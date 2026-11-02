@@ -199,24 +199,39 @@ func turnNotes(sess *ToolSession, db Database, sessionID, userMessage string) st
 // says it was never started and starts it again: observed, three songs for
 // one request. Said on every turn while the work runs, because a turn that
 // is not told cannot ask.
+//
+// Work that has finished and is being delivered is said as that, not as still
+// running: the turn delivering it was told the very work it held was
+// unfinished.
 func backgroundTurnNote(sess *ToolSession) string {
 	if sess == nil {
 		return ""
 	}
-	jobs := ListBackgroundJobs(sess.DeliverySession())
-	if len(jobs) == 0 {
-		return ""
-	}
-	var lines []string
-	for _, j := range jobs {
+	var running, delivering []string
+	for _, j := range ListBackgroundJobs(sess.DeliverySession()) {
+		if j.Delivering {
+			delivering = append(delivering, "- "+j.Label+" ("+j.ID+")")
+			continue
+		}
 		line := "- " + j.Label + " (" + j.ID
 		if !j.Started.IsZero() {
 			line += ", started " + agoWords(time.Since(j.Started))
 		}
-		lines = append(lines, line+")")
+		running = append(running, line+")")
 	}
-	return frameworkNoteTag + "STILL RUNNING IN THIS CONVERSATION, started earlier and not finished:\n" + strings.Join(lines, "\n") +
-		"\nIt is under way, and its result comes back here by itself when it finishes. Do not start it again, and do not say it has not started. background_work lists it, or stops it if the user wants it stopped."
+	var parts []string
+	if len(running) > 0 {
+		parts = append(parts, "STILL RUNNING IN THIS CONVERSATION, started earlier and not finished:\n"+strings.Join(running, "\n")+
+			"\nIt is under way, and its result comes back here by itself when it finishes. Do not start it again, and do not say it has not started. background_work lists it, or stops it if the user wants it stopped.")
+	}
+	if len(delivering) > 0 {
+		parts = append(parts, "FINISHED, ITS RESULT BEING DELIVERED TO THIS CONVERSATION NOW:\n"+strings.Join(delivering, "\n")+
+			"\nIt is done. Do not start it again; its result arrives here by itself, with what it made.")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return frameworkNoteTag + strings.Join(parts, "\n\n")
 }
 
 // agoWords is how long ago something began, as a person says it.

@@ -150,6 +150,7 @@ func (T *OrchestrateApp) startTask(bt backgroundTask, fn func(ctx context.Contex
 		defer func() {
 			if r := recover(); r != nil {
 				run.Complete(RunStatusFailed)
+				FinishBackgroundJob(bt.origin.SessionID, run.ID)
 				T.deliverTaskResult(bt.origin, bt.label, TaskProduct{}, fmt.Errorf("task panicked: %v", r))
 			}
 		}()
@@ -168,6 +169,10 @@ func (T *OrchestrateApp) startTask(bt backgroundTask, fn func(ctx context.Contex
 		} else {
 			run.Complete(RunStatusCompleted)
 		}
+		// Finished now, not when delivered: delivering is a turn of its own,
+		// and the turn delivering it was being told the work was still
+		// running. It stays listed, as on its way, until it arrives.
+		FinishBackgroundJob(bt.origin.SessionID, run.ID)
 		T.deliverTaskResult(bt.origin, bt.label, out, err)
 	}()
 	return job
@@ -814,7 +819,9 @@ func backgroundWorkOf(sess *ToolSession, prompt func() string) func() ([]string,
 		}
 		var running []string
 		for _, j := range ListBackgroundJobs(sess.DeliverySession()) {
-			running = append(running, j.Label)
+			if !j.Delivering {
+				running = append(running, j.Label)
+			}
 		}
 		return running, wakeLabel(prompt())
 	}

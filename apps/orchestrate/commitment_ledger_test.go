@@ -174,4 +174,15 @@ func TestATurnIsToldWhatIsStillRunning(t *testing.T) {
 	if n := backgroundTurnNote(&ToolSession{ChatSessionID: "conv-other"}); n != "" {
 		t.Errorf("another conversation is told of this one's work: %q", n)
 	}
+	// Finished and being delivered, it is said as that: the turn delivering it
+	// was told the work it held was still running.
+	FinishBackgroundJob("conv-bg", "job1")
+	got = backgroundTurnNote(sess)
+	if strings.Contains(got, "STILL RUNNING") || !strings.Contains(got, "FINISHED, ITS RESULT BEING DELIVERED") ||
+		!strings.Contains(got, "Lyric & Music Generator (job1)") || !strings.Contains(got, "Do not start it again") {
+		t.Errorf("finished work is not said as on its way:\n%s", got)
+	}
+	if running, _ := backgroundWorkOf(sess, func() string { return "" })(); len(running) != 0 {
+		t.Errorf("the turn judge counts finished work as running: %v", running)
+	}
 }

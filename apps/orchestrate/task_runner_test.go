@@ -4,6 +4,7 @@
 package orchestrate
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"net/http"
@@ -608,5 +609,44 @@ func TestWakeLabelNamesWhatAWakeDelivers(t *testing.T) {
 	}
 	if got := wakeLabel("make me a song"); got != "" {
 		t.Errorf("a person's message is read as a wake: %q", got)
+	}
+}
+
+// A task is finished when its work is, not when its result has been
+// delivered: delivering is a turn of its own, and the turn delivering it was
+// told the work it held was still running. Listed as on its way until the
+// result arrives, then gone.
+func TestATaskIsFinishedBeforeItsResultIsDelivered(t *testing.T) {
+	const sid = "task-finished-before-delivery"
+	q := RegisterInjectionQueue(sid, "u", "a1")
+	defer ReleaseInjectionQueue(sid)
+	app := &OrchestrateApp{}
+	ran := make(chan struct{})
+	app.startTask(backgroundTask{origin: taskOrigin{SessionID: sid, User: "u", AgentID: "a1"}, title: "song: rain", label: "song: rain"},
+		func(ctx context.Context) (TaskProduct, error) {
+			close(ran)
+			return TaskProduct{Text: "made rain.mp3"}, nil
+		})
+	<-ran
+	deadline := time.Now().Add(time.Second)
+	for {
+		jobs := ListBackgroundJobs(sid)
+		if len(jobs) == 1 && jobs[0].Delivering {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("while its result is being delivered the task is listed as %+v, want finished and on its way", jobs)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(q.Pending()) != 0 {
+		t.Fatal("delivered before the grace a live turn gets to take it")
+	}
+	deadline = time.Now().Add(taskWakeGrace + 3*time.Second)
+	for len(ListBackgroundJobs(sid)) != 0 || len(q.Pending()) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("delivered=%d, still listed=%+v", len(q.Pending()), ListBackgroundJobs(sid))
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

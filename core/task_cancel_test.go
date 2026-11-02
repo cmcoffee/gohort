@@ -116,3 +116,39 @@ func TestTheToolLooksAtTheConversationNotTheSubSession(t *testing.T) {
 		t.Errorf("a wake turn must see the conversation's work:\n%s", out)
 	}
 }
+
+// Work that has finished is listed as on its way while its result is
+// delivered, not as running, and cannot be stopped; once delivered it leaves.
+func TestFinishedWorkIsListedAsOnItsWay(t *testing.T) {
+	const sess = "sess-bg-delivering"
+	t.Cleanup(func() { CompleteBackgroundJob(sess, "task-done"); CancelBackgroundJobs(sess, "") })
+	stopped := false
+	RegisterBackgroundJob(sess, TaskRun{ID: "task-done", Label: "song: rain"}, func() { stopped = true })
+	RegisterBackgroundJob(sess, TaskRun{ID: "task-busy", Label: "song: sun"}, func() {})
+	FinishBackgroundJob(sess, "task-done")
+
+	jobs := ListBackgroundJobs(sess)
+	if len(jobs) != 2 || !jobs[0].Delivering || jobs[1].Delivering {
+		t.Fatalf("listed %+v", jobs)
+	}
+	tool := &backgroundWorkTool{}
+	s := &ToolSession{ChatSessionID: sess}
+	out, _ := tool.RunWithSession(map[string]any{"action": "list"}, s)
+	for _, want := range []string{"1 still running", "task-busy", "1 finished, its result being delivered", "task-done - song: rain"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("list missing %q:\n%s", want, out)
+		}
+	}
+	out, _ = tool.RunWithSession(map[string]any{"action": "stop"}, s)
+	if stopped || !strings.Contains(out, "Stopped 1") || strings.Contains(out, "task-done") {
+		t.Errorf("stopping everything reached finished work: stopped=%v\n%s", stopped, out)
+	}
+	out, _ = tool.RunWithSession(map[string]any{"action": "stop", "task": "task-done"}, s)
+	if stopped || !strings.Contains(out, "already finished and its result is being delivered") {
+		t.Errorf("stopping finished work: stopped=%v\n%s", stopped, out)
+	}
+	CompleteBackgroundJob(sess, "task-done")
+	if out, _ := tool.RunWithSession(map[string]any{"action": "list"}, s); !strings.Contains(out, "Nothing is running") {
+		t.Errorf("a delivered job is still listed:\n%s", out)
+	}
+}

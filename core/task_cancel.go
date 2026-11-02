@@ -30,6 +30,26 @@ type backgroundJob struct {
 	at     time.Time
 }
 
+// FinishBackgroundJob marks a run whose work is done and whose result is now
+// being delivered. Delivering can take minutes (a turn of its own), and the
+// job used to be listed as still running all that while, so the turn
+// delivering it, and any turn beside it, was told the work it held was
+// unfinished. Kept on the list, marked, rather than dropped: a turn that
+// starts in between is told the result is on its way instead of nothing, and
+// does not start the work again. CompleteBackgroundJob drops it once
+// delivered. Finished work cannot be stopped: CancelBackgroundJobs passes it
+// over.
+func FinishBackgroundJob(sessionID, runID string) {
+	sessionID, runID = strings.TrimSpace(sessionID), strings.TrimSpace(runID)
+	bgJobsMu.Lock()
+	defer bgJobsMu.Unlock()
+	for i, j := range bgJobs[sessionID] {
+		if j.run.ID == runID {
+			bgJobs[sessionID][i].run.Delivering = true
+		}
+	}
+}
+
 var (
 	bgJobsMu sync.Mutex
 	bgJobs   = map[string][]backgroundJob{} // delivery session → live jobs
@@ -71,7 +91,8 @@ func CompleteBackgroundJob(sessionID, runID string) {
 	bgJobs[sessionID] = keep
 }
 
-// ListBackgroundJobs returns what is still running for a conversation.
+// ListBackgroundJobs returns what is still running for a conversation, and
+// what has finished and is being delivered (TaskRun.Delivering).
 func ListBackgroundJobs(sessionID string) []TaskRun {
 	bgJobsMu.Lock()
 	defer bgJobsMu.Unlock()
@@ -101,7 +122,9 @@ func CancelBackgroundJobs(sessionID, runID string) []TaskRun {
 	var cancels []func()
 	keep := bgJobs[sessionID][:0]
 	for _, j := range bgJobs[sessionID] {
-		if runID != "" && j.run.ID != runID {
+		// Finished work is on its way and cannot be stopped; it stays listed
+		// until it arrives.
+		if (runID != "" && j.run.ID != runID) || j.run.Delivering {
 			keep = append(keep, j)
 			continue
 		}
@@ -180,26 +203,31 @@ func (t *backgroundWorkTool) RunWithSession(args map[string]any, sess *ToolSessi
 	}
 	switch strings.ToLower(strings.TrimSpace(StringArg(args, "action"))) {
 	case "", "list":
-		jobs := ListBackgroundJobs(session)
-		if len(jobs) == 0 {
+		running, delivering := splitDelivering(ListBackgroundJobs(session))
+		if len(running) == 0 && len(delivering) == 0 {
 			// Said plainly, because the model's next move on an ambiguous
 			// "stop that" is otherwise to claim it stopped something.
 			return "Nothing is running in the background for this conversation. There is nothing to stop: if the user is waiting on something, it has already finished or was never started.", nil
 		}
 		var b strings.Builder
-		fmt.Fprintf(&b, "%d still running:\n", len(jobs))
-		for _, j := range jobs {
-			b.WriteString("  " + j.ID)
-			if l := strings.TrimSpace(j.Label); l != "" {
-				b.WriteString(" - " + l)
-			}
-			b.WriteString("\n")
+		if len(running) > 0 {
+			fmt.Fprintf(&b, "%d still running:\n", len(running))
+			writeJobs(&b, running)
 		}
-		b.WriteString("Stop one with action=\"stop\", task=<id>, or all of them by omitting task.")
-		return b.String(), nil
+		if len(delivering) > 0 {
+			fmt.Fprintf(&b, "%d finished, its result being delivered to this conversation now (it cannot be stopped):\n", len(delivering))
+			writeJobs(&b, delivering)
+		}
+		if len(running) > 0 {
+			b.WriteString("Stop one with action=\"stop\", task=<id>, or all of them by omitting task.")
+		}
+		return strings.TrimSpace(b.String()), nil
 	case "stop":
 		stopped := CancelBackgroundJobs(session, strings.TrimSpace(StringArg(args, "task")))
 		if len(stopped) == 0 {
+			if _, delivering := splitDelivering(ListBackgroundJobs(session)); len(delivering) > 0 {
+				return "Nothing was stopped: the work has already finished and its result is being delivered to this conversation now. Tell the user it is done and on its way; do not say you cancelled it.", nil
+			}
 			return "Nothing was stopped: there is nothing running in the background for this conversation. Do not tell the user you cancelled something; tell them there was nothing to cancel.", nil
 		}
 		var b strings.Builder
@@ -215,4 +243,28 @@ func (t *backgroundWorkTool) RunWithSession(args map[string]any, sess *ToolSessi
 		return b.String(), nil
 	}
 	return "", fmt.Errorf("unknown action %q for background_work: use list | stop", StringArg(args, "action"))
+}
+
+// splitDelivering separates work still running from work finished and being
+// delivered.
+func splitDelivering(jobs []TaskRun) (running, delivering []TaskRun) {
+	for _, j := range jobs {
+		if j.Delivering {
+			delivering = append(delivering, j)
+		} else {
+			running = append(running, j)
+		}
+	}
+	return running, delivering
+}
+
+// writeJobs lists jobs one to a line, id then label.
+func writeJobs(b *strings.Builder, jobs []TaskRun) {
+	for _, j := range jobs {
+		b.WriteString("  " + j.ID)
+		if l := strings.TrimSpace(j.Label); l != "" {
+			b.WriteString(" - " + l)
+		}
+		b.WriteString("\n")
+	}
 }

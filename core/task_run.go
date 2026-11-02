@@ -197,6 +197,10 @@ type TaskRun struct {
 	Label   string // human/model-readable summary, e.g. "editing image#1"
 	Detach  time.Duration
 	Started time.Time // when it began running in the background (ListBackgroundJobs)
+	// Delivering: the work has finished and its result is on its way into
+	// the conversation (FinishBackgroundJob). Listed until it arrives, so a
+	// turn in between does not start it again; no longer stoppable.
+	Delivering bool
 }
 
 // TaskProduct is everything a detached call produced: the text the model reads,
