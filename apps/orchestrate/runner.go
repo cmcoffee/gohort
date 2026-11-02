@@ -2440,6 +2440,24 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		// would loop. drainNotes() empties the shared queue, so the
 		// plan-step/synthesis drains coexist (first drain wins).
 		InjectionDrain: drainWithDeliveries(func() []Message {
+			// What this round already streamed is settled into its own
+			// bubble before a note the person wrote is taken in. The last
+			// check before the turn finishes drains here with the answer
+			// still open, and the reply to the note was written into that
+			// answer, above the note. A no-op when nothing streamed.
+			//
+			// That check runs before the output guardrail judges the answer.
+			// Streamed live, it is on screen already and settling only closes
+			// it; held for the guardrail, it has not been judged, so it is
+			// dropped instead of painted, and the reply after the note is
+			// judged as any final reply is.
+			if t.personNotePending() {
+				if pr.holdStream && pr.streamedBuf.Len() > 0 {
+					pr.retractRound()
+				} else {
+					pr.settleRound()
+				}
+			}
 			notes := t.drainNotes()
 			if len(notes) == 0 {
 				return nil

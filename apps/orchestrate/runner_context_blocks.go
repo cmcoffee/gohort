@@ -752,6 +752,14 @@ func roundShapePreamble(maxSteps int, canAsk, canPlan bool) string {
 // user messages on the session (so reload sees them too). Returns
 // the drained slice for the caller to fold into the next prompt.
 // Empty when there's nothing queued or no queue at all.
+//
+// A note the person wrote stays where it was taken in, below what the turn
+// had shown by then, live and on reload. So the bubbles the turn has already
+// finalized are saved ahead of it (they are otherwise held until the turn
+// ends and saved after it), and the bubble a round left open is closed once
+// it is in: a round that only called tools leaves one open, and the next
+// round's text and tool calls were written into it, ABOVE the note they came
+// after. Approval cards close it the same way (confirm.go).
 func (t *chatTurn) drainNotes() []injectionNote {
 	if t == nil || t.queue == nil {
 		return nil
@@ -760,7 +768,14 @@ func (t *chatTurn) drainNotes() []injectionNote {
 	if len(taken) == 0 {
 		return nil
 	}
+	personal := false
+	for _, n := range taken {
+		personal = personal || !n.Framework
+	}
 	if t.session != nil {
+		if personal {
+			appendMidTurnBubbles(t.session, t.drainMidTurnBubbles(), "")
+		}
 		now := time.Now()
 		for _, n := range taken {
 			// A framework note (a background result) is kept hidden: the model
@@ -806,7 +821,22 @@ func (t *chatTurn) drainNotes() []injectionNote {
 		// draws the note from this instead of only saying one was read.
 		"notes": notes,
 	})
+	t.setCurrentMsgID("")
 	return taken
+}
+
+// personNotePending reports whether a note the person wrote is waiting to be
+// taken in (not a framework note, not one held while it is being edited).
+func (t *chatTurn) personNotePending() bool {
+	if t == nil || t.queue == nil {
+		return false
+	}
+	for _, n := range t.queue.Pending() {
+		if !n.Framework && !n.EditLocked {
+			return true
+		}
+	}
+	return false
 }
 
 // notesContextBlock formats a drained slice for prepending to a

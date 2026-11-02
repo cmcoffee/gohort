@@ -109,3 +109,131 @@ func TestOldFrameworkNotesAreHiddenWhenServed(t *testing.T) {
 		t.Errorf("hidden: %v %v %v %v", msgs[0].Hidden, msgs[1].Hidden, msgs[2].Hidden, msgs[3].Hidden)
 	}
 }
+
+// A note stays where it was taken in. What the turn showed before it is saved
+// ahead of it, and what comes after it opens below it: a round that only
+// called tools left its bubble open, and the next round's tool calls and the
+// final reply were written into it, above the note they came after.
+func TestWhatFollowsAPickedUpNoteGoesBelowIt(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	udb := UserDB(root, "u")
+	sess, _ := saveChatSession(udb, ChatSession{AgentID: "a1", Messages: []ChatMessage{{Role: "user", Content: "look into it"}}})
+	key := "notes-order-" + sess.ID
+	q := RegisterInjectionQueue(key, "u", "a1")
+	defer ReleaseInjectionQueue(key)
+	buf := &syncBuf{}
+	turn := &chatTurn{user: "u", udb: udb, session: &sess, queue: q, sse: &sseWriter{live: buf}}
+
+	turn.captureMidTurnBubble("Checking the logs first.")
+	above := turn.ensureBubbleForTool() // a round that only called a tool
+	if turn.personNotePending() {
+		t.Fatal("nothing is waiting yet")
+	}
+	q.Push("check the disk too")
+	if !turn.personNotePending() {
+		t.Fatal("the person's note is waiting")
+	}
+	turn.drainNotes()
+	below := turn.ensureBubbleForTool()
+	if below == above {
+		t.Fatalf("what came after the note went back into the bubble above it (%s)", above)
+	}
+	out := buf.String()
+	if picked, next := strings.Index(out, `"ui_notes_consumed"`), strings.Index(out, `"id":"`+below+`"`); picked < 0 || next < picked {
+		t.Errorf("the new bubble is not after the note:\n%s", out)
+	}
+	got, _ := loadChatSession(udb, "a1", sess.ID)
+	var order []string
+	for _, m := range got.Messages {
+		order = append(order, m.Role+":"+m.Content)
+	}
+	if strings.Join(order, " | ") != "user:look into it | assistant:Checking the logs first. | user:check the disk too" {
+		t.Errorf("a reload would not show the note where it was taken in: %v", order)
+	}
+	if len(turn.drainMidTurnBubbles()) != 0 {
+		t.Error("the bubble saved ahead of the note is still held, and would be saved again after it")
+	}
+}
+
+// A background result taken in is no note of the person's: it leaves the
+// open bubble and the held bubbles where they are, and does not count as a
+// note waiting.
+func TestABackgroundResultLeavesTheOpenBubbleAlone(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	udb := UserDB(root, "u")
+	sess, _ := saveChatSession(udb, ChatSession{AgentID: "a1", Messages: []ChatMessage{{Role: "user", Content: "render it"}}})
+	key := "notes-bg-" + sess.ID
+	q := RegisterInjectionQueue(key, "u", "a1")
+	defer ReleaseInjectionQueue(key)
+	turn := &chatTurn{user: "u", udb: udb, session: &sess, queue: q, sse: &sseWriter{live: &syncBuf{}}}
+	turn.captureMidTurnBubble("Rendering.")
+	open := turn.ensureBubbleForTool()
+	q.PushFramework(taskWakeMarker+" render done", "")
+	if turn.personNotePending() {
+		t.Error("a background result counted as the person's note")
+	}
+	turn.drainNotes()
+	if turn.ensureBubbleForTool() != open {
+		t.Error("a background result closed the open bubble")
+	}
+	if len(turn.drainMidTurnBubbles()) != 1 {
+		t.Error("a background result saved the held bubbles ahead of the reply")
+	}
+}
+
+// A note that lands while the final answer is being written is taken in by
+// the last check before the turn finishes, with the answer still open. The
+// answer is settled into its own bubble first, so the reply to the note opens
+// below the note rather than running on in the answer above it; held for an
+// output guardrail, the unjudged answer is dropped, never painted.
+func TestANoteDuringTheAnswerComesAfterIt(t *testing.T) {
+	for _, held := range []bool{false, true} {
+		root := &DBase{Store: kvlite.MemStore()}
+		udb := UserDB(root, "u")
+		sess, _ := saveChatSession(udb, ChatSession{AgentID: "a1", Messages: []ChatMessage{{Role: "user", Content: "sum it up"}}})
+		key := "notes-late-" + sess.ID
+		q := RegisterInjectionQueue(key, "u", "a1")
+		buf := &syncBuf{}
+		turn := &chatTurn{user: "u", udb: udb, session: &sess, queue: q, sse: &sseWriter{live: buf}}
+		pr := &planRun{t: turn, resp: &Response{}, telem: newTurnTelemetry(), cancelOrch: func() {}, holdStream: held}
+		drain := pr.loopConfig().InjectionDrain
+
+		if drain() != nil {
+			t.Fatal("nothing was waiting")
+		}
+		pr.streamHandler("Three things went wrong.")
+		answer := pr.streamMsgID
+		q.Push("and the fourth?")
+		if len(drain()) == 0 {
+			t.Fatal("the note was not taken in")
+		}
+		ReleaseInjectionQueue(key)
+		out := buf.String()
+		picked := strings.Index(out, `"ui_notes_consumed"`)
+		done := strings.Index(out, `{"id":"`+answer+`","kind":"message_done"}`)
+		got, _ := loadChatSession(udb, "a1", sess.ID)
+		var order []string
+		for _, m := range got.Messages {
+			order = append(order, m.Role+":"+m.Content)
+		}
+		saved := strings.Join(order, " | ")
+		if !held {
+			if done < 0 || done > picked {
+				t.Errorf("live: the answer was not closed before the note was taken in:\n%s", out)
+			}
+			if saved != "user:sum it up | assistant:Three things went wrong. | user:and the fourth?" {
+				t.Errorf("live: saved %s", saved)
+			}
+		} else {
+			if done >= 0 || strings.Contains(out, `"kind":"chunk","text":"Three things went wrong."`) {
+				t.Errorf("held: the unjudged answer was painted:\n%s", out)
+			}
+			if saved != "user:sum it up | user:and the fourth?" {
+				t.Errorf("held: the unjudged answer was saved: %s", saved)
+			}
+		}
+		if pr.streamMsgID != "" || turn.getCurrentMsgID() != "" {
+			t.Errorf("held=%v: the answer's bubble is still open for the reply to run on in", held)
+		}
+	}
+}
