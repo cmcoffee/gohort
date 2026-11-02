@@ -111,8 +111,8 @@ func TestAPersonalMCPServerSignsInWithCredentialsOrOAuth(t *testing.T) {
 	if !strings.Contains(list, "API credential mine") || !strings.Contains(list, "OAuth, not signed in") {
 		t.Errorf("the list says how each signs in: %s", list)
 	}
-	b, _ := json.Marshal(app.mcpServersSection("alice"))
-	if !strings.Contains(string(b), `"oauth_client_id"`) || !strings.Contains(string(b), "/account/mcp/callback") {
+	b, _ := json.Marshal(app.integrationsSection(req("GET", "/extensions"), "alice"))
+	if !strings.Contains(string(b), `"mcp__oauth_client_id"`) || !strings.Contains(string(b), "/account/mcp/callback") {
 		t.Error("the add form does not offer an app registered by hand, with its redirect URI")
 	}
 	if !strings.Contains(string(b), `"assist":true`) {

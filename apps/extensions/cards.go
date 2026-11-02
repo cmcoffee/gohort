@@ -51,11 +51,11 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div
   function load(){
     fetch(API, {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(list){
       box.innerHTML = '';
-      if (!list || !list.length){ box.appendChild(el('div',{class:'acct-conns-empty',text:'Nothing to connect yet. An API you add under APIs appears here for its key, and so does any integration your admin offers for you to sign in to.'})); return; }
+      if (!list || !list.length){ box.appendChild(el('div',{class:'acct-conns-empty',text:'Nothing to connect yet. An API you add under Integrations appears here for its key, and so does any integration your admin offers for you to sign in to.'})); return; }
       list.forEach(function(c){
         var badge = el('span', {class:'acct-conn-badge '+(c.connected?'on':'off'), text: c.connected?'Connected':'Not connected'});
         var head = el('div', {class:'acct-conn-head'}, [el('span',{class:'acct-conn-name',text:c.name})]);
-        if (c.kind === 'own') head.appendChild(el('span',{class:'acct-conn-kind',text:'Your API', title:'Configured under APIs'}));
+        if (c.kind === 'own') head.appendChild(el('span',{class:'acct-conn-kind',text:'Your API', title:'Configured under Integrations'}));
         head.appendChild(badge);
         var card = el('div', {class:'acct-conn'}, [head]);
         if (c.description) card.appendChild(el('div',{class:'acct-conn-desc',text:c.description}));
@@ -94,7 +94,7 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div
         // there is a key to protect, and frozen when an admin has locked it
         // for the deployment: you may keep your own lock on, never lift
         // theirs. Your own API's reach is part of its configuration, so it is
-        // set under APIs rather than here.
+        // set under Integrations rather than here.
         if (c.connected && c.kind !== 'own'){
           var lockWrap = el('label', {class:'acct-conn-lock'});
           var lock = el('input', {type:'checkbox'});

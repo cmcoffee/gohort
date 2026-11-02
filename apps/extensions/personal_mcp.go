@@ -179,105 +179,54 @@ func (T *Extensions) handleMCPServerDelete(c *jsonapi.Call, _ struct{}) (any, er
 	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
-// mcpServersSection is the Extensions section for them.
-func (T *Extensions) mcpServersSection(user string) ui.Section {
-	policy := governance.Of(governance.MCPServers)
-	sub := "MCP servers you add yourself. Their tools reach your own agents, and nobody else's."
-	switch {
-	case UserIsAdmin(user):
-	case policy == governance.AdminOnly:
-		sub = "Your administrator sets up MCP servers here, and nobody else adds them. Ones you added before keep working."
-	case policy == governance.NeedsApproval:
-		sub += " A new one waits for an administrator's approval."
+// mcpRowActions are a server's actions on its row under Integrations.
+func mcpRowActions() []ui.RowAction {
+	return []ui.RowAction{
+		{Type: "button", Label: "Check", Method: "POST", PostTo: "api/mcp-servers?action=check&name={name}"},
+		{Type: "button", Label: "Enable", Method: "POST", PostTo: "api/mcp-servers?action=enable&name={name}", OnlyIf: "can_enable"},
+		{Type: "button", Label: "Disable", Method: "POST", PostTo: "api/mcp-servers?action=disable&name={name}", OnlyIf: "can_disable"},
+		{Type: "button", Label: "Offer as one tool", Method: "POST", PostTo: "api/mcp-servers?action=one_tool&name={name}", OnlyIf: "many_tools"},
+		{Type: "button", Label: "Offer tools separately", Method: "POST", PostTo: "api/mcp-servers?action=many_tools&name={name}", OnlyIf: "one_tool"},
+		{Type: "button", Label: "Delete", Method: "DELETE", PostTo: "api/mcp-servers?name={name}", Variant: "danger",
+			Confirm: "Delete this MCP server? Your agents lose its tools, and its token is removed."},
 	}
-	children := []ui.Component{
-		ui.Table{
-			Source: "api/mcp-servers",
-			RowKey: "name",
-			Columns: []ui.Col{
-				{Field: "name", Flex: 1},
-				{Field: "url", Label: "Address", Mute: true, Flex: 2},
-				{Field: "auth", Label: "Signs in with", Mute: true},
-				{Field: "tools", Label: "Tools", Mute: true},
-				{Field: "awaiting", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
-					{Value: true, Label: "Waiting for approval", Color: "warning"},
-				}},
-				{Field: "held", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
-					{Value: true, Label: "Switched off by an administrator", Color: "danger"},
-				}},
-				{Field: "disabled", Label: "Status", Type: "dot", Badges: []ui.BadgeMapping{
-					{Value: true, Label: "Off", Color: "danger"},
-					{Value: false, Label: "Active", Color: "success"},
-				}},
-				{Field: "problem", Label: "Last check", Mute: true, Flex: 2},
-			},
-			RowActions: []ui.RowAction{
-				{Type: "button", Label: "Check", Method: "POST", PostTo: "api/mcp-servers?action=check&name={name}"},
-				{Type: "button", Label: "Enable", Method: "POST", PostTo: "api/mcp-servers?action=enable&name={name}", OnlyIf: "can_enable"},
-				{Type: "button", Label: "Disable", Method: "POST", PostTo: "api/mcp-servers?action=disable&name={name}", OnlyIf: "can_disable"},
-				{Type: "button", Label: "Offer as one tool", Method: "POST", PostTo: "api/mcp-servers?action=one_tool&name={name}", OnlyIf: "many_tools"},
-				{Type: "button", Label: "Offer tools separately", Method: "POST", PostTo: "api/mcp-servers?action=many_tools&name={name}", OnlyIf: "one_tool"},
-				{Type: "button", Label: "Delete", Method: "DELETE", PostTo: "api/mcp-servers?name={name}", Variant: "danger",
-					Confirm: "Delete this MCP server? Your agents lose its tools, and its token is removed."},
-			},
-			EmptyText: "No MCP servers of your own yet.",
-		},
-	}
-	if UserIsAdmin(user) || policy != governance.AdminOnly {
-		callback := "<this site's address>/account/mcp/callback"
-		if db := AuthDB(); db != nil {
-			var ext string
-			if db.Get(WebTable, "external_url", &ext) && strings.TrimSpace(ext) != "" {
-				callback = strings.TrimRight(strings.TrimSpace(ext), "/") + "/account/mcp/callback"
-			}
+}
+
+// mcpAddFields are the form a server is added with.
+func mcpAddFields() []ui.FormField {
+	callback := "<this site's address>/account/mcp/callback"
+	if db := AuthDB(); db != nil {
+		var ext string
+		if db.Get(WebTable, "external_url", &ext) && strings.TrimSpace(ext) != "" {
+			callback = strings.TrimRight(strings.TrimSpace(ext), "/") + "/account/mcp/callback"
 		}
-		children = append(children, ui.ModalButton{
-			Label:    "Add MCP server",
-			Title:    "Add an MCP server",
-			Subtitle: "Its tools reach your own agents once it answers.",
-			Variant:  "primary",
-			Width:    "560px",
-			Body: ui.FormPanel{
-				Assist:      true,
-				PostURL:     "api/mcp-servers",
-				SubmitLabel: "Add server",
-				Fields: []ui.FormField{
-					{Field: "name", Label: "Name", Required: true, Placeholder: "e.g. linear",
-						Help: "Lowercase letters, digits, dashes or underscores. Its tools are named <name>_<tool>."},
-					{Field: "url", Label: "Address", Required: true, Placeholder: "https://mcp.example.com/mcp",
-						Help: "The server's Streamable HTTP endpoint. Public https addresses only."},
-					{Field: "auth", Label: "Signs in with", Type: "select", Options: []ui.SelectOption{
-						{Value: "", Label: "Nothing: an open server"},
-						{Value: "bearer", Label: "A bearer token"},
-						{Value: "secure_api", Label: "One of your API credentials"},
-						{Value: "oauth", Label: "OAuth: you sign in"},
-					}, Help: "With OAuth you sign in to the provider after saving, under Connected accounts."},
-					{Field: "token", Label: "Token", Type: "password", ShowWhen: "auth:bearer",
-						Help: "Stored encrypted, sent only to this server, never shown to an agent."},
-					{Field: "credential", Label: "API credential", Type: "select", ShowWhen: "auth:secure_api",
-						OptionsSource: "api/mcp-servers?options=credentials",
-						Help:          "Its key signs every request, held to the credential's own rules: its allowed endpoints must cover this server's address, and it may not ask before writes."},
-					{Field: "oauth_client_id", Label: "Client ID (only if the provider needs one)", ShowWhen: "auth:oauth",
-						Help: "Leave it blank: most providers register a client for you when you sign in.",
-						Detail: "Some providers do not register clients themselves, and signing in then says so. For one of those, register an OAuth app with the provider, " +
-							"give it the redirect URI " + callback + ", and paste its client ID here."},
-					{Field: "oauth_client_secret", Label: "Client secret (optional)", Type: "password", ShowWhen: "auth:oauth;oauth_client_id",
-						Help: "Only if the provider gave your app one. Stored encrypted, sent only to the provider's token endpoint."},
-					{Field: "oauth_scopes", Label: "Scopes (optional)", ShowWhen: "auth:oauth",
-						Help: "Space-separated. Leave blank to ask for what the server advertises."},
-					{Field: "one_tool", Label: "Offer as one tool", Type: "toggle",
-						Help: "Your agents see one tool named for the server, with an action per tool, instead of each tool on its own. For a server with many tools."},
-				},
-			},
-		})
 	}
-	return ui.Section{
-		Title:    "MCP servers",
-		Subtitle: sub,
-		Detail: "An MCP server offers tools. Once one you add answers, each of its tools reaches your agents as <name>_<tool>; an agent with its own tool list takes only the ones you put on it, and Private mode takes them away. " +
-			"A server that signs in with OAuth is listed under Connected accounts, where you press Connect to sign in. " +
-			"A tool whose name says it changes something asks you in the chat first, and does not run where nobody is watching (a schedule, a message from someone else). Check asks the server again for what it offers.",
-		Body: ui.Stack{Children: children},
+	return []ui.FormField{
+		{Field: "name", Label: "Name", Required: true, Placeholder: "e.g. linear",
+			Help: "Lowercase letters, digits, dashes or underscores. Its tools are named <name>_<tool>."},
+		{Field: "url", Label: "Address", Required: true, Placeholder: "https://mcp.example.com/mcp",
+			Help: "The server's Streamable HTTP endpoint. Public https addresses only."},
+		{Field: "auth", Label: "Signs in with", Type: "select", Options: []ui.SelectOption{
+			{Value: "", Label: "Nothing: an open server"},
+			{Value: "bearer", Label: "A bearer token"},
+			{Value: "secure_api", Label: "One of your API credentials"},
+			{Value: "oauth", Label: "OAuth: you sign in"},
+		}, Help: "With OAuth you sign in to the provider after saving, under Connected accounts."},
+		{Field: "token", Label: "Token", Type: "password", ShowWhen: "auth:bearer",
+			Help: "Stored encrypted, sent only to this server, never shown to an agent."},
+		{Field: "credential", Label: "API credential", Type: "select", ShowWhen: "auth:secure_api",
+			OptionsSource: "api/mcp-servers?options=credentials",
+			Help:          "Its key signs every request, held to the credential's own rules: its allowed endpoints must cover this server's address, and it may not ask before writes."},
+		{Field: "oauth_client_id", Label: "Client ID (only if the provider needs one)", ShowWhen: "auth:oauth",
+			Help: "Leave it blank: most providers register a client for you when you sign in.",
+			Detail: "Some providers do not register clients themselves, and signing in then says so. For one of those, register an OAuth app with the provider, " +
+				"give it the redirect URI " + callback + ", and paste its client ID here."},
+		{Field: "oauth_client_secret", Label: "Client secret (optional)", Type: "password", ShowWhen: "auth:oauth;oauth_client_id",
+			Help: "Only if the provider gave your app one. Stored encrypted, sent only to the provider's token endpoint."},
+		{Field: "oauth_scopes", Label: "Scopes (optional)", ShowWhen: "auth:oauth",
+			Help: "Space-separated. Leave blank to ask for what the server advertises."},
+		{Field: "one_tool", Label: "Offer as one tool", Type: "toggle",
+			Help: "Your agents see one tool named for the server, with an action per tool, instead of each tool on its own. For a server with many tools."},
 	}
 }
 

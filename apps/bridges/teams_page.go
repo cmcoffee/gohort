@@ -1,6 +1,6 @@
 package bridges
 
-// A person's own Teams bot, on the Bridges page: added from a bot they
+// A person's own Teams bot, under Extensions > Integrations: added from a bot they
 // registered in Azure, reached through a webhook made with it, and packaged
 // for Teams.
 
@@ -264,58 +264,21 @@ func teamsBotFields(adding bool) []ui.FormField {
 	return fields
 }
 
-// teamsBotsSection is the Bridges section for them.
-func (T *Bridges) teamsBotsSection(user string) ui.Section {
-	policy := governance.Of(governance.TeamsBots)
-	sub := "A Microsoft Teams bot of your own: it answers in Teams with your agents, under its own name."
-	switch {
-	case UserIsAdmin(user):
-	case policy == governance.AdminOnly:
-		sub = "Your administrator sets up Teams bots here, and nobody else adds them."
-	case policy == governance.NeedsApproval:
-		sub += " A new one waits for an administrator's approval."
-	}
-	children := []ui.Component{ui.Table{
-		Source: "/bridges/api/teams-bots",
-		RowKey: "service",
-		Columns: []ui.Col{
-			{Field: "name", Flex: 1},
-			{Field: "service", Label: "Service", Mute: true},
-			{Field: "endpoint", Label: "Messaging endpoint", Mute: true, Flex: 2},
-			{Field: "status", Label: "Status", Mute: true, Flex: 1},
-			{Field: "trouble", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
-				{Value: true, Label: "Needs attention", Color: "danger"},
-			}},
-			{Field: "last_call", Label: "Last call", Mute: true, Flex: 2},
-		},
-		RowActions: []ui.RowAction{
-			ui.ModalAction("Edit", ui.FormPanel{Source: "/bridges/api/teams-bots?service={service}", PostURL: "/bridges/api/teams-bots?service={service}",
-				SubmitLabel: "Save", Fields: teamsBotFields(false)}),
-			{Type: "button", Label: "Delete", Method: "DELETE", PostTo: "/bridges/api/teams-bots?service={service}", Variant: "danger",
-				Confirm: "Delete this Teams bot? It stops answering, and its secret and webhook are removed. The Azure registration stays yours to remove."},
-		},
-		EmptyText: "No Teams bot yet.",
-	}}
-	if UserIsAdmin(user) || policy != governance.AdminOnly {
-		children = append(children, ui.ModalButton{
-			Label:    "Add a Teams bot",
-			Title:    "Add a Teams bot",
-			Subtitle: "From a bot you registered in Azure.",
-			Variant:  "primary",
-			Width:    "560px",
-			Body:     ui.FormPanel{PostURL: "/bridges/api/teams-bots", SubmitLabel: "Add bot", Fields: teamsBotFields(true)},
-		})
-	}
-	return ui.Section{
-		Title:    "Teams bot",
-		Subtitle: sub,
-		Detail: "How to set one up:\n\n" +
-			"1. In the Azure portal, create an Azure Bot (single tenant). On its Configuration page copy the Microsoft App ID and App tenant ID; under Manage Password make a new client secret.\n" +
-			"2. Add it here. Its messaging endpoint is on its row, and under Edit with a Copy button: paste it into the Azure Bot's Configuration as the Messaging endpoint.\n" +
-			"3. In the Azure Bot's Channels, add Microsoft Teams.\n" +
-			"4. Under Edit, download its Teams app package and upload it in Teams (Apps, Manage your apps, Upload an app). Your organisation may need to allow custom apps.\n" +
-			"5. Bind a channel to teams (or its service name) with the agent that answers.\n\n" +
-			"Microsoft signs every message it sends the bot; one not signed for this bot's app id is refused, and its replies go only to Microsoft's Teams service.",
-		Body: ui.Stack{Children: children},
+// teamsBotRowActions are a bot's actions on its row under Integrations.
+func teamsBotRowActions() []ui.RowAction {
+	return []ui.RowAction{
+		ui.ModalAction("Edit", ui.FormPanel{Source: "/bridges/api/teams-bots?service={service}", PostURL: "/bridges/api/teams-bots?service={service}",
+			SubmitLabel: "Save", Fields: teamsBotFields(false)}),
+		{Type: "button", Label: "Delete", Method: "DELETE", PostTo: "/bridges/api/teams-bots?service={service}", Variant: "danger",
+			Confirm: "Delete this Teams bot? It stops answering, and its secret and webhook are removed. The Azure registration stays yours to remove."},
 	}
 }
+
+// teamsBotHelp is how to set one up.
+const teamsBotHelp = "How to set one up:\n\n" +
+	"1. In the Azure portal, create an Azure Bot (single tenant). On its Configuration page copy the Microsoft App ID and App tenant ID; under Manage Password make a new client secret.\n" +
+	"2. Add it here. Its messaging endpoint is on its row, and under Edit with a Copy button: paste it into the Azure Bot's Configuration as the Messaging endpoint.\n" +
+	"3. In the Azure Bot's Channels, add Microsoft Teams.\n" +
+	"4. Under Edit, download its Teams app package and upload it in Teams (Apps, Manage your apps, Upload an app). Your organisation may need to allow custom apps.\n" +
+	"5. On the Bridges page, bind a channel to teams (or its service name) with the agent that answers.\n\n" +
+	"Microsoft signs every message it sends the bot; one not signed for this bot's app id is refused, and its replies go only to Microsoft's Teams service."

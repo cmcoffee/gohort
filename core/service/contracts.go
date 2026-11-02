@@ -261,7 +261,7 @@ func init() {
 		Name:   "message.send",
 		About:  "A message sent through a messaging API, with a file when one is given; to is whom to send to, when the service needs one and the connector does not set it, and id is the service's name for the message.",
 		Checks: "Any answer: a reply at all means the service took the message.",
-		Where:  "Bridges > Linked services: the replies to what the same connector fetches",
+		Where:  "Extensions > Integrations, a linked service: the replies to what the same connector fetches",
 		Gives:  "Sending messages",
 		Inputs: []Port{
 			{Name: "text", Type: TypeText, Required: true},
@@ -289,7 +289,7 @@ func init() {
 		About: "New messages from a messaging API: since is where the last fetch left off (the cursor it gave), and chat the conversation, for a service that fetches one at a time. messages is a list of objects: id, chat, from, from_name, text and at; cursor is where the next fetch starts.",
 		Checks: "messages is a list, and every message in it has an id. A message that does not say its chat is in the chat asked for. " +
 			"The test fetches without a cursor, as a link's first fetch does.",
-		Where: "Bridges > Linked services: a linked service's messages reach its channels",
+		Where: "Extensions > Integrations, a linked service: a linked service's messages reach its channels",
 		Gives: "Fetching messages",
 		Inputs: []Port{
 			{Name: "since", Type: TypeText},

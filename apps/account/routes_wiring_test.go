@@ -48,7 +48,7 @@ func TestOwnCredentialKeysRouteByKind(t *testing.T) {
 		"conns = append(conns, Secure().OwnConnectionsFor(user)...)",
 		"if body.Kind == ConnKindOwn {",
 		`jsonapi.BadRequest("paste a key to save")`,
-		`jsonapi.BadRequest("this credential's reach is set under APIs")`,
+		`jsonapi.BadRequest("this credential's reach is set under Integrations")`,
 		"Secure().SetOwnedSecret(user, body.Name, secret)",
 	} {
 		if !strings.Contains(src, want) {

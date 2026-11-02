@@ -481,7 +481,7 @@ func (T *Bridges) sendLinked(ctx context.Context, l serviceLink) (int, error) {
 	return sent, nil
 }
 
-// --- the Bridges page --------------------------------------------------------
+// --- the list and the form ---------------------------------------------------
 
 // linkRow is one link as its row shows it.
 type linkRow struct {

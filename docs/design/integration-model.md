@@ -1007,6 +1007,20 @@ once:
     for that address; never the owner's name). The `bot_framework`
     connector kind is deleted, with Builder's create and update for it.
     A shared bot with Teams users mapped to gohort users is not built.
+
+    Integrations (2026-11-02, branch `integrations`): what a person
+    connects for themselves is one list with one Add, under Extensions >
+    Integrations, in place of the APIs, MCP servers and Webhooks sections
+    and Bridges' Teams bot and Linked services sections. Each kind
+    registers its own list and add endpoints with `core/sections`
+    (`IntegrationKind`); the page reads each kind's list, keeps each
+    kind's row actions to its own rows (their conditions read the kind's
+    fields, carried under the kind's name), and hands the Add form to the
+    chosen kind's endpoint with only that kind's fields. A kind may be
+    hidden from someone who cannot use its app, and its Add follows the
+    administrator's policy (`governance.Offer`). Nothing is stored
+    differently. Keys and sign-ins stay under Connected accounts; channels,
+    conversations and the relay stay on the Bridges page.
 12. Watches on connectors: `rest_poll` becomes a watch over a connector.
 13. Desktop programs (`desktop_command`, `desktop_mcp`) on a per-user Desktop
     page (decided, Q5); MCP servers and peers on their own pages with the key

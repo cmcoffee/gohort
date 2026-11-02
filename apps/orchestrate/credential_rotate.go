@@ -70,7 +70,7 @@ func (t *chatTurn) storeAgentKey(name, secret string) (string, error) {
 	switch {
 	case err == nil:
 		_, enabled, _ := Secure().CredentialStatusOwned(user, name)
-		status := "It still needs to be ENABLED (the setup card, or Extensions > APIs) before calls go through."
+		status := "It still needs to be ENABLED (the setup card, or Extensions > Integrations) before calls go through."
 		if enabled {
 			status = "The credential is enabled: dispatch through it now (fetch_url_" + name + " or your wrapped tool)."
 		}

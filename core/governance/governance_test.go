@@ -57,5 +57,9 @@ func TestPermitFollowsThePolicyAndNeverHoldsAnAdmin(t *testing.T) {
 		if hold, err := Permit(MCPServers, "boss"); hold || err != nil {
 			t.Errorf("%s: an administrator was held: hold=%v err=%v", c.p, hold, err)
 		}
+		// An Add offers what Permit allows, and says when a new one waits.
+		if ok, note := Offer(MCPServers, "dana"); ok != c.ok || (note != "") != c.hold {
+			t.Errorf("%s: offered %v %q", c.p, ok, note)
+		}
 	}
 }

@@ -188,7 +188,7 @@ func (T *Account) handleMCPConnect(w http.ResponseWriter, r *http.Request) {
 			"Close this window and try Connect again from Extensions.")
 		return
 	}
-	// One of the person's own MCP servers (Extensions > MCP servers).
+	// One of the person's own MCP servers (Extensions > Integrations).
 	if r.URL.Query().Get("own") == "1" {
 		authURL, err := mcppersonal.StartConnect(user, server, mcpConnectCallbackURI(r))
 		if err != nil {
@@ -283,7 +283,7 @@ func (T *Account) handleConnections(c *jsonapi.Call) (any, error) {
 	// in one panel. MCP entries carry Kind="mcp" + a ConnectURL so the panel
 	// routes their Connect/Disconnect to the MCP endpoints.
 	// The deployment's per-user integrations, then the user's own API
-	// credentials (their configuration lives under APIs; their
+	// credentials (their configuration lives under Integrations; their
 	// key lives here, with every other key and sign-in), then MCP servers.
 	conns := Secure().PerUserConnectionsFor(user)
 	conns = append(conns, Secure().OwnConnectionsFor(user)...)
@@ -315,10 +315,10 @@ type connectionSave struct {
 func (T *Account) handleConnectionSave(c *jsonapi.Call, body connectionSave) (any, error) {
 	user := c.User
 	// The user's own credential: only its key is set here. Its
-	// configuration, reach and lending stay under APIs.
+	// configuration, reach and lending stay under Integrations.
 	if body.Kind == ConnKindOwn {
 		if body.Secured != nil {
-			return nil, jsonapi.BadRequest("this credential's reach is set under APIs")
+			return nil, jsonapi.BadRequest("this credential's reach is set under Integrations")
 		}
 		// Only an explicit Disconnect removes the key. A blank save is a
 		// mistake to refuse, not a request to wipe what is stored.

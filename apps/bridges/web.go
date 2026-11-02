@@ -125,6 +125,7 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// Linked services poll from start, as the rest_messaging pollers do
 	// once their connectors are materialized.
 	T.wireWebhooks()
+	T.registerIntegrations(prefix)
 	T.startLinks()
 	T.startTeams()
 

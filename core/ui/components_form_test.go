@@ -32,3 +32,18 @@ func TestAFormDropsAHeadingWithNothingUnderIt(t *testing.T) {
 		t.Errorf("a heading with fields, or a field, went missing: %s", s)
 	}
 }
+
+// A named heading shows and hides by its show_when, as a field does: a form
+// that shows one group of fields at a time hides that group's headings with
+// it. An unnamed one is not registered, so it always shows.
+func TestANamedHeadingFollowsItsShowWhen(t *testing.T) {
+	basics := mustRuntimePart(t, "10_basics.js")
+	at := strings.Index(basics, "if (t === 'header') {")
+	if at < 0 {
+		t.Fatal("the heading branch is gone")
+	}
+	end := strings.Index(basics[at:], "return fieldWrap;")
+	if end < 0 || !strings.Contains(basics[at:at+end], "if (f.field) fieldEls[f.field] = fieldWrap;") {
+		t.Error("a named heading is not registered, so its show_when never applies")
+	}
+}

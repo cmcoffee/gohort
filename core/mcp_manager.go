@@ -1202,7 +1202,7 @@ func (m *MCPManager) startOAuth(cfg MCPServerConfig, st MCPOAuthStart) (string, 
 			return "", fmt.Errorf("the server publishes no OAuth sign-in endpoints: one like that is one an administrator adds")
 		}
 		if personal && strings.TrimSpace(cfg.OAuthClientID) == "" && strings.TrimSpace(disc.RegistrationEndpoint) == "" {
-			return "", fmt.Errorf("the provider does not register OAuth clients itself: register an OAuth app with it, then put its Client ID (and secret) on the server under Extensions > MCP servers")
+			return "", fmt.Errorf("the provider does not register OAuth clients itself: register an OAuth app with it, then put its Client ID (and secret) on the server under Extensions > Integrations")
 		}
 		if disc.AuthEndpoint == "" || disc.TokenEndpoint == "" {
 			if discErr != nil {
@@ -1224,7 +1224,7 @@ func (m *MCPManager) startOAuth(cfg MCPServerConfig, st MCPOAuthStart) (string, 
 			if err != nil {
 				where := "the server (Admin -> MCP Servers)"
 				if personal {
-					where = "the server under Extensions > MCP servers"
+					where = "the server under Extensions > Integrations"
 				}
 				return "", fmt.Errorf("client registration: %w, or set a Client ID on %s to use a pre-registered OAuth app", err, where)
 			}

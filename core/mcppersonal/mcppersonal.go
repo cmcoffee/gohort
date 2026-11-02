@@ -207,7 +207,7 @@ func Save(s Server, token string, hold bool) error {
 			return fmt.Errorf("name the API credential it signs in with")
 		}
 		if _, ok := Secure().Resolve(s.Credential, s.Owner); !ok {
-			return fmt.Errorf("no API credential named %q that you can use: add it under APIs first", s.Credential)
+			return fmt.Errorf("no API credential named %q that you can use: add it under Extensions > Integrations first", s.Credential)
 		}
 	default:
 		return fmt.Errorf("auth must be none, bearer, secure_api or oauth")

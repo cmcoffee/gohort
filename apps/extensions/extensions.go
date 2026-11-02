@@ -93,6 +93,8 @@ func (T *Extensions) Routes() {
 		"POST":   jsonapi.Post(T.DB, T.handleWebhookSave, jsonapi.MaxBody(1<<16)),
 		"DELETE": jsonapi.Delete(T.DB, T.handleWebhookDelete),
 	}.Serve)
+	T.HandleFunc("/api/integrations", T.handleIntegrations)
+	T.registerIntegrations()
 	T.HandleFunc("/api/tools", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.listUserTools),
 		"POST":   T.userToolPost(),
@@ -1878,14 +1880,10 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 	}
 	pt := startPhases()
 	defer pt.logIfSlow("the page")
-	sections := []ui.Section{T.apisSection()}
-	pt.mark("APIs")
-	sections = append(sections, T.mcpServersSection(user))
-	pt.mark("MCP servers")
+	sections := []ui.Section{T.integrationsSection(r, user)}
+	pt.mark("integrations")
 	sections = append(sections, T.connectedAccountsSection())
 	pt.mark("connected accounts")
-	sections = append(sections, T.webhooksSection(user))
-	pt.mark("webhooks")
 	sections = append(sections, T.toolsSection(user))
 	pt.mark("tools")
 	sections = append(sections, T.skillsSection())
@@ -1945,198 +1943,115 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 	}.ServeHTTP(w, r)
 }
 
-// apisSection is the APIs place: the user's own API credentials, and
-// those shared with them.
-func (T *Extensions) apisSection() ui.Section {
-	return ui.Section{
-		Title: "APIs",
-		Wide:  true,
-		Body: ui.Stack{Children: []ui.Component{
-			ui.Subsection{
-				Title:    "Your APIs",
-				Subtitle: "The APIs you set up yourself. Edit says what each one is; Security says who may use it. Its key lives under Connected accounts.",
-				Detail: "They live in your namespace: no other user can reach them, and they never appear on the admin page. " +
-					"By default every one of your agents gets a fetch_url_<name> tool for each. Each API's Security panel narrows that (only tools that declare it, or only the agents you pick), says whether to ask you first, and holds who you have lent it to. " +
-					"You can paste a key when you add one; after that, change or remove it under Connected accounts. A credential marked \"Needs its key\" is waiting for one there. " +
-					"Keys are stored encrypted and never shown to the assistant.",
-				Body: ui.Stack{Children: []ui.Component{
-					ui.Table{
-						Source: "api/credentials",
-						RowKey: "name",
-						Columns: []ui.Col{
-							{Field: "name", Flex: 1},
-							{Field: "type", Mute: true},
-							{Field: "base_url", Label: "Base URL", Mute: true, Flex: 2},
-							// Which credentials are open to every agent is the fact
-							// this page exists to let someone control, so it belongs
-							// in the list rather than one edit form at a time.
-							{Field: "secured", Label: "Reach", Type: "badge", Badges: []ui.BadgeMapping{
-								{Value: true, Label: "Tools only", Color: "success"},
-								{Value: false, Label: "All my agents", Color: "warning"},
-							}},
-							{Field: "lending_label", Label: "Lending", Mute: true},
-							{Field: "shared_summary", Label: "Shared", Mute: true},
-							{Field: "handover_pending", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
-								{Value: true, Label: "Handover pending", Color: "warning"},
-							}},
-							// A draft never finished: its tools fail until the key
-							// is set, so the list says so rather than "Active".
-							{Field: "needs_key", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
-								{Value: true, Label: "Needs its key", Color: "warning"},
-							}},
-							{Field: "awaiting_approval", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
-								{Value: true, Label: "Waiting for approval", Color: "warning"},
-							}},
-							{Field: "disabled", Label: "Status", Type: "dot", Badges: []ui.BadgeMapping{
-								{Value: true, Label: "Disabled", Color: "danger"},
-								{Value: false, Label: "Active", Color: "success"},
-							}},
-						},
-						RowActions: []ui.RowAction{
-							ui.Expand("Edit", ui.FormPanel{
-								Assist:      true,
-								Source:      "api/credentials?name={name}",
-								PostURL:     "api/credentials",
-								SubmitLabel: "Save changes",
-								Fields:      credentialEditFields(),
-							}),
-							// Mute/unmute without editing — a disabled credential drops
-							// out of the agent tool catalog until re-enabled.
-							{Type: "button", Label: "Disable", Method: "POST",
-								PostTo:     "api/credentials?action=disable&name={name}",
-								HideIf:     "disabled",
-								Optimistic: true},
-							{Type: "button", Label: "Enable", Method: "POST",
-								PostTo:     "api/credentials?action=enable&name={name}",
-								OnlyIf:     "disabled",
-								Optimistic: true},
-							// Two grants, two pickers, because the risk is not the
-							// same on both sides. Lending a key for reads hands
-							// somebody data they could have asked you for. Lending
-							// one that writes means the page, the ticket and the
-							// comment all say YOU did it, and nothing downstream can
-							// tell otherwise — so it is a separate decision, made
-							// deliberately, and not a checkbox on the first one.
-							// The other half of lending a key: what went out through
-							// it, and who sent it. An owner answerable for calls made
-							// under their name needs the one record that tells the
-							// two apart.
-							// Who may use it and how, in one place (api_security.go):
-							// which agents, whether to ask first, whether it may be
-							// lent, who has it, and what has gone through it.
-							ui.Expand("Security", ui.Stack{Children: []ui.Component{
-								ui.FormPanel{
-									Assist:      true,
-									Source:      "api/credentials?name={name}&view=security",
-									PostURL:     "api/credentials?action=security&name={name}",
-									SubmitLabel: "Save security",
-									Fields:      apiSecurityFields(),
-									Invalidate:  []string{"api/credentials"},
-								},
-								ui.Card{HTML: `<div style="font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Lent for reads</div>`},
-								ui.ACLPicker(ui.ACLPickerConfig{
-									OptionsSource: "api/user-candidates",
-									RecordSource:  "api/credentials?name={name}",
-									Field:         "shared_read_only",
-									PostTo:        "api/credentials?action=share&name={name}",
-									Method:        "POST",
-									Noun:          "user",
-									Intro: "They can read through your key: GET and HEAD, nothing else. " +
-										"Your own use of it is unchanged. Every call is logged with their name against it. Refused while lending is set to Nobody.",
-									EmptyText:  "No other users to share with yet.",
-									Invalidate: []string{"api/credentials"},
-								}),
-								ui.Card{HTML: `<div style="font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Lent for writes</div>`},
-								ui.ACLPicker(ui.ACLPickerConfig{
-									OptionsSource: "api/user-candidates",
-									RecordSource:  "api/credentials?name={name}",
-									Field:         "shared_read_write",
-									PostTo:        "api/credentials?action=share&name={name}",
-									Method:        "POST",
-									Noun:          "user",
-									Intro: "They can write through your key, and what they write arrives as YOU: " +
-										"the page says you edited it, the ticket says you commented. " +
-										"The ledger records who actually made each call, which is the only place the two can be told apart. Share this with people you would let post under your name. Allowed only while lending is Readers and writers (or not decided).",
-									EmptyText:  "No other users to share with yet.",
-									Invalidate: []string{"api/credentials"},
-								}),
-								ui.Card{HTML: `<div style="font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Recent calls</div>`},
-								ui.Table{
-									Source: "api/credentials?audit={name}",
-									RowKey: "when",
-									Columns: []ui.Col{
-										{Field: "when", Label: "When", Flex: 1},
-										{Field: "who", Label: "Who", Flex: 1},
-										{Field: "method", Label: "Method", Mute: true},
-										{Field: "url", Label: "URL", Flex: 3, Mute: true},
-										{Field: "outcome", Label: "Outcome", Flex: 1},
-									},
-									EmptyText: "Nothing has been sent through this credential yet.",
-								},
-							}}),
-							// Handing it over is a different ask from lending it, and
-							// the form says so before the ask rather than after. Sharing
-							// widens who may use something that stays yours; this ends
-							// the ownership, and there is no way back from it that is
-							// the former owner's to take.
-							ui.ModalActionIf("Hand to the deployment", "can_hand_over", "", ui.FormPanel{
-								SubmitLabel: "Ask an admin",
-								PostURL:     "api/promotions?kind=credential&name={name}",
-								Fields: []ui.FormField{
-									{Type: "header", Label: "This stops being your credential",
-										Help: "It becomes the deployment's, and taking it back is not yours to do.",
-										Detail: "Sharing widens who may use a key that stays yours. This ends the ownership: the secret moves into the deployment's namespace and the credential lands SECURED, which means it has no user list at all — it is reachable only through the tools bound to it, and you reach it the same way everybody else does.\n\n" +
-											"That is what lets a tuned agent be handed over as a resource rather than as a copy somebody has to reassemble: the key underneath belongs to the work instead of to a person.\n\n" +
-											"The tools that already dispatch through it become its bindings. A tool that is still yours alone stays yours alone, so share each one from Tools for your colleagues to reach the key through it. Any tool that took the raw key into a script stops working, because a secured credential never hands the secret out.\n\n" +
-											"Anyone you lent this key to loses their lend, and an admin has to agree before any of it happens."},
-									{Field: "note", Type: "textarea", Rows: 3, Label: "Note for the admin (optional)",
-										Placeholder: "What is this key for, and who needs to reach it?"},
-								},
-								Invalidate: []string{"api/credentials"},
-							}),
-							{Type: "button", Label: "Delete", Method: "DELETE",
-								PostTo:     "api/credentials?name={name}",
-								Variant:    "danger",
-								Confirm:    "Delete this credential? Agents and tools using it stop working, and anyone you shared it with loses it.",
-								Optimistic: true},
-						},
-						EmptyText: "No credentials yet. Add one to let your agents call an API as you.",
-					},
-					ui.ModalButton{
-						Label:    "Add credential",
-						Title:    "Add API credential",
-						Subtitle: "Pick a type. Bearer / header / query / basic attach a static secret; \"No auth\" is for a public API.",
-						Variant:  "primary",
-						Width:    "560px",
-						Body: ui.FormPanel{
-							Assist:      true,
-							PostURL:     "api/credentials",
-							SubmitLabel: "Create credential",
-							Fields:      credentialFormFields(),
-						},
-					},
-				}},
+// credentialRowActions are an API's actions on its row under Integrations.
+func credentialRowActions() []ui.RowAction {
+	return []ui.RowAction{
+		ui.Expand("Edit", ui.FormPanel{
+			Assist:      true,
+			Source:      "api/credentials?name={name}",
+			PostURL:     "api/credentials",
+			SubmitLabel: "Save changes",
+			Fields:      credentialEditFields(),
+		}),
+		// Mute/unmute without editing — a disabled credential drops
+		// out of the agent tool catalog until re-enabled.
+		{Type: "button", Label: "Disable", Method: "POST",
+			PostTo:     "api/credentials?action=disable&name={name}",
+			HideIf:     "disabled",
+			Optimistic: true},
+		{Type: "button", Label: "Enable", Method: "POST",
+			PostTo:     "api/credentials?action=enable&name={name}",
+			OnlyIf:     "disabled",
+			Optimistic: true},
+		// Two grants, two pickers, because the risk is not the
+		// same on both sides. Lending a key for reads hands
+		// somebody data they could have asked you for. Lending
+		// one that writes means the page, the ticket and the
+		// comment all say YOU did it, and nothing downstream can
+		// tell otherwise — so it is a separate decision, made
+		// deliberately, and not a checkbox on the first one.
+		// The other half of lending a key: what went out through
+		// it, and who sent it. An owner answerable for calls made
+		// under their name needs the one record that tells the
+		// two apart.
+		// Who may use it and how, in one place (api_security.go):
+		// which agents, whether to ask first, whether it may be
+		// lent, who has it, and what has gone through it.
+		ui.Expand("Security", ui.Stack{Children: []ui.Component{
+			ui.FormPanel{
+				Assist:      true,
+				Source:      "api/credentials?name={name}&view=security",
+				PostURL:     "api/credentials?action=security&name={name}",
+				SubmitLabel: "Save security",
+				Fields:      apiSecurityFields(),
+				Invalidate:  []string{"api/credentials"},
 			},
-			ui.Subsection{
-				Title:    "Shared with you",
-				Subtitle: "Keys other people lent you.",
-				Detail: "You never see the secret. Each one appears to your agents as a fetch_url_<name> tool, and a key of your own with the same name wins over a lent one. " +
-					"Reads-only means GET and HEAD; anything else is refused and the refusal is recorded. " +
-					"Where the grant includes writes, what you send arrives at the far end as the person who lent it, under their name.",
-				Body: ui.Table{
-					Source: "api/credentials?lent=1",
-					RowKey: "name",
-					Columns: []ui.Col{
-						{Field: "name", Flex: 1},
-						{Field: "owner", Label: "Lent by"},
-						{Field: "grant", Label: "You may", Flex: 1},
-						{Field: "tool", Label: "Tool", Mute: true, Flex: 1},
-						{Field: "base_url", Label: "Base URL", Mute: true, Flex: 2},
-					},
-					EmptyText: "Nobody has shared a credential with you.",
+			ui.Card{HTML: `<div style="font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Lent for reads</div>`},
+			ui.ACLPicker(ui.ACLPickerConfig{
+				OptionsSource: "api/user-candidates",
+				RecordSource:  "api/credentials?name={name}",
+				Field:         "shared_read_only",
+				PostTo:        "api/credentials?action=share&name={name}",
+				Method:        "POST",
+				Noun:          "user",
+				Intro: "They can read through your key: GET and HEAD, nothing else. " +
+					"Your own use of it is unchanged. Every call is logged with their name against it. Refused while lending is set to Nobody.",
+				EmptyText:  "No other users to share with yet.",
+				Invalidate: []string{"api/credentials"},
+			}),
+			ui.Card{HTML: `<div style="font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Lent for writes</div>`},
+			ui.ACLPicker(ui.ACLPickerConfig{
+				OptionsSource: "api/user-candidates",
+				RecordSource:  "api/credentials?name={name}",
+				Field:         "shared_read_write",
+				PostTo:        "api/credentials?action=share&name={name}",
+				Method:        "POST",
+				Noun:          "user",
+				Intro: "They can write through your key, and what they write arrives as YOU: " +
+					"the page says you edited it, the ticket says you commented. " +
+					"The ledger records who actually made each call, which is the only place the two can be told apart. Share this with people you would let post under your name. Allowed only while lending is Readers and writers (or not decided).",
+				EmptyText:  "No other users to share with yet.",
+				Invalidate: []string{"api/credentials"},
+			}),
+			ui.Card{HTML: `<div style="font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Recent calls</div>`},
+			ui.Table{
+				Source: "api/credentials?audit={name}",
+				RowKey: "when",
+				Columns: []ui.Col{
+					{Field: "when", Label: "When", Flex: 1},
+					{Field: "who", Label: "Who", Flex: 1},
+					{Field: "method", Label: "Method", Mute: true},
+					{Field: "url", Label: "URL", Flex: 3, Mute: true},
+					{Field: "outcome", Label: "Outcome", Flex: 1},
 				},
+				EmptyText: "Nothing has been sent through this credential yet.",
 			},
-		}},
+		}}),
+		// Handing it over is a different ask from lending it, and
+		// the form says so before the ask rather than after. Sharing
+		// widens who may use something that stays yours; this ends
+		// the ownership, and there is no way back from it that is
+		// the former owner's to take.
+		ui.ModalActionIf("Hand to the deployment", "can_hand_over", "", ui.FormPanel{
+			SubmitLabel: "Ask an admin",
+			PostURL:     "api/promotions?kind=credential&name={name}",
+			Fields: []ui.FormField{
+				{Type: "header", Label: "This stops being your credential",
+					Help: "It becomes the deployment's, and taking it back is not yours to do.",
+					Detail: "Sharing widens who may use a key that stays yours. This ends the ownership: the secret moves into the deployment's namespace and the credential lands SECURED, which means it has no user list at all — it is reachable only through the tools bound to it, and you reach it the same way everybody else does.\n\n" +
+						"That is what lets a tuned agent be handed over as a resource rather than as a copy somebody has to reassemble: the key underneath belongs to the work instead of to a person.\n\n" +
+						"The tools that already dispatch through it become its bindings. A tool that is still yours alone stays yours alone, so share each one from Tools for your colleagues to reach the key through it. Any tool that took the raw key into a script stops working, because a secured credential never hands the secret out.\n\n" +
+						"Anyone you lent this key to loses their lend, and an admin has to agree before any of it happens."},
+				{Field: "note", Type: "textarea", Rows: 3, Label: "Note for the admin (optional)",
+					Placeholder: "What is this key for, and who needs to reach it?"},
+			},
+			Invalidate: []string{"api/credentials"},
+		}),
+		{Type: "button", Label: "Delete", Method: "DELETE",
+			PostTo:     "api/credentials?name={name}",
+			Variant:    "danger",
+			Confirm:    "Delete this credential? Agents and tools using it stop working, and anyone you shared it with loses it.",
+			Optimistic: true},
 	}
 }
 
@@ -2147,7 +2062,7 @@ func (T *Extensions) connectedAccountsSection() ui.Section {
 		Title:    "Connected accounts",
 		Wide:     true,
 		Subtitle: "Every key and sign-in your integrations use: connect, replace a key, or reconnect here.",
-		Detail: "Two kinds sit here. Your own APIs, set up under APIs, show the key each one uses. " +
+		Detail: "Two kinds sit here. Your own APIs, set up under Integrations, show the key each one uses. " +
 			"Integrations your admin offers you connect with your own account, reading or writing as you. " +
 			"Keys are stored encrypted and never shown to the assistant.",
 		Body:     ui.Card{HTML: connectionsHTML},

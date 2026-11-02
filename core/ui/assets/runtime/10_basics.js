@@ -2269,6 +2269,10 @@
           headLinks.forEach(function(a) { headLinkRow.appendChild(a); });
           fieldWrap.appendChild(headLinkRow);
         }
+        // A named heading is registered, so its show_when applies: a form
+        // that shows one group of fields at a time hides that group's
+        // headings with it. An unnamed one always shows.
+        if (f.field) fieldEls[f.field] = fieldWrap;
         return fieldWrap;
       }
 

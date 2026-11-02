@@ -21,13 +21,14 @@ func TestTheExtensionsPageRenders(t *testing.T) {
 		t.Errorf("signed out: %d, want 401", anon.Code)
 	}
 
+	serve(app) // its routes, and with them its kinds of integration
 	w := httptest.NewRecorder()
 	app.servePage(w, req(http.MethodGet, "/extensions"))
 	if w.Code != http.StatusOK {
 		t.Fatalf("signed in: %d, want 200", w.Code)
 	}
 	page := w.Body.String()
-	for _, place := range []string{`"title":"APIs"`, `"title":"Connected accounts"`, `"title":"Tools"`, `"title":"Skills"`} {
+	for _, place := range []string{`"title":"Integrations"`, `"title":"Connected accounts"`, `"title":"Tools"`, `"title":"Skills"`} {
 		if !strings.Contains(page, place) {
 			t.Errorf("the page is missing %s", place)
 		}

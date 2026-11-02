@@ -19,7 +19,8 @@ package service
 //
 // Finding is read only and applying writes, so a dry run (gohort
 // --migrate-dry-run, on a copy of the database) lists exactly what the
-// migration does. Delete this file a release after it has run.
+// migration does. It stays until 1.0, so any older install upgrades in one
+// start; delete it then, with gohort's --migrate-dry-run.
 
 import (
 	"encoding/json"

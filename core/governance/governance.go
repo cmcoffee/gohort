@@ -117,3 +117,16 @@ func Permit(k Kind, user string) (hold bool, err error) {
 	}
 	return false, fmt.Errorf("your administrator sets up %s on this deployment, and nobody else adds them: ask them to add the one you need", nouns[k])
 }
+
+// Offer is Permit as an Add offers it: whether user may add one at all, and
+// what to tell them first when a new one waits for an administrator.
+func Offer(k Kind, user string) (ok bool, note string) {
+	hold, err := Permit(k, user)
+	switch {
+	case err != nil:
+		return false, ""
+	case hold:
+		return true, "A new one waits for an administrator's approval."
+	}
+	return true, ""
+}

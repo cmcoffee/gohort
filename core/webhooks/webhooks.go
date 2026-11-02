@@ -3,8 +3,8 @@
 // calls. A webhook checks who is calling, reads the event out of what was
 // posted, and feeds it on: to a watch (one of its owner's webhook
 // monitors), which wakes that monitor's agent with the event, or to a
-// channel, as a message on one of its owner's linked services (Bridges >
-// Linked services), which the channel bound to that service answers
+// channel, as a message on one of its owner's linked services (Extensions >
+// Integrations), which the channel bound to that service answers
 // through the link's connector.
 //
 // A webhook is its owner's, as a monitor is: it feeds only the owner's own

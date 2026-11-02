@@ -1231,7 +1231,7 @@ func (s *SecureAPI) workingGlobalBehindDraft(own SecureCredential, user, name st
 		return SecureCredential{}, false
 	}
 	if _, seen := shadowNoted.LoadOrStore(user+"\x00"+name, true); !seen {
-		Log("[secure_api] %s has an unfinished personal credential %q with no key; using the deployment's working %q instead (delete the personal one under Extensions > APIs)", user, name, name)
+		Log("[secure_api] %s has an unfinished personal credential %q with no key; using the deployment's working %q instead (delete the personal one under Extensions > Integrations)", user, name, name)
 	}
 	return g, true
 }
@@ -3644,7 +3644,7 @@ func (s *SecureAPI) SecuredCoverRefusal(rawURL, user string, inTool bool) error 
 	}
 	who := "an administrator can unsecure it in Admin > APIs"
 	if cover.Owner != "" {
-		who = "its owner can unsecure it in Extensions > APIs"
+		who = "its owner can unsecure it in Extensions > Integrations"
 	}
 	return fmt.Errorf("this host is covered by credential %q, which is SECURED: its key is used only by the tools bound to it (%s), never by fetch_url or a script. To check or repair one of those tools, change it in place with tool_def action=\"update\" and run it with tool_def action=\"test\": an edit keeps its binding. Do not route around this with another fetch, a script or a new credential. If the work needs this API outside those tools, stop and ask the person: %s", cover.Name, tools, who)
 }
@@ -3666,7 +3666,7 @@ func (s *SecureAPI) autoRouteOwn(rawURL, user string) (string, error) {
 		name := covering[0]
 		_, enabled, hasSecret := s.CredentialStatusOwned(user, name)
 		if !enabled {
-			return "", fmt.Errorf("this host is covered by your credential %q, but it's DISABLED: fetch_url will not send unauthenticated to a credential-covered host. Enable it in Extensions > APIs, then retry", name)
+			return "", fmt.Errorf("this host is covered by your credential %q, but it's DISABLED: fetch_url will not send unauthenticated to a credential-covered host. Enable it in Extensions > Integrations, then retry", name)
 		}
 		if !hasSecret {
 			return "", fmt.Errorf("this host is covered by your credential %q, but no secret is set: paste the key in Extensions > Connected accounts, then retry. fetch_url will not send unauthenticated to a credential-covered host", name)

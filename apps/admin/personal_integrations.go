@@ -74,7 +74,7 @@ func personalIntegrationsSection() ui.Section {
 					Help:    "People add these on their Extensions page. Their tools reach only the owner's agents."},
 				{Field: string(governance.TeamsBots), Label: "Personal Teams bots", Type: "select",
 					Options: policyOptions("Teams bots"),
-					Help:    "People add these under Bridges, from a bot they registered in Azure. Each answers in Teams with its owner's agents."},
+					Help:    "People add these under Extensions > Integrations, from a bot they registered in Azure. Each answers in Teams with its owner's agents."},
 			},
 		},
 	}
@@ -221,7 +221,7 @@ func (a *AdminApp) handlePersonalTeamsBotDelete(c *jsonapi.Call, _ struct{}) (an
 func personalTeamsBotsSection() ui.Section {
 	return ui.Section{
 		Title:    "Personal Teams bots",
-		Subtitle: "Microsoft Teams bots people add for themselves, under Bridges.",
+		Subtitle: "Microsoft Teams bots people add for themselves, under Extensions > Integrations.",
 		Detail: "Each is a bot its owner registered in Azure. It answers in Teams with its owner's agents, in the conversations they let it, and replies under the bot's own name. " +
 			"Approve enables one that is waiting; Disable holds one off, and the owner cannot switch it back on. Check the app id is one your organisation knows before approving it.",
 		Body: ui.Table{
@@ -249,7 +249,7 @@ func personalTeamsBotsSection() ui.Section {
 				{Type: "button", Label: "Delete", Method: "DELETE", PostTo: "api/personal-teams-bots?owner={owner}&service={service}", Variant: "danger",
 					Confirm: "Delete this person's Teams bot? It stops answering, and its secret and webhook are removed."},
 			},
-			EmptyText: "No personal Teams bots. When someone adds one under Bridges, it appears here.",
+			EmptyText: "No personal Teams bots. When someone adds one under Extensions > Integrations, it appears here.",
 		},
 	}
 }

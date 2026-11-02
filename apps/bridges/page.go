@@ -11,8 +11,7 @@ import (
 // the master enable toggle, the bridge registry (connectors + status), and key
 // management. Channel/agent behavior lives in Agents — this is transport only.
 func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
 		return
 	}
 	page := ui.Page{
@@ -45,7 +44,7 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 						Source: "/bridges/api/config",
 						Method: "PATCH",
 						Fields: []ui.FormField{
-							{Field: "self_name", Label: "Your name", Type: "text", Placeholder: "Craig",
+							{Field: "self_name", Label: "Your name", Type: "text", Placeholder: "Sam",
 								Help: "How your own messages are labeled in group chats."},
 							{Field: "self_handle", Label: "Your handle", Type: "text", Placeholder: "+15551234567",
 								Help: "Your own phone/email: lets the agent text you directly (notify_me) and resolve \"me\" as a recipient."},
@@ -58,7 +57,7 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Message bridges",
-				Subtitle: "PUSH sources: a messaging connector delivers inbound into a channel.",
+				Subtitle: "PUSH sources: a messaging connector delivers inbound into a channel. A Teams bot or a linked service is added under Extensions > Integrations.",
 				Detail:   "iMessage runs as the gohort-desktop daemon; others, Telegram and Slack, are server-side. Toggle one off to pause just that bridge; status shows the last check-in.",
 				Body: ui.Table{
 					Source: "/bridges/api/bridges",
@@ -91,57 +90,6 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 					},
 					EmptyText: "No message bridges yet. The gohort-desktop daemon registers itself automatically the first time it connects to /bridges/api/hook.",
 				},
-			},
-			T.teamsBotsSection(user),
-			{
-				Title:    "Linked services",
-				Subtitle: "A messaging service reached through a connector that fetches and sends messages, such as Slack or Discord.",
-				Detail: "How to set one up: an administrator adds the service's connector from its template (Slack messages, Discord messages) with its token. " +
-					"Link it here under a service name, with the chats to read where the service fetches one at a time. " +
-					"Then bind a channel to that service name, and its agent answers there.\n\n" +
-					"gohort asks the service for new messages on each poll, as you, so a connector limited to named users is linked only by one of them. " +
-					"The first poll of each chat passes over what is already there. A reply that cannot be sent is kept and tried again on the next poll. " +
-					"One link a service: a service another bridge already carries for you cannot be linked too.",
-				Body: ui.Stack{Children: []ui.Component{
-					ui.Table{
-						Source: "/bridges/api/links",
-						RowKey: "service",
-						Columns: []ui.Col{
-							{Field: "service", Label: "Service"},
-							{Field: "connector", Label: "Through", Mute: true, Flex: 1},
-							{Field: "chats", Label: "Chats", Mute: true, Flex: 1},
-							{Field: "every", Label: "Every", Mute: true},
-							{Field: "trouble", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
-								{Value: true, Label: "Needs attention", Color: "danger"},
-							}},
-							{Field: "last", Label: "Last poll", Mute: true, Flex: 2},
-						},
-						RowActions: []ui.RowAction{
-							{Type: "button", Label: "Unlink", Method: "DELETE", PostTo: "/bridges/api/links?service={service}", Variant: "danger",
-								Confirm: "Unlink this service? Its messages stop coming in, and replies waiting to go out stay queued.", Compact: true},
-						},
-						EmptyText: "No linked services yet.",
-					},
-					ui.ModalButton{
-						Label:   "Link a service",
-						Title:   "Link a messaging service",
-						Variant: "primary",
-						Width:   "520px",
-						Body: ui.FormPanel{
-							PostURL:     "/bridges/api/links",
-							SubmitLabel: "Link it",
-							Fields: []ui.FormField{
-								{Field: "connector", Label: "Connector", Type: "select", Required: true, OptionsSource: "/bridges/api/links?options=connectors",
-									Help: "A connector that both fetches and sends messages, which you may use."},
-								{Field: "service", Label: "Service name", Required: true, Placeholder: "e.g. slack",
-									Help: "What channels bind to. Use slack or discord for those services."},
-								{Field: "chats", Label: "Chats", Placeholder: "e.g. C0123456789",
-									Help: "Comma-separated: the conversations to read. Slack needs them (its channel ids); Discord reads the channel its connector is set to when blank."},
-								{Field: "interval_secs", Label: "Poll every (seconds)", Type: "number", Min: linkMinSecs, Placeholder: "30"},
-							},
-						},
-					},
-				}},
 			},
 			{
 				// Stage A of the unified-bridge model: a POLL source is the

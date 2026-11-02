@@ -61,7 +61,7 @@ func webhookRowOf(r *http.Request, h webhooks.Webhook) webhookRow {
 	if svc := h.Channel(); svc != "" {
 		row.Feeds = "the channel " + svc
 		if !linkedService(h.Owner, svc) {
-			row.Problem = svc + " is no longer one of your linked services: link it under Bridges, or choose another under Edit."
+			row.Problem = svc + " is no longer one of your linked services: add it as a linked service under Integrations, or choose another under Edit."
 		}
 	} else if m, ok := GetEventMonitor(RootDB, h.Owner, h.Watch()); !ok || m.Kind != EventKindWebhook {
 		row.Problem = "Its watch " + h.Watch() + " is gone: choose another under Edit."
@@ -265,7 +265,7 @@ func webhookFields(adding bool) []ui.FormField {
 			Help: "The conversation a message is in: needed to pass it to a channel."},
 		ui.FormField{Field: "", Label: "Passing it on", Type: "header"},
 		ui.FormField{Field: "feeds", Label: "Passes it to", Type: "select", Required: true, OptionsSource: "api/webhooks?options=feeds",
-			Help: "One of your watches that a post wakes, or the channel of one of your linked services. Ask an agent to watch for something posted, or link a service under Bridges, and it is listed here.",
+			Help: "One of your watches that a post wakes, or the channel of one of your linked services. Ask an agent to watch for something posted, or add a linked service under Integrations, and it is listed here.",
 			Detail: "A watch woken by a post wakes its agent with the event, in the thread it was set up in. It keeps its own limit on how often it is woken, whichever way it is posted to, and pausing it pauses this too. " +
 				"Passed to a channel, each event is a message in its chat, answered by the agent bound to that service, through the linked service's connector; the link then fetches nothing itself."},
 		ui.FormField{Field: "reach", Label: "Reached", Type: "select", OptionsSource: "api/webhooks?options=reach",
@@ -274,60 +274,19 @@ func webhookFields(adding bool) []ui.FormField {
 	return fields
 }
 
-// webhooksSection is the Extensions section for them.
-func (T *Extensions) webhooksSection(user string) ui.Section {
-	table := ui.Table{
-		Source: "api/webhooks",
-		RowKey: "name",
-		Columns: []ui.Col{
-			{Field: "label", Label: "Name", Flex: 1},
-			{Field: "address", Label: "Address", Mute: true, Flex: 2},
-			{Field: "checks", Label: "Checks", Mute: true, Flex: 1},
-			{Field: "feeds", Label: "Passes to", Mute: true},
-			{Field: "open", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
-				{Value: true, Label: "Checks nothing", Color: "warning"},
-			}},
-			{Field: "last_call", Label: "Last call", Mute: true, Flex: 2},
-			{Field: "problem", Label: "", Mute: true, Flex: 2},
-		},
-		RowActions: []ui.RowAction{
-			ui.ModalActionIf("Edit", "", "managed", ui.FormPanel{Source: "api/webhooks?name={name}", PostURL: "api/webhooks?name={name}",
-				SubmitLabel: "Save", Fields: webhookFields(false)}),
-			ui.Expand("Calls", ui.Table{Source: "api/webhooks?calls={name}", Columns: []ui.Col{
-				{Field: "at", Label: "When", Mute: true}, {Field: "kind", Label: "Kind", Mute: true},
-				{Field: "outcome", Label: "What happened", Flex: 2}}, EmptyText: "Nothing has posted to it yet."}),
-			ui.ModalActionIf("New secret", "signed", "", ui.FormPanel{Source: "api/webhooks?options=new",
-				PostURL: "api/webhooks?action=secret&name={name}", SubmitLabel: "Use this secret", Fields: []ui.FormField{
-					{Field: "secret", Label: "Secret", Required: true, Help: "Copy this to the service first: the old one stops working when you save, and this is not shown again."},
-				}}),
-			{Type: "button", Label: "Delete", Method: "DELETE", PostTo: "api/webhooks?name={name}", Variant: "danger",
-				Confirm: "Delete this webhook? Posts to its address are refused from now on."},
-		},
-		EmptyText: "No webhooks yet.",
-	}
-	add := ui.ModalButton{
-		Label:    "Add webhook",
-		Title:    "Add a webhook",
-		Subtitle: "An address a service posts to, which wakes one of your watches.",
-		Variant:  "primary",
-		Width:    "600px",
-		Body: ui.FormPanel{
-			Source:      "api/webhooks?options=new",
-			PostURL:     "api/webhooks",
-			SubmitLabel: "Add webhook",
-			Fields:      webhookFields(true),
-		},
-	}
-	return ui.Section{
-		Title:    "Webhooks",
-		Subtitle: "Addresses a service posts to, such as GitHub, Stripe or Slack: each checks who is posting and passes the event to one of your watches, or to a linked service's channel.",
-		Detail: "How to set one up: ask an agent to watch for something posted to it, which makes a watch; add a webhook here that wakes that watch, " +
-			"with the check the service offers and where its event's text is; then give the service the webhook's address and secret. " +
-			"Each call is listed under Calls: refused ones say why. A post that is not checked, comes too often, or is an event already passed on is not passed on. " +
-			"A webhook that checks nothing has a long random address, since that address is then its only secret: use it only for a tool on your own network.\n\n" +
-			"For Slack, so its messages come at once instead of on each poll: link Slack (messages) under Bridges first. Then add a webhook checked by Slack's request signing, " +
-			"pasting the signing secret from your Slack app's Basic Information, reading text event.text, chat event.channel, from event.user, id event.ts, kind event.type, passing on only message, " +
-			"and passing to the channel slack. Give its address to the Slack app under Event Subscriptions: Slack checks it at once, and this answers. Subscribe to message.channels.",
-		Body: ui.Stack{Children: []ui.Component{table, add}},
+// webhookRowActions are a webhook's actions on its row under Integrations.
+func webhookRowActions() []ui.RowAction {
+	return []ui.RowAction{
+		ui.ModalActionIf("Edit", "", "managed", ui.FormPanel{Source: "api/webhooks?name={name}", PostURL: "api/webhooks?name={name}",
+			SubmitLabel: "Save", Fields: webhookFields(false)}),
+		ui.Expand("Calls", ui.Table{Source: "api/webhooks?calls={name}", Columns: []ui.Col{
+			{Field: "at", Label: "When", Mute: true}, {Field: "kind", Label: "Kind", Mute: true},
+			{Field: "outcome", Label: "What happened", Flex: 2}}, EmptyText: "Nothing has posted to it yet."}),
+		ui.ModalActionIf("New secret", "signed", "", ui.FormPanel{Source: "api/webhooks?options=new",
+			PostURL: "api/webhooks?action=secret&name={name}", SubmitLabel: "Use this secret", Fields: []ui.FormField{
+				{Field: "secret", Label: "Secret", Required: true, Help: "Copy this to the service first: the old one stops working when you save, and this is not shown again."},
+			}}),
+		{Type: "button", Label: "Delete", Method: "DELETE", PostTo: "api/webhooks?name={name}", Variant: "danger",
+			Confirm: "Delete this webhook? Posts to its address are refused from now on."},
 	}
 }
