@@ -823,3 +823,53 @@ func TestDeleteChunksWhereIsVisibleToTheNextSearch(t *testing.T) {
 		t.Fatalf("nothing matched, got %d", n)
 	}
 }
+
+// Chunks are written and deleted in one commit per operation: what is
+// ingested is all there, a delete by rule takes exactly its rows, a delete by
+// ID skips an empty one, and a wipe leaves nothing.
+func TestChunksAreWrittenAndDeletedTogether(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	rows := []EmbeddedChunk{{ID: "c1", ReportID: "r1", Text: "one"}, {ID: "c2", ReportID: "r1", Text: "two"}, {ID: "c3", ReportID: "r2", Text: "three"}}
+	putChunks(db, rows)
+	if n := db.CountKeys(EmbeddedChunks); n != 3 {
+		t.Fatalf("stored %d of 3", n)
+	}
+	if got := DeleteChunksWhere(db, func(c EmbeddedChunk) bool { return c.ReportID == "r1" }); got != 2 {
+		t.Errorf("deleted %d, want the 2 of r1", got)
+	}
+	if keys := db.Keys(EmbeddedChunks); len(keys) != 1 || keys[0] != "c3" {
+		t.Errorf("left %v, want c3", keys)
+	}
+	putChunks(db, rows[:2])
+	DeleteChunksByIDs(db, []string{"c1", ""})
+	if keys := db.Keys(EmbeddedChunks); len(keys) != 2 {
+		t.Errorf("a delete by id left %v", keys)
+	}
+	if n := WipeVectorStore(db); n != 2 || db.CountKeys(EmbeddedChunks) != 0 {
+		t.Errorf("wipe removed %d and left %d", n, db.CountKeys(EmbeddedChunks))
+	}
+}
+
+// A title backfill writes each untitled chunk of the kind back under its own
+// key, with the title, in one commit, and leaves the rest alone.
+func TestBackfilledTitlesAreWrittenBack(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	putChunks(db, []EmbeddedChunk{
+		{ID: "c1", ReportID: "r1", Kind: "debate", Text: "one"},
+		{ID: "c2", ReportID: "r1", Kind: "debate", Title: "kept", Text: "two"},
+		{ID: "c3", ReportID: "r2", Kind: "other", Text: "three"},
+	})
+	if n := BackfillChunkTitles(db, "debate", func(id string) string { return "Topic " + id }); n != 1 {
+		t.Fatalf("backfilled %d, want 1", n)
+	}
+	var c EmbeddedChunk
+	for id, want := range map[string]string{"c1": "Topic r1", "c2": "kept", "c3": ""} {
+		if !db.Get(EmbeddedChunks, id, &c) || c.Title != want {
+			t.Errorf("%s: title %q, want %q", id, c.Title, want)
+		}
+		c = EmbeddedChunk{}
+	}
+	if n := db.CountKeys(EmbeddedChunks); n != 3 {
+		t.Errorf("the backfill left %d rows, want the same 3", n)
+	}
+}

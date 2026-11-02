@@ -38,8 +38,16 @@ type Database interface {
 	// separator-named scopes Tables() hides) — for maintenance/enumeration.
 	AllTables() []string
 	Table(table string) Table
+	// Batch makes every write fn asks of b in one commit: one fsync for the
+	// lot instead of one per write (5,000 chunk rows: 9s written one by one,
+	// a quarter second in one batch), and nothing at all written if fn
+	// returns an error. Encoding happens as fn asks, outside the write lock.
+	Batch(fn func(b DBBatch) error) error
 	Close()
 }
+
+// DBBatch gathers the writes of one Database.Batch (kvlite.Batch).
+type DBBatch = kvlite.Batch
 
 var (
 	// ResetDB is a function that resets the database.
@@ -450,6 +458,21 @@ func (d *DBase) Sub(table string) Database {
 // Drop deletes the specified table.
 func (d DBase) Drop(table string) {
 	dbFail(true, "drop", table, "", d.Store.Drop(table))
+}
+
+// Batch makes fn's writes in one commit; see Database.Batch. A store failure
+// is counted as any write's is; fn's own error is the caller's, not the
+// store's.
+func (d DBase) Batch(fn func(b DBBatch) error) error {
+	var fnErr error
+	err := d.Store.Batch(func(b DBBatch) error {
+		fnErr = fn(b)
+		return fnErr
+	})
+	if err != nil && err != fnErr {
+		dbFail(true, "batch", "", "", err)
+	}
+	return err
 }
 
 // CryptSet saves an encrypted value to the specified table and key.

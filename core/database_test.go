@@ -38,6 +38,9 @@ func (f *failingStore) CountKeys(table string) (int, error) { return 0, f.err }
 func (f *failingStore) Tables() ([]string, error)           { return nil, f.err }
 func (f *failingStore) AllTables() ([]string, error)        { return nil, f.err }
 func (f *failingStore) Drop(table string) error             { return f.err }
+func (f *failingStore) Batch(fn func(b kvlite.Batch) error) error {
+	return f.err
+}
 
 func brokenDB(err error) Database {
 	return &DBase{Store: &failingStore{Store: kvlite.MemStore(), err: err}}
@@ -385,5 +388,44 @@ func TestAnUnreadableSecretIsNotAMissingOne(t *testing.T) {
 	// care, so the distinction costs nothing at the other call sites.
 	if _, ok := working.resolveSecret(SecureCredential{Name: "gitlab"}, ""); !ok {
 		t.Error("resolveSecret stopped finding a stored secret")
+	}
+}
+
+// A batch is all of its writes or none of them. A failure of the store is
+// counted as any write's is; an error from the caller's own function is the
+// caller's, and writes nothing without being counted against the store.
+func TestABatchIsAllOrNothing(t *testing.T) {
+	resetDBHealth(t)
+	db := &DBase{Store: kvlite.MemStore()}
+	if err := db.Batch(func(b DBBatch) error {
+		b.Set("t", "a", "1")
+		b.Set("t", "b", "2")
+		return b.Unset("t", "missing")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(db.Keys("t")); n != 2 {
+		t.Fatalf("a batch wrote %d of 2", n)
+	}
+	stop := errors.New("changed my mind")
+	if err := db.Batch(func(b DBBatch) error {
+		b.Set("t", "c", "3")
+		b.Unset("t", "a")
+		return stop
+	}); !errors.Is(err, stop) {
+		t.Fatalf("the caller's error came back as %v", err)
+	}
+	var v string
+	if db.Get("t", "c", &v) || !db.Get("t", "a", &v) {
+		t.Error("a batch whose function failed wrote some of it")
+	}
+	if h := DBHealth(); h.Writes != 0 {
+		t.Errorf("the caller's own error was counted as a store failure: %+v", h)
+	}
+	if err := brokenDB(errors.New("disk full")).Batch(func(b DBBatch) error { return b.Set("t", "k", "v") }); err == nil {
+		t.Fatal("a broken store's batch reported success")
+	}
+	if h := DBHealth(); h.Writes != 1 || !strings.HasPrefix(h.LastOp, "batch") {
+		t.Errorf("a failed batch was not counted as a write failure: %+v", h)
 	}
 }

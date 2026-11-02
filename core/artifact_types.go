@@ -1042,6 +1042,7 @@ func ingestImportedCollectionChunks(id, name string, chunks []PortableChunk) {
 	src := CollectionSource(id)
 	now := time.Now().Format(time.RFC3339)
 	var embedded, empty int
+	var rows []EmbeddedChunk
 	for _, pc := range chunks {
 		text := strings.TrimSpace(pc.Text)
 		if text == "" {
@@ -1076,8 +1077,9 @@ func ingestImportedCollectionChunks(id, name string, chunks []PortableChunk) {
 			Kind:     pc.Kind,
 			Ord:      pc.Ord,
 		}
-		db.Set(EmbeddedChunks, row.ID, row)
+		rows = append(rows, row)
 	}
+	putChunks(db, rows)
 	InvalidateChunkCache()
 	Log("[artifacts] collection %q: ingested %d imported chunk(s) (%d embedded, %d without vectors)",
 		name, embedded+empty, embedded, empty)
