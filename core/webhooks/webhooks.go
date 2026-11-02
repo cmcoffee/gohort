@@ -1,11 +1,14 @@
 // Package webhooks is a person's webhooks: an address on this instance a
 // service calls (/hook/<name>), the mirror of a connector, which gohort
 // calls. A webhook checks who is calling, reads the event out of what was
-// posted, and feeds it on: in this version, to a watch (one of its owner's
-// webhook monitors), which wakes that monitor's agent with the event.
+// posted, and feeds it on: to a watch (one of its owner's webhook
+// monitors), which wakes that monitor's agent with the event, or to a
+// channel, as a message on one of its owner's linked services (Bridges >
+// Linked services), which the channel bound to that service answers
+// through the link's connector.
 //
 // A webhook is its owner's, as a monitor is: it feeds only the owner's own
-// watches. Its address is unique on the instance. One that checks nothing
+// watches and linked services. Its address is unique on the instance. One that checks nothing
 // gets a long random name, since its address is then its only secret.
 //
 // A watch's own token URL (/orchestrate/api/operator/event/<token>) keeps
@@ -35,9 +38,16 @@ const (
 	VerifyNone  = "none"  // nothing: the address is the only secret
 	VerifyToken = "token" // a shared token in a named header
 	VerifyHMAC  = "hmac"  // a signature over the body in a named header
+	// VerifySlack is Slack's request signing: an HMAC SHA-256 over
+	// "v0:<timestamp>:<body>", the timestamp within five minutes; it
+	// answers Slack's URL check too.
+	VerifySlack = "slack"
 
 	// FeedWatch is the prefix of what a webhook feeds: watch:<monitor>.
 	FeedWatch = "watch:"
+	// FeedChannel is the prefix of feeding a channel: channel:<service>,
+	// one of the owner's linked services.
+	FeedChannel = "channel:"
 	// ReachDirect is reached at this instance's own address; peer:<relay
 	// connection> through a peer's relay.
 	ReachDirect = "direct"
@@ -73,6 +83,7 @@ type Webhook struct {
 type Map struct {
 	Text string `json:"text,omitempty"` // what the agent reads
 	Kind string `json:"kind,omitempty"` // what sort of event (push, payment.failed)
+	Chat string `json:"chat,omitempty"` // the conversation, for a message fed to a channel
 	ID   string `json:"id,omitempty"`   // the event's own id, to drop a provider's retry
 	From string `json:"from,omitempty"` // who or what it is from
 }
@@ -237,6 +248,8 @@ func (h *Webhook) check() error {
 		if h.Header == "" {
 			return fmt.Errorf("say which header the token comes in")
 		}
+	case VerifySlack:
+		h.Header, h.Algorithm, h.Prefix = "", "", ""
 	case VerifyHMAC:
 		if h.Header == "" {
 			return fmt.Errorf("say which header the signature comes in")
@@ -250,12 +263,22 @@ func (h *Webhook) check() error {
 	default:
 		return fmt.Errorf("it checks a token, a signature, or nothing")
 	}
-	monitor, ok := strings.CutPrefix(h.Feeds, FeedWatch)
-	if !ok || strings.TrimSpace(monitor) == "" {
-		return fmt.Errorf("choose the watch it wakes")
-	}
-	if m, ok := GetEventMonitor(RootDB, h.Owner, strings.TrimSpace(monitor)); !ok || m.Kind != EventKindWebhook {
-		return fmt.Errorf("%s is not one of your watches woken by a post", monitor)
+	if svc, ok := strings.CutPrefix(h.Feeds, FeedChannel); ok {
+		svc = strings.TrimSpace(svc)
+		if !h.linked(svc) {
+			return fmt.Errorf("%s is not one of your linked services", svc)
+		}
+		if strings.TrimSpace(h.Map.Chat) == "" {
+			return fmt.Errorf("to feed a channel, say where a message's chat is read")
+		}
+	} else {
+		monitor, ok := strings.CutPrefix(h.Feeds, FeedWatch)
+		if !ok || strings.TrimSpace(monitor) == "" {
+			return fmt.Errorf("choose the watch it wakes")
+		}
+		if m, ok := GetEventMonitor(RootDB, h.Owner, strings.TrimSpace(monitor)); !ok || m.Kind != EventKindWebhook {
+			return fmt.Errorf("%s is not one of your watches woken by a post", monitor)
+		}
 	}
 	if h.Reach == "" {
 		h.Reach = ReachDirect
@@ -277,7 +300,7 @@ func (h *Webhook) check() error {
 	if len(h.Kinds) > 0 && strings.TrimSpace(h.Map.Kind) == "" {
 		return fmt.Errorf("to pass on only some kinds of event, say where its kind is read")
 	}
-	for _, p := range []string{h.Map.Text, h.Map.Kind, h.Map.ID, h.Map.From} {
+	for _, p := range []string{h.Map.Text, h.Map.Kind, h.Map.ID, h.Map.From, h.Map.Chat} {
 		if p = strings.TrimSpace(p); strings.HasPrefix(p, "header:") && strings.TrimSpace(strings.TrimPrefix(p, "header:")) == "" {
 			return fmt.Errorf("header: needs the header's name")
 		}
@@ -285,10 +308,58 @@ func (h *Webhook) check() error {
 	return nil
 }
 
-// Watch is the monitor h feeds.
+// Watch is the monitor h feeds, or "".
 func (h Webhook) Watch() string {
-	m, _ := strings.CutPrefix(h.Feeds, FeedWatch)
-	return strings.TrimSpace(m)
+	if m, ok := strings.CutPrefix(h.Feeds, FeedWatch); ok {
+		return strings.TrimSpace(m)
+	}
+	return ""
+}
+
+// Channel is the linked service h feeds, or "".
+func (h Webhook) Channel() string {
+	if s, ok := strings.CutPrefix(h.Feeds, FeedChannel); ok {
+		return strings.TrimSpace(s)
+	}
+	return ""
+}
+
+// LinkedServices, set by the app that keeps linked services (bridges),
+// is owner's linked services by name: what a webhook may feed as a
+// channel. Nil, and none may be fed.
+var LinkedServices func(owner string) []string
+
+// ToChannel, set with LinkedServices, passes a message on to owner's
+// linked service svc, as the service's own fetch would have.
+var ToChannel func(owner, svc string, m ChannelMessage)
+
+// ChannelMessage is a message a webhook passes to a channel.
+type ChannelMessage struct {
+	ID, Chat, From, Text string
+}
+
+// linked reports whether svc is one of h's owner's linked services.
+func (h Webhook) linked(svc string) bool {
+	if LinkedServices == nil || svc == "" {
+		return false
+	}
+	for _, s := range LinkedServices(h.Owner) {
+		if s == svc {
+			return true
+		}
+	}
+	return false
+}
+
+// FeedsChannel are owner's webhooks feeding linked service svc.
+func FeedsChannel(owner, svc string) []Webhook {
+	var out []Webhook
+	for _, h := range List(owner) {
+		if h.Channel() == svc {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 // Address is where h is reached, from base (this instance's own address,

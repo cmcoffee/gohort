@@ -16,6 +16,10 @@ package bridges
 // so history does not wake anyone; after that each poll passes on what is
 // new. A service that gives a cursor is asked from it; one that gives none
 // is asked for its latest every time, and what was seen is passed over.
+//
+// A link a webhook feeds (core/webhooks, channel:<service>) is pushed its
+// messages: it fetches nothing, and sends its agents' replies every few
+// seconds instead.
 
 import (
 	"context"
@@ -32,6 +36,7 @@ import (
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/messaging"
 	"github.com/cmcoffee/gohort/core/service"
+	"github.com/cmcoffee/gohort/core/webhooks"
 )
 
 const (
@@ -42,6 +47,8 @@ const (
 	linkMinSecs     = 15
 	// linkMaxChats bounds the chats one link polls, each a call a tick.
 	linkMaxChats = 20
+	// linkPushedSecs is how often a link a webhook feeds sends replies.
+	linkPushedSecs = 3
 )
 
 var serviceIDRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
@@ -293,15 +300,40 @@ func (T *Bridges) stopLink(key string) {
 }
 
 func (T *Bridges) linkLoop(ctx context.Context, l serviceLink) {
-	tick := time.NewTicker(l.every())
-	defer tick.Stop()
 	for {
 		T.pollLink(ctx, l)
+		wait := l.every()
+		if pushedBy(l) != "" {
+			wait = linkPushedSecs * time.Second
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-tick.C:
+		case <-time.After(wait):
 		}
+	}
+}
+
+// pushedBy names the webhook feeding l, or "".
+func pushedBy(l serviceLink) string {
+	if hs := webhooks.FeedsChannel(l.Owner, l.Service); len(hs) > 0 {
+		return hs[0].Label
+	}
+	return ""
+}
+
+// wireWebhooks lets a person's webhooks feed their linked services.
+func (T *Bridges) wireWebhooks() {
+	webhooks.LinkedServices = func(owner string) []string {
+		var out []string
+		for _, l := range T.linksOf(owner) {
+			out = append(out, l.Service)
+		}
+		return out
+	}
+	webhooks.ToChannel = func(owner, svc string, m webhooks.ChannelMessage) {
+		T.ingestInbound(BridgeKey{Owner: owner, Service: svc, Enabled: true, Name: "webhook"},
+			hookRequest{ChatID: m.Chat, Handle: m.From, Text: m.Text, MsgID: m.ID})
 	}
 }
 
@@ -311,6 +343,17 @@ func (l serviceLink) cursorKey(chat string) string { return l.key() + "\x00" + c
 // pollLink fetches each of l's chats once, passes on what is new, then
 // sends what its agents wrote back.
 func (T *Bridges) pollLink(ctx context.Context, l serviceLink) {
+	if by := pushedBy(l); by != "" {
+		sent, err := T.sendLinked(ctx, l)
+		if err != nil {
+			noteLink(l.key(), false, "messages come by the webhook %s; could not send a reply, kept for the next try: %v", by, err)
+		} else if sent > 0 {
+			noteLink(l.key(), true, "messages come by the webhook %s; %d sent", by, sent)
+		} else if _, ok := lastLink(l.key()); !ok {
+			noteLink(l.key(), true, "messages come by the webhook %s", by)
+		}
+		return
+	}
 	key := BridgeKey{Owner: l.Owner, Service: l.Service, Enabled: true, Name: l.Connector}
 	passed, seeded, chatless := 0, 0, 0
 	for _, chat := range l.chats() {

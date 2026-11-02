@@ -30,7 +30,7 @@ func TestAPersonsWebhooks(t *testing.T) {
 	SaveEventMonitor(RootDB, EventMonitor{Name: "checker", Owner: "alice", Kind: EventKindPoll})
 	SaveEventMonitor(RootDB, EventMonitor{Name: "bobs", Owner: "bob", Kind: EventKindWebhook, Token: NewEventToken()})
 
-	_, opts := do("GET", "/api/webhooks?options=watches", "")
+	_, opts := do("GET", "/api/webhooks?options=feeds", "")
 	if !strings.Contains(opts, `"watch:repo"`) || strings.Contains(opts, "checker") || strings.Contains(opts, "bobs") {
 		t.Errorf("the watches offered: %s", opts)
 	}
@@ -77,5 +77,46 @@ func TestAPersonsWebhooks(t *testing.T) {
 	}
 	if _, ok := webhooks.Get("repo"); ok {
 		t.Error("still there")
+	}
+}
+
+// Linked services are offered beside watches, and a webhook feeding one
+// says so on its row, and that it is no longer linked when it is not.
+func TestAWebhookMayFeedALinkedService(t *testing.T) {
+	app, req := authedExtensions(t)
+	linked := []string{"slack"}
+	webhooks.LinkedServices = func(owner string) []string {
+		if owner == "alice" {
+			return linked
+		}
+		return nil
+	}
+	t.Cleanup(func() { webhooks.LinkedServices = nil })
+	do := func(method, path, body string) (int, string) {
+		r := req(method, path)
+		if body != "" {
+			r.Body = readCloser(body)
+		}
+		w := httptest.NewRecorder()
+		serve(app)(w, r)
+		return w.Code, w.Body.String()
+	}
+	if _, opts := do("GET", "/api/webhooks?options=feeds", ""); !strings.Contains(opts, `"channel:slack"`) {
+		t.Errorf("feeds offered: %s", opts)
+	}
+	code, body := do("POST", "/api/webhooks", `{"label":"Slack","verify":"slack","secret":"sig","text":"event.text","chat":"event.channel","from":"event.user","feeds":"channel:slack"}`)
+	if code >= 300 {
+		t.Fatalf("add: %d %s", code, body)
+	}
+	_, list := do("GET", "/api/webhooks", "")
+	if !strings.Contains(list, `"feeds":"the channel slack"`) || !strings.Contains(list, "Slack's request signing") || strings.Contains(list, `"problem"`) {
+		t.Errorf("the list: %s", list)
+	}
+	if _, form := do("GET", "/api/webhooks?name=slack", ""); !strings.Contains(form, `"chat":"event.channel"`) {
+		t.Errorf("the edit form: %s", form)
+	}
+	linked = nil
+	if _, list := do("GET", "/api/webhooks", ""); !strings.Contains(list, "no longer one of your linked services") {
+		t.Errorf("unlinked: %s", list)
 	}
 }

@@ -13,6 +13,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/service"
+	"github.com/cmcoffee/gohort/core/webhooks"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -289,5 +290,58 @@ func TestALinkIsPolledAsItsOwner(t *testing.T) {
 		Spec: json.RawMessage(`{"service":"acme"}`)})
 	if !T.serviceHasOutput("alice", "acme") {
 		t.Error("the link's way out was lost to a connector that sends nothing")
+	}
+}
+
+// A webhook feeding a linked service: its messages reach the channel bound
+// to the service as the link's own would, and the link, pushed its
+// messages, fetches nothing and sends its agents' replies.
+func TestAWebhookFeedsALinkedService(t *testing.T) {
+	T := linkWorld(t)
+	api := &chatAPI{}
+	chatConnector(t, "acme-chat", api.serve(t).URL, false)
+	l, err := T.storeLink(serviceLink{Owner: "alice", Service: "acme", Connector: "acme-chat"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	T.wireWebhooks()
+	t.Cleanup(func() { webhooks.LinkedServices, webhooks.ToChannel = nil, nil })
+	if got := webhooks.LinkedServices("alice"); len(got) != 1 || got[0] != "acme" || len(webhooks.LinkedServices("bob")) != 0 {
+		t.Errorf("linked services: %v", got)
+	}
+	if pushedBy(l) != "" {
+		t.Error("pushed before any webhook feeds it")
+	}
+	if _, err := webhooks.Create(webhooks.Webhook{Label: "Acme push", Owner: "alice", Verify: webhooks.VerifyNone,
+		Map: webhooks.Map{Text: "text", Chat: "chat", From: "from", ID: "id"}, Feeds: "channel:acme"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	SaveChannel(RootDB, Channel{ID: "ch-acme", Owner: "alice", Name: "Acme", Service: "acme", AgentID: "agent-1", AutoReply: true})
+	asked := make(chan string, 4)
+	RegisterChannelAgentRunner(func(_ context.Context, in ChannelInbound) (ChannelReply, error) {
+		asked <- in.Text
+		return ChannelReply{Text: "on it"}, nil
+	})
+	t.Cleanup(func() { RegisterChannelAgentRunner(nil) })
+
+	webhooks.ToChannel("alice", "acme", webhooks.ChannelMessage{ID: "e1", Chat: "room-2", From: "u9", Text: "build failed"})
+	select {
+	case got := <-asked:
+		if got != "build failed" {
+			t.Errorf("the agent was asked %q", got)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the pushed message never reached the channel's agent")
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) && T.pendingOutboxCount("acme", "alice") == 0 {
+		time.Sleep(20 * time.Millisecond)
+	}
+	T.pollLink(context.Background(), l)
+	if len(api.fetches) != 0 || len(api.sent) != 1 || !strings.Contains(api.sent[0], `"to":"room-2"`) {
+		t.Errorf("fetched %d, sent %q", len(api.fetches), api.sent)
+	}
+	if got := lastOutcome(t, l); got != "messages come by the webhook Acme push; 1 sent" {
+		t.Errorf("%q", got)
 	}
 }

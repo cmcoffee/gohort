@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -385,5 +386,132 @@ func TestWhatIsNeverPassedOn(t *testing.T) {
 	RootDB.Set(table, bad.Name, bad)
 	if _, ok := Get(bad.Name); ok {
 		t.Error("a name outside the shape was looked up")
+	}
+}
+
+// slackPost signs body as Slack does, at when.
+func slackPost(t *testing.T, name, body, key string, when time.Time) int {
+	t.Helper()
+	ts := strconv.FormatInt(when.Unix(), 10)
+	mac := hmac.New(sha256.New, []byte(key))
+	mac.Write([]byte("v0:" + ts + ":" + body))
+	return post(t, name, body, map[string]string{"X-Slack-Request-Timestamp": ts, "X-Slack-Signature": "v0=" + hex.EncodeToString(mac.Sum(nil))})
+}
+
+// channelSeams stands in for the linked services: alice has slack, and
+// what is passed to it is kept.
+func channelSeams(t *testing.T) *[]ChannelMessage {
+	t.Helper()
+	var got []ChannelMessage
+	linked := []string{"slack"}
+	LinkedServices = func(owner string) []string {
+		if owner == "alice" {
+			return linked
+		}
+		return nil
+	}
+	ToChannel = func(owner, svc string, m ChannelMessage) { got = append(got, m) }
+	t.Cleanup(func() { LinkedServices, ToChannel = nil, nil })
+	return &got
+}
+
+// Slack's Events API into a linked service's channel: its URL check is
+// answered, a signed message is passed on as a message in its chat, once;
+// a bot's post (no user) is passed over; a request signed too long ago, or
+// signed wrong, or not at all, is refused. Unlinked, nothing is passed on.
+func TestASlackEventReachesAChannel(t *testing.T) {
+	world(t)
+	got := channelSeams(t)
+	h, err := Create(Webhook{Label: "Slack", Owner: "alice", Verify: VerifySlack, Header: "ignored",
+		Map:   Map{Text: "event.text", Chat: "event.channel", From: "event.user", ID: "event.ts", Kind: "event.type"},
+		Kinds: []string{"message"}, Feeds: "channel:slack"}, "signing-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.Header != "" {
+		t.Errorf("Slack's check takes no header of the owner's: %q", h.Header)
+	}
+	now := time.Now()
+	r := httptest.NewRequest(http.MethodPost, Prefix+h.Name, strings.NewReader(`{"type":"url_verification","challenge":"abc123"}`))
+	ts := strconv.FormatInt(now.Unix(), 10)
+	mac := hmac.New(sha256.New, []byte("signing-secret"))
+	mac.Write([]byte("v0:" + ts + `:{"type":"url_verification","challenge":"abc123"}`))
+	r.Header.Set("X-Slack-Request-Timestamp", ts)
+	r.Header.Set("X-Slack-Signature", "v0="+hex.EncodeToString(mac.Sum(nil)))
+	w := httptest.NewRecorder()
+	Handle(w, r)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"challenge":"abc123"`) || len(*got) != 0 {
+		t.Errorf("the URL check: %d %s", w.Code, w.Body.String())
+	}
+	msg := `{"type":"event_callback","event":{"type":"message","channel":"C1","user":"U1","text":"hello","ts":"1700.1"}}`
+	if code := slackPost(t, h.Name, msg, "signing-secret", now); code != http.StatusOK {
+		t.Fatalf("a signed message: %d", code)
+	}
+	if len(*got) != 1 || (*got)[0] != (ChannelMessage{ID: "1700.1", Chat: "C1", From: "U1", Text: "hello"}) {
+		t.Errorf("passed on: %+v", *got)
+	}
+	slackPost(t, h.Name, msg, "signing-secret", now)
+	bot := `{"type":"event_callback","event":{"type":"message","channel":"C1","bot_id":"B1","text":"my own reply","ts":"1700.2"}}`
+	slackPost(t, h.Name, bot, "signing-secret", now)
+	if len(*got) != 1 {
+		t.Errorf("a retry or a bot's post was passed on: %+v", *got)
+	}
+	for _, c := range []struct {
+		why  string
+		code int
+	}{
+		{"old", slackPost(t, h.Name, msg, "signing-secret", now.Add(-10*time.Minute))},
+		{"future", slackPost(t, h.Name, msg, "signing-secret", now.Add(10*time.Minute))},
+		{"wrong key", slackPost(t, h.Name, msg, "other", now)},
+		{"unsigned", post(t, h.Name, msg, nil)},
+	} {
+		if c.code != http.StatusUnauthorized {
+			t.Errorf("%s: %d", c.why, c.code)
+		}
+	}
+	if got := Calls(h.Name)[0].Outcome; got != "refused: it came with no Slack signature" {
+		t.Errorf("the unsigned post's row: %q", got)
+	}
+	LinkedServices = func(string) []string { return nil }
+	msg2 := strings.Replace(msg, "1700.1", "1700.3", 1)
+	if code := slackPost(t, h.Name, msg2, "signing-secret", now); code != http.StatusAccepted || len(*got) != 1 ||
+		!strings.Contains(Calls(h.Name)[0].Outcome, "no longer one of its owner's linked services") {
+		t.Errorf("unlinked: %d %+v", code, Calls(h.Name)[0])
+	}
+}
+
+// Feeding a channel takes one of the owner's linked services and where a
+// message's chat is read.
+func TestFeedingAChannelNeedsALinkAndAChat(t *testing.T) {
+	world(t)
+	channelSeams(t)
+	ok := Webhook{Label: "S", Owner: "alice", Verify: VerifyNone, Map: Map{Chat: "c"}, Feeds: "channel:slack"}
+	if _, err := Create(ok, ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		change func(*Webhook)
+		want   string
+	}{
+		{func(h *Webhook) { h.Map.Chat = "" }, "chat is read"},
+		{func(h *Webhook) { h.Feeds = "channel:discord" }, "not one of your linked services"},
+		{func(h *Webhook) { h.Owner = "bob" }, "not one of your linked services"},
+		{func(h *Webhook) { h.Map.Chat = "header:" }, "header's name"},
+	} {
+		h := ok
+		c.change(&h)
+		if _, err := Create(h, ""); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("want %q, got %v", c.want, err)
+		}
+	}
+	LinkedServices = nil
+	if _, err := Create(ok, ""); err == nil {
+		t.Error("with no linked services kept here, a channel was fed")
+	}
+	if got := FeedsChannel("alice", "slack"); len(got) != 1 || got[0].Watch() != "" || got[0].Channel() != "slack" {
+		t.Errorf("feeding slack: %+v", got)
+	}
+	if got := FeedsChannel("alice", "discord"); len(got) != 0 {
+		t.Errorf("feeding discord: %+v", got)
 	}
 }

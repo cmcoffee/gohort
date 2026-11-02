@@ -971,6 +971,21 @@ once:
     (decision 10). Nor can a secret's send add a prefix yet: Discord's
     token is pasted as "Bot <token>". The send-only templates have no
     caller now that flows are retired; their text says so.
+
+    11b built (2026-11-02, branch `channels`): a webhook feeds a channel,
+    `feeds` `channel:<service>`, one of its owner's linked services (the
+    bridges app answers `webhooks.LinkedServices` and takes
+    `webhooks.ToChannel`, which goes in through `ingestInbound` as a
+    link's own fetch would). `map` gains `chat`, needed to feed a channel;
+    a post saying no chat, no sender or (with a text path) no text is
+    passed over, which is what keeps a bot's own replies, posted back as
+    events, from coming round again; an id is claimed once. The `slack`
+    check is Slack's request signing (`v0:<timestamp>:<body>`, the
+    timestamp within five minutes either way) and answers its URL check
+    with the challenge. A link a webhook feeds fetches nothing and sends
+    its agents' replies every three seconds. The Extensions page's Webhooks
+    section says how to set Slack up; Graph and Bot Framework stay with
+    11c and 11d.
 12. Watches on connectors: `rest_poll` becomes a watch over a connector.
 13. Desktop programs (`desktop_command`, `desktop_mcp`) on a per-user Desktop
     page (decided, Q5); MCP servers and peers on their own pages with the key
