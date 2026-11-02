@@ -38,20 +38,51 @@
         "name": "{{name}}",
         "recipe": {
           "name": "{{name}}",
-          "kind": "rest_image",
+          "kind": "service",
           "template": "a1111",
           "desc": "Automatic1111 image generation at {{base_url}}",
           "spec": {
-            "credential": "no_auth",
-            "default_height": 512,
-            "default_steps": 20,
-            "default_width": 512,
-            "image_b64_path": "images.0",
-            "prompt_guidance": "{{prompt_guidance}}",
-            "prompt_suffix": "{{prompt_suffix}}",
-            "submit_body": "{\"prompt\":\"{prompt}\",\"negative_prompt\":\"{negative}\",\"width\":{width},\"height\":{height},\"steps\":{steps},\"seed\":{seed}}",
-            "submit_method": "POST",
-            "submit_url": "{{base_url}}/sdapi/v1/txt2img"
+            "config": [
+              {
+                "name": "api_key",
+                "label": "API login",
+                "type": "secret",
+                "send": "basic",
+                "help": "Only for a server started with --api-auth: its user:password. A local one takes none."
+              }
+            ],
+            "provider": {
+              "transport": "http",
+              "base_url": "{{base_url}}",
+              "auth": {
+                "secret": "api_key"
+              },
+              "operations": {
+                "render": {
+                  "builtin": "a1111",
+                  "options": {
+                    "mode": "txt2img",
+                    "prompt_suffix": "{{prompt_suffix}}",
+                    "prompt_guidance": "{{prompt_guidance}}"
+                  }
+                }
+              }
+            },
+            "provides": [
+              {
+                "capability": "image.generate",
+                "steps": [
+                  {
+                    "call": "render"
+                  }
+                ],
+                "output": {
+                  "image": {
+                    "from": "body"
+                  }
+                }
+              }
+            ]
           }
         }
       }

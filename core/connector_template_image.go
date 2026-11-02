@@ -31,11 +31,9 @@ func init() {
 // --- rest_image_preset strategy (generic; reused by a1111 and future presets) --
 
 func restImagePresetBuildSpec(t ConnectorTemplate, vals map[string]any) (json.RawMessage, []string, error) {
-	cred := TemplateStr(vals, "credential")
-	if cred == "" {
-		cred = "no_auth"
-	}
-	spec, err := ApplyRestImagePreset(t.Params["preset"], RestImageSpec{Credential: cred}, map[string]string{"base_url": TemplateStr(vals, "base_url")})
+	// No credential: the connection keeping it takes its key, if it has one,
+	// under Settings on its row.
+	spec, err := ApplyRestImagePreset(t.Params["preset"], RestImageSpec{}, map[string]string{"base_url": TemplateStr(vals, "base_url")})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -50,16 +48,16 @@ func restImagePresetBuildSpec(t ConnectorTemplate, vals map[string]any) (json.Ra
 	}
 	spec.PromptSuffix = TemplateStr(vals, "prompt_suffix")
 	spec.PromptGuidance = TemplateStr(vals, "prompt_guidance")
-	raw, err := json.Marshal(spec)
+	spec.PollMaxSecs = TemplateInt(vals, "poll_max_secs")
+	_, raw, err := spec.AsService("")
 	return raw, nil, err
 }
 
 func restImagePresetReadValues(t ConnectorTemplate, spec json.RawMessage) map[string]any {
-	var s RestImageSpec
-	_ = json.Unmarshal(spec, &s)
+	s := imageStored(spec)
 	return map[string]any{
 		"base_url":        restImagePresetBaseURL(t.Params["preset"], s.SubmitURL),
-		"credential":      s.Credential,
+		"poll_max_secs":   s.PollMaxSecs,
 		"default_width":   s.DefaultWidth,
 		"default_height":  s.DefaultHeight,
 		"default_steps":   s.DefaultSteps,
@@ -86,7 +84,7 @@ func comfyBuildSpec(t ConnectorTemplate, vals map[string]any) (json.RawMessage, 
 	if err != nil {
 		return nil, warns, err
 	}
-	_, raw, err := spec.AsService()
+	_, raw, err := spec.AsService("")
 	return raw, warns, err
 }
 
@@ -164,11 +162,12 @@ func comfyBuild(t ConnectorTemplate, vals map[string]any) (RestImageSpec, []stri
 	return spec, warns, nil
 }
 
-// comfyStored is the ComfyUI backend a stored spec keeps: the service
-// connection's (comfyHost), or a rest_image connector's from before it moved.
-func comfyStored(raw json.RawMessage) RestImageSpec {
+// imageStored is the image backend a stored spec keeps: the service
+// connection's (imageHost), or the spec of a rest_image connector from before
+// they became connections.
+func imageStored(raw json.RawMessage) RestImageSpec {
 	var s RestImageSpec
-	if json.Unmarshal(raw, &s) == nil && s.ComfyWorkflow != "" {
+	if json.Unmarshal(raw, &s) == nil && (s.ComfyWorkflow != "" || s.SubmitURL != "") {
 		return s
 	}
 	if kept, graph, err := imageSpecOf(Connector{Kind: serviceConnectorKind, Spec: raw}); graph && err == nil {
@@ -217,7 +216,7 @@ func isDerivedUploadURL(raw string) bool {
 }
 
 func comfyReadValues(_ ConnectorTemplate, spec json.RawMessage) map[string]any {
-	s := comfyStored(spec)
+	s := imageStored(spec)
 	vals := map[string]any{
 		"base_url":           strings.TrimSuffix(s.SubmitURL, "/prompt"),
 		"workflow_type":      ComfyWorkflowTypeOf(s.ComfyMap),
@@ -425,12 +424,11 @@ func a1111Template() ConnectorTemplate {
 		Label:       "Automatic1111",
 		Category:    "Image generation",
 		Description: "A local or self-hosted Automatic1111 (stable-diffusion-webui) server. Synchronous txt2img: no workflow needed.",
-		Kind:        RestImageConnectorKind,
+		Kind:        serviceConnectorKind,
 		Strategy:    "rest_image_preset",
 		Params:      map[string]string{"preset": "a1111"},
 		Fields: []TemplateField{
 			{Key: "base_url", Label: "Automatic1111 URL", Type: "text", Group: "Connection", Help: "e.g. http://localhost:7860"},
-			{Key: "credential", Label: "Credential", Type: "credential", Group: "Connection", Advanced: true, Help: "no_auth for a local box; a SecureAPI credential name for an authenticated server."},
 			{Key: "default_width", Label: "Default width", Type: "number", Group: "Defaults"},
 			{Key: "default_height", Label: "Default height", Type: "number", Group: "Defaults"},
 			{Key: "default_steps", Label: "Default steps", Type: "number", Group: "Defaults"},
@@ -450,24 +448,14 @@ func ConnectorTemplateRef(c Connector) TemplateRef {
 	return TemplateRef{Target: TargetConnector, Name: strings.TrimSpace(c.Template)}
 }
 
-// TemplateForConnector resolves which template owns a connector. It PREFERS the
-// stored provenance (Connector.Template), falling back to shape inference for
-// connectors authored before provenance: rest_image with a workflow → comfyui;
-// other rest_image → a1111. Returns ("", false) when no template applies.
+// TemplateForConnector resolves which template owns a connector, by its
+// stored provenance (Connector.Template). Returns ("", false) when no template
+// applies.
 func TemplateForConnector(c Connector) (ConnectorTemplate, bool) {
 	if tpl, ok := ConnectorTemplateRef(c).Resolve(); ok {
 		return tpl, true
 	}
-	if c.Kind != RestImageConnectorKind {
-		return ConnectorTemplate{}, false
-	}
-	var s RestImageSpec
-	_ = json.Unmarshal(c.Spec, &s)
-	name := "a1111"
-	if s.ComfyWorkflow != "" {
-		name = "comfyui"
-	}
-	return GetConnectorTemplate(name)
+	return ConnectorTemplate{}, false
 }
 
 // a1111Img2ImgTemplate is a PURE DECLARATION, like a1111 — no strategy code of
@@ -480,12 +468,11 @@ func a1111Img2ImgTemplate() ConnectorTemplate {
 		Label:       "Automatic1111 (edit a photo)",
 		Category:    "Image generation",
 		Description: "A local or self-hosted Automatic1111, wired for img2img: it takes a source photo and a prompt and returns a changed version. Add the plain Automatic1111 template as well if you also want text-to-image.",
-		Kind:        RestImageConnectorKind,
+		Kind:        serviceConnectorKind,
 		Strategy:    "rest_image_preset",
 		Params:      map[string]string{"preset": "a1111_img2img"},
 		Fields: []TemplateField{
 			{Key: "base_url", Label: "Automatic1111 URL", Type: "text", Group: "Connection", Help: "e.g. http://localhost:7860, the same server as your text-to-image backend, if you have one."},
-			{Key: "credential", Label: "Credential", Type: "credential", Group: "Connection", Advanced: true, Help: "no_auth for a local box; a SecureAPI credential name for an authenticated server."},
 			{Key: "default_width", Label: "Default width", Type: "number", Group: "Defaults"},
 			{Key: "default_height", Label: "Default height", Type: "number", Group: "Defaults"},
 			{Key: "default_steps", Label: "Default steps", Type: "number", Group: "Defaults"},

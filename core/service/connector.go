@@ -80,10 +80,10 @@ func (handler) Materialize(c Connector) error {
 		return err
 	}
 	name := strings.TrimSpace(c.Name)
-	// A ComfyUI workflow is served where a rest_image backend is, by the
-	// machinery that runs one: generate, edit, blend and its tool alike.
-	_, comfy := comfyOperation(s)
-	if comfy {
+	// An image builtin (ComfyUI, A1111) is served by the machinery that
+	// runs one: generate, edit, blend and its tool alike.
+	_, backend := imageOperation(s)
+	if backend {
 		unregisterOwned(name)
 		c.ServeImageBackend()
 	} else if _, _, err := s.binding("image.generate"); err == nil {
@@ -96,7 +96,7 @@ func (handler) Materialize(c Connector) error {
 	} else {
 		unregisterOwned(name)
 	}
-	if _, _, err := s.binding("image.edit"); err == nil && !comfy {
+	if _, _, err := s.binding("image.edit"); err == nil && !backend {
 		RegisterImageEditBackend(name, func(sess *ToolSession, prompt string, image []byte) (*ImageGenResult, error) {
 			return editImage(sess, name, prompt, image)
 		})
@@ -123,7 +123,7 @@ func (handler) Teardown(c Connector) error {
 	}
 	RegisterImageEditBackend(name, nil)
 	if s, err := Parse(c.Spec); err == nil {
-		if _, comfy := comfyOperation(s); comfy {
+		if _, backend := imageOperation(s); backend {
 			c.StopImageBackend()
 		}
 	}

@@ -88,7 +88,7 @@ func TestImageRenderRefusesSourcePhotosOnATextOnlyBackend(t *testing.T) {
 		SubmitURL: "https://gpu.example/render", SubmitMethod: "POST",
 		SubmitBody: `{"prompt":"{prompt}"}`, ImageB64Path: "images.0", Credential: "no_auth",
 	})
-	if err := SaveConnector(RootDB, Connector{Name: "comfyui", Kind: RestImageConnectorKind, Spec: spec}); err != nil {
+	if err := SaveConnector(RootDB, Connector{Name: "comfyui", Kind: testImageKind, Spec: spec}); err != nil {
 		t.Fatalf("saving the text-only backend: %v", err)
 	}
 	if err := ApproveConnector(RootDB, "comfyui"); err != nil {
@@ -214,7 +214,7 @@ func TestPeerEditReachesTheBackend(t *testing.T) {
 		SubmitBody:   `{"prompt":"{prompt}","init_images":{images}}`,
 		ImageB64Path: "images.0", Credential: "no_auth", MaxInputImages: 1,
 	})
-	if err := SaveConnector(RootDB, Connector{Name: "editor", Kind: RestImageConnectorKind, Spec: spec}); err != nil {
+	if err := SaveConnector(RootDB, Connector{Name: "editor", Kind: testImageKind, Spec: spec}); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 	if err := ApproveConnector(RootDB, "editor"); err != nil {

@@ -2,7 +2,7 @@ package core
 
 // Which image backends a caller may render through. The grouped `image` tool
 // turned the backend from a tool NAME into a parameter, so this list is what
-// stands between a caller and every rest_image connector on the box.
+// stands between a caller and every image connection on the box.
 
 import (
 	"context"
@@ -34,7 +34,7 @@ func backendTestDB(t *testing.T) {
 	})
 }
 
-// putImageConnector stores a rest_image connector and, when approved, registers
+// putImageConnector stores an image connection and, when approved, registers
 // the backend closure the way Materialize would.
 func putImageConnector(t *testing.T, name, credential string, approved bool) {
 	t.Helper()
@@ -50,7 +50,7 @@ func putImageConnector(t *testing.T, name, credential string, approved bool) {
 	if err != nil {
 		t.Fatalf("marshal spec: %v", err)
 	}
-	c := Connector{Name: name, Kind: RestImageConnectorKind, Approved: approved, Spec: spec}
+	c := Connector{Name: name, Kind: testImageKind, Approved: approved, Spec: spec}
 	RootDB.Set(connectorsTable, name, &c)
 	offerImageBackend(name)
 	if approved {
@@ -123,19 +123,19 @@ func TestApprovedConnectorIsReachableWithItsGuidance(t *testing.T) {
 	}
 }
 
-func TestDeniedCredentialHidesTheBackend(t *testing.T) {
-	// A rest_image backend dispatches through its credential, so the per-agent
-	// credential deny list is the gate that already governs it. Offering a
-	// backend the agent can't actually dispatch through is a guaranteed refusal.
+func TestADeniedConnectionHidesTheBackend(t *testing.T) {
+	// An image connection is switched off for an agent by its credential
+	// scope, as every connection is. Offering a backend the agent can't
+	// actually dispatch through is a guaranteed refusal.
 	backendTestDB(t)
 	putImageConnector(t, "comfy_lan", "no_auth", true)
-	putImageConnector(t, "hosted_flux", "flux_key", true)
+	putImageConnector(t, "hosted_flux", "no_auth", true)
 
 	open := ReachableImageBackends(&ToolSession{})
 	if len(open) != 2 {
 		t.Fatalf("reachable = %v, want both", backendNames(open))
 	}
-	denied := &ToolSession{DeniedCredentials: map[string]bool{"flux_key": true}}
+	denied := &ToolSession{DeniedCredentials: map[string]bool{connectionScopeName("hosted_flux"): true}}
 	got := ReachableImageBackends(denied)
 	if len(got) != 1 || got[0].Name != "comfy_lan" {
 		t.Errorf("reachable = %v, want only comfy_lan", backendNames(got))
@@ -192,7 +192,7 @@ func TestApprovedButUnmaterializedIsNotReachable(t *testing.T) {
 	// backend closure. Advertising the name would hand the model a value that
 	// cannot dispatch.
 	backendTestDB(t)
-	c := Connector{Name: "comfy_lan", Kind: RestImageConnectorKind, Approved: true, Spec: json.RawMessage(`{"submit_url":"http://x/prompt"}`)}
+	c := Connector{Name: "comfy_lan", Kind: testImageKind, Approved: true, Spec: json.RawMessage(`{"submit_url":"http://x/prompt"}`)}
 	RootDB.Set(connectorsTable, "comfy_lan", &c)
 	if got := ReachableImageBackends(&ToolSession{}); len(got) != 0 {
 		t.Errorf("reachable = %v, want none — no backend closure is registered", backendNames(got))

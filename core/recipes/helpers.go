@@ -94,7 +94,7 @@ func init() {
 			if err != nil {
 				return nil, nil, fmt.Errorf("the workflow could not be wired: %v", err)
 			}
-			_, kept, err := spec.AsService()
+			_, kept, err := spec.AsService("")
 			if err != nil {
 				return nil, nil, err
 			}

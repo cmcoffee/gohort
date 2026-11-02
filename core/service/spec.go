@@ -284,8 +284,8 @@ func (s Spec) validateSettled() error {
 		if err := op.validate(name); err != nil {
 			return err
 		}
-		if op.Builtin == comfyBuiltin {
-			if err := validateComfy(p.BaseURL, name, op); err != nil {
+		if imageBuiltin(op.Builtin) {
+			if err := validateImage(p.BaseURL, name, op); err != nil {
 				return err
 			}
 		}
@@ -333,8 +333,8 @@ func (s Spec) validateProvides() error {
 }
 
 func (op Operation) validate(name string) error {
-	if b := strings.TrimSpace(op.Builtin); b == comfyBuiltin {
-		return nil // validateComfy, with the provider's address
+	if b := strings.TrimSpace(op.Builtin); imageBuiltin(b) {
+		return nil // validateImage, with the provider's address
 	} else if b != "" {
 		if len(op.Options) > 0 {
 			return fmt.Errorf("operation %q: a built-in search takes no options", name)
@@ -433,9 +433,9 @@ func (b Binding) validate(p Provider) error {
 			return fmt.Errorf("step %d names %q, which is not an operation", i+1, name)
 		}
 		switch {
-		case op.Builtin == comfyBuiltin && b.Capability != "image.generate" && b.Capability != "image.edit":
-			return fmt.Errorf("step %d calls %q, a ComfyUI workflow: it gives image.generate or image.edit", i+1, name)
-		case op.Builtin != "" && op.Builtin != comfyBuiltin && b.Capability != "web.search":
+		case imageBuiltin(op.Builtin) && b.Capability != "image.generate" && b.Capability != "image.edit":
+			return fmt.Errorf("step %d calls %q, an image backend: it gives image.generate or image.edit", i+1, name)
+		case op.Builtin != "" && !imageBuiltin(op.Builtin) && b.Capability != "web.search":
 			return fmt.Errorf("step %d calls %q, a built-in search: it gives web.search's results", i+1, name)
 		}
 		for _, tok := range opTokens(op) {
@@ -539,7 +539,7 @@ func (o Output) validate(name string, spec Port, last Operation) error {
 		if o.From != "body" || o.Path != "" || o.As != "" || o.Each != "" || len(o.Fields) > 0 || o.Single {
 			return fmt.Errorf("output %q: from must be \"body\", alone", name)
 		}
-		if spec.Type != TypeFile || (last.Read != "file" && last.Builtin != comfyBuiltin) {
+		if spec.Type != TypeFile || (last.Read != "file" && !imageBuiltin(last.Builtin)) {
 			return fmt.Errorf("output %q: from body needs a file output and a last operation that reads file", name)
 		}
 		return nil

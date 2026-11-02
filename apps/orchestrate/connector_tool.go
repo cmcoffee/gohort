@@ -169,7 +169,7 @@ Typical flow for a calendar:
 	gt.AddAction("create", &GroupedToolAction{
 		Description: "Declare a new connector (bridge type). remote_mcp is created UNAPPROVED (admin approves in Admin > Connectors); rest_poll goes live immediately (it uses an already-approved credential).",
 		Params: map[string]ToolParam{
-			"kind":                 {Type: "string", Enum: []string{RemoteMCPConnectorKind, RestPollConnectorKind, DesktopMCPConnectorKind, DesktopCommandConnectorKind, MessagingBridgeConnectorKind, RestMessagingConnectorKind, BotFrameworkConnectorKind, RestImageConnectorKind, PeerRelayConnectorKind, service.Kind}, Description: "The bridge type. remote_mcp = a remote MCP server whose tools register as <name>.<tool>. rest_poll = poll one authenticated URL every N minutes and wake an agent when it changes. desktop_mcp = run a LOCAL MCP server (subprocess) on the user's OWN machine. desktop_command = run a fixed local command (with {placeholder} args) as one tool on the user's machine: the lightweight option. messaging_bridge = enable a built-in messaging relay (iMessage) on the user's device so their chats route to agents. rest_messaging = a server-side two-sided messaging bridge for a REST-pollable service (Teams/Slack/Discord) via a SecureAPI credential: use preset=\"teams\" for the canned Graph mapping. bot_framework = gohort as a real Microsoft Teams BOT (Azure Bot registration): answers DMs, group chats and channel @mentions and replies under its own identity, the one that works when Graph app-only sending does not. rest_image = an image-GENERATION backend (ComfyUI / Automatic1111 / hosted diffusion) declared from a spec, use preset=\"a1111\" with vars={\"base_url\":\"http://localhost:7860\"} (ComfyUI: action=import_comfyui); materializes a generate_image_<name> tool. peer_relay = inbound webhooks via a peer's public address. Created UNAPPROVED."},
+			"kind":                 {Type: "string", Enum: []string{RemoteMCPConnectorKind, RestPollConnectorKind, DesktopMCPConnectorKind, DesktopCommandConnectorKind, MessagingBridgeConnectorKind, RestMessagingConnectorKind, BotFrameworkConnectorKind, PeerRelayConnectorKind, service.Kind}, Description: "The bridge type. remote_mcp = a remote MCP server whose tools register as <name>.<tool>. rest_poll = poll one authenticated URL every N minutes and wake an agent when it changes. desktop_mcp = run a LOCAL MCP server (subprocess) on the user's OWN machine. desktop_command = run a fixed local command (with {placeholder} args) as one tool on the user's machine: the lightweight option. messaging_bridge = enable a built-in messaging relay (iMessage) on the user's device so their chats route to agents. rest_messaging = a server-side two-sided messaging bridge for a REST-pollable service (Teams/Slack/Discord) via a SecureAPI credential: use preset=\"teams\" for the canned Graph mapping. bot_framework = gohort as a real Microsoft Teams BOT (Azure Bot registration): answers DMs, group chats and channel @mentions and replies under its own identity, the one that works when Graph app-only sending does not. service = a REST service kept as a connection, from service_spec: an image backend among them (Automatic1111: the a1111 builtin, see service_spec; ComfyUI: action=import_comfyui). peer_relay = inbound webhooks via a peer's public address. Created UNAPPROVED."},
 			"name":                 {Type: "string", Description: "Short unique id (letters/digits/underscore/dash), e.g. \"gcal\". Namespaces the capability's tools."},
 			"url":                  {Type: "string", Description: "(remote_mcp) the MCP server's https endpoint. (rest_poll) the full URL to poll each interval."},
 			"auth_mode":            {Type: "string", Enum: []string{"none", "secure_api", "oauth"}, Description: "(remote_mcp) How the server authenticates. none = public; secure_api = mint a bearer from a registered SecureAPI credential (set secure_cred); oauth = per-user hosted login. NEVER pass a static token."},
@@ -210,8 +210,7 @@ Typical flow for a calendar:
 			"skip":                 {Type: "array", Description: "(rest_messaging, optional) messages to drop, each {\"path\": element dot-path, \"values\": [...]}: dropped when the path has a value, or one of the listed values. Use it to skip the bridge's own replies (e.g. {\"path\":\"bot_id\"}) and system events, or the agent answers itself."},
 			"display_name":         {Type: "string", Description: "(service, required; rest_messaging, optional) the name people see it by, e.g. \"Serper\". A messaging service gohort knows keeps its own."},
 			"markdown":             {Type: "boolean", Description: "(rest_messaging, optional) the service renders markdown, so replies keep their formatting. Only for a service gohort does not know."},
-			"service_spec":         {Type: "object", Description: "(service) {config:[{name,type,send}],provider:{transport:\"http\",base_url,auth:{secret}|{none:true},operations:{name:{method,path,body}}},provides:[{capability:\"image.generate\",steps:[{call,save}|{wait,until}],output:{image:{path,as}}}]}. A key is a config entry of type secret, never in the spec; a refused save says what is wrong."},
-			"image_spec":           {Type: "object", Description: "(rest_image, optional) explicit backend fields overriding/extending the preset: submit_url, submit_method, submit_body (a JSON template with {prompt}/{negative}/{width}/{height}/{steps}/{seed} tokens), image_b64_path or image_url_path (synchronous result), or the poll set submit_id_path/poll_url/poll_ready_path/poll_b64_path/poll_url_path/poll_url_template/poll_fields (async). Omit when a preset + vars is enough. For rest_image, `credential` names the SecureAPI credential (or \"no_auth\" for a local endpoint) and `vars` fills preset tokens like {\"base_url\":\"http://localhost:7860\"}."},
+			"service_spec":         {Type: "object", Description: "(service) {config:[{name,type,send}],provider:{transport:\"http\",base_url,auth:{secret}|{none:true},operations:{name:{method,path,body}}},provides:[{capability:\"image.generate\",steps:[{call,save}|{wait,until}],output:{image:{path,as}}}]}. An Automatic1111 server: base_url its address (http://host:7860), auth {none:true}, operations {render:{builtin:\"a1111\",options:{mode:\"txt2img\" or \"img2img\"}}}, provides image.generate (img2img: image.edit) with steps [{call:\"render\"}] and output {image:{from:\"body\"}}. A key is a config entry of type secret, never in the spec; a refused save says what is wrong."},
 			"description":          {Type: "string", Description: "(optional) What this connector is for. For desktop_command it is also the tool's description shown to callers."},
 		},
 		Required: []string{"kind", "name"},
@@ -258,9 +257,7 @@ Typical flow for a calendar:
 			"service_host":         {Type: "string", Description: "(bot_framework) new host replies are sent to."},
 			"reply_in_thread":      {Type: "boolean", Description: "(bot_framework) thread a channel reply under the message that triggered it."},
 			"accept_channel_types": {Type: "array", Description: "(bot_framework) new list of Teams surfaces that route inbound: any of \"personal\", \"channel\", \"groupChat\" (replaces the whole list).", Items: &ToolParam{Type: "string"}},
-			"image_spec":           {Type: "object", Description: "(rest_image) backend fields to change; the ones given replace the stored ones, the rest are kept."},
 			"service_spec":         {Type: "object", Description: "(service) the whole new spec."},
-			"vars":                 {Type: "object", Description: "(rest_image) preset token values to re-apply across the URL, body and path fields, e.g. {\"base_url\":\"http://localhost:7860\"}."},
 		},
 		Required: []string{"name"},
 		Handler:  connectorUpdate,
@@ -299,7 +296,7 @@ Typical flow for a calendar:
 		Handler:     connectorImport,
 	})
 	gt.AddAction("import_comfyui", &GroupedToolAction{
-		Description: "Set up a ComfyUI image backend from a workflow the user pastes: the easy path for “make my ComfyUI the image generator.” Give the ComfyUI base URL and (optionally) the user's exported workflow JSON (ComfyUI “Save (API Format)”, needs Dev Mode). The framework AUTO-WIRES the graph (detects the prompt node and the SaveImage output node and injects the {prompt}/{negative}/{seed} tokens), so you paste the workflow VERBATIM; do NOT hand-edit or tokenize it yourself. Omit workflow for a built-in default SD1.5 graph. Drafts it out of use: tell the user to choose it under Admin > Capabilities > Image Generation, and to give its key under Settings on its row if their ComfyUI takes one. For Automatic1111, use action=create with kind=rest_image, preset=a1111.",
+		Description: "Set up a ComfyUI image backend from a workflow the user pastes: the easy path for “make my ComfyUI the image generator.” Give the ComfyUI base URL and (optionally) the user's exported workflow JSON (ComfyUI “Save (API Format)”, needs Dev Mode). The framework AUTO-WIRES the graph (detects the prompt node and the SaveImage output node and injects the {prompt}/{negative}/{seed} tokens), so you paste the workflow VERBATIM; do NOT hand-edit or tokenize it yourself. Omit workflow for a built-in default SD1.5 graph. Drafts it out of use: tell the user to choose it under Admin > Capabilities > Image Generation, and to give its key under Settings on its row if their ComfyUI takes one. For Automatic1111, use action=create with kind=service and the a1111 builtin (service_spec).",
 		Params: map[string]ToolParam{
 			"name":        {Type: "string", Description: "Connector id (letters/digits/underscore/dash), e.g. \"comfyui\". Becomes the image-provider name and the generate_image_<name> tool."},
 			"base_url":    {Type: "string", Description: "The ComfyUI server URL, e.g. http://localhost:8188."},
@@ -376,22 +373,6 @@ func serviceSpecArg(args map[string]any) (json.RawMessage, error) {
 		return nil, err
 	}
 	return raw, nil
-}
-
-// imageSpecArg maps the `image_spec` object arg onto a RestImageSpec by
-// marshaling the raw map and unmarshaling into the typed struct — so every
-// declared field (submit_url, submit_body, the poll set, defaults) flows through
-// by its JSON tag without per-field wiring. Returns the zero spec when absent.
-func imageSpecArg(args map[string]any, key string) RestImageSpec {
-	var s RestImageSpec
-	m, ok := args[key].(map[string]any)
-	if !ok {
-		return s
-	}
-	if b, err := json.Marshal(m); err == nil {
-		_ = json.Unmarshal(b, &s)
-	}
-	return s
 }
 
 // normalizeConnectorAuth maps the LLM-facing "none" to the empty auth mode the
@@ -583,20 +564,6 @@ func connectorCreate(args map[string]any, sess *ToolSession) (string, error) {
 			return "", fmt.Errorf("display_name is required for a service connection: how people see it named wherever it is offered, e.g. \"Serper\"")
 		}
 		c.DisplayName = FreeDisplayName(RootDB, name, display)
-	case RestImageConnectorKind:
-		if strings.TrimSpace(stringArg(args, "preset")) == "comfyui" {
-			return "", fmt.Errorf("a ComfyUI backend is set up with action=import_comfyui")
-		}
-		over := imageSpecArg(args, "image_spec")
-		if cred := strings.TrimSpace(stringArg(args, "credential")); cred != "" {
-			over.Credential = cred
-		}
-		spec, err := ApplyRestImagePreset(stringArg(args, "preset"), over, stringMapArg(args, "vars"))
-		if err != nil {
-			return "", err
-		}
-		raw, _ := json.Marshal(spec)
-		c.Spec = raw
 	default:
 		return "", fmt.Errorf("unknown connector kind %q", kind)
 	}
@@ -815,20 +782,6 @@ func connectorUpdate(args map[string]any, sess *ToolSession) (string, error) {
 		if display := strings.TrimSpace(stringArg(args, "display_name")); display != "" {
 			c.DisplayName = FreeDisplayName(RootDB, name, display)
 		}
-	case RestImageConnectorKind:
-		var existing RestImageSpec
-		_ = json.Unmarshal(prev.Spec, &existing)
-		// Overlay: image_spec fields + credential win; empty fields keep existing.
-		over := imageSpecArg(args, "image_spec")
-		if cred := strings.TrimSpace(stringArg(args, "credential")); cred != "" {
-			over.Credential = cred
-		}
-		merged := MergeRestImageSpec(existing, over)
-		// Re-apply any vars (e.g. a changed base_url) across the URL/body/path fields.
-		if vars := stringMapArg(args, "vars"); len(vars) > 0 {
-			merged, _ = ApplyRestImagePreset("", merged, vars)
-		}
-		c.Spec, _ = json.Marshal(merged)
 	default:
 		return "", fmt.Errorf("update not supported for kind %q: delete and recreate instead", prev.Kind)
 	}
@@ -887,7 +840,7 @@ func connectorImportComfyUI(args map[string]any, sess *ToolSession) (string, err
 	if err != nil {
 		return "", fmt.Errorf("setting up the ComfyUI backend failed: %w", err)
 	}
-	kind, raw, err := spec.AsService()
+	kind, raw, err := spec.AsService("")
 	if err != nil {
 		return "", err
 	}

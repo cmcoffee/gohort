@@ -174,9 +174,33 @@ func TestBuilderSetsUpAComfyUIConnection(t *testing.T) {
 	if !strings.Contains(msg, "Image Generation") || !strings.Contains(msg, "Settings") {
 		t.Errorf("what Builder is told: %s", msg)
 	}
-	_, err = connectorCreate(map[string]any{"name": "old", "kind": RestImageConnectorKind, "preset": "comfyui",
-		"vars": map[string]any{"base_url": "http://comfy.example:8188"}}, sess)
-	if err == nil || !strings.Contains(err.Error(), "import_comfyui") {
-		t.Errorf("a rest_image ComfyUI draft: %v", err)
+	if _, err = connectorCreate(map[string]any{"name": "old", "kind": "rest_image"}, sess); err == nil {
+		t.Error("a rest_image draft was made: the kind is gone")
+	}
+}
+
+// Builder sets an Automatic1111 server up as a service running the a1111
+// builtin, as its catalog describes it, out of use.
+func TestBuilderSetsUpAnA1111Connection(t *testing.T) {
+	connectorOwnerFixture(t)
+	sess := &ToolSession{Username: "alice"}
+	spec := map[string]any{
+		"provider": map[string]any{"transport": "http", "base_url": "http://sd.example:7860", "auth": map[string]any{"none": true},
+			"operations": map[string]any{"render": map[string]any{"builtin": "a1111", "options": map[string]any{"mode": "txt2img"}}}},
+		"provides": []any{map[string]any{"capability": "image.generate", "steps": []any{map[string]any{"call": "render"}},
+			"output": map[string]any{"image": map[string]any{"from": "body"}}}},
+	}
+	if _, err := connectorCreate(map[string]any{"name": "sd", "kind": service.Kind, "display_name": "Stable Diffusion", "service_spec": spec}, sess); err != nil {
+		t.Fatal(err)
+	}
+	c, ok := GetConnector(RootDB, "sd")
+	if !ok || c.Kind != service.Kind || c.Approved || !strings.Contains(string(c.Spec), `"builtin":"a1111"`) {
+		t.Fatalf("set up as: %+v", c)
+	}
+	if _, err := connectorCreate(map[string]any{"name": "sd2", "kind": service.Kind, "display_name": "SD 2",
+		"service_spec": map[string]any{"provider": map[string]any{"transport": "http", "base_url": "http://sd.example:7860", "auth": map[string]any{"none": true},
+			"operations": map[string]any{"render": map[string]any{"builtin": "a1111", "options": map[string]any{"mode": "sketch"}}}},
+			"provides": spec["provides"]}}, sess); err == nil || !strings.Contains(err.Error(), "txt2img or img2img") {
+		t.Errorf("an unknown mode: %v", err)
 	}
 }

@@ -369,14 +369,13 @@ func (a *AdminApp) handleImageGenSave(c *jsonapi.Call, form withSettings[imageGe
 }
 
 // imageConnector reports whether name is a connector that makes or edits
-// pictures: an image backend, or a service giving image.generate or
-// image.edit.
+// pictures: a service giving image.generate or image.edit.
 func imageConnector(name string) bool {
 	c, ok := GetConnector(RootDB, name)
 	if !ok {
 		return false
 	}
-	return c.Kind == RestImageConnectorKind || (c.Kind == service.Kind && (service.Provides(c, "image.generate") || service.Provides(c, "image.edit")))
+	return c.Kind == service.Kind && (service.Provides(c, "image.generate") || service.Provides(c, "image.edit"))
 }
 
 // handleTranscribeTest serves /api/transcribe/test; registerMediaRoutes says what it is for.

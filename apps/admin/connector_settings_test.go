@@ -354,7 +354,7 @@ func TestAComfyUIConnectionIsConfiguredFromItsTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	kind, raw, err := r.AsService()
+	kind, raw, err := r.AsService("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,8 +372,9 @@ func TestAComfyUIConnectionIsConfiguredFromItsTemplate(t *testing.T) {
 	}
 }
 
-// Configuring a ComfyUI backend still kept as a rest_image connector saves
-// it as the connection the template now makes, not the two specs merged.
+// Configuring a ComfyUI backend still stored as the older rest_image kind
+// saves it as the connection the template now makes, not the two specs
+// merged: reconfiguring is how a record from before takes the new shape.
 func TestConfiguringAnOldComfyUIBackendMovesIt(t *testing.T) {
 	settingsWorld(t)
 	r, _, err := NewComfyImageSpec("http://comfy.example:8188", "no_auth", "", "")
@@ -381,9 +382,9 @@ func TestConfiguringAnOldComfyUIBackendMovesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw, _ := json.Marshal(r)
-	if err := SaveConnector(RootDB, Connector{Name: "studio", Kind: RestImageConnectorKind, Template: "comfyui", Spec: raw}); err != nil {
-		t.Fatal(err)
-	}
+	// Written as it sits in a database from before: no handler takes the
+	// kind now, so it is stored as it was, not saved through one.
+	RootDB.Set("connectors", "studio", Connector{Name: "studio", Kind: "rest_image", Template: "comfyui", Spec: raw})
 	tpl, _ := GetConnectorTemplate("comfyui")
 	vals := tpl.ReadValues(raw)
 	vals["prompt_suffix"] = "crisp"

@@ -1,35 +1,23 @@
-// The rest_image connector kind: a GENERIC, spec-declared image-GENERATION
-// backend for any HTTP image API — a local ComfyUI or Automatic1111, a hosted
-// Stable-Diffusion/Flux endpoint, DALL·E, Replicate — declared entirely from a
-// spec, with no Go per backend.
-//
-// Where the built-in generate_image tool (core/image_gen.go) is hardwired to two
-// providers (Gemini, OpenAI) compiled into the binary, rest_image is the
-// unified-connector realization for image generation: the Builder authors a spec
-// (or picks a preset), an admin approves it, and it materializes a per-connector
-// chat tool `generate_image_<name>` that agents can be granted. Because the whole
-// backend is just the Spec (endpoints + a request-body template + response
-// dot-paths + an optional poll stage), a rest_image connector EXPORTS and IMPORTS
-// through the same gohort.bundle machinery as every other connector — the
-// "easily shared based on need" goal — with zero extra wiring: the credential is
-// referenced by name (never a secret), so a bundle carries the whole capability.
+// The image machinery: what runs an image backend kept as a service
+// connection (core/service, its comfyui and a1111 builtins) — a local ComfyUI
+// or Automatic1111, or a peer's renderer, which speaks A1111. RestImageSpec is
+// how such a backend is described (endpoints, a request-body template,
+// response dot-paths, an optional poll stage, a ComfyUI workflow and its node
+// map), and this file runs it: generate and edit, the cascade over more photos
+// than a backend takes, masks, the face pass, and the generate_image_<name>
+// tool a served backend gets. The connection keeps the key and decides who
+// reaches it; the spec never holds a secret.
 //
 // Two request shapes are covered:
 //
-//   - SYNCHRONOUS (Automatic1111, DALL·E): one POST returns the image inline. The
-//     response carries base64 (image_b64_path, e.g. A1111 "images.0") or a URL
-//     (image_url_path, e.g. DALL·E "data.0.url").
+//   - SYNCHRONOUS (Automatic1111): one POST returns the image inline, as base64
+//     (image_b64_path, e.g. A1111 "images.0") or a URL (image_url_path).
 //
 //   - ASYNC / POLL (ComfyUI): submit returns a job id (submit_id_path), then we
 //     poll poll_url (with {id} substituted) until poll_ready_path is present, and
 //     pull the result out of the poll response — as base64, a URL, or a URL BUILT
 //     from response fields (poll_url_template + poll_fields, for ComfyUI's
 //     /view?filename=…&subfolder=…&type=… dance) which we then fetch to bytes.
-//
-// Approval is MANDATORY (no ConnectorAutoApprover): a rest_image backend makes an
-// unattended outbound call to an arbitrary (and, with no_auth, un-credentialed)
-// host and can incur cost, so it stays pending until an admin approves it in
-// Admin > Connectors — the right gate for an imported bundle to land behind, too.
 package core
 
 import (
@@ -51,9 +39,6 @@ import (
 
 	"github.com/cmcoffee/gohort/core/textutil"
 )
-
-// RestImageConnectorKind is the Kind value for a spec-declared image backend.
-const RestImageConnectorKind = "rest_image"
 
 // RestImageToolPrefix names the per-connector chat tool a rest_image
 // materializes. Exported so callers that curate the tool catalog can recognize
@@ -220,7 +205,6 @@ func (s RestImageSpec) MaxImages() int {
 }
 
 func init() {
-	RegisterConnectorKind(RestImageConnectorKind, restImageHandler{})
 	// The render deadline was a hardcoded 120s fallback with 180s from the
 	// ComfyUI preset, reachable only by hand-editing the spec JSON. That is
 	// nowhere near enough for an EDIT: a large edit checkpoint has to load
@@ -241,62 +225,6 @@ func (s RestImageSpec) pollEvery() time.Duration {
 		return time.Duration(s.PollIntervalSecs) * time.Second
 	}
 	return TuneDuration("tune_image_poll_interval_secs")
-}
-
-// MigrateFrozenImageDefaults unfreezes knobs that a PRESET wrote into stored
-// specs before those knobs became tunables.
-//
-// Every connector was saved as the preset merged INTO the spec, so installation
-// defaults got baked in per-connector: change the default and nothing already
-// saved moved. That is what made a longer edit deadline invisible to the very
-// backend it was added for.
-//
-// Only values that still EQUAL the old preset constants are cleared — nobody
-// chose those, the preset put them there. Anything else is an operator's
-// decision and is left exactly as it is.
-func MigrateFrozenImageDefaults(db Database) {
-	NewMigrationRunner("core", "").Once("unfreeze_rest_image_defaults:v1", func() int {
-		if db == nil {
-			return 0
-		}
-		// The values the presets used to write. A stored knob matching one of
-		// these is preset residue, not a choice.
-		const (
-			legacyPollMax      = 180 // comfyui preset
-			legacyPollMaxOther = 120 // the old hardcoded fallback
-			legacyPollInterval = 2   // both presets
-		)
-		changed := 0
-		for _, c := range ListConnectors(db) {
-			if c.Kind != RestImageConnectorKind {
-				continue
-			}
-			var spec RestImageSpec
-			if json.Unmarshal(c.Spec, &spec) != nil {
-				continue
-			}
-			before := spec
-			if spec.PollMaxSecs == legacyPollMax || spec.PollMaxSecs == legacyPollMaxOther {
-				spec.PollMaxSecs = 0
-			}
-			if spec.PollIntervalSecs == legacyPollInterval {
-				spec.PollIntervalSecs = 0
-			}
-			if spec.PollMaxSecs == before.PollMaxSecs && spec.PollIntervalSecs == before.PollIntervalSecs {
-				continue
-			}
-			raw, err := json.Marshal(spec)
-			if err != nil {
-				continue
-			}
-			c.Spec = raw
-			db.Set(connectorsTable, c.Name, &c)
-			Log("[rest_image] unfroze preset defaults on connector %q (deadline %ds -> tunable, interval %ds -> tunable)",
-				c.Name, before.PollMaxSecs, before.PollIntervalSecs)
-			changed++
-		}
-		return changed
-	})
 }
 
 // pollDeadline is how long this backend gets to finish. An explicit
@@ -332,25 +260,10 @@ func (s RestImageSpec) submitTimeoutSecs() int {
 	return int(s.pollDeadline() / time.Second)
 }
 
-type restImageHandler struct{}
-
-func (restImageHandler) parse(c Connector) (RestImageSpec, error) {
-	var s RestImageSpec
-	if len(c.Spec) > 0 {
-		if err := json.Unmarshal(c.Spec, &s); err != nil {
-			return s, fmt.Errorf("bad rest_image spec: %w", err)
-		}
-	}
-	s.Credential = strings.TrimSpace(s.Credential)
-	s.SubmitURL = strings.TrimSpace(s.SubmitURL)
-	return s, nil
-}
-
-func (h restImageHandler) Validate(c Connector) error {
-	s, err := h.parse(c)
-	if err != nil {
-		return err
-	}
+// Validate checks s can run: an http(s) address, and the paths it reads the
+// picture from, or, for a ComfyUI workflow, its output node, a prompt or photo
+// node, and photo inputs it can write.
+func (s RestImageSpec) Validate() error {
 	if !strings.HasPrefix(s.SubmitURL, "https://") && !strings.HasPrefix(s.SubmitURL, "http://") {
 		return fmt.Errorf("submit_url must be http(s): got %q (did you fill the preset var, e.g. base_url?)", s.SubmitURL)
 	}
@@ -591,23 +504,10 @@ func min3(a, b, c int) int {
 	return a
 }
 
-// Materialize registers the per-connector generate_image_<name> chat tool. The
-// registry is append-only (mirrors MCP proxies), so we register a live-resolving
-// proxy ONCE per name; it reads the connector's spec from RootDB at call time, so
-// an edit (re-materialize) or an Unapprove/Delete takes effect without touching
-// the registry — a torn-down connector's tool simply errors on use.
-func (h restImageHandler) Materialize(c Connector) error {
-	if _, err := h.parse(c); err != nil {
-		return err
-	}
-	serveImageBackend(c.Name)
-	return nil
-}
-
-// ServeImageBackend puts c, a ComfyUI backend kept as another kind of
-// connection (core/service), where a rest_image connector goes: an image
-// provider by its name, and its generate_image_<name> tool, so an agent
-// granted that tool before it moved keeps it.
+// ServeImageBackend puts c, a connection running an image builtin (ComfyUI,
+// A1111: core/service), where the image machinery looks: an image provider by
+// its name, and its generate_image_<name> tool, so an agent granted that tool
+// keeps it.
 func (c Connector) ServeImageBackend() { serveImageBackend(c.Name) }
 
 // StopImageBackend takes c's image backend away again.
@@ -646,16 +546,6 @@ func serveImageBackend(name string) {
 	// reads Approved=false, and the sweep would drop the registration made four
 	// lines up.
 	reconcileImageBackends(RootDB, name)
-}
-
-// Teardown drops this connector's backend. The chat tool stays registered (the
-// registry is append-only and the proxy live-resolves, so it errors cleanly on
-// use), but the BACKEND must go: it is what ImageBackendRegistered answers on,
-// and a stale yes kept an unapproved or deleted connector on offer as an image
-// provider for the rest of the process.
-func (restImageHandler) Teardown(c Connector) error {
-	stopImageBackend(c.Name)
-	return nil
 }
 
 // stopImageBackend drops connector name's backend.
@@ -717,23 +607,6 @@ func reconcileImageBackends(db Database, keepLive ...string) {
 		UnregisterImageBackend(name)
 		Log("[rest_image] dropped backend %q: no approved connector of that name", name)
 	}
-}
-
-func (h restImageHandler) Summary(c Connector) string {
-	s, _ := h.parse(c)
-	cred := s.Credential
-	if cred == "" {
-		cred = "no_auth"
-	}
-	mode := "synchronous"
-	if s.PollURL != "" {
-		mode = "poll"
-	}
-	url := s.SubmitURL
-	if url == "" {
-		url = "(no url)"
-	}
-	return fmt.Sprintf("generate images via %s (%s, credential %s) → tool %s%s", url, mode, cred, RestImageToolPrefix, restImageToolName(c.Name)[len(RestImageToolPrefix):])
 }
 
 var (
@@ -856,7 +729,7 @@ func (t *restImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	if !c.Approved {
 		return "", fmt.Errorf("image backend %q is not approved: an admin enables it in Admin > Connectors", t.connector)
 	}
-	if err := sess.ConnectionBarred(t.connector); c.Kind != RestImageConnectorKind && err != nil {
+	if err := sess.ConnectionBarred(t.connector); err != nil {
 		return "", err
 	}
 	s, graph, err := imageSpecOf(c)
@@ -1411,22 +1284,18 @@ func reachableImageBackends(sess *ToolSession) []ImageBackendChoice {
 		if err != nil {
 			continue
 		}
-		// A connection (a service, core/service) is offered unless this
-		// session's agent or user is barred from it; a rest_image backend
-		// unless its credential is.
-		if c.Kind != RestImageConnectorKind && sess.ConnectionBarred(c.Name) != nil {
+		// A connection is offered unless this session's agent or user is
+		// barred from it.
+		if sess.ConnectionBarred(c.Name) != nil {
 			continue
 		}
-		// Another kind's image backend that is no ComfyUI is offered by name.
+		// Another image backend (OpenAI or Gemini images) is offered by name.
 		if !graph {
 			choice := ImageBackendChoice{Name: c.Name, Default: c.Name == defaultProvider, Edits: edits}
 			if edits {
 				choice.MaxImages, choice.CascadeMax = 1, 1
 			}
 			out = append(out, choice)
-			continue
-		}
-		if c.Kind == RestImageConnectorKind && sess != nil && sess.DeniedCredentials[strings.TrimSpace(s.Credential)] {
 			continue
 		}
 		out = append(out, ImageBackendChoice{
@@ -1796,50 +1665,48 @@ func resolveImageConnector(connector string) (RestImageSpec, error) {
 	return s, err
 }
 
-// serviceConnectorKind is the kind ComfyUI backends are kept as (core/service).
+// serviceConnectorKind is the kind image backends are kept as (core/service).
 const serviceConnectorKind = "service"
 
-// comfyHost is a connector kind that keeps ComfyUI backends (core/service):
+// imageHost is the connector kind that keeps image backends (core/service):
 // it gives one back as the spec the machinery here runs, its calls going
 // through the connection's own key, and makes one from such a spec.
-type comfyHost interface {
-	// ComfySpec is c's ComfyUI backend, and false when c is not one.
-	ComfySpec(c Connector) (RestImageSpec, bool, error)
-	// ComfyConnector is the spec of a connection keeping ComfyUI backend s.
-	ComfyConnector(s RestImageSpec) (json.RawMessage, error)
+type imageHost interface {
+	// ImageSpec is c's image backend (a ComfyUI workflow, an A1111 server),
+	// and false when c runs none.
+	ImageSpec(c Connector) (RestImageSpec, bool, error)
+	// ImageConnector is the spec of a connection keeping image backend s,
+	// its key sent as send ("" for the backend's usual way).
+	ImageConnector(s RestImageSpec, send string) (json.RawMessage, error)
 }
 
-// imageSpecOf is connector c as the image machinery here runs it: a
-// rest_image connector's own spec, or a ComfyUI backend another kind keeps.
-// graph is false for any other connector.
+// imageSpecOf is connector c's image backend as the machinery here runs it,
+// and false when c runs none.
 func imageSpecOf(c Connector) (s RestImageSpec, graph bool, err error) {
-	if c.Kind == RestImageConnectorKind {
-		s, err = restImageHandler{}.parse(c)
-		return s, true, err
-	}
 	h, ok := ConnectorHandlerFor(c.Kind)
 	if !ok {
 		return s, false, nil
 	}
-	host, ok := h.(comfyHost)
+	host, ok := h.(imageHost)
 	if !ok {
 		return s, false, nil
 	}
-	return host.ComfySpec(c)
+	return host.ImageSpec(c)
 }
 
-// AsService is s, a ComfyUI backend, as the connection that keeps it: its
-// kind and spec.
-func (s RestImageSpec) AsService() (string, json.RawMessage, error) {
+// AsService is the kind and spec of a connection keeping backend s, its key
+// sent as send ("" for the backend's usual way): a ComfyUI workflow runs the
+// comfyui builtin, anything else the a1111 one.
+func (s RestImageSpec) AsService(send string) (string, json.RawMessage, error) {
 	h, ok := ConnectorHandlerFor(serviceConnectorKind)
 	if !ok {
-		return "", nil, fmt.Errorf("no connector kind keeps ComfyUI backends in this build")
+		return "", nil, fmt.Errorf("no connector kind keeps image backends in this build")
 	}
-	host, ok := h.(comfyHost)
+	host, ok := h.(imageHost)
 	if !ok {
-		return "", nil, fmt.Errorf("the %s kind does not keep ComfyUI backends", serviceConnectorKind)
+		return "", nil, fmt.Errorf("the %s kind does not keep image backends", serviceConnectorKind)
 	}
-	raw, err := host.ComfyConnector(s)
+	raw, err := host.ImageConnector(s, send)
 	return serviceConnectorKind, raw, err
 }
 
@@ -2049,7 +1916,7 @@ func ApplyRestImagePreset(preset string, over RestImageSpec, vars map[string]str
 		if !ok {
 			return out, fmt.Errorf("unknown rest_image preset %q (known: %s)", p, strings.Join(RestImagePresetNames(), ", "))
 		}
-		out = MergeRestImageSpec(base, over)
+		out = mergeRestImageSpec(base, over)
 	}
 	out.SubmitURL = substituteTokens(out.SubmitURL, vars)
 	out.SubmitBody = substituteTokens(out.SubmitBody, vars)
@@ -2067,11 +1934,10 @@ func ApplyRestImagePreset(preset string, over RestImageSpec, vars map[string]str
 	return out, nil
 }
 
-// MergeRestImageSpec returns `over` with any empty field filled from `base`.
-// Explicit (`over`) values win. Used to apply a preset's defaults and to
-// partial-patch a stored spec on update. An empty field means "keep base", so a
-// field can't be cleared through this merge; re-author to clear.
-func MergeRestImageSpec(base, over RestImageSpec) RestImageSpec {
+// mergeRestImageSpec returns `over` with any empty field filled from `base`.
+// Explicit (`over`) values win. Used to apply a preset's defaults. An empty
+// field means "keep base", so a field can't be cleared through this merge.
+func mergeRestImageSpec(base, over RestImageSpec) RestImageSpec {
 	out := over
 	fill := func(dst *string, src string) {
 		if strings.TrimSpace(*dst) == "" {

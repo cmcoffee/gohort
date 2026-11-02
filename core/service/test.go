@@ -3,11 +3,9 @@ package service
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/sourcehooks"
 )
 
 // TestReport is how one capability's contract test went.
@@ -41,11 +39,8 @@ func Estimate(name string) (float64, bool) {
 	return total, known
 }
 
-// Testable reports whether connector c has a contract test: a service, or an
-// image backend of the older rest_image kind.
-func Testable(c Connector) bool {
-	return c.Kind == Kind || (c.Kind == RestImageConnectorKind && c.Approved)
-}
+// Testable reports whether connector c has a contract test: a service.
+func Testable(c Connector) bool { return c.Kind == Kind }
 
 // Test runs each capability's contract test: the smallest real call that
 // proves the capability, through the contract's check. A real call can cost
@@ -66,54 +61,8 @@ func Test(ctx context.Context, name string) ([]TestReport, error) {
 			return nil, err
 		}
 		return runTests(ctx, name, s), nil
-	case RestImageConnectorKind:
-		if !c.Approved {
-			return nil, fmt.Errorf("approve %s first: an image backend of this kind is tested through its live registration", name)
-		}
-		if err := takeTest(name, Spec{}); err != nil {
-			return nil, err
-		}
-		return []TestReport{testImageBackend(ctx, name)}, nil
 	}
 	return nil, fmt.Errorf("a %s connector has no contract test", c.Kind)
-}
-
-// testImageBackend tests an older image backend through its registration,
-// with the image contract's own check. Its cost is billed by its credential's
-// price, as its calls always are.
-func testImageBackend(ctx context.Context, name string) TestReport {
-	ct, _ := Lookup("image.generate")
-	rep := TestReport{Capability: ct.Name}
-	res, err := GenerateImageWithBackend(ctx, name, fmt.Sprint(ct.Test["prompt"]), false)
-	if err != nil {
-		rep.Detail = err.Error()
-		return rep
-	}
-	path := res.URL
-	if u, perr := url.Parse(res.URL); perr == nil && (u.Scheme == "http" || u.Scheme == "https") {
-		if err := RefuseNonPublicHost(res.URL); err != nil {
-			rep.Detail = err.Error()
-			return rep
-		}
-		resp, err := sourcehooks.NewPublicHTTPClient().Get(res.URL)
-		if err != nil {
-			rep.Detail = "fetching the image: " + err.Error()
-			return rep
-		}
-		defer resp.Body.Close()
-		f, _, err := writeFile(resp.Body, defaultMaxBytes)
-		if err != nil {
-			rep.Detail = "fetching the image: " + err.Error()
-			return rep
-		}
-		path = f.Path
-	}
-	if err := imageFileOK(path); err != nil {
-		rep.Detail = "an image came back, but " + err.Error()
-		return rep
-	}
-	rep.OK, rep.File, rep.Detail = true, path, "passed: an image came back (billed by its credential's price, if one is set)"
-	return rep
 }
 
 func describe(r Result) string {

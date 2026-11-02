@@ -3,7 +3,7 @@ package service
 // A connector is how a service is reached and read; whether gohort uses it is
 // decided where it is put to use: a tie-in, a configuration page that names
 // it (Web Search's engine, the Worker LLM, a Research Source, a flow's step,
-// ...). A services connector (a spec, or an image backend) is in use exactly
+// ...). A services connector is in use exactly
 // while a tie-in names it: there is no approving it by itself. Its Approved
 // mark is that state, kept by Settle after every tie-in save, at startup, and
 // after a change.
@@ -27,8 +27,8 @@ import (
 )
 
 // TieInConnector reports whether a connector of kind is put to use only by
-// the pages that name it: a spec, or an image backend.
-func TieInConnector(kind string) bool { return kind == Kind || kind == RestImageConnectorKind }
+// the pages that name it: a service.
+func TieInConnector(kind string) bool { return kind == Kind }
 
 // MusicTable holds the Music tie-in: the music connectors offered to agents
 // as tools, under "agents".

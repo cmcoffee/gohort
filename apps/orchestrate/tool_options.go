@@ -86,7 +86,7 @@ var supersededWorkerTools = []string{
 }
 
 // isSupersededWorkerTool covers the fixed list above plus the per-connector
-// image backends, which can't be listed statically — every approved rest_image
+// image backends, which can't be listed statically — every image backend
 // connector materializes its own generate_image_<name> tool, and `image` now
 // reaches all of them through its `backend` param. Ten connectors used to mean
 // ten near-identical tools in the picker.

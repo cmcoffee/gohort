@@ -246,8 +246,6 @@ const researchTemplates = "Research Sources"
 // each connector (service.TieIns).
 func connectorGroup(conn Connector, research map[string]bool, uses map[string][]string) string {
 	switch conn.Kind {
-	case RestImageConnectorKind:
-		return groupImages
 	case RestMessagingConnectorKind, MessagingBridgeConnectorKind, BotFrameworkConnectorKind:
 		return groupMessages
 	case RestPollConnectorKind:
@@ -443,8 +441,8 @@ func (a *AdminApp) handleConnectorAction(c *jsonapi.Call, body json.RawMessage) 
 		err = UnapproveConnector(RootDB, name)
 	case "update_spec":
 		// SaveConnector re-validates against the kind and, if the connector
-		// is approved, re-materializes so an edit (e.g. a rest_image
-		// backend's default_steps / submit_body) takes effect immediately.
+		// is approved, re-materializes so an edit (e.g. an image
+		// backend's options) takes effect immediately.
 		if !json.Valid(body) {
 			return nil, jsonapi.BadRequest("spec must be valid JSON")
 		}
@@ -498,7 +496,7 @@ func (a *AdminApp) handleConnectorSpec(c *jsonapi.Call) (any, error) {
 	}
 	spec := "{}"
 	if len(conn.Spec) > 0 {
-		// Show a rest_image comfy_workflow as a NESTED object (readable) rather
+		// Show an older image connector's comfy_workflow as a NESTED object (readable) rather
 		// than an escaped string; other kinds just get plain indentation.
 		if nested, ok := nestComfyWorkflow(conn.Spec); ok {
 			spec = string(nested)

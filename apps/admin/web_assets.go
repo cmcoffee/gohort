@@ -291,8 +291,8 @@ window.uiConfigureBackend=function(connector, reload){
 
 // connectorEditSpecAction opens an inline JSON editor for a connector's
 // kind-specific Spec. Generic across every kind (the Spec IS the backend
-// definition) — the immediate use is tuning a rest_image backend (checkpoint /
-// default_steps / submit_body / endpoints) without re-authoring via the Builder.
+// definition) — the immediate use is tuning an image backend (its options:
+// default_steps, prompt_suffix, the workflow) without re-authoring via the Builder.
 // GET the pretty spec, edit, POST it back; the server re-validates against the
 // kind and re-materializes an approved connector so the change takes effect now.
 const connectorEditSpecAction = `function(ctx){
@@ -306,7 +306,7 @@ const connectorEditSpecAction = `function(ctx){
       window.uiOpenSimpleModal({ title: 'Edit spec: ' + name + ' (' + (data.kind||'') + ')', width: '760px', mount: function(body, dlg){
         var note = document.createElement('div');
         note.style.cssText = 'margin:0 0 8px;font-size:12px;opacity:0.75;line-height:1.45;';
-        note.textContent = 'Edit the connector spec as JSON. Saving re-validates it against the connector kind; if the connector is approved it re-materializes immediately (e.g. a rest_image backend picks up a new default_steps / submit_body / checkpoint right away).';
+        note.textContent = 'Edit the connector spec as JSON. Saving re-validates it against the connector kind; if the connector is approved it re-materializes immediately (e.g. an image backend picks up new options right away).';
         var ta = document.createElement('textarea');
         ta.value = data.spec || '{}';
         ta.spellcheck = false;

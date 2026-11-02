@@ -20,17 +20,53 @@ import (
 // tinyPNG is a 1x1 transparent PNG, base64-encoded — a valid decodable payload.
 const tinyPNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
 
+// testImageKind keeps an image backend as its spec, standing in for the
+// service connections (core/service) that keep one outside this package's
+// tests: a connector of it is served, checked and read as one would be.
+const testImageKind = serviceConnectorKind
+
+type testImageHost struct{}
+
+func init() { RegisterConnectorKind(testImageKind, testImageHost{}) }
+
+func (testImageHost) parse(c Connector) (RestImageSpec, error) {
+	var s RestImageSpec
+	err := json.Unmarshal(c.Spec, &s)
+	return s, err
+}
+
+func (h testImageHost) Validate(c Connector) error {
+	s, err := h.parse(c)
+	if err != nil {
+		return err
+	}
+	return s.Validate()
+}
+
+func (testImageHost) Materialize(c Connector) error { c.ServeImageBackend(); return nil }
+func (testImageHost) Teardown(c Connector) error    { c.StopImageBackend(); return nil }
+func (testImageHost) Summary(c Connector) string    { return "" }
+
+func (h testImageHost) ImageSpec(c Connector) (RestImageSpec, bool, error) {
+	s, err := h.parse(c)
+	return s, err == nil, err
+}
+
+func (testImageHost) ImageConnector(s RestImageSpec, send string) (json.RawMessage, error) {
+	return json.Marshal(s)
+}
+
 func decodeSpec(t *testing.T, s RestImageSpec) Connector {
 	t.Helper()
 	raw, err := json.Marshal(s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Connector{Name: "img", Kind: RestImageConnectorKind, Spec: raw}
+	return Connector{Name: "img", Kind: testImageKind, Spec: raw}
 }
 
 func TestRestImageValidate(t *testing.T) {
-	h := restImageHandler{}
+	h := testImageHost{}
 
 	// Missing submit_url.
 	if err := h.Validate(decodeSpec(t, RestImageSpec{ImageB64Path: "images.0"})); err == nil {
@@ -433,7 +469,7 @@ func comfyConnector(t *testing.T, name, baseURL string) Connector {
 	if err != nil {
 		t.Fatalf("build spec: %v", err)
 	}
-	return Connector{Name: name, Kind: RestImageConnectorKind, Spec: json.RawMessage(raw), Approved: true}
+	return Connector{Name: name, Kind: testImageKind, Spec: json.RawMessage(raw), Approved: true}
 }
 
 // Unapproving a connector must take its backend out of the registry, not leave
@@ -443,7 +479,7 @@ func TestTearingDownAConnectorDropsItsBackend(t *testing.T) {
 	c := comfyConnector(t, "comfyui", "http://box:8188")
 	db.Set(connectorsTable, c.Name, c)
 
-	if err := (restImageHandler{}).Materialize(c); err != nil {
+	if err := (testImageHost{}).Materialize(c); err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
 	if !ImageBackendRegistered("comfyui") {
@@ -452,7 +488,7 @@ func TestTearingDownAConnectorDropsItsBackend(t *testing.T) {
 
 	c.Approved = false
 	db.Set(connectorsTable, c.Name, c)
-	if err := (restImageHandler{}).Teardown(c); err != nil {
+	if err := (testImageHost{}).Teardown(c); err != nil {
 		t.Fatalf("teardown: %v", err)
 	}
 	if ImageBackendRegistered("comfyui") {
@@ -468,7 +504,7 @@ func TestASaveReconcilesEveryBackendNotJustItsOwn(t *testing.T) {
 	db := reloadTestDB(t)
 	gone := comfyConnector(t, "old_name", "http://box:8188")
 	db.Set(connectorsTable, gone.Name, gone)
-	if err := (restImageHandler{}).Materialize(gone); err != nil {
+	if err := (testImageHost{}).Materialize(gone); err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
 	if !ImageBackendRegistered("old_name") {
@@ -481,7 +517,7 @@ func TestASaveReconcilesEveryBackendNotJustItsOwn(t *testing.T) {
 	// Saving an UNRELATED connector must still clean it up.
 	other := comfyConnector(t, "new_name", "http://box:8188")
 	db.Set(connectorsTable, other.Name, other)
-	if err := (restImageHandler{}).Materialize(other); err != nil {
+	if err := (testImageHost{}).Materialize(other); err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
 
@@ -504,7 +540,7 @@ func TestTheSweepLeavesForeignBackendsAlone(t *testing.T) {
 
 	c := comfyConnector(t, "comfyui", "http://box:8188")
 	db.Set(connectorsTable, c.Name, c)
-	if err := (restImageHandler{}).Materialize(c); err != nil {
+	if err := (testImageHost{}).Materialize(c); err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
 	if !ImageBackendRegistered("not_a_connector") {
@@ -518,13 +554,13 @@ func TestReSavingRefreshesRatherThanDuplicates(t *testing.T) {
 	db := reloadTestDB(t)
 	c := comfyConnector(t, "comfyui", "http://oldbox:8188")
 	db.Set(connectorsTable, c.Name, c)
-	if err := (restImageHandler{}).Materialize(c); err != nil {
+	if err := (testImageHost{}).Materialize(c); err != nil {
 		t.Fatalf("materialize: %v", err)
 	}
 
 	moved := comfyConnector(t, "comfyui", "http://newbox:9000")
 	db.Set(connectorsTable, moved.Name, moved)
-	if err := (restImageHandler{}).Materialize(moved); err != nil {
+	if err := (testImageHost{}).Materialize(moved); err != nil {
 		t.Fatalf("re-materialize: %v", err)
 	}
 
@@ -542,7 +578,7 @@ func TestReSavingRefreshesRatherThanDuplicates(t *testing.T) {
 	if !ok {
 		t.Fatal("connector missing")
 	}
-	s, err := (restImageHandler{}).parse(stored)
+	s, err := (testImageHost{}).parse(stored)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -585,9 +621,9 @@ func TestInlineBackendIsAnEditorWithoutAnUploadEndpoint(t *testing.T) {
 	if spec.MaxImages() != 1 {
 		t.Errorf("MaxImages = %d, want 1", spec.MaxImages())
 	}
-	c := Connector{Name: "a1111_edit", Kind: RestImageConnectorKind}
+	c := Connector{Name: "a1111_edit", Kind: testImageKind}
 	c.Spec, _ = json.Marshal(spec)
-	if err := (restImageHandler{}).Validate(c); err != nil {
+	if err := (testImageHost{}).Validate(c); err != nil {
 		t.Fatalf("must validate: %v", err)
 	}
 }
@@ -771,7 +807,7 @@ func TestASlowSynchronousRenderIsNotCutOffByTheAPICap(t *testing.T) {
 		MaxInputImages: 1, PollMaxSecs: 30,
 	}
 	raw, _ := json.Marshal(spec)
-	if err := SaveConnector(RootDB, Connector{Name: "slowedit", Kind: RestImageConnectorKind, Spec: raw}); err != nil {
+	if err := SaveConnector(RootDB, Connector{Name: "slowedit", Kind: testImageKind, Spec: raw}); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 	if err := ApproveConnector(RootDB, "slowedit"); err != nil {

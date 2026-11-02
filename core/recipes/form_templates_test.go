@@ -7,46 +7,6 @@ import (
 
 	"github.com/cmcoffee/gohort/core"
 )
-
-// The Automatic1111 forms are templates now, written as data: adding one
-// lands the connector the form would have made, recorded as that form's so
-// Configure on its row still opens the form for the defaults.
-func TestTheAutomatic1111TemplatesMatchTheirForms(t *testing.T) {
-	for _, c := range []struct{ id, form, name, path string }{
-		{"a1111", "a1111", "a1111", "/sdapi/v1/txt2img"},
-		{"a1111-img2img", "a1111_img2img", "a1111_edit", "/sdapi/v1/img2img"},
-	} {
-		db := testDB(t)
-		res, err := Install(db, c.id, "admin", map[string]string{"base_url": "http://192.168.1.20:7860/", "prompt_suffix": "crisp"})
-		if err != nil {
-			t.Fatalf("%s: %v", c.id, err)
-		}
-		if res.Imported != 1 {
-			t.Fatalf("%s: one connector lands: %+v", c.id, res)
-		}
-		conn, ok := core.GetConnector(db, c.name)
-		if !ok || conn.Kind != core.RestImageConnectorKind || conn.Template != c.form || conn.Approved {
-			t.Fatalf("%s: an unapproved image connector recorded as the %s form's: %+v", c.id, c.form, conn)
-		}
-		tpl, ok := core.TemplateForConnector(conn)
-		if !ok || tpl.Name != c.form {
-			t.Errorf("%s: Configure would not open the %s form", c.id, c.form)
-		}
-		// Byte for byte what the form builds from the same answers.
-		want, _, err := tpl.BuildSpec(map[string]any{"base_url": "http://192.168.1.20:7860", "prompt_suffix": "crisp"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		var got, exp core.RestImageSpec
-		json.Unmarshal(conn.Spec, &got)
-		json.Unmarshal(want, &exp)
-		if got.SubmitURL != "http://192.168.1.20:7860"+c.path || got.SubmitURL != exp.SubmitURL || got.SubmitBody != exp.SubmitBody ||
-			got.ImageB64Path != exp.ImageB64Path || got.DefaultSteps != exp.DefaultSteps || got.PromptSuffix != "crisp" || got.Credential != "no_auth" {
-			t.Errorf("%s: the template's connector differs from the form's:\n got %+v\nwant %+v", c.id, got, exp)
-		}
-	}
-}
-
 // The REST call template reaches the form's own strategy through the form
 // helper, because the tool's arguments come from the {placeholders} in the
 // address it is given, which no file can know in advance.

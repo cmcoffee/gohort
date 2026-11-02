@@ -380,8 +380,16 @@ by hand, as below.
 
 - **LLM providers as built-ins** (above), with a plain form per tier. Pre-plan-B
   code is the reference: `git show a6d845ac^:<path>`.
-- **A1111 and peers' renderers as connectors**, A1111's img2img through a
-  builtin if the engine cannot express its inline pictures.
+- **A1111 and peers' renderers as connectors** (built in step 5). A service
+  operation runs the `a1111` builtin, `options.mode` `txt2img` or `img2img`,
+  beside `comfyui`; the image machinery (RestImageSpec) runs both. A plain
+  A1111 stores only its mode and what differs from it; its `--api-auth` login
+  is the connection's key, sent as basic. A peer's renderer is an `a1111`
+  connection under its old name with its own path and body, the peer key
+  kept as its secret for the peer's address and rewritten in place when the
+  key changes; the next sync rewrites one stored as `rest_image`. A peer's
+  renderer is put to use where it is chosen (Image Generation), not on
+  arrival. Builder writes one as a plain `create` of a service.
 
 ### What is kept
 
@@ -544,12 +552,20 @@ once:
    what references it; the in-use gate, Approve and the Settle machinery go
    for connectors, after the call paths are checked; the Changed hold stays;
    the other kinds are listed on their own pages; the Contracts page goes, its
-   text shown in the connector editor.
+   text shown in the connector editor; and pages store their choices as plain
+   names (Q7), the stale highlight catching the prefixed ones until the
+   migration rewrites them.
 7. The cleanup button.
 8. The security acceptance tests and the private repo's branch.
 9. The one migration, from both starting points, written now that the rest is
    final, and its check against a copy of the live database (the embeddings
-   space above all).
+   space above all). For a stored `rest_image` connector:
+   `RestImageSpec.AsService` makes the connection for a ComfyUI or an
+   A1111-shaped one, its vault credential's send carried (`credentialSend`);
+   other shapes (a hosted API polled for its result) had a general
+   translation, `FromRestImage`, taken out in step 5 with the Fix that used
+   it: `git show 0a7e63ec:core/service/translate.go`. Peers' renderers need
+   nothing: the next sync rewrites them.
 
 **After the rework,** each its own branch, with no migration:
 

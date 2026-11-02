@@ -17,36 +17,21 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
-// ForFix is connector name as the two halves: a service's own spec, or an
-// older kind's translated, with notes on what did not carry over.
+// ForFix is connector name as the two halves: a service's own spec.
 func ForFix(name string) (Spec, []string, Connector, error) {
 	c, ok := GetConnector(RootDB, name)
 	if !ok {
 		return Spec{}, nil, c, fmt.Errorf("no connector named %q", name)
 	}
-	switch c.Kind {
-	case Kind:
-		s, err := Parse(c.Spec)
-		return s, nil, c, err
-	case RestImageConnectorKind:
-		s, notes, err := FromRestImage(c)
-		return s, notes, c, err
+	if c.Kind != Kind {
+		return Spec{}, nil, c, fmt.Errorf("a %s connector cannot be fixed here", c.Kind)
 	}
-	return Spec{}, nil, c, fmt.Errorf("a %s connector cannot be fixed here", c.Kind)
+	s, err := Parse(c.Spec)
+	return s, nil, c, err
 }
 
-// Fixable reports whether c opens in a Fix: a service, or an older image
-// backend whose shape translates.
-func Fixable(c Connector) bool {
-	switch c.Kind {
-	case Kind:
-		return true
-	case RestImageConnectorKind:
-		_, _, err := FromRestImage(c)
-		return err == nil
-	}
-	return false
-}
+// Fixable reports whether c opens in a Fix: a service.
+func Fixable(c Connector) bool { return c.Kind == Kind }
 
 // CheckDraft refuses a draft that is not valid, or that changes what the
 // admin decides: its capabilities, their prices, its test budget.

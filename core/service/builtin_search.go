@@ -72,10 +72,10 @@ func SourceGet(ctx context.Context, name, path string) ([]byte, error) {
 // builtin runs the built-in search op names: its requests go to the
 // provider's address through the connector's own governed path, and its
 // results come back as the reply the spec reads, {"results": [...]}. A
-// comfyui op runs its workflow instead (comfyui.go).
+// an image op runs its backend instead (images.go).
 func (t transport) builtin(ctx context.Context, name string, op Operation, vars map[string]any) (reply, error) {
-	if op.Builtin == comfyBuiltin {
-		return t.comfy(name, op, vars)
+	if imageBuiltin(op.Builtin) {
+		return t.renderImage(name, op, vars)
 	}
 	search := builtinSearches[op.Builtin]
 	query, _ := vars["query"].(string)

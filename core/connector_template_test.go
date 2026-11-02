@@ -41,7 +41,7 @@ func TestComfyTemplateBuildAndRead(t *testing.T) {
 		t.Fatalf("BuildSpec: %v", err)
 	}
 	// The built spec is a valid comfyui connector (mapping model).
-	if err := (restImageHandler{}).Validate(Connector{Kind: RestImageConnectorKind, Spec: spec}); err != nil {
+	if err := (testImageHost{}).Validate(Connector{Kind: testImageKind, Spec: spec}); err != nil {
 		t.Fatalf("built spec fails Validate: %v", err)
 	}
 	var s RestImageSpec
@@ -103,7 +103,7 @@ func TestA1111TemplateRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := (restImageHandler{}).Validate(Connector{Kind: RestImageConnectorKind, Spec: spec}); err != nil {
+	if err := (testImageHost{}).Validate(Connector{Kind: testImageKind, Spec: spec}); err != nil {
 		t.Fatalf("a1111 spec invalid: %v", err)
 	}
 	vals := tpl.ReadValues(spec)
@@ -116,29 +116,28 @@ func TestA1111TemplateRoundTrip(t *testing.T) {
 }
 
 func TestTemplateForConnector(t *testing.T) {
-	// Inference fallback (no provenance).
-	comfy := Connector{Kind: RestImageConnectorKind, Spec: json.RawMessage(`{"comfy_workflow":"{}"}`)}
-	if tpl, ok := TemplateForConnector(comfy); !ok || tpl.Name != "comfyui" {
-		t.Errorf("comfy connector → %v %v", tpl.Name, ok)
-	}
-	a1 := Connector{Kind: RestImageConnectorKind, Spec: json.RawMessage(`{"submit_url":"http://x/sdapi/v1/txt2img"}`)}
-	if tpl, ok := TemplateForConnector(a1); !ok || tpl.Name != "a1111" {
-		t.Errorf("a1111 connector → %v %v", tpl.Name, ok)
+	// A connection's template is the one it was made from, and nothing is
+	// guessed from its shape.
+	comfy := Connector{Kind: testImageKind, Spec: json.RawMessage(`{"comfy_workflow":"{}"}`)}
+	if tpl, ok := TemplateForConnector(comfy); ok {
+		t.Errorf("an untagged connection was given template %q", tpl.Name)
 	}
 	if _, ok := TemplateForConnector(Connector{Kind: "remote_mcp"}); ok {
 		t.Error("non-image connector should have no template")
 	}
-	// Stored provenance WINS over inference: shape says comfyui, Template says a1111.
-	tagged := Connector{Kind: RestImageConnectorKind, Template: "a1111", Spec: json.RawMessage(`{"comfy_workflow":"{}"}`)}
+	tagged := Connector{Kind: testImageKind, Template: "a1111", Spec: json.RawMessage(`{"comfy_workflow":"{}"}`)}
 	if tpl, ok := TemplateForConnector(tagged); !ok || tpl.Name != "a1111" {
 		t.Errorf("stored Template should win: got %v %v", tpl.Name, ok)
+	}
+	if _, ok := TemplateForConnector(Connector{Kind: testImageKind, Template: "peer:den"}); ok {
+		t.Error("a peer's renderer is not configured from a template")
 	}
 }
 
 func TestConnectorProvenanceTravels(t *testing.T) {
 	// toPortable carries the template; the portable form round-trips through JSON,
 	// so export→import preserves which template can Configure the connector.
-	pc := toPortable(nil, Connector{Name: "cx", Kind: RestImageConnectorKind, Template: "comfyui", Spec: json.RawMessage(`{}`)})
+	pc := toPortable(nil, Connector{Name: "cx", Kind: testImageKind, Template: "comfyui", Spec: json.RawMessage(`{}`)})
 	if pc.Template != "comfyui" {
 		t.Errorf("toPortable dropped template: %q", pc.Template)
 	}
@@ -160,7 +159,7 @@ func TestDeclarationOnlyBackend(t *testing.T) {
 		Name:     "sdnext_decl_test",
 		Label:    "SD.Next (test)",
 		Category: "Image generation",
-		Kind:     RestImageConnectorKind,
+		Kind:     testImageKind,
 		Strategy: "rest_image_preset",
 		Params:   map[string]string{"preset": "a1111"}, // A1111-compatible API
 		Fields:   []TemplateField{{Key: "base_url", Type: "text"}, {Key: "default_steps", Type: "number"}},
@@ -173,7 +172,7 @@ func TestDeclarationOnlyBackend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("declaration-only BuildSpec failed: %v", err)
 	}
-	if err := (restImageHandler{}).Validate(Connector{Kind: RestImageConnectorKind, Spec: spec}); err != nil {
+	if err := (testImageHost{}).Validate(Connector{Kind: testImageKind, Spec: spec}); err != nil {
 		t.Fatalf("built spec invalid: %v", err)
 	}
 	vals := tpl.ReadValues(spec)

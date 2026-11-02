@@ -3,7 +3,7 @@
 alice GET /api/connectors ""
   403 forbidden
 root GET /api/connectors ""
-  200 [{"name":"ct-art","title":"ct-art","kind":"rest_image","summary":"generate images via http://127.0.0.1:1/sdapi/v1/txt2img (synchronous, credential no_auth) → tool generate_image_ct_art","owner":"roo… (533 bytes, sha1 62e1360f42b52c7333c79d389288be9ee5ab43fa)
+  200 [{"name":"ct-art","title":"ct-art","kind":"service","summary":"Image Generation ⇐ render ⇐ 127.0.0.1:1 (its API login)","owner":"root","approved":false,"last_error":"","template":"a1111","is_image… (837 bytes, sha1 97ceaa6e2e19107f147942b6b586e1f832dae7df)
 root PUT /api/connectors "{}"
   405 method not allowed
 (signed out) GET /api/connectors/spec?name=ct-art ""
@@ -48,10 +48,10 @@ root POST /api/connectors?action=update_spec&name=ct-art ""
   400 spec must be valid JSON
 root POST /api/connectors?action=update_spec&name=ct-nope "{}"
   404 no connector named ct-nope
-root POST /api/connectors?action=update_spec&name=ct-art "{\"credential\":\"no_auth\",\"submit_url\":\"http://127.0.0.1:2/sdapi/v1/txt2img\",\"submit_method\":\"POST\",\"submit_body\":\"{\\\"prompt\\\":\\\"{prompt}\\\",\\\"negative_prompt\\\":\\\"{negative}\\\",\\\"width\\\":{width},\\\"height\\\":{height},\\\"steps\\\":{steps},\\\"seed\\\":{seed}}\",\"image_b64_path\":\"images.0\",\"default_width\":512,\"default_height\":512,\"default_steps\":20,\"comfy_map\":{}}"
+root POST /api/connectors?action=update_spec&name=ct-art "{\"config\":[{\"name\":\"api_key\",\"label\":\"API login\",\"help\":\"Only for a server started with --api-auth: its user:password. A local one takes none.\",\"type\":\"secret\",\"send\":\"basic\"}],\"provider\":{\"transport\":\"http\",\"base_url\":\"http://127.0.0.1:2\",\"auth\":{\"secret\":\"api_key\"},\"operations\":{\"render\":{\"builtin\":\"a1111\",\"options\":{\"mode\":\"txt2img\"}}}},\"provides\":[{\"capability\":\"image.generate\",\"steps\":[{\"call\":\"render\"}],\"output\":{\"image\":{\"from\":\"body\"}}}]}"
   204 
 root GET /api/connectors ""
-  200 [{"name":"ct-art","title":"ct-art","kind":"rest_image","summary":"generate images via http://127.0.0.1:2/sdapi/v1/txt2img (synchronous, credential no_auth) → tool generate_image_ct_art","owner":"roo… (533 bytes, sha1 30a53c5001bee1ad62e63cdab35e138d5a762bb5)
+  200 [{"name":"ct-art","title":"ct-art","kind":"service","summary":"Image Generation ⇐ render ⇐ 127.0.0.1:2 (its API login)","owner":"root","approved":false,"last_error":"","template":"a1111","is_image… (837 bytes, sha1 130d205dd6a425662af89f5531ac981e2e12a7c4)
 root GET /api/connectors/spec?name=ct-nope ""
   404 no connector named ct-nope
 alice POST /api/research-sources "{\"connector\":\"ct-find\",\"topics\":[\"legal\"]}"

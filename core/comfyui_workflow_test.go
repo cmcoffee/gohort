@@ -389,9 +389,9 @@ func TestQwenEditIsAnEditor(t *testing.T) {
 	if got := ComfyWorkflowTypeOf(spec.ComfyMap); got != ComfyTypeEdit {
 		t.Errorf("workflow type = %q, want edit — it takes a photo AND a prompt", got)
 	}
-	c := Connector{Name: "qwen_edit", Kind: RestImageConnectorKind}
+	c := Connector{Name: "qwen_edit", Kind: testImageKind}
 	c.Spec, _ = json.Marshal(spec)
-	if err := (restImageHandler{}).Validate(c); err != nil {
+	if err := (testImageHost{}).Validate(c); err != nil {
 		t.Fatalf("a real edit backend must validate: %v", err)
 	}
 }
@@ -484,9 +484,9 @@ func TestMappingOntoADrivenInputIsRejected(t *testing.T) {
 	}
 
 	spec.ComfyMap.StepsNodes = []string{"170:169"} // the KSampler, by hand
-	c := Connector{Name: "qwen_edit", Kind: RestImageConnectorKind}
+	c := Connector{Name: "qwen_edit", Kind: testImageKind}
 	c.Spec, _ = json.Marshal(spec)
-	err = (restImageHandler{}).Validate(c)
+	err = (testImageHost{}).Validate(c)
 	if err == nil {
 		t.Fatal("mapping onto a graph-driven input must be rejected, not silently ignored")
 	}
@@ -504,9 +504,9 @@ func TestMappingOntoALiteralInputIsFine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewComfyImageSpec: %v", err)
 	}
-	c := Connector{Name: "txt", Kind: RestImageConnectorKind}
+	c := Connector{Name: "txt", Kind: testImageKind}
 	c.Spec, _ = json.Marshal(spec)
-	if err := (restImageHandler{}).Validate(c); err != nil {
+	if err := (testImageHost{}).Validate(c); err != nil {
 		t.Fatalf("a plain txt2img graph must validate: %v", err)
 	}
 }
@@ -554,9 +554,9 @@ func TestQwenBlendWorkflowTakesTwoImages(t *testing.T) {
 		}
 	}
 
-	c := Connector{Name: "qwen_blend", Kind: RestImageConnectorKind}
+	c := Connector{Name: "qwen_blend", Kind: testImageKind}
 	c.Spec, _ = json.Marshal(spec)
-	if err := (restImageHandler{}).Validate(c); err != nil {
+	if err := (testImageHost{}).Validate(c); err != nil {
 		t.Fatalf("must validate: %v", err)
 	}
 }
@@ -1380,9 +1380,9 @@ func TestBlendGraphValidatesAndRuns(t *testing.T) {
 		t.Fatalf("NewComfyImageSpec: %v", err)
 	}
 	// prompt_nodes is empty — Validate must not insist on it for an image graph.
-	c := Connector{Name: "blend", Kind: RestImageConnectorKind}
+	c := Connector{Name: "blend", Kind: testImageKind}
 	c.Spec, _ = json.Marshal(spec)
-	if err := (restImageHandler{}).Validate(c); err != nil {
+	if err := (testImageHost{}).Validate(c); err != nil {
 		t.Fatalf("a promptless blend backend must validate: %v", err)
 	}
 	if !spec.SupportsImageInput() {

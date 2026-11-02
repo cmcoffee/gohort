@@ -13,11 +13,10 @@ import (
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
-// An older image backend opens in Fix as a service spec, and saving it from
-// the Fix converts it into a service connector, off until approved again.
-// The assistant is told the grammar, the contract and the rules, and its
-// check refuses a draft that changes a price.
-func TestFixingAnOlderImageBackendConvertsIt(t *testing.T) {
+// An image backend kept as a connection (A1111) opens in Fix as its own
+// spec. The assistant is told the grammar, the contract and the rules, and
+// its check refuses a draft that changes a price.
+func TestFixingAnImageConnection(t *testing.T) {
 	saved := RootDB
 	RootDB = &DBase{Store: kvlite.MemStore()}
 	t.Cleanup(func() { RootDB = saved })
@@ -31,24 +30,27 @@ func TestFixingAnOlderImageBackendConvertsIt(t *testing.T) {
 		return w
 	}
 
-	old, err := ApplyRestImagePreset("a1111", RestImageSpec{Credential: "no_auth"}, map[string]string{"base_url": "http://sd.lan.test:7860"})
+	old, err := ApplyRestImagePreset("a1111", RestImageSpec{}, map[string]string{"base_url": "http://sd.lan.test:7860"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := json.Marshal(old)
-	if err := SaveConnector(RootDB, Connector{Name: "sd", Kind: RestImageConnectorKind, Spec: raw}); err != nil {
+	kind, raw, err := old.AsService("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveConnector(RootDB, Connector{Name: "sd", Kind: kind, Spec: raw}); err != nil {
 		t.Fatal(err)
 	}
 	ApproveConnector(RootDB, "sd")
 	conn, _ := GetConnector(RootDB, "sd")
 	if !service.Fixable(conn) {
-		t.Fatal("an A1111 backend is not offered a Fix")
+		t.Fatal("an A1111 connection is not offered a Fix")
 	}
 
 	w := call("GET", "/api/connectors/fix-form?name=sd", "")
 	var form struct{ Spec, Note string }
 	json.Unmarshal(w.Body.Bytes(), &form)
-	if w.Code != 200 || !strings.Contains(form.Spec, `"capability": "image.generate"`) || !strings.Contains(form.Note, "converts it") {
+	if w.Code != 200 || !strings.Contains(form.Spec, `"capability": "image.generate"`) || !strings.Contains(form.Spec, `"builtin": "a1111"`) {
 		t.Fatalf("fix form: %d %s", w.Code, w.Body.String())
 	}
 

@@ -193,19 +193,16 @@ func imageBackendToolbarActions() []ui.ToolbarAction {
 }
 
 // configurableImage is an image backend Configure backend… opens: a
-// rest_image connector, or a connection an image template made (a ComfyUI
-// backend kept as a service), whose form is that template's.
+// connection an image template made (ComfyUI, A1111), whose form is that
+// template's.
 func configurableImage(c Connector) bool {
-	if c.Kind == RestImageConnectorKind {
-		return true
-	}
 	t, ok := TemplateForConnector(c)
 	return ok && t.Category == "Image generation"
 }
 
 // imageFormFields builds the Image Generation settings: the connector that
-// makes pictures, chosen from every approved one that does (a rest_image
-// backend that generates, or a service giving image.generate), or Disabled.
+// makes pictures, chosen from every one that does (a service giving
+// image.generate or image.edit, or a peer's renderer), or Disabled.
 // A new connector appears here with no edit.
 func imageFormFields() []ui.FormField {
 	var opts []ui.SelectOption
