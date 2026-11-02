@@ -576,11 +576,11 @@ func TestATemplateInstallsAConnection(t *testing.T) {
 			t.Fatalf("%s: %v", name, err)
 		}
 	}
-	// Each is shown as its template is, the second told apart by its name;
-	// two cannot be shown alike. Each keeps its own address.
+	// Each is shown as its template is, the second numbered; two cannot be
+	// shown alike. Each keeps its own address.
 	a, _ := GetConnector(RootDB, "embed-a")
 	b, _ := GetConnector(RootDB, "embed-b")
-	if a.Title() != title || b.Title() != title+" (embed-b)" {
+	if a.Title() != title || b.Title() != title+" 2" {
 		t.Errorf("shown as %q and %q", a.Title(), b.Title())
 	}
 	if err := SetConnectorDisplayName(RootDB, "embed-b", strings.ToLower(title)); err == nil {

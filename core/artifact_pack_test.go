@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // fakeArtifact is a registry-only ArtifactType backed by an in-memory map, so
@@ -823,5 +825,59 @@ func TestAnImportReportsWhatIsLeftToDo(t *testing.T) {
 	}
 	if !strings.Contains(res.Summary(), "What is left to do") {
 		t.Errorf("summary: %s", res.Summary())
+	}
+}
+
+// A connector imported where a different one has its name lands numbered,
+// and the preview and the outcome both say so; the same connector (its
+// spec spaced and ordered otherwise) is a skip, as before.
+func TestAConnectorImportedOverADifferentOneIsNumbered(t *testing.T) {
+	RegisterConnectorKind("test_auto_import", stubAutoConnector{})
+	db := &DBase{Store: kvlite.MemStore()}
+	spec := `{"base_url":"https://a.example.test","auth":{"none":true},"path":"/q"}`
+	if err := importConnector(db, PortableConnector{Name: "finder", Kind: "test_auto_import", Spec: json.RawMessage(spec)}, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	bundle := func(spec string) []byte {
+		data, _ := json.Marshal(ArtifactBundle{Bundle: "gohort.bundle/v1", Artifacts: []PortableArtifact{
+			{Type: "connector", Name: "finder", Recipe: json.RawMessage(`{"name":"finder","kind":"test_auto_import","spec":` + spec + `}`)}}})
+		return data
+	}
+	same := `{"path": "/q", "auth": {"none": true}, "base_url": "https://a.example.test"}`
+	if pre, _ := PreviewArtifactBundle(db, bundle(same), "admin"); pre.WouldSkip != 1 {
+		t.Errorf("the same connector previews as a skip: %+v", pre.Items)
+	}
+	if res, _ := ImportArtifactBundle(db, bundle(same), "admin"); res.Skipped != 1 {
+		t.Errorf("the same connector is a skip: %+v", res.Outcomes)
+	}
+
+	other := strings.Replace(spec, "a.example.test", "b.example.test", 1)
+	pre, _ := PreviewArtifactBundle(db, bundle(other), "admin")
+	if pre.WouldImport != 1 || pre.Items[0].Detail != "added as finder-2: a different connector here is named finder" {
+		t.Errorf("preview: %+v", pre.Items)
+	}
+	res, _ := ImportArtifactBundle(db, bundle(other), "admin")
+	if res.Imported != 1 || res.Outcomes[0].Name != "finder-2" || len(res.Outcomes[0].Warnings) != 1 || res.Outcomes[0].Warnings[0] != pre.Items[0].Detail {
+		t.Fatalf("import: %+v", res.Outcomes)
+	}
+	if c, _ := GetConnector(db, "finder"); !strings.Contains(string(c.Spec), "a.example.test") {
+		t.Error("the connector already here was changed")
+	}
+	if c, ok := GetConnector(db, "finder-2"); !ok || !strings.Contains(string(c.Spec), "b.example.test") {
+		t.Errorf("the import landed as: %+v", c)
+	}
+	if res, _ := ImportArtifactBundle(db, bundle(other), "admin"); res.Skipped != 1 || res.Outcomes[0].Name != "finder-2" {
+		t.Errorf("imported again, it is found under its number: %+v", res.Outcomes)
+	}
+	third := strings.Replace(spec, "a.example.test", "c.example.test", 1)
+	if res, _ := ImportArtifactBundle(db, bundle(third), "admin"); res.Outcomes[0].Name != "finder-3" {
+		t.Errorf("a third: %+v", res.Outcomes)
+	}
+	// The same spec of another kind is a different connector.
+	RegisterConnectorKind("test_auto_import_b", stubAutoConnector{})
+	data, _ := json.Marshal(ArtifactBundle{Bundle: "gohort.bundle/v1", Artifacts: []PortableArtifact{
+		{Type: "connector", Name: "finder", Recipe: json.RawMessage(`{"name":"finder","kind":"test_auto_import_b","spec":` + spec + `}`)}}})
+	if res, _ := ImportArtifactBundle(db, data, "admin"); res.Imported != 1 || res.Outcomes[0].Name != "finder-4" {
+		t.Errorf("another kind: %+v", res.Outcomes)
 	}
 }

@@ -53,7 +53,7 @@ root POST /api/templates/import ""
 root GET /api/templates ""
   200 [{"id":"ct-echo","kind":"template","title":"Echo a greeting","category":"Tools","description":"A shell tool that echoes what it was set up with.","contains":"ct_echo (tool)","source":"imported","_reci… (455 bytes, sha1 d23990ca961d2bf56c2b6de3a3ada235eba0c531)
 root GET /api/templates/recipe?id=ct-echo ""
-  200 {"contains":["ct_echo (tool)"],"description":"A shell tool that echoes what it was set up with.","destinations":{},"id":"ct-echo","questions":[{"name":"greeting","label":"Greeting","required":true}],"setup_notes":"","source":"imported","title":"Echo a greeting"}
+  200 {"contains":["ct_echo (tool)"],"description":"A shell tool that echoes what it was set up with.","destinations":{},"id":"ct-echo","names_connector":"","questions":[{"name":"greeting","label":"Greeting","required":true}],"setup_notes":"","source":"imported","title":"Echo a greeting"}
 root GET /api/templates/recipe?id=nope ""
   404 no such template
 root GET /api/templates/export?id=ct-echo ""
@@ -89,7 +89,7 @@ root POST /api/templates/save "{\"id\":\"system-info\",\"title\":\"Clash\",\"pie
 root POST /api/templates/save "{\"title\":"
   400 invalid JSON: unexpected EOF
 root GET /api/templates/recipe?id=saved-echo ""
-  200 {"contains":["ct_echo (tool)"],"description":"","destinations":{},"id":"saved-echo","questions":[{"name":"greeting","label":"greeting"}],"setup_notes":"","source":"imported","title":"Saved Echo!"}
+  200 {"contains":["ct_echo (tool)"],"description":"","destinations":{},"id":"saved-echo","names_connector":"","questions":[{"name":"greeting","label":"greeting"}],"setup_notes":"","source":"imported","title":"Saved Echo!"}
 root POST /api/templates/delete?id=system-info ""
   400 built-in templates cannot be deleted
 root POST /api/templates/delete?id=nope ""

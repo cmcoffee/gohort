@@ -20,6 +20,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -27,6 +28,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"reflect"
 	"regexp"
 	"slices"
 	"sort"
@@ -397,16 +399,49 @@ func SetConnectorDisplayName(db Database, name, display string) error {
 	return nil
 }
 
-// FreeDisplayName is display, or it with the connector's name after it when
-// another connector is shown as display already.
+// FreeDisplayName is display, or, when another connector is shown as it
+// already, display numbered: "Serper 2", "Serper 3". A connector's name is
+// its handle inside gohort, never shown to tell two apart.
 func FreeDisplayName(db Database, name, display string) string {
 	display = strings.TrimSpace(display)
-	for _, o := range ListConnectors(db) {
-		if o.Name != name && strings.EqualFold(o.Title(), display) {
-			return display + " (" + name + ")"
+	taken := func(d string) bool {
+		for _, o := range ListConnectors(db) {
+			if o.Name != name && strings.EqualFold(o.Title(), d) {
+				return true
+			}
 		}
+		return false
 	}
-	return display
+	free := display
+	for n := 2; taken(free); n++ {
+		free = fmt.Sprintf("%s %d", display, n)
+	}
+	return free
+}
+
+// FreeConnectorName is name, or, when a connector has it already, name
+// numbered past every one taken: "serper-search-2", "serper-search-3".
+func FreeConnectorName(db Database, name string) string {
+	free := name
+	for n := 2; ; n++ {
+		if _, taken := GetConnector(db, free); !taken {
+			return free
+		}
+		free = fmt.Sprintf("%s-%d", name, n)
+	}
+}
+
+// SameConnector reports whether pc is c as it is stored: the same kind and
+// the same spec, however its JSON is spaced or ordered.
+func SameConnector(c Connector, pc PortableConnector) bool {
+	if c.Kind != strings.TrimSpace(pc.Kind) {
+		return false
+	}
+	var a, b any
+	if json.Unmarshal(c.Spec, &a) != nil || json.Unmarshal(pc.Spec, &b) != nil {
+		return bytes.Equal(c.Spec, pc.Spec)
+	}
+	return reflect.DeepEqual(a, b)
 }
 
 // ReloadApprovedConnectors re-materializes every served connector

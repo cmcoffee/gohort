@@ -119,7 +119,7 @@ func TestBuilderDraftsAServiceConnector(t *testing.T) {
 	if _, err := connectorCreate(map[string]any{"kind": "service", "name": "acme-three", "display_name": "acme images", "service_spec": spec}, sess); err != nil {
 		t.Fatal(err)
 	}
-	if c3, _ := GetConnector(RootDB, "acme-three"); c3.Title() != "acme images (acme-three)" {
+	if c3, _ := GetConnector(RootDB, "acme-three"); c3.Title() != "acme images 2" {
 		t.Errorf("a second one shown as the first is: %q", c3.Title())
 	}
 	bad := spec

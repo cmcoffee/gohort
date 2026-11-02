@@ -596,7 +596,7 @@ func TestAConnectionTravelsWithItsSettings(t *testing.T) {
 	if _, has := GetConnectionSecret(RootDB, got, "api_key"); has {
 		t.Error("a key arrived with the import")
 	}
-	if got.Title() != "Finder (finder)" {
+	if got.Title() != "Finder 2" {
 		t.Errorf("shown as %q beside another shown as Finder", got.Title())
 	}
 }

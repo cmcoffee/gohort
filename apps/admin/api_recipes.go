@@ -215,7 +215,10 @@ func (a *AdminApp) handleTemplateRecipe(c *jsonapi.Call) (any, error) {
 	}
 	return map[string]any{"id": rec.ID, "title": rec.Title, "description": rec.Description,
 		"setup_notes": rec.SetupNotes, "questions": rec.Questions, "contains": contains, "source": src,
-		"destinations": dest}, nil
+		// The question naming the connector it makes is not asked: gohort
+		// names it (recipes.Install), and the dialog asks what it is shown as.
+		"names_connector": recipes.ConnectorNameQuestion(rec),
+		"destinations":    dest}, nil
 }
 
 // handleTemplateInstall adds the ?id= template with the answers given.

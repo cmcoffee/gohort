@@ -600,7 +600,18 @@ const templateInstallAction = `function(ctx){
         if (rec.setup_notes) note(rec.setup_notes);
         if ((rec.contains || []).length) note('Adds: ' + rec.contains.join(', ') + '. Everything lands as a draft for review.');
         var inputs = {};
+        // The connector's name is gohort's to make; what people see it as
+        // is asked instead, the template's title to start.
+        if (rec.names_connector) {
+          body.appendChild(el('div', {style: 'font-weight:600;font-size:var(--fs-sm, 0.85rem);margin:0.6rem 0 0.2rem'}, ['Shown as']));
+          var shown = el('input', {class: 'ui-input', type: 'text', autocomplete: 'off', style: 'width:100%;box-sizing:border-box'});
+          shown.value = rec.title || '';
+          body.appendChild(shown);
+          body.appendChild(el('div', {style: 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);margin-top:0.15rem', text: 'What the pages that offer it, and its row, show it as.'}));
+          inputs._shown_as = shown;
+        }
         (rec.questions || []).forEach(function(q){
+          if (rec.names_connector && q.name === rec.names_connector) return;
           var lab = el('div', {style: 'font-weight:600;font-size:var(--fs-sm, 0.85rem);margin:0.6rem 0 0.2rem'}, [q.label + (q.required ? ' *' : '')]);
           body.appendChild(lab);
           var inp;

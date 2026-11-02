@@ -105,9 +105,17 @@ type ArtifactType interface {
 // artifactImportWarner is an OPTIONAL interface an ArtifactType implements
 // when an import can bring something it does not keep (a connector's
 // setting its spec does not take): what was left out, and why, shown on the
-// outcome.
+// outcome. name is what the artifact landed as.
 type artifactImportWarner interface {
-	ImportWarnings(db Database, recipe json.RawMessage) []string
+	ImportWarnings(db Database, recipe json.RawMessage, name string) []string
+}
+
+// artifactImportNamer is an OPTIONAL interface an ArtifactType implements
+// when an import that meets a different artifact of its name lands under
+// another name rather than skipping: ImportName is the name recipe would
+// land as, for the preview to say what the import does.
+type artifactImportNamer interface {
+	ImportName(db Database, recipe json.RawMessage) string
 }
 
 // ArtifactDependencies is an OPTIONAL interface an ArtifactType implements when
@@ -1039,7 +1047,7 @@ func importArtifactBundle(db Database, data []byte, owner string, userOnly bool)
 		default:
 			out := ArtifactImportOutcome{Type: typ, Name: name, Status: "imported"}
 			if w, ok := at.(artifactImportWarner); ok {
-				out.Warnings = w.ImportWarnings(db, a.Recipe)
+				out.Warnings = w.ImportWarnings(db, a.Recipe, name)
 				res.Warnings = append(res.Warnings, out.Warnings...)
 			}
 			res.Outcomes = append(res.Outcomes, out)
@@ -1189,6 +1197,10 @@ func previewArtifactBundle(db Database, data []byte, owner string, userOnly bool
 		name := artifactRecipeName(a)
 		item := ArtifactPreviewItem{Type: typ, Name: name}
 		at, known := lookupArtifactType(typ)
+		landsAs := name
+		if n, ok := at.(artifactImportNamer); ok && known && name != "" {
+			landsAs = n.ImportName(db, a.Recipe)
+		}
 		switch {
 		case !known:
 			item.Action, item.Detail = "skip", "unknown artifact type"
@@ -1198,10 +1210,13 @@ func previewArtifactBundle(db Database, data []byte, owner string, userOnly bool
 			item.Action, item.Detail = "skip", "missing artifact name"
 		case importRefused(at, name) != "":
 			item.Action, item.Detail = "skip", importRefused(at, name)
-		case artifactExists(db, ArtifactSel{Type: typ, Name: name, Owner: owner}):
+		case artifactExists(db, ArtifactSel{Type: typ, Name: landsAs, Owner: owner}):
 			item.Action, item.Detail = "skip", "an artifact with this name already exists on this install"
 		default:
 			item.Action = "import"
+			if landsAs != name {
+				item.Detail = renamedOnImport(name, landsAs)
+			}
 			// Unmet references, mirroring warnMissingDependencies: only for
 			// artifacts that would import, satisfied by the bundle or the
 			// install, one shared message shape.

@@ -9,7 +9,7 @@
       "name": "name",
       "label": "Connector name",
       "help": "Lowercase letters, digits, dashes and underscores; the speech settings list it by this name.",
-      "default": "local-speech-2"
+      "default": "local-speech"
     }
   ],
   "bundle": {

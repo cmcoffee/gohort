@@ -9,7 +9,7 @@
       "name": "name",
       "label": "Connector name",
       "help": "Lowercase letters, digits, dashes and underscores; the embeddings settings list it by this name.",
-      "default": "local-embeddings-2"
+      "default": "local-embeddings"
     }
   ],
   "bundle": {

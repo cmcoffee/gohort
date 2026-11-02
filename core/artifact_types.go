@@ -133,24 +133,71 @@ func (connectorArtifact) ImportArtifact(db Database, recipe json.RawMessage, own
 	if name == "" {
 		return "", "", Error("missing connector name")
 	}
-	if _, exists := GetConnector(db, name); exists {
-		return name, "a connector with this name already exists", nil
+	landed, here := connectorImportName(db, pc)
+	if here {
+		return landed, "a connector with this name already exists", nil
 	}
+	pc.Name = landed
 	if err := importConnector(db, pc, owner); err != nil {
-		return name, "", err
+		return pc.Name, "", err
 	}
-	return name, "", nil
+	return pc.Name, "", nil
+}
+
+// ImportName is the name the connector recipe lands under (connectorImportName).
+func (connectorArtifact) ImportName(db Database, recipe json.RawMessage) string {
+	var pc PortableConnector
+	if json.Unmarshal(recipe, &pc) != nil {
+		return ""
+	}
+	name, _ := connectorImportName(db, pc)
+	return name
+}
+
+// connectorImportName is the name pc lands under, and whether it is here
+// already: its own when that is free, or the one of its name or numbered
+// after it ("finder", "finder-2", …) that is the same connector (kind and
+// spec), so a bundle imported again skips; else its name numbered past
+// every one taken, so an import never stands in for a different connector
+// that was here already. Nothing else a bundle carries names a connector (a
+// research source is reached by its own tool name), so a numbered one
+// breaks no reference.
+func connectorImportName(db Database, pc PortableConnector) (string, bool) {
+	name := strings.TrimSpace(pc.Name)
+	try := name
+	for n := 2; ; n++ {
+		c, exists := GetConnector(db, try)
+		if !exists {
+			return try, false
+		}
+		if SameConnector(c, pc) {
+			return try, true
+		}
+		try = fmt.Sprintf("%s-%d", name, n)
+	}
 }
 
 // ImportWarnings say what an imported connector left out of the settings
-// it brought, and why: asked of the same check its import made.
-func (connectorArtifact) ImportWarnings(db Database, recipe json.RawMessage) []string {
+// it brought, and why: asked of the same check its import made. One that
+// landed under another name says so.
+func (connectorArtifact) ImportWarnings(db Database, recipe json.RawMessage, name string) []string {
 	var pc PortableConnector
 	if json.Unmarshal(recipe, &pc) != nil {
 		return nil
 	}
+	var out []string
+	if was := strings.TrimSpace(pc.Name); name != was {
+		out = append(out, renamedOnImport(was, name))
+	}
+	pc.Name = name
 	_, dropped := importedSettings(db, pc)
-	return dropped
+	return append(out, dropped...)
+}
+
+// renamedOnImport is what a connector that landed as name, not as was,
+// says about it.
+func renamedOnImport(was, name string) string {
+	return fmt.Sprintf("added as %s: a different connector here is named %s", name, was)
 }
 
 // ---- tool ------------------------------------------------------------------

@@ -452,7 +452,6 @@ func templateSaveButton() ui.ModalButton {
 func connectorColumns() []ui.Col {
 	return []ui.Col{
 		{Field: "title", Label: "Name", Flex: 2},
-		{Field: "name", Label: "Id", Mute: true},
 		{Field: "kind", Label: "Type", Mute: true},
 		{Field: "owner", Label: "Drafted by", Mute: true},
 		{

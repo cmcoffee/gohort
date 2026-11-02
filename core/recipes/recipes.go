@@ -513,6 +513,52 @@ func Fill(r Recipe, answers map[string]string) (core.ArtifactBundle, Secrets, []
 	return out, secrets, warnings, nil
 }
 
+// ShownAs is the answer naming, for people, the connector a template makes:
+// what its row and the pages that offer it show. Blank shows the template's
+// title.
+const ShownAs = "_shown_as"
+
+// ConnectorNameQuestion is the question whose answer names the connector a
+// template makes, {{question}} in the connector's name, or "" when none
+// does. The name is gohort's handle for it, never asked of a person: left
+// blank, Install makes one (namedFreely).
+func ConnectorNameQuestion(r Recipe) string {
+	for _, a := range r.Bundle.Artifacts {
+		if a.Type != "connector" {
+			continue
+		}
+		if q, ok := strings.CutPrefix(a.Name, "{{"); ok {
+			if q, ok := strings.CutSuffix(q, "}}"); ok && !strings.ContainsAny(q, "{}.") {
+				return q
+			}
+		}
+	}
+	return ""
+}
+
+// namedFreely is answers with the connector's name made when it is blank:
+// the question's default (else the template's id), numbered past any
+// connector already named so ("serper-search", "serper-search-2"), so a
+// template added again adds another rather than finding the name taken.
+func namedFreely(db core.Database, r Recipe, answers map[string]string) map[string]string {
+	q := ConnectorNameQuestion(r)
+	if q == "" || strings.TrimSpace(answers[q]) != "" {
+		return answers
+	}
+	base := r.ID
+	for _, question := range r.Questions {
+		if question.Name == q && strings.TrimSpace(question.Default) != "" {
+			base = strings.TrimSpace(question.Default)
+		}
+	}
+	out := make(map[string]string, len(answers)+1)
+	for k, v := range answers {
+		out[k] = v
+	}
+	out[q] = core.FreeConnectorName(db, base)
+	return out
+}
+
 // Install adds a template: fills the answers in, imports the pieces as
 // drafts owned by owner, and writes each secret answer into its credential,
 // which stays disabled until the admin tests and enables it. A credential
@@ -522,6 +568,7 @@ func Install(db core.Database, id, owner string, answers map[string]string) (cor
 	if !ok {
 		return core.ArtifactImportResult{}, fmt.Errorf("no template %q", id)
 	}
+	answers = namedFreely(db, r, answers)
 	bundle, secrets, warnings, err := Fill(r, answers)
 	if err != nil {
 		return core.ArtifactImportResult{}, err
@@ -570,14 +617,18 @@ func Install(db core.Database, id, owner string, answers map[string]string) (cor
 			res.Warnings = append(res.Warnings, fmt.Sprintf("the secret for %q could not be stored: %v", cred, err))
 		}
 	}
-	// A connector it made is shown as the template is, told apart from
-	// another made from it by its name.
+	// A connector it made is shown as asked (ShownAs), else as the template
+	// is, numbered apart from another shown the same.
+	shown := strings.TrimSpace(answers[ShownAs])
+	if shown == "" {
+		shown = r.Title
+	}
 	for _, o := range res.Outcomes {
 		if o.Type != "connector" || o.Status != "imported" {
 			continue
 		}
 		if c, ok := core.GetConnector(db, o.Name); ok && strings.TrimSpace(c.DisplayName) == "" {
-			core.SetConnectorDisplayName(db, o.Name, core.FreeDisplayName(db, o.Name, r.Title))
+			core.SetConnectorDisplayName(db, o.Name, core.FreeDisplayName(db, o.Name, shown))
 		}
 	}
 	core.Log("[recipes] %s added template %q: %d imported, %d skipped", owner, id, res.Imported, res.Skipped)
