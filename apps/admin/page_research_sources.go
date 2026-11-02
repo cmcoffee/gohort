@@ -9,8 +9,8 @@ import (
 func (a *AdminApp) researchSourcesSections() []ui.Section {
 	return []ui.Section{{
 		Title:    "Research Sources",
-		Subtitle: "Search connectors that research asks on its topics, and that agents can ask through query_source.",
-		Detail: "A source is a search connector referenced here: research asks it on the topics you give, or on every run, and given a tool name, agents see it under Available sources and ask it with query_source. A skill may also grant it as a tool of its own by that name. Its answers are kept in a cache, so the same or a near query is not asked twice.\n\n" +
+		Subtitle: "Search connectors that research asks on its topics, and that agents can be given as tools.",
+		Detail: "A source is a search connector referenced here: research asks it on the topics you give, or on every run, and given a tool name, it is a tool agents have by that name, listed under Research sources in each agent's tools, where it can be taken off an agent. A skill may also grant it by that name. Its answers are kept in a cache, so the same or a near query is not asked twice.\n\n" +
 			"A source turned off is not asked. The connector itself, how the service is reached and how its results are read, stays under Connectors, where it is tested and fixed. Templates has research sources ready to add: PubMed, OpenAlex, SEC EDGAR, Europe PMC, Semantic Scholar, CORE, CourtListener and Westlaw.\n\n" +
 			"The connector Web Search is set to is not asked here as well: it already answers web_search.",
 		Body: ui.Stack{Children: []ui.Component{
@@ -72,7 +72,7 @@ func researchSourceFields(editing bool) []ui.FormField {
 			Help: "The research topics it is asked on."},
 		{Field: "always", Label: "Ask on every research run", Type: "toggle"},
 		{Field: "offer", Label: "Offer to agents", Type: "toggle",
-			Help: "Agents see it under Available sources and ask it with query_source."},
+			Help: "It becomes a tool agents have, by the name below: listed under Research sources in each agent's tools, where it can be taken off an agent."},
 		{Field: "tool_name", Label: "Name agents know it by", Placeholder: "pubmed_search", ShowWhen: "offer",
 			Help: "Lowercase letters, digits and _. A skill grants it as a tool of its own by this name."},
 		{Field: "tool_description", Label: "When agents should ask it", Type: "textarea", Rows: 3, ShowWhen: "offer",

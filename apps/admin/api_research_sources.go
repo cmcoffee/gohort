@@ -3,9 +3,9 @@ package admin
 // Research Sources: the tie-in that puts search connectors to use for
 // research and for agents. A source is a search connector, the topics
 // research asks it on (or always), and, when it is offered to agents, the
-// name and description query_source shows for it. Adding one that is on
-// puts its connector to use; the connector itself stays how the service is
-// reached and read, under Connectors.
+// tool name and description agents see. Adding one references its
+// connector; the connector itself stays how the service is reached and
+// read, under Connectors.
 
 import (
 	"net/http"

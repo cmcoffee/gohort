@@ -1,8 +1,8 @@
 package service
 
 // A search connector (web.search) is referenced beyond Web Search as a
-// research source: research asks it on its topics, and agents through
-// query_source, as Source Hooks were asked. Which connectors, on what, is
+// research source: research asks it on its topics, and agents through a
+// tool of its own, as Source Hooks were asked. Which connectors, on what, is
 // the Research Sources tie-in, kept here; the connector stays how a service
 // is reached and read. Research reaches a source through core/sourcehooks'
 // seams.
@@ -27,7 +27,7 @@ func init() {
 
 // ResearchSourcesTable holds the Research Sources tie-in: which search
 // connectors research asks, on which topics, and which are offered to
-// agents through query_source. The connector itself stays how a service is
+// agents as tools. The connector itself stays how a service is
 // reached and read; how gohort uses it for research is set here.
 const ResearchSourcesTable = "research_sources"
 
@@ -38,9 +38,9 @@ type ResearchSource struct {
 	// Always asks it on every research run.
 	Topics []string `json:"topics,omitempty"`
 	Always bool     `json:"always,omitempty"`
-	// ToolName, when set, offers it to agents through query_source under
-	// that name, with ToolDescription saying when to choose it over
-	// web_search; a skill may grant it as a tool of its own by that name.
+	// ToolName, when set, offers it to agents as a tool of that name (under
+	// Research sources in the agent editor), with ToolDescription saying
+	// when to choose it over web_search; a skill may grant it by that name.
 	ToolName        string `json:"tool_name,omitempty"`
 	ToolDescription string `json:"tool_description,omitempty"`
 	// Off keeps the entry and asks nothing of the connector.
@@ -64,6 +64,21 @@ func ListResearchSources(db Database) []ResearchSource {
 	return out
 }
 
+// toolNameTaken reports whether name is a tool agents already have under
+// that name (a built-in, or a name the framework keeps), or another research
+// source's than the one on connector.
+func toolNameTaken(db Database, connector, name string) bool {
+	if _, ok := FindChatTool(name); ok || IsReservedToolName(name) {
+		return true
+	}
+	for _, rs := range ListResearchSources(db) {
+		if rs.Connector != connector && rs.ToolName == name {
+			return true
+		}
+	}
+	return false
+}
+
 // GetResearchSource is the research source on connector name.
 func GetResearchSource(db Database, name string) (ResearchSource, bool) {
 	var rs ResearchSource
@@ -77,8 +92,9 @@ func GetResearchSource(db Database, name string) (ResearchSource, bool) {
 // SaveResearchSource puts the search connector rs names to use as a
 // research source: it must give web.search, research needs its topics or
 // Always unless it is only offered to agents, and a tool name is one an
-// agent can call. Saving it is an administrator's acceptance of the
-// connector as it is now (Settle).
+// agent can call that no other tool or source has. Saving it is an
+// administrator's acceptance of the connector as it is now
+// (AcceptChanges).
 func SaveResearchSource(db Database, rs ResearchSource) error {
 	rs.Connector = strings.TrimSpace(rs.Connector)
 	c, ok := GetConnector(db, rs.Connector)
@@ -96,6 +112,8 @@ func SaveResearchSource(db Database, rs ResearchSource) error {
 	switch {
 	case rs.ToolName != "" && !searchToolNameRE.MatchString(rs.ToolName):
 		return fmt.Errorf("tool name %q: lowercase letters, digits and _, 3 to 41 of them, starting with a letter", rs.ToolName)
+	case rs.ToolName != "" && toolNameTaken(db, rs.Connector, rs.ToolName):
+		return fmt.Errorf("tool name %q is already another tool's: agents would reach that one instead; choose another", rs.ToolName)
 	case !rs.Always && len(rs.Topics) == 0 && rs.ToolName == "":
 		return fmt.Errorf("say when %s is asked: on topics, always, or offered to agents by a tool name", rs.Connector)
 	}
@@ -115,7 +133,7 @@ func DeleteResearchSource(db Database, name string) {
 
 // searchSources are the research sources that are on and whose connector
 // has no change waiting, as the entries research matches by topic and
-// agents ask through query_source.
+// agents ask through their tools.
 func searchSources() []sourcehooks.SourceHook {
 	var out []sourcehooks.SourceHook
 	for _, rs := range ListResearchSources(RootDB) {

@@ -2,6 +2,10 @@ package orchestrate
 
 import (
 	"context"
+	"encoding/json"
+	"github.com/cmcoffee/gohort/core/service"
+	"github.com/cmcoffee/gohort/core/ui"
+	"slices"
 	"strings"
 	"testing"
 
@@ -166,4 +170,46 @@ func TestBuilderAuthoringToolsCarryBulletinsWithoutATurn(t *testing.T) {
 		}
 	}
 	t.Fatal("builderAuthoringTools(sess, nil) must include bulletins")
+}
+
+// A research source offered to agents is a tool of its own: listed in the
+// agent editor under Research sources, in the default set, and kept out of
+// an agent whose own list does not tick it.
+func TestAResearchSourceIsAnAgentsTool(t *testing.T) {
+	connectorOwnerFixture(t)
+	spec := json.RawMessage(`{"provider":{"transport":"http","base_url":"https://law.example.test","auth":{"none":true},"operations":{"find":{"path":"/s?q={query}"}}},"provides":[{"capability":"web.search","steps":[{"call":"find"}],"output":{"results":{"path":"hits","fields":{"title":"t","url":"u"}}}}]}`)
+	if err := SaveConnector(RootDB, Connector{Name: "caselaw", Kind: service.Kind, Spec: spec}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SaveResearchSource(RootDB, service.ResearchSource{Connector: "caselaw", ToolName: "caselaw_search", ToolDescription: "Search court opinions."}); err != nil {
+		t.Fatal(err)
+	}
+	var found *ui.SelectOption
+	for _, o := range availableWorkerToolOptions("") {
+		if o.Value == "caselaw_search" {
+			o := o
+			found = &o
+		}
+	}
+	if found == nil || found.Group != ResearchSourceCategory || found.Help != "Search court opinions." {
+		t.Fatalf("in the agent editor: %+v", found)
+	}
+	if !slices.Contains(availableWorkerToolNames(), "caselaw_search") {
+		t.Error("not in the default set")
+	}
+	open := &chatTurn{agent: AgentRecord{}}
+	ticked := &chatTurn{agent: AgentRecord{AllowedTools: []string{"caselaw_search"}}}
+	unticked := &chatTurn{agent: AgentRecord{AllowedTools: []string{"web_search"}}}
+	for name, turn := range map[string]*chatTurn{"default": open, "ticked": ticked, "unticked": unticked} {
+		wc := &workerCatalog{t: turn, sess: &ToolSession{Username: "alice"}}
+		wc.chooseNames()
+		wc.loadTools()
+		has := false
+		for _, td := range wc.tools {
+			has = has || td.Tool.Name == "caselaw_search"
+		}
+		if has != (name != "unticked") {
+			t.Errorf("%s agent has the source: %v", name, has)
+		}
+	}
 }

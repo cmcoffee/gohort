@@ -55,29 +55,60 @@ func TestAResearchSourceIsAskedOnItsTopicsAndByAgents(t *testing.T) {
 		t.Errorf("research's query: %q %v", out, err)
 	}
 
-	qs, ok := QuerySourceToolDef(RootDB, nil)
-	if !ok || len(qs.Tool.Parameters["source"].Enum) != 1 || qs.Tool.Parameters["source"].Enum[0] != "caselaw" {
-		t.Fatalf("query_source: %+v %v", qs.Tool.Parameters["source"], ok)
+	// Offered to agents, it is a tool of its own by its tool name, under
+	// Research sources, and its call is the source's own search.
+	tools := ResearchSourceTools(nil)
+	if len(tools) != 1 || tools[0].Tool.Name != "caselaw_search" || tools[0].Tool.Category != ResearchSourceCategory ||
+		tools[0].Tool.Description != "Search court opinions." {
+		t.Fatalf("the source's tool: %+v", tools)
 	}
-	if out, err := qs.Handler(context.Background(), map[string]any{"source": "caselaw_search", "query": "negligence"}); err != nil || !strings.Contains(out, "Smith v. Jones") || !strings.Contains(out, "[Grounding:") {
-		t.Errorf("query_source's search: %q %v", out, err)
+	if out, err := tools[0].Handler(context.Background(), map[string]any{"query": "negligence"}); err != nil || !strings.Contains(out, "Smith v. Jones") || !strings.Contains(out, "[Grounding:") {
+		t.Errorf("its search: %q %v", out, err)
 	}
-	if !strings.Contains(RenderAvailableSourcesBlock(RootDB, nil), "**caselaw** Search court opinions.") {
-		t.Errorf("Available sources: %s", RenderAvailableSourcesBlock(RootDB, nil))
+	if def, isSource, ok := ResearchSourceTool(nil, "caselaw_search"); !isSource || !ok || def.Tool.Name != "caselaw_search" {
+		t.Errorf("by its name: %v %v", isSource, ok)
+	}
+	if got, err := GetAgentToolsWithSession(nil, "caselaw_search"); err != nil || len(got) != 1 {
+		t.Errorf("resolved by name for an agent: %v %v", got, err)
 	}
 	if def, ok := SourceHookToolDefByName("caselaw_search"); !ok || def.Tool.Description != "Search court opinions." {
 		t.Errorf("a skill's grant: %+v %v", def.Tool, ok)
 	}
-	// An agent switched off the connection neither sees the source nor
-	// reaches it, through query_source or a skill's grant of it.
+	// An agent switched off the connection is not given the source's tool,
+	// nor served by it, nor by a skill's grant of it.
 	off := &ToolSession{Username: "u", DeniedCredentials: map[string]bool{"connection:caselaw": true}}
-	if _, ok := QuerySourceToolDef(RootDB, off); ok || strings.Contains(RenderAvailableSourcesBlock(RootDB, off), "caselaw") {
+	if len(ResearchSourceTools(off)) != 0 {
 		t.Error("a barred agent is offered the source")
 	}
-	ctx := off.ContextWithSession(context.Background())
-	if _, err := qs.Handler(ctx, map[string]any{"source": "caselaw", "query": "negligence"}); err == nil {
-		t.Error("query_source served a barred agent")
+	if got, err := GetAgentToolsWithSession(off, "caselaw_search"); err != nil || len(got) != 0 {
+		t.Errorf("a barred agent's grant of it: %v %v", got, err)
 	}
+	ctx := off.ContextWithSession(context.Background())
+	if _, err := tools[0].Handler(ctx, map[string]any{"query": "negligence"}); err == nil {
+		t.Error("the source's tool served a barred agent")
+	}
+	// A tool name another tool has is refused: agents would reach that one,
+	// whether a name the framework keeps or another source's.
+	RegisterReservedToolName("kept_by_framework")
+	if err := SaveConnector(RootDB, Connector{Name: "statutes", Kind: Kind, Spec: raw}); err != nil {
+		t.Fatal(err)
+	}
+	// Asked by research only, with no tool name, it is not an agent's tool.
+	if err := SaveResearchSource(RootDB, ResearchSource{Connector: "statutes", Always: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := ResearchSourceTools(nil); len(got) != 1 || got[0].Tool.Name != "caselaw_search" {
+		t.Errorf("a source not offered to agents is a tool: %+v", got)
+	}
+	if err := SaveResearchSource(RootDB, ResearchSource{Connector: "statutes", Always: true, ToolName: "statute_search"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, taken := range []string{"kept_by_framework", "statute_search"} {
+		if err := SaveResearchSource(RootDB, ResearchSource{Connector: "caselaw", Always: true, ToolName: taken}); err == nil || !strings.Contains(err.Error(), "another tool's") {
+			t.Errorf("tool name %s: %v", taken, err)
+		}
+	}
+	DeleteResearchSource(RootDB, "statutes")
 	if def, ok := SourceHookToolDefByName("caselaw_search"); !ok {
 		t.Error("the skill's grant is gone")
 	} else if _, err := def.Handler(ctx, map[string]any{"query": "negligence"}); err == nil {
@@ -102,7 +133,7 @@ func TestAResearchSourceIsAskedOnItsTopicsAndByAgents(t *testing.T) {
 	rs, _ := GetResearchSource(RootDB, "caselaw")
 	rs.Off = true
 	SaveResearchSource(RootDB, rs)
-	if _, ok := QuerySourceToolDef(RootDB, nil); ok || len(sourcehooks.HooksForTopic([]string{"legal"})) != 0 {
+	if len(ResearchSourceTools(nil)) != 0 || len(sourcehooks.HooksForTopic([]string{"legal"})) != 0 {
 		t.Error("an off source is still asked")
 	}
 	rs.Off = false

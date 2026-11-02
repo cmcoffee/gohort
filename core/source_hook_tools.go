@@ -1,7 +1,6 @@
-// Research sources offered to agents: the search connectors whose spec
-// offers a tool (core/service, Binding.Tool), through the one query_source
-// dispatcher and the "Available sources" block it is read with, or, granted
-// by a skill, as a tool of their own. They were Source Hooks; Source Hooks
+// Research sources offered to agents: the search connectors given a tool
+// name under Research Sources, each a tool of its own, or, granted by a
+// skill, the same tool. They were Source Hooks; Source Hooks
 // became search connectors, and the names and shapes here stayed.
 
 package core
@@ -149,31 +148,52 @@ func sourceHookToAgentToolDef(h SourceHook) (AgentToolDef, bool) {
 	return def, true
 }
 
-// --- query_source: the single dispatcher (the agents pattern) ---
+// --- research sources as tools ---
 //
-// Instead of N always-on per-hook tools (one schema each — unbounded
-// growth as admin exposes more sources), ALL globally-exposed hooks
-// collapse to ONE name-keyed dispatcher (query_source) plus a shown
-// "Available sources" catalog block (RenderAvailableSourcesBlock) —
-// mirroring agents(action="run") + the available-agents block. The block
-// carries the per-source "use when" intent the old per-tool descriptions
-// held; the model reads it, picks a source, and calls query_source.
-//
-// Skills that grant a SPECIFIC hook still get a focused per-hook tool via
-// SourceHookToolDefByName — that scoping is correct for a skill's domain
-// and is intentionally unaffected by this collapse.
+// Each research source offered to agents (given a tool name under Research
+// Sources) is a tool of its own, named by that tool name: listed in the
+// agent editor under "Research sources", in the default set, and taken off
+// an agent like any other tool. A call shows as the source's own tool.
+// Skills grant a source the same way (SourceHookToolDefByName), whether or
+// not it is offered to agents.
 
-// exposedQueryableHooks returns the sources eligible for the query_source
-// dispatcher + catalog block: search connectors whose spec offers a tool,
-// and that sess's agent and user may reach.
-func exposedQueryableHooks(sess *ToolSession) []SourceHook {
-	var out []SourceHook
+// ResearchSourceCategory is the tool category research sources list under.
+const ResearchSourceCategory = "Research sources"
+
+// ResearchSourceTools are the research sources offered to agents, each its
+// own tool, that sess's agent and user may reach (a nil sess is the
+// instance's own, barred from nothing).
+func ResearchSourceTools(sess *ToolSession) []AgentToolDef {
+	var out []AgentToolDef
 	for _, h := range sourcehooks.Sources() {
-		if h.ExposeToLLM && (h.Connector == "" || sess.ConnectionBarred(h.Connector) == nil) {
-			out = append(out, h)
+		if def, ok := researchSourceTool(sess, h); ok {
+			out = append(out, def)
 		}
 	}
 	return out
+}
+
+// ResearchSourceTool is the research source offered to agents whose tool is
+// named name, as ResearchSourceTools gives it. isSource says whether name
+// is such a source's tool at all: one sess may not reach is a source (not
+// another kind of tool) that is left out.
+func ResearchSourceTool(sess *ToolSession, name string) (def AgentToolDef, isSource, ok bool) {
+	for _, h := range sourcehooks.Sources() {
+		if h.ExposeToLLM && sourceHookToolName(h) == strings.TrimSpace(name) {
+			def, ok = researchSourceTool(sess, h)
+			return def, true, ok
+		}
+	}
+	return AgentToolDef{}, false, false
+}
+
+func researchSourceTool(sess *ToolSession, h SourceHook) (AgentToolDef, bool) {
+	if !h.ExposeToLLM || (h.Connector != "" && sess.ConnectionBarred(h.Connector) != nil) {
+		return AgentToolDef{}, false
+	}
+	def, ok := sourceHookToAgentToolDef(h)
+	def.Tool.Category = ResearchSourceCategory
+	return def, ok
 }
 
 // sourceBarred is why the run calling a source's tool may not reach the
@@ -184,108 +204,6 @@ func sourceBarred(ctx context.Context, h SourceHook) error {
 		return nil
 	}
 	return ToolSessionFromContext(ctx).ConnectionBarred(h.Connector)
-}
-
-// QuerySourceToolDef builds the single query_source dispatcher over all
-// exposed source hooks. Returns ok=false when none are exposed (caller
-// skips it). `source` is constrained to an enum of the available source
-// names; RenderAvailableSourcesBlock supplies the "use when" detail.
-func QuerySourceToolDef(db Database, sess *ToolSession) (AgentToolDef, bool) {
-	hooks := exposedQueryableHooks(sess)
-	if len(hooks) == 0 {
-		return AgentToolDef{}, false
-	}
-	// Resolution map (display name + derived tool-name, case-insensitive)
-	// and the enum of canonical names the model picks from.
-	byKey := make(map[string]SourceHook, len(hooks)*2)
-	names := make([]string, 0, len(hooks))
-	for _, h := range hooks {
-		name := strings.TrimSpace(h.Name)
-		if name == "" {
-			continue
-		}
-		names = append(names, name)
-		byKey[strings.ToLower(name)] = h
-		if tn := sourceHookToolName(h); tn != "" {
-			byKey[strings.ToLower(tn)] = h
-		}
-	}
-	if len(names) == 0 {
-		return AgentToolDef{}, false
-	}
-	def := AgentToolDef{
-		Tool: Tool{
-			Name:        "query_source",
-			Description: "Search one of the curated knowledge sources the admin wired up: see \"Available sources\" for what each covers and when to prefer it over web_search. Pick the source whose domain fits the question and pass a natural-language query; cite ONLY specifics that appear in the returned results.",
-			Parameters: map[string]ToolParam{
-				"source": {Type: "string", Enum: names, Description: "Which source to query: one of the names listed under \"Available sources\"."},
-				"query":  {Type: "string", Description: "Natural-language search query. Phrase like a web search; the source's adapter handles any specialized syntax."},
-			},
-			Required: []string{"source", "query"},
-			Caps:     []Capability{CapNetwork, CapRead},
-		},
-		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			source := strings.TrimSpace(stringArgForHook(args, "source"))
-			query := strings.TrimSpace(stringArgForHook(args, "query"))
-			if source == "" || query == "" {
-				return "", fmt.Errorf("source and query are required")
-			}
-			h, ok := byKey[strings.ToLower(source)]
-			if !ok {
-				return fmt.Sprintf("Unknown source %q. Available: %s.", source, strings.Join(names, ", ")), nil
-			}
-			if err := sourceBarred(ctx, h); err != nil {
-				return "", err
-			}
-			result, err := QuerySourceHook(h, query)
-			if err != nil {
-				return "", fmt.Errorf("source %q failed: %w", h.Name, err)
-			}
-			result = strings.TrimSpace(result)
-			if result == "" {
-				return fmt.Sprintf("No results from %s for %q.", h.Name, query), nil
-			}
-			// Same grounding guard the per-hook tools carried.
-			result += "\n\n[Grounding: cite ONLY specifics that actually appear in these results, a number, name, citation, figure, or quote not shown above is NOT in this source. If the results don't contain the exact answer, say this source doesn't cover it rather than supplying one from memory.]"
-			return result, nil
-		},
-	}
-	return def, true
-}
-
-// RenderAvailableSourcesBlock lists the exposed source hooks as a
-// system-prompt catalog (name — "use when…"), mirroring the available-
-// agents block. It's the menu the model reads to pick a `source` for
-// query_source. Empty when no hooks are exposed.
-func RenderAvailableSourcesBlock(db Database, sess *ToolSession) string {
-	hooks := exposedQueryableHooks(sess)
-	if len(hooks) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString("\n\n## Available sources\n\n")
-	b.WriteString("Curated knowledge sources the admin wired up. When a question fits one of these, prefer query_source(source, query) over web_search: they're authoritative for their domain, and you should cite ONLY what their results contain. Format: **name**, what it covers / when to use.\n\n")
-	for _, h := range hooks {
-		name := strings.TrimSpace(h.Name)
-		if name == "" {
-			continue
-		}
-		desc := strings.TrimSpace(h.ToolDescription)
-		if desc == "" {
-			switch h.Type {
-			case HookTypeRAG:
-				desc = "curated knowledge corpus: returns ranked document chunks."
-			default:
-				desc = "curated external API: returns titled results with snippets."
-			}
-		}
-		b.WriteString("- **")
-		b.WriteString(name)
-		b.WriteString("** ")
-		b.WriteString(desc)
-		b.WriteString("\n")
-	}
-	return b.String()
 }
 
 // stringArgForHook extracts a string arg with a small case-insensitive

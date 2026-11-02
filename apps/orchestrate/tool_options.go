@@ -137,6 +137,9 @@ func availableWorkerToolOptions(user string) []ui.SelectOption {
 		}
 		defs = append(defs, ChatToolToAgentToolDefWithSession(t, nil))
 	}
+	// Research sources offered to agents, each a tool of its own, under
+	// their own heading: in the default set, and taken off like any tool.
+	defs = append(defs, ResearchSourceTools(nil)...)
 	defs = FilterToolsByCaps(defs, []Capability{CapRead, CapNetwork})
 
 	// Surface this user's persistent temp tools too — admin groups

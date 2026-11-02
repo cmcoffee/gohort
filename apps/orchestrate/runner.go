@@ -409,14 +409,6 @@ func (pr *planRun) assemblePrompt() {
 	// the user message for salience, like the trigger hint. No-op when no
 	// dispatch thread is open this session.
 	pr.turnContext += t.renderActiveDispatchThreads()
-	// "Available sources" block — the catalog for query_source: lists each
-	// admin-exposed source hook (name — what it covers / when to use), so
-	// the model picks a source and calls query_source(source, query). One
-	// dispatcher + this menu instead of N per-hook tools (the agents
-	// pattern). No-op when no hooks are exposed.
-	if t.app != nil {
-		pr.sys += RenderAvailableSourcesBlock(t.app.DB, t.scopeSession())
-	}
 	// Builder-only: list the user's existing persistent custom tools
 	// as READ-ONLY awareness. They're hidden from Builder's executable
 	// catalog (see newToolSession's isBuilderAgent skip) — this block

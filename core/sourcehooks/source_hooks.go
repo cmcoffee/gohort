@@ -221,8 +221,8 @@ type SourceHook struct {
 	ToolDescription string `json:"tool_description,omitempty"` // LLM-facing description. Tells the model when to choose this over web_search. Defaults to a terse derived string when empty.
 
 	// Disabled mutes the hook everywhere it's CONSULTED — topic routing
-	// (HooksForTopic), paywall matching (HookForDomain), LLM tools, the
-	// query_source dispatcher — while it stays visible on management surfaces
+	// (HooksForTopic), paywall matching (HookForDomain), agents' source
+	// tools — while it stays visible on management surfaces
 	// (admin list, CLI, export). It exists as the bundle-import review gate: an
 	// imported hook receives live search queries at its endpoint once active,
 	// so it lands disabled until the admin has looked. A local mute, not part
@@ -612,7 +612,7 @@ var EngineHook func() string
 
 // IsSearchEngine reports whether h is the web search engine. Picked under
 // Web Search, a search connector is asked only as web_search, never routed
-// to by topic or offered through query_source, so one API is not called
+// to by topic or offered to agents as a tool, so one API is not called
 // twice under two names.
 func IsSearchEngine(h SourceHook) bool {
 	if EngineHook == nil {

@@ -683,6 +683,15 @@ func GetAgentToolsWithSession(sess *ToolSession, names ...string) ([]AgentToolDe
 			tools = append(tools, ChatToolToAgentToolDefWithSession(ct, sess))
 			continue
 		}
+		// A research source offered to agents is a tool of its own, named
+		// by its tool name; one this caller may not reach is left out, as an
+		// unavailable dynamic tool is.
+		if def, isSource, ok := ResearchSourceTool(sess, name); isSource {
+			if ok {
+				tools = append(tools, def)
+			}
+			continue
+		}
 		// Fallback: the dynamic secure-API tools (call_<credential>)
 		// are generated per-session by Secure().BuildTools(sess) and
 		// never registered globally. Pipeline steps + other resolvers

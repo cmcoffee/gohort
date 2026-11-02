@@ -32,7 +32,7 @@ func init() {
 		// memory
 		"remember", "recall", "forget",
 		// on-demand framework tools and turn plumbing
-		"load_tool", "request_build", "hand_to_builder", "query_source",
+		"load_tool", "request_build", "hand_to_builder",
 		"agents", "collection",
 		// Builder's authoring catalog, deferred behind load_tool on every other
 		// authoring agent (builderAuthoringTools; per-credential fetch_url_*
@@ -1080,16 +1080,6 @@ func (t *chatTurn) dynamicNewTempTools(sess *ToolSession) func() []AgentToolDef 
 		// the cached prefix survives. Empty for every agent that isn't
 		// Author-flagged, and for Author-flagged turns that never loaded one.
 		out = append(out, t.loadedDeferredAuthoringTools()...)
-		// Source-hook dispatcher: ONE query_source tool over all exposed
-		// hooks (the agents pattern) instead of N per-hook tools — see
-		// RenderAvailableSourcesBlock for the shown "Available sources"
-		// menu that carries each source's "use when". Walked per-round so
-		// admin add/remove/toggle takes effect without a restart; cheap
-		// (reads the in-memory sourceHookRegistry). Skills still grant a
-		// SPECIFIC hook as a focused per-hook tool via the skill path.
-		if qs, ok := QuerySourceToolDef(t.app.DB, sess); ok {
-			out = append(out, qs)
-		}
 		// (No skill-granted tools here anymore. Experts run as dispatched
 		// use_expert workers with their own catalog; behavior skills only
 		// inject instructions. Neither puts tools in the MAIN catalog.)

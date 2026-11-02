@@ -215,7 +215,7 @@ func StaleWhy(db Database, v string) string {
 // AgentConnections are the connections an agent's tools reach, by name:
 // the image connectors (the one Image Generation uses and those offered to
 // agents), the music connectors offered to agents, the Research Sources
-// offered through query_source. An agent's
+// offered to agents as tools. An agent's
 // credential scope and a connection's Access decide who reaches these; a
 // connection a page has serve the whole instance is not among them.
 func AgentConnections(db Database) []string {

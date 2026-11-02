@@ -164,6 +164,16 @@ That is a gate on edits, not on references, and its marker stays on the row.
 Fix becomes how Edit opens on a spec that does not validate. Configure
 becomes the Go form's Edit. Revert goes with provided connections.
 
+**Research sources are agents' tools** (2026-11-01). A research source
+offered to agents is a tool of its own, by the tool name given under
+Research Sources: listed in the agent editor under "Research sources", in
+the default set, and taken off an agent like any tool; a call shows as the
+source's own tool. The one `query_source` dispatcher, added to every turn
+unseen, and its "Available sources" prompt block are gone. A tool name
+another tool or source has is refused. Web Search keeps research sources
+out of its engines: "Use a research source…" and the list under it choose
+one.
+
 **Adding one** (2026-11-01). A template is a recipe, never installed: Add…
 on it asks its questions and makes the connector, and the template stays
 for next time. Admin > Extensions > Templates lists them all by category.
@@ -506,7 +516,7 @@ by hand, as below.
    that means gohort runs without a model until reconfigured, so the deploy
    and the reconfiguring happen in one sitting.
 3. **Names agents use do not change:** granted tools (`generate_image_<name>`,
-   search tools), `query_source` sources, and credential
+   search tools, a research source's own tool), and credential
    scopes (`connection:<name>`). An agent naming something that no longer
    exists is listed in the admin notice, as a setting needing it is.
 4. **Every security property since plan B survives,** as acceptance tests the
@@ -526,7 +536,7 @@ by hand, as below.
    - agent and user scope, at the call and in tool lists: images
      (TestAnAgentBarredFromAConnectionIsNeitherOfferedNorServed,
      TestADeniedConnectionHidesTheBackend, and a backend's own tool in
-     TestAnImageConnectionKeepsItsKeyAndItsScope), music and query_source
+     TestAnImageConnectionKeepsItsKeyAndItsScope), music and research sources
      (their tool-list tests in core/service), the connection's own
      check (TestAConnectionBarsAnAgentOrAUser);
    - the privacy check judges a tier by its address, failing closed:
@@ -680,6 +690,132 @@ here, per the rule that names are agreed first.
 | trust | open (Q2), with DLP |
 | the egress check | `EgressCheck`, `Egress`, `Decision` (with DLP) |
 | one-provider Go in a connector | `builtin` (exists) |
+
+## Admin flows: getting each thing working (2026-11-01)
+
+What an administrator clicks today, after the changes on this branch, for
+each common goal; where it is clumsy; and a proposed path. Proposals only:
+each is decided before it is built. None of them changes a stored shape, so
+none blocks the migration (step 9); the one new kind is marked.
+
+### Search the web with Serper
+
+Today:
+
+1. Admin > Capabilities > Web Search: "Search with" > **+ Add another…**.
+2. Add… on *Serper (web search)*: it asks a name; Add; Back to the list.
+3. The page reloads with Serper in the list, not chosen: choose it.
+4. Its key field appears under the choice: give the key, Test, Save.
+
+Clumsy: step 3. The page was opened to add Serper, and after adding it the
+admin has to find and choose it before its key field shows.
+
+Proposed: adding from a page leaves the page with the new connector
+chosen (not yet saved), its key and settings showing, so steps 3 and 4 are
+one: give the key, Save. Needs one generic `core/ui` piece: a form value
+set on arrival (the page told which value to choose as it reloads).
+
+### Make pictures (Gemini, OpenAI, ComfyUI, A1111)
+
+Today, two ways in:
+
+- "Make pictures with" > **+ Add another…**: the Gemini, OpenAI, ComfyUI
+  and Automatic1111 templates, then as Web Search above;
+- the section's own toolbar: **Add image backend…** (ComfyUI and A1111's
+  setup forms) and **Configure backend…**.
+
+Clumsy: two ways to add ComfyUI or A1111, and Configure backend… does what
+the connector's row Edit already does.
+
+Proposed: one way. The toolbar goes: ComfyUI and A1111 come through
++ Add another… like the rest (their templates exist), and Edit on the
+connector's row opens their setup form. Plus the arrival choice above.
+
+### Embed with a hosted or local model
+
+Today:
+
+1. Admin > Capabilities > Embeddings: "Embed with" > + Add another… >
+   Add… on *OpenAI (embeddings)* (or Ollama, llama.cpp/vLLM).
+2. Back to the list, choose it, give its model and key, Test, Save.
+3. Admin > Maintenance > Vector Index: Repair, so stored documents are
+   embedded again in the new space.
+
+Clumsy: step 3 lives on another tab, and nothing on Embeddings says it is
+needed; until it runs, search skips stored documents.
+
+Proposed: the arrival choice; and after a save that changes the space,
+Embeddings says so and offers **Re-embed now** in place, running the
+repair with its progress (the spinner rule).
+
+### Transcribe and speak
+
+Today: Audio Transcription and Speech, each as Embeddings' steps 1 and 2
+(Speech also picks a voice from the connector's list).
+
+Clumsy: only the arrival choice.
+
+### Send mail through an API (Resend, Postmark, Mailgun)
+
+Today: Admin > **System** > Mail (SMTP): "Send with" > + Add another… >
+Add… > back, choose, key, Save.
+
+Clumsy: mail is the one capability on the System tab, so it is not where
+the other "what does gohort use for X" pages are.
+
+Proposed: Mail moves to the Capabilities tab, titled "Mail". Plus the
+arrival choice.
+
+### Add a research source (PubMed)
+
+Today, two pages and two records:
+
+1. Admin > Extensions > Research Sources > Add: "Search connector" >
+   + Add another… > Add… on *PubMed (research)* > back.
+2. Choose PubMed, set its topics or Always, and to offer it to agents a
+   tool name and description; Save.
+3. Its tool then shows in each agent's tools under Research sources.
+
+Clumsy: Research Sources sits under Extensions while Web Search, its
+nearest neighbour, is under Capabilities; and the template makes only the
+connector, so the source is a second form after it.
+
+Proposed: Research Sources moves to the Capabilities tab, beside Web
+Search; and a research template asks the source's questions too (topics or
+always, offer to agents, tool name) and makes both. That needs a bundle
+artifact for a research source: **a new kind**, additive (bundles without
+one import as now; no migration). Today only the legacy Source Hook
+artifact makes both, by an older shape.
+
+### Borrow a peer's model, search or GPU
+
+Today: Admin > Capabilities > Peers: add the peer's address and key; what
+it lends then appears on each page's list ("Peer: gpu-box"), and its
+renderers as connections under Image Generation.
+
+Clumsy: nothing found that this rework should change.
+
+### Set the LLM tiers
+
+Today: Admin > LLMs > Worker LLM and Lead LLM: provider, address (blank for
+the provider's own), key, model; Test; Save.
+
+Clumsy: nothing found that this rework should change.
+
+### Summary
+
+| Proposal | Touches | Stored shape |
+|---|---|---|
+| Arrival choice: a page reloads with what was just added chosen | `core/ui` (a form value set on arrival), each page's + Add another… | none |
+| One way to add an image backend: the toolbar goes | Image Generation | none |
+| Re-embed now on Embeddings after the space changes | Embeddings, the repair's progress | none |
+| Mail moves to Capabilities | the admin page's tabs | none |
+| Research Sources moves to Capabilities | the admin page's tabs | none |
+| A research template makes the source too | a research source bundle artifact (new kind), the research templates | additive |
+
+Suggested order: the arrival choice first (every goal above has it), then
+the two moves and the image toolbar (small, page-only), then Re-embed now,
+then the research source artifact (a new kind, agreed before it is built).
 
 ## Order of work
 
