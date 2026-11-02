@@ -736,7 +736,17 @@
           // beneath the buttons inside the row).
           appendAction(actionsWrap, act, ai, rec, rowKey, row);
         });
-        if (actionsWrap.childNodes.length > 0) row.appendChild(actionsWrap);
+        if (actionsWrap.childNodes.length > 0) {
+          row.appendChild(actionsWrap);
+          // On a phone a row's buttons are one line that scrolls sideways
+          // (runtime.css), so the one cut off at the edge, Delete most often,
+          // fades as a tab bar's does and reads as "swipe" rather than as the
+          // end of the row. Only where rows scroll: a wide screen wraps them,
+          // and a long list need not watch every row for nothing.
+          if (window.uiEdgeFade && window.matchMedia && window.matchMedia('(max-width: 800px)').matches) {
+            window.uiEdgeFade(actionsWrap);
+          }
+        }
 
         // Row link: the named field carries this row's destination. Same
         // scheme guard as the link column, so a javascript:/data: value in
@@ -1105,18 +1115,7 @@
         var mbtn = el('button', {class: mclasses, onclick: function() {
           var renderCfg = JSON.parse(JSON.stringify(act.render));
           substituteRefs(renderCfg, rec);
-          var handle = window.uiOpenSimpleModal({
-            title: act.label || 'Edit',
-            width: act.width || '520px',
-            mount: function(body) {
-              var childCtx = {};
-              for (var k in rec) childCtx[k] = rec[k];
-              // Deferred through the closure: handle is assigned when
-              // uiOpenSimpleModal returns, before any save can fire.
-              childCtx.__closeModal = function() { if (handle) handle.close(); };
-              mountComponent(renderCfg, body, childCtx);
-            }
-          });
+          openComponentDialog({title: act.label || 'Edit', width: act.width, component: renderCfg, ctx: rec});
         }}, [act.label || 'Edit']);
         parent.appendChild(mbtn);
       } else if (act.type === 'expand') {
@@ -6283,6 +6282,52 @@
     return bar;
   };
 
+  // openComponentDialog mounts a component in a dialog: a ModalButton's
+  // body, or a row action's. o is {title, subtitle, width, component, ctx};
+  // the component gets ctx and a __closeModal hook, which a submit-mode
+  // FormPanel calls on a successful save so the dialog dismisses instead of
+  // sitting open looking inert.
+  //
+  // uiOpenModal, NOT a <dialog> of its own. ModalButton built a native
+  // <dialog> and called showModal(), which renders in the browser's TOP
+  // LAYER, above every z-index there is: the toast on a failed submit, or a
+  // second modal opened from inside, landed underneath and could not be
+  // seen. One implementation, so a dialog opened from a dialog stacks
+  // (uiNextModalZ) and a toast at 9000 clears both.
+  //
+  // A dialog that IS a form with a submit button puts that button in the
+  // footer beside Close, from either door: at the end of a long form it
+  // scrolled out of sight, a level apart from Close, and the dialog read as
+  // having nothing to press but Close. Close then stops being the primary
+  // button; the submit is. A wizard keeps its Back/Next row by its steps.
+  //
+  // No click-outside-to-close: a text-selection drag ending past the dialog
+  // edge would otherwise dismiss it mid-copy.
+  function openComponentDialog(o) {
+    var c = o.component || {};
+    var footerSubmit = c.type === 'form_panel' && !!c.submit_label && !(c.steps && c.steps.length);
+    return window.uiOpenModal({
+      title: o.title || '',
+      subtitle: o.subtitle || undefined,
+      width: o.width || '520px',
+      actions: footerSubmit ? [{label: 'Close'}] : undefined,
+      mount: function(body, api) {
+        if (!o.component) return;
+        // The close hook is namespaced so it cannot collide with the
+        // parent-record fields ctx also carries.
+        var childCtx = {};
+        for (var k in (o.ctx || {})) childCtx[k] = o.ctx[k];
+        childCtx.__closeModal = function() { api.close(); };
+        if (footerSubmit) childCtx.__modalFooter = api.dialog.querySelector('.ui-modal-footer');
+        mountComponent(c, body, childCtx);
+      },
+    });
+  }
+  // Apps open a component in a dialog the same way, from their own scripts
+  // (a page's + New button), rather than mounting it into a bare modal and
+  // leaving its Save under the fields.
+  window.uiOpenComponentDialog = openComponentDialog;
+
   // ModalButton — a button that, on click, pops a <dialog> hosting an
   // inner component (typically a FormPanel). Framework owns the dialog
   // chrome (header, subtitle, scrollable body, Close, backdrop,
@@ -6301,48 +6346,8 @@
     if (cfg.variant) btnClass += ' ' + cfg.variant;
     var btn = el('button', {type: 'button', class: btnClass}, [cfg.label || 'Open']);
     btn.addEventListener('click', function() {
-      // uiOpenModal, NOT a <dialog> of its own.
-      //
-      // This built a native <dialog> and called showModal(), which
-      // renders in the browser's TOP LAYER — above every z-index there
-      // is. So everything the framework raises to report an outcome
-      // landed underneath it and could not be seen: the toast on a
-      // failed submit, another modal opened from inside. A submit that
-      // failed in here reset its button and told you nothing, which is
-      // what a button that does nothing looks like, and no z-index
-      // could have fixed it because the top layer is not a z-index.
-      //
-      // One implementation now, so a dialog opened from a dialog stacks
-      // (uiNextModalZ) and a toast at 9000 clears both.
-      //
-      // A dialog that IS a form with a submit button puts that button in
-      // the footer beside Close: at the end of a long form it scrolled out
-      // of sight, and the dialog read as having nothing to press but Close.
-      // Close then stops being the primary button, the submit is.
-      var b = cfg.body || {};
-      var footerSubmit = b.type === 'form_panel' && !!b.submit_label && !(b.steps && b.steps.length);
-      var m = window.uiOpenModal({
-        title: cfg.title || cfg.label || '',
-        subtitle: cfg.subtitle || undefined,
-        width: cfg.width || '520px',
-        actions: footerSubmit ? [{label: 'Close'}] : undefined,
-        // No click-outside-to-close is inherited: a text-selection drag
-        // ending past the dialog edge would otherwise dismiss it
-        // mid-copy.
-        mount: function(body, api) {
-          if (!cfg.body) return;
-          // Hand the inner component a close hook (namespaced so it
-          // cannot collide with parent-record fields ctx also carries).
-          // A submit-mode FormPanel calls it on a successful save so the
-          // dialog dismisses instead of sitting open looking inert.
-          var childCtx = {};
-          for (var k in (ctx || {})) childCtx[k] = ctx[k];
-          childCtx.__closeModal = function() { api.close(); };
-          if (footerSubmit) childCtx.__modalFooter = api.dialog.querySelector('.ui-modal-footer');
-          mountComponent(cfg.body, body, childCtx);
-        },
-      });
-      return m;
+      return openComponentDialog({title: cfg.title || cfg.label || '', subtitle: cfg.subtitle,
+        width: cfg.width, component: cfg.body, ctx: ctx});
     });
 
     row.appendChild(btn);

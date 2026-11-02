@@ -2,6 +2,8 @@
 //
 // At the end of a long form the submit scrolled out of sight, and the dialog
 // read as having nothing to press but Close (an Add Store dialog, reported).
+// A ModalButton's dialog and a row action's open the same way
+// (openComponentDialog); modal_footer_test.go drives the row's.
 
 var fs = require('fs');
 var src = fs.readFileSync(__dirname + '/../10_basics.js', 'utf8');
@@ -14,7 +16,7 @@ function check(name, cond, extra) {
 }
 
 check('a dialog whose body is a submit form gives it the footer',
-  src.indexOf("var footerSubmit = b.type === 'form_panel' && !!b.submit_label && !(b.steps && b.steps.length);") >= 0 &&
+  src.indexOf("var footerSubmit = c.type === 'form_panel' && !!c.submit_label && !(c.steps && c.steps.length);") >= 0 &&
   src.indexOf("if (footerSubmit) childCtx.__modalFooter = api.dialog.querySelector('.ui-modal-footer');") >= 0);
 check('Close stops being the primary button there',
   src.indexOf("actions: footerSubmit ? [{label: 'Close'}] : undefined,") >= 0);

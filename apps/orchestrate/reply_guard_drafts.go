@@ -553,7 +553,7 @@ const draftedGuardsHead = `<script>
         var ta = el('textarea', {class: 'ui-input', rows: '4', style: 'width:100%;box-sizing:border-box',
           placeholder: 'It also catches short replies that are fine. Only fire when the turn made no tool call.'});
         body.appendChild(ta);
-        var go = el('button', {class: 'ui-row-btn', text: '✨ Redraft'});
+        var go = el('button', {class: 'ui-row-btn primary', text: '✨ Redraft'});
         go.addEventListener('click', function() {
           var note = ta.value.trim();
           if (!note) { ta.focus(); return; }
@@ -565,7 +565,7 @@ const draftedGuardsHead = `<script>
             .then(function() { dlg.close(); if (ctx.reload) ctx.reload(); })
             .catch(function(e) { go.disabled = false; if (window.uiToast) window.uiToast('Could not redraft: ' + (e && e.message || e)); });
         });
-        body.appendChild(el('div', {style: 'margin-top:0.6rem;display:flex;gap:0.5rem'}, [go]));
+        dlg.addAction(go); // beside Close, in the footer
         setTimeout(function() { ta.focus(); }, 30);
       }});
     });
@@ -614,7 +614,7 @@ const draftedGuardsHead = `<script>
           if (!rec.checks_own) cj.placeholder = rec.checks_json || '';
           body.appendChild(cj);
         }
-        var go = el('button', {class: 'ui-row-btn', text: 'Save'});
+        var go = el('button', {class: 'ui-row-btn primary', text: 'Save'});
         go.addEventListener('click', function() {
           go.disabled = true;
           fetch('/orchestrate/api/console/reply-guards/setting?id=' + encodeURIComponent(rec._id), {
@@ -624,7 +624,7 @@ const draftedGuardsHead = `<script>
             .then(function() { dlg.close(); if (ctx.reload) ctx.reload(); })
             .catch(function(e) { go.disabled = false; if (window.uiToast) window.uiToast('Not saved: ' + (e && e.message || e)); });
         });
-        body.appendChild(el('div', {style: 'margin-top:0.8rem;display:flex;gap:0.5rem'}, [go]));
+        dlg.addAction(go); // beside Close, not under a long checks box
       }});
     });
   }

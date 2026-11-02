@@ -68,3 +68,18 @@ console.log('OK');
 		t.Fatalf("edgeFade:\n%s", out)
 	}
 }
+
+// A table row's buttons scroll sideways on a phone, as a tab bar does, so
+// they fade at the edge the same way: the cut-off one (Delete, most often)
+// reads as "swipe" rather than as the end of the row.
+func TestARowsButtonsFadeWhereTheyScroll(t *testing.T) {
+	src := readRuntimeFile(t, "10_basics.js")
+	at := strings.Index(src, "var actionsWrap = el('div', {class: 'ui-row-actions'});")
+	if at < 0 {
+		t.Fatal("the row's buttons moved")
+	}
+	block := src[at : at+2000]
+	if !strings.Contains(block, "window.uiEdgeFade(actionsWrap)") || !strings.Contains(block, "matchMedia('(max-width: 800px)')") {
+		t.Error("a row's buttons do not fade where they scroll on a phone")
+	}
+}

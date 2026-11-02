@@ -1,8 +1,9 @@
 package knowledge
 
-// New collection opens in the framework's modal (uiOpenModal) with the
-// framework's form in it, so Create, the redirect to the new collection and
-// the ✨ are the form's own. Driven, not read: an earlier conversion named
+// New collection opens the framework's form in the framework's dialog
+// (uiOpenComponentDialog, as a ModalButton does), so Create, the redirect to
+// the new collection and the ✨ are the form's own, and Create sits in the
+// footer beside Close. Driven, not read: an earlier conversion named
 // the modal's handle "api", which hid the page's api() URL helper, so Create
 // threw and sent nothing, with nothing on screen to say so.
 
@@ -79,9 +80,8 @@ function node(tag){ var n={tagName:tag, children:[], style:{}, value:'', textCon
 var newBtn=node('button');
 global.document={createElement:node, querySelector:function(s){ if(s==='#docs-new') return newBtn; if(s==='#docs-import') return null; return node('div'); }, body:node('body'), addEventListener:function(){}};
 global.window={location:{href:''}, uiAlert:function(m){ throw new Error('alert: '+m); }};
-var opened=null, mounted=null;
-window.uiOpenModal=function(o){ opened=o; var body=node('div'); o.mount(body, {close:function(){}}); opened.body=body; };
-window.uiMountComponent=function(cfg, host){ mounted={cfg:cfg, host:host}; };
+var opened=null;
+window.uiOpenComponentDialog=function(o){ opened=o; };
 global.fetch=function(){ return Promise.resolve({ok:true, json:function(){ return Promise.resolve({collections:[]}); }}); };
 `
 
@@ -89,8 +89,7 @@ const newCollectionHarnessAfter = `
 (newBtn._click||[]).forEach(function(f){f();});
 if(!opened) throw new Error('New collection opened no modal');
 if(opened.title!=='New collection') throw new Error('title '+opened.title);
-if(opened.actions) throw new Error('the form has its own Create; the modal keeps only Close');
-if(!mounted || mounted.host!==opened.body) throw new Error('the form was not mounted in the modal');
-if(mounted.cfg.type!=='form_panel' || mounted.cfg.assist_label!=='Draft with AI') throw new Error('mounted '+JSON.stringify(mounted.cfg));
+var c=opened.component;
+if(!c || c.type!=='form_panel' || !c.submit_label || c.assist_label!=='Draft with AI') throw new Error('the dialog holds '+JSON.stringify(c));
 console.log('OK');
 `

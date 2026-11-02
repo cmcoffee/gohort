@@ -119,18 +119,16 @@ const documentsListAssets = `<style>
   });
 
   // + New collection: the framework's form (newCollectionForm) in the
-  // framework's modal. The form has its own Create, which posts and opens
-  // the new collection, and its own ✨ Draft with AI. There is no close on
-  // a click outside it (a drag-select copy would dismiss it mid-copy);
-  // Close closes.
+  // framework's dialog, as a ModalButton opens one: its Create, which posts
+  // and opens the new collection, sits in the footer beside Close, and its
+  // ✨ Draft with AI stays by the fields. There is no close on a click
+  // outside it (a drag-select copy would dismiss it mid-copy); Close closes.
   newBtn.addEventListener('click', function() {
-    window.uiOpenModal({
+    window.uiOpenComponentDialog({
       title: 'New collection',
       subtitle: 'A named bundle of documents your agents and skills can search. Name it and say what it should hold; you add the documents next.',
       width: 'min(760px, 96vw)',
-      mount: function(body) {
-        window.uiMountComponent(window.knowledgeNewCollectionForm, body);
-      },
+      component: window.knowledgeNewCollectionForm,
     });
   });
 

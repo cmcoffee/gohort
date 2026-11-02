@@ -230,7 +230,9 @@ window.uiTemplateForm = function(cfg, reload){
     fillSuggestions(null);
     function collect(){ var out={}; Object.keys(inputs).forEach(function(k){ if(k==='__name'||inputs[k].type==='file')return; var it=inputs[k]; out[k]=(it.type==='bool'?it.el.checked:(it.type==='number'?(parseInt(it.el.value,10)||0):it.el.value)); }); return out; }
     var msg=document.createElement('div'); msg.style.cssText='font-size:12px;white-space:pre-wrap;min-height:16px;margin:6px 0;';
-    var actions=document.createElement('div'); actions.className='ui-modal-footer';
+    // The dialog's buttons go in its footer beside Close, which is the way
+    // out (no Cancel of its own): at the end of a long form they scrolled
+    // out of sight, a row apart from Close.
     if(cfg.detect){
       var det=document.createElement('button'); det.className='ui-row-btn'; det.textContent='Detect';
       det.onclick=function(){ msg.textContent=''; det.disabled=true; det.textContent='Detecting…';
@@ -240,12 +242,11 @@ window.uiTemplateForm = function(cfg, reload){
             if(d.warnings&&d.warnings.length){ msg.style.color='#f5a623'; msg.textContent='Detected with notes: '+d.warnings.join('; '); } else { msg.style.color='#3fb950'; msg.textContent='Detected.'; } })
           .catch(function(e){ det.disabled=false; det.textContent='Detect'; msg.style.color='#e5484d'; msg.textContent=(e&&e.message)||(''+e); });
       };
-      actions.appendChild(det);
+      dlg.addAction(det);
     }
     var defChk=null;
-    if(cfg.create && cfg.category==='Image generation'){ var dl=document.createElement('label'); dl.style.cssText='font-size:12px;margin-right:auto;'; defChk=document.createElement('input'); defChk.type='checkbox'; defChk.checked=true; defChk.style.cssText='margin-right:5px;vertical-align:middle;'; dl.appendChild(defChk); dl.appendChild(document.createTextNode('Set as default provider')); actions.appendChild(dl); }
-    var cancel=document.createElement('button'); cancel.className='ui-row-btn'; cancel.textContent='Cancel'; cancel.onclick=function(){ try{dlg.close();dlg.remove();}catch(e){} };
-    var save=document.createElement('button'); save.className='ui-wb-action-btn'; save.textContent=cfg.create?'Create & approve':'Save';
+    if(cfg.create && cfg.category==='Image generation'){ var dl=document.createElement('label'); dl.style.cssText='font-size:12px;margin-right:auto;'; defChk=document.createElement('input'); defChk.type='checkbox'; defChk.checked=true; defChk.style.cssText='margin-right:5px;vertical-align:middle;'; dl.appendChild(defChk); dl.appendChild(document.createTextNode('Set as default provider')); dlg.addAction(dl); }
+    var save=document.createElement('button'); save.className='ui-row-btn primary'; save.textContent=cfg.create?'Create & approve':'Save';
     save.onclick=function(){ msg.style.color='#e5484d'; msg.textContent='';
       var payload={ template:cfg.template, connector:(cfg.create?'':cfg.connector), owner:(cfg.owner||''), name:(nameInp?nameInp.value.trim():''), values:collect(), set_default:(defChk?defChk.checked:false) };
       if(cfg.create && !payload.name){ msg.textContent='Name is required.'; return; }
@@ -254,8 +255,7 @@ window.uiTemplateForm = function(cfg, reload){
         .then(function(r){ if(!r.ok) return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));}); try{dlg.close();dlg.remove();}catch(e){} if(reload)reload(); })
         .catch(function(e){ save.disabled=false; save.textContent=cfg.create?'Create & approve':'Save'; msg.textContent=(e&&e.message)||(''+e); });
     };
-    actions.appendChild(cancel); actions.appendChild(save);
-    body.appendChild(msg); body.appendChild(actions);
+    body.appendChild(msg); dlg.addAction(save);
   }});
 };
 window.uiAddBackend=function(category, reload){
@@ -314,13 +314,9 @@ const connectorEditSpecAction = `function(ctx){
         ta.style.cssText = 'height:380px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:var(--fs-sm);line-height:1.45;';
         var msg = document.createElement('div');
         msg.style.cssText = 'margin:8px 0 0;font-size:12px;color:#e5484d;white-space:pre-wrap;min-height:16px;';
-        var actions = document.createElement('div');
-        actions.className = 'ui-modal-footer';
-        var cancel = document.createElement('button');
-        cancel.className = 'ui-row-btn'; cancel.textContent = 'Cancel';
-        cancel.onclick = function(){ try{ dlg.close(); dlg.remove(); }catch(e){} };
+        // Save goes in the footer beside Close, which is the way out.
         var save = document.createElement('button');
-        save.className = 'ui-wb-action-btn'; save.textContent = 'Save spec';
+        save.className = 'ui-row-btn primary'; save.textContent = 'Save spec';
         save.onclick = function(){
           msg.textContent = '';
           var parsed;
@@ -334,8 +330,8 @@ const connectorEditSpecAction = `function(ctx){
             if(reload) reload(); else if(window.uiInvalidate) window.uiInvalidate(['api/connectors']);
           }).catch(function(e){ save.disabled=false; save.textContent='Save spec'; msg.textContent = (e && e.message)||(''+e); });
         };
-        actions.appendChild(cancel); actions.appendChild(save);
-        body.appendChild(note); body.appendChild(ta); body.appendChild(msg); body.appendChild(actions);
+        body.appendChild(note); body.appendChild(ta); body.appendChild(msg);
+        dlg.addAction(save);
       }});
     }).catch(function(e){ window.uiAlert && window.uiAlert((e && e.message)||(''+e)); });
 }`
@@ -367,7 +363,7 @@ const connectorWebhookAction = `function(ctx){
     var inp = el('input', {class: 'ui-input', type: 'password', autocomplete: 'off', placeholder: 'Secret or token', style: 'width:100%;box-sizing:border-box'});
     body.appendChild(inp);
     var out = el('div', {style: 'margin-top:0.6rem;font-size:var(--fs-sm, 0.85rem);min-height:1.1em'});
-    var save = el('button', {class: 'ui-row-btn', text: 'Set secret'});
+    var save = el('button', {class: 'ui-row-btn primary', text: 'Set secret'});
     save.addEventListener('click', function(){
       var v = inp.value.trim();
       if (!v) { out.textContent = 'Enter the secret first.'; return; }
@@ -378,7 +374,7 @@ const connectorWebhookAction = `function(ctx){
         .then(function(){ inp.value = ''; save.disabled = false; out.textContent = 'Saved. Pushes are now checked against it.'; })
         .catch(function(e){ save.disabled = false; out.textContent = 'Not saved: ' + ((e && e.message) || e); });
     });
-    body.appendChild(el('div', {style: 'margin-top:0.7rem;display:flex;gap:0.5rem'}, [save]));
+    dlg.addAction(save);
     body.appendChild(out);
   }});
 }`
@@ -637,7 +633,7 @@ const templateInstallAction = `function(ctx){
           inputs[q.name] = inp;
         });
         var out = el('div', {style: 'margin-top:0.7rem;font-size:var(--fs-sm, 0.85rem);white-space:pre-wrap'});
-        var go = el('button', {class: 'ui-row-btn', text: 'Add'});
+        var go = el('button', {class: 'ui-row-btn primary', text: 'Add'});
         var added = null;
         go.addEventListener('click', function(){
           // Once added, from a page's "+ Add another…", the button goes back.
@@ -663,7 +659,9 @@ const templateInstallAction = `function(ctx){
             })
             .catch(function(e){ go.disabled = false; out.textContent = 'Not added: ' + ((e && e.message) || e); });
         });
-        body.appendChild(el('div', {style: 'margin-top:0.8rem;display:flex;gap:0.5rem'}, [go]));
+        // Add goes in the footer beside Close, not after a long list of
+        // questions where it scrolled out of sight.
+        dlg.addAction(go);
         body.appendChild(out);
       }});
     })

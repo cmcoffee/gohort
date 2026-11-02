@@ -299,13 +299,37 @@ const categorySecurityJS = `function(ctx){
       }
     });
   }
-  function who(body){
+  // who is the "Who can use it" choice. Its Apply is the dialog's one
+  // commit, so it sits in the footer beside Close (dlg.addAction), made once:
+  // render runs again after every apply and reads the choice it draws.
+  function who(body, dlg){
     var host = document.createElement('div');
     body.appendChild(host);
     var group = 'cat-who-' + Math.random().toString(36).slice(2);
+    var picked = '', ticked = {}, differ = [];
+    var apply = document.createElement('button');
+    apply.type = 'button';
+    apply.className = 'ui-row-btn primary';
+    apply.addEventListener('click', function(){
+      if (!picked) { window.uiAlert && window.uiAlert('Choose who can use them first.'); return; }
+      var go = function(){
+        apply.disabled = true;
+        fetch('api/category-security?' + qs + '&section=who', {method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({mode: picked, agents: Object.keys(ticked)})})
+          .then(jsonOrThrow)
+          .then(function(){ apply.disabled = false; if(reload) reload(); load(); })
+          .catch(function(e){ apply.disabled = false; window.uiAlert && window.uiAlert('Could not change them: ' + (e && e.message || e)); load(); });
+      };
+      if (differ.length && window.uiConfirm) {
+        window.uiConfirm('Replace the settings of ' + differ.length + ' tool' + (differ.length === 1 ? '' : 's') + ' listed above with this choice?').then(function(ok){ if (ok) go(); });
+      } else {
+        go();
+      }
+    });
+    dlg.addAction(apply);
     function render(d){
       host.innerHTML = '';
-      var differ = d.differ || [];
+      differ = d.differ || [];
       if (differ.length) {
         var warn = document.createElement('div');
         warn.style.cssText = 'border:1px solid var(--warning, #c9a227);border-radius:6px;padding:0.5rem 0.65rem;margin:0 0 0.6rem;font-size:var(--fs-sm, 0.85rem);line-height:1.45';
@@ -320,8 +344,8 @@ const categorySecurityJS = `function(ctx){
         });
         host.appendChild(warn);
       }
-      var picked = d.mode || '';
-      var ticked = {};
+      picked = d.mode || '';
+      ticked = {};
       (d.agents || []).forEach(function(a){ if (a.on) ticked[a.id] = true; });
       var list = document.createElement('div');
       list.style.cssText = 'margin:0.2rem 0 0.4rem 1.6rem';
@@ -352,30 +376,7 @@ const categorySecurityJS = `function(ctx){
         if (o[0] === 'agents') host.appendChild(list);
       });
       drawList();
-      var apply = document.createElement('button');
-      apply.type = 'button';
-      apply.className = 'ui-row-btn primary';
-      apply.style.marginTop = '0.5rem';
-      apply.textContent = 'Apply to all ' + d.count + ' tool' + (d.count === 1 ? '' : 's');
-      apply.addEventListener('click', function(){
-        if (!picked) { window.uiAlert && window.uiAlert('Choose who can use them first.'); return; }
-        var go = function(){
-          apply.disabled = true;
-          fetch('api/category-security?' + qs + '&section=who', {method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({mode: picked, agents: Object.keys(ticked)})})
-            .then(jsonOrThrow)
-            .then(function(){ if(reload) reload(); load(); })
-            .catch(function(e){ apply.disabled = false; window.uiAlert && window.uiAlert('Could not change them: ' + (e && e.message || e)); load(); });
-        };
-        if (differ.length && window.uiConfirm) {
-          window.uiConfirm('Replace the settings of ' + differ.length + ' tool' + (differ.length === 1 ? '' : 's') + ' listed above with this choice?').then(function(ok){ if (ok) go(); });
-        } else if (differ.length) {
-          if (window.confirm('Replace the settings of the tools listed above with this choice?')) go();
-        } else {
-          go();
-        }
-      });
-      host.appendChild(apply);
+      apply.textContent = 'Apply who can use it to all ' + d.count + ' tool' + (d.count === 1 ? '' : 's');
     }
     function load(){
       fetch('api/category-security?' + qs + '&section=who', {cache:'no-store'}).then(jsonOrThrow)
@@ -386,7 +387,7 @@ const categorySecurityJS = `function(ctx){
   window.uiOpenSimpleModal({
     title: 'Security: ' + name,
     width: '600px',
-    mount: function(body){
+    mount: function(body, dlg){
       var intro = document.createElement('div');
       intro.style.cssText = 'color:var(--text-mute);font-size:var(--fs-sm, 0.85rem);line-height:1.45';
       intro.textContent = 'Set these for every tool in the category at once. A tool can still be set on its own afterwards, from its own Security.';
@@ -394,7 +395,7 @@ const categorySecurityJS = `function(ctx){
       heading(body, 'How it runs');
       runPills(body);
       heading(body, 'Who can use it');
-      who(body);
+      who(body, dlg);
     }
   });
 }`

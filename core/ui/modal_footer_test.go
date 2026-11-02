@@ -102,3 +102,60 @@ global.window = {
   matchMedia: function() { return {matches: false}; },
 };
 `
+
+// A form opened from a row's button saves from the footer too, beside Close,
+// as one opened from a ModalButton does. The row's dialog left its Save at
+// the end of the form, a level apart from Close, where a long form or a
+// phone scrolled it out of sight.
+func TestARowsFormSavesFromTheFooter(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed")
+	}
+	basics := readRuntimeFile(t, "10_basics.js")
+	row := strings.Index(basics, "} else if (act.type === 'modal') {")
+	if row < 0 || !strings.Contains(basics[row:row+1500], "openComponentDialog({") {
+		t.Fatal("a row's dialog does not open the way a ModalButton's does")
+	}
+	prelude := readRuntimeFile(t, "00_prelude.js")
+	from := strings.Index(prelude, "  window.uiOpenModal = function(opts) {")
+	to := strings.Index(prelude, "  // window.uiOpenArtifactPane")
+	at := strings.Index(basics, "  function openComponentDialog(o) {")
+	end := strings.Index(basics, "  // ModalButton — a button that")
+	if from < 0 || to < from || at < 0 || end < at {
+		t.Fatal("could not find uiOpenModal and openComponentDialog")
+	}
+	// The stub's querySelector finds a dialog's footer, as the form does.
+	dom := strings.Replace(modalStubDOM, "querySelector: function() { return null; },",
+		"querySelector: function(q) { return this.children.filter(function(c) { return '.' + c.className === q; })[0] || null; },", 1)
+	script := dom + prelude[from:to] + basics[at:end] + `
+function footerOf(dlg) { return dlg.children.filter(function(c) { return c.className === 'ui-modal-footer'; })[0]; }
+function labels(bar) { return bar.children.map(function(b) { return b.textContent + (/primary/.test(b.className) ? '*' : ''); }).join(','); }
+var mounted = null;
+// The form's own rule: its submit goes to the footer it is handed, else
+// after its fields.
+function mountComponent(c, parent, ctx) {
+  mounted = {c: c, ctx: ctx, parent: parent};
+  if (c.type !== 'form_panel' || !c.submit_label) return;
+  var b = document.createElement('button'); b.textContent = c.submit_label;
+  if (ctx.__modalFooter) { b.className = 'ui-row-btn primary'; ctx.__modalFooter.appendChild(b); }
+  else { b.className = 'ui-form-submit'; parent.appendChild(b); }
+}
+var m = openComponentDialog({title: 'Edit', component: {type: 'form_panel', submit_label: 'Save'}, ctx: {name: 'h1'}});
+if (labels(footerOf(m.dialog)) !== 'Close,Save*') throw new Error('a form saves from ' + labels(footerOf(m.dialog)));
+if (mounted.ctx.name !== 'h1' || typeof mounted.ctx.__closeModal !== 'function') throw new Error('the row and the close hook should reach the form');
+// A form that saves as it goes has nothing to put there: Close stays the way out.
+m = openComponentDialog({title: 'Edit', component: {type: 'form_panel'}});
+if (labels(footerOf(m.dialog)) !== 'Close*') throw new Error('an autosaving form reads ' + labels(footerOf(m.dialog)));
+// A wizard keeps its Back/Next row by its steps.
+m = openComponentDialog({title: 'New', component: {type: 'form_panel', submit_label: 'Create', steps: [{}]}});
+if (labels(footerOf(m.dialog)) !== 'Close*' || mounted.parent.children.length !== 1) throw new Error('a wizard\'s submit left its steps');
+console.log('OK');
+`
+	tmp := filepath.Join(t.TempDir(), "row_form.js")
+	if err := os.WriteFile(tmp, []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("node", tmp).CombinedOutput(); err != nil || !strings.Contains(string(out), "OK") {
+		t.Fatalf("a row's form does not save from the footer:\n%s", out)
+	}
+}

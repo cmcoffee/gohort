@@ -144,9 +144,9 @@ func max0(n int) int {
 // toast clears both.
 func TestModalButtonUsesTheFrameworksOneModal(t *testing.T) {
 	src := readRuntimeFile(t, "10_basics.js")
-	at := strings.Index(src, "components.modal_button = function")
+	at := strings.Index(src, "  function openComponentDialog(o) {")
 	if at < 0 {
-		t.Fatal("modal_button moved")
+		t.Fatal("openComponentDialog moved")
 	}
 	end := strings.Index(src[at:], "components.json_view")
 	if end < 0 {
@@ -178,7 +178,7 @@ func TestModalButtonUsesTheFrameworksOneModal(t *testing.T) {
 	}
 	// And the two things the old one carried deliberately: the caller's
 	// width, and the subtitle.
-	for _, want := range []string{"cfg.width", "cfg.subtitle"} {
+	for _, want := range []string{"o.width", "o.subtitle", "width: cfg.width", "subtitle: cfg.subtitle"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("modal_button dropped %s in the swap", want)
 		}
