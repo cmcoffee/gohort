@@ -221,10 +221,10 @@ func TestConnectorsAreBandedByWhatTheyDo(t *testing.T) {
 	}
 }
 
-// A services connector is put to use on the page that uses it, never by an
-// Approve on its row; its row says which pages use it, none, or a change
-// waiting; and saving the page with it chosen accepts a waiting change.
-func TestAServicesConnectorIsPutToUseOnItsPage(t *testing.T) {
+// A services connector has no approval: Approve on its row is refused; its
+// row says which pages reference it, none, or a change waiting; and saving
+// the page with it chosen accepts a waiting change.
+func TestAServicesConnectorIsReferencedFromItsPage(t *testing.T) {
 	saved := RootDB
 	RootDB = &DBase{Store: kvlite.MemStore()}
 	t.Cleanup(func() { RootDB = saved })
@@ -251,14 +251,14 @@ func TestAServicesConnectorIsPutToUseOnItsPage(t *testing.T) {
 		t.Fatal("no row for tunes")
 		return nil
 	}
-	inUse := func() bool { c, _ := GetConnector(RootDB, "tunes"); return c.Approved }
+	referenced := func() bool { return service.Referenced(RootDB, "tunes") }
 
 	if _, err := a.handleConnectorAction(call("POST", "/api/connectors?name=tunes&action=approve"), nil); err == nil ||
-		!strings.Contains(err.Error(), "is put to use where it is used") || inUse() {
-		t.Errorf("Approve on its row: %v, in use %v", err, inUse())
+		!strings.Contains(err.Error(), "has no approval") {
+		t.Errorf("Approve on its row: %v", err)
 	}
-	if r := row(); r["state"] != "unused" || r["can_approve"] == true || !strings.HasPrefix(r["status"].(string), "Not in use") {
-		t.Errorf("an unused row: %v", r)
+	if r := row(); r["state"] != "unreferenced" || r["can_approve"] == true || !strings.HasPrefix(r["status"].(string), "Not referenced") {
+		t.Errorf("an unreferenced row: %v", r)
 	}
 	finder := `{"provider":{"transport":"http","base_url":"https://find.example.test","auth":{"none":true},"operations":{"find":{"path":"/s?q={query}"}}},"provides":[{"capability":"web.search","steps":[{"call":"find"}],"output":{"results":{"path":"hits","fields":{"title":"t","url":"u"}}}}]}`
 	if err := SaveConnector(RootDB, Connector{Name: "finder", Kind: service.Kind, Spec: json.RawMessage(finder)}); err != nil {
@@ -269,33 +269,29 @@ func TestAServicesConnectorIsPutToUseOnItsPage(t *testing.T) {
 			t.Errorf("Music took %s, which does not make music", n)
 		}
 	}
-	if _, err := a.handleMusicSave(call("POST", "/api/music"), musicConfig{Agents: []string{"tunes"}}); err != nil || !inUse() {
-		t.Fatalf("offering it on Music: %v, in use %v", err, inUse())
+	if _, err := a.handleMusicSave(call("POST", "/api/music"), musicConfig{Agents: []string{"tunes"}}); err != nil || !referenced() {
+		t.Fatalf("offering it on Music: %v, referenced %v", err, referenced())
 	}
-	if r := row(); r["state"] != "in-use" || !strings.HasPrefix(r["status"].(string), "Used by Music (offered to agents).") {
-		t.Errorf("a row in use: %v", r)
+	if r := row(); r["state"] != "referenced" || !strings.HasPrefix(r["status"].(string), "Referenced by Music (offered to agents).") {
+		t.Errorf("a referenced row: %v", r)
 	}
 
 	// Changed by someone not an administrator: held, and said so on its row
 	// and in the page's choice, until the page is saved with it chosen.
 	service.MarkChanged(RootDB, "tunes", "someone")
-	service.Settle(RootDB)
-	if inUse() {
-		t.Fatal("a change waiting left it in use")
-	}
 	if r := row(); r["state"] != "changed" || !strings.HasPrefix(r["status"].(string), "Changed by someone on ") {
 		t.Errorf("a changed row: %v", r)
 	}
 	if opts := musicOptions(); len(opts) != 1 || opts[0].Label != "tunes (changed, waiting to be accepted)" {
 		t.Errorf("the page's choice: %+v", opts)
 	}
-	if _, err := a.handleMusicSave(call("POST", "/api/music"), musicConfig{Agents: []string{"tunes"}}); err != nil || !inUse() {
-		t.Errorf("saving the page with it chosen did not accept it: %v, in use %v", err, inUse())
+	if _, err := a.handleMusicSave(call("POST", "/api/music"), musicConfig{Agents: []string{"tunes"}}); err != nil {
+		t.Errorf("saving the page with it chosen: %v", err)
 	}
 	if _, waiting := service.PendingChange(RootDB, "tunes"); waiting {
 		t.Error("accepted, still waiting")
 	}
-	if _, err := a.handleMusicSave(call("POST", "/api/music"), musicConfig{}); err != nil || inUse() {
-		t.Errorf("taken off Music: %v, in use %v", err, inUse())
+	if _, err := a.handleMusicSave(call("POST", "/api/music"), musicConfig{}); err != nil || referenced() {
+		t.Errorf("taken off Music: %v, referenced %v", err, referenced())
 	}
 }

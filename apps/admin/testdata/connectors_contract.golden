@@ -3,7 +3,7 @@
 alice GET /api/connectors ""
   403 forbidden
 root GET /api/connectors ""
-  200 [{"name":"ct-art","title":"ct-art","kind":"service","summary":"Image Generation ⇐ render ⇐ 127.0.0.1:1 (its API login)","owner":"root","approved":false,"last_error":"","template":"a1111","is_image… (837 bytes, sha1 97ceaa6e2e19107f147942b6b586e1f832dae7df)
+  200 [{"name":"ct-art","title":"ct-art","kind":"service","summary":"Image Generation ⇐ render ⇐ 127.0.0.1:1 (its API login)","owner":"root","approved":false,"last_error":"","template":"a1111","is_image… (869 bytes, sha1 75e6cb83d1d21fbef2c015df5fb05dc33eb2c0a0)
 root PUT /api/connectors "{}"
   405 method not allowed
 (signed out) GET /api/connectors/spec?name=ct-art ""
@@ -35,11 +35,11 @@ alice POST /api/connectors?action=approve&name=ct-art ""
 root POST /api/connectors?action=approve ""
   400 missing name
 root POST /api/connectors?action=approve&name=ct-art ""
-  400 ct-art is put to use where it is used, not here: choose it on the page that uses it (Web Search, Image Generation, Research Sources, a flow, ...), or take it off there
+  400 ct-art has no approval: it is reached through the pages that reference it (Web Search, Image Generation, Research Sources, a flow, ...)
 root POST /api/connectors?action=approve&name=ct-nope ""
   400 no connector named "ct-nope"
 root POST /api/connectors?action=unapprove&name=ct-art ""
-  400 ct-art is put to use where it is used, not here: choose it on the page that uses it (Web Search, Image Generation, Research Sources, a flow, ...), or take it off there
+  400 ct-art has no approval: it is reached through the pages that reference it (Web Search, Image Generation, Research Sources, a flow, ...)
 root POST /api/connectors?action=sideways&name=ct-art ""
   400 action must be approve|unapprove|update_spec|revert
 root POST /api/connectors?action=update_spec&name=ct-art "not json"
@@ -51,7 +51,7 @@ root POST /api/connectors?action=update_spec&name=ct-nope "{}"
 root POST /api/connectors?action=update_spec&name=ct-art "{\"config\":[{\"name\":\"api_key\",\"label\":\"API login\",\"help\":\"Only for a server started with --api-auth: its user:password. A local one takes none.\",\"type\":\"secret\",\"send\":\"basic\"}],\"provider\":{\"transport\":\"http\",\"base_url\":\"http://127.0.0.1:2\",\"auth\":{\"secret\":\"api_key\"},\"operations\":{\"render\":{\"builtin\":\"a1111\",\"options\":{\"mode\":\"txt2img\"}}}},\"provides\":[{\"capability\":\"image.generate\",\"steps\":[{\"call\":\"render\"}],\"output\":{\"image\":{\"from\":\"body\"}}}]}"
   204 
 root GET /api/connectors ""
-  200 [{"name":"ct-art","title":"ct-art","kind":"service","summary":"Image Generation ⇐ render ⇐ 127.0.0.1:2 (its API login)","owner":"root","approved":false,"last_error":"","template":"a1111","is_image… (837 bytes, sha1 130d205dd6a425662af89f5531ac981e2e12a7c4)
+  200 [{"name":"ct-art","title":"ct-art","kind":"service","summary":"Image Generation ⇐ render ⇐ 127.0.0.1:2 (its API login)","owner":"root","approved":false,"last_error":"","template":"a1111","is_image… (869 bytes, sha1 ab8b10af7501024b22ff2cc8ca8cea9043e6fda8)
 root GET /api/connectors/spec?name=ct-nope ""
   404 no connector named ct-nope
 alice POST /api/research-sources "{\"connector\":\"ct-find\",\"topics\":[\"legal\"]}"
@@ -101,4 +101,4 @@ root DELETE /api/connectors ""
 root DELETE /api/connectors?name=ct-art ""
   204 
 root GET /api/connectors ""
-  200 [{"name":"ct-find","title":"ct-find","kind":"service","summary":"Web search ⇐ find ⇐ find.example.test (no key)","owner":"","approved":false,"last_error":"","is_image":false,"configurable":false,"… (814 bytes, sha1 53ad95b975a19147279b043c4c2e6dab542ee5f4)
+  200 [{"name":"ct-find","title":"ct-find","kind":"service","summary":"Web search ⇐ find ⇐ find.example.test (no key)","owner":"","approved":false,"last_error":"","is_image":false,"configurable":false,"… (846 bytes, sha1 799c94ab0d6b78c1aa77bc2e20429de48219f691)

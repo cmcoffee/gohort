@@ -157,7 +157,7 @@ func (a *AdminApp) handleWebSearchSave(c *jsonapi.Call, form withSettings[WebSea
 		a.db.Set(SearchTable, "endpoint", req.Endpoint)
 		a.db.Set(SearchTable, "source", req.Source)
 	}
-	settleTieIn(req.Provider)
+	acceptChanges(req.Provider)
 	adminChange(c.R, activity.Settings, "updated web-search config (provider=%q)",
 		req.Provider)
 	return jsonapi.Empty(http.StatusNoContent), nil
@@ -199,7 +199,7 @@ func (a *AdminApp) handleBrowseSave(c *jsonapi.Call, form withSettings[BrowseCon
 		a.db.Set(BrowseTable, "source", src)
 	}
 	SetBrowseConfig(BrowseConfig{Source: src})
-	settleTieIn(src)
+	acceptChanges(src)
 	adminChange(c.R, activity.Settings, "set page rendering to %q", src)
 	return jsonapi.Empty(http.StatusNoContent), nil
 }
@@ -291,7 +291,7 @@ func (a *AdminApp) handleMailSave(c *jsonapi.Call, form withSettings[MailConfig]
 		a.db.Set(MailTable, "username", req.Username)
 		a.db.Set(MailTable, "password", req.Password)
 	}
-	settleTieIn(req.Provider)
+	acceptChanges(req.Provider)
 	adminChange(c.R, activity.Settings, "updated mail config (provider=%q server=%q from=%q)",
 		req.Provider, req.Server, req.From)
 	return jsonapi.Empty(http.StatusNoContent), nil

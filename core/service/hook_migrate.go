@@ -54,11 +54,11 @@ func hookSlug(name string) string {
 
 // HookConnector makes the search connector Source Hook h described, its key
 // (when it has one) kept in the connection's own space, and the Research Sources
-// entry for how research and agents asked it, on when approve (which puts
-// the connector to use). from names where the hook came from, for the
-// connector's description. It returns the connector's name and how many
-// records it wrote.
-func HookConnector(db Database, h sourcehooks.SourceHook, approve bool, from string) (string, int, error) {
+// entry for how research and agents asked it, off until an administrator
+// turns it on. from names where the hook came from, for the connector's
+// description. It returns the connector's name and how many records it
+// wrote.
+func HookConnector(db Database, h sourcehooks.SourceHook, from string) (string, int, error) {
 	if h.Type == sourcehooks.HookTypePaywall {
 		return "", 0, fmt.Errorf("%s is a paywall hook: it is a credential for its sites, not a search", h.Name)
 	}
@@ -176,7 +176,7 @@ func HookConnector(db Database, h sourcehooks.SourceHook, approve bool, from str
 	}
 	// How research and agents asked the hook is its Research Sources entry,
 	// which puts the connector to use when the hook was on.
-	rs := ResearchSource{Connector: c.Name, Always: h.AlwaysActive, Off: !approve}
+	rs := ResearchSource{Connector: c.Name, Always: h.AlwaysActive, Off: true}
 	for _, t := range h.TriggerDomains {
 		if t = strings.TrimSpace(t); t != "" {
 			rs.Topics = append(rs.Topics, t)
@@ -191,11 +191,6 @@ func HookConnector(db Database, h sourcehooks.SourceHook, approve bool, from str
 	}
 	if !rs.Always && len(rs.Topics) == 0 && rs.ToolName == "" {
 		// Asked by nothing but Web Search, if that: no source to keep.
-		if approve {
-			if err := ApproveConnector(db, c.Name); err != nil {
-				return c.Name, changed, err
-			}
-		}
 		return c.Name, changed, nil
 	}
 	if err := SaveResearchSource(db, rs); err != nil {
@@ -244,7 +239,7 @@ func init() { RegisterArtifactType(sourceHookArtifact{}) }
 
 // sourceHookArtifact reads a Source Hook a bundle made before Source Hooks
 // became connectors: importing one makes the search connector it described,
-// unapproved, and its Research Sources entry, off, its credential (secrets
+// and its Research Sources entry, off, its credential (secrets
 // never travel) a draft waiting for its key. Nothing exports as one now:
 // export the connector.
 type sourceHookArtifact struct{}
@@ -273,6 +268,6 @@ func (sourceHookArtifact) ImportArtifact(db Database, recipe json.RawMessage, _ 
 		return h.Name, "a paywall hook is a credential for its sites: add one under API Credentials", nil
 	}
 	h.AuthKey = ""
-	name, _, err := HookConnector(db, h, false, "Source Hook "+h.Name+" in a bundle")
+	name, _, err := HookConnector(db, h, "Source Hook "+h.Name+" in a bundle")
 	return name, "", err
 }

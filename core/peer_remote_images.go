@@ -156,8 +156,8 @@ func peerGuidance(peer, g string) string {
 // advertises, each keeping the peer key, and returns the connection names this
 // peer now owns.
 //
-// Each is put to use where it is chosen, as any connection is: on Image
-// Generation, as the default or offered to agents.
+// Each is served once saved, and reached where it is chosen, as any
+// connection is: on Image Generation, as the default or offered to agents.
 //
 // Idempotent: a connection that already says exactly what this peer currently
 // advertises is left alone, its key rewritten only when the peer's changed.

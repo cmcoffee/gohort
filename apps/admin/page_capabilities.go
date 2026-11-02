@@ -74,7 +74,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		{
 			Title:    "Music",
 			Subtitle: "Music connectors agents may make songs with.",
-			Detail:   "Each one ticked is offered to agents as a tool of its own, generate_music_<connector>, and put to use. Add a music connector under Admin > Extensions > Connectors, from its spec; it is tested and fixed there. A flow may use one as a step without it being offered here.",
+			Detail:   "Each one ticked is offered to agents as a tool of its own, generate_music_<connector>. Add a music connector under Admin > Extensions > Connectors, from its spec; it is tested and fixed there. A flow may use one as a step without it being offered here.",
 			Body: ui.FormPanel{
 				Source: "api/music",
 				Fields: []ui.FormField{{Field: "agents", Label: "Offered to agents", Type: "checklist", Options: musicOptions(),
@@ -84,7 +84,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		{
 			Title:    "Web Search",
 			Subtitle: "Provider for the web_search tool.",
-			Detail:   "DuckDuckGo is built in and needs no key. Any other engine is a connector that searches: add one from a template (Admin > Extensions > Templates has Brave, Serper, Tavily, Google Programmable Search and SearXNG) and pick it here, which puts it to use, its key kept on it.",
+			Detail:   "DuckDuckGo is built in and needs no key. Any other engine is a connector that searches: add one from a template (Admin > Extensions > Templates has Brave, Serper, Tavily, Google Programmable Search and SearXNG) and pick it here, its key kept on it.",
 			Body: ui.FormPanel{
 				Assist:    true,
 				Source:    "api/web-search",
@@ -105,7 +105,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		{
 			Title:    "Mail (SMTP)",
 			Subtitle: "Outbound SMTP for notification emails.",
-			Detail:   "Signup approvals, scheduled deliveries, watcher alerts and the send_email tool. Leave Server blank for localhost:25. A mail API (Resend, Postmark and others) can send instead: add a connector that sends mail from Admin > Extensions > Templates and pick it under Send with, which puts it to use.",
+			Detail:   "Signup approvals, scheduled deliveries, watcher alerts and the send_email tool. Leave Server blank for localhost:25. A mail API (Resend, Postmark and others) can send instead: add a connector that sends mail from Admin > Extensions > Templates and pick it under Send with.",
 			Body: ui.FormPanel{
 				Assist:    true,
 				Source:    "api/mail",
@@ -207,8 +207,8 @@ func configurableImage(c Connector) bool {
 func imageFormFields() []ui.FormField {
 	var opts []ui.SelectOption
 	for _, c := range ListConnectors(RootDB) {
-		// Every image connector (choosing it here puts it to use), and any
-		// other backend already registered, a peer's renderer among them.
+		// Every image connector (choosing it here references it), and any
+		// other backend already registered.
 		if imageConnector(c.Name) || (c.Approved && ImageBackendRegistered(c.Name)) {
 			label := connectorLabel(c)
 			if _, waiting := service.PendingChange(RootDB, c.Name); waiting {
@@ -224,11 +224,11 @@ func imageFormFields() []ui.FormField {
 		f.Help = "Nothing here makes pictures yet: " + add + "."
 		return []ui.FormField{f}
 	}
-	f.Help = "The connector that makes pictures. Choosing it puts it to use; its settings (an address, a model, a key) are set here below it."
-	f.Detail = "To make pictures with something not listed, " + add + ". A connector changed by someone who is not an administrator since it was put to use waits out of use: read the change on its row, then save here with it chosen to accept it."
+	f.Help = "The connector that makes pictures. Its settings (an address, a model, a key) are set here below it."
+	f.Detail = "To make pictures with something not listed, " + add + ". A connector changed by someone who is not an administrator is held, so no call reaches it: read the change on its row, then save here with it chosen to accept it."
 	agents := ui.FormField{Field: "agents", Label: "Also offered to agents", Type: "checklist", Options: opts,
 		Help:   "Other image connectors agents may choose by name, and peers borrowing image generation. The one above is always offered.",
-		Detail: "Each one ticked is put to use. Agents' image tools offer the connector above as the default and these by name; a peer that borrows image generation from this machine may name them too."}
+		Detail: "Agents' image tools, and a backend's own generate_image_<name> tool, reach only the connector above and the ones ticked here. They offer the connector above as the default and these by name; a peer that borrows image generation from this machine may name them too."}
 	fields := append([]ui.FormField{f}, connectorSettingsFields("image.generate", "", "provider", func(n string) string { return n })...)
 	return append(fields, agents)
 }
@@ -366,7 +366,7 @@ func webSearchFormFields() []ui.FormField {
 				{Value: "duckduckgo", Label: "DuckDuckGo (built in, no key)"},
 			}, serviceProviderOptions("web.search", "Search")...),
 			Help:   "The engine every search goes to. A connector's settings (its key, an address) are set here below it.",
-			Detail: "To search with an engine not listed, " + add + ". Once added it is offered here, and choosing it puts it to use. Serper's also finds pictures, for agents' find_image. The connector picked here is not also asked as a research source: it already answers web_search."},
+			Detail: "To search with an engine not listed, " + add + ". Once added it is offered here. Serper's also finds pictures, for agents' find_image. The connector picked here is not also asked as a research source: it already answers web_search."},
 	)
 	return append(fields, connectorSettingsFields("web.search", local, "provider", choiceFor("web.search"))...)
 }

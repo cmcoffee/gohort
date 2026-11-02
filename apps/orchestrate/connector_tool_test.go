@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -130,26 +131,25 @@ func TestBuilderDraftsAServiceConnector(t *testing.T) {
 		t.Error("a refused spec was saved")
 	}
 
-	// Put to use by a page, then changed by alice's Builder: held out of
-	// use, by her name, until an administrator accepts it.
+	// Referenced by a page, then changed by alice's Builder: held, by her
+	// name, until an administrator accepts it.
 	RootDB.Set(ImageTable, "provider", "acme-images")
-	service.Settle(RootDB)
-	if c, _ := GetConnector(RootDB, "acme-images"); !c.Approved {
-		t.Fatal("named by Image Generation, not in use")
-	}
 	bad["provides"].([]any)[0].(map[string]any)["capability"] = "image.generate"
-	if _, err := connectorUpdate(map[string]any{"name": "acme-images", "service_spec": spec}, sess); err != nil {
+	msg, err := connectorUpdate(map[string]any{"name": "acme-images", "service_spec": spec}, sess)
+	if err != nil {
 		t.Fatal(err)
 	}
-	service.Settle(RootDB)
-	if c, _ := GetConnector(RootDB, "acme-images"); c.Approved {
-		t.Error("a change by someone not an administrator went live")
+	if !strings.Contains(msg, "HELD") {
+		t.Errorf("what Builder is told of its change: %s", msg)
+	}
+	if _, err := service.Call(context.Background(), nil, "acme-images", "image.generate", map[string]any{"prompt": "x"}); err == nil || !strings.Contains(err.Error(), "change waiting") {
+		t.Errorf("a change by someone not an administrator went live: %v", err)
 	}
 	if ch, ok := service.PendingChange(RootDB, "acme-images"); !ok || ch.By != "alice" {
 		t.Errorf("the change waiting: %+v %v", ch, ok)
 	}
 	// Image Generation still names it, so her Builder cannot delete it.
-	if _, err := connectorDelete(map[string]any{"name": "acme-images"}, sess); err == nil || !strings.Contains(err.Error(), "in use by Image Generation") {
+	if _, err := connectorDelete(map[string]any{"name": "acme-images"}, sess); err == nil || !strings.Contains(err.Error(), "referenced by Image Generation") {
 		t.Errorf("deleting one a page names: %v", err)
 	}
 	if _, ok := GetConnector(RootDB, "acme-images"); !ok {

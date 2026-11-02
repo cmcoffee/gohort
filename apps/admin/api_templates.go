@@ -183,9 +183,9 @@ func (a *AdminApp) handleConnectorConfigSave(c *jsonapi.Call, req struct {
 	if err := SaveConnector(RootDB, conn); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
-	// A services connector is put to use by the page that names it: as the
-	// default here when asked, else under Image Generation. Any other kind
-	// is live once added, as before.
+	// A services connector is served once saved and reached through the
+	// page that names it: as the default here when asked, else under Image
+	// Generation. Any other kind is live once added, as before.
 	if !service.TieInConnector(t.Kind) {
 		if err := ApproveConnector(RootDB, name); err != nil {
 			return nil, jsonapi.BadRequest("created but approve failed: " + err.Error())
@@ -193,7 +193,7 @@ func (a *AdminApp) handleConnectorConfigSave(c *jsonapi.Call, req struct {
 	}
 	if req.SetDefault && a.db != nil && t.Category == "Image generation" {
 		a.db.Set(ImageTable, "provider", name)
-		settleTieIn(name)
+		acceptChanges(name)
 	}
 	adminChange(c.R, activity.Settings, "added backend %q via template %q", name, req.Template)
 	return jsonapi.Empty(http.StatusNoContent), nil

@@ -6,16 +6,20 @@ import (
 	"testing"
 )
 
-// Serve settles which connections pages reference, then checks the saved
-// connections, so what the log names is what the instance will run with.
+// Serve checks the saved connections at start, so what is wrong with one is
+// in the log before a call first meets it.
 func TestStartupChecksSavedConnections(t *testing.T) {
 	src, err := os.ReadFile("gohort.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(src)
-	settle, check := strings.Index(s, "service.Settle(global.db)"), strings.Index(s, "service.LogSelfCheck(global.db)")
-	if settle < 0 || check < settle {
-		t.Error("serve does not check the saved connections after settling what references them")
+	if !strings.Contains(s, "service.LogSelfCheck(global.db)") {
+		t.Error("serve does not check the saved connections")
+	}
+	// A connection has no approval to settle at start: it is served, and
+	// reached through the pages that reference it.
+	if strings.Contains(s, "service.Settle(") {
+		t.Error("serve still settles what is in use")
 	}
 }

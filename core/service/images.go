@@ -220,6 +220,11 @@ func (handler) ImageSpec(c Connector) (RestImageSpec, bool, error) {
 	if _, ok := imageOperation(s); !ok {
 		return RestImageSpec{}, false, nil
 	}
+	// A change waiting on it holds it, as it holds every call (tieins.go):
+	// until it is accepted the backend is not served.
+	if held(c.Name) {
+		return RestImageSpec{}, true, fmt.Errorf("image backend %q has a change waiting: an admin accepts it by saving a page that uses it", c.Name)
+	}
 	settled, err := settledFor(context.Background(), c.Name, s)
 	if err != nil {
 		return RestImageSpec{}, true, err

@@ -200,12 +200,12 @@ func (a *AdminApp) handleFlowSave(c *jsonapi.Call, form wiringForm) (any, error)
 	if old != "" && old != f.Name {
 		service.DeleteFlow(old)
 	}
-	// A flow's steps put their connectors to use.
+	// Saving a flow accepts a change waiting on a connector its steps name.
 	var named []string
 	for _, st := range f.Steps {
 		named = append(named, st.Connector)
 	}
-	settleTieIn(named...)
+	acceptChanges(named...)
 	return map[string]any{"ok": true, "name": f.Name}, nil
 }
 
@@ -215,7 +215,6 @@ func (a *AdminApp) handleFlowDelete(c *jsonapi.Call, _ struct{}) (any, error) {
 		return nil, jsonapi.BadRequest("missing name")
 	}
 	service.DeleteFlow(name)
-	settleTieIn()
 	return map[string]any{"ok": true}, nil
 }
 

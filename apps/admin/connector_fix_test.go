@@ -75,15 +75,12 @@ func TestFixingAnImageConnection(t *testing.T) {
 	}
 
 	body, _ := json.Marshal(map[string]string{"spec": form.Spec})
-	if w := call("POST", "/api/connectors/fix-save?name=sd", string(body)); w.Code != 200 || !strings.Contains(w.Body.String(), "out of use until a page that uses it chooses it") {
+	if w := call("POST", "/api/connectors/fix-save?name=sd", string(body)); w.Code != 200 || !strings.Contains(w.Body.String(), "Saved.") {
 		t.Fatalf("save: %d %s", w.Code, w.Body.String())
 	}
 	conn, _ = GetConnector(RootDB, "sd")
-	if conn.Kind != service.Kind || conn.Approved {
-		t.Errorf("after the save: kind %s, approved %v", conn.Kind, conn.Approved)
-	}
-	if ImageBackendRegistered("sd") {
-		t.Error("the old backend is still live after the conversion")
+	if conn.Kind != service.Kind || !ImageBackendRegistered("sd") {
+		t.Errorf("after the save: kind %s, served %v", conn.Kind, ImageBackendRegistered("sd"))
 	}
 	if w := call("POST", "/api/connectors/fix-save?name=sd", `{"spec":"{\"provider\":{}}"}`); w.Code != 400 {
 		t.Errorf("an invalid spec saved: %d", w.Code)

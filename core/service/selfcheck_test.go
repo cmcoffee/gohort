@@ -39,7 +39,7 @@ func TestASavedConnectionIsChecked(t *testing.T) {
 	if got := check(); got != "" {
 		t.Errorf("unused and unset: %s", got)
 	}
-	ApproveConnector(RootDB, "finder")
+	RootDB.Set(SearchTable, "provider", "search:finder")
 	if got := check(); !strings.Contains(got, "Address") {
 		t.Errorf("in use with no address: %s", got)
 	}

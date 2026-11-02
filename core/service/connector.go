@@ -16,7 +16,7 @@ import (
 func init() { RegisterConnectorKind(Kind, handler{}) }
 
 // handler is the service connector kind. A service adds new outside reach,
-// so it is not auto-approved: an admin approves it, as for rest_image.
+// so a page that names it is what reaches it (tieins.go).
 type handler struct{}
 
 func specOf(c Connector) (Spec, error) {
@@ -111,6 +111,10 @@ func (handler) Materialize(c Connector) error {
 	}
 	return nil
 }
+
+// ServedAlways: a connection carries no approval. It is served from its
+// save, and reached through the pages that name it (tieins.go).
+func (handler) ServedAlways() bool { return true }
 
 func (handler) Teardown(c Connector) error {
 	name := strings.TrimSpace(c.Name)
@@ -270,8 +274,9 @@ func Default(c Connector, capability, input string) string {
 	return strings.TrimSpace(fmt.Sprint(b.Defaults[input]))
 }
 
-// Call runs capability on the approved service connector named name, records
-// how it went and what it cost, and returns its result.
+// Call runs capability on the service connector named name, records how it
+// went and what it cost, and returns its result. Whatever calls it has the
+// name from a reference to it (a page's choice, a flow's step, ...).
 func Call(ctx context.Context, sess *ToolSession, name, capability string, inputs map[string]any) (Result, error) {
 	c, ok := GetConnector(RootDB, name)
 	if !ok || c.Kind != Kind {
@@ -284,7 +289,7 @@ func Call(ctx context.Context, sess *ToolSession, name, capability string, input
 		return nil, err
 	}
 	if !callable(ctx, c) {
-		return nil, fmt.Errorf("service %q is not in use: an admin puts it to use by choosing it on the page that uses it (Web Search, Image Generation, Research Sources, a flow, ...)", name)
+		return nil, fmt.Errorf("service %q has a change waiting: an admin accepts it by saving a page that uses it, after reading its spec under Connectors", name)
 	}
 	s, err := specOf(c)
 	if err == nil {

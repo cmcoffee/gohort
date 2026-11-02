@@ -65,15 +65,12 @@ func connectorFixAction() ui.RowAction {
 // with a note on what saving does.
 func (a *AdminApp) handleConnectorFixForm(c *jsonapi.Call) (any, error) {
 	name := strings.TrimSpace(c.R.URL.Query().Get("name"))
-	s, notes, conn, err := service.ForFix(name)
+	s, notes, _, err := service.ForFix(name)
 	if err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
 	pretty, _ := json.MarshalIndent(s, "", "  ")
-	note := "Saving re-checks the spec and, if the connector is in use, puts the change live at once."
-	if conn.Kind != service.Kind {
-		note = "This " + conn.Kind + " connector is shown as a service spec. Saving converts it into a service connector, in use again once a page that uses it is saved."
-	}
+	note := "Saving re-checks the spec and puts the change live at once."
 	if len(notes) > 0 {
 		note += " Not carried over: " + strings.Join(notes, "; ") + "."
 	}
@@ -97,28 +94,14 @@ func (a *AdminApp) handleConnectorFixSave(c *jsonapi.Call, body struct {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
 	raw, _ := json.Marshal(s)
-	msg := "Saved."
-	if conn.Kind != service.Kind {
-		if conn.Approved {
-			if err := UnapproveConnector(RootDB, name); err != nil {
-				return nil, jsonapi.BadRequest(err.Error())
-			}
-		}
-		conn, _ = GetConnector(RootDB, name)
-		conn.Kind = service.Kind
-		msg = "Saved as a service connector."
-	}
 	conn.Spec = raw
 	if err := SaveConnector(RootDB, conn); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
-	// An administrator saving the fix accepts it: in use again wherever a
-	// page names it.
-	settleTieIn(name)
-	if now, _ := GetConnector(RootDB, name); !now.Approved {
-		msg += " It is out of use until a page that uses it chooses it."
-	}
-	return map[string]any{"message": msg}, nil
+	// An administrator saving the fix accepts it, a change waiting on it
+	// with it.
+	acceptChanges(name)
+	return map[string]any{"message": "Saved."}, nil
 }
 
 // connectorFixAbout is what the assistant is told first: the connector, how

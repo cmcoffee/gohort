@@ -55,8 +55,11 @@ func builtinSearchNames() []string {
 // full text), within what the connector's credential allows.
 func SourceGet(ctx context.Context, name, path string) ([]byte, error) {
 	c, ok := GetConnector(RootDB, name)
-	if !ok || c.Kind != Kind || !c.Approved {
-		return nil, fmt.Errorf("no search connector in use named %q", name)
+	if !ok || c.Kind != Kind {
+		return nil, fmt.Errorf("no search connector named %q", name)
+	}
+	if !callable(ctx, c) {
+		return nil, fmt.Errorf("search connector %q has a change waiting: an admin accepts it by saving a page that uses it", name)
 	}
 	s, err := specOf(c)
 	if err == nil {
@@ -71,8 +74,8 @@ func SourceGet(ctx context.Context, name, path string) ([]byte, error) {
 
 // builtin runs the built-in search op names: its requests go to the
 // provider's address through the connector's own governed path, and its
-// results come back as the reply the spec reads, {"results": [...]}. A
-// an image op runs its backend instead (images.go).
+// results come back as the reply the spec reads, {"results": [...]}. An
+// image op runs its backend instead (images.go).
 func (t transport) builtin(ctx context.Context, name string, op Operation, vars map[string]any) (reply, error) {
 	if imageBuiltin(op.Builtin) {
 		return t.renderImage(name, op, vars)

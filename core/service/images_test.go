@@ -74,9 +74,6 @@ func comfyConnection(t *testing.T, srv *httptest.Server, stub *comfyStub, name, 
 	if err := SaveConnector(RootDB, Connector{Name: name, Kind: kind, Template: "comfyui", Spec: raw}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ApproveConnector(RootDB, name); err != nil {
-		t.Fatal(err)
-	}
 	c, _ := GetConnector(RootDB, name)
 	return c
 }
@@ -123,8 +120,9 @@ func TestAComfyUIConnectionDraws(t *testing.T) {
 		}
 	}
 
-	// Another saved leaves the first served, and the tool an agent was
-	// granted before the move draws through it too.
+	// Another saved leaves the first served. The tool an agent was granted
+	// before the move draws through it only while Image Generation offers
+	// it: the grant alone is no reference.
 	if _, err := GenerateImageWithBackend(context.Background(), "studio", "a fox again", false); err != nil {
 		t.Errorf("after another was saved: %v", err)
 	}
@@ -135,16 +133,20 @@ func TestAComfyUIConnectionDraws(t *testing.T) {
 	run, _ := tool.(interface {
 		RunWithSession(map[string]any, *ToolSession) (string, error)
 	})
+	if out, err := run.RunWithSession(map[string]any{"prompt": "a green fox"}, &ToolSession{}); err == nil || !strings.Contains(err.Error(), "not offered") {
+		t.Errorf("its tool, not offered: %q %v", out, err)
+	}
+	RootDB.Set(ImageTable, "agents", []string{"studio"})
 	if out, err := run.RunWithSession(map[string]any{"prompt": "a green fox"}, &ToolSession{}); err != nil || !strings.Contains(out, "generated") {
 		t.Errorf("its tool: %q %v", out, err)
 	}
-	// Out of use, it draws no more, and is no longer offered as a backend.
-	UnapproveConnector(RootDB, "studio_open")
-	if _, err := GenerateImageWithBackend(context.Background(), "studio_open", "a fox", false); err == nil {
-		t.Error("an unused connection still draws")
+	// Held by a change, it draws no more, by name or by its tool.
+	MarkChanged(RootDB, "studio", "someone")
+	if _, err := GenerateImageWithBackend(context.Background(), "studio", "a fox", false); err == nil || !strings.Contains(err.Error(), "change waiting") {
+		t.Errorf("a held connection still draws: %v", err)
 	}
-	if ImageBackendRegistered("studio_open") {
-		t.Error("an unused connection is still registered as a backend")
+	if _, err := run.RunWithSession(map[string]any{"prompt": "a fox"}, &ToolSession{}); err == nil {
+		t.Error("a held connection still draws through its tool")
 	}
 }
 
@@ -357,9 +359,6 @@ func a1111Connection(t *testing.T, tpl, name string, values map[string]any) Conn
 	if err := SaveConnector(RootDB, Connector{Name: name, Kind: Kind, Template: tpl, Spec: raw}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ApproveConnector(RootDB, name); err != nil {
-		t.Fatal(err)
-	}
 	c, _ := GetConnector(RootDB, name)
 	return c
 }
@@ -444,9 +443,6 @@ func TestAPeerShapedA1111ConnectionKeepsItsPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := SaveConnector(RootDB, Connector{Name: "peer-den-flux", Kind: kind, Template: "peer:den", Spec: raw}); err != nil {
-		t.Fatal(err)
-	}
-	if err := ApproveConnector(RootDB, "peer-den-flux"); err != nil {
 		t.Fatal(err)
 	}
 	c, _ := GetConnector(RootDB, "peer-den-flux")
@@ -537,4 +533,42 @@ func TestTheA1111RecipesAddAConnection(t *testing.T) {
 			t.Errorf("%s: the recipe's connection differs from the form's:\n got %+v\nwant %+v", tc.recipe, spec, form)
 		}
 	}
+}
+
+// A connection carries no approval: it is served from its save and again at
+// start. A change holds it, so it draws nothing, and a save elsewhere then
+// stops serving it; accepted, it is served again at once, not at the next
+// start.
+func TestAnImageConnectionIsServedWithoutApproval(t *testing.T) {
+	world(t)
+	stub := &a1111Stub{}
+	srv := stub.serve(t)
+	a1111Connection(t, "a1111", "sd", map[string]any{"base_url": srv.URL})
+	if c, _ := GetConnector(RootDB, "sd"); c.Approved || !ImageBackendRegistered("sd") {
+		t.Fatalf("saved: approved %v, served %v", c.Approved, ImageBackendRegistered("sd"))
+	}
+	c, _ := GetConnector(RootDB, "sd")
+	c.StopImageBackend()
+	if ImageBackendRegistered("sd") {
+		t.Fatal("stopped, still served")
+	}
+	ReloadApprovedConnectors(RootDB)
+	if !ImageBackendRegistered("sd") {
+		t.Error("not served again at start")
+	}
+
+	MarkChanged(RootDB, "sd", "someone")
+	a1111Connection(t, "a1111", "other", map[string]any{"base_url": srv.URL})
+	if ImageBackendRegistered("sd") {
+		t.Error("a held connection is still served after a save elsewhere")
+	}
+	AcceptChanges(RootDB, "sd")
+	if !ImageBackendRegistered("sd") {
+		t.Fatal("accepted, not served again")
+	}
+	res, err := GenerateImageWithBackend(context.Background(), "sd", "a fox", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(res.URL)
 }

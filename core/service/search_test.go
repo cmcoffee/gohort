@@ -40,8 +40,8 @@ func TestAResearchSourceIsAskedOnItsTopicsAndByAgents(t *testing.T) {
 		ToolName: "caselaw_search", ToolDescription: "Search court opinions."}); err != nil {
 		t.Fatal(err)
 	}
-	if c, _ := GetConnector(RootDB, "caselaw"); !c.Approved {
-		t.Error("adding the source did not put its connector to use")
+	if !Referenced(RootDB, "caselaw") {
+		t.Error("adding the source did not reference its connector")
 	}
 	if got := sourcehooks.HooksForTopic([]string{"medical"}); len(got) != 0 {
 		t.Errorf("asked on a topic it is not for: %+v", got)
@@ -92,12 +92,12 @@ func TestAResearchSourceIsAskedOnItsTopicsAndByAgents(t *testing.T) {
 	}
 	LoadWebSearchConfigFunc = saved
 
-	// A source whose connector was taken out of use is not asked.
-	UnapproveConnector(RootDB, "caselaw")
+	// A source whose connector has a change waiting is not asked.
+	MarkChanged(RootDB, "caselaw", "someone")
 	if len(sourcehooks.HooksForTopic([]string{"legal"})) != 0 {
-		t.Error("a source on a connector out of use is asked")
+		t.Error("a source on a connector with a change waiting is asked")
 	}
-	ApproveConnector(RootDB, "caselaw")
+	AcceptChanges(RootDB, "caselaw")
 
 	rs, _ := GetResearchSource(RootDB, "caselaw")
 	rs.Off = true
@@ -162,8 +162,8 @@ func TestSourceGetReadsWithTheConnectionsKey(t *testing.T) {
 	if err != nil || string(body) != `{"plain_text":"The court held."}` || auth != "Token t0k" {
 		t.Errorf("read: %q %v, auth %q", body, err, auth)
 	}
-	UnapproveConnector(RootDB, "opinions")
-	if _, err := SourceGet(context.Background(), "opinions", "/opinions/42/"); err == nil {
-		t.Error("a connector out of use was read")
+	MarkChanged(RootDB, "opinions", "someone")
+	if _, err := SourceGet(context.Background(), "opinions", "/opinions/42/"); err == nil || !strings.Contains(err.Error(), "change waiting") {
+		t.Errorf("a connector a change holds was read: %v", err)
 	}
 }

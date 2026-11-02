@@ -383,9 +383,8 @@ func main() {
 
 		// Wire auth database.
 		AuthDB = func() Database { return global.db }
-		// Which connections pages reference, and what is wrong with a saved
-		// one, in the log now rather than when a call first meets it.
-		service.Settle(global.db)
+		// What is wrong with a saved connection, in the log now rather than
+		// when a call first meets it.
 		service.LogSelfCheck(global.db)
 
 		AuthEnabled = func() bool { return AuthHasUsers(global.db) }

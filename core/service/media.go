@@ -109,11 +109,11 @@ func embedVia(ctx context.Context, name, model string, texts []string) ([][]floa
 	return Vectors(res)
 }
 
-// serviceAddress is the base URL of the approved service connector named
-// name, or "".
+// serviceAddress is the base URL of the service connector named name, or
+// "".
 func serviceAddress(name string) string {
 	c, ok := GetConnector(RootDB, name)
-	if !ok || c.Kind != Kind || !c.Approved {
+	if !ok || c.Kind != Kind {
 		return ""
 	}
 	s, err := specOf(c)
@@ -310,10 +310,9 @@ func (t *musicTool) Caps() []Capability {
 }
 
 // offered reports whether the Music page offers this connector to agents,
-// and it is in use.
+// and no change waits on it.
 func (t *musicTool) offered() bool {
-	c, ok := GetConnector(RootDB, t.connector)
-	if !ok || !c.Approved {
+	if _, ok := GetConnector(RootDB, t.connector); !ok || held(t.connector) {
 		return false
 	}
 	var agents []string

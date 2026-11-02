@@ -31,7 +31,7 @@ func imageSearchConnector() (string, bool) {
 		return "", false
 	}
 	c, found := GetConnector(RootDB, name)
-	return name, found && c.Approved && service.Provides(c, "image.search")
+	return name, found && service.Provides(c, "image.search")
 }
 
 // searchImages finds pictures through the connector (its contract refuses a

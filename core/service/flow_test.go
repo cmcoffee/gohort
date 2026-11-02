@@ -187,11 +187,11 @@ func TestAFlowTakesAndGivesFiles(t *testing.T) {
 	}
 }
 
-// A flow saved while one of its connectors is out of use says so, and a run
-// stops at that step with the connector's own reason.
+// A flow saved while a change holds one of its connectors says so, and a
+// run stops at that step with the connector's own reason.
 func TestAFlowWaitsOnItsConnectors(t *testing.T) {
 	flowWorld(t)
-	UnapproveConnector(RootDB, "ears")
+	MarkChanged(RootDB, "ears", "someone")
 	f := roundTrip()
 	if err := SaveFlow(f); err != nil {
 		t.Fatal(err)
@@ -199,7 +199,7 @@ func TestAFlowWaitsOnItsConnectors(t *testing.T) {
 	if w := f.Waiting(); len(w) != 1 || w[0] != "ears" {
 		t.Errorf("waiting on: %v", w)
 	}
-	if _, _, err := f.Run(context.Background(), nil, map[string]any{"word": "x"}); err == nil || !strings.Contains(err.Error(), "step hear (speech.transcribe on ears): service \"ears\" is not in use") {
+	if _, _, err := f.Run(context.Background(), nil, map[string]any{"word": "x"}); err == nil || !strings.Contains(err.Error(), "step hear (speech.transcribe on ears): service \"ears\" has a change waiting") {
 		t.Errorf("run: %v", err)
 	}
 	if _, _, err := f.Run(context.Background(), nil, map[string]any{}); err == nil || err.Error() != "round_trip needs word" {

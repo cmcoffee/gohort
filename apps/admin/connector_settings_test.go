@@ -146,14 +146,14 @@ func TestAPagesTestRunsOnItsForm(t *testing.T) {
 	}
 }
 
-// A connector a page uses cannot be deleted: its row offers no Delete,
-// and a delete is refused naming the page, until it is taken off there.
-func TestAConnectorInUseCannotBeDeleted(t *testing.T) {
+// A connector a page references cannot be deleted: its row offers no
+// Delete, and a delete is refused naming the page, until it is taken off
+// there.
+func TestAReferencedConnectorCannotBeDeleted(t *testing.T) {
 	srv, _ := settingsWorld(t)
 	vecConnector(t, srv.URL)
 	a := &AdminApp{db: RootDB}
 	RootDB.Set(EmbeddingTable, "current", EmbeddingConfig{Enabled: true, Provider: "embed:vec"})
-	service.Settle(RootDB)
 	deletable := func() bool {
 		out, _ := a.handleConnectors(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/connectors", nil)})
 		b, _ := json.Marshal(out)
@@ -172,10 +172,10 @@ func TestAConnectorInUseCannotBeDeleted(t *testing.T) {
 		return err
 	}
 	if deletable() {
-		t.Error("a connector in use offers Delete")
+		t.Error("a referenced connector offers Delete")
 	}
-	if err := del(); err == nil || !strings.Contains(err.Error(), "in use by Embeddings") {
-		t.Fatalf("deleting one in use: %v", err)
+	if err := del(); err == nil || !strings.Contains(err.Error(), "referenced by Embeddings") {
+		t.Fatalf("deleting one referenced: %v", err)
 	}
 	if _, ok := GetConnector(RootDB, "vec"); !ok {
 		t.Fatal("refused, and deleted anyway")

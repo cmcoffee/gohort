@@ -1,6 +1,6 @@
 package service
 
-// A search connector (web.search) is put to use beyond Web Search as a
+// A search connector (web.search) is referenced beyond Web Search as a
 // research source: research asks it on its topics, and agents through
 // query_source, as Source Hooks were asked. Which connectors, on what, is
 // the Research Sources tie-in, kept here; the connector stays how a service
@@ -31,7 +31,7 @@ func init() {
 // reached and read; how gohort uses it for research is set here.
 const ResearchSourcesTable = "research_sources"
 
-// ResearchSource is one search connector put to use as a research source.
+// ResearchSource is one search connector referenced as a research source.
 type ResearchSource struct {
 	Connector string `json:"connector"`
 	// Topics are the research topics (legal, medical, ...) it is asked on;
@@ -100,29 +100,27 @@ func SaveResearchSource(db Database, rs ResearchSource) error {
 		return fmt.Errorf("say when %s is asked: on topics, always, or offered to agents by a tool name", rs.Connector)
 	}
 	db.Set(ResearchSourcesTable, rs.Connector, rs)
-	// Saving it here puts its connector to use, or out of use when it is
-	// off and nothing else names it.
-	Settle(db, rs.Connector)
+	// Saving it here accepts a change waiting on its connector.
+	AcceptChanges(db, rs.Connector)
 	return nil
 }
 
 // DeleteResearchSource stops asking connector name as a research source;
-// the connector stays, out of use unless another page names it.
+// the connector stays.
 func DeleteResearchSource(db Database, name string) {
 	if db != nil {
 		db.Unset(ResearchSourcesTable, strings.TrimSpace(name))
-		Settle(db)
 	}
 }
 
 // searchSources are the research sources that are on and whose connector
-// is approved, as the entries research matches by topic and agents ask
-// through query_source.
+// has no change waiting, as the entries research matches by topic and
+// agents ask through query_source.
 func searchSources() []sourcehooks.SourceHook {
 	var out []sourcehooks.SourceHook
 	for _, rs := range ListResearchSources(RootDB) {
 		c, ok := GetConnector(RootDB, rs.Connector)
-		if rs.Off || !ok || c.Kind != Kind || !c.Approved || !Provides(c, "web.search") {
+		if rs.Off || !ok || c.Kind != Kind || held(c.Name) || !Provides(c, "web.search") {
 			continue
 		}
 		out = append(out, sourcehooks.SourceHook{Name: c.Name, Type: sourcehooks.HookTypeAPI, Connector: c.Name,

@@ -177,7 +177,6 @@ func TestACallTakesTheConnectionsSettings(t *testing.T) {
 	if err := SaveConnector(RootDB, Connector{Name: "vec", Kind: Kind, Spec: raw}); err != nil {
 		t.Fatal(err)
 	}
-	ApproveConnector(RootDB, "vec")
 	c, _ := GetConnector(RootDB, "vec")
 	in := map[string]any{"texts": []string{"hi"}}
 
@@ -228,7 +227,6 @@ func TestAConnectionCarriesItsSecret(t *testing.T) {
 	if err := SaveConnector(RootDB, Connector{Name: "vec", Kind: Kind, Spec: raw, ID: "c_chosen"}); err != nil {
 		t.Fatal(err)
 	}
-	ApproveConnector(RootDB, "vec")
 	c, _ := GetConnector(RootDB, "vec")
 	if c.ID == "" || c.ID == "c_chosen" {
 		t.Fatalf("the id: %q", c.ID)
@@ -308,7 +306,6 @@ func TestASecretIsSentAsDeclared(t *testing.T) {
 		raw, _ := json.Marshal(m)
 		DeleteConnector(RootDB, "vec")
 		SaveConnector(RootDB, Connector{Name: "vec", Kind: Kind, Spec: raw})
-		ApproveConnector(RootDB, "vec")
 		c, _ := GetConnector(RootDB, "vec")
 		if err := SaveSettings(c, "", map[string]string{"endpoint": srv.URL}, map[string]string{"api_key": "k-" + send}); err != nil {
 			t.Fatal(err)
@@ -342,8 +339,9 @@ func TestASettingListsItsOptions(t *testing.T) {
 	SaveConnector(RootDB, Connector{Name: "vec", Kind: Kind, Spec: raw})
 	c, _ := GetConnector(RootDB, "vec")
 	SaveSettings(c, "", map[string]string{"endpoint": srv.URL}, map[string]string{"api_key": "sk-1"})
+	MarkChanged(RootDB, "vec", "someone")
 	if _, err := ListOptions(context.Background(), "vec", "embed.text/model"); err == nil {
-		t.Error("listed for a connection in no use")
+		t.Error("listed for a connection a change holds")
 	}
 	ctx, end := Preview(context.Background(), "vec")
 	defer end()
@@ -372,7 +370,6 @@ func TestAnOptionalKeyIsSentOnlyWhenGiven(t *testing.T) {
 	delete(m["config"].([]any)[2].(map[string]any), "required")
 	raw, _ := json.Marshal(m)
 	SaveConnector(RootDB, Connector{Name: "vec", Kind: Kind, Spec: raw})
-	ApproveConnector(RootDB, "vec")
 	c, _ := GetConnector(RootDB, "vec")
 	SaveSettings(c, "", map[string]string{"endpoint": srv.URL}, nil)
 	in := map[string]any{"texts": []string{"hi"}}

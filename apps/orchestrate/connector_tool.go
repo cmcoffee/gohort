@@ -296,7 +296,7 @@ Typical flow for a calendar:
 		Handler:     connectorImport,
 	})
 	gt.AddAction("import_comfyui", &GroupedToolAction{
-		Description: "Set up a ComfyUI image backend from a workflow the user pastes: the easy path for “make my ComfyUI the image generator.” Give the ComfyUI base URL and (optionally) the user's exported workflow JSON (ComfyUI “Save (API Format)”, needs Dev Mode). The framework AUTO-WIRES the graph (detects the prompt node and the SaveImage output node and injects the {prompt}/{negative}/{seed} tokens), so you paste the workflow VERBATIM; do NOT hand-edit or tokenize it yourself. Omit workflow for a built-in default SD1.5 graph. Drafts it out of use: tell the user to choose it under Admin > Capabilities > Image Generation, and to give its key under Settings on its row if their ComfyUI takes one. For Automatic1111, use action=create with kind=service and the a1111 builtin (service_spec).",
+		Description: "Set up a ComfyUI image backend from a workflow the user pastes: the easy path for “make my ComfyUI the image generator.” Give the ComfyUI base URL and (optionally) the user's exported workflow JSON (ComfyUI “Save (API Format)”, needs Dev Mode). The framework AUTO-WIRES the graph (detects the prompt node and the SaveImage output node and injects the {prompt}/{negative}/{seed} tokens), so you paste the workflow VERBATIM; do NOT hand-edit or tokenize it yourself. Omit workflow for a built-in default SD1.5 graph. It makes no calls until chosen: tell the user to choose it under Admin > Capabilities > Image Generation, and to give its key under Settings on its row if their ComfyUI takes one. For Automatic1111, use action=create with kind=service and the a1111 builtin (service_spec).",
 		Params: map[string]ToolParam{
 			"name":        {Type: "string", Description: "Connector id (letters/digits/underscore/dash), e.g. \"comfyui\". Becomes the image-provider name and the generate_image_<name> tool."},
 			"base_url":    {Type: "string", Description: "The ComfyUI server URL, e.g. http://localhost:8188."},
@@ -574,13 +574,13 @@ func connectorCreate(args map[string]any, sess *ToolSession) (string, error) {
 	// rest_poll (and any auto-approving kind) goes live on create; remote_mcp
 	// waits for an admin. Reflect the real state back.
 	saved, _ := GetConnector(RootDB, name)
-	if saved.Approved {
-		return fmt.Sprintf("Connector %q (kind=%s) created and LIVE. %s\nManage it in Admin > Connectors.", name, kind, ConnectorSummary(saved)), nil
-	}
 	if service.TieInConnector(saved.Kind) {
 		return fmt.Sprintf(
-			"Drafted connector %q (kind=%s), NOT IN USE. %s\nTo put it to use: an admin reviews it under Admin > Extensions > Connectors (Test there), then chooses it on the page that uses it (Web Search, Image Generation, Research Sources, a flow, ...). Nothing runs until then.",
+			"Drafted connector %q (kind=%s), NOT REFERENCED. %s\nIt makes no calls until an admin reviews it under Admin > Extensions > Connectors (Test there) and chooses it on the page that uses it (Web Search, Image Generation, Research Sources, a flow, ...).",
 			name, kind, ConnectorSummary(saved)), nil
+	}
+	if saved.Approved {
+		return fmt.Sprintf("Connector %q (kind=%s) created and LIVE. %s\nManage it in Admin > Connectors.", name, kind, ConnectorSummary(saved)), nil
 	}
 	return fmt.Sprintf(
 		"Drafted connector %q (kind=%s), created UNAPPROVED. %s\nTo go live: an admin opens Admin > Connectors, reviews it, and clicks Approve, then its tools register for agents. Nothing runs until then.",
@@ -789,12 +789,14 @@ func connectorUpdate(args map[string]any, sess *ToolSession) (string, error) {
 	// Admin approval covered the connector as it was. A non-admin edit to a
 	// live connector takes it down first so the changed version never goes
 	// live unreviewed; auto-approving kinds re-approve as they do on create.
-	// A services connector is held out of use until an administrator accepts
-	// the change, by saving a page that uses it.
-	if service.TieInConnector(prev.Kind) && !UserIsAdmin(owner) {
+	// A services connector has no approval: it is held, so no call reaches
+	// it, until an administrator accepts the change by saving a page that
+	// uses it.
+	tieIn := service.TieInConnector(prev.Kind)
+	if tieIn && !UserIsAdmin(owner) {
 		service.MarkChanged(RootDB, name, owner)
 	}
-	if prev.Approved && !UserIsAdmin(owner) {
+	if !tieIn && prev.Approved && !UserIsAdmin(owner) {
 		if err := UnapproveConnector(RootDB, name); err != nil {
 			return "", err
 		}
@@ -802,7 +804,7 @@ func connectorUpdate(args map[string]any, sess *ToolSession) (string, error) {
 	if err := SaveConnector(RootDB, c); err != nil {
 		return "", err
 	}
-	if h, ok := ConnectorHandlerFor(c.Kind); ok && prev.Approved && !UserIsAdmin(owner) {
+	if h, ok := ConnectorHandlerFor(c.Kind); ok && !tieIn && prev.Approved && !UserIsAdmin(owner) {
 		if aa, ok := h.(ConnectorAutoApprover); ok && aa.AutoApprove() {
 			if err := ApproveConnector(RootDB, name); err != nil {
 				return "", fmt.Errorf("saved, but auto-approve failed: %w", err)
@@ -811,13 +813,14 @@ func connectorUpdate(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	saved, _ := GetConnector(RootDB, name)
 	state := "draft updated (still UNAPPROVED)"
-	if prev.Approved && !saved.Approved {
+	switch {
+	case tieIn && !UserIsAdmin(owner):
+		state = "updated and HELD: no call reaches it until an admin accepts the change, by saving the page that uses it"
+	case tieIn:
+		state = "updated (live now wherever a page references it)"
+	case prev.Approved && !saved.Approved:
 		state = "updated and taken OFFLINE until an admin re-approves it in Admin > Connectors"
-		if service.TieInConnector(saved.Kind) {
-			state = "updated and taken OUT OF USE until an admin accepts the change, by saving the page that uses it"
-		}
-	}
-	if saved.Approved {
+	case saved.Approved:
 		state = "updated and RE-MATERIALIZED (live now)"
 	}
 	return fmt.Sprintf("Connector %q %s. %s", name, state, ConnectorSummary(saved)), nil
@@ -825,7 +828,7 @@ func connectorUpdate(args map[string]any, sess *ToolSession) (string, error) {
 
 // connectorImportComfyUI drafts a ComfyUI backend as a service connection,
 // auto-wiring a pasted workflow (via core.ApplyComfyWorkflow) so the LLM never
-// hand-edits the graph. It is out of use until an admin chooses it under Image
+// hand-edits the graph. It makes no calls until an admin chooses it under Image
 // Generation, and takes any key under Settings on its row: never from here.
 func connectorImportComfyUI(args map[string]any, sess *ToolSession) (string, error) {
 	name := strings.TrimSpace(stringArg(args, "name"))
@@ -852,12 +855,31 @@ func connectorImportComfyUI(args map[string]any, sess *ToolSession) (string, err
 	if err := SaveConnector(RootDB, c); err != nil {
 		return "", err
 	}
-	msg := fmt.Sprintf("Drafted ComfyUI backend %q, out of use. An admin puts it to use by choosing it under Admin > Capabilities > Image Generation; it is then also the generate_image_%s tool. If the ComfyUI takes a key, it is given under Settings on its row in Admin > Connectors.",
+	msg := fmt.Sprintf("Drafted ComfyUI backend %q, not referenced: it makes no calls until an admin chooses it under Admin > Capabilities > Image Generation, which also offers its generate_image_%s tool. If the ComfyUI takes a key, it is given under Settings on its row in Admin > Connectors.",
 		name, strings.ReplaceAll(name, "-", "_"))
 	if len(warns) > 0 {
 		msg += "\nAuto-wire notes: " + strings.Join(warns, "; ")
 	}
 	return msg, nil
+}
+
+// connectorState is what Builder is told of connector c's state: for a
+// services connector which pages reference it, or that a change holds it;
+// for another kind whether it is approved.
+func connectorState(c Connector, uses map[string][]string) string {
+	if !service.TieInConnector(c.Kind) {
+		if c.Approved {
+			return "approved (live)"
+		}
+		return "UNAPPROVED (inert), an admin must approve it in Admin > Connectors"
+	}
+	if _, held := service.PendingChange(RootDB, c.Name); held {
+		return "HELD: a change waits for an admin to accept it, by saving the page that uses it"
+	}
+	if pages := uses[c.Name]; len(pages) > 0 {
+		return "referenced by " + strings.Join(pages, ", ")
+	}
+	return "not referenced (makes no calls until an admin chooses it on the page that uses it)"
 }
 
 func connectorList(args map[string]any, sess *ToolSession) (string, error) {
@@ -867,12 +889,9 @@ func connectorList(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%d connector(s):\n", len(cs))
+	uses := service.TieIns(RootDB)
 	for _, c := range cs {
-		state := "UNAPPROVED (inert)"
-		if c.Approved {
-			state = "approved (live)"
-		}
-		fmt.Fprintf(&b, "- %s [%s] %s: %s", c.Name, c.Kind, state, ConnectorSummary(c))
+		fmt.Fprintf(&b, "- %s [%s] %s: %s", c.Name, c.Kind, connectorState(c, uses), ConnectorSummary(c))
 		if c.LastError != "" {
 			fmt.Fprintf(&b, " ⚠️ last error: %s", c.LastError)
 		}
@@ -894,11 +913,7 @@ func connectorGet(args map[string]any, sess *ToolSession) (string, error) {
 	if c.Desc != "" {
 		fmt.Fprintf(&b, "  purpose:  %s\n", c.Desc)
 	}
-	if c.Approved {
-		b.WriteString("  status:   approved (live)\n")
-	} else {
-		b.WriteString("  status:   UNAPPROVED, an admin must approve it in Admin > Connectors\n")
-	}
+	fmt.Fprintf(&b, "  status:   %s\n", connectorState(c, service.TieIns(RootDB)))
 	if c.Owner != "" {
 		fmt.Fprintf(&b, "  drafted by: %s\n", c.Owner)
 	}
@@ -930,7 +945,10 @@ func connectorTest(args map[string]any, sess *ToolSession) (string, error) {
 		return "", fmt.Errorf("%q validates, but the live check failed: %w\n(If its credential isn't enabled yet, an admin must add its secret and enable it in Admin > APIs first.)", name, err)
 	}
 	next := "Approve it in Admin > Connectors to go live."
-	if c.Approved {
+	switch {
+	case service.TieInConnector(c.Kind):
+		next = "It is " + connectorState(c, service.TieIns(RootDB)) + "."
+	case c.Approved:
 		next = "It is approved and live."
 	}
 	if !probed {

@@ -32,8 +32,11 @@ func checkDue() {
 	if RootDB == nil {
 		return
 	}
+	// Only a connector a page names is checked: one no page names makes no
+	// calls, a check's among them.
+	uses := TieIns(RootDB)
 	for _, c := range ListConnectors(RootDB) {
-		if c.Kind != Kind || !c.Approved {
+		if c.Kind != Kind || len(uses[c.Name]) == 0 {
 			continue
 		}
 		s, err := specOf(c)

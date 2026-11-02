@@ -12,7 +12,7 @@ import (
 )
 
 // find_image searches pictures through the connector Web Search is set to,
-// and only when that connector finds pictures and is approved.
+// and only when that connector finds pictures.
 func TestFindImageSearchesThroughWebSearchsConnector(t *testing.T) {
 	savedRoot, savedAuth, savedCfg := RootDB, AuthDB, LoadWebSearchConfigFunc
 	t.Cleanup(func() { RootDB, AuthDB, LoadWebSearchConfigFunc = savedRoot, savedAuth, savedCfg })
@@ -38,11 +38,6 @@ func TestFindImageSearchesThroughWebSearchsConnector(t *testing.T) {
 	if err := SaveConnector(RootDB, Connector{Name: "pics", Kind: "service", Spec: json.RawMessage(spec)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := imageSearchConnector(); ok {
-		t.Error("an unapproved connector finds pictures")
-	}
-	ApproveConnector(RootDB, "pics")
-	t.Cleanup(func() { UnapproveConnector(RootDB, "pics") })
 	name, ok := imageSearchConnector()
 	if !ok || name != "pics" {
 		t.Fatalf("the connector Web Search is set to: %q %v", name, ok)

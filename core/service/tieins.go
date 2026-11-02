@@ -1,16 +1,15 @@
 package service
 
 // A connector is how a service is reached and read; whether gohort uses it is
-// decided where it is put to use: a tie-in, a configuration page that names
-// it (Web Search's engine, the Worker LLM, a Research Source, a flow's step,
-// ...). A services connector is in use exactly
-// while a tie-in names it: there is no approving it by itself. Its Approved
-// mark is that state, kept by Settle after every tie-in save, at startup, and
-// after a change.
+// decided where it is referenced: a configuration page that names it (Web
+// Search's engine, Image Generation, Research Sources, a flow's step, ...).
+// Those are its references: they guard its deletion and show on its row. A
+// connector has no on/off state of its own; it is served from its save, and
+// whatever reaches it does so through a reference.
 //
 // A connector changed by someone who is not an administrator (the Builder
-// on their behalf) since it was put to use is held out of use until an
-// administrator accepts the change, by saving a page that names it.
+// on their behalf) is held until an administrator accepts the change, by
+// saving a page that names it: no call reaches it meanwhile.
 
 import (
 	"context"
@@ -26,16 +25,16 @@ import (
 	"github.com/cmcoffee/gohort/core/media"
 )
 
-// TieInConnector reports whether a connector of kind is put to use only by
-// the pages that name it: a service.
+// TieInConnector reports whether a connector of kind is reached only
+// through the pages that name it: a service.
 func TieInConnector(kind string) bool { return kind == Kind }
 
 // MusicTable holds the Music tie-in: the music connectors offered to agents
 // as tools, under "agents".
 const MusicTable = "music_config"
 
-// connectorReviewTable holds a connector changed since it was put to use,
-// by whom, until an administrator accepts it.
+// connectorReviewTable holds a connector changed by someone who is not an
+// administrator, by whom, until an administrator accepts it.
 const connectorReviewTable = "connector_review"
 
 // ConnectorChange is a change waiting for an administrator to accept it.
@@ -44,8 +43,8 @@ type ConnectorChange struct {
 	At time.Time `json:"at"`
 }
 
-// MarkChanged holds connector name out of use until an administrator
-// accepts the change by saving a page that names it.
+// MarkChanged holds connector name until an administrator accepts the
+// change by saving a page that names it.
 func MarkChanged(db Database, name, by string) {
 	if db != nil {
 		db.Set(connectorReviewTable, name, ConnectorChange{By: by, At: time.Now()})
@@ -201,33 +200,36 @@ func flowsIn(db Database) []Flow {
 	return out
 }
 
-// Settle puts every services connector a tie-in names to use, unless a
-// change waits on it, and takes every other out of use. accepted are the
-// connectors an administrator has just accepted, by saving a page that
-// names them: a change waiting on one is accepted with it.
-func Settle(db Database, accepted ...string) {
+// AcceptChanges accepts the changes waiting on connectors named, as an
+// administrator saving a page that names them does, and serves each again
+// as it now is.
+func AcceptChanges(db Database, named ...string) {
 	if db == nil {
 		return
 	}
-	for _, name := range accepted {
-		db.Unset(connectorReviewTable, strings.TrimSpace(name))
-	}
-	uses := TieIns(db)
-	for _, c := range ListConnectors(db) {
-		if !TieInConnector(c.Kind) {
+	for _, name := range named {
+		name = strings.TrimSpace(name)
+		if _, held := PendingChange(db, name); !held {
 			continue
 		}
-		_, held := PendingChange(db, c.Name)
-		want := len(uses[c.Name]) > 0 && !held
-		switch {
-		case want && !c.Approved:
-			if err := ApproveConnector(db, c.Name); err != nil {
-				Log("[connectors] %s is named by %s but could not be put to use: %v", c.Name, strings.Join(uses[c.Name], ", "), err)
+		db.Unset(connectorReviewTable, name)
+		if c, ok := GetConnector(db, name); ok && c.Kind == Kind {
+			if err := (handler{}).Materialize(c); err != nil {
+				Log("[connectors] %s: the change was accepted, but serving it failed: %v", name, err)
 			}
-		case !want && c.Approved:
-			UnapproveConnector(db, c.Name)
 		}
 	}
+}
+
+// held reports whether a change waits on connector name.
+func held(name string) bool {
+	_, ok := PendingChange(RootDB, name)
+	return ok
+}
+
+// Referenced reports whether a page names connector name.
+func Referenced(db Database, name string) bool {
+	return len(TieIns(db)[strings.TrimSpace(name)]) > 0
 }
 
 // adaptedOf is the adapted System Hook a connector of that kind holds.
@@ -249,9 +251,9 @@ type previewMark struct {
 }
 
 // Preview lets an administrator's test on a settings page (its Test, the
-// voices offered) reach connector name before any page has put it to use,
-// as choosing it there and testing before saving needs. Calls under the
-// returned context reach it; end ends it. Nothing else reaches a connector not in use.
+// voices offered) reach connector name while a change waits on it, as
+// choosing it there and testing before saving (which accepts the change)
+// needs. Calls under the returned context reach it; end ends it.
 func Preview(ctx context.Context, name string) (context.Context, func()) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -262,10 +264,10 @@ func Preview(ctx context.Context, name string) (context.Context, func()) {
 	return context.WithValue(ctx, previewKey{}, mark), func() { mark.ended.Store(true) }
 }
 
-// callable reports whether a call under ctx may reach connector c: in use,
-// or under an administrator's preview of it.
+// callable reports whether a call under ctx may reach connector c: no
+// change waits on it, or it is under an administrator's preview.
 func callable(ctx context.Context, c Connector) bool {
-	if c.Approved {
+	if !held(c.Name) {
 		return true
 	}
 	for mark, _ := ctx.Value(previewKey{}).(*previewMark); mark != nil; mark = mark.parent {
@@ -280,7 +282,7 @@ func callable(ctx context.Context, c Connector) bool {
 // page would be left naming nothing, so what uses it is cleared first.
 func RemoveConnector(db Database, name string) error {
 	if pages := TieIns(db)[strings.TrimSpace(name)]; len(pages) > 0 {
-		return fmt.Errorf("%s is in use by %s: take it off there first, then delete it", name, strings.Join(pages, ", "))
+		return fmt.Errorf("%s is referenced by %s: take it off there first, then delete it", name, strings.Join(pages, ", "))
 	}
 	c, _ := GetConnector(db, strings.TrimSpace(name))
 	if err := DeleteConnector(db, name); err != nil {

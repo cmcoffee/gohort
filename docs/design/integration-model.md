@@ -139,6 +139,15 @@ the gate is removed, every path that calls a connector by name is checked
 reference or goes through the admin's Test preview, and one that does neither
 is a gap to close.
 
+Built in step 6a (2026-11-01). The audit found two gaps, both closed: a
+backend's `generate_image_<name>` tool reaches only a connection Image
+Generation offers (its default or the ones offered to agents), since a tool
+grant alone is no reference; and the free health check runs on its own only
+for a referenced connector, so a draft makes no calls. A service connection
+is served from its save and at start (`Connector.Served`); the stored
+`Approved` field stays for the other kinds and is ignored for connections.
+What is left of the gate is the hold below, checked at every call.
+
 **The Changed hold stays.** An edit the Builder or a non-admin makes waits
 until an admin accepts it, by saving a page that references the connector.
 That is a gate on edits, not on references, and its marker stays on the row.
@@ -548,7 +557,7 @@ once:
 4. Provided connections, the legacy reads, the migrations, the dry run and
    `core/bbolt` taken out.
 5. A1111 and peers' renderers as connectors; `rest_image` deleted.
-6. The Connectors page shows connectors: one editor per row, each reading
+6. (6a references, 6b plain names, 6c the page.) The Connectors page shows connectors: one editor per row, each reading
    what references it; the in-use gate, Approve and the Settle machinery go
    for connectors, after the call paths are checked; the Changed hold stays;
    the other kinds are listed on their own pages; the Contracts page goes, its

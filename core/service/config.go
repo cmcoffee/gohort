@@ -858,7 +858,7 @@ func ListOptions(ctx context.Context, name, key string) ([]string, error) {
 		return nil, fmt.Errorf("no service connector named %q", name)
 	}
 	if !callable(ctx, c) {
-		return nil, fmt.Errorf("%s is not in use: choose it where it is used, or test it there first", name)
+		return nil, fmt.Errorf("%s has a change waiting: choose it where it is used, or test it there first", name)
 	}
 	s, err := specOf(c)
 	if err != nil {

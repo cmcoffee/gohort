@@ -482,9 +482,6 @@ func saveAdapted(owner, name string, a flows.Adapted, edit bool, desc string) (t
 	if err := SaveConnector(RootDB, c); err != nil {
 		return turnedOff, err
 	}
-	if turnedOff {
-		settleTieIn() // the connector it named may be named by nothing now
-	}
 	return turnedOff, nil
 }
 
@@ -520,7 +517,7 @@ func runRow(r *http.Request, id string, in []byte) (flows.Result, string, bool, 
 // on gohort's sample document, anything else on in (or the link).
 func runFlowOn(ctx context.Context, name string, a flows.Adapted, in []byte, link string) (flows.Result, string, bool, error) {
 	// An administrator's test: the connector doing its conversion is tried
-	// before the hook is turned on and puts it to use.
+	// even with a change waiting on it, before the hook is turned on.
 	ctx, end := service.Preview(ctx, a.Service)
 	defer end()
 	if a.IsOutput() {

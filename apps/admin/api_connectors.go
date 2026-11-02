@@ -91,7 +91,7 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 		TestConfirm string `json:"test_confirm,omitempty"`
 		Fixable     bool   `json:"fixable,omitempty"`
 		// State is the badge: approved or pending, or for a services
-		// connector in use, not in use or changed.
+		// connector referenced, not referenced, or changed.
 		State string `json:"state"`
 		// Endpoints is a service with endpoints to list (Endpoints on its row).
 		Endpoints bool `json:"endpoints,omitempty"`
@@ -102,12 +102,12 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 		GroupSummary string `json:"group_summary,omitempty"`
 		GroupOpen    bool   `json:"group_open,omitempty"`
 		// CanApprove and CanUnapprove are a connector approved or not here:
-		// a services connector is put to use by the pages that name it
-		// instead, and its State says whether one does.
+		// a services connector has no approval, and its State says whether
+		// a page references it.
 		CanApprove   bool `json:"can_approve,omitempty"`
 		CanUnapprove bool `json:"can_unapprove,omitempty"`
-		// Deletable is a connector no page names: one in use is taken off
-		// its pages first.
+		// Deletable is a connector no page names: one referenced is taken
+		// off its pages first.
 		Deletable bool `json:"deletable,omitempty"`
 		// HasSettings is a services connection: its display name, and the
 		// settings and secrets it declares, are set under its row's Settings.
@@ -155,7 +155,7 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 		return slices.Index(connectorGroups, rows[i].Group) < slices.Index(connectorGroups, rows[j].Group)
 	})
 	// Each band's heading says what it holds, so a folded band still does.
-	type tally struct{ n, pending, failing, inUse int }
+	type tally struct{ n, pending, failing, referenced int }
 	t := map[string]*tally{}
 	for _, r := range rows {
 		g := t[r.Group]
@@ -167,8 +167,8 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 		switch {
 		case r.State == "pending":
 			g.pending++
-		case r.State == "in-use":
-			g.inUse++
+		case r.State == "referenced":
+			g.referenced++
 		}
 		if r.LastError != "" {
 			g.failing++
@@ -180,7 +180,7 @@ func (a *AdminApp) handleConnectors(c *jsonapi.Call) (any, error) {
 		for _, x := range []struct {
 			n    int
 			what string
-		}{{g.pending, "pending"}, {g.failing, "with an error"}, {g.inUse, "in use"}} {
+		}{{g.pending, "pending"}, {g.failing, "with an error"}, {g.referenced, "referenced"}} {
 			if x.n > 0 {
 				parts = append(parts, fmt.Sprintf("%d %s", x.n, x.what))
 			}
@@ -432,7 +432,7 @@ func (a *AdminApp) handleConnectorAction(c *jsonapi.Call, body json.RawMessage) 
 	var err error
 	action := q.Get("action")
 	if conn, ok := GetConnector(RootDB, name); ok && service.TieInConnector(conn.Kind) && (action == "approve" || action == "unapprove") {
-		return nil, jsonapi.BadRequest(name + " is put to use where it is used, not here: choose it on the page that uses it (Web Search, Image Generation, Research Sources, a flow, ...), or take it off there")
+		return nil, jsonapi.BadRequest(name + " has no approval: it is reached through the pages that reference it (Web Search, Image Generation, Research Sources, a flow, ...)")
 	}
 	switch action {
 	case "approve":
@@ -461,15 +461,11 @@ func (a *AdminApp) handleConnectorAction(c *jsonapi.Call, body json.RawMessage) 
 		return nil, jsonapi.BadRequest(err.Error())
 	}
 	// An adapted System Hook turned on names the connector that does its
-	// conversion, which puts that connector to use; turned off, it may not.
-	if conn, ok := GetConnector(RootDB, name); ok && conn.Kind == flows.ConnectorKind {
+	// conversion: turning it on accepts a change waiting on that connector.
+	if conn, ok := GetConnector(RootDB, name); ok && conn.Kind == flows.ConnectorKind && action == "approve" {
 		var ad flows.Adapted
 		json.Unmarshal(conn.Spec, &ad)
-		if action == "approve" {
-			settleTieIn(ad.Service)
-		} else {
-			settleTieIn()
-		}
+		acceptChanges(ad.Service)
 	}
 	return jsonapi.Empty(http.StatusNoContent), nil
 }
@@ -595,7 +591,7 @@ func tieInState(c Connector, pages []string, status string) (string, string) {
 		return "changed", join(changedNote(ch))
 	}
 	if len(pages) == 0 {
-		return "unused", join("Not in use: no page names it. Choose it where it is to be used (Web Search, Image Generation, Research Sources, a flow, ...).")
+		return "unreferenced", join("Not referenced: no page names it, so it makes no calls. Choose it where it is to be used (Web Search, Image Generation, Research Sources, a flow, ...).")
 	}
-	return "in-use", join("Used by " + strings.Join(pages, ", ") + ".")
+	return "referenced", join("Referenced by " + strings.Join(pages, ", ") + ".")
 }

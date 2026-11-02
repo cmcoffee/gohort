@@ -71,8 +71,8 @@ type ConnectorHandler interface {
 	// create/test time, before anything is materialized.
 	Validate(c Connector) error
 	// Materialize brings the real capability up. Called when an admin approves
-	// the connector, on a save of an already-approved one, and (idempotently)
-	// on restart for approved connectors.
+	// the connector, on a save of an already-approved one (or of any one of a
+	// kind served always), and (idempotently) on restart for served ones.
 	Materialize(c Connector) error
 	// Teardown drops the capability. Called on delete and on unapprove.
 	Teardown(c Connector) error
@@ -91,6 +91,28 @@ type ConnectorAutoApprover interface {
 	AutoApprove() bool
 }
 
+
+// connectorServedAlways is an optional ConnectorHandler capability: a kind
+// whose connectors carry no approval. Each is served from its save and at
+// start, and whatever reaches one decides by its own reference whether it
+// may: a page naming it, a flow's step, the list offered to agents.
+type connectorServedAlways interface {
+	ServedAlways() bool
+}
+
+// Served reports whether connector c is brought up: approved, or of a kind
+// served always.
+func (c Connector) Served() bool {
+	if c.Approved {
+		return true
+	}
+	h, ok := ConnectorHandlerFor(c.Kind)
+	if !ok {
+		return false
+	}
+	sa, ok := h.(connectorServedAlways)
+	return ok && sa.ServedAlways()
+}
 
 // connectorAutoApproves reports whether a kind materializes on create.
 func connectorAutoApproves(h ConnectorHandler) bool {
@@ -263,8 +285,9 @@ func saveConnector(db Database, c Connector, autoApprove bool) error {
 	c.Updated = now
 	c.LastError = ""
 	db.Set(connectorsTable, c.Name, c)
-	// Already live? Re-materialize so an edit takes effect immediately.
-	if c.Approved {
+	// Already live, or served always? Re-materialize so an edit takes effect
+	// immediately.
+	if c.Served() {
 		if err := h.Materialize(c); err != nil {
 			recordConnectorError(db, c.Name, err)
 			return fmt.Errorf("saved, but re-materialize failed: %w", err)
@@ -379,12 +402,12 @@ func FreeDisplayName(db Database, name, display string) string {
 	return display
 }
 
-// ReloadApprovedConnectors re-materializes every approved connector
+// ReloadApprovedConnectors re-materializes every served connector
 // (idempotent). Call once at startup, after the subsystems the handlers
 // target (e.g. MCP) are ready. Mirrors MCP().Reload's restore behavior.
 func ReloadApprovedConnectors(db Database) {
 	for _, c := range ListConnectors(db) {
-		if !c.Approved {
+		if !c.Served() {
 			continue
 		}
 		h, ok := ConnectorHandlerFor(c.Kind)

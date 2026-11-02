@@ -559,8 +559,8 @@ func stopImageBackend(name string) {
 }
 
 // reconcileImageBackends makes the process-level backend registry match the
-// stored connectors: every approved, parseable rest_image connector is
-// registered, and every name we own that no longer has one is dropped.
+// stored connectors: every served image backend that reads is registered,
+// and every name we own that no longer has one is dropped.
 //
 // It only removes names it put there, tracked in ownedImageBackends, so the
 // service kind's backends (core/service) are not clobbered.
@@ -584,7 +584,7 @@ func reconcileImageBackends(db Database, keepLive ...string) {
 		}
 	}
 	for _, c := range ListConnectors(db) {
-		if !c.Approved {
+		if !c.Served() {
 			continue
 		}
 		if _, graph, err := imageSpecOf(c); !graph || err != nil {
@@ -726,11 +726,14 @@ func (t *restImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	if !ok {
 		return "", fmt.Errorf("image backend %q no longer exists", t.connector)
 	}
-	if !c.Approved {
-		return "", fmt.Errorf("image backend %q is not approved: an admin enables it in Admin > Connectors", t.connector)
-	}
-	if err := sess.ConnectionBarred(t.connector); err != nil {
-		return "", err
+	// Its tool reaches only a backend Image Generation offers (its default,
+	// or offered to agents), as the image tool's backend list does: a grant
+	// of the tool alone is no reference to the connection.
+	if !ImageBackendReachable(sess, t.connector) {
+		if err := sess.ConnectionBarred(t.connector); err != nil {
+			return "", err
+		}
+		return "", fmt.Errorf("image backend %q is not offered to agents: an admin offers it under Admin > Capabilities > Image Generation", t.connector)
 	}
 	s, graph, err := imageSpecOf(c)
 	if err == nil && !graph {
@@ -1277,7 +1280,7 @@ func reachableImageBackends(sess *ToolSession) []ImageBackendChoice {
 		// closure exists. An approved-but-unmaterialized connector would
 		// advertise a name that can't dispatch.
 		_, edits := lookupImageEditBackend(c.Name)
-		if !c.Approved || !(ImageBackendRegistered(c.Name) || edits) {
+		if !c.Served() || !(ImageBackendRegistered(c.Name) || edits) {
 			continue
 		}
 		s, graph, err := imageSpecOf(c)
@@ -1652,10 +1655,10 @@ func joinCounts(counts []int) string {
 	return strings.Join(parts[:len(parts)-1], ", ") + " or " + parts[len(parts)-1]
 }
 
-// resolveImageConnector loads an approved rest_image connector's spec by name.
+// resolveImageConnector loads a served image backend's spec by name.
 func resolveImageConnector(connector string) (RestImageSpec, error) {
 	c, ok := GetConnector(RootDB, strings.TrimSpace(connector))
-	if !ok || !c.Approved {
+	if !ok || !c.Served() {
 		return RestImageSpec{}, fmt.Errorf("image backend %q is unavailable", connector)
 	}
 	s, graph, err := imageSpecOf(c)

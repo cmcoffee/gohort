@@ -5,13 +5,13 @@ import (
 )
 
 // researchSourcesSections is the Research Sources part of the admin page:
-// the search connectors put to use for research and for agents.
+// the search connectors referenced for research and for agents.
 func (a *AdminApp) researchSourcesSections() []ui.Section {
 	return []ui.Section{{
 		Title:    "Research Sources",
 		Subtitle: "Search connectors that research asks on its topics, and that agents can ask through query_source.",
-		Detail: "A source is a search connector put to use here: research asks it on the topics you give, or on every run, and given a tool name, agents see it under Available sources and ask it with query_source. A skill may also grant it as a tool of its own by that name. Its answers are kept in a cache, so the same or a near query is not asked twice.\n\n" +
-			"Adding a source, or turning it on, puts its connector to use. The connector itself, how the service is reached and how its results are read, stays under Connectors, where it is tested and fixed. Templates has research sources ready to add: PubMed, OpenAlex, SEC EDGAR, Europe PMC, Semantic Scholar, CORE, CourtListener and Westlaw.\n\n" +
+		Detail: "A source is a search connector referenced here: research asks it on the topics you give, or on every run, and given a tool name, agents see it under Available sources and ask it with query_source. A skill may also grant it as a tool of its own by that name. Its answers are kept in a cache, so the same or a near query is not asked twice.\n\n" +
+			"A source turned off is not asked. The connector itself, how the service is reached and how its results are read, stays under Connectors, where it is tested and fixed. Templates has research sources ready to add: PubMed, OpenAlex, SEC EDGAR, Europe PMC, Semantic Scholar, CORE, CourtListener and Westlaw.\n\n" +
 			"The connector Web Search is set to is not asked here as well: it already answers web_search.",
 		Body: ui.Stack{Children: []ui.Component{
 			ui.Table{
@@ -62,7 +62,7 @@ func (a *AdminApp) researchSourcesSections() []ui.Section {
 // one), when research asks it, and whether agents can.
 func researchSourceFields(editing bool) []ui.FormField {
 	connector := ui.FormField{Field: "connector", Label: "Search connector", Type: "select", Options: researchSourceOptions(),
-		Required: true, Help: "A connector that searches. Adding it here puts it to use."}
+		Required: true, Help: "A connector that searches."}
 	if editing {
 		connector = ui.FormField{Field: "connector", Label: "Search connector", Type: "readonly"}
 	}

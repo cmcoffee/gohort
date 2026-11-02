@@ -108,9 +108,6 @@ func install(t *testing.T, name string, spec map[string]any) {
 	if err := SaveConnector(RootDB, Connector{Name: name, Kind: Kind, Spec: raw}); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	if err := ApproveConnector(RootDB, name); err != nil {
-		t.Fatalf("approve: %v", err)
-	}
 }
 
 // An approved image service is an image backend like a built-in one: a

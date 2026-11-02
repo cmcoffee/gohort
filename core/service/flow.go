@@ -291,13 +291,13 @@ func (f Flow) Estimate() (float64, bool) {
 	return total, known
 }
 
-// Waiting names the steps' connectors not approved yet: the flow is saved,
-// and runs once they are.
+// Waiting names the steps' connectors that are missing or have a change
+// waiting: the flow is saved, and runs once they are there and accepted.
 func (f Flow) Waiting() []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, st := range f.Steps {
-		if c, ok := GetConnector(RootDB, st.Connector); (!ok || !c.Approved) && !seen[st.Connector] {
+		if _, ok := GetConnector(RootDB, st.Connector); (!ok || held(st.Connector)) && !seen[st.Connector] {
 			seen[st.Connector] = true
 			out = append(out, st.Connector)
 		}

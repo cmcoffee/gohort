@@ -57,7 +57,7 @@ func SelfCheck(db Database, c Connector) []string {
 		}
 		out = append(out, fmt.Sprintf("its %s is kept but cannot be read: give it again under Settings", title))
 	}
-	if !c.Approved {
+	if !Referenced(db, c.Name) {
 		return out
 	}
 	if cred := strings.TrimSpace(s.Provider.Auth.Credential); cred != "" {

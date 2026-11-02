@@ -133,7 +133,7 @@ func (a *AdminApp) handleResearchSourceDelete(c *jsonapi.Call, _ struct{}) (any,
 }
 
 // researchSourceOptions are the search connectors a source can be: every
-// one that gives web.search, since choosing it here is what puts it to use.
+// one that gives web.search, since choosing it here is what references it.
 func researchSourceOptions() []ui.SelectOption {
 	var out []ui.SelectOption
 	for _, c := range ListConnectors(RootDB) {

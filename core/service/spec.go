@@ -408,7 +408,7 @@ func (b Binding) validate(p Provider) error {
 		return fmt.Errorf("plain takes site: filters out of a search's query: web.search and image.search only")
 	}
 	if b.Research != nil || b.Tool != nil {
-		return fmt.Errorf("research and tool are set where a search is put to use, under Admin > Research Sources, not in its spec")
+		return fmt.Errorf("research and tool are set where a search is referenced, under Admin > Research Sources, not in its spec")
 	}
 	if len(b.Steps) == 0 {
 		return fmt.Errorf("no steps")

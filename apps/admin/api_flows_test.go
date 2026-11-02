@@ -53,21 +53,22 @@ func TestFlowsAreEditedAsRowsAndChecked(t *testing.T) {
 	if w := call("POST", "/api/flows", broken); w.Code != 400 || !strings.Contains(w.Body.String(), "the flow has no input whom") {
 		t.Errorf("a flow that does not fit: %d %s", w.Code, w.Body.String())
 	}
-	// Tested before it is saved, its step's connector is tried though no
-	// page has put it to use yet; saving the flow puts it to use.
+	// Tested before it is saved, its step's connector is tried though a
+	// change holds it; saving the flow accepts the change.
+	service.MarkChanged(RootDB, "voice", "someone")
 	var tried map[string]any
 	json.Unmarshal(call("POST", "/api/flows/test", form).Body.Bytes(), &tried)
 	if tried["ok"] != true {
 		t.Errorf("testing the unsaved form: %v", tried)
 	}
-	if c, _ := GetConnector(RootDB, "voice"); c.Approved {
-		t.Error("testing the form put its connector to use")
+	if _, held := service.PendingChange(RootDB, "voice"); !held {
+		t.Error("testing the form accepted the change")
 	}
 	if w := call("POST", "/api/flows", form); w.Code != 200 {
 		t.Fatalf("save: %d %s", w.Code, w.Body.String())
 	}
-	if c, _ := GetConnector(RootDB, "voice"); !c.Approved {
-		t.Error("saving the flow did not put its connector to use")
+	if _, held := service.PendingChange(RootDB, "voice"); held || !service.Referenced(RootDB, "voice") {
+		t.Error("saving the flow did not accept the change, or does not reference its connector")
 	}
 	var rows []flowRow
 	json.Unmarshal(call("GET", "/api/flows", "").Body.Bytes(), &rows)
