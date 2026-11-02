@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cmcoffee/gohort/core/ui"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -87,5 +88,25 @@ func TestTheDashboardDrawsEachPartWhereItBelongs(t *testing.T) {
 	serve_dashboard(w, httptest.NewRequest("GET", "/", nil), apps, nil, bands)
 	if strings.Contains(w.Body.String(), `class="auth-bar"`) {
 		t.Error("an anonymous viewer got the account bar")
+	}
+}
+
+// The dashboard says what colour it is before any of its own styles: every
+// app visit passes through it, and the desktop app's webview paints its white
+// canvas between pages until a page says otherwise.
+func TestTheDashboardIsThemedBeforeItsFirstFrame(t *testing.T) {
+	w := httptest.NewRecorder()
+	serve_dashboard(w, httptest.NewRequest("GET", "/", nil), nil, nil, dashBands{})
+	page := w.Body.String()
+	head := ui.ThemeFirstPaintHead(ui.ActiveTheme())
+	if head == "" {
+		t.Fatal("the active theme has no first-paint head to check against")
+	}
+	at, style := strings.Index(page, head), strings.Index(page, "<style>")
+	if at < 0 || style < 0 || at > style {
+		t.Errorf("the first-paint head is missing, or comes after the page's own styles (head at %d, first style at %d)", at, style)
+	}
+	if strings.Contains(page, "%FIRSTPAINT%") {
+		t.Error("the placeholder was left in the page")
 	}
 }

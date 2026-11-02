@@ -150,3 +150,48 @@ console.log('OK');
 		t.Error("a frame paints itself white again")
 	}
 }
+
+// An app's frame is out of sight until its document has loaded, so whatever
+// an engine paints for a frame still loading (white, in the desktop app's
+// WebKit) is never seen; and it is shown in the end even if it never loads.
+// Driven on a stub frame; the card and the page frame both use it, after
+// their style is final.
+func TestAnAppFrameShowsOnlyOnceLoaded(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed")
+	}
+	src := readRuntimeFile(t, "70_misc.js")
+	from := strings.Index(src, "  function hideUntilLoaded(f) {")
+	to := strings.Index(src, "  function isolatedFrame(")
+	if from < 0 || to < from {
+		t.Fatal("hideUntilLoaded moved")
+	}
+	script := `
+var timers = [];
+global.setTimeout = function(fn, ms) { timers.push(fn); };
+function frame() { var f = {style: {}, on: {}}; f.addEventListener = function(k, fn) { f.on[k] = fn; }; return f; }
+` + src[from:to] + `
+var f = frame();
+hideUntilLoaded(f);
+if (f.style.opacity !== '0') throw new Error('a loading frame is visible');
+f.on.load();
+if (f.style.opacity !== '') throw new Error('a loaded frame stayed hidden');
+var g = frame();
+hideUntilLoaded(g);
+timers.forEach(function(fn) { fn(); });
+if (g.style.opacity !== '') throw new Error('a frame that never loads stayed hidden');
+console.log('OK');
+`
+	tmp := filepath.Join(t.TempDir(), "hide.js")
+	if err := os.WriteFile(tmp, []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("node", tmp).CombinedOutput(); err != nil || !strings.Contains(string(out), "OK") {
+		t.Fatalf("frame reveal:\n%s", out)
+	}
+	card := strings.Index(src, "pageScheme();\n      hideUntilLoaded(iso);")
+	page := strings.Index(src, "      f.setAttribute('srcdoc', withScheme(cfg.html));\n    }\n    hideUntilLoaded(f);")
+	if card < 0 || page < 0 {
+		t.Error("a card or a page frame is shown before it has loaded, or hidden before its style is final")
+	}
+}

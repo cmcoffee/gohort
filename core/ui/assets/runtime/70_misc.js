@@ -1430,6 +1430,20 @@
     return m ? m[0] + schemeHead() + html.slice(m[0].length) : schemeHead() + html;
   }
 
+  // hideUntilLoaded keeps a frame out of sight until its document has loaded.
+  // An engine draws a frame that has not painted yet on a canvas of its own,
+  // and WebKit (the desktop app's view) makes that canvas white whatever the
+  // colour scheme says, so an app's cards and pages flashed white as they
+  // came in. Hidden, there is nothing to see until the document has drawn
+  // itself. Shown after a moment regardless, so a frame that never loads is
+  // not lost. Call it after the frame's style is final: cssText resets it.
+  function hideUntilLoaded(f) {
+    f.style.opacity = '0';
+    var show = function() { f.style.opacity = ''; };
+    f.addEventListener('load', show, {once: true});
+    setTimeout(show, 1500);
+  }
+
   function isolatedFrame(cfg, autoHeight) {
     var f = document.createElement('iframe');
     f.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-modals allow-pointer-lock');
@@ -1532,6 +1546,7 @@
     if (cfg.isolate) {
       var iso = isolatedFrame(cfg, true);
       iso.style.cssText = 'display:block;width:100%;border:0;background:transparent;height:40px;color-scheme:' + pageScheme();
+      hideUntilLoaded(iso);
       iso.__uiSet(cfg.html);
       wrap.appendChild(iso);
       if (cfg.source) {
@@ -1637,6 +1652,7 @@
     } else {
       f.setAttribute('srcdoc', withScheme(cfg.html));
     }
+    hideUntilLoaded(f);
     // Keyboard-driven documents (games, editors) are inert until the frame
     // holds focus. Take it on load unless the user is typing somewhere.
     f.addEventListener('load', function() {
