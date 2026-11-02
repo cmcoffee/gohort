@@ -1,5 +1,9 @@
 # Connectors and flows: one way to think about every integration
 
+> Superseded by [integration-model.md](integration-model.md) (2026-11-01).
+> Its flows (connector chains under Admin > Extensions > Flows) were
+> retired there; System Hooks keep their own.
+
 **Status:** stages 1 to 5 built, 2026-10-30 (the map, `../integrations.md`;
 connectors read inside to outside; gohort's own providers listed as
 connectors; saved flows checked by contract; System Hooks' programs and

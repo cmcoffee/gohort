@@ -21,7 +21,8 @@ type planBConnector struct {
 
 // Clearing removes a connection gohort once provided only when its spec no
 // longer validates and no page uses it, with its space and key; a space no
-// connection owns; and the markers of migrations that are gone. A provided
+// connection owns; the markers of migrations that are gone; and saved
+// flows, retired. A provided
 // one that still works, one a page uses, one never provided, an owned space
 // and any other marker stay. The dry run's walk is the delete's.
 func TestClearingRemovesOnlyOldConnectionRecords(t *testing.T) {
@@ -47,7 +48,11 @@ func TestClearingRemovesOnlyOldConnectionRecords(t *testing.T) {
 		RootDB.Set(migrate.MigrationsTable, m.Key(), m)
 	}
 
+	RootDB.Set("service_flows", "announce", map[string]string{"name": "announce"})
 	old := findOldRecords(RootDB)
+	if got := strings.Join(old.flows, ","); got != "announce" {
+		t.Errorf("flows: %s", got)
+	}
 	if got := strings.Join(old.connections, ","); got != "llm-anthropic" {
 		t.Errorf("connections: %s", got)
 	}

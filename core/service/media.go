@@ -71,7 +71,7 @@ func mailVia(ctx context.Context, name, from, to, subject, body string) error {
 
 // renderVia renders the page at url with the service connector named name and
 // gives at most maxChars of its text. Only a public web address is sent: the
-// rule the browser keeps, so a flow calling the contract directly keeps it
+// rule the browser keeps, so a call through the contract directly keeps it
 // too.
 func renderVia(ctx context.Context, name, url string, maxChars int) (string, error) {
 	if err := RefuseNonPublicHost(url); err != nil {

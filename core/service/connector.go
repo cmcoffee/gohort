@@ -276,7 +276,7 @@ func Default(c Connector, capability, input string) string {
 
 // Call runs capability on the service connector named name, records how it
 // went and what it cost, and returns its result. Whatever calls it has the
-// name from a reference to it (a page's choice, a flow's step, ...).
+// name from a reference to it (a page's choice, a Research Source, ...).
 func Call(ctx context.Context, sess *ToolSession, name, capability string, inputs map[string]any) (Result, error) {
 	c, ok := GetConnector(RootDB, name)
 	if !ok || c.Kind != Kind {

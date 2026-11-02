@@ -97,7 +97,7 @@ type ConnectorAutoApprover interface {
 // connectorServedAlways is an optional ConnectorHandler capability: a kind
 // whose connectors carry no approval. Each is served from its save and at
 // start, and whatever reaches one decides by its own reference whether it
-// may: a page naming it, a flow's step, the list offered to agents.
+// may: a page naming it, the list offered to agents.
 type connectorServedAlways interface {
 	ServedAlways() bool
 }
@@ -502,7 +502,7 @@ const (
 func connectionScopeName(name string) string { return "connection:" + strings.TrimSpace(name) }
 
 // Access is who may reach connection c through an agent's tools (an image
-// or music connector offered to agents, a Research Source, a flow): empty is
+// or music connector offered to agents, a Research Source): empty is
 // everyone. A page that has it serve the whole instance (an LLM tier, Web
 // Search, Embeddings) serves every user whatever it says.
 func (c Connector) Access(db Database) []string {

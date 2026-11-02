@@ -576,7 +576,7 @@ func connectorCreate(args map[string]any, sess *ToolSession) (string, error) {
 	saved, _ := GetConnector(RootDB, name)
 	if service.TieInConnector(saved.Kind) {
 		return fmt.Sprintf(
-			"Drafted connector %q (kind=%s), NOT REFERENCED. %s\nIt makes no calls until an admin reviews it under Admin > Extensions > Connectors (Test there) and chooses it on the page that uses it (Web Search, Image Generation, Research Sources, a flow, ...).",
+			"Drafted connector %q (kind=%s), NOT REFERENCED. %s\nIt makes no calls until an admin reviews it under Admin > Extensions > Connectors (Test there) and chooses it on the page that uses it (Web Search, Image Generation, Research Sources, ...).",
 			name, kind, ConnectorSummary(saved)), nil
 	}
 	if saved.Approved {

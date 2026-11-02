@@ -2,7 +2,7 @@ package service
 
 // A connector is how a service is reached and read; whether gohort uses it is
 // decided where it is referenced: a configuration page that names it (Web
-// Search's engine, Image Generation, Research Sources, a flow's step, ...).
+// Search's engine, Image Generation, Research Sources, ...).
 // Those are its references: they guard its deletion and show on its row. A
 // connector has no on/off state of its own; it is served from its save, and
 // whatever reaches it does so through a reference.
@@ -123,11 +123,6 @@ func TieIns(db Database) map[string][]string {
 			add(rs.Connector, "Research Sources")
 		}
 	}
-	for _, f := range flowsIn(db) {
-		for _, st := range f.Steps {
-			add(st.Connector, "Flow "+f.Name)
-		}
-	}
 	for _, c := range ListConnectors(db) {
 		if c.Kind != flows.ConnectorKind || !c.Approved {
 			continue
@@ -220,7 +215,7 @@ func StaleWhy(db Database, v string) string {
 // AgentConnections are the connections an agent's tools reach, by name:
 // the image connectors (the one Image Generation uses and those offered to
 // agents), the music connectors offered to agents, the Research Sources
-// offered through query_source, and those a flow's steps call. An agent's
+// offered through query_source. An agent's
 // credential scope and a connection's Access decide who reaches these; a
 // connection a page has serve the whole instance is not among them.
 func AgentConnections(db Database) []string {
@@ -241,11 +236,6 @@ func AgentConnections(db Database) []string {
 			names = append(names, rs.Connector)
 		}
 	}
-	for _, f := range flowsIn(db) {
-		for _, st := range f.Steps {
-			names = append(names, st.Connector)
-		}
-	}
 	var out []string
 	seen := map[string]bool{}
 	for _, n := range names {
@@ -259,18 +249,6 @@ func AgentConnections(db Database) []string {
 		}
 	}
 	sort.Strings(out)
-	return out
-}
-
-// flowsIn are the saved flows in db.
-func flowsIn(db Database) []Flow {
-	var out []Flow
-	for _, k := range db.Keys(FlowTable) {
-		var f Flow
-		if db.Get(FlowTable, k, &f) {
-			out = append(out, f)
-		}
-	}
 	return out
 }
 
@@ -317,7 +295,7 @@ type previewKey struct{}
 
 // previewMark is one preview, carried on its context: the connector,
 // whether it has ended, and the preview it was made under, so a test of
-// several connectors (a flow's steps) previews each.
+// several connectors previews each.
 type previewMark struct {
 	name   string
 	ended  atomic.Bool

@@ -45,24 +45,22 @@ func searchServer(t *testing.T) *httptest.Server {
 }
 
 // A connector is referenced by the pages that name it: Web Search's engine,
-// a Research Source that is on, a flow's step, the image or music lists
-// offered to agents. Taken off every page, it is referenced by none, and
+// a Research Source that is on, the image or music lists offered to agents. Taken off every page, it is referenced by none, and
 // only then can it be deleted.
 func TestAConnectorIsReferencedByThePagesThatNameIt(t *testing.T) {
 	world(t)
-	for _, n := range []string{"engine", "papers", "idle", "pics", "tunes", "stepper"} {
+	for _, n := range []string{"engine", "papers", "idle", "pics", "tunes"} {
 		searchConnector(t, n, "")
 	}
 	RootDB.Set(SearchTable, "provider", "engine")
 	RootDB.Set(ImageTable, "agents", []string{"pics"})
 	RootDB.Set(MusicTable, "agents", []string{"tunes"})
-	RootDB.Set(FlowTable, "f", Flow{Name: "f", Steps: []FlowStep{{ID: "a", Connector: "stepper", Capability: "web.search"}}})
 	if err := SaveResearchSource(RootDB, ResearchSource{Connector: "papers", Always: true}); err != nil {
 		t.Fatal(err)
 	}
 	uses := TieIns(RootDB)
 	for name, page := range map[string]string{"engine": "Web Search", "papers": "Research Sources",
-		"pics": "Image Generation (offered to agents)", "tunes": "Music (offered to agents)", "stepper": "Flow f"} {
+		"pics": "Image Generation (offered to agents)", "tunes": "Music (offered to agents)"} {
 		if !slices.Contains(uses[name], page) || !Referenced(RootDB, name) {
 			t.Errorf("%s: pages %v, want %s", name, uses[name], page)
 		}
@@ -149,7 +147,7 @@ func TestAnAdministratorsPreviewReachesOnlyItsConnector(t *testing.T) {
 		t.Error("the preview's context still reaches it after it ended")
 	}
 
-	// A test of several connectors (a flow's steps) previews each.
+	// A test that reaches several connectors previews each.
 	ctx, endTrial := Preview(context.Background(), "trial")
 	both, endOther := Preview(ctx, "other")
 	for _, n := range []string{"trial", "other"} {
@@ -200,9 +198,9 @@ func TestOnlyAReferencedConnectorIsCheckedOnItsOwn(t *testing.T) {
 }
 
 // The connections an agent's tools reach: the image connectors, the music
-// ones offered to agents, a Research Source offered through query_source and
-// what a flow's steps call. Not one a page has serve the whole instance, nor
-// a source research asks without offering it to agents.
+// ones offered to agents, and a Research Source offered through
+// query_source. Not one a page has serve the whole instance, nor a source
+// research asks without offering it to agents.
 func TestAgentConnectionsAreWhatAgentsToolsReach(t *testing.T) {
 	world(t)
 	for _, n := range []string{"pics", "more-pics", "tunes", "chat", "voice", "ears"} {
@@ -220,14 +218,13 @@ func TestAgentConnectionsAreWhatAgentsToolsReach(t *testing.T) {
 	RootDB.Set(ImageTable, "agents", []string{"more-pics"})
 	RootDB.Set(MusicTable, "agents", []string{"tunes", "gone"})
 	RootDB.Set(LLMTable, "provider", "llm:chat")
-	RootDB.Set(FlowTable, "f", Flow{Name: "f", Steps: []FlowStep{{Connector: "voice"}, {Connector: "ears"}}})
 	for _, rs := range []ResearchSource{{Connector: "law", Always: true, ToolName: "law_search", ToolDescription: "Law."}, {Connector: "quiet-law", Always: true}} {
 		if err := SaveResearchSource(RootDB, rs); err != nil {
 			t.Fatal(err)
 		}
 	}
 	got := strings.Join(AgentConnections(RootDB), ",")
-	if got != "ears,law,more-pics,pics,tunes,voice" {
+	if got != "law,more-pics,pics,tunes" {
 		t.Errorf("agent connections: %s", got)
 	}
 }

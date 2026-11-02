@@ -21,7 +21,7 @@ it is met without Go, or a reason it cannot be:
 | A provider changes: a field renamed, a new endpoint, a different auth header | yes | edit its connector's spec, Test |
 | A new provider for a job gohort already does: another search, image or speech API | yes | a connector, from a template or written |
 | A new OpenAI- or Anthropic-compatible LLM | yes | a built-in compatible-endpoint provider: a form |
-| A new thing for agents to do: call a CRM, look up stock | yes | an API tool or a saved flow |
+| A new thing for agents to do: call a CRM, look up stock | yes | an API tool |
 | A new service pushing events in | yes, once webhooks exist | a webhook |
 | A new job gohort itself runs, or a new protocol (streaming, graph surgery) | no | Go, kept small: a `builtin` behind a configurable connector |
 
@@ -122,7 +122,7 @@ second programming language:
 
 **References, not "in use"** (decided 2026-11-01). A connector has no on/off
 state. What it has are references: the pages that name it (Web Search, Image
-Generation and its list offered to agents, Research Sources, a flow's step,
+Generation and its list offered to agents, Research Sources,
 ...), each named as the list it is in. References do two things:
 
 - **guard deletion:** a referenced connector cannot be deleted, and says what
@@ -202,8 +202,7 @@ The mirror of a connector: a service calls gohort.
   reads a reply: `id`, `chat`, `from`, `text`, `kind`.
 - **What it feeds**, one of:
   - a channel (a message arrived);
-  - a watch (wake an agent);
-  - a flow (start it).
+  - a watch (wake an agent).
 
 The pieces exist today, scattered across kinds:
 
@@ -427,7 +426,7 @@ by hand, as below.
    that means gohort runs without a model until reconfigured, so the deploy
    and the reconfiguring happen in one sitting.
 3. **Names agents use do not change:** granted tools (`generate_image_<name>`,
-   search tools, `flow_<name>`), `query_source` sources, and credential
+   search tools), `query_source` sources, and credential
    scopes (`connection:<name>`). An agent naming something that no longer
    exists is listed in the admin notice, as a setting needing it is.
 4. **Every security property since plan B survives,** as acceptance tests the
@@ -447,8 +446,8 @@ by hand, as below.
    - agent and user scope, at the call and in tool lists: images
      (TestAnAgentBarredFromAConnectionIsNeitherOfferedNorServed,
      TestADeniedConnectionHidesTheBackend, and a backend's own tool in
-     TestAnImageConnectionKeepsItsKeyAndItsScope), music, query_source and
-     flows (their tool-list tests in core/service), the connection's own
+     TestAnImageConnectionKeepsItsKeyAndItsScope), music and query_source
+     (their tool-list tests in core/service), the connection's own
      check (TestAConnectionBarsAnAgentOrAUser);
    - the privacy check judges a tier by its address, failing closed:
      TestATierStillNamingAConnectionFailsClosed (an old `llm:` value, an
@@ -531,8 +530,8 @@ minutes, then whatever the admin notice lists.
   provided only when its spec no longer validates and no page uses it (plan
   B's LLM providers), with its space and key; a provided one that still
   validates (a local server's) stays as the ordinary connection it is now.
-  It removes `connection:<id>` spaces no connector owns, and the markers of
-  the seven migrations the rework removed. It leaves `rest_image` records
+  It removes `connection:<id>` spaces no connector owns, the markers of
+  the seven migrations the rework removed, and saved flows (decision 9). It leaves `rest_image` records
   (the migration's) and the vault (rule 5). The delete refuses while any
   setting needs setting again, since setting it replaces the keys those
   records hold; step 9 also makes it wait for the migration to have run.
@@ -594,7 +593,7 @@ here, per the rule that names are agreed first.
 | a webhook's address | `/hook/<name>` |
 | a webhook's check | `verify`: `none`, `token`, `hmac`, `slack`, `graph`, `botframework` |
 | a webhook's payload map | `map`: `id`, `chat`, `from`, `text`, `kind` |
-| a webhook's consumer | `feeds`: `channel:<name>`, `watch:<agent>`, `flow:<name>` |
+| a webhook's consumer | `feeds`: `channel:<name>`, `watch:<agent>` |
 | a webhook's reach | `reach`: `direct`, `peer:<name>` |
 | fetching messages | contract `message.fetch` |
 | trust | open (Q2), with DLP |
@@ -640,7 +639,8 @@ once:
 **After the rework,** each its own branch, with no migration:
 
 10. Webhooks, first version: the record, `/hook/<name>`, the verifiers, and
-   two consumers, watches and flows (decided, Q4). `peer_relay` becomes a
+   one consumer, watches (decided, Q4; flows were its second until they
+   were retired, decision 9). `peer_relay` becomes a
    webhook's reach. `rest_messaging`'s push side and Bot Framework's inbound
    stay as they are until channels.
 11. Channels on connectors: `message.fetch`; Slack, Discord and Teams
@@ -660,8 +660,9 @@ once:
    the page (see decision 7 for what replaces "in use").
 2. **Trust: not drawn from internal versus external.** DLP as a whole is
    revisited after everything else, and Q2 with it.
-3. (Q4) **Webhooks' first version feeds watches and flows.** Messaging's push
-   side and Bot Framework move once, with channels.
+3. (Q4) **Webhooks' first version feeds watches.** Messaging's push side
+   and Bot Framework move once, with channels. (Revised 2026-11-01: it fed
+   flows too, until they were retired, decision 9.)
 4. (Q5) **Desktop programs get their own per-user page,** desktop MCP with
    them.
 5. (Q6) **Reconfiguring is highlighted where it is needed,** on each page and
@@ -677,6 +678,16 @@ once:
 8. **One migration, written last,** from both starting points (before plan B,
    and plan B) into the final shape, once the design and code are final.
    Reconfiguring, highlighted, is the fallback for anything it does not cover.
+
+9. **Flows are retired** (2026-11-01). The connector chains under Admin >
+   Extensions > Flows, their `flow_<name>` tools and an event starting one
+   are removed: nothing in a week of logs ran one, and agents chain calls
+   themselves. A flow's steps no longer count as references. Saved flows
+   (the `service_flows` table) are inert, and Clear old connection records
+   removes them. The code is in git history should a webhook-to-flow need
+   appear. System Hooks' own flows (`core/flows`) are a different thing and
+   stay. `message.send` has no caller until channels; its four templates
+   (Slack, Discord, ntfy, ntfy with a file) stay for them.
 
 ## Still open
 

@@ -253,15 +253,15 @@ func init() {
 		Check:   checkAudio("audio"),
 		units:   func(map[string]any, Result) float64 { return 1 },
 	})
-	// message.send is what lets a flow end by sending: a messaging API's
-	// connector gives it. to is whom to send to, when the service needs one
+	// message.send is a messaging API's send, which channels are to be built
+	// on; until they are, nothing but its Test calls it. to is whom to send to, when the service needs one
 	// and the connector does not set it; id is what the service calls the
 	// message, when it says.
 	register(Contract{
 		Name:   "message.send",
 		About:  "A message sent through a messaging API, with a file when one is given; to is whom to send to, when the service needs one and the connector does not set it, and id is the service's name for the message.",
 		Checks: "Any answer: a reply at all means the service took the message.",
-		Where:  "a flow's last step: send what it made through a messaging API",
+		Where:  "channels, once built (nothing calls it before then but its Test)",
 		Gives:  "Sending messages",
 		Inputs: []Port{
 			{Name: "text", Type: TypeText, Required: true},

@@ -14,6 +14,8 @@ package service
 //     the stored vectors are in.
 //   - a connection space no connector owns: settings and keys left behind.
 //   - the marker of a migration that no longer exists.
+//   - a saved flow: flows (connector chains) were retired, and nothing reads
+//     them.
 //
 // The delete refuses while any setting needs setting again (StaleSettings):
 // the keys plan B kept in its provided connections are what setting the LLM
@@ -34,7 +36,7 @@ func init() {
 		"survey_old_connection_records",
 		"Survey old connection records (dry run)",
 		"Read-only. Lists the connections gohort once provided that no longer work and no page uses, "+
-			"connection settings and keys no connection owns, and the markers of migrations that are gone. Deletes nothing.",
+			"connection settings and keys no connection owns, the markers of migrations that are gone, and saved flows (retired). Deletes nothing.",
 		func(ctx context.Context) int {
 			old := findOldRecords(RootDB)
 			if old.count() == 0 {
@@ -68,13 +70,18 @@ func init() {
 var oldMarkers = []string{"connections:v2", "connections:v3", "images:v1", "source_hooks_to_connectors:v1",
 	"search_research_to_sources:v1", "connectors_in_use:v1", "unfreeze_rest_image_defaults:v1"}
 
+// flowsTable held the flows (connector chains), retired.
+const flowsTable = "service_flows"
+
 // oldRecords is what clearing removes: connection names, the ids of spaces
-// no connection owns, and marker keys.
+// no connection owns, marker keys, and the names of saved flows.
 type oldRecords struct {
-	connections, spaces, markers []string
+	connections, spaces, markers, flows []string
 }
 
-func (o oldRecords) count() int { return len(o.connections) + len(o.spaces) + len(o.markers) }
+func (o oldRecords) count() int {
+	return len(o.connections) + len(o.spaces) + len(o.markers) + len(o.flows)
+}
 
 // lines are o as the log says it, one record a line.
 func (o oldRecords) lines() []string {
@@ -87,6 +94,9 @@ func (o oldRecords) lines() []string {
 	}
 	for _, k := range o.markers {
 		out = append(out, "migration marker "+k)
+	}
+	for _, f := range o.flows {
+		out = append(out, "saved flow "+f+" (flows are retired)")
 	}
 	return out
 }
@@ -132,8 +142,10 @@ func findOldRecords(db Database) oldRecords {
 			o.markers = append(o.markers, key)
 		}
 	}
+	o.flows = db.Keys(flowsTable)
 	sort.Strings(o.connections)
 	sort.Strings(o.spaces)
+	sort.Strings(o.flows)
 	return o
 }
 
@@ -159,6 +171,9 @@ func clearOldRecords(db Database) (int, error) {
 	}
 	for _, k := range o.markers {
 		db.Unset(migrate.MigrationsTable, k)
+	}
+	if len(o.flows) > 0 {
+		db.Drop(flowsTable)
 	}
 	if o.count() > 0 {
 		Log("[connections] removed:\n%s", strings.Join(o.lines(), "\n"))

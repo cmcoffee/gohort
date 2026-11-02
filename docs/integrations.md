@@ -1,9 +1,9 @@
 # How gohort reaches things
 
-gohort does a lot itself, and wraps the rest. Three words explain every
-integration: **connector**, **flow** and **agent**.
+gohort does a lot itself, and wraps the rest. Two words explain every
+integration: **connector** and **agent**.
 
-## Connectors, flows, agents
+## Connectors and agents
 
 ```
             inside                          outside
@@ -11,8 +11,7 @@ gohort ⇄ [ a gohort contract ]  CONNECTOR  [ transport + endpoints ] ⇄ the r
          make an image, transcribe,         HTTP and a key, a program here,
          convert a file, send a message     MCP, another gohort, a messaging service
 
-FLOW:   connector → connector → connector    deterministic wiring between connectors
-AGENT:  decides which connectors to call and which flows to run
+AGENT:  decides which connectors to call
 ```
 
 - **A connector is a wrapper.** It takes something gohort does not own and
@@ -21,11 +20,8 @@ AGENT:  decides which connectors to call and which flows to run
   or tell gohort that something arrived. Its **outside** reaches the
   resource: a transport and its endpoints, with whatever reaching it takes
   (a key, a program, network access, an admin's approval).
-- **A flow connects connectors.** The output of one becomes the input of the
-  next. A flow is deterministic: the same input takes the same steps, every
-  time, so it can be tested, priced and fixed.
 - **An agent decides.** It is the one part that is not deterministic: it
-  reads the situation, calls a connector or runs a flow, reads the result,
+  reads the situation, calls a connector, reads the result,
   and decides again.
 
 A voice note on Telegram, end to end:
@@ -41,10 +37,10 @@ The same four jobs, whatever it wraps:
 1. **Translate.** Its mapping turns what gohort asks into calls on the
    resource's endpoints, and reads the answer back into the contract.
 2. **Govern.** The key and the endpoints it may reach, the sandbox a
-   program runs in, whether it has the network, and whether it is in use: a
-   services connector while a page that uses it names it (Web Search, an
-   LLM tier, a Research Source, a flow, ...), the others by an admin's
-   approval. What gohort can reach, and who allowed it, all sits on
+   program runs in, whether it has the network, and what reaches it: a
+   services connector is reached through the pages that name it (Web
+   Search, Image Generation, a Research Source, ...), the others once an
+   admin approves them. What gohort can reach, and who allowed it, all sits on
    connectors.
 3. **Measure.** A free health check on a timer where the resource offers
    one; a test, one small real call checked against the contract (tests can
@@ -75,7 +71,7 @@ shows the same for each job it does.
 | `image.generate` | A picture made from a prompt. | prompt (text, required), negative (text), width (number), height (number), seed (number), steps (number), model (text), aspect (text) | image (file) | image is a picture gohort can show: PNG, JPEG, GIF or WebP, with a size. | Admin > Capabilities > Image Generation, and agents' image tools |
 | `image.search` | Pictures already on the web. results is a list of objects: image_url (the picture itself), title, source (the site it is on) and link (the page it is on). | query (text, required), count (number) | results (json) | results is a list, and every image_url in it is an http or https address. The test, a search for a common subject, must find at least one. | agents' find_image, through the connector Web Search is set to |
 | `mail.send` | An email: to, subject and body, from the connector's own sender unless one is given, with a file when one is given; id is the service's name for the message. | to (text, required), subject (text, required), body (text, required), from (text), file (file) | id (text) | Any answer: a reply at all means the service took the message. | Admin > System > Mail (SMTP): "Send with" |
-| `message.send` | A message sent through a messaging API, with a file when one is given; to is whom to send to, when the service needs one and the connector does not set it, and id is the service's name for the message. | text (text, required), file (file), to (text) | id (text) | Any answer: a reply at all means the service took the message. | a flow's last step: send what it made through a messaging API |
+| `message.send` | A message sent through a messaging API, with a file when one is given; to is whom to send to, when the service needs one and the connector does not set it, and id is the service's name for the message. | text (text, required), file (file), to (text) | id (text) | Any answer: a reply at all means the service took the message. | channels, once built (nothing calls it before then but its Test) |
 | `music.generate` | A piece of music made from a prompt, with lyrics, a style, a title and a length when given. | prompt (text, required), lyrics (text), style (text), title (text), duration (number), model (text) | audio (file) | audio is sound gohort can play: MP3, WAV, OGG, FLAC, AAC or MP4 audio, judged by its first bytes. | an agent tool of its own, named generate_music_ and the connector's name |
 | `page.render` | A page read the way a browser shows it: the readable text of the page at url, and its title when the service gives one. | url (text, required) | text (text), title (text) | text is not empty. | Admin > Capabilities > Page Rendering (Browser): "Render pages on" |
 | `speech.synthesize` | A text spoken aloud, in a voice when one is given. | text (text, required), voice (text), model (text) | audio (file) | audio is sound gohort can play: MP3, WAV, OGG, FLAC, AAC or MP4 audio, judged by its first bytes. | Admin > Capabilities > Speech (TTS): "Speak with" |
@@ -87,7 +83,7 @@ shows the same for each job it does.
 The inside faces both ways. gohort asks things of a connector (make, convert,
 send), and a connector tells gohort things (a message arrived, a watched API
 changed). The second is what starts work with no one asking: a message wakes
-an agent, and later a flow.
+an agent.
 
 ## The outside: transports and endpoints
 
@@ -178,7 +174,6 @@ per person and never shared between accounts unless the owner lends one.
 | What | Where |
 |---|---|
 | Connectors | Admin > Extensions > Connectors (polls also under Admin > Extensions > Bridges) |
-| Flows | Admin > Extensions > Flows; each is the agent tool `flow_<name>` |
 | Which connector serves a capability | Admin > Capabilities (Embeddings, Speech, Transcription, Image Generation, Web Search) |
 | Credentials | yours: Extensions app > APIs; everyone's: Admin > Extensions > API Credentials |
 | System Hooks | Admin > Capabilities > System Hooks |
@@ -193,46 +188,20 @@ per person and never shared between accounts unless the owner lends one.
 |---|---|
 | a hosted provider to do something gohort already does | a connector from a template, then pick it under Admin > Capabilities |
 | an agent to call an API | a credential, plus a tool (Builder drafts both) |
-| connectors chained the same way every time, as one agent tool | a flow |
 | a file type handled by a program here | System Hooks |
 | to be told when something outside changes | a poll (an agent's bridge tool makes one) |
 | an agent on a messaging service | a messaging relay |
 | another gohort's GPU or models | a peer |
 | to hand your setup to someone else | a template |
 
-## Flows
-
-A flow is saved under Admin > Extensions > Flows: its inputs, then its steps
-in order, each a connector and a contract, and what feeds the contract's
-inputs, one per line:
-
-```
-inputs:  note (file, required)
-listen:  speech.transcribe on ears         audio = {input.note}
-draw:    image.generate on acme-images     prompt = A watercolor of {listen.text}
-```
-
-`{input.note}` is the flow's input; `{listen.text}` is the text the step
-`listen` gave. Only the last step's outputs come back, here the picture.
-Saving checks it all fits: each connector gives its
-contract, each input a contract needs is fed, by a value of the right type.
-The flow is then the tool `flow_<name>`, given to an agent like any other
-tool; what the last step gives comes back to the agent, files saved in its
-workspace. Each step's call is counted and priced on its connector's row,
-and Test runs the flow once on sample inputs.
-
-A flow can also start on its own. Under "Starts when", pick a monitor (a
-watch noticing a change, a webhook, a timer) and the input its text goes
-into: each time it fires, the flow runs with no agent in between and its
-`message.send` step sends what it made. The flow must have that step. Its
-runs a day from the event are capped (24 unless set); past the cap, or if a
-step fails, the monitor delivers the event its usual way with why in front.
+## Sending messages
 
 Templates under Admin > Extensions > Templates add a `message.send`
 connector: *Slack (send messages)* and *Discord (send messages)* through a
-bot, *ntfy (send notifications)*, and *ntfy (send files)*, which attaches
-what a flow made. Telegram, and Slack or Discord webhooks, keep their secret
-in the address, which a connector never holds, so they have no template.
+bot, *ntfy (send notifications)*, and *ntfy (send files)*. Channels, built
+later, send through them; until then nothing calls them but their Test.
+Telegram, and Slack or Discord webhooks, keep their secret in the address,
+which a connector never holds, so they have no template.
 
 ## An example from start to finish: hosted embeddings
 
@@ -240,8 +209,8 @@ The connector: inside `embed.text`, mapping one request, outside OpenAI with
 its key.
 
 1. **Admin > Extensions > Templates > Add a template…**, pick *OpenAI
-   (embeddings)* and give it a name. This creates the connection, out of
-   use, shown as *OpenAI (embeddings)*.
+   (embeddings)* and give it a name. This creates the connection, shown as
+   *OpenAI (embeddings)*; it makes no calls until a page chooses it.
 2. **Admin > Capabilities > Embeddings:** set "Embed with" to it. Its model
    and its API key show under the choice. Test embeds two sentences and
    checks for two vectors of the same length. Save: choosing it there is
@@ -258,17 +227,14 @@ OpenAI changes something, ✨ Fix is on the same row.
 
 The model is where gohort is going; some pieces still bend it.
 
-- **Messages arriving do not start flows yet.** A monitor's fire (a watch
-  noticing a change, a webhook, a timer) can start one; a message arriving
-  on a messaging relay cannot, and only an admin attaches a flow to an
-  event.
 - **A program's network access belongs to the job.** A video downloader's
   program is listed with the network, but the setting is the job's, on
   System Hooks, not the connector's.
 - **An adapted System Hook is stored as a connector** already, and is set up
   and fixed from System Hooks.
-- **Older image backends** (`rest_image`) still work. Fix shows one as a
-  service spec, and saving it there converts it.
+- **Older image backends** (`rest_image`) are not run any more: A1111,
+  ComfyUI and peers' renderers are connections. A ComfyUI one is moved by
+  setting it up again from its row; the rest wait for the migration.
 
 The plan for closing these is
-[design/connectors-and-flows.md](design/connectors-and-flows.md).
+[design/integration-model.md](design/integration-model.md).
