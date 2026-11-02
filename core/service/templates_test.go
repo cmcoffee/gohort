@@ -675,3 +675,89 @@ func TestATemplateNamesItsConnector(t *testing.T) {
 		t.Errorf("named %v", names)
 	}
 }
+
+// The message templates fetch a channel and send to it: Slack from where
+// the last fetch left off (oldest), its messages saying no chat of their
+// own, so they are in the one asked for, and the newest's ts the cursor;
+// Discord its latest, each saying its channel, with no cursor. A Slack
+// refusal, which comes back as ok false with no messages, fails visibly
+// rather than reading as nothing new.
+func TestTheMessageTemplatesFetchAndSend(t *testing.T) {
+	world(t)
+	var got []string
+	refuse := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got = append(got, r.Method+" "+r.URL.RequestURI()+" "+string(b))
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case refuse:
+			w.Write([]byte(`{"ok":false,"error":"not_in_channel"}`))
+		case strings.HasPrefix(r.URL.Path, "/api/conversations.history"):
+			w.Write([]byte(`{"ok":true,"messages":[{"ts":"1700000200.000200","user":"U2","text":"second","user_profile":{"real_name":"Ann"}},{"ts":"1700000100.000100","bot_id":"B1","username":"build","text":"first"}]}`))
+		case strings.HasPrefix(r.URL.Path, "/api/chat"):
+			w.Write([]byte(`{"ok":true,"ts":"1700000300.0003"}`))
+		case r.Method == "GET":
+			w.Write([]byte(`[{"id":"112","channel_id":"9001","author":{"id":"77","username":"ann","global_name":"Ann"},"content":"hi there","timestamp":"2026-11-01T10:00:00+00:00"}]`))
+		default:
+			w.Write([]byte(`{"id":"113"}`))
+		}
+	}))
+	defer srv.Close()
+	for _, id := range []string{"slack-messages", "discord-messages"} {
+		install(t, id, templateSpec(t, id, srv.URL))
+	}
+	c, _ := GetConnector(RootDB, "slack-messages")
+	SetConnectionConfig(RootDB, c, map[string]string{"channel": "C42"})
+
+	got = nil
+	res, err := Call(context.Background(), nil, "slack-messages", "message.fetch", map[string]any{"chat": "C7", "since": "1700000000.0"})
+	ms, _ := FetchedMessages(res, "C7")
+	if err != nil || len(got) != 1 || got[0] != "GET /api/conversations.history?channel=C7&oldest=1700000000.0&limit=50 " ||
+		len(ms) != 2 || ms[0] != (FetchedMessage{ID: "1700000200.000200", Chat: "C7", From: "U2", FromName: "Ann", Text: "second", At: "1700000200.000200"}) ||
+		ms[1].From != "B1" || ms[1].FromName != "build" || res["cursor"].Text != "1700000200.000200" {
+		t.Errorf("slack fetch: %v %q %+v %q", err, got, ms, res["cursor"].Text)
+	}
+	got = nil
+	if _, err := Call(context.Background(), nil, "slack-messages", "message.fetch", map[string]any{}); err != nil || got[0] != "GET /api/conversations.history?channel=C42&oldest=0&limit=50 " {
+		t.Errorf("slack fetch with nothing given: %v %q", err, got)
+	}
+	got = nil
+	res, err = Call(context.Background(), nil, "discord-messages", "message.fetch", map[string]any{"chat": "9001"})
+	ms, _ = FetchedMessages(res, "")
+	if err != nil || got[0] != "GET /api/v10/channels/9001/messages?limit=50 " || len(ms) != 1 ||
+		ms[0] != (FetchedMessage{ID: "112", Chat: "9001", From: "77", FromName: "Ann", Text: "hi there", At: "2026-11-01T10:00:00+00:00"}) || res["cursor"].Text != "" {
+		t.Errorf("discord fetch: %v %q %+v", err, got, ms)
+	}
+	for _, s := range []struct{ id, want string }{
+		{"slack-messages", `POST /api/chat.postMessage {"channel":"C7","text":"ok"}`},
+		{"discord-messages", `POST /api/v10/channels/9001/messages {"content":"ok"}`},
+	} {
+		got = nil
+		to := "C7"
+		if s.id == "discord-messages" {
+			to = "9001"
+		}
+		if _, err := Call(context.Background(), nil, s.id, "message.send", map[string]any{"text": "ok", "to": to}); err != nil || got[0] != s.want {
+			t.Errorf("%s send: %v %q", s.id, err, got)
+		}
+	}
+	refuse = true
+	if _, err := Call(context.Background(), nil, "slack-messages", "message.fetch", map[string]any{"chat": "C7"}); err == nil || !strings.Contains(err.Error(), "not_in_channel") {
+		t.Errorf("a Slack refusal: %v", err)
+	}
+}
+
+// What a fetch gives is checked: a message with no id fails it.
+func TestAFetchedMessageNeedsAnID(t *testing.T) {
+	c, _ := Lookup("message.fetch")
+	if err := c.Check(Result{"messages": {Text: `[{"id":"1","text":"a"}]`}}); err != nil {
+		t.Error(err)
+	}
+	if err := c.Check(Result{"messages": {Text: `[{"text":"a"}]`}}); err == nil {
+		t.Error("a message with no id passed")
+	}
+	if err := c.Check(Result{"messages": {Text: `"nope"`}}); err == nil {
+		t.Error("messages that are not a list passed")
+	}
+}

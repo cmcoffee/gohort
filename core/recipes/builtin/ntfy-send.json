@@ -1,9 +1,9 @@
 {
   "id": "ntfy-send",
   "title": "ntfy (send notifications)",
-  "description": "Sends a flow's message as a push notification through ntfy (ntfy.sh or your own server) to every phone subscribed to a topic: a message.send connector, the last step of a flow that runs on its own. Text only; ntfy (send files) sends what a flow made.",
+  "description": "Sends a message as a push notification through ntfy (ntfy.sh or your own server) to every phone subscribed to a topic: a message.send connector. Text only; ntfy (send files) sends a file.",
   "category": "Messaging",
-  "setup_notes": "Install the ntfy app on your phone and subscribe to a topic. Anyone who knows a topic's name on ntfy.sh can read it, so pick one nobody would guess. Run Test on its row under Admin > Extensions > Connectors, which sends a short test notification. Then put it to use as a flow's message.send step. A server that requires sign-in needs an access token: declare a secret setting sent as bearer in its spec's config, name it in auth in place of none, and give the token under Settings on its row.",
+  "setup_notes": "Install the ntfy app on your phone and subscribe to a topic. Anyone who knows a topic's name on ntfy.sh can read it, so pick one nobody would guess. Run Test on its row under Admin > Extensions > Connectors, which sends a short test notification. Nothing in gohort sends through a send-only connector yet. A server that requires sign-in needs an access token: declare a secret setting sent as bearer in its spec's config, name it in auth in place of none, and give the token under Settings on its row.",
   "questions": [
     {
       "name": "name",

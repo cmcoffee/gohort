@@ -92,6 +92,56 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 			{
+				Title:    "Linked services",
+				Subtitle: "A messaging service reached through a connector that fetches and sends messages, such as Slack or Discord.",
+				Detail: "How to set one up: an administrator adds the service's connector from its template (Slack messages, Discord messages) with its token. " +
+					"Link it here under a service name, with the chats to read where the service fetches one at a time. " +
+					"Then bind a channel to that service name, and its agent answers there.\n\n" +
+					"gohort asks the service for new messages on each poll, as you, so a connector limited to named users is linked only by one of them. " +
+					"The first poll of each chat passes over what is already there. A reply that cannot be sent is kept and tried again on the next poll. " +
+					"One link a service: a service another bridge already carries for you cannot be linked too.",
+				Body: ui.Stack{Children: []ui.Component{
+					ui.Table{
+						Source: "/bridges/api/links",
+						RowKey: "service",
+						Columns: []ui.Col{
+							{Field: "service", Label: "Service"},
+							{Field: "connector", Label: "Through", Mute: true, Flex: 1},
+							{Field: "chats", Label: "Chats", Mute: true, Flex: 1},
+							{Field: "every", Label: "Every", Mute: true},
+							{Field: "trouble", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
+								{Value: true, Label: "Needs attention", Color: "danger"},
+							}},
+							{Field: "last", Label: "Last poll", Mute: true, Flex: 2},
+						},
+						RowActions: []ui.RowAction{
+							{Type: "button", Label: "Unlink", Method: "DELETE", PostTo: "/bridges/api/links?service={service}", Variant: "danger",
+								Confirm: "Unlink this service? Its messages stop coming in, and replies waiting to go out stay queued.", Compact: true},
+						},
+						EmptyText: "No linked services yet.",
+					},
+					ui.ModalButton{
+						Label:   "Link a service",
+						Title:   "Link a messaging service",
+						Variant: "primary",
+						Width:   "520px",
+						Body: ui.FormPanel{
+							PostURL:     "/bridges/api/links",
+							SubmitLabel: "Link it",
+							Fields: []ui.FormField{
+								{Field: "connector", Label: "Connector", Type: "select", Required: true, OptionsSource: "/bridges/api/links?options=connectors",
+									Help: "A connector that both fetches and sends messages, which you may use."},
+								{Field: "service", Label: "Service name", Required: true, Placeholder: "e.g. slack",
+									Help: "What channels bind to. Use slack or discord for those services."},
+								{Field: "chats", Label: "Chats", Placeholder: "e.g. C0123456789",
+									Help: "Comma-separated: the conversations to read. Slack needs them (its channel ids); Discord reads the channel its connector is set to when blank."},
+								{Field: "interval_secs", Label: "Poll every (seconds)", Type: "number", Min: linkMinSecs, Placeholder: "30"},
+							},
+						},
+					},
+				}},
+			},
+			{
 				// Stage A of the unified-bridge model: a POLL source is the
 				// same bridge concept as a message (push) bridge — one source
 				// feeding an agent — so it belongs here, not only in the

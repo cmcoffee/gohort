@@ -253,7 +253,7 @@ var capabilityGroups = map[string]string{
 	"image.generate": groupImages, "image.edit": groupImages,
 	"speech.transcribe": groupAudio, "speech.synthesize": groupAudio, "speech.voices": groupAudio, "music.generate": groupAudio,
 	"embed.text": groupEmbed, "page.render": groupPages, "file.convert": groupPages,
-	"mail.send": groupMail, "message.send": groupMessages,
+	"mail.send": groupMail, "message.send": groupMessages, "message.fetch": groupMessages,
 }
 
 // researchTemplates is the template category of a research source's.

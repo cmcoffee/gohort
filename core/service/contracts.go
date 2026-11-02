@@ -253,15 +253,15 @@ func init() {
 		Check:   checkAudio("audio"),
 		units:   func(map[string]any, Result) float64 { return 1 },
 	})
-	// message.send is a messaging API's send, which channels are to be built
-	// on; until they are, nothing but its Test calls it. to is whom to send to, when the service needs one
+	// message.send is a messaging API's send: a linked service's replies go
+	// out through it. to is whom to send to, when the service needs one
 	// and the connector does not set it; id is what the service calls the
 	// message, when it says.
 	register(Contract{
 		Name:   "message.send",
 		About:  "A message sent through a messaging API, with a file when one is given; to is whom to send to, when the service needs one and the connector does not set it, and id is the service's name for the message.",
 		Checks: "Any answer: a reply at all means the service took the message.",
-		Where:  "channels, once built (nothing calls it before then but its Test)",
+		Where:  "Bridges > Linked services: the replies to what the same connector fetches",
 		Gives:  "Sending messages",
 		Inputs: []Port{
 			{Name: "text", Type: TypeText, Required: true},
@@ -278,6 +278,41 @@ func init() {
 		// What comes back is the service's receipt, in whatever shape it
 		// has: a reply at all means the send was taken.
 		Check: func(Result) error { return nil },
+		units: func(map[string]any, Result) float64 { return 1 },
+	})
+	// message.fetch is a messaging API's new messages: since is where the
+	// last fetch left off (its cursor), chat the conversation to fetch when
+	// the service fetches one at a time. A message that does not say its
+	// chat is in the chat asked for.
+	register(Contract{
+		Name:  "message.fetch",
+		About: "New messages from a messaging API: since is where the last fetch left off (the cursor it gave), and chat the conversation, for a service that fetches one at a time. messages is a list of objects: id, chat, from, from_name, text and at; cursor is where the next fetch starts.",
+		Checks: "messages is a list, and every message in it has an id. A message that does not say its chat is in the chat asked for. " +
+			"The test fetches without a cursor, as a link's first fetch does.",
+		Where: "Bridges > Linked services: a linked service's messages reach its channels",
+		Gives: "Fetching messages",
+		Inputs: []Port{
+			{Name: "since", Type: TypeText},
+			{Name: "chat", Type: TypeText},
+		},
+		Outputs: []Port{
+			{Name: "messages", Type: TypeJSON, Required: true},
+			{Name: "cursor", Type: TypeText},
+		},
+		Units: []string{"fetch"},
+		Test:  map[string]any{},
+		Check: func(r Result) error {
+			ms, err := FetchedMessages(r, "")
+			if err != nil {
+				return err
+			}
+			for i, m := range ms {
+				if strings.TrimSpace(m.ID) == "" {
+					return fmt.Errorf("message %d has no id: check which field id is read from", i+1)
+				}
+			}
+			return nil
+		},
 		units: func(map[string]any, Result) float64 { return 1 },
 	})
 	// file.convert turns a file into another format: from is its format as
@@ -447,6 +482,31 @@ func SearchResults(r Result) ([]SearchResult, error) {
 	var out []SearchResult
 	if err := json.Unmarshal([]byte(r["results"].Text), &out); err != nil {
 		return nil, fmt.Errorf("the results are not a list of title, url and snippet: %v", err)
+	}
+	return out, nil
+}
+
+// FetchedMessage is one message a message.fetch gave.
+type FetchedMessage struct {
+	ID       string `json:"id"`
+	Chat     string `json:"chat"`
+	From     string `json:"from"`
+	FromName string `json:"from_name"`
+	Text     string `json:"text"`
+	At       string `json:"at"`
+}
+
+// FetchedMessages reads a message.fetch result, each message without a chat
+// of its own in chat, the one asked for.
+func FetchedMessages(r Result, chat string) ([]FetchedMessage, error) {
+	var out []FetchedMessage
+	if err := json.Unmarshal([]byte(r["messages"].Text), &out); err != nil {
+		return nil, fmt.Errorf("the messages are not a list of id, chat, from, from_name, text and at: %v", err)
+	}
+	for i := range out {
+		if strings.TrimSpace(out[i].Chat) == "" {
+			out[i].Chat = chat
+		}
 	}
 	return out, nil
 }

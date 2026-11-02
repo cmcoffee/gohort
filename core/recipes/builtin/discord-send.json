@@ -1,9 +1,9 @@
 {
   "id": "discord-send",
   "title": "Discord (send messages)",
-  "description": "Sends a flow's message to a Discord channel through a bot: a message.send connector, the last step of a flow that runs on its own. Text only.",
+  "description": "Sends a message to a Discord channel through a bot: a message.send connector. Text only. For a channel an agent answers in, add Discord (messages), which reads the channel too.",
   "category": "Messaging",
-  "setup_notes": "Create an application at discord.com/developers/applications, add a Bot and copy its token. Invite the bot to your server with the Send Messages permission (OAuth2 > URL Generator, scope bot). Turn on Developer Mode in Discord's settings, then right-click the channel and Copy Channel ID. Run Test on its row under Admin > Extensions > Connectors, which posts a short test message. Then put it to use as a flow's message.send step. Its key is given where it is used, under the choice, or under Settings on its row in Admin > Extensions > Connectors.",
+  "setup_notes": "Create an application at discord.com/developers/applications, add a Bot and copy its token. Invite the bot to your server with the Send Messages permission (OAuth2 > URL Generator, scope bot). Turn on Developer Mode in Discord's settings, then right-click the channel and Copy Channel ID. Run Test on its row under Admin > Extensions > Connectors, which posts a short test message. Nothing in gohort sends through a send-only connector yet; Discord (messages) is the one a linked service uses. Paste the token as Bot, a space, then the token. Its key is given where it is used, under the choice, or under Settings on its row in Admin > Extensions > Connectors.",
   "questions": [
     {
       "name": "name",

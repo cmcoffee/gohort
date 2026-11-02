@@ -1,0 +1,125 @@
+{
+  "id": "slack-messages",
+  "title": "Slack (messages)",
+  "description": "Reads and sends a Slack channel's messages through a Slack app's bot token: link it under Bridges > Linked services as slack, and a channel bound to slack answers there. Text only.",
+  "category": "Messaging",
+  "setup_notes": "Create a Slack app at api.slack.com/apps. Under OAuth & Permissions add the scopes channels:history, groups:history and chat:write, install it to your workspace and copy the Bot User OAuth Token (it starts xoxb-). Invite the app to each channel it reads (/invite @your-app); a channel's id is at the bottom of its details. Test on its row under Admin > Extensions > Connectors fetches the channel set here and posts a short test message. Then, under Bridges > Linked services, link it as slack with the channel ids to read. Its key is given under Settings on its row in Admin > Extensions > Connectors.",
+  "questions": [
+    {
+      "name": "name",
+      "label": "Connector name",
+      "default": "slack-messages"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "slack-messages",
+          "desc": "Slack messages",
+          "spec": {
+            "config": [
+              {
+                "name": "channel",
+                "label": "Channel id",
+                "help": "The channel its Test reads and posts to, e.g. C0123456789. The channels a link reads are named on the link."
+              },
+              {
+                "name": "bot_token",
+                "label": "Bot User OAuth Token",
+                "type": "secret",
+                "send": "bearer",
+                "required": true,
+                "help": "Kept with this connection, and sent only to the address it is given for."
+              }
+            ],
+            "provider": {
+              "transport": "http",
+              "base_url": "https://slack.com",
+              "auth": {
+                "secret": "bot_token"
+              },
+              "operations": {
+                "history": {
+                  "path": "/api/conversations.history?channel={chat}&oldest={since}&limit=50"
+                },
+                "post": {
+                  "method": "POST",
+                  "path": "/api/chat.postMessage",
+                  "body": {
+                    "channel": "{to}",
+                    "text": "{text}"
+                  }
+                },
+                "auth": {
+                  "path": "/api/auth.test"
+                }
+              },
+              "health": {
+                "call": "auth",
+                "expect": "user_id",
+                "every_mins": 60
+              }
+            },
+            "provides": [
+              {
+                "capability": "message.fetch",
+                "steps": [
+                  {
+                    "call": "history",
+                    "save": {
+                      "listed": "messages"
+                    }
+                  }
+                ],
+                "output": {
+                  "messages": {
+                    "path": "messages",
+                    "fields": {
+                      "id": "ts",
+                      "from": "user|bot_id",
+                      "from_name": "user_profile.real_name|username",
+                      "text": "text",
+                      "at": "ts"
+                    }
+                  },
+                  "cursor": {
+                    "path": "messages.0.ts"
+                  }
+                },
+                "defaults": {
+                  "chat": "{config.channel}",
+                  "since": "0"
+                }
+              },
+              {
+                "capability": "message.send",
+                "steps": [
+                  {
+                    "call": "post",
+                    "save": {
+                      "sent": "ts"
+                    }
+                  }
+                ],
+                "output": {
+                  "id": {
+                    "path": "ts"
+                  }
+                },
+                "defaults": {
+                  "to": "{config.channel}"
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

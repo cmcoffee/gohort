@@ -1,0 +1,115 @@
+{
+  "id": "discord-messages",
+  "title": "Discord (messages)",
+  "description": "Reads and sends a Discord channel's messages through a bot: link it under Bridges > Linked services as discord, and a channel bound to discord answers there. Text only.",
+  "category": "Messaging",
+  "setup_notes": "Create an application at discord.com/developers/applications, add a Bot, turn on its Message Content Intent, and copy its token. Invite the bot to your server with the Read Message History and Send Messages permissions (OAuth2 > URL Generator, scope bot). Turn on Developer Mode in Discord's settings, then right-click a channel and Copy Channel ID. Test on its row under Admin > Extensions > Connectors reads the channel set here and posts a short test message. Then, under Bridges > Linked services, link it as discord. Each poll reads the channel's latest 50 messages and passes on the ones not seen before. Its key is given under Settings on its row in Admin > Extensions > Connectors.",
+  "questions": [
+    {
+      "name": "name",
+      "label": "Connector name",
+      "default": "discord-messages"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "discord-messages",
+          "desc": "Discord messages",
+          "spec": {
+            "config": [
+              {
+                "name": "channel",
+                "label": "Channel id",
+                "help": "The channel it reads and posts to unless a link names others: the long number Copy Channel ID gives."
+              },
+              {
+                "name": "bot_token",
+                "label": "Bot token",
+                "type": "secret",
+                "send": "header:Authorization",
+                "required": true,
+                "help": "Paste it as Bot, a space, then the token: Discord reads it that way. Kept with this connection, and sent only to the address it is given for."
+              }
+            ],
+            "provider": {
+              "transport": "http",
+              "base_url": "https://discord.com",
+              "auth": {
+                "secret": "bot_token"
+              },
+              "operations": {
+                "latest": {
+                  "path": "/api/v10/channels/{chat}/messages?limit=50"
+                },
+                "post": {
+                  "method": "POST",
+                  "path": "/api/v10/channels/{to}/messages",
+                  "body": {
+                    "content": "{text}"
+                  }
+                },
+                "me": {
+                  "path": "/api/v10/users/@me"
+                }
+              },
+              "health": {
+                "call": "me",
+                "expect": "id",
+                "every_mins": 60
+              }
+            },
+            "provides": [
+              {
+                "capability": "message.fetch",
+                "steps": [
+                  {
+                    "call": "latest"
+                  }
+                ],
+                "output": {
+                  "messages": {
+                    "path": "",
+                    "fields": {
+                      "id": "id",
+                      "chat": "channel_id",
+                      "from": "author.id",
+                      "from_name": "author.global_name|author.username",
+                      "text": "content",
+                      "at": "timestamp"
+                    }
+                  }
+                },
+                "defaults": {
+                  "chat": "{config.channel}"
+                }
+              },
+              {
+                "capability": "message.send",
+                "steps": [
+                  {
+                    "call": "post"
+                  }
+                ],
+                "output": {
+                  "id": {
+                    "path": "id"
+                  }
+                },
+                "defaults": {
+                  "to": "{config.channel}"
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

@@ -92,6 +92,11 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		"DELETE": jsonapi.Delete(T.DB, T.handleKeyRevoke),
 	}.Serve)
 	sub.HandleFunc("/api/bridges", jsonapi.Get(T.DB, T.handleBridgeList))
+	sub.HandleFunc("/api/links", jsonapi.Methods{
+		"GET":    jsonapi.Get(T.DB, T.handleLinks),
+		"POST":   jsonapi.Post(T.DB, T.handleLinkSave, jsonapi.MaxBody(1<<14)),
+		"DELETE": jsonapi.Delete(T.DB, T.handleLinkDelete),
+	}.Serve)
 	sub.HandleFunc("/api/panic", jsonapi.Post(T.DB, T.handlePanic))
 	sub.HandleFunc("/api/config", jsonapi.Methods{
 		"GET":   jsonapi.Get(T.DB, T.handleConfig),
@@ -117,6 +122,9 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	}.Serve)
 	sub.HandleFunc("/api/messages/", jsonapi.Get(T.DB, T.handleMessages))
 	MountSubMux(mux, prefix, sub)
+	// Linked services poll from start, as the rest_messaging pollers do
+	// once their connectors are materialized.
+	T.startLinks()
 
 	// Expose Bridges' stored threads + outbound to orchestrate's channel-scoped
 	// chat tools (list_chats / read_chat / send_message) without a cycle.
@@ -769,6 +777,10 @@ var fileNameSafe = strings.NewReplacer("/", "-", "\\", "-", ":", "-", "\x00", ""
 // WITH send_url — is assumed to have a drainer. Used to decide whether an agent's
 // reply is enqueued for delivery or overflowed to the agent's cortex/session.
 func (T *Bridges) serviceHasOutput(owner, svc string) bool {
+	// A linked service sends through its connector's message.send.
+	if _, ok := T.linkFor(owner, svc); ok {
+		return true
+	}
 	found := false
 	for _, c := range ListConnectors(RootDB) {
 		if c.Kind != RestMessagingConnectorKind || !c.Approved || c.Owner != owner {

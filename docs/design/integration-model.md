@@ -951,6 +951,26 @@ once:
 11. Channels on connectors: `message.fetch`; Slack, Discord and Teams
     templates; the channel consumer for webhooks; `rest_messaging` and Bot
     Framework move, once.
+
+    11a built (2026-11-01, branch `channels`): the `message.fetch` contract
+    (since, chat; messages of id, chat, from, from_name, text, at, and a
+    cursor; every message has an id, and one that does not say its chat is
+    in the chat asked for). A person links a service under Bridges >
+    Linked services (`apps/bridges/links.go`): a connector giving both
+    `message.fetch` and `message.send`, called as them (its Access), under
+    a service name channels bind to, polling named chats or the whole
+    service. One link a service a person, refused where another transport
+    carries it. The first fetch of each chat marks what is there as seen;
+    later ones pass on only what is not seen yet, so a service asked for its
+    latest (Discord) is not counted twice; replies go out through
+    `message.send` to the chat they came from, kept for the next poll when
+    sending fails. Templates: Slack (messages), with a cursor, and Discord
+    (messages), latest 50 a poll (after=0 would walk its whole history).
+    Mattermost was not added: its reply is a map of posts keyed by id,
+    which the spec cannot read as a list, so it waits for an adapter
+    (decision 10). Nor can a secret's send add a prefix yet: Discord's
+    token is pasted as "Bot <token>". The send-only templates have no
+    caller now that flows are retired; their text says so.
 12. Watches on connectors: `rest_poll` becomes a watch over a connector.
 13. Desktop programs (`desktop_command`, `desktop_mcp`) on a per-user Desktop
     page (decided, Q5); MCP servers and peers on their own pages with the key
