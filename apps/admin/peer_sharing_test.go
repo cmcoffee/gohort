@@ -334,10 +334,6 @@ func TestEmbeddingFormOffersOnlyAddAnotherWithNothingToPick(t *testing.T) {
 			t.Errorf("field %q is on the embeddings form: it is the connector's", name)
 		}
 	}
-	// The toggle is unconditional either way.
-	if f, ok := findField(fields, "enabled"); !ok || f.ShowWhen != "" {
-		t.Errorf("the enable toggle must always render: %+v", f)
-	}
 }
 
 // The paired case: register a peer and the dropdown comes back, offering the

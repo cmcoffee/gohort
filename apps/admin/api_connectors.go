@@ -287,15 +287,21 @@ func connectorGroup(conn Connector, research map[string]bool, uses map[string][]
 	if !ok {
 		return groupOther
 	}
-	if g == groupSearch && !slices.Contains(uses[conn.Name], "Web Search") {
-		if research[conn.Name] {
-			return groupResearch
-		}
-		if r, _, ok := recipes.Get(RootDB, conn.Template); ok && conn.Template != "" && r.Category == researchTemplates {
-			return groupResearch
-		}
+	if g == groupSearch && !slices.Contains(uses[conn.Name], "Web Search") && researchConnector(conn, research) {
+		return groupResearch
 	}
 	return g
+}
+
+// researchConnector reports whether c is a research source's connector: one
+// a research source names (research, researchNamed), or one made from a
+// Research Sources template.
+func researchConnector(c Connector, research map[string]bool) bool {
+	if research[c.Name] {
+		return true
+	}
+	r, _, ok := recipes.Get(RootDB, c.Template)
+	return ok && c.Template != "" && r.Category == researchTemplates
 }
 
 // researchNamed are the connectors a research source names, on or off.

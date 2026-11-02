@@ -60,9 +60,6 @@ func TestTranscribeFormShowsThePeerPicker(t *testing.T) {
 	if !ok {
 		t.Fatal("a peer offers transcription but the provider dropdown is absent")
 	}
-	if f, ok := findField(fields, "enabled"); !ok || f.Help != "" {
-		t.Errorf("the toggle stays, with no pointer while there is a choice: %+v", f)
-	}
 	if got := choicesOf(t, provider, "speech.transcribe"); len(got) != 1 || got[0].Value != PeerProviderValue("gpu-box") {
 		t.Errorf("dropdown should offer the peer alone, got %+v", got)
 	}

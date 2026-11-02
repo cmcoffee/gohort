@@ -85,8 +85,8 @@ func TestAPageSetsUpItsConnector(t *testing.T) {
 	for _, f := range embeddingFormFields() {
 		fields[f.Field] = f.Type + " " + f.ShowWhen + " " + f.Default
 	}
-	if fields["config/vec/endpoint"] != "text enabled;provider:vec " || fields["config/vec/model"] != "text enabled;provider:vec small-embed" ||
-		fields["config/vec/api_key"] != "password enabled;provider:vec " {
+	if fields["config/vec/endpoint"] != "text provider:vec " || fields["config/vec/model"] != "text provider:vec small-embed" ||
+		fields["config/vec/api_key"] != "password provider:vec " {
 		t.Errorf("the settings shown: %v", fields)
 	}
 

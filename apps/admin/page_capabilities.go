@@ -203,7 +203,7 @@ func imageFormFields() []ui.FormField {
 		}
 	}
 	f := ui.FormField{Field: "provider", Label: "Make pictures with", Type: "select",
-		Options: append(append([]ui.SelectOption(nil), opts...), ui.SelectOption{Value: "none", Label: "Disabled"}, addAnother("image.generate"))}
+		Options: append(append([]ui.SelectOption{disabledOption}, opts...), addAnother("image.generate"))}
 	if len(opts) == 0 {
 		f.Help = "Nothing here makes pictures yet: + Add another… adds one from a template (Gemini, OpenAI, ComfyUI, Automatic1111), or connect a peer that lends image generation (Admin > Capabilities > Peers)."
 		return []ui.FormField{staleField, f}
@@ -230,13 +230,12 @@ func imageFormFields() []ui.FormField {
 // under Admin > Extensions > Connectors, so there is one place each is kept.
 func embeddingFormFields() []ui.FormField {
 	choices := append(serviceProviderOptions("embed.text", "Embed"), EmbeddingProviderOptions()...)
-	fields := []ui.FormField{staleField, {Field: "enabled", Label: "Enable embeddings", Type: "toggle"},
+	fields := []ui.FormField{staleField,
 		{Field: "provider", Label: "Embed with", Type: "select",
-			Options:  append(choices, addAnother("embed.text")),
-			ShowWhen: "enabled",
-			Help:     "The connector or peer that makes embeddings; + Add another… adds one from a template. A connector's settings (its address, its model, a key) are set here below it.",
-			Detail:   "A peer that lends embeddings is connected under Admin > Capabilities > Peers. Changing what embeds, or its model, changes the embedding space: search skips stored documents from the old space until Repair in the Vector Index panel makes them again, and through a paid service that is billed."}}
-	fields = append(fields, connectorSettingsFields("embed.text", "enabled", "provider")...)
+			Options: append(append([]ui.SelectOption{disabledOption}, choices...), addAnother("embed.text")),
+			Help:    "The connector or peer that makes embeddings; + Add another… adds one from a template. A connector's settings (its address, its model, a key) are set here below it.",
+			Detail:  "A peer that lends embeddings is connected under Admin > Capabilities > Peers. Changing what embeds, or its model, changes the embedding space: search skips stored documents from the old space until Repair in the Vector Index panel makes them again, and through a paid service that is billed."}}
+	fields = append(fields, connectorSettingsFields("embed.text", "", "provider")...)
 	return append(fields,
 		// The prefixes belong to the MODEL, not to where it runs, so they stay
 		// beside whichever connector or peer does the embedding.
@@ -244,7 +243,7 @@ func embeddingFormFields() []ui.FormField {
 			Placeholder: "search_query: ",
 			Help:        "Prepended to every search query before embedding. Asymmetric retrieval models need it.",
 			Detail:      "e5 uses \"query: \", nomic-embed uses \"search_query: \", bge uses \"Represent this sentence for searching relevant passages: \". Leave it blank for symmetric models. It is included verbatim, trailing space and all, and is safe to change at any time.",
-			ShowWhen:    "enabled",
+			ShowWhen:    "provider:!none",
 			Presets: []ui.FieldPreset{
 				{Label: "e5", Value: "query: ", Hint: "intfloat/e5 family"},
 				{Label: "nomic", Value: "search_query: ", Hint: "nomic-embed-text"},
@@ -254,7 +253,7 @@ func embeddingFormFields() []ui.FormField {
 			Placeholder: "search_document: ",
 			Help:        "Prepended to every chunk, fact and tool description before embedding.",
 			Detail:      "e5 uses \"passage: \" and nomic-embed uses \"search_document: \"; bge and Qwen3-Embedding use none. Changing it changes the embedding space: stored vectors stop matching until their documents are re-ingested.",
-			ShowWhen:    "enabled",
+			ShowWhen:    "provider:!none",
 			Presets: []ui.FieldPreset{
 				{Label: "e5", Value: "passage: ", Hint: "intfloat/e5 family"},
 				{Label: "nomic", Value: "search_document: ", Hint: "nomic-embed-text"},
@@ -268,13 +267,12 @@ func embeddingFormFields() []ui.FormField {
 // are.
 func transcribeFormFields() []ui.FormField {
 	choices := append(serviceProviderOptions("speech.transcribe", "Transcribe"), TranscribeProviderOptions()...)
-	fields := []ui.FormField{staleField, {Field: "enabled", Label: "Enable transcription", Type: "toggle"},
+	fields := []ui.FormField{staleField,
 		{Field: "provider", Label: "Transcribe with", Type: "select",
-			Options:  append(choices, addAnother("speech.transcribe")),
-			ShowWhen: "enabled",
-			Help:     "The connector or peer that transcribes; + Add another… adds one from a template. A connector's settings (its address, its model, a key) are set here below it.",
-			Detail:   "A peer that lends transcription is connected under Admin > Capabilities > Peers."}}
-	return append(fields, connectorSettingsFields("speech.transcribe", "enabled", "provider")...)
+			Options: append(append([]ui.SelectOption{disabledOption}, choices...), addAnother("speech.transcribe")),
+			Help:    "The connector or peer that transcribes; + Add another… adds one from a template. A connector's settings (its address, its model, a key) are set here below it.",
+			Detail:  "A peer that lends transcription is connected under Admin > Capabilities > Peers."}}
+	return append(fields, connectorSettingsFields("speech.transcribe", "", "provider")...)
 }
 
 // speechFormFields builds the speech (TTS) settings: on or off, the
@@ -283,19 +281,18 @@ func transcribeFormFields() []ui.FormField {
 // Extensions > Connectors, as transcription's are.
 func speechFormFields() []ui.FormField {
 	choices := append(serviceProviderOptions("speech.synthesize", "Speak"), SpeechProviderOptions()...)
-	fields := []ui.FormField{staleField, {Field: "enabled", Label: "Enable speech", Type: "toggle"},
+	fields := []ui.FormField{staleField,
 		{Field: "provider", Label: "Speak with", Type: "select",
-			Options:  append(choices, addAnother("speech.synthesize")),
-			ShowWhen: "enabled",
-			Help:     "The connector or peer that speaks; + Add another… adds one from a template. A connector's settings (its address, its model, a key) are set here below it.",
-			Detail:   "A peer that lends speech is connected under Admin > Capabilities > Peers."}}
-	fields = append(fields, connectorSettingsFields("speech.synthesize", "enabled", "provider")...)
+			Options: append(append([]ui.SelectOption{disabledOption}, choices...), addAnother("speech.synthesize")),
+			Help:    "The connector or peer that speaks; + Add another… adds one from a template. A connector's settings (its address, its model, a key) are set here below it.",
+			Detail:  "A peer that lends speech is connected under Admin > Capabilities > Peers."}}
+	fields = append(fields, connectorSettingsFields("speech.synthesize", "", "provider")...)
 	return append(fields,
 		ui.FormField{Field: "voice", Label: "Voice", Type: "text",
 			Placeholder: "af_heart",
 			Help:        "Optional. A voice it offers, such as Kokoro's 'af_heart' or OpenAI's 'alloy'. Blank uses the connector's own default.",
 			Detail:      "Save the connector or peer first, then click a chip to pick from its own list, and Preview voice to hear it before you save. One without a voice list shows no chips; type the voice instead.",
-			ShowWhen:    "enabled",
+			ShowWhen:    "provider:!none",
 			ChipsSource: "api/speech/voices"},
 	)
 }
@@ -325,15 +322,38 @@ func webSearchFormFields() []ui.FormField {
 			Detail:  "Peers live under Resource Sharing, then Peers. Borrowing a peer means this machine never holds the search API key.",
 		})
 	}
+	// The engines, and the research sources apart: a research source is
+	// chosen by "Use a research source…" and the list under it, never
+	// offered as if it were an engine.
+	research := researchNamed()
+	var engines, sources []ui.SelectOption
+	for _, o := range serviceProviderOptions("web.search", "Search") {
+		if c, ok := GetConnector(RootDB, o.Value); ok && researchConnector(c, research) {
+			sources = append(sources, o)
+			continue
+		}
+		engines = append(engines, o)
+	}
+	opts := append([]ui.SelectOption{disabledOption, {Value: "duckduckgo", Label: "DuckDuckGo (built in, no key)"}}, engines...)
+	if len(sources) > 0 {
+		opts = append(opts, ui.SelectOption{Value: useResearchSource, Label: "Use a research source…"})
+	}
 	fields = append(fields,
 		ui.FormField{Field: "provider", Label: "Search with", Type: "select",
 			ShowWhen: local,
-			Options: append(append([]ui.SelectOption{
-				{Value: "duckduckgo", Label: "DuckDuckGo (built in, no key)"},
-			}, serviceProviderOptions("web.search", "Search")...), addAnother("web.search")),
-			Help:   "The engine every search goes to; + Add another… adds one from a template (Brave, Serper, Tavily, Google, SearXNG). A connector's settings (its key, an address) are set here below it.",
-			Detail: "Serper's also finds pictures, for agents' find_image. The connector picked here is not also asked as a research source: it already answers web_search."},
+			Options:  append(opts, addAnother("web.search")),
+			Help:     "The engine every search goes to; + Add another… adds one from a template (Brave, Serper, Tavily, Google, SearXNG). A connector's settings (its key, an address) are set here below it.",
+			Detail:   "Disabled withdraws web_search (and find_image) from every agent, and anything else that searches is told it is off. Serper's engine also finds pictures, for agents' find_image. Use a research source… searches with one of the sources set up under Research Sources instead; the source picked here is not also asked as a research source, since it already answers web_search."},
 	)
+	if len(sources) > 0 {
+		when := "provider:" + useResearchSource
+		if local != "" {
+			when = local + ";" + when
+		}
+		fields = append(fields, ui.FormField{Field: "research_source", Label: "Research source", Type: "select",
+			ShowWhen: when, Options: sources,
+			Help: "The research source every search goes to. Its settings are on its row under Admin > Extensions > Connectors."})
+	}
 	return append(fields, connectorSettingsFields("web.search", local, "provider")...)
 }
 

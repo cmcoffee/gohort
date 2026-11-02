@@ -9,6 +9,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -78,7 +79,7 @@ func TestWebSearchTestTriesTheChoiceBeforeItIsSaved(t *testing.T) {
 	}
 	a := &AdminApp{db: RootDB}
 	out, _ := a.handleWebSearchTest(&jsonapi.Call{R: httptest.NewRequest("POST", "/api/web-search/test", nil)},
-		withSettings[WebSearchConfig]{Form: WebSearchConfig{Source: "local", Provider: "finder"}})
+		withSettings[webSearchForm]{Form: webSearchForm{WebSearchConfig: WebSearchConfig{Source: "local", Provider: "finder"}}})
 	if body, _ := out.(map[string]any); body["ok"] != true {
 		t.Errorf("the test of a choice not yet saved: %+v", out)
 	}
@@ -116,5 +117,90 @@ func TestMailTestTriesTheChoiceBeforeItIsSaved(t *testing.T) {
 	}
 	if c, _ := GetConnector(RootDB, "postbox"); c.Approved {
 		t.Error("testing it put it to use")
+	}
+}
+
+// Web Search offers the engines; a research source is never listed as one.
+// "Use a research source…" and the list under it pick one, and what is saved
+// is the source's own connector, shown back the same way.
+func TestWebSearchKeepsResearchSourcesApart(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved })
+	search := func(base string) json.RawMessage {
+		return json.RawMessage(`{"provider":{"transport":"http","base_url":"` + base + `","auth":{"none":true},"operations":{"find":{"path":"/s?q={query}"}}},"provides":[{"capability":"web.search","steps":[{"call":"find"}],"output":{"results":{"path":"hits","fields":{"title":"t","url":"u"}}}}]}`)
+	}
+	for name, base := range map[string]string{"engine": "https://engine.example.test", "caselaw": "https://law.example.test"} {
+		if err := SaveConnector(RootDB, Connector{Name: name, Kind: service.Kind, Spec: search(base)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := service.SaveResearchSource(RootDB, service.ResearchSource{Connector: "caselaw", Always: true}); err != nil {
+		t.Fatal(err)
+	}
+	fields := webSearchFormFields()
+	provider, _ := findField(fields, "provider")
+	var values []string
+	for _, o := range choicesOf(t, provider, "web.search") {
+		values = append(values, o.Value)
+	}
+	if strings.Join(values, ",") != "duckduckgo,engine,@research" {
+		t.Errorf("the engines: %v", values)
+	}
+	if f, ok := findField(fields, "research_source"); !ok || f.ShowWhen != "provider:@research" || len(f.Options) != 1 || f.Options[0].Value != "caselaw" {
+		t.Errorf("the research source list: %+v", f)
+	}
+
+	a := &AdminApp{db: RootDB}
+	call := &jsonapi.Call{R: httptest.NewRequest("POST", "/api/web-search", nil)}
+	save := func(f webSearchForm) error {
+		_, err := a.handleWebSearchSave(call, withSettings[webSearchForm]{Form: f})
+		return err
+	}
+	if err := save(webSearchForm{WebSearchConfig: WebSearchConfig{Provider: "@research"}}); err == nil || !strings.Contains(err.Error(), "which research source") {
+		t.Errorf("no source chosen: %v", err)
+	}
+	if err := save(webSearchForm{WebSearchConfig: WebSearchConfig{Provider: "@research"}, ResearchSource: "caselaw"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.storedString(SearchTable, "provider"); got != "caselaw" {
+		t.Errorf("stored: %q", got)
+	}
+	out, _ := a.handleWebSearch(call)
+	if got := out.(map[string]any); got["provider"] != "@research" || got["research_source"] != "caselaw" {
+		t.Errorf("shown back: %+v", got)
+	}
+	if err := save(webSearchForm{WebSearchConfig: WebSearchConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.storedString(SearchTable, "provider"); got != "none" {
+		t.Errorf("disabled, stored: %q", got)
+	}
+}
+
+// Disabled turns a job off and keeps what was chosen before, so choosing it
+// again starts from it; the page shows Disabled while it is off.
+func TestDisabledKeepsTheEarlierChoice(t *testing.T) {
+	srv, _ := settingsWorld(t)
+	embedConnector(t, "vec", srv.URL, "m")
+	a := &AdminApp{db: RootDB}
+	call := &jsonapi.Call{R: httptest.NewRequest("POST", "/api/embeddings", nil)}
+	save := func(provider string) {
+		t.Helper()
+		if _, err := a.handleEmbeddingsSave(call, withSettings[EmbeddingConfig]{Form: EmbeddingConfig{Provider: provider}}); err != nil {
+			t.Fatalf("saving %s: %v", provider, err)
+		}
+	}
+	save("vec")
+	if cfg := a.storedEmbeddingConfig(); !cfg.Enabled || cfg.Provider != "vec" {
+		t.Fatalf("on: %+v", cfg)
+	}
+	save("none")
+	if cfg := a.storedEmbeddingConfig(); cfg.Enabled || cfg.Provider != "vec" {
+		t.Errorf("off, the earlier choice kept: %+v", cfg)
+	}
+	out, _ := a.handleEmbeddings(call)
+	if got := out.(map[string]any)["provider"]; got != "none" {
+		t.Errorf("shown while off: %v", got)
 	}
 }

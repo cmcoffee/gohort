@@ -176,6 +176,15 @@ func (t *WebSearchTool) Params() map[string]ToolParam {
 
 func (t *WebSearchTool) IsInternetTool() bool { return true }
 
+// SchemaWithSession offers the tool only while web search is on: Disabled
+// under Admin > Capabilities > Web Search withdraws it from every catalog.
+func (t *WebSearchTool) SchemaWithSession(sess *ToolSession) (string, map[string]ToolParam) {
+	if strings.TrimSpace(LoadWebSearchConfig().Provider) == "none" {
+		return "", nil
+	}
+	return t.Desc(), t.Params()
+}
+
 func (t *WebSearchTool) Run(args map[string]any) (string, error) {
 	return t.runWithSession(args, nil)
 }
@@ -962,6 +971,8 @@ func SearchWithProvider(req SearchRequest) (string, error) {
 		_, named = GetConnector(RootDB, name)
 	}
 	switch {
+	case provider == "none":
+		return "", fmt.Errorf("web search is disabled: an admin turns it on under Admin > Capabilities > Web Search")
 	case provider == "duckduckgo":
 		result, err = searchDuckDuckGo(query)
 	case named:

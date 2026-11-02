@@ -19,7 +19,7 @@ func TestEachMediaPathReachesItsOwnHandler(t *testing.T) {
 	a.registerMediaRoutes(mux)
 	for _, tc := range []struct{ method, path, want string }{
 		{"GET", "/api/embeddings", `"enabled":false`},
-		{"GET", "/api/transcribe", `"model":""}`},
+		{"GET", "/api/transcribe", `"model":"","provider":"none"}`},
 		{"GET", "/api/speech", `"voice":""`},
 		{"GET", "/api/speech/voices", "[]"},
 		{"GET", "/api/image-gen", `"provider":"none"`},

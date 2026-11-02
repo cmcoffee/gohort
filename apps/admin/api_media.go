@@ -81,11 +81,12 @@ func (a *AdminApp) handleEmbeddings(c *jsonapi.Call) (any, error) {
 	// Where embeddings are made is the connector or peer named: its key is
 	// its own, never shown here.
 	cfg.APIKey = ""
-	return markStale(withValues(cfg, chosenConnection(cfg.Provider), "embed.text"), "provider", ""), nil
+	return shownOff(markStale(withValues(cfg, chosenConnection(cfg.Provider), "embed.text"), "provider", ""), cfg.Enabled), nil
 }
 
 // handleEmbeddingsSave persists the embeddings config and reinstalls it live.
 func (a *AdminApp) handleEmbeddingsSave(c *jsonapi.Call, form withSettings[EmbeddingConfig]) (any, error) {
+	turnedOff(&form.Form.Provider, &form.Form.Enabled, a.storedEmbeddingConfig().Provider)
 	req, conn := form.Form, chosenConnection(form.Form.Provider)
 	req.APIKey = ""
 	// The form names a connector or a peer and nothing else: resolve it into
@@ -112,10 +113,11 @@ func (a *AdminApp) handleEmbeddingsSave(c *jsonapi.Call, form withSettings[Embed
 // handleEmbeddingsTest serves /api/embeddings/test; registerMediaRoutes says what it is for.
 func (a *AdminApp) handleEmbeddingsTest(c *jsonapi.Call, form withSettings[EmbeddingConfig]) (any, error) {
 	r := c.R
+	turnedOff(&form.Form.Provider, &form.Form.Enabled, "")
 	req, conn := form.Form, chosenConnection(form.Form.Provider)
 	req.APIKey = ""
 	if !req.Enabled {
-		return testResultBody(false, "", "embeddings are disabled: flip the toggle on first"), nil
+		return testResultBody(false, "", "embeddings are disabled: choose what embeds first"), nil
 	}
 	// Resolve a peer selection the same way the SAVE path does. Without
 	// this the test ran the form's literal fields — and with a peer picked
@@ -166,12 +168,13 @@ func (a *AdminApp) handleTranscribe(c *jsonapi.Call) (any, error) {
 	// What transcribes is the connector or peer named: its key is its own,
 	// never shown here.
 	cfg.APIKey = ""
-	return markStale(withValues(cfg, chosenConnection(cfg.Provider), "speech.transcribe"), "provider", ""), nil
+	return shownOff(markStale(withValues(cfg, chosenConnection(cfg.Provider), "speech.transcribe"), "provider", ""), cfg.Enabled), nil
 }
 
 // handleTranscribeSave persists the transcription config and reinstalls it
 // live.
 func (a *AdminApp) handleTranscribeSave(c *jsonapi.Call, form withSettings[TranscribeConfig]) (any, error) {
+	turnedOff(&form.Form.Provider, &form.Form.Enabled, a.storedTranscribeConfig().Provider)
 	req, conn := form.Form, chosenConnection(form.Form.Provider)
 	req.APIKey = ""
 	// The form names a connector or a peer and nothing else: resolve it into
@@ -220,11 +223,12 @@ func (a *AdminApp) handleSpeech(c *jsonapi.Call) (any, error) {
 	// What speaks is the connector or peer named: its key is its own, never
 	// shown here.
 	cfg.APIKey = ""
-	return markStale(withValues(cfg, chosenConnection(cfg.Provider), "speech.synthesize"), "provider", ""), nil
+	return shownOff(markStale(withValues(cfg, chosenConnection(cfg.Provider), "speech.synthesize"), "provider", ""), cfg.Enabled), nil
 }
 
 // handleSpeechSave persists the speech config and installs it live.
 func (a *AdminApp) handleSpeechSave(c *jsonapi.Call, form withSettings[media.SpeechConfig]) (any, error) {
+	turnedOff(&form.Form.Provider, &form.Form.Enabled, a.storedSpeechConfig().Provider)
 	req, conn := form.Form, chosenConnection(form.Form.Provider)
 	req.APIKey = ""
 	// The form names a connector or a peer and a voice: resolve it into a
@@ -270,10 +274,11 @@ func resolveSpeech(req media.SpeechConfig, values map[string]string) (media.Spee
 // the voice is one the connector or peer takes, and the way to hear a voice
 // before choosing it.
 func (a *AdminApp) handleSpeechTest(c *jsonapi.Call, form withSettings[media.SpeechConfig]) (any, error) {
+	turnedOff(&form.Form.Provider, &form.Form.Enabled, "")
 	req, conn := form.Form, chosenConnection(form.Form.Provider)
 	req.APIKey = ""
 	if !req.Enabled {
-		return testResultBody(false, "", "speech is disabled: flip the toggle on first"), nil
+		return testResultBody(false, "", "speech is disabled: choose what speaks first"), nil
 	}
 	// Resolved as the save resolves it, so a peer picked in the form speaks
 	// the preview: the whole link, proven by hearing it.
@@ -380,10 +385,11 @@ func imageConnector(name string) bool {
 
 // handleTranscribeTest serves /api/transcribe/test; registerMediaRoutes says what it is for.
 func (a *AdminApp) handleTranscribeTest(c *jsonapi.Call, form withSettings[TranscribeConfig]) (any, error) {
+	turnedOff(&form.Form.Provider, &form.Form.Enabled, "")
 	req, conn := form.Form, chosenConnection(form.Form.Provider)
 	req.APIKey = ""
 	if !req.Enabled {
-		return testResultBody(false, "", "transcription is disabled: flip the toggle on first"), nil
+		return testResultBody(false, "", "transcription is disabled: choose what transcribes first"), nil
 	}
 	// Resolved as the save resolves it, so the test runs what the form is
 	// set to, saved or not.
@@ -533,6 +539,33 @@ func changedNote(ch service.ConnectorChange) string {
 		by = "someone who is not an administrator"
 	}
 	return "Changed by " + by + " on " + ch.At.Format("2006-01-02 15:04") + ", so no call reaches it: read its spec under Connectors, then save this page with it chosen to accept the change."
+}
+
+// disabledOption is "Disabled", first in a page's list for a job that can
+// be off (embedding, transcription, speech, pictures, web search).
+var disabledOption = ui.SelectOption{Value: "none", Label: "Disabled"}
+
+// turnedOff reads a page's choice back: "none" (Disabled) turns the job off
+// and keeps what was chosen before (stored), so turning it on again starts
+// from it; any other choice turns it on. A post naming no choice leaves
+// enabled as it came.
+func turnedOff(provider *string, enabled *bool, stored string) {
+	switch strings.TrimSpace(*provider) {
+	case "none":
+		*provider, *enabled = stored, false
+	case "":
+	default:
+		*enabled = true
+	}
+}
+
+// shownOff is a page's values with its choice shown as Disabled while the
+// job is off: the page has no separate switch.
+func shownOff(out map[string]any, enabled bool) map[string]any {
+	if !enabled {
+		out["provider"] = "none"
+	}
+	return out
 }
 
 // acceptChanges accepts the changes waiting on connectors a page names,

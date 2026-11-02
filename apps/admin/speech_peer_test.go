@@ -50,15 +50,12 @@ func TestSpeechFormShowsThePeerPicker(t *testing.T) {
 	if got := choicesOf(t, provider, "speech.synthesize"); len(got) != 1 || got[0].Value != PeerProviderValue("gpu-box") {
 		t.Errorf("dropdown should offer the peer alone, got %+v", got)
 	}
-	if f, ok := findField(fields, "enabled"); !ok || f.Help != "" {
-		t.Errorf("the toggle stays, with no pointer while there is a choice: %+v", f)
-	}
 	for _, name := range []string{"endpoint", "model", "api_key"} {
 		if _, ok := findField(fields, name); ok {
 			t.Errorf("field %q is on the speech form: it is the connector's or the peer's", name)
 		}
 	}
-	if f, _ := findField(fields, "voice"); f.ShowWhen != "enabled" {
+	if f, _ := findField(fields, "voice"); f.ShowWhen != "provider:!none" {
 		t.Errorf("the voice is chosen here for a peer too, got ShowWhen %q", f.ShowWhen)
 	}
 }
@@ -69,7 +66,7 @@ func TestSpeechFormHidesAPeerWithoutTheGrant(t *testing.T) {
 		t.Error("a peer that does not offer speech is being offered as a speech provider")
 	}
 	for _, f := range speechFormFields() {
-		if strings.Contains(f.ShowWhen, "provider:") {
+		if strings.Contains(f.ShowWhen, "provider:") && f.ShowWhen != "provider:!none" {
 			t.Errorf("with no picker, field %q must not wait on one: %q", f.Field, f.ShowWhen)
 		}
 	}

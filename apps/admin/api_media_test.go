@@ -138,8 +138,9 @@ func TestEmbeddingSettingsTakeAServiceThatEmbeds(t *testing.T) {
 }
 
 // choicesOf are select f's options that are choices: its list ends with
-// "+ Add another…" for need, a command that opens need's templates, which is
-// checked here and left out.
+// "+ Add another…" for need, a command that opens need's templates, and a
+// list for a job that can be off starts with Disabled; both are checked here
+// and left out.
 func choicesOf(t *testing.T, f ui.FormField, need string) []ui.SelectOption {
 	t.Helper()
 	n := len(f.Options)
@@ -147,7 +148,30 @@ func choicesOf(t *testing.T, f ui.FormField, need string) []ui.SelectOption {
 		t.Errorf("%s does not end with + Add another… for %s: %+v", f.Field, need, f.Options)
 		return f.Options
 	}
-	return f.Options[:n-1]
+	opts := f.Options[:n-1]
+	if len(opts) > 0 && opts[0].Value == "none" && opts[0].Label == "Disabled" {
+		opts = opts[1:]
+	}
+	return opts
+}
+
+// Each job that can be off starts its list with Disabled: images,
+// embeddings, transcription, speech and web search. There is no separate
+// switch.
+func TestAJobThatCanBeOffStartsWithDisabled(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved })
+	for name, fields := range map[string]func() []ui.FormField{"images": imageFormFields, "embeddings": embeddingFormFields,
+		"transcription": transcribeFormFields, "speech": speechFormFields, "web search": webSearchFormFields} {
+		f, ok := findField(fields(), "provider")
+		if !ok || len(f.Options) == 0 || f.Options[0].Value != "none" || f.Options[0].Label != "Disabled" {
+			t.Errorf("%s does not start with Disabled: %+v", name, f.Options)
+		}
+		if _, ok := findField(fields(), "enabled"); ok {
+			t.Errorf("%s still has a separate switch", name)
+		}
+	}
 }
 
 // Each page that chooses a connector always shows its list, ending with
@@ -209,7 +233,7 @@ func TestImageGenerationTakesAConnectorThatMakesPictures(t *testing.T) {
 	if len(f) != 2 || f[0].Field != "_stale" || !strings.Contains(f[1].Help, "+ Add another…") || !strings.Contains(f[1].Help, "Admin > Capabilities > Peers") {
 		t.Errorf("with nothing that makes pictures: %+v", f)
 	}
-	if got := choicesOf(t, f[1], "image.generate"); len(got) != 1 || got[0].Value != "none" {
+	if got := choicesOf(t, f[1], "image.generate"); len(got) != 0 {
 		t.Errorf("with nothing that makes pictures, the choices: %+v", got)
 	}
 	if w := call("GET", "/api/image-gen", ""); strings.TrimSpace(w.Body.String()) != `{"agents":[],"provider":"none"}` {
@@ -234,7 +258,7 @@ func TestImageGenerationTakesAConnectorThatMakesPictures(t *testing.T) {
 	if len(f) != 3 || !strings.Contains(f[1].Detail, "Admin > Capabilities > Peers") || f[2].Field != "agents" || len(f[2].Options) != 2 {
 		t.Errorf("with a connector to choose: %+v", f)
 	}
-	if got := choicesOf(t, f[1], "image.generate"); len(got) != 3 || got[0].Value != "painter" || got[2].Value != "none" {
+	if got := choicesOf(t, f[1], "image.generate"); len(got) != 2 || got[0].Value != "painter" {
 		t.Errorf("with a connector to choose, the choices: %+v", got)
 	}
 	if w := call("POST", "/api/image-gen", `{"provider":"painter","agents":["sketcher","vectors"]}`); w.Code != http.StatusBadRequest {
@@ -321,13 +345,13 @@ func TestWebSearchTakesAConnectorThatSearches(t *testing.T) {
 	if !offered() {
 		t.Error("a connector no page uses yet is not offered: choosing it is what puts it to use")
 	}
-	if _, err := a.handleWebSearchSave(&jsonapi.Call{R: httptest.NewRequest("POST", "/api/web-search", nil)}, withSettings[WebSearchConfig]{Form: WebSearchConfig{Provider: "finder"}}); err != nil {
+	if _, err := a.handleWebSearchSave(&jsonapi.Call{R: httptest.NewRequest("POST", "/api/web-search", nil)}, withSettings[webSearchForm]{Form: webSearchForm{WebSearchConfig: WebSearchConfig{Provider: "finder"}}}); err != nil {
 		t.Errorf("choosing it: %v", err)
 	}
 	if !service.Referenced(RootDB, "finder") {
 		t.Error("choosing it did not reference it")
 	}
-	if _, err := a.handleWebSearchSave(&jsonapi.Call{R: httptest.NewRequest("POST", "/api/web-search", nil)}, withSettings[WebSearchConfig]{Form: WebSearchConfig{Provider: "finder"}}); err != nil {
+	if _, err := a.handleWebSearchSave(&jsonapi.Call{R: httptest.NewRequest("POST", "/api/web-search", nil)}, withSettings[webSearchForm]{Form: webSearchForm{WebSearchConfig: WebSearchConfig{Provider: "finder"}}}); err != nil {
 		t.Errorf("saving it: %v", err)
 	}
 	if got := a.storedString(SearchTable, "provider"); got != "finder" {

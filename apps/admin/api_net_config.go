@@ -104,11 +104,40 @@ func (a *AdminApp) handleWebSearch(c *jsonapi.Call) (any, error) {
 		source = EmbeddingProviderLocal
 	}
 	conn := chosenConnection(provider)
-	out := map[string]any{"provider": provider, "source": source}
+	out := markStale(map[string]any{"provider": provider, "source": source}, "provider", "")
 	for k, v := range settingsValues(conn, "web.search") {
 		out[k] = v
 	}
-	return markStale(out, "provider", ""), nil
+	// A research source as the engine shows as "Use a research source…"
+	// and which one.
+	if c, ok := GetConnector(RootDB, chosenConnection(fmt.Sprint(out["provider"]))); ok && researchConnector(c, researchNamed()) {
+		out["provider"], out["research_source"] = useResearchSource, c.Name
+	}
+	return out, nil
+}
+
+// webSearchForm is what the Web Search page posts: its config, and the
+// research source chosen when the engine is "Use a research source…".
+type webSearchForm struct {
+	WebSearchConfig
+	ResearchSource string `json:"research_source,omitempty"`
+}
+
+// useResearchSource is the page's "Use a research source…": the engine is
+// the research source's connector the second list names. A page value only,
+// never stored, and no connector can take it (names have no @).
+const useResearchSource = "@research"
+
+// engine reads "Use a research source…" back as the research source chosen,
+// the engine the setting names.
+func (f *webSearchForm) engine() error {
+	if f.Provider != useResearchSource {
+		return nil
+	}
+	if f.Provider = strings.TrimSpace(f.ResearchSource); f.Provider == "" {
+		return fmt.Errorf("choose which research source to search with")
+	}
+	return nil
 }
 
 // searchEngineOK refuses an engine a local search cannot use: one that is
@@ -121,7 +150,7 @@ func searchEngineOK(cfg WebSearchConfig) error {
 	p := strings.TrimSpace(cfg.Provider)
 	_, isConnector := GetConnector(RootDB, chosenConnection(p))
 	switch {
-	case p == "", p == "duckduckgo":
+	case p == "", p == "duckduckgo", p == "none":
 		return nil
 	case isConnector:
 		return serviceProviderOK(p, "web.search")
@@ -131,8 +160,11 @@ func searchEngineOK(cfg WebSearchConfig) error {
 }
 
 // handleWebSearchSave saves the web search config.
-func (a *AdminApp) handleWebSearchSave(c *jsonapi.Call, form withSettings[WebSearchConfig]) (any, error) {
-	req, conn := form.Form, chosenConnection(form.Form.Provider)
+func (a *AdminApp) handleWebSearchSave(c *jsonapi.Call, form withSettings[webSearchForm]) (any, error) {
+	if err := form.Form.engine(); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	req, conn := form.Form.WebSearchConfig, chosenConnection(form.Form.Provider)
 	// A local engine keeps no key or address here: they are the
 	// connector's.
 	req.APIKey, req.Endpoint = "", ""
@@ -207,8 +239,14 @@ func (a *AdminApp) handleBrowseSave(c *jsonapi.Call, form withSettings[BrowseCon
 }
 
 // handleWebSearchTest runs one search with the form's working config.
-func (a *AdminApp) handleWebSearchTest(c *jsonapi.Call, form withSettings[WebSearchConfig]) (any, error) {
-	req, conn := form.Form, chosenConnection(form.Form.Provider)
+func (a *AdminApp) handleWebSearchTest(c *jsonapi.Call, form withSettings[webSearchForm]) (any, error) {
+	if err := form.Form.engine(); err != nil {
+		return testResultBody(false, "", err.Error()), nil
+	}
+	if form.Form.Provider == "none" {
+		return testResultBody(false, "", "web search is disabled: choose an engine first"), nil
+	}
+	req, conn := form.Form.WebSearchConfig, chosenConnection(form.Form.Provider)
 	req.APIKey, req.Endpoint = "", ""
 	// Resolve before inspecting the fields — with a peer picked they are
 	// hidden and empty, and testing a valid peer would otherwise fail on

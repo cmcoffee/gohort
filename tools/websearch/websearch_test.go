@@ -116,3 +116,23 @@ func TestOldEnginesAreRefused(t *testing.T) {
 		t.Errorf("a peer's search: %v", err)
 	}
 }
+
+// Disabled under Web Search withdraws web_search from every catalog, and a
+// search asked anyway is told it is off, never sent to some other engine.
+func TestADisabledWebSearchIsWithdrawn(t *testing.T) {
+	saved := LoadWebSearchConfigFunc
+	t.Cleanup(func() { LoadWebSearchConfigFunc = saved })
+	provider := "none"
+	LoadWebSearchConfigFunc = func() WebSearchConfig { return WebSearchConfig{Provider: provider} }
+	tool := &WebSearchTool{}
+	if desc, params := tool.SchemaWithSession(&ToolSession{}); desc != "" || params != nil {
+		t.Error("offered while disabled")
+	}
+	if _, err := SearchWithProvider(SearchRequest{Query: "x", Provider: "none"}); err == nil || !strings.Contains(err.Error(), "web search is disabled") {
+		t.Errorf("a search while disabled: %v", err)
+	}
+	provider = "duckduckgo"
+	if desc, _ := tool.SchemaWithSession(&ToolSession{}); desc == "" {
+		t.Error("not offered once on")
+	}
+}
