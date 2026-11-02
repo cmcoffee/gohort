@@ -214,7 +214,7 @@ func storePeerTokens(name string, t peerTokens) {
 	RootDB.CryptSet(remotePeersTable, key, p)
 	peerRecordMu.Unlock()
 	InvalidatePeerResolution()
-	republishPeerImageCredential(p)
+	republishPeerImageKey(p)
 }
 
 // resetPeerTokenCache drops every in-memory peer credential. The cache is keyed
@@ -540,30 +540,29 @@ func peerPostToken(ctx context.Context, p RemotePeer, body map[string]string) (p
 	}, nil
 }
 
-// --- image credential republication -----------------------------------------
+// --- the renderers' key -------------------------------------------------------
 
-// republishPeerImageCredential rewrites the managed credential the peer's image
-// connectors name, so a rotated bearer reaches the one consumer that cannot
-// resolve it at read time. No-op for a peer contributing no renderers.
-func republishPeerImageCredential(p RemotePeer) {
+// republishPeerImageKey rewrites the key each of the peer's renderer
+// connections keeps (core/peer_remote_images.go), so a rotated bearer reaches
+// the one consumer that cannot resolve it at read time: a connection sends
+// the key it keeps. No-op for a peer contributing no renderers, and for a
+// connection already keeping the current key.
+func republishPeerImageKey(p RemotePeer) {
 	if len(p.ImageConnectors) == 0 || RootDB == nil {
 		return
 	}
-	credName := peerCredentialName(p.Name)
-	if exists, _, _ := Secure().CredentialStatus(credName); !exists {
-		return
-	}
-	if err := Secure().Save(SecureCredential{
-		Name:              credName,
-		Type:              SecureCredHeader,
-		ParamName:         peerKeyHeader,
-		BaseURL:           p.BaseURL,
-		AllowedURLPattern: imageHostPattern(p.BaseURL),
-		Description:       "Resource-sharing key for peer " + p.Name + ". Created with the peer; removed when it is forgotten.",
-		Secured:           true,
-		Managed:           "peer",
-	}, PeerCredential(p)); err != nil {
-		Log("[peer] could not republish the image credential for %q: %v", p.Name, err)
+	key := PeerCredential(p)
+	for _, name := range p.ImageConnectors {
+		c, ok := GetConnector(RootDB, name)
+		if !ok || c.Template != peerImageTemplate(p.Name) {
+			continue
+		}
+		if kept, ok := GetConnectionSecret(RootDB, c, "api_key"); ok && kept.Value == key {
+			continue
+		}
+		if err := SetConnectionSecret(RootDB, c, "api_key", key, []string{peerKeyAddress(p)}); err != nil {
+			Log("[peer] could not give %q the rotated key for peer %q: %v", name, p.Name, err)
+		}
 	}
 }
 

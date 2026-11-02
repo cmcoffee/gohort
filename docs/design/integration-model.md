@@ -500,6 +500,20 @@ minutes, then whatever the admin notice lists.
   connection spaces and their keys, and finished migration markers. It is
   not run at start.
 
+  Built in step 7 (2026-11-01), under Admin > Maintenance > Reclaim space as
+  a dry run and the delete it lists. It removes a connection gohort once
+  provided only when its spec no longer validates and no page uses it (plan
+  B's LLM providers), with its space and key; a provided one that still
+  validates (a local server's) stays as the ordinary connection it is now.
+  It removes `connection:<id>` spaces no connector owns, and the markers of
+  the seven migrations the rework removed. It leaves `rest_image` records
+  (the migration's) and the vault (rule 5). The delete refuses while any
+  setting needs setting again, since setting it replaces the keys those
+  records hold; step 9 also makes it wait for the migration to have run.
+  Found while building it: a peer's token rotation was still rewriting the
+  vault credential its renderers sent before step 5; it now rewrites the
+  key each renderer connection keeps.
+
 ### Other tasks on the branch
 
 - **Tests:** hundreds encode plan-B shapes. They are rewritten or deleted,

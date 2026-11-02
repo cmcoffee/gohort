@@ -2184,12 +2184,20 @@
     // shows it only while cfg.test_show_when holds.
     var testRowEl = null;
 
+    // hideIfEmpty marks an output field (readonly, link) with nothing in it,
+    // and hides it: shown, it would be an empty box nobody can fill in.
+    // applyVisibility keeps it hidden whatever its show_when says.
+    function hideIfEmpty(node, empty) {
+      node.uiEmpty = !!empty;
+      if (empty) node.style.display = 'none';
+    }
+
     function applyVisibility() {
       cfg.fields.forEach(function(f) {
         var node = fieldEls[f.field];
         if (!node) return;
         if (f.show_when) {
-          node.style.display = matchesShowWhen(f.show_when) ? '' : 'none';
+          node.style.display = (!node.uiEmpty && matchesShowWhen(f.show_when)) ? '' : 'none';
         }
       });
       if (testRowEl && cfg.test_show_when) {
@@ -2270,6 +2278,10 @@
         if (f.help) fieldWrap.appendChild(el('div', {class: 'ui-form-help'}, [f.help]));
         // Not written back: a readonly field is output, and echoing it into
         // the payload would let a stale render overwrite a computed value.
+        // An empty one says nothing and cannot be filled in, so it is not
+        // shown; and it is registered, so its show_when applies.
+        hideIfEmpty(fieldWrap, roVal === '');
+        fieldEls[f.field] = fieldWrap;
         return fieldWrap;
       }
 
@@ -2295,6 +2307,9 @@
           fieldWrap.appendChild(a);
         }
         if (f.help) fieldWrap.appendChild(el('div', {class: 'ui-form-help'}, [f.help]));
+        // A link with nowhere to go is not shown, as an empty readonly is not.
+        hideIfEmpty(fieldWrap, !href);
+        fieldEls[f.field] = fieldWrap;
         return fieldWrap;
       }
 

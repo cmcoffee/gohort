@@ -262,13 +262,13 @@ func TestTheFlowIsAdoptedOnlyWhenTheFarSideRequiresIt(t *testing.T) {
 	}
 }
 
-// --- the image credential ----------------------------------------------------
+// --- the renderers' key ------------------------------------------------------
 
-// TestRotationRepublishesTheImageCredential — the one consumer that cannot
-// resolve at read time. Its key lives in a managed SecureCredential the
-// generated connectors name, so a rotation that updated only the peer record
-// would leave image generation holding a dead token while everything else works.
-func TestRotationRepublishesTheImageCredential(t *testing.T) {
+// TestRotationReachesTheRenderersKey: the one consumer that cannot resolve at
+// read time. A peer's renderer connection keeps the key it sends, so a
+// rotation that updated only the peer record would leave image generation
+// holding a dead token while everything else works.
+func TestRotationReachesTheRenderersKey(t *testing.T) {
 	defer scratchPeerStore(t)()
 	defer waitPeerTokenIdle() // runs FIRST: no renewal may outlive the store it reads
 	prevAuth := AuthDB
@@ -276,30 +276,25 @@ func TestRotationRepublishesTheImageCredential(t *testing.T) {
 	defer func() { AuthDB = prevAuth }()
 
 	p := consumingPeer(t, "den", "https://den.example", "static-key", true)
-	p.ImageConnectors = []string{"peer-den-sd"}
-	RootDB.Set(remotePeersTable, "den", p)
-
-	credName := peerCredentialName("den")
-	if err := Secure().Save(SecureCredential{
-		Name: credName, Type: SecureCredHeader, ParamName: peerKeyHeader,
-		BaseURL: p.BaseURL, AllowedURLPattern: imageHostPattern(p.BaseURL),
-		Secured: true, Managed: "peer",
-	}, "static-key"); err != nil {
-		t.Skipf("secure store unavailable in this configuration: %v", err)
+	made, err := provisionPeerImages(p, []PeerImageBackend{{Name: "sd"}})
+	if err != nil || len(made) != 1 {
+		t.Fatalf("provision: %v %v", made, err)
 	}
+	p.ImageConnectors = made
+	RootDB.CryptSet(remotePeersTable, "den", p)
 
 	storePeerTokens("den", peerTokens{
 		Access: "rotated-access", Refresh: "rotated-refresh",
 		Expires: time.Now().Add(peerAccessTTL),
 	})
 
-	got, ok := Secure().loadSecret(credName)
-	if !ok {
-		t.Fatal("the republished credential has no secret")
+	c, _ := GetConnector(RootDB, made[0])
+	kept, ok := GetConnectionSecret(RootDB, c, "api_key")
+	if !ok || kept.Value != "rotated-access" {
+		t.Errorf("the renderer keeps %q: image generation would 401 while every other capability kept working", kept.Value)
 	}
-	if got != "rotated-access" {
-		t.Errorf("the image credential still holds %q — image generation would 401 while "+
-			"every other capability kept working", got)
+	if len(kept.Addresses) != 1 || kept.Addresses[0] != "https://den.example" {
+		t.Errorf("the rotated key is kept for %v", kept.Addresses)
 	}
 }
 
