@@ -23,7 +23,8 @@ it is met without Go, or a reason it cannot be:
 | A new OpenAI- or Anthropic-compatible LLM | yes | a built-in compatible-endpoint provider: a form |
 | A new thing for agents to do: call a CRM, look up stock | yes | an API tool |
 | A new service pushing events in | yes, once webhooks exist | a webhook |
-| A new job gohort itself runs, or a new protocol (streaming, graph surgery) | no | Go, kept small: a `builtin` behind a configurable connector |
+| A new API whose data has a shape gohort does not handle yet (files inline as base64, a streamed reply, paged results) | once | Go once: an adapter (below); every API of that shape after it is data |
+| A new job gohort itself runs, or one provider's own logic (graph surgery) | no | Go, kept small: a `builtin` behind a configurable connector |
 
 Each place is small, pure data, and something the Builder can draft for the
 owner to approve. That last part is the strongest lever: a new requirement
@@ -118,7 +119,8 @@ contract are connector things. Its operation names a Go builtin
 second programming language:
 
 - **one provider needs it:** write a builtin in Go;
-- **several providers share the shape:** extend the engine.
+- **several providers share the shape:** write an adapter (below), and
+  every provider of that shape is data from then on.
 
 **References, not "in use"** (decided 2026-11-01). A connector has no on/off
 state. What it has are references: the pages that name it (Web Search, Image
@@ -161,6 +163,74 @@ That is a gate on edits, not on references, and its marker stays on the row.
 
 Fix becomes how Edit opens on a spec that does not validate. Configure
 becomes the Go form's Edit. Revert goes with provided connections.
+
+### Adapters
+
+Decided 2026-11-01 (decision 10). **An adapter is a small Go primitive for
+one shape of data or transport**: how a request carries its values, how a
+reply is read, how a job is waited on, how a key is sent, how results are
+paged. It is written once, named, documented and tested on its own, and a
+connector's spec composes adapters by name. A new API whose shape gohort
+already handles is pure data; Go is written only when a new shape appears,
+and every API of that shape after it is data too.
+
+Three concepts, each standing on its own:
+
+- **adapter:** Go, a shape (inline base64, multipart, a streamed reply, a
+  poll, a signature);
+- **connector:** data, one configured service: adapters composed into its
+  calls, with its address, key and job;
+- **template:** data, a starting point that makes a connector.
+
+**Named in the spec, where it applies.** An adapter shapes one part of a
+call, so the spec names it in that part, never in a list apart and never as
+a stored record a connector points to. An adapter is code: all there is to
+keep is which one and its settings for this call, and those belong to the
+call. A stored adapter would need an attach step, versions, and an answer
+for changing under every connector at once: the provided-connections
+problem again.
+
+| Part of a call | Where the spec names it | Adapters today |
+|---|---|---|
+| how the request carries values | the operation's `send` | `json`, `form`, `multipart`, `file`, `none` |
+| how the reply is read | the operation's `read` | `json`, `text`, `file` |
+| how a value is decoded | the output's `as` (with `each`, `fields`) | `base64`, `url`, `json` |
+| how a job is waited on | a step's `wait` (`until`, `fail`, `every_secs`, `max_secs`) | the poll |
+| how the key goes | the secret's `send` | `bearer`, `header:<name>`, `query:<name>`, `basic`, `aws_sigv4` |
+| how results are paged | the operation's `page`, when needed | none yet |
+
+A plain name covers most; one that takes settings uses the shape builtins
+already use, the name and its `options`. Today's names stay the adapters'
+names, so formalising them changes nothing stored.
+
+**What lives outside the spec:** each adapter's Go, its test, and its line
+in the table above. For now the names a spec may use are what its
+validation checks; once there are enough to be worth it, a registry lists
+them (name, what it does, its options) for the connector editor, the Fix
+assistant and the Builder, as the contracts are listed. A spec naming an adapter this build
+does not have fails validation, and its self-check says so. An adapter's
+name is a contract: it never changes meaning, and a new behaviour gets a new
+name.
+
+**Builtin versus adapter.** A builtin replaces a whole operation with one
+provider's Go (ComfyUI's graph wiring, PubMed's searches); an adapter
+changes one aspect of an operation and serves any provider. Over time most
+builtins become an ordinary operation and an adapter or two: A1111's inline
+base64 images, now inside the A1111 code, are a `base64-inline` request
+adapter; PubMed's XML replies, an `xml` read adapter.
+
+**The guardrail.** Adapters handle the shape of data and its transport,
+never control flow or a provider's business logic: that is what keeps the
+engine from becoming a programming language. A new adapter is added when an
+API in hand needs it, with a fake server test, not ahead of one.
+
+**Candidates,** each when a real API needs it:
+
+- inline base64 in a request body (A1111, most image-editing APIs);
+- streamed replies, SSE and NDJSON (anything LLM-like);
+- pages: a next cursor or a next link;
+- upload, then reference: post the file, keep its id, send the id;
+- XML and RSS replies (PubMed, feeds).
 
 ### Key store
 
@@ -590,6 +660,7 @@ here, per the rule that names are agreed first.
 | their switches | `max_tokens_field`, `reasoning_field`, `stream_usage`, plus any the client already special-cases |
 | the highlight | "Needs setting again" on a page; the admin notice "N settings need setting again" |
 | the cleanup | Admin > Maintenance > "Clear old connection records" |
+| a data shape gohort handles in Go | adapter; named in a spec's `send`, `read`, `as`, a step's `wait`, a secret's `send`, and `page`; today's values are its first names (decision 10) |
 | a webhook's address | `/hook/<name>` |
 | a webhook's check | `verify`: `none`, `token`, `hmac`, `slack`, `graph`, `botframework` |
 | a webhook's payload map | `map`: `id`, `chat`, `from`, `text`, `kind` |
@@ -652,6 +723,13 @@ once:
     store's rules.
 14. The vault and the key store (Q3).
 15. DLP: the egress check and its hooks, then the DLP behind it; trust (Q2).
+16. Adapters (decision 10): no project of their own. Each new adapter
+    lands with the API that needs it, inside the existing engine, with its
+    fake-server test and a line in the Adapters table. The "registry" stays
+    what the spec's validation already checks until there are enough to be
+    worth listing in the editor and Fix. Folding the RestImageSpec image
+    machinery into adapters is a separate decision, made later on its own
+    merits.
 
 ## Decisions (2026-11-01)
 
@@ -688,6 +766,14 @@ once:
    appear. System Hooks' own flows (`core/flows`) are a different thing and
    stay. `message.send` has no caller until channels; its four templates
    (Slack, Discord, ntfy, ntfy with a file) stay for them.
+
+10. **Adapters** (2026-11-01, see Adapters). Go primitives for shapes of
+   data and transport, named in a connector's spec where each applies, never
+   stored apart; a builtin stays for one provider's own logic. Today's
+   `send`, `read`, `as`, wait and key names are the first adapters. A rule
+   for where Go goes, not a framework: nothing is built ahead of an API that
+   needs it, and the word stays with spec authors, the Builder and Fix,
+   never a thing an admin manages on a page.
 
 ## Still open
 
