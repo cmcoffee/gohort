@@ -1,9 +1,9 @@
 {
   "id": "slack-messages",
   "title": "Slack (messages)",
-  "description": "Reads and sends a Slack channel's messages through a Slack app's bot token: link it under Bridges > Linked services as slack, and a channel bound to slack answers there. Text only.",
+  "description": "Reads and sends a Slack channel's messages through a Slack app's bot token: add it as a linked service named slack under Extensions > Integrations, and a channel bound to slack answers there. Text only.",
   "category": "Messaging",
-  "setup_notes": "Create a Slack app at api.slack.com/apps. Under OAuth & Permissions add the scopes channels:history, groups:history and chat:write, install it to your workspace and copy the Bot User OAuth Token (it starts xoxb-). Invite the app to each channel it reads (/invite @your-app); a channel's id is at the bottom of its details. Test on its row under Admin > Extensions > Connectors fetches the channel set here and posts a short test message. Then, under Bridges > Linked services, link it as slack with the channel ids to read. Its key is given under Settings on its row in Admin > Extensions > Connectors.",
+  "setup_notes": "Create a Slack app at api.slack.com/apps. Under OAuth & Permissions add the scopes channels:history, groups:history and chat:write, install it to your workspace and copy the Bot User OAuth Token (it starts xoxb-). Invite the app to each channel it reads (/invite @your-app); a channel's id is at the bottom of its details. Test on its row under Admin > Extensions > Connectors fetches the channel set here and posts a short test message. Then, under Extensions > Integrations, add a linked service named slack through it with the channel ids to read. Its key is given under Settings on its row in Admin > Extensions > Connectors.",
   "questions": [
     {
       "name": "name",

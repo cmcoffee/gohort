@@ -1,9 +1,9 @@
 {
   "id": "discord-messages",
   "title": "Discord (messages)",
-  "description": "Reads and sends a Discord channel's messages through a bot: link it under Bridges > Linked services as discord, and a channel bound to discord answers there. Text only.",
+  "description": "Reads and sends a Discord channel's messages through a bot: add it as a linked service named discord under Extensions > Integrations, and a channel bound to discord answers there. Text only.",
   "category": "Messaging",
-  "setup_notes": "Create an application at discord.com/developers/applications, add a Bot, turn on its Message Content Intent, and copy its token. Invite the bot to your server with the Read Message History and Send Messages permissions (OAuth2 > URL Generator, scope bot). Turn on Developer Mode in Discord's settings, then right-click a channel and Copy Channel ID. Test on its row under Admin > Extensions > Connectors reads the channel set here and posts a short test message. Then, under Bridges > Linked services, link it as discord. Each poll reads the channel's latest 50 messages and passes on the ones not seen before. Its key is given under Settings on its row in Admin > Extensions > Connectors.",
+  "setup_notes": "Create an application at discord.com/developers/applications, add a Bot, turn on its Message Content Intent, and copy its token. Invite the bot to your server with the Read Message History and Send Messages permissions (OAuth2 > URL Generator, scope bot). Turn on Developer Mode in Discord's settings, then right-click a channel and Copy Channel ID. Test on its row under Admin > Extensions > Connectors reads the channel set here and posts a short test message. Then, under Extensions > Integrations, add a linked service named discord through it. Each poll reads the channel's latest 50 messages and passes on the ones not seen before. Its key is given under Settings on its row in Admin > Extensions > Connectors.",
   "questions": [
     {
       "name": "name",

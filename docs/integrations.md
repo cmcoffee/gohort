@@ -196,14 +196,16 @@ per person and never shared between accounts unless the owner lends one.
 | another gohort's GPU or models | a peer |
 | to hand your setup to someone else | a template |
 
-## Sending messages
+## Messaging services
 
-Templates under Admin > Extensions > Templates add a `message.send`
-connector: *Slack (send messages)* and *Discord (send messages)* through a
-bot, *ntfy (send notifications)*, and *ntfy (send files)*. Channels, built
-later, send through them; until then nothing calls them but their Test.
-Telegram, and Slack or Discord webhooks, keep their secret in the address,
-which a connector never holds, so they have no template.
+*Slack (messages)* and *Discord (messages)* under Admin > Extensions >
+Templates add a connector that fetches and sends a channel's messages
+(`message.fetch` and `message.send`). A person adds it as a linked service
+under Extensions > Integrations, and the channel bound to that service
+answers there. A connector that only sends has nothing that calls it, so
+there is no send-only template; a recipe can make one when something needs
+it. Telegram, and Slack or Discord webhooks, keep their secret in the
+address, which a connector never holds, so they have no template.
 
 ## An example from start to finish: hosted embeddings
 
