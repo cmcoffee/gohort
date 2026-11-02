@@ -77,7 +77,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 			Detail:   "Each one ticked is offered to agents as a tool of its own, generate_music_<connector>. Add a music connector under Admin > Extensions > Connectors, from its spec; it is tested and fixed there. A flow may use one as a step without it being offered here.",
 			Body: ui.FormPanel{
 				Source: "api/music",
-				Fields: []ui.FormField{{Field: "agents", Label: "Offered to agents", Type: "checklist", Options: musicOptions(),
+				Fields: []ui.FormField{staleField, {Field: "agents", Label: "Offered to agents", Type: "checklist", Options: musicOptions(),
 					Help: "None listed means no connector here makes music yet."}},
 			},
 		},
@@ -138,7 +138,7 @@ func mailPointer(hasChoice bool) string {
 	if hasChoice {
 		return ""
 	}
-	return "Mail is sent by the SMTP server set here. To send through a mail API instead, add a connector that sends mail (Admin > Extensions > Templates): once approved, it is offered here to choose."
+	return "Mail is sent by the SMTP server set here. To send through a mail API instead, add a connector that sends mail (Admin > Extensions > Templates): once added, it is offered here to choose."
 }
 
 // mailFormFields are the mail settings: what sends (SMTP, or a connector that
@@ -152,11 +152,11 @@ func mailFormFields() []ui.FormField {
 	if hasChoice {
 		smtp = "provider:smtp"
 	}
-	var fields []ui.FormField
+	fields := []ui.FormField{staleField}
 	if hasChoice {
 		fields = append(fields, ui.FormField{Field: "provider", Label: "Send with", Type: "select", Options: choices,
 			Help: "This instance's SMTP server, or a connector that sends mail through an API, set up below it."})
-		fields = append(fields, connectorSettingsFields("mail.send", "", "provider", choiceFor("mail.send"))...)
+		fields = append(fields, connectorSettingsFields("mail.send", "", "provider")...)
 	}
 	return append(fields,
 		ui.FormField{Field: "server", Label: "SMTP Server", Type: "text",
@@ -222,14 +222,14 @@ func imageFormFields() []ui.FormField {
 		Options: append(append([]ui.SelectOption(nil), opts...), ui.SelectOption{Value: "none", Label: "Disabled"})}
 	if len(opts) == 0 {
 		f.Help = "Nothing here makes pictures yet: " + add + "."
-		return []ui.FormField{f}
+		return []ui.FormField{staleField, f}
 	}
 	f.Help = "The connector that makes pictures. Its settings (an address, a model, a key) are set here below it."
 	f.Detail = "To make pictures with something not listed, " + add + ". A connector changed by someone who is not an administrator is held, so no call reaches it: read the change on its row, then save here with it chosen to accept it."
 	agents := ui.FormField{Field: "agents", Label: "Also offered to agents", Type: "checklist", Options: opts,
 		Help:   "Other image connectors agents may choose by name, and peers borrowing image generation. The one above is always offered.",
 		Detail: "Agents' image tools, and a backend's own generate_image_<name> tool, reach only the connector above and the ones ticked here. They offer the connector above as the default and these by name; a peer that borrows image generation from this machine may name them too."}
-	fields := append([]ui.FormField{f}, connectorSettingsFields("image.generate", "", "provider", func(n string) string { return n })...)
+	fields := append([]ui.FormField{staleField, f}, connectorSettingsFields("image.generate", "", "provider")...)
 	return append(fields, agents)
 }
 
@@ -247,18 +247,18 @@ func imageFormFields() []ui.FormField {
 func embeddingFormFields() []ui.FormField {
 	choices := append(serviceProviderOptions("embed.text", "Embed"), EmbeddingProviderOptions()...)
 	add := "add a connector that embeds from a template (Admin > Extensions > Templates: Ollama (embeddings); llama.cpp / vLLM / OpenAI-compatible (embeddings); OpenAI (embeddings)) or from its spec (Add, under Admin > Extensions > Connectors), or connect a peer that lends embeddings (Admin > Capabilities > Peers)"
-	fields := []ui.FormField{{Field: "enabled", Label: "Enable embeddings", Type: "toggle"}}
+	fields := []ui.FormField{staleField, {Field: "enabled", Label: "Enable embeddings", Type: "toggle"}}
 	if len(choices) == 0 {
 		// Nothing to choose: say how to get something, rather than a choice
 		// with no answers.
-		fields[0].Help = "Nothing here embeds yet: " + add + "."
+		fields[1].Help = "Nothing here embeds yet: " + add + "."
 	} else {
 		fields = append(fields, ui.FormField{Field: "provider", Label: "Embed with", Type: "select",
 			Options:  choices,
 			ShowWhen: "enabled",
 			Help:     "The connector or peer that makes embeddings. A connector's settings (its address, its model, a key) are set here below it.",
 			Detail:   "To embed with something not listed, " + add + ". Changing what embeds, or its model, changes the embedding space: search skips stored documents from the old space until Repair in the Vector Index panel makes them again, and through a paid service that is billed."})
-		fields = append(fields, connectorSettingsFields("embed.text", "enabled", "provider", choiceFor("embed.text"))...)
+		fields = append(fields, connectorSettingsFields("embed.text", "enabled", "provider")...)
 	}
 	return append(fields,
 		// The prefixes belong to the MODEL, not to where it runs, so they stay
@@ -292,9 +292,9 @@ func embeddingFormFields() []ui.FormField {
 func transcribeFormFields() []ui.FormField {
 	choices := append(serviceProviderOptions("speech.transcribe", "Transcribe"), TranscribeProviderOptions()...)
 	add := "add a connector that transcribes from a template (Admin > Extensions > Templates: whisper.cpp / OpenAI-compatible (transcription); OpenAI (transcription)) or from its spec (Add, under Admin > Extensions > Connectors), or connect a peer that lends transcription (Admin > Capabilities > Peers)"
-	fields := []ui.FormField{{Field: "enabled", Label: "Enable transcription", Type: "toggle"}}
+	fields := []ui.FormField{staleField, {Field: "enabled", Label: "Enable transcription", Type: "toggle"}}
 	if len(choices) == 0 {
-		fields[0].Help = "Nothing here transcribes yet: " + add + "."
+		fields[1].Help = "Nothing here transcribes yet: " + add + "."
 		return fields
 	}
 	fields = append(fields, ui.FormField{Field: "provider", Label: "Transcribe with", Type: "select",
@@ -302,7 +302,7 @@ func transcribeFormFields() []ui.FormField {
 		ShowWhen: "enabled",
 		Help:     "The connector or peer that transcribes. A connector's settings (its address, its model, a key) are set here below it.",
 		Detail:   "To transcribe with something not listed, " + add + "."})
-	return append(fields, connectorSettingsFields("speech.transcribe", "enabled", "provider", choiceFor("speech.transcribe"))...)
+	return append(fields, connectorSettingsFields("speech.transcribe", "enabled", "provider")...)
 }
 
 // speechFormFields builds the speech (TTS) settings: on or off, the
@@ -312,9 +312,9 @@ func transcribeFormFields() []ui.FormField {
 func speechFormFields() []ui.FormField {
 	choices := append(serviceProviderOptions("speech.synthesize", "Speak"), SpeechProviderOptions()...)
 	add := "add a connector that speaks from a template (Admin > Extensions > Templates: Kokoro / OpenAI-compatible (speech); ElevenLabs (speech)) or from its spec (Add, under Admin > Extensions > Connectors), or connect a peer that lends speech (Admin > Capabilities > Peers)"
-	fields := []ui.FormField{{Field: "enabled", Label: "Enable speech", Type: "toggle"}}
+	fields := []ui.FormField{staleField, {Field: "enabled", Label: "Enable speech", Type: "toggle"}}
 	if len(choices) == 0 {
-		fields[0].Help = "Nothing here speaks yet: " + add + "."
+		fields[1].Help = "Nothing here speaks yet: " + add + "."
 		return fields
 	}
 	fields = append(fields, ui.FormField{Field: "provider", Label: "Speak with", Type: "select",
@@ -322,7 +322,7 @@ func speechFormFields() []ui.FormField {
 		ShowWhen: "enabled",
 		Help:     "The connector or peer that speaks. A connector's settings (its address, its model, a key) are set here below it.",
 		Detail:   "To speak with something not listed, " + add + "."})
-	fields = append(fields, connectorSettingsFields("speech.synthesize", "enabled", "provider", choiceFor("speech.synthesize"))...)
+	fields = append(fields, connectorSettingsFields("speech.synthesize", "enabled", "provider")...)
 	return append(fields,
 		ui.FormField{Field: "voice", Label: "Voice", Type: "text",
 			Placeholder: "af_heart",
@@ -349,7 +349,7 @@ func webSearchFormFields() []ui.FormField {
 	if hasPeers {
 		local = "source:local"
 	}
-	var fields []ui.FormField
+	fields := []ui.FormField{staleField}
 	if hasPeers {
 		fields = append(fields, ui.FormField{
 			Field: "source", Label: "Search on", Type: "select",
@@ -368,7 +368,7 @@ func webSearchFormFields() []ui.FormField {
 			Help:   "The engine every search goes to. A connector's settings (its key, an address) are set here below it.",
 			Detail: "To search with an engine not listed, " + add + ". Once added it is offered here. Serper's also finds pictures, for agents' find_image. The connector picked here is not also asked as a research source: it already answers web_search."},
 	)
-	return append(fields, connectorSettingsFields("web.search", local, "provider", choiceFor("web.search"))...)
+	return append(fields, connectorSettingsFields("web.search", local, "provider")...)
 }
 
 // browseFormFields is the page-rendering picker. Unlike search or STT there is
@@ -377,11 +377,12 @@ func webSearchFormFields() []ui.FormField {
 // showing an empty form when no peer offers rendering.
 func browseFormFields() []ui.FormField {
 	opts := append(BrowseProviderOptions(), serviceProviderOptions("page.render", "Render")...)
-	help := "Only this instance renders pages. To render elsewhere, add a connector that renders pages (Admin > Extensions > Templates) or a peer that lends page rendering (Admin > Capabilities > Peers): once approved, it is offered here to choose."
+	help := "Only this instance renders pages. To render elsewhere, add a connector that renders pages (Admin > Extensions > Templates) or a peer that lends page rendering (Admin > Capabilities > Peers): once added, it is offered here to choose."
 	if len(opts) > 1 {
 		help = "Render locally, on a peer, or through a connector. Borrowing means this machine never downloads or runs Chromium. Public web only, whichever renders."
 	}
 	return append([]ui.FormField{
+		staleField,
 		{Field: "source", Label: "Render pages on", Type: "select", Options: opts, Help: help},
-	}, connectorSettingsFields("page.render", "", "source", choiceFor("page.render"))...)
+	}, connectorSettingsFields("page.render", "", "source")...)
 }

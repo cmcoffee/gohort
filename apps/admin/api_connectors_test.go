@@ -77,7 +77,7 @@ func TestAServiceConnectorRowAndThePicker(t *testing.T) {
 		t.Errorf("status %q, has health %v", status, hasHealth)
 	}
 	offered := func() bool {
-		for _, o := range imageFormFields()[0].Options {
+		for _, o := range imageFormFields()[1].Options {
 			if o.Value == "acme-images" {
 				return true
 			}
@@ -191,7 +191,7 @@ func TestConnectorsAreBandedByWhatTheyDo(t *testing.T) {
 			t.Fatalf("%s: %v", c.Name, err)
 		}
 	}
-	RootDB.Set(SearchTable, "provider", "service:court")
+	RootDB.Set(SearchTable, "provider", "court")
 	if err := service.SaveResearchSource(RootDB, service.ResearchSource{Connector: "papers", Always: true, Off: true}); err != nil {
 		t.Fatal(err)
 	}

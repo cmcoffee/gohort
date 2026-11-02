@@ -464,6 +464,22 @@ where. No report: the highlight sits where the fix is made.
   each a link to its page. It goes once they are set.
 - **In the log:** the same list at start, once.
 
+Built in step 6b (2026-11-01). A setting needs setting again when it names a
+connection the old way (`<job>:<name>`, `service:<name>`) or names one that
+is not there; an LLM tier only the old way, since a plain name there is an
+unknown provider its page refuses. The pages that choose a connector (Web
+Search, Image Generation and its list offered to agents, Embeddings,
+Transcription, Speech, Page Rendering, Mail, Music) read such a value as not
+set, with "Needs setting again" saying why; a disabled embedder, transcriber
+or speaker is not flagged. The admin notice is one dashboard card naming
+each page, its button opening the first; `service.StaleSettings` is the one
+list behind the card, the pages and the log. The reserved names are `none`,
+`default`, `local`, `commands`, `duckduckgo`, `searxng`, `smtp` and the
+built-in LLM providers; a new connector cannot take one, and one already
+saved under such a name says so in its self-check. The embeddings' space
+survives the rename: choosing the connection a value named the old way keeps
+the endpoint it was stored with.
+
 **Before deploying, a checklist** (no code):
 
 1. Export all connectors (Admin > Extensions > Connectors > Export all): their

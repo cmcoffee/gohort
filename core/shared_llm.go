@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/prompts"
 )
 
@@ -828,8 +827,6 @@ func ProviderIsLocal(provider string) bool {
 		return true
 	case strings.HasPrefix(p, peerProviderPrefix):
 		return true
-	case media.IsConnection(p):
-		return LocalDialect(modelDialect(provider))
 	}
 	return false
 }

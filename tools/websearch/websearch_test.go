@@ -36,7 +36,7 @@ func TestAConnectorIsTheSearchEngine(t *testing.T) {
 		t.Fatal(err)
 	}
 	ApproveConnector(RootDB, "finder")
-	out, err := SearchWithProvider(SearchRequest{Query: "solar panels", Provider: "service:finder"})
+	out, err := SearchWithProvider(SearchRequest{Query: "solar panels", Provider: "finder"})
 	src := ParseSearchResults(out)
 	if err != nil || len(src) != 1 || src[0].Title != "Panels compared" || src[0].URL != "https://example.org/panels" || src[0].Snippet != "What each one costs." {
 		t.Fatalf("want the result as a search result: %q %v -> %+v", out, err, src)
@@ -75,7 +75,7 @@ func TestGoogleRedirectLinksAreMarked(t *testing.T) {
 		t.Fatal(err)
 	}
 	ApproveConnector(RootDB, "serpish")
-	out, err := SearchWithProvider(SearchRequest{Query: "x", Provider: "service:serpish"})
+	out, err := SearchWithProvider(SearchRequest{Query: "x", Provider: "serpish"})
 	if err != nil {
 		t.Fatal(err)
 	}

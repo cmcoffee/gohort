@@ -29,7 +29,7 @@ import (
 // the browser is either linked into the build or it is not — so this is one
 // choice, not a form.
 type BrowseConfig struct {
-	Source string `json:"source,omitempty"` // "local" (default), "peer:<name>" or "render:<name>"
+	Source string `json:"source,omitempty"` // "local" (default), "peer:<name>" or a connector's name
 }
 
 var (

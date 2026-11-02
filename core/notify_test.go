@@ -20,7 +20,7 @@ func TestNotificationsGoThroughAMailConnector(t *testing.T) {
 		return nil
 	}
 	NotifyFromFunc = nil
-	cfg := MailConfig{Provider: "service:postbox", From: "alerts@mail.example"}
+	cfg := MailConfig{Provider: "postbox", From: "alerts@mail.example"}
 	if err := cfg.SendNotification(context.Background(), "pat@mail.example", "Rates", "Rates rose."); err != nil || len(sent) != 1 || sent[0] != "postbox|alerts@mail.example|pat@mail.example|Rates|Rates rose." {
 		t.Errorf("sent %v %v", sent, err)
 	}

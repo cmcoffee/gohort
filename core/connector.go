@@ -33,6 +33,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/media"
 )
 
 // connectorsTable holds Connector records keyed by Name.
@@ -269,6 +271,11 @@ func saveConnector(db Database, c Connector, autoApprove bool) error {
 		return err
 	}
 	prev, existed := GetConnector(db, c.Name)
+	// A page offers a reserved name as its own (duckduckgo, smtp, none, an
+	// LLM provider), so a setting naming it never names a connection.
+	if !existed && media.Reserved(c.Name) {
+		return fmt.Errorf("%q is a name gohort keeps for something built in: choose another", c.Name)
+	}
 	now := time.Now()
 	if existed {
 		c.Created = prev.Created

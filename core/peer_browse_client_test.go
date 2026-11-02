@@ -217,7 +217,7 @@ func TestBrowseRoutesToAConnector(t *testing.T) {
 		return "rendered by " + connector, nil
 	}
 	RegisterBrowserFetch(func(url string, maxChars int) (string, error) { return "local render", nil })
-	SetBrowseConfig(BrowseConfig{Source: "service:reader"})
+	SetBrowseConfig(BrowseConfig{Source: "reader"})
 	if out, err := BrowserFetchFunc("https://news.example/a", 100); err != nil || out != "rendered by reader" {
 		t.Errorf("through the connector: %q %v", out, err)
 	}

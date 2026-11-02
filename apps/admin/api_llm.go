@@ -8,6 +8,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/activity"
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/core/media"
 )
 
 // registerLLMRoutes wires the llm API under the admin sub-mux.
@@ -396,7 +397,7 @@ func (a *AdminApp) handleLLMConfig(table string, worker bool) func(c *jsonapi.Ca
 		}
 		// A tier still naming a connection, which tiers no longer use, reads
 		// as not set, and says so: never as some other provider.
-		if name := chosenConnection(provider); name != "" {
+		if name, ok := media.LegacyConnection(provider); ok {
 			out["provider"] = ""
 			out["_stale"] = "This tier named the connection " + name + ", which tiers no longer use. Choose its provider again below."
 		}
@@ -649,11 +650,17 @@ var tierProviders = map[string]bool{"anthropic": true, "openai": true, "gemini":
 // built-in provider, a peer, or none (the lead's "use primary").
 func tierProviderOK(provider string) error {
 	p := strings.TrimSpace(provider)
-	switch {
-	case p == "", tierProviders[p], strings.HasPrefix(p, PeerProviderValue("")):
+	if p == "" || tierProviders[p] || strings.HasPrefix(p, PeerProviderValue("")) {
 		return nil
-	case chosenConnection(p) != "":
-		return fmt.Errorf("a tier no longer runs on a connection (%s): choose its provider, and give an address for an OpenAI- or Anthropic-compatible one", chosenConnection(p))
+	}
+	name, ok := media.LegacyConnection(p)
+	if !ok {
+		if _, found := GetConnector(RootDB, p); found {
+			name, ok = p, true
+		}
+	}
+	if ok {
+		return fmt.Errorf("a tier no longer runs on a connection (%s): choose its provider, and give an address for an OpenAI- or Anthropic-compatible one", name)
 	}
 	return fmt.Errorf("%q is not a provider a tier runs on", p)
 }

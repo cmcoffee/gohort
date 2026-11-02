@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/media"
 )
 
 // searchConnector saves a search connector named name, reaching srvURL (or
@@ -52,7 +53,7 @@ func TestAConnectorIsReferencedByThePagesThatNameIt(t *testing.T) {
 	for _, n := range []string{"engine", "papers", "idle", "pics", "tunes", "stepper"} {
 		searchConnector(t, n, "")
 	}
-	RootDB.Set(SearchTable, "provider", "service:engine")
+	RootDB.Set(SearchTable, "provider", "engine")
 	RootDB.Set(ImageTable, "agents", []string{"pics"})
 	RootDB.Set(MusicTable, "agents", []string{"tunes"})
 	RootDB.Set(FlowTable, "f", Flow{Name: "f", Steps: []FlowStep{{ID: "a", Connector: "stepper", Capability: "web.search"}}})
@@ -189,7 +190,7 @@ func TestOnlyAReferencedConnectorIsCheckedOnItsOwn(t *testing.T) {
 		}
 		install(t, n, spec)
 	}
-	RootDB.Set(SearchTable, "provider", "search:named")
+	RootDB.Set(SearchTable, "provider", "named")
 	checkDue()
 	mu.Lock()
 	defer mu.Unlock()
@@ -228,5 +229,43 @@ func TestAgentConnectionsAreWhatAgentsToolsReach(t *testing.T) {
 	got := strings.Join(AgentConnections(RootDB), ",")
 	if got != "ears,law,more-pics,pics,tunes,voice" {
 		t.Errorf("agent connections: %s", got)
+	}
+}
+
+// A setting that no longer reads is named, with why: a connection named the
+// old way, or one that is not here. A tier only the old way: a plain name
+// there is an unknown provider, its own page's to refuse. An entry offered
+// to agents is checked as a choice is; a peer and a built-in name read.
+func TestStaleSettingsSayWhatNeedsSettingAgain(t *testing.T) {
+	world(t)
+	searchConnector(t, "engine", "")
+	RootDB.Set(LLMTable, "provider", "llm:chat")
+	RootDB.Set(LeadLLMTable, "provider", "openai")
+	RootDB.Set(SearchTable, "provider", "search:engine")
+	RootDB.Set(ImageTable, "provider", "gone")
+	RootDB.Set(ImageTable, "agents", []string{"engine", "service:pics", "peer:den"})
+	RootDB.Set(MailTable, "provider", "smtp")
+	RootDB.Set(EmbeddingTable, "current", EmbeddingConfig{Enabled: false, Provider: "embed:vec"})
+	RootDB.Set(TranscribeTable, "current", media.TranscribeConfig{Enabled: false, Provider: "transcribe:ears"})
+	RootDB.Set(media.SpeechTable, "current", media.SpeechConfig{Enabled: true, Provider: "engine"})
+	var got []string
+	for _, st := range StaleSettings(RootDB) {
+		got = append(got, st.Page+": "+st.Why)
+	}
+	want := []string{
+		"Image Generation: it names gone, which is not a connection here",
+		"Image Generation: offered to agents, it names the connection pics the old way",
+		"Web Search: it names the connection engine the old way",
+		"Worker LLM: it names the connection chat, which LLM tiers no longer use",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("stale:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	RootDB.Set(SearchTable, "provider", "engine")
+	RootDB.Set(ImageTable, "provider", "none")
+	RootDB.Set(ImageTable, "agents", []string{"engine"})
+	RootDB.Set(LLMTable, "provider", "anthropic")
+	if got := StaleSettings(RootDB); len(got) != 0 {
+		t.Errorf("set again, still stale: %+v", got)
 	}
 }

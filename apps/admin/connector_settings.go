@@ -35,15 +35,15 @@ func settingField(connection, key string) string {
 }
 
 // connectorSettingsFields are, for each connection giving capability, the
-// settings it takes for it, shown while the field choice holds the value
-// choose(connection) and the condition also (a show_when, or "").
-func connectorSettingsFields(capability, also, choice string, choose func(string) string) []ui.FormField {
+// settings it takes for it, shown while the field choice holds the
+// connection's name and the condition also (a show_when, or "").
+func connectorSettingsFields(capability, also, choice string) []ui.FormField {
 	var out []ui.FormField
 	for _, c := range ListConnectors(RootDB) {
 		if c.Kind != service.Kind || !service.Provides(c, capability) {
 			continue
 		}
-		when := choice + ":" + choose(c.Name)
+		when := choice + ":" + c.Name
 		if also != "" {
 			when = also + ";" + when
 		}
@@ -307,19 +307,63 @@ func withValues(v any, name, capability string) map[string]any {
 	return out
 }
 
-// chosenConnection is the connection a provider setting names
-// ("transcribe:<name>", "search:<name>"), or "".
+// staleField is a page's line saying its choice needs setting again
+// (markStale), shown only then.
+var staleField = ui.FormField{Field: "_stale", Type: "readonly", Label: "Needs setting again", ShowWhen: "_stale"}
+
+// markStale reads a page's choice in out[field] as not set, and says why
+// under _stale, when it no longer reads (service.StaleWhy): never as some
+// other choice. Entries of out[list] that no longer read are dropped from
+// it and named too.
+func markStale(out map[string]any, field, list string) map[string]any {
+	var whys []string
+	if v, _ := out[field].(string); v != "" {
+		if why := service.StaleWhy(RootDB, v); why != "" {
+			out[field] = ""
+			whys = append(whys, "This setting "+why+". Choose it again below.")
+		}
+	}
+	if list != "" {
+		var kept []string
+		for _, v := range toStrings(out[list]) {
+			if why := service.StaleWhy(RootDB, v); why != "" {
+				whys = append(whys, "One offered to agents "+why+", so it is no longer offered.")
+				continue
+			}
+			kept = append(kept, v)
+		}
+		if kept == nil {
+			kept = []string{}
+		}
+		out[list] = kept
+	}
+	if len(whys) > 0 {
+		out["_stale"] = strings.Join(whys, " ")
+	}
+	return out
+}
+
+// toStrings is v as a list of strings: a []string, or a decoded JSON list.
+func toStrings(v any) []string {
+	switch t := v.(type) {
+	case []string:
+		return t
+	case []any:
+		var out []string
+		for _, x := range t {
+			if s, ok := x.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// chosenConnection is the connection a provider setting names, or "".
 func chosenConnection(provider string) string {
 	name, _ := media.ChosenConnection(provider)
 	return name
-}
-
-// llmChoice is the LLM tier setting that runs on connection name.
-func llmChoice(name string) string { return media.Choice(media.JobLLM, name) }
-
-// choiceFor is how a page choosing a connection for capability names one.
-func choiceFor(capability string) func(string) string {
-	return func(name string) string { return media.ChoiceFor(capability, name) }
 }
 
 // connectionNameField is the hidden field the row's Settings form names its

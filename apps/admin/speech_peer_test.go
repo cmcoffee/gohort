@@ -21,7 +21,7 @@ func speechPeer(t *testing.T, caps ...string) RemotePeer {
 	t.Cleanup(func() { RootDB = prevDB; media.SetSpeechConfig(prevCfg) })
 	RootDB = &DBase{Store: kvlite.MemStore()}
 	// The serving instance speaks with a connector of its own.
-	media.SetSpeechConfig(media.SpeechConfig{Enabled: true, Provider: "service:voice", Model: "kokoro"})
+	media.SetSpeechConfig(media.SpeechConfig{Enabled: true, Provider: "voice", Model: "kokoro"})
 
 	pk, err := MintPeerKey("consumer", caps, 0)
 	if err != nil {

@@ -742,7 +742,7 @@ func transcribeAt(t *testing.T, url string) {
 		}
 		return strings.TrimSpace(string(raw)), nil
 	}
-	SetTranscribeConfig(TranscribeConfig{Enabled: true, Provider: media.Choice(media.JobTranscribe, "ears")})
+	SetTranscribeConfig(TranscribeConfig{Enabled: true, Provider: "ears"})
 }
 
 // speakAt points speech at a connector whose server is url, in voice,
@@ -766,5 +766,5 @@ func speakAt(t *testing.T, url, voice string) {
 		}
 		return audio, ".mp3", nil
 	}
-	media.SetSpeechConfig(media.SpeechConfig{Enabled: true, Provider: media.Choice(media.JobSpeak, "voice"), Voice: voice})
+	media.SetSpeechConfig(media.SpeechConfig{Enabled: true, Provider: "voice", Voice: voice})
 }

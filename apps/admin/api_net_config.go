@@ -108,7 +108,7 @@ func (a *AdminApp) handleWebSearch(c *jsonapi.Call) (any, error) {
 	for k, v := range settingsValues(conn, "web.search") {
 		out[k] = v
 	}
-	return out, nil
+	return markStale(out, "provider", ""), nil
 }
 
 // searchEngineOK refuses an engine a local search cannot use: one that is
@@ -118,10 +118,12 @@ func searchEngineOK(cfg WebSearchConfig) error {
 	if strings.HasPrefix(cfg.Source, "peer:") {
 		return nil
 	}
-	switch p := strings.TrimSpace(cfg.Provider); {
+	p := strings.TrimSpace(cfg.Provider)
+	_, isConnector := GetConnector(RootDB, chosenConnection(p))
+	switch {
 	case p == "", p == "duckduckgo":
 		return nil
-	case media.IsConnection(p):
+	case isConnector:
 		return serviceProviderOK(p, "web.search")
 	default:
 		return fmt.Errorf("%s is not an engine here: add a connector that searches from a template (Brave, Serper, Tavily, Google Programmable Search, SearXNG) and choose it", p)
@@ -169,7 +171,7 @@ func (a *AdminApp) handleBrowse(c *jsonapi.Call) (any, error) {
 	if cfg.Source == "" {
 		cfg.Source = EmbeddingProviderLocal
 	}
-	return withValues(cfg, chosenConnection(cfg.Source), "page.render"), nil
+	return markStale(withValues(cfg, chosenConnection(cfg.Source), "page.render"), "source", ""), nil
 }
 
 // handleBrowseSave sets where pages are rendered.
@@ -270,7 +272,7 @@ func (a *AdminApp) handleMail(c *jsonapi.Call) (any, error) {
 		cfg.Provider = "smtp"
 	}
 	cfg.Password = maskSecret(cfg.Password)
-	return withValues(cfg, chosenConnection(cfg.Provider), "mail.send"), nil
+	return markStale(withValues(cfg, chosenConnection(cfg.Provider), "mail.send"), "provider", ""), nil
 }
 
 // handleMailSave saves the mail config.

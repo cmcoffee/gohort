@@ -53,10 +53,9 @@ type TranscribeConfig struct {
 	Model    string `json:"model"`    // the model it transcribes with, when known
 	APIKey   string `json:"api_key"`  // a peer's credential
 	Enabled  bool   `json:"enabled"`  // false → calls return an error and callers skip
-	// Provider is what transcribes: "transcribe:<name>" (a connector) or
+	// Provider is what transcribes: a connection's name or
 	// "peer:<name>". "local", or blank, is the endpoint this instance once
-	// called itself, moved onto a connector at startup (core/service's
-	// migration): it no longer transcribes.
+	// called itself: it no longer transcribes.
 	Provider string `json:"provider,omitempty"`
 }
 
@@ -107,58 +106,45 @@ var TranscribeResolver func(TranscribeConfig) TranscribeConfig
 // sends, and a peer credential rotates between them.
 var HTTPClientForProvider func(provider string, timeout time.Duration) *http.Client
 
-// A setting names the connection that does its job as "<job>:<name>":
-// llm:anthropic for an LLM tier, transcribe:local-transcription for
-// transcription. The job is what the setting has the connection do, so the
-// value says what it is for wherever it is read, beside "peer:<name>" for a
-// peer and a bare name for what is built in.
-const (
-	JobLLM        = "llm"
-	JobEmbed      = "embed"
-	JobTranscribe = "transcribe"
-	JobSpeak      = "speak"
-	JobSearch     = "search"
-	JobRender     = "render"
-	JobMail       = "mail"
-	JobConvert    = "convert"
-)
+// A setting names the connection that does its job by the connection's own
+// name (serper-search). Beside it are the names a page offers as its own
+// (Reserved: duckduckgo, smtp, none, ...) and "peer:<name>" for a peer. A
+// connection cannot take a reserved name, so a value is never both.
+//
+// Settings were once written "<job>:<name>" (search:serper-search,
+// embed:local-embeddings, and service:<name> before that). That shape is
+// no longer written or read as naming anything: LegacyConnection recognises
+// it, so the page can say it needs setting again, and so what was stamped
+// with it (the embeddings' space) is kept when the same connection is
+// chosen again.
 
-// legacyChoice is the prefix every job's setting was written with before it
-// was named for its job. It is never written now, only recognised, so a
-// setting still saved that way reads as naming a connection (and fails
-// closed where that matters) until the migration rewrites it.
-const legacyChoice = "service"
+// legacyJobs are the prefixes a setting's value once named a connection by.
+var legacyJobs = map[string]bool{"llm": true, "embed": true, "transcribe": true, "speak": true,
+	"search": true, "render": true, "mail": true, "convert": true, "service": true}
 
-// choiceJobs are the prefixes a setting's value names a connection by.
-var choiceJobs = map[string]bool{JobLLM: true, JobEmbed: true, JobTranscribe: true, JobSpeak: true,
-	JobSearch: true, JobRender: true, JobMail: true, JobConvert: true, legacyChoice: true}
-
-// capabilityJobs is the job a setting chooses a connection for, by the
-// capability it is chosen for.
-var capabilityJobs = map[string]string{"llm.chat": JobLLM, "embed.text": JobEmbed, "speech.transcribe": JobTranscribe,
-	"speech.synthesize": JobSpeak, "web.search": JobSearch, "page.render": JobRender, "mail.send": JobMail, "file.convert": JobConvert}
-
-// Choice is the setting value that has connection name do job.
-func Choice(job, name string) string { return job + ":" + name }
-
-// ChoiceFor is the setting value that has connection name do what a setting
-// choosing it for capability asks of it.
-func ChoiceFor(capability, name string) string {
-	if job, ok := capabilityJobs[capability]; ok {
-		return Choice(job, name)
-	}
-	return name
+// reserved are the names pages offer as their own: what this instance does
+// itself, the built-in LLM providers, and the words that mean nothing or
+// the default. No connection may take one.
+var reserved = map[string]bool{
+	"none": true, "default": true, "local": true, "commands": true,
+	"duckduckgo": true, "searxng": true, "smtp": true,
+	"anthropic": true, "openai": true, "gemini": true, "bedrock": true,
+	"ollama": true, "llama.cpp": true, "vllm": true,
 }
 
-// ChosenConnection is the connection a setting's value names, by its job or
-// the old service: spelling; false for a peer, something built in, or
-// nothing.
+// Reserved reports whether name is one a page offers as its own, which no
+// connection may take.
+func Reserved(name string) bool { return reserved[strings.ToLower(strings.TrimSpace(name))] }
+
+// ChosenConnection is the connection a setting's value names: the value
+// itself, unless it is a reserved name, a peer's, or in the old
+// "<job>:<name>" shape; false for those and for nothing.
 func ChosenConnection(value string) (string, bool) {
-	job, name, ok := strings.Cut(strings.TrimSpace(value), ":")
-	if !ok || !choiceJobs[job] || strings.TrimSpace(name) == "" {
+	v := strings.TrimSpace(value)
+	if v == "" || strings.Contains(v, ":") || Reserved(v) {
 		return "", false
 	}
-	return name, true
+	return v, true
 }
 
 // IsConnection reports whether a setting's value names a connection.
@@ -167,17 +153,19 @@ func IsConnection(value string) bool {
 	return ok
 }
 
-// AsJob is value written for job: a connection named the way job names one,
-// anything else (a peer, something built in) as it is.
-func AsJob(job, value string) string {
-	if name, ok := ChosenConnection(value); ok {
-		return Choice(job, name)
+// LegacyConnection is the connection a value in the old "<job>:<name>"
+// shape named. Such a value names nothing now; this says which connection it
+// meant, so it can be set again.
+func LegacyConnection(value string) (string, bool) {
+	job, name, ok := strings.Cut(strings.TrimSpace(value), ":")
+	if !ok || !legacyJobs[job] || strings.TrimSpace(name) == "" {
+		return "", false
 	}
-	return value
+	return strings.TrimSpace(name), true
 }
 
 // EmbedService, when set, embeds through a service connector, for an
-// embedding config whose Provider is "embed:<name>" (core/service installs
+// embedding config whose Provider names a connection (core/service installs
 // it): one vector per text, in order, made with model (blank: the service's
 // own). Nil, and such a config is refused. It sits with the other service
 // seams here although embedding lives in core, which keeps its exports few.
@@ -190,14 +178,14 @@ var EmbedService func(ctx context.Context, connector, model string, texts []stri
 var ServiceAddress func(connector string) string
 
 // PageService, when set, renders a page through a service connector, for a
-// page rendering source of "render:<name>" (core/service installs it): the
+// page rendering source naming a connection (core/service installs it): the
 // page's readable text, at most maxChars of it. It sits with the other
 // service seams although page rendering is routed in core, for the same
 // reason as EmbedService.
 var PageService func(ctx context.Context, connector, url string, maxChars int) (string, error)
 
 // MailService, when set, sends mail through a service connector, for a mail
-// provider of "mail:<name>" (core/service installs it). from may be blank:
+// provider naming a connection (core/service installs it). from may be blank:
 // the connector's own sender then. Kept here for the same reason as
 // EmbedService.
 var MailService func(ctx context.Context, connector, from, to, subject, body string) error

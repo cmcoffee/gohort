@@ -19,7 +19,7 @@ func TestFindImageSearchesThroughWebSearchsConnector(t *testing.T) {
 	RootDB = &DBase{Store: kvlite.MemStore()}
 	auth := &DBase{Store: kvlite.MemStore()}
 	AuthDB = func() Database { return auth }
-	provider := "service:pics"
+	provider := "pics"
 	LoadWebSearchConfigFunc = func() WebSearchConfig { return WebSearchConfig{Provider: provider} }
 
 	var asked string
@@ -46,7 +46,7 @@ func TestFindImageSearchesThroughWebSearchsConnector(t *testing.T) {
 	if err != nil || len(got) != 1 || got[0].ImageURL != "https://img.example/1.jpg" || got[0].Link != "https://example.org/barn" || asked != "a red barn" {
 		t.Errorf("the pictures: %+v %v (asked %q)", got, err, asked)
 	}
-	for _, p := range []string{"duckduckgo", "serper", "service:nothing"} {
+	for _, p := range []string{"duckduckgo", "serper", "nothing"} {
 		provider = p
 		if _, ok := imageSearchConnector(); ok {
 			t.Errorf("Web Search set to %s finds pictures", p)
@@ -58,7 +58,7 @@ func TestFindImageSearchesThroughWebSearchsConnector(t *testing.T) {
 		"provides":[{"capability":"web.search","steps":[{"call":"search"}],"output":{"results":{"path":"organic","fields":{"title":"title","url":"link","snippet":"snippet"}}}}]}`)})
 	ApproveConnector(RootDB, "words")
 	t.Cleanup(func() { UnapproveConnector(RootDB, "words") })
-	provider = "service:words"
+	provider = "words"
 	if _, ok := imageSearchConnector(); ok {
 		t.Error("a connector that only searches the web finds pictures")
 	}

@@ -39,7 +39,7 @@ func TestASavedConnectionIsChecked(t *testing.T) {
 	if got := check(); got != "" {
 		t.Errorf("unused and unset: %s", got)
 	}
-	RootDB.Set(SearchTable, "provider", "search:finder")
+	RootDB.Set(SearchTable, "provider", "finder")
 	if got := check(); !strings.Contains(got, "Address") {
 		t.Errorf("in use with no address: %s", got)
 	}
@@ -108,5 +108,22 @@ func TestAnotherKindOfConnectionIsChecked(t *testing.T) {
 	RootDB.Set("connectors", "tracker", c)
 	if got := check(); !strings.Contains(got, `its type "retired_kind" is not one this build knows`) {
 		t.Errorf("an unknown type: %s", got)
+	}
+}
+
+// A connection saved under a name gohort keeps for something built in, from
+// before names were reserved, says so: no page can choose it.
+func TestAConnectionUnderAReservedNameSaysSo(t *testing.T) {
+	world(t)
+	searchConnector(t, "finder", "")
+	c, _ := GetConnector(RootDB, "finder")
+	c.Name = "duckduckgo"
+	RootDB.Set("connectors", "duckduckgo", c)
+	if got := strings.Join(SelfCheck(RootDB, c), " | "); !strings.Contains(got, "keeps for something built in") {
+		t.Errorf("self-check: %s", got)
+	}
+	c, _ = GetConnector(RootDB, "finder")
+	if got := SelfCheck(RootDB, c); len(got) != 0 {
+		t.Errorf("an ordinary name: %v", got)
 	}
 }

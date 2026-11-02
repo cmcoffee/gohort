@@ -26,7 +26,7 @@ func transcribePeer(t *testing.T, caps ...string) RemotePeer {
 	RootDB = &DBase{Store: kvlite.MemStore()}
 
 	// The serving instance transcribes with a connector of its own.
-	SetTranscribeConfig(TranscribeConfig{Enabled: true, Provider: "service:stt", Model: "whisper-1"})
+	SetTranscribeConfig(TranscribeConfig{Enabled: true, Provider: "stt", Model: "whisper-1"})
 
 	pk, err := MintPeerKey("consumer", caps, 0)
 	if err != nil {

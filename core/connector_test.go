@@ -207,3 +207,25 @@ func TestAConnectionBarsAnAgentOrAUser(t *testing.T) {
 		t.Error("access kept for a connector with no space")
 	}
 }
+
+// A page offers a reserved name (duckduckgo, smtp, none, an LLM provider) as
+// its own, so a new connector cannot take one; one already saved under such
+// a name still saves.
+func TestANewConnectorCannotTakeAReservedName(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	defer func() { RootDB = saved }()
+	RegisterConnectorKind("probe_test_kind", noProbeHandler{})
+	for _, name := range []string{"duckduckgo", "smtp", "none", "openai", "ollama"} {
+		if err := SaveConnector(RootDB, Connector{Name: name, Kind: "probe_test_kind"}); err == nil || !strings.Contains(err.Error(), "built in") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if err := SaveConnector(RootDB, Connector{Name: "serper-search", Kind: "probe_test_kind"}); err != nil {
+		t.Errorf("an ordinary name: %v", err)
+	}
+	RootDB.Set(connectorsTable, "smtp", Connector{Name: "smtp", Kind: "probe_test_kind", ID: "c_smtp"})
+	if err := SaveConnector(RootDB, Connector{Name: "smtp", Kind: "probe_test_kind"}); err != nil {
+		t.Errorf("one already saved under a reserved name: %v", err)
+	}
+}

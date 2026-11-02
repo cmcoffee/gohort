@@ -337,7 +337,7 @@ type flowForm struct {
 	Reads       string   `json:"reads,omitempty"`
 	TimeoutSecs int      `json:"timeout_secs"`
 	Prefer      bool     `json:"prefer"`
-	// By is what does it: "commands" (the steps), or "convert:<name>", a
+	// By is what does it: "commands" (the steps), or the name of a
 	// connector that converts files.
 	By string `json:"by,omitempty"`
 }
@@ -431,7 +431,7 @@ func (ff flowForm) adapted(job string) flows.Adapted {
 func formOf(name string, a flows.Adapted) flowForm {
 	ff := flowForm{Name: name, Steps: stepsOf(a.Flow()), Reads: strings.Join(a.Reads, ", "), TimeoutSecs: a.TimeoutSecs, Prefer: a.Prefer, By: "commands"}
 	if a.Service != "" {
-		ff.By = media.Choice(media.JobConvert, a.Service)
+		ff.By = a.Service
 	}
 	switch {
 	case a.Job != "":

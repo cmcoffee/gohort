@@ -21,10 +21,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -321,7 +323,41 @@ func (a *AdminApp) DashboardNotices(r *http.Request) []DashboardNotice {
 	if a.db == nil || !AuthIsAdmin(AuthDB(), r) {
 		return nil
 	}
-	return append(a.firstRunNotices(AuthGetFirstRunDismissed(AuthDB(), AuthCurrentUser(r))), a.llmNotices()...)
+	return a.notices(AuthGetFirstRunDismissed(AuthDB(), AuthCurrentUser(r)))
+}
+
+// notices are the dashboard's cards for an admin, the first-run one unless
+// dismissed.
+func (a *AdminApp) notices(dismissed bool) []DashboardNotice {
+	out := append(a.firstRunNotices(dismissed), a.llmNotices()...)
+	if n, ok := a.staleNotice(); ok {
+		out = append(out, n)
+	}
+	return out
+}
+
+// staleNotice is ONE card for every setting that needs setting again
+// (service.StaleSettings): what each is, and a button to the first. It goes
+// once they are set; each page says the same beside its choice.
+func (a *AdminApp) staleNotice() (DashboardNotice, bool) {
+	var pages []string
+	for _, st := range service.StaleSettings(a.db) {
+		if !slices.Contains(pages, st.Page) {
+			pages = append(pages, st.Page)
+		}
+	}
+	if len(pages) == 0 {
+		return DashboardNotice{}, false
+	}
+	what := "1 setting needs"
+	if len(pages) > 1 {
+		what = fmt.Sprintf("%d settings need", len(pages))
+	}
+	return DashboardNotice{
+		Text:   what + " setting again: " + strings.Join(pages, ", ") + ". Each reads as not set until it is, and its page says why.",
+		Action: "Open " + pages[0],
+		URL:    a.WebPath() + "/" + ui.SectionOnTab(sectionGroup[pages[0]], pages[0]),
+	}, true
 }
 
 // llmNotices says, on the dashboard, when the lead is quietly not doing its

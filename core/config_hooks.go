@@ -11,15 +11,15 @@ type MailConfig struct {
 	Username  string `json:"username"`  // SMTP auth username
 	Password  string `json:"password"`  // SMTP auth password
 	Recipient string `json:"recipient"` // Default report recipient email address
-	// Provider is what sends: "" or "smtp" for the server above, or
-	// "mail:<name>" for a connector that sends mail (core/service,
-	// mail.send), which From is passed to.
+	// Provider is what sends: "" or "smtp" for the server above, or the name
+	// of a connector that sends mail (core/service, mail.send), which From
+	// is passed to.
 	Provider string `json:"provider,omitempty"`
 }
 
 // WebSearchConfig holds web search provider settings.
 type WebSearchConfig struct {
-	Provider string `json:"provider"` // The engine: "duckduckgo", "search:<connector>", or "searxng" for a peer's search
+	Provider string `json:"provider"` // The engine: "duckduckgo", a connector's name, or "searxng" for a peer's search
 	APIKey   string `json:"api_key"`  // A peer's credential (ResolveSearchProvider); a connector keeps its own
 	Endpoint string `json:"endpoint"` // A peer's search address
 	// Source records WHERE this config came from: "local" (a provider was

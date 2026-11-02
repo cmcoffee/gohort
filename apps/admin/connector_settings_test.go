@@ -85,14 +85,14 @@ func TestAPageSetsUpItsConnector(t *testing.T) {
 	for _, f := range embeddingFormFields() {
 		fields[f.Field] = f.Type + " " + f.ShowWhen + " " + f.Default
 	}
-	if fields["config/vec/endpoint"] != "text enabled;provider:embed:vec " || fields["config/vec/model"] != "text enabled;provider:embed:vec small-embed" ||
-		fields["config/vec/api_key"] != "password enabled;provider:embed:vec " {
+	if fields["config/vec/endpoint"] != "text enabled;provider:vec " || fields["config/vec/model"] != "text enabled;provider:vec small-embed" ||
+		fields["config/vec/api_key"] != "password enabled;provider:vec " {
 		t.Errorf("the settings shown: %v", fields)
 	}
 
 	a := &AdminApp{db: RootDB}
 	call := &jsonapi.Call{R: httptest.NewRequest("POST", "/api/embeddings", nil)}
-	form := postedForm[EmbeddingConfig](t, `{"enabled":true,"provider":"embed:vec","config/vec/endpoint":"`+srv.URL+`","config/vec/model":"big-embed","config/vec/api_key":"sk-new","config/other/endpoint":"x"}`)
+	form := postedForm[EmbeddingConfig](t, `{"enabled":true,"provider":"vec","config/vec/endpoint":"`+srv.URL+`","config/vec/model":"big-embed","config/vec/api_key":"sk-new","config/other/endpoint":"x"}`)
 	if _, err := a.handleEmbeddingsSave(call, form); err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestAPageSetsUpItsConnector(t *testing.T) {
 
 	// Saved again with the key as the page showed it, the key is kept; a
 	// model cleared takes its default.
-	form = postedForm[EmbeddingConfig](t, `{"enabled":true,"provider":"embed:vec","config/vec/endpoint":"`+srv.URL+`","config/vec/model":"","config/vec/api_key":"`+secretUnchanged+`"}`)
+	form = postedForm[EmbeddingConfig](t, `{"enabled":true,"provider":"vec","config/vec/endpoint":"`+srv.URL+`","config/vec/model":"","config/vec/api_key":"`+secretUnchanged+`"}`)
 	if _, err := a.handleEmbeddingsSave(call, form); err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestAPagesTestRunsOnItsForm(t *testing.T) {
 	vecConnector(t, srv.URL)
 	a := &AdminApp{db: RootDB}
 	call := &jsonapi.Call{R: httptest.NewRequest("POST", "/api/embeddings/test", nil)}
-	form := postedForm[EmbeddingConfig](t, `{"enabled":true,"provider":"embed:vec","config/vec/endpoint":"`+srv.URL+`","config/vec/model":"tried-embed"}`)
+	form := postedForm[EmbeddingConfig](t, `{"enabled":true,"provider":"vec","config/vec/endpoint":"`+srv.URL+`","config/vec/model":"tried-embed"}`)
 	out, _ := a.handleEmbeddingsTest(call, form)
 	if body, _ := out.(map[string]any); body["ok"] != true || len(*got) != 1 || !strings.HasSuffix((*got)[0], " tried-embed") {
 		t.Errorf("the Test: %v, sent %v", out, *got)
@@ -153,7 +153,7 @@ func TestAReferencedConnectorCannotBeDeleted(t *testing.T) {
 	srv, _ := settingsWorld(t)
 	vecConnector(t, srv.URL)
 	a := &AdminApp{db: RootDB}
-	RootDB.Set(EmbeddingTable, "current", EmbeddingConfig{Enabled: true, Provider: "embed:vec"})
+	RootDB.Set(EmbeddingTable, "current", EmbeddingConfig{Enabled: true, Provider: "vec"})
 	deletable := func() bool {
 		out, _ := a.handleConnectors(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/connectors", nil)})
 		b, _ := json.Marshal(out)
@@ -206,7 +206,7 @@ func TestAPageKeepsTheOtherCapabilitysSettings(t *testing.T) {
 	}
 	c, _ := GetConnector(RootDB, "duo")
 	SetConnectionConfig(RootDB, c, map[string]string{"endpoint": "http://a.example", "speech.synthesize/voice": "alto", "gone": "x"})
-	form := postedForm[EmbeddingConfig](t, `{"provider":"embed:duo","config/duo/endpoint":"http://b.example","config/duo/embed.text/model":"big"}`)
+	form := postedForm[EmbeddingConfig](t, `{"provider":"duo","config/duo/endpoint":"http://b.example","config/duo/embed.text/model":"big"}`)
 	if err := form.Settings.save("duo", "embed.text"); err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +318,7 @@ func TestAKeptKeyShowsItsEnd(t *testing.T) {
 
 	a := &AdminApp{db: RootDB}
 	call := &jsonapi.Call{R: httptest.NewRequest("GET", "/api/connectors/settings?name=vec", nil)}
-	chosen := postedForm[EmbeddingConfig](t, `{"enabled":true,"provider":"embed:vec","config/vec/endpoint":"`+srv.URL+`","config/vec/api_key":"`+secretUnchanged+`"}`)
+	chosen := postedForm[EmbeddingConfig](t, `{"enabled":true,"provider":"vec","config/vec/endpoint":"`+srv.URL+`","config/vec/api_key":"`+secretUnchanged+`"}`)
 	if _, err := a.handleEmbeddingsSave(call, chosen); err != nil {
 		t.Fatal(err)
 	}

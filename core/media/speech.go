@@ -42,15 +42,14 @@ type SpeechConfig struct {
 	Voice    string `json:"voice"`    // blank: the connector's or server's own
 	APIKey   string `json:"api_key"`  // a peer's credential
 	Enabled  bool   `json:"enabled"`  // false → calls return an error and callers send text only
-	// Provider is what speaks: "speak:<name>" (a connector) or
+	// Provider is what speaks: a connection's name or
 	// "peer:<name>". "local", or blank, is the endpoint this instance once
-	// called itself, moved onto a connector at startup (core/service's
-	// migration): it no longer speaks.
+	// called itself: it no longer speaks.
 	Provider string `json:"provider,omitempty"`
 }
 
 // SpeechService, when set, speaks through a service connector, for a config
-// whose Provider is "speak:<name>" (core/service installs it), returning
+// whose Provider names a connection (core/service installs it), returning
 // the audio and its extension. Nil, and such a config is refused.
 var SpeechService func(ctx context.Context, connector, text, voice string) ([]byte, string, error)
 

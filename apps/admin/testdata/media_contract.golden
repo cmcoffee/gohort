@@ -70,85 +70,85 @@ root POST /api/image-gen/test "{\"enabled\":"
   400 invalid JSON: unexpected EOF
 root POST /api/image-gen/test ""
   400 invalid JSON: EOF
-alice POST /api/embeddings "{\"enabled\":true,\"provider\":\"service:vectors\"}"
+alice POST /api/embeddings "{\"enabled\":true,\"provider\":\"vectors\"}"
   403 forbidden
 root POST /api/embeddings "{\"enabled\":true,\"provider\":\"local\",\"endpoint\":\"<stub>/embed/v1\",\"api_key\":\"s3cr3t-embed-1\"}"
   400 choose where embeddings are made: a connector (Admin > Extensions > Connectors) or a peer that lends them
-root POST /api/embeddings "{\"enabled\":true,\"provider\":\"service:vectors\",\"model\":\"typed-in\"}"
+root POST /api/embeddings "{\"enabled\":true,\"provider\":\"vectors\",\"model\":\"typed-in\"}"
   204 
 root GET /api/embeddings ""
-  200 {"api_key":"","enabled":true,"endpoint":"service:vectors","model":"nomic-embed-text","provider":"service:vectors"}
-root POST /api/embeddings "{\"enabled\":true,\"provider\":\"service:nope\"}"
+  200 {"api_key":"","enabled":true,"endpoint":"vectors","model":"nomic-embed-text","provider":"vectors"}
+root POST /api/embeddings "{\"enabled\":true,\"provider\":\"nope\"}"
   400 no connector named "nope"
 root POST /api/embeddings "{\"enabled\":true,\"provider\":\"peer:nope\"}"
   400 no peer named "nope" is registered: add it under Peers first
-root POST /api/embeddings "{\"enabled\":false,\"provider\":\"service:vectors\"}"
+root POST /api/embeddings "{\"enabled\":false,\"provider\":\"vectors\"}"
   204 
 root POST /api/embeddings "{\"enabled\":"
   400 invalid JSON: unexpected EOF
 root POST /api/embeddings ""
   400 invalid JSON: EOF
-root POST /api/embeddings/test "{\"enabled\":false,\"provider\":\"service:vectors\"}"
+root POST /api/embeddings/test "{\"enabled\":false,\"provider\":\"vectors\"}"
   200 {"error":"embeddings are disabled: flip the toggle on first","ok":false}
 root POST /api/embeddings/test "{\"enabled\":true,\"model\":\"m\"}"
   200 {"message":"OK: 3-dim embedding from nomic-embed-text via the service vectors","ok":true}
 root POST /api/embeddings/test "{\"enabled\":true,\"provider\":\"peer:nope\"}"
   200 {"error":"no peer named \"nope\" is registered: add it under Peers first","ok":false}
-root POST /api/embeddings/test "{\"enabled\":true,\"provider\":\"service:vectors\"}"
+root POST /api/embeddings/test "{\"enabled\":true,\"provider\":\"vectors\"}"
   200 {"message":"OK: 3-dim embedding from nomic-embed-text via the service vectors","ok":true}
-root POST /api/embeddings/test "{\"enabled\":true,\"provider\":\"service:gone\"}"
+root POST /api/embeddings/test "{\"enabled\":true,\"provider\":\"gone\"}"
   200 {"error":"embed through service gone: embed: request failed: Post \"http://127.0.0.1:1/v1/embeddings\": dial tcp 127.0.0.1:1: connect: connection refused","ok":false}
-alice POST /api/transcribe "{\"enabled\":true,\"provider\":\"service:ears\"}"
+alice POST /api/transcribe "{\"enabled\":true,\"provider\":\"ears\"}"
   403 forbidden
 root POST /api/transcribe "{\"enabled\":true,\"provider\":\"local\",\"endpoint\":\"<stub>/stt-ok/v1\",\"api_key\":\"s3cr3t-stt\"}"
   400 choose what transcribes: a connector (Admin > Extensions > Connectors) or a peer that lends transcription
-root POST /api/transcribe "{\"enabled\":true,\"provider\":\"service:ears\",\"endpoint\":\"http://127.0.0.1:1/v1\",\"model\":\"typed-in\"}"
+root POST /api/transcribe "{\"enabled\":true,\"provider\":\"ears\",\"endpoint\":\"http://127.0.0.1:1/v1\",\"model\":\"typed-in\"}"
   204 
 root GET /api/transcribe ""
-  200 {"api_key":"","enabled":true,"endpoint":"","model":"whisper-1","provider":"service:ears"}
-root POST /api/transcribe "{\"enabled\":true,\"provider\":\"service:nope\"}"
+  200 {"api_key":"","enabled":true,"endpoint":"","model":"whisper-1","provider":"ears"}
+root POST /api/transcribe "{\"enabled\":true,\"provider\":\"nope\"}"
   400 no connector named "nope"
 root POST /api/transcribe "{\"enabled\":true,\"provider\":\"peer:nope\"}"
   400 no peer named "nope" is registered: add it under Peers first
-root POST /api/transcribe "{\"enabled\":false,\"provider\":\"service:ears\"}"
+root POST /api/transcribe "{\"enabled\":false,\"provider\":\"ears\"}"
   204 
 root POST /api/transcribe "{\"enabled\":"
   400 invalid JSON: unexpected EOF
-root POST /api/transcribe/test "{\"enabled\":false,\"provider\":\"service:ears\"}"
+root POST /api/transcribe/test "{\"enabled\":false,\"provider\":\"ears\"}"
   200 {"error":"transcription is disabled: flip the toggle on first","ok":false}
 root POST /api/transcribe/test "{\"enabled\":true}"
   200 {"message":"OK: ears transcribed a second of a tone and heard no words, as expected of a tone","ok":true}
 root POST /api/transcribe/test "{\"enabled\":true,\"provider\":\"peer:nope\"}"
   200 {"error":"no peer named \"nope\" is registered: add it under Peers first","ok":false}
-root POST /api/transcribe/test "{\"enabled\":true,\"provider\":\"service:ears\"}"
+root POST /api/transcribe/test "{\"enabled\":true,\"provider\":\"ears\"}"
   200 {"message":"OK: ears transcribed a second of a tone and heard no words, as expected of a tone","ok":true}
-root POST /api/transcribe/test "{\"enabled\":true,\"provider\":\"service:deaf\"}"
+root POST /api/transcribe/test "{\"enabled\":true,\"provider\":\"deaf\"}"
   200 {"error":"transcribe: the provider answered HTTP 403: no","ok":false}
-alice POST /api/speech "{\"enabled\":true,\"provider\":\"service:voice\",\"voice\":\"af_heart\"}"
+alice POST /api/speech "{\"enabled\":true,\"provider\":\"voice\",\"voice\":\"af_heart\"}"
   403 forbidden
 root POST /api/speech "{\"enabled\":true,\"provider\":\"local\",\"endpoint\":\"<stub>/tts-ok/v1\",\"api_key\":\"s3cr3t-tts\"}"
   400 choose what speaks: a connector (Admin > Extensions > Connectors) or a peer that lends speech
-root POST /api/speech "{\"enabled\":true,\"provider\":\"service:voice\",\"endpoint\":\"http://127.0.0.1:1/v1\",\"model\":\"typed-in\",\"voice\":\"af_heart\"}"
+root POST /api/speech "{\"enabled\":true,\"provider\":\"voice\",\"endpoint\":\"http://127.0.0.1:1/v1\",\"model\":\"typed-in\",\"voice\":\"af_heart\"}"
   204 
 root GET /api/speech ""
-  200 {"api_key":"","enabled":true,"endpoint":"","model":"kokoro","provider":"service:voice","voice":"af_heart"}
+  200 {"api_key":"","enabled":true,"endpoint":"","model":"kokoro","provider":"voice","voice":"af_heart"}
 root GET /api/speech/voices ""
   200 [{"id":"af_heart","name":"af_heart","value":"af_heart"},{"id":"bm_george","name":"bm_george","value":"bm_george"}]
 root POST /api/speech "{\"enabled\":"
   400 invalid JSON: unexpected EOF
-root POST /api/speech/test "{\"enabled\":false,\"provider\":\"service:voice\"}"
+root POST /api/speech/test "{\"enabled\":false,\"provider\":\"voice\"}"
   200 {"error":"speech is disabled: flip the toggle on first","ok":false}
 root POST /api/speech/test "{\"enabled\":true,\"voice\":\"af_heart\"}"
   200 {"audio":"data:audio/mpeg;base64,SUQzBAAAAAAAAGNsaXA=","message":"Spoke a sample: 1 KB of mp3 audio.","ok":true}
-root POST /api/speech/test "{\"enabled\":true,\"provider\":\"service:voice\",\"voice\":\"nobody\"}"
+root POST /api/speech/test "{\"enabled\":true,\"provider\":\"voice\",\"voice\":\"nobody\"}"
   200 {"error":"speak: the provider answered HTTP 400: {\"detail\":\"voice not found\"}","ok":false}
-root POST /api/speech/test "{\"enabled\":true,\"provider\":\"service:mute\"}"
+root POST /api/speech/test "{\"enabled\":true,\"provider\":\"mute\"}"
   200 {"error":"speak: Post \"http://127.0.0.1:1/v1/audio/speech\": dial tcp 127.0.0.1:1: connect: connection refused","ok":false}
 root POST /api/speech/test "{\"enabled\":true,\"provider\":\"peer:nope\"}"
   200 {"error":"no peer named \"nope\" is registered: add it under Peers first","ok":false}
 root POST /api/speech "{\"enabled\":true,\"provider\":\"peer:nope\"}"
   400 no peer named "nope" is registered: add it under Peers first
-root POST /api/speech "{\"enabled\":true,\"provider\":\"service:nope\"}"
+root POST /api/speech "{\"enabled\":true,\"provider\":\"nope\"}"
   400 no connector named "nope"
 alice POST /api/image-gen "{\"provider\":\"none\"}"
   403 forbidden
@@ -169,9 +169,9 @@ root POST /api/image-gen/test "{\"provider\":\"none\"}"
 root POST /api/image-gen/test "{\"provider\":\"gemini\"}"
   200 {"error":"no connector named gemini makes pictures","ok":false}
 activity log, 6 entries:
-  settings root: updated embeddings config (enabled=false provider="service:vectors" endpoint="service:vectors" model="nomic-embed-text")
-  settings root: updated embeddings config (enabled=true provider="service:vectors" endpoint="service:vectors" model="nomic-embed-text")
+  settings root: updated embeddings config (enabled=false provider="vectors" endpoint="vectors" model="nomic-embed-text")
+  settings root: updated embeddings config (enabled=true provider="vectors" endpoint="vectors" model="nomic-embed-text")
   settings root: updated image-gen config (provider="none")
-  settings root: updated speech config (enabled=true provider="service:voice" model="kokoro" voice="af_heart")
-  settings root: updated transcribe config (enabled=false provider="service:ears" model="whisper-1")
-  settings root: updated transcribe config (enabled=true provider="service:ears" model="whisper-1")
+  settings root: updated speech config (enabled=true provider="voice" model="kokoro" voice="af_heart")
+  settings root: updated transcribe config (enabled=false provider="ears" model="whisper-1")
+  settings root: updated transcribe config (enabled=true provider="ears" model="whisper-1")

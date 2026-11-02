@@ -14,7 +14,7 @@ import (
 func TestSendEmailGoesThroughAMailConnector(t *testing.T) {
 	prevCfg, prevSvc := LoadMailConfigFunc, media.MailService
 	t.Cleanup(func() { LoadMailConfigFunc, media.MailService = prevCfg, prevSvc })
-	LoadMailConfigFunc = func() MailConfig { return MailConfig{Provider: "service:postbox", From: "alerts@mail.example"} }
+	LoadMailConfigFunc = func() MailConfig { return MailConfig{Provider: "postbox", From: "alerts@mail.example"} }
 	var sent string
 	media.MailService = func(_ context.Context, connector, from, to, subject, body string) error {
 		sent = strings.Join([]string{connector, from, to, subject, body}, "|")

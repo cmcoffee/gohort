@@ -77,7 +77,7 @@ func useConnectorEmbedder(t *testing.T, endpoint, model string) EmbeddingConfig 
 	}
 	// The endpoint stored is the connector's name, as picking one in the
 	// settings stores it: its address is only the connector's.
-	cfg := EmbeddingConfig{Enabled: true, Provider: media.Choice(media.JobEmbed, "test"), Endpoint: media.Choice(media.JobEmbed, "test"), Model: model}
+	cfg := EmbeddingConfig{Enabled: true, Provider: "test", Endpoint: "test", Model: model}
 	SetEmbeddingConfig(cfg)
 	return cfg
 }
@@ -246,7 +246,7 @@ func TestEmbedsThroughAServiceAreCounted(t *testing.T) {
 		}
 		return out, nil
 	}
-	cfg := EmbeddingConfig{Enabled: true, Provider: "service:vec", Endpoint: "service:vec", Model: "m1"}
+	cfg := EmbeddingConfig{Enabled: true, Provider: "vec", Endpoint: "vec", Model: "m1"}
 	vecs, err := embedTexts(context.Background(), cfg, []string{"a", "b"})
 	if err != nil || len(vecs) != 2 || vecs[1][0] != 1 || gotName != "vec" || gotModel != "m1" {
 		t.Fatalf("batch: %v %v (%s, %s)", vecs, err, gotName, gotModel)
@@ -269,66 +269,75 @@ func TestAServiceEmbedderIsItsOwnSpace(t *testing.T) {
 	saved := GetEmbeddingConfig()
 	t.Cleanup(func() { SetEmbeddingConfig(saved) })
 	SetEmbeddingConfig(EmbeddingConfig{})
-	cfg, err := ResolveEmbeddingProvider(EmbeddingConfig{Provider: "service:vec", Endpoint: "http://localhost:11434/api", APIKey: "local-key", Model: "nomic-embed-text"})
-	if err != nil || cfg.Endpoint != "service:vec" || cfg.APIKey != "" {
+	cfg, err := ResolveEmbeddingProvider(EmbeddingConfig{Provider: "vec", Endpoint: "http://localhost:11434/api", APIKey: "local-key", Model: "nomic-embed-text"})
+	if err != nil || cfg.Endpoint != "vec" || cfg.APIKey != "" {
 		t.Fatalf("resolved: %+v %v", cfg, err)
 	}
-	if got := (EmbeddingConfig{Provider: "service:vec"}).spaceStamp(); got != "service:vec" {
+	if got := (EmbeddingConfig{Provider: "vec"}).spaceStamp(); got != "service:vec" {
 		t.Errorf("a model-less service is stamped %q", got)
 	}
-	if got := (EmbeddingConfig{Provider: "service:vec", Model: "m1", DocPrefix: "passage: "}).spaceStamp(); got != "m1+doc:passage: " {
+	if got := (EmbeddingConfig{Provider: "vec", Model: "m1", DocPrefix: "passage: "}).spaceStamp(); got != "m1+doc:passage: " {
 		t.Errorf("a service with a model is stamped %q", got)
 	}
 	if got := (EmbeddingConfig{Provider: "local"}).spaceStamp(); got != "" {
 		t.Errorf("a model-less local embedder stays unstamped, got %q", got)
 	}
-	// The connector the migration made keeps the endpoint embeddings were
-	// made at before, and with it their space: saved again it keeps it, and
-	// with no model it stays unstamped, as the rows it made are.
-	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Provider: "service:embeddings", Endpoint: "http://localhost:8080/v1"})
-	again, err := ResolveEmbeddingProvider(EmbeddingConfig{Enabled: true, Provider: "service:embeddings"})
+	// A connector made from the settings this instance embedded with before
+	// connectors keeps the endpoint embeddings were made at, and with it
+	// their space: saved again it keeps it, and with no model it stays
+	// unstamped, as the rows it made are.
+	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Provider: "embeddings", Endpoint: "http://localhost:8080/v1"})
+	again, err := ResolveEmbeddingProvider(EmbeddingConfig{Enabled: true, Provider: "embeddings"})
 	if err != nil || again.Endpoint != "http://localhost:8080/v1" {
-		t.Errorf("the migrated connector saved again: %+v %v", again, err)
+		t.Errorf("the connector saved again: %+v %v", again, err)
 	}
 	if got := again.spaceStamp(); got != "" {
-		t.Errorf("the migrated model-less connector is stamped %q", got)
+		t.Errorf("the model-less connector is stamped %q", got)
 	}
 	// A form that did not render the picker (the service went away) keeps
 	// the stored selection rather than falling back to local.
-	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Provider: "service:vec", Endpoint: "service:vec"})
-	kept, err := ResolveEmbeddingProvider(EmbeddingConfig{Enabled: true, Endpoint: "service:vec"})
-	if err != nil || kept.Provider != "service:vec" || kept.Endpoint != "service:vec" {
+	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Provider: "vec", Endpoint: "vec"})
+	kept, err := ResolveEmbeddingProvider(EmbeddingConfig{Enabled: true, Endpoint: "vec"})
+	if err != nil || kept.Provider != "vec" || kept.Endpoint != "vec" {
 		t.Errorf("a blank provider over a stored service: %+v %v", kept, err)
 	}
 }
 
-// A connection that names no model stamps its vectors "service:<name>"
-// whichever way the setting spells it, so naming the setting for its job
-// leaves every stored vector comparable.
+// A connection that names no model stamps its vectors "service:<name>",
+// as it did when the setting spelt it service:<name> or embed:<name>, so
+// naming it plainly leaves every stored vector comparable. The old spelling
+// itself names nothing now: it embeds nothing until chosen again.
 func TestTheStampOutlastsTheSettingsSpelling(t *testing.T) {
-	old := EmbeddingConfig{Provider: "service:vec", Endpoint: "service:vec"}.spaceStamp()
-	now := EmbeddingConfig{Provider: "embed:vec", Endpoint: "service:vec"}.spaceStamp()
-	if old != "service:vec" || now != old {
-		t.Errorf("stamps: before %q, after %q", old, now)
+	if got := (EmbeddingConfig{Provider: "vec", Endpoint: "service:vec"}).spaceStamp(); got != "service:vec" {
+		t.Errorf("a plainly named model-less connection is stamped %q", got)
 	}
-	if got := (EmbeddingConfig{Provider: "embed:vec", Model: "e5"}).spaceStamp(); got != "e5" {
+	if got := (EmbeddingConfig{Provider: "vec", Model: "e5"}).spaceStamp(); got != "e5" {
 		t.Errorf("a named model's stamp = %q", got)
+	}
+	if _, err := embedTexts(context.Background(), EmbeddingConfig{Enabled: true, Provider: "embed:vec"}, []string{"a"}); err == nil ||
+		!strings.Contains(err.Error(), "not set to a connector or a peer") {
+		t.Errorf("the old spelling embedded: %v", err)
 	}
 }
 
-// A connection saved as service:<name> and chosen again under its job's
-// name is the same connection: the save keeps the endpoint naming its
-// vectors' space, so nothing is re-embedded. Another connection is another
-// space.
-func TestReSavingEmbeddingsUnderTheJobsNameKeepsTheSpace(t *testing.T) {
-	before := EmbeddingConfig{Enabled: true, Provider: "service:vec", Endpoint: "service:vec"}
-	SetEmbeddingConfig(before)
+// A connection saved the old way (service:<name>, embed:<name>) and chosen
+// again by its name is the same connection: the save keeps the endpoint
+// naming its vectors' space, so nothing is re-embedded. Another connection
+// is another space.
+func TestChoosingTheSameConnectionAgainKeepsTheSpace(t *testing.T) {
 	defer SetEmbeddingConfig(EmbeddingConfig{})
-	got, err := ResolveEmbeddingProvider(EmbeddingConfig{Enabled: true, Provider: "embed:vec"})
-	if err != nil || got.Endpoint != "service:vec" || got.Provider != "embed:vec" {
-		t.Errorf("re-saved: %+v %v", got, err)
-	}
-	if other, _ := ResolveEmbeddingProvider(EmbeddingConfig{Enabled: true, Provider: "embed:other"}); other.Endpoint != "embed:other" {
-		t.Errorf("another connection kept the old space: %+v", other)
+	for _, stored := range []EmbeddingConfig{
+		{Enabled: true, Provider: "service:vec", Endpoint: "service:vec"},
+		{Enabled: true, Provider: "embed:vec", Endpoint: "http://localhost:8080/v1"},
+		{Enabled: true, Provider: "vec", Endpoint: "embed:vec"},
+	} {
+		SetEmbeddingConfig(stored)
+		got, err := ResolveEmbeddingProvider(EmbeddingConfig{Enabled: true, Provider: "vec"})
+		if err != nil || got.Endpoint != stored.Endpoint || got.Provider != "vec" {
+			t.Errorf("over %+v, chosen again: %+v %v", stored, got, err)
+		}
+		if other, _ := ResolveEmbeddingProvider(EmbeddingConfig{Enabled: true, Provider: "other"}); other.Endpoint != "other" {
+			t.Errorf("over %+v, another connection kept the old space: %+v", stored, other)
+		}
 	}
 }

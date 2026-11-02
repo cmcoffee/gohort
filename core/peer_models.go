@@ -713,7 +713,7 @@ func peerNameFromProvider(provider string) string {
 
 func ResolveModelProvider(cfg LLMProviderConfig, provider string) (LLMProviderConfig, error) {
 	provider = strings.TrimSpace(provider)
-	if name, ok := media.ChosenConnection(provider); ok {
+	if name, ok := media.LegacyConnection(provider); ok {
 		return cfg, fmt.Errorf("this tier still names the connection %s, which tiers no longer use: choose its provider again under Admin > LLMs", name)
 	}
 	if provider == "" || !strings.HasPrefix(provider, peerProviderPrefix) {

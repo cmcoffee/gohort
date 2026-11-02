@@ -6,17 +6,19 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/media"
 )
 
 // SelfCheck is what is wrong with connection c as it is saved, each in words
 // for its row, or nothing. It reads what is kept and changes nothing.
 //
-// Whatever c's use, a spec that no longer reads, a saved value its setting
-// no longer takes, and a secret kept but unreadable are wrong. While a page
-// has it in use, so is what would refuse its next call: a required setting
-// or secret missing, a spec still naming a vault credential, and a secret
-// given for an address its calls no longer go to. A connection gohort
-// provides and nothing uses yet has no key, and that is not wrong.
+// Whatever c's use, a name gohort keeps for something built in, a spec that
+// no longer reads, a saved value its setting no longer takes, and a secret
+// kept but unreadable are wrong. While a page references it, so is what
+// would refuse its next call: a required setting or secret missing, a spec
+// still naming a vault credential, and a secret given for an address its
+// calls no longer go to. One nothing references yet may have no key, and
+// that is not wrong.
 //
 // A connection of another kind is held to its own type's check (otherCheck).
 //
@@ -26,9 +28,13 @@ func SelfCheck(db Database, c Connector) []string {
 	if c.Kind != Kind {
 		return otherCheck(c)
 	}
+	var out []string
+	if media.Reserved(c.Name) {
+		out = append(out, "its name is one gohort keeps for something built in, so no page can choose it: add it again under another name")
+	}
 	s, err := specOf(c)
 	if err != nil {
-		return []string{"its spec no longer reads: " + err.Error() + ". Fix or Revert it"}
+		return append(out, "its spec no longer reads: "+err.Error()+". Fix it")
 	}
 	declared := map[string]Setting{}
 	for _, st := range s.settings() {
@@ -40,7 +46,6 @@ func SelfCheck(db Database, c Connector) []string {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	var out []string
 	for _, k := range keys {
 		st, ok := declared[k]
 		if !ok || st.Field.IsSecret() {
@@ -113,12 +118,16 @@ func otherCheck(c Connector) []string {
 	return out
 }
 
-// LogSelfCheck warns of what SelfCheck finds in every connection, once at
-// start, so a bad value or a lost key is in the log before a call meets it.
+// LogSelfCheck warns of what SelfCheck finds in every connection, and of
+// every setting that needs setting again (StaleSettings), once at start, so
+// a bad value or a lost key is in the log before a call meets it.
 func LogSelfCheck(db Database) {
 	for _, c := range ListConnectors(db) {
 		for _, p := range SelfCheck(db, c) {
 			Warn("[connections] %s: %s", c.Title(), p)
 		}
+	}
+	for _, st := range StaleSettings(db) {
+		Warn("[settings] %s needs setting again: %s", st.Page, st.Why)
 	}
 }

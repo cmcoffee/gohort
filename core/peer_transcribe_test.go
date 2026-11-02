@@ -60,7 +60,7 @@ func useConnectorTranscriber(t *testing.T, endpoint, model string) {
 		}
 		return strings.TrimSpace(string(raw)), nil
 	}
-	SetTranscribeConfig(TranscribeConfig{Enabled: true, Provider: media.Choice(media.JobTranscribe, "stt"), Model: model})
+	SetTranscribeConfig(TranscribeConfig{Enabled: true, Provider: "stt", Model: model})
 }
 
 // sttServer stands up a fake OpenAI-compatible STT endpoint and points this
@@ -194,7 +194,7 @@ func TestManifestOffersTranscriptionOnlyWhenConfigured(t *testing.T) {
 		t.Errorf("transcription advertised while disabled: %+v", info)
 	}
 	// Set to a connector: its address is the connector's, not the settings'.
-	SetTranscribeConfig(TranscribeConfig{Enabled: true, Provider: "service:stt", Model: "whisper-1"})
+	SetTranscribeConfig(TranscribeConfig{Enabled: true, Provider: "stt", Model: "whisper-1"})
 	info := peerTranscribeInfo("/api/peer/v1")
 	if info == nil {
 		t.Fatal("a configured STT is not advertised")

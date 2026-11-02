@@ -2,7 +2,7 @@ package service
 
 // Where a service reaches what gohort does itself: transcription, speech (and
 // its voice list) and embeddings, when their settings name a service
-// connector ("<job>:<name>"), go through it (core/media's seams); a music
+// connector by its name, go through it (core/media's seams); a music
 // service is a tool an agent can be given.
 
 import (

@@ -81,7 +81,7 @@ func (a *AdminApp) handleEmbeddings(c *jsonapi.Call) (any, error) {
 	// Where embeddings are made is the connector or peer named: its key is
 	// its own, never shown here.
 	cfg.APIKey = ""
-	return withValues(cfg, chosenConnection(cfg.Provider), "embed.text"), nil
+	return markStale(withValues(cfg, chosenConnection(cfg.Provider), "embed.text"), "provider", ""), nil
 }
 
 // handleEmbeddingsSave persists the embeddings config and reinstalls it live.
@@ -166,7 +166,7 @@ func (a *AdminApp) handleTranscribe(c *jsonapi.Call) (any, error) {
 	// What transcribes is the connector or peer named: its key is its own,
 	// never shown here.
 	cfg.APIKey = ""
-	return withValues(cfg, chosenConnection(cfg.Provider), "speech.transcribe"), nil
+	return markStale(withValues(cfg, chosenConnection(cfg.Provider), "speech.transcribe"), "provider", ""), nil
 }
 
 // handleTranscribeSave persists the transcription config and reinstalls it
@@ -220,7 +220,7 @@ func (a *AdminApp) handleSpeech(c *jsonapi.Call) (any, error) {
 	// What speaks is the connector or peer named: its key is its own, never
 	// shown here.
 	cfg.APIKey = ""
-	return withValues(cfg, chosenConnection(cfg.Provider), "speech.synthesize"), nil
+	return markStale(withValues(cfg, chosenConnection(cfg.Provider), "speech.synthesize"), "provider", ""), nil
 }
 
 // handleSpeechSave persists the speech config and installs it live.
@@ -325,7 +325,7 @@ func (a *AdminApp) handleImageGen(c *jsonapi.Call) (any, error) {
 	for k, v := range settingsValues(provider, "image.generate") {
 		out[k] = v
 	}
-	return out, nil
+	return markStale(out, "provider", "agents"), nil
 }
 
 // handleImageGenSave persists the image connector and the others offered to
@@ -521,7 +521,7 @@ func serviceProviderOptions(capability, verb string) []ui.SelectOption {
 			label += " (changed, waiting to be accepted)"
 			help += " " + changedNote(ch)
 		}
-		out = append(out, ui.SelectOption{Value: media.ChoiceFor(capability, c.Name), Label: label, Help: help})
+		out = append(out, ui.SelectOption{Value: c.Name, Label: label, Help: help})
 	}
 	return out
 }
@@ -536,17 +536,13 @@ func changedNote(ch service.ConnectorChange) string {
 }
 
 // acceptChanges accepts the changes waiting on connectors a page names,
-// given as provider settings ("<job>:<name>") or names: the administrator
-// saving the page accepts them as they are.
+// given as its settings' values: the administrator saving the page accepts
+// them as they are.
 func acceptChanges(named ...string) {
 	var names []string
 	for _, n := range named {
-		n = strings.TrimSpace(n)
-		if rest, ok := media.ChosenConnection(n); ok {
-			n = rest
-		}
-		if n != "" && !strings.Contains(n, ":") {
-			names = append(names, n)
+		if name, ok := media.ChosenConnection(n); ok {
+			names = append(names, name)
 		}
 	}
 	service.AcceptChanges(RootDB, names...)
@@ -558,11 +554,11 @@ type musicConfig struct {
 }
 
 func (a *AdminApp) handleMusic(c *jsonapi.Call) (any, error) {
-	cfg := musicConfig{Agents: []string{}}
+	var agents []string
 	if a.db != nil {
-		a.db.Get(service.MusicTable, "agents", &cfg.Agents)
+		a.db.Get(service.MusicTable, "agents", &agents)
 	}
-	return cfg, nil
+	return markStale(map[string]any{"agents": agents}, "", "agents"), nil
 }
 
 // handleMusicSave offers the music connectors chosen to agents, as tools of
@@ -601,8 +597,8 @@ func musicOptions() []ui.SelectOption {
 }
 
 // previewTieIn lets the settings page's own test reach the connector its
-// form names (a provider setting, "<job>:<name>") before a save puts it
-// to use: under the returned context; end ends it.
+// form names (a provider setting) while a change holds it: under the
+// returned context; end ends it.
 func previewTieIn(ctx context.Context, provider string) (context.Context, func()) {
 	name, ok := media.ChosenConnection(strings.TrimSpace(provider))
 	if !ok {

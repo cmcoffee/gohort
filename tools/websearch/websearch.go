@@ -955,13 +955,18 @@ func SearchWithProvider(req SearchRequest) (string, error) {
 	Debug("[web_search] provider=%s query=%q", provider, query)
 	var result string
 	var err error
+	name, named := media.ChosenConnection(provider)
+	if named {
+		// A name that is no connector here (an engine gohort once had in
+		// Go: brave, serper) is no engine either, said as one.
+		_, named = GetConnector(RootDB, name)
+	}
 	switch {
 	case provider == "duckduckgo":
 		result, err = searchDuckDuckGo(query)
-	case media.IsConnection(provider):
+	case named:
 		// A service connector that searches (core/service, web.search),
 		// chosen under Web Search: it counts and prices its own calls.
-		name, _ := media.ChosenConnection(provider)
 		result, err = service.Search(context.Background(), name, query)
 	case provider == "searxng" && strings.HasPrefix(req.Source, "peer:"):
 		// A peer lends its search in SearXNG's shape (ResolveSearchProvider).

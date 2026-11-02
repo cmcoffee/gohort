@@ -607,8 +607,8 @@ func TestAProviderIsShownByItsName(t *testing.T) {
 	}
 	SetConnectorDisplayName(RootDB, "local-speech", "Local speech server")
 	for in, want := range map[string]string{
-		"speak:local-speech": "Local speech server", "anthropic": "Anthropic", "openai": "OpenAI", "llama.cpp": "llama.cpp",
-		"vllm": "vLLM", "bedrock": "AWS Bedrock", "peer:den": "Peer den", "local-speech": "Local speech server", "something-else": "something-else",
+		"local-speech": "Local speech server", "anthropic": "Anthropic", "openai": "OpenAI", "llama.cpp": "llama.cpp",
+		"vllm": "vLLM", "bedrock": "AWS Bedrock", "peer:den": "Peer den", "something-else": "something-else",
 	} {
 		if got := ProviderTitle(in); got != want {
 			t.Errorf("ProviderTitle(%q) = %q, want %q", in, got, want)

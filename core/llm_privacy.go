@@ -80,7 +80,7 @@ func ProviderLooksPrivate(provider, endpoint string) (bool, string) {
 	// A tier still naming a connection (llm:<name>), which tiers no longer
 	// use, has no address here to judge: its blank endpoint must not read as
 	// a local default.
-	if name, ok := media.ChosenConnection(strings.TrimSpace(provider)); ok {
+	if name, ok := media.LegacyConnection(provider); ok {
 		return false, "the tier still names the connection " + name + ", which tiers no longer use, so it cannot be judged private: set its provider again under Admin > LLMs"
 	}
 	switch strings.ToLower(strings.TrimSpace(provider)) {

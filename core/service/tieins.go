@@ -60,7 +60,7 @@ func PendingChange(db Database, name string) (ConnectorChange, bool) {
 	return c, db.Get(connectorReviewTable, name, &c)
 }
 
-// serviceName is the connector a provider setting names: "<job>:<name>".
+// serviceName is the connector a provider setting names, or "".
 func serviceName(provider string) string {
 	name, ok := media.ChosenConnection(strings.TrimSpace(provider))
 	if !ok {
@@ -141,6 +141,80 @@ func TieIns(db Database) map[string][]string {
 		out[name] = dedupe(pages)
 	}
 	return out
+}
+
+// StaleSetting is a page's setting that needs setting again: Page is the
+// page as the admin pages title it, Why what is wrong with what it holds.
+type StaleSetting struct {
+	Page string `json:"page"`
+	Why  string `json:"why"`
+}
+
+// StaleSettings are the settings that no longer read: a connection named
+// the old way ("search:serper-search", "llm:anthropic"), or one named that
+// is not here. Each reads as not set, never as something else, until it is
+// set again; the pages, the dashboard and the log at start say so.
+func StaleSettings(db Database) []StaleSetting {
+	if db == nil {
+		return nil
+	}
+	var out []StaleSetting
+	add := func(page, why string) {
+		if why != "" {
+			out = append(out, StaleSetting{Page: page, Why: why})
+		}
+	}
+	str := func(table, key string) string {
+		var s string
+		db.Get(table, key, &s)
+		return s
+	}
+	for table, page := range map[string]string{LLMTable: "Worker LLM", LeadLLMTable: "Lead LLM"} {
+		if name, ok := media.LegacyConnection(str(table, "provider")); ok {
+			add(page, "it names the connection "+name+", which LLM tiers no longer use")
+		}
+	}
+	add("Web Search", StaleWhy(db, str(SearchTable, "provider")))
+	add("Image Generation", StaleWhy(db, str(ImageTable, "provider")))
+	var emb EmbeddingConfig
+	if db.Get(EmbeddingTable, "current", &emb) && emb.Enabled {
+		add("Embeddings", StaleWhy(db, emb.Provider))
+	}
+	var tr media.TranscribeConfig
+	if db.Get(TranscribeTable, "current", &tr) && tr.Enabled {
+		add("Audio Transcription (STT)", StaleWhy(db, tr.Provider))
+	}
+	var sp media.SpeechConfig
+	if db.Get(media.SpeechTable, "current", &sp) && sp.Enabled {
+		add("Speech (TTS)", StaleWhy(db, sp.Provider))
+	}
+	add("Page Rendering (Browser)", StaleWhy(db, str(BrowseTable, "source")))
+	add("Mail (SMTP)", StaleWhy(db, str(MailTable, "provider")))
+	for table, page := range map[string]string{ImageTable: "Image Generation", MusicTable: "Music"} {
+		var agents []string
+		db.Get(table, "agents", &agents)
+		for _, a := range agents {
+			if why := StaleWhy(db, a); why != "" {
+				add(page, "offered to agents, "+why)
+			}
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Page < out[j].Page })
+	return out
+}
+
+// StaleWhy is what is wrong with a setting's value v, or "" when it reads:
+// a connection named the old way, or one that is not here.
+func StaleWhy(db Database, v string) string {
+	if name, ok := media.LegacyConnection(v); ok {
+		return "it names the connection " + name + " the old way"
+	}
+	if name, ok := media.ChosenConnection(v); ok {
+		if _, found := GetConnector(db, name); !found {
+			return "it names " + name + ", which is not a connection here"
+		}
+	}
+	return ""
 }
 
 // AgentConnections are the connections an agent's tools reach, by name:

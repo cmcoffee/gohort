@@ -80,40 +80,36 @@ func TestATranscriberThatIsNeitherConnectorNorPeerIsRefused(t *testing.T) {
 		return "heard", nil
 	}
 	ctx := WithTranscribePrompt(context.Background(), "Pemberly")
-	if text, err := TranscribeWith(ctx, TranscribeConfig{Enabled: true, Provider: Choice(JobTranscribe, "stt")}, []byte("audio"), "a.wav"); err != nil || text != "heard" || got != "stt/a.wav/Pemberly" || sent {
+	if text, err := TranscribeWith(ctx, TranscribeConfig{Enabled: true, Provider: "stt"}, []byte("audio"), "a.wav"); err != nil || text != "heard" || got != "stt/a.wav/Pemberly" || sent {
 		t.Errorf("a connector: %q %v %q", text, err, got)
 	}
 }
 
-// A setting names a connection for the job it gives it, and reads the old
-// service: spelling the same until the migration that rewrote it goes. A
-// peer, something built in and nothing are not connections.
-func TestASettingNamesItsConnectionForItsJob(t *testing.T) {
-	if got := ChoiceFor("llm.chat", "anthropic"); got != "llm:anthropic" {
-		t.Errorf("an LLM tier's choice = %q", got)
-	}
-	if got := ChoiceFor("speech.transcribe", "local-transcription"); got != "transcribe:local-transcription" {
-		t.Errorf("transcription's choice = %q", got)
-	}
-	// Chosen for something with no job of its own, it is its plain name:
-	// never the service: spelling, which is only read.
-	if got := ChoiceFor("image.generate", "studio"); got != "studio" {
-		t.Errorf("an image backend's choice = %q", got)
-	}
-	for _, v := range []string{"llm:anthropic", "service:anthropic", " embed:anthropic "} {
-		if name, ok := ChosenConnection(v); !ok || name != "anthropic" {
+// A setting names a connection by its plain name. A peer, a name a page
+// keeps for something built in, and nothing are not connections; nor is
+// the old "<job>:<name>" shape, which is read only to say which connection
+// it meant.
+func TestASettingNamesItsConnectionPlainly(t *testing.T) {
+	for _, v := range []string{"serper-search", " local-embeddings "} {
+		if name, ok := ChosenConnection(v); !ok || name != strings.TrimSpace(v) {
 			t.Errorf("ChosenConnection(%q) = %q %v", v, name, ok)
 		}
 	}
-	for _, v := range []string{"peer:den", "duckduckgo", "llama.cpp", "", "llm:", "http://x.example:8080"} {
+	for _, v := range []string{"peer:den", "duckduckgo", "llama.cpp", "OpenAI", "none", "smtp", "local", "", "llm:anthropic",
+		"search:serper-search", "http://x.example:8080"} {
 		if IsConnection(v) {
 			t.Errorf("%q read as a connection", v)
 		}
 	}
-	if got := AsJob(JobSpeak, "service:local-speech"); got != "speak:local-speech" {
-		t.Errorf("AsJob = %q", got)
+	for v, want := range map[string]string{"llm:anthropic": "anthropic", "service:studio": "studio", " embed:local-embeddings ": "local-embeddings",
+		"search:serper-search": "serper-search"} {
+		if name, ok := LegacyConnection(v); !ok || name != want {
+			t.Errorf("LegacyConnection(%q) = %q %v", v, name, ok)
+		}
 	}
-	if got := AsJob(JobSpeak, "peer:den"); got != "peer:den" {
-		t.Errorf("a peer was renamed: %q", got)
+	for _, v := range []string{"peer:den", "serper-search", "llm:", "http://x.example:8080", "duckduckgo"} {
+		if name, ok := LegacyConnection(v); ok {
+			t.Errorf("%q read as the old shape, naming %q", v, name)
+		}
 	}
 }

@@ -86,7 +86,7 @@ func TestAResearchSourceIsAskedOnItsTopicsAndByAgents(t *testing.T) {
 
 	// The Web Search engine is asked as web_search only.
 	saved := LoadWebSearchConfigFunc
-	LoadWebSearchConfigFunc = func() WebSearchConfig { return WebSearchConfig{Provider: "service:caselaw"} }
+	LoadWebSearchConfigFunc = func() WebSearchConfig { return WebSearchConfig{Provider: "caselaw"} }
 	if len(sourcehooks.HooksForTopic([]string{"legal"})) != 0 {
 		t.Error("the Web Search engine is also asked as a source")
 	}

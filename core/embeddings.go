@@ -17,20 +17,19 @@ import (
 )
 
 // EmbeddingConfig says where embeddings are made for the semantic-search
-// pipeline: a service connector ("embed:<name>", core/service) or a peer
+// pipeline: a service connector (by its name, core/service) or a peer
 // that lends them ("peer:<name>"). The connector keeps its own address, model
 // and key; Endpoint and Model here name the SPACE the stored vectors are in
 // (EmbedVersion), and Model is the one each embed asks the connector for. Set
 // under Admin > Capabilities > Embeddings.
 type EmbeddingConfig struct {
-	Endpoint string `json:"endpoint"` // names the space: the connector ("embed:<name>", or "service:<name>" for one chosen before settings were named for their jobs), the peer's endpoint, or the endpoint embeddings were made at before connectors
+	Endpoint string `json:"endpoint"` // names the space: the connector as it was first chosen (its name, or embed:<name> or service:<name> from before names were plain), the peer's endpoint, or the endpoint embeddings were made at before connectors
 	Model    string `json:"model"`    // the model asked for; blank for a single-model server
 	APIKey   string `json:"api_key"`  // a peer's credential, as last resolved; a connector's key is its credential's
 	Enabled  bool   `json:"enabled"`  // false → ingestion and search become no-ops
-	// Provider is what makes the embeddings: "embed:<name>" or
+	// Provider is what makes the embeddings: a connector's name or
 	// "peer:<name>". Blank or "local" is a config stored before every
-	// embedder was a connector, which core/service's migration moves onto one
-	// at startup.
+	// embedder was a connector: it embeds nothing until set again.
 	//
 	// For a peer it is NOT bookkeeping only: GetEmbeddingConfig reads it and
 	// overlays the named peer's current endpoint, model and key, so the fields

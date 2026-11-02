@@ -509,7 +509,7 @@ func TestTheSpokenMarkFollowsTheWork(t *testing.T) {
 		t.Error("a typed turn's work was marked spoken")
 	}
 	prevTTS := media.GetSpeechConfig()
-	media.SetSpeechConfig(media.SpeechConfig{Provider: "service:voice", Enabled: true})
+	media.SetSpeechConfig(media.SpeechConfig{Provider: "voice", Enabled: true})
 	t.Cleanup(func() { media.SetSpeechConfig(prevTTS) })
 	fr := &fireRun{app: app, p: orchUpdatePayload{SessionID: "room-1", Prompt: taskWakeMarker + " done",
 		SpokenReply: true, ChannelChatID: "chat-1", ChannelHandle: "+15550100"}}
