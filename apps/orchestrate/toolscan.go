@@ -939,13 +939,38 @@ func (t *chatTurn) taintedActionJudge() TaintedActionJudge {
 //
 // Resolved at catalog time into a predicate per tool, so the per-call work is
 // one map lookup and a string compare rather than a capability walk.
+//
+// And, whatever the taint, a call of a tool an enforced rule is bound to
+// ("#web_search never search for a customer's name"). The pre_action check
+// otherwise judged only NeedsConfirm tools, so a rule bound to anything else
+// was stored, shown as enforced, and never judged. Only bound tools pay for
+// it: a call no rule names is not judged on this account.
 func (t *chatTurn) guardrailActionGate() func(string, map[string]any) bool {
-	if t == nil || !scanTightens(t.agent) {
+	if t == nil {
+		return nil
+	}
+	bound := guardrailBoundTools(t.agent)
+	tightens := scanTightens(t.agent)
+	if len(bound) == 0 && !tightens {
 		return nil
 	}
 	return func(name string, args map[string]any) bool {
-		return t.turnTainted() && t.callIsOutbound(name, args)
+		if bound[strings.ToLower(strings.TrimSpace(name))] {
+			return true
+		}
+		return tightens && t.turnTainted() && t.callIsOutbound(name, args)
 	}
+}
+
+// guardrailBoundTools is every tool an enforced rule of agent is bound to.
+func guardrailBoundTools(agent AgentRecord) map[string]bool {
+	out := map[string]bool{}
+	for _, r := range enforcedGuardrailRules(agent) {
+		for _, tool := range r.Tools {
+			out[tool] = true
+		}
+	}
+	return out
 }
 
 // noteOutboundTool records how a wrapped tool can carry data out. Called from

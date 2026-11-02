@@ -1223,7 +1223,7 @@ type agentsRun struct {
 	runRoute          string
 	abortTools        []string
 	runConfirmFn      func(name string, args string) bool
-	runFallback       func(name string) (ToolHandlerFunc, bool)
+	runFallback       func(name string) (AgentToolDef, bool)
 	runDynamic        func() []AgentToolDef
 	buildCheck        *dispatchBuildCheck
 	runCfg            AgentLoopConfig
@@ -1699,7 +1699,7 @@ func (ar *agentsRun) prepareInput() {
 	// An agent that plans on the lead hands its work to work_step
 	// (runner_lead_plans_dispatch.go).
 	ar.runConfirmFn = t.runConfirm(ar.target.ID, ar.subSess, ar.subTurn.asksFirst)
-	ar.runFallback, ar.runDynamic = ar.subTurn.lazyToolFallback, ar.subTurn.dynamicNewTempTools(ar.subSess)
+	ar.runFallback, ar.runDynamic = ar.subTurn.lazyToolDef, ar.subTurn.dynamicNewTempTools(ar.subSess)
 	if ar.subTurn.applyDispatchLeadPlans(ar.subSess, ar.runPin, ar.msg, &ar.sysPrompt, &ar.tools, ar.runConfirmFn) {
 		ar.runFallback, ar.runDynamic = nil, nil
 	}

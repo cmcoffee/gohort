@@ -976,10 +976,18 @@ func (t *chatTurn) loadPersistentToolOnDemand(sess *ToolSession, name string) (d
 // prior turn (via load_tool) and is now calling it straight from context,
 // so forcing a re-load would be pointless friction — its schema is lazy
 // (kept out of the LLM tool array to save tokens), but its handler is
-// still valid. Returns the (already activity-wrapped) handler and marks
-// the tool loaded so its schema also rejoins the catalog next round.
-// Wired as the agent loop's ToolFallbackResolver.
+// still valid. Returns the handler, for a caller that only runs it; the agent
+// loop takes the whole def (lazyToolDef).
 func (t *chatTurn) lazyToolFallback(name string) (ToolHandlerFunc, bool) {
+	td, ok := t.lazyToolDef(name)
+	return td.Handler, ok
+}
+
+// lazyToolDef is lazyToolFallback with the whole (already activity-wrapped)
+// def, and marks the tool loaded so its schema also rejoins the catalog next
+// round. Wired as the agent loop's ToolFallbackResolver: the loop reads from
+// the def whether the call is confirmed and judged first.
+func (t *chatTurn) lazyToolDef(name string) (AgentToolDef, bool) {
 	// A deferred authoring tool called DIRECTLY, load_tool skipped. The index
 	// asks for a load first, but a model acting on an index listing will often
 	// just call the tool it read about — the same habit this fallback already
@@ -993,13 +1001,13 @@ func (t *chatTurn) lazyToolFallback(name string) (ToolHandlerFunc, bool) {
 	// (authored before the name was reserved) catch every direct call to it.
 	if td, ok := t.deferredAuthoringDefs[name]; ok {
 		t.deferredAuthoringLoaded[name] = true
-		return td.Handler, true
+		return td, true
 	}
 	if td, ok := t.lazyCustomToolDefs[name]; ok {
 		t.loadedCustomTools[name] = true
-		return td.Handler, true
+		return td, true
 	}
-	return nil, false
+	return AgentToolDef{}, false
 }
 
 // dynamicTempTools returns a DynamicTools callback that exposes the

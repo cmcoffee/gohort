@@ -100,3 +100,27 @@ func TestAnUngovernedDelegatorChangesNothing(t *testing.T) {
 		t.Errorf("a delegator with no rules disturbed the target: %+v", got)
 	}
 }
+
+// A delegator that blocks when a check cannot reach a verdict hands its rules
+// on blocking too, including to a delegate that already holds the same lines.
+// The delegate used to enforce them fail-open, so a warden outage let through
+// on the delegate what the delegator would have blocked. One that fails open
+// leaves the delegate's own setting alone.
+func TestFailClosedTravelsWithTheRules(t *testing.T) {
+	strict := AgentRecord{ID: "p", Guardrails: "never share a home address", GuardrailFailClosed: true}
+	if got := inheritDelegatorGuardrails(strict, AgentRecord{ID: "c"}); !got.GuardrailFailClosed {
+		t.Error("the delegate enforces the delegator's rules fail-open")
+	}
+	same := AgentRecord{ID: "c", Guardrails: "never share a home address"}
+	if got := inheritDelegatorGuardrails(strict, same); !got.GuardrailFailClosed {
+		t.Error("a delegate already holding the rule kept failing open")
+	}
+	lenient := AgentRecord{ID: "p", Guardrails: "never share a home address"}
+	own := AgentRecord{ID: "c", GuardrailFailClosed: true}
+	if got := inheritDelegatorGuardrails(lenient, own); !got.GuardrailFailClosed {
+		t.Error("a fail-open delegator loosened the delegate's own setting")
+	}
+	if got := inheritDelegatorGuardrails(lenient, AgentRecord{ID: "c"}); got.GuardrailFailClosed {
+		t.Error("a fail-open delegator made the delegate fail closed")
+	}
+}

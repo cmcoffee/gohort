@@ -618,3 +618,65 @@ func TestOwnLanesSurviveAWritingRound(t *testing.T) {
 		t.Errorf("a tool's own lanes should still run together, peak %d", p.peak)
 	}
 }
+
+// A tool the model calls by name, outside the round's catalog, is confirmed
+// and judged as it would be in the catalog. The fallback used to hand the
+// loop a bare handler, which carried none of that: a confirm tool loaded on
+// an earlier turn and called directly ran with no confirm and no pre_action
+// check.
+func TestAToolCalledByNameIsConfirmedAndJudged(t *testing.T) {
+	app, _ := withTierStubs(t, "test.fallbackconfirm", func(n int) []ToolCall {
+		if n == 1 {
+			return []ToolCall{{ID: "1", Name: "pay", Args: map[string]any{"to": "x"}}}
+		}
+		return nil
+	})
+	var mu sync.Mutex
+	var asked, judged []string
+	ran := false
+	pay := AgentToolDef{
+		Tool:         Tool{Name: "pay", Description: "pay", Parameters: map[string]ToolParam{"to": {Type: "string"}}},
+		NeedsConfirm: true,
+		Handler: func(context.Context, map[string]any) (string, error) {
+			mu.Lock()
+			ran = true
+			mu.Unlock()
+			return "paid", nil
+		},
+	}
+	_, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		RouteKey:  "test.fallbackconfirm",
+		MaxRounds: 3,
+		ToolFallbackResolver: func(name string) (AgentToolDef, bool) {
+			return pay, name == "pay"
+		},
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			if hook == GuardHookPreAction {
+				mu.Lock()
+				judged = append(judged, candidate)
+				mu.Unlock()
+			}
+			return GuardrailDecision{}
+		},
+		Confirm: func(name, args string) bool {
+			mu.Lock()
+			asked = append(asked, name)
+			mu.Unlock()
+			return false
+		},
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(judged) != 1 || !strings.HasPrefix(judged[0], "pay") {
+		t.Errorf("the pre_action check judged %v, want the pay call", judged)
+	}
+	if len(asked) != 1 || asked[0] != "pay" {
+		t.Errorf("Confirm was asked about %v, want [pay]", asked)
+	}
+	if ran {
+		t.Error("a confirm tool called by name ran after Confirm said no")
+	}
+}

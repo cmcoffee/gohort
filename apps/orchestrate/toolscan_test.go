@@ -1193,3 +1193,23 @@ func TestTheBrokenToolNoteIsNotScannedOrFenced(t *testing.T) {
 		t.Error("wording the tool returned must still be scanned, or a page could hide behind it")
 	}
 }
+
+// A rule bound to a tool is judged when that tool runs, though the tool asks
+// nothing on its own and the turn is not tainted. The pre_action check only
+// ever judged NeedsConfirm tools, so "#web_search never search for a
+// customer's name" was stored, listed as enforced, and never judged.
+func TestARuleBoundToAToolIsJudgedWhenItRuns(t *testing.T) {
+	agent := AgentRecord{ID: "a", Owner: "u", Guardrails: "#web_search never search for a customer's name", ScanTightenDisabled: true}
+	gate := (&chatTurn{agent: agent}).guardrailActionGate()
+	if gate == nil || !gate("web_search", nil) || !gate("Web_Search", nil) {
+		t.Fatal("a call of a tool a rule is bound to is not judged")
+	}
+	if gate("fetch_url", nil) {
+		t.Error("a call no rule names was judged on its account")
+	}
+	// A suspended rule is not enforced, so it binds nothing.
+	agent.GuardrailsDisabled = true
+	if g := (&chatTurn{agent: agent}).guardrailActionGate(); g != nil && g("web_search", nil) {
+		t.Error("a suspended rule still widened the check")
+	}
+}

@@ -1112,7 +1112,7 @@ func (fr *fireRun) runLoop() {
 		UncheckedClaims:    UncheckedFactNotes(fr.facts),
 		// Custom-tool resolution, same as the dispatch path: resolve a direct
 		// call to a has-args custom tool and surface tools loaded via load_tool.
-		ToolFallbackResolver: fr.subTurn.lazyToolFallback,
+		ToolFallbackResolver: fr.subTurn.lazyToolDef,
 		DynamicTools:         fr.subTurn.dynamicNewTempTools(fr.subSess),
 		DrainViewImages:      fr.subSess.DrainViewImages,
 		BeforeToolRound:      func() { SnapshotImageRefs(fr.subSess) },

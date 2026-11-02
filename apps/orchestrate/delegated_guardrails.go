@@ -57,6 +57,14 @@ func inheritDelegatorGuardrails(from, target AgentRecord) AgentRecord {
 	if len(add) == 0 {
 		return target
 	}
+	// And how they fail. A delegator set to block when a check cannot reach
+	// a verdict hands its rules on with that: the delegate used to enforce
+	// them fail-open, so a warden outage let through on the delegate what
+	// the delegator would have blocked. Only ever tightened here, before the
+	// early return below, which a delegate holding the same lines takes.
+	if from.GuardrailFailClosed {
+		target.GuardrailFailClosed = true
+	}
 	have := map[string]bool{}
 	for _, line := range ruleLines(target.Guardrails) {
 		have[strings.ToLower(line)] = true

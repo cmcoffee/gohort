@@ -2589,9 +2589,9 @@ func (pr *planRun) dynamicTools() func() []AgentToolDef {
 // toolFallback resolves a tool the model names that is not in the catalog
 // (a lazy custom tool): none for an agent held to exactly its own tools, or a
 // dropped tool could still be reached by naming it.
-func (pr *planRun) toolFallback() func(string) (ToolHandlerFunc, bool) {
+func (pr *planRun) toolFallback() func(string) (AgentToolDef, bool) {
 	if pr.exactTools || pr.leadPlansOn {
 		return nil
 	}
-	return pr.t.lazyToolFallback
+	return pr.t.lazyToolDef
 }

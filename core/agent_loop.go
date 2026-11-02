@@ -806,6 +806,28 @@ func (lr *loopRun) filterCaps(in []AgentToolDef) []AgentToolDef {
 	return out
 }
 
+// admitFallback records a tool the fallback resolved the way rebuildToolMaps
+// records one in the catalog, so the checks below see it as they would have:
+// what it confirms, what it writes, what it may reach. A tool the run's
+// capabilities do not allow stays unknown, as it would in the catalog.
+func (lr *loopRun) admitFallback(name string, td AgentToolDef) (ToolHandlerFunc, bool) {
+	if lr.allowedSet != nil && !capsAllowed(td.Tool.Caps, lr.allowedSet) {
+		Debug("[agent_loop] fallback tool '%s' refused by AllowedCaps (declares %v)", name, td.Tool.Caps)
+		return nil, false
+	}
+	lr.toolCaps[name] = Tool{Caps: td.Tool.Caps, ActionCaps: td.Tool.ActionCaps}
+	if td.NeedsConfirm || td.Confirmation.asks() {
+		lr.needsConfirm[name] = true
+	}
+	for _, c := range td.Tool.Caps {
+		if c == CapWrite || c == CapExecute {
+			lr.writeTools[name] = true
+			break
+		}
+	}
+	return td.Handler, true
+}
+
 func (lr *loopRun) rebuildToolMaps(active []AgentToolDef) {
 	lr.toolDefs = lr.toolDefs[:0]
 	for k := range lr.handlers {
@@ -3711,9 +3733,9 @@ func (lr *loopRun) toolRoundPlanCalls() loopAction {
 			// The name isn't in this round's catalog, but it may be a
 			// lazy tool whose handler is still valid (model knows the
 			// schema from context and called it directly — no re-load).
-			if fb, found := lr.cfg.ToolFallbackResolver(tc.Name); found {
+			if fb, found := lr.cfg.ToolFallbackResolver(tc.Name); found && fb.Handler != nil {
 				Debug("[agent_loop] tool %q resolved via fallback (lazy/known tool called directly)", tc.Name)
-				handler, ok = fb, true
+				handler, ok = lr.admitFallback(tc.Name, fb)
 			}
 		}
 		if !ok {

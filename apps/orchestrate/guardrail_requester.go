@@ -138,6 +138,15 @@ func (t *chatTurn) requester() requesterIdentity {
 	if t.requesterChannel == "" {
 		owner = owner || t.ownerUser == "" || t.ownerUser == t.user
 	}
+	// A run somebody other than the owner started, carried here by a
+	// webhook or by the hand-off of a stranger's channel message, runs as
+	// the owner's account too, and was judged as the owner: "anyone but me"
+	// let the stranger through as soon as the request reached a delegate.
+	// The mark is the server's own (authoring_requester.go); the other
+	// owner-only gates already read it.
+	if nonOwnerRequester(t.ctx) {
+		owner = false
+	}
 	who := requesterIdentity{
 		Owner:   owner,
 		Name:    strings.TrimSpace(t.requesterName),
@@ -180,8 +189,10 @@ func (t *chatTurn) resolveAuthorization() (as, via string) {
 	// is now all-or-nothing, so a second match would say the same thing twice.
 	//
 	// An authenticated account. A channel inbound runs as a synthetic per-chat
-	// user, which authenticates nobody, so it is excluded by name.
-	if acct := strings.TrimSpace(t.user); acct != "" && !isSyntheticRequester(acct) {
+	// user, which authenticates nobody, so it is excluded by name. So is a run
+	// a non-owner started: it runs as the owner's account, which proves only
+	// that the owner's agent is running it.
+	if acct := strings.TrimSpace(t.user); acct != "" && !isSyntheticRequester(acct) && !nonOwnerRequester(t.ctx) {
 		for _, p := range people {
 			if strings.EqualFold(p, acct) {
 				return p, guardAuthAuthenticated

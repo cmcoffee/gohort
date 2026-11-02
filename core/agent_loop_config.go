@@ -702,11 +702,16 @@ type AgentLoopConfig struct {
 	// call to a tool whose SCHEMA is intentionally lazy (kept out of the
 	// LLM tool array to save tokens) but whose HANDLER is still valid —
 	// e.g. a custom tool the model already learned via load_tool on a
-	// prior turn and now calls directly from context. Return (handler,
-	// true) to run it; (nil, false) to fall through to the normal
-	// "unknown tool" error. The resolver may also mark the tool loaded so
-	// its schema rejoins the catalog next round.
-	ToolFallbackResolver func(name string) (ToolHandlerFunc, bool)
+	// prior turn and now calls directly from context. Return (def, true)
+	// to run it; (_, false) to fall through to the normal "unknown tool"
+	// error. The resolver may also mark the tool loaded so its schema
+	// rejoins the catalog next round.
+	//
+	// The whole def, not just its handler: the loop decides from it whether
+	// the call is confirmed and judged before it runs, exactly as for a tool
+	// in the catalog. A bare handler carried none of that, so a confirm tool
+	// called this way ran with no confirm and no pre-action guardrail.
+	ToolFallbackResolver func(name string) (AgentToolDef, bool)
 
 	// DeliveredCount reports how many attachments actually go out with this
 	// reply. Evidence for the turn judge: "here's your picture" is true or false

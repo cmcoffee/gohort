@@ -1,8 +1,11 @@
 package orchestrate
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	. "github.com/cmcoffee/gohort/core"
 )
 
 // An uploaded picture used to reach the LLM as vision content and nothing else:
@@ -46,5 +49,25 @@ func TestUploadNoteIsNotTheChannelManifest(t *testing.T) {
 	note := uploadedImageHandles(1)
 	if strings.Contains(note, "do NOT send one back") || strings.Contains(note, "already received") {
 		t.Errorf("channel-thread advice must not leak into the web surface:\n%s", note)
+	}
+}
+
+// The fallback hands the loop the tool's whole def, so a confirm tool called
+// by name is confirmed (TestAToolCalledByNameIsConfirmedAndJudged in core).
+// It used to hand back the handler alone.
+func TestALazyToolCalledByNameKeepsItsConfirm(t *testing.T) {
+	turn := &chatTurn{
+		lazyCustomToolDefs: map[string]AgentToolDef{"pay": {Tool: Tool{Name: "pay"}, NeedsConfirm: true,
+			Handler: func(context.Context, map[string]any) (string, error) { return "", nil }}},
+		loadedCustomTools:       map[string]bool{},
+		deferredAuthoringDefs:   map[string]AgentToolDef{},
+		deferredAuthoringLoaded: map[string]bool{},
+	}
+	td, ok := turn.lazyToolDef("pay")
+	if !ok || !td.NeedsConfirm || td.Handler == nil {
+		t.Errorf("the fallback lost what the loop decides from: ok=%v %+v", ok, td)
+	}
+	if !turn.loadedCustomTools["pay"] {
+		t.Error("the tool was not marked loaded for the next round")
 	}
 }

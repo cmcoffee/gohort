@@ -474,7 +474,7 @@ func (ws *workerStep) runLoop() bool {
 		SystemPrompt:         ws.sysPrompt,
 		Tools:                ws.tools,
 		DynamicTools:         t.dynamicNewTempTools(ws.sess),
-		ToolFallbackResolver: t.lazyToolFallback,
+		ToolFallbackResolver: t.lazyToolDef,
 		MaxRounds:            ws.hardCap,
 		ThinkBudget:          t.agent.ThinkBudget, // per-agent override; 0 = inherit route/global
 		Effort:               t.agent.Effort,      // per-agent level; a budget above wins

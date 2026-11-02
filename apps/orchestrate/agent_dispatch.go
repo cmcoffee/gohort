@@ -728,7 +728,7 @@ type syncDispatch struct {
 	gDecline         string
 	dispatchPin      LLMTier
 	dispatchRoute    string
-	dispatchFallback func(name string) (ToolHandlerFunc, bool)
+	dispatchFallback func(name string) (AgentToolDef, bool)
 	dispatchDynamic  func() []AgentToolDef
 	buildCheck       *dispatchBuildCheck
 	syncCfg          AgentLoopConfig
@@ -1130,7 +1130,7 @@ func (sd *syncDispatch) prepareInput() {
 	// An agent that plans on the lead hands its work to work_step here
 	// (runner_lead_plans_dispatch.go), and the lead loses the routes back to
 	// the work tools it gave up.
-	sd.dispatchFallback, sd.dispatchDynamic = sd.subTurn.lazyToolFallback, sd.subTurn.dynamicNewTempTools(sd.subSess)
+	sd.dispatchFallback, sd.dispatchDynamic = sd.subTurn.lazyToolDef, sd.subTurn.dynamicNewTempTools(sd.subSess)
 	if sd.subTurn.applyDispatchLeadPlans(sd.subSess, sd.dispatchPin, message, &sd.sysPrompt, &sd.tools, confirm) {
 		sd.dispatchFallback, sd.dispatchDynamic = nil, nil
 	}
@@ -2348,7 +2348,7 @@ func (cr *continuingRun) configureLoop() {
 		GuardrailReject:     cr.subTurn.guardrailEnforcer().Reject,
 		GuardrailDeclines:   cr.subTurn.agent.GuardrailDeclines,
 		// Custom-tool resolution, same as the web runPlan (see RunAgentSync).
-		ToolFallbackResolver: cr.subTurn.lazyToolFallback,
+		ToolFallbackResolver: cr.subTurn.lazyToolDef,
 		DynamicTools:         cr.subTurn.dynamicNewTempTools(cr.subSess),
 		// InjectionDrain (not OnRoundStart): the queue-drain closure
 		// returns nil when empty, so the loop's pre-finalize re-call
