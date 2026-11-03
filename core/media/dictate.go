@@ -82,7 +82,7 @@ func ServeDictation(w http.ResponseWriter, r *http.Request, user string) {
 			levels = fmt.Sprintf("%.1fs", secs)
 		}
 		if why != "" {
-			nfo.Debug("[dictate] %s: %s, %s, not sent; meter %s", user, levels, why, note)
+			nfo.Debug("[dictate] %s: %s, %s, not sent; meter %s, client %s", user, levels, why, note, dictationClient(r.UserAgent()))
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Cache-Control", "no-store")
 			json.NewEncoder(w).Encode(map[string]string{"text": ""})
@@ -99,7 +99,7 @@ func ServeDictation(w http.ResponseWriter, r *http.Request, user string) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	nfo.Debug("[dictate] %s: %d bytes, %s, meter %s, prompt %q, %d chars back", user, len(audio), levels, note, prompt, len(strings.TrimSpace(text)))
+	nfo.Debug("[dictate] %s: %d bytes, %s, meter %s, client %s, prompt %q, %d chars back", user, len(audio), levels, note, dictationClient(r.UserAgent()), prompt, len(strings.TrimSpace(text)))
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	json.NewEncoder(w).Encode(map[string]string{"text": strings.TrimSpace(text)})
@@ -293,7 +293,7 @@ func dbfs(v float64) float64 {
 func dictationMeterNote(h string) string {
 	var b strings.Builder
 	for _, c := range h {
-		if b.Len() >= 80 {
+		if b.Len() >= 160 {
 			break
 		}
 		if c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || strings.ContainsRune("=.- ", c) {
@@ -301,6 +301,30 @@ func dictationMeterNote(h string) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+// dictationClient is the kind of client a recording came from, by its user
+// agent, so a timing that differs between a browser and an app's web view
+// can be told apart in the log.
+func dictationClient(ua string) string {
+	switch {
+	case strings.Contains(ua, "Electron/"):
+		return "electron"
+	case strings.Contains(ua, "Edg/"):
+		return "edge"
+	case strings.Contains(ua, "Chrome/"), strings.Contains(ua, "Chromium/"):
+		return "chrome"
+	case strings.Contains(ua, "Firefox/"):
+		return "firefox"
+	case strings.Contains(ua, "AppleWebKit") && strings.Contains(ua, "Safari/"):
+		return "safari"
+	case strings.Contains(ua, "AppleWebKit"):
+		// An app's embedded WebKit leaves Safari's name out.
+		return "webkit-webview"
+	case ua == "":
+		return "unknown"
+	}
+	return "other"
 }
 
 // dictationFileName names a recording by the format the browser made it in,
@@ -446,8 +470,26 @@ const dictationJS = `(function(){
   // while one is. It lives in this page only: a reload or leaving the page
   // lets it go, and so does a message going out without it.
   var held = null, micCtx = null, discard = null;
+  // How long each step of a recording took, for the log beside it: from the
+  // press to the microphone (open) and to the recorder started (rec, the
+  // start tone included), from starting the recorder to the browser saying
+  // it is capturing (began, -1 when it never says), and from Stop to the
+  // audio being handed over (stop). A step slow in one client and not in
+  // another is the one to look at.
+  var pressAt = 0, openMs = -1, recMs = -1, startCall = 0, beganMs = -1, stopAt = 0;
 
-  function show(ctx, text, title) { ctx.button.textContent = text; ctx.button.title = title; }
+  // label changes the button's words by editing the text it already has,
+  // never by swapping it for new text. The clock and the spinner rewrite it
+  // several times a second, and WebKit fires a click only when the press and
+  // the release land on the same node: a press that straddled one rewrite
+  // showed as pressed and did nothing, so the desktop app's recording would
+  // not stop for every other press. Chrome clicked anyway.
+  function label(b, text) {
+    var n = b.firstChild;
+    if (n && n.nodeType === 3 && !n.nextSibling) { n.nodeValue = text; return; }
+    b.textContent = text;
+  }
+  function show(ctx, text, title) { label(ctx.button, text); ctx.button.title = title; }
   // pressed marks the button as recording, which the composer draws red,
   // and level rings it with how loud the microphone is.
   function pressed(ctx, on) {
@@ -538,9 +580,11 @@ const dictationJS = `(function(){
     awaiting = false;
     if (window.gohortReadAloudStop) window.gohortReadAloudStop();
     state = 'starting';
+    pressAt = Date.now(); openMs = recMs = beganMs = -1;
     show(ctx, micGlyph, 'Starting the microphone. Press to cancel');
     navigator.mediaDevices.getUserMedia({audio: true}).then(function(s) {
       if (state !== 'starting') { s.getTracks().forEach(function(t) { t.stop(); }); return; }
+      openMs = Date.now() - pressAt;
       stream = s;
       tone(true);
       if (audio) setTimeout(function() { begin(ctx, s); }, toneMs); else begin(ctx, s);
@@ -557,10 +601,14 @@ const dictationJS = `(function(){
     var chunks = [];
     var r = rec = new MediaRecorder(s);
     r.ondataavailable = function(e) { if (e.data && e.data.size) chunks.push(e.data); };
+    r.onstart = function() { beganMs = Date.now() - startCall; };
     r.onstop = function() {
       if (state !== 'sending') return;
+      meterNote += ' stop=' + (Date.now() - stopAt);
       transcribe(ctx, new Blob(chunks, {type: r.mimeType || 'audio/webm'}), Math.round((Date.now() - started) / 1000));
     };
+    recMs = Date.now() - pressAt;
+    startCall = Date.now();
     r.start();
     state = 'recording';
     started = Date.now();
@@ -570,7 +618,7 @@ const dictationJS = `(function(){
       : 'Recording. Press to stop and write it out');
     timer = setInterval(function() {
       var secs = Math.floor((Date.now() - started) / 1000);
-      ctx.button.textContent = stopGlyph + ' ' + clock(secs);
+      label(ctx.button, stopGlyph + ' ' + clock(secs));
     }, 250);
     // The ✕ beside it throws the recording away.
     if (discard) discard.button.style.display = '';
@@ -665,7 +713,9 @@ const dictationJS = `(function(){
     if (state !== 'recording' || !rec) return;
     state = 'sending';
     meterNote = (meter ? 'live=' + (meter.live ? 1 : 0) + ' voiced=' + meter.voiced + ' first=' + meter.first +
-      ' peak=' + meter.peak.toFixed(3) + ' ctx=' + audio.state : 'none') + ' ms=' + (Date.now() - started);
+      ' peak=' + meter.peak.toFixed(3) + ' ctx=' + audio.state : 'none') + ' ms=' + (Date.now() - started) +
+      ' open=' + openMs + ' rec=' + recMs + ' began=' + beganMs;
+    stopAt = Date.now();
     stopMeter();
     pressed(ctx, false);
     tone(false);
@@ -687,7 +737,7 @@ const dictationJS = `(function(){
     show(ctx, frames.charAt(0), 'Writing it out. Press to cancel');
     timer = setInterval(function() {
       var secs = Math.round((Date.now() - from) / 1000);
-      ctx.button.textContent = frames.charAt(frame++ % frames.length) + (secs >= 3 ? ' ' + secs + 's' : '');
+      label(ctx.button, frames.charAt(frame++ % frames.length) + (secs >= 3 ? ' ' + secs + 's' : ''));
     }, 100);
   }
 

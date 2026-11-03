@@ -127,7 +127,14 @@ global.window = {
   localStorage: {getItem: function(k) { return k in store ? store[k] : null; }, setItem: function(k, v) { store[k] = v; }},
   matchMedia: function(q) { return {matches: coarse && q === '(pointer: coarse)'}; },
   uiRegisterComposerAction: function(o) {
-    var ctx = {button: {textContent: o.label, title: o.title || '', attrs: {},
+    // The button's words are a text node, as in a page: setting textContent
+    // swaps in a new one (counted in swapped), and WebKit drops a click whose
+    // press and release land on different nodes.
+    var ctx = {button: {_text: {nodeType: 3, nodeValue: o.label, nextSibling: null}, swapped: 0,
+        get firstChild() { return this._text; },
+        get textContent() { return this._text.nodeValue; },
+        set textContent(v) { this._text = {nodeType: 3, nodeValue: String(v), nextSibling: null}; this.swapped++; },
+        title: o.title || '', attrs: {},
         setAttribute: function(k, v) { this.attrs[k] = v; }, removeAttribute: function(k) { delete this.attrs[k]; },
         style: {props: {}, setProperty: function(k, v) { this.props[k] = v; }}}, input: input,
       insertText: function(t) { input.value += (input.value ? ' ' : '') + t; },
@@ -150,7 +157,7 @@ Object.defineProperty(global, 'navigator', {configurable: true, value: {mediaDev
 window.navigator = navigator;
 var recorders = [];
 global.MediaRecorder = function(s) { this.mimeType = 'audio/webm;codecs=opus'; recorders.push(this); };
-MediaRecorder.prototype.start = function() { this.started = true; };
+MediaRecorder.prototype.start = function() { this.started = true; if (this.onstart) this.onstart(); };
 // A real browser hands the audio over a beat after stop; with lateStop set
 // the fake holds it until handOver() is called.
 var lateStop = false, handOver = null;
@@ -205,7 +212,7 @@ const dictationFlow = `
   mic.onclick(mic);
   await sleep(10);
   check('pressing again stops and sends the recording', pending.length === 1 && pending[0].url === '/api/dictate' && pending[0].opts.headers['Content-Type'] === 'audio/webm;codecs=opus' && tracksStopped >= 1);
-  check('saying it had no meter', /^none ms=\d+$/.test(pending[0].opts.headers['X-Dictation-Meter']));
+  check('saying it had no meter, and how long each step took', /^none ms=\d+ open=\d+ rec=\d+ began=\d+ stop=\d+$/.test(pending[0].opts.headers['X-Dictation-Meter']));
   check('and it is no longer marked as recording', !('aria-pressed' in mic.button.attrs));
   await sleep(150);
   check('a spinner while it is written out', /^[⠀-⣿]/.test(mic.button.textContent));
@@ -213,6 +220,7 @@ const dictationFlow = `
   await sleep(10);
   check('the words land in the box to be read over', input.value === 'Meet me at noon.');
   check('and the button is ready again', mic.button.textContent === '🎤');
+  check('its words were changed in place throughout, never swapped for new text, so a press during a tick still clicks', mic.button.swapped === 0);
   check('the send tells the agent its reply will be heard', extras.length === 1 && extras[0].spoken_reply === true);
   check('with read-aloud on it goes at once, hands-free', sends === 1);
 
@@ -508,7 +516,7 @@ eval(dictationJS);
   check('talking keeps it recording', pending.length === 0);
   loud = 0.003; await sleep(400);
   check('going quiet after speech stops it and sends it', pending.length === 1);
-  check('saying what the meter heard, for the log', /^live=1 voiced=\d+ first=\d+ peak=0\.\d{3} ctx=running ms=\d+$/.test(pending[0].opts.headers['X-Dictation-Meter']));
+  check('saying what the meter heard, and how long each step took, for the log', /^live=1 voiced=\d+ first=\d+ peak=0\.\d{3} ctx=running ms=\d+ open=\d+ rec=\d+ began=\d+ stop=\d+$/.test(pending[0].opts.headers['X-Dictation-Meter']));
   check('with a falling tone', tones.join() === 'up,down');
   check('the meter is let go and the ring cleared', disconnected === 1 && mic.button.style.props['--ui-act-level'] === '0.00');
   pending[0].res(written('Hello.'));
@@ -638,8 +646,25 @@ func TestTheMeterNoteKeepsToItsShape(t *testing.T) {
 	if got := dictationMeterNote("live=1\n[ERROR] forged <b>"); got != "live=1 forged b" {
 		t.Errorf("a forged line: %q", got)
 	}
-	if got := dictationMeterNote(strings.Repeat("a", 200)); len(got) != 80 {
+	if got := dictationMeterNote(strings.Repeat("a", 300)); len(got) != 160 {
 		t.Errorf("a long note is clipped to a line: %d", len(got))
+	}
+}
+
+// The log says which kind of client a recording came from, so a step slow in
+// an app's web view and not in a browser shows as such.
+func TestTheDictationLogNamesTheClient(t *testing.T) {
+	for ua, want := range map[string]string{
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36":   "chrome",
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15":   "safari",
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)":                                "webkit-webview",
+		"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) app/1.0 Chrome/128.0 Electron/32.0 Safari/537.36": "electron",
+		"Mozilla/5.0 (X11; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0":                                                  "firefox",
+		"": "unknown",
+	} {
+		if got := dictationClient(ua); got != want {
+			t.Errorf("%q: %q, want %q", ua, got, want)
+		}
 	}
 }
 
