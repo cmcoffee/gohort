@@ -124,6 +124,10 @@ func (a imageActions) imagesParamDesc() string {
 		// called it done.
 		d += "This backend changes ONE picture at a time and cannot composite several: if the user asks to combine pictures, tell them that rather than choosing one of them. "
 	}
+	// Said here and not only in the list of recent pictures, which a turn
+	// may never ask for: "change it" after two renders went back to the
+	// original photo, because every line about renders said not to use one.
+	d += "Asked to change a picture you just made, pass that render (first, when there are several): going back to the original photo starts over and loses every change since. "
 	d += "A picture you kept under a name is \"image#<that name>\" and stays valid indefinitely. "
 	return d + "A web URL is NOT accepted: fetch it first, then pass the saved filename."
 }

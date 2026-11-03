@@ -885,7 +885,8 @@ func RecentImageManifest(sess *ToolSession) string {
 		}
 	}
 	if len(made) > 0 {
-		b.WriteString("Pictures YOU MADE: not evidence of what anything really looks like. Use one only to keep working on that same render, never as the reference for a real subject (newest first):\n")
+		b.WriteString("Pictures YOU MADE: not evidence of what anything really looks like, so never the likeness for a real person on their own. " +
+			"Asked to change one (\"change it\", \"now make him...\", \"add a hat\"), it is the picture to change: pass it FIRST, usually the newest below, and add a picture you were given after it only to keep a face true (newest first):\n")
 		for _, r := range made {
 			fmt.Fprintf(&b, "- %s: %s\n", label(r), describe(r))
 		}

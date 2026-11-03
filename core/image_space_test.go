@@ -272,6 +272,12 @@ func TestRingManifestSeparatesGivenFromMade(t *testing.T) {
 	if !strings.Contains(m, "not evidence of what anything really looks like") {
 		t.Errorf("the agent's own output should be marked, got:\n%s", m)
 	}
+	// But a render is still the picture to change when asked to change it:
+	// "never as the reference" alone sent "change it" back to the original
+	// photo, losing every change since.
+	if !strings.Contains(m, "it is the picture to change: pass it FIRST") {
+		t.Errorf("the manifest should say a render is what a change to it works from, got:\n%s", m)
+	}
 	// And the instruction must point at the parameter, not the removed action.
 	if strings.Contains(m, `action="edit"`) {
 		t.Errorf("the manifest should not name a removed action, got:\n%s", m)

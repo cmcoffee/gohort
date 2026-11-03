@@ -278,7 +278,7 @@ func refuseInventedReference(sess *ToolSession, prompt string, refs []string) er
 	}
 	fix := "If you meant to change a picture you made, say what should CHANGE and drop the likeness wording: it is your render, so there is no likeness to keep."
 	if given := givenRefsFor(sess); given != "" {
-		fix = "Pass a picture you were GIVEN instead: " + given + ". " + fix
+		fix = "Pass a picture you were GIVEN alongside it, after your render when you are changing that render: " + given + ". " + fix
 	} else {
 		fix = "You have not been given a picture of anyone, so there is no reference to pass: ask for one. " + fix
 	}

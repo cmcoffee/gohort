@@ -298,6 +298,12 @@ func TestMultiImageBackendAdvertisesOrderAndCount(t *testing.T) {
 	if !strings.Contains(d, "ORDER MATTERS") {
 		t.Errorf("a multi-image backend must explain ordering:\n%s", d)
 	}
+	// "Change it" works from the render either way, one picture or several.
+	for _, desc := range []string{d, one.params["images"].Description} {
+		if !strings.Contains(desc, "Asked to change a picture you just made, pass that render") {
+			t.Errorf("the images description should say a change to a render starts from it:\n%s", desc)
+		}
+	}
 }
 
 func TestMaskParamFollowsTheBackend(t *testing.T) {
