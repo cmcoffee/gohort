@@ -60,14 +60,15 @@ func (t *chatTurn) leadReviewer(ctx context.Context) func(TurnClaimEvidence) (bo
 		return nil
 	}
 	return func(ev TurnClaimEvidence) (bool, string, bool) {
-		return t.app.reviewTurn(ctx, t.agent.ID, ev)
+		return t.app.reviewTurn(ctx, t.leadGate(), ev)
 	}
 }
 
 // reviewTurn is one review: the brief, the evidence, the lead's verdict.
-func (T *OrchestrateApp) reviewTurn(ctx context.Context, agentID string, ev TurnClaimEvidence) (bool, string, bool) {
+func (T *OrchestrateApp) reviewTurn(ctx context.Context, g leadGate, ev TurnClaimEvidence) (bool, string, bool) {
+	agentID := g.agentID
 	started := time.Now()
-	resp, err := T.LeadChat(ctx, []Message{{Role: "user", Content: leadReviewEvidence(ev)}},
+	resp, err := T.leadChatGated(ctx, g, "review", []Message{{Role: "user", Content: leadReviewEvidence(ev)}},
 		WithSystemPrompt(leadReviewSysPrompt), WithJSONMode(), WithRouteKey(leadReviewRouteKey))
 	took := time.Since(started).Round(100 * time.Millisecond)
 	if err != nil || resp == nil {
@@ -148,6 +149,7 @@ func reviewExcerpt(s string) string {
 // question rather than borrowed from the truth check's message, which carries
 // instructions about what that judge must call KEPT.
 func leadReviewEvidence(ev TurnClaimEvidence) string {
+	ev.ToolOutputs = keptLocalOutputs(ev.ToolOutputs)
 	var b strings.Builder
 	fmt.Fprintf(&b, "WHAT THEY ASKED:\n%s\n\n", truncateObs(strings.TrimSpace(ev.Request), 2000))
 	if now := strings.TrimSpace(ev.Now); now != "" {

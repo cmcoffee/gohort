@@ -2797,3 +2797,38 @@ func TestAddingAServerIsMovingTheCredential(t *testing.T) {
 		t.Error("an administrator's credential keeps its key")
 	}
 }
+
+// Every stored value the user's turns can reach is replaced by name, and
+// nothing else: another user's own key is not theirs to send, so it is not
+// theirs to find, and a value too short to be told from ordinary text stays.
+func TestRedactSecretsForReplacesWhatTheUserCanReach(t *testing.T) {
+	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
+	save := func(name, owner, secret string) {
+		t.Helper()
+		if err := s.Save(SecureCredential{Name: name, Owner: owner, Type: SecureCredBearer, BaseURL: "https://x.test"}, secret); err != nil {
+			t.Fatalf("save %s: %v", name, err)
+		}
+	}
+	save("payments", "", "sk_shared_0123456789")
+	save("mailbox", "alice", "alice-own-secret-99")
+	save("archive", "bob", "bob-private-secret-77")
+	save("pin", "alice", "4321")
+
+	text := "Called with sk_shared_0123456789 and alice-own-secret-99 twice: alice-own-secret-99. " +
+		"bob-private-secret-77 is someone else's. PIN 4321."
+	got, n := s.RedactSecretsFor("alice", text)
+	if n != 3 {
+		t.Errorf("expected 3 values replaced, got %d: %s", n, got)
+	}
+	for _, gone := range []string{"sk_shared_0123456789", "alice-own-secret-99"} {
+		if strings.Contains(got, gone) {
+			t.Errorf("%q is still in the text: %s", gone, got)
+		}
+	}
+	if !strings.Contains(got, "[credential: payments]") || !strings.Contains(got, "[credential: mailbox]") {
+		t.Errorf("each value must be named by its credential: %s", got)
+	}
+	if !strings.Contains(got, "bob-private-secret-77") || !strings.Contains(got, "4321") {
+		t.Errorf("another user's key and a short value must be left alone: %s", got)
+	}
+}

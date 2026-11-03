@@ -84,7 +84,7 @@ func (pr *planRun) checkPlanWithLead(steps []PlanStep) []PlanStep {
 	started := time.Now()
 	ctx, cancel := context.WithTimeout(t.ctx, leadPlanCheckTimeout)
 	defer cancel()
-	resp, err := t.app.LeadChat(ctx, []Message{{Role: "user", Content: pr.leadPlanCheckEvidence(steps)}},
+	resp, err := t.app.leadChatGated(ctx, t.leadGate(), "plan check", []Message{{Role: "user", Content: pr.leadPlanCheckEvidence(steps)}},
 		WithSystemPrompt(leadPlanCheckSysPrompt), WithJSONMode(), WithRouteKey(leadPlanCheckRouteKey))
 	took := time.Since(started).Round(100 * time.Millisecond)
 	if err != nil || resp == nil {

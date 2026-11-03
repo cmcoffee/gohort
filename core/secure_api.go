@@ -5185,3 +5185,44 @@ var secureAPIShapeNoteStatuses = []int{400, 404, 405, 422}
 func secureAPIShapeNote(status int) string {
 	return fmt.Sprintf("[The server RESPONDED with HTTP %d: it is reachable and speaking HTTP, so the credential and protocol are FINE. A %d means the PATH, QUERY PARAMS, or BODY are wrong FOR THIS ENDPOINT, iterate the request: try a different path/params, copy the shape of a working sibling tool on this credential (check_credential lists them), or read the provider's HTTP-API docs. Do NOT switch this tool to shell/telnet, and do NOT ask the user to reconfigure the credential, over a 4xx.]", status, status)
 }
+
+// minRedactedSecret is the shortest stored value redacted by value. Shorter
+// ones ("1234", "true") are too likely to be ordinary text, and replacing them
+// would mangle what goes out without protecting anything a pattern misses.
+const minRedactedSecret = 8
+
+// RedactSecretsFor replaces every stored credential value the user's turns can
+// reach (the shared credentials and the user's own, with the user's secret for
+// a per-user one) with "[credential: name]" wherever it appears in text, and
+// reports how many it replaced. The values never leave this method: it is how
+// text bound for somewhere outside, such as the lead model, is made safe
+// without anything else reading the vault.
+//
+// By value, not by shape: a key gohort holds is known exactly, so there are no
+// false positives, and a shape match catches only what looks like a key.
+func (s *SecureAPI) RedactSecretsFor(user, text string) (string, int) {
+	if s == nil || strings.TrimSpace(text) == "" || !s.ready() {
+		return text, 0
+	}
+	type known struct{ name, value string }
+	var secrets []known
+	creds := s.List()
+	if user = strings.TrimSpace(user); user != "" {
+		creds = append(creds, s.ListUser(user)...)
+	}
+	for _, c := range creds {
+		if v, ok := s.resolveSecret(c, user); ok && len(strings.TrimSpace(v)) >= minRedactedSecret {
+			secrets = append(secrets, known{c.Name, strings.TrimSpace(v)})
+		}
+	}
+	// Longest first, so a secret that contains another is replaced whole.
+	sort.Slice(secrets, func(i, j int) bool { return len(secrets[i].value) > len(secrets[j].value) })
+	n := 0
+	for _, k := range secrets {
+		if c := strings.Count(text, k.value); c > 0 {
+			text = strings.ReplaceAll(text, k.value, "[credential: "+k.name+"]")
+			n += c
+		}
+	}
+	return text, n
+}

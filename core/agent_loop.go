@@ -4347,7 +4347,11 @@ func (lr *loopRun) dispatchTools() loopAction {
 		if n >= errShapeNudgeAt && !lr.errShapeNudged[shape] {
 			lr.errShapeNudged[shape] = true
 			Debug("[agent_loop] failure-shape guard: %q seen %d times this turn, nudging", oneLineShape(shape), n)
-			msg, consulted := failureShapeCorrection(n, oneLineShape(shape), lr.rs.results[w.index].Content, lr.cfg.Consult)
+			consult := lr.cfg.Consult
+			if lr.readsTheWeb(w.tc.Name) && pageNotFoundShape(shape) {
+				consult = nil // dead links: nothing for the lead to answer
+			}
+			msg, consulted := failureShapeCorrection(n, oneLineShape(shape), lr.rs.results[w.index].Content, consult)
 			// DEFERRED, not appended here. We are between the assistant
 			// message that carried the tool calls and the tool-results
 			// message appended below, and a tool result must directly

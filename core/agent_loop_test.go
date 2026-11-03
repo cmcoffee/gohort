@@ -800,3 +800,45 @@ func TestANetworkWriteWithChangingAnswersIsNotStopped(t *testing.T) {
 		t.Errorf("a network write whose answer changes must not be stopped as a repeated read; it ran only %d times", ran)
 	}
 }
+
+// consultsOnRepeatedFailure runs a turn that hits one failure from a tool with
+// the given caps until the guard steps in, and counts the consults it made.
+func consultsOnRepeatedFailure(t *testing.T, route, failure string, caps []Capability) int {
+	t.Helper()
+	prev := LeadTurnTokenBudget
+	LeadTurnTokenBudget = 0
+	t.Cleanup(func() { LeadTurnTokenBudget = prev })
+	app, _ := withTierStubs(t, route, func(n int) []ToolCall {
+		if n >= 5 {
+			return nil
+		}
+		return []ToolCall{{ID: fmt.Sprint(n), Name: "read_page", Args: map[string]any{"when": fmt.Sprintf("page-%d", n)}}}
+	})
+	tool := alwaysFailTool("read_page", failure)
+	tool.Tool.Caps = caps
+	consults := 0
+	if _, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		Tools: []AgentToolDef{tool}, MaxRounds: 8, RouteKey: route,
+		Consult: func(q, ev string) (string, error) { consults++; return "Try another source.", nil },
+	}); err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	return consults
+}
+
+// Dead links are nothing for the lead to answer: every research turn spent
+// three consults, about eight seconds each, being told to try another address.
+// Any other repeated failure, and a 404 from a tool that does more than read
+// the web, still consults.
+func TestADeadLinkIsNotTakenToTheLead(t *testing.T) {
+	web := []Capability{CapNetwork, CapRead}
+	if n := consultsOnRepeatedFailure(t, "test.deadlink", "fetch failed: HTTP 404", web); n != 0 {
+		t.Errorf("dead links from a web read were taken to the lead %d times", n)
+	}
+	if n := consultsOnRepeatedFailure(t, "test.badshape", "fetch failed: HTTP 400: missing field 'to'", web); n != 1 {
+		t.Errorf("a repeated request-shape failure must still consult once, got %d", n)
+	}
+	if n := consultsOnRepeatedFailure(t, "test.apiwrite", "fetch failed: HTTP 404", []Capability{CapNetwork, CapWrite}); n != 1 {
+		t.Errorf("a 404 from a tool that writes must still consult once, got %d", n)
+	}
+}

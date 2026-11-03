@@ -152,7 +152,7 @@ func (t *chatTurn) consult(question, evidence string) (string, error) {
 		}
 	}
 	started := time.Now()
-	resp, err := t.app.LeadChat(t.ctx, msgs, opts...)
+	resp, err := t.app.leadChatGated(t.ctx, t.leadGate(), "consult", msgs, opts...)
 	took := time.Since(started).Round(100 * time.Millisecond)
 	if err != nil {
 		Log("[orchestrate.consult] call %d failed: %v", t.consultCount, err)

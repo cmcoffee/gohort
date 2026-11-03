@@ -218,12 +218,14 @@ func TestConsultTheLeadResolves(t *testing.T) {
 	if settingIsOn(db, plain, defaultConsultLead) {
 		t.Error("an ordinary agent does not consult by default")
 	}
-	if !settingIsOn(db, author, defaultConsultLead) {
-		t.Error("Builder, the authoring agent, keeps consulting, as it always has")
+	// No agent sends its work to the lead unasked, an authoring one included:
+	// Builder consulted by default while consult rode the authoring toolset.
+	if settingIsOn(db, author, defaultConsultLead) || settingIsOn(db, AgentRecord{ID: "a2", Author: true}, defaultConsultLead) {
+		t.Error("an authoring agent does not consult by default either")
 	}
-	author.ConsultLead = settingOff
-	if settingIsOn(db, author, defaultConsultLead) {
-		t.Error("an explicit Off beats the old authoring default")
+	author.ConsultLead = settingOn
+	if !settingIsOn(db, author, defaultConsultLead) {
+		t.Error("an authoring agent can be switched on")
 	}
 	plain.ConsultLead = settingOn
 	if !settingIsOn(db, plain, defaultConsultLead) {

@@ -75,6 +75,15 @@ func failureShapeCorrection(n int, shape, evidence string, consult func(question
 		n, shape), false
 }
 
+// pageNotFoundShape reports a failure that says the page is not there (HTTP
+// 404 or 410). From a tool that only reads the web it is a dead link, which
+// the lead cannot answer: its advice is "try another address", the nudge says
+// the same, and every research turn spent three consults, about eight seconds
+// each, on dead links. The nudge still goes; only the consult is skipped.
+func pageNotFoundShape(shape string) bool {
+	return strings.Contains(shape, "http 404") || strings.Contains(shape, "http 410") || strings.Contains(shape, "404 not found")
+}
+
 // normalizeFailureShape reduces a failed tool result to a comparable
 // fingerprint of WHAT went wrong, so the same wall is recognized across
 // different calls and different arguments. Case and whitespace are flattened,

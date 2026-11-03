@@ -221,15 +221,13 @@ var triSettings = map[string]triSetting{
 		key:   defaultConsultLead,
 		words: map[string]string{settingOn: "On", settingOff: "Off"},
 		own:   func(a AgentRecord) string { return a.ConsultLead },
-		// Before this was a setting, consult rode along with the authoring
-		// toolset, so an agent that can author had it and nothing else did.
-		// That stays its answer until somebody decides otherwise.
-		legacy: func(a AgentRecord) (string, bool) {
-			if agentCanAuthor(a) {
-				return settingOn, true
-			}
-			return "", false
-		},
+		// Off unless somebody chooses it, for every agent: consulting is the
+		// first level that sends what the worker sees to the lead, which is
+		// usually remote, so no agent does it by default. An agent that can
+		// author used to have it on by default, from when consult rode along
+		// with the authoring toolset; that made Builder, and any agent given
+		// authoring, send its plans and questions out unasked.
+		legacy:     func(AgentRecord) (string, bool) { return "", false },
 		framework:  settingOff,
 		values:     onOff(),
 		strictness: looseToStrict(),
