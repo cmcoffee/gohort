@@ -126,10 +126,21 @@ func collectMessageMedia(sess *ToolSession, text string) (images, videos []strin
 // source of the blend, not the blend. Only the model's own marker recovers
 // there.
 func recoverStagedDeliverable(sess *ToolSession, reply string, produced bool) string {
-	if sess == nil || strings.TrimSpace(sess.WorkspaceDir) == "" || !deliveryIntended(reply, produced) {
+	if sess == nil || strings.TrimSpace(sess.WorkspaceDir) == "" {
 		return ""
 	}
 	if sess.Detach.Any() && !operatorAttachMarkerRe.MatchString(reply) {
+		return ""
+	}
+	// The reply names a file this turn made, by its file name: the most exact
+	// signal there is, and it needs no cue. Live, a planned turn's last step
+	// made the Word document it was asked for, had no tool to attach it, and
+	// the reply said "The comparison is saved as home-automation-comparison.docx";
+	// nothing reads "saved as" as a hand-over, and the file never went.
+	if named := stagedDeliverableNamed(sess, reply); named != "" && !replyDisclaimsDelivery(reply) {
+		return named
+	}
+	if !deliveryIntended(reply, produced) {
 		return ""
 	}
 	var newest string
@@ -438,6 +449,55 @@ func isDeliverableFile(name string) bool {
 	// reply saying "here's the track" with nothing attached was never given
 	// the track it had just saved.
 	return media.IsAudioFileName(name)
+}
+
+// stagedDeliverableNamed is the deliverable file this turn staged whose file
+// name the reply writes out, or "".
+func stagedDeliverableNamed(sess *ToolSession, reply string) string {
+	for _, name := range sess.StagedFiles() {
+		base := filepath.Base(name)
+		if strings.HasPrefix(base, "_") || !isDeliverableFile(base) || !strings.Contains(reply, base) {
+			continue
+		}
+		if info, err := os.Stat(filepath.Join(sess.WorkspaceDir, name)); err == nil && !info.IsDir() {
+			return name
+		}
+	}
+	return ""
+}
+
+// stagedFileKind is how a recovered file goes out: "image", "video" (audio
+// rides it), or "file" for anything else, a document or a PDF, which went out
+// as a picture before and arrived broken.
+func stagedFileKind(name string) string {
+	switch {
+	case isVideoAttachment(name):
+		return "video"
+	case isImageFileName(name):
+		return "image"
+	}
+	return "file"
+}
+
+// isImageFileName reports a picture by its extension.
+func isImageFileName(name string) bool {
+	switch strings.ToLower(filepath.Ext(strings.TrimSpace(name))) {
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp":
+		return true
+	}
+	return false
+}
+
+// stagedFileAttachment is a recovered file as a file delivery: its name, the
+// type its bytes and name give it, and the bytes.
+func stagedFileAttachment(name, b64 string) FileAttachment {
+	raw, _ := base64.StdEncoding.DecodeString(b64)
+	return FileAttachment{
+		Name:     filepath.Base(name),
+		MimeType: media.ZipDocumentType(http.DetectContentType(raw), name),
+		Data:     b64,
+		Size:     len(raw),
+	}
 }
 
 // isVideoAttachment classifies a workspace file path as a video or audio file

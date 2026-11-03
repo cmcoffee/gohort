@@ -748,3 +748,55 @@ func TestAGroundingCorrectionMarksTheReplyCorrected(t *testing.T) {
 		t.Errorf("the ungrounded reply was not marked corrected: %q", corrected)
 	}
 }
+
+// repeatedFetchLoop runs a model that makes the same call every round against
+// a tool declaring caps, whose answer changes by a counter each time, and
+// reports how many times the tool really ran.
+func repeatedFetchLoop(t *testing.T, route string, caps []Capability) int32 {
+	t.Helper()
+	app, _ := withTierStubs(t, route, func(n int) []ToolCall {
+		if n <= 10 { // per tier: the worker and the lead stubs count their own calls
+			return []ToolCall{{ID: strconv.Itoa(n), Name: "read_page", Args: map[string]any{"url": "https://example.test/releases"}}}
+		}
+		return nil
+	})
+	var ran int32
+	tool := AgentToolDef{
+		Tool: Tool{Name: "read_page", Description: "read", Caps: caps, Parameters: map[string]ToolParam{"url": {Type: "string"}}},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			n := atomic.AddInt32(&ran, 1)
+			return fmt.Sprintf("Release notes. Request id %d.", n), nil
+		},
+	}
+	if _, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "versions"}}, AgentLoopConfig{
+		Tools: []AgentToolDef{tool}, MaxRounds: 12, RouteKey: route,
+	}); err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	return ran
+}
+
+// The same web read made again and again is stopped even when the page's text
+// moves by a byte each time (a request id, a clock): live, one step fetched one
+// address fifteen times and the byte-identical check reset on every fetch.
+func TestTheSameWebReadIsStoppedEvenWhenThePageDrifts(t *testing.T) {
+	if ran := repeatedFetchLoop(t, "test.repeatweb", []Capability{CapNetwork, CapRead}); ran != repeatSameLimit+1 {
+		t.Errorf("a web read repeated with drifting text must stop after %d repeats; it ran %d times", repeatSameLimit, ran)
+	}
+}
+
+// A local reader whose answer changes (a job's progress) is still a reader
+// with something new to say, and keeps the byte-identical rule.
+func TestALocalReadWithChangingAnswersIsNotStopped(t *testing.T) {
+	if ran := repeatedFetchLoop(t, "test.repeatlocal", []Capability{CapRead}); ran <= repeatSameLimit+1 {
+		t.Errorf("a local read whose answer changes must not be stopped as a repeat; it ran only %d times", ran)
+	}
+}
+
+// A tool that writes over the network is not a web read: each call may do
+// something, so only byte-identical answers count as repeats.
+func TestANetworkWriteWithChangingAnswersIsNotStopped(t *testing.T) {
+	if ran := repeatedFetchLoop(t, "test.repeatwrite", []Capability{CapNetwork, CapWrite}); ran <= repeatSameLimit+1 {
+		t.Errorf("a network write whose answer changes must not be stopped as a repeated read; it ran only %d times", ran)
+	}
+}

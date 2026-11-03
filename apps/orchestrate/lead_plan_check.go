@@ -51,6 +51,7 @@ const leadPlanCheckSysPrompt = `You check another assistant's plan before it run
 
 Approve the plan unless something matters:
 - the steps do not cover the whole job: a part of the request no step does, or too few steps for what was asked;
+- a file the person asked to receive that no step sends to them: making a file does not send it, attaching it does;
 - a step that does not serve the request, or one step doing two jobs that should be two;
 - steps in an order that cannot work, such as a step that needs a result a later step makes;
 - a step given tools that cannot do its job, or missing one it needs;

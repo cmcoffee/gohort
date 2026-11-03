@@ -143,7 +143,7 @@ func (t *chatTurn) flushNewAttachments(sess *ToolSession, msgID string, imgN, vi
 // is" alongside a real attachment is describing that attachment.
 func (t *chatTurn) recoverClaimedDelivery(reply string) {
 	t.attMu.Lock()
-	already := len(t.deliveredAtt)
+	already := len(t.deliveredAtt) + len(t.deliveredFiles)
 	t.attMu.Unlock()
 	if already > 0 {
 		return
@@ -159,13 +159,20 @@ func (t *chatTurn) recoverClaimedDelivery(reply string) {
 	}
 	Log("[chat] reply claimed a delivery but attached nothing: backstop attaching staged %q", staged)
 	// Paint it under the bubble the reply just streamed into, the same way a
-	// tool-delivered image arrives.
-	kind := "image"
-	if isVideoAttachment(staged) {
-		kind = "video"
-	}
+	// tool-delivered image, clip or file arrives.
+	kind := stagedFileKind(staged)
 	msgID := t.getCurrentMsgID()
 	for _, b64 := range b64s {
+		if kind == "file" {
+			f := stagedFileAttachment(staged, b64)
+			t.sse.Send(map[string]any{"kind": "file", "msg_id": msgID, "name": f.Name, "mime_type": f.MimeType, "data": f.Data, "size": f.Size})
+			if kept := keepDeliveredFiles(t.user, nil, []FileAttachment{f}); len(kept) > 0 {
+				t.attMu.Lock()
+				t.deliveredFiles = append(t.deliveredFiles, kept...)
+				t.attMu.Unlock()
+			}
+			continue
+		}
 		t.sse.Send(map[string]any{"kind": kind, "msg_id": msgID, "data": b64})
 		if kind == "image" {
 			t.keepDelivered(b64)

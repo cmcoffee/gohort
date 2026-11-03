@@ -445,6 +445,22 @@ const failureStreakThreshold = 3
 
 const repeatFailLimit = 3
 
+// readsTheWeb reports whether a tool only reads from the network: it declares
+// the network and nothing beyond reading, and has no sub-actions that could
+// differ. The identical-repeat guard counts such a call whatever it returned.
+func (lr *loopRun) readsTheWeb(name string) bool {
+	t, ok := lr.toolCaps[name]
+	if !ok || len(t.ActionCaps) > 0 || !slices.Contains(t.Caps, CapNetwork) {
+		return false
+	}
+	for _, c := range t.Caps {
+		if c != CapNetwork && c != CapRead {
+			return false
+		}
+	}
+	return true
+}
+
 // How much content makes a clean "stop" finish read as an ANSWER rather
 // than a lead-in to a narrated tool call, for the prose-scan gate below.
 // Under it the scan still runs, so a model that only ever describes its
@@ -3894,12 +3910,14 @@ func (lr *loopRun) toolRoundPlanCalls() loopAction {
 		// Identical no-progress guard: this exact call keeps returning the
 		// SAME result. Unlike the error guard above this fires on SUCCESS too,
 		// catching a valid-but-pointless polling loop the error counter misses.
+		// For a tool that only reads the web, the same call counts whatever
+		// came back (see readsTheWeb).
 		if lr.repeatSame[sig] >= repeatSameLimit {
 			Debug("[agent_loop] loop-guard: %s blocked (%d identical no-progress repeats this turn)", tc.Name, lr.repeatSame[sig])
 			lr.rs.guardBlockedThisRound = true
 			lr.rs.results[i] = ToolResult{
 				ID:      tc.ID,
-				Content: fmt.Sprintf(guardStopPrefix+"you have already called '%s' with these exact arguments %d times this turn and it returned the SAME result every time. It is giving you no new information and making no progress. Do NOT call it again. Answer the user with what you already have, use a DIFFERENT tool, or tell them plainly you cannot get what they asked for.", tc.Name, lr.repeatSame[sig]),
+				Content: fmt.Sprintf(guardStopPrefix+"you have already called '%s' with these exact arguments %d times this turn and it gave you nothing new each time. It is making no progress. Do NOT call it again. Answer the user with what you already have, use a DIFFERENT tool, or tell them plainly you cannot get what they asked for.", tc.Name, lr.repeatSame[sig]),
 				IsError: true,
 			}
 			lr.rs.toolErrors++
@@ -4282,8 +4300,12 @@ func (lr *loopRun) dispatchTools() loopAction {
 			delete(lr.rs.batchHeld, w.sendKey)
 		}
 		// Identical-repeat tracking (see repeatSame decl). Count byte-identical
-		// results per signature on success OR error; a changed result resets.
-		if prev, seen := lr.lastToolContent[w.sig]; seen && prev == lr.rs.results[w.index].Content {
+		// results per signature on success OR error; a changed result resets,
+		// except from a tool that only reads the web: a page does not change
+		// within a turn in any way that matters, and one whose text moved by a
+		// byte each fetch (a token, a clock) was fetched fifteen times in one
+		// step, the guard reset on every one.
+		if prev, seen := lr.lastToolContent[w.sig]; seen && (prev == lr.rs.results[w.index].Content || lr.readsTheWeb(w.tc.Name)) {
 			lr.repeatSame[w.sig]++
 		} else {
 			lr.repeatSame[w.sig] = 0

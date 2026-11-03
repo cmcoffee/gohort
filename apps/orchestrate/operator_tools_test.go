@@ -741,3 +741,45 @@ func TestAWorkspaceSymlinkIsNotFollowedOut(t *testing.T) {
 		t.Fatal("an ordinary workspace file should still resolve")
 	}
 }
+
+// docxSession is a session whose turn made one Word document.
+func docxSession(t *testing.T, name string) *ToolSession {
+	t.Helper()
+	ws := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ws, name), []byte("PK\x03\x04 a word document"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	sess := &ToolSession{Username: "alice", WorkspaceDir: ws}
+	sess.AddStagedFiles([]string{name})
+	return sess
+}
+
+// A reply that names a file the turn made, by its file name, delivers it: live,
+// a planned turn made the Word document asked for, had no tool to attach it,
+// and said "saved as" it, which no cue reads as a hand-over.
+func TestAReplyNamingAFileItMadeDeliversIt(t *testing.T) {
+	sess := docxSession(t, "home-automation-comparison.docx")
+	if got := recoverStagedDeliverable(sess, "The comparison is saved as home-automation-comparison.docx.", false); got != "home-automation-comparison.docx" {
+		t.Errorf("a reply naming the file it made must deliver it, got %q", got)
+	}
+	if got := recoverStagedDeliverable(sess, "I couldn't finish home-automation-comparison.docx.", false); got != "" {
+		t.Errorf("a reply saying it failed must not ship the file, got %q", got)
+	}
+	if got := recoverStagedDeliverable(sess, "The comparison is in the chat above.", false); got != "" {
+		t.Errorf("a reply that neither names nor presents the file must not ship it, got %q", got)
+	}
+}
+
+// A recovered document goes out as a file, typed by its name: it went out as a
+// picture before, and arrived broken.
+func TestARecoveredDocumentGoesOutAsAFile(t *testing.T) {
+	sess := docxSession(t, "comparison.docx")
+	fr := &fireRun{subSess: sess, reply: "Saved as comparison.docx.", agentLabel: "helper"}
+	fr.recoverClaimedDelivery()
+	if len(sess.Images) != 0 || len(sess.Files) != 1 {
+		t.Fatalf("the document must go out as one file and no picture: %d files, %d images", len(sess.Files), len(sess.Images))
+	}
+	if f := sess.Files[0]; f.Name != "comparison.docx" || f.MimeType != "application/vnd.openxmlformats-officedocument.wordprocessingml.document" {
+		t.Errorf("the file must keep its name and be typed as a Word document: %+v", f.Name+" "+f.MimeType)
+	}
+}

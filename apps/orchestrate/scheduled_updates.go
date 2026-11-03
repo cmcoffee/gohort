@@ -1383,9 +1383,12 @@ func (fr *fireRun) recoverClaimedDelivery() {
 	}
 	Log("[orchestrate/scheduled] agent=%s session=%s: reply claimed a delivery but attached nothing: backstop attaching staged %q", fr.agentLabel, fr.p.SessionID, staged)
 	for _, b := range b64s {
-		if isVideoAttachment(staged) {
+		switch stagedFileKind(staged) {
+		case "video":
 			s.AppendVideo(b)
-		} else {
+		case "file":
+			s.AppendFile(stagedFileAttachment(staged, b))
+		default:
 			s.AppendImage(b)
 		}
 	}
