@@ -323,13 +323,17 @@ const readAloudHarness = `
 var fail = 0;
 function check(label, cond) { if (cond) console.log('ok   ' + label); else { fail++; console.log('FAIL ' + label); } }
 function sleep(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
-var registered = null;
-global.window = {uiRegisterBubbleAction: function(a) { registered = a; }};
+var registered = null, listeners = {};
+global.window = {
+  uiRegisterBubbleAction: function(a) { registered = a; },
+  addEventListener: function(name, fn) { (listeners[name] = listeners[name] || []).push(fn); },
+};
+function emit(name, detail) { (listeners[name] || []).forEach(function(fn) { fn({detail: detail}); }); }
 var pending = [];
 global.fetch = function(url, opts) {
   return new Promise(function(res, rej) {
     pending.push({url: url, opts: opts, res: res});
-    opts.signal.addEventListener('abort', function() { var e = new Error('aborted'); e.name = 'AbortError'; rej(e); });
+    if (opts.signal) opts.signal.addEventListener('abort', function() { var e = new Error('aborted'); e.name = 'AbortError'; rej(e); });
   });
 };
 var audios = [];
@@ -409,6 +413,124 @@ eval(readAloudJS);
   window.gohortReadAloud(seven);
   window.gohortReadAloudStop();
   check('stopped, it says so too', ends.join() === 'four:true,five:false,seven:false');
+
+  // --- A reply read while it is still being written ---
+  function body(i) { return JSON.parse(pending[i].opts.body); }
+  function opened(url) { return {ok: true, json: function() { return Promise.resolve({url: url}); }}; }
+  function taken(open) { return {ok: true, json: function() { return Promise.resolve({open: open}); }}; }
+  var live = reply(''); live.onDone = function(ended) { ends.push('live:' + ended); };
+  var b = live.bubble;
+  emit('ui-agent-message-text', {bubble: b, text: 'Sure.', done: false});
+  var n = pending.length;
+  registered.onclick(live);
+  await sleep(20);
+  check('a short first sentence waits for more', pending.length === n);
+  emit('ui-agent-message-text', {bubble: b, text: 'Sure. I checked the logs for the last day and found two', done: false});
+  await sleep(700);
+  check('however fast it comes, a first sentence that short is not read alone', pending.length === n);
+  var written = 'Sure. I checked the logs for the last day and found two errors. First, a time';
+  emit('ui-agent-message-text', {bubble: b, text: written, done: false});
+  await sleep(20);
+  check('once the reply is coming fast, it starts at the last whole sentence', pending.length === n + 1 &&
+    pending[n].url === '/api/speak' && body(n).open === true &&
+    body(n).text === 'Sure. I checked the logs for the last day and found two errors.');
+  pending[n].res(opened('/api/speak/live1'));
+  await sleep(20);
+  var la = audios[audios.length - 1];
+  check('and plays the open read', la.src === '/api/speak/live1' && !la.paused);
+  written += 'out on the database. Then a ' + String.fromCharCode(96, 96, 96) + 'retry. Again. ';
+  emit('ui-agent-message-text', {bubble: b, text: written, done: false});
+  await sleep(20);
+  check('each sentence goes to the open read as it is written', pending.length === n + 2 &&
+    pending[n + 1].url === '/api/speak/live1' && body(n + 1).text === ' First, a timeout on the database.');
+  pending[n + 1].res(taken(true));
+  written += 'loop' + String.fromCharCode(96, 96, 96) + ' that never ends.';
+  emit('ui-agent-message-text', {bubble: b, text: written, done: true});
+  await sleep(20);
+  check('and the rest when the reply is done, code block and all', pending.length === n + 3 &&
+    body(n + 2).done === true && body(n + 2).text.indexOf('retry. Again. loop') > 0);
+  pending[n + 2].res(taken(false));
+  await sleep(20);
+  la.onended();
+  check('played to the end, the read is over', ends[ends.length - 1] === 'live:true' && live.button.textContent === idle);
+
+  // The speed decides when a long enough first sentence starts: at once when
+  // it arrived fast, and not while the reply trickles in slower than it can
+  // be spoken, unless enough of it is in hand to talk through a slow stretch.
+  var fast = reply(''); fast.onDone = function() {};
+  var sentence = 'The backup finished overnight and every volume verified. ';
+  emit('ui-agent-message-text', {bubble: fast.bubble, text: sentence, done: false});
+  n = pending.length;
+  registered.onclick(fast);
+  await sleep(20);
+  check('a long enough sentence written fast starts at once', pending.length === n + 1 && body(n).text.trim() === sentence.trim());
+  check('saying it follows the reply, when it began, and what the page heard', body(n).live === true &&
+    typeof body(n).after_ms === 'number' && body(n).seen === 1);
+  window.gohortReadAloudStop();
+  var trickle = reply(''); trickle.onDone = function() {};
+  emit('ui-agent-message-text', {bubble: trickle.bubble, text: 'The backup', done: false});
+  n = pending.length;
+  registered.onclick(trickle);
+  await sleep(2600);
+  emit('ui-agent-message-text', {bubble: trickle.bubble, text: sentence + 'It ran', done: false});
+  await sleep(300);
+  check('a reply coming slower than speech is not started on one sentence', pending.length === n);
+  emit('ui-agent-message-text', {bubble: trickle.bubble, text: sentence + sentence + sentence, done: false});
+  await sleep(20);
+  check('but is once enough of it is in hand', pending.length === n + 1);
+  window.gohortReadAloudStop();
+
+  // The last sentence of a reply has nothing after its full stop. Once the
+  // reply has been quiet a moment it is read, not held until the reply is
+  // marked done, which a check of the finished reply can delay for seconds.
+  var ending = reply(''); ending.onDone = function() {};
+  var two = 'The backup finished overnight and every volume verified. Nothing else needs doing tonight.';
+  emit('ui-agent-message-text', {bubble: ending.bubble, text: two, done: false});
+  n = pending.length;
+  registered.onclick(ending);
+  await sleep(20);
+  pending[n].res(opened('/api/speak/end1'));
+  await sleep(20);
+  check('a sentence ending the text waits a moment, in case more is coming', pending.length === n + 1);
+  await sleep(900);
+  check('then is read without waiting for the reply to be done', pending.length === n + 2 &&
+    pending[n + 1].url === '/api/speak/end1' && body(n + 1).text.trim() === 'Nothing else needs doing tonight.' && !body(n + 1).done);
+  window.gohortReadAloudStop();
+
+  // A pause in the reply closes the read where it got to, and what follows
+  // is read next, after it.
+  var slow = reply(''); slow.onDone = function(ended) { ends.push('slow:' + ended); };
+  var sb = slow.bubble;
+  var long = 'This one comes in quickly at first, a full sentence and then some more of it. ';
+  emit('ui-agent-message-text', {bubble: sb, text: long, done: false});
+  n = pending.length;
+  registered.onclick(slow);
+  await sleep(700);
+  pending[n].res(opened('/api/speak/slow1'));
+  await sleep(20);
+  var sa = audios[audios.length - 1];
+  await sleep(3200);
+  check('a reply gone quiet has its read closed', pending.length === n + 2 &&
+    pending[n + 1].url === '/api/speak/slow1' && body(n + 1).done === true);
+  pending[n + 1].res(taken(false));
+  emit('ui-agent-message-text', {bubble: sb, text: long + 'Then it carries on. ', done: false});
+  await sleep(20);
+  check('what follows opens the next read', pending.length === n + 3 && pending[n + 2].url === '/api/speak' &&
+    body(n + 2).text.trim() === 'Then it carries on.');
+  pending[n + 2].res(opened('/api/speak/slow2'));
+  await sleep(20);
+  check('which waits for the first to finish', sa.src === '/api/speak/slow1');
+  sa.onended();
+  check('and plays after it', sa.src === '/api/speak/slow2' && !sa.paused);
+  emit('ui-agent-message-text', {bubble: sb, text: long + 'Then it carries on. ', done: false, struck: true});
+  check('a reply struck while read stops being read', ends[ends.length - 1] === 'slow:false' && sa.paused);
+
+  // Taken back (emptied) stops it too.
+  var gone = reply(''); gone.onDone = function(ended) { ends.push('gone:' + ended); };
+  emit('ui-agent-message-text', {bubble: gone.bubble, text: long, done: false});
+  registered.onclick(gone);
+  emit('ui-agent-message-text', {bubble: gone.bubble, text: '', done: false, replaced: true});
+  check('a reply taken back stops being read', ends[ends.length - 1] === 'gone:false');
   process.exit(fail ? 1 : 0);
 })();
 `
@@ -835,5 +957,123 @@ func TestAJoinedStreamSaysNoLength(t *testing.T) {
 	json.Unmarshal(resp.Body.Bytes(), &start)
 	if body := readAloudDo("GET", start.URL, "alice", "").Body.String(); !strings.Contains(body, "Info") {
 		t.Errorf("a reply in one piece keeps its own length: %q", body[:min(len(body), 80)])
+	}
+}
+
+// openRead starts an open read of first and returns its link.
+func openRead(t *testing.T, user, first string) string {
+	t.Helper()
+	w := readAloudDo("POST", ReadAloudPath, user, `{"open":true,"text":`+strconv.Quote(first)+`}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("start: %d %s", w.Code, w.Body.String())
+	}
+	var start struct{ URL string }
+	json.Unmarshal(w.Body.Bytes(), &start)
+	return start.URL
+}
+
+// addTo sends more of the reply to an open read and reports whether it takes
+// more.
+func addTo(t *testing.T, url, user, body string) bool {
+	t.Helper()
+	w := readAloudDo("POST", url, user, body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("add: %d %s", w.Code, w.Body.String())
+	}
+	var got struct{ Open bool }
+	json.Unmarshal(w.Body.Bytes(), &got)
+	return got.Open
+}
+
+// A reply read while it is still being written: the link plays the first
+// sentence, waits, and plays each sentence the page adds, in order, ending
+// when the page says the reply is done. Before, reading began only once the
+// whole reply had arrived.
+func TestAnOpenReadPlaysTheReplyAsItIsWritten(t *testing.T) {
+	readAloudServer(t)
+	url := openRead(t, "alice", "Here is the plan for tonight.")
+	played := make(chan string, 1)
+	go func() { played <- readAloudDo("GET", url, "alice", "").Body.String() }()
+	if !addTo(t, url, "alice", `{"text":"First we check the logs."}`) {
+		t.Fatal("an open read refused more text")
+	}
+	if !addTo(t, url, "alice", `{"text":"Then we restart **the service**."}`) {
+		t.Fatal("an open read refused more text")
+	}
+	select {
+	case body := <-played:
+		t.Fatalf("the stream ended before the reply was done: %q", body)
+	case <-time.After(150 * time.Millisecond):
+	}
+	if addTo(t, url, "alice", `{"done":true}`) {
+		t.Error("a finished reply still reads as open")
+	}
+	var body string
+	select {
+	case body = <-played:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stream did not end once the reply was done")
+	}
+	body = strings.NewReplacer("][", " ", "[", "", "]", "").Replace(body[strings.Index(body, "["):])
+	if body != "Here is the plan for tonight. First we check the logs. Then we restart the service." {
+		t.Errorf("the stream plays the reply in order, as speech: %q", body)
+	}
+	if addTo(t, url, "alice", `{"text":"Too late."}`) {
+		t.Error("a closed read took more text")
+	}
+}
+
+// Sentences that arrive one at a time before the maker reaches them are made
+// together, so the voice keeps its phrasing across them; a piece the maker has
+// taken is not added to.
+func TestSentencesAddedTogetherAreMadeTogether(t *testing.T) {
+	j := &readAloudJob{open: true}
+	j.cond = sync.NewCond(&j.mu)
+	j.add("One.", false)
+	j.add("Two.", false)
+	if len(j.rest) != 1 || j.rest[0] != "One. Two." {
+		t.Errorf("sentences not yet taken should join one piece: %q", j.rest)
+	}
+	j.next = 1
+	j.add("Three.", false)
+	if len(j.rest) != 2 || j.rest[1] != "Three." {
+		t.Errorf("a piece the maker took must not grow: %q", j.rest)
+	}
+}
+
+// An open read is its owner's to add to, and one nobody adds to closes itself,
+// so a page that went away does not hold a stream open: the player plays out
+// what it had and ends.
+func TestAnOpenReadIsOwnedAndClosesWhenLeft(t *testing.T) {
+	readAloudServer(t)
+	prev := readAloudOpenIdle
+	readAloudOpenIdle = 100 * time.Millisecond
+	t.Cleanup(func() { readAloudOpenIdle = prev })
+	url := openRead(t, "alice", "Here is the plan for tonight.")
+	if w := readAloudDo("POST", url, "bob", `{"text":"Not yours."}`); w.Code != http.StatusNotFound {
+		t.Errorf("another user added to the read: %d", w.Code)
+	}
+	done := make(chan string, 1)
+	go func() { done <- readAloudDo("GET", url, "alice", "").Body.String() }()
+	select {
+	case body := <-done:
+		if !strings.Contains(body, "[Here is the plan for tonight.]") || strings.Contains(body, "Not yours") {
+			t.Errorf("the stream plays what it had and nothing else: %q", body)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("an open read left alone never closed")
+	}
+}
+
+// An open read is held to the same length as any other: what passes it is cut
+// at a sentence and the read closes.
+func TestAnOpenReadIsBounded(t *testing.T) {
+	j := &readAloudJob{open: true, chars: readAloudMaxChars - 20}
+	j.cond = sync.NewCond(&j.mu)
+	if j.add("Short one. "+strings.Repeat("And a long tail that does not fit. ", 5), false) {
+		t.Error("a read past its length still takes more")
+	}
+	if got := strings.Join(j.rest, " "); got != "Short one." {
+		t.Errorf("the overflow should be cut at a sentence: %q", got)
 	}
 }

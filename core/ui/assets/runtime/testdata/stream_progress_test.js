@@ -231,6 +231,7 @@ eval(lift(panel, 'function streamingText(', 'streamingText'));
 eval(lift(panel, 'function revealFor(', 'revealFor'));
 eval(lift(panel, 'function showStreaming(', 'showStreaming'));
 eval(lift(panel, 'function showVisible(', 'showVisible'));
+eval(lift(panel, 'function announceText(', 'announceText'));
 eval(lift(panel, 'function appendChunk(', 'appendChunk'));
 eval(lift(panel, 'function replaceChunk(', 'replaceChunk'));
 var removed = [];

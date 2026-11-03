@@ -328,7 +328,8 @@ func dictationFileName(contentType string) string {
 // (press it to cancel), and lands in the input box. It stops itself at five
 // minutes. A recording whose writing-out failed in a way a retry could fix
 // is kept, so the next press sends it again rather than recording anew,
-// with a ✕ beside the mic to discard it. With read-aloud on (below) it is
+// with a ✕ beside the mic to discard it. While recording, the same ✕ throws
+// the recording away and sends nothing. With read-aloud on (below) it is
 // then sent at once, hands-free; with it off it waits in the box to be read
 // over and sent.
 //
@@ -464,12 +465,24 @@ const dictationJS = `(function(){
     try { meter.source.disconnect(); } catch (e) {}
     meter = null;
   }
+  // afterPaint runs fn once the button has been redrawn. Letting go of the
+  // microphone can take WebKit a moment, and done in the press itself it
+  // held the redraw back, so the button sat as it was after it was pressed.
+  function afterPaint(fn) {
+    var later = function() { setTimeout(fn, 0); };
+    if (window.requestAnimationFrame) window.requestAnimationFrame(later); else later();
+  }
+  function letGoOf(s) {
+    if (s) afterPaint(function() { s.getTracks().forEach(function(t) { t.stop(); }); });
+  }
   function release() {
     stopMeter();
     if (timer) { clearInterval(timer); timer = null; }
     if (cutoff) { clearTimeout(cutoff); cutoff = null; }
-    if (stream) { stream.getTracks().forEach(function(t) { t.stop(); }); stream = null; }
+    letGoOf(stream);
+    stream = null;
     rec = null; ctl = null;
+    if (!held && discard) discard.button.style.display = 'none';
   }
   function idle(ctx) { release(); state = 'idle'; show(ctx, micGlyph, 'Dictate'); }
   function failed(ctx, why) {
@@ -491,9 +504,12 @@ const dictationJS = `(function(){
     held = null;
     if (discard) discard.button.style.display = 'none';
   }
-  // letGo discards a held recording, stopping a resend of it in flight,
-  // and puts the mic back to recording anew.
+  // letGo is the ✕: while recording it throws the recording away and sends
+  // nothing, whatever the level meter made of it; otherwise it discards a
+  // held recording, stopping a resend of it in flight, and puts the mic back
+  // to recording anew.
   function letGo() {
+    if (state === 'recording' && micCtx) { discardRecording(micCtx); return; }
     if (!held) return;
     if (state === 'sending' && ctl) ctl.abort();
     drop();
@@ -556,6 +572,8 @@ const dictationJS = `(function(){
       var secs = Math.floor((Date.now() - started) / 1000);
       ctx.button.textContent = stopGlyph + ' ' + clock(secs);
     }, 250);
+    // The ✕ beside it throws the recording away.
+    if (discard) discard.button.style.display = '';
     cutoff = setTimeout(function() { stopRecording(ctx); }, maxMs);
     listen(ctx, s);
   }
@@ -618,13 +636,29 @@ const dictationJS = `(function(){
   // nothing to write out, so nothing is sent, and the mic says so. A silent
   // clip sent anyway came back as words the transcriber made up.
   function cancelRecording(ctx) {
+    endUnsent(ctx, 'Nothing was heard, so nothing was sent. Press to dictate');
+  }
+
+  // discardRecording is the ✕ pressed while recording: the person changed
+  // their mind, so nothing is sent. A press on the mic could not say that
+  // when the level meter had nothing to go on (a web view's that reads all
+  // zeros): it sent the recording to be written out, and the spinner and the
+  // upload were the wait before it came back with nothing heard.
+  function discardRecording(ctx) {
+    endUnsent(ctx, 'Recording discarded, nothing was sent. Press to dictate');
+  }
+
+  // endUnsent ends a recording without sending it: the button first, the
+  // recorder after the redraw. The recorder's own stop then finds the state
+  // idle and sends nothing.
+  function endUnsent(ctx, title) {
     var r = rec;
     state = 'idle';
     pressed(ctx, false);
     tone(false);
-    if (r) r.stop();
     idle(ctx);
-    ctx.button.title = 'Nothing was heard, so nothing was sent. Press to dictate';
+    ctx.button.title = title;
+    if (r) afterPaint(function() { try { r.stop(); } catch (e) {} });
   }
 
   function stopRecording(ctx) {
@@ -638,9 +672,11 @@ const dictationJS = `(function(){
     if (timer) { clearInterval(timer); timer = null; }
     if (cutoff) { clearTimeout(cutoff); cutoff = null; }
     writing(ctx);
+    if (!held && discard) discard.button.style.display = 'none';
     var r = rec;
-    r.stop();
-    if (stream) { stream.getTracks().forEach(function(t) { t.stop(); }); stream = null; }
+    afterPaint(function() { try { r.stop(); } catch (e) {} });
+    letGoOf(stream);
+    stream = null;
   }
 
   // writing spins the button while a recording is written out, from the
@@ -743,7 +779,13 @@ const dictationJS = `(function(){
     var m = readQueue.shift();
     var btn = m.bubble && m.bubble.querySelector ? m.bubble.querySelector('button[title="Read aloud"]') : null;
     reading = true;
-    window.gohortReadAloud({bubble: m.bubble, getText: function() { return m.text; },
+    // A reply queued while it was being written is read from its text as it
+    // is now: followed, if it is still coming (read aloud's follow).
+    window.gohortReadAloud({bubble: m.bubble, getText: function() {
+        if (m.text != null) return m.text;
+        var now = m.bubble && m.bubble.__gohortText;
+        return now ? now.text : '';
+      },
       agentId: window.GOHORT_AGENT_ID || '', audio: player, button: btn,
       onDone: function(ended) {
         reading = false;
@@ -774,6 +816,16 @@ const dictationJS = `(function(){
     readLater(d.bubble, m.content);
   });
   window.addEventListener('ui-agent-turn-done', function() { awaiting = false; });
+  // A reply to a dictated message is queued for reading the moment it starts
+  // being written, not once it is finished: read aloud follows it as it
+  // comes, so a long answer starts playing at its first sentence.
+  window.addEventListener('ui-agent-message-text', function(e) {
+    var d = e && e.detail;
+    if (!awaiting || !d || d.replay || !d.bubble || d.bubble.__gohortQueued) return;
+    if (!String(d.text || '').trim()) return;
+    d.bubble.__gohortQueued = true;
+    readLater(d.bubble, null);
+  });
 
   function showSpeaker(ctx) {
     var on = readRepliesAloud();
@@ -785,6 +837,7 @@ const dictationJS = `(function(){
     if (!window.uiRegisterComposerAction || !window.uiRegisterMessageDecorator) { setTimeout(register, 50); return; }
     window.uiRegisterMessageDecorator(function(m) {
       if (!awaiting || !m || m.role !== 'assistant' || !String(m.rawText || '').trim()) return;
+      if (m.wrap && m.wrap.__gohortQueued) return; // queued while it was written
       readLater(m.wrap, m.rawText);
     });
     // First in the row, the mic then its switch: the button most reached for

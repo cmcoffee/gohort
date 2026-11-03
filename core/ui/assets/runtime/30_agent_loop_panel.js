@@ -3644,6 +3644,7 @@
       if (!m || !m.bubble) return;
       m.bubble.classList.add('ui-agent-msg-struck');
       m.struck = reason || '';
+      if (reason) announceText(m, id, {struck: true});
       var line = m.bubble.querySelector(':scope > .ui-agent-msg-struck-reason');
       if (!reason) {
         if (line) line.remove();
@@ -4545,6 +4546,25 @@
       scrollConvo(false);
     }
 
+    // announceText tells whoever listens what a reply's text is now, as it
+    // grows, is replaced, finishes, or is struck: something that follows a
+    // reply while it is written (reading it aloud, say) needs more than the
+    // finished message the decorators see. Generic: it says what happened to
+    // the text and leaves what to do about it to the listener. replay marks
+    // events a page replays on arriving mid-run, which a listener may not
+    // want to act on as if they were new.
+    function announceText(m, id, what) {
+      if (!m || m.role !== 'assistant') return;
+      what = what || {};
+      try {
+        window.dispatchEvent(new CustomEvent('ui-agent-message-text', {detail: {
+          id: id, bubble: m.bubble, text: m.rawText || '',
+          done: !!what.done, replaced: !!what.replaced, struck: !!what.struck,
+          replay: replayWindow.active(),
+        }}));
+      } catch (e) {}
+    }
+
     function appendChunk(id, text) {
       var m = msgEls[id];
       if (!m) { m = addMessage('assistant', id, ''); }
@@ -4553,6 +4573,7 @@
       // not be on screen for the length of the stream. rawText keeps the
       // original for the final markdown pass.
       showStreaming(m);
+      announceText(m, id);
     }
 
     // A replace is shown as it is, at once: it is a correction, not more of
@@ -4563,6 +4584,7 @@
       m.rawText = text || '';
       revealFor(m).jump(m.rawText);
       showVisible(m, m.rawText);
+      announceText(m, id, {replaced: true});
     }
 
     function finalizeMessage(id) {
@@ -4614,6 +4636,7 @@
           });
         } catch (_) {}
       }
+      announceText(m, id, {done: true});
       // Tell a host surface (e.g. a WorkbenchPanel) a reply finalized — its
       // co-author tool may have written into the open document. Idempotent.
       try { window.dispatchEvent(new CustomEvent('ui-chat-round-done')); } catch (e) {}

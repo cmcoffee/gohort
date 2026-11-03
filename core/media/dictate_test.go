@@ -372,8 +372,16 @@ const dictationFlow = `
   recs = recorders.length;
   mic.onclick(mic); await sleep(10);
   check('so the next press records anew', recorders.length === recs + 1);
+  check('and the ✕ is there while it records', discard.button.style.display === '');
+  var sentBefore = pending.length, stoppedBefore = tracksStopped;
   discard.onclick(discard);
-  check('a ✕ with nothing held does nothing', mic.button.textContent.indexOf('⏹') === 0);
+  check('✕ while recording throws it away at once', mic.button.textContent === '🎤' && mic.button.title.indexOf('discarded') >= 0 &&
+    discard.button.style.display === 'none');
+  check('the button first, the recorder after', !recorders[recorders.length - 1].stopped);
+  await sleep(20);
+  check('sends nothing, and lets the microphone go', pending.length === sentBefore && tracksStopped > stoppedBefore &&
+    recorders[recorders.length - 1].stopped);
+  mic.onclick(mic); await sleep(10);
   mic.onclick(mic); await sleep(10);
   pending[11].res(refused(500, 'busy'));
   await sleep(10);
@@ -411,6 +419,9 @@ const dictationFlow = `
   var sent = pending.length;
   mic.onclick(mic);
   check('Stop spins at once, before the browser hands the audio over', /^[⠀-⣿]/.test(mic.button.textContent) && pending.length === sent);
+  // The recorder is stopped once the button has been redrawn.
+  check('and the recorder is not stopped until the button is redrawn', !recorders[recorders.length - 1].stopped);
+  await sleep(5);
   handOver(); await sleep(10);
   check('and sends it once it does', pending.length === sent + 1 && /^[⠀-⣿]/.test(mic.button.textContent));
   pending[sent].res(written('ok'));
@@ -801,4 +812,45 @@ func TestDictationNamesTheAgentToTheTranscriber(t *testing.T) {
 	if NamesPrompt() != "" || NamesPrompt(" ", "") != "" {
 		t.Error("no names is no prompt")
 	}
+}
+
+// dictationLiveReply is a dictated message whose reply is still being written:
+// it is queued the moment its text starts, read from its text as it is then,
+// and not queued a second time when it is finished.
+const dictationLiveReply = `
+eval(dictationJS);
+(async function() {
+  await sleep(10);
+  mic = actions[0];
+  var skew = 0, realNow = Date.now;
+  Date.now = function() { return realNow() + skew; };
+  mic.onclick(mic); await sleep(10); skew += 1000; mic.onclick(mic); await sleep(10);
+  pending[0].res(written('What happened overnight?'));
+  await sleep(10);
+  fire('ui-agent-sent');
+  var growing = {querySelector: function() { return null; }};
+  fire('ui-agent-message-text', {bubble: growing, text: '', done: false});
+  await sleep(5);
+  check('a reply with no text yet is not queued', readCalls.length === 0);
+  fire('ui-agent-message-text', {bubble: growing, text: 'Two things hap', done: false});
+  growing.__gohortText = {text: 'Two things happened.', done: false};
+  await sleep(5);
+  check('a reply is queued as its text starts', readCalls.length === 1 && readCalls[0].bubble === growing);
+  check('and read from its text as it is then', readCalls[0].getText() === 'Two things happened.');
+  decorators.forEach(function(d) { d({role: 'assistant', rawText: 'Two things happened.', wrap: growing}); });
+  readCalls[0].onDone(true);
+  await sleep(5);
+  check('finishing it does not queue it again', readCalls.length === 1);
+  var replayed = {querySelector: function() { return null; }};
+  fire('ui-agent-message-text', {bubble: replayed, text: 'From before.', done: false, replay: true});
+  await sleep(5);
+  check('a replayed reply is not read as new', readCalls.length === 1);
+  process.exit(fail ? 1 : 0);
+})();
+`
+
+// A reply to a dictated message is read while it is being written, not once
+// it is finished: queued as its first text arrives.
+func TestADictatedReplyIsQueuedAsItStarts(t *testing.T) {
+	runDictationHarness(t, dictationNode(t), dictationSetup+dictationLiveReply)
 }
