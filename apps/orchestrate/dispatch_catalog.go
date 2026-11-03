@@ -32,6 +32,11 @@ import (
 // still tools this run has. The run's dynamic feed and fallback resolver
 // (lazyToolFallback) surface one once it is loaded, or called by name.
 func (t *chatTurn) finalizeDispatchCatalog(sess *ToolSession, tools []AgentToolDef) []AgentToolDef {
+	// The consultant and hybrid levels on everything an agent does, not only
+	// its chat page: a channel message, a schedule, a task, a dispatch.
+	if t.consultsLead() {
+		tools = append(tools, consultTool(t))
+	}
 	tools = t.applyGuardrailToolWithholding(tools)
 	for i := range tools {
 		if !t.activityWrapped[tools[i].Tool.Name] {

@@ -1081,6 +1081,7 @@ func (fr *fireRun) runLoop() {
 		// The lead's review of a turn that did work, when this agent asks for one
 		// (lead_review.go).
 		TurnReview: fr.subTurn.leadReviewer(fr.ctx),
+		Consult:    fr.subTurn.leadConsult(),
 		// What goes out with the reply, the finished picture a task wake
 		// carries included. Unset, the judge read every wake as delivering
 		// nothing: "There it is: the tagged version" went out WITH the picture

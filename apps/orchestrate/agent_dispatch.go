@@ -25,6 +25,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -1186,6 +1187,7 @@ func (sd *syncDispatch) configureLoop() {
 		// The lead's review of a turn that did work, when this agent asks for one
 		// (lead_review.go).
 		TurnReview:   sd.subTurn.leadReviewer(sd.ctx),
+		Consult:      sd.subTurn.leadConsult(),
 		PriorReports: func() []string { return dispatchPriorReports(sd.target, sd.subSessID, sd.runtimeDB) },
 		FinishCheck:  sd.buildCheck.finishCheck(),
 		FinishUnmet:  sd.buildCheck.finishUnmet(),
@@ -2115,6 +2117,9 @@ func (cr *continuingRun) loadThread() {
 		cr.priorSession.AgentID = cr.target.ID
 		cr.priorSession.Created = time.Now()
 	}
+	// The thread, for a consult's context: this run has no session of its
+	// own on the turn, and the consultant otherwise saw the question alone.
+	cr.subTurn.convo = append(slices.Clone(cr.priorSession.Messages), ChatMessage{Role: "user", Content: cr.message})
 	// Name a fresh, untitled session from the caller (channel rooms pass the
 	// contact's display name), so the rail labels it by conversation partner.
 	if cr.priorSession.Title == "" && run.Title != "" {
@@ -2350,6 +2355,10 @@ func (cr *continuingRun) configureLoop() {
 		// Custom-tool resolution, same as the web runPlan (see RunAgentSync).
 		ToolFallbackResolver: cr.subTurn.lazyToolDef,
 		DynamicTools:         cr.subTurn.dynamicNewTempTools(cr.subSess),
+		// The lead beside the worker on a channel message too, on the
+		// consultant and hybrid levels (lead_review.go, consult.go).
+		TurnReview: cr.subTurn.leadReviewer(cr.ctx),
+		Consult:    cr.subTurn.leadConsult(),
 		// InjectionDrain (not OnRoundStart): the queue-drain closure
 		// returns nil when empty, so the loop's pre-finalize re-call
 		// terminates. A mid-flight note pushed while this dispatch runs

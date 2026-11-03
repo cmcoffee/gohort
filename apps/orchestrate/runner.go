@@ -2369,7 +2369,8 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		// One-shot advice for the failure-shape guard: three hits on one wall
 		// means the arguments aren't what's wrong, so ask a model that can
 		// ANSWER instead of nudging the one that's stuck. See consult.go.
-		Consult: t.consult,
+		// Only on the levels that work with the lead (leadConsult).
+		Consult: t.leadConsult(),
 		// Settle the rejected round's streamed bubble before a correction
 		// re-prompts, so the retry opens a fresh bubble instead of
 		// concatenating into an orphaned one (the double-emit fix).

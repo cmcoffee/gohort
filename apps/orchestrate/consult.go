@@ -105,6 +105,23 @@ func consultTool(t *chatTurn) AgentToolDef {
 	}
 }
 
+// leadConsult is the failure guard's consult hook, or nil when this turn's
+// agent does not work with the lead beside the worker (consultant or hybrid)
+// or the turn may not reach it. It was wired for every agent, so a Worker
+// only agent that hit one failure three times still sent it to the lead.
+func (t *chatTurn) leadConsult() func(question, evidence string) (string, error) {
+	if !t.consultsLead() {
+		return nil
+	}
+	return t.consult
+}
+
+// consultsLead reports whether this turn may ask the lead: its agent is a
+// consultant or a hybrid, the worker drives, and the turn may reach the lead.
+func (t *chatTurn) consultsLead() bool {
+	return t != nil && t.app != nil && leadAsks(RootDB, t.agent) && !t.agent.LeadModel && t.leadPermitted()
+}
+
 // consult runs the one-shot advice call. Shared by the consult tool and the
 // agent loop's failure-shape guard (wired through AgentLoopConfig.Consult), so
 // both surfaces send the same shape of request and obey the same per-turn cap.
@@ -187,10 +204,13 @@ func (t *chatTurn) consult(question, evidence string) (string, error) {
 // message clipped. Empty where the turn has no conversation (the automatic
 // consult on a failure, from a run with no session).
 func (t *chatTurn) consultContext() string {
-	if t.session == nil || len(t.session.Messages) == 0 {
+	msgs := t.convo
+	if t.session != nil {
+		msgs = t.session.Messages
+	}
+	if len(msgs) == 0 {
 		return ""
 	}
-	msgs := t.session.Messages
 	if len(msgs) > consultContextMessages {
 		msgs = msgs[len(msgs)-consultContextMessages:]
 	}

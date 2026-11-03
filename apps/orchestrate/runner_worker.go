@@ -525,7 +525,8 @@ func (ws *workerStep) runLoop() bool {
 		// One-shot advice for the failure-shape guard: three hits on one wall
 		// means the arguments aren't what's wrong, so ask a model that can
 		// ANSWER instead of nudging the one that's stuck. See consult.go.
-		Consult: t.consult,
+		// Only on the levels that work with the lead (leadConsult).
+		Consult: t.leadConsult(),
 		// OnStep feeds telemetry — rounds, tool calls, dup-args
 		// fingerprints. Summary log fires from the deferred block at
 		// the top of runWorkerStep.

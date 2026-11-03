@@ -374,6 +374,9 @@ type chatTurn struct {
 	spokenReply      bool     // per-turn: the page will read the reply aloud (spokenReplyNote)
 	dictated         bool     // per-turn: the message was written out from speech (dictatedNote)
 	userImages       [][]byte // decoded image attachments from the chat panel; attached to the orchestrator's last user message
+	// convo is the conversation a run with no session of its own answers in
+	// (a channel message's thread), for the consultant's context.
+	convo []ChatMessage
 	// fromDesktopClient is true when THIS request came from the gohort-desktop
 	// viewer (its proxy stamped the bridge key). Gates RUNNING the
 	// from_client_* tools, so local-machine capabilities are reachable only

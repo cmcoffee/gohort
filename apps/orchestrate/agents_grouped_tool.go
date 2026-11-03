@@ -1758,6 +1758,7 @@ func (ar *agentsRun) configureLoop() {
 		// The lead's review of a turn that did work, when this agent asks for one
 		// (lead_review.go).
 		TurnReview:         ar.subTurn.leadReviewer(ar.ctx),
+		Consult:            ar.subTurn.leadConsult(),
 		TurnGroundingJudge: t.app.turnGroundingJudge(ar.ctx),
 		OnWait:             t.waitNotice(ar.target.Name),
 		ChatOptions: []ChatOption{
