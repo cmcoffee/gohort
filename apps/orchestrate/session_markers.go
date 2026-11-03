@@ -71,7 +71,7 @@ func sessionMarkerReportID(agentID, sessionID string) string {
 
 // sessionLink opens the session in the chat page.
 func sessionLink(agentID, sessionID string) string {
-	return "/orchestrate/?agent=" + url.QueryEscape(agentID) + "&session=" + url.QueryEscape(sessionID)
+	return orchPath("?agent=") + url.QueryEscape(agentID) + "&session=" + url.QueryEscape(sessionID)
 }
 
 // sessionRecallOn reports whether an agent has session recall: its own

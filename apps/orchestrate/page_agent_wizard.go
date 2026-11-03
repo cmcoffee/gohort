@@ -141,10 +141,10 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 				Help:   "One question: companion or tool?",
 				Detail: "An Assistant talks with people, whether you, a room or a contact, keeps a standing mind, and remembers who it talks to.\n\nA Specialist is built for one job: a research agent with an intake form, a report generator. You use it directly, or other agents dispatch to it, and it remembers lessons rather than people.\n\nThe Memory step adjusts either."},
 			{Field: "name", Type: "text", Label: "Name", Required: true,
-				Placeholder: "Research helper", SuggestURL: "../api/agents/suggest"},
+				Placeholder: "Research helper", SuggestURL: orchPath("api/agents/suggest")},
 			{Field: "description", Type: "text", Label: "Description",
 				Placeholder: "One sentence on what this agent is for. Leave blank to have it written for you.",
-				SuggestURL:  "../api/agents/suggest"},
+				SuggestURL:  orchPath("api/agents/suggest")},
 		},
 	}
 	if kindPreset == "" && len(wizardTemplates()) > 0 {
@@ -456,11 +456,11 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 			Intro: "Last thing. Give it a name, or take one of the suggestions, which are drawn from everything you just said.",
 			Fields: []ui.FormField{
 				{Field: "name", Type: "text", Label: "Name", Required: true,
-					Placeholder: "e.g. Jarvis, Ada, Scout", SuggestURL: "../api/agents/suggest",
+					Placeholder: "e.g. Jarvis, Ada, Scout", SuggestURL: orchPath("api/agents/suggest"),
 					SuggestOnOpen: true},
 				{Field: "description", Type: "text", Label: "One line about it (optional)",
 					Placeholder: "Leave blank and it will write its own.",
-					SuggestURL:  "../api/agents/suggest"},
+					SuggestURL:  orchPath("api/agents/suggest")},
 			},
 		}
 		steps = []ui.FormStep{welcome, personaStep, purposeStep, aboutStep, nameStep, createStep}
@@ -493,7 +493,7 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 			Title:    sectionTitle,
 			Subtitle: sectionSub,
 			Body: ui.FormPanel{
-				PostURL:        "../api/agents/wizard",
+				PostURL:        orchPath("api/agents/wizard"),
 				Method:         "POST",
 				SubmitLabel:    "Create agent",
 				RedirectURL:    redirectURL,
@@ -1115,15 +1115,14 @@ func wizardDescribeHTML() string {
             var inps=out.querySelectorAll('input[data-ask]');
             for(var i=0;i<inps.length;i++){ answers[parseInt(inps[i].dataset.ask,10)]=inps[i].value||''; }
             create.disabled=true; create.textContent='Creating…';
-            fetch('../api/agents/wizard',{method:'POST',headers:{'Content-Type':'application/json'},
+            fetch(` + jsString(orchPath("api/agents/wizard")) + `,{method:'POST',headers:{'Content-Type':'application/json'},
               body:JSON.stringify({shape:d.shape,name:(nameInp.value||d.name),purpose:request,answers:answers})})
               .then(function(r){ if(!r.ok) return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));}); return r.json(); })
-              // Relative to THIS page, /orchestrate/agent/wizard, the same
-              // way the guided form's RedirectURL "{id}" is: a bare id lands
-              // on /orchestrate/agent/<id>. It said agent/<id>, which is
-              // /orchestrate/agent/agent/<id> from here, so the agent was
+              // The new agent's page, from the app's mount path (links.go).
+              // Written relative it once said agent/<id>, which is
+              // /orchestrate/agent/agent/<id> from this page, so the agent was
               // created and the page it opened on was a 404.
-              .then(function(rec){ window.location.href=encodeURIComponent(rec.id); })
+              .then(function(rec){ window.location.href=` + jsString(orchPath("agent/")) + `+encodeURIComponent(rec.id); })
               .catch(function(e){
                 create.disabled=false; create.textContent='Create it';
                 out.appendChild(el('p',{class:'wd-hint',text:'Could not create it: '+((e&&e.message)||e)}));
@@ -1137,7 +1136,7 @@ func wizardDescribeHTML() string {
           var req=(input.value||'').trim();
           if(!req) return;
           go.disabled=true; go.textContent='Looking…';
-          fetch('../api/agents/propose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request:req})})
+          fetch(` + jsString(orchPath("api/agents/propose")) + `,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request:req})})
             .then(function(r){ if(!r.ok) return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));}); return r.json(); })
             .then(function(d){ renderProposal(d,req); })
             .catch(function(e){ out.innerHTML=''; out.appendChild(el('p',{class:'wd-hint',text:'Could not look: '+((e&&e.message)||e)})); })

@@ -149,14 +149,14 @@ func TestAssistDialogHTML(t *testing.T) {
 	got := agentAssistHTML("agent-123")
 
 	for _, want := range []string{
-		"../api/agents/'+id+'/assist", // ask
-		"../api/agents/'+id",          // apply, via the PATCH allowlist
+		`"/orchestrate/api/agents/"+id+'/assist'`, // ask
+		`"/orchestrate/api/agents/"+id`,           // apply, via the PATCH allowlist
 		"'PATCH'",
 		"window.uiOpenModal", // THE modal, not a hand-rolled overlay
 		// The shared conversation pane and its client: the spinner, Stop
 		// and web lookups every ✨ has, not a conversation of its own.
 		"window.uiAssistChat({",
-		"send:window.uiAssistPost('../api/agents/'+id+'/assist'),",
+		`send:window.uiAssistPost("/orchestrate/api/agents/"+id+'/assist'),`,
 		"web:true,",
 		"onResult:function(res){",
 		"agent-123",

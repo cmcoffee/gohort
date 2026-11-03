@@ -120,7 +120,7 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 				// distinction: empty means it cannot be stopped from here.
 				cancelURL := ""
 				if s.Cancellable {
-					cancelURL = "/orchestrate/api/runs/" + url.PathEscape(s.ID) + "/cancel"
+					cancelURL = orchPath("api/runs/") + url.PathEscape(s.ID) + "/cancel"
 				}
 				out = append(out, LiveEntry{
 					ID: s.ID, Label: runIndentPrefix(s.Depth) + label, App: name, Status: status,

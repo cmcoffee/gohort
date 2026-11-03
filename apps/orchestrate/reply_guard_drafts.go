@@ -481,11 +481,11 @@ func (T *OrchestrateApp) handleAuthoredGuards(c *jsonapi.Call) (any, error) {
 }
 
 func init() {
-	sections.RegisterAdminSection(sections.AdminSectionEntry{App: "/orchestrate", Section: draftedGuardsSection(), Head: draftedGuardsHead})
+	sections.RegisterAdminSection(sections.AdminSectionEntry{App: "/orchestrate", Section: draftedGuardsSection(), Head: orchJS(draftedGuardsHead)})
 }
 
 func draftedGuardsSection() ui.Section {
-	const api = "/orchestrate/api/console/reply-guards/authored"
+	api := orchPath("api/console/reply-guards/authored")
 	act := func(action, label, variant, onlyIf, confirm string) ui.RowAction {
 		return ui.RowAction{Type: "button", Label: label, Variant: variant, Compact: true, OnlyIf: onlyIf, Confirm: confirm,
 			PostTo: api + "/act?id={id}&action=" + action}
@@ -558,7 +558,7 @@ const draftedGuardsHead = `<script>
           var note = ta.value.trim();
           if (!note) { ta.focus(); return; }
           go.disabled = true;
-          fetch('/orchestrate/api/console/reply-guards/authored/act?id=' + encodeURIComponent(rec.id) + '&action=redraft', {
+          fetch(ORCH_BASE + '/api/console/reply-guards/authored/act?id=' + encodeURIComponent(rec.id) + '&action=redraft', {
             method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({note: note})
           }).then(function(r) { return r.text().then(function(t) { if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); }); })
@@ -617,7 +617,7 @@ const draftedGuardsHead = `<script>
         var go = el('button', {class: 'ui-row-btn primary', text: 'Save'});
         go.addEventListener('click', function() {
           go.disabled = true;
-          fetch('/orchestrate/api/console/reply-guards/setting?id=' + encodeURIComponent(rec._id), {
+          fetch(ORCH_BASE + '/api/console/reply-guards/setting?id=' + encodeURIComponent(rec._id), {
             method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({retries: parseInt(sel.value, 10) || 0, note: ta ? ta.value : '', checks: cj ? cj.value : ''})
           }).then(function(r) { return r.text().then(function(t) { if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); }); })

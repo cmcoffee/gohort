@@ -218,7 +218,7 @@ func (ed *agentEditor) load() {
 	// would honor is a control that reads as broken.
 	ed.leadModelLocked = false
 	if id != "" {
-		ed.source = "../api/agents/" + id
+		ed.source = orchPath("api/agents/") + id
 		ed.title = "Edit agent"
 		// Agents live in the user's per-user DB (udb), NOT the global
 		// T.DB — reading from the wrong store leaves OwnedBy empty and
@@ -262,9 +262,9 @@ func (ed *agentEditor) formFields() {
 		{Type: "header", Label: "Identity",
 			Help: "Name + short description shown in the agent picker."},
 		{Field: "name", Type: "text", Label: "Name", Placeholder: "Research helper",
-			SuggestURL: "../api/agents/suggest"},
+			SuggestURL: orchPath("api/agents/suggest")},
 		{Field: "description", Type: "text", Label: "Description", Placeholder: "What this agent is for.",
-			SuggestURL: "../api/agents/suggest"},
+			SuggestURL: orchPath("api/agents/suggest")},
 		{Field: "triggers", Type: "tags", Label: "Dispatch triggers (optional)",
 			Help:   "Words in a message that push this agent to the front of the queue that turn.",
 			Detail: "A pattern with * or ? matches attachment filenames; anything else is a case-insensitive substring of the message. It is a per-turn hint, stronger than the description alone for domains the host already has priors in (law, medicine, finance).\n\nAuthor SPECIFIC patterns the domain's questions actually contain. A criminal-law agent wants \"penal code\", \"PC \", \"felony\", \"misdemeanor\", \"charged with\". Loose ones over-fire and get tuned out. Empty means no per-turn nudge; the agent is still in the catalog."},
@@ -277,7 +277,7 @@ func (ed *agentEditor) formFields() {
 		{Field: "orchestrator_prompt", Type: "sections", Label: "Orchestrator prompt", Rows: 12,
 			Help:       "Voice, decomposition style, and synthesis approach.",
 			Detail:     "The orchestrator also briefs the worker per step, so spell out how to handle this agent's common failure modes: ambiguous matches, empty results, conflicting sources. Defaults rarely fit.",
-			SuggestURL: "../api/agents/suggest",
+			SuggestURL: orchPath("api/agents/suggest"),
 			AssistPrompt: "You are writing the system prompt for an AI agent, which the user will run. " +
 				"Write in the second person, addressing the agent directly (\"You are…\", \"When a request is ambiguous, ask…\"). " +
 				"Be concrete about behavior rather than aspirational about quality: \"cite the URL you read it from\" beats \"be accurate\". " +
@@ -291,7 +291,7 @@ func (ed *agentEditor) formFields() {
 			Sections:          orchestratorPromptSections},
 		{Field: "plan_guidance", Type: "textarea", Label: "Plan guidance", Rows: 3,
 			Help:       "Optional. Appended to the orchestrator prompt: nudges decomposition style.",
-			SuggestURL: "../api/agents/suggest"},
+			SuggestURL: orchPath("api/agents/suggest")},
 		// No machine picker here. A machine is assigned from its own page
 		// (Extensions, Machines: "Assign to agents") or the chat's Configure
 		// menu. Listed on every agent, the picker offered each one every
@@ -464,7 +464,7 @@ func (ed *agentEditor) formFields() {
 				Help:        "Optional. A form shown instead of the text input on the first turn of a new session.",
 				Detail:      "Submitting packs the values into a markdown user message and uploads any file fields as attachments. PDFs and DOCX get text-extracted server-side, images go to vision. Leave it blank for a normal chat-first agent.\n\nFormat: a JSON array of {name, label, type, placeholder, help, required, options}. type is \"text\" (the default), \"textarea\", \"select\" (single-choice dropdown), \"checklist\" (multi-pick checkboxes, whose selected values get comma-joined into the packed markdown), \"number\", \"file\", or \"button\" (self-submitting). options is an array of strings, used by select, checklist and button.",
 				Placeholder: "[\n  {\"name\": \"company\", \"label\": \"Company name\", \"type\": \"text\", \"required\": true},\n  {\"name\": \"audience\", \"label\": \"Target audience\", \"type\": \"textarea\"},\n  {\"name\": \"deadline\", \"label\": \"Deadline\", \"type\": \"select\", \"options\": [\"This week\", \"This month\", \"No rush\"]},\n  {\"name\": \"topics\", \"label\": \"Topics of interest\", \"type\": \"checklist\", \"options\": [\"AI\", \"Healthcare\", \"Finance\", \"Education\"]}\n]",
-				SuggestURL:  "../api/agents/suggest"},
+				SuggestURL:  orchPath("api/agents/suggest")},
 		)
 	}
 	// (Sub-agent surface has no extra toggles — memory / publishing / intake are
@@ -510,7 +510,7 @@ func (ed *agentEditor) mainSection() {
 		Body: ui.FormPanel{
 			Assist:         true,
 			Source:         ed.source,
-			PostURL:        "../api/agents",
+			PostURL:        orchPath("api/agents"),
 			Method:         "POST",
 			SubmitLabel:    "Save agent",
 			RedirectURL:    ed.redirectURL,
@@ -579,7 +579,7 @@ func (ed *agentEditor) picturesSection() {
 			Subtitle: "Every picture this agent has kept for reuse. Look at them.",
 			Detail:   "A name, a caption and an origin can all be confidently wrong together, and only the picture settles it.\n\n\"Unrecorded\" origin means nobody captured where it came from. It may be something the agent made, so do not trust it as a likeness until you have looked.\n\nForget what should not be here, and label anyone the agent has not identified, so a request naming them finds the right face. If two rows show the same person, both are flagged: the agent will pick one and you will not know which, so forget whichever is wrong.",
 			Body: ui.Table{
-				Source:    "../api/agent-images?id=" + id,
+				Source:    orchPath("api/agent-images?id=") + id,
 				RowKey:    "name",
 				EmptyText: "This agent hasn't kept any pictures yet.",
 				Columns: []ui.Col{
@@ -605,7 +605,7 @@ func (ed *agentEditor) picturesSection() {
 						// refused server-side; hiding the button says so before
 						// the click rather than after it.
 						HideIf:  "inherited",
-						PostTo:  "../api/agent-images/action?id=" + id + "&action=forget&name={name}",
+						PostTo:  orchPath("api/agent-images/action?id=") + id + "&action=forget&name={name}",
 						Confirm: "Forget this picture? The agent will no longer be able to use it, and this can't be undone.",
 					},
 				},
@@ -699,13 +699,13 @@ func (ed *agentEditor) shapeSection() {
 				Subtitle: "Fields you have changed here are yours permanently. " + kept +
 					" That is how a framework improvement reaches an agent you made months ago. Stop following to freeze this agent exactly as it reads now.",
 				Body: ui.DisplayPanel{
-					Source: "../api/agents/" + id,
+					Source: orchPath("api/agents/") + id,
 					Pairs:  []ui.DisplayPair{},
 					Actions: []ui.ToolbarAction{
 						{
 							Label:   "Stop following the shape",
 							Method:  "POST",
-							URL:     "../api/agents/" + id + "/detach",
+							URL:     orchPath("api/agents/") + id + "/detach",
 							Confirm: "Freeze this agent as it reads now? It keeps everything it has, and stops receiving framework improvements to the fields you never changed. This cannot be undone.",
 						},
 					},
@@ -737,7 +737,7 @@ func (ed *agentEditor) usedBySection() {
 					Title:    "Used by",
 					Subtitle: "These run through this agent. Changing it changes them; deleting it stops them working until they are pointed at another agent.",
 					Body: ui.DisplayPanel{
-						Source: "../api/agents/" + id + "/used-by",
+						Source: orchPath("api/agents/") + id + "/used-by",
 						Pairs:  pairs,
 					},
 				})
@@ -764,7 +764,7 @@ func (ed *agentEditor) deleteSection() {
 			Subtitle: "Permanently remove this agent. This cannot be undone.",
 			Detail:   "Its sessions, memory, knowledge and any sub-agents it owns go with it, and its channels are removed. The schedules it runs can be kept parked for 30 days, to be relinked to a replacement agent, or deleted with it: the delete asks.",
 			Body: ui.DisplayPanel{
-				Source: "../api/agents/" + id,
+				Source: orchPath("api/agents/") + id,
 				Pairs:  []ui.DisplayPair{},
 				Actions: []ui.ToolbarAction{
 					{
@@ -896,7 +896,7 @@ func agentAssistHTML(id string) string {
           intro:'Tell me what is not working about this agent, or what you want it to do differently. I will propose changes you can review before anything is saved.',
           placeholders:{write:'What should be different? For example: it keeps answering from memory, make it stick to sources.'},
           starters:['Look it over: what would you change?','What is this agent set up to do?'],
-          send:window.uiAssistPost('../api/agents/'+id+'/assist'),
+          send:window.uiAssistPost(`+jsString(orchPath("api/agents/"))+`+id+'/assist'),
           // A reply that proposes changes replaces the ones shown; one that
           // only answers (a question about them, say) leaves them standing.
           onResult:function(res){
@@ -926,7 +926,7 @@ func agentAssistHTML(id string) string {
           }
           if(!n){ window.uiToast('Nothing selected.'); return; }
           apply.disabled=true; apply.textContent='Applying…';
-          fetch('../api/agents/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)})
+          fetch(`+jsString(orchPath("api/agents/"))+`+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)})
             .then(function(r){ if(!r.ok) return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));}); location.reload(); })
             .catch(function(e){ apply.disabled=false; apply.textContent='Apply selected'; window.uiAlert('Could not apply: '+((e&&e.message)||e)); });
         };
@@ -1121,7 +1121,7 @@ func splitAgentFormSections(id, source string, fields []ui.FormField, identitySu
 			// The id rides in the QUERY, not the body: a FormPanel's PATCH body
 			// is exactly {changed_field: value} and carries no record id, so
 			// the target has to be named in the URL.
-			PostURL: "../api/agents?id=" + url.QueryEscape(id),
+			PostURL: orchPath("api/agents?id=") + url.QueryEscape(id),
 			Method:  "PATCH",
 			Fields:  ff,
 		}
@@ -1134,7 +1134,7 @@ func splitAgentFormSections(id, source string, fields []ui.FormField, identitySu
 	// FormPanel over the same record, so setting it on the shared panel builder
 	// would put the same button on each one — one control, repeated eight
 	// times, all opening the same list.
-	identity.HistoryURL = "../api/agents/" + url.PathEscape(id) + "/revisions"
+	identity.HistoryURL = orchPath("api/agents/") + url.PathEscape(id) + "/revisions"
 	identity.HistoryLabel = "Version history"
 	out := []ui.Section{{
 		Title:    "Agent",
@@ -1251,11 +1251,11 @@ func (T *OrchestrateApp) budgetReasoningFields(editRec AgentRecord, leadModelLoc
 		{Field: "max_plan_steps", Type: "number", Label: "Max plan steps", Min: 1, Max: 12,
 			Placeholder: fmt.Sprintf("%d", defaultMaxPlanSteps),
 			Help:        fmt.Sprintf("How many steps the orchestrator may commit to per user turn. Leave blank for the default (%d) on general agents; raise for deep-research agents that need more decomposition; drop to 1-2 for snappy lookup agents.", defaultMaxPlanSteps),
-			SuggestURL:  "../api/agents/suggest"},
+			SuggestURL:  orchPath("api/agents/suggest")},
 		{Field: "max_worker_rounds", Type: "number", Label: "Max worker rounds per step", Min: 1, Max: maxWorkerRoundsCeiling,
 			Placeholder: fmt.Sprintf("%d", defaultMaxWorkerRounds),
 			Help:        fmt.Sprintf("How many LLM call + tool-execution cycles the worker may use for a single step. Each round is one model call. Leave blank for the default (%d); raise when the worker chains many tool calls (research with cross-references, or surveying a command before writing it down); lower for fast single-tool answers. Anything under %d is raised to %d: a cap too low to finish an action is worse than no cap.", defaultMaxWorkerRounds, minWorkerRounds, minWorkerRounds),
-			SuggestURL:  "../api/agents/suggest"},
+			SuggestURL:  orchPath("api/agents/suggest")},
 		{Field: "run_priority", Type: "select", Label: "Model priority",
 			Options: []ui.SelectOption{
 				{Value: "", Label: "By how it runs: a person waiting goes first, a schedule waits for people"},

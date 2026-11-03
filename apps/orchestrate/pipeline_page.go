@@ -28,7 +28,7 @@ import (
 func init() {
 	RegisterExtensionSection(ExtensionSectionEntry{
 		Build: pipelinesExtensionSection,
-		Head:  assignPillsHead + artifactExportHead(),
+		Head:  orchJS(assignPillsHead) + artifactExportHead(),
 		// Directly after Machines: they are the same kind of thing to
 		// somebody looking for one, and a workflow that runs to an end
 		// belongs next to a workflow a conversation sits in.
@@ -60,14 +60,14 @@ func pipelinesExtensionSection(r *http.Request, user string) (ui.Section, bool) 
 				ui.Toolbar{Actions: []ui.ToolbarAction{{
 					Label:   "New pipeline",
 					Title:   "Start from a small pipeline that already runs",
-					URL:     "/orchestrate/pipeline?new=1",
+					URL:     orchPath("pipeline?new=1"),
 					Method:  "GET",
 					Variant: "primary",
 				}}},
 				ui.Toolbar{Actions: []ui.ToolbarAction{{
 					Label:  "Describe one…",
 					Title:  "Draft a pipeline from a description of what it should do",
-					URL:    "/orchestrate/pipeline?describe=1",
+					URL:    orchPath("pipeline?describe=1"),
 					Method: "GET",
 				}}},
 				// Import had nothing calling it until v0.6.221. A file
@@ -79,9 +79,9 @@ func pipelinesExtensionSection(r *http.Request, user string) (ui.Section, bool) 
 					Subtitle: "Pick a .pipeline.json recipe. It lands as a pipeline of your own, with its own id.",
 					Width:    "480px",
 					Body: ui.FormPanel{
-						PostURL:        "/orchestrate/api/pipelines/import",
+						PostURL:        orchPath("api/pipelines/import"),
 						SubmitLabel:    "Import",
-						RedirectURL:    "/orchestrate/pipeline?id={id}",
+						RedirectURL:    orchPath("pipeline?id={id}"),
 						RedirectTarget: "_self",
 						Fields: []ui.FormField{{
 							Field: "recipe", Type: "file", Accept: ".json",
@@ -92,7 +92,7 @@ func pipelinesExtensionSection(r *http.Request, user string) (ui.Section, bool) 
 				},
 			}},
 			ui.Table{
-				Source:       "/orchestrate/api/pipelines",
+				Source:       orchPath("api/pipelines"),
 				RecordsField: "pipelines",
 				RowKey:       "id",
 				RowLink:      "edit_url",
@@ -110,7 +110,7 @@ func pipelinesExtensionSection(r *http.Request, user string) (ui.Section, bool) 
 					{Type: "button", Label: "Export", Method: "client",
 						PostTo: "export_pipeline"},
 					{Type: "button", Label: "Delete", Method: "DELETE",
-						PostTo:     "/orchestrate/api/pipelines/{id}",
+						PostTo:     orchPath("api/pipelines/{id}"),
 						Variant:    "danger",
 						Confirm:    "Delete this pipeline? Agents that call it lose the tool; runs already finished keep their results.",
 						Optimistic: true},
@@ -139,7 +139,7 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 		fresh.ID = ""
 		saved := SavePipelineDef(udb, fresh)
 		Log("[orchestrate.pipelines] user=%q started a new pipeline (id=%s)", user, saved.ID)
-		http.Redirect(w, r, "/orchestrate/pipeline?id="+saved.ID, http.StatusSeeOther)
+		http.Redirect(w, r, orchPath("pipeline?id=")+saved.ID, http.StatusSeeOther)
 		return
 	}
 	// ?describe=1 is the drafting form, on its own page rather than in a
@@ -190,7 +190,7 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 			JS(ArtifactClientJS).
 			ClientAction("export_pipeline", `function(ctx){ window.gohortArtifacts.exportAction('pipeline', 'id', 'name')(ctx); }`).
 			JS(pipelineMapHereJS).
-			ClientAction("pipeline_duplicate", pipelineDuplicateJS),
+			ClientAction("pipeline_duplicate", orchJS(pipelineDuplicateJS)),
 		Sections: []ui.Section{{
 			Title:    "The pipeline",
 			Wide:     true,
@@ -198,13 +198,13 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 			Detail:   "Both are what an agent reads when deciding whether to call it, so the description is not decoration.",
 			Body: ui.Stack{Children: []ui.Component{
 				ui.FormPanel{
-					Source:  "/orchestrate/api/pipelines/" + url_(def.ID),
-					PostURL: "/orchestrate/api/pipelines/" + url_(def.ID),
+					Source:  orchPath("api/pipelines/") + url_(def.ID),
+					PostURL: orchPath("api/pipelines/") + url_(def.ID),
 					Method:  "PUT",
 					// The last few edits, each readable without applying it.
 					// On the pipeline's own fields rather than on a stage's:
 					// history is a fact about the whole definition.
-					HistoryURL:   "/orchestrate/api/pipelines/" + url_(def.ID) + "/revisions",
+					HistoryURL:   orchPath("api/pipelines/") + url_(def.ID) + "/revisions",
 					HistoryLabel: "Version history",
 					Fields: []ui.FormField{
 						{Field: "name", Type: "text", Label: "Name"},
@@ -214,7 +214,7 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 					},
 				},
 				ui.Toolbar{Actions: []ui.ToolbarAction{exportToolbarAction("pipeline", def.ID, def.Name,
-					"/orchestrate/api/pipelines/"+url_(def.ID)+"/export", mine), {
+					orchPath("api/pipelines/")+url_(def.ID)+"/export", mine), {
 					// A client action, not a POST toolbar button: the
 					// toolbar fires the request and stays put, and the
 					// point of duplicating is to work on the COPY.
@@ -401,9 +401,9 @@ func (T *OrchestrateApp) servePipelineDescribePage(w http.ResponseWriter, r *htt
 			Detail: "What it works out first, what it does with each piece, what it produces." +
 				"A draft opens for you to adjust. A pipeline that would not run is refused rather than saved, so an empty result means the draft failed, not that it vanished.",
 			Body: ui.FormPanel{
-				PostURL:     "/orchestrate/api/pipelines/draft",
+				PostURL:     orchPath("api/pipelines/draft"),
 				SubmitLabel: "✨ Draft it",
-				RedirectURL: "/orchestrate/pipeline?id={id}",
+				RedirectURL: orchPath("pipeline?id={id}"),
 				Fields: []ui.FormField{{
 					Field: "description", Type: "textarea", Rows: 8,
 					Label:       "In plain words",
@@ -419,7 +419,7 @@ func (T *OrchestrateApp) servePipelineDescribePage(w http.ResponseWriter, r *htt
 			Body: ui.Toolbar{Actions: []ui.ToolbarAction{{
 				Label:   "New pipeline",
 				Title:   "Start from a small pipeline that already runs",
-				URL:     "/orchestrate/pipeline?new=1",
+				URL:     orchPath("pipeline?new=1"),
 				Method:  "GET",
 				Variant: "primary",
 			}, {
@@ -440,12 +440,12 @@ func (T *OrchestrateApp) servePipelineDescribePage(w http.ResponseWriter, r *htt
 const pipelineDuplicateJS = `function(ctx) {
   var id = ctx && ctx.action && ctx.action.data;
   if (!id) return;
-  fetch('/orchestrate/api/pipelines/' + encodeURIComponent(id) + '/duplicate', {method: 'POST'})
+  fetch(ORCH_BASE + '/api/pipelines/' + encodeURIComponent(id) + '/duplicate', {method: 'POST'})
     .then(function(r) {
       if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
       return r.json();
     })
-    .then(function(d) { window.location.href = '/orchestrate/pipeline?id=' + encodeURIComponent(d.id); })
+    .then(function(d) { window.location.href = ORCH_BASE + '/pipeline?id=' + encodeURIComponent(d.id); })
     .catch(function(err) {
       window.uiAlert && window.uiAlert('Could not duplicate it: ' + (err && err.message || err));
     });
@@ -457,7 +457,7 @@ const pipelineDuplicateJS = `function(ctx) {
 func pipelineAssist(def PipelineDef) definitionAssist {
 	return definitionAssist{
 		Noun:        "pipeline",
-		Base:        "/orchestrate/api/pipelines/" + url_(def.ID),
+		Base:        orchPath("api/pipelines/") + url_(def.ID),
 		Intro:       "Ask about this pipeline, or for a change to any part of it: a stage, the order, the instructions. A change is drafted and shown before anything is saved, and one that would not run is not saved.",
 		Placeholder: "What should be different? For example: research each query with the web tools, and add a stage that checks the sources.",
 		Starters:    []string{"Look it over: what would you change?", "Walk me through what it does."},
@@ -487,7 +487,7 @@ func undoPipelineRevisionToolbar(def PipelineDef) ui.Component {
 		Label:   "Undo the revision",
 		Title:   "Put back the version this pipeline had before the last change",
 		Method:  "POST",
-		URL:     "/orchestrate/api/pipelines/" + url_(def.ID) + "/undo",
+		URL:     orchPath("api/pipelines/") + url_(def.ID) + "/undo",
 		Variant: "danger",
 		Confirm: "Put back the version from before the last revision? What the revision produced is discarded.",
 	}}}
@@ -637,7 +637,7 @@ func pipelineStageSections(def PipelineDef, cat editorCatalog) []ui.Section {
 			Label:   "Remove this stage",
 			Title:   "Delete it. Refused while another stage still reads it, naming which.",
 			Method:  "DELETE",
-			URL:     "/orchestrate/" + base + "?name=" + url_(s.Name),
+			URL:     orchPath("") + base + "?name=" + url_(s.Name),
 			Variant: "danger",
 			Confirm: "Remove the stage \"" + s.Name + "\"?",
 		}}})
@@ -660,7 +660,7 @@ func pipelineStageSections(def PipelineDef, cat editorCatalog) []ui.Section {
 		Body: ui.FormPanel{
 			PostURL:        "api/pipelines/" + url_(def.ID) + "/stages",
 			SubmitLabel:    "Add it",
-			RedirectURL:    "/orchestrate/pipeline?id=" + url_(def.ID),
+			RedirectURL:    orchPath("pipeline?id=") + url_(def.ID),
 			RedirectTarget: "_self",
 			Fields: []ui.FormField{
 				{Field: "name", Type: "text", Label: "Name",
@@ -908,7 +908,7 @@ func pipelineBodySections(def PipelineDef, parent PipelineStage, base string, ca
 					Label:   "Remove this step",
 					Title:   "Delete it from " + parent.Name + "'s body. Refused while another step in the same body reads it.",
 					Method:  "DELETE",
-					URL:     "/orchestrate/" + base + "?name=" + path,
+					URL:     orchPath("") + base + "?name=" + path,
 					Variant: "danger",
 					Confirm: "Remove " + strconv.Quote(b.Name) + " from " + strconv.Quote(parent.Name) + "?",
 				}}},
@@ -923,7 +923,7 @@ func pipelineBodySections(def PipelineDef, parent PipelineStage, base string, ca
 		Body: ui.FormPanel{
 			PostURL:        base + "?parent=" + url_(parent.Name),
 			SubmitLabel:    "Add it",
-			RedirectURL:    "/orchestrate/pipeline?id=" + url_(def.ID),
+			RedirectURL:    orchPath("pipeline?id=") + url_(def.ID),
 			RedirectTarget: "_self",
 			Fields: []ui.FormField{
 				{Field: "name", Type: "text", Label: "Name",

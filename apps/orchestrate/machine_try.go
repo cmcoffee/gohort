@@ -484,7 +484,7 @@ const machineTryJS = `function(ctx) {
   out.appendChild(turn);
   box.value = '';
 
-  fetch('/orchestrate/api/machines/' + encodeURIComponent(id) + '/try', {
+  fetch(ORCH_BASE + '/api/machines/' + encodeURIComponent(id) + '/try', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({message: msg, cursor: cursor})

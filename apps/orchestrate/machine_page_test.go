@@ -146,7 +146,7 @@ func TestMachineTryPanel_ButtonMarkupAndRouteAgree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(page), `ClientAction("machine_try", machineTryJS)`) {
+	if !strings.Contains(string(page), `ClientAction("machine_try", orchJS(machineTryJS))`) {
 		t.Error("machine_try is named by the button but never registered on the page")
 	}
 	if !strings.Contains(string(page), "machineTryPanel(def)") {
@@ -229,7 +229,7 @@ var document = {
 var window = {location: {search: '?id=m1'}};
 var URLSearchParams = function() { return {get: function() { return 'm1'; }}; };
 var fetch = function() { calledFetch = true; return {then: function() { return this; }, catch: function() { return this; }}; };
-var fn = ` + machineTryJS + `;
+var fn = ` + orchJS(machineTryJS) + `;
 fn({button: null});
 if (!calledFetch) { throw new Error('never reached the fetch — something threw or returned early'); }
 console.log('OK');
@@ -260,12 +260,12 @@ func TestTheEditorOffersExportAndDuplicate(t *testing.T) {
 	if !strings.Contains(src, `URL:    "machine_duplicate"`) {
 		t.Error("the editor has no way to copy the machine")
 	}
-	if !strings.Contains(src, `ClientAction("machine_duplicate", machineDuplicateJS)`) {
+	if !strings.Contains(src, `ClientAction("machine_duplicate", orchJS(machineDuplicateJS))`) {
 		t.Error("machine_duplicate is named by a button but never registered — the button would do nothing")
 	}
 	// Duplicating opens the COPY: staying on the original is the wrong
 	// half of the action.
-	if !strings.Contains(machineDuplicateJS, "window.location.href = '/orchestrate/machine?id='") {
+	if !strings.Contains(orchJS(machineDuplicateJS), `window.location.href = "/orchestrate" + '/machine?id='`) {
 		t.Error("duplicate should land in the copy")
 	}
 	// And the endpoint it posts to is one the router serves.
@@ -322,7 +322,7 @@ var fetch = function(url, opts) {
   });
 };
 
-var send = ` + machineTryJS + `;
+var send = ` + orchJS(machineTryJS) + `;
 var reset = ` + machineTryResetJS + `;
 
 box.value = 'why is the export failing?';

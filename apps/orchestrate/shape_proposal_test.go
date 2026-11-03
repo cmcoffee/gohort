@@ -187,8 +187,8 @@ func TestShapeAnswerBrief(t *testing.T) {
 func TestWizardDescribeHTML(t *testing.T) {
 	got := wizardDescribeHTML()
 	for _, want := range []string{
-		"../api/agents/propose",
-		"../api/agents/wizard",
+		`"/orchestrate/api/agents/propose"`,
+		`"/orchestrate/api/agents/wizard"`,
 		"window.uiOpenModal",
 		"needs_composing", // the shape that ships nothing reads differently
 		"shape:d.shape",

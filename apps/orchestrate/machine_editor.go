@@ -167,7 +167,7 @@ func addPanel(def MachineDef, base string) ui.ModalButton {
 			// that closed and changed nothing, land them ON the new
 			// step — the redirect carries the section anchor, so the
 			// editor reopens with that step's form already open.
-			RedirectURL:    "/orchestrate/machine?id={id}#{slug}",
+			RedirectURL:    orchPath("machine?id={id}#{slug}"),
 			RedirectTarget: "_self",
 			Fields:         phaseFormFields(def),
 		},

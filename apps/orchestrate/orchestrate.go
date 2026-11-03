@@ -280,6 +280,7 @@ func (T *OrchestrateApp) webRestrictedLegacy(r *http.Request) bool {
 //	/api/confirm               — answer a tool confirm card (POST {id, value})
 //	/api/inject                — POST/PATCH/DELETE: mid-flight note queue
 func (T *OrchestrateApp) Routes() {
+	orchMount = T.WebPrefix() // links.go
 	T.wireRunners()
 	T.wireArtifactTypes()
 	T.wireSeams()

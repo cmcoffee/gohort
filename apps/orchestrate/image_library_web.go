@@ -82,7 +82,7 @@ func (T *OrchestrateApp) handleAgentImages(c *jsonapi.Call) (any, error) {
 			dupe = "same person as " + strings.Join(others, ", ")
 		}
 		rows = append(rows, imageLibraryRow{
-			Thumb:     "api/agent-images/raw?id=" + urlQ(agentID) + "&name=" + urlQ(k.Name),
+			Thumb:     orchPath("api/agent-images/raw?id=") + urlQ(agentID) + "&name=" + urlQ(k.Name),
 			Ref:       k.Ref,
 			Name:      k.Name,
 			Subject:   librarySubject(k),
@@ -249,7 +249,7 @@ window.uiRegisterClientAction('agent_image_label', function(ctx) {
     if (of === null) return;
     of = String(of).trim();
     if (!of) return;
-    var url = '../api/agent-images/action?action=label&id=' + encodeURIComponent(` + jsString(agentID) + `) +
+    var url = ` + jsString(orchPath("api/agent-images/action?action=label&id=")) + ` + encodeURIComponent(` + jsString(agentID) + `) +
       '&name=' + encodeURIComponent(rec.name || '') + '&of=' + encodeURIComponent(of);
     fetch(url, {method: 'POST'}).then(function(r) {
       if (!r.ok) { return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); }); }

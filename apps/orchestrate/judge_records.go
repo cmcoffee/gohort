@@ -996,7 +996,7 @@ func init() {
 }
 
 func firingsSections() []ui.Section {
-	const api = "/orchestrate/api/console/judge-records"
+	api := orchPath("api/console/judge-records")
 	countCols := func(label string) []ui.Col {
 		return []ui.Col{
 			{Field: "key", Label: label, Flex: 3},

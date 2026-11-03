@@ -155,7 +155,7 @@ func (T *OrchestrateApp) machinesList(c *jsonapi.Call) (any, error) {
 			Legend:     d.Graph().Legend,
 			UsedByText: usedByText(users[d.ID]),
 			Status:     machineStatusText(d),
-			EditURL:    "/orchestrate/machine?id=" + d.ID,
+			EditURL:    orchPath("machine?id=") + d.ID,
 			Mine:       true,
 			SharedWith: ShareRecipientsText(d.AllowedUsers),
 		})
@@ -171,7 +171,7 @@ func (T *OrchestrateApp) machinesList(c *jsonapi.Call) (any, error) {
 			Start:   sm.Def.StartPhase(),
 			Legend:  sm.Def.Graph().Legend,
 			Status:  "shared by " + sm.Owner,
-			EditURL: "/orchestrate/machine?id=" + sm.Def.ID,
+			EditURL: orchPath("machine?id=") + sm.Def.ID,
 			Owner:   sm.Owner,
 		})
 	}

@@ -123,7 +123,7 @@ func (T *OrchestrateApp) pipelinesList(c *jsonapi.Call) (any, error) {
 			UsedBy:     users[d.ID],
 			UsedByText: usedByText(users[d.ID]),
 			Status:     pipelineStatusText(d),
-			EditURL:    "/orchestrate/pipeline?id=" + d.ID,
+			EditURL:    orchPath("pipeline?id=") + d.ID,
 			Mine:       true,
 			SharedWith: ShareRecipientsText(d.AllowedUsers),
 		})
@@ -137,7 +137,7 @@ func (T *OrchestrateApp) pipelinesList(c *jsonapi.Call) (any, error) {
 			ID: sp.Def.ID, Name: sp.Def.Name, Description: sp.Def.Description, Stages: len(sp.Def.Stages),
 			StageNames: pipelineStageNames(sp.Def),
 			Status:     "shared by " + sp.Owner,
-			EditURL:    "/orchestrate/pipeline?id=" + sp.Def.ID,
+			EditURL:    orchPath("pipeline?id=") + sp.Def.ID,
 			Owner:      sp.Owner,
 		})
 	}

@@ -240,7 +240,7 @@ func init() {
 }
 
 func deploymentSettingsSection() ui.Section {
-	const api = "/orchestrate/api/console/deployment-settings"
+	api := orchPath("api/console/deployment-settings")
 	fields := []ui.FormField{}
 	for _, s := range deploymentSettingOrder {
 		spec := triSettings[s.key]

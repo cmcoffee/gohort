@@ -81,7 +81,7 @@ chatOpts.onResult({reply: 'Because it guesses.'});
 check('a reply that only answers leaves the changes standing', changes.querySelectorAll().length === 2);
 changes.querySelectorAll()[0].checked = false;
 apply.onclick();
-check('Apply sends the ticked ones as a PATCH', sent && sent.method === 'PATCH' && sent.url === '../api/agents/a1' &&
+check('Apply sends the ticked ones as a PATCH', sent && sent.method === 'PATCH' && sent.url === '/orchestrate/api/agents/a1' &&
   !('rules' in sent.body) && JSON.stringify(sent.body.triggers) === '["look up","find out"]');
 setTimeout(function() {
   check('and reloads to show what was stored', reloaded);

@@ -139,7 +139,7 @@ func init() {
 }
 
 func buildOutcomesSection() ui.Section {
-	const src = "/orchestrate/api/console/build-outcomes"
+	src := orchPath("api/console/build-outcomes")
 	return ui.Section{
 		Group:    "Agents",
 		Title:    "Build outcomes",

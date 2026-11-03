@@ -665,7 +665,7 @@ func subheading(text string) ui.Card {
 // checks (judge_records.go): every guard for all tiers and on the lead and the
 // worker, what it caught there, and how it is set.
 func replyGuardControls() []ui.Component {
-	const guards = "/orchestrate/api/console/reply-guards"
+	guards := orchPath("api/console/reply-guards")
 	return []ui.Component{
 		subheading("Guards, by tier"),
 		ui.Table{Source: guards, RowKey: "_id", GroupBy: "group",
@@ -704,7 +704,7 @@ func replyGuardControls() []ui.Component {
 }
 
 func replyGuardSections() []ui.Section {
-	const flags = "/orchestrate/api/console/reply-flags"
+	flags := orchPath("api/console/reply-flags")
 	flagDetail := ui.RecordView{Pairs: []ui.DisplayPair{
 		{Label: "What was wrong", Field: "evaluation", Block: true},
 		{Label: "They asked", Field: "asked", Block: true},
@@ -741,7 +741,7 @@ func replyGuardSections() []ui.Section {
 					},
 					RowActions: []ui.RowAction{
 						ui.Expand("Detail", flagDetail),
-						{Type: "button", Label: "✨ Draft a guard", Compact: true, PostTo: "/orchestrate/api/console/reply-guards/draft?flag={id}",
+						{Type: "button", Label: "✨ Draft a guard", Compact: true, PostTo: orchPath("api/console/reply-guards/draft?flag={id}"),
 							Confirm: "Draft a reply guard from this flagged reply? A model drafts it and it is tested against everything flagged; it appears under Drafted guards, and nothing runs until you enable it."},
 						status(flagKept, "Keep", "success", ""),
 						status(flagDismissed, "Dismiss", "", ""),

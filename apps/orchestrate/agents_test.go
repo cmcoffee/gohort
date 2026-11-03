@@ -554,7 +554,9 @@ func TestRunningTheResearchSeedByIDLeavesNoAgentBehind(t *testing.T) {
 // applyBlock returns the Apply handler's client source.
 func applyBlock(t *testing.T) string {
 	t.Helper()
-	src := readFile(t, "page_agent.go")
+	// The dialog as served, with its links filled in, not the Go source that
+	// builds it.
+	src := agentAssistHTML("a1")
 	i := strings.Index(src, "apply.onclick=function(){")
 	if i < 0 {
 		t.Fatal("the Apply button is gone")
@@ -578,7 +580,7 @@ func TestApplyTargetsARouteThatServesItsVerb(t *testing.T) {
 	}
 	var path string
 	switch {
-	case strings.Contains(block, "'../api/agents/'+id"):
+	case strings.Contains(block, `"/orchestrate/api/agents/"+id`):
 		path = "/api/agents/a1"
 	case strings.Contains(block, "'../api/agents?id='"):
 		path = "/api/agents?id=a1"

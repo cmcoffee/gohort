@@ -31,7 +31,7 @@ import (
 func init() {
 	RegisterExtensionSection(ExtensionSectionEntry{
 		Build: machinesExtensionSection,
-		Head:  assignPillsHead + artifactExportHead(),
+		Head:  orchJS(assignPillsHead) + artifactExportHead(),
 		// After the page's own tools and credentials, which are what
 		// somebody reaches for constantly.
 		Order: 10,
@@ -61,7 +61,7 @@ func machinesExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 				ui.Toolbar{Actions: []ui.ToolbarAction{{
 					Label:   "New machine",
 					Title:   "Start from a small working machine you can replace entirely",
-					URL:     "/orchestrate/machine?new=1",
+					URL:     orchPath("machine?new=1"),
 					Method:  "GET",
 					Variant: "primary",
 				}}},
@@ -77,7 +77,7 @@ func machinesExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 				ui.Toolbar{Actions: []ui.ToolbarAction{{
 					Label:  "Describe one…",
 					Title:  "Draft a machine from a description of what it should do",
-					URL:    "/orchestrate/machine?describe=1",
+					URL:    orchPath("machine?describe=1"),
 					Method: "GET",
 				}}},
 				// The third way in. The endpoint has existed since machines
@@ -92,9 +92,9 @@ func machinesExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 					Subtitle: "Pick a .machine.json recipe. It lands as a machine of your own, a copy with its own id, and opens in the editor.",
 					Width:    "480px",
 					Body: ui.FormPanel{
-						PostURL:        "/orchestrate/api/machines/import",
+						PostURL:        orchPath("api/machines/import"),
 						SubmitLabel:    "Import",
-						RedirectURL:    "/orchestrate/machine?id={id}",
+						RedirectURL:    orchPath("machine?id={id}"),
 						RedirectTarget: "_self",
 						Fields: []ui.FormField{{
 							Field: "recipe", Type: "file", Accept: ".json",
@@ -106,7 +106,7 @@ func machinesExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 				},
 			}},
 			ui.Table{
-				Source: "/orchestrate/api/machines",
+				Source: orchPath("api/machines"),
 				RowKey: "id",
 				// The whole row opens the editor — a machine's name is a
 				// link to the thing, not a label beside a button.
@@ -139,11 +139,11 @@ func machinesExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 					{Type: "button", Label: "Export", Method: "client",
 						PostTo: "export_machine"},
 					{Type: "button", Label: "Duplicate", Method: "POST",
-						PostTo:         "/orchestrate/api/machines/{id}/duplicate",
-						RedirectURL:    "/orchestrate/machine?id={id}",
+						PostTo:         orchPath("api/machines/{id}/duplicate"),
+						RedirectURL:    orchPath("machine?id={id}"),
 						RedirectTarget: "_self"},
 					{Type: "button", Label: "Delete", Method: "DELETE",
-						PostTo:     "/orchestrate/api/machines/{id}",
+						PostTo:     orchPath("api/machines/{id}"),
 						Variant:    "danger",
 						Confirm:    "Delete this machine? Agents pointing at it are detached; conversations already running it finish as ordinary agent turns.",
 						Optimistic: true},
@@ -177,7 +177,7 @@ const assignPillsHead = `<script>
       var kind = url.indexOf('/pipeline') >= 0 ? 'pipelines' : 'machines';
       var id = (url.split('id=')[1] || '').split('&')[0];
       if (!id) { window.uiAlert && window.uiAlert('No row selected.'); return; }
-      var base = '/orchestrate/api/' + kind + '/' + encodeURIComponent(id) + '/agents';
+      var base = ORCH_BASE + '/api/' + kind + '/' + encodeURIComponent(id) + '/agents';
       var reload = ctx && ctx.reload;
       window.uiOpenSimpleModal({
         title: 'Assign: ' + (r.name || ''),
@@ -233,7 +233,7 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 		fresh.ID = ""
 		saved := SaveMachineDef(udb, fresh)
 		Log("[orchestrate.machines] user=%q started a new machine (id=%s)", user, saved.ID)
-		http.Redirect(w, r, "/orchestrate/machine?id="+saved.ID, http.StatusSeeOther)
+		http.Redirect(w, r, orchPath("machine?id=")+saved.ID, http.StatusSeeOther)
 		return
 	}
 	// ?describe=1 is the drafting form, on its own page.
@@ -305,12 +305,12 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			JS(ArtifactClientJS).
 			ClientAction("export_machine", `function(ctx){ window.gohortArtifacts.exportAction('machine', 'id', 'name')(ctx); }`).
 			ClientAction("machine_remove_step", machineRemoveStepJS).
-			ClientAction("machine_move_step", machineMoveStepJS).
-			ClientAction("machine_try", machineTryJS).
+			ClientAction("machine_move_step", orchJS(machineMoveStepJS)).
+			ClientAction("machine_try", orchJS(machineTryJS)).
 			ClientAction("machine_try_reset", machineTryResetJS).
-			ClientAction("machine_duplicate", machineDuplicateJS).
-			ClientAction("machine_repair", machineRepairJS).
-			ClientAction("machine_undo", machineUndoJS).
+			ClientAction("machine_duplicate", orchJS(machineDuplicateJS)).
+			ClientAction("machine_repair", orchJS(machineRepairJS)).
+			ClientAction("machine_undo", orchJS(machineUndoJS)).
 			CSS(machineMapCSS).
 			CSS(definitionAssistCSS).
 			JS(definitionAssistJS).
@@ -333,7 +333,7 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 					// bundle carries; Duplicate lands in the copy, so
 					// trying something drastic never costs the original.
 					ui.Toolbar{Actions: []ui.ToolbarAction{exportToolbarAction("machine", def.ID, def.Name,
-						"/orchestrate/api/machines/"+url_(def.ID)+"/export", mine), {
+						orchPath("api/machines/")+url_(def.ID)+"/export", mine), {
 						Label:  "Duplicate",
 						Title:  "Make a copy to experiment on, and open it",
 						Method: "client",
@@ -531,9 +531,9 @@ func (T *OrchestrateApp) serveSharedMachinePage(w http.ResponseWriter, r *http.R
 		Head: ui.NewHead().CSS(machineMapCSS).
 			JS(machineMapHereJS).
 			JS(machineTryEnterJS).
-			ClientAction("machine_try", machineTryJS).
+			ClientAction("machine_try", orchJS(machineTryJS)).
 			ClientAction("machine_try_reset", machineTryResetJS).
-			ClientAction("machine_duplicate", machineDuplicateJS),
+			ClientAction("machine_duplicate", orchJS(machineDuplicateJS)),
 		Sections: []ui.Section{{
 			Title: "Shared with you",
 			Wide:  true,
@@ -545,7 +545,7 @@ func (T *OrchestrateApp) serveSharedMachinePage(w http.ResponseWriter, r *http.R
 					Label:  "Export",
 					Title:  "Download this machine's portable recipe",
 					Method: "GET",
-					URL:    "/orchestrate/api/machines/" + url_(def.ID) + "/export",
+					URL:    orchPath("api/machines/") + url_(def.ID) + "/export",
 				}, {
 					Label:  "Duplicate",
 					Title:  "Make your own copy, which you can then edit",
@@ -641,9 +641,9 @@ func (T *OrchestrateApp) serveMachineDescribePage(w http.ResponseWriter, r *http
 			Detail: "What the conversation works out first, what it decides between, where it settles." +
 				"A draft machine opens in the editor for you to adjust; anything the draft got wrong is waiting in its checklist, which beats an empty editor.",
 			Body: ui.FormPanel{
-				PostURL:     "/orchestrate/api/machines/draft",
+				PostURL:     orchPath("api/machines/draft"),
 				SubmitLabel: "✨ Draft it",
-				RedirectURL: "/orchestrate/machine?id={id}",
+				RedirectURL: orchPath("machine?id={id}"),
 				Fields: []ui.FormField{{
 					Field: "description", Type: "textarea", Rows: 8,
 					Label:       "In plain words",
@@ -664,7 +664,7 @@ func (T *OrchestrateApp) serveMachineDescribePage(w http.ResponseWriter, r *http
 			Body: ui.Toolbar{Actions: []ui.ToolbarAction{{
 				Label:   "New machine",
 				Title:   "Start from a small working machine you can replace entirely",
-				URL:     "/orchestrate/machine?new=1",
+				URL:     orchPath("machine?new=1"),
 				Method:  "GET",
 				Variant: "primary",
 			}, {
@@ -688,7 +688,7 @@ const machineRepairJS = `function(ctx) {
   var kind = (ctx && ctx.action && ctx.action.data) || '';
   var id = new URLSearchParams(window.location.search).get('id');
   if (!id) return;
-  fetch('/orchestrate/api/machines/' + encodeURIComponent(id) +
+  fetch(ORCH_BASE + '/api/machines/' + encodeURIComponent(id) +
         '/repair?kind=' + encodeURIComponent(kind), {method: 'POST'})
     .then(function(r) {
       if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
@@ -763,7 +763,7 @@ const machineUndoJS = `function(ctx) {
     ? window.uiConfirm('Put back the version from before the last revision? What the revision produced is discarded.')
     : confirm('Put back the version from before the last revision?')).then(function(ok) {
     if (!ok) return;
-    fetch('/orchestrate/api/machines/' + encodeURIComponent(id) + '/undo', {method: 'POST'})
+    fetch(ORCH_BASE + '/api/machines/' + encodeURIComponent(id) + '/undo', {method: 'POST'})
       .then(function(r) {
         if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
         // Reload: every step's form, the map and both findings lists are
@@ -786,7 +786,7 @@ const machineRemoveStepJS = `function(ctx) {
   var step = ctx && ctx.action && ctx.action.data;
   var id = new URLSearchParams(window.location.search).get('id');
   if (!step || !id) return;
-  fetch('/orchestrate/api/machines/' + encodeURIComponent(id) +
+  fetch(ORCH_BASE + '/api/machines/' + encodeURIComponent(id) +
         '/phases?name=' + encodeURIComponent(step), {method: 'DELETE'})
     .then(function(r) {
       if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
@@ -836,12 +836,12 @@ const machinePreviewRefreshJS = `window.addEventListener('ui-data-changed', func
 const machineDuplicateJS = `function(ctx) {
   var id = ctx && ctx.action && ctx.action.data;
   if (!id) return;
-  fetch('/orchestrate/api/machines/' + encodeURIComponent(id) + '/duplicate', {method: 'POST'})
+  fetch(ORCH_BASE + '/api/machines/' + encodeURIComponent(id) + '/duplicate', {method: 'POST'})
     .then(function(r) {
       if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
       return r.json();
     })
-    .then(function(d) { window.location.href = '/orchestrate/machine?id=' + encodeURIComponent(d.id); })
+    .then(function(d) { window.location.href = ORCH_BASE + '/machine?id=' + encodeURIComponent(d.id); })
     .catch(function(err) {
       window.uiAlert && window.uiAlert('Could not duplicate it: ' + (err && err.message || err));
     });
@@ -856,7 +856,7 @@ const machineMoveStepJS = `function(ctx) {
   if (!data || !id) return;
   var cut = data.lastIndexOf('|');
   var step = data.slice(0, cut), dir = data.slice(cut + 1);
-  fetch('/orchestrate/api/machines/' + encodeURIComponent(id) + '/move', {
+  fetch(ORCH_BASE + '/api/machines/' + encodeURIComponent(id) + '/move', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({name: step, dir: dir})

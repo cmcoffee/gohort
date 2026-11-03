@@ -141,7 +141,7 @@ func TestOneAssignActionServesBothLists(t *testing.T) {
 		if rerr != nil {
 			t.Fatal(rerr)
 		}
-		if !strings.Contains(string(b), "Head:  assignPillsHead") {
+		if !strings.Contains(string(b), "Head:  orchJS(assignPillsHead)") {
 			t.Errorf("%s does not contribute the registration", f)
 		}
 		if !strings.Contains(string(b), `Label: "Assign"`) {

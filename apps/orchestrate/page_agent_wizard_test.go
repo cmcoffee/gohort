@@ -400,7 +400,7 @@ func TestDescribeItOpensTheAgentItCreated(t *testing.T) {
 	if m == nil {
 		t.Fatal("the dialog no longer navigates to the agent it created")
 	}
-	prefix := strings.Trim(strings.TrimSuffix(strings.TrimSpace(m[1]), "+"), "'")
+	prefix := strings.Trim(strings.TrimSuffix(strings.TrimSpace(m[1]), "+"), `'"`)
 	got := resolveFromWizard(t, prefix+"abc123")
 	if got != "/orchestrate/agent/abc123" {
 		t.Errorf("after creating, the dialog opens %s; the agent's page is /orchestrate/agent/abc123", got)
@@ -413,7 +413,7 @@ func TestDescribeItPostsToRoutesThatExist(t *testing.T) {
 		t.Fatalf("reading the routes: %v", err)
 	}
 	routes := string(raw)
-	fetches := regexp.MustCompile(`fetch\('([^']+)'`).FindAllStringSubmatch(wizardDescribeHTML(), -1)
+	fetches := regexp.MustCompile(`fetch\(["']([^"']+)["']`).FindAllStringSubmatch(wizardDescribeHTML(), -1)
 	if len(fetches) == 0 {
 		t.Fatal("the dialog makes no calls; the test is reading the wrong thing")
 	}
