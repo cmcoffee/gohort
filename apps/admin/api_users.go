@@ -10,6 +10,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/activity"
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/core/notices"
 	"github.com/cmcoffee/gohort/core/promotion"
 )
 
@@ -85,6 +86,13 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 	sub.HandleFunc("/api/user-machines", jsonapi.Methods{
 		"GET":  jsonapi.Get(a.db, a.handleUserMachines, a.gate()),
 		"POST": jsonapi.Post(a.db, a.handleUserMachinesAction, a.gate()),
+	}.Serve)
+
+	// Everything else users have shared with the whole deployment (skills,
+	// knowledge, apps, guides), with Take back. See api_published.go.
+	sub.HandleFunc("/api/published", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handlePublished, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handlePublishedTakeBack, a.gate()),
 	}.Serve)
 
 	// API: promotion requests — the bottom-up publish queue. Users request that
@@ -279,10 +287,10 @@ func (a *AdminApp) handleUserAgentsAction(c *jsonapi.Call, _ struct{}) (any, err
 	switch q.Get("action") {
 	case "revoke_share":
 		hook = AdminRevokeAgentShare
-	case "publish": // admin "delegate to users" — flip Exposed on
-		hook = AdminPublishAgent
+	case "unpublish": // take back from everyone; publishing is the owner's ask
+		hook = AdminUnpublishAgent
 	default:
-		return nil, jsonapi.BadRequest("action must be revoke_share|publish")
+		return nil, jsonapi.BadRequest("action must be revoke_share|unpublish")
 	}
 	if hook == nil {
 		return nil, jsonapi.Status(http.StatusServiceUnavailable, "unavailable (orchestrate not wired)")
@@ -402,12 +410,40 @@ func (a *AdminApp) handlePromotionAction(c *jsonapi.Call, _ struct{}) (any, erro
 		if err := SetPromotionRequestState(a.db, id, PromotionDeniedState, c.User); err != nil {
 			return nil, jsonapi.BadRequest(err.Error())
 		}
+		tellOwnerDenied(req)
 	default:
 		return nil, jsonapi.BadRequest("action must be approve|deny")
 	}
 	verb := map[string]string{"approve": "approved", "deny": "denied"}[action]
 	RecordActivity(c.R, activity.Approval, c.User, verb+" publishing the "+req.Kind+" "+req.Name+" of "+req.Owner)
 	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// requestNoun is what a request kind is called to its owner.
+var requestNoun = map[string]string{
+	"tool": "tool", "app": "app", "agent": "agent", "collection": "collection",
+	"credential": "credential", "skill": "skill", "pipeline": "pipeline",
+	"machine": "machine", "guide": "guide", "store_grant": "file store access",
+}
+
+// tellOwnerDenied tells the owner their request to share was declined. Only
+// apps showed it (on the app's own share status); every other kind's request
+// just left the queue, and its owner found out, if at all, by noticing nothing
+// had happened.
+func tellOwnerDenied(req PromotionRequest) {
+	if RootDB == nil || strings.TrimSpace(req.Owner) == "" {
+		return
+	}
+	noun := requestNoun[req.Kind]
+	if noun == "" {
+		noun = req.Kind
+	}
+	notices.Record(RootDB, notices.Notice{
+		Owner: req.Owner,
+		Kind:  notices.KindReport,
+		Title: fmt.Sprintf("Your request to share the %s %q was declined", noun, req.Name),
+		Body:  "An administrator declined it. It is still yours, exactly as it was: nothing about who can use it changed.",
+	})
 }
 
 // handleGlobalTools serves /api/global-tools; registerUsersRoutes says what it is for.

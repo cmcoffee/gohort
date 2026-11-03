@@ -3,7 +3,7 @@ package extensions
 // The rail holds four places: Integrations, Connected accounts, Tools and
 // Skills. What other people or the deployment offer sits INSIDE the matching
 // place, not as a rail entry of its own: a key lent to you is a row among
-// your integrations, and "Global tools" and the deployment's skills are the
+// your integrations, and "Shared tools" and the deployment's skills are the
 // second part (ui.Subsection) of Tools and Skills. Each reads as a separate
 // destination when it is the other half of one.
 
@@ -36,7 +36,7 @@ func TestExtensionsRailHoldsFourPlaces(t *testing.T) {
 			t.Fatalf("rail sections = %q, want %q", got, want)
 		}
 	}
-	for _, part := range []string{"Your tools", "Categories", "Global tools", "Your skills", "Published by your deployment"} {
+	for _, part := range []string{"Your tools", "Categories", "Shared tools", "Your skills", "Published by your deployment"} {
 		if !regexp.MustCompile(`ui\.Subsection\{\s*Title:\s*"` + regexp.QuoteMeta(part) + `"`).MatchString(src) {
 			t.Errorf("%q should be a part of its section", part)
 		}

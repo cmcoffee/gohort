@@ -272,6 +272,7 @@ func listUserOwnedMachinesForAdmin(db Database) []UserOwnedMachineRow {
 				Steps:      len(d.Phases),
 				Unattended: d.Unattended,
 				Published:  d.Published,
+				Revocable:  len(d.AllowedUsers) > 0 || d.Published,
 			})
 		}
 	}

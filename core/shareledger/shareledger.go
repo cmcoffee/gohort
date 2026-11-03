@@ -125,6 +125,16 @@ type Provider struct {
 	// having taken it are different things - a tool is referenced by NAME, so
 	// only the people who took this owner's copy can be relying on it.
 	Dependents func(owner, id string, users []string) []Dependent
+
+	// Published lists everything of this kind its owners have shared with
+	// the whole deployment, each with its Owner: the administrator's view
+	// of what is out there, which no one owner's Mine can give. Nil for a
+	// kind that cannot reach everybody.
+	Published func() []Grant
+	// Unpublish takes one deployment-wide grant back to its owner, through
+	// the same door the owner's own take-back uses. Nil leaves the row
+	// listed but not takeable.
+	Unpublish func(owner, id string) error
 }
 
 var (
@@ -154,6 +164,54 @@ func ToMe(user string) []Grant {
 	return collect(user, false, func(p Provider) func(string) []Grant { return p.ToMe })
 }
 
+// Published is everything shared with the whole deployment, across every
+// kind that reports it. Revocable says whether the kind can take it back.
+func Published() []Grant {
+	out := []Grant{}
+	for kind, p := range snapshot() {
+		if p.Published == nil {
+			continue
+		}
+		for _, g := range p.Published() {
+			g.Kind, g.Label, g.Wide = kind, p.Label, true
+			g.Revocable = p.Unpublish != nil
+			out = append(out, g)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Label != out[j].Label {
+			return out[i].Label < out[j].Label
+		}
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Owner < out[j].Owner
+	})
+	return out
+}
+
+// Unpublish takes one deployment-wide grant of kind back to its owner.
+func Unpublish(kind, owner, id string) error {
+	mu.RLock()
+	p, ok := providers[strings.TrimSpace(kind)]
+	mu.RUnlock()
+	if !ok || p.Unpublish == nil {
+		return errString(kind + " cannot be taken back from here")
+	}
+	return p.Unpublish(owner, id)
+}
+
+// snapshot is the registry as it stands, read once.
+func snapshot() map[string]Provider {
+	mu.RLock()
+	defer mu.RUnlock()
+	out := make(map[string]Provider, len(providers))
+	for k, p := range providers {
+		out[k] = p
+	}
+	return out
+}
+
 // collect gathers one side across every kind. withDependents asks, per grant,
 // who relies on it; only the owner's view does:
 // that is the side deciding whether to take something back, and "they lose it"
@@ -163,13 +221,7 @@ func collect(who string, withDependents bool, pick func(Provider) func(string) [
 	if strings.TrimSpace(who) == "" {
 		return out
 	}
-	mu.RLock()
-	snapshot := make(map[string]Provider, len(providers))
-	for k, p := range providers {
-		snapshot[k] = p
-	}
-	mu.RUnlock()
-	for kind, p := range snapshot {
+	for kind, p := range snapshot() {
 		fn := pick(p)
 		if fn == nil {
 			continue

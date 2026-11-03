@@ -172,7 +172,7 @@ func TestNothingInAdminStartsCollapsed(t *testing.T) {
 func TestGovernanceListsTheToolCatalogNotWhoAdoptedIt(t *testing.T) {
 	var tools *ui.Section
 	for i, s := range (&AdminApp{}).governanceSections() {
-		if s.Title == "Global tools" {
+		if s.Title == "Shared tools" {
 			tools = &(&AdminApp{}).governanceSections()[i]
 		}
 		if strings.Contains(strings.ToLower(s.Title), "adoption") {

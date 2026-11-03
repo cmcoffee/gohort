@@ -453,51 +453,6 @@ func scopeManageActionJS(kind, idExpr, labelExpr, decorate string) string {
 // on/off exactly as before.
 const mapAgentsPillsJS = `(st.agents || []).map(function(a){ return { key: a.id, label: a.name, on: !!a.on, under: a.parent_id, partial: !!a.partial }; })`
 
-// toolPromoteGlobalAction moves an agent-scoped tool into its owner's user-wide
-// pool — the on-ramp to the tier-1 user ACL, which is the only access control
-// this page should be offering.
-//
-// It deliberately does ONE thing. The button it replaced opened the per-agent
-// pill editor, which let an admin attach another user's tool to that user's
-// agents — the wrong level: admin governs which USERS may reach a tool, and
-// which of their own agents load it is the user's call in their agent editor.
-// Promote reaches the user-ACL model; it doesn't reimplement a second one.
-const toolPromoteGlobalAction = `async function(ctx){
-  var r = ctx && ctx.record; if(!r) return;
-  var name = (r.tool && r.tool.name) || r.name;
-  var owner = r.owner || '';
-  if(!name){ window.uiAlert && window.uiAlert('No tool selected.'); return; }
-  var who = owner ? (owner + "'s") : 'the owner' + "'s";
-  var msg = 'Move "' + name + '" into ' + who + ' user-wide pool? Every one of their '
-          + 'agents can then use it, and you can Share it and set which users may '
-          + 'adopt it from Global Tools.';
-  // uiConfirm, not confirm: the desktop shim cannot answer a synchronous browser
-  // dialog, so a bare confirm() there does not ask. It used to approve without
-  // asking, which on a promote-to-global is exactly the wrong default.
-  if(!(await (window.uiConfirm ? window.uiConfirm(msg) : Promise.resolve(window.confirm(msg))))) return;
-  fetch('api/tool-scope?name=' + encodeURIComponent(name) + '&owner=' + encodeURIComponent(owner), {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({target: 'global', on: true})
-  }).then(function(res){
-    if(!res.ok) return res.text().then(function(t){ throw new Error(t || res.status); });
-    if(ctx.refresh) ctx.refresh();
-    window.uiToast && window.uiToast('Promoted "' + name + '" to the global pool.');
-  }).catch(function(err){
-    window.uiAlert && window.uiAlert('Promote failed: ' + (err && err.message || err));
-  });
-}`
-
-// pipelineScopeManageAction — Global (all agents run it) + per-agent attach.
-var pipelineScopeManageAction = scopeManageActionJS("pipeline",
-	`r.id || r.name`, `r.name || r.id`,
-	`function(st){
-    var note = st.global
-      ? 'Global: every agent can run this pipeline. Turn an agent off to deny it there; turn Global off to scope it down to the agents left on.'
-      : 'Agent-scoped: runnable only on the agents shown. Turn Global on to give it to all your agents.';
-    return { primary: { label: 'Global (all agents)', on: !!st.global }, items: `+mapAgentsPillsJS+`, note: note };
-  }`)
-
 // categoryScopeManageAction — set access for EVERY tool claiming a category at
 // once, and say so plainly when they don't agree.
 //

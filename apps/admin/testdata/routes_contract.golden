@@ -171,7 +171,7 @@ alice POST /api/user-agents?owner=bob&id=x&action=revoke_share ""
 root POST /api/user-agents ""
   400 owner and id required
 root POST /api/user-agents?owner=bob&id=x&action=bogus ""
-  400 action must be revoke_share|publish
+  400 action must be revoke_share|unpublish
 root POST /api/user-agents?owner=bob&id=x&action=revoke_share ""
   503 unavailable (orchestrate not wired)
 alice POST /api/user-machines?owner=bob&id=x&action=revoke_share ""
@@ -190,7 +190,7 @@ root POST /api/user-pipelines?owner=bob&id=x&action=bogus ""
   400 action must be revoke_share
 root POST /api/user-pipelines?owner=bob&id=x&action=revoke_share ""
   503 unavailable (orchestrate not wired)
-root POST /api/user-agents?owner=bob&id=x&action=publish ""
+root POST /api/user-agents?owner=bob&id=x&action=unpublish ""
   503 unavailable (orchestrate not wired)
 alice POST /api/user-credentials?owner=bob&name=k&action=disable ""
   403 forbidden

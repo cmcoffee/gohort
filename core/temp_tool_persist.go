@@ -618,7 +618,7 @@ func SetPersistentTempToolShared(db Database, username, name string, shared bool
 // tool in a user's persistent pool. Empty/nil = open to every user; the list is
 // trimmed, de-duped, and sorted for a stable store. Meaningful only when the tool
 // is Shared (see CanAdoptGlobalTool); harmless to set otherwise. Returns an error
-// when the named tool isn't in that user's pool. Admin-driven (Global Tools page).
+// when the named tool isn't in that user's pool. Admin-driven (Access on a shared tool).
 func SetPersistentTempToolAllowedUsers(db Database, username, name string, users []string) error {
 	db = tempToolStore(db)
 	if db == nil || username == "" {
@@ -748,6 +748,10 @@ type toolAdoption struct {
 	Copy *TempTool `json:"copy,omitempty"`
 	// At is when Copy was taken.
 	At time.Time `json:"at,omitempty"`
+	// Agents is which of the user's agents load it: empty for all of them,
+	// or only those listed. The recipient's choice, made after adding it; the
+	// owner's own agent list never travels with a tool.
+	Agents []string `json:"agents,omitempty"`
 }
 
 // loadAdoptions reads the user's adoptions by name: the list, completed from
@@ -905,6 +909,11 @@ func SetGlobalToolAdopted(db Database, username, name, owner string, adopted boo
 	recs := loadAdoptions(db, username)
 	if adopted {
 		rec := toolAdoption{Name: name, Owner: owner, ID: took.ID}
+		// Taking the same tool again (accepting an update) keeps which of
+		// the user's agents have it.
+		if was, ok := recs[name]; ok && was.Owner == owner {
+			rec.Agents = was.Agents
+		}
 		if took.Version == 0 {
 			frozen := took.Tool
 			rec.Copy, rec.At = &frozen, time.Now()
@@ -913,6 +922,38 @@ func SetGlobalToolAdopted(db Database, username, name, owner string, adopted boo
 	} else {
 		delete(recs, name)
 	}
+	saveAdoptionsLocked(db, username, recs)
+	return nil
+}
+
+// SetAdoptedToolAgents sets which of the user's agents load a tool they
+// added: none listed for all of them, otherwise only those. The tool reaches
+// them as an agent-scoped one (LentTool.ScopeAgents), so every loader that
+// keeps a scoped tool to its agents keeps this one to them too.
+func SetAdoptedToolAgents(db Database, username, name string, agents []string) error {
+	db = tempToolStore(db)
+	if db == nil || username == "" {
+		return errString("adoption requires an authenticated user")
+	}
+	name = strings.TrimSpace(name)
+	var ids []string
+	for _, id := range agents {
+		if id = strings.TrimSpace(id); id != "" && !sliceHas(ids, id) {
+			ids = append(ids, id)
+		}
+	}
+	tempToolPersistMu.Lock()
+	defer tempToolPersistMu.Unlock()
+	recs := loadAdoptions(db, username)
+	rec, ok := recs[name]
+	switch {
+	case !ok:
+		return errString("you have not added a tool called " + name)
+	case rec.Owner == "":
+		return errString("add " + name + " again from the one person offering it, then choose its agents")
+	}
+	rec.Agents = ids
+	recs[name] = rec
 	saveAdoptionsLocked(db, username, recs)
 	return nil
 }
@@ -978,13 +1019,15 @@ func AdoptedToolsFor(db Database, user string) []LentTool {
 		if !ok {
 			continue
 		}
+		c.ScopeAgents = append([]string(nil), rec.Agents...)
+		learn := rec.Owner != recs[name].Owner
 		if rec.ID == "" {
-			rec.ID = c.ID
+			rec.ID, learn = c.ID, true
 		}
 		if c.Version == 0 {
 			if rec.Copy == nil {
 				frozen := c.Tool
-				rec.Copy, rec.At = &frozen, time.Now()
+				rec.Copy, rec.At, learn = &frozen, time.Now(), true
 			}
 			current := c.Tool
 			c.Tool = *rec.Copy
@@ -992,7 +1035,7 @@ func AdoptedToolsFor(db Database, user string) []LentTool {
 				c.Update = &current
 			}
 		}
-		if rec != recs[name] {
+		if learn {
 			learned[name] = rec
 		}
 		out = append(out, c)
@@ -1018,6 +1061,7 @@ func AdoptedToolsFor(db Database, user string) []LentTool {
 			if was.Copy != nil {
 				rec.Copy, rec.At = was.Copy, was.At
 			}
+			rec.Agents = was.Agents
 			cur[name] = rec
 		}
 		saveAdoptionsLocked(db, user, cur)

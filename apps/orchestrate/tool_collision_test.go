@@ -116,3 +116,43 @@ func TestADirectCallReachesTheFrameworkToolFirst(t *testing.T) {
 		t.Error("the shadowing custom tool was marked loaded")
 	}
 }
+
+// A tool the user added and kept to one of their agents loads for that agent
+// and no other.
+func TestAnAddedToolKeptToOneAgentLoadsOnlyThere(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	udb := UserDB(root, "u")
+	prevRoot := RootDB
+	RootDB = root
+	t.Cleanup(func() { RootDB = prevRoot })
+
+	if err := AdminPersistTempTool(root, "lender", TempTool{Name: "fx_rate", Description: "d", CommandTemplate: "echo lent"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetPersistentTempToolSharedWith(root, "lender", "fx_rate", []string{"u"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetGlobalToolAdopted(root, "u", "fx_rate", "lender", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetAdoptedToolAgents(root, "u", "fx_rate", []string{"agent-1"}); err != nil {
+		t.Fatal(err)
+	}
+	has := func(agentID string) bool {
+		turn := &chatTurn{user: "u", udb: udb, agent: AgentRecord{ID: agentID, Owner: "u"}}
+		sess := &ToolSession{}
+		turn.loadAgentTempTools(sess, "u", root)
+		for _, tt := range sess.TempTools {
+			if tt.Name == "fx_rate" {
+				return true
+			}
+		}
+		return false
+	}
+	if !has("agent-1") {
+		t.Error("the agent it was put on does not load it")
+	}
+	if has("agent-2") {
+		t.Error("an agent it was not put on loads it")
+	}
+}

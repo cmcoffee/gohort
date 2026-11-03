@@ -95,18 +95,21 @@ type UserOwnedAgentRow struct {
 	Exposed    bool   `json:"exposed"` // already published as a /agents/ app
 }
 
-// AdminListUserOwnedAgents / AdminRevokeAgentShare / AdminPublishAgent are wired by
-// orchestrate (in an init) so the admin governance console can enumerate, un-share,
-// and DELEGATE (publish) user-owned agents across the deployment without the admin
-// app importing orchestrate. They take the app-wide Database (admin passes its own)
-// and mirror the AdminRehomeOrphanTool hook pattern. Nil until orchestrate's init
-// runs (single binary, so always set in practice). Publish is the admin's top-down
-// "delegate to users" step: it flips the agent Exposed so it becomes a /agents/
-// app the admin can then grant to users (the owner's peer-share stays independent).
+// AdminListUserOwnedAgents / AdminRevokeAgentShare / AdminUnpublishAgent are wired
+// by orchestrate (in an init) so the admin governance console can enumerate,
+// un-share and unpublish user-owned agents across the deployment without the
+// admin app importing orchestrate. They take the app-wide Database (admin passes
+// its own) and mirror the AdminRehomeOrphanTool hook pattern. Nil until
+// orchestrate's init runs (single binary, so always set in practice).
+//
+// Every one of them narrows reach. Publishing a user's agent is theirs to ask
+// for (their share list's Everyone), and the ask is approved under Sharing: an
+// admin "Publish" that made any user's agent reachable by everyone, running as
+// its owner, used to be here.
 var (
 	AdminListUserOwnedAgents func(db Database) []UserOwnedAgentRow
 	AdminRevokeAgentShare    func(db Database, owner, id string) error
-	AdminPublishAgent        func(db Database, owner, id string) error
+	AdminUnpublishAgent      func(db Database, owner, id string) error
 )
 
 // UserOwnedPipelineRow is one user-owned pipeline for the same governance
@@ -123,6 +126,10 @@ type UserOwnedPipelineRow struct {
 	// it. Listed beside Shared rather than folded into it, because "shared with
 	// two people" and "shared with everybody" are not the same row to read.
 	Published bool `json:"published"`
+	// Revocable is Shared or Published: there is a share to take back.
+	// Revoke takes both, and offering it on Shared alone hid it from a
+	// pipeline published to everyone and shared with nobody in particular.
+	Revocable bool `json:"revocable"`
 }
 
 // AdminListUserOwnedPipelines / AdminRevokePipelineShare are the pipeline half of
@@ -151,6 +158,8 @@ type UserOwnedMachineRow struct {
 	// it. Listed beside Shared rather than folded into it, because "shared with
 	// two people" and "shared with everybody" are not the same row to read.
 	Published bool `json:"published"`
+	// Revocable is Shared or Published; see UserOwnedPipelineRow.
+	Revocable bool `json:"revocable"`
 }
 
 // AdminListUserOwnedMachines / AdminRevokeMachineShare are the machine half of

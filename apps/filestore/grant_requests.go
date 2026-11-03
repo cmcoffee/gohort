@@ -6,7 +6,7 @@ package filestore
 // by hand on the store's page, after Builder told the person what to set. Now
 // Builder files the request (app_def request_store) and the admin answers it:
 // on the chat's card when the person building is an admin, otherwise under
-// Admin, Governance, Pending promotions. The request names what is asked for
+// Admin, Sharing, Requests to share. The request names what is asked for
 // (appstores.GrantRequestName), and approving applies exactly that, added to
 // whatever the app already holds there.
 

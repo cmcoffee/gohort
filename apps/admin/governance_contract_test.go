@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/notices"
 	"github.com/cmcoffee/gohort/core/promotion"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
@@ -127,4 +128,20 @@ func TestGovernanceRoutesContract(t *testing.T) {
 
 	ct.activity(mux, adb, "root")
 	ct.check(t, "testdata/governance_contract.golden")
+}
+
+// A declined request reaches its owner: only apps used to show one, on the
+// app's own share status, and every other kind's request just left the queue.
+func TestADeclinedRequestTellsItsOwner(t *testing.T) {
+	prev := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = prev })
+	tellOwnerDenied(PromotionRequest{Kind: "skill", Owner: "bob", Name: "refunds"})
+	got := notices.List(RootDB, "bob")
+	if len(got) != 1 || !strings.Contains(got[0].Title, `skill "refunds" was declined`) {
+		t.Errorf("the owner was not told: %+v", got)
+	}
+	if len(notices.List(RootDB, "alice")) != 0 {
+		t.Error("somebody else was told")
+	}
 }

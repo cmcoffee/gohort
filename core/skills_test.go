@@ -871,3 +871,31 @@ func TestTheSkillHintSaysThePersonCannotSeeIt(t *testing.T) {
 		t.Errorf("hint: %q", h)
 	}
 }
+
+// A published skill is on the administrator's list of what is shared with
+// everyone, and taking it back from there returns it to its author.
+func TestAPublishedSkillIsListedAndTakenBack(t *testing.T) {
+	db := skillShareStore(t)
+	SaveSkill(db, "carol", SkillRecord{ID: "s2", Name: "Ledger", Instructions: "Carol's ledger."})
+	if err := promoteSkillToDeployment("carol", "s2"); err != nil {
+		t.Fatal(err)
+	}
+	listed := false
+	for _, g := range shareledger.Published() {
+		if g.Kind == "skill" && g.ID == "s2" && g.Owner == "carol" && g.Revocable {
+			listed = true
+		}
+	}
+	if !listed {
+		t.Fatalf("not listed: %+v", shareledger.Published())
+	}
+	if err := shareledger.Unpublish("skill", "carol", "s2"); err != nil {
+		t.Fatal(err)
+	}
+	if len(PublishedSkillsBy(db, "carol")) != 0 {
+		t.Fatal("still published")
+	}
+	if _, ok := FindSkillByName(db, "carol", "Ledger"); !ok {
+		t.Fatal("the skill did not come back to its author")
+	}
+}

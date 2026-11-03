@@ -6,6 +6,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appassets"
 	"github.com/cmcoffee/gohort/core/promotion"
+	"github.com/cmcoffee/gohort/core/shareledger"
 	"github.com/cmcoffee/gohort/tools/appscript"
 	"github.com/cmcoffee/snugforge/kvlite"
 	"net/http"
@@ -525,5 +526,34 @@ func TestEveryPathTheFrameReachesIsBehindTheAppGate(t *testing.T) {
 		if !reached {
 			t.Errorf("%s: the owner reaches no handler either, so this path proves nothing about the gate", path)
 		}
+	}
+}
+
+// An app shared with every signed-in user is on the administrator's list of
+// what is shared with everyone; one shared only with people is not, and taking
+// one back turns its Share off and leaves it with its owner.
+func TestASharedAppIsListedAndTakenBack(t *testing.T) {
+	T := sharingTestApp(t)
+	T.registerPublished()
+	SaveAppSpec(AppSpec{Slug: "tally", Name: "Tally", Owner: "alice"})
+	SaveAppSpec(AppSpec{Slug: "notes", Name: "Notes", Owner: "bob"})
+	if err := T.setShared("alice", "tally", true); err != nil {
+		t.Fatal(err)
+	}
+	SetSharedOwner(T.DB, sharedAppsIndex, "notes", "bob", true) // as a person share leaves it
+	var got []string
+	for _, g := range shareledger.Published() {
+		if g.Kind == "app" {
+			got = append(got, g.Owner+"/"+g.ID+"/"+g.Name)
+		}
+	}
+	if len(got) != 1 || got[0] != "alice/tally/Tally" {
+		t.Fatalf("listed %v", got)
+	}
+	if err := shareledger.Unpublish("app", "alice", "tally"); err != nil {
+		t.Fatal(err)
+	}
+	if s, ok := loadSpec("alice", "tally"); !ok || s.Shared {
+		t.Fatalf("still shared, or gone: %+v %v", s, ok)
 	}
 }

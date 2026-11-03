@@ -45,6 +45,7 @@ import (
 	"github.com/cmcoffee/gohort/core/appassets"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/promotion"
+	"github.com/cmcoffee/gohort/core/shareledger"
 	"github.com/cmcoffee/gohort/core/ui"
 
 	"github.com/cmcoffee/gohort/tools/appscript"
@@ -130,6 +131,7 @@ func (T *CustomApps) Routes() {
 	// Approving an "app" publish request is the same act as the owner's
 	// Share toggle would have been: share it to every signed-in user.
 	promotion.RegisterApprover("app", T.approvePublish)
+	T.registerPublished()
 	// Anonymous links are gone. Stopping them being served is the code above;
 	// this withdraws the ones already minted and tells their owners which app
 	// each belonged to. See public_link_retired.go.
@@ -1752,7 +1754,7 @@ func (T *CustomApps) handleShareApp(c *jsonapi.Call, body *struct {
 	if on && !spec.Shared && !requestIsAdmin(r) {
 		// Sharing runs the owner's scripts, with the owner's credentials, for
 		// everyone who opens the app — so it is published the way a tool is:
-		// the owner asks, an administrator approves (the Pending promotions
+		// the owner asks, an administrator approves (the Requests to share
 		// queue on the Administrator page), and the approver does the share.
 		// An admin owner, or a deployment with nobody to ask, shares directly.
 		note := "" // optional
@@ -1813,6 +1815,33 @@ func (T *CustomApps) unshareOwned(owner, slug string) {
 	if cur, ok := LookupSharedOwner(T.DB, sharedAppsIndex, slug); ok && cur == owner {
 		SetSharedOwner(T.DB, sharedAppsIndex, slug, owner, false)
 	}
+}
+
+// registerPublished lists what is shared with everyone, for the
+// administrator to see and take back: the owner's own Share toggle, turned
+// off.
+func (T *CustomApps) registerPublished() {
+	shareledger.Register("app", shareledger.Provider{
+		Label:     "App",
+		Published: T.publishedApps,
+		Unpublish: func(owner, slug string) error { return T.setShared(owner, slug, false) },
+	})
+}
+
+// publishedApps is every app shared with every signed-in user. The index
+// also finds apps shared only with people or teams, which are not listed.
+func (T *CustomApps) publishedApps() []shareledger.Grant {
+	var out []shareledger.Grant
+	for slug, owner := range ListSharedOwners(T.DB, sharedAppsIndex) {
+		if spec, ok := loadSpec(owner, slug); ok && spec.Shared {
+			name := spec.Name
+			if name == "" {
+				name = slug
+			}
+			out = append(out, shareledger.Grant{ID: slug, Name: name, Owner: owner, Reach: "Every signed-in user"})
+		}
+	}
+	return out
 }
 
 // approvePublish is the "app" kind's promotion approver: an administrator

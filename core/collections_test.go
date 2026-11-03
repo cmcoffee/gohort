@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/cmcoffee/gohort/core/peershare"
+	"github.com/cmcoffee/gohort/core/shareledger"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -525,5 +526,37 @@ func TestCollectionRemintRepointsTheBundlesSkill(t *testing.T) {
 		if len(res.Warnings) != 0 {
 			t.Errorf("collectionFirst=%v: a re-pointed skill has nothing missing: %v", collectionFirst, res.Warnings)
 		}
+	}
+}
+
+// A deployment collection is on the administrator's list of what is shared
+// with everyone, and taking it back from there returns it to its owner.
+func TestADeploymentCollectionIsListedAndTakenBack(t *testing.T) {
+	savedRoot, savedVec := RootDB, VectorDB
+	RootDB, VectorDB = &DBase{Store: kvlite.MemStore()}, &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB, VectorDB = savedRoot, savedVec })
+	owner := UserDB(CollectionsDB(), "alice")
+	if owner == nil {
+		t.Skip("no per-user store in this configuration")
+	}
+	SaveCollection(owner, Collection{ID: "col-1", Owner: "alice", Name: "Runbooks"})
+	if err := PromoteCollectionToDeployment("alice", "col-1"); err != nil {
+		t.Fatal(err)
+	}
+	RootDB.Set(GlobalCollectionsTable, "framework", Collection{ID: "framework", Name: "Built in"})
+	var ids []string
+	for _, g := range shareledger.Published() {
+		if g.Kind == "collection" {
+			ids = append(ids, g.ID)
+		}
+	}
+	if len(ids) != 1 || ids[0] != "col-1" {
+		t.Fatalf("listed %v, want only the owned one", ids)
+	}
+	if err := shareledger.Unpublish("collection", "alice", "col-1"); err != nil {
+		t.Fatal(err)
+	}
+	if c, ok := LoadCollection(owner, "alice", "col-1"); !ok || IsDeploymentScope(c) {
+		t.Fatalf("not back with its owner: %+v %v", c, ok)
 	}
 }

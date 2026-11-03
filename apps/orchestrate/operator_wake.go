@@ -572,8 +572,12 @@ func registerOperatorWake(app *OrchestrateApp) {
 			addTool(p.Tool)
 		}
 		// The same resolver as the runner: each adoption to the owner it was
-		// taken from, and only while that owner still offers it.
+		// taken from, and only while that owner still offers it. One the
+		// user put on only some of their agents loads for those.
 		for _, p := range AdoptedToolsFor(AuthDB(), owner) {
+			if len(p.ScopeAgents) > 0 && !p.ScopedToAgent(agentID) {
+				continue
+			}
 			addTool(p.Tool)
 		}
 		for _, td := range temptool.BuildAgentToolDefs(sess) {

@@ -70,12 +70,12 @@ func (a *AdminApp) governanceSections() []ui.Section {
 		personalMCPServersSection(),
 		personalTeamsBotsSection(),
 		{
-			Title:    "Global tools",
-			Subtitle: "What this deployment publishes, and who may take it.",
+			Title:    "Shared tools",
+			Subtitle: "The deployment's tool catalog: what is shared with everyone, and who may add it.",
 			Detail: "A tool reaches other people on three rungs: its owner's alone, shared by them with people they name, or published here to the deployment catalog. This is the third — the one an admin grants.\n\n" +
 				"Published is not loaded. Each user opts in from their own Extensions catalog and picks which of their agents load it, which is their business and not shown here: an admin who wants somebody to stop using a tool takes away the permission rather than the preference. Access does that for one person; Unshare does it for everybody.\n\n" +
-				"What users run is the VERSION you approved, not the owner's current copy. The owner's edits reach only their own agents until they request an update, which arrives in Pending promotions with the changes to review; approving makes it the next version for everyone. History keeps the last five versions, and any of them can be rolled back to.\n\n" +
-				"Publish a tool, set its access, and inspect what it actually does on the Tools page.",
+				"What users run is the VERSION you approved, not the owner's current copy. The owner's edits reach only their own agents until they request an update, which arrives in Requests to share with the changes to review; approving makes it the next version for everyone. History keeps the last five versions, and any of them can be rolled back to.\n\n" +
+				"A user's tool is shared when they ask; your own you can share from Users' tools, under Extensions.",
 			Body: ui.Table{
 				Source: "api/global-tools",
 				RowKey: "id",
@@ -94,7 +94,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 				},
 				RowActions: []ui.RowAction{
 					// The owner's requested next version, against the one users
-					// run now. Approve or Deny it in Pending promotions below.
+					// run now. Approve or Deny it in Requests to share.
 					ui.ExpandIf("Review update", "update_requested", "", ui.RecordView{
 						Pairs: []ui.DisplayPair{{Label: "Requested changes", Field: "review", Block: true}},
 					}),
@@ -141,13 +141,13 @@ func (a *AdminApp) governanceSections() []ui.Section {
 						Confirm: "Take this tool out of the shared catalog? Everyone who adopted it stops loading it, and it goes back to being its owner's alone.",
 						Variant: "danger"},
 				},
-				EmptyText: "The deployment publishes no tools. A user asks for one to be published from their Extensions page, and it appears in Pending promotions below.",
+				EmptyText: "The deployment publishes no tools. A user asks for one to be published from their Extensions page, and it appears in Requests to share.",
 			},
 		},
 		{
 			Title:    "User-owned agents",
 			Subtitle: "Agents users create, and optionally peer-share with specific other users.",
-			Detail:   "Sharing is user-initiated; this is the admin's audit and revoke. A shared agent runs in its owner's context with each recipient's own credentials, so no secret travels.\n\nRevoke share clears the recipient list and the owner keeps the agent. Empty recipients means private.",
+			Detail:   "Sharing and publishing are the owner's to ask for; this is the admin's audit and take-back. A shared agent runs in its owner's context with each recipient's own credentials, so no secret travels.\n\nRevoke share clears the recipient list, and Unpublish takes a published agent back from everyone. The owner keeps the agent either way.",
 			Body: ui.Table{
 				Source: "api/user-agents",
 				RowKey: "id",
@@ -163,14 +163,14 @@ func (a *AdminApp) governanceSections() []ui.Section {
 					}},
 				},
 				RowActions: []ui.RowAction{
-					// Delegate to users — publish the agent as a /agents/ app the
-					// admin can then grant. Shown until it's published; the owner's
-					// peer-share stays intact.
-					{Type: "button", Label: "Publish",
-						PostTo:  "api/user-agents?action=publish&owner={owner}&id={id}",
+					// Take back from everyone. Publishing is the owner's ask
+					// (their share list's Everyone), approved under Sharing.
+					{Type: "button", Label: "Unpublish",
+						PostTo:  "api/user-agents?action=unpublish&owner={owner}&id={id}",
 						Method:  "POST",
-						Confirm: "Publish this agent as a dashboard app? It becomes available at /agents/, which you can then grant to users. The owner's existing share is unchanged.",
-						HideIf:  "exposed"},
+						Confirm: "Take this agent back from everyone? The owner keeps it, and the people they shared it with keep it too.",
+						OnlyIf:  "exposed",
+						Variant: "danger"},
 					{Type: "button", Label: "Revoke share",
 						PostTo:  "api/user-agents?action=revoke_share&owner={owner}&id={id}",
 						Method:  "POST",
@@ -207,9 +207,17 @@ func (a *AdminApp) governanceSections() []ui.Section {
 					{Type: "button", Label: "Revoke share",
 						PostTo:  "api/user-pipelines?action=revoke_share&owner={owner}&id={id}",
 						Method:  "POST",
-						Confirm: "Revoke this pipeline's sharing? Its recipients lose access; the owner keeps the pipeline.",
-						OnlyIf:  "shared",
+						Confirm: "Revoke this pipeline's sharing, with everyone it was published to? They lose access; the owner keeps the pipeline.",
+						OnlyIf:  "revocable",
 						Variant: "danger"},
+					// Here rather than on a second list of every user's
+					// pipelines, which this page also had.
+					{Type: "button", Label: "Delete",
+						PostTo:     "api/pipelines?id={id}",
+						Method:     "DELETE",
+						Confirm:    "Delete this pipeline? It's removed for the owning user and detached from any agent that used it.",
+						Variant:    "danger",
+						Optimistic: true},
 				},
 				EmptyText: "No user-owned pipelines yet. When a user authors one, it appears here.",
 			},
@@ -240,16 +248,16 @@ func (a *AdminApp) governanceSections() []ui.Section {
 					{Type: "button", Label: "Revoke share",
 						PostTo:  "api/user-machines?action=revoke_share&owner={owner}&id={id}",
 						Method:  "POST",
-						Confirm: "Revoke this machine's sharing? Its recipients lose access, including any schedule they armed against it, which is marked broken rather than left to fail. The owner keeps the machine.",
-						OnlyIf:  "shared",
+						Confirm: "Revoke this machine's sharing, with everyone it was published to? They lose access, including any schedule they armed against it, which is marked broken rather than left to fail. The owner keeps the machine.",
+						OnlyIf:  "revocable",
 						Variant: "danger"},
 				},
 				EmptyText: "No user-owned machines yet. When a user authors one, it appears here.",
 			},
 		},
 		{
-			Title:    "Pending promotions",
-			Subtitle: "Users' bottom-up requests to publish their own resources deployment-wide.",
+			Title:    "Requests to share",
+			Subtitle: "What users have asked to share with the whole deployment, waiting for your decision.",
 			Detail: "Approve a tool request to Share it to the global catalog, where each user then opts in from their Extensions page. A tool request marked Update asks for a published tool's next version: Review shows what changes, and approving it changes what every user who added the tool runs. What you approve is the definition as it was when the owner asked.\n\n" +
 				"Approve an app request to share it with every signed-in user: each gets their own copy, and its scripts run with the owner's credentials, which is why an admin sees it first.\n\n" +
 				"Approve a public-link request to mint the app's anonymous link: anyone who has the URL then runs its data sources as the owner, with no login.\n\n" +
@@ -284,6 +292,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 						{Value: "pipeline", Label: "Pipeline", Color: "info"},
 						{Value: "machine", Label: "Machine", Color: "info"},
 						{Value: "store_grant", Label: "File store", Color: "warning"},
+						{Value: "guide", Label: "Guide", Color: "info"},
 					}},
 					{Field: "update", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "Update", Color: "warning"},
@@ -305,7 +314,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 						// Approving a tool promotion shares it deployment-wide
 						// — which is a badge on that tool's row two sections
 						// down, in the table this queue exists to feed.
-						Invalidate: []string{"api/persistent-tools", "api/global-tools"}},
+						Invalidate: []string{"api/persistent-tools", "api/global-tools", "api/published"}},
 					{Type: "button", Label: "Deny",
 						PostTo:  "api/promotions?action=deny&id={id}",
 						Method:  "POST",
@@ -313,6 +322,31 @@ func (a *AdminApp) governanceSections() []ui.Section {
 						Variant: "danger"},
 				},
 				EmptyText: "No pending promotion requests.",
+			},
+		},
+		{
+			Title:    "Shared with everyone",
+			Subtitle: "Skills, knowledge, apps and guides users have shared with the whole deployment.",
+			Detail: "Each was shared by its owner, or by you approving their request. Take back ends the sharing and leaves the thing with its owner: a skill or a collection returns to its owner's own list with nobody else on it, an app stops being shared with every signed-in user, and a guide loses Everyone. Nothing is deleted, and the owner gets a notice saying so.\n\n" +
+				"Tools are listed under Shared tools, and agents, pipelines and machines on the Governance tab, each with its own way to take one back.",
+			Body: ui.Table{
+				Source: "api/published",
+				RowKey: "key",
+				Columns: []ui.Col{
+					{Field: "label", Label: "Kind", Mute: true},
+					{Field: "name", Flex: 1},
+					{Field: "owner", Label: "Owner", Mute: true},
+					{Field: "reach", Label: "Reach", Mute: true, Flex: 1},
+				},
+				RowActions: []ui.RowAction{
+					{Type: "button", Label: "Take back",
+						PostTo:  "api/published?kind={kind}&owner={owner}&id={id}",
+						Method:  "POST",
+						OnlyIf:  "revocable",
+						Confirm: "Take this back from the deployment? It stays with its owner, who is told. Everyone else stops having it.",
+						Variant: "danger"},
+				},
+				EmptyText: "Nothing else is shared with everyone.",
 			},
 		},
 	}

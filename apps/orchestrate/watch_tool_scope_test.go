@@ -48,6 +48,11 @@ func TestAWatchResolvesWithinTheAgentsOwnTools(t *testing.T) {
 			t.Errorf("the watch invoker lost %q", want)
 		}
 	}
+	// Twice: the owner's own tools, and the ones they added and kept to some
+	// of their agents.
+	if n := strings.Count(src, "if len(p.ScopeAgents) > 0 && !p.ScopedToAgent(agentID) {"); n < 2 {
+		t.Errorf("only %d tool walks keep a scoped tool to its agents; own and added tools both must", n)
+	}
 	if n := strings.Count(src, "if !watchableTool(td) {"); n < 3 {
 		t.Errorf("only %d branches refuse a tool that makes changes; operator, channel and provided tools all must", n)
 	}

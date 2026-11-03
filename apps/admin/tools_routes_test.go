@@ -143,9 +143,17 @@ func TestTheToolsPageChangesWhatItSays(t *testing.T) {
 	if _, in := pool("waiting_tool"); !in || len(LoadPendingTempTools(db, "bob")) != 0 {
 		t.Error("approving should move the tool from the queue to the pool")
 	}
-	ok("POST", "/api/persistent-tools?action=share&owner=bob&name=pool_tool", "")
-	if p, _ := pool("pool_tool"); !p.Shared {
-		t.Error("share did not share it")
+	// A user's tool is shared when they ask, not from here: Share on bob's
+	// tool is refused, and it stays his alone.
+	if w := f.do(t, "POST", "/api/persistent-tools?action=share&owner=bob&name=pool_tool", ""); w.Code != http.StatusForbidden {
+		t.Errorf("sharing another user's tool answered %d, want 403", w.Code)
+	}
+	if p, _ := pool("pool_tool"); p.Shared {
+		t.Error("an admin shared another user's tool without being asked")
+	}
+	// As approving his request would.
+	if err := SetPersistentTempToolShared(db, "bob", "pool_tool", true); err != nil {
+		t.Fatal(err)
 	}
 	ok("POST", "/api/persistent-tools?action=unshare&owner=bob&name=pool_tool", "")
 	if p, _ := pool("pool_tool"); p.Shared {
@@ -238,7 +246,12 @@ func TestTheScopePillsReachTheirKindsProvider(t *testing.T) {
 	if w := f.do(t, "GET", "/api/tool-scope?kind=zz_test_kind&name=missing", ""); w.Code != 404 {
 		t.Errorf("a missing item answered %d", w.Code)
 	}
-	if w := f.do(t, "POST", "/api/tool-scope?kind=zz_test_kind&owner=bob&name=x", `{"target":"a-1","on":true}`); w.Code != 204 || strings.Join(set, " ") != "bob/x:a-1" {
+	// Which of bob's agents use his item is bob's to choose: refused here.
+	if w := f.do(t, "POST", "/api/tool-scope?kind=zz_test_kind&owner=bob&name=x", `{"target":"a-1","on":true}`); w.Code != 403 || len(set) != 0 {
+		t.Errorf("an admin re-scoped another user's item: %d, set %v", w.Code, set)
+	}
+	// The admin's own item toggles through the provider.
+	if w := f.do(t, "POST", "/api/tool-scope?kind=zz_test_kind&name=x", `{"target":"a-1","on":true}`); w.Code != 204 || len(set) != 1 || !strings.HasSuffix(set[0], "/x:a-1") {
 		t.Errorf("toggle: %d, set %v", w.Code, set)
 	}
 	for body, want := range map[string]string{`{"target":" "}`: "target is required", `{"target":"bad"}`: "no such agent", `nope`: "invalid JSON"} {

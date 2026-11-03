@@ -183,7 +183,7 @@ func (t *chatTurn) appDefRequestStore(args map[string]any) (string, error) {
 		return "", err
 	}
 	_, rights, _ := strings.Cut(name, ": ")
-	waiting := fmt.Sprintf("Requested %s on %s for %s. It is waiting for an admin under Admin, Governance, Pending promotions; scripts reach the store once it is approved.", rights, st.Name, spec.Name)
+	waiting := fmt.Sprintf("Requested %s on %s for %s. It is waiting for an admin under Admin, Sharing, Requests to share; scripts reach the store once it is approved.", rights, st.Name, spec.Name)
 	if !UserIsAdmin(t.user) || (t.sse == nil && t.askVia == nil) {
 		return waiting, nil
 	}

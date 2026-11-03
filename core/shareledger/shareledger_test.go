@@ -326,3 +326,32 @@ func TestWithdrawnFromEverybodyTellsOnlyItsDependents(t *testing.T) {
 		t.Errorf("an empty take-back said something: %v", *sent)
 	}
 }
+
+// The administrator's view: every kind's deployment-wide grants, stamped with
+// the kind, revocable only where the kind can take one back, and a take-back
+// reaching the kind that owns it.
+func TestPublishedListsAndTakesBackAcrossKinds(t *testing.T) {
+	reset(t)
+	var took string
+	Register("skill", Provider{Label: "Skill",
+		Published: func() []Grant { return []Grant{{ID: "s1", Name: "Triage", Owner: "alice"}} },
+		Unpublish: func(owner, id string) error { took = owner + "/" + id; return nil },
+	})
+	Register("note", Provider{Label: "Note",
+		Published: func() []Grant { return []Grant{{ID: "n1", Name: "Memo", Owner: "bob"}} },
+	})
+	Register("agent", Provider{Label: "Agent"})
+	got := Published()
+	if len(got) != 2 || got[0].Kind != "note" || got[1].Kind != "skill" {
+		t.Fatalf("published: %+v", got)
+	}
+	if got[0].Revocable || !got[1].Revocable || !got[1].Wide {
+		t.Fatalf("revocable only where the kind can take it back: %+v", got)
+	}
+	if err := Unpublish("skill", "alice", "s1"); err != nil || took != "alice/s1" {
+		t.Fatalf("take-back: %v %q", err, took)
+	}
+	if err := Unpublish("note", "bob", "n1"); err == nil {
+		t.Fatal("a kind with no take-back reported one")
+	}
+}

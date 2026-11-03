@@ -125,6 +125,10 @@ func (T *Extensions) Routes() {
 		"GET":  jsonapi.Get(T.DB, T.handleGlobalTools),
 		"POST": jsonapi.Post(T.DB, T.handleGlobalToolAdopt),
 	}.Serve)
+	T.HandleFunc("/api/global-tools/agents", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handleAdoptedAgents),
+		"POST": jsonapi.Post(T.DB, T.handleAdoptedAgentsSet),
+	}.Serve)
 	T.HandleFunc("/api/skills", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.handleUserSkills),
 		"POST":   T.skillPost(),
@@ -556,6 +560,11 @@ type toolRow struct {
 	Differs         bool   `json:"differs"`           // working copy is not the published version
 	Diff            string `json:"diff,omitempty"`    // published -> working copy, field by field
 	CanUpdate       bool   `json:"can_update"`        // differs, and no update request pending
+	// An administrator's own tool publishes, and takes an update, without
+	// a request to themselves: CanPublish and CanPublishUpdate stand in
+	// for CanRequest and CanUpdate on their rows.
+	CanPublish       bool `json:"can_publish"`
+	CanPublishUpdate bool `json:"can_publish_update"`
 	UpdateRequested bool   `json:"update_requested"`  // an update request is pending admin review
 	// Session drafts — tools the assistant authored mid-conversation with
 	// persist=false. They are real and callable for the life of their chat
@@ -604,6 +613,7 @@ type toolList struct {
 	name     string
 	rows     []toolRow
 	released map[string]ToolRelease
+	admin    bool // the user is an administrator: their own tools publish directly
 	scoped   []ScopedTool
 	byName   map[string]int
 	pt       *phaseTimes // the list's step times; nil for a single-record fetch
@@ -669,6 +679,7 @@ func (lt *toolList) ownRows() {
 	// under theirs from the next load (core/toolcat).
 	toolcat.Kick(user)
 	lt.rows = []toolRow{}
+	lt.admin = UserIsAdmin(user)
 	// The user's own published tools, by name: their releases.
 	lt.released = map[string]ToolRelease{}
 	for _, rel := range ToolReleases(AuthDB()) {
@@ -696,32 +707,55 @@ func (lt *toolList) ownRows() {
 		if !p.LastUsedAt.IsZero() {
 			last = p.LastUsedAt.Format("2006-01-02")
 		}
-		// A pending request on an unpublished tool asks to publish it; on a
-		// published one it asks for the working copy to become the next
-		// version. Two different badges.
-		pending := PendingPromotion(AuthDB(), user, "tool", p.Tool.Name)
 		r := toolRow{
 			Key:  "pool:" + p.Tool.Name,
 			Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
 			Credential: p.Tool.Credential, Category: toolCategoryOf(user, p.Tool), CategoryAuto: toolCategoryIsAuto(user, p.Tool),
-			Missing: missing, Shared: p.Shared, LastUsed: last,
+			Missing: missing, LastUsed: last,
 			SharedWith: sharedWithSummary(p.SharedWith),
 			Disabled:   p.Tool.Disabled, BuilderOnly: p.Tool.BuilderOnly, BoundOnly: p.Tool.BoundOnly, NoUnattended: p.Tool.NoUnattended,
-			Requested: !p.Shared && pending, CanRequest: !p.Shared && !pending,
 			Pool: true, Deletable: true, DisableOK: true,
-			Group: "All Agents (Global tools)",
+			Group: "In my pool (all my agents)",
 		}
-		if rel, ok := lt.released[p.Tool.Name]; ok && p.Shared && rel.ID == p.ID {
-			r.Release = "Published v" + strconv.Itoa(rel.Version)
-			if !rel.Tool.SameDefinition(p.Tool) {
-				r.Differs, r.Diff = true, rel.Tool.DefinitionDiff(p.Tool)
-				r.Release += " - your copy differs"
-			}
-			r.UpdateRequested = pending
-			r.CanUpdate = r.Differs && !pending
-		}
+		lt.shareState(&r, p)
 		lt.rows = append(lt.rows, r)
 	}
+}
+
+// shareState fills a row's place in the deployment catalog from the
+// owner's record: published or not, a request pending, and whether the
+// working copy has moved on from the published version. The same for a
+// pool tool and for one scoped to a few agents: sharing hands others the
+// definition, never which of the owner's agents carry it.
+//
+// A pending request on an unpublished tool asks to publish it; on a
+// published one it asks for the working copy to become the next version.
+// Two different badges.
+func (lt *toolList) shareState(r *toolRow, p PersistentTempTool) {
+	if lt.admin {
+		defer r.direct()
+	}
+	pending := PendingPromotion(AuthDB(), lt.user, "tool", p.Tool.Name)
+	r.Shared = p.Shared
+	r.Requested, r.CanRequest = !p.Shared && pending, !p.Shared && !pending
+	rel, ok := lt.released[p.Tool.Name]
+	if !ok || !p.Shared || rel.ID != p.ID {
+		return
+	}
+	r.Release = "Published v" + strconv.Itoa(rel.Version)
+	if !rel.Tool.SameDefinition(p.Tool) {
+		r.Differs, r.Diff = true, rel.Tool.DefinitionDiff(p.Tool)
+		r.Release += " - your copy differs"
+	}
+	r.UpdateRequested = pending
+	r.CanUpdate = r.Differs && !pending
+}
+
+// direct swaps a row's requests for an administrator's direct publish: an
+// administrator's own tool is theirs to put in the catalog.
+func (r *toolRow) direct() {
+	r.CanPublish, r.CanRequest = r.CanRequest, false
+	r.CanPublishUpdate, r.CanUpdate = r.CanUpdate, false
 }
 
 // A sub-agent is labelled with its parent so it doesn't read as a
@@ -753,6 +787,14 @@ func (lt *toolList) scopedRows() {
 	// name would invite an action that does nothing.
 	lt.scoped = ListScopedTools(user)
 	lt.pt.mark(fmt.Sprintf("loading %d scoped", len(lt.scoped)))
+	// The records behind the scoped rows, for their catalog state: a
+	// tool kept to a few agents can still be shared with the deployment.
+	records := map[string]PersistentTempTool{}
+	for _, p := range LoadPersistentTempTools(AuthDB(), user) {
+		if len(p.ScopeAgents) > 0 {
+			records[p.Tool.Name] = p
+		}
+	}
 	defer lt.pt.mark("scoped rows")
 	lt.byName = map[string]int{} // tool name -> index into rows
 	for _, st := range lt.scoped {
@@ -778,14 +820,18 @@ func (lt *toolList) scopedRows() {
 			}
 		}
 		lt.byName[st.Tool.Name] = len(lt.rows)
-		lt.rows = append(lt.rows, toolRow{
+		r := toolRow{
 			Key:  "scoped:" + st.AgentID + ":" + st.Tool.Name,
 			Name: st.Tool.Name, Description: st.Tool.Description, Mode: st.Tool.Mode,
 			Credential: st.Tool.Credential, Category: toolCategoryOf(user, st.Tool), CategoryAuto: toolCategoryIsAuto(user, st.Tool), Missing: missing,
 			AgentTool: true, Trial: st.Trial, Disabled: st.Tool.Disabled, DisableOK: true,
 			AgentID: st.AgentID, Agents: []string{agent}, AgentList: agent,
 			Group: "Scoped Tools",
-		})
+		}
+		if p, ok := records[st.Tool.Name]; ok {
+			lt.shareState(&r, p)
+		}
+		lt.rows = append(lt.rows, r)
 	}
 	// Legacy session drafts keep their per-conversation heading: they are
 	// keyed to one session by definition, and they only exist until that
@@ -1557,6 +1603,16 @@ func (T *Extensions) handlePromotions(c *jsonapi.Call, body *struct {
 	if err := CreatePromotionRequest(AuthDB(), user, kind, name, note); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
+	// An administrator's own tool publishes, or takes the update, at once:
+	// the request is filed and approved in one step, so it is versioned and
+	// recorded the same way anybody else's is.
+	if kind == "tool" && UserIsAdmin(user) {
+		if err := promotion.Approve(AuthDB(), promotion.RequestKey(kind, user, name), user); err != nil {
+			// Nothing was published, so nothing waits in the queue either.
+			promotion.WithdrawPromotionRequest(AuthDB(), user, kind, name)
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+	}
 	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
@@ -1579,6 +1635,16 @@ func (T *Extensions) handleGlobalTools(c *jsonapi.Call) (any, error) {
 	for _, p := range AdoptedToolsFor(AuthDB(), user) {
 		loadedFrom[p.Tool.Name] = p.Owner
 		taken[p.Tool.Name] = p
+	}
+	var labels map[string]string
+	agentsOf := func(name string, adopted bool) string {
+		if !adopted || len(taken[name].ScopeAgents) == 0 {
+			return ""
+		}
+		if labels == nil {
+			labels = adoptedAgentLabels(user)
+		}
+		return adoptedAgentsSummary(labels, taken[name].ScopeAgents)
 	}
 	publishedBy := SharedToolOwners(AuthDB())
 	versions := map[string]int{}
@@ -1628,6 +1694,9 @@ func (T *Extensions) handleGlobalTools(c *jsonapi.Call) (any, error) {
 		// says how; Accept takes the new definition.
 		UpdateAvailable bool   `json:"update_available"`
 		Diff            string `json:"diff,omitempty"`
+		// Agents names which of the user's agents an added tool is on,
+		// blank for all of them.
+		Agents string `json:"agents,omitempty"`
 	}
 	rows := []row{}
 	missingCred := func(t TempTool) bool {
@@ -1658,6 +1727,7 @@ func (T *Extensions) handleGlobalTools(c *jsonapi.Call) (any, error) {
 		if t, ok := taken[p.Tool.Name]; ok && r.Adopted && t.Version == 0 && t.Update != nil {
 			r.UpdateAvailable, r.Diff = true, t.Tool.DefinitionDiff(*t.Update)
 		}
+		r.Agents = agentsOf(p.Tool.Name, r.Adopted)
 		rows = append(rows, r)
 	}
 	for _, p := range LoadSharedPersistentTempTools(AuthDB()) {
@@ -1678,12 +1748,14 @@ func (T *Extensions) handleGlobalTools(c *jsonapi.Call) (any, error) {
 			continue
 		}
 		listed[key] = true
+		adopted := owner != "" && loadedFrom[p.Tool.Name] == owner
 		rows = append(rows, row{
 			Key:  key,
 			Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
-			Credential: p.Tool.Credential, Adopted: owner != "" && loadedFrom[p.Tool.Name] == owner,
+			Credential: p.Tool.Credential, Adopted: adopted,
 			Missing: missingCred(p.Tool), Shadowed: own[p.Tool.Name], Owner: owner,
 			Version: "v" + strconv.Itoa(versions[p.Tool.Name]),
+			Agents:  agentsOf(p.Tool.Name, adopted),
 		})
 	}
 	return rows, nil
@@ -2235,6 +2307,15 @@ func (T *Extensions) toolsSection(user string) ui.Section {
 							},
 							Invalidate: []string{"api/tools"},
 						}),
+						// An administrator's own tool: no request to themselves.
+						{Type: "button", Label: "Publish", Method: "POST",
+							PostTo:  "api/promotions?kind=tool&name={name}",
+							OnlyIf:  "can_publish",
+							Confirm: "Publish this tool to the deployment catalog? Anyone it admits can add it to their agents."},
+						{Type: "button", Label: "Publish update", Method: "POST",
+							PostTo:  "api/promotions?kind=tool&name={name}",
+							OnlyIf:  "can_publish_update",
+							Confirm: "Make your copy the next version? Everyone who added this tool runs it from now on."},
 						{Type: "button", Label: "Withdraw", Method: "POST",
 							PostTo:  "api/tools?action=withdraw&name={name}",
 							OnlyIf:  "shared",
@@ -2355,9 +2436,9 @@ func (T *Extensions) toolsSection(user string) ui.Section {
 				}},
 			},
 			ui.Subsection{
-				Title:    "Global tools",
-				Subtitle: "Shared tools your deployment publishes.",
-				Detail: "Add the ones you want and they become available to your agents; remove any you do not use.\n\n" +
+				Title:    "Shared tools",
+				Subtitle: "Tools shared with your deployment. Add one to put it in your pool for your agents.",
+				Detail: "Add the ones you want and they become available to your agents; remove any you do not use. Agents on an added tool puts it on only the agents you tick; the Agents column names them, and blank means all of them.\n\n" +
 					"A published tool runs as the version an administrator approved, and a new version reaches you when one is approved. " +
 					"A tool a colleague shared with you runs as the copy you added: when they change it, the row says an update is available, and nothing changes for you until you accept it.",
 				Body: ui.Table{
@@ -2377,6 +2458,7 @@ func (T *Extensions) toolsSection(user string) ui.Section {
 							{Value: true, Label: "Shadowed by your own tool", Color: "warning"},
 						}},
 						{Field: "from", Label: "From", Mute: true},
+						{Field: "agents", Label: "Agents", Mute: true},
 						{Field: "missing", Label: "Deps", Type: "badge", Badges: []ui.BadgeMapping{
 							{Value: true, Label: "⚠ missing", Color: "danger"},
 						}},
@@ -2387,6 +2469,9 @@ func (T *Extensions) toolsSection(user string) ui.Section {
 							PostTo:     "api/global-tools?name={name}&owner={owner}&adopt=true",
 							HideIf:     "adopted",
 							Optimistic: true},
+						// Which of the user's agents have it: all of them, or
+						// only the ones ticked.
+						adoptedAgentsDialog(),
 						{Type: "button", Label: "Remove", Method: "POST",
 							PostTo:     "api/global-tools?name={name}&adopt=false",
 							OnlyIf:     "adopted",

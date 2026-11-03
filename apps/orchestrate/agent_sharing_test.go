@@ -122,7 +122,10 @@ func TestListAndRevokeUserOwnedAgents(t *testing.T) {
 // TestPublishAgentForAdmin covers the admin "delegate to users" action: publishing
 // flips Exposed on a top-level user agent (leaving its share intact), a sub-agent
 // can't be published, and the governance list reflects the published state.
-func TestPublishAgentForAdmin(t *testing.T) {
+// The admin takes a published agent back from everyone, and only that: the
+// owner keeps the agent and the people they shared it with. Publishing is the
+// owner's to ask for, so there is no admin publish to test.
+func TestTheAdminUnpublishesAnAgent(t *testing.T) {
 	root := &DBase{Store: kvlite.MemStore()}
 	saved := RootDB
 	RootDB = root
@@ -130,33 +133,23 @@ func TestPublishAgentForAdmin(t *testing.T) {
 
 	AuthSetUser(root, "alice", "pw", false)
 	udb := UserDB(root, "alice")
-	if _, err := saveAgent(udb, AgentRecord{ID: "a1", Owner: "alice", Name: "Helper", OrchestratorPrompt: "p", AllowedUsers: []string{"bob"}}); err != nil {
+	if _, err := saveAgent(udb, AgentRecord{ID: "a1", Owner: "alice", Name: "Helper", OrchestratorPrompt: "p",
+		AllowedUsers: []string{"bob"}, Everyone: true}); err != nil {
 		t.Fatal(err)
 	}
-
-	if err := publishAgentForAdmin(root, "alice", "a1"); err != nil {
+	if err := unpublishAgentForAdmin(root, "alice", "a1"); err != nil {
 		t.Fatal(err)
 	}
 	a, _ := loadAgent(udb, "a1")
-	if !a.Everyone {
-		t.Fatal("publish must set Exposed=true")
+	if a.Everyone {
+		t.Fatal("unpublish must take the agent back from everyone")
 	}
 	if len(a.AllowedUsers) != 1 || a.AllowedUsers[0] != "bob" {
-		t.Fatalf("publish must leave the owner's share intact; got %v", a.AllowedUsers)
+		t.Fatalf("unpublish must leave the owner's share intact; got %v", a.AllowedUsers)
 	}
-
-	// A sub-agent can't be published.
-	if _, err := saveAgent(udb, AgentRecord{ID: "sub", Owner: "alice", Name: "Sub", OrchestratorPrompt: "p", OwnedBy: "a1"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := publishAgentForAdmin(root, "alice", "sub"); err == nil {
-		t.Fatal("a sub-agent must not be publishable")
-	}
-
-	// The governance list reflects the published state.
 	for _, r := range listUserOwnedAgentsForAdmin(root) {
-		if r.ID == "a1" && !r.Exposed {
-			t.Fatal("governance row must reflect the published (Exposed) state")
+		if r.ID == "a1" && r.Exposed {
+			t.Fatal("governance row must reflect the unpublished state")
 		}
 	}
 }

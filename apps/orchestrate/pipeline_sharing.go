@@ -282,6 +282,7 @@ func listUserOwnedPipelinesForAdmin(db Database) []UserOwnedPipelineRow {
 				Shared:     len(d.AllowedUsers) > 0,
 				Stages:     len(d.Stages),
 				Published:  d.Published,
+				Revocable:  len(d.AllowedUsers) > 0 || d.Published,
 			})
 		}
 	}

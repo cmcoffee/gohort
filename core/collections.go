@@ -1049,6 +1049,22 @@ func NarrowCollectionToOwner(owner, id string) error {
 func init() {
 	shareledger.Register("collection", shareledger.Provider{
 		Label: "Knowledge",
+		// The framework's own collection has no owner and is nobody's to
+		// take back.
+		Published: func() []shareledger.Grant {
+			var out []shareledger.Grant
+			if RootDB == nil {
+				return out
+			}
+			for _, id := range RootDB.Keys(GlobalCollectionsTable) {
+				var c Collection
+				if RootDB.Get(GlobalCollectionsTable, id, &c) && c.ID != "" && c.Owner != "" {
+					out = append(out, shareledger.Grant{ID: c.ID, Name: c.Name, Owner: c.Owner, Reach: "Deployment-wide"})
+				}
+			}
+			return out
+		},
+		Unpublish: NarrowCollectionToOwner,
 		Candidates: func(owner string) []shareledger.Grant {
 			var out []shareledger.Grant
 			udb := UserDB(CollectionsDB(), owner)

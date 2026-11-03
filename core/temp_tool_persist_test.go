@@ -1639,3 +1639,69 @@ func TestARenamedToolKeepsItsAskFirstMark(t *testing.T) {
 		t.Error("and comes off under the new name too")
 	}
 }
+
+// A tool the user added can be put on only some of their agents. The choice
+// is the recipient's, rides the adoption, and reaches the loaders as the
+// tool's agent list; taking the same tool again (accepting an update) keeps
+// it, and choosing all agents again clears it.
+func TestAnAddedToolCanBeKeptToSomeAgents(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	saved := RootDB
+	RootDB = db
+	t.Cleanup(func() { RootDB = saved })
+	if err := AdminPersistTempTool(db, "lender", TempTool{Name: "fx_rate", CommandTemplate: "echo one"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetPersistentTempToolSharedWith(db, "lender", "fx_rate", []string{"bob"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetAdoptedToolAgents(db, "bob", "fx_rate", []string{"a-1"}); err == nil {
+		t.Fatal("agents were set on a tool bob never added")
+	}
+	if err := SetGlobalToolAdopted(db, "bob", "fx_rate", "lender", true); err != nil {
+		t.Fatal(err)
+	}
+	scope := func() []string {
+		t.Helper()
+		for _, p := range AdoptedToolsFor(db, "bob") {
+			if p.Tool.Name == "fx_rate" {
+				return p.ScopeAgents
+			}
+		}
+		t.Fatal("bob does not load the tool he added")
+		return nil
+	}
+	if s := scope(); len(s) != 0 {
+		t.Fatalf("an added tool starts on all agents: %v", s)
+	}
+	if err := SetAdoptedToolAgents(db, "bob", "fx_rate", []string{"a-1", " a-1 ", ""}); err != nil {
+		t.Fatal(err)
+	}
+	if s := scope(); len(s) != 1 || s[0] != "a-1" {
+		t.Fatalf("kept to a-1: %v", s)
+	}
+	// The resolver completing the record must not lose the choice.
+	if s := scope(); len(s) != 1 || s[0] != "a-1" {
+		t.Fatalf("a second read lost the agents: %v", s)
+	}
+	if err := AdminPersistTempTool(db, "lender", TempTool{Name: "fx_rate", CommandTemplate: "echo two"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetGlobalToolAdopted(db, "bob", "fx_rate", "lender", true); err != nil {
+		t.Fatal(err)
+	}
+	if s := scope(); len(s) != 1 || s[0] != "a-1" {
+		t.Fatalf("accepting an update dropped the agents: %v", s)
+	}
+	for _, p := range LoadPersistentTempTools(db, "lender") {
+		if p.Tool.Name == "fx_rate" && len(p.ScopeAgents) != 0 {
+			t.Fatalf("the recipient's choice reached the owner's record: %v", p.ScopeAgents)
+		}
+	}
+	if err := SetAdoptedToolAgents(db, "bob", "fx_rate", nil); err != nil {
+		t.Fatal(err)
+	}
+	if s := scope(); len(s) != 0 {
+		t.Fatalf("all agents again: %v", s)
+	}
+}

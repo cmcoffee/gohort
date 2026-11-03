@@ -1805,6 +1805,17 @@ func noteSkillPublished(owner string, s SkillRecord, strippedTools int) {
 func init() {
 	shareledger.Register("skill", shareledger.Provider{
 		Label: "Skill",
+		// Muted ones included: muted is not unpublished.
+		Published: func() []shareledger.Grant {
+			var out []shareledger.Grant
+			for _, s := range allDeploymentSkills(nil) {
+				if s.Owner != "" {
+					out = append(out, shareledger.Grant{ID: s.ID, Name: s.Name, Owner: s.Owner, Reach: "Deployment-wide"})
+				}
+			}
+			return out
+		},
+		Unpublish: func(owner, id string) error { return NarrowSkillToOwner(nil, owner, id) },
 		Candidates: func(owner string) []shareledger.Grant {
 			var out []shareledger.Grant
 			for _, s := range LoadSkills(nil, owner) {

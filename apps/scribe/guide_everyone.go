@@ -15,6 +15,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/promotion"
+	"github.com/cmcoffee/gohort/core/shareledger"
 )
 
 // guidePromotionKind is the request kind; the name is "<guide id>:<level>".
@@ -59,6 +60,43 @@ func guideEveryoneAsk(owner string, g Guide, admin bool) promotion.EveryoneAsk {
 // guide reaches everyone at the level asked for.
 func (T *Scribe) registerGuidePromotion() {
 	promotion.RegisterApprover(guidePromotionKind, T.approveEveryone)
+	// What is shared with everyone, for the administrator to see and take
+	// back: Everyone off, the people and teams it is shared with kept.
+	shareledger.Register(guidePromotionKind, shareledger.Provider{
+		Label:     "Guide",
+		Published: T.everyoneGuides,
+		Unpublish: T.takeBackEveryone,
+	})
+}
+
+// everyoneGuides is every guide shared with everyone.
+func (T *Scribe) everyoneGuides() []shareledger.Grant {
+	var out []shareledger.Grant
+	for id, owner := range ListSharedOwners(T.DB, sharedGuidesIndex) {
+		g, ok := loadGuide(UserDB(T.DB, owner), id)
+		if !ok || !g.Shared {
+			continue
+		}
+		reach := "Everyone can read"
+		if g.everyoneLevel() == guideLevelEdit {
+			reach = "Everyone can edit"
+		}
+		out = append(out, shareledger.Grant{ID: id, Name: g.Title, Owner: owner, Reach: reach})
+	}
+	return out
+}
+
+// takeBackEveryone takes a guide's Everyone away.
+func (T *Scribe) takeBackEveryone(owner, id string) error {
+	udb := UserDB(T.DB, owner)
+	g, ok := loadGuide(udb, id)
+	if !ok {
+		return Error("no guide " + id + " owned by " + owner)
+	}
+	g.setEveryoneLevel("")
+	saveGuide(udb, g)
+	indexGuideShares(T.DB, owner, id, false, g.AllowedUsers)
+	return nil
 }
 
 func (T *Scribe) approveEveryone(owner, name string) error {

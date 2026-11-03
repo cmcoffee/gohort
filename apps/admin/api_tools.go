@@ -62,6 +62,10 @@ type activeWithOwner struct {
 	Owner      string   `json:"owner"`
 	Missing    []string `json:"missing,omitempty"`
 	HasMissing bool     `json:"has_missing"`
+	// CanShare is the admin's own tool, not yet shared: the only kind this
+	// page publishes directly. Another user's tool is shared when they ask,
+	// and the ask is approved under Sharing.
+	CanShare bool `json:"can_share"`
 	PersistentTempTool
 }
 
@@ -177,7 +181,8 @@ func (ov *toolsOverview) pools() {
 			// user-wide pool tools.
 			for _, p := range SharedUserTools(a.db, u) {
 				m := toolMissingDeps(p.Tool)
-				ov.active = append(ov.active, activeWithOwner{Owner: u, Missing: m, HasMissing: len(m) > 0, PersistentTempTool: p})
+				ov.active = append(ov.active, activeWithOwner{Owner: u, Missing: m, HasMissing: len(m) > 0,
+					CanShare: u == username && !p.Shared, PersistentTempTool: p})
 			}
 		}
 		// Walk both tables — usernames may exist in one and not
@@ -323,6 +328,13 @@ func (a *AdminApp) changePersistentTool(c *jsonapi.Call, acl *toolACL) (any, err
 	case "reject":
 		err = RejectPendingTempTool(a.db, owner, name)
 	case "share":
+		// The admin's own tool only. A user's tool reaches the deployment
+		// when they ask for it, and the ask is approved under Sharing: an
+		// admin publishing somebody's tool without one used to be possible
+		// from here, and it closed their own pending request as approved.
+		if owner != username {
+			return nil, jsonapi.Status(http.StatusForbidden, "a user's tool is shared when they ask: approve their request under Sharing, Requests to share")
+		}
 		err = SetPersistentTempToolShared(a.db, owner, name, true)
 	case "unshare":
 		err = SetPersistentTempToolShared(a.db, owner, name, false)
@@ -436,6 +448,12 @@ func (a *AdminApp) handleToolScopeSet(c *jsonapi.Call, body struct {
 	owner, name, _, prov, err := toolScopeArgs(c)
 	if err != nil {
 		return nil, err
+	}
+	// Which of a user's agents get their own tool or pipeline is theirs to
+	// choose, from their own pages. This page used to set it for any user
+	// (Promote to Global, a pipeline's Access).
+	if owner != c.User {
+		return nil, jsonapi.Status(http.StatusForbidden, "which of a user's agents use their own tool or pipeline is theirs to choose")
 	}
 	body.Target = strings.TrimSpace(body.Target)
 	if body.Target == "" {

@@ -44,10 +44,15 @@ var sectionGroup = map[string]string{
 	// Pluggable integrations you ADD — grouped under Extensions (vs Capabilities,
 	// which are configured features like Image Generation / STT).
 	"API Credentials": "Extensions", "MCP Servers": "Extensions", "Connectors": "Extensions", "Other integrations": "Extensions",
-	"Research Sources": "Extensions", "Persistent Tools (Pending)": "Extensions",
-	"Global Tools": "Extensions", "Agent-Scoped Tools": "Extensions", "Orphaned Tools": "Extensions",
+	"Research Sources": "Extensions",
+	"Users' tools":     "Extensions", "Agent-Scoped Tools": "Extensions", "Orphaned Tools": "Extensions",
 	"Tool Groups": "Extensions",
-	"Skills":      "Extensions", "Pipelines": "Extensions",
+	"Skills":      "Extensions",
+
+	// What reaches the whole deployment, and the asks for it, in one place:
+	// the requests waiting for you, the drafted tools waiting for review, and
+	// what is shared. They were spread across Governance and Extensions.
+	"Requests to share": "Sharing", "Drafted tools waiting for review": "Sharing", "Shared tools": "Sharing", "Shared with everyone": "Sharing",
 
 	"Agent Capabilities: Outward & Spending": "Agents",
 
@@ -70,9 +75,9 @@ var sectionGroup = map[string]string{
 	// Who owns what, across every kind of owned thing. Six sections that
 	// are one subject, which is a tab rather than six strays in General.
 	"Rules":                  "Governance",
-	"User-owned credentials": "Governance", "Global tools": "Governance",
-	"User-owned agents": "Governance", "User-owned pipelines": "Governance",
-	"User-owned machines": "Governance", "Pending promotions": "Governance",
+	"User-owned credentials": "Governance",
+	"User-owned agents":      "Governance", "User-owned pipelines": "Governance",
+	"User-owned machines":   "Governance",
 	"Personal integrations": "Governance", "Personal MCP servers": "Governance", "Personal Teams bots": "Governance",
 }
 
@@ -311,8 +316,6 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 			ClientAction("configure_tool", configureToolAction).
 			ClientAction("tools_export", toolsExportAction).
 			ClientAction("tools_export_all", toolsExportAllAction).
-			ClientAction("tool_promote_global", toolPromoteGlobalAction).
-			ClientAction("pipeline_scope_manage", pipelineScopeManageAction).
 			ClientAction("category_scope_manage", categoryScopeManageAction).
 			ClientAction("credentials_export", credentialsExportAction).
 			ClientAction("credentials_export_all", credentialsExportAllAction).
@@ -368,9 +371,10 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 		"System Status": true, "Users": true, "LLM Routing": true, "Activity Log": true,
 		"Cost History (Last 30 Days)": true, "Cost by source": true, "Scheduled Tasks": true,
 		"API Credentials": true, "MCP Servers": true, "Connectors": true, "Other integrations": true, "Research Sources": true,
-		"Persistent Tools (Pending)": true, "Global Tools": true, "System Hooks": true,
+		"Drafted tools waiting for review": true, "Users' tools": true, "System Hooks": true,
+		"Requests to share": true, "Shared tools": true,
 		"Agent-Scoped Tools": true, "Orphaned Tools": true,
-		"Tool Groups": true, "Skills": true, "Pipelines": true, "Teams": true,
+		"Tool Groups": true, "Skills": true, "Teams": true,
 		"Templates":  true,
 		"Migrations": true, "Database Browser": true,
 		"Agent Capabilities: Outward & Spending": true,
@@ -448,7 +452,13 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 	// above has to appear here. "Tools" is deliberately absent now: the tool
 	// sections all live under Extensions, and a rank for a tab nothing lands on
 	// is a tab that never appears.
-	groupRank := map[string]int{"System": 0, "Costs": 2, "LLMs": 3, "Capabilities": 4, "Agents": 5, "Governance": 6, "Extensions": 7, "Apps": 8, "Tuning": 9, "Prompts": 10, "Maintenance": 11}
+	groupRank := map[string]int{"System": 0, "Costs": 2, "LLMs": 3, "Capabilities": 4, "Agents": 5, "Governance": 6, "Sharing": 7, "Extensions": 8, "Apps": 9, "Tuning": 10, "Prompts": 11, "Maintenance": 12}
+	// The Sharing tab reads as a queue then a catalog: what is waiting for
+	// you first, then what is shared. Its sections come from two builders,
+	// whose order would put the catalog first.
+	for t, n := range map[string]int{"Requests to share": 1, "Drafted tools waiting for review": 2, "Shared tools": 3, "Shared with everyone": 4} {
+		order[t] = n
+	}
 	sort.SliceStable(page.Sections, func(i, j int) bool {
 		gi, gj := groupRank[page.Sections[i].Group], groupRank[page.Sections[j].Group]
 		if gi != gj {
@@ -560,7 +570,7 @@ var configureBackendAction = `function(ctx){
   window.uiConfigureBackend(name, (ctx && ctx.reload) || function(){ location.reload(); });
 }`
 
-// addToolFromTemplateAction (Global Tools toolbar) → Add a tool from a tool
+// addToolFromTemplateAction (Users' tools toolbar) → Add a tool from a tool
 // template (same generic renderer, tool target → persists a TempTool).
 var addToolFromTemplateAction = `function(ctx){
   if(!window.uiTemplateForm){` + connectorFormDef + `}
@@ -582,7 +592,7 @@ var addExtensionAction = `function(ctx){
     .catch(function(e){ window.uiAlert && window.uiAlert((e&&e.message)||(''+e)); });
 }`
 
-// configureToolAction (Global Tools row "Configure") → re-open a template-authored
+// configureToolAction (Users' tools row "Configure") → re-open a template-authored
 // tool in the generic form, prefilled from its provenance. Mirrors
 // configureBackendAction on the connector side; the shared uiTemplateForm routes
 // the save to api/tool-config (edit mode preserves share/ACL state).

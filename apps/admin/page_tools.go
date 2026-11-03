@@ -4,13 +4,13 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
-// toolsSections is the tools part of the admin page: Persistent Tools (Pending), Global Tools, Agent-Scoped Tools, Orphaned Tools, Categories.
+// toolsSections is the tools part of the admin page: Drafted tools waiting for review, Users' tools, Agent-Scoped Tools, Orphaned Tools, Categories.
 func (a *AdminApp) toolsSections() []ui.Section {
 	return []ui.Section{
 		{
-			Title:    "Persistent Tools (Pending)",
-			Subtitle: "LLM-discovered API patterns awaiting your approval.",
-			Detail:   "Approve to make one permanent; reject to discard. The description is the LLM's own summary of what the tool does.",
+			Title:    "Drafted tools waiting for review",
+			Subtitle: "Tools an assistant drafted for a user, waiting for your approval before that user's agents can use them.",
+			Detail:   "Approve to keep one in its owner's pool; reject to discard. Approving shares it with nobody: that is a request of its own, under Requests to share. The description is the assistant's own summary of what the tool does.",
 			Body: ui.Table{
 				Source:       "api/persistent-tools",
 				RecordsField: "pending",
@@ -78,9 +78,9 @@ func (a *AdminApp) toolsSections() []ui.Section {
 			},
 		},
 		{
-			Title:    "Global Tools",
-			Subtitle: "User-wide tools, available to ALL of the owner's agents.",
-			Detail:   "\"Access\" opens the pill editor: descope a tool down to specific agents, or disable it per agent.\n\nShare publishes the tool to the deployment-wide catalog, where each user OPTS IN from their Extensions page; it no longer auto-loads for everyone. What they run is the tool as it was when shared (its version 1): the owner's later edits reach them only through an update request you approve. Unshare pulls it from the catalog, and Delete revokes immediately. Export a tool, or all of them, as a portable bundle. A ⚠ badge marks a tool whose credential dependency is missing.",
+			Title:    "Users' tools",
+			Subtitle: "Every user's own tools, in their pools: a directory, not the shared catalog.",
+			Detail:   "Which of their agents use a tool is the owner's choice, made on their own Extensions page. A tool reaches other users when its owner asks for it to be shared, and you approve the ask under Requests to share; Shared tools lists what is shared. Your own tools you can Share directly from here.\n\nAccess, on a shared tool, sets which users may add it. Unshare takes it back from everyone, and Delete removes it for good. Export a tool, or all of them, as a portable bundle. A ⚠ badge marks a tool whose credential dependency is missing.",
 			Body: ui.Stack{Children: []ui.Component{
 				ui.Table{
 					Source:       "api/persistent-tools",
@@ -141,10 +141,13 @@ func (a *AdminApp) toolsSections() []ui.Section {
 						// Share to all users / pull back. Mirror approve/reject: the
 						// visible button is the action NOT yet taken (Share when
 						// private, Unshare when shared).
+						// Your own tool only (can_share): a user's tool is
+						// shared when they ask, and the ask is approved under
+						// Shared.
 						{Type: "button", Label: "Share",
 							PostTo:     "api/persistent-tools?action=share&name={tool.name}&owner={owner}",
 							Method:     "POST",
-							HideIf:     "shared",
+							OnlyIf:     "can_share",
 							Optimistic: true},
 						{Type: "button", Label: "Unshare",
 							PostTo:     "api/persistent-tools?action=unshare&name={tool.name}&owner={owner}",
@@ -229,19 +232,6 @@ func (a *AdminApp) toolsSections() []ui.Section {
 							{Label: "Hook capabilities", Field: "tool.hook_capabilities", Mono: true},
 						},
 					}),
-					// Promote — move this agent-scoped tool into the owner's
-					// user-wide pool, where the tier-1 user ACL ("Access" on
-					// Global Tools) governs who may adopt it.
-					//
-					// This used to be an "Access" button opening the per-AGENT
-					// pill editor, which is the wrong control at this level:
-					// admin governs WHICH USERS may reach a tool, while which of
-					// a user's own agents load it is that user's choice in their
-					// agent editor. Global Tools' Access says exactly this in its
-					// own comment; this row was the last place still contradicting
-					// it. Promote is the on-ramp to that model, not a second one.
-					{Type: "button", Label: "Promote to Global", Method: "client",
-						PostTo: "tool_promote_global"},
 				},
 				EmptyText: "No agent-scoped tools.",
 			},
@@ -249,7 +239,7 @@ func (a *AdminApp) toolsSections() []ui.Section {
 		{
 			Title:    "Orphaned Tools",
 			Subtitle: "Formerly agent-scoped tools whose owning agent was deleted.",
-			Detail:   "They were captured so they are not silently lost. Promote one to your user-wide pool to keep it, then use \"Access\" on Global Tools to place it, or Delete to discard. A ⚠ badge marks a missing credential dependency.",
+			Detail:   "They were captured so they are not silently lost. Give one back to its owner's pool to keep it (they choose which of their agents use it), or Delete to discard. A ⚠ badge marks a missing credential dependency.",
 			Body: ui.Table{
 				Source:       "api/persistent-tools",
 				RecordsField: "orphaned",
@@ -277,11 +267,13 @@ func (a *AdminApp) toolsSections() []ui.Section {
 							{Label: "Orphaned at", Field: "orphaned_at", Format: "reltime"},
 						},
 					}),
-					{Type: "button", Label: "Promote to global",
+					// A repair: the tool's agent is gone, so it goes back to
+					// its owner's pool, where they choose which agents get it.
+					{Type: "button", Label: "Give back to the owner's pool",
 						PostTo:     "api/persistent-tools?action=orphan_promote&name={tool.name}&owner={owner}",
 						Method:     "POST",
 						Variant:    "success",
-						Confirm:    "Adopt this orphaned tool into your user-wide pool?",
+						Confirm:    "Give this tool back to its owner's pool? They then choose which of their agents use it, from their Extensions page.",
 						Optimistic: true},
 					{Type: "button", Label: "Delete",
 						PostTo:     "api/persistent-tools?action=orphan_delete&name={tool.name}&owner={owner}",

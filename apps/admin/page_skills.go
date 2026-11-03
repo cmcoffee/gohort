@@ -129,36 +129,6 @@ func (a *AdminApp) skillsSections() []ui.Section {
 			}},
 		},
 		{
-			Title:    "Pipelines",
-			Subtitle: "Declarative multi-stage workflows authored in Agents.",
-			Detail:   "Written with the pipeline tool, or via Builder. This surface lists every user's pipelines and lets you inspect the stages or delete a definition. Deleting one also drops it from any agent it was attached to.",
-			Body: ui.Table{
-				Source:       "api/pipelines",
-				RecordsField: "pipelines",
-				RowKey:       "id",
-				Columns: []ui.Col{
-					{Field: "owner", Label: "Owner", Flex: 1, Mute: true},
-					{Field: "name", Label: "Name", Flex: 1},
-					{Field: "description", Label: "Description", Flex: 2, Mute: true},
-					{Field: "stages", Label: "Stages", Flex: 0},
-				},
-				RowActions: []ui.RowAction{
-					ui.Expand("View", ui.JSONView{Field: "detail", Title: "Definition"}),
-					// Scope pill — Global (all agents run it) + per-agent
-					// attach, mirroring the tool scope control.
-					{Type: "button", Label: "Access", Method: "client",
-						PostTo: "pipeline_scope_manage"},
-					{Type: "button", Label: "Delete",
-						PostTo:     "api/pipelines?id={id}",
-						Method:     "DELETE",
-						Confirm:    "Delete this pipeline definition? It's removed for the owning user and detached from any agent that used it. Authoring it again means re-creating the stages.",
-						Variant:    "danger",
-						Optimistic: true},
-				},
-				EmptyText: "No pipelines defined. They're authored in Agents via the pipeline tool or Builder.",
-			},
-		},
-		{
 			Title:    "Agent Capabilities: Outward & Spending",
 			Subtitle: "The blast radius of each agent: what it can do that reaches REAL PEOPLE or COSTS MONEY.",
 			Detail:   "Read-only, derived live from each agent's bound channels, its messaging tools, and the paid credentials its attached tools dispatch through. Agents with no outward or spending reach are omitted, so this list IS the surface to watch.",

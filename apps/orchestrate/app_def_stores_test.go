@@ -72,7 +72,7 @@ func TestBuilderRequestsAStoreForAnApp(t *testing.T) {
 	SaveAppSpec(AppSpec{Owner: user, Slug: "prep", Name: "Case prep", RecordKey: "id"})
 	turn := &chatTurn{user: user}
 	out, err := turn.appDefRequestStore(map[string]any{"id": "prep", "store": "intake", "write": true, "commands": true, "why": "downloads and extracts"})
-	if err != nil || !strings.Contains(out, "waiting for an admin under Admin, Governance, Pending promotions") {
+	if err != nil || !strings.Contains(out, "waiting for an admin under Admin, Sharing, Requests to share") {
 		t.Fatalf("%q %v", out, err)
 	}
 	name := appstores.GrantRequestName("intake", "prep", true, true, false)

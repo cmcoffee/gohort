@@ -61,7 +61,7 @@ func TestRoutesContract(t *testing.T) {
 		do("root", "POST", p+"?owner=bob&id=x&action=bogus", "")
 		do("root", "POST", p+"?owner=bob&id=x&action=revoke_share", "")
 	}
-	do("root", "POST", "/api/user-agents?owner=bob&id=x&action=publish", "")
+	do("root", "POST", "/api/user-agents?owner=bob&id=x&action=unpublish", "")
 	do("alice", "POST", "/api/user-credentials?owner=bob&name=k&action=disable", "")
 	do("root", "POST", "/api/user-credentials", "")
 	do("root", "POST", "/api/user-credentials?owner=bob&name=k&action=bogus", "")
