@@ -26,6 +26,13 @@
 //
 // Off unless a caller labels the turn (WithPromptTurn), so nothing here
 // costs anything for the callers this was not written for.
+//
+// Across conversations too. A label names a family (an agent) as well as the
+// turn, and the first call of a conversation is compared with the family's
+// last call: on a local server a new conversation reuses the cache only when
+// its system prompt and tools match an earlier one byte for byte, so a slow
+// first token is either a prefix that moved (named here) or a cache that let
+// it go (said here as "same as its last conversation").
 
 package core
 
@@ -33,30 +40,39 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"strconv"
 	"strings"
 	"sync"
 )
 
 type promptTurnKey struct{}
 
-// WithPromptTurn labels every LLM call made under ctx as belonging to
-// one turn, which is the unit the watch compares within. Without it the
-// watch does nothing.
-func WithPromptTurn(ctx context.Context, id string) context.Context {
-	if id = strings.TrimSpace(id); id == "" || ctx == nil {
-		return ctx
-	}
-	return context.WithValue(ctx, promptTurnKey{}, id)
+// promptLabel is what WithPromptTurn puts on a context.
+type promptLabel struct {
+	family, turn string
 }
 
-func promptTurn(ctx context.Context) string {
+// WithPromptTurn labels every LLM call made under ctx as belonging to
+// one turn, which is the unit the watch compares within, and to a family
+// (an agent), whose conversations are compared with each other. Without a
+// turn the watch does nothing; without a family it compares within turns
+// only.
+func WithPromptTurn(ctx context.Context, family, turn string) context.Context {
+	if turn = strings.TrimSpace(turn); turn == "" || ctx == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, promptTurnKey{}, promptLabel{strings.TrimSpace(family), turn})
+}
+
+func promptTurn(ctx context.Context) promptLabel {
 	if ctx == nil {
-		return ""
+		return promptLabel{}
 	}
-	if s, ok := ctx.Value(promptTurnKey{}).(string); ok {
-		return s
+	if l, ok := ctx.Value(promptTurnKey{}).(promptLabel); ok {
+		return l
 	}
-	return ""
+	return promptLabel{}
 }
 
 // prefixSnapshot is what one call sent, kept only long enough to compare
@@ -65,11 +81,14 @@ type prefixSnapshot struct {
 	calls     int
 	system    string
 	toolNames []string
+	toolSums  map[string]string // name -> hash of what the model reads of it
 }
 
 var (
 	prefixWatchMu sync.Mutex
 	prefixWatch   = map[string]*prefixSnapshot{}
+	// prefixFamilies is each family's last call, for the next conversation.
+	prefixFamilies = map[string]*prefixSnapshot{}
 )
 
 // maxWatchedTurns bounds the map. A turn ends without telling anyone, so
@@ -83,17 +102,28 @@ const maxWatchedTurns = 64
 // Called at the shared option-application point, so it sees what every
 // provider is about to send rather than one provider's rendering of it.
 func WatchPromptPrefix(ctx context.Context, system string, tools []Tool) {
-	turn := promptTurn(ctx)
+	label := promptTurn(ctx)
+	turn := label.turn
 	if turn == "" {
 		return
 	}
 	names := make([]string, 0, len(tools))
+	sums := make(map[string]string, len(tools))
 	for _, t := range tools {
 		names = append(names, t.Name)
+		sums[t.Name] = toolSum(t)
 	}
 
 	prefixWatchMu.Lock()
 	defer prefixWatchMu.Unlock()
+	if label.family != "" {
+		defer func() {
+			if _, ok := prefixFamilies[label.family]; !ok && len(prefixFamilies) >= maxWatchedTurns {
+				prefixFamilies = map[string]*prefixSnapshot{}
+			}
+			prefixFamilies[label.family] = &prefixSnapshot{system: system, toolNames: names, toolSums: sums}
+		}()
+	}
 	prev, seen := prefixWatch[turn]
 	if !seen {
 		if len(prefixWatch) >= maxWatchedTurns {
@@ -102,9 +132,12 @@ func WatchPromptPrefix(ctx context.Context, system string, tools []Tool) {
 				break
 			}
 		}
-		prefixWatch[turn] = &prefixSnapshot{calls: 1, system: system, toolNames: names}
+		prefixWatch[turn] = &prefixSnapshot{calls: 1, system: system, toolNames: names, toolSums: sums}
 		Debug("[prefix-watch] %s call 1: %d tools, %d bytes of system prompt, this is the write everything else should read",
 			turn, len(names), len(system))
+		if last, ok := prefixFamilies[label.family]; ok {
+			Log("[prefix-watch] %s: a new conversation, against its family's last call: %s", turn, prefixAgainst(last, system, names, sums))
+		}
 		return
 	}
 	prev.calls++
@@ -127,6 +160,47 @@ func WatchPromptPrefix(ctx context.Context, system string, tools []Tool) {
 		prev.system = system
 	}
 }
+
+// prefixAgainst says how a prefix compares with an earlier one: the same, or
+// what moved first.
+func prefixAgainst(last *prefixSnapshot, system string, names []string, sums map[string]string) string {
+	var moved []string
+	if added, removed := diffNames(last.toolNames, names); len(added) > 0 || len(removed) > 0 {
+		moved = append(moved, "TOOLS CHANGED ("+itoa(len(last.toolNames))+" → "+itoa(len(names))+listPart(" +", added)+listPart(" -", removed)+")")
+	} else if strings.Join(last.toolNames, ",") != strings.Join(names, ",") {
+		moved = append(moved, "TOOLS REORDERED")
+	}
+	var reworded []string
+	for _, n := range names {
+		if was, ok := last.toolSums[n]; ok && was != sums[n] {
+			reworded = append(reworded, n)
+		}
+	}
+	if len(reworded) > 0 {
+		moved = append(moved, "TOOL SCHEMAS CHANGED"+listPart(" ", reworded))
+	}
+	if last.system != system {
+		at := firstDiff(last.system, system)
+		moved = append(moved, "SYSTEM PROMPT CHANGED at byte "+itoa(at)+" of "+itoa(len(system))+": was "+quote(snippet(last.system, at))+", now "+quote(snippet(system, at)))
+	}
+	if len(moved) == 0 {
+		return "same system prompt and tools, so a cold start here is the server's cache letting the prefix go, not the prompt"
+	}
+	return strings.Join(moved, "; ")
+}
+
+// toolSum identifies what the model reads of a tool, so a reworded
+// description shows up and not only an added or removed tool.
+func toolSum(t Tool) string {
+	b, _ := json.Marshal(struct {
+		D string
+		P map[string]ToolParam
+		R []string
+	}{t.Description, t.Parameters, t.Required})
+	return hashOf(string(b))
+}
+
+func quote(s string) string { return strconv.Quote(s) }
 
 // diffNames reports catalog membership changes. Order is deliberately
 // ignored: a reordered catalog also breaks the cache, but reporting it as

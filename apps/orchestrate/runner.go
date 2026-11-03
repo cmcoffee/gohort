@@ -2392,11 +2392,18 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		// turn is the volatile tail that never caches anyway — same place the
 		// date stamp goes, and free for the same reason.
 		TurnNotes: func(user string) string {
-			notes := t.withBulletins(turnNotes(pr.sess, t.udb, t.chatSessionID(), user, t.datesTurnNote(UserLocation(t.user))))
+			dates := t.datesTurnNote(UserLocation(t.user))
+			framework := turnNotes(pr.sess, t.udb, t.chatSessionID(), user, dates)
+			notes := t.withBulletins(framework)
 			// The one-time ask about an idle open item is for the person in
 			// this conversation, so it rides the main turn only, never a
 			// worker or a dispatched agent.
-			if ask := t.openItemTurnNote(user); ask != "" {
+			ask := t.openItemTurnNote(user)
+			// What the note is made of: a long one costs the prompt cache, and
+			// the loop's warning says only how long.
+			Debug("[orchestrate.turn-notes] agent=%s: bulletins %d, framework %d (dates %d), open-item ask %d chars",
+				t.agent.ID, len(notes)-len(framework), len(framework), len(dates), len(ask))
+			if ask != "" {
 				if notes != "" {
 					notes += "\n\n"
 				}
