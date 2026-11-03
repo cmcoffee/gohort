@@ -540,3 +540,109 @@ func TestAChangedEmbeddingSpaceStartsTheRepair(t *testing.T) {
 		}
 	}
 }
+
+// sizeLimitedEmbedServer is an embedder with a small batch, as a llama.cpp
+// server is: an input over limit chars is refused for its size, the way
+// that server words it.
+func sizeLimitedEmbedServer(t *testing.T, limit int) *int32 {
+	t.Helper()
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		var req struct {
+			Input []string `json:"input"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		for _, in := range req.Input {
+			if len(in) > limit {
+				http.Error(w, "input (588 tokens) is too large to process. increase the physical batch size (current batch size: 512)", 500)
+				return
+			}
+		}
+		vecs := make([][]float32, len(req.Input))
+		for i := range vecs {
+			vecs[i] = []float32{0.5, 0.5}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"embeddings": vecs})
+	}))
+	t.Cleanup(srv.Close)
+	useConnectorEmbedder(t, srv.URL, "m")
+	return &calls
+}
+
+// A section heading the splitter took from a run of code was longer than the
+// embedder's batch, and it rides on every piece, so no split could make the
+// chunk fit. The header sent is clipped; the stored section is not.
+func TestALongHeadingStillEmbeds(t *testing.T) {
+	sizeLimitedEmbedServer(t, 600)
+	heading := "PYTORCH CODE " + strings.Repeat("model . train () ", 110)
+	db := &DBase{Store: kvlite.MemStore()}
+	db.Set(EmbeddedChunks, "c", EmbeddedChunk{ID: "c", Source: "kb", ReportID: "r1", Section: heading, Text: "optim . step ()"})
+
+	if n := ReembedUnvectoredChunks(context.Background(), db); n != 1 {
+		t.Fatalf("a chunk with a long heading must embed, repaired %d", n)
+	}
+	var c EmbeddedChunk
+	db.Get(EmbeddedChunks, "c", &c)
+	if len(c.Vector) == 0 || c.Section != heading {
+		t.Fatalf("the row must carry a vector and keep its whole heading: vector %d, section %d chars", len(c.Vector), len(c.Section))
+	}
+	if got := embedHeader(strings.Repeat("t", 500), heading); len(got) > 2*embedHeaderPartChars+10 {
+		t.Errorf("the header must be clipped, got %d chars", len(got))
+	}
+}
+
+// Chunks refused for their size are not an outage: the embedder answered.
+// Five in a row once ended a pass as "endpoint likely down" against a server
+// that was up; each is skipped and the pass goes on.
+func TestChunksTooLargeDoNotStopTheRepair(t *testing.T) {
+	calls := sizeLimitedEmbedServer(t, 0)
+	db := &DBase{Store: kvlite.MemStore()}
+	ids := []string{"a", "b", "c", "d", "e", "f", "g"}
+	for _, id := range ids {
+		db.Set(EmbeddedChunks, id, EmbeddedChunk{ID: id, Source: "kb", Text: "short " + id})
+	}
+
+	if n := ReembedUnvectoredChunks(context.Background(), db); n != 0 {
+		t.Fatalf("nothing fits this embedder, repaired %d", n)
+	}
+	// The batch, then every chunk alone: none of them is a step toward the breaker.
+	if int(*calls) != 1+len(ids) {
+		t.Errorf("every chunk must be tried, the embedder saw %d calls for %d chunks", *calls, len(ids))
+	}
+}
+
+// The give-ups for size say so, which is what keeps them off the breaker.
+func TestASizeGiveUpIsMarked(t *testing.T) {
+	sizeLimitedEmbedServer(t, 0)
+	pieces := embedWithSplitFallback(context.Background(), GetEmbeddingConfig(), "## S", "tiny")
+	if len(pieces) != 1 || len(pieces[0].Vector) != 0 || !pieces[0].TooLarge {
+		t.Fatalf("a chunk refused for its size must come back marked, got %+v", pieces)
+	}
+}
+
+// Splitting stops at its depth cap, and a piece given up there is marked as
+// refused for its size like the rest.
+func TestTheSplitDepthCapIsASizeGiveUp(t *testing.T) {
+	sizeLimitedEmbedServer(t, 0)
+	text := strings.Repeat("a sentence of filler. ", 3000) // big enough to reach the cap
+	pieces := embedWithSplitFallback(context.Background(), GetEmbeddingConfig(), "## S", text)
+	for i, p := range pieces {
+		if !p.TooLarge {
+			t.Fatalf("piece %d of %d was not marked as refused for its size", i+1, len(pieces))
+		}
+	}
+}
+
+// A PDF's pages go through the same clipped header as every other ingest.
+func TestAPagedIngestClipsALongHeading(t *testing.T) {
+	sizeLimitedEmbedServer(t, 600)
+	db := &DBase{Store: kvlite.MemStore()}
+	heading := "PYTORCH CODE " + strings.Repeat("model . train () ", 110)
+	IngestPagedReport(context.Background(), db, "collection:t", "pdf", "## "+heading+"\n\noptim . step ()\n")
+	rows := ChunksWhere(db, func(c EmbeddedChunk) bool { return c.ReportID == "pdf" })
+	if len(rows) != 1 || len(rows[0].Vector) == 0 {
+		t.Fatalf("the page must embed despite its long heading, got %d row(s)", len(rows))
+	}
+}

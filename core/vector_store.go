@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cmcoffee/gohort/core/sourcehooks"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // DESIGN NOTE — no temporal decay in this store. An earlier version decayed
@@ -672,7 +673,7 @@ func IngestPagedReport(ctx context.Context, db Database, source, reportID, repor
 		}
 		totalChunks += len(chunks)
 		for _, c := range chunks {
-			pieces := embedWithSplitFallback(ctx, cfg, c.Section, c.Text)
+			pieces := embedWithSplitFallback(ctx, cfg, embedHeader("", c.Section), c.Text)
 			for j, p := range pieces {
 				if len(p.Vector) > 0 {
 					embedded++
@@ -713,9 +714,12 @@ func IngestPagedReport(ctx context.Context, db Database, source, reportID, repor
 }
 
 // embedPiece is one (text, vector) result from embedWithSplitFallback.
+// TooLarge marks a piece the embedder refused for its size even after
+// splitting: the embedder is up, this text just never fits it.
 type embedPiece struct {
-	Text   string
-	Vector []float32
+	Text     string
+	Vector   []float32
+	TooLarge bool
 }
 
 // embedHeader is the context line prefixed to a chunk's text when it is
@@ -725,13 +729,25 @@ type embedPiece struct {
 // and without it a query about the document lands on nothing. Empty title
 // leaves the header as the bare section, so pre-Title ingests embed as they
 // always did.
+//
+// Each part is clipped to embedHeaderPartChars. The header rides on every
+// piece a split makes, so a heading the splitter took from a run of code
+// (seen at 1,850 chars) kept every piece over the embedder's limit however
+// small the text got. Only what is embedded is clipped, never the stored
+// section.
 func embedHeader(title, section string) string {
 	title = strings.TrimSpace(title)
+	section = textutil.Clip(section, embedHeaderPartChars)
 	if title == "" || strings.EqualFold(title, strings.TrimSpace(section)) {
 		return section
 	}
-	return title + "\n" + section
+	return textutil.Clip(title, embedHeaderPartChars) + "\n" + section
 }
+
+// embedHeaderPartChars bounds the title and the section in an embed header:
+// longer than any real heading, short enough to leave a small embedder's
+// batch for the text.
+const embedHeaderPartChars = 200
 
 // embedWithSplitFallback embeds a chunk's text, falling back to
 // recursive half-splitting when the embedder rejects the input as too
@@ -760,7 +776,7 @@ func embedWithSplitFallbackDepth(ctx context.Context, cfg EmbeddingConfig, secti
 	}
 	if depth >= maxSplitDepth {
 		Debug("[vector] embed split depth cap %d reached for section %q (text %d chars): storing raw", maxSplitDepth, section, len(text))
-		return []embedPiece{{Text: text}}
+		return []embedPiece{{Text: text, TooLarge: true}}
 	}
 	prompt := section + "\n\n" + text
 	v, err := embedDocumentWith(ctx, cfg, prompt)
@@ -776,14 +792,14 @@ func embedWithSplitFallbackDepth(ctx context.Context, cfg EmbeddingConfig, secti
 	}
 	if len(text) <= minSplitChars {
 		Debug("[vector] embed too-large but text already small (%d chars), giving up: section %q", len(text), section)
-		return []embedPiece{{Text: text}}
+		return []embedPiece{{Text: text, TooLarge: true}}
 	}
 	// Split at the nearest paragraph or sentence boundary near the
 	// midpoint. Falls back to a hard mid-cut if nothing sensible.
 	left, right := splitTextNearMid(text)
 	if left == "" || right == "" {
 		Debug("[vector] embed too-large but split produced empty halves: section %q", section)
-		return []embedPiece{{Text: text}}
+		return []embedPiece{{Text: text, TooLarge: true}}
 	}
 	Debug("[vector] embed too-large for section %q (%d chars): sub-splitting (depth=%d)", section, len(text), depth)
 	out := embedWithSplitFallbackDepth(ctx, cfg, section, left, depth+1)

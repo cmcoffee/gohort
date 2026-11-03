@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // reembedFailStreak is how many consecutive embed failures end the pass.
@@ -28,8 +29,10 @@ import (
 // breaker, a 10k-row backlog against a dead endpoint is 10k requests that each
 // wait out the 60s client ceiling — days of pointless retry that also looks
 // identical, from the admin UI, to a pass that is merely slow. Five in a row is
-// enough to distinguish a dead endpoint from an individual chunk the embedder
-// dislikes (an oversized one, which fails and is skipped without ending the run).
+// enough to tell a dead endpoint from an individual chunk the embedder
+// dislikes. A chunk refused for its size is not counted at all: the embedder
+// answered, and five such chunks in a row once ended a pass as "endpoint
+// likely down" against a server that was up.
 const reembedFailStreak = 5
 
 // reembedChunkTimeout bounds a single chunk's embed. The shared client ceiling
@@ -166,6 +169,13 @@ func reembedChunks(ctx context.Context, db Database, what string, want func(c Em
 					continue
 				}
 				failed++
+				// Refused for its size: the embedder answered, so this is no
+				// step toward "the endpoint is down".
+				if len(pieces) > 0 && pieces[0].TooLarge {
+					Log("[vector-reembed] %s/%s section %q is too large for %s even split; skipped",
+						p.c.Source, p.c.ReportID, textutil.Clip(p.c.Section, 80), cfg.Endpoint)
+					return false
+				}
 				streak++
 				Debug("[vector-reembed] %s/%s section %q failed", p.c.Source, p.c.ReportID, p.c.Section)
 				if streak >= reembedFailStreak {
