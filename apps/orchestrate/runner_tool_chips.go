@@ -1,6 +1,8 @@
 package orchestrate
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -111,7 +113,7 @@ func (t *chatTurn) flushNewAttachments(sess *ToolSession, msgID string, imgN, vi
 			"data":   b64,
 		})
 	}
-	files := sess.ClaimUnflushedFiles()
+	files := t.unsentFiles(sess.ClaimUnflushedFiles())
 	for _, f := range files {
 		t.sse.Send(map[string]any{
 			"kind":      "file",
@@ -127,6 +129,29 @@ func (t *chatTurn) flushNewAttachments(sess *ToolSession, msgID string, imgN, vi
 		t.deliveredFiles = append(t.deliveredFiles, kept...)
 		t.attMu.Unlock()
 	}
+}
+
+// unsentFiles is files without those this turn already sent, by name and
+// contents. Each step runs on its own session, whose own check stops a repeat
+// only within it.
+func (t *chatTurn) unsentFiles(files []FileAttachment) []FileAttachment {
+	t.attMu.Lock()
+	defer t.attMu.Unlock()
+	if t.sentFiles == nil {
+		t.sentFiles = map[string]bool{}
+	}
+	var out []FileAttachment
+	for _, f := range files {
+		sum := sha256.Sum256([]byte(f.Data))
+		key := f.Name + "\x00" + hex.EncodeToString(sum[:])
+		if t.sentFiles[key] {
+			Debug("[attachment] %s already went out this turn; not sent again", f.Name)
+			continue
+		}
+		t.sentFiles[key] = true
+		out = append(out, f)
+	}
+	return out
 }
 
 // recoverClaimedDelivery ships a file the reply claims to have sent but that

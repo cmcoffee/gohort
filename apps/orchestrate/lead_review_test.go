@@ -166,3 +166,85 @@ func (nightlyLogs) ItemTools(user, itemID string) []AgentToolDef {
 		},
 	}}
 }
+
+// plannedReplyRun is a planned turn whose steps searched, about to write its
+// reply, on an agent with the review on or off. The model first writes the
+// reply below, then answers as lead says.
+func plannedReplyRun(t *testing.T, review bool, lead ...FakeTurn) (*sendRun, *FakeLLM, *syncBuf) {
+	t.Helper()
+	T, udb, user := newTestOrchestrate(t)
+	pinRootDB(t)
+	fake := &FakeLLM{Turns: append([]FakeTurn{{Content: "Everything ran fine last night."}}, lead...)}
+	T.LLM, T.LeadLLM = fake, fake
+	buf := &syncBuf{}
+	turn := &chatTurn{app: T, ctx: context.Background(), user: user, udb: udb, sse: &sseWriter{live: buf},
+		agent: AgentRecord{ID: "a1", Name: "Helper", LeadReview: review}}
+	turn.toolCalls = []toolCallRecord{{Name: "search_nightly", Result: "02:14 build #812 FAILED: disk full on /var"}}
+	steps := []PlanStep{{ID: 1, Title: "Read the logs", Output: "Build #812 failed: disk full."}}
+	sr := &sendRun{turn: turn, sse: turn.sse, ctx: context.Background(), steps: steps,
+		req: sendRequest{Message: "What failed last night?"}}
+	return sr, fake, buf
+}
+
+// A planned turn's reply is reviewed too: the review sat in the agent loop,
+// which a planned turn leaves at plan_set, so every planned reply went out
+// unread. Sent back, it is written again with the changes and shown as a
+// revision, and the first version stays in the conversation.
+func TestAPlannedTurnsReplyIsReviewed(t *testing.T) {
+	sr, fake, buf := plannedReplyRun(t, true,
+		FakeTurn{Content: `{"verdict":"SEND_BACK","changes":"1. The step found build #812 failed; the reply says everything ran fine."}`},
+		FakeTurn{Content: "Build #812 failed last night: the disk filled up."})
+	if !sr.synthesize() {
+		t.Fatal("the reply was not written")
+	}
+	if fake.Calls() != 3 || fake.Config(1).RouteKey != leadReviewRouteKey {
+		t.Fatalf("expected the reply, a review, then a rewrite, got %d calls", fake.Calls())
+	}
+	if p := fake.Prompt(1); !strings.Contains(p, "Everything ran fine") || !strings.Contains(p, "disk full") || !strings.Contains(p, "Read the logs") {
+		t.Errorf("the review must read the reply, what the steps ran, and their findings:\n%s", p)
+	}
+	told := false
+	for _, m := range fake.Sent(2) {
+		if strings.Contains(m.Content, "sends it back") && strings.Contains(m.Content, "build #812 failed") {
+			told = true
+		}
+	}
+	if !told {
+		t.Error("the rewrite was not given the review's changes")
+	}
+	if sr.reply != "Build #812 failed last night: the disk filled up." || sr.replyLabel != reviewedReplyLabel {
+		t.Errorf("the revision must replace the reply and be labelled: %q (%q)", sr.reply, sr.replyLabel)
+	}
+	if !strings.Contains(buf.String(), reviewedReplyLabel) {
+		t.Error("the page was not told the revision is one")
+	}
+	if kept := sr.turn.drainMidTurnBubbles(); len(kept) != 1 || kept[0].Content != "Everything ran fine last night." {
+		t.Errorf("the first version must stay in the conversation: %+v", kept)
+	}
+}
+
+// Approved, the reply stands; and an agent not on Hybrid is not reviewed.
+func TestAnApprovedOrUnreviewedPlannedReplyStands(t *testing.T) {
+	sr, fake, _ := plannedReplyRun(t, true, FakeTurn{Content: `{"verdict":"APPROVE"}`})
+	sr.synthesize()
+	if fake.Calls() != 2 || sr.reply != "Everything ran fine last night." || sr.replyLabel != "" {
+		t.Errorf("an approved reply must stand: %d calls, %q", fake.Calls(), sr.reply)
+	}
+	sr, fake, _ = plannedReplyRun(t, false)
+	sr.synthesize()
+	if fake.Calls() != 1 {
+		t.Errorf("an agent not on Hybrid must not be reviewed: %d calls", fake.Calls())
+	}
+}
+
+// The written reply is the turn's current bubble, so a file the delivery
+// backstop sends afterwards lands under it: it was sent with no bubble, and the
+// page dropped a planned turn's Word document.
+func TestAPlannedReplyIsTheBubbleItsFilesLandIn(t *testing.T) {
+	sr, _, buf := plannedReplyRun(t, false)
+	sr.synthesize()
+	id := sr.turn.getCurrentMsgID()
+	if !strings.HasPrefix(id, "synth-") || !strings.Contains(buf.String(), id) {
+		t.Errorf("the reply's bubble must be the current one, got %q", id)
+	}
+}

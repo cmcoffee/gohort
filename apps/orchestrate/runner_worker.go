@@ -617,7 +617,12 @@ func (ws *workerStep) finish() bool {
 // runSynthesis has the orchestrator compose the final user-facing
 // reply given the original message + every worker step output. Streamed
 // to the user via SSE chunk events as it generates.
-func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []injectionNote) (string, error) {
+// synthRevision is a reply the lead's review sent back, and what it asked for.
+type synthRevision struct {
+	previous, changes string
+}
+
+func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []injectionNote, revise *synthRevision) (string, error) {
 	// Build the LLM message array as full conversation history with
 	// the synthesis-flavored content REPLACING the latest user turn
 	// (handleSend already appended the user's current message; we
@@ -647,6 +652,11 @@ func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []inject
 	}
 	body.WriteString("\n## Your task\nCompose the final reply to the user's message above. Use the worker findings as your source material; integrate them naturally with the prior conversation context. Don't restate the plan unless it helps explain the result, and don't repeat content already established earlier in the conversation.")
 	msgs = append(msgs, Message{Role: "user", Content: body.String()})
+	if revise != nil {
+		msgs = append(msgs,
+			Message{Role: "assistant", Content: revise.previous},
+			Message{Role: "user", Content: plannedRevisionNote(revise.changes)})
+	}
 
 	// Allocate a stable message id so SSE chunk events know which
 	// bubble in the conversation pane to stream into.
@@ -657,6 +667,14 @@ func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []inject
 		"id":   msgID,
 		"text": "",
 	})
+	if revise != nil {
+		t.sse.Send(map[string]any{"kind": "message_label", "id": msgID, "label": reviewedReplyLabel})
+	}
+	// The reply's bubble is the turn's current one, so what arrives with the
+	// reply (a file the delivery backstop sends) is painted under it. Without
+	// this the backstop sent a planned turn's Word document with no bubble to
+	// land in, and the page dropped it.
+	t.setCurrentMsgID(msgID)
 
 	var full strings.Builder
 	handler := func(chunk string) {

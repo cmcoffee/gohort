@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -276,6 +277,7 @@ type sendRun struct {
 	syntheticPlan bool
 	blockID       string
 	reply         string
+	replyLabel    string // set when the reply is a revision the lead's review asked for
 	synthErr      error
 	turnToolCalls []PersistedToolCall
 }
@@ -1085,13 +1087,44 @@ func (sr *sendRun) synthesize() bool {
 		sr.turn.emitStatus(fmt.Sprintf("Picked up %d user note%s before synthesis.", n, plural(n)))
 	}
 	sr.turn.emitStatus("Composing reply…")
-	sr.reply, sr.synthErr = sr.turn.runSynthesis(sr.req.Message, sr.steps, synthNotes)
+	sr.reply, sr.synthErr = sr.turn.runSynthesis(sr.req.Message, sr.steps, synthNotes, nil)
 	if sr.synthErr != nil {
 		persistIncompleteTurnTrace(&sr.sess, sr.udb, sr.turn, sr.synthErr.Error())
 		sr.sse.Send(map[string]any{"kind": "error", "text": "synthesis: " + sr.synthErr.Error()})
 		return false
 	}
+	sr.reviewPlannedReply()
 	return true
+}
+
+// reviewPlannedReply is the lead's review of a planned turn's reply, on
+// Hybrid. The direct path's review sits in the agent loop, which a planned
+// turn leaves at plan_set, so the reply of every planned turn (the bigger
+// ones) went out unread. Sent back, the reply is written once more with the
+// changes; the first version stays in the conversation, as on the direct
+// path, and the revision is shown as one. Once: the write-up has no tools,
+// so a second send-back would get the same findings again.
+func (sr *sendRun) reviewPlannedReply() {
+	review := sr.turn.leadReviewer(sr.ctx)
+	if review == nil || strings.TrimSpace(sr.reply) == "" {
+		return
+	}
+	ev := sr.turn.plannedTurnEvidence(sr.req.Message, sr.reply, sr.steps)
+	if !ev.TurnDidWork() {
+		return
+	}
+	sendBack, changes, ok := review(ev)
+	if !ok || !sendBack || strings.TrimSpace(changes) == "" {
+		return
+	}
+	sr.turn.emitStatus("The lead sent the reply back; revising it.")
+	sr.turn.captureMidTurnBubble(sr.reply)
+	revised, err := sr.turn.runSynthesis(sr.req.Message, sr.steps, nil, &synthRevision{previous: sr.reply, changes: changes})
+	if err != nil || strings.TrimSpace(revised) == "" {
+		Log("[lead-review] agent=%s: the revision could not be written (%v); the first reply stands", sr.turn.agent.ID, err)
+		return
+	}
+	sr.reply, sr.replyLabel = revised, reviewedReplyLabel
 }
 
 func (sr *sendRun) saveReply() {
@@ -1129,7 +1162,7 @@ func (sr *sendRun) saveReply() {
 		Role: "assistant", Content: sr.reply,
 		Created: time.Now(), Usage: sr.turn.drainLastUsage(),
 		ToolCalls: finalCalls,
-		Label:     sr.turn.finalReplyLabel(sr.reply),
+		Label:     cmp.Or(sr.replyLabel, sr.turn.finalReplyLabel(sr.reply)),
 	}))
 	sr.sess.Plans = append(sr.sess.Plans, PlanSnapshot{
 		RoundIndex: len(sr.sess.Plans),

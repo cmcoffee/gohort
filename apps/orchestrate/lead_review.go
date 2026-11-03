@@ -13,6 +13,7 @@ package orchestrate
 // turns that did work.
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"strings"
@@ -93,6 +94,54 @@ func (T *OrchestrateApp) reviewTurn(ctx context.Context, agentID string, ev Turn
 	}
 	Log("[lead-review] agent=%s: SENT BACK in %s (tier=%s): %s", agentID, took, resp.Tier, truncateObs(changes, 200))
 	return true, changes, true
+}
+
+// reviewedReplyLabel is what a revision the review asked for is shown under,
+// as core's loop shows its own.
+const reviewedReplyLabel = "Revised after review"
+
+// plannedRevisionNote is what the write-up is told when the review sends a
+// planned turn's reply back. It has no tools, so it works from the findings.
+func plannedRevisionNote(changes string) string {
+	return frameworkNoteTag + "A reviewer read your reply against what this turn's steps ran and got back, and sends it back:\n" + strings.TrimSpace(changes) +
+		"\n\nMake these changes from the worker findings above, and give the complete reply again. Where the findings do not support a change, say plainly what is missing. Do not mention the review, and do not apologize."
+}
+
+// plannedTurnEvidence is the review's view of a planned turn: what its steps
+// ran and returned, each step's findings, and what goes out with the reply.
+func (t *chatTurn) plannedTurnEvidence(request, reply string, steps []PlanStep) TurnClaimEvidence {
+	ev := TurnClaimEvidence{Request: request, Reply: reply, Now: CurrentContextStampIn(UserLocation(t.user))}
+	t.toolMu.Lock()
+	for _, rec := range t.toolCalls {
+		if rec.Framework {
+			continue
+		}
+		label := rec.Name
+		if rec.Err != "" {
+			label += " [FAILED: " + truncateObs(rec.Err, 160) + "]"
+			ev.ToolErrors++
+		}
+		ev.ToolCalls = append(ev.ToolCalls, label)
+		ev.ToolOutputs = append(ev.ToolOutputs, label+": "+reviewExcerpt(cmp.Or(rec.Result, rec.Err)))
+	}
+	t.toolMu.Unlock()
+	for _, s := range steps {
+		ev.PriorWork = append(ev.PriorWork, fmt.Sprintf("step %d, %s: %s", s.ID, s.Title, reviewExcerpt(s.Output)))
+	}
+	t.attMu.Lock()
+	ev.Delivered = len(t.deliveredAtt) + len(t.deliveredFiles)
+	t.attMu.Unlock()
+	return ev
+}
+
+// reviewExcerpt is the head and tail of a result: what a call says it did is
+// often in the notes it ends with.
+func reviewExcerpt(s string) string {
+	r := []rune(strings.TrimSpace(s))
+	if len(r) <= 600 {
+		return string(r)
+	}
+	return string(r[:420]) + " … " + string(r[len(r)-160:])
 }
 
 // leadReviewEvidence is the reviewer's view of the turn. Built for this

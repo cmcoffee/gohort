@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -35,5 +36,22 @@ func TestAHandOffChipNamesItsAgent(t *testing.T) {
 	}
 	if got := turn.chipArgs("schedule", map[string]any{"agent": music.ID}); got["agent"] != music.ID {
 		t.Error("another tool's agent argument was rewritten")
+	}
+}
+
+// A file two steps both attach goes out once: each step runs on its own
+// session, whose own check stops a repeat only within it, and a plan with a
+// "make and attach" step and a "deliver" step sent one Word document twice.
+func TestAFileTwoStepsAttachGoesOutOnce(t *testing.T) {
+	buf := &syncBuf{}
+	turn := &chatTurn{sse: &sseWriter{live: buf}}
+	doc := FileAttachment{Name: "comparison.docx", MimeType: "application/zip", Data: "UEsDBA==", Size: 4}
+	for _, f := range []FileAttachment{doc, doc, {Name: "notes.pdf", Data: "JVBERg==", Size: 4}} {
+		step := &ToolSession{Username: "alice"}
+		step.AppendFile(f)
+		turn.flushNewAttachments(step, "m1", 0, 0, 0)
+	}
+	if n := strings.Count(buf.String(), `"kind":"file"`); n != 2 {
+		t.Errorf("the document twice and another file once must send 2 files, sent %d", n)
 	}
 }

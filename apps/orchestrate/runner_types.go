@@ -499,7 +499,12 @@ type chatTurn struct {
 	deliveredAtt []string
 	// The same for what is not a picture (a song, a video, a document).
 	deliveredFiles []deliveredFile
-	attMu          sync.Mutex
+	// sentFiles is each file this turn has sent, by name and contents, so a
+	// second attach of the same file from another step's session is not sent
+	// again: a plan with a "make and attach" step and a "deliver" step sent
+	// one Word document twice. Guarded by attMu.
+	sentFiles map[string]bool
+	attMu     sync.Mutex
 
 	// lastUsage holds the most-recent assistant-turn stats payload
 	// (tokens, throughput, elapsed) captured by emitStats. handleSend
