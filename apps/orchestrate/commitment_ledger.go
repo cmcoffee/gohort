@@ -173,7 +173,7 @@ func privateTurnNote(sess *ToolSession) string {
 //
 // Order is deliberate: reference material first, the thing to ACT on last, so
 // the instruction sits closest to where the model starts writing.
-func turnNotes(sess *ToolSession, db Database, sessionID, userMessage string) string {
+func turnNotes(sess *ToolSession, db Database, sessionID, userMessage string, extra ...string) string {
 	var parts []string
 	if n := privateTurnNote(sess); n != "" {
 		parts = append(parts, n)
@@ -190,7 +190,14 @@ func turnNotes(sess *ToolSession, db Database, sessionID, userMessage string) st
 	if n := commitmentTurnNote(db, sessionID); n != "" {
 		parts = append(parts, n)
 	}
+	parts = append(parts, nonEmpty(extra...)...)
 	return oneFrameworkNote(parts)
+}
+
+// datesTurnNote is the dated notes near today, worked out in loc, the zone the
+// turn's date stamp is in (NearDatesNote).
+func (t *chatTurn) datesTurnNote(loc *time.Location) string {
+	return NearDatesNote(t.facts(), time.Now(), loc)
 }
 
 // backgroundTurnNote tells a turn what is still running in its

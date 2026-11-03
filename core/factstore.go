@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -464,6 +465,9 @@ func StoreMemoryFactP(db Database, namespace, note string, p FactWritePolicy) Fa
 		}
 		if j.kindSet {
 			f.MemKind, f.EventAt = j.kind, time.Time{}
+			if j.yearly {
+				f.EventAt, f.Yearly = j.eventAt, true
+			}
 			if j.kind == provenance.MemKindEvent {
 				f.EventAt = now
 				if !j.eventAt.IsZero() {
@@ -689,6 +693,7 @@ type factJudgement struct {
 	supersedes []MemoryFact
 	kind       provenance.MemKind
 	eventAt    time.Time
+	yearly     bool // eventAt's month and day come round every year
 	kindSet    bool
 }
 
@@ -709,13 +714,13 @@ func judgeFactWrite(chat FactChatFunc, newNote string, candidates []MemoryFact, 
 
 2. supersedes: For each EXISTING fact listed, does the new note REPLACE it - same attribute or relationship, and they cannot both be currently true ("lives in Denver" becomes "lives in Austin")? Do NOT flag facts that can independently coexist ("likes coffee" vs "likes tea"). List the numbers of the facts the new note replaces.
 
-3. kind: "fact" if it stays true until something replaces it (a name, a preference, a role). "event" if it is something that happened, or will happen, on a particular date: a trip, a visit, an appointment, something the user just did. "open" if it records work or a decision still waiting on someone ("pending edits on the photos", "wants to look into X later"). For an event, give event_date as YYYY-MM-DD when the note says or implies it (today is %s); otherwise leave it out.
+3. kind: "fact" if it stays true until something replaces it (a name, a preference, a role). "event" if it is something that happened, or will happen, on a particular date: a trip, a visit, an appointment, something the user just did. "open" if it records work or a decision still waiting on someone ("pending edits on the photos", "wants to look into X later"). For an event, give event_date as YYYY-MM-DD when the note says or implies it (today is %s); otherwise leave it out. For a date that comes round every year (a birthday, an anniversary), use kind "fact", give event_date as YYYY-MM-DD in any year, and set yearly to true.
 
 NEW note: %q
 
 EXISTING facts:
 %s
-Reply with ONLY JSON: {"relevant": true or false, "supersedes": [numbers], "kind": "fact" or "event" or "open", "event_date": "YYYY-MM-DD"}. Use [] when nothing is superseded.`, now.Format("2006-01-02"), newNote, list.String())},
+Reply with ONLY JSON: {"relevant": true or false, "supersedes": [numbers], "kind": "fact" or "event" or "open", "event_date": "YYYY-MM-DD", "yearly": true or false}. Use [] when nothing is superseded.`, now.Format("2006-01-02"), newNote, list.String())},
 	}, WithSystemPrompt("You gate a personal chatbot's long-term memory: decide whether a new note is durable enough to keep, and which existing notes it replaces. Reply with ONLY the requested JSON object."),
 		WithCaller("memory.gate"),
 		WithThink(false),
@@ -732,6 +737,7 @@ Reply with ONLY JSON: {"relevant": true or false, "supersedes": [numbers], "kind
 		Supersedes []int  `json:"supersedes"`
 		Kind       string `json:"kind"`
 		EventDate  string `json:"event_date"`
+		Yearly     bool   `json:"yearly"`
 	}
 	if DecodeJSON(ResponseText(resp), &parsed) != nil {
 		Log("[factstore] fact-write judge reply unparseable: storing %q UNJUDGED (fail-open)", newNote)
@@ -747,6 +753,11 @@ Reply with ONLY JSON: {"relevant": true or false, "supersedes": [numbers], "kind
 		j.kind, j.kindSet = provenance.ParseMemKind(k), true
 		if at, ok := provenance.ParseEventDate(parsed.EventDate, now); ok {
 			j.eventAt = at
+			// A yearly date is a standing fact, whatever kind came with it:
+			// a birthday filed as an event would be swept away as past.
+			if parsed.Yearly {
+				j.kind, j.yearly = provenance.MemKindFact, true
+			}
 		}
 	}
 	return j
@@ -1569,6 +1580,9 @@ func factProvenanceMarker(f MemoryFact) string {
 // news on a turn weeks later. Absolute dates, fixed once written, for the same
 // prompt-cache reason as the volatility marker.
 func factKindMarker(f MemoryFact) string {
+	if f.Yearly && !f.EventAt.IsZero() {
+		return " (every year, " + f.EventAt.Format("January 2") + ")"
+	}
 	switch f.MemKind {
 	case provenance.MemKindEvent:
 		if at := f.EventDate(f.Created); !at.IsZero() {
@@ -1580,6 +1594,122 @@ func factKindMarker(f MemoryFact) string {
 		}
 	}
 	return ""
+}
+
+// nearDatesDays is how far either side of today a dated note is mentioned on
+// the turn, and nearDatesMax how many are.
+const (
+	nearDatesDays = 14
+	nearDatesMax  = 5
+)
+
+// NearDatesNote is a line for the turn naming the dated notes that fall
+// within two weeks of today, with how far away each is, worked out here. The
+// prompt shows a note's date as an absolute date, fixed for the prompt cache,
+// and left the model to subtract: "his birthday's today" for an October 24
+// read on November 2. The turn already carries the date, and is never
+// cached, so this costs the cache nothing. Empty when nothing is near.
+//
+// An event counts on its date; a yearly fact on whichever occurrence is
+// nearest, last year's, this year's or next.
+func NearDatesNote(facts []MemoryFact, now time.Time, loc *time.Location) string {
+	if loc == nil {
+		loc = time.Local
+	}
+	today := calendarDay(now.In(loc))
+	type near struct {
+		label string
+		when  time.Time
+		days  int
+	}
+	var items []near
+	for _, f := range facts {
+		if f.EventAt.IsZero() || (!f.Yearly && f.MemKind != provenance.MemKindEvent) {
+			continue
+		}
+		when := noteDay(f.EventAt, loc)
+		if f.Yearly {
+			when = nearestYearly(when, today)
+		}
+		days := int(when.Sub(today).Hours() / 24)
+		if days < -nearDatesDays || days > nearDatesDays {
+			continue
+		}
+		items = append(items, near{label: clipNoteLabel(f.Note), when: when, days: days})
+	}
+	if len(items) == 0 {
+		return ""
+	}
+	sort.SliceStable(items, func(i, j int) bool { return abs(items[i].days) < abs(items[j].days) })
+	if len(items) > nearDatesMax {
+		items = items[:nearDatesMax]
+	}
+	parts := make([]string, 0, len(items))
+	for _, it := range items {
+		parts = append(parts, it.label+" ("+it.when.Format("Jan 2")+") "+daysAway(it.days))
+	}
+	return "[Dates in your notes, worked out from today's date: " + strings.Join(parts, "; ") + ".]"
+}
+
+// calendarDay is t's date as a midnight in UTC, so days between two are whole.
+func calendarDay(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+// noteDay is the date a note's EventAt names. One saved from "YYYY-MM-DD" is
+// a bare date at midnight and is read as written; a timestamp (an event noted
+// as just now) is read in the user's zone, so a late evening stays its day.
+func noteDay(at time.Time, loc *time.Location) time.Time {
+	if at.Hour() == 0 && at.Minute() == 0 && at.Second() == 0 && at.Nanosecond() == 0 {
+		return calendarDay(at)
+	}
+	return calendarDay(at.In(loc))
+}
+
+// nearestYearly is the occurrence of day's month and day nearest today. A
+// February 29 falls on February 28 in other years.
+func nearestYearly(day, today time.Time) time.Time {
+	best, bestGap := time.Time{}, 0
+	for _, y := range []int{today.Year() - 1, today.Year(), today.Year() + 1} {
+		d := day.Day()
+		if day.Month() == time.February && d == 29 && !isLeap(y) {
+			d = 28
+		}
+		at := time.Date(y, day.Month(), d, 0, 0, 0, 0, time.UTC)
+		if gap := abs(int(at.Sub(today).Hours() / 24)); best.IsZero() || gap < bestGap {
+			best, bestGap = at, gap
+		}
+	}
+	return best
+}
+
+func isLeap(y int) bool { return y%4 == 0 && (y%100 != 0 || y%400 == 0) }
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+// daysAway says how far a day is from today, in words.
+func daysAway(n int) string {
+	switch {
+	case n == 0:
+		return "is today"
+	case n == 1:
+		return "is tomorrow"
+	case n == -1:
+		return "was yesterday"
+	case n > 1:
+		return "is in " + strconv.Itoa(n) + " days"
+	}
+	return "was " + strconv.Itoa(-n) + " days ago"
+}
+
+// clipNoteLabel is a note's text short enough to name it in a line.
+func clipNoteLabel(note string) string {
+	return textutil.Clip(strings.Join(strings.Fields(note), " "), 60)
 }
 
 // factSpeakerMarker names whose claim this is when it is not the principal's.

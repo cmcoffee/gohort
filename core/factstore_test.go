@@ -821,3 +821,73 @@ func TestANoteAboutAPastDayIsHeldBack(t *testing.T) {
 		t.Errorf("a note about the past, or one with no date, was held back:\n%s", after)
 	}
 }
+
+// A birthday is a yearly fact: the save check's yearly answer files it as a
+// standing fact with its date, whatever kind came with it, and the prompt
+// block names it by month and day, fixed text the cache keeps.
+func TestABirthdayIsAYearlyFact(t *testing.T) {
+	db := memDB(t)
+	got := StoreMemoryFactP(db, "agent:dates", "Henry's birthday is October 24",
+		FactWritePolicy{Mode: "chatbot", Source: MemSourceUserStated,
+			Chat: fakeChat(`{"relevant": true, "supersedes": [], "kind": "event", "event_date": "2025-10-24", "yearly": true}`, nil)})
+	f := got.Fact
+	if f.MemKind != provenance.MemKindFact || !f.Yearly || f.EventAt.Format("01-02") != "10-24" {
+		t.Fatalf("a birthday is a yearly fact on its date: %+v", f.MemoryProvenance)
+	}
+	if block := RenderMemoryFactsBlock(ListMemoryFacts(db, "agent:dates")); !strings.Contains(block, "(every year, October 24)") {
+		t.Errorf("the prompt block should name it by month and day:\n%s", block)
+	}
+}
+
+// The turn says how far each dated note near today is, worked out here, so
+// the model reads "9 days ago" rather than subtracting October 24 from
+// November 2 itself. Yearly dates count from their nearest occurrence, across
+// the turn of the year and on February 29; a timestamp is read in the user's
+// zone; anything past two weeks, and an undated fact, is left out.
+func TestTheTurnSaysHowFarDatedNotesAre(t *testing.T) {
+	pst, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Skip("no time zone data")
+	}
+	day := func(s string) time.Time { d, _ := time.Parse("2006-01-02", s); return d }
+	yearly := func(note, date string) MemoryFact {
+		return MemoryFact{Note: note, MemoryProvenance: MemoryProvenance{MemKind: provenance.MemKindFact, EventAt: day(date), Yearly: true}}
+	}
+	event := func(note string, at time.Time) MemoryFact {
+		return MemoryFact{Note: note, MemoryProvenance: MemoryProvenance{MemKind: provenance.MemKindEvent, EventAt: at}}
+	}
+	now := time.Date(2026, 11, 2, 23, 15, 0, 0, pst)
+	got := NearDatesNote([]MemoryFact{
+		yearly("Henry's birthday is October 24", "2025-10-24"),
+		event("Leo's trip to Fresno", day("2026-11-05")),
+		event("Dentist this evening", time.Date(2026, 11, 3, 6, 30, 0, 0, time.UTC)), // 22:30 on Nov 2 in Los Angeles
+		event("The summer trip", day("2026-08-01")),
+		{Note: "Prefers tea", MemoryProvenance: MemoryProvenance{MemKind: provenance.MemKindFact}},
+	}, now, pst)
+	for _, want := range []string{
+		"Henry's birthday is October 24 (Oct 24) was 9 days ago",
+		"Leo's trip to Fresno (Nov 5) is in 3 days",
+		"Dentist this evening (Nov 2) is today",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in %q", want, got)
+		}
+	}
+	if strings.Contains(got, "summer") || strings.Contains(got, "tea") {
+		t.Errorf("a far date or an undated fact was named: %q", got)
+	}
+	if !strings.HasPrefix(got, "[Dates in your notes, worked out from today's date: Dentist") {
+		t.Errorf("nearest first: %q", got)
+	}
+
+	newYear := time.Date(2027, 1, 2, 12, 0, 0, 0, pst)
+	if got := NearDatesNote([]MemoryFact{yearly("Anniversary", "2019-12-30")}, newYear, pst); !strings.Contains(got, "(Dec 30) was 3 days ago") {
+		t.Errorf("across the new year: %q", got)
+	}
+	if got := NearDatesNote([]MemoryFact{yearly("Born on leap day", "2024-02-29")}, time.Date(2027, 2, 27, 12, 0, 0, 0, pst), pst); !strings.Contains(got, "(Feb 28) is tomorrow") {
+		t.Errorf("February 29 in a common year: %q", got)
+	}
+	if got := NearDatesNote([]MemoryFact{event("Long ago", day("2020-01-01"))}, now, pst); got != "" {
+		t.Errorf("nothing near should say nothing: %q", got)
+	}
+}

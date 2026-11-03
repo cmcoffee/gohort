@@ -1177,7 +1177,7 @@ func (sd *syncDispatch) configureLoop() {
 			noteRunWork(sd.ctx, sd.target.Name, info)
 		},
 		TurnNotes: func(user string) string {
-			return sd.subTurn.withBulletins(turnNotes(sd.subSess, sd.runtimeDB, sd.subSessID, user))
+			return sd.subTurn.withBulletins(turnNotes(sd.subSess, sd.runtimeDB, sd.subSessID, user, sd.subTurn.datesTurnNote(UserLocation(sd.runtimeUser))))
 		},
 		CapturePrompt:  sd.target.CapturePrompt,
 		TurnClaimJudge: sd.subTurn.claimJudge(sd.ctx),
@@ -2409,7 +2409,7 @@ func (cr *continuingRun) wireJudges() {
 	// channel reply takes, and the one where "blend these two photos" arrives
 	// with no filenames anywhere in it. See imageSpaceNote.
 	cr.loopCfg.TurnNotes = func(user string) string {
-		return cr.subTurn.withBulletins(turnNotes(cr.subSess, cr.runtimeDB, cr.subSessionID, user))
+		return cr.subTurn.withBulletins(turnNotes(cr.subSess, cr.runtimeDB, cr.subSessionID, user, cr.subTurn.datesTurnNote(UserLocation(cr.runtimeUser))))
 	}
 	// Last look before the reply reaches the channel. See turn_judge.go.
 	cr.loopCfg.TurnClaimJudge = cr.subTurn.claimJudge(cr.ctx)

@@ -12,8 +12,10 @@ package orchestrate
 import (
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/provenance"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -184,5 +186,29 @@ func TestATurnIsToldWhatIsStillRunning(t *testing.T) {
 	}
 	if running, _ := backgroundWorkOf(sess, func() string { return "" })(); len(running) != 0 {
 		t.Errorf("the turn judge counts finished work as running: %v", running)
+	}
+}
+
+// A saved date near today reaches the turn, said as how far away it is, inside
+// the one framework note; the turn's own notes still come with it.
+func TestADatedNoteNearTodayReachesTheTurn(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	udb := UserDB(root, "u")
+	turn := &chatTurn{user: "u", udb: udb, agent: AgentRecord{ID: "a1", Owner: "u"}}
+	threeDaysAgo := time.Now().In(time.UTC).AddDate(-3, 0, -3) // a birthday, years back
+	f := MemoryFact{ID: "f1", Note: "Henry's birthday", Created: time.Now()}
+	f.MemKind, f.EventAt, f.Yearly = provenance.MemKindFact, time.Date(threeDaysAgo.Year(), threeDaysAgo.Month(), threeDaysAgo.Day(), 0, 0, 0, 0, time.UTC), true
+	udb.Set(MemoryFactsTable, factsNamespace("a1")+"/f1", f)
+
+	line := turn.datesTurnNote(time.UTC)
+	if !strings.Contains(line, "Henry's birthday") || !strings.Contains(line, "was 3 days ago") {
+		t.Fatalf("the dated note should be said as how far away it is: %q", line)
+	}
+	got := turnNotes(&ToolSession{}, commitDB(t), "", "hi", line)
+	if !strings.HasPrefix(got, frameworkNoteTag) || !strings.Contains(got, "was 3 days ago") || strings.Count(got, frameworkNoteTag) != 1 {
+		t.Errorf("it should ride in the one framework note: %q", got)
+	}
+	if turnNotes(&ToolSession{}, commitDB(t), "", "hi", "") != "" {
+		t.Error("with nothing near, the turn carries no note for it")
 	}
 }

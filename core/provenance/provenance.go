@@ -298,6 +298,10 @@ type MemoryProvenance struct {
 	// any fresh activity on the item clears it.
 	MemKind MemKind   `json:"mk,omitempty"`
 	EventAt time.Time `json:"ev_at,omitempty"`
+	// Yearly marks a standing fact whose EventAt comes round every year (a
+	// birthday, an anniversary): its month and day are what matter, and the
+	// past-event sweep, which only moves events, leaves it alone.
+	Yearly  bool      `json:"yearly,omitempty"`
 	AskedAt time.Time `json:"asked_at,omitempty"`
 	// ExpiresAt is when a note stops being true, for one saved as lasting only
 	// a while ("at practice until six", today's plan). Zero means it stands
