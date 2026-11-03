@@ -958,7 +958,7 @@ func AttachWorkspaceFile(sess *ToolSession, relPath, displayName string, cleanup
 	if err != nil {
 		return "", fmt.Errorf("read %q: %w", relPath, err)
 	}
-	mime := http.DetectContentType(data)
+	mime := media.ZipDocumentType(http.DetectContentType(data), relPath)
 	// What it is, read before a cleanup removes it and its note.
 	var what string
 	if line := filenotes.LineFor(abs); line != "" {
@@ -1105,7 +1105,7 @@ func attachOn(sess *ToolSession, data []byte, mime, name, displayName string) st
 // route to the user as a file does — a second delivery path is how one of them
 // ends up quietly not supporting video, or not reporting its size.
 func attachBytes(sess *ToolSession, data []byte, displayName string) string {
-	mime := http.DetectContentType(data)
+	mime := media.ZipDocumentType(http.DetectContentType(data), displayName)
 	channel := attachOn(sess, data, mime, displayName, displayName)
 	// No cleanup clause: a kept image is deliberately durable, and sending a
 	// copy must never consume the library entry.

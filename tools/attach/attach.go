@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/media"
 )
 
 // maxAttachmentBytes caps a single attachment to keep payloads sane.
@@ -89,8 +90,10 @@ func (t *AttachFileTool) RunWithSession(args map[string]any, sess *ToolSession) 
 	// Sniff MIME from content. Don't trust the file extension — the
 	// LLM could have written anything in there. http.DetectContentType
 	// reads the first 512 bytes and returns one of ~80 known types
-	// or "application/octet-stream" for unknowns.
-	mime := http.DetectContentType(data)
+	// or "application/octet-stream" for unknowns. A zip archive is
+	// named by its extension only when that is a document format
+	// stored as one (a .docx), never anything shown inline.
+	mime := media.ZipDocumentType(http.DetectContentType(data), rel)
 
 	// Display name: caller override > workspace basename. The
 	// workspace path is preserved as Name in the attachment record

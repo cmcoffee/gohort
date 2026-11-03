@@ -158,6 +158,34 @@ func IsUnsniffedAudio(sniffed, name string) bool {
 	return IsAudioFileName(name)
 }
 
+// zipDocumentTypes are the document formats stored as zip archives, by
+// extension.
+var zipDocumentTypes = map[string]string{
+	".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	".odt":  "application/vnd.oasis.opendocument.text",
+	".ods":  "application/vnd.oasis.opendocument.spreadsheet",
+	".odp":  "application/vnd.oasis.opendocument.presentation",
+	".epub": "application/epub+zip",
+}
+
+// ZipDocumentType is the type of bytes the content sniffer called a zip
+// archive, by their name when that names a document format stored as one: a
+// Word, Excel or PowerPoint file, an OpenDocument file, an e-book. Delivered
+// as application/zip, a Word document was saved as .zip by an app that names
+// downloads from the type. Any other answer stands: a text file named .docx
+// is still text.
+func ZipDocumentType(sniffed, name string) string {
+	if sniffed != "application/zip" {
+		return sniffed
+	}
+	if t, ok := zipDocumentTypes[strings.ToLower(filepath.Ext(name))]; ok {
+		return t
+	}
+	return sniffed
+}
+
 // extractHTML walks a parsed HTML document and returns just the
 // readable text — strips <script>, <style>, <nav>, <header>, <footer>,
 // and aria-hidden content. Output is normalized whitespace (single
