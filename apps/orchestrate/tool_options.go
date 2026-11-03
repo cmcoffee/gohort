@@ -168,14 +168,14 @@ func availableWorkerToolOptions(user string) []ui.SelectOption {
 			})
 		}
 		// Client-bridge tools (from_client_*) are NOT surfaced here.
-		// The runtime always includes them in the catalog whenever
-		// the user has registered a desktop (see LocalToolsForUser
-		// + resolveWorkerTools) and the desktop's per-call approval
-		// modal is the real enforcement point. A per-agent checkbox
-		// here would create a confusing UX: the LLM would see the
-		// tool in the catalog regardless of the toggle state. If a
-		// user wants to disable the bridge surface entirely, they
-		// close gohort-desktop; per-tool gating belongs on the
+		// The runtime includes them in the catalog of every chat-page
+		// send once the user has registered a desktop (see
+		// LocalToolsForUser + resolveWorkerTools), and each refuses to
+		// run unless the message came from the desktop app (desktopOnly).
+		// A per-agent checkbox here would create a confusing UX: the LLM
+		// would see the tool in the catalog regardless of the toggle
+		// state. If a user wants to disable the bridge surface entirely,
+		// they close gohort-desktop; per-tool gating belongs on the
 		// desktop side (the approval modal).
 	}
 

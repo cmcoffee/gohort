@@ -862,7 +862,7 @@ func (t *desktopChatTool) Name() string {
 }
 
 func (t *desktopChatTool) Desc() string {
-	return t.desc.Desc + " (runs on the user's gohort-desktop client: works when the desktop is connected; returns a clean error otherwise)"
+	return t.desc.Desc + " (runs on the user's gohort-desktop client: works when they are writing from the desktop app and it is connected; returns a clean error otherwise)"
 }
 
 func (t *desktopChatTool) Params() map[string]ToolParam {

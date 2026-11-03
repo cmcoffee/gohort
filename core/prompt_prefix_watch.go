@@ -87,7 +87,10 @@ type prefixSnapshot struct {
 var (
 	prefixWatchMu sync.Mutex
 	prefixWatch   = map[string]*prefixSnapshot{}
-	// prefixFamilies is each family's last call, for the next conversation.
+	// prefixFamilies is the first call of each family's latest conversation,
+	// for the next one. The first call, not the last: a tool loaded partway
+	// through a conversation belongs to it alone, and comparing the next
+	// conversation with that reported a catalog change that was not one.
 	prefixFamilies = map[string]*prefixSnapshot{}
 )
 
@@ -116,14 +119,6 @@ func WatchPromptPrefix(ctx context.Context, system string, tools []Tool) {
 
 	prefixWatchMu.Lock()
 	defer prefixWatchMu.Unlock()
-	if label.family != "" {
-		defer func() {
-			if _, ok := prefixFamilies[label.family]; !ok && len(prefixFamilies) >= maxWatchedTurns {
-				prefixFamilies = map[string]*prefixSnapshot{}
-			}
-			prefixFamilies[label.family] = &prefixSnapshot{system: system, toolNames: names, toolSums: sums}
-		}()
-	}
 	prev, seen := prefixWatch[turn]
 	if !seen {
 		if len(prefixWatch) >= maxWatchedTurns {
@@ -135,9 +130,15 @@ func WatchPromptPrefix(ctx context.Context, system string, tools []Tool) {
 		prefixWatch[turn] = &prefixSnapshot{calls: 1, system: system, toolNames: names, toolSums: sums}
 		Debug("[prefix-watch] %s call 1: %d tools, %d bytes of system prompt, this is the write everything else should read",
 			turn, len(names), len(system))
-		if last, ok := prefixFamilies[label.family]; ok {
-			Log("[prefix-watch] %s: a new conversation, against its family's last call: %s", turn, prefixAgainst(last, system, names, sums))
+		if label.family == "" {
+			return
 		}
+		if last, ok := prefixFamilies[label.family]; ok {
+			Log("[prefix-watch] %s: a new conversation, against its family's last one: %s", turn, prefixAgainst(last, system, names, sums))
+		} else if len(prefixFamilies) >= maxWatchedTurns {
+			prefixFamilies = map[string]*prefixSnapshot{}
+		}
+		prefixFamilies[label.family] = &prefixSnapshot{system: system, toolNames: names, toolSums: sums}
 		return
 	}
 	prev.calls++

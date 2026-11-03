@@ -777,6 +777,7 @@ func (sr *sendRun) buildTurn() {
 		// gohort-desktop viewer (its proxy stamps the bridge key) — never a
 		// remote browser/phone on the same account.
 		fromDesktopClient: sr.user != "" && DesktopClientUser(sr.r) == sr.user,
+		chatPageSend:      true,
 		// Flag the turn as having fresh external content if the user
 		// attached any document. The consolidation loop-break gate
 		// reads this to decide whether to ingest the synthesis.

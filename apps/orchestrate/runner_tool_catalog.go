@@ -232,6 +232,19 @@ func (wc *workerCatalog) chooseNames() {
 	}
 }
 
+// desktopOnly is a from_client_* tool that runs only on a turn sent from the
+// desktop app, and refuses with what to tell the person anywhere else.
+func (t *chatTurn) desktopOnly(td AgentToolDef) AgentToolDef {
+	run := td.Handler
+	td.Handler = func(ctx context.Context, args map[string]any) (string, error) {
+		if !t.fromDesktopClient {
+			return "", fmt.Errorf("%s reaches the person's own computer, so it runs only when they write from the gohort desktop app, and this message came from somewhere else (a browser or phone). Tell them in one line to ask from the desktop app", td.Tool.Name)
+		}
+		return run(ctx, args)
+	}
+	return td
+}
+
 func (wc *workerCatalog) loadTools() {
 	t := wc.t
 	sess := wc.sess
@@ -475,25 +488,28 @@ func (wc *workerCatalog) finishCatalog() {
 	// DynamicTools feed (dynamicNewTempTools → AppendSkillGrantedTools) the
 	// round AFTER activate_skill fires, so they appear this same turn.)
 	// Local tools from the user's gohort-desktop surface (from_client_*).
-	// Exposed ONLY when this request came from the gohort-desktop viewer
-	// itself (its proxy stamps the bridge key — see t.fromDesktopClient). A
-	// remote browser / phone logged into the same account never sees them, so
-	// the local machine's filesystem / screenshot / contacts can't be reached
-	// remotely — not even with auto-approve on (the old "approval modal is the
-	// enforcement point" model failed exactly there). When the desktop is
-	// offline at call time the tool's wrapper still returns a clean "open your
-	// desktop" error. Keyed off the chat user so seed agents (Chat) get the
-	// surface for whoever is chatting at the desktop.
+	// OFFERED on every chat-page send, from whichever app, and RUN only when
+	// the request came from the gohort-desktop viewer itself (its proxy stamps
+	// the bridge key, see t.fromDesktopClient): from a remote browser or phone
+	// on the same account each one refuses, so the local machine's filesystem
+	// and contacts can't be reached remotely, not even with auto-approve on
+	// (the old "approval modal is the enforcement point" model failed exactly
+	// there). Offered alike so the tool list does not change with the app a
+	// conversation starts from: it did, and every switch made the next new
+	// conversation re-read the whole prompt (3.5 to 6 s before a first token).
+	// When the desktop is offline at call time the tool's wrapper still
+	// returns a clean "open your desktop" error. Keyed off the chat user so
+	// seed agents (Chat) get the surface for whoever is chatting.
 	wc.have = map[string]bool{}
 	for _, n := range wc.toolNames {
 		wc.have[n] = true
 	}
-	if t.fromDesktopClient && len(t.agent.AllowedTools) == 0 {
+	if t.chatPageSend && len(t.agent.AllowedTools) == 0 {
 		for _, lt := range LocalToolsForUser(t.user) {
 			if wc.have[lt.Name()] {
 				continue
 			}
-			wc.fromClient = append(wc.fromClient, ChatToolToAgentToolDef(lt))
+			wc.fromClient = append(wc.fromClient, t.desktopOnly(ChatToolToAgentToolDef(lt)))
 			wc.toolNames = append(wc.toolNames, lt.Name())
 		}
 	}

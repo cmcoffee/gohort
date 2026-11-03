@@ -375,10 +375,16 @@ type chatTurn struct {
 	dictated         bool     // per-turn: the message was written out from speech (dictatedNote)
 	userImages       [][]byte // decoded image attachments from the chat panel; attached to the orchestrator's last user message
 	// fromDesktopClient is true when THIS request came from the gohort-desktop
-	// viewer (its proxy stamped the bridge key). Gates the from_client_* tool
-	// surface so local-machine capabilities are reachable only from the
-	// desktop app, never a remote browser/phone on the same account.
+	// viewer (its proxy stamped the bridge key). Gates RUNNING the
+	// from_client_* tools, so local-machine capabilities are reachable only
+	// from the desktop app, never a remote browser/phone on the same account.
 	fromDesktopClient bool
+	// chatPageSend is true when a person sent this turn from a chat page, in
+	// any app. Gates OFFERING the from_client_* tools: they are in the list on
+	// every such turn, so the list (and the prompt cache) does not change with
+	// the app a conversation is started from. Scheduled, channel and
+	// dispatched turns, where they could never run, leave them out.
+	chatPageSend bool
 
 	// topic is the snake_case slug used to scope memory_save /
 	// memory_search to a per-subject bucket. The LLM picks the slug

@@ -147,16 +147,17 @@ func TestWatchComparesANewConversationWithTheLast(t *testing.T) {
 	}
 }
 
-// Later calls of a conversation are compared within it, as before, and still
-// keep the family's last call current.
-func TestWatchKeepsTheFamilyCurrent(t *testing.T) {
+// A new conversation is compared with the last conversation's FIRST call: a
+// tool loaded partway through one belongs to it alone, and comparing with its
+// last call reported "TOOLS CHANGED (82 → 81)" for a catalog that had not.
+func TestWatchComparesConversationsByTheirFirstCalls(t *testing.T) {
 	lines := captureLog(t)
 	a := WithPromptTurn(context.Background(), "agent=k", "k-1")
-	WatchPromptPrefix(a, "ONE", nil)
-	WatchPromptPrefix(a, "TWO", nil)
+	WatchPromptPrefix(a, "SYS", []Tool{{Name: "x"}})
+	WatchPromptPrefix(a, "SYS", []Tool{{Name: "x"}, {Name: "recall_about"}}) // loaded mid-conversation
 	*lines = nil
-	WatchPromptPrefix(WithPromptTurn(context.Background(), "agent=k", "k-2"), "TWO", nil)
+	WatchPromptPrefix(WithPromptTurn(context.Background(), "agent=k", "k-2"), "SYS", []Tool{{Name: "x"}})
 	if got := strings.Join(*lines, "\n"); !strings.Contains(got, "same system prompt") {
-		t.Errorf("the next conversation must be compared with the latest call, not the first: %q", got)
+		t.Errorf("a tool loaded during the last conversation must not read as a change: %q", got)
 	}
 }

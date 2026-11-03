@@ -1,6 +1,8 @@
 package orchestrate
 
 import (
+	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -160,5 +162,74 @@ func TestDedupeToolsByNameHandlesEmpty(t *testing.T) {
 	got, names := dedupeToolsByName(nil, nil)
 	if len(got) != 0 || len(names) != 0 {
 		t.Error("empty input should stay empty")
+	}
+}
+
+// desktopCatalog is the catalog of a turn by a user whose desktop app has
+// registered one tool: the names offered, and that tool's definition.
+func desktopCatalog(t *testing.T, chatPage, fromDesktop bool) ([]string, *AgentToolDef) {
+	t.Helper()
+	app, udb, user := newTestOrchestrate(t)
+	pinRootDB(t)
+	// What the desktop announced, as the bridge keeps it between connections.
+	RootDB.Set("desktop_known_tools", user, []DesktopToolDescriptor{{Name: "contacts_lookup", Desc: "Look up a contact."}})
+	a, err := saveAgent(udb, AgentRecord{Name: "Helper", Owner: user, OrchestratorPrompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn := &chatTurn{app: app, agent: a, user: user, udb: udb, ctx: context.Background(), chatPageSend: chatPage, fromDesktopClient: fromDesktop}
+	tools, _, err := turn.resolveWorkerTools(turn.newToolSession(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	var desk *AgentToolDef
+	for i, td := range tools {
+		names = append(names, td.Tool.Name)
+		if td.Tool.Name == "from_client_contacts_lookup" {
+			desk = &tools[i]
+		}
+	}
+	return names, desk
+}
+
+// The desktop tools are offered on every chat-page send, from whichever app,
+// so the list does not change with the app a conversation starts from: it
+// did, and every switch made the next new conversation re-read its whole
+// prompt. They run only from the desktop app.
+func TestTheDesktopToolsAreOfferedFromEveryAppAndRunOnlyFromTheDesktop(t *testing.T) {
+	fromBrowser, desk := desktopCatalog(t, true, false)
+	if desk == nil {
+		t.Fatalf("a chat-page send from a browser must be offered the desktop tools: %v", fromBrowser)
+	}
+	_, err := desk.Handler(context.Background(), map[string]any{"query": "x"})
+	if err == nil || !strings.Contains(err.Error(), "only when they write from the gohort desktop app") {
+		t.Fatalf("from a browser the tool must refuse and say why, got %v", err)
+	}
+
+	fromDesktop, desk := desktopCatalog(t, true, true)
+	if !slices.Equal(fromBrowser, fromDesktop) {
+		t.Errorf("the tool list must be the same from either app:\nbrowser %v\ndesktop %v", fromBrowser, fromDesktop)
+	}
+	// From the desktop app the call goes through to the bridge, which here
+	// has no desktop connected and says so.
+	_, err = desk.Handler(context.Background(), map[string]any{"query": "x"})
+	if err == nil || !strings.Contains(err.Error(), "isn't connected") {
+		t.Fatalf("from the desktop app the call must reach the bridge, got %v", err)
+	}
+}
+
+// A turn nobody sent from a chat page (a schedule, a channel, a dispatch) is
+// not offered tools it could never run.
+func TestTheDesktopToolsStayOffTurnsWithoutAChatPage(t *testing.T) {
+	if names, desk := desktopCatalog(t, false, false); desk != nil {
+		t.Errorf("a turn without a chat page was offered the desktop tools: %v", names)
+	}
+}
+
+// The chat page marks its sends, which is what offers the desktop tools.
+func TestTheChatPageMarksItsSends(t *testing.T) {
+	if src := readFile(t, "runner_http.go"); !strings.Contains(src, "chatPageSend:      true,") {
+		t.Error("a chat-page send is no longer marked, so the desktop tools would never be offered")
 	}
 }
