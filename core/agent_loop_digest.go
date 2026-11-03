@@ -232,6 +232,12 @@ func promptReuseNote(resp *Response) string {
 	if cached < 0 {
 		cached = 0
 	}
+	if resp.PrefillMS <= 0 {
+		// A server that reports what it cached but not how long the rest
+		// took (vLLM).
+		return fmt.Sprintf(", prefilled=%d/%d prompt tokens (%d%% cached)",
+			resp.PromptTokensPrefilled, resp.InputTokens, cached*100/resp.InputTokens)
+	}
 	return fmt.Sprintf(", prefilled=%d/%d prompt tokens (%d%% cached, %.0fms)",
 		resp.PromptTokensPrefilled, resp.InputTokens, cached*100/resp.InputTokens, resp.PrefillMS)
 }

@@ -894,6 +894,16 @@ func (c *openAIClient) warmupContext() {
 //
 // Silent on backends that don't report timings, and on the first call of a
 // conversation where a full prefill is simply correct.
+// logFirstToken says how long a streamed call waited for its first token:
+// the time a person stares at nothing, made of the wait for a free slot on
+// the server and the prompt's processing (most of it on a cache miss).
+func logFirstToken(provider, route string, sent, first time.Time) {
+	if first.IsZero() {
+		return
+	}
+	Debug("[%s] first token after %dms (route=%s)", provider, first.Sub(sent).Milliseconds(), route)
+}
+
 func logPrefillReuse(provider string, r *Response) {
 	if r == nil || r.PromptTokensPrefilled <= 0 || r.InputTokens <= 0 {
 		return
@@ -901,6 +911,12 @@ func logPrefillReuse(provider string, r *Response) {
 	cached := r.InputTokens - r.PromptTokensPrefilled
 	if cached < 0 {
 		cached = 0
+	}
+	if r.PrefillMS <= 0 {
+		// The server said what it cached but not how long the rest took.
+		Debug("[%s] prefill: %d of %d prompt tokens processed (%d%% served from cache)",
+			provider, r.PromptTokensPrefilled, r.InputTokens, cached*100/r.InputTokens)
+		return
 	}
 	Debug("[%s] prefill: %d of %d prompt tokens processed (%d%% served from cache) in %.0fms",
 		provider, r.PromptTokensPrefilled, r.InputTokens, cached*100/r.InputTokens, r.PrefillMS)
@@ -1190,12 +1206,33 @@ type oaiResponse struct {
 		CompletionTokensDetails struct {
 			ReasoningTokens int `json:"reasoning_tokens,omitempty"`
 		} `json:"completion_tokens_details,omitempty"`
+		PromptTokensDetails oaiPromptDetails `json:"prompt_tokens_details,omitempty"`
 	} `json:"usage"`
 	// Timings is llama.cpp-specific — pure-decode and pure-prefill
 	// throughput numbers, without the wall-clock-elapsed muddling that
 	// comes from including network round-trip + prefill in the same
 	// metric. Mirrors what llama.cpp's built-in web UI displays.
 	Timings *oaiTimings `json:"timings,omitempty"`
+}
+
+// oaiPromptDetails is the OpenAI-shaped report of how much of the prompt the
+// server served from its cache. vLLM sends it when started with
+// --enable-prompt-tokens-details; llama.cpp reports the same through timings.
+type oaiPromptDetails struct {
+	CachedTokens int `json:"cached_tokens,omitempty"`
+}
+
+// prefilledFromCacheReport is how many prompt tokens a server that reports
+// cached tokens had to process: the rest of the prompt. Zero when it sent no
+// report, which reads as "unknown", not "everything cached".
+func prefilledFromCacheReport(prompt, cached int) int {
+	if prompt <= 0 || cached <= 0 {
+		return 0
+	}
+	if cached >= prompt {
+		return 1 // a server counts at least the last token as processed
+	}
+	return prompt - cached
 }
 
 type oaiTimings struct {
@@ -1224,6 +1261,7 @@ type oaiStreamChunk struct {
 		CompletionTokensDetails struct {
 			ReasoningTokens int `json:"reasoning_tokens,omitempty"`
 		} `json:"completion_tokens_details,omitempty"`
+		PromptTokensDetails oaiPromptDetails `json:"prompt_tokens_details,omitempty"`
 	} `json:"usage,omitempty"`
 	Timings *oaiTimings `json:"timings,omitempty"`
 }
@@ -2240,6 +2278,8 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 		out.PromptPerSecond = result.Timings.PromptPerSecond
 		out.PromptTokensPrefilled = result.Timings.PromptN
 		out.PrefillMS = result.Timings.PromptMS
+	} else {
+		out.PromptTokensPrefilled = prefilledFromCacheReport(result.Usage.PromptTokens, result.Usage.PromptTokensDetails.CachedTokens)
 	}
 	logPrefillReuse(c.provider(), out)
 	return out, nil
@@ -2366,6 +2406,7 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 	}
 	Debug("[%s]: Sending stream request (route=%s, body=%d bytes, think=%s, thinking_budget=%s, json=%v, per_read=%s watchdog=%s req_timeout=%s ctx_deadline=%s)",
 		c.provider(), routeForLog(cfg), len(body), fmtThink(cfg.Think), fmtThinkBudget(payload.ThinkingBudgetTokens), cfg.JSONMode, streamRead, watchdogTimeout, c.api.RequestTimeout, ctxDeadline)
+	sentAt := time.Now()
 	resp, err := c.doRequest(withCallRoute(ctx, routeForLog(cfg)), body, streamRead)
 	if err != nil {
 		return nil, err
@@ -2388,7 +2429,7 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 	var model string
 	var inputTokens, outputTokens, reasoningTokens int
 	var predictedPerSecond, promptPerSecond, promptMS float64
-	var promptN int
+	var promptN, cachedTokens int
 
 	// Accumulate tool call fragments by index.
 	toolCallBuilders := make(map[int]*struct {
@@ -2443,6 +2484,7 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 			inputTokens = chunk.Usage.PromptTokens
 			outputTokens = chunk.Usage.CompletionTokens
 			reasoningTokens = chunk.Usage.CompletionTokensDetails.ReasoningTokens
+			cachedTokens = chunk.Usage.PromptTokensDetails.CachedTokens
 		}
 		if chunk.Timings != nil {
 			predictedPerSecond = chunk.Timings.PredictedPerSecond
@@ -2629,6 +2671,13 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 		// OpenAI-compatible backend.
 		StopReason: finishReason,
 	}
+	// A server with no timings (vLLM) still says how much came from its
+	// cache; its prefill time is not reported, so the wait for the first
+	// token stands in for it below.
+	if promptN == 0 {
+		streamed.PromptTokensPrefilled = prefilledFromCacheReport(inputTokens, cachedTokens)
+	}
+	logFirstToken(c.provider(), routeForLog(cfg), sentAt, clock.first)
 	logPrefillReuse(c.provider(), streamed)
 	return streamed, nil
 }

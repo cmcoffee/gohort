@@ -209,3 +209,38 @@ func TestSamplerThinkNoThinkSplit(t *testing.T) {
 		t.Fatalf("deferred think state should use thinking temp 0.6, got %v", pd.Temperature)
 	}
 }
+
+// vLLM reports its prompt cache as usage.prompt_tokens_details.cached_tokens
+// rather than llama.cpp's timings. Read either way, a turn says how much of
+// its prompt the server had to process, which is what decides how long the
+// first word takes.
+func TestAStreamReadsTheServersCacheReport(t *testing.T) {
+	llm := serveTimedOpenAIStream(t, 0, 0,
+		`data: {"choices":[{"delta":{"content":"Hi."},"finish_reason":"stop"}]}`,
+		`data: {"choices":[],"usage":{"prompt_tokens":40000,"completion_tokens":3,"prompt_tokens_details":{"cached_tokens":39000}}}`,
+		`data: [DONE]`,
+	)
+	resp, err := llm.ChatStream(t.Context(), []Message{{Role: "user", Content: "q"}}, func(string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.PromptTokensPrefilled != 1000 || resp.InputTokens != 40000 {
+		t.Errorf("prefilled %d of %d, want 1000 of 40000", resp.PromptTokensPrefilled, resp.InputTokens)
+	}
+	if note := promptReuseNote(resp); note != ", prefilled=1000/40000 prompt tokens (97% cached)" {
+		t.Errorf("the round's note: %q", note)
+	}
+}
+
+func TestPrefilledFromCacheReport(t *testing.T) {
+	for _, c := range []struct{ prompt, cached, want int }{
+		{40000, 39000, 1000}, // most of it reused
+		{40000, 0, 0},        // no report: unknown, not "all cached"
+		{40000, 40000, 1},    // all cached: the last token is still processed
+		{0, 5, 0},
+	} {
+		if got := prefilledFromCacheReport(c.prompt, c.cached); got != c.want {
+			t.Errorf("prompt %d cached %d: %d, want %d", c.prompt, c.cached, got, c.want)
+		}
+	}
+}
