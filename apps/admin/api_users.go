@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/accountname"
 	"github.com/cmcoffee/gohort/core/activity"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/notices"
@@ -664,11 +665,21 @@ func (a *AdminApp) handleAddUser(c *jsonapi.Call, req struct {
 	Admin    bool   `json:"admin"`
 	Invite   bool   `json:"invite"` // send a registration link instead of setting a password
 }) (any, error) {
-	req.Username = strings.TrimSpace(req.Username)
-	if req.Username == "" {
+	// One rule for every new name (core/accountname): lowercased, plain
+	// characters, and not an existing account's name in another case.
+	if strings.TrimSpace(req.Username) == "" {
 		return nil, jsonapi.BadRequest("email required")
 	}
-	if _, exists := AuthGetUser(a.db, req.Username); exists {
+	name, err := accountname.Canonical(req.Username)
+	if err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	req.Username = name
+	var existing []string
+	for _, u := range AuthListUsers(a.db) {
+		existing = append(existing, u.Username)
+	}
+	if _, taken := accountname.Clash(existing, name); taken {
 		return nil, jsonapi.Status(http.StatusConflict, "user already exists")
 	}
 	current := c.User

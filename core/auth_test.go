@@ -740,3 +740,76 @@ func TestTheSharerIsNotOfferedTheirOwnName(t *testing.T) {
 		t.Errorf("an unfiltered listing dropped somebody: %s", all)
 	}
 }
+
+// One person, one name (core/accountname). A new name is stored lowercased
+// and held to plain characters, and refused when an account already has it in
+// another case. An existing name in mixed case still signs in, typed in any
+// case, and two accounts that differ only by case are not guessed between.
+func TestOnePersonHasOneName(t *testing.T) {
+	db := loginFixture(t)
+	lockoutMu.Lock()
+	saved := lockouts
+	lockouts = map[string]*lockoutEntry{}
+	lockoutMu.Unlock()
+	t.Cleanup(func() { lockoutMu.Lock(); lockouts = saved; lockoutMu.Unlock() })
+	AuthSetUser(db, "Mixed@Example.test", "pw-m-123", false) // made before the rule
+	login := LoginHandler(db)
+	signedInAs := func(typed, pass, ip string) string {
+		w := httptest.NewRecorder()
+		login(w, signInPost(typed, pass, ip))
+		c := sessionCookie(w)
+		if c == nil {
+			return ""
+		}
+		user, _ := AuthValidateSession(db, c.Value)
+		return user
+	}
+	if got := signedInAs("mixed@example.test", "pw-m-123", "198.51.100.50:4000"); got != "Mixed@Example.test" {
+		t.Errorf("an existing name typed in another case signed in as %q", got)
+	}
+	if got := signedInAs("Mixed@Example.test", "pw-m-123", "198.51.100.51:4000"); got != "Mixed@Example.test" {
+		t.Errorf("an existing name typed as stored signed in as %q", got)
+	}
+
+	if _, err := AuthCreateInvite(db, "MIXED@example.TEST", false); err == nil {
+		t.Error("an invite took an existing name in another case")
+	}
+	if _, err := AuthCreateInvite(db, "eve@example.test:user-a", false); err == nil {
+		t.Error("an invite took a name holding a colon")
+	}
+	if _, err := AuthCreateInvite(db, " New@Example.test ", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := AuthGetUser(db, "new@example.test"); !ok {
+		t.Error("an invited name was not stored lowercased")
+	}
+
+	prevSignup := AuthSignupAllowed
+	AuthSignupAllowed = func() bool { return true }
+	t.Cleanup(func() { AuthSignupAllowed = prevSignup })
+	signup := func(email string) {
+		form := url.Values{"email": {email}, "password": {"pw-s-123"}, "confirm": {"pw-s-123"}}
+		r := httptest.NewRequest(http.MethodPost, "http://gohort.test/signup", strings.NewReader(form.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.RemoteAddr = "198.51.100.60:4000"
+		SignupHandler(db)(httptest.NewRecorder(), r)
+	}
+	signup("Fresh@Example.test")
+	if _, ok := AuthGetUser(db, "fresh@example.test"); !ok {
+		t.Error("a signup was not stored lowercased")
+	}
+	before := len(AuthListUsers(db))
+	signup("FRESH@example.TEST")
+	signup("mixed@example.test")
+	if after := len(AuthListUsers(db)); after != before {
+		t.Errorf("a signup in another case made a second account: %d -> %d", before, after)
+	}
+
+	// Two accounts made before the rule that differ only by case: neither is
+	// guessed at from a third spelling.
+	AuthSetUser(db, "Twin@example.test", "pw-t-123", false)
+	AuthSetUser(db, "twin@Example.test", "pw-t-123", false)
+	if got := signedInAs("TWIN@example.test", "pw-t-123", "198.51.100.52:4000"); got != "" {
+		t.Errorf("a name matching two accounts signed in as %q", got)
+	}
+}

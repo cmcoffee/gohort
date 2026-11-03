@@ -20,6 +20,7 @@ import (
 
 	"github.com/cmcoffee/gohort/apps/ollama_proxy"
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/accountname"
 	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/gohort/core/tlsconf"
@@ -408,6 +409,15 @@ func main() {
 		// What is wrong with a saved connection, in the log now rather than
 		// when a call first meets it.
 		service.LogSelfCheck(global.db)
+		// Account names made before the name rule that it would refuse now:
+		// said once at start, for an administrator, since nothing renames them.
+		var names []string
+		for _, u := range AuthListUsers(global.db) {
+			names = append(names, u.Username)
+		}
+		for _, line := range accountname.Audit(names) {
+			Log("[auth] account name to look at: %s", line)
+		}
 
 		AuthEnabled = func() bool { return AuthHasUsers(global.db) }
 		AuthSignupAllowed = func() bool {

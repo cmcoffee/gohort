@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/accountname"
 	"github.com/cmcoffee/gohort/core/activity"
 	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/netgate"
@@ -836,6 +837,49 @@ func AuthListUsers(db Database) []AuthUser {
 	return users
 }
 
+// authUserNames is every account's name as stored.
+func authUserNames(db Database) []string {
+	var out []string
+	for _, u := range AuthListUsers(db) {
+		out = append(out, u.Username)
+	}
+	return out
+}
+
+// authNewName is raw as the name of a NEW account (core/accountname), or why
+// not: one held to the rule, and not one an existing account already has in
+// any case.
+func authNewName(db Database, raw string) (string, error) {
+	name, err := accountname.Canonical(raw)
+	if err != nil {
+		return "", err
+	}
+	if _, taken := accountname.Clash(authUserNames(db), name); taken {
+		return "", fmt.Errorf("user already exists")
+	}
+	return name, nil
+}
+
+// authLoginName is the stored account a name typed at sign-in means: itself
+// when an account has it exactly, which keeps every existing name working as
+// it always has, else the one account it matches in another case. Two such
+// accounts are not guessed between: the typed name is returned unchanged and
+// fails as an unknown one would, and the log says why.
+func authLoginName(db Database, typed string) string {
+	if _, ok := AuthGetUser(db, typed); ok || typed == "" {
+		return typed
+	}
+	m := accountname.Matches(authUserNames(db), typed)
+	switch len(m) {
+	case 1:
+		return m[0]
+	case 0:
+		return typed
+	}
+	Log("[auth] %q matches %d accounts in different case (%s): not signing in as either; an administrator should merge or rename them", typed, len(m), strings.Join(m, ", "))
+	return typed
+}
+
 // AuthGetUser retrieves a user by username.
 func AuthGetUser(db Database, username string) (AuthUser, bool) {
 	var user AuthUser
@@ -1249,12 +1293,9 @@ func AuthIssueResetLink(db Database, username string) (string, bool) {
 // the user already exists. Until they set a password via the link they cannot
 // log in (an empty hash never matches). Admin-authorized — the caller gates.
 func AuthCreateInvite(db Database, username string, admin bool) (string, error) {
-	username = strings.TrimSpace(username)
-	if username == "" {
-		return "", fmt.Errorf("email is required")
-	}
-	if _, exists := AuthGetUser(db, username); exists {
-		return "", fmt.Errorf("user already exists")
+	username, err := authNewName(db, username)
+	if err != nil {
+		return "", err
 	}
 	// Pre-approved (not pending) with an empty password hash — unusable until
 	// the invitee sets one through the reset link.
@@ -1829,7 +1870,7 @@ func LoginHandler(db Database) http.HandlerFunc {
 				return
 			}
 			r.ParseForm()
-			username := strings.TrimSpace(r.FormValue("username"))
+			username := authLoginName(db, strings.TrimSpace(r.FormValue("username")))
 			password := r.FormValue("password")
 			ip := ClientIP(r).String()
 			keys := loginLockKeys(ClientIP(r), username)
@@ -1960,10 +2001,12 @@ func SignupHandler(db Database) http.HandlerFunc {
 				serveSignupPage(w, "Email and password are required.")
 				return
 			}
-			if len(email) > 254 || !isValidEmail(email) {
+			canonical, nameErr := accountname.Canonical(email)
+			if len(email) > 254 || !isValidEmail(email) || nameErr != nil {
 				serveSignupPage(w, "Please enter a valid email address.")
 				return
 			}
+			email = canonical
 			if len(password) < 6 {
 				serveSignupPage(w, "Password must be at least 6 characters.")
 				return
@@ -1976,7 +2019,7 @@ func SignupHandler(db Database) http.HandlerFunc {
 				serveSignupPage(w, "Passwords do not match.")
 				return
 			}
-			if _, exists := AuthGetUser(db, email); exists {
+			if _, err := authNewName(db, email); err != nil {
 				serveSignupPage(w, "An account with that email already exists.")
 				return
 			}
@@ -2156,6 +2199,7 @@ func ForgotHandler(db Database) http.HandlerFunc {
 			// out in the background, so an existing account does not answer
 			// measurably slower than a missing one.
 			if email != "" && isValidEmail(email) {
+				email = authLoginName(db, email)
 				if user, ok := AuthGetUser(db, email); ok && !user.Pending {
 					token := createResetToken(db, email)
 					link := DashboardURL() + "/reset?token=" + token
@@ -2361,8 +2405,9 @@ func BuildAuthSetup(db Database) (*Options, *authSetupState) {
 		if username == "" {
 			return true
 		}
-		if _, exists := AuthGetUser(db, username); exists {
-			Stderr("\n  User %q already exists.\n\n", username)
+		username, err := authNewName(db, username)
+		if err != nil {
+			Stderr("\n  %s.\n\n", err)
 			return true
 		}
 		password := GetInput("Password: ")
