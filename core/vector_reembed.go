@@ -499,6 +499,24 @@ func vectorEmbedderAnswered() {
 	})
 }
 
+// RepairAfterSpaceChange starts the vector repair when a saved embedding
+// config put the stored vectors in another space: another model, another
+// document prefix. Until then semantic search skipped every chunk made in the
+// old one, and nothing said so but the counts in the Vector Index panel. It
+// runs as the nightly repair does, through the maintenance runner (progress,
+// Stop, a page arriving mid-run rejoins it), and only when the automatic
+// repairs are on and the new config embeds at all. Reports whether it started.
+func RepairAfterSpaceChange(prev, next EmbeddingConfig) bool {
+	if !next.Enabled || !TuneBool(TunableVectorUpkeep) || prev.spaceStamp() == next.spaceStamp() {
+		return false
+	}
+	startVectorUpkeep("the embedding settings moved stored vectors to another space")
+	return true
+}
+
+// startVectorUpkeep runs the upkeep in the background; tests replace it.
+var startVectorUpkeep = func(why string) { go runVectorUpkeep(why) }
+
 // runVectorUpkeep runs the cleanup, then the repair, through the maintenance
 // runner, on a context of its own (it outlives whatever noticed it was due),
 // and says what they did.

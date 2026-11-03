@@ -234,7 +234,7 @@ func embeddingFormFields() []ui.FormField {
 		{Field: "provider", Label: "Embed with", Type: "select",
 			Options: append(append([]ui.SelectOption{disabledOption}, choices...), addAnother("embed.text")),
 			Help:    "The connector or peer that makes embeddings; + Add another… adds one from a template. A connector's settings (its address, its model, a key) are set here below it.",
-			Detail:  "A peer that lends embeddings is connected under Admin > Capabilities > Peers. Changing what embeds, or its model, changes the embedding space: search skips stored documents from the old space until Repair in the Vector Index panel makes them again, and through a paid service that is billed."}}
+			Detail:  "A peer that lends embeddings is connected under Admin > Capabilities > Peers. Changing what embeds, or its model, changes the embedding space: saving starts re-embedding the stored documents (progress and Stop under Maintenance, Vector index), and through a paid service that is billed."}}
 	fields = append(fields, connectorSettingsFields("embed.text", "", "provider")...)
 	return append(fields,
 		// The prefixes belong to the MODEL, not to where it runs, so they stay
@@ -252,7 +252,7 @@ func embeddingFormFields() []ui.FormField {
 		ui.FormField{Field: "doc_prefix", Label: "Document prefix", Type: "text",
 			Placeholder: "search_document: ",
 			Help:        "Prepended to every chunk, fact and tool description before embedding.",
-			Detail:      "e5 uses \"passage: \" and nomic-embed uses \"search_document: \"; bge and Qwen3-Embedding use none. Changing it changes the embedding space: stored vectors stop matching until their documents are re-ingested.",
+			Detail:      "e5 uses \"passage: \" and nomic-embed uses \"search_document: \"; bge and Qwen3-Embedding use none. Changing it changes the embedding space: saving starts re-embedding the stored documents, with its progress under Maintenance, Vector index.",
 			ShowWhen:    "provider:!none",
 			Presets: []ui.FieldPreset{
 				{Label: "e5", Value: "passage: ", Hint: "intfloat/e5 family"},

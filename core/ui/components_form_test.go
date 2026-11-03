@@ -47,3 +47,18 @@ func TestANamedHeadingFollowsItsShowWhen(t *testing.T) {
 		t.Error("a named heading is not registered, so its show_when never applies")
 	}
 }
+
+// A form's plain inputs are settings, never a sign-in: the browser is told
+// not to fill a saved login into them. A text box just above a password box
+// otherwise reads to it as a username, and a saved sign-in landed in a
+// settings field that changed what the field meant.
+func TestAFormFieldIsNeverFilledWithASavedLogin(t *testing.T) {
+	i := strings.Index(runtimeJS, "// text, tel, anything else")
+	if i < 0 {
+		t.Fatal("the generic input branch moved; find it and keep this check on it")
+	}
+	branch := runtimeJS[i:min(i+1200, len(runtimeJS))]
+	if !strings.Contains(branch, `input.setAttribute('autocomplete', t === 'password' ? 'new-password' : 'off');`) {
+		t.Errorf("the generic form input no longer turns the browser's login fill off:\n%s", branch)
+	}
+}

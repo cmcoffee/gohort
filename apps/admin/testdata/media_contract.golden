@@ -75,7 +75,7 @@ alice POST /api/embeddings "{\"enabled\":true,\"provider\":\"vectors\"}"
 root POST /api/embeddings "{\"enabled\":true,\"provider\":\"local\",\"endpoint\":\"<stub>/embed/v1\",\"api_key\":\"s3cr3t-embed-1\"}"
   400 choose where embeddings are made: a connector (Admin > Extensions > Connectors) or a peer that lends them
 root POST /api/embeddings "{\"enabled\":true,\"provider\":\"vectors\",\"model\":\"typed-in\"}"
-  204 
+  200 {"message":"Saved. Stored documents are being re-embedded for the new model or prefix: progress is under Maintenance, Vector index, where it can be stopped."}
 root GET /api/embeddings ""
   200 {"api_key":"","enabled":true,"endpoint":"vectors","model":"nomic-embed-text","provider":"vectors"}
 root POST /api/embeddings "{\"enabled\":true,\"provider\":\"nope\"}"

@@ -3589,6 +3589,13 @@
       } else {
         // text, tel, anything else
         input = el('input', {type: t, class: 'ui-form-input', placeholder: f.placeholder || ''});
+        // A form here is settings, never a sign-in. A browser that sees a
+        // text box just above a password box takes the pair for a login and
+        // fills the saved sign-in into the text box: a setting quietly
+        // became an email address. new-password on the secret keeps it from
+        // offering a saved one, which is also what stops it guessing a
+        // username for the box above.
+        input.setAttribute('autocomplete', t === 'password' ? 'new-password' : 'off');
         input.value = String(initial);
         // Suggestions: an existing-values list the field offers while still
         // accepting anything typed. A <select> would force the value to be

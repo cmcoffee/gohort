@@ -513,3 +513,30 @@ func TestTheEmbedderComingBackRepairsWhatItMissed(t *testing.T) {
 		t.Error("a repair was wanted with no embedder to make it")
 	}
 }
+
+// Saving an embedding config that moves stored vectors to another space starts
+// the repair, and one that does not (or embeds nothing) starts nothing.
+func TestAChangedEmbeddingSpaceStartsTheRepair(t *testing.T) {
+	var started []string
+	prev := startVectorUpkeep
+	startVectorUpkeep = func(why string) { started = append(started, why) }
+	t.Cleanup(func() { startVectorUpkeep = prev })
+
+	was := EmbeddingConfig{Enabled: true, Model: "nomic-embed-text", Endpoint: "http://embed.example.test/v1"}
+	for _, tc := range []struct {
+		name string
+		next EmbeddingConfig
+		want bool
+	}{
+		{"the same space", was, false},
+		{"another endpoint, the same model", EmbeddingConfig{Enabled: true, Model: "nomic-embed-text", Endpoint: "http://other.example.test/v1"}, false},
+		{"another model", EmbeddingConfig{Enabled: true, Model: "bge-m3", Endpoint: was.Endpoint}, true},
+		{"a document prefix", EmbeddingConfig{Enabled: true, Model: was.Model, Endpoint: was.Endpoint, DocPrefix: "search_document: "}, true},
+		{"turned off", EmbeddingConfig{Model: "bge-m3"}, false},
+	} {
+		started = nil
+		if got := RepairAfterSpaceChange(was, tc.next); got != tc.want || (len(started) == 1) != tc.want {
+			t.Errorf("%s: reported %v, started %d, want %v", tc.name, got, len(started), tc.want)
+		}
+	}
+}

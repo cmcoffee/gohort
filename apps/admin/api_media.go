@@ -103,10 +103,17 @@ func (a *AdminApp) handleEmbeddingsSave(c *jsonapi.Call, form withSettings[Embed
 	if a.db != nil {
 		a.db.Set(EmbeddingTable, "current", req)
 	}
+	prev := GetEmbeddingConfig()
 	SetEmbeddingConfig(req)
 	acceptChanges(req.Provider)
 	adminChange(c.R, activity.Settings, "updated embeddings config (enabled=%v provider=%q endpoint=%q model=%q)",
 		req.Enabled, req.Provider, req.Endpoint, req.Model)
+	// A new model or document prefix leaves every stored vector in the old
+	// space, out of semantic search until re-embedded: start that now rather
+	// than leave it to a button nobody knows to press.
+	if RepairAfterSpaceChange(prev, GetEmbeddingConfig()) {
+		return map[string]string{"message": "Saved. Stored documents are being re-embedded for the new model or prefix: progress is under Maintenance, Vector index, where it can be stopped."}, nil
+	}
 	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
