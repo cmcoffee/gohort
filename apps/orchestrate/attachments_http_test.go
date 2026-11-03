@@ -81,3 +81,36 @@ func TestASongSentInADirectReplySurvivesTheReload(t *testing.T) {
 		t.Fatalf("the song is not on the saved reply: %+v", files)
 	}
 }
+
+// A reloaded document downloads under its own name: the desktop app names a
+// download from the server's header, not the link, and saved one as
+// "attachment" with no extension.
+func TestAKeptDocumentDownloadsUnderItsName(t *testing.T) {
+	saved := ImageDir()
+	SetImageDir(t.TempDir())
+	t.Cleanup(func() { SetImageDir(saved) })
+	T, _, user := newTestOrchestrate(t)
+	doc := FileAttachment{Name: "comparison.docx", Data: base64.StdEncoding.EncodeToString([]byte("PK\x03\x04 a word document"))}
+	kept := keepDeliveredFiles(user, nil, []FileAttachment{doc})
+	if len(kept) != 1 {
+		t.Fatalf("the document was not kept: %+v", kept)
+	}
+	get := func(name string) string {
+		w := httptest.NewRecorder()
+		T.handleAttachment(w, asUser(httptest.NewRequest(http.MethodGet, "/api/attachment?id="+kept[0].ID+"&name="+name, nil), user))
+		return w.Header().Get("Content-Disposition")
+	}
+	for name, want := range map[string]string{
+		"Smart%20home%20comparison.docx": `attachment; filename="Smart home comparison.docx"`,
+		"..%2F..%2Fetc%2Fcomparison.docx": `attachment; filename=comparison.docx`,
+		"R%C3%A9sum%C3%A9.docx":          `attachment; filename*=utf-8''R%C3%A9sum%C3%A9.docx`,
+		"":                               "attachment",
+	} {
+		if got := get(name); got != want {
+			t.Errorf("name %q: Content-Disposition %q, want %q", name, got, want)
+		}
+	}
+	if src := readFile(t, "assets/web_assets.html"); !strings.Contains(src, "'&name=' + encodeURIComponent(f.name)") {
+		t.Error("a reloaded file's link no longer carries its name")
+	}
+}

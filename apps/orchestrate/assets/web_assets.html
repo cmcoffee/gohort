@@ -8109,8 +8109,11 @@
           if (!window.uiRenderMessageMedia) return;
           files.forEach(function(f) {
             if (!f || !f.id) return;
-            window.uiRenderMessageMedia(bubble, {src: 'api/attachment?id=' + encodeURIComponent(f.id),
-              kind: f.kind, name: f.name, size: f.size});
+            // The name rides the address too: the desktop app names a download
+            // from the server's header, not the link, and saved a reloaded
+            // document as "attachment" with no extension.
+            var src = 'api/attachment?id=' + encodeURIComponent(f.id) + (f.name ? '&name=' + encodeURIComponent(f.name) : '');
+            window.uiRenderMessageMedia(bubble, {src: src, kind: f.kind, name: f.name, size: f.size});
           });
         });
       }

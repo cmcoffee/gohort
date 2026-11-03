@@ -10,6 +10,7 @@ package orchestrate
 import (
 	"mime"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 
@@ -40,7 +41,7 @@ func (T *OrchestrateApp) handleAttachment(w http.ResponseWriter, r *http.Request
 	// inline from this origin it could run with the viewer's session.
 	if !inlineAttachmentType(mime) {
 		mime = "application/octet-stream"
-		w.Header().Set("Content-Disposition", "attachment")
+		w.Header().Set("Content-Disposition", attachmentDisposition(r.URL.Query().Get("name")))
 	}
 	w.Header().Set("Content-Type", mime)
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
@@ -48,6 +49,22 @@ func (T *OrchestrateApp) handleAttachment(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Cache-Control", "private, max-age=86400, immutable")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Write(data)
+}
+
+// attachmentDisposition is the download header for a kept file, carrying the
+// name the message delivered it under: an app that names a download from the
+// header (the desktop app) saved a reloaded document as "attachment". The name
+// is only ever the caller's own file's, and FormatMediaType quotes it (and
+// encodes one outside ASCII); one it cannot carry safely is left off.
+func attachmentDisposition(name string) string {
+	name = strings.TrimSpace(path.Base(strings.ReplaceAll(name, "\\", "/")))
+	if name == "" || name == "." || name == "/" {
+		return "attachment"
+	}
+	if d := mime.FormatMediaType("attachment", map[string]string{"filename": name}); d != "" {
+		return d
+	}
+	return "attachment"
 }
 
 // keepDeliveredAttachments stores what a turn attached and returns the ids for
