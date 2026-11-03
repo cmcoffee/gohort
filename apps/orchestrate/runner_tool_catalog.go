@@ -336,11 +336,11 @@ func (wc *workerCatalog) authoringTools() {
 			wc.toolNames = append(wc.toolNames, td.Tool.Name)
 		}
 	}
-	// Consult the Lead: one self-contained question to the lead model when the
-	// agent hits a wall, without handing it the turn. Its own setting, not a
-	// passenger on authoring; a Private turn drops it with every other network
-	// tool.
-	if forOrchestrator && settingIsOn(RootDB, t.agent, defaultConsultLead) {
+	// The lead as consultant: a question to the lead model when the worker is
+	// unsure or stuck, without handing it the turn. On the consultant and
+	// hybrid levels (leadAsks); a Private turn drops it with every other
+	// network tool.
+	if forOrchestrator && leadAsks(RootDB, t.agent) {
 		ct := consultTool(t)
 		wc.tools = append(wc.tools, ct)
 		wc.toolNames = append(wc.toolNames, ct.Tool.Name)

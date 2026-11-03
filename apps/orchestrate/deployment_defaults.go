@@ -309,7 +309,7 @@ var deploymentSettingOrder = []struct {
 	{defaultInboundMode, "Which agents may dispatch to an agent",
 		"Who an agent accepts work from. Anyone, only its named callers, or nobody."},
 	{defaultConsultLead, "Whether an agent may consult the Lead",
-		"On, an agent that hits a wall may ask the lead model one self-contained question, at most three a turn. The lead is usually remote and billed, so Off keeps every agent on the worker. Private conversations never consult."},
+		"On, agents may work with the lead beside the worker: as a consultant the worker can ask when unsure (at most five a turn) and every plan it makes goes past the lead; as a hybrid the lead also reviews finished replies. The lead is usually remote and billed, so Off keeps those agents on the worker alone. Private conversations never reach the lead."},
 	{defaultGuardrailDepth, "How carefully an agent's own guardrails are checked",
 		"Quick answers straight off; Moderate and Thorough reason first, adding a few seconds to each checked reply. The deployment's Rules have their own depth, under Governance."},
 	{defaultShareCortex, "A shared agent's standing thread",

@@ -1,6 +1,6 @@
 package orchestrate
 
-// "Lead plans, worker does the work" (AgentRecord.LeadPlans).
+// "Lead orchestrates": the lead plans, the worker does the work (AgentRecord.LeadPlans).
 //
 // On "Lead for every turn" the lead runs the whole turn with every tool, and
 // small jobs it does itself: each tool round goes to the lead with the full

@@ -349,7 +349,8 @@ type AgentRecord struct {
 	// and on a turn that cannot reach the lead. On Builder it means the lead
 	// designs and reviews apps and a worker writes them (builder_app_split.go).
 	LeadPlans bool `json:"lead_plans,omitempty"`
-	// LeadReview keeps the turn on the worker and has the lead read the
+	// LeadReview is the hybrid level: the turn stays on the worker, the
+	// lead is its consultant and reads every plan first, and it reads the
 	// finished reply, with what the turn ran and got back, before it goes
 	// out: it either lets it go or sends it back with changes
 	// (lead_review.go). Without LeadModel; inert on a turn that cannot

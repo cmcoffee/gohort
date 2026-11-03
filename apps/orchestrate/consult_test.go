@@ -6,10 +6,12 @@ import (
 	"testing"
 )
 
-// The consulted model sees ONLY what the caller pastes — no conversation, no
-// tools. Missing evidence is therefore a hard error, not a best-effort call:
-// answering from an empty prompt is how a confident wrong answer gets made.
-func TestConsultToolRequiresQuestionAndEvidence(t *testing.T) {
+// The consultant sees the request, the recent conversation and what the
+// caller pastes, never its tools. A question is required; evidence is not,
+// since a judgement ("which approach?") may have none, and the request and the
+// conversation always go with it (consultContext), so the prompt is never
+// empty.
+func TestConsultToolRequiresAQuestion(t *testing.T) {
 	td := consultTool(&chatTurn{})
 	cases := []struct {
 		name string
@@ -17,7 +19,6 @@ func TestConsultToolRequiresQuestionAndEvidence(t *testing.T) {
 		want string
 	}{
 		{"no question", map[string]any{"evidence": "HTTP 400 ..."}, "question is required"},
-		{"no evidence", map[string]any{"question": "What is the body?"}, "evidence is required"},
 		{"blank question", map[string]any{"question": "  ", "evidence": "x"}, "question is required"},
 	}
 	for _, tc := range cases {
@@ -58,7 +59,27 @@ func TestConsultToolFramesAnswerAsAdvice(t *testing.T) {
 			t.Errorf("missing %q parameter", want)
 		}
 	}
-	if len(td.Tool.Required) != 2 {
-		t.Errorf("question and evidence must both be required: %v", td.Tool.Required)
+	if len(td.Tool.Required) != 1 || td.Tool.Required[0] != "question" {
+		t.Errorf("only the question is required: %v", td.Tool.Required)
+	}
+}
+
+// The consultant knows the case: the person's request and the conversation
+// just before it go with every question, clipped, without the worker pasting
+// them. A turn with no conversation sends the question alone.
+func TestTheConsultantSeesTheConversation(t *testing.T) {
+	sess := &ChatSession{Messages: []ChatMessage{
+		{Role: "user", Content: "Plan a weekend in Fresno."},
+		{Role: "assistant", Content: "Which weekend?"},
+		{Role: "user", Content: "This one, and keep it cheap."},
+	}}
+	got := (&chatTurn{session: sess}).consultContext()
+	for _, want := range []string{"Person: Plan a weekend in Fresno.", "Agent: Which weekend?", "Person: This one, and keep it cheap."} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the consultant's context lacks %q:\n%s", want, got)
+		}
+	}
+	if (&chatTurn{}).consultContext() != "" {
+		t.Error("a turn with no conversation should add nothing")
 	}
 }

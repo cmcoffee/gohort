@@ -21,6 +21,7 @@ package orchestrate
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -342,10 +343,24 @@ func settingSource(db Database, rec AgentRecord, key string) string {
 const (
 	leadUseLead    = "lead"
 	leadUsePlan    = "plan"
-	leadUseReview  = "review"
+	leadUseHybrid  = "hybrid"
 	leadUseConsult = "consult"
 	leadUseOff     = "off"
 )
+
+// The levels of lead help, least to most, as the editor's scale shows them:
+//
+//   - Worker only: the lead is never used.
+//   - Lead as consultant: the worker drives, may ask the lead, and every plan
+//     it makes goes past the lead first (lead_plan_check.go).
+//   - Hybrid: as the consultant, and the lead reviews the finished reply of
+//     a turn that did work (lead_review.go). The balance to tune for.
+//   - Lead orchestrates: the lead plans every turn and writes the reply.
+//   - Lead only: the lead runs the whole turn.
+//
+// Stored as the fields that were here before the levels (LeadModel,
+// LeadPlans, LeadReview, ConsultLead): hybrid is LeadReview, so an agent
+// saved on "Lead reviews" is a hybrid, with nothing rewritten.
 
 // leadUseOf is the agent's choice as it stands, its consult setting resolved
 // through the deployment default it may be following.
@@ -356,11 +371,30 @@ func leadUseOf(db Database, a AgentRecord) string {
 	case a.LeadModel:
 		return leadUseLead
 	case a.LeadReview:
-		return leadUseReview
+		return leadUseHybrid
 	case settingIsOn(db, a, defaultConsultLead):
 		return leadUseConsult
 	}
 	return leadUseOff
+}
+
+// consultAllowed reports whether the deployment lets agents consult the lead
+// at all: its ceiling on the consult setting.
+func consultAllowed(db Database) bool {
+	return slices.Contains(deploymentDefaultChoices(db, defaultConsultLead), settingOn)
+}
+
+// leadAsks reports whether the agent works with the lead beside the worker:
+// consultant or hybrid, on a turn the worker drives. Both may consult the
+// lead and send it their plans.
+func leadAsks(db Database, a AgentRecord) bool {
+	switch leadUseOf(db, a) {
+	case leadUseConsult:
+		return true
+	case leadUseHybrid:
+		return consultAllowed(db)
+	}
+	return false
 }
 
 // leadUseDefault is what an agent that has decided nothing gets.
@@ -375,6 +409,9 @@ func leadUseDefault(db Database, a AgentRecord) string {
 // that matches the default is stored as following it, for the same reason.
 func applyLeadUse(db Database, a *AgentRecord, v string) {
 	v = strings.TrimSpace(v)
+	if v == "review" { // the hybrid level, saved when it was "Lead reviews"
+		v = leadUseHybrid
+	}
 	if v == "" || v == leadUseOf(db, *a) {
 		return
 	}
@@ -383,10 +420,11 @@ func applyLeadUse(db Database, a *AgentRecord, v string) {
 		a.LeadModel = true
 		a.LeadPlans = v == leadUsePlan
 		a.LeadReview = false
-	case leadUseReview:
-		// The worker runs the turn; the lead only reads the result. Ask
-		// when stuck is left to follow the deployment default, since a
-		// reviewed turn can still use a question answered mid-way.
+	case leadUseHybrid:
+		// The worker runs the turn with the lead as its partner: the
+		// consultant, every plan, and the review of a finished reply. The
+		// consultant comes with the level (consultOffered), so the agent's
+		// own consult setting is left to follow the default.
 		a.LeadModel, a.LeadPlans, a.LeadReview = false, false, true
 		a.ConsultLead = ""
 	case leadUseConsult, leadUseOff:

@@ -18,8 +18,8 @@ import (
 func TestLeadReviewIsAStopOnTheScale(t *testing.T) {
 	pinRootDB(t)
 	a := AgentRecord{ID: "a1", Name: "Helper"}
-	applyLeadUse(RootDB, &a, leadUseReview)
-	if !a.LeadReview || a.LeadModel || a.LeadPlans || leadUseOf(RootDB, a) != leadUseReview {
+	applyLeadUse(RootDB, &a, leadUseHybrid)
+	if !a.LeadReview || a.LeadModel || a.LeadPlans || leadUseOf(RootDB, a) != leadUseHybrid {
 		t.Fatalf("review: %+v reads %s", a, leadUseOf(RootDB, a))
 	}
 	for _, other := range []string{leadUseLead, leadUsePlan, leadUseOff} {
@@ -41,10 +41,10 @@ func TestLeadReviewIsAStopOnTheScale(t *testing.T) {
 		}
 	}
 	at := func(v string) int { return slices.Index(order, v) }
-	if !(at(leadUseOff) == 0 && at(leadUseOff) < at(leadUseReview) && at(leadUseReview) < at(leadUsePlan) && at(leadUsePlan) < at(leadUseLead) && at(leadUseLead) == len(order)-1) {
+	if !(at(leadUseOff) == 0 && at(leadUseOff) < at(leadUseHybrid) && at(leadUseHybrid) < at(leadUsePlan) && at(leadUsePlan) < at(leadUseLead) && at(leadUseLead) == len(order)-1) {
 		t.Errorf("the scale is out of order: %v", order)
 	}
-	if c := at(leadUseConsult); c >= 0 && (c < at(leadUseOff) || c > at(leadUseReview)) {
+	if c := at(leadUseConsult); c >= 0 && (c < at(leadUseOff) || c > at(leadUseHybrid)) {
 		t.Errorf("ask when stuck is out of place: %v", order)
 	}
 }

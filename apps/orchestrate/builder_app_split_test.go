@@ -176,7 +176,7 @@ func TestBuilderOffersAndKeepsTheDesignSplit(t *testing.T) {
 	if l := label(AgentRecord{ID: "seed-builder"}); !strings.Contains(l, "Lead designs apps") {
 		t.Errorf("Builder offers %q", l)
 	}
-	if l := label(AgentRecord{ID: "a1"}); !strings.Contains(l, "Lead plans") {
+	if l := label(AgentRecord{ID: "a1"}); !strings.Contains(l, "Lead orchestrates") {
 		t.Errorf("another agent offers %q", l)
 	}
 	seed := AgentRecord{ID: "seed-builder"}

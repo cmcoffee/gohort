@@ -1,6 +1,6 @@
 package orchestrate
 
-// "Lead reviews" (AgentRecord.LeadReview): the worker runs the turn, and
+// The review half of "Hybrid" (AgentRecord.LeadReview): the worker runs the turn, and
 // before the reply goes out the lead reads it with what the turn ran and got
 // back, then lets it go or sends it back with the changes it needs.
 //
@@ -16,6 +16,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -64,8 +65,10 @@ func (t *chatTurn) leadReviewer(ctx context.Context) func(TurnClaimEvidence) (bo
 
 // reviewTurn is one review: the brief, the evidence, the lead's verdict.
 func (T *OrchestrateApp) reviewTurn(ctx context.Context, agentID string, ev TurnClaimEvidence) (bool, string, bool) {
+	started := time.Now()
 	resp, err := T.LeadChat(ctx, []Message{{Role: "user", Content: leadReviewEvidence(ev)}},
 		WithSystemPrompt(leadReviewSysPrompt), WithJSONMode(), WithRouteKey(leadReviewRouteKey))
+	took := time.Since(started).Round(100 * time.Millisecond)
 	if err != nil || resp == nil {
 		Log("[lead-review] agent=%s: no review (%v); the reply goes out as written", agentID, err)
 		return false, "", false
@@ -85,10 +88,10 @@ func (T *OrchestrateApp) reviewTurn(ctx context.Context, agentID string, ev Turn
 	verdict := strings.ToUpper(strings.TrimSpace(out.Verdict))
 	changes := strings.TrimSpace(out.Changes)
 	if verdict != "SEND_BACK" || changes == "" {
-		Log("[lead-review] agent=%s: approved (tools=%d, tier=%s)", agentID, len(ev.ToolCalls), resp.Tier)
+		Log("[lead-review] agent=%s: approved in %s (tools=%d, tier=%s)", agentID, took, len(ev.ToolCalls), resp.Tier)
 		return false, "", true
 	}
-	Log("[lead-review] agent=%s: SENT BACK (tier=%s): %s", agentID, resp.Tier, truncateObs(changes, 200))
+	Log("[lead-review] agent=%s: SENT BACK in %s (tier=%s): %s", agentID, took, resp.Tier, truncateObs(changes, 200))
 	return true, changes, true
 }
 

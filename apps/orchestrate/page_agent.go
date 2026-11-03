@@ -1181,29 +1181,27 @@ func leadUseField(show bool, rec AgentRecord) ui.FormField {
 		return ui.SelectOption{Value: v, Label: label, Help: help}
 	}
 	opts := []ui.SelectOption{stop(leadUseOff, "Worker only", "Every turn runs on the local worker; the lead is never used.")}
-	// Consult is offered only where the deployment allows it.
-	for _, c := range deploymentDefaultChoices(RootDB, defaultConsultLead) {
-		if c == settingOn {
-			opts = append(opts, stop(leadUseConsult, "Ask when stuck",
-				"The worker runs the turn and may ask the lead one self-contained question when it hits a wall, at most three a turn. Only the question and its evidence go."))
-		}
+	// The consultant is offered only where the deployment allows consulting.
+	if consultAllowed(RootDB) {
+		opts = append(opts, stop(leadUseConsult, "Lead as consultant",
+			"The worker runs the turn and may ask the lead when it is unsure, sending your request and the recent conversation with the question. Every plan it makes goes past the lead first. Turns that need neither stay on the worker."))
 	}
-	opts = append(opts, stop(leadUseReview, "Lead reviews",
-		"The worker runs the turn; before the reply goes out, the lead reads it with what the turn ran and got back, and lets it go or sends it back with changes. Only turns that did work are reviewed."))
+	opts = append(opts, stop(leadUseHybrid, "Hybrid",
+		"The worker and the lead share the turn: the lead is the worker's consultant, reads every plan before it runs, and reviews the reply of a turn that did work before it goes out. The recommended balance."))
 	// The same choice on Builder means something of its own: the lead designs
 	// and reviews apps, and a worker writes them (builder_app_split.go).
 	if isBuilderAgent(rec.ID) {
 		opts = append(opts, stop(leadUsePlan, "Lead designs apps",
 			"For an app, the lead designs it with you, a worker on the local model writes it, and the lead reads the code and sends changes until it is right. Everything else Builder makes is built on the lead."))
 	} else {
-		opts = append(opts, stop(leadUsePlan, "Lead plans",
+		opts = append(opts, stop(leadUsePlan, "Lead orchestrates",
 			"The lead decides and writes the reply; steps on the worker do the work with the tools it picks for each. No tool list and no raw tool output reach the lead."))
 	}
-	opts = append(opts, stop(leadUseLead, "Lead every turn", "The lead runs the whole turn with every tool."))
+	opts = append(opts, stop(leadUseLead, "Lead only", "The lead runs the whole turn with every tool; the worker is never used."))
 	return ui.FormField{
 		Field: "lead_use", Type: "scale", Label: "Lead model", Options: opts,
 		Help: "How much of each turn the lead model does: left is the local worker alone, right is the lead for everything.",
-		Detail: "Left to right, each step gives the lead more of the turn, and costs more. Worker only never uses it. Ask when stuck lets the worker ask it a question. Lead reviews has it read the finished reply against what the turn did, once, and send it back when something is wrong or missing; it never rewrites the reply itself. Lead plans has it decide and write while workers do the work (on Builder, design and review apps while a worker writes them). Lead every turn runs the whole turn on it.\n\n" +
+		Detail: "Left to right, each step gives the lead more of the turn, and costs more. Worker only never uses it. Lead as consultant lets the worker ask it when unsure, with your request and the recent conversation, and has it read every plan the worker makes before it runs. Hybrid, the balance to aim for, adds a review of the finished reply of any turn that did work: once, sending it back when something is wrong or missing, never rewriting it. Lead orchestrates has it plan every turn and write the reply while workers do the steps (on Builder, design and review apps while a worker writes them). Lead only runs the whole turn on it.\n\n" +
 			"A Private conversation never reaches the lead, whatever is chosen here.",
 	}
 }

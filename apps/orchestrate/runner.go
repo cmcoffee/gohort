@@ -2249,8 +2249,9 @@ func (pr *planRun) finish() (steps []PlanStep, question, directReply string, err
 	}
 	if len(pr.capturedSteps) > 0 {
 		// Plan_set's pre-amble narration already streamed; the plan
-		// card will render below. Nothing further to emit here.
-		return pr.capturedSteps, "", "", nil
+		// card will render below. The plan goes past the lead first on the
+		// consultant and hybrid levels (lead_plan_check.go).
+		return pr.checkPlanWithLead(pr.capturedSteps), "", "", nil
 	}
 	if pr.capturedReply != "" {
 		pr.emitCapturedAsBubble(pr.capturedReply)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -32,7 +33,14 @@ import (
 // agent is thrashing rather than stuck on a specific unknown, and the
 // failure-shape de-escalation is the better remedy. Not silent — the cap
 // returns a message the model can act on.
-const consultMaxPerTurn = 3
+const consultMaxPerTurn = 5
+
+// consultContextMessages is how much of the conversation goes with a consult,
+// and consultContextChars how much of each message.
+const (
+	consultContextMessages = 6
+	consultContextChars    = 800
+)
 
 // ConsultRouteKey is the routing stage for one-shot advice calls. Registered in
 // orchestrate.go with Default "lead" and NOT Private, so an admin controls it
@@ -44,9 +52,9 @@ const ConsultRouteKey = "app.orchestrate.consult"
 // consultSystemPrompt is fixed and short. It says answer from the evidence,
 // give the concrete shape, and admit when the evidence doesn't settle it —
 // the three failure modes that make advice worse than none.
-const consultSystemPrompt = `You are advising another AI agent in the middle of a task. It is stuck and has sent you one question plus the raw evidence it has.
+const consultSystemPrompt = `You are advising another AI agent in the middle of a task, as its consultant. It has sent you one question, what the person asked, the recent conversation, and any evidence it has. The question may be a judgement (which approach, whether something is sound, what it is missing) or a failure it cannot get past.
 
-Answer ONLY from the evidence given. Do not invent endpoints, field names, or behavior that is not in it.
+Answer ONLY from what you were given. Do not invent endpoints, field names, or behavior that is not in it. For a judgement, say which way and why in a few sentences.
 
 Be concrete. If the question is about a request or response shape, give the exact field names and their exact nesting: a snippet beats a description. If it is about a failure, name the cause and the specific change that fixes it.
 
@@ -61,7 +69,7 @@ func consultTool(t *chatTurn) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "consult",
-			Description: "Ask a stronger model ONE self-contained question and get its answer back. Call this when: you have hit the same API failure twice and varying the arguments isn't working; the docs are ambiguous about a request or response shape; or you are about to make your first authoring call against an API you have not built against before. Do NOT call it for anything you can settle by testing directly, and do not call it for general advice: it sees only what you paste, not your conversation. The answer is ADVICE: apply it, then VERIFY with a real call before telling the user anything works.",
+			Description: "Ask the lead, a stronger model, for advice: your consultant. Call it when you are unsure: which approach to take, whether your plan or answer is sound, what you might be missing; or when you have hit the same failure twice and varying the arguments isn't working, or the docs are ambiguous about a request or response shape. It sees the person's request and the recent conversation with your question, but not your tools or tool results: paste any evidence the answer depends on. Do NOT call it for anything you can settle by testing directly. At most five a turn. The answer is ADVICE: weigh it, and VERIFY anything it says about a system with a real call before telling the user it works.",
 			Parameters: map[string]ToolParam{
 				"question": {
 					Type:        "string",
@@ -69,14 +77,14 @@ func consultTool(t *chatTurn) AgentToolDef {
 				},
 				"evidence": {
 					Type:        "string",
-					Description: "The raw material the answer depends on: the doc excerpt, the full error body, your current template. Paste it verbatim; do not summarize. The consulted model sees ONLY this, not your conversation or your tools.",
+					Description: "Optional for a judgement, needed for a failure: the raw material the answer depends on (the doc excerpt, the full error body, your current template, your draft). Paste it verbatim; do not summarize. The consultant sees the request and recent conversation, but not your tools or what they returned.",
 				},
 				"tried": {
 					Type:        "string",
 					Description: "Optional. What you already attempted and how it failed, so the answer doesn't repeat it.",
 				},
 			},
-			Required: []string{"question", "evidence"},
+			Required: []string{"question"},
 			Caps:     []Capability{CapNetwork},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
@@ -84,9 +92,6 @@ func consultTool(t *chatTurn) AgentToolDef {
 			evidence := strings.TrimSpace(StringArg(args, "evidence"))
 			if question == "" {
 				return "", fmt.Errorf("question is required: ask ONE specific question")
-			}
-			if evidence == "" {
-				return "", fmt.Errorf("evidence is required: the consulted model sees ONLY what you paste here, not your conversation. Include the doc excerpt, error body, or template the answer depends on")
 			}
 			if tried := strings.TrimSpace(StringArg(args, "tried")); tried != "" {
 				evidence += "\n\nAlready tried, and it failed:\n" + tried
@@ -124,7 +129,7 @@ func (t *chatTurn) consult(question, evidence string) (string, error) {
 
 	msgs := []Message{
 		{Role: "system", Content: consultSystemPrompt},
-		{Role: "user", Content: "QUESTION\n" + question + "\n\nEVIDENCE\n" + evidence},
+		{Role: "user", Content: t.consultContext() + "QUESTION\n" + question + evidenceSection(evidence)},
 	}
 	// Routed like every other stage: LeadChat honors the route key and
 	// delegates to the worker when the admin has set this stage to worker.
@@ -146,7 +151,9 @@ func (t *chatTurn) consult(question, evidence string) (string, error) {
 			}
 		}
 	}
+	started := time.Now()
 	resp, err := t.app.LeadChat(t.ctx, msgs, opts...)
+	took := time.Since(started).Round(100 * time.Millisecond)
 	if err != nil {
 		Log("[orchestrate.consult] call %d failed: %v", t.consultCount, err)
 		return "", fmt.Errorf("consultation failed: %w", err)
@@ -169,8 +176,43 @@ func (t *chatTurn) consult(question, evidence string) (string, error) {
 	}
 	// Logged, not silent: a consult that never earns its keep should be
 	// visible as a line you can count, not an invisible cost.
-	Log("[orchestrate.consult] call %d/%d served by tier=%s: q=%q answer=%d chars",
-		t.consultCount, consultMaxPerTurn, tier, firstLineSnippet(question, 80), len(advice))
+	Log("[orchestrate.consult] call %d/%d served by tier=%s in %s: q=%q answer=%d chars",
+		t.consultCount, consultMaxPerTurn, tier, took, firstLineSnippet(question, 80), len(advice))
 	t.turnDiag("consulted", "Asked a stronger model one question mid-task: "+firstLineSnippet(question, 120))
 	return advice, nil
+}
+
+// consultContext is what the consultant knows of the case without being told:
+// the person's latest request and the conversation just before it, each
+// message clipped. Empty where the turn has no conversation (the automatic
+// consult on a failure, from a run with no session).
+func (t *chatTurn) consultContext() string {
+	if t.session == nil || len(t.session.Messages) == 0 {
+		return ""
+	}
+	msgs := t.session.Messages
+	if len(msgs) > consultContextMessages {
+		msgs = msgs[len(msgs)-consultContextMessages:]
+	}
+	var b strings.Builder
+	b.WriteString("RECENT CONVERSATION (the last message is the request)\n")
+	for _, m := range msgs {
+		if m.Role != "user" && m.Role != "assistant" {
+			continue
+		}
+		who := "Person"
+		if m.Role == "assistant" {
+			who = "Agent"
+		}
+		fmt.Fprintf(&b, "%s: %s\n", who, truncateObs(strings.TrimSpace(m.Content), consultContextChars))
+	}
+	return b.String() + "\n"
+}
+
+// evidenceSection is the evidence the worker pasted, when it pasted any.
+func evidenceSection(evidence string) string {
+	if strings.TrimSpace(evidence) == "" {
+		return ""
+	}
+	return "\n\nEVIDENCE\n" + evidence
 }

@@ -314,7 +314,7 @@ func TestTheLeadChoiceRoundTrips(t *testing.T) {
 	for _, o := range f.Options {
 		order = append(order, o.Value)
 	}
-	if f.Field != "lead_use" || f.Type != "scale" || strings.Join(order, " ") != "off consult review plan lead" ||
+	if f.Field != "lead_use" || f.Type != "scale" || strings.Join(order, " ") != "off consult hybrid plan lead" ||
 		!strings.Contains(f.Options[0].Help, "This is the default.") {
 		t.Errorf("the scale: %+v", f.Options)
 	}
@@ -335,7 +335,7 @@ func TestTheLeadChoiceSavesThroughPATCH(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, choice := range []string{leadUsePlan, leadUseLead, leadUseReview, leadUseOff, leadUseReview, leadUsePlan} {
+		for _, choice := range []string{leadUsePlan, leadUseLead, leadUseHybrid, leadUseOff, leadUseHybrid, leadUsePlan} {
 			w := httptest.NewRecorder()
 			body := `{"id":"` + a.ID + `","lead_use":"` + choice + `"}`
 			routed(T)(w, as(t, httptest.NewRequest(http.MethodPatch, "/api/agents?id="+a.ID, strings.NewReader(body)), user))
