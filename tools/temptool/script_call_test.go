@@ -33,7 +33,7 @@ func TestAScriptCallsOnlyToolsThatNeedNoOne(t *testing.T) {
 	if _, err := ScriptCallableTool(RootDB, "owner", "their_tool"); err == nil || !strings.Contains(err.Error(), "no tool named") {
 		t.Fatalf("another user's tool: %v", err)
 	}
-	if _, err := CallToolForScript(&ToolSession{}, "", "get_weather", nil); err == nil {
+	if _, err := CallToolForScript(&ToolSession{}, "get_weather", nil); err == nil {
 		t.Fatal("a session with no user ran a tool")
 	}
 }
@@ -60,9 +60,10 @@ func (f fakeMCPTool) RunWithSession(args map[string]any, sess *ToolSession) (str
 }
 
 // A script may call an MCP tool from an enabled server that offers its tools,
-// as the person using the app (so a per-person sign-in answers for them), and
-// not one that would stop to ask, nor one from a server that is off.
-func TestAScriptCallsAnMCPToolAsTheAppsUser(t *testing.T) {
+// as the app's owner: what it reads goes to the owner's script, so it is the
+// owner's sign-in that answers, never the person using the app. Not one that
+// would stop to ask, nor one from a server that is off.
+func TestAScriptCallsAnMCPToolAsTheOwner(t *testing.T) {
 	saved, savedAuth := RootDB, AuthDB
 	db := &DBase{Store: kvlite.MemStore()}
 	RootDB = db
@@ -81,8 +82,8 @@ func TestAScriptCallsAnMCPToolAsTheAppsUser(t *testing.T) {
 	if _, err := ScriptCallableTool(db, "owner", "scripttest-atl_get_issue"); err != nil {
 		t.Fatalf("an MCP read tool: %v", err)
 	}
-	out, err := CallToolForScript(&ToolSession{Username: "owner", DB: db}, "bob", "scripttest-atl_get_issue", map[string]any{"key": "SUP-1"})
-	if err != nil || out != "issue SUP-1" || ranAs != "bob" {
+	out, err := CallToolForScript(&ToolSession{Username: "owner", DB: db}, "scripttest-atl_get_issue", map[string]any{"key": "SUP-1"})
+	if err != nil || out != "issue SUP-1" || ranAs != "owner" {
 		t.Errorf("ran as %q: %q %v", ranAs, out, err)
 	}
 	if _, err := ScriptCallableTool(db, "owner", "scripttest-atl_delete_issue"); err == nil || !strings.Contains(err.Error(), "nobody to ask") {

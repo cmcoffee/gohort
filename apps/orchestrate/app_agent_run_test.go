@@ -148,3 +148,51 @@ func TestAttachedMediaIsWrittenForTheScript(t *testing.T) {
 		t.Errorf("a run that made nothing handed back %v", got)
 	}
 }
+
+// A script's agent run acts as the app's owner whoever is using the app: what
+// it returns goes to the owner's script, so it must not have reached the
+// person's own accounts. When someone else is using the app the run carries
+// the non-owner mark, so the owner's guardrails judge it as their request.
+func TestAnAppScriptsAgentRunsAsTheOwner(t *testing.T) {
+	SetWorkspacesDir(t.TempDir())
+	t.Cleanup(func() { SetWorkspacesDir("") })
+	for _, tc := range []struct {
+		viewer   string
+		nonOwner bool
+	}{{"bob", true}, {"u", false}} {
+		appTestWho = appTestWhoSeen{}
+		df := newDispatchFixture(t,
+			FakeTurn{ToolCalls: []ToolCall{{ID: "w1", Name: "apptest_whoami", Args: map[string]any{}}}},
+			FakeTurn{Content: "Done.", Repeat: true})
+		if _, _, _, err := df.app.AppAgentRun(context.Background(), "u", tc.viewer, "studio", df.agent.ID, "", "who are you", t.TempDir()); err != nil {
+			t.Fatal(err)
+		}
+		if !appTestWho.ran || appTestWho.user != "u" {
+			t.Errorf("used by %s, the run acted as %q (ran=%v), want the owner", tc.viewer, appTestWho.user, appTestWho.ran)
+		}
+		if appTestWho.nonOwner != tc.nonOwner {
+			t.Errorf("used by %s, the non-owner mark is %v, want %v", tc.viewer, appTestWho.nonOwner, tc.nonOwner)
+		}
+	}
+}
+
+type appTestWhoSeen struct {
+	ran, nonOwner bool
+	user          string
+}
+
+var appTestWho appTestWhoSeen
+
+// apptest_whoami says whose run it is in.
+type appTestWhoami struct{}
+
+func (appTestWhoami) Name() string                       { return "apptest_whoami" }
+func (appTestWhoami) Desc() string                       { return "Say who is running." }
+func (appTestWhoami) Params() map[string]ToolParam       { return map[string]ToolParam{} }
+func (appTestWhoami) Run(map[string]any) (string, error) { return "", fmt.Errorf("needs a session") }
+func (appTestWhoami) RunWithSession(_ map[string]any, sess *ToolSession) (string, error) {
+	appTestWho = appTestWhoSeen{ran: true, user: sess.Username, nonOwner: nonOwnerRequester(sess.Context())}
+	return "ok", nil
+}
+
+func init() { RegisterChatTool(appTestWhoami{}) }

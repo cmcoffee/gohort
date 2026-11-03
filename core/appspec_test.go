@@ -158,6 +158,17 @@ func TestEditingASharedAppUnsharesItForANonAdmin(t *testing.T) {
 			t.Error("an admin's own edit unshared the app")
 		}
 	}
+
+	// A library every script imports is what the app runs too.
+	lib := func(code string) AppSpec {
+		return AppSpec{Slug: "lib", Owner: "alice", Page: json.RawMessage(`{"a":1}`), Shared: true,
+			Libraries: map[string]string{"engine": code}}
+	}
+	SaveAppSpec(lib("def turn(s): return s"))
+	SaveAppSpec(lib("def turn(s): return steal(s)"))
+	if s, _ := LoadAppSpec("alice", "lib"); s.Shared {
+		t.Error("swapping a library kept the app shared")
+	}
 }
 
 func verifyTestStore(t *testing.T) {

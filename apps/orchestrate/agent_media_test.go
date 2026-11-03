@@ -268,7 +268,7 @@ func TestHandedMediaIsTakenOnce(t *testing.T) {
 // where it is when the two share one (a sub-agent and its parent).
 
 func TestFilesARunCreatedComeBackToTheAgentThatRanIt(t *testing.T) {
-	theirs, mine := t.TempDir(), t.TempDir()
+	theirs, mine := workFolders(t)
 	os.WriteFile(filepath.Join(theirs, "song.mp3"), []byte("mp3"), 0600)
 	os.WriteFile(filepath.Join(theirs, "notes.txt"), []byte("lyrics"), 0600)
 	os.WriteFile(filepath.Join(mine, "notes.txt"), []byte("my own notes"), 0600)
@@ -318,7 +318,7 @@ func TestFilesARunCreatedComeBackToTheAgentThatRanIt(t *testing.T) {
 // A delegation hands back through a collecting session with no folder of its
 // own, so the files ride it by absolute path.
 func TestFilesComeBackThroughADelegationsCollector(t *testing.T) {
-	theirs, mine := t.TempDir(), t.TempDir()
+	theirs, mine := workFolders(t)
 	os.WriteFile(filepath.Join(theirs, "report.md"), []byte("findings"), 0600)
 	run := &ToolSession{WorkspaceDir: theirs}
 	run.AddStagedFiles([]string{"report.md"})
@@ -339,7 +339,7 @@ func TestAHandBackTooLargeStaysWhereItIs(t *testing.T) {
 	prev := handBackFileLimit
 	handBackFileLimit = 4
 	t.Cleanup(func() { handBackFileLimit = prev })
-	theirs, mine := t.TempDir(), t.TempDir()
+	theirs, mine := workFolders(t)
 	os.WriteFile(filepath.Join(theirs, "film.mp4"), []byte("too large"), 0600)
 	run := &ToolSession{WorkspaceDir: theirs}
 	run.AddStagedFiles([]string{"film.mp4"})
@@ -389,7 +389,7 @@ func TestASyncDispatchHandsItsFilesToTheCollector(t *testing.T) {
 // Any file can be handed to an agent: pictures, audio and video as its media,
 // anything else copied into its folder under received/, which the note names.
 func TestAnyFileCanBeHandedToAnotherAgent(t *testing.T) {
-	mine, theirs := t.TempDir(), t.TempDir()
+	mine, theirs := workFolders(t)
 	os.WriteFile(filepath.Join(mine, "notes.md"), []byte("the brief"), 0600)
 	os.WriteFile(filepath.Join(mine, "data.csv"), []byte("a,b"), 0600)
 	caller := &ToolSession{WorkspaceDir: mine}
@@ -447,8 +447,10 @@ func TestAnyFileCanBeHandedToAnotherAgent(t *testing.T) {
 // built, and the file has to land in it.
 func TestADelegationReceivesAHandedFile(t *testing.T) {
 	SetWorkspacesDir(t.TempDir())
+	t.Cleanup(func() { SetWorkspacesDir("") })
 	df := newDispatchFixture(t, FakeTurn{Content: "Read it."})
-	mine := t.TempDir()
+	mine := filepath.Join(WorkspacesDir(), "caller")
+	os.MkdirAll(mine, 0700)
 	os.WriteFile(filepath.Join(mine, "brief.txt"), []byte("do the thing"), 0600)
 	items, _, err := handOut(&ToolSession{WorkspaceDir: mine}, "Wren", []string{"brief.txt"})
 	if err != nil {
@@ -469,7 +471,7 @@ func TestADelegationReceivesAHandedFile(t *testing.T) {
 // the caller already had a generated_music.mp3, so the copy is -2, and a list
 // of generated names alone does not say that -2 is the new song.
 func TestAHandedBackFileKeepsWhatItIs(t *testing.T) {
-	mine, theirs := t.TempDir(), t.TempDir()
+	mine, theirs := workFolders(t)
 	os.WriteFile(filepath.Join(mine, "generated_music.mp3"), []byte("old"), 0o644)
 	src := filepath.Join(theirs, "generated_music.mp3")
 	os.WriteFile(src, []byte("new"), 0o644)
@@ -506,4 +508,58 @@ func TestTheHistorySaysWhatASentFileWas(t *testing.T) {
 	if attachedDescription(`Attached "x.png" (image/png, 1 KB) via image channel.`) != "" {
 		t.Error("an attach with no note describes nothing")
 	}
+}
+
+// workFolders is two working folders under a workspaces root of their own,
+// as every real one is: a file is handed on only from under that root.
+func workFolders(t *testing.T) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	SetWorkspacesDir(root)
+	t.Cleanup(func() { SetWorkspacesDir("") })
+	a, b := filepath.Join(root, "a"), filepath.Join(root, "b")
+	os.MkdirAll(a, 0700)
+	os.MkdirAll(b, 0700)
+	return a, b
+}
+
+// A link a run left in its folder is not handed on: the server, which makes
+// the copy and is not sandboxed, would have read wherever it pointed.
+func TestALinkARunLeftIsNotHandedOn(t *testing.T) {
+	theirs, mine := workFolders(t)
+	secret := filepath.Join(t.TempDir(), "server.db")
+	os.WriteFile(secret, []byte("private"), 0600)
+	link := filepath.Join(theirs, "report.md")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Skip("no symlinks here")
+	}
+	os.Symlink(filepath.Dir(secret), filepath.Join(theirs, "out"))
+	viaDir := filepath.Join(theirs, "out", "server.db")
+
+	to := &ToolSession{WorkspaceDir: mine}
+	handBackFiles("Scout", []string{link, viaDir}, to)
+	if got := to.StagedFiles(); len(got) != 0 {
+		t.Errorf("a hand-back copied through a link: %v", got)
+	}
+	if got := handToScript("Scout", stagedRun(link, viaDir), filepath.Join(t.TempDir(), "run")); len(got) != 0 {
+		t.Errorf("an app script was handed a link's target: %v", got)
+	}
+	if err := receiveHandedFile(to, link); err == nil {
+		t.Error("a handed link was received")
+	}
+	if err := receiveHandedFile(to, viaDir); err == nil {
+		t.Error("a file through a linked folder was received")
+	}
+	for _, name := range []string{"report.md", "server.db"} {
+		if b, _ := os.ReadFile(filepath.Join(mine, "received", name)); len(b) != 0 {
+			t.Errorf("the target reached the receiving folder as %s: %q", name, b)
+		}
+	}
+}
+
+// stagedRun is a run that reports having made paths.
+func stagedRun(paths ...string) *ToolSession {
+	s := &ToolSession{}
+	s.AddStagedFiles(paths)
+	return s
 }

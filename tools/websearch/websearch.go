@@ -22,6 +22,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/gohort/core/safefile"
 	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/tools/browser"
@@ -581,7 +582,7 @@ func fetchAndCache(target, workspaceDir, mime string) (string, string, int64, er
 	if resp.StatusCode >= 400 {
 		return "", "", 0, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	f, err := os.Create(cacheAbs)
+	f, err := safefile.Create(cacheAbs, 0666)
 	if err != nil {
 		return "", "", 0, err
 	}
@@ -613,7 +614,7 @@ func writeCacheString(target, workspaceDir, body, mime string) (string, string, 
 	if err := os.MkdirAll(filepath.Dir(cacheAbs), 0755); err != nil {
 		return "", "", 0, err
 	}
-	if err := os.WriteFile(cacheAbs, []byte(body), 0644); err != nil {
+	if err := safefile.WriteFile(cacheAbs, []byte(body), 0644); err != nil {
 		return "", "", 0, err
 	}
 	enforceFetchCacheQuota(workspaceDir)
@@ -800,7 +801,7 @@ func fetchURLDirect(sess *ToolSession, target, method, body string, customHeader
 		if perr != nil {
 			return "", fmt.Errorf("save_to: %w", perr)
 		}
-		f, ferr := os.Create(savePath)
+		f, ferr := safefile.Create(savePath, 0666)
 		if ferr != nil {
 			return "", fmt.Errorf("create save_to: %w", ferr)
 		}
@@ -891,7 +892,7 @@ func fetchURLToFile(sess *ToolSession, target, absPath, displayPath string) (str
 	if err := os.MkdirAll(filepath.Dir(absPath), 0700); err != nil {
 		return "", fmt.Errorf("create parent dir: %w", err)
 	}
-	f, err := os.Create(absPath)
+	f, err := safefile.Create(absPath, 0666)
 	if err != nil {
 		return "", fmt.Errorf("create file: %w", err)
 	}

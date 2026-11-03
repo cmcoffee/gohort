@@ -24,6 +24,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/apijob"
+	"github.com/cmcoffee/gohort/core/safefile"
 	"github.com/cmcoffee/gohort/tools/workspace"
 )
 
@@ -188,7 +189,7 @@ func downloadPublic(sess *ToolSession, rawURL, rel string) (int64, error) {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return 0, err
 	}
-	f, err := os.Create(dest)
+	f, err := safefile.Create(dest, 0666)
 	if err != nil {
 		return 0, err
 	}

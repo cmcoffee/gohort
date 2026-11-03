@@ -40,6 +40,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/filenotes"
+	"github.com/cmcoffee/gohort/core/safefile"
 )
 
 // handBack moves what the agent a run dispatched attached (a picture, a song,
@@ -103,8 +104,8 @@ func handBackFiles(agent string, made []string, to *ToolSession) string {
 		if filepath.Dir(src) == filepath.Clean(dir) {
 			continue
 		}
-		info, err := os.Stat(src)
-		if err != nil || !info.Mode().IsRegular() {
+		info, ok := handable(src)
+		if !ok {
 			continue
 		}
 		if total+info.Size() > handBackFileLimit {
@@ -184,8 +185,8 @@ func handToScript(agent string, returned *ToolSession, dir string) []string {
 		names = append(names, name)
 	}
 	for _, src := range madeFiles(returned) {
-		info, err := os.Stat(src)
-		if err != nil || !info.Mode().IsRegular() {
+		info, ok := handable(src)
+		if !ok {
 			continue
 		}
 		if sum, err := fileSum(src); err == nil {
@@ -315,7 +316,7 @@ func freeFileName(dir, name string) string {
 }
 
 func copyFileTo(src, dst string) error {
-	in, err := os.Open(src)
+	in, err := safefile.Open(src)
 	if err != nil {
 		return err
 	}
@@ -510,8 +511,36 @@ func receiveHandedFile(sess *ToolSession, src string) error {
 	if dst == src {
 		return nil
 	}
+	if _, ok := handable(src); !ok {
+		return fmt.Errorf("%s is not a plain file in a working folder", filepath.Base(src))
+	}
 	os.Remove(dst)
 	return copyFileTo(src, dst)
+}
+
+// handable is src's details when it is a file one run may hand to another: a
+// regular file under the workspaces, with no link anywhere on its path below
+// them. The server makes the copy, and the server is not sandboxed: a link a
+// script left in its folder had the copy read wherever it pointed, another
+// person's workspace or the server's own data, and hand that over instead.
+// Gohort makes no links in a workspace, so a link there is a script's.
+func handable(src string) (os.FileInfo, bool) {
+	root := WorkspacesDir()
+	if root == "" {
+		return nil, false
+	}
+	rel, err := filepath.Rel(root, src)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, false
+	}
+	if _, err := ResolveWorkspacePath(root, rel); err != nil {
+		return nil, false
+	}
+	info, err := os.Lstat(src)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, false
+	}
+	return info, true
 }
 
 // takeHandedMedia gives sess what ctx hands the run, and returns ctx without

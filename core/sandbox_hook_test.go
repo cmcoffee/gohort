@@ -537,3 +537,28 @@ func TestStatusCodeFromLineIgnoresNonStatusNumbers(t *testing.T) {
 		t.Errorf("first plausible code wins, got %d", got)
 	}
 }
+
+// A script's save_to lands in its workspace, under a folder made for it, and
+// never through a folder it swapped for a link: the server writes it.
+func TestASaveToGoesNowhereThroughALink(t *testing.T) {
+	ws := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(ws, "out")); err != nil {
+		t.Skip("no symlinks here")
+	}
+	for _, to := range []string{"out/x.png", "out/new/x.png", filepath.Join(ws, "out", "x.png"), "../x.png"} {
+		if _, _, err := hookSaveTarget(ws, to); err == nil {
+			t.Errorf("save_to %q was accepted", to)
+		}
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Errorf("a folder was made through the link: %v", entries)
+	}
+	path, rel, err := hookSaveTarget(ws, filepath.Join(ws, "img", "x.png"))
+	if err != nil || rel != filepath.Join("img", "x.png") || path != filepath.Join(ws, "img", "x.png") {
+		t.Fatalf("an absolute path inside the workspace: %q %q %v", path, rel, err)
+	}
+	if info, err := os.Stat(filepath.Join(ws, "img")); err != nil || !info.IsDir() {
+		t.Error("the folder it goes in was not made")
+	}
+}

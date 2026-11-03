@@ -542,7 +542,7 @@ func TestTheSpokenMarkFollowsTheWork(t *testing.T) {
 //   - a reply claiming it sent the song, with nothing attached, gets the new
 //     song from the backstop, audio included.
 func TestABackgroundTasksSavedFileIsTheWakeTurnsOwn(t *testing.T) {
-	mine, theirs := t.TempDir(), t.TempDir()
+	mine, theirs := workFolders(t)
 	os.WriteFile(filepath.Join(mine, "generated_music.mp3"), []byte("the old song"), 0o644)
 	old := time.Now().Add(-9 * 24 * time.Hour)
 	os.Chtimes(filepath.Join(mine, "generated_music.mp3"), old, old)

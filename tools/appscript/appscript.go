@@ -207,7 +207,7 @@ func (j Job) Run() (string, error) {
 		caller = user
 	}
 	sess.CallTool = func(name string, args map[string]any) (string, error) {
-		return temptool.CallToolForScript(sess, caller, name, args)
+		return temptool.CallToolForScript(sess, name, args)
 	}
 	app := func() (AppSpec, error) {
 		if j.Spec != nil {
@@ -313,7 +313,7 @@ func withArg(args map[string]any, k string, v any) map[string]any {
 func (j Job) runLong(sess *ToolSession, tt *TempTool, args map[string]any, bindModel func(*ToolSession)) (string, error) {
 	return bgrun.BackgroundRun{Tool: tt.Name, Run: func(work *ToolSession) (string, error) {
 		work.CallTool = func(name string, a map[string]any) (string, error) {
-			return temptool.CallToolForScript(work, j.Caller, name, a)
+			return temptool.CallToolForScript(work, name, a)
 		}
 		bindModel(work)
 		work.Notify = sess.Notify

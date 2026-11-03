@@ -18,6 +18,7 @@ import (
 	"github.com/cmcoffee/gohort/core/bgrun"
 	"github.com/cmcoffee/gohort/core/filenotes"
 	"github.com/cmcoffee/gohort/core/pathhold"
+	"github.com/cmcoffee/gohort/core/safefile"
 	// Imported directly rather than through a core alias: a shell run needs a
 	// working directory, and core is at its export ceiling.
 	"github.com/cmcoffee/gohort/core/sandbox"
@@ -546,7 +547,7 @@ func (sd *shellDispatch) deployScripts() bool {
 			body = fixed
 		}
 		needWrite := true
-		if existing, err := os.ReadFile(scriptPath); err == nil {
+		if existing, err := safefile.ReadFile(scriptPath); err == nil {
 			if string(existing) == body {
 				needWrite = false
 			}
@@ -556,7 +557,7 @@ func (sd *shellDispatch) deployScripts() bool {
 			if err := os.MkdirAll(filepath.Dir(scriptPath), 0700); err != nil {
 				return sd.exit("", fmt.Errorf("create parent dir for script %q on tool %q: %w", onDiskName, tt.Name, err))
 			}
-			if err := os.WriteFile(scriptPath, []byte(body), 0700); err != nil {
+			if err := safefile.WriteFile(scriptPath, []byte(body), 0700); err != nil {
 				return sd.exit("", fmt.Errorf("redeploy script %q for tool %q: %w", onDiskName, tt.Name, err))
 			}
 			Debug("[temptool] redeployed script_body to %s for tool %q (%dB)", scriptPath, tt.Name, len(body))
@@ -588,10 +589,10 @@ func (sd *shellDispatch) deployScripts() bool {
 			mode = 0700
 		}
 		filePath := filepath.Join(sd.workspaceDir, rel)
-		if existing, err := os.ReadFile(filePath); err == nil && string(existing) == wf.Content {
+		if existing, err := safefile.ReadFile(filePath); err == nil && string(existing) == wf.Content {
 			continue // already present with matching content — no-op
 		}
-		if err := os.WriteFile(filePath, []byte(wf.Content), mode); err != nil {
+		if err := safefile.WriteFile(filePath, []byte(wf.Content), mode); err != nil {
 			return sd.exit("", fmt.Errorf("redeploy workspace file %q for tool %q: %w", rel, tt.Name, err))
 		}
 		Debug("[temptool] redeployed workspace file %s for tool %q (%dB)", filePath, tt.Name, len(wf.Content))

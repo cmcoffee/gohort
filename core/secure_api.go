@@ -37,7 +37,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"path"
 	"sort"
 	"strconv"
@@ -48,6 +47,7 @@ import (
 	"github.com/cmcoffee/gohort/core/notices"
 	"github.com/cmcoffee/gohort/core/peershare"
 	"github.com/cmcoffee/gohort/core/promotion"
+	"github.com/cmcoffee/gohort/core/safefile"
 	"github.com/cmcoffee/gohort/core/shareledger"
 	"github.com/cmcoffee/snugforge/mimebody"
 )
@@ -4182,7 +4182,7 @@ func textualContentType(ct string) bool {
 // the LLM can decide whether to retry. Caller has already validated
 // the path via ResolveWorkspacePath.
 func writeWorkspaceFile(absPath string, r io.Reader, maxBytes int64) (int64, error) {
-	f, err := os.Create(absPath)
+	f, err := safefile.Create(absPath, 0666)
 	if err != nil {
 		return 0, err
 	}

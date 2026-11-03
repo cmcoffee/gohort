@@ -47,6 +47,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/safefile"
 	"github.com/cmcoffee/gohort/core/sandbox"
 	"github.com/cmcoffee/snugforge/iotimeout"
 
@@ -1261,6 +1262,30 @@ func (h *SandboxHook) credentialRoute(rawURL, method string) (credName, refusal 
 // the session's NetworkConnector so a Private toggle mid-flight
 // CANCELS this call (returns context.Canceled to the script)
 // rather than letting it complete.
+// hookSaveTarget is where a script's save_to lands in wsDir, and its path
+// there, with the folder it goes in made. No link on the way, checked before
+// anything is made along it: the server writes this, and a folder the script
+// swapped for a link would have it write wherever that points.
+func hookSaveTarget(wsDir, saveTo string) (string, string, error) {
+	if filepath.IsAbs(saveTo) {
+		rel, err := filepath.Rel(filepath.Clean(wsDir), filepath.Clean(saveTo))
+		if err != nil || strings.HasPrefix(rel, "..") || rel == ".." {
+			return "", "", errString("save_to absolute path must fall under the workspace dir (or pass a workspace-relative path)")
+		}
+		saveTo = rel
+	} else if strings.Contains(saveTo, "..") {
+		return "", "", errString("save_to must not contain parent-traversal segments")
+	}
+	savePath, err := ResolveWorkspacePath(wsDir, saveTo)
+	if err != nil {
+		return "", "", errString("save_to: " + err.Error())
+	}
+	if err := os.MkdirAll(filepath.Dir(savePath), 0700); err != nil {
+		return "", "", errString("create parent dir for save_to: " + err.Error())
+	}
+	return savePath, saveTo, nil
+}
+
 func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) {
 	rawURL, _ := params["url"].(string)
 	if rawURL == "" {
@@ -1514,29 +1539,13 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 		// Auto-accepting absolute paths inside the workspace removes a class
 		// of Builder retries — scripts often build absolute paths like
 		// f"{os.environ['workspace']}/meme.png" expecting them to "just work."
-		var savePath string
-		if filepath.IsAbs(saveTo) {
-			cleanedSave := filepath.Clean(saveTo)
-			cleanedWS := filepath.Clean(wsDir)
-			rel, relErr := filepath.Rel(cleanedWS, cleanedSave)
-			if relErr != nil || strings.HasPrefix(rel, "..") || rel == ".." {
-				writeHookError(conn, "save_to absolute path must fall under the workspace dir (or pass a workspace-relative path)")
-				return
-			}
-			savePath = cleanedSave
-			saveTo = rel
-		} else {
-			if strings.Contains(saveTo, "..") {
-				writeHookError(conn, "save_to must not contain parent-traversal segments")
-				return
-			}
-			savePath = filepath.Join(wsDir, saveTo)
-		}
-		if err := os.MkdirAll(filepath.Dir(savePath), 0700); err != nil {
-			writeHookError(conn, "create parent dir for save_to: "+err.Error())
+		savePath, rel, err := hookSaveTarget(wsDir, saveTo)
+		if err != nil {
+			writeHookError(conn, err.Error())
 			return
 		}
-		f, ferr := os.Create(savePath)
+		saveTo = rel
+		f, ferr := safefile.Create(savePath, 0666)
 		if ferr != nil {
 			writeHookError(conn, "save_to create: "+ferr.Error())
 			return

@@ -599,20 +599,23 @@ func appVerdictCarries(prior, next AppSpec) bool {
 	return bytes.Equal(strip(prior), strip(next))
 }
 
-// appServesDifferently reports whether what an app shows or runs changed: its
-// page, sections, data-source and action scripts, bound agent or pipeline,
-// and the collections its users share.
+// appServesDifferently reports whether what an app shows or runs changed.
+// Everything counts but the words about it, its bookkeeping, who it is shared
+// with, its layout, its spending caps and what the host derives: a field added
+// later counts until it is named here. Listing what counts instead missed its
+// libraries, so an approved app could swap the module every script imports and
+// stay shared.
 func appServesDifferently(prior, next AppSpec) bool {
-	if specPageChanged(prior, next) || prior.AgentID != next.AgentID || prior.PipelineID != next.PipelineID {
-		return true
+	strip := func(s AppSpec) []byte {
+		s.Name, s.Desc, s.Notes, s.ChangeNote = "", "", "", ""
+		s.Created, s.Updated, s.Verify, s.Schema = "", "", nil, 0
+		s.Shared, s.SharedGroups, s.SharedWith, s.PublicToken, s.Disabled = false, nil, nil, "", false
+		s.FullWidth, s.Narrow, s.AskDailyUSD, s.AskUserDailyUSD = false, false, 0, 0
+		s.RecordFields, s.Sample = nil, nil
+		b, _ := json.Marshal(s)
+		return b
 	}
-	// A new shared collection puts data in front of every user of the app.
-	if strings.Join(prior.SharedCollections, "\x00") != strings.Join(next.SharedCollections, "\x00") {
-		return true
-	}
-	a, _ := json.Marshal([]any{prior.DataSources, prior.Actions})
-	b, _ := json.Marshal([]any{next.DataSources, next.Actions})
-	return !bytes.Equal(a, b)
+	return !bytes.Equal(strip(prior), strip(next))
 }
 
 // ListAppSpecs returns every stored spec owned by the user.

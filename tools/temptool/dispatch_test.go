@@ -261,3 +261,35 @@ func TestToolboxActionWithoutWorkDirStartsInTheWorkspace(t *testing.T) {
 		t.Errorf("want the workspace %q, got %q", want, got)
 	}
 }
+
+// A script swapped for a link is not written through when the tool is
+// redeployed: the server, which is not sandboxed, would have written the
+// script into whatever the link names. The link is replaced with the script.
+// The same for a bundled helper file.
+func TestRedeployDoesNotWriteThroughALink(t *testing.T) {
+	ws := t.TempDir()
+	target := filepath.Join(t.TempDir(), "server.conf")
+	os.WriteFile(target, []byte("keep me"), 0600)
+	for _, name := range []string{"tool.py", "helper.py"} {
+		if err := os.Symlink(target, filepath.Join(ws, name)); err != nil {
+			t.Skip("no symlinks here")
+		}
+	}
+	sd := &shellDispatch{sess: &ToolSession{}, workspaceDir: ws, tt: &TempTool{
+		Name: "t", ScriptBody: "print('hi')\n", CanonicalScriptName: "tool.py",
+		WorkspaceFiles: []RecipeFile{{Path: "helper.py", Content: "X = 1\n"}},
+	}}
+	if !sd.deployScripts() {
+		t.Fatalf("deploy: %v", sd.retErr)
+	}
+	if b, _ := os.ReadFile(target); string(b) != "keep me" {
+		t.Fatalf("the redeploy wrote through a link: %q", b)
+	}
+	for name, want := range map[string]string{"tool.py": "print('hi')\n", "helper.py": "X = 1\n"} {
+		info, _ := os.Lstat(filepath.Join(ws, name))
+		b, _ := os.ReadFile(filepath.Join(ws, name))
+		if info == nil || !info.Mode().IsRegular() || string(b) != want {
+			t.Errorf("%s is not the deployed file: %q", name, b)
+		}
+	}
+}

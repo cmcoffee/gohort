@@ -94,10 +94,13 @@ func appAskUsage(resp *Response) UsageDiff {
 // app's backend reaching any agent its owner has is a wider promise than an
 // app having a brain.
 //
-// Whose run: the definition is the owner's and the run is the person's
-// (user), as the app's chat section runs it, so a shared app's tools act with
-// that person's own accounts. Nobody is there to approve a tool that stops to
-// ask, so such a call is refused, never assumed.
+// Whose run: the owner's, whoever is using the app (appRunAs). What the run
+// returns goes to the owner's script, so a run acting with the person's own
+// accounts handed the owner whatever those accounts could reach: their mail,
+// their files, their connected services. The app's chat section is different
+// and still runs as the person, because its answer goes to them. Nobody is
+// there to approve a tool that stops to ask, so such a call is refused, never
+// assumed.
 //
 // What the run's tools made or attached (a song, a picture) is written into
 // filesDir, a folder of the script's, and named in the return: the reply
@@ -106,15 +109,13 @@ func (T *OrchestrateApp) AppAgentRun(ctx context.Context, owner, user, slug, age
 	if T == nil || T.DB == nil || owner == "" {
 		return "", nil, 0, fmt.Errorf("the app's agents are not available")
 	}
-	if user == "" {
-		user = owner
-	}
+	ctx = appRunAs(ctx, owner, user)
 	agent, err := T.appOwnAgent(owner, slug, agentID, agentKey)
 	if err != nil {
 		return "", nil, 0, err
 	}
 	returned := &ToolSession{} // what the run makes and attaches (agent_media.go)
-	res, err := T.runAgentSyncConfirm(withMediaReturn(ctx, returned), owner, user, agent.ID, prompt, func(string, string) bool { return false })
+	res, err := T.runAgentSyncConfirm(withMediaReturn(ctx, returned), owner, owner, agent.ID, prompt, func(string, string) bool { return false })
 	cost := GetCostRates().Estimate(res.Usage)
 	if err != nil {
 		return "", nil, cost, err
@@ -124,6 +125,17 @@ func (T *OrchestrateApp) AppAgentRun(ctx context.Context, owner, user, slug, age
 		text += "\n\n(The agent stopped at its round limit before it finished.)"
 	}
 	return text, handToScript(agent.Name, returned, filesDir), cost, nil
+}
+
+// appRunAs is the context a script's run goes on: it runs as the app's owner,
+// and when somebody else is using the app it carries the non-owner mark, so
+// the owner's guardrails judge it as a request from someone else, authoring
+// is withheld, and the owner's standing approvals do not answer for it.
+func appRunAs(ctx context.Context, owner, viewer string) context.Context {
+	if v := strings.TrimSpace(viewer); v != "" && v != owner {
+		return withNonOwnerRequester(ctx)
+	}
+	return ctx
 }
 
 // appOwnAgent resolves an agent an app may run: its agent_id, or one whose
@@ -159,7 +171,8 @@ func (T *OrchestrateApp) appOwnAgent(owner, slug, agentID, agentKey string) (Age
 // gohort.run_pipeline, and returns its final output and what it cost. The
 // app's own (pipelineID, its pipeline_id) unless pipelineKey names one made
 // for it (owning_app = slug). Its agent stages run as AppAgentRun runs an
-// agent: the owner's definitions, the person's run, nothing approved unasked.
+// agent: the owner's definitions and the owner's run, marked as someone
+// else's request when it is, nothing approved unasked.
 //
 // The whole run happens inside the script's, so it suits a short pipeline; a
 // long one belongs in a pipeline section, where it runs on its own.
@@ -167,9 +180,7 @@ func (T *OrchestrateApp) AppPipelineRun(ctx context.Context, owner, user, slug, 
 	if T == nil || T.DB == nil || owner == "" {
 		return "", 0, fmt.Errorf("the app's pipelines are not available")
 	}
-	if user == "" {
-		user = owner
-	}
+	ctx = appRunAs(ctx, owner, user)
 	def, err := T.appOwnPipeline(owner, slug, pipelineID, pipelineKey)
 	if err != nil {
 		return "", 0, err
@@ -186,14 +197,14 @@ func (T *OrchestrateApp) AppPipelineRun(ctx context.Context, owner, user, slug, 
 			if _, found := findAgentByNameOrID(ownerDB, owner, agentKey); !found {
 				return "", ErrNoSuchAgent
 			}
-			res, err := T.runAgentSyncConfirm(ctx, owner, user, agentKey, stageInput, func(string, string) bool { return false })
+			res, err := T.runAgentSyncConfirm(ctx, owner, owner, agentKey, stageInput, func(string, string) bool { return false })
 			mu.Lock()
 			stageCost += GetCostRates().Estimate(res.Usage)
 			mu.Unlock()
 			return res.Text, err
 		},
-		Machine: T.pipelineMachineRunner(user),
-		Tools:   T.pipelineStandaloneTools(ctx, user, def),
+		Machine: T.pipelineMachineRunner(owner),
+		Tools:   T.pipelineStandaloneTools(ctx, owner, def),
 	})
 	mu.Lock()
 	cost := GetCostRates().Estimate(mine.Diff(UsageSnapshot{})) + stageCost

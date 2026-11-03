@@ -66,10 +66,11 @@ func ScriptCallableTool(db Database, user, name string) (TempTool, error) {
 	return tt, nil
 }
 
-// CallToolForScript runs name for an app script on sess, if the owner may. An
-// owner's tool runs as the owner (sess); an MCP tool runs as caller, the person
-// using the app ("" means the owner).
-func CallToolForScript(sess *ToolSession, caller, name string, args map[string]any) (string, error) {
+// CallToolForScript runs name for an app script on sess, if the owner may,
+// as the owner, whoever is using the app. An MCP tool ran as the person using
+// it, with their own sign-in, and handed what it read to the owner's script:
+// their issues, their mail, whatever that server reaches for them.
+func CallToolForScript(sess *ToolSession, name string, args map[string]any) (string, error) {
 	if sess == nil || strings.TrimSpace(sess.Username) == "" {
 		return "", fmt.Errorf("no owner to run the tool as")
 	}
@@ -83,12 +84,8 @@ func CallToolForScript(sess *ToolSession, caller, name string, args map[string]a
 		if !ok {
 			return "", fmt.Errorf("MCP tool %q cannot be run for a person", name)
 		}
-		who := strings.TrimSpace(caller)
-		if who == "" {
-			who = sess.Username
-		}
-		Log("[temptool/script] %s's app calls MCP %s (%s) as %s", sess.Username, name, server, who)
-		return run.RunWithSession(args, &ToolSession{Username: who, DB: sess.DB, Ctx: sess.Context()})
+		Log("[temptool/script] %s's app calls MCP %s (%s)", sess.Username, name, server)
+		return run.RunWithSession(args, &ToolSession{Username: sess.Username, DB: sess.DB, Ctx: sess.Context()})
 	}
 	tt, err := ScriptCallableTool(sess.DB, sess.Username, name)
 	if err != nil {
