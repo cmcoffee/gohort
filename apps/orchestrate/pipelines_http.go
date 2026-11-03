@@ -218,7 +218,16 @@ func (T *OrchestrateApp) registerPipelineRoutes() {
 		"PUT":  jsonapi.Put(T.DB, T.pipelineAgentsSave, jsonapi.MaxBody(maxImportBytes)),
 	}.Serve)
 	T.HandleFunc("/api/pipelines/{id}/duplicate", jsonapi.Post(T.DB, T.pipelineDuplicate))
-	T.HandleFunc("/api/pipelines/{id}/revise", jsonapi.Post(T.DB, T.pipelineRevise))
+	T.HandleFunc("/api/pipelines/{id}/propose", jsonapi.Post(T.DB, T.pipelinePropose))
+	T.HandleFunc("/api/pipelines/{id}/revise", jsonapi.Post(T.DB, T.pipelineRevise, jsonapi.MaxBody(maxImportBytes)))
+	// The conversation about the whole pipeline (definition_assist.go).
+	T.HandleFunc("/api/pipelines/{id}/assist", T.pipelineRaw(func(w http.ResponseWriter, r *http.Request, p *pipelineCall) {
+		if err := p.editable("revise"); err != nil {
+			jsonapi.Fail(w, r, err)
+			return
+		}
+		T.handlePipelineAssist(w, r, p.def)
+	}))
 	T.HandleFunc("/api/pipelines/{id}/undo", jsonapi.Post(T.DB, T.pipelineUndo))
 	T.HandleFunc("/api/pipelines/{id}/stages", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.pipelineStage),

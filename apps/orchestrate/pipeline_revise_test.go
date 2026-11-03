@@ -1,6 +1,7 @@
 package orchestrate
 
-// Describe a change, against a pipeline that already exists.
+// Describe a change, against a pipeline that already exists, through ✨ Get
+// assistance: drafted and shown first, then applied.
 //
 // The machine version with one real difference: a pipeline is
 // VALIDATED at every door, so a revision that would not run is refused
@@ -16,9 +17,30 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
+// reviseP asks for a change the way the page's ✨ Get assistance does:
+// drafted for review (propose), then applied (revise). The reply is the
+// apply's, or the draft's when drafting failed.
 func reviseP(t *testing.T, app *OrchestrateApp, user, id, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	r := httptest.NewRequest("POST", "/api/pipelines/"+id+"/revise", strings.NewReader(body))
+	r := httptest.NewRequest("POST", "/api/pipelines/"+id+"/propose", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	routed(app)(w, asUser(r, user))
+	if w.Code != 200 {
+		return w
+	}
+	var prop struct {
+		Proposal json.RawMessage `json:"proposal"`
+		From     string          `json:"from"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &prop)
+	return applyP(t, app, user, id, string(prop.Proposal), prop.From)
+}
+
+// applyP applies a proposal as the dialog does.
+func applyP(t *testing.T, app *OrchestrateApp, user, id, proposal, from string) *httptest.ResponseRecorder {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"proposal": json.RawMessage(proposal), "from": from})
+	r := httptest.NewRequest("POST", "/api/pipelines/"+id+"/revise", strings.NewReader(string(body)))
 	w := httptest.NewRecorder()
 	routed(app)(w, asUser(r, user))
 	return w
@@ -189,5 +211,51 @@ func TestARevisionThatDropsASettingIsReported(t *testing.T) {
 	// things to somebody deciding whether to undo.
 	if strings.Contains(joined, "plan (instructions)") {
 		t.Errorf("the prompt did not change: %q", joined)
+	}
+}
+
+// What a revision does not describe stays as it was: the drafter writes a
+// name, a description and stages, and the whole of its answer used to be
+// saved, dropping sharing, flags and follow-ups on every revision.
+func TestAPipelineRevisionKeepsItsOtherSettings(t *testing.T) {
+	app, udb, user, def := stageEditFixture(t)
+	def.Published, def.Editors, def.AllowedUsers = true, []string{"carol"}, []string{"bob"}
+	def.SessionMeta = []string{"plan.queries"}
+	def = SavePipelineDef(udb, def)
+	app.LLM = &FakeLLM{Turns: []FakeTurn{{Content: `{"name":"Research","stages":[
+		{"name":"plan","kind":"worker","prompt":"break it up","model":"lead",
+		 "output":[{"name":"queries","type":"list","desc":"q"}]},
+		{"name":"dig","kind":"fanout","fan_over":"plan.queries","prompt":"research {item}","tools":["web_search"]},
+		{"name":"answer","kind":"worker","prompt":"from {stage:dig}, briefly"}]}`, Repeat: true}}}
+	if w := reviseP(t, app, user, def.ID, `{"description":"answer briefly"}`); w.Code != 200 {
+		t.Fatalf("revise: %d %s", w.Code, w.Body.String())
+	}
+	got, _ := LoadPipelineDef(udb, user, def.ID)
+	if !got.Published || len(got.Editors) != 1 || len(got.AllowedUsers) != 1 || len(got.SessionMeta) != 1 {
+		t.Errorf("a revision dropped settings it does not describe: %+v", got)
+	}
+	if got.Stages[2].Prompt != "from {stage:dig}, briefly" {
+		t.Error("the change itself was not applied")
+	}
+}
+
+// A proposal comes back from the page, so it is validated at apply as at
+// every door, and one drafted against an older version is refused.
+func TestAPipelineProposalIsCheckedWhenApplied(t *testing.T) {
+	app, udb, user, def := stageEditFixture(t)
+	from := definitionFingerprint(def)
+	broken := `{"name":"Research","stages":[{"name":"plan","kind":"worker","prompt":"read {stage:nowhere.at_all}"}]}`
+	if w := applyP(t, app, user, def.ID, broken, from); w.Code != 400 || !strings.Contains(w.Body.String(), "would not run") {
+		t.Errorf("a proposal that would not run was not refused: %d %s", w.Code, w.Body.String())
+	}
+	def.Stages[0].Prompt = "edited in another tab"
+	SavePipelineDef(udb, def)
+	fine := `{"name":"Research","stages":[{"name":"plan","kind":"worker","prompt":"x"}]}`
+	if w := applyP(t, app, user, def.ID, fine, from); w.Code != 409 {
+		t.Errorf("a stale proposal was not refused: %d %s", w.Code, w.Body.String())
+	}
+	got, _ := LoadPipelineDef(udb, user, def.ID)
+	if got.Stages[0].Prompt != "edited in another tab" {
+		t.Error("a refused proposal changed the pipeline")
 	}
 }

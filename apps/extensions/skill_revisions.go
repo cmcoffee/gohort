@@ -11,8 +11,7 @@ import (
 	"github.com/cmcoffee/gohort/core/revisions"
 )
 
-// handleUserSkillOne serves /api/skills/{id}/revisions[/preview|/restore];
-// /api/skills/{id}/revise has its own route (skill_revise.go).
+// handleUserSkillOne serves /api/skills/{id}/revisions[/preview|/restore].
 //
 // A separate route from /api/skills because that one is an exact pattern: a
 // path with anything after it does not reach it at all.

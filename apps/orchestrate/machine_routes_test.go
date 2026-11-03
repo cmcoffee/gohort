@@ -73,7 +73,7 @@ func TestEveryMachineRouteTakesItsMethodsAndKeepsItsGates(t *testing.T) {
 			}
 		}
 	}
-	for _, action := range []string{"suggest", "block?name=x", "graph", "export", "revisions", "runs", "runs/sessions"} {
+	for _, action := range []string{"assist", "block?name=x", "graph", "export", "revisions", "runs", "runs/sessions"} {
 		if w := do("", "GET", "/api/machines/m-a/"+action, ""); w.Code != http.StatusUnauthorized {
 			t.Errorf("signed out, GET %s answered %d, want 401", action, w.Code)
 		}
@@ -100,7 +100,9 @@ func TestEveryMachineRouteTakesItsMethodsAndKeepsItsGates(t *testing.T) {
 		{"POST", "/api/machines/m-a/move", `{"name":"answer","dir":"up"}`},
 		{"POST", "/api/machines/m-a/repair?kind=problems", ""},
 		{"POST", "/api/machines/m-a/undo", "{}"},
-		{"POST", "/api/machines/m-a/suggest", "{}"},
+		{"POST", "/api/machines/m-a/assist", "{}"},
+		{"POST", "/api/machines/m-a/propose", `{"description":"mine"}`},
+		{"POST", "/api/machines/m-a/revise", "{}"},
 	} {
 		if w := do("bob", c.method, c.path, c.body); w.Code != http.StatusForbidden {
 			t.Errorf("bob, a reader, %s %s answered %d, want 403", c.method, c.path, w.Code)

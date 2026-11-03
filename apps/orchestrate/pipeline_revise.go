@@ -1,4 +1,6 @@
-// Describe a CHANGE to a pipeline that already exists.
+// Describe a CHANGE to a pipeline that already exists, through the page's
+// ✨ Get assistance (definition_assist.go): the conversation settles what
+// should change, propose drafts it for review, revise applies it.
 //
 // The machine editor's version (machine_revise.go) with one real
 // difference: a pipeline is VALIDATED at every door, so a revision that
@@ -24,14 +26,72 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/assist"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
-// pipelineRevise redrafts an existing pipeline from a description
-// of what should change.
+// draftPipelineRevision redrafts a pipeline with a change made, through
+// the drafter and the validator's repair pass. Nothing is saved; the result
+// carries only what the drafter writes (name, description, stages), and it
+// runs, or an error says why not.
+func (T *OrchestrateApp) draftPipelineRevision(ctx context.Context, def PipelineDef, want string) (PipelineDef, error) {
+	// The pipeline as it stands, in the dialect the drafter writes.
+	// Its own export shape rather than prose about it: the model is
+	// being asked to return this document edited, and describing the
+	// document invites a rewrite from scratch.
+	current, err := json.MarshalIndent(ExportPipeline(def), "", "  ")
+	if err != nil {
+		return PipelineDef{}, jsonapi.Status(http.StatusInternalServerError, "could not read the pipeline")
+	}
+	ask := "Revise this pipeline.\n\nWHAT SHOULD CHANGE:\n" + want +
+		"\n\nTHE PIPELINE AS IT STANDS:\n" + string(current) +
+		"\n\nReturn the WHOLE pipeline with that change made. Keep every stage, prompt and setting the " +
+		"change does not touch, byte for byte: an edit that rewrites what nobody asked about is a " +
+		"worse answer than one that refuses. Keep the name unless the change is about the name."
+
+	revised, derr := T.draftPipelineOnce(ctx, ask)
+	if derr != nil {
+		if revised, derr = T.draftPipelineOnce(ctx, ask+
+			"\n\nYour previous reply could not be used: "+derr.Error()+
+			"\nReply with ONLY the JSON object."); derr != nil {
+			return PipelineDef{}, jsonapi.Status(http.StatusBadGateway, "the revision could not be produced: "+derr.Error())
+		}
+	}
+	// A pipeline is refused unless it runs, so the repair pass is what
+	// makes this door usable at all rather than a polish step.
+	if verr := revised.Validate(); verr != nil {
+		fixed, ferr := T.draftPipelineOnce(ctx, ask+
+			"\n\nA previous attempt would not run:\n"+verr.Error()+
+			"\nReturn a corrected pipeline.")
+		if ferr != nil || fixed.Validate() != nil {
+			return PipelineDef{}, jsonapi.Status(http.StatusBadGateway, "the revision would not run, and a second attempt did not fix it:\n"+
+				verr.Error()+"\n\nNothing was changed.")
+		}
+		revised = fixed
+	}
+	return revised, nil
+}
+
+// withPipelineRevision is def with a revision's parts in place of its own:
+// name, description and stages. Everything else (who it is shared with,
+// its follow-ups, its suggestion, its flags, its identity) stays the
+// stored definition's. A revision used to be saved whole, and the drafter
+// writes none of those, so each one quietly dropped them.
+func withPipelineRevision(def, rev PipelineDef) PipelineDef {
+	out := def
+	if name := strings.TrimSpace(rev.Name); name != "" {
+		out.Name = name
+	}
+	out.Description = rev.Description
+	out.Stages = rev.Stages
+	return out
+}
+
+// pipelinePropose drafts a change to a pipeline for review, without saving
+// it (definition_assist.go).
 //
-//	POST /api/pipelines/{id}/revise {"description": "..."} → {id, changed[]}
-func (T *OrchestrateApp) pipelineRevise(c *jsonapi.Call, body struct {
+//	POST /api/pipelines/{id}/propose {"description": "..."} → {proposal, from, changed[], changes[]}
+func (T *OrchestrateApp) pipelinePropose(c *jsonapi.Call, body struct {
 	Description string `json:"description"`
 }) (any, error) {
 	p, perr := T.pipelineAt(c)
@@ -41,7 +101,6 @@ func (T *OrchestrateApp) pipelineRevise(c *jsonapi.Call, body struct {
 	if err := p.editable("revise"); err != nil {
 		return nil, err
 	}
-	r, udb, user, def := c.R, p.ed.db, p.ed.owner, p.def
 	if T.LLM == nil {
 		return nil, jsonapi.Status(http.StatusServiceUnavailable, "worker LLM not configured")
 	}
@@ -52,58 +111,140 @@ func (T *OrchestrateApp) pipelineRevise(c *jsonapi.Call, body struct {
 	if len(want) > maxDraftDescription {
 		want = want[:maxDraftDescription]
 	}
-
-	// The pipeline as it stands, in the dialect the drafter writes.
-	// Its own export shape rather than prose about it: the model is
-	// being asked to return this document edited, and describing the
-	// document invites a rewrite from scratch.
-	current, err := json.MarshalIndent(ExportPipeline(def), "", "  ")
+	def := p.def
+	revised, err := T.draftPipelineRevision(c.R.Context(), def, want)
 	if err != nil {
-		return nil, jsonapi.Status(http.StatusInternalServerError, "could not read the pipeline")
+		return nil, err
 	}
-	ask := "Revise this pipeline.\n\nWHAT SHOULD CHANGE:\n" + want +
-		"\n\nTHE PIPELINE AS IT STANDS:\n" + string(current) +
-		"\n\nReturn the WHOLE pipeline with that change made. Keep every stage, prompt and setting the " +
-		"change does not touch, byte for byte: an edit that rewrites what nobody asked about is a " +
-		"worse answer than one that refuses. Keep the name unless the change is about the name."
+	after := withPipelineRevision(def, revised)
+	changes := pipelineChanges(def, after)
+	changed := describePipelineChange(def, after)
+	if len(changes) == 0 {
+		changed = nil
+	}
+	return map[string]any{
+		"proposal": revised,
+		"from":     definitionFingerprint(def),
+		"changed":  changed,
+		"changes":  changes,
+	}, nil
+}
 
-	revised, derr := T.draftPipelineOnce(r.Context(), ask)
-	if derr != nil {
-		if revised, derr = T.draftPipelineOnce(r.Context(), ask+
-			"\n\nYour previous reply could not be used: "+derr.Error()+
-			"\nReply with ONLY the JSON object."); derr != nil {
-			return nil, jsonapi.Status(http.StatusBadGateway, "the revision could not be produced: "+derr.Error())
-		}
+// pipelineRevise applies a proposal: the pipeline as stored with the
+// proposal's parts in place, refused unless it runs, the version before
+// kept for Undo.
+//
+//	POST /api/pipelines/{id}/revise {"proposal": {...}, "from": "..."} → {id, name, changed[]}
+func (T *OrchestrateApp) pipelineRevise(c *jsonapi.Call, body struct {
+	Proposal PipelineDef `json:"proposal"`
+	From     string      `json:"from"`
+}) (any, error) {
+	p, perr := T.pipelineAt(c)
+	if perr != nil {
+		return nil, perr
 	}
-	// A pipeline is refused unless it runs, so the repair pass is what
-	// makes this door usable at all rather than a polish step.
-	if verr := revised.Validate(); verr != nil {
-		fixed, ferr := T.draftPipelineOnce(r.Context(), ask+
-			"\n\nA previous attempt would not run:\n"+verr.Error()+
-			"\nReturn a corrected pipeline.")
-		if ferr != nil || fixed.Validate() != nil {
-			return nil, jsonapi.Status(http.StatusBadGateway, "the revision would not run, and a second attempt did not fix it:\n"+
-				verr.Error()+"\n\nNothing was changed.")
-		}
-		revised = fixed
+	if err := p.editable("revise"); err != nil {
+		return nil, err
 	}
-
-	// Identity is the editor's, not the model's: the ID keeps every
-	// agent that attached this pipeline pointing at it.
+	udb, user, def := p.ed.db, p.ed.owner, p.def
+	if len(body.Proposal.Stages) == 0 {
+		return nil, jsonapi.BadRequest("the proposal has no stages")
+	}
+	if body.From != definitionFingerprint(def) {
+		return nil, jsonapi.Status(http.StatusConflict, "the pipeline changed after this was drafted: ask for the change again")
+	}
+	after := withPipelineRevision(def, body.Proposal)
+	// Validated at every door, this one included: the proposal came back
+	// from the page.
+	if verr := after.Validate(); verr != nil {
+		return nil, jsonapi.BadRequest("this change would not run, so nothing was saved:\n" + verr.Error())
+	}
 	before := def
 	before.Previous = nil // one deep
-	revised.ID = def.ID
-	revised.Owner = user
-	if strings.TrimSpace(revised.Name) == "" {
-		revised.Name = def.Name
-	}
-	revised.Previous = &before
+	after.Owner = user
+	after.Previous = &before
 
-	saved := SavePipelineDef(udb, revised)
+	saved := SavePipelineDef(udb, after)
 	changed := describePipelineChange(before, saved)
 	Log("[orchestrate.pipelines] user=%q revised pipeline %q (id=%s): %s", user, saved.Name, saved.ID,
 		strings.Join(changed, "; "))
 	return map[string]any{"id": saved.ID, "name": saved.Name, "changed": changed}, nil
+}
+
+// handlePipelineAssist is the conversation about a whole pipeline
+// (definition_assist.go): POST /api/pipelines/{id}/assist {message, history}.
+func (T *OrchestrateApp) handlePipelineAssist(w http.ResponseWriter, r *http.Request, def PipelineDef) {
+	assist.Handler(assist.Spec{
+		Route: "app.orchestrate.assist", Label: "Pipelines: whole-pipeline assist", App: "/orchestrate",
+		Core: &T.AppCore, Think: assist.Off, Web: true,
+		// The pipeline's route checked who is asking before it got here.
+		Allow: func(http.ResponseWriter, *http.Request) bool { return true },
+		Prompt: func(*http.Request, assist.Request) (string, error) {
+			var problems []string
+			if err := def.Validate(); err != nil {
+				problems = append(problems, err.Error())
+			}
+			return definitionAssistPrompt("pipeline", ExportPipeline(def), problems), nil
+		},
+		Parse: func(_ assist.Request, raw string) assist.Reply {
+			reply, change := parseDefinitionAssist(raw)
+			rp := assist.Reply{Reply: reply}
+			if change != "" {
+				rp.Extra = map[string]any{"change": change}
+			}
+			return rp
+		},
+	})(w, r)
+}
+
+// pipelineChanges is a proposal's review: each stage it adds, removes or
+// changes, as it is and as it would be, in the order the pipeline runs them.
+func pipelineChanges(before, after PipelineDef) []defChange {
+	var out []defChange
+	if before.Name != after.Name {
+		out = append(out, defChange{Label: "Name", Current: before.Name, Value: after.Name})
+	}
+	if before.Description != after.Description {
+		out = append(out, defChange{Label: "Description", Current: before.Description, Value: after.Description})
+	}
+	was := map[string]PipelineStage{}
+	for _, s := range before.Stages {
+		was[s.Name] = s
+	}
+	is := map[string]bool{}
+	for _, s := range after.Stages {
+		is[s.Name] = true
+		old, existed := was[s.Name]
+		switch {
+		case !existed:
+			out = append(out, defChange{Label: "New stage " + strconv.Quote(s.Name), Value: definitionJSON(s)})
+		default:
+			if old.Prompt != s.Prompt {
+				out = append(out, defChange{Label: "Stage " + strconv.Quote(s.Name) + ": instructions", Current: old.Prompt, Value: s.Prompt})
+			}
+			if !samePipelineWiring(old, s) {
+				ow, nw := old, s
+				ow.Prompt, nw.Prompt = "", ""
+				out = append(out, defChange{Label: "Stage " + strconv.Quote(s.Name) + ": settings", Current: definitionJSON(ow), Value: definitionJSON(nw)})
+			}
+		}
+	}
+	for _, s := range before.Stages {
+		if !is[s.Name] {
+			out = append(out, defChange{Label: "Removed stage " + strconv.Quote(s.Name), Current: definitionJSON(s)})
+		}
+	}
+	// The order alone can change: the same stages, run in another order.
+	if len(out) == 0 && len(before.Stages) == len(after.Stages) {
+		var a, b []string
+		for i := range before.Stages {
+			a, b = append(a, before.Stages[i].Name), append(b, after.Stages[i].Name)
+		}
+		if strings.Join(a, "\n") != strings.Join(b, "\n") {
+			out = append(out, defChange{Label: "The order of the stages", Current: strings.Join(a, "\n"), Value: strings.Join(b, "\n")})
+		}
+	}
+	return out
 }
 
 // pipelineUndo puts back the definition a revision replaced.

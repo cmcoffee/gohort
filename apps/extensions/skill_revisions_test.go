@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -139,5 +140,37 @@ func TestSkillRevisionsRefuseAnotherUsersSkill(t *testing.T) {
 		if s.ID == made.ID && s.Instructions != "v2" {
 			t.Errorf("another user's skill changed: %q", s.Instructions)
 		}
+	}
+}
+
+// A skill is changed with its form's own ✨ Get assistance, which fills the
+// fields and saves nothing until Save skill. The one-shot "Revise it" form
+// above it was a second ✨ for the same fields, and its route is gone with
+// it: a request to it changes nothing.
+func TestASkillIsChangedThroughItsFormsAssistant(t *testing.T) {
+	app, req := authedExtensions(t)
+	made, _ := SaveSkill(AuthDB(), "alice", SkillRecord{Name: "refunds", Instructions: "Check the order date."})
+	app.LLM = &FakeLLM{Turns: []FakeTurn{{Content: `{"name":"refunds","description":"","triggers":[],"instructions":"CHANGED"}`, Repeat: true}}}
+	r := req("POST", "/api/skills/"+made.ID+"/revise")
+	r.Body = readCloser(`{"description":"change it"}`)
+	w := httptest.NewRecorder()
+	serve(app)(w, r)
+	if w.Code == 200 {
+		t.Errorf("the revise route still answers: %s", w.Body.String())
+	}
+	if got, _ := findOwnSkill("alice", made.ID); got.Instructions != "Check the order date." {
+		t.Errorf("a request to the old route changed the skill: %q", got.Instructions)
+	}
+	src, err := os.ReadFile("extensions.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(src)
+	if strings.Contains(page, "Revise it") {
+		t.Error("the skill editor still has a Revise it form")
+	}
+	i := strings.Index(page, `Source:      "api/skills?id={id}&view=form"`)
+	if i < 0 || !strings.Contains(page[max(0, i-120):i], "Assist:      true") {
+		t.Error("the skill form lost its own ✨ Get assistance")
 	}
 }

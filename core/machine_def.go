@@ -174,12 +174,13 @@ type MachineDef struct {
 	// rewrite can be taken back.
 	//
 	// Exactly ONE deep, and only set by the doors that replace a machine
-	// rather than edit part of it (today: describe-a-change). A form
+	// rather than edit part of it (today: a change applied from ✨ Get
+	// assistance). A form
 	// that changes one field does not need it — the field is right
 	// there — but a revision drafted from a paragraph can rewrite every
 	// prompt in the machine, and prompts are the part somebody actually
-	// wrote. Without this, "describe a change" is a control you cannot
-	// safely try, which is the same as one nobody uses.
+	// wrote. Without this, applying a drafted change is a control you
+	// cannot safely try, which is the same as one nobody uses.
 	//
 	// Stripped on export: a recipe carries a machine, not its history.
 	Previous *MachineDef `json:"previous,omitempty"`

@@ -452,15 +452,18 @@ func TestAPipelineCanBeRunFromItsOwnPage(t *testing.T) {
 // dropped rather than special-cased into the pipeline.
 func TestBothEditorsPresentTheSameOrder(t *testing.T) {
 	app, udb, user := newTestOrchestrate(t)
+	// Each with a change to undo, so the Last change section is in both.
 	m := SaveMachineDef(udb, MachineDef{Owner: user, Name: "M", Start: "s",
-		Phases: []MachinePhase{{Name: "s", Prompt: "p", Resident: true}}})
+		Phases:   []MachinePhase{{Name: "s", Prompt: "p", Resident: true}},
+		Previous: &MachineDef{Name: "M", Phases: []MachinePhase{{Name: "s", Prompt: "before", Resident: true}}}})
 	p := SavePipelineDef(udb, PipelineDef{Owner: user, Name: "P",
-		Stages: []PipelineStage{{Name: "s", Kind: StageWorker, Prompt: "p"}}})
+		Stages:   []PipelineStage{{Name: "s", Kind: StageWorker, Prompt: "p"}},
+		Previous: &PipelineDef{Name: "P", Stages: []PipelineStage{{Name: "s", Kind: StageWorker, Prompt: "before"}}}})
 
 	shared := map[string]string{
 		"The machine": "identity", "The pipeline": "identity",
-		"Describe a change": "describe",
-		"Add a step":        "add", "Add a stage": "add",
+		"Last change": "last",
+		"Add a step":  "add", "Add a stage": "add",
 		"Try it": "try", "Run it": "try",
 		"What a turn costs": "cost", "What a run costs": "cost",
 		"Assign to agents": "assign",

@@ -132,7 +132,6 @@ func (T *Extensions) Routes() {
 		"DELETE": jsonapi.Delete(T.DB, T.handleSkillDelete),
 	}.Serve)
 	T.HandleFunc("/api/skills/", T.handleUserSkillOne)
-	T.HandleFunc("/api/skills/{id}/revise", jsonapi.Post(T.DB, T.handleSkillRevise))
 	T.HandleFunc("/api/skill-tools", jsonapi.Get(T.DB, T.handleSkillToolOptions))
 	T.HandleFunc("/api/skill-collections", jsonapi.Get(T.DB, T.handleSkillCollectionOptions))
 	T.HandleFunc("/api/skill-playbook", jsonapi.Methods{
@@ -2451,22 +2450,10 @@ func (T *Extensions) skillsSection() ui.Section {
 							// rides in the PostURL so the handler load-then-mutates
 							// (preserving any Builder-authored tools/grants).
 							ui.Expand("Edit", ui.Stack{Children: []ui.Component{
-								// Say what should change and the worker rewrites the
-								// skill with it (skill_revise.go): the same control a
-								// machine and a pipeline have. Above the form it
-								// changes, and the form below reloads to show it.
-								ui.FormPanel{
-									PostURL:     "api/skills/{id}/revise",
-									SubmitLabel: "✨ Revise it",
-									Invalidate:  []string{"api/skills"},
-									Fields: []ui.FormField{{
-										Field: "description", Type: "textarea", Rows: 3,
-										Label:       "Describe a change",
-										Placeholder: "Also cover refunds over $500, and ask for the order number before anything else.",
-										Help:        "Say what should be different and the name, description, triggers and instructions are rewritten with that change made.",
-										Detail:      "Every word the change does not touch is kept, and tools, collections, shares and playbook rules are left alone. It runs a model, so it takes a moment. The version before is in Version history below, where it can be put back.",
-									}},
-								},
+								// The form's own ✨ Get assistance is the one way to ask
+								// the worker for a change: it fills the fields here, and
+								// nothing is saved until Save skill. A one-shot redraft form
+								// above this one was a second ✨ for the same fields.
 								ui.FormPanel{
 									Assist:      true,
 									Source:      "api/skills?id={id}&view=form",

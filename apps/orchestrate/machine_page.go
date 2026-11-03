@@ -312,6 +312,9 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			ClientAction("machine_repair", machineRepairJS).
 			ClientAction("machine_undo", machineUndoJS).
 			CSS(machineMapCSS).
+			CSS(definitionAssistCSS).
+			JS(definitionAssistJS).
+			JS(machineAssist(def).js()).
 			JS(machineMapHereJS).
 			JS(machineRewriteJS).
 			JS(machineTryEnterJS).
@@ -389,37 +392,9 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 		// Empty for those, and dropped below rather than rendered — see
 		// withoutEmptySections.
 		unattendedRunSection(def),
-		// Say what should change, against the machine already on
-		// screen. A SECTION rather than a dialog, and that is the
-		// whole point: ModalButton opens a native <dialog> with
-		// showModal(), which renders in the browser's top layer —
-		// above every z-index there is. Anything the framework
-		// raises from inside one (a toast, another modal) lands
-		// underneath it and cannot be seen, so a submit that failed
-		// in there reset its button and told you nothing. On the
-		// page the form is just a form: its errors render inline,
-		// next to the box you typed in.
-		{
-			Title:    "Describe a change",
-			Wide:     true,
-			Subtitle: "Say what should be different and the machine is redrafted with that change made.",
-			Detail: "Every step and prompt it does not touch is kept." +
-				"The version you have now is kept, so you can put it back.",
-			Body: ui.Stack{Children: []ui.Component{
-				ui.FormPanel{
-					PostURL:     machineAPIBase(def) + "/revise",
-					SubmitLabel: "✨ Revise it",
-					RedirectURL: "/orchestrate/machine?id=" + url_(def.ID),
-					Fields: []ui.FormField{{
-						Field: "description", Type: "textarea", Rows: 4,
-						Label:       "What should change?",
-						Placeholder: "Let triage choose between three lanes (logs, config, and a plain question), and give the config lane its own step before it answers.",
-						Help:        "One change, in plain words. It runs a model, so it takes a moment; what it changed is reported when it lands.",
-					}},
-				},
-				undoRevisionToolbar(def),
-			}},
-		},
+		// The change ✨ Get assistance last applied, and the way back
+		// from it. Empty when there is none, and dropped below.
+		machineLastChangeSection(def),
 		{
 			// Derived, not written: the definition knows exactly which
 			// steps cost a model call and which turns pay a guard check,
@@ -739,13 +714,40 @@ const machineRepairJS = `function(ctx) {
 // A revision is the one edit on this page that can rewrite work nobody
 // asked it to touch — every other control changes the field it names.
 // Without a way back it is a control people are right not to press.
+// machineAssist is the page's ✨ Get assistance (definition_assist.go).
+func machineAssist(def MachineDef) definitionAssist {
+	return definitionAssist{
+		Noun:        "machine",
+		Base:        machineAPIBase(def),
+		Intro:       "Ask about this machine, or for a change to any part of it: a step, the way they connect, the instructions. A change is drafted and shown before anything is saved.",
+		Placeholder: "What should be different? For example: let triage choose between three lanes, and give the config lane its own step.",
+		Starters:    []string{"Look it over: what would you change?", "Walk me through what it does."},
+	}
+}
+
+// machineLastChangeSection holds Undo for the last change ✨ Get assistance
+// applied. The change itself is made in that dialog (definition_assist.go);
+// what stays on the page is the way back, and only while there is one.
+func machineLastChangeSection(def MachineDef) ui.Section {
+	if def.Previous == nil {
+		return ui.Section{}
+	}
+	return ui.Section{
+		Title:    "Last change",
+		Wide:     true,
+		Subtitle: "The last change made with ✨ Get assistance is applied, and the version before it is kept.",
+		Detail:   "Undo puts that version back. Every version is also in the machine's history.",
+		Body:     undoRevisionToolbar(def),
+	}
+}
+
 func undoRevisionToolbar(def MachineDef) ui.Component {
 	if def.Previous == nil {
 		return ui.Stack{}
 	}
 	return ui.Toolbar{Actions: []ui.ToolbarAction{{
 		Label:   "Undo the revision",
-		Title:   "Put back the version this machine had before the last Describe a change",
+		Title:   "Put back the version this machine had before the last change",
 		Method:  "client",
 		URL:     "machine_undo",
 		Data:    def.ID,
@@ -1165,20 +1167,12 @@ const machineMapHereJS = `(function() {
 
 // machineRewriteJS is the one finding whose fix is prose.
 //
-// Draft-and-review rather than a silent edit: which sentences are
-// formatting instructions and which are the subject is a judgement, so
-// the model proposes and the person keeps or discards. The workbench
-// (uiOpenAssist) is the framework's, and it already holds every version
-// including the original — so walking back from a bad suggestion to
-// what was there is one click, which is what makes accepting one safe.
-//
-// It drives the SAME assist endpoint the step's own ✨ button does, with
-// the finding as its opening request. A second endpoint here would be a
-// second set of rules about what a step's instructions may say, and the
-// two would drift.
+// It opens the page's ✨ Get assistance (definition_assist.go) with the fix
+// already asked for, so the rewrite is drafted and shown against the
+// instructions as they are, and applied, or not, like any other change. It
+// had a step assist of its own, a second set of rules about what a step's
+// instructions may say, with a save path of its own.
 const machineRewriteJS = `(function() {
-  function machineID() { return new URLSearchParams(window.location.search).get('id'); }
-
   // Delegated: the findings lists are redrawn on every save, so a
   // handler bound to the buttons would survive exactly one edit.
   document.addEventListener('click', function(ev) {
@@ -1186,71 +1180,10 @@ const machineRewriteJS = `(function() {
     if (!btn) return;
     ev.preventDefault();
     var step = btn.getAttribute('data-rewrite-step');
-    var id = machineID();
-    if (!step || !id || !window.uiOpenAssist) return;
-    var base = '/orchestrate/api/machines/' + encodeURIComponent(id);
-
-    // Open on what is actually STORED rather than on the textarea in the
-    // section, which may be mid-edit or not rendered yet: the rail
-    // mounts one section at a time.
-    btn.disabled = true;
-    fetch(base)
-      .then(function(r) { return r.ok ? r.json() : null; })
-      .then(function(def) {
-        btn.disabled = false;
-        if (!def) throw new Error('could not read the machine');
-        var phase = (def.phases || []).filter(function(p) { return p.name === step; })[0];
-        if (!phase) throw new Error('no step called ' + step);
-        window.uiOpenAssist({
-          title: 'Rewrite the instructions, ' + step,
-          subtitle: 'The declared fields already say what to produce. Keep the method; drop the format.',
-          initial: phase.prompt || '',
-          placeholder: 'Ask for another pass, shorter, keep the second paragraph…',
-          ask: 'These instructions hand-roll the JSON the declared fields already produce. ' +
-               'Rewrite them: delete the format instructions and any example object, keep everything ' +
-               'that says HOW to do the work, and add nothing new. Reply with the instructions only.',
-          send: function(req, done) {
-            fetch(base + '/suggest', {
-              method: 'POST',
-              headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({
-                field: 'prompt',
-                record: {name: step},
-                message: req.message,
-                draft: req.draft,
-                history: req.history,
-              }),
-            })
-              .then(function(r) {
-                if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
-                return r.json();
-              })
-              .then(function(d) { done({reply: d && d.reply, value: d && d.value}); })
-              .catch(function(err) { done(null, (err && err.message) || String(err)); });
-          },
-          onAccept: function(text) {
-            fetch(base + '/phases?name=' + encodeURIComponent(step), {
-              method: 'POST',
-              headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({prompt: text}),
-            })
-              .then(function(r) {
-                if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
-                // Reload: the prompt is on screen in its own section and
-                // the finding that sent you here is in two lists, all of
-                // which just became wrong.
-                window.location.reload();
-              })
-              .catch(function(err) {
-                window.uiAlert && window.uiAlert('Could not save it: ' + (err && err.message || err));
-              });
-          },
-        });
-      })
-      .catch(function(err) {
-        btn.disabled = false;
-        window.uiAlert && window.uiAlert('Could not open it: ' + (err && err.message || err));
-      });
+    if (!step || !window.orchDefinitionAssistOpen) return;
+    window.orchDefinitionAssistOpen('Rewrite the instructions of the step ' + JSON.stringify(step) +
+      ': they hand-roll the JSON its declared fields already produce. Delete the format instructions and ' +
+      'any example object, keep everything that says how to do the work, and add nothing new.');
   });
 })();`
 

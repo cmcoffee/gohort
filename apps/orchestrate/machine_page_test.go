@@ -910,23 +910,22 @@ func TestTheProseFindingOffersARewrite(t *testing.T) {
 	if !strings.Contains(body, "data-rewrite-step=\\\"decide_approach\\\"") {
 		t.Error("the button should name the step it rewrites")
 	}
-	// It drives the SAME assist endpoint the step's own suggest button
-	// does. A second endpoint would be a second set of rules about what a
-	// step's instructions may say, and the two would drift.
+	// It opens the page's ✨ Get assistance with the fix asked for, so the
+	// rewrite is drafted, shown against the instructions as they are, and
+	// applied like any other change: one set of rules about what a step's
+	// instructions may say, and one way a change is saved.
 	src, err := os.ReadFile("machine_page.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	js := string(src)
-	for _, want := range []string{"uiOpenAssist", "'/suggest'", "field: 'prompt'", "ask:", "onAccept:"} {
+	for _, want := range []string{"window.orchDefinitionAssistOpen(", "JSON.stringify(step)", "Delete the format instructions"} {
 		if !strings.Contains(js, want) {
 			t.Errorf("the rewrite flow is missing %q", want)
 		}
 	}
-	// Accepting saves through the phase form's own endpoint, so one place
-	// still decides what a save does to a step.
-	if !strings.Contains(js, "'/phases?name=' + encodeURIComponent(step)") {
-		t.Error("accepting a draft should save the way the form does")
+	if strings.Contains(js, "uiOpenAssist") || strings.Contains(js, "'/suggest'") {
+		t.Error("the finding still opens a step assist of its own")
 	}
 	// Delegated, because both findings lists are rebuilt on every save —
 	// a handler bound to the button would survive exactly one edit.
@@ -1010,17 +1009,18 @@ func TestNeitherDraftingDoorIsADialog(t *testing.T) {
 		Phases: []MachinePhase{{Name: "s", Prompt: "p", Resident: true}}})
 	adminAuth(t, user)
 
-	// The editor's own door is a section, posting to revise.
+	// The editor's own door is ✨ Get assistance (definition_assist.go): the
+	// framework's stacked modal rather than a native <dialog>, and a draft
+	// that fails says so inside it, where it is being read.
 	editor := renderMachinePage(t, app, user, def.ID)
-	at := strings.Index(editor, "Describe a change")
-	if at < 0 {
-		t.Fatal("the editor lost its describe-a-change form")
+	if !strings.Contains(editor, `orchDefinitionAssist({"noun":"machine","base":"api/machines/`+def.ID+`"`) {
+		t.Error("the editor does not offer ✨ Get assistance on this machine")
 	}
-	if strings.Contains(editor[max0(at-400):at+400], "modal_button") {
-		t.Error("describe a change is still a dialog — its failures would be invisible")
+	if strings.Contains(editor, "Describe a change") || strings.Contains(editor, `"post_url":"api/machines/`+def.ID+`/revise"`) {
+		t.Error("the one-shot describe-a-change form is still on the page")
 	}
-	if !strings.Contains(editor, `"post_url":"api/machines/`+def.ID+`/revise"`) {
-		t.Error("the form does not post to revise")
+	if !strings.Contains(definitionAssistJS, "window.uiOpenModal(") || !strings.Contains(definitionAssistJS, "The change could not be drafted: ") {
+		t.Error("the dialog must be the stacked modal, and say inside it why a draft failed")
 	}
 
 	// The list's door is a link to a page.

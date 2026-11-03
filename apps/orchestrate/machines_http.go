@@ -258,7 +258,8 @@ func (T *OrchestrateApp) registerMachineRoutes() {
 	}.Serve)
 	T.HandleFunc("/api/machines/{id}/try", jsonapi.Post(T.DB, T.machineTry))
 	T.HandleFunc("/api/machines/{id}/duplicate", jsonapi.Post(T.DB, T.machineDuplicate))
-	T.HandleFunc("/api/machines/{id}/revise", jsonapi.Post(T.DB, T.machineRevise))
+	T.HandleFunc("/api/machines/{id}/propose", jsonapi.Post(T.DB, T.machinePropose))
+	T.HandleFunc("/api/machines/{id}/revise", jsonapi.Post(T.DB, T.machineRevise, jsonapi.MaxBody(maxImportBytes)))
 	T.HandleFunc("/api/machines/{id}/undo", jsonapi.Post(T.DB, T.machineUndo))
 	T.HandleFunc("/api/machines/{id}/repair", jsonapi.Post(T.DB, T.machineRepair))
 	T.HandleFunc("/api/machines/{id}/move", jsonapi.Post(T.DB, T.machineMove))
@@ -273,16 +274,15 @@ func (T *OrchestrateApp) registerMachineRoutes() {
 	}.Serve)
 	T.HandleFunc("/api/machines/{id}/publish", jsonapi.Post(T.DB, T.machinePublish))
 	T.HandleFunc("/api/machines/{id}/unpublish", jsonapi.Post(T.DB, T.machineUnpublish))
-	// Not JSON in and out: the ✨ step draft, an editor page block, the
+	// Not JSON in and out: the ✨ conversation, an editor page block, the
 	// picture, a download, the revisions surface and the run sub-protocol.
-	T.HandleFunc("/api/machines/{id}/suggest", T.machineRaw(func(w http.ResponseWriter, r *http.Request, mc *machineCall) {
-		// Drafting one step's instructions, grounded in the machine
-		// around it (machine_suggest.go).
-		if err := mc.editable("draft a step for"); err != nil {
+	// The conversation about the whole machine (definition_assist.go).
+	T.HandleFunc("/api/machines/{id}/assist", T.machineRaw(func(w http.ResponseWriter, r *http.Request, mc *machineCall) {
+		if err := mc.editable("revise"); err != nil {
 			jsonapi.Fail(w, r, err)
 			return
 		}
-		T.handleMachineSuggest(w, r, mc.ed.db, mc.ed.owner, mc.def)
+		T.handleMachineAssist(w, r, mc.def)
 	}))
 	T.HandleFunc("/api/machines/{id}/block", T.machineRaw(T.handleMachineBlock))
 	T.HandleFunc("/api/machines/{id}/graph", T.machineRaw(T.handleMachineGraph))

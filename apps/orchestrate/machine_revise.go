@@ -1,4 +1,6 @@
-// Describe a CHANGE to a machine that already exists.
+// Describe a CHANGE to a machine that already exists, through the page's
+// ✨ Get assistance (definition_assist.go): the conversation settles what
+// should change, propose drafts it for review, revise applies it.
 //
 // The draft endpoint (machine_draft.go) turns a paragraph into a machine,
 // and it is one shot: if the draft misses, the only recourse is editing
@@ -20,6 +22,7 @@
 package orchestrate
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -27,14 +30,67 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/assist"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
-// machineRevise redrafts an existing machine from a description of
-// what should change.
+// draftMachineRevision redrafts a machine with a change made, through the
+// drafter and its repair pass. Nothing is saved; the result carries only
+// what the drafter writes (name, description, start, steps).
+func (T *OrchestrateApp) draftMachineRevision(ctx context.Context, def MachineDef, want string) (MachineDef, error) {
+	// The machine as it stands, in the same dialect the drafter writes.
+	// Its own export shape rather than a description of it: the model is
+	// being asked to return this document edited, and handing it prose
+	// about the document invites a rewrite from scratch.
+	current, err := json.MarshalIndent(ExportMachine(def), "", "  ")
+	if err != nil {
+		return MachineDef{}, jsonapi.Status(http.StatusInternalServerError, "could not read the machine")
+	}
+	ask := "Revise this machine.\n\nWHAT SHOULD CHANGE:\n" + want +
+		"\n\nTHE MACHINE AS IT STANDS:\n" + string(current) +
+		"\n\nReturn the WHOLE machine with that change made. Keep every step, prompt, and setting the " +
+		"change does not touch, byte for byte: an edit that rewrites what nobody asked about is a " +
+		"worse answer than one that refuses. Keep the name unless the change is about the name."
+
+	revised, derr := T.draftMachineOnce(ctx, ask)
+	if derr != nil {
+		if revised, derr = T.draftMachineOnce(ctx, ask+
+			"\n\nYour previous reply could not be used: "+derr.Error()+
+			"\nReply with ONLY the JSON object."); derr != nil {
+			return MachineDef{}, jsonapi.Status(http.StatusBadGateway, "the revision could not be produced: "+derr.Error())
+		}
+	}
+	if probs := revised.Problems(); len(probs) > 0 {
+		if fixed, ferr := T.draftMachineOnce(ctx, ask+
+			"\n\nA previous attempt had these problems, return a corrected machine:\n- "+
+			strings.Join(probs, "\n- ")); ferr == nil && len(fixed.Problems()) < len(probs) {
+			revised = fixed
+		}
+	}
+	return revised, nil
+}
+
+// withMachineRevision is def with a revision's parts in place of its own:
+// name, description, start and steps. Everything else (who it is shared
+// with, its flags, its deny list, its identity) stays the stored
+// definition's. A revision used to be saved whole, and the drafter writes
+// none of those, so each one quietly dropped them.
+func withMachineRevision(def, rev MachineDef) MachineDef {
+	out := def
+	if name := strings.TrimSpace(rev.Name); name != "" {
+		out.Name = name
+	}
+	out.Description = rev.Description
+	out.Start = rev.Start
+	out.Phases = rev.Phases
+	return out
+}
+
+// machinePropose drafts a change to a machine for review, without saving
+// it (definition_assist.go).
 //
-//	POST /api/machines/{id}/revise {"description": "..."} → {id, changed[], checklist}
-func (T *OrchestrateApp) machineRevise(c *jsonapi.Call, body struct {
+//	POST /api/machines/{id}/propose {"description": "..."} → {proposal, from, changed[], changes[], checklist}
+func (T *OrchestrateApp) machinePropose(c *jsonapi.Call, body struct {
 	Description string `json:"description"`
 }) (any, error) {
 	mc, perr := T.machineAt(c)
@@ -44,7 +100,6 @@ func (T *OrchestrateApp) machineRevise(c *jsonapi.Call, body struct {
 	if err := mc.editable("revise"); err != nil {
 		return nil, err
 	}
-	r, udb, user, def := c.R, mc.ed.db, mc.ed.owner, mc.def
 	if T.LLM == nil {
 		return nil, jsonapi.Status(http.StatusServiceUnavailable, "worker LLM not configured")
 	}
@@ -55,51 +110,57 @@ func (T *OrchestrateApp) machineRevise(c *jsonapi.Call, body struct {
 	if len(want) > maxDraftDescription {
 		want = want[:maxDraftDescription]
 	}
-
-	// The machine as it stands, in the same dialect the drafter writes.
-	// Its own export shape rather than a description of it: the model is
-	// being asked to return this document edited, and handing it prose
-	// about the document invites a rewrite from scratch.
-	current, err := json.MarshalIndent(ExportMachine(def), "", "  ")
+	def := mc.def
+	revised, err := T.draftMachineRevision(c.R.Context(), def, want)
 	if err != nil {
-		return nil, jsonapi.Status(http.StatusInternalServerError, "could not read the machine")
+		return nil, err
 	}
-	ask := "Revise this machine.\n\nWHAT SHOULD CHANGE:\n" + want +
-		"\n\nTHE MACHINE AS IT STANDS:\n" + string(current) +
-		"\n\nReturn the WHOLE machine with that change made. Keep every step, prompt, and setting the " +
-		"change does not touch, byte for byte: an edit that rewrites what nobody asked about is a " +
-		"worse answer than one that refuses. Keep the name unless the change is about the name."
+	after := withMachineRevision(def, revised)
+	changes := machineChanges(def, after)
+	changed := describeMachineChange(def, after)
+	if len(changes) == 0 {
+		changed = nil
+	}
+	return map[string]any{
+		"proposal":  revised,
+		"from":      definitionFingerprint(def),
+		"changed":   changed,
+		"changes":   changes,
+		"checklist": after.Problems(),
+	}, nil
+}
 
-	revised, derr := T.draftMachineOnce(r.Context(), ask)
-	if derr != nil {
-		if revised, derr = T.draftMachineOnce(r.Context(), ask+
-			"\n\nYour previous reply could not be used: "+derr.Error()+
-			"\nReply with ONLY the JSON object."); derr != nil {
-			return nil, jsonapi.Status(http.StatusBadGateway, "the revision could not be produced: "+derr.Error())
-		}
+// machineRevise applies a proposal: the machine as stored with the
+// proposal's parts in place, the version before kept for Undo.
+//
+//	POST /api/machines/{id}/revise {"proposal": {...}, "from": "..."} → {id, name, changed[], checklist}
+func (T *OrchestrateApp) machineRevise(c *jsonapi.Call, body struct {
+	Proposal MachineDef `json:"proposal"`
+	From     string     `json:"from"`
+}) (any, error) {
+	mc, perr := T.machineAt(c)
+	if perr != nil {
+		return nil, perr
 	}
-	if probs := revised.Problems(); len(probs) > 0 {
-		if fixed, ferr := T.draftMachineOnce(r.Context(), ask+
-			"\n\nA previous attempt had these problems, return a corrected machine:\n- "+
-			strings.Join(probs, "\n- ")); ferr == nil && len(fixed.Problems()) < len(probs) {
-			revised = fixed
-		}
+	if err := mc.editable("revise"); err != nil {
+		return nil, err
 	}
-
-	// Identity is the editor's, not the model's. The ID keeps every
-	// agent pointing here, and an empty name would land somebody in an
-	// editor whose title vanished.
+	udb, user, def := mc.ed.db, mc.ed.owner, mc.def
+	if len(body.Proposal.Phases) == 0 {
+		return nil, jsonapi.BadRequest("the proposal has no steps")
+	}
+	// Drafted against a version that is no longer the stored one: applying
+	// it would quietly undo whatever changed in between.
+	if body.From != definitionFingerprint(def) {
+		return nil, jsonapi.Status(http.StatusConflict, "the machine changed after this was drafted: ask for the change again")
+	}
 	before := def
 	before.Previous = nil // one deep: the snapshot must not carry its own
-	revised.ID = def.ID
-	revised.Owner = user
-	revised.Created = def.Created
-	if strings.TrimSpace(revised.Name) == "" {
-		revised.Name = def.Name
-	}
-	revised.Previous = &before
+	after := withMachineRevision(def, body.Proposal)
+	after.Owner = user
+	after.Previous = &before
 
-	saved := SaveMachineDef(udb, revised)
+	saved := SaveMachineDef(udb, after)
 	changed := describeMachineChange(before, saved)
 	Log("[orchestrate.machines] user=%q revised machine %q (id=%s): %s", user, saved.Name, saved.ID,
 		strings.Join(changed, "; "))
@@ -108,6 +169,71 @@ func (T *OrchestrateApp) machineRevise(c *jsonapi.Call, body struct {
 		"changed":   changed,
 		"checklist": saved.Problems(),
 	}, nil
+}
+
+// handleMachineAssist is the conversation about a whole machine
+// (definition_assist.go): POST /api/machines/{id}/assist {message, history}.
+func (T *OrchestrateApp) handleMachineAssist(w http.ResponseWriter, r *http.Request, def MachineDef) {
+	assist.Handler(assist.Spec{
+		Route: "app.orchestrate.assist", Label: "Machines: whole-machine assist", App: "/orchestrate",
+		Core: &T.AppCore, Think: assist.Off, Web: true,
+		// The machine's route checked who is asking before it got here.
+		Allow: func(http.ResponseWriter, *http.Request) bool { return true },
+		Prompt: func(*http.Request, assist.Request) (string, error) {
+			return definitionAssistPrompt("machine", ExportMachine(def), def.Problems()), nil
+		},
+		Parse: func(_ assist.Request, raw string) assist.Reply {
+			reply, change := parseDefinitionAssist(raw)
+			rp := assist.Reply{Reply: reply}
+			if change != "" {
+				rp.Extra = map[string]any{"change": change}
+			}
+			return rp
+		},
+	})(w, r)
+}
+
+// machineChanges is a proposal's review: each step it adds, removes or
+// changes, as it is and as it would be, in the order the machine runs them.
+func machineChanges(before, after MachineDef) []defChange {
+	var out []defChange
+	if before.Name != after.Name {
+		out = append(out, defChange{Label: "Name", Current: before.Name, Value: after.Name})
+	}
+	if before.Description != after.Description {
+		out = append(out, defChange{Label: "Description", Current: before.Description, Value: after.Description})
+	}
+	if before.StartPhase() != after.StartPhase() {
+		out = append(out, defChange{Label: "Where it starts", Current: before.StartPhase(), Value: after.StartPhase()})
+	}
+	was := map[string]MachinePhase{}
+	for _, p := range before.Phases {
+		was[p.Name] = p
+	}
+	is := map[string]bool{}
+	for _, p := range after.Phases {
+		is[p.Name] = true
+		old, existed := was[p.Name]
+		switch {
+		case !existed:
+			out = append(out, defChange{Label: "New step " + strconv.Quote(p.Name), Value: definitionJSON(p)})
+		default:
+			if old.Prompt != p.Prompt {
+				out = append(out, defChange{Label: "Step " + strconv.Quote(p.Name) + ": instructions", Current: old.Prompt, Value: p.Prompt})
+			}
+			if !samePhaseWiring(old, p) {
+				ow, nw := old, p
+				ow.Prompt, nw.Prompt = "", ""
+				out = append(out, defChange{Label: "Step " + strconv.Quote(p.Name) + ": settings", Current: definitionJSON(ow), Value: definitionJSON(nw)})
+			}
+		}
+	}
+	for _, p := range before.Phases {
+		if !is[p.Name] {
+			out = append(out, defChange{Label: "Removed step " + strconv.Quote(p.Name), Current: definitionJSON(p)})
+		}
+	}
+	return out
 }
 
 // machineUndo puts back the definition a revision replaced.

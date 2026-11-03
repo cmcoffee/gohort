@@ -184,6 +184,9 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 		// exactly what a stage's own section cannot show.
 		Sticky: pipelineMapCard(def),
 		Head: ui.NewHead().CSS(pipelineStageCSS).
+			CSS(definitionAssistCSS).
+			JS(definitionAssistJS).
+			JS(pipelineAssist(def).js()).
 			JS(ArtifactClientJS).
 			ClientAction("export_pipeline", `function(ctx){ window.gohortArtifacts.exportAction('pipeline', 'id', 'name')(ctx); }`).
 			JS(pipelineMapHereJS).
@@ -226,17 +229,14 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 	}
 	// The order matches the machine editor's, section for section, so
 	// somebody moving between the two finds the same things in the same
-	// places: identity, then the parts, then running it, then the
-	// wholesale change, what it costs, who gets it, and what is worth a
-	// look. They had drifted into two different orders within a day of
-	// each other, and the pinned test is what keeps them from doing it
-	// again (TestBothEditorsPresentTheSameOrder).
+	// places: identity, then the parts, then running it, then the last
+	// change applied (while there is one to undo), what it costs, who gets
+	// it, and what is worth a look. They had drifted into two different
+	// orders within a day of each other, and the pinned test is what keeps
+	// them from doing it again (TestBothEditorsPresentTheSameOrder).
 	//
-	// Build, rehearse, revise — in that order, because that is the loop.
-	// "Say what should be different" presumes you know what is wrong, and
-	// running it is what tells you; a redraft offered before the rehearsal
-	// asks for a verdict nobody has earned yet. It also put the biggest
-	// button on the page in front of somebody who came to edit one prompt.
+	// A change is asked for in ✨ Get assistance, at the top of the page
+	// (definition_assist.go), not in a section of its own.
 	page.Sections = append(page.Sections, pipelineStageSections(def,
 		editorCatalog{agents: agentOptions(catDB, catUser), tools: phaseToolOptions(catUser),
 			machines: childMachineOptions(catDB, catUser, MachineDef{})})...)
@@ -286,31 +286,9 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 				EmptyText:  "No runs yet. This is the fastest way to find out whether a stage is doing what its prompt says.",
 			},
 		},
-		// A form on the page, not a dialog: drafting runs a model for up
-		// to a minute and can come back with nothing runnable, and a
-		// door that cannot show you why is the wrong door for it
-		// (v0.6.220).
-		ui.Section{
-			Title:    "Describe a change",
-			Wide:     true,
-			Subtitle: "Say what should be different and the pipeline is redrafted with that change made.",
-			Detail: "Every stage and prompt it does not touch is kept." +
-				"A revision that would not run is refused rather than saved, and the version you have now is kept either way.",
-			Body: ui.Stack{Children: []ui.Component{
-				ui.FormPanel{
-					PostURL:     "api/pipelines/" + url_(def.ID) + "/revise",
-					SubmitLabel: "✨ Revise it",
-					RedirectURL: "/orchestrate/pipeline?id=" + url_(def.ID),
-					Fields: []ui.FormField{{
-						Field: "description", Type: "textarea", Rows: 4,
-						Label:       "What should change?",
-						Placeholder: "Research each query with the web tools instead of answering from memory, and add a stage that checks the sources before the summary.",
-						Help:        "One change, in plain words. It runs a model, so it takes a moment; what it changed is reported when it lands.",
-					}},
-				},
-				undoPipelineRevisionToolbar(def),
-			}},
-		},
+		// The change ✨ Get assistance last applied, and the way back
+		// from it. Empty when there is none, and dropped below.
+		pipelineLastChangeSection(def),
 		ui.Section{
 			// Derived, not written: the definition knows which stages
 			// call a model, and a fanout or a loop turns one line of a
@@ -404,6 +382,7 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 			Subtitle: who + can + ", and it runs against your own agents, tools and credentials rather than " + defOwner + "'s.",
 		})
 	}
+	page.Sections = withoutEmptySections(page.Sections)
 	page.ServeHTTP(w, r)
 }
 
@@ -474,13 +453,39 @@ const pipelineDuplicateJS = `function(ctx) {
 
 // undoPipelineRevisionToolbar offers to put back what a revision
 // replaced, and only while there is something to put back.
+// pipelineAssist is the page's ✨ Get assistance (definition_assist.go).
+func pipelineAssist(def PipelineDef) definitionAssist {
+	return definitionAssist{
+		Noun:        "pipeline",
+		Base:        "/orchestrate/api/pipelines/" + url_(def.ID),
+		Intro:       "Ask about this pipeline, or for a change to any part of it: a stage, the order, the instructions. A change is drafted and shown before anything is saved, and one that would not run is not saved.",
+		Placeholder: "What should be different? For example: research each query with the web tools, and add a stage that checks the sources.",
+		Starters:    []string{"Look it over: what would you change?", "Walk me through what it does."},
+	}
+}
+
+// pipelineLastChangeSection holds Undo for the last change ✨ Get
+// assistance applied, only while there is one.
+func pipelineLastChangeSection(def PipelineDef) ui.Section {
+	if def.Previous == nil {
+		return ui.Section{}
+	}
+	return ui.Section{
+		Title:    "Last change",
+		Wide:     true,
+		Subtitle: "The last change made with ✨ Get assistance is applied, and the version before it is kept.",
+		Detail:   "Undo puts that version back. Every version is also in the pipeline's history.",
+		Body:     undoPipelineRevisionToolbar(def),
+	}
+}
+
 func undoPipelineRevisionToolbar(def PipelineDef) ui.Component {
 	if def.Previous == nil {
 		return ui.Stack{}
 	}
 	return ui.Toolbar{Actions: []ui.ToolbarAction{{
 		Label:   "Undo the revision",
-		Title:   "Put back the version this pipeline had before the last Describe a change",
+		Title:   "Put back the version this pipeline had before the last change",
 		Method:  "POST",
 		URL:     "/orchestrate/api/pipelines/" + url_(def.ID) + "/undo",
 		Variant: "danger",
@@ -620,7 +625,6 @@ func pipelineStageSections(def PipelineDef, cat editorCatalog) []ui.Section {
 	for i, s := range def.Stages {
 		body := []ui.Component{
 			ui.FormPanel{
-				Assist:  true,
 				Source:  base + "?name=" + url_(s.Name),
 				PostURL: base + "?name=" + url_(s.Name),
 				Fields:  stageFormFields(def, s, cat),
@@ -896,7 +900,6 @@ func pipelineBodySections(def PipelineDef, parent PipelineStage, base string, ca
 			Subtitle: bodyStageSubtitle(parent, b),
 			Body: ui.Stack{Children: []ui.Component{
 				ui.FormPanel{
-					Assist:  true,
 					Source:  base + "?name=" + path,
 					PostURL: base + "?name=" + path,
 					Fields:  bodyStageFormFields(def, b, cat),

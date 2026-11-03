@@ -93,9 +93,11 @@ func machineEditorSpec(def MachineDef, cat editorCatalog) map[string]any {
 
 // metaPanel is the machine's own fields — name, when to use it, where a
 // conversation starts.
+//
+// No ✨ of its own, nor on any step: the page has one, for the whole
+// machine (definition_assist.go), as the agent editor does.
 func metaPanel(def MachineDef, base string, cat editorCatalog) ui.FormPanel {
 	return ui.FormPanel{
-		Assist:  true,
 		Source:  base + "/meta",
 		PostURL: base + "/meta",
 		// The last few edits, each readable without applying it. On the
@@ -254,7 +256,7 @@ func phasePanels(def MachineDef, base string, cat editorCatalog) []ui.Component 
 				URL:    "machine_move_step",
 				Data:   p.Name + "|down",
 			}}},
-			ui.FormPanel{Assist: true, Source: q, PostURL: q, Fields: phaseFieldsFor(def, p, cat)},
+			ui.FormPanel{Source: q, PostURL: q, Fields: phaseFieldsFor(def, p, cat)},
 		}
 		// The tool limit saves on its own, so no other setting on this step
 		// can carry it (see phaseToolFields).
@@ -817,9 +819,7 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 	// ten lines of prose first was asking somebody to write against a
 	// spec they had not been shown yet.
 	fields = append(fields,
-		ui.FormField{Field: "prompt", Type: "textarea", Rows: 10, Label: promptLabel, Help: promptHelp,
-			SuggestURL:   machineAPIBase(def) + "/suggest",
-			AssistPrompt: "Draft the method for this step: how to go about the work, in plain sentences written to a person. Not the output shape, which the declared fields already carry."},
+		ui.FormField{Field: "prompt", Type: "textarea", Rows: 10, Label: promptLabel, Help: promptHelp},
 	)
 	if p.Resident {
 		fields = append(fields,
