@@ -1945,6 +1945,13 @@ func splitSkillTriggers(s string) []string {
 }
 
 func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
+	// The page is the bare path only. Everything else under it that no
+	// route claimed is a wrong address: answering it with the page and a 200
+	// hid a mistyped API path behind a page of HTML.
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return

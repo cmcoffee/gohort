@@ -16,6 +16,13 @@ import (
 )
 
 func (T *CodeWriterAgent) handleCodeWriterPage(w http.ResponseWriter, r *http.Request) {
+	// The page is the bare path only. Everything else under it that no
+	// route claimed is a wrong address: answering it with the page and a 200
+	// hid a mistyped API path behind a page of HTML.
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
 	if _, _, ok := RequireUser(w, r, T.DB); !ok {
 		return
 	}

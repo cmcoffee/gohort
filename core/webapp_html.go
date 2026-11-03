@@ -184,63 +184,6 @@ func ServeHTMLWithBase(w http.ResponseWriter, html string, prefix string) {
 	fmt.Fprint(w, html)
 }
 
-// AppUIAssets holds the app-specific HTML, CSS, and JS passed to NewWebUI.
-// Title, AppName, and Prefix are filled in automatically from the WebApp.
-type AppUIAssets struct {
-	BodyHTML string
-	AppCSS   string
-	AppJS    string
-	HeadHTML string
-}
-
-// NewWebUI creates a sub-mux and registers the app's root HTML page on it
-// using the app's WebName() for the title and toolbar. The caller is
-// responsible for mounting the returned sub-mux (via MountSubMux or a
-// custom gate) so apps with special access-control wrappers can interpose.
-func NewWebUI(app WebApp, prefix string, assets AppUIAssets) *http.ServeMux {
-	sub := http.NewServeMux()
-	// If the app uses the legacy hand-rolled body + css + js, mount it
-	// at "/". Apps that have migrated to the core/ui framework leave
-	// BodyHTML empty and register their own "/" handler — the legacy
-	// catch-all would otherwise clash with that registration.
-	if assets.BodyHTML != "" {
-		sub.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/" {
-				http.NotFound(w, r)
-				return
-			}
-			webui.WriteHTML(w, webui.RenderPage(webui.PageOpts{
-				Title:    app.WebName(),
-				AppName:  app.WebName(),
-				Prefix:   prefix,
-				BodyHTML: assets.BodyHTML,
-				AppCSS:   assets.AppCSS,
-				AppJS:    assets.AppJS,
-				HeadHTML: assets.HeadHTML,
-			}))
-		})
-	}
-	return sub
-}
-
-// WriteAppHTML renders the app's hand-rolled BodyHTML/CSS/JS to w
-// using the same webui.RenderPage path NewWebUI uses for "/", but as
-// a function callable from any handler. Useful when an app needs to
-// serve the legacy hand-rolled UI from a non-root path (e.g.
-// /legacy) alongside a framework-based "/" handler during a phased
-// migration.
-func WriteAppHTML(w http.ResponseWriter, app WebApp, prefix string, assets AppUIAssets) {
-	webui.WriteHTML(w, webui.RenderPage(webui.PageOpts{
-		Title:    app.WebName(),
-		AppName:  app.WebName(),
-		Prefix:   prefix,
-		BodyHTML: assets.BodyHTML,
-		AppCSS:   assets.AppCSS,
-		AppJS:    assets.AppJS,
-		HeadHTML: assets.HeadHTML,
-	}))
-}
-
 // MountSubMux registers a sub-mux under a prefix using StripPrefix.
 // When prefix is empty (standalone mode), mounts at root. The sub-mux
 // is wrapped with UsageReportMiddleware so every handler registered on

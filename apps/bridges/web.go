@@ -68,7 +68,7 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// makes them safe to hand a borrowed public address to.
 	RegisterRelayablePath(prefix + "/api/webhook/")
 
-	sub := NewWebUI(T, prefix, AppUIAssets{})
+	sub := http.NewServeMux()
 	sub.HandleFunc("/", T.handleDashboard)
 	sub.HandleFunc("/api/hook", T.handleHook)
 	sub.HandleFunc("/api/poll", T.handlePoll)

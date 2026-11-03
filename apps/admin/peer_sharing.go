@@ -389,17 +389,22 @@ func (a *AdminApp) peerRoutes() http.HandlerFunc {
 		"GET":  jsonapi.Get(a.db, a.peerKeyForm, a.gate()),
 		"POST": jsonapi.Post(a.db, a.handlePeerKeyUpdate, a.gate()),
 	}
+	// Each action answers only at its own path: a DELETE forgot the peer at
+	// ANY path under it (/api/peers/x/key included), and an action nobody
+	// serves read as a wrong method instead of a wrong address.
 	return func(w http.ResponseWriter, r *http.Request) {
 		_, action := peerInPath(r)
 		switch {
-		case r.Method == http.MethodDelete:
+		case action == "" && r.Method == http.MethodDelete:
 			forget(w, r)
 		case action == "refresh" && r.Method == http.MethodPost:
 			refresh(w, r)
 		case action == "key":
 			key.Serve(w, r)
-		default:
+		case action == "" || action == "refresh":
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		default:
+			http.NotFound(w, r)
 		}
 	}
 }

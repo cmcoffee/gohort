@@ -2,7 +2,6 @@ package core
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	httppprof "net/http/pprof"
 	"slices"
@@ -88,7 +87,7 @@ func ServeDashboard(addr string) error {
 		// App's Routes() just registers via T.HandleFunc against
 		// the pre-wired AppCore.webMux.
 		if simple, ok := wa.(SimpleWebApp); ok {
-			sub := NewWebUI(wa, prefix, AppUIAssets{})
+			sub := http.NewServeMux()
 			if a, ok := wa.(interface{ Get() *AppCore }); ok {
 				a.Get().SetWebMux(sub, prefix)
 			}
@@ -752,78 +751,6 @@ func (d dashboardHost) handleAccess(w http.ResponseWriter, r *http.Request) {
 // Dated is the minimal interface a history record must satisfy.
 type Dated interface {
 	GetDate() string
-}
-
-// HistoryHandlers returns HTTP handler functions for list, detail, and delete
-// operations on a database history table. The summarize function converts a
-// full record into whatever summary struct the list endpoint should return.
-// R must implement Dated so results can be sorted newest-first.
-func HistoryHandlers[R Dated, S any](db func() Database, table string, summarize func(R) S) (list, detail, delete_handler http.HandlerFunc) {
-	list = func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		store := db()
-		if store == nil {
-			fmt.Fprint(w, "[]")
-			return
-		}
-		type entry struct {
-			date string
-			item S
-		}
-		var entries []entry
-		for _, key := range store.Keys(table) {
-			var rec R
-			if store.Get(table, key, &rec) {
-				entries = append(entries, entry{date: rec.GetDate(), item: summarize(rec)})
-			}
-		}
-		if entries == nil {
-			fmt.Fprint(w, "[]")
-			return
-		}
-		sort.Slice(entries, func(i, j int) bool { return entries[i].date > entries[j].date })
-		items := make([]S, len(entries))
-		for i, e := range entries {
-			items[i] = e.item
-		}
-		data, _ := json.Marshal(items)
-		w.Write(data)
-	}
-
-	detail = func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		id := strings.TrimPrefix(r.URL.Path, "/api/history/")
-		store := db()
-		if id == "" || store == nil {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		var rec R
-		if !store.Get(table, id, &rec) {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		data, _ := json.Marshal(rec)
-		w.Write(data)
-	}
-
-	delete_handler = func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		id := strings.TrimPrefix(r.URL.Path, "/api/history/delete/")
-		if id == "" {
-			http.Error(w, "missing id", http.StatusBadRequest)
-			return
-		}
-		if store := db(); store != nil {
-			store.Unset(table, id)
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}
-
-	return
 }
 
 // --- Choosing what the dashboard shows -------------------------------------

@@ -63,7 +63,15 @@ func (T *KnowledgeApp) WebDesc() string {
 // (-1000) and Bridges (-900), ahead of the default-50 app grid.
 func (T *KnowledgeApp) WebOrder() int { return -800 }
 
+// knowledgeLegacyPath is where this surface lived as Documents.
+const knowledgeLegacyPath = "/documents"
+
 func (T *KnowledgeApp) Routes() {
+	// This surface used to be Documents at /documents. Old links still say
+	// so. A 308 keeps a POST a POST, and the old path answers before any app
+	// grant is checked, so it redirects for everyone rather than refusing
+	// the people the hidden redirect app was never granted to.
+	RegisterLegacyMount(knowledgeLegacyPath, T.WebPath())
 	T.HandleFunc("/", T.handleListPage)
 	T.HandleFunc("/c/", T.handleDetailPage)
 	// The share picker's candidate list. Served here rather than borrowed:

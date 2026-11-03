@@ -16,14 +16,14 @@ func TestTheExtensionsPageRenders(t *testing.T) {
 	app, req := authedExtensions(t)
 
 	anon := httptest.NewRecorder()
-	app.servePage(anon, httptest.NewRequest(http.MethodGet, "/extensions", nil))
+	app.servePage(anon, httptest.NewRequest(http.MethodGet, "/", nil)) // the path the handler sees under its mount
 	if anon.Code != http.StatusUnauthorized {
 		t.Errorf("signed out: %d, want 401", anon.Code)
 	}
 
 	serve(app) // its routes, and with them its kinds of integration
 	w := httptest.NewRecorder()
-	app.servePage(w, req(http.MethodGet, "/extensions"))
+	app.servePage(w, req(http.MethodGet, "/"))
 	if w.Code != http.StatusOK {
 		t.Fatalf("signed in: %d, want 200", w.Code)
 	}

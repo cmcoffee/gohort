@@ -170,7 +170,7 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// Connections made before Sources were the door become Sources, once.
 	go T.moveGrantsToSources()
 
-	sub := NewWebUI(T, prefix, AppUIAssets{})
+	sub := http.NewServeMux()
 	// Serve commands to other instances (a wire to a system only this machine
 	// reaches), and list what registered peers let US reach. Wired here
 	// rather than in init because it needs T.DB.

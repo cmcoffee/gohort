@@ -463,3 +463,40 @@ func TestCapabilitiesReadTheSameOnBothEnds(t *testing.T) {
 		t.Errorf("an unknown capability rendered as %q, want it passed through", got)
 	}
 }
+
+// Each peer action answers only at its own path. "no such peer" is the
+// forget handler answering, so it must come only from a DELETE of the peer
+// itself, never from one aimed at its key; an action nobody serves is a
+// wrong address, not a wrong method.
+func TestAPeerIsForgottenOnlyAtItsOwnPath(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	AuthSetUser(db, "root", "pw", true)
+	prevAuth := AuthDB
+	AuthDB = func() Database { return db }
+	t.Cleanup(func() { AuthDB = prevAuth })
+	token := AuthCreateSession(db, "root")
+	a := &AdminApp{db: db}
+	mux := http.NewServeMux()
+	a.RegisterRoutes(mux, "")
+	do := func(method, path string) (int, string) {
+		r := httptest.NewRequest(method, path, nil)
+		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: token})
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		return w.Code, w.Body.String()
+	}
+	if code, body := do("DELETE", "/api/peers/gpu-box"); code != http.StatusNotFound || !strings.Contains(body, "no such peer") {
+		t.Errorf("DELETE of the peer did not reach forget: %d %s", code, body)
+	}
+	for _, p := range []string{"/api/peers/gpu-box/key", "/api/peers/gpu-box/refresh", "/api/peers/gpu-box/anything"} {
+		if code, body := do("DELETE", p); strings.Contains(body, "no such peer") {
+			t.Errorf("DELETE %s reached forget: %d %s", p, code, body)
+		}
+	}
+	if code, _ := do("GET", "/api/peers/gpu-box/bogus"); code != http.StatusNotFound {
+		t.Errorf("an unknown action answered %d, want 404", code)
+	}
+	if code, _ := do("GET", "/api/peers/gpu-box/refresh"); code != http.StatusMethodNotAllowed {
+		t.Errorf("refresh by GET answered %d, want 405", code)
+	}
+}
