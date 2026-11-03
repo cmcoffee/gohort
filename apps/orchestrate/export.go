@@ -356,15 +356,20 @@ func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Data
 		// export says them too: a struck reply exported as plain text would
 		// read as an answer that stood.
 		retracted := strings.TrimSpace(m.Retracted)
+		corrected := strings.TrimSpace(m.Corrected)
 		switch {
 		case retracted != "":
 			header += " (retracted)"
+		case corrected != "":
+			header += " (corrected)"
 		case strings.TrimSpace(m.Label) != "":
 			header += " [" + strings.TrimSpace(m.Label) + "]"
 		}
 		fmt.Fprintf(&b, "## %s%s\n\n", header, ts)
 		if retracted != "" {
 			fmt.Fprintf(&b, "> %s\n\n", exportText(retracted))
+		} else if corrected != "" {
+			fmt.Fprintf(&b, "> %s\n\n", exportText(corrected))
 		}
 		if body := strings.TrimSpace(exportText(m.Content)); body != "" {
 			if retracted != "" {

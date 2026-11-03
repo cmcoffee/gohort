@@ -2975,6 +2975,13 @@ func llmHistoryText(m ChatMessage) string {
 		return textutil.FenceMeta(fmt.Sprintf("this reply was retracted and does not stand: %s The reply after it is the correction; do not treat this one as fact or repeat it.",
 			strings.TrimSpace(m.Retracted))) + "\n" + m.Content
 	}
+	// A corrected reply stands, but the one after it finishes or replaces
+	// it: read bare, an early "I'll save that" looked like a promise still
+	// owed, or a second answer to the same question.
+	if m.Role == "assistant" && strings.TrimSpace(m.Corrected) != "" {
+		return textutil.FenceMeta(fmt.Sprintf("this reply was followed up at a check's request: %s The reply after it is the one that stands.",
+			strings.TrimSpace(m.Corrected))) + "\n" + m.Content
+	}
 	return attributeSender(m.Role, m.Sender, m.Content)
 }
 

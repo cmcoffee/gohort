@@ -680,3 +680,71 @@ func TestAToolCalledByNameIsConfirmedAndJudged(t *testing.T) {
 		t.Error("a confirm tool called by name ran after Confirm said no")
 	}
 }
+
+// A reply a check followed up on is marked corrected, with the reason, rather
+// than settled bare: settled bare it read as the agent answering twice, and
+// the save dropped it as a repeat of the reply after it, so the reload and the
+// live screen disagreed. A host that wires no CorrectRound still settles.
+func TestAFollowedUpReplyIsMarkedCorrected(t *testing.T) {
+	look := AgentToolDef{
+		Tool:    Tool{Name: "check_logs", Description: "reads the logs", Parameters: map[string]ToolParam{"q": {Type: "string"}}},
+		Handler: func(context.Context, map[string]any) (string, error) { return "all quiet", nil },
+	}
+	run := func(wire bool) (corrected []string, settled int) {
+		app := &AppCore{LLM: &FakeLLM{Turns: []FakeTurn{
+			{Content: "Let me check the logs now."},
+			{ToolCalls: []ToolCall{{ID: "1", Name: "check_logs", Args: map[string]any{"q": "errors"}}}},
+			{Content: "The logs are quiet.", Repeat: true},
+		}}}
+		cfg := AgentLoopConfig{
+			MaxRounds:   6,
+			RouteKey:    "test.correctround",
+			Tools:       []AgentToolDef{look},
+			SettleRound: func() { settled++ },
+		}
+		if wire {
+			cfg.CorrectRound = func(reason string) { corrected = append(corrected, reason) }
+		}
+		if _, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "anything in the logs?"}}, cfg); err != nil {
+			t.Fatalf("loop: %v", err)
+		}
+		return corrected, settled
+	}
+	corrected, _ := run(true)
+	if len(corrected) != 1 || !strings.Contains(corrected[0], "called no tool") {
+		t.Fatalf("the promise was not marked corrected with its reason: %q", corrected)
+	}
+	if _, settled := run(false); settled == 0 {
+		t.Error("a host with no CorrectRound did not get the settle it relies on")
+	}
+}
+
+// The grounding correction marks the reply it follows up, too; the reply it
+// asks for already carries the "Correction" label.
+func TestAGroundingCorrectionMarksTheReplyCorrected(t *testing.T) {
+	var corrected []string
+	judged := 0
+	app := &AppCore{LLM: &FakeLLM{Turns: []FakeTurn{
+		{Content: "The staging server runs Ubuntu 22.04, so that package will work."},
+		{Content: "You mentioned the staging server runs Ubuntu 22.04, so that package should work.", Repeat: true},
+	}}}
+	_, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "will that package work?"}}, AgentLoopConfig{
+		MaxRounds:       4,
+		RouteKey:        "test.groundcorrect",
+		CorrectRound:    func(reason string) { corrected = append(corrected, reason) },
+		UncheckedClaims: []string{"the staging server runs Ubuntu 22.04"},
+		TurnGroundingJudge: func(ev TurnGroundingEvidence) (TurnGroundingVerdict, bool) {
+			judged++
+			if judged > 1 {
+				return TurnGroundingVerdict{}, true
+			}
+			return TurnGroundingVerdict{Asserted: true, Claim: ev.Reply, Basis: "the staging server runs Ubuntu 22.04"}, true
+		},
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if len(corrected) != 1 || !strings.Contains(corrected[0], "unchecked note") {
+		t.Errorf("the ungrounded reply was not marked corrected: %q", corrected)
+	}
+}

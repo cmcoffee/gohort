@@ -3667,6 +3667,24 @@
       paint();
     }
 
+    // correctMessage marks a message a check followed up on: it stands, and
+    // the one after it finishes or replaces it. A chip at its head says so,
+    // and the reason, which is the server's text, sits behind an info icon.
+    // Not struck: unlike a retraction, nothing in it was ruled untrue.
+    // Idempotent; an empty reason clears it.
+    function correctMessage(id, reason) {
+      var m = msgEls[id];
+      if (!m || !m.bubble) return;
+      m.corrected = reason || '';
+      var chip = m.bubble.querySelector(':scope > .ui-agent-msg-corrected');
+      if (chip) chip.remove();
+      if (!reason) return;
+      chip = el('div', {class: 'ui-agent-msg-corrected'}, [el('span', {}, ['Corrected'])]);
+      var info = uiInfoIcon(reason, {label: 'Why it was corrected'});
+      if (info) chip.appendChild(info);
+      m.bubble.insertBefore(chip, m.body);
+    }
+
     // labelMessage puts a small label chip at the head of a message (e.g. a
     // follow-up the server wants read as a correction). What the label says
     // is the server's; the panel only shows it. Idempotent.
@@ -3759,6 +3777,7 @@
       // The replay route for a struck or labelled message, so what was shown
       // live is still shown when the thread is reopened.
       if (meta.retracted) strikeMessage(id, meta.retracted);
+      if (meta.corrected) correctMessage(id, meta.corrected);
       if (meta.label) labelMessage(id, meta.label);
     }
 
@@ -5532,6 +5551,9 @@
         case 'chunk_strike':
           strikeMessage(ev.id, ev.reason || '');
           break;
+        case 'chunk_corrected':
+          correctMessage(ev.id, ev.reason || '');
+          break;
         case 'message_label':
           labelMessage(ev.id, ev.label || '');
           break;
@@ -6980,7 +7002,7 @@
       var mid = (m && m.id) || ('obs-' + Math.random().toString(36).slice(2));
       addMessage(m.role || 'assistant', mid, m.content || m.text || '', m.sender);
       if (cfg.markdown && (m.role === 'assistant')) finalizeMessage(mid);
-      if (m.created || m.usage || m.report_from || m.mark || m.retracted || m.label) setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail, mark: m.mark, retracted: m.retracted, label: m.label});
+      if (m.created || m.usage || m.report_from || m.mark || m.retracted || m.corrected || m.label) setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail, mark: m.mark, retracted: m.retracted, corrected: m.corrected, label: m.label});
       applyPersistedToolCalls(mid, m);
       runReplayHooks(mid, m);
       return mid;
@@ -7715,8 +7737,8 @@
                 var mid = m.id || ('m-' + Math.random().toString(36).slice(2));
                 addMessage(m.role || 'assistant', mid, m.content || m.text || '');
                 if (cfg.markdown && (m.role === 'assistant')) finalizeMessage(mid);
-                if (m.created || m.usage || m.retracted || m.label) {
-                  setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail, mark: m.mark, retracted: m.retracted, label: m.label});
+                if (m.created || m.usage || m.retracted || m.corrected || m.label) {
+                  setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail, mark: m.mark, retracted: m.retracted, corrected: m.corrected, label: m.label});
                 }
                 // Replay persisted tool calls (same shape as the
                 // SESSION-mode branch below — see that comment for
@@ -7920,8 +7942,8 @@
               else if (m.role === 'assistant') attachAssistantActions(msgEls[mid].bubble);
             }
             if (cfg.markdown && (m.role === 'assistant')) finalizeMessage(mid);
-            if (m.created || m.usage || m.retracted || m.label) {
-              setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail, mark: m.mark, retracted: m.retracted, label: m.label});
+            if (m.created || m.usage || m.retracted || m.corrected || m.label) {
+              setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail, mark: m.mark, retracted: m.retracted, corrected: m.corrected, label: m.label});
             }
             if (msgEls[mid] && msgEls[mid].bubble) {
               noticeAnchors.push({at: Date.parse(m.created || ''), node: msgEls[mid].bubble});

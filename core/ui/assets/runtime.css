@@ -5316,6 +5316,26 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   cursor: pointer;
   text-decoration: underline;
 }
+/* A message a check followed up on: it stands, so it is not struck; a quiet
+ * chip at its head says so, with the reason behind its info icon. */
+.ui-agent-msg-corrected {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  width: max-content;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+  border: 1px dashed currentColor;
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  margin-bottom: 0.25rem;
+}
+.ui-agent-msg-corrected .ui-info { text-transform: none; }
+
 /* Label chip at the head of a message ("Correction"). */
 .ui-agent-msg-label {
   align-self: flex-start;
@@ -7222,7 +7242,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   :is(.ui-live-state, .ui-live-stop, .ui-cp-pill-flag, .ui-cp-pill-note,
       .ui-channels-h-title, .ui-channels-dir, .ui-channels-inert,
       .ui-chat-side-source, .ui-pl-side-pill, .ui-agent-msg-sender,
-      .ui-agent-msg-label) { font-size: var(--fs-2xs); }
+      .ui-agent-msg-label, .ui-agent-msg-corrected) { font-size: var(--fs-2xs); }
 }
 
 /* A chat card's Dismiss control (AgentLoopPanel), top right, in space the

@@ -25,6 +25,7 @@ func runCorrectedTurn(t *testing.T, turns []FakeTurn, cfg AgentLoopConfig) (Chat
 	cfg.SettleRound = pr.settleRound
 	cfg.RetractRound = pr.retractRound
 	cfg.StrikeRound = pr.strikeRound
+	cfg.CorrectRound = pr.correctRound
 	cfg.LabelNextRound = pr.labelNextRound
 	if cfg.MaxRounds == 0 {
 		cfg.MaxRounds = 6
@@ -176,6 +177,10 @@ func TestAGroundingRetryThatRepeatsTheClaimLeavesTheOriginalAsTheReply(t *testin
 	if strings.Contains(live, "message_label") {
 		t.Errorf("a dropped follow-up must not be labelled on the page:\n%s", live)
 	}
+	// And the original no longer says a correction follows.
+	if !strings.Contains(live, `"kind":"chunk_corrected"`) || !strings.Contains(live, `"reason":""`) {
+		t.Errorf("the page must be told to take the original's mark back:\n%s", live)
+	}
 }
 
 func TestTheExportShowsStruckAndLabelledReplies(t *testing.T) {
@@ -200,5 +205,99 @@ func TestTheExportShowsStruckAndLabelledReplies(t *testing.T) {
 	}
 	if strings.Contains(md, "~~I have not made") {
 		t.Error("only the retracted reply is struck")
+	}
+}
+
+// A reply a check followed up on (here, a promise with no tool behind it) is
+// saved and shown marked corrected, with the reason, and the reply after it
+// follows. Before, it finalized bare, so the page showed two answers, and the
+// save dropped the first as a repeat of the second, so a reload showed one.
+func TestAFollowedUpReplyIsSavedCorrected(t *testing.T) {
+	const promise = "Let me save that decision now."
+	look := AgentToolDef{
+		Tool:    Tool{Name: "save_note", Description: "saves a note", Parameters: map[string]ToolParam{"text": {Type: "string"}}},
+		Handler: func(context.Context, map[string]any) (string, error) { return "saved", nil },
+	}
+	sess, live := runCorrectedTurn(t, []FakeTurn{
+		{Content: promise},
+		{ToolCalls: []ToolCall{{ID: "1", Name: "save_note", Args: map[string]any{"text": "NVFP4"}}}},
+		{Content: "Let me save that decision now. Saved.", Repeat: true},
+	}, AgentLoopConfig{Tools: []AgentToolDef{look}})
+	if len(sess.Messages) < 2 {
+		t.Fatalf("the followed-up reply was dropped from the saved turn: %+v", sess.Messages)
+	}
+	first := sess.Messages[0]
+	if first.Content != promise || !strings.Contains(first.Corrected, "called no tool") || first.Retracted != "" {
+		t.Errorf("the first reply must be saved, marked corrected (not struck) with its reason: %+v", first)
+	}
+	if !strings.Contains(live, `"kind":"chunk_corrected"`) || !strings.Contains(live, "called no tool") {
+		t.Errorf("the page must be told to mark the bubble, with the reason:\n%s", live)
+	}
+	hist := toLLMMessages(sess.Messages)
+	if !strings.Contains(hist[0].Content, "<gohort-meta>") || !strings.Contains(hist[0].Content, "is the one that stands") {
+		t.Errorf("a corrected reply must reach the model with the follow-up noted, got %q", hist[0].Content)
+	}
+}
+
+// The chat turn's own loop hands the hook to the loop. The test above wires it
+// by hand, so without this a turn could lose it and still pass.
+func TestTheChatTurnWiresCorrectRound(t *testing.T) {
+	body := funcBody(t, readFile(t, "runner.go"), "func (pr *planRun) loopConfig() AgentLoopConfig {")
+	if !strings.Contains(body, "CorrectRound:   pr.correctRound,") {
+		t.Error("the chat turn's loop config does not wire CorrectRound, so its corrected replies settle bare")
+	}
+}
+
+// A corrected bubble survives the final-reply dedup, as a struck one does,
+// unless the final reply only says it again: then nothing followed it and the
+// final reply stands for it, as for any bubble it repeats.
+func TestACorrectedBubbleSurvivesTheFinalReplyDedup(t *testing.T) {
+	var sess ChatSession
+	text := "Let me save that decision now."
+	appendMidTurnBubbles(&sess, []ChatMessage{{Role: "assistant", Content: text, Corrected: "Said it would do this but called no tool."}}, text+" Saved.")
+	if len(sess.Messages) != 1 || sess.Messages[0].Corrected == "" {
+		t.Fatalf("the corrected bubble must be kept, got %+v", sess.Messages)
+	}
+	var again ChatSession
+	appendMidTurnBubbles(&again, []ChatMessage{{Role: "assistant", Content: text, Corrected: "Said it would do this but called no tool."}}, text)
+	if len(again.Messages) != 0 {
+		t.Errorf("a corrected bubble the final reply only repeats was kept beside it: %+v", again.Messages)
+	}
+}
+
+// The export says a reply was corrected and why, without striking it.
+func TestTheExportShowsCorrectedReplies(t *testing.T) {
+	sess := ChatSession{Messages: []ChatMessage{
+		{Role: "assistant", Content: "Let me save that decision now.", Corrected: "Said it would do this but called no tool; asked to do it now."},
+		{Role: "assistant", Content: "Saved."},
+	}}
+	md := renderSessionMarkdown(AgentRecord{Name: "Helper"}, sess, true)
+	for _, want := range []string{"## Assistant (corrected)", "> Said it would do this but called no tool; asked to do it now.", "Let me save that decision now."} {
+		if !strings.Contains(md, want) {
+			t.Errorf("export is missing %q:\n%s", want, md)
+		}
+	}
+	if strings.Contains(md, "~~Let me save") {
+		t.Error("a corrected reply is not struck")
+	}
+}
+
+// Asked to act, the reply came back unchanged: the follow-up is dropped and
+// the first reply is the answer after all, so its mark comes off, on the page
+// and in the saved turn. Left on, it said a correction followed when none
+// did, and the reply was saved twice.
+func TestAnUnchangedFollowUpTakesTheMarkBack(t *testing.T) {
+	sess, live := runCorrectedTurn(t, []FakeTurn{
+		{Content: "Let me save that decision now."},
+		{Content: "Let me save that decision now.", Repeat: true},
+	}, AgentLoopConfig{MaxRounds: 12, Tools: []AgentToolDef{{
+		Tool:    Tool{Name: "save_note", Description: "saves a note", Parameters: map[string]ToolParam{"text": {Type: "string"}}},
+		Handler: func(context.Context, map[string]any) (string, error) { return "saved", nil },
+	}}})
+	if len(sess.Messages) != 1 || sess.Messages[0].Corrected != "" {
+		t.Fatalf("want the reply once, unmarked: %+v", sess.Messages)
+	}
+	if !strings.Contains(live, `"kind":"chunk_corrected"`) || !strings.Contains(live, `"reason":""`) {
+		t.Errorf("the page must be told to take the mark back:\n%s", live)
 	}
 }

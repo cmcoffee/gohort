@@ -1079,7 +1079,7 @@ func (lr *loopRun) finalRoundMalformedCall() loopAction {
 	Debug("[agent_loop] round %d: provider dropped a malformed tool call (%d chars of text before it), retrying: correction %d/%d",
 		lr.round, len(lr.rs.resp.Content), lr.corrections.spend(correctionMalformedCall), maxCorrectionsPerKind)
 	lr.emitDiag("malformed-call-retried", "The provider rejected the model's tool call as malformed and dropped it; asked again for a valid call.")
-	lr.settleRound()
+	lr.correctRound("Its tool call was rejected as malformed and did not run; asked again. The reply below follows.")
 	lr.graceRounds++ // the retry needs a round of its own, like a cut-off reply
 	lr.history = append(lr.history, Message{
 		Role:    "user",
@@ -1168,7 +1168,7 @@ func (lr *loopRun) finalRoundUnfinishedReply() loopAction {
 	}
 	Debug("[agent_loop] reply stops mid-sentence (%q), re-prompting: correction %d/%d", tail, lr.corrections.spend(correctionUnfinished), maxCorrectionsPerKind)
 	lr.emitDiag("unfinished-reply-corrected", "The reply stopped mid-sentence; asked for the rest.")
-	lr.settleRound()
+	lr.correctRound("Stopped mid-sentence; asked for the rest, which follows below.")
 	lr.history = append(lr.history, Message{
 		Role:    "user",
 		Content: frameworkNoticeTag + fmt.Sprintf("Your reply stops mid-sentence (it ends %q), so the user has an unfinished message. Send the rest now: finish what you were saying. If it was leading into questions for the user, ask them; if it was leading into an action, take it with a real tool call.", tail),

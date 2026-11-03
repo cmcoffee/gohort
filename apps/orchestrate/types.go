@@ -1679,6 +1679,13 @@ type ChatMessage struct {
 	// noted (llmHistoryContent), so a later turn does not re-read it as fact.
 	Retracted string `json:"retracted,omitempty"`
 
+	// Corrected, when set, marks an assistant reply a check found premature
+	// rather than false (it promised a call it never made, stopped
+	// mid-sentence, stated an unchecked note as fact), and carries the
+	// one-line reason. The reply after it is the one the check asked for.
+	// Kept and shown with its reason, not struck: it said nothing untrue.
+	Corrected string `json:"corrected,omitempty"`
+
 	// Label is a short tag shown on the bubble ("Correction"), so a follow-up
 	// the framework asked for reads as what it is rather than as a second
 	// unexplained answer. Display-only.

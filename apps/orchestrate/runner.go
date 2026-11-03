@@ -147,6 +147,9 @@ type planRun struct {
 	streamedBuf       strings.Builder
 	lastFinalizedID   string
 	lastFinalizedText string
+	// lastCorrectedID is the bubble the last correction marked, so a dropped
+	// follow-up can take the mark back (correctRound with no reason).
+	lastCorrectedID   string
 	holdStream        bool
 	streamFreshBubble bool
 	// nextLabel is the label the loop asked for on the next answer bubble
@@ -1500,6 +1503,44 @@ func (pr *planRun) strikeRound(reason string) {
 	t.setCurrentMsgID("")
 }
 
+// correctRound settles the round's reply like settleRound and marks it
+// corrected, with the reason beside it, live and in the transcript
+// (AgentLoopConfig.CorrectRound). Nothing streamed, nothing to mark. An
+// empty reason takes the last mark back, on the page and in the transcript.
+func (pr *planRun) correctRound(reason string) {
+	t := pr.t
+	if strings.TrimSpace(reason) == "" {
+		if id := pr.lastCorrectedID; id != "" {
+			pr.lastCorrectedID = ""
+			t.sse.Send(map[string]any{"kind": "chunk_corrected", "id": id, "reason": ""})
+			t.uncorrectLastBubble()
+		}
+		return
+	}
+	id := pr.streamMsgID
+	if id == "" {
+		id = t.getCurrentMsgID()
+	}
+	cleaned := cleanBubbleText(pr.streamedBuf.String())
+	if id == "" || cleaned == "" {
+		pr.settleRound()
+		return
+	}
+	if cleaned != strings.TrimSpace(pr.streamedBuf.String()) {
+		t.sse.Send(map[string]any{"kind": "chunk_replace", "id": id, "text": cleaned})
+	}
+	pr.paintHeldBubble(id, cleaned)
+	t.sse.Send(map[string]any{"kind": "message_done", "id": id})
+	t.sse.Send(map[string]any{"kind": "chunk_corrected", "id": id, "reason": reason})
+	pr.lastFinalizedID = id
+	pr.lastFinalizedText = cleaned
+	t.captureCorrectedBubble(cleaned, reason)
+	pr.lastCorrectedID = id
+	pr.streamMsgID = ""
+	pr.streamedBuf.Reset()
+	t.setCurrentMsgID("")
+}
+
 // mayShowStruck reports whether a reply about to be struck may be shown at
 // all. Only a held stream needs asking: an agent without an output guardrail
 // already streamed the text live.
@@ -2338,6 +2379,7 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		// follow-up is shown under a "Correction" label. Both saved, so a
 		// reload shows what happened.
 		StrikeRound:    pr.strikeRound,
+		CorrectRound:   pr.correctRound,
 		LabelNextRound: pr.labelNextRound,
 		// Feed view_video's sampled frames to the model on the next round so it
 		// actually sees the clip instead of describing it blind.

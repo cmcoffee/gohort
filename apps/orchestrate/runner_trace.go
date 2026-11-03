@@ -76,6 +76,31 @@ func (t *chatTurn) captureStruckBubble(text, reason string) {
 	t.captureBubble(text, reason, "")
 }
 
+// captureCorrectedBubble records a bubble a check found premature and asked
+// to follow up, with the reason. Saved like a struck one, so the reload shows
+// what the live screen did.
+func (t *chatTurn) captureCorrectedBubble(text, reason string) {
+	if saved := t.captureBubble(text, "", ""); saved != "" {
+		t.bubblesMu.Lock()
+		t.midTurnBubbles[len(t.midTurnBubbles)-1].Corrected = reason
+		t.bubblesMu.Unlock()
+	}
+}
+
+// uncorrectLastBubble takes the mark off the last bubble that carries one: the
+// follow-up was dropped and that bubble is the turn's answer after all, so it
+// is saved, and folded into the final reply, like any other.
+func (t *chatTurn) uncorrectLastBubble() {
+	t.bubblesMu.Lock()
+	defer t.bubblesMu.Unlock()
+	for i := len(t.midTurnBubbles) - 1; i >= 0; i-- {
+		if t.midTurnBubbles[i].Corrected != "" {
+			t.midTurnBubbles[i].Corrected = ""
+			return
+		}
+	}
+}
+
 // captureLabelledBubble records a bubble shown under a label. The text and
 // label are remembered too, because the bubble is usually the turn's final
 // reply and gets deduplicated against it on save; finalReplyLabel hands the
@@ -233,8 +258,16 @@ func appendMidTurnBubbles(sess *ChatSession, bubbles []ChatMessage, finalReply s
 			// A struck bubble is never folded into the reply that replaced
 			// it. The corrected reply often says much the same thing, and
 			// dropping the struck one as a "duplicate" would erase exactly
-			// the record of what was taken back.
-			if b.Retracted == "" && b.Block == nil && repeatsWithoutAdding(b.Content, final) {
+			// the record of what was taken back. A corrected one neither:
+			// the live screen showed it with its reason, and a reload that
+			// did not made the turn look as if it had answered once.
+			// Unless the final reply is the same text: then nothing
+			// followed it, and it is the answer after all. The same text,
+			// not the near-duplicate test, which counts a reply with a
+			// short new ending ("... Saved.") as a repeat, and that ending
+			// is the follow-up.
+			corrected := b.Corrected != "" && strings.TrimSpace(b.Content) != final
+			if b.Retracted == "" && !corrected && b.Block == nil && repeatsWithoutAdding(b.Content, final) {
 				if len(b.ToolCalls) > 0 {
 					orphanedCalls = append(orphanedCalls, b.ToolCalls...)
 				}

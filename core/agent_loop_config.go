@@ -268,6 +268,21 @@ type AgentLoopConfig struct {
 	// RetractRound, so a host that wired only the retract behaves as before.
 	StrikeRound func(reason string)
 
+	// CorrectRound settles the current round's reply like SettleRound and
+	// marks it corrected, with reason (one line, ready to show): the check
+	// that fired found the reply premature, not false (it promised a call it
+	// never made, stopped mid-sentence, stated an unchecked note as fact), and
+	// the loop is about to ask for the reply that follows. Settled bare, it
+	// read as the agent answering twice, and the save dropped it as a repeat
+	// of the corrected one, so a reload no longer showed it. The app keeps it
+	// on screen and in the transcript with the reason beside it. Nil falls
+	// back to SettleRound.
+	//
+	// Called with "" it withdraws the last mark: the follow-up was dropped
+	// (it only repeated the reply) and the marked reply stands as the answer,
+	// so it must no longer say a correction follows.
+	CorrectRound func(reason string)
+
 	// LabelNextRound asks the app to show the NEXT reply bubble it finalizes
 	// with a small label (e.g. "Correction"), live and in the saved
 	// transcript, so a follow-up the framework asked for reads as one instead

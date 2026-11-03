@@ -1211,6 +1211,25 @@ func (lr *loopRun) strikeRound(reason string) {
 	lr.retractRound()
 }
 
+// correctRound settles the current round's reply marked corrected, with the
+// reason beside it (see AgentLoopConfig.CorrectRound). Falls back to
+// settleRound on hosts that did not wire it.
+func (lr *loopRun) correctRound(reason string) {
+	if lr.cfg.CorrectRound != nil {
+		lr.cfg.CorrectRound(reason)
+		return
+	}
+	lr.settleRound()
+}
+
+// withdrawCorrection takes back the last correction mark: the follow-up was
+// dropped and the marked reply is the turn's answer after all.
+func (lr *loopRun) withdrawCorrection() {
+	if lr.cfg.CorrectRound != nil {
+		lr.cfg.CorrectRound("")
+	}
+}
+
 // finishCheck asks the host whether the turn may end on this reply; see
 // AgentLoopConfig.FinishCheck. The reply it objects to is struck rather than
 // erased, so the reader sees what was taken back and why.
@@ -1344,6 +1363,7 @@ func (lr *loopRun) dropRepeatedGroundingRetry() loopAction {
 	lr.emitDiag("ungrounded-claim-retry-dropped", fmt.Sprintf("The follow-up asked for a short correction of %q only said it again, so it was dropped. The original reply stands as the answer.", truncForLog(g.claim, 120)))
 	lr.retractRound()
 	lr.labelNextRound("")
+	lr.withdrawCorrection()
 	if g.historyLen <= len(lr.history) {
 		lr.history = lr.history[:g.historyLen]
 	}
@@ -2872,7 +2892,7 @@ func (lr *loopRun) finalRoundPromiseGuards() loopAction {
 	if lr.corrections.available(correctionAnnouncedCall) && lr.round < lr.maxRounds && endsWithCallAnnouncement(lr.rs.resp.Content) && lr.guardActs(correctionAnnouncedCall) {
 		Debug("[agent_loop] reply ends announcing a call that never followed, re-prompting: correction %d/%d: %q", lr.corrections.spend(correctionAnnouncedCall), maxCorrectionsPerKind, truncForLog(lr.rs.resp.Content, 80))
 		lr.emitDiag("announced-call-corrected", "The reply ended by announcing a tool call it never made; re-prompted to actually make the call or finish the reply.")
-		lr.settleRound() // finalize the announcement so the retry doesn't concatenate into it
+		lr.correctRound("Announced a tool call it never made; asked to make it. The reply below follows.")
 		lr.history = append(lr.history, Message{
 			Role:    "user",
 			Content: frameworkNoticeTag + lr.guardNote(correctionAnnouncedCall, noteAnnouncedCall),
@@ -2922,7 +2942,7 @@ func (lr *loopRun) finalRoundToolMentionGuard() loopAction {
 		} else if name != "" && lr.guardActs(correctionToolMention) {
 			Debug("[agent_loop] tool %q named in prose without a call (needs_args=%v), re-prompting: correction %d/%d", name, needsArgs, lr.corrections.spend(correctionToolMention), maxCorrectionsPerKind)
 			lr.emitDiag("tool-mention-corrected", fmt.Sprintf("The reply named the %q tool without calling it; re-prompted to either run it or answer plainly.", name))
-			lr.settleRound() // finalize the preamble so the retry doesn't concatenate into it
+			lr.correctRound(fmt.Sprintf("Named the %q tool without calling it; asked to run it or answer plainly. The reply below follows.", name))
 			// Two different reasons nothing ran, and the model can only
 			// fix the one it is told about. The parameterized wording
 			// also has to say the tool IS available: the reply that
@@ -3058,8 +3078,9 @@ func (lr *loopRun) finalRoundStallGuards() loopAction {
 		// own, so the person saw the reply twice (the saved transcript drops
 		// the echo; the live page did not). Take the repeat back; the reply is
 		// still the turn's answer, and the host's echo check matches it to the
-		// bubble already shown.
+		// bubble already shown, which no longer says a correction follows.
 		lr.retractRound()
+		lr.withdrawCorrection()
 		return actNone
 	}
 	if gaveUp {
@@ -3082,6 +3103,7 @@ func (lr *loopRun) finalRoundStallGuards() loopAction {
 		// error messages" when nothing errored sends it hunting for a
 		// problem that isn't there, and it will invent one.
 		var diag, nudge string
+		correctedReason := "Said it would do this but called no tool; asked to do it now. The reply below follows."
 		roundPlural := ""
 		if roundsLeft != 1 {
 			roundPlural = "s"
@@ -3097,6 +3119,7 @@ func (lr *loopRun) finalRoundStallGuards() loopAction {
 				stopped = "ended your turn by saying you were ABOUT to do the work, and then called no tool"
 				diag = fmt.Sprintf("The reply promised work it never did: it announced the next step, called no tool, and left %d tool error(s) unaddressed with rounds to spare. Re-prompted to actually do it.", lr.cumulativeToolErrors)
 			}
+			correctedReason = "Stopped on a tool error with rounds to spare; asked to adjust and try again. The reply below follows."
 			nudge = fmt.Sprintf(
 				frameworkNoticeTag+"You %s, but %d tool call%s errored earlier this turn that you didn't follow up on, and you have %d round%s remaining. Saying what you are about to do is not doing it: the user sees the sentence and nothing else, and nothing runs after your turn ends. DON'T end here with a polite summary of what you tried: that's giving up. Re-read the most recent error message(s) carefully, ADJUST your approach (different args, different tool, different sequence), and TRY AGAIN with a real tool call. If you genuinely have no other avenues, say so explicitly, but only after you've actually tried adjusting at least once.",
 				stopped, lr.cumulativeToolErrors, errPlural, roundsLeft, roundPlural)
@@ -3105,7 +3128,7 @@ func (lr *loopRun) finalRoundStallGuards() loopAction {
 			nudge = frameworkNoticeTag + lr.guardNote(correctionActionPromise, noteActionPromise)
 		}
 		lr.emitDiag("giveup-retried", diag)
-		lr.settleRound() // no-op when nothing streamed; keeps the discipline uniform across guards
+		lr.correctRound(correctedReason) // no-op when nothing streamed; keeps the discipline uniform across guards
 		lr.history = append(lr.history, Message{Role: "user", Content: nudge})
 		return actContinue
 	}
@@ -3331,7 +3354,7 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 			// paragraphs ending differently. Two corrections produced three
 			// renderings of one reply in an exported session. Every sibling
 			// guard in this file settles or retracts first, for this reason.
-			lr.settleRound()
+			lr.correctRound("Stated an unchecked note as fact; asked to check it or say where it came from. The correction follows.")
 			lr.history[len(lr.history)-1] = Message{Role: "assistant", Content: lr.rs.resp.Content, Reasoning: lr.rs.resp.Reasoning}
 			// Two shapes of basis, and they call for different rewrites.
 			// A stored note is something the agent holds; a live claim is
