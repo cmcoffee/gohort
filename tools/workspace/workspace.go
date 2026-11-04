@@ -330,10 +330,11 @@ func init() {
 	})
 
 	gt.AddAction("view_image", &GroupedToolAction{
-		Description: "Run a vision-LLM look at an image in your workspace and return a description. Use to verify a file matches what you want before attaching, or to extract details from it. The image must be image/* mime.",
+		Description: "Look at an image in your workspace. By default a vision model describes it and you get the description: use it to check a file before attaching it, or to pull details out of it. With show_me=true you see the image yourself on your next step instead, as you see a picture someone sends you: use it to read a screenshot, or to compare images side by side. The image must be image/* mime.",
 		Params: map[string]ToolParam{
-			"path":   {Type: "string", Description: "Workspace-relative path to the image."},
-			"prompt": {Type: "string", Description: "Optional prompt to focus the vision-LLM (e.g. 'is this a cat?'). Defaults to a neutral 'describe this image' request."},
+			"path":    {Type: "string", Description: "Workspace-relative path to the image."},
+			"prompt":  {Type: "string", Description: "Optional prompt to focus the description (e.g. 'is this a cat?'). Defaults to a neutral 'describe this image' request. Not used with show_me."},
+			"show_me": {Type: "boolean", Description: "true: put the image itself in front of you on your next step, instead of a description of it."},
 		},
 		Required: []string{"path"},
 		Caps:     []Capability{CapRead, CapNetwork},
@@ -1211,6 +1212,14 @@ func handleViewImage(args map[string]any, sess *ToolSession) (string, error) {
 	mime := http.DetectContentType(data)
 	if !strings.HasPrefix(mime, "image/") {
 		return "", fmt.Errorf("%q is %s, not an image: use cat for text", rel, mime)
+	}
+	// The image itself, for the model's next step: a description is a second
+	// model's reading, and a screenshot's small print or two pictures compared
+	// side by side need the pixels. The same queue the image tools use to
+	// show a model what it just made.
+	if BoolArg(args, "show_me") {
+		sess.AppendViewImageAs(data, "the workspace image "+rel)
+		return fmt.Sprintf("%s is in front of you on your next step (%s).", rel, humanSize(int64(len(data)))), nil
 	}
 	if sess.LLM == nil {
 		return "", fmt.Errorf("view_image requires an LLM bound to the session")

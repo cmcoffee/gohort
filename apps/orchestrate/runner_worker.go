@@ -470,10 +470,13 @@ func (ws *workerStep) runLoop() bool {
 	logPromptComposition(fmt.Sprintf("step %d", cur.ID), t.chatSessionID(), ws.sysPrompt, ws.tools,
 		[]Message{{Role: "user", Content: ws.stepUser}})
 	ws.resp, _, ws.err = t.app.RunAgentLoop(t.ctx, []Message{{Role: "user", Content: ws.stepUser}}, AgentLoopConfig{
-		SendGuardKey:         sendGuardKey,
-		SystemPrompt:         ws.sysPrompt,
-		Tools:                ws.tools,
-		DynamicTools:         t.dynamicNewTempTools(ws.sess),
+		SendGuardKey: sendGuardKey,
+		SystemPrompt: ws.sysPrompt,
+		Tools:        ws.tools,
+		DynamicTools: t.dynamicNewTempTools(ws.sess),
+		// What a step's tools put in front of the model (a picture made,
+		// view_image's show_me) reaches it, as on the orchestrator's rounds.
+		DrainViewImages:      ws.sess.DrainViewImages,
 		ToolFallbackResolver: t.lazyToolDef,
 		MaxRounds:            ws.hardCap,
 		ThinkBudget:          t.agent.ThinkBudget, // per-agent override; 0 = inherit route/global

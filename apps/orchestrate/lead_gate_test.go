@@ -157,3 +157,21 @@ func TestAChannelConsultCarriesTheThread(t *testing.T) {
 		t.Error("a channel run no longer hands its thread to the turn")
 	}
 }
+
+// What a run's tools put in front of the model (a picture made, view_image's
+// show_me) reaches it on every run: on an agents-tool run and a plan step it
+// was queued and never drained.
+func TestEveryRunShowsTheModelWhatItsToolsQueue(t *testing.T) {
+	for _, c := range []struct{ file, want string }{
+		{"runner.go", "DrainViewImages: pr.sess.DrainViewImages,"},
+		{"runner_worker.go", "DrainViewImages:      ws.sess.DrainViewImages,"},
+		{"agent_dispatch.go", "DrainViewImages: sd.subSess.DrainViewImages,"},
+		{"agent_dispatch.go", "cr.loopCfg.DrainViewImages = cr.subSess.DrainViewImages"},
+		{"agents_grouped_tool.go", "DrainViewImages:      ar.subSess.DrainViewImages,"},
+		{"scheduled_updates.go", "DrainViewImages:      fr.subSess.DrainViewImages,"},
+	} {
+		if !strings.Contains(readFile(t, c.file), c.want) {
+			t.Errorf("%s no longer has %q", c.file, c.want)
+		}
+	}
+}

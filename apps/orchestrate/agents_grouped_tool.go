@@ -1745,6 +1745,7 @@ func (ar *agentsRun) configureLoop() {
 		// dynamicNewTempTools surfaces tools loaded via load_tool this turn.
 		ToolFallbackResolver: ar.runFallback,
 		DynamicTools:         ar.runDynamic,
+		DrainViewImages:      ar.subSess.DrainViewImages,
 		FinishCheck:          ar.buildCheck.finishCheck(),
 		FinishUnmet:          ar.buildCheck.finishUnmet(),
 		// Whether the reply describes things that happened, as the two
