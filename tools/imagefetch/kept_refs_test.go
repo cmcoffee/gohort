@@ -368,3 +368,25 @@ func TestCountMismatchAdviceMatchesTheDirection(t *testing.T) {
 		t.Errorf("one picture into a two-picture backend is no longer refused for its count, got %v", err)
 	}
 }
+
+// Several real people go into a scene through placeholders, one swap per pass:
+// a render asked to place everyone at once drops one, merges two, or swaps a
+// face, and nothing says which. People only: things are not sent through
+// passes on the strength of one blend the edit model could not draw.
+func TestSeveralPeopleGoInThroughPlaceholders(t *testing.T) {
+	desc := imageSchemaFor(imageActions{fetch: true, generate: true, edit: true, find: true,
+		editors: []ImageBackendChoice{{Name: "comfy_lan", Default: true}}}).desc
+	if strings.Contains(desc, "ships") || strings.Contains(desc, "someone or something") {
+		t.Error("the people-only rules were widened to things again")
+	}
+	for _, want := range []string{"SEVERAL real people", "never all at once", "PLACEHOLDER figure standing where each person goes", "swap ONE person per pass", "naming it by position", "deliver=false", "look at each before starting the next"} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("the edit guidance lacks %q", want)
+		}
+	}
+	// Only where something can edit: with no editor there is no swap to make.
+	noEdit := imageSchemaFor(imageActions{fetch: true, generate: true, find: true}).desc
+	if strings.Contains(noEdit, "PLACEHOLDER") {
+		t.Error("placeholder passes offered where nothing can edit")
+	}
+}

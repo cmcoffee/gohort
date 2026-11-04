@@ -147,17 +147,38 @@ func editImage(sess *ToolSession, args map[string]any, avail imageActions) (stri
 	if err != nil {
 		return "", fmt.Errorf("image edit via %q failed: %w", p.backend, err)
 	}
-	// Source BEFORE result, so the two pictures the model is about to compare
-	// arrive in the order the instruction claims.
-	compared := queueSourceForComparison(sess, p.refs)
+	// A one-photo edit: the source BEFORE the result, so the two pictures the
+	// model is about to compare arrive in the order the instruction claims.
+	// A step from several photos is shown as one contact sheet instead, made
+	// below once the result is in hand.
+	shown := queueSourceForComparison(sess, p.refs)
+	sources := checkSources(sess, p.refs)
+	queued := 0
+	if sess != nil {
+		queued = len(sess.PendingViewImages)
+	}
 	out, serr := saveImageResult(sess, result, "edit", "edited "+strings.Join(p.refs, "+")+": "+truncate(p.prompt, 60), ImageFromEdited, holdsResult(args))
 	if serr != nil {
 		return out, serr
 	}
-	note := ""
-	if compared {
-		note = fidelityNote(p.refs[0])
+	// The result as rendered, read before a contact sheet takes its place.
+	var rendered []byte
+	if sess != nil && len(sess.PendingViewImages) == queued+1 {
+		rendered = sess.PendingViewImages[queued].Data
 	}
+	note := ""
+	switch {
+	case len(shown) == 1:
+		note = fidelityNote(shown[0])
+	case len(p.refs) > 1 && len(sources) > 0:
+		if refs, ok := sheetInPlaceOfResult(sess, queued, sources); ok {
+			note = blendNote(refs, holdsResult(args))
+		}
+	}
+	// And the check that does not rest on the agent's own look, for a
+	// one-photo edit as for a blend: the agent's look at a source beside its
+	// result is the look that reported a lost ship as present.
+	note += sourceCheckNote(checkSourcesInResult(sess, sources, rendered, p.prompt), len(sources), holdsResult(args))
 	return out + p.note + note, nil
 }
 
@@ -175,35 +196,121 @@ func editImage(sess *ToolSession, args map[string]any, avail imageActions) (stri
 // pixels alone. That is the failure an edit model actually has: the reference
 // was passed, the backend used it, and the face still came out somebody else's.
 //
-// Only the FIRST reference, and only when there is a model to look with. The
-// first is the base/subject by the ordering this tool already documents, so it
-// is the one carrying the identity; showing all three would triple the cost of
-// every edit to answer a question about one of them.
-// queueSourceForComparison puts the edit's SOURCE image in front of the model,
-// before the result is queued, and reports whether it did.
+// A one-photo edit shows its source beside the result: the first reference is
+// the subject, and the question is whether that subject survived the render.
+//
+// A step that takes SEVERAL photos (a blend, a composite, a face from one onto
+// another) is shown differently: every source and the result on one contact
+// sheet (checkSources, sheetInPlaceOfResult). Each source carries something
+// the result has to contain, and the failure a blend has is one of them going
+// missing: swapped, merged into another, or dropped. As separate pictures they
+// ran into the model's per-request picture limit, and the older ones arrived as
+// a paragraph somebody else wrote, which no likeness can be checked against.
+//
+// Only when there is a model to look with. A detached render counts: its
+// result is shown on the round that reports it (saveImageResult), so its
+// source is too, or that round compares an AFTER with no BEFORE.
+//
+// queueSourceForComparison puts a one-photo edit's SOURCE in front of the
+// model, before the result is queued, and returns the reference it showed.
 //
 // Order is the whole point, and it used to be wrong. The result was queued
 // first (inside saveImageResult) and the source second, while the text told
 // the model the source was "above the result" — so a comparison meant to ask
 // "did the likeness survive" was made with the two pictures swapped, and any
-// decision about which one to deliver was inverted with them. Queuing the
-// source first also reads the way a before/after comparison should.
-func queueSourceForComparison(sess *ToolSession, refs []string) bool {
-	if sess == nil || sess.LLM == nil || sess.Detached || len(refs) == 0 {
-		return false
+// decision about which one to deliver was inverted with them.
+func queueSourceForComparison(sess *ToolSession, refs []string) []string {
+	if sess == nil || sess.LLM == nil || len(refs) != 1 {
+		return nil
 	}
 	src, ok := ResolveRecentImage(sess, refs[0])
 	if !ok || len(src) == 0 {
-		// A workspace filename or a media id: resolvable elsewhere, not here.
-		// No source to compare against means no check — silence rather than a
-		// question the model cannot answer.
-		return false
+		// A workspace filename or a media id: resolvable elsewhere, not
+		// here. No source to compare against means no question about it.
+		return nil
 	}
-	// Named, not merely first. Ordering alone carried this before, and ordering
-	// alone is what got it backwards; a label survives another producer landing
-	// between the source and the result.
+	// Named, not merely ordered. Ordering alone carried this before, and
+	// ordering alone is what got it backwards; a label survives another
+	// producer landing between the source and the result.
 	sess.AppendViewImageAs(src, "the SOURCE photo, BEFORE the edit ("+refs[0]+")")
-	return true
+	return refs[:1]
+}
+
+// sourceImage is one source picture of a step, by the reference it was passed as.
+type sourceImage struct {
+	ref  string
+	data []byte
+}
+
+// checkSources resolves every source of an edit, in the order passed, for the
+// source check and (for several) the contact sheet. Nil with no model to look
+// with. A reference that does not resolve here (a workspace file, a media id)
+// is left off rather than guessed at.
+func checkSources(sess *ToolSession, refs []string) []sourceImage {
+	if sess == nil || sess.LLM == nil || len(refs) == 0 {
+		return nil
+	}
+	var out []sourceImage
+	for _, ref := range refs {
+		if data, ok := ResolveRecentImage(sess, ref); ok && len(data) > 0 {
+			out = append(out, sourceImage{ref: ref, data: data})
+		}
+	}
+	return out
+}
+
+// sheetInPlaceOfResult swaps the result picture saveImageResult just queued for
+// a contact sheet of the sources and that result, and returns the sources it
+// shows. queued is how many view pictures were pending before the result: the
+// swap is made only when the result is the one picture added since, so it
+// never replaces something another producer queued. Not built, the result
+// stays as it was queued and the step reads as an ordinary render.
+func sheetInPlaceOfResult(sess *ToolSession, queued int, sources []sourceImage) ([]string, bool) {
+	if sess == nil || len(sources) == 0 || len(sess.PendingViewImages) != queued+1 {
+		return nil, false
+	}
+	pictures := make([][]byte, 0, len(sources)+1)
+	labels := make([]string, 0, len(sources)+1)
+	refs := make([]string, 0, len(sources))
+	for i, src := range sources {
+		pictures = append(pictures, src.data)
+		labels = append(labels, fmt.Sprint(i+1))
+		refs = append(refs, src.ref)
+	}
+	pictures = append(pictures, sess.PendingViewImages[queued].Data)
+	labels = append(labels, "RESULT")
+	sheet, err := contactSheet(pictures, labels)
+	if err != nil {
+		Debug("[imagefetch] contact sheet not built, showing the result alone: %v", err)
+		return nil, false
+	}
+	sess.PendingViewImages[queued] = ViewImage{
+		Data:  sheet,
+		Label: fmt.Sprintf("a contact sheet: sources 1 to %d, then the RESULT", len(sources)),
+	}
+	return refs, true
+}
+
+// blendNote is the instruction for a step made from several photos, shown as
+// one contact sheet. held says this step is a pass toward a later one, where a
+// wrong step is worse than a wrong picture: the next pass inherits it.
+func blendNote(refs []string, held bool) string {
+	next := "deliver it"
+	stop := ""
+	if held {
+		next = "go on to the next pass"
+		stop = " Do NOT build the next pass on a step that lost a subject: the next pass cannot put it back."
+	}
+	order := make([]string, len(refs))
+	for i, r := range refs {
+		order[i] = fmt.Sprintf("%d = %s", i+1, r)
+	}
+	return fmt.Sprintf(" COMPARE: the picture included with this result is ONE contact sheet, left to right and row by row, each tile labelled at its top: "+
+		"the sources %s, then the tile labelled RESULT (its label band is blue). "+
+		"Check each numbered source against RESULT: is that source's subject in it, and the SAME ONE (not swapped with another, merged into one, duplicated, or left out)? "+
+		"This is a question looking CAN settle: not who anyone is, but whether each subject in the sources survived into the result. "+
+		"If one is missing or came out as somebody or something else, say which number and try once more with it named as the thing to keep.%s "+
+		"If every one survived, %s and do not raise this again.", strings.Join(order, ", "), stop, next)
 }
 
 // fidelityNote is the instruction that goes with the two queued pictures. It

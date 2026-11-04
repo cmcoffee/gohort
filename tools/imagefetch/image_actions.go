@@ -501,6 +501,15 @@ func imageSchemaFor(a imageActions) imageSchema {
 				// backend two sources for one face and invites it to draw from
 				// the words. Say what they DO, not what they look like.
 				desc += " Do NOT describe the appearance of someone you passed a picture of: say what they are doing, wearing or where they are, and let the picture carry the likeness. Words about a face compete with the reference rather than reinforcing it."
+				// Asked to put everyone in at once, a render places some, merges
+				// two into one, or gives one person another's face, and nothing
+				// says which. A scene that already has a figure where each person
+				// goes turns the job into a swap per figure, which is the edit a
+				// backend does reliably, and each pass is small enough to check.
+				// People only: a blend of two ships that lost one was the edit
+				// model failing to draw it from a small reference, not the prompt's
+				// words, and nothing showed passes would have saved it.
+				desc += " Putting SEVERAL real people into one scene goes in passes, never all at once: first get a scene with one PLACEHOLDER figure standing where each person goes (generate it with that many people in the right places, or use the scene you were given if it has them), then swap ONE person per pass onto their placeholder, naming it by position (\"the person on the left\"), passing the scene so far and that one person's picture. Hold every pass but the last (deliver=false) and look at each before starting the next."
 			}
 		}
 	}

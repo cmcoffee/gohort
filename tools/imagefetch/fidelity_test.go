@@ -9,6 +9,8 @@
 package imagefetch
 
 import (
+	"bytes"
+	"image/jpeg"
 	"strings"
 	"testing"
 
@@ -26,7 +28,7 @@ func TestFidelityCheckAsksTheAnswerableQuestion(t *testing.T) {
 	if RecordRecentImage(sess, []byte("SOURCE-PHOTO"), "received from craig", ImageFromUser) == "" {
 		t.Fatal("record failed")
 	}
-	if !queueSourceForComparison(sess, []string{"image#1"}) {
+	if len(queueSourceForComparison(sess, []string{"image#1"})) != 1 {
 		t.Fatal("an edit with a resolvable source should carry a comparison")
 	}
 	note := fidelityNote("image#1")
@@ -64,19 +66,109 @@ func TestFidelityCheckAttachesTheSource(t *testing.T) {
 	}
 }
 
-// Only the first: the ordering this tool documents makes it the subject, and
-// attaching all three would triple the cost of every edit.
-func TestFidelityCheckShowsOnlyTheFirstSource(t *testing.T) {
+// A one-photo edit shows its one source: it is the subject, and the question is
+// whether it survived.
+func TestAOnePhotoEditShowsItsSource(t *testing.T) {
 	sess := fidelitySession(t)
-	for i := 0; i < 3; i++ {
-		if RecordRecentImage(sess, []byte{byte('A' + i)}, "received from craig", ImageFromUser) == "" {
-			t.Fatal("record failed")
-		}
+	if RecordRecentImage(sess, []byte("A"), "received from craig", ImageFromUser) == "" {
+		t.Fatal("record failed")
 	}
 	before := len(sess.PendingViewImages)
-	queueSourceForComparison(sess, []string{"image#1", "image#2", "image#3"})
+	if got := queueSourceForComparison(sess, []string{"image#1"}); len(got) != 1 {
+		t.Errorf("shown = %v, want the one source", got)
+	}
 	if got := len(sess.PendingViewImages) - before; got != 1 {
 		t.Errorf("exactly one source should be attached, got %d", got)
+	}
+}
+
+// A step from several photos is shown as ONE contact sheet in place of the
+// result: every source and the result in one picture, which fits under a
+// model's per-request picture limit where separate ones did not, and the older
+// ones arrived as somebody else's paragraph.
+func TestABlendIsOneContactSheet(t *testing.T) {
+	sess := fidelitySession(t)
+	RecordRecentImage(sess, pngOf(t, 64, 64, red), "received from craig", ImageFromUser)
+	RecordRecentImage(sess, pngOf(t, 64, 64, green), "received from craig", ImageFromUser)
+	refs := []string{"image#2", "image#1"}
+
+	if got := queueSourceForComparison(sess, refs); got != nil {
+		t.Errorf("a blend queued its sources separately: %v", got)
+	}
+	sources := checkSources(sess, refs)
+	if len(sources) != 2 || sources[0].ref != "image#2" || sources[1].ref != "image#1" {
+		t.Fatalf("sources = %+v, want both in the order passed", sources)
+	}
+	before := len(sess.PendingViewImages)
+	sess.AppendViewImageAs(pngOf(t, 64, 64, blue), "the finished render (the AFTER picture)") // as saveImageResult does
+	shown, ok := sheetInPlaceOfResult(sess, before, sources)
+	if !ok || strings.Join(shown, ",") != "image#2,image#1" {
+		t.Fatalf("sheet not built: %v %v", shown, ok)
+	}
+	if n := len(sess.PendingViewImages) - before; n != 1 {
+		t.Fatalf("%d pictures queued for the step, want the one sheet", n)
+	}
+	v := sess.PendingViewImages[before]
+	if !strings.Contains(v.Label, "contact sheet") {
+		t.Errorf("label %q does not say it is a contact sheet", v.Label)
+	}
+	img, err := jpeg.Decode(bytes.NewReader(v.Data))
+	if err != nil {
+		t.Fatalf("the queued picture is not the sheet: %v", err)
+	}
+	if w := img.Bounds().Dx(); w != sheetGap+3*(sheetTileHeight+sheetGap) {
+		t.Errorf("sheet width %d does not hold three tiles", w)
+	}
+}
+
+// The swap is made only on the result this step queued: a picture another
+// producer queued in between is never replaced.
+func TestTheSheetNeverReplacesSomethingElse(t *testing.T) {
+	sess := fidelitySession(t)
+	RecordRecentImage(sess, pngOf(t, 64, 64, red), "received from craig", ImageFromUser)
+	RecordRecentImage(sess, pngOf(t, 64, 64, green), "received from craig", ImageFromUser)
+	sources := checkSources(sess, []string{"image#1", "image#2"})
+	before := len(sess.PendingViewImages)
+	sess.AppendViewImageAs([]byte("someone else's"), "a screenshot")
+	sess.AppendViewImageAs(pngOf(t, 64, 64, blue), "the finished render (the AFTER picture)")
+	if _, ok := sheetInPlaceOfResult(sess, before, sources); ok {
+		t.Error("swapped with two pictures queued since, one of them not this step's")
+	}
+	if string(sess.PendingViewImages[before].Data) != "someone else's" {
+		t.Error("another producer's picture was changed")
+	}
+}
+
+// A sheet that cannot be built leaves the result as it was queued.
+func TestAnUnbuildableSheetLeavesTheResult(t *testing.T) {
+	sess := fidelitySession(t)
+	sources := []sourceImage{{ref: "image#1", data: []byte("not a picture")}}
+	before := len(sess.PendingViewImages)
+	result := pngOf(t, 64, 64, blue)
+	sess.AppendViewImageAs(result, "the finished render (the AFTER picture)")
+	if _, ok := sheetInPlaceOfResult(sess, before, sources); ok {
+		t.Error("reported a sheet that could not be built")
+	}
+	if !bytes.Equal(sess.PendingViewImages[before].Data, result) {
+		t.Error("the result was replaced by a failed sheet")
+	}
+}
+
+// The blend's question is about each numbered source on the sheet, and a held
+// step is told not to be built on when one went missing.
+func TestTheBlendNoteChecksEachSource(t *testing.T) {
+	note := blendNote([]string{"image#1", "image#2"}, false)
+	for _, want := range []string{"ONE contact sheet", "1 = image#1, 2 = image#2", "RESULT", "Check each numbered source", "say which number", "do not raise this again"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("blend note lacks %q: %q", want, note)
+		}
+	}
+	if strings.Contains(note, "next pass") {
+		t.Errorf("a delivered blend is told about a next pass: %q", note)
+	}
+	held := blendNote([]string{"image#1", "image#2"}, true)
+	if !strings.Contains(held, "Do NOT build the next pass on a step that lost a subject") || !strings.Contains(held, "go on to the next pass") {
+		t.Errorf("a held step is not told to stop on a lost subject: %q", held)
 	}
 }
 
@@ -84,24 +176,36 @@ func TestFidelityCheckShowsOnlyTheFirstSource(t *testing.T) {
 // something unanswerable.
 func TestFidelityCheckIsSilentWithoutAResolvableSource(t *testing.T) {
 	sess := fidelitySession(t)
-	if queueSourceForComparison(sess, []string{"some-file.png"}) {
+	if len(queueSourceForComparison(sess, []string{"some-file.png"})) != 0 {
 		t.Error("an unresolvable ref should produce no comparison")
 	}
-	if queueSourceForComparison(sess, nil) {
+	if len(queueSourceForComparison(sess, nil)) != 0 {
 		t.Error("a render with no sources has nothing to compare")
 	}
 }
 
-// A detached render has nobody looking this round, so attaching a source would
-// spend tokens on a question no one will answer.
-func TestFidelityCheckSkipsDetachedRuns(t *testing.T) {
+// A detached render shows its sources too. Its result is shown on the round
+// that reports it (saveImageResult), and that round used to compare an AFTER
+// with no BEFORE: the source was skipped on the reasoning that nobody was
+// looking, which stopped being true when the result started being shown.
+func TestADetachedRenderStillComparesItsSources(t *testing.T) {
 	sess := fidelitySession(t)
 	sess.Detached = true
 	if RecordRecentImage(sess, []byte("SOURCE-PHOTO"), "received from craig", ImageFromUser) == "" {
 		t.Fatal("record failed")
 	}
-	if queueSourceForComparison(sess, []string{"image#1"}) {
-		t.Error("a detached run should skip the comparison")
+	if len(queueSourceForComparison(sess, []string{"image#1"})) != 1 {
+		t.Error("a detached render should show its source for the comparison")
+	}
+}
+
+// Without a model to look with there is nothing to queue.
+func TestNoModelNoComparison(t *testing.T) {
+	sess := fidelitySession(t)
+	sess.LLM = nil
+	RecordRecentImage(sess, []byte("SOURCE-PHOTO"), "received from craig", ImageFromUser)
+	if len(queueSourceForComparison(sess, []string{"image#1"})) != 0 {
+		t.Error("queued a comparison for a session with no model")
 	}
 }
 
