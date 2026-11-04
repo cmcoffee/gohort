@@ -64,6 +64,79 @@ check('the turn ending ends it, timer included',
 check('the seconds advance between server ticks',
   /setInterval\(renderThinkLive, 1000\)/.test(lift(panel, 'function noteThinking(', 'noteThinking')));
 
+// ---- what a running call is doing --------------------------------------------
+
+// A call of the turn's own is named beside the dots once it has run a second,
+// with its seconds past three; a dispatch is named by its agent instead; the
+// line names two and counts the rest; a result takes its call off. Driven with
+// the real functions and a stand-in clock.
+(function() {
+  var now = 0;
+  var Date = {now: function() { return now; }};
+  var thinkingEl = {}, rendered = 0;
+  var serverClockOffset = null;
+  function showThinking() {}
+  function renderThinkLive() { rendered++; }
+  function setInterval() { return 1; }
+  function clearInterval() {}
+  eval(panel.match(/var liveCallQuietMs = \d+;/)[0]);
+  eval(panel.match(/var liveCallsShown = \d+;/)[0]);
+  var dispatchLive = {}, dispatchLiveTimer = null;
+  eval(lift(panel, 'function dispatchEntry(', 'dispatchEntry'));
+  eval(lift(panel, 'function noteLiveCall(', 'noteLiveCall'));
+  eval(lift(panel, 'function tickDispatchLive(', 'tickDispatchLive'));
+  eval(lift(panel, 'function noteDispatchProgress(', 'noteDispatchProgress'));
+  eval(lift(panel, 'function endDispatchLive(', 'endDispatchLive'));
+  eval(lift(panel, 'function dispatchLiveText(', 'dispatchLiveText'));
+
+  noteLiveCall({call_id: 'a', name: 'web_search'});
+  check('a call that has just begun is not named yet', dispatchLiveText() === '');
+  check('but the line starts ticking for it', rendered > 0);
+  now = 1500;
+  check('after a second it is named', dispatchLiveText() === 'web_search');
+  now = 4200;
+  check('past three seconds it says how long', dispatchLiveText() === 'web_search · 4s');
+  endDispatchLive('a');
+  check('its result takes it off the line', dispatchLiveText() === '' && !dispatchLive.a);
+
+  serverClockOffset = 0;
+  noteLiveCall({call_id: 'b', name: 'fetch_url', started_ms: now - 20000});
+  check('a call rejoined mid-run is timed from when it began', dispatchLiveText() === 'fetch_url · 20s');
+  endDispatchLive('b');
+
+  now = 10000;
+  ['x', 'y', 'z'].forEach(function(id) { noteLiveCall({call_id: id, name: 'tool_' + id}); });
+  now = 11500;
+  check('two are named and the rest counted',
+    dispatchLiveText() === 'tool_x  |  tool_y +1 more');
+  ['x', 'y', 'z'].forEach(endDispatchLive);
+
+  noteLiveCall({call_id: 'd', name: 'agents'});
+  noteDispatchProgress({call_id: 'd', agent: 'Researcher', round: 2});
+  check('a dispatch is named by its agent, not by the call that sent it',
+    dispatchLiveText() === '[Researcher] round 2');
+  check('and shows from its first report, with no wait',
+    now - dispatchLive.d.since < liveCallQuietMs);
+})();
+
+// The line edits its text node in place: WebKit drops a click whose press and
+// release land on different nodes.
+(function() {
+  eval(lift(panel, 'function setLiveText(', 'setLiveText'));
+  var text = {nodeType: 3, nodeValue: 'a', nextSibling: null};
+  var node = {firstChild: text, textContent: 'a'};
+  setLiveText(node, 'b');
+  check('an existing text node is edited, not replaced', node.firstChild === text && text.nodeValue === 'b');
+  var empty = {firstChild: null, textContent: ''};
+  setLiveText(empty, 'c');
+  check('an empty label gets its text', empty.textContent === 'c');
+})();
+var callCase = panel.slice(panel.indexOf("case 'tool_call': {"), panel.indexOf("case 'tool_progress':"));
+check('every call of the turn\'s own goes on the line, unless it has a card of its own',
+  callCase.indexOf('if (ev.call_id && !ev.own_card) noteLiveCall(ev);') > callCase.indexOf('endThinkLive();'));
+check('the line is written in place',
+  /setLiveText\(label,/.test(lift(panel, 'function renderThinkLive(', 'renderThinkLive')));
+
 // ---- the dots step aside while the reply is written --------------------------
 
 // The dots say "waiting": hidden while words arrive, back once the writing has

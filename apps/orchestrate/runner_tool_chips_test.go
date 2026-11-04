@@ -1,8 +1,11 @@
 package orchestrate
 
 import (
+	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -54,4 +57,43 @@ func TestAFileTwoStepsAttachGoesOutOnce(t *testing.T) {
 	if n := strings.Count(buf.String(), `"kind":"file"`); n != 2 {
 		t.Errorf("the document twice and another file once must send 2 files, sent %d", n)
 	}
+}
+
+// A call says when it began, so a page that rejoins mid-call times it from
+// then; and a call that waits on the person under its own card (ask_user) says
+// so, so the live line beside the dots does not count the wait as it running.
+func TestAToolCallCarriesItsStartAndOwnCard(t *testing.T) {
+	buf := &bytes.Buffer{}
+	turn := &chatTurn{sse: &sseWriter{live: buf}}
+
+	before := time.Now().UnixMilli()
+	turn.emitToolCall("m1", "web_search", map[string]any{"q": "x"}, "")
+	var ev map[string]any
+	if err := json.Unmarshal(sseData(t, buf.String()), &ev); err != nil {
+		t.Fatalf("decoding %q: %v", buf.String(), err)
+	}
+	if ms, _ := ev["started_ms"].(float64); int64(ms) < before || int64(ms) > time.Now().UnixMilli() {
+		t.Errorf("started_ms = %v, want the time of the call", ev["started_ms"])
+	}
+	if _, ok := ev["own_card"]; ok {
+		t.Error("a plain call claimed a card of its own")
+	}
+
+	buf.Reset()
+	turn.emitToolCall("m1", "ask_user", map[string]any{"question": "which one?"}, "")
+	if !strings.Contains(buf.String(), `"own_card":true`) {
+		t.Errorf("ask_user should be kept off the live line: %s", buf.String())
+	}
+}
+
+// sseData is the JSON of the one SSE event in s.
+func sseData(t *testing.T, s string) []byte {
+	t.Helper()
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(line, "data: ") {
+			return []byte(strings.TrimPrefix(line, "data: "))
+		}
+	}
+	t.Fatalf("no data line in %q", s)
+	return nil
 }

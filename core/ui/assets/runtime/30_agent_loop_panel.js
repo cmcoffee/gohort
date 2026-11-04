@@ -5615,6 +5615,9 @@
             }
           }
           endThinkLive();
+          // Named on the line beside the dots while it runs, unless it draws
+          // a card of its own that says what it is waiting on.
+          if (ev.call_id && !ev.own_card) noteLiveCall(ev);
           // Inline tool-call card on the targeted bubble — OR on the
           // previous visible block when the bubble's still empty (so
           // tool activity surfaces on a plan/intent card the user is
@@ -5954,21 +5957,48 @@
     function renderThinkLive() {
       var label = thinkingEl && thinkingEl.querySelector('.ui-agent-thinking-label');
       if (!label) return;
-      // The reply's own thinking first; while it waits on a dispatched agent,
-      // what that agent is doing.
-      label.textContent = thinkLive ? thinkingLabel(Date.now() - thinkLive.since, thinkLive.tokens) : dispatchLiveText();
+      // The reply's own thinking first; while it waits on a call, what the
+      // call is doing.
+      setLiveText(label, thinkLive ? thinkingLabel(Date.now() - thinkLive.since, thinkLive.tokens) : dispatchLiveText());
+    }
+    // The line changes every second, so it edits its text node rather than
+    // replacing it: WebKit drops a click whose press and release land on
+    // different nodes, and churn beside a button is churn under the pointer.
+    function setLiveText(node, text) {
+      var t = node.firstChild;
+      if (t && t.nodeType === 3 && !t.nextSibling) {
+        if (t.nodeValue !== text) t.nodeValue = text;
+      } else {
+        node.textContent = text;
+      }
     }
 
-    // What each running dispatch is doing, by its call id: the agent, its
-    // round, the tool it is running or how long it has been thinking. Fed by
-    // tool_progress and by the calls drawn under it; gone with its result.
+    // What each running call is doing, by its call id. A call of the turn's
+    // own is its name and how long it has run. A dispatch adds the agent, its
+    // round, the tool it is running or how long it has been thinking, fed by
+    // tool_progress and by the calls drawn under it. Gone with its result.
     var dispatchLive = {};
     var dispatchLiveTimer = null;
+    // A call of the turn's own stays off the line for its first second: most
+    // finish sooner, and a name that flashes past says nothing.
+    var liveCallQuietMs = 1000;
+    // At most this many calls are named; the rest are counted.
+    var liveCallsShown = 2;
     function dispatchEntry(id, agent) {
       var d = dispatchLive[id];
-      if (!d) d = dispatchLive[id] = {agent: agent || '', since: Date.now(), round: 0, tool: '', think: null};
+      if (!d) d = dispatchLive[id] = {agent: agent || '', since: Date.now(), round: 0, tool: '', think: null, call: ''};
       if (agent) d.agent = agent;
       return d;
+    }
+    // A call starts: timed from when the server began it when that is known,
+    // so a page that rejoins mid-call does not start its clock over.
+    function noteLiveCall(ev) {
+      var d = dispatchEntry(ev.call_id);
+      d.call = String(ev.name || 'tool');
+      if (ev.started_ms && serverClockOffset !== null) {
+        d.since = Math.min(d.since, Number(ev.started_ms) + serverClockOffset);
+      }
+      tickDispatchLive();
     }
     function tickDispatchLive() {
       var any = Object.keys(dispatchLive).length > 0;
@@ -6012,13 +6042,18 @@
       var parts = [];
       Object.keys(dispatchLive).forEach(function(id) {
         var d = dispatchLive[id], bits = [];
+        var ms = Date.now() - d.since;
+        if (!d.agent && ms < liveCallQuietMs) return;
         if (d.round) bits.push('round ' + d.round);
         if (d.think) bits.push(thinkingLabel(Date.now() - d.think.since, d.think.tokens));
         else if (d.tool) bits.push(d.tool);
-        var secs = Math.floor((Date.now() - d.since) / 1000);
+        else if (!d.agent && d.call) bits.push(d.call);
+        var secs = Math.floor(ms / 1000);
         if (secs >= 3) bits.push(secs >= 60 ? Math.floor(secs / 60) + 'm ' + (secs % 60) + 's' : secs + 's');
         parts.push((d.agent ? '[' + d.agent + '] ' : '') + bits.join(' · '));
       });
+      var more = parts.length - liveCallsShown;
+      if (more > 0) return parts.slice(0, liveCallsShown).join('  |  ') + ' +' + more + ' more';
       return parts.join('  |  ');
     }
 

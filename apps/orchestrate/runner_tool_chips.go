@@ -53,6 +53,14 @@ var hiddenToolChips = map[string]bool{
 	"ask_user_form":    true,
 }
 
+// ownCardTools draw a card of their own that says what they are waiting on
+// (ask_user's question waits on the person), so their chip stays off the live
+// line beside the thinking dots, which would otherwise count the wait as the
+// call running.
+var ownCardTools = map[string]bool{
+	"ask_user": true,
+}
+
 // sessAttachmentCounts snapshots the session's attachment slice lengths
 // so wrapToolsForActivity can detect new entries the tool appended
 // during its run. nil-safe — control tools may pass nil sess when they
@@ -323,6 +331,12 @@ func (t *chatTurn) emitToolCallUnder(parentCallID, msgID, name string, args map[
 		"name":      displayName,
 		"args":      summarizeToolArgs(t.chipArgs(name, args)) + suffix,
 		"args_full": callArgs,
+		// When the call began, so a page that rejoins mid-call times it
+		// from then rather than from the replay.
+		"started_ms": time.Now().UnixMilli(),
+	}
+	if ownCardTools[name] {
+		payload["own_card"] = true
 	}
 	// Mark pipeline-mode temp tools so the client can decorate the
 	// pill differently (today: an emoji prefix). Detected by walking
