@@ -1230,3 +1230,62 @@ func TestAHandedOffPictureSaysHowToLookAgain(t *testing.T) {
 		t.Errorf("with nothing to describe the picture there is nothing to ask about:\n%s", got)
 	}
 }
+
+// A model left marked as reading images that refuses a request for carrying
+// them is learned as not reading them: the request is retried at once with the
+// pictures described by a model that does, and later requests send it
+// descriptions from the start. A picture in a format it cannot read is not
+// that, and teaches nothing.
+func TestAModelThatRefusesPicturesIsLearnedBlind(t *testing.T) {
+	worker := &FakeLLM{Turns: []FakeTurn{{Content: "A sign reads OPEN 9-5.", Repeat: true}}}
+	leadInner := &FakeLLM{Turns: []FakeTurn{
+		{Err: errors.New(`400: image input is not supported - hint: if this is unexpected, you may need to provide the mmproj`)},
+		{Content: "The sign says open nine to five.", Repeat: true},
+	}}
+	lead := &retryLLM{inner: leadInner, maxRetries: 1}
+	prevW, prevL := SharedWorkerLLM(), SharedLeadLLM()
+	SetSharedLLMs(&retryLLM{inner: worker, maxRetries: 1}, lead)
+	t.Cleanup(func() { SetSharedLLMs(prevW, prevL) })
+	describeMu.Lock()
+	describeCache, describeOrder = map[[32]byte]string{}, nil
+	describeMu.Unlock()
+
+	msgs := []Message{{Role: "user", Content: "what does it say?", Images: [][]byte{[]byte("\x89PNG a sign")}}}
+	resp, err := lead.Chat(context.Background(), msgs)
+	if err != nil || !strings.Contains(resp.Content, "nine to five") {
+		t.Fatalf("the refused request must be answered from a description: %v %+v", err, resp)
+	}
+	if !lead.blind() {
+		t.Fatal("the model must be learned as not reading images")
+	}
+	retried := leadInner.Sent(1)
+	if len(retried[0].Images) != 0 || !strings.Contains(retried[0].Content, "OPEN 9-5") {
+		t.Errorf("the retry must carry the description, not the picture: %+v", retried[0])
+	}
+	calls := leadInner.Calls()
+	if _, err := lead.Chat(context.Background(), msgs); err != nil {
+		t.Fatal(err)
+	}
+	if leadInner.Calls() != calls+1 || len(leadInner.Sent(calls)[0].Images) != 0 {
+		t.Error("once learned, the next request must go out described the first time")
+	}
+
+	// The same on the streaming path, which most turns take: a refusal
+	// streams nothing, so the retry is safe there too.
+	streamInner := &FakeLLM{Turns: []FakeTurn{
+		{Err: errors.New(`400: Invalid content type. image_url is only supported by certain models.`)},
+		{Content: "Open nine to five.", Repeat: true},
+	}}
+	streamer := &retryLLM{inner: streamInner, maxRetries: 1}
+	SetSharedLLMs(&retryLLM{inner: worker, maxRetries: 1}, streamer)
+	if resp, err := streamer.ChatStream(context.Background(), msgs, func(string) {}); err != nil || !strings.Contains(resp.Content, "nine to five") || !streamer.blind() {
+		t.Errorf("a streamed refusal must be learned and retried described: %v %+v", err, resp)
+	}
+
+	// A format the model cannot read is not a model that cannot see.
+	odd := &retryLLM{inner: &FakeLLM{Turns: []FakeTurn{{Err: errors.New("400: unsupported image type image/heic")}, {Content: "ok", Repeat: true}}}, maxRetries: 1}
+	odd.Chat(context.Background(), msgs)
+	if odd.blind() {
+		t.Error("an unsupported image format must not mark a model as not reading images")
+	}
+}

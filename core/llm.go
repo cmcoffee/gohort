@@ -1449,6 +1449,9 @@ type retryLLM struct {
 	// noImages: this model is not shown images; they are described in their
 	// place (LLMProviderConfig.NoImages, the image gate in llm.go).
 	noImages bool
+	// learnedNoImages is the same, learned from the model refusing a request
+	// for carrying pictures (learnNoImages), for the life of the process.
+	learnedNoImages atomic.Bool
 	// imageLimit is how many pictures this model takes in one request, 0 for
 	// not known. Learned from its own refusal (learnImageLimit) and applied
 	// before every call after (withinImageLimit). A lower limit is learned
@@ -1640,6 +1643,12 @@ func (r *retryLLM) chat(ctx context.Context, messages []Message, opts ...ChatOpt
 			messages = r.withinImageLimit(ctx, messages)
 			resp, err = r.inner.Chat(ctx, messages, opts...)
 		}
+		if r.learnNoImages(err, messages) {
+			// No pictures at all for this model: the same request, each one
+			// described by a model that reads them.
+			messages = r.withoutImages(ctx, messages)
+			resp, err = r.inner.Chat(ctx, messages, opts...)
+		}
 		if !shouldRetryEmpty(resp, err) {
 			return resp, err
 		}
@@ -1726,6 +1735,10 @@ func (r *retryLLM) chatStream(ctx context.Context, messages []Message, handler S
 		// refusal streams nothing, so the retry within the limit is safe.
 		if !handlerCalled && r.learnImageLimit(err, messages) {
 			messages = r.withinImageLimit(ctx, messages)
+			resp, err = r.inner.ChatStream(ctx, messages, wrappedHandler, opts...)
+		}
+		if !handlerCalled && r.learnNoImages(err, messages) {
+			messages = r.withoutImages(ctx, messages)
 			resp, err = r.inner.ChatStream(ctx, messages, wrappedHandler, opts...)
 		}
 		if err != nil && handlerCalled {
@@ -2572,7 +2585,7 @@ var (
 // description, for a model that does not read them. Messages carrying none
 // are returned as they are, and the caller's slice is never changed.
 func (r *retryLLM) withoutImages(ctx context.Context, messages []Message) []Message {
-	if !r.noImages {
+	if !r.blind() {
 		return messages
 	}
 	carries := false
@@ -2662,6 +2675,44 @@ func countImages(messages []Message) (n int) {
 	return n
 }
 
+// blind reports whether this model is not shown images: set so ("Reads
+// images" off), or learned from its own refusal.
+func (r *retryLLM) blind() bool {
+	return r.noImages || r.learnedNoImages.Load()
+}
+
+// imagesRefusedRE reads a provider refusing a request because the model takes
+// no pictures at all, in the words llama.cpp, vLLM, OpenAI and routers use. A
+// picture in a format the model cannot read ("unsupported image type") is not
+// this: one odd file must not mark a model that sees as blind.
+var imagesRefusedRE = regexp.MustCompile(`(?i)(image inputs? (is|are) not supported|do(es)?( no|n')t support (image|images|vision|multi-?modal)|not a multi-?modal model|image_url is only supported|at most 0 image|vision is not supported|support image input|multi-?modal inputs? (is|are) not supported)`)
+
+// learnNoImages marks this model as not reading images when err is it
+// refusing messages for carrying pictures, and says whether messages can be
+// retried without them. Learned for the life of the process, and said once:
+// the setting that keeps it is "Reads images" in Admin > Models. Without it,
+// an owner who left the switch on for a model that cannot see had every
+// picture fail the request, or worse, ignored.
+func (r *retryLLM) learnNoImages(err error, messages []Message) bool {
+	if err == nil || r.blind() || !carriesImages(messages) || !imagesRefusedRE.MatchString(err.Error()) {
+		return false
+	}
+	if r.learnedNoImages.CompareAndSwap(false, true) {
+		Log("[llm] the model refused a request for carrying pictures (%v): from now on its pictures are described by a model that reads them. Set \"Reads images\" off for it in Admin > Models to keep this after a restart", err)
+	}
+	return true
+}
+
+// carriesImages reports whether messages hold any picture or video.
+func carriesImages(messages []Message) bool {
+	for _, m := range messages {
+		if len(m.Images) > 0 || len(m.Videos) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // learnImageLimit keeps the limit err reports and says whether messages can
 // be retried within it. A limit of none is not learned: a model that reads no
 // pictures is the NoImages setting.
@@ -2722,7 +2773,7 @@ func (r *retryLLM) withinImageLimit(ctx context.Context, messages []Message) []M
 func imageDescriber(asking *retryLLM) LLM {
 	for _, m := range []LLM{SharedWorkerLLM(), SharedLeadLLM()} {
 		r, ok := m.(*retryLLM)
-		if !ok || r == asking || r.noImages {
+		if !ok || r == asking || r.blind() {
 			continue
 		}
 		return r
@@ -2742,7 +2793,7 @@ func ImagesReadable() bool {
 			continue
 		}
 		configured = true
-		if r, ok := m.(*retryLLM); !ok || !r.noImages {
+		if r, ok := m.(*retryLLM); !ok || !r.blind() {
 			return true
 		}
 	}
