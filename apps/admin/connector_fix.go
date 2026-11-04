@@ -49,7 +49,7 @@ func connectorEditAction(label, onlyIf, ask string) ui.RowAction {
 			{Field: "note", Type: "readonly", Label: "Saving"},
 			{Field: "spec", Type: "textarea", Label: "Spec", Rows: 24},
 		},
-		Invalidate: []string{"api/connectors"},
+		Invalidate: connectorListSources,
 		Assist:     true, AssistURL: "api/connectors/fix?name={name}",
 	}
 	act := ui.AssistAction(label, ui.AssistPanel{

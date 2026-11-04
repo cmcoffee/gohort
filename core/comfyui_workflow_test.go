@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -282,8 +283,73 @@ func TestFlux2WorkflowImports(t *testing.T) {
 	if got := ComfyWorkflowTypeOf(spec.ComfyMap); got != ComfyTypeGenerate {
 		t.Errorf("type = %q, want generate", got)
 	}
+	// One warning, and only one: steps sit on the scheduler, driven by the
+	// turbo switch (8 with the LoRA, 20 without). Leaving them unmapped is
+	// right, since writing a number over the link would cut the switch out,
+	// but without a word a requested step count is ignored and nothing says
+	// why. It names the switch by its title, which is what the author sees.
+	if len(warns) != 1 || !strings.Contains(warns[0], "steps is driven by node 98:103 (Switch(steps))") {
+		t.Errorf("want the one steps warning naming the switch, got %v", warns)
+	}
+	if len(spec.ComfyMap.StepsNodes) != 0 {
+		t.Errorf("steps mapped onto %v, over the switch's link", spec.ComfyMap.StepsNodes)
+	}
+}
+
+// Steps one node out on the scheduler, as a plain number, are mapped like a
+// KSampler's: a Flux graph without a switch takes the steps it is asked for.
+func TestSchedulerStepsAreMappedWhenLiteral(t *testing.T) {
+	var g map[string]any
+	if err := json.Unmarshal([]byte(flux2Graph(t)), &g); err != nil {
+		t.Fatal(err)
+	}
+	g["98:48"].(map[string]any)["inputs"].(map[string]any)["steps"] = 12
+	raw, _ := json.Marshal(g)
+	spec, warns, err := NewComfyImageSpec("http://localhost:8188", "no_auth", string(raw), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !eqStrs(spec.ComfyMap.StepsNodes, []string{"98:48"}) {
+		t.Errorf("steps nodes = %v, want the scheduler 98:48", spec.ComfyMap.StepsNodes)
+	}
 	if len(warns) != 0 {
-		t.Errorf("a fully mapped graph should import clean, got %v", warns)
+		t.Errorf("literal steps should import clean, got %v", warns)
+	}
+	body, err := BuildComfyBody(spec.ComfyWorkflow, spec.ComfyMap, ComfyBuildInput{Prompt: "p", Width: 1024, Height: 1024, Steps: 6, Seed: 1})
+	if err != nil || !strings.Contains(body, `"steps":6`) {
+		t.Errorf("requested steps did not reach the scheduler: %v", err)
+	}
+}
+
+// Flux, Flux 2 and SD3 latents work in 16-pixel blocks and drop the rest, so
+// a size rounded only to 8 renders short. Every size node gets the same
+// multiple of 16, the latent and the scheduler alike.
+func TestComfySizesAreMultiplesOfSixteen(t *testing.T) {
+	for in, want := range map[int]int{1368: 1376, 1360: 1360, 1352: 1360, 768: 768, 1000: 1008, 0: 0, 40: 64} {
+		if got := comfyLatentDim(in); got != want {
+			t.Errorf("comfyLatentDim(%d) = %d, want %d", in, got, want)
+		}
+	}
+	spec, _, err := NewComfyImageSpec("http://localhost:8188", "no_auth", flux2Graph(t), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := BuildComfyBody(spec.ComfyWorkflow, spec.ComfyMap, ComfyBuildInput{Prompt: "p", Width: 1368, Height: 768, Seed: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b struct {
+		Prompt map[string]struct {
+			Inputs map[string]any `json:"inputs"`
+		} `json:"prompt"`
+	}
+	if err := json.Unmarshal([]byte(body), &b); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"98:47", "98:48"} {
+		if w := b.Prompt[id].Inputs["width"]; w != float64(1376) {
+			t.Errorf("%s width = %v, want 1376", id, w)
+		}
 	}
 }
 
@@ -1574,5 +1640,180 @@ func TestOrderIsStable(t *testing.T) {
 				t.Fatalf("order is unstable across calls: %v vs %v — map iteration is leaking out", first, again)
 			}
 		}
+	}
+}
+
+// qwenThreeInputGraph is the Qwen blend fixture with a third source: a third
+// LoadImage through its own scaler into image3 of both encoders.
+func qwenThreeInputGraph(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", "qwen_blend_workflow.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var g map[string]map[string]any
+	if err := json.Unmarshal(raw, &g); err != nil {
+		t.Fatal(err)
+	}
+	g["43"] = map[string]any{"class_type": "LoadImage", "inputs": map[string]any{"image": "ComfyUI_00175_.png"}}
+	g["170:171"] = map[string]any{"class_type": "FluxKontextImageScale", "inputs": map[string]any{"image": []any{"43", 0}}}
+	for _, enc := range []string{"170:149", "170:151"} {
+		g[enc]["inputs"].(map[string]any)["image3"] = []any{"170:171", 0}
+	}
+	out, _ := json.Marshal(g)
+	return string(out)
+}
+
+// Every source of a three-picture blend reaches its own loader, in the order
+// passed: picture 2 and 3 are not dropped, doubled, or left on the filenames
+// the workflow was saved with.
+func TestThreePicturesEachReachTheirLoader(t *testing.T) {
+	spec, _, err := NewComfyImageSpec("http://localhost:8188", "no_auth", qwenThreeInputGraph(t), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !eqStrs(spec.ComfyMap.ImageNodes, []string{"41", "42", "43"}) {
+		t.Fatalf("image nodes = %v, want the three loaders in image1..image3 order", spec.ComfyMap.ImageNodes)
+	}
+	build := func(names ...string) map[string]map[string]any {
+		var imgs []ComfyUploadedImage
+		for _, n := range names {
+			imgs = append(imgs, ComfyUploadedImage{Name: n, Subfolder: "gohort"})
+		}
+		body, err := BuildComfyBody(spec.ComfyWorkflow, spec.ComfyMap, ComfyBuildInput{Prompt: "p", Seed: 1, Images: imgs})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var b struct {
+			Prompt map[string]map[string]any `json:"prompt"`
+		}
+		if err := json.Unmarshal([]byte(body), &b); err != nil {
+			t.Fatal(err)
+		}
+		return b.Prompt
+	}
+	inputs := func(g map[string]map[string]any, id string) map[string]any { return g[id]["inputs"].(map[string]any) }
+
+	g := build("a.png", "b.png", "c.png")
+	for id, want := range map[string]string{"41": "gohort/a.png", "42": "gohort/b.png", "43": "gohort/c.png"} {
+		if got := inputs(g, id)["image"]; got != want {
+			t.Errorf("loader %s = %v, want %s", id, got, want)
+		}
+	}
+	for _, enc := range []string{"170:149", "170:151"} {
+		for _, k := range []string{"image1", "image2", "image3"} {
+			if _, ok := inputs(g, enc)[k]; !ok {
+				t.Errorf("encoder %s lost %s with every picture given", enc, k)
+			}
+		}
+	}
+
+	// Two pictures: the third input is taken out, and the first two stay
+	// wired on BOTH encoders.
+	g = build("a.png", "b.png")
+	if _, ok := g["43"]; ok {
+		if got := inputs(g, "43")["image"]; got == "ComfyUI_00175_.png" {
+			t.Error("the unfilled third loader still renders its saved placeholder")
+		}
+	}
+	for _, enc := range []string{"170:149", "170:151"} {
+		in := inputs(g, enc)
+		if _, ok := in["image3"]; ok {
+			t.Errorf("encoder %s still takes image3 with two pictures", enc)
+		}
+		if _, ok := in["image1"]; !ok {
+			t.Errorf("encoder %s lost image1", enc)
+		}
+		if _, ok := in["image2"]; !ok {
+			t.Errorf("encoder %s lost image2", enc)
+		}
+	}
+	if got := inputs(g, "42")["image"]; got != "gohort/b.png" {
+		t.Errorf("second loader = %v, want gohort/b.png", got)
+	}
+}
+
+// The log line beside a job id says which picture went to which loader, and
+// which inputs were taken out unfilled.
+func TestTheWiringLineNamesEachPictureAndNode(t *testing.T) {
+	spec, _, err := NewComfyImageSpec("http://comfy.example.test:8188", "no_auth", qwenThreeInputGraph(t), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := restImageParams{images: []inputImage{{name: "image#first", data: make([]byte, 2048)}, {name: "image#second", data: make([]byte, 10)}}}
+	line := spec.comfyWiringLine(p, []ComfyUploadedImage{{Name: "a.png", Subfolder: "gohort"}, {Name: "b.png", Subfolder: "gohort"}})
+	for _, want := range []string{
+		"picture 1 (image#first, 2.0KB) to node 41 as gohort/a.png",
+		"picture 2 (image#second, 10.0Bytes) to node 42 as gohort/b.png",
+		"unfilled inputs taken out: 43",
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("wiring line %q lacks %q", line, want)
+		}
+	}
+	if (RestImageSpec{}).comfyWiringLine(p, nil) != "" {
+		t.Error("a backend with no workflow logged a wiring line")
+	}
+	if got := hostOf("http://comfy.example.test:8188/prompt"); got != "comfy.example.test:8188" {
+		t.Errorf("hostOf = %q", got)
+	}
+}
+
+// A workflow says which model it runs, and a backend nobody wrote guidance
+// for is told that model's prompting conventions: Qwen-Image-Edit's Picture 1,
+// Picture 2, or Kontext's "change X while keeping Y". Qwen is recognised even
+// where it borrows Kontext's helper nodes, as the 2511 workflows do.
+func TestAWorkflowSaysHowItsModelIsPrompted(t *testing.T) {
+	read := func(name string) string {
+		raw, err := os.ReadFile(filepath.Join("testdata", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+	for _, name := range []string{"qwen_edit_workflow.json", "qwen_blend_workflow.json"} {
+		g := suggestedComfyGuidance(read(name))
+		if !strings.Contains(g, "Qwen-Image-Edit") || !strings.Contains(g, "Picture 1, Picture 2") || !strings.Contains(g, "face swap") {
+			t.Errorf("%s: guidance = %q", name, g)
+		}
+	}
+	kontext := `{"1":{"class_type":"ReferenceLatent","inputs":{}},"2":{"class_type":"CLIPTextEncode","inputs":{"text":"x"}}}`
+	if g := suggestedComfyGuidance(kontext); !strings.Contains(g, "FLUX Kontext") || !strings.Contains(g, "while keeping") {
+		t.Errorf("kontext guidance = %q", g)
+	}
+	// A model it does not recognise says nothing rather than guess.
+	if g := suggestedComfyGuidance(flux2Graph(t)); g != "" {
+		t.Errorf("an unrecognised model got guidance: %q", g)
+	}
+	if g := suggestedComfyGuidance("not json"); g != "" {
+		t.Errorf("an unreadable workflow got guidance: %q", g)
+	}
+}
+
+// Written guidance replaces the suggestion; empty uses it. The form shows
+// whichever is in force, so the admin sees what the agent is told.
+func TestWrittenGuidanceReplacesTheSuggestion(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "qwen_edit_workflow.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, _, err := NewComfyImageSpec("http://localhost:8188", "no_auth", string(raw), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(spec.promptGuidance(), "Picture 1") {
+		t.Errorf("an empty field did not use the suggestion: %q", spec.promptGuidance())
+	}
+	b, _ := json.Marshal(spec)
+	if v := comfyReadValues(ConnectorTemplate{}, b)["prompt_guidance"]; !strings.Contains(fmt.Sprint(v), "Picture 1") {
+		t.Errorf("the form does not show the suggestion: %v", v)
+	}
+	spec.PromptGuidance = "Say 'image one' and 'image two'."
+	if got := spec.promptGuidance(); got != "Say 'image one' and 'image two'." {
+		t.Errorf("written guidance did not win: %q", got)
+	}
+	b, _ = json.Marshal(spec)
+	if v := comfyReadValues(ConnectorTemplate{}, b)["prompt_guidance"]; v != "Say 'image one' and 'image two'." {
+		t.Errorf("the form shows %v, not what was written", v)
 	}
 }

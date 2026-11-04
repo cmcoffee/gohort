@@ -203,7 +203,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 						// The summary says what the connector reaches; it and
 						// what is wrong take the second line at full width.
 						Columns: connectorColumns(),
-						RowActions: []ui.RowAction{
+						RowActions: append(append([]ui.RowAction{
 							ui.ExpandIf("Endpoints", "endpoints", "", ui.Table{
 								Source: "api/connectors/endpoints?name={name}",
 								RowKey: "name",
@@ -215,14 +215,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 								},
 								EmptyText: "This service has no endpoints.",
 							}),
-							ui.ModalActionIf("Settings", "has_settings", "", ui.FormPanel{
-								Source:      "api/connectors/settings?name={name}",
-								PostURL:     "api/connectors/settings?name={name}",
-								Method:      "POST",
-								SubmitLabel: "Save",
-								Invalidate:  []string{"api/connectors"},
-								Fields:      connectionSettingsFields(),
-							}),
+							connectorSettingsAction(),
 							ui.ModalActionIf("Access", "has_access", "", ui.ACLPicker(ui.ACLPickerConfig{
 								OptionsSource: "api/user-candidates",
 								RecordSource:  "api/connectors/access?name={name}",
@@ -235,24 +228,19 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 									"A page that has it serve the whole instance (an LLM tier, Web Search, Embeddings) serves every user whatever this says.",
 								EmptyText: "No other users to grant yet.",
 							})),
-							{Type: "button", Label: "Edit", Method: "client",
-								PostTo: "configure_backend", OnlyIf: "edit_form"},
-							connectorEditAction("Edit", "edit_spec", "What should change in how this service is called, and why?"),
-							connectorEditAction("Fix", "needs_fix", "Why is this service failing, and what would fix it?"),
-							{Type: "button", Label: "Test", Method: "POST",
-								PostTo: "api/connectors/test?name={name}", OnlyIf: "testable",
-								ConfirmField: "test_confirm"},
-							{Type: "button", Label: "Check health", Method: "POST",
+						}, connectorEditRowActions()...),
+							connectorTestAction(),
+							ui.RowAction{Type: "button", Label: "Check health", Method: "POST",
 								PostTo: "api/connectors/health?name={name}", OnlyIf: "has_health"},
-							{Type: "button", Label: "Export", Method: "client",
+							ui.RowAction{Type: "button", Label: "Export", Method: "client",
 								PostTo: "connectors_export"},
-							{Type: "button", Label: "Delete",
+							ui.RowAction{Type: "button", Label: "Delete",
 								PostTo:  "api/connectors?name={name}",
 								Method:  "DELETE",
 								OnlyIf:  "deletable",
 								Confirm: "Delete this connector?",
 								Variant: "danger"},
-						},
+						),
 						EmptyText: "No connectors yet. Add one from Admin > Services > Templates, or import a bundle.",
 					},
 					// Import: "Import bundle…" opens a file picker, then a
@@ -449,6 +437,41 @@ func templateSaveButton() ui.ModalButton {
 }
 
 // connectorColumns are a connector row's columns, in both lists.
+// connectorSettingsAction is a connector row's Settings: its values and its
+// key, the form the page that chooses it shows. Every table listing
+// connectors uses this one, so a connector's settings are one form.
+func connectorSettingsAction() ui.RowAction {
+	return ui.ModalActionIf("Settings", "has_settings", "", ui.FormPanel{
+		Source:      "api/connectors/settings?name={name}",
+		PostURL:     "api/connectors/settings?name={name}",
+		Method:      "POST",
+		SubmitLabel: "Save",
+		Invalidate:  connectorListSources,
+		Fields:      connectionSettingsFields(),
+	})
+}
+
+// connectorEditRowActions are a connector row's one editor, by the flags
+// connectorEditors sets: Edit for its setup form, Edit for its spec, or Fix.
+func connectorEditRowActions() []ui.RowAction {
+	return []ui.RowAction{
+		{Type: "button", Label: "Edit", Method: "client", PostTo: "configure_backend", OnlyIf: "edit_form"},
+		connectorEditAction("Edit", "edit_spec", "What should change in how this service is called, and why?"),
+		connectorEditAction("Fix", "needs_fix", "Why is this service failing, and what would fix it?"),
+	}
+}
+
+// connectorTestAction is a connector row's Test: the smallest real call, and
+// its contract's check.
+func connectorTestAction() ui.RowAction {
+	return ui.RowAction{Type: "button", Label: "Test", Method: "POST",
+		PostTo: "api/connectors/test?name={name}", OnlyIf: "testable", ConfirmField: "test_confirm"}
+}
+
+// connectorListSources are the tables that list connectors. A change made
+// from either one's row reloads both, since a page can hold both.
+var connectorListSources = []string{"api/connectors", imageBackendsSource}
+
 func connectorColumns() []ui.Col {
 	return []ui.Col{
 		{Field: "title", Label: "Name", Flex: 2},

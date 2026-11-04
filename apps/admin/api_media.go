@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -46,6 +48,11 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 		"GET":  jsonapi.Get(a.db, a.handleImageGen, a.gate()),
 		"POST": jsonapi.Post(a.db, a.handleImageGenSave, a.gate()),
 	}.Serve)
+
+	// Every image backend, with what it does and the editor its row opens:
+	// the list under Image Generation's picker, so a backend is configured
+	// from the page that chooses it.
+	sub.HandleFunc("/"+imageBackendsSource, jsonapi.Get(a.db, a.handleImageBackends, a.gate()))
 
 	// Music: the music connectors offered to agents as tools.
 	sub.HandleFunc("/api/music", jsonapi.Methods{
@@ -321,6 +328,73 @@ func (a *AdminApp) handleSpeechVoices(c *jsonapi.Call) (any, error) {
 	ctx, end := previewTieIn(c.R.Context(), cfg.Provider)
 	defer end()
 	return media.VoiceChips(media.SpeechVoices(ctx, cfg)), nil
+}
+
+// imageBackendsSource is the image backend list's address, named once because
+// the edits made from any connector row reload it (connectorListSources), and
+// a reload names its source exactly.
+const imageBackendsSource = "api/image-backends"
+
+// imageBackendRow is one image backend on Image Generation's list.
+type imageBackendRow struct {
+	Name    string `json:"name"`
+	Title   string `json:"title"`
+	Summary string `json:"summary"`
+	// Role is how Image Generation uses it: "default" (the picker's choice),
+	// "offered" (also offered to agents), or "unused".
+	Role  string `json:"role"`
+	Does  string `json:"does"`
+	Size  string `json:"size"`
+	Steps string `json:"steps,omitempty"`
+	// What its row can do, set exactly as a Connectors row's are, so it opens
+	// the same editor there and here.
+	EditForm    bool   `json:"edit_form,omitempty"`
+	EditSpec    bool   `json:"edit_spec,omitempty"`
+	NeedsFix    bool   `json:"needs_fix,omitempty"`
+	HasSettings bool   `json:"has_settings,omitempty"`
+	Testable    bool   `json:"testable,omitempty"`
+	TestConfirm string `json:"test_confirm,omitempty"`
+	LastError   string `json:"last_error,omitempty"`
+}
+
+// handleImageBackends lists every connector Image Generation's picker offers,
+// the default first, then the ones offered to agents, then the rest.
+func (a *AdminApp) handleImageBackends(c *jsonapi.Call) (any, error) {
+	provider := a.storedString(ImageTable, "provider")
+	var agents []string
+	if a.db != nil {
+		a.db.Get(ImageTable, "agents", &agents)
+	}
+	rows := []imageBackendRow{}
+	for _, conn := range ListConnectors(RootDB) {
+		if !imageBackendListed(conn) {
+			continue
+		}
+		o := OutlineImageBackend(conn)
+		row := imageBackendRow{Name: conn.Name, Title: conn.Title(), Summary: ConnectorSummary(conn),
+			Role: "unused", Does: o.Does, Size: o.Size, Steps: o.Steps,
+			HasSettings: conn.Kind == service.Kind, LastError: conn.LastError}
+		switch {
+		case conn.Name == provider:
+			row.Role = "default"
+		case slices.Contains(agents, conn.Name):
+			row.Role = "offered"
+		}
+		row.EditForm, row.EditSpec, row.NeedsFix = connectorEditors(conn)
+		if service.Testable(conn) {
+			row.Testable, row.TestConfirm = true, testConfirm(conn.Name)
+		}
+		rows = append(rows, row)
+	}
+	rank := map[string]int{"default": 0, "offered": 1, "unused": 2}
+	sort.SliceStable(rows, func(i, j int) bool { return rank[rows[i].Role] < rank[rows[j].Role] })
+	return rows, nil
+}
+
+// imageBackendListed is a connector the picker offers: every image
+// connector, and any other backend already registered (imageFormFields).
+func imageBackendListed(conn Connector) bool {
+	return imageConnector(conn.Name) || (conn.Approved && ImageBackendRegistered(conn.Name))
 }
 
 // handleImageGen serves /api/image-gen; registerMediaRoutes says what it is for.

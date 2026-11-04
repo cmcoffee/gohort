@@ -382,7 +382,6 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 			ClientAction("connector_webhook", connectorWebhookAction).
 			ClientAction("add_image_backend", addImageBackendAction).
 			ClientAction("configure_backend", configureBackendAction).
-			ClientAction("configure_backend_pick", configureBackendPickAction).
 			ClientAction("add_tool_from_template", addToolFromTemplateAction).
 			ClientAction("add_extension", addExtensionAction).
 			ClientAction("template_install", templateInstallAction).
@@ -713,20 +712,6 @@ var configureToolAction = `function(ctx){
     .then(function(res){ if(!res.ok) return res.text().then(function(t){throw new Error(t||('HTTP '+res.status));}); return res.json(); })
     .then(function(sc){ window.uiTemplateForm(sc, reload); })
     .catch(function(e){ window.uiAlert && window.uiAlert((e&&e.message)||(''+e)); });
-}`
-
-// configureBackendPickAction (Image Generation toolbar) → pick an image backend to configure.
-var configureBackendPickAction = `function(ctx){
-  if(!window.uiTemplateForm){` + connectorFormDef + `}
-  fetch('api/connectors',{cache:'no-store',credentials:'same-origin'}).then(function(r){return r.json();}).then(function(rows){
-    var img=(rows||[]).filter(function(x){ return x.is_image; });
-    if(!img.length){ window.uiAlert && window.uiAlert('No image backend yet: add one first.'); return; }
-    if(img.length===1){ window.uiConfigureBackend(img[0].name, function(){ location.reload(); }); return; }
-    var names=img.map(function(x){return x.name;});
-    window.uiChoose('Configure which backend?', names).then(function(pick){
-      if(pick){ window.uiConfigureBackend(pick, function(){ location.reload(); }); }
-    });
-  }).catch(function(e){ window.uiAlert && window.uiAlert((e&&e.message)||(''+e)); });
 }`
 
 // (credentialScopeManageAction removed — the per-agent credential scope pill is

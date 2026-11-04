@@ -85,7 +85,6 @@ func connectorRows(connectors bool) any {
 		Approved  bool   `json:"approved"`
 		LastError string `json:"last_error"`
 		Template  string `json:"template,omitempty"` // provenance (which template authored it)
-		IsImage   bool   `json:"is_image"`           // configurableImage → image-section toolbar pick
 		Webhook   string `json:"webhook,omitempty"`  // a push bridge's provider → gets "Webhook…"
 		// Its one editor: EditForm, the Go setup form a template made it with
 		// (ComfyUI, A1111); EditSpec, its spec beside the assistant; NeedsFix,
@@ -138,16 +137,12 @@ func connectorRows(connectors bool) any {
 			continue
 		}
 		row := connRow{Name: conn.Name, Title: conn.Title(), Kind: conn.Kind, Summary: ConnectorSummary(conn), Owner: conn.Owner,
-			Approved: conn.Approved, LastError: conn.LastError, Template: conn.Template, IsImage: configurableImage(conn),
+			Approved: conn.Approved, LastError: conn.LastError, Template: conn.Template,
 			Webhook: connectorWebhook(conn), State: "pending",
 			Endpoints: conn.Kind == service.Kind, Group: connectorGroup(conn, research, uses),
 			Deletable: len(uses[conn.Name]) == 0, HasSettings: conn.Kind == service.Kind,
 			HasAccess: conn.Kind == service.Kind && conn.ID != ""}
-		if service.Fixable(conn) {
-			_, form := TemplateForConnector(conn)
-			valid := ValidateConnector(conn) == nil
-			row.EditForm, row.EditSpec, row.NeedsFix = form && valid, !form && valid, !valid
-		}
+		row.EditForm, row.EditSpec, row.NeedsFix = connectorEditors(conn)
 		row.Key = keptSecretsLine(conn)
 		if problems := service.SelfCheck(RootDB, conn); len(problems) > 0 {
 			row.Check = "Needs attention: " + strings.Join(problems, "; ") + "."
@@ -207,6 +202,20 @@ func connectorRows(connectors bool) any {
 		return []connRow{}
 	}
 	return rows
+}
+
+// connectorEditors is which one editor a connector's row opens: form, the Go
+// setup form a template made it with (ComfyUI, A1111); spec, its spec beside
+// the assistant; fix, the same as Fix, when its spec does not validate. At
+// most one is true. Shared by every table that lists connectors, so a
+// connector opens the same editor wherever it is listed.
+func connectorEditors(conn Connector) (form, spec, fix bool) {
+	if !service.Fixable(conn) {
+		return false, false, false
+	}
+	_, made := TemplateForConnector(conn)
+	valid := ValidateConnector(conn) == nil
+	return made && valid, !made && valid, !valid
 }
 
 // keptSecretsLine is connection c's row's word on the secrets it keeps:

@@ -417,6 +417,43 @@ func firstComfyLinkID(v any) any {
 	return "?"
 }
 
+// comfyWiringLine says which source picture went to which load node, and which
+// inputs were taken out unfilled, for the log line beside the job id. "One
+// picture made it and the others did not" was otherwise unanswerable from this
+// side: the request was right or wrong, and nothing recorded which. With the
+// job id, ComfyUI's /history for that job says what it did with each.
+func (s RestImageSpec) comfyWiringLine(p restImageParams, uploaded []ComfyUploadedImage) string {
+	if s.ComfyWorkflow == "" || len(uploaded) == 0 {
+		return ""
+	}
+	nodes := s.ComfyMap.ImageNodes
+	var parts []string
+	for i, up := range uploaded {
+		node := "?"
+		if i < len(nodes) {
+			node = nodes[i]
+		}
+		what := ""
+		if i < len(p.images) {
+			what = fmt.Sprintf(" (%s, %s)", p.images[i].name, HumanSize(int64(len(p.images[i].data))))
+		}
+		parts = append(parts, fmt.Sprintf("picture %d%s to node %s as %s", i+1, what, node, up.Ref()))
+	}
+	line := strings.Join(parts, "; ")
+	if len(uploaded) < len(nodes) {
+		line += "; unfilled inputs taken out: " + strings.Join(nodes[len(uploaded):], ", ")
+	}
+	return line
+}
+
+// hostOf is a URL's host, for a log line that names a backend without its path.
+func hostOf(raw string) string {
+	if u, err := url.Parse(strings.TrimSpace(raw)); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return raw
+}
+
 // sameImageHost reports whether two of the backend's endpoints share a host.
 func sameImageHost(submitURL, otherURL string) error {
 	a, err := url.Parse(strings.TrimSpace(submitURL))
@@ -678,7 +715,7 @@ func (t *restImageTool) Desc() string {
 	// carry backend-specific prompting tips, e.g. quoting text you want rendered.
 	if c, ok := GetConnector(RootDB, t.connector); ok {
 		if s, graph, err := imageSpecOf(c); graph && err == nil {
-			if g := strings.TrimSpace(s.PromptGuidance); g != "" {
+			if g := s.promptGuidance(); g != "" {
 				base += " Prompt guidance for this backend: " + g
 			}
 		}
@@ -986,6 +1023,9 @@ func (s RestImageSpec) generate(sess *ToolSession, p restImageParams) (restImage
 	id := restJSONString(submitNode, s.SubmitIDPath)
 	if s.SubmitIDPath != "" && id == "" {
 		return out, fmt.Errorf("image backend gave no job id at %q; response: %s", s.SubmitIDPath, truncateForError(jsonBody))
+	}
+	if line := s.comfyWiringLine(p, uploaded); line != "" {
+		Log("[rest_image] job %s on %s: %s", id, hostOf(s.SubmitURL), line)
 	}
 	idTok := map[string]string{"id": id}
 	pollURL := substituteTokens(s.PollURL, idTok)
@@ -1303,7 +1343,7 @@ func reachableImageBackends(sess *ToolSession) []ImageBackendChoice {
 		}
 		out = append(out, ImageBackendChoice{
 			Name:        c.Name,
-			Guidance:    strings.TrimSpace(s.PromptGuidance),
+			Guidance:    s.promptGuidance(),
 			Default:     c.Name == defaultProvider,
 			Edits:       s.SupportsImageInput(),
 			MaxImages:   s.MaxImages(),
@@ -1681,6 +1721,57 @@ type imageHost interface {
 	// ImageConnector is the spec of a connection keeping image backend s,
 	// its key sent as send ("" for the backend's usual way).
 	ImageConnector(s RestImageSpec, send string) (json.RawMessage, error)
+}
+
+// ImageBackendOutline is an image connector in words, for a page that lists
+// image backends beside the setting that picks between them: what it does,
+// and how the size and steps of a picture from it are decided.
+type ImageBackendOutline struct {
+	Does  string // "generate", "edit" or "blend"
+	Size  string // "1024×1024", "the source photo's", "the backend's own"
+	Steps string // "20", "the workflow's", "set by the workflow", or "" when it has none
+}
+
+// OutlineImageBackend reads an image connector's outline from the spec the
+// image tool reads, so the page and the agent describe it alike. A ComfyUI
+// workflow says what it does by its wiring (ComfyWorkflowTypeOf): a graph's
+// size follows its size nodes, or the source photo when it has none; its steps
+// are the request's when they are mapped, and the workflow's otherwise.
+func OutlineImageBackend(c Connector) ImageBackendOutline {
+	s, graph, err := imageSpecOf(c)
+	_, edits := lookupImageEditBackend(c.Name)
+	if err != nil || !graph {
+		o := ImageBackendOutline{Does: ComfyTypeGenerate, Size: "the backend's own"}
+		if edits || (err == nil && s.SupportsImageInput()) {
+			o.Does = ComfyTypeEdit
+		}
+		if err == nil && s.DefaultWidth > 0 && s.DefaultHeight > 0 {
+			o.Size = fmt.Sprintf("%d×%d", s.DefaultWidth, s.DefaultHeight)
+		}
+		if err == nil && s.DefaultSteps > 0 {
+			o.Steps = fmt.Sprint(s.DefaultSteps)
+		}
+		return o
+	}
+	m := s.ComfyMap
+	o := ImageBackendOutline{Does: ComfyWorkflowTypeOf(m)}
+	switch {
+	case len(m.WidthNodes) > 0 && s.DefaultWidth > 0 && s.DefaultHeight > 0:
+		o.Size = fmt.Sprintf("%d×%d", s.DefaultWidth, s.DefaultHeight)
+	case len(m.ImageNodes) > 0:
+		o.Size = "the source photo's"
+	default:
+		o.Size = "the workflow's"
+	}
+	switch {
+	case len(m.StepsNodes) == 0:
+		o.Steps = "set by the workflow"
+	case s.DefaultSteps > 0:
+		o.Steps = fmt.Sprint(s.DefaultSteps)
+	default:
+		o.Steps = "the workflow's"
+	}
+	return o
 }
 
 // imageSpecOf is connector c's image backend as the machinery here runs it,

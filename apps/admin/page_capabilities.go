@@ -55,7 +55,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		{
 			Title:    "Image Generation",
 			Subtitle: "Image generation for tools that produce illustrations or thumbnails.",
-			Detail:   "Every picture comes from a connector chosen here: Gemini or OpenAI added from their templates, a local ComfyUI or Automatic1111, a peer's renderer, or any backend declared as a spec. Its address and key are kept on it, under Admin > Services > Connectors.\n\nUse “Add image backend” to stand up a local ComfyUI or A1111 in one step.",
+			Detail:   "Every picture comes from a connector chosen here: Gemini or OpenAI added from their templates, a local ComfyUI or Automatic1111, a peer's renderer, or any backend declared as a spec.\n\nThe list below is every image backend: which is the default, which are offered to agents, what each does and how its size and steps are decided. Edit on a row opens that backend's own editor (for ComfyUI, its workflow and how it is mapped), the same one its row under Connectors opens.\n\nUse “Add image backend” to stand up a local ComfyUI or A1111 in one step.",
 			Body: ui.Stack{
 				Children: []ui.Component{
 					ui.FormPanel{
@@ -64,9 +64,13 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 						TestURL:   "api/image-gen/test",
 						TestLabel: "Test",
 						Fields:    imageFormFields(),
+						// Which backend is the default, and which are offered,
+						// is the list's Role column.
+						Invalidate: []string{imageBackendsSource},
 					},
+					imageBackendsTable(),
 					ui.Toolbar{
-						Actions: imageBackendToolbarActions(),
+						Actions: []ui.ToolbarAction{{Label: "Add image backend…", Method: "client", URL: "add_image_backend"}},
 					},
 				},
 			},
@@ -147,26 +151,32 @@ func mailFormFields() []ui.FormField {
 	)
 }
 
-// imageBackendToolbarActions builds the Image Generation toolbar: "Add image
-// backend" is always available; "Configure backend…" appears only when an image
-// backend actually exists (nothing to configure otherwise).
-func imageBackendToolbarActions() []ui.ToolbarAction {
-	acts := []ui.ToolbarAction{{Label: "Add image backend…", Method: "client", URL: "add_image_backend"}}
-	for _, c := range ListConnectors(RootDB) {
-		if configurableImage(c) {
-			acts = append(acts, ui.ToolbarAction{Label: "Configure backend…", Method: "client", URL: "configure_backend_pick"})
-			break
-		}
+// imageBackendsTable is every image backend under Image Generation's picker,
+// each with the editor its Connectors row opens, so a backend's workflow,
+// size and steps are changed from the page that chooses it. The row actions
+// are the Connectors table's own (connectorEditRowActions and the rest): one
+// editor per connector, reached from two places.
+func imageBackendsTable() ui.Table {
+	return ui.Table{
+		Source: imageBackendsSource,
+		RowKey: "name",
+		Columns: []ui.Col{
+			{Field: "title", Label: "Backend", Flex: 2},
+			{Field: "role", Type: "badge", Badges: []ui.BadgeMapping{
+				{Value: "default", Label: "Default", Color: "success"},
+				{Value: "offered", Label: "Offered to agents", Color: "info"},
+				{Value: "unused", Label: "Not offered", Color: "mute"},
+			}},
+			{Field: "does", Label: "Does", Mute: true},
+			{Field: "size", Label: "Size", Mute: true},
+			{Field: "steps", Label: "Steps", Mute: true},
+			{Field: "summary", Label: "", Mute: true, Flex: 4, Line: 2},
+			{Field: "last_error", Label: "", Mute: true, Flex: 4, Line: 2},
+		},
+		RowActions: append(append([]ui.RowAction{}, connectorEditRowActions()...),
+			connectorSettingsAction(), connectorTestAction()),
+		EmptyText: "No image backend yet. Add image backend… stands up a local ComfyUI or A1111; + Add another… above adds one from a template.",
 	}
-	return acts
-}
-
-// configurableImage is an image backend Configure backend… opens: a
-// connection an image template made (ComfyUI, A1111), whose form is that
-// template's.
-func configurableImage(c Connector) bool {
-	t, ok := TemplateForConnector(c)
-	return ok && t.Category == "Image generation"
 }
 
 // imageFormFields builds the Image Generation settings: the connector that
@@ -178,7 +188,7 @@ func imageFormFields() []ui.FormField {
 	for _, c := range ListConnectors(RootDB) {
 		// Every image connector (choosing it here references it), and any
 		// other backend already registered.
-		if imageConnector(c.Name) || (c.Approved && ImageBackendRegistered(c.Name)) {
+		if imageBackendListed(c) {
 			label := connectorLabel(c)
 			if _, waiting := service.PendingChange(RootDB, c.Name); waiting {
 				label += " (changed, waiting to be accepted)"

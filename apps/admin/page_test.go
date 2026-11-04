@@ -66,7 +66,7 @@ func TestToggleLabel(t *testing.T) {
 // No browser prompt on an administrator page: a list to pick from is asked
 // through the shared modal (uiChoose), so it carries the app's chrome.
 func TestAdminPagesAskThroughTheSharedModal(t *testing.T) {
-	for _, src := range []string{configureBackendPickAction, connectorFormDef} {
+	for _, src := range []string{connectorFormDef} {
 		if strings.Contains(src, "window.prompt(") || strings.Contains(src, "window.confirm(") {
 			t.Errorf("an administrator page still uses a browser dialog:\n%s", src[:200])
 		}

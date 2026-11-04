@@ -259,15 +259,32 @@ func ApplyComfyWorkflow(s *RestImageSpec, apiJSON, saveNodeOverride string) ([]s
 			warnings = append(warnings, "no seed input on the sampler; generated images may not vary")
 		}
 	}
-	if v, ok := sIn["steps"]; ok {
-		if comfyIsLink(v) {
+	// Steps live on the sampler (KSampler), or one node out on the scheduler
+	// that feeds its sigmas (SamplerCustomAdvanced, the Flux shape, where a
+	// BasicScheduler or Flux2Scheduler holds them). Looking only at the sampler
+	// left a Flux graph's steps unmapped with nothing said: requested steps
+	// were ignored, and a graph that drives them from a switch got no word of
+	// why the knob did nothing.
+	stepsNode := sampler
+	if _, ok := sIn["steps"]; !ok {
+		stepsNode = ""
+		if sid, linked := comfyLinkTarget(sIn["sigmas"]); linked && hasKey(comfyInputs(graph, sid), "steps") {
+			stepsNode = sid
+		}
+	}
+	if stepsNode != "" {
+		if v := comfyInputs(graph, stepsNode)["steps"]; comfyIsLink(v) {
 			// Computed by the graph — a switch, a primitive, a preset chain.
 			// Mapping it would advertise a knob that can only damage the wiring,
 			// so leave it unmapped and say why: an empty steps field otherwise
 			// looks like a detection failure worth "fixing" by hand.
-			warnings = append(warnings, fmt.Sprintf("steps is driven by node %v in this workflow, so it stays unmapped and the graph keeps deciding it", firstComfyLinkID(v)))
+			driver := fmt.Sprint(firstComfyLinkID(v))
+			if title := comfyNodeTitle(graph, driver); title != "" {
+				driver += " (" + title + ")"
+			}
+			warnings = append(warnings, fmt.Sprintf("steps is driven by node %s in this workflow, so it stays unmapped and the graph keeps deciding it", driver))
 		} else {
-			m.StepsNodes = []string{sampler}
+			m.StepsNodes = []string{stepsNode}
 		}
 	}
 
@@ -346,6 +363,49 @@ func ApplyComfyWorkflow(s *RestImageSpec, apiJSON, saveNodeOverride string) ([]s
 			s.MaxInputImages, len(m.ImageNodes), len(m.ImageNodes)-s.MaxInputImages))
 	}
 	return warnings, nil
+}
+
+// promptGuidance is what the agent is told about prompting this backend: the
+// admin's own guidance, or when that is empty, the conventions of the model
+// the workflow runs (suggestedComfyGuidance). Empty means "use what the model
+// wants", so a backend nobody wrote guidance for still says how its model is
+// prompted, and anything written replaces it.
+func (s RestImageSpec) promptGuidance() string {
+	if g := strings.TrimSpace(s.PromptGuidance); g != "" {
+		return g
+	}
+	return suggestedComfyGuidance(s.ComfyWorkflow)
+}
+
+// suggestedComfyGuidance is prompting guidance for the image model a workflow
+// runs, recognised by its nodes, or "" for a model it does not recognise.
+//
+// Each edit model has its own conventions, and the agent's generic ones ("the
+// person in the first image") are close to but not the words the model was
+// trained on. Qwen-Image-Edit's encoder labels its inputs Picture 1, Picture 2
+// itself; FLUX Kontext follows "change X while keeping Y". Qwen is checked
+// first: its workflows borrow Kontext's helper nodes (FluxKontextImageScale,
+// FluxKontextMultiReferenceLatentMethod) without being Kontext.
+func suggestedComfyGuidance(workflow string) string {
+	graph, err := parseComfyGraph(workflow)
+	if err != nil {
+		return ""
+	}
+	has := func(part string) bool {
+		return findComfyNode(graph, func(class string) bool { return strings.Contains(class, part) }) != ""
+	}
+	switch {
+	case has("TextEncodeQwenImageEdit"):
+		return "This backend runs Qwen-Image-Edit. Refer to the inputs as Picture 1, Picture 2 and so on, in the order passed. " +
+			"Write one short instruction: what to change, from which picture, and what to keep. " +
+			"For a face swap: \"Replace the face of the person in Picture 1 with the face of the person in Picture 2. Keep Picture 1's pose, hair, clothing, lighting and background unchanged.\" " +
+			"Never describe in words a face you passed a picture of."
+	case has("FluxKontext") || has("ReferenceLatent"):
+		return "This backend runs FLUX Kontext. Write the change as an instruction that names what to keep: " +
+			"\"Change X to Y while keeping the face, pose and background the same.\" " +
+			"Make one change per instruction, and refer to a subject by where it is (\"the person on the left\"), not by describing it."
+	}
+	return ""
 }
 
 // PrettyComfyJSON indents a workflow so it's human-readable in the config panel;
@@ -571,6 +631,25 @@ func (u ComfyUploadedImage) Ref() string {
 	return u.Name
 }
 
+// comfyLatentDim rounds a requested dimension to the nearest multiple of 16.
+//
+// The connector rounds every backend's size to 8, which is Stable Diffusion's
+// grain. Flux, Flux 2 and SD3 work in 16-pixel blocks, and their latent nodes
+// divide by 16 and drop the remainder: a requested 1368 renders at 1360, with
+// the scheduler still solving for the size that was asked. Nothing errors; the
+// picture is just not the size requested. Sixteen is a multiple of eight, so
+// the SD graphs lose nothing by it. Zero (no size given) is left alone.
+func comfyLatentDim(v int) int {
+	if v <= 0 {
+		return v
+	}
+	v = (v + 8) / 16 * 16
+	if v < 64 {
+		v = 64
+	}
+	return v
+}
+
 // BuildComfyBody parses the stored workflow and injects each generation value
 // into the nodes named by the map, returning the /prompt request body. This is
 // the mapping-model counterpart to token substitution — the wiring lives in the
@@ -612,8 +691,8 @@ func BuildComfyBody(workflow string, m ComfyNodeMap, in ComfyBuildInput) (string
 	}
 	setStr(m.PromptNodes, keys, in.Prompt)
 	setStr(m.NegativeNodes, keys, in.Negative)
-	setNum(m.WidthNodes, "width", in.Width)
-	setNum(m.HeightNodes, "height", in.Height)
+	setNum(m.WidthNodes, "width", comfyLatentDim(in.Width))
+	setNum(m.HeightNodes, "height", comfyLatentDim(in.Height))
 	seedKey := m.SeedKey
 	if seedKey == "" {
 		seedKey = "seed"

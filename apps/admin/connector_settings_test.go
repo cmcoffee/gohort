@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -343,12 +344,21 @@ func TestAKeptKeyShowsItsEnd(t *testing.T) {
 	}
 }
 
-// A ComfyUI backend kept as a connection is still configured from its
-// template: Configure backend… is offered for it, and its row picks it.
-func TestAComfyUIConnectionIsConfiguredFromItsTemplate(t *testing.T) {
+// A ComfyUI backend kept as a connection is configured from its template, and
+// from Image Generation: its row on the backend list opens the template's form,
+// the same Edit its Connectors row opens, and says what the workflow does.
+func TestAComfyUIConnectionIsConfiguredFromImageGeneration(t *testing.T) {
 	settingsWorld(t)
-	if len(imageBackendToolbarActions()) != 1 {
-		t.Fatalf("Configure offered with no image backend")
+	a := &AdminApp{db: RootDB}
+	list := func() []imageBackendRow {
+		out, err := a.handleImageBackends(&jsonapi.Call{R: httptest.NewRequest("GET", "/"+imageBackendsSource, nil)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out.([]imageBackendRow)
+	}
+	if rows := list(); len(rows) != 0 {
+		t.Fatalf("listed with no image backend: %+v", rows)
 	}
 	r, _, err := NewComfyImageSpec("http://comfy.example:8188", "", "", "")
 	if err != nil {
@@ -358,17 +368,44 @@ func TestAComfyUIConnectionIsConfiguredFromItsTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := SaveConnector(RootDB, Connector{Name: "studio", Kind: kind, Template: "comfyui", Spec: raw}); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"studio", "sketch"} {
+		if err := SaveConnector(RootDB, Connector{Name: name, Kind: kind, Template: "comfyui", Spec: raw}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if acts := imageBackendToolbarActions(); len(acts) != 2 || acts[1].URL != "configure_backend_pick" {
-		t.Errorf("toolbar: %+v", acts)
+	RootDB.Set(ImageTable, "provider", "sketch")
+	rows := list()
+	if len(rows) != 2 || rows[0].Name != "sketch" || rows[0].Role != "default" || rows[1].Role != "unused" {
+		t.Fatalf("rows = %+v, want the default first", rows)
 	}
-	a := &AdminApp{db: RootDB}
-	out, _ := a.handleConnectors(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/connectors", nil)})
-	b, _ := json.Marshal(out)
-	if !strings.Contains(string(b), `"name":"studio"`) || !strings.Contains(string(b), `"is_image":true`) {
-		t.Errorf("its row: %s", b)
+	row := rows[1]
+	// The same editor as its Connectors row: the template's form.
+	if !row.EditForm || row.EditSpec || row.NeedsFix {
+		t.Errorf("editor flags = form %v spec %v fix %v, want the template's form", row.EditForm, row.EditSpec, row.NeedsFix)
+	}
+	if row.Does != ComfyTypeGenerate || row.Size != "512×512" || row.Steps == "" {
+		t.Errorf("outline = does %q size %q steps %q", row.Does, row.Size, row.Steps)
+	}
+	// Offered to agents reads as such.
+	RootDB.Set(ImageTable, "agents", []string{"studio"})
+	if rows := list(); rows[1].Role != "offered" {
+		t.Errorf("an offered backend reads %q", rows[1].Role)
+	}
+}
+
+// The backend list's rows carry the Connectors table's own actions, so the two
+// open one editor, and an edit from either reloads both.
+func TestTheBackendListSharesTheConnectorActions(t *testing.T) {
+	tbl := imageBackendsTable()
+	var labels []string
+	for _, act := range tbl.RowActions {
+		labels = append(labels, act.Label)
+	}
+	if got := strings.Join(labels, ","); got != "Edit,✨ Edit,✨ Fix,Settings,Test" {
+		t.Errorf("row actions = %s", got)
+	}
+	if !slices.Contains(connectorListSources, imageBackendsSource) || !slices.Contains(connectorListSources, "api/connectors") {
+		t.Errorf("an edit reloads %v, want both lists", connectorListSources)
 	}
 }
 
