@@ -138,6 +138,30 @@ func TestAPromiseToBeThereIsNotStalledWork(t *testing.T) {
 	}
 }
 
+// Taking leave is not work either. The first line is the goodnight from the
+// 2026-11-04 session that was sent back and cut off the voice reading it.
+func TestTakingLeaveIsNotStalledWork(t *testing.T) {
+	for _, goodbye := range []string{
+		"Appreciate you saying so. It's a late one for you, so I'll leave you to it. Good night.",
+		"Get some rest, I'll let you get some sleep.",
+		"Sounds like a plan. I'll talk to you tomorrow.",
+		"Okay, I'll let you go. Night!",
+		"That's everything for today, so I'll stop there.",
+	} {
+		if replyStalledOnAPromise(goodbye) {
+			t.Errorf("re-prompted a goodbye:\n  %s", goodbye)
+		}
+	}
+	for _, stall := range []string{
+		"I'll let you know in a minute. Let me check the logs first.",
+		"I'll leave you to it after I check the calendar. I'll look it up now.",
+	} {
+		if !replyStalledOnAPromise(stall) {
+			t.Errorf("a promise to act after a goodbye is still a stall:\n  %s", stall)
+		}
+	}
+}
+
 // The tightening must not blunt the guard on real work. A promise to ACT still
 // has to be caught, including when the same reply apologises first, which is
 // the shape that makes the two easy to conflate.

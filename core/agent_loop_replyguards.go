@@ -642,9 +642,19 @@ func lastPromiseIsPresence(lower string) bool {
 			return false
 		}
 	}
-	m := presenceRe.FindStringIndex(lower[last[0]:])
+	tail := lower[last[0]:]
+	if m := presenceRe.FindStringIndex(tail); m != nil && m[0] == 0 {
+		return true
+	}
+	m := leaveTakingRe.FindStringIndex(tail)
 	return m != nil && m[0] == 0
 }
+
+// leaveTakingRe is a promise to go: a goodbye said as "I'll", which is no
+// work and no tool's to do. Observed 2026-11-04: "It's a late one for you, so
+// I'll leave you to it. Good night." was sent back as a promise, the voice
+// reading it aloud was cut off, and the retry wrote the same goodnight again.
+var leaveTakingRe = regexp.MustCompile(`^(?:i'll|i will) (?:leave you (?:to it|be|alone|in peace)|let you (?:go|be|rest|sleep|get (?:some )?(?:sleep|rest)|get (?:back )?to (?:it|bed|sleep|your)|head (?:off|out|to bed))|talk (?:to|with) you|catch you|see you|speak (?:to|with) you|stop (?:there|here)|sign off|head (?:off|out))\b`)
 
 // presenceRe is a promise to be available: here, around, waiting.
 var presenceRe = regexp.MustCompile(`^(?:i'll|i will) (?:still )?be (?:right )?(?:here|around|waiting|standing by|available|on call|on standby|up)\b`)
