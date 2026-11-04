@@ -402,6 +402,7 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 	actions := make([]TempToolAction, 0, len(actionsList))
 	seen := make(map[string]bool, len(actionsList))
 	var scaffoldedActions []string // write actions we auto-gave a body_template
+	hasCommand := false            // an action runs a command, so the toolbox's script has a use
 	for i, raw := range actionsList {
 		m, ok := raw.(map[string]any)
 		if !ok {
@@ -418,14 +419,35 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 			return "", fmt.Errorf("actions[%d]: duplicate action name %q (each action must be uniquely named within the toolbox)", i, actName)
 		}
 		seen[actName] = true
+		// The script and what it may reach are the toolbox's, not an action's.
+		// Set on an action they used to be dropped without a word, and the
+		// action kept running as the HTTP call it was.
+		for _, f := range []string{"script_body", "script_name", "hook_capabilities"} {
+			if _, present := m[f]; present {
+				return "", fmt.Errorf("actions[%d] (%q): %s belongs on the toolbox, beside name and mode, not inside an action: a toolbox has one script, and each command action runs it with its own arguments via command_template", i, actName, f)
+			}
+		}
 		urlTpl := strings.TrimSpace(StringArg(m, "url_template"))
-		if urlTpl == "" {
-			return "", fmt.Errorf("actions[%d] (%q): url_template is required", i, actName)
+		cmdTpl := strings.TrimSpace(StringArg(m, "command_template"))
+		switch {
+		case urlTpl != "" && cmdTpl != "":
+			return "", fmt.Errorf("actions[%d] (%q): give url_template (an HTTP call) or command_template (a command run in the sandbox), not both", i, actName)
+		case urlTpl == "" && cmdTpl == "":
+			return "", fmt.Errorf("actions[%d] (%q): url_template (an HTTP call) or command_template (a command run in the sandbox) is required", i, actName)
 		}
 		actDesc := strings.TrimSpace(StringArg(m, "description"))
 		actParams, err := parseParamsArg(m["params"])
 		if err != nil {
 			return "", fmt.Errorf("actions[%d] (%q): params: %w", i, actName, err)
+		}
+		if cmdTpl != "" {
+			act, err := toolboxCommandAction(i, actName, actDesc, cmdTpl, m, shared.paramsFor(actName, actParams))
+			if err != nil {
+				return "", err
+			}
+			actions = append(actions, act)
+			hasCommand = true
+			continue
 		}
 		ownParams := actParams
 		actParams = shared.paramsFor(actName, actParams)
@@ -542,13 +564,21 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 	if err := CheckCatalogNameCollision(sess, name, actions); err != nil {
 		return "", err
 	}
+	script, err := toolboxScript(args, sess, name, hasCommand)
+	if err != nil {
+		return "", err
+	}
 	tool := &TempTool{
-		Name:        name,
-		Description: desc,
-		Mode:        TempToolModeToolbox,
-		Credential:  credential,
-		Actions:     actions,
-		Expand:      BoolArg(args, "expand"),
+		Name:                name,
+		Description:         desc,
+		Mode:                TempToolModeToolbox,
+		Credential:          credential,
+		Actions:             actions,
+		ScriptBody:          script.body,
+		ScriptName:          script.name,
+		CanonicalScriptName: script.canonical,
+		HookCapabilities:    script.caps,
+		Expand:              BoolArg(args, "expand"),
 		// What any of its replies may ask for.
 		FollowUpsFromAny: followUpNames(args["follow_ups_from_any"]),
 		Category:         strings.TrimSpace(StringArg(args, "category")),
@@ -986,4 +1016,90 @@ func validateFollowUps(actions []TempToolAction, fromAny []string) error {
 		}
 	}
 	return nil
+}
+
+// toolboxCommandAction is an action that runs a command in the sandbox rather
+// than calling a URL, as a shell tool does: the same {placeholder} check, and
+// every param required unless the action says otherwise. The HTTP fields do
+// not apply to it, so setting one is refused rather than ignored.
+func toolboxCommandAction(i int, actName, actDesc, cmdTpl string, m map[string]any, params map[string]ToolParam) (TempToolAction, error) {
+	for _, f := range []string{"method", "body_template", "content_type", "headers", "response_pipe", "response_extract"} {
+		if _, present := m[f]; present {
+			return TempToolAction{}, fmt.Errorf("actions[%d] (%q): %s is for an HTTP action (url_template); a command action has none", i, actName, f)
+		}
+	}
+	if err := validateTemplate(cmdTpl, params); err != nil {
+		return TempToolAction{}, fmt.Errorf("actions[%d] (%q): command_template: %w, every {placeholder} must name a declared param", i, actName, err)
+	}
+	required, explicit, err := readRequired(m, params)
+	if err != nil {
+		return TempToolAction{}, fmt.Errorf("actions[%d] (%q): %w", i, actName, err)
+	}
+	if !explicit {
+		for k := range params {
+			required = append(required, k)
+		}
+		sort.Strings(required)
+	}
+	required = unionNames(required, markedRequired(m["params"]))
+	return TempToolAction{
+		Name:            actName,
+		Description:     actDesc,
+		Params:          params,
+		Required:        required,
+		CommandTemplate: cmdTpl,
+		Disabled:        BoolArg(m, "disabled"),
+		FollowUps:       followUpNames(m["follow_ups"]),
+	}, nil
+}
+
+// toolboxScriptParts is a toolbox's one script and what it may reach.
+type toolboxScriptParts struct {
+	body, name, canonical string
+	caps                  []string
+}
+
+// toolboxScript reads a toolbox's script_body, script_name and
+// hook_capabilities, held to the same checks as a shell tool's, and deploys
+// the script. Each command action runs it with its own arguments
+// (dispatchToolboxModeTempTool hands it the script and the capabilities). A
+// script or capabilities with no command action to use them are refused: the
+// HTTP actions would never run them.
+func toolboxScript(args map[string]any, sess *ToolSession, name string, hasCommand bool) (toolboxScriptParts, error) {
+	var p toolboxScriptParts
+	p.body = StringArg(args, "script_body")
+	if fixed, ok := NormalizeScriptBody(p.body); ok {
+		p.body = fixed
+	}
+	caps, err := parseHookCapabilities(args, name)
+	if err != nil {
+		return p, err
+	}
+	p.caps = caps
+	if strings.TrimSpace(p.body) == "" && len(caps) == 0 {
+		return p, nil
+	}
+	if !hasCommand {
+		return p, fmt.Errorf("script_body and hook_capabilities are for a toolbox's command actions, and this toolbox has none: give the action that runs the script a command_template (e.g. python3 {workspace_dir}/script.py save {issue_key})")
+	}
+	if strings.TrimSpace(p.body) == "" {
+		return p, nil
+	}
+	if why := callsOwnTools(p.body); why != "" {
+		return p, fmt.Errorf("%s", why)
+	}
+	p.name = strings.TrimSpace(StringArg(args, "script_name"))
+	if p.name == "" {
+		p.name = "script.py"
+	}
+	if strings.ContainsAny(p.name, "/\\") {
+		return p, fmt.Errorf("script_name must be a single filename (no path separators)")
+	}
+	if p.caps, err = scriptHookChecks(p.body, p.caps); err != nil {
+		return p, err
+	}
+	if p.canonical, _, err = deployScriptBody(sess, name, p.name, p.body); err != nil {
+		return p, err
+	}
+	return p, nil
 }

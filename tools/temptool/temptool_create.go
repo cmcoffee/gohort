@@ -331,79 +331,11 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	// without a name is rejected so the tool record always names
 	// every credential it can read. Other typos fail authoring
 	// rather than silently never being granted at dispatch.
-	if caps := stringSliceArg(args["hook_capabilities"]); len(caps) > 0 {
-		bareKnown := map[string]bool{"fetch": true, "log": true, "browse_page": true, "proxy": true}
-		var bad []string
-		var clean []string
-		seen := map[string]bool{}
-		for _, c := range caps {
-			// Preserve credential name casing in the suffix — credential
-			// names are case-sensitive on the registry side — but
-			// normalize the method prefix to lower.
-			c = strings.TrimSpace(c)
-			if c == "" {
-				continue
-			}
-			if idx := strings.IndexByte(c, ':'); idx >= 0 {
-				method := strings.ToLower(c[:idx])
-				name := strings.TrimSpace(c[idx+1:])
-				if name == "" {
-					bad = append(bad, c)
-					continue
-				}
-				// Qualified forms: per-credential grants. secret:<name>
-				// returns the decrypted secret to the script;
-				// fetch_via:<name> routes an HTTP call through that
-				// credential's Secure.Dispatch (allowlist + audit +
-				// auth applied server-side, script never sees the
-				// secret).
-				if method != "secret" && method != "fetch_via" {
-					bad = append(bad, c)
-					continue
-				}
-				// SECURED credential binding is AUTO-RESOLVED: a tool that declares
-				// fetch_via:<cred> is bound to it — no approval step. Access follows
-				// the tool's own scope. Two exceptions: secret:<cred> (raw key to a
-				// script) is never a binding and stays hard-blocked; and an admin's
-				// explicit REVOKE of this tool is a durable deny. See
-				// docs/design/secured-credential-tool-binding.md.
-				if cr, ok := Secure().Load(name); ok && cr.Secured {
-					switch {
-					case method == "secret":
-						return "", fmt.Errorf("credential %q is SECURED, a tool cannot take its raw secret (secret:%s). Route the call through the credential with fetch_via:%s instead, the secret stays server-side and the binding is automatic", name, name, name)
-					case Secure().ToolBindingRevoked(name, tool.Name):
-						return "", fmt.Errorf("credential %q is SECURED and tool %q's binding was REVOKED by an admin: ask them to restore it in Admin > APIs, or use a different tool name", name, tool.Name)
-					default:
-						// Auto-resolve: record the binding so it shows in the admin
-						// effective-access view; access is governed by the tool's scope.
-						_ = Secure().ApproveToolBinding(name, tool.Name)
-					}
-				}
-				c = method + ":" + name
-			} else {
-				c = strings.ToLower(c)
-				if c == "secret" || c == "fetch_via" {
-					// Bare qualified-form methods are intentionally
-					// not honored — every credential grant must be
-					// explicit.
-					return "", fmt.Errorf("hook_capabilities entry %q is too broad: declare specific credentials as %q instead", c, c+":<credential_name>")
-				}
-				if !bareKnown[c] {
-					bad = append(bad, c)
-					continue
-				}
-			}
-			if seen[c] {
-				continue
-			}
-			seen[c] = true
-			clean = append(clean, c)
-		}
-		if len(bad) > 0 {
-			return "", fmt.Errorf("hook_capabilities lists unknown entry/entries %v, known forms: \"fetch\", \"log\", \"proxy\", \"secret:<credential_name>\", \"fetch_via:<credential_name>\"", bad)
-		}
-		tool.HookCapabilities = clean
+	caps, err := parseHookCapabilities(args, tool.Name)
+	if err != nil {
+		return "", err
 	}
+	tool.HookCapabilities = caps
 	// A script that calls the author's own tools through default_api is
 	// refused in PrepareScriptBody, the seam shared with add_tool.
 	// Default-on the bare hook capabilities for any shell-mode tool
@@ -421,44 +353,8 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	// calls gohort.secret("openweather") without "secret:openweather"
 	// declared fails authoring with a directive error.
 	if scriptBody != "" {
-		existing := map[string]bool{}
-		for _, c := range tool.HookCapabilities {
-			existing[c] = true
-		}
-		for _, def := range []string{"fetch", "log", "browse_page"} {
-			if !existing[def] {
-				existing[def] = true
-				tool.HookCapabilities = append(tool.HookCapabilities, def)
-			}
-		}
-		// Credentialed-call guard: script that needs secret:<name> or
-		// fetch_via:<name> must declare it explicitly. We refuse to
-		// guess credential identifiers.
-		if missing := findUngrantedCredentialCalls(scriptBody, tool.HookCapabilities); missing.calls != "" {
-			return "", fmt.Errorf(
-				"script_body uses %s but hook_capabilities doesn't grant the credential(s). "+
-					"Add %s to hook_capabilities: the framework won't auto-grant credential names. "+
-					"Register the credential via the admin UI first if it doesn't exist yet.",
-				missing.calls, missing.suggest)
-		}
-		// A name the gohort module does not export fails the first run, not
-		// the save; refuse it here, while the author is still looking.
-		if why := unknownGohortName(scriptBody); why != "" {
-			return "", fmt.Errorf("%s", why)
-		}
-		// Refuse network primitives. Builder repeatedly rewrites
-		// fetch-failing tools to urllib/requests when fetch_url returns
-		// 4xx, but those libraries are BLOCKED in the script sandbox.
-		// Refuse at authoring time so the rewrite path is closed off
-		// entirely. curl and wget are not refused: the sandbox's are
-		// stand-ins that send through the same fetch hook. Nor is a tool
-		// that declared the proxy grant: its clients reach public
-		// addresses through the run's relay (core/sandbox relay.go), and
-		// the grant makes it ask before each run.
-		if forbidden := detectForbiddenNetworkPatterns(scriptBody); forbidden != "" && !slices.Contains(tool.HookCapabilities, "proxy") {
-			return "", fmt.Errorf(
-				"script_body uses %s: that's BLOCKED. Python's network libraries (urllib / requests / http.client / socket) are blocked in the script sandbox. All HTTP goes through gohort: `from gohort import fetch_url; data = fetch_url(url)`, or curl / wget, whose sandbox versions send through the same fetch_url. If gohort.fetch_url is returning a 4xx, the fix is NOT a different HTTP client, diagnose the URL itself, escalate to gohort.browse_page for JS-heavy / anti-bot hosts, or add hook_capabilities=[\"fetch_via:<credential_name>\"] for authenticated endpoints. Only when the code genuinely needs its own client (a library that makes its own requests, a package install), declare hook_capabilities=[\"proxy\"]: it reaches public addresses through gohort's proxy, with no credentials and its contents unrecorded, and the tool then asks before each run.",
-				forbidden)
+		if tool.HookCapabilities, err = scriptHookChecks(scriptBody, tool.HookCapabilities); err != nil {
+			return "", err
 		}
 	}
 	// Optional cache spec — opt-in memoization keyed by rendered
@@ -507,4 +403,135 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	_ = BoolArg(args, "persist")
 	saveSessionScoped()
 	return fmt.Sprintf("Created temp tool %q. It is now in your tool catalog.%s", name, spec), nil
+}
+
+// parseHookCapabilities reads and checks a tool's declared hook_capabilities:
+// bare methods ("fetch", "log", "browse_page", "proxy") and per-credential
+// grants ("secret:<name>", "fetch_via:<name>"), with the secured-credential
+// rules. Shared by a shell tool and a toolbox whose actions run commands, so
+// both are held to the same rules.
+func parseHookCapabilities(args map[string]any, toolName string) ([]string, error) {
+	caps := stringSliceArg(args["hook_capabilities"])
+	if len(caps) == 0 {
+		return nil, nil
+	}
+	bareKnown := map[string]bool{"fetch": true, "log": true, "browse_page": true, "proxy": true}
+	var bad []string
+	var clean []string
+	seen := map[string]bool{}
+	for _, c := range caps {
+		// Preserve credential name casing in the suffix — credential
+		// names are case-sensitive on the registry side — but
+		// normalize the method prefix to lower.
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		if idx := strings.IndexByte(c, ':'); idx >= 0 {
+			method := strings.ToLower(c[:idx])
+			name := strings.TrimSpace(c[idx+1:])
+			if name == "" {
+				bad = append(bad, c)
+				continue
+			}
+			// Qualified forms: per-credential grants. secret:<name>
+			// returns the decrypted secret to the script;
+			// fetch_via:<name> routes an HTTP call through that
+			// credential's Secure.Dispatch (allowlist + audit +
+			// auth applied server-side, script never sees the
+			// secret).
+			if method != "secret" && method != "fetch_via" {
+				bad = append(bad, c)
+				continue
+			}
+			// SECURED credential binding is AUTO-RESOLVED: a tool that declares
+			// fetch_via:<cred> is bound to it — no approval step. Access follows
+			// the tool's own scope. Two exceptions: secret:<cred> (raw key to a
+			// script) is never a binding and stays hard-blocked; and an admin's
+			// explicit REVOKE of this tool is a durable deny. See
+			// docs/design/secured-credential-tool-binding.md.
+			if cr, ok := Secure().Load(name); ok && cr.Secured {
+				switch {
+				case method == "secret":
+					return nil, fmt.Errorf("credential %q is SECURED, a tool cannot take its raw secret (secret:%s). Route the call through the credential with fetch_via:%s instead, the secret stays server-side and the binding is automatic", name, name, name)
+				case Secure().ToolBindingRevoked(name, toolName):
+					return nil, fmt.Errorf("credential %q is SECURED and tool %q's binding was REVOKED by an admin: ask them to restore it in Admin > APIs, or use a different tool name", name, toolName)
+				default:
+					// Auto-resolve: record the binding so it shows in the admin
+					// effective-access view; access is governed by the tool's scope.
+					_ = Secure().ApproveToolBinding(name, toolName)
+				}
+			}
+			c = method + ":" + name
+		} else {
+			c = strings.ToLower(c)
+			if c == "secret" || c == "fetch_via" {
+				// Bare qualified-form methods are intentionally
+				// not honored — every credential grant must be
+				// explicit.
+				return nil, fmt.Errorf("hook_capabilities entry %q is too broad: declare specific credentials as %q instead", c, c+":<credential_name>")
+			}
+			if !bareKnown[c] {
+				bad = append(bad, c)
+				continue
+			}
+		}
+		if seen[c] {
+			continue
+		}
+		seen[c] = true
+		clean = append(clean, c)
+	}
+	if len(bad) > 0 {
+		return nil, fmt.Errorf("hook_capabilities lists unknown entry/entries %v, known forms: \"fetch\", \"log\", \"proxy\", \"secret:<credential_name>\", \"fetch_via:<credential_name>\"", bad)
+	}
+
+	return clean, nil
+}
+
+// scriptHookChecks adds the default hook capabilities a script gets and
+// refuses a script that calls a credential it was not granted, names
+// something the gohort module does not export, or opens its own network
+// client. Shared by a shell tool's script and a toolbox's.
+func scriptHookChecks(scriptBody string, caps []string) ([]string, error) {
+	existing := map[string]bool{}
+	for _, c := range caps {
+		existing[c] = true
+	}
+	for _, def := range []string{"fetch", "log", "browse_page"} {
+		if !existing[def] {
+			existing[def] = true
+			caps = append(caps, def)
+		}
+	}
+	// Credentialed-call guard: script that needs secret:<name> or
+	// fetch_via:<name> must declare it explicitly. We refuse to
+	// guess credential identifiers.
+	if missing := findUngrantedCredentialCalls(scriptBody, caps); missing.calls != "" {
+		return nil, fmt.Errorf(
+			"script_body uses %s but hook_capabilities doesn't grant the credential(s). "+
+				"Add %s to hook_capabilities: the framework won't auto-grant credential names. "+
+				"Register the credential via the admin UI first if it doesn't exist yet.",
+			missing.calls, missing.suggest)
+	}
+	// A name the gohort module does not export fails the first run, not
+	// the save; refuse it here, while the author is still looking.
+	if why := unknownGohortName(scriptBody); why != "" {
+		return nil, fmt.Errorf("%s", why)
+	}
+	// Refuse network primitives. Builder repeatedly rewrites
+	// fetch-failing tools to urllib/requests when fetch_url returns
+	// 4xx, but those libraries are BLOCKED in the script sandbox.
+	// Refuse at authoring time so the rewrite path is closed off
+	// entirely. curl and wget are not refused: the sandbox's are
+	// stand-ins that send through the same fetch hook. Nor is a tool
+	// that declared the proxy grant: its clients reach public
+	// addresses through the run's relay (core/sandbox relay.go), and
+	// the grant makes it ask before each run.
+	if forbidden := detectForbiddenNetworkPatterns(scriptBody); forbidden != "" && !slices.Contains(caps, "proxy") {
+		return nil, fmt.Errorf(
+			"script_body uses %s: that's BLOCKED. Python's network libraries (urllib / requests / http.client / socket) are blocked in the script sandbox. All HTTP goes through gohort: `from gohort import fetch_url; data = fetch_url(url)`, or curl / wget, whose sandbox versions send through the same fetch_url. If gohort.fetch_url is returning a 4xx, the fix is NOT a different HTTP client, diagnose the URL itself, escalate to gohort.browse_page for JS-heavy / anti-bot hosts, or add hook_capabilities=[\"fetch_via:<credential_name>\"] for authenticated endpoints. Only when the code genuinely needs its own client (a library that makes its own requests, a package install), declare hook_capabilities=[\"proxy\"]: it reaches public addresses through gohort's proxy, with no credentials and its contents unrecorded, and the tool then asks before each run.",
+			forbidden)
+	}
+	return caps, nil
 }

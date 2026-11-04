@@ -80,26 +80,7 @@ func dispatchToolboxModeTempTool(sess *ToolSession, tt *TempTool, args map[strin
 	// workspace. Anything else would be a second execution semantic living
 	// inside the toolbox, which is where drift starts.
 	if hasCmd {
-		shellAct := TempTool{
-			Name:            tt.Name + "." + act.Name,
-			Description:     act.Description,
-			Params:          act.Params,
-			Required:        act.Required,
-			Mode:            TempToolModeShell,
-			CommandTemplate: act.CommandTemplate,
-			WorkDir:         act.WorkDir,
-			// The parent's recipe and workspace posture travel with the action:
-			// a toolbox that packages a binary has one deployment, not one per
-			// verb, and an action that ran somewhere else would not find it.
-			Recipe:         tt.Recipe,
-			WorkspaceFiles: tt.WorkspaceFiles,
-			StatePath:      tt.StatePath,
-			// The toolbox's declared timeout covers its commands too.
-			TimeoutSec: tt.TimeoutSec,
-			// An admin-mapped store command's actions stay trusted to reach
-			// the store (PathScope.TrustedOnly).
-			AdminMapped: tt.AdminMapped,
-		}
+		shellAct := toolboxShellAction(tt, act)
 		// liveRequired leaves a shell action's list untouched, so this is the
 		// author's list either way — routed through the one function so a
 		// later change to the rule reaches dispatch as well as the schema.
@@ -157,4 +138,38 @@ func dispatchToolboxModeTempTool(sess *ToolSession, tt *TempTool, args map[strin
 	}
 	inner = canonicalizeArgKeys(inner, synthetic.Required, synthetic.Params)
 	return dispatchAPIModeTempTool(sess, &synthetic, inner)
+}
+
+// toolboxShellAction is the shell-mode tool a command action runs as: the
+// action's command and params, with the toolbox's deployment (recipe, files,
+// state, timeout), its one script, and what that script may reach.
+func toolboxShellAction(tt *TempTool, act *TempToolAction) TempTool {
+	return TempTool{
+		Name:            tt.Name + "." + act.Name,
+		Description:     act.Description,
+		Params:          act.Params,
+		Required:        act.Required,
+		Mode:            TempToolModeShell,
+		CommandTemplate: act.CommandTemplate,
+		WorkDir:         act.WorkDir,
+		// The parent's recipe and workspace posture travel with the action:
+		// a toolbox that packages a binary has one deployment, not one per
+		// verb, and an action that ran somewhere else would not find it.
+		Recipe:         tt.Recipe,
+		WorkspaceFiles: tt.WorkspaceFiles,
+		StatePath:      tt.StatePath,
+		// The toolbox's declared timeout covers its commands too.
+		TimeoutSec: tt.TimeoutSec,
+		// Its one script, and what that script may reach through the hook
+		// (fetch_via:<credential> and the rest), held to the same checks
+		// on the toolbox as a shell tool's: without them a command action
+		// could neither find the script nor call the API it wraps.
+		ScriptBody:          tt.ScriptBody,
+		ScriptName:          tt.ScriptName,
+		CanonicalScriptName: tt.CanonicalScriptName,
+		HookCapabilities:    tt.HookCapabilities,
+		// An admin-mapped store command's actions stay trusted to reach
+		// the store (PathScope.TrustedOnly).
+		AdminMapped: tt.AdminMapped,
+	}
 }

@@ -115,7 +115,10 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	// the create path below, which applies them and says which actions took
 	// them.
 	if existing.Mode == TempToolModeToolbox {
-		for _, f := range []string{"url_template", "command_template", "body_template", "response_pipe", "script_body", "script_name", "required"} {
+		// script_body and script_name are NOT in this list: a toolbox has one
+		// script, at the top level, which its command actions run. Telling
+		// an author to move it into an action sent it where it was ignored.
+		for _, f := range []string{"url_template", "command_template", "body_template", "response_pipe", "required"} {
 			if _, present := args[f]; present {
 				return "", fmt.Errorf("%q is a PER-ACTION field on a toolbox, not a top-level one: setting it at the top level does nothing. Put it INSIDE the action: actions=[{name:\"<action>\", %s:...}]. Example fixing a reply body: actions=[{name:\"reply_to_comment\", body_template:{\"parent_id\": {comment_id}, \"content\": {content}}}] (unspecified fields on that action are preserved)", f, f)
 			}
@@ -219,6 +222,7 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 					// unspecified fields (body_template, response_pipe, method,
 					// description, disabled, …) survive.
 					if existingAM, ok := cur[idx].(map[string]any); ok {
+						switchActionKind(existingAM, am)
 						for k, v := range am {
 							existingAM[k] = v
 						}
@@ -437,4 +441,19 @@ func removeTool(args map[string]any, sess *ToolSession, name string) (string, er
 		DequeuePendingTempTool(sess.DB, sess.Username, name)
 	}
 	return res, err
+}
+
+// switchActionKind clears what an action stops being when an update turns it
+// from an HTTP call into a command or back. The merge keeps every field the
+// update does not name, so a command_template added to an HTTP action left its
+// url_template beside it, and the action could not run as either.
+func switchActionKind(stored, update map[string]any) {
+	if strings.TrimSpace(StringArg(update, "command_template")) != "" {
+		for _, f := range []string{"url_template", "method", "body_template", "content_type", "headers", "response_pipe", "response_extract"} {
+			delete(stored, f)
+		}
+	}
+	if strings.TrimSpace(StringArg(update, "url_template")) != "" {
+		delete(stored, "command_template")
+	}
 }

@@ -95,16 +95,9 @@ func PrepareScriptBody(sess *ToolSession, toolName, cmd, scriptBody, scriptName 
 	if strings.TrimSpace(cmd) == "" {
 		return "", "", "", fmt.Errorf("command_template is required (or supply script_body with a recognized extension.py/.sh/.bash/.js/.jq/.rb, and the framework will infer it; declared params reach the script as ENVIRONMENT VARIABLES, not positional argv, read them with os.environ['name'])")
 	}
-	canonical := canonicalScriptName(toolName, scriptName, scriptBody)
-	if _, werr := EnsureSessionWorkspace(sess); werr != nil {
-		return "", "", "", fmt.Errorf("auto-mint workspace: %w", werr)
-	}
-	scriptPath := filepath.Join(sess.WorkspaceDir, canonical)
-	if mkerr := os.MkdirAll(filepath.Dir(scriptPath), 0700); mkerr != nil {
-		return "", "", "", fmt.Errorf("create parent dir for script %q: %w", canonical, mkerr)
-	}
-	if werr := os.WriteFile(scriptPath, []byte(scriptBody), 0700); werr != nil {
-		return "", "", "", fmt.Errorf("write script %q: %w", canonical, werr)
+	canonical, scriptPath, err := deployScriptBody(sess, toolName, scriptName, scriptBody)
+	if err != nil {
+		return "", "", "", err
 	}
 	// The template must actually reference the script, or the tool is born
 	// broken — the exact failure this helper exists to prevent.
@@ -112,6 +105,25 @@ func PrepareScriptBody(sess *ToolSession, toolName, cmd, scriptBody, scriptName 
 		return "", "", "", fmt.Errorf("script_body was written to %s (canonical %s) but command_template %q doesn't reference it: add {workspace_dir}/%s to the template", scriptPath, canonical, cmd, scriptName)
 	}
 	return cmd, scriptName, canonical, nil
+}
+
+// deployScriptBody writes a tool's script into the session's workspace under
+// its canonical (collision-proof) name, and returns that name and the path.
+// Shared by a shell tool and a toolbox, whose command actions all run its one
+// script.
+func deployScriptBody(sess *ToolSession, toolName, scriptName, scriptBody string) (canonical, scriptPath string, err error) {
+	canonical = canonicalScriptName(toolName, scriptName, scriptBody)
+	if _, werr := EnsureSessionWorkspace(sess); werr != nil {
+		return "", "", fmt.Errorf("auto-mint workspace: %w", werr)
+	}
+	scriptPath = filepath.Join(sess.WorkspaceDir, canonical)
+	if mkerr := os.MkdirAll(filepath.Dir(scriptPath), 0700); mkerr != nil {
+		return "", "", fmt.Errorf("create parent dir for script %q: %w", canonical, mkerr)
+	}
+	if werr := os.WriteFile(scriptPath, []byte(scriptBody), 0700); werr != nil {
+		return "", "", fmt.Errorf("write script %q: %w", canonical, werr)
+	}
+	return canonical, scriptPath, nil
 }
 
 func inferCommandTemplate(scriptName, scriptBody string, paramOrder []string) string {

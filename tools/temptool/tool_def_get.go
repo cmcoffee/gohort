@@ -253,12 +253,17 @@ func toolInSessionDrafts(sess *ToolSession, name string) bool {
 // parse keeps the action's exact optional/required split instead of defaulting.
 func actionToArgs(a TempToolAction) map[string]any {
 	m := map[string]any{
-		"name":         a.Name,
-		"description":  a.Description,
-		"url_template": a.URLTemplate,
-		"params":       a.Params,
-		"required":     append([]string{}, a.Required...), // present even when empty
-		"method":       a.Method,
+		"name":        a.Name,
+		"description": a.Description,
+		"params":      a.Params,
+		"required":    append([]string{}, a.Required...), // present even when empty
+	}
+	// One template or the other: a command action carries no URL or method.
+	if a.CommandTemplate != "" {
+		m["command_template"] = a.CommandTemplate
+	} else {
+		m["url_template"] = a.URLTemplate
+		m["method"] = a.Method
 	}
 	if a.BodyTemplate != "" {
 		m["body_template"] = a.BodyTemplate
@@ -382,6 +387,13 @@ func tempToolToCreateArgs(tt TempTool) map[string]any {
 		out["actions"] = acts
 		if tt.Expand {
 			out["expand"] = true
+		}
+		// The script its command actions run rides through an update.
+		if tt.ScriptBody != "" {
+			out["script_body"] = tt.ScriptBody
+		}
+		if tt.ScriptName != "" {
+			out["script_name"] = tt.ScriptName
 		}
 		if len(tt.FollowUpsFromAny) > 0 {
 			out["follow_ups_from_any"] = tt.FollowUpsFromAny
