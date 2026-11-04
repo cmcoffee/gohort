@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/activity"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
@@ -125,25 +125,25 @@ func (a *AdminApp) handleMaintenanceRun(c *jsonapi.Call, _ struct{}) (any, error
 	// which is exactly what the progress spinner invites you to do.
 	// WithoutCancel keeps the request's values (deadlines and identity
 	// for anything downstream) and drops only its cancellation.
-	started := time.Now()
-	first, release := claimMaintenancePress(key)
-	// Released in a defer: a pass that panics must not leave its key
-	// claimed, or no later press would ever be recorded again.
-	count := func() int {
-		defer release()
-		return RunMaintenanceFunc(context.WithoutCancel(c.R.Context()), key)
-	}()
-	if count < 0 {
+	//
+	// Who pressed it rides on the context, and core records how the run
+	// ended (recordMaintenanceEnd), for a press and a scheduled run alike. A
+	// press that joins a run already going waits for it and is answered its
+	// count; the record stays the first press's.
+	label := ""
+	for _, f := range ListMaintenanceFuncs() {
+		if f.Key == key {
+			label = f.Label
+		}
+	}
+	if label == "" {
 		return nil, jsonapi.NotFound("unknown maintenance function")
 	}
-	// Recorded after it returns, so a pass that panicked leaves the
-	// previous record standing rather than claiming a run that did not
-	// finish. RunMaintenanceFunc blocks for the whole pass; the progress
-	// endpoint is what the page watches meanwhile.
-	// A press that joined one already running reports the count and
-	// leaves the record to the press that started it.
-	if first {
-		a.recordMaintenanceRun(key, c.User, count, time.Since(started))
+	adminChange(c.R, activity.Maintenance, "ran maintenance %q", label)
+	ctx := WithMaintenanceBy(context.WithoutCancel(c.R.Context()), c.User)
+	count := RunMaintenanceFunc(ctx, key)
+	if count < 0 {
+		return nil, jsonapi.NotFound("unknown maintenance function")
 	}
 	return map[string]int{"fixed": count}, nil
 }

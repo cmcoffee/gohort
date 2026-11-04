@@ -31,6 +31,7 @@ func (a *AdminApp) systemSections() []ui.Section {
 					// host. Sits in System Status rather than behind a
 					// tools page because when it reads "none" it applies
 					// to every tool at once.
+					{Label: "Background work", Field: "background_work", StatusField: "background_status"},
 					{Label: "Shell sandbox", Field: "sandbox_backend", StatusField: "sandbox_status"},
 					{Label: "Shell tools confined", Field: "sandbox_confined", StatusField: "sandbox_status"},
 					{Label: "Sandbox required (fail closed)", Field: "sandbox_required"},

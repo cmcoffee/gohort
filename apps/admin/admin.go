@@ -97,6 +97,9 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	if AuthDB != nil {
 		a.db = AuthDB()
 	}
+	// How every maintenance pass ended, the scheduled ones too, is kept
+	// beside its button (maintenance_history.go).
+	OnMaintenanceEnded = a.recordMaintenanceEnd
 
 	sub := http.NewServeMux()
 

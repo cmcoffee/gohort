@@ -181,6 +181,7 @@ func reembedChunks(ctx context.Context, db Database, what string, want func(c Em
 				if streak >= reembedFailStreak {
 					Log("[vector-reembed] stopping, %d consecutive failures (endpoint likely down: %s). Repaired %d before the streak; re-run once the embedder is back.",
 						streak, cfg.Endpoint, fixed)
+					ReportMaintenanceFailure(ctx, fmt.Sprintf("stopped after %d failures in a row (the embedder at %s is likely down); repaired %d before that", streak, cfg.Endpoint, fixed))
 					return true
 				}
 				return false

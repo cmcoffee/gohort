@@ -360,7 +360,13 @@ const (
 	// PeerCapSpeech and ResolveSpeechProvider, the speech capability's name
 	// and the admin save's resolver, as transcription has. Its handlers and
 	// manifest entry stay unexported.
-	coreExportCeiling = 2360
+	// 2388: the slack had been spent again (HEAD stood at 2384, the last one
+	// TunableCategories, the Tuning tab's subjects), plus WithMaintenanceBy,
+	// MaintenanceEnded, OnMaintenanceEnded and ReportMaintenanceFailure: how
+	// every maintenance pass ended, the scheduled ones too, reaches the admin's
+	// record, so a nightly repair that gave up is on the page and not only in
+	// the server log. The run state and its hold stay unexported.
+	coreExportCeiling = 2388
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

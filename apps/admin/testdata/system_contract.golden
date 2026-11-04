@@ -3,7 +3,7 @@
 alice GET /api/status ""
   403 forbidden
 root GET /api/status ""
-  200 object with keys active_sessions,allow_signup,auth_enabled,sandbox_advice,sandbox_backend,sandbox_bypass,sandbox_confined,sandbox_limits,sandbox_refusing,sandbox_required,sandbox_status,tls_enabled,tls_self_signed,user_count
+  200 object with keys active_sessions,allow_signup,auth_enabled,background_status,background_work,sandbox_advice,sandbox_backend,sandbox_bypass,sandbox_confined,sandbox_limits,sandbox_refusing,sandbox_required,sandbox_status,tls_enabled,tls_self_signed,user_count
 root POST /api/status "{}"
   405 method not allowed
 (signed out) GET /api/dependencies ""

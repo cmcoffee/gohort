@@ -231,6 +231,9 @@ func SaveStore(db Database, s Store) (Store, error) {
 	if s.Ephemeral && s.LifetimeHours <= 0 {
 		s.LifetimeHours = defaultLifetimeHours
 	}
+	if err := checkCleanupAllowed(db, s); err != nil {
+		return s, err
+	}
 	if s.MaxGB < 0 {
 		s.MaxGB = 0
 	}
@@ -255,6 +258,34 @@ func SaveStore(db Database, s Store) (Store, error) {
 	}
 	db.Set(storesTable, s.Slug, s)
 	return s, nil
+}
+
+// cleansUp reports whether the store deletes from its folder: on a timer when
+// temporary, or by an admin's sweep when it has a retention window.
+func (s Store) cleansUp() bool { return s.Ephemeral || s.RetentionDays > 0 }
+
+// checkCleanupAllowed refuses to turn cleanup ON for a folder this server's
+// user cannot delete in. A store pointed at /var/log and marked temporary
+// tried, every fifteen minutes for a week, to delete the system's log folders,
+// and only the operating system said no. Refused when it is being set, not on
+// every save: a store that already cleans up stays editable, and its row and
+// System Status say what is wrong with it.
+func checkCleanupAllowed(db Database, s Store) error {
+	if !s.cleansUp() {
+		return nil
+	}
+	if prev, ok := LoadStore(db, s.Slug); ok && prev.cleansUp() && prev.Path == s.Path {
+		return nil
+	}
+	if why := cleanupBlocker(s.Path); why != "" {
+		what := "a retention window"
+		if s.Ephemeral {
+			what = "Temporary"
+		}
+		return Error(what + " deletes folders from " + s.Path + ", and " + why +
+			": leave it off, or give this server's user write access to the folder first")
+	}
+	return nil
 }
 
 // cleanAccessList trims and drops blanks and repeats.

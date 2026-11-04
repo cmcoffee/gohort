@@ -873,3 +873,128 @@ func TestBackfilledTitlesAreWrittenBack(t *testing.T) {
 		t.Errorf("the backfill left %d rows, want the same 3", n)
 	}
 }
+
+// endedHook captures what OnMaintenanceEnded is told, restoring the previous
+// hook when the test ends.
+func endedHook(t *testing.T) func() []MaintenanceEnded {
+	t.Helper()
+	saved := OnMaintenanceEnded
+	t.Cleanup(func() { OnMaintenanceEnded = saved })
+	var mu sync.Mutex
+	var got []MaintenanceEnded
+	OnMaintenanceEnded = func(e MaintenanceEnded) {
+		mu.Lock()
+		got = append(got, e)
+		mu.Unlock()
+	}
+	return func() []MaintenanceEnded {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]MaintenanceEnded(nil), got...)
+	}
+}
+
+// Every run is reported when it ends, with who started it: a press names its
+// person, and a run that started on its own names nobody. That is what puts a
+// nightly repair on the admin page instead of only in the server log.
+func TestEveryMaintenanceRunIsReportedWithWhoStartedIt(t *testing.T) {
+	saved := maintenanceFuncs
+	t.Cleanup(func() { maintenanceFuncs = saved })
+	ended := endedHook(t)
+
+	const key = "test_reported_pass"
+	RegisterMaintenanceFunc("Housekeeping", key, "Reported pass", "Changes three.",
+		func(ctx context.Context) int {
+			ReportMaintenanceOutcome(ctx, "three of them")
+			return 3
+		})
+	RunMaintenanceFunc(WithMaintenanceBy(context.Background(), "craig"), key)
+	RunMaintenanceFunc(context.Background(), key)
+
+	got := ended()
+	if len(got) != 2 {
+		t.Fatalf("reported %d runs, want 2: %+v", len(got), got)
+	}
+	if got[0].By != "craig" || got[0].Changed != 3 || got[0].Outcome != "three of them" || got[0].Failed {
+		t.Errorf("the pressed run was reported as %+v", got[0])
+	}
+	if got[1].By != "" {
+		t.Errorf("a run nobody started was reported as started by %q", got[1].By)
+	}
+}
+
+// A pass that reports failure is recorded as failed, and the reason stays its
+// last word: the summary a loop writes on its way out does not replace it.
+func TestAFailedPassKeepsItsReason(t *testing.T) {
+	saved := maintenanceFuncs
+	t.Cleanup(func() { maintenanceFuncs = saved })
+	ended := endedHook(t)
+
+	const key = "test_failing_pass"
+	RegisterMaintenanceFunc("Vector index", key, "Failing pass", "The far end is down.",
+		func(ctx context.Context) int {
+			ReportMaintenanceFailure(ctx, "the embedder stopped answering")
+			ReportMaintenanceOutcome(ctx, "100 checked - 4 re-embedded")
+			return 4
+		})
+	RunMaintenanceFunc(context.Background(), key)
+
+	got := ended()
+	if len(got) != 1 || !got[0].Failed || got[0].Outcome != "the embedder stopped answering" {
+		t.Fatalf("the failed run was reported as %+v", got)
+	}
+	if o := MaintenanceOutcome(key); o != "failed: the embedder stopped answering" {
+		t.Errorf("the outcome reads %q", o)
+	}
+}
+
+// A second start while one runs joins it, and only the first is reported: the
+// record keeps the starter's name and the real duration.
+func TestAJoinedRunIsReportedOnce(t *testing.T) {
+	saved := maintenanceFuncs
+	t.Cleanup(func() { maintenanceFuncs = saved })
+	ended := endedHook(t)
+
+	const key = "test_joined_pass"
+	release := make(chan struct{})
+	RegisterMaintenanceFunc("Housekeeping", key, "Joined pass", "Waits.",
+		func(ctx context.Context) int { <-release; return 1 })
+	done := make(chan int, 2)
+	go func() { done <- RunMaintenanceFunc(WithMaintenanceBy(context.Background(), "first"), key) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for MaintenanceProgress(key) == "" {
+		if time.Now().After(deadline) {
+			t.Fatal("the pass never started")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	go func() { done <- RunMaintenanceFunc(WithMaintenanceBy(context.Background(), "second"), key) }()
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	<-done
+	<-done
+	got := ended()
+	if len(got) != 1 || got[0].By != "first" {
+		t.Errorf("reported %+v, want the first start alone", got)
+	}
+}
+
+// A pass that panics is reported as one that did not finish: it claims no
+// finish, and it is not silence either.
+func TestAPanickedPassIsReportedAsNotFinishing(t *testing.T) {
+	saved := maintenanceFuncs
+	t.Cleanup(func() { maintenanceFuncs = saved })
+	ended := endedHook(t)
+
+	const key = "test_panicked_report"
+	RegisterMaintenanceFunc("Housekeeping", key, "Panics", "Falls over.",
+		func(ctx context.Context) int { panic("boom") })
+	func() {
+		defer func() { _ = recover() }()
+		RunMaintenanceFunc(context.Background(), key)
+	}()
+	got := ended()
+	if len(got) != 1 || !got[0].Failed || got[0].Outcome != "did not finish" {
+		t.Errorf("the panicked run was reported as %+v", got)
+	}
+}

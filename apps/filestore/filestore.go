@@ -76,8 +76,11 @@ func init() {
 	// reading "none" is what tells an owner the capability exists and
 	// this agent does not hold it.
 	// Retention: a dry run and a delete, both driven by the per-store
-	// window. Nothing fires on a timer — see retention.go.
+	// window, which nothing fires on a timer — see retention.go. Beside
+	// them the two sweeps that do run on a timer, through the maintenance
+	// runner so each run is recorded: temporary stores and evidence indexes.
 	registerRetentionMaintenance(app)
+	registerEvidenceMaintenance(app)
 	RegisterAgentGrantor(AgentGrantor{
 		Name: "filestore", Label: "File stores",
 		Granted: func(user, agentID string) []AgentGrant {

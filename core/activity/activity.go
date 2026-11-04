@@ -44,6 +44,7 @@ const (
 	Peer         = "peer"
 	Approval     = "approval"
 	Settings     = "settings"
+	Maintenance  = "maintenance" // an administrator ran a maintenance pass
 )
 
 // Event is one thing that happened.

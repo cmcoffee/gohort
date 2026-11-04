@@ -488,7 +488,7 @@ func storeFormFields() []ui.FormField {
 			Help:   "Shown in the agent's Sources picker, and in the tool descriptions an attached agent reads.",
 			Detail: "The tool NAMES come from a handle minted from this name the first time the store is saved (\"Build logs\" becomes search_build_logs), and that handle does not change afterwards. RENAMING A STORE CHANGES THE LABEL, NOT THE TOOL NAMES.\n\nIt has to work that way: the handle is what agent attachments are keyed on and what a minted command tool's frozen path_scope names, so moving it would break every approved tool pointed at this store. The Agent tools column shows the names in force."},
 		{Field: "path", Type: "text", Label: "Folder", Placeholder: "/var/log/builds",
-			Help:   "Absolute path on this server. Read-only: nothing here ever writes to it.",
+			Help:   "Absolute path on this server. Temporary and a retention window delete from it, and need write access here.",
 			Detail: "The folder itself is what an agent attaches to; its subfolders, if any, are what a search can be scoped to."},
 		{Field: "evidence", Type: "toggle", Label: "Index folders as evidence",
 			Help:   "Index each subfolder like an evidence bundle, and give attached agents a summary and a timeline of it. Off by default.",
@@ -858,11 +858,15 @@ func connectedLabel(st Store, all []Store) string {
 // keepsLabel is the retention in a few words, for the table's row:
 // "forever", "90 days", "temporary, 24h". retentionLabel says it in full.
 func keepsLabel(st Store) string {
+	cant := ""
+	if st.cleansUp() && cleanupBlocker(st.Path) != "" {
+		cant = ", can't delete here"
+	}
 	switch {
 	case st.Ephemeral:
-		return "temporary, " + strconv.Itoa(int(st.lifetime().Hours())) + "h"
+		return "temporary, " + strconv.Itoa(int(st.lifetime().Hours())) + "h" + cant
 	case st.RetentionDays > 0:
-		return strconv.Itoa(st.RetentionDays) + " days"
+		return strconv.Itoa(st.RetentionDays) + " days" + cant
 	}
 	return "forever"
 }
@@ -908,6 +912,11 @@ func retentionLabel(st Store) string {
 	}
 	if limit := st.capBytes(); limit > 0 {
 		window += ", " + HumanSize(st.usage()) + " of " + HumanSize(limit) + " cap"
+	}
+	if st.cleansUp() {
+		if why := cleanupBlocker(st.Path); why != "" {
+			window += ". NOTHING IS DELETED: " + why + ", so the cleanup is skipped until the folder's permissions or this setting change"
+		}
 	}
 	return window
 }

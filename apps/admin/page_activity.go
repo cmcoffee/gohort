@@ -47,6 +47,7 @@ func (a *AdminApp) activitySections() []ui.Section {
 					{Value: activity.Peer, Label: "Peer", Color: "info"},
 					{Value: activity.Approval, Label: "Approval", Color: "info"},
 					{Value: activity.Settings, Label: "Setting", Color: "mute"},
+					{Value: activity.Maintenance, Label: "Maintenance", Color: "mute"},
 				}},
 				{Field: "user", Label: "Who"},
 				{Field: "ip", Label: "From", Mute: true},

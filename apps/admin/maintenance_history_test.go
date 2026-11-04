@@ -1,6 +1,6 @@
 package admin
 
-// What each hand-run maintenance pass did last time.
+// What each maintenance pass did last time, pressed or run on its own.
 //
 // The state that matters most is "never run", because it is the one every
 // function starts in and the one a decision about scheduling turns on. It is
@@ -23,6 +23,11 @@ func historyApp(t *testing.T) *AdminApp {
 	return &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
 }
 
+// record stores a run the way core reports one ending.
+func record(a *AdminApp, key, by string, changed int, took time.Duration) {
+	a.recordMaintenanceEnd(MaintenanceEnded{Key: key, By: by, Changed: changed, Took: took})
+}
+
 // Driven, not read: a record that does not survive the round trip through the
 // store is the whole failure, and no amount of reading the formatter catches it.
 func TestARunIsRememberedAcrossTheRoundTrip(t *testing.T) {
@@ -30,7 +35,7 @@ func TestARunIsRememberedAcrossTheRoundTrip(t *testing.T) {
 	if _, ok := a.lastMaintenanceRun("vector_repair"); ok {
 		t.Fatal("an unrun pass reports a run")
 	}
-	a.recordMaintenanceRun("vector_repair", "craig", 12, 95*time.Second)
+	record(a, "vector_repair", "craig", 12, 95*time.Second)
 
 	run, ok := a.lastMaintenanceRun("vector_repair")
 	if !ok {
@@ -51,7 +56,7 @@ func TestARunIsRememberedAcrossTheRoundTrip(t *testing.T) {
 
 	// Overwritten, not appended: what a person needs before pressing is the
 	// last run, and a growing table for that is storage nobody reads.
-	a.recordMaintenanceRun("vector_repair", "someone-else", 0, time.Second)
+	record(a, "vector_repair", "someone-else", 0, time.Second)
 	run, _ = a.lastMaintenanceRun("vector_repair")
 	if run.By != "someone-else" || run.Changed != 0 {
 		t.Errorf("the second run did not replace the first: %+v", run)
@@ -107,7 +112,7 @@ func TestNeverRunPassesAreCountable(t *testing.T) {
 	if got := len(a.maintenanceKeysNeverRun()); got != len(all) {
 		t.Errorf("%d of %d passes report as never run on a fresh store", got, len(all))
 	}
-	a.recordMaintenanceRun(all[0].Key, "craig", 1, time.Second)
+	record(a, all[0].Key, "craig", 1, time.Second)
 	if got := len(a.maintenanceKeysNeverRun()); got != len(all)-1 {
 		t.Errorf("after one run, %d report never-run, want %d", got, len(all)-1)
 	}
@@ -131,28 +136,52 @@ func TestTheMaintenanceListAsksForItsHistory(t *testing.T) {
 	var _ ui.ActionList = list
 }
 
-// A second press while the first is running joins it; only the press that
-// started the run records it, so the record keeps the starter's name and the
-// real duration.
-func TestOnlyThePressThatStartedARunRecordsIt(t *testing.T) {
-	first, release := claimMaintenancePress("reembed")
-	if !first {
-		t.Fatal("the first press should own the run")
+// A run nobody pressed says so, and a pass's own words replace the bare count.
+func TestAScheduledRunSaysItRanOnItsOwn(t *testing.T) {
+	a := historyApp(t)
+	a.recordMaintenanceEnd(MaintenanceEnded{Key: "vector_repair", Changed: 340,
+		Outcome: "8,400 chunk(s) checked - 340 re-embedded", Took: 3 * time.Minute})
+	run, ok := a.lastMaintenanceRun("vector_repair")
+	line := maintenanceHistoryLine(run, ok)
+	for _, want := range []string{"on its own", ": 8,400 chunk(s) checked - 340 re-embedded", "took 3m"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("history line %q is missing %q", line, want)
+		}
 	}
-	if again, rel2 := claimMaintenancePress("reembed"); again {
-		t.Error("a press during the run should not record it")
-	} else {
-		rel2()
+	if strings.Contains(line, "340 changed") {
+		t.Errorf("the pass's own words and the bare count both: %q", line)
 	}
-	if other, rel3 := claimMaintenancePress("dedupe"); !other {
-		t.Error("a different pass is its own run")
-	} else {
-		rel3()
+}
+
+// A failed last run is named on System Status, with its reason, until the
+// pass next runs cleanly.
+func TestAFailedRunIsOnTheStatusPanelUntilTheNextGoodOne(t *testing.T) {
+	a := historyApp(t)
+	all := ListMaintenanceFuncs()
+	if len(all) == 0 {
+		t.Skip("no maintenance functions registered in this binary")
 	}
-	release()
-	if next, rel4 := claimMaintenancePress("reembed"); !next {
-		t.Error("after the run returns, the next press owns the next run")
-	} else {
-		rel4()
+	if got := a.failedMaintenance(); len(got) != 0 {
+		t.Fatalf("a fresh store reports failures: %v", got)
+	}
+	k := all[0]
+	a.recordMaintenanceEnd(MaintenanceEnded{Key: k.Key, Failed: true, Outcome: "the embedder stopped answering"})
+	got := a.failedMaintenance()
+	if len(got) != 1 || !strings.HasPrefix(got[0], k.Label+" failed") || !strings.Contains(got[0], "the embedder stopped answering") {
+		t.Errorf("failures = %v", got)
+	}
+	if line := backgroundWorkLine(got); !strings.Contains(line, k.Label) {
+		t.Errorf("the status line does not name the pass: %q", line)
+	}
+	run, _ := a.lastMaintenanceRun(k.Key)
+	if line := maintenanceHistoryLine(run, true); !strings.Contains(line, ", failed: the embedder stopped answering") {
+		t.Errorf("history line %q does not say it failed", line)
+	}
+	record(a, k.Key, "", 0, time.Second)
+	if got := a.failedMaintenance(); len(got) != 0 {
+		t.Errorf("a clean run did not clear the failure: %v", got)
+	}
+	if line := backgroundWorkLine(nil); !strings.Contains(line, "ended cleanly") {
+		t.Errorf("the clean status line reads %q", line)
 	}
 }

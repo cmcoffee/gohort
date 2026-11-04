@@ -189,3 +189,178 @@ func TestAStoppedBundleReapRemovesNothing(t *testing.T) {
 		t.Fatal("a stopped reap removed the folder")
 	}
 }
+
+// runPass runs fn as a maintenance pass under a key of its own and returns how
+// core reported it ending: the same path the timers take, so what is checked
+// is what the admin records.
+func runPass(t *testing.T, key string, fn func(ctx context.Context) int) MaintenanceEnded {
+	t.Helper()
+	saved := OnMaintenanceEnded
+	t.Cleanup(func() { OnMaintenanceEnded = saved })
+	var got []MaintenanceEnded
+	OnMaintenanceEnded = func(e MaintenanceEnded) {
+		if e.Key == key {
+			got = append(got, e)
+		}
+	}
+	RegisterMaintenanceFunc("Housekeeping", key, key, "test pass", fn)
+	RunMaintenanceFunc(context.Background(), key)
+	if len(got) != 1 {
+		t.Fatalf("the pass was reported %d times, want once", len(got))
+	}
+	return got[0]
+}
+
+// The two timed sweeps are maintenance passes, so each run is recorded and
+// either can be run now from Housekeeping.
+func TestTheTimedSweepsAreMaintenancePasses(t *testing.T) {
+	want := map[string]bool{temporarySweepKey: false, evidenceSweepKey: false}
+	for _, f := range ListMaintenanceFuncs() {
+		if _, ok := want[f.Key]; ok {
+			want[f.Key] = true
+			if f.Group != "Housekeeping" {
+				t.Errorf("%s is under %q, want Housekeeping", f.Key, f.Group)
+			}
+		}
+	}
+	for k, ok := range want {
+		if !ok {
+			t.Errorf("%s is not a registered maintenance pass, so its runs are not recorded", k)
+		}
+	}
+}
+
+// A temporary sweep says what it removed.
+func TestATemporarySweepReportsWhatItRemoved(t *testing.T) {
+	app := &FileStoreApp{}
+	app.DB = &DBase{Store: kvlite.MemStore()}
+	root := t.TempDir()
+	if _, err := SaveStore(app.DB, Store{Name: "Intake", Path: root, Ephemeral: true, LifetimeHours: 1}); err != nil {
+		t.Fatal(err)
+	}
+	aged(t, root, "CASE-1", 1)
+	end := runPass(t, "test_temporary_sweep_reports", func(ctx context.Context) int { return sweepTemporaryPass(ctx, app.DB) })
+	if end.Failed || end.Changed != 1 || !strings.HasPrefix(end.Outcome, "removed 1 expired folder(s)") {
+		t.Errorf("the sweep ended as %+v", end)
+	}
+}
+
+// A folder this server cannot remove whole is never tried: it is left
+// exactly as it was, not emptied of what could be deleted, and the run fails
+// naming it, so the cleanup that cannot happen is on System Status.
+func TestAFolderItCannotRemoveIsLeftWhole(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root removes a folder from a read-only parent, so the case cannot be made")
+	}
+	app := &FileStoreApp{}
+	app.DB = &DBase{Store: kvlite.MemStore()}
+	root := t.TempDir()
+	if _, err := SaveStore(app.DB, Store{Name: "Intake", Path: root, Ephemeral: true, LifetimeHours: 1}); err != nil {
+		t.Fatal(err)
+	}
+	stuck := aged(t, root, "CASE-1", 1)
+	inner := filepath.Join(stuck, "inner")
+	if err := os.MkdirAll(inner, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(inner, "x"), []byte("x"), 0o644)
+	// The folder's own contents cannot be unlinked, so it cannot go whole.
+	if err := os.Chmod(inner, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(inner, 0o755) })
+	when := time.Now().AddDate(0, 0, -1)
+	os.Chtimes(stuck, when, when)
+	os.Chtimes(inner, when, when)
+	gone := aged(t, root, "CASE-2", 1) // a removable neighbour still goes
+
+	end := runPass(t, "test_temporary_sweep_blocked", func(ctx context.Context) int { return sweepTemporaryPass(ctx, app.DB) })
+	if !end.Failed || !strings.Contains(end.Outcome, "left alone") || !strings.Contains(end.Outcome, "Intake / CASE-1") || end.Changed != 1 {
+		t.Errorf("the run ended as %+v", end)
+	}
+	// Whole: the file at its top, which a RemoveAll would have taken first,
+	// is still there.
+	if _, err := os.Stat(filepath.Join(stuck, "log.txt")); err != nil {
+		t.Errorf("the folder it could not remove was partly emptied: %v", err)
+	}
+	if _, err := os.Stat(gone); !os.IsNotExist(err) {
+		t.Errorf("the removable neighbour should have gone: %v", err)
+	}
+}
+
+// A store whose folder this server cannot delete in is not read for cleanup
+// at all: listed once as left alone, nothing tried.
+func TestAStoreItCannotDeleteInIsNotTried(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can delete in a read-only folder")
+	}
+	app := &FileStoreApp{}
+	app.DB = &DBase{Store: kvlite.MemStore()}
+	root := t.TempDir()
+	st, err := SaveStore(app.DB, Store{Name: "Build Logs", Path: root, Ephemeral: true, LifetimeHours: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := aged(t, root, "anaconda", 30)
+	if err := os.Chmod(root, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(root, 0o755) })
+
+	sc := findExpired(context.Background(), app.DB, true)
+	if len(sc.bundles) != 0 || len(sc.blocked) != 1 || !strings.HasPrefix(sc.blocked[0], "Build Logs: ") {
+		t.Errorf("scan = %+v, want the store left alone once", sc)
+	}
+	end := runPass(t, "test_temporary_sweep_unwritable_root", func(ctx context.Context) int { return sweepTemporaryPass(ctx, app.DB) })
+	if !end.Failed || !strings.Contains(end.Outcome, "no permission to delete in "+root) {
+		t.Errorf("the run ended as %+v", end)
+	}
+	if _, err := os.Stat(old); err != nil {
+		t.Errorf("a folder in an undeletable store went: %v", err)
+	}
+	// The row says so, short in the table and in full in the details.
+	if k := keepsLabel(st); !strings.Contains(k, "can't delete here") {
+		t.Errorf("table row = %q", k)
+	}
+	if r := retentionLabel(st); !strings.Contains(r, "NOTHING IS DELETED") {
+		t.Errorf("details = %q", r)
+	}
+}
+
+// Cleanup cannot be turned ON for a folder this server cannot delete in, and a
+// store that already cleans up stays editable.
+func TestCleanupIsRefusedWhereItCannotDelete(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can delete in a read-only folder")
+	}
+	db := &DBase{Store: kvlite.MemStore()}
+	locked := t.TempDir()
+	if err := os.Chmod(locked, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+	if _, err := SaveStore(db, Store{Name: "Logs", Path: locked, Ephemeral: true}); err == nil || !strings.Contains(err.Error(), "Temporary deletes folders from") {
+		t.Errorf("temporary on an undeletable folder: %v", err)
+	}
+	if _, err := SaveStore(db, Store{Name: "Logs", Path: locked, RetentionDays: 30}); err == nil || !strings.Contains(err.Error(), "a retention window deletes") {
+		t.Errorf("retention on an undeletable folder: %v", err)
+	}
+	// A read-only store is fine there: it deletes nothing.
+	if _, err := SaveStore(db, Store{Name: "Logs", Path: locked}); err != nil {
+		t.Fatalf("a store that deletes nothing was refused: %v", err)
+	}
+
+	// One that already cleans up, whose folder lost write access later, still
+	// saves: the edit is not about cleanup, and the row says what is wrong.
+	open := t.TempDir()
+	tmp, err := SaveStore(db, Store{Name: "Intake", Path: open, Ephemeral: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Chmod(open, 0o555)
+	t.Cleanup(func() { os.Chmod(open, 0o755) })
+	tmp.Description = "raw downloads"
+	if _, err := SaveStore(db, tmp); err != nil {
+		t.Errorf("an existing temporary store could not be edited: %v", err)
+	}
+}

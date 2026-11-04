@@ -280,11 +280,30 @@ func noteChanged(db Database, st Store, folder string) {
 	}
 }
 
+// evidenceSweepKey is the evidence sweep as a maintenance pass. The timer runs
+// it through the maintenance runner, so each sweep is recorded like a pressed
+// one: its last run sits beside its button, and a failed one is on System
+// Status rather than only in the server log.
+const evidenceSweepKey = "sweep_evidence_indexes"
+
+// registerEvidenceMaintenance makes the sweep a pass an admin can also run now.
+func registerEvidenceMaintenance(app *FileStoreApp) {
+	RegisterMaintenanceFunc("Housekeeping", evidenceSweepKey,
+		"Bring evidence indexes up to date",
+		"Indexes every changed or new folder of a store that indexes evidence, and wipes the "+
+			"indexes of folders that are gone. Runs on its own every 15 minutes; this runs it now.",
+		func(ctx context.Context) int { return sweepEvidence(ctx, app.DB) })
+}
+
 // sweepEvidence brings every evidence store's indexes in line with its
 // folders: a changed or new folder is indexed (one at a time, so the sweep
 // never runs a dozen walks at once), an index whose folder is gone is wiped,
-// and so is every index of a store that no longer indexes evidence.
-func sweepEvidence(ctx context.Context, db Database) {
+// and so is every index of a store that no longer indexes evidence. It answers
+// how many folders it indexed or wiped, and says how it went: a store whose
+// folders cannot be read, or a folder that would not index, is a failed run.
+func sweepEvidence(ctx context.Context, db Database) int {
+	var indexed, wiped int
+	var problems []string
 	stores := map[string]Store{}
 	for _, st := range ListStores(db) {
 		stores[st.Slug] = st
@@ -293,15 +312,18 @@ func sweepEvidence(ctx context.Context, db Database) {
 		slug, folder, ok := strings.Cut(key, "/")
 		if !ok {
 			db.Unset(evidenceTable, key)
+			wiped++
 			continue
 		}
 		st, ok := stores[slug]
 		if !ok || !st.Evidence {
 			wipeEvidence(db, slug, folder)
+			wiped++
 			continue
 		}
 		if _, _, err := evidenceFolder(st, folder); err != nil {
 			wipeEvidence(db, slug, folder)
+			wiped++
 		}
 	}
 	for _, st := range stores {
@@ -310,11 +332,13 @@ func sweepEvidence(ctx context.Context, db Database) {
 		}
 		folders, err := ListFolders(st.Path)
 		if err != nil {
+			problems = append(problems, fmt.Sprintf("could not read store %s: %v", st.Slug, err))
 			continue
 		}
 		for _, f := range folders {
 			if ctx.Err() != nil {
-				return
+				ReportMaintenanceOutcome(ctx, fmt.Sprintf("stopped part way: %d folder(s) indexed, %d index(es) wiped", indexed, wiped))
+				return indexed + wiped
 			}
 			folder, dir, err := evidenceFolder(st, f.Name)
 			if err != nil {
@@ -323,20 +347,37 @@ func sweepEvidence(ctx context.Context, db Database) {
 			if _, current := evidenceCurrent(db, st.Slug, folder, dir); current {
 				continue
 			}
-			<-evidenceRuns.start(db, st, folder, dir).done
+			run := evidenceRuns.start(db, st, folder, dir)
+			<-run.done
+			if run.err != nil {
+				problems = append(problems, fmt.Sprintf("%s/%s did not index: %v", st.Slug, folder, run.err))
+				continue
+			}
+			indexed++
 		}
 	}
+	summary := fmt.Sprintf("%d folder(s) indexed, %d index(es) of removed folders wiped", indexed, wiped)
+	if len(problems) > 0 {
+		more := ""
+		if len(problems) > 1 {
+			more = fmt.Sprintf(" (and %d more)", len(problems)-1)
+		}
+		ReportMaintenanceFailure(ctx, summary+"; "+problems[0]+more)
+	} else {
+		ReportMaintenanceOutcome(ctx, summary)
+	}
+	return indexed + wiped
 }
 
-// sweepEvidenceLoop runs sweepEvidence on a timer, once shortly after start so
-// a restart does not wait a quarter hour to catch up.
+// sweepEvidenceLoop runs the sweep on a timer, once shortly after start so a
+// restart does not wait a quarter hour to catch up.
 func (T *FileStoreApp) sweepEvidenceLoop() {
 	time.Sleep(time.Minute)
-	sweepEvidence(context.Background(), T.DB)
+	RunMaintenanceFunc(context.Background(), evidenceSweepKey)
 	tick := time.NewTicker(evidenceSweepEvery)
 	defer tick.Stop()
 	for range tick.C {
-		sweepEvidence(context.Background(), T.DB)
+		RunMaintenanceFunc(context.Background(), evidenceSweepKey)
 	}
 }
 

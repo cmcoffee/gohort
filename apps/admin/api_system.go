@@ -51,6 +51,15 @@ func (a *AdminApp) registerSystemRoutes(sub *http.ServeMux) {
 
 }
 
+// backgroundWorkLine is the System Status row for maintenance passes: the
+// ones whose last run failed, or that every one ended cleanly.
+func backgroundWorkLine(failed []string) string {
+	if len(failed) == 0 {
+		return "Every pass's last run ended cleanly"
+	}
+	return strings.Join(failed, "; ")
+}
+
 func (a *AdminApp) handleStatus(c *jsonapi.Call) (any, error) {
 	var allow_signup bool
 	a.db.Get(WebTable, "allow_signup", &allow_signup)
@@ -94,6 +103,12 @@ func (a *AdminApp) handleStatus(c *jsonapi.Call) (any, error) {
 		"active_sessions": len(AllLiveSessions()),
 		"allow_signup":    allow_signup,
 	}
+	// A scheduled pass that gave up overnight (the vector repair with the
+	// embedder down) said so only in the server log. Its last run is kept now,
+	// and a failed one is named here until it next runs.
+	failed := a.failedMaintenance()
+	status["background_work"] = backgroundWorkLine(failed)
+	status["background_status"] = map[bool]string{true: "ok", false: "bad"}[len(failed) == 0]
 	return status, nil
 }
 

@@ -1202,6 +1202,34 @@ func ListMaintenanceFuncs() []struct{ Group, Key, Label, Desc string } {
 
 type maintenanceKeyCtx struct{}
 
+// maintenanceByCtx carries the person who started a run (WithMaintenanceBy).
+type maintenanceByCtx struct{}
+
+// WithMaintenanceBy names the person starting a maintenance run, for the
+// record of how it ended. A run started without one ran on its own: a nightly
+// repair, a daily sweep, or one something noticed was due.
+func WithMaintenanceBy(ctx context.Context, who string) context.Context {
+	return context.WithValue(ctx, maintenanceByCtx{}, who)
+}
+
+// MaintenanceEnded is how one pass ended, handed to OnMaintenanceEnded.
+type MaintenanceEnded struct {
+	Key     string
+	By      string // who started it; empty for a pass that ran on its own
+	Changed int
+	Took    time.Duration
+	Outcome string // the pass's own last words, if it said any
+	Stopped bool   // somebody asked it to stop
+	Failed  bool   // it said it failed (ReportMaintenanceFailure), or it did not return
+}
+
+// OnMaintenanceEnded, when set, is told how every pass ended, the ones that
+// ran on their own as well as the ones somebody pressed. The admin sets it to
+// keep the last run of each pass, so a scheduled repair that gave up overnight
+// is on the page rather than only in the server log. Called once per run, by
+// the run that started it, never by a press that joined it.
+var OnMaintenanceEnded func(MaintenanceEnded)
+
 var maintenanceProgress struct {
 	mu      sync.Mutex
 	at      map[string]string
@@ -1224,6 +1252,10 @@ type maintenanceRun struct {
 	// stopped rather than finished.
 	cancel  context.CancelFunc
 	stopped bool
+	// by is who started it ("" when it ran on its own), and failed says the
+	// pass reported failure (ReportMaintenanceFailure).
+	by     string
+	failed bool
 }
 
 // maintenanceOutcome is how a finished pass ended, kept for a while after it
@@ -1276,8 +1308,31 @@ func MaintenanceProgress(key string) string {
 // which the generic "N record(s) changed" cannot: a re-embed that checked
 // 8,400 chunks, repaired 340 and left 12 still failing has three numbers that
 // matter and one of them is not the return value. Optional — a pass that says
-// nothing gets the generic line.
+// nothing gets the generic line. Once a pass has reported failure, that stays
+// its last word: the summary a loop writes on its way out would otherwise
+// replace the reason it stopped.
 func ReportMaintenanceOutcome(ctx context.Context, line string) {
+	key, _ := ctx.Value(maintenanceKeyCtx{}).(string)
+	if key == "" {
+		return
+	}
+	maintenanceProgress.mu.Lock()
+	defer maintenanceProgress.mu.Unlock()
+	if run := maintenanceProgress.running[key]; run != nil && run.failed {
+		return
+	}
+	if maintenanceProgress.spoken == nil {
+		maintenanceProgress.spoken = map[string]string{}
+	}
+	maintenanceProgress.spoken[key] = line
+}
+
+// ReportMaintenanceFailure is ReportMaintenanceOutcome for a pass that could
+// not do its work: the embedder stopped answering, a store would not open. The
+// line is its last word as with an outcome, and the run is recorded as failed,
+// which the admin shows beside the pass and on the System Status panel. A pass
+// that merely found nothing to do has not failed.
+func ReportMaintenanceFailure(ctx context.Context, line string) {
 	key, _ := ctx.Value(maintenanceKeyCtx{}).(string)
 	if key == "" {
 		return
@@ -1288,6 +1343,9 @@ func ReportMaintenanceOutcome(ctx context.Context, line string) {
 		maintenanceProgress.spoken = map[string]string{}
 	}
 	maintenanceProgress.spoken[key] = line
+	if run := maintenanceProgress.running[key]; run != nil {
+		run.failed = true
+	}
 }
 
 // MaintenanceOutcome returns how the pass last ENDED, within
@@ -1322,7 +1380,7 @@ func CancelMaintenance(key string) bool {
 // startMaintenanceRun claims key for one pass. When a pass of that key is
 // already in flight it returns that run and false: the caller waits on it
 // instead of starting another.
-func startMaintenanceRun(key string) (*maintenanceRun, bool) {
+func startMaintenanceRun(key, by string) (*maintenanceRun, bool) {
 	maintenanceProgress.mu.Lock()
 	defer maintenanceProgress.mu.Unlock()
 	if run := maintenanceProgress.running[key]; run != nil {
@@ -1331,7 +1389,7 @@ func startMaintenanceRun(key string) (*maintenanceRun, bool) {
 	if maintenanceProgress.running == nil {
 		maintenanceProgress.running = map[string]*maintenanceRun{}
 	}
-	run := &maintenanceRun{started: time.Now(), over: make(chan struct{})}
+	run := &maintenanceRun{started: time.Now(), over: make(chan struct{}), by: by}
 	maintenanceProgress.running[key] = run
 	return run, true
 }
@@ -1341,31 +1399,47 @@ func startMaintenanceRun(key string) (*maintenanceRun, bool) {
 // late sees how it ended rather than nothing at all; a pass that panicked
 // leaves the previous outcome standing rather than claiming a finish. Either
 // way the key is released and anybody waiting on it is let go, in the same
-// lock, so no reader sees it both ended and still running.
+// lock, so no reader sees it both ended and still running. OnMaintenanceEnded
+// is told after, outside the lock: a pass that did not return is recorded as
+// one that did not finish, which claims no finish and is not silence either.
 func finishMaintenanceProgress(key string, run *maintenanceRun, returned bool) {
 	maintenanceProgress.mu.Lock()
-	defer maintenanceProgress.mu.Unlock()
+	spoken := maintenanceProgress.spoken[key]
 	if returned {
 		if maintenanceProgress.done == nil {
 			maintenanceProgress.done = map[string]maintenanceOutcome{}
 		}
-		line := maintenanceProgress.spoken[key]
+		line := spoken
 		if line == "" {
 			line = fmt.Sprintf("%d record(s) changed", run.n)
 		}
 		ended := "finished: "
-		if run.stopped {
+		switch {
+		case run.stopped:
 			ended = "stopped: "
+		case run.failed:
+			ended = "failed: "
 		}
 		maintenanceProgress.done[key] = maintenanceOutcome{
 			line: ended + line,
 			at:   time.Now(),
 		}
 	}
+	end := MaintenanceEnded{
+		Key: key, By: run.by, Changed: run.n, Took: time.Since(run.started),
+		Outcome: spoken, Stopped: run.stopped, Failed: run.failed || !returned,
+	}
+	if !returned {
+		end.Outcome = "did not finish"
+	}
 	delete(maintenanceProgress.at, key)
 	delete(maintenanceProgress.spoken, key)
 	delete(maintenanceProgress.running, key)
 	close(run.over)
+	maintenanceProgress.mu.Unlock()
+	if hook := OnMaintenanceEnded; hook != nil {
+		hook(end)
+	}
 }
 
 // RunMaintenanceFunc runs the maintenance function matching key. Returns -1 if
@@ -1382,7 +1456,8 @@ func RunMaintenanceFunc(ctx context.Context, key string) int {
 		if m.Key != key {
 			continue
 		}
-		run, mine := startMaintenanceRun(key)
+		by, _ := ctx.Value(maintenanceByCtx{}).(string)
+		run, mine := startMaintenanceRun(key, by)
 		if !mine {
 			<-run.over
 			return run.n

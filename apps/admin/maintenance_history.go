@@ -19,7 +19,6 @@ package admin
 import (
 	"fmt"
 	"sort"
-	"sync"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -31,49 +30,36 @@ import (
 // reads.
 const maintenanceRunsTable = "maintenance_runs"
 
-// maintenanceRun is how one hand-run pass ended.
+// maintenanceRun is how one pass last ended, pressed or run on its own.
 type maintenanceRun struct {
 	Key     string    `json:"key"`
 	RanAt   time.Time `json:"ran_at"`
-	By      string    `json:"by,omitempty"`
+	By      string    `json:"by,omitempty"` // who pressed it; empty when it ran on its own
 	Changed int       `json:"changed"`
 	Seconds int       `json:"seconds,omitempty"`
+	// Outcome is the pass's own last words, when it said any. Failed and
+	// Stopped are how it ended when that was not a finish.
+	Outcome string `json:"outcome,omitempty"`
+	Failed  bool   `json:"failed,omitempty"`
+	Stopped bool   `json:"stopped,omitempty"`
 }
 
-// maintenancePressed tracks which keys a press from this page is running, so a
-// second press while one is in flight (core joins it rather than starting
-// another) does not overwrite the first press's record with its own name and
-// the shorter time it spent waiting.
-var maintenancePressed = struct {
-	sync.Mutex
-	keys map[string]bool
-}{keys: map[string]bool{}}
-
-// claimMaintenancePress reports whether this press started the run and should
-// record it. release must be called when the run returns.
-func claimMaintenancePress(key string) (first bool, release func()) {
-	maintenancePressed.Lock()
-	defer maintenancePressed.Unlock()
-	if maintenancePressed.keys[key] {
-		return false, func() {}
-	}
-	maintenancePressed.keys[key] = true
-	return true, func() {
-		maintenancePressed.Lock()
-		delete(maintenancePressed.keys, key)
-		maintenancePressed.Unlock()
-	}
-}
-
-// recordMaintenanceRun stores what a press came to. Best-effort: a pass that
-// worked must not report failure because the note about it did not save.
-func (a *AdminApp) recordMaintenanceRun(key, by string, changed int, took time.Duration) {
-	if a == nil || a.db == nil || key == "" {
+// recordMaintenanceEnd stores how a pass ended. It is core's
+// OnMaintenanceEnded, so it hears every run: the ones pressed here and the
+// ones that run on their own (the nightly vector repair, the daily memory
+// pass), which before this left a trace only in the server log. Core calls it
+// once per run, from the run that started it, so a press that joined a run
+// already going does not overwrite the record with its own name. Best-effort:
+// a pass that worked must not report failure because the note about it did
+// not save.
+func (a *AdminApp) recordMaintenanceEnd(e MaintenanceEnded) {
+	if a == nil || a.db == nil || e.Key == "" {
 		return
 	}
-	a.db.Set(maintenanceRunsTable, key, maintenanceRun{
-		Key: key, RanAt: time.Now().UTC(), By: by, Changed: changed,
-		Seconds: int(took.Round(time.Second) / time.Second),
+	a.db.Set(maintenanceRunsTable, e.Key, maintenanceRun{
+		Key: e.Key, RanAt: time.Now().UTC(), By: e.By, Changed: e.Changed,
+		Seconds: int(e.Took.Round(time.Second) / time.Second),
+		Outcome: e.Outcome, Failed: e.Failed, Stopped: e.Stopped,
 	})
 }
 
@@ -102,17 +88,50 @@ func maintenanceHistoryLine(run maintenanceRun, ok bool) string {
 	line := "Last run " + relativeWhen(run.RanAt)
 	if run.By != "" {
 		line += " by " + run.By
+	} else {
+		line += " on its own"
 	}
-	// The count is the point of having run it, so it is said even when zero —
-	// "0 changed" is a real answer meaning there was nothing to do, and
-	// omitting it makes a clean run look like a run with no result.
-	line += fmt.Sprintf(", %d changed", run.Changed)
+	switch {
+	case run.Failed:
+		line += ", failed"
+	case run.Stopped:
+		line += ", stopped"
+	}
+	// The pass's own words say more than a count ("8,400 checked - 340
+	// re-embedded - 12 still failing"). Without them the count is said even
+	// when zero: "0 changed" is a real answer meaning there was nothing to
+	// do, and omitting it makes a clean run look like a run with no result.
+	if run.Outcome != "" {
+		line += ": " + run.Outcome
+	} else {
+		line += fmt.Sprintf(", %d changed", run.Changed)
+	}
 	if run.Seconds >= 60 {
 		line += fmt.Sprintf(", took %dm", run.Seconds/60)
 	} else if run.Seconds > 0 {
 		line += fmt.Sprintf(", took %ds", run.Seconds)
 	}
 	return line + "."
+}
+
+// failedMaintenance is a sentence per pass whose last run failed, for the
+// System Status panel, sorted by label. A pass that failed and then ran
+// cleanly is not on it: the record is the LAST run, so the line clears itself.
+func (a *AdminApp) failedMaintenance() []string {
+	var out []string
+	for _, f := range ListMaintenanceFuncs() {
+		run, ok := a.lastMaintenanceRun(f.Key)
+		if !ok || !run.Failed {
+			continue
+		}
+		line := f.Label + " failed " + relativeWhen(run.RanAt)
+		if run.Outcome != "" {
+			line += ": " + run.Outcome
+		}
+		out = append(out, line)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // relativeWhen says how long ago in the units a person would use. Coarse on

@@ -108,7 +108,29 @@ func folderBytes(dir string) int64 {
 // default, and the state every store starts in. A stopped ctx ends the walk
 // at the next folder, with what it found so far.
 func FindExpiredBundles(ctx context.Context, db Database) []ExpiredBundle {
-	return findExpired(ctx, db, false)
+	return findExpired(ctx, db, false).bundles
+}
+
+// expiredScan is what a sweep found: the folders it may remove, and the ones
+// it is leaving alone because this server's user could not remove them.
+type expiredScan struct {
+	bundles []ExpiredBundle
+	// blocked is one line per store or folder left alone, saying why. Not
+	// attempted, so never half-deleted, and said rather than skipped quietly:
+	// a cleanup somebody set up that can never happen is a setting to fix.
+	blocked []string
+}
+
+// blockedNote is the scan's left-alone list as one clause, "" when empty.
+func (sc expiredScan) blockedNote() string {
+	if len(sc.blocked) == 0 {
+		return ""
+	}
+	more := ""
+	if len(sc.blocked) > 1 {
+		more = fmt.Sprintf(" (and %d more)", len(sc.blocked)-1)
+	}
+	return fmt.Sprintf("left alone, because this server cannot delete there: %s%s", sc.blocked[0], more)
 }
 
 // findExpired is FindExpiredBundles, limited to temporary stores when
@@ -118,11 +140,18 @@ func FindExpiredBundles(ctx context.Context, db Database) []ExpiredBundle {
 // its retention in days. A folder something is using (pathhold) is never
 // listed, however old: an extraction reading or writing deep inside one does
 // not refresh the age read here.
-func findExpired(ctx context.Context, db Database, temporaryOnly bool) []ExpiredBundle {
+//
+// Nor is a folder this server's user could not remove whole (removeBlocker):
+// it goes on the blocked list instead, and a store whose root it cannot delete
+// in at all is listed there once and not read. What saved a temporary store
+// pointed at /var/log was the operating system refusing, every fifteen
+// minutes for a week; a folder the user could PARTLY delete would have been
+// emptied and then reported as failing.
+func findExpired(ctx context.Context, db Database, temporaryOnly bool) expiredScan {
+	var sc expiredScan
 	if db == nil {
-		return nil
+		return sc
 	}
-	var out []ExpiredBundle
 	for _, st := range ListStores(db) {
 		var cutoff time.Time
 		switch {
@@ -135,6 +164,10 @@ func findExpired(ctx context.Context, db Database, temporaryOnly bool) []Expired
 		default:
 			continue // no window set: nothing in this store is ever eligible
 		}
+		if why := cleanupBlocker(st.Path); why != "" {
+			sc.blocked = append(sc.blocked, st.Name+": "+why)
+			continue
+		}
 		entries, err := os.ReadDir(st.Path)
 		if err != nil {
 			Log("[filestore.retention] %s: cannot read %s (%v), skipped", st.Name, st.Path, err)
@@ -142,7 +175,7 @@ func findExpired(ctx context.Context, db Database, temporaryOnly bool) []Expired
 		}
 		for _, e := range entries {
 			if ctx.Err() != nil {
-				return out
+				return sc
 			}
 			if !e.IsDir() {
 				continue // loose files at the root are never touched
@@ -167,14 +200,18 @@ func findExpired(ctx context.Context, db Database, temporaryOnly bool) []Expired
 				Debug("[filestore.retention] %s/%s is past its window but in use: kept", st.Name, e.Name())
 				continue
 			}
-			out = append(out, ExpiredBundle{
+			if why := removeBlocker(dir); why != "" {
+				sc.blocked = append(sc.blocked, st.Name+" / "+e.Name()+": "+why)
+				continue
+			}
+			sc.bundles = append(sc.bundles, ExpiredBundle{
 				Store: st.Name, Slug: st.Slug, Folder: e.Name(),
 				Path: dir, Newest: newest, Bytes: folderBytes(dir),
 			})
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Newest.Before(out[j].Newest) })
-	return out
+	sort.Slice(sc.bundles, func(i, j int) bool { return sc.bundles[i].Newest.Before(sc.bundles[j].Newest) })
+	return sc
 }
 
 // FormatExpiredBundles renders candidates for the maintenance log — the
@@ -205,12 +242,14 @@ func ReapExpiredBundles(ctx context.Context, db Database) (int, int64) {
 
 // reapExpired removes what findExpired reports.
 func reapExpired(ctx context.Context, db Database, temporaryOnly bool) (int, int64) {
-	list := findExpired(ctx, db, temporaryOnly)
+	sc := findExpired(ctx, db, temporaryOnly)
+	list := sc.bundles
 	if ctx.Err() != nil {
 		return 0, 0
 	}
-	var gone int
+	var gone, failed int
 	var freed int64
+	var firstFailure string
 	for _, c := range list {
 		if ctx.Err() != nil {
 			break
@@ -222,6 +261,10 @@ func reapExpired(ctx context.Context, db Database, temporaryOnly bool) (int, int
 		}
 		if err := os.RemoveAll(c.Path); err != nil {
 			Log("[filestore.retention] could not remove %s: %v", c.Path, err)
+			if failed == 0 {
+				firstFailure = fmt.Sprintf("%s / %s: %v", c.Store, c.Folder, err)
+			}
+			failed++
 			continue
 		}
 		gone++
@@ -232,12 +275,34 @@ func reapExpired(ctx context.Context, db Database, temporaryOnly bool) (int, int
 		Log("[filestore.retention] removed %s / %s (%s, last touched %s ago)",
 			c.Store, c.Folder, HumanSize(c.Bytes), c.Age().Round(time.Hour))
 	}
+	// A folder that would not go is still taking the space it was meant to
+	// give back, so the run that met it failed, whatever else it removed.
+	// No-op outside a maintenance run.
+	//
+	// What was left alone for want of permission is a failure too, though
+	// nothing was tried: the cleanup somebody set up is not happening, and it
+	// stays on System Status until the store or its permissions are fixed.
+	var problems []string
+	if failed > 0 {
+		problems = append(problems, fmt.Sprintf("could not remove %d, first %s", failed, firstFailure))
+	}
+	if note := sc.blockedNote(); note != "" {
+		problems = append(problems, note)
+	}
+	if len(problems) > 0 {
+		ReportMaintenanceFailure(ctx, fmt.Sprintf("removed %d folder(s), %s reclaimed; %s", gone, HumanSize(freed), strings.Join(problems, "; ")))
+	}
 	return gone, freed
 }
 
 // temporarySweepEvery is how often temporary stores are swept. Their lifetimes
 // are in hours, so a folder outlives its lifetime by at most this much.
 const temporarySweepEvery = 15 * time.Minute
+
+// temporarySweepKey is the temporary-store sweep as a maintenance pass. The
+// timer runs it through the maintenance runner, so each sweep is recorded like
+// a pressed one, and a folder that would not go is on System Status.
+const temporarySweepKey = "sweep_temporary_stores"
 
 // sweepTemporaryStores removes, on a timer, the folders of temporary stores
 // that have outlived their lifetime. Only temporary stores: everything else
@@ -246,16 +311,37 @@ func (T *FileStoreApp) sweepTemporaryStores() {
 	tick := time.NewTicker(temporarySweepEvery)
 	defer tick.Stop()
 	for range tick.C {
-		if n, freed := reapExpired(context.Background(), T.DB, true); n > 0 {
-			Log("[filestore.retention] temporary stores: removed %d expired folder(s), %s", n, HumanSize(freed))
-		}
+		RunMaintenanceFunc(context.Background(), temporarySweepKey)
 	}
+}
+
+// sweepTemporaryPass is one sweep: the expired folders of temporary stores,
+// removed, and how many.
+func sweepTemporaryPass(ctx context.Context, db Database) int {
+	n, freed := reapExpired(ctx, db, true)
+	if n > 0 {
+		Log("[filestore.retention] temporary stores: removed %d expired folder(s), %s", n, HumanSize(freed))
+	}
+	if ctx.Err() != nil {
+		ReportMaintenanceOutcome(ctx, fmt.Sprintf("stopped after removing %d folder(s), %s reclaimed", n, HumanSize(freed)))
+	} else {
+		ReportMaintenanceOutcome(ctx, fmt.Sprintf("removed %d expired folder(s), %s reclaimed", n, HumanSize(freed)))
+	}
+	return n
 }
 
 // registerRetentionMaintenance wires the dry run and the delete as a
 // pair, matching the workspace reaper: same walk behind both, so the
 // list an admin reads is the list that gets removed.
 func registerRetentionMaintenance(app *FileStoreApp) {
+	// The temporary-store sweep is not one of the pair: it takes only what a
+	// temporary store's own lifetime already says may go, and it runs on its
+	// own. Here so it can also be run now, and so each run is recorded.
+	RegisterMaintenanceFunc("Housekeeping", temporarySweepKey,
+		"Remove expired temporary store folders",
+		"Removes the folders of temporary stores that have outlived their lifetime. Runs on its own "+
+			"every 15 minutes; this runs it now. Stores that are not temporary are never touched by it.",
+		func(ctx context.Context) int { return sweepTemporaryPass(ctx, app.DB) })
 	RegisterMaintenanceFunc("Reclaim space",
 		"list_expired_bundles",
 		"List expired file-store folders (dry run)",
@@ -263,16 +349,26 @@ func registerRetentionMaintenance(app *FileStoreApp) {
 			"A store with no window set never appears here, that is the default, and it means "+
 			"nothing in it is ever eligible.",
 		func(ctx context.Context) int {
-			list := FindExpiredBundles(ctx, app.DB)
+			sc := findExpired(ctx, app.DB, false)
+			list := sc.bundles
 			if ctx.Err() != nil {
 				ReportMaintenanceOutcome(ctx, fmt.Sprintf("stopped part way, %d folder(s) found by then", len(list)))
 				return len(list)
 			}
+			// The dry run says what the delete would leave alone, and why, so
+			// it is read before anybody presses delete.
+			note := sc.blockedNote()
 			if len(list) == 0 {
 				Log("[filestore.retention] nothing eligible")
+				if note != "" {
+					ReportMaintenanceOutcome(ctx, "nothing eligible; "+note)
+				}
 				return 0
 			}
 			Log("[filestore.retention] eligible:\n%s", FormatExpiredBundles(list))
+			if note != "" {
+				ReportMaintenanceOutcome(ctx, fmt.Sprintf("%d folder(s) eligible; %s", len(list), note))
+			}
 			return len(list)
 		},
 	)
@@ -283,13 +379,19 @@ func registerRetentionMaintenance(app *FileStoreApp) {
 			"newest content is past that store's retention window. Run the dry run first: it uses "+
 			"the same walk, so what it shows is what this removes. Not recoverable.",
 		func(ctx context.Context) int {
-			list := FindExpiredBundles(ctx, app.DB)
+			sc := findExpired(ctx, app.DB, false)
+			list := sc.bundles
 			if ctx.Err() != nil {
 				ReportMaintenanceOutcome(ctx, "stopped before removing anything")
 				return 0
 			}
 			if len(list) == 0 {
 				Log("[filestore.retention] nothing eligible; nothing removed")
+				// Nothing to remove can still be a cleanup that cannot
+				// happen: what was left alone is said, not swallowed.
+				if note := sc.blockedNote(); note != "" {
+					ReportMaintenanceFailure(ctx, "nothing removed; "+note)
+				}
 				return 0
 			}
 			Log("[filestore.retention] removing %d folder(s):\n%s", len(list), FormatExpiredBundles(list))

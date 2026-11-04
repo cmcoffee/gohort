@@ -94,7 +94,9 @@ func TestAnAgentReadsAFolderFromItsEvidenceIndex(t *testing.T) {
 func TestTheIndexFollowsTheFolder(t *testing.T) {
 	app, st := evidenceFixture(t)
 	dir := filepath.Join(st.Path, "case-1")
-	sweepEvidence(context.Background(), app.DB)
+	if n := sweepEvidence(context.Background(), app.DB); n != 2 {
+		t.Errorf("the first sweep reports %d folder(s) indexed or wiped, want the 2 it indexed", n)
+	}
 	if _, current := evidenceCurrent(app.DB, st.Slug, "case-1", dir); !current {
 		t.Fatal("the sweep should have indexed case-1")
 	}
