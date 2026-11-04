@@ -2615,11 +2615,42 @@ func TestACredentialedRequestStaysOnItsHost(t *testing.T) {
 		"https://evil.example/v1/items":           false,
 		"https://api.crm.example/admin":           false,
 		"https://api.crm.example/v1/billing":      false,
+		"https://media.crm.example/file/7":        false, // not covered
 	} {
 		err := check(&http.Request{URL: mustURL(t, target)}, []*http.Request{first})
 		if (err == nil) != ok {
 			t.Errorf("redirect to %s: allowed=%v, want %v (%v)", target, err == nil, ok, err)
 		}
+	}
+}
+
+// A redirect to a host the credential also covers is followed: Confluence
+// sends an attachment download to its media host, and with that host in
+// also_covers the download was still refused. A host it does not cover, and a
+// denied URL on one it does, are still refused.
+func TestARedirectToACoveredHostIsFollowed(t *testing.T) {
+	check := credentialRedirectCheck(SecureCredential{
+		Name: "wiki", BaseURL: "https://site.wiki.example", AllowedEndpoints: []string{"/wiki/*"},
+		AlsoCovers:        []string{"https://media.wiki.example"},
+		DeniedURLPatterns: []string{"https://media.wiki.example/private/**"},
+	})
+	first := &http.Request{URL: mustURL(t, "https://site.wiki.example/wiki/rest/api/content/1/child/attachment/2/download")}
+	for target, ok := range map[string]bool{
+		"https://media.wiki.example/file/abc/binary?token=signed": true,
+		"https://media.wiki.example/private/abc":                  false,
+		"https://elsewhere.example/file/abc":                      false,
+	} {
+		err := check(&http.Request{URL: mustURL(t, target)}, []*http.Request{first})
+		if (err == nil) != ok {
+			t.Errorf("redirect to %s: allowed=%v, want %v (%v)", target, err == nil, ok, err)
+		}
+	}
+	// A credential from before Base URLs, whose one pattern spans hosts,
+	// covers no host by name: a redirect off the first host stays refused.
+	legacy := credentialRedirectCheck(SecureCredential{Name: "old", AllowedURLPattern: "https://*.legacy.example/**"})
+	from := &http.Request{URL: mustURL(t, "https://a.legacy.example/x")}
+	if err := legacy(&http.Request{URL: mustURL(t, "https://b.legacy.example/x")}, []*http.Request{from}); err == nil {
+		t.Error("a legacy pattern credential followed a redirect to another host")
 	}
 }
 

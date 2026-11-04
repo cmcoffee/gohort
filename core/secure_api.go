@@ -3864,14 +3864,21 @@ func credMisconfigEscalation(name, baseErr string, count int) error {
 // redirect but forwards every other header, so a header-type key (X-API-Key)
 // went wherever an allowed endpoint redirected, and the allowlist and deny
 // patterns were checked only on the first URL. A redirect is followed only to
-// the SAME host, and only when that URL passes both lists again.
+// a host the credential covers (the first request's own, its Base URL's, or
+// one in AlsoCovers), and only when that URL passes both lists again.
+//
+// Covered hosts, not only the same one: a download that answers with a
+// redirect to the service's media host (Confluence sends attachments to
+// api.media.atlassian.com) was refused with that host in also_covers, which
+// left no way to fetch it. The owner naming a host is what lets a key go
+// there, for a redirect as for a direct call.
 func credentialRedirectCheck(c SecureCredential) func(*http.Request, []*http.Request) error {
 	return func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {
 			return fmt.Errorf("stopped after 10 redirects")
 		}
-		if len(via) > 0 && !strings.EqualFold(req.URL.Host, via[0].URL.Host) {
-			return fmt.Errorf("credential %q: refusing a redirect to another host (%s)", c.Name, req.URL.Host)
+		if len(via) > 0 && !strings.EqualFold(req.URL.Host, via[0].URL.Host) && !credentialCovers(c, req.URL.String()) {
+			return fmt.Errorf("credential %q: refusing a redirect to %s, a host it does not cover (add it under also_covers to allow it)", c.Name, req.URL.Host)
 		}
 		if !urlAllowedByCredential(c, req.URL.String()) {
 			return fmt.Errorf("credential %q: refusing a redirect outside its allowed endpoints", c.Name)
