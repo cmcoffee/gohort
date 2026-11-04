@@ -7,6 +7,7 @@ package workspace
 // different faces handed over as the references for three real people.
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 
@@ -82,5 +83,46 @@ func TestAMissingKeptIdIsNotMistakenForAFile(t *testing.T) {
 	// A real workspace file still attaches the old way.
 	if _, err := AttachWorkspaceFile(sess, "notes.txt", "", false); err == nil {
 		t.Error("a missing ordinary file should still error")
+	}
+}
+
+// A recent picture's stable id and its position are what a render's sources
+// are named by, and attaching those failed: asked to show the two pictures a
+// blend was made from, the agent could not send them by the ids it had, went
+// looking by filename, and sent the right two files under each other's names.
+// Each is now sent as itself, saying what it shows.
+func TestARecentPictureIsSentByItsIdAndSaysWhatItShows(t *testing.T) {
+	SetImageDir(t.TempDir())
+	sess := &ToolSession{Username: "alice", AgentID: "agent1", WorkspaceDir: t.TempDir()}
+	ship := append(testPNGBytes(), 'E')
+	other := append(testPNGBytes(), 'Y')
+	_, shipID := RecordRecentImageStable(sess, ship, "found: a white starship with a saucer section", ImageFromFound)
+	_, otherID := RecordRecentImageStable(sess, other, "found: a red and gray battleship", ImageFromFound)
+	if shipID == "" || otherID == "" {
+		t.Fatal("no stable ids to attach by")
+	}
+	for _, c := range []struct {
+		id, shows string
+		data      []byte
+	}{{shipID, "white starship", ship}, {otherID, "red and gray battleship", other}} {
+		before := len(sess.Images)
+		out, err := AttachWorkspaceFile(sess, c.id, "", false)
+		if err != nil {
+			t.Fatalf("%s: %v", c.id, err)
+		}
+		if len(sess.Images) != before+1 || sess.Images[before] != base64.StdEncoding.EncodeToString(c.data) {
+			t.Errorf("%s did not send its own picture", c.id)
+		}
+		if !strings.Contains(out, "It shows: ") || !strings.Contains(out, c.shows) {
+			t.Errorf("%s: the result does not say what it shows: %s", c.id, out)
+		}
+	}
+	// By position too: image#1 is the newest. A picture of its own, since a
+	// reply carries each picture once and the two above are already in it.
+	third := append(testPNGBytes(), 'T')
+	RecordRecentImage(sess, third, "found: a third picture", ImageFromFound)
+	before := len(sess.Images)
+	if _, err := AttachWorkspaceFile(sess, "image#1", "", false); err != nil || len(sess.Images) != before+1 || sess.Images[before] != base64.StdEncoding.EncodeToString(third) {
+		t.Errorf("image#1 did not send the newest picture: %v", err)
 	}
 }

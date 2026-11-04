@@ -2515,8 +2515,16 @@
       });
     }
 
-    // What the paperclip takes, and so what a paste may attach.
-    var attachAccept = 'image/*,.pdf,application/pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.doc,application/msword,.txt,.md,text/*';
+    // What the paperclip takes, and so what a paste may attach: pictures, and
+    // every document the server's extractor reads (core/media
+    // DocumentAcceptAttr, which a test holds this list to). Each by its
+    // EXTENSION as well as its type, because text/* only matches a file the
+    // operating system has a type for: a .log usually has none, so the picker
+    // hid it although the server reads it fine.
+    var attachAccept = 'image/*,' +
+      '.pdf,.docx,.doc,.txt,.md,.log,.csv,.json,.yaml,.yml,.html,.htm,' +
+      'application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,' +
+      'application/json,text/plain,text/markdown,text/csv,text/html,text/*';
     if (window.GOHORT_TRANSCRIBE_ENABLED) {
       attachAccept += ',audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac,.webm,.opus';
     }

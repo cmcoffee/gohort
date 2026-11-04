@@ -308,7 +308,7 @@ func init() {
 	gt.AddAction("attach", &GroupedToolAction{
 		Description: "Deliver a file from the active workspace to the user as an attachment. This is the ONLY action that puts a file in front of the user: every other action just stages or inspects locally. Any file the workspace contains can be attached, regardless of which tool produced it (find_image / fetch_image / generate_image / workspace write / a Builder-authored shell tool / etc.). After this call the file ships with your reply. Cap: 20MB per file.",
 		Params: map[string]ToolParam{
-			"path":    {Type: "string", Description: "Workspace-relative filename to deliver (e.g. \"meme.jpg\", \"report.pdf\")."},
+			"path":    {Type: "string", Description: "Workspace-relative filename to deliver (e.g. \"meme.jpg\", \"report.pdf\"), or a picture's id (image#r.7a3f9c2b, image#3, image#name) to send that exact picture."},
 			"name":    {Type: "string", Description: "Optional display name shown to the user. Defaults to the filename."},
 			"cleanup": {Type: "boolean", Description: "If true, deletes the file from the workspace after successful delivery. Default false (keep). Producer tools that return one-shot files (find_image, fetch_image, generate_image) recommend cleanup=true: workspace stays tidy."},
 			"title":   {Type: "string", Description: "Optional: what this file is, in a few words (a song's title, what a picture shows). Kept with the file, so later turns, and other agents it is passed to, can tell it from others of a similar name. Set it when the file's name does not say what it is."},
@@ -930,8 +930,15 @@ func AttachWorkspaceFile(sess *ToolSession, relPath, displayName string, cleanup
 	// handed over three different faces as the references for three real people.
 	// The one thing the whole provenance model exists to prevent, proposed as a
 	// workaround for a missing verb.
-	if data, ok := ResolveKeptImage(sess, relPath); ok && len(data) > 0 {
-		return attachBytes(sess, data, keptDisplayName(relPath, displayName)), nil
+	//
+	// Every image id, not only a kept name: a recent picture's stable id
+	// (image#r.7a3f9c2b) and its position (image#3) are what a render's
+	// sources are named by, and attaching those failed the same way. Asked to
+	// show the two pictures a blend was made from, the agent could not send
+	// them by the ids it had, went looking by filename, and sent the right two
+	// files under each other's names.
+	if data, ok := ResolveRecentImage(sess, relPath); ok && len(data) > 0 {
+		return attachBytes(sess, data, keptDisplayName(relPath, displayName)) + pictureShows(sess, data), nil
 	}
 	// The agent's own workspace, and nowhere else: a file another agent holds
 	// is not this one's to send (core/workspace_agent.go).
@@ -1111,6 +1118,16 @@ func attachBytes(sess *ToolSession, data []byte, displayName string) string {
 	// copy must never consume the library entry.
 	return fmt.Sprintf("Attached %q (%s, %s) via %s channel. The kept image is unchanged and still available under that id.",
 		displayName, mime, humanSize(int64(len(data))), channel)
+}
+
+// pictureShows is what an attached picture shows, from the record kept when it
+// was saved, so the line the agent writes about it comes from the picture and
+// not from the agent's memory of which was which.
+func pictureShows(sess *ToolSession, data []byte) string {
+	if about := strings.TrimSpace(sess.RecentImageAbout(data)); about != "" {
+		return " It shows: " + about + ". Describe it as that."
+	}
+	return ""
 }
 
 // keptDisplayName gives an attached kept image a filename a person can read.
