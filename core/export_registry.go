@@ -1,7 +1,7 @@
 // Export format registry: the formats an app or an agent defines at
 // runtime, beyond the export jobs every deployment has (PDF, Word,
 // OpenDocument, Excel, PowerPoint: core/flows, listed and adaptable under
-// Admin > Capabilities > System Hooks). A format here is data + a
+// Admin > Services > System Hooks). A format here is data + a
 // generator; the registry maps its name to the generator that turns a JSON
 // payload into file bytes.
 //

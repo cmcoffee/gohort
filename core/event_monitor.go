@@ -568,7 +568,7 @@ func parkEventMonitor(db Database, owner, name, cause, reason string) bool {
 func init() {
 	RegisterTunable(TunableSpec{
 		Key:      "tune_watch_idle_days",
-		Category: "Limits",
+		Category: "Scheduling",
 		Label:    "Watch monitor idle-pause (days)",
 		Help: "Pause a watch monitor that has gone this many days with no change to report. " +
 			"Nothing is broken when this fires (the watched source stopped moving), so the monitor is PAUSED and kept, not deleted, and one click resumes it. " +

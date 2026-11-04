@@ -42,21 +42,21 @@ import (
 
 func init() {
 	RegisterTunable(TunableSpec{
-		Key: "tune_tool_detach_after", Category: "Timeouts",
+		Key: "tune_tool_detach_after", Category: "Tools & background work",
 		Label:  "Move a running tool to the background after",
 		Help:   "A command-running tool still going after this long continues in the background.",
 		Detail: "The conversation carries on and the result arrives as its own message when the run ends, with progress and a Stop button in the live pill meanwhile. On a messaging conversation the messaging detach threshold applies when it is shorter, since there the person sees nothing until a reply arrives.",
 		Kind:   KindSeconds, Default: 60, Min: 10, Max: 3600,
 	})
 	RegisterTunable(TunableSpec{
-		Key: "tune_tool_idle_limit", Category: "Timeouts",
+		Key: "tune_tool_idle_limit", Category: "Tools & background work",
 		Label:  "Stop a running tool after no output for",
 		Help:   "A command-running tool that shows no sign of work for this long is taken to be stuck and stopped.",
 		Detail: "Signs of work are output, files growing in the folders it was pointed at (a download writing a file), and, for a file store's commands, its process using CPU or moving data (a download receiving into a temporary file elsewhere, a verify after the transfer). There is no limit on total time for a run that keeps working; a tool that sets its own timeout keeps that as a ceiling too. What it printed before it was stopped is returned with the reason.",
 		Kind:   KindSeconds, Default: 300, Min: 30, Max: 7200,
 	})
 	RegisterTunable(TunableSpec{
-		Key: "tune_run_max_write_gb", Category: "Limits",
+		Key: "tune_run_max_write_gb", Category: "Tools & background work",
 		Label:  "Stop a running tool after it writes (GB)",
 		Help:   "A command-running tool that writes more than this in one run is stopped.",
 		Detail: "Catches the archive that unpacks to far more than anyone expected before it fills the disk. Counted as what the run wrote into its working folders, checked every few seconds. Separate from the free-space floor, which stops any write that would leave the disk too full.",

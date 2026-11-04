@@ -158,7 +158,7 @@ func ParseWindowBounds(spec string) (sh, sm, eh, em int, err error) {
 func cronMinGap() time.Duration { return TuneDuration("tune_cron_min_gap") }
 
 func init() {
-	RegisterTunable(TunableSpec{Key: "tune_cron_min_gap", Category: "Limits", Label: "Cron minimum gap", Help: "Safety margin that shifts a randomly-scheduled fire into the next slot to avoid back-to-back runs.", Kind: KindMinutes, Default: 20, Min: 1, Max: 120})
+	RegisterTunable(TunableSpec{Key: "tune_cron_min_gap", Category: "Scheduling", Label: "Cron minimum gap", Help: "Safety margin that shifts a randomly-scheduled fire into the next slot to avoid back-to-back runs.", Kind: KindMinutes, Default: 20, Min: 1, Max: 120})
 }
 
 func NextRandomWindowTime(spec string, from time.Time, n, firedSoFar int) (time.Time, error) {

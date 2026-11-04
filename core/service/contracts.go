@@ -136,7 +136,7 @@ func init() {
 		Name:   "image.generate",
 		About:  "A picture made from a prompt.",
 		Checks: "image is a picture gohort can show: PNG, JPEG, GIF or WebP, with a size.",
-		Where:  "Admin > Capabilities > Image Generation, and agents' image tools",
+		Where:  "Admin > Services > Image Generation, and agents' image tools",
 		Gives:  "Image Generation",
 		Inputs: []Port{
 			{Name: "prompt", Type: TypeText, Required: true},
@@ -160,7 +160,7 @@ func init() {
 		Name:   "image.edit",
 		About:  "A picture changed as a prompt asks.",
 		Checks: "image is a picture gohort can show: PNG, JPEG, GIF or WebP, with a size.",
-		Where:  "Admin > Capabilities > Image Generation, and agents' image tools",
+		Where:  "Admin > Services > Image Generation, and agents' image tools",
 		Gives:  "Image editing",
 		Inputs: []Port{
 			{Name: "prompt", Type: TypeText, Required: true},
@@ -183,7 +183,7 @@ func init() {
 		Name:   "speech.transcribe",
 		About:  "The words spoken in a sound file.",
 		Checks: "Any answer the spec can read, empty text included: the test's sound is a tone with no words.",
-		Where:  "Admin > Capabilities > Audio Transcription: \"Transcribe with\"",
+		Where:  "Admin > Services > Audio Transcription: \"Transcribe with\"",
 		Gives:  "Transcription",
 		Inputs: []Port{
 			{Name: "audio", Type: TypeFile, Required: true},
@@ -205,7 +205,7 @@ func init() {
 		Name:   "speech.synthesize",
 		About:  "A text spoken aloud, in a voice when one is given.",
 		Checks: "audio is sound gohort can play: MP3, WAV, OGG, FLAC, AAC or MP4 audio, judged by its first bytes.",
-		Where:  "Admin > Capabilities > Speech (TTS): \"Speak with\"",
+		Where:  "Admin > Services > Speech (TTS): \"Speak with\"",
 		Gives:  "Speech",
 		Inputs: []Port{
 			{Name: "text", Type: TypeText, Required: true},
@@ -323,7 +323,7 @@ func init() {
 		Name:   "file.convert",
 		About:  "A file turned into another format: from is its format and to the one wanted, each as an extension (docx, pdf, png).",
 		Checks: "A file that is not empty came back; the job that asked checks it is the format it wanted.",
-		Where:  "Admin > Capabilities > System Hooks: a job's Adapt, \"Done by\"",
+		Where:  "Admin > Services > System Hooks: a job's Adapt, \"Done by\"",
 		Gives:  "File conversion",
 		Inputs: []Port{
 			{Name: "file", Type: TypeFile, Required: true},
@@ -348,7 +348,7 @@ func init() {
 		Name:   "mail.send",
 		About:  "An email: to, subject and body, from the connector's own sender unless one is given, with a file when one is given; id is the service's name for the message.",
 		Checks: "Any answer: a reply at all means the service took the message.",
-		Where:  "Admin > System > Mail (SMTP): \"Send with\"",
+		Where:  "Admin > Services > Mail (SMTP): \"Send with\"",
 		Gives:  "Mail",
 		Inputs: []Port{
 			{Name: "to", Type: TypeText, Required: true},
@@ -370,7 +370,7 @@ func init() {
 		Name:   "page.render",
 		About:  "A page read the way a browser shows it: the readable text of the page at url, and its title when the service gives one.",
 		Checks: "text is not empty.",
-		Where:  "Admin > Capabilities > Page Rendering (Browser): \"Render pages on\"",
+		Where:  "Admin > Services > Page Rendering (Browser): \"Render pages on\"",
 		Gives:  "Page rendering",
 		Inputs: []Port{
 			{Name: "url", Type: TypeText, Required: true},
@@ -397,7 +397,7 @@ func init() {
 		Name:   "web.search",
 		About:  "A search of the web. results is a list of objects: title, url and snippet, and published when the engine says when a page was published.",
 		Checks: "results is a list, and every url in it is an http or https address. The test, a search for a common phrase, must find at least one.",
-		Where:  "Admin > Capabilities > Web Search: \"Search with\"",
+		Where:  "Admin > Services > Web Search: \"Search with\"",
 		Gives:  "Web search",
 		Inputs: []Port{
 			{Name: "query", Type: TypeText, Required: true},
@@ -445,7 +445,7 @@ func init() {
 		Name:   "embed.text",
 		About:  "Vectors for texts, for semantic search: texts is a list of strings, and vectors a list of lists of numbers, one for each text.",
 		Checks: "At least one vector came back, none of them empty, all the same length. The test embeds two texts.",
-		Where:  "Admin > Capabilities > Embeddings: \"Embed with\"",
+		Where:  "Admin > Services > Embeddings: \"Embed with\"",
 		Gives:  "Embeddings",
 		Inputs: []Port{
 			{Name: "texts", Type: TypeJSON, Required: true},

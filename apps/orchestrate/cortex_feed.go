@@ -296,7 +296,7 @@ func isOwnReply(m ChatMessage) bool { return m.ReportKind == cortexKindResult }
 const tuneCortexFeedLines = "tune_cortex_feed_lines"
 
 func init() {
-	RegisterTunable(TunableSpec{App: "/orchestrate", Key: tuneCortexFeedLines, Category: "Limits",
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: tuneCortexFeedLines, Category: "Turns & context",
 		Label:  "Cortex standing-activity lines",
 		Help:   "How many recent cortex observations to inject at the top of a forked session.",
 		Detail: "They arrive as background awareness. Lower it to save context; 0 hides the block.",

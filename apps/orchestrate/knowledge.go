@@ -41,8 +41,8 @@ import (
 )
 
 func init() {
-	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_knowledge_ingest_timeout", Category: "Timeouts", Label: "Knowledge ingest timeout", Help: "Caps any embedding round-trip during knowledge ingest/search.", Kind: KindSeconds, Default: 45, Min: 5, Max: 300})
-	RegisterTunable(TunableSpec{App: "/orchestrate", Key: tuneFindingHardCap, Category: "Limits",
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_knowledge_ingest_timeout", Category: "Ingest & autofill", Label: "Knowledge ingest timeout", Help: "Caps any embedding round-trip during knowledge ingest/search.", Kind: KindSeconds, Default: 45, Min: 5, Max: 300})
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: tuneFindingHardCap, Category: "Memory",
 		Label:  "Findings hard cap per agent (0 = off)",
 		Help:   "Max self-saved findings, from memory_save and remember, that one agent keeps.",
 		Detail: "Past the cap the OLDEST findings are deleted. This is the fact store's hard-cap parity for the Reference layer, which otherwise grows without bound, since every save is a new document. Uploaded and attached documents are never touched.",
@@ -117,7 +117,7 @@ func normalizeTopic(t string) string {
 const tuneKnownTopicsMax = "tune_known_topics_max"
 
 func init() {
-	RegisterTunable(TunableSpec{App: "/orchestrate", Key: tuneKnownTopicsMax, Category: "Limits",
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: tuneKnownTopicsMax, Category: "Turns & context",
 		Label:  "Known-topics shown",
 		Help:   "Max recently-used memory topic slugs listed in the system prompt, for bucket reuse.",
 		Detail: "Lower it to save context; 0 shows all. Dropped slugs still work: the agent just reuses or mints them without the hint.",

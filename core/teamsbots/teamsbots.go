@@ -14,7 +14,7 @@
 //
 // Whether people may add one is the administrator's policy
 // (core/governance, TeamsBots): under Needs approval a new one waits, off,
-// until an administrator approves it (Admin > Governance).
+// until an administrator approves it (Admin > Integrations).
 package teamsbots
 
 import (

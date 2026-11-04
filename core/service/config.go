@@ -446,7 +446,7 @@ func (s Spec) settle(values map[string]string) (Spec, error) {
 		vals[f.Name], types[f.Name] = v, f.kind()
 	}
 	if len(missing) > 0 {
-		return s, fmt.Errorf("set %s for this connection: on the page that uses it, or on its row under Admin > Extensions > Connectors", strings.Join(missing, ", "))
+		return s, fmt.Errorf("set %s for this connection: on the page that uses it, or on its row under Admin > Services > Connectors", strings.Join(missing, ", "))
 	}
 	out := s
 	var err error

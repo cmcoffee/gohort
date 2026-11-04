@@ -227,7 +227,7 @@ func ResolveTranscribeProvider(cfg TranscribeConfig, provider string) (Transcrib
 		if !cfg.Enabled {
 			return cfg, nil
 		}
-		return cfg, fmt.Errorf("choose what transcribes: a connector (Admin > Extensions > Connectors) or a peer that lends transcription")
+		return cfg, fmt.Errorf("choose what transcribes: a connector (Admin > Services > Connectors) or a peer that lends transcription")
 	}
 	p, ok := PeerFromProvider(provider)
 	if !ok {

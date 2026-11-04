@@ -1526,7 +1526,7 @@ func init() {
 	RegisterTunable(TunableSpec{
 		Key:      "tune_event_card_chars",
 		App:      "/orchestrate",
-		Category: "Limits",
+		Category: "Turns & context",
 		Label:    "Event card kept in the thread (characters)",
 		Help:     "How much of an event's text stays in the thread after the agent has reacted to it.",
 		Detail: "An event is a monitor fire or a scheduled wake. " +

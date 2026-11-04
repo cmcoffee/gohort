@@ -535,7 +535,7 @@ const (
 
 // PeerRelaySpec is the Spec payload for a peer_relay connector.
 type PeerRelaySpec struct {
-	// Peer is a registered remote peer (Admin > Capabilities > Peers) whose key
+	// Peer is a registered remote peer (Admin > Integrations > Peers) whose key
 	// grants relay. Its credential, renewal and address all come from that
 	// record; nothing secret is in the spec.
 	Peer string `json:"peer"`
@@ -610,11 +610,11 @@ func (h peerRelayHandlerKind) Validate(c Connector) error {
 		return err
 	}
 	if s.Peer == "" {
-		return fmt.Errorf("peer is required: the name of a registered peer (Admin > Capabilities > Peers) whose key grants relay")
+		return fmt.Errorf("peer is required: the name of a registered peer (Admin > Integrations > Peers) whose key grants relay")
 	}
 	p, ok := GetRemotePeer(s.Peer)
 	if !ok {
-		return fmt.Errorf("no peer named %q is registered here: add it under Admin > Capabilities > Peers first", s.Peer)
+		return fmt.Errorf("no peer named %q is registered here: add it under Admin > Integrations > Peers first", s.Peer)
 	}
 	if !p.Offers(PeerCapRelay) {
 		return fmt.Errorf("peer %q does not offer relay to this instance: on that instance, add Relay to this key's grants, then refresh the peer here", s.Peer)

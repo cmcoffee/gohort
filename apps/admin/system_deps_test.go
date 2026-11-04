@@ -671,12 +671,17 @@ func TestStepsAreAListOfRows(t *testing.T) {
 	}
 }
 
-// System Hooks is the first thing on Capabilities: the settings below it
+// System Hooks is the first thing on Services: the settings below it
 // are what some of its rows point to.
-func TestSystemHooksIsFirstOnCapabilities(t *testing.T) {
+func TestSystemHooksIsFirstOnServices(t *testing.T) {
 	secs := (&AdminApp{}).capabilitiesSections()
-	if len(secs) == 0 || secs[0].Title != "System Hooks" || sectionTab(secs[0].Title, "") != "Capabilities" {
-		t.Errorf("System Hooks should open the Capabilities tab, got %q", secs[0].Title)
+	if len(secs) == 0 || secs[0].Title != "System Hooks" || sectionTab(secs[0].Title, "") != "Services" {
+		t.Errorf("System Hooks should be on the Services tab, got %q", secs[0].Title)
+	}
+	for _, t2 := range adminLayout {
+		if t2.tab == "Services" && (len(t2.sections) == 0 || t2.sections[0] != "System Hooks") {
+			t.Errorf("Services opens on %v, want System Hooks first", t2.sections)
+		}
 	}
 }
 

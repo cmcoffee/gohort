@@ -410,7 +410,7 @@ func (T *FileStoreApp) handleCommand(c *jsonapi.Call, body *runReq) (any, error)
 			avail = "registered here: " + strings.Join(names, ", ")
 		}
 		return nil, jsonapi.NotFound("no command called " + strconv.Quote(name) + " on " + st.Name + " (" + avail +
-			"). An admin registers commands under Admin → Files.")
+			"). An admin registers commands under Admin → Integrations → File stores.")
 	}
 	dir, err := SubRoot(st.Path, q.Get("within"))
 	if err != nil {

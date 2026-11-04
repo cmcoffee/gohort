@@ -32,46 +32,88 @@ func TestEachAdminTabIsItsOwnPage(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("first tab: %d", code)
 	}
-	code, costs := get("/admin/costs")
+	code, models := get("/admin/models")
 	if code != http.StatusOK {
-		t.Fatalf("costs tab: %d", code)
+		t.Fatalf("models tab: %d", code)
 	}
-	if first == costs {
+	if first == models {
 		t.Error("two tabs served the same page")
 	}
-	// The first page is System: it has the status panel and not the cost
-	// chart; the Costs page has the chart and not the status panel.
-	if !strings.Contains(first, "api/status") || strings.Contains(first, "api/cost-history") {
-		t.Error("the first page is not the System tab alone")
+	// The first page is Overview: the status panel and the cost chart, and
+	// not a model's settings; the Models page is the reverse.
+	if !strings.Contains(first, "api/status") || !strings.Contains(first, "api/cost-history") || strings.Contains(first, "api/worker-llm") {
+		t.Error("the first page is not the Overview tab alone")
 	}
-	if strings.Contains(costs, "api/status") || !strings.Contains(costs, "api/cost-history") {
-		t.Error("the Costs page is not the Costs tab alone")
+	if strings.Contains(models, "api/status") || strings.Contains(models, "api/cost-history") || !strings.Contains(models, "api/worker-llm") {
+		t.Error("the Models page is not the Models tab alone")
 	}
-	for _, want := range []string{`"label":"System"`, `"label":"Costs"`, `"url":"/admin/costs"`, `"active":true`} {
-		if !strings.Contains(costs, want) {
-			t.Errorf("the Costs page's nav lacks %s", want)
+	for _, want := range []string{`"label":"Overview"`, `"label":"Models"`, `"url":"/admin/models"`, `"active":true`} {
+		if !strings.Contains(models, want) {
+			t.Errorf("the Models page's nav lacks %s", want)
 		}
 	}
 	// A tab's sections are a rail down its left: tabs above them as well
 	// read as a second header.
-	if !strings.Contains(costs, `"section_nav":true`) {
+	if !strings.Contains(models, `"section_nav":true`) {
 		t.Error("the admin page does not ask for the section rail")
 	}
-	if !strings.Contains(costs, "location.replace(tabs[t]+location.hash)") {
+	if !strings.Contains(models, "location.replace(tabs[t]+location.hash)") {
 		t.Error("a #tab/section link has no way to reach its tab's page")
 	}
 	if code, _ := get("/admin/no-such-tab"); code != http.StatusNotFound {
 		t.Errorf("an unknown tab: %d, want 404", code)
 	}
-	if code, _ := get("/admin/costs/more"); code != http.StatusNotFound {
+	if code, _ := get("/admin/models/more"); code != http.StatusNotFound {
 		t.Errorf("a path below a tab: %d, want 404", code)
 	}
 }
 
 // adminTabs lists each group once, in order, the first at the root.
 func TestAdminTabsAreTheGroupsInOrder(t *testing.T) {
-	tabs := adminTabs("/admin", []ui.Section{{Group: "System"}, {Group: "Costs"}, {Group: "System"}, {Group: "LLMs"}})
-	if len(tabs) != 3 || tabs[0].url != "/admin/" || tabs[1].url != "/admin/costs" || tabs[2].slug != "llms" {
+	tabs := adminTabs("/admin", []ui.Section{{Group: "Overview"}, {Group: "People"}, {Group: "Overview"}, {Group: "Models"}})
+	if len(tabs) != 3 || tabs[0].url != "/admin/" || tabs[1].url != "/admin/people" || tabs[2].slug != "models" {
 		t.Errorf("tabs: %+v", tabs)
+	}
+}
+
+// A tab from an earlier layout is a bookmark somebody has. It goes to the tab
+// that took its sections, and every retired address goes to a tab that exists.
+func TestRetiredTabsGoWhereTheirSectionsWent(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	db.Set(LLMTable, "provider", "openai")
+	prev := AuthDB
+	AuthDB = func() Database { return db }
+	t.Cleanup(func() { AuthDB = prev })
+	a := &AdminApp{db: db}
+	mux := http.NewServeMux()
+	a.RegisterRoutes(mux, "/admin")
+	live := map[string]bool{"": true}
+	for _, tab := range adminLayout {
+		live[ui.SectionSlug(tab.tab)] = true
+	}
+	for old, to := range retiredTabs {
+		if live[old] && old != "" {
+			t.Errorf("%q is retired but is still a tab", old)
+		}
+		if !live[to] {
+			t.Errorf("%q retires to %q, which is not a tab", old, to)
+		}
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest("GET", "/admin/"+old, nil))
+		if w.Code != http.StatusFound || w.Header().Get("Location") != "/admin/"+to {
+			t.Errorf("/admin/%s answered %d %q, want /admin/%s", old, w.Code, w.Header().Get("Location"), to)
+		}
+	}
+}
+
+// A #tab/section link written before the section moved still reaches it: the
+// page knows where every section is and goes there.
+func TestASectionLinkFollowsTheSection(t *testing.T) {
+	js := adminTabRedirectScript([]adminTab{{name: "Services", slug: "services", url: "/admin/services"}},
+		map[string]string{"connectors": "services"}, "overview")
+	for _, want := range []string{`"connectors":"services"`, "where[s]", "tabs[at]+'#'+at+'/'+s"} {
+		if !strings.Contains(js, want) {
+			t.Errorf("the redirect script lacks %s", want)
+		}
 	}
 }

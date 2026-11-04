@@ -28,7 +28,7 @@ const (
 func init() {
 	RegisterTunable(TunableSpec{
 		App: "/scribe",
-		Key: tuneCuratorThreshold, Category: "Limits",
+		Key: tuneCuratorThreshold, Category: "Scribe",
 		Label:  "Guide curator batch threshold",
 		Help:   "Run the Guide Curator once this many findings are waiting for a user.",
 		Detail: "0 disables threshold firing, leaving only the interval.",
@@ -36,7 +36,7 @@ func init() {
 	})
 	RegisterTunable(TunableSpec{
 		App: "/scribe",
-		Key: tuneCuratorInterval, Category: "Limits",
+		Key: tuneCuratorInterval, Category: "Scribe",
 		Label:  "Guide curator interval (minutes)",
 		Help:   "Run the Guide Curator for any user with waiting findings at least this often.",
 		Detail: "It fires even if the threshold was never reached. 0 disables interval firing.",

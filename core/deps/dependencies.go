@@ -251,7 +251,7 @@ func legacyDocDependency() struct {
 //
 // The row reports PRESENCE only. Whether the profile this build generates is
 // accepted is a separate question, answered at startup by the probe in
-// core/sandbox/seatbelt.go and reported in Admin → System Status; a dependency
+// core/sandbox/seatbelt.go and reported in Admin → Overview → System Status; a dependency
 // check has no business running a sandbox to find out.
 func sandboxDependency() struct {
 	name, enables string
@@ -270,7 +270,7 @@ func sandboxDependency() struct {
 			staleAfter    time.Duration
 		}{
 			name: "sandbox-exec", enables: enables,
-			hint: "ships with macOS at /usr/bin/sandbox-exec: nothing to install. See Admin → System Status for whether it is actually confining.",
+			hint: "ships with macOS at /usr/bin/sandbox-exec: nothing to install. See Admin → Overview → System Status for whether it is actually confining.",
 		}
 	}
 	return struct {

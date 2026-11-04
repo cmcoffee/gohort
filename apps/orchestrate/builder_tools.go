@@ -384,7 +384,7 @@ func draftAPICredentialToolDef(t *chatTurn) AgentToolDef {
 			}
 			t.emitCredentialSetupCard(c.Name, c.Type, "", secretNeeded, true)
 			if hold {
-				return fmt.Sprintf("Drafted %s credential %q in the user's OWN API credentials. Personal credentials need an administrator's approval here, so it is held OFF until one approves it in Admin > Governance. A setup card is showing: the USER pastes %s now, and it goes live as fetch_url_%s once approved. Tell them both steps plainly. Then build the tool with tool_def(mode=\"api\", credential=%q), with url_template as a PATH.",
+				return fmt.Sprintf("Drafted %s credential %q in the user's OWN API credentials. Personal credentials need an administrator's approval here, so it is held OFF until one approves it in Admin > Integrations. A setup card is showing: the USER pastes %s now, and it goes live as fetch_url_%s once approved. Tell them both steps plainly. Then build the tool with tool_def(mode=\"api\", credential=%q), with url_template as a PATH.",
 					c.Type, c.Name, secretNeeded, c.Name, c.Name), nil
 			}
 			return fmt.Sprintf("Drafted %s credential %q in the user's OWN API credentials, created DISABLED. A setup card is showing in the chat: the USER pastes %s and enables it in Extensions › API credentials (no admin needed). It goes live as fetch_url_%s for their agents. %s Then build the tool with tool_def(mode=\"api\", credential=%q): do NOT take the key/secret/host as tool params, and author url_template as a PATH (e.g. \"/api/v1/posts\"): it resolves against the credential's Base URL so the host can never drift.",

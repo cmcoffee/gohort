@@ -211,11 +211,11 @@ func init() {
 	// before the first step runs, and on a GPU shared with a resident LLM it
 	// loads slowly or in low-VRAM mode. Two knobs, because the two cases differ
 	// by an order of magnitude and a single number punishes one of them.
-	RegisterTunable(TunableSpec{Key: "tune_image_poll_max_secs", Category: "Timeouts", Label: "Image render deadline", Help: "How long to wait for a text-to-image backend to finish before giving up.",
+	RegisterTunable(TunableSpec{Key: "tune_image_poll_max_secs", Category: "Images", Label: "Image render deadline", Help: "How long to wait for a text-to-image backend to finish before giving up.",
 		Detail: "A connector can override this in its own settings.", Kind: KindSeconds, Default: 180, Min: 30, Max: 3600})
-	RegisterTunable(TunableSpec{Key: "tune_image_edit_poll_max_secs", Category: "Timeouts", Label: "Image edit deadline", Help: "Same, for backends that take a source photo. Higher by default.",
+	RegisterTunable(TunableSpec{Key: "tune_image_edit_poll_max_secs", Category: "Images", Label: "Image edit deadline", Help: "Same, for backends that take a source photo. Higher by default.",
 		Detail: "An edit model is usually larger, and the first request after another model was resident pays a full load before it starts.", Kind: KindSeconds, Default: 900, Min: 30, Max: 3600})
-	RegisterTunable(TunableSpec{Key: "tune_image_poll_interval_secs", Category: "Timeouts", Label: "Image poll interval", Help: "How often to ask an image backend whether it has finished. A connector can override this in its own settings.", Kind: KindSeconds, Default: 2, Min: 1, Max: 60})
+	RegisterTunable(TunableSpec{Key: "tune_image_poll_interval_secs", Category: "Images", Label: "Image poll interval", Help: "How often to ask an image backend whether it has finished. A connector can override this in its own settings.", Kind: KindSeconds, Default: 2, Min: 1, Max: 60})
 }
 
 // pollEvery is how often to ask whether the render has finished. Same shape as
@@ -733,7 +733,7 @@ func (t *restImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 		if err := sess.ConnectionBarred(t.connector); err != nil {
 			return "", err
 		}
-		return "", fmt.Errorf("image backend %q is not offered to agents: an admin offers it under Admin > Capabilities > Image Generation", t.connector)
+		return "", fmt.Errorf("image backend %q is not offered to agents: an admin offers it under Admin > Services > Image Generation", t.connector)
 	}
 	s, graph, err := imageSpecOf(c)
 	if err == nil && !graph {

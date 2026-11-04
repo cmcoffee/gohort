@@ -2789,7 +2789,7 @@ const tuneShellNetworkClosed = "tune_shell_network_closed"
 
 func init() {
 	RegisterTunable(TunableSpec{
-		Key: tuneShellNetworkClosed, Category: "Security",
+		Key: tuneShellNetworkClosed, Category: "Sign-in & security",
 		Label: "Shell tools reach the network only when they declare it",
 		Help:  "ON (the default): a shell command gets no network namespace unless its tool record sets raw_network, and ordinary HTTP goes through the audited gohort.fetch hook. OFF (the historical behaviour): every shell command shares the host's network, loopback and LAN included.",
 		Kind:  KindBool, Default: 1, Min: 0, Max: 1,

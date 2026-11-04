@@ -46,7 +46,7 @@ const (
 func maxRunsPerOwner() int { return TuneInt("tune_max_runs_per_owner") }
 
 func init() {
-	RegisterTunable(TunableSpec{Key: "tune_max_runs_per_owner", Category: "Limits", Label: "Run ledger retention per owner", Help: "Cap on retained run records per owner; oldest are pruned past this.", Kind: KindInt, Default: 500, Min: 50, Max: 5000})
+	RegisterTunable(TunableSpec{Key: "tune_max_runs_per_owner", Category: "Storage & retention", Label: "Run ledger retention per owner", Help: "Cap on retained run records per owner; oldest are pruned past this.", Kind: KindInt, Default: 500, Min: 50, Max: 5000})
 }
 
 // RunStatus is the outcome of a run. The Operator badges on it and the

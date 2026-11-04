@@ -51,8 +51,8 @@ func mcpCallTimeout() time.Duration { return TuneDuration("tune_mcp_call_timeout
 const mcpRedialBackoff = 30 * time.Second
 
 func init() {
-	RegisterTunable(TunableSpec{Key: "tune_mcp_handshake_timeout", Category: "Timeouts", Label: "MCP handshake timeout", Help: "Caps initialize + tools/list when connecting to an MCP server.", Kind: KindSeconds, Default: 20, Min: 4, Max: 120})
-	RegisterTunable(TunableSpec{Key: "tune_mcp_call_timeout", Category: "Timeouts", Label: "MCP call timeout", Help: "Caps a single MCP tools/call invocation.", Kind: KindSeconds, Default: 55, Min: 10, Max: 300})
+	RegisterTunable(TunableSpec{Key: "tune_mcp_handshake_timeout", Category: "Integrations", Label: "MCP handshake timeout", Help: "Caps initialize + tools/list when connecting to an MCP server.", Kind: KindSeconds, Default: 20, Min: 4, Max: 120})
+	RegisterTunable(TunableSpec{Key: "tune_mcp_call_timeout", Category: "Integrations", Label: "MCP call timeout", Help: "Caps a single MCP tools/call invocation.", Kind: KindSeconds, Default: 55, Min: 10, Max: 300})
 }
 
 // MCPAuthMode selects how outbound requests to a server are authorized.
@@ -1253,7 +1253,7 @@ func (m *MCPManager) startOAuth(cfg MCPServerConfig, st MCPOAuthStart) (string, 
 	// consent codes to a host of the requester's choosing.
 	if strings.TrimSpace(cfg.OAuthClientID) == "" && !oc.knowsRedirect(redirectURI) &&
 		len(oc.RegisteredRedirects) > 0 && !redirectHostKnown(oc.RegisteredRedirects, redirectURI) {
-		return "", fmt.Errorf("this server's OAuth client is registered for %s, not %s: set External URL in Admin > Site Settings so every consent uses the same address",
+		return "", fmt.Errorf("this server's OAuth client is registered for %s, not %s: set External URL in Admin > Overview > Site so every consent uses the same address",
 			redirectOrigins(oc.RegisteredRedirects), redirectOrigin(redirectURI))
 	}
 	if strings.TrimSpace(cfg.OAuthClientID) == "" && !oc.knowsRedirect(redirectURI) &&

@@ -376,7 +376,7 @@ func TranscribeWith(ctx context.Context, cfg TranscribeConfig, audio []byte, fil
 		return TranscribeService(ctx, name, audio, filename)
 	}
 	if !strings.HasPrefix(cfg.Provider, peerProviderPrefix) {
-		return "", fmt.Errorf("transcription is not set to a connector or a peer: choose one under Admin > Capabilities > Audio Transcription (STT)")
+		return "", fmt.Errorf("transcription is not set to a connector or a peer: choose one under Admin > Services > Audio Transcription (STT)")
 	}
 	return transcribeFromPeer(ctx, cfg, audio, filename)
 }

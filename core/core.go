@@ -985,15 +985,15 @@ func init() {
 	geo.IdleTimeout = func() time.Duration { return TuneDuration("tune_geocode_idle_timeout") }
 	geo.ConnectTimeout = func() time.Duration { return TuneDuration("tune_geocode_connect_timeout") }
 	geo.MaxAttempts = func() int { return TuneInt("tune_geocode_max_attempts") }
-	RegisterTunable(TunableSpec{Key: "tune_geocode_timeout", Category: "Timeouts", Label: "Geocode HTTP timeout", Help: "Per-request timeout for online (Nominatim) reverse-geocoding lookups.", Kind: KindSeconds, Default: 5, Min: 1, Max: 30})
-	RegisterTunable(TunableSpec{Key: "tune_geocode_idle_timeout", Category: "Timeouts", Label: "Geocode download idle timeout", Help: "Moving-window no-bytes timeout for offline geocode-database downloads before falling to the next mirror.", Kind: KindSeconds, Default: 30, Min: 5, Max: 180})
-	RegisterTunable(TunableSpec{Key: "tune_geocode_connect_timeout", Category: "Timeouts", Label: "Geocode connect timeout", Help: "Dial + TLS handshake cap for offline geocode-database downloads.", Kind: KindSeconds, Default: 10, Min: 2, Max: 60})
-	RegisterTunable(TunableSpec{Key: "tune_geocode_max_attempts", Category: "Concurrency", Label: "Geocode download attempts", Help: "Number of mirror attempts when downloading the offline geocode database.", Kind: KindInt, Default: 3, Min: 1, Max: 10})
+	RegisterTunable(TunableSpec{Key: "tune_geocode_timeout", Category: "Integrations", Label: "Geocode HTTP timeout", Help: "Per-request timeout for online (Nominatim) reverse-geocoding lookups.", Kind: KindSeconds, Default: 5, Min: 1, Max: 30})
+	RegisterTunable(TunableSpec{Key: "tune_geocode_idle_timeout", Category: "Integrations", Label: "Geocode download idle timeout", Help: "Moving-window no-bytes timeout for offline geocode-database downloads before falling to the next mirror.", Kind: KindSeconds, Default: 30, Min: 5, Max: 180})
+	RegisterTunable(TunableSpec{Key: "tune_geocode_connect_timeout", Category: "Integrations", Label: "Geocode connect timeout", Help: "Dial + TLS handshake cap for offline geocode-database downloads.", Kind: KindSeconds, Default: 10, Min: 2, Max: 60})
+	RegisterTunable(TunableSpec{Key: "tune_geocode_max_attempts", Category: "Integrations", Label: "Geocode download attempts", Help: "Number of mirror attempts when downloading the offline geocode database.", Kind: KindInt, Default: 3, Min: 1, Max: 10})
 
 	// media: per-document extraction timeout, read from the tunables registry.
 	media.ExtractTimeout = func() time.Duration { return TuneDuration("tune_document_extract_timeout") }
 	RegisterTunable(TunableSpec{
-		Key: "tune_document_extract_timeout", Category: "Timeouts",
+		Key: "tune_document_extract_timeout", Category: "Ingest & autofill",
 		Label: "Document extraction timeout",
 		Help:  "Per-document cap for text extraction (PDFs, office files) on a user send.",
 		Kind:  KindSeconds, Default: 30, Min: 5, Max: 300,
@@ -1073,9 +1073,9 @@ func init() {
 	// and the defaults) stays here, which is why core makes the calls.
 	promotion.TuneDurationFunc = TuneDuration
 	promotion.TuneIntFunc = TuneInt
-	RegisterTunable(TunableSpec{Key: "tune_promotion_window", Category: "Timeouts", Label: "Sub-session stickiness window", Help: "How long an idle sub-session stays joinable after its last reply.",
+	RegisterTunable(TunableSpec{Key: "tune_promotion_window", Category: "Turns & context", Label: "Sub-session stickiness window", Help: "How long an idle sub-session stays joinable after its last reply.",
 		Detail: "After that, the next turn falls through to the host LLM.", Kind: KindMinutes, Default: 5, Min: 1, Max: 60})
-	RegisterTunable(TunableSpec{Key: "tune_promotion_turn_cap", Category: "Limits", Label: "Sub-session turn cap", Help: "Maximum number of follow-up turns a single promoted sub-session will serve.", Kind: KindInt, Default: 8, Min: 1, Max: 50})
+	RegisterTunable(TunableSpec{Key: "tune_promotion_turn_cap", Category: "Turns & context", Label: "Sub-session turn cap", Help: "Maximum number of follow-up turns a single promoted sub-session will serve.", Kind: KindInt, Default: 8, Min: 1, Max: 50})
 
 	// provenance: recency/staleness weights come from the tunables registry.
 	provenance.TuneFloatFunc = TuneFloat

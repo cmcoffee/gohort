@@ -60,7 +60,7 @@ func personalIntegrationsSection() ui.Section {
 	return ui.Section{
 		Title:    "Personal integrations",
 		Subtitle: "Whether people add their own API credentials, MCP servers and Teams bots, or the administrator sets them up.",
-		Detail: "A policy governs adding a new one. What someone already has keeps working; turn any of it off below, in User-owned credentials and Personal MCP servers.\n\n" +
+		Detail: "A policy governs adding a new one. What someone already has keeps working; turn any of it off on the Integrations tab, in User-owned credentials and Personal MCP servers.\n\n" +
 			"Needs approval holds each new one off until you enable it below. An administrator is never held by either policy.\n\n" +
 			"A personal MCP server's tools reach only its owner's agents, and it may not point at this network's private addresses unless its owner is an administrator.",
 		Body: ui.FormPanel{

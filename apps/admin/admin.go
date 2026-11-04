@@ -9,7 +9,6 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
-	"github.com/cmcoffee/gohort/core/ui"
 )
 
 func writeTestResult(w http.ResponseWriter, ok bool, message, errMsg string) {
@@ -114,9 +113,15 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			return
 		}
 		// The activity log was a tab of its own; a link to it still lands on
-		// the log, now on System.
+		// the log, wherever the layout puts it.
 		if tab == "activity" {
-			http.Redirect(w, r, a.WebPath()+"/"+ui.SectionOnTab("System", "Activity Log"), http.StatusFound)
+			http.Redirect(w, r, a.WebPath()+"/"+adminSectionLink("Activity Log"), http.StatusFound)
+			return
+		}
+		// A tab from an earlier layout goes to the one that took its sections.
+		// The browser keeps the hash across the redirect.
+		if to, ok := retiredTabs[tab]; ok {
+			http.Redirect(w, r, a.WebPath()+"/"+to, http.StatusFound)
 			return
 		}
 		// First run: an install with no LLM provider cannot do anything, so

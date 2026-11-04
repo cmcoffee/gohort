@@ -35,7 +35,7 @@ const commandTimeout = 90 * time.Second
 func init() {
 	RegisterTunable(TunableSpec{
 		Key:      "tune_pipeline_tool_timeout",
-		Category: "Timeouts",
+		Category: "Tools & background work",
 		Label:    "Pipeline tool wall-clock timeout",
 		Help:     "Max wall-clock time a pipeline-mode custom tool's nested sub-agent may run.",
 		Detail:   "It bounds a runaway or stalled pipeline, so it fails cleanly instead of hanging the turn.",

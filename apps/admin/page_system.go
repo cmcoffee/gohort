@@ -5,7 +5,13 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
-// systemSections is the system part of the admin page: System Status, Site Settings, Channel Wake Rules, Add account, Users, Feature Access, Default Apps, App Groups.
+// signInTunables are the Tuning tab's knobs that are about signing in. They
+// show on Sign-in as well, the way an app's knobs show on its own page as well
+// as on Tuning: both forms write the same keys through PATCH, so neither can
+// put back what the other changed.
+var signInTunables = []string{"tune_reset_token_expiry", "tune_account_key_lifetime", "tune_activity_retention_days"}
+
+// systemSections is the system part of the admin page: System Status, Site, Sign-in, Channel Wake Rules, Add account, Users, Teams, Feature Access, Default Apps.
 func (a *AdminApp) systemSections() []ui.Section {
 	secs := []ui.Section{
 		{
@@ -42,15 +48,20 @@ func (a *AdminApp) systemSections() []ui.Section {
 			},
 		},
 		{
-			Title:    "Site Settings",
-			Subtitle: "Authentication, naming, and operational quotas. Saved automatically as you edit.",
+			Title:    "Site",
+			Subtitle: "What this deployment is called, how it looks, and where it is. Saved automatically as you edit.",
 			Body: ui.FormPanel{
 				Assist: true,
 				Source: "api/settings",
 				Method: settingsSaveMethod,
 				Fields: []ui.FormField{
-					{Field: "allow_signup", Label: "Allow public signup", Type: "toggle",
-						Help: "When off, only existing accounts can sign in. Approvals can still happen via the user list."},
+					{Field: "service_name", Label: "Service name", Type: "text",
+						Placeholder: "gohort", Help: "Shown in the page title and email From: line."},
+					{Field: "site_name", Label: "Site name", Type: "text",
+						Placeholder: "e.g. SnugLab", Help: "Shown in exported-document footers."},
+					{Field: "doc_brand", Label: "Document brand", Type: "text",
+						Placeholder: "e.g. SnugLab Research",
+						Help:        "Header label on exported documents (guide PDF/HTML) and the PDF branding line. Falls back to the site name."},
 					// The page reloads into the new theme once it saves: every
 					// page draws its theme at render, so asking the person to
 					// reload was a step the form could take for them.
@@ -58,13 +69,6 @@ func (a *AdminApp) systemSections() []ui.Section {
 						Options:        themePickerOptions(),
 						ReloadOnChange: true,
 						Help:           "Platform-wide UI theme. The page reloads in it when you pick one."},
-					{Field: "service_name", Label: "Service name", Type: "text",
-						Placeholder: "gohort", Help: "Shown in the page title and email From: line."},
-					{Field: "doc_brand", Label: "Document brand", Type: "text",
-						Placeholder: "e.g. SnugLab Research",
-						Help:        "Header label on exported documents (guide PDF/HTML) and the PDF branding line. Falls back to the site name."},
-					{Field: "site_name", Label: "Site name", Type: "text",
-						Placeholder: "e.g. SnugLab", Help: "Shown in exported-document footers."},
 					{Field: "external_url", Label: "External URL", Type: "text",
 						Placeholder: "https://gohort.example.com",
 						Help:        "Used to build links in notification emails. Include scheme."},
@@ -72,11 +76,25 @@ func (a *AdminApp) systemSections() []ui.Section {
 						Options: TimezoneSelectOptions("System default (host zone)"),
 						Help:    "Deployment timezone for day boundaries, schedules, and displayed times.",
 						Detail:  "Day boundaries are what cost and usage roll up on. Blank uses the host zone. Applies on restart."},
+					// Kept here, not moved beside Mail's own From Address: set,
+					// it overrides that one (core/notify.go), and a field that
+					// overrides another is the one that has to stay in sight.
 					{Field: "notify_from", Label: "Notification From", Type: "text",
-						Placeholder: "noreply@example.com"},
-					{Field: "api_key_allow_query", Label: "Accept the deployment API key in the URL", Type: "toggle",
-						Help:   "Off, the recommended setting, accepts the key only as the X-Gohort-Key header.",
-						Detail: "A credential in a URL reaches browser history, Referer headers on any outbound link, and the log of every proxy in between, and the key is a blanket authentication bypass.\n\nTurn this on only while an integration that cannot send a header is being moved, and expect a refused call to say exactly this."},
+						Placeholder: "noreply@example.com",
+						Help:        "When set, notification emails come from this address instead of Mail's From Address."},
+				},
+			},
+		},
+		{
+			Title:    "Sign-in",
+			Subtitle: "Who may sign up, how long a sign-in lasts, and what locks an account out. Saved automatically as you edit.",
+			Body: ui.FormPanel{
+				Assist: true,
+				Source: "api/settings",
+				Method: settingsSaveMethod,
+				Fields: append([]ui.FormField{
+					{Field: "allow_signup", Label: "Allow public signup", Type: "toggle",
+						Help: "When off, only existing accounts can sign in. Approvals can still happen via the user list."},
 					{Field: "session_days", Label: "Session idle lifetime (days)", Type: "number",
 						Min: 1, Max: 90, Help: "Default 7. How long a session survives WITHOUT use.",
 						Detail: "It renews while someone is actively working, so this is the idle timeout, not a countdown from login."},
@@ -87,9 +105,10 @@ func (a *AdminApp) systemSections() []ui.Section {
 						Min: 1, Max: 100, Help: "Default 5. Failed attempts above this trigger a temporary lockout."},
 					{Field: "lockout_minutes", Label: "Lockout duration (minutes)", Type: "number",
 						Min: 1, Max: 1440, Help: "Default 15."},
-					{Field: "fetch_cache_quota_mb", Label: "Fetch cache quota (MB)", Type: "number",
-						Min: 0, Max: 10240, Help: "Disk budget for the URL fetch cache. 0 disables caching."},
-				},
+					{Field: "api_key_allow_query", Label: "Accept the deployment API key in the URL", Type: "toggle",
+						Help:   "Off, the recommended setting, accepts the key only as the X-Gohort-Key header.",
+						Detail: "A credential in a URL reaches browser history, Referer headers on any outbound link, and the log of every proxy in between, and the key is a blanket authentication bypass.\n\nTurn this on only while an integration that cannot send a header is being moved, and expect a refused call to say exactly this."},
+				}, tunableFieldsFor(signInTunables...)...),
 			},
 		},
 		{

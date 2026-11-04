@@ -811,7 +811,7 @@ func ResolveEmbeddingProvider(cfg EmbeddingConfig) (EmbeddingConfig, error) {
 		if !cfg.Enabled {
 			return cfg, nil
 		}
-		return cfg, fmt.Errorf("choose where embeddings are made: a connector (Admin > Extensions > Connectors) or a peer that lends them")
+		return cfg, fmt.Errorf("choose where embeddings are made: a connector (Admin > Services > Connectors) or a peer that lends them")
 	}
 	p, ok := PeerFromProvider(provider)
 	if !ok {

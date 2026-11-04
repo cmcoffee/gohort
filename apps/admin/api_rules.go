@@ -147,7 +147,7 @@ func saveStyleRules(lines []string) (on, edited, custom int) {
 	return on, edited, len(list)
 }
 
-// rulesSection is the Rules section at the top of the Governance tab: the
+// rulesSection is the Rules section at the top of the Oversight tab: the
 // Always list, then the Style list, each saved on its own.
 func rulesSection() ui.Section {
 	return ui.Section{

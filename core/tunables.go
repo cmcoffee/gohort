@@ -46,7 +46,7 @@ const (
 // it groups under, display copy, type/unit, default, and validation bounds.
 type TunableSpec struct {
 	Key      string
-	Category string // admin section this knob groups under ("Retrieval", "Timeouts", "Limits", "Cache")
+	Category string // admin section this knob groups under: one of TunableCategories
 	Label    string
 	Help     string
 	// Detail is the long explanation, shown behind an ⓘ icon beside the
@@ -61,7 +61,7 @@ type TunableSpec struct {
 	Decimals int // float display precision (KindFloat only)
 	// App names the app this knob belongs to, as its WebPath. Empty means a
 	// framework-level knob owned by no single app — which is every knob today,
-	// since Category groups them by SUBJECT (Retrieval, Timeouts) rather than
+	// since Category groups them by SUBJECT (Retrieval, Model calls) rather than
 	// by owner. Declared, never inferred; see RouteStage.App.
 	App string
 	// PriorDefaults are values this knob's default used to be. A stored value
@@ -178,19 +178,49 @@ func TuneDuration(key string) time.Duration {
 
 // --- admin-facing introspection (registry is the single source of truth) ---
 
-// AllTunableSpecs returns every registered spec, ordered by category (first
-// appearance) then registration order within the category.
+// TunableCategories is every category a knob may be filed under, in the order
+// the Tuning tab lists them. A category is what the knob is ABOUT, never its
+// unit: "Limits" and "Timeouts" once held 88 of the knobs, with password reset
+// expiry beside an MCP handshake, and nobody found anything by subject. The
+// app-named ones close the list: their knobs are on that app's page too.
+//
+// The category is display only (a knob is stored under its Key), so moving a
+// knob between categories changes where it is shown and nothing stored.
+var TunableCategories = []string{
+	"Model calls",             // LLM timeouts, stream guards, retries, sampling, vision input
+	"Turns & context",         // thread tails, compaction, coalescing, sub-sessions, gap checks
+	"Tools & background work", // spills, detaching, tool limits, desktop bridge, fan-out
+	"Integrations",            // SecureAPI, MCP, geocode downloads, outbound HTTP
+	"Images",                  // generation budgets and render deadlines
+	"Memory",
+	"Retrieval",
+	"Ingest & autofill",
+	"Scheduling",          // cron, scheduled updates, watches, run sweeps
+	"Storage & retention", // disk floors and how long things are kept
+	"Sign-in & security",
+	"Exports",
+	"Bridges",
+	"Scribe",
+	"Servitor",
+}
+
+// AllTunableSpecs returns every registered spec, ordered by category (the
+// order of TunableCategories, then any other category by first appearance)
+// then registration order within the category.
 func AllTunableSpecs() []TunableSpec {
 	tunablesMu.RLock()
 	defer tunablesMu.RUnlock()
 	catOrder := map[string]int{}
-	var cats []string
+	for i, c := range TunableCategories {
+		catOrder[c] = i
+	}
+	next := len(TunableCategories)
 	out := make([]TunableSpec, 0, len(tunRegOrder))
 	for _, k := range tunRegOrder {
 		s := tunSpecs[k]
 		if _, seen := catOrder[s.Category]; !seen {
-			catOrder[s.Category] = len(cats)
-			cats = append(cats, s.Category)
+			catOrder[s.Category] = next
+			next++
 		}
 		out = append(out, s)
 	}
@@ -282,9 +312,9 @@ func init() {
 	RegisterTunable(TunableSpec{Key: TunableChunkChars, Category: "Retrieval", Label: "Embedding chunk size (chars)",
 		Help:   "Max characters per embedded chunk.",
 		Detail: "Applies to NEW ingestions only. Existing documents keep their chunking until they are re-ingested.", Kind: KindInt, Default: 1000, Min: 200, Max: 8000})
-	RegisterTunable(TunableSpec{Key: TunableLLMMaxRetries, Category: "Limits", Label: "LLM retry attempts",
+	RegisterTunable(TunableSpec{Key: TunableLLMMaxRetries, Category: "Model calls", Label: "LLM retry attempts",
 		Help: "Retries for a failed LLM call before giving up (per-call override still applies).", Kind: KindInt, Default: 5, Min: 0, Max: 20})
-	RegisterTunable(TunableSpec{Key: "tune_prompt_cache_1h", Category: "LLM", Label: "Extended prompt cache (1 hour)",
+	RegisterTunable(TunableSpec{Key: "tune_prompt_cache_1h", Category: "Model calls", Label: "Extended prompt cache (1 hour)",
 		Help: "Keep the cached prompt prefix alive for an hour instead of the 5-minute default.",
 		Detail: "A toggle rather than a number, because those are the only two lifetimes the API has.\n\n" +
 			"Off, a cache expires while somebody reads a reply, so an interactive session re-writes its whole prefix on nearly every turn. Writes are billed at 1.25x input, reads at 0.1x. " +

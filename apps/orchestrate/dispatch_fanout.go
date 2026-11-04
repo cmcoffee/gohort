@@ -42,7 +42,7 @@ import (
 )
 
 func init() {
-	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_dispatch_fanout_lanes", Category: "Limits",
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_dispatch_fanout_lanes", Category: "Tools & background work",
 		Label: "Parallel sibling dispatch lanes",
 		Help:  "How many agents(run) calls from ONE model response may execute at once.",
 		Detail: "1, the default, runs them strictly one after another. " +

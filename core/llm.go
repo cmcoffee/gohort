@@ -2013,7 +2013,7 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		// The official API needs a key; a compatible server at an address of
 		// its own may take none.
 		if cfg.APIKey == "" && strings.TrimSpace(cfg.Endpoint) == "" {
-			return nil, Error("anthropic API key is not configured: set it in the web UI under Admin → LLMs")
+			return nil, Error("anthropic API key is not configured: set it in the web UI under Admin → Models")
 		}
 		model := cfg.Model
 		if model == "" {
@@ -2062,7 +2062,7 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		// The official API needs a key; a compatible server at an address of
 		// its own may take none.
 		if cfg.APIKey == "" && strings.TrimSpace(cfg.Endpoint) == "" {
-			return nil, Error("openai API key is not configured: set it in the web UI under Admin → LLMs")
+			return nil, Error("openai API key is not configured: set it in the web UI under Admin → Models")
 		}
 		model := cfg.Model
 		if model == "" {
@@ -2074,7 +2074,7 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		inner.(*openAIClient).streamIdleTimeout = cfg.StreamIdleTimeout
 	case "gemini":
 		if cfg.APIKey == "" {
-			return nil, Error("gemini API key is not configured: set it in the web UI under Admin → LLMs → Worker LLM")
+			return nil, Error("gemini API key is not configured: set it in the web UI under Admin → Models → Worker LLM")
 		}
 		model := cfg.Model
 		if model == "" {
@@ -2152,7 +2152,7 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		}
 		StartLlamacppScheduler(mp)
 	default:
-		return nil, Error("no LLM provider is configured: set one in the web UI under Admin → LLMs → Worker LLM")
+		return nil, Error("no LLM provider is configured: set one in the web UI under Admin → Models → Worker LLM")
 	}
 
 	// Handed to every client rather than applied here, because only the

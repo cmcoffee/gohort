@@ -30,8 +30,8 @@ func visionMaxDim() int { return TuneInt("tune_vision_max_dim") }      // longes
 func visionJQQual() int { return TuneInt("tune_vision_jpeg_quality") } // JPEG quality for resized images
 
 func init() {
-	RegisterTunable(TunableSpec{Key: "tune_vision_max_dim", Category: "Limits", Label: "Vision image max dimension", Help: "Longest-side pixel cap for images downscaled before sending to the LLM.", Kind: KindInt, Default: 1024, Min: 256, Max: 4096})
-	RegisterTunable(TunableSpec{Key: "tune_vision_jpeg_quality", Category: "Limits", Label: "Vision JPEG quality", Help: "JPEG quality (1-100) for resized images sent to the LLM.", Kind: KindInt, Default: 82, Min: 30, Max: 100})
+	RegisterTunable(TunableSpec{Key: "tune_vision_max_dim", Category: "Model calls", Label: "Vision image max dimension", Help: "Longest-side pixel cap for images downscaled before sending to the LLM.", Kind: KindInt, Default: 1024, Min: 256, Max: 4096})
+	RegisterTunable(TunableSpec{Key: "tune_vision_jpeg_quality", Category: "Model calls", Label: "Vision JPEG quality", Help: "JPEG quality (1-100) for resized images sent to the LLM.", Kind: KindInt, Default: 82, Min: 30, Max: 100})
 }
 
 // LLM API clients apply iotimeout.NewReadCloser to every response body using
@@ -56,9 +56,9 @@ func llmRequestTimeout() time.Duration { return TuneDuration("tune_llm_request_t
 func llmVisionRequestTimeout() time.Duration { return TuneDuration("tune_llm_vision_request_timeout") }
 
 func init() {
-	RegisterTunable(TunableSpec{Key: "tune_llm_connect_timeout", Category: "Timeouts", Label: "LLM connect timeout", Help: "Dial + TLS handshake cap for LLM API connections.", Kind: KindSeconds, Default: 10, Min: 2, Max: 60})
-	RegisterTunable(TunableSpec{Key: "tune_llm_request_timeout", Category: "Timeouts", Label: "LLM request timeout (fallback)", Help: "Fallback per-request timeout for LLM endpoints when request_timeout_seconds is unset.", Kind: KindMinutes, Default: 12, Min: 1, Max: 60})
-	RegisterTunable(TunableSpec{Key: "tune_llm_vision_request_timeout", Category: "Timeouts", Label: "LLM vision request timeout", Help: "Total budget for a single non-streaming vision call, one whose prompt contains images.",
+	RegisterTunable(TunableSpec{Key: "tune_llm_connect_timeout", Category: "Model calls", Label: "LLM connect timeout", Help: "Dial + TLS handshake cap for LLM API connections.", Kind: KindSeconds, Default: 10, Min: 2, Max: 60})
+	RegisterTunable(TunableSpec{Key: "tune_llm_request_timeout", Category: "Model calls", Label: "LLM request timeout (fallback)", Help: "Fallback per-request timeout for LLM endpoints when request_timeout_seconds is unset.", Kind: KindMinutes, Default: 12, Min: 1, Max: 60})
+	RegisterTunable(TunableSpec{Key: "tune_llm_vision_request_timeout", Category: "Model calls", Label: "LLM vision request timeout", Help: "Total budget for a single non-streaming vision call, one whose prompt contains images.",
 		Detail: "Video frames count too. Vision rounds skip thinking and normally answer in seconds; a hung one otherwise burns the caller's whole turn budget before a retry can happen. It only tightens the general request timeout, never extends it.", Kind: KindSeconds, Default: 120, Min: 15, Max: 1800})
 }
 
@@ -466,15 +466,15 @@ func samplerKey(base string, thinking bool) string {
 
 func init() {
 	for _, m := range samplerModes {
-		RegisterTunable(TunableSpec{Key: TunableSamplingTemperature + m.suffix, Category: "Sampling",
+		RegisterTunable(TunableSpec{Key: TunableSamplingTemperature + m.suffix, Category: "Model calls",
 			Label: "Temperature, " + m.label + " (-1 = server default)",
 			Help:  "Sampling temperature for " + m.label + " calls when the call sets none. -1 defers to the model server; 0-2 pins it (0 = deterministic). Qwen 3 recommends ~0.6 thinking / ~0.7 non-thinking. Per-call WithTemperature always overrides.",
 			Kind:  KindFloat, Default: -1, Min: -1, Max: 2, Decimals: 2})
-		RegisterTunable(TunableSpec{Key: TunableSamplingTopK + m.suffix, Category: "Sampling",
+		RegisterTunable(TunableSpec{Key: TunableSamplingTopK + m.suffix, Category: "Model calls",
 			Label: "Top-k, " + m.label + " (-1 = server default)",
 			Help:  "top-k for " + m.label + " calls when the call sets none. -1 defers to the server default. Qwen 3 recommends 20 for both modes. Per-call override always wins.",
 			Kind:  KindInt, Default: -1, Min: -1, Max: 500})
-		RegisterTunable(TunableSpec{Key: TunableSamplingTopP + m.suffix, Category: "Sampling",
+		RegisterTunable(TunableSpec{Key: TunableSamplingTopP + m.suffix, Category: "Model calls",
 			Label: "Top-p, " + m.label + " (-1 = server default)",
 			Help:  "Nucleus-sampling top-p for " + m.label + " calls when the call sets none. -1 defers to the server default; 0-1 pins it. Qwen 3 recommends ~0.95 thinking / ~0.8 non-thinking. Per-call override always wins.",
 			Kind:  KindFloat, Default: -1, Min: -1, Max: 1, Decimals: 2})
@@ -1186,7 +1186,7 @@ func unreadableImagesNote(formats []string) string {
 	}
 	return "[" + n + " not shown to you: " + strings.Join(formats, ", ") +
 		" cannot be read here (JPEG, PNG, GIF and WebP can). Tell the user, and ask them to send it as a JPEG or PNG." +
-		" An administrator can make these readable under Admin > Capabilities > System Hooks.]"
+		" An administrator can make these readable under Admin > Services > System Hooks.]"
 }
 
 type oaiResponse struct {

@@ -210,7 +210,7 @@ func failingNotice(name, capability string, c CapabilityRecord) {
 			Owner: u.Username,
 			Kind:  notices.KindStopped,
 			Title: "Service " + name + " is failing",
-			Body: fmt.Sprintf("%s failed %d of its last %d calls. The last: %s\n\nOpen Admin > Extensions > Connectors and use Fix on its row: it reads the failure, tries a corrected spec against the service, and fills the form for you to save.",
+			Body: fmt.Sprintf("%s failed %d of its last %d calls. The last: %s\n\nOpen Admin > Services > Connectors and use Fix on its row: it reads the failure, tries a corrected spec against the service, and fills the form for you to save.",
 				capability, failed, calls, c.LastError),
 		})
 	}

@@ -564,7 +564,7 @@ const guardrailArgTotalFactor = 4
 func init() {
 	RegisterTunable(TunableSpec{
 		Key:      "tune_guardrail_action_arg_chars",
-		Category: "Limits",
+		Category: "Sign-in & security",
 		Label:    "Guardrail: argument text read per tool call",
 		Help:     "How much of each argument the pre-action guardrail check reads.",
 		Detail:   "A rule about the CONTENT of what an agent sends is applied to this much of it. Raise it if your rules need to see long message bodies or documents, at the cost of a bigger check on every consequential call. The whole candidate is additionally capped at four times this.\n\nIt does not affect the reply check, which always sees the complete reply.",

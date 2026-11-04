@@ -74,7 +74,7 @@ func TestAStaleChoiceReadsAsNotSetAndIsOneCard(t *testing.T) {
 		}
 	}
 	if !ok || !strings.HasPrefix(n.Text, "2 settings need setting again: Image Generation, Web Search.") ||
-		n.Action != "Open Image Generation" || !strings.HasSuffix(n.URL, ui.SectionOnTab("Capabilities", "Image Generation")) {
+		n.Action != "Open Image Generation" || !strings.HasSuffix(n.URL, ui.SectionOnTab("Services", "Image Generation")) {
 		t.Errorf("the card: %+v %v", n, ok)
 	}
 	RootDB.Set(SearchTable, "provider", "finder")

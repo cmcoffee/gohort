@@ -55,7 +55,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		{
 			Title:    "Image Generation",
 			Subtitle: "Image generation for tools that produce illustrations or thumbnails.",
-			Detail:   "Every picture comes from a connector chosen here: Gemini or OpenAI added from their templates, a local ComfyUI or Automatic1111, a peer's renderer, or any backend declared as a spec. Its address and key are kept on it, under Admin > Extensions > Connectors.\n\nUse “Add image backend” to stand up a local ComfyUI or A1111 in one step.",
+			Detail:   "Every picture comes from a connector chosen here: Gemini or OpenAI added from their templates, a local ComfyUI or Automatic1111, a peer's renderer, or any backend declared as a spec. Its address and key are kept on it, under Admin > Services > Connectors.\n\nUse “Add image backend” to stand up a local ComfyUI or A1111 in one step.",
 			Body: ui.Stack{
 				Children: []ui.Component{
 					ui.FormPanel{
@@ -74,7 +74,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		{
 			Title:    "Music",
 			Subtitle: "Music connectors agents may make songs with.",
-			Detail:   "Each one ticked is offered to agents as a tool of its own, generate_music_<connector>. Add a music connector under Admin > Extensions > Connectors, from its spec; it is tested and fixed there. A flow may use one as a step without it being offered here.",
+			Detail:   "Each one ticked is offered to agents as a tool of its own, generate_music_<connector>. Add a music connector under Admin > Services > Connectors, from its spec; it is tested and fixed there. A flow may use one as a step without it being offered here.",
 			Body: ui.FormPanel{
 				Source: "api/music",
 				Fields: []ui.FormField{staleField, {Field: "agents", Label: "Offered to agents", Type: "checklist", Options: musicOptions(),
@@ -84,7 +84,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		{
 			Title:    "Web Search",
 			Subtitle: "Provider for the web_search tool.",
-			Detail:   "DuckDuckGo is built in and needs no key. Any other engine is a connector that searches: add one from a template (Admin > Extensions > Templates has Brave, Serper, Tavily, Google Programmable Search and SearXNG) and pick it here, its key kept on it.",
+			Detail:   "DuckDuckGo is built in and needs no key. Any other engine is a connector that searches: add one from a template (Admin > Services > Templates has Brave, Serper, Tavily, Google Programmable Search and SearXNG) and pick it here, its key kept on it.",
 			Body: ui.FormPanel{
 				Assist:    true,
 				Source:    "api/web-search",
@@ -105,29 +105,13 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		{
 			Title:    "Mail (SMTP)",
 			Subtitle: "Outbound SMTP for notification emails.",
-			Detail:   "Signup approvals, scheduled deliveries, watcher alerts and the send_email tool. Leave Server blank for localhost:25. A mail API (Resend, Postmark and others) can send instead: add a connector that sends mail from Admin > Extensions > Templates and pick it under Send with.",
+			Detail:   "Signup approvals, scheduled deliveries, watcher alerts and the send_email tool. Leave Server blank for localhost:25. A mail API (Resend, Postmark and others) can send instead: add a connector that sends mail from Admin > Services > Templates and pick it under Send with.",
 			Body: ui.FormPanel{
 				Assist:    true,
 				Source:    "api/mail",
 				TestURL:   "api/mail/test",
 				TestLabel: "Send test email",
 				Fields:    mailFormFields(),
-			},
-		},
-		{
-			Title:    "Network Timeouts",
-			Subtitle: "Outbound HTTP timeouts for research sources and search APIs.",
-			Detail:   "Raise them when working against slow upstreams; lower them to fail fast in a tight loop.",
-			Body: ui.FormPanel{
-				Source: "api/network",
-				Fields: []ui.FormField{
-					{Field: "connect_timeout_seconds", Label: "Connect timeout (seconds)",
-						Type: "number", Min: 1, Max: 120, Placeholder: "10",
-						Help: "TCP + TLS connection timeout. Default 10."},
-					{Field: "request_timeout_seconds", Label: "Request timeout (seconds)",
-						Type: "number", Min: 1, Max: 300, Placeholder: "15",
-						Help: "Per-read I/O timeout for HTTP response bodies. Default 15."},
-				},
 			},
 		},
 	}
@@ -205,11 +189,11 @@ func imageFormFields() []ui.FormField {
 	f := ui.FormField{Field: "provider", Label: "Make pictures with", Type: "select",
 		Options: append(append([]ui.SelectOption{disabledOption}, opts...), addAnother("image.generate"))}
 	if len(opts) == 0 {
-		f.Help = "Nothing here makes pictures yet: + Add another… adds one from a template (Gemini, OpenAI, ComfyUI, Automatic1111), or connect a peer that lends image generation (Admin > Capabilities > Peers)."
+		f.Help = "Nothing here makes pictures yet: + Add another… adds one from a template (Gemini, OpenAI, ComfyUI, Automatic1111), or connect a peer that lends image generation (Admin > Integrations > Peers)."
 		return []ui.FormField{staleField, f}
 	}
 	f.Help = "The connector that makes pictures; + Add another… adds one from a template. Its settings (an address, a model, a key) are set here below it."
-	f.Detail = "A peer that lends image generation is connected under Admin > Capabilities > Peers. A connector changed by someone who is not an administrator is held, so no call reaches it: read the change on its row, then save here with it chosen to accept it."
+	f.Detail = "A peer that lends image generation is connected under Admin > Integrations > Peers. A connector changed by someone who is not an administrator is held, so no call reaches it: read the change on its row, then save here with it chosen to accept it."
 	agents := ui.FormField{Field: "agents", Label: "Also offered to agents", Type: "checklist", Options: opts,
 		Help:   "Other image connectors agents may choose by name, and peers borrowing image generation. The one above is always offered.",
 		Detail: "Agents' image tools, and a backend's own generate_image_<name> tool, reach only the connector above and the ones ticked here. They offer the connector above as the default and these by name; a peer that borrows image generation from this machine may name them too."}
@@ -227,14 +211,14 @@ func imageFormFields() []ui.FormField {
 // embeddingFormFields builds the Embeddings settings: on or off, the
 // connector or peer that embeds, and the prefixes its model wants. The
 // endpoint, model and key are the connector's own, set up, tested and fixed
-// under Admin > Extensions > Connectors, so there is one place each is kept.
+// under Admin > Services > Connectors, so there is one place each is kept.
 func embeddingFormFields() []ui.FormField {
 	choices := append(serviceProviderOptions("embed.text", "Embed"), EmbeddingProviderOptions()...)
 	fields := []ui.FormField{staleField,
 		{Field: "provider", Label: "Embed with", Type: "select",
 			Options: append(append([]ui.SelectOption{disabledOption}, choices...), addAnother("embed.text")),
 			Help:    "The connector or peer that makes embeddings; + Add another… adds one from a template. A connector's settings (its address, its model, a key) are set here below it.",
-			Detail:  "A peer that lends embeddings is connected under Admin > Capabilities > Peers. Changing what embeds, or its model, changes the embedding space: saving starts re-embedding the stored documents (progress and Stop under Maintenance, Vector index), and through a paid service that is billed."}}
+			Detail:  "A peer that lends embeddings is connected under Admin > Integrations > Peers. Changing what embeds, or its model, changes the embedding space: saving starts re-embedding the stored documents (progress and Stop under Maintenance, Vector index), and through a paid service that is billed."}}
 	fields = append(fields, connectorSettingsFields("embed.text", "", "provider")...)
 	return append(fields,
 		// The prefixes belong to the MODEL, not to where it runs, so they stay
@@ -263,7 +247,7 @@ func embeddingFormFields() []ui.FormField {
 
 // transcribeFormFields builds the STT settings: on or off, and the connector
 // or peer that transcribes. Its address, model and key are its own, set up,
-// tested and fixed under Admin > Extensions > Connectors, as embeddings'
+// tested and fixed under Admin > Services > Connectors, as embeddings'
 // are.
 func transcribeFormFields() []ui.FormField {
 	choices := append(serviceProviderOptions("speech.transcribe", "Transcribe"), TranscribeProviderOptions()...)
@@ -271,7 +255,7 @@ func transcribeFormFields() []ui.FormField {
 		{Field: "provider", Label: "Transcribe with", Type: "select",
 			Options: append(append([]ui.SelectOption{disabledOption}, choices...), addAnother("speech.transcribe")),
 			Help:    "The connector or peer that transcribes; + Add another… adds one from a template. A connector's settings (its address, its model, a key) are set here below it.",
-			Detail:  "A peer that lends transcription is connected under Admin > Capabilities > Peers."}}
+			Detail:  "A peer that lends transcription is connected under Admin > Integrations > Peers."}}
 	return append(fields, connectorSettingsFields("speech.transcribe", "", "provider")...)
 }
 
@@ -285,7 +269,7 @@ func speechFormFields() []ui.FormField {
 		{Field: "provider", Label: "Speak with", Type: "select",
 			Options: append(append([]ui.SelectOption{disabledOption}, choices...), addAnother("speech.synthesize")),
 			Help:    "The connector or peer that speaks; + Add another… adds one from a template. A connector's settings (its address, its model, a key) are set here below it.",
-			Detail:  "A peer that lends speech is connected under Admin > Capabilities > Peers."}}
+			Detail:  "A peer that lends speech is connected under Admin > Integrations > Peers."}}
 	fields = append(fields, connectorSettingsFields("speech.synthesize", "", "provider")...)
 	return append(fields,
 		ui.FormField{Field: "voice", Label: "Voice", Type: "text",
@@ -352,7 +336,7 @@ func webSearchFormFields() []ui.FormField {
 		}
 		fields = append(fields, ui.FormField{Field: "research_source", Label: "Research source", Type: "select",
 			ShowWhen: when, Options: sources,
-			Help: "The research source every search goes to. Its settings are on its row under Admin > Extensions > Connectors."})
+			Help: "The research source every search goes to. Its settings are on its row under Admin > Services > Connectors."})
 	}
 	return append(fields, connectorSettingsFields("web.search", local, "provider")...)
 }
@@ -367,6 +351,6 @@ func browseFormFields() []ui.FormField {
 	return append([]ui.FormField{
 		staleField,
 		{Field: "source", Label: "Render pages on", Type: "select", Options: opts, Help: help,
-			Detail: "A peer that lends page rendering is connected under Admin > Capabilities > Peers."},
+			Detail: "A peer that lends page rendering is connected under Admin > Integrations > Peers."},
 	}, connectorSettingsFields("page.render", "", "source")...)
 }

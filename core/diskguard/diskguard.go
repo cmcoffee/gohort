@@ -20,14 +20,14 @@ import (
 
 func init() {
 	RegisterTunable(TunableSpec{
-		Key: "tune_disk_floor_gb", Category: "Limits",
+		Key: "tune_disk_floor_gb", Category: "Storage & retention",
 		Label:  "Keep free on disk (GB)",
 		Help:   "Large writes stop before the free space on their disk drops below this.",
 		Detail: "Covers commands run by tools, copies between file stores and uploads. It protects the server's own database and logs, which share the disk. If the percentage below is also set, the larger of the two applies.",
 		Kind:   KindInt, Default: 10, Min: 1, Max: 10000,
 	})
 	RegisterTunable(TunableSpec{
-		Key: "tune_disk_floor_pct", Category: "Limits",
+		Key: "tune_disk_floor_pct", Category: "Storage & retention",
 		Label:  "Keep free on disk (%)",
 		Help:   "Optional: also keep this share of the disk free. 0 is off.",
 		Detail: "Off by default, because on a large disk a share holds back far more than needed (5% of 2 TB is 100 GB). When set, the larger of this and the GB amount applies.",

@@ -28,7 +28,7 @@ import (
 
 func init() {
 	RegisterTunable(TunableSpec{
-		Key: "tune_task_detach_threshold", Category: "Timeouts",
+		Key: "tune_task_detach_threshold", Category: "Tools & background work",
 		Label:  "Detach long tool calls after",
 		Help:   "A tool call expected to take longer than this runs detached.",
 		Detail: "It returns straight away, keeps working in the background, and delivers its result into the conversation when it finishes. Set it high to keep everything inline.",
@@ -62,7 +62,7 @@ func init() {
 	// message) is small and the cost of waiting (looking gone) is what people
 	// actually complain about. Raise it to make a channel behave like a chat.
 	RegisterTunable(TunableSpec{
-		Key: "tune_task_detach_threshold_unattended", Category: "Timeouts",
+		Key: "tune_task_detach_threshold_unattended", Category: "Tools & background work",
 		Label:  "Detach long tool calls after (messaging)",
 		Help:   "Detach threshold for turns answering a messaging conversation.",
 		Detail: "There, the person sees nothing at all until a reply arrives: no progress indicator, no live status. Set it lower than the main threshold so an agent on a channel answers straight away and reports back, instead of going quiet mid-conversation. Raise it to the main value to treat both surfaces alike.",

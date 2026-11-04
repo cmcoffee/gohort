@@ -19,67 +19,86 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
-// sectionGroup is the top tab for each of admin's own sections, by TITLE.
-// Tab order follows first appearance in the Sections slice, so the order of
-// these groups is set by section order. Read through sectionTab.
-var sectionGroup = map[string]string{
-	"System Status": "System", "Site Settings": "System",
-	"Users": "System", "Add account": "System", "Default Apps": "System",
-	"Teams": "System", "Activity Log": "System",
-
-	"Cost History (Last 30 Days)": "Costs", "Cost by source": "Costs", "Prices": "Costs",
-
-	"Worker LLM": "LLMs", "Lead LLM": "LLMs", "LLM Routing": "LLMs", "Model Privacy": "LLMs",
-	"Ollama Proxy": "LLMs", "Agent Loop Tuning": "LLMs",
-	"Local Model Scheduler": "LLMs",
-
-	"Embeddings":                "Capabilities",
-	"Audio Transcription (STT)": "Capabilities", "Speech (TTS)": "Capabilities", "Image Generation": "Capabilities", "Music": "Capabilities",
-	"Resource Sharing": "Capabilities", "Peers": "Capabilities", "Shared With": "Capabilities",
-	"Web Search": "Capabilities", "Mail (SMTP)": "System",
-	"Network Timeouts": "Tuning",
-
-	"Templates": "Extensions", "Import and export": "Extensions",
-
-	// Pluggable integrations you ADD — grouped under Extensions (vs Capabilities,
-	// which are configured features like Image Generation / STT).
-	"API Credentials": "Extensions", "MCP Servers": "Extensions", "Connectors": "Extensions", "Other integrations": "Extensions",
-	"Research Sources": "Extensions",
-	"Users' tools":     "Extensions", "Agent-Scoped Tools": "Extensions", "Orphaned Tools": "Extensions",
-	"Tool Groups": "Extensions",
-	"Skills":      "Extensions",
-
-	// What reaches the whole deployment, and the asks for it, in one place:
-	// the requests waiting for you, the drafted tools waiting for review, and
-	// what is shared. They were spread across Governance and Extensions.
-	"Requests to share": "Sharing", "Drafted tools waiting for review": "Sharing", "Shared tools": "Sharing", "Shared with everyone": "Sharing",
-
-	"Agent Capabilities: Outward & Spending": "Agents",
-
-	"Scheduled Tasks": "Maintenance", "Maintenance": "Maintenance",
-	"Migrations": "Maintenance", "Vector Index": "Maintenance",
-	"Database Browser": "Maintenance",
-	// The three maintenance groups. They were absent from this map, so
-	// they kept the empty Group that means "General" and sat on a tab of
-	// their own away from the Maintenance ones — which also made their
-	// being collapsed read as arbitrary rather than as "the rarely-used
-	// ones are closed", which is the rule they were written under.
-	"Reclaim space": "Maintenance", "Reports": "Maintenance",
-	"Housekeeping": "Maintenance",
-	// Also unmapped, and landing in General for the same reason.
-	"Channel Wake Rules": "System", "Feature Access": "System",
-	"System Hooks": "Capabilities", "Page Rendering (Browser)": "Capabilities",
-	"MCP Tools (exposed to external clients)": "Extensions", "Bridges": "Extensions",
-	"Categories": "Extensions",
-
-	// Who owns what, across every kind of owned thing. Six sections that
-	// are one subject, which is a tab rather than six strays in General.
-	"Rules":                  "Governance",
-	"User-owned credentials": "Governance",
-	"User-owned agents":      "Governance", "User-owned pipelines": "Governance",
-	"User-owned machines":   "Governance",
-	"Personal integrations": "Governance", "Personal MCP servers": "Governance", "Personal Teams bots": "Governance",
+// adminLayout is the administrator's tabs in order, each with the sections on
+// it in order, by TITLE. It is the one place that says where a section goes:
+// the tab, the tab's position, and the section's position on it all read from
+// here, so they cannot disagree.
+//
+// Tabs are by the administrator's job, not by the kind of thing configured:
+// who gets in (People), what answers (Models), what gohort can do
+// (Services, each beside the connectors behind it), what it is wired to
+// (Integrations), what agents may do (Oversight) and how well they did it
+// (Quality). A subject held both ways, a deployment's own and its users', has
+// the two side by side on one tab rather than one on each of two.
+//
+// A section another app contributes is placed here by title like admin's
+// own, ahead of the Group it declared (see sectionTab). Apps and Tuning are
+// filled by sections that declare their tab, and list none here.
+var adminLayout = []struct {
+	tab      string
+	sections []string
+}{
+	// What this deployment is, how it is doing, and what it costs. Prices sit
+	// with the chart they feed.
+	{"Overview", []string{"System Status", "Site", "Cost History (Last 30 Days)", "Cost by source", "Prices"}},
+	{"People", []string{
+		"Sign-in", "Add account", "Users", "Teams", "Default Apps",
+		"Feature Access", "Personal integrations", "Activity Log",
+	}},
+	{"Models", []string{"Worker LLM", "Lead LLM", "Model Privacy", "LLM Routing", "Local Model Scheduler"}},
+	// System Hooks first: the settings below it are what some of its rows
+	// point to.
+	{"Services", []string{
+		"System Hooks", "Embeddings", "Audio Transcription (STT)", "Speech (TTS)", "Image Generation",
+		"Music", "Web Search", "Page Rendering (Browser)", "Mail (SMTP)", "Research Sources",
+		"Connectors", "Templates",
+	}},
+	{"Integrations", []string{
+		"API Credentials", "User-owned credentials", "File stores",
+		"MCP Servers", "Personal MCP servers", "MCP Tools (exposed to external clients)",
+		"Bridges", "Personal Teams bots", "Other integrations", "Ollama Proxy",
+		"Resource Sharing", "Peers", "Shared With", "Import and export",
+	}},
+	{"Tools & Skills", []string{
+		"Drafted tools waiting for review", "Users' tools", "Agent-Scoped Tools", "Orphaned Tools",
+		"Categories", "Shared tools", "Skills",
+	}},
+	// What every agent is held to, and what reaches the whole deployment:
+	// the rules, the security ceiling, the requests to share and what is
+	// shared, and what users have built.
+	{"Oversight", []string{
+		"Rules", "Channel Wake Rules", "Agent security across the deployment",
+		"Agent Capabilities: Outward & Spending", "Requests to share", "Shared with everyone",
+		"User-owned agents", "User-owned pipelines", "User-owned machines",
+	}},
+	// How the checks on agents' replies are doing: the queues to review
+	// first, then the records.
+	{"Quality", []string{
+		"Flagged replies", "Drafted guards", "Correction checks", "Overturned firings",
+		"Recent firings", "Build outcomes",
+	}},
+	{AppsTabGroup, nil},
+	{"Tuning", nil},
+	{"Maintenance", []string{
+		"Scheduled Tasks", "Reclaim space", "Reports", "Housekeeping", "Migrations",
+		"Vector Index", "Database Browser",
+	}},
 }
+
+// sectionGroup is the tab of each section adminLayout places, by title;
+// tabRank is each tab's position and sectionRank each section's on its tab.
+// Read through sectionTab.
+var sectionGroup, tabRank, sectionRank = func() (map[string]string, map[string]int, map[string]int) {
+	groups, tabs, secs := map[string]string{}, map[string]int{}, map[string]int{}
+	for i, t := range adminLayout {
+		tabs[t.tab] = i
+		for j, title := range t.sections {
+			groups[title] = t.tab
+			secs[title] = j
+		}
+	}
+	return groups, tabs, secs
+}()
 
 // sectionTab is the tab a section lands on: its entry in sectionGroup, else
 // the Group it declared. Empty stays empty, which the page renders as General.
@@ -130,7 +149,7 @@ func buildTunableSections() []ui.Section {
 		}
 	}
 	// One category per SECTION, so the framework's SectionNav renders the Tuning
-	// tab as a compact left-rail side-index of areas (Network Timeouts, Limits,
+	// tab as a compact left-rail side-index of areas (Model calls, Images,
 	// …) with only the selected category's fields shown — instead of one long
 	// stack that grows every time a knob is registered. This replaces the app's
 	// own embedded NavShell rail with the shared menu system, so Tuning navigates
@@ -138,22 +157,79 @@ func buildTunableSections() []ui.Section {
 	// its own Revert.
 	out := make([]ui.Section, 0, len(order))
 	for _, cat := range order {
+		var body ui.Component = ui.FormPanel{
+			Assist:       true,
+			Source:       "api/settings",
+			Method:       settingsSaveMethod,
+			ResetURL:     "api/settings/reset-tunables?category=" + url.QueryEscape(cat),
+			ResetLabel:   "Revert to defaults",
+			ResetConfirm: "Revert the " + cat + " settings to their built-in defaults?",
+			Fields:       append(byCat[cat], tuningExtraFields[cat]...),
+			RefreshOn:    paneSources[cat],
+		}
+		if panes := tuningExtraPanes[cat]; len(panes) > 0 {
+			body = ui.Stack{Children: append([]ui.Component{body}, panes...)}
+		}
 		out = append(out, ui.Section{
 			Title:    cat,
 			Group:    "Tuning",
 			Wide:     true, // each category pane wants full width, not the two-up config column
 			Subtitle: "Saved automatically as you edit.",
-			Body: ui.FormPanel{
-				Assist:       true,
-				Source:       "api/settings",
-				Method:       settingsSaveMethod,
-				ResetURL:     "api/settings/reset-tunables?category=" + url.QueryEscape(cat),
-				ResetLabel:   "Revert to defaults",
-				ResetConfirm: "Revert the " + cat + " settings to their built-in defaults?",
-				Fields:       byCat[cat],
-				RefreshOn:    paneSources[cat],
-			},
+			Body:     body,
 		})
+	}
+	return out
+}
+
+// tuningExtraFields are settings on the shared record that are not tunables
+// but are about a category's subject, so they sit in its form. Revert to
+// defaults covers tunables only, and says nothing of these.
+var tuningExtraFields = map[string][]ui.FormField{
+	"Storage & retention": {
+		{Field: "fetch_cache_quota_mb", Label: "Fetch cache quota (MB)", Type: "number",
+			Min: 0, Max: 10240, Help: "Disk budget for the URL fetch cache. 0 disables caching. Not covered by Revert to defaults."},
+	},
+}
+
+// tuningExtraPanes are settings kept in a store of their own that are about a
+// category's subject. Each was a one-form section on another tab; here it is
+// beneath the knobs it sits beside, still saving to where it always did.
+var tuningExtraPanes = map[string][]ui.Component{
+	"Turns & context": {ui.FormPanel{
+		Assist: true,
+		Source: "api/agent-loop-tuning",
+		Fields: []ui.FormField{
+			{Type: "header", Label: "Agent loop history"},
+			{Field: "history_budget_percent", Label: "History budget (% of context window)",
+				Type: "number", Min: 25, Max: 90, Placeholder: "50",
+				Help:   "Steady-state cap on per-round history, as a percent of the LLM's context window. Not covered by Revert to defaults.",
+				Detail: "Default 50, so a 200K-window worker targets about 100K of history. Lower means faster prefill and more aggressive elision of old tool results; higher means more retained context and slower prefill. Clamped to 25-90.\n\nLower it when long sessions push prefill latency or thrash the LLM's prompt cache; raise it when the model needs to remember more context across rounds."},
+		},
+	}},
+	"Integrations": {ui.FormPanel{
+		Source: "api/network",
+		Fields: []ui.FormField{
+			{Type: "header", Label: "Research sources and search APIs"},
+			{Field: "connect_timeout_seconds", Label: "Connect timeout (seconds)",
+				Type: "number", Min: 1, Max: 120, Placeholder: "10",
+				Help: "TCP + TLS connection timeout. Default 10. Not covered by Revert to defaults."},
+			{Field: "request_timeout_seconds", Label: "Request timeout (seconds)",
+				Type: "number", Min: 1, Max: 300, Placeholder: "15",
+				Help:   "Per-read I/O timeout for HTTP response bodies. Default 15. Not covered by Revert to defaults.",
+				Detail: "Raise them when working against slow upstreams; lower them to fail fast in a tight loop."},
+		},
+	}},
+}
+
+// tunableFieldsFor is the named knobs as form fields, for a section on another
+// tab that shows a few of the Tuning tab's knobs beside its own settings. A key
+// that is not registered is left out (page_system_test pins the ones in use).
+func tunableFieldsFor(keys ...string) []ui.FormField {
+	var out []ui.FormField
+	for _, k := range keys {
+		if s, ok := LookupTunable(k); ok {
+			out = append(out, tunableField(s))
+		}
 	}
 	return out
 }
@@ -374,7 +450,7 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 		"Drafted tools waiting for review": true, "Users' tools": true, "System Hooks": true,
 		"Requests to share": true, "Shared tools": true,
 		"Agent-Scoped Tools": true, "Orphaned Tools": true,
-		"Tool Groups": true, "Skills": true, "Teams": true,
+		"Skills": true, "Teams": true,
 		"Templates":  true,
 		"Migrations": true, "Database Browser": true,
 		"Agent Capabilities: Outward & Spending": true,
@@ -444,27 +520,28 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 			page.Sections[i].MaxWidth = w
 		}
 	}
-	// Tab order (and clustering of each group's sections) — a stable sort
-	// by this rank so the tabs read in a sensible order regardless of the
-	// section authoring order above; sections keep their relative order
-	// within each group.
-	// An unranked group sorts to 0 and ties with System, so every name used
-	// above has to appear here. "Tools" is deliberately absent now: the tool
-	// sections all live under Extensions, and a rank for a tab nothing lands on
-	// is a tab that never appears.
-	groupRank := map[string]int{"System": 0, "Costs": 2, "LLMs": 3, "Capabilities": 4, "Agents": 5, "Governance": 6, "Sharing": 7, "Extensions": 8, "Apps": 9, "Tuning": 10, "Prompts": 11, "Maintenance": 12}
-	// The Sharing tab reads as a queue then a catalog: what is waiting for
-	// you first, then what is shared. Its sections come from two builders,
-	// whose order would put the catalog first.
-	for t, n := range map[string]int{"Requests to share": 1, "Drafted tools waiting for review": 2, "Shared tools": 3, "Shared with everyone": 4} {
-		order[t] = n
+	// Tab order, then each section's place on its tab, both from adminLayout.
+	// A section the layout does not list (one another app contributes, or a
+	// Tuning category) follows the listed ones, in its own declared Order and
+	// then the order it was built in. A tab the layout does not name sorts
+	// last, where it is visible rather than ahead of Overview.
+	rankOf := func(s ui.Section) (int, int) {
+		tr, ok := tabRank[s.Group]
+		if !ok {
+			tr = len(adminLayout)
+		}
+		if n, ok := sectionRank[s.Title]; ok && sectionGroup[s.Title] == s.Group {
+			return tr, n
+		}
+		return tr, 1000 + order[s.Title]
 	}
 	sort.SliceStable(page.Sections, func(i, j int) bool {
-		gi, gj := groupRank[page.Sections[i].Group], groupRank[page.Sections[j].Group]
-		if gi != gj {
-			return gi < gj
+		ti, si := rankOf(page.Sections[i])
+		tj, sj := rankOf(page.Sections[j])
+		if ti != tj {
+			return ti < tj
 		}
-		return order[page.Sections[i].Title] < order[page.Sections[j].Title]
+		return si < sj
 	})
 	tabs := adminTabs(a.WebPath(), page.Sections)
 	cur := -1
@@ -476,6 +553,15 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 	if cur < 0 {
 		http.NotFound(w, r)
 		return
+	}
+	// Where every section is, by slug, before the page keeps only its own:
+	// a link names a section's tab as it was when the link was written, and
+	// the section is what it means.
+	where := map[string]string{}
+	for _, s := range page.Sections {
+		if k := ui.SectionSlug(s.Title); k != "" && where[k] == "" {
+			where[k] = ui.SectionSlug(s.Group)
+		}
 	}
 	keep := page.Sections[:0:0]
 	for _, s := range page.Sections {
@@ -497,7 +583,7 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 	for i, t := range tabs {
 		page.Nav = append(page.Nav, ui.NavLink{Label: t.name, URL: t.url, Active: i == cur})
 	}
-	page.ExtraHeadHTML += adminTabRedirectScript(tabs, tabs[cur].slug)
+	page.ExtraHeadHTML += adminTabRedirectScript(tabs, where, tabs[cur].slug)
 	page.ExtraHeadHTML += deleteUserScript // the user table's Delete (delete_user.go)
 	page.ServeHTTP(w, r)
 	// A slow page says where its time went, in the log an operator already
@@ -537,23 +623,44 @@ func adminTabs(base string, sections []ui.Section) []adminTab {
 }
 
 // adminTabRedirectScript sends a "#<tab>/<section>" address to the page that
-// tab is on. Links into the administrator pages name a tab and a section
-// in the hash (ui.SectionOnTab), as they did when every tab was one page,
-// and a hash is not sent to the server: so the page the link lands on
-// reads it, and if it names another tab, goes there with the hash kept,
-// where the rail opens the section. Also on a hash change, for a link
-// clicked on the page itself (an app's "On tab" links).
-func adminTabRedirectScript(tabs []adminTab, cur string) string {
+// section is on. Links into the administrator pages name a tab and a section
+// in the hash (ui.SectionOnTab), and a hash is not sent to the server: so the
+// page the link lands on reads it and goes where the SECTION is, with the
+// hash rewritten to name that tab, where the rail opens it. A link written
+// before a section moved tabs still arrives. A hash naming a tab and no known
+// section goes to that tab. Also on a hash change, for a link clicked on the
+// page itself (an app's "On tab" links).
+func adminTabRedirectScript(tabs []adminTab, where map[string]string, cur string) string {
 	urls := map[string]string{}
 	for _, t := range tabs {
 		urls[t.slug] = t.url
 	}
 	b, _ := json.Marshal(urls)
+	w, _ := json.Marshal(where)
 	c, _ := json.Marshal(cur)
-	return "<script>(function(){var tabs=" + string(b) + ",cur=" + string(c) + ";" +
+	return "<script>(function(){var tabs=" + string(b) + ",where=" + string(w) + ",cur=" + string(c) + ";" +
 		"function go(){var h=location.hash.replace(/^#/,'');var i=h.indexOf('/');if(i<0)return;" +
-		"var t=h.slice(0,i);if(t===cur||!tabs[t])return;location.replace(tabs[t]+location.hash);}" +
+		"var t=h.slice(0,i),s=h.slice(i+1),at=s&&where[s];" +
+		"if(at&&tabs[at]){if(at!==t||at!==cur)location.replace(tabs[at]+'#'+at+'/'+s);return;}" +
+		"if(t===cur||!tabs[t])return;location.replace(tabs[t]+location.hash);}" +
 		"window.addEventListener('hashchange',go);go();})();</script>"
+}
+
+// adminSectionLink is the address of one of the administrator's sections, on
+// whichever tab adminLayout puts it, relative to the admin's root: the tab's
+// own page with the section in the hash, so it opens there with no hop.
+func adminSectionLink(title string) string {
+	tab := sectionGroup[title]
+	return ui.SectionSlug(tab) + ui.SectionOnTab(tab, title)
+}
+
+// retiredTabs are tab addresses from an earlier layout, and the tab that took
+// most of each one's sections. A bookmark to one arrives there, and its hash,
+// if it names a section, then goes on to wherever that section is.
+var retiredTabs = map[string]string{
+	"system": "", "costs": "", "llms": "models", "capabilities": "services",
+	"agents": "quality", "governance": "oversight", "sharing": "oversight",
+	"extensions": "integrations", "files": "integrations",
 }
 
 // addImageBackendAction (Image Generation toolbar) → Add flow for image templates.

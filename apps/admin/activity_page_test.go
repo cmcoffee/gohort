@@ -95,8 +95,8 @@ func TestTheActivityPageListsWhatAdministratorsDid(t *testing.T) {
 // tab it used to have lands on it there.
 func TestTheActivityLogIsOnSystem(t *testing.T) {
 	secs := (&AdminApp{}).activitySections()
-	if len(secs) != 1 || secs[0].Title != "Activity Log" || sectionTab(secs[0].Title, "") != "System" {
-		t.Fatalf("the activity log should be on System: %+v", secs)
+	if len(secs) != 1 || secs[0].Title != "Activity Log" || sectionTab(secs[0].Title, "") != "People" {
+		t.Fatalf("the activity log should be on People: %+v", secs)
 	}
 	sys := (&AdminApp{}).systemSections()
 	if len(sys) < 3 || sys[0].Title != "System Status" || sys[1].Title != "Activity Log" {
@@ -108,14 +108,14 @@ func TestTheActivityLogIsOnSystem(t *testing.T) {
 	}
 }
 
-// The tab the log used to have sends a link to it on to the log on System.
+// The tab the log used to have sends a link to it on to the log on People.
 func TestTheOldActivityTabLandsOnTheLog(t *testing.T) {
 	a := &AdminApp{}
 	mux := http.NewServeMux()
 	a.RegisterRoutes(mux, "/admin")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/admin/activity", nil))
-	if w.Code != http.StatusFound || w.Header().Get("Location") != "/admin/#system/activity-log" {
+	if w.Code != http.StatusFound || w.Header().Get("Location") != "/admin/people#people/activity-log" {
 		t.Fatalf("the old tab answered %d %q", w.Code, w.Header().Get("Location"))
 	}
 }

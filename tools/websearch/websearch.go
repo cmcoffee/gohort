@@ -178,7 +178,7 @@ func (t *WebSearchTool) Params() map[string]ToolParam {
 func (t *WebSearchTool) IsInternetTool() bool { return true }
 
 // SchemaWithSession offers the tool only while web search is on: Disabled
-// under Admin > Capabilities > Web Search withdraws it from every catalog.
+// under Admin > Services > Web Search withdraws it from every catalog.
 func (t *WebSearchTool) SchemaWithSession(sess *ToolSession) (string, map[string]ToolParam) {
 	if strings.TrimSpace(LoadWebSearchConfig().Provider) == "none" {
 		return "", nil
@@ -973,7 +973,7 @@ func SearchWithProvider(req SearchRequest) (string, error) {
 	}
 	switch {
 	case provider == "none":
-		return "", fmt.Errorf("web search is disabled: an admin turns it on under Admin > Capabilities > Web Search")
+		return "", fmt.Errorf("web search is disabled: an admin turns it on under Admin > Services > Web Search")
 	case provider == "duckduckgo":
 		result, err = searchDuckDuckGo(query)
 	case named:
@@ -984,7 +984,7 @@ func SearchWithProvider(req SearchRequest) (string, error) {
 		// A peer lends its search in SearXNG's shape (ResolveSearchProvider).
 		result, err = searchPeer(req)
 	default:
-		return "", fmt.Errorf("web search is set to %q, which is not an engine here: choose one under Admin > Capabilities > Web Search, or add a connector that searches from a template (Brave, Serper, Tavily, Google Programmable Search, SearXNG)", provider)
+		return "", fmt.Errorf("web search is set to %q, which is not an engine here: choose one under Admin > Services > Web Search, or add a connector that searches from a template (Brave, Serper, Tavily, Google Programmable Search, SearXNG)", provider)
 	}
 	if err != nil {
 		Debug("[web_search] error: %s", err)

@@ -30,8 +30,8 @@ func maxRecipeFileSize() int64  { return int64(TuneInt("tune_recipe_max_file_siz
 func maxRecipeTotalSize() int64 { return int64(TuneInt("tune_recipe_max_total_size")) }
 
 func init() {
-	RegisterTunable(TunableSpec{Key: "tune_recipe_max_file_size", Category: "Limits", Label: "Tool recipe per-file size cap", Help: "Max size of any single file packed into a tool recipe archive.", Kind: KindInt, Default: 2097152, Min: 65536, Max: 33554432})
-	RegisterTunable(TunableSpec{Key: "tune_recipe_max_total_size", Category: "Limits", Label: "Tool recipe total size cap", Help: "Max combined size of all files in one tool recipe archive.", Kind: KindInt, Default: 10485760, Min: 1048576, Max: 134217728})
+	RegisterTunable(TunableSpec{Key: "tune_recipe_max_file_size", Category: "Tools & background work", Label: "Tool recipe per-file size cap", Help: "Max size of any single file packed into a tool recipe archive.", Kind: KindInt, Default: 2097152, Min: 65536, Max: 33554432})
+	RegisterTunable(TunableSpec{Key: "tune_recipe_max_total_size", Category: "Tools & background work", Label: "Tool recipe total size cap", Help: "Max combined size of all files in one tool recipe archive.", Kind: KindInt, Default: 10485760, Min: 1048576, Max: 134217728})
 }
 
 // MintToolDispatchDir creates a fresh per-invocation directory for a

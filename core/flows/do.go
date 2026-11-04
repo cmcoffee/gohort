@@ -379,7 +379,7 @@ func Export(ctx context.Context, doc Document, ext string, builtin func() ([]byt
 	}
 	res, err := ways(live(true, match), native, live(false, match), in)(ctx)
 	if err == nil && res.Out == nil {
-		return res, fmt.Errorf("%w: nothing here writes %s; add it under Admin > Capabilities > System Hooks", ErrNoConversion, OutLabel(ext))
+		return res, fmt.Errorf("%w: nothing here writes %s; add it under Admin > Services > System Hooks", ErrNoConversion, OutLabel(ext))
 	}
 	return res, err
 }

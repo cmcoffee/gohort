@@ -16,7 +16,7 @@ func (s Spec) binding(capability string) (Binding, Contract, error) {
 	for _, b := range s.Provides {
 		if b.Capability == capability {
 			if m := s.missing[capability]; len(m) > 0 {
-				return b, Contract{}, fmt.Errorf("set %s for this connection: on the page that uses it, or on its row under Admin > Extensions > Connectors", strings.Join(m, ", "))
+				return b, Contract{}, fmt.Errorf("set %s for this connection: on the page that uses it, or on its row under Admin > Services > Connectors", strings.Join(m, ", "))
 			}
 			c, ok := Lookup(capability)
 			if !ok {

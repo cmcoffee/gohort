@@ -230,7 +230,7 @@ func TestImageGenerationTakesAConnectorThatMakesPictures(t *testing.T) {
 		"provides":[{"capability":"embed.text","steps":[{"call":"embed"}],"output":{"vectors":{"path":"data","each":"embedding"}}}]}`
 	SaveConnector(RootDB, Connector{Name: "vectors", Kind: "service", Spec: json.RawMessage(embedSpec)})
 	f := imageFormFields()
-	if len(f) != 2 || f[0].Field != "_stale" || !strings.Contains(f[1].Help, "+ Add another…") || !strings.Contains(f[1].Help, "Admin > Capabilities > Peers") {
+	if len(f) != 2 || f[0].Field != "_stale" || !strings.Contains(f[1].Help, "+ Add another…") || !strings.Contains(f[1].Help, "Admin > Integrations > Peers") {
 		t.Errorf("with nothing that makes pictures: %+v", f)
 	}
 	if got := choicesOf(t, f[1], "image.generate"); len(got) != 0 {
@@ -255,7 +255,7 @@ func TestImageGenerationTakesAConnectorThatMakesPictures(t *testing.T) {
 	t.Cleanup(func() { UnapproveConnector(RootDB, "painter"); UnapproveConnector(RootDB, "sketcher") })
 	SaveConnector(RootDB, Connector{Name: "sketcher", Kind: "service", Spec: json.RawMessage(strings.Replace(spec, "/v1/images", "/v2/images", 1))})
 	f = imageFormFields()
-	if len(f) != 3 || !strings.Contains(f[1].Detail, "Admin > Capabilities > Peers") || f[2].Field != "agents" || len(f[2].Options) != 2 {
+	if len(f) != 3 || !strings.Contains(f[1].Detail, "Admin > Integrations > Peers") || f[2].Field != "agents" || len(f[2].Options) != 2 {
 		t.Errorf("with a connector to choose: %+v", f)
 	}
 	if got := choicesOf(t, f[1], "image.generate"); len(got) != 2 || got[0].Value != "painter" {

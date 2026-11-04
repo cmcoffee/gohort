@@ -636,7 +636,7 @@ const connectorAddAnotherAction = `function(ctx){
     .then(function(rows){
       window.uiOpenSimpleModal({title: 'Add another', width: '600px', mount: function(body, dlg){
         if (!(rows || []).length) {
-          body.appendChild(el('p', {style: 'margin:0;font-size:var(--fs-sm, 0.86rem)', text: 'No template does this yet. Import one under Admin > Extensions > Templates, or add a connector from its spec under Admin > Extensions > Connectors.'}));
+          body.appendChild(el('p', {style: 'margin:0;font-size:var(--fs-sm, 0.86rem)', text: 'No template does this yet. Import one under Admin > Services > Templates, or add a connector from its spec under Admin > Services > Connectors.'}));
           return;
         }
         body.appendChild(el('p', {style: 'margin:0 0 0.7rem;font-size:var(--fs-sm, 0.86rem);color:var(--text-mute)', text: 'Pick one. It asks a few questions and adds the connector, which then joins the list.'}));

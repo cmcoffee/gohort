@@ -26,9 +26,9 @@ func StreamGuardRepeatSegLen() int { return TuneInt("tune_stream_guard_repeat_se
 func StreamGuardRepeatThreshold() int { return TuneInt("tune_stream_guard_repeat_threshold") }
 
 func init() {
-	RegisterTunable(TunableSpec{Key: "tune_stream_guard_max_chars", Category: "Limits", Label: "Stream guard max chars", Help: "Hard cap on total streamed output per LLM call before the stream is aborted.", Kind: KindInt, Default: 51200, Min: 8192, Max: 524288})
-	RegisterTunable(TunableSpec{Key: "tune_stream_guard_repeat_seg_len", Category: "Limits", Label: "Stream guard repeat segment length", Help: "Length of the tail segment sampled when detecting a repetition loop.", Kind: KindInt, Default: 40, Min: 10, Max: 200})
-	RegisterTunable(TunableSpec{Key: "tune_stream_guard_repeat_threshold", Category: "Limits", Label: "Stream guard repeat threshold", Help: "How many times the sampled tail segment must repeat in-window to abort the stream.", Kind: KindInt, Default: 5, Min: 2, Max: 25})
+	RegisterTunable(TunableSpec{Key: "tune_stream_guard_max_chars", Category: "Model calls", Label: "Stream guard max chars", Help: "Hard cap on total streamed output per LLM call before the stream is aborted.", Kind: KindInt, Default: 51200, Min: 8192, Max: 524288})
+	RegisterTunable(TunableSpec{Key: "tune_stream_guard_repeat_seg_len", Category: "Model calls", Label: "Stream guard repeat segment length", Help: "Length of the tail segment sampled when detecting a repetition loop.", Kind: KindInt, Default: 40, Min: 10, Max: 200})
+	RegisterTunable(TunableSpec{Key: "tune_stream_guard_repeat_threshold", Category: "Model calls", Label: "Stream guard repeat threshold", Help: "How many times the sampled tail segment must repeat in-window to abort the stream.", Kind: KindInt, Default: 5, Min: 2, Max: 25})
 }
 
 // StreamGuardHandler wraps an LLM stream chunk handler with two aborts:

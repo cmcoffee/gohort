@@ -179,16 +179,16 @@ func init() {
 	// the model to regenerate a checkable miss; the hard cap is a runaway guard
 	// set well above it so genuine multi-image turns ("make me 4 logos") aren't
 	// blocked. Both are per-turn (the attempt counter is session-scoped).
-	RegisterTunable(TunableSpec{Key: "tune_image_max_regens", Category: "Limits", Label: "Image auto-regeneration budget", Help: "How many times the model may regenerate an image to fix a CHECKABLE miss.",
+	RegisterTunable(TunableSpec{Key: "tune_image_max_regens", Category: "Images", Label: "Image auto-regeneration budget", Help: "How many times the model may regenerate an image to fix a CHECKABLE miss.",
 		Detail: "A checkable miss is a specific count, a named object, or required text. After the budget it must deliver the best result. 0 disables auto-retry: the model still SEES the image (Tier 1) but is told to caveat rather than retry.", Kind: KindInt, Default: 2, Min: 0, Max: 5})
-	RegisterTunable(TunableSpec{Key: "tune_image_gen_hard_cap", Category: "Limits", Label: "Image generations per turn (hard cap)", Help: "Absolute ceiling on generate_image calls in one turn: a runaway guard, not the retry budget.",
+	RegisterTunable(TunableSpec{Key: "tune_image_gen_hard_cap", Category: "Images", Label: "Image generations per turn (hard cap)", Help: "Absolute ceiling on generate_image calls in one turn: a runaway guard, not the retry budget.",
 		Detail: "Set it well above the auto-regeneration budget, so legitimate multi-image requests still work.", Kind: KindInt, Default: 10, Min: 1, Max: 50})
 	// Whether a render waits or goes to the background. On, the conversation is
 	// never held open by a picture: the reply comes straight back and each
 	// finished image arrives as its own message. Off, the generic duration rule
 	// applies and only renders slower than the detach threshold go background —
 	// which for a twenty-second generate means never.
-	RegisterTunable(TunableSpec{Key: "tune_image_always_detach", Category: "Limits",
+	RegisterTunable(TunableSpec{Key: "tune_image_always_detach", Category: "Images",
 		Label:  "Run image renders in the background",
 		Help:   "Send every image generate and edit to the background instead of holding the turn open.",
 		Detail: "The agent answers immediately and each finished picture arrives as its own message, so a set of variations is delivered one at a time rather than after the whole batch. Turn it off to keep renders inline unless they are slower than the detach threshold.",
@@ -341,7 +341,7 @@ type ImageGenResult struct {
 // by its name. Every image comes from one; none is written in Go.
 func generateWithBackend(ctx context.Context, backend, prompt string, landscape bool) (*ImageGenResult, error) {
 	if backend == "" {
-		return nil, fmt.Errorf("image generation is not set up: choose an image connector under Admin > Capabilities > Image Generation")
+		return nil, fmt.Errorf("image generation is not set up: choose an image connector under Admin > Services > Image Generation")
 	}
 	fn, ok := lookupImageBackend(backend)
 	if !ok {

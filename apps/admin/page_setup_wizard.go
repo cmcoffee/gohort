@@ -356,7 +356,7 @@ func (a *AdminApp) staleNotice() (DashboardNotice, bool) {
 	return DashboardNotice{
 		Text:   what + " setting again: " + strings.Join(pages, ", ") + ". Each reads as not set until it is, and its page says why.",
 		Action: "Open " + pages[0],
-		URL:    a.WebPath() + "/" + ui.SectionOnTab(sectionGroup[pages[0]], pages[0]),
+		URL:    a.WebPath() + "/" + adminSectionLink(pages[0]),
 	}, true
 }
 
@@ -410,7 +410,7 @@ func (a *AdminApp) leadNotice() (DashboardNotice, bool) {
 	n := DashboardNotice{
 		Text:   strings.Join(says, " "),
 		Action: "Open LLM settings",
-		URL:    a.WebPath() + "/" + ui.SectionOnTab("LLMs", "Lead LLM"),
+		URL:    a.WebPath() + "/" + adminSectionLink("Lead LLM"),
 	}
 	// Dismiss is for the failures. A lead that cannot start is not dismissed:
 	// it is fixed in its settings.

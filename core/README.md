@@ -104,7 +104,7 @@ Framework knobs self-register instead of living as hardcoded constants, and appe
 // Register once (typically in an init()), then read through the typed accessor.
 // From core/stream_watchdog.go and core/run_ledger.go.
 RegisterTunable(TunableSpec{
-    Key: "tune_stream_idle_timeout", Category: "Timeouts",
+    Key: "tune_stream_idle_timeout", Category: "Model calls",
     Kind: KindSeconds, Default: 60, Min: 10, Max: 600,
     Label: "Stream idle timeout", Help: "Max wall-clock gap with no bytes on a streaming LLM response before the read aborts.",
 })
@@ -114,6 +114,8 @@ maxRuns := TuneInt("tune_max_runs_per_owner")
 ```
 
 Each knob gets an editable, revert-to-default row in the admin UI with no per-knob UI code.
+
+`Category` is the Tuning tab's rail entry, and names what the knob is *about* (Model calls, Images, Storage & retention), never its unit. It must be one of `TunableCategories`; a test fails on any other, since a stray name makes a rail entry of its own.
 
 ## Memory Primitives
 

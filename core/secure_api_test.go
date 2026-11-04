@@ -979,7 +979,7 @@ func TestUploadTimeoutIsItsOwnTunable(t *testing.T) {
 	if up.Default <= req.Default {
 		t.Errorf("upload default %v must exceed the request default %v", up.Default, req.Default)
 	}
-	if up.Category != "Timeouts" {
+	if up.Category != "Integrations" {
 		t.Errorf("category = %q", up.Category)
 	}
 }

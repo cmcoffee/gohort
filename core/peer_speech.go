@@ -201,7 +201,7 @@ func ResolveSpeechProvider(cfg media.SpeechConfig, provider string) (media.Speec
 		if !cfg.Enabled {
 			return cfg, nil
 		}
-		return cfg, fmt.Errorf("choose what speaks: a connector (Admin > Extensions > Connectors) or a peer that lends speech")
+		return cfg, fmt.Errorf("choose what speaks: a connector (Admin > Services > Connectors) or a peer that lends speech")
 	}
 	p, ok := PeerFromProvider(provider)
 	if !ok {

@@ -36,7 +36,7 @@ import (
 
 func init() {
 	RegisterTunable(TunableSpec{
-		Key: "tune_task_series_max", Category: "Limits",
+		Key: "tune_task_series_max", Category: "Tools & background work",
 		Label:  "Background pieces per series",
 		Help:   "Ceiling on how many pieces of background work one declared series may run.",
 		Detail: "\"Make me four variations\" and the like. Each piece is a separate background job, run one after another, so this is the number of extra messages the user gets. A request for more is clamped to this, not refused.",

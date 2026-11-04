@@ -59,26 +59,26 @@ is a setting.
 
 What gohort asks of a connector: what each contract is, what it takes and
 gives, what its check requires of an answer, and where gohort uses it. A
-connector's editor (Edit on its row under Admin > Extensions > Connectors)
+connector's editor (Edit on its row under Admin > Services > Connectors)
 shows the same for each job it does.
 
 <!-- contracts: made from core/service's registry; UPDATE_DOCS=1 go test ./core/service -run TestTheDocsListTheContracts rewrites it -->
 | Contract | What it is | Takes | Gives | Checked for | Where it plugs in |
 |---|---|---|---|---|---|
-| `embed.text` | Vectors for texts, for semantic search: texts is a list of strings, and vectors a list of lists of numbers, one for each text. | texts (json, required), model (text) | vectors (json) | At least one vector came back, none of them empty, all the same length. The test embeds two texts. | Admin > Capabilities > Embeddings: "Embed with" |
-| `file.convert` | A file turned into another format: from is its format and to the one wanted, each as an extension (docx, pdf, png). | file (file, required), to (text, required), from (text) | file (file) | A file that is not empty came back; the job that asked checks it is the format it wanted. | Admin > Capabilities > System Hooks: a job's Adapt, "Done by" |
-| `image.edit` | A picture changed as a prompt asks. | prompt (text, required), image (file, required), negative (text), width (number), height (number), seed (number), steps (number), model (text) | image (file) | image is a picture gohort can show: PNG, JPEG, GIF or WebP, with a size. | Admin > Capabilities > Image Generation, and agents' image tools |
-| `image.generate` | A picture made from a prompt. | prompt (text, required), negative (text), width (number), height (number), seed (number), steps (number), model (text), aspect (text) | image (file) | image is a picture gohort can show: PNG, JPEG, GIF or WebP, with a size. | Admin > Capabilities > Image Generation, and agents' image tools |
+| `embed.text` | Vectors for texts, for semantic search: texts is a list of strings, and vectors a list of lists of numbers, one for each text. | texts (json, required), model (text) | vectors (json) | At least one vector came back, none of them empty, all the same length. The test embeds two texts. | Admin > Services > Embeddings: "Embed with" |
+| `file.convert` | A file turned into another format: from is its format and to the one wanted, each as an extension (docx, pdf, png). | file (file, required), to (text, required), from (text) | file (file) | A file that is not empty came back; the job that asked checks it is the format it wanted. | Admin > Services > System Hooks: a job's Adapt, "Done by" |
+| `image.edit` | A picture changed as a prompt asks. | prompt (text, required), image (file, required), negative (text), width (number), height (number), seed (number), steps (number), model (text) | image (file) | image is a picture gohort can show: PNG, JPEG, GIF or WebP, with a size. | Admin > Services > Image Generation, and agents' image tools |
+| `image.generate` | A picture made from a prompt. | prompt (text, required), negative (text), width (number), height (number), seed (number), steps (number), model (text), aspect (text) | image (file) | image is a picture gohort can show: PNG, JPEG, GIF or WebP, with a size. | Admin > Services > Image Generation, and agents' image tools |
 | `image.search` | Pictures already on the web. results is a list of objects: image_url (the picture itself), title, source (the site it is on) and link (the page it is on). | query (text, required), count (number) | results (json) | results is a list, and every image_url in it is an http or https address. The test, a search for a common subject, must find at least one. | agents' find_image, through the connector Web Search is set to |
-| `mail.send` | An email: to, subject and body, from the connector's own sender unless one is given, with a file when one is given; id is the service's name for the message. | to (text, required), subject (text, required), body (text, required), from (text), file (file) | id (text) | Any answer: a reply at all means the service took the message. | Admin > System > Mail (SMTP): "Send with" |
+| `mail.send` | An email: to, subject and body, from the connector's own sender unless one is given, with a file when one is given; id is the service's name for the message. | to (text, required), subject (text, required), body (text, required), from (text), file (file) | id (text) | Any answer: a reply at all means the service took the message. | Admin > Services > Mail (SMTP): "Send with" |
 | `message.fetch` | New messages from a messaging API: since is where the last fetch left off (the cursor it gave), and chat the conversation, for a service that fetches one at a time. messages is a list of objects: id, chat, from, from_name, text and at; cursor is where the next fetch starts. | since (text), chat (text) | messages (json), cursor (text) | messages is a list, and every message in it has an id. A message that does not say its chat is in the chat asked for. The test fetches without a cursor, as a link's first fetch does. | Extensions > Integrations, a linked service: a linked service's messages reach its channels |
 | `message.send` | A message sent through a messaging API, with a file when one is given; to is whom to send to, when the service needs one and the connector does not set it, and id is the service's name for the message. | text (text, required), file (file), to (text) | id (text) | Any answer: a reply at all means the service took the message. | Extensions > Integrations, a linked service: the replies to what the same connector fetches |
 | `music.generate` | A piece of music made from a prompt, with lyrics, a style, a title and a length when given. | prompt (text, required), lyrics (text), style (text), title (text), duration (number), model (text) | audio (file) | audio is sound gohort can play: MP3, WAV, OGG, FLAC, AAC or MP4 audio, judged by its first bytes. | an agent tool of its own, named generate_music_ and the connector's name |
-| `page.render` | A page read the way a browser shows it: the readable text of the page at url, and its title when the service gives one. | url (text, required) | text (text), title (text) | text is not empty. | Admin > Capabilities > Page Rendering (Browser): "Render pages on" |
-| `speech.synthesize` | A text spoken aloud, in a voice when one is given. | text (text, required), voice (text), model (text) | audio (file) | audio is sound gohort can play: MP3, WAV, OGG, FLAC, AAC or MP4 audio, judged by its first bytes. | Admin > Capabilities > Speech (TTS): "Speak with" |
-| `speech.transcribe` | The words spoken in a sound file. | audio (file, required), prompt (text), language (text), model (text) | text (text) | Any answer the spec can read, empty text included: the test's sound is a tone with no words. | Admin > Capabilities > Audio Transcription: "Transcribe with" |
+| `page.render` | A page read the way a browser shows it: the readable text of the page at url, and its title when the service gives one. | url (text, required) | text (text), title (text) | text is not empty. | Admin > Services > Page Rendering (Browser): "Render pages on" |
+| `speech.synthesize` | A text spoken aloud, in a voice when one is given. | text (text, required), voice (text), model (text) | audio (file) | audio is sound gohort can play: MP3, WAV, OGG, FLAC, AAC or MP4 audio, judged by its first bytes. | Admin > Services > Speech (TTS): "Speak with" |
+| `speech.transcribe` | The words spoken in a sound file. | audio (file, required), prompt (text), language (text), model (text) | text (text) | Any answer the spec can read, empty text included: the test's sound is a tone with no words. | Admin > Services > Audio Transcription: "Transcribe with" |
 | `speech.voices` | The voices a speech service offers. voices is a list, each a bare id or an object naming the voice under id, voice_id or name (name is what people read, when there is an id too). | nothing | voices (json) | voices is a list, and each one names a voice. | the Speech (TTS) Voice field's choices, from the connector that speaks |
-| `web.search` | A search of the web. results is a list of objects: title, url and snippet, and published when the engine says when a page was published. | query (text, required), count (number) | results (json) | results is a list, and every url in it is an http or https address. The test, a search for a common phrase, must find at least one. | Admin > Capabilities > Web Search: "Search with" |
+| `web.search` | A search of the web. results is a list of objects: title, url and snippet, and published when the engine says when a page was published. | query (text, required), count (number) | results (json) | results is a list, and every url in it is an http or https address. The test, a search for a common phrase, must find at least one. | Admin > Services > Web Search: "Search with" |
 <!-- end contracts -->
 
 The inside faces both ways. gohort asks things of a connector (make, convert,
@@ -149,22 +149,22 @@ resource's whole schema.
 
 | You know it as | Inside | Outside |
 |---|---|---|
-| A service (Admin > Extensions > Connectors) | the contracts it provides | HTTP and a key, or a program here |
-| A System Hook (Admin > Capabilities > System Hooks) | convert or read a file, cut audio | a program here: pandoc, ffmpeg, yt-dlp |
+| A service (Admin > Services > Connectors) | the contracts it provides | HTTP and a key, or a program here |
+| A System Hook (Admin > Services > System Hooks) | convert or read a file, cut audio | a program here: pandoc, ffmpeg, yt-dlp |
 | An MCP server | its tools, for agents | MCP |
-| A peer (Admin > Capabilities > Peers) | models, embeddings, speech, transcription | another gohort |
+| A peer (Admin > Integrations > Peers) | models, embeddings, speech, transcription | another gohort |
 | A messaging relay | messages in and out | Telegram, Teams, others |
 | A poll (made by an agent's bridge tool) | "the answer changed" | HTTP and a key |
-| A research source (Admin > Extensions > Research Sources) | a search connector put to use for research and agents | the connector's |
+| A research source (Admin > Services > Research Sources) | a search connector put to use for research and agents | the connector's |
 | gohort's own providers (DuckDuckGo search, the browser, SMTP mail and the local model servers) | the same contracts | written in Go where Go is the protocol or the server is on this machine; every hosted provider moved to a connector (embeddings, transcription, speech, images, the other search engines, the hosted LLMs and Bedrock) |
 
-Admin > Extensions > Connectors lists what has a spec, the part that can be
+Admin > Services > Connectors lists what has a spec, the part that can be
 edited and fixed without a new build: services, messaging relays, polls, MCP
 connections, adapted System Hooks and peer relays, grouped by what each does.
 What gohort does in Go has no spec and is not listed there: DuckDuckGo and
-the browser are set up under Admin > Capabilities, SMTP under Admin > System >
-Mail, a local model server under Admin > LLMs, peers under Admin >
-Capabilities > Peers, and the programs System Hooks run under System Hooks.
+the browser are set up under Admin > Services, SMTP under Admin > Services >
+Mail, a local model server under Admin > Models, peers under Admin >
+Integrations > Peers, and the programs System Hooks run under System Hooks.
 
 ## Where to find things
 
@@ -174,21 +174,21 @@ per person and never shared between accounts unless the owner lends one.
 
 | What | Where |
 |---|---|
-| Connectors | Admin > Extensions > Connectors (polls also under Admin > Extensions > Bridges) |
-| Which connector serves a capability | Admin > Capabilities (Embeddings, Speech, Transcription, Image Generation, Web Search) |
-| Credentials | yours: Extensions app > Integrations (their keys: Connected accounts); everyone's: Admin > Extensions > API Credentials |
-| System Hooks | Admin > Capabilities > System Hooks |
-| Peers | Admin > Capabilities > Peers |
-| MCP servers | yours: Extensions app > Integrations; the deployment's: Admin > Extensions > MCP Servers |
+| Connectors | Admin > Services > Connectors (polls also under Admin > Integrations > Bridges) |
+| Which connector serves a capability | Admin > Services (Embeddings, Speech, Transcription, Image Generation, Web Search) |
+| Credentials | yours: Extensions app > Integrations (their keys: Connected accounts); everyone's: Admin > Integrations > API Credentials |
+| System Hooks | Admin > Services > System Hooks |
+| Peers | Admin > Integrations > Peers |
+| MCP servers | yours: Extensions app > Integrations; the deployment's: Admin > Integrations > MCP Servers |
 | Webhooks, Teams bots, linked services | yours: Extensions app > Integrations |
-| Agent tools | yours: Extensions app > Tools; everyone's: Admin > Extensions > Global Tools |
-| Templates (a connector and its credential, packaged to reuse or share) | Admin > Extensions > Templates |
+| Agent tools | yours: Extensions app > Tools; everyone's: Admin > Tools & Skills > Shared tools |
+| Templates (a connector and its credential, packaged to reuse or share) | Admin > Services > Templates |
 
 ## Which one do I want?
 
 | You want… | Use |
 |---|---|
-| a hosted provider to do something gohort already does | a connector from a template, then pick it under Admin > Capabilities |
+| a hosted provider to do something gohort already does | a connector from a template, then pick it under Admin > Services |
 | an agent to call an API | a credential, plus a tool (Builder drafts both) |
 | a file type handled by a program here | System Hooks |
 | to be told when something outside changes | a poll (an agent's bridge tool makes one) |
@@ -198,7 +198,7 @@ per person and never shared between accounts unless the owner lends one.
 
 ## Messaging services
 
-*Slack (messages)* and *Discord (messages)* under Admin > Extensions >
+*Slack (messages)* and *Discord (messages)* under Admin > Services >
 Templates add a connector that fetches and sends a channel's messages
 (`message.fetch` and `message.send`). A person adds it as a linked service
 under Extensions > Integrations, and the channel bound to that service
@@ -212,11 +212,11 @@ address, which a connector never holds, so they have no template.
 The connector: inside `embed.text`, mapping one request, outside OpenAI with
 its key.
 
-1. **Admin > Capabilities > Embeddings:** in "Embed with", choose
+1. **Admin > Services > Embeddings:** in "Embed with", choose
    **+ Add another…**, then **Add…** on *OpenAI (embeddings)* and give it a
    name. This creates the connection, shown as *OpenAI (embeddings)*, and
    the page reloads with it in the list. (The same templates are under
-   Admin > Extensions > Templates, by category.)
+   Admin > Services > Templates, by category.)
 2. **Still on Embeddings:** set "Embed with" to it. Its model and its API
    key show under the choice. Test embeds two sentences and checks for two
    vectors of the same length. Save: the page now references it, and keeps

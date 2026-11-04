@@ -26,7 +26,7 @@ func TestAnAppThatClaimsNothingSaysSo(t *testing.T) {
 	}
 	// And it names the tabs the controls are actually on, because "none" on
 	// its own reads as "this app has no settings", which is false.
-	for _, tab := range []string{"LLMs", "Tuning", "Extensions"} {
+	for _, tab := range []string{"Models", "Services", "Tuning"} {
 		if !strings.Contains(got, tab) {
 			t.Errorf("summary should say where the controls are; missing %q in %q", tab, got)
 		}
@@ -36,7 +36,7 @@ func TestAnAppThatClaimsNothingSaysSo(t *testing.T) {
 func TestClaimedControlsAreCounted(t *testing.T) {
 	RegisterRouteStage(RouteStage{Key: "app.summarytest.a", Label: "A", App: "/summarytest"})
 	RegisterRouteStage(RouteStage{Key: "app.summarytest.b", Label: "B", App: "/summarytest"})
-	RegisterTunable(TunableSpec{Key: "tune_summarytest", Category: "Limits", Label: "T",
+	RegisterTunable(TunableSpec{Key: "tune_summarytest", Category: "Scheduling", Label: "T",
 		App: "/summarytest", Kind: KindInt, Default: 1, Min: 1, Max: 10})
 
 	got := describeAppControls(nil, "/summarytest")
@@ -372,7 +372,7 @@ func init() {
 	RegisterApp(fakeHiddenApp{fakeWebApp{path: "/hiddenpanetest"}})
 	RegisterApp(fakeHiddenApp{fakeWebApp{path: "/hiddenclaimsnothing"}})
 	RegisterAdminSection(AdminSectionEntry{App: "/hiddenpanetest",
-		Section: ui.Section{Title: "Pane Panel Test", Group: "Extensions"}})
+		Section: ui.Section{Title: "Pane Panel Test", Group: "Integrations"}})
 	// Declares one tab and is filed on another by the title map: the link has
 	// to name where the section actually is.
 	RegisterAdminSection(AdminSectionEntry{App: "/hiddenpanetest",
@@ -431,9 +431,9 @@ func TestPanelLinksNameTheTabTheSectionIsOn(t *testing.T) {
 		t.Fatalf("%v: %s", err, w.Body.String())
 	}
 	want := map[string][2]string{
-		"Pane Panel Test": {"Extensions", "#extensions/pane-panel-test"},
-		// The title map files Templates under Extensions whatever it declares.
-		"Templates": {"Extensions", "#extensions/templates"},
+		"Pane Panel Test": {"Integrations", "#integrations/pane-panel-test"},
+		// The layout files Templates under Services whatever it declares.
+		"Templates": {"Services", "#services/templates"},
 	}
 	if len(rows) != len(want) {
 		t.Fatalf("rows = %v", rows)

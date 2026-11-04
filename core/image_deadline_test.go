@@ -48,15 +48,15 @@ func TestPerConnectorDeadlineOverridesTheTunable(t *testing.T) {
 
 func TestBothDeadlinesAreTunable(t *testing.T) {
 	// The question that started this: is it a knob an operator can turn without
-	// editing JSON? It has to be, in the same Timeouts group as the rest.
+	// editing JSON? It has to be, filed with the other image knobs.
 	for _, key := range []string{"tune_image_poll_max_secs", "tune_image_edit_poll_max_secs"} {
 		spec, ok := LookupTunable(key)
 		if !ok {
 			t.Errorf("%s is not registered — it can only be changed by hand-editing a spec", key)
 			continue
 		}
-		if spec.Category != "Timeouts" {
-			t.Errorf("%s category = %q, want Timeouts", key, spec.Category)
+		if spec.Category != "Images" {
+			t.Errorf("%s category = %q, want Images", key, spec.Category)
 		}
 		if spec.Kind != KindSeconds {
 			t.Errorf("%s should be entered in seconds", key)

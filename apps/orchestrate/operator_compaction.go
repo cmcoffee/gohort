@@ -26,7 +26,7 @@ func init() {
 	RegisterTunable(TunableSpec{
 		Key:      "tune_compaction_fold_trigger_pct",
 		App:      "/orchestrate",
-		Category: "Limits",
+		Category: "Turns & context",
 		Label:    "Compaction fold trigger (% of context depth)",
 		Help:     "How far a thread's unsummarized tail may grow, as a percent of its Context Depth.",
 		Detail:   "Past this, the rolling summary folds the tail back down to the depth. 150 folds at 1.5x depth, so the prompt floats between depth and 1.5x depth: at depth 100 the prompt stays between 100 and 150.\n\nHigher folds less often, giving a looser prompt and fewer summary LLM calls. Lower keeps the prompt tighter at the cost of more frequent folds. It was effectively 300, or 3x, before this was configurable.",
@@ -38,7 +38,7 @@ func init() {
 	RegisterTunable(TunableSpec{
 		Key:      "tune_persistent_tail_tokens",
 		App:      "/orchestrate",
-		Category: "Limits",
+		Category: "Turns & context",
 		Label:    "Persistent-thread tail budget (tokens)",
 		Help:     "How much verbatim conversation a persistent thread carries into each turn.",
 		Detail: "Older messages in it are left to the rolling summary.\n\n" +

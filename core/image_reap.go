@@ -407,20 +407,20 @@ func FormatImageReapCandidates(list []ImageReapCandidate) string {
 
 func init() {
 	RegisterTunable(TunableSpec{
-		Key: TunableImageReap, Category: "Images", Label: "Reap old images automatically",
+		Key: TunableImageReap, Category: "Storage & retention", Label: "Reap old images automatically",
 		Help: "Run the age-based image sweep on a schedule. Off leaves the store to the count-based " +
 			"pruning that runs on every write, which bounds a busy store and never reclaims an idle " +
 			"one. The admin actions below run either way; this only governs the scheduled sweep.",
 		Kind: KindBool, Default: 1, Min: 0, Max: 1})
 	RegisterTunable(TunableSpec{
-		Key: TunableImageReapRingDays, Category: "Images", Label: "Recent-image retention",
+		Key: TunableImageReapRingDays, Category: "Storage & retention", Label: "Recent-image retention",
 		Help: "How long a picture stays in an agent's recent-image ring before age alone removes it. " +
 			"The ring is already capped at ten of the agent's own pictures and ten it was given; this " +
 			"is what reaches a ring nobody has written to since. 0 disables it. Kept images are never " +
 			"affected at any value.",
 		Kind: KindDays, Default: 30, Min: 0, Max: 3650})
 	RegisterTunable(TunableSpec{
-		Key: TunableImageReapDeliveredDays, Category: "Images", Label: "Chat attachment retention",
+		Key: TunableImageReapDeliveredDays, Category: "Storage & retention", Label: "Chat attachment retention",
 		Help: "How long a delivered chat attachment is stored before age alone removes it. Past this, " +
 			"an old message renders without its picture, so raise it if your users reopen threads " +
 			"older than this. Attachments are typically most of the store's bytes, so this is the " +
@@ -430,7 +430,7 @@ func init() {
 			"cap.",
 		Kind: KindDays, Default: 90, Min: 0, Max: 3650})
 	RegisterTunable(TunableSpec{
-		Key: TunableImageReapOrphanHours, Category: "Images", Label: "Orphaned render retention",
+		Key: TunableImageReapOrphanHours, Category: "Storage & retention", Label: "Orphaned render retention",
 		Help: "How long a bare render left at the image-store root is kept. These are handoff files a " +
 			"tool writes and removes within one call, so anything still here is one an error path " +
 			"returned past. Low by design; raise it if you debug against those files. 0 disables it.",

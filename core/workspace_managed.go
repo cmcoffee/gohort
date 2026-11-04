@@ -33,7 +33,7 @@ func managedWorkspaceIdleLimit() time.Duration {
 }
 
 func init() {
-	RegisterTunable(TunableSpec{Key: "tune_managed_workspace_idle_limit", Category: "Cache", Label: "Managed workspace idle limit", Help: "How long an idle managed (disposable) workspace is retained before it is eligible for cleanup.", Kind: KindHours, Default: 24, Min: 1, Max: 720})
+	RegisterTunable(TunableSpec{Key: "tune_managed_workspace_idle_limit", Category: "Storage & retention", Label: "Managed workspace idle limit", Help: "How long an idle managed (disposable) workspace is retained before it is eligible for cleanup.", Kind: KindHours, Default: 24, Min: 1, Max: 720})
 }
 
 // ManagedWorkspace is the persistent record for an LLM-created

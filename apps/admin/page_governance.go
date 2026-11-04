@@ -328,7 +328,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 			Title:    "Shared with everyone",
 			Subtitle: "Skills, knowledge, apps and guides users have shared with the whole deployment.",
 			Detail: "Each was shared by its owner, or by you approving their request. Take back ends the sharing and leaves the thing with its owner: a skill or a collection returns to its owner's own list with nobody else on it, an app stops being shared with every signed-in user, and a guide loses Everyone. Nothing is deleted, and the owner gets a notice saying so.\n\n" +
-				"Tools are listed under Shared tools, and agents, pipelines and machines on the Governance tab, each with its own way to take one back.",
+				"Tools are listed under Tools & Skills > Shared tools, and agents, pipelines and machines further down this tab, each with its own way to take one back.",
 			Body: ui.Table{
 				Source: "api/published",
 				RowKey: "key",

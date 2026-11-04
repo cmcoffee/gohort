@@ -55,7 +55,7 @@ func init() {
 	RegisterTunable(TunableSpec{
 		Key:      "tune_term_buffer_cap",
 		App:      "/servitor",
-		Category: "Limits",
+		Category: "Servitor",
 		Label:    "Terminal buffer cap (bytes)",
 		Help:     "Max bytes retained per live terminal buffer before old output is trimmed.",
 		Kind:     KindInt,

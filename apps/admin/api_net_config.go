@@ -290,7 +290,7 @@ func (a *AdminApp) handleWebSearchTest(c *jsonapi.Call, form withSettings[webSea
 		return testResultBody(false, "", serr.Error()), nil
 	}
 	if strings.TrimSpace(out) == "" {
-		return testResultBody(false, "", "no results returned: check the engine (a connector's row under Admin > Extensions > Connectors shows its request and key)"), nil
+		return testResultBody(false, "", "no results returned: check the engine (a connector's row under Admin > Services > Connectors shows its request and key)"), nil
 	}
 	return testResultBody(true, fmt.Sprintf("OK via %s: %d chars returned", ProviderTitle(req.Provider), len(out)), ""), nil
 }

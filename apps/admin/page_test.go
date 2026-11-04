@@ -93,11 +93,11 @@ func tuningTestApp(t *testing.T) (*AdminApp, func(method, url, body string) *htt
 }
 
 func init() {
-	RegisterTunable(TunableSpec{Key: "tune_panetune_mine", Category: "Limits", Label: "Mine",
+	RegisterTunable(TunableSpec{Key: "tune_panetune_mine", Category: "Scheduling", Label: "Mine",
 		App: "/panetune", Kind: KindInt, Default: 5, Min: 1, Max: 50})
-	RegisterTunable(TunableSpec{Key: "tune_panetune_flag", Category: "Timeouts", Label: "Flag",
+	RegisterTunable(TunableSpec{Key: "tune_panetune_flag", Category: "Model calls", Label: "Flag",
 		App: "/panetune", Kind: KindBool, Default: 0, Min: 0, Max: 1})
-	RegisterTunable(TunableSpec{Key: "tune_panetune_theirs", Category: "Limits", Label: "Theirs",
+	RegisterTunable(TunableSpec{Key: "tune_panetune_theirs", Category: "Scheduling", Label: "Theirs",
 		App: "/otherpane", Kind: KindInt, Default: 5, Min: 1, Max: 50})
 }
 
@@ -183,7 +183,7 @@ func TestAppTuningFormShape(t *testing.T) {
 			headers = append(headers, fl.Label)
 		}
 	}
-	if strings.Join(headers, ",") != "Limits,Timeouts" {
+	if strings.Join(headers, ",") != "Model calls,Scheduling" {
 		t.Errorf("headers = %v", headers)
 	}
 }

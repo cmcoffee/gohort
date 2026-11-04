@@ -591,7 +591,7 @@ func (s *ToolSession) ConnectionBarred(name string) error {
 		return fmt.Errorf("the connection %s is switched off for this agent (its credential scope on the agent editor)", c.Title())
 	}
 	if users := c.Access(RootDB); len(users) > 0 && !slices.Contains(users, strings.TrimSpace(s.Username)) {
-		return fmt.Errorf("the connection %s is limited to named users, and this run's user is not one of them: an admin grants it under Access on its row in Admin > Extensions > Connectors", c.Title())
+		return fmt.Errorf("the connection %s is limited to named users, and this run's user is not one of them: an admin grants it under Access on its row in Admin > Services > Connectors", c.Title())
 	}
 	return nil
 }
@@ -756,7 +756,7 @@ func ConnectionCredential(name, send, secret, profile string, addresses []string
 		return c, fmt.Errorf("send %q: a secret is sent as bearer, header:<name>, query:<name>, basic:<username> or aws_sigv4", send)
 	}
 	if secret == "" {
-		return c, fmt.Errorf("the connection %s has no key yet: give it on the page that uses it, or on its row under Admin > Extensions > Connectors", name)
+		return c, fmt.Errorf("the connection %s has no key yet: give it on the page that uses it, or on its row under Admin > Services > Connectors", name)
 	}
 	c.inlineSecret = secret
 	return c, nil

@@ -359,7 +359,7 @@ func (a *AdminApp) handleImageGenSave(c *jsonapi.Call, form withSettings[imageGe
 	}
 	for _, n := range append(names, agents...) {
 		if !imageConnector(n) {
-			return nil, jsonapi.BadRequest("no connector named " + n + " makes pictures: add one under Admin > Extensions > Connectors or Templates first")
+			return nil, jsonapi.BadRequest("no connector named " + n + " makes pictures: add one under Admin > Services > Connectors or Templates first")
 		}
 	}
 	if len(names) > 0 {
@@ -443,9 +443,9 @@ func (a *AdminApp) handleImageGenTest(c *jsonapi.Call, req imageGenConfig) (any,
 		return testResultBody(false, "", "no connector named "+req.Provider+" makes pictures"), nil
 	}
 	if !ImageBackendRegistered(req.Provider) {
-		return testResultBody(false, "", ProviderTitle(req.Provider)+" makes pictures but is not served: a change waits on it (save here with it chosen to accept it), or its spec does not read (Fix it under Admin > Extensions > Connectors)"), nil
+		return testResultBody(false, "", ProviderTitle(req.Provider)+" makes pictures but is not served: a change waits on it (save here with it chosen to accept it), or its spec does not read (Fix it under Admin > Services > Connectors)"), nil
 	}
-	return testResultBody(true, "The connector "+ProviderTitle(req.Provider)+" is ready. Its Test under Admin > Extensions > Connectors renders a picture end to end.", ""), nil
+	return testResultBody(true, "The connector "+ProviderTitle(req.Provider)+" is ready. Its Test under Admin > Services > Connectors renders a picture end to end.", ""), nil
 }
 
 // imageGenConfig is the image-generation form: the connector chosen.

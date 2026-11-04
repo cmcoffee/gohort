@@ -7,7 +7,7 @@
 // PDF, Word, OpenDocument, RTF and legacy .doc are jobs (core/flows, via
 // DocumentConverter): the tool for each (pdftotext, pandoc, antiword or
 // textutil) runs sandboxed, and an admin can adapt one that is missing under
-// Admin > Capabilities > System Hooks. HTML, JSON
+// Admin > Services > System Hooks. HTML, JSON
 // and plain text are read here.
 //
 // Extraction returns the plain-text body. Callers compose the final

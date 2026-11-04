@@ -35,7 +35,7 @@ import (
 func init() {
 	RegisterTunable(TunableSpec{
 		Key:      "tune_channel_coalesce_ms",
-		Category: "Limits",
+		Category: "Turns & context",
 		Label:    "Channel message coalesce window (ms)",
 		Help:     "How long an inbound channel message is held, so rapid follow-ups merge into one turn.",
 		Detail:   "A question and an image posted right after it become ONE agent turn, instead of racing as separate turns on a shared session. A message that arrives while a turn is still running cancels and reprocesses it with both messages folded in, unless that turn already replied. 0 disables coalescing, and each message dispatches immediately.",

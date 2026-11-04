@@ -38,7 +38,7 @@ func init() {
 	RegisterTunable(TunableSpec{
 		Key:      "tune_sysprobe_command_timeout",
 		App:      "/servitor",
-		Category: "Timeouts",
+		Category: "Servitor",
 		Label:    "Sysprobe command timeout",
 		Help:     "Per-command wall-clock cap for SSH probe commands before they are killed.",
 		Kind:     KindSeconds,

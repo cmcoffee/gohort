@@ -21,7 +21,7 @@ import (
 // that lends them ("peer:<name>"). The connector keeps its own address, model
 // and key; Endpoint and Model here name the SPACE the stored vectors are in
 // (EmbedVersion), and Model is the one each embed asks the connector for. Set
-// under Admin > Capabilities > Embeddings.
+// under Admin > Services > Embeddings.
 type EmbeddingConfig struct {
 	Endpoint string `json:"endpoint"` // names the space: the connector as it was first chosen (its name, or embed:<name> or service:<name> from before names were plain), the peer's endpoint, or the endpoint embeddings were made at before connectors
 	Model    string `json:"model"`    // the model asked for; blank for a single-model server
@@ -269,7 +269,7 @@ func embedTextsVia(ctx context.Context, cfg EmbeddingConfig, texts []string) ([]
 	if strings.HasPrefix(strings.TrimSpace(cfg.Provider), peerProviderPrefix) {
 		return embedFromPeer(ctx, cfg, texts, chars)
 	}
-	return nil, fmt.Errorf("embeddings are not set to a connector or a peer: choose one under Admin > Capabilities > Embeddings")
+	return nil, fmt.Errorf("embeddings are not set to a connector or a peer: choose one under Admin > Services > Embeddings")
 }
 
 // embedFromPeer embeds through a peer instance that lends embeddings: its

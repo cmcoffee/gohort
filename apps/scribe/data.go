@@ -439,7 +439,7 @@ const TunableGuideRevisionCap = "tune_guide_revision_cap"
 
 func init() {
 	RegisterTunable(TunableSpec{
-		Key: TunableGuideRevisionCap, Category: "Limits", App: "/scribe",
+		Key: TunableGuideRevisionCap, Category: "Scribe", App: "/scribe",
 		Label: "Guide revision history",
 		Help: "How many past versions of a guide are kept. Every destructive co-author pass: a " +
 			"reorganize, an audit's edits, a restore: saves one first, so this is how far back an " +

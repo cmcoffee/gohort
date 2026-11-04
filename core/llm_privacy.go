@@ -81,7 +81,7 @@ func ProviderLooksPrivate(provider, endpoint string) (bool, string) {
 	// use, has no address here to judge: its blank endpoint must not read as
 	// a local default.
 	if name, ok := media.LegacyConnection(provider); ok {
-		return false, "the tier still names the connection " + name + ", which tiers no longer use, so it cannot be judged private: set its provider again under Admin > LLMs"
+		return false, "the tier still names the connection " + name + ", which tiers no longer use, so it cannot be judged private: set its provider again under Admin > Models"
 	}
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "anthropic", "openai", "gemini", "bedrock":

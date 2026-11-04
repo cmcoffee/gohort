@@ -168,7 +168,7 @@ Two tiers with transparent fallback:
 
 Route stages self-register via `RegisterRouteStage`. Each stage can be independently assigned to worker or precision tier via `--setup` (or the admin web UI) without code changes.
 
-For models without native tool support, turn off **Native tool calling** on the model in **Admin → LLMs**. The agent loop falls back to prompt-based tool calling.
+For models without native tool support, turn off **Native tool calling** on the model in **Admin → Models**. The agent loop falls back to prompt-based tool calling.
 
 ## Built-in Apps
 

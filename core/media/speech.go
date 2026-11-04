@@ -162,7 +162,7 @@ func SpeakWith(ctx context.Context, cfg SpeechConfig, text string) ([]byte, stri
 		return SpeechService(ctx, name, text, cfg.Voice)
 	}
 	if !strings.HasPrefix(cfg.Provider, peerProviderPrefix) {
-		return nil, "", fmt.Errorf("speech is not set to a connector or a peer: choose one under Admin > Capabilities > Speech (TTS)")
+		return nil, "", fmt.Errorf("speech is not set to a connector or a peer: choose one under Admin > Services > Speech (TTS)")
 	}
 	return speakFromPeer(ctx, cfg, text)
 }

@@ -1145,7 +1145,7 @@ func TestATierStillNamingAConnectionFailsClosed(t *testing.T) {
 	if private, why := ProviderLooksPrivate("llm:anthropic", ""); private || !strings.Contains(why, "no longer use") {
 		t.Errorf("judged private: %v %q", private, why)
 	}
-	if _, err := ResolveModelProvider(LLMProviderConfig{Provider: "llm:anthropic"}, "llm:anthropic"); err == nil || !strings.Contains(err.Error(), "Admin > LLMs") {
+	if _, err := ResolveModelProvider(LLMProviderConfig{Provider: "llm:anthropic"}, "llm:anthropic"); err == nil || !strings.Contains(err.Error(), "Admin > Models") {
 		t.Errorf("resolved: %v", err)
 	}
 	if private, _ := ProviderLooksPrivate("openai", "http://192.168.1.20:8000/v1"); private {

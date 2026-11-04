@@ -53,7 +53,7 @@ func (t *EmailTool) Run(args map[string]any) (string, error) {
 	// Load mail config from database.
 	cfg := LoadMailConfig()
 
-	// A connector that sends mail (Admin > System > Mail) sends it instead
+	// A connector that sends mail (Admin > Services > Mail) sends it instead
 	// of SMTP.
 	if name, ok := media.ChosenConnection(strings.TrimSpace(cfg.Provider)); ok {
 		if media.MailService == nil {

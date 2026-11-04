@@ -500,7 +500,7 @@ func (p *panes) controls(path string) string {
 		parts = append(parts, plural(n, "settings panel")+" on other tabs (linked from Other settings)")
 	}
 	if len(parts) == 0 {
-		return "none declared: anything this app configures still lives on the LLMs, Tuning and Extensions tabs"
+		return "none declared: anything this app configures still lives on the Models, Services and Tuning tabs"
 	}
 	return strings.Join(parts, ", ")
 }

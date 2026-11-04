@@ -299,7 +299,7 @@ const tuneAccountKeyLifetime = "tune_account_key_lifetime"
 
 func init() {
 	RegisterTunable(TunableSpec{
-		Key: tuneAccountKeyLifetime, Category: "Security",
+		Key: tuneAccountKeyLifetime, Category: "Sign-in & security",
 		Label:  "API key lifetime",
 		Help:   "How long a personal API key works before it has to be replaced. 0 means keys never expire.",
 		Detail: "People create API keys on their Account page to connect outside clients; they do not choose how long a key lasts. A new key expires this many days after it is created. A key that already exists with no deadline, or a later one, gets this many days counted from the first time it is seen after the setting changes, so nothing stops working at once. Lowering it shortens existing keys the same way; raising it does not lengthen them.",

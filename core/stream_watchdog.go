@@ -20,7 +20,7 @@ import (
 func DefaultStreamIdleTimeout() time.Duration { return TuneDuration("tune_stream_idle_timeout") }
 
 func init() {
-	RegisterTunable(TunableSpec{Key: "tune_stream_idle_timeout", Category: "Timeouts", Label: "Stream idle timeout", Help: "Max wall-clock gap with no bytes on a streaming LLM response before the read aborts.", Kind: KindSeconds, Default: 60, Min: 10, Max: 600})
+	RegisterTunable(TunableSpec{Key: "tune_stream_idle_timeout", Category: "Model calls", Label: "Stream idle timeout", Help: "Max wall-clock gap with no bytes on a streaming LLM response before the read aborts.", Kind: KindSeconds, Default: 60, Min: 10, Max: 600})
 }
 
 // streamIdleTimeoutMarker is the substring isTransientError matches on

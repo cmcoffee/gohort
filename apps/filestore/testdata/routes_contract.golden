@@ -85,7 +85,7 @@ alice POST /api/commands/run?slug=bundles&command=decrypt&within=bundle-1 "{\"in
 alice POST /api/commands/run?slug=bundles&command=decrypt&within=bundle-1 "{\"input\":"
   400 invalid JSON: unexpected EOF
 alice POST /api/commands/run?slug=bundles&command=nope ""
-  404 no command called "nope" on Bundles (registered here: decrypt). An admin registers commands under Admin → Files.
+  404 no command called "nope" on Bundles (registered here: decrypt). An admin registers commands under Admin → Integrations → File stores.
 alice POST /api/commands/run?slug=archive&command=decrypt ""
   403 you have Read Only / No Commands access to Archive, and running its commands takes Full Access.
 alice POST /api/commands/run?slug=nope&command=decrypt ""

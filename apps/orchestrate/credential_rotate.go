@@ -82,7 +82,7 @@ func (t *chatTurn) storeAgentKey(name, secret string) (string, error) {
 			// holding the key would wait on an answer nobody can give.
 			where := "Extensions > Connected accounts"
 			if !yours {
-				where = "Admin > Extensions > API Credentials"
+				where = "Admin > Integrations > API Credentials"
 			}
 			return fmt.Sprintf("Credential %q already has a working key, so it was NOT replaced, and this run has no chat where the user could approve a replacement. Tell the user a new key was received and that they set it themselves in %s. Do not repeat the key.", name, where), nil
 		}

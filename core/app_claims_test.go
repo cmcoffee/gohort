@@ -51,9 +51,9 @@ func TestNoAppMeansNoClaims(t *testing.T) {
 }
 
 func TestTunablesAreClaimedTheSameWay(t *testing.T) {
-	RegisterTunable(TunableSpec{Key: "tune_claimtest_a", Category: "Limits", Label: "A",
+	RegisterTunable(TunableSpec{Key: "tune_claimtest_a", Category: "Scheduling", Label: "A",
 		App: "/claimtest", Kind: KindInt, Default: 1, Min: 1, Max: 10})
-	RegisterTunable(TunableSpec{Key: "tune_claimtest_b", Category: "Limits", Label: "B",
+	RegisterTunable(TunableSpec{Key: "tune_claimtest_b", Category: "Scheduling", Label: "B",
 		Kind: KindInt, Default: 1, Min: 1, Max: 10})
 	got := TunablesForApp("/claimtest")
 	if len(got) != 1 || got[0].Key != "tune_claimtest_a" {

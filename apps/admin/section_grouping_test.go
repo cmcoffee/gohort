@@ -2,15 +2,13 @@ package admin
 
 // Which tab each admin section lands on.
 //
-// The map keys on TITLE and the rank keys on GROUP, so both are a name written
-// twice with nothing checking they agree. A section missing from the first
-// keeps the empty group that renders as "General"; a group missing from the
-// second sorts to 0 and ties with System. Neither fails anywhere — the section
-// simply appears somewhere nobody looked for it.
+// adminLayout names every tab and the sections on it, in order. A section it
+// does not list keeps the group it declared, and an empty one renders as
+// "General": nothing fails, the section simply appears somewhere nobody
+// looked for it.
 
 import (
 	"os"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -49,28 +47,28 @@ func TestNoAdminSectionFallsIntoGeneral(t *testing.T) {
 	}
 }
 
-// Every group named by the map has to be ranked, or it sorts to zero and its
-// tab appears wherever System is.
-func TestEveryGroupIsRanked(t *testing.T) {
-	groups, ranks := adminSectionMaps(t)
-	for title, g := range groups {
-		if _, ok := ranks[g]; !ok {
-			t.Errorf("section %q is grouped under %q, which has no rank: its tab sorts to the front", title, g)
+// Every tab the layout names is reached by something, or it is a tab that
+// never appears, which reads as a plan somebody abandoned. A tab listing no
+// sections has to be one that sections declare for themselves.
+func TestEveryTabInTheLayoutIsFilled(t *testing.T) {
+	declared := map[string]bool{AppsTabGroup: true, "Tuning": true}
+	for _, tab := range adminLayout {
+		if len(tab.sections) == 0 && !declared[tab.tab] {
+			t.Errorf("tab %q lists no sections and none declare it", tab.tab)
 		}
 	}
-	// And the reverse: a rank for a group nothing uses is a tab that never
-	// appears, which reads as a plan somebody abandoned.
-	// Groups whose sections declare their own Group rather than being mapped by
-	// title here: the Apps tab rows, and the app-contributed sections that
-	// register themselves through core (AdminSectionEntriesFor) so admin does
-	// not import the app.
-	used := map[string]bool{"Apps": true, "Prompts": true}
-	for _, g := range groups {
-		used[g] = true
-	}
-	for g := range ranks {
-		if !used[g] {
-			t.Errorf("group %q is ranked but nothing is in it", g)
+}
+
+// A section listed twice is on whichever tab the second listing says, and the
+// first listing is a lie about where it is.
+func TestEachSectionIsListedOnce(t *testing.T) {
+	seen := map[string]string{}
+	for _, tab := range adminLayout {
+		for _, title := range tab.sections {
+			if prev, ok := seen[title]; ok {
+				t.Errorf("%q is listed on %q and on %q", title, prev, tab.tab)
+			}
+			seen[title] = tab.tab
 		}
 	}
 }
@@ -86,37 +84,14 @@ func TestTheMaintenanceGroupsAreOnTheMaintenanceTab(t *testing.T) {
 	}
 }
 
-// adminSectionMaps returns the section-to-tab map and the tab ranks. The map is
-// package-level (the Apps tab names those tabs in its links), so it is read
-// directly; the ranks are still local to the page handler and are read out of
-// its source, because making them package-level to test them is a change to
-// the thing under test.
+// adminSectionMaps returns the section-to-tab map and the tab ranks, both
+// read from adminLayout.
 func adminSectionMaps(t *testing.T) (map[string]string, map[string]int) {
 	t.Helper()
-	src := readAdminPageSource(t)
-	groups := sectionGroup
-	ranks := map[string]int{}
-	i := strings.Index(src, "groupRank := map[string]int{")
-	j := strings.Index(src[i:], "}\n")
-	for _, m := range rankRe.FindAllStringSubmatch(src[i:i+j], -1) {
-		ranks[m[1]] = 0
+	if len(sectionGroup) == 0 || len(tabRank) == 0 {
+		t.Fatal("could not read the section maps; adminLayout is empty")
 	}
-	if len(groups) == 0 || len(ranks) == 0 {
-		t.Fatal("could not read the section maps; page.go has been reshaped")
-	}
-	return groups, ranks
-}
-
-var rankRe = regexp.MustCompile(`"([^"]+)"\s*:\s*\d+`)
-
-// readAdminPageSource returns page.go, where the rank map lives.
-func readAdminPageSource(t *testing.T) string {
-	t.Helper()
-	b, err := os.ReadFile("page.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(b)
+	return sectionGroup, tabRank
 }
 
 // Nothing on the admin page opens closed.

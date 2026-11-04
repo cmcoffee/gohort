@@ -170,21 +170,6 @@ func (a *AdminApp) llmSections() []ui.Section {
 			},
 		},
 		{
-			Title:    "Agent Loop Tuning",
-			Subtitle: "Per-round behavior of the agent loop.",
-			Detail:   "Lower the history budget when long sessions push prefill latency or thrash the LLM's prompt cache; raise it when you need the model to remember more context across rounds.",
-			Body: ui.FormPanel{
-				Assist: true,
-				Source: "api/agent-loop-tuning",
-				Fields: []ui.FormField{
-					{Field: "history_budget_percent", Label: "History budget (% of context window)",
-						Type: "number", Min: 25, Max: 90, Placeholder: "50",
-						Help:   "Steady-state cap on per-round history, as a percent of the LLM's context window.",
-						Detail: "Default 50, so a 200K-window worker targets about 100K of history. Lower means faster prefill and more aggressive elision of old tool results; higher means more retained context and slower prefill. Clamped to 25-90."},
-				},
-			},
-		},
-		{
 			Title:    "Local Model Scheduler",
 			Subtitle: "How requests share the model: concurrent-request caps for local backends (default 1, strictly serial; 8 for vLLM, which batches), and whether background work waits for people.",
 			Detail:   "Raise it only when the backend supports parallel requests. Applies immediately on save, because the live LLM is rebuilt.",

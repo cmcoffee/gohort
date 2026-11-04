@@ -212,7 +212,7 @@ func (T *Servitor) handleApplianceSave(c *jsonapi.Call, req Appliance) (any, err
 	// changed.
 	req.LeadTierAvailable = false
 	if !AllLLMsPrivate() && (req.OrchestratorTier == "lead" || req.WorkerTier == "lead") {
-		return nil, jsonapi.BadRequest("pinning this system to the lead model needs Admin → LLMs → Model Privacy turned on: " +
+		return nil, jsonapi.BadRequest("pinning this system to the lead model needs Admin → Models → Model Privacy turned on: " +
 			"Servitor handles credentials and log contents, so it stays on the worker until every configured model is private")
 	}
 	isNew := req.ID == ""

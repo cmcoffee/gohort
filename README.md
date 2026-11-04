@@ -94,7 +94,7 @@ gohort registers credentials **per user**: each person brings their own API key,
 
 Most providers' terms expect each end user to authenticate with their own credential, and treat subscription plans as individual use rather than a backend for automation. Check your provider's current terms, especially for scheduled or autonomous agents.
 
-The same goes for MCP servers: where the administrator allows it (**Admin → Governance**), each person adds their own, signs in to them their own way, and their agents reach them with nobody else's account.
+The same goes for MCP servers: where the administrator allows it (**Admin → Integrations**), each person adds their own, signs in to them their own way, and their agents reach them with nobody else's account.
 
 ## A platform, and an SDK
 
@@ -179,7 +179,7 @@ Then sign in and visit **/admin**: nearly all operator config (LLM routing, embe
 
 **Do `--setup` first, and on loopback.** An instance with no users configured has nobody to authenticate, so the dashboard's front door is open and `/admin/` leads to the wizard that mints the first admin. That is how the first account gets created and it is fine on `127.0.0.1` (the setup default is `127.0.0.1:8181`); it is not fine on a public interface. Create the admin account, then widen the bind address.
 
-**Optional host tools.** The binary needs nothing else to run, but a few features shell out to programs it expects on `PATH`: `ffmpeg`/`ffprobe` (audio and video), `pdftotext` and `pandoc` (document extraction), `yt-dlp` (video downloads), `git` (repository appliances), `python3` (sandboxed scripts), and `bwrap` (the shell sandbox, Linux). Each is optional and only the feature that uses it degrades when it is missing. **Admin → Capabilities → System Hooks** shows how each job is done on this machine, and adapts a job to another tool when the usual one is missing.
+**Optional host tools.** The binary needs nothing else to run, but a few features shell out to programs it expects on `PATH`: `ffmpeg`/`ffprobe` (audio and video), `pdftotext` and `pandoc` (document extraction), `yt-dlp` (video downloads), `git` (repository appliances), `python3` (sandboxed scripts), and `bwrap` (the shell sandbox, Linux). Each is optional and only the feature that uses it degrades when it is missing. **Admin → Services → System Hooks** shows how each job is done on this machine, and adapts a job to another tool when the usual one is missing.
 
 ## Extend it: a whole app in ~20 lines
 

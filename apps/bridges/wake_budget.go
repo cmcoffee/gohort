@@ -27,7 +27,7 @@ const (
 func init() {
 	RegisterTunable(TunableSpec{
 		App: "/bridges",
-		Key: "tune_bridge_sender_wakes_per_min", Category: "Limits",
+		Key: "tune_bridge_sender_wakes_per_min", Category: "Bridges",
 		Label:   "Wakes per sender per minute",
 		Help:    "How many messages from one sender (not the owner) may wake an agent in a minute.",
 		Detail:  "Counted across every conversation the sender writes in. Past it, their messages are recorded but wake nothing until the minute rolls over, so a stranger writing quickly cannot spend the owner's model budget.",
@@ -36,7 +36,7 @@ func init() {
 	})
 	RegisterTunable(TunableSpec{
 		App: "/bridges",
-		Key: "tune_bridge_connector_wakes_per_min", Category: "Limits",
+		Key: "tune_bridge_connector_wakes_per_min", Category: "Bridges",
 		Label:   "Wakes per connector per minute",
 		Help:    "How many messages arriving through one connector (not from the owner) may wake agents in a minute.",
 		Detail:  "The backstop for senders the per-sender limit cannot tell apart, such as a webhook whose sender and chat ids are whatever the caller says. Past it, messages are recorded but wake nothing until the minute rolls over.",

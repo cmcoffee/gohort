@@ -505,13 +505,13 @@ func secureAPIRequestTimeout() time.Duration {
 func auditRingSize() int { return TuneInt("tune_secure_api_audit_ring_size") }
 
 func init() {
-	RegisterTunable(TunableSpec{Key: "tune_secure_api_max_response_bytes", Category: "Limits", Label: "SecureAPI response byte cap", Help: "Max response body returned directly to the LLM as text (no response pipe).", Kind: KindInt, Default: 262144, Min: 16384, Max: 4194304})
-	RegisterTunable(TunableSpec{Key: "tune_secure_api_max_response_bytes_pipe", Category: "Limits", Label: "SecureAPI response byte cap (piped)", Help: "Higher response read cap used when a response_pipe is configured.", Kind: KindInt, Default: 4194304, Min: 262144, Max: 67108864})
-	RegisterTunable(TunableSpec{Key: "tune_secure_api_max_save_bytes", Category: "Limits", Label: "SecureAPI save byte cap", Help: "Max response body written to the workspace via save_to.", Kind: KindInt, Default: 104857600, Min: 1048576, Max: 1073741824})
-	RegisterTunable(TunableSpec{Key: "tune_secure_api_upload_timeout", Category: "Timeouts", Label: "SecureAPI upload timeout", Help: "Wall-clock cap for a streaming file upload through a credential.",
+	RegisterTunable(TunableSpec{Key: "tune_secure_api_max_response_bytes", Category: "Integrations", Label: "SecureAPI response byte cap", Help: "Max response body returned directly to the LLM as text (no response pipe).", Kind: KindInt, Default: 262144, Min: 16384, Max: 4194304})
+	RegisterTunable(TunableSpec{Key: "tune_secure_api_max_response_bytes_pipe", Category: "Integrations", Label: "SecureAPI response byte cap (piped)", Help: "Higher response read cap used when a response_pipe is configured.", Kind: KindInt, Default: 4194304, Min: 262144, Max: 67108864})
+	RegisterTunable(TunableSpec{Key: "tune_secure_api_max_save_bytes", Category: "Integrations", Label: "SecureAPI save byte cap", Help: "Max response body written to the workspace via save_to.", Kind: KindInt, Default: 104857600, Min: 1048576, Max: 1073741824})
+	RegisterTunable(TunableSpec{Key: "tune_secure_api_upload_timeout", Category: "Integrations", Label: "SecureAPI upload timeout", Help: "Wall-clock cap for a streaming file upload through a credential.",
 		Detail: "Separate from the request timeout: a file takes as long as the link allows.", Kind: KindSeconds, Default: 300, Min: 30, Max: 3600})
-	RegisterTunable(TunableSpec{Key: "tune_secure_api_request_timeout", Category: "Timeouts", Label: "SecureAPI request timeout", Help: "Wall-clock cap per SecureAPI call.", Kind: KindSeconds, Default: 30, Min: 5, Max: 300})
-	RegisterTunable(TunableSpec{Key: "tune_secure_api_audit_ring_size", Category: "Limits", Label: "SecureAPI audit ring size", Help: "Per-credential audit-log retention; older entries drop FIFO.", Kind: KindInt, Default: 50, Min: 10, Max: 1000})
+	RegisterTunable(TunableSpec{Key: "tune_secure_api_request_timeout", Category: "Integrations", Label: "SecureAPI request timeout", Help: "Wall-clock cap per SecureAPI call.", Kind: KindSeconds, Default: 30, Min: 5, Max: 300})
+	RegisterTunable(TunableSpec{Key: "tune_secure_api_audit_ring_size", Category: "Integrations", Label: "SecureAPI audit ring size", Help: "Per-credential audit-log retention; older entries drop FIFO.", Kind: KindInt, Default: 50, Min: 10, Max: 1000})
 }
 
 // ----------------------------------------------------------------------
@@ -1967,7 +1967,7 @@ func (s *SecureAPI) NotReady(owner, name string) string {
 		if c.Owner != "" {
 			return fmt.Sprintf("its credential %q has no key yet (the user sets it under Extensions > Connected accounts)", c.Name)
 		}
-		return fmt.Sprintf("its credential %q has no key yet (an administrator sets it under Admin > Extensions > API Credentials)", c.Name)
+		return fmt.Sprintf("its credential %q has no key yet (an administrator sets it under Admin > Integrations > API Credentials)", c.Name)
 	}
 	return ""
 }
@@ -3740,7 +3740,7 @@ func (s *SecureAPI) agentSecretTarget(user string, admin bool, name, secret stri
 			return SecureCredential{}, "", fmt.Errorf("credential %q not registered: draft it first", name)
 		}
 		if !admin {
-			return SecureCredential{}, "", fmt.Errorf("credential %q belongs to the deployment: only an administrator sets its key (Admin > Extensions > API Credentials)", name)
+			return SecureCredential{}, "", fmt.Errorf("credential %q belongs to the deployment: only an administrator sets its key (Admin > Integrations > API Credentials)", name)
 		}
 		c = g
 	}

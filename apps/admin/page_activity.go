@@ -1,6 +1,6 @@
 package admin
 
-// Admin › System › Activity Log: the deployment's activity log (core/activity). Who signed
+// Admin › People › Activity Log: the deployment's activity log (core/activity). Who signed
 // in, who failed to and from where, and the changes an administrator wants a
 // record of. The live views say what is running now; this says who did what,
 // and when, afterwards.
@@ -27,7 +27,7 @@ func (a *AdminApp) activitySections() []ui.Section {
 		Title:    "Activity Log",
 		Subtitle: "Sign-ins, failed sign-ins, and changes to accounts, credentials, peers, approvals and settings, newest first.",
 		Detail: "Each event names who acted (for a failed sign-in, the name that was tried), what happened, and the address and browser it came from. " +
-			"Events are kept for the number of days set in Tuning › Security › Activity log retention, 90 by default. " +
+			"Events are kept for the number of days set in People › Sign-in › Activity log retention (also on Tuning › Sign-in & security), 90 by default. " +
 			"Secrets are never recorded: a saved credential is logged by its name only. Filter the list with the box above it.",
 		Body: ui.Table{
 			Source:            "api/activity",

@@ -102,7 +102,7 @@ const (
 func init() {
 	RegisterTunable(TunableSpec{
 		App: "/bridges",
-		Key: "tune_bridge_reply_budget", Category: "Limits",
+		Key: "tune_bridge_reply_budget", Category: "Bridges",
 		Label:   "Loop guard: replies to your messages per conversation",
 		Help:    "How many replies to YOUR messages the agent may send into one conversation before routing is cut.",
 		Detail:  "An agent's own reply can only come back looking like your message, so these are the replies a loop is made of. The window is set below. Every reply counts, including a guardrail decline, so testing an agent from your phone spends this budget. Raise it if ordinary use trips the cut; lower it to catch runaways sooner.",
@@ -111,7 +111,7 @@ func init() {
 	})
 	RegisterTunable(TunableSpec{
 		App: "/bridges",
-		Key: "tune_bridge_person_reply_budget", Category: "Limits",
+		Key: "tune_bridge_person_reply_budget", Category: "Bridges",
 		Label:   "Loop guard: replies per conversation, all senders",
 		Help:    "How many replies in all the agent may send into one conversation before routing is cut, whoever it is answering.",
 		Detail:  "Someone else has to type each message, so a conversation with a person cannot loop the way your own thread can. This catches the agent stuck answering another bot instead, which runs far faster than anyone types. Same window as above.",
@@ -120,7 +120,7 @@ func init() {
 	})
 	RegisterTunable(TunableSpec{
 		App: "/bridges",
-		Key: "tune_bridge_reply_window_min", Category: "Limits",
+		Key: "tune_bridge_reply_window_min", Category: "Bridges",
 		Label:   "Loop guard: reply window (minutes)",
 		Help:    "The window the reply budget is counted over.",
 		Detail:  "It has to outlast a slow loop, and an agent loop runs at about 13s per round, while staying short enough that a normal conversation's replies age out.",
@@ -129,7 +129,7 @@ func init() {
 	})
 	RegisterTunable(TunableSpec{
 		App: "/bridges",
-		Key: "tune_bridge_self_thread_budget", Category: "Limits",
+		Key: "tune_bridge_self_thread_budget", Category: "Bridges",
 		Label:   "Loop guard: replies into your own thread",
 		Help:    "The stricter budget for a thread addressed to YOURSELF, where an agent can answer itself.",
 		Detail:  "Anywhere else a person has to type, so a runaway cannot start. This only applies when the transport keys the conversation by your handle; a conversation keyed by chat id falls under the general budget above.",
@@ -138,7 +138,7 @@ func init() {
 	})
 	RegisterTunable(TunableSpec{
 		App: "/bridges",
-		Key: "tune_bridge_loop_cooldown_min", Category: "Limits",
+		Key: "tune_bridge_loop_cooldown_min", Category: "Bridges",
 		Label:   "Loop guard: cooldown (minutes)",
 		Help:    "How long routing stays cut for a conversation after the budget trips.",
 		Detail:  "Inbound messages are still recorded to the transcript throughout. Nothing wakes the agent until it expires.",

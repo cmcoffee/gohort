@@ -68,9 +68,9 @@ func desktopPingInterval() time.Duration { return TuneDuration("tune_desktop_pin
 func desktopReadDeadline() time.Duration { return TuneDuration("tune_desktop_read_deadline") }
 
 func init() {
-	RegisterTunable(TunableSpec{Key: "tune_desktop_invoke_deadline", Category: "Timeouts", Label: "Desktop tool invoke deadline", Help: "Max wait for a desktop-bridge tool call before the agent loop gives up on the client.", Kind: KindSeconds, Default: 60, Min: 10, Max: 300})
-	RegisterTunable(TunableSpec{Key: "tune_desktop_ping_interval", Category: "Timeouts", Label: "Desktop WS ping interval", Help: "Keepalive ping cadence for idle desktop-bridge WebSocket connections.", Kind: KindSeconds, Default: 25, Min: 5, Max: 120})
-	RegisterTunable(TunableSpec{Key: "tune_desktop_read_deadline", Category: "Timeouts", Label: "Desktop WS read deadline", Help: "Drop a desktop-bridge connection with no frame for this long; keep above the ping interval.", Kind: KindSeconds, Default: 70, Min: 15, Max: 360})
+	RegisterTunable(TunableSpec{Key: "tune_desktop_invoke_deadline", Category: "Tools & background work", Label: "Desktop tool invoke deadline", Help: "Max wait for a desktop-bridge tool call before the agent loop gives up on the client.", Kind: KindSeconds, Default: 60, Min: 10, Max: 300})
+	RegisterTunable(TunableSpec{Key: "tune_desktop_ping_interval", Category: "Tools & background work", Label: "Desktop WS ping interval", Help: "Keepalive ping cadence for idle desktop-bridge WebSocket connections.", Kind: KindSeconds, Default: 25, Min: 5, Max: 120})
+	RegisterTunable(TunableSpec{Key: "tune_desktop_read_deadline", Category: "Tools & background work", Label: "Desktop WS read deadline", Help: "Drop a desktop-bridge connection with no frame for this long; keep above the ping interval.", Kind: KindSeconds, Default: 70, Min: 15, Max: 360})
 }
 
 // DesktopToolDescriptor is the wire shape for one tool the desktop

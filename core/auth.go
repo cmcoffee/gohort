@@ -301,7 +301,7 @@ func clearLockout(ip string) {
 func resetTokenExpiry() time.Duration { return TuneDuration("tune_reset_token_expiry") }
 
 func init() {
-	RegisterTunable(TunableSpec{Key: "tune_reset_token_expiry", Category: "Timeouts", Label: "Password reset token expiry", Help: "How long a password-reset link stays valid after it is issued.", Kind: KindHours, Default: 1, Min: 1, Max: 72})
+	RegisterTunable(TunableSpec{Key: "tune_reset_token_expiry", Category: "Sign-in & security", Label: "Password reset token expiry", Help: "How long a password-reset link stays valid after it is issued.", Kind: KindHours, Default: 1, Min: 1, Max: 72})
 }
 
 type resetToken struct {
@@ -2522,9 +2522,9 @@ const tuneActivityRetention = "tune_activity_retention_days"
 
 func init() {
 	RegisterTunable(TunableSpec{
-		Key: tuneActivityRetention, Category: "Security",
+		Key: tuneActivityRetention, Category: "Sign-in & security",
 		Label:  "Activity log retention",
-		Help:   "How many days the activity log (Admin › System) keeps an event: sign-ins and failed sign-ins, account and credential changes, peers, approvals.",
+		Help:   "How many days the activity log (Admin › People › Activity Log) keeps an event: sign-ins and failed sign-ins, account and credential changes, peers, approvals.",
 		Detail: "Older events are removed as new ones are written, at most once an hour, so lowering this takes effect within the hour. Raising it keeps what is still there; it cannot bring back what was already removed.",
 		Kind:   KindDays, Default: 90, Min: 1, Max: 3650,
 	})

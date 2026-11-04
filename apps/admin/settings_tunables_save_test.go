@@ -114,18 +114,36 @@ func TestSettingsPanelsSendOnlyTheChangedField(t *testing.T) {
 	sections := append(everyAdminSection(t), buildTunableSections()...)
 	n := 0
 	for _, sec := range sections {
-		fp, ok := sec.Body.(ui.FormPanel)
-		if !ok || fp.Source != "api/settings" {
-			continue
-		}
-		n++
-		if fp.Method != "PATCH" {
-			t.Errorf("%q saves the whole settings record with %q", sec.Title, fp.Method)
+		for _, fp := range formPanelsIn(sec.Body) {
+			if fp.Source != "api/settings" {
+				continue
+			}
+			n++
+			if fp.Method != "PATCH" {
+				t.Errorf("%q saves the whole settings record with %q", sec.Title, fp.Method)
+			}
 		}
 	}
 	if n == 0 {
 		t.Fatal("found no settings panels; the walk is broken")
 	}
+}
+
+// formPanelsIn is every form in a section body, the ones inside a Stack too:
+// a Tuning category with a pane of another store beside it is a Stack, and a
+// walk that read only top-level forms would pass it unchecked.
+func formPanelsIn(c ui.Component) []ui.FormPanel {
+	switch v := c.(type) {
+	case ui.FormPanel:
+		return []ui.FormPanel{v}
+	case ui.Stack:
+		var out []ui.FormPanel
+		for _, ch := range v.Children {
+			out = append(out, formPanelsIn(ch)...)
+		}
+		return out
+	}
+	return nil
 }
 
 func jsonNum(f float64) string { b, _ := json.Marshal(f); return string(b) }
