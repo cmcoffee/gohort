@@ -2551,6 +2551,10 @@ func (f *FakeLLM) Streamed(i int) bool {
 // imageDescribePrompt is what the describing model is asked.
 const imageDescribePrompt = `Describe this image for an assistant that cannot see it and has to answer questions about it. Say what it shows; copy any text in it exactly; give the layout, the people and their expressions, numbers, colours and anything unusual. Plain prose, no preamble, no opinion of the image.`
 
+// imageFollowUpNote follows the descriptions a model that does not read images
+// is handed: how to ask about a detail they leave out.
+const imageFollowUpNote = `[For a detail a description does not give, call workspace(action="view_image") with path set to that picture's reference (its media#N or image#N as given with it, or its workspace path) and prompt set to your question: a model that reads images looks at the picture and answers.]`
+
 // imageNote is what goes in an image's place when nothing could describe it.
 const imageNote = "[An image was attached here. This model does not read images, and no model that does was available to describe it, so its contents are unknown.]"
 
@@ -2601,6 +2605,13 @@ func (r *retryLLM) withoutImages(ctx context.Context, messages []Message) []Mess
 		}
 		if len(images) == 0 && len(m.Videos) > 0 {
 			notes = append(notes, "[A video was attached here, and no still could be taken from it.]")
+		}
+		// A picture handed to this model, which did not ask for it: the
+		// description is all it has, so it is told how to look again. Only
+		// when something read the picture; a note that nothing could has
+		// nothing to ask about.
+		if describer != nil && len(images) > 0 {
+			notes = append(notes, imageFollowUpNote)
 		}
 		text := strings.TrimSpace(m.Content)
 		if text != "" {

@@ -332,7 +332,7 @@ func init() {
 	gt.AddAction("view_image", &GroupedToolAction{
 		Description: "Look at an image in your workspace. By default a vision model describes it and you get the description: use it to check a file before attaching it, or to pull details out of it. With show_me=true you see the image yourself on your next step instead, as you see a picture someone sends you: use it to read a screenshot, or to compare images side by side. The image must be image/* mime.",
 		Params: map[string]ToolParam{
-			"path":    {Type: "string", Description: "Workspace-relative path to the image."},
+			"path":    {Type: "string", Description: "The picture: a workspace-relative path, a media#N someone sent you, or an image#N handle."},
 			"prompt":  {Type: "string", Description: "Optional prompt to focus the description (e.g. 'is this a cat?'). Defaults to a neutral 'describe this image' request. Not used with show_me."},
 			"show_me": {Type: "boolean", Description: "true: put the image itself in front of you on your next step, instead of a description of it."},
 		},
@@ -1201,13 +1201,9 @@ func handleViewImage(args map[string]any, sess *ToolSession) (string, error) {
 	if rel == "" {
 		return "", fmt.Errorf("path is required")
 	}
-	abs, err := ResolveWorkspacePath(sess.WorkspaceDir, rel)
+	data, err := viewableImage(sess, rel)
 	if err != nil {
-		return "", fmt.Errorf("resolve path: %w", err)
-	}
-	data, err := os.ReadFile(abs)
-	if err != nil {
-		return "", fmt.Errorf("read %q: %w", rel, err)
+		return "", err
 	}
 	mime := http.DetectContentType(data)
 	if !strings.HasPrefix(mime, "image/") {
@@ -1247,6 +1243,59 @@ func handleViewImage(args map[string]any, sess *ToolSession) (string, error) {
 		return "(no response from vision-LLM)", nil
 	}
 	return strings.TrimSpace(resp.Content), nil
+}
+
+// viewableImage is the picture ref names: something sent to the agent
+// (media#N), a picture in its recent or kept images (image#…, which holds a
+// photo the person just sent), or a workspace path. Looking is not sending, so
+// the echo rules that keep a person's photo from being posted back to them do
+// not apply. A picture handed to a model that does not read images reaches it
+// as a description that names these references (the image gate), and this is
+// how that model asks about what the description left out.
+func viewableImage(sess *ToolSession, ref string) ([]byte, error) {
+	if b64, kind, ok := sess.ResolveInboundMedia(ref); ok {
+		if kind != "" && kind != "image" {
+			return nil, fmt.Errorf("%s is a %s, not a picture", ref, kind)
+		}
+		data, err := base64.StdEncoding.DecodeString(b64)
+		if err != nil {
+			return nil, fmt.Errorf("%s could not be read: %w", ref, err)
+		}
+		return data, nil
+	}
+	if strings.HasPrefix(strings.ToLower(ref), "image#") {
+		if data, ok := ResolveRecentImage(sess, ref); ok && len(data) > 0 {
+			return data, nil
+		}
+		if data, ok := ResolveKeptImage(sess, ref); ok && len(data) > 0 {
+			return data, nil
+		}
+		return nil, fmt.Errorf("no picture %s here. %s", ref, viewableList(sess))
+	}
+	abs, err := ResolveWorkspacePath(sess.WorkspaceDir, ref)
+	if err != nil {
+		return nil, fmt.Errorf("resolve path: %w", err)
+	}
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		return nil, fmt.Errorf("read %q: %w. %s", ref, err, viewableList(sess))
+	}
+	return data, nil
+}
+
+// viewableList says what pictures a reference can name, for a miss.
+func viewableList(sess *ToolSession) string {
+	var parts []string
+	if n := sess.InboundMediaCount(); n > 0 {
+		parts = append(parts, fmt.Sprintf("Sent to you: media#1 to media#%d.", n))
+	}
+	if m := strings.TrimSpace(RecentImageManifest(sess)); m != "" {
+		parts = append(parts, "Your images:\n"+m)
+	}
+	if len(parts) == 0 {
+		return "path can also be a media#N someone sent you or an image#N handle."
+	}
+	return strings.Join(parts, " ")
 }
 
 // humanSize formats bytes for human-readable display in tool results.

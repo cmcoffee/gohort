@@ -89,3 +89,21 @@ func TestViewImageSaysSoWhenNoModelReadsImages(t *testing.T) {
 		t.Error("nothing may be queued for a model that cannot see it")
 	}
 }
+
+// view_image looks at a picture by the reference a hand-off gives: a media#N
+// someone sent, not only a workspace path. A miss lists what can be looked at.
+func TestViewImageTakesAPictureSentToTheAgent(t *testing.T) {
+	sess := &ToolSession{Username: "alice", WorkspaceDir: t.TempDir()}
+	photo := []byte("\x89PNG\r\n\x1a\n the photo someone sent")
+	id := sess.RegisterInboundMedia("image", photo, "bob")
+	if _, err := handleViewImage(map[string]any{"path": id, "show_me": true}, sess); err != nil {
+		t.Fatalf("view_image %s: %v", id, err)
+	}
+	if q := sess.DrainViewImages(); len(q) != 1 || string(q[0].Data) != string(photo) {
+		t.Fatalf("the picture sent as %s must be the one looked at: %+v", id, q)
+	}
+	_, err := handleViewImage(map[string]any{"path": "nothing-here.png", "show_me": true}, sess)
+	if err == nil || !strings.Contains(err.Error(), "Sent to you: media#1") {
+		t.Errorf("a miss must list what can be looked at, got %v", err)
+	}
+}

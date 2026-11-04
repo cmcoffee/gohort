@@ -1206,3 +1206,27 @@ func TestImagesReadable(t *testing.T) {
 		t.Error("with no model configured there is nothing to say no")
 	}
 }
+
+// A picture handed to a model that does not read images comes with how to
+// look again: the description is all it has, and it did not ask for the
+// picture, so nothing else would tell it view_image can answer a question
+// about it. Not when nothing could describe it: there is nothing to ask about.
+func TestAHandedOffPictureSaysHowToLookAgain(t *testing.T) {
+	lead, leadInner, _ := gateFixture(t, true)
+	msgs := []Message{{Role: "user", Content: "media#1 from the channel", Images: [][]byte{[]byte("\x89PNG a screenshot")}}}
+	if _, err := lead.Chat(context.Background(), msgs); err != nil {
+		t.Fatal(err)
+	}
+	if got := leadInner.Sent(0)[0].Content; !strings.Contains(got, `workspace(action="view_image")`) || !strings.Contains(got, "OPEN 9-5") {
+		t.Errorf("the lead must get the description and how to ask about a detail:\n%s", got)
+	}
+
+	// Nobody reads images: the note that an image was there, and no offer.
+	lead, leadInner, _ = gateFixture(t, false)
+	if _, err := lead.Chat(context.Background(), msgs); err != nil {
+		t.Fatal(err)
+	}
+	if got := leadInner.Sent(0)[0].Content; strings.Contains(got, "view_image") {
+		t.Errorf("with nothing to describe the picture there is nothing to ask about:\n%s", got)
+	}
+}
