@@ -998,3 +998,29 @@ func TestAPanickedPassIsReportedAsNotFinishing(t *testing.T) {
 		t.Errorf("the panicked run was reported as %+v", got)
 	}
 }
+
+// Only a short "## " line outside a code block opens a section. A Python
+// comment in a flattened code sample made 1,850 characters of code a heading,
+// which no split could fit through the embedder; and a comment inside a fenced
+// block is code. Either way the line stays in the text.
+func TestOnlyAShortLineOutsideCodeIsAHeading(t *testing.T) {
+	code := "## TENSORFLOW CODE " + strings.Repeat("train_dataset = train_dataset . map ( lambda x , y : x ) ", 30)
+	doc := "## Fine-tuning\n\nSet up the model first.\n\n" + code + "\n\n```python\n## not a heading\nmodel.fit()\n```\n\n## Results\n\nIt converged.\n"
+	chunks := splitReport(doc, false)
+	var sections []string
+	body := ""
+	for _, c := range chunks {
+		// A long section is cut into parts; the heading is what counts.
+		base, _, _ := strings.Cut(c.Section, " (part ")
+		if len(sections) == 0 || sections[len(sections)-1] != base {
+			sections = append(sections, base)
+		}
+		body += c.Text
+	}
+	if got := strings.Join(sections, " | "); got != "Fine-tuning | Results" {
+		t.Errorf("sections = %q, want the two real headings only", got)
+	}
+	if !strings.Contains(body, "TENSORFLOW CODE") || !strings.Contains(body, "## not a heading") {
+		t.Error("a line that is not a heading must stay in the text, where it is searched")
+	}
+}

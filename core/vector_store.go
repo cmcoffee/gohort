@@ -381,9 +381,13 @@ func splitReport(report string, dropBibliography bool) []struct{ Section, Text s
 		}
 		curBuf.Reset()
 	}
+	inFence := false
 	for _, line := range lines {
 		trim := strings.TrimSpace(line)
-		if strings.HasPrefix(trim, "## ") {
+		if strings.HasPrefix(trim, "```") || strings.HasPrefix(trim, "~~~") {
+			inFence = !inFence
+		}
+		if isSectionHeading(trim, inFence) {
 			flush()
 			curSection = strings.TrimSpace(strings.TrimPrefix(trim, "##"))
 			continue
@@ -393,6 +397,19 @@ func splitReport(report string, dropBibliography bool) []struct{ Section, Text s
 	}
 	flush()
 	return chunks
+}
+
+// maxSectionHeadingChars is the longest line taken as a section heading.
+const maxSectionHeadingChars = 200
+
+// isSectionHeading reports whether a line opens a section: "## " and a
+// heading's length, outside a fenced code block. A Python comment in a code
+// sample ("## TENSORFLOW CODE") is not one: in a page whose code had been
+// flattened onto long lines, one such comment made 1,850 characters of code a
+// section's heading, which rode on every piece of its text and no split could
+// make fit the embedder. A long line stays in the text, where it is searched.
+func isSectionHeading(trim string, inFence bool) bool {
+	return !inFence && strings.HasPrefix(trim, "## ") && len(trim) <= maxSectionHeadingChars+3
 }
 
 // splitOnParagraphsCap breaks text into chunks no longer than cap,

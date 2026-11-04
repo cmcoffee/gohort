@@ -635,14 +635,21 @@ func TestTheSplitDepthCapIsASizeGiveUp(t *testing.T) {
 	}
 }
 
-// A PDF's pages go through the same clipped header as every other ingest.
+// A PDF's page with a long "## " line embeds: the line is text, not a heading.
 func TestAPagedIngestClipsALongHeading(t *testing.T) {
 	sizeLimitedEmbedServer(t, 600)
 	db := &DBase{Store: kvlite.MemStore()}
 	heading := "PYTORCH CODE " + strings.Repeat("model . train () ", 110)
 	IngestPagedReport(context.Background(), db, "collection:t", "pdf", "## "+heading+"\n\noptim . step ()\n")
 	rows := ChunksWhere(db, func(c EmbeddedChunk) bool { return c.ReportID == "pdf" })
-	if len(rows) != 1 || len(rows[0].Vector) == 0 {
-		t.Fatalf("the page must embed despite its long heading, got %d row(s)", len(rows))
+	if len(rows) == 0 {
+		t.Fatal("the page stored nothing")
+	}
+	// The long line is text now, not a heading (isSectionHeading), so every
+	// row embeds and none carries it as its section.
+	for _, r := range rows {
+		if len(r.Vector) == 0 || len(r.Section) > maxSectionHeadingChars+20 {
+			t.Errorf("a row of the page did not embed, or kept the long line as its heading: section %d chars", len(r.Section))
+		}
 	}
 }
