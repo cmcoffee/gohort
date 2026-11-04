@@ -2719,6 +2719,25 @@ func imageDescriber(asking *retryLLM) LLM {
 	return nil
 }
 
+// ImagesReadable reports whether any configured model reads images. False
+// only when every one has "Reads images" off (LLMProviderConfig.NoImages):
+// then a picture can be neither shown to a model nor described by one, and a
+// tool about to look at one says so instead of asking a model about a note
+// that stands where the picture was. No model configured is not that case.
+func ImagesReadable() bool {
+	configured := false
+	for _, m := range []LLM{SharedWorkerLLM(), SharedLeadLLM()} {
+		if m == nil {
+			continue
+		}
+		configured = true
+		if r, ok := m.(*retryLLM); !ok || !r.noImages {
+			return true
+		}
+	}
+	return !configured
+}
+
 // describeImage is one picture's description, from the cache when it has
 // been described before.
 func describeImage(ctx context.Context, describer LLM, img []byte) string {

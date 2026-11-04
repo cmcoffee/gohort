@@ -63,3 +63,29 @@ func TestShowMePutsTheImageInFrontOfTheModel(t *testing.T) {
 		t.Error("a description with no model bound must fail as before")
 	}
 }
+
+// With no model that reads images, view_image says so in either form rather
+// than asking a model to describe a note that stands where the picture was.
+func TestViewImageSaysSoWhenNoModelReadsImages(t *testing.T) {
+	blind, err := NewLLMFromConfig(LLMProviderConfig{Provider: "openai", Endpoint: "http://127.0.0.1:1/v1", Model: "m", APIKey: "k", NoImages: true})
+	if err != nil {
+		t.Fatalf("build a model: %v", err)
+	}
+	prevW, prevL := SharedWorkerLLM(), SharedLeadLLM()
+	SetSharedLLMs(blind, blind)
+	t.Cleanup(func() { SetSharedLLMs(prevW, prevL) })
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "screen.png"), []byte("\x89PNG\r\n\x1a\n a screenshot"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	sess := &ToolSession{Username: "alice", WorkspaceDir: dir, LLM: blind}
+	for _, args := range []map[string]any{{"path": "screen.png"}, {"path": "screen.png", "show_me": true}} {
+		_, err := handleViewImage(args, sess)
+		if err == nil || !strings.Contains(err.Error(), "no model on this deployment reads images") {
+			t.Errorf("%v: want the no-model refusal, got %v", args, err)
+		}
+	}
+	if q := sess.DrainViewImages(); len(q) != 0 {
+		t.Error("nothing may be queued for a model that cannot see it")
+	}
+}

@@ -1213,6 +1213,12 @@ func handleViewImage(args map[string]any, sess *ToolSession) (string, error) {
 	if !strings.HasPrefix(mime, "image/") {
 		return "", fmt.Errorf("%q is %s, not an image: use cat for text", rel, mime)
 	}
+	// No model here reads images: neither form can work, and asking one to
+	// describe a picture it is shown only a note about invites an invented
+	// answer. Say so, so the agent tells the person rather than guessing.
+	if !ImagesReadable() {
+		return "", fmt.Errorf("no model on this deployment reads images (every configured model has \"Reads images\" off), so %s cannot be looked at. Tell the person: an administrator can turn \"Reads images\" on for a model that supports pictures, in Admin > Models", rel)
+	}
 	// The image itself, for the model's next step: a description is a second
 	// model's reading, and a screenshot's small print or two pictures compared
 	// side by side need the pixels. The same queue the image tools use to

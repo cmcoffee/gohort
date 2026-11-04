@@ -1189,3 +1189,20 @@ func TestAnAnthropicTierSpeaksToItsAddress(t *testing.T) {
 		t.Errorf("sent to %q with key %q, got %q", path, key, resp.Content)
 	}
 }
+
+// Whether any configured model reads images: false only when every one has
+// "Reads images" off. No model configured is not that case.
+func TestImagesReadable(t *testing.T) {
+	gateFixture(t, true)
+	if !ImagesReadable() {
+		t.Error("the worker reads images, so images are readable")
+	}
+	gateFixture(t, false)
+	if ImagesReadable() {
+		t.Error("neither model reads images, so none are readable")
+	}
+	SetSharedLLMs(nil, nil)
+	if !ImagesReadable() {
+		t.Error("with no model configured there is nothing to say no")
+	}
+}
