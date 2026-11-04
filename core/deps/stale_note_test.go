@@ -117,3 +117,17 @@ func TestATomorrowDatedBuildIsNotStale(t *testing.T) {
 		t.Errorf("a build dated tomorrow is current, got %v %q", stale, note)
 	}
 }
+
+// The age is counted in dates: across the autumn clock change, a build from
+// summer read a day too old in the last hour of every evening, since that span
+// holds one 25-hour day.
+func TestABuildsAgeIsCountedInDates(t *testing.T) {
+	la, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Skip("no zone database:", err)
+	}
+	now := time.Date(2026, 11, 3, 23, 10, 0, 0, la) // after the clocks went back
+	if _, note := dateVersionStaleAt("2026.09.08", 42*24*time.Hour, now); note != "56 days old" {
+		t.Errorf("Sep 8 to Nov 3 is 56 days, got %q", note)
+	}
+}

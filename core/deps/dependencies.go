@@ -179,9 +179,20 @@ func dateVersionStaleAt(version string, staleAfter time.Duration, now time.Time)
 		return false, ""
 	}
 	if age := now.Sub(t); age > staleAfter {
-		return true, fmt.Sprintf("%d days old", int(age.Hours()/24))
+		return true, fmt.Sprintf("%d days old", calendarDaysBetween(t, now))
 	}
 	return false, ""
+}
+
+// calendarDaysBetween is how many dates lie from day to now's date, in now's
+// zone. Counted by date, not by hours over 24: across a daylight-saving change
+// a day is 23 or 25 hours, and in the last hour of a winter evening a build
+// from summer read a day older than it was.
+func calendarDaysBetween(day, now time.Time) int {
+	y, m, d := now.Date()
+	today := time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+	y, m, d = day.In(now.Location()).Date()
+	return int(today.Sub(time.Date(y, m, d, 0, 0, 0, 0, time.UTC)).Hours() / 24)
 }
 
 // dependencyInstallHint returns an OS-appropriate one-line install command, or
