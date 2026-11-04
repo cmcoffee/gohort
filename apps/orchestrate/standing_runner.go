@@ -158,7 +158,7 @@ func (T *OrchestrateApp) runStanding(ctx context.Context, sa StandingAgent) Stan
 	}
 	// liveRun goes in so the dispatch reports on THIS row rather than
 	// opening a second one for the same fire.
-	run, err := T.runAgentSyncAppTools(ctx, sa.Owner, sa.Owner, sa.AgentID, mission, gate.confirm,
+	run, err := T.runAgentSyncAppTools(withConfirmRefusal(ctx, gate.refusal), sa.Owner, sa.Owner, sa.AgentID, mission, gate.confirm,
 		append(standingPacingTool(sa, pacingAsk), tnotes.tool()...), liveRun, sa.DispatchedBy...)
 	out, hitRoundCap, toolTrace := run.Text, run.HitRoundCap, run.Trace
 	if err != nil {

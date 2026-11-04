@@ -169,18 +169,30 @@ func TestUnwatchedRunsUseTheOwnersGate(t *testing.T) {
 	sess := &ToolSession{Username: "alice"}
 	sess.TempTools = []*TempTool{{Name: "asks", Mode: TempToolModeShell, ConfirmInChat: true}, {Name: "plain", Mode: TempToolModeShell}}
 	turn := &chatTurn{app: app, user: "alice"}
-	gate := turn.runConfirm("agent1", sess)
+	gate, why := turn.runConfirm("agent1", sess)
 	if gate("fetch_url_bank", "url: https://bank.example/x") {
 		t.Error("a call its credential asks about went through with nobody watching")
 	}
 	if gate("asks", "") {
 		t.Error("a tool marked ask-before-every-call went through with nobody watching")
 	}
+	// The model is told why, once: "denied by user" on a run nobody watched
+	// left a Builder sent work by another agent unable to see what refused it.
+	if w := why("asks"); !strings.Contains(w, "asks needs the owner's approval") || !strings.Contains(w, "Authorizations") {
+		t.Errorf("the refusal must say it waits for the owner's approval, and where: %q", w)
+	}
+	if w := why("asks"); w != "" {
+		t.Errorf("the reason is given once, then cleared: %q", w)
+	}
 	if !gate("plain", "") {
 		t.Error("an ordinary tool was stopped")
 	}
-	if (&chatTurn{user: "alice"}).runConfirm("agent1", sess)("plain", "") {
+	noApp, noAppWhy := (&chatTurn{user: "alice"}).runConfirm("agent1", sess)
+	if noApp("plain", "") {
 		t.Error("with no app to queue with, a run refuses rather than approves")
+	}
+	if !strings.Contains(noAppWhy("plain"), "nowhere to ask") {
+		t.Error("a refusal with nowhere to ask must say so")
 	}
 }
 
@@ -226,5 +238,27 @@ func TestAStrangerOnAChannelMeetsTheShareSwitches(t *testing.T) {
 	web := &chatTurn{user: "owner", ownerUser: "owner", agent: agent}
 	if !web.ownLayerShared(defaultShareNotes) {
 		t.Error("the owner's own web run sees their own facts")
+	}
+}
+
+// Every run that can be refused an approval tells its model why: the loop's
+// own fallback is "denied by user", which on a run nobody watched is not true,
+// and a Builder sent work by another agent gave up on a tool over refusals it
+// could not see.
+func TestEveryRefusingRunSaysWhy(t *testing.T) {
+	for _, c := range []struct{ file, want string }{
+		{"runner.go", "ConfirmRefusal:      t.confirmRefusal,"},
+		{"runner_worker.go", "ConfirmRefusal:      t.confirmRefusal,"},
+		{"agent_dispatch.go", "ConfirmRefusal: gate.refusal,"},
+		{"agent_dispatch.go", "ConfirmRefusal:      sd.refusal,"},
+		{"agent_dispatch.go", "sd.refusal = confirmRefusalFrom(sd.ctx)"},
+		{"scheduled_updates.go", "ConfirmRefusal:      fr.gate.refusal,"},
+		{"agents_grouped_tool.go", "ConfirmRefusal:      ar.runRefusalFn,"},
+		{"pipeline_tools.go", "ConfirmRefusal:      stageRefusal,"},
+		{"standing_runner.go", "withConfirmRefusal(ctx, gate.refusal)"},
+	} {
+		if !strings.Contains(readFile(t, c.file), c.want) {
+			t.Errorf("%s no longer has %q", c.file, c.want)
+		}
 	}
 }

@@ -1035,6 +1035,7 @@ func (fr *fireRun) runLoop() {
 		DailySpendUSD:       fr.agent.DailySpendUSD,
 		SharedBudgets:       familyBudgets(fr.agent),
 		Confirm:             fr.gate.confirm,
+		ConfirmRefusal:      fr.gate.refusal,
 		AskFirst:            fr.subTurn.asksFirst, // the owner's ask marks, and never-unattended ones
 		GuardrailCheck:      fr.subTurn.guardrailEnforcer().Check,
 		GuardrailActionGate: fr.subTurn.guardrailEnforcer().ActionGate,

@@ -100,6 +100,8 @@ type autonomousGate struct {
 	// withheld is the other refusal kind, kept apart because it means something
 	// different to the owner: nothing is waiting on them, they already decided.
 	withheld []string
+	// why is what the model is told about the last refusal (refusal).
+	why string
 }
 
 // newAutonomousGate builds the gate for an agent's autonomous run, snapshotting
@@ -327,6 +329,8 @@ func (g *autonomousGate) confirm(name, args string) bool {
 	// list, which the run's attention line reports in its own words.
 	if g.noUnattended[name] {
 		g.withheld = append(g.withheld, name)
+		g.why = "NOT RUN: the owner has marked " + name + " never to run without somebody watching, and nobody is watching this run. " +
+			"Do not try to get the same result another way: finish without it, and say plainly that " + name + " needs doing while the owner is there."
 		Log("[orchestrate/autonomous] agent=%s withheld %q: marked never unattended", g.agentID, name)
 		// The only durable owner-facing trace this refusal gets. There is no
 		// queue entry and no badge, by design, so without this the schedule
@@ -340,11 +344,46 @@ func (g *autonomousGate) confirm(name, args string) bool {
 	// not approved, and the log says why.
 	if strings.TrimSpace(g.agentID) == "" {
 		g.withheld = append(g.withheld, name)
+		g.why = "NOT RUN: " + name + " asks the owner first, and this unattended run has no agent the owner could approve it for. " +
+			"Do not try to get the same result another way: finish without it, and say plainly that " + name + " was not run."
 		Log("[orchestrate/autonomous] owner=%s withheld %q: it asks first, and an unattended run with no agent behind it has nobody to ask", g.owner, name)
 		return false
 	}
 	g.queue(name, args)
+	g.why = "NOT RUN: " + name + " needs the owner's approval, and nobody is watching this run. The request is waiting in their Authorizations; once they approve it there, it runs on later runs. " +
+		"Do not try to get the same result another way: finish without it, and say plainly that " + name + " is waiting for the owner's approval."
 	return false
+}
+
+// confirmRefusalKey carries a gate's refusal to a dispatch that was handed the
+// gate's confirm by its caller (a standing run), so the run can say why too.
+type confirmRefusalKey struct{}
+
+func withConfirmRefusal(ctx context.Context, refusal func(string) string) context.Context {
+	return context.WithValue(ctx, confirmRefusalKey{}, refusal)
+}
+
+// confirmRefusalFrom is the refusal a caller put on ctx, or nil.
+func confirmRefusalFrom(ctx context.Context) func(string) string {
+	if ctx == nil {
+		return nil
+	}
+	f, _ := ctx.Value(confirmRefusalKey{}).(func(string) string)
+	return f
+}
+
+// refusal is the agent loop's ConfirmRefusal for a run this gate approves:
+// why the last call was not run, once. Without it the model was told "denied
+// by user" on a run nobody was watching, and a Builder sent work by another
+// agent, refused three updates "for reasons it couldn't see", gave up on the
+// tool and made a new one.
+func (g *autonomousGate) refusal(string) string {
+	if g == nil {
+		return ""
+	}
+	why := g.why
+	g.why = ""
+	return why
 }
 
 // ownerAsksFirst reports whether the owner asked to be consulted before every

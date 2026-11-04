@@ -1223,6 +1223,7 @@ type agentsRun struct {
 	runRoute          string
 	abortTools        []string
 	runConfirmFn      func(name string, args string) bool
+	runRefusalFn      func(name string) string
 	runFallback       func(name string) (AgentToolDef, bool)
 	runDynamic        func() []AgentToolDef
 	buildCheck        *dispatchBuildCheck
@@ -1698,7 +1699,7 @@ func (ar *agentsRun) prepareInput() {
 	}
 	// An agent that plans on the lead hands its work to work_step
 	// (runner_lead_plans_dispatch.go).
-	ar.runConfirmFn = t.runConfirm(ar.target.ID, ar.subSess, ar.subTurn.asksFirst)
+	ar.runConfirmFn, ar.runRefusalFn = t.runConfirm(ar.target.ID, ar.subSess, ar.subTurn.asksFirst)
 	ar.runFallback, ar.runDynamic = ar.subTurn.lazyToolDef, ar.subTurn.dynamicNewTempTools(ar.subSess)
 	if ar.subTurn.applyDispatchLeadPlans(ar.subSess, ar.runPin, ar.msg, &ar.sysPrompt, &ar.tools, ar.runConfirmFn) {
 		ar.runFallback, ar.runDynamic = nil, nil
@@ -1726,6 +1727,7 @@ func (ar *agentsRun) configureLoop() {
 		// Asked of whoever is watching the calling turn; with nobody
 		// watching, queued for the owner (see runConfirm).
 		Confirm:             ar.runConfirmFn,
+		ConfirmRefusal:      ar.runRefusalFn,
 		AskFirst:            ar.subTurn.asksFirst, // its marks and the caller's (ask_first.go)
 		GuardrailCheck:      ar.subTurn.guardrailEnforcer().Check,
 		GuardrailActionGate: ar.subTurn.guardrailEnforcer().ActionGate,

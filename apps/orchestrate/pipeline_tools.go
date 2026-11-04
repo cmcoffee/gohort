@@ -89,6 +89,7 @@ func (t *chatTurn) runPipelineSubAgent(ctx context.Context, sysPrompt, userMsg s
 	// a distinct agent with its own rules is doing the work.) The stage prompt can
 	// carry fetched or user-supplied text, so the input pre-pass applies too.
 	stageMsgs, gDecline := t.applyInputGuardrail([]Message{{Role: "user", Content: userMsg}})
+	stageConfirm, stageRefusal := t.runConfirm(t.agent.ID, subSess)
 	resp, _, err2 := t.app.RunAgentLoop(ctx, stageMsgs, AgentLoopConfig{
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
@@ -96,7 +97,8 @@ func (t *chatTurn) runPipelineSubAgent(ctx context.Context, sysPrompt, userMsg s
 		SystemPrompt:        sysPrompt,
 		Tools:               tools,
 		MaxRounds:           maxRounds,
-		Confirm:             t.runConfirm(t.agent.ID, subSess),
+		Confirm:             stageConfirm,
+		ConfirmRefusal:      stageRefusal,
 		AskFirst:            t.asksFirst, // the owner's ask marks reach every tool (ask_first.go)
 		GuardrailCheck:      t.guardrailEnforcer().Check,
 		GuardrailActionGate: t.guardrailEnforcer().ActionGate,

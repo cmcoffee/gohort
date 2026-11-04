@@ -688,6 +688,7 @@ type syncDispatch struct {
 	agentKey          string
 	message           string
 	confirm           func(string, string) bool
+	refusal           func(string) string // why confirm said no, for the model (ConfirmRefusal)
 	appTools          []AgentToolDef
 	liveRun           *Run
 	via               []string
@@ -1057,8 +1058,11 @@ func (sd *syncDispatch) holdUnattended() {
 		gate := sd.T.newAutonomousGate(sd.agentOwner, sd.target.ID, sd.subSess)
 		sd.subTurn.neverUnattended = gate.neverUnattended
 		if sd.confirm == nil {
-			sd.confirm = gate.confirm
+			sd.confirm, sd.refusal = gate.confirm, gate.refusal
 		}
+	}
+	if sd.refusal == nil {
+		sd.refusal = confirmRefusalFrom(sd.ctx)
 	}
 	if sd.confirm == nil {
 		sd.confirm = func(string, string) bool { return true }
@@ -1206,6 +1210,7 @@ func (sd *syncDispatch) configureLoop() {
 		BackgroundWork:      backgroundWorkOf(sd.subSess, func() string { return "" }),
 		BackgroundEstimate:  func() string { return sd.subSess.Detach.EstimateText() },
 		Confirm:             confirm,
+		ConfirmRefusal:      sd.refusal,
 		AskFirst:            sd.subTurn.asksFirst, // its marks and its delegators' (ask_first.go)
 		GuardrailCheck:      sd.subTurn.guardrailEnforcer().Check,
 		GuardrailActionGate: sd.subTurn.guardrailEnforcer().ActionGate,
@@ -2343,7 +2348,8 @@ func (cr *continuingRun) configureLoop() {
 		// writes" asks about is queued for the owner rather than let through.
 		// This used to approve everything, which left every one of those
 		// settings without effect on exactly the runs a stranger can start.
-		Confirm: gate.confirm,
+		Confirm:        gate.confirm,
+		ConfirmRefusal: gate.refusal,
 		// And what the owner asked to be asked about first, which this loop
 		// never consulted, so an ask mark meant nothing on a channel turn.
 		AskFirst:            cr.subTurn.asksFirst,

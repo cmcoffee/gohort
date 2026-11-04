@@ -201,19 +201,23 @@ func toolCredentials(tt TempTool) []string {
 // owner's unattended gate, which queues the call for approval. These runs
 // used to approve every call, so a credential that asks first, "confirm
 // writes" and the owner's ask-before marks had no effect on them.
-func (t *chatTurn) runConfirm(agentID string, sess *ToolSession, asks ...func(string) bool) func(name, args string) bool {
+func (t *chatTurn) runConfirm(agentID string, sess *ToolSession, asks ...func(string) bool) (confirm func(name, args string) bool, refusal func(string) string) {
 	if t != nil && t.sse != nil {
-		return t.confirmFuncForAsks(sess, asks...)
+		return t.confirmFuncForAsks(sess, asks...), t.confirmRefusal
 	}
 	if t == nil || t.app == nil {
 		// No app to queue with: refuse rather than approve.
-		return func(string, string) bool { return false }
+		return func(string, string) bool { return false },
+			func(name string) string {
+				return "NOT RUN: " + name + " needs approval, and there was nowhere to ask for it."
+			}
 	}
 	_, owner := t.ownerView()
 	if owner == "" {
 		owner = t.user
 	}
-	return t.app.newAutonomousGate(owner, agentID, sess).confirm
+	gate := t.app.newAutonomousGate(owner, agentID, sess)
+	return gate.confirm, gate.refusal
 }
 
 // confirmFuncFor builds the AgentLoopConfig.Confirm hook for this
