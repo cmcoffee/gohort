@@ -387,6 +387,14 @@ func (T *Servitor) handleApplianceMemory(w http.ResponseWriter, r *http.Request)
 		http.NotFound(w, r)
 		return
 	}
+	// Reading it is anyone's the system is shared with; writing it is the
+	// owner's. The investigator reads these notes on every run and acts on
+	// them with the owner's own login, so a recipient who could plant one
+	// would be steering what runs on the owner's machine.
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && !canManageAppliance(userID, a, RequestIsAdmin(r)) {
+		http.Error(w, "only the system's owner can change what it remembers", http.StatusForbidden)
+		return
+	}
 	udb = ownerUDB
 	orch := agenthost.Get()
 	if orch == nil {

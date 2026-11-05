@@ -294,7 +294,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 					{Field: "created", Format: "reltime", Flex: 0, Mute: true},
 				},
 				RowActions: []ui.RowAction{
-					// What approving a tool request would publish: a diff
+					// What approving a tool or skill request would publish: a diff
 					// against the published version, or the whole new tool.
 					ui.ExpandIf("Review", "review", "", ui.RecordView{
 						Pairs: []ui.DisplayPair{{Label: "What approving publishes", Field: "review", Block: true}},

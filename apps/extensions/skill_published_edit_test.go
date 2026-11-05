@@ -46,14 +46,31 @@ func TestAnAuthorCanEditAndMuteTheirPublishedSkill(t *testing.T) {
 	var form map[string]any
 	json.Unmarshal(w.Body.Bytes(), &form)
 
-	// Edit saves, into the deployment's copy.
+	// Edit saves, as a request: everybody keeps the approved text until an
+	// administrator approves the new one, and the author's row says so.
 	form["instructions"] = "summarize"
 	body, _ := json.Marshal(form)
 	if w := call("POST", "/api/skills?id="+made.ID, string(body)); w.Code/100 != 2 {
 		t.Fatalf("the Edit form cannot save a published skill: %d %s", w.Code, w.Body.String())
 	}
+	if got := DeploymentSkills(AuthDB()); len(got) != 1 || got[0].Instructions != "extract" {
+		t.Fatalf("an unapproved edit reached everybody: %+v", got)
+	}
+	var listed []map[string]any
+	json.Unmarshal(call("GET", "/api/skills", "").Body.Bytes(), &listed)
+	if len(listed) != 1 || listed[0]["edit_pending"] != true {
+		t.Fatalf("the row does not say the edit waits: %+v", listed)
+	}
+	// Opening Edit again shows the author their pending text.
+	json.Unmarshal(call("GET", "/api/skills?id="+made.ID+"&view=form", "").Body.Bytes(), &form)
+	if form["instructions"] != "summarize" {
+		t.Errorf("the Edit form reopened on the published text: %v", form["instructions"])
+	}
+	if err := promotion.Approve(AuthDB(), promotion.RequestKey(SkillPromotionKind, "alice", "pdf"), "admin"); err != nil {
+		t.Fatalf("approve the edit: %v", err)
+	}
 	if got := DeploymentSkills(AuthDB()); len(got) != 1 || got[0].Instructions != "summarize" {
-		t.Fatalf("the edit did not reach the deployment's copy: %+v", got)
+		t.Fatalf("the approved edit did not reach the deployment's copy: %+v", got)
 	}
 	if got := LoadSkills(AuthDB(), "alice"); len(got) != 0 {
 		t.Errorf("the edit made a private copy: %+v", got)
@@ -80,8 +97,23 @@ func TestAnAuthorCanEditAndMuteTheirPublishedSkill(t *testing.T) {
 	if w := call("POST", "/api/skills?action=enable&id="+made.ID, ""); w.Code/100 != 2 {
 		t.Fatalf("Enable on a published skill: %d %s", w.Code, w.Body.String())
 	}
-	if got := DeploymentSkills(AuthDB()); len(got) != 1 || got[0].Instructions != "summarize" ||
-		strings.Join(got[0].AllowedTools, ",") != "t1" {
-		t.Errorf("the published skill did not come back as edited: %+v", got)
+	// Muting and unmuting went through at once; the picker's change still
+	// waits, and muting did not lose it.
+	if got := DeploymentSkills(AuthDB()); len(got) != 1 || got[0].Instructions != "summarize" || len(got[0].AllowedTools) != 0 {
+		t.Errorf("the published skill did not come back as approved: %+v", got)
+	}
+	if d := PublishedSkillDrafts(AuthDB(), "alice"); len(d) != 1 || strings.Join(d[0].AllowedTools, ",") != "t1" || !d[0].AwaitingApproval {
+		t.Errorf("the picker's change is not waiting: %+v", d)
+	}
+}
+
+// Restoring an old version of a published skill is an edit like any other,
+// and the history page says it went to an administrator.
+func TestRestoringAPublishedSkillSaysItWaits(t *testing.T) {
+	if got := restoreDoneFor(ownedSkill{published: true}, "alice"); !strings.Contains(got, "administrator") {
+		t.Errorf("a published skill's restore says %q", got)
+	}
+	if got := restoreDoneFor(ownedSkill{}, "alice"); got != "" {
+		t.Errorf("a private skill's restore says %q", got)
 	}
 }

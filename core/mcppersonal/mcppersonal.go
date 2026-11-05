@@ -215,6 +215,11 @@ func Save(s Server, token string, hold bool) error {
 	if prev, ok := Load(s.Owner, s.Name); ok {
 		s.Disabled, s.AdminDisabled, s.AwaitingApproval, s.Created = prev.Disabled, prev.AdminDisabled, prev.AwaitingApproval, prev.Created
 		moved := origin(prev.URL) != origin(s.URL)
+		// An approval is for the server it was given for: one moved to
+		// another while servers need approval waits for it again.
+		if moved && hold {
+			s.AdminDisabled, s.AwaitingApproval = true, true
+		}
 		if !moved {
 			s.Tools, s.CheckedAt, s.CheckErr = prev.Tools, prev.CheckedAt, prev.CheckErr
 		} else {
@@ -264,6 +269,9 @@ func checkURL(owner, raw string) error {
 	}
 	return nil
 }
+
+// SameOrigin reports two server addresses on the same scheme and host.
+func SameOrigin(a, b string) bool { return origin(a) == origin(b) }
 
 func origin(raw string) string {
 	raw = strings.TrimSpace(raw)

@@ -1696,6 +1696,12 @@ func RollbackMachineDef(udb Database, id, ref string) (MachineDef, error) {
 		return MachineDef{}, fmt.Errorf("kept version #%d could not be read", rev.Seq)
 	}
 	restored.ID = id
+	// Who it reaches stays as it is now (RollbackPipelineDef).
+	var current MachineDef
+	if udb.Get(MachineDefsTable, id, &current) {
+		restored.AllowedUsers, restored.Editors, restored.Published = current.AllowedUsers, current.Editors, current.Published
+		restored.Owner = current.Owner
+	}
 	return SaveMachineDefAs(udb, restored, fmt.Sprintf("rolled back to #%d", rev.Seq)), nil
 }
 

@@ -383,6 +383,9 @@ func (T *OrchestrateApp) machineSave(c *jsonapi.Call, body MachineDef) (any, err
 	// the promotion queue; an edit form must not be able to assert it.
 	body.Published = def.Published
 	body.Created = def.Created
+	// The undo snapshot is the server's too: undo puts it back whole, so a
+	// form that wrote one could have it publish or share the record.
+	body.Previous = def.Previous
 	if err := body.Validate(); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}

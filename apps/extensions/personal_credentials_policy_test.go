@@ -35,6 +35,17 @@ func TestANewCredentialFollowsThePolicy(t *testing.T) {
 	if code := post(`{"name":"kept","type":"bearer","base_url":"https://k.test","description":"edited"}`); code >= 300 {
 		t.Errorf("an edit to one they have was refused: %d", code)
 	}
+	if c, _ := Secure().LoadUser("alice", "kept"); c.AwaitingApproval || c.Disabled {
+		t.Errorf("an edit on the same host was held: %+v", c)
+	}
+	// Pointed at another host, its key would go there: that is adding a key
+	// for that host, so it waits for an administrator.
+	if code := post(`{"name":"kept","type":"bearer","base_url":"https://elsewhere.test"}`); code >= 300 {
+		t.Errorf("moving it: %d", code)
+	}
+	if c, _ := Secure().LoadUser("alice", "kept"); !c.AwaitingApproval || !c.Disabled {
+		t.Errorf("a credential moved to another host kept its approval: %+v", c)
+	}
 
 	if err := governance.Set(governance.Credentials, string(governance.NeedsApproval)); err != nil {
 		t.Fatal(err)

@@ -60,6 +60,24 @@ func TestAPersonalMCPServerFollowsThePolicy(t *testing.T) {
 	if code, _ := do("POST", "/api/mcp-servers", `{"name":"linear","url":"https://mcp.invalid/v2"}`); code >= 300 {
 		t.Errorf("an edit to one they have was refused: %d", code)
 	}
+	// Approved, then pointed at another server: that is adding that server,
+	// so it waits for an administrator again. Another path on the same one
+	// is still just an edit.
+	if err := mcppersonal.AdminSetDisabled("alice", "linear", false); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := do("POST", "/api/mcp-servers", `{"name":"linear","url":"https://mcp.invalid/v3"}`); code >= 300 {
+		t.Errorf("an edit on the same server: %d", code)
+	}
+	if s, _ := mcppersonal.Load("alice", "linear"); !s.Usable() {
+		t.Errorf("an edit on the same server lost its approval: %+v", s)
+	}
+	if code, _ := do("POST", "/api/mcp-servers", `{"name":"linear","url":"https://elsewhere.invalid/mcp"}`); code >= 300 {
+		t.Errorf("moving it: %d", code)
+	}
+	if s, _ := mcppersonal.Load("alice", "linear"); s.Usable() || !s.AwaitingApproval {
+		t.Errorf("a server moved elsewhere kept its approval: %+v", s)
+	}
 	if code, _ := do("DELETE", "/api/mcp-servers?name=linear", ""); code >= 300 {
 		t.Errorf("delete: %d", code)
 	}

@@ -387,7 +387,7 @@ func (T *Servitor) handleApplianceSave(c *jsonapi.Call, req Appliance) (any, err
 	// Saving a system is the owner saying "this is the machine": the next
 	// connection trusts whatever key it presents now (a rebuilt host).
 	if req.Type == "ssh" {
-		forgetHostKey(req.Host, req.Port)
+		forgetHostKey(owner, req.ID, req.Host, req.Port)
 	}
 	// Repo appliances: clone + ingest under the OWNER (one shared clone) on
 	// create or when the store is empty.

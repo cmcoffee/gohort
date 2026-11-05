@@ -80,6 +80,7 @@ func acquireConn(userID string, appliance Appliance) (*ssh.Client, error) {
 	}
 
 	a := &Servitor{}
+	a.input.pin_owner, a.input.pin_system = appliance.Owner, appliance.ID
 	a.input.host = appliance.Host
 	a.input.port = appliance.Port
 	if a.input.port == 0 {
@@ -129,9 +130,15 @@ func connIsAlive(c *ssh.Client) bool {
 	return true
 }
 
-// hostKeyStore holds the SSH host keys pinned on first use, keyed
-// "host:port". Set once the app's store is known (RegisterRoutes); nil (the
-// command-line run) keeps the historical accept-any behaviour.
+// hostKeyStore holds the SSH host keys pinned on first use, keyed by the
+// system's owner, the system, and "host:port". Set once the app's store is
+// known (RegisterRoutes); nil (the command-line run) keeps the historical
+// accept-any behaviour.
+//
+// Per owner and system, not per host: pinned by host alone, any user saving a
+// system at the same address cleared everybody's pin, and the next connection
+// of anybody's trusted whatever answered, password and all. A pin made by host
+// alone before this still counts, until the system's own pin takes its place.
 var hostKeyStore Database
 
 const hostKeyTable = "ssh_host_keys"
@@ -142,32 +149,42 @@ const hostKeyTable = "ssh_host_keys"
 // anybody able to sit between gohort and the machine. Saving the appliance
 // again (forgetHostKey) re-trusts the host's current key, for a machine that
 // was really rebuilt.
-func pinnedHostKey(addr string) ssh.HostKeyCallback {
+func pinnedHostKey(owner, system, addr string) ssh.HostKeyCallback {
 	if hostKeyStore == nil {
 		return ssh.InsecureIgnoreHostKey()
 	}
+	k := hostPinKey(owner, system, addr)
 	return func(_ string, _ net.Addr, key ssh.PublicKey) error {
 		fp := ssh.FingerprintSHA256(key)
 		var pinned string
-		if hostKeyStore.Get(hostKeyTable, strings.ToLower(addr), &pinned) && pinned != "" {
-			if pinned != fp {
-				return fmt.Errorf("the SSH host key for %s has CHANGED (was %s, now %s). If the machine was rebuilt, save the system again to trust its new key; otherwise something may be intercepting the connection", addr, pinned, fp)
-			}
-			return nil
+		if !hostKeyStore.Get(hostKeyTable, k, &pinned) {
+			// No pin of this system's own yet: one made by host alone
+			// before pins were per system still holds, and becomes its own.
+			hostKeyStore.Get(hostKeyTable, strings.ToLower(addr), &pinned)
 		}
-		hostKeyStore.Set(hostKeyTable, strings.ToLower(addr), fp)
+		if pinned != "" && pinned != fp {
+			return fmt.Errorf("the SSH host key for %s has CHANGED (was %s, now %s). If the machine was rebuilt, save the system again to trust its new key; otherwise something may be intercepting the connection", addr, pinned, fp)
+		}
+		hostKeyStore.Set(hostKeyTable, k, fp)
 		return nil
 	}
 }
 
-// forgetHostKey drops the pinned key for host:port, so the next connection
-// trusts whatever the host presents.
-func forgetHostKey(host string, port int) {
+// hostPinKey is where one system's pin of its host's key is kept.
+func hostPinKey(owner, system, addr string) string {
+	return strings.ToLower(owner) + "\x1f" + system + "\x1f" + strings.ToLower(addr)
+}
+
+// forgetHostKey lets one system's next connection trust whatever its host
+// presents, for the owner saying the machine was rebuilt. Only that system's
+// pin: an empty pin, so a pin made by host alone is not consulted for it
+// either, and nobody else's is touched.
+func forgetHostKey(owner, system, host string, port int) {
 	if hostKeyStore == nil || strings.TrimSpace(host) == "" {
 		return
 	}
 	if port == 0 {
 		port = 22
 	}
-	hostKeyStore.Unset(hostKeyTable, strings.ToLower(net.JoinHostPort(host, fmt.Sprint(port))))
+	hostKeyStore.Set(hostKeyTable, hostPinKey(owner, system, net.JoinHostPort(host, fmt.Sprint(port))), "")
 }

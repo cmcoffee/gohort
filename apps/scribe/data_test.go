@@ -55,3 +55,26 @@ func TestGuideNextOrder(t *testing.T) {
 		t.Errorf("empty nextOrder = %d, want 1", got)
 	}
 }
+
+// A co-editor restoring an older version of a guide brings back its text,
+// not the owner's choices: Private, its sources, knowledge and brief, its
+// title. The owner restoring brings back everything but who owns it and who
+// it is shared with.
+func TestARestoreKeepsTheOwnersChoices(t *testing.T) {
+	cur := Guide{ID: "g1", Owner: "alice", Title: "Now", Private: true, Brief: "now", Collections: []string{"c2"},
+		Shared: true, AllowedUsers: []string{"bob"}, Editors: []string{"bob"}}
+	old := Guide{ID: "g1", Owner: "alice", Title: "Then", Private: false, Brief: "then", Collections: []string{"c1"}}
+	byEditor := old
+	keepGuideOwnership(&byEditor, cur, false)
+	if !byEditor.Private || byEditor.Brief != "now" || byEditor.Title != "Now" || byEditor.Collections[0] != "c2" {
+		t.Errorf("a co-editor's restore undid the owner's settings: %+v", byEditor)
+	}
+	if !byEditor.Shared || len(byEditor.Editors) != 1 {
+		t.Errorf("a restore changed who the guide is shared with: %+v", byEditor)
+	}
+	byOwner := old
+	keepGuideOwnership(&byOwner, cur, true)
+	if byOwner.Private || byOwner.Brief != "then" || !byOwner.Shared || len(byOwner.AllowedUsers) != 1 {
+		t.Errorf("the owner's restore: %+v", byOwner)
+	}
+}

@@ -139,6 +139,14 @@ func RollbackPipelineDef(udb Database, id, ref string) (PipelineDef, error) {
 	// the id it belongs to, so a body naming another record must not become a
 	// write to that record.
 	restored.ID = id
+	// Who it reaches stays as it is now: a share taken back, or a publish an
+	// administrator withdrew, is not brought back by restoring an older
+	// version (an editor may restore, and could otherwise re-share).
+	var current PipelineDef
+	if udb.Get(PipelineDefsTable, id, &current) {
+		restored.AllowedUsers, restored.Editors, restored.Published = current.AllowedUsers, current.Editors, current.Published
+		restored.Owner = current.Owner
+	}
 	return SavePipelineDefAs(udb, restored, fmt.Sprintf("rolled back to #%d", rev.Seq)), nil
 }
 

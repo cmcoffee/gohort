@@ -9,12 +9,15 @@ package orchestrate
 // of a polish step.
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/revisions"
 )
 
 // reviseP asks for a change the way the page's ✨ Get assistance does:
@@ -257,5 +260,49 @@ func TestAPipelineProposalIsCheckedWhenApplied(t *testing.T) {
 	got, _ := LoadPipelineDef(udb, user, def.ID)
 	if got.Stages[0].Prompt != "edited in another tab" {
 		t.Error("a refused proposal changed the pipeline")
+	}
+}
+
+// A pipeline's reach changes only through sharing and the publish request:
+// not by a save writing the undo snapshot, by undo, or by restoring a kept
+// version (TestReachIsNeverBroughtBackByUndoOrRestore, for machines).
+func TestAPipelinesReachIsNeverBroughtBack(t *testing.T) {
+	app, udb, user, def := stageEditFixture(t)
+	def.AllowedUsers = []string{"bob"}
+	def = SavePipelineDef(udb, def)
+	body := def
+	body.Previous = &PipelineDef{Name: def.Name, Stages: def.Stages, Published: true, AllowedUsers: []string{"eve"}, Editors: []string{"eve"}}
+	raw, _ := json.Marshal(body)
+	w := httptest.NewRecorder()
+	routed(app)(w, asUser(httptest.NewRequest("PUT", "/api/pipelines/"+def.ID, bytes.NewReader(raw)), user))
+	if w.Code >= 300 {
+		t.Fatalf("save: %d %s", w.Code, w.Body.String())
+	}
+	if got, _ := LoadPipelineDef(udb, user, def.ID); got.Previous != nil {
+		t.Fatalf("a save wrote the undo snapshot: %+v", got.Previous)
+	}
+	cur, _ := LoadPipelineDef(udb, user, def.ID)
+	cur.Previous = body.Previous
+	SavePipelineDef(udb, cur)
+	w = httptest.NewRecorder()
+	routed(app)(w, asUser(httptest.NewRequest("POST", "/api/pipelines/"+def.ID+"/undo", nil), user))
+	if w.Code >= 300 {
+		t.Fatalf("undo: %d %s", w.Code, w.Body.String())
+	}
+	got, _ := LoadPipelineDef(udb, user, def.ID)
+	if got.Published || len(got.AllowedUsers) != 1 || got.AllowedUsers[0] != "bob" || len(got.Editors) != 0 {
+		t.Errorf("undo brought back reach: published %v, shared with %v, editors %v", got.Published, got.AllowedUsers, got.Editors)
+	}
+	got.AllowedUsers = []string{"bob", "eve"}
+	got = SavePipelineDef(udb, got)
+	got.AllowedUsers = []string{"bob"}
+	got.Description = "changed after the share was narrowed"
+	SavePipelineDefAs(udb, got, "edited")
+	revs := revisions.List(udb, revisions.KindPipeline, def.ID)
+	if _, err := RollbackPipelineDef(udb, def.ID, fmt.Sprint(revs[0].Seq)); err != nil {
+		t.Fatal(err)
+	}
+	if back, _ := LoadPipelineDef(udb, user, def.ID); len(back.AllowedUsers) != 1 || back.AllowedUsers[0] != "bob" {
+		t.Errorf("restoring a version re-shared it: %v", back.AllowedUsers)
 	}
 }

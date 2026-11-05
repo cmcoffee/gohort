@@ -191,13 +191,31 @@ func TestSkillDefByNameReachesAPublishedSkill(t *testing.T) {
 		t.Fatalf("a private duplicate landed: %+v", got)
 	}
 
-	if _, err := skillDefCall(t, sess, map[string]any{"action": "update", "name": "Triage",
-		"instructions": "Assess, then page."}); err != nil {
+	out, err := skillDefCall(t, sess, map[string]any{"action": "update", "name": "Triage",
+		"instructions": "Assess, then page."})
+	if err != nil {
 		t.Fatalf("update could not reach the published skill: %v", err)
 	}
+	// It goes to an administrator, and the agent is told so rather than
+	// that it is live.
+	if !strings.Contains(out, "approval") {
+		t.Errorf("the agent was not told the edit waits: %s", out)
+	}
 	pub := PublishedSkillsBy(udb, "alice")
-	if len(pub) != 1 || pub[0].Instructions != "Assess, then page." {
-		t.Fatalf("the edit did not reach the deployment's copy: %+v", pub)
+	if len(pub) != 1 || pub[0].Instructions != "Assess." {
+		t.Fatalf("an unapproved edit reached everybody: %+v", pub)
+	}
+	if d := PublishedSkillDrafts(udb, "alice"); len(d) != 1 || d[0].Instructions != "Assess, then page." {
+		t.Fatalf("the edit is not waiting as the author's draft: %+v", d)
+	}
+	// A second update before approval builds on the first, not on the
+	// published text.
+	if _, err := skillDefCall(t, sess, map[string]any{"action": "update", "name": "Triage",
+		"description": "First look"}); err != nil {
+		t.Fatal(err)
+	}
+	if d := PublishedSkillDrafts(udb, "alice"); len(d) != 1 || d[0].Instructions != "Assess, then page." || d[0].Description != "First look" {
+		t.Fatalf("a second update dropped the first: %+v", d)
 	}
 	if got := LoadSkills(udb, "alice"); len(got) != 0 {
 		t.Errorf("update made a private copy: %+v", got)

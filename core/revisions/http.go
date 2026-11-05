@@ -49,6 +49,11 @@ type Surface struct {
 	// and a restore is refused as not allowed.
 	Restore func(ref string) error
 
+	// RestoreDone is what a finished restore says; empty is "Restored.". For
+	// a thing whose restore is a request rather than a change, so the page
+	// does not report as done what is waiting on somebody.
+	RestoreDone string
+
 	// LockedReason, when non-empty, refuses a restore and says why. Reading
 	// history stays open: a lock is about changing something, not about
 	// knowing what it used to say.
@@ -125,7 +130,7 @@ func (s Surface) serveList(w http.ResponseWriter) {
 				Method:  "post",
 				Variant: "danger",
 				Confirm: fmt.Sprintf("Restore version #%d? The current version is kept too, so this is reversible.", rev.Seq),
-				Done:    "Restored.",
+				Done:    s.restoreDone(),
 			})
 		}
 		out.Entries = append(out.Entries, surfaceEntry{
@@ -341,4 +346,11 @@ func plural(n int, unit string) string {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func (s Surface) restoreDone() string {
+	if s.RestoreDone != "" {
+		return s.RestoreDone
+	}
+	return "Restored."
 }

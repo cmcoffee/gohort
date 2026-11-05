@@ -131,12 +131,18 @@ func (T *Extensions) handleMCPServerSave(c *jsonapi.Call, body mcpServerSave) (a
 	body.Name = strings.TrimSpace(body.Name)
 	// A NEW one answers to the administrator's policy; an edit to one
 	// they have is not adding one.
+	// Pointing one at another server is adding that server, as far as an
+	// approval goes: it waits for an administrator where new ones do, and
+	// where only an administrator adds them.
 	var hold bool
-	if _, exists := mcppersonal.Load(user, body.Name); !exists {
+	if prev, exists := mcppersonal.Load(user, body.Name); !exists {
 		var perr error
 		if hold, perr = governance.Permit(governance.MCPServers, user); perr != nil {
 			return nil, jsonapi.Forbidden(perr.Error())
 		}
+	} else if !mcppersonal.SameOrigin(prev.URL, body.URL) {
+		h, perr := governance.Permit(governance.MCPServers, user)
+		hold = h || perr != nil
 	}
 	// The secret goes with the sign-in it is for: a token typed and then
 	// left behind on a switch to OAuth is not the client's secret.

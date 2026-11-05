@@ -717,7 +717,12 @@ func (s *ToolSession) CopyTempTools() []*TempTool {
 // the script but not, say, the credential or the response pipe would approve
 // a change nobody showed them.
 func (t TempTool) DefinitionDiff(o TempTool) string {
-	a, b := definitionFields(t), definitionFields(o)
+	return fieldMapDiff(definitionFields(t), definitionFields(o))
+}
+
+// fieldMapDiff is the field-by-field diff of two flattened definitions
+// (jsonFields): short values side by side, long ones as a line diff.
+func fieldMapDiff(a, b map[string]string) string {
 	keys := make([]string, 0, len(a)+len(b))
 	for k := range a {
 		keys = append(keys, k)
@@ -748,8 +753,13 @@ func (t TempTool) DefinitionDiff(o TempTool) string {
 // names: a string as itself, anything else (params, actions, headers) as
 // indented JSON so a line diff can say which entry changed.
 func definitionFields(t TempTool) map[string]string {
+	return jsonFields(withoutGovernance(t))
+}
+
+// jsonFields flattens any record to field -> text by its JSON names.
+func jsonFields(v any) map[string]string {
 	out := map[string]string{}
-	raw, err := json.Marshal(withoutGovernance(t))
+	raw, err := json.Marshal(v)
 	if err != nil {
 		return out
 	}

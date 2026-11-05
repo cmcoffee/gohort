@@ -110,6 +110,11 @@ type SkillRecord struct {
 	// finding out is what prevents it.
 	SharedFrom    string   `json:"shared_from,omitempty"`
 	SharedOmitted []string `json:"shared_omitted,omitempty"`
+	// AwaitingApproval is set on the copy a save of a published skill hands
+	// back when the edit went to an administrator instead of to everybody
+	// (holdPublishedSkillEdit), never stored. The caller says so, rather than
+	// "updated" over text nobody else will see until it is approved.
+	AwaitingApproval bool `json:"awaiting_approval,omitempty"`
 
 	// Disabled mutes the skill — classifier skips it entirely as if
 	// it didn't exist. Use to pause a skill without losing its
@@ -642,6 +647,7 @@ func SaveSkillAs(db Database, username string, s SkillRecord, reason string) (Sk
 	if store == nil || username == "" {
 		return SkillRecord{}, errString("save skill requires user")
 	}
+	s.AwaitingApproval = false
 	// A skill its author published has moved to the deployment pool and is
 	// still theirs. Saving it goes there, to the copy everybody uses, rather
 	// than landing a second, private copy in the author's own pool. Publishing
@@ -1536,9 +1542,8 @@ const deploymentSkillsTable = "deployment_skills"
 const SkillPromotionKind = "skill"
 
 func init() {
-	promotion.RegisterApprover(SkillPromotionKind, func(owner, id string) error {
-		return promoteSkillToDeployment(owner, id)
-	})
+	promotion.RegisterApprover(SkillPromotionKind, approveSkillRequest)
+	promotion.RegisterRequestHook(SkillPromotionKind, snapshotSkillRequest)
 }
 
 // DeploymentSkills returns the skills published to everybody.
@@ -1642,16 +1647,232 @@ func saveDeploymentSkill(db Database, owner string, s SkillRecord, reason string
 	s.Created = all[at].Created
 	s.Tools = nil
 	s.AllowedUsers = nil
-	s.SharedFrom, s.SharedOmitted = "", nil
+	s.SharedFrom, s.SharedOmitted, s.AwaitingApproval = "", nil, false
 	s.Updated = time.Now()
+	// An administrator approved this text going to everybody, so changing it
+	// is the author's request and an administrator's decision, the way a
+	// published tool's next version is. Muting or unmuting is the author's
+	// at once: it only decides whether the approved text runs. An
+	// administrator's own edit is its own approval.
+	if !UserIsAdmin(owner) {
+		live := all[at]
+		changed := skillTextChanged(live, s)
+		if live.Disabled != s.Disabled {
+			live.Disabled = s.Disabled
+			all[at] = live
+			store.Set(deploymentSkillsTable, "all", all)
+		}
+		if !changed {
+			// Back to the published text: an edit waiting on an
+			// administrator is no longer asked for.
+			withdrawSkillEdit(store, owner, live)
+			return live, nil
+		}
+		return holdPublishedSkillEdit(store, owner, live, s, reason)
+	}
+	return writeDeploymentSkill(store, all, at, s, reason), nil
+}
+
+// writeDeploymentSkill replaces the published skill at index at with s,
+// keeping the version it replaces in the skill's history.
+func writeDeploymentSkill(store Database, all []SkillRecord, at int, s SkillRecord, reason string) SkillRecord {
 	// Same ring as before it was published: owner and id do not change when a
 	// skill moves pools, so its history is still the author's to read.
 	if reason != revisions.NoHistory && revisions.Differs(all[at], s, "updated") {
-		revisions.Push(store, revisions.KindSkill, skillRingKey(owner, s.ID), all[at], all[at].Updated, reason)
+		revisions.Push(store, revisions.KindSkill, skillRingKey(s.Owner, s.ID), all[at], all[at].Updated, reason)
 	}
 	all[at] = s
 	store.Set(deploymentSkillsTable, "all", all)
-	return s, nil
+	return s
+}
+
+// skillTextChanged is whether next changes what a published skill does, as
+// opposed to whether it runs or when it was saved.
+func skillTextChanged(prev, next SkillRecord) bool {
+	return revisions.Differs(prev, next, "updated", "created", "disabled", "embedding", "awaiting_approval")
+}
+
+// skillRequestsTable holds the skill a publish or edit request asked for,
+// keyed by the request's id: what approving it publishes, frozen when it was
+// asked for, so an administrator approves the text they were shown and not
+// whatever the skill says by the time they click.
+const skillRequestsTable = "skill_requests"
+
+type skillRequestSnapshot struct {
+	Skill SkillRecord `json:"skill"`
+	// Edits is the id of the published skill this request changes; empty for
+	// a first publish.
+	Edits  string    `json:"edits,omitempty"`
+	Reason string    `json:"reason,omitempty"`
+	At     time.Time `json:"at"`
+}
+
+// holdPublishedSkillEdit files an author's edit to their published skill as
+// a request, under the published name, and hands back the published copy
+// marked as waiting. A later edit replaces the pending one.
+func holdPublishedSkillEdit(store Database, owner string, live, s SkillRecord, reason string) (SkillRecord, error) {
+	key := PromotionRequestKey(SkillPromotionKind, owner, live.Name)
+	s.Disabled = live.Disabled
+	store.Set(skillRequestsTable, key, skillRequestSnapshot{Skill: s, Edits: live.ID, Reason: reason, At: time.Now()})
+	note := "An edit to the published skill"
+	if r := strings.TrimSpace(reason); r != "" && r != "update" {
+		note += " (" + r + ")"
+	}
+	if err := CreatePromotionRequest(store, owner, SkillPromotionKind, live.Name, note); err != nil {
+		return SkillRecord{}, err
+	}
+	live.AwaitingApproval = true
+	return live, nil
+}
+
+// withdrawSkillEdit takes back owner's pending edit to the published skill
+// live, if there is one.
+func withdrawSkillEdit(store Database, owner string, live SkillRecord) {
+	key := PromotionRequestKey(SkillPromotionKind, owner, live.Name)
+	var snap skillRequestSnapshot
+	if store.Get(skillRequestsTable, key, &snap) && snap.Edits == live.ID {
+		promotion.WithdrawPromotionRequest(store, owner, SkillPromotionKind, live.Name)
+		store.Unset(skillRequestsTable, key)
+	}
+}
+
+// PublishedSkillDrafts is owner's published skills as they edit them: each
+// one carrying the edit waiting on an administrator, when there is one, in
+// place of the published text, and marked AwaitingApproval. Every surface
+// the author edits from reads this, or a second edit made before the first
+// is approved starts from the published text and drops the first. What
+// everybody runs is DeploymentSkills; what the author published is
+// PublishedSkillsBy.
+func PublishedSkillDrafts(db Database, owner string) []SkillRecord {
+	out := PublishedSkillsBy(db, owner)
+	store := skillStore(db)
+	if store == nil {
+		return out
+	}
+	for i, p := range out {
+		key := PromotionRequestKey(SkillPromotionKind, owner, p.Name)
+		var snap skillRequestSnapshot
+		if !store.Get(skillRequestsTable, key, &snap) || snap.Edits != p.ID ||
+			!promotion.PendingPromotion(store, owner, SkillPromotionKind, p.Name) {
+			continue
+		}
+		d := snap.Skill
+		d.ID, d.Owner, d.Created, d.Disabled = p.ID, owner, p.Created, p.Disabled
+		d.AwaitingApproval = true
+		out[i] = d
+	}
+	return out
+}
+
+// snapshotSkillRequest is the request hook: a publish request freezes the
+// author's skill as it is now. An edit to a published skill froze its own
+// copy before filing (holdPublishedSkillEdit), so that one is left alone.
+func snapshotSkillRequest(owner, name string) error {
+	store := skillStore(nil)
+	if store == nil {
+		return nil
+	}
+	key := PromotionRequestKey(SkillPromotionKind, owner, name)
+	for _, s := range LoadSkills(nil, owner) {
+		if s.ID == name || strings.EqualFold(s.Name, name) {
+			store.Set(skillRequestsTable, key, skillRequestSnapshot{Skill: s, At: time.Now()})
+			return nil
+		}
+	}
+	return nil
+}
+
+// RequestedSkill is what approving owner's pending skill request filed under
+// name would publish, and the published version it replaces when it is an
+// edit (ok false when there is no frozen request).
+func RequestedSkill(owner, name string) (want SkillRecord, replaces *SkillRecord, ok bool) {
+	store := skillStore(nil)
+	if store == nil {
+		return want, nil, false
+	}
+	var snap skillRequestSnapshot
+	if !store.Get(skillRequestsTable, PromotionRequestKey(SkillPromotionKind, owner, name), &snap) {
+		return want, nil, false
+	}
+	if snap.Edits != "" {
+		for _, p := range allDeploymentSkills(nil) {
+			if p.ID == snap.Edits && p.Owner == owner {
+				c := p
+				return snap.Skill, &c, true
+			}
+		}
+	}
+	return snap.Skill, nil, true
+}
+
+// approveSkillRequest is an administrator approving a skill request: the
+// first publish of a skill, or an edit to one already published. It publishes
+// what the request froze; a request from before requests froze one publishes
+// the author's skill as it is.
+func approveSkillRequest(owner, name string) error {
+	store := skillStore(nil)
+	if store == nil {
+		return errString("no skill store")
+	}
+	key := PromotionRequestKey(SkillPromotionKind, owner, name)
+	var snap skillRequestSnapshot
+	if !store.Get(skillRequestsTable, key, &snap) {
+		return promoteSkillToDeployment(owner, name, nil)
+	}
+	if snap.Edits == "" {
+		if err := promoteSkillToDeployment(owner, snap.Skill.ID, &snap.Skill); err != nil {
+			return err
+		}
+		store.Unset(skillRequestsTable, key)
+		return nil
+	}
+	all := allDeploymentSkills(nil)
+	at := -1
+	for i := range all {
+		if all[i].ID == snap.Edits && all[i].Owner == owner {
+			at = i
+			break
+		}
+	}
+	if at < 0 {
+		return errString(owner + " took " + name + " back since asking, so there is no published skill to change; deny this")
+	}
+	want := snap.Skill
+	if !strings.EqualFold(all[at].Name, want.Name) {
+		for i, o := range all {
+			if i != at && strings.EqualFold(o.Name, want.Name) {
+				return errString("the deployment already publishes a skill called " + want.Name)
+			}
+		}
+	}
+	want.ID, want.Owner, want.Created = all[at].ID, owner, all[at].Created
+	want.Tools, want.AllowedUsers = nil, nil
+	want.SharedFrom, want.SharedOmitted, want.AwaitingApproval = "", nil, false
+	// Whether it runs stays the author's latest word, not the one at asking.
+	want.Disabled = all[at].Disabled
+	want.Updated = time.Now()
+	reason := "approved edit"
+	if snap.Reason != "" && snap.Reason != "update" {
+		reason = "approved: " + snap.Reason
+	}
+	writeDeploymentSkill(store, all, at, want, reason)
+	store.Unset(skillRequestsTable, key)
+	Log("[skills] approved %q's edit to their published skill %q", owner, want.Name)
+	return nil
+}
+
+// DefinitionDiff is what changes between two versions of a skill, field by
+// field, for a reviewer: the same form a tool's update request shows.
+func (s SkillRecord) DefinitionDiff(o SkillRecord) string {
+	return fieldMapDiff(skillDefinitionFields(s), skillDefinitionFields(o))
+}
+
+func skillDefinitionFields(s SkillRecord) map[string]string {
+	s.ID, s.Owner, s.Embedding = "", "", nil
+	s.Created, s.Updated = time.Time{}, time.Time{}
+	s.Tools, s.AllowedUsers, s.SharedFrom, s.SharedOmitted = nil, nil, "", nil
+	s.Disabled, s.AwaitingApproval = false, false
+	return jsonFields(s)
 }
 
 // promoteSkillToDeployment moves a user's skill into the deployment pool, where
@@ -1670,7 +1891,7 @@ func saveDeploymentSkill(db Database, owner string, s SkillRecord, reason string
 // more true for every user at once: it would run the author's scripts in every
 // session in the deployment, under each person's own credentials, with the tool
 // rung skipped entirely.
-func promoteSkillToDeployment(owner, id string) error {
+func promoteSkillToDeployment(owner, id string, frozen *SkillRecord) error {
 	owner, id = strings.TrimSpace(owner), strings.TrimSpace(id)
 	if owner == "" || id == "" {
 		return errString("owner and skill id are required")
@@ -1694,6 +1915,13 @@ func promoteSkillToDeployment(owner, id string) error {
 	if found == nil {
 		return errString("no skill " + id + " owned by " + owner +
 			" (a skill renamed after the request was filed no longer answers to the name on it)")
+	}
+	// What the request froze is what the administrator was shown, so that is
+	// what goes out, under the skill it was taken from.
+	if frozen != nil {
+		c := *frozen
+		c.ID, c.Created = found.ID, found.Created
+		found = &c
 	}
 	// Muted ones too: enabling one later must not produce the clash this
 	// refusal exists to prevent.
@@ -1765,6 +1993,10 @@ func NarrowSkillToOwner(db Database, owner, id string) error {
 		}
 	}
 	store.Set(deploymentSkillsTable, "all", rest)
+	// An edit waiting on an administrator was an edit to the published
+	// skill; there is none now, so it is not left in the queue to approve.
+	promotion.WithdrawPromotionRequest(store, owner, SkillPromotionKind, taken.Name)
+	store.Unset(skillRequestsTable, PromotionRequestKey(SkillPromotionKind, owner, taken.Name))
 	taken.AllowedUsers = nil
 	if _, err := SaveSkillAs(db, owner, *taken, "unpublished"); err != nil {
 		// Put it back rather than losing it between two tables.
@@ -1787,7 +2019,7 @@ func noteSkillPublished(owner string, s SkillRecord, strippedTools int) {
 	if RootDB == nil || owner == "" {
 		return
 	}
-	body := "It has moved out of your own skills and into the deployment's, where it activates on everybody's turns. It is still yours: your name is on it, you edit it, and you can take it back at any time without asking."
+	body := "It has moved out of your own skills and into the deployment's, where it activates on everybody's turns. It is still yours: your name is on it, and you can take it back at any time without asking. Your edits to it go to an administrator before they reach everybody, the way a published tool's next version does."
 	if strippedTools > 0 {
 		body += " Its " + strconv.Itoa(strippedTools) + " bundled tool(s) did not come with it — that would run your scripts in every session in the deployment, under each person's own credentials. Share those from Extensions if the skill needs them."
 	}

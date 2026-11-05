@@ -1,8 +1,13 @@
 package servitor
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // TestApplianceMemScope locks the synthetic scope-user format the orchestrate
@@ -34,5 +39,39 @@ func TestApplianceMemoryModalWiring(t *testing.T) {
 		if !strings.Contains(s, ep) {
 			t.Errorf("modal script missing endpoint %q", ep)
 		}
+	}
+}
+
+// Someone a system is shared with can read what it remembers, but only its
+// owner can change it: the investigator acts on those notes with the owner's
+// own login.
+func TestOnlyASystemsOwnerChangesWhatItRemembers(t *testing.T) {
+	prevAuth := AuthDB
+	auth := &DBase{Store: kvlite.MemStore()}
+	AuthDB = func() Database { return auth }
+	t.Cleanup(func() { AuthDB = prevAuth })
+	auth.Set(AuthTable, "user:alice", AuthUser{Username: "alice"})
+	auth.Set(AuthTable, "user:bob", AuthUser{Username: "bob"})
+
+	app, udb := sourcesApp(t)
+	a := Appliance{ID: "lab-box", Name: "Lab Box", Type: "ssh", Owner: "alice", AllowedUsers: []string{"bob"}}
+	udb.Set(applianceTable, a.ID, a)
+	app.indexNamedShares("alice", a.ID, a.AllowedUsers)
+
+	send := func(user, method string) int {
+		r := httptest.NewRequest(method, "/api/appliances/lab-box/notes", strings.NewReader(`{"note":"x"}`))
+		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(auth, user)})
+		w := httptest.NewRecorder()
+		app.handleApplianceMemory(w, r)
+		return w.Code
+	}
+	if code := send("bob", "POST"); code != http.StatusForbidden {
+		t.Errorf("a recipient's write = %d, want 403", code)
+	}
+	if code := send("alice", "POST"); code == http.StatusForbidden || code == http.StatusNotFound {
+		t.Errorf("the owner's write = %d", code)
+	}
+	if code := send("bob", "GET"); code == http.StatusForbidden || code == http.StatusNotFound {
+		t.Errorf("a recipient's read = %d", code)
 	}
 }

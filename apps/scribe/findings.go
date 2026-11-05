@@ -311,6 +311,7 @@ func undoCuratorEntry(appDB, udb Database, user, runID, findingID string) error 
 		}
 		restored := rev.Guide
 		restored.ID = e.GuideID
+		keepGuideOwnership(&restored, g, CanManageShared(user, owner, false))
 		saveGuideRev(ownerUDB, restored, "Undid curator "+e.Kind+": "+e.Topic)
 		e.Undone = true
 		saveCuratorRun(udb, run)

@@ -863,3 +863,20 @@ func wasWere(n int) string {
 	}
 	return "are"
 }
+
+// keepGuideOwnership carries onto a restored version of a guide what is not
+// the version's to bring back: who owns it and who it is shared with, always;
+// and, when a co-editor rather than the owner (or an administrator) restores,
+// the settings only the owner may change. A co-editor restoring a version from
+// before the owner marked the guide Private, or changed its sources, its
+// knowledge or its brief, would otherwise have undone the owner's choice.
+func keepGuideOwnership(g *Guide, cur Guide, manager bool) {
+	g.Owner, g.Shared, g.ShareMode = cur.Owner, cur.Shared, cur.ShareMode
+	g.AllowedUsers, g.Editors = cur.AllowedUsers, cur.Editors
+	if manager {
+		return
+	}
+	g.Title, g.Subtitle, g.Private = cur.Title, cur.Subtitle, cur.Private
+	g.CurateOnReport, g.Brief = cur.CurateOnReport, cur.Brief
+	g.Collections, g.References = cur.Collections, cur.References
+}

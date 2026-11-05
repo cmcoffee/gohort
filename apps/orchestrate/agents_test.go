@@ -1062,3 +1062,28 @@ func TestEndingADelegationEndsOnlyItself(t *testing.T) {
 		t.Errorf("under way after the first ended: %+v %v", d, ok)
 	}
 }
+
+// Restoring an older version of an agent does not bring back reach an
+// administrator took away: published to everyone, exposed, served over MCP.
+func TestRollingBackKeepsTodaysReach(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	a, err := saveAgent(db, AgentRecord{Name: "Helper", OrchestratorPrompt: "first", Everyone: true, Exposed: true, MCPExposed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.OrchestratorPrompt = "second"
+	a.Everyone, a.Exposed, a.MCPExposed = false, false, false // taken back
+	if a, err = saveAgent(db, a); err != nil {
+		t.Fatal(err)
+	}
+	back, err := rollbackAgent(db, a.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.OrchestratorPrompt != "first" {
+		t.Fatalf("the kept version was not restored: %q", back.OrchestratorPrompt)
+	}
+	if back.Everyone || back.Exposed || back.MCPExposed {
+		t.Errorf("a rollback brought back reach: everyone %v, exposed %v, mcp %v", back.Everyone, back.Exposed, back.MCPExposed)
+	}
+}

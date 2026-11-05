@@ -377,8 +377,11 @@ func (a *AdminApp) handlePromotions(c *jsonapi.Call) (any, error) {
 	rows := []reqRow{}
 	for _, req := range ListPromotionRequests(a.db, true) { // pending only — the actionable queue
 		row := reqRow{PromotionRequest: req}
-		if req.Kind == "tool" {
+		switch req.Kind {
+		case "tool":
 			row.Update, row.Review = toolRequestReview(a.db, releases, req.Owner, req.Name)
+		case SkillPromotionKind:
+			row.Update, row.Review = skillRequestReview(req.Owner, req.Name)
 		}
 		rows = append(rows, row)
 	}
@@ -1000,6 +1003,24 @@ func toolRequestReview(db Database, releases map[string]ToolRelease, owner, name
 		return true, fmt.Sprintf("Update to %s's published tool, now at version %d. Approving makes this the next version for everyone who added it.\n\n%s", owner, rel.Version, d)
 	}
 	return false, "A new tool for the catalog. Its whole definition:\n\n" + (TempTool{}).DefinitionDiff(want)
+}
+
+// skillRequestReview is what approving owner's pending skill request would
+// publish: a diff against the published version for an edit, the whole skill
+// for a first publish. Empty for a request from before requests froze one.
+func skillRequestReview(owner, name string) (update bool, review string) {
+	want, replaces, ok := RequestedSkill(owner, name)
+	if !ok {
+		return false, ""
+	}
+	if replaces != nil {
+		d := replaces.DefinitionDiff(want)
+		if d == "" {
+			d = "No change from the published version."
+		}
+		return true, fmt.Sprintf("An edit to %s's published skill, which activates on everybody's turns. Approving makes this what everybody gets.\n\n%s", owner, d)
+	}
+	return false, "A new skill for the deployment. The whole skill (its bundled tools do not go with it):\n\n" + (SkillRecord{}).DefinitionDiff(want)
 }
 
 // asAdmin says, for the activity log, that an account was given admin rights.

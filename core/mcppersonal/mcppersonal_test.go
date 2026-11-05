@@ -490,3 +490,25 @@ func TestASignInWithAClientRegisteredByHand(t *testing.T) {
 		t.Errorf("the old app's secret went with the new one: %v", form)
 	}
 }
+
+// An approval is for the server it was given for: pointing an approved
+// server at another one, where servers need approval, waits for it again.
+// Changing anything else on it does not.
+func TestMovingAnApprovedServerWaitsForApprovalAgain(t *testing.T) {
+	withStore(t)
+	if err := Save(Server{Owner: "dana", Name: "srv", URL: "https://mcp.example.com/mcp"}, "", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(Server{Owner: "dana", Name: "srv", URL: "https://mcp.example.com/other", OneTool: true}, "", true); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := Load("dana", "srv"); s.AwaitingApproval {
+		t.Fatal("an edit that kept the server was held")
+	}
+	if err := Save(Server{Owner: "dana", Name: "srv", URL: "https://attacker.example/mcp"}, "", true); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := Load("dana", "srv"); !s.AwaitingApproval || s.Usable() {
+		t.Fatalf("a server moved to another host kept its approval: %+v", s)
+	}
+}

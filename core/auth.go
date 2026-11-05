@@ -1750,6 +1750,15 @@ func AuthMiddleware(db Database, next http.Handler) http.Handler {
 				http.Error(w, "this instance has no accounts yet, so it only answers on an IP address, a local name, or its configured dashboard address: open it that way, or create an account first", http.StatusForbidden)
 				return
 			}
+			// Nor driven from another site: with no accounts there is no
+			// cookie for SameSite to withhold, so a page the operator
+			// visits could post to this machine's address and be obeyed
+			// (make itself an administrator, repoint the models). The
+			// Origin check the signed-in path makes, made here too.
+			if IsStateChangingMethod(r.Method) && !SameOriginRequest(r) {
+				http.Error(w, "cross-origin state-changing request rejected", http.StatusForbidden)
+				return
+			}
 			next.ServeHTTP(w, r)
 			return
 		}

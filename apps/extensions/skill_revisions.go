@@ -55,6 +55,7 @@ func (T *Extensions) handleUserSkillOne(w http.ResponseWriter, r *http.Request) 
 			_, err := RollbackSkill(AuthDB(), user, id, ref)
 			return err
 		},
+		RestoreDone: restoreDoneFor(own, user),
 	}.Serve(w, r, action)
 }
 
@@ -69,4 +70,14 @@ func revisionAction(tail string) (action string, ok bool) {
 		return rest, true
 	}
 	return "", false
+}
+
+// restoreDoneFor is what restoring a version of this skill says: on a skill
+// published to everybody, restoring is an edit like any other and goes to an
+// administrator, unless its author is one.
+func restoreDoneFor(own ownedSkill, user string) string {
+	if own.published && !UserIsAdmin(user) {
+		return "Sent to an administrator. Everybody keeps the published version until it is approved."
+	}
+	return ""
 }

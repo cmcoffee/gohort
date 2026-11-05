@@ -82,7 +82,7 @@ func TestSkillTakeBacksAreAnnounced(t *testing.T) {
 	// Published, then taken back from the deployment: whoever relied on it.
 	p, _ := SaveSkill(nil, "alice", SkillRecord{Name: "Tone", AllowedUsers: []string{"bob"}})
 	*told = nil
-	if err := promoteSkillToDeployment("alice", p.ID); err != nil {
+	if err := promoteSkillToDeployment("alice", p.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(*told) != 0 {

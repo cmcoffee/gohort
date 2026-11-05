@@ -8,12 +8,15 @@ package orchestrate
 // as the word "revised"; and the version it replaced can be put back.
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/revisions"
 )
 
 func reviseFixture(t *testing.T) (*OrchestrateApp, Database, string, MachineDef) {
@@ -289,4 +292,56 @@ func renderMachinePage(t *testing.T, app *OrchestrateApp, user, id string) strin
 		t.Fatalf("page: %d", w.Code)
 	}
 	return w.Body.String()
+}
+
+// Who a machine reaches changes only through sharing and the publish request.
+// A save could write the undo snapshot, which undo then put back whole; and
+// undo and restoring a kept version brought back sharing and a publish an
+// administrator had taken away.
+func TestReachIsNeverBroughtBackByUndoOrRestore(t *testing.T) {
+	app, udb, user, def := reviseFixture(t)
+	def.AllowedUsers = []string{"bob"}
+	def = SaveMachineDef(udb, def)
+
+	// A save that writes its own undo snapshot keeps the stored one.
+	body := def
+	body.Previous = &MachineDef{Name: def.Name, Start: def.Start, Phases: def.Phases, Published: true, AllowedUsers: []string{"eve"}, Editors: []string{"eve"}}
+	raw, _ := json.Marshal(body)
+	w := httptest.NewRecorder()
+	routed(app)(w, asUser(httptest.NewRequest("PUT", "/api/machines/"+def.ID, bytes.NewReader(raw)), user))
+	if w.Code >= 300 {
+		t.Fatalf("save: %d %s", w.Code, w.Body.String())
+	}
+	if got, _ := LoadMachineDef(udb, user, def.ID); got.Previous != nil {
+		t.Fatalf("a save wrote the undo snapshot: %+v", got.Previous)
+	}
+
+	// An undo snapshot that would publish or reshare (one stored before
+	// this) is undone with today's reach.
+	cur, _ := LoadMachineDef(udb, user, def.ID)
+	cur.Previous = body.Previous
+	SaveMachineDef(udb, cur)
+	w = httptest.NewRecorder()
+	routed(app)(w, asUser(httptest.NewRequest("POST", "/api/machines/"+def.ID+"/undo", nil), user))
+	if w.Code >= 300 {
+		t.Fatalf("undo: %d %s", w.Code, w.Body.String())
+	}
+	got, _ := LoadMachineDef(udb, user, def.ID)
+	if got.Published || len(got.AllowedUsers) != 1 || got.AllowedUsers[0] != "bob" || len(got.Editors) != 0 {
+		t.Errorf("undo brought back reach: published %v, shared with %v, editors %v", got.Published, got.AllowedUsers, got.Editors)
+	}
+
+	// Restoring a kept version from when it was shared with more people.
+	got.AllowedUsers = []string{"bob", "eve"}
+	got = SaveMachineDef(udb, got)
+	got.AllowedUsers = []string{"bob"}
+	got.Phases[0].Prompt = "changed after the share was narrowed"
+	SaveMachineDefAs(udb, got, "edited")
+	revs := revisions.List(udb, revisions.KindMachine, def.ID)
+	if _, err := RollbackMachineDef(udb, def.ID, fmt.Sprint(revs[0].Seq)); err != nil {
+		t.Fatal(err)
+	}
+	if back, _ := LoadMachineDef(udb, user, def.ID); len(back.AllowedUsers) != 1 || back.AllowedUsers[0] != "bob" {
+		t.Errorf("restoring a version re-shared it: %v", back.AllowedUsers)
+	}
 }

@@ -813,3 +813,34 @@ func TestOnePersonHasOneName(t *testing.T) {
 		t.Errorf("a name matching two accounts signed in as %q", got)
 	}
 }
+
+// With no accounts there is no cookie for SameSite to hold back, so a page
+// the operator visits elsewhere must not be able to post to this machine and
+// be obeyed. The instance's own pages still can.
+func TestWithNoAccountsAnotherSiteCannotChangeAnything(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	reached := false
+	h := AuthMiddleware(db, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	send := func(method, origin string) int {
+		reached = false
+		r := httptest.NewRequest(method, "http://10.0.0.5:8080/admin/api/users", strings.NewReader("{}"))
+		if origin != "" {
+			r.Header.Set("Origin", origin)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	if code := send("POST", "https://attacker.example"); code != http.StatusForbidden || reached {
+		t.Errorf("a cross-site post was obeyed: %d", code)
+	}
+	if code := send("POST", "http://10.0.0.5:8080"); code != 200 || !reached {
+		t.Errorf("the instance's own page was refused: %d", code)
+	}
+	if code := send("GET", "https://attacker.example"); code != 200 || !reached {
+		t.Errorf("a cross-site read was refused: %d", code)
+	}
+}

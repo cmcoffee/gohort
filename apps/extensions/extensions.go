@@ -355,12 +355,18 @@ func (T *Extensions) handleCredentialSave(c *jsonapi.Call, body credentialSave) 
 	// A NEW one answers to the administrator's policy for personal
 	// credentials (core/governance): refused, held for approval, or live.
 	// An edit to one they have is not adding one.
+	// Pointing one at another host is adding a key for that host, as far
+	// as an approval goes: it waits for an administrator where new ones do,
+	// and where only an administrator adds them.
 	var hold bool
-	if _, found := Secure().LoadUser(user, cred.Name); !found {
+	if prev, found := Secure().LoadUser(user, cred.Name); !found {
 		var perr error
 		if hold, perr = governance.Permit(governance.Credentials, user); perr != nil {
 			return nil, jsonapi.Forbidden(perr.Error())
 		}
+	} else if !sameCredentialHost(prev.BaseURL, cred.BaseURL) {
+		h, perr := governance.Permit(governance.Credentials, user)
+		hold = h || perr != nil
 	}
 	if prev, found := Secure().LoadUser(user, cred.Name); found {
 		cred.RequiresConfirm, cred.ConfirmWrites, cred.Lending = prev.RequiresConfirm, prev.ConfirmWrites, prev.Lending
@@ -1286,6 +1292,9 @@ func (T *Extensions) handleUserSkills(c *jsonapi.Call) (any, error) {
 		// watch it disappear and have no way back.
 		Published      bool `json:"published"`
 		PublishPending bool `json:"publish_pending"`
+		// An edit to a published skill waits on an administrator; until
+		// then everybody keeps the published text.
+		EditPending bool `json:"edit_pending"`
 		CanPublish     bool `json:"can_publish"`
 		// An administrator's own skill publishes at once, as their own
 		// tool does: no request to themselves.
@@ -1302,7 +1311,7 @@ func (T *Extensions) handleUserSkills(c *jsonapi.Call) (any, error) {
 			ID: s.ID, Name: s.Name, Description: s.Description,
 			Triggers: len(s.Triggers), Disabled: s.Disabled, Updated: updated,
 			Playbook: playbookCount(s), PlaybookURL: playbookEditorURL(s.ID),
-			Published: published, PublishPending: pending,
+			Published: published, PublishPending: pending, EditPending: published && s.AwaitingApproval,
 			CanPublish: !published && !pending && !admin,
 			PublishNow: !published && !pending && admin,
 		}
@@ -1325,7 +1334,7 @@ func (T *Extensions) handleUserSkills(c *jsonapi.Call) (any, error) {
 	// deployment's. Still theirs to edit and to take back, and a muted one
 	// is listed too: DeploymentSkills hides it from everybody's turns, and
 	// hiding it from its author would leave no row to Enable it from.
-	for _, s := range PublishedSkillsBy(AuthDB(), user) {
+	for _, s := range PublishedSkillDrafts(AuthDB(), user) {
 		rows = append(rows, toSkillRow(s, true))
 	}
 	return rows, nil
@@ -1541,7 +1550,7 @@ func findOwnSkill(user, id string) (ownedSkill, bool) {
 			return ownedSkill{SkillRecord: s, user: user}, true
 		}
 	}
-	for _, s := range PublishedSkillsBy(AuthDB(), user) {
+	for _, s := range PublishedSkillDrafts(AuthDB(), user) {
 		if s.ID == id {
 			return ownedSkill{SkillRecord: s, user: user, published: true}, true
 		}
@@ -1552,7 +1561,7 @@ func findOwnSkill(user, id string) (ownedSkill, bool) {
 // ownSkillNamed returns the user's skill, other than except, that already
 // answers to name, in either pool they write to.
 func ownSkillNamed(user, name, except string) (SkillRecord, bool) {
-	for _, s := range append(LoadSkills(AuthDB(), user), PublishedSkillsBy(AuthDB(), user)...) {
+	for _, s := range append(LoadSkills(AuthDB(), user), PublishedSkillDrafts(AuthDB(), user)...) {
 		if s.ID != except && strings.EqualFold(strings.TrimSpace(s.Name), strings.TrimSpace(name)) {
 			return s, true
 		}
@@ -2558,6 +2567,9 @@ func (T *Extensions) skillsSection() ui.Section {
 							{Field: "publish_pending", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
 								{Value: true, Label: "Publish requested", Color: "warning"},
 							}},
+							{Field: "edit_pending", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
+								{Value: true, Label: "Edit awaiting approval", Color: "warning"},
+							}},
 							{Field: "disabled", Label: "Status", Type: "dot", Badges: []ui.BadgeMapping{
 								{Value: true, Label: "Disabled", Color: "danger"},
 								{Value: false, Label: "Active", Color: "success"},
@@ -2649,7 +2661,7 @@ func (T *Extensions) skillsSection() ui.Section {
 								Fields: []ui.FormField{
 									{Type: "header", Label: "Everybody's turns, not just yours",
 										Help: "It stays yours to edit and to take back, and an admin decides whether it goes out.",
-										Detail: "A published skill moves out of your own list into the deployment's, where the classifier can activate it on any user's turn. Your name stays on it, you keep editing it, and Take back returns it to you without asking anybody.\n\n" +
+										Detail: "A published skill moves out of your own list into the deployment's, where the classifier can activate it on any user's turn. Your name stays on it and Take back returns it to you without asking anybody. Your later edits go to an admin too: everybody keeps the version that was approved until the next one is.\n\n" +
 											"Its bundled tools do not go with it. Everything true of that for one recipient is more true for every account at once: it would run your scripts in every session in the deployment, under each person's own credentials, skipping the rung a tool has to pass to reach even one other user.\n\n" +
 											"Attached collections travel as references and resolve for whoever can already read them, so promote the collection too if everybody is meant to have it. Anyone you had shared this with keeps it by having it deployment-wide instead."},
 									{Field: "note", Type: "textarea", Rows: 3, Label: "Note for the admin (optional)",
@@ -3579,4 +3591,14 @@ func userToolNamed(user, name string) (TempTool, bool) {
 		}
 	}
 	return TempTool{}, false
+}
+
+// sameCredentialHost reports two base URLs on the same scheme and host.
+func sameCredentialHost(a, b string) bool {
+	ua, ea := url.Parse(strings.TrimSpace(a))
+	ub, eb := url.Parse(strings.TrimSpace(b))
+	if ea != nil || eb != nil {
+		return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
+	}
+	return strings.EqualFold(ua.Scheme, ub.Scheme) && strings.EqualFold(ua.Host, ub.Host)
 }

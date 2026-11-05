@@ -260,6 +260,11 @@ func rollbackAgent(db Database, id, ref string) (AgentRecord, error) {
 	var current AgentRecord
 	if db.Get(agentsTable, id, &current) {
 		guardrailSetOf(current).applyTo(&restored)
+		// So does how far it reaches past its owner: publishing to everyone
+		// and exposing it are an administrator's approval, and one an
+		// administrator took back is not brought back by restoring a version
+		// from before.
+		restored.Everyone, restored.MCPExposed, restored.Exposed = current.Everyone, current.MCPExposed, current.Exposed
 	}
 	return saveAgentAs(db, restored, fmt.Sprintf("rolled back to #%d", rev.Seq))
 }

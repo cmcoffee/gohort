@@ -230,7 +230,7 @@ func authoredSkill(sess *ToolSession, key string) (s SkillRecord, published, ok 
 		return SkillRecord{}, false, false, nil
 	}
 	own := LoadSkills(sess.DB, sess.Username)
-	pub := PublishedSkillsBy(sess.DB, sess.Username)
+	pub := PublishedSkillDrafts(sess.DB, sess.Username)
 	for _, r := range own {
 		if r.ID == key {
 			return r, false, true, nil
@@ -580,6 +580,9 @@ func skillDefUpdate(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	if len(changed) == 0 {
 		return fmt.Sprintf("Skill %q unchanged.%s", saved.Name, attachNote(attached, unknown)), nil
+	}
+	if saved.AwaitingApproval {
+		return fmt.Sprintf("Skill %q is published to everybody, so the change (%s) went to an administrator for approval. Everybody keeps the published version until it is approved; tell the user it is waiting, not that it is live.%s", saved.Name, strings.Join(changed, ", "), attachNote(attached, unknown)), nil
 	}
 	return fmt.Sprintf("Skill %q updated (%s). All other fields preserved.%s", saved.Name, strings.Join(changed, ", "), attachNote(attached, unknown)), nil
 }

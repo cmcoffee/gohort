@@ -708,11 +708,8 @@ func (T *Scribe) handleRestore(c *jsonapi.Call, _ struct{}) (any, error) {
 		return nil, errNoGuide
 	}
 	g := rev.Guide
-	g.ID = id           // guard against a snapshot carrying a stale id
-	g.Owner = cur.Owner // preserve ownership + sharing across a restore
-	g.Shared = cur.Shared
-	g.ShareMode = cur.ShareMode
-	g.AllowedUsers, g.Editors = cur.AllowedUsers, cur.Editors
+	g.ID = id // guard against a snapshot carrying a stale id
+	keepGuideOwnership(&g, cur, CanManageShared(user, cur.Owner, RequestIsAdmin(r)))
 	saveGuideRev(ownerUDB, g, "Restored revision from "+rev.At)
 	return map[string]bool{"ok": true}, nil
 }

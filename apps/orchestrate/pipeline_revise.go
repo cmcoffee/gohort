@@ -263,6 +263,9 @@ func (T *OrchestrateApp) pipelineUndo(c *jsonapi.Call, _ struct{}) (any, error) 
 	back := *def.Previous
 	back.ID = def.ID
 	back.Owner = user
+	// Who it reaches is not part of the revision: it is changed through
+	// sharing and the publish request, never put back by an undo.
+	back.AllowedUsers, back.Editors, back.Published = def.AllowedUsers, def.Editors, def.Published
 	// One step, deliberately: keeping the revision as the new snapshot
 	// would make undo a toggle, which promises something else.
 	back.Previous = nil

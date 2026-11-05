@@ -90,6 +90,11 @@ var AllRiskCategories = []RiskCategory{RiskFileDelete, RiskDataMutate, RiskNetEg
 
 type Servitor struct {
 	input struct {
+		// pin_owner and pin_system name whose pin of the host key this
+		// connection checks (ssh_pool.go): set for a system's connection,
+		// empty for the command line, which pins nothing.
+		pin_owner  string
+		pin_system string
 		host       string
 		port       int
 		user       string
@@ -650,7 +655,7 @@ func (T *Servitor) connect() error {
 	cfg := &ssh.ClientConfig{
 		User:            T.input.user,
 		Auth:            auth_methods,
-		HostKeyCallback: pinnedHostKey(addr),
+		HostKeyCallback: pinnedHostKey(T.input.pin_owner, T.input.pin_system, addr),
 		Timeout:         30 * time.Second,
 	}
 
