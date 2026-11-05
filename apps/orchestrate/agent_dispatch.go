@@ -1798,6 +1798,16 @@ func (cr *continuingRun) admit() bool {
 	if err := outsideRunRefusal(cr.runtimeUser, cr.target); err != nil {
 		return cr.exit(AgentSyncResult{}, err)
 	}
+	// A person outside past a limit gets a fixed reply, and no turn runs to
+	// spend what the limit was saving (outside_audience.go).
+	if agenthost.IsOutsideScope(cr.runtimeUser) {
+		now := time.Now()
+		if ok, why := outsideAdmit(UserDB(T.DB, cr.runtimeUser), cr.runtimeUser, cr.target, now); !ok {
+			Log("[outside] %s on %s: over a limit (%s), answered with the fixed reply", cr.runtimeUser, cr.target.ID, why)
+			noteOutsideLimit(cr.agentOwner, cr.target, cr.runtimeUser, why, now)
+			return cr.exit(AgentSyncResult{Text: outsideLimitReply}, nil)
+		}
+	}
 	cr.runtimeDB = cr.ownerDB
 	if cr.runtimeUser != cr.agentOwner {
 		cr.runtimeDB = UserDB(T.DB, cr.runtimeUser)
@@ -1848,6 +1858,10 @@ func (cr *continuingRun) buildSession() {
 		ChannelHandle:      run.ChannelHandle,
 		SpokenReply:        run.SpokenReply, // and be answered the way it was asked
 		DeniedCredentials:  credentialDenySet(cr.target, cr.runtimeUser),
+	}
+	// A person outside reaches only the credentials lent for them.
+	if agenthost.IsOutsideScope(cr.runtimeUser) {
+		cr.subSess.DeniedCredentials = outsideCredentialDeny(cr.subSess.DeniedCredentials, cr.agentOwner, cr.target)
 	}
 	// Builder sent work by another agent stamps what it builds as that
 	// agent's, and works within that agent's limits (builder_delegation.go).
@@ -2085,6 +2099,13 @@ func (cr *continuingRun) buildTurn() {
 	// ForcePrivate enforcement — see applyForcePrivateToDispatch.
 	// No-op when target.ForcePrivate is false.
 	cr.ctx, cr.tools = applyForcePrivateToDispatch(cr.ctx, cr.subSess, cr.tools, cr.target)
+	// Last, so nothing added above escapes it: a person outside gets what the
+	// owner lent and their own memory, and no list of the owner's other agents
+	// or custom tools to reach for (outside_audience.go).
+	if agenthost.IsOutsideScope(cr.runtimeUser) {
+		cr.tools = outsideKit(cr.tools, cr.target, cr.subTurn.asksFirst)
+		cr.availableBlock, cr.customToolPrompt = "", ""
+	}
 }
 
 func (cr *continuingRun) buildPrompt() {
@@ -2416,6 +2437,12 @@ func (cr *continuingRun) configureLoop() {
 	cr.loopCfg.DrainViewImages = cr.subSess.DrainViewImages
 	cr.loopCfg.BeforeToolRound = func() { SnapshotImageRefs(cr.subSess) }
 	cr.loopCfg.StampLocation = UserLocation(cr.runtimeUser) // stamp the turn in the acting user's zone
+	// A person outside: no tool found mid-turn that the kit left out, and
+	// their own spend allowance beside the agent's.
+	if agenthost.IsOutsideScope(cr.runtimeUser) {
+		cr.loopCfg.ToolFallbackResolver, cr.loopCfg.DynamicTools = nil, nil
+		cr.loopCfg.SharedBudgets = append(cr.loopCfg.SharedBudgets, outsideBudget(cr.runtimeUser, cr.target))
+	}
 }
 
 func (cr *continuingRun) wireJudges() {

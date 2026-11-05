@@ -17,7 +17,17 @@ package orchestrate
 //
 // And the agent has to be set to serve them (AgentRecord.OutsideAudience).
 
-import "github.com/cmcoffee/gohort/core/agenthost"
+import (
+	"fmt"
+	"strings"
+	"sync"
+	"time"
+
+	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/gohort/core/notices"
+	"github.com/cmcoffee/gohort/core/ui"
+)
 
 // outsideAudience reports a turn for a person outside gohort.
 func (t *chatTurn) outsideAudience() bool {
@@ -31,4 +41,221 @@ func outsideRunRefusal(runtimeUser string, target AgentRecord) error {
 		return agenthost.ErrNotForOutsideAudience
 	}
 	return nil
+}
+
+// --- Reach (design D) -----------------------------------------------------
+//
+// An outside turn gets the tools its owner lent the agent for people outside
+// (AgentRecord.OutsideTools) and a few that act on nothing but the person's
+// own store or arithmetic. Nothing the owner marked ask-first is offered even
+// when lent: there is nobody on the other end who can say yes. No delegation
+// to the owner's other agents, no custom tools found mid-turn, no Sources:
+// what is not listed is not there, rather than refused when reached for.
+
+// outsideAlwaysTools are the tools every outside turn has: the person's own
+// memory, and arithmetic and dates.
+var outsideAlwaysTools = []string{"remember", "recall", "forget", "calculate", "date_math", "time_in_zone"}
+
+// outsideKit narrows a run's tools to what an outside person may use.
+func outsideKit(tools []AgentToolDef, target AgentRecord, asksFirst func(string) bool) []AgentToolDef {
+	lent := map[string]bool{}
+	for _, n := range outsideAlwaysTools {
+		lent[n] = true
+	}
+	for _, n := range target.OutsideTools {
+		lent[strings.TrimSpace(n)] = true
+	}
+	kept := tools[:0:0]
+	for _, td := range tools {
+		name := td.Tool.Name
+		if !lent[name] || td.NeedsConfirm || (asksFirst != nil && asksFirst(name)) {
+			continue
+		}
+		kept = append(kept, td)
+	}
+	return kept
+}
+
+// outsideCredentialDeny is the credential deny set for an outside turn: every
+// credential the deployment or the owner holds, but the ones the owner lent
+// the agent for people outside, on top of what was already denied.
+func outsideCredentialDeny(deny map[string]bool, owner string, target AgentRecord) map[string]bool {
+	lent := map[string]bool{}
+	for _, n := range target.OutsideCredentials {
+		lent[strings.TrimSpace(n)] = true
+	}
+	out := map[string]bool{}
+	for n, v := range deny {
+		out[n] = v
+	}
+	add := func(cs []SecureCredential) {
+		for _, c := range cs {
+			if !lent[c.Name] {
+				out[c.Name] = true
+			}
+		}
+	}
+	add(Secure().List())
+	if owner = strings.TrimSpace(owner); owner != "" {
+		add(Secure().ListUser(owner))
+	}
+	return out
+}
+
+// --- Limits (design E) ----------------------------------------------------
+
+// The limits an agent serving people outside applies when its owner set none.
+// A zero is the default, never "unlimited": one busy or abusive person must
+// not be able to spend the owner's budget for everyone.
+const (
+	outsideDefaultPerMinute = 10
+	outsideDefaultPerDay    = 100
+	outsideDefaultSpendUSD  = 1.0
+)
+
+func outsidePerMinute(a AgentRecord) int {
+	if a.OutsidePerMinute > 0 {
+		return a.OutsidePerMinute
+	}
+	return outsideDefaultPerMinute
+}
+
+func outsidePerDay(a AgentRecord) int {
+	if a.OutsidePerDay > 0 {
+		return a.OutsidePerDay
+	}
+	return outsideDefaultPerDay
+}
+
+func outsideSpendUSD(a AgentRecord) float64 {
+	if a.OutsideDailySpendUSD > 0 {
+		return a.OutsideDailySpendUSD
+	}
+	return outsideDefaultSpendUSD
+}
+
+// outsideBudget is one person's spend allowance on one agent, in the loop's
+// rolling 24 hours beside the agent's own.
+func outsideBudget(person string, a AgentRecord) SharedBudget {
+	return SharedBudget{
+		Key:           "outside|" + person + "|" + a.ID,
+		Label:         "this person's",
+		DailySpendUSD: outsideSpendUSD(a),
+	}
+}
+
+// outsideLimitReply is what a person over a limit is told. Fixed text, not
+// the model's: a turn that runs to say no would spend what the limit saves.
+const outsideLimitReply = "Sorry, you've reached the limit for now. Please try again later."
+
+// outsideTurnsTable holds each person's recent turn times, per agent, in the
+// person's own store, so the day's count survives a restart.
+const outsideTurnsTable = "outside_turns"
+
+// outsideTurns is one person's recent turns on one agent.
+type outsideTurns struct {
+	At []time.Time `json:"at"`
+}
+
+var outsideTurnsMu sync.Mutex
+
+// outsideAdmit counts a turn for a person, or refuses it when it would take
+// them past a limit: turns in the last minute, turns in the last 24 hours, or
+// spend in the last 24 hours. A refused turn is not counted. The reason is
+// for the owner's notice; the person only ever sees outsideLimitReply.
+func outsideAdmit(db Database, person string, a AgentRecord, now time.Time) (ok bool, reason string) {
+	if over, spent, limit, _ := OverDailySpend([]SharedBudget{outsideBudget(person, a)}); over {
+		return false, fmt.Sprintf("spent $%.2f of $%.2f in 24 hours", spent, limit)
+	}
+	if db == nil {
+		return false, "no store for this person"
+	}
+	outsideTurnsMu.Lock()
+	defer outsideTurnsMu.Unlock()
+	var rec outsideTurns
+	db.Get(outsideTurnsTable, a.ID, &rec)
+	dayAgo, minuteAgo := now.Add(-24*time.Hour), now.Add(-time.Minute)
+	kept := rec.At[:0:0]
+	lastMinute := 0
+	for _, t := range rec.At {
+		if t.After(dayAgo) {
+			kept = append(kept, t)
+			if t.After(minuteAgo) {
+				lastMinute++
+			}
+		}
+	}
+	if lastMinute >= outsidePerMinute(a) {
+		return false, fmt.Sprintf("%d turns in a minute", lastMinute)
+	}
+	if len(kept) >= outsidePerDay(a) {
+		return false, fmt.Sprintf("%d turns in 24 hours", len(kept))
+	}
+	rec.At = append(kept, now)
+	db.Set(outsideTurnsTable, a.ID, rec)
+	return true, ""
+}
+
+// noteOutsideLimit tells the owner a person outside reached a limit. One
+// notice per agent per day: repeats fold into it with a count (core/notices),
+// and the next day's is a new one.
+func noteOutsideLimit(owner string, a AgentRecord, person, reason string, now time.Time) {
+	if strings.TrimSpace(owner) == "" {
+		return
+	}
+	notices.Record(RootDB, notices.Notice{
+		Owner: owner,
+		Agent: a.ID,
+		Kind:  notices.KindBlocked,
+		Title: fmt.Sprintf("People outside gohort reached a limit on %s (%s)", chFirst(a.Name, a.ID), now.In(UserLocation(owner)).Format("2006-01-02")),
+		Body:  fmt.Sprintf("Latest: %s, %s. They were told to try again later. The limits are on the agent's Access page, under People outside gohort.", strings.TrimPrefix(person, "outside:"), reason),
+	})
+}
+
+// --- The owner's choices (Access page) -------------------------------------
+
+// outsideToolOptions are the tools an owner can lend people outside: what the
+// agent itself carries (its allowlist, or the default pool when it has none),
+// without the ones every outside turn has anyway. A name lent before and no
+// longer offered stays listed, so it can be taken back.
+func outsideToolOptions(user string, a AgentRecord) []ui.SelectOption {
+	always := map[string]bool{}
+	for _, n := range outsideAlwaysTools {
+		always[n] = true
+	}
+	carried := map[string]bool{}
+	for _, n := range a.AllowedTools {
+		carried[strings.TrimSpace(n)] = true
+	}
+	var out []ui.SelectOption
+	for _, o := range availableWorkerToolOptions(user) {
+		if always[o.Value] || (len(carried) > 0 && !carried[o.Value]) {
+			continue
+		}
+		out = append(out, o)
+	}
+	return keepUnofferedValues(out, a.OutsideTools, "No longer offered", "Lent earlier; the agent no longer carries it.")
+}
+
+// outsideCredentialOptions are the credentials an owner can lend people
+// outside: the deployment's that they may use, and their own.
+func outsideCredentialOptions(owner string, a AgentRecord) []ui.SelectOption {
+	var out []ui.SelectOption
+	seen := map[string]bool{}
+	add := func(c SecureCredential, group string) {
+		if seen[c.Name] {
+			return
+		}
+		seen[c.Name] = true
+		out = append(out, ui.SelectOption{Value: c.Name, Label: c.Name, Group: group})
+	}
+	for _, c := range Secure().List() {
+		if Secure().UserMayUse(c, owner) {
+			add(c, "Shared")
+		}
+	}
+	for _, c := range Secure().ListUser(owner) {
+		add(c, "Yours")
+	}
+	return keepUnofferedValues(out, a.OutsideCredentials, "No longer offered", "Lent earlier; no longer available to you.")
 }

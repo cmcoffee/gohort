@@ -219,11 +219,23 @@ func dailySpend(key string) (float64, []spendEntry) {
 	return total, kept
 }
 
+// OverDailySpend is overDailySpend for budgets checked before a run starts,
+// so a caller can turn away a turn whose allowance is already spent instead
+// of starting it only for the loop to stop it.
+func OverDailySpend(budgets []SharedBudget) (over bool, spent, limit float64, label string) {
+	return budgetsOverDailySpend(budgets)
+}
+
 // overDailySpend reports whether any budget the run is held to is already
 // spent, and which: what it has spent, its ceiling, and whose it is ("" for
 // the run's own).
 func overDailySpend(cfg AgentLoopConfig) (over bool, spent, limit float64, label string) {
-	for _, b := range runBudgets(cfg) {
+	return budgetsOverDailySpend(runBudgets(cfg))
+}
+
+// budgetsOverDailySpend is the first of budgets already spent, if any.
+func budgetsOverDailySpend(budgets []SharedBudget) (over bool, spent, limit float64, label string) {
+	for _, b := range budgets {
 		if b.DailySpendUSD <= 0 {
 			continue
 		}

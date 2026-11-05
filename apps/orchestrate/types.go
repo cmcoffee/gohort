@@ -407,6 +407,16 @@ type AgentRecord struct {
 	// default, and an outside key's turn on an agent with it off is refused.
 	// The owner's own chats with the agent are unchanged either way.
 	OutsideAudience bool `json:"outside_audience,omitempty"`
+	// What a person outside gohort may reach through this agent, and how much
+	// of it (outside_audience.go). Tools and credentials are lent by name and
+	// none are by default: beyond their own memory and a few utilities, an
+	// outside turn has what the owner listed here and nothing else. Zero
+	// limits read as the defaults (outsideDefault*), never as unlimited.
+	OutsideTools         []string `json:"outside_tools,omitempty"`
+	OutsideCredentials   []string `json:"outside_credentials,omitempty"`
+	OutsidePerMinute     int      `json:"outside_per_minute,omitempty"`
+	OutsidePerDay        int      `json:"outside_per_day,omitempty"`
+	OutsideDailySpendUSD float64  `json:"outside_daily_spend_usd,omitempty"`
 
 	// PublicName overrides the display name + URL slug on the public
 	// /agents/ surface. Left blank, the public view uses Name; set

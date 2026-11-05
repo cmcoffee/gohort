@@ -2,10 +2,14 @@ package orchestrate
 
 import (
 	"errors"
+	"os"
+	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/gohort/core/notices"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -86,6 +90,207 @@ func TestAnOutsidePersonsNotesStayTheirs(t *testing.T) {
 	for _, f := range ListMemoryFacts(UserDB(root, "alice"), ns) {
 		if f.Note == "ann's order number is 4471" {
 			t.Error("an outside person's note reached the owner's store")
+		}
+	}
+}
+
+// offeredTools is every tool name the model was offered across the calls.
+func offeredTools(llm *FakeLLM) map[string]bool {
+	out := map[string]bool{}
+	for i := 0; i < llm.Calls(); i++ {
+		for _, tl := range llm.Config(i).Tools {
+			out[tl.Name] = true
+		}
+	}
+	return out
+}
+
+// A person outside is offered their own memory and the utilities, and of the
+// rest only what the owner lent: not the caller's tools, not the owner's
+// other agents. The owner's own run of the same agent is unchanged.
+func TestAnOutsideTurnReachesOnlyWhatWasLent(t *testing.T) {
+	df := newDispatchFixture(t, FakeTurn{Content: "Happy to help.", Repeat: true})
+	df.agent.OutsideAudience = true
+	a, err := saveAgent(df.udb, df.agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	df.agent = a
+	person := agenthost.OutsideScope("key1", "ann")
+
+	df.run(AgentSyncRun{RuntimeUser: person, SubSessionID: "p1", Message: "where is my order"})
+	got := offeredTools(df.llm)
+	if got["lookup_order"] || got["agents"] {
+		t.Errorf("an outside person was offered what nobody lent: %v", got)
+	}
+	for name := range got {
+		lent := false
+		for _, n := range outsideAlwaysTools {
+			lent = lent || n == name
+		}
+		if !lent && name != "ask_user" {
+			t.Errorf("an outside person was offered %q, which nobody lent", name)
+		}
+	}
+	if !got["remember"] || !got["recall"] {
+		t.Errorf("an outside person lost their own memory: %v", got)
+	}
+
+	df.agent.OutsideTools = []string{"lookup_order"}
+	if df.agent, err = saveAgent(df.udb, df.agent); err != nil {
+		t.Fatal(err)
+	}
+	df.llm.Turns = []FakeTurn{{Content: "Happy to help.", Repeat: true}}
+	before := df.llm.Calls()
+	df.run(AgentSyncRun{RuntimeUser: person, SubSessionID: "p2", Message: "and now"})
+	lentNow := false
+	for i := before; i < df.llm.Calls(); i++ {
+		for _, tl := range df.llm.Config(i).Tools {
+			lentNow = lentNow || tl.Name == "lookup_order"
+		}
+	}
+	if !lentNow {
+		t.Error("a lent tool was not offered to a person outside")
+	}
+
+	before = df.llm.Calls()
+	df.run(AgentSyncRun{SubSessionID: "own", Message: "owner asking"})
+	ownerHas := false
+	for i := before; i < df.llm.Calls(); i++ {
+		for _, tl := range df.llm.Config(i).Tools {
+			ownerHas = ownerHas || tl.Name == "lookup_order"
+		}
+	}
+	if !ownerHas {
+		t.Error("the owner's own run lost a tool to the outside rules")
+	}
+}
+
+// What is lent is still not offered when it would ask first: nobody on the
+// other end can say yes.
+func TestAnAskFirstToolIsNeverOfferedOutside(t *testing.T) {
+	tools := []AgentToolDef{
+		{Tool: Tool{Name: "recall"}},
+		{Tool: Tool{Name: "lookup_order"}},
+		{Tool: Tool{Name: "refund"}},
+		{Tool: Tool{Name: "send_message"}, NeedsConfirm: true},
+		{Tool: Tool{Name: "web_search"}},
+	}
+	a := AgentRecord{ID: "a1", OutsideTools: []string{"lookup_order", "refund", "send_message"}}
+	kept := outsideKit(tools, a, func(name string) bool { return name == "refund" })
+	var names []string
+	for _, td := range kept {
+		names = append(names, td.Tool.Name)
+	}
+	if strings.Join(names, ",") != "recall,lookup_order" {
+		t.Errorf("kit = %v; want recall and the lent tool that asks nothing", names)
+	}
+}
+
+// A person outside reaches no credential the owner did not lend, whether it is
+// the deployment's or the owner's own.
+func TestAnOutsidePersonReachesOnlyLentCredentials(t *testing.T) {
+	secStore := &DBase{Store: kvlite.MemStore()}
+	prev := AuthDB
+	AuthDB = func() Database { return secStore }
+	defer func() { AuthDB = prev }()
+	for _, c := range []SecureCredential{
+		{Name: "shop_api", Type: SecureCredBearer, BaseURL: "https://shop.test"},
+		{Name: "mail", Type: SecureCredBearer, BaseURL: "https://mail.test"},
+		{Name: "alice_bank", Type: SecureCredBearer, BaseURL: "https://bank.test", Owner: "alice"},
+	} {
+		if err := Secure().Save(c, "t"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deny := outsideCredentialDeny(map[string]bool{"old": true}, "alice", AgentRecord{ID: "a1", OutsideCredentials: []string{"shop_api"}})
+	if deny["shop_api"] {
+		t.Error("the lent credential was denied")
+	}
+	for _, n := range []string{"mail", "alice_bank", "old"} {
+		if !deny[n] {
+			t.Errorf("%s reached a person outside", n)
+		}
+	}
+}
+
+// Past a limit a person gets the fixed reply and no turn runs; the owner gets
+// a notice. The refused turn is not counted against them.
+func TestAPersonOverALimitGetsTheFixedReply(t *testing.T) {
+	df := newDispatchFixture(t, FakeTurn{Content: "Happy to help.", Repeat: true})
+	df.agent.OutsideAudience, df.agent.OutsidePerMinute = true, 2
+	a, err := saveAgent(df.udb, df.agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	df.agent = a
+	prevRoot := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = prevRoot })
+	person := agenthost.OutsideScope("key1", "ann")
+
+	for i := 0; i < 2; i++ {
+		if res := df.run(AgentSyncRun{RuntimeUser: person, SubSessionID: "p", Message: "hello"}); res.Text == outsideLimitReply {
+			t.Fatalf("turn %d hit the limit early", i+1)
+		}
+	}
+	calls := df.llm.Calls()
+	if res := df.run(AgentSyncRun{RuntimeUser: person, SubSessionID: "p", Message: "hello again"}); res.Text != outsideLimitReply {
+		t.Errorf("over the limit the person got %q", res.Text)
+	}
+	if df.llm.Calls() != calls {
+		t.Error("a turn over the limit still called the model")
+	}
+	if len(notices.List(RootDB, "u")) != 1 {
+		t.Errorf("the owner was not told once: %+v", notices.List(RootDB, "u"))
+	}
+	// Someone else is unaffected.
+	if res := df.run(AgentSyncRun{RuntimeUser: agenthost.OutsideScope("key1", "ben"), SubSessionID: "q", Message: "hello"}); res.Text == outsideLimitReply {
+		t.Error("one person's limit held another")
+	}
+}
+
+// The day's count is kept in the person's store and rolls: turns older than a
+// day stop counting, and a refused turn is not one.
+func TestTheDayLimitRolls(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	a := AgentRecord{ID: "a1", OutsideAudience: true, OutsidePerDay: 2, OutsidePerMinute: 100}
+	start := time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
+	for i, at := range []time.Time{start, start.Add(time.Hour)} {
+		if ok, why := outsideAdmit(db, "outside:k:ann", a, at); !ok {
+			t.Fatalf("turn %d refused: %s", i+1, why)
+		}
+	}
+	if ok, _ := outsideAdmit(db, "outside:k:ann", a, start.Add(2*time.Hour)); ok {
+		t.Error("a third turn in a day was let through")
+	}
+	if ok, why := outsideAdmit(db, "outside:k:ann", a, start.Add(24*time.Hour+time.Minute)); !ok {
+		t.Errorf("a day on, the first turn has aged out, yet: %s", why)
+	}
+	if ok, _ := outsideAdmit(db, "outside:k:ann", a, start.Add(24*time.Hour+2*time.Minute)); ok {
+		t.Error("the refused turn was counted as room, or the second has aged out early")
+	}
+	// Zero limits are the defaults, not unlimited.
+	if outsidePerMinute(AgentRecord{}) != outsideDefaultPerMinute || outsidePerDay(AgentRecord{}) != outsideDefaultPerDay || outsideSpendUSD(AgentRecord{}) != outsideDefaultSpendUSD {
+		t.Error("an unset limit is not the default")
+	}
+}
+
+// Three parts of an outside turn no whole-turn test here reaches: the
+// credentials it may not use, no custom tool found mid-turn, and the person's
+// spend counted under the key outsideAdmit checks. Pinned at their one site.
+func TestAnOutsideRunIsWiredForCredentialsToolsAndSpend(t *testing.T) {
+	src, err := os.ReadFile("agent_dispatch.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"cr.subSess.DeniedCredentials = outsideCredentialDeny(cr.subSess.DeniedCredentials, cr.agentOwner, cr.target)",
+		"cr.loopCfg.ToolFallbackResolver, cr.loopCfg.DynamicTools = nil, nil",
+		"cr.loopCfg.SharedBudgets = append(cr.loopCfg.SharedBudgets, outsideBudget(cr.runtimeUser, cr.target))",
+	} {
+		if !strings.Contains(string(src), want) {
+			t.Errorf("the continuing run no longer does: %s", want)
 		}
 	}
 }

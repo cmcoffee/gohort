@@ -892,7 +892,7 @@ func (ap *accessPage) shareSections() []ui.Section {
 			Subtitle: "Whether people who are not gohort users can talk to this agent, through a platform's API key marked for an outside audience.",
 			Detail: "For example a chat widget on a customer portal, whose server calls /v1 with a key marked \"For people outside gohort\" (Account, API keys, Access) and names the person each call is for.\n\n" +
 				"Each person runs in a store of their own: what they tell the agent, and their conversations, stay with them and never reach you or anyone else. The agent's saved notes come with it, read-only, so it knows its job; your cortex and its saved findings do not. Nothing they say changes the agent's own memory. Your own chats with it are unchanged.\n\n" +
-				"The agent still needs to be reachable from outside (above), and the key has to list it.",
+				"The agent still needs to be reachable from outside (above), and the key has to list it. They reach only the tools and credentials you lend them below, never your other agents.",
 			Body: ui.FormPanel{
 				Source:  ap.patchURL,
 				PostURL: ap.patchURL,
@@ -900,6 +900,20 @@ func (ap *accessPage) shareSections() []ui.Section {
 				Fields: []ui.FormField{
 					{Field: "outside_audience", Type: "toggle", Label: "Serves people outside gohort",
 						Help: "Off: an outside-audience key's calls to this agent are refused."},
+					{Field: "outside_tools", Type: "checklist", Label: "Tools they may use",
+						Options:     outsideToolOptions(ap.user, ap.agent),
+						Placeholder: "(this agent carries nothing that can be lent)",
+						Help:        "None by default. They always have their own memory, arithmetic and dates. Anything you set to ask first is left out even when ticked: there is nobody to ask."},
+					{Field: "outside_credentials", Type: "checklist", Label: "Credentials they may use",
+						Options:     outsideCredentialOptions(ap.user, ap.agent),
+						Placeholder: "(you have no credentials to lend)",
+						Help:        "None by default. A lent tool that needs a credential not ticked here fails for them."},
+					{Field: "outside_per_minute", Type: "number", Label: "Turns per minute, each person", Min: 0, Max: 120,
+						Help: "Blank uses 10. Past a limit they are told to try again later, and you get one notice a day."},
+					{Field: "outside_per_day", Type: "number", Label: "Turns per 24 hours, each person", Min: 0, Max: 10000,
+						Help: "Blank uses 100."},
+					{Field: "outside_daily_spend_usd", Type: "number", Label: "Spend per 24 hours, each person (US$)", Min: 0, Max: 1000, Decimals: 2,
+						Help: "Blank uses $1.00. Counted from recorded usage, so an estimate."},
 				},
 			},
 		},
