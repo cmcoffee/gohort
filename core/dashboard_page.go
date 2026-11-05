@@ -253,11 +253,28 @@ func renderDashCard(b *strings.Builder, a dashApp, extraCls string) {
 		href += "/"
 	}
 	// The description is held to two lines (.card-desc), so the whole of it
-	// rides on the card's title for hovering.
-	fmt.Fprintf(b, `<a class="card%s" href="%s" title="%s">
+	// rides on the card's title for hovering. Its colour says who made what
+	// it opens (data-kind).
+	fmt.Fprintf(b, `<a class="card%s" href="%s" data-kind="%s" title="%s">
 			<div class="card-name">%s</div>
 			<div class="card-desc">%s</div>
-		</a>`, extraCls, html.EscapeString(href), html.EscapeString(a.desc), html.EscapeString(a.name), html.EscapeString(a.desc))
+		</a>`, extraCls, html.EscapeString(href), cardKind(a), html.EscapeString(a.desc),
+		html.EscapeString(a.name), html.EscapeString(a.desc))
+}
+
+// cardKind is who made what a card opens, which is what its colour says:
+// "builtin" for gohort's own apps, "agent" for an agent, "made" for an app
+// somebody built. A card from a card source names its kind by its group;
+// agents are listed under "Agents" (apps/orchestrate), and everything else a
+// source offers was made by somebody here.
+func cardKind(a dashApp) string {
+	switch {
+	case a.app != nil:
+		return "builtin"
+	case a.group == "Agents":
+		return "agent"
+	}
+	return "made"
 }
 
 // dashCards is the dashboard's cards sorted into where they are drawn: the

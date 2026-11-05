@@ -253,28 +253,32 @@ func ThemeCSS() string {
 // Built-in themes. Add a new one here (or via RegisterTheme from anywhere) and
 // it auto-appears in the picker + validates + ships its CSS — no other edits.
 func init() {
+	// --accent-2 and --accent-3 are the accent's two companions, picked from
+	// each theme's own palette and kept clear of its success, warning and
+	// danger colours, so a page can tell a few kinds of thing apart by colour
+	// without any of them reading as a status.
 	RegisterTheme(ThemeSpec{Name: "indigo", Label: "Indigo: cool slate + indigo accent", Tokens: map[string]string{
 		"--bg-0": "#0f1117", "--bg-1": "#1a1d27", "--bg-2": "#232733",
 		"--text": "#e4e7ef", "--text-hi": "#ffffff", "--text-mute": "#9ca3b8",
-		"--border": "#333848", "--accent": "#6366f1", "--accent-hi": "#818cf8", "--text-on-accent": "#ffffff",
+		"--border": "#333848", "--accent": "#6366f1", "--accent-hi": "#818cf8", "--text-on-accent": "#ffffff", "--accent-2": "#c084fc", "--accent-3": "#22d3ee",
 		"--danger": "#ef4444", "--success": "#22c55e", "--warning": "#f59e0b", "--tap": "44px",
 	}})
 	RegisterTheme(ThemeSpec{Name: "blackboard", Label: "Blackboard: warm navy + amber", Tokens: map[string]string{
 		"--bg-0": "#0c1424", "--bg-1": "#142037", "--bg-2": "#1c2a45",
 		"--text": "#f5f0e1", "--text-hi": "#ffffff", "--text-mute": "#9aa3b8",
-		"--border": "#2a3a5e", "--accent": "#d4a657", "--accent-hi": "#f0c878", "--text-on-accent": "#1a1408",
+		"--border": "#2a3a5e", "--accent": "#d4a657", "--accent-hi": "#f0c878", "--text-on-accent": "#1a1408", "--accent-2": "#c792ea", "--accent-3": "#7fdbca",
 		"--danger": "#c97474", "--success": "#56d364", "--warning": "#e3b341", "--tap": "44px",
 	}})
 	RegisterTheme(ThemeSpec{Name: "github-dark", Label: "GitHub Dark", Tokens: map[string]string{
 		"--bg-0": "#0d1117", "--bg-1": "#161b22", "--bg-2": "#21262d",
 		"--text": "#c9d1d9", "--text-hi": "#f0f6fc", "--text-mute": "#8b949e",
-		"--border": "#30363d", "--accent": "#4f8cff", "--accent-hi": "#79c0ff", "--text-on-accent": "#ffffff",
+		"--border": "#30363d", "--accent": "#4f8cff", "--accent-hi": "#79c0ff", "--text-on-accent": "#ffffff", "--accent-2": "#d2a8ff", "--accent-3": "#56d4dd",
 		"--danger": "#f85149", "--success": "#56d364", "--warning": "#d29922", "--tap": "44px",
 	}})
 	RegisterTheme(ThemeSpec{Name: "light", Label: "Light: slate-on-white + indigo", Tokens: map[string]string{
 		"--bg-0": "#f6f7f9", "--bg-1": "#ffffff", "--bg-2": "#eceef2",
 		"--text": "#24292f", "--text-hi": "#0d1117", "--text-mute": "#57606a",
-		"--border": "#d0d7de", "--accent": "#4f46e5", "--accent-hi": "#6366f1", "--text-on-accent": "#ffffff",
+		"--border": "#d0d7de", "--accent": "#4f46e5", "--accent-hi": "#6366f1", "--text-on-accent": "#ffffff", "--accent-2": "#9333ea", "--accent-3": "#0891b2",
 		"--danger": "#cf222e", "--success": "#1a7f37", "--warning": "#9a6700", "--tap": "44px",
 	}})
 	// After the two it follows, which have to be registered for it to work.
@@ -282,31 +286,31 @@ func init() {
 	RegisterTheme(ThemeSpec{Name: "high-contrast", Label: "High contrast: black and white + yellow", Tokens: map[string]string{
 		"--bg-0": "#000000", "--bg-1": "#0b0b0b", "--bg-2": "#1c1c1c",
 		"--text": "#ffffff", "--text-hi": "#ffffff", "--text-mute": "#d4d4d4",
-		"--border": "#8c8c8c", "--accent": "#ffd400", "--accent-hi": "#ffe866", "--text-on-accent": "#000000",
+		"--border": "#8c8c8c", "--accent": "#ffd400", "--accent-hi": "#ffe866", "--text-on-accent": "#000000", "--accent-2": "#ff6ec7", "--accent-3": "#00e5ff",
 		"--danger": "#ff6161", "--success": "#45e06f", "--warning": "#ffb020", "--tap": "44px",
 	}})
 	RegisterTheme(ThemeSpec{Name: "nord", Label: "Nord: cool blue-grey + frost", Tokens: map[string]string{
 		"--bg-0": "#2e3440", "--bg-1": "#3b4252", "--bg-2": "#434c5e",
 		"--text": "#e5e9f0", "--text-hi": "#eceff4", "--text-mute": "#a3adbf",
-		"--border": "#4c566a", "--accent": "#88c0d0", "--accent-hi": "#8fbcbb", "--text-on-accent": "#2e3440",
+		"--border": "#4c566a", "--accent": "#88c0d0", "--accent-hi": "#8fbcbb", "--text-on-accent": "#2e3440", "--accent-2": "#b48ead", "--accent-3": "#d08770",
 		"--danger": "#bf616a", "--success": "#a3be8c", "--warning": "#ebcb8b", "--tap": "44px",
 	}})
 	RegisterTheme(ThemeSpec{Name: "solarized-dark", Label: "Solarized Dark", Tokens: map[string]string{
 		"--bg-0": "#002b36", "--bg-1": "#073642", "--bg-2": "#0e4250",
 		"--text": "#93a1a1", "--text-hi": "#eee8d5", "--text-mute": "#7d9093",
-		"--border": "#24515c", "--accent": "#268bd2", "--accent-hi": "#2aa198", "--text-on-accent": "#fdf6e3",
+		"--border": "#24515c", "--accent": "#268bd2", "--accent-hi": "#2aa198", "--text-on-accent": "#fdf6e3", "--accent-2": "#6c71c4", "--accent-3": "#d33682",
 		"--danger": "#dc322f", "--success": "#859900", "--warning": "#b58900", "--tap": "44px",
 	}})
 	RegisterTheme(ThemeSpec{Name: "solarized-light", Label: "Solarized Light", Tokens: map[string]string{
 		"--bg-0": "#eee8d5", "--bg-1": "#fdf6e3", "--bg-2": "#e4ddc8",
 		"--text": "#586e75", "--text-hi": "#073642", "--text-mute": "#6c7f85",
-		"--border": "#d3cbb7", "--accent": "#268bd2", "--accent-hi": "#2aa198", "--text-on-accent": "#fdf6e3",
+		"--border": "#d3cbb7", "--accent": "#268bd2", "--accent-hi": "#2aa198", "--text-on-accent": "#fdf6e3", "--accent-2": "#6c71c4", "--accent-3": "#d33682",
 		"--danger": "#dc322f", "--success": "#5f7000", "--warning": "#8a6900", "--tap": "44px",
 	}})
 	RegisterTheme(ThemeSpec{Name: "gruvbox", Label: "Gruvbox: warm retro brown + orange", Tokens: map[string]string{
 		"--bg-0": "#282828", "--bg-1": "#32302f", "--bg-2": "#3c3836",
 		"--text": "#ebdbb2", "--text-hi": "#fbf1c7", "--text-mute": "#a89984",
-		"--border": "#504945", "--accent": "#fe8019", "--accent-hi": "#fabd2f", "--text-on-accent": "#282828",
+		"--border": "#504945", "--accent": "#fe8019", "--accent-hi": "#fabd2f", "--text-on-accent": "#282828", "--accent-2": "#d3869b", "--accent-3": "#83a598",
 		"--danger": "#fb4934", "--success": "#b8bb26", "--warning": "#fabd2f", "--tap": "44px",
 	}})
 	// The two phosphor screens: one colour of phosphor on black, with a faint
@@ -316,14 +320,14 @@ func init() {
 	RegisterTheme(ThemeSpec{Name: "terminal", Label: "Terminal: green phosphor on black", Tokens: map[string]string{
 		"--bg-0": "#040a05", "--bg-1": "#08140b", "--bg-2": "#0e2013",
 		"--text": "#41e874", "--text-hi": "#a6ffbf", "--text-mute": "#2a9a4c",
-		"--border": "#1a4a28", "--accent": "#33ff66", "--accent-hi": "#8dffad", "--text-on-accent": "#021006",
+		"--border": "#1a4a28", "--accent": "#33ff66", "--accent-hi": "#8dffad", "--text-on-accent": "#021006", "--accent-2": "#b6ffcb", "--accent-3": "#1fbf55",
 		"--danger": "#ff5f56", "--success": "#33ff66", "--warning": "#e8e04a", "--tap": "44px",
 		"--text-glow": "0 0 3px rgba(51, 255, 102, 0.35)",
 	}})
 	RegisterTheme(ThemeSpec{Name: "amber", Label: "Amber: amber phosphor on black", Tokens: map[string]string{
 		"--bg-0": "#0a0600", "--bg-1": "#140d02", "--bg-2": "#1f1504",
 		"--text": "#ffb000", "--text-hi": "#ffd27a", "--text-mute": "#a8740c",
-		"--border": "#4a3308", "--accent": "#ffb000", "--accent-hi": "#ffcc4d", "--text-on-accent": "#140c00",
+		"--border": "#4a3308", "--accent": "#ffb000", "--accent-hi": "#ffcc4d", "--text-on-accent": "#140c00", "--accent-2": "#ffe6b0", "--accent-3": "#d98a00",
 		"--danger": "#ff5a3c", "--success": "#d4e05a", "--warning": "#ffd27a", "--tap": "44px",
 		"--text-glow": "0 0 3px rgba(255, 176, 0, 0.35)",
 	}})

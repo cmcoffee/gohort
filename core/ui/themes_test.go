@@ -53,6 +53,18 @@ func TestEveryThemeCarriesEveryToken(t *testing.T) {
 			t.Errorf("theme %q is not registered", name)
 		}
 	}
+	// The accent's companions tell kinds of thing apart; none may be a
+	// status colour, or a kind reads as a warning.
+	for _, th := range Themes() {
+		for _, k := range []string{"--accent-2", "--accent-3"} {
+			c := strings.ToLower(th.Tokens[k])
+			for _, st := range []string{"--success", "--warning", "--danger"} {
+				if c != "" && c == strings.ToLower(th.Tokens[st]) {
+					t.Errorf("theme %q's %s is its %s", th.Name, k, st)
+				}
+			}
+		}
+	}
 	if !isLightColor(themeByName["solarized-light"].Tokens["--bg-0"]) || isLightColor(themeByName["nord"].Tokens["--bg-0"]) {
 		t.Error("a theme's light or dark reading is wrong")
 	}

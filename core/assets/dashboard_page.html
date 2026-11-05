@@ -98,12 +98,23 @@
     display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
     gap: 1.5rem; width: 100%; max-width: var(--dash-w);
   }
+  /* A card's colour says who made what it opens (data-kind): the accent for
+     gohort's own apps, the theme's second accent for apps people built, its
+     third for agents. The section around the cards carries the same colour
+     on its title's tick, so the title is the key. The card is washed in its
+     colour from the corner, and lifts in it when pointed at. */
+  .card, .cluster { --tone: var(--accent, #6366f1); }
+  .cluster:has(> .cluster-grid > .card[data-kind="made"]), .card[data-kind="made"] { --tone: var(--accent-2, var(--accent, #6366f1)); }
+  .cluster:has(> .cluster-grid > .card[data-kind="agent"]), .card[data-kind="agent"] { --tone: var(--accent-3, var(--accent, #6366f1)); }
   .card {
     display: block; text-decoration: none; color: var(--text, #c9d1d9);
     background: var(--bg-1, #161b22); border: 1px solid var(--border, #30363d); border-radius: calc(var(--btn-radius, 6px) * 4 / 3);
-    padding: 1.5rem; transition: border-color 0.2s, transform 0.2s;
+    padding: 1.5rem; transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
   }
-  .card:hover { border-color: var(--accent, #58a6ff); transform: translateY(-2px); }
+  .card:hover {
+    border-color: color-mix(in srgb, var(--tone) 60%, var(--border, #30363d)); transform: translateY(-2px);
+    box-shadow: 0 12px 28px -18px color-mix(in srgb, var(--tone) 80%, transparent);
+  }
   .card-name { font-size: 1.25rem; font-weight: 600; color: var(--text-hi, #f0f6fc); margin-bottom: 0.5rem; }
   /* Two lines at most. A description is whatever its author typed, and an
      agent's often runs to a paragraph: every line of it made its card taller
@@ -118,7 +129,6 @@
   .card.featured {
     grid-column: 1 / -1;
     padding: 2.25rem 2rem;
-    background: linear-gradient(135deg, var(--bg-1, #161b22) 0%, var(--bg-2, #1b2230) 100%);
     box-shadow: 0 8px 24px rgba(0,0,0,0.35);
   }
   .card.featured:hover { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,0,0,0.45); }
@@ -136,15 +146,31 @@
      Gateways), so the dashboard mirrors that grouping instead of scattering
      them among unrelated cards. It spans the full grid width and holds its own
      inner card grid. */
+  /* A section's title sits IN its top border, the page's colour behind it so
+     the line stops either side, with an accent tick before the words. The
+     gear rides on the same line at the right. */
   .cluster {
-    grid-column: 1 / -1;
+    grid-column: 1 / -1; position: relative; margin-top: 0.6rem;
     border: 1px solid var(--border, #30363d); border-radius: calc(var(--btn-radius, 6px) * 5 / 3);
-    padding: 1rem 1rem 1.25rem;
+    padding: 1.4rem 1rem 1.25rem;
   }
   .cluster-head {
+    position: absolute; top: 0; left: 0.9rem; right: 0.9rem; transform: translateY(-50%);
     font-size: var(--fs-xs, 0.78rem); font-weight: 600; letter-spacing: 0.08em;
-    text-transform: uppercase; color: var(--text-mute, #8b949e); margin-bottom: 0.9rem;
+    text-transform: uppercase; color: var(--text-mute, #8b949e); pointer-events: none;
   }
+  .cluster-head > span:first-child {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    padding: 0 0.5rem; background: var(--bg-0, #0d1117);
+  }
+  .cluster-head > span:first-child::before {
+    content: ""; width: 0.9rem; height: 2px; background: var(--tone, var(--accent, #6366f1));
+  }
+  /* Retro draws the title as a terminal window's: set between the line's
+     own joints. */
+  :root[data-style="retro"] .cluster-head > span:first-child::before { content: "┤"; width: auto; height: auto; background: none; color: var(--tone, var(--border, #30363d)); letter-spacing: 0; }
+  :root[data-style="retro"] .cluster-head > span:first-child::after { content: "├"; color: var(--tone, var(--border, #30363d)); letter-spacing: 0; }
+  .cluster-head .band-gear { pointer-events: auto; background: var(--bg-0, #0d1117); }
   .cluster-grid {
     /* auto-FIT, not auto-fill. The cluster holds a bounded set: the apps that
        are also hub tabs, four of them, so a reserved empty track reads as a
@@ -189,7 +215,14 @@
     font-size: var(--fs-2xs, 0.7rem); padding: 0.15rem 0.4rem; border-radius: calc(var(--btn-radius, 6px) * 2 / 3);
     font-weight: 600; white-space: nowrap;
   }
-  .live-badge.running { background: var(--success); color: #fff; }
+  /* Running is alive, so it moves: the house spinner and the word, in the
+     success colour, rather than a solid block that reads the same as a
+     stuck one. */
+  .live-run {
+    flex: 0 0 auto; display: inline-flex; align-items: center; gap: 0.35rem;
+    font-size: var(--fs-2xs, 0.7rem); font-weight: 600; white-space: nowrap; color: var(--success, #22c55e);
+  }
+  .live-spin { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.95rem; line-height: 1; }
   .live-badge.queued { background: var(--warning); color: #fff; }
   .live-label {
     /* 7rem is the floor: below that the topic is not worth reading, so the
@@ -291,8 +324,7 @@
     .card-name { font-size: 1.1rem; }
     .card.featured { padding: 1.25rem 1.1rem; }
     .card.featured .card-name { font-size: 1.45rem; }
-    .cluster { padding: 0.8rem 0.7rem 0.9rem; }
-    .cluster-head { margin-bottom: 0.6rem; }
+    .cluster { padding: 1.2rem 0.7rem 0.9rem; }
   }
   /* Theme overrides: re-point chrome surfaces to the active theme's tokens
      (injected above via %THEMECSS%). Additive + same selector specificity as
@@ -300,13 +332,14 @@
      color as a fallback. */
   body { background: var(--bg-0); color: var(--text); }
   .subtitle, .card-desc, .auth-user, .live-status, #live-panel h3 { color: var(--text-mute); }
-  .card, .card.featured, .live-item, .auth-link { background: var(--bg-1); border-color: var(--border); color: var(--text); }
+  .live-item, .auth-link { background: var(--bg-1); border-color: var(--border); color: var(--text); }
+  .card { background: linear-gradient(155deg, color-mix(in srgb, var(--tone) 12%, var(--bg-1)) 0%, var(--bg-1) 55%); border-color: var(--border); color: var(--text); }
+  .card.featured { background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 16%, var(--bg-1)) 0%, var(--bg-1) 60%); }
   .cluster { border-color: var(--border); }
   .cluster-head { color: var(--text-mute); }
   .card-name { color: var(--text-hi); }
-  .card:hover, .auth-link:hover, .live-item:hover { border-color: var(--accent); }
+  .auth-link:hover, .live-item:hover { border-color: var(--accent); }
   .auth-link:hover { color: var(--text-hi); }
-  .live-badge.running { background: var(--success); }
   /* A bell that is always lit is a bell nobody reads. Muted until there is
      something unread, and then it carries the number. */
   .bell {
@@ -436,7 +469,7 @@ function refreshLive() {
     var html = '';
     for (var i = 0; i < items.length; i++) {
       var it = items[i];
-      var badge = it.queued ? '<span class="live-badge queued">Queued</span>' : '<span class="live-badge running">Running</span>';
+      var badge = it.queued ? '<span class="live-badge queued">Queued</span>' : '<span class="live-run"><span class="live-spin">' + spinFrames[spinAt] + '</span>Running</span>';
       var app = it.app ? '<span class="live-badge" style="background:var(--bg-2);color:var(--text-mute)">' + esc(it.app) + '</span>' : '';
       var label = it.topic || it.label || 'Untitled';
       // Back to the work itself, as the live pill goes: /api/live resolves
@@ -450,6 +483,20 @@ function refreshLive() {
     }
     list.innerHTML = html;
   });
+}
+// The running rows' spinners turn together. Each frame edits the glyph's text
+// node in place: replacing a link's content as it is clicked can swallow the
+// click, and these rows are links. Still under prefers-reduced-motion.
+var spinFrames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'], spinAt = 0;
+if (!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) {
+  setInterval(function() {
+    var spins = document.querySelectorAll('.live-spin');
+    if (!spins.length) return;
+    spinAt = (spinAt + 1) % spinFrames.length;
+    for (var i = 0; i < spins.length; i++) {
+      if (spins[i].firstChild) spins[i].firstChild.nodeValue = spinFrames[spinAt];
+    }
+  }, 100);
 }
 // The masthead builds itself once, then hands its squares to the heartbeat.
 setTimeout(function() { document.getElementById('logo').classList.remove('play'); }, 1800);

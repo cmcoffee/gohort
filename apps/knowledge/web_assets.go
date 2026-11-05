@@ -30,9 +30,9 @@ const documentsListAssets = `<style>
 .docs-hdr { display: flex; align-items: flex-start; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
 .docs-intro { flex: 1; min-width: 260px; margin: 0; color: var(--text-mute); font-size: var(--fs-md, 0.88rem); line-height: 1.45; }
 .docs-status { font-size: var(--fs-sm, 0.8rem); color: var(--text-mute); margin-bottom: 0.6rem; min-height: 1.2em; }
-/* Collection cards. Each gets a monogram in one of a few theme colours,
-   picked from its id so it keeps the same one, and the card is washed with
-   that colour from the corner. Whose it is, and how you have it, sits under
+/* Collection cards. A card's colour says how you hold the collection: the accent for your own, the theme's second accent for one you
+   maintain for its owner, its third for one shared with you or with everyone
+   here. The card is washed with that colour from the corner. Whose it is, and how you have it, sits under
    the name. The card is a link, so it opens in a new tab and takes the
    keyboard like one. */
 .docs-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 0.85rem; }
@@ -51,19 +51,9 @@ const documentsListAssets = `<style>
   box-shadow: 0 12px 28px -18px color-mix(in srgb, var(--tone) 80%, transparent);
 }
 .docs-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.docs-card.tone-1 { --tone: var(--success, #22c55e); }
-.docs-card.tone-2 { --tone: var(--warning, #f59e0b); }
-.docs-card.tone-3 { --tone: var(--accent-hi, var(--accent)); }
-.docs-card-head { display: flex; align-items: center; gap: 0.75rem; min-width: 0; }
-.docs-card-mark {
-  flex: 0 0 auto; width: 2.6rem; height: 2.6rem; border-radius: calc(var(--btn-radius) * 2);
-  display: grid; place-items: center;
-  font-weight: 700; font-size: 1.1rem; line-height: 1;
-  color: color-mix(in srgb, var(--tone) 70%, var(--text-hi));
-  background: color-mix(in srgb, var(--tone) 16%, var(--bg-2));
-  border: 1px solid color-mix(in srgb, var(--tone) 32%, transparent);
-}
-.docs-card-title { flex: 1; min-width: 0; }
+.docs-card.held-maintain { --tone: var(--accent-2, var(--accent)); }
+.docs-card.held-shared { --tone: var(--accent-3, var(--accent)); }
+.docs-card-title { min-width: 0; }
 .docs-card-name {
   font-weight: 600; color: var(--text-hi); font-size: var(--fs-lg, 1rem); line-height: 1.25; overflow-wrap: anywhere;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
@@ -126,12 +116,11 @@ const documentsListAssets = `<style>
     return e;
   }
 
-  // tone picks one of the card colours from the id, so a collection keeps
-  // its colour from one visit to the next.
-  function tone(id) {
-    var h = 0;
-    for (var i = 0; i < (id || '').length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
-    return Math.abs(h) % 4;
+  // held is how this person holds the collection, which is what its colour
+  // says: their own, one they maintain, or one shared with them.
+  function held(c) {
+    if (c.role === 'yours') return '';
+    return c.role === 'maintain' ? 'held-maintain' : 'held-shared';
   }
 
   function ago(iso) {
@@ -162,18 +151,15 @@ const documentsListAssets = `<style>
 
   function card(c) {
     var a = el('a', 'docs-card');
-    var t = tone(c.id);
-    if (t) a.classList.add('tone-' + t);
+    var h = held(c);
+    if (h) a.classList.add(h);
     a.href = '/knowledge/c/' + encodeURIComponent(c.id);
 
-    var head = el('div', 'docs-card-head');
     var name = (c.name || '').trim();
-    head.appendChild(el('div', 'docs-card-mark', name ? name.charAt(0).toUpperCase() : '?'));
     var title = el('div', 'docs-card-title');
     title.appendChild(el('div', 'docs-card-name', name || '(unnamed)'));
     title.appendChild(el('div', 'docs-card-sub', whose(c)));
-    head.appendChild(title);
-    a.appendChild(head);
+    a.appendChild(title);
 
     var desc = (c.description || '').trim();
     a.appendChild(el('div', 'docs-card-desc' + (desc ? '' : ' none'), desc || 'No description yet.'));
