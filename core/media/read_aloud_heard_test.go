@@ -2,8 +2,11 @@ package media
 
 import (
 	"bytes"
+	"encoding/json"
 	"math"
 	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -119,5 +122,72 @@ func TestMP3Seconds(t *testing.T) {
 		if got := mp3Seconds(c.in); math.Abs(got-c.want) > 1e-9 {
 			t.Errorf("%s: %.4fs, want %.4fs", c.name, got, c.want)
 		}
+	}
+}
+
+// mp3After cuts at a frame: what plays in the first secs seconds goes, a
+// leading tag with it, and seconds the piece was too short for are left for
+// the next one.
+func TestMP3After(t *testing.T) {
+	f := mp3Frame(true, false, "", 0)
+	dur := 1152.0 / 44100
+	five := bytes.Repeat(f, 5)
+	if got, left := mp3After(five, 2.5*dur); !bytes.Equal(got, bytes.Repeat(f, 2)) || left != 0 {
+		t.Errorf("2.5 frames in: %d bytes left, %.4fs over", len(got), left)
+	}
+	tagged := append([]byte("ID3\x04\x00\x00\x00\x00\x00\x02xx"), five...)
+	if got, _ := mp3After(tagged, 0.5*dur); !bytes.Equal(got, bytes.Repeat(f, 4)) {
+		t.Errorf("after a tag: %d bytes", len(got))
+	}
+	if got, left := mp3After(five, 7*dur); len(got) != 0 || math.Abs(left-2*dur) > 1e-9 {
+		t.Errorf("past the end: %d bytes, %.4fs over, want %.4fs", len(got), left, 2*dur)
+	}
+	if got, _ := mp3After([]byte("[not mp3]"), 1); string(got) != "[not mp3]" {
+		t.Errorf("not an mp3 is kept whole: %q", got)
+	}
+}
+
+// A player that says it has ended can have stopped short. The read says how
+// much audio is past where it stopped, and plays from there, cut at a frame,
+// across the pieces it was made in.
+func TestAReadPlaysOnFromWhereThePlayerStopped(t *testing.T) {
+	frame := mp3Frame(true, false, "", 0)
+	dur := 1152.0 / 44100
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(bytes.Repeat(frame, 10)) // each piece, 10 frames
+	}))
+	t.Cleanup(srv.Close)
+	prev := GetSpeechConfig()
+	SetSpeechConfig(SpeechConfig{Provider: "peer:den", Endpoint: srv.URL, Enabled: true})
+	t.Cleanup(func() { SetSpeechConfig(prev) })
+
+	url := startLink(t, readAloudLong("The first sentence of a reply long enough for two pieces"))
+	whole := readAloudDo("GET", url, "alice", "").Body.Bytes()
+	frames := len(whole) / len(frame)
+	if frames < 20 || len(whole)%len(frame) != 0 {
+		t.Fatalf("want two or more pieces of whole frames: %d bytes", len(whole))
+	}
+	made := float64(frames) * dur
+
+	at := int(15.5 * dur * 1000) // partway into the second piece
+	w := readAloudDo("POST", url, "alice", `{"rest_after_ms":`+strconv.Itoa(at)+`}`)
+	var rest struct {
+		RestMs int  `json:"rest_ms"`
+		More   bool `json:"more"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &rest)
+	if want := int((made - float64(at)/1000) * 1000); w.Code != http.StatusOK || rest.RestMs < want-1 || rest.RestMs > want+1 || rest.More {
+		t.Errorf("rest after %dms: %d %+v, want %dms and nothing more coming", at, w.Code, rest, want)
+	}
+	if w := readAloudDo("POST", url, "bob", `{"rest_after_ms":0}`); w.Code != http.StatusNotFound {
+		t.Errorf("another user asked about the read: %d", w.Code)
+	}
+
+	from := readAloudDo("GET", url+"?from_ms="+strconv.Itoa(at), "alice", "").Body.Bytes()
+	if !bytes.Equal(from, whole[16*len(frame):]) {
+		t.Errorf("from %dms: %d frames, want the %d after the 16th", at, len(from)/len(frame), frames-16)
+	}
+	if past := readAloudDo("GET", url+"?from_ms=999999", "alice", "").Body.Bytes(); len(past) != 0 {
+		t.Errorf("from past the end: %d bytes", len(past))
 	}
 }

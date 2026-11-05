@@ -19,6 +19,9 @@ type readAloudHeard struct {
 	SentChars  int    `json:"sent_chars"`  // how much of it the page handed to be read
 	ReplyDone  bool   `json:"reply_done"`  // the reply was finished
 	Waiting    int    `json:"waiting"`     // reads opened after this one, not yet played
+	// Resumed is how many times the player said it had ended with audio
+	// still to play, and the page played on from where it stopped.
+	Resumed int `json:"resumed"`
 }
 
 // line is the log line for a read the page says it heard, and whether it
@@ -39,6 +42,9 @@ func (h readAloudHeard) line(user, client string, made float64) (string, bool) {
 		user, logSafe(h.Why), played, of, h.SentChars, h.ReplyChars, reply)
 	if h.Waiting > 0 {
 		line += fmt.Sprintf("; %d more read(s) waiting to play", h.Waiting)
+	}
+	if h.Resumed > 0 {
+		line += fmt.Sprintf("; the player stopped short and was played on %d time(s)", h.Resumed)
 	}
 	line += " (" + client + ")"
 	short := !h.Ended ||
@@ -75,6 +81,28 @@ func mp3Seconds(b []byte) float64 {
 		b = b[n:]
 	}
 	return secs
+}
+
+// mp3After is b without the frames that play in its first secs seconds, and
+// how many of those seconds b was too short to hold, for the next piece to
+// lose. A leading ID3 tag goes with them. For a player that stopped short and
+// asks for the rest from where it stopped: the cut falls on a frame, so what
+// is left plays from its first byte. Anything that is not mp3 is kept whole.
+func mp3After(b []byte, secs float64) ([]byte, float64) {
+	b = withoutID3(b)
+	for secs > 0 && len(b) >= 4 {
+		n, _, ok := mp3FrameInfo(b)
+		if !ok || n > len(b) {
+			break
+		}
+		samples := 576.0
+		if (b[1]>>3)&3 == 3 {
+			samples = 1152
+		}
+		secs -= samples / float64(mp3SampleRate(b))
+		b = b[n:]
+	}
+	return b, max(secs, 0)
 }
 
 // mp3SampleRate is the sample rate an mp3 frame header at the start of b

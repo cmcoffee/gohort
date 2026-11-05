@@ -336,7 +336,17 @@ global.window = {
 };
 function emit(name, detail) { (listeners[name] || []).forEach(function(fn) { fn({detail: detail}); }); }
 var pending = [];
+// A player saying it has ended makes the page ask how much audio is left past
+// that point (rest_after_ms). Answered here at once, with restLeft, and kept
+// out of pending so the checks' counts of requests are of everything else.
+var restLeft = 0, restAsks = [];
 global.fetch = function(url, opts) {
+  var asked = opts && opts.body && JSON.parse(opts.body);
+  if (asked && asked.rest_after_ms != null) {
+    restAsks.push({url: url, at: asked.rest_after_ms});
+    var left = restLeft; restLeft = 0;
+    return Promise.resolve({ok: true, json: function() { return Promise.resolve({rest_ms: left, more: false}); }});
+  }
   return new Promise(function(res, rej) {
     pending.push({url: url, opts: opts, res: res});
     if (opts.signal) opts.signal.addEventListener('abort', function() { var e = new Error('aborted'); e.name = 'AbortError'; rej(e); });
@@ -401,6 +411,7 @@ eval(readAloudJS);
   audios[3].onplaying();
   audios[3].currentTime = 2.5;
   audios[3].onended();
+  await sleep(5);
   check('the button comes back when it ends', three.button.textContent === idle);
   check('a read played out says so, how long it played, and that it had all the reply', lastHeard().url === '/api/speak/jkl' &&
     lastHeard().heard.ended === true && lastHeard().heard.played_ms === 2500 &&
@@ -417,17 +428,40 @@ eval(readAloudJS);
   pending[6].res(link('/api/speak/mno'));
   await sleep(20);
   audios[4].onended();
+  await sleep(5);
   check('played to its end, it says so', ends.join() === 'four:true');
+
+  // A player can stop short of the end of a stream (WebKit on a phone did, 55s
+  // into 61): the page asks what is left past where it stopped and plays on
+  // from there, and only then is the read over.
+  var short = reply('Fifth.'); short.onDone = function(ended) { ends.push('short:' + ended); };
+  window.gohortReadAloud(short);
+  pending[7].res(link('/api/speak/pqr'));
+  await sleep(20);
+  var sp = audios[audios.length - 1];
+  sp.currentTime = 55;
+  restLeft = 5600;
+  sp.onended();
+  await sleep(5);
+  check('a player that stops short is asked about from where it stopped', restAsks.length && restAsks[restAsks.length - 1].url === '/api/speak/pqr' &&
+    restAsks[restAsks.length - 1].at === 55000);
+  check('and plays on from there', sp.src === '/api/speak/pqr?from_ms=55000' && !sp.paused && ends.join() === 'four:true');
+  sp.currentTime = 5.6;
+  sp.onended();
+  await sleep(5);
+  check('with nothing left, the read is over', ends.join() === 'four:true,short:true');
+  check('and the server hears all of it played, once played on', lastHeard().url === '/api/speak/pqr' &&
+    lastHeard().heard.played_ms === 60600 && lastHeard().heard.resumed === 1);
   var five = reply('Fifth.'); five.onDone = function(ended) { ends.push('five:' + ended); };
   window.gohortReadAloud(five);
   window.gohortReadAloud(reply('Sixth.'));
-  check('replaced by another, it says it did not end', ends.join() === 'four:true,five:false');
+  check('replaced by another, it says it did not end', ends.join() === 'four:true,short:true,five:false');
   var seven = reply('Seventh.'); seven.onDone = function(ended) { ends.push('seven:' + ended); };
   window.gohortReadAloud(seven);
   window.gohortReadAloudStop();
-  check('stopped, it says so too', ends.join() === 'four:true,five:false,seven:false');
-  check('a read that never began playing tells the server nothing', beacons.length === told + 1 &&
-    lastHeard().url === '/api/speak/mno');
+  check('stopped, it says so too', ends.join() === 'four:true,short:true,five:false,seven:false');
+  check('a read that never began playing tells the server nothing', beacons.length === told + 2 &&
+    lastHeard().url === '/api/speak/pqr');
 
   // --- A reply read while it is still being written ---
   function body(i) { return JSON.parse(pending[i].opts.body); }
@@ -469,6 +503,7 @@ eval(readAloudJS);
   told = beacons.length;
   la.currentTime = 9;
   la.onended();
+  await sleep(5);
   check('played to the end, the read is over', ends[ends.length - 1] === 'live:true' && live.button.textContent === idle);
   check('and the server hears it once: played out, all of the finished reply handed over', beacons.length === told + 1 &&
     lastHeard().url === '/api/speak/live1' && lastHeard().heard.ended === true && lastHeard().heard.played_ms === 9000 &&
@@ -542,6 +577,7 @@ eval(readAloudJS);
   await sleep(20);
   check('which waits for the first to finish', sa.src === '/api/speak/slow1');
   sa.onended();
+  await sleep(5);
   check('and plays after it', sa.src === '/api/speak/slow2' && !sa.paused);
   check('the first read played out while the reply was still coming', lastHeard().url === '/api/speak/slow1' &&
     lastHeard().heard.ended === true && lastHeard().heard.reply_done === false);
@@ -572,6 +608,7 @@ eval(readAloudJS);
   await sleep(20);
   var ra = audios[audios.length - 1];
   ra.onended();
+  await sleep(5);
   check('and the whole reply is played', ends[ends.length - 1] === 'race:true' && lastHeard().heard.sent_chars === lastHeard().heard.reply_chars);
 
   // Taken back (emptied) stops it too.
@@ -591,6 +628,7 @@ eval(readAloudJS);
   pending[n].res(link('/api/speak/night1'));
   await sleep(20);
   audios[audios.length - 1].onended();
+  await sleep(5);
   check('the reply is read', ends[ends.length - 1] === 'said:true');
   var again = reply('Appreciate you saying so - I will leave you to it. Good night!');
   again.skipRepeat = true; again.onDone = function(ended) { ends.push('again:' + ended); };

@@ -36,6 +36,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -270,6 +271,16 @@ func streamReadAloud(w http.ResponseWriter, r *http.Request, user, key string) {
 	w.Header().Set("Content-Type", job.firstType)
 	w.Header().Set("Cache-Control", "no-store")
 	flush := http.NewResponseController(w)
+	// from_ms is a player that stopped short asking for the rest: the audio
+	// from that point on, cut at an mp3 frame (see restAfter).
+	skip := 0.0
+	if ms, err := strconv.Atoi(r.URL.Query().Get("from_ms")); err == nil && ms > 0 {
+		skip = float64(ms) / 1000
+	}
+	from := ""
+	if skip > 0 {
+		from = fmt.Sprintf(", from %.1fs", skip)
+	}
 	// How this request ended, said in the log: a voice cut short is the
 	// player hanging up (it decided the audio was over), or the maker
 	// stopping, and the two are fixed in different places. With the Range it
@@ -283,19 +294,23 @@ func streamReadAloud(w http.ResponseWriter, r *http.Request, user, key string) {
 		if sent == total && closed != "" {
 			ended += ", closed when " + closed
 		}
-		line := fmt.Sprintf("[speech] read aloud for %s: %d of %d piece(s), %d bytes, %s (range %q, %s)",
-			user, sent, total, sentBytes, ended, r.Header.Get("Range"), readAloudClient(r.UserAgent()))
+		line := fmt.Sprintf("[speech] read aloud for %s: %d of %d piece(s)%s, %d bytes, %s (range %q, %s)",
+			user, sent, total, from, sentBytes, ended, r.Header.Get("Range"), readAloudClient(r.UserAgent()))
 		if sent < total {
 			nfo.Log("%s", line)
 		} else {
 			nfo.Debug("%s", line)
 		}
 	}()
-	if _, err := w.Write(job.first); err != nil {
+	first := job.first
+	if skip > 0 {
+		first, skip = mp3After(first, skip)
+	}
+	if _, err := w.Write(first); err != nil {
 		ended = "the player hung up"
 		return
 	}
-	sent, sentBytes = 1, len(job.first)
+	sent, sentBytes = 1, len(first)
 	flush.Flush()
 	ctx := r.Context()
 	job.listen()
@@ -332,6 +347,9 @@ func streamReadAloud(w http.ResponseWriter, r *http.Request, user, key string) {
 		if piece == nil {
 			ended = "the speech maker stopped"
 			return
+		}
+		if skip > 0 {
+			piece, skip = mp3After(piece, skip)
 		}
 		if _, err := w.Write(piece); err != nil {
 			ended = "the player hung up"
@@ -461,6 +479,10 @@ func addToReadAloud(w http.ResponseWriter, r *http.Request, user, key string) {
 		Done  bool            `json:"done"`
 		Why   string          `json:"why"`
 		Heard *readAloudHeard `json:"heard"`
+		// RestAfterMs asks how much audio there is after that point: a
+		// player that says it has ended may have stopped short (see
+		// restAfter).
+		RestAfterMs *int `json:"rest_after_ms"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
@@ -471,6 +493,20 @@ func addToReadAloud(w http.ResponseWriter, r *http.Request, user, key string) {
 	readAloudMu.Unlock()
 	if !ok || job.user != user {
 		http.NotFound(w, r)
+		return
+	}
+	if req.RestAfterMs != nil {
+		job.mu.Lock()
+		made := mp3Seconds(job.first)
+		for _, piece := range job.made {
+			made += mp3Seconds(piece)
+		}
+		more := job.making || job.open || len(job.made) < len(job.rest)
+		job.mu.Unlock()
+		rest := made - float64(*req.RestAfterMs)/1000
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		json.NewEncoder(w).Encode(map[string]any{"rest_ms": int(max(rest, 0) * 1000), "more": more})
 		return
 	}
 	if req.Heard != nil {
@@ -882,10 +918,35 @@ const readAloudJS = `(function(){
     p.cur = ''; p.told = url;
     var text = String(p.text || '');
     tell(url, {heard: {why: p.ended ? 'played to its end' : why, ended: !!p.ended,
-      played_ms: Math.round(((a && a.currentTime) || 0) * 1000),
+      played_ms: Math.round((p.from || 0) + ((a && a.currentTime) || 0) * 1000),
+      resumed: p.resumes || 0,
       reply_chars: text.length, sent_chars: p.live ? p.sent : text.length,
       reply_done: p.live ? !!p.done : true,
       waiting: (p.urls ? p.urls.length : 0) + (p.segStarting ? 1 : 0)}});
+  }
+  // playOnOrEnd is what a player saying it has ended goes through. A player
+  // can be wrong about where a stream of unknown length ends: WebKit on a
+  // phone stopped one at 55 seconds of the 61 it had been sent, and the
+  // reply's last sentence was never heard. So the page asks the read how
+  // much audio there is past where the player stopped, and if more than a
+  // moment is left, plays the read again from there (the server cuts it on
+  // a frame). Only then is it the end. A few times at most per read, in case
+  // a player keeps stopping in the same place.
+  function playOnOrEnd(p, a, end) {
+    var url = p.cur;
+    var at = Math.round((p.from || 0) + (a.currentTime || 0) * 1000);
+    if (!url || (p.resumes || 0) >= 3) { end(); return; }
+    post(url, {rest_after_ms: at}).then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(d) {
+        if (playing !== p || p.cur !== url) return;
+        if (!d || !(d.rest_ms > 400)) { end(); return; }
+        p.resumes = (p.resumes || 0) + 1;
+        p.from = at;
+        a.src = url + (url.indexOf('?') < 0 ? '?' : '&') + 'from_ms=' + at;
+        var again = a.play();
+        if (again && again.catch) again.catch(function() { if (playing === p) end(); });
+      })
+      .catch(function() { if (playing === p) end(); });
   }
   // tell posts a note that must outlive the page if it is closing.
   function tell(url, body) {
@@ -956,12 +1017,15 @@ const readAloudJS = `(function(){
         // reused player carries this read's and no earlier one's.
         var a = p.audio = ctx.audio || new Audio();
         a.src = p.cur = d.url;
+        p.from = 0; p.resumes = 0;
         a.onplaying = function() {
           if (playing !== p) return;
           if (p.timer) { clearInterval(p.timer); p.timer = null; }
           if (btn) { btn.textContent = stopGlyph; btn.title = 'Stop reading'; }
         };
-        a.onended = function() { if (playing === p) { p.ended = true; stop(); } };
+        a.onended = function() {
+          if (playing === p) playOnOrEnd(p, a, function() { p.ended = true; stop(); });
+        };
         a.onerror = function() {
           if (playing !== p) return;
           stop('the audio failed partway');
@@ -1153,6 +1217,7 @@ const readAloudJS = `(function(){
     p.busy = true;
     var a = p.audio = p.audio || new Audio();
     a.src = p.cur = p.urls.shift();
+    p.from = 0; p.resumes = 0;
     a.onplaying = function() {
       if (playing !== p) return;
       if (p.timer) { clearInterval(p.timer); p.timer = null; }
@@ -1160,9 +1225,11 @@ const readAloudJS = `(function(){
     };
     a.onended = function() {
       if (playing !== p) return;
-      p.ended = true; heard(p); p.ended = false;
-      p.busy = false;
-      if (p.urls.length) playNext(p); else finishIfDone(p);
+      playOnOrEnd(p, a, function() {
+        p.ended = true; heard(p); p.ended = false;
+        p.busy = false;
+        if (p.urls.length) playNext(p); else finishIfDone(p);
+      });
     };
     a.onerror = function() {
       if (playing !== p) return;
