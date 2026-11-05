@@ -103,9 +103,18 @@ func TestAnyThemeCanBeWornRetro(t *testing.T) {
 			t.Errorf("the retro style does not set %s", want)
 		}
 	}
+	// Soft and Paper are styles too, each a block of its own.
+	for _, s := range []string{StyleSoft, StylePaper} {
+		if !IsValidStyle(s) || !strings.Contains(css, `:root[data-style="`+s+`"] {`) {
+			t.Errorf("the %s style is missing", s)
+		}
+	}
+	if len(StyleOptions()) != 4 {
+		t.Errorf("the picker offers %d styles", len(StyleOptions()))
+	}
 	// A theme's colours stay its own: none of them sets the shape.
 	for _, th := range Themes() {
-		for _, k := range []string{"--btn-radius", "--font-ui", "--mark-line"} {
+		for _, k := range []string{"--btn-radius", "--font-ui", "--mark-line", "--lift", "--lift-glow", "--rest-shadow"} {
 			if _, ok := th.Tokens[k]; ok {
 				t.Errorf("theme %q sets %s, which is the style's", th.Name, k)
 			}

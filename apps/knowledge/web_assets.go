@@ -46,9 +46,9 @@ const documentsListAssets = `<style>
   transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .docs-card:hover {
-  transform: translateY(-2px);
+  transform: translateY(calc(var(--lift, 2px) * -1));
   border-color: color-mix(in srgb, var(--tone) 55%, var(--border));
-  box-shadow: 0 12px 28px -18px color-mix(in srgb, var(--tone) 80%, transparent);
+  box-shadow: 0 12px 28px -18px var(--lift-glow, color-mix(in srgb, var(--tone) 80%, transparent));
 }
 .docs-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .docs-card.held-maintain { --tone: var(--accent-2, var(--accent)); }

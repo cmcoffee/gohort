@@ -246,7 +246,7 @@ func ThemeCSS() string {
 		}
 		block(t.Name, t.Tokens)
 	}
-	b.WriteString(retroStyleCSS)
+	b.WriteString(styleCSS)
 	return b.String()
 }
 
@@ -334,20 +334,44 @@ func init() {
 }
 
 // Styles are the shape of the UI, chosen apart from the theme's colours, so
-// any theme can be worn either way. Modern is rounded, in the system face,
-// with the accent line fading out under the bar; Retro is square, monospace,
-// with the line solid. A page carries its style as data-style on <html>
-// beside data-theme, and the Retro block below (in ThemeCSS, so every page
-// shell that themes itself has it) sets the variables the stylesheet reads.
+// any theme can be worn any way:
+//
+//   - Modern: rounded, in the system face, the accent line fading out under
+//     the bar, cards lifting when pointed at. What every page has unset.
+//   - Retro: square, monospace, the line solid.
+//   - Soft: rounder, in a rounded face where the device has one.
+//   - Paper: serif type, barely rounded, a plain printed rule under the bar,
+//     and nothing lifts or casts a shadow: a page that reads like a document.
+//
+// A page carries its style as data-style on <html> beside data-theme, and
+// the blocks below (in ThemeCSS, so every page shell that themes itself has
+// them) set the variables the stylesheet reads: --font-ui, --btn-radius,
+// --mark-line, and for things that lift when pointed at, --lift (how far),
+// --lift-glow (the colour of the glow under them) and --rest-shadow (the
+// shadow a raised card casts at rest).
 const (
 	StyleModern = "modern"
 	StyleRetro  = "retro"
+	StyleSoft   = "soft"
+	StylePaper  = "paper"
 )
 
-const retroStyleCSS = `:root[data-style="retro"] {
+const styleCSS = `:root[data-style="retro"] {
   --font-ui: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
   --btn-radius: 0px;
   --mark-line: var(--accent);
+}
+:root[data-style="soft"] {
+  --font-ui: ui-rounded, "SF Pro Rounded", "Hiragino Maru Gothic ProN", Nunito, Quicksand, "Varela Round", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --btn-radius: 12px;
+}
+:root[data-style="paper"] {
+  --font-ui: Charter, "Bitstream Charter", "Sitka Text", "Iowan Old Style", Cambria, Georgia, serif;
+  --btn-radius: 2px;
+  --mark-line: var(--text-mute);
+  --lift: 0px;
+  --lift-glow: transparent;
+  --rest-shadow: none;
 }
 `
 
@@ -358,7 +382,13 @@ var styleResolver func() string
 func RegisterStyleResolver(fn func() string) { styleResolver = fn }
 
 // IsValidStyle reports whether s names a style.
-func IsValidStyle(s string) bool { return s == StyleModern || s == StyleRetro }
+func IsValidStyle(s string) bool {
+	switch s {
+	case StyleModern, StyleRetro, StyleSoft, StylePaper:
+		return true
+	}
+	return false
+}
 
 // ActiveStyle is the resolver's style, or Modern when it has none (or names
 // one that does not exist).
@@ -376,5 +406,7 @@ func StyleOptions() []SelectOption {
 	return []SelectOption{
 		{Value: StyleModern, Label: "Modern: rounded, in the system font"},
 		{Value: StyleRetro, Label: "Retro: square, in a monospace font"},
+		{Value: StyleSoft, Label: "Soft: rounder, in a rounded font where the device has one"},
+		{Value: StylePaper, Label: "Paper: serif type, fine lines, nothing lifts or casts a shadow"},
 	}
 }

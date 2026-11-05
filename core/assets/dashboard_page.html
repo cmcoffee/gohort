@@ -112,8 +112,8 @@
     padding: 1.5rem; transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
   }
   .card:hover {
-    border-color: color-mix(in srgb, var(--tone) 60%, var(--border, #30363d)); transform: translateY(-2px);
-    box-shadow: 0 12px 28px -18px color-mix(in srgb, var(--tone) 80%, transparent);
+    border-color: color-mix(in srgb, var(--tone) 60%, var(--border, #30363d)); transform: translateY(calc(var(--lift, 2px) * -1));
+    box-shadow: 0 12px 28px -18px var(--lift-glow, color-mix(in srgb, var(--tone) 80%, transparent));
   }
   .card-name { font-size: 1.25rem; font-weight: 600; color: var(--text-hi, #f0f6fc); margin-bottom: 0.5rem; }
   /* Two lines at most. A description is whatever its author typed, and an
@@ -129,9 +129,9 @@
   .card.featured {
     grid-column: 1 / -1;
     padding: 2.25rem 2rem;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    box-shadow: var(--rest-shadow, 0 8px 24px rgba(0,0,0,0.35));
   }
-  .card.featured:hover { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,0,0,0.45); }
+  .card.featured:hover { transform: translateY(calc(var(--lift, 3px) * -1)); box-shadow: var(--rest-shadow, 0 12px 30px rgba(0,0,0,0.45)); }
   .card.featured .card-name { font-size: 1.9rem; margin-bottom: 0.6rem; }
   /* Capped by MEASURE, not by the card: the hero spans every column, and at
      four of them its one line of description would run the width of the
