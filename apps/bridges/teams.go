@@ -56,6 +56,7 @@ type botConv struct {
 	LastActivity string `json:"last_activity,omitempty"` // replyToId for threaded replies
 	UserAadID    string `json:"user_aad_id,omitempty"`   // what a future proactive open needs
 	Connector    string `json:"connector,omitempty"`     // the bot that heard it: owner \x00 service
+	Title        string `json:"title,omitempty"`         // what its owner sees it called: team / channel, chat name, or person
 	Updated      string `json:"updated,omitempty"`
 }
 
@@ -298,6 +299,12 @@ func (T *Bridges) botframeworkCheck(r *http.Request, h webhooks.Webhook, body []
 		}
 		return http.StatusOK, "recorded: added to a " + firstNonEmpty(strings.TrimSpace(a.Conversation.ConversationType), "conversation"), nil
 	}
+	// The owner's word on this one conversation, over the bot's per-type
+	// rule: off, every message, or only when named (teams_conversations.go).
+	bot, muted := T.answerIn(bot, a.Conversation.ID, a.Conversation.ConversationType)
+	if muted && strings.EqualFold(strings.TrimSpace(a.Type), "message") {
+		return http.StatusOK, "passed over: its owner switched the bot off in this conversation", nil
+	}
 	req, err := activityToInbound(a, bot)
 	if err != nil {
 		return http.StatusAccepted, "passed over: " + err.Error(), nil
@@ -369,6 +376,7 @@ func (T *Bridges) rememberBotConv(bot teamsbots.Bot, a botActivity) error {
 		LastActivity: strings.TrimSpace(a.ID),
 		UserAadID:    strings.TrimSpace(a.From.AadObjectID),
 		Connector:    bot.Key(),
+		Title:        a.title(),
 		Updated:      now(),
 	})
 	return nil

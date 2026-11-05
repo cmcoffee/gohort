@@ -354,14 +354,14 @@ func TestATeamsBotIsAddedAndAnswersWhenNamed(t *testing.T) {
 		webhooks.Handle(w, r)
 		return w.Code
 	}
-	group := map[string]string{"id": "19:group-1@thread.v2", "conversationType": "groupChat", "tenantId": tenant}
+	group := map[string]string{"id": "19:group-1@thread.v2", "conversationType": "groupChat", "tenantId": tenant, "name": "Lunch crew"}
 	ada := map[string]string{"id": "29:ada", "name": "Ada Lovelace", "aadObjectId": "aad-ada"}
 
 	if code := send(map[string]any{"type": "conversationUpdate", "id": "u1", "conversation": group,
 		"membersAdded": []map[string]string{{"id": botID}}}); code != http.StatusOK {
 		t.Fatalf("added to a group: %d %+v", code, webhooks.Calls(hook.Name)[0])
 	}
-	if bc, ok := T.getBotConv("19:group-1@thread.v2"); !ok || bc.ConvType != "groupChat" {
+	if bc, ok := T.getBotConv("19:group-1@thread.v2"); !ok || bc.ConvType != "groupChat" || bc.Title != "Lunch crew" {
 		t.Errorf("the group was not recorded when the bot was added: %+v %v", bc, ok)
 	}
 
@@ -396,5 +396,25 @@ func TestATeamsBotIsAddedAndAnswersWhenNamed(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("a one-to-one message never reached the agent")
+	}
+
+	// The owner's word on the group: every message, then not at all.
+	T.DB.Set(botConvAnswerTable, answerKey(bot, "19:group-1@thread.v2"), answerAll)
+	send(map[string]any{"type": "message", "id": "g4", "text": "anyone around?", "from": ada, "conversation": group})
+	select {
+	case in := <-asked:
+		if in.Text != "anyone around?" {
+			t.Errorf("asked %q", in.Text)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a group set to every message did not answer an unnamed one")
+	}
+	T.DB.Set(botConvAnswerTable, answerKey(bot, "19:group-1@thread.v2"), answerOff)
+	send(map[string]any{"type": "message", "id": "g5", "text": "<at>Wren</at> status?", "from": ada, "conversation": group,
+		"entities": []map[string]any{{"type": "mention", "mentioned": map[string]string{"id": botID}}}})
+	select {
+	case in := <-asked:
+		t.Errorf("answered in a group its owner switched it off in: %q", in.Text)
+	case <-time.After(200 * time.Millisecond):
 	}
 }

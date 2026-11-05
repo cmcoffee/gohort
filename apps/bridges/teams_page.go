@@ -286,6 +286,7 @@ func teamsBotRowActions() []ui.RowAction {
 	return []ui.RowAction{
 		ui.ModalAction("Edit", ui.FormPanel{Source: "/bridges/api/teams-bots?service={service}", PostURL: "/bridges/api/teams-bots?service={service}",
 			SubmitLabel: "Save", Fields: teamsBotFields(false)}),
+		teamsBotConversationsUI(),
 		{Type: "button", Label: "Delete", Method: "DELETE", PostTo: "/bridges/api/teams-bots?service={service}", Variant: "danger",
 			Confirm: "Delete this Teams bot? It stops answering, and its secret and webhook are removed. The Azure registration stays yours to remove."},
 	}

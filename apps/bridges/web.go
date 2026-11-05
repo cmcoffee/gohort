@@ -92,6 +92,10 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		"DELETE": jsonapi.Delete(T.DB, T.handleTeamsBotDelete),
 	}.Serve)
 	sub.HandleFunc("/api/teams-bots/package", T.handleTeamsBotPackage)
+	sub.HandleFunc("/api/teams-bots/conversations", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handleTeamsBotConversations),
+		"POST": jsonapi.Post(T.DB, T.handleTeamsBotConversationAnswer),
+	}.Serve)
 	sub.HandleFunc("/api/links", jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.handleLinks),
 		"POST":   jsonapi.Post(T.DB, T.handleLinkSave, jsonapi.MaxBody(1<<14)),
