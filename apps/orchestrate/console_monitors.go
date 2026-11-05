@@ -589,6 +589,18 @@ func consoleMonitorRows(user, agentID string) []consoleMonitorRow {
 		if r := []rune(seen); len(r) > 80 {
 			seen = string(r[:80]) + "…"
 		}
+		// An agent-judged monitor's last answer is a verdict, said as one:
+		// the card shows values without labels, and its checker's bare
+		// "NONE" read as the monitor being attached to nothing.
+		if verdict, note := PollVerdict(m); verdict != "" {
+			seen = "Last check: " + verdict
+			if r := []rune(note); len(r) > 80 {
+				note = string(r[:80]) + "…"
+			}
+			if note != "" {
+				seen += " (" + note + ")"
+			}
+		}
 		// Full script — the UI table renders long/multi-line cells with a
 		// click-to-expand toggle, so send it whole rather than truncating here.
 		script := strings.TrimSpace(m.FormatScript)

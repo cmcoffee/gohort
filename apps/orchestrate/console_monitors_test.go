@@ -239,3 +239,29 @@ func TestAMonitorCanRunAtSetTimes(t *testing.T) {
 		t.Error("a push-triggered monitor has no schedule for set times")
 	}
 }
+
+// An agent-judged monitor's card says how its last check went, in words that
+// name themselves: the card shows values without labels, and a bare "NONE"
+// read as the monitor being attached to nothing. Other kinds keep the value
+// they saw.
+func TestAMonitorCardSaysHowItsLastCheckWent(t *testing.T) {
+	parkedTestSetup(t)
+	SaveEventMonitor(RootDB, EventMonitor{Owner: "u", Name: "quiet", Kind: EventKindPoll, LastResult: "NONE"})
+	SaveEventMonitor(RootDB, EventMonitor{Owner: "u", Name: "hit", Kind: EventKindPoll, LastResult: "YES - the deploy finished"})
+	SaveEventMonitor(RootDB, EventMonitor{Owner: "u", Name: "odd", Kind: EventKindPoll, LastResult: "Possibly"})
+	SaveEventMonitor(RootDB, EventMonitor{Owner: "u", Name: "price", Kind: EventKindHTTP, LastResult: "41.20"})
+	seen := map[string]string{}
+	for _, r := range consoleMonitorRows("u", "") {
+		seen[r.Name] = r.Seen
+	}
+	for name, want := range map[string]string{
+		"quiet": "Last check: False",
+		"hit":   "Last check: True (the deploy finished)",
+		"odd":   `Last check: Issue (answered neither "YES" nor "NONE": Possibly)`,
+		"price": "41.20",
+	} {
+		if seen[name] != want {
+			t.Errorf("%s: %q, want %q", name, seen[name], want)
+		}
+	}
+}

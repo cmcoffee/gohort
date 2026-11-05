@@ -1455,3 +1455,34 @@ func TestAFailedCheckSaysSo(t *testing.T) {
 		t.Errorf("a failed check returned no body: %q", steps[0].Result)
 	}
 }
+
+// An agent-judged monitor's last check reads as True, False or Issue, by the
+// rule the check itself fires by, with what the checker added after its first
+// word. A check that failed is an Issue, saying how, whatever it last answered.
+func TestPollVerdict(t *testing.T) {
+	poll := func(answer, match string) EventMonitor {
+		return EventMonitor{Kind: EventKindPoll, LastResult: answer, MatchContains: match}
+	}
+	for _, c := range []struct {
+		m             EventMonitor
+		verdict, note string
+	}{
+		{poll("YES, two new CVEs were posted.", ""), PollTrue, "two new CVEs were posted."},
+		{poll("**NONE**", ""), PollFalse, ""},
+		{poll("none - nothing new since 9am", ""), PollFalse, "nothing new since 9am"},
+		{poll("FOUND: the build is green", "FOUND"), PollTrue, "the build is green"},
+		{poll("YES it is", "FOUND"), PollIssue, `answered neither "FOUND" nor "NONE": YES it is`},
+		{poll("Maybe? I could not tell.", ""), PollIssue, `answered neither "YES" nor "NONE": Maybe? I could not tell.`},
+		{poll("NONETHELESS it happened", ""), PollIssue, `answered neither "YES" nor "NONE": NONETHELESS it happened`},
+		{poll("", ""), "", ""},
+		{EventMonitor{Kind: EventKindHTTP, LastResult: "NONE"}, "", ""},
+		{EventMonitor{Kind: EventKindPoll, LastResult: "NONE", ConsecutiveFailures: 2,
+			RecentChecks: []monitorCheck{{Outcome: "failed", Detail: "checker timed out"}, {Outcome: "no match"}}},
+			PollIssue, "the check failed: checker timed out"},
+	} {
+		v, n := PollVerdict(c.m)
+		if v != c.verdict || n != c.note {
+			t.Errorf("%q (match %q): %q %q, want %q %q", c.m.LastResult, c.m.MatchContains, v, n, c.verdict, c.note)
+		}
+	}
+}

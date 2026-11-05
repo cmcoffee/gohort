@@ -879,6 +879,56 @@ func eventMatch(answer, match string) bool {
 	return next == utf8.RuneError || !(unicode.IsLetter(next) || unicode.IsDigit(next))
 }
 
+// The three ways an agent-judged (poll) monitor's last check can have gone,
+// as the Scheduler shows it.
+const (
+	PollTrue  = "True"  // the answer began with the match word: it is so
+	PollFalse = "False" // the answer began with NONE: it is not
+	PollIssue = "Issue" // neither, or the check itself failed
+)
+
+// PollVerdict is how a poll monitor's last check went, in the words the
+// Scheduler shows: True, False or Issue, and a note (what the checker added
+// after its first word, what it said that was neither, or how the check
+// failed). It reads the answer by the same rule the check fires by
+// (eventMatch), so the card cannot disagree with what the monitor did. Both
+// are empty for a monitor of another kind, or one not checked yet.
+//
+// The raw answer used to stand on the card on its own, and a lone "NONE"
+// among a card's values read as the monitor being attached to nothing.
+func PollVerdict(m EventMonitor) (verdict, note string) {
+	if m.Kind != EventKindPoll {
+		return "", ""
+	}
+	if m.ConsecutiveFailures > 0 {
+		why := "the check failed"
+		for i := len(m.RecentChecks) - 1; i >= 0; i-- {
+			if c := m.RecentChecks[i]; c.Outcome == "failed" {
+				if d := strings.TrimSpace(c.Detail); d != "" {
+					why += ": " + d
+				}
+				break
+			}
+		}
+		return PollIssue, why
+	}
+	answer := strings.TrimSpace(m.LastResult)
+	if answer == "" {
+		return "", ""
+	}
+	after := func(word string) string {
+		lead := strings.TrimLeft(answer, " \t\r\n*_#>`\"'")
+		return strings.TrimSpace(strings.TrimLeft(lead[len(word):], " \t\r\n.,:;!-*_"))
+	}
+	switch {
+	case eventMatch(answer, m.MatchContains):
+		return PollTrue, after(matchWord(m.MatchContains))
+	case eventMatch(answer, "NONE"):
+		return PollFalse, after("NONE")
+	}
+	return PollIssue, "answered neither " + quoteMatch(m.MatchContains) + " nor \"NONE\": " + truncateEvent(oneLine(answer), 120)
+}
+
 // matchWord is a poll's match string, "YES" when none was set.
 func matchWord(match string) string {
 	if want := strings.TrimSpace(match); want != "" {
