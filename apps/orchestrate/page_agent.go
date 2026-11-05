@@ -132,6 +132,16 @@ func (T *OrchestrateApp) handleAgentPage(w http.ResponseWriter, r *http.Request)
 // surface clean and prevent accidental misconfiguration. enforceSubAgentPosture
 // at loadAgent is the runtime safety net even if the UI ever leaks.
 func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Request, user string, udb Database, id string) {
+	// An agent the person maintains for its owner opens in the maintainer's
+	// editor: only what a maintainer may change (agent_maintainers.go).
+	if id != "" {
+		if _, own := loadAgent(udb, id); !own {
+			if rec, _, ok := maintainedAgent(T.DB, user, id); ok {
+				renderMaintainerEditor(w, r, rec)
+				return
+			}
+		}
+	}
 	ed := &agentEditor{T: T, w: w, r: r, user: user, udb: udb, id: id}
 	if !ed.answerAppAgent() {
 		return

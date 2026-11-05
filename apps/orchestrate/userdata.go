@@ -87,6 +87,7 @@ func (h *orchUserData) Reassign(from, to string) error {
 		src.Unset(agentsTable, a.ID)
 		if RootDB != nil {
 			peershare.MoveOwner(RootDB, SharedAgentsTable, from, to, a.ID)
+			peershare.MoveOwner(RootDB, MaintainedAgentsTable, from, to, a.ID)
 		}
 		// What it learned stays with the person who taught it.
 		dropAgentSideData(src, from, a.ID)
@@ -176,6 +177,7 @@ func (h *orchUserData) forgetRecipient(uid string) {
 	}
 	if RootDB != nil {
 		peershare.DropRecipient(RootDB, SharedAgentsTable, uid)
+		peershare.DropRecipient(RootDB, MaintainedAgentsTable, uid)
 	}
 	without := func(list []string) ([]string, bool) {
 		out := list[:0:0]
@@ -196,8 +198,10 @@ func (h *orchUserData) forgetRecipient(uid string) {
 			if !udb.Get(agentsTable, k, &a) {
 				continue
 			}
-			if list, changed := without(a.AllowedUsers); changed {
-				a.AllowedUsers = list
+			users, uChanged := without(a.AllowedUsers)
+			maint, mChanged := without(a.Maintainers)
+			if uChanged || mChanged {
+				a.AllowedUsers, a.Maintainers = users, maint
 				udb.Set(agentsTable, k, a)
 			}
 		}

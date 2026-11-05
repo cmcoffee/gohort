@@ -265,6 +265,9 @@ func rollbackAgent(db Database, id, ref string) (AgentRecord, error) {
 		// administrator took back is not brought back by restoring a version
 		// from before.
 		restored.Everyone, restored.MCPExposed, restored.Exposed = current.Everyone, current.MCPExposed, current.Exposed
+		// Nor who maintains it: a maintainer taken off is not put back by
+		// going back to a version from before.
+		restored.Maintainers = current.Maintainers
 	}
 	return saveAgentAs(db, restored, fmt.Sprintf("rolled back to #%d", rev.Seq))
 }
@@ -370,6 +373,7 @@ func writeAgent(db Database, a AgentRecord, reason string) (AgentRecord, error) 
 	// one would be a row nothing can act on.
 	if RootDB != nil && isShareableAgent(a, a.Owner) {
 		peershare.SetRecipients(RootDB, SharedAgentsTable, a.Owner, a.ID, a.AllowedUsers)
+		peershare.SetRecipients(RootDB, MaintainedAgentsTable, a.Owner, a.ID, a.Maintainers)
 	}
 	// Only the credential lends this agent's share made, which is the whole
 	// reason they were recorded: a key the owner lent somebody by hand months

@@ -73,6 +73,13 @@ func registerShareProviders() {
 					Detail: "It runs in YOUR namespace: your tools, your credentials, your guardrails.",
 				})
 			}
+			for _, a := range MaintainedAgentsFor(orchestrateBaseDB, user) {
+				out = append(out, shareledger.Grant{
+					ID: a.ID, Name: a.Name, Owner: a.Owner,
+					Reach:  "Yours to maintain",
+					Detail: "Adjust its prompt, rules and behaviour at /orchestrate/agent/" + a.ID + ". Who uses it, its guardrails, its memory and what it is given stay with " + a.Owner + ".",
+				})
+			}
 			return out
 		},
 		Revoke: func(owner, id, recipient string) error {

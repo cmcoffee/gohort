@@ -128,7 +128,17 @@ func (T *OrchestrateApp) agentSave(c *jsonapi.Call, raw json.RawMessage) (any, e
 	_ = json.Unmarshal(raw, &sent)
 	_, sentMachine := sent["machine"]
 	_, sentBulletins := sent["bulletins"]
+	_, sentMaintainers := sent["maintainers"]
 	applyEditorChoices(RootDB, &req, sent)
+	// A maintainer's save lands on the owner's record, with only what a
+	// maintainer may change taken from it (agent_maintainers.go).
+	if req.ID != "" && !isSeedID(req.ID) {
+		if _, own := loadAgent(udb, req.ID); !own {
+			if cur, odb, ok := maintainedAgent(T.DB, user, req.ID); ok {
+				return T.saveAsMaintainer(user, cur, odb, req)
+			}
+		}
+	}
 	req.Owner = user
 	// Seed-IDs are saved in place as a per-user shadow record;
 	// the in-code seed stays untouched and surfaces back if the
@@ -183,6 +193,11 @@ func (T *OrchestrateApp) agentSave(c *jsonapi.Call, raw json.RawMessage) (any, e
 			// elsewhere must not unsubscribe the agent.
 			if !sentBulletins {
 				req.Bulletins = existing.Bulletins
+			}
+			// And its maintainers, which the Sharing panel sets: a form
+			// that never showed them must not take them away.
+			if !sentMaintainers {
+				req.Maintainers = existing.Maintainers
 			}
 		}
 	} else if isSeedID(req.ID) {
@@ -376,10 +391,18 @@ func (T *OrchestrateApp) patchAgent(c *jsonapi.Call, patch map[string]any, pathI
 		return nil, jsonapi.BadRequest("id is required for PATCH (in the body or as ?id=)")
 	}
 	existing, ok := loadAgent(udb, id)
+	// One the caller maintains: patched on the owner's record, held to what
+	// a maintainer may change (agent_maintainers.go).
+	maintainer := ""
+	if !ok {
+		if cur, odb, mok := maintainedAgent(T.DB, user, id); mok {
+			existing, udb, maintainer, ok = cur, odb, user, true
+		}
+	}
 	if !ok {
 		return nil, jsonapi.NotFound("agent not found")
 	}
-	if existing.Owner != "" && existing.Owner != user && existing.Owner != seedOwner {
+	if maintainer == "" && existing.Owner != "" && existing.Owner != user && existing.Owner != seedOwner {
 		return nil, jsonapi.Forbidden("not your agent")
 	}
 	// Merge: start from the stored record's own JSON so untouched fields keep
@@ -445,6 +468,10 @@ func (T *OrchestrateApp) patchAgent(c *jsonapi.Call, patch map[string]any, pathI
 		//
 		// Turning either OFF stays direct here as it does there: nobody needs
 		// permission to stop sharing.
+		if (k == "exposed" || k == "mcp_exposed") && maintainer != "" {
+			// Reach is the owner's: a maintainer neither sets it nor asks.
+			continue
+		}
 		if k == "exposed" || k == "mcp_exposed" {
 			// Read tolerantly and then STORE what was read. A select sends
 			// "true" where a toggle sends true, and a strict v == true made
@@ -493,6 +520,14 @@ func (T *OrchestrateApp) patchAgent(c *jsonapi.Call, patch map[string]any, pathI
 	rec.Owner = existing.Owner
 	if rec.Owner == "" || rec.Owner == seedOwner {
 		rec.Owner = user
+	}
+	if maintainer != "" {
+		saved, err := saveAgentAs(udb, applyMaintainerEdit(existing, rec), "edited by "+maintainer)
+		if err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+		Log("[orchestrate.agents] PATCH agent=%s by maintainer %s fields=%v", id, maintainer, applied)
+		return saved, nil
 	}
 	saved, err := saveAgent(udb, rec)
 	if err != nil {
@@ -600,6 +635,12 @@ func (T *OrchestrateApp) signedIn(h func(w http.ResponseWriter, r *http.Request,
 // agentGet is the record the editor loads, the caller's own or a seed.
 func (T *OrchestrateApp) agentGet(c *jsonapi.Call) (any, error) {
 	a, ok := loadAgent(c.UDB, c.R.PathValue("id"))
+	if !ok {
+		// One the caller maintains for its owner: the owner's record.
+		if m, _, mok := maintainedAgent(T.DB, c.User, c.R.PathValue("id")); mok {
+			return withEditorChoices(RootDB, m), nil
+		}
+	}
 	if !ok || (a.Owner != c.User && a.Owner != seedOwner) {
 		return nil, errNotFound
 	}

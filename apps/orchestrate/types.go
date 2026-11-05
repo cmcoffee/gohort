@@ -708,6 +708,13 @@ type AgentRecord struct {
 	// docs/design/sharing-governance.md.
 	AllowedUsers []string `json:"allowed_users,omitempty"`
 
+	// Maintainers are the people or teams (group:<id>) who may ADJUST this
+	// agent besides its owner: its prompt, instructions and behaviour, never
+	// its reach or access (agent_maintainers.go). Users run it; maintainers
+	// keep it working; the owner decides who is which and what it may touch.
+	// Their edits land on the owner's record, the one copy there is.
+	Maintainers []string `json:"maintainers,omitempty"`
+
 	// What of this agent's own memory a recipient's turns READ.
 	//
 	// Three layers, three switches, and each one DEFAULTS TO WHAT THE

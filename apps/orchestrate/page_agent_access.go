@@ -852,6 +852,23 @@ func (ap *accessPage) shareSections() []ui.Section {
 		},
 		{
 			Group:    "Share",
+			Title:    "Who may maintain this agent",
+			Subtitle: "People or teams who adjust it for you: its prompt, rules and behaviour.",
+			Detail: "A maintainer opens this agent in an editor of their own and changes its words and behaviour; the change is yours, on this agent, and its history says who made it, so you can roll it back.\n\n" +
+				"What stays yours: who uses it and who maintains it, publishing, its guardrails and security settings, what it remembers, and giving it a tool, skill or collection. A maintainer may take one of those away from it, never add one. Running it is a separate grant: add them above too if they should use it.",
+			Body: ui.ACLPicker(ui.ACLPickerConfig{
+				OptionsSource: T.WebPrefix() + "/api/user-candidates?groups=1",
+				RecordSource:  ap.shareURL(),
+				Field:         "maintainers",
+				PostTo:        ap.shareURL(),
+				Method:        "POST",
+				Noun:          "maintainer",
+				Intro:         "People, or a team you are on, who may adjust this agent.",
+				EmptyText:     "No other users to choose from yet.",
+			}),
+		},
+		{
+			Group:    "Share",
 			Title:    "Reachable from outside",
 			Subtitle: "Whether an external MCP client can dispatch to this agent over gohort's /mcp/ endpoint.",
 			Detail: "For example a desktop client with a bridge key calling ask_agent. Off by default, and REQUESTED rather than applied for the same reason publishing is: it takes this agent, with your tools and your documents, outside the deployment. Turning it back off is yours.\n\n" +

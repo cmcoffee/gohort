@@ -151,36 +151,50 @@ func (T *OrchestrateApp) agentShareGet(c *jsonapi.Call) (any, error) {
 	return sh.list(sh.rec), nil
 }
 
-// agentShareSave replaces the share list, Everyone in it or not.
+// agentShareSave replaces the share list, Everyone in it or not, and the
+// maintainers when the body names them (absent keeps them).
 func (T *OrchestrateApp) agentShareSave(c *jsonapi.Call, body struct {
-	AllowedUsers []string `json:"allowed_users"`
+	AllowedUsers *[]string `json:"allowed_users"`
+	Maintainers  *[]string `json:"maintainers"`
 }) (any, error) {
 	sh, err := agentShareAt(c)
 	if err != nil {
 		return nil, err
 	}
 	rec, ask := sh.rec, sh.ask
-	names, want := splitEveryone(body.AllowedUsers)
-	if want {
-		ask.Want = promotion.EveryoneOn
-	}
-	level, err := promotion.AskEveryone(sh.db, ask)
-	if err != nil {
-		return nil, jsonapi.BadRequest(err.Error())
-	}
-	if on := level != ""; on && !rec.Everyone {
-		if err := T.publishedSlugClash(rec); err != nil {
-			return nil, jsonapi.Status(http.StatusConflict, err.Error())
+	// Each list is changed only when the body names it: the maintainers
+	// picker posts its own list alone, and must not clear who uses it.
+	if body.AllowedUsers != nil {
+		names, want := splitEveryone(*body.AllowedUsers)
+		if want {
+			ask.Want = promotion.EveryoneOn
 		}
-		rec.Everyone = true
-	} else if !on {
-		rec.Everyone = false
+		level, err := promotion.AskEveryone(sh.db, ask)
+		if err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+		if on := level != ""; on && !rec.Everyone {
+			if err := T.publishedSlugClash(rec); err != nil {
+				return nil, jsonapi.Status(http.StatusConflict, err.Error())
+			}
+			rec.Everyone = true
+		} else if !on {
+			rec.Everyone = false
+		}
+		rec.AllowedUsers = normalizeShareList(names, c.User)
 	}
-	rec.AllowedUsers = normalizeShareList(names, c.User)
+	before := ShareMembers(rec.Maintainers, c.User)
+	if body.Maintainers != nil {
+		// People or teams, never Everyone: maintaining an agent is a trust
+		// given to somebody, not to the deployment.
+		maint, _ := splitEveryone(*body.Maintainers)
+		rec.Maintainers = normalizeShareList(maint, c.User)
+	}
 	saved, err := saveAgent(c.UDB, rec)
 	if err != nil {
 		return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
 	}
+	tellNewMaintainers(saved, before)
 	return sh.list(saved), nil
 }
 
@@ -218,5 +232,6 @@ func agentShareAt(c *jsonapi.Call) (agentShare, error) {
 // it is on or waiting for an administrator.
 func (sh agentShare) list(a AgentRecord) map[string]any {
 	return map[string]any{"allowed_users": withEveryone(nonNilUsers(a.AllowedUsers),
-		a.Everyone || promotion.EveryonePending(sh.db, sh.ask) != "")}
+		a.Everyone || promotion.EveryonePending(sh.db, sh.ask) != ""),
+		"maintainers": nonNilUsers(a.Maintainers)}
 }
