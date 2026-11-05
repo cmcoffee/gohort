@@ -807,7 +807,7 @@ func TestSavingAnAgentKeepsThePriorVersion(t *testing.T) {
 	}
 }
 
-// A ring six deep cannot afford writes that changed nothing. A re-save with no
+// A ring of revisions.Kept cannot afford writes that changed nothing. A re-save with no
 // edit in it, which a debounced editor produces per keystroke pause, would
 // otherwise evict every version worth keeping.
 func TestResavingAnUnchangedAgentFilesNothing(t *testing.T) {

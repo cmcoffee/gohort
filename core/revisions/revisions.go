@@ -47,9 +47,10 @@ import (
 const Table = "definition_revisions"
 
 // Kept is the ring depth. Deep enough to walk back through a bad authoring
-// session (the observed one burned four saves), shallow enough that the stored
-// bytes stay incidental next to the definitions themselves.
-const Kept = 6
+// session (the observed one burned four saves) and a few edits besides, and
+// shallow enough that the stored bytes stay incidental next to the
+// definitions themselves.
+const Kept = 10
 
 // NoHistory, passed as a reason, suppresses the snapshot. Rollback uses it:
 // restoring a known-good version after a bad edit must not file the bad one as
@@ -66,7 +67,7 @@ const (
 	// KindAgentGuardrails is an agent's guardrail settings, kept apart from
 	// the agent's own ring. The guardrails editor saves on every change, and
 	// each save filed a whole agent version, so a few guardrail tweaks pushed
-	// the persona and rules an owner wanted back out of a ring six deep.
+	// the persona and rules an owner wanted back out of a ring only Kept deep.
 	KindAgentGuardrails = "agent-guardrails"
 )
 
@@ -215,7 +216,7 @@ func Delete(db Store, kind, id string) {
 
 // Differs reports whether a save actually changes the definition, ignoring the
 // named JSON fields. Metadata-only writes are not revisions of the thing and
-// must not push the real history out of a ring six deep: a debounced editor
+// must not push the real history out of a ring only Kept deep: a debounced editor
 // fires a save per keystroke pause, and an enable/disable flip or a re-save
 // that touched nothing would otherwise evict every version worth keeping.
 //

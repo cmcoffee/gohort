@@ -130,7 +130,7 @@ func TestRingTrimsAndIDsNeverRepeat(t *testing.T) {
 }
 
 // Rollback files nothing: restoring a known-good version after a bad edit must
-// not push the bad one into a ring six deep.
+// not push the bad one into a ring only Kept deep.
 func TestNoHistoryReasonStoresNothing(t *testing.T) {
 	db := newStore()
 	if seq := Push(db, KindPipeline, "p", def{Prompt: "v1"}, time.Now(), NoHistory); seq != 0 {

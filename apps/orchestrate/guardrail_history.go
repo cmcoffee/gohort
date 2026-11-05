@@ -4,7 +4,7 @@ package orchestrate
 //
 // The guardrails editor saves on every change: a severity toggled, a rule
 // typed, a hook ticked. Each of those saves wrote the whole agent record, and
-// each filed the version it replaced in the agent's ring, which is six deep.
+// each filed the version it replaced in the agent's ring, which is only revisions.Kept deep.
 // A few minutes of tuning guardrails pushed every earlier version out, the
 // persona and rules an owner wanted to go back to among them, and with nothing
 // else holding them they were gone.
