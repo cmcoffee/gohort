@@ -144,9 +144,6 @@ func (T *KnowledgeApp) handleDetailPage(w http.ResponseWriter, r *http.Request) 
 	if s, ok := T.sharingSection(user, collectionIDFromPath(r.URL.Path)); ok {
 		sections = append(sections, s)
 	}
-	if s, ok := T.maintainersSection(user, collectionIDFromPath(r.URL.Path)); ok {
-		sections = append(sections, s)
-	}
 	page := ui.Page{
 		Title:     "Collection",
 		ShowTitle: true,
@@ -174,40 +171,6 @@ func collectionIDFromPath(path string) string {
 		return rest
 	}
 	return id
-}
-
-// maintainersSection is who looks after this collection for its owner: the
-// owner's to set, on their own collection. Its own picker rather than a third
-// state on the share chip, because it is a different trust: a maintainer
-// decides what the corpus takes in, not just what goes into it.
-func (T *KnowledgeApp) maintainersSection(user, collectionID string) (ui.Section, bool) {
-	if strings.TrimSpace(collectionID) == "" || strings.TrimSpace(user) == "" {
-		return ui.Section{}, false
-	}
-	c, ok := LoadCollection(UserDB(CollectionsDB(), user), user, collectionID)
-	if !ok || c.Owner != user || IsDeploymentScope(c) {
-		return ui.Section{}, false
-	}
-	base := "/orchestrate/api/collections/" + url.PathEscape(collectionID)
-	return ui.Section{
-		Title:    "Maintainers",
-		Subtitle: "People, or a team you are on, who look after this collection for you.",
-		Detail: "A maintainer does what a contributor does (adds and removes documents, auto-fills, researches) and curates besides: reviews the suggestions agents file, runs the audit, and edits what it takes in, its description, filter rules and articles.\n\n" +
-			"Its name, who reads, contributes to or maintains it, the agent in charge of it, and deleting it stay yours. Somebody you make a maintainer is shared it too, since they curate what they read; taking them off the share takes them off here.",
-		Body: ui.ACLPicker(ui.ACLPickerConfig{
-			OptionsSource: "/knowledge/api/user-candidates?groups=1",
-			RecordSource:  base,
-			Field:         "maintainers",
-			PostTo:        base,
-			// PATCH: absent fields stay as they are, so this picker cannot
-			// clear the share list above.
-			Method:     "PATCH",
-			Noun:       "maintainer",
-			Intro:      "People, or a team you are on, who may curate this collection.",
-			EmptyText:  "No other users to choose from yet.",
-			Invalidate: []string{base},
-		}),
-	}, true
 }
 
 // stewardSection names the agent in charge of this collection.
@@ -339,10 +302,11 @@ func (T *KnowledgeApp) sharingSection(user, collectionID string) (ui.Section, bo
 	base := "/orchestrate/api/collections/" + url.PathEscape(collectionID)
 	return ui.Section{
 		Title:    "Shared with",
-		Subtitle: "Other people, or a team you are on, who may attach and search this collection. Empty means private to you.",
-		Detail: "They get READ: it appears in their collections, they can attach it to their agents and search it. " +
-			"They cannot rename it, delete it or change who it reaches, and there is only ever one copy — so a document you add later is shared too, and one you remove is gone for everyone.\n\n" +
-			"Everybody added starts as a READER. Contributor is an extra you set on their own chip, and it is worth stopping on: a contributor may add documents, and an agent takes this corpus as fact, so they decide what every agent reading it believes.\n\n" +
+		Subtitle: "Other people, or a team you are on, who may use this collection, each at the access you choose on their chip. Empty means private to you.",
+		Detail: "Everybody added starts at READ: it appears in their collections, they can attach it to their agents and search it. " +
+			"They cannot rename it, delete it or change who it reaches, and there is only ever one copy, so a document you add later is shared too, and one you remove is gone for everyone.\n\n" +
+			"ADD DOCUMENTS lets them upload, paste, auto-fill and research into it. It is worth stopping on: an agent takes this corpus as fact, so whoever adds to it decides what every agent reading it believes.\n\n" +
+			"MAINTAIN is that and curating besides: reviewing the suggestions agents file, running the audit, and editing its description, filter rules and articles. Its name, who it reaches, the agent in charge of it and deleting it stay yours.\n\n" +
 			"Sharing with the whole deployment is a separate decision and is not offered here.",
 		Body: ui.ACLPicker(ui.ACLPickerConfig{
 			OptionsSource: "/knowledge/api/user-candidates?groups=1",
@@ -354,16 +318,20 @@ func (T *KnowledgeApp) sharingSection(user, collectionID string) (ui.Section, bo
 			// carry whatever else it happened to have read.
 			Method:    "PATCH",
 			Noun:      "user",
-			Intro:     "People, or a team you are on, who may use this collection. Everybody starts a reader.",
+			Intro:     "People, or a team you are on, who may use this collection. Everybody starts at Read.",
 			EmptyText: "No other users to share with yet.",
-			// One list with a setting per person. Two pickers over overlapping
-			// sets read as two decisions and leave you working out which names
-			// are in both.
-			FlagField:    "contributors",
-			FlagLabel:    "Contributor",
-			FlagOffLabel: "Reader",
-			FlagHelp:     "A contributor may add documents. An agent takes this corpus as fact, so they decide what every agent reading it believes.",
-			Invalidate:   []string{base},
+			// One list with a level per person: Read, Add documents or
+			// Maintain. Pickers over overlapping sets (this list and the
+			// maintainers it used to have beside it) read as separate
+			// decisions and leave you working out which names are in both.
+			FlagOffLabel: "Read",
+			Levels: []ui.PickerLevel{
+				{Field: "contributors", Label: "Add documents",
+					Help: "May add documents. An agent takes this corpus as fact, so they decide what every agent reading it believes."},
+				{Field: "maintainers", Label: "Maintain",
+					Help: "May add documents and curate: review suggestions, run the audit, edit the description, filter rules and articles."},
+			},
+			Invalidate: []string{base},
 		}),
 	}, true
 }

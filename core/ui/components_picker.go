@@ -57,6 +57,14 @@ type ChipPicker struct {
 	// has it truthy starts flagged when added, the rest start unflagged.
 	// Blank = everyone starts unflagged.
 	FlagDefaultField string `json:"flag_default_field,omitempty"`
+	// Levels give each selected member one of several permissions beyond
+	// membership, in order, chosen from a menu on their own pill: "Read",
+	// then "Add documents", then "Maintain". Each level is its own array
+	// on the record, and a member is in exactly one of them (or none, the
+	// base level, which FlagOffLabel names). For a permission with more
+	// than two settings; FlagField is the on/off case. Set one or the
+	// other, not both.
+	Levels []PickerLevel `json:"levels,omitempty"`
 
 	PostTo string `json:"post_to"`          // save destination
 	Method string `json:"method,omitempty"` // default POST; PATCH sends only the changed Field
@@ -254,6 +262,18 @@ type ACLPickerConfig struct {
 	// offered the flag. For a kind whose extra permission some choices may
 	// not hold (Everyone, which share candidates leave without "named").
 	FlagWhenField string
+	// Levels: several permissions beyond membership, one per member, from a
+	// menu on the pill; see ChipPicker.Levels. FlagOffLabel names the base.
+	Levels []PickerLevel
+}
+
+// PickerLevel is one permission a member can be given on a picker with
+// Levels: the record field holding who has it, what it is called on the
+// pill, and what it allows, shown on hover.
+type PickerLevel struct {
+	Field string `json:"field"`
+	Label string `json:"label"`
+	Help  string `json:"help,omitempty"`
 }
 
 // ACLPicker builds a ChipPicker preconfigured as an access-control editor: a
@@ -286,6 +306,7 @@ func ACLPicker(c ACLPickerConfig) ChipPicker {
 
 		FlagDefaultField: c.FlagDefaultField,
 		FlagWhenField:    c.FlagWhenField,
+		Levels:           c.Levels,
 	}
 	if c.RecordSource != "" {
 		// Record mode: current selection + save both go through the owning record.

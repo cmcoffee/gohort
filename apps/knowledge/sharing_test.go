@@ -8,6 +8,7 @@ package knowledge
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -99,9 +100,12 @@ func TestOnlyTheOwnerSeesTheStewardForm(t *testing.T) {
 	}
 }
 
-// The owner names maintainers on their own collection, nobody else is offered
-// that; a maintainer sees the suggestions they review, a plain reader does not.
-func TestMaintainersAreTheOwnersToNameAndSeeTheSuggestions(t *testing.T) {
+// One list sets who uses a collection and how far: each person on the share
+// is at Read, Add documents or Maintain, chosen on their own chip and saved to
+// the contributors and maintainers fields, so there is no separate maintainers
+// picker. A maintainer sees the suggestions they review, a plain reader does
+// not.
+func TestOneSharingListHoldsEveryLevel(t *testing.T) {
 	withStores(t)
 	app := &KnowledgeApp{}
 	owner := UserDB(CollectionsDB(), "alice")
@@ -110,11 +114,25 @@ func TestMaintainersAreTheOwnersToNameAndSeeTheSuggestions(t *testing.T) {
 	}
 	SaveCollection(owner, Collection{ID: "col-1", Owner: "alice", Name: "Runbooks",
 		AllowedUsers: []string{"bob", "carol"}, Maintainers: []string{"bob"}})
-	if _, ok := app.maintainersSection("alice", "col-1"); !ok {
-		t.Error("the owner cannot name maintainers")
+	s, ok := app.sharingSection("alice", "col-1")
+	if !ok {
+		t.Fatal("no sharing section for the owner")
 	}
-	if _, ok := app.maintainersSection("bob", "col-1"); ok {
-		t.Error("a maintainer is offered the maintainers picker")
+	blob, _ := json.Marshal(s.Body)
+	for _, want := range []string{`"flag_off_label":"Read"`, `"field":"contributors","label":"Add documents"`, `"field":"maintainers","label":"Maintain"`} {
+		if !strings.Contains(string(blob), want) {
+			t.Errorf("the sharing list has no %s:\n%s", want, blob)
+		}
+	}
+	if strings.Contains(string(blob), `"flag_field"`) {
+		t.Error("the sharing list still has the on/off flag beside its levels")
+	}
+	src, err := os.ReadFile("knowledge.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(src), "maintainersSection") {
+		t.Error("a separate maintainers picker is still on the page")
 	}
 	if _, ok := app.suggestionsSection("bob", "col-1"); !ok {
 		t.Error("a maintainer does not see the suggestions")

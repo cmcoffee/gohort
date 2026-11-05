@@ -1725,6 +1725,13 @@ select:-webkit-autofill {
   background: color-mix(in srgb, var(--accent, #6366f1) 18%, transparent);
   border-color: var(--accent, #6366f1); color: var(--text-hi);
 }
+/* The level menu wears the flag's look, with room for its arrow. */
+select.ui-cp-pill-level { -webkit-appearance: none; appearance: none; padding-right: 1rem; }
+select.ui-cp-pill-level, select.ui-cp-pill-level.on {
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 0.55rem) 55%, calc(100% - 0.35rem) 55%;
+  background-size: 0.2rem 0.2rem; background-repeat: no-repeat;
+}
 /* A selected value with no option behind it any more. Dashed and muted so it
  * reads as a stale reference, not as one more live choice. */
 .ui-cp-pill-missing { border-style: dashed; color: var(--text-mute); }

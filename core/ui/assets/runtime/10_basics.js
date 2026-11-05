@@ -1644,6 +1644,10 @@
     // overlapping sets read as two, and leave the reader working out which
     // names are in both.
     var flagged = {};
+    // levelOf is each member's place on a picker with levels (cfg.levels):
+    // 0 the base, i+1 the i-th level, read from and saved to each level's
+    // own field.
+    var levelOf = {};
     Promise.all([
       fetchJSON(cfg.options_source),
       needRecord ? fetchJSON(cfg.record_source) : Promise.resolve(null)
@@ -1663,6 +1667,13 @@
         var flagSrc = cfg.attached_field ? r[0] : record;
         ((flagSrc && flagSrc[cfg.flag_field]) || []).forEach(function(v){ flagged[v] = true; });
       }
+      // A member found in more than one level's field (stored before the
+      // levels were one control) shows at the highest; the next save puts
+      // them in that one alone.
+      (cfg.levels || []).forEach(function(lv, i) {
+        var src = cfg.attached_field ? r[0] : record;
+        ((src && src[lv.field]) || []).forEach(function(v){ levelOf[v] = Math.max(levelOf[v] || 0, i + 1); });
+      });
 
       // persist writes the current selection back. In local mode nothing is
       // POSTed — the caller is handed the selection via cfg.on_change and saves
@@ -1689,6 +1700,13 @@
             record[cfg.flag_field] = held;
           }
         }
+        // Each level's field holds the members at that level, every save, so
+        // a member removed or moved leaves no name behind in another.
+        (cfg.levels || []).forEach(function(lv, i) {
+          var at = selected.filter(function(v){ return (levelOf[v] || 0) === i + 1; });
+          body[lv.field] = at;
+          if (!cfg.save_key && !(cfg.method && cfg.method.toUpperCase() === 'PATCH')) record[lv.field] = at;
+        });
         return fetchJSON(cfg.post_to, {
           method: cfg.method || 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify(body)
@@ -1864,6 +1882,30 @@
             });
           });
           pill.appendChild(mark);
+        }
+        if (cfg.levels && cfg.levels.length && (!cfg.flag_when_field || opt[cfg.flag_when_field])) {
+          // A menu of the member's level, saying which one they are at. The
+          // base is the default and the safe direction, as the flag's off is.
+          var lvl = levelOf[v] || 0;
+          var help = lvl ? (cfg.levels[lvl - 1].help || '') : '';
+          var menu = el('select', {class: 'ui-cp-pill-flag ui-cp-pill-level' + (lvl ? ' on' : ''),
+            title: help, 'aria-label': 'Access for ' + labelOf(opt)});
+          menu.appendChild(el('option', {value: '0', text: cfg.flag_off_label || 'Read'}));
+          cfg.levels.forEach(function(lv, i) {
+            menu.appendChild(el('option', {value: String(i + 1), text: lv.label, title: lv.help || ''}));
+          });
+          menu.value = String(lvl);
+          menu.addEventListener('change', function(){
+            var was = levelOf[v] || 0;
+            levelOf[v] = parseInt(menu.value, 10) || 0;
+            renderPills();
+            persist().catch(function(err){
+              showToast('Save failed: ' + err.message);
+              levelOf[v] = was;
+              renderPills();
+            });
+          });
+          pill.appendChild(menu);
         }
         var x = el('span', {class: 'ui-cp-pill-x', title: 'Remove', text: '×'});
         x.addEventListener('click', function(){ toggle(v, false); });
