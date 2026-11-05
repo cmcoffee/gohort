@@ -239,6 +239,7 @@ const dictationFlow = `
   readCalls[0].onDone(true);
   check('and is read once it has', readCalls.length === 2 && readCalls[1].getText() === 'Noon works.' && readCalls[1].bubble === answer.wrap);
   check('in the unlocked player, for the right agent, with its button', readCalls[1].audio && readCalls[1].agentId === 'a1' && readCalls[1].button);
+  check('leaving out a reply that only repeats the one before it', readCalls[1].skipRepeat === true);
   // Stopping a piece drops the ones waiting: the person stopped listening.
   var more = {role: 'assistant', rawText: 'One more thing.', wrap: {}}, last = {role: 'assistant', rawText: 'Done.', wrap: {}};
   decorators.forEach(function(d) { d(more); d(last); });

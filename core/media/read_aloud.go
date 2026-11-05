@@ -108,6 +108,9 @@ type readAloudJob struct {
 	failed    bool       // the maker stopped on an error; nothing more will come
 	listeners int
 	cancel    context.CancelFunc
+	// closed says how an open read came to close, for the log: a stream
+	// that sent all it had may still have been closed before the reply was.
+	closed string
 }
 
 // ReadAloudVoice, when set, names the voice of the agent whose reply is read:
@@ -275,8 +278,11 @@ func streamReadAloud(w http.ResponseWriter, r *http.Request, user, key string) {
 	sent, sentBytes, ended := 0, 0, "all pieces sent"
 	defer func() {
 		job.mu.Lock()
-		total := 1 + len(job.rest)
+		total, closed := 1+len(job.rest), job.closed
 		job.mu.Unlock()
+		if sent == total && closed != "" {
+			ended += ", closed when " + closed
+		}
 		line := fmt.Sprintf("[speech] read aloud for %s: %d of %d piece(s), %d bytes, %s (range %q, %s)",
 			user, sent, total, sentBytes, ended, r.Header.Get("Range"), readAloudClient(r.UserAgent()))
 		if sent < total {
@@ -444,13 +450,17 @@ func (j *readAloudJob) make(ctx context.Context, from int) {
 }
 
 // addToReadAloud adds what the page sends to an open read: {"text": ...} for
-// the sentences written since, {"done": true} once the reply is finished.
-// Answers {"open": false} when the read takes no more (closed, idle, full),
-// so the page stops sending.
+// the sentences written since, {"done": true} once the reply is finished,
+// with "why" when the page closes it for another reason. Answers
+// {"open": false} when the read takes no more (closed, idle, full), so the
+// page stops sending. {"heard": ...} is the page saying how the read ended,
+// for the log; it adds nothing.
 func addToReadAloud(w http.ResponseWriter, r *http.Request, user, key string) {
 	var req struct {
-		Text string `json:"text"`
-		Done bool   `json:"done"`
+		Text  string          `json:"text"`
+		Done  bool            `json:"done"`
+		Why   string          `json:"why"`
+		Heard *readAloudHeard `json:"heard"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
@@ -463,7 +473,23 @@ func addToReadAloud(w http.ResponseWriter, r *http.Request, user, key string) {
 		http.NotFound(w, r)
 		return
 	}
-	open := job.add(textutil.SpeakableText(req.Text), req.Done)
+	if req.Heard != nil {
+		job.mu.Lock()
+		made := mp3Seconds(job.first)
+		for _, piece := range job.made {
+			made += mp3Seconds(piece)
+		}
+		job.mu.Unlock()
+		line, short := req.Heard.line(user, readAloudClient(r.UserAgent()), made)
+		if short {
+			nfo.Log("%s", line)
+		} else {
+			nfo.Debug("%s", line)
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	open := job.add(textutil.SpeakableText(req.Text), req.Done, req.Why)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	json.NewEncoder(w).Encode(map[string]bool{"open": open})
@@ -472,16 +498,33 @@ func addToReadAloud(w http.ResponseWriter, r *http.Request, user, key string) {
 // add puts text on the end of an open read, a sentence at a time, and closes
 // it when done or full. Joined to the last piece while the maker has not taken
 // it and it has room, so the voice keeps its phrasing across sentences that
-// arrive one by one. Reports whether the read takes more.
-func (j *readAloudJob) add(text string, done bool) bool {
+// arrive one by one. Reports whether the read takes more. why is the page's
+// reason for closing it, when that is not the reply being done.
+//
+// Text sent to a read already closed is not read, and is logged: the page
+// moved past it, so a voice that ends early with this in the log lost its
+// tail here.
+func (j *readAloudJob) add(text string, done bool, why string) bool {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	text = strings.TrimSpace(text)
 	if !j.open {
+		if text != "" {
+			nfo.Log("[speech] read aloud for %s: %d chars arrived after the read closed (%s) and were not read",
+				j.user, utf8.RuneCountInString(text), j.closed)
+		}
 		return false
 	}
-	if text = strings.TrimSpace(text); text != "" {
+	if done {
+		j.closed = "the page said the reply was done"
+		if why = logSafe(why); why != "" {
+			j.closed = "the page closed it: " + why
+		}
+	}
+	if text != "" {
 		if room := readAloudMaxChars - j.chars; utf8.RuneCountInString(text) > room {
 			text, done = lastWholeSentence(string([]rune(text)[:max(room, 0)])), true
+			j.closed = fmt.Sprintf("it reached %d chars", readAloudMaxChars)
 		}
 		j.chars += utf8.RuneCountInString(text)
 		for _, piece := range readAloudPiecesFrom(text, len(j.rest)+1) {
@@ -518,6 +561,9 @@ func lastWholeSentence(text string) string {
 // close ends an open read: the player plays out what it has.
 func (j *readAloudJob) close() {
 	j.mu.Lock()
+	if j.open {
+		j.closed = fmt.Sprintf("nothing was added for %s", readAloudOpenIdle)
+	}
 	j.open = false
 	j.cond.Broadcast()
 	j.mu.Unlock()
@@ -757,10 +803,9 @@ func mp3FrameInfo(b []byte) (length, side int, ok bool) {
 	if version == 1 || layer != 1 || bitIdx == 0 || bitIdx == 15 || rateIdx == 3 {
 		return 0, 0, false
 	}
-	mono := b[3]>>6 == 3
+	mono, rate := b[3]>>6 == 3, mp3SampleRate(b)
 	if version == 3 {
 		kbps := [...]int{0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320}[bitIdx]
-		rate := [...]int{44100, 48000, 32000}[rateIdx]
 		side = 32
 		if mono {
 			side = 17
@@ -768,10 +813,6 @@ func mp3FrameInfo(b []byte) (length, side int, ok bool) {
 		return 144000*kbps/rate + pad, side, true
 	}
 	kbps := [...]int{0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160}[bitIdx]
-	rate := [...]int{22050, 24000, 16000}[rateIdx]
-	if version == 0 {
-		rate /= 2
-	}
 	side = 17
 	if mono {
 		side = 9
@@ -802,10 +843,15 @@ const readAloudJS = `(function(){
   var idle = '🔊', stopGlyph = '⏹', failGlyph = '⚠';
   var speakPath = '` + ReadAloudPath + `';
   var playing = null;
-  function stop() {
+  // recent is the reply last read aloud, as its words, so a reading that
+  // would only say it again can be left out (see repeatOf).
+  var recent = null, repeatMs = 120000;
+  function stop(why) {
     var p = playing;
     if (!p) return;
     playing = null;
+    heard(p, why || 'stopped');
+    if (p.told && String(p.text || '').trim()) recent = {words: wordsOf(p.text), at: Date.now()};
     if (p.timer) clearInterval(p.timer);
     if (p.stall) clearTimeout(p.stall);
     if (p.wake) clearTimeout(p.wake);
@@ -814,7 +860,7 @@ const readAloudJS = `(function(){
     (p.ctls || []).forEach(function(c) { c.abort(); });
     // An open read left behind would close itself in half a minute; saying
     // so now frees the speech server at once.
-    if (p.live && p.segOpen && p.url) post(p.url, {done: true});
+    if (p.live && p.segOpen && p.url) post(p.url, {done: true, why: 'the read was stopped'});
     if (p.bubble && p.bubble.__gohortFollow === p) p.bubble.__gohortFollow = null;
     if (p.audio) { p.audio.pause(); p.audio.removeAttribute('src'); p.audio.load(); }
     if (p.button) { p.button.textContent = idle; p.button.title = 'Read aloud'; }
@@ -822,6 +868,43 @@ const readAloudJS = `(function(){
     // replaced, failed). A caller reading several pieces in turn goes on
     // only after an end.
     if (p.onDone) { try { p.onDone(!!p.ended); } catch (e) {} }
+  }
+  // heard tells the server how the read playing ended: why, how far its audio
+  // got, and how much of the reply had been handed to it. The server's own
+  // line says what it sent; set beside this one, a voice cut short shows
+  // where: the player stopping before the end of what it had, the page not
+  // sending the rest, or the reply changing under the read. Once per read:
+  // the one playing, or the last opened when none has played yet.
+  function heard(p, why) {
+    var url = p.cur || (p.told !== p.url && p.url);
+    if (!url) return;
+    var a = p.cur ? p.audio : null;
+    p.cur = ''; p.told = url;
+    var text = String(p.text || '');
+    tell(url, {heard: {why: p.ended ? 'played to its end' : why, ended: !!p.ended,
+      played_ms: Math.round(((a && a.currentTime) || 0) * 1000),
+      reply_chars: text.length, sent_chars: p.live ? p.sent : text.length,
+      reply_done: p.live ? !!p.done : true,
+      waiting: (p.urls ? p.urls.length : 0) + (p.segStarting ? 1 : 0)}});
+  }
+  // tell posts a note that must outlive the page if it is closing.
+  function tell(url, body) {
+    var s = JSON.stringify(body);
+    try { if (typeof navigator !== 'undefined' && navigator.sendBeacon && navigator.sendBeacon(url, s)) return; } catch (e) {}
+    fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: s, keepalive: true}).catch(function() {});
+  }
+  // wordsOf is a reply's words, lowercase, with punctuation and spacing gone:
+  // a retry that only swaps a dash for a comma says the same thing.
+  function wordsOf(text) {
+    return String(text || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  }
+  // repeatOf says whether text, as far as it goes, only repeats the reply
+  // just read: the same words, or the start of them. A check that sends a
+  // reply back can get the same reply again, in a bubble of its own; read
+  // automatically, it was heard twice, and the first reading was cut off for
+  // the second.
+  function repeatOf(text) {
+    return !!recent && Date.now() - recent.at <= repeatMs && recent.words.indexOf(wordsOf(text)) === 0;
   }
   function fail(btn, why) {
     if (!btn) return;
@@ -841,17 +924,22 @@ const readAloudJS = `(function(){
   }
   function press(ctx) {
     var again = playing && playing.bubble === ctx.bubble;
-    stop();
+    stop(again ? 'stopped with its button' : 'another reply was read');
     if (again) return;
-    // A reply still being written is followed as it is written.
+    // A reply still being written is followed as it is written. One taken
+    // back (emptied) before its turn came has nothing to follow: it would
+    // wait for a reply that is not coming.
     var live = ctx.bubble && ctx.bubble.__gohortText;
-    if (live && !live.done) { follow(ctx); return; }
-    var text = String(ctx.getText() || '');
+    var takenBack = live && !live.done && !String(live.text || '').trim() && seenOf(ctx.bubble) > 0;
+    if (live && !live.done && !takenBack) { follow(ctx); return; }
+    var text = takenBack ? '' : String(ctx.getText() || '');
     // Nothing to read counts as read, so a caller reading several replies
-    // in turn goes on to the next.
-    if (!text.trim()) { if (ctx.onDone) { try { ctx.onDone(true); } catch (e) {} } return; }
+    // in turn goes on to the next. So does a reply read for the caller
+    // (skipRepeat) that says again what was just read; a press of its button
+    // reads it regardless.
+    if (!text.trim() || (ctx.skipRepeat && repeatOf(text))) { if (ctx.onDone) { try { ctx.onDone(true); } catch (e) {} } return; }
     var btn = ctx.button || null;
-    var p = playing = {bubble: ctx.bubble, button: btn, ctl: new AbortController(), onDone: ctx.onDone};
+    var p = playing = {bubble: ctx.bubble, button: btn, ctl: new AbortController(), onDone: ctx.onDone, text: text};
     spin(p);
     fetch(speakPath, {method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({text: text, agent_id: ctx.agentId || '', seen: seenOf(ctx.bubble)}), signal: p.ctl.signal})
@@ -867,7 +955,7 @@ const readAloudJS = `(function(){
         // reply arrives seconds later. Handlers are set, not added, so a
         // reused player carries this read's and no earlier one's.
         var a = p.audio = ctx.audio || new Audio();
-        a.src = d.url;
+        a.src = p.cur = d.url;
         a.onplaying = function() {
           if (playing !== p) return;
           if (p.timer) { clearInterval(p.timer); p.timer = null; }
@@ -876,14 +964,14 @@ const readAloudJS = `(function(){
         a.onended = function() { if (playing === p) { p.ended = true; stop(); } };
         a.onerror = function() {
           if (playing !== p) return;
-          stop();
+          stop('the audio failed partway');
           fail(btn, 'the audio stopped: the speech server may have failed partway.');
         };
         return a.play();
       })
       .catch(function(e) {
         if (e && e.name === 'AbortError') return;
-        if (playing === p) stop();
+        if (playing === p) stop('it would not start: ' + (e && e.message || e));
         fail(btn, e && e.message || e);
       });
   }
@@ -931,7 +1019,7 @@ const readAloudJS = `(function(){
       body: JSON.stringify(body), signal: ctl ? ctl.signal : undefined});
   }
   function follow(ctx) {
-    var p = playing = {bubble: ctx.bubble, button: ctx.button || null, onDone: ctx.onDone, live: true,
+    var p = playing = {bubble: ctx.bubble, button: ctx.button || null, onDone: ctx.onDone, live: true, skipRepeat: !!ctx.skipRepeat,
       agentId: ctx.agentId || '', audio: ctx.audio || null, text: '', sent: 0, done: false,
       firstAt: 0, lastGrow: 0, started: false, segOpen: false, segStarting: false, url: '',
       urls: [], busy: false, ctls: [], chain: Promise.resolve()};
@@ -947,10 +1035,12 @@ const readAloudJS = `(function(){
     if (playing !== p) return;
     text = String(text || '');
     if (replaced || text.slice(0, p.sent) !== p.text.slice(0, p.sent)) {
-      if (!text.trim()) { stop(); return; }
+      // Taken back before any of it was read: nothing was missed, so a
+      // caller reading several in turn goes on.
+      if (!text.trim()) { if (!p.started) p.ended = true; stop('the reply was taken back'); return; }
       var tail = p.text.slice(0, p.sent).trim().slice(-30);
       var at = tail ? text.indexOf(tail) : 0;
-      if (at < 0) { stop(); return; }
+      if (at < 0) { stop('the reply was rewritten past what had been read'); return; }
       p.sent = tail ? at + tail.length : 0;
     }
     p.text = text;
@@ -970,7 +1060,7 @@ const readAloudJS = `(function(){
     p.stall = setTimeout(function() {
       if (playing !== p || !p.segOpen) return;
       p.segOpen = false;
-      send(p, {done: true});
+      send(p, {done: true, why: 'the reply paused'});
     }, left);
   }
   // readyToStart: once a read has begun, whatever is whole goes on. A first
@@ -992,6 +1082,12 @@ const readAloudJS = `(function(){
   }
   function pump(p, settled) {
     if (playing !== p || p.segStarting) return;
+    // Read for a caller, a reply that so far only repeats the one just read
+    // waits to show it says something new; done and the same, it is left out.
+    if (!p.started && p.skipRepeat && repeatOf(p.text)) {
+      if (p.done) { p.ended = true; stop('it said again what was just read'); }
+      return;
+    }
     var end = speakableEnd(p.text, p.done, settled);
     var chunk = end > p.sent ? p.text.slice(p.sent, end) : '';
     if (!p.segOpen) {
@@ -1013,18 +1109,24 @@ const readAloudJS = `(function(){
     p.started = true;
     var ctl = new AbortController();
     p.ctls.push(ctl);
-    post(speakPath, {text: chunk, agent_id: p.agentId, open: !p.done,
+    // Opened to take more, it stays open until told it is done, even when
+    // the reply finishes while it opens: the rest then goes to it and closes
+    // it. Taken as closed, it was left open with nothing coming, a second
+    // read was opened for the rest, and the player waited on the first until
+    // it gave up: the end of the reply was never played.
+    var asOpen = !p.done;
+    post(speakPath, {text: chunk, agent_id: p.agentId, open: asOpen,
       live: true, after_ms: Date.now() - p.firstAt, seen: seenOf(p.bubble)}, ctl)
       .then(function(r) {
         if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
         return r.json();
       })
       .then(function(d) {
-        if (playing !== p) { post(d.url, {done: true}); return; }
+        if (playing !== p) { post(d.url, {done: true, why: 'the read was stopped as it opened'}); return; }
         p.segStarting = false;
         p.sent = Math.max(p.sent, end);
         p.url = d.url;
-        p.segOpen = !p.done;
+        p.segOpen = asOpen;
         p.urls.push(d.url);
         armStall(p);
         playNext(p);
@@ -1032,7 +1134,7 @@ const readAloudJS = `(function(){
       })
       .catch(function(e) {
         if (e && e.name === 'AbortError') return;
-        if (playing === p) stop();
+        if (playing === p) stop('a read would not open: ' + (e && e.message || e));
         fail(p.button, e && e.message || e);
       });
   }
@@ -1050,7 +1152,7 @@ const readAloudJS = `(function(){
     if (playing !== p || p.busy || !p.urls.length) return;
     p.busy = true;
     var a = p.audio = p.audio || new Audio();
-    a.src = p.urls.shift();
+    a.src = p.cur = p.urls.shift();
     a.onplaying = function() {
       if (playing !== p) return;
       if (p.timer) { clearInterval(p.timer); p.timer = null; }
@@ -1058,16 +1160,17 @@ const readAloudJS = `(function(){
     };
     a.onended = function() {
       if (playing !== p) return;
+      p.ended = true; heard(p); p.ended = false;
       p.busy = false;
       if (p.urls.length) playNext(p); else finishIfDone(p);
     };
     a.onerror = function() {
       if (playing !== p) return;
-      stop();
+      stop('the audio failed partway');
       fail(p.button, 'the audio stopped: the speech server may have failed partway.');
     };
     var played = a.play();
-    if (played && played.catch) played.catch(function(e) { if (playing === p) { stop(); fail(p.button, e && e.message || e); } });
+    if (played && played.catch) played.catch(function(e) { if (playing === p) { stop('the player would not play: ' + (e && e.message || e)); fail(p.button, e && e.message || e); } });
   }
   // finishIfDone ends the read once the reply is done and all of it played.
   function finishIfDone(p) {
@@ -1086,7 +1189,7 @@ const readAloudJS = `(function(){
     d.bubble.__gohortText = {text: d.text || '', done: !!d.done};
     var p = d.bubble.__gohortFollow;
     if (!p || playing !== p) return;
-    if (d.struck) { stop(); return; }
+    if (d.struck) { stop('the reply was struck'); return; }
     feed(p, d.text, d.done, d.replaced);
   });
 
@@ -1095,7 +1198,7 @@ const readAloudJS = `(function(){
   // message, or started recording). ctx is a bubble action's: {bubble, getText, agentId, button?,
   // audio?, onDone?(ended)}. A reply still being written is followed.
   window.gohortReadAloud = press;
-  window.gohortReadAloudStop = stop;
+  window.gohortReadAloudStop = function(why) { stop(why || 'the page stopped it'); };
   function register() {
     if (!window.uiRegisterBubbleAction) { setTimeout(register, 50); return; }
     window.uiRegisterBubbleAction({role: 'assistant', label: idle, title: 'Read aloud', onclick: press});

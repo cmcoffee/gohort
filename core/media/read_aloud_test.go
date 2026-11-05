@@ -324,6 +324,12 @@ var fail = 0;
 function check(label, cond) { if (cond) console.log('ok   ' + label); else { fail++; console.log('FAIL ' + label); } }
 function sleep(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
 var registered = null, listeners = {};
+// How a read ended goes to the server by beacon, apart from the fetches the
+// checks count.
+var beacons = [];
+Object.defineProperty(global, 'navigator', {configurable: true, writable: true, value: {
+  sendBeacon: function(url, s) { beacons.push({url: url, heard: JSON.parse(s).heard}); return true; }}});
+function lastHeard() { return beacons.length ? beacons[beacons.length - 1] : {heard: {}}; }
 global.window = {
   uiRegisterBubbleAction: function(a) { registered = a; },
   addEventListener: function(name, fn) { (listeners[name] = listeners[name] || []).push(fn); },
@@ -363,6 +369,8 @@ eval(readAloudJS);
   check('the button becomes stop once it plays', one.button.textContent === '⏹');
   registered.onclick(one);
   check('pressing again stops it and lets go of the stream', audios[0].paused && audios[0].src === '' && one.button.textContent === idle);
+  check('and tells the server how it ended', beacons.length === 1 && lastHeard().url === '/api/speak/abc' &&
+    lastHeard().heard.why === 'stopped with its button' && lastHeard().heard.ended === false);
 
   registered.onclick(one);
   await sleep(10);
@@ -391,8 +399,13 @@ eval(readAloudJS);
   pending[5].res(link('/api/speak/jkl'));
   await sleep(20);
   audios[3].onplaying();
+  audios[3].currentTime = 2.5;
   audios[3].onended();
   check('the button comes back when it ends', three.button.textContent === idle);
+  check('a read played out says so, how long it played, and that it had all the reply', lastHeard().url === '/api/speak/jkl' &&
+    lastHeard().heard.ended === true && lastHeard().heard.played_ms === 2500 &&
+    lastHeard().heard.sent_chars === 6 && lastHeard().heard.reply_chars === 6 && lastHeard().heard.reply_done === true);
+  var told = beacons.length;
   registered.onclick(reply('   '));
   check('an empty reply asks for nothing', pending.length === 6);
 
@@ -413,6 +426,8 @@ eval(readAloudJS);
   window.gohortReadAloud(seven);
   window.gohortReadAloudStop();
   check('stopped, it says so too', ends.join() === 'four:true,five:false,seven:false');
+  check('a read that never began playing tells the server nothing', beacons.length === told + 1 &&
+    lastHeard().url === '/api/speak/mno');
 
   // --- A reply read while it is still being written ---
   function body(i) { return JSON.parse(pending[i].opts.body); }
@@ -451,8 +466,14 @@ eval(readAloudJS);
     body(n + 2).done === true && body(n + 2).text.indexOf('retry. Again. loop') > 0);
   pending[n + 2].res(taken(false));
   await sleep(20);
+  told = beacons.length;
+  la.currentTime = 9;
   la.onended();
   check('played to the end, the read is over', ends[ends.length - 1] === 'live:true' && live.button.textContent === idle);
+  check('and the server hears it once: played out, all of the finished reply handed over', beacons.length === told + 1 &&
+    lastHeard().url === '/api/speak/live1' && lastHeard().heard.ended === true && lastHeard().heard.played_ms === 9000 &&
+    lastHeard().heard.reply_done === true && lastHeard().heard.sent_chars === written.length &&
+    lastHeard().heard.reply_chars === written.length && lastHeard().heard.waiting === 0);
 
   // The speed decides when a long enough first sentence starts: at once when
   // it arrived fast, and not while the reply trickles in slower than it can
@@ -510,8 +531,8 @@ eval(readAloudJS);
   await sleep(20);
   var sa = audios[audios.length - 1];
   await sleep(3200);
-  check('a reply gone quiet has its read closed', pending.length === n + 2 &&
-    pending[n + 1].url === '/api/speak/slow1' && body(n + 1).done === true);
+  check('a reply gone quiet has its read closed, saying why', pending.length === n + 2 &&
+    pending[n + 1].url === '/api/speak/slow1' && body(n + 1).done === true && body(n + 1).why === 'the reply paused');
   pending[n + 1].res(taken(false));
   emit('ui-agent-message-text', {bubble: sb, text: long + 'Then it carries on. ', done: false});
   await sleep(20);
@@ -522,8 +543,36 @@ eval(readAloudJS);
   check('which waits for the first to finish', sa.src === '/api/speak/slow1');
   sa.onended();
   check('and plays after it', sa.src === '/api/speak/slow2' && !sa.paused);
+  check('the first read played out while the reply was still coming', lastHeard().url === '/api/speak/slow1' &&
+    lastHeard().heard.ended === true && lastHeard().heard.reply_done === false);
   emit('ui-agent-message-text', {bubble: sb, text: long + 'Then it carries on. ', done: false, struck: true});
   check('a reply struck while read stops being read', ends[ends.length - 1] === 'slow:false' && sa.paused);
+  check('and the read playing says the reply was struck', lastHeard().url === '/api/speak/slow2' &&
+    lastHeard().heard.why === 'the reply was struck' && lastHeard().heard.ended === false);
+
+  // A reply that finishes while its first read is still opening: the read
+  // was opened to take more, so the rest goes to it and closes it. Opening a
+  // second read for the rest left the first open with nothing coming; the
+  // player waited on it, gave up, and the rest was never played.
+  var race = reply(''); race.onDone = function(ended) { ends.push('race:' + ended); };
+  var first = 'The backup finished overnight and every volume verified. ';
+  emit('ui-agent-message-text', {bubble: race.bubble, text: first, done: false});
+  n = pending.length;
+  registered.onclick(race);
+  await sleep(20);
+  check('a read opens to take more', pending.length === n + 1 && body(n).open === true);
+  emit('ui-agent-message-text', {bubble: race.bubble, text: first + 'Nothing else tonight.', done: true});
+  await sleep(20);
+  pending[n].res(opened('/api/speak/race1'));
+  await sleep(20);
+  check('the rest of a reply finished meanwhile goes to it, and closes it', pending.length === n + 2 &&
+    pending[n + 1].url === '/api/speak/race1' && body(n + 1).done === true &&
+    body(n + 1).text.trim() === 'Nothing else tonight.');
+  pending[n + 1].res(taken(false));
+  await sleep(20);
+  var ra = audios[audios.length - 1];
+  ra.onended();
+  check('and the whole reply is played', ends[ends.length - 1] === 'race:true' && lastHeard().heard.sent_chars === lastHeard().heard.reply_chars);
 
   // Taken back (emptied) stops it too.
   var gone = reply(''); gone.onDone = function(ended) { ends.push('gone:' + ended); };
@@ -531,6 +580,70 @@ eval(readAloudJS);
   registered.onclick(gone);
   emit('ui-agent-message-text', {bubble: gone.bubble, text: '', done: false, replaced: true});
   check('a reply taken back stops being read', ends[ends.length - 1] === 'gone:false');
+
+  // A check that sends a reply back can get the same reply again, in a
+  // bubble of its own. Read for the dictation script, the repeat is left
+  // out; a press of its button reads it all the same.
+  var night = 'Appreciate you saying so. I will leave you to it. Good night.';
+  var said = reply(night); said.onDone = function(ended) { ends.push('said:' + ended); };
+  window.gohortReadAloud(said);
+  n = pending.length - 1;
+  pending[n].res(link('/api/speak/night1'));
+  await sleep(20);
+  audios[audios.length - 1].onended();
+  check('the reply is read', ends[ends.length - 1] === 'said:true');
+  var again = reply('Appreciate you saying so - I will leave you to it. Good night!');
+  again.skipRepeat = true; again.onDone = function(ended) { ends.push('again:' + ended); };
+  n = pending.length;
+  window.gohortReadAloud(again);
+  await sleep(20);
+  check('its repeat, finished, is not read again, and the caller goes on', pending.length === n && ends[ends.length - 1] === 'again:true');
+  var echo = reply(''); echo.skipRepeat = true; echo.onDone = function(ended) { ends.push('echo:' + ended); };
+  emit('ui-agent-message-text', {bubble: echo.bubble, text: 'Appreciate you saying so. I will leave you to it. Good', done: false});
+  window.gohortReadAloud(echo);
+  await sleep(800);
+  check('a repeat still being written waits to show it is one', pending.length === n);
+  emit('ui-agent-message-text', {bubble: echo.bubble, text: night, done: true});
+  await sleep(20);
+  check('and once it is, is left out', pending.length === n && ends[ends.length - 1] === 'echo:true');
+  var gone2 = reply(''); gone2.skipRepeat = true; gone2.onDone = function(ended) { ends.push('gone2:' + ended); };
+  emit('ui-agent-message-text', {bubble: gone2.bubble, text: 'Appreciate you saying so.', done: false});
+  window.gohortReadAloud(gone2);
+  await sleep(20);
+  emit('ui-agent-message-text', {bubble: gone2.bubble, text: '', done: false, replaced: true});
+  check('a repeat taken back while it waits ends with nothing missed, and the caller goes on', pending.length === n && ends[ends.length - 1] === 'gone2:true');
+  var more = reply(''); more.skipRepeat = true; more.onDone = function() {};
+  emit('ui-agent-message-text', {bubble: more.bubble, text: 'Appreciate you saying so. ', done: false});
+  window.gohortReadAloud(more);
+  await sleep(20);
+  emit('ui-agent-message-text', {bubble: more.bubble, text: 'Appreciate you saying so. One more thing: the backup failed overnight, twice. ', done: false});
+  await sleep(20);
+  check('a retry that says something new is read, from its start', pending.length === n + 1 &&
+    body(n).text.indexOf('Appreciate you saying so.') === 0 && body(n).text.indexOf('backup failed') > 0);
+  window.gohortReadAloudStop();
+  var pressed = reply(night);
+  n = pending.length;
+  registered.onclick(pressed);
+  await sleep(20);
+  check('pressing a repeat\'s button reads it', pending.length === n + 1 && body(n).text === night);
+  window.gohortReadAloudStop();
+  var realNow = Date.now;
+  Date.now = function() { return realNow() + 121000; };
+  var later = reply(night); later.skipRepeat = true; later.onDone = function() {};
+  n = pending.length;
+  window.gohortReadAloud(later);
+  Date.now = realNow;
+  check('a reply said again minutes later is read again', pending.length === n + 1);
+  window.gohortReadAloudStop();
+
+  // A reply taken back before its turn came is passed over, not waited on.
+  var dropped = reply(''); dropped.onDone = function(ended) { ends.push('dropped:' + ended); };
+  emit('ui-agent-message-text', {bubble: dropped.bubble, text: 'Working on it now.', done: false});
+  emit('ui-agent-message-text', {bubble: dropped.bubble, text: '', done: false, replaced: true});
+  n = pending.length;
+  window.gohortReadAloud(dropped);
+  await sleep(20);
+  check('a reply emptied before its turn is passed over, and the caller goes on', pending.length === n && ends[ends.length - 1] === 'dropped:true');
   process.exit(fail ? 1 : 0);
 })();
 `
@@ -1029,13 +1142,13 @@ func TestAnOpenReadPlaysTheReplyAsItIsWritten(t *testing.T) {
 func TestSentencesAddedTogetherAreMadeTogether(t *testing.T) {
 	j := &readAloudJob{open: true}
 	j.cond = sync.NewCond(&j.mu)
-	j.add("One.", false)
-	j.add("Two.", false)
+	j.add("One.", false, "")
+	j.add("Two.", false, "")
 	if len(j.rest) != 1 || j.rest[0] != "One. Two." {
 		t.Errorf("sentences not yet taken should join one piece: %q", j.rest)
 	}
 	j.next = 1
-	j.add("Three.", false)
+	j.add("Three.", false, "")
 	if len(j.rest) != 2 || j.rest[1] != "Three." {
 		t.Errorf("a piece the maker took must not grow: %q", j.rest)
 	}
@@ -1070,7 +1183,7 @@ func TestAnOpenReadIsOwnedAndClosesWhenLeft(t *testing.T) {
 func TestAnOpenReadIsBounded(t *testing.T) {
 	j := &readAloudJob{open: true, chars: readAloudMaxChars - 20}
 	j.cond = sync.NewCond(&j.mu)
-	if j.add("Short one. "+strings.Repeat("And a long tail that does not fit. ", 5), false) {
+	if j.add("Short one. "+strings.Repeat("And a long tail that does not fit. ", 5), false, "") {
 		t.Error("a read past its length still takes more")
 	}
 	if got := strings.Join(j.rest, " "); got != "Short one." {

@@ -578,7 +578,7 @@ const dictationJS = `(function(){
     // was not read stays in the thread with its Read aloud button.
     readQueue = [];
     awaiting = false;
-    if (window.gohortReadAloudStop) window.gohortReadAloudStop();
+    if (window.gohortReadAloudStop) window.gohortReadAloudStop('a recording started');
     state = 'starting';
     pressAt = Date.now(); openMs = recMs = beganMs = -1;
     show(ctx, micGlyph, 'Starting the microphone. Press to cancel');
@@ -837,6 +837,8 @@ const dictationJS = `(function(){
         return now ? now.text : '';
       },
       agentId: window.GOHORT_AGENT_ID || '', audio: player, button: btn,
+      // A retry that says the same as the reply just read is not read again.
+      skipRepeat: true,
       onDone: function(ended) {
         reading = false;
         if (ended) readNext(); else readQueue = [];
@@ -849,7 +851,7 @@ const dictationJS = `(function(){
     // So is the reply being read: the person has moved on. Typing leaves it
     // playing, since they may be listening while they write.
     readQueue = [];
-    if (window.gohortReadAloudStop) window.gohortReadAloudStop();
+    if (window.gohortReadAloudStop) window.gohortReadAloudStop('a message was sent');
     awaiting = dictated;
     dictated = false;
   });
