@@ -215,6 +215,23 @@
   flex: 1 1 auto;
   min-height: 0;
 }
+/* View on a Scheduler row (orchestrate_view_task). */
+.orch-view-sec { margin-bottom: 1.1rem; }
+.orch-view-h { font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-mute); margin-bottom: 0.45rem; }
+.orch-view-kv { display: flex; gap: 0.6rem; padding: 0.15rem 0; font-size: var(--fs-sm); }
+.orch-view-k { flex: 0 0 7.5rem; color: var(--text-mute); text-transform: capitalize; }
+.orch-view-v { flex: 1 1 auto; min-width: 0; color: var(--text); overflow-wrap: anywhere; }
+.orch-view-run { padding: 0.45rem 0; border-bottom: 1px solid var(--border); }
+.orch-view-run:last-child { border-bottom: none; }
+.orch-view-run-h { display: flex; align-items: center; gap: 0.5rem; font-size: var(--fs-sm); }
+.orch-view-when { color: var(--text-mute); }
+.orch-view-said { margin-top: 0.25rem; font-size: var(--fs-sm); color: var(--text); overflow-wrap: anywhere; }
+.orch-view-tag { font-size: var(--fs-2xs); font-weight: 700; padding: 0.05rem 0.45rem; border-radius: 999px; background: var(--bg-2); color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; }
+.orch-view-tag-ok, .orch-view-tag-true { background: color-mix(in srgb, var(--success) 18%, transparent); color: var(--success); }
+.orch-view-tag-failed, .orch-view-tag-issue, .orch-view-tag-attention { background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--warning); }
+.orch-view-notes { font-size: var(--fs-sm); color: var(--text); background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--btn-radius); padding: 0.5rem 0.65rem; margin-bottom: 0.5rem; max-height: 14rem; overflow: auto; }
+.orch-view-help { font-size: var(--fs-xs); color: var(--text-mute); margin-bottom: 0.45rem; }
+.orch-view-empty { font-size: var(--fs-sm); color: var(--text-mute); font-style: italic; }
 .ui-orch-modal-help {
   font-size: 0.78rem; color: var(--text-mute);
   margin-bottom: 0.7rem;
@@ -6920,6 +6937,115 @@
       // task's notes are read where they were written: on the card that already
       // says what the task is for, when it runs next and how its attempts have
       // gone.
+      // View: one Scheduler item's overview, read only. What it is (the card's
+      // own fields), how it has been going (its last runs, or a monitor's last
+      // checks as True, False or Issue) and its notes, with Edit beside them
+      // for the rare correction. Served by api/console/scheduler/view.
+      window.uiRegisterClientAction('orchestrate_view_task', function(ctx) {
+        var row = (ctx && ctx.row) || {};
+        var kind = row._kind || '';
+        var id = (ctx && ctx.id) || row._id || '';
+        if (!kind || !id) { window.uiAlert('This row has nothing to show.'); return; }
+        var m = openOrchModal(row.name || row.where || 'Schedule');
+        m.body.classList.add('orch-view');
+        function section(title) {
+          var sec = document.createElement('div');
+          sec.className = 'orch-view-sec';
+          var h = document.createElement('div');
+          h.className = 'orch-view-h';
+          h.textContent = title;
+          sec.appendChild(h);
+          m.body.appendChild(sec);
+          return sec;
+        }
+        function line(host, cls, text) {
+          var d = document.createElement('div');
+          d.className = cls;
+          d.textContent = text;
+          host.appendChild(d);
+          return d;
+        }
+        // What it is: the row's own visible fields, the name aside, as the
+        // card shows them but each with its name.
+        var about = section('About');
+        var shown = 0;
+        Object.keys(row).forEach(function(k) {
+          if (k.charAt(0) === '_' || k === 'name') return;
+          var v = row[k];
+          if (v == null || v === '' || typeof v === 'object') return;
+          var item = document.createElement('div');
+          item.className = 'orch-view-kv';
+          line(item, 'orch-view-k', k.replace(/_/g, ' '));
+          line(item, 'orch-view-v', String(v));
+          about.appendChild(item);
+          shown++;
+        });
+        if (!shown) line(about, 'orch-view-empty', 'Nothing more to say about it.');
+        var going = section(kind === 'monitor' ? 'Recent checks' : 'Recent runs');
+        var wait = going.appendChild(window.uiLoading ? window.uiLoading('Loading') : document.createTextNode('Loading'));
+        var notesSec = null;
+        fetch('api/console/scheduler/view?kind=' + encodeURIComponent(kind) + '&id=' + encodeURIComponent(id), {credentials: 'same-origin'})
+          .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+          .then(function(d) {
+            if (wait && wait.parentNode) wait.parentNode.removeChild(wait);
+            var list = kind === 'monitor' ? (d.checks || []) : (d.runs || []);
+            if (kind === 'link') {
+              line(going, 'orch-view-empty', 'A group runs as its members: each member\'s View shows its own runs.');
+            } else if (!list.length) {
+              line(going, 'orch-view-empty', kind === 'monitor' ? 'No checks recorded yet.' : 'It has not run yet.');
+            }
+            list.forEach(function(it) {
+              var item = document.createElement('div');
+              item.className = 'orch-view-run';
+              var head = document.createElement('div');
+              head.className = 'orch-view-run-h';
+              var tag = it.verdict || it.status || '';
+              if (tag) {
+                var b = document.createElement('span');
+                b.className = 'orch-view-tag orch-view-tag-' + String(tag).toLowerCase();
+                b.textContent = tag;
+                head.appendChild(b);
+              }
+              var w = document.createElement('span');
+              w.className = 'orch-view-when';
+              w.textContent = it.when + (it.trigger ? ' - ' + it.trigger : '');
+              head.appendChild(w);
+              item.appendChild(head);
+              var said = it.summary || it.note || '';
+              if (said) line(item, 'orch-view-said', said);
+              going.appendChild(item);
+            });
+            if (d.notes) {
+              notesSec = section('Notes');
+              line(notesSec, 'orch-view-help', 'What its runs have left for each other: each run reads these and can rewrite them.' +
+                (d.notes.updated ? ' Last written ' + d.notes.updated + '.' : ''));
+              var txt = String(d.notes.text || '').trim();
+              var pre = line(notesSec, txt ? 'orch-view-notes' : 'orch-view-empty', txt || 'Nothing recorded yet.');
+              if (txt) pre.style.whiteSpace = 'pre-wrap';
+              var edit = document.createElement('button');
+              edit.type = 'button';
+              edit.className = 'ui-row-btn';
+              edit.textContent = 'Edit notes';
+              edit.title = 'Correct what its runs believe: every later run reads these';
+              edit.addEventListener('click', function() {
+                var fn = window.UIClientActions && window.UIClientActions['orchestrate_task_notes'];
+                if (fn) fn(ctx);
+              });
+              notesSec.appendChild(edit);
+            }
+          })
+          .catch(function(e) {
+            if (wait && wait.parentNode) wait.parentNode.removeChild(wait);
+            line(going, 'orch-view-empty', 'Could not load: ' + (e && e.message || e));
+          });
+        var close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'ui-row-btn';
+        close.textContent = 'Close';
+        close.addEventListener('click', m.close);
+        m.footer.appendChild(close);
+      });
+
       window.uiRegisterClientAction('orchestrate_task_notes', function(ctx) {
         var row = (ctx && ctx.row) || {};
         var kind = row._kind || '';

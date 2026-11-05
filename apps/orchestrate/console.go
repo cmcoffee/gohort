@@ -287,6 +287,9 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// reads, POST replaces (the same write path update_notes uses). Scoped by
 	// (kind, id) from the row, and only for tasks this user owns. See
 	// task_notes.go and docs/design/task-notes.md.
+	// One item's overview for the row's View: its last runs (or a monitor's
+	// checks) and its notes. Read only; see scheduler_view.go.
+	T.HandleFunc("/api/console/scheduler/view", jsonapi.Get(T.DB, T.handleConsoleSchedulerView))
 	T.HandleFunc("/api/console/scheduler/notes", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.taskNotesGet),
 		"POST": jsonapi.Post(T.DB, T.taskNotesSave),

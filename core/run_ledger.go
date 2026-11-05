@@ -208,6 +208,13 @@ func (f RunFilter) AboutStanding(name string) RunFilter {
 	return f
 }
 
+// AboutMonitor narrows to one event monitor's runs, as AboutStanding does a
+// schedule's.
+func (f RunFilter) AboutMonitor(name string) RunFilter {
+	f.Subject, f.Agent = runSubject("monitor", name), name
+	return f
+}
+
 type RunFilter struct {
 	// Subject restricts to one thing's runs by identity (RunSubjectAgent and
 	// friends). This is the correct way to ask; Agent below is a display label

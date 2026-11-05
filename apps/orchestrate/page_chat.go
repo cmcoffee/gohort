@@ -511,7 +511,7 @@ func chatAgentNav() []ui.OrchestratorNavItem {
 			// down, and this is the Scheduler's own action
 			// rather than a copy of it.
 			RowActions: []ui.OrchestratorRowAction{
-				{Label: "Notes", Method: "client", URL: "orchestrate_task_notes", OnlyIf: "_notes"},
+				{Label: "View", Method: "client", URL: "orchestrate_view_task", OnlyIf: "_kind"},
 			}},
 		// Not on a sub-agent's page: its schedules are on its
 		// parent's Scheduler, with the rest of the family.
@@ -523,12 +523,13 @@ func chatAgentNav() []ui.OrchestratorNavItem {
 				{Label: "New machine run", Method: "client", URL: machineRunCreatorAction},
 			},
 			RowActions: []ui.OrchestratorRowAction{
-				// What this task's fires have left for each other. On the task
-				// rather than on the agent, because that is the whole scope of
-				// the thing: these notes end when the task does, and the card
-				// listing its goal, its attempts and its next fire is where
-				// somebody reading them already is.
-				{Label: "Notes", Method: "client", URL: "orchestrate_task_notes", OnlyIf: "_notes"},
+				// View: this item's overview, read only: how it has been going
+				// (its last runs, or a monitor's checks) and what its fires have
+				// left for each other, its notes, with Edit beside them. On the
+				// task rather than on the agent, because that is the whole scope
+				// of the notes: they end when the task does. It replaced Notes,
+				// which opened them as an editor, and Recent checks.
+				{Label: "View", Method: "client", URL: "orchestrate_view_task", OnlyIf: "_kind"},
 				// Link groups (schedule_links.go): the group's own
 				// controls on its header row, the order and the way
 				// out on each member, and Link… on every row that
@@ -558,7 +559,6 @@ func chatAgentNav() []ui.OrchestratorNavItem {
 				// What its recent checks found, the ones that would
 				// have fired included: a monitor that never fires
 				// otherwise looks just like a broken one.
-				{Label: "Recent checks", Method: "GET", URL: "api/console/monitors/checks", ShowResult: true, OnlyIf: "_del_monitor"},
 				{Label: "Test", Method: "POST", URL: "api/console/monitors/run", OnlyIf: "_test_monitor", Confirm: "Run this monitor's check once right now? If its condition matches, it will fire (wake/notify) as it would on a normal poll."},
 				{Label: "Pause", Icon: "pause", Method: "POST", URL: "api/console/monitors/pause", OnlyIf: "_pause_monitor"},
 				{Label: "Resume", Icon: "play", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_resume_monitor"},
@@ -754,7 +754,7 @@ func chatFleetNav() []ui.OrchestratorNavItem {
 			// this page's own question, and it is the
 			// Scheduler's action rather than a copy of it.
 			RowActions: []ui.OrchestratorRowAction{
-				{Label: "Notes", Method: "client", URL: "orchestrate_task_notes", OnlyIf: "_notes"},
+				{Label: "View", Method: "client", URL: "orchestrate_view_task", OnlyIf: "_kind"},
 			}},
 		{Label: "Scheduler", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/scheduler", Layout: "cards", TitleField: "name", NoBadge: true,
 			SearchPlaceholder: schedulerSearchHint,

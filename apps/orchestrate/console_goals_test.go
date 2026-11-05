@@ -190,8 +190,8 @@ func TestTheGoalsViewOwnsNoVerbs(t *testing.T) {
 			if !strings.Contains(line, "{Label:") || !strings.Contains(line, "URL:") {
 				continue
 			}
-			if !strings.Contains(line, `"orchestrate_task_notes"`) {
-				t.Errorf("the %s Goals entry declares an action other than Notes; the page that owns the record owns the verbs:\n  %s",
+			if !strings.Contains(line, `"orchestrate_view_task"`) {
+				t.Errorf("the %s Goals entry declares an action other than View; the page that owns the record owns the verbs:\n  %s",
 					entry.menu, strings.TrimSpace(line))
 			}
 			if !strings.Contains(line, `Method: "client"`) {
