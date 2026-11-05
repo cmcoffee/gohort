@@ -1142,28 +1142,25 @@ select:-webkit-autofill {
  * It would otherwise win the cascade and blow the chat up to 70vh.) */
 
 /* --- Switch ---
- * On fills the track with the theme's accent and turns the knob the colour
- * text takes on it: on reads as chosen, like a selected tab, rather than as
- * a health check passing (it used to be the success green). Off is the
- * page's darkest colour behind a hairline, with a muted knob, so it stays
- * visible on a light theme. A pill under Modern; the Retro style squares
- * it. The row it sits in is the tap target, so the switch can be slim. */
+ * A green track with a white knob, as a phone draws one, a size smaller
+ * than a phone's (the row it sits in is the tap target). Off is the
+ * border colour. A pill under Modern; the Retro style squares it. */
 .ui-switch {
   -webkit-appearance: none; appearance: none;
   position: relative; flex-shrink: 0;
-  width: 46px; height: 28px; border-radius: 999px;
-  background: var(--bg-2); border: none;
-  box-shadow: inset 0 0 0 1px var(--border);
+  width: 44px; height: 26px; border-radius: 999px;
+  background: var(--border); border: none;
   cursor: pointer; outline: none;
-  transition: background 0.15s ease, box-shadow 0.15s ease;
+  transition: background 0.15s ease;
 }
 .ui-switch::before {
-  content: ''; position: absolute; left: 5px; top: 5px;
-  width: 18px; height: 18px; border-radius: 999px; background: var(--text-mute);
-  transition: transform 0.15s ease, background 0.15s ease;
+  content: ''; position: absolute; left: 2px; top: 2px;
+  width: 22px; height: 22px; border-radius: 999px; background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  transition: transform 0.15s ease;
 }
-.ui-switch:checked { background: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
-.ui-switch:checked::before { transform: translateX(18px); background: var(--text-on-accent, #fff); }
+.ui-switch:checked { background: var(--success); }
+.ui-switch:checked::before { transform: translateX(18px); }
 .ui-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 :root[data-style="retro"] .ui-switch,
 :root[data-style="retro"] .ui-switch::before { border-radius: 0; }
@@ -3839,7 +3836,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   width: 34px; height: 20px;
 }
 .ui-switch.ui-switch-sm::before {
-  left: 4px; top: 4px; width: 12px; height: 12px;
+  width: 16px; height: 16px;
 }
 .ui-switch.ui-switch-sm:checked::before {
   transform: translateX(14px);
