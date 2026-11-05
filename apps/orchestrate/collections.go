@@ -26,6 +26,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -314,6 +315,7 @@ func (T *OrchestrateApp) collectionGet(call *jsonapi.Call) (any, error) {
 		// silently clears the share.
 		"allowed_users": nonNilUsers(c.AllowedUsers),
 		"contributors":  nonNilUsers(c.Contributors),
+		"maintainers":   nonNilUsers(c.Maintainers),
 	}, nil
 }
 
@@ -336,6 +338,9 @@ type collectionPatch struct {
 	// decision: reading a corpus tells you what somebody knows,
 	// writing to it decides what every agent reading it believes.
 	Contributors *[]string `json:"contributors"`
+	// Who looks after it (Collection.Maintainers). The owner's to set; a
+	// person made one is shared it too, since they curate what they read.
+	Maintainers *[]string `json:"maintainers"`
 	// "user" or "deployment". Widening is requested, narrowing is
 	// applied; both handled before the ordinary field edits below,
 	// because either one moves the record to a different pool and
@@ -350,6 +355,14 @@ func (T *OrchestrateApp) collectionPatch(call *jsonapi.Call, body collectionPatc
 		return nil, cerr
 	}
 	r, user, udb := call.R, call.User, call.UDB
+	// A maintainer reaches this PATCH to curate, and only that: what it takes
+	// in and how. The name and everything about who reaches it are the
+	// owner's, so naming any of them is refused rather than dropped.
+	if CollectionMaintainer(c, user) {
+		if body.Name != nil || body.Scope != nil || body.AllowedUsers != nil || body.Contributors != nil || body.Maintainers != nil {
+			return nil, jsonapi.Forbidden("\"" + c.Name + "\" belongs to " + c.Owner + ": you maintain what is in it, but its name and who it reaches are theirs")
+		}
+	}
 	if body.Name != nil {
 		if name := strings.TrimSpace(*body.Name); name != "" {
 			// A rename onto another of the owner's names makes the
@@ -431,6 +444,7 @@ func (T *OrchestrateApp) collectionPatch(call *jsonapi.Call, body collectionPatc
 		// A list that outlived the access it narrowed would be waiting
 		// to hand write back the day they were re-shared.
 		c.Contributors = keepOnly(c.Contributors, c.AllowedUsers)
+		c.Maintainers = keepOnly(c.Maintainers, c.AllowedUsers)
 	}
 	if body.Contributors != nil {
 		if c.Owner != "" && c.Owner != user {
@@ -441,7 +455,22 @@ func (T *OrchestrateApp) collectionPatch(call *jsonapi.Call, body collectionPatc
 		// writing into it blind.
 		c.Contributors = keepOnly(*body.Contributors, c.AllowedUsers)
 	}
-	saveCollection(udb, c)
+	if body.Maintainers != nil {
+		if c.Owner != "" && c.Owner != user {
+			return nil, jsonapi.Forbidden("only the owner decides who looks after this")
+		}
+		// Somebody made a maintainer reads it too: curating what you cannot
+		// see is not curating. Added to the share rather than refused.
+		c.Maintainers = normalizeShareList(*body.Maintainers, c.Owner)
+		for _, m := range c.Maintainers {
+			if !slices.Contains(c.AllowedUsers, m) {
+				c.AllowedUsers = append(c.AllowedUsers, m)
+			}
+		}
+	}
+	// The owner's record, wherever the edit came from: a maintainer's own
+	// store holds no copy of it.
+	saveCollection(T.collectionHome(udb, c), c)
 	return c, nil
 }
 
@@ -1888,6 +1917,14 @@ var collectionCorpusActions = map[string]bool{
 	"suggest": true,
 }
 
+// collectionMaintainerActions are what a maintainer may take beyond a
+// contributor's: looking after what is in it. Not "steward", which appoints
+// an agent to run it, a decision about the collection that stays the owner's.
+var collectionMaintainerActions = map[string]bool{
+	"suggestions": true,
+	"audit":       true,
+}
+
 // collectionWriteRefusal says why this user may not perform this action on
 // this collection, or "" when they may.
 //
@@ -1921,6 +1958,13 @@ func collectionWriteRefusal(c Collection, user, action, method string, admin boo
 	// somebody trusted to put a document in has not thereby been handed the
 	// thing itself.
 	if collectionCorpusActions[action] && CollectionContributor(c, user) {
+		return ""
+	}
+	// A maintainer may do that and curate besides: the suggestions, the
+	// audit, and a PATCH of the record, which collectionPatch holds to the
+	// fields a maintainer may change. Never DELETE.
+	if CollectionMaintainer(c, user) &&
+		(collectionCorpusActions[action] || collectionMaintainerActions[action] || (action == "" && method == http.MethodPatch)) {
 		return ""
 	}
 	if CollectionContributor(c, user) {

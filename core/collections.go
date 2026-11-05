@@ -158,9 +158,16 @@ type Collection struct {
 	// Empty is the default and the safe one. Nobody was ever granted this
 	// deliberately: before the write gate, every recipient had it because
 	// nothing checked, which is not the same as having been given it.
-	Contributors []string  `json:"contributors,omitempty"`
-	Created      time.Time `json:"created"`
-	Updated      time.Time `json:"updated,omitempty"`
+	Contributors []string `json:"contributors,omitempty"`
+	// Maintainers look after it for its owner: what a contributor may do,
+	// and the curation besides, reviewing the suggestions agents file and
+	// shaping what it takes in (its description, filter rules and articles).
+	// Never its name, its reach (who reads, contributes or maintains), its
+	// curator agent, or deleting it: those stay the owner's. People or teams,
+	// held to the people it is shared with, like Contributors.
+	Maintainers []string  `json:"maintainers,omitempty"`
+	Created     time.Time `json:"created"`
+	Updated     time.Time `json:"updated,omitempty"`
 	// IngestedURLs tracks every URL that has been pulled into this
 	// collection by the autofill flow. Used to dedupe across
 	// repeated "Auto-fill from web" clicks — the second run won't
@@ -881,6 +888,7 @@ func collectionSharedWith(c Collection, user string) bool {
 func SaveCollection(udb Database, c Collection) {
 	c.Updated = time.Now()
 	c.Contributors = contributorsStillShared(c)
+	c.Maintainers = stillSharedWith(c, c.Maintainers)
 	if IsDeploymentScope(c) {
 		if RootDB != nil {
 			RootDB.Set(GlobalCollectionsTable, c.ID, c)
@@ -1158,6 +1166,16 @@ func CollectionContributor(c Collection, user string) bool {
 	return SharedWithUser(contributorsStillShared(c), c.Owner, user)
 }
 
+// CollectionMaintainer reports whether user maintains c for its owner (by
+// name or through a team). The owner is not one: they own it.
+func CollectionMaintainer(c Collection, user string) bool {
+	user = strings.TrimSpace(user)
+	if user == "" || c.Owner == "" || c.Owner == user {
+		return false
+	}
+	return SharedWithUser(stillSharedWith(c, c.Maintainers), c.Owner, user)
+}
+
 // contributorsStillShared is Contributors held to the rule its comment states:
 // a subset of the people it is shared with. Taking somebody off the share used
 // to leave them on this list on every path but the edit form (the share ledger's
@@ -1168,11 +1186,17 @@ func CollectionContributor(c Collection, user string) bool {
 // A deployment collection has no share list (everybody reads it), so its
 // contributors are the owner's grant alone and are left as they are.
 func contributorsStillShared(c Collection) []string {
-	if IsDeploymentScope(c) || len(c.Contributors) == 0 {
-		return c.Contributors
+	return stillSharedWith(c, c.Contributors)
+}
+
+// stillSharedWith is list held to the people c is shared with (see
+// contributorsStillShared), for each list that grants more than reading.
+func stillSharedWith(c Collection, list []string) []string {
+	if IsDeploymentScope(c) || len(list) == 0 {
+		return list
 	}
 	var out []string
-	for _, u := range c.Contributors {
+	for _, u := range list {
 		for _, a := range c.AllowedUsers {
 			if u == a {
 				out = append(out, u)

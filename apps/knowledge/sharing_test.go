@@ -98,3 +98,28 @@ func TestOnlyTheOwnerSeesTheStewardForm(t *testing.T) {
 		t.Error("a reader is offered a form the endpoint refuses")
 	}
 }
+
+// The owner names maintainers on their own collection, nobody else is offered
+// that; a maintainer sees the suggestions they review, a plain reader does not.
+func TestMaintainersAreTheOwnersToNameAndSeeTheSuggestions(t *testing.T) {
+	withStores(t)
+	app := &KnowledgeApp{}
+	owner := UserDB(CollectionsDB(), "alice")
+	if owner == nil {
+		t.Skip("no per-user store in this configuration")
+	}
+	SaveCollection(owner, Collection{ID: "col-1", Owner: "alice", Name: "Runbooks",
+		AllowedUsers: []string{"bob", "carol"}, Maintainers: []string{"bob"}})
+	if _, ok := app.maintainersSection("alice", "col-1"); !ok {
+		t.Error("the owner cannot name maintainers")
+	}
+	if _, ok := app.maintainersSection("bob", "col-1"); ok {
+		t.Error("a maintainer is offered the maintainers picker")
+	}
+	if _, ok := app.suggestionsSection("bob", "col-1"); !ok {
+		t.Error("a maintainer does not see the suggestions")
+	}
+	if _, ok := app.suggestionsSection("carol", "col-1"); ok {
+		t.Error("a reader sees the suggestions")
+	}
+}

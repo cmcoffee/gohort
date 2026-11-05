@@ -144,6 +144,9 @@ func (T *KnowledgeApp) handleDetailPage(w http.ResponseWriter, r *http.Request) 
 	if s, ok := T.sharingSection(user, collectionIDFromPath(r.URL.Path)); ok {
 		sections = append(sections, s)
 	}
+	if s, ok := T.maintainersSection(user, collectionIDFromPath(r.URL.Path)); ok {
+		sections = append(sections, s)
+	}
 	page := ui.Page{
 		Title:     "Collection",
 		ShowTitle: true,
@@ -171,6 +174,40 @@ func collectionIDFromPath(path string) string {
 		return rest
 	}
 	return id
+}
+
+// maintainersSection is who looks after this collection for its owner: the
+// owner's to set, on their own collection. Its own picker rather than a third
+// state on the share chip, because it is a different trust: a maintainer
+// decides what the corpus takes in, not just what goes into it.
+func (T *KnowledgeApp) maintainersSection(user, collectionID string) (ui.Section, bool) {
+	if strings.TrimSpace(collectionID) == "" || strings.TrimSpace(user) == "" {
+		return ui.Section{}, false
+	}
+	c, ok := LoadCollection(UserDB(CollectionsDB(), user), user, collectionID)
+	if !ok || c.Owner != user || IsDeploymentScope(c) {
+		return ui.Section{}, false
+	}
+	base := "/orchestrate/api/collections/" + url.PathEscape(collectionID)
+	return ui.Section{
+		Title:    "Maintainers",
+		Subtitle: "People, or a team you are on, who look after this collection for you.",
+		Detail: "A maintainer does what a contributor does (adds and removes documents, auto-fills, researches) and curates besides: reviews the suggestions agents file, runs the audit, and edits what it takes in, its description, filter rules and articles.\n\n" +
+			"Its name, who reads, contributes to or maintains it, the agent in charge of it, and deleting it stay yours. Somebody you make a maintainer is shared it too, since they curate what they read; taking them off the share takes them off here.",
+		Body: ui.ACLPicker(ui.ACLPickerConfig{
+			OptionsSource: "/knowledge/api/user-candidates?groups=1",
+			RecordSource:  base,
+			Field:         "maintainers",
+			PostTo:        base,
+			// PATCH: absent fields stay as they are, so this picker cannot
+			// clear the share list above.
+			Method:     "PATCH",
+			Noun:       "maintainer",
+			Intro:      "People, or a team you are on, who may curate this collection.",
+			EmptyText:  "No other users to choose from yet.",
+			Invalidate: []string{base},
+		}),
+	}, true
 }
 
 // stewardSection names the agent in charge of this collection.
@@ -242,7 +279,7 @@ func (T *KnowledgeApp) suggestionsSection(user, collectionID string) (ui.Section
 	if !ok {
 		return ui.Section{}, false
 	}
-	if c.Owner != user && !(c.Owner == "" && IsDeploymentScope(c) && UserIsAdmin(user)) {
+	if c.Owner != user && !CollectionMaintainer(c, user) && !(c.Owner == "" && IsDeploymentScope(c) && UserIsAdmin(user)) {
 		return ui.Section{}, false
 	}
 	base := "/orchestrate/api/collections/" + url.PathEscape(collectionID) + "/suggestions"
