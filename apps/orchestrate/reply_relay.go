@@ -14,6 +14,18 @@
 // message carries on unchanged. It is armed when the message actually goes
 // out (at once, or when the owner approves it), never for a send that was
 // refused, and it expires after replyRelayTTL.
+//
+// It waits on a PERSON, by their handle, and only where the answer would not
+// otherwise reach the agent. Observed: an agent's cortex posted into a group
+// chat the same agent serves, and thirteen hours later the next message in
+// that group, a request to the agent from somebody else, both reached the
+// group's own conversation, which answered it, and woke the cortex as "an
+// answer", which acted on it too: two pictures rendered for one request, the
+// cortex's left in the cortex with nobody to send it to. So a send to a group
+// arms nothing (a group has no single person whose next message is the
+// answer), a send into a chat the asking agent serves arms nothing (the
+// answer reaches that agent there, with what was said), and a relay keeps for
+// hours, not a day.
 
 package orchestrate
 
@@ -29,10 +41,12 @@ import (
 // replyRelayTable holds each owner's armed relays, keyed by owner.
 const replyRelayTable = "orchestrate_reply_relays"
 
-// replyRelayTTL is how long a relay waits for the answer. A day covers someone
-// who reads it that evening; past it, the conversation has moved on and an
-// answer arriving into it would be a surprise rather than the one promised.
-const replyRelayTTL = 24 * time.Hour
+// replyRelayTTL is how long a relay waits for the answer. Long enough for
+// somebody to see it and reply; past it, the conversation has moved on, and
+// their next message is likelier to be about something else than to be the
+// answer promised. It was a day, and a post at 1:38am was answered by a
+// different request at 3:06pm.
+const replyRelayTTL = 4 * time.Hour
 
 // replyWakeMarker opens the note a relayed answer wakes a conversation with.
 // A wake like a finished task's (isTaskWake).
@@ -65,13 +79,18 @@ func askingOrigin(sess *ToolSession) taskOrigin {
 // armReplyRelay waits for the next message from the person a message just went
 // to, on behalf of the conversation in origin. A conversation already waiting
 // on them is re-armed with the newer message. Nothing is armed without a
-// conversation to come back to, or when the asking conversation IS theirs.
+// conversation to come back to, when the asking conversation IS theirs, without
+// a person to wait on (a group: its chat has no handle), or into a chat the
+// asking agent serves itself, where their answer already reaches it.
 func armReplyRelay(owner, chatID, handle, sent string, origin taskOrigin) {
 	chatID, handle = strings.TrimSpace(chatID), strings.TrimSpace(handle)
-	if owner == "" || origin.SessionID == "" || origin.AgentID == "" || (chatID == "" && handle == "") {
+	if owner == "" || origin.SessionID == "" || origin.AgentID == "" || handle == "" {
 		return
 	}
 	if sameRecipient(chatID, handle, origin.ChatID, origin.Handle) {
+		return
+	}
+	if agentServesChat(owner, origin.AgentID, chatID, handle) {
 		return
 	}
 	replyRelayMu.Lock()
@@ -111,7 +130,11 @@ func takeReplyRelays(ev messaging.InboundEvent) []replyRelay {
 	for _, r := range all {
 		switch {
 		case now.After(r.Until):
-		case (addrs[r.ChatID] || addrs[r.Handle]) && text != r.Sent:
+		// The person, by their handle (the inbound's addresses carry the
+		// sender's handle and aliases). Not the chat: in a group the chat is
+		// everybody's, and a relay armed before this rule on a chat alone
+		// waits out its time and goes.
+		case r.Handle != "" && addrs[r.Handle] && text != r.Sent:
 			due = append(due, r)
 		default:
 			kept = append(kept, r)
@@ -161,6 +184,21 @@ func replyWakeNote(ev messaging.InboundEvent, r replyRelay) wakeNote {
 }
 
 // sameRecipient reports whether two chat/handle pairs name one conversation.
+// agentServesChat reports whether agentID has a channel of its own on this
+// chat (bound to the chat id or the person's handle) that takes inbound: their
+// messages there already reach the agent, in that channel's conversation.
+func agentServesChat(owner, agentID, chatID, handle string) bool {
+	for _, ch := range ListChannels(RootDB, owner) {
+		if ch.AgentID != agentID || ch.Address == "" || ch.Direction == messaging.DirectionOutbound {
+			continue
+		}
+		if (chatID != "" && ch.Address == chatID) || ch.Address == handle {
+			return true
+		}
+	}
+	return false
+}
+
 func sameRecipient(chatA, handleA, chatB, handleB string) bool {
 	return (chatA != "" && (chatA == chatB || chatA == handleB)) || (handleA != "" && (handleA == handleB || handleA == chatB))
 }

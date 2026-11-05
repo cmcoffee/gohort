@@ -103,8 +103,9 @@ func TestAnApprovedSendIsWaitedOnOnceItGoesOut(t *testing.T) {
 	}
 }
 
-// A relay waits on one person for one conversation, for a day, and not on the
-// person whose own conversation it is.
+// A relay waits on one person for one conversation, for a few hours, and not on
+// the person whose own conversation it is, a group, or a chat the asking agent
+// serves itself.
 func TestARelayKeepsToItsTerms(t *testing.T) {
 	depStores(t, "u")
 	origin := taskOrigin{SessionID: "s-1", User: "u", AgentID: "lead"}
@@ -126,11 +127,34 @@ func TestARelayKeepsToItsTerms(t *testing.T) {
 		t.Errorf("their own conversation, no conversation, or no one: %d relay(s) armed", n)
 	}
 
+	// A group has no single person to wait on: its chat carries no handle,
+	// and a post to it arms nothing.
+	armReplyRelay("u", "any;+;chat-group", "", "posted to the group", origin)
+	// Nor does a send into a chat the asking agent serves itself: the answer
+	// reaches it there. A channel that only sends does not count.
+	SaveChannel(RootDB, Channel{ID: "ch-own", Owner: "u", AgentID: "lead", Service: "imessage", Address: "chat-own"})
+	armReplyRelay("u", "chat-own", "+15550111", "hi", origin)
+	SaveChannel(RootDB, Channel{ID: "ch-out", Owner: "u", AgentID: "lead", Service: "imessage", Address: "chat-out", Direction: "outbound"})
+	armReplyRelay("u", "chat-out", "+15550122", "hi", origin)
+	if armed := loadReplyRelays("u"); len(armed) != 1 || armed[0].Handle != "+15550122" {
+		t.Errorf("a group, or a chat the agent serves, armed a relay; an outbound-only channel did not: %+v", armed)
+	}
+	saveReplyRelays("u", nil)
+
+	// It waits on the person, not their chat: somebody else writing in the
+	// same chat (a group) is not their answer.
 	armReplyRelay("u", "chat-1", "+15550100", "hi", origin)
+	if due := takeReplyRelays(messaging.InboundEvent{Owner: "u", ChatID: "chat-1", Handle: "+15550177", Addresses: []string{"chat-1", "+15550177"}, Text: "me too"}); len(due) != 0 {
+		t.Errorf("another person in the chat answered for them: %+v", due)
+	}
+	if got := loadReplyRelays("u"); len(got) != 1 || got[0].Until.Sub(time.Now()) > replyRelayTTL || replyRelayTTL > 4*time.Hour {
+		t.Errorf("a relay keeps for hours, not a day: %v", replyRelayTTL)
+	}
+
 	rs := loadReplyRelays("u")
 	rs[0].Until = time.Now().Add(-time.Minute)
 	saveReplyRelays("u", rs)
-	if due := takeReplyRelays(messaging.InboundEvent{Owner: "u", ChatID: "chat-1", Text: "late answer"}); len(due) != 0 {
+	if due := takeReplyRelays(messaging.InboundEvent{Owner: "u", ChatID: "chat-1", Handle: "+15550100", Addresses: []string{"+15550100"}, Text: "late answer"}); len(due) != 0 {
 		t.Errorf("an expired relay woke: %+v", due)
 	}
 	if n := len(loadReplyRelays("u")); n != 0 {
