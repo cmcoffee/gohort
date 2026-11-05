@@ -480,9 +480,22 @@
     // (e.g. ?id=<id> for cross-links) render as anchors.
     // Absolute URLs open in a new tab; relative ones navigate the
     // same window so the page deep-link logic can pick them up.
-    s = s.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g,
-      '<a href="$2" target="_blank" rel="noopener">$1</a>');
-    s = s.replace(/\[([^\]]+)\]\(([?#/][^)]+)\)/g, '<a href="$2">$1</a>');
+    //
+    // Each finished anchor is held, as code is, so no later pass can reach
+    // into it. The autolink passes below used to find a second URL inside a
+    // link's href and write a whole new anchor there, whose own href="
+    // closed the first one's attribute: "[t](https://a https://x/onmouseover=
+    // ...)" came out as an <a> with an event handler. A link whose address
+    // has whitespace or an angle bracket in it is left as text, and "//"
+    // (another site) is not a relative link.
+    function linkOK(u) { return !/\s|&lt;|&gt;|[\uE000\uE001]/.test(u); }
+    s = s.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, function(m, text, url) {
+      return linkOK(url) ? hold('<a href="' + url + '" target="_blank" rel="noopener">' + text + '</a>') : m;
+    });
+    s = s.replace(/\[([^\]]+)\]\(([?#/][^)]+)\)/g, function(m, text, url) {
+      if (!linkOK(url) || /^\/[\/\\]/.test(url)) return m;
+      return hold('<a href="' + url + '">' + text + '</a>');
+    });
     // CommonMark angle-bracket autolinks — <https://url>. The escape
     // pass above turned the brackets into &lt; / &gt;, so match those.
     // This MUST run before the bare-URL pass: otherwise that pass's
@@ -490,16 +503,18 @@
     // trailing &gt; into the href, producing a broken link ending in
     // a literal '>'. Non-greedy so the URL stops at its own &gt;
     // closer rather than a later one on the same line.
-    s = s.replace(/&lt;(https?:\/\/[^\s<]+?)&gt;/g,
-      '<a href="$1" target="_blank" rel="noopener">$1</a>');
+    s = s.replace(/&lt;(https?:\/\/[^\s<\uE000\uE001]+?)&gt;/g, function(_, url) {
+      return hold('<a href="' + url + '" target="_blank" rel="noopener">' + url + '</a>');
+    });
     // Auto-link bare http/https URLs that didn't go through the
     // [text](url) replacement above. The (^|[^"'>=]) prefix avoids
     // matching URLs already inside href="..." attributes or as the
     // text content of a freshly-built <a> tag (>url</a>). Trailing
     // punctuation like ".," common at end of sentences gets pulled
     // out of the match.
-    s = s.replace(/(^|[^"'>=])(https?:\/\/[^\s<)]+?)([.,;:!?]?(?=\s|$|<|\)))/g,
-      '$1<a href="$2" target="_blank" rel="noopener">$2</a>$3');
+    s = s.replace(/(^|[^"'>=])(https?:\/\/[^\s<)\uE000\uE001]+?)([.,;:!?]?(?=\s|$|<|\)|[\uE000\uE001]))/g, function(_, pre, url, post) {
+      return pre + hold('<a href="' + url + '" target="_blank" rel="noopener">' + url + '</a>') + post;
+    });
     s = s.replace(/(^|\n)((?:[-*] .+(?:\n|$))+)/g, function(_, p, block) {
       var items = block.trim().split(/\n/).map(function(line){
         return '<li>' + line.replace(/^[-*]\s+/, '') + '</li>';
@@ -866,16 +881,22 @@
   //
   // Compared without the hash, which addresses a section of this page rather
   // than another page.
+  //
+  // Only the checked URL is ever followed. A javascript: URL checks to "#",
+  // which is this page, so the same-page branch used to replace() with the
+  // raw URL it had just refused and run it: an app button's redirect_url
+  // ran script for whoever pressed it.
   window.uiGoTo = function(dest) {
+    var safe = safeURL(dest);
     try {
       var probe = document.createElement('a');
-      probe.href = safeURL(dest);
+      probe.href = safe;
       if (probe.pathname + probe.search === location.pathname + location.search) {
-        location.replace(dest);
+        location.replace(safe);
         return;
       }
     } catch (_) {}
-    location.href = safeURL(dest);
+    location.href = safe;
   };
 
   window.uiRegisterClientAction = function(name, fn) {
@@ -1663,8 +1684,15 @@
     // leading "/" (not "//host"), no scheme, no backslash (a browser reads
     // "/\host" as "//host"). Everything else is refused — the url mode
     // renders UNsandboxed, so it must never frame foreign content.
+    //
+    // No control character or space either: a browser drops tabs and
+    // newlines from a URL, so "/\t/evil.example" passed the checks above and
+    // became "//evil.example", another site framed with no sandbox. And it
+    // must resolve to this origin, which is the property all of this is for.
     function sameOriginPath(u) {
-      return typeof u === 'string' && u.charAt(0) === '/' && u.charAt(1) !== '/' && u.indexOf('\\') < 0;
+      if (typeof u !== 'string' || u.charAt(0) !== '/' || u.charAt(1) === '/' || u.indexOf('\\') >= 0) return false;
+      if (/[\u0000-\u0020\u007f-\u00a0]/.test(u)) return false;
+      try { return new URL(u, location.origin).origin === location.origin; } catch (_) { return false; }
     }
     var state = {id: '', html: '', url: '', dataUrls: [], dataKey: ''};
     // gohort.fetch shim, injected into authored documents that declared
@@ -1779,8 +1807,18 @@
     popBtn.addEventListener('click', function() {
       try {
         if (state.url) { window.open(safeURL(state.url), '_blank'); return; }
-        var blob = new Blob([state.html || ''], {type: 'text/html'});
-        window.open(URL.createObjectURL(blob), '_blank');
+        // A blob URL has the origin of the page that made it, so the
+        // document opened as one ran on this origin with the viewer's
+        // session: whatever the model wrote into it, outside the pane's
+        // sandbox. The new tab is a page holding it in a frame sandboxed
+        // exactly as the pane's is, the HTML escaped into srcdoc.
+        var esc = String(state.html || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+        var page = '<!doctype html><meta charset="utf-8"><title>' +
+          String(ttl.textContent || 'Artifact').replace(/[&<>"]/g, function(c) {
+            return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c];
+          }) + '</title><style>html,body{margin:0;height:100%}iframe{border:0;width:100%;height:100%;display:block}</style>' +
+          '<iframe sandbox="allow-scripts allow-modals" srcdoc="' + esc + '"></iframe>';
+        window.open(URL.createObjectURL(new Blob([page], {type: 'text/html'})), '_blank');
       } catch (_) {}
     });
     // A file name from the title: what a person would type, not an id.

@@ -34,6 +34,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/safefile"
 )
 
 // toolFolderManifest is tool.json.
@@ -110,12 +111,13 @@ func toolCheckout(args map[string]any, sess *ToolSession) (string, error) {
 	if name == "" {
 		name = strings.TrimSuffix(filepath.Base(rel), ".tool")
 	}
+	root := sess.WorkspaceDir
 	write := func(file string, data []byte) error {
 		p := filepath.Join(abs, file)
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		if err := safefile.MkdirAllIn(root, filepath.Dir(p), 0o755); err != nil {
 			return err
 		}
-		return os.WriteFile(p, data, 0o644)
+		return safefile.WriteFileIn(root, p, data, 0o644)
 	}
 	existing, ok := loadExistingToolRecord(sess, name)
 	if !ok {
@@ -135,7 +137,7 @@ func toolCheckout(args map[string]any, sess *ToolSession) (string, error) {
 	if effectiveTempToolMode(existing) != TempToolModeShell || strings.TrimSpace(existing.ScriptBody) == "" {
 		return "", fmt.Errorf("%q is a %s tool, not a script tool: a folder holds a script tool. Edit this one with tool_def(action=\"update\")", name, effectiveTempToolMode(existing))
 	}
-	m, err := writeToolFolder(abs, existing, toolFingerprint(existing))
+	m, err := writeToolFolder(root, abs, existing, toolFingerprint(existing))
 	if err != nil {
 		return "", err
 	}
@@ -146,14 +148,15 @@ func toolCheckout(args map[string]any, sess *ToolSession) (string, error) {
 // writeToolFolder writes a script tool into a folder: tool.json, the script,
 // its helpers and NOTES.md. base is the live state the folder holds
 // (toolFingerprint), or "" when it holds none (an unpacked bundle). Shared by
-// checkout and unpack.
-func writeToolFolder(abs string, existing TempTool, base string) (toolFolderManifest, error) {
+// checkout and unpack. Every write stays inside root, the workspace the folder
+// is in, and follows no link a script left there.
+func writeToolFolder(root, abs string, existing TempTool, base string) (toolFolderManifest, error) {
 	write := func(file string, data []byte) error {
 		p := filepath.Join(abs, file)
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		if err := safefile.MkdirAllIn(root, filepath.Dir(p), 0o755); err != nil {
 			return err
 		}
-		return os.WriteFile(p, data, 0o644)
+		return safefile.WriteFileIn(root, p, data, 0o644)
 	}
 	m := toolFolderManifest{Name: existing.Name, Description: existing.Description, Category: existing.Category,
 		Script: chFirstStr(existing.ScriptName, "script.py"), HookCapabilities: existing.HookCapabilities,

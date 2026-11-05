@@ -1280,7 +1280,9 @@ func hookSaveTarget(wsDir, saveTo string) (string, string, error) {
 	if err != nil {
 		return "", "", errString("save_to: " + err.Error())
 	}
-	if err := os.MkdirAll(filepath.Dir(savePath), 0700); err != nil {
+	// Inside the workspace as it is made, not as it was checked above: the
+	// script asking for this is running, and can swap a folder for a link.
+	if err := safefile.MkdirAllIn(wsDir, filepath.Dir(savePath), 0700); err != nil {
 		return "", "", errString("create parent dir for save_to: " + err.Error())
 	}
 	return savePath, saveTo, nil
@@ -1545,7 +1547,7 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 			return
 		}
 		saveTo = rel
-		f, ferr := safefile.Create(savePath, 0666)
+		f, ferr := safefile.CreateIn(wsDir, savePath, 0666)
 		if ferr != nil {
 			writeHookError(conn, "save_to create: "+ferr.Error())
 			return
@@ -1553,12 +1555,12 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 		written, werr := io.Copy(f, io.LimitReader(resp.Body, 100*1024*1024+1))
 		f.Close()
 		if werr != nil {
-			os.Remove(savePath)
+			safefile.RemoveIn(wsDir, savePath)
 			writeHookError(conn, "save_to write: "+werr.Error())
 			return
 		}
 		if written > 100*1024*1024 {
-			os.Remove(savePath)
+			safefile.RemoveIn(wsDir, savePath)
 			writeHookError(conn, "save_to: response exceeded 100MB cap")
 			return
 		}

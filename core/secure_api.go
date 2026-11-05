@@ -2675,6 +2675,7 @@ type apiCall struct {
 	stream   io.Reader // a streamed request's body (OpenStream), in place of body
 	saveTo   string
 	savePath string
+	saveRoot string // the workspace savePath is in, which the write may not leave
 	parsed   *url.URL
 
 	// The secret and whose call it is (loadSecret).
@@ -2776,7 +2777,7 @@ func (ac *apiCall) target() bool {
 		if err != nil {
 			return ac.exit("", fmt.Errorf("save_to: %w", err))
 		}
-		ac.savePath = resolved
+		ac.savePath, ac.saveRoot = resolved, sess.WorkspaceDir
 	}
 	return true
 }
@@ -3313,7 +3314,7 @@ func (ac *apiCall) saveFile() bool {
 				limited = strings.NewReader("")
 			}
 		}
-		written, err := writeWorkspaceFile(ac.savePath, limited, secureAPIMaxSaveBytes())
+		written, err := writeWorkspaceFile(ac.saveRoot, ac.savePath, limited, secureAPIMaxSaveBytes())
 		if err != nil {
 			ac.auditEntry.Status = ac.resp.StatusCode
 			ac.auditEntry.Error = ac.redact("save_to write: " + err.Error())
@@ -4187,9 +4188,10 @@ func textualContentType(ct string) bool {
 // the byte count written. If the limit is hit the error reads
 // "response exceeded %d byte cap"; partial output is left on disk so
 // the LLM can decide whether to retry. Caller has already validated
-// the path via ResolveWorkspacePath.
-func writeWorkspaceFile(absPath string, r io.Reader, maxBytes int64) (int64, error) {
-	f, err := safefile.Create(absPath, 0666)
+// the path via ResolveWorkspacePath; the write is held inside root as it
+// happens, since a script can swap a folder on the path after that check.
+func writeWorkspaceFile(root, absPath string, r io.Reader, maxBytes int64) (int64, error) {
+	f, err := safefile.CreateIn(root, absPath, 0666)
 	if err != nil {
 		return 0, err
 	}

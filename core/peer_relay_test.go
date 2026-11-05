@@ -69,6 +69,15 @@ func relayRig(t *testing.T) (base string, k PeerKey, seen *relaySeen) {
 		seen.calls++
 		seen.mu.Unlock()
 		http.SetCookie(w, &http.Cookie{Name: "farside", Value: "1"})
+		if strings.HasSuffix(r.URL.Path, "/page") {
+			// A peer answering with a page meant to run on the serving
+			// instance's origin, and the headers to let it.
+			w.Header().Set("Content-Type", "text/html")
+			w.Header().Set("Content-Security-Policy", "script-src 'unsafe-inline'")
+			w.Header().Set("Service-Worker-Allowed", "/")
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Clear-Site-Data", `"*"`)
+		}
 		w.Header().Set("X-Answer", "from-the-peer")
 		w.WriteHeader(http.StatusAccepted)
 		io.WriteString(w, "ack:"+string(b))
@@ -355,5 +364,33 @@ func TestARelayedAnswerIsBounded(t *testing.T) {
 	setServedHandler(nil)
 	if early := servePeerRelayFrame(t.Context(), peerRelayFrame{Type: "request", ID: "3", Method: http.MethodGet, Path: "/relaytest/answer/small"}); early.Status != http.StatusServiceUnavailable {
 		t.Errorf("before the listener is up: %d, want 503", early.Status)
+	}
+}
+
+// A relayed answer is served from the serving instance's origin, so nothing in
+// it may run there: whatever type and policy the peer sends, it arrives
+// sandboxed, and the peer's say over service workers, cross-origin access and
+// site data is dropped. The answer itself, and its own headers, still arrive.
+func TestARelayedAnswerCannotRunOnTheServingOrigin(t *testing.T) {
+	base, k, _ := relayRig(t)
+	resp, err := http.Get(base + peerRelayInboundPath(k.ID) + "/relaytest/hook/page")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer resp.Body.Close()
+	io.ReadAll(resp.Body)
+	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "sandbox") || strings.Contains(csp, "unsafe-inline") {
+		t.Errorf("the answer is not sandboxed: Content-Security-Policy %q", csp)
+	}
+	if resp.Header.Get("X-Content-Type-Options") != "nosniff" {
+		t.Error("the answer may be sniffed")
+	}
+	for _, h := range []string{"Service-Worker-Allowed", "Access-Control-Allow-Origin", "Clear-Site-Data"} {
+		if v := resp.Header.Get(h); v != "" {
+			t.Errorf("the peer set %s on the serving origin: %q", h, v)
+		}
+	}
+	if resp.Header.Get("X-Answer") != "from-the-peer" {
+		t.Error("the peer's own answer headers stopped arriving")
 	}
 }

@@ -808,7 +808,7 @@ const guideSectionCtrlCSS = `<style>
 // click time.
 const guideModalElJS = `function el(tag, attrs, kids){
   var n = document.createElement(tag);
-  if (attrs) for (var k in attrs){ if (k === 'text') n.textContent = attrs[k]; else n.setAttribute(k, attrs[k]); }
+  if (attrs) for (var k in attrs){ if (k === 'text') n.textContent = attrs[k]; else if ((k === 'href' || k === 'src') && window.uiSafeURL) n.setAttribute(k, window.uiSafeURL(attrs[k])); else n.setAttribute(k, attrs[k]); }
   (kids||[]).forEach(function(c){ n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
   return n;
 }`
@@ -819,7 +819,7 @@ const guideModalElJS = `function el(tag, attrs, kids){
 const guideSectionCode = `(function(){
   function el(tag, attrs, kids){
     var n = document.createElement(tag);
-    if (attrs) for (var k in attrs){ if (k === 'text') n.textContent = attrs[k]; else n.setAttribute(k, attrs[k]); }
+    if (attrs) for (var k in attrs){ if (k === 'text') n.textContent = attrs[k]; else if ((k === 'href' || k === 'src') && window.uiSafeURL) n.setAttribute(k, window.uiSafeURL(attrs[k])); else n.setAttribute(k, attrs[k]); }
     (kids||[]).forEach(function(c){ n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
     return n;
   }

@@ -478,3 +478,16 @@ func TestATargetKeepsItsTableOfContentsAcrossUpdates(t *testing.T) {
 		t.Errorf("a plain list is said, not a bare Published: %s", out)
 	}
 }
+
+// A webhook's reply names the post it made, and the publish dialog links to
+// it: only a web address may be that link, never a script.
+func TestAWebhooksLinkIsOnlyAWebAddress(t *testing.T) {
+	for _, bad := range []string{`javascript:alert(1)`, ` JavaScript:alert(1)`, `data:text/html,x`, `//evil.example`} {
+		if got := webhookResult(`{"id":"1","url":"`+bad+`"}`, docs.PublishRequest{Title: "T"}); got.URL != "" {
+			t.Errorf("kept %q as the link", got.URL)
+		}
+	}
+	if got := webhookResult(`{"id":"7","url":"https://wiki.example/p/7"}`, docs.PublishRequest{Title: "T"}); got.URL != "https://wiki.example/p/7" || got.ExternalID != "7" {
+		t.Errorf("an ordinary reply: %+v", got)
+	}
+}

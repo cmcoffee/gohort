@@ -186,21 +186,24 @@ func downloadPublic(sess *ToolSession, rawURL, rel string) (int64, error) {
 		return 0, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	limit := int64(TuneInt("tune_secure_api_max_save_bytes"))
-	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+	// Held inside the workspace as it is written: the job's script is still
+	// running there and can swap a folder on the path for a link.
+	ws := sess.WorkspaceDir
+	if err := safefile.MkdirAllIn(ws, filepath.Dir(dest), 0o755); err != nil {
 		return 0, err
 	}
-	f, err := safefile.Create(dest, 0666)
+	f, err := safefile.CreateIn(ws, dest, 0666)
 	if err != nil {
 		return 0, err
 	}
 	n, err := io.Copy(f, io.LimitReader(resp.Body, limit+1))
 	f.Close()
 	if err != nil {
-		os.Remove(dest)
+		safefile.RemoveIn(ws, dest)
 		return 0, err
 	}
 	if n > limit {
-		os.Remove(dest)
+		safefile.RemoveIn(ws, dest)
 		return 0, fmt.Errorf("the file is larger than the %s a download may be", HumanSize(limit))
 	}
 	return n, nil

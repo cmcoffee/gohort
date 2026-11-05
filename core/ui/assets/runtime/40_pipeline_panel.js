@@ -542,7 +542,8 @@
                 return pump();
               }).catch(function(err) {
                 if (err.name !== 'AbortError') {
-                  body.innerHTML = '<div class="ui-pl-modal-status" style="color:var(--danger)">Failed: ' + (err.message || err) + '</div>';
+                  body.textContent = '';
+                  body.appendChild(el('div', {class: 'ui-pl-modal-status', style: 'color:var(--danger)', text: 'Failed: ' + (err.message || err)}));
                 }
               });
               return;
@@ -617,8 +618,9 @@
         return pump();
       }).catch(function(err) {
         if (err.name === 'AbortError') return;
-        body.innerHTML = '<div class="ui-pl-modal-status" style="color:var(--danger)">Failed: ' +
-          (err.message || err) + '</div>';
+        // As text: the message is the server's answer.
+        body.textContent = '';
+        body.appendChild(el('div', {class: 'ui-pl-modal-status', style: 'color:var(--danger)', text: 'Failed: ' + (err.message || err)}));
       });
 
       function processModalEvent(raw) {

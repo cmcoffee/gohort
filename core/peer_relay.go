@@ -154,6 +154,24 @@ func peerRelayHeaders(h http.Header) http.Header {
 	return out
 }
 
+// peerRelayAnswerDropped reports a header from the peer's answer that is an
+// instruction to the browser rather than part of the answer: security policy,
+// framing, service workers, cross-origin access, site data, links to preload.
+// The peer's word on any of these would be the serving instance's word on its
+// own origin. The safety headers the relay sets itself replace the policy
+// ones.
+func peerRelayAnswerDropped(ck string) bool {
+	switch ck {
+	case "Content-Security-Policy", "Content-Security-Policy-Report-Only",
+		"X-Frame-Options", "X-Content-Type-Options", "Service-Worker-Allowed",
+		"Clear-Site-Data", "Refresh", "Link", "Strict-Transport-Security",
+		"Alt-Svc", "Permissions-Policy", "Feature-Policy", "Origin-Agent-Cluster",
+		"Content-Disposition", "Report-To", "Reporting-Endpoints", "Nel":
+		return true
+	}
+	return strings.HasPrefix(ck, "Access-Control-") || strings.HasPrefix(ck, "Cross-Origin-")
+}
+
 // --- sessions ----------------------------------------------------------------
 
 var (
@@ -474,8 +492,17 @@ func HandlePeerRelayInbound(w http.ResponseWriter, r *http.Request) {
 	touchPeerKey(k)
 
 	for hk, hv := range peerRelayHeaders(resp.Header) {
+		if peerRelayAnswerDropped(hk) {
+			continue
+		}
 		w.Header()[hk] = hv
 	}
+	// The answer is served from THIS instance's origin, to whoever opened the
+	// address: a page the peer wrote would run as them, with their session.
+	// A relay carries a webhook's answer, which a provider reads as data, so
+	// nothing in it may run or be framed, whatever type the peer gave it.
+	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; frame-ancestors 'none'")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	status := resp.Status
 	if status < 100 || status > 999 {
 		status = http.StatusOK

@@ -153,7 +153,13 @@
         if (toolsPopover && toolsPopover.style.display !== 'none') renderToolsPopover();
       }).catch(function(err) {
         if (toolsPopover && toolsPopover.style.display !== 'none') {
-          toolsPopover.innerHTML = '<div class="ui-chat-tools-loading">Load failed: ' + err.message + '</div>';
+          // As text: an error's message is the server's answer, which can
+          // carry what the request sent.
+          toolsPopover.textContent = '';
+          var failMsg = document.createElement('div');
+          failMsg.className = 'ui-chat-tools-loading';
+          failMsg.textContent = 'Load failed: ' + (err && err.message || err);
+          toolsPopover.appendChild(failMsg);
         }
       });
     }

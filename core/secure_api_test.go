@@ -2863,3 +2863,25 @@ func TestRedactSecretsForReplacesWhatTheUserCanReach(t *testing.T) {
 		t.Errorf("another user's key and a short value must be left alone: %s", got)
 	}
 }
+
+// A response saved into a workspace stays in it: a folder on the save path
+// swapped for a link (by a script running there, after the path was checked)
+// leads nowhere.
+func TestASavedResponseStaysInItsWorkspace(t *testing.T) {
+	base := t.TempDir()
+	ws, outside := filepath.Join(base, "ws"), filepath.Join(base, "server-data")
+	os.MkdirAll(ws, 0o700)
+	os.MkdirAll(outside, 0o700)
+	if err := os.Symlink(outside, filepath.Join(ws, "out")); err != nil {
+		t.Skip("no symlinks here")
+	}
+	if _, err := writeWorkspaceFile(ws, filepath.Join(ws, "out", "gohort.db"), strings.NewReader("overwritten"), 1<<20); err == nil {
+		t.Error("saved through a folder link")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "gohort.db")); err == nil {
+		t.Error("the response landed outside the workspace")
+	}
+	if n, err := writeWorkspaceFile(ws, filepath.Join(ws, "audio.mp3"), strings.NewReader("ok"), 1<<20); err != nil || n != 2 {
+		t.Errorf("an ordinary save: %d %v", n, err)
+	}
+}

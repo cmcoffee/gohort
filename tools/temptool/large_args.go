@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/safefile"
 )
 
 // maxEnvArgBytes is the largest parameter value handed to a shell tool as an
@@ -58,12 +59,13 @@ func passLargeArgs(tt *TempTool, args map[string]any, envArgs map[string]string,
 			continue
 		}
 		dir := filepath.Join(workspaceDir, ".tool_args")
-		if err := os.MkdirAll(dir, 0700); err != nil {
+		// Inside the workspace, through no link a script left there.
+		if err := safefile.MkdirAllIn(workspaceDir, dir, 0700); err != nil {
 			return moved, fmt.Errorf("param %q is %d KB, too large for an environment variable, and could not be written to a file: %v", k, len(val)/1024, err)
 		}
 		sum := sha256.Sum256([]byte(val))
 		path := filepath.Join(dir, fmt.Sprintf("%s_%s_%s.txt", tt.Name, k, hex.EncodeToString(sum[:4])))
-		if err := os.WriteFile(path, []byte(val), 0600); err != nil {
+		if err := safefile.WriteFileIn(workspaceDir, path, []byte(val), 0600); err != nil {
 			return moved, fmt.Errorf("param %q is %d KB, too large for an environment variable, and could not be written to a file: %v", k, len(val)/1024, err)
 		}
 		envArgs[k] = ""

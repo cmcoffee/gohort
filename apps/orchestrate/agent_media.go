@@ -315,8 +315,50 @@ func freeFileName(dir, name string) string {
 	}
 }
 
+// openHandedSource opens a file another agent made, for copying, held inside
+// its owner's part of the workspaces as it is opened (handSourceRoot):
+// handable checked the path, and a script still running where the file is can
+// swap a folder on it for a link after that, to the server's own data or to
+// another person's workspace.
+func openHandedSource(src string) (*os.File, error) {
+	root, ok := handSourceRoot(src)
+	if !ok {
+		return nil, fmt.Errorf("%s is not in a workspace", filepath.Base(src))
+	}
+	return safefile.OpenIn(root, src)
+}
+
+// handSourceRoot is the part of the workspaces src's owner has, the bound a
+// hand-off reads it within: the folder named for the owner at the top
+// (alice, app:servitor:<id>), or the owner's within a framework folder there,
+// which is named with a leading "." or "_" (.agents/alice, _flows/<run>).
+// The server makes these folders, above anywhere a sandboxed script can
+// write, so a script cannot move the bound itself; within it are only the
+// owner's own files.
+func handSourceRoot(src string) (string, bool) {
+	base := WorkspacesDir()
+	if base == "" {
+		return "", false
+	}
+	rel, err := filepath.Rel(base, src)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	parts := strings.Split(rel, string(filepath.Separator))
+	n := 1
+	if strings.HasPrefix(parts[0], ".") || strings.HasPrefix(parts[0], "_") {
+		n = 2
+	}
+	if len(parts) <= n {
+		return "", false // the owner's folder itself, or a framework folder, is not a file in one
+	}
+	return filepath.Join(append([]string{base}, parts[:n]...)...), true
+}
+
+// copyFileTo copies a file another agent made into dst, a name directly in a
+// folder of the receiver's, never over a file already there.
 func copyFileTo(src, dst string) error {
-	in, err := safefile.Open(src)
+	in, err := openHandedSource(src)
 	if err != nil {
 		return err
 	}
@@ -503,8 +545,11 @@ func receiveHandedFile(sess *ToolSession, src string) error {
 	if sess == nil || strings.TrimSpace(sess.WorkspaceDir) == "" {
 		return fmt.Errorf("the run has no working folder")
 	}
-	dir := filepath.Join(sess.WorkspaceDir, handedFilesDir)
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	// received/ is a folder the run's own scripts can swap for a link, so
+	// the copy is held inside the run's folder as it is made.
+	ws := sess.WorkspaceDir
+	dir := filepath.Join(ws, handedFilesDir)
+	if err := safefile.MkdirAllIn(ws, dir, 0700); err != nil {
 		return err
 	}
 	dst := filepath.Join(dir, filepath.Base(src))
@@ -514,8 +559,22 @@ func receiveHandedFile(sess *ToolSession, src string) error {
 	if _, ok := handable(src); !ok {
 		return fmt.Errorf("%s is not a plain file in a working folder", filepath.Base(src))
 	}
-	os.Remove(dst)
-	return copyFileTo(src, dst)
+	safefile.RemoveIn(ws, dst)
+	in, err := openHandedSource(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := safefile.CreateIn(ws, dst, 0600)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		safefile.RemoveIn(ws, dst)
+		return err
+	}
+	return out.Close()
 }
 
 // handable is src's details when it is a file one run may hand to another: a

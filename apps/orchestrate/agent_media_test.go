@@ -563,3 +563,143 @@ func stagedRun(paths ...string) *ToolSession {
 	s.AddStagedFiles(paths)
 	return s
 }
+
+// A file handed from one run to another is read and written inside the
+// workspaces as the copy is made: a folder on either path swapped for a link
+// (by a script still running there) leads nowhere.
+func TestAHandedFileIsCopiedInsideTheWorkspaces(t *testing.T) {
+	base := t.TempDir()
+	root, outside := filepath.Join(base, "workspaces"), filepath.Join(base, "server-data")
+	SetWorkspacesDir(root)
+	t.Cleanup(func() { SetWorkspacesDir("") })
+	sender, receiver := filepath.Join(root, "alice", "sender"), filepath.Join(root, "alice", "receiver")
+	os.MkdirAll(filepath.Join(sender, "out"), 0o700)
+	os.MkdirAll(receiver, 0o700)
+	os.MkdirAll(outside, 0o700)
+	os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("private"), 0o600)
+	os.WriteFile(filepath.Join(sender, "out", "song.mp3"), []byte("la"), 0o600)
+
+	// The receiver's received/ folder swapped for a link out.
+	if err := os.Symlink(outside, filepath.Join(receiver, handedFilesDir)); err != nil {
+		t.Skip("no symlinks here")
+	}
+	sess := &ToolSession{WorkspaceDir: receiver}
+	if err := receiveHandedFile(sess, filepath.Join(sender, "out", "song.mp3")); err == nil {
+		t.Error("the copy went through a folder link")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "song.mp3")); err == nil {
+		t.Error("the handed file landed outside the workspaces")
+	}
+
+	// The sender's folder swapped for a link out, after the path was checked.
+	os.Remove(filepath.Join(receiver, handedFilesDir))
+	os.RemoveAll(filepath.Join(sender, "out"))
+	os.Symlink(outside, filepath.Join(sender, "out"))
+	if _, err := openHandedSource(filepath.Join(sender, "out", "secret.txt")); err == nil {
+		t.Error("read the server's file through a folder link")
+	}
+
+	// An ordinary hand-off.
+	os.Remove(filepath.Join(sender, "out"))
+	os.MkdirAll(filepath.Join(sender, "out"), 0o700)
+	os.WriteFile(filepath.Join(sender, "out", "song.mp3"), []byte("la"), 0o600)
+	if err := receiveHandedFile(sess, filepath.Join(sender, "out", "song.mp3")); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(receiver, handedFilesDir, "song.mp3")); string(b) != "la" {
+		t.Errorf("the handed copy: %q", b)
+	}
+}
+
+// The race the copy is held against: the receiver's received/ folder swapped
+// for a link out and back as fast as a script can, while files are handed in.
+func TestAHandedFileNeverEscapesARacingSwap(t *testing.T) {
+	base := t.TempDir()
+	root, outside := filepath.Join(base, "workspaces"), filepath.Join(base, "server-data")
+	SetWorkspacesDir(root)
+	t.Cleanup(func() { SetWorkspacesDir("") })
+	sender, receiver := filepath.Join(root, "alice", "sender"), filepath.Join(root, "alice", "receiver")
+	os.MkdirAll(sender, 0o700)
+	os.MkdirAll(filepath.Join(receiver, handedFilesDir), 0o700)
+	os.MkdirAll(outside, 0o700)
+	src := filepath.Join(sender, "song.mp3")
+	os.WriteFile(src, []byte("la"), 0o600)
+	received := filepath.Join(receiver, handedFilesDir)
+	stop, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			os.RemoveAll(received)
+			os.Symlink(outside, received)
+			os.Remove(received)
+			os.Mkdir(received, 0o700)
+		}
+	}()
+	sess := &ToolSession{WorkspaceDir: receiver}
+	for i := 0; i < 3000; i++ {
+		receiveHandedFile(sess, src)
+	}
+	close(stop)
+	<-done
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Fatalf("a handed file landed outside the workspaces: %v", entries)
+	}
+}
+
+// A hand-off's source is read within its owner's part of the workspaces, so a
+// folder swapped for a link to another person's workspace leads nowhere, as
+// one to the server's data does.
+func TestAHandedFileIsReadWithinItsOwnersWorkspaces(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "workspaces")
+	SetWorkspacesDir(root)
+	t.Cleanup(func() { SetWorkspacesDir("") })
+	j := func(p ...string) string { return filepath.Join(append([]string{root}, p...)...) }
+	for _, c := range []struct {
+		src, want string
+		ok        bool
+	}{
+		{j("alice", "notes.txt"), j("alice"), true},
+		{j("alice", "_ws", "w1", "out", "a.txt"), j("alice"), true},
+		{j(".agents", "alice", "helper", "a.txt"), j(".agents", "alice"), true},
+		{j("_flows", "run1", "a.txt"), j("_flows", "run1"), true},
+		{j("app:servitor:1", "a.txt"), j("app:servitor:1"), true},
+		{j("alice"), "", false},
+		{j(".agents", "alice"), "", false},
+		{filepath.Join(base, "elsewhere", "a.txt"), "", false},
+	} {
+		got, ok := handSourceRoot(c.src)
+		if ok != c.ok || got != c.want {
+			t.Errorf("handSourceRoot(%s) = %q %v, want %q %v", c.src, got, ok, c.want, c.ok)
+		}
+	}
+
+	alice, bob := j(".agents", "alice", "helper"), j(".agents", "bob", "helper")
+	os.MkdirAll(alice, 0o700)
+	os.MkdirAll(filepath.Join(bob, "private"), 0o700)
+	os.WriteFile(filepath.Join(bob, "private", "diary.txt"), []byte("bob's"), 0o600)
+	if err := os.Symlink(filepath.Join(bob, "private"), filepath.Join(alice, "out")); err != nil {
+		t.Skip("no symlinks here")
+	}
+	if f, err := openHandedSource(filepath.Join(alice, "out", "diary.txt")); err == nil {
+		f.Close()
+		t.Error("read another person's file through a folder link")
+	}
+	// Within alice's own part, a (relative) link leads only to alice's files.
+	// An absolute one is refused whatever it names: os.Root takes none.
+	os.MkdirAll(j(".agents", "alice", "other"), 0o700)
+	os.WriteFile(j(".agents", "alice", "other", "song.mp3"), []byte("la"), 0o600)
+	os.Remove(filepath.Join(alice, "out"))
+	os.Symlink(filepath.Join("..", "other"), filepath.Join(alice, "out"))
+	f, err := openHandedSource(filepath.Join(alice, "out", "song.mp3"))
+	if err != nil {
+		t.Errorf("a link within the owner's own workspaces: %v", err)
+	} else {
+		f.Close()
+	}
+}

@@ -3,13 +3,13 @@ package temptool
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/safefile"
 )
 
 // inferCommandTemplate produces a sensible default command_template
@@ -117,10 +117,14 @@ func deployScriptBody(sess *ToolSession, toolName, scriptName, scriptBody string
 		return "", "", fmt.Errorf("auto-mint workspace: %w", werr)
 	}
 	scriptPath = filepath.Join(sess.WorkspaceDir, canonical)
-	if mkerr := os.MkdirAll(filepath.Dir(scriptPath), 0700); mkerr != nil {
+	// Inside the workspace, never through a link: the name is predictable
+	// (the tool's name and the body's hash), so a script could leave a link
+	// there to have this write land anywhere the server can write, such as
+	// the library every sandbox imports (core/safefile).
+	if mkerr := safefile.MkdirAllIn(sess.WorkspaceDir, filepath.Dir(scriptPath), 0700); mkerr != nil {
 		return "", "", fmt.Errorf("create parent dir for script %q: %w", canonical, mkerr)
 	}
-	if werr := os.WriteFile(scriptPath, []byte(scriptBody), 0700); werr != nil {
+	if werr := safefile.WriteFileIn(sess.WorkspaceDir, scriptPath, []byte(scriptBody), 0700); werr != nil {
 		return "", "", fmt.Errorf("write script %q: %w", canonical, werr)
 	}
 	return canonical, scriptPath, nil

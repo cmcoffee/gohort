@@ -71,21 +71,30 @@ func (d *webhookDest) Publish(ctx context.Context, user string, req docs.Publish
 	if status >= 400 {
 		return docs.PublishResult{}, fmt.Errorf("%s returned HTTP %d: %s", cfg.WebhookURL, status, trimForError(payload))
 	}
-	// A webhook may or may not hand back an id/url. Take them when they're
-	// there so a second publish can be an update; otherwise every publish is a
-	// fresh post, which is the honest behavior for an endpoint that told us
-	// nothing about what it created.
+	return webhookResult(payload, req), nil
+}
+
+// webhookResult is what a webhook's reply says about what it made. A webhook
+// may or may not hand back an id/url. Take them when they're there so a
+// second publish can be an update; otherwise every publish is a fresh post,
+// which is the honest behavior for an endpoint that told us nothing about
+// what it created. The link is the endpoint's word and becomes an "Open"
+// link in the publish dialog, so only a web address may.
+func webhookResult(payload string, req docs.PublishRequest) docs.PublishResult {
 	var resp struct {
 		ID  string `json:"id"`
 		URL string `json:"url"`
 	}
 	_ = json.Unmarshal([]byte(payload), &resp)
+	if u := strings.ToLower(strings.TrimSpace(resp.URL)); !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") {
+		resp.URL = ""
+	}
 	return docs.PublishResult{
 		ExternalID: resp.ID,
 		URL:        resp.URL,
 		Label:      req.Title,
 		Updated:    strings.TrimSpace(req.ExternalID) != "",
-	}, nil
+	}
 }
 
 // webhookBody renders the document in the configured format and reports the

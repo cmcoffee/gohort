@@ -564,7 +564,9 @@ func fetchAndCache(target, workspaceDir, mime string) (string, string, int64, er
 		Debug("[fetch_url] cache hit %s → %s (%d bytes, age %s)", target, cacheRel, info.Size(), time.Since(info.ModTime()).Round(time.Second))
 		return cacheAbs, cacheRel, info.Size(), nil
 	}
-	if err := os.MkdirAll(filepath.Dir(cacheAbs), 0755); err != nil {
+	// Held inside the workspace as it is written: a script running there
+	// can swap a folder on the path for a link (core/safefile).
+	if err := safefile.MkdirAllIn(workspaceDir, filepath.Dir(cacheAbs), 0755); err != nil {
 		return "", "", 0, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -582,7 +584,7 @@ func fetchAndCache(target, workspaceDir, mime string) (string, string, int64, er
 	if resp.StatusCode >= 400 {
 		return "", "", 0, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	f, err := safefile.Create(cacheAbs, 0666)
+	f, err := safefile.CreateIn(workspaceDir, cacheAbs, 0666)
 	if err != nil {
 		return "", "", 0, err
 	}
@@ -593,7 +595,7 @@ func fetchAndCache(target, workspaceDir, mime string) (string, string, int64, er
 		return "", "", 0, err
 	}
 	if written > fetchURLMaxSaveBytes {
-		os.Remove(cacheAbs)
+		safefile.RemoveIn(workspaceDir, cacheAbs)
 		return "", "", 0, fmt.Errorf("response exceeded %d byte cap", fetchURLMaxSaveBytes)
 	}
 	enforceFetchCacheQuota(workspaceDir)
@@ -611,10 +613,10 @@ func writeCacheString(target, workspaceDir, body, mime string) (string, string, 
 	if err != nil {
 		return "", "", 0, err
 	}
-	if err := os.MkdirAll(filepath.Dir(cacheAbs), 0755); err != nil {
+	if err := safefile.MkdirAllIn(workspaceDir, filepath.Dir(cacheAbs), 0755); err != nil {
 		return "", "", 0, err
 	}
-	if err := safefile.WriteFile(cacheAbs, []byte(body), 0644); err != nil {
+	if err := safefile.WriteFileIn(workspaceDir, cacheAbs, []byte(body), 0644); err != nil {
 		return "", "", 0, err
 	}
 	enforceFetchCacheQuota(workspaceDir)
@@ -801,18 +803,18 @@ func fetchURLDirect(sess *ToolSession, target, method, body string, customHeader
 		if perr != nil {
 			return "", fmt.Errorf("save_to: %w", perr)
 		}
-		f, ferr := safefile.Create(savePath, 0666)
+		f, ferr := safefile.CreateIn(sess.WorkspaceDir, savePath, 0666)
 		if ferr != nil {
 			return "", fmt.Errorf("create save_to: %w", ferr)
 		}
 		defer f.Close()
 		written, werr := io.Copy(f, io.LimitReader(resp.Body, fetchURLMaxSaveBytes+1))
 		if werr != nil {
-			os.Remove(savePath)
+			safefile.RemoveIn(sess.WorkspaceDir, savePath)
 			return "", werr
 		}
 		if written > fetchURLMaxSaveBytes {
-			os.Remove(savePath)
+			safefile.RemoveIn(sess.WorkspaceDir, savePath)
 			return "", fmt.Errorf("response exceeded %d byte cap", fetchURLMaxSaveBytes)
 		}
 		return fmt.Sprintf("Saved %d bytes to %s (status=%d, content-type=%s).",
@@ -889,10 +891,10 @@ func fetchURLToFile(sess *ToolSession, target, absPath, displayPath string) (str
 	// Auto-create parent directories. Without this, a save_to path
 	// like "output/data.csv" would fail when output/ doesn't exist
 	// — same friction as workspace(write) before its MkdirAll.
-	if err := os.MkdirAll(filepath.Dir(absPath), 0700); err != nil {
+	if err := safefile.MkdirAllIn(sess.WorkspaceDir, filepath.Dir(absPath), 0700); err != nil {
 		return "", fmt.Errorf("create parent dir: %w", err)
 	}
-	f, err := safefile.Create(absPath, 0666)
+	f, err := safefile.CreateIn(sess.WorkspaceDir, absPath, 0666)
 	if err != nil {
 		return "", fmt.Errorf("create file: %w", err)
 	}

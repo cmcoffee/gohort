@@ -140,3 +140,20 @@ func TestAnArtifactEmbedsItsPicturesByName(t *testing.T) {
 		t.Errorf("an entry with no handle should say the form: %v", err)
 	}
 }
+
+// The url mode frames a page with no sandbox, so it must be this site's. A
+// browser drops tabs and newlines from a URL: "/\t/evil.example" passed the
+// slash checks and became "//evil.example", another site.
+func TestShowHTMLFramesOnlyThisSite(t *testing.T) {
+	turn := &chatTurn{session: &ChatSession{ID: "s1"}, sse: newSSEWriter(httptest.NewRecorder())}
+	tool := turn.showHTMLToolDef()
+	for _, u := range []string{"//evil.example", "/\\evil.example", "/\t/evil.example", "/\n/evil.example", "/\r/evil.example",
+		"/ /evil.example", "https://evil.example", "javascript:alert(1)"} {
+		if _, err := tool.Handler(context.Background(), map[string]any{"title": "x", "url": u}); err == nil {
+			t.Errorf("framed %q", u)
+		}
+	}
+	if _, err := tool.Handler(context.Background(), map[string]any{"title": "x", "url": "/apps/notes/"}); err != nil {
+		t.Errorf("a page of this site: %v", err)
+	}
+}

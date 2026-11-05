@@ -115,7 +115,7 @@ func toolUnpack(args map[string]any, sess *ToolSession) (string, error) {
 	if _, err := os.Stat(filepath.Join(abs, toolManifestFile)); err == nil && !BoolArg(args, "overwrite") {
 		return "", fmt.Errorf("%s already holds a tool folder: pass overwrite=true to replace it with the bundle's tool, or dir=\"...\" for another folder", rel)
 	}
-	if _, err := writeToolFolder(abs, *tt, ""); err != nil {
+	if _, err := writeToolFolder(root, abs, *tt, ""); err != nil {
 		return "", err
 	}
 	note := ""

@@ -172,7 +172,10 @@ func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 			// leading "/" — no scheme, no protocol-relative "//host". The
 			// client-side pane enforces the same rule.
 			// A backslash counts as "/" to a browser, so "/\host" is "//host".
-			if url != "" && (!strings.HasPrefix(url, "/") || strings.HasPrefix(url, "//") || strings.Contains(url, "\\")) {
+			// No control character or space either: a browser drops tabs and
+			// newlines from a URL, so "/\t/host" passed and became "//host".
+			if url != "" && (!strings.HasPrefix(url, "/") || strings.HasPrefix(url, "//") || strings.Contains(url, "\\") ||
+				strings.IndexFunc(url, func(r rune) bool { return r <= ' ' || (r >= 0x7f && r <= 0xa0) }) >= 0) {
 				return "", fmt.Errorf("url must be a same-origin path starting with \"/\" (got %q): external pages can't be previewed; to show external content, author an html document instead", url)
 			}
 			// Live-data allowlist (html mode). The pane proxies these WITH the

@@ -557,3 +557,27 @@ func TestASharedAppIsListedAndTakenBack(t *testing.T) {
 		t.Fatalf("still shared, or gone: %+v %v", s, ok)
 	}
 }
+
+// An app's links may lead off the app but never be a script: the runtime once
+// followed a javascript: redirect_url, running it for whoever pressed the
+// button. Every link and redirect an app's page names is checked here too.
+func TestAnAppsLinksAreNeverScripts(t *testing.T) {
+	for _, bad := range []string{"javascript:alert(1)", " JaVaScRiPt:alert(1)", "java\tscript:alert(1)", "data:text/html,<script>1</script>", "vbscript:x"} {
+		cfg := map[string]any{
+			"href": bad, "redirect_url": bad, "back_url": bad,
+			"url": bad, "method": "GET",
+			"action_url": bad, "action_method": "open",
+		}
+		holdEndpointsInApp(cfg, "/apps/notes/")
+		for _, k := range []string{"href", "redirect_url", "back_url", "url", "action_url"} {
+			if cfg[k] != "" {
+				t.Errorf("%s kept %q", k, cfg[k])
+			}
+		}
+	}
+	cfg := map[string]any{"href": "https://example.com/a", "redirect_url": "data/view", "back_url": "/", "url": "other", "method": "GET"}
+	holdEndpointsInApp(cfg, "/apps/notes/")
+	if cfg["href"] != "https://example.com/a" || cfg["redirect_url"] != "data/view" || cfg["back_url"] != "/" || cfg["url"] != "other" {
+		t.Errorf("ordinary links were blanked: %+v", cfg)
+	}
+}

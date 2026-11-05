@@ -33,6 +33,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -1999,7 +2000,17 @@ func holdEndpointsInApp(t map[string]any, appBase string) {
 	}
 	for k, v := range t {
 		u, ok := v.(string)
-		if !ok || u == "" || navigationKeys[k] {
+		if !ok || u == "" {
+			continue
+		}
+		// A link is followed, never fetched, so it may lead off the app; it
+		// may not be a script. The runtime checks too, and once let one
+		// through: an app button's redirect_url ran script for whoever
+		// pressed it, an administrator reviewing the app included.
+		if navigationKeys[k] {
+			if !navigableLink(u) {
+				t[k] = ""
+			}
 			continue
 		}
 		endpoint := k == "source" || k == "post_to" || k == "url" || strings.HasSuffix(k, "_url") || strings.HasSuffix(k, "_source") || strings.HasSuffix(k, "_url_base")
@@ -2007,9 +2018,15 @@ func holdEndpointsInApp(t map[string]any, appBase string) {
 			continue
 		}
 		if (k == "url" || k == "post_to") && navMethod("method") {
+			if !navigableLink(u) {
+				t[k] = ""
+			}
 			continue
 		}
 		if k == "action_url" && navMethod("action_method") {
+			if !navigableLink(u) {
+				t[k] = ""
+			}
 			continue
 		}
 		if !appRelative(u, appBase) {
@@ -2017,6 +2034,26 @@ func holdEndpointsInApp(t map[string]any, appBase string) {
 		}
 	}
 }
+
+// navigableLink reports a link that leads to a page: an http(s) address, or
+// one with no scheme at all (a path, a client action's name). A javascript:,
+// data: or vbscript: one does not, written however (spaces and controls a
+// browser drops, any case).
+func navigableLink(u string) bool {
+	low := strings.ToLower(strings.Map(func(r rune) rune {
+		if r <= ' ' || (r >= 0x7f && r <= 0xa0) {
+			return -1
+		}
+		return r
+	}, u))
+	if m := linkSchemeRE.FindString(low); m != "" {
+		return m == "http:" || m == "https:"
+	}
+	return true
+}
+
+// linkSchemeRE is a URL's scheme, when it starts with one.
+var linkSchemeRE = regexp.MustCompile(`^[a-z][a-z0-9+.-]*:`)
 
 // appRelative reports whether a URL resolves inside the app's own page
 // directory: relative (or an absolute path under appBase, the app's own

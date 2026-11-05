@@ -17,7 +17,7 @@ import (
 // rare enough to accept as a known limit.
 var (
 	BareURLPattern   = regexp.MustCompile(`https?://(?:[^\s\(\)\]>"]|\([^\s\)\]>"]*\))+`)
-	MDLinkPattern    = regexp.MustCompile(`\[((?:[^\[\]]|\[[^\]]*\])*)\]\((https?://(?:[^\s\(\)]|\([^\s\)]*\))+)\)`)
+	MDLinkPattern    = regexp.MustCompile(`\[((?:[^\[\]]|\[[^\]]*\])*)\]\((https?://(?:[^\s\(\)\x00]|\([^\s\)\x00]*\))+)\)`)
 	TaggedSrcPattern = regexp.MustCompile(`^\[(\d+)\]\s*\[((?:[^\[\]]|\[[^\]]*\])*)\]\((https?://(?:[^\(\)\n]|\([^\)\n]*\))+)\)`)
 	CiteRefPattern   = regexp.MustCompile(`\[(\d+)\]`)
 	DomainPattern    = regexp.MustCompile(`https?://([^\s/\)\]>"]+)`)
@@ -28,12 +28,12 @@ var (
 	// HTML they emit has no remaining `[text](url)` shape).
 	// Restricts the URL part to non-paren / non-whitespace chars to
 	// avoid swallowing trailing prose punctuation.
-	inlineLinkPattern = regexp.MustCompile(`\[([^\]\n]+)\]\(([^\s)]+)\)`)
+	inlineLinkPattern = regexp.MustCompile(`\[([^\]\n]+)\]\(([^\s)\x00]+)\)`)
 )
 
 // mdImagePattern matches a markdown image, ![alt](url). Run before the link
 // passes, which would otherwise read it as "!" and a link.
-var mdImagePattern = regexp.MustCompile(`!\[([^\]\n]*)\]\(([^\s)]+)\)`)
+var mdImagePattern = regexp.MustCompile(`!\[([^\]\n]*)\]\(([^\s)\x00]+)\)`)
 
 // inlineImageDataRE is the embedded-image form an <img> may carry: a base64
 // raster in one of the types every browser shows. No SVG (it can carry script).
@@ -184,7 +184,20 @@ func InlineMarkdownToHTML(s string) string {
 	// sentinel that won't appear in real prose or in HTMLEscape's
 	// output, escape the surrounding text, then substitute each
 	// placeholder back with the original verbatim HTML.
+	//
+	// Each anchor this makes is parked the same way, as soon as it is made,
+	// so no later pass can reach into it: the bare-URL pass used to find a
+	// URL inside a link's href (or a parked span sitting just after one) and
+	// write a whole anchor there, whose own href=" closed the first one's
+	// attribute and left an event handler loose in the tag. A NUL in the
+	// input could forge a placeholder, so there are none, and no URL pattern
+	// takes one.
+	s = strings.ReplaceAll(s, "\x00", "")
 	var protected []string
+	park := func(h string) string {
+		protected = append(protected, h)
+		return fmt.Sprintf("\x00HTMLPROTECT%d\x00", len(protected)-1)
+	}
 	s = inlineHTMLPassthroughRE.ReplaceAllStringFunc(s, func(match string) string {
 		idx := len(protected)
 		// Rebuilt, not kept: the span arrives from model output and from
@@ -216,11 +229,16 @@ func InlineMarkdownToHTML(s string) string {
 	// inside a markdown link's text doesn't get double-wrapped.
 	// The regexes look for `&lt;` and `&gt;` because HTMLEscape already
 	// converted any literal `<` / `>`.
-	autolinkAngle := regexp.MustCompile(`&lt;(https?://[^\s&]+)&gt;`)
-	s = autolinkAngle.ReplaceAllString(s,
-		`<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>`)
-	autolinkMailAngle := regexp.MustCompile(`&lt;([^\s@&]+@[^\s&]+)&gt;`)
-	s = autolinkMailAngle.ReplaceAllString(s, `<a href="mailto:$1">$1</a>`)
+	autolinkAngle := regexp.MustCompile(`&lt;(https?://[^\s&\x00]+)&gt;`)
+	s = autolinkAngle.ReplaceAllStringFunc(s, func(m string) string {
+		u := autolinkAngle.FindStringSubmatch(m)[1]
+		return park(`<a href="` + u + `" target="_blank" rel="noopener noreferrer">` + u + `</a>`)
+	})
+	autolinkMailAngle := regexp.MustCompile(`&lt;([^\s@&\x00]+@[^\s&\x00]+)&gt;`)
+	s = autolinkMailAngle.ReplaceAllStringFunc(s, func(m string) string {
+		a := autolinkMailAngle.FindStringSubmatch(m)[1]
+		return park(`<a href="mailto:` + a + `">` + a + `</a>`)
+	})
 	// Markdown links: [text](url) → <a href="url">text</a>. These run BEFORE
 	// the bare-URL autolinker below — otherwise the autolinker links the URL
 	// inside `](url)` first, which breaks the [text](url) match and leaves the
@@ -240,27 +258,30 @@ func InlineMarkdownToHTML(s string) string {
 	//        - prepends https:// to bare domains and adds target=_blank
 	//      Without classification, bare domains rendered as relative
 	//      paths resolved against the page URL — broken links.
-	s = MDLinkPattern.ReplaceAllString(s,
-		`<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>`)
+	s = MDLinkPattern.ReplaceAllStringFunc(s, func(m string) string {
+		sub := MDLinkPattern.FindStringSubmatch(m)
+		return park(`<a href="` + sub[2] + `" target="_blank" rel="noopener noreferrer">` + inlineEmphasis(sub[1]) + `</a>`)
+	})
 	s = inlineLinkPattern.ReplaceAllStringFunc(s, func(match string) string {
 		sub := inlineLinkPattern.FindStringSubmatch(match)
 		if sub == nil {
 			return match
 		}
-		text, url := sub[1], sub[2]
+		text, url := inlineEmphasis(sub[1]), sub[2]
 		switch {
 		case strings.HasPrefix(url, "#"):
 			// Internal anchor — stays in-document.
-			return fmt.Sprintf(`<a href="%s">%s</a>`, url, text)
-		case strings.HasPrefix(url, "/"):
-			// Relative path — leave as-is, same document context.
-			return fmt.Sprintf(`<a href="%s">%s</a>`, url, text)
+			return park(fmt.Sprintf(`<a href="%s">%s</a>`, url, text))
+		case strings.HasPrefix(url, "/") && !strings.HasPrefix(url, "//") && !strings.HasPrefix(url, `/\`):
+			// Relative path — leave as-is, same document context. "//" or
+			// "/\" is another site, and falls to the cases below.
+			return park(fmt.Sprintf(`<a href="%s">%s</a>`, url, text))
 		case strings.HasPrefix(url, "mailto:"), strings.HasPrefix(url, "tel:"):
-			return fmt.Sprintf(`<a href="%s">%s</a>`, url, text)
-		case strings.Contains(url, "."):
+			return park(fmt.Sprintf(`<a href="%s">%s</a>`, url, text))
+		case strings.Contains(url, ".") && !strings.HasPrefix(url, "/"):
 			// Bare-domain or scheme-less URL — promote to https://
 			// and treat as external (new tab).
-			return fmt.Sprintf(`<a href="https://%s" target="_blank" rel="noopener noreferrer">%s</a>`, url, text)
+			return park(fmt.Sprintf(`<a href="https://%s" target="_blank" rel="noopener noreferrer">%s</a>`, url, text))
 		default:
 			// Unclassifiable (javascript:, data:, a scheme we do not know):
 			// the text, not a link. Linking it verbatim made any scheme a
@@ -275,9 +296,24 @@ func InlineMarkdownToHTML(s string) string {
 	// get autolinked. Match URLs preceded by start/whitespace/`>`/`(` (the last
 	// for parenthetical "(https://…)"); the quote exclusion in the char class
 	// keeps it off href values.
-	bareURL := regexp.MustCompile(`(^|[\s>(])(https?://[^\s<>"'()]+)`)
-	s = bareURL.ReplaceAllString(s,
-		`$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>`)
+	bareURL := regexp.MustCompile(`(^|[\s>(])(https?://[^\s<>"'()\x00]+)`)
+	s = bareURL.ReplaceAllStringFunc(s, func(m string) string {
+		sub := bareURL.FindStringSubmatch(m)
+		return sub[1] + park(`<a href="`+sub[2]+`" target="_blank" rel="noopener noreferrer">`+sub[2]+`</a>`)
+	})
+	s = inlineEmphasis(s)
+	// Restore protected spans and parked anchors last, newest first: an
+	// anchor parked after an image or span it holds (a linked image) brings
+	// that placeholder back with it, to be restored in its turn.
+	for idx := len(protected) - 1; idx >= 0; idx-- {
+		s = strings.ReplaceAll(s, fmt.Sprintf("\x00HTMLPROTECT%d\x00", idx), protected[idx])
+	}
+	return s
+}
+
+// inlineEmphasis applies bold, inline code and italic, which a link's text
+// takes before its anchor is parked, as the prose around it does after.
+func inlineEmphasis(s string) string {
 	// Bold.
 	for strings.Contains(s, "**") {
 		start := strings.Index(s, "**")
@@ -307,12 +343,6 @@ func InlineMarkdownToHTML(s string) string {
 		}
 		end += start + 1
 		s = s[:start] + "<em>" + s[start+1:end] + "</em>" + s[end+1:]
-	}
-	// Restore protected HTML spans last — the markdown link loop
-	// ran on placeholder-substituted text, so the [brackets] inside
-	// the restored <sup> spans can't interact with real markdown.
-	for idx, raw := range protected {
-		s = strings.ReplaceAll(s, fmt.Sprintf("\x00HTMLPROTECT%d\x00", idx), raw)
 	}
 	return s
 }
