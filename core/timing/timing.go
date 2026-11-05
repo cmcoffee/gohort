@@ -172,7 +172,6 @@ func daysInMonth(month int) int {
 	return 31
 }
 
-// windowMinutes is the length of the day it may fire in.
 // perDayOn is how many times a random-count Spec fires on day d: PerDay, or
 // with a range (PerDayMax), a number between the two drawn from the date and
 // the Spec itself. Drawn rather than random, so the count is one number for
@@ -187,6 +186,19 @@ func (s Spec) perDayOn(d time.Time) int {
 	return s.PerDay + int(h.Sum32()%uint32(s.PerDayMax-s.PerDay+1))
 }
 
+// gapDayRange is roughly how many times a random-gap Spec fires in a day: its
+// window (the whole day without one) over the longest gap, and over the
+// shortest. Gaps are drawn one at a time, so a day can land anywhere in it;
+// said on the label so that spread is not a surprise.
+func (s Spec) gapDayRange() (lo, hi int) {
+	if s.MinGapSeconds < 1 || s.MaxGapSeconds < 1 {
+		return 0, 0
+	}
+	w := s.windowMinutes() * 60
+	return w / s.MaxGapSeconds, w / s.MinGapSeconds
+}
+
+// windowMinutes is the length of the day it may fire in.
 func (s Spec) windowMinutes() int {
 	if s.HasWindow {
 		return s.WindowTo - s.WindowFrom
@@ -456,6 +468,15 @@ func (s Spec) Label() string {
 		}
 	case HowRandomGap:
 		b.WriteString("at random, every " + gapWords(s.MinGapSeconds, s.MaxGapSeconds))
+		switch lo, hi := s.gapDayRange(); {
+		case hi < 1:
+		case lo == hi:
+			b.WriteString(fmt.Sprintf(" (about %d a day)", hi))
+		case lo < 1:
+			b.WriteString(fmt.Sprintf(" (up to about %d a day)", hi))
+		default:
+			b.WriteString(fmt.Sprintf(" (about %d to %d a day)", lo, hi))
+		}
 	case HowYearly:
 		b.WriteString(fmt.Sprintf("every year on %s %d at %s", time.Month(s.Month).String()[:3], s.Day, HHMM(s.Times[0])))
 	case HowMonthly:

@@ -295,3 +295,21 @@ func TestRandomCountRange(t *testing.T) {
 		}
 	}
 }
+
+// Random gaps say on their label what they come to in a day: each gap is drawn
+// on its own, so a day lands anywhere between the window over the longest gap
+// and over the shortest.
+func TestRandomGapSaysItsDailyRange(t *testing.T) {
+	for _, c := range []struct {
+		s    Spec
+		want string
+	}{
+		{Spec{How: HowRandomGap, MinGapSeconds: 1800, MaxGapSeconds: 14400}, "(about 6 to 48 a day)"},
+		{Spec{How: HowRandomGap, MinGapSeconds: 1800, MaxGapSeconds: 14400, HasWindow: true, WindowFrom: 8 * 60, WindowTo: 22 * 60}, "(about 3 to 28 a day)"},
+		{Spec{How: HowRandomGap, MinGapSeconds: 3600 * 20, MaxGapSeconds: 3600 * 30}, "(up to about 1 a day)"},
+	} {
+		if got := c.s.Label(); !strings.Contains(got, c.want) {
+			t.Errorf("%+v: %q, want %q in it", c.s, got, c.want)
+		}
+	}
+}

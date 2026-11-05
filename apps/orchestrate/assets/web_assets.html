@@ -221,6 +221,9 @@
 .orch-view-kv { display: flex; gap: 0.6rem; padding: 0.15rem 0; font-size: var(--fs-sm); }
 .orch-view-k { flex: 0 0 7.5rem; color: var(--text-mute); text-transform: capitalize; }
 .orch-view-v { flex: 1 1 auto; min-width: 0; color: var(--text); overflow-wrap: anywhere; }
+.orch-view-fold summary { cursor: pointer; color: var(--text-mute); }
+.orch-view-fold summary:hover { color: var(--text); }
+.orch-view-code { margin: 0.35rem 0 0; padding: 0.5rem 0.65rem; max-height: 18rem; overflow: auto; white-space: pre; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: var(--fs-xs); color: var(--text); background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--btn-radius); }
 .orch-view-run { padding: 0.45rem 0; border-bottom: 1px solid var(--border); }
 .orch-view-run:last-child { border-bottom: none; }
 .orch-view-run-h { display: flex; align-items: center; gap: 0.5rem; font-size: var(--fs-sm); }
@@ -6976,7 +6979,25 @@
           var item = document.createElement('div');
           item.className = 'orch-view-kv';
           line(item, 'orch-view-k', k.replace(/_/g, ' '));
-          line(item, 'orch-view-v', String(v));
+          var text = String(v);
+          // Code or a long value (a monitor's format script) folds to one
+          // line, "14 lines", opening to the whole of it set as written:
+          // printed inline it ran as one wall of text among the short ones.
+          var lines = text.split('\n').length;
+          if (lines > 1 || text.length > 120) {
+            var fold = document.createElement('details');
+            fold.className = 'orch-view-v orch-view-fold';
+            var sum = document.createElement('summary');
+            sum.textContent = lines > 1 ? lines + ' lines' : text.slice(0, 80).trim() + '…';
+            fold.appendChild(sum);
+            var pre = document.createElement('pre');
+            pre.className = 'orch-view-code';
+            pre.textContent = text;
+            fold.appendChild(pre);
+            item.appendChild(fold);
+          } else {
+            line(item, 'orch-view-v', text);
+          }
           about.appendChild(item);
           shown++;
         });
@@ -7535,10 +7556,33 @@
         gapWrap.appendChild(gapMin); gapWrap.appendChild(document.createTextNode('to'));
         gapWrap.appendChild(gapMax); gapWrap.appendChild(gapUnit);
         var gapRow = schedLabeled('Each gap between runs', gapWrap);
+        // What the gaps come to in a day, as they are typed: each gap is drawn
+        // on its own, so a day lands anywhere in this. For a set number each
+        // day, "a number of times a day" takes a range.
+        var gapDay = document.createElement('div');
+        gapDay.className = 'ui-orch-sec-toggle-help';
+        gapDay.style.marginTop = '0.3rem';
+        gapRow.appendChild(gapDay);
         host.appendChild(gapRow);
 
         var win = schedWindowRow(spec);
         host.appendChild(win.el);
+        function paintGapDay() {
+          var mul = gapUnit.value === 'hours' ? 3600 : 60;
+          var lo = parseInt(gapMin.value, 10) * mul, hi = parseInt(gapMax.value, 10) * mul;
+          var day = 86400;
+          var f = schedMinutes((win.from.value || '').trim()), t = schedMinutes((win.to.value || '').trim());
+          if (f >= 0 && t > f) day = (t - f) * 60;
+          if (!(lo > 0) || !(hi > lo)) { gapDay.textContent = ''; return; }
+          var few = Math.floor(day / hi), many = Math.floor(day / lo);
+          gapDay.textContent = 'About ' + (few < 1 ? 'up to ' + many : few + ' to ' + many) +
+            ' times a day, varying from day to day. To set a minimum and maximum each day, choose "At random, a number of times a day".';
+        }
+        [gapMin, gapMax, gapUnit, win.from, win.to].forEach(function(el) {
+          el.addEventListener('input', paintGapDay);
+          el.addEventListener('change', paintGapDay);
+        });
+        paintGapDay();
 
         // Once a year: a month, a day and a time. The day boxes do not apply.
         // Built last so the inputs above keep their order.
