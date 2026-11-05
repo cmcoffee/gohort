@@ -18,6 +18,8 @@
 package teamsbots
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"regexp"
 	"sort"
@@ -66,6 +68,12 @@ type Bot struct {
 	ServiceHost   string   `json:"service_host,omitempty"`
 	ReplyInThread bool     `json:"reply_in_thread,omitempty"`
 	Accept        []string `json:"accept,omitempty"` // conversation types answered; none = every one
+	// Mention lists the conversation types it answers only when @mentioned:
+	// a group chat or a channel, where it is one voice among many. Teams
+	// usually delivers a bot only its mentions there anyway; this holds when
+	// the bot has been granted more. None = every message, as before it
+	// existed. A new bot starts with group chats and channels (NewBotDefaults).
+	Mention []string `json:"mention,omitempty"`
 	// Webhook is the name of the webhook it is reached through.
 	Webhook string `json:"webhook,omitempty"`
 
@@ -93,6 +101,32 @@ func (b Bot) Accepts(ct string) bool {
 		}
 	}
 	return false
+}
+
+// OutsideSource names this bot as the source of its people outside gohort
+// (agenthost.OutsideScope): stable for the bot's app id, and free of ":".
+func (b Bot) OutsideSource() string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(b.AppID)))
+	return "teams-" + hex.EncodeToString(sum[:8])
+}
+
+// NeedsMention reports whether the bot answers in a conversation of type ct
+// only when it is @mentioned.
+func (b Bot) NeedsMention(ct string) bool {
+	for _, m := range b.Mention {
+		if strings.EqualFold(m, strings.TrimSpace(ct)) {
+			return true
+		}
+	}
+	return false
+}
+
+// NewBotDefaults are where a new bot answers when its owner ticked nothing:
+// its one-to-one chats always, group chats when @mentioned, and no team
+// channel until the owner turns one on (docs/design/outside-audience.md).
+// Bots made before these existed keep answering as they did.
+func NewBotDefaults() (accept, mention []string) {
+	return []string{"personal", "groupChat"}, []string{"groupChat", "channel"}
 }
 
 func db() Database { return RootDB }
@@ -169,8 +203,19 @@ func (b *Bot) check() error {
 	case !strings.HasPrefix(b.ServiceHost, "https://"):
 		return fmt.Errorf("replies go to an https address")
 	}
-	var accept []string
-	for _, a := range b.Accept {
+	var err error
+	if b.Accept, err = conversationTypes(b.Accept); err != nil {
+		return err
+	}
+	b.Mention, err = conversationTypes(b.Mention)
+	return err
+}
+
+// conversationTypes is a list of conversation types in their canonical
+// spelling, refusing any that is not one.
+func conversationTypes(in []string) ([]string, error) {
+	var out []string
+	for _, a := range in {
 		a = strings.TrimSpace(a)
 		ok := false
 		for _, ct := range ConversationTypes {
@@ -182,12 +227,11 @@ func (b *Bot) check() error {
 			continue
 		}
 		if !ok {
-			return fmt.Errorf("it answers in personal, groupChat or channel conversations, not %q", a)
+			return nil, fmt.Errorf("it answers in personal, groupChat or channel conversations, not %q", a)
 		}
-		accept = append(accept, a)
+		out = append(out, a)
 	}
-	b.Accept = accept
-	return nil
+	return out, nil
 }
 
 // Save adds or updates b, its secret when one is given (an update keeps the

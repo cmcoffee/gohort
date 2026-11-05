@@ -1,6 +1,6 @@
 # Outside audiences: gohort behind someone else's chat
 
-Status: design agreed (2026-11-05); see Decisions. Built for /v1: step 1 (outside keys, per-person stores, the agent switch), step 2 (lent tools and credentials, per-person limits), and the People view (owner and admin can view, clear or delete a person). Teams (step 3) is next.
+Status: design agreed (2026-11-05); see Decisions. Built: step 1 (outside keys, per-person stores, the agent switch), step 2 (lent tools and credentials, per-person limits), the People view (owner and admin can view, clear or delete a person), and step 3 for Teams (per-type @mention rule, a store per DM person or group conversation, recorded when the bot is added). Left: per-conversation overrides on the bot page.
 
 ## Why
 
@@ -183,3 +183,9 @@ exactly as today.
    on with @mention, DMs on.
 4. **Signing the end-user id comes later**: outside-marked keys are used
    server to server and name the end user; HMAC signing is a follow-up.
+5. Per-person memory lives in a **store of its own** per person
+   (`outside:<source>:<person>`), not a namespace in the owner's store.
+6. Teams per-type rules apply to **new bots only**: an existing bot keeps
+   answering as it did until its owner changes it.
+7. On Teams, **anyone but the owner** is an outside person when the bound
+   agent serves people outside; with that switch off, Teams behaves as before.

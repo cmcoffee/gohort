@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/teamsbots"
 )
 
@@ -308,5 +309,68 @@ func TestRememberBotConvUpdatesOnEveryInbound(t *testing.T) {
 	conv, _ := T.getBotConv("19:thread@thread.tacv2")
 	if conv.LastActivity != "1700000000002" || conv.ServiceURL != "https://smba.trafficmanager.net/emea" {
 		t.Errorf("record did not follow the conversation: %+v", conv)
+	}
+}
+
+// A bot made before mentions were a setting answers every group message as it
+// did; one set to need a mention there answers only when the mention is its
+// own, not someone else's.
+func TestAMentionRuleNeedsTheBotsOwnMention(t *testing.T) {
+	group := func(text string, mentioned ...string) botActivity {
+		a := parseActivity(t, channelActivityJSON)
+		a.Conversation.ConversationType, a.Text = "groupChat", text
+		for _, id := range mentioned {
+			a.Entities = append(a.Entities, struct {
+				Type      string `json:"type"`
+				Mentioned struct {
+					ID string `json:"id"`
+				} `json:"mentioned"`
+			}{Type: "mention", Mentioned: struct {
+				ID string `json:"id"`
+			}{ID: id}})
+		}
+		return a
+	}
+	legacy := bfSpec()
+	if req, _ := activityToInbound(group("lunch?"), legacy); req == nil {
+		t.Error("a bot with no mention rule stopped answering a group")
+	}
+	named := bfSpec()
+	named.Mention = []string{"groupChat"}
+	if req, _ := activityToInbound(group("lunch?"), named); req != nil {
+		t.Error("answered a group message that did not name it")
+	}
+	if req, _ := activityToInbound(group("<at>Grace</at> lunch?", "29:grace"), named); req != nil {
+		t.Error("answered when someone else was named")
+	}
+	if req, _ := activityToInbound(group("<at>gohort</at> status?", "28:app-1"), named); req == nil {
+		t.Error("named, it did not answer")
+	}
+	// A personal chat never needs a mention.
+	if req, _ := activityToInbound(parseActivity(t, strings.Replace(channelActivityJSON, `"conversationType": "channel"`, `"conversationType": "personal"`, 1)), named); req == nil {
+		t.Error("a one-to-one chat was held to a mention")
+	}
+}
+
+// A channel's threads are one conversation, and every store name is one an
+// outside person can have.
+func TestAChannelsThreadsShareItsStore(t *testing.T) {
+	a := parseActivity(t, channelActivityJSON)
+	base := a.outsideScope(bfSpec())
+	a.Conversation.ID += ";messageid=1700000000001"
+	if got := a.outsideScope(bfSpec()); got != base {
+		t.Errorf("a reply in a channel thread ran in %q, the channel in %q", got, base)
+	}
+	other := parseActivity(t, channelActivityJSON)
+	other.Conversation.ID = "19:other@thread.tacv2"
+	if other.outsideScope(bfSpec()) == base {
+		t.Error("two channels share a store")
+	}
+	if !agenthost.IsOutsideScope(base) {
+		t.Errorf("%q is not an outside store", base)
+	}
+	key, person, _ := strings.Cut(strings.TrimPrefix(base, "outside:"), ":")
+	if strings.Contains(key, ":") || agenthost.CheckOutsidePerson(person) != nil {
+		t.Errorf("%q cannot name a store", base)
 	}
 }

@@ -22,6 +22,8 @@ package bridges
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -31,6 +33,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/teamsbots"
 	"github.com/cmcoffee/gohort/core/webhooks"
 	"github.com/cmcoffee/snugforge/jwcrypt"
@@ -94,6 +97,71 @@ type botActivity struct {
 		Team    struct{ ID, Name string } `json:"team"`
 		Channel struct{ ID, Name string } `json:"channel"`
 	} `json:"channelData"`
+	// Entities carry who a message @mentions; the text only marks it up.
+	Entities []struct {
+		Type      string `json:"type"`
+		Mentioned struct {
+			ID string `json:"id"`
+		} `json:"mentioned"`
+	} `json:"entities"`
+	// MembersAdded is who a conversationUpdate says joined, the bot itself
+	// when it was just added to a team or a chat.
+	MembersAdded []struct {
+		ID string `json:"id"`
+	} `json:"membersAdded"`
+}
+
+// namesBot reports whether this message @mentions the bot. The mention
+// entities say whom; text markup alone counts only when a message carries no
+// entities at all, since <at> also wraps a mention of anyone else.
+func (a botActivity) namesBot() bool {
+	bot := strings.TrimSpace(a.Recipient.ID)
+	if len(a.Entities) == 0 {
+		return atTagRE.MatchString(a.Text)
+	}
+	for _, e := range a.Entities {
+		if strings.EqualFold(e.Type, "mention") && strings.EqualFold(strings.TrimSpace(e.Mentioned.ID), bot) {
+			return true
+		}
+	}
+	return false
+}
+
+// addsBot reports whether a conversationUpdate is the bot being added.
+func (a botActivity) addsBot() bool {
+	bot := strings.TrimSpace(a.Recipient.ID)
+	for _, m := range a.MembersAdded {
+		if bot != "" && strings.EqualFold(strings.TrimSpace(m.ID), bot) {
+			return true
+		}
+	}
+	return false
+}
+
+// outsideScope is where this sender runs when the bound agent serves people
+// outside gohort and they are not the owner (docs/design/outside-audience.md):
+// a one-to-one chat in the person's own store, a group chat or channel in the
+// conversation's, so what one group said stays with that group and a DM never
+// reaches it. Named by the bot's app id, so two bots never share a store.
+func (a botActivity) outsideScope(bot teamsbots.Bot) string {
+	source := bot.OutsideSource()
+	if strings.EqualFold(strings.TrimSpace(a.Conversation.ConversationType), "personal") {
+		person := strings.TrimSpace(a.From.AadObjectID)
+		if agenthost.CheckOutsidePerson(person) != nil {
+			person = "id-" + shortHash(strings.TrimSpace(a.From.ID))
+		}
+		return agenthost.OutsideScope(source, person)
+	}
+	// A channel reply's conversation id names the thread it is in
+	// (";messageid=…"); the channel is the conversation.
+	conv, _, _ := strings.Cut(strings.TrimSpace(a.Conversation.ID), ";")
+	return agenthost.OutsideScope(source, "conv-"+shortHash(conv))
+}
+
+// shortHash is a stable, store-safe stand-in for an id that may hold ":".
+func shortHash(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:8])
 }
 
 // tenant returns the tenant id from wherever this activity carried it.
@@ -143,6 +211,10 @@ func activityToInbound(a botActivity, bot teamsbots.Bot) (*hookRequest, error) {
 	if !bot.Accepts(a.Conversation.ConversationType) {
 		return nil, nil
 	}
+	// Where it is one voice among many, it answers only when named.
+	if bot.NeedsMention(a.Conversation.ConversationType) && !a.namesBot() {
+		return nil, nil
+	}
 	// A single-tenant bot must not act on another tenant's traffic even if the
 	// token verified: the signature proves Microsoft sent it, not that it came
 	// from the bot's own tenant.
@@ -170,6 +242,7 @@ func activityToInbound(a botActivity, bot teamsbots.Bot) (*hookRequest, error) {
 		Text:             text,
 		MsgID:            strings.TrimSpace(a.ID),
 		Timestamp:        strings.TrimSpace(a.Timestamp),
+		OutsideScope:     a.outsideScope(bot),
 	}, nil
 }
 
@@ -212,6 +285,18 @@ func (T *Bridges) botframeworkCheck(r *http.Request, h webhooks.Webhook, body []
 		return http.StatusAccepted, "not passed on: an administrator switched the bot off", nil
 	case !T.config().Enabled:
 		return http.StatusAccepted, "not passed on: bridges are switched off", nil
+	}
+	// Added to a team or a chat: remember the conversation now, with its type,
+	// so the bot can answer there from the first message and its owner sees
+	// where it is (docs/design/outside-audience.md). Nothing to route.
+	if strings.EqualFold(strings.TrimSpace(a.Type), "conversationUpdate") && a.addsBot() {
+		if bot.TenantID != "" && !strings.EqualFold(a.tenant(), bot.TenantID) {
+			return http.StatusAccepted, "passed over: added in another tenant", nil
+		}
+		if err := T.rememberBotConv(bot, a); err != nil {
+			return http.StatusAccepted, "not recorded: " + err.Error(), nil
+		}
+		return http.StatusOK, "recorded: added to a " + firstNonEmpty(strings.TrimSpace(a.Conversation.ConversationType), "conversation"), nil
 	}
 	req, err := activityToInbound(a, bot)
 	if err != nil {

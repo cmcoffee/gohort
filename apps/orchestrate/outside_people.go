@@ -21,6 +21,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/core/teamsbots"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -98,6 +99,9 @@ func (T *OrchestrateApp) personRows(owner, agentID string) []map[string]any {
 	for _, k := range ListAccountTokens(owner) {
 		keyNames[k.ID] = k.Name
 	}
+	for _, b := range teamsbots.List(owner) {
+		keyNames[b.OutsideSource()] = "Teams bot " + b.Name
+	}
 	loc := UserLocation(owner)
 	var people []outsidePerson
 	for _, k := range odb.Keys(outsidePeopleTable) {
@@ -112,7 +116,7 @@ func (T *OrchestrateApp) personRows(owner, agentID string) []map[string]any {
 		key, person := splitScope(p.Scope)
 		keyName := keyNames[key]
 		if keyName == "" {
-			keyName = "(a key since revoked)"
+			keyName = "(a key or bot since removed)"
 		}
 		pdb := UserDB(T.DB, p.Scope)
 		agentName := p.Agent

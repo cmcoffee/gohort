@@ -1795,6 +1795,10 @@ func (cr *continuingRun) admit() bool {
 		return cr.exit(AgentSyncResult{}, fmt.Errorf("agent %q not found in agentOwner %q store", cr.agentKey, cr.agentOwner))
 	}
 	cr.target = materializeIfRetiringSeed(cr.ownerDB, cr.agentOwner, cr.agentKey, cr.target)
+	// A transport's person outside (a Teams DM, a group) runs in their own
+	// store when the agent serves people outside and they are not the owner.
+	// Otherwise the run is the owner's, as it always was.
+	cr.runtimeUser = outsideRunAs(cr.runtimeUser, run, cr.target)
 	if err := outsideRunRefusal(cr.runtimeUser, cr.target); err != nil {
 		return cr.exit(AgentSyncResult{}, err)
 	}

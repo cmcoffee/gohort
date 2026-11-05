@@ -230,3 +230,43 @@ func TestTheAppPackage(t *testing.T) {
 		}
 	}
 }
+
+// A new bot starts with its own chats on, group chats on @mention, and no
+// team channel; a bot made before mentions were a setting needs none.
+func TestANewBotStartsWhereTheDesignSays(t *testing.T) {
+	accept, mention := NewBotDefaults()
+	b := Bot{Accept: accept, Mention: mention}
+	if !b.Accepts("personal") || !b.Accepts("groupChat") || b.Accepts("channel") {
+		t.Errorf("a new bot answers in %v", accept)
+	}
+	if b.NeedsMention("personal") || !b.NeedsMention("groupChat") || !b.NeedsMention("channel") {
+		t.Errorf("a new bot needs a mention in %v", mention)
+	}
+	if (Bot{}).NeedsMention("groupChat") || !(Bot{}).Accepts("channel") {
+		t.Error("a bot made before these settings stopped answering as it did")
+	}
+}
+
+// A bot's people outside are named by its app id: stable, apart from another
+// bot's, and free of the ":" a store name may not hold.
+func TestABotNamesItsPeopleApart(t *testing.T) {
+	a := Bot{AppID: "11111111-2222-3333-4444-555555555555"}
+	b := Bot{AppID: "99999999-2222-3333-4444-555555555555"}
+	if a.OutsideSource() != a.OutsideSource() || a.OutsideSource() == b.OutsideSource() {
+		t.Error("a bot's source is not its own")
+	}
+	if strings.Contains(a.OutsideSource(), ":") || !strings.HasPrefix(a.OutsideSource(), "teams-") {
+		t.Errorf("source %q", a.OutsideSource())
+	}
+}
+
+// Mentions take the conversation types' own spelling and refuse others.
+func TestMentionTypesAreChecked(t *testing.T) {
+	got, err := conversationTypes([]string{" GroupChat ", "channel", ""})
+	if err != nil || strings.Join(got, ",") != "groupChat,channel" {
+		t.Errorf("got %v %v", got, err)
+	}
+	if _, err := conversationTypes([]string{"meeting"}); err == nil {
+		t.Error("an unknown type was accepted")
+	}
+}

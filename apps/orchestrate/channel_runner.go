@@ -424,9 +424,12 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			MessageSender: in.SenderName,
 			SenderHandle:  in.Handle, // transport attribution; recognizes the owner's own phone
 			SenderIsOwner: in.FromOwner,
-			Message:       in.Text + videoNote + attachNote,
-			Images:        images,
-			Interactive:   true, // a real person is texting — no delegation marker
+			// Where this sender runs if the agent serves people outside
+			// gohort and they are not the owner (outside_audience.go).
+			OutsideScope: in.OutsideScope,
+			Message:      in.Text + videoNote + attachNote,
+			Images:       images,
+			Interactive:  true, // a real person is texting — no delegation marker
 			// Replying BACK to this same conversation is in-thread, not a
 			// proactive reach-out — so it skips the send approval gate.
 			ReplyAuthorizedKey: operatorRecipientKey(in.ChatID, in.Handle),

@@ -510,6 +510,11 @@ type ChannelInbound struct {
 	// not name (an app, a bot, a webhook). Everything downstream asks this
 	// rather than reading ownership off the handle.
 	FromOwner bool
+	// OutsideScope is the store the transport proposes for this sender when
+	// they are not the owner and the agent serves people outside gohort
+	// (agenthost.OutsideScope): a Teams DM's person, a group's conversation.
+	// Set by the transport, never by a connector's payload.
+	OutsideScope string
 	SenderName       string   // the inbound message's author display name (falls back to handle) — the per-message sender in the transcript
 	ConversationName string   // the conversation/room display name (the title editable on the transport side) — names the session
 	Roster           []string // known participant display names for a GROUP conversation, so the agent is handed who-is-here up front instead of having to call list_members. Empty for 1:1 chats or unknown rosters.

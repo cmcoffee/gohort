@@ -35,6 +35,7 @@ type teamsBotForm struct {
 	TenantID      string   `json:"tenant_id"`
 	Secret        string   `json:"secret"`
 	Accept        []string `json:"accept"`
+	Mention       []string `json:"mention"`
 	ReplyInThread bool     `json:"reply_in_thread"`
 	Reach         string   `json:"reach"`
 	Service       string   `json:"service"`
@@ -82,7 +83,7 @@ func (T *Bridges) handleTeamsBots(c *jsonapi.Call) (any, error) {
 			reach = h.Reach
 		}
 		endpoint, _ := botEndpoint(c.R, b)
-		return teamsBotForm{Endpoint: endpoint, Name: b.Name, AppID: b.AppID, TenantID: b.TenantID, Accept: b.Accept, ReplyInThread: b.ReplyInThread,
+		return teamsBotForm{Endpoint: endpoint, Name: b.Name, AppID: b.AppID, TenantID: b.TenantID, Accept: b.Accept, Mention: b.Mention, ReplyInThread: b.ReplyInThread,
 			Reach: reach, Service: b.Service, Package: "/bridges/api/teams-bots/package?service=" + b.Service}, nil
 	}
 	rows := []teamsBotRow{}
@@ -141,8 +142,15 @@ func (T *Bridges) handleTeamsBotSave(c *jsonapi.Call, f teamsBotForm) (any, erro
 			return nil, jsonapi.Forbidden(err.Error())
 		}
 	}
+	// A new bot with nothing ticked starts where the design says: its own
+	// chats, group chats when @mentioned, no team channel yet. An existing
+	// bot keeps whatever it has, "none ticked" answering everywhere as before.
+	accept, mention := f.Accept, f.Mention
+	if adding && len(accept) == 0 && len(mention) == 0 {
+		accept, mention = teamsbots.NewBotDefaults()
+	}
 	b, err := teamsbots.Save(teamsbots.Bot{Owner: user, Service: svc, Name: f.Name, AppID: f.AppID, TenantID: f.TenantID,
-		Accept: f.Accept, ReplyInThread: f.ReplyInThread, Webhook: prev.Webhook}, f.Secret, hold)
+		Accept: accept, Mention: mention, ReplyInThread: f.ReplyInThread, Webhook: prev.Webhook}, f.Secret, hold)
 	if err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
@@ -224,11 +232,19 @@ func (T *Bridges) handleTeamsBotPackage(w http.ResponseWriter, r *http.Request) 
 // teamsBotFields are the bot form's fields; the service is named only when
 // adding one.
 func teamsBotFields(adding bool) []ui.FormField {
+	acceptHelp := "None ticked answers in all three."
+	if adding {
+		acceptHelp = "None ticked here or below: one-to-one chats, and group chats when @mentioned. Team channels stay off until you tick them."
+	}
 	accept := ui.FormField{Field: "accept", Label: "Answers in", Type: "checklist", Options: []ui.SelectOption{
 		{Value: "personal", Label: "One-to-one chats with the bot"},
 		{Value: "groupChat", Label: "Group chats it is added to"},
-		{Value: "channel", Label: "Team channels, when @mentioned"},
-	}, Help: "None ticked answers in all three."}
+		{Value: "channel", Label: "Team channels"},
+	}, Help: acceptHelp}
+	mention := ui.FormField{Field: "mention", Label: "Only when @mentioned in", Type: "checklist", Options: []ui.SelectOption{
+		{Value: "groupChat", Label: "Group chats"},
+		{Value: "channel", Label: "Team channels"},
+	}, Help: "Where it is one voice among many, it answers only when someone names it. Teams usually sends a bot only those messages there anyway; this holds if it is given more."}
 	var fields []ui.FormField
 	if !adding {
 		fields = append(fields, ui.FormField{Field: "endpoint", Label: "Messaging endpoint", Type: "readonly", Copy: true,
@@ -248,6 +264,7 @@ func teamsBotFields(adding bool) []ui.FormField {
 	fields = append(fields,
 		ui.FormField{Field: "secret", Label: "Client secret", Type: "password", Required: adding, Help: secretHelp},
 		accept,
+		mention,
 		ui.FormField{Field: "reply_in_thread", Label: "Reply in the thread", Type: "toggle",
 			Help: "In a team channel, reply under the message that asked rather than as a new post."},
 		ui.FormField{Field: "reach", Label: "Reached", Type: "select", OptionsSource: "/bridges/api/teams-bots?options=reach",

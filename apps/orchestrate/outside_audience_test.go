@@ -294,3 +294,69 @@ func TestAnOutsideRunIsWiredForCredentialsToolsAndSpend(t *testing.T) {
 		}
 	}
 }
+
+// A transport's person outside runs in their own store only when the agent
+// serves people outside gohort and they are not the owner. Anywhere else the
+// run is the owner's, as before: a Teams bot whose agent does not serve
+// outside answers as it always did, and is not refused.
+func TestATransportsOutsiderRunsApartOnlyWhenTheAgentServesThem(t *testing.T) {
+	df := newDispatchFixture(t, FakeTurn{Content: "Happy to help.", Repeat: true})
+	scope := agenthost.OutsideScope("teams-abc", "aad-ada")
+	indexed := func() bool {
+		return df.udb.Get(outsidePeopleTable, df.agent.ID+"|"+scope, &outsidePerson{})
+	}
+
+	// The agent does not serve outside: the owner's run, and no refusal.
+	df.run(AgentSyncRun{Kind: "channel", SubSessionID: "t1", Message: "hi", OutsideScope: scope})
+	if indexed() {
+		t.Error("an agent that does not serve outside ran a Teams sender apart")
+	}
+
+	df.agent.OutsideAudience = true
+	a, err := saveAgent(df.udb, df.agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	df.agent = a
+	// The owner, on their own bot: still their own run.
+	df.run(AgentSyncRun{Kind: "channel", SubSessionID: "t2", Message: "hi", OutsideScope: scope, SenderIsOwner: true})
+	if indexed() {
+		t.Error("the owner's own message ran apart from them")
+	}
+	// Anyone else: their own store.
+	df.run(AgentSyncRun{Kind: "channel", SubSessionID: "t3", Message: "hi", OutsideScope: scope})
+	if !indexed() {
+		t.Error("someone else on Teams did not run in their own store")
+	}
+}
+
+// A proposal that is not an outside store is never taken as a user name.
+func TestAProposedStoreMustBeAnOutsideOne(t *testing.T) {
+	a := AgentRecord{ID: "a1", OutsideAudience: true}
+	if got := outsideRunAs("alice", AgentSyncRun{OutsideScope: "bob"}, a); got != "alice" {
+		t.Errorf("a proposed account name was run as: %q", got)
+	}
+	if got := outsideRunAs("alice", AgentSyncRun{OutsideScope: "outside:teams-abc:ann"}, a); got != "outside:teams-abc:ann" {
+		t.Errorf("a proposed outside store was ignored: %q", got)
+	}
+}
+
+// Through the channel runner: an inbound's proposed store reaches the run.
+func TestAChannelInboundCarriesItsOutsideStore(t *testing.T) {
+	df := newDispatchFixture(t, FakeTurn{Content: "Happy to help.", Repeat: true})
+	df.agent.OutsideAudience = true
+	a, err := saveAgent(df.udb, df.agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerChannelAgentRunner(df.app)
+	t.Cleanup(func() { RegisterChannelAgentRunner(nil) })
+	scope := agenthost.OutsideScope("teams-abc", "conv-123")
+	if _, err := RunChannelAgent(t.Context(), ChannelInbound{Owner: "u", AgentID: a.ID, SessionID: "teams:conv", ChatID: "19:conv", Handle: "aad-ada",
+		SenderName: "Ada", Text: "hi", OutsideScope: scope}); err != nil {
+		t.Fatal(err)
+	}
+	if !df.udb.Get(outsidePeopleTable, a.ID+"|"+scope, &outsidePerson{}) {
+		t.Error("the channel runner dropped the inbound's outside store")
+	}
+}

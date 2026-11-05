@@ -116,7 +116,7 @@ func TestOnlyTheOwnerOrAnAdminSeesAPerson(t *testing.T) {
 		t.Fatalf("the owner's list: %v %v", rows, err)
 	}
 	row := rows.([]map[string]any)[0]
-	if row["key"] != "(a key since revoked)" || row["notes"] != 1 || row["conversations"] != 1 {
+	if row["key"] != "(a key or bot since removed)" || row["notes"] != 1 || row["conversations"] != 1 {
 		t.Errorf("a row: %v", row)
 	}
 	all, err := pf.app.handleAllOutsidePeople(pf.call("root", "/x"))

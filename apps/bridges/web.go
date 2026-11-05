@@ -277,6 +277,10 @@ type hookRequest struct {
 	// anything was actually sent — every inbound looked like it happened now.
 	// That is what let replayed history wake an agent as live conversation.
 	Timestamp string `json:"timestamp,omitempty"`
+	// OutsideScope is where the sender runs if they are not the owner and the
+	// agent serves people outside gohort. Set by a transport that knows its
+	// people (Teams), never read off a connector's payload: hence no JSON.
+	OutsideScope string `json:"-"`
 }
 
 // inboundMsgID returns the stable per-message id for an inbound, preferring the
@@ -600,6 +604,7 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 		ChatID:           chatID,
 		Handle:           handle,
 		FromOwner:        messagingLinkImpl{T: T}.ownsBridge(ch.Owner) && T.isOwnerHandleFor(svc, handle),
+		OutsideScope:     req.OutsideScope,
 		SenderName:       sender,
 		ConversationName: firstNonEmpty(req.ConversationName, sender),
 		Roster:           T.rosterNames(owner, activeChatID),

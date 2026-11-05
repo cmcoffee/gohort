@@ -34,6 +34,18 @@ func (t *chatTurn) outsideAudience() bool {
 	return t != nil && agenthost.IsOutsideScope(t.user)
 }
 
+// outsideRunAs is who a run executes as once a transport's proposed outside
+// store is weighed: that store, for a sender who is not the owner on an agent
+// that serves people outside gohort; otherwise who it already was. A proposal
+// that is not an outside store is ignored rather than trusted as a user name.
+func outsideRunAs(runtimeUser string, run AgentSyncRun, target AgentRecord) string {
+	scope := strings.TrimSpace(run.OutsideScope)
+	if scope == "" || run.SenderIsOwner || !target.OutsideAudience || !agenthost.IsOutsideScope(scope) {
+		return runtimeUser
+	}
+	return scope
+}
+
 // outsideRunRefusal refuses a run for an outside person on an agent its owner
 // has not set to serve people outside, or returns nil.
 func outsideRunRefusal(runtimeUser string, target AgentRecord) error {

@@ -294,6 +294,11 @@ type Run struct {
 	// (ChannelInbound.FromOwner). A channel run's owner check reads it, and
 	// nothing else: the run executes as the owner's account whoever sent it.
 	SenderIsOwner bool
+	// OutsideScope is the store a transport proposes for a sender who is not
+	// the owner (OutsideScope): a Teams DM's person, or a group's
+	// conversation. Used only when the agent serves people outside gohort and
+	// the sender is not the owner; otherwise the run is the owner's as ever.
+	OutsideScope string
 	// MessageSender, when set, is stored as THIS message's author (ChatMessage
 	// .Sender). Channel rooms pass the inbound contact's display name so a
 	// GROUP thread renders real who-said-what — each inbound carries its own

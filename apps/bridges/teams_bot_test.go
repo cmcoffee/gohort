@@ -17,12 +17,23 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/teamsbots"
 	"github.com/cmcoffee/gohort/core/webhooks"
 	"github.com/cmcoffee/snugforge/jwcrypt"
 )
 
 const botApp = "11111111-2222-3333-4444-555555555555"
+
+// signing is Microsoft's one signing key and key set for the whole package.
+// One, because the verifier is shared and keeps the first key-set address it
+// fetches: a second test's own key server was never asked, and its tokens
+// failed against the first test's cached key.
+var signing struct {
+	once sync.Once
+	key  *rsa.PrivateKey
+	url  string
+}
 
 // microsoftStandIn signs activity tokens as Bot Framework does, mints reply
 // tokens, and takes replies as the Teams service would.
@@ -35,18 +46,21 @@ type microsoftStandIn struct {
 
 func newMicrosoftStandIn(t *testing.T) *microsoftStandIn {
 	t.Helper()
-	k, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := &microsoftStandIn{key: k}
-	b64 := func(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
-	// The key set is fetched by the verifier's own client, over plain HTTP here.
-	keys := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, `{"keys":[{"kty":"RSA","use":"sig","alg":"RS256","kid":"k1","n":%q,"e":%q,"endorsements":["msteams"]}]}`,
-			b64(k.N.Bytes()), b64(big.NewInt(int64(k.E)).Bytes()))
-	}))
-	t.Cleanup(keys.Close)
+	signing.once.Do(func() {
+		k, err := rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			panic(err)
+		}
+		b64 := func(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
+		// The key set is fetched by the verifier's own client, over plain HTTP
+		// here, and outlives every test: see signing.
+		keys := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintf(w, `{"keys":[{"kty":"RSA","use":"sig","alg":"RS256","kid":"k1","n":%q,"e":%q,"endorsements":["msteams"]}]}`,
+				b64(k.N.Bytes()), b64(big.NewInt(int64(k.E)).Bytes()))
+		}))
+		signing.key, signing.url = k, keys.URL
+	})
+	m := &microsoftStandIn{key: signing.key}
 	m.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/oauth2/v2.0/token"):
@@ -61,7 +75,7 @@ func newMicrosoftStandIn(t *testing.T) *microsoftStandIn {
 	}))
 	v := teamsbots.Verifier()
 	prevKeys, prevURL, prevClient := v.JWKSURL, teamsbots.TokenURL, teamsbots.HTTPClient
-	v.JWKSURL = keys.URL
+	v.JWKSURL = signing.url
 	teamsbots.TokenURL = func(tenant string) string { return m.srv.URL + "/" + tenant + "/oauth2/v2.0/token" }
 	teamsbots.HTTPClient = m.srv.Client()
 	t.Cleanup(func() {
@@ -244,11 +258,23 @@ func TestTheTeamsBotOnTheBridgesPage(t *testing.T) {
 	if rb, _ := teamsbots.Load("root", "teams-ops"); rb.AwaitingApproval {
 		t.Error("an administrator's bot was held")
 	}
+	// A new bot with nothing ticked starts with the design's defaults; one
+	// edited with nothing ticked keeps "everywhere", as before.
+	if code, body := do("root", "POST", "/api/teams-bots", `{"name":"Plain","app_id":"`+botApp+`","secret":"s","service":"teams-plain"}`); code >= 300 {
+		t.Fatalf("a bot with nothing ticked: %d %s", code, body)
+	}
+	wantAccept, wantMention := teamsbots.NewBotDefaults()
+	if pb, _ := teamsbots.Load("root", "teams-plain"); strings.Join(pb.Accept, ",") != strings.Join(wantAccept, ",") || strings.Join(pb.Mention, ",") != strings.Join(wantMention, ",") {
+		t.Errorf("a new bot with nothing ticked: accept %v, mention %v", pb.Accept, pb.Mention)
+	}
 	if code, body := do("alice", "POST", "/api/teams-bots?service=teams", `{"name":"Wren Two","app_id":"`+botApp+`","secret":""}`); code >= 300 {
 		t.Errorf("edit: %d %s", code, body)
 	}
 	if teamsbots.Secret("alice", "teams") != "sekret" {
 		t.Error("an edit with no secret lost the one it had")
+	}
+	if eb, _ := teamsbots.Load("alice", "teams"); len(eb.Accept) != 0 || len(eb.Mention) != 0 {
+		t.Errorf("an edit with nothing ticked took a new bot's defaults: accept %v, mention %v", eb.Accept, eb.Mention)
 	}
 	_, list := do("alice", "GET", "/api/teams-bots", "")
 	if strings.Contains(list, "sekret") || !strings.Contains(list, "Wren Two") || !strings.Contains(list, "waiting for an administrator") {
@@ -285,5 +311,90 @@ func TestOnlyAnApprovedBotReplies(t *testing.T) {
 	T.deliverTeams(context.Background())
 	if len(m.replies) != 1 {
 		t.Errorf("an approved bot did not: %q", m.replies)
+	}
+}
+
+// A bot added to a group chat records the conversation at once; in the group
+// it answers only when named, and each message carries where its sender runs
+// if the agent serves people outside: the group's own store there, the
+// person's in a one-to-one chat.
+func TestATeamsBotIsAddedAndAnswersWhenNamed(t *testing.T) {
+	T := linkWorld(t)
+	m := newMicrosoftStandIn(t)
+	const tenant = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	accept, mention := teamsbots.NewBotDefaults()
+	bot, err := teamsbots.Save(teamsbots.Bot{Owner: "alice", Name: "Wren", AppID: botApp, TenantID: tenant, ServiceHost: m.srv.URL, Accept: accept, Mention: mention}, "sekret", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	T.wireWebhooks()
+	t.Cleanup(func() { webhooks.LinkedServices, webhooks.ToChannel = nil, nil })
+	hook, err := webhooks.Create(webhooks.Webhook{Label: "Wren (Teams bot)", Owner: "alice", Verify: teamsbots.VerifyName, Feeds: "channel:teams"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamsbots.SetWebhook("alice", "teams", hook.Name)
+	SaveChannel(RootDB, Channel{ID: "ch-teams", Owner: "alice", Name: "Teams", Service: "teams", AgentID: "agent-1", AutoReply: true})
+	asked := make(chan ChannelInbound, 4)
+	RegisterChannelAgentRunner(func(_ context.Context, in ChannelInbound) (ChannelReply, error) {
+		asked <- in
+		return ChannelReply{Text: "ok"}, nil
+	})
+	t.Cleanup(func() { RegisterChannelAgentRunner(nil) })
+
+	svcURL := m.srv.URL + "/amer/"
+	botID := "28:" + botApp
+	send := func(v map[string]any) int {
+		v["serviceUrl"], v["channelId"] = svcURL, "msteams"
+		v["recipient"] = map[string]string{"id": botID, "name": "Wren"}
+		b, _ := json.Marshal(v)
+		r := httptest.NewRequest(http.MethodPost, webhooks.Prefix+hook.Name, strings.NewReader(string(b)))
+		r.Header.Set("Authorization", "Bearer "+m.token(t, botApp, svcURL))
+		w := httptest.NewRecorder()
+		webhooks.Handle(w, r)
+		return w.Code
+	}
+	group := map[string]string{"id": "19:group-1@thread.v2", "conversationType": "groupChat", "tenantId": tenant}
+	ada := map[string]string{"id": "29:ada", "name": "Ada Lovelace", "aadObjectId": "aad-ada"}
+
+	if code := send(map[string]any{"type": "conversationUpdate", "id": "u1", "conversation": group,
+		"membersAdded": []map[string]string{{"id": botID}}}); code != http.StatusOK {
+		t.Fatalf("added to a group: %d %+v", code, webhooks.Calls(hook.Name)[0])
+	}
+	if bc, ok := T.getBotConv("19:group-1@thread.v2"); !ok || bc.ConvType != "groupChat" {
+		t.Errorf("the group was not recorded when the bot was added: %+v %v", bc, ok)
+	}
+
+	send(map[string]any{"type": "message", "id": "g1", "text": "lunch anyone?", "from": ada, "conversation": group})
+	send(map[string]any{"type": "message", "id": "g2", "text": "<at>Grace</at> lunch?", "from": ada, "conversation": group,
+		"entities": []map[string]any{{"type": "mention", "mentioned": map[string]string{"id": "29:grace"}}}})
+	select {
+	case in := <-asked:
+		t.Fatalf("answered in a group without being named: %q", in.Text)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	send(map[string]any{"type": "message", "id": "g3", "text": "<at>Wren</at> what's the status?", "from": ada, "conversation": group,
+		"entities": []map[string]any{{"type": "mention", "mentioned": map[string]string{"id": botID}}}})
+	var groupScope string
+	select {
+	case in := <-asked:
+		groupScope = in.OutsideScope
+		if in.Text != "what's the status?" || !agenthost.IsOutsideScope(groupScope) || strings.HasSuffix(groupScope, ":aad-ada") {
+			t.Errorf("named in a group: text %q, store %q; want the group's store", in.Text, groupScope)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("named in a group, it never answered")
+	}
+
+	send(map[string]any{"type": "message", "id": "p1", "text": "hi", "from": ada,
+		"conversation": map[string]string{"id": "a:conv-1", "conversationType": "personal", "tenantId": tenant}})
+	select {
+	case in := <-asked:
+		if want := agenthost.OutsideScope(bot.OutsideSource(), "aad-ada"); in.OutsideScope != want || in.OutsideScope == groupScope {
+			t.Errorf("a one-to-one chat runs in %q, want the person's own %q", in.OutsideScope, want)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a one-to-one message never reached the agent")
 	}
 }
