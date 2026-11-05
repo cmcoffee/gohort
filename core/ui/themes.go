@@ -20,6 +20,21 @@ type ThemeSpec struct {
 	Name   string
 	Label  string
 	Tokens map[string]string // CSS var (e.g. "--bg-0") -> value
+	// Dark and Light, set together and with no Tokens, make a theme that
+	// follows the device: Dark's tokens, and Light's when the device asks for
+	// a light page (prefers-color-scheme). Both name registered themes.
+	Dark, Light string
+}
+
+// follows reports whether t follows the device between two other themes, and
+// those two when it does.
+func (t ThemeSpec) follows() (dark, light ThemeSpec, ok bool) {
+	if t.Dark == "" || t.Light == "" {
+		return ThemeSpec{}, ThemeSpec{}, false
+	}
+	dark, okD := themeByName[t.Dark]
+	light, okL := themeByName[t.Light]
+	return dark, light, okD && okL
 }
 
 var (
@@ -96,9 +111,15 @@ func ActiveTheme() string {
 func ThemeFirstPaintHead(theme string) string {
 	themesMu.RLock()
 	t, ok := themeByName[theme]
+	dark, light, follows := t.follows()
 	themesMu.RUnlock()
 	if !ok {
 		return ""
+	}
+	if follows {
+		// Both answers, chosen by the browser before anything paints.
+		css := firstPaintCSS(dark) + "@media (prefers-color-scheme: light){" + firstPaintCSS(light) + "}"
+		return "<meta name=\"color-scheme\" content=\"dark light\">\n<style>" + css + "</style>\n"
 	}
 	bg := strings.TrimSpace(t.Tokens["--bg-0"])
 	if bg == "" {
@@ -116,10 +137,36 @@ func ThemeFirstPaintHead(theme string) string {
 	return "<meta name=\"color-scheme\" content=\"" + scheme + "\">\n<style>" + css + "</style>\n"
 }
 
+// firstPaintCSS is the page background and text colour of t, for the head.
+func firstPaintCSS(t ThemeSpec) string {
+	bg, fg := strings.TrimSpace(t.Tokens["--bg-0"]), strings.TrimSpace(t.Tokens["--text"])
+	if bg == "" {
+		return ""
+	}
+	if fg == "" {
+		return "html,body{background:" + bg + "}"
+	}
+	return "html,body{background:" + bg + ";color:" + fg + "}"
+}
+
 // AppHead is webui.AppHeadTags plus the theme's background as theme-color,
 // so a phone's status bar and a saved home-screen app match the page.
 func AppHead(theme string) string {
 	out := webui.AppHeadTags
+	themesMu.RLock()
+	t := themeByName[theme]
+	dark, light, follows := t.follows()
+	themesMu.RUnlock()
+	if follows {
+		// A status bar per scheme, so a phone's matches whichever it shows.
+		if bg := strings.TrimSpace(dark.Tokens["--bg-0"]); bg != "" {
+			out += "<meta name=\"theme-color\" content=\"" + bg + "\" media=\"(prefers-color-scheme: dark)\">\n"
+		}
+		if bg := strings.TrimSpace(light.Tokens["--bg-0"]); bg != "" {
+			out += "<meta name=\"theme-color\" content=\"" + bg + "\" media=\"(prefers-color-scheme: light)\">\n"
+		}
+		return out
+	}
 	if bg := themeBackground(theme); bg != "" {
 		out += "<meta name=\"theme-color\" content=\"" + bg + "\">\n"
 	}
@@ -172,17 +219,32 @@ func isLightColor(hex string) bool {
 // is free.
 func ThemeCSS() string {
 	var b strings.Builder
-	for _, t := range Themes() {
-		keys := make([]string, 0, len(t.Tokens))
-		for k := range t.Tokens {
+	block := func(name string, tokens map[string]string) {
+		keys := make([]string, 0, len(tokens))
+		for k := range tokens {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
-		b.WriteString(":root[data-theme=\"" + t.Name + "\"] {\n")
+		b.WriteString(":root[data-theme=\"" + name + "\"] {\n")
 		for _, k := range keys {
-			b.WriteString("  " + k + ": " + t.Tokens[k] + ";\n")
+			b.WriteString("  " + k + ": " + tokens[k] + ";\n")
 		}
 		b.WriteString("}\n")
+	}
+	for _, t := range Themes() {
+		themesMu.RLock()
+		dark, light, follows := t.follows()
+		themesMu.RUnlock()
+		if follows {
+			// The dark theme's tokens, then the light one's for a device that
+			// asks for light: the browser switches with the device, live.
+			block(t.Name, dark.Tokens)
+			b.WriteString("@media (prefers-color-scheme: light) {\n")
+			block(t.Name, light.Tokens)
+			b.WriteString("}\n")
+			continue
+		}
+		block(t.Name, t.Tokens)
 	}
 	return b.String()
 }
@@ -213,5 +275,37 @@ func init() {
 		"--text": "#24292f", "--text-hi": "#0d1117", "--text-mute": "#57606a",
 		"--border": "#d0d7de", "--accent": "#4f46e5", "--accent-hi": "#6366f1", "--text-on-accent": "#ffffff",
 		"--danger": "#cf222e", "--success": "#1a7f37", "--warning": "#9a6700", "--tap": "44px",
+	}})
+	// After the two it follows, which have to be registered for it to work.
+	RegisterTheme(ThemeSpec{Name: "system", Label: "Follow system: Indigo or Light, as the device is set", Dark: "indigo", Light: "light"})
+	RegisterTheme(ThemeSpec{Name: "high-contrast", Label: "High contrast: black and white + yellow", Tokens: map[string]string{
+		"--bg-0": "#000000", "--bg-1": "#0b0b0b", "--bg-2": "#1c1c1c",
+		"--text": "#ffffff", "--text-hi": "#ffffff", "--text-mute": "#d4d4d4",
+		"--border": "#8c8c8c", "--accent": "#ffd400", "--accent-hi": "#ffe866", "--text-on-accent": "#000000",
+		"--danger": "#ff6161", "--success": "#45e06f", "--warning": "#ffb020", "--tap": "44px",
+	}})
+	RegisterTheme(ThemeSpec{Name: "nord", Label: "Nord: cool blue-grey + frost", Tokens: map[string]string{
+		"--bg-0": "#2e3440", "--bg-1": "#3b4252", "--bg-2": "#434c5e",
+		"--text": "#e5e9f0", "--text-hi": "#eceff4", "--text-mute": "#a3adbf",
+		"--border": "#4c566a", "--accent": "#88c0d0", "--accent-hi": "#8fbcbb", "--text-on-accent": "#2e3440",
+		"--danger": "#bf616a", "--success": "#a3be8c", "--warning": "#ebcb8b", "--tap": "44px",
+	}})
+	RegisterTheme(ThemeSpec{Name: "solarized-dark", Label: "Solarized Dark", Tokens: map[string]string{
+		"--bg-0": "#002b36", "--bg-1": "#073642", "--bg-2": "#0e4250",
+		"--text": "#93a1a1", "--text-hi": "#eee8d5", "--text-mute": "#7d9093",
+		"--border": "#24515c", "--accent": "#268bd2", "--accent-hi": "#2aa198", "--text-on-accent": "#fdf6e3",
+		"--danger": "#dc322f", "--success": "#859900", "--warning": "#b58900", "--tap": "44px",
+	}})
+	RegisterTheme(ThemeSpec{Name: "solarized-light", Label: "Solarized Light", Tokens: map[string]string{
+		"--bg-0": "#eee8d5", "--bg-1": "#fdf6e3", "--bg-2": "#e4ddc8",
+		"--text": "#586e75", "--text-hi": "#073642", "--text-mute": "#6c7f85",
+		"--border": "#d3cbb7", "--accent": "#268bd2", "--accent-hi": "#2aa198", "--text-on-accent": "#fdf6e3",
+		"--danger": "#dc322f", "--success": "#5f7000", "--warning": "#8a6900", "--tap": "44px",
+	}})
+	RegisterTheme(ThemeSpec{Name: "gruvbox", Label: "Gruvbox: warm retro brown + orange", Tokens: map[string]string{
+		"--bg-0": "#282828", "--bg-1": "#32302f", "--bg-2": "#3c3836",
+		"--text": "#ebdbb2", "--text-hi": "#fbf1c7", "--text-mute": "#a89984",
+		"--border": "#504945", "--accent": "#fe8019", "--accent-hi": "#fabd2f", "--text-on-accent": "#282828",
+		"--danger": "#fb4934", "--success": "#b8bb26", "--warning": "#fabd2f", "--tap": "44px",
 	}})
 }

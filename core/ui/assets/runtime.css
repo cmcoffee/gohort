@@ -297,6 +297,14 @@ select:-webkit-autofill {
   background: var(--bg-1);
   position: relative; /* anchor for the live-pill popover */
 }
+/* gohort's mark on every page: a thin line in the theme's accent along the top
+ * of the bar, fading out to the right. One signature detail rather than a
+ * logo, so every theme carries it in its own colour. */
+.ui-page-header::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-hi) 45%, transparent 85%);
+  opacity: 0.85; pointer-events: none;
+}
 .ui-page-header-left {
   /* back link + title grouped on the left; min-width:0 lets the title clamp. */
   display: flex; align-items: center; gap: 0.6rem;
@@ -347,23 +355,41 @@ select:-webkit-autofill {
  * link): a shared page menu for a multi-page app. Pill-highlighted active page;
  * scrolls horizontally on narrow screens rather than wrapping. */
 .ui-page-tabs {
-  display: flex; align-items: center; gap: 0.15rem;
+  display: flex; align-items: flex-end; gap: 0.15rem;
   overflow-x: auto; -webkit-overflow-scrolling: touch;
   /* In the flow after the left group, which holds them at a fixed offset (see
    * .ui-page-header-left). Scrolls sideways when the tabs do not fit. */
   flex: 0 1 auto; min-width: 0;
+  /* Folder tabs: the strip reaches down over the bar's bottom padding and its
+   * border, so the active tab sits ON the page below rather than floating in
+   * the bar. */
+  align-self: stretch;
+  margin-bottom: calc(-0.45rem - 1px);
 }
 .ui-page-tabs::-webkit-scrollbar { height: 0; }
 .ui-page-tab {
+  position: relative;
   display: inline-flex; align-items: center;
-  padding: 0.3rem 0.7rem;
+  padding: 0.4rem 0.8rem 0.45rem;
   font-size: var(--fs-sm); color: var(--text-mute); text-decoration: none;
-  border-radius: var(--btn-radius); white-space: nowrap;
+  border: 1px solid transparent; border-bottom: none;
+  border-radius: var(--btn-radius) var(--btn-radius) 0 0; white-space: nowrap;
   -webkit-tap-highlight-color: transparent;
-  transition: color 0.1s ease, background 0.1s ease;
+  transition: color 0.1s ease, border-color 0.1s ease, background 0.1s ease;
 }
-.ui-page-tab:hover { color: var(--text); background: var(--bg-2); }
-.ui-page-tab.active { color: var(--text); background: var(--bg-2); font-weight: 600; }
+/* Folder tabs, not pills. A tab at rest is a label in the bar; hovering it
+ * shows the outline of the tab it would become. The active one is the page's
+ * own colour, open at the bottom, so it reads as the front of the folder the
+ * page below belongs to, with the accent along its top edge. */
+.ui-page-tab:hover { color: var(--text); border-color: color-mix(in srgb, var(--border) 75%, transparent); }
+.ui-page-tab.active {
+  color: var(--text-hi); background: var(--bg-0); font-weight: 600;
+  border-color: var(--border);
+}
+.ui-page-tab.active::before {
+  content: ""; position: absolute; left: -1px; right: -1px; top: -1px; height: 2px;
+  background: var(--accent); border-radius: var(--btn-radius) var(--btn-radius) 0 0;
+}
 /* More: the button the tabs that do not fit fold behind (navStrip), drawn as
  * one more tab so the row reads as one control. Its menu is anchored to the
  * page body, so the row's sideways overflow cannot clip it. */
@@ -378,7 +404,9 @@ select:-webkit-autofill {
   background: var(--bg-1); border: 1px solid var(--border);
   border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
 }
-.ui-page-tabs-menu .ui-page-tab { color: var(--text); padding: 0.45rem 0.7rem; }
+.ui-page-tabs-menu .ui-page-tab { color: var(--text); padding: 0.45rem 0.7rem; border: none; border-radius: var(--btn-radius); }
+.ui-page-tabs-menu .ui-page-tab:hover { background: var(--bg-2); }
+.ui-page-tabs-menu .ui-page-tab.active::before { display: none; }
 @media (max-width: 700px) {
   /* Their own row now, so a thumb-height that does not double the bar. */
   .ui-page-tab { min-height: 2.25rem; padding: 0.4rem 0.7rem; }
@@ -660,21 +688,30 @@ select:-webkit-autofill {
 }
 /* Page.Tabbed — a category button bar across the top; one group's
  * sections show at a time. */
+/* The same folder tabs as the page header's: they stand on the rule below
+ * them, and the active one is open into the panel it shows. */
 .ui-tabbar {
-  display: flex; flex-wrap: wrap; gap: 0.4rem;
-  margin: 0 0 1rem 0; padding-bottom: 0.6rem;
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.2rem;
+  margin: 0 0 1rem 0; padding-bottom: 0;
   border-bottom: 1px solid var(--border);
 }
 .ui-tab {
-  padding: 0.4rem 0.9rem; border-radius: var(--btn-radius); cursor: pointer;
+  position: relative; margin-bottom: -1px;
+  padding: 0.45rem 0.95rem; border-radius: var(--btn-radius) var(--btn-radius) 0 0; cursor: pointer;
   font: inherit; font-size: var(--fs-sm);
-  border: 1px solid var(--border); background: var(--bg-1); color: var(--text-mute);
+  border: 1px solid transparent; border-bottom: none; background: transparent; color: var(--text-mute);
   transition: color 0.12s, border-color 0.12s, background 0.12s;
 }
-.ui-tab:hover { color: var(--text); border-color: var(--text-mute); }
+.ui-tab:hover { color: var(--text); border-color: color-mix(in srgb, var(--border) 75%, transparent); }
 .ui-tab.active {
-  background: var(--accent-soft, color-mix(in srgb, var(--accent) 16%, transparent));
-  border-color: var(--accent, #4a9eff); color: var(--text);
+  background: var(--bg-0); color: var(--text-hi); font-weight: 600;
+  border-color: var(--border);
+  /* Covers the rule beneath it, so the tab is open into its panel. */
+  box-shadow: 0 1px 0 var(--bg-0);
+}
+.ui-tab.active::before {
+  content: ""; position: absolute; left: -1px; right: -1px; top: -1px; height: 2px;
+  background: var(--accent); border-radius: var(--btn-radius) var(--btn-radius) 0 0;
 }
 .ui-tab-hidden { display: none; }
 /* Section sub-nav (Page.SectionNav): a left rail of a tab group's sections. */
@@ -1466,7 +1503,9 @@ select:-webkit-autofill {
 /* Stack composes multiple components in one expand panel. */
 .ui-stack { display: flex; flex-direction: column; gap: 0.6rem; }
 /* Badge — colored pill for boolean/state indicators in table rows. */
+/* Numbers in badges line up and read as instruments rather than prose. */
 .ui-badge {
+  font-variant-numeric: tabular-nums;
   display: inline-block; padding: 0.1rem 0.55rem;
   border-radius: 999px; font-size: var(--fs-2xs); font-weight: 600;
   text-transform: uppercase; letter-spacing: 0.04em;
