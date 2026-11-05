@@ -879,7 +879,8 @@
             (rows || []).forEach(function(row) {
               if (isOrchItem(row) && passesOthers(row, ref.fi, q) && optionMatches(ref.opt, row)) n++;
             });
-            ref.btn.className = 'ui-tab' + (chosen[ref.fi] === ref.oi ? ' active' : '');
+            ref.btn.className = 'ui-filter-opt' + (chosen[ref.fi] === ref.oi ? ' active' : '');
+            ref.btn.setAttribute('aria-pressed', chosen[ref.fi] === ref.oi ? 'true' : 'false');
             ref.count.textContent = ' ' + n;
             // A choice that would empty the page says so before it is made.
             ref.btn.style.opacity = n ? '' : '0.55';
@@ -921,26 +922,28 @@
             bar.appendChild(searchBox);
           }
           filters.forEach(function(f, fi) {
-            if (f.label) {
-              bar.appendChild(el('span', {style: 'font-size:var(--fs-2xs, 0.72rem);text-transform:uppercase;letter-spacing:0.05em;color:var(--text-mute, #999)'}, [f.label]));
-            }
-            // TABS, not chips. A filter group is mutually exclusive with its
-            // first option as the default, which is what a tab bar is, and the
-            // house already draws one: .ui-tabbar / .ui-tab, the same control
-            // along the top of every admin page. Rendering the same idea two
-            // ways teaches the reader that they are two ideas.
-            //
+            // A SEGMENTED control, not tabs and not chips. A filter group is
+            // one choice of which rows to show, its first option the default:
+            // not a place to go, which is what the tabs above it are, so it
+            // must not look like them (drawn as tabs, a pane's filters read as
+            // a third row of navigation under the page's and the pane's own).
             // The chip styling stays where chips are genuinely chips: the
             // multi-select picker, where several can be on at once.
-            var group = el('div', {class: 'ui-tabbar', style: 'margin:0;padding:0;border:0'});
+            // The label and its track are one unit, so a row that wraps
+            // breaks between groups, never between a label and its options.
+            var unit = el('span', {class: 'ui-filter-group'});
+            if (f.label) unit.appendChild(el('span', {class: 'ui-filter-label'}, [f.label]));
+            var group = el('div', {class: 'ui-filter-seg', role: 'group'});
+            if (f.label) group.setAttribute('aria-label', f.label);
             (f.options || []).forEach(function(opt, oi) {
-              var count = el('span', {style: 'opacity:0.7;margin-left:0.35rem'}, ['']);
-              var btn = el('button', {type: 'button', class: 'ui-tab',
+              var count = el('span', {class: 'ui-filter-count'}, ['']);
+              var btn = el('button', {type: 'button', class: 'ui-filter-opt',
                 onclick: function() { chosen[fi] = oi; repaint(); }}, [opt.label || '?', count]);
               chipRefs.push({fi: fi, oi: oi, opt: opt, btn: btn, count: count});
               group.appendChild(btn);
             });
-            bar.appendChild(group);
+            unit.appendChild(group);
+            bar.appendChild(unit);
           });
           orchView.appendChild(bar);
         }

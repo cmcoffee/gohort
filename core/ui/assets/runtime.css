@@ -697,34 +697,51 @@ select:-webkit-autofill {
 }
 /* Page.Tabbed — a category button bar across the top; one group's
  * sections show at a time. */
-/* The same folder tabs as the page header's: they stand on the rule below
- * them, and the active one is open into the panel it shows. */
+/* Three shapes for three questions. The page tabs in the header are folders:
+ * where you are in gohort. These are a page's own sections, a level below
+ * them, so they are drawn quieter: words on the rule, the open one underlined
+ * in the accent. A list's filters are neither (see .ui-filter-seg). */
 .ui-tabbar {
-  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.2rem;
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0 1.2rem;
   margin: 0 0 1rem 0; padding-bottom: 0;
   border-bottom: 1px solid var(--border);
 }
 .ui-tab {
   position: relative; margin-bottom: -1px;
-  padding: 0.45rem 0.95rem; border-radius: calc(var(--btn-radius) * 2) calc(var(--btn-radius) * 2) 0 0; cursor: pointer;
+  padding: 0.5rem 0.1rem 0.55rem; border-radius: 0; cursor: pointer;
   font: inherit; font-size: var(--fs-sm);
-  border: 1px solid transparent; border-bottom: none; background: transparent; color: var(--text-mute);
-  transition: color 0.12s, border-color 0.12s, background 0.12s;
+  border: none; border-bottom: 2px solid transparent; background: transparent; color: var(--text-mute);
+  transition: color 0.12s, border-color 0.12s;
 }
-.ui-tab:hover { color: var(--text); border-color: color-mix(in srgb, var(--border) 75%, transparent); }
-.ui-tab.active {
+.ui-tab:hover { color: var(--text); border-bottom-color: var(--border); }
+.ui-tab.active { color: var(--text-hi); font-weight: 600; border-bottom-color: var(--accent); }
+.ui-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* A list's filter says which of its rows to show, not where to go, so it is a
+ * segmented control: a recessed track with the chosen option raised in it,
+ * each option's count beside its name. A label and its track wrap as one, and
+ * a track wider than the row scrolls sideways rather than breaking. */
+.ui-filter-group { display: inline-flex; align-items: center; gap: 0.5rem; min-width: 0; max-width: 100%; }
+.ui-filter-label { flex: 0 0 auto; font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-mute); }
+.ui-filter-seg {
+  display: inline-flex; gap: 2px; padding: 3px; min-width: 0; max-width: 100%;
+  overflow-x: auto; scrollbar-width: none;
+  background: var(--bg-2); border-radius: calc(var(--btn-radius) + 3px);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.ui-filter-seg::-webkit-scrollbar { display: none; }
+.ui-filter-opt {
+  flex: 0 0 auto; padding: 0.3rem 0.7rem; cursor: pointer; white-space: nowrap;
+  font: inherit; font-size: var(--fs-sm);
+  border: none; border-radius: var(--btn-radius); background: transparent; color: var(--text-mute);
+  transition: color 0.12s, background 0.12s, box-shadow 0.12s;
+}
+.ui-filter-opt:hover:not(.active) { color: var(--text); }
+.ui-filter-opt.active {
   background: var(--bg-0); color: var(--text-hi); font-weight: 600;
-  border-color: var(--border);
-  /* Covers the rule beneath it, so the tab is open into its panel. */
-  box-shadow: 0 1px 0 var(--bg-0);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25), inset 0 0 0 1px var(--border);
 }
-.ui-tab.active::before {
-  /* The accent follows the rounded top: a cap as tall as the corner, drawn
-   * by its top border, which thins away down each curve. */
-  content: ""; position: absolute; left: -1px; right: -1px; top: -1px;
-  height: calc(var(--btn-radius) * 2); pointer-events: none;
-  border-top: 2px solid var(--accent); border-radius: calc(var(--btn-radius) * 2) calc(var(--btn-radius) * 2) 0 0;
-}
+.ui-filter-opt:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ui-filter-count { margin-left: 0.35rem; font-size: var(--fs-2xs); color: var(--text-mute); font-variant-numeric: tabular-nums; }
 .ui-tab-hidden { display: none; }
 /* Section sub-nav (Page.SectionNav): a left rail of a tab group's sections. */
 .ui-secnav { display: flex; gap: 1.2rem; align-items: flex-start; }
@@ -7127,7 +7144,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
       .ui-sections-view, .ui-cw-doc-view, .ui-rules-edit-suggest,
       .ui-rules-edit-done, .ui-rules-edit-cancel, .ui-assist-send, .ui-assist-choice,
       .ui-cp-add-btn, .ui-cp-add, .ui-form-preset-chip, .ui-bell-act,
-      .ui-suggest-secondary, .ui-channels-add, .ui-bell, .ui-page-tab, .ui-tab,
+      .ui-suggest-secondary, .ui-channels-add, .ui-bell, .ui-page-tab, .ui-tab, .ui-filter-opt,
       .ui-scope-pill, .ui-scope-more) {
     min-height: var(--btn-h-sm);
   }

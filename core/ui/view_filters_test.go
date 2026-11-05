@@ -291,17 +291,24 @@ func TestAChangeRedrawKeepsTheTabYouAreOn(t *testing.T) {
 	}
 }
 
-// The tab is a TAB, drawn the way the house draws tabs. A filter group is
-// mutually exclusive with its first option as the default, which is what a tab
-// bar is, and rendering the same idea two ways teaches the reader they are two
-// ideas.
-func TestFilterOptionsRenderAsHouseTabs(t *testing.T) {
+// A filter is a segmented control, not a tab. It chooses which rows to show,
+// not where to go; drawn as tabs, a pane's filters read as a third row of
+// navigation under the page's tabs and the pane's own. Each label and its
+// track wrap as one unit.
+func TestFilterOptionsRenderAsASegmentedControl(t *testing.T) {
 	src := readRuntimeFile(t, "30_agent_loop_panel.js")
-	if !strings.Contains(src, "class: 'ui-tab'") {
-		t.Error("filter options do not use the house tab class")
+	f := src[strings.Index(src, "filters.forEach(function(f, fi) {"):]
+	f = f[:strings.Index(f, "orchView.appendChild(bar);")]
+	if strings.Contains(f, "ui-tab") {
+		t.Error("filter options are drawn as tabs")
 	}
-	if !strings.Contains(src, "'ui-tab' + (chosen[ref.fi] === ref.oi ? ' active' : '')") {
-		t.Error("the selected tab is not marked with the house active class")
+	for _, want := range []string{"class: 'ui-filter-group'", "class: 'ui-filter-seg'", "class: 'ui-filter-opt'", "class: 'ui-filter-count'"} {
+		if !strings.Contains(f, want) {
+			t.Errorf("the filter is missing %s", want)
+		}
+	}
+	if !strings.Contains(src, "'ui-filter-opt' + (chosen[ref.fi] === ref.oi ? ' active' : '')") {
+		t.Error("the chosen option is not marked active")
 	}
 	// The multi-select picker keeps the chip styling: several can be on at
 	// once there, which is what a chip is and a tab is not.
