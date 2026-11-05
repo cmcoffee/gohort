@@ -212,7 +212,7 @@ const dictationFlow = `
   mic.onclick(mic);
   await sleep(10);
   check('pressing again stops and sends the recording', pending.length === 1 && pending[0].url === '/api/dictate' && pending[0].opts.headers['Content-Type'] === 'audio/webm;codecs=opus' && tracksStopped >= 1);
-  check('saying it had no meter, and how long each step took', /^none ms=\d+ open=\d+ rec=\d+ began=\d+ stop=\d+$/.test(pending[0].opts.headers['X-Dictation-Meter']));
+  check('saying it had no meter, and how long each step took', /^none ms=\d+ open=\d+ warm=-1 rec=\d+ began=\d+ stop=\d+$/.test(pending[0].opts.headers['X-Dictation-Meter']));
   check('and it is no longer marked as recording', !('aria-pressed' in mic.button.attrs));
   await sleep(150);
   check('a spinner while it is written out', /^[⠀-⣿]/.test(mic.button.textContent));
@@ -500,6 +500,9 @@ eval(dictationJS);
 (async function() {
   await sleep(10);
   var mic = actions[0];
+  // A real microphone hisses a little the moment it is open; the start cue
+  // waits for that (waitForSound), so the room's noise is there from the tap.
+  loud = 0.003;
   mic.onclick(mic);
   check('the tap wakes the audio, where a phone allows it', made === 1 && resumed === 1);
   await sleep(30);
@@ -517,9 +520,10 @@ eval(dictationJS);
   check('talking keeps it recording', pending.length === 0);
   loud = 0.003; await sleep(400);
   check('going quiet after speech stops it and sends it', pending.length === 1);
-  check('saying what the meter heard, and how long each step took, for the log', /^live=1 voiced=\d+ first=\d+ peak=0\.\d{3} ctx=running ms=\d+ open=\d+ rec=\d+ began=\d+ stop=\d+$/.test(pending[0].opts.headers['X-Dictation-Meter']));
+  check('saying what the meter heard, and how long each step took, for the log', /^live=1 voiced=\d+ first=\d+ peak=0\.\d{3} ctx=running ms=\d+ open=\d+ warm=\d+ rec=\d+ began=\d+ stop=\d+$/.test(pending[0].opts.headers['X-Dictation-Meter']));
   check('with a falling tone', tones.join() === 'up,down');
-  check('the meter is let go and the ring cleared', disconnected === 1 && mic.button.style.props['--ui-act-level'] === '0.00');
+  // Two let go per recording: the warm-up's listener, then the meter.
+  check('the meter is let go and the ring cleared', disconnected === 2 && mic.button.style.props['--ui-act-level'] === '0.00');
   pending[0].res(written('Hello.'));
   await sleep(10);
 
@@ -544,7 +548,7 @@ eval(dictationJS);
   check('a long one with nothing said cancels, sending nothing', recorders[2].stopped && pending.length === 2 &&
     mic.button.textContent === '🎤' && mic.button.title.indexOf('Nothing was heard') === 0);
   check('with the falling tone, the meter let go and the ring cleared', tones[tones.length - 1] === 'down' &&
-    !('aria-pressed' in mic.button.attrs) && mic.button.style.props['--ui-act-level'] === '0.00' && disconnected === 3);
+    !('aria-pressed' in mic.button.attrs) && mic.button.style.props['--ui-act-level'] === '0.00' && disconnected === 6);
 
   // Stop pressed before anything was said cancels the same way: a silent
   // clip sent anyway comes back as words the transcriber made up.
@@ -589,6 +593,32 @@ eval(dictationJS);
   var recs = recorders.length;
   mic.onclick(mic); await sleep(20); mic.onclick(mic); await sleep(250);
   check('pressing during the tone cancels before any recording', recorders.length === recs && mic.button.textContent === '🎤');
+
+  // A microphone that opens silent (a headset switching into its call mode):
+  // no tone and no recording until it delivers sound, the button spinning
+  // meanwhile; then the cue, and the wait is in the log.
+  loud = 0;
+  var tonesBefore = tones.length;
+  mic.onclick(mic); await sleep(30);
+  check('no cue while the microphone is still silent', tones.length === tonesBefore && recorders.length === recs);
+  check('the button spins while it waits', /^[\u2800-\u28ff]$/.test(mic.button.textContent));
+  loud = 0.003; await sleep(250);
+  check('the cue once it delivers sound, then it records', tones[tones.length - 1] === 'up' && recorders.length === recs + 1 && recorders[recs].started);
+  loud = 0.3; await sleep(300);
+  loud = 0.003; await sleep(400);
+  check('and the wait is in the log', pending.length === 7 && / warm=\d+ /.test(pending[6].opts.headers['X-Dictation-Meter']) &&
+    !/ warm=-1 /.test(pending[6].opts.headers['X-Dictation-Meter']));
+  pending[6].res(written('Yes.'));
+  await sleep(10);
+
+  // One that never delivers sound is cued anyway once the wait is up: some
+  // web views report silence for good, and a press must never hang.
+  loud = 0;
+  recs = recorders.length;
+  mic.onclick(mic); await sleep(500);
+  check('a microphone silent for good is cued after the wait', recorders.length === recs + 1 && recorders[recs].started);
+  mic.onclick(mic); await sleep(10);
+  check('and says it never heard it', pending.length === 8 && / warm=-1 /.test(pending[7].opts.headers['X-Dictation-Meter']));
   process.exit(fail ? 1 : 0);
 })();
 `

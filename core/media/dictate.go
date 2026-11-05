@@ -383,6 +383,12 @@ const dictationJS = `(function(){
   var silenceMs = 1800, quietMs = 15000, tickMs = 50, armMs = 150;
   // The start tone's length; recording begins after it, so it is not heard.
   var toneMs = 150;
+  // How long the press waits for the microphone to deliver sound before it
+  // cues anyway (waitForSound). Some devices open silent for a while: a
+  // headset switching into its call mode, a USB microphone, a Mac waking an
+  // input. Cued at once, the start of what was said went into that silence.
+  // Some web views report silence for good, so it never waits for ever.
+  var warmCapMs = 1500;
   // A stop this soon after the start is a tap on and off, not a recording:
   // it cancels whatever the meter made of it, since a clip that short with
   // nothing said comes back as words the transcriber made up.
@@ -476,7 +482,10 @@ const dictationJS = `(function(){
   // it is capturing (began, -1 when it never says), and from Stop to the
   // audio being handed over (stop). A step slow in one client and not in
   // another is the one to look at.
-  var pressAt = 0, openMs = -1, recMs = -1, startCall = 0, beganMs = -1, stopAt = 0;
+  // warm is how long the microphone took, once open, to deliver its first
+  // sound (waitForSound); -1 when it never did within warmCapMs or could not
+  // be listened to.
+  var pressAt = 0, openMs = -1, recMs = -1, startCall = 0, beganMs = -1, stopAt = 0, warmMs = -1;
 
   // label changes the button's words by editing the text it already has,
   // never by swapping it for new text. The clock and the spinner rewrite it
@@ -580,18 +589,69 @@ const dictationJS = `(function(){
     awaiting = false;
     if (window.gohortReadAloudStop) window.gohortReadAloudStop('a recording started');
     state = 'starting';
-    pressAt = Date.now(); openMs = recMs = beganMs = -1;
+    pressAt = Date.now(); openMs = recMs = beganMs = warmMs = -1;
     show(ctx, micGlyph, 'Starting the microphone. Press to cancel');
     navigator.mediaDevices.getUserMedia({audio: true}).then(function(s) {
       if (state !== 'starting') { s.getTracks().forEach(function(t) { t.stop(); }); return; }
       openMs = Date.now() - pressAt;
       stream = s;
-      tone(true);
-      if (audio) setTimeout(function() { begin(ctx, s); }, toneMs); else begin(ctx, s);
+      // The cue (the tone, the button turning to recording) waits until the
+      // microphone is actually delivering sound, so what is said after the
+      // cue is all heard.
+      waitForSound(ctx, s, function(ms) {
+        if (stream !== s || state !== 'starting') return;
+        warmMs = ms;
+        tone(true);
+        if (audio) setTimeout(function() { begin(ctx, s); }, toneMs); else begin(ctx, s);
+      });
     }).catch(function(e) {
       if (state !== 'starting') return;
       failed(ctx, e && e.name === 'NotAllowedError' ? 'the microphone was not allowed.' : (e && e.message) || e);
     });
+  }
+
+  // waitForSound calls done once the open microphone delivers its first sound
+  // (any sample that is not exactly zero: a real microphone always hisses a
+  // little), with how long that took, or after warmCapMs with -1. The button
+  // spins meanwhile, as it did while the microphone opened. Without a way to
+  // listen (no audio context), it is done at once.
+  function waitForSound(ctx, s, done) {
+    var t0 = Date.now();
+    if (!audio || !audio.createMediaStreamSource || !audio.createAnalyser) { done(-1); return; }
+    var src, an;
+    try {
+      src = audio.createMediaStreamSource(s);
+      an = audio.createAnalyser();
+      an.fftSize = 512;
+      src.connect(an);
+    } catch (e) { done(-1); return; }
+    if (!an.getFloatTimeDomainData) { try { src.disconnect(); } catch (e) {} done(-1); return; }
+    if (audio.state !== 'running' && audio.resume) { try { audio.resume(); } catch (e) {} }
+    var buf = new Float32Array(an.fftSize), fi = 0, iv = null;
+    // One look now, then one a tick: a microphone already delivering sound
+    // is cued at once, not a tick later.
+    function look() {
+      if (state !== 'starting' || stream !== s) {
+        if (iv) clearInterval(iv);
+        try { src.disconnect(); } catch (e) {}
+        return true;
+      }
+      an.getFloatTimeDomainData(buf);
+      var heard = false;
+      for (var i = 0; i < buf.length; i++) if (buf[i] !== 0) { heard = true; break; }
+      var waited = Date.now() - t0;
+      if (heard || waited >= warmCapMs) {
+        if (iv) clearInterval(iv);
+        try { src.disconnect(); } catch (e) {}
+        done(heard ? waited : -1);
+        return true;
+      }
+      fi = (fi + 1) % frames.length;
+      label(ctx.button, frames.charAt(fi));
+      return false;
+    }
+    if (look()) return;
+    iv = setInterval(look, tickMs);
   }
 
   // begin starts recording once the start tone has played, unless a press
@@ -714,7 +774,7 @@ const dictationJS = `(function(){
     state = 'sending';
     meterNote = (meter ? 'live=' + (meter.live ? 1 : 0) + ' voiced=' + meter.voiced + ' first=' + meter.first +
       ' peak=' + meter.peak.toFixed(3) + ' ctx=' + audio.state : 'none') + ' ms=' + (Date.now() - started) +
-      ' open=' + openMs + ' rec=' + recMs + ' began=' + beganMs;
+      ' open=' + openMs + ' warm=' + warmMs + ' rec=' + recMs + ' began=' + beganMs;
     stopAt = Date.now();
     stopMeter();
     pressed(ctx, false);
