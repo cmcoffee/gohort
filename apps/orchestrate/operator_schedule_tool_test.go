@@ -525,22 +525,3 @@ func TestAMonthlyScheduleIsMade(t *testing.T) {
 		t.Errorf("pattern fields: %v", got)
 	}
 }
-
-// An agent asking for random times a day can give a range: each day fires
-// between times_per_day and times_per_day_max. A scheduled agent fires at
-// random gaps and takes neither.
-func TestARandomTaskCanFireARangeOfTimesADay(t *testing.T) {
-	spec, ok, err := everyTiming("u", map[string]any{"random": true, "times_per_day": float64(3), "times_per_day_max": float64(6)}, "", 0, nil)
-	if err != nil || !ok {
-		t.Fatalf("%v %v", ok, err)
-	}
-	if spec.How != timing.HowRandomCount || spec.PerDay != 3 || spec.PerDayMax != 6 {
-		t.Errorf("spec: %+v", spec)
-	}
-	if !strings.HasPrefix(spec.Label(), "3 to 6 times a day at random") {
-		t.Errorf("label: %q", spec.Label())
-	}
-	if _, _, err := standingRandomGaps(map[string]any{"times_per_day_max": float64(6), "min_gap_minutes": float64(30), "max_gap_minutes": float64(60)}, 0); err == nil {
-		t.Error("times_per_day_max was accepted for a scheduled agent")
-	}
-}

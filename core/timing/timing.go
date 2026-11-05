@@ -15,7 +15,6 @@ package timing
 import (
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"sort"
 	"strings"
 	"time"
@@ -60,11 +59,6 @@ type Spec struct {
 	EverySeconds int `json:"every_seconds,omitempty"`
 	// PerDay is how many random fires a day for HowRandomCount.
 	PerDay int `json:"per_day,omitempty"`
-	// PerDayMax, above PerDay, makes that a range: each day fires between
-	// PerDay and PerDayMax times (perDayOn). Random gaps let one day bunch up
-	// and the next go quiet; a range keeps every day between a floor and a
-	// ceiling and still varies them. Zero, or PerDay itself, is a fixed count.
-	PerDayMax int `json:"per_day_max,omitempty"`
 	// MinGapSeconds / MaxGapSeconds bound each random gap for HowRandomGap.
 	MinGapSeconds int `json:"min_gap_seconds,omitempty"`
 	MaxGapSeconds int `json:"max_gap_seconds,omitempty"`
@@ -125,10 +119,7 @@ func (s Spec) Validate() error {
 		if s.PerDay < 1 || s.PerDay > 96 {
 			return errors.New("times a day at random has to be between 1 and 96")
 		}
-		if s.PerDayMax != 0 && (s.PerDayMax < s.PerDay || s.PerDayMax > 96) {
-			return errors.New("the most times a day has to be between the fewest and 96")
-		}
-		if s.windowMinutes()/max(s.PerDay, s.PerDayMax) < 1 {
+		if s.windowMinutes()/s.PerDay < 1 {
 			return errors.New("the window is too short for that many times a day")
 		}
 	case HowRandomGap:
@@ -170,32 +161,6 @@ func daysInMonth(month int) int {
 		return 30
 	}
 	return 31
-}
-
-// perDayOn is how many times a random-count Spec fires on day d: PerDay, or
-// with a range (PerDayMax), a number between the two drawn from the date and
-// the Spec itself. Drawn rather than random, so the count is one number for
-// the whole day however often Next asks, through a restart too, with nothing
-// stored. Two Specs set alike fire alike many times on a given day.
-func (s Spec) perDayOn(d time.Time) int {
-	if s.PerDayMax <= s.PerDay {
-		return s.PerDay
-	}
-	h := fnv.New32a()
-	fmt.Fprintf(h, "%s|%d|%d|%d|%d|%d", dayOf(d).Format("2006-01-02"), s.PerDay, s.PerDayMax, s.windowStart(), s.windowMinutes(), s.Days)
-	return s.PerDay + int(h.Sum32()%uint32(s.PerDayMax-s.PerDay+1))
-}
-
-// gapDayRange is roughly how many times a random-gap Spec fires in a day: its
-// window (the whole day without one) over the longest gap, and over the
-// shortest. Gaps are drawn one at a time, so a day can land anywhere in it;
-// said on the label so that spread is not a surprise.
-func (s Spec) gapDayRange() (lo, hi int) {
-	if s.MinGapSeconds < 1 || s.MaxGapSeconds < 1 {
-		return 0, 0
-	}
-	w := s.windowMinutes() * 60
-	return w / s.MaxGapSeconds, w / s.MinGapSeconds
 }
 
 // windowMinutes is the length of the day it may fire in.
@@ -309,24 +274,19 @@ func (s Spec) Next(from time.Time, rnd func() float64) (time.Time, error) {
 		}
 		return t, nil
 	case HowRandomCount:
-		// The window is cut into the day's count of equal slots and each fire
-		// lands at a random moment in the next slot, so a day gets its count
-		// spread across it with no state to keep between them. With a range,
-		// the day's count is the date's (perDayOn), the same however often
-		// this is asked.
-		slotOn := func(d time.Time) time.Duration {
-			return time.Duration(s.windowMinutes()) * time.Minute / time.Duration(s.perDayOn(d))
-		}
+		// The window is cut into PerDay equal slots and each fire lands at a
+		// random moment in the next slot, so a day gets PerDay fires spread
+		// across it with no state to keep between them.
+		slot := time.Duration(s.windowMinutes()) * time.Minute / time.Duration(s.PerDay)
 		day := dayOf(from)
 		startOf := func(d time.Time) time.Time { return d.Add(time.Duration(s.windowStart()) * time.Minute) }
 		pick := func(d time.Time, k int) time.Time {
-			slot := slotOn(d)
 			return startOf(d).Add(time.Duration(k)*slot + time.Duration(rnd()*float64(slot)))
 		}
 		if s.runsOn(from.Weekday()) {
 			if since := from.Sub(startOf(day)); since < 0 {
 				return pick(day, 0), nil
-			} else if k := int(since/slotOn(day)) + 1; k < s.perDayOn(day) {
+			} else if k := int(since/slot) + 1; k < s.PerDay {
 				return pick(day, k), nil
 			}
 		}
@@ -458,25 +418,13 @@ func (s Spec) Label() string {
 	case HowEvery:
 		b.WriteString("every " + durationWords(s.EverySeconds))
 	case HowRandomCount:
-		switch {
-		case s.PerDayMax > s.PerDay:
-			b.WriteString(fmt.Sprintf("%d to %d times a day at random", s.PerDay, s.PerDayMax))
-		case s.PerDay == 1:
+		b.WriteString(fmt.Sprintf("%d times a day at random", s.PerDay))
+		if s.PerDay == 1 {
+			b.Reset()
 			b.WriteString("once a day at random")
-		default:
-			b.WriteString(fmt.Sprintf("%d times a day at random", s.PerDay))
 		}
 	case HowRandomGap:
 		b.WriteString("at random, every " + gapWords(s.MinGapSeconds, s.MaxGapSeconds))
-		switch lo, hi := s.gapDayRange(); {
-		case hi < 1:
-		case lo == hi:
-			b.WriteString(fmt.Sprintf(" (about %d a day)", hi))
-		case lo < 1:
-			b.WriteString(fmt.Sprintf(" (up to about %d a day)", hi))
-		default:
-			b.WriteString(fmt.Sprintf(" (about %d to %d a day)", lo, hi))
-		}
 	case HowYearly:
 		b.WriteString(fmt.Sprintf("every year on %s %d at %s", time.Month(s.Month).String()[:3], s.Day, HHMM(s.Times[0])))
 	case HowMonthly:

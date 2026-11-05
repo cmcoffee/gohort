@@ -7529,20 +7529,8 @@
         var everyRow = schedLabeled('Every', everyWrap);
         host.appendChild(everyRow);
 
-        // Times a day, and "up to": a range keeps every day between a floor
-        // and a ceiling (each day's count drawn from the range), where random
-        // gaps let one day bunch up and the next go quiet. Blank, or the same
-        // number, is a fixed count.
-        // (The "up to" box itself is made last, below, and placed here.)
         var perDay = schedNum(spec.per_day || 3, 1);
-        var perDayWrap = document.createElement('div');
-        perDayWrap.style.cssText = 'display:flex;gap:0.5rem;align-items:center';
-        perDayWrap.appendChild(perDay);
-        var upTo = document.createElement('span');
-        upTo.className = 'ui-orch-sec-toggle-help';
-        upTo.textContent = 'up to';
-        perDayWrap.appendChild(upTo);
-        var perDayRow = schedLabeled('Times a day', perDayWrap);
+        var perDayRow = schedLabeled('Times a day', perDay);
         host.appendChild(perDayRow);
 
         var gapUnit0 = (spec.min_gap_seconds || 1800) % 3600 === 0 && (spec.max_gap_seconds || 3600) % 3600 === 0 ? 'hours' : 'minutes';
@@ -7556,33 +7544,10 @@
         gapWrap.appendChild(gapMin); gapWrap.appendChild(document.createTextNode('to'));
         gapWrap.appendChild(gapMax); gapWrap.appendChild(gapUnit);
         var gapRow = schedLabeled('Each gap between runs', gapWrap);
-        // What the gaps come to in a day, as they are typed: each gap is drawn
-        // on its own, so a day lands anywhere in this. For a set number each
-        // day, "a number of times a day" takes a range.
-        var gapDay = document.createElement('div');
-        gapDay.className = 'ui-orch-sec-toggle-help';
-        gapDay.style.marginTop = '0.3rem';
-        gapRow.appendChild(gapDay);
         host.appendChild(gapRow);
 
         var win = schedWindowRow(spec);
         host.appendChild(win.el);
-        function paintGapDay() {
-          var mul = gapUnit.value === 'hours' ? 3600 : 60;
-          var lo = parseInt(gapMin.value, 10) * mul, hi = parseInt(gapMax.value, 10) * mul;
-          var day = 86400;
-          var f = schedMinutes((win.from.value || '').trim()), t = schedMinutes((win.to.value || '').trim());
-          if (f >= 0 && t > f) day = (t - f) * 60;
-          if (!(lo > 0) || !(hi > lo)) { gapDay.textContent = ''; return; }
-          var few = Math.floor(day / hi), many = Math.floor(day / lo);
-          gapDay.textContent = 'About ' + (few < 1 ? 'up to ' + many : few + ' to ' + many) +
-            ' times a day, varying from day to day. To set a minimum and maximum each day, choose "At random, a number of times a day".';
-        }
-        [gapMin, gapMax, gapUnit, win.from, win.to].forEach(function(el) {
-          el.addEventListener('input', paintGapDay);
-          el.addEventListener('change', paintGapDay);
-        });
-        paintGapDay();
 
         // Once a year: a month, a day and a time. The day boxes do not apply.
         // Built last so the inputs above keep their order.
@@ -7640,18 +7605,6 @@
         how.addEventListener('change', sync);
         sync();
 
-        // "Up to" beside Times a day, made after every other field of this
-        // dialog's timing so the fields made before it keep their places,
-        // and a numeric text box rather than a number one for the same reason.
-        var perDayMax = document.createElement('input');
-        perDayMax.type = 'text'; perDayMax.inputMode = 'numeric';
-        perDayMax.className = 'ui-orch-sec-filter';
-        perDayMax.style.width = '5rem';
-        perDayMax.value = spec.per_day_max > (spec.per_day || 0) ? String(spec.per_day_max) : '';
-        perDayMax.placeholder = 'same';
-        perDayMax.title = 'The most times a day. Each day fires between the two numbers; leave blank for the same number every day.';
-        perDayWrap.appendChild(perDayMax);
-
         return function collect() {
           var h = how.value;
           if (h === 'yearly') {
@@ -7685,11 +7638,6 @@
               var c = parseInt(perDay.value, 10);
               if (isNaN(c) || c < 1 || c > 96) { window.uiAlert('Times a day has to be between 1 and 96.'); return null; }
               out.per_day = c;
-              var cmax = parseInt(perDayMax.value, 10);
-              if (!isNaN(cmax) && cmax !== c) {
-                if (cmax < c || cmax > 96) { window.uiAlert('"Up to" has to be more than times a day, and at most 96.'); return null; }
-                out.per_day_max = cmax;
-              }
             } else {
               var mul = gapUnit.value === 'hours' ? 3600 : 60;
               var lo = parseInt(gapMin.value, 10), hi = parseInt(gapMax.value, 10);

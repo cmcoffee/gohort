@@ -295,7 +295,7 @@ func TestStandingRandomGaps(t *testing.T) {
 	if len(seen) < 2 {
 		t.Fatalf("every gap was the same: not random")
 	}
-	if got := StandingScheduleLabel(sa); got != "at random, every 30-60 minutes (about 24 to 48 a day)" {
+	if got := StandingScheduleLabel(sa); got != "at random, every 30-60 minutes" {
 		t.Errorf("label %q", got)
 	}
 	// A bound not above the interval is the plain fixed interval.
@@ -332,7 +332,7 @@ func TestStandingWindow(t *testing.T) {
 	if next, _ := nextStandingRun(sa, early); next.Before(time.Date(2026, 10, 12, 9, 0, 0, 0, loc)) || next.After(time.Date(2026, 10, 12, 9, 30, 0, 0, loc)) {
 		t.Fatalf("a run before the window did not wait for it: %s", next)
 	}
-	if got := StandingScheduleLabel(sa); got != "at random, every 30-60 minutes (about 8 to 16 a day) between 09:00 and 17:00" {
+	if got := StandingScheduleLabel(sa); got != "at random, every 30-60 minutes between 09:00 and 17:00" {
 		t.Errorf("label %q", got)
 	}
 }
