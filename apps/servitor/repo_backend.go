@@ -64,16 +64,25 @@ func repoFileCount(user, applianceID string) int {
 	return len(store.Keys(repoFilesTable))
 }
 
+// wipeRepoFiles drops every file of a repo's store, in one commit per group.
 func wipeRepoFiles(user, applianceID string) {
 	store := repoFileStore(user, applianceID)
 	if store == nil {
 		return
 	}
+	w := &repoWrites{store: store}
+	keys := map[string]bool{}
 	for _, k := range store.Keys(repoFilesTable) {
-		store.Unset(repoFilesTable, k)
+		keys[k] = true
 	}
 	for _, k := range store.Keys(repoHashTable) {
-		store.Unset(repoHashTable, k)
+		keys[k] = true
+	}
+	for k := range keys {
+		w.unset(k)
+	}
+	if err := w.flush(); err != nil {
+		Log("[servitor.repo] wiping %s's files failed partway: %v", applianceID, err)
 	}
 }
 
@@ -127,10 +136,12 @@ func (T *Servitor) cloneAndIngestRepo(ctx context.Context, user string, udb Data
 	seen := map[string]bool{}
 	var count, added, changed int
 	capped := false
+	w := &repoWrites{store: store}
 	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		// A local folder can be far bigger than a repository: stop when the
-		// session is cancelled or the file cap is reached, not at the end.
-		if ctx.Err() != nil {
+		// session is cancelled, the file cap is reached, or the store refuses
+		// a write, not at the end.
+		if ctx.Err() != nil || w.err != nil {
 			return filepath.SkipAll
 		}
 		if count >= maxIngestFiles {
@@ -176,8 +187,7 @@ func (T *Servitor) cloneAndIngestRepo(ctx context.Context, user string, udb Data
 		if old, ok := prev[key]; ok && old == h {
 			return nil // unchanged — skip the encrypt + write
 		}
-		store.Set(repoFilesTable, key, string(content))
-		store.Set(repoHashTable, key, h)
+		w.set(key, string(content), h)
 		if _, existed := prev[key]; existed {
 			changed++
 		} else {
@@ -186,6 +196,14 @@ func (T *Servitor) cloneAndIngestRepo(ctx context.Context, user string, udb Data
 		return nil
 	})
 
+	// What was read is written even when the walk stopped early, as it was
+	// when each file was written on its own. A store that refused a write
+	// leaves the record as it was: the next ingest writes what this one could
+	// not, since a file's hash is only written with its content.
+	if err := w.flush(); err != nil {
+		Log("[servitor.repo] ingest of %s stopped: writing its files failed: %v", rec.Name, err)
+		return
+	}
 	// A walk that stopped early has not seen the whole tree, so nothing it
 	// missed may be taken for deleted.
 	if ctx.Err() != nil {
@@ -200,10 +218,13 @@ func (T *Servitor) cloneAndIngestRepo(ctx context.Context, user string, udb Data
 	removed := 0
 	for p := range prev {
 		if !seen[p] && !capped {
-			store.Unset(repoFilesTable, p)
-			store.Unset(repoHashTable, p)
+			w.unset(p)
 			removed++
 		}
+	}
+	if err := w.flush(); err != nil {
+		Log("[servitor.repo] ingest of %s stopped: dropping files gone from it failed: %v", rec.Name, err)
+		return
 	}
 
 	rec.RepoCloned = time.Now().Format(time.RFC3339)
