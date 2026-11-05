@@ -94,6 +94,22 @@ type TokenScope struct {
 	// migrated the first time it is seen (bindAgentsToMCP), listing the
 	// agents it reached then, so it keeps them.
 	AgentsBindMCP bool `json:"agents_bind_mcp,omitempty"`
+	// Outside marks a key a platform uses on behalf of people who are not
+	// gohort users: a chat widget's backend, say. Every call names the person
+	// it is for, and the turn runs in that person's own memory rather than the
+	// owner's (docs/design/outside-audience.md). Such a key opens one door, the
+	// Model API, and reaches agents only: no MCP, no desktop bridge, no raw
+	// model tier, no channel, no app agent. Off for every key that predates it.
+	Outside bool `json:"outside,omitempty"`
+}
+
+// OutsideAudienceDoor is the one feature an outside-audience key may use: the
+// OpenAI-compatible Model API.
+const OutsideAudienceDoor = "openai"
+
+// ForOutsideAudience reports a key marked for people outside gohort.
+func (t *AccountToken) ForOutsideAudience() bool {
+	return t != nil && t.Scope != nil && t.Scope.Outside
 }
 
 // AllowsFeature reports whether the key permits a feature. A nil scope is the
@@ -104,6 +120,9 @@ func (t *AccountToken) AllowsFeature(feature string) bool {
 	}
 	if t.Scope == nil {
 		return true // legacy: minted before scoping — unrestricted
+	}
+	if t.Scope.Outside && !strings.EqualFold(strings.TrimSpace(feature), OutsideAudienceDoor) {
+		return false
 	}
 	return containsFold(t.Scope.Features, feature)
 }
@@ -117,6 +136,9 @@ func (t *AccountToken) AllowsTarget(target string) bool {
 	}
 	if t.Scope == nil {
 		return true // legacy: unrestricted
+	}
+	if t.Scope.Outside && !strings.HasPrefix(strings.TrimSpace(target), "agent:") {
+		return false
 	}
 	return containsFold(t.Scope.Targets, target)
 }

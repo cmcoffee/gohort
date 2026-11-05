@@ -7,9 +7,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // TestTextContentShapes: clients send message content either as a plain string
@@ -345,5 +347,87 @@ func TestModelsListTheAgentsMCPLists(t *testing.T) {
 	ListExternalReachableAgentsFn = nil
 	if got := modelAgents("alice", token); got != nil {
 		t.Errorf("no agent host, no agents: %+v", got)
+	}
+}
+
+// outsideHost records the run an agent turn asks for.
+type outsideHost struct {
+	agenthost.Host
+	runs   []agenthost.Run
+	thread string // whose store RecentThread was asked to look in
+	err    error
+}
+
+func (h *outsideHost) RunAgentSyncContinuingRich(ctx context.Context, run agenthost.Run) (agenthost.Result, error) {
+	h.runs = append(h.runs, run)
+	return agenthost.Result{Text: "hello"}, h.err
+}
+
+func (h *outsideHost) RecentThread(owner, agentID, prefix string, idle time.Duration) string {
+	h.thread = owner
+	return ""
+}
+
+// A key for people outside gohort runs each call in the named person's own
+// store, refuses a call that names nobody, and says plainly when the agent is
+// not set to serve them. An ordinary key's turn still runs as its owner.
+func TestAnOutsideKeyRunsEachPersonInTheirOwnStore(t *testing.T) {
+	prevDB, prevResolve := RootDB, ResolveExternalAgentFn
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	ResolveExternalAgentFn = func(db Database, owner, key string, granted func(string) bool) (string, bool) { return "a1", true }
+	host := &outsideHost{}
+	prevHost := agenthost.Get()
+	agenthost.Register(host)
+	t.Cleanup(func() { RootDB, ResolveExternalAgentFn = prevDB, prevResolve; agenthost.Register(prevHost) })
+
+	outside := MintAccountTokenScoped("alice", "portal", &TokenScope{Outside: true, Features: []string{"openai"}, Targets: []string{"agent:a1"}})
+	plain := MintAccountTokenScoped("alice", "voice", &TokenScope{Features: []string{"openai"}, Targets: []string{"agent:a1"}})
+
+	call := func(key string, headers map[string]string, user string) *httptest.ResponseRecorder {
+		r := newReq(headers)
+		r.Header.Set("X-API-Key", key)
+		req := chatReq{Model: "agent:a1", User: user}
+		req.Messages = append(req.Messages, struct {
+			Role    string `json:"role"`
+			Content any    `json:"content"`
+		}{"user", "hi"})
+		w := httptest.NewRecorder()
+		(&OpenAIAPI{}).serveAgent(w, r, "alice", "a1", req)
+		return w
+	}
+
+	if w := call(outside.Token, nil, ""); w.Code != http.StatusBadRequest || len(host.runs) != 0 {
+		t.Fatalf("a call naming nobody: %d with %d run(s); want 400 and no run", w.Code, len(host.runs))
+	}
+	if w := call(outside.Token, map[string]string{"X-End-User": "cust:7"}, ""); w.Code != http.StatusBadRequest || len(host.runs) != 0 {
+		t.Fatalf("an id that cannot name a store: %d with %d run(s); want 400 and no run", w.Code, len(host.runs))
+	}
+
+	want := agenthost.OutsideScope(outside.ID, "cust-7")
+	if w := call(outside.Token, map[string]string{"X-End-User": "cust-7"}, "ignored-when-the-header-names-them"); w.Code != http.StatusOK {
+		t.Fatalf("a named call: %d %s", w.Code, w.Body.String())
+	}
+	run := host.runs[len(host.runs)-1]
+	if run.RuntimeUser != want || run.AgentOwner != "alice" || run.MessageSender != "cust-7" {
+		t.Errorf("ran as %q for %q, sender %q; want %q for alice, sender cust-7", run.RuntimeUser, run.AgentOwner, run.MessageSender, want)
+	}
+	if host.thread != want {
+		t.Errorf("the conversation was looked up in %q's store, want the person's", host.thread)
+	}
+	// The user field names them when the header does not.
+	call(outside.Token, nil, "cust-8")
+	if got := host.runs[len(host.runs)-1].RuntimeUser; got != agenthost.OutsideScope(outside.ID, "cust-8") {
+		t.Errorf("the user field did not name the person: ran as %q", got)
+	}
+
+	host.err = agenthost.ErrNotForOutsideAudience
+	if w := call(outside.Token, map[string]string{"X-End-User": "cust-7"}, ""); w.Code != http.StatusForbidden {
+		t.Errorf("an agent not set to serve people outside: %d, want 403", w.Code)
+	}
+	host.err = nil
+
+	call(plain.Token, map[string]string{"X-End-User": "cust-7"}, "")
+	if got := host.runs[len(host.runs)-1].RuntimeUser; got != "alice" {
+		t.Errorf("an ordinary key's turn ran as %q, want its owner", got)
 	}
 }

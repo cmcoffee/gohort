@@ -45,6 +45,7 @@ package openaiapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -538,7 +539,8 @@ func (T *OpenAIAPI) serveAgent(w http.ResponseWriter, r *http.Request, user, age
 		writeErr(w, http.StatusServiceUnavailable, "the orchestrate app is not mounted, so agents can't be reached")
 		return
 	}
-	resolved, ok := resolveAgent(user, agentKey, tokenGrant(AccountTokenFromRequest(r)))
+	token := AccountTokenFromRequest(r)
+	resolved, ok := resolveAgent(user, agentKey, tokenGrant(token))
 	if !ok {
 		writeErr(w, http.StatusNotFound, fmt.Sprintf("no agent %q reachable for this account: check the id, and turn on \"Reachable over MCP\" on that agent (the same switch governs this endpoint)", agentKey))
 		return
@@ -548,19 +550,36 @@ func (T *OpenAIAPI) serveAgent(w http.ResponseWriter, r *http.Request, user, age
 		writeErr(w, http.StatusBadRequest, "no user message to answer")
 		return
 	}
+	// A key for people outside gohort runs each person in a store of their
+	// own, so it has to know who each call is for. There is no safe default
+	// person to put an unnamed caller's memory in.
+	runtime, sender := user, callerName(r, req)
+	if token.ForOutsideAudience() {
+		person, err := outsidePerson(r, req)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		runtime = agenthost.OutsideScope(token.ID, person)
+		if strings.TrimSpace(r.Header.Get("X-Caller-Name")) == "" {
+			sender = person
+		}
+		Log("[openai_api] %s: outside-audience key %q, turn runs as %s", user, token.ID, runtime)
+	}
 	// Per-caller thread: without a stable key every utterance would start a
 	// new conversation and the agent would forget what it just said.
 	session, rolling := sessionKey(r, req)
 	if rolling {
-		session = conversationThread(orch, user, resolved, session)
+		session = conversationThread(orch, runtime, resolved, session)
 	}
 	T.runAgentTurn(w, r, agentTurn{
 		orch:      orch,
 		owner:     user,
+		runtime:   runtime,
 		agent:     resolved,
 		session:   session,
 		autoTitle: true,
-		sender:    callerName(r, req),
+		sender:    sender,
 		input:     input,
 		system:    system,
 		model:     req.Model,
@@ -633,6 +652,23 @@ func callerName(r *http.Request, req chatReq) string {
 	return "Voice caller"
 }
 
+// outsidePerson is who an outside-audience call is for: the X-End-User header,
+// else the request's user field. The platform's server names them; the key is
+// never in a browser, where anyone could name anyone.
+func outsidePerson(r *http.Request, req chatReq) (string, error) {
+	person := strings.TrimSpace(r.Header.Get("X-End-User"))
+	if person == "" {
+		person = strings.TrimSpace(req.User)
+	}
+	if person == "" {
+		return "", errors.New("this API key is for people outside gohort: name the person each call is for, in the X-End-User header or the request's user field")
+	}
+	if err := agenthost.CheckOutsidePerson(person); err != nil {
+		return "", err
+	}
+	return person, nil
+}
+
 // turnInput picks the turn's input (the last user message) and the caller's
 // system instructions out of an OpenAI message array.
 //
@@ -676,13 +712,24 @@ func turnInput(req chatReq) (input, system string) {
 type agentTurn struct {
 	orch                                 agenthost.Host
 	owner, agent, session, title, sender string
-	input, system, model                 string
-	stream                               bool
+	// runtime is who the turn runs as: the owner, or an outside person's
+	// own store (agenthost.OutsideScope). Empty means the owner.
+	runtime              string
+	input, system, model string
+	stream               bool
 	// autoTitle names a thread from its conversation (AgentSyncRun.AutoTitle):
 	// the agent route's threads have no room name to take.
 	autoTitle bool
 	// effort is the caller's reasoning_effort level, "" for no thinking.
 	effort string
+}
+
+// runAs is who the turn runs as: the outside person's store, or the owner.
+func (t agentTurn) runAs() string {
+	if t.runtime != "" {
+		return t.runtime
+	}
+	return t.owner
 }
 
 // thinking sets run's thinking from the caller's reasoning_effort and returns
@@ -753,7 +800,7 @@ func (T *OpenAIAPI) runAgentTurn(w http.ResponseWriter, r *http.Request, t agent
 
 	run := agenthost.Run{
 		AgentOwner:    t.owner,
-		RuntimeUser:   t.owner,
+		RuntimeUser:   t.runAs(),
 		AgentKey:      t.agent,
 		SubSessionID:  t.session,
 		Kind:          "openai", // labels the turn in the live ribbon / "Active now"
@@ -785,6 +832,10 @@ func (T *OpenAIAPI) runAgentTurn(w http.ResponseWriter, r *http.Request, t agent
 	mu.Lock()
 	defer mu.Unlock()
 	if err != nil {
+		if sse == nil && errors.Is(err, agenthost.ErrNotForOutsideAudience) {
+			writeErr(w, http.StatusForbidden, err.Error())
+			return
+		}
 		if sse == nil {
 			writeErr(w, http.StatusBadGateway, "agent run failed: "+err.Error())
 			return

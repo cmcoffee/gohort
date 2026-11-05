@@ -400,6 +400,14 @@ type AgentRecord struct {
 	// public /agents/ web surface) — an agent can be on one, both, or neither.
 	MCPExposed bool `json:"mcp_exposed,omitempty"`
 
+	// OutsideAudience lets people who are not gohort users talk to this agent
+	// through an outside-audience API key (docs/design/outside-audience.md).
+	// Each of them runs in a store of their own, with this agent's saved notes
+	// underneath read-only; the owner's cortex and findings stay out. Off by
+	// default, and an outside key's turn on an agent with it off is refused.
+	// The owner's own chats with the agent are unchanged either way.
+	OutsideAudience bool `json:"outside_audience,omitempty"`
+
 	// PublicName overrides the display name + URL slug on the public
 	// /agents/ surface. Left blank, the public view uses Name; set
 	// this when the internal agent name doesn't read well as an

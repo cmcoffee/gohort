@@ -895,6 +895,14 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
       showTools();
     }
 
+    // Who is on the other end. A platform's server calling for people who are
+    // not gohort users: each call names the person, and each person runs in a
+    // store of their own (docs/design/outside-audience.md).
+    wrap.appendChild(el('h4',{text:'Who it is for'}));
+    var outside = chk('For people outside gohort', 'outside', !!selected.outside);
+    var og2 = el('div',{class:'acct-tok-scope-grp'}); og2.appendChild(outside.row); wrap.appendChild(og2);
+    wrap.appendChild(el('div',{class:'acct-tok-scope-note',text:'For a platform such as a chat widget, calling the Model API from its own server. Every call names the person it is for, in the X-End-User header or the request\'s user field, and each person gets their own memory and conversations, apart from yours and from each other\'s. Such a key reaches only agents set to serve people outside gohort, over the Model API. Never put it in a browser or an app people can open: whoever holds it can speak as anyone.'}));
+
     // The Desktop bridge: the other direction, so it is not a way in.
     var lends = ofKind('lends');
     if(lends.length){
@@ -910,6 +918,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
       boxes.targets.forEach(function(c){ if(c.box.checked) t.push(c.box.getAttribute('data-v')); });
       boxes.tools.forEach(function(c){ if(c.box.checked) m.push(c.box.getAttribute('data-v')); });
       var out = { features: f, targets: t };
+      if(outside.box.checked){ out.outside = true; }
       // Only send a tools list once the user has actually touched it, or when
       // the key already had one. Otherwise a key that was never narrowed stays
       // un-narrowed instead of being pinned to today's tool set, which would
@@ -966,6 +975,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
     list.forEach(function(t){
       var nameRow = el('div',{class:'acct-tok-name'},[ document.createTextNode(t.name || '(unnamed)') ]);
       if(!t.scope){ nameRow.appendChild(el('span',{class:'acct-tok-badge warn',text:'Unrestricted'})); }
+      if(t.scope && t.scope.outside){ nameRow.appendChild(el('span',{class:'acct-tok-badge',text:'People outside gohort'})); }
       var subKids = [ el('span',{class:'acct-tok-code',text: t.token || ''}), document.createTextNode('  -  created '+String(t.created||'').slice(0,10)) ];
       subKids.push(document.createTextNode('  -  '+lastUsed(t)));
       var exp = expiryText(t);

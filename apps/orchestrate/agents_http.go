@@ -350,7 +350,7 @@ var patchAgentFields = map[string]bool{
 	"capture_prompt": true,
 	"allow_explorer": true, "explorer_hard_cap": true,
 	"channel": true, "fleet": true, "tag_name": true, "voice": true,
-	"exposed": true, "mcp_exposed": true, "show_on_dashboard": true, "public_name": true,
+	"exposed": true, "mcp_exposed": true, "show_on_dashboard": true, "public_name": true, "outside_audience": true,
 	"allow_private_mode": true, "force_private": true, "hidden": true,
 	"workspace_no_network": true, "workspace_network": true,
 	"share_cortex": true, "share_reference": true, "share_notes": true, "share_uploads": true, "disabled_tool_actions": true,

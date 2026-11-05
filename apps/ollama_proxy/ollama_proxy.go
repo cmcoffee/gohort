@@ -189,8 +189,11 @@ func (p *ollamaProxy) allow(w http.ResponseWriter, r *http.Request) bool {
 		// the same grant governs it: a personal access token scoped for the
 		// OpenAI endpoint, for a user the admin allows it. Any key of any kind
 		// used to do, including one scoped to nothing or to MCP alone.
+		//
+		// Not a key for people outside gohort: it reaches agents only, and the
+		// proxy is the raw models.
 		tok := AccountTokenFromRequest(r)
-		if tok != nil && tok.AllowsFeature(inferenceFeatureKey) && FeatureAllowedForUser(RootDB, inferenceFeatureKey, user) {
+		if tok != nil && !tok.ForOutsideAudience() && tok.AllowsFeature(inferenceFeatureKey) && FeatureAllowedForUser(RootDB, inferenceFeatureKey, user) {
 			return true
 		}
 		Warn("[ollama-proxy] refused %s's key for %s %s: not a token scoped for model access", user, r.Method, r.URL.Path)

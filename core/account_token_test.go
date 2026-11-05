@@ -488,3 +488,38 @@ func TestToolScopeSurvivesJSON(t *testing.T) {
 		}
 	}
 }
+
+// A key for people outside gohort opens the Model API and reaches agents,
+// whatever else is ticked on it: never MCP, the desktop bridge, an app's agent,
+// a raw model tier or a channel, any of which would hand a stranger the
+// owner's account without a store of their own.
+func TestAnOutsideKeyOpensOneDoorToAgentsOnly(t *testing.T) {
+	tok := &AccountToken{Owner: "u", Scope: &TokenScope{
+		Outside:  true,
+		Features: []string{"openai", "mcp", "desktop", "app:servitor"},
+		Targets:  []string{"agent:abc", "worker", "lead", "channel:z"},
+	}}
+	if !tok.ForOutsideAudience() {
+		t.Fatal("the key does not read as for people outside")
+	}
+	if !tok.AllowsFeature("openai") {
+		t.Error("the Model API is closed to it")
+	}
+	for _, f := range []string{"mcp", "desktop", "app:servitor"} {
+		if tok.AllowsFeature(f) {
+			t.Errorf("it opens %q", f)
+		}
+	}
+	if !tok.AllowsTarget("agent:abc") {
+		t.Error("its listed agent is closed to it")
+	}
+	for _, target := range []string{"worker", "lead", "channel:z"} {
+		if tok.AllowsTarget(target) {
+			t.Errorf("it reaches %q", target)
+		}
+	}
+	// Everything else is untouched.
+	if (&AccountToken{Scope: &TokenScope{Features: []string{"mcp"}}}).ForOutsideAudience() || (&AccountToken{}).ForOutsideAudience() {
+		t.Error("an ordinary or legacy key reads as for people outside")
+	}
+}

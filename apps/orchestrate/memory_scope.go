@@ -253,6 +253,9 @@ func (t *chatTurn) searchOwnKnowledge(ctx context.Context, topic, query string, 
 // become a record of their own week can stop it, not because sharing it was
 // wrong.
 func (t *chatTurn) readsOwnerCortex() bool {
+	if t.outsideAudience() {
+		return false // the owner's own activity (outside_audience.go)
+	}
 	return t.memoryUnderlay() != "" &&
 		settingIsOn(RootDB, t.agent, defaultShareCortex)
 }
@@ -265,6 +268,9 @@ func (t *chatTurn) readsOwnerCortex() bool {
 // inferred across the owner's conversations without being asked to. An owner
 // who reads what is in it and decides it should not travel turns this on.
 func (t *chatTurn) readsOwnerReference() bool {
+	if t.outsideAudience() {
+		return false // worked out across the owner's conversations
+	}
 	return t.memoryUnderlay() != "" &&
 		settingIsOn(RootDB, t.agent, defaultShareReference)
 }
@@ -276,6 +282,9 @@ func (t *chatTurn) readsOwnerReference() bool {
 // default would disclose, on every existing share, whatever came up while the
 // owner was talking to the agent alone.
 func (t *chatTurn) readsOwnerFacts() bool {
+	if t.outsideAudience() {
+		return t.memoryUnderlay() != "" // read-only, so the agent knows its job
+	}
 	return t.memoryUnderlay() != "" &&
 		settingIsOn(RootDB, t.agent, defaultShareNotes)
 }

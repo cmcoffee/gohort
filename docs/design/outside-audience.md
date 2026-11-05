@@ -1,6 +1,6 @@
 # Outside audiences: gohort behind someone else's chat
 
-Status: design agreed (2026-11-05); see Decisions. Nothing here is built yet.
+Status: design agreed (2026-11-05); see Decisions. Step 1 for /v1 is built (outside keys, per-person stores, the agent switch).
 
 ## Why
 
@@ -81,10 +81,17 @@ What counts as an outside turn: a /v1 call whose key is marked for outside use
 
 ### B. Memory per person, never shared
 
-- Each outside person gets their own memory namespace:
-  `agent:<id>:person:<source>:<id>`, where source is the API key or the Teams
-  bot, and id is the asserted user or the Entra object id.
-- `remember` / `recall` in an outside turn read and write only that namespace.
+- Each outside person runs in a store of their own, `outside:<source>:<id>`
+  (`agenthost.OutsideScope`), where source is the API key or the Teams bot,
+  and id is the asserted user or the Entra object id. It is the path a shared
+  agent's recipient and a servitor appliance already take: notes, findings,
+  history, past sessions and threads are all theirs, with no layer learning a
+  new namespace. (Decided 2026-11-05 over a namespace inside the owner's store,
+  which would have needed a carve-out per memory layer.)
+- `remember` / `recall` in an outside turn read and write only that store.
+- What reaches them from underneath is fixed, whatever the share switches say:
+  the agent's saved notes, read-only; never the owner's cortex or the
+  agent's findings; curated knowledge as today.
 - The agent's own memory (what the owner taught it) is **read-only** context
   for outside turns: the agent knows its job, but nothing an outsider says
   writes into it.

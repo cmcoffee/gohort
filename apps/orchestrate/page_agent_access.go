@@ -888,6 +888,23 @@ func (ap *accessPage) shareSections() []ui.Section {
 		},
 		{
 			Group:    "Share",
+			Title:    "People outside gohort",
+			Subtitle: "Whether people who are not gohort users can talk to this agent, through a platform's API key marked for an outside audience.",
+			Detail: "For example a chat widget on a customer portal, whose server calls /v1 with a key marked \"For people outside gohort\" (Account, API keys, Access) and names the person each call is for.\n\n" +
+				"Each person runs in a store of their own: what they tell the agent, and their conversations, stay with them and never reach you or anyone else. The agent's saved notes come with it, read-only, so it knows its job; your cortex and its saved findings do not. Nothing they say changes the agent's own memory. Your own chats with it are unchanged.\n\n" +
+				"The agent still needs to be reachable from outside (above), and the key has to list it.",
+			Body: ui.FormPanel{
+				Source:  ap.patchURL,
+				PostURL: ap.patchURL,
+				Method:  "PATCH",
+				Fields: []ui.FormField{
+					{Field: "outside_audience", Type: "toggle", Label: "Serves people outside gohort",
+						Help: "Off: an outside-audience key's calls to this agent are refused."},
+				},
+			},
+		},
+		{
+			Group:    "Share",
 			Title:    "Published app name",
 			Subtitle: "What this agent is called to the people it is published to. Blank uses its own name.",
 			Body: ui.FormPanel{

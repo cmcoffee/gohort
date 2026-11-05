@@ -784,6 +784,9 @@ func (sd *syncDispatch) admit() bool {
 	// Standing fire / monitor wake / external dispatch to a retiring archetype
 	// seed → materialize the owner's own copy and run that.
 	sd.target = materializeIfRetiringSeed(sd.ownerDB, sd.agentOwner, agentKey, sd.target)
+	if err := outsideRunRefusal(sd.runtimeUser, sd.target); err != nil {
+		return sd.exit(syncRunResult{}, err)
+	}
 	sd.runtimeDB = sd.ownerDB
 	if sd.runtimeUser != sd.agentOwner {
 		sd.runtimeDB = UserDB(T.DB, sd.runtimeUser)
@@ -1761,7 +1764,8 @@ func (cr *continuingRun) admit() bool {
 	// A channel message from anyone but the owner marks this run and every run
 	// it starts, so a delegation cannot launder the sender away
 	// (authoring_requester.go).
-	if !channelSenderIsOwner(cr.agentOwner, run) {
+	// So does a person outside gohort, whatever the transport says.
+	if !channelSenderIsOwner(cr.agentOwner, run) || agenthost.IsOutsideScope(run.RuntimeUser) {
 		cr.ctx = withNonOwnerRequester(cr.ctx, run.ReplyAuthorizedKey)
 	}
 	if T == nil || T.LLM == nil {
@@ -1791,6 +1795,9 @@ func (cr *continuingRun) admit() bool {
 		return cr.exit(AgentSyncResult{}, fmt.Errorf("agent %q not found in agentOwner %q store", cr.agentKey, cr.agentOwner))
 	}
 	cr.target = materializeIfRetiringSeed(cr.ownerDB, cr.agentOwner, cr.agentKey, cr.target)
+	if err := outsideRunRefusal(cr.runtimeUser, cr.target); err != nil {
+		return cr.exit(AgentSyncResult{}, err)
+	}
 	cr.runtimeDB = cr.ownerDB
 	if cr.runtimeUser != cr.agentOwner {
 		cr.runtimeDB = UserDB(T.DB, cr.runtimeUser)
