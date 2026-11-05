@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -65,4 +66,38 @@ func TestTheLiveSpinnerTurnsInPlace(t *testing.T) {
 	if !strings.Contains(js, "prefers-reduced-motion: reduce") {
 		t.Error("the spinner turns under reduced motion")
 	}
+}
+
+// The bell's panel stays open when the click that opens it lands on the drawn
+// glyph inside the button, which is where a click on the bell lands.
+func TestTheBellOpensWhenItsGlyphIsClicked(t *testing.T) {
+	if strings.Contains(notifyPanelHTML, "e.target !== bell") || !strings.Contains(notifyPanelHTML, "!bell.contains(e.target)") {
+		t.Error("a click on the bell's glyph reads as a click outside it and closes the panel it opened")
+	}
+}
+
+// The dashboard's own fixed chrome sits under the framework's windows (the
+// section gear opens one), or its bar is drawn over the window.
+func TestTheDashboardBarSitsUnderTheWindows(t *testing.T) {
+	const firstWindow = 1010 // uiNextModalZ's first layer
+	css := dashboardPageSource(t)
+	for _, sel := range []string{"\n  .auth-bar {", "\n  .notify-panel {"} {
+		if z := cssZIndex(t, cssBlock(css, sel)); z >= firstWindow {
+			t.Errorf("%s z-index %d is drawn over a window (%d)", strings.TrimSpace(sel), z, firstWindow)
+		}
+	}
+}
+
+// cssZIndex is the z-index a rule's block sets.
+func cssZIndex(t *testing.T, block string) int {
+	t.Helper()
+	j := strings.Index(block, "z-index:")
+	if j < 0 {
+		t.Fatalf("no z-index in %q", block)
+	}
+	var z int
+	if _, err := fmt.Sscanf(strings.TrimSpace(block[j+len("z-index:"):]), "%d", &z); err != nil {
+		t.Fatalf("z-index in %q: %v", block, err)
+	}
+	return z
 }

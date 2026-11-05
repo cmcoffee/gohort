@@ -236,8 +236,11 @@
     color: var(--text-mute, #8b949e); font-size: var(--fs-sm, 0.8rem);
     overflow-wrap: anywhere; line-height: 1.35;
   }
+  /* Under the framework's windows, which start at 1010 (uiNextModalZ): the
+     section gear opens one, and a bar at 9999 sat on top of it, its Account
+     and Logout drawn over the window's title on a phone. */
   .auth-bar {
-    position: fixed; top: 12px; right: 12px; z-index: 9999;
+    position: fixed; top: 12px; right: 12px; z-index: 900;
     display: flex; align-items: center; gap: 0.6rem;
     font-size: var(--fs-sm, 0.8rem);
     max-width: calc(100vw - 64px); /* leave room for the dashboard-back icon at top-left */
@@ -363,7 +366,7 @@
      and the panel opened off-screen above you. Whatever anchors the button has
      to anchor the thing the button opens. */
   .notify-panel {
-    display: none; position: fixed; right: 12px; top: 3rem; z-index: 10000;
+    display: none; position: fixed; right: 12px; top: 3rem; z-index: 950;
     width: min(26rem, calc(100vw - 2rem)); max-height: 60vh; overflow-y: auto;
     background: var(--bg-elev, #1b1b1f); border: 1px solid var(--border);
     border-radius: calc(var(--btn-radius, 6px) * 4 / 3); padding: 0.4rem; text-align: left;

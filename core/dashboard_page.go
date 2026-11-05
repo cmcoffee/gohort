@@ -73,8 +73,11 @@ const notifyPanelHTML = `<div class="notify-panel" id="notify-panel">
     }).catch(function() { /* a dashboard that cannot reach its own API still has to render */ });
   }
   bell.onclick = function() { panel.classList.toggle('open'); if (panel.classList.contains('open')) { load(); } };
+  // Contains, not equals: a click on the bell lands on its drawn glyph (a
+  // path inside the svg inside the button), and "not the bell itself" read
+  // that as a click outside, closing the panel in the click that opened it.
   document.addEventListener('click', function(e) {
-    if (!panel.contains(e.target) && e.target !== bell) { panel.classList.remove('open'); }
+    if (!panel.contains(e.target) && !bell.contains(e.target)) { panel.classList.remove('open'); }
   });
   list.addEventListener('click', function(e) {
     var id = e.target && (e.target.getAttribute('data-read') || e.target.getAttribute('data-dismiss'));

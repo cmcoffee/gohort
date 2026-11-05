@@ -141,9 +141,9 @@ func TestTheNotificationsPanelFollowsItsBell(t *testing.T) {
 		t.Error("the panel is not fixed while the bell that opens it is: " +
 			"it will open off-screen for anybody who has scrolled")
 	}
-	// Above the bar, not below it. The bar sits at a very high z-index and a
-	// panel under it would open behind the controls it belongs to.
-	if !strings.Contains(panel, "z-index: 10000") {
+	// Above the bar, not below it: a panel under it would open behind the
+	// controls it belongs to.
+	if cssZIndex(t, panel) <= cssZIndex(t, bar) {
 		t.Error("the panel no longer sits above the fixed bar it hangs from")
 	}
 }
