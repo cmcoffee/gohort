@@ -13,8 +13,8 @@ func (a *AdminApp) costSections() []ui.Section {
 		// retained for compatibility but no longer surfaced here.
 		{
 			Title:    "Cost History (Last 30 Days)",
-			Subtitle: "Daily LLM and search spend across all pipelines.",
-			Detail:   "Hover any bar for the per-day breakdown of runs, tokens, searches and images.\n\nThe \"in\" figures are the whole prompt; the cached and written rows beneath each are the share of it billed at the cache weights rather than the full input rate.",
+			Subtitle: "Daily LLM and search spend across all pipelines (cost estimates based on recorded usage).",
+			Detail:   "Estimates, not a bill: each figure is the tokens and calls gohort recorded, priced at the rates under Prices below. A provider's own invoice can differ, from a price that changed, a model priced here at 0, or caching it bills differently. Check the provider's console for what was actually charged.\n\nHover any bar for the per-day breakdown of runs, tokens, searches and images.\n\nThe \"in\" figures are the whole prompt; the cached and written rows beneath each are the share of it billed at the cache weights rather than the full input rate.",
 			Body: ui.BarChart{
 				Source:    costHistorySource,
 				XField:    "date",
