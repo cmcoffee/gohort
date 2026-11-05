@@ -646,9 +646,20 @@ func lastPromiseIsPresence(lower string) bool {
 	if m := presenceRe.FindStringIndex(tail); m != nil && m[0] == 0 {
 		return true
 	}
+	if acceptanceRe.MatchString(tail) {
+		return true
+	}
 	m := leaveTakingRe.FindStringIndex(tail)
 	return m != nil && m[0] == 0
 }
+
+// acceptanceRe is an idiom of taking what was offered: "I'll take it", "I'll
+// take that as a compliment", "I'll allow it". Said as "I'll" and no work, so
+// only when it ends its sentence: "I'll take that file and convert it" is
+// still a promise. Observed 2026-11-05: a joke was answered "Flattery from
+// the master program of 1982. I'll take it.", the guard sent it back as a
+// promise, the same line came back, and the chat showed it twice.
+var acceptanceRe = regexp.MustCompile(`^(?:i'll|i will) (?:take (?:it|that|this|the (?:win|compliment|w|l))(?: as (?:a |the )?(?:compliment|win|yes))?|allow it|accept (?:it|that))\s*(?:[.!,;)]|$)`)
 
 // leaveTakingRe is a promise to go: a goodbye said as "I'll", which is no
 // work and no tool's to do. Observed 2026-11-04: "It's a late one for you, so

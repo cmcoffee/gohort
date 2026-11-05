@@ -138,6 +138,32 @@ func TestAPromiseToBeThereIsNotStalledWork(t *testing.T) {
 	}
 }
 
+// Taking what was offered is not work: "I'll take it" is an idiom, not a
+// promise. The first line is the exact reply from the 2026-11-05 session that
+// was sent back, came back the same, and was shown twice.
+func TestAcceptingIsNotStalledWork(t *testing.T) {
+	for _, taken := range []string{
+		"Flattery from the master program of 1982. I'll take it.",
+		"Ha, I'll take that as a compliment.",
+		"Fair enough, I'll take the win!",
+		"Bold, but I'll allow it.",
+		"I'll take it",
+	} {
+		if replyStalledOnAPromise(taken) {
+			t.Errorf("re-prompted an idiom of taking what was offered:\n  %s", taken)
+		}
+	}
+	for _, stall := range []string{
+		"Got it. I'll take that file and convert it to a PDF.",
+		"I'll take it from here and pull the logs.",
+		"Thanks, I'll take it. Let me check the calendar now.",
+	} {
+		if !replyStalledOnAPromise(stall) {
+			t.Errorf("a promise to act is still a stall:\n  %s", stall)
+		}
+	}
+}
+
 // Taking leave is not work either. The first line is the goodnight from the
 // 2026-11-04 session that was sent back and cut off the voice reading it.
 func TestTakingLeaveIsNotStalledWork(t *testing.T) {
@@ -348,8 +374,11 @@ func TestAReplySentBackUnchangedIsDelivered(t *testing.T) {
 	if settled != 1 || retracted != 1 {
 		t.Errorf("want the first copy settled and the repeat retracted: settled=%d retracted=%d", settled, retracted)
 	}
-	if !strings.Contains(resp.Content, "pull the logs") {
-		t.Errorf("delivered %q", resp.Content)
+	// The answer is the copy already on screen, word for word: a retry that
+	// differed by one word ("master program", "master control program") read
+	// to the host as new, and the person saw the reply twice.
+	if resp.Content != "I'll pull the logs now." {
+		t.Errorf("delivered %q, not the copy already shown", resp.Content)
 	}
 	if !strings.Contains(noteActionPromise, "send your previous reply again exactly as it was") {
 		t.Error("the correction no longer offers resending the reply")

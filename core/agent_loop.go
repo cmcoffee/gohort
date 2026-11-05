@@ -3115,6 +3115,12 @@ func (lr *loopRun) finalRoundStallGuards() loopAction {
 		// bubble already shown, which no longer says a correction follows.
 		lr.retractRound()
 		lr.withdrawCorrection()
+		// And the turn's answer IS the reply already on screen, word for word.
+		// The two copies are the same reply, not the same text: observed, the
+		// retry changed "master program" to "master control program", the
+		// host's near-duplicate check counted the extra word as new, and the
+		// person saw the reply twice anyway.
+		lr.rs.resp.Content = lr.promiseCorrected
 		return actNone
 	}
 	if gaveUp {
