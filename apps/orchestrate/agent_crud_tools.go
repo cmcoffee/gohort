@@ -466,6 +466,17 @@ func agentHasNoTools(rec AgentRecord) bool {
 // asks for — and unresolvedAllowedTools skips "*" when it hunts for
 // typos, so nothing warns. update_agent used to do exactly that while
 // reporting success.
+// asksForEveryTool reports whether an allowed_tools argument is the "*" that
+// means every tool.
+func asksForEveryTool(list []string) bool {
+	for _, n := range list {
+		if strings.TrimSpace(n) == "*" {
+			return true
+		}
+	}
+	return false
+}
+
 func normalizeAllowedTools(list []string) []string {
 	for _, n := range list {
 		if strings.TrimSpace(n) == "*" {
@@ -826,6 +837,11 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if len(changed) == 0 && len(inlineTools) == 0 && copied == 0 && len(raised) == 0 {
 		return fmt.Sprintf("NOTHING CHANGED on %q (id=%s): every field this call set already had that value (it set: %s). To change the agent, pass the fields you want changed with their NEW values in the same call, e.g. description, orchestrator_prompt, rules. Nothing was saved, so the edit you meant to make has NOT happened yet; do not report it as done.",
 			existing.Name, existing.ID, chFirst(strings.Join(sortedArgKeys(args, "id", "agent"), ", "), "no fields")), nil
+	}
+	// ["*"] asks for every tool. Said explicitly to the save, which reads a
+	// list emptied any other way as no tools (settleAllowedTools).
+	if v, ok := args["allowed_tools"]; ok && v != nil && len(existing.AllowedTools) == 0 && asksForEveryTool(stringSliceFromArgs(args, "allowed_tools")) {
+		existing.AllowedTools = []string{allToolsMarker}
 	}
 	var saved AgentRecord
 	moveNote := ""

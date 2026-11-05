@@ -167,11 +167,24 @@ func TestStaleAllowlistHealsForCatalogAndGateAlike(t *testing.T) {
 	turn.agent.DispatchMode = dispatchOnly
 	turn.agent.AllowedDispatchTargets = []string{"deleted-agent-1", "deleted-agent-2"}
 
-	if got := turn.dispatchModeAfterSelfHeal(fleetDB, fleetUser); got != dispatchAll {
-		t.Fatalf("a wholly-deleted allowlist resolved to %q, want the %q rescue", got, dispatchAll)
+	// It may hand work to nobody: deleting the agents it was limited to does
+	// not widen it to the fleet. Catalog and gate agree, on none.
+	if got := turn.dispatchModeAfterSelfHeal(fleetDB, fleetUser); got != dispatchNone {
+		t.Fatalf("a wholly-deleted allowlist resolved to %q, want %q", got, dispatchNone)
 	}
-	if _, _, err := turn.agentsRunGate(map[string]any{"agent": peer.Name, "message": "hi"}); err != nil {
-		t.Fatalf("gate refused a peer the catalog would advertise: %v", err)
+	if _, _, err := turn.agentsRunGate(map[string]any{"agent": peer.Name, "message": "hi"}); err == nil {
+		t.Fatal("a peer the dead list never named was reachable")
+	}
+	// And the owner is shown why: each dead target is listed as missing.
+	missing := agentMissingRefs(turn.agent, turn.udb, "u", nil, nil)
+	found := 0
+	for _, m := range missing {
+		if m.Kind == "agent" {
+			found++
+		}
+	}
+	if found != 2 {
+		t.Errorf("the dead dispatch targets are not listed as missing: %+v", missing)
 	}
 
 	// A list naming a target that DOES exist is not stale and must not heal —

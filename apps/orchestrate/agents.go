@@ -277,6 +277,16 @@ func writeAgent(db Database, a AgentRecord, reason string) (AgentRecord, error) 
 	if db == nil {
 		return a, fmt.Errorf("db not initialized")
 	}
+	// Emptying a tool list never widens the agent: only an explicit "all"
+	// does (allToolsMarker). Settled against the stored row, before anything
+	// below reads the list as decided.
+	{
+		var prior AgentRecord
+		if a.ID != "" {
+			db.Get(agentsTable, a.ID, &prior)
+		}
+		a.AllowedTools = settleAllowedTools(prior.AllowedTools, a.AllowedTools)
+	}
 	// What the CALLER decided, recorded before the invariants below get a
 	// vote. A rule that fires on save is the framework's decision, not the
 	// user's, and recording it as an override would freeze that field against
@@ -335,6 +345,12 @@ func writeAgent(db Database, a AgentRecord, reason string) (AgentRecord, error) 
 	if a.ID == "" {
 		a.ID = UUIDv4()
 		a.Created = now
+		// A new agent's dispatch policy is written down rather than left to
+		// a blank that reads as Allow all: what the editor shows is what is
+		// stored, and nothing reaches "all" without having been chosen.
+		if strings.TrimSpace(a.DispatchMode) == "" {
+			a.DispatchMode = effectiveDispatchMode(a)
+		}
 	}
 	if a.Created.IsZero() {
 		a.Created = now

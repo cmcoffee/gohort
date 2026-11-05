@@ -206,9 +206,10 @@ func (m *agentMove) out() (AgentRecord, string, error) {
 	Log("[orchestrate.agents] moved %q to top level (was under %q)", saved.Name, parentID)
 	notes := []string{saved.Name + " is now a top-level agent."}
 	if parent, ok := loadAgent(m.db, parentID); ok && parent.Owner == m.owner {
-		// The HEALED mode: a list whose every entry is gone already reads as
-		// Allow all, and giving it one live entry would narrow it to this.
-		switch healedDispatchMode(parent, m.db, m.owner, m.db, m.owner) {
+		// The mode as the owner set it: an "only" list whose every entry is
+		// gone reads as none at run time, and adding this one gives it back a
+		// target it can reach.
+		switch effectiveDispatchMode(parent) {
 		case dispatchOnly:
 			if !slices.Contains(parent.AllowedDispatchTargets, saved.ID) {
 				parent.AllowedDispatchTargets = append(parent.AllowedDispatchTargets, saved.ID)

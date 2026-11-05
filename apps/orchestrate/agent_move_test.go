@@ -67,9 +67,10 @@ func TestMoveAgentUnderAParentAndBackOut(t *testing.T) {
 	}
 }
 
-// A list whose every entry is gone reads as Allow all. Adding the moved agent
-// to it would narrow the parent to that one agent.
-func TestMoveOutLeavesAStaleListAlone(t *testing.T) {
+// A list whose every entry is gone reads as none, so the moved agent goes on
+// it: the parent could call it before the move, and still can after, without
+// the dead list widening it to the whole fleet.
+func TestMoveOutKeepsTheChildCallableFromAStaleList(t *testing.T) {
 	app, udb, _ := newTestOrchestrate(t)
 	moveTestAgent(t, udb, AgentRecord{ID: "p1", Name: "Planner", DispatchMode: dispatchOnly, AllowedDispatchTargets: []string{"deleted-long-ago"}})
 	moveTestAgent(t, udb, AgentRecord{ID: "c1", Name: "Scout", OwnedBy: "p1"})
@@ -77,8 +78,8 @@ func TestMoveOutLeavesAStaleListAlone(t *testing.T) {
 		t.Fatalf("move out: %d %s", w.Code, w.Body.String())
 	}
 	p, _ := loadAgent(udb, "p1")
-	if dispatchListContains(p, "c1") {
-		t.Fatalf("a stale list (healed to Allow all) was narrowed to the moved agent: %v", p.AllowedDispatchTargets)
+	if !dispatchListContains(p, "c1") {
+		t.Fatalf("the parent can no longer call the agent that moved out: %v", p.AllowedDispatchTargets)
 	}
 }
 

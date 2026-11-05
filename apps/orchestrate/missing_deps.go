@@ -55,6 +55,8 @@ func missingKindPhrase(kind string) string {
 		return "a skill"
 	case "collection":
 		return "a knowledge collection"
+	case "agent":
+		return "an agent it may hand work to"
 	}
 	return "something"
 }
@@ -95,6 +97,8 @@ func agentReferences(a AgentRecord, kind, id string) bool {
 		return !a.DisableSkills && namedIn(a.AllowedSkills, id)
 	case "collection":
 		return namedIn(a.AttachedCollections, id)
+	case "agent":
+		return namedIn(a.AllowedDispatchTargets, id)
 	}
 	return false
 }
@@ -171,6 +175,16 @@ func agentMissingRefs(a AgentRecord, poolDB Database, owner string, own, resolve
 		_, withheld := agentCorpusSourceSet(owner, owner, a.AttachedCollections, nil)
 		for _, id := range withheld {
 			out = append(out, missingRef{Kind: "collection", ID: id, Name: missingRefName("collection", id)})
+		}
+	}
+	// Limited to agents that are all gone, it may hand work to nobody
+	// (healedDispatchMode): each one is listed, so the owner sees why and
+	// can remove them or pick new ones.
+	if effectiveDispatchMode(a) == dispatchOnly && healedDispatchMode(a, poolDB, owner, poolDB, owner) == dispatchNone {
+		for _, id := range a.AllowedDispatchTargets {
+			if id = strings.TrimSpace(id); id != "" {
+				out = append(out, missingRef{Kind: "agent", ID: id, Name: id})
+			}
 		}
 	}
 	return out
@@ -589,6 +603,8 @@ func dropAgentReference(udb Database, user string, a AgentRecord, kind, id strin
 		a.AllowedSkills = withoutOne(a.AllowedSkills, id)
 	case "collection":
 		a.AttachedCollections = withoutOne(a.AttachedCollections, id)
+	case "agent":
+		a.AllowedDispatchTargets = withoutOne(a.AllowedDispatchTargets, id)
 	default:
 		return a, errors.New("unknown kind " + kind)
 	}
@@ -625,7 +641,7 @@ func keepUnlistedTools(stored, submitted, catalog []string) []string {
 	switch {
 	case isNoToolsSentinel(submitted):
 		// Nothing in the catalog: the names outside it are still allowed.
-	case len(submitted) == 0:
+	case len(submitted) == 0 || isAllToolsMarker(submitted):
 		// Every box checked collapses to "the default pool" only when that
 		// loses nothing. With names outside the catalog, it becomes the
 		// literal list, or the collapse would drop them.

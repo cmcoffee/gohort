@@ -25,6 +25,35 @@ import (
 // of them was reconsidered.
 const noToolsSentinel = NoToolsMarker
 
+// allToolsMarker is how a writer says "every default tool" on purpose.
+//
+// An empty AllowedTools means every default tool, which made emptying a list
+// the way to widen an agent to everything: a filter that dropped the last name,
+// or a save from a form that never showed tools, did it without anybody
+// choosing it. So a save that would empty a list that had something in it
+// stores the no-tools marker instead (settleAllowedTools), and the one way to
+// ask for every tool is to send this, which the save stores as the empty list
+// the rest of the code already reads as "all". Never stored itself.
+const allToolsMarker = "__all__"
+
+// isAllToolsMarker reports whether a submitted list asks for every tool.
+func isAllToolsMarker(list []string) bool {
+	return len(list) == 1 && list[0] == allToolsMarker
+}
+
+// settleAllowedTools is the tool list a save stores, given the one it
+// replaces: every tool only when asked for by allToolsMarker; a list that had
+// something and comes in empty is no tools, never all of them.
+func settleAllowedTools(prior, next []string) []string {
+	if isAllToolsMarker(next) {
+		return nil
+	}
+	if len(next) == 0 && len(prior) > 0 {
+		return []string{noToolsSentinel}
+	}
+	return next
+}
+
 // isNoToolsSentinel reports whether AllowedTools is the explicit
 // no-optional-tools marker. Exported via the package so runner.go's
 // resolveWorkerTools can short-circuit before the default-pool
@@ -120,7 +149,11 @@ func healedDispatchMode(a AgentRecord, fleetDB Database, fleetUser string, udb D
 	if dispatchListNamesARunnable(a.AllowedDispatchTargets, udb, user) {
 		return mode // names a pipeline or machine instead of an agent
 	}
-	return dispatchAll
+	// Every target it was limited to is gone: it may hand work to nobody,
+	// and the agent page says so (agentMissingRefs). This used to read as
+	// Allow all, so deleting the agents an owner had limited one to widened
+	// it to the whole fleet. The catalog and the gate still agree, on none.
+	return dispatchNone
 }
 
 // dispatchListNames reports whether a dispatch target list names a target by

@@ -132,12 +132,13 @@ func curateToolsFromModal(db Database, user string, req *AgentRecord) {
 	seed, isSeed := seedAgentByID(req.ID)
 	switch {
 	case isSeed && len(seed.AllowedTools) == 0:
+		all := len(req.AllowedTools) == 0 || isAllToolsMarker(req.AllowedTools)
 		// Default-pool seed (seed-chat): the in-code seed ships an EMPTY
 		// AllowedTools, meaning "every approved tool, including ones approved
 		// in the future". Unchecks fold into the deny list, and AllowedTools is
 		// forced back to nil so it never freezes into a snapshot that blocks
 		// auto-add.
-		if len(req.AllowedTools) == 0 {
+		if all {
 			// All-checked: clear the deny list, except what the modal said
 			// about SCOPED tools — they have no checkbox in the list this
 			// "all" describes (see keepScopedDenials).
@@ -145,7 +146,9 @@ func curateToolsFromModal(db Database, user string, req *AgentRecord) {
 		} else {
 			req.DisabledPersistentTools = foldUncheckedIntoDenyList(db, user, req.AllowedTools, req.DisabledPersistentTools)
 		}
-		req.AllowedTools = nil
+		// Every default tool, said explicitly so the save does not read an
+		// emptied list as "none" (settleAllowedTools).
+		req.AllowedTools = []string{allToolsMarker}
 	case isSeed:
 		// Curated seed (research, kb): the in-code seed ships a real
 		// framework-tool allowlist that resolveWorkerTools intersects against.
@@ -153,7 +156,7 @@ func curateToolsFromModal(db Database, user string, req *AgentRecord) {
 		// temp-tool unchecks fold into the deny list. Wiping AllowedTools here
 		// would broaden the agent to the full default pool (loadAgent does not
 		// restore the curated list).
-		if len(req.AllowedTools) > 0 {
+		if len(req.AllowedTools) > 0 && !isAllToolsMarker(req.AllowedTools) {
 			req.DisabledPersistentTools = foldUncheckedIntoDenyList(db, user, req.AllowedTools, req.DisabledPersistentTools)
 		}
 	default:
@@ -167,7 +170,7 @@ func curateToolsFromModal(db Database, user string, req *AgentRecord) {
 		// unchecked again on every reload, permanently. Seeds were given this in
 		// v0.5.698/699; agents the user made themselves were the case left
 		// standing.
-		if len(req.AllowedTools) == 0 {
+		if len(req.AllowedTools) == 0 || isAllToolsMarker(req.AllowedTools) {
 			// Every catalog box checked: nothing in the pool is off. What the
 			// scoped group said still stands — it is not part of that "all".
 			req.DisabledPersistentTools = keepScopedDenials(db, user, req.DisabledPersistentTools)

@@ -2462,7 +2462,8 @@
           //   [name1, name2, ...] → exactly these names
           //
           // Save handler maps the modal state back:
-          //   all checked   → []           (preserves the default-pool semantic)
+          //   all checked   → ["__all__"]  (the default pool, asked for by name: the
+          //                                   server reads an emptied list as none)
           //   none checked  → ["__none__"] (preserves explicit-no-tools)
           //   some checked  → [name, ...]  (literal list)
           var allowed = {};
@@ -3100,7 +3101,9 @@
               // tool reached through the default pool was never listed.
               var keptExtras = extras.filter(function(n) { return !removedRefs[n] && listed.indexOf(n) >= 0; });
               if (picked.length === checkboxes.length) {
-                picked = keptExtras.length ? picked.concat(keptExtras) : [];
+                // Every tool, said explicitly: the server reads an emptied
+                // list as "none" so that emptying one never widens an agent.
+                picked = keptExtras.length ? picked.concat(keptExtras) : ['__all__'];
               } else if (picked.length === 0) {
                 picked = keptExtras.length ? keptExtras : ['__none__'];
               } else {
