@@ -919,6 +919,13 @@ func (ap *accessPage) shareSections() []ui.Section {
 		},
 		{
 			Group:    "Share",
+			Title:    "People it has served",
+			Subtitle: "Everyone outside gohort who has talked to this agent, each in a store of their own.",
+			Detail:   "They have no login, so looking after them is yours. View shows what the agent saved about one of them and their conversations. Clear memory forgets what it saved and keeps the conversations. Delete removes them entirely, from every one of your agents they reached: what to do when someone asks to be forgotten.",
+			Body:     outsidePeopleTableUI(T.WebPrefix(), T.WebPrefix()+"/api/outside-people?agent="+url.QueryEscape(ap.agent.ID), false),
+		},
+		{
+			Group:    "Share",
 			Title:    "Published app name",
 			Subtitle: "What this agent is called to the people it is published to. Blank uses its own name.",
 			Body: ui.FormPanel{

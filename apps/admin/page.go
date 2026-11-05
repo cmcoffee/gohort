@@ -42,7 +42,7 @@ var adminLayout = []struct {
 	// with the chart they feed.
 	{"Overview", []string{"System Status", "Site", "Cost History (Last 30 Days)", "Cost by source", "Prices"}},
 	{"People", []string{
-		"Sign-in", "Add account", "Users", "Teams", "Default Apps",
+		"Sign-in", "Add account", "Users", "People outside gohort", "Teams", "Default Apps",
 		"Feature Access", "Personal integrations", "Activity Log",
 	}},
 	{"Models", []string{"Worker LLM", "Lead LLM", "Model Privacy", "LLM Routing", "Local Model Scheduler"}},
@@ -449,7 +449,7 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 		"Drafted tools waiting for review": true, "Users' tools": true, "System Hooks": true,
 		"Requests to share": true, "Shared tools": true,
 		"Agent-Scoped Tools": true, "Orphaned Tools": true,
-		"Skills": true, "Teams": true,
+		"Skills": true, "Teams": true, "People outside gohort": true,
 		"Templates":  true,
 		"Migrations": true, "Database Browser": true,
 		"Agent Capabilities: Outward & Spending": true,

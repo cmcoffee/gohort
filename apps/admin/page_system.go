@@ -229,6 +229,12 @@ func (a *AdminApp) systemSections() []ui.Section {
 			},
 		},
 		{
+			Title:    "People outside gohort",
+			Subtitle: "Everyone a user's agents have served through a key marked for people outside gohort, across every owner.",
+			Detail:   "They have no account, so they never appear above. Each runs in a store of their own. Their owner looks after them on the agent's Access page; this is the same list for every owner, for when one is gone or a request to be forgotten reaches you. Delete removes the person from every agent of that owner's they reached.",
+			Body:     outsidePeopleAdminTable(),
+		},
+		{
 			Title:    "Teams",
 			Subtitle: "Name a team, give it apps, and put people on it with the Teams button on their row above.",
 			Detail:   "For example \"Writers\" or \"Ops\". A team's apps are resolved when a member opens one, so editing a team re-provisions everyone on it at once. With sharing turned on, members can also share what they own with the whole team.",

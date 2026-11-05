@@ -1,6 +1,6 @@
 # Outside audiences: gohort behind someone else's chat
 
-Status: design agreed (2026-11-05); see Decisions. Built for /v1: step 1 (outside keys, per-person stores, the agent switch) and step 2 (lent tools and credentials, per-person limits).
+Status: design agreed (2026-11-05); see Decisions. Built for /v1: step 1 (outside keys, per-person stores, the agent switch), step 2 (lent tools and credentials, per-person limits), and the People view (owner and admin can view, clear or delete a person). Teams (step 3) is next.
 
 ## Why
 

@@ -1807,6 +1807,8 @@ func (cr *continuingRun) admit() bool {
 			noteOutsideLimit(cr.agentOwner, cr.target, cr.runtimeUser, why, now)
 			return cr.exit(AgentSyncResult{Text: outsideLimitReply}, nil)
 		}
+		// So the owner can find them again (outside_people.go).
+		notePersonTurn(T.DB, cr.agentOwner, cr.target.ID, cr.runtimeUser, now)
 	}
 	cr.runtimeDB = cr.ownerDB
 	if cr.runtimeUser != cr.agentOwner {

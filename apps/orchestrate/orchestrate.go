@@ -674,6 +674,16 @@ func (T *OrchestrateApp) registerHandlers() {
 	// same setters the Permissions page uses. See agent_access_tools.go.
 	T.HandleFunc("/api/agent-access/tool", jsonapi.Methods{"PATCH": jsonapi.Patch(T.DB, T.handleAgentAccessTool), "POST": jsonapi.Post(T.DB, T.handleAgentAccessTool)}.Serve)
 	T.HandleFunc("/api/agent-access/handoff", jsonapi.Post(T.DB, T.handleAgentAccessHandoff))
+	// People outside gohort (outside_people.go): each owner's on their
+	// agent's Access page, every owner's for an administrator (/all). The
+	// per-person routes check owner-or-admin on the person itself.
+	T.HandleFunc("/api/outside-people", jsonapi.Get(T.DB, T.handleOutsidePeople))
+	T.HandleFunc("/api/outside-people/all", jsonapi.Get(T.DB, T.handleAllOutsidePeople, T.adminOpt()))
+	T.HandleFunc("/api/outside-people/notes", jsonapi.Get(T.DB, T.handleOutsidePersonNotes))
+	T.HandleFunc("/api/outside-people/conversations", jsonapi.Get(T.DB, T.handleOutsidePersonConversations))
+	T.HandleFunc("/api/outside-people/conversation", jsonapi.Get(T.DB, T.handleOutsidePersonConversation))
+	T.HandleFunc("/api/outside-people/clear", jsonapi.Post(T.DB, T.handleOutsidePersonClear))
+	T.HandleFunc("/api/outside-people/delete", jsonapi.Post(T.DB, T.handleOutsidePersonDelete))
 	T.HandleFunc("/api/agent-credentials", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.agentCredentialsGet),
 		"POST": jsonapi.Post(T.DB, T.agentCredentialsSave),
