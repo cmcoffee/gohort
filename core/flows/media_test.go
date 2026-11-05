@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -217,6 +218,17 @@ func TestAVideoIsDownloadedFromALink(t *testing.T) {
 	if !Installed("yt-dlp") {
 		t.Skip("yt-dlp is not installed here")
 	}
+	// yt-dlp goes through the download proxy, which reaches public addresses
+	// only, so the loopback test server is refused (TestTheDownloadProxy*).
+	// Shown first, then let through for the rest of the test.
+	if _, err := Do(context.Background(), "media.download", Input{Params: map[string]string{"url": link}}); err == nil {
+		t.Fatal("yt-dlp reached a loopback server: the download proxy was not in its way")
+	}
+	prevDial := ProxyDial
+	ProxyDial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, addr)
+	}
+	defer func() { ProxyDial = prevDial }()
 	res, err := Do(context.Background(), "media.download", Input{Params: map[string]string{"url": link}})
 	if err != nil || !bytes.Equal(res.Out, video) || res.By != "yt-dlp" {
 		t.Fatalf("want the video by yt-dlp: %v %q (%s)", err, res.By, res.Log)

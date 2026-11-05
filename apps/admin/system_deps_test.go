@@ -9,6 +9,7 @@ import (
 	"image"
 	"image/png"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -737,6 +738,13 @@ func TestTheDownloadRowTakesALink(t *testing.T) {
 		return nil
 	}
 	defer func() { flows.URLGuard = was }()
+	// yt-dlp reaches public addresses only, through the download proxy; this
+	// test's server is on loopback, so the proxy is let through to it.
+	wasDial := flows.ProxyDial
+	flows.ProxyDial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, addr)
+	}
+	defer func() { flows.ProxyDial = wasDial }()
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
 	mw.WriteField("url", srv.URL+"/clip.mp4")

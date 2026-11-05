@@ -75,6 +75,15 @@ func downloadNative(ctx context.Context, b *Box, in Input) ([]byte, [][]byte, er
 		return nil, nil, err
 	}
 	args = append(args, cookies...)
+	// Every request yt-dlp makes (the page, its redirects, each fragment)
+	// goes through a proxy that reaches public addresses only: the link was
+	// checked as written, and where it leads is not (public_proxy.go).
+	proxy, err := startPublicProxy()
+	if err != nil {
+		return nil, nil, err
+	}
+	defer proxy.Close()
+	args = append(args, "--proxy", proxy.URL())
 	// Nothing after "--" is an option, whatever it starts with.
 	args = append(args, "--", url)
 	if _, err := b.Run(ctx, downloadTimeout, "yt-dlp", args...); err != nil {
