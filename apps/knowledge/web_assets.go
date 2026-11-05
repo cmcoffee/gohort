@@ -39,7 +39,7 @@ const documentsListAssets = `<style>
 .docs-card {
   --tone: var(--accent);
   position: relative; display: flex; flex-direction: column; gap: 0.7rem;
-  padding: 1rem 1rem 0.85rem; border-radius: 14px;
+  padding: 1rem 1rem 0.85rem; border-radius: calc(var(--btn-radius) * 7 / 3);
   background: linear-gradient(155deg, color-mix(in srgb, var(--tone) 10%, var(--bg-1)) 0%, var(--bg-1) 60%);
   border: 1px solid var(--border);
   color: inherit; text-decoration: none;
@@ -56,7 +56,7 @@ const documentsListAssets = `<style>
 .docs-card.tone-3 { --tone: var(--accent-hi, var(--accent)); }
 .docs-card-head { display: flex; align-items: center; gap: 0.75rem; min-width: 0; }
 .docs-card-mark {
-  flex: 0 0 auto; width: 2.6rem; height: 2.6rem; border-radius: 12px;
+  flex: 0 0 auto; width: 2.6rem; height: 2.6rem; border-radius: calc(var(--btn-radius) * 2);
   display: grid; place-items: center;
   font-weight: 700; font-size: 1.1rem; line-height: 1;
   color: color-mix(in srgb, var(--tone) 70%, var(--text-hi));
@@ -77,7 +77,7 @@ const documentsListAssets = `<style>
 .docs-card-foot { display: flex; align-items: baseline; gap: 1rem; margin-top: auto; font-size: var(--fs-xs, 0.78rem); color: var(--text-mute); }
 .docs-card-stat b { margin-right: 0.25rem; font-size: var(--fs-md, 0.9rem); font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
 .docs-card-when { margin-left: auto; white-space: nowrap; }
-.docs-empty { color: var(--text-mute); font-style: italic; padding: 2rem; text-align: center; border: 1px dashed var(--border); border-radius: 14px; }
+.docs-empty { color: var(--text-mute); font-style: italic; padding: 2rem; text-align: center; border: 1px dashed var(--border); border-radius: calc(var(--btn-radius) * 7 / 3); }
 </style>
 <script>
 (function() {

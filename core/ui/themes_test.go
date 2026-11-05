@@ -48,12 +48,55 @@ func TestEveryThemeCarriesEveryToken(t *testing.T) {
 			}
 		}
 	}
-	for _, name := range []string{"high-contrast", "nord", "solarized-dark", "solarized-light", "gruvbox"} {
+	for _, name := range []string{"high-contrast", "nord", "solarized-dark", "solarized-light", "gruvbox", "terminal", "amber"} {
 		if !IsValidTheme(name) {
 			t.Errorf("theme %q is not registered", name)
 		}
 	}
 	if !isLightColor(themeByName["solarized-light"].Tokens["--bg-0"]) || isLightColor(themeByName["nord"].Tokens["--bg-0"]) {
 		t.Error("a theme's light or dark reading is wrong")
+	}
+}
+
+func TestAnyThemeCanBeWornRetro(t *testing.T) {
+	defer RegisterStyleResolver(nil)
+	render := func() string {
+		var b strings.Builder
+		if err := RenderPageJSON(&b, []byte(`{}`), "nord", "", "x"); err != nil {
+			t.Fatal(err)
+		}
+		return b.String()
+	}
+	// Unset, or naming no style, reads as Modern.
+	for _, stored := range []string{"", "neon"} {
+		RegisterStyleResolver(func() string { return stored })
+		if ActiveStyle() != StyleModern || !strings.Contains(render(), `data-theme="nord" data-style="modern"`) {
+			t.Errorf("stored style %q did not read as modern", stored)
+		}
+	}
+	RegisterStyleResolver(func() string { return StyleRetro })
+	if !strings.Contains(render(), `data-theme="nord" data-style="retro"`) {
+		t.Error("a page does not carry the retro style beside its theme")
+	}
+	// The retro shape comes with the theme CSS every page shell includes,
+	// keyed on the style alone, so it applies whatever the theme.
+	css := ThemeCSS()
+	i := strings.Index(css, `:root[data-style="retro"] {`)
+	if i < 0 {
+		t.Fatal("the theme CSS has no retro style")
+	}
+	block := css[i : i+strings.Index(css[i:], "}")]
+	for _, want := range []string{"--btn-radius: 0px", "--font-ui:", "monospace", "--mark-line:"} {
+		if !strings.Contains(block, want) {
+			t.Errorf("the retro style does not set %s", want)
+		}
+	}
+	// A theme's colours stay its own: none of them sets the shape.
+	for _, th := range Themes() {
+		for _, k := range []string{"--btn-radius", "--font-ui", "--mark-line"} {
+			if _, ok := th.Tokens[k]; ok {
+				t.Errorf("theme %q sets %s, which is the style's", th.Name, k)
+			}
+		}
 	}
 }

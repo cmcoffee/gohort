@@ -211,6 +211,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
 
 	html := dashboardPageHTML
 	html = strings.Replace(html, "%THEME%", ui.ActiveTheme(), 1)
+	html = strings.Replace(html, "%STYLE%", ui.ActiveStyle(), 1)
 	// The theme's colour scheme and background, ahead of the page's own
 	// styles: every app visit passes through here, and a webview (the desktop
 	// app's) paints its white canvas between pages until a page says what

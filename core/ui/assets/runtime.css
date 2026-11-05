@@ -2,7 +2,10 @@
 html, body {
   margin: 0; padding: 0;
   background: var(--bg-0); color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  /* A theme may set its own face (--font-ui) and a glow on the text
+   * (--text-glow); without them, the system face and none. */
+  font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif);
+  text-shadow: var(--text-glow, none);
   -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
   overscroll-behavior-y: contain;
 }
@@ -304,7 +307,8 @@ select:-webkit-autofill {
  * carries it in its own colour. */
 .ui-page-header::before {
   content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
-  background: linear-gradient(90deg, var(--accent), var(--accent-hi) 45%, transparent 85%);
+  /* A theme may draw it its own way (--mark-line). */
+  background: var(--mark-line, linear-gradient(90deg, var(--accent), var(--accent-hi) 45%, transparent 85%));
   opacity: 0.85; pointer-events: none;
 }
 .ui-page-header-left {
@@ -665,7 +669,7 @@ select:-webkit-autofill {
 
 /* --- Section --- */
 .ui-section {
-  background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px;
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: calc(var(--btn-radius) * 2);
   padding: 1rem 1.15rem; margin-bottom: 1rem;
 }
 /* Page.Grid layout — sections flow into a responsive 2-column grid on

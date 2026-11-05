@@ -200,6 +200,7 @@ func ServeDashboard(addr string) error {
 	// un-pinned page renders in the admin-selected theme (falls back to the
 	// ui default when unset).
 	ui.RegisterThemeResolver(func() string { return AuthGetUITheme(AuthDB()) })
+	ui.RegisterStyleResolver(func() string { return AuthGetUIStyle(AuthDB()) })
 
 	// Authentication endpoints.
 	if AuthDB != nil {

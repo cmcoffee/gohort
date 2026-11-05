@@ -27,7 +27,7 @@ root POST /api/apps "{}"
 alice GET /api/settings ""
   403 forbidden
 root GET /api/settings ""
-  200 {"allow_signup":false,"api_key_allow_query":false,"channel_wake_rules":"","default_apps":null,"doc_brand":"","external_url":"","fetch_cache_quota_mb":100,"lockout_minutes":15,"max_login_attempts":5,"n… (453 bytes, sha1 88811d0d9b212d80b3b9282fe01a075d6c9f9b76)
+  200 {"allow_signup":false,"api_key_allow_query":false,"channel_wake_rules":"","default_apps":null,"doc_brand":"","external_url":"","fetch_cache_quota_mb":100,"lockout_minutes":15,"max_login_attempts":5,"n… (473 bytes, sha1 ffd7bab7f985ca8812a0402c389944c554db2431)
 (signed out) GET /api/settings?app=/nope ""
   403 forbidden
 alice GET /api/settings?app=/nope ""
@@ -138,6 +138,12 @@ root PATCH /api/settings "{\"ui_theme\":\"nope\"}"
   200 {"status":"updated"}
 root PATCH /api/settings "{\"ui_theme\":\"indigo\"}"
   200 {"status":"updated"}
+root PATCH /api/settings "{\"ui_style\":\"nope\"}"
+  200 {"status":"updated"}
+root PATCH /api/settings "{\"ui_style\":\"retro\"}"
+  200 {"status":"updated"}
+root PATCH /api/settings "{\"ui_style\":\"modern\"}"
+  200 {"status":"updated"}
 root PATCH /api/settings "{\"timezone\":\"Not/AZone\"}"
   200 {"status":"updated"}
 root PATCH /api/settings "{\"timezone\":\"UTC\"}"
@@ -167,7 +173,7 @@ root PATCH /api/settings "{\"tune_account_key_lifetime\":90}"
 root PATCH /api/settings?app=/nope "{\"tune_account_key_lifetime\":3650}"
   200 {"status":"updated"}
 root GET /api/settings ""
-  200 {"allow_signup":true,"api_key_allow_query":false,"channel_wake_rules":"wake on mention","default_apps":["/chat"],"doc_brand":"Brand","external_url":"https://example.test","fetch_cache_quota_mb":0,"loc… (548 bytes, sha1 2f9f82d800dfb4d3426fea4969f1858744cb3ed6)
+  200 {"allow_signup":true,"api_key_allow_query":false,"channel_wake_rules":"wake on mention","default_apps":["/chat"],"doc_brand":"Brand","external_url":"https://example.test","fetch_cache_quota_mb":0,"loc… (568 bytes, sha1 f0e1b5f6c7f1f0ea53ef660f005b66b95307748a)
 alice POST /api/settings/reset-tunables ""
   403 forbidden
 root POST /api/settings/reset-tunables?category=nope ""
@@ -192,7 +198,7 @@ root POST /api/cost-rates "{}"
   405 method not allowed
 root GET /api/cost-rates ""
   200 {"worker_input_per_1k":0.0015,"worker_output_per_1k":0,"lead_input_per_1k":0,"lead_output_per_1k":0.009,"search_per_call":0.01,"image_per_call":0.04,"cache_read_multiplier":0.1,"cache_write_multiplier":1.25,"configured":true,"worker_input_per_1m":1.5,"worker_output_per_1m":0,"lead_input_per_1m":0,"lead_output_per_1m":9}
-activity log, 30 entries:
+activity log, 32 entries:
   settings root: cleared timezone (host zone; applies on restart)
   settings root: reverted tunables to defaults (app="/nope")
   settings root: reverted tunables to defaults (category="")
@@ -219,6 +225,8 @@ activity log, 30 entries:
   settings root: set timezone="UTC" (applies on restart)
   settings root: set tune_account_key_lifetime back to its default (90)
   settings root: set tune_account_key_lifetime=3650
+  settings root: set ui_style="modern"
+  settings root: set ui_style="retro"
   settings root: set ui_theme="indigo"
   settings root: set worker_input=$1.5 per 1M tokens
   settings root: set worker_input_per_1k=0.002

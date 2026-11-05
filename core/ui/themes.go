@@ -246,6 +246,7 @@ func ThemeCSS() string {
 		}
 		block(t.Name, t.Tokens)
 	}
+	b.WriteString(retroStyleCSS)
 	return b.String()
 }
 
@@ -308,4 +309,68 @@ func init() {
 		"--border": "#504945", "--accent": "#fe8019", "--accent-hi": "#fabd2f", "--text-on-accent": "#282828",
 		"--danger": "#fb4934", "--success": "#b8bb26", "--warning": "#fabd2f", "--tap": "44px",
 	}})
+	// The two phosphor screens: one colour of phosphor on black, with a faint
+	// glow on the text. Paired with the Retro style they are the old screen
+	// whole; the glow is theirs, since it suits a dark screen and blurs a light
+	// one.
+	RegisterTheme(ThemeSpec{Name: "terminal", Label: "Terminal: green phosphor on black", Tokens: map[string]string{
+		"--bg-0": "#040a05", "--bg-1": "#08140b", "--bg-2": "#0e2013",
+		"--text": "#41e874", "--text-hi": "#a6ffbf", "--text-mute": "#2a9a4c",
+		"--border": "#1a4a28", "--accent": "#33ff66", "--accent-hi": "#8dffad", "--text-on-accent": "#021006",
+		"--danger": "#ff5f56", "--success": "#33ff66", "--warning": "#e8e04a", "--tap": "44px",
+		"--text-glow": "0 0 3px rgba(51, 255, 102, 0.35)",
+	}})
+	RegisterTheme(ThemeSpec{Name: "amber", Label: "Amber: amber phosphor on black", Tokens: map[string]string{
+		"--bg-0": "#0a0600", "--bg-1": "#140d02", "--bg-2": "#1f1504",
+		"--text": "#ffb000", "--text-hi": "#ffd27a", "--text-mute": "#a8740c",
+		"--border": "#4a3308", "--accent": "#ffb000", "--accent-hi": "#ffcc4d", "--text-on-accent": "#140c00",
+		"--danger": "#ff5a3c", "--success": "#d4e05a", "--warning": "#ffd27a", "--tap": "44px",
+		"--text-glow": "0 0 3px rgba(255, 176, 0, 0.35)",
+	}})
+}
+
+// Styles are the shape of the UI, chosen apart from the theme's colours, so
+// any theme can be worn either way. Modern is rounded, in the system face,
+// with the accent line fading out under the bar; Retro is square, monospace,
+// with the line solid. A page carries its style as data-style on <html>
+// beside data-theme, and the Retro block below (in ThemeCSS, so every page
+// shell that themes itself has it) sets the variables the stylesheet reads.
+const (
+	StyleModern = "modern"
+	StyleRetro  = "retro"
+)
+
+const retroStyleCSS = `:root[data-style="retro"] {
+  --font-ui: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  --btn-radius: 0px;
+  --mark-line: var(--accent);
+}
+`
+
+var styleResolver func() string
+
+// RegisterStyleResolver installs the active-style lookup, as
+// RegisterThemeResolver does the theme's. Call once at startup.
+func RegisterStyleResolver(fn func() string) { styleResolver = fn }
+
+// IsValidStyle reports whether s names a style.
+func IsValidStyle(s string) bool { return s == StyleModern || s == StyleRetro }
+
+// ActiveStyle is the resolver's style, or Modern when it has none (or names
+// one that does not exist).
+func ActiveStyle() string {
+	if styleResolver != nil {
+		if s := styleResolver(); IsValidStyle(s) {
+			return s
+		}
+	}
+	return StyleModern
+}
+
+// StyleOptions are the styles for a picker.
+func StyleOptions() []SelectOption {
+	return []SelectOption{
+		{Value: StyleModern, Label: "Modern: rounded, in the system font"},
+		{Value: StyleRetro, Label: "Retro: square, in a monospace font"},
+	}
 }

@@ -34,7 +34,7 @@ func TestSiteSettingsFieldsAllHaveAHome(t *testing.T) {
 		}
 	}
 	for _, f := range []string{
-		"allow_signup", "ui_theme", "service_name", "doc_brand", "site_name",
+		"allow_signup", "ui_theme", "ui_style", "service_name", "doc_brand", "site_name",
 		"external_url", "timezone", "notify_from", "api_key_allow_query",
 		"session_days", "session_absolute_days", "max_login_attempts",
 		"lockout_minutes", "fetch_cache_quota_mb",

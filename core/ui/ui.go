@@ -258,14 +258,14 @@ func RenderPageJSON(w io.Writer, pageJSON []byte, theme, extraHead, title string
 		theme = ActiveTheme() // resolver-or-default; see RegisterThemeResolver
 	}
 	fmt.Fprintf(w, `<!doctype html>
-<html lang="en" data-theme=%q>
+<html lang="en" data-theme=%q data-style=%q>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 %s<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,%s">
 %s<title>%s</title>
 <link rel="stylesheet" href="/_ui/ui.css">
-%s</head>`, theme, ThemeFirstPaintHead(theme), webui.FaviconSVG, AppHead(theme), htmlEscape(title), extraHead)
+%s</head>`, theme, ActiveStyle(), ThemeFirstPaintHead(theme), webui.FaviconSVG, AppHead(theme), htmlEscape(title), extraHead)
 	fmt.Fprintf(w, `
 <body>
 <div id="ui-root"></div>

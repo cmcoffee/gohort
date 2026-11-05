@@ -203,6 +203,10 @@ func (a *AdminApp) handleGetSettings(c *jsonapi.Call) (any, error) {
 	if ui_theme == "" {
 		ui_theme = "indigo"
 	}
+	ui_style := AuthGetUIStyle(a.db)
+	if !ui.IsValidStyle(ui_style) {
+		ui_style = ui.StyleModern
+	}
 	var apiKeyAllowQuery string
 	a.db.Get(WebTable, "api_key_allow_query", &apiKeyAllowQuery)
 	resp := map[string]interface{}{
@@ -224,6 +228,7 @@ func (a *AdminApp) handleGetSettings(c *jsonapi.Call) (any, error) {
 		"fetch_cache_quota_mb":  fetch_cache_quota_mb,
 		"channel_wake_rules":    AuthGetChannelWakeRules(a.db),
 		"ui_theme":              ui_theme,
+		"ui_style":              ui_style,
 		"doc_brand":             AuthGetDocBrand(a.db),
 		"site_name":             AuthGetSiteName(a.db),
 		"timezone":              DeploymentTimezoneName(a.db),
@@ -266,6 +271,7 @@ func (a *AdminApp) handleUpdateSettings(c *jsonapi.Call, raw json.RawMessage) (a
 		FetchCacheQuotaMB   *int      `json:"fetch_cache_quota_mb,omitempty"`
 		ChannelWakeRules    *string   `json:"channel_wake_rules,omitempty"`
 		UITheme             *string   `json:"ui_theme,omitempty"`
+		UIStyle             *string   `json:"ui_style,omitempty"`
 		DocBrand            *string   `json:"doc_brand,omitempty"`
 		SiteName            *string   `json:"site_name,omitempty"`
 		Timezone            *string   `json:"timezone,omitempty"`
@@ -379,6 +385,14 @@ func (a *AdminApp) handleUpdateSettings(c *jsonapi.Call, raw json.RawMessage) (a
 			adminChange(r, activity.Settings, "set ui_theme=%q", t)
 		} else {
 			Log("[admin] user %q tried to set unknown ui_theme=%q: ignored", current, t)
+		}
+	}
+	if req.UIStyle != nil {
+		if s := strings.TrimSpace(*req.UIStyle); ui.IsValidStyle(s) {
+			AuthSetUIStyle(a.db, s)
+			adminChange(r, activity.Settings, "set ui_style=%q", s)
+		} else {
+			Log("[admin] user %q tried to set unknown ui_style=%q: ignored", current, s)
 		}
 	}
 	if req.DocBrand != nil {

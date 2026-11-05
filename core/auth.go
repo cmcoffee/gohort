@@ -1023,6 +1023,19 @@ func AuthSetUITheme(db Database, theme string) {
 	db.Set(WebTable, "ui_theme", theme)
 }
 
+// AuthGetUIStyle returns the deployment-wide UI style (ui.StyleModern or
+// ui.StyleRetro), or "" when unset, which reads as Modern.
+func AuthGetUIStyle(db Database) string {
+	var s string
+	db.Get(WebTable, "ui_style", &s)
+	return s
+}
+
+// AuthSetUIStyle stores the deployment-wide UI style.
+func AuthSetUIStyle(db Database, style string) {
+	db.Set(WebTable, "ui_style", style)
+}
+
 // Deployment branding — a document/header brand (e.g. an org or research-group
 // name like "SnugLab Research") and a site name. Used on exported documents
 // (guide PDF/HTML headers + footers) and the PDF branding line. Both deployment-
@@ -2065,7 +2078,7 @@ func SignupHandler(db Database) http.HandlerFunc {
 // page templates.
 func authPageHTML(title, body string) string {
 	return `<!DOCTYPE html>
-<html lang="en" data-theme="` + ui.ActiveTheme() + `">
+<html lang="en" data-theme="` + ui.ActiveTheme() + `" data-style="` + ui.ActiveStyle() + `">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -2075,13 +2088,14 @@ func authPageHTML(title, body string) string {
 ` + ui.ThemeCSS() + `
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif);
+    text-shadow: var(--text-glow, none);
     background: var(--bg-0); color: var(--text); min-height: 100vh;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     padding: 20px;
   }
   .auth-box {
-    background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg-1); border: 1px solid var(--border); border-radius: calc(var(--btn-radius, 6px) * 4 / 3);
     padding: 2rem; width: 100%; max-width: 380px;
   }
   .ascii-logo {

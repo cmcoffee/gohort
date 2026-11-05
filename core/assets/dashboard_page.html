@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="%THEME%">
+<html lang="en" data-theme="%THEME%" data-style="%STYLE%">
 <head>
 <meta charset="UTF-8">
 %FIRSTPAINT%<meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -10,7 +10,7 @@
 %THEMECSS%
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif); text-shadow: var(--text-glow, none);
     background: var(--bg-0, #0d1117); color: var(--text, #c9d1d9); min-height: 100vh;
     display: flex; flex-direction: column; align-items: center;
     padding: 80px 20px;
@@ -68,7 +68,7 @@
   .notice {
     width: 100%; max-width: var(--dash-w); margin: 0 auto 1.25rem;
     display: flex; flex-direction: column; align-items: stretch; gap: 0.75rem;
-    padding: 0.85rem 1.1rem; border-radius: 8px;
+    padding: 0.85rem 1.1rem; border-radius: calc(var(--btn-radius, 6px) * 4 / 3);
     background: rgba(99,102,241,0.10); border: 1px solid rgba(99,102,241,0.35);
     color: var(--text, #c9d1d9); font-size: var(--fs-lg, 0.95rem); line-height: 1.5;
   }
@@ -80,13 +80,13 @@
   .notice span { min-width: 0; overflow-wrap: anywhere; }
   .notice-act {
     align-self: flex-start; text-decoration: none; font-weight: 600; font-size: var(--fs-md, 0.9rem);
-    padding: 0.45rem 0.9rem; border-radius: 6px;
+    padding: 0.45rem 0.9rem; border-radius: var(--btn-radius, 6px);
     background: var(--accent, #6366f1); color: var(--text-on-accent, #fff);
   }
   .notice-act:hover { filter: brightness(1.1); }
   .notice-acts { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
   .notice-dismiss {
-    font: inherit; font-size: var(--fs-md, 0.9rem); padding: 0.45rem 0.9rem; border-radius: 6px; cursor: pointer;
+    font: inherit; font-size: var(--fs-md, 0.9rem); padding: 0.45rem 0.9rem; border-radius: var(--btn-radius, 6px); cursor: pointer;
     background: transparent; color: var(--text, #c9d1d9); border: 1px solid rgba(99,102,241,0.35);
   }
   .notice-dismiss:hover { border-color: var(--accent, #6366f1); }
@@ -100,7 +100,7 @@
   }
   .card {
     display: block; text-decoration: none; color: var(--text, #c9d1d9);
-    background: var(--bg-1, #161b22); border: 1px solid var(--border, #30363d); border-radius: 8px;
+    background: var(--bg-1, #161b22); border: 1px solid var(--border, #30363d); border-radius: calc(var(--btn-radius, 6px) * 4 / 3);
     padding: 1.5rem; transition: border-color 0.2s, transform 0.2s;
   }
   .card:hover { border-color: var(--accent, #58a6ff); transform: translateY(-2px); }
@@ -138,7 +138,7 @@
      inner card grid. */
   .cluster {
     grid-column: 1 / -1;
-    border: 1px solid var(--border, #30363d); border-radius: 10px;
+    border: 1px solid var(--border, #30363d); border-radius: calc(var(--btn-radius, 6px) * 5 / 3);
     padding: 1rem 1rem 1.25rem;
   }
   .cluster-head {
@@ -180,13 +180,13 @@
     display: flex; align-items: center; flex-wrap: wrap;
     gap: 0.35rem 0.75rem;
     padding: 0.6rem 0.8rem; background: var(--bg-1, #161b22); border: 1px solid var(--border, #21262d);
-    border-radius: 6px; margin-bottom: 0.4rem; cursor: pointer;
+    border-radius: var(--btn-radius, 6px); margin-bottom: 0.4rem; cursor: pointer;
     text-decoration: none; color: var(--text, #c9d1d9); font-size: var(--fs-sm, 0.85rem);
   }
   .live-item:hover { border-color: var(--border, #30363d); }
   .live-badge {
     flex: 0 0 auto;
-    font-size: var(--fs-2xs, 0.7rem); padding: 0.15rem 0.4rem; border-radius: 4px;
+    font-size: var(--fs-2xs, 0.7rem); padding: 0.15rem 0.4rem; border-radius: calc(var(--btn-radius, 6px) * 2 / 3);
     font-weight: 600; white-space: nowrap;
   }
   .live-badge.running { background: var(--success); color: #fff; }
@@ -217,7 +217,7 @@
   }
   .auth-link {
     color: var(--text-mute, #8b949e); text-decoration: none;
-    padding: 0.3rem 0.7rem; border: 1px solid var(--border, #30363d); border-radius: 6px;
+    padding: 0.3rem 0.7rem; border: 1px solid var(--border, #30363d); border-radius: var(--btn-radius, 6px);
     background: var(--bg-1, #161b22); transition: border-color 0.2s, color 0.2s;
     white-space: nowrap;
     /* Match a <button class="auth-link"> (POST-logout) to the <a> siblings. */
@@ -332,7 +332,7 @@
     display: none; position: fixed; right: 12px; top: 3rem; z-index: 10000;
     width: min(26rem, calc(100vw - 2rem)); max-height: 60vh; overflow-y: auto;
     background: var(--bg-elev, #1b1b1f); border: 1px solid var(--border);
-    border-radius: 0.5rem; padding: 0.4rem; text-align: left;
+    border-radius: calc(var(--btn-radius, 6px) * 4 / 3); padding: 0.4rem; text-align: left;
   }
   .notify-panel.open { display: block; }
   .notify-empty { padding: 0.9rem; color: var(--text-mute, #999); font-size: var(--fs-sm, 0.85rem); }
@@ -352,7 +352,7 @@
   .band-gear {
     margin-left: auto; display: inline-flex; align-items: center; gap: 0.35rem;
     min-width: 30px; min-height: 30px; padding: 0.25rem 0.4rem; justify-content: center;
-    background: none; border: 1px solid transparent; border-radius: 6px; cursor: pointer;
+    background: none; border: 1px solid transparent; border-radius: var(--btn-radius, 6px); cursor: pointer;
     color: var(--text-mute, #8b949e); opacity: 0.55; font: inherit; text-transform: none; letter-spacing: 0;
   }
   .band-gear:hover, .band-gear:focus-visible { opacity: 1; color: var(--text, #c9d1d9); border-color: var(--border, #30363d); }
