@@ -338,7 +338,10 @@ func init() {
 //
 //   - Modern: rounded, in the system face, the accent line fading out under
 //     the bar, cards lifting when pointed at. What every page has unset.
-//   - Retro: square, monospace, the line solid.
+//   - Retro: square, monospace, the line solid, the type a step smaller: a
+//     monospace face runs about a sixth wider than the system one at the
+//     same size, so at the same size a line of it took far more room.
+//     Condensed coding faces come first, where the device has one.
 //   - Soft: rounder, in a rounded face where the device has one.
 //   - Paper: serif type, barely rounded, a plain printed rule under the bar,
 //     and nothing lifts or casts a shadow: a page that reads like a document.
@@ -357,9 +360,11 @@ const (
 )
 
 const styleCSS = `:root[data-style="retro"] {
-  --font-ui: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  --font-ui: "Iosevka Term", Iosevka, PragmataPro, ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
   --btn-radius: 0px;
   --mark-line: var(--accent);
+  --fs-2xs: 0.66rem; --fs-xs: 0.71rem; --fs-sm: 0.77rem;
+  --fs-md: 0.83rem;  --fs-lg: 0.9rem;  --fs-xl: 1rem; --fs-base: 0.9rem;
 }
 :root[data-style="soft"] {
   --font-ui: ui-rounded, "SF Pro Rounded", "Hiragino Maru Gothic ProN", Nunito, Quicksand, "Varela Round", system-ui, -apple-system, "Segoe UI", sans-serif;

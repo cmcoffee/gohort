@@ -98,7 +98,7 @@ func TestAnyThemeCanBeWornRetro(t *testing.T) {
 		t.Fatal("the theme CSS has no retro style")
 	}
 	block := css[i : i+strings.Index(css[i:], "}")]
-	for _, want := range []string{"--btn-radius: 0px", "--font-ui:", "monospace", "--mark-line:"} {
+	for _, want := range []string{"--btn-radius: 0px", "--font-ui:", "monospace", "--mark-line:", "--fs-md: 0.83rem"} {
 		if !strings.Contains(block, want) {
 			t.Errorf("the retro style does not set %s", want)
 		}
