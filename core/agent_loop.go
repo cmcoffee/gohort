@@ -337,6 +337,9 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		return nil, messages, fmt.Errorf("LLM is not configured")
 	}
 	lr := &loopRun{T: T, ctx: ctx, messages: messages, cfg: cfg}
+	// Pictures queued in the loop's last round, with no round after it to
+	// show them, are said in the log: the model was told it would see them.
+	defer lr.noteUnshownPictures()
 	// What each call can learn of the round it is in: the tools it was
 	// given, read when asked, since a round can be handed new ones.
 	lr.ctx = withTurnTools(lr.ctx, func() []Tool { return append([]Tool(nil), lr.toolDefs...) })
@@ -566,6 +569,9 @@ type loopRun struct {
 	laneWait    time.Duration // time the run gave way to people at its own calls (shared_llm.go)
 	requestAt   int           // index in history of the request this turn answers; -1 when none
 	maxRounds   int
+	// The last pictures shown to the model on a coming step: where in history
+	// they went and how many (noteUnshownPictures).
+	viewMsgAt, viewMsgPictures int
 	confirmFn   ConfirmFunc
 	// Capability allow-set, computed once. Static tools and dynamic ones
 	// (from cfg.DynamicTools) both pass through the same filter — runtime
@@ -752,6 +758,18 @@ type loopResult struct {
 // Only a clean finish is judged. An error exit has no reply to release, and
 // asking a warden about a context-exhaustion message spends a call to be told
 // what nobody was going to send anyway.
+// noteUnshownPictures says in the log when the pictures a tool queued for the
+// model were collected and the run then ended without another call to it
+// (its round limit, a halt): the model was told it would see them and never
+// did. Read off the history, which the collected pictures are the last of
+// when no call followed; nothing is taken off any queue, since a loop running
+// inside another's tool call may share its session.
+func (lr *loopRun) noteUnshownPictures() {
+	if lr.viewMsgPictures > 0 && lr.viewMsgAt == len(lr.history)-1 {
+		Log("[agent_loop] %d picture(s) queued for the model were never shown: the run ended before another step", lr.viewMsgPictures)
+	}
+}
+
 func (lr *loopRun) exit(resp *Response, history []Message, err error) loopAction {
 	if err == nil {
 		lr.guardOutgoing(resp)
@@ -4479,11 +4497,13 @@ func (lr *loopRun) settleToolRound() loopAction {
 	// preceding tool result says what the images are.
 	if lr.cfg.DrainViewImages != nil {
 		if imgs := lr.cfg.DrainViewImages(); len(imgs) > 0 {
+			Debug("[agent_loop] showing the model %d queued picture(s) on its next step", len(imgs))
 			lr.history = append(lr.history, Message{
 				Role:    "user",
 				Content: viewImageNote(imgs),
 				Images:  viewImageBytes(imgs),
 			})
+			lr.viewMsgAt, lr.viewMsgPictures = len(lr.history)-1, len(imgs)
 		}
 	}
 	lr.prevHadToolCalls = true

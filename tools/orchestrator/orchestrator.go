@@ -128,6 +128,9 @@ func (t *DelegateTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 			Tools:        []AgentToolDef{dispatchWorker},
 			MaxRounds:    8,
 			ChatOptions:  []ChatOption{WithThink(tr)},
+			// A picture a worker's tool queued and the worker did not get to
+			// show is shown to the orchestrator.
+			DrainViewImages: sess.DrainViewImages,
 		},
 	)
 	if err != nil {
@@ -231,6 +234,9 @@ func buildDispatchWorker(sess *ToolSession, workerLLM LLM, workerToolNames []str
 					SerialTools:     true,
 					MaskDebugOutput: false,
 					ChatOptions:     []ChatOption{WithThink(f), WithTemperature(0.2)},
+					// The worker's tools are bound to sess: what they queue
+					// for the model is shown on its next round.
+					DrainViewImages: sess.DrainViewImages,
 				},
 			)
 			if werr != nil {

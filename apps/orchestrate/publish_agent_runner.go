@@ -201,6 +201,8 @@ func registerCredentialPublisher(app *OrchestrateApp) {
 			MaxRounds:       14,
 			OnRoundStart:    progRoundStart,
 			ReasoningStream: progReasoning,
+			// A picture an integration tool hands back is shown on the next round.
+			DrainViewImages: sess.DrainViewImages,
 		})
 		// A stopped update ends as the producer's own reason, whatever the
 		// run said after it: that is what the producer acts on.

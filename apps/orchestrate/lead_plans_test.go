@@ -245,7 +245,7 @@ func TestWorkStepKeepsToItsTools(t *testing.T) {
 	fake := &FakeLLM{Turns: []FakeTurn{{Content: "found it", Repeat: true}}}
 	T.LLM, T.LeadLLM = fake, fake
 	turn := &chatTurn{app: T, agent: AgentRecord{ID: "a1", Owner: user, MaxPlanSteps: 1}, user: user, udb: udb, ctx: context.Background()}
-	ws := turn.workStepToolDef("q", []AgentToolDef{{Tool: Tool{Name: "web_search"}}}, nil)
+	ws := turn.workStepToolDef(nil, "q", []AgentToolDef{{Tool: Tool{Name: "web_search"}}}, nil)
 	call := func(tool string) (string, error) {
 		return ws.Handler(context.Background(), map[string]any{"title": "x", "brief": "y", "tools": []any{tool}})
 	}

@@ -222,6 +222,8 @@ func registerCredentialReader(app *OrchestrateApp) {
 			SystemPrompt: credentialReaderPrompt,
 			Tools:        append(tools, report),
 			MaxRounds:    8,
+			// A picture an integration tool hands back is shown on the next round.
+			DrainViewImages: sess.DrainViewImages,
 		})
 		if err != nil {
 			return docs.PublishedCopy{}, err

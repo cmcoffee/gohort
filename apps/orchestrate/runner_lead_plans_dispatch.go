@@ -55,7 +55,7 @@ func (t *chatTurn) applyDispatchLeadPlans(sess *ToolSession, pin LLMTier, reques
 			delegable = append(delegable, td)
 		}
 	}
-	lead = append(lead, t.workStepToolDef(request, delegable, confirm))
+	lead = append(lead, t.workStepToolDef(sess, request, delegable, confirm))
 	*tools = lead
 	*sysPrompt += dispatchLeadPlansBlock(delegable, resolveMaxPlanSteps(t.agent))
 	Log("[orchestrate.routing] agent=%s dispatched run: the lead plans; %d tool(s) listed for work_step", t.agent.ID, len(delegable))
@@ -73,7 +73,7 @@ func dispatchLeadPlansBlock(delegable []AgentToolDef, maxSteps int) string {
 }
 
 // workStepToolDef runs one step on the worker for the planning lead.
-func (t *chatTurn) workStepToolDef(request string, delegable []AgentToolDef, confirm func(string, string) bool) AgentToolDef {
+func (t *chatTurn) workStepToolDef(sess *ToolSession, request string, delegable []AgentToolDef, confirm func(string, string) bool) AgentToolDef {
 	byName := map[string]AgentToolDef{}
 	var names []string
 	for _, td := range delegable {
@@ -126,14 +126,14 @@ func (t *chatTurn) workStepToolDef(request string, delegable []AgentToolDef, con
 			steps++
 			n := steps
 			mu.Unlock()
-			return t.runDispatchedStep(ctx, n, title, brief, request, pick, confirm)
+			return t.runDispatchedStep(ctx, sess, n, title, brief, request, pick, confirm)
 		},
 	}
 }
 
 // runDispatchedStep is one work_step: a worker loop with the picked tools,
 // under the agent's rules, budgets and guardrails, on the worker tier.
-func (t *chatTurn) runDispatchedStep(ctx context.Context, n int, title, brief, request string, tools []AgentToolDef, confirm func(string, string) bool) (string, error) {
+func (t *chatTurn) runDispatchedStep(ctx context.Context, sess *ToolSession, n int, title, brief, request string, tools []AgentToolDef, confirm func(string, string) bool) (string, error) {
 	sys := prependAgentContext(t.gatedPersona(brief), t.agent, t.facts(), t.operatingNotes())
 	if len(tools) > 0 {
 		sys += "\n\n" + buildToolUseDirective(tools)
@@ -171,8 +171,12 @@ func (t *chatTurn) runDispatchedStep(ctx context.Context, n int, title, brief, r
 				line(fmt.Sprintf("Step %d: %s, round %d", n, info.ToolCalls[k-1].Name, info.Round))
 			}
 		},
-		SystemPrompt:         sys,
-		Tools:                tools,
+		SystemPrompt: sys,
+		Tools:        tools,
+		// The step's tools are the run's, bound to its session: what they
+		// put in front of the model (view_image's show_me, a picture made)
+		// is collected there and shown on the step's next round.
+		DrainViewImages:      sess.DrainViewImages,
 		TierOverride:         WORKER,
 		MaxRounds:            resolveMaxWorkerRounds(t.agent),
 		ThinkBudget:          t.agent.ThinkBudget,

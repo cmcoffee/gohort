@@ -7,6 +7,9 @@
 package core
 
 import (
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -70,4 +73,54 @@ func TestATurnNoteNeverLandsOnAToolResult(t *testing.T) {
 		}
 	}
 	applyTurnNotes(AgentLoopConfig{TurnNotes: func(string) string { return "NOTE" }}, nil) // must not panic
+}
+
+// Every agent loop gohort builds says where its tools queue pictures for the
+// model (DrainViewImages), so a picture a tool put "in front of you on your
+// next step" (view_image's show_me, a render shown to its maker) is shown on
+// that step. A loop without it left them queued with nobody to show them, and
+// the model, told it would see them, said it could not read them. A file whose
+// loops' tools have no tool session to queue on says so here.
+func TestEveryAgentLoopShowsWhatItsToolsQueue(t *testing.T) {
+	noSession := map[string]string{
+		"core/sdk.go":                        "the bare loop for an outside caller: its tools take no tool session",
+		"core/pipeline_interp.go":            "pipeline stages here are given tools without a tool session",
+		"apps/hello/agent.go":                "the minimal example: its tools take no tool session",
+		"apps/servitor/probe_session.go":     "Servitor's own tools, which take no tool session",
+		"apps/servitor/sysprobe.go":          "Servitor's own tools, which take no tool session",
+		"apps/servitor/repo_audit.go":        "Servitor's own tools, which take no tool session",
+		"apps/servitor/workspace_session.go": "Servitor's own tools, which take no tool session",
+		"apps/servitor/map_session.go":       "Servitor's own tools, which take no tool session",
+	}
+	root := filepath.Join("..")
+	var missing []string
+	for _, dir := range []string{"core", "apps", "tools"} {
+		filepath.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			b, rerr := os.ReadFile(path)
+			if rerr != nil {
+				return nil
+			}
+			src := string(b)
+			rel, _ := filepath.Rel(root, path)
+			rel = filepath.ToSlash(rel)
+			if !strings.Contains(src, "AgentLoopConfig{") || rel == "core/agent_loop.go" || rel == "core/agent_loop_config.go" {
+				return nil
+			}
+			if strings.Count(src, "AgentLoopConfig{") > strings.Count(src, "DrainViewImages") && noSession[rel] == "" {
+				missing = append(missing, rel)
+			}
+			return nil
+		})
+	}
+	if len(missing) > 0 {
+		t.Errorf("agent loops that do not show the model what their tools queue (set DrainViewImages to the tools' session, or say here why they have none): %v", missing)
+	}
+	for f := range noSession {
+		if _, err := os.Stat(filepath.Join(root, f)); err != nil {
+			t.Errorf("%s is listed as having no tool session but is gone: take it off the list", f)
+		}
+	}
 }

@@ -312,7 +312,11 @@ func (s *ToolSession) AppendViewImageAs(data []byte, label string) {
 	}
 	s.mu.Lock()
 	s.PendingViewImages = append(s.PendingViewImages, ViewImage{Data: data, Label: label})
+	n := len(s.PendingViewImages)
 	s.mu.Unlock()
+	// Paired with the loop's "showing the model N queued picture(s)": the two
+	// lines say whether a picture a tool queued reached the model.
+	Debug("[view] queued %s for the model's next step (%d waiting)", chFirstNonEmpty(label, "a picture"), n)
 }
 
 // DrainViewImages returns and clears any pending view images. Callers

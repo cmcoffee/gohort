@@ -93,11 +93,13 @@ func (t *chatTurn) runPipelineSubAgent(ctx context.Context, sysPrompt, userMsg s
 	resp, _, err2 := t.app.RunAgentLoop(ctx, stageMsgs, AgentLoopConfig{
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
-		PreEmptedReply:      gDecline,
-		SystemPrompt:        sysPrompt,
-		Tools:               tools,
-		MaxRounds:           maxRounds,
-		Confirm:             stageConfirm,
+		PreEmptedReply: gDecline,
+		SystemPrompt:   sysPrompt,
+		Tools:          tools,
+		MaxRounds:      maxRounds,
+		Confirm:        stageConfirm,
+		// What the stage's tools queue for the model is shown on its next round.
+		DrainViewImages:     subSess.DrainViewImages,
 		ConfirmRefusal:      stageRefusal,
 		AskFirst:            t.asksFirst, // the owner's ask marks reach every tool (ask_first.go)
 		GuardrailCheck:      t.guardrailEnforcer().Check,

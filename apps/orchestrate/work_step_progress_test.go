@@ -46,7 +46,7 @@ func TestAWorkStepReportsWhatItsWorkerIsDoing(t *testing.T) {
 		},
 	}
 	turn := &chatTurn{app: T, agent: AgentRecord{ID: "a1", Name: "Clerk", Owner: user}, user: user, udb: udb, ctx: ctx}
-	ws := turn.workStepToolDef("Where is order A17?", []AgentToolDef{lookup}, nil)
+	ws := turn.workStepToolDef(nil, "Where is order A17?", []AgentToolDef{lookup}, nil)
 	out, err := ws.Handler(ctx, map[string]any{"title": "Check the order", "brief": "Look up A17.", "tools": []any{"lookup"}})
 	if err != nil || out != "Order A17 shipped Tuesday." {
 		t.Fatalf("the step: %q %v", out, err)
