@@ -1,5 +1,7 @@
 # SDK decoupling scope
 
+**Status: shelved (2026-11-05).** gohort is positioned as a platform you extend through Builder, not a Go SDK to import. The agent loop staying free of server state is still a good property and nothing here is undone; this scope is just not being pursued.
+
 Goal: let someone build an agent app by importing `github.com/cmcoffee/gohort/core`
 without booting the whole gohort server. This is the "gohort as an SDK, not the
 whole framework" path.

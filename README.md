@@ -96,11 +96,13 @@ Most providers' terms expect each end user to authenticate with their own creden
 
 The same goes for MCP servers: where the administrator allows it (**Admin → Integrations**), each person adds their own, signs in to them their own way, and their agents reach them with nobody else's account.
 
-## A platform, and an SDK
+## Built to extend
 
 **🏗️ A platform.** A web dashboard that runs a fleet: multi-agent dispatch with per-caller allowlists, declarative **pipelines**, **machines**, messaging **channels**, scheduled and event-triggered agents, multi-user auth with per-user data isolation, cross-user sharing, and cost telemetry.
 
-**🧩 An SDK.** A Go framework you build on. Registering a new app is ~20 lines and one blank import; its CLI command and web dashboard are discovered from the type. Apps compose `FormPanel`, `Table`, `ChatPanel`, `PipelinePanel`, `ChipPicker` and the rest, and rarely touch HTML, CSS, or DOM JavaScript. A new app uses an existing primitive or adds a generic one.
+**🧩 Extended from inside.** You grow gohort by asking for what it lacks. The Builder agent makes new tools, agents, apps, connectors and flows as data, each approved by you, with no Go and no rebuild. What it builds uses the same building blocks as the built-in apps: tables, forms, chat panels, pipelines.
+
+**🔧 For contributors.** The built-in apps are Go packages on a small app framework (`core/ui`). Registering one is about 20 lines, and it composes those same building blocks without hand-written HTML or DOM JavaScript. See [core/ui/AUTHORING.md](core/ui/AUTHORING.md).
 
 ## What it looks like in practice
 

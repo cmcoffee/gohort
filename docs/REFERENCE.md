@@ -1,6 +1,6 @@
 # Gohort: Reference
 
-The full feature surface, built-in apps, SDK interfaces, CLI flags, and project layout.
+The full feature surface, built-in apps, the app framework for contributors, CLI flags, and project layout.
 For the overview and quick start, see the [README](../README.md).
 
 ## Features
