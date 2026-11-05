@@ -2,6 +2,8 @@ package admin
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -202,5 +204,30 @@ func TestTheLeadNoticeSaysWhenItLastFailedAndWorked(t *testing.T) {
 		if got := leadLatest(c.st); got != c.want {
 			t.Errorf("got %q, want %q", got, c.want)
 		}
+	}
+}
+
+// Skipping the setup is a link, so a link on another site must not do it for
+// a signed-in administrator; the page's own Skip still does.
+func TestSetupIsNotSkippedFromAnotherSite(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	prev := AuthDB
+	AuthDB = func() Database { return db }
+	t.Cleanup(func() { AuthDB = prev })
+	AuthSetUser(db, "root", "pw", true)
+	a := &AdminApp{db: db}
+	skip := func(site string) {
+		r := httptest.NewRequest("GET", "/admin/setup?skip=1", nil)
+		r.Header.Set("Sec-Fetch-Site", site)
+		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(db, "root")})
+		a.handleSetupWizard(httptest.NewRecorder(), r)
+	}
+	skip("cross-site")
+	if AuthGetFirstRunDismissed(db, "root") {
+		t.Fatal("a link on another site skipped the setup")
+	}
+	skip("same-origin")
+	if !AuthGetFirstRunDismissed(db, "root") {
+		t.Error("the page's own Skip did nothing")
 	}
 }

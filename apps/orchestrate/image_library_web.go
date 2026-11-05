@@ -171,7 +171,16 @@ func (T *OrchestrateApp) handleAgentImageRaw(w http.ResponseWriter, r *http.Requ
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Content-Type", http.DetectContentType(data))
+	// Only as a picture. What an agent kept may have come from the web, and
+	// bytes that sniff as HTML, served as such from this origin, would run
+	// as this page; anything that is not an image is not served at all.
+	ct := http.DetectContentType(data)
+	if !strings.HasPrefix(ct, "image/") {
+		http.Error(w, "not a picture", http.StatusUnsupportedMediaType)
+		return
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	// Private, not public: these are photographs of people, and a shared cache
 	// between accounts is not a risk worth taking for a 48-pixel thumbnail.
 	w.Header().Set("Cache-Control", "private, max-age=300")

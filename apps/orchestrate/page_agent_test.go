@@ -326,3 +326,15 @@ func TestOnlyTheVoiceSectionPreviewsAVoice(t *testing.T) {
 		t.Errorf("only the Voice section should preview: %v", previews)
 	}
 }
+
+// The agent's id goes into the assist script as a string that cannot close
+// the script it sits in.
+func TestTheAssistScriptCannotBeClosedByAnID(t *testing.T) {
+	s := agentAssistHTML(`a1</script><script>alert(1)//`)
+	if strings.Contains(s, "</script><script>alert(1)") {
+		t.Fatal("an id closed the assist script")
+	}
+	if !strings.Contains(s, "var id=\"a1\\u003c/script\\u003e") {
+		t.Errorf("the id is not a JSON string in the script")
+	}
+}

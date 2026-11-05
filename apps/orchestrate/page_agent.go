@@ -905,7 +905,7 @@ func agentAssistHTML(id string) string {
 </style>
 <script>
 (function(){
-  var id=%q, pending=[];
+  var id=%s, pending=[];
   function el(t,a,kids){var n=document.createElement(t);a=a||{};for(var k in a){if(k==='class')n.className=a[k];else if(k==='text')n.textContent=a[k];else n.setAttribute(k,a[k]);}
     (kids||[]).forEach(function(c){n.appendChild(c);});return n;}
 
@@ -1004,7 +1004,7 @@ func agentAssistHTML(id string) string {
   }
   mount();
 })();
-</script>`, id)
+</script>`, jsString(id))
 }
 
 // dispatchModeOptions builds the "Dispatch policy" select options with `first`

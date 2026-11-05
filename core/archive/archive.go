@@ -56,6 +56,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cmcoffee/gohort/core/safefile"
 	"github.com/cmcoffee/snugforge/nfo"
 )
 
@@ -79,6 +80,12 @@ type Limits struct {
 	// MaxDepth caps nested expansion (an archive inside an archive).
 	// Zero uses the default.
 	MaxDepth int
+	// Root is the folder no read or write of the pass may leave, through a
+	// link or otherwise. Empty is the folder being expanded. A caller whose
+	// folder sits inside a larger one a script can write (a file store)
+	// names the larger one, so the folder itself swapped for a link leads
+	// nowhere either.
+	Root string
 }
 
 func (l Limits) bytes() int64 {
@@ -127,7 +134,11 @@ type Result struct {
 // is what lets a search result say "this line came out of logs.tar.gz"
 // rather than losing the provenance at unpack time.
 func Expand(ctx context.Context, dir string, lim Limits) (Result, error) {
-	run := &expandRun{lim: lim}
+	root := lim.Root
+	if root == "" {
+		root = dir
+	}
+	run := &expandRun{lim: lim, root: root}
 	err := run.pass(ctx, dir, 0)
 	return run.res, err
 }
@@ -175,9 +186,17 @@ func SafeJoin(root, name string) (string, bool) {
 // --- the pass ---------------------------------------------------------
 
 type expandRun struct {
-	lim Limits
-	res Result
+	lim  Limits
+	res  Result
+	root string
 }
+
+// Every file the pass touches is opened, made or removed through root
+// (core/safefile, os.Root): the folder is one a script can write, and a link
+// it planted, or a folder it swapped for one while the pass ran, would
+// otherwise have the server read from or write to wherever it pointed.
+func (r *expandRun) open(p string) (*os.File, error) { return safefile.OpenIn(r.root, p) }
+func (r *expandRun) mkdir(d string) error            { return safefile.MkdirAllIn(r.root, d, 0o700) }
 
 func (r *expandRun) pass(ctx context.Context, dir string, depth int) error {
 	if depth >= r.lim.depth() {
@@ -219,7 +238,7 @@ func (r *expandRun) pass(ctx context.Context, dir string, depth int) error {
 			continue
 		}
 		r.res.Opened++
-		os.Remove(a)
+		safefile.RemoveIn(r.root, a)
 	}
 	return r.pass(ctx, dir, depth+1)
 }
@@ -264,7 +283,7 @@ func expandDirFor(archive string) string {
 }
 
 func (r *expandRun) tarGz(p string) error {
-	f, err := os.Open(p)
+	f, err := r.open(p)
 	if err != nil {
 		return err
 	}
@@ -278,7 +297,7 @@ func (r *expandRun) tarGz(p string) error {
 }
 
 func (r *expandRun) tarBz2(p string) error {
-	f, err := os.Open(p)
+	f, err := r.open(p)
 	if err != nil {
 		return err
 	}
@@ -287,7 +306,7 @@ func (r *expandRun) tarBz2(p string) error {
 }
 
 func (r *expandRun) tarPlain(p string) error {
-	f, err := os.Open(p)
+	f, err := r.open(p)
 	if err != nil {
 		return err
 	}
@@ -296,7 +315,7 @@ func (r *expandRun) tarPlain(p string) error {
 }
 
 func (r *expandRun) untar(tr *tar.Reader, dest string) error {
-	if err := os.MkdirAll(dest, 0o700); err != nil {
+	if err := r.mkdir(dest); err != nil {
 		return err
 	}
 	for {
@@ -314,7 +333,7 @@ func (r *expandRun) untar(tr *tar.Reader, dest string) error {
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			os.MkdirAll(target, 0o700)
+			r.mkdir(target)
 		case tar.TypeReg:
 			if err := r.write(target, tr, hdr.Size); err != nil {
 				return err
@@ -329,13 +348,21 @@ func (r *expandRun) untar(tr *tar.Reader, dest string) error {
 }
 
 func (r *expandRun) zipFile(p string) error {
-	zr, err := zip.OpenReader(p)
+	f, err := r.open(p)
 	if err != nil {
 		return err
 	}
-	defer zr.Close()
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	zr, err := zip.NewReader(f, info.Size())
+	if err != nil {
+		return err
+	}
 	dest := expandDirFor(p)
-	if err := os.MkdirAll(dest, 0o700); err != nil {
+	if err := r.mkdir(dest); err != nil {
 		return err
 	}
 	for _, f := range zr.File {
@@ -345,7 +372,7 @@ func (r *expandRun) zipFile(p string) error {
 			continue
 		}
 		if f.FileInfo().IsDir() {
-			os.MkdirAll(target, 0o700)
+			r.mkdir(target)
 			continue
 		}
 		if !f.Mode().IsRegular() {
@@ -368,7 +395,7 @@ func (r *expandRun) zipFile(p string) error {
 
 // gzFile decompresses a single gzip file to the same name without ".gz".
 func (r *expandRun) gzFile(p string) error {
-	f, err := os.Open(p)
+	f, err := r.open(p)
 	if err != nil {
 		return err
 	}
@@ -384,7 +411,7 @@ func (r *expandRun) gzFile(p string) error {
 // bz2File decompresses a single bzip2 file to the same name without
 // ".bz2".
 func (r *expandRun) bz2File(p string) error {
-	f, err := os.Open(p)
+	f, err := r.open(p)
 	if err != nil {
 		return err
 	}
@@ -404,10 +431,10 @@ func (r *expandRun) write(target string, src io.Reader, declared int64) error {
 	if declared >= 0 && r.res.Bytes+declared > budget {
 		return fmt.Errorf("%w (%s)", ErrBudget, nfo.HumanSize(budget))
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+	if err := r.mkdir(filepath.Dir(target)); err != nil {
 		return err
 	}
-	out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	out, err := safefile.CreateIn(r.root, target, 0o600)
 	if err != nil {
 		return err
 	}

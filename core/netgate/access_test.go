@@ -2,6 +2,7 @@ package netgate
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -84,5 +85,18 @@ func TestLoopbackBypassExcludesBrowsers(t *testing.T) {
 				t.Errorf("bypass = %v, want %v", got, tc.wantBypass)
 			}
 		})
+	}
+}
+
+// A request is cross-site only when the browser says so.
+func TestCrossSiteIsWhatTheBrowserSays(t *testing.T) {
+	for v, want := range map[string]bool{"cross-site": true, "same-origin": false, "same-site": false, "none": false, "": false} {
+		r := httptest.NewRequest("GET", "/x", nil)
+		if v != "" {
+			r.Header.Set("Sec-Fetch-Site", v)
+		}
+		if got := CrossSite(r); got != want {
+			t.Errorf("Sec-Fetch-Site %q: CrossSite = %v", v, got)
+		}
 	}
 }

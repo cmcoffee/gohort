@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -227,7 +228,8 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 	// It has to be minted here because POST /api/machines validates: an
 	// EMPTY machine cannot be created at all, so "make one and fill it in"
 	// was not a path that existed.
-	if r.URL.Query().Get("new") == "1" {
+	// Not from a link on another site (see handlePipelinePage).
+	if r.URL.Query().Get("new") == "1" && !netgate.CrossSite(r) {
 		fresh := StarterMachine()
 		fresh.Owner = user
 		fresh.ID = ""

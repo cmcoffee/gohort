@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -1059,4 +1060,28 @@ func machinesHeadForTest() string {
 		}
 	}
 	return ""
+}
+
+// ?new=1 makes a machine or a pipeline from a link, so a link on another
+// site must not: the browser marks it cross-site and nothing is made. The
+// same link from gohort's own pages still makes one.
+func TestANewOneIsNotMadeFromAnotherSite(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	get := func(path, site string, h func(http.ResponseWriter, *http.Request)) {
+		r := httptest.NewRequest("GET", path, nil)
+		if site != "" {
+			r.Header.Set("Sec-Fetch-Site", site)
+		}
+		h(httptest.NewRecorder(), asUser(r, user))
+	}
+	get("/orchestrate/machine?new=1", "cross-site", app.handleMachinePage)
+	get("/orchestrate/pipeline?new=1", "cross-site", app.handlePipelinePage)
+	if n := len(ListMachineDefs(udb, user)) + len(ListPipelineDefs(udb, user)); n != 0 {
+		t.Fatalf("a link on another site made %d machine(s)/pipeline(s)", n)
+	}
+	get("/orchestrate/machine?new=1", "same-origin", app.handleMachinePage)
+	get("/orchestrate/pipeline?new=1", "", app.handlePipelinePage)
+	if len(ListMachineDefs(udb, user)) != 1 || len(ListPipelineDefs(udb, user)) != 1 {
+		t.Error("gohort's own New link stopped making one")
+	}
 }

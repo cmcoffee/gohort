@@ -26,6 +26,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/gohort/core/ui"
 )
@@ -63,7 +64,9 @@ func (a *AdminApp) handleSetupWizard(w http.ResponseWriter, r *http.Request) {
 	}
 	// Skip — record the dismissal against the user so it does not reappear on
 	// their next visit, or on another device.
-	if r.URL.Query().Get("skip") == "1" {
+	// Not from a link on another site, which could dismiss an
+	// administrator's setup without them seeing it.
+	if r.URL.Query().Get("skip") == "1" && !netgate.CrossSite(r) {
 		AuthSetFirstRunDismissed(AuthDB(), AuthCurrentUser(r), true)
 		http.Redirect(w, r, a.WebPath()+"/", http.StatusFound)
 		return

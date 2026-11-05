@@ -246,6 +246,12 @@ func (m *LiveSessionMap[T]) ScheduleCleanupAfter(id string, d time.Duration) {
 // HandleCancel returns an http.HandlerFunc that cancels a live or queued session by ID.
 func (m *LiveSessionMap[T]) HandleCancel(logPrefix string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// POST only: a GET is what a link on another site can make a
+		// signed-in browser send, and this stops somebody's run.
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST required", http.StatusMethodNotAllowed)
+			return
+		}
 		id := r.URL.Query().Get("id")
 		if id == "" {
 			http.Error(w, "id parameter required", http.StatusBadRequest)

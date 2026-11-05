@@ -403,7 +403,7 @@ func dashboardAuthBar(username string) string {
 				`<button type="button" class="auth-link bell" id="bell" title="Notifications" aria-label="Notifications">`+bellGlyphSVG+`<span class="bell-count" id="bell-count"></span></button>`+
 				`<a class="auth-link" href="/account">Account</a><form class="auth-logout" method="POST" action="/logout"><button type="submit" class="auth-link">Logout</button></form></div>`+
 				notifyPanelHTML,
-			username)
+			html.EscapeString(username))
 	}
 	return auth_html
 }

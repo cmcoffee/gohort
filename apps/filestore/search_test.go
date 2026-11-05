@@ -511,7 +511,7 @@ func TestSaveUploadPartRefusesEscapingFilenames(t *testing.T) {
 	// misses, so the join is re-checked.
 	dest := t.TempDir()
 	for _, name := range []string{"../evil.sh", "../../etc/cron.d/x", "/etc/passwd", "", "  "} {
-		if _, _, err := saveUploadPart(dest, name, strings.NewReader("x")); err == nil {
+		if _, _, err := saveUploadPart(dest, dest, name, strings.NewReader("x")); err == nil {
 			// A name that reduces to a safe base is allowed — that is
 			// correct — so only assert nothing landed OUTSIDE dest.
 			entries, _ := os.ReadDir(dest)
@@ -527,7 +527,7 @@ func TestSaveUploadPartRefusesEscapingFilenames(t *testing.T) {
 	}
 
 	// The ordinary case still works, and reports what it wrote.
-	n, saved, err := saveUploadPart(dest, "app.log", strings.NewReader("hello\n"))
+	n, saved, err := saveUploadPart(dest, dest, "app.log", strings.NewReader("hello\n"))
 	if err != nil {
 		t.Fatalf("upload: %v", err)
 	}
@@ -1074,5 +1074,26 @@ func TestStoreLeavesVersionControlOut(t *testing.T) {
 	}
 	if _, _, err := Read(root, "case-1/app.log", 0, 0); err != nil {
 		t.Errorf("an ordinary file must still read: %v", err)
+	}
+}
+
+// A link left where an upload lands, or the upload folder swapped for one,
+// leads nowhere: the upload replaces the link or is refused, and the file it
+// pointed at is untouched.
+func TestAnUploadWritesNothingThroughALink(t *testing.T) {
+	base := t.TempDir()
+	root, outside := filepath.Join(base, "store"), filepath.Join(base, "server-data")
+	os.MkdirAll(root, 0o700)
+	os.MkdirAll(outside, 0o700)
+	secret := filepath.Join(outside, "gohort.db")
+	os.WriteFile(secret, []byte("private"), 0o600)
+	if err := os.Symlink(secret, filepath.Join(root, "app.log")); err != nil {
+		t.Skip("no symlinks here")
+	}
+	saveUploadPart(root, root, "app.log", strings.NewReader("overwritten"))
+	os.Symlink(outside, filepath.Join(root, "within"))
+	saveUploadPart(root, filepath.Join(root, "within"), "gohort.db", strings.NewReader("overwritten"))
+	if b, _ := os.ReadFile(secret); string(b) != "private" {
+		t.Fatalf("an upload wrote through a link: %q", b)
 	}
 }

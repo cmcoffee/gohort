@@ -261,3 +261,37 @@ func TestClientRegistrationCoversEveryCallbackThisDeploymentSends(t *testing.T) 
 		t.Error("an unrecorded client should not claim to hold a URI")
 	}
 }
+
+// The authorization endpoint is where a person's browser is sent, and the
+// server names it: one that is not a web address is refused at discovery.
+func TestMCPDiscoverRefusesAnEndpointThatIsNotAWebAddress(t *testing.T) {
+	asMux := http.NewServeMux()
+	as := httptest.NewServer(asMux)
+	defer as.Close()
+	asMux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"authorization_endpoint": "javascript:alert(document.cookie)",
+			"token_endpoint":         as.URL + "/token",
+		})
+	})
+	rsMux := http.NewServeMux()
+	rs := httptest.NewServer(rsMux)
+	defer rs.Close()
+	rsMux.HandleFunc("/.well-known/oauth-protected-resource", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"resource": rs.URL + "/mcp", "authorization_servers": []string{as.URL}})
+	})
+	rsMux.HandleFunc("/mcp", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+rs.URL+`/.well-known/oauth-protected-resource"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	if cfg, err := mcpDiscover(context.Background(), rs.URL+"/mcp"); err == nil {
+		t.Fatalf("a javascript: authorization endpoint was taken: %+v", cfg)
+	}
+}
+
+// The signed-in name on the dashboard is text, not markup.
+func TestTheDashboardEscapesTheSignedInName(t *testing.T) {
+	if out := dashboardAuthBar(`<img src=x onerror=alert(1)>`); strings.Contains(out, "<img") {
+		t.Errorf("the name went into the page as markup: %s", out)
+	}
+}

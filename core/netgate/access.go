@@ -209,3 +209,14 @@ func ForwardedHTTPS(r *http.Request) bool {
 	}
 	return strings.EqualFold(strings.TrimSpace(proto), "https")
 }
+
+// CrossSite reports whether the browser says a request came from another
+// site's page (Sec-Fetch-Site: cross-site): a link or redirect there, or a
+// form it submitted. For a GET that changes something (makes a record,
+// dismisses a prompt), which SameSite=Lax still sends the cookie with on a
+// top-level navigation. A request without the header (an older browser, a
+// script) is not called cross-site: this narrows what a page elsewhere can
+// do to a signed-in person, it does not authenticate anybody.
+func CrossSite(r *http.Request) bool {
+	return r.Header.Get("Sec-Fetch-Site") == "cross-site"
+}

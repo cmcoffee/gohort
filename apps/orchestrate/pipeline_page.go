@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -133,7 +134,9 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 	// on a form asking for a name. The starter comes from the server
 	// (StarterPipeline) and a test proves it validates, so the first
 	// thing anybody sees is something that would run.
-	if r.URL.Query().Get("new") == "1" {
+	// Not from a link on another site: that would make a pipeline in a
+	// signed-in person's account without them asking.
+	if r.URL.Query().Get("new") == "1" && !netgate.CrossSite(r) {
 		fresh := StarterPipeline()
 		fresh.Owner = user
 		fresh.ID = ""

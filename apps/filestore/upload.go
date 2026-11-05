@@ -26,7 +26,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -35,6 +34,7 @@ import (
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/pathhold"
+	"github.com/cmcoffee/gohort/core/safefile"
 )
 
 // maxExpandBytes bounds what one upload may unpack to. Generous, so a
@@ -102,6 +102,14 @@ func (T *FileStoreApp) handleUpload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Every write lands through the store's own root: a script with a write
+	// grant on the store can plant a link, or swap the folder for one after
+	// it was checked, and a plain open would follow it out of the store.
+	root, err := filepath.EvalSymlinks(st.Path)
+	if err != nil {
+		http.Error(w, "that store's folder is unreadable: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	// The server-wide body cap is sized for JSON requests; a capture is far
 	// larger, so this route sets its own, finite one.
@@ -145,7 +153,7 @@ func (T *FileStoreApp) handleUpload(w http.ResponseWriter, r *http.Request) {
 			part.Close()
 			continue // a plain form field, not a file
 		}
-		n, saved, err := saveUploadPart(dest, name, part)
+		n, saved, err := saveUploadPart(root, dest, name, part)
 		part.Close()
 		if err != nil {
 			if isOversize(err) {
@@ -176,7 +184,7 @@ func (T *FileStoreApp) handleUpload(w http.ResponseWriter, r *http.Request) {
 	var exp archive.Result
 	err = nil
 	if budget > 0 {
-		exp, err = archive.Expand(r.Context(), dest, archive.Limits{MaxBytes: budget})
+		exp, err = archive.Expand(r.Context(), dest, archive.Limits{MaxBytes: budget, Root: root})
 	} else {
 		err = fmt.Errorf("no room left to unpack into (disk floor or store cap)")
 	}
@@ -214,7 +222,7 @@ func (T *FileStoreApp) handleUpload(w http.ResponseWriter, r *http.Request) {
 // element and re-checked after joining: a part named "../../etc/cron.d/x"
 // is the obvious attack, and filepath.Base alone is the kind of defence
 // that looks sufficient until someone finds the case it misses.
-func saveUploadPart(dest, name string, r io.Reader) (int64, string, error) {
+func saveUploadPart(root, dest, name string, r io.Reader) (int64, string, error) {
 	base := filepath.Base(filepath.Clean("/" + name))
 	if base == "." || base == string(filepath.Separator) || strings.TrimSpace(base) == "" {
 		return 0, "", fmt.Errorf("a file in that upload has no usable name")
@@ -223,7 +231,7 @@ func saveUploadPart(dest, name string, r io.Reader) (int64, string, error) {
 	if filepath.Dir(full) != filepath.Clean(dest) {
 		return 0, "", fmt.Errorf("that filename does not stay in the folder: %s", name)
 	}
-	f, err := os.OpenFile(full, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	f, err := safefile.CreateIn(root, full, 0o644)
 	if err != nil {
 		return 0, "", fmt.Errorf("cannot write %s: %w", base, err)
 	}
@@ -232,7 +240,8 @@ func saveUploadPart(dest, name string, r io.Reader) (int64, string, error) {
 	if err != nil {
 		// A partial file is worse than none: it reads as a complete log
 		// that happens to stop mid-incident.
-		os.Remove(full)
+		f.Close()
+		safefile.RemoveIn(root, full)
 		return 0, "", fmt.Errorf("writing %s failed after %s: %w", base, HumanSize(n), err)
 	}
 	return n, base, nil

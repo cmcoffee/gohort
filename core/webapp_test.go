@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"github.com/cmcoffee/gohort/core/notices"
 	"github.com/cmcoffee/snugforge/kvlite"
 	"net/http"
 	"net/http/httptest"
@@ -230,6 +231,12 @@ func TestOwnerOfDistinguishesMissingFromUntagged(t *testing.T) {
 // --- the handlers ------------------------------------------------------------
 
 // asUser builds a request carrying a valid session cookie for username.
+// postAs is r as a POST.
+func postAs(r *http.Request) *http.Request {
+	r.Method = http.MethodPost
+	return r
+}
+
 func asUser(t *testing.T, target, username string) *http.Request {
 	t.Helper()
 	r := httptest.NewRequest(http.MethodGet, target, nil)
@@ -275,8 +282,15 @@ func TestHandleCancelRefusesAnotherUsersSession(t *testing.T) {
 	cancelled := false
 	m.Register("s1", "topic", func() { cancelled = true; cancel() }).SetOwner("craig")
 
+	// A GET (a link on another site, too) stops nothing.
 	w := httptest.NewRecorder()
-	m.HandleCancel("test")(w, asUser(t, "/api/cancel?id=s1", "dana"))
+	m.HandleCancel("test")(w, asUser(t, "/api/cancel?id=s1", "craig"))
+	if w.Code != http.StatusMethodNotAllowed || cancelled {
+		t.Fatalf("a GET cancelled the run: %d", w.Code)
+	}
+
+	w = httptest.NewRecorder()
+	m.HandleCancel("test")(w, postAs(asUser(t, "/api/cancel?id=s1", "dana")))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("dana must get 404, got %d", w.Code)
 	}
@@ -285,7 +299,7 @@ func TestHandleCancelRefusesAnotherUsersSession(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	m.HandleCancel("test")(w, asUser(t, "/api/cancel?id=s1", "craig"))
+	m.HandleCancel("test")(w, postAs(asUser(t, "/api/cancel?id=s1", "craig")))
 	if w.Code != http.StatusOK {
 		t.Fatalf("the owner must be able to cancel, got %d", w.Code)
 	}
@@ -553,5 +567,31 @@ func TestAnAppForEveryUserNeedsNoGrant(t *testing.T) {
 	}
 	if appForEveryUser("/research") || appForEveryUser("/nowhere") {
 		t.Error("an ordinary or unknown app must still need its grant")
+	}
+}
+
+// Clearing or dismissing notices is a POST: with no id either one empties the
+// whole list, and a GET is what a link on another site can make a signed-in
+// browser send.
+func TestNoticesAreClearedByPOSTOnly(t *testing.T) {
+	withUsers(t)
+	prevRoot := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = prevRoot })
+	notices.Record(RootDB, notices.Notice{Owner: "craig", Kind: notices.KindStopped, Title: "something happened"})
+	for _, h := range []http.HandlerFunc{handleNotificationRead, handleNotificationDismiss} {
+		w := httptest.NewRecorder()
+		h(w, asUser(t, "/api/notifications/dismiss", "craig"))
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("a GET answered %d, want 405", w.Code)
+		}
+	}
+	if len(notices.List(RootDB, "craig")) != 1 || notices.Unread(RootDB, "craig") != 1 {
+		t.Fatal("a GET cleared the notices")
+	}
+	w := httptest.NewRecorder()
+	handleNotificationDismiss(w, postAs(asUser(t, "/api/notifications/dismiss", "craig")))
+	if w.Code != http.StatusNoContent || len(notices.List(RootDB, "craig")) != 0 {
+		t.Errorf("a POST did not clear them: %d", w.Code)
 	}
 }

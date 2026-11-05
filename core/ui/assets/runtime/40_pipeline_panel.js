@@ -522,7 +522,9 @@
               var sep = url.indexOf('?') >= 0 ? '&' : '?';
               var newURL = url + sep + 'regenerate=1';
               ctrl = new AbortController();
-              fetch(newURL, {signal: ctrl.signal}).then(function(r) {
+              // POST: regenerating replaces what is stored, which a
+              // server answers only for a POST.
+              fetch(newURL, {method: 'POST', signal: ctrl.signal}).then(function(r) {
                 if (!r.ok) throw new Error('HTTP ' + r.status);
                 var reader = r.body.getReader();
                 var dec = new TextDecoder();

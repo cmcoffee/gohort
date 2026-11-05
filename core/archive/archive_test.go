@@ -259,3 +259,44 @@ func TestSafeJoinAndUnopened(t *testing.T) {
 		t.Error("Expandable disagrees with the expander table")
 	}
 }
+
+// The folder an archive unpacks into, planted in advance as a link out of
+// the tree, or a member's folder planted that way, leads nowhere: nothing is
+// written outside. A script with write access to the folder could plant
+// either before the upload unpacks.
+func TestExpandWritesNothingThroughAPlantedLink(t *testing.T) {
+	base := t.TempDir()
+	dir, outside := filepath.Join(base, "store"), filepath.Join(base, "server-data")
+	os.MkdirAll(dir, 0o700)
+	os.MkdirAll(outside, 0o700)
+	tarGzWith(t, filepath.Join(dir, "logs.tar.gz"), map[string]string{"x.txt": "planted"})
+	if err := os.Symlink(outside, filepath.Join(dir, "logs.d")); err != nil {
+		t.Skip("no symlinks here")
+	}
+	os.MkdirAll(filepath.Join(dir, "two.d"), 0o700)
+	tarGzWith(t, filepath.Join(dir, "two.tar.gz"), map[string]string{"sub/y.txt": "planted"})
+	os.Symlink(outside, filepath.Join(dir, "two.d", "sub"))
+
+	Expand(context.Background(), dir, Limits{})
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Fatalf("an archive wrote outside its folder: %v", entries)
+	}
+}
+
+// With Root set, the pass reads, writes and removes nothing outside Root,
+// whatever folder it was handed: the folder may have become a link out of
+// the store between the check and the pass.
+func TestExpandStaysUnderItsRoot(t *testing.T) {
+	base := t.TempDir()
+	root, outside := filepath.Join(base, "store"), filepath.Join(base, "server-data")
+	os.MkdirAll(root, 0o700)
+	os.MkdirAll(outside, 0o700)
+	tarGzWith(t, filepath.Join(outside, "theirs.tar.gz"), map[string]string{"z.txt": "x"})
+	Expand(context.Background(), outside, Limits{Root: root})
+	if _, err := os.Stat(filepath.Join(outside, "theirs.tar.gz")); err != nil {
+		t.Error("an archive outside the root was removed")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "theirs.d")); err == nil {
+		t.Error("an archive outside the root was unpacked")
+	}
+}

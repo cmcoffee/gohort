@@ -671,6 +671,12 @@ func handleNotifications(w http.ResponseWriter, r *http.Request) {
 // you have read about it, and that number is the only evidence that says
 // chronic rather than one-off.
 func handleNotificationRead(w http.ResponseWriter, r *http.Request) {
+	// POST only: with no id this clears the whole list, and a GET is what a
+	// link on another site can make a signed-in browser send.
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
 	user := AuthCurrentUser(r)
 	if user == "" {
 		http.Error(w, "not signed in", http.StatusUnauthorized)
@@ -687,6 +693,10 @@ func handleNotificationRead(w http.ResponseWriter, r *http.Request) {
 // handleNotificationDismiss deletes one. It comes back if the thing happens
 // again, which is right for a condition and is why this is not a mute.
 func handleNotificationDismiss(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
 	user := AuthCurrentUser(r)
 	if user == "" {
 		http.Error(w, "not signed in", http.StatusUnauthorized)

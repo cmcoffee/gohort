@@ -186,6 +186,14 @@ func mcpDiscover(ctx context.Context, serverURL string) (mcpOAuthConfig, error) 
 	if asm.AuthorizationEndpoint == "" || asm.TokenEndpoint == "" {
 		return cfg, fmt.Errorf("authorization-server metadata missing endpoints (from %s)", as)
 	}
+	// The authorization endpoint is where a person's browser is sent, and the
+	// server named it: a javascript: or data: address there would run in this
+	// page's place. Web addresses only, for all three.
+	for _, e := range []string{asm.AuthorizationEndpoint, asm.TokenEndpoint, asm.RegistrationEndpoint} {
+		if e != "" && !mcpWebURL(e) {
+			return cfg, fmt.Errorf("authorization-server metadata names an endpoint that is not a web address: %q (from %s)", e, as)
+		}
+	}
 	cfg.AuthEndpoint = asm.AuthorizationEndpoint
 	cfg.TokenEndpoint = asm.TokenEndpoint
 	cfg.RegistrationEndpoint = asm.RegistrationEndpoint
@@ -536,4 +544,10 @@ func MCPRedirectURIs(primary string, extra ...string) []string {
 var mcpCallbackPaths = []string{
 	"/account/mcp/callback",                 // any user, from Extensions or a chat prompt
 	"/admin/api/mcp-servers/oauth/callback", // the Connect button on the admin MCP row
+}
+
+// mcpWebURL reports whether s is an http(s) address with a host.
+func mcpWebURL(s string) bool {
+	u, err := url.Parse(strings.TrimSpace(s))
+	return err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != ""
 }
