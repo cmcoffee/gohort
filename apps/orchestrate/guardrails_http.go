@@ -196,7 +196,8 @@ func (T *OrchestrateApp) agentGuardrailsSave(c *jsonapi.Call, body guardrailsBod
 	if body.ScanTrusted != nil {
 		agent.ScanTrustedSources = sanitizeScanSources(*body.ScanTrusted)
 	}
-	if _, err := saveAgent(udb, agent); err != nil {
+	// Into the guardrails' own history, not the agent's (guardrail_history.go).
+	if _, err := saveAgentGuardrails(udb, agent, "changed guardrails"); err != nil {
 		return nil, jsonapi.Status(http.StatusInternalServerError, "save failed: "+err.Error())
 	}
 	// A newly-bound rule names its tool, so the "does this forbid the tool
@@ -487,7 +488,7 @@ func (T *OrchestrateApp) agentGuardrailDepthSave(c *jsonapi.Call, body struct {
 		return nil, jsonapi.BadRequest("depth must be quick, moderate or thorough")
 	}
 	agent.GuardrailDepth = depth
-	if _, err := saveAgent(c.UDB, agent); err != nil {
+	if _, err := saveAgentGuardrails(c.UDB, agent, "changed check depth"); err != nil {
 		return nil, err
 	}
 	Log("[orchestrate.guardrail] agent=%s check depth set to %q by owner", agent.ID, depth)

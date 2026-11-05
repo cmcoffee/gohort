@@ -147,7 +147,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 		{
 			Title:    "User-owned agents",
 			Subtitle: "Agents users create, and optionally peer-share with specific other users.",
-			Detail:   "Sharing and publishing are the owner's to ask for; this is the admin's audit and take-back. A shared agent runs in its owner's context with each recipient's own credentials, so no secret travels.\n\nRevoke share clears the recipient list, and Unpublish takes a published agent back from everyone. The owner keeps the agent either way.",
+			Detail:   "Sharing and publishing are the owner's to ask for; this is the admin's audit and take-back. A shared agent runs in its owner's context with each recipient's own credentials, so no secret travels.\n\nRevoke share clears the recipient list; the owner keeps the agent. A published agent is taken back from everyone under Sharing, Shared with everyone, beside every other kind that reaches the whole deployment.",
 			Body: ui.Table{
 				Source: "api/user-agents",
 				RowKey: "id",
@@ -163,14 +163,6 @@ func (a *AdminApp) governanceSections() []ui.Section {
 					}},
 				},
 				RowActions: []ui.RowAction{
-					// Take back from everyone. Publishing is the owner's ask
-					// (their share list's Everyone), approved under Sharing.
-					{Type: "button", Label: "Unpublish",
-						PostTo:  "api/user-agents?action=unpublish&owner={owner}&id={id}",
-						Method:  "POST",
-						Confirm: "Take this agent back from everyone? The owner keeps it, and the people they shared it with keep it too.",
-						OnlyIf:  "exposed",
-						Variant: "danger"},
 					{Type: "button", Label: "Revoke share",
 						PostTo:  "api/user-agents?action=revoke_share&owner={owner}&id={id}",
 						Method:  "POST",
@@ -326,9 +318,9 @@ func (a *AdminApp) governanceSections() []ui.Section {
 		},
 		{
 			Title:    "Shared with everyone",
-			Subtitle: "Skills, knowledge, apps and guides users have shared with the whole deployment.",
-			Detail: "Each was shared by its owner, or by you approving their request. Take back ends the sharing and leaves the thing with its owner: a skill or a collection returns to its owner's own list with nobody else on it, an app stops being shared with every signed-in user, and a guide loses Everyone. Nothing is deleted, and the owner gets a notice saying so.\n\n" +
-				"Tools are listed under Tools & Skills > Shared tools, and agents, pipelines and machines further down this tab, each with its own way to take one back.",
+			Subtitle: "Agents, pipelines, machines, skills, knowledge, apps and guides users have shared with the whole deployment.",
+			Detail: "Each was shared by its owner, or by you approving their request. Take back ends the sharing and leaves the thing with its owner: an agent, pipeline or machine loses Everyone and keeps the people and teams its owner named, a skill or a collection returns to its owner's own list with nobody else on it, an app stops being shared with every signed-in user, and a guide loses Everyone. Nothing is deleted, and the owner gets a notice saying so.\n\n" +
+				"Tools are listed under Tools & Skills > Shared tools, with their own way to take one back.",
 			Body: ui.Table{
 				Source: "api/published",
 				RowKey: "key",

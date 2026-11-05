@@ -100,12 +100,12 @@ func TestBuildSuggestPromptWholeFieldUnchanged(t *testing.T) {
 }
 
 func TestSectionGuidance(t *testing.T) {
-	if g := sectionGuidance("orchestrator_prompt", "Rules"); !strings.Contains(g, "Hard constraints") {
-		t.Errorf("Rules guidance = %q", g)
+	if g := sectionGuidance("orchestrator_prompt", "Failure modes"); !strings.Contains(g, "commonly goes wrong") {
+		t.Errorf("Failure modes guidance = %q", g)
 	}
 	// Title matching is case- and space-insensitive: it comes from a
 	// round-tripped markdown heading, not from a picker.
-	if g := sectionGuidance("orchestrator_prompt", "  rules  "); g == "" {
+	if g := sectionGuidance("orchestrator_prompt", "  failure MODES  "); g == "" {
 		t.Error("guidance lookup should tolerate case and surrounding space")
 	}
 	if g := sectionGuidance("orchestrator_prompt", "Nonexistent"); g != "" {
@@ -254,13 +254,13 @@ func TestBuildAssistSystemPromptBoundsDeclaredFraming(t *testing.T) {
 
 func TestBuildAssistSystemPrompt(t *testing.T) {
 	rec := map[string]any{"name": "Research helper"}
-	p := buildAssistSystemPrompt("orchestrator_prompt", "Rules", "- cite a URL", "", "", rec)
+	p := buildAssistSystemPrompt("orchestrator_prompt", "Failure modes", "- cite a URL", "", "", rec)
 	for _, want := range []string{
-		`"Rules" section`,
-		"Hard constraints", // declared Help for that section
-		"- cite a URL",     // the live draft
-		"Research helper",  // surrounding record
-		draftFence,         // the response contract
+		`"Failure modes" section`,
+		"commonly goes wrong", // declared Help for that section
+		"- cite a URL",        // the live draft
+		"Research helper",     // surrounding record
+		draftFence,            // the response contract
 		"replaces the draft outright",
 	} {
 		if !strings.Contains(p, want) {
@@ -327,7 +327,7 @@ func TestAWholeFieldDraftIsToldTheOutline(t *testing.T) {
 
 	// A section-scoped draft is unchanged: it writes one body, with no
 	// heading, and must not be handed the whole outline.
-	one := buildSuggestPrompt("orchestrator_prompt", "Rules", "", map[string]any{})
+	one := buildSuggestPrompt("orchestrator_prompt", "Approach", "", map[string]any{})
 	if strings.Contains(one, "Structure to write it in") {
 		t.Error("a single-section draft was handed the whole outline")
 	}

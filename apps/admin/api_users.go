@@ -89,8 +89,8 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 		"POST": jsonapi.Post(a.db, a.handleUserMachinesAction, a.gate()),
 	}.Serve)
 
-	// Everything else users have shared with the whole deployment (skills,
-	// knowledge, apps, guides), with Take back. See api_published.go.
+	// What users have shared with the whole deployment (agents, pipelines,
+	// machines, skills, knowledge, apps, guides), with Take back. See api_published.go.
 	sub.HandleFunc("/api/published", jsonapi.Methods{
 		"GET":  jsonapi.Get(a.db, a.handlePublished, a.gate()),
 		"POST": jsonapi.Post(a.db, a.handlePublishedTakeBack, a.gate()),
@@ -288,10 +288,10 @@ func (a *AdminApp) handleUserAgentsAction(c *jsonapi.Call, _ struct{}) (any, err
 	switch q.Get("action") {
 	case "revoke_share":
 		hook = AdminRevokeAgentShare
-	case "unpublish": // take back from everyone; publishing is the owner's ask
-		hook = AdminUnpublishAgent
 	default:
-		return nil, jsonapi.BadRequest("action must be revoke_share|unpublish")
+		// Taking an agent back from everyone is under Sharing, Shared with
+		// everyone, with every other kind that reaches the whole deployment.
+		return nil, jsonapi.BadRequest("action must be revoke_share")
 	}
 	if hook == nil {
 		return nil, jsonapi.Status(http.StatusServiceUnavailable, "unavailable (orchestrate not wired)")

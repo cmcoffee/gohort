@@ -26,7 +26,6 @@ import (
 func init() {
 	AdminListUserOwnedAgents = listUserOwnedAgentsForAdmin
 	AdminRevokeAgentShare = revokeAgentShareForAdmin
-	AdminUnpublishAgent = unpublishAgentForAdmin
 }
 
 // isShareableAgent reports whether an agent record is a user's OWN top-level agent
@@ -95,7 +94,9 @@ func revokeAgentShareForAdmin(db Database, owner, id string) error {
 
 // unpublishAgentForAdmin takes a published agent back from everyone: Everyone
 // off, the owner's own share list left as it is. The admin's take-back for an
-// agent whose publish request was approved; publishing is the owner's to ask.
+// agent whose publish request was approved (the shared-with-everyone list's
+// Take back, registered in share_providers.go); publishing is the owner's to
+// ask.
 func unpublishAgentForAdmin(db Database, owner, id string) error {
 	if db == nil || owner == "" || id == "" {
 		return fmt.Errorf("owner and id required")

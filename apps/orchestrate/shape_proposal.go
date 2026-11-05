@@ -134,10 +134,8 @@ func describeAgentPlainly(a AgentRecord) []string {
 		out = append(out, "Reaches "+joinWords(reach)+".")
 	}
 
-	for _, rule := range strings.Split(a.Rules, "\n") {
-		if r := strings.TrimSpace(rule); r != "" {
-			out = append(out, r)
-		}
+	for _, item := range ruleItems(a.Rules) {
+		out = append(out, strings.Join(item, " "))
 	}
 
 	switch {

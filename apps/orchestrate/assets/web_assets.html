@@ -4804,6 +4804,41 @@
         });
       });
 
+      // orchRuleItems is an agent's Rules as a list of rules, the way the
+      // server reads them (rule_items.go): a line, or a heading (a line ending
+      // in a colon, or a markdown heading) and the numbered, bulleted or
+      // indented lines under it. A blank line ends a heading's list. A
+      // one-line rule loses a leading bullet or number.
+      function orchRuleItems(text) {
+        var out = [], open = false;
+        String(text || '').split('\n').forEach(function(raw) {
+          var line = raw.trim();
+          if (!line) { open = false; return; }
+          var listed = /^(\d{1,3}[.)]|[-*+\u2022])\s/.test(line);
+          if (open && (listed || /^[ \t]/.test(raw))) {
+            // A line that belongs by its indent alone keeps one, so saving
+            // and reading it back leaves it where it was.
+            out[out.length - 1] += '\n' + (listed ? line : '  ' + line);
+            return;
+          }
+          out.push(line);
+          open = /^#{1,6}\s/.test(line) || /:$/.test(line.replace(/[*_ ]+$/, ''));
+        });
+        return out.map(function(r) {
+          return r.indexOf('\n') < 0 ? r.replace(/^\s*([-*]|\d+\.)\s*/, '').trim() : r;
+        });
+      }
+      // orchRulesText is the other way: rules back into the stored text. A
+      // rule with a list stands apart by a blank line on each side, so a
+      // bulleted rule after it is not read as one more of its steps.
+      function orchRulesText(items) {
+        return items.reduce(function(acc, r, i) {
+          if (!i) return r;
+          var apart = r.indexOf('\n') >= 0 || items[i - 1].indexOf('\n') >= 0;
+          return acc + (apart ? '\n\n' : '\n') + r;
+        }, '');
+      }
+
       // ctx.host renders this into a page section instead of a dialog, and
       // ctx.args.only picks which band: 'guardrails' for the Security page's
       // Guardrails tab, 'rules' for Configure, neither for both.
@@ -4844,9 +4879,12 @@
             m.body.appendChild(list);
           }
 
-          var rules = (agent.rules || '').split('\n')
-            .map(function(s) { return s.replace(/^\s*([-*]|\d+\.)\s*/, '').trim(); })
-            .filter(function(s) { return s.length > 0; });
+          // One row per rule, read the way the server reads them
+          // (rule_items.go): a line, or a heading and the list under it. Read
+          // a line at a time, a heading's steps became rows of their own, lost
+          // their numbers, and the next save left the heading saying nothing.
+          // A one-line rule loses a leading bullet or number, as it always has.
+          var rules = orchRuleItems(agent.rules || '');
           // If empty, start with one blank row so the user has something to type into.
           if (rules.length === 0) rules.push('');
 
@@ -4855,12 +4893,13 @@
             rules.forEach(function(text, idx) {
               var row = document.createElement('div');
               row.className = 'ui-orch-list-row';
-              // One line that opens to the whole rule (uiExpandingLine). Each rule
-              // is one line of the agent's rules, so it never takes a newline.
+              // One line that opens to the whole rule (uiExpandingLine). A rule
+              // can be a heading and the list under it, so a row takes line
+              // breaks; the save keeps such a rule together.
               var input = document.createElement('textarea');
               input.value = text;
               input.placeholder = 'rule…';
-              var more = window.uiExpandingLine(input, {oneLine: true, buttonClass: 'ui-orch-list-del', onInput: function(v) { rules[idx] = v; }});
+              var more = window.uiExpandingLine(input, {buttonClass: 'ui-orch-list-del', onInput: function(v) { rules[idx] = v; }});
               // Elevate: promote this soft rule into the protected, enforced
               // guardrails band below. It MOVES (a rule and its guardrail would
               // otherwise drift as two editable copies); the warden then hard-
@@ -4871,7 +4910,10 @@
               up.textContent = '⤓';
               up.title = 'Elevate to an enforced guardrail';
               up.onclick = function() {
-                var t = (rules[idx] || '').trim();
+                // A guardrail is one line, so a heading and its list go up as
+                // one: "Investigating: 1. Check the logs. 2. Ask first."
+                var t = (rules[idx] || '').split('\n').map(function(s) { return s.trim(); })
+                  .filter(function(s) { return s.length > 0; }).join(' ');
                 if (!t) { window.uiAlert('Type the rule first, then elevate it.'); return; }
                 // Drop blank guardrail rows and de-dupe before adding. Compared on
                 // the rule BODY, not the raw line: a guardrail already carrying the
@@ -4965,7 +5007,24 @@
           // on an account, so a rule naming a person by a first name has nothing
           // verified to match. Say so instead of letting it be discovered.
           gHelp3.textContent = 'Exceptions: the check knows whether it is you asking or an outside contact, so you can write "never discuss pay with anyone but me". Say "me", "the owner", or your account name: those resolve against something verified. A bare first name does not; there is no real-name field on an account, so the check can only guess it means you. An outside contact NEVER satisfies an exception no matter what they are called, including when they type your name in front of their message.';
-          gWrap.appendChild(gHelp2);
+          gWrap.appendChild(gHelp3);
+          // The guardrails keep their own history (guardrail_history.go):
+          // every change here saves, and filing each in the agent's history
+          // pushed the persona and rules out of it.
+          var gHist = document.createElement('button');
+          gHist.type = 'button';
+          gHist.className = 'ui-row-btn';
+          gHist.style.cssText = 'margin:0.2rem 0 0.4rem';
+          gHist.textContent = 'Guardrail history';
+          gHist.title = 'Earlier versions of these guardrails, to read or go back to';
+          gHist.onclick = function() {
+            window.uiOpenHistory('api/agents/' + encodeURIComponent(id) + '/guardrails/revisions', {
+              // What is on screen is the version just replaced: a dialog
+              // closes to be opened again, a page section reloads.
+              onRestored: function() { if (m.hosted) window.location.reload(); else m.close(); }
+            });
+          };
+          gWrap.appendChild(gHist);
           var gList = document.createElement('div');
           gList.className = 'ui-orch-list';
           gWrap.appendChild(gList);
@@ -5480,12 +5539,36 @@
                 if (toolSel.value) { setTools(bound.concat([toolSel.value])); }
               });
               toolBox.appendChild(toolSel);
+              // Demote: the way back from elevating. A guardrail that shapes an
+              // answer rather than forbids one is guidance, and Rules is where
+              // guidance costs nothing to enforce. It MOVES, as elevating does,
+              // and goes without its severity and links, which only a
+              // guardrail has.
+              var down = document.createElement('button');
+              down.className = 'ui-orch-list-del'; down.type = 'button';
+              down.textContent = '⤒';
+              down.title = 'Move back to Rules (guidance, not an enforced check)';
+              down.onclick = function() {
+                var t = gBody(grules[idx]).trim();
+                if (t) {
+                  rules = rules.filter(function(s) { return s.trim().length > 0; });
+                  if (!rules.some(function(s) { return s.trim() === t; })) rules.push(t);
+                }
+                grules.splice(idx, 1);
+                gCommit();
+                render();
+                renderG();
+                if (!showRules) {
+                  var said = 'Moved to Rules and saved. Find it in the agent\u2019s Rules.';
+                  if (window.uiToast) window.uiToast(said); else window.uiAlert(said);
+                }
+              };
               var del = document.createElement('button');
               del.className = 'ui-orch-list-del'; del.type = 'button'; del.textContent = '×';
               del.onclick = function() { grules.splice(idx, 1); renderG(); gCommit(); };
               var apply = document.createElement('div');
               apply.className = 'ui-orch-guard-apply';
-              apply.appendChild(toolBox); apply.appendChild(term); apply.appendChild(exempt); apply.appendChild(del);
+              apply.appendChild(toolBox); apply.appendChild(term); apply.appendChild(exempt); apply.appendChild(down); apply.appendChild(del);
               row.appendChild(input); row.appendChild(more); row.appendChild(apply);
               gList.appendChild(row);
             });
@@ -6498,7 +6581,7 @@
           function gSave() {
             var clean = rules.map(function(r) { return r.trim(); })
                              .filter(function(r) { return r.length > 0; });
-            agent.rules = clean.join('\n');
+            agent.rules = orchRulesText(clean);
             var gclean = grules.map(function(r) { return r.trim(); })
                                .filter(function(r) { return r.length > 0; });
             var hooks = hookDefs.map(function(h){ return h.v; }).filter(function(v){ return activeHooks[v]; });
@@ -8036,7 +8119,7 @@
           } else {
             applySessionCount(0);
           }
-          var rn = (a.rules || '').split('\n').filter(function(s) { return s.trim(); }).length;
+          var rn = orchRuleItems(a.rules || '').length; // a heading and its list count once
           setCount(rules, rn);
         }).catch(function(){});
         // The saved facts, which is what the Memory modal opens on. This

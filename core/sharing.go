@@ -95,9 +95,9 @@ type UserOwnedAgentRow struct {
 	Exposed    bool   `json:"exposed"` // already published as a /agents/ app
 }
 
-// AdminListUserOwnedAgents / AdminRevokeAgentShare / AdminUnpublishAgent are wired
-// by orchestrate (in an init) so the admin governance console can enumerate,
-// un-share and unpublish user-owned agents across the deployment without the
+// AdminListUserOwnedAgents / AdminRevokeAgentShare are wired by orchestrate (in
+// an init) so the admin governance console can enumerate and un-share
+// user-owned agents across the deployment without the
 // admin app importing orchestrate. They take the app-wide Database (admin passes
 // its own) and mirror the AdminRehomeOrphanTool hook pattern. Nil until
 // orchestrate's init runs (single binary, so always set in practice).
@@ -105,11 +105,11 @@ type UserOwnedAgentRow struct {
 // Every one of them narrows reach. Publishing a user's agent is theirs to ask
 // for (their share list's Everyone), and the ask is approved under Sharing: an
 // admin "Publish" that made any user's agent reachable by everyone, running as
-// its owner, used to be here.
+// its owner, used to be here. Taking one back from everyone is under Sharing
+// too, in the shared-with-everyone list (core/shareledger).
 var (
 	AdminListUserOwnedAgents func(db Database) []UserOwnedAgentRow
 	AdminRevokeAgentShare    func(db Database, owner, id string) error
-	AdminUnpublishAgent      func(db Database, owner, id string) error
 )
 
 // UserOwnedPipelineRow is one user-owned pipeline for the same governance

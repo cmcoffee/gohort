@@ -1,3 +1,111 @@
+  // uiOpenHistoryList renders a history payload (FormPanel.HistoryURL's
+  // contract): the entries, and one entry's "show" view in place when asked.
+  // In place rather than as a second modal: a preview is a step INSIDE looking
+  // at history, and stacking dialogs to read one costs two layers of Escape
+  // handling to answer one question.
+  function uiOpenHistoryList(d, historyURL, onRestored) {
+    var entries = (d && d.entries) || [];
+    window.uiOpenModal({
+      title: (d && d.title) || 'History',
+      subtitle: d && d.subtitle,
+      mount: function(body, api) {
+        function renderList() {
+          body.textContent = '';
+          if (!entries.length) {
+            body.appendChild(el('div', {style: 'color:var(--text-mute);font-size:var(--fs-sm, 0.85rem)'},
+              [(d && d.empty) || 'Nothing kept yet.']));
+            return;
+          }
+          entries.forEach(function(e) {
+            var card = el('div', {style: 'border:1px solid var(--border);border-radius:5px;padding:0.6rem 0.7rem;margin-bottom:0.5rem'});
+            card.appendChild(el('div', {style: 'font-weight:600;font-size:var(--fs-md, 0.88rem)'}, [e.title || '']));
+            if (e.detail) {
+              card.appendChild(el('div', {style: 'color:var(--text-mute);font-size:var(--fs-sm, 0.8rem);margin-top:0.15rem'}, [e.detail]));
+            }
+            var acts = el('div', {style: 'display:flex;gap:0.4rem;margin-top:0.5rem;flex-wrap:wrap'});
+            (e.actions || []).forEach(function(a) {
+              var ab = el('button', {class: 'ui-row-btn' + (a.variant === 'danger' ? ' danger' : ''), type: 'button'}, [a.label || 'Go']);
+              ab.addEventListener('click', function() { runHistoryAction(a, ab, api, renderList); });
+              acts.appendChild(ab);
+            });
+            if (acts.childNodes.length) card.appendChild(acts);
+            body.appendChild(card);
+          });
+        }
+        function showView(view, back) {
+          body.textContent = '';
+          var head = el('div', {style: 'display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem'});
+          var backBtn = el('button', {class: 'ui-row-btn', type: 'button'}, ['‹ Back']);
+          backBtn.addEventListener('click', back);
+          head.appendChild(backBtn);
+          if (view.title) {
+            head.appendChild(el('div', {style: 'font-weight:600;font-size:var(--fs-md, 0.88rem)'}, [view.title]));
+          }
+          body.appendChild(head);
+          body.appendChild(el('pre', {style: 'white-space:pre-wrap;word-break:break-word;font-size:var(--fs-sm, 0.8rem);line-height:1.5;margin:0;background:var(--bg-0);border:1px solid var(--border);border-radius:5px;padding:0.6rem;max-height:52vh;overflow:auto'},
+            [view.text || '']));
+        }
+        // An entry's url is resolved against the HISTORY url rather than
+        // the page. The page decides its own depth and reaches the api
+        // through its own relative base; a server building absolute paths
+        // would have to guess it, and guessing wrong lands the fetch on
+        // some other page's endpoint.
+        function historyActionURL(u) {
+          try {
+            return new URL(u, new URL(historyURL, window.location.href)).toString();
+          } catch (e) {
+            return u;
+          }
+        }
+        function runHistoryAction(a, ab, api, back) {
+          if (!a || !a.url) return;
+          var url = historyActionURL(a.url);
+          var orig = ab.textContent;
+          if (a.kind === 'show') {
+            ab.disabled = true;
+            ab.textContent = ''; ab.appendChild(uiLoading('Loading', {immediate: true}));
+            fetchJSON(url).then(function(view) {
+              showView(view || {}, back);
+            }).catch(function(err) {
+              showToast('Could not open: ' + (err && err.message || err));
+            }).then(function() { ab.disabled = false; ab.textContent = orig; });
+            return;
+          }
+          (async function() {
+            if (a.confirm && !(await window.uiConfirm(a.confirm))) return;
+            ab.disabled = true;
+            ab.textContent = 'Working…';
+            fetch(url, {method: (a.method || 'post').toUpperCase()})
+              .then(function(r) {
+                if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+                // Reload the form before closing: leaving the fields on the
+                // version that was just replaced makes a restore that
+                // worked look like one that did nothing.
+                if (onRestored) onRestored();
+                api.close();
+                showToast(a.done || 'Done');
+              })
+              .catch(function(err) { showToast('Failed: ' + (err && err.message || err)); })
+              .then(function() { ab.disabled = false; ab.textContent = orig; });
+          })();
+        }
+        renderList();
+      },
+    });
+  }
+  // uiOpenHistory fetches a history payload from url and shows it, for a
+  // surface that is not a FormPanel but keeps versions the same way: the
+  // FormPanel History button and this read one contract. onRestored runs
+  // after a restore, so the caller can reload what it shows.
+  window.uiOpenHistory = function(url, opts) {
+    opts = opts || {};
+    return fetchJSON(url).then(function(d) {
+      uiOpenHistoryList(d || {}, url, opts.onRestored);
+    }).catch(function(err) {
+      showToast('History unavailable: ' + (err && err.message || err));
+    });
+  };
+
   // --- tool-call arguments --------------------------------------------
   // A tool call shows a one-line summary with every value clipped, which
   // keeps a row of calls readable and hides the request that was actually
@@ -4446,99 +4554,8 @@
         row.appendChild(btn);
         host.appendChild(row);
       }
-      // openHistoryModal renders the entries, and renders one entry's "show"
-      // view in place when asked. In place rather than as a second modal: a
-      // preview is a step INSIDE looking at history, and stacking dialogs to
-      // read one costs two layers of Escape handling to answer one question.
       function openHistoryModal(d) {
-        var entries = (d && d.entries) || [];
-        window.uiOpenModal({
-          title: (d && d.title) || 'History',
-          subtitle: d && d.subtitle,
-          mount: function(body, api) {
-            function renderList() {
-              body.textContent = '';
-              if (!entries.length) {
-                body.appendChild(el('div', {style: 'color:var(--text-mute);font-size:var(--fs-sm, 0.85rem)'},
-                  [(d && d.empty) || 'Nothing kept yet.']));
-                return;
-              }
-              entries.forEach(function(e) {
-                var card = el('div', {style: 'border:1px solid var(--border);border-radius:5px;padding:0.6rem 0.7rem;margin-bottom:0.5rem'});
-                card.appendChild(el('div', {style: 'font-weight:600;font-size:var(--fs-md, 0.88rem)'}, [e.title || '']));
-                if (e.detail) {
-                  card.appendChild(el('div', {style: 'color:var(--text-mute);font-size:var(--fs-sm, 0.8rem);margin-top:0.15rem'}, [e.detail]));
-                }
-                var acts = el('div', {style: 'display:flex;gap:0.4rem;margin-top:0.5rem;flex-wrap:wrap'});
-                (e.actions || []).forEach(function(a) {
-                  var ab = el('button', {class: 'ui-row-btn' + (a.variant === 'danger' ? ' danger' : ''), type: 'button'}, [a.label || 'Go']);
-                  ab.addEventListener('click', function() { runHistoryAction(a, ab, api, renderList); });
-                  acts.appendChild(ab);
-                });
-                if (acts.childNodes.length) card.appendChild(acts);
-                body.appendChild(card);
-              });
-            }
-            function showView(view, back) {
-              body.textContent = '';
-              var head = el('div', {style: 'display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem'});
-              var backBtn = el('button', {class: 'ui-row-btn', type: 'button'}, ['‹ Back']);
-              backBtn.addEventListener('click', back);
-              head.appendChild(backBtn);
-              if (view.title) {
-                head.appendChild(el('div', {style: 'font-weight:600;font-size:var(--fs-md, 0.88rem)'}, [view.title]));
-              }
-              body.appendChild(head);
-              body.appendChild(el('pre', {style: 'white-space:pre-wrap;word-break:break-word;font-size:var(--fs-sm, 0.8rem);line-height:1.5;margin:0;background:var(--bg-0);border:1px solid var(--border);border-radius:5px;padding:0.6rem;max-height:52vh;overflow:auto'},
-                [view.text || '']));
-            }
-            // An entry's url is resolved against the HISTORY url rather than
-            // the page. The page decides its own depth and reaches the api
-            // through its own relative base; a server building absolute paths
-            // would have to guess it, and guessing wrong lands the fetch on
-            // some other page's endpoint.
-            function historyActionURL(u) {
-              try {
-                return new URL(u, new URL(cfg.history_url, window.location.href)).toString();
-              } catch (e) {
-                return u;
-              }
-            }
-            function runHistoryAction(a, ab, api, back) {
-              if (!a || !a.url) return;
-              var url = historyActionURL(a.url);
-              var orig = ab.textContent;
-              if (a.kind === 'show') {
-                ab.disabled = true;
-                ab.textContent = ''; ab.appendChild(uiLoading('Loading', {immediate: true}));
-                fetchJSON(url).then(function(view) {
-                  showView(view || {}, back);
-                }).catch(function(err) {
-                  showToast('Could not open: ' + (err && err.message || err));
-                }).then(function() { ab.disabled = false; ab.textContent = orig; });
-                return;
-              }
-              (async function() {
-                if (a.confirm && !(await window.uiConfirm(a.confirm))) return;
-                ab.disabled = true;
-                ab.textContent = 'Working…';
-                fetch(url, {method: (a.method || 'post').toUpperCase()})
-                  .then(function(r) {
-                    if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
-                    // Reload the form before closing: leaving the fields on the
-                    // version that was just replaced makes a restore that
-                    // worked look like one that did nothing.
-                    load();
-                    api.close();
-                    showToast(a.done || 'Done');
-                  })
-                  .catch(function(err) { showToast('Failed: ' + (err && err.message || err)); })
-                  .then(function() { ab.disabled = false; ab.textContent = orig; });
-              })();
-            }
-            renderList();
-          },
-        });
+        uiOpenHistoryList(d, cfg.history_url, load);
       }
       // ResetURL — "Revert to defaults" button. Confirms, POSTs to the reset
       // endpoint (server clears the stored overrides), then reloads the form

@@ -2,9 +2,10 @@
 // administrator's take-back.
 //
 // Each kind lists its own and takes one back through the owner's own door
-// (core/shareledger: Published, Unpublish): a skill or a collection returns
-// to its author's pool with no recipients, an app's Share is turned off, a
-// guide loses Everyone. Nothing is deleted, and the owner is told.
+// (core/shareledger: Published, Unpublish): an agent, pipeline or machine
+// loses Everyone and keeps its named list, a skill or a collection returns to
+// its author's pool with no recipients, an app's Share is turned off, a guide
+// loses Everyone. Nothing is deleted, and the owner is told.
 
 package admin
 

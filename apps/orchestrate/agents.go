@@ -254,6 +254,13 @@ func rollbackAgent(db Database, id, ref string) (AgentRecord, error) {
 	// id it belongs to, so trust the argument over the payload: a body that
 	// somehow names another agent must not become a write to that agent.
 	restored.ID = id
+	// The guardrails stay as they are now. They keep a history of their own
+	// (guardrail_history.go), and going back to an earlier persona must not
+	// quietly put back the guardrails it had.
+	var current AgentRecord
+	if db.Get(agentsTable, id, &current) {
+		guardrailSetOf(current).applyTo(&restored)
+	}
 	return saveAgentAs(db, restored, fmt.Sprintf("rolled back to #%d", rev.Seq))
 }
 

@@ -57,9 +57,10 @@ func (t *chatTurn) introspectToolDef() AgentToolDef {
 				b.WriteString("- Memory mode: " + mode + "\n")
 				if r := strings.TrimSpace(a.Rules); r != "" {
 					b.WriteString("- Rules (always applied):\n")
-					for _, line := range strings.Split(r, "\n") {
-						if line = strings.TrimSpace(line); line != "" {
-							b.WriteString("    - " + line + "\n")
+					for _, item := range ruleItems(r) {
+						b.WriteString("    - " + item[0] + "\n")
+						for _, line := range item[1:] {
+							b.WriteString("      " + line + "\n")
 						}
 					}
 				}

@@ -63,6 +63,11 @@ const (
 	KindSkill    = "skill"
 	KindMachine  = "machine"
 	KindPipeline = "pipeline"
+	// KindAgentGuardrails is an agent's guardrail settings, kept apart from
+	// the agent's own ring. The guardrails editor saves on every change, and
+	// each save filed a whole agent version, so a few guardrail tweaks pushed
+	// the persona and rules an owner wanted back out of a ring six deep.
+	KindAgentGuardrails = "agent-guardrails"
 )
 
 // Store is the slice of a key-value database this package uses.

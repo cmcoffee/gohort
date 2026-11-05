@@ -22,6 +22,13 @@ import (
 // still one markdown string, an existing free-form prompt opens intact
 // in the Intro block above these slots, empty slots contribute nothing,
 // and the author can add sections of their own.
+//
+// No Rules slot. The agent's Rules (Configure, Rules) are read first by both
+// the model that talks and the one that works, and win every conflict; a
+// Rules section here reached only the first, carried no weight, and was a
+// second place for the same constraints to go out of step. A persona that
+// already has one keeps it as a section of its own, with a button on this page
+// to move it into Rules (personaRulesSection).
 var orchestratorPromptSections = []ui.SectionSpec{
 	{Title: "Role & voice", Mode: "prose", Required: true,
 		Placeholder: "You are a…",
@@ -29,9 +36,6 @@ var orchestratorPromptSections = []ui.SectionSpec{
 		Detail:      "Tone lives here rather than in its own slot: nobody writes a persona and then a separate paragraph about its tone, and splitting them just leaves one box empty."},
 	{Title: "Approach", Mode: "prose",
 		Help: "How it works a request: what it does first, how it decomposes, when it asks instead of assuming."},
-	{Title: "Rules", Mode: "list",
-		Placeholder: "always cite a source URL",
-		Help:        "Hard constraints, one per line. Stated as instructions the agent can check itself against."},
 	{Title: "Failure modes", Mode: "list",
 		Placeholder: "no results found: say so, don't guess",
 		Help:        "What commonly goes wrong in this domain, and what to do about it.",
@@ -137,6 +141,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	ed.templates()
 	ed.mainSection()
 	ed.splitSections()
+	ed.personaRulesSection()
 	ed.picturesSection()
 	ed.shareSection()
 	ed.shapeSection()
@@ -538,6 +543,51 @@ func (ed *agentEditor) splitSections() {
 			ed.sections = split
 		}
 	}
+}
+
+// personaRulesSection offers, on an agent whose persona still has a Rules
+// section, to move it into the agent's Rules (persona_rules.go). Placed right
+// after the persona, where the section it is about is. Nothing when there is
+// none.
+func (ed *agentEditor) personaRulesSection() {
+	if ed.id == "" || ed.udb == nil {
+		return
+	}
+	rec, ok := loadAgent(ed.udb, ed.id)
+	if !ok {
+		return
+	}
+	moved, _, ok := personaRules(rec.OrchestratorPrompt)
+	if !ok {
+		return
+	}
+	n := len(ruleItems(moved))
+	sec := ui.Section{
+		Title: "Rules in the persona",
+		Subtitle: fmt.Sprintf("The persona has a Rules section (%d rule%s). Rules belong in the agent's Rules, under Configure: "+
+			"read first by both the model that talks and the one that works, and winning every conflict. "+
+			"In the persona they reach only the first, with no weight of their own.", n, plural(n)),
+		Body: ui.DisplayPanel{
+			Source: orchPath("api/agents/") + ed.id,
+			Pairs:  []ui.DisplayPair{},
+			Actions: []ui.ToolbarAction{{
+				Label:       "Move them to Rules",
+				Method:      "POST",
+				URL:         orchPath("api/agents/") + ed.id + "/persona-rules",
+				Confirm:     "Move the persona's Rules section into this agent's Rules? It is taken out of the persona and added after the rules it has. The persona as it was stays in the agent's history.",
+				RedirectURL: orchPath("agent/") + url.PathEscape(ed.id),
+			}},
+		},
+	}
+	// After the persona's own section, where the rules being moved are.
+	at := len(ed.sections)
+	for i, s := range ed.sections {
+		if s.Title == "Persona" {
+			at = i + 1
+			break
+		}
+	}
+	ed.sections = slices.Insert(ed.sections, at, sec)
 }
 
 func (ed *agentEditor) picturesSection() {

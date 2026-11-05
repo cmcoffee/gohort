@@ -189,12 +189,17 @@ func (T *Extensions) handleCredentials(c *jsonapi.Call) (any, error) {
 		// the first — so the row says it is waiting instead.
 		HandoverPending bool `json:"handover_pending"`
 		CanHandOver     bool `json:"can_hand_over"`
+		// An administrator's own key is theirs to hand over: no request to
+		// themselves, so the row offers the act instead of the ask.
+		HandOverNow bool `json:"hand_over_now"`
 		// Added while personal credentials need approval: off until an
 		// administrator approves it, which the row says.
 		AwaitingApproval bool `json:"awaiting_approval"`
 	}
+	admin := UserIsAdmin(user)
 	toRow := func(cred SecureCredential) row {
 		_, _, stored := Secure().CredentialStatusOwned(user, cred.Name)
+		canHandOver := !handoverPending(user, cred.Name)
 		return row{
 			Name: cred.Name, Type: cred.Type, BaseURL: cred.BaseURL, AlsoCovers: nonNilList(cred.AlsoCovers), ParamName: cred.ParamName,
 			Description: cred.Description, RequiresConfirm: cred.RequiresConfirm, ConfirmWrites: cred.ConfirmWrites,
@@ -207,7 +212,8 @@ func (T *Extensions) handleCredentials(c *jsonapi.Call) (any, error) {
 			Lending:         cred.Lending,
 			LendingLabel:    lendingListLabel(cred),
 			HandoverPending: handoverPending(user, cred.Name),
-			CanHandOver:     !handoverPending(user, cred.Name),
+			CanHandOver:     canHandOver && !admin,
+			HandOverNow:     canHandOver && admin,
 
 			AwaitingApproval: cred.AwaitingApproval,
 		}
@@ -1281,7 +1287,11 @@ func (T *Extensions) handleUserSkills(c *jsonapi.Call) (any, error) {
 		Published      bool `json:"published"`
 		PublishPending bool `json:"publish_pending"`
 		CanPublish     bool `json:"can_publish"`
+		// An administrator's own skill publishes at once, as their own
+		// tool does: no request to themselves.
+		PublishNow bool `json:"publish_now"`
 	}
+	admin := UserIsAdmin(user)
 	toSkillRow := func(s SkillRecord, published bool) row {
 		updated := ""
 		if !s.Updated.IsZero() {
@@ -1293,7 +1303,8 @@ func (T *Extensions) handleUserSkills(c *jsonapi.Call) (any, error) {
 			Triggers: len(s.Triggers), Disabled: s.Disabled, Updated: updated,
 			Playbook: playbookCount(s), PlaybookURL: playbookEditorURL(s.ID),
 			Published: published, PublishPending: pending,
-			CanPublish: !published && !pending,
+			CanPublish: !published && !pending && !admin,
+			PublishNow: !published && !pending && admin,
 		}
 	}
 	// ?deployment=1 is what the deployment publishes, for everybody. These
@@ -1603,10 +1614,11 @@ func (T *Extensions) handlePromotions(c *jsonapi.Call, body *struct {
 	if err := CreatePromotionRequest(AuthDB(), user, kind, name, note); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
-	// An administrator's own tool publishes, or takes the update, at once:
-	// the request is filed and approved in one step, so it is versioned and
-	// recorded the same way anybody else's is.
-	if kind == "tool" && UserIsAdmin(user) {
+	// An administrator's own tool publishes, or takes the update, at once,
+	// and so does their own skill or key: the request is filed and approved
+	// in one step, so it is versioned and recorded the same way anybody
+	// else's is.
+	if UserIsAdmin(user) {
 		if err := promotion.Approve(AuthDB(), promotion.RequestKey(kind, user, name), user); err != nil {
 			// Nothing was published, so nothing waits in the queue either.
 			promotion.WithdrawPromotionRequest(AuthDB(), user, kind, name)
@@ -2125,6 +2137,20 @@ func credentialRowActions() []ui.RowAction {
 			},
 			Invalidate: []string{"api/credentials"},
 		}),
+		// An administrator's own key: the same hand-over, with no request
+		// to themselves.
+		ui.ModalActionIf("Hand to the deployment", "hand_over_now", "", ui.FormPanel{
+			SubmitLabel: "Hand it over",
+			PostURL:     "api/promotions?kind=credential&name={name}",
+			Fields: []ui.FormField{
+				{Type: "header", Label: "This stops being your credential",
+					Help: "It becomes the deployment's at once. The way back is deleting it.",
+					Detail: "Sharing widens who may use a key that stays yours. This ends the ownership: the secret moves into the deployment's namespace and the credential lands SECURED, which means it has no user list at all — it is reachable only through the tools bound to it, and you reach it the same way everybody else does.\n\n" +
+						"The tools that already dispatch through it become its bindings. A tool that is still yours alone stays yours alone, so share each one from Tools for your colleagues to reach the key through it. Any tool that took the raw key into a script stops working, because a secured credential never hands the secret out.\n\n" +
+						"Anyone you lent this key to loses their lend."},
+			},
+			Invalidate: []string{"api/credentials"},
+		}),
 		{Type: "button", Label: "Delete", Method: "DELETE",
 			PostTo:     "api/credentials?name={name}",
 			Variant:    "danger",
@@ -2631,6 +2657,13 @@ func (T *Extensions) skillsSection() ui.Section {
 								},
 								Invalidate: []string{"api/skills"},
 							}),
+							// An administrator's own skill: no request to
+							// themselves.
+							{Type: "button", Label: "Publish deployment-wide", Method: "POST",
+								PostTo:     "api/promotions?kind=skill&name={name}",
+								OnlyIf:     "publish_now",
+								Confirm:    "Publish this skill to everybody? It can activate on any user's turn. Its bundled tools do not go with it, and Take back returns it to you.",
+								Invalidate: []string{"api/skills"}},
 							{Type: "button", Label: "Take back", Method: "POST",
 								PostTo:     "api/skills?action=unpublish&id={id}",
 								OnlyIf:     "published",

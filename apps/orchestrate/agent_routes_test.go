@@ -50,10 +50,11 @@ func TestEveryAgentRouteTakesItsMethodsAndRefusesTheSignedOut(t *testing.T) {
 		"guardrail-depth":  "GET POST",
 		"guardrail-test":   "POST",
 		"decline-suggest":  "POST",
+		"persona-rules":    "POST",
 	}
 	src := funcBody(t, readFile(t, "agents_http.go"), "func (T *OrchestrateApp) registerAgentRoutes")
-	if n := strings.Count(src, `T.HandleFunc("/api/agents/{id}`); n != len(takes)+5 {
-		t.Fatalf("registerAgentRoutes mounts %d routes under /api/agents/{id}; this table names %d and the five raw ones: add the new one here", n, len(takes))
+	if n := strings.Count(src, `T.HandleFunc("/api/agents/{id}`); n != len(takes)+7 {
+		t.Fatalf("registerAgentRoutes mounts %d routes under /api/agents/{id}; this table names %d and the seven raw ones: add the new one here", n, len(takes))
 	}
 	for action, methods := range takes {
 		path := "/api/agents/agent-a"
@@ -73,13 +74,14 @@ func TestEveryAgentRouteTakesItsMethodsAndRefusesTheSignedOut(t *testing.T) {
 		}
 	}
 	// The raw routes resolve the caller themselves.
-	for _, action := range []string{"export", "knowledge/upload", "assist", "revisions", "revisions/preview"} {
+	for _, action := range []string{"export", "knowledge/upload", "assist", "revisions", "revisions/preview",
+		"guardrails/revisions", "guardrails/revisions/preview"} {
 		if w := do("", "GET", "/api/agents/agent-a/"+action); w.Code != http.StatusUnauthorized {
 			t.Errorf("signed out, GET %s answered %d, want 401", action, w.Code)
 		}
 	}
 	// Reads of the agent find only the caller's own.
-	for _, action := range []string{"", "guardrails", "guardrail-depth", "missing", "reach", "export"} {
+	for _, action := range []string{"", "guardrails", "guardrail-depth", "missing", "reach", "export", "guardrails/revisions"} {
 		path := "/api/agents/agent-a"
 		if action != "" {
 			path += "/" + action

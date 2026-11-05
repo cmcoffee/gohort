@@ -229,3 +229,61 @@ func TestAnAdministratorsOwnToolPublishesDirectly(t *testing.T) {
 		t.Fatal("a failed direct publish left a request in the queue")
 	}
 }
+
+// An administrator's own skill and own key go out the same way as their own
+// tool: at once, with no request to themselves. Anybody else's still asks.
+func TestAnAdministratorsOwnSkillAndKeyGoOutDirectly(t *testing.T) {
+	app, req := authedExtensions(t)
+	call := func(method, path string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		serve(app)(w, req(method, path))
+		return w
+	}
+	if _, err := SaveSkill(AuthDB(), "alice", SkillRecord{Name: "pdf", Instructions: "extract"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Secure().Save(SecureCredential{Name: "team_key", Type: SecureCredBearer, BaseURL: "https://api.example.test", Owner: "alice"}, "k"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Not an administrator: both rows ask, and asking files a request.
+	if r := rowsNamed(t, call("GET", "/api/skills").Body.Bytes(), "pdf"); r["can_publish"] != true || r["publish_now"] == true {
+		t.Fatalf("a user's skill should offer the request: %+v", r)
+	}
+	if r := rowsNamed(t, call("GET", "/api/credentials").Body.Bytes(), "team_key"); r["can_hand_over"] != true || r["hand_over_now"] == true {
+		t.Fatalf("a user's key should offer the request: %+v", r)
+	}
+	if w := call("POST", "/api/promotions?kind=skill&name=pdf"); w.Code/100 != 2 {
+		t.Fatalf("request: %d %s", w.Code, w.Body.String())
+	}
+	if !PendingPromotion(AuthDB(), "alice", SkillPromotionKind, "pdf") || len(DeploymentSkills(AuthDB())) != 0 {
+		t.Fatal("a user's request should wait for an administrator")
+	}
+	promotion.WithdrawPromotionRequest(AuthDB(), "alice", SkillPromotionKind, "pdf")
+
+	// An administrator: both rows offer the act, and it happens at once.
+	AuthDB().Set(AuthTable, "user:alice", AuthUser{Username: "alice", Admin: true})
+	if r := rowsNamed(t, call("GET", "/api/skills").Body.Bytes(), "pdf"); r["publish_now"] != true || r["can_publish"] == true {
+		t.Fatalf("an admin's own skill should offer Publish, not a request: %+v", r)
+	}
+	if r := rowsNamed(t, call("GET", "/api/credentials").Body.Bytes(), "team_key"); r["hand_over_now"] != true || r["can_hand_over"] == true {
+		t.Fatalf("an admin's own key should offer the hand-over, not a request: %+v", r)
+	}
+	if w := call("POST", "/api/promotions?kind=skill&name=pdf"); w.Code/100 != 2 {
+		t.Fatalf("publish: %d %s", w.Code, w.Body.String())
+	}
+	if got := DeploymentSkills(AuthDB()); len(got) != 1 || got[0].Name != "pdf" {
+		t.Fatalf("an admin's skill was not published at once: %+v", got)
+	}
+	if w := call("POST", "/api/promotions?kind=credential&name=team_key"); w.Code/100 != 2 {
+		t.Fatalf("hand over: %d %s", w.Code, w.Body.String())
+	}
+	if _, still := Secure().LoadUser("alice", "team_key"); still {
+		t.Fatal("an admin's key was not handed over at once")
+	}
+	for _, k := range []string{SkillPromotionKind, CredentialPromotionKind} {
+		if PendingPromotion(AuthDB(), "alice", k, map[string]string{SkillPromotionKind: "pdf", CredentialPromotionKind: "team_key"}[k]) {
+			t.Errorf("an admin's direct %s left a request in the queue", k)
+		}
+	}
+}

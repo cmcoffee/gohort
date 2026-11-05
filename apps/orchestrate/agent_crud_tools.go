@@ -87,6 +87,9 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if strings.TrimSpace(rec.OrchestratorPrompt) == "" {
 		return "", errors.New("orchestrator_prompt is required")
 	}
+	if err := rulesProblem(rec.Rules); err != nil {
+		return "", err
+	}
 	pinned, err := pinDispatchAgentNames(sess.DB, sess.Username, rec.AllowedDispatchTargets)
 	if err != nil {
 		return "", err
@@ -742,6 +745,13 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	priorLimits.ActionQuotas = maps.Clone(existing.ActionQuotas)
 	priorFields := agentFieldValues(existing)
 	mergeAgentArgs(&existing, args)
+	// Only rules this call writes: an agent whose stored rules have a stray
+	// heading still takes other edits.
+	if v, ok := args["rules"]; ok && v != nil {
+		if err := rulesProblem(existing.Rules); err != nil {
+			return "", err
+		}
+	}
 	// An app's agent is not given every tool by this call: not by
 	// allowed_tools ["*"], and not by making an agent that has every tool
 	// the app's (a clone of a general agent, say). An app agent that

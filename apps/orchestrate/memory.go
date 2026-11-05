@@ -30,14 +30,17 @@ func renderRulesPromptSection(rules string) string {
 	var b strings.Builder
 	b.WriteString("## Rules: operating policy you must follow\n\n")
 	b.WriteString("These rules are non-negotiable and apply to every turn. If a rule conflicts with anything else in this prompt, the rule wins.\n\n")
-	for _, ln := range strings.Split(rules, "\n") {
-		ln = strings.TrimSpace(ln)
-		if ln == "" {
-			continue
-		}
+	// A rule is a line, or a heading with its list nested under it, so a
+	// step keeps saying what it is about (see ruleItems).
+	for _, item := range ruleItems(rules) {
 		b.WriteString("- ")
-		b.WriteString(ln)
+		b.WriteString(item[0])
 		b.WriteString("\n")
+		for _, ln := range item[1:] {
+			b.WriteString("  ")
+			b.WriteString(ln)
+			b.WriteString("\n")
+		}
 	}
 	b.WriteString("\n")
 	return b.String()

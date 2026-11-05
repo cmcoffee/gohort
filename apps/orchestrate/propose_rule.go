@@ -63,6 +63,14 @@ func (t *chatTurn) proposeRule(rule, why string) (string, error) {
 	if len([]rune(rule)) > proposeRuleMaxRunes {
 		return "", fmt.Errorf("that is more than one rule (over %d characters): propose them one at a time", proposeRuleMaxRunes)
 	}
+	// One line: a suggestion is one rule, and a line break would land it in
+	// the Rules as two, or a heading on its own.
+	if strings.ContainsAny(rule, "\r\n") {
+		return "", fmt.Errorf("a rule is proposed on one line: write it as one sentence or two, or propose each rule on its own")
+	}
+	if ruleHeading(rule) {
+		return "", fmt.Errorf("%q is a heading, not a rule: say the rule itself", rule)
+	}
 	db := t.ownerDB
 	if db == nil {
 		db = t.udb
@@ -157,7 +165,13 @@ func addAgentRule(db Database, agentID, rule string) error {
 		return nil
 	}
 	if r := strings.TrimRight(rec.Rules, "\n "); r != "" {
-		rec.Rules = r + "\n" + strings.TrimSpace(rule)
+		// After a heading's list, a blank line first: a rule that begins
+		// with a bullet would otherwise join the list as one of its steps.
+		sep := "\n"
+		if items := ruleItems(r); len(items[len(items)-1]) > 1 {
+			sep = "\n\n"
+		}
+		rec.Rules = r + sep + strings.TrimSpace(rule)
 	} else {
 		rec.Rules = strings.TrimSpace(rule)
 	}

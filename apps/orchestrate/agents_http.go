@@ -274,6 +274,13 @@ func (T *OrchestrateApp) agentSave(c *jsonapi.Call, raw json.RawMessage) (any, e
 	if fromToolsModal {
 		reason = "changed tools"
 	}
+	// Rules the save changes are checked; ones it carries over unchanged are
+	// not, so an agent with a stray heading stored still takes other edits.
+	if prev, ok := loadAgent(udb, req.ID); !ok || prev.Rules != req.Rules {
+		if err := rulesProblem(req.Rules); err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+	}
 	saved, err := saveAgentAs(udb, req, reason)
 	if err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
@@ -553,6 +560,7 @@ func (T *OrchestrateApp) registerAgentRoutes() {
 	}.Serve)
 	T.HandleFunc("/api/agents/{id}/guardrail-test", jsonapi.Post(T.DB, T.agentGuardrailTest))
 	T.HandleFunc("/api/agents/{id}/decline-suggest", jsonapi.Post(T.DB, T.agentDeclineSuggest))
+	T.HandleFunc("/api/agents/{id}/persona-rules", jsonapi.Post(T.DB, T.agentPersonaRulesMove))
 	// Not JSON in and out: a download, an upload, the ✨ assist and the
 	// revisions surface. They resolve the caller themselves.
 	T.HandleFunc("/api/agents/{id}/export", T.signedIn(T.handleAgentExport))
@@ -568,6 +576,12 @@ func (T *OrchestrateApp) registerAgentRoutes() {
 	})
 	T.HandleFunc("/api/agents/{id}/revisions", revisions)
 	T.HandleFunc("/api/agents/{id}/revisions/{action}", revisions)
+	// The guardrails' own history (guardrail_history.go).
+	guardRevisions := T.signedIn(func(w http.ResponseWriter, r *http.Request, user string, _ Database) {
+		T.handleAgentGuardrailRevisions(w, r, user, r.PathValue("id"), r.PathValue("action"))
+	})
+	T.HandleFunc("/api/agents/{id}/guardrails/revisions", guardRevisions)
+	T.HandleFunc("/api/agents/{id}/guardrails/revisions/{action}", guardRevisions)
 	T.registerMemoryRoutes()
 }
 

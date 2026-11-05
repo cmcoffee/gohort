@@ -91,6 +91,20 @@ func registerShareProviders() {
 			_, err := saveAgent(udb, a)
 			return err
 		},
+		// The administrator's list of what reaches everybody. Take back
+		// turns Everyone off and leaves the owner's named list alone.
+		Published: func() []shareledger.Grant {
+			var out []shareledger.Grant
+			for _, u := range AuthListUsers(AuthDB()) {
+				for _, a := range listAgents(UserDB(orchestrateBaseDB, u.Username), u.Username) {
+					if isShareableAgent(a, u.Username) && a.Everyone {
+						out = append(out, shareledger.Grant{ID: a.ID, Name: a.Name, Owner: a.Owner, Reach: "Everyone can run it"})
+					}
+				}
+			}
+			return out
+		},
+		Unpublish: func(owner, id string) error { return unpublishAgentForAdmin(orchestrateBaseDB, owner, id) },
 	})
 
 	shareledger.Register("pipeline", shareledger.Provider{
@@ -144,6 +158,20 @@ func registerShareProviders() {
 			breakSchedulesForLostRecipients(SavePipelineDefAs(udb, def, "share taken back"), before)
 			return nil
 		},
+		Published: func() []shareledger.Grant {
+			var out []shareledger.Grant
+			for _, u := range AuthListUsers(AuthDB()) {
+				for _, d := range ListPipelineDefs(UserDB(orchestrateBaseDB, u.Username), u.Username) {
+					if d.Owner == u.Username && d.Published {
+						out = append(out, shareledger.Grant{ID: d.ID, Name: d.Name, Owner: d.Owner, Reach: "Everyone can run it"})
+					}
+				}
+			}
+			return out
+		},
+		// The owner's own way back: the people and teams kept beside
+		// Everyone keep it.
+		Unpublish: unpublishPipeline,
 	})
 
 	shareledger.Register("machine", shareledger.Provider{
@@ -197,6 +225,18 @@ func registerShareProviders() {
 			breakMachineSchedulesForLostRecipients(SaveMachineDefAs(udb, def, "share taken back"), before)
 			return nil
 		},
+		Published: func() []shareledger.Grant {
+			var out []shareledger.Grant
+			for _, u := range AuthListUsers(AuthDB()) {
+				for _, d := range ListMachineDefs(UserDB(orchestrateBaseDB, u.Username), u.Username) {
+					if d.Owner == u.Username && d.Published {
+						out = append(out, shareledger.Grant{ID: d.ID, Name: d.Name, Owner: d.Owner, Reach: "Everyone can run it"})
+					}
+				}
+			}
+			return out
+		},
+		Unpublish: unpublishMachine,
 	})
 }
 
