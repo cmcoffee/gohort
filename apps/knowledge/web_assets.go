@@ -212,7 +212,7 @@ const documentsDetailBody = `
       <textarea id="docs-desc" class="docs-detail-desc-edit" placeholder="Describe what this collection should contain. The description steers Auto-fill's search queries: be specific (e.g. &quot;Official Kubernetes API reference, operator best practices, and our cluster runbook&quot;)."></textarea>
       <div class="docs-desc-actions">
         <button id="docs-desc-save" class="ui-row-btn" disabled>Save</button>
-        <button id="docs-desc-suggest" class="ui-row-btn">✨ Suggest with AI</button>
+        <button id="docs-desc-suggest" class="ui-row-btn" title="Work out the description with the assistant: it knows what the collection holds">✨ Get assistance</button>
         <span id="docs-desc-status"></span>
       </div>
     </div>
@@ -670,34 +670,30 @@ const documentsDetailAssets = `<style>
     });
   });
 
-  // Suggest-with-AI: single click → vanilla worker LLM drafts a
-  // description from the collection's name + existing docs.
-  // Previously a modal let the user pick a skill voice; that
-  // surface went with the skill/corpus split.
+  // ✨ Get assistance: the shared assist window on the description, talking
+  // to the collection's assist (core/assist), which is told what the
+  // collection holds. Empty, it opens already asking for a suggestion, the
+  // one click the old Suggest with AI was; with text, it waits to be asked.
+  // What is kept goes into the box, and Save saves it, as typing would.
   $('#docs-desc-suggest').addEventListener('click', function() {
-    var btn = $('#docs-desc-suggest');
-    var st = $('#docs-desc-status');
-    btn.disabled = true;
-    st.style.color = 'var(--text-mute)';
-    st.textContent = 'Drafting suggestion...';
-    fetch(api('/api/collections/' + encodeURIComponent(cid) + '/suggest-description'), {
-      method: 'POST', credentials: 'same-origin',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({mode: 'none'}),
-    }).then(function(r){
-      if (!r.ok) return r.text().then(function(t){ throw new Error(t); });
-      return r.json();
-    }).then(function(out) {
-      var ta = $('#docs-desc');
-      ta.value = (out && out.description) || '';
-      $('#docs-desc-save').disabled = (ta.value === loadedDescription);
-      st.style.color = 'var(--text-mute)';
-      st.textContent = 'Suggestion ready: edit and Save when you\'re happy.';
-      btn.disabled = false;
-    }).catch(function(err){
-      st.style.color = 'var(--danger,#ff7b72)';
-      st.textContent = 'Suggest failed: ' + (err && err.message || err);
-      btn.disabled = false;
+    if (!window.uiOpenAssist) return;
+    var ta = $('#docs-desc');
+    var cur = ta.value || '';
+    window.uiOpenAssist({
+      title: 'Description: ' + ($('#docs-name').textContent || 'collection'),
+      subtitle: 'What this collection is for. Auto-fill searches from these words, so name the kinds of source it should hold.',
+      initial: cur,
+      placeholder: 'The description appears here. Edit it directly, or ask for changes in the conversation.',
+      url: api('/api/collections/' + encodeURIComponent(cid) + '/assist'),
+      web: true,
+      ask: cur.trim() ? '' : 'Suggest a description from its name and the documents in it.',
+      onAccept: function(text) {
+        ta.value = text;
+        $('#docs-desc-save').disabled = (ta.value === loadedDescription);
+        var st = $('#docs-desc-status');
+        st.style.color = 'var(--text-mute)';
+        st.textContent = ta.value === loadedDescription ? '' : 'Kept from the assistant: Save when you are happy with it.';
+      },
     });
   });
 

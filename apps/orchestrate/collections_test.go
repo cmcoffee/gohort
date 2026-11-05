@@ -49,7 +49,7 @@ func TestEveryCollectionRouteTakesItsMethodsAndKeepsTheGate(t *testing.T) {
 		"autofill":             "POST",
 		"research":             "POST",
 		"audit":                "POST",
-		"suggest-description":  "POST",
+		"assist":               "GET POST",
 		"suggestions":          "GET",
 		"suggestions/settings": "POST",
 		"suggestions/dismiss":  "POST",

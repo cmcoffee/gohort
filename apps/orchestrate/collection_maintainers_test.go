@@ -18,7 +18,7 @@ func TestACollectionMaintainerCuratesButDoesNotOwn(t *testing.T) {
 		AllowedUsers: []string{"bob", "carol"}, Maintainers: []string{"bob"}}
 	for _, a := range []struct{ action, method string }{
 		{"upload", "POST"}, {"sources", "DELETE"}, {"autofill", "POST"},
-		{"suggestions", "POST"}, {"audit", "POST"}, {"", "PATCH"},
+		{"suggestions", "POST"}, {"audit", "POST"}, {"", "PATCH"}, {"assist", "POST"},
 	} {
 		if why := collectionWriteRefusal(c, "bob", a.action, a.method, false); why != "" {
 			t.Errorf("a maintainer was refused %s %q: %s", a.method, a.action, why)
@@ -31,6 +31,10 @@ func TestACollectionMaintainerCuratesButDoesNotOwn(t *testing.T) {
 	}
 	if collectionWriteRefusal(c, "carol", "suggestions", "POST", false) == "" {
 		t.Error("a reader may review suggestions")
+	}
+	// Help with the description is for whoever may change it.
+	if collectionWriteRefusal(c, "carol", "assist", "POST", false) == "" {
+		t.Error("a reader may ask for help writing the description")
 	}
 	// Held to the share, like a contributor: off it, a maintainer is nothing.
 	c.AllowedUsers = []string{"carol"}

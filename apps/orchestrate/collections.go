@@ -256,7 +256,15 @@ func (T *OrchestrateApp) registerCollectionRoutes() {
 	T.HandleFunc("/api/collections/{id}/autofill", jsonapi.Post(T.DB, T.collectionAutofill))
 	T.HandleFunc("/api/collections/{id}/research", jsonapi.Post(T.DB, T.collectionResearch))
 	T.HandleFunc("/api/collections/{id}/audit", jsonapi.Post(T.DB, T.collectionAudit))
-	T.HandleFunc("/api/collections/{id}/suggest-description", jsonapi.Post(T.DB, T.collectionSuggestDescription))
+	// ✨ Get assistance with the description: the shared assist window's
+	// conversation, behind the collection's gate (collection_assist.go).
+	T.HandleFunc("/api/collections/{id}/assist", T.signedIn(func(w http.ResponseWriter, r *http.Request, user string, udb Database) {
+		if c, err := T.collectionFor(r, user, udb, "assist"); err != nil {
+			jsonapi.Fail(w, r, err)
+		} else {
+			T.handleCollectionAssist(w, r, c)
+		}
+	}))
 	// An upload and a download: raw, behind the same gate.
 	T.HandleFunc("/api/collections/{id}/upload", T.signedIn(func(w http.ResponseWriter, r *http.Request, user string, udb Database) {
 		if c, err := T.collectionFor(r, user, udb, "upload"); err != nil {
@@ -1285,129 +1293,6 @@ func (T *OrchestrateApp) collectionAutofill(call *jsonapi.Call, body *collection
 	}, nil
 }
 
-// collectionSuggestDescriptionBody is a description draft: which expertise to draft with.
-type collectionSuggestDescriptionBody struct {
-	// Mode picks the expertise source:
-	//   ""         → default (treat as "attached")
-	//   "attached" → union every skill currently attached to this collection
-	//   "none"     → vanilla worker LLM, no expertise primer
-	//   "skill"    → single named skill, identified by SkillID
-	Mode    string `json:"mode"`
-	SkillID string `json:"skill_id"`
-}
-
-// collectionSuggestDescription drafts a description for the
-// collection using the worker LLM. Optionally takes a skill_id —
-// when provided, the skill's instructions get prepended to the system
-// prompt so the draft reads like that domain's expert wrote it
-// (e.g. a "Kubernetes Helper" skill produces a k8s-savvy description,
-// not a generic one).
-//
-//	POST /api/collections/{id}/suggest-description
-//	body (optional): {skill_id: "..."}
-//	→ {description: "..."}
-func (T *OrchestrateApp) collectionSuggestDescription(call *jsonapi.Call, body *collectionSuggestDescriptionBody) (any, error) {
-	if body == nil {
-		body = &collectionSuggestDescriptionBody{}
-	}
-	c, cerr := T.collectionAt(call, "suggest-description")
-	if cerr != nil {
-		return nil, cerr
-	}
-	r, user, udb := call.R, call.User, call.UDB
-	body.SkillID = strings.TrimSpace(body.SkillID)
-	if body.Mode == "" {
-		body.Mode = "attached"
-	}
-
-	// Sample existing doc titles (if any) so the suggestion is
-	// informed by what's already in the collection. Cap at a handful
-	// so the prompt stays terse.
-	var titles []string
-	colPrefix := collectionSource(c.ID)
-	for _, ch := range ChunksWhere(T.collectionDB(c), func(x EmbeddedChunk) bool { return strings.HasPrefix(x.Source, colPrefix) }) {
-		t := strings.TrimSpace(strings.TrimPrefix(ch.Section, "## "))
-		if t == "" {
-			continue
-		}
-		seen := false
-		for _, existing := range titles {
-			if existing == t {
-				seen = true
-				break
-			}
-		}
-		if !seen {
-			titles = append(titles, t)
-			if len(titles) >= 8 {
-				break
-			}
-		}
-	}
-
-	// Base system prompt.
-	sys := `You write descriptions for RAG document collections. A description has three jobs:
-1. Tell future-you (or another admin) what this collection is FOR.
-2. Steer the Auto-fill feature's web-search queries: the more specific the description, the better the queries.
-3. Stay short: 1-3 sentences, ~200 chars max.
-
-Output ONLY the description text. No headings, no commentary, no quotes.
-
-Bias toward CONCRETE nouns and named sources: "Official Kubernetes API reference, kubectl command guide, and CNCF operator best practices" reads way better than "Things about kubernetes." When in doubt, list specific types of source material the collection should contain.`
-
-	// Optional skill-lens enhancement: when mode="skill" + skill_id,
-	// append that skill's instructions to the system prompt so the
-	// model drafts with that skill's voice. The old "attached" mode
-	// (union all skills attached to this collection) is gone because
-	// skills no longer attach to collections.
-	if body.Mode == "skill" && body.SkillID != "" {
-		for _, sk := range LoadSkills(udb, user) {
-			if sk.ID == body.SkillID {
-				if instr := strings.TrimSpace(sk.Instructions); instr != "" {
-					sys += "\n\n--- Domain expertise (apply when drafting) ---\n### " + sk.Name + "\n" + instr
-				}
-				break
-			}
-		}
-	}
-
-	prompt := "Collection name: " + c.Name
-	if cur := strings.TrimSpace(c.Description); cur != "" {
-		prompt += "\nCurrent description (revise / improve): " + cur
-	}
-	if len(titles) > 0 {
-		prompt += "\nDocuments already in this collection:\n- " + strings.Join(titles, "\n- ")
-	}
-	prompt += "\n\nDescription:"
-
-	// No artificial timeout — the worker LLM's own client timeout
-	// + the HTTP request context (browser-navigate cancel) govern.
-	// The previous 30s cap fired before thinking-mode workers
-	// could finish even simple suggestions on a cold prompt cache.
-	resp, err := T.WorkerChat(r.Context(),
-		[]Message{{Role: "user", Content: prompt}},
-		WithSystemPrompt(sys), WithMaxTokens(200),
-	)
-	if err != nil || resp == nil {
-		return nil, jsonapi.Status(http.StatusServiceUnavailable, "worker LLM unavailable: "+errStr(err))
-	}
-	out := strings.TrimSpace(resp.Content)
-	// Strip leading/trailing quote marks that some models add despite
-	// the prompt's "no quotes" instruction.
-	out = strings.Trim(out, "\"'")
-	if out == "" {
-		return nil, jsonapi.Status(http.StatusBadGateway, "model returned empty description")
-	}
-	return map[string]string{"description": out}, nil
-}
-
-func errStr(err error) string {
-	if err == nil {
-		return "(nil)"
-	}
-	return err.Error()
-}
-
 // generateAutofillQueries asks the worker LLM for 3-5 diverse search
 // queries based on the collection's name + description. Returns empty
 // when the LLM is unreachable, the description is too thin, or the
@@ -1940,6 +1825,8 @@ var collectionCorpusActions = map[string]bool{
 var collectionMaintainerActions = map[string]bool{
 	"suggestions": true,
 	"audit":       true,
+	// Help writing the description, which a maintainer may change.
+	"assist": true,
 }
 
 // collectionWriteRefusal says why this user may not perform this action on

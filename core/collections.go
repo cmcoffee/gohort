@@ -3,7 +3,7 @@
 //
 // The data layer lives in core/ so apps don't have to import
 // orchestrate just to reference a collection. HTTP handlers, the
-// admin UI, autofill, and the suggest-description flow stay in
+// admin UI, autofill, and the description assist stay in
 // apps/orchestrate/ — those are use-site concerns. The struct,
 // storage, and lookup helpers are framework primitives.
 //
