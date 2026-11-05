@@ -30,14 +30,54 @@ const documentsListAssets = `<style>
 .docs-hdr { display: flex; align-items: flex-start; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
 .docs-intro { flex: 1; min-width: 260px; margin: 0; color: var(--text-mute); font-size: var(--fs-md, 0.88rem); line-height: 1.45; }
 .docs-status { font-size: var(--fs-sm, 0.8rem); color: var(--text-mute); margin-bottom: 0.6rem; min-height: 1.2em; }
-.docs-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0.7rem; }
-.docs-card { background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem; display: flex; flex-direction: column; gap: 0.4rem; cursor: pointer; transition: border-color 0.15s; }
-.docs-card:hover { border-color: var(--accent, #56d364); }
-.docs-card-name { font-weight: 600; color: var(--text); font-size: var(--fs-lg, 1rem); }
-.docs-card-desc { color: var(--text-mute); font-size: var(--fs-xs, 0.78rem); line-height: 1.4; min-height: 1.2em; }
-.docs-card-meta { display: flex; gap: 0.8rem; font-size: var(--fs-2xs, 0.72rem); color: var(--text-mute); margin-top: auto; padding-top: 0.4rem; border-top: 1px solid var(--border); }
-.docs-card-meta span { display: inline-flex; align-items: center; gap: 0.2rem; }
-.docs-empty { color: var(--text-mute); font-style: italic; padding: 2rem; text-align: center; border: 1px dashed var(--border); border-radius: 8px; }
+/* Collection cards. Each gets a monogram in one of a few theme colours,
+   picked from its id so it keeps the same one, and the card is washed with
+   that colour from the corner. Whose it is, and how you have it, sits under
+   the name. The card is a link, so it opens in a new tab and takes the
+   keyboard like one. */
+.docs-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 0.85rem; }
+.docs-card {
+  --tone: var(--accent);
+  position: relative; display: flex; flex-direction: column; gap: 0.7rem;
+  padding: 1rem 1rem 0.85rem; border-radius: 14px;
+  background: linear-gradient(155deg, color-mix(in srgb, var(--tone) 10%, var(--bg-1)) 0%, var(--bg-1) 60%);
+  border: 1px solid var(--border);
+  color: inherit; text-decoration: none;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.docs-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--tone) 55%, var(--border));
+  box-shadow: 0 12px 28px -18px color-mix(in srgb, var(--tone) 80%, transparent);
+}
+.docs-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.docs-card.tone-1 { --tone: var(--success, #22c55e); }
+.docs-card.tone-2 { --tone: var(--warning, #f59e0b); }
+.docs-card.tone-3 { --tone: var(--accent-hi, var(--accent)); }
+.docs-card-head { display: flex; align-items: center; gap: 0.75rem; min-width: 0; }
+.docs-card-mark {
+  flex: 0 0 auto; width: 2.6rem; height: 2.6rem; border-radius: 12px;
+  display: grid; place-items: center;
+  font-weight: 700; font-size: 1.1rem; line-height: 1;
+  color: color-mix(in srgb, var(--tone) 70%, var(--text-hi));
+  background: color-mix(in srgb, var(--tone) 16%, var(--bg-2));
+  border: 1px solid color-mix(in srgb, var(--tone) 32%, transparent);
+}
+.docs-card-title { flex: 1; min-width: 0; }
+.docs-card-name {
+  font-weight: 600; color: var(--text-hi); font-size: var(--fs-lg, 1rem); line-height: 1.25; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.docs-card-sub { margin-top: 0.1rem; font-size: var(--fs-xs, 0.78rem); color: var(--text-mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.docs-card-desc {
+  color: var(--text-mute); font-size: var(--fs-sm, 0.84rem); line-height: 1.45; min-height: 2.9em;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.docs-card-desc.none { font-style: italic; opacity: 0.7; }
+.docs-card-foot { display: flex; align-items: baseline; gap: 1rem; margin-top: auto; font-size: var(--fs-xs, 0.78rem); color: var(--text-mute); }
+.docs-card-stat b { margin-right: 0.25rem; font-size: var(--fs-md, 0.9rem); font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.docs-card-when { margin-left: auto; white-space: nowrap; }
+.docs-empty { color: var(--text-mute); font-style: italic; padding: 2rem; text-align: center; border: 1px dashed var(--border); border-radius: 14px; }
 </style>
 <script>
 (function() {
@@ -76,33 +116,75 @@ const documentsListAssets = `<style>
     var grid = document.createElement('div');
     grid.className = 'docs-list';
     list.appendChild(grid);
-    cols.forEach(function(c) {
-      var card = document.createElement('div');
-      card.className = 'docs-card';
-      card.addEventListener('click', function() {
-        window.location.href = '/knowledge/c/' + encodeURIComponent(c.id);
-      });
-      var name = document.createElement('div');
-      name.className = 'docs-card-name';
-      name.textContent = c.name || '(unnamed)';
-      card.appendChild(name);
-      var desc = document.createElement('div');
-      desc.className = 'docs-card-desc';
-      desc.textContent = c.description || '';
-      card.appendChild(desc);
-      var meta = document.createElement('div');
-      meta.className = 'docs-card-meta';
-      meta.appendChild(spanIcon((c.documents || 0) + ' doc' + (c.documents === 1 ? '' : 's')));
-      meta.appendChild(spanIcon((c.chunks || 0) + ' chunk' + (c.chunks === 1 ? '' : 's')));
-      card.appendChild(meta);
-      grid.appendChild(card);
-    });
+    cols.forEach(function(c) { grid.appendChild(card(c)); });
   }
 
-  function spanIcon(text) {
-    var s = document.createElement('span');
-    s.textContent = text;
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+
+  // tone picks one of the card colours from the id, so a collection keeps
+  // its colour from one visit to the next.
+  function tone(id) {
+    var h = 0;
+    for (var i = 0; i < (id || '').length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+    return Math.abs(h) % 4;
+  }
+
+  function ago(iso) {
+    var t = iso ? new Date(iso).getTime() : 0;
+    if (!t || t <= 0) return '';
+    var s = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (s < 3600) return 'just now';
+    if (s < 86400) return Math.round(s / 3600) + 'h ago';
+    if (s < 86400 * 60) return Math.round(s / 86400) + 'd ago';
+    return new Date(t).toLocaleDateString(undefined, {month: 'short', year: 'numeric'});
+  }
+
+  // whose says who it belongs to and how this person has it.
+  function whose(c) {
+    var deploy = c.scope === 'deployment';
+    if (c.role === 'yours') return deploy ? 'Yours, for everyone here' : 'Yours';
+    if (c.role === 'maintain') return 'You maintain it for ' + c.owner;
+    if (deploy) return 'For everyone here';
+    return c.owner ? 'Shared by ' + c.owner : 'Shared with you';
+  }
+
+  function stat(n, one, many) {
+    var s = el('span', 'docs-card-stat');
+    s.appendChild(el('b', '', (n || 0).toLocaleString()));
+    s.appendChild(document.createTextNode(n === 1 ? one : many));
     return s;
+  }
+
+  function card(c) {
+    var a = el('a', 'docs-card');
+    var t = tone(c.id);
+    if (t) a.classList.add('tone-' + t);
+    a.href = '/knowledge/c/' + encodeURIComponent(c.id);
+
+    var head = el('div', 'docs-card-head');
+    var name = (c.name || '').trim();
+    head.appendChild(el('div', 'docs-card-mark', name ? name.charAt(0).toUpperCase() : '?'));
+    var title = el('div', 'docs-card-title');
+    title.appendChild(el('div', 'docs-card-name', name || '(unnamed)'));
+    title.appendChild(el('div', 'docs-card-sub', whose(c)));
+    head.appendChild(title);
+    a.appendChild(head);
+
+    var desc = (c.description || '').trim();
+    a.appendChild(el('div', 'docs-card-desc' + (desc ? '' : ' none'), desc || 'No description yet.'));
+
+    var foot = el('div', 'docs-card-foot');
+    foot.appendChild(stat(c.documents, 'document', 'documents'));
+    foot.appendChild(stat(c.chunks, 'chunk', 'chunks'));
+    var when = ago(c.updated || c.created);
+    if (when) foot.appendChild(el('span', 'docs-card-when', when));
+    a.appendChild(foot);
+    return a;
   }
 
   // Import goes through the shared bundle client (core ArtifactClientJS,

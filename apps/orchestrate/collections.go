@@ -97,6 +97,18 @@ func collectionAccess(c Collection, user string) string {
 	}
 }
 
+// collectionRole is how user holds c, for the collections page's label:
+// "yours", "maintain" (they curate it for its owner) or "shared".
+func collectionRole(c Collection, user string) string {
+	switch {
+	case user != "" && c.Owner == user:
+		return "yours"
+	case CollectionMaintainer(c, user):
+		return "maintain"
+	}
+	return "shared"
+}
+
 // Aliases for the old unexported constant names used inside this
 // file (HTTP handler reads, etc.). External callers should use
 // the exported core.CollectionsTable / core.GlobalCollectionsTable.
@@ -130,6 +142,10 @@ func (T *OrchestrateApp) collectionsList(c *jsonapi.Call) (any, error) {
 		Collection
 		Documents int `json:"documents"`
 		Chunks    int `json:"chunks"`
+		// Role is how this person holds it, for the list's label:
+		// "yours", "maintain" or "shared". Worked out per request, never
+		// stored.
+		Role string `json:"role"`
 	}
 	// Single pass over EmbeddedChunks instead of one walk per
 	// collection. The old shape (collectionStats called per
@@ -179,6 +195,7 @@ func (T *OrchestrateApp) collectionsList(c *jsonapi.Call) (any, error) {
 			Collection: c,
 			Documents:  s.docs,
 			Chunks:     s.chunks,
+			Role:       collectionRole(c, user),
 		})
 	}
 	return map[string]any{"collections": results}, nil

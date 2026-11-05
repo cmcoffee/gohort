@@ -297,11 +297,13 @@ select:-webkit-autofill {
   background: var(--bg-1);
   position: relative; /* anchor for the live-pill popover */
 }
-/* gohort's mark on every page: a thin line in the theme's accent along the top
- * of the bar, fading out to the right. One signature detail rather than a
- * logo, so every theme carries it in its own colour. */
+/* gohort's mark on every page: a thin line in the theme's accent along the
+ * bottom of the bar, over its border, fading out to the right. The active
+ * folder tab is drawn after it, so the tab breaks the line where it opens
+ * into the page. One signature detail rather than a logo, so every theme
+ * carries it in its own colour. */
 .ui-page-header::before {
-  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px;
+  content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
   background: linear-gradient(90deg, var(--accent), var(--accent-hi) 45%, transparent 85%);
   opacity: 0.85; pointer-events: none;
 }
@@ -373,7 +375,7 @@ select:-webkit-autofill {
   padding: 0.4rem 0.8rem 0.45rem;
   font-size: var(--fs-sm); color: var(--text-mute); text-decoration: none;
   border: 1px solid transparent; border-bottom: none;
-  border-radius: var(--btn-radius) var(--btn-radius) 0 0; white-space: nowrap;
+  border-radius: calc(var(--btn-radius) * 2) calc(var(--btn-radius) * 2) 0 0; white-space: nowrap;
   -webkit-tap-highlight-color: transparent;
   transition: color 0.1s ease, border-color 0.1s ease, background 0.1s ease;
 }
@@ -387,8 +389,11 @@ select:-webkit-autofill {
   border-color: var(--border);
 }
 .ui-page-tab.active::before {
-  content: ""; position: absolute; left: -1px; right: -1px; top: -1px; height: 2px;
-  background: var(--accent); border-radius: var(--btn-radius) var(--btn-radius) 0 0;
+  /* The accent follows the rounded top: a cap as tall as the corner, drawn
+   * by its top border, which thins away down each curve. */
+  content: ""; position: absolute; left: -1px; right: -1px; top: -1px;
+  height: calc(var(--btn-radius) * 2); pointer-events: none;
+  border-top: 2px solid var(--accent); border-radius: calc(var(--btn-radius) * 2) calc(var(--btn-radius) * 2) 0 0;
 }
 /* More: the button the tabs that do not fit fold behind (navStrip), drawn as
  * one more tab so the row reads as one control. Its menu is anchored to the
@@ -697,7 +702,7 @@ select:-webkit-autofill {
 }
 .ui-tab {
   position: relative; margin-bottom: -1px;
-  padding: 0.45rem 0.95rem; border-radius: var(--btn-radius) var(--btn-radius) 0 0; cursor: pointer;
+  padding: 0.45rem 0.95rem; border-radius: calc(var(--btn-radius) * 2) calc(var(--btn-radius) * 2) 0 0; cursor: pointer;
   font: inherit; font-size: var(--fs-sm);
   border: 1px solid transparent; border-bottom: none; background: transparent; color: var(--text-mute);
   transition: color 0.12s, border-color 0.12s, background 0.12s;
@@ -710,8 +715,11 @@ select:-webkit-autofill {
   box-shadow: 0 1px 0 var(--bg-0);
 }
 .ui-tab.active::before {
-  content: ""; position: absolute; left: -1px; right: -1px; top: -1px; height: 2px;
-  background: var(--accent); border-radius: var(--btn-radius) var(--btn-radius) 0 0;
+  /* The accent follows the rounded top: a cap as tall as the corner, drawn
+   * by its top border, which thins away down each curve. */
+  content: ""; position: absolute; left: -1px; right: -1px; top: -1px;
+  height: calc(var(--btn-radius) * 2); pointer-events: none;
+  border-top: 2px solid var(--accent); border-radius: calc(var(--btn-radius) * 2) calc(var(--btn-radius) * 2) 0 0;
 }
 .ui-tab-hidden { display: none; }
 /* Section sub-nav (Page.SectionNav): a left rail of a tab group's sections. */
