@@ -597,7 +597,7 @@ func TestEveryChipNamesAFieldTheRowsCarry(t *testing.T) {
 		}
 	}
 	// The section chips must spell the headings EXACTLY, or they match no row.
-	want := map[string]bool{schedSectionStanding: true, schedSectionRecurring: true, schedSectionMonitors: true}
+	want := map[string]bool{schedSectionStanding: true, schedSectionRecurring: true, schedSectionMonitors: true, schedSectionDone: true}
 	for _, opt := range schedulerFilters()[0].Options[1:] {
 		if !want[opt.Equals] {
 			t.Errorf("chip %q filters on section %q, which is not one the page draws", opt.Label, opt.Equals)

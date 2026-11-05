@@ -564,6 +564,8 @@ func chatAgentNav() []ui.OrchestratorNavItem {
 				{Label: "Resume", Icon: "play", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_resume_monitor"},
 				{Label: "Relink", Method: "POST", URL: "api/console/monitors/relink", PickerSource: "api/console/agent-options?with_default=1", PickerTitle: "Relink (Default agent, or pick a specific one)", OnlyIf: "_relink_monitor"},
 				{Label: "Delete", Method: "DELETE", URL: "api/console/monitors/delete", Variant: "danger", OnlyIf: "_del_monitor", Confirm: "Delete this event monitor?"},
+				// Finished schedules: held past the 30-day cleanup, or let go.
+				schedActKeep, schedActUnkeep,
 			}},
 		// Permissions — pinned ABOVE the session list (it's an action
 		// queue, not browse-config), and combines BOTH pending
@@ -784,6 +786,8 @@ func chatFleetNav() []ui.OrchestratorNavItem {
 				{Label: "Resume", Icon: "play", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_resume_monitor"},
 				{Label: "Relink", Method: "POST", URL: "api/console/monitors/relink", PickerSource: "api/console/agent-options?with_default=1", PickerTitle: "Relink (Default agent, or pick a specific one)", OnlyIf: "_relink_monitor"},
 				{Label: "Delete", Method: "DELETE", URL: "api/console/monitors/delete", Variant: "danger", OnlyIf: "_del_monitor", Confirm: "Delete this event monitor?"},
+				// Finished schedules: held past the 30-day cleanup, or let go.
+				schedActKeep, schedActUnkeep,
 			}},
 		// The durable record behind the live view: every scheduled,
 		// standing, monitor and dispatched run this user owns, newest
@@ -1018,6 +1022,12 @@ func (p *phaseTimer) report(what string) {
 	}
 	Log("[orchestrate.page] %s took %s: %s", what, total.Round(time.Millisecond), strings.Join(p.phases, ", "))
 }
+
+// A finished schedule's Keep and its undo (done_schedules.go).
+var (
+	schedActKeep   = ui.OrchestratorRowAction{Label: "Keep", Method: "POST", URL: "api/console/scheduler/keep", OnlyIf: "_keep", IDField: "_ref"}
+	schedActUnkeep = ui.OrchestratorRowAction{Label: "Don't keep", Method: "POST", URL: "api/console/scheduler/unkeep", OnlyIf: "_unkeep", IDField: "_ref"}
+)
 
 // The Scheduler's link-group buttons (schedule_links.go), named so both
 // Scheduler views list the same ones. The header row of a group carries the

@@ -37,6 +37,10 @@ const (
 	schedSectionStanding  = "Scheduled agents"
 	schedSectionRecurring = "Recurring tasks"
 	schedSectionMonitors  = "Event monitors"
+	// Done is what finished: a goal met, an end reached, a fire allowance
+	// spent. Last, because nothing in it will run again, and it empties
+	// itself (done_schedules.go).
+	schedSectionDone = "Done"
 )
 
 // handleConsoleScheduler serves the merged view: GET /api/console/scheduler
@@ -145,7 +149,7 @@ func agentRowLabel(names map[string]string, agentID, title string) string {
 // core/ui's, so the sorter that serves it lives there. What belongs to this app
 // is the order of the sections themselves.
 func sortSchedulerRows(rows []map[string]any) {
-	ui.SortRowsBySection(rows, []string{schedSectionStanding, schedSectionRecurring, schedSectionMonitors})
+	ui.SortRowsBySection(rows, []string{schedSectionStanding, schedSectionRecurring, schedSectionMonitors, schedSectionDone})
 }
 
 // The three kinds a row can be. Used only to pick which action flags to
@@ -211,6 +215,13 @@ func schedulerRow(row any, section, kind string) map[string]any {
 	}
 	m["_kind"] = kind
 	m["_notes"] = true
+	// A finished schedule is filed under Done whatever kind it is, with Keep
+	// (or its undo) to hold it past the cleanup.
+	if schedFlag(m, "_done") {
+		m["_section"] = schedSectionDone
+		m["_keep"] = !schedFlag(m, "_kept")
+		m["_unkeep"] = schedFlag(m, "_kept")
+	}
 	// The kind-qualified id the parent and roll-up actions address a row by
 	// (their IDField): _id alone is a bare name, and a monitor and a standing
 	// agent can share one.
@@ -332,6 +343,7 @@ func schedulerFilters() []ui.OrchestratorViewFilter {
 			{Label: "Agents", Field: "_section", Equals: schedSectionStanding},
 			{Label: "Tasks", Field: "_section", Equals: schedSectionRecurring},
 			{Label: "Monitors", Field: "_section", Equals: schedSectionMonitors},
+			{Label: "Done", Field: "_section", Equals: schedSectionDone},
 		}},
 		{Label: "Show", Options: []ui.OrchestratorFilterOption{
 			{Label: "Everything"},

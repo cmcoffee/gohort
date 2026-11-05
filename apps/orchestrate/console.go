@@ -279,6 +279,10 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// The merged view the Scheduler nav entry reads — the three lists above in
 	// one page, grouped. See console_scheduler.go.
 	T.HandleFunc("/api/console/scheduler", jsonapi.Get(T.DB, T.handleConsoleScheduler))
+	// Keep a finished schedule past the cleanup, or let it go. See
+	// done_schedules.go.
+	T.HandleFunc("/api/console/scheduler/keep", jsonapi.Post(T.DB, T.handleConsoleScheduleKeep))
+	T.HandleFunc("/api/console/scheduler/unkeep", jsonapi.Post(T.DB, T.handleConsoleScheduleKeep))
 	// One task's working notes: what its fires have left for each other. GET
 	// reads, POST replaces (the same write path update_notes uses). Scoped by
 	// (kind, id) from the row, and only for tasks this user owns. See

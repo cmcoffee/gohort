@@ -453,6 +453,10 @@ type consoleMonitorRow struct {
 	// no choice of agent fixes a hostname that does not resolve.
 	Relinkable bool   `json:"_relinkable,omitempty"`
 	Agent      string `json:"_agent,omitempty"` // hidden; the agent it wakes, named on the fleet Scheduler
+	// Done: it stopped because it finished, so the Scheduler files it under
+	// Done and the cleanup removes it unless Kept (done_schedules.go).
+	Done bool `json:"_done,omitempty"`
+	Kept bool `json:"_kept,omitempty"`
 }
 
 // handleConsoleMonitors lists the owner's event monitors (webhook / poll /
@@ -503,6 +507,10 @@ func consoleMonitorRows(user, agentID string) []consoleMonitorRow {
 			if m.StopCause() == MonitorStopBroken {
 				state += parkedDeadlineNote(schedKindMonitor, user, m.Name)
 			}
+		}
+		done := monitorDone(m)
+		if done {
+			state += doneStateNote(schedKindMonitor, user, m.Name)
 		}
 		detail := ""
 		switch m.Kind {
@@ -596,7 +604,8 @@ func consoleMonitorRows(user, agentID string) []consoleMonitorRow {
 			// monitor separates "the thing it needs is gone" (relink) from
 			// "everything resolves and the checks keep failing" (does not), and
 			// only the first is repaired by re-pointing it. See ParkCauseOf.
-			Relinkable: m.StopCause() == MonitorStopBroken})
+			Relinkable: m.StopCause() == MonitorStopBroken,
+			Done:       done, Kept: done && doneKept(schedKindMonitor, user, m.Name)})
 	}
 	return rows
 }

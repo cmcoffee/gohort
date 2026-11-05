@@ -408,6 +408,10 @@ type consoleAgentRow struct {
 	// Agent is whose schedule this is (the agent that runs it, else the one
 	// that set it up), which the fleet Scheduler names on the row.
 	Agent string `json:"_agent,omitempty"`
+	// Done: it stopped because it finished, so the Scheduler files it under
+	// Done and the cleanup removes it unless Kept (done_schedules.go).
+	Done bool `json:"_done,omitempty"`
+	Kept bool `json:"_kept,omitempty"`
 }
 
 // handleConsoleAgents lists the owner's standing (scheduled) agents, each
@@ -491,10 +495,15 @@ func consoleAgentRows(user string, udb Database, agentID string, ix *standingRun
 		if RelinkFixesIt(StandingParkCause(sa)) {
 			state += parkedDeadlineNote(schedKindStanding, user, sa.Name)
 		}
+		done := standingDone(sa)
+		if done {
+			state += doneStateNote(schedKindStanding, user, sa.Name)
+		}
 		// A long mission without a summary of its current text gets one
 		// written now, for schedules set up on a path that did not ask.
 		summarizeMissionLater(sa)
-		row := consoleAgentRow{Name: sa.Name, Mission: missionForList(sa), State: state, Schedule: StandingScheduleLabel(sa), Runs: standingRunsLabel(user, sa), ID: sa.Name, Paused: sa.Paused, Agent: firstNonEmptyStr(sa.AgentID, sa.ReportAgentID)}
+		row := consoleAgentRow{Name: sa.Name, Mission: missionForList(sa), State: state, Schedule: StandingScheduleLabel(sa), Runs: standingRunsLabel(user, sa), ID: sa.Name, Paused: sa.Paused, Agent: firstNonEmptyStr(sa.AgentID, sa.ReportAgentID),
+			Done: done, Kept: done && doneKept(schedKindStanding, user, sa.Name)}
 		if sa.Broken {
 			row.Broken = true
 			row.State = parkedStateLabel(StandingParkCause(sa), sa.BrokenReason)
