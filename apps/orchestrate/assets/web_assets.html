@@ -7508,8 +7508,20 @@
         var everyRow = schedLabeled('Every', everyWrap);
         host.appendChild(everyRow);
 
+        // Times a day, and "up to": a range keeps every day between a floor
+        // and a ceiling (each day's count drawn from the range), where random
+        // gaps let one day bunch up and the next go quiet. Blank, or the same
+        // number, is a fixed count.
+        // (The "up to" box itself is made last, below, and placed here.)
         var perDay = schedNum(spec.per_day || 3, 1);
-        var perDayRow = schedLabeled('Times a day', perDay);
+        var perDayWrap = document.createElement('div');
+        perDayWrap.style.cssText = 'display:flex;gap:0.5rem;align-items:center';
+        perDayWrap.appendChild(perDay);
+        var upTo = document.createElement('span');
+        upTo.className = 'ui-orch-sec-toggle-help';
+        upTo.textContent = 'up to';
+        perDayWrap.appendChild(upTo);
+        var perDayRow = schedLabeled('Times a day', perDayWrap);
         host.appendChild(perDayRow);
 
         var gapUnit0 = (spec.min_gap_seconds || 1800) % 3600 === 0 && (spec.max_gap_seconds || 3600) % 3600 === 0 ? 'hours' : 'minutes';
@@ -7584,6 +7596,18 @@
         how.addEventListener('change', sync);
         sync();
 
+        // "Up to" beside Times a day, made after every other field of this
+        // dialog's timing so the fields made before it keep their places,
+        // and a numeric text box rather than a number one for the same reason.
+        var perDayMax = document.createElement('input');
+        perDayMax.type = 'text'; perDayMax.inputMode = 'numeric';
+        perDayMax.className = 'ui-orch-sec-filter';
+        perDayMax.style.width = '5rem';
+        perDayMax.value = spec.per_day_max > (spec.per_day || 0) ? String(spec.per_day_max) : '';
+        perDayMax.placeholder = 'same';
+        perDayMax.title = 'The most times a day. Each day fires between the two numbers; leave blank for the same number every day.';
+        perDayWrap.appendChild(perDayMax);
+
         return function collect() {
           var h = how.value;
           if (h === 'yearly') {
@@ -7617,6 +7641,11 @@
               var c = parseInt(perDay.value, 10);
               if (isNaN(c) || c < 1 || c > 96) { window.uiAlert('Times a day has to be between 1 and 96.'); return null; }
               out.per_day = c;
+              var cmax = parseInt(perDayMax.value, 10);
+              if (!isNaN(cmax) && cmax !== c) {
+                if (cmax < c || cmax > 96) { window.uiAlert('"Up to" has to be more than times a day, and at most 96.'); return null; }
+                out.per_day_max = cmax;
+              }
             } else {
               var mul = gapUnit.value === 'hours' ? 3600 : 60;
               var lo = parseInt(gapMin.value, 10), hi = parseInt(gapMax.value, 10);

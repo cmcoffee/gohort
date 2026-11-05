@@ -207,12 +207,13 @@ func scheduleToolDef(sess *ToolSession, owner, controllerAgentID string, impl ma
 	}
 	if hasRec {
 		for k, v := range map[string]ToolParam{
-			"random":          {Type: "boolean", Description: "(every, optional) Fire at RANDOM moments instead of a fixed cadence: random gaps between min_gap_minutes and max_gap_minutes, or times_per_day moments a day inside the active_from/active_to window."},
-			"times_per_day":   {Type: "integer", Description: "(every, random) Random fires per day inside the window (1-96)."},
-			"min_gap_minutes": {Type: "integer", Description: "(every, random) Minimum minutes between fires."},
-			"max_gap_minutes": {Type: "integer", Description: "(every, random) Maximum minutes between fires."},
-			"active_from":     {Type: "string", Description: "(every at an interval or random, optional) Daily window start, HH:MM local, with active_to; runs that would land outside it wait for the next window."},
-			"active_to":       {Type: "string", Description: "(every at an interval or random, optional) Daily window end, HH:MM local."},
+			"random":            {Type: "boolean", Description: "(every, optional) Fire at RANDOM moments instead of a fixed cadence: random gaps between min_gap_minutes and max_gap_minutes, or times_per_day moments a day inside the active_from/active_to window."},
+			"times_per_day":     {Type: "integer", Description: "(every, random) Random fires per day inside the window (1-96)."},
+			"times_per_day_max": {Type: "integer", Description: "(every, random, with times_per_day) The most fires a day: each day fires between times_per_day and this many, its count drawn per day, so no day bunches up and none goes quiet. Omit for the same number every day."},
+			"min_gap_minutes":   {Type: "integer", Description: "(every, random) Minimum minutes between fires."},
+			"max_gap_minutes":   {Type: "integer", Description: "(every, random) Maximum minutes between fires."},
+			"active_from":       {Type: "string", Description: "(every at an interval or random, optional) Daily window start, HH:MM local, with active_to; runs that would land outside it wait for the next window."},
+			"active_to":         {Type: "string", Description: "(every at an interval or random, optional) Daily window end, HH:MM local."},
 		} {
 			params[k] = v
 		}
@@ -734,7 +735,7 @@ func scheduleOwnTimer(owner string, rec recurringImpl, timeSpec, then, name stri
 // scheduled agent has no "N times a day inside a window" shape; that is a task
 // of the agent's own.
 func standingRandomGaps(args map[string]any, interval int) (lo, hi int, err error) {
-	if oArgInt(args, "times_per_day") > 0 {
+	if oArgInt(args, "times_per_day") > 0 || oArgInt(args, "times_per_day_max") > 0 {
 		return 0, 0, fmt.Errorf("a scheduled agent fires at random gaps (min_gap_minutes to max_gap_minutes), not a number of times a day: give the gaps instead")
 	}
 	lo, hi = oArgInt(args, "min_gap_minutes")*60, oArgInt(args, "max_gap_minutes")*60
@@ -784,7 +785,7 @@ func scheduleOwnRecurring(rec recurringImpl, cron string, interval int, then, na
 			m[k] = v
 		}
 	}
-	for _, k := range []string{"times_per_day", "min_gap_minutes", "max_gap_minutes", "max_attempts"} {
+	for _, k := range []string{"times_per_day", "times_per_day_max", "min_gap_minutes", "max_gap_minutes", "max_attempts"} {
 		if v := oArgInt(args, k); v > 0 {
 			m[k] = v
 		}
@@ -1100,7 +1101,7 @@ func everyTiming(owner string, args map[string]any, cron string, interval int, t
 	switch {
 	case oArgBool(args, "random"):
 		if n := oArgInt(args, "times_per_day"); n > 0 {
-			s = timing.Spec{How: timing.HowRandomCount, PerDay: n}
+			s = timing.Spec{How: timing.HowRandomCount, PerDay: n, PerDayMax: oArgInt(args, "times_per_day_max")}
 		} else {
 			lo, hi := oArgInt(args, "min_gap_minutes")*60, oArgInt(args, "max_gap_minutes")*60
 			if lo <= 0 {

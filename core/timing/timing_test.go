@@ -1,6 +1,7 @@
 package timing
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -109,13 +110,16 @@ func TestDone(t *testing.T) {
 
 func TestValidate(t *testing.T) {
 	for name, s := range map[string]Spec{
-		"no how":        {},
-		"no times":      {How: HowTimes},
-		"two for daily": {How: HowDaily, Times: []int{1, 2}},
-		"zero interval": {How: HowEvery},
-		"gap inverted":  {How: HowRandomGap, MinGapSeconds: 60, MaxGapSeconds: 60},
-		"window back":   {How: HowEvery, EverySeconds: 60, HasWindow: true, WindowFrom: 600, WindowTo: 500},
-		"too many":      {How: HowRandomCount, PerDay: 200},
+		"no how":          {},
+		"no times":        {How: HowTimes},
+		"two for daily":   {How: HowDaily, Times: []int{1, 2}},
+		"zero interval":   {How: HowEvery},
+		"gap inverted":    {How: HowRandomGap, MinGapSeconds: 60, MaxGapSeconds: 60},
+		"window back":     {How: HowEvery, EverySeconds: 60, HasWindow: true, WindowFrom: 600, WindowTo: 500},
+		"too many":        {How: HowRandomCount, PerDay: 200},
+		"range inverted":  {How: HowRandomCount, PerDay: 5, PerDayMax: 3},
+		"range too high":  {How: HowRandomCount, PerDay: 5, PerDayMax: 97},
+		"range too tight": {How: HowRandomCount, PerDay: 2, PerDayMax: 90, HasWindow: true, WindowFrom: 600, WindowTo: 660},
 	} {
 		if s.Validate() == nil {
 			t.Errorf("%s was accepted", name)
@@ -237,5 +241,57 @@ func TestMonthly(t *testing.T) {
 	}
 	if (Spec{How: HowMonthly, Day: 28, Times: []int{540, 600}}).Validate() == nil {
 		t.Error("two times a month was accepted")
+	}
+}
+
+// A range of times a day: every day fires between the fewest and the most, a
+// day's count is one number however often it is asked, the counts vary from
+// day to day, and every fire is inside the window. Random gaps let one day
+// bunch up and the next go quiet; this is what keeps each day inside bounds.
+func TestRandomCountRange(t *testing.T) {
+	s := Spec{How: HowRandomCount, PerDay: 3, PerDayMax: 6, HasWindow: true, WindowFrom: 9 * 60, WindowTo: 21 * 60}
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(s.Label(), "3 to 6 times a day at random") {
+		t.Errorf("label: %q", s.Label())
+	}
+	seen := map[int]bool{}
+	for d := 0; d < 40; d++ {
+		day := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, d)
+		want := s.perDayOn(day)
+		if want < 3 || want > 6 {
+			t.Fatalf("%s: %d fires, outside 3 to 6", day.Format("Jan 2"), want)
+		}
+		if again := s.perDayOn(day.Add(15 * time.Hour)); again != want {
+			t.Fatalf("%s: the count moved within the day, %d then %d", day.Format("Jan 2"), want, again)
+		}
+		seen[want] = true
+		n := 0
+		for from := day; ; {
+			next, err := s.Next(from, half)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !next.Before(day.AddDate(0, 0, 1)) {
+				break
+			}
+			if h := next.Hour(); h < 9 || h >= 21 {
+				t.Fatalf("%s: a fire outside the window at %s", day.Format("Jan 2"), next.Format("15:04"))
+			}
+			n, from = n+1, next
+		}
+		if n != want {
+			t.Errorf("%s: %d fires, the day's count is %d", day.Format("Jan 2"), n, want)
+		}
+	}
+	if len(seen) < 3 {
+		t.Errorf("forty days drew only %d different counts: %v", len(seen), seen)
+	}
+	// No range, or a range of one, is the fixed count it always was.
+	for _, fixed := range []Spec{{How: HowRandomCount, PerDay: 4}, {How: HowRandomCount, PerDay: 4, PerDayMax: 4}} {
+		if fixed.perDayOn(at(12, 0, 0)) != 4 || fixed.Label() != "4 times a day at random" {
+			t.Errorf("%+v: %d, %q", fixed, fixed.perDayOn(at(12, 0, 0)), fixed.Label())
+		}
 	}
 }

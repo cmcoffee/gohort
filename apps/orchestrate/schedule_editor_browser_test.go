@@ -288,6 +288,35 @@ func TestTheScheduleEditorSendsWhatWasTypedInBothHalves(t *testing.T) {
         if (!alerted || alerted.indexOf('longest gap') < 0) fail('nothing said why: ' + alerted);`,
 		},
 		{
+			// A range of times a day: "up to" beside Times a day sends the most.
+			name:   "a random count can be a range of times a day",
+			action: "orchestrate_edit_standing",
+			record: `{name: 'poster', mission: 'post something', timing: {how: 'random_count', per_day: 3}}`,
+			edit:   `global.made.input.filter(function(x) { return x.placeholder === 'same'; })[0].value = '6';`,
+			checks: `
+        if (!posted) fail('nothing was sent: ' + alerted);
+        var tm = posted.timing || {};
+        if (tm.how !== 'random_count' || tm.per_day !== 3 || tm.per_day_max !== 6) fail('range: ' + JSON.stringify(tm));`,
+		},
+		{
+			name:   "a range of times a day opens as it was and keeps it",
+			action: "orchestrate_edit_standing",
+			record: `{name: 'poster', mission: 'post something', timing: {how: 'random_count', per_day: 3, per_day_max: 6}}`,
+			checks: `
+        if (!posted) fail('nothing was sent: ' + alerted);
+        var tm = posted.timing || {};
+        if (tm.per_day !== 3 || tm.per_day_max !== 6) fail('a re-save lost the range: ' + JSON.stringify(tm));`,
+		},
+		{
+			name:   "an up-to under the times a day is refused",
+			action: "orchestrate_edit_standing",
+			record: `{name: 'poster', mission: 'post something', timing: {how: 'random_count', per_day: 3}}`,
+			edit:   `global.made.input.filter(function(x) { return x.placeholder === 'same'; })[0].value = '2';`,
+			checks: `
+        if (posted) fail('an inverted range was posted: ' + JSON.stringify(posted));
+        if (!alerted || alerted.indexOf('Up to') < 0) fail('nothing said why: ' + alerted);`,
+		},
+		{
 			// Days are always shown as boxes; unticking the weekend is weekdays.
 			name:   "days are ticked boxes, sent as a mask",
 			action: "orchestrate_edit_standing",
