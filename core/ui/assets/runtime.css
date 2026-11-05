@@ -3528,10 +3528,16 @@ input[type="checkbox"].ui-input { width: auto; }
 .ui-chat-empty { color: var(--text-mute); text-align: center; padding: 2rem 1rem; font-size: var(--fs-md); }
 .ui-chat-msg {
   max-width: 85%;
-  padding: 0.6rem 0.85rem; border-radius: 10px;
+  padding: 0.6rem 0.85rem;
+  /* Shaped as the agent conversation's bubbles are: round, tight on the
+   * speaker's side, where a reply's stripe runs. */
+  border-radius: calc(var(--btn-radius) / 2) calc(var(--btn-radius) * 2) calc(var(--btn-radius) * 2) calc(var(--btn-radius) / 2);
   font-size: var(--fs-md); line-height: 1.5; white-space: pre-wrap; word-wrap: break-word;
 }
-.ui-chat-msg.user { background: var(--bg-2); align-self: flex-end; border: 1px solid var(--border); }
+.ui-chat-msg.user {
+  background: var(--bg-2); align-self: flex-end; border: 1px solid var(--border);
+  border-radius: calc(var(--btn-radius) * 2) calc(var(--btn-radius) / 2) calc(var(--btn-radius) / 2) calc(var(--btn-radius) * 2);
+}
 .ui-chat-msg.assistant { background: var(--bg-0); align-self: flex-start; border: 1px solid var(--border); border-left: 3px solid var(--accent); }
 /* Phone: a reply takes the width, as the agent conversation's does; the
  * person's own message stays capped on the right so the two still read as
@@ -5211,9 +5217,17 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   word-wrap: break-word; overflow-wrap: anywhere;
   display: flex; flex-direction: column;
 }
+/* The bubble is as wide as what was said, not as wide as the message's row
+ * of actions beneath it: the message is a column, and a stretched child took
+ * the width of its widest sibling. Rounded with the style (twice the button
+ * radius), except the side nearest the speaker, which stays tight, so each
+ * bubble leans toward whoever said it; that side is also where a bubble's
+ * stripe runs (yours on the right, a toned reply's on the left), which would
+ * bend round a full corner. */
 .ui-agent-msg-body {
+  align-self: flex-start;
   padding: 0.55rem 0.85rem;
-  border-radius: 6px;
+  border-radius: calc(var(--btn-radius) / 2) calc(var(--btn-radius) * 2) calc(var(--btn-radius) * 2) calc(var(--btn-radius) / 2);
   border: 1px solid var(--border);
 }
 /* Channel-room transcript: a small sender name above the bubble so a
@@ -5235,6 +5249,10 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
  * own message echoed back. The user's own message is reference;
  * the LLM's reply is the focus. */
 .ui-agent-msg-user { align-self: flex-end; }
+.ui-agent-msg-user > .ui-agent-msg-body {
+  align-self: flex-end;
+  border-radius: calc(var(--btn-radius) * 2) calc(var(--btn-radius) / 2) calc(var(--btn-radius) / 2) calc(var(--btn-radius) * 2);
+}
 .ui-agent-msg-user .ui-agent-msg-body {
   /* User text is set as textContent and never markdown-rendered (addMessage
    * gates markdown to role="assistant"), so without this HTML collapses the
@@ -6086,7 +6104,8 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   align-items: center;
   opacity: 0; transition: opacity 0.12s ease;
 }
-.ui-agent-msg-user .ui-agent-msg-actions,
+/* Under the bubble it belongs to: yours ends at your bubble's right edge. */
+.ui-agent-msg-user .ui-agent-msg-actions { justify-content: flex-end; }
 .ui-agent-msg-assistant .ui-agent-msg-actions { justify-content: flex-start; }
 .ui-agent-msg:hover .ui-agent-msg-actions,
 .ui-agent-msg-actions:focus-within { opacity: 1; }
