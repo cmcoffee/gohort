@@ -7,9 +7,12 @@ package core
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/cmcoffee/gohort/core/safefile"
 )
 
 // maxUploadBytes caps a declared file upload. Generous for a document or a
@@ -60,9 +63,24 @@ func ResolveUploadSource(sess *ToolSession, ref string) (UploadSource, error) {
 	if info.Size() > maxUploadBytes {
 		return out, fmt.Errorf("%q is %s: the upload limit is %s", ref, HumanSize(info.Size()), HumanSize(maxUploadBytes))
 	}
-	data, err := os.ReadFile(abs)
+	data, err := readWorkspaceFileMax(sess.WorkspaceDir, abs, maxUploadBytes)
 	if err != nil {
 		return out, fmt.Errorf("read %q: %w", ref, err)
 	}
 	return UploadSource{Name: filepath.Base(ref), Data: data}, nil
+}
+
+// readWorkspaceFileMax reads a file under the workspace root through no link
+// out of it, refusing one over max bytes by the size of the file it opened:
+// the check before it looked at a path a script still running can change.
+func readWorkspaceFileMax(root, path string, max int64) ([]byte, error) {
+	f, err := safefile.OpenIn(root, path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if info, err := f.Stat(); err == nil && info.Size() > int64(max) {
+		return nil, fmt.Errorf("%s: the limit is %s", HumanSize(info.Size()), HumanSize(int64(max)))
+	}
+	return io.ReadAll(io.LimitReader(f, int64(max)+1))
 }

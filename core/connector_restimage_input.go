@@ -406,7 +406,7 @@ func resolveInputImage(sess *ToolSession, ref string) (inputImage, error) {
 	if info.Size() > maxInputImageBytes {
 		return out, fmt.Errorf("%q is %s: the limit for a source image is %s", ref, HumanSize(info.Size()), HumanSize(maxInputImageBytes))
 	}
-	data, err := os.ReadFile(abs)
+	data, err := readWorkspaceFileMax(sess.WorkspaceDir, abs, maxInputImageBytes)
 	if err != nil {
 		return out, fmt.Errorf("read %q: %w", ref, err)
 	}

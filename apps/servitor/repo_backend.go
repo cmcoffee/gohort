@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -250,12 +251,26 @@ func (T *Servitor) cloneRepoToTmp(ctx context.Context, user string, rec Applianc
 	// Checked again here, not only when the record was saved: a record from
 	// before the check, an import, or a store edited some other way reaches
 	// this line too, and this is the line that runs git on the server.
-	if err := validateRepoSource(rec.RepoURL, rec.RepoBranch, UserIsAdmin(user)); err != nil {
+	admin := UserIsAdmin(user)
+	if err := validateRepoSource(rec.RepoURL, rec.RepoBranch, admin); err != nil {
 		Log("[servitor.repo] refusing to clone %s: %v", rec.Name, err)
 		os.RemoveAll(dir)
 		return "", false
 	}
-	args := []string{"clone", "--depth", "1", "--single-branch"}
+	if !admin && repoHostResolvesInward(ctx, rec.RepoURL) {
+		Log("[servitor.repo] refusing to clone %s: its host resolves to an address inside the network", rec.Name)
+		os.RemoveAll(dir)
+		return "", false
+	}
+	home, err := os.MkdirTemp(base, "servitor-home-")
+	if err != nil {
+		Log("[servitor.repo] tmp home: %v", err)
+		os.RemoveAll(dir)
+		return "", false
+	}
+	defer os.RemoveAll(home)
+	pre, env := cloneConfinement(admin, home)
+	args := append(pre, "clone", "--depth", "1", "--single-branch")
 	if b := strings.TrimSpace(rec.RepoBranch); b != "" {
 		args = append(args, "--branch", b)
 	}
@@ -270,13 +285,55 @@ func (T *Servitor) cloneRepoToTmp(ctx context.Context, user string, rec Applianc
 	cmd := exec.CommandContext(ctx, "git", args...)
 	// GIT_ALLOW_PROTOCOL also binds what git reaches on its own behalf
 	// (submodules, redirects), not just the URL checked above.
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL=https:ssh")
+	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL=https:ssh"), env...)
 	if _, err := cmd.CombinedOutput(); err != nil {
 		Log("[servitor.repo] clone failed for %s: %v", rec.Name, err)
 		os.RemoveAll(dir)
 		return "", false
 	}
 	return dir, true
+}
+
+// cloneConfinement is what a clone for an owner who is not an administrator
+// runs under: git options to put before the subcommand, and environment to
+// add. The clone is the server's git, with the server's own configuration,
+// credential helpers and .netrc, and a redirect it follows on its own. For a
+// URL anybody typed none of that is theirs: a public address that redirects
+// to one inside, or a helper that signs in to a private repository the
+// server's account can read, would hand them what they could not reach. An
+// administrator's clone keeps all of it, as their repos may need it.
+func cloneConfinement(admin bool, home string) (pre, env []string) {
+	if admin {
+		return nil, nil
+	}
+	return []string{"-c", "http.followRedirects=false", "-c", "credential.helper="},
+		[]string{"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "HOME=" + home, "XDG_CONFIG_HOME=" + home}
+}
+
+// repoHostResolvesInward reports whether an https repo URL's host resolves
+// to any address that is not public: a name a user chose can point inside the
+// server's network as easily as an address can. A name that does not resolve
+// is left to git, which fails on it.
+func repoHostResolvesInward(ctx context.Context, rawURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Hostname() == "" {
+		return true
+	}
+	if ip := net.ParseIP(u.Hostname()); ip != nil {
+		return IsNonPublicHost(ip.String())
+	}
+	lctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupIPAddr(lctx, u.Hostname())
+	if err != nil {
+		return false
+	}
+	for _, a := range addrs {
+		if IsNonPublicHost(a.IP.String()) {
+			return true
+		}
+	}
+	return false
 }
 
 // scpLikeRepo is the "user@host:path" form git accepts for ssh.
@@ -316,6 +373,13 @@ func validateRepoSource(rawURL, branch string, ownerIsAdmin bool) error {
 		p, err := url.Parse(u)
 		if err != nil || p.Host == "" || strings.HasPrefix(p.Hostname(), "-") {
 			return fmt.Errorf("repo url is not a valid https:// address")
+		}
+		// The clone runs on the server, so a name for an address inside
+		// its network would have it fetch from there for whoever typed it.
+		if !ownerIsAdmin {
+			if err := RefuseNonPublicHost(u); err != nil {
+				return fmt.Errorf("repo url must be a public address: %w", err)
+			}
 		}
 		return nil
 	case strings.HasPrefix(lower, "ssh://"):

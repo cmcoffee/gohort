@@ -645,3 +645,58 @@ func TestSearchCodeKeepsMoreThanAPage(t *testing.T) {
 		t.Errorf("read_output should reach hit 650: %v\n%s", err, found)
 	}
 }
+
+// A clone is the server's git: for an owner who is not an administrator, an
+// address inside the network is refused, by URL and by what its name
+// resolves to, and the clone runs without the server's own git settings,
+// credential helpers or redirects.
+func TestANonAdminCloneStaysOutsideAndUnsignedIn(t *testing.T) {
+	for _, u := range []string{"https://127.0.0.1/org/repo.git", "https://10.0.0.5/org/repo.git", "https://localhost/org/repo.git", "https://git.internal/org/repo.git"} {
+		if err := validateRepoSource(u, "", false); err == nil {
+			t.Errorf("%q accepted for a non-admin owner", u)
+		}
+		if err := validateRepoSource(u, "", true); err != nil {
+			t.Errorf("%q refused for an admin owner: %v", u, err)
+		}
+	}
+	ctx := context.Background()
+	if !repoHostResolvesInward(ctx, "https://127.0.0.1/org/repo.git") || !repoHostResolvesInward(ctx, "https://localhost/org/repo.git") {
+		t.Error("a host that resolves to loopback was taken as outside")
+	}
+	if repoHostResolvesInward(ctx, "https://repo-host.invalid/org/repo.git") {
+		t.Error("a name that does not resolve was taken as inside; git fails on it by itself")
+	}
+	pre, env := cloneConfinement(false, "/tmp/clone-home")
+	joined := strings.Join(append(pre, env...), " ")
+	for _, want := range []string{"http.followRedirects=false", "credential.helper=", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "HOME=/tmp/clone-home"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("a non-admin clone is missing %q: %s", want, joined)
+		}
+	}
+	if pre, env := cloneConfinement(true, "/tmp/clone-home"); len(pre)+len(env) != 0 {
+		t.Errorf("an admin's clone was confined: %v %v", pre, env)
+	}
+}
+
+// And the clone runs that way: a stand-in git records what it was run with.
+func TestANonAdminCloneRunsConfined(t *testing.T) {
+	bin := t.TempDir()
+	record := filepath.Join(bin, "ran")
+	script := "#!/bin/sh\n{ echo \"$@\"; env; } > " + record + "\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	T := &Servitor{}
+	dir, ok := T.cloneRepoToTmp(context.Background(), "bob", Appliance{Name: "r", RepoURL: "https://repo-host.invalid/org/repo.git"})
+	if !ok {
+		t.Fatal("the clone did not run")
+	}
+	os.RemoveAll(dir)
+	ran, _ := os.ReadFile(record)
+	for _, want := range []string{"http.followRedirects=false", "credential.helper=", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1"} {
+		if !strings.Contains(string(ran), want) {
+			t.Errorf("the clone ran without %q:\n%s", want, ran)
+		}
+	}
+}

@@ -18,6 +18,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/filenotes"
+	"github.com/cmcoffee/gohort/core/safefile"
 )
 
 const (
@@ -75,7 +76,9 @@ func (t *ReadFileTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if info.IsDir() {
 		return "", fmt.Errorf("%q is a directory; use list_directory", rel)
 	}
-	data, err := os.ReadFile(abs)
+	// Through the workspace root, so a folder on the way swapped for a link
+	// after the check above cannot have this read a file outside it.
+	data, err := safefile.ReadFileIn(sess.WorkspaceDir, abs)
 	if err != nil {
 		return "", fmt.Errorf("read %q: %w", rel, err)
 	}
@@ -208,14 +211,18 @@ func (t *WriteFileTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	if info, err := os.Stat(abs); err == nil && info.IsDir() {
 		return "", fmt.Errorf("%q is a directory", rel)
 	}
-	// Auto-create parent directories.
-	if err := os.MkdirAll(filepath.Dir(abs), 0700); err != nil {
+	// Auto-create parent directories. Every step from here is taken inside
+	// the workspace root: a script still running can swap a folder for a
+	// link between the check above and the write, and a plain open would
+	// follow it out.
+	ws := sess.WorkspaceDir
+	if err := safefile.MkdirAllIn(ws, filepath.Dir(abs), 0700); err != nil {
 		return "", fmt.Errorf("create parent dir: %w", err)
 	}
 
 	switch mode {
 	case "create":
-		f, err := os.OpenFile(abs, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+		f, err := safefile.OpenFileIn(ws, abs, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 		if err != nil {
 			return "", fmt.Errorf("create %q: %w", rel, err)
 		}
@@ -224,7 +231,7 @@ func (t *WriteFileTool) RunWithSession(args map[string]any, sess *ToolSession) (
 			return "", fmt.Errorf("write: %w", err)
 		}
 	case "append":
-		f, err := os.OpenFile(abs, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+		f, err := safefile.OpenFileIn(ws, abs, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
 		if err != nil {
 			return "", fmt.Errorf("open for append %q: %w", rel, err)
 		}
@@ -233,7 +240,7 @@ func (t *WriteFileTool) RunWithSession(args map[string]any, sess *ToolSession) (
 			return "", fmt.Errorf("append: %w", err)
 		}
 	case "overwrite":
-		if err := os.WriteFile(abs, []byte(content), 0644); err != nil {
+		if err := safefile.WriteFileIn(ws, abs, []byte(content), 0644); err != nil {
 			return "", fmt.Errorf("write %q: %w", rel, err)
 		}
 	default:

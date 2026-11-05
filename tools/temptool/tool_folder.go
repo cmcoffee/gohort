@@ -422,7 +422,7 @@ func toolPublish(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	head := fmt.Sprintf("Published %s/ to tool %q.", rel, m.Name)
 	if saved, ok := loadExistingToolRecord(sess, m.Name); ok {
-		os.WriteFile(filepath.Join(abs, toolFolderBaseFile), []byte(toolFingerprint(saved)), 0o644)
+		safefile.WriteFileIn(sess.WorkspaceDir, filepath.Join(abs, toolFolderBaseFile), []byte(toolFingerprint(saved)), 0o644)
 		var prev *TempTool
 		if exists {
 			prev = &live

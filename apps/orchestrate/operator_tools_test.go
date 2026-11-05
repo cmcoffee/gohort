@@ -5,6 +5,8 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -781,5 +783,20 @@ func TestARecoveredDocumentGoesOutAsAFile(t *testing.T) {
 	}
 	if f := sess.Files[0]; f.Name != "comparison.docx" || f.MimeType != "application/vnd.openxmlformats-officedocument.wordprocessingml.document" {
 		t.Errorf("the file must keep its name and be typed as a Word document: %+v", f.Name+" "+f.MimeType)
+	}
+}
+
+// An attachment URL is fetched from public addresses only, checked where the
+// connection goes: a name or a redirect leading inside is refused, not
+// fetched and sent on to the recipient.
+func TestAnAttachmentIsNotFetchedFromInside(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Write([]byte("\x89PNG\r\n\x1a\n"))
+	}))
+	defer srv.Close()
+	if resp, err := attachmentHTTP.Get(srv.URL); err == nil {
+		resp.Body.Close()
+		t.Fatal("the attachment client reached a loopback address")
 	}
 }

@@ -1,6 +1,7 @@
 package temptool
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -25,6 +26,56 @@ func TestADeclaredIntegerCannotCarryACommand(t *testing.T) {
 		out, _ := substitute("head -n {n} file", params, map[string]any{"n": v})
 		if out != want {
 			t.Errorf("%q: got %q, want %q", v, out, want)
+		}
+	}
+}
+
+// An author who wraps a placeholder in quotes of their own, '{x}' or "{x}",
+// still gets the value as one literal string. Quoting it again closed their
+// quotes around it and left it bare, so a value could run a command. Checked
+// by running each rendered line through a real shell.
+func TestAQuotedPlaceholderStaysOneLiteralValue(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh here")
+	}
+	params := map[string]ToolParam{"x": {Type: "string"}}
+	values := []string{
+		`plain`,
+		`it's here`,
+		`; echo INJECTED`,
+		`'; echo INJECTED; '`,
+		`$(echo INJECTED)`,
+		"`echo INJECTED`",
+		`"; echo INJECTED; "`,
+		`\"; echo INJECTED; \"`,
+		`$HOME and \ and "quotes"`,
+		`line one
+line two`,
+	}
+	// The last: escaped quote marks are text, not quotes, so the placeholder
+	// between them is bare and quoted whole.
+	for _, tmpl := range []string{`printf '%s' {x}`, `printf '%s' '{x}'`, `printf '%s' "{x}"`, `printf '%s' "say: {x}!"`, `printf '%s' 'say: {x}!'`, `printf '%s' \"{x}\"`} {
+		for _, v := range values {
+			cmd, err := substitute(tmpl, params, map[string]any{"x": v})
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, err := exec.Command(sh, "-c", cmd).CombinedOutput()
+			if err != nil {
+				t.Errorf("%s with %q: the command broke: %v %s (%s)", tmpl, v, err, out, cmd)
+				continue
+			}
+			want := v
+			if strings.Contains(tmpl, "say: ") {
+				want = "say: " + v + "!"
+			}
+			if strings.Contains(tmpl, `\"`) {
+				want = `"` + v + `"`
+			}
+			if string(out) != want {
+				t.Errorf("%s with %q printed %q, want the value as it is (rendered %s)", tmpl, v, out, cmd)
+			}
 		}
 	}
 }

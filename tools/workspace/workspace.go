@@ -19,6 +19,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -34,6 +35,7 @@ import (
 	// working directory, and two more symbols in core put it over
 	// TestCoreStaysUnderItsCeiling.
 	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/gohort/core/safefile"
 	"github.com/cmcoffee/gohort/core/sandbox"
 	"github.com/cmcoffee/gohort/tools/files"
 )
@@ -597,7 +599,7 @@ func handleRm(args map[string]any, sess *ToolSession) (string, error) {
 	if info.IsDir() {
 		return "", fmt.Errorf("%q is a directory; use run with `rm -r` if you really need to remove a directory", rel)
 	}
-	if err := os.Remove(abs); err != nil {
+	if err := safefile.RemoveIn(sess.WorkspaceDir, abs); err != nil {
 		return "", fmt.Errorf("remove %q: %w", rel, err)
 	}
 	return fmt.Sprintf("Deleted %s.", filepath.Base(rel)), nil
@@ -962,7 +964,9 @@ func AttachWorkspaceFile(sess *ToolSession, relPath, displayName string, cleanup
 	if info.Size() > maxAttach {
 		return "", fmt.Errorf("file too large: %d bytes (cap %d)", info.Size(), maxAttach)
 	}
-	data, err := os.ReadFile(abs)
+	// Read inside the workspace root, and held to the size checked above:
+	// what is read is the file opened, whatever the path became meanwhile.
+	data, err := readWorkspaceFile(sess.WorkspaceDir, abs, maxAttach)
 	if err != nil {
 		return "", fmt.Errorf("read %q: %w", relPath, err)
 	}
@@ -984,7 +988,7 @@ func AttachWorkspaceFile(sess *ToolSession, relPath, displayName string, cleanup
 	channel := attachOn(sess, data, mime, relPath, displayName)
 	var suffix string
 	if cleanup {
-		if err := os.Remove(abs); err != nil {
+		if err := safefile.RemoveIn(sess.WorkspaceDir, abs); err != nil {
 			suffix = fmt.Sprintf(" (cleanup failed: %v)", err)
 		} else {
 			suffix = " (cleaned up from workspace)"
@@ -1276,7 +1280,7 @@ func viewableImage(sess *ToolSession, ref string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve path: %w", err)
 	}
-	data, err := os.ReadFile(abs)
+	data, err := safefile.ReadFileIn(sess.WorkspaceDir, abs)
 	if err != nil {
 		return nil, fmt.Errorf("read %q: %w. %s", ref, err, viewableList(sess))
 	}
@@ -1332,7 +1336,7 @@ func handleEdit(args map[string]any, sess *ToolSession) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	data, err := os.ReadFile(abs)
+	data, err := safefile.ReadFileIn(sess.WorkspaceDir, abs)
 	if err != nil {
 		return "", fmt.Errorf("no file %q in the workspace", rel)
 	}
@@ -1349,7 +1353,7 @@ func handleEdit(args map[string]any, sess *ToolSession) (string, error) {
 	} else {
 		text = strings.Replace(text, find, replace, 1)
 	}
-	if err := os.WriteFile(abs, []byte(text), 0600); err != nil {
+	if err := safefile.WriteFileIn(sess.WorkspaceDir, abs, []byte(text), 0600); err != nil {
 		return "", fmt.Errorf("write %s: %w", rel, err)
 	}
 	if all {
@@ -1402,3 +1406,17 @@ func wsWrite(args map[string]any) (string, bool) {
 }
 
 func wsSwitch(map[string]any) (string, bool) { return "file", true }
+
+// readWorkspaceFile reads a file under root through no link out of it, and
+// refuses one over max bytes by the size of the file it opened.
+func readWorkspaceFile(root, path string, max int64) ([]byte, error) {
+	f, err := safefile.OpenIn(root, path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if info, err := f.Stat(); err == nil && info.Size() > max {
+		return nil, fmt.Errorf("file too large: %d bytes (cap %d)", info.Size(), max)
+	}
+	return io.ReadAll(io.LimitReader(f, max+1))
+}

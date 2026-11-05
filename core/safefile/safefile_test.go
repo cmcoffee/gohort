@@ -205,3 +205,30 @@ func TestARemoveThroughASwappedFolderDeletesNothingOutside(t *testing.T) {
 		t.Errorf("removing a file of the workspace's own: %v", err)
 	}
 }
+
+// OpenFileIn is for the opens CreateIn does not cover, held to the same rule:
+// no link out on the way, no link at the file, a regular file only.
+func TestOpenFileInFollowsNoLinkOut(t *testing.T) {
+	ws, outside, secret := rootFixture(t)
+	os.RemoveAll(filepath.Join(ws, "out"))
+	if err := os.Symlink(outside, filepath.Join(ws, "out")); err != nil {
+		t.Skip("no symlinks here")
+	}
+	if f, err := OpenFileIn(ws, filepath.Join(ws, "out", "gohort.db"), os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
+		f.Close()
+		t.Error("opened through a folder link")
+	}
+	os.Symlink(secret, filepath.Join(ws, "app.log"))
+	if f, err := OpenFileIn(ws, filepath.Join(ws, "app.log"), os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
+		f.Close()
+		t.Error("appended through a link at the file")
+	}
+	f, err := OpenFileIn(ws, "new.txt", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		t.Fatalf("a new file of the workspace's own: %v", err)
+	}
+	f.Close()
+	if b, _ := os.ReadFile(secret); string(b) != "private" {
+		t.Fatalf("the server's file changed: %q", b)
+	}
+}

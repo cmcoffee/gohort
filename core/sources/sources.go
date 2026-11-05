@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/sourcehooks"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
@@ -317,9 +318,10 @@ func fetchCitationMetadata(ctx context.Context, rawURL string) (authors, title, 
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; gohort-research/1.0; +https://github.com/cmcoffee/gohort)")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml")
-	client := &http.Client{
-		Timeout: 8 * time.Second,
-	}
+	// Public addresses only, on every hop: doi.org and its like redirect
+	// wherever the record says, which can be inward.
+	client := sourcehooks.NewPublicHTTPClient()
+	client.Timeout = 8 * time.Second
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", "", ""

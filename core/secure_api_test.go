@@ -2885,3 +2885,25 @@ func TestASavedResponseStaysInItsWorkspace(t *testing.T) {
 		t.Errorf("an ordinary save: %d %v", n, err)
 	}
 }
+
+// A credential held to public addresses, with certificate checks turned off
+// for a self-signed host, is still held to public addresses: the transport
+// that skips verification is built on the public one, not in place of it.
+func TestSkippingVerificationKeepsThePublicOnlyRule(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("inside"))
+	}))
+	defer srv.Close()
+	c := &http.Client{Transport: skipVerify(NewPublicHTTPClient().Transport)}
+	if resp, err := c.Get(srv.URL); err == nil {
+		resp.Body.Close()
+		t.Fatal("a public-only credential with verification off reached a loopback address")
+	}
+	// And with no public rule, it does skip verification.
+	open := &http.Client{Transport: skipVerify(nil)}
+	resp, err := open.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("verification was not skipped: %v", err)
+	}
+	resp.Body.Close()
+}

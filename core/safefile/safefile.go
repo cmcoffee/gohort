@@ -188,6 +188,27 @@ func CreateIn(root, path string, perm os.FileMode) (*os.File, error) {
 	return f, err
 }
 
+// OpenFileIn is os.OpenFile for a file under root: no step of the path may
+// lead out of it, a link at the file itself is not followed, and what opens
+// has to be a regular file. For the opens CreateIn does not cover: a create
+// that must not replace anything (O_EXCL), an append.
+func OpenFileIn(root, path string, flag int, perm os.FileMode) (*os.File, error) {
+	var f *os.File
+	err := within(root, path, func(r *os.Root, name string) error {
+		var err error
+		if f, err = r.OpenFile(name, flag|noFollow, perm); err != nil {
+			return err
+		}
+		if err := regular(f, path); err != nil {
+			f.Close()
+			f = nil
+			return err
+		}
+		return nil
+	})
+	return f, err
+}
+
 // WriteFileIn is WriteFile through CreateIn.
 func WriteFileIn(root, path string, data []byte, perm os.FileMode) error {
 	f, err := CreateIn(root, path, perm)

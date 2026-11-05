@@ -3197,11 +3197,22 @@ func (ac *apiCall) client() bool {
 	if c.InsecureSkipTLS {
 		// Per-credential opt-out of cert verification (self-signed / IP-addressed
 		// LAN appliances). Scoped to this credential's allow-listed host only.
-		tr := http.DefaultTransport.(*http.Transport).Clone()
-		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-		ac.httpClient.Transport = tr
+		ac.httpClient.Transport = skipVerify(ac.httpClient.Transport)
 	}
 	return true
+}
+
+// skipVerify is rt with certificate verification off, built on rt itself, so
+// a credential held to public addresses stays held to them: replacing the
+// transport with a fresh default one dropped that rule along with the check.
+func skipVerify(rt http.RoundTripper) http.RoundTripper {
+	base, _ := rt.(*http.Transport)
+	if base == nil {
+		base = http.DefaultTransport.(*http.Transport)
+	}
+	tr := base.Clone()
+	tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	return tr
 }
 
 func (ac *apiCall) send() bool {

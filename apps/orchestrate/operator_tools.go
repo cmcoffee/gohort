@@ -29,6 +29,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/gohort/core/safefile"
 	"github.com/cmcoffee/gohort/core/timing"
 )
 
@@ -536,7 +537,7 @@ func resolveWorkspaceImages(sess *ToolSession, paths []string) []string {
 		if rerr != nil {
 			continue // never escape the workspace
 		}
-		b, err := os.ReadFile(full)
+		b, err := safefile.ReadFileIn(sess.WorkspaceDir, full)
 		if err != nil {
 			continue
 		}
@@ -611,10 +612,14 @@ func resolveAttachmentRef(sess *ToolSession, ref string, allowInbound bool) (b64
 	return imgs[0], k, true
 }
 
-// attachmentHTTP fetches remote attachment URLs; short timeout, no redirects to
-// non-public hosts (Get follows redirects but each hop's host is re-checked by the
-// transport-free guard below is best-effort — the final body is still capped).
-var attachmentHTTP = &http.Client{Timeout: 20 * time.Second}
+// attachmentHTTP fetches remote attachment URLs, public addresses only, checked
+// on the address actually dialled: a name that resolves inward, or a public URL
+// that redirects to one, is refused, not fetched and sent on to the recipient.
+var attachmentHTTP = func() *http.Client {
+	c := NewPublicHTTPClient()
+	c.Timeout = 20 * time.Second
+	return c
+}()
 
 // maxAttachmentBytes caps a fetched attachment so a huge or malicious URL can't
 // balloon memory or the outbound payload.
