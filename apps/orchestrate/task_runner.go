@@ -252,7 +252,12 @@ func buildWakeNote(sessionID, label string, out TaskProduct, taskErr error) wake
 		}
 		stageHeldImages(sessionID, out.Held)
 		if n := stageTaskAttachments(sessionID, out); n > 0 {
-			fmt.Fprintf(&fact, "The %d file(s) it produced are ATTACHED to the message you are about to send: they go out with it automatically. Do not attach them again and do not describe how to find them.\n", n)
+			// The fact for the thread; the instruction for this turn alone.
+			// "Do not attach them again", kept in history, was read by later
+			// turns as "this picture is not to be attached", and a turn asked
+			// to send it again rendered a new one instead.
+			fmt.Fprintf(&fact, "It produced %d file(s), sent with the message that delivered this result.\n", n)
+			act += fmt.Sprintf("\nThe %d file(s) are ATTACHED to the message you are about to send: they go out with it automatically. Do not attach them again and do not describe how to find them.", n)
 		}
 		// What it saved rather than attached (a song, a render written to
 		// disk): named, and made this turn's own when the turn claims them

@@ -186,7 +186,12 @@ func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note str
 	// stored, announced as done — and never actually sent. Delivery of a
 	// detached call's attachments is the framework's job from here on.
 	if sess != nil && sess.Detached {
-		msg := fmt.Sprintf("The finished picture (%d bytes) IS ATTACHED to this result and will be delivered with the message you send about it. Do NOT call workspace(action=\"attach\") for it, that would send it twice. Just say what it is.", len(data))
+		// A fact, since this text is kept in the thread the result arrives in:
+		// the turn delivering it is told, for that turn only, that it is
+		// attached and not to attach it again (the wake's instruction half).
+		// Said here too, it stayed in history, and a later turn asked to send
+		// this picture again read it as not to be attached and rendered anew.
+		msg := fmt.Sprintf("The finished picture (%d bytes) goes out with the message that delivers this result.", len(data))
 		ref, stable := RecordRecentImageStable(sess, data, note, origin)
 		if hold {
 			// A step toward a later pass: kept under its id and not sent, so

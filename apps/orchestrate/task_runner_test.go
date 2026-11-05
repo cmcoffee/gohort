@@ -658,3 +658,55 @@ func TestATaskIsFinishedBeforeItsResultIsDelivered(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// The files a finished task attached are a fact in the thread and an
+// instruction to the delivering turn alone. Kept in history, "do not attach
+// them again" was read by a later turn asked to send the picture again, which
+// rendered a new one instead.
+func TestAttachedFilesAreAFactInTheThreadAndAnInstructionOnce(t *testing.T) {
+	note := buildWakeNote("sess-note-attached", "a picture", TaskProduct{
+		Text: "The finished picture (12 bytes) goes out with the message that delivers this result.", Images: []string{"aW1n"},
+	}, nil)
+	claimTaskAttachments("sess-note-attached", &ToolSession{})
+	if !strings.Contains(note.history, "It produced 1 file(s), sent with the message that delivered this result.") {
+		t.Errorf("the thread should keep that it produced a file:\n%s", note.history)
+	}
+	if strings.Contains(note.history, "Do not attach them again") || strings.Contains(note.history, "ATTACHED") {
+		t.Errorf("the attach instruction belongs to this turn, not to history:\n%s", note.history)
+	}
+	if !strings.Contains(note.prompt, "ATTACHED to the message you are about to send") || !strings.Contains(note.prompt, "Do not attach them again") {
+		t.Errorf("the delivering turn should be told it is attached:\n%s", note.prompt)
+	}
+}
+
+// A sub-agent is told which conversation its caller is answering, so a
+// picture it finishes in the background is delivered there; and only that:
+// the permission to reply in the chat without asking stays with the caller.
+// Observed: a sub-agent's render came home to a thread that did not know
+// which chat it was for, "no deliverable recipient", and stayed there.
+func TestASubAgentKnowsTheConversationButMayNotReplyInIt(t *testing.T) {
+	caller := &ToolSession{ChannelChatID: "any;+;chat-1", ChannelHandle: "+15550100", SpokenReply: true, ReplyAuthorizedKey: "any;+;chat-1"}
+	if got := subAgentChannel(caller); got != (subAgentConversation{ChannelChatID: "any;+;chat-1", ChannelHandle: "+15550100", SpokenReply: true}) {
+		t.Errorf("the conversation did not carry: %+v", got)
+	}
+	if (subAgentChannel(nil) != subAgentConversation{}) {
+		t.Error("no caller carries nothing")
+	}
+	// The right to reply without asking is not among what it carries: the
+	// sub-agent's session is built without ReplyAuthorizedKey.
+	src0, _ := os.ReadFile("agents_grouped_tool.go")
+	if b := string(src0); strings.Contains(b[strings.Index(b, "func (ar *agentsRun) buildSession()"):][:3000], "ReplyAuthorizedKey") {
+		t.Error("a sub-agent was handed the caller's right to reply in its chat")
+	}
+	src, err := os.ReadFile("agents_grouped_tool.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both ways a sub-agent starts: waited on (its own session) and handed
+	// off (a continuing run).
+	for _, want := range []string{"ChannelChatID:  subAgentChannel(ar.caller).ChannelChatID", "ChannelChatID:     subAgentChannel(d).ChannelChatID"} {
+		if !strings.Contains(string(src), want) {
+			t.Errorf("a sub-agent path does not carry the conversation: %s", want)
+		}
+	}
+}

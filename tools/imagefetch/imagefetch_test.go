@@ -192,8 +192,17 @@ func TestDetachedRenderAttachesItself(t *testing.T) {
 	if strings.Contains(msg, "workspace(action=\"attach\"") && !strings.Contains(msg, "Do NOT call workspace") {
 		t.Errorf("detached result should not ask for an attach it already did:\n%s", msg)
 	}
-	if !strings.Contains(strings.ToLower(msg), "attached") {
-		t.Errorf("the model needs to know the picture is already attached:\n%s", msg)
+	// That it goes out is said as a fact, since this text is kept in the
+	// thread the result arrives in. The turn delivering it is told, for that
+	// turn alone, that it is attached and not to attach it again (the wake's
+	// instruction half, apps/orchestrate buildWakeNote): said here, it stayed
+	// in history, and a later turn asked to send the picture again read it as
+	// not to be attached and rendered a new one.
+	if !strings.Contains(msg, "goes out with the message that delivers this result") {
+		t.Errorf("the result should say the picture goes out with the delivering message:\n%s", msg)
+	}
+	if strings.Contains(msg, "Do NOT") || strings.Contains(msg, "IS ATTACHED") {
+		t.Errorf("a one-turn instruction in text the thread keeps:\n%s", msg)
 	}
 }
 

@@ -1303,6 +1303,29 @@ func (ar *agentsRun) admit() bool {
 	return true
 }
 
+// subAgentChannel is the conversation a delegating turn answers, for the
+// sub-agent it starts: the chat, the person, and whether they spoke. A
+// sub-agent's run comes home to its caller's thread, but without these a
+// picture it finished in the background came home to a thread that did not
+// know which chat it was for: it stayed there, "no deliverable recipient",
+// and the caller rendered another to send. Only these three: the
+// permission to reply in that chat without asking (ReplyAuthorizedKey)
+// stays with the turn that received the message, so a sub-agent cannot post
+// there on its own account.
+func subAgentChannel(s *ToolSession) subAgentConversation {
+	if s == nil {
+		return subAgentConversation{}
+	}
+	return subAgentConversation{ChannelChatID: s.ChannelChatID, ChannelHandle: s.ChannelHandle, SpokenReply: s.SpokenReply}
+}
+
+// subAgentConversation is what subAgentChannel carries, named as the session
+// fields it fills.
+type subAgentConversation struct {
+	ChannelChatID, ChannelHandle string
+	SpokenReply                  bool
+}
+
 func (ar *agentsRun) buildSession() {
 	t := ar.t
 	ar.parentSessID = ""
@@ -1327,9 +1350,15 @@ func (ar *agentsRun) buildSession() {
 		DeliverySessionID: ar.parentSessID,
 		AgentID:           ar.target.ID,
 		DeniedCredentials: credentialDenySet(ar.target, t.user),
-		SubAgentRunner:    t.runPipelineSubAgent,
-		PipelineRunner:    t.runToolPipeline,
-		PipelineSource:    t.toolPipelineSource,
+		// The conversation the caller is answering, so work this agent hands
+		// to the background (a picture rendering) is delivered back to it
+		// when it finishes; see subAgentChannel.
+		ChannelChatID:  subAgentChannel(ar.caller).ChannelChatID,
+		ChannelHandle:  subAgentChannel(ar.caller).ChannelHandle,
+		SpokenReply:    subAgentChannel(ar.caller).SpokenReply,
+		SubAgentRunner: t.runPipelineSubAgent,
+		PipelineRunner: t.runToolPipeline,
+		PipelineSource: t.toolPipelineSource,
 		// Carry the dispatching parent so authoring tools (Builder's
 		// create_agent) can stamp creations OwnedBy=<parent> and route them to
 		// the parent owner's approval queue.
@@ -2006,8 +2035,12 @@ func (t *chatTurn) agentsDispatchPolicy(allowRun bool) DetachPolicy {
 			res, rerr := t.app.RunAgentSyncContinuingRich(runCtx, AgentSyncRun{
 				AgentOwner: t.user, RuntimeUser: t.user, AgentKey: target.ID,
 				SubSessionID: thread,
-				// Where a picture the sub-agent makes has to come home to.
+				// Where a picture the sub-agent makes has to come home to, and
+				// the conversation that is to be delivered into (subAgentChannel).
 				DeliverySessionID: d.DeliverySession(),
+				ChannelChatID:     subAgentChannel(d).ChannelChatID,
+				ChannelHandle:     subAgentChannel(d).ChannelHandle,
+				SpokenReply:       subAgentChannel(d).SpokenReply,
 				Message:           msg,
 				// This path loads the target itself, so the delegator is named
 				// rather than merged here — same helper either way.
