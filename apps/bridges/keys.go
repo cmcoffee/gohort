@@ -125,27 +125,42 @@ func (T *Bridges) handleBridgeList(c *jsonapi.Call) (any, error) {
 	type row struct {
 		ID      string `json:"id"`
 		Bridge  string `json:"bridge"`  // "Name (Service)"
+		Name    string `json:"name"`    // the bridge's own name
+		Service string `json:"service"` // its service, as people say it
 		Reach   string `json:"reach"`   // "N channels"
 		Status  string `json:"status"`  // connection state
+		// State is the card's pill: on and checked in within two minutes
+		// (connected), on but quiet since (stale), on and never heard from
+		// (never), or switched off (off). Seen says it in a sentence.
+		State   string `json:"state"`
+		Seen    string `json:"seen"`
 		Enabled bool   `json:"enabled"` // per-bridge switch
 	}
 	out := []row{}
 	for _, k := range T.listBridgeKeys(c.User) {
-		status := "never connected"
+		status, state, seen := "never connected", "never", "Has never connected."
 		if k.LastSeen != "" {
 			if t, err := time.Parse(time.RFC3339, k.LastSeen); err == nil {
 				if ago := time.Since(t); ago < 2*time.Minute {
-					status = "connected"
+					status, state, seen = "connected", "connected", "Connected now."
 				} else {
-					status = "last seen " + humanAgo(ago)
+					status, state, seen = "last seen "+humanAgo(ago), "stale", "Last seen "+humanAgo(ago)+"."
 				}
 			}
+		}
+		if !k.Enabled {
+			state = "off"
+			seen += " Switched off: nothing it brings in reaches an agent."
 		}
 		out = append(out, row{
 			ID:      k.ID,
 			Bridge:  k.Name + " (" + ServiceDisplayName(k.Service) + ")",
+			Name:    k.Name,
+			Service: ServiceDisplayName(k.Service),
 			Reach:   plural(chanCount[k.Service], "channel"),
 			Status:  status,
+			State:   state,
+			Seen:    seen,
 			Enabled: k.Enabled,
 		})
 	}

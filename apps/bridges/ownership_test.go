@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -274,5 +275,68 @@ func TestTwoUsersShareAChatIDWithoutSharingAThread(t *testing.T) {
 	f.T.ingestInbound(bob, hookRequest{ChatID: "chat-legacy", Text: "mine now", MsgID: "b2"})
 	if c, _ := f.T.getConvo("", "chat-legacy"); c.Owner != "" {
 		t.Errorf("a non-admin's imessage key claimed the legacy conversation: %q", c.Owner)
+	}
+}
+
+// A bridge's card says whether it is connected, and a conversation's whether
+// an agent answers it: the pill each card is coloured by and the sentence in
+// its box.
+func TestEachBridgeAndChatSaysHowItStands(t *testing.T) {
+	f := newOwnershipFixture(t)
+	T := f.T
+	ago := func(d time.Duration) string { return time.Now().Add(-d).UTC().Format(time.RFC3339) }
+	T.saveBridgeKey(BridgeKey{ID: "k-live", Name: "Home Mac", Owner: "alice", Service: "imessage", Enabled: true, LastSeen: ago(30 * time.Second)})
+	T.saveBridgeKey(BridgeKey{ID: "k-quiet", Name: "Office Mac", Owner: "alice", Service: "imessage", Enabled: true, LastSeen: ago(3 * time.Hour)})
+	T.saveBridgeKey(BridgeKey{ID: "k-off", Name: "Old laptop", Owner: "alice", Service: "imessage", Enabled: false, LastSeen: ago(30 * time.Second)})
+	w := f.call("alice", "GET", "/api/bridges", "", f.routes())
+	var bridges []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &bridges); err != nil {
+		t.Fatalf("%s: %v", w.Body.String(), err)
+	}
+	want := map[string][2]string{
+		"Home Mac":   {"connected", "Connected now."},
+		"Office Mac": {"stale", "Last seen 3h ago."},
+		"Old laptop": {"off", "Switched off"},
+	}
+	for _, b := range bridges {
+		w, ok := want[b["name"].(string)]
+		if !ok {
+			continue
+		}
+		delete(want, b["name"].(string))
+		if b["state"] != w[0] || !strings.Contains(b["seen"].(string), w[1]) {
+			t.Errorf("%s: state %v, seen %q; want %s, %q", b["name"], b["state"], b["seen"], w[0], w[1])
+		}
+	}
+	if len(want) != 0 {
+		t.Errorf("bridges missing from the list: %v", want)
+	}
+
+	SaveChannel(RootDB, Channel{ID: "ch-on", Owner: "alice", Name: "Helper", Service: "imessage", Address: "chat-alice", AgentID: "a1", AutoReply: true})
+	T.saveConvo(Convo{ChatID: "chat-quiet", Service: "imessage", Owner: "alice", Added: true})
+	SaveChannel(RootDB, Channel{ID: "ch-off", Owner: "alice", Name: "Desk", Service: "imessage", Address: "chat-quiet", AgentID: "a1"})
+	T.saveConvo(Convo{ChatID: "chat-new", Service: "imessage", Owner: "alice", Added: true})
+	w = f.call("alice", "GET", "/api/conversations", "", f.routes())
+	var chats []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &chats); err != nil {
+		t.Fatalf("%s: %v", w.Body.String(), err)
+	}
+	links := map[string][2]string{
+		"chat-alice": {"linked", "Answered by Helper."},
+		"chat-quiet": {"paused", "Linked to Desk, with its replies switched off."},
+		"chat-new":   {"unlinked", "Not linked to an agent"},
+	}
+	for _, c := range chats {
+		l, ok := links[c["chat_id"].(string)]
+		if !ok {
+			continue
+		}
+		delete(links, c["chat_id"].(string))
+		if c["link"] != l[0] || !strings.HasPrefix(c["answer"].(string), l[1]) {
+			t.Errorf("%s: link %v, answer %q; want %s, %q", c["chat_id"], c["link"], c["answer"], l[0], l[1])
+		}
+	}
+	if len(links) != 0 {
+		t.Errorf("chats missing from the list: %v", links)
 	}
 }

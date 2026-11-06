@@ -27,6 +27,11 @@ func (T *Bridges) handleConversations(c *jsonapi.Call) (any, error) {
 		ChannelID    string `json:"channel_id,omitempty"` // the connected channel, for the auto-reply toggle
 		AutoReply    bool   `json:"auto_reply"`           // that channel's per-channel switch
 		LastAt       string `json:"last_at,omitempty"`
+		// Link is the card's pill: answered by an agent (linked), linked
+		// with its replies switched off (paused), or not linked to one
+		// (unlinked). Answer says it in a sentence.
+		Link   string `json:"link"`
+		Answer string `json:"answer"`
 	}
 	out := []row{}
 	for _, c := range T.convosFor(user, RequestIsAdmin(c.R)) {
@@ -44,10 +49,18 @@ func (T *Bridges) handleConversations(c *jsonapi.Call) (any, error) {
 		if !c.Added && connected == "" {
 			continue
 		}
+		link, answer := "unlinked", "Not linked to an agent: Edit links it to one."
+		switch {
+		case connected != "" && autoReply:
+			link, answer = "linked", "Answered by "+connected+"."
+		case connected != "":
+			link, answer = "paused", "Linked to "+connected+", with its replies switched off."
+		}
 		out = append(out, row{
 			ChatID: c.ChatID, Name: firstNonEmpty(c.DisplayName, c.Handle, c.ChatID),
 			Service: c.Service, ServiceLabel: ServiceDisplayName(c.Service),
 			Connected: connected, ChannelID: channelID, AutoReply: autoReply, LastAt: c.LastAt,
+			Link: link, Answer: answer,
 		})
 	}
 	return out, nil

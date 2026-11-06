@@ -1,13 +1,13 @@
 (signed out) GET /bridges/api/bridges ""
   401 unauthorized
 alice GET /bridges/api/bridges ""
-  200 [{"id":"key-alice","bridge":"laptop (api)","reach":"0 channels","status":"never connected","enabled":true}]
+  200 [{"id":"key-alice","bridge":"laptop (api)","name":"laptop","service":"api","reach":"0 channels","status":"never connected","state":"never","seen":"Has never connected.","enabled":true}]
 alice POST /bridges/api/bridges "{}"
   405 method not allowed
 (signed out) GET /bridges/api/conversations ""
   401 unauthorized
 alice GET /bridges/api/conversations ""
-  200 [{"chat_id":"chat-alice","name":"Alice's friend","service":"imessage","service_label":"iMessage","connected":"","auto_reply":false}]
+  200 [{"chat_id":"chat-alice","name":"Alice's friend","service":"imessage","service_label":"iMessage","connected":"","auto_reply":false,"link":"unlinked","answer":"Not linked to an agent: Edit links it to one."}]
 alice POST /bridges/api/conversations "{}"
   405 method not allowed
 (signed out) GET /bridges/api/incoming-convos ""
@@ -55,7 +55,7 @@ alice DELETE /bridges/api/keys ""
 alice PATCH /bridges/api/keys/key-alice "{\"enabled\":false}"
   200 {"enabled":false,"id":"key-alice"}
 alice GET /bridges/api/bridges ""
-  200 [{"id":"<hex>","bridge":" (api)","reach":"0 channels","status":"never connected","enabled":true},{"id":"<hex>","bridge":"phone (api)","reach":"0 channels","status":"never connected","enabled":true},{"id":"key-alice","bridge":"laptop (api)","reach":"0 channels","status":"never connected","enabled":false}]
+  200 [{"id":"<hex>","bridge":" (api)","name":"","service":"api","reach":"0 channels","status":"never connected","state":"never","seen":"Has never connected.","enabled":true},{"id":"<hex>","bridge":"phone (api)","name":"phone","service":"api","reach":"0 channels","status":"never connected","state":"never","seen":"Has never connected.","enabled":true},{"id":"key-alice","bridge":"laptop (api)","name":"laptop","service":"api","reach":"0 channels","status":"never connected","state":"off","seen":"Has never connected. Switched off: nothing it brings in reaches an agent.","enabled":false}]
 alice POST /bridges/api/keys/key-alice "{\"enabled\":true}"
   200 {"enabled":true,"id":"key-alice"}
 alice PATCH /bridges/api/keys/key-alice ""
@@ -75,11 +75,11 @@ alice DELETE /bridges/api/keys/nope ""
 (signed out) DELETE /bridges/api/keys/key-alice ""
   401 unauthorized
 alice GET /bridges/api/bridges ""
-  200 [{"id":"<hex>","bridge":" (api)","reach":"0 channels","status":"never connected","enabled":true},{"id":"<hex>","bridge":"phone (api)","reach":"0 channels","status":"never connected","enabled":true},{"id":"key-alice","bridge":"laptop (api)","reach":"0 channels","status":"never connected","enabled":true}]
+  200 [{"id":"<hex>","bridge":" (api)","name":"","service":"api","reach":"0 channels","status":"never connected","state":"never","seen":"Has never connected.","enabled":true},{"id":"<hex>","bridge":"phone (api)","name":"phone","service":"api","reach":"0 channels","status":"never connected","state":"never","seen":"Has never connected.","enabled":true},{"id":"key-alice","bridge":"laptop (api)","name":"laptop","service":"api","reach":"0 channels","status":"never connected","state":"never","seen":"Has never connected.","enabled":true}]
 alice DELETE /bridges/api/keys/key-alice ""
   204 
 alice GET /bridges/api/bridges ""
-  200 [{"id":"<hex>","bridge":" (api)","reach":"0 channels","status":"never connected","enabled":true},{"id":"<hex>","bridge":"phone (api)","reach":"0 channels","status":"never connected","enabled":true}]
+  200 [{"id":"<hex>","bridge":" (api)","name":"","service":"api","reach":"0 channels","status":"never connected","state":"never","seen":"Has never connected.","enabled":true},{"id":"<hex>","bridge":"phone (api)","name":"phone","service":"api","reach":"0 channels","status":"never connected","state":"never","seen":"Has never connected.","enabled":true}]
 alice GET /bridges/api/config ""
   200 {"enabled":true}
 alice PATCH /bridges/api/config "{\"self_name\":\"Alice\"}"
@@ -129,7 +129,7 @@ alice GET /bridges/api/set-autoreply?id=ch-alice ""
 alice PATCH /bridges/api/set-autoreply?id=nope "{\"auto_reply\":true}"
   404 channel not found
 alice GET /bridges/api/conversations ""
-  200 [{"chat_id":"+15550100","name":"+15550100","service":"imessage","service_label":"iMessage","connected":"","auto_reply":false},{"chat_id":"chat-alice","name":"Alice's friend","service":"imessage","service_label":"iMessage","connected":"Alice's line","channel_id":"ch-alice","auto_reply":false}]
+  200 [{"chat_id":"+15550100","name":"+15550100","service":"imessage","service_label":"iMessage","connected":"","auto_reply":false,"link":"unlinked","answer":"Not linked to an agent: Edit links it to one."},{"chat_id":"chat-alice","name":"Alice's friend","service":"imessage","service_label":"iMessage","connected":"Alice's line","channel_id":"ch-alice","auto_reply":false,"link":"paused","answer":"Linked to Alice's line, with its replies switched off."}]
 alice POST /bridges/api/connect-channel?chat_id=chat-alice ""
   200 {"connected":false}
 alice POST /bridges/api/connect-channel "{}"
@@ -163,4 +163,4 @@ alice GET /bridges/api/conversation/chat-alice ""
 alice DELETE /bridges/api/conversation/chat-alice ""
   200 {"removed":true}
 alice GET /bridges/api/conversations ""
-  200 [{"chat_id":"+15550100","name":"+15550100","service":"imessage","service_label":"iMessage","connected":"","auto_reply":false}]
+  200 [{"chat_id":"+15550100","name":"+15550100","service":"imessage","service_label":"iMessage","connected":"","auto_reply":false,"link":"unlinked","answer":"Not linked to an agent: Edit links it to one."}]

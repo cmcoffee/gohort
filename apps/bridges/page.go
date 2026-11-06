@@ -69,10 +69,20 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				Body: ui.Table{
 					Source: "/bridges/api/bridges",
 					RowKey: "id",
+					// A row per bridge: its name, whether it is connected, its switch,
+					// then when it last checked in and what it routes.
+					Cards: "list",
 					Columns: []ui.Col{
-						{Field: "bridge", Label: "Bridge", Flex: 2},
-						{Field: "status", Label: "Status"},
-						{Field: "reach", Label: "", Mute: true},
+						{Field: "name", Label: "Bridge"},
+						{Field: "state", Label: "Status", Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: "connected", Label: "Connected", Color: "success"},
+							{Value: "stale", Label: "Not connected", Color: "warning"},
+							{Value: "never", Label: "Never connected", Color: "mute"},
+							{Value: "off", Label: "Off", Color: "mute"},
+						}},
+						{Field: "service", Label: "Service", Card: "sub"},
+						{Field: "seen", Label: "Last check-in", Card: "box"},
+						{Field: "reach", Label: "Routes", Card: "field"},
 					},
 					RowActions: []ui.RowAction{
 						// Per-bridge enable switch (independent of the global panic).
@@ -113,15 +123,18 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				Body: ui.Table{
 					Source: "/orchestrate/api/console/bridges",
 					RowKey: "name",
+					// A row per poll: its name and whether it runs, where it reads and
+					// delivers, the credential it calls through, and when it last fired.
+					Cards: "list",
 					Columns: []ui.Col{
-						{Field: "name", Label: "Bridge", Flex: 1},
-						{Field: "credential", Label: "Credential", Mute: true},
-						{Field: "detail", Label: "Source → destination", Mute: true, Flex: 2},
+						{Field: "name", Label: "Bridge"},
 						{Field: "state", Label: "Status", Type: "badge", Badges: []ui.BadgeMapping{
 							{Value: "active", Label: "Active", Color: "success"},
 							{Value: "paused", Label: "Paused", Color: "warning"},
 						}},
-						{Field: "last_fired", Label: "Last fired", Mute: true},
+						{Field: "detail", Label: "Source → destination", Card: "box"},
+						{Field: "credential", Label: "Credential", Card: "field"},
+						{Field: "last_fired", Label: "Last fired", Card: "field"},
 					},
 					RowActions: []ui.RowAction{
 						// Hook this bridge to a channel — the change is delivered into
@@ -214,10 +227,20 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 					ui.Table{
 						Source: "/bridges/api/conversations",
 						RowKey: "chat_id",
+						// A row per chat: its name, whether an agent answers it, its
+						// auto-reply switch, then its service, who answers, and when it
+						// last heard from anyone.
+						Cards: "list",
 						Columns: []ui.Col{
-							{Field: "name", Label: "Chat", Flex: 2},
-							{Field: "service_label", Label: "Service"},
-							{Field: "connected", Label: "Channel", Mute: true},
+							{Field: "name", Label: "Chat"},
+							{Field: "link", Label: "Answered", Type: "badge", Badges: []ui.BadgeMapping{
+								{Value: "linked", Label: "Answered", Color: "success"},
+								{Value: "paused", Label: "Replies off", Color: "warning"},
+								{Value: "unlinked", Label: "Not linked", Color: "mute"},
+							}},
+							{Field: "service_label", Label: "Service", Card: "sub"},
+							{Field: "answer", Label: "Who answers", Card: "box"},
+							{Field: "last_at", Label: "Last message", Format: "reltime", Card: "field"},
 						},
 						RowActions: []ui.RowAction{
 							// Per-channel auto-reply switch (phantom's per-conversation
