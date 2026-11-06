@@ -2,7 +2,8 @@
 // Document Collections: list / get (resolve names → IDs to wire into
 // agents), create / update of a collection's METADATA (name +
 // description), AND corpus management — docs (list ingested documents),
-// add_url (fetch + extract + ingest one URL), remove_doc (drop one).
+// add_url (fetch + extract + ingest one URL), add_file (one file from the
+// session workspace, such as a PDF a tool downloaded), remove_doc (drop one).
 // add_url/remove_doc reuse the autofill/source-delete primitives against
 // the global VectorDB, so Builder can pull in an authoritative source or
 // prune noise without bouncing the user to the Knowledge surface (which
@@ -27,7 +28,7 @@ import (
 
 func collectionsListTool() ChatTool {
 	gt := NewGroupedTool("collections",
-		"Manage the user's Document Collections so you can wire them into agents (attached_collections=[...]). Actions: list, get, create (mint an empty collection), update (patch name, description or curator), docs (list ingested documents), add_url (ingest one URL into the corpus), add_text (ingest text you have (markdown or JSON) as one titled document; same title replaces), remove_doc (drop one document). Use add_url to pull a known authoritative source (a statute's full-text page) into a collection, add_text to save material the user gave you or you drafted WITH the user's say-so, and remove_doc to prune noise; for bulk topic-based filling, the Knowledge surface's Auto-fill is still the better path.")
+		"Manage the user's Document Collections so you can wire them into agents (attached_collections=[...]). Actions: list, get, create (mint an empty collection), update (patch name, description or curator), docs (list ingested documents), add_url (ingest one URL into the corpus), add_file (ingest a file from your workspace, such as a PDF a tool saved), add_text (ingest text you have (markdown or JSON) as one titled document; same title replaces), remove_doc (drop one document). Use add_url to pull a known authoritative source (a statute's full-text page) into a collection, add_text to save material the user gave you or you drafted WITH the user's say-so, and remove_doc to prune noise; for bulk topic-based filling, the Knowledge surface's Auto-fill is still the better path.")
 
 	gt.AddAction("list", &GroupedToolAction{
 		Description: "List every collection the user can attach: their own, ones colleagues shared with them, and the deployment's. Returns [{id, name, access, description, documents, chunks}] sorted by most-recently-updated; access is \"yours\", \"shared by <owner>\" or \"deployment\". Names are not unique across owners: an entry with name_also_used set shares its name with the listed others, so pick by access and id, and when the user named a collection without saying whose, ask which one. Use this when the user names a collection by display name and you need its ID to pass to attached_collections, or when surveying what corpus material exists for a new agent.",
@@ -393,7 +394,101 @@ func collectionsListTool() ChatTool {
 		},
 	})
 
+	gt.AddAction("add_file", &GroupedToolAction{
+		Description: "Ingest ONE file from your workspace into a collection (a PDF, DOCX, HTML, markdown or text file a tool saved there): extracts its text and adds it as one document, a PDF with its page numbers for citation. Adding a file under the same title again REPLACES that document, so a report downloaded on a schedule stays current. Use this, not add_text, for a file you have: the document never passes through your reply.",
+		Params: map[string]ToolParam{
+			"id":    {Type: "string", Description: "Collection ID."},
+			"path":  {Type: "string", Description: "The file's path in your workspace, relative (as the tool that saved it reported it)."},
+			"title": {Type: "string", Description: "(optional) Document title, and the handle a later add_file with the same title replaces. Defaults to the file name."},
+		},
+		Required: []string{"id", "path"},
+		Caps:     []Capability{CapWrite},
+		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
+			if sess == nil || sess.DB == nil || sess.Username == "" {
+				return "", errors.New("collections: requires authenticated session")
+			}
+			id := strings.TrimSpace(stringArg(args, "id"))
+			if id == "" {
+				return "", errors.New("id is required for action=add_file")
+			}
+			c, ok := loadCollection(sess.DB, sess.Username, id)
+			if !ok {
+				return "", fmt.Errorf("collection %q not found", id)
+			}
+			if why := collectionWriteRefusal(c, sess.Username, "upload", http.MethodPost, UserIsAdmin(sess.Username)); why != "" {
+				return "", errors.New(why)
+			}
+			// Workspace-relative only, by the same reader an upload tool uses:
+			// no absolute path, no "..", no link out of the workspace.
+			src, err := ResolveUploadSource(sess, stringArg(args, "path"))
+			if err != nil {
+				return "", err
+			}
+			title := strings.TrimSpace(stringArg(args, "title"))
+			if title == "" {
+				title = src.Name
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
+			defer cancel()
+			res, err := addFileToCollection(ctx, VectorDB, c, title, src)
+			if err != nil {
+				return "", err
+			}
+			saveCollection(sess.DB, c)
+			Log("[orchestrate.collections] user=%q add_file %q as %q into collection %q (%d chars, %d chunks, replaced=%v)", sess.Username, src.Name, res.Name, c.ID, res.Chars, res.Chunks, res.Replaced)
+			verb := "Added"
+			if res.Replaced {
+				verb = "Replaced"
+			}
+			return fmt.Sprintf("%s document %q (%d chunks) in the collection; doc_id %s.", verb, res.Name, res.Chunks, res.ID), nil
+		},
+	})
+
 	return gt
+}
+
+// fileResult is what add_file reports back.
+type fileResult struct {
+	ID       string
+	Name     string
+	Chars    int
+	Chunks   int
+	Replaced bool
+}
+
+// addFileMinChars is the least extracted text worth a document, the same floor
+// a document uploaded on the page has.
+const addFileMinChars = 200
+
+// addFileToCollection extracts src and ingests it as one document of c titled
+// title. The id comes from the title, so adding under the same title again
+// replaces the document rather than piling up copies of a report fetched every
+// day. A PDF goes in paged, as an upload to an agent does: pdftotext marks
+// pages with form feeds, and each chunk keeps the "page N" a citation names.
+// A file with no extension is still read as a PDF when its bytes say it is
+// one, since a tool saves what a server sent under whatever name it was given.
+func addFileToCollection(ctx context.Context, db Database, c Collection, title string, src UploadSource) (fileResult, error) {
+	mime := ""
+	if http.DetectContentType(src.Data) == "application/pdf" {
+		mime = "application/pdf"
+	}
+	text, err := ExtractDocument(ctx, DocumentAttachment{Name: src.Name, MimeType: mime, Data: src.Data})
+	if err != nil {
+		return fileResult{}, fmt.Errorf("could not read %q: %w", src.Name, err)
+	}
+	text = strings.TrimSpace(text)
+	if len(text) < addFileMinChars {
+		return fileResult{}, fmt.Errorf("%q has only %d characters of text (the least is %d): a scanned PDF or an image has no text to index", src.Name, len(text), addFileMinChars)
+	}
+	reportID := "file-" + c.ID + "-" + slugForReportID(title)
+	replaced := countReportChunks(db, reportID) > 0
+	doc := "## " + title + "\n\n" + text
+	if isPDFUpload(mime, src.Name) {
+		IngestPagedReport(ctx, db, collectionSource(c.ID), reportID, doc)
+	} else {
+		IngestDocument(ctx, db, collectionSource(c.ID), reportID, title, doc)
+	}
+	return fileResult{ID: reportID, Name: title, Chars: len(text), Chunks: countReportChunks(db, reportID), Replaced: replaced}, nil
 }
 
 // collectionCuratorFor resolves the agent named to be a collection's curator,

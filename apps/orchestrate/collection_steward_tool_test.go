@@ -29,8 +29,8 @@ func TestTheStewardToolCarriesOnlyCorpusActions(t *testing.T) {
 		t.Fatalf("expected a grouped tool, got %T", st)
 	}
 	got := strings.Join(gt.ActionNames(), ",")
-	if got != "add_text,add_url,docs,remove_doc" {
-		t.Errorf("the grant is not the four corpus actions: %s", got)
+	if got != "add_file,add_text,add_url,docs,remove_doc" {
+		t.Errorf("the grant is not the corpus actions: %s", got)
 	}
 	for _, banned := range []string{"create", "update", "list", "get"} {
 		for _, have := range gt.ActionNames() {

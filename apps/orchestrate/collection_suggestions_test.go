@@ -145,7 +145,7 @@ func TestTheCuratorWorksTheQueue(t *testing.T) {
 		t.Errorf("a resolved suggestion is still waiting (%d)", n)
 	}
 	// The plain steward tool, which Builder-side tests derive, is unchanged.
-	if got := strings.Join(collectionStewardTool([]Collection{c}).(*GroupedTool).ActionNames(), ","); got != "add_text,add_url,docs,remove_doc" {
+	if got := strings.Join(collectionStewardTool([]Collection{c}).(*GroupedTool).ActionNames(), ","); got != "add_file,add_text,add_url,docs,remove_doc" {
 		t.Errorf("the queue leaked into the plain grant: %s", got)
 	}
 }
