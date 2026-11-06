@@ -621,14 +621,12 @@ func rerankFindingsByRecency(findings []SearchHit, now time.Time) []SearchHit {
 // when there's no parseable date. Absolute date (not "N days ago") so the model
 // judges it against today rather than a relative phrase that drifts.
 func recallAgeNote(date string) string {
-	if date == "" {
+	saved := savedOn(date)
+	if saved == "" {
 		return ""
 	}
-	ts, err := time.Parse(time.RFC3339, date)
-	if err != nil {
-		return ""
-	}
-	stamp := "(saved " + ts.Format("2006-01-02")
+	ts, _ := time.Parse(time.RFC3339, date)
+	stamp := "(saved " + saved
 	// A bare date is inert: it makes the model do the arithmetic AND draw the
 	// conclusion. Findings are mostly notes about EXTERNAL systems — an API's
 	// request shape, an endpoint path, a library's quirk — which change without
@@ -647,11 +645,36 @@ func recallAgeNote(date string) string {
 	return stamp + ")"
 }
 
+// savedOn is the day a stored passage was saved, "2006-01-02", or "" when its
+// date is missing or unreadable (never a made-up one).
+func savedOn(date string) string {
+	if strings.TrimSpace(date) == "" {
+		return ""
+	}
+	ts, err := time.Parse(time.RFC3339, date)
+	if err != nil {
+		return ""
+	}
+	return ts.Format("2006-01-02")
+}
+
+// knowledgeAgeNote is a curated passage's saved date, plain: "(saved
+// 2006-01-02)". Not the graded caution a finding gets, since a reference
+// document is not wrong for being old; but without the date a pre-event
+// research note read as current, and an agent answered from one about a
+// company that had since gone public.
+func knowledgeAgeNote(date string) string {
+	if saved := savedOn(date); saved != "" {
+		return "(saved " + saved + ")"
+	}
+	return ""
+}
+
 // renderRecallChunks formats a bucket of vector hits under a [tag], stamping an
 // id of the form <prefix>:<ReportID> so recall/forget can round-trip it. Uses
 // an excerpt (not the full chunk) to keep recall from dumping whole documents.
-// Findings carry a saved-date hint so the model can weight their freshness;
-// curated knowledge cites via its own locator, so no date line there.
+// Findings carry a graded age hint so the model can weight their freshness;
+// curated knowledge carries its saved date alone (knowledgeAgeNote).
 func renderRecallChunks(tag, idPrefix string, hits []SearchHit) string {
 	if len(hits) == 0 {
 		return ""
@@ -667,10 +690,12 @@ func renderRecallChunks(tag, idPrefix string, hits []SearchHit) string {
 		}
 		fmt.Fprintf(&b, "- [%s] %s\n  id: %s:%s\n  %s\n", tag, name, idPrefix, h.ReportID,
 			strings.ReplaceAll(knowledgeSearchExcerpt(h.Text), "\n", "\n  "))
+		age := knowledgeAgeNote(h.Date)
 		if tag == "finding" {
-			if age := recallAgeNote(h.Date); age != "" {
-				fmt.Fprintf(&b, "  %s\n", age)
-			}
+			age = recallAgeNote(h.Date)
+		}
+		if age != "" {
+			fmt.Fprintf(&b, "  %s\n", age)
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")

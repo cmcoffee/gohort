@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -333,5 +334,26 @@ func TestANamedEntityBringsItsRecordedFacts(t *testing.T) {
 	// Something named with nothing recorded about it carries nothing.
 	if h := turn.graphBridgeHints("anything Elsewhere?", recallGraphMax); len(h) != 0 {
 		t.Errorf("an entity with nothing recorded was carried: %+v", h)
+	}
+}
+
+// A knowledge hint says when its document was saved, as a pointer and as a
+// body carried in whole, so a passage written before something changed reads
+// as old rather than as what is true now.
+func TestAKnowledgeHintIsDated(t *testing.T) {
+	saved := time.Now().AddDate(-1, -2, 0)
+	hit := SearchHit{ReportID: "d1", Title: "Launch market notes", Text: "Acme is privately held.", Score: 0.9, Date: saved.Format(time.RFC3339)}
+	want := "(saved " + saved.Format("2006-01-02") + ")"
+	ptrs := knowledgeHints([]SearchHit{hit}, 0.5, nil)
+	if len(ptrs) != 1 || !strings.Contains(ptrs[0].label, want) {
+		t.Errorf("pointer label: %+v", ptrs)
+	}
+	if block := formatRecallHints([]SearchHit{hit}, nil, nil); !strings.Contains(block, want) {
+		t.Errorf("a promoted body is not dated:\n%s", block)
+	}
+	undated := hit
+	undated.Date = ""
+	if ptrs := knowledgeHints([]SearchHit{undated}, 0.5, nil); len(ptrs) != 1 || strings.Contains(ptrs[0].label, "saved") {
+		t.Errorf("an undated hit gained a date: %+v", ptrs)
 	}
 }

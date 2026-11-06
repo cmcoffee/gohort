@@ -247,19 +247,26 @@ func TestRecallAgeNoteHandlesBadInput(t *testing.T) {
 	}
 }
 
-// Only findings get the hint — curated knowledge cites via its own locator,
-// and dating a reference document says nothing about whether it is still true.
-func TestOnlyFindingsCarryTheAgeHint(t *testing.T) {
-	old := time.Now().AddDate(-2, 0, 0).Format(time.RFC3339)
-	hits := []SearchHit{{ReportID: "r1", Title: "Endpoint shape", Text: "POST /v1/things", Date: old}}
+// Only findings get the caution: a reference document is not wrong for being
+// old. Curated knowledge carries its saved date alone, since without it a
+// research note written before a change read as current.
+func TestOnlyFindingsCarryTheAgeCaution(t *testing.T) {
+	two := time.Now().AddDate(-2, 0, 0)
+	hits := []SearchHit{{ReportID: "r1", Title: "Endpoint shape", Text: "POST /v1/things", Date: two.Format(time.RFC3339)}}
 
 	finding := renderRecallChunks("finding", "mem", hits)
 	if !strings.Contains(finding, "re-verify") {
 		t.Errorf("a two-year-old finding must carry the caution: %q", finding)
 	}
 	knowledge := renderRecallChunks("knowledge", "kb", hits)
-	if strings.Contains(knowledge, "saved ") {
-		t.Errorf("curated knowledge should not be age-stamped: %q", knowledge)
+	if !strings.Contains(knowledge, "(saved "+two.Format("2006-01-02")+")") {
+		t.Errorf("curated knowledge should carry its saved date: %q", knowledge)
+	}
+	if strings.Contains(knowledge, "re-verify") || strings.Contains(knowledge, "may have changed") {
+		t.Errorf("curated knowledge should not carry the finding's caution: %q", knowledge)
+	}
+	if got := knowledgeAgeNote(""); got != "" {
+		t.Errorf("no date, no note: %q", got)
 	}
 }
 

@@ -50,6 +50,11 @@ func (t *chatTurn) entityRelatedPassages(e GraphEntity) string {
 		if strings.TrimSpace(h.Locator) != "" {
 			loc = " (" + h.Locator + ")"
 		}
+		// Dated, so a passage written before something changed reads as
+		// old rather than as what is true now.
+		if age := knowledgeAgeNote(h.Date); age != "" {
+			loc += " " + age
+		}
 		b.WriteString("- " + title + loc + ": " + truncateObs(h.Text, 280) + "\n")
 	}
 	return strings.TrimRight(b.String(), "\n")

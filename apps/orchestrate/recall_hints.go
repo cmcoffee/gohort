@@ -211,8 +211,12 @@ func knowledgeHints(hits []SearchHit, threshold float64, exclude map[string]bool
 			continue // already injected as a promoted body
 		}
 		pull, id := recallIDPull("doc", h.ReportID, "knowledge")
+		label := fmt.Sprintf("%q", truncate(name, 80))
+		if age := knowledgeAgeNote(h.Date); age != "" {
+			label += " " + age
+		}
 		out = append(out, recallHint{
-			source: "knowledge", label: fmt.Sprintf("%q", truncate(name, 80)),
+			source: "knowledge", label: label,
 			score: h.Score, scored: true, pull: pull, key: key, id: id,
 		})
 	}
@@ -430,7 +434,10 @@ func formatRecallHints(promoted []SearchHit, scored, graph []recallHint) string 
 			if name == "" {
 				name = "passage"
 			}
-			fmt.Fprintf(&b, "── %s (%.2f) ──\n%s\n", truncate(name, 80), h.Score, truncate(strings.TrimSpace(h.Text), recallPromoteMaxChars))
+			if age := knowledgeAgeNote(h.Date); age != "" {
+				name = truncate(name, 80) + " " + age
+			}
+			fmt.Fprintf(&b, "── %s (%.2f) ──\n%s\n", truncate(name, 100), h.Score, truncate(strings.TrimSpace(h.Text), recallPromoteMaxChars))
 		}
 	}
 	if len(known) > 0 {
