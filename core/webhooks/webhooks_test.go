@@ -525,3 +525,25 @@ func TestFeedingAChannelNeedsALinkAndAChat(t *testing.T) {
 		t.Errorf("feeding discord: %+v", got)
 	}
 }
+
+// A webhook's ceiling counts posts that verify. Charged before the check,
+// unsigned posts from anyone who knew the name used it up, and the service's
+// genuine posts were turned away; now they cost their sender instead.
+func TestUnsignedPostsCannotSilenceAWebhook(t *testing.T) {
+	woke := world(t)
+	watch("alice", "w")
+	h, _ := Create(Webhook{Label: "W", Owner: "alice", Verify: VerifyToken, Header: "X-Token", Feeds: "watch:w"}, "t")
+	posts = NewRateLimiter(1, time.Minute)
+	for i := 0; i < 5; i++ {
+		if got := post(t, h.Name, "junk", nil); got != http.StatusUnauthorized {
+			t.Fatalf("an unsigned post: %d, want 401", got)
+		}
+	}
+	if got := post(t, h.Name, "real", map[string]string{"X-Token": "t"}); got/100 != 2 {
+		t.Fatalf("the genuine post after unsigned ones: %d, want it taken", got)
+	}
+	woken(t, woke)
+	if got := post(t, h.Name, "again", map[string]string{"X-Token": "t"}); got != http.StatusTooManyRequests {
+		t.Errorf("a genuine post past the ceiling: %d, want 429", got)
+	}
+}

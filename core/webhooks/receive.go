@@ -77,9 +77,21 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 		refuse(http.StatusNotFound, "no such webhook")
 		return
 	}
-	if !posts.Allow(h.Name) {
+	// The ceiling on posts to this webhook counts only posts that verify.
+	// Charged before the check, unsigned posts from a handful of addresses
+	// used it up, and the service's genuine posts were then turned away:
+	// anyone who knew the name could silence a webhook. A post that fails
+	// its check costs its sender instead (failures, above). One that checks
+	// nothing is counted here, as before.
+	overCeiling := func() bool {
+		if posts.Allow(h.Name) {
+			return false
+		}
 		note(h.Name, Call{At: time.Now(), Outcome: "refused: posted to too often"})
 		TooManyRequests(w, time.Minute, "this webhook is posted to too often: slow down")
+		return true
+	}
+	if h.Verify == VerifyNone && overCeiling() {
 		return
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
@@ -88,7 +100,10 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 		refuse(http.StatusRequestEntityTooLarge, "too large")
 		return
 	}
-	// A channel type of its own checks and reads its posts itself.
+	// A channel type of its own checks and reads its posts itself, in one
+	// step, so its ceiling cannot sit between the check and the delivery.
+	// Its posts come only from the service that signs them; one that is not
+	// signed is refused and costs its sender.
 	if check, ok := channelChecks[h.Verify]; ok {
 		status, outcome, refused := check(r, h, body)
 		if refused != nil {
@@ -103,6 +118,9 @@ func Handle(w http.ResponseWriter, r *http.Request) {
 	if err := h.verify(r.Header, body); err != nil {
 		note(h.Name, Call{At: time.Now(), Outcome: "refused: " + err.Error()})
 		refuse(http.StatusUnauthorized, "not verified")
+		return
+	}
+	if h.Verify != VerifyNone && overCeiling() {
 		return
 	}
 	// Slack checks an address once by posting a challenge to echo back.
