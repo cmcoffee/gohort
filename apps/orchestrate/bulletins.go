@@ -243,7 +243,10 @@ func bulletinAge(at, now time.Time, loc *time.Location) string {
 // The boards are the agent owner's, so a turn a contact started still reads
 // the owner's boards (ownerView), not the contact's.
 func (t *chatTurn) withBulletins(notes string) string {
-	if t == nil {
+	// Not for a person outside gohort: the boards are the owner's, posted to
+	// by the owner's other agents, the same standing activity the cortex is
+	// kept from outside turns for (memory_scope.go).
+	if t == nil || t.outsideAudience() {
 		return notes
 	}
 	db, user := t.ownerView()

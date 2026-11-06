@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"errors"
 	"os"
 	"strings"
@@ -358,5 +359,61 @@ func TestAChannelInboundCarriesItsOutsideStore(t *testing.T) {
 	}
 	if !df.udb.Get(outsidePeopleTable, a.ID+"|"+scope, &outsidePerson{}) {
 		t.Error("the channel runner dropped the inbound's outside store")
+	}
+}
+
+// A person outside gohort never runs the agent's machine. Its steps run with
+// the agent's whole catalog, the owner's credentials and an approval gate that
+// reads the person's empty store, none of it the set lent to outside turns, so
+// an end user's message reaching a step could steer it to the owner's Sources
+// and tools. The owner's own turn on the same agent still gets its machine.
+func TestAnOutsidePersonNeverRunsTheMachine(t *testing.T) {
+	udb := &DBase{Store: kvlite.MemStore()}
+	agent := AgentRecord{ID: "support", Name: "Support", Machine: "m-1", OutsideAudience: true}
+	outside := &chatTurn{agent: agent, udb: udb, ctx: context.Background(),
+		user: agenthost.OutsideScope("widget", "visitor-1"), session: &ChatSession{ID: "conv-1", AgentID: "support"}}
+	if m := outside.enterMachine("hello"); m.on {
+		t.Fatal("an outside turn entered the machine")
+	}
+	found := false
+	for _, d := range parentTrailOf(udb, "support", "conv-1") {
+		found = found || d.Kind == "machine_outside"
+	}
+	if !found {
+		t.Errorf("the turn did not say why it answered without its machine: %+v", parentTrailOf(udb, "support", "conv-1"))
+	}
+	if got := outside.machineCatalog(MachinePhase{Name: "route"}); got != nil {
+		t.Errorf("a machine step reached on an outside turn has %d tools", len(got))
+	}
+
+	owner := &chatTurn{agent: agent, udb: udb, ctx: context.Background(), user: "owner", session: &ChatSession{ID: "conv-2", AgentID: "support"}}
+	owner.enterMachine("hello")
+	for _, d := range parentTrailOf(udb, "support", "conv-2") {
+		if d.Kind == "machine_outside" {
+			t.Error("the owner's own turn was refused its machine")
+		}
+	}
+}
+
+// The bulletin boards an agent follows are the owner's, posted to by the
+// owner's other agents: a person outside gohort is not shown them, as the
+// cortex is not. Notes already on the turn pass through untouched.
+func TestAnOutsidePersonIsNotShownTheOwnersBulletins(t *testing.T) {
+	owner := &DBase{Store: kvlite.MemStore()}
+	if err := saveBulletin(owner, bulletinBoard{Name: "news", TTLHours: 24}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := postBulletin(owner, "news", "Quarter numbers land Friday", "Briefing Bot"); err != nil {
+		t.Fatal(err)
+	}
+	agent := AgentRecord{ID: "support", Bulletins: []string{"news"}, OutsideAudience: true}
+	own := &chatTurn{agent: agent, udb: owner, user: "owner"}
+	if !strings.Contains(own.withBulletins(""), "Quarter numbers land Friday") {
+		t.Fatal("the owner's own turn should carry the board it follows")
+	}
+	outside := &chatTurn{agent: agent, udb: &DBase{Store: kvlite.MemStore()}, user: agenthost.OutsideScope("widget", "visitor-1"),
+		ownerDB: owner, ownerUser: "owner"}
+	if got := outside.withBulletins("the turn's own notes"); got != "the turn's own notes" {
+		t.Errorf("an outside turn was shown the owner's board: %q", got)
 	}
 }

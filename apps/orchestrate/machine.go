@@ -112,6 +112,17 @@ func (t *chatTurn) enterMachine(userMsg string) turnMachine {
 	if t.agent.Machine == "" || thread == nil {
 		return turnMachine{}
 	}
+	// Not for a person outside gohort. A machine's steps run with the agent's
+	// whole catalog (machineCatalog), the owner's credentials and an approval
+	// gate that reads the person's empty store, none of it the narrowed set
+	// lent to outside turns (outside_audience.go): an end user's message
+	// reaching a step as its input could steer it to the owner's Sources and
+	// tools. Refused rather than narrowed, so a step added later cannot open
+	// the hole again.
+	if t.outsideAudience() {
+		t.turnDiag("machine_outside", chFirst(t.agent.Name, t.agent.ID)+" answered a person outside gohort as a plain agent, without its machine: a machine's steps reach more than is lent to people outside")
+		return turnMachine{}
+	}
 	if d := machineDelegation(t.ctx); d > maxMachineDelegation {
 		t.turnDiag("machine_depth", "this run is "+strconv.Itoa(d)+" machine delegations deep (the limit is "+strconv.Itoa(maxMachineDelegation)+
 			"), so "+chFirst(t.agent.Name, t.agent.ID)+" answered as a plain agent rather than running its machine: machines that hand to each other would otherwise never stop")
@@ -477,6 +488,11 @@ func cursorDiffers(sess *ChatSession, cur *MachineCursor) bool {
 // the step's OWN rather than waiting for the turn's, and why the tools it
 // hands out are wired rather than half-wired.
 func (t *chatTurn) machineCatalog(ph MachinePhase) []AgentToolDef {
+	// A machine never runs for a person outside gohort (enterMachine); this
+	// holds the line if a step is ever reached another way.
+	if t.outsideAudience() {
+		return nil
+	}
 	// The one way to say "no tools" now that unchecked means everything.
 	// Kept as a real setting rather than inferred from an empty list,
 	// because both ends of the control have to be sayable: a step that
