@@ -33,12 +33,23 @@ func bulletinRow(b bulletinBoard, agents []AgentRecord, loc *time.Location) map[
 			posters = append(posters, chFirst(a.Name, a.ID))
 		}
 	}
-	followText := "nobody yet"
+	followText := "Nobody yet"
 	switch {
 	case b.AllAgents:
 		followText = "All agents"
 	case len(followers) > 0:
 		followText = strings.Join(followers, ", ")
+	}
+	// What the board's card is washed with and says in its pill: whether its
+	// followers see anything from it right now, and if not, why not.
+	state := "empty"
+	switch {
+	case strings.TrimSpace(b.Text) != "" && b.current(now):
+		state = "current"
+	case strings.TrimSpace(b.Text) != "":
+		state = "stale"
+	case b.Cleared:
+		state = "cleared"
 	}
 	postText := "No post yet"
 	if b.Cleared && strings.TrimSpace(b.Text) == "" {
@@ -52,9 +63,6 @@ func bulletinRow(b bulletinBoard, agents []AgentRecord, loc *time.Location) map[
 		if b.PostedBy != "" {
 			postText += " by " + b.PostedBy
 		}
-		if !b.current(now) {
-			postText += " (out of date: followers no longer see it)"
-		}
 	}
 	latest := b.Text
 	if r := []rune(latest); len(r) > 140 {
@@ -64,11 +72,69 @@ func bulletinRow(b bulletinBoard, agents []AgentRecord, loc *time.Location) map[
 	if b.TTLHours > 0 {
 		ttl = fmt.Sprintf("Current for %d hour%s", b.TTLHours, plural(b.TTLHours))
 	}
+	// Whether the followers see the post, and until when: the card's answer to
+	// "is this board doing anything right now".
+	seen := "Followers see nothing from it."
+	switch state {
+	case "current":
+		seen = "Followers see it on every turn. It never goes out of date."
+		if b.TTLHours > 0 {
+			until := b.PostedAt.Add(time.Duration(b.TTLHours) * time.Hour)
+			seen = fmt.Sprintf("Followers see it until %s (each post is current for %d hour%s).",
+				bulletinWhen(until, now, loc), b.TTLHours, plural(b.TTLHours))
+		}
+	case "stale":
+		until := b.PostedAt.Add(time.Duration(b.TTLHours) * time.Hour)
+		seen = "Out of date since " + bulletinWhen(until, now, loc) + ": followers no longer see it."
+	}
 	return map[string]any{
 		"name": b.Name, "desc": b.Desc, "latest": latest, "posted": postText,
-		"followers": followText, "posters": chFirst(strings.Join(posters, ", "), "only you"),
-		"ttl": ttl, "_has_post": strings.TrimSpace(b.Text) != "",
+		"followers": followText, "seen": seen, "state": state,
+		"posters": chFirst(strings.Join(posters, ", "), "Only you"), "ttl": ttl,
+		"size": bulletinSize(b.Text), "_has_post": strings.TrimSpace(b.Text) != "",
 	}
+}
+
+// bulletinWhen says a time near now, past or to come, in the reader's zone:
+// today, tomorrow or yesterday with the time, a weekday within the week either
+// way, a date beyond it (with the year when it is not this one).
+func bulletinWhen(at, now time.Time, loc *time.Location) string {
+	at, now = at.In(loc), now.In(loc)
+	day := func(t time.Time) string { return t.Format("2006-01-02") }
+	switch day(at) {
+	case day(now):
+		return "today " + at.Format("3:04 PM")
+	case day(now.AddDate(0, 0, 1)):
+		return "tomorrow " + at.Format("3:04 PM")
+	case day(now.AddDate(0, 0, -1)):
+		return "yesterday " + at.Format("3:04 PM")
+	}
+	if d := at.Sub(now); d < 6*24*time.Hour && d > -6*24*time.Hour {
+		return at.Format("Mon 3:04 PM")
+	}
+	if at.Year() != now.Year() {
+		return at.Format("Jan 2, 2006")
+	}
+	return at.Format("Jan 2")
+}
+
+// bulletinSize is how much of a post's room it uses, "312 of 1,200
+// characters", or nothing for an empty board. The room matters because the
+// post rides on every turn of every follower.
+func bulletinSize(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	return groupThousands(len([]rune(text))) + " of " + groupThousands(maxBulletinChars) + " characters"
+}
+
+// groupThousands writes n with commas between each group of three digits.
+func groupThousands(n int) string {
+	s := fmt.Sprint(n)
+	for i := len(s) - 3; i > 0 && s[i-1] != '-'; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
 }
 
 // bulletinTargets are the agents a board can reach: the owner's own, visible

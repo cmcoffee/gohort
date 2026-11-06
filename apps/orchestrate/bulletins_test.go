@@ -436,3 +436,79 @@ func TestBulletinAskOwnerAndCancelRoutesKeepTheirMethodsAndOwners(t *testing.T) 
 		t.Errorf("cancelling a run that is not bob's answered %d", w.Code)
 	}
 }
+
+// A board's row says whether its followers see anything from it right now: the
+// state its card is coloured and labelled by, and a sentence saying until when.
+func TestABoardsRowSaysWhetherItsFollowersSeeIt(t *testing.T) {
+	now := time.Now()
+	for _, c := range []struct {
+		name string
+		b    bulletinBoard
+		want string
+	}{
+		{"empty", bulletinBoard{Name: "motd"}, "empty"},
+		{"cleared", bulletinBoard{Name: "motd", Cleared: true, PostedAt: now}, "cleared"},
+		{"pinned", bulletinBoard{Name: "motd", Text: "Welcome", PostedAt: now.Add(-1000 * time.Hour)}, "current"},
+		{"fresh", bulletinBoard{Name: "news", Text: "Fog", TTLHours: 24, PostedAt: now.Add(-time.Hour)}, "current"},
+		{"stale", bulletinBoard{Name: "news", Text: "Fog", TTLHours: 24, PostedAt: now.Add(-25 * time.Hour)}, "stale"},
+	} {
+		if got := bulletinRow(c.b, nil, time.UTC)["state"]; got != c.want {
+			t.Errorf("%s: state %v, want %s", c.name, got, c.want)
+		}
+	}
+	if got := bulletinRow(bulletinBoard{Name: "news"}, nil, time.UTC)["followers"]; got != "Nobody yet" {
+		t.Errorf("a board nobody follows: %v", got)
+	}
+	if got := bulletinRow(bulletinBoard{Name: "news", AllAgents: true}, nil, time.UTC)["followers"]; got != "All agents" {
+		t.Errorf("a board for every agent: %v", got)
+	}
+	if got := bulletinRow(bulletinBoard{Name: "news"}, nil, time.UTC)["posters"]; got != "Only you" {
+		t.Errorf("a board no agent may post to: %v", got)
+	}
+	// Whether followers see it, and until when.
+	for _, c := range []struct {
+		name string
+		b    bulletinBoard
+		want string
+	}{
+		{"empty", bulletinBoard{Name: "news"}, "Followers see nothing"},
+		{"cleared", bulletinBoard{Name: "news", Cleared: true, PostedAt: now}, "Followers see nothing"},
+		{"pinned", bulletinBoard{Name: "news", Text: "Fog", PostedAt: now}, "never goes out of date"},
+		{"fresh", bulletinBoard{Name: "news", Text: "Fog", TTLHours: 24, PostedAt: now.Add(-time.Hour)}, "until "},
+		{"stale", bulletinBoard{Name: "news", Text: "Fog", TTLHours: 24, PostedAt: now.Add(-25 * time.Hour)}, "Out of date since "},
+	} {
+		if got := bulletinRow(c.b, nil, time.UTC)["seen"].(string); !strings.Contains(got, c.want) {
+			t.Errorf("%s: %q should say %q", c.name, got, c.want)
+		}
+	}
+	if got := bulletinRow(bulletinBoard{Name: "news", Text: "Fog é", PostedAt: now}, nil, time.UTC)["size"]; got != "5 of 1,200 characters" {
+		t.Errorf("a post's size counts characters against the room: %v", got)
+	}
+	if got := bulletinRow(bulletinBoard{Name: "news"}, nil, time.UTC)["size"]; got != "" {
+		t.Errorf("an empty board has no size: %v", got)
+	}
+	for n, want := range map[int]string{0: "0", 999: "999", 1200: "1,200", 1234567: "1,234,567", -1200: "-1,200"} {
+		if got := groupThousands(n); got != want {
+			t.Errorf("groupThousands(%d) = %q, want %q", n, got, want)
+		}
+	}
+
+	// A time near now reads as a day, past or to come.
+	at := time.Date(2026, 3, 10, 15, 4, 0, 0, time.UTC)
+	for _, c := range []struct {
+		now  time.Time
+		want string
+	}{
+		{at.Add(-2 * time.Hour), "today 3:04 PM"},
+		{at.AddDate(0, 0, -1), "tomorrow 3:04 PM"},
+		{at.AddDate(0, 0, 1), "yesterday 3:04 PM"},
+		{at.AddDate(0, 0, -3), "Tue 3:04 PM"},
+		{at.AddDate(0, 0, 3), "Tue 3:04 PM"},
+		{at.AddDate(0, 0, -30), "Mar 10"},
+		{at.AddDate(-1, 0, 0), "Mar 10, 2026"},
+	} {
+		if got := bulletinWhen(at, c.now, time.UTC); got != c.want {
+			t.Errorf("bulletinWhen from %s = %q, want %q", c.now.Format(time.RFC3339), got, c.want)
+		}
+	}
+}
