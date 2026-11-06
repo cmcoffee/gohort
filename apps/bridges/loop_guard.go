@@ -267,6 +267,19 @@ func carriesOurTag(text string) bool {
 // isSelfThread report TRUE for a group, dropping it to the strict 3-reply
 // budget. The echo fingerprint mismatched too: outbound to a group carries no
 // handle and keyed on the chat id, while inbound keyed on the member.
+// ownerLoopIdentity is loopIdentity for one owner's conversation. Two people's
+// bots can sit in one Teams group chat or channel, which every bot in it sees
+// under the same conversation id: keyed on the conversation alone, one
+// owner's reply loop put the other's conversation into cooldown. An empty
+// owner is the conversation alone, as it always was.
+func ownerLoopIdentity(owner, chatID, handle string) string {
+	id := loopIdentity(chatID, handle)
+	if id == "" || strings.TrimSpace(owner) == "" {
+		return id
+	}
+	return strings.TrimSpace(owner) + "\x00" + id
+}
+
 func loopIdentity(chatID, handle string) string {
 	if h := chatHandle(chatID); h != "" {
 		return normalizeIdentity(h) // 1:1 — collapse the iMessage and SMS legs onto the person
@@ -413,8 +426,8 @@ func seenContent(chatID, handle, text string) bool {
 // strict limit; elsewhere replies to anything that could be our own reply
 // returning (mayBeEcho: the owner's handle, or none) have their own limit, and
 // all replies together the looser one.
-func noteReply(chatID, handle string, selfThread, mayBeEcho bool) (cut string) {
-	id := loopIdentity(chatID, handle)
+func noteReply(chatOwner, chatID, handle string, selfThread, mayBeEcho bool) (cut string) {
+	id := ownerLoopIdentity(chatOwner, chatID, handle)
 	if id == "" {
 		return ""
 	}
@@ -468,8 +481,8 @@ func clearRepliesLocked(id string) {
 }
 
 // loopTripped reports whether a conversation is in its post-loop cooldown.
-func loopTripped(chatID, handle string) bool {
-	id := loopIdentity(chatID, handle)
+func loopTripped(chatOwner, chatID, handle string) bool {
+	id := ownerLoopIdentity(chatOwner, chatID, handle)
 	loopGuard.mu.Lock()
 	defer loopGuard.mu.Unlock()
 	loopGuardInit()

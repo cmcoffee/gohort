@@ -585,7 +585,7 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 	}
 	// A conversation that already blew the reply budget stays cut until its
 	// cooldown expires. Recording continues so nothing is lost from history.
-	if loopTripped(activeChatID, req.Handle) {
+	if loopTripped(ch.Owner, activeChatID, req.Handle) {
 		Log("[bridges] conversation %s is in loop cooldown: inbound recorded, not routed", activeChatID)
 		return
 	}
@@ -672,7 +672,7 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 		// The dispatch context (with its generous timeout) is owned inside the
 		// coalescer so a superseding message can cancel an in-flight turn. See
 		// core.CoalesceChannelDispatch.
-		reply, err := CoalesceChannelDispatch(sessionID, in, RunChannelAgent)
+		reply, err := CoalesceChannelDispatch(coalesceKey(ch, sessionID), in, RunChannelAgent)
 		if err != nil {
 			Log("[bridges] channel agent run failed (chat=%s agent=%s): %v", chatID, ch.AgentID, err)
 			return
@@ -695,7 +695,7 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 		// reply come back: the owner's handle, or no handle at all (a
 		// transport that could not name the sender could be naming us).
 		mayBeEcho := T.isOwnerHandleFor(svc, handle) || strings.TrimSpace(handle) == ""
-		if cut := noteReply(chatID, handle, T.isSelfThread(chatID, handle), mayBeEcho); cut != "" {
+		if cut := noteReply(ch.Owner, chatID, handle, T.isSelfThread(chatID, handle), mayBeEcho); cut != "" {
 			logLoopCut(chatID, cut)
 		}
 		if hasOutput {
@@ -842,4 +842,13 @@ func (T *Bridges) handlePanic(c *jsonapi.Call, _ struct{}) (any, error) {
 	T.setConfig(cfg)
 	Log("[bridges] PANIC: transport disabled; no inbound routes, no outbound delivers")
 	return map[string]any{"enabled": false, "message": "Bridges disabled. Re-enable from Master switches."}, nil
+}
+
+// coalesceKey is what the coalescer batches a channel's messages under: the
+// owner and channel as well as the conversation. Every bot in a Teams group
+// chat or channel sees one conversation id, so two people's bots in it shared a
+// batch under the id alone: a message to one was merged into the other owner's
+// turn, and that agent's reply could go out through the wrong bot.
+func coalesceKey(ch Channel, sessionID string) string {
+	return ch.Owner + "\x00" + ch.ID + "\x00" + sessionID
 }

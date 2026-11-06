@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	. "github.com/cmcoffee/gohort/core"
 )
 
 // The loop these guard against: in a SELF thread every message is is_from_me,
@@ -86,16 +88,16 @@ func TestReplyBudgetTerminatesALoop(t *testing.T) {
 	const chat = "loopy"
 	tripped := false
 	for i := 0; i < replyBudgetFor()+3 && !tripped; i++ {
-		tripped = noteReply(chat, "", false, true) != ""
+		tripped = noteReply("", chat, "", false, true) != ""
 	}
 	if !tripped {
 		t.Fatalf("budget of %d replies should have tripped", replyBudgetFor())
 	}
-	if !loopTripped(chat, "") {
+	if !loopTripped("", chat, "") {
 		t.Error("a tripped conversation must stay cut for its cooldown")
 	}
 	// Scoped per conversation — one runaway thread must not mute the others.
-	if loopTripped("a-different-chat", "") {
+	if loopTripped("", "a-different-chat", "") {
 		t.Error("the cut must not spread to other conversations")
 	}
 }
@@ -106,11 +108,11 @@ func TestReplyBudgetToleratesNormalTraffic(t *testing.T) {
 	LoopGuardReset()
 	const chat = "busy"
 	for i := 0; i < replyBudgetFor()-1; i++ {
-		if noteReply(chat, "", false, true) != "" {
+		if noteReply("", chat, "", false, true) != "" {
 			t.Fatalf("tripped after %d replies — the budget is too tight for a normal exchange", i+1)
 		}
 	}
-	if loopTripped(chat, "") {
+	if loopTripped("", chat, "") {
 		t.Error("a busy but bounded conversation must not be cut")
 	}
 }
@@ -120,14 +122,14 @@ func TestReplyBudgetToleratesNormalTraffic(t *testing.T) {
 func TestReplyBudgetIsPerConversation(t *testing.T) {
 	LoopGuardReset()
 	for i := 0; i < replyBudgetFor()+1; i++ {
-		noteReply("runaway", "", false, true)
+		noteReply("", "runaway", "", false, true)
 	}
 	for i := 0; i < 3; i++ {
-		if noteReply(fmt.Sprintf("normal-%d", i), "", false, true) != "" {
+		if noteReply("", fmt.Sprintf("normal-%d", i), "", false, true) != "" {
 			t.Error("an unrelated conversation should be nowhere near its budget")
 		}
 	}
-	if !loopTripped("runaway", "") {
+	if !loopTripped("", "runaway", "") {
 		t.Error("the runaway thread should still be cut")
 	}
 }
@@ -135,7 +137,7 @@ func TestReplyBudgetIsPerConversation(t *testing.T) {
 func TestNoteReplyIgnoresEmptyChat(t *testing.T) {
 	LoopGuardReset()
 	for i := 0; i < replyBudgetFor()+5; i++ {
-		if noteReply("", "", false, true) != "" {
+		if noteReply("", "", "", false, true) != "" {
 			t.Fatal("an empty chat id must not accumulate a budget")
 		}
 	}
@@ -164,12 +166,12 @@ func TestGuardsSurviveTheTransportSplit(t *testing.T) {
 		if i%2 == 1 {
 			chat = sms // alternating transports, one conversation
 		}
-		tripped = noteReply(chat, "", false, true) != ""
+		tripped = noteReply("", chat, "", false, true) != ""
 	}
 	if !tripped {
 		t.Error("a loop alternating between transports must still fill ONE budget")
 	}
-	if !loopTripped(sms, "") || !loopTripped(native, "") {
+	if !loopTripped("", sms, "") || !loopTripped("", native, "") {
 		t.Error("the cut must apply to the conversation, whichever leg it arrives on")
 	}
 }
@@ -223,7 +225,7 @@ func TestSelfThreadBudgetIsStrict(t *testing.T) {
 	LoopGuardReset()
 	tripped := false
 	for i := 0; i < selfThreadBudgetFor() && !tripped; i++ {
-		tripped = noteReply("iMessage;-;+16505550142", "", true, true) != ""
+		tripped = noteReply("", "iMessage;-;+16505550142", "", true, true) != ""
 	}
 	if !tripped {
 		t.Errorf("a self thread should cut at %d replies", selfThreadBudgetFor())
@@ -232,7 +234,7 @@ func TestSelfThreadBudgetIsStrict(t *testing.T) {
 	// The same count in a real conversation is nowhere near its limit.
 	LoopGuardReset()
 	for i := 0; i < selfThreadBudgetFor()+2; i++ {
-		if noteReply("iMessage;-;+15559998888", "", false, true) != "" {
+		if noteReply("", "iMessage;-;+15559998888", "", false, true) != "" {
 			t.Fatalf("a conversation with another person must not cut at %d replies", i+1)
 		}
 	}
@@ -268,15 +270,15 @@ func TestTrippedThreadDoesNotCutGroups(t *testing.T) {
 
 	// Blow the strict budget on the owner's own thread.
 	for i := 0; i < selfThreadBudgetFor(); i++ {
-		noteReply("iMessage;-;"+owner, "", true, true)
+		noteReply("", "iMessage;-;"+owner, "", true, true)
 	}
-	if !loopTripped("iMessage;-;"+owner, "") {
+	if !loopTripped("", "iMessage;-;"+owner, "") {
 		t.Fatal("the self thread should be in cooldown")
 	}
 	// A group the owner also talks in must still route. Over SMS/MMS the owner's
 	// own group message arrives with their handle populated, which is exactly the
 	// case that used to collapse onto the tripped identity.
-	if loopTripped(group, owner) {
+	if loopTripped("", group, owner) {
 		t.Error("a group must not inherit another thread's cooldown")
 	}
 }
@@ -288,7 +290,7 @@ func TestGroupKeepsTheGenerousBudget(t *testing.T) {
 	LoopGuardReset()
 	const group = "iMessage;+;chat9876543210"
 	for i := 0; i < selfThreadBudgetFor()+2; i++ {
-		if noteReply(group, "+16505550142", false, true) != "" {
+		if noteReply("", group, "+16505550142", false, true) != "" {
 			t.Fatalf("a group must not cut at %d replies", i+1)
 		}
 	}
@@ -302,15 +304,15 @@ func TestRepliesToAPersonUseTheLooserBudget(t *testing.T) {
 	LoopGuardReset()
 	const chat = "iMessage;-;+15559990001"
 	for i := 0; i < replyBudgetFor()+5; i++ {
-		if cut := noteReply(chat, "+15559990001", false, false); cut != "" {
+		if cut := noteReply("", chat, "+15559990001", false, false); cut != "" {
 			t.Fatalf("a conversation with a person was cut at reply %d: %s", i+1, cut)
 		}
 	}
 	cut := ""
 	for i := 0; i < personReplyBudgetFor() && cut == ""; i++ {
-		cut = noteReply(chat, "+15559990001", false, false)
+		cut = noteReply("", chat, "+15559990001", false, false)
 	}
-	if cut == "" || !loopTripped(chat, "+15559990001") {
+	if cut == "" || !loopTripped("", chat, "+15559990001") {
 		t.Fatalf("%d replies must still cut, whoever is answered", personReplyBudgetFor())
 	}
 }
@@ -321,15 +323,43 @@ func TestRepliesToTheOwnerKeepTheStrictBudget(t *testing.T) {
 	LoopGuardReset()
 	const chat = "iMessage;-;+15559990002"
 	for i := 0; i < 5; i++ {
-		noteReply(chat, "+15559990002", false, false)
+		noteReply("", chat, "+15559990002", false, false)
 	}
 	cut := ""
 	n := 0
 	for cut == "" && n < replyBudgetFor()+1 {
 		n++
-		cut = noteReply(chat, "", false, true)
+		cut = noteReply("", chat, "", false, true)
 	}
 	if n != replyBudgetFor() || !strings.Contains(cut, "to your messages") {
 		t.Fatalf("cut after %d replies to the owner (%q), want %d", n, cut, replyBudgetFor())
+	}
+}
+
+// Two people's bots in one Teams group chat or channel see the same
+// conversation id. One owner's runaway conversation is cut for that owner
+// only, and their messages are batched apart, so neither owner's turn takes
+// in the other's message.
+func TestOneConversationTwoOwnersStayApart(t *testing.T) {
+	LoopGuardReset()
+	const chat = "19:shared@thread.v2"
+	tripped := false
+	for i := 0; i < replyBudgetFor()+3 && !tripped; i++ {
+		tripped = noteReply("alice", chat, "", false, true) != ""
+	}
+	if !tripped || !loopTripped("alice", chat, "") {
+		t.Fatal("alice's runaway conversation should be cut")
+	}
+	if loopTripped("bob", chat, "") {
+		t.Error("bob's bot in the same conversation was cut by alice's loop")
+	}
+
+	alice := Channel{ID: "ch-a", Owner: "alice", Service: "teams-a"}
+	bob := Channel{ID: "ch-b", Owner: "bob", Service: "teams-b"}
+	if coalesceKey(alice, "chan:"+chat) == coalesceKey(bob, "chan:"+chat) {
+		t.Error("two owners' channels on one conversation share a batch")
+	}
+	if coalesceKey(alice, "chan:"+chat) != coalesceKey(alice, "chan:"+chat) {
+		t.Error("one owner's messages in a conversation should still batch together")
 	}
 }
