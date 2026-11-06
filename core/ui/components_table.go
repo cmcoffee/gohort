@@ -19,6 +19,20 @@ type Table struct {
 	PullToRefresh bool        `json:"pull_to_refresh,omitempty"`
 	SortBy        string      `json:"sort_by,omitempty"` // field to sort by (descending if SortDesc)
 	SortDesc      bool        `json:"sort_desc,omitempty"`
+	// Cards lays each row out as a card rather than a line: its name and
+	// badges on top, its columns with a Card role below (Col.Card), its
+	// buttons apart from them. A card is washed with the colour of its first
+	// badge, so its state reads before a word of it does. Leading actions (a
+	// row's on/off switch) sit in its top line, and an expanding action opens
+	// inside it. Two shapes:
+	//   - "grid" — cards side by side, the buttons along each card's bottom.
+	//     For a few things you glance across, each with a state and several
+	//     facts worth reading.
+	//   - "list" — one full-width row each, its facts across the row and its
+	//     buttons at the right. For a list you manage and that can grow: a
+	//     grid of many reads as a wall.
+	// Empty is the plain table.
+	Cards string `json:"cards,omitempty"`
 	// GroupBy renders each distinct value of this field as its own BORDERED
 	// BAND — a heading with that group's rows enclosed under it — in the order
 	// the records arrive (so the server controls grouping order by ordering its
@@ -161,6 +175,16 @@ type Col struct {
 	// 0 or 1 is the first line, 2 the second. A table where nothing asks for
 	// it keeps the single-line layout it was written for.
 	Line int `json:"line,omitempty"`
+	// Card places this column on a card, in a Table with Cards set. A column
+	// with no Card role sits on the card's top line with the name and any
+	// badges. The roles, top to bottom as declared:
+	//   - "sub"   — small and quiet, tucked under the name: what the thing is.
+	//   - "box"   — in a box edged with the card's colour: the one line that
+	//     says how the thing stands (its last activity, where it goes).
+	//   - "line"  — an ordinary line of text.
+	//   - "field" — a labelled row, the column's Label beside its value. The
+	//     first one is set off by a rule, and an empty one is left out.
+	Card string `json:"card,omitempty"`
 }
 
 // RowAction adds an interactive control to each table row.

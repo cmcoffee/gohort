@@ -443,6 +443,12 @@
 
   components.table = function(cfg) {
     var listEl = el('div', {class: 'ui-table-list'}, [uiLoading()]);
+    // Table.Cards: the rows are cards (runtime.css .ui-table-cards), side by
+    // side ("grid") or one full-width row each ("list").
+    if (cfg.cards) {
+      listEl.classList.add('ui-table-cards');
+      if (cfg.cards === 'list') listEl.classList.add('ui-cards-list');
+    }
     var refreshIndicator = null;
     var records = [];
     var searchText = '';
@@ -709,10 +715,14 @@
 
         // Leading actions go directly on the row (they stay pinned to
         // the left even when cells stack on narrow viewports).
-        (cfg.row_actions || []).forEach(function(act, ai) {
-          if (!act.leading) return;
-          appendAction(row, act, ai, rec, rowKey, row);
-        });
+        // On a card they sit in its top line instead, after the name and
+        // badges (below, once the cells are built).
+        if (!cfg.cards) {
+          (cfg.row_actions || []).forEach(function(act, ai) {
+            if (!act.leading) return;
+            appendAction(row, act, ai, rec, rowKey, row);
+          });
+        }
 
         var cellsWrap = el('div', {class: 'ui-row-cells'});
         // A column marked line:2 renders on a SECOND line beneath the first.
@@ -723,8 +733,10 @@
         // Only built when something asks for it, so every existing table keeps
         // the single-line layout it was written for.
         var secondLine = null;
+        // On a card, a column with a Card role goes below the top line.
+        function onCard(col) { return !!(cfg.cards && col.card); }
         function cellHost(col) {
-          if (Number(col.line) !== 2) return cellsWrap;
+          if (Number(col.line) !== 2 && !onCard(col)) return cellsWrap;
           if (!secondLine) {
             secondLine = el('div', {class: 'ui-row-cells ui-row-cells-2'});
           }
@@ -780,7 +792,12 @@
           }
           var cell = el('div', {class: 'ui-table-cell' + (col.mute ? ' mute' : '')});
           if (col.flex) cell.style.flex = col.flex;
-          if (!keyed && !col.mute && Number(col.line) !== 2) {
+          // Its place on a card, and a field's label beside its value.
+          if (onCard(col)) {
+            cell.classList.add('ui-card-' + col.card);
+            if (col.card === 'field' && col.label) cell.setAttribute('data-label', col.label);
+          }
+          if (!keyed && !col.mute && Number(col.line) !== 2 && !onCard(col)) {
             cell.classList.add('ui-table-cell-key');
             keyed = true;
           }
@@ -824,6 +841,14 @@
           }
           cellHost(col).appendChild(cell);
         });
+        if (cfg.cards) {
+          var headActs = el('div', {class: 'ui-card-head-actions'});
+          (cfg.row_actions || []).forEach(function(act, ai) {
+            if (!act.leading) return;
+            appendAction(headActs, act, ai, rec, rowKey, row);
+          });
+          if (headActs.childNodes.length) cellsWrap.appendChild(headActs);
+        }
         if (secondLine) {
           // The two lines stack; the row's own flex then lays them out
           // beside any actions exactly as it did with one.
@@ -1152,7 +1177,7 @@
               if (rowEl && openExpansions[rowKey]) {
                 Object.keys(openExpansions[rowKey]).forEach(function(k){
                   var panel = openExpansions[rowKey][k];
-                  if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
+                  if (panel && panel.parentNode) closeExpansion(panel);
                 });
                 delete openExpansions[rowKey];
               }
@@ -1240,7 +1265,7 @@
     function toggleExpand(rec, rowKey, ai, act, row) {
       openExpansions[rowKey] = openExpansions[rowKey] || {};
       if (openExpansions[rowKey][ai]) {
-        openExpansions[rowKey][ai].remove();
+        closeExpansion(openExpansions[rowKey][ai]);
         delete openExpansions[rowKey][ai];
         if (reloadWhenClosed) reload(true);
         return;
@@ -1249,7 +1274,7 @@
       // (one-at-a-time keeps the page tidy).
       Object.keys(openExpansions).forEach(function(rk) {
         Object.keys(openExpansions[rk]).forEach(function(idx) {
-          openExpansions[rk][idx].remove();
+          closeExpansion(openExpansions[rk][idx]);
         });
         openExpansions[rk] = {};
       });
@@ -1261,8 +1286,22 @@
       var renderCfg = JSON.parse(JSON.stringify(act.render));
       substituteRefs(renderCfg, rec);
       mountComponent(renderCfg, panel, rec);
-      row.parentNode.insertBefore(panel, row.nextSibling);
+      if (cfg.cards) {
+        // Inside its card, which takes the grid's full width while open: a
+        // panel placed between cards landed in a grid cell of its own,
+        // apart from the card it belongs to.
+        row.appendChild(panel);
+        row.classList.add('ui-card-open');
+      } else {
+        row.parentNode.insertBefore(panel, row.nextSibling);
+      }
       openExpansions[rowKey][ai] = panel;
+    }
+
+    function closeExpansion(panel) {
+      var host = panel.parentNode;
+      panel.remove();
+      if (host && host.classList) host.classList.remove('ui-card-open');
     }
 
     function substituteRefs(obj, rec) {

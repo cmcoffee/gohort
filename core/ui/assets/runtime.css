@@ -1327,6 +1327,108 @@ select:-webkit-autofill {
 .ui-table-cell a.ui-table-link { color: var(--accent); text-decoration: none; }
 .ui-table-cell a.ui-table-link:hover { text-decoration: underline; }
 .ui-table-empty { color: var(--text-mute); font-size: var(--fs-md); padding: 0.5rem 0; }
+/* Table.Cards: the rows as cards in a grid. A card's name and badges on
+ * top, then its columns with a Card role (Col.Card), then its buttons under
+ * a rule. Washed from the corner with the colour of its first badge, so its
+ * state reads before a word of it does; a grey badge, or none, leaves it
+ * plain. The selectors are .ui-table-cards-scoped and so outrank the line
+ * layout's, phone rules included. */
+.ui-table-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: 0.85rem; }
+/* What is not a card (the empty text, the loading line) takes the full width. */
+.ui-table-cards > :not(.ui-table-row) { grid-column: 1 / -1; }
+.ui-table-cards > .ui-table-row {
+  --tone: var(--accent);
+  flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 0.75rem;
+  padding: 1rem 1rem 0.85rem; border-radius: calc(var(--btn-radius) * 7 / 3);
+  background: linear-gradient(155deg, color-mix(in srgb, var(--tone) 10%, var(--bg-2)) 0%, var(--bg-2) 60%);
+}
+.ui-table-cards > .ui-table-row:has(.ui-badge.success) { --tone: var(--success); }
+.ui-table-cards > .ui-table-row:has(.ui-badge.warning) { --tone: var(--warning); }
+.ui-table-cards > .ui-table-row:has(.ui-badge.danger) { --tone: var(--danger); }
+.ui-table-cards > .ui-table-row:has(.ui-row-cells:first-child .ui-badge.mute):not(:has(.ui-badge:is(.success, .warning, .danger, .accent))) {
+  --tone: var(--text-mute); background: var(--bg-2);
+}
+/* An open panel (Relay log, Thread) is inside its card, which takes the
+ * whole width while it is open. */
+.ui-table-cards > .ui-table-row.ui-card-open { grid-column: 1 / -1; }
+.ui-table-cards > .ui-table-row > .ui-expand { margin: 0; }
+.ui-table-cards .ui-row-lines { flex: none; gap: 0.6rem; }
+.ui-table-cards .ui-row-lines > .ui-row-cells:first-child,
+.ui-table-cards > .ui-table-row > .ui-row-cells { display: flex; align-items: flex-start; gap: 0.6rem; }
+.ui-table-cards .ui-table-cell-key {
+  flex: 1 1 auto; min-width: 0; margin: 0; display: block;
+  font-weight: 600; color: var(--text-hi, var(--text)); font-size: var(--fs-lg, 1rem); line-height: 1.25;
+  white-space: normal; overflow: visible; overflow-wrap: anywhere;
+}
+.ui-table-cards .ui-row-cells > .ui-table-cell-badge:not(:empty) { display: block; margin: 0; flex-shrink: 0; }
+/* The name takes the room; its badges and switch sit at the right. */
+.ui-table-cards .ui-card-head-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; flex-shrink: 0; }
+.ui-table-cards .ui-row-cells-2 { display: flex; flex-direction: column; align-items: stretch; gap: 0.45rem; opacity: 1; }
+.ui-table-cards .ui-row-cells-2 > .ui-table-cell {
+  display: block; overflow: visible; white-space: normal; overflow-wrap: anywhere; margin: 0;
+  -webkit-line-clamp: none; line-clamp: none;
+  font-size: var(--fs-sm, 0.84rem); line-height: 1.45; color: var(--text);
+}
+.ui-table-cards .ui-row-cells-2 > .ui-table-cell:nth-child(n):empty { display: none; }
+.ui-table-cards .ui-row-cells-2 > .ui-card-sub {
+  margin-top: -0.45rem; color: var(--text-mute); font-size: var(--fs-xs, 0.78rem);
+}
+.ui-table-cards .ui-row-cells-2 > .ui-card-box {
+  display: flex; align-items: baseline; gap: 0.75rem;
+  margin: 0.15rem 0 0.1rem; padding: 0.55rem 0.75rem;
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--tone) 70%, transparent);
+  border-radius: 0 var(--btn-radius) var(--btn-radius) 0;
+  background: color-mix(in srgb, var(--tone) 6%, var(--bg-0));
+  font-size: var(--fs-md, 0.9rem); font-weight: 500;
+}
+.ui-table-cards .ui-row-cells-2 > .ui-card-field {
+  display: grid; grid-template-columns: 6rem 1fr; gap: 0.75rem; font-size: var(--fs-xs, 0.8rem);
+}
+.ui-table-cards .ui-row-cells-2 > .ui-card-field::before { content: attr(data-label); color: var(--text-mute); }
+/* The first field that shows is set off from the lines above it. */
+.ui-table-cards .ui-row-cells-2 > .ui-card-field:not(:empty):not(.ui-card-field:not(:empty) ~ .ui-card-field) {
+  margin-top: 0.15rem; padding-top: 0.55rem; border-top: 1px dashed color-mix(in srgb, var(--border) 80%, transparent);
+}
+.ui-table-cards > .ui-table-row > .ui-row-actions {
+  margin: auto 0 0; padding-top: 0.75rem; width: 100%; box-sizing: border-box;
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  justify-content: flex-start; gap: 0.4rem;
+}
+.ui-table-cards > .ui-table-row > .ui-row-actions > .danger { margin-left: auto; }
+/* Table.Cards "list": one full-width row each. The facts run across the row
+ * as label and value, the buttons sit at the right, and the state colours an
+ * edge down the left and a wash along it. On a phone it stacks like a card. */
+.ui-table-cards.ui-cards-list { grid-template-columns: minmax(0, 1fr); gap: 0.6rem; }
+.ui-cards-list > .ui-table-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 1.25rem; row-gap: 0.6rem; align-items: start;
+  padding: 0.8rem 1rem; border-radius: calc(var(--btn-radius) * 5 / 3);
+  border-left: 3px solid color-mix(in srgb, var(--tone) 75%, var(--border));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--tone) 8%, var(--bg-2)) 0%, var(--bg-2) 45%);
+}
+.ui-cards-list > .ui-table-row:has(.ui-row-cells:first-child .ui-badge.mute):not(:has(.ui-badge:is(.success, .warning, .danger, .accent))) {
+  border-left-color: var(--border); background: var(--bg-2);
+}
+.ui-cards-list > .ui-table-row > .ui-row-lines { grid-column: 1; }
+.ui-cards-list > .ui-table-row > .ui-row-actions {
+  grid-column: 2; grid-row: 1; margin: 0; padding: 0; border: 0; width: auto;
+  justify-content: flex-end; max-width: 26rem;
+}
+.ui-cards-list > .ui-table-row > .ui-row-actions > .danger { margin-left: 0; }
+.ui-cards-list > .ui-table-row > .ui-expand { grid-column: 1 / -1; }
+.ui-cards-list .ui-row-cells-2 { flex-direction: row; flex-wrap: wrap; align-items: baseline; column-gap: 1.5rem; row-gap: 0.4rem; }
+.ui-cards-list .ui-row-cells-2 > :is(.ui-card-sub, .ui-card-box, .ui-card-line) { flex: 1 0 100%; }
+.ui-cards-list .ui-row-cells-2 > .ui-card-box { margin: 0.1rem 0; }
+.ui-cards-list .ui-row-cells-2 > .ui-card-field { display: inline-flex; gap: 0.45rem; }
+.ui-cards-list .ui-row-cells-2 > .ui-card-field:not(:empty):not(.ui-card-field:not(:empty) ~ .ui-card-field) {
+  margin-top: 0; padding-top: 0; border-top: 0;
+}
+@media (max-width: 800px) {
+  .ui-cards-list > .ui-table-row { grid-template-columns: minmax(0, 1fr); }
+  .ui-cards-list > .ui-table-row > .ui-row-actions {
+    grid-column: 1; grid-row: auto; max-width: none; width: 100%; justify-content: flex-start;
+    padding-top: 0.6rem; border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  }
+}
 /* Table.ReorderURL: a grip leads each row. touch-action: none so a finger on
  * the grip drags the row instead of scrolling the page; the rest of the row
  * still scrolls as before. */
