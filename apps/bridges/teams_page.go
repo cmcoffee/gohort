@@ -141,6 +141,14 @@ func (T *Bridges) handleTeamsBotSave(c *jsonapi.Call, f teamsBotForm) (any, erro
 		if hold, err = governance.Permit(governance.TeamsBots, user); err != nil {
 			return nil, jsonapi.Forbidden(err.Error())
 		}
+	} else if teamsbots.ChangesWhatWasApproved(prev, f.AppID, f.TenantID) {
+		// A different app or tenant is a bot the administrator has not seen:
+		// it goes through the same policy as a new one, and waits for
+		// approval again where that policy holds new bots.
+		var err error
+		if hold, err = governance.Permit(governance.TeamsBots, user); err != nil {
+			return nil, jsonapi.Forbidden(err.Error())
+		}
 	}
 	// A new bot with nothing ticked starts where the design says: its own
 	// chats, group chats when @mentioned, no team channel yet. An existing
@@ -184,6 +192,8 @@ func (T *Bridges) handleTeamsBotSave(c *jsonapi.Call, f teamsBotForm) (any, erro
 		if b.AwaitingApproval {
 			msg += " Teams bots need an administrator's approval here: it answers once one approves it."
 		}
+	} else if b.AwaitingApproval && !prev.AwaitingApproval {
+		msg = "Saved. Its app or tenant changed, so it waits for an administrator's approval again, and answers once one approves it."
 	}
 	return map[string]string{"message": msg}, nil
 }

@@ -236,7 +236,10 @@ func conversationTypes(in []string) ([]string, error) {
 
 // Save adds or updates b, its secret when one is given (an update keeps the
 // one it has otherwise), held for an administrator's approval when hold. An
-// update keeps what an administrator decided: approval, and a switch-off.
+// update keeps what an administrator decided, approval and a switch-off,
+// unless it changes what was approved: a different app, or a different tenant
+// (blanking it opens the bot to every tenant). That is a bot the administrator
+// has not seen, so with hold it waits for approval again.
 func Save(b Bot, secret string, hold bool) (Bot, error) {
 	if db() == nil {
 		return b, fmt.Errorf("the store is not ready")
@@ -253,6 +256,9 @@ func Save(b Bot, secret string, hold bool) (Bot, error) {
 		if prev.AppID != b.AppID && secret == "" {
 			return b, fmt.Errorf("a new app id needs its own client secret")
 		}
+		if hold && (prev.AppID != b.AppID || prev.TenantID != b.TenantID) {
+			b.AwaitingApproval = true
+		}
 	} else {
 		if secret == "" {
 			return b, fmt.Errorf("give it the app's client secret")
@@ -265,6 +271,14 @@ func Save(b Bot, secret string, hold bool) (Bot, error) {
 		forgetToken(b.Key())
 	}
 	return b, nil
+}
+
+// ChangesWhatWasApproved reports whether an edit to prev's app id or tenant
+// makes it a different bot from the one an administrator approved, read the
+// way Save stores them.
+func ChangesWhatWasApproved(prev Bot, appID, tenantID string) bool {
+	norm := func(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
+	return norm(appID) != prev.AppID || norm(tenantID) != prev.TenantID
 }
 
 // SetWebhook records the webhook owner's bot for svc is reached through.

@@ -270,3 +270,52 @@ func TestMentionTypesAreChecked(t *testing.T) {
 		t.Error("an unknown type was accepted")
 	}
 }
+
+// An approval is of the bot the administrator saw: its app and its tenant. An
+// edit that changes either, blanking the tenant included (that opens it to
+// every tenant), waits for approval again where the policy holds new bots; an
+// edit that keeps both keeps the approval, and with no hold nothing waits.
+func TestAnApprovalHoldsOnlyForTheBotThatWasApproved(t *testing.T) {
+	world(t)
+	approved := func() Bot {
+		t.Helper()
+		RootDB = &DBase{Store: kvlite.MemStore()}
+		if _, err := Save(bot(), "s1", true); err != nil {
+			t.Fatal(err)
+		}
+		if err := AdminSetDisabled(bot().Owner, "teams", false); err != nil {
+			t.Fatal(err)
+		}
+		b, _ := Load(bot().Owner, "teams")
+		if b.AwaitingApproval {
+			t.Fatal("the bot should be approved")
+		}
+		return b
+	}
+	for _, c := range []struct {
+		name   string
+		change func(*Bot) string
+		hold   bool
+		want   bool
+	}{
+		{"renamed", func(b *Bot) string { b.Name = "Robin"; return "" }, true, false},
+		{"tenant blanked", func(b *Bot) string { b.TenantID = ""; return "" }, true, true},
+		{"tenant changed", func(b *Bot) string { b.TenantID = "ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee"; return "" }, true, true},
+		{"app changed", func(b *Bot) string { b.AppID = "99999999-2222-3333-4444-555555555555"; return "s2" }, true, true},
+		{"tenant changed, no hold", func(b *Bot) string { b.TenantID = ""; return "" }, false, false},
+	} {
+		b := approved()
+		secret := c.change(&b)
+		if got := ChangesWhatWasApproved(approved(), b.AppID, b.TenantID); got != (c.name != "renamed") {
+			t.Errorf("%s: ChangesWhatWasApproved = %v", c.name, got)
+		}
+		approved()
+		saved, err := Save(b, secret, c.hold)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if saved.AwaitingApproval != c.want {
+			t.Errorf("%s: awaiting approval = %v, want %v", c.name, saved.AwaitingApproval, c.want)
+		}
+	}
+}
