@@ -2,6 +2,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1147,5 +1149,85 @@ func TestAStreamedBodyIsNotSigned(t *testing.T) {
 	req, _ = http.NewRequest("POST", "https://polly.us-east-1.amazonaws.com/v1/speech", strings.NewReader("whole"))
 	if b, err := requestPayload(req); err != nil || string(b) != "whole" {
 		t.Errorf("a whole body: %q %v", b, err)
+	}
+}
+
+// An expired SSO sign-in runs GOHORT_AWS_AUTH_REFRESH once and resolves
+// again, so the call goes through instead of failing; calls waiting on that
+// sign-in do not start another. A sign-in that fails is not started again
+// within the cooldown, and with the variable unset, or a failure a sign-in
+// does not fix, nothing runs.
+func TestAnExpiredAWSSignInIsRefreshedOnce(t *testing.T) {
+	expired := Error("aws configure export-credentials failed: Error loading SSO Token: Token for work has expired. For SSO, run `aws sso login --profile work`.")
+	var mu sync.Mutex
+	signedIn, runs := false, 0
+	prevResolve, prevRun := resolveAWSCredsFn, runAWSSignIn
+	t.Cleanup(func() {
+		resolveAWSCredsFn, runAWSSignIn = prevResolve, prevRun
+		awsSignIn.lastOK, awsSignIn.lastFail = time.Time{}, time.Time{}
+	})
+	resolveAWSCredsFn = func(string, bool) (awsCreds, time.Time, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if !signedIn {
+			return awsCreds{}, time.Time{}, expired
+		}
+		return awsCreds{AccessKey: "AK", SecretKey: "SK"}, time.Now().Add(time.Hour), nil
+	}
+	fail := false
+	runAWSSignIn = func(_ context.Context, command string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		runs++
+		if command != "aws sso login --profile work" {
+			t.Errorf("ran %q", command)
+		}
+		if fail {
+			return Error("closed the browser")
+		}
+		signedIn = true
+		return nil
+	}
+
+	t.Setenv(AWSAuthRefreshEnv, "")
+	if _, err := (&bedrockCreds{profile: "work", explicit: true}).get(); err == nil || runs != 0 {
+		t.Fatalf("with nothing set: err %v, %d sign-ins", err, runs)
+	}
+
+	t.Setenv(AWSAuthRefreshEnv, "aws sso login --profile work")
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if c, err := (&bedrockCreds{profile: "work", explicit: true}).get(); err != nil || c.AccessKey != "AK" {
+				t.Errorf("after signing in: %+v %v", c, err)
+			}
+		}()
+	}
+	wg.Wait()
+	if runs != 1 {
+		t.Errorf("%d sign-ins for one expiry, want 1", runs)
+	}
+
+	// A failed sign-in is not started again within the cooldown.
+	signedIn, runs, fail = false, 0, true
+	awsSignIn.lastOK = time.Time{}
+	for i := 0; i < 3; i++ {
+		if _, err := (&bedrockCreds{profile: "work", explicit: true}).get(); err == nil {
+			t.Fatal("a failed sign-in gave credentials")
+		}
+	}
+	if runs != 1 {
+		t.Errorf("%d sign-ins after one failed, want 1 until the cooldown passes", runs)
+	}
+
+	// Gohort's own hint names `aws sso login`; a failure it does not fix
+	// starts nothing.
+	if awsSignInExpired(Error("bedrock: could not resolve AWS profile work - aws CLI not found in PATH (searched /usr/bin) For SSO, run `aws sso login --profile work`.")) {
+		t.Error("a missing aws CLI read as an expired sign-in")
+	}
+	if !awsSignInExpired(Error("The SSO session associated with this profile has expired or is otherwise invalid.")) {
+		t.Error("the CLI's expired-session message was not recognised")
 	}
 }

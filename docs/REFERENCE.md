@@ -242,6 +242,26 @@ The `serve` subcommand starts the web dashboard and has its own flags:
 | `--tls_cert <path>` | Path to TLS certificate file (PEM) |
 | `--tls_key <path>` | Path to TLS private key file (PEM) |
 
+### Amazon Bedrock with SSO
+
+A Bedrock tier signed in through AWS SSO gets its credentials from the AWS
+CLI (`aws configure export-credentials`), which renews them for as long as
+the SSO session lasts. When the session ends, only a person can sign in
+again. Set `GOHORT_AWS_AUTH_REFRESH` in gohort's environment to the command
+that does it, and gohort runs it when a call finds the sign-in expired, then
+carries on:
+
+```sh
+export GOHORT_AWS_AUTH_REFRESH="aws sso login --profile work"
+```
+
+The call waits for the sign-in, for up to five minutes. One sign-in runs at a
+time, and one that fails or is left unfinished is not started again for five
+minutes. What the command prints goes to the log, so on a machine with no
+browser `aws sso login --no-browser --profile work` leaves the address and
+code to open elsewhere there. Profiles in the `[sso-session]` format renew
+quietly until the session ends, so the sign-in is needed far less often.
+
 ## Adding Private Apps
 
 Create a `private/` directory (gitignored) and a `private.go` file:

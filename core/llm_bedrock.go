@@ -46,6 +46,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -357,7 +358,10 @@ func (c *bedrockCreds) get() (awsCreds, error) {
 	if fresh {
 		return c.cur, nil
 	}
-	creds, expires, err := resolveAWSCreds(c.profile, c.explicit)
+	creds, expires, err := resolveAWSCredsFn(c.profile, c.explicit)
+	if err != nil && awsSignInExpired(err) && refreshAWSSignIn() {
+		creds, expires, err = resolveAWSCredsFn(c.profile, c.explicit)
+	}
 	if err != nil {
 		return awsCreds{}, err
 	}
@@ -368,6 +372,120 @@ func (c *bedrockCreds) get() (awsCreds, error) {
 		Debug("[bedrock]: credentials from %s, expire %s", creds.Source, expires.Format(time.RFC3339))
 	}
 	return creds, nil
+}
+
+// resolveAWSCredsFn is resolveAWSCreds, a variable so a test can stand in for
+// the AWS CLI.
+var resolveAWSCredsFn = resolveAWSCreds
+
+// --- signing in again ---------------------------------------------------------
+//
+// An SSO session ends (eight hours by default, as the organisation sets it),
+// and then only a person can sign in again: `aws sso login` opens a browser.
+// GOHORT_AWS_AUTH_REFRESH names that command, as the operator would type it
+// (e.g. "aws sso login --profile work"). When resolving credentials fails
+// because the sign-in expired, it is run once and the credentials resolved
+// again, so the call waits for the sign-in rather than failing. Unset, nothing
+// runs and the error says to sign in, as before.
+//
+// One sign-in at a time for the whole process: every tier and every call that
+// finds the session expired while one is open waits for it. A sign-in that
+// fails or is abandoned is not started again for awsSignInCooldown, so a
+// browser does not open on every call while nobody is there.
+
+// AWSAuthRefreshEnv is the variable naming the sign-in command.
+const AWSAuthRefreshEnv = "GOHORT_AWS_AUTH_REFRESH"
+
+const (
+	// awsSignInTimeout is how long a sign-in may wait for its person.
+	awsSignInTimeout = 5 * time.Minute
+	// awsSignInCooldown is how long after a failed sign-in none is started.
+	awsSignInCooldown = 5 * time.Minute
+	// awsSignInFresh is how recent a successful sign-in must be for a
+	// caller that waited on it to retry without starting another.
+	awsSignInFresh = time.Minute
+)
+
+var awsSignIn struct {
+	sync.Mutex
+	lastOK, lastFail time.Time
+}
+
+// runAWSSignIn runs the sign-in command, logging what it prints as it prints
+// it: on a machine with no browser, `aws sso login --no-browser` prints the
+// address and code to open elsewhere, and the log is where they are found.
+var runAWSSignIn = func(ctx context.Context, command string) error {
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.CommandContext(ctx, "cmd", "/C", command)
+	} else {
+		cmd = exec.CommandContext(ctx, "sh", "-c", command)
+	}
+	pr, pw := io.Pipe()
+	cmd.Stdout, cmd.Stderr = pw, pw
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		sc := bufio.NewScanner(pr)
+		for sc.Scan() {
+			if line := strings.TrimSpace(sc.Text()); line != "" {
+				Log("[bedrock] sign-in: %s", line)
+			}
+		}
+	}()
+	err := cmd.Run()
+	pw.Close()
+	<-done
+	return err
+}
+
+// awsSignInExpired reports whether err is the CLI saying the SSO sign-in has
+// run out or never happened, the failures a sign-in fixes. It matches the
+// CLI's words, not gohort's: every resolve error here ends by suggesting
+// `aws sso login`, so "sso login" in the text says nothing (a missing aws
+// CLI would otherwise open a sign-in).
+func awsSignInExpired(err error) bool {
+	msg := strings.ToLower(err.Error())
+	if !strings.Contains(msg, "sso") {
+		return false
+	}
+	for _, w := range []string{"expired", "invalid", "does not exist"} {
+		if strings.Contains(msg, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// refreshAWSSignIn runs GOHORT_AWS_AUTH_REFRESH, or waits for the one already
+// running, and reports whether resolving again is worth trying.
+func refreshAWSSignIn() bool {
+	command := strings.TrimSpace(os.Getenv(AWSAuthRefreshEnv))
+	if command == "" {
+		return false
+	}
+	awsSignIn.Lock()
+	defer awsSignIn.Unlock()
+	now := time.Now()
+	if now.Sub(awsSignIn.lastOK) < awsSignInFresh {
+		return true // a sign-in finished while this call waited for it
+	}
+	if now.Sub(awsSignIn.lastFail) < awsSignInCooldown {
+		return false
+	}
+	Log("[bedrock] the AWS sign-in has expired: running %s (%s), waiting up to %s for it", AWSAuthRefreshEnv, command, awsSignInTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), awsSignInTimeout)
+	defer cancel()
+	started := time.Now()
+	if err := runAWSSignIn(ctx, command); err != nil {
+		awsSignIn.lastFail = time.Now()
+		Warn("[bedrock] AWS sign-in did not complete after %s: %v. Not tried again for %s; sign in by hand meanwhile.",
+			time.Since(started).Round(time.Second), err, awsSignInCooldown)
+		return false
+	}
+	awsSignIn.lastOK = time.Now()
+	Log("[bedrock] AWS sign-in completed in %s", time.Since(started).Round(time.Second))
+	return true
 }
 
 // awsCredsFromFile reads ~/.aws/credentials (or $AWS_SHARED_CREDENTIALS_FILE)
