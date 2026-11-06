@@ -34,6 +34,22 @@ func (t *chatTurn) outsideAudience() bool {
 	return t != nil && agenthost.IsOutsideScope(t.user)
 }
 
+// outsiderNotServedReply is what someone gets who is not the owner, writing
+// through a transport that marks its outsiders (a Teams bot), to an agent not
+// set to serve people outside gohort. Fixed text: no turn runs.
+const outsiderNotServedReply = "This assistant only answers its owner here."
+
+// outsiderNotServed reports a run from someone a transport marks as outside,
+// who is not the owner, to an agent that does not serve people outside. Such
+// a run used to go ahead as the owner's, in the owner's own memory: every
+// colleague who wrote to a Teams bot, and on a bot open to every tenant
+// anyone at all, had the agent's notes, findings and history of its owner.
+// Now it is refused, and the owner who wants them answered sets the agent to
+// serve people outside, where each runs in a store of their own.
+func outsiderNotServed(run AgentSyncRun, target AgentRecord) bool {
+	return agenthost.IsOutsideScope(strings.TrimSpace(run.OutsideScope)) && !run.SenderIsOwner && !target.OutsideAudience
+}
+
 // outsideRunAs is who a run executes as once a transport's proposed outside
 // store is weighed: that store, for a sender who is not the owner on an agent
 // that serves people outside gohort; otherwise who it already was. A proposal
@@ -146,6 +162,45 @@ func outsideSpendUSD(a AgentRecord) float64 {
 	return outsideDefaultSpendUSD
 }
 
+// The ceiling across ALL of an agent's people outside, an administrator's
+// tunable rather than the owner's. The per-person limits above are only as
+// good as the person id, and a chat widget often gives each anonymous visitor
+// a fresh one: every new id came with its own turns and its own dollar, and
+// nothing capped the agent as a whole. On a hosted model that is the
+// deployment's money; on a local one it is everyone else's capacity.
+const (
+	tuneOutsideAllPerDay   = "tune_outside_all_per_day"
+	tuneOutsideAllSpendUSD = "tune_outside_all_spend_usd"
+)
+
+func init() {
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: tuneOutsideAllPerDay, Category: "People outside gohort",
+		Label:  "Turns per 24 hours, all outside people, per agent",
+		Help:   "The most turns one agent takes from people outside gohort in a day, all of them together.",
+		Detail: "Each person also has the agent's own per-person limits. This is the ceiling over all of them, because a platform can give every visitor a fresh id and each new id starts with its own allowance. Past it, every outside person on that agent is told to try again later, and the owner gets one notice a day.",
+		Kind:   KindInt, Default: 2000, Min: 10, Max: 1000000})
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: tuneOutsideAllSpendUSD, Category: "People outside gohort",
+		Label:  "Spend per 24 hours, all outside people, per agent (US$)",
+		Help:   "The most one agent spends on people outside gohort in a day, all of them together. Counted from recorded usage, so an estimate.",
+		Detail: "The ceiling over every outside person on an agent, beside each person's own limit, so fresh ids cannot add up to an open budget. Spend is estimated from recorded usage and the prices under Costs; with no prices set, it counts nothing.",
+		Kind:   KindFloat, Decimals: 2, Default: 20, Min: 0.5, Max: 100000})
+}
+
+// outsideAllBudget is the spend allowance for all of an agent's people
+// outside, together, in the loop's rolling 24 hours.
+func outsideAllBudget(a AgentRecord) SharedBudget {
+	return SharedBudget{
+		Key:           "outside-all|" + a.ID,
+		Label:         "everyone outside gohort on this agent",
+		DailySpendUSD: TuneFloat(tuneOutsideAllSpendUSD),
+	}
+}
+
+// outsideTurnsAllTable holds an agent's recent outside turns, all people
+// together, in the root store: the people's own stores are theirs, and the
+// count has to see across them.
+const outsideTurnsAllTable = "outside_turns_all"
+
 // outsideBudget is one person's spend allowance on one agent, in the loop's
 // rolling 24 hours beside the agent's own.
 func outsideBudget(person string, a AgentRecord) SharedBudget {
@@ -179,6 +234,9 @@ func outsideAdmit(db Database, person string, a AgentRecord, now time.Time) (ok 
 	if over, spent, limit, _ := OverDailySpend([]SharedBudget{outsideBudget(person, a)}); over {
 		return false, fmt.Sprintf("spent $%.2f of $%.2f in 24 hours", spent, limit)
 	}
+	if over, spent, limit, _ := OverDailySpend([]SharedBudget{outsideAllBudget(a)}); over {
+		return false, fmt.Sprintf("everyone outside together spent $%.2f of $%.2f in 24 hours", spent, limit)
+	}
 	if db == nil {
 		return false, "no store for this person"
 	}
@@ -203,9 +261,59 @@ func outsideAdmit(db Database, person string, a AgentRecord, now time.Time) (ok 
 	if len(kept) >= outsidePerDay(a) {
 		return false, fmt.Sprintf("%d turns in 24 hours", len(kept))
 	}
+	var all outsideTurns
+	if RootDB != nil {
+		RootDB.Get(outsideTurnsAllTable, a.ID, &all)
+	}
+	allKept := all.At[:0:0]
+	for _, t := range all.At {
+		if t.After(dayAgo) {
+			allKept = append(allKept, t)
+		}
+	}
+	if max := TuneInt(tuneOutsideAllPerDay); max > 0 && len(allKept) >= max {
+		return false, fmt.Sprintf("everyone outside together took %d turns in 24 hours", len(allKept))
+	}
 	rec.At = append(kept, now)
 	db.Set(outsideTurnsTable, a.ID, rec)
+	if RootDB != nil {
+		all.At = append(allKept, now)
+		RootDB.Set(outsideTurnsAllTable, a.ID, all)
+	}
 	return true, ""
+}
+
+// outsideBusyReply is what a person sending a message while their last one is
+// still being answered is told. Fixed text, as the limit reply is.
+const outsideBusyReply = "One moment: I'm still answering your last message."
+
+// outsideInFlight is the outside people with a turn running, per agent: one
+// turn at a time each, so one person cannot hold every slot the owner's
+// integrations share and turn everyone else away.
+var outsideInFlight = struct {
+	sync.Mutex
+	on map[string]bool
+}{on: map[string]bool{}}
+
+// outsideOneAtATime takes the person's one turn on agent, or reports they
+// already have one running. done gives it back, once however often it is
+// called.
+func outsideOneAtATime(person, agent string) (done func(), ok bool) {
+	key := person + "|" + agent
+	outsideInFlight.Lock()
+	defer outsideInFlight.Unlock()
+	if outsideInFlight.on[key] {
+		return func() {}, false
+	}
+	outsideInFlight.on[key] = true
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			outsideInFlight.Lock()
+			delete(outsideInFlight.on, key)
+			outsideInFlight.Unlock()
+		})
+	}, true
 }
 
 // noteOutsideLimit tells the owner a person outside reached a limit. One

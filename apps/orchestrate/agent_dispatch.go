@@ -1635,6 +1635,11 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// Nobody is watching a continuing run (see its gate below), so what it
 	// starts in turn is held the same way.
 	cr := &continuingRun{T: T, ctx: withUnattended(ctx), run: run}
+	defer func() {
+		if cr.outsideDone != nil {
+			cr.outsideDone()
+		}
+	}()
 	if !cr.admit() {
 		return cr.ret, cr.retErr
 	}
@@ -1679,6 +1684,9 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 // the method it was cut from; the method is now the order of the phases and
 // the defers between them.
 type continuingRun struct {
+	// outsideDone gives back a person outside's one turn at a time
+	// (outsideOneAtATime) when the run ends, however it ends.
+	outsideDone       func()
 	T                 *OrchestrateApp
 	ctx               context.Context
 	run               AgentSyncRun
@@ -1799,6 +1807,10 @@ func (cr *continuingRun) admit() bool {
 	// A transport's person outside (a Teams DM, a group) runs in their own
 	// store when the agent serves people outside and they are not the owner.
 	// Otherwise the run is the owner's, as it always was.
+	if outsiderNotServed(run, cr.target) {
+		Log("[outside] someone who is not %s wrote to %s through a transport, and it does not serve people outside: answered with the fixed reply", cr.agentOwner, cr.target.ID)
+		return cr.exit(AgentSyncResult{Text: outsiderNotServedReply}, nil)
+	}
 	cr.runtimeUser = outsideRunAs(cr.runtimeUser, run, cr.target)
 	if err := outsideRunRefusal(cr.runtimeUser, cr.target); err != nil {
 		return cr.exit(AgentSyncResult{}, err)
@@ -1807,6 +1819,14 @@ func (cr *continuingRun) admit() bool {
 	// spend what the limit was saving (outside_audience.go).
 	if agenthost.IsOutsideScope(cr.runtimeUser) {
 		now := time.Now()
+		// One turn at a time each: a second message while the first is still
+		// being answered gets a fixed reply, and is not counted.
+		done, free := outsideOneAtATime(cr.runtimeUser, cr.target.ID)
+		if !free {
+			Log("[outside] %s on %s: a turn is already running, answered with the busy reply", cr.runtimeUser, cr.target.ID)
+			return cr.exit(AgentSyncResult{Text: outsideBusyReply}, nil)
+		}
+		cr.outsideDone = done
 		if ok, why := outsideAdmit(UserDB(T.DB, cr.runtimeUser), cr.runtimeUser, cr.target, now); !ok {
 			Log("[outside] %s on %s: over a limit (%s), answered with the fixed reply", cr.runtimeUser, cr.target.ID, why)
 			noteOutsideLimit(cr.agentOwner, cr.target, cr.runtimeUser, why, now)
@@ -2449,7 +2469,7 @@ func (cr *continuingRun) configureLoop() {
 	// their own spend allowance beside the agent's.
 	if agenthost.IsOutsideScope(cr.runtimeUser) {
 		cr.loopCfg.ToolFallbackResolver, cr.loopCfg.DynamicTools = nil, nil
-		cr.loopCfg.SharedBudgets = append(cr.loopCfg.SharedBudgets, outsideBudget(cr.runtimeUser, cr.target))
+		cr.loopCfg.SharedBudgets = append(cr.loopCfg.SharedBudgets, outsideBudget(cr.runtimeUser, cr.target), outsideAllBudget(cr.target))
 	}
 }
 

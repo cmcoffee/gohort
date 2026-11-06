@@ -3,6 +3,7 @@ package orchestrate
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -31,10 +32,10 @@ func TestAnOutsidePersonReachesOnlyAnAgentSetToServeThem(t *testing.T) {
 	}
 }
 
-// What reaches an outside person from underneath is fixed, whatever the
-// agent's share switches say: its saved notes, read-only, so it knows its job;
-// never the owner's cortex or what the agent worked out across the owner's
-// conversations. Published documents still reach them.
+// What reaches an outside person from underneath: its saved notes only when
+// the owner shares them, read-only; never the owner's cortex or what the agent
+// worked out across the owner's conversations, whatever the switches say.
+// Published documents still reach them.
 func TestAnOutsidePersonGetsTheAgentsNotesAndNothingOfTheOwners(t *testing.T) {
 	person := agenthost.OutsideScope("key1", "cust-7")
 	for _, rec := range []AgentRecord{
@@ -45,8 +46,11 @@ func TestAnOutsidePersonGetsTheAgentsNotesAndNothingOfTheOwners(t *testing.T) {
 		if !turn.outsideAudience() {
 			t.Fatal("the turn does not read as an outside person's")
 		}
-		if !turn.readsOwnerFacts() {
-			t.Error("the agent's saved notes did not come with it")
+		// The saved notes follow the owner's "Its saved notes" switch, as for
+		// anyone the agent is shared with: off by default, so what came up in
+		// the owner's own chats does not reach every customer.
+		if got, want := turn.readsOwnerFacts(), rec.ShareMemoryExplicit; got != want {
+			t.Errorf("saved notes reach a person outside: %v, want %v (switch %v)", got, want, rec.ShareMemoryExplicit)
 		}
 		if turn.readsOwnerCortex() {
 			t.Error("the owner's cortex reached a person outside")
@@ -74,11 +78,18 @@ func TestAnOutsidePersonsNotesStayTheirs(t *testing.T) {
 	ann, ben := agenthost.OutsideScope("key1", "ann"), agenthost.OutsideScope("key1", "ben")
 	StoreMemoryFact(UserDB(root, ann), ns, "ann's order number is 4471")
 
-	turn := sharedTurn("alice", ann, AgentRecord{ID: "a1", OutsideAudience: true})
+	// The owner shares the agent's notes: hers come first, the agent's under.
+	turn := sharedTurn("alice", ann, AgentRecord{ID: "a1", OutsideAudience: true, ShareMemoryExplicit: true})
 	turn.app, turn.udb = app, UserDB(root, ann)
 	got := turn.facts()
 	if len(got) != 2 || got[0].Note != "ann's order number is 4471" || got[1].Note != "answer billing questions only" {
 		t.Fatalf("ann's prompt facts = %+v; want hers over the agent's", got)
+	}
+	// Not shared, the default: hers alone.
+	plain := sharedTurn("alice", ann, AgentRecord{ID: "a1", OutsideAudience: true})
+	plain.app, plain.udb = app, UserDB(root, ann)
+	if got := plain.facts(); len(got) != 1 || got[0].Note != "ann's order number is 4471" {
+		t.Fatalf("with the notes not shared, ann's prompt facts = %+v; want hers alone", got)
 	}
 
 	other := sharedTurn("alice", ben, AgentRecord{ID: "a1", OutsideAudience: true})
@@ -288,7 +299,8 @@ func TestAnOutsideRunIsWiredForCredentialsToolsAndSpend(t *testing.T) {
 	for _, want := range []string{
 		"cr.subSess.DeniedCredentials = outsideCredentialDeny(cr.subSess.DeniedCredentials, cr.agentOwner, cr.target)",
 		"cr.loopCfg.ToolFallbackResolver, cr.loopCfg.DynamicTools = nil, nil",
-		"cr.loopCfg.SharedBudgets = append(cr.loopCfg.SharedBudgets, outsideBudget(cr.runtimeUser, cr.target))",
+		"cr.loopCfg.SharedBudgets = append(cr.loopCfg.SharedBudgets, outsideBudget(cr.runtimeUser, cr.target), outsideAllBudget(cr.target))",
+		"done, free := outsideOneAtATime(cr.runtimeUser, cr.target.ID)",
 	} {
 		if !strings.Contains(string(src), want) {
 			t.Errorf("the continuing run no longer does: %s", want)
@@ -296,10 +308,10 @@ func TestAnOutsideRunIsWiredForCredentialsToolsAndSpend(t *testing.T) {
 	}
 }
 
-// A transport's person outside runs in their own store only when the agent
-// serves people outside gohort and they are not the owner. Anywhere else the
-// run is the owner's, as before: a Teams bot whose agent does not serve
-// outside answers as it always did, and is not refused.
+// A transport's person outside runs in their own store when the agent serves
+// people outside gohort and they are not the owner. To an agent that does not
+// serve them they are refused with a fixed reply, rather than run in the
+// owner's own memory; the owner on their own bot runs as themselves.
 func TestATransportsOutsiderRunsApartOnlyWhenTheAgentServesThem(t *testing.T) {
 	df := newDispatchFixture(t, FakeTurn{Content: "Happy to help.", Repeat: true})
 	scope := agenthost.OutsideScope("teams-abc", "aad-ada")
@@ -307,10 +319,18 @@ func TestATransportsOutsiderRunsApartOnlyWhenTheAgentServesThem(t *testing.T) {
 		return df.udb.Get(outsidePeopleTable, df.agent.ID+"|"+scope, &outsidePerson{})
 	}
 
-	// The agent does not serve outside: the owner's run, and no refusal.
-	df.run(AgentSyncRun{Kind: "channel", SubSessionID: "t1", Message: "hi", OutsideScope: scope})
-	if indexed() {
-		t.Error("an agent that does not serve outside ran a Teams sender apart")
+	// The agent does not serve outside: refused with the fixed reply, and no
+	// turn runs. It used to run as the owner's, in the owner's own memory.
+	calls := df.llm.Calls()
+	if res := df.run(AgentSyncRun{Kind: "channel", SubSessionID: "t1", Message: "hi", OutsideScope: scope}); res.Text != outsiderNotServedReply {
+		t.Errorf("someone else on Teams, to an agent that does not serve outside, got %q", res.Text)
+	}
+	if df.llm.Calls() != calls || indexed() {
+		t.Error("a refused Teams sender still ran a turn")
+	}
+	// The owner on their own bot, the agent not serving outside: their run.
+	if res := df.run(AgentSyncRun{Kind: "channel", SubSessionID: "t0", Message: "hi", OutsideScope: scope, SenderIsOwner: true}); res.Text == outsiderNotServedReply {
+		t.Error("the owner was refused their own agent")
 	}
 
 	df.agent.OutsideAudience = true
@@ -416,4 +436,60 @@ func TestAnOutsidePersonIsNotShownTheOwnersBulletins(t *testing.T) {
 	if got := outside.withBulletins("the turn's own notes"); got != "the turn's own notes" {
 		t.Errorf("an outside turn was shown the owner's board: %q", got)
 	}
+}
+
+// The per-person limits are only as good as the person id, and a platform can
+// give every visitor a fresh one. An administrator's ceiling counts every
+// outside person on an agent together: past it, a brand-new id is refused too.
+func TestFreshIdsDoNotAddUpToAnOpenAgent(t *testing.T) {
+	prevRoot := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = prevRoot })
+	tdb := &DBase{Store: kvlite.MemStore()}
+	tdb.Set(WebTable, tuneOutsideAllPerDay, float64(10))
+	SetTunablesDB(tdb)
+	t.Cleanup(func() { SetTunablesDB(nil) })
+
+	a := AgentRecord{ID: "a1", OutsideAudience: true}
+	now := time.Date(2026, 11, 6, 9, 0, 0, 0, time.UTC)
+	for i := 0; i < 10; i++ {
+		person := agenthost.OutsideScope("widget", fmt.Sprintf("visitor-%d", i))
+		if ok, why := outsideAdmit(&DBase{Store: kvlite.MemStore()}, person, a, now); !ok {
+			t.Fatalf("visitor %d refused under the ceiling: %s", i, why)
+		}
+	}
+	ok, why := outsideAdmit(&DBase{Store: kvlite.MemStore()}, agenthost.OutsideScope("widget", "visitor-new"), a, now)
+	if ok || !strings.Contains(why, "everyone outside together") {
+		t.Errorf("a fresh id past the agent's ceiling: ok=%v %q", ok, why)
+	}
+	if ok, _ := outsideAdmit(&DBase{Store: kvlite.MemStore()}, agenthost.OutsideScope("widget", "visitor-other-agent"), AgentRecord{ID: "a2", OutsideAudience: true}, now); !ok {
+		t.Error("one agent's ceiling held another agent")
+	}
+	if b := outsideAllBudget(a); b.DailySpendUSD <= 0 || b.Key != "outside-all|a1" {
+		t.Errorf("the spend ceiling: %+v", b)
+	}
+}
+
+// One turn at a time each: a person with a turn running is told so, and the
+// turn is theirs again once it ends, however often it is given back.
+func TestAPersonOutsideHasOneTurnAtATime(t *testing.T) {
+	done, ok := outsideOneAtATime("outside:k:ann", "a1")
+	if !ok {
+		t.Fatal("the first turn was refused")
+	}
+	if _, ok := outsideOneAtATime("outside:k:ann", "a1"); ok {
+		t.Error("a second turn ran beside the first")
+	}
+	if other, ok := outsideOneAtATime("outside:k:ben", "a1"); !ok {
+		t.Error("one person's turn held another")
+	} else {
+		other()
+	}
+	done()
+	done()
+	again, ok := outsideOneAtATime("outside:k:ann", "a1")
+	if !ok {
+		t.Fatal("the turn was not given back")
+	}
+	again()
 }

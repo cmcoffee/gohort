@@ -189,3 +189,20 @@ exactly as today.
    answering as it did until its owner changes it.
 7. On Teams, **anyone but the owner** is an outside person when the bound
    agent serves people outside; with that switch off, Teams behaves as before.
+
+Revised after the security review (2026-11-06), for use at work, where the
+outside people are customers or a whole organisation:
+
+- Decision 1: the agent's saved notes reach outside turns **only when the owner
+  shares them** (the agent's "Its saved notes" switch, off by default), as for
+  anyone else the agent is shared with. Notes are written in the owner's own
+  chats and hold whatever came up there.
+- Decision 7: with the switch off, a Teams message from anyone but the owner is
+  **refused** with a fixed reply. It used to run as the owner's turn, in the
+  owner's own memory, for every colleague and, on a bot open to every tenant,
+  for anyone.
+- An administrator's ceiling over **all** of an agent's outside people (turns
+  and spend per 24 hours, Admin tunables), beside the per-person limits, and
+  **one turn at a time** per person: a platform can give every visitor a fresh
+  id, and each new id started with its own allowance.
+- An outside turn runs **no machine** and sees **no bulletins**.

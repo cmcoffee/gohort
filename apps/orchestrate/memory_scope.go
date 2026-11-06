@@ -281,10 +281,13 @@ func (t *chatTurn) readsOwnerReference() bool {
 // Default OFF, because this layer has never travelled and turning it on by
 // default would disclose, on every existing share, whatever came up while the
 // owner was talking to the agent alone.
+//
+// A person outside gohort goes by the same switch. They read the notes
+// regardless at first, "so the agent knows its job", but notes are written in
+// the owner's own chats and hold whatever came up there, and an agent serving
+// customers would hand that to every one of them. The owner who wants the
+// notes to travel turns the switch on, knowing who it reaches.
 func (t *chatTurn) readsOwnerFacts() bool {
-	if t.outsideAudience() {
-		return t.memoryUnderlay() != "" // read-only, so the agent knows its job
-	}
 	return t.memoryUnderlay() != "" &&
 		settingIsOn(RootDB, t.agent, defaultShareNotes)
 }

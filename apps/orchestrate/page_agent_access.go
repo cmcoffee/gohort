@@ -891,7 +891,7 @@ func (ap *accessPage) shareSections() []ui.Section {
 			Title:    "People outside gohort",
 			Subtitle: "Whether people who are not gohort users can talk to this agent, through a platform's API key marked for an outside audience.",
 			Detail: "For example a chat widget on a customer portal, whose server calls /v1 with a key marked \"For people outside gohort\" (Account, API keys, Access) and names the person each call is for.\n\n" +
-				"Each person runs in a store of their own: what they tell the agent, and their conversations, stay with them and never reach you or anyone else. The agent's saved notes come with it, read-only, so it knows its job; your cortex and its saved findings do not. Nothing they say changes the agent's own memory. Your own chats with it are unchanged.\n\n" +
+				"Each person runs in a store of their own: what they tell the agent, and their conversations, stay with them and never reach you or anyone else. The agent's saved notes reach them only if you share them (\"Its saved notes\", below), read-only; your cortex and its saved findings never do. Nothing they say changes the agent's own memory. Your own chats with it are unchanged.\n\n" +
 				"The agent still needs to be reachable from outside (above), and the key has to list it. They reach only the tools and credentials you lend them below, never your other agents.",
 			Body: ui.FormPanel{
 				Source:  ap.patchURL,
@@ -899,7 +899,7 @@ func (ap *accessPage) shareSections() []ui.Section {
 				Method:  "PATCH",
 				Fields: []ui.FormField{
 					{Field: "outside_audience", Type: "toggle", Label: "Serves people outside gohort",
-						Help: "Off: an outside-audience key's calls to this agent are refused."},
+						Help: "Off: an outside-audience key's calls to this agent are refused, and so are Teams messages from anyone but you."},
 					{Field: "outside_tools", Type: "checklist", Label: "Tools they may use",
 						Options:     outsideToolOptions(ap.user, ap.agent),
 						Placeholder: "(this agent carries nothing that can be lent)",

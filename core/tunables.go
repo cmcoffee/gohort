@@ -198,6 +198,7 @@ var TunableCategories = []string{
 	"Scheduling",          // cron, scheduled updates, watches, run sweeps
 	"Storage & retention", // disk floors and how long things are kept
 	"Sign-in & security",
+	"People outside gohort", // ceilings over everyone an agent serves outside gohort
 	"Exports",
 	"Bridges",
 	"Scribe",
