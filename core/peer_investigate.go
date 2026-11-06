@@ -97,6 +97,12 @@ var PeerExecFunc func(ctx context.Context, user, applianceID, command string) (s
 // closely enough that a command which would time out locally times out here.
 const peerExecTimeout = 5 * time.Minute
 
+// peerExecRatePerMin caps commands per key per minute, apart from the general
+// peer ceiling, which is sized for an embedder grinding a corpus. A command
+// spends a shell on a machine here: an investigation sends one every few
+// seconds, and a key sending more than two a second is not investigating.
+const peerExecRatePerMin = 120
+
 // HandlePeerExec serves POST /api/peer/v1/exec.
 func HandlePeerExec(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -112,6 +118,12 @@ func HandlePeerExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
+	if !peerCapRateAllow(k.ID, PeerCapExec, peerExecRatePerMin) {
+		w.Header().Set("Retry-After", "60")
+		peerDeny(w, http.StatusTooManyRequests, fmt.Sprintf(
+			"commands are limited to %d per minute per key: each one spends a shell on a machine here", peerExecRatePerMin))
+		return
+	}
 	if PeerExecFunc == nil {
 		peerDeny(w, http.StatusServiceUnavailable, "this instance offers no command transport")
 		return

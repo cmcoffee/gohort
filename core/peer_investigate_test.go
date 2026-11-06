@@ -245,3 +245,36 @@ func TestEveryPeerRouteIsSessionAuthExempt(t *testing.T) {
 		}
 	}
 }
+
+// Commands carry their own ceiling, well below the general one: each spends
+// a shell on a machine here. Past it the key gets 429 and nothing runs.
+func TestPeerExecIsRateLimitedSeparately(t *testing.T) {
+	peerImageDB(t)
+	pk, _ := MintPeerKey("mac", []string{PeerCapExec}, 0)
+	pk, err := SetPeerKeyScope(pk.ID, "user1", []string{"app-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if peerExecRatePerMin >= defaultPeerRatePerMin {
+		t.Fatalf("exec ceiling %d is not below the general %d", peerExecRatePerMin, defaultPeerRatePerMin)
+	}
+	prev := PeerExecFunc
+	ran := 0
+	PeerExecFunc = func(context.Context, string, string, string) (string, error) {
+		ran++
+		return "ok", nil
+	}
+	t.Cleanup(func() { PeerExecFunc = prev })
+	auth := peerAuth(t, pk)
+	var lastCode int
+	for i := 0; i < peerExecRatePerMin+1; i++ {
+		r := httptest.NewRequest(http.MethodPost, "/api/peer/v1/exec", strings.NewReader(`{"appliance_id":"app-1","command":"true"}`))
+		r.Header.Set("Authorization", "Bearer "+auth)
+		w := httptest.NewRecorder()
+		HandlePeerExec(w, r)
+		lastCode = w.Code
+	}
+	if lastCode != http.StatusTooManyRequests || ran != peerExecRatePerMin {
+		t.Errorf("call %d → %d after %d ran, want 429 once %d have run", peerExecRatePerMin+1, lastCode, ran, peerExecRatePerMin)
+	}
+}

@@ -86,3 +86,34 @@ func TestExecLocalSucceeds(t *testing.T) {
 		t.Errorf("got %q, want %q", out, "hello")
 	}
 }
+
+// A command run for a peer starts from what a shell needs, not from this
+// process's environment, which holds its API keys; the system's own
+// variables still reach it. Run here, the environment is inherited as always.
+func TestACommandRunForAPeerSeesNoneOfThisProcesssEnvironment(t *testing.T) {
+	t.Setenv("GOHORT_TEST_DAEMON_SECRET", "daemon-secret-value")
+	T := &Servitor{}
+	cmd := `echo "d=${GOHORT_TEST_DAEMON_SECRET:-none} s=${SYSTEM_VAR:-none} p=${PATH:+set}"`
+	sys := []string{"SYSTEM_VAR=lent"}
+	out, err := T.exec_local_ctx(withRawCapture(context.Background()), cmd, "", sys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "d=none") || !strings.Contains(out, "s=lent") || !strings.Contains(out, "p=set") {
+		t.Errorf("for a peer: %q", out)
+	}
+	out, err = T.exec_local_ctx(context.Background(), cmd, "", sys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "d=daemon-secret-value") {
+		t.Errorf("run here, the process's environment was not inherited: %q", out)
+	}
+	src, err := os.ReadFile("peer_appliance.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), "return scrubEnvValues(out, a.EnvVars), err") {
+		t.Error("a peer's command output no longer has the system's variable values scrubbed")
+	}
+}

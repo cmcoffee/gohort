@@ -844,7 +844,7 @@ func (T *Servitor) exec_local_ctx(ctx context.Context, cmd, workDir string, envV
 	if workDir != "" {
 		c.Dir = workDir
 	}
-	c.Env = append(os.Environ(), envVars...)
+	c.Env = append(localCommandBaseEnv(ctx), envVars...)
 	// Timeout kills must reap the WHOLE process tree, not just sh: a grandchild
 	// (e.g. a hung binary the probe shell invoked) otherwise survives as an
 	// orphan and keeps the inherited output pipes open, blocking CombinedOutput
@@ -1027,6 +1027,37 @@ func (T *Servitor) Main() error {
 // added to the peer protocol: the text travels instead of a handle.
 
 // rawCaptureKey marks a context whose exec returns the capture whole.
+// peerCommandEnvKeep is what a command run for a peer keeps of this
+// process's environment: what a shell needs to behave, nothing it holds.
+var peerCommandEnvKeep = map[string]bool{
+	"PATH": true, "LANG": true, "LC_ALL": true, "LC_CTYPE": true, "TERM": true,
+	"HOME": true, "USER": true, "LOGNAME": true, "SHELL": true, "TZ": true, "TMPDIR": true,
+}
+
+// localCommandBaseEnv is the environment a local command system's command
+// starts from, before the system's own variables. Run here, it is this
+// process's, as it always was. Run for a peer, it is only what a shell needs:
+// gohort's own environment holds API keys and cloud credentials, and a peer
+// key lends a machine's command, not what this instance holds.
+func localCommandBaseEnv(ctx context.Context) []string {
+	if !rawCapture(ctx) {
+		return os.Environ()
+	}
+	var env []string
+	hasPath := false
+	for _, kv := range os.Environ() {
+		name, _, _ := strings.Cut(kv, "=")
+		if peerCommandEnvKeep[name] {
+			env = append(env, kv)
+			hasPath = hasPath || name == "PATH"
+		}
+	}
+	if !hasPath {
+		env = append(env, "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+	}
+	return env
+}
+
 type rawCaptureKey struct{}
 
 // withRawCapture marks ctx for an exec run on behalf of a peer.

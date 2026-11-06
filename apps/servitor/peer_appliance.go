@@ -343,7 +343,11 @@ func (T *Servitor) registerPeerExec() {
 			if err := localCommandAllowed(a); err != nil {
 				return "", err
 			}
-			return exec.exec_local_ctx(ctx, command, a.WorkDir, a.EnvVars)
+			// The system's own variables are lent with it to run the
+			// command, not to be read back: their values are scrubbed from
+			// what goes to the peer, as for a person it is shared with.
+			out, err := exec.exec_local_ctx(ctx, command, a.WorkDir, a.EnvVars)
+			return scrubEnvValues(out, a.EnvVars), err
 		}
 		client, err := acquireConn(user, a)
 		if err != nil {
