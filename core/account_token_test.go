@@ -523,3 +523,41 @@ func TestAnOutsideKeyOpensOneDoorToAgentsOnly(t *testing.T) {
 		t.Error("an ordinary or legacy key reads as for people outside")
 	}
 }
+
+// A key's kind is read off what it holds, so a key written before keys had
+// kinds has one, or reads as several.
+func TestAKeysKindIsReadOffWhatItHolds(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		scope *TokenScope
+		want  string
+	}{
+		{"legacy unrestricted", nil, KeyKindSeveral},
+		{"nothing yet", &TokenScope{}, ""},
+		{"agents", &TokenScope{Features: []string{"openai"}, Targets: []string{"agent:a1"}}, KeyKindAgents},
+		{"agents, none ticked", &TokenScope{Features: []string{"openai"}}, KeyKindAgents},
+		{"an app", &TokenScope{Features: []string{"openai", "app:servitor"}}, KeyKindAgents},
+		{"channel", &TokenScope{Features: []string{"openai"}, Targets: []string{"channel:c"}}, KeyKindAgents},
+		{"mcp", &TokenScope{Features: []string{"mcp"}, Targets: []string{"agent:a1"}}, KeyKindMCP},
+		{"models", &TokenScope{Features: []string{"models", "openai"}, Targets: []string{"worker"}}, KeyKindModels},
+		{"proxy only", &TokenScope{Features: []string{"models"}}, KeyKindModels},
+		{"tiers before Model access", &TokenScope{Features: []string{"openai"}, Targets: []string{"lead"}}, KeyKindModels},
+		{"desktop", &TokenScope{Features: []string{"desktop"}}, KeyKindDesktop},
+		{"outside", &TokenScope{Features: []string{"openai"}, Targets: []string{"agent:a1"}, Outside: true}, KeyKindOutside},
+		{"api and mcp", &TokenScope{Features: []string{"openai", "mcp"}, Targets: []string{"agent:a1"}}, KeyKindSeveral},
+		{"tiers and agents", &TokenScope{Features: []string{"openai"}, Targets: []string{"worker", "agent:a1"}}, KeyKindSeveral},
+		{"mcp and desktop", &TokenScope{Features: []string{"mcp", "desktop"}}, KeyKindSeveral},
+	} {
+		if got := c.scope.Kind(); got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+	}
+	if !IsRawTier(" Worker ") || IsRawTier("agent:worker") {
+		t.Error("IsRawTier")
+	}
+	for _, k := range []string{KeyKindAgents, KeyKindMCP, KeyKindModels, KeyKindDesktop, KeyKindOutside} {
+		if got := (&TokenScope{Features: KeyKindDoors(k), Outside: k == KeyKindOutside}).Kind(); got != k {
+			t.Errorf("a key holding only %s's doors reads as %q", k, got)
+		}
+	}
+}

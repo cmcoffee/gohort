@@ -107,6 +107,89 @@ type TokenScope struct {
 // OpenAI-compatible Model API.
 const OutsideAudienceDoor = "openai"
 
+// A key does one thing: it is of one kind. The kind is read off what the key
+// holds rather than stored beside it, so every key written before keys had
+// kinds already has one, or reads as holding several.
+const (
+	KeyKindAgents  = "agents"  // the Model API, to your agents, app agents and channels
+	KeyKindMCP     = "mcp"     // MCP, to your agents and their tools
+	KeyKindModels  = "models"  // Model access: the raw tiers and the model proxy, no agent in front
+	KeyKindDesktop = "desktop" // the desktop app, lending its computer to your agents
+	KeyKindOutside = "outside" // the Model API, for people outside gohort
+	KeyKindSeveral = "several" // an older key holding more than one of these
+)
+
+// keyKindDoors are the features a key of each kind is made of. A raw-model key
+// holds the Model API's too, because the raw tiers are reached through /v1.
+var keyKindDoors = map[string][]string{
+	KeyKindAgents:  {"openai"},
+	KeyKindMCP:     {"mcp"},
+	KeyKindModels:  {"models", "openai"},
+	KeyKindDesktop: {"desktop"},
+	KeyKindOutside: {OutsideAudienceDoor},
+}
+
+// KeyKindDoors is the features a key of this kind is made of, nil for no kind.
+func KeyKindDoors(kind string) []string {
+	return append([]string(nil), keyKindDoors[kind]...)
+}
+
+// IsRawTier reports a target that is a model tier rather than an agent or a
+// channel.
+func IsRawTier(target string) bool {
+	t := strings.TrimSpace(target)
+	return strings.EqualFold(t, "worker") || strings.EqualFold(t, "lead")
+}
+
+// Kind is what a key of this scope is for: one of the KeyKind values, or ""
+// for a key that opens nothing yet. A nil scope, the unrestricted key from
+// before scoping, holds every kind.
+func (s *TokenScope) Kind() string {
+	if s == nil {
+		return KeyKindSeveral
+	}
+	if s.Outside {
+		return KeyKindOutside
+	}
+	has := func(f string) bool { return containsFold(s.Features, f) }
+	var tiers, reach bool
+	for _, t := range s.Targets {
+		if IsRawTier(t) {
+			tiers = true
+		} else if strings.TrimSpace(t) != "" {
+			reach = true
+		}
+	}
+	for _, f := range s.Features {
+		if strings.HasPrefix(strings.TrimSpace(f), "app:") {
+			reach = true
+		}
+	}
+	var kinds []string
+	if has("desktop") {
+		kinds = append(kinds, KeyKindDesktop)
+	}
+	if has("mcp") {
+		kinds = append(kinds, KeyKindMCP)
+	}
+	models := has("models") || tiers
+	if models {
+		kinds = append(kinds, KeyKindModels)
+	}
+	// The Model API's door is a raw-model key's too: it is an agents key when
+	// it reaches an agent, an app or a channel, or when it is all it holds.
+	if has("openai") && (reach || !models) {
+		kinds = append(kinds, KeyKindAgents)
+	}
+	switch len(kinds) {
+	case 0:
+		return ""
+	case 1:
+		return kinds[0]
+	}
+	return KeyKindSeveral
+}
+
 // ForOutsideAudience reports a key marked for people outside gohort.
 func (t *AccountToken) ForOutsideAudience() bool {
 	return t != nil && t.Scope != nil && t.Scope.Outside

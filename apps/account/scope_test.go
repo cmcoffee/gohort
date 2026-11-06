@@ -1,6 +1,7 @@
 package account
 
 import (
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -32,5 +33,86 @@ func TestAKeyScopeKeepsOnlyWhatTheEditorOffers(t *testing.T) {
 	}
 	if len(got.Targets) != 2 || got.Targets[0] != "worker" || got.Targets[1] != "lead" {
 		t.Errorf("targets: %v", got.Targets)
+	}
+}
+
+// A key is saved as one kind: its door is set from the kind, and of what was
+// posted only what that kind reaches is kept. A scope that reads as several
+// kinds, or a kind the user has not been granted, is refused.
+func TestAKeyIsSavedAsOneKind(t *testing.T) {
+	prevRoot, prevFn := RootDB, ListExternalTargetsFn
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	ListExternalTargetsFn = func(_ Database, user string) []ExternalTarget {
+		return []ExternalTarget{
+			{Value: "agent:a1", Group: "Agents"},
+			{Value: "channel:c1", Group: "Channels"},
+		}
+	}
+	t.Cleanup(func() { RootDB, ListExternalTargetsFn = prevRoot, prevFn })
+	RegisterShareableFeature(ShareableFeature{Key: "openai", Label: "Model API"})
+	RegisterShareableFeature(ShareableFeature{Key: "mcp", Label: "MCP"})
+	for _, f := range []string{"openai", "mcp", "desktop", ModelAccessFeature} {
+		SetFeatureAllowedUsers(RootDB, f, []string{"alice"})
+	}
+	T := &Account{}
+	T.DB = RootDB.(*DBase).Bucket("account")
+	tools := []string{"ask_agent"}
+	everything := &TokenScope{
+		Features: []string{"openai", "mcp", "desktop", "models"},
+		Targets:  []string{"agent:a1", "channel:c1", "worker", "lead"},
+		Tools:    &tools,
+	}
+	for _, c := range []struct {
+		kind     string
+		features string
+		targets  string
+		tools    bool
+		outside  bool
+	}{
+		{KeyKindAgents, "openai", "agent:a1,channel:c1", false, false},
+		{KeyKindMCP, "mcp", "agent:a1", true, false},
+		{KeyKindModels, "models,openai", "worker,lead", false, false},
+		{KeyKindDesktop, "desktop", "", false, false},
+		{KeyKindOutside, "openai", "agent:a1", false, true},
+	} {
+		got, err := T.kindScope("alice", c.kind, everything)
+		if err != nil {
+			t.Fatalf("%s: %v", c.kind, err)
+		}
+		if f := strings.Join(got.Features, ","); f != c.features {
+			t.Errorf("%s: features %q, want %q", c.kind, f, c.features)
+		}
+		if tg := strings.Join(got.Targets, ","); tg != c.targets {
+			t.Errorf("%s: targets %q, want %q", c.kind, tg, c.targets)
+		}
+		if (got.Tools != nil) != c.tools || got.Outside != c.outside {
+			t.Errorf("%s: tools %v outside %v", c.kind, got.Tools, got.Outside)
+		}
+		if k := got.Kind(); k != c.kind {
+			t.Errorf("%s: the saved key reads as %q", c.kind, k)
+		}
+	}
+	// No kind named: the one the scope reads as.
+	if got, err := T.kindScope("alice", "", &TokenScope{Features: []string{"mcp"}, Targets: []string{"agent:a1"}}); err != nil || got.Kind() != KeyKindMCP {
+		t.Errorf("an MCP scope with no kind named: %+v %v", got, err)
+	}
+	if _, err := T.kindScope("alice", "", everything); err == nil {
+		t.Error("a scope of several kinds was saved")
+	}
+	if got, err := T.kindScope("alice", "", &TokenScope{}); err != nil || got.Kind() != "" {
+		t.Errorf("an empty scope stays the key that opens nothing: %+v %v", got, err)
+	}
+	if _, err := T.kindScope("alice", "made-up", nil); err == nil {
+		t.Error("a kind that does not exist was saved")
+	}
+	// Bob has been granted nothing.
+	if _, err := T.kindScope("bob", KeyKindMCP, nil); err == nil {
+		t.Error("a kind the user was not granted was saved")
+	}
+	if k := keyKinds("bob"); len(k) != 0 {
+		t.Errorf("bob is offered kinds he was not granted: %v", k)
+	}
+	if k := strings.Join(keyKinds("alice"), ","); k != "agents,mcp,models,desktop,outside" {
+		t.Errorf("alice's kinds: %s", k)
 	}
 }
