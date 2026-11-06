@@ -994,6 +994,8 @@
               renderRows();
             }
             if (d && typeof d.message === 'string' && d.message) showToast(d.message);
+            // What the server derives from it (a state pill) comes in too.
+            reload(true);
           }).catch(function(err){
             // The server refused (it may have its own rules about what can be
             // switched), so the row must stop claiming otherwise.

@@ -90,3 +90,29 @@ func TestTableCellsTruncateRatherThanCrush(t *testing.T) {
 		t.Error("the stacked phone layout must wrap and break words, not clip them")
 	}
 }
+
+// A row's switch, once saved, brings the row's other fields up to date: a
+// state the server works out from the switch (a pill, and the colour a card
+// takes from it) read the old state beside the new switch until the page was
+// reloaded. The quiet reload runs on success only; a refusal puts the record
+// back instead.
+func TestARowsSwitchRefreshesWhatTheServerDerives(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("assets", "runtime", "10_basics.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	start := strings.Index(src, "if (act.type === 'toggle') {")
+	if start < 0 {
+		t.Fatal("the toggle row action is gone")
+	}
+	block := src[start:]
+	ok := strings.Index(block, "}).then(function(d){")
+	fail := strings.Index(block, "}).catch(function(err){")
+	if ok < 0 || fail < ok {
+		t.Fatal("could not find the toggle's save handlers")
+	}
+	if !strings.Contains(block[ok:fail], "reload(true)") {
+		t.Error("a saved switch does not reload its table, so what the server derives from it stays stale")
+	}
+}

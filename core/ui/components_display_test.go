@@ -94,7 +94,13 @@ func TestARowToggleRedrawsItsRow(t *testing.T) {
 	if i < 0 {
 		t.Fatal("the toggle row action has moved")
 	}
-	block := body[i:min(i+1800, len(body))]
+	// To the end of the switch's own code (its optional label follows), not
+	// a fixed width that the next line added to the handler pushes past.
+	end := strings.Index(body[i:], "// Optional label rendered")
+	if end < 0 {
+		t.Fatal("could not find the end of the toggle's handler")
+	}
+	block := body[i : i+end]
 
 	if strings.Count(block, "renderRows()") < 2 {
 		t.Error("the toggle no longer redraws its row on both the optimistic and the failed path — " +
