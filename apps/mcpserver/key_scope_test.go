@@ -31,6 +31,36 @@ func TestAnMCPScopedKeyNeedsNoDesktopScope(t *testing.T) {
 	}
 }
 
+// MCP takes a personal API key that is an MCP key. A desktop key, or a key
+// some other validator resolves (a bridge's connector key), names its owner
+// but carries no scope, so it is refused, as /v1 refuses it; so is a key of
+// another kind.
+func TestMCPTakesOnlyAnMCPKey(t *testing.T) {
+	prevAuth, prevRoot := AuthDB, RootDB
+	root := &DBase{Store: kvlite.MemStore()}
+	AuthSetUser(root, "user-a", "pw-a-123", false)
+	AuthDB = func() Database { return root }
+	RootDB = root
+	t.Cleanup(func() { AuthDB, RootDB = prevAuth, prevRoot })
+	RegisterAPIKeyValidator(func(secret string) (string, bool) { return "user-a", secret == "connector-secret" })
+
+	app := &MCPServer{}
+	app.DB = root.Bucket("mcpserver")
+	desktop, _ := MintDesktopKey("user-a")
+	modelAPI := MintAccountTokenScoped("user-a", "voice", &TokenScope{Features: []string{"openai"}})
+	try := func(key string) int {
+		r := httptest.NewRequest(http.MethodPost, "/mcp/", nil)
+		r.Header.Set("X-API-Key", key)
+		_, _, status := app.authorize(r, "test")
+		return status
+	}
+	for name, key := range map[string]string{"desktop": desktop, "connector": "connector-secret", "Model API": modelAPI.Token} {
+		if got := try(key); got != http.StatusForbidden {
+			t.Errorf("a %s key on MCP: %d, want 403", name, got)
+		}
+	}
+}
+
 // A key narrowed to some agents sees those agents' runs only, and an app's
 // tools run only for a user the app is granted to.
 func TestANarrowedKeySeesItsOwnAgentsAndApps(t *testing.T) {

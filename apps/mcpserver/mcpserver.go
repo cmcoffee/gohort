@@ -8,8 +8,8 @@
 // schedules (standing agents). This bridges the gap: Claude asks the agent to
 // set something up, gohort owns the durable execution and delivery.
 //
-// Auth reuses the bridge key (X-API-Key -> owner) so there is nothing new to
-// mint. Dispatch reuses core.RunChannelAgent, which is synchronous and returns
+// Auth is an MCP key, a personal access token from the Account page, in
+// X-API-Key. Dispatch reuses core.RunChannelAgent, which is synchronous and returns
 // the agent's reply: a perfect fit for an MCP tools/call round trip.
 //
 // Transport note: this speaks JSON-RPC over a single POST, not the full MCP
@@ -88,8 +88,8 @@ func (T *MCPServer) WebName() string { return "MCP Server" }
 func (T *MCPServer) WebDesc() string { return "External MCP client bridge." }
 
 // WebHidden keeps the /mcp/ endpoint mounted but drops the dashboard tile —
-// the human-facing info now lives as a section in Bridges (where its auth
-// bridge keys are managed), so a standalone tile would be redundant. The
+// the human-facing info now lives as a section in Bridges, so a standalone
+// tile would be redundant. The
 // status page at /mcp/ still renders for anyone who navigates there directly.
 func (T *MCPServer) WebHidden() bool { return true }
 
@@ -173,7 +173,7 @@ func (T *MCPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"endpoint":  scheme + "://" + r.Host + "/mcp/",
 		"transport": "Streamable HTTP (GET opens an SSE stream, POST carries JSON-RPC)",
-		"auth":      "X-API-Key header, a personal access token (create one on your Account page: /account)",
+		"auth":      "X-API-Key header, an MCP key (Account > API keys > + New API key)",
 		"tools":     strings.Join(names, ", "),
 		"agent":     defaultAgent,
 	})
@@ -184,13 +184,15 @@ func (T *MCPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 // status the HTTP status that fits it; what is logged names the action.
 //
 // Three tiers, mirroring the /v1 endpoint:
-//  1. a credential: a valid access token, bridge key or session
+//  1. a credential: the viewer's session, or a personal access token. A
+//     desktop or bridge key resolves to a user too, but carries no scope, so
+//     it is refused rather than let through unscoped, as /v1 refuses it.
 //  2. admin: may this USER use the MCP endpoint at all
-//  3. key: did the user enable "mcp" on THIS key (nil scope = legacy
-//     unscoped key, grandfathered by AllowsFeature)
+//  3. key: is THIS key an MCP key (nil scope = legacy unscoped key,
+//     grandfathered by AllowsFeature)
 //
-// A session-cookie or bridge-key request has no account token and skips tier
-// 3, and cannot call a tool either (tools/call requires an account token).
+// A session-cookie request has no account token and skips tier 3, and cannot
+// call a tool either (tools/call requires an account token).
 //
 // Its own resolution, not the desktop bridge's: that one also demands the
 // "desktop" scope on a personal token, so a key scoped to MCP alone was
@@ -206,20 +208,27 @@ func (T *MCPServer) authorize(r *http.Request, action string) (owner, refusal st
 		Log("[mcpserver] %s REJECTED: cross-site request carrying the session cookie", action)
 		return "", "Forbidden: cross-site request.", http.StatusForbidden
 	}
+	byKey := false
 	if owner == "" {
 		owner = APIKeyUser(r)
+		byKey = owner != ""
 	}
 	if owner == "" {
-		Log("[mcpserver] %s REJECTED: no valid X-API-Key (mint a bridge key in Bridges admin)", action)
+		Log("[mcpserver] %s REJECTED: no valid X-API-Key (an MCP key from the Account page)", action)
 		return "", "Unauthorized: this endpoint needs a valid gohort personal access token in the X-API-Key header. Create one on your Account page (/account) and put it in the connector config.", http.StatusUnauthorized
 	}
 	if !FeatureAllowedForUser(RootDB, MCPFeatureKey, owner) {
 		Log("[mcpserver] %s REJECTED: admin policy denies MCP for user=%s", action, owner)
 		return "", "Forbidden: an admin has not enabled MCP access for your account (Admin > Feature Access).", http.StatusForbidden
 	}
-	if tok := AccountTokenFromRequest(r); tok != nil && !tok.AllowsFeature(MCPFeatureKey) {
-		Log("[mcpserver] %s REJECTED: key %q lacks the mcp feature (owner=%s)", action, tok.Name, owner)
-		return "", "Forbidden: this access token is not allowed to use the MCP endpoint. On your Account page, open this key's Access and tick \"MCP endpoint\" under Connects with.", http.StatusForbidden
+	tok := AccountTokenFromRequest(r)
+	if byKey && tok == nil {
+		Log("[mcpserver] %s REJECTED: user=%s presented a desktop or bridge key, not a personal access token", action, owner)
+		return "", "Forbidden: the MCP endpoint takes an MCP key from your Account page (Account > API keys > + New API key). Desktop and connector keys are not API keys.", http.StatusForbidden
+	}
+	if tok != nil && !tok.AllowsFeature(MCPFeatureKey) {
+		Log("[mcpserver] %s REJECTED: key %q is not an MCP key (owner=%s)", action, tok.Name, owner)
+		return "", "Forbidden: this key is not an MCP key. Each key does one thing: make an MCP key on your Account page (Account > API keys > + New API key).", http.StatusForbidden
 	}
 	return owner, "", http.StatusOK
 }
@@ -372,7 +381,7 @@ func (T *MCPServer) handleRPC(w http.ResponseWriter, r *http.Request) {
 		resp.Result = map[string]any{"tools": defs}
 		Log("[mcpserver] tools/list -> %d tools [%s] (%s)", len(defs), strings.Join(names, ", "), scopeNote)
 	case "tools/call":
-		// Only the ACTION needs auth. Resolve the bridge key -> owner here and
+		// Only the ACTION needs auth. Resolve the MCP key -> owner here and
 		// return a CLEAR JSON-RPC tool error (not an opaque HTTP 401 the client
 		// won't surface) when it's missing/unrecognized.
 		owner, refusal, _ := T.authorize(r, "tools/call")

@@ -298,21 +298,21 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				}},
 			},
 			{
-				Title:    "API keys",
-				Subtitle: "Bridge keys authenticate connectors and the MCP server.",
-				Detail:   "Minting one shows the secret ONCE, so copy it then. Put a key in a connector's config or the MCP client's X-API-Key header. The iMessage desktop daemon auto-registers its own key, so you do not mint one for it here.",
+				Title:    "Connector keys",
+				Subtitle: "Keys a server-side connector signs in with.",
+				Detail:   "Minting one shows the secret ONCE, so copy it then. Put it in the connector's config. The iMessage desktop daemon registers its own key, so you do not mint one for it here. An MCP client takes an MCP key from your Account page instead: a connector key does not open MCP.",
 				Body: ui.KeyManager{
 					ListURL:   "/bridges/api/keys",
 					CreateURL: "/bridges/api/keys",
 					DeleteURL: "/bridges/api/keys",
 					NewLabel:  "+ New key",
-					EmptyText: "No keys yet. Mint one for an MCP client or a server-side connector.",
+					EmptyText: "No connector keys yet. Mint one for a server-side connector.",
 				},
 			},
 			{
 				Title:    "MCP Server",
 				Subtitle: "Lets an external MCP client reach your agents over a JSON-RPC endpoint.",
-				Detail:   "A tool-API, not a messaging bridge: the client, say Claude Desktop, calls tools/call to dispatch to an agent. It authenticates with one of the bridge keys above, in the X-API-Key header.",
+				Detail:   "A tool-API, not a messaging bridge: the client, say Claude Desktop, calls tools/call to dispatch to an agent. It authenticates with an MCP key from your Account page (Account > API keys > + New API key), in the X-API-Key header.",
 				Body: ui.DisplayPanel{
 					Source: "/mcp/status",
 					Pairs: []ui.DisplayPair{
