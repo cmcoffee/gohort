@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -182,7 +183,11 @@ func TestARepliesTokenAndWhereItGoes(t *testing.T) {
 	}
 	multi := bot()
 	multi.Service, multi.TenantID, multi.ServiceHost = "teams2", "", m.srv.URL
-	multi, _ = Save(multi, "s2", false)
+	multi.AppID = "99999999-8888-7777-6666-555555555555"
+	multi, err := Save(multi, "s2", false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	Send(ctx, multi, m.srv.URL+"/emea", "c", nil)
 	if m.tokenAt != "/botframework.com/oauth2/v2.0/token" {
 		t.Errorf("a multi-tenant bot's token: %s", m.tokenAt)
@@ -317,5 +322,13 @@ func TestAnApprovalHoldsOnlyForTheBotThatWasApproved(t *testing.T) {
 		if saved.AwaitingApproval != c.want {
 			t.Errorf("%s: awaiting approval = %v, want %v", c.name, saved.AwaitingApproval, c.want)
 		}
+	}
+}
+
+// A token from a clock a little ahead of this one is not refused: Bot
+// Framework's guidance allows five minutes of skew.
+func TestTheVerifierAllowsFiveMinutesOfSkew(t *testing.T) {
+	if got := Verifier().Leeway; got < 5*time.Minute {
+		t.Errorf("leeway %v, want five minutes", got)
 	}
 }

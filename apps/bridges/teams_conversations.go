@@ -68,11 +68,11 @@ func (T *Bridges) handleTeamsBotConversations(c *jsonapi.Call) (any, error) {
 	byBase := map[string]map[string]any{}
 	latest := map[string]string{}
 	for _, k := range T.DB.Keys(botConvTable) {
-		bc, ok := T.getBotConv(k)
-		if !ok || bc.Connector != bot.Key() {
+		var bc botConv
+		if !T.DB.Get(botConvTable, k, &bc) || bc.Connector != bot.Key() {
 			continue
 		}
-		base := baseConversation(k)
+		base := baseConversation(convOfBotConvKey(k))
 		if bc.Updated <= latest[base] {
 			continue // the newest thread names the conversation
 		}
@@ -124,7 +124,8 @@ func (T *Bridges) handleTeamsBotConversationAnswer(c *jsonapi.Call, body struct 
 	// seen is a key nobody will ever look up, or someone else's.
 	known := false
 	for _, k := range T.DB.Keys(botConvTable) {
-		if bc, ok := T.getBotConv(k); ok && bc.Connector == bot.Key() && baseConversation(k) == conv {
+		var bc botConv
+		if T.DB.Get(botConvTable, k, &bc) && bc.Connector == bot.Key() && baseConversation(convOfBotConvKey(k)) == conv {
 			known = true
 			break
 		}

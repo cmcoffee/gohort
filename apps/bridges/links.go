@@ -334,6 +334,12 @@ func (T *Bridges) wireWebhooks() {
 		}
 		return out
 	}
+	webhooks.ServiceCheck = func(owner, svc string) string {
+		if _, ok := teamsbots.Load(owner, svc); ok {
+			return teamsbots.VerifyName
+		}
+		return ""
+	}
 	webhooks.RegisterChannelCheck(teamsbots.VerifyName, T.botframeworkCheck)
 	webhooks.ToChannel = func(owner, svc string, m webhooks.ChannelMessage) {
 		T.ingestInbound(BridgeKey{Owner: owner, Service: svc, Enabled: true, Name: "webhook"},

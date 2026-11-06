@@ -131,6 +131,9 @@ func (T *Bridges) handleTeamsBotSave(c *jsonapi.Call, f teamsBotForm) (any, erro
 	}
 	var hold bool
 	if adding {
+		if svc == "imessage" {
+			return nil, jsonapi.BadRequest("iMessage comes through the desktop relay: give the bot another service name")
+		}
 		if by := T.servedElsewhere(user, svc); by != "" {
 			return nil, jsonapi.BadRequest(fmt.Sprintf("%s already carries %s for you: one transport a service, or the two would race for its replies", by, svc))
 		}

@@ -134,6 +134,9 @@ func (T *Extensions) handleWebhooks(c *jsonapi.Call) (any, error) {
 		}
 		if webhooks.LinkedServices != nil {
 			for _, svc := range webhooks.LinkedServices(user) {
+				if webhooks.ServiceCheck != nil && webhooks.ServiceCheck(user, svc) != "" {
+					continue // fed only by its own check's webhook, made where the service is
+				}
 				opts = append(opts, ui.SelectOption{Value: webhooks.FeedChannel + svc, Label: "The channel " + svc + " (a linked service)"})
 			}
 		}

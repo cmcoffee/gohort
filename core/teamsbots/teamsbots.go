@@ -247,6 +247,14 @@ func Save(b Bot, secret string, hold bool) (Bot, error) {
 	if err := b.check(); err != nil {
 		return b, err
 	}
+	// One Azure Bot is one bot here. Its tokens verify for whoever names its
+	// app id, and people outside run in stores named by it, so a second bot
+	// with the same app id would hear the first one's traffic as its own.
+	for _, other := range All() {
+		if other.Key() != b.Key() && other.AppID == b.AppID {
+			return b, fmt.Errorf("that app id is a bot already added here: each Azure Bot is added once")
+		}
+	}
 	secret = strings.TrimSpace(secret)
 	if prev, ok := Load(b.Owner, b.Service); ok {
 		b.Created, b.AwaitingApproval, b.AdminDisabled = prev.Created, prev.AwaitingApproval, prev.AdminDisabled
@@ -327,7 +335,9 @@ const (
 )
 
 // verifier is shared by every bot: one issuer, one key set, one cache.
-var verifier = &jwks.Verifier{MetadataURL: metadataURL, Issuer: issuer, Name: "bot framework"}
+// Leeway is the five minutes of clock skew Bot Framework's own guidance
+// allows, so a token signed by a clock a little ahead is not refused.
+var verifier = &jwks.Verifier{MetadataURL: metadataURL, Issuer: issuer, Name: "bot framework", Leeway: 5 * time.Minute}
 
 // Verifier checks the tokens Microsoft signs on every activity: Verify with
 // the bot's app id as the audience, which is what makes a token this bot's

@@ -272,6 +272,11 @@ func (h *Webhook) check() error {
 	}
 	if svc, ok := strings.CutPrefix(h.Feeds, FeedChannel); ok {
 		svc = strings.TrimSpace(svc)
+		if ServiceCheck != nil {
+			if want := ServiceCheck(h.Owner, svc); want != "" && want != h.Verify {
+				return fmt.Errorf("%s takes posts only through its own webhook, the one made where it is set up", svc)
+			}
+		}
 		if !h.linked(svc) {
 			return fmt.Errorf("%s is not one of your linked services", svc)
 		}
@@ -336,6 +341,13 @@ func (h Webhook) Channel() string {
 // channel. Nil, and none may be fed.
 var LinkedServices func(owner string) []string
 
+// ServiceCheck, set with LinkedServices, names the channel check a linked
+// service's posts must come through when it has one of its own (a Teams
+// bot's are signed by Bot Framework), "" when any webhook may feed it. A
+// service with its own check is fed by no other webhook, so a post with a
+// token or a signature cannot speak into it as anyone it names.
+var ServiceCheck func(owner, svc string) string
+
 // ToChannel, set with LinkedServices, passes a message on to owner's
 // linked service svc, as the service's own fetch would have.
 var ToChannel func(owner, svc string, m ChannelMessage)
@@ -367,6 +379,11 @@ type ChannelMessage struct {
 func (h Webhook) linked(svc string) bool {
 	if LinkedServices == nil || svc == "" {
 		return false
+	}
+	if ServiceCheck != nil {
+		if want := ServiceCheck(h.Owner, svc); want != "" && want != h.Verify {
+			return false
+		}
 	}
 	for _, s := range LinkedServices(h.Owner) {
 		if s == svc {

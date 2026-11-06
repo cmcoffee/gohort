@@ -45,6 +45,12 @@ const botConvTable = "bridges_bot_conversations" // conversation id → botConv
 // instant; this is the only latency on the way back.
 const botOutboundTick = 3 * time.Second
 
+// botReplyMaxAge is how late a reply may still go out. One held longer (its
+// bot waiting for approval or switched off, bridges off, or Microsoft
+// refusing sends that long) is dropped rather than arriving out of nowhere
+// in a conversation that has moved on.
+const botReplyMaxAge = time.Hour
+
 // botConv is what the bridge remembers about a conversation so it can speak
 // into it later. Written on every inbound, because every field can change:
 // Microsoft may move a conversation between regional serviceUrls, and the
@@ -60,13 +66,42 @@ type botConv struct {
 	Updated      string `json:"updated,omitempty"`
 }
 
-func (T *Bridges) getBotConv(chatID string) (botConv, bool) {
-	var bc botConv
-	ok := T.DB.Get(botConvTable, chatID, &bc)
-	return bc, ok
+// botConvKey is where one bot's record of a conversation is kept: by bot and
+// conversation, as answerKey is, so two owners' bots added to the same chat
+// each keep their own way of answering it. Records written before were keyed
+// by the conversation alone, and getBotConv still reads them.
+func botConvKey(connector, chatID string) string { return connector + "|" + chatID }
+
+// convOfBotConvKey is the conversation a record's key names, either spelling.
+func convOfBotConvKey(k string) string {
+	if i := strings.Index(k, "|"); i >= 0 && strings.Contains(k[:i], "\x00") {
+		return k[i+1:]
+	}
+	return k
 }
 
-func (T *Bridges) setBotConv(chatID string, bc botConv) { T.DB.Set(botConvTable, chatID, bc) }
+// getBotConv is the bot's record of a conversation: its own, else one kept
+// under the conversation alone that this bot wrote.
+func (T *Bridges) getBotConv(connector, chatID string) (botConv, bool) {
+	var bc botConv
+	if T.DB.Get(botConvTable, botConvKey(connector, chatID), &bc) {
+		return bc, true
+	}
+	if T.DB.Get(botConvTable, chatID, &bc) && bc.Connector == connector {
+		return bc, true
+	}
+	return botConv{}, false
+}
+
+// setBotConv writes the record under its bot, and retires the bot's record
+// under the conversation alone, so it is not listed twice.
+func (T *Bridges) setBotConv(chatID string, bc botConv) {
+	T.DB.Set(botConvTable, botConvKey(bc.Connector, chatID), bc)
+	var old botConv
+	if T.DB.Get(botConvTable, chatID, &old) && old.Connector == bc.Connector {
+		T.DB.Unset(botConvTable, chatID)
+	}
+}
 
 // --- inbound -----------------------------------------------------------------
 
@@ -227,6 +262,11 @@ func activityToInbound(a botActivity, bot teamsbots.Bot) (*hookRequest, error) {
 	if chatID == "" {
 		return nil, fmt.Errorf("activity carries no conversation id")
 	}
+	// Who it is from names where they run and what they are allowed: with no
+	// id at all, every such sender would read as one person.
+	if strings.TrimSpace(a.From.ID) == "" && strings.TrimSpace(a.From.AadObjectID) == "" {
+		return nil, fmt.Errorf("the activity names no sender")
+	}
 	text := stripMentions(a.Text)
 	if text == "" {
 		return nil, nil // an @mention and nothing else, or an attachment-only post
@@ -334,13 +374,23 @@ func botTokenFitsActivity(ctx context.Context, token string, claims jwcrypt.Clai
 			return fmt.Errorf("the token is for serviceUrl %q, the activity names %q", want, a.ServiceURL)
 		}
 	}
+	// A Teams bot answers Teams. Bot Framework also signs for its other
+	// channels (Web Chat, Direct Line, the emulator), whose senders are not
+	// people in the bot's tenant.
+	ch := strings.TrimSpace(a.ChannelID)
+	if !strings.EqualFold(ch, "msteams") {
+		return fmt.Errorf("the activity is from channel %q, not Teams", ch)
+	}
+	// The key it was signed with is the one whose endorsements say which
+	// channels it may sign for: a token that names none, or one not
+	// published, cannot be held to them.
 	hdr, err := jwcrypt.DecodeJWTHeader(token)
 	if err != nil || hdr.KeyID == "" {
-		return nil
+		return fmt.Errorf("the token names no signing key")
 	}
 	key, ok := teamsbots.Verifier().KeyByID(ctx, hdr.KeyID)
 	if !ok || key == nil {
-		return nil
+		return fmt.Errorf("the token's signing key %q is not one Bot Framework publishes", hdr.KeyID)
 	}
 	raw, ok := key.Extra["endorsements"]
 	if !ok {
@@ -350,7 +400,6 @@ func botTokenFitsActivity(ctx context.Context, token string, claims jwcrypt.Clai
 	if json.Unmarshal(raw, &endorsed) != nil {
 		return fmt.Errorf("the signing key's endorsements are unreadable")
 	}
-	ch := strings.TrimSpace(a.ChannelID)
 	for _, e := range endorsed {
 		if strings.EqualFold(strings.TrimSpace(e), ch) {
 			return nil
@@ -414,6 +463,11 @@ func (T *Bridges) startTeams() {
 // deliverTeams is one pass of the reply loop: every bot an administrator
 // lets answer sends what its owner's agents wrote back.
 func (T *Bridges) deliverTeams(ctx context.Context) {
+	// Bridges switched off: nothing comes in, and nothing goes out either.
+	// Replies wait in the outbox, for as long as botReplyMaxAge allows.
+	if !T.config().Enabled {
+		return
+	}
 	for _, bot := range teamsbots.All() {
 		if bot.Usable() {
 			T.deliverBotOutbound(ctx, bot)
@@ -439,8 +493,12 @@ func (T *Bridges) deliverBotOutbound(ctx context.Context, bot teamsbots.Bot) {
 		if strings.TrimSpace(it.Text) == "" {
 			continue
 		}
-		conv, ok := T.getBotConv(it.ChatID)
-		if !ok || conv.ServiceURL == "" || conv.Connector != bot.Key() {
+		if at, err := time.Parse(time.RFC3339, it.Created); err == nil && time.Since(at) > botReplyMaxAge {
+			Warn("[bridges] Teams reply for %s dropped: written %s ago, too late to send (bot=%s)", it.ChatID, time.Since(at).Round(time.Minute), bot.Name)
+			continue
+		}
+		conv, ok := T.getBotConv(bot.Key(), it.ChatID)
+		if !ok || conv.ServiceURL == "" {
 			Warn("[bridges] Teams reply for %s dropped: the bot %q has not heard from that conversation, so there is nowhere to send it", it.ChatID, bot.Name)
 			continue
 		}

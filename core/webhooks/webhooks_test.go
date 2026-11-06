@@ -547,3 +547,27 @@ func TestUnsignedPostsCannotSilenceAWebhook(t *testing.T) {
 		t.Errorf("a genuine post past the ceiling: %d, want 429", got)
 	}
 }
+
+// A service with a check of its own passes posts on only from a webhook
+// checked by it, so one made before the service named its check, or with
+// another check, delivers nothing.
+func TestAServiceWithItsOwnCheckTakesNoOtherWebhook(t *testing.T) {
+	LinkedServices = func(string) []string { return []string{"bot", "chat"} }
+	ServiceCheck = func(_, svc string) string {
+		if svc == "bot" {
+			return "test-own"
+		}
+		return ""
+	}
+	t.Cleanup(func() { LinkedServices, ServiceCheck = nil, nil })
+	plain := Webhook{Owner: "alice", Verify: VerifyNone}
+	if plain.linked("bot") {
+		t.Error("a webhook with no check of the service's own fed it")
+	}
+	if !plain.linked("chat") {
+		t.Error("a service with no check of its own refused a plain webhook")
+	}
+	if own := (Webhook{Owner: "alice", Verify: "test-own"}); !own.linked("bot") {
+		t.Error("the service's own webhook was refused")
+	}
+}

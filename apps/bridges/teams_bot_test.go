@@ -119,7 +119,7 @@ func TestATeamsBotAnswersInTeams(t *testing.T) {
 		t.Fatal(err)
 	}
 	T.wireWebhooks()
-	t.Cleanup(func() { webhooks.LinkedServices, webhooks.ToChannel = nil, nil })
+	t.Cleanup(func() { webhooks.LinkedServices, webhooks.ToChannel, webhooks.ServiceCheck = nil, nil, nil })
 	hook, err := webhooks.Create(webhooks.Webhook{Label: "Wren (Teams bot)", Owner: "alice", Verify: teamsbots.VerifyName, Feeds: "channel:teams"}, "")
 	if err != nil {
 		t.Fatal(err)
@@ -231,7 +231,7 @@ func TestTheTeamsBotOnTheBridgesPage(t *testing.T) {
 	f.adb.Set(WebTable, "external_url", "https://gohort.example.test")
 	T := f.T
 	T.wireWebhooks()
-	t.Cleanup(func() { webhooks.LinkedServices, webhooks.ToChannel = nil, nil })
+	t.Cleanup(func() { webhooks.LinkedServices, webhooks.ToChannel, webhooks.ServiceCheck = nil, nil, nil })
 	do := func(user, method, path, body string) (int, string) {
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
 		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(f.adb, user)})
@@ -252,7 +252,17 @@ func TestTheTeamsBotOnTheBridgesPage(t *testing.T) {
 	if code, body := do("alice", "POST", "/api/teams-bots", form); code != 400 || !strings.Contains(body, "edit it") {
 		t.Errorf("a second bot for teams: %d %s", code, body)
 	}
-	if code, _ := do("root", "POST", "/api/teams-bots", strings.Replace(form, `"accept"`, `"service":"teams-ops","accept"`, 1)); code >= 300 {
+	// iMessage comes through the desktop relay, never a bot.
+	if code, body := do("root", "POST", "/api/teams-bots", strings.Replace(form, `"accept"`, `"service":"imessage","accept"`, 1)); code != 400 || !strings.Contains(body, "desktop relay") {
+		t.Errorf("a Teams bot named imessage: %d %s", code, body)
+	}
+	// One Azure Bot is added once: another person naming the same app id is
+	// refused, so their bot cannot hear this one's traffic.
+	if code, body := do("root", "POST", "/api/teams-bots", strings.Replace(form, `"accept"`, `"service":"teams-twin","accept"`, 1)); code != 400 || !strings.Contains(body, "added once") {
+		t.Errorf("a second bot with the same app id: %d %s", code, body)
+	}
+	opsForm := strings.Replace(form, botApp, "22222222-2222-3333-4444-555555555555", 1)
+	if code, _ := do("root", "POST", "/api/teams-bots", strings.Replace(opsForm, `"accept"`, `"service":"teams-ops","accept"`, 1)); code >= 300 {
 		t.Errorf("an administrator's: %d", code)
 	}
 	if rb, _ := teamsbots.Load("root", "teams-ops"); rb.AwaitingApproval {
@@ -260,7 +270,7 @@ func TestTheTeamsBotOnTheBridgesPage(t *testing.T) {
 	}
 	// A new bot with nothing ticked starts with the design's defaults; one
 	// edited with nothing ticked keeps "everywhere", as before.
-	if code, body := do("root", "POST", "/api/teams-bots", `{"name":"Plain","app_id":"`+botApp+`","secret":"s","service":"teams-plain"}`); code >= 300 {
+	if code, body := do("root", "POST", "/api/teams-bots", `{"name":"Plain","app_id":"33333333-2222-3333-4444-555555555555","secret":"s","service":"teams-plain"}`); code >= 300 {
 		t.Fatalf("a bot with nothing ticked: %d %s", code, body)
 	}
 	wantAccept, wantMention := teamsbots.NewBotDefaults()
@@ -328,7 +338,7 @@ func TestATeamsBotIsAddedAndAnswersWhenNamed(t *testing.T) {
 		t.Fatal(err)
 	}
 	T.wireWebhooks()
-	t.Cleanup(func() { webhooks.LinkedServices, webhooks.ToChannel = nil, nil })
+	t.Cleanup(func() { webhooks.LinkedServices, webhooks.ToChannel, webhooks.ServiceCheck = nil, nil, nil })
 	hook, err := webhooks.Create(webhooks.Webhook{Label: "Wren (Teams bot)", Owner: "alice", Verify: teamsbots.VerifyName, Feeds: "channel:teams"}, "")
 	if err != nil {
 		t.Fatal(err)
@@ -361,7 +371,7 @@ func TestATeamsBotIsAddedAndAnswersWhenNamed(t *testing.T) {
 		"membersAdded": []map[string]string{{"id": botID}}}); code != http.StatusOK {
 		t.Fatalf("added to a group: %d %+v", code, webhooks.Calls(hook.Name)[0])
 	}
-	if bc, ok := T.getBotConv("19:group-1@thread.v2"); !ok || bc.ConvType != "groupChat" || bc.Title != "Lunch crew" {
+	if bc, ok := T.getBotConv(bot.Key(), "19:group-1@thread.v2"); !ok || bc.ConvType != "groupChat" || bc.Title != "Lunch crew" {
 		t.Errorf("the group was not recorded when the bot was added: %+v %v", bc, ok)
 	}
 
@@ -416,5 +426,101 @@ func TestATeamsBotIsAddedAndAnswersWhenNamed(t *testing.T) {
 	case in := <-asked:
 		t.Errorf("answered in a group its owner switched it off in: %q", in.Text)
 	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// Two owners' bots added to the same chat each keep their own way back into
+// it: the second to hear a message does not take the first one's record, and
+// a record kept under the conversation alone (as before) still answers.
+func TestTwoBotsInOneChatEachKeepTheirWayBack(t *testing.T) {
+	T := linkWorld(t)
+	m := newMicrosoftStandIn(t)
+	alice, err := teamsbots.Save(teamsbots.Bot{Owner: "alice", Name: "Wren", AppID: botApp, ServiceHost: m.srv.URL}, "s", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := teamsbots.Save(teamsbots.Bot{Owner: "bob", Name: "Finch", AppID: "66666666-7777-8888-9999-000000000000", ServiceHost: m.srv.URL}, "s", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	T.setBotConv("19:shared@thread.v2", botConv{ServiceURL: m.srv.URL + "/amer", Connector: alice.Key()})
+	T.setBotConv("19:shared@thread.v2", botConv{ServiceURL: m.srv.URL + "/emea", Connector: bob.Key()})
+	if bc, ok := T.getBotConv(alice.Key(), "19:shared@thread.v2"); !ok || bc.ServiceURL != m.srv.URL+"/amer" {
+		t.Fatalf("the first bot lost its record when the second heard the chat: %+v %v", bc, ok)
+	}
+	T.enqueueOutbox(OutboxItem{Service: "teams", Owner: "alice", ChatID: "19:shared@thread.v2", Text: "from wren"})
+	T.deliverBotOutbound(context.Background(), alice)
+	if len(m.replies) != 1 {
+		t.Fatalf("the first bot's reply was not sent: %q", m.replies)
+	}
+
+	// Kept the old way, under the conversation alone: read, then moved.
+	T.DB.Set(botConvTable, "a:legacy", botConv{ServiceURL: m.srv.URL + "/amer", Connector: alice.Key()})
+	if _, ok := T.getBotConv(alice.Key(), "a:legacy"); !ok {
+		t.Fatal("a record kept under the conversation alone is no longer read")
+	}
+	if _, ok := T.getBotConv(bob.Key(), "a:legacy"); ok {
+		t.Fatal("another bot read a record it did not write")
+	}
+	T.setBotConv("a:legacy", botConv{ServiceURL: m.srv.URL + "/amer", Connector: alice.Key()})
+	var left botConv
+	if T.DB.Get(botConvTable, "a:legacy", &left) {
+		t.Error("the old record stayed beside the new one")
+	}
+}
+
+// A Teams bot's channel is fed only by its own Bot Framework webhook: one
+// checked by a token or nothing is refused when made, a post through one
+// made before is not passed on, and the webhook form does not offer it.
+func TestOnlyTheBotsOwnWebhookFeedsItsChannel(t *testing.T) {
+	T := linkWorld(t)
+	m := newMicrosoftStandIn(t)
+	if _, err := teamsbots.Save(teamsbots.Bot{Owner: "alice", Name: "Wren", AppID: botApp, ServiceHost: m.srv.URL}, "s", true); err != nil {
+		t.Fatal(err)
+	}
+	T.wireWebhooks()
+	t.Cleanup(func() { webhooks.LinkedServices, webhooks.ToChannel, webhooks.ServiceCheck = nil, nil, nil })
+	_, err := webhooks.Create(webhooks.Webhook{Label: "spoof", Owner: "alice", Verify: webhooks.VerifyNone,
+		Map: webhooks.Map{Text: "text", Chat: "chat", From: "from", ID: "id"}, Feeds: "channel:teams"}, "")
+	if err == nil || !strings.Contains(err.Error(), "its own webhook") {
+		t.Fatalf("a webhook with no Bot Framework check was made to feed the bot: %v", err)
+	}
+	if _, err := webhooks.Create(webhooks.Webhook{Label: "Wren (Teams bot)", Owner: "alice", Verify: teamsbots.VerifyName, Feeds: "channel:teams"}, ""); err != nil {
+		t.Fatalf("the bot's own webhook was refused: %v", err)
+	}
+	if got := webhooks.ServiceCheck("alice", "teams"); got != teamsbots.VerifyName {
+		t.Errorf("the bot's service names check %q", got)
+	}
+	if got := webhooks.ServiceCheck("alice", "acme"); got != "" {
+		t.Errorf("a service with no bot names check %q", got)
+	}
+}
+
+// Bridges switched off send nothing; the reply waits and goes once they are
+// on again. One held past botReplyMaxAge is dropped, not sent late.
+func TestATeamsReplyWaitsWhileBridgesAreOffAndNotForever(t *testing.T) {
+	T := linkWorld(t)
+	m := newMicrosoftStandIn(t)
+	bot, err := teamsbots.Save(teamsbots.Bot{Owner: "alice", Name: "Wren", AppID: botApp, ServiceHost: m.srv.URL}, "s", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	T.setBotConv("a:c1", botConv{ServiceURL: m.srv.URL + "/amer", Connector: bot.Key()})
+	T.setConfig(bridgesConfig{Enabled: false})
+	T.enqueueOutbox(OutboxItem{Service: "teams", Owner: "alice", ChatID: "a:c1", Text: "held"})
+	T.deliverTeams(context.Background())
+	if len(m.replies) != 0 {
+		t.Fatalf("sent with bridges off: %q", m.replies)
+	}
+	T.setConfig(bridgesConfig{Enabled: true})
+	T.deliverTeams(context.Background())
+	if len(m.replies) != 1 {
+		t.Fatalf("the held reply did not go once bridges were on: %q", m.replies)
+	}
+	T.enqueueOutbox(OutboxItem{Service: "teams", Owner: "alice", ChatID: "a:c1", Text: "stale",
+		Created: time.Now().Add(-2 * botReplyMaxAge).UTC().Format(time.RFC3339)})
+	T.deliverTeams(context.Background())
+	if len(m.replies) != 1 {
+		t.Errorf("a reply held past its age was sent: %q", m.replies)
 	}
 }

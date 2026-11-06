@@ -305,7 +305,7 @@ func TestAWebhookFeedsALinkedService(t *testing.T) {
 		t.Fatal(err)
 	}
 	T.wireWebhooks()
-	t.Cleanup(func() { webhooks.LinkedServices, webhooks.ToChannel = nil, nil })
+	t.Cleanup(func() { webhooks.LinkedServices, webhooks.ToChannel, webhooks.ServiceCheck = nil, nil, nil })
 	if got := webhooks.LinkedServices("alice"); len(got) != 1 || got[0] != "acme" || len(webhooks.LinkedServices("bob")) != 0 {
 		t.Errorf("linked services: %v", got)
 	}

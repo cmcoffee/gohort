@@ -120,6 +120,19 @@ func TestActivityToInboundRequiresConversationID(t *testing.T) {
 	}
 }
 
+// With no sender id at all, every such sender would read as one person, in
+// one store, so the activity is refused.
+func TestActivityToInboundRequiresASender(t *testing.T) {
+	raw := `{"type":"message","id":"m1","text":"hi","conversation":{"id":"a:dm","conversationType":"personal"},"from":{"name":"Ada"}}`
+	if _, err := activityToInbound(parseActivity(t, raw), bfSpec()); err == nil || !strings.Contains(err.Error(), "no sender") {
+		t.Fatalf("an activity naming no sender: %v", err)
+	}
+	raw = `{"type":"message","id":"m1","text":"hi","conversation":{"id":"a:dm","conversationType":"personal"},"from":{"id":"29:ada"}}`
+	if req, err := activityToInbound(parseActivity(t, raw), bfSpec()); err != nil || req == nil {
+		t.Fatalf("an activity with a sender id: %v %v", req, err)
+	}
+}
+
 func TestActivityToInboundHonoursChannelTypeGate(t *testing.T) {
 	spec := bfSpec()
 	spec.Accept = []string{"personal"}
@@ -236,7 +249,7 @@ func TestRememberBotConv(t *testing.T) {
 	if err := T.rememberBotConv(spec, a); err != nil {
 		t.Fatalf("remember: %v", err)
 	}
-	conv, ok := T.getBotConv("19:thread@thread.tacv2")
+	conv, ok := T.getBotConv(bfSpec().Key(), "19:thread@thread.tacv2")
 	if !ok {
 		t.Fatal("nothing recorded")
 	}
@@ -267,7 +280,7 @@ func TestRememberBotConvRejectsForeignServiceURL(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "service host") {
 		t.Fatalf("err = %v, want a service host refusal", err)
 	}
-	if _, ok := T.getBotConv("19:thread@thread.tacv2"); ok {
+	if _, ok := T.getBotConv(bfSpec().Key(), "19:thread@thread.tacv2"); ok {
 		t.Error("a refused conversation was recorded anyway")
 	}
 }
@@ -306,7 +319,7 @@ func TestRememberBotConvUpdatesOnEveryInbound(t *testing.T) {
 	if err := T.rememberBotConv(bfSpec(), a); err != nil {
 		t.Fatal(err)
 	}
-	conv, _ := T.getBotConv("19:thread@thread.tacv2")
+	conv, _ := T.getBotConv(bfSpec().Key(), "19:thread@thread.tacv2")
 	if conv.LastActivity != "1700000000002" || conv.ServiceURL != "https://smba.trafficmanager.net/emea" {
 		t.Errorf("record did not follow the conversation: %+v", conv)
 	}

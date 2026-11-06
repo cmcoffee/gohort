@@ -25,7 +25,7 @@ func TestBridgesKindsUnderIntegrations(t *testing.T) {
 	f.adb.Set(WebTable, "external_url", "https://gohort.example.test")
 	T := f.T
 	T.wireWebhooks()
-	t.Cleanup(func() { webhooks.LinkedServices, webhooks.ToChannel = nil, nil })
+	t.Cleanup(func() { webhooks.LinkedServices, webhooks.ToChannel, webhooks.ServiceCheck = nil, nil, nil })
 	T.registerIntegrations("/bridges")
 	kinds := map[string]sections.IntegrationKind{}
 	for _, k := range sections.IntegrationKinds() {
