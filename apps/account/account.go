@@ -9,6 +9,7 @@ package account
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -621,15 +622,25 @@ type tokenMintBody struct {
 }
 
 // keyKinds are the kinds of key this user may make: a kind is offered when
-// the administrator has granted them the door it opens.
+// the administrator has granted them the door it opens. Not the desktop app:
+// signing in to it provisions the key it needs (core desktop_key.go), so a
+// key made by hand for it was a second way to do what sign-in does. A
+// desktop key made before keeps working and can still be edited.
 func keyKinds(user string) []string {
 	var out []string
-	for _, k := range []string{KeyKindAgents, KeyKindMCP, KeyKindModels, KeyKindDesktop, KeyKindOutside} {
-		if FeatureAllowedForUser(RootDB, KeyKindDoors(k)[0], user) {
+	for _, k := range []string{KeyKindAgents, KeyKindMCP, KeyKindModels, KeyKindOutside} {
+		if kindOpen(user, k) {
 			out = append(out, k)
 		}
 	}
 	return out
+}
+
+// kindOpen reports whether the administrator has granted this user the door a
+// kind of key opens.
+func kindOpen(user, kind string) bool {
+	doors := KeyKindDoors(kind)
+	return len(doors) > 0 && FeatureAllowedForUser(RootDB, doors[0], user)
 }
 
 // kindScope is the scope a key of one kind is saved with: that kind's door,
@@ -652,11 +663,7 @@ func (T *Account) kindScope(user, kind string, posted *TokenScope) (*TokenScope,
 	case KeyKindSeveral:
 		return nil, jsonapi.BadRequest("a key does one thing: choose its kind (the Model API to your agents, MCP, raw models, the desktop app, or people outside gohort) and make another key for the rest")
 	}
-	offered := false
-	for _, k := range keyKinds(user) {
-		offered = offered || k == kind
-	}
-	if !offered {
+	if !kindOpen(user, kind) {
 		return nil, jsonapi.BadRequest("that kind of key is not open to you: an administrator grants it under Feature Access")
 	}
 	want := &TokenScope{Features: KeyKindDoors(kind)}
@@ -704,6 +711,9 @@ func (T *Account) handleTokenMint(c *jsonapi.Call, req *tokenMintBody) (any, err
 	scope, err := T.kindScope(c.User, req.Kind, req.Scope)
 	if err != nil {
 		return nil, err
+	}
+	if k := scope.Kind(); k != "" && !slices.Contains(keyKinds(c.User), k) {
+		return nil, jsonapi.BadRequest("a new key cannot be of that kind: the desktop app makes its own key when you sign in to it")
 	}
 	return MintAccountTokenScoped(c.User, req.Name, scope), nil // secret returned once
 }
@@ -892,8 +902,8 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
   color:var(--tone); border:1px solid color-mix(in srgb, var(--tone) 45%, transparent); background:color-mix(in srgb, var(--tone) 12%, transparent); }
 .acct-tok-scope { border-left:3px solid var(--tone, var(--border)); background:linear-gradient(155deg, color-mix(in srgb, var(--tone, var(--border)) 8%, var(--bg-2)) 0%, var(--bg-2) 55%); }
 .acct-tok-edit { display:flex; flex-direction:column; gap:0.55rem; margin-top:0.35rem; padding:0.6rem 0.75rem; border:1px dashed var(--border); border-radius:8px; }
-.acct-tok-new { display:flex; flex-direction:column; gap:0.55rem; margin-top:0.5rem; padding:0.75rem; border:1px solid var(--border); border-radius:8px; }
-.acct-tok-new-h { margin:0; font-size:var(--fs-2xs, 0.72rem); text-transform:uppercase; letter-spacing:0.03em; color:var(--text-mute); }
+.acct-tok-newbtn { align-self:flex-start; margin-top:0.3rem; }
+.acct-tok-newform { display:flex; flex-direction:column; gap:0.6rem; }
 .acct-tok-kinds { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(190px, 100%), 1fr)); gap:0.5rem; }
 .acct-tok-kindcard { --tone: var(--accent); display:flex; flex-direction:column; gap:0.25rem; text-align:left; cursor:pointer; font:inherit;
   padding:0.6rem 0.7rem; border-radius:8px; color:var(--text); background:var(--bg-2);
@@ -1023,7 +1033,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
       var tg = group('Models', tiers.length ? 'Over the Model API, only the ticked ones. The model proxy takes the key either way.' : 'No model tier is open to you.');
       tiers.forEach(function(t){ addTarget(tg, t); });
     } else if(kind === 'desktop'){
-      wrap.appendChild(el('div',{class:'acct-tok-scope-note',text:'Nothing to choose: paste the key into the desktop app. What it may do on that computer is set in the app.'}));
+      wrap.appendChild(el('div',{class:'acct-tok-scope-note',text:'Nothing to choose. The desktop app now makes its own key when you sign in to it, so this one is only needed by an app that still uses it.'}));
     } else if(kind === 'outside'){
       agentsGroup('Only agents set to serve people outside gohort answer, and only the ticked ones.');
       wrap.appendChild(el('div',{class:'acct-tok-scope-note',text:'Every call names the person it is for, in the X-End-User header or the request\'s user field, and each person gets their own memory and conversations, apart from yours and from each other\'s. Never put this key in a browser or an app people can open: whoever holds it can speak as anyone.'}));
@@ -1145,36 +1155,60 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
       root.appendChild(holder);
     });
 
-    // A new key: its name, then its kind, then that kind's choices.
-    var nameInput = el('input',{type:'text',class:'acct-tok-input',placeholder:'Name (e.g. Claude Desktop)'});
-    var create = el('button',{class:'ui-row-btn primary',text:'Create key'});
-    create.disabled = true;
-    var pending = null;
-    var newSlot = el('div',{});
-    var newMsg = el('span',{class:'acct-tok-scope-note',text:'Choose what the key is for.'});
-    var picker = kindPicker(null, function(kind){
-      newSlot.innerHTML = '';
-      pending = scopeEditor(null, kind);
-      newSlot.appendChild(pending.node);
-      create.disabled = false;
-      newMsg.textContent = '';
+    // A new key: one button, and a dialog asking its name and what it is
+    // for. With one kind open (MCP alone, for most people) there is nothing
+    // to choose, so the dialog goes straight to that kind's options.
+    var newBtn = el('button',{class:'ui-row-btn primary acct-tok-newbtn',text:'+ New API key'});
+    newBtn.addEventListener('click', openNew);
+    root.appendChild(newBtn);
+  }
+
+  function openNew(){
+    var offered = (CAT.kinds||[]).filter(function(k){ return KINDS[k]; });
+    window.uiOpenSimpleModal({
+      title: 'New API key',
+      subtitle: offered.length === 1 ? KINDS[offered[0]].label + ' key' : 'Each key does one thing. Make another for anything else.',
+      width: '620px',
+      mount: function(body, dlg){
+        var form = el('div',{class:'acct-tok-newform'});
+        body.appendChild(form);
+        var nameInput = el('input',{type:'text',class:'acct-tok-input',placeholder:'Name (e.g. Claude Desktop)'});
+        form.appendChild(nameInput);
+        var slot = el('div',{});
+        var msg = el('div',{class:'acct-tok-scope-note'});
+        var pending = null;
+        var create = el('button',{class:'ui-row-btn primary',text:'Create key'});
+        create.disabled = true;
+        function show(kind){
+          slot.innerHTML = '';
+          pending = scopeEditor(null, kind);
+          slot.appendChild(pending.node);
+          create.disabled = false;
+        }
+        if(!offered.length){
+          form.appendChild(el('div',{class:'acct-tok-scope-note',text:'No kind of key is open to you yet. An administrator grants them under Feature Access.'}));
+        } else if(offered.length === 1){
+          form.appendChild(el('div',{class:'acct-tok-scope-note',text:KINDS[offered[0]].desc}));
+          show(offered[0]);
+        } else {
+          form.appendChild(kindPicker(null, show));
+        }
+        form.appendChild(slot);
+        form.appendChild(msg);
+        create.addEventListener('click', function(){
+          if(!pending) return;
+          var req = pending.collect();
+          req.name = nameInput.value.trim();
+          create.disabled = true; create.textContent = 'Creating…'; msg.textContent = '';
+          fetch('api/tokens',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(req)})
+            .then(function(r){ if(!r.ok) return r.text().then(function(x){ throw new Error(x || ('HTTP '+r.status)); }); return r.json(); })
+            .then(function(t){ dlg.close(); load().then(function(){ reveal(t); }); })
+            .catch(function(e){ create.disabled = false; create.textContent = 'Create key'; msg.textContent = e.message; });
+        });
+        dlg.addAction(create);
+        setTimeout(function(){ nameInput.focus(); }, 0);
+      }
     });
-    create.addEventListener('click',function(){
-      if(!pending) return;
-      var body = pending.collect();
-      body.name = nameInput.value.trim();
-      create.disabled=true; create.textContent='Creating…'; newMsg.textContent='';
-      fetch('api/tokens',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
-        .then(function(r){ if(!r.ok) return r.text().then(function(x){ throw new Error(x || ('HTTP '+r.status)); }); return r.json(); })
-        .then(function(t){ load().then(function(){ reveal(t); }); })
-        .catch(function(e){ create.disabled=false; create.textContent='Create key'; newMsg.textContent=e.message; });
-    });
-    var newBox = el('div',{class:'acct-tok-new'},[
-      el('h4',{class:'acct-tok-new-h',text:'New key'}),
-      nameInput, picker, newSlot,
-      el('div',{class:'acct-tok-scope-actions'},[create, newMsg])
-    ]);
-    root.appendChild(newBox);
   }
   function reveal(t){
     if(!t || !t.token) return;

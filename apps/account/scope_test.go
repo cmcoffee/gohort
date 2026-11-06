@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -112,7 +113,19 @@ func TestAKeyIsSavedAsOneKind(t *testing.T) {
 	if k := keyKinds("bob"); len(k) != 0 {
 		t.Errorf("bob is offered kinds he was not granted: %v", k)
 	}
-	if k := strings.Join(keyKinds("alice"), ","); k != "agents,mcp,models,desktop,outside" {
+	// The desktop app makes its own key when signed in to, so a new key is
+	// never of that kind; one made before still saves as itself.
+	if k := strings.Join(keyKinds("alice"), ","); k != "agents,mcp,models,outside" {
 		t.Errorf("alice's kinds: %s", k)
+	}
+	c := &jsonapi.Call{User: "alice"}
+	if _, err := T.handleTokenMint(c, &tokenMintBody{Name: "laptop", Kind: KeyKindDesktop}); err == nil {
+		t.Error("a new desktop key was minted")
+	}
+	if _, err := T.handleTokenMint(c, &tokenMintBody{Name: "laptop", Scope: &TokenScope{Features: []string{"desktop"}}}); err == nil {
+		t.Error("a new desktop key was minted from its scope alone")
+	}
+	if _, err := T.handleTokenMint(c, &tokenMintBody{Name: "claude", Kind: KeyKindMCP}); err != nil {
+		t.Errorf("an MCP key: %v", err)
 	}
 }
