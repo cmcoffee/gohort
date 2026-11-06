@@ -301,6 +301,7 @@ func TestAnOutsideRunIsWiredForCredentialsToolsAndSpend(t *testing.T) {
 		"cr.loopCfg.ToolFallbackResolver, cr.loopCfg.DynamicTools = nil, nil",
 		"cr.loopCfg.SharedBudgets = append(cr.loopCfg.SharedBudgets, outsideBudget(cr.runtimeUser, cr.target), outsideAllBudget(cr.target))",
 		"done, free := outsideOneAtATime(cr.runtimeUser, cr.target.ID)",
+		"cr.loopCfg.Confirm, cr.loopCfg.ConfirmRefusal = outsideConfirm, outsideConfirmRefusal",
 	} {
 		if !strings.Contains(string(src), want) {
 			t.Errorf("the continuing run no longer does: %s", want)
@@ -492,4 +493,72 @@ func TestAPersonOutsideHasOneTurnAtATime(t *testing.T) {
 		t.Fatal("the turn was not given back")
 	}
 	again()
+}
+
+// An outside turn is not told what else the owner runs: the trigger hints that
+// name the owner's other agents, and the owner's custom tools listed for
+// Builder, are left out of it. Pinned at their one site each.
+func TestAnOutsideTurnIsNotShownTheOwnersFleetOrTools(t *testing.T) {
+	src, err := os.ReadFile("dispatch_catalog.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"if !t.outsideAudience() {\n\t\tout += t.renderAgentTriggerHints(message)",
+		"func (t *chatTurn) dispatchCatalogPrompt() string {\n\t// Not for a person outside gohort",
+	} {
+		if !strings.Contains(string(src), want) {
+			t.Errorf("dispatch_catalog.go no longer guards: %q", want)
+		}
+	}
+	if got := (&chatTurn{agent: AgentRecord{ID: "a1"}, user: agenthost.OutsideScope("w", "v")}).dispatchCatalogPrompt(); got != "" {
+		t.Errorf("an outside turn was given the Builder tools block: %q", got)
+	}
+}
+
+// On an outside turn a call that would need the owner's go-ahead is refused,
+// never queued for the owner with a stranger's arguments, and the model is
+// told it is not available rather than that it was denied.
+func TestAnOutsideTurnAsksTheOwnerNothing(t *testing.T) {
+	if outsideConfirm("send_email", `{"to":"anyone"}`) {
+		t.Error("an outside turn's call needing approval was let through")
+	}
+	if why := outsideConfirmRefusal("send_email"); !strings.Contains(why, "send_email") || !strings.Contains(why, "not available") {
+		t.Errorf("refusal: %q", why)
+	}
+}
+
+// A save lends only what the Access page offers: a hand-made PATCH naming
+// one of the framework's own tools (which write to the owner's stores) is
+// dropped, while a name lent before stays until it is unticked.
+func TestASaveLendsOnlyWhatThePickerOffers(t *testing.T) {
+	offered := ""
+	for _, o := range outsideToolOptions("u", AgentRecord{}) {
+		offered = o.Value
+		break
+	}
+	if offered == "" {
+		t.Skip("no worker tools registered in this build")
+	}
+	a := AgentRecord{OutsideTools: []string{offered, "knowledge_save", "store_fact", offered}}
+	got := lendableOutsideTools("u", a, nil)
+	if len(got) != 1 || got[0] != offered {
+		t.Fatalf("lent %v, want only %q", got, offered)
+	}
+	got = lendableOutsideTools("u", a, []string{"store_fact"})
+	if len(got) != 2 || got[1] != "store_fact" {
+		t.Fatalf("a name lent before was dropped: %v", got)
+	}
+	src, err := os.ReadFile("agents_http.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"req.OutsideTools = lendableOutsideTools(user, req, prev.OutsideTools)",
+		"rec.OutsideTools = lendableOutsideTools(user, rec, existing.OutsideTools)",
+	} {
+		if !strings.Contains(string(src), want) {
+			t.Errorf("agents_http.go no longer holds a save to the picker: missing %q", want)
+		}
+	}
 }

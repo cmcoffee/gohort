@@ -19,6 +19,7 @@ package orchestrate
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,17 @@ import (
 // outsideAudience reports a turn for a person outside gohort.
 func (t *chatTurn) outsideAudience() bool {
 	return t != nil && agenthost.IsOutsideScope(t.user)
+}
+
+// outsideConfirm is an outside turn's answer to every call that would need the
+// owner's go-ahead: no, without queuing it. The kit already leaves out tools
+// that ask first; this is for a lent tool whose credential, or the owner's
+// "confirm writes", asks on its own.
+func outsideConfirm(string, string) bool { return false }
+
+// outsideConfirmRefusal is what the model is told in place of the denial.
+func outsideConfirmRefusal(tool string) string {
+	return tool + " needs its owner's approval for each use, and nobody is there to give it on this conversation: it is not available here. Say so plainly rather than trying another way."
 }
 
 // outsiderNotServedReply is what someone gets who is not the owner, writing
@@ -355,6 +367,32 @@ func outsideToolOptions(user string, a AgentRecord) []ui.SelectOption {
 		out = append(out, o)
 	}
 	return keepUnofferedValues(out, a.OutsideTools, "No longer offered", "Lent earlier; the agent no longer carries it.")
+}
+
+// lendableOutsideTools holds a save to what the picker offers. A name already
+// lent stays (it is taken back by unticking it); a name newly added must be
+// one outsideToolOptions lists, so a hand-made save cannot lend a tool the
+// Access page never offers, such as the framework's own.
+func lendableOutsideTools(user string, a AgentRecord, prev []string) []string {
+	if len(a.OutsideTools) == 0 {
+		return a.OutsideTools
+	}
+	ok := map[string]bool{}
+	for _, n := range prev {
+		ok[strings.TrimSpace(n)] = true
+	}
+	carried := a
+	carried.OutsideTools = nil
+	for _, o := range outsideToolOptions(user, carried) {
+		ok[o.Value] = true
+	}
+	var out []string
+	for _, n := range a.OutsideTools {
+		if n = strings.TrimSpace(n); n != "" && ok[n] && !slices.Contains(out, n) {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // outsideCredentialOptions are the credentials an owner can lend people

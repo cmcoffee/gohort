@@ -61,6 +61,11 @@ func (t *chatTurn) finalizeDispatchCatalog(sess *ToolSession, tools []AgentToolD
 // finds it rather than building it twice. A web turn adds both (runner.go);
 // "" for an agent that has neither.
 func (t *chatTurn) dispatchCatalogPrompt() string {
+	// Not for a person outside gohort: the owner's custom tools are not
+	// theirs to know of, and their turn cannot build anything.
+	if t.outsideAudience() {
+		return ""
+	}
 	db, user := t.ownerDB, t.ownerUser
 	if db == nil || user == "" {
 		db, user = t.udb, t.user
@@ -79,7 +84,12 @@ func (t *chatTurn) dispatchTurnContext(message string) string {
 	t.autoDeliverPlaybooks(message)
 	out := t.renderTriggeredSkills()
 	out += t.renderSkillTriggerHints(message)
-	out += t.renderAgentTriggerHints(message)
+	// The owner's other agents, by name, with a nudge to hand the work to
+	// one: not for a person outside gohort, whose turn cannot delegate and
+	// is not told what else the owner runs.
+	if !t.outsideAudience() {
+		out += t.renderAgentTriggerHints(message)
+	}
 	out += t.renderRecallHints(message)
 	return strings.TrimSpace(out)
 }

@@ -291,11 +291,13 @@ func (T *OrchestrateApp) agentSave(c *jsonapi.Call, raw json.RawMessage) (any, e
 	}
 	// Rules the save changes are checked; ones it carries over unchanged are
 	// not, so an agent with a stray heading stored still takes other edits.
-	if prev, ok := loadAgent(udb, req.ID); !ok || prev.Rules != req.Rules {
+	prev, hadPrev := loadAgent(udb, req.ID)
+	if !hadPrev || prev.Rules != req.Rules {
 		if err := rulesProblem(req.Rules); err != nil {
 			return nil, jsonapi.BadRequest(err.Error())
 		}
 	}
+	req.OutsideTools = lendableOutsideTools(user, req, prev.OutsideTools)
 	saved, err := saveAgentAs(udb, req, reason)
 	if err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
@@ -522,6 +524,7 @@ func (T *OrchestrateApp) patchAgent(c *jsonapi.Call, patch map[string]any, pathI
 	if rec.Owner == "" || rec.Owner == seedOwner {
 		rec.Owner = user
 	}
+	rec.OutsideTools = lendableOutsideTools(user, rec, existing.OutsideTools)
 	if maintainer != "" {
 		saved, err := saveAgentAs(udb, applyMaintainerEdit(existing, rec), "edited by "+maintainer)
 		if err != nil {

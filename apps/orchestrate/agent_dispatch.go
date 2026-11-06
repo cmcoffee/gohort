@@ -2470,6 +2470,11 @@ func (cr *continuingRun) configureLoop() {
 	if agenthost.IsOutsideScope(cr.runtimeUser) {
 		cr.loopCfg.ToolFallbackResolver, cr.loopCfg.DynamicTools = nil, nil
 		cr.loopCfg.SharedBudgets = append(cr.loopCfg.SharedBudgets, outsideBudget(cr.runtimeUser, cr.target), outsideAllBudget(cr.target))
+		// Nothing that would need the owner's go-ahead runs, and nothing is
+		// queued for it: the arguments are a stranger's, and an approval card
+		// for the owner would carry them in what looks like the owner's own
+		// agent asking.
+		cr.loopCfg.Confirm, cr.loopCfg.ConfirmRefusal = outsideConfirm, outsideConfirmRefusal
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -201,6 +202,23 @@ type spendEntry struct {
 
 // dailySpend totals what this budget has cost inside the window, dropping
 // what has aged out.
+// spendLedgerMu makes adding to a ledger one step. Read, append and write
+// apart, two rounds charging one budget at once (an agent's in-flight turns,
+// everyone outside on one agent) each read the same entries and the second
+// write dropped the first's cost.
+var spendLedgerMu sync.Mutex
+
+// appendSpend records cost on key's ledger and returns what the last 24 hours
+// held before it.
+func appendSpend(key string, cost float64) (before float64) {
+	spendLedgerMu.Lock()
+	defer spendLedgerMu.Unlock()
+	before, entries := dailySpend(key)
+	entries = append(entries, spendEntry{At: time.Now(), USD: cost})
+	RootDB.Set(spendLedgerTable, key, &entries)
+	return before
+}
+
 func dailySpend(key string) (float64, []spendEntry) {
 	if strings.TrimSpace(key) == "" || RootDB == nil {
 		return 0, nil
@@ -266,9 +284,7 @@ func chargeDailySpend(cfg AgentLoopConfig, resp *Response) (spent, limit float64
 		if cost <= 0 {
 			return 0, 0, "", false
 		}
-		before, entries := dailySpend(b.Key)
-		entries = append(entries, spendEntry{At: time.Now(), USD: cost})
-		RootDB.Set(spendLedgerTable, b.Key, &entries)
+		before := appendSpend(b.Key, cost)
 		after := before + cost
 		switch {
 		case !crossed && before < b.DailySpendUSD && after >= b.DailySpendUSD:
