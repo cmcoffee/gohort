@@ -72,6 +72,50 @@ func TestAFireLinksTheSessionItWasMadeIn(t *testing.T) {
 	}
 }
 
+// A fire's text carries its source note once. The agent, having read earlier
+// fires that end in one, writes the line itself; that copy is dropped, even
+// naming another schedule, and the true note goes under the text.
+func TestAFireCarriesItsSourceNoteOnce(t *testing.T) {
+	src := "Scheduled from [Timing data](/orchestrate/?agent=a1&session=s1)."
+	for _, c := range []struct{ name, in, want string }{
+		{"plain", "Posted two replies.", "Posted two replies.\n\n" + src},
+		{"copied", "Posted two replies.\n\n" + src, "Posted two replies.\n\n" + src},
+		{"another's", "Posted.\n\nScheduled from [Old plan](/orchestrate/?agent=a1&session=s0).\n", "Posted.\n\n" + src},
+		{"mid-text", "First.\nScheduled from [X](/y).\nSecond.", "First.\nSecond.\n\n" + src},
+		{"in a sentence", "I was Scheduled from [X](/y). today", "I was Scheduled from [X](/y). today\n\n" + src},
+	} {
+		if got := withScheduleSource(c.in, src); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+	if got := withScheduleSource("Done.\n\n"+src, ""); got != "Done." {
+		t.Errorf("no source: a copied line still goes, got %q", got)
+	}
+	if got := withScheduleSource("  ", src); got != "" {
+		t.Errorf("an empty fire gets no note: %q", got)
+	}
+}
+
+// Every place a fire is given its source note goes through withScheduleSource,
+// so none of them adds the line beside a copy the agent wrote.
+func TestEveryFireAddsItsSourceNoteThroughOneHelper(t *testing.T) {
+	for _, f := range []string{"operator_wake.go", "scheduled_updates.go", "standing_runner.go"} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src := string(b)
+		if !strings.Contains(src, "scheduleSourceNote(") || !strings.Contains(src, "withScheduleSource(") {
+			t.Errorf("%s: its source note should go through withScheduleSource", f)
+		}
+		for _, raw := range []string{`+ "\n\n" + src`, `+ "\n\n" + source`} {
+			if strings.Contains(src, raw) {
+				t.Errorf("%s appends the source note by hand (%s)", f, raw)
+			}
+		}
+	}
+}
+
 // A recurring task runs in the cortex whatever it was set to; a background
 // job's result coming back is not a schedule and returns to its session.
 func TestARecurringFireRunsInTheCortexAndATaskWakeDoesNot(t *testing.T) {

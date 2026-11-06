@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"net/url"
+	"regexp"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -103,4 +104,20 @@ func (T *OrchestrateApp) scheduleSourceNote(udb Database, agentID, home string) 
 	}
 	link := strings.TrimSuffix(T.WebPath(), "/") + "/?agent=" + url.QueryEscape(agentID) + "&session=" + url.QueryEscape(home)
 	return "Scheduled from [" + title + "](" + link + ")."
+}
+
+// scheduleSourceLineRE matches a source note on a line of its own.
+var scheduleSourceLineRE = regexp.MustCompile(`(?m)^[ \t]*Scheduled from \[[^\]\n]*\]\([^)\n]*\)\.?[ \t]*(?:\n|$)`)
+
+// withScheduleSource puts the source note under a fire's text, once. The
+// agent reads its earlier fires, each ending in the note, and takes to ending
+// its own reply with it, so the line was there twice. The note is never the
+// agent's to write: any it wrote is dropped, whichever schedule it named, and
+// the true one is added. An empty source note leaves the text without one.
+func withScheduleSource(text, src string) string {
+	text = strings.TrimSpace(scheduleSourceLineRE.ReplaceAllString(text, ""))
+	if src == "" || text == "" {
+		return text
+	}
+	return text + "\n\n" + src
 }

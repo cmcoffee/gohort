@@ -311,12 +311,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 		surfSession := scheduleSession(wakeAgent, wakeSession)
 		cardSession := surfSession
 		source := app.scheduleSourceNote(UserDB(app.DB, owner), wakeAgent, wakeSession)
-		withSource := func(text string) string {
-			if source == "" {
-				return text
-			}
-			return strings.TrimSpace(text) + "\n\n" + source
-		}
+		withSource := func(text string) string { return withScheduleSource(text, source) }
 		toParent := false // a sub-agent's fire went to its parent's Cortex
 
 		// direct: post the change verbatim, no LLM, WHERE the watcher was created

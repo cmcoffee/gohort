@@ -400,8 +400,8 @@ func (T *OrchestrateApp) reportStanding(ctx context.Context, sa StandingAgent, r
 	// The report lands in the agent's cortex (console_surface.go), linking
 	// the session the schedule was made in.
 	reportSession := scheduleSession(reportAgent, home)
-	if src := T.scheduleSourceNote(udb, reportAgent, home); src != "" && body != "" {
-		body = strings.TrimSpace(body) + "\n\n" + src
+	if body != "" {
+		body = withScheduleSource(body, T.scheduleSourceNote(udb, reportAgent, home))
 	}
 	// Every run leaves a line in the cortex of the agent that RAN it, the
 	// record of what reached it, unless the full report is landing there

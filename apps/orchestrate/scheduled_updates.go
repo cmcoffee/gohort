@@ -1505,10 +1505,8 @@ func (fr *fireRun) postReport() {
 		})
 	}
 	content := fr.reply
-	if !isTaskWake(p.Prompt) {
-		if src := fr.app.scheduleSourceNote(fr.udb, p.AgentID, p.SessionID); src != "" && strings.TrimSpace(content) != "" {
-			content = strings.TrimSpace(content) + "\n\n" + src
-		}
+	if !isTaskWake(p.Prompt) && strings.TrimSpace(content) != "" {
+		content = withScheduleSource(content, fr.app.scheduleSourceNote(fr.udb, p.AgentID, p.SessionID))
 	}
 	cards = append(cards, ChatMessage{
 		Role:         "assistant",
