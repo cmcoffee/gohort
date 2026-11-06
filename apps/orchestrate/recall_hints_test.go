@@ -1,11 +1,13 @@
 package orchestrate
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // knowledgeHints/memoryHints are the pure converters behind the scored sources:
@@ -249,7 +251,7 @@ func TestOnlyCorpusToolDefsMintsTheKnowledgePair(t *testing.T) {
 func TestAHintedIDIsOneRecallWillFetch(t *testing.T) {
 	turn := &chatTurn{agent: AgentRecord{ID: "a1"}}
 	mem := memoryHints([]SearchHit{{ReportID: "m1", Title: "Acme API pagination", Score: 0.79}}, 0.70)
-	turn.recordRecallHints(nil, mem)
+	turn.recordRecallHints(nil, mem, nil)
 	if !turn.recallIDWasIssued("mem:m1") {
 		t.Error("a hinted finding's id should count as given to the turn")
 	}
@@ -279,5 +281,57 @@ func TestTheMemoryToolsAreInTheCatalogOnce(t *testing.T) {
 		if counts[name] != 1 {
 			t.Errorf("%s is in the catalog %d times", name, counts[name])
 		}
+	}
+}
+
+// A turn that names something carries what the graph records about it, not a
+// pointer to it: asked how a person's companies were doing, an agent answered
+// that one was private, from training, while its graph, one link from the
+// person, recorded its stock listing. The facts run both ways from the entity,
+// since "Acme belongs to Robin" is stored on Acme's side, and reach one step
+// further, to the things it links to.
+func TestANamedEntityBringsItsRecordedFacts(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	ns := factsNamespace("a1")
+	robin, _ := UpsertGraphEntity(db, ns, "person", "Robin", nil, nil)
+	acme, _ := UpsertGraphEntity(db, ns, "org", "Acme", nil, map[string]string{"status": "public"})
+	exchange, _ := UpsertGraphEntity(db, ns, "org", "the Exchange", nil, nil)
+	ticker, _ := UpsertGraphEntity(db, ns, "thing", "ACMX", nil, nil)
+	LinkGraphEdge(db, ns, acme.ID, "belongs_to", robin.ID, "", false)
+	LinkGraphEdge(db, ns, acme.ID, "listed_on", exchange.ID, "", false)
+	LinkGraphEdge(db, ns, acme.ID, "traded_under_ticker", ticker.ID, "", false)
+	UpsertGraphEntity(db, ns, "thing", "Elsewhere", nil, nil) // named nowhere, linked to nothing
+
+	turn := &chatTurn{agent: AgentRecord{ID: "a1"}, udb: db}
+	hints := turn.graphBridgeHints("how are Robin's companies doing", recallGraphMax)
+	if len(hints) != 1 || hints[0].label != "Robin (person)" {
+		t.Fatalf("hints: %+v", hints)
+	}
+	facts := strings.Join(hints[0].facts, "\n")
+	for _, want := range []string{"Acme belongs to Robin", "Acme listed on the Exchange", "Acme traded under ticker ACMX", "Acme status: public"} {
+		if !strings.Contains(facts, want) {
+			t.Errorf("missing %q in:\n%s", want, facts)
+		}
+	}
+	block := formatRecallHints(nil, nil, hints)
+	if !strings.Contains(block, "[known facts:") || !strings.Contains(block, "outranks what you remember from training") ||
+		!strings.Contains(block, "  - Acme listed on the Exchange") {
+		t.Errorf("the facts are not carried in the block:\n%s", block)
+	}
+	if strings.Contains(block, "[recall hints:") {
+		t.Errorf("a graph hint with facts also went out as a pointer:\n%s", block)
+	}
+
+	// Bounded: an entity linked to many things carries its cap, not the graph.
+	for i := 0; i < 30; i++ {
+		n, _ := UpsertGraphEntity(db, ns, "thing", fmt.Sprintf("Widget %d", i), nil, nil)
+		LinkGraphEdge(db, ns, robin.ID, "owns", n.ID, "", false)
+	}
+	if got := graphFactLines(db, ns, robin, recallGraphFacts, recallGraphNeighbors); len(got) > recallGraphFacts {
+		t.Errorf("%d facts, over the cap of %d", len(got), recallGraphFacts)
+	}
+	// Something named with nothing recorded about it carries nothing.
+	if h := turn.graphBridgeHints("anything Elsewhere?", recallGraphMax); len(h) != 0 {
+		t.Errorf("an entity with nothing recorded was carried: %+v", h)
 	}
 }
