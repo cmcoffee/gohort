@@ -297,3 +297,50 @@ func TestARecurringRowNamesItsLedgerTask(t *testing.T) {
 		t.Fatalf("rows %+v; want one naming task %q", rows, recurringName(ff.p))
 	}
 }
+
+// A guardrail that blocked one of a fire's actions did not stop the fire: the
+// rest ran, and the fire is reported (its session, the Cortex) and recorded
+// for attention with the rule named. One that stopped the answer itself is
+// still recorded as stopped, and nothing is posted from it.
+func TestAPartlyBlockedFireIsStillReported(t *testing.T) {
+	ff := newFireFixture(t)
+	trace := []PersistedToolCall{{Name: "moltbook", Args: map[string]any{"action": "reply_to_comment"}}}
+	partly := &fireRun{p: ff.p, udb: ff.udb, agent: ff.agent, agentLabel: ff.agent.Name, toolTrace: trace,
+		resp:    &Response{Content: "Replied to two comments; one reply was held back."},
+		subTurn: &chatTurn{guardrailRulesHit: []string{"Never double-post."}, guardrailBlocks: 1}}
+	if !partly.reportable() {
+		t.Fatal("a fire a guardrail only partly blocked was not reported")
+	}
+	if len(partly.partlyBlocked) != 1 {
+		t.Fatalf("the partly blocked fire does not carry its rule: %v", partly.partlyBlocked)
+	}
+	status, summary := scheduledOutcome{reply: partly.reply, partly: partly.partlyBlocked}.resolve()
+	if status != RunAttention || !strings.HasPrefix(summary, `Partly blocked by guardrail "Never double-post."`) {
+		t.Errorf("recorded as %s: %q", status, summary)
+	}
+
+	stopped := &fireRun{p: ff.p, udb: ff.udb, agent: ff.agent, agentLabel: ff.agent.Name, toolTrace: trace,
+		resp:    &Response{Content: "I can't help with that."},
+		subTurn: &chatTurn{guardrailRulesHit: []string{"Never double-post."}, guardrailStopped: true}}
+	if stopped.reportable() {
+		t.Error("a fire whose reply a guardrail stopped was reported")
+	}
+	escalated := &fireRun{p: ff.p, udb: ff.udb, agent: ff.agent, agentLabel: ff.agent.Name, toolTrace: trace,
+		resp:    &Response{Content: "x"},
+		subTurn: &chatTurn{guardrailRulesHit: []string{"Never double-post."}, guardrailBlocks: guardBlockEscalateAt}}
+	if escalated.reportable() {
+		t.Error("a fire the guardrails ended was reported")
+	}
+}
+
+// Only a block on the request or the reply stops a turn's answer; a block on
+// one action does not.
+func TestOnlyAnInputOrOutputBlockStopsTheTurn(t *testing.T) {
+	src := readFile(t, "guardrail_enforce.go")
+	if !strings.Contains(src, "if hookPoint != guardHookPreAction {\n\t\t\tt.guardrailStopped = true") {
+		t.Error("a block outside pre_action no longer marks the turn stopped")
+	}
+	if !strings.Contains(readFile(t, "guardrail_input.go"), "t.guardrailStopped = true") {
+		t.Error("a refused request no longer marks the turn stopped")
+	}
+}

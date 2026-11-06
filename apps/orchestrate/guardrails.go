@@ -773,3 +773,11 @@ func (t *chatTurn) noteGuardrailRule(rule string) {
 	}
 	t.guardrailRulesHit = append(t.guardrailRulesHit, rule)
 }
+
+// guardrailStoppedTurn reports whether a guardrail stopped this turn: it
+// blocked the request or the reply, or blocked enough attempts to end the
+// turn. A turn whose guardrails only blocked some of its actions was not
+// stopped; those actions did not happen and the rest did.
+func (t *chatTurn) guardrailStoppedTurn() bool {
+	return t != nil && (t.guardrailStopped || t.guardrailBlocks >= guardBlockEscalateAt)
+}

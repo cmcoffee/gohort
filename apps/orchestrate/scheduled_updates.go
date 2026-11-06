@@ -373,6 +373,7 @@ type scheduledOutcome struct {
 	softCap     int
 	detections  int // injection-scan hits during the fire
 	taintBlocks int // follow-up actions the tainted-action check stopped
+	partly      []string // guardrails that blocked some of the fire's actions
 }
 
 // resolve returns the run's status and the summary that goes with it.
@@ -396,6 +397,10 @@ func (o scheduledOutcome) resolve() (RunStatus, string) {
 	if o.hitCap {
 		status = RunAttention
 		summary = fmt.Sprintf("hit round cap (%d rounds): cycle may be incomplete. %s", o.softCap, summary)
+	}
+	if len(o.partly) > 0 {
+		status = RunAttention
+		summary = fmt.Sprintf("Partly blocked by guardrail %s: those actions did not happen, the rest ran. %s", strings.Join(quoteAll(o.partly), ", "), summary)
 	}
 	// Applied last, so it reads first. Something this fire READ carried
 	// instructions aimed at the agent, and flagged-and-delivered is the default
@@ -539,6 +544,9 @@ type fireRun struct {
 	think            bool
 	softCap          int
 	lastRound        int
+	// partlyBlocked names the guardrails that blocked some of this fire's
+	// actions while the rest ran: reported, and marked for attention.
+	partlyBlocked []string
 	// Filled by the loop's OnPromptDigest hook, read by record() below.
 	promptDigest PromptDigest
 	// liveCalls accumulates the tool calls the model actually requested each
@@ -1209,7 +1217,19 @@ func (fr *fireRun) reportable() bool {
 	// ledger can say about it, and it used to say nothing: the decline text
 	// became the reply and the run recorded OK, so a task silently doing nothing
 	// looked identical to one working fine. Named rules, human-readable status.
-	if rules := fr.subTurn.guardrailRulesHit; len(rules) > 0 {
+	//
+	// A guardrail that blocked only some of the fire's actions did not stop
+	// it: those actions did not happen, the rest did, and the reply passed its
+	// own check. Treated as stopped, a fire that posted a comment was left out
+	// of its session and the Cortex, and its comment was nowhere but the
+	// site. It is reported like any fire, marked for attention with the rule.
+	if rules := fr.subTurn.guardrailRulesHit; len(rules) > 0 && !fr.subTurn.guardrailStoppedTurn() {
+		fr.partlyBlocked = rules
+		named := strings.Join(quoteAll(rules), ", ")
+		Log("[orchestrate/scheduled] agent=%s session=%s fire %d partly blocked by guardrail(s) %s: the rest ran and is reported", fr.agentLabel, p.SessionID, p.FireCount+1, named)
+		appendSessionDiag(fr.udb, p.AgentID, p.SessionID, "recurring-fire-partly-blocked",
+			fmt.Sprintf("Recurring task %q fire %d: guardrail %s blocked some of its actions, which did not happen. The rest of the fire ran and is reported.", recurringName(p), p.FireCount+1, named))
+	} else if len(rules) > 0 {
 		named := strings.Join(quoteAll(rules), ", ")
 		Log("[orchestrate/scheduled] agent=%s session=%s fire %d hit guardrail(s) %s", fr.agentLabel, p.SessionID, p.FireCount+1, named)
 		appendSessionDiag(fr.udb, p.AgentID, p.SessionID, "recurring-fire-guardrail",
@@ -1581,6 +1601,7 @@ func (fr *fireRun) recordOutcome() {
 		softCap:     fr.softCap,
 		detections:  fr.subTurn.scanDetectionCount(),
 		taintBlocks: fr.subTurn.taintBlockCount(),
+		partly:      fr.partlyBlocked,
 	}
 	status, summary := outcome.resolve()
 	if fr.hitCap {

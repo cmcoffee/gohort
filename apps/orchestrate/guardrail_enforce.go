@@ -278,6 +278,9 @@ func (t *chatTurn) guardrailCheckHookCtx(ctx context.Context) func(hookPoint, ca
 		// escalation state belongs to the turn.
 		t.countGuardrailBlock(rule, hookPoint, candidate)
 		t.noteGuardrailRule(rule)
+		if hookPoint != guardHookPreAction {
+			t.guardrailStopped = true
+		}
 		t.turnDiag("guardrail-blocked", fmt.Sprintf("Guardrail %q blocked a %s check%s: %s", rule, hookPoint, modeNote, reason))
 		Log("[orchestrate.guardrail] agent=%s blocked %s (rule=%q correctable=%v) block#%d of %d attempted", t.agent.ID, hookPoint, rule, correctable, t.guardrailBlocks, t.guardrailBlockTotal)
 		// File it for review. Every block, including repeats — a rule tripping

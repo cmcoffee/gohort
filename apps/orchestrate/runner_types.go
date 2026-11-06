@@ -276,6 +276,12 @@ type chatTurn struct {
 	// with a status that says nothing about why.
 	guardrailRulesHit []string
 
+	// guardrailStopped records that a guardrail stopped the turn's answer, not
+	// only one of its actions: a block on the request itself or on the reply.
+	// A block on an action leaves the rest of the turn to run, and a
+	// background run that did so reports what it did (guardrailStoppedTurn).
+	guardrailStopped bool
+
 	// diagAgentID / diagSessionID identify the trail for a turn that has no
 	// live *session — a scheduled fire, a monitor wake, a dispatched sub-agent.
 	// Those turns still fire guards, and without this every breadcrumb they

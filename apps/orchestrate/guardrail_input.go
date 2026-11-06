@@ -48,6 +48,7 @@ func (t *chatTurn) guardrailInputDirective(candidate string) (directive string, 
 		// blocked turn carries (visible as the loop's COLLAPSE-DIAG: thousands of
 		// reasoning tokens, one sentence of output). Skip it.
 		t.noteGuardrailRule(rule)
+		t.guardrailStopped = true
 		t.turnDiag("guardrail-input-blocked", fmt.Sprintf("Guardrail %q refused the request before the model saw it, so no reply was generated: %s", rule, reason))
 		Log("[orchestrate.guardrail] agent=%s pre_input HARD BLOCK (rule=%q, not correctable)", t.agent.ID, rule)
 		// A pre_input hard block is the quietest failure of all — no reply was
