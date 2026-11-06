@@ -1,6 +1,7 @@
 package account
 
 import (
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -127,5 +128,36 @@ func TestAKeyIsSavedAsOneKind(t *testing.T) {
 	}
 	if _, err := T.handleTokenMint(c, &tokenMintBody{Name: "claude", Kind: KeyKindMCP}); err != nil {
 		t.Errorf("an MCP key: %v", err)
+	}
+}
+
+// A kind no longer made stays editable on a key that already is one, and no
+// other key can be rescoped into it: rescoping was the way round minting's
+// refusal.
+func TestAKeyCannotBeRescopedIntoTheDesktopKind(t *testing.T) {
+	prevRoot := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = prevRoot })
+	RegisterShareableFeature(ShareableFeature{Key: "mcp", Label: "MCP"})
+	for _, f := range []string{"mcp", "desktop"} {
+		SetFeatureAllowedUsers(RootDB, f, []string{"alice"})
+	}
+	T := &Account{}
+	T.DB = RootDB.(*DBase).Bucket("account")
+	mcp := MintAccountTokenScoped("alice", "claude", &TokenScope{Features: []string{"mcp"}})
+	desk := MintAccountTokenScoped("alice", "laptop", &TokenScope{Features: []string{"desktop"}})
+	rescope := func(id string) error {
+		c := &jsonapi.Call{User: "alice", R: httptest.NewRequest("POST", "/api/tokens?action=scope&id="+id, nil)}
+		_, err := T.handleTokenScope(c, struct {
+			Kind  string     `json:"kind"`
+			Scope TokenScope `json:"scope"`
+		}{Kind: KeyKindDesktop})
+		return err
+	}
+	if err := rescope(mcp.ID); err == nil {
+		t.Error("an MCP key was rescoped into a desktop key")
+	}
+	if err := rescope(desk.ID); err != nil {
+		t.Errorf("an existing desktop key could not be saved as itself: %v", err)
 	}
 }

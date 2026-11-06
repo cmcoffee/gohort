@@ -6,6 +6,7 @@
 package ollama_proxy
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -307,11 +308,13 @@ func TestTheRouterHoldsCallersToModelAccessLimits(t *testing.T) {
 	RootDB = testRoot()
 	AuthDB = func() Database { return RootDB }
 	t.Cleanup(func() { RootDB, AuthDB = prevRoot, prevAuth })
-	SetFeatureAllowedUsers(RootDB, ModelAccessFeature, []string{"alice"})
+	// A user of its own: the limits are shared across the package, and a
+	// changed limit keeps what each person has already used.
+	SetFeatureAllowedUsers(RootDB, ModelAccessFeature, []string{"dora"})
 	if err := modelaccess.Save(modelaccess.Limits{PerMinute: 1, AtOnce: 5}); err != nil {
 		t.Fatal(err)
 	}
-	tok := MintAccountToken("alice", "workstation")
+	tok := MintAccountToken("dora", "workstation")
 	mux := (&ollamaProxy{}).routes()
 	send := func() int {
 		r := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"model":"gohort"}`))
@@ -326,5 +329,30 @@ func TestTheRouterHoldsCallersToModelAccessLimits(t *testing.T) {
 	}
 	if code := send(); code != http.StatusTooManyRequests {
 		t.Errorf("past the per-minute limit through the router: %d, want 429", code)
+	}
+}
+
+// With the worker's maximum effort set to off, a proxy call cannot turn
+// thinking on for itself: its "think" becomes false, as /v1 caps it. An
+// administrator's call is left as sent, and so is every call under any other
+// maximum.
+func TestTheProxyHoldsThinkingToTheWorkersMaximum(t *testing.T) {
+	prev := RootDB
+	RootDB = testRoot()
+	t.Cleanup(func() { RootDB = prev })
+	req := func() *http.Request { return from("127.0.0.1:5555") }
+	body := []byte(`{"model":"gohort","think":true,"messages":[]}`)
+
+	if got := capThinking(req(), body); string(got) != string(body) {
+		t.Errorf("with no maximum set, the call was changed: %s", got)
+	}
+	RootDB.Set(LLMTable, "max_effort", "off")
+	got := capThinking(req(), body)
+	var obj map[string]any
+	if err := json.Unmarshal(got, &obj); err != nil || obj["think"] != false || obj["model"] != "gohort" {
+		t.Errorf("with the maximum off, the call kept its thinking: %s (%v)", got, err)
+	}
+	if got := capThinking(req(), []byte("not json")); string(got) != "not json" {
+		t.Errorf("a body that is not an object was changed: %s", got)
 	}
 }

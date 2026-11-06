@@ -88,3 +88,25 @@ func TestANarrowedKeySeesItsOwnAgentsAndApps(t *testing.T) {
 		t.Error("a granted app, an admin, or a tool with no app was refused")
 	}
 }
+
+// A key presented beside a session must be the same person's: one user's key
+// scope is not applied to another user's run.
+func TestAKeyBesideASessionMustBeTheSamePersons(t *testing.T) {
+	prevAuth, prevRoot := AuthDB, RootDB
+	root := &DBase{Store: kvlite.MemStore()}
+	AuthSetUser(root, "user-a", "pw-a-123", false)
+	AuthSetUser(root, "user-b", "pw-b-123", false)
+	AuthDB = func() Database { return root }
+	RootDB = root
+	t.Cleanup(func() { AuthDB, RootDB = prevAuth, prevRoot })
+
+	app := &MCPServer{}
+	app.DB = root.Bucket("mcpserver")
+	bobsKey := MintAccountTokenScoped("user-b", "claude", &TokenScope{Features: []string{MCPFeatureKey}})
+	r := httptest.NewRequest(http.MethodGet, "/mcp/", nil)
+	r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(root, "user-a")})
+	r.Header.Set("X-API-Key", bobsKey.Token)
+	if _, _, status := app.authorize(r, "test"); status != http.StatusForbidden {
+		t.Errorf("user-a's session with user-b's key: %d, want 403", status)
+	}
+}

@@ -61,3 +61,29 @@ func TestEachPersonIsHeldToTheLimits(t *testing.T) {
 	}
 	done()
 }
+
+// Changing the limits keeps what each person has used and has running: a
+// request already in flight still counts, and the minute is not handed back.
+func TestChangedLimitsKeepWhatIsInUse(t *testing.T) {
+	withStore(t)
+	Save(Limits{PerMinute: 3, AtOnce: 1})
+	running, why := Admit("cara")
+	if why != "" {
+		t.Fatalf("first request refused: %s", why)
+	}
+	for i := 0; i < 2; i++ {
+		if _, why := Admit("cara"); !strings.Contains(why, "already running") {
+			t.Fatalf("a second request beside a running one: %q", why)
+		}
+	}
+	Save(Limits{PerMinute: 4, AtOnce: 1})
+	if _, why := Admit("cara"); !strings.Contains(why, "already running") {
+		t.Errorf("after a limit change, a request ran beside the one still running: %q", why)
+	}
+	running()
+	// Three counted in this minute so far, plus the refused one just now:
+	// the raised limit of four is reached, not restarted.
+	if _, why := Admit("cara"); !strings.Contains(why, "this minute") {
+		t.Errorf("after a limit change, the minute's count started over: %q", why)
+	}
+}

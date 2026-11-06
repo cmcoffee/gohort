@@ -226,6 +226,13 @@ func (T *MCPServer) authorize(r *http.Request, action string) (owner, refusal st
 		Log("[mcpserver] %s REJECTED: user=%s presented a desktop or bridge key, not a personal access token", action, owner)
 		return "", "Forbidden: the MCP endpoint takes an MCP key from your Account page (Account > API keys > + New API key). Desktop and connector keys are not API keys.", http.StatusForbidden
 	}
+	// A key and a session at once must be the same person's: one user's key
+	// scope was applied to another's agents. Nothing was gained by it, the
+	// run being the session's, but a request is one person.
+	if tok != nil && tok.Owner != owner {
+		Log("[mcpserver] %s REJECTED: key %q belongs to %s, the session to %s", action, tok.Name, tok.Owner, owner)
+		return "", "Forbidden: this key is not yours.", http.StatusForbidden
+	}
 	if tok != nil && !tok.AllowsFeature(MCPFeatureKey) {
 		Log("[mcpserver] %s REJECTED: key %q is not an MCP key (owner=%s)", action, tok.Name, owner)
 		return "", "Forbidden: this key is not an MCP key. Each key does one thing: make an MCP key on your Account page (Account > API keys > + New API key).", http.StatusForbidden

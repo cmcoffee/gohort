@@ -18,6 +18,17 @@ func NewInFlight(max int) *InFlight {
 	return &InFlight{max: max, n: map[string]int{}}
 }
 
+// SetMax changes how many may run at once per key, keeping what is running:
+// a request already in flight still gives its slot back to this limiter.
+func (f *InFlight) SetMax(max int) {
+	if f == nil {
+		return
+	}
+	f.mu.Lock()
+	f.max = max
+	f.mu.Unlock()
+}
+
 // Acquire takes a slot for key, returning the func that gives it back and
 // true, or false when key already has max running. An empty key is not
 // limited, since it cannot be told apart from any other caller.

@@ -607,10 +607,27 @@ func (T *Account) handleTokenScope(c *jsonapi.Call, body struct {
 	if err != nil {
 		return nil, err
 	}
+	// A kind no longer made (the desktop app's) stays editable on a key that
+	// already is one, and no other key can be turned into one: rescoping was
+	// the way round the refusal minting makes.
+	if k := scope.Kind(); k != "" && !slices.Contains(keyKinds(c.User), k) && storedKeyKind(c.User, id) != k {
+		return nil, jsonapi.BadRequest("a key cannot be changed into that kind: the desktop app makes its own key when you sign in to it")
+	}
 	if !SetAccountTokenScope(c.User, id, scope) {
 		return nil, jsonapi.NotFound("token not found")
 	}
 	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// storedKeyKind is the kind owner's key id is now, or "" when there is no such
+// key.
+func storedKeyKind(owner, id string) string {
+	for _, t := range ListAccountTokens(owner) {
+		if t.ID == id {
+			return t.Scope.Kind()
+		}
+	}
+	return ""
 }
 
 // tokenMintBody is a key to mint: its name, the one kind it is for, and its

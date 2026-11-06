@@ -88,10 +88,19 @@ var state struct {
 func Admit(user string) (release func(), refusal string) {
 	l := Load()
 	state.mu.Lock()
-	if state.rate == nil || state.limits != l {
+	switch {
+	case state.rate == nil:
 		state.limits = l
 		state.rate = core.NewRateLimiter(l.PerMinute, time.Minute)
 		state.busy = netgate.NewInFlight(l.AtOnce)
+	case state.limits != l:
+		// Changed in place. Rebuilt, every count went back to zero: a
+		// request running released into the old limiter, the new one
+		// started empty, and for a moment anyone could run twice the
+		// at-once limit and have a fresh minute.
+		state.limits = l
+		state.rate.SetLimit(l.PerMinute)
+		state.busy.SetMax(l.AtOnce)
 	}
 	rate, busy := state.rate, state.busy
 	state.mu.Unlock()

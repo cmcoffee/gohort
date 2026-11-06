@@ -423,6 +423,13 @@ func TestAnOlderScopedKeyKeepsTheAgentsItReachedOverMCP(t *testing.T) {
 	if got := storedToken(v1Key).Scope; !got.AgentsBindMCP || strings.Join(got.Targets, ",") != "worker" {
 		t.Errorf("a key that cannot use MCP gained targets: %+v", got)
 	}
+	// A key that opens the Model API as well is left as it was: listing the
+	// agents it reached over MCP would open them over /v1 too.
+	both := MintAccountTokenExpiring("user1", "both", &TokenScope{Features: []string{"mcp", "openai"}, Targets: []string{"agent:a1"}}, 0)
+	lookupAccountTokenOwner(both.Token)
+	if got := storedToken(both).Scope; got.AgentsBindMCP || strings.Join(got.Targets, ",") != "agent:a1" {
+		t.Errorf("a key with the Model API as well gained targets: %+v", got)
+	}
 	if !MintAccountTokenScoped("craig", "new", &TokenScope{}).Scope.AgentsBindMCP {
 		t.Error("a new key should be born with its list binding MCP")
 	}

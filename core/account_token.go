@@ -386,6 +386,13 @@ func bindAgentsToMCP(t *AccountToken) bool {
 	if t == nil || t.Scope == nil || t.Scope.AgentsBindMCP {
 		return false
 	}
+	// A key that also opens the Model API is left as it is. Its targets are
+	// that door's allow-list too, so listing every agent it reached over MCP
+	// on it also opened those agents over /v1. Unmarked, it keeps reaching
+	// over MCP what it always did; editing it makes it one kind, and binds it.
+	if containsFold(t.Scope.Features, mcpFeature) && containsFold(t.Scope.Features, OutsideAudienceDoor) {
+		return false
+	}
 	if containsFold(t.Scope.Features, mcpFeature) {
 		if ListExternalReachableAgentsFn == nil {
 			return false

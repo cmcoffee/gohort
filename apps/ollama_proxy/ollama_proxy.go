@@ -183,6 +183,39 @@ func (p *ollamaProxy) allow(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
+// workerThinkingOff reports an administrator capping the worker's thinking at
+// off (Admin, Models, Worker LLM, Maximum effort). /v1 holds every call to the
+// cap; the proxy passed a caller's own "think" through, so a raw model call
+// could think on a tier set never to.
+func workerThinkingOff() bool {
+	if RootDB == nil {
+		return false
+	}
+	var max string
+	RootDB.Get(LLMTable, "max_effort", &max)
+	return strings.EqualFold(strings.TrimSpace(max), "off")
+}
+
+// capThinking holds a request to the worker's maximum effort when it is off:
+// for anyone but an administrator, the body's "think" becomes false, which the
+// Ollama backend reads as is and the llama.cpp/vLLM path turns into a zero
+// thinking budget. Anything not a JSON object passes as it came.
+func capThinking(r *http.Request, data []byte) []byte {
+	if callerIsAdmin(r) || !workerThinkingOff() || len(data) == 0 {
+		return data
+	}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(data, &obj) != nil || obj == nil {
+		return data
+	}
+	obj["think"] = json.RawMessage("false")
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return data
+	}
+	return out
+}
+
 // keylessLocal reports a request the proxy serves with no key: from a program
 // on this machine, the way an Ollama client is, which sends no credential.
 //
@@ -372,6 +405,7 @@ func (p *ollamaProxy) handleOllama(w http.ResponseWriter, r *http.Request, backe
 		if tag == "no-think" {
 			bodyBytes = injectOptions(bodyBytes, "think", false)
 		}
+		bodyBytes = capThinking(r, bodyBytes)
 	}
 
 	callerID := callerIP(r)
@@ -460,6 +494,7 @@ func (p *ollamaProxy) handleLlamaCpp(w http.ResponseWriter, r *http.Request, end
 		http.Error(w, "read error", http.StatusBadRequest)
 		return
 	}
+	bodyBytes = capThinking(r, bodyBytes)
 
 	switch r.URL.Path {
 	case "/api/chat":

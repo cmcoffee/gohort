@@ -68,6 +68,18 @@ func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
 // ceiling. An empty key is always allowed: a limiter cannot meaningfully
 // bucket what it cannot identify, and refusing would turn "we could not tell
 // who this is" into an outage.
+// SetLimit changes how many events a key may have per window, keeping every
+// key's count so far: a new limit applies at once, without handing everyone a
+// fresh window.
+func (r *RateLimiter) SetLimit(limit int) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.limit = limit
+	r.mu.Unlock()
+}
+
 func (r *RateLimiter) Allow(key string) bool {
 	if r == nil || r.limit <= 0 || key == "" {
 		return true
