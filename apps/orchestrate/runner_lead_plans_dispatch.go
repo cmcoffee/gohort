@@ -188,6 +188,7 @@ func (t *chatTurn) runDispatchedStep(ctx context.Context, sess *ToolSession, n i
 		Confirm:              confirm,
 		AskFirst:             t.asksFirst,
 		GuardrailCheck:       t.guardrailEnforcer().Check,
+		GuardrailObserve:     t.guardrailEnforcer().Observe,
 		GuardrailActionGate:  t.guardrailEnforcer().ActionGate,
 		GuardrailHalted:      t.guardrailEnforcer().Halted,
 		GuardrailReject:      t.guardrailEnforcer().Reject,

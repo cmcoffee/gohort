@@ -1759,6 +1759,7 @@ func (ar *agentsRun) configureLoop() {
 		ConfirmRefusal:      ar.runRefusalFn,
 		AskFirst:            ar.subTurn.asksFirst, // its marks and the caller's (ask_first.go)
 		GuardrailCheck:      ar.subTurn.guardrailEnforcer().Check,
+		GuardrailObserve:    ar.subTurn.guardrailEnforcer().Observe,
 		GuardrailActionGate: ar.subTurn.guardrailEnforcer().ActionGate,
 		GuardrailHalted:     ar.subTurn.guardrailEnforcer().Halted,
 		GuardrailReject:     ar.subTurn.guardrailEnforcer().Reject,

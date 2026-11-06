@@ -70,6 +70,7 @@ func (T *OrchestrateApp) AgentCredentialDeny(owner, agentID string) map[string]b
 func applyAppGuard(t *chatTurn, cfg AgentLoopConfig) AgentLoopConfig {
 	e := t.guardrailEnforcer()
 	cfg.GuardrailCheck = e.Check
+	cfg.GuardrailObserve = e.Observe
 	cfg.GuardrailActionGate = e.ActionGate
 	cfg.GuardrailHalted = e.Halted
 	cfg.GuardrailReject = e.Reject

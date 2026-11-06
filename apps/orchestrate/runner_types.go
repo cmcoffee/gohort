@@ -287,6 +287,13 @@ type chatTurn struct {
 	// guardrails caches this turn's enforcement set (see guardrailEnforcer).
 	guardrails *guardrailEnforcement
 
+	// doneCalls is what this turn's calls did, in order, as the loop reported
+	// them (guardrail_done.go): what a pre_action check is shown as already
+	// done. Its own mutex: a round's calls are reported from the loop while
+	// a check may be reading.
+	doneMu    sync.Mutex
+	doneCalls []doneCall
+
 	// scanner is this turn's tool-result injection scanner and scannerInit
 	// records that we tried to build it (nil is a real answer — no LLM wired —
 	// and must not be retried on every tool call). Its own mutex: toolMu is

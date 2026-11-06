@@ -64,7 +64,13 @@ func (t *chatTurn) judgeWithRecheck(ctx context.Context, hookPoint, candidate st
 	var o wardenOutcome
 	call := func(opts ...ChatOption) {
 		o.tries++
-		o.verdicts, o.err = t.app.runWarden(ctx, t.agent, hookPoint, candidate, who, opts...)
+		// At a pre_action check the warden is shown what the turn already
+		// did, so a rule about order can be judged (guardrail_done.go).
+		var facts wardenFacts
+		if hookPoint == guardHookPreAction {
+			facts.Done = t.doneSoFar()
+		}
+		o.verdicts, o.err = t.app.runWardenWith(ctx, t.agent, hookPoint, candidate, who, facts, opts...)
 	}
 	call()
 	if !o.failed() {

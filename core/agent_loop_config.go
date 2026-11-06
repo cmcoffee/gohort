@@ -380,6 +380,16 @@ type AgentLoopConfig struct {
 	// treatment. The predicate reads whichever arg selects the action.
 	GuardrailActionGate func(toolName string, args map[string]any) bool
 
+	// GuardrailObserve, when set, is told each call this turn made once its
+	// round has run, and whether it failed (a refused call counts as failed).
+	// It is how a pre_action check comes to know what already happened: the
+	// warden judges one candidate in fresh context, so a rule about ORDER
+	// ("verify before you post") was unjudgeable, and an agent that had just
+	// verified was blocked for not verifying. The app records what this
+	// reports and shows it to the warden as fact the framework established,
+	// not anything the agent claims. nil ⇒ nothing recorded.
+	GuardrailObserve func(call ToolCall, failed bool)
+
 	// GuardrailHalted, when set, is consulted immediately after any blocked
 	// check. true means the app has decided this turn must END — not be
 	// corrected, redirected, or asked to stop.

@@ -1216,6 +1216,7 @@ func (sd *syncDispatch) configureLoop() {
 		ConfirmRefusal:      sd.refusal,
 		AskFirst:            sd.subTurn.asksFirst, // its marks and its delegators' (ask_first.go)
 		GuardrailCheck:      sd.subTurn.guardrailEnforcer().Check,
+		GuardrailObserve:    sd.subTurn.guardrailEnforcer().Observe,
 		GuardrailActionGate: sd.subTurn.guardrailEnforcer().ActionGate,
 		GuardrailHalted:     sd.subTurn.guardrailEnforcer().Halted,
 		GuardrailReject:     sd.subTurn.guardrailEnforcer().Reject,
@@ -2388,6 +2389,7 @@ func (cr *continuingRun) configureLoop() {
 		// never consulted, so an ask mark meant nothing on a channel turn.
 		AskFirst:            cr.subTurn.asksFirst,
 		GuardrailCheck:      cr.subTurn.guardrailEnforcer().Check,
+		GuardrailObserve:    cr.subTurn.guardrailEnforcer().Observe,
 		GuardrailActionGate: cr.subTurn.guardrailEnforcer().ActionGate,
 		GuardrailHalted:     cr.subTurn.guardrailEnforcer().Halted,
 		GuardrailReject:     cr.subTurn.guardrailEnforcer().Reject,

@@ -842,3 +842,38 @@ func TestADeadLinkIsNotTakenToTheLead(t *testing.T) {
 		t.Errorf("a 404 from a tool that writes must still consult once, got %d", n)
 	}
 }
+
+// Each call a round makes is reported once it has run, with whether it failed,
+// so a guardrail judging the next call can be told what is already done.
+func TestEachCallIsReportedForTheGuardrail(t *testing.T) {
+	verify := AgentToolDef{
+		Tool:    Tool{Name: "verify", Description: "checks a draft", Parameters: map[string]ToolParam{"text": {Type: "string"}}},
+		Handler: func(context.Context, map[string]any) (string, error) { return "ok", nil },
+	}
+	flaky := AgentToolDef{
+		Tool:    Tool{Name: "fetch", Description: "fetches", Parameters: map[string]ToolParam{"url": {Type: "string"}}},
+		Handler: func(context.Context, map[string]any) (string, error) { return "", fmt.Errorf("timed out") },
+	}
+	app := &AppCore{LLM: &FakeLLM{Turns: []FakeTurn{
+		{ToolCalls: []ToolCall{
+			{ID: "1", Name: "verify", Args: map[string]any{"text": "draft"}},
+			{ID: "2", Name: "fetch", Args: map[string]any{"url": "https://example.test"}},
+		}},
+		{Content: "Done.", Repeat: true},
+	}}}
+	var seen []string
+	cfg := AgentLoopConfig{
+		MaxRounds: 4,
+		RouteKey:  "test.observe",
+		Tools:     []AgentToolDef{verify, flaky},
+		GuardrailObserve: func(call ToolCall, failed bool) {
+			seen = append(seen, fmt.Sprintf("%s:%v", call.Name, failed))
+		},
+	}
+	if _, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "check and fetch"}}, cfg); err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if strings.Join(seen, ",") != "verify:false,fetch:true" {
+		t.Errorf("reported %v, want verify ok then fetch failed", seen)
+	}
+}

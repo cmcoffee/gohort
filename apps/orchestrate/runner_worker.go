@@ -556,6 +556,7 @@ func (ws *workerStep) runLoop() bool {
 		ConfirmRefusal:      t.confirmRefusal,
 		AskFirst:            t.asksFirst, // the owner's ask marks reach every tool (ask_first.go)
 		GuardrailCheck:      t.guardrailEnforcer().Check,
+		GuardrailObserve:    t.guardrailEnforcer().Observe,
 		GuardrailActionGate: t.guardrailEnforcer().ActionGate,
 		GuardrailHalted:     t.guardrailEnforcer().Halted,
 		GuardrailReject:     t.guardrailEnforcer().Reject,

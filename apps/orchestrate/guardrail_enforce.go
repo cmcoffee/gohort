@@ -31,6 +31,9 @@ type guardrailEnforcement struct {
 	// this turn is tainted. It travels with the rest because it is meaningless
 	// without them: a gate with no check behind it judges nothing.
 	ActionGate func(toolName string, args map[string]any) bool
+	// Observe records each call the turn made once it has run, so a later
+	// pre_action check can be shown what is already done (guardrail_done.go).
+	Observe func(call ToolCall, failed bool)
 }
 
 // guardrailEnforcer returns the enforcement set for this turn. Inert (zero
@@ -67,6 +70,7 @@ func (t *chatTurn) guardrailEnforcerCtx(ctx context.Context) guardrailEnforcemen
 	return guardrailEnforcement{
 		Check:      check,
 		ActionGate: t.guardrailActionGate(),
+		Observe:    t.noteDoneCall,
 		Halted:     func() bool { return t.guardrailBlocks >= guardBlockEscalateAt },
 		// Bound to the same context as the check, for the same reason: the
 		// rejection writer is itself a model call, and one made on a dead

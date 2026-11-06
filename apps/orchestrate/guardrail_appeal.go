@@ -202,7 +202,11 @@ func (t *chatTurn) guardrailAppealToolDef() AgentToolDef {
 			finding := fmt.Sprintf(
 				"the phrase %q appears in %d separate USER message(s) in this conversation (the agent claims: %s). One of them reads: %q",
 				quote, n, claim, excerpt)
-			verdicts, err := t.app.runWardenWithFinding(t.ctx, t.agent, offer.Hook, offer.Candidate, t.requester(), finding)
+			facts := wardenFacts{Finding: finding}
+			if offer.Hook == guardHookPreAction {
+				facts.Done = t.doneSoFar()
+			}
+			verdicts, err := t.app.runWardenWith(t.ctx, t.agent, offer.Hook, offer.Candidate, t.requester(), facts)
 			if err != nil {
 				t.turnDiag("guardrail-appeal-failed", fmt.Sprintf(
 					"Appeal against %q could not be re-checked (%v): the block stands.", offer.Rule, err))

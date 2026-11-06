@@ -1038,6 +1038,7 @@ func (fr *fireRun) runLoop() {
 		ConfirmRefusal:      fr.gate.refusal,
 		AskFirst:            fr.subTurn.asksFirst, // the owner's ask marks, and never-unattended ones
 		GuardrailCheck:      fr.subTurn.guardrailEnforcer().Check,
+		GuardrailObserve:    fr.subTurn.guardrailEnforcer().Observe,
 		GuardrailActionGate: fr.subTurn.guardrailEnforcer().ActionGate,
 		GuardrailHalted:     fr.subTurn.guardrailEnforcer().Halted,
 		GuardrailReject:     fr.subTurn.guardrailEnforcer().Reject,

@@ -103,6 +103,7 @@ func (t *chatTurn) runPipelineSubAgent(ctx context.Context, sysPrompt, userMsg s
 		ConfirmRefusal:      stageRefusal,
 		AskFirst:            t.asksFirst, // the owner's ask marks reach every tool (ask_first.go)
 		GuardrailCheck:      t.guardrailEnforcer().Check,
+		GuardrailObserve:    t.guardrailEnforcer().Observe,
 		GuardrailActionGate: t.guardrailEnforcer().ActionGate,
 		GuardrailHalted:     t.guardrailEnforcer().Halted,
 		GuardrailReject:     t.guardrailEnforcer().Reject,

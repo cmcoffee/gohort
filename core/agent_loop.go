@@ -2556,6 +2556,9 @@ func (lr *loopRun) recordResponse() loopAction {
 			}
 		}
 		lr.prevHadToolCalls = true
+		if lr.cfg.GuardrailObserve != nil {
+			lr.cfg.GuardrailObserve(*tc, toolErr != nil)
+		}
 
 		if lr.cfg.OnStep != nil {
 			lr.cfg.OnStep(StepInfo{Round: lr.round, ToolCalls: []ToolCall{*tc}, ToolErrors: toolErrors})
@@ -4663,6 +4666,13 @@ func (lr *loopRun) settleToolRound() loopAction {
 		})
 	}
 	lr.cumulativeToolErrors += lr.rs.toolErrors
+	// What ran, for a guardrail judging the next call (GuardrailObserve).
+	if lr.cfg.GuardrailObserve != nil {
+		for i, tc := range lr.rs.resp.ToolCalls {
+			failed := i < len(lr.rs.results) && lr.rs.results[i].IsError
+			lr.cfg.GuardrailObserve(tc, failed)
+		}
+	}
 	// Evidence for the turn judge: what ran, and what the last failure said.
 	// Duplicates are kept on purpose — three image calls are three attempts,
 	// and a judge that sees one of them is reading a different turn.
