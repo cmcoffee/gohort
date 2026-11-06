@@ -179,6 +179,8 @@ make build
 
 Then sign in and visit **/admin**: nearly all operator config (LLM routing, embeddings, STT, image gen, web search, SMTP, cost rates, tunables) lives there, each with an inline **Test connectivity** button.
 
+**Next: [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)** takes a fresh instance to an agent you use: connect a model, make your assistant, give it documents, voice, API keys and other people.
+
 **Do `--setup` first, and on loopback.** An instance with no users configured has nobody to authenticate, so the dashboard's front door is open and `/admin/` leads to the wizard that mints the first admin. That is how the first account gets created and it is fine on `127.0.0.1` (the setup default is `127.0.0.1:8181`); it is not fine on a public interface. Create the admin account, then widen the bind address.
 
 **Optional host tools.** The binary needs nothing else to run, but a few features shell out to programs it expects on `PATH`: `ffmpeg`/`ffprobe` (audio and video), `pdftotext` and `pandoc` (document extraction), `yt-dlp` (video downloads), `git` (repository appliances), `python3` (sandboxed scripts), and `bwrap` (the shell sandbox, Linux). Each is optional and only the feature that uses it degrades when it is missing. **Admin → Services → System Hooks** shows how each job is done on this machine, and adapts a job to another tool when the usual one is missing.
@@ -243,6 +245,7 @@ Full descriptions in the [reference](docs/REFERENCE.md#built-in-apps).
 
 ## Learn more
 
+- **[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)**: from a fresh install to an agent you use, step by step
 - **[docs/REFERENCE.md](docs/REFERENCE.md)**: the full feature surface, SDK interfaces, CLI flags, and project layout
 - **[docs/integrations.md](docs/integrations.md)**: how gohort reaches things: connectors wrap what gohort does not own, flows wire connectors together, agents decide
 - **[core/ui/AUTHORING.md](core/ui/AUTHORING.md)**: how to write a new app from scratch
