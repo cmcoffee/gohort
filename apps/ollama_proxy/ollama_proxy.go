@@ -157,7 +157,7 @@ type ollamaProxy struct {
 // widened without the operator thinking about it still needs keys, and a
 // loopback bind reached through some forwarding arrangement still gets asked.
 func (p *ollamaProxy) allow(w http.ResponseWriter, r *http.Request) bool {
-	if IsLoopbackRequest(r) {
+	if keylessLocal(r) {
 		return true
 	}
 	if user := APIKeyUser(r); user != "" {
@@ -181,6 +181,33 @@ func (p *ollamaProxy) allow(w http.ResponseWriter, r *http.Request) bool {
 	w.Header().Set("WWW-Authenticate", `Bearer realm="gohort"`)
 	http.Error(w, "this endpoint needs a gohort personal access token in X-API-Key or Authorization: Bearer (create one on your Account page)", http.StatusUnauthorized)
 	return false
+}
+
+// keylessLocal reports a request the proxy serves with no key: from a program
+// on this machine, the way an Ollama client is, which sends no credential.
+//
+// A loopback peer with no forwarding header is not enough on its own. A web
+// page open in a browser on this machine reaches 127.0.0.1 too, by a name it
+// controls that it re-points at this machine (DNS rebinding), and would read
+// the deployment's models with no key and no limits. So the request must also
+// name this machine as its host, and carry nothing a browser sends: an Origin,
+// the Sec-Fetch headers, or an Accept for a page. A relay on this machine that
+// strips forwarding headers and rewrites the host still looks local here; the
+// administrator's choice of bind address and relay is what governs that.
+func keylessLocal(r *http.Request) bool {
+	if !IsLoopbackRequest(r) || IsBrowserRequest(r) || r.Header.Get("Origin") != "" {
+		return false
+	}
+	host := r.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(strings.ToLower(host), "[]")
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // ollamaClientPaths are the Ollama endpoints an inference client needs:

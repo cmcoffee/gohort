@@ -31,10 +31,36 @@ func TestLoopbackNeedsNoKey(t *testing.T) {
 	// clients speak no authentication at all, so a key here would cost the
 	// ordinary case and buy nothing.
 	p := &ollamaProxy{}
-	for _, addr := range []string{"127.0.0.1:5555", "[::1]:5555"} {
+	for _, c := range []struct{ addr, host string }{
+		{"127.0.0.1:5555", "127.0.0.1:11435"}, {"[::1]:5555", "[::1]:11435"}, {"127.0.0.1:5555", "localhost:11435"},
+	} {
+		r := from(c.addr)
+		r.Host = c.host
 		w := httptest.NewRecorder()
-		if !p.allow(w, from(addr)) {
-			t.Errorf("loopback caller %s was refused (%d)", addr, w.Code)
+		if !p.allow(w, r) {
+			t.Errorf("loopback caller %s to %s was refused (%d)", c.addr, c.host, w.Code)
+		}
+	}
+}
+
+// A web page open in a browser on this machine reaches 127.0.0.1 too, by a
+// name it re-points here (DNS rebinding). Without a key it is refused: a
+// request that names another host, or carries what a browser sends, is not a
+// local program's.
+func TestABrowserOnThisMachineNeedsAKey(t *testing.T) {
+	p := &ollamaProxy{}
+	for name, mod := range map[string]func(*http.Request){
+		"another host":    func(r *http.Request) { r.Host = "attacker.example:11435" },
+		"an origin":       func(r *http.Request) { r.Header.Set("Origin", "http://attacker.example:11435") },
+		"sec-fetch":       func(r *http.Request) { r.Header.Set("Sec-Fetch-Mode", "cors") },
+		"a page's accept": func(r *http.Request) { r.Header.Set("Accept", "text/html") },
+	} {
+		r := from("127.0.0.1:5555")
+		r.Host = "127.0.0.1:11435"
+		mod(r)
+		w := httptest.NewRecorder()
+		if p.allow(w, r) {
+			t.Errorf("%s: a keyless loopback request was let through", name)
 		}
 	}
 }
