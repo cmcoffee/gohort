@@ -161,23 +161,20 @@ func (p *ollamaProxy) allow(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	if user := APIKeyUser(r); user != "" {
-		// The proxy lends the deployment's models, which is what /v1 lends, so
-		// the same grant governs it: a personal access token scoped for the
-		// OpenAI endpoint, for a user the admin allows it. Any key of any kind
-		// used to do, including one scoped to nothing or to MCP alone.
+		// The proxy lends the raw models: Model access, closed until an
+		// administrator grants it, and a raw-models key (one key, one kind).
+		// A Model API key used to do too, so a key made to reach agents also
+		// opened raw compute; any key of any kind did before that.
 		//
 		// Not a key for people outside gohort: it reaches agents only, and the
 		// proxy is the raw models.
 		tok := AccountTokenFromRequest(r)
-		//
-		// The administrator's grant is Model access (raw compute, closed until
-		// granted); the key's own door is the Model API's, or Model access.
-		if tok != nil && !tok.ForOutsideAudience() && (tok.AllowsFeature(inferenceFeatureKey) || tok.AllowsFeature(ModelAccessFeature)) &&
+		if tok != nil && !tok.ForOutsideAudience() && tok.AllowsFeature(ModelAccessFeature) &&
 			FeatureAllowedForUser(RootDB, ModelAccessFeature, user) {
 			return true
 		}
-		Warn("[ollama-proxy] refused %s's key for %s %s: not a token scoped for model access", user, r.Method, r.URL.Path)
-		http.Error(w, "this key may not use the model proxy: it needs Model access, which an administrator grants (Admin, People, Feature Access), and a personal access token with it enabled (Account > API keys > Access)", http.StatusForbidden)
+		Warn("[ollama-proxy] refused %s's key for %s %s: not a raw-models key", user, r.Method, r.URL.Path)
+		http.Error(w, "this key may not use the model proxy: it needs Model access, which an administrator grants (Admin, People, Feature Access), and a Raw models key (Account > API keys > New key > Raw models)", http.StatusForbidden)
 		return false
 	}
 	Warn("[ollama-proxy] refused unauthenticated request from %s %s %s", directPeer(r), r.Method, r.URL.Path)
@@ -185,10 +182,6 @@ func (p *ollamaProxy) allow(w http.ResponseWriter, r *http.Request) bool {
 	http.Error(w, "this endpoint needs a gohort personal access token in X-API-Key or Authorization: Bearer (create one on your Account page)", http.StatusUnauthorized)
 	return false
 }
-
-// inferenceFeatureKey is the /v1 endpoint's feature (openaiapi.OpenAIFeatureKey),
-// named here rather than imported: both surfaces lend the same models.
-const inferenceFeatureKey = "openai"
 
 // ollamaClientPaths are the Ollama endpoints an inference client needs:
 // chat, completion, embedding and model listing. Everything else the

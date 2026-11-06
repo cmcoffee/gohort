@@ -190,8 +190,9 @@ func TestProxyServerHasHeaderTimeoutAndBodyCap(t *testing.T) {
 	}
 }
 
-// From off the box the proxy wants what /v1 wants: a personal token scoped for
-// model access. A desktop key, or a token scoped to something else, is refused.
+// From off the box the proxy wants a raw-models key: a personal token holding
+// Model access. A desktop key, an MCP key, or a Model API key (made to reach
+// agents) is refused.
 func TestTheProxyWantsAModelScopedToken(t *testing.T) {
 	prevRoot, prevAuth := RootDB, AuthDB
 	RootDB = &DBase{Store: kvlite.MemStore()}
@@ -199,7 +200,9 @@ func TestTheProxyWantsAModelScopedToken(t *testing.T) {
 	t.Cleanup(func() { RootDB, AuthDB = prevRoot, prevAuth })
 	desktop, _ := MintDesktopKey("alice")
 	mcpOnly := MintAccountTokenScoped("alice", "mcp", &TokenScope{Features: []string{"mcp"}})
-	models := MintAccountTokenScoped("alice", "models", &TokenScope{Features: []string{inferenceFeatureKey}})
+	modelAPI := MintAccountTokenScoped("alice", "agents", &TokenScope{Features: []string{"openai"}, Targets: []string{"agent:a1"}})
+	models := MintAccountTokenScoped("alice", "models", &TokenScope{Features: KeyKindDoors(KeyKindModels), Targets: []string{"worker"}})
+	proxyOnly := MintAccountTokenScoped("alice", "proxy", &TokenScope{Features: []string{ModelAccessFeature}})
 	SetFeatureAllowedUsers(RootDB, ModelAccessFeature, []string{"alice"})
 
 	p := &ollamaProxy{}
@@ -211,8 +214,11 @@ func TestTheProxyWantsAModelScopedToken(t *testing.T) {
 	if try(desktop) || try(mcpOnly.Token) {
 		t.Error("a key not scoped for model access used the proxy")
 	}
-	if !try(models.Token) {
-		t.Error("a model-scoped token was refused")
+	if try(modelAPI.Token) {
+		t.Error("a Model API key, made to reach agents, used the raw models")
+	}
+	if !try(models.Token) || !try(proxyOnly.Token) {
+		t.Error("a raw-models key was refused")
 	}
 }
 
