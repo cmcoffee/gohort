@@ -265,10 +265,11 @@ func TestGateTarget(t *testing.T) {
 	}
 }
 
-// reasoning_effort: unset is no thinking, a known level is that level, and a
-// value nobody defined is refused rather than guessed.
+// reasoning_effort: unset follows the deployment's settings, none is no
+// thinking, a known level is that level, and a value nobody defined is refused
+// rather than guessed.
 func TestReasoningEffortLevels(t *testing.T) {
-	for in, want := range map[string]string{"": "", "none": "", "minimal": "", "low": "low", "Medium": "medium", "high": "high", "xhigh": "high"} {
+	for in, want := range map[string]string{"": "", "none": effortOff, "minimal": effortOff, "low": "low", "Medium": "medium", "high": "high", "xhigh": "high"} {
 		got, ok := reasoningEffort(in)
 		if !ok || got != want {
 			t.Errorf("reasoningEffort(%q) = %q, %v; want %q", in, got, ok, want)
@@ -279,8 +280,9 @@ func TestReasoningEffortLevels(t *testing.T) {
 	}
 }
 
-// A passthrough call thinks only when the caller asked for it.
-func TestPassthroughThinksOnlyWhenAsked(t *testing.T) {
+// A passthrough call thinks as its tier is set to unless the caller chose:
+// asked nothing, it names no thinking, so the tier's default applies.
+func TestPassthroughThinksAsItsTierIsSet(t *testing.T) {
 	ask := func(effort string) ChatConfig {
 		llm := &FakeLLM{Turns: []FakeTurn{{Content: "hi"}}}
 		api := &OpenAIAPI{}
@@ -297,22 +299,36 @@ func TestPassthroughThinksOnlyWhenAsked(t *testing.T) {
 		}
 		return llm.Config(0)
 	}
-	if cfg := ask(""); cfg.Think == nil || *cfg.Think {
-		t.Error("a caller that asked for nothing should get no thinking")
+	// The worker call turns thinking on when a caller names none, and the
+	// tier's administrator default then sets its level: so nothing forced
+	// off, and no level forced.
+	if cfg := ask(""); (cfg.Think != nil && !*cfg.Think) || cfg.Effort != "" {
+		t.Errorf("a caller that asked for nothing should get the tier's setting, got think=%v effort=%q", cfg.Think != nil && *cfg.Think, cfg.Effort)
+	}
+	if cfg := ask(effortOff); cfg.Think == nil || *cfg.Think {
+		t.Error("a caller that asked for none should get no thinking")
 	}
 	if cfg := ask("medium"); cfg.Think == nil || !*cfg.Think || cfg.Effort != "medium" {
 		t.Errorf("a caller that asked for medium should get it, got %+v", cfg)
 	}
 }
 
-// An agent turn with no reasoning_effort runs with thinking off and marks its
-// context, so the agents it hands work to stay quiet too; one with a level
-// thinks at it and leaves the agents below to their own.
-func TestAnAgentTurnThinksOnlyWhenAsked(t *testing.T) {
+// An agent turn with no reasoning_effort thinks as the agent is set to, and the
+// agents it hands work to as they are, as in the app: it used to be off down
+// the whole chain, which made an agent reached here weaker than the same agent
+// in the app. One asked for none runs with thinking off and marks its context,
+// so the agents below stay quiet too; one with a level thinks at it and leaves
+// the agents below to their own.
+func TestAnAgentTurnThinksAsTheAgentIsSet(t *testing.T) {
 	var run agenthost.Run
 	ctx := agentTurn{}.thinking(context.Background(), &run)
+	if run.Think != nil || run.Effort != "" || ctx != context.Background() {
+		t.Errorf("no reasoning_effort should leave the agents to their own settings, got think=%v effort=%q marked=%v", run.Think, run.Effort, ctx != context.Background())
+	}
+	run = agenthost.Run{}
+	ctx = agentTurn{effort: effortOff}.thinking(context.Background(), &run)
 	if run.Think == nil || *run.Think || ctx == context.Background() {
-		t.Errorf("no reasoning_effort should mean no thinking on the chain, got think=%v marked=%v", run.Think != nil && *run.Think, ctx != context.Background())
+		t.Errorf("none should mean no thinking on the chain, got think=%v marked=%v", run.Think != nil && *run.Think, ctx != context.Background())
 	}
 	run = agenthost.Run{}
 	ctx = agentTurn{effort: "high"}.thinking(context.Background(), &run)

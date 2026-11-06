@@ -26,11 +26,15 @@
 // per tool — so keep a voice-facing agent's tool set small and budget for the
 // caller's response timeout.
 //
-// Nothing thinks by default: a caller here is usually waiting out loud, and a
-// model thinking is silence on the line. That holds for every agent an agent
-// turn hands work to. A caller that would rather wait for a considered answer
-// sends OpenAI's reasoning_effort ("low", "medium", "high"; "none" and
-// "minimal" are the default).
+// Thinking follows the deployment's own settings: an agent turn thinks as that
+// agent does in the app, and the agents it hands work to as they do, and a raw
+// tier thinks at the default its administrator set. It used to be off for
+// everything unless the caller asked, for voice, where thinking is silence on
+// the line, and that made every agent reached here a weaker one than the same
+// agent in the app. A voice agent is set not to think, and a caller can still
+// choose per request with OpenAI's reasoning_effort: "none" or "minimal" for
+// no thinking on the turn and everything below it, "low", "medium" or "high"
+// for that level.
 //
 // Which agents are reachable is governed by the SAME "Reachable over MCP"
 // toggle that gates the MCP server, so external exposure stays one switch per
@@ -480,13 +484,14 @@ func (T *OpenAIAPI) servePassthrough(w http.ResponseWriter, r *http.Request, use
 	if req.Temperature > 0 {
 		opts = append(opts, WithTemperature(req.Temperature))
 	}
-	// Thinking off: a voice caller wants the answer, not a reasoning preamble,
-	// and the tokens cost latency the caller pays for in dead air. A caller
-	// that asked for reasoning_effort waits for it.
-	if req.ReasoningEffort != "" {
-		opts = append(opts, WithThink(true), WithEffort(req.ReasoningEffort))
-	} else {
+	// Thinking as the tier's administrator set it, unless the caller chose:
+	// "off" for none, a level for that level.
+	switch req.ReasoningEffort {
+	case "":
+	case effortOff:
 		opts = append(opts, WithThink(false))
+	default:
+		opts = append(opts, WithThink(true), WithEffort(req.ReasoningEffort))
 	}
 
 	lead := strings.EqualFold(req.Model, "lead")
@@ -737,7 +742,8 @@ type agentTurn struct {
 	// autoTitle names a thread from its conversation (AgentSyncRun.AutoTitle):
 	// the agent route's threads have no room name to take.
 	autoTitle bool
-	// effort is the caller's reasoning_effort level, "" for no thinking.
+	// effort is the caller's reasoning_effort: "" to follow the agents' own
+	// settings, effortOff for none, or a level.
 	effort string
 }
 
@@ -750,28 +756,40 @@ func (t agentTurn) runAs() string {
 }
 
 // thinking sets run's thinking from the caller's reasoning_effort and returns
-// the context to run it on. With none, nothing thinks, on this agent or on any
-// agent it hands the work to, or the silence comes back one hop down. With a
-// level, this agent thinks at it and the agents below at their own levels.
+// the context to run it on. Asked for nothing, the agent and those it hands
+// work to think as they are set to, as in the app. Asked for none, nothing
+// thinks, on this agent or on any it hands the work to, or the silence comes
+// back one hop down. Asked for a level, this agent thinks at it and the agents
+// below at their own.
 func (t agentTurn) thinking(ctx context.Context, run *agenthost.Run) context.Context {
-	think := t.effort != ""
-	run.Think = &think
-	run.Effort = t.effort
-	if !think {
-		ctx = agenthost.WithoutThinking(ctx)
+	switch t.effort {
+	case "":
+		return ctx
+	case effortOff:
+		off := false
+		run.Think = &off
+		return agenthost.WithoutThinking(ctx)
 	}
+	on := true
+	run.Think = &on
+	run.Effort = t.effort
 	return ctx
 }
 
-// reasoningEffort reads a request's reasoning_effort. Unset, "none" and
-// "minimal" are no thinking (""), the default here, since a caller on this
-// endpoint is usually waiting out loud; "low", "medium" and "high" are that
-// level, and "xhigh" is high, the top one there is. Anything else is refused
-// rather than guessed.
+// effortOff is a caller's explicit "no thinking" ("none" or "minimal"), apart
+// from asking nothing, which follows the deployment's settings.
+const effortOff = "off"
+
+// reasoningEffort reads a request's reasoning_effort. Unset is "": follow the
+// agent's or tier's own setting. "none" and "minimal" are effortOff, no
+// thinking; "low", "medium" and "high" are that level, and "xhigh" is high,
+// the top one there is. Anything else is refused rather than guessed.
 func reasoningEffort(v string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "", "none", "minimal":
+	case "":
 		return "", true
+	case "none", "minimal", effortOff:
+		return effortOff, true
 	case "low":
 		return "low", true
 	case "medium":
