@@ -431,8 +431,10 @@ type consoleMonitorRow struct {
 	// part that never does.
 	Objective string `json:"objective,omitempty"`
 	Failing   string `json:"failing,omitempty"`
-	Detail    string `json:"detail"`
-	Script    string `json:"format_script"` // the watch format_script, if any (so you can SEE it)
+	// FailStreak is the count behind Failing, for the attention flag.
+	FailStreak int    `json:"_fail_streak,omitempty"`
+	Detail     string `json:"detail"`
+	Script     string `json:"format_script"` // the watch format_script, if any (so you can SEE it)
 	// NextRun is when the next check is due, under the same key the other two
 	// scheduled kinds use: a monitor's check IS its scheduled run, and the
 	// merged Scheduler page orders every section by this one field. Empty for
@@ -610,8 +612,9 @@ func consoleMonitorRows(user, agentID string) []consoleMonitorRow {
 			// A monitor does not back off, it PARKS: the streak counts towards
 			// a bound, so the label says what it is counting towards rather
 			// than leaving a rising number to mean whatever the reader guesses.
-			Failing: scheduleFailingLabel(m.ConsecutiveFailures, MonitorFailureThreshold(), time.Time{}, nil),
-			NextRun: monitorNextRun(m),
+			Failing:    scheduleFailingLabel(m.ConsecutiveFailures, MonitorFailureThreshold(), time.Time{}, nil),
+			FailStreak: m.ConsecutiveFailures,
+			NextRun:    monitorNextRun(m),
 			// The monitor vocabulary's own answer to core.RelinkFixesIt: a
 			// monitor separates "the thing it needs is gone" (relink) from
 			// "everything resolves and the checks keep failing" (does not), and

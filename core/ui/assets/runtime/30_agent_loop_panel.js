@@ -666,14 +666,36 @@
                   ? 'display:flex;align-items:center;gap:0.6rem;padding:0.2rem 0.3rem 0.45rem;flex-wrap:wrap'
                   : 'display:flex;align-items:center;gap:0.6rem;border:1px solid var(--border, rgba(127,127,127,0.25));border-radius:7px;padding:0.45rem 0.7rem;margin-bottom:0.4rem;background:var(--bg-1, rgba(127,127,127,0.03));flex-wrap:wrap')
                 + (depth ? ';margin-left:' + (depth * 1.25) + 'rem' : '')});
+              // "_warn" marks a row that needs attention: a warning edge, a dot
+              // ahead of the title, and "_warn_why" said in the warning colour
+              // as visible text (a phone has no hover for a tooltip). Like
+              // "_depth", a property of a ROW; the layout does not learn what
+              // the attention is about.
+              var warn = !!row._warn;
+              if (warn) card.style.borderLeft = '3px solid var(--warning, #d29922)';
               // Left: title + status pill + inline muted details, all on one line.
               var info = el('div', {style: 'flex:1 1 11rem;min-width:0;display:flex;align-items:baseline;gap:0.45rem;flex-wrap:wrap'});
+              if (warn) {
+                info.appendChild(el('span', {class: 'ui-card-warn', role: 'img', 'aria-label': 'Needs attention',
+                  title: row._warn_why ? String(row._warn_why) : 'Needs attention',
+                  style: 'display:inline-block;width:0.55rem;height:0.55rem;border-radius:50%;background:var(--warning, #d29922);align-self:center;flex:0 0 auto'}));
+              }
               ckeys.forEach(function(k, ki) {
                 var v = row[k];
                 var s = (v == null) ? '' : String(v);
                 if (!s) return;
                 if (ki === 0) {
                   info.appendChild(el('span', {style: 'font-weight:600;font-size:var(--fs-md, 0.9rem)'}, [s]));
+                  // "_status" is a short pill beside the title, toned by
+                  // "_status_tone": ok, warn, bad, or none for a neutral grey.
+                  // Like "_warn", a property of the row; the layout does not
+                  // learn what the status is about.
+                  if (row._status) {
+                    var tones = {ok: 'var(--success, #2ea043)', warn: 'var(--warning, #d29922)', bad: 'var(--danger, #d9534f)'};
+                    var tc = tones[row._status_tone];
+                    info.appendChild(el('span', {class: 'ui-card-status', style: 'font-size:0.56rem;text-transform:uppercase;letter-spacing:0.04em;padding:0.05rem 0.42rem;border-radius:999px;font-weight:700;align-self:center;white-space:nowrap;' +
+                      (tc ? 'background:color-mix(in srgb, ' + tc + ' 18%, transparent);color:' + tc : 'background:var(--bg-2, rgba(127,127,127,0.22));color:var(--text-mute, #999)')}, [String(row._status)]));
+                  }
                 } else if (k === 'Status') {
                   var pend = /pending/i.test(s);
                   info.appendChild(el('span', {style: 'font-size:0.56rem;text-transform:uppercase;letter-spacing:0.04em;padding:0.05rem 0.42rem;border-radius:999px;font-weight:700;align-self:center;' +
@@ -682,6 +704,9 @@
                   info.appendChild(el('span', {style: 'color:var(--text-mute, #999);font-size:var(--fs-xs, 0.78rem);word-break:break-word'}, [s]));
                 }
               });
+              if (warn && row._warn_why) {
+                info.appendChild(el('span', {class: 'ui-card-warn-why', style: 'color:var(--warning, #d29922);font-size:var(--fs-xs, 0.78rem);font-weight:600;word-break:break-word'}, [String(row._warn_why)]));
+              }
               card.appendChild(info);
               // Right: segmented state control (rows that carry it) + actions.
               var controls = el('div', {class: 'ui-card-controls'});
@@ -1273,11 +1298,17 @@
       function refreshChannelBadges(onlyAllAgents, onlyQueues) {
         (cfg.orchestrator_nav || []).forEach(function(item, i) {
           var badge = orchBadges[i];
-          if (!item.source || !badge) return;
+          // A badge_source is a cheap list counted in place of the item's own
+          // source; no_badge without one means the source is not fetched for
+          // a count at all, wherever the item sits (a pinned row draws a badge
+          // element whatever it declares).
+          var bsrc = item.badge_source || item.source;
+          if (!bsrc || !badge) return;
+          if (item.no_badge && !item.badge_source) return;
           if (onlyAllAgents && !item.all_agents) return;
           if (onlyQueues && !item.badge_field) return;
           var seq = badgeSeq[i] = (badgeSeq[i] || 0) + 1;
-          fetch(orchSourceURL(item.source, item)).then(function(r) { return r.ok ? r.json() : []; })
+          fetch(orchSourceURL(bsrc, item)).then(function(r) { return r.ok ? r.json() : []; })
             .then(function(rows) {
               if (badgeSeq[i] !== seq) return; // a newer request owns this badge
               // BadgeField counts only matching rows (e.g. _pending on a page
@@ -1456,7 +1487,7 @@
             var ac = (item.variant === 'danger') ? 'var(--danger, #d9534f)' : (item.variant === 'warning') ? 'var(--warning, #d98c34)' : 'var(--text-mute, #999)';
             label.style.color = ac;
             label.style.fontSize = '0.85rem';
-          } else if (item.source && !item.no_badge) {
+          } else if (item.badge_source || (item.source && !item.no_badge)) {
             badge = el('span', {class: 'ui-channel-badge', style: 'display:none;min-width:1.2rem;text-align:center;padding:0.05rem 0.4rem;border-radius:999px;font-size:var(--fs-xs, 0.75rem);background:var(--bg-2, rgba(127,127,127,0.22));color:var(--text-mute, #999)'}, ['']);
             kids.push(badge);
           }

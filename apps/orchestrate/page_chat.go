@@ -516,6 +516,9 @@ func chatAgentNav() []ui.OrchestratorNavItem {
 		// Not on a sub-agent's page: its schedules are on its
 		// parent's Scheduler, with the rest of the family.
 		{Label: "Scheduler", Icon: "⏰", Pinned: true, AllAgents: true, HideFlag: "ORCH_SUB_AGENT_OF", Source: "api/console/scheduler", Layout: "cards", TitleField: "name", NoBadge: true,
+			// The count is of what needs attention, from a list built off the
+			// records alone: never the whole Scheduler (scheduler_load_test.go).
+			BadgeSource: "api/console/scheduler/attention", BadgeField: "_attention",
 			SearchPlaceholder: schedulerSearchHint,
 			Filters:           schedulerFilters(),
 			ViewActions: []ui.OrchestratorRowAction{
@@ -757,6 +760,9 @@ func chatFleetNav() []ui.OrchestratorNavItem {
 				{Label: "View", Method: "client", URL: "orchestrate_view_task", OnlyIf: "_kind"},
 			}},
 		{Label: "Scheduler", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/scheduler", Layout: "cards", TitleField: "name", NoBadge: true,
+			// The count is of what needs attention, from a list built off the
+			// records alone: never the whole Scheduler (scheduler_load_test.go).
+			BadgeSource: "api/console/scheduler/attention", BadgeField: "_attention",
 			SearchPlaceholder: schedulerSearchHint,
 			Filters:           schedulerFilters(),
 			RowActions: []ui.OrchestratorRowAction{

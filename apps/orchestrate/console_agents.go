@@ -394,12 +394,14 @@ type consoleAgentRow struct {
 	// least about how that was going. See schedule_row_state.go.
 	Objective string `json:"objective,omitempty"`
 	Failing   string `json:"failing,omitempty"`
-	Schedule  string `json:"schedule"`
-	Status    string `json:"status"`
-	NextRun   string `json:"next_run"`
-	ID        string `json:"_id"`               // hidden; row-action target (the agent name)
-	Paused    bool   `json:"_paused"`           // hidden; gates Pause vs Resume per row
-	Broken    bool   `json:"_broken,omitempty"` // hidden; parked and kept — see State for which kind
+	// FailStreak is the count behind Failing, for the attention flag.
+	FailStreak int    `json:"_fail_streak,omitempty"`
+	Schedule   string `json:"schedule"`
+	Status     string `json:"status"`
+	NextRun    string `json:"next_run"`
+	ID         string `json:"_id"`               // hidden; row-action target (the agent name)
+	Paused     bool   `json:"_paused"`           // hidden; gates Pause vs Resume per row
+	Broken     bool   `json:"_broken,omitempty"` // hidden; parked and kept — see State for which kind
 	// Relinkable gates the Relink row action: true only when something the
 	// schedule needs is GONE. An objective that stalled needs attempts, not a
 	// new target, and offering it a picker of live agents describes a problem
@@ -447,7 +449,12 @@ func (ix *standingRunIndex) all() []RunRecord {
 
 // latestStatus is the status of the standing agent's most recent run, or "".
 func (ix *standingRunIndex) latestStatus(name string) string {
-	f := RunFilter{}.AboutStanding(name)
+	return ix.latestFor(RunFilter{}.AboutStanding(name))
+}
+
+// latestFor is the status of the most recent run f matches, or "": any kind of
+// schedule's, from the one read.
+func (ix *standingRunIndex) latestFor(f RunFilter) string {
 	for _, r := range ix.all() {
 		if f.Matches(r) {
 			return string(r.Status)
@@ -520,6 +527,7 @@ func consoleAgentRows(user string, udb Database, agentID string, ix *standingRun
 		// stop at.
 		row.Objective = objectiveStateLabel(standingObjective(sa))
 		row.Failing = scheduleFailingLabel(sa.ConsecutiveFailures, 0, sa.NextAttemptAt, UserLocation(user))
+		row.FailStreak = sa.ConsecutiveFailures
 		// By identity, with the display name as the legacy fallback for runs
 		// recorded before subjects existed (see RunFilter.Subject).
 		row.Status = ix.latestStatus(sa.Name)

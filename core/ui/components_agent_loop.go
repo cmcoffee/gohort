@@ -524,6 +524,11 @@ type OrchestratorNavItem struct {
 	// rows where that field is truthy (e.g. "_pending" counts just the pending
 	// approvals on a page that also lists granted ones). Empty = count all rows.
 	BadgeField string `json:"badge_field,omitempty"`
+	// BadgeSource counts the badge from this URL instead of Source: a cheap
+	// list of just the rows worth counting, for an item whose full Source is
+	// too costly to rebuild on every refresh. It draws a badge even when
+	// NoBadge is set, since NoBadge is about not fetching Source for one.
+	BadgeSource string `json:"badge_source,omitempty"`
 	// NoBadge draws no count badge, so the item's Source is fetched only when
 	// its view is opened. For a list whose length is nothing to watch: badges
 	// refresh whenever sessions change, and each refresh rebuilds the source

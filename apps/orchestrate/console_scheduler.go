@@ -107,12 +107,59 @@ func (T *OrchestrateApp) handleConsoleScheduler(c *jsonapi.Call) (any, error) {
 		}
 		out = append(groups, rest...)
 	}
+	addLastRunBadges(out, ix)
 	if took := time.Since(start); took > 300*time.Millisecond {
 		Debug("[console.scheduler] agent=%q family=%d rows=%d took %s (rows %s, ledger %d runs, groups %s)",
 			agentID, len(family), len(out), took.Round(time.Millisecond), rowsDone.Sub(start).Round(time.Millisecond),
 			len(ix.runs), time.Since(rowsDone).Round(time.Millisecond))
 	}
 	return out, nil
+}
+
+// addLastRunBadges gives each schedule a badge saying how its latest run went
+// (ui: "_status", "_status_tone"), from the one ledger read the page already
+// makes. It answers "how did the last one go", where the warning marker
+// answers "does it keep going wrong": one good run in a string of bad ones
+// reads OK here and stays marked there.
+func addLastRunBadges(rows []map[string]any, ix *standingRunIndex) {
+	for _, m := range rows {
+		id := schedStr(m, "_id")
+		var f RunFilter
+		switch m["_kind"] {
+		case schedKindStanding:
+			f = RunFilter{}.AboutStanding(id)
+		case schedKindRecurring:
+			f = RunFilter{Task: schedStr(m, "_task")}.AboutAgent(schedStr(m, "_agent"), "")
+		case schedKindMonitor:
+			f = RunFilter{}.AboutMonitor(id)
+		default:
+			continue
+		}
+		if id == "" {
+			continue
+		}
+		label, tone := lastRunBadge(ix.latestFor(f))
+		m["_status"], m["_status_tone"] = label, tone
+		// The standing row's own cell said the same in grey.
+		delete(m, "status")
+	}
+}
+
+// lastRunBadge is a latest run status as the badge says it, and its tone.
+func lastRunBadge(status string) (label, tone string) {
+	switch RunStatus(status) {
+	case RunOK:
+		return "OK", "ok"
+	case RunAttention:
+		return "ATTENTION", "warn"
+	case RunFailed:
+		return "FAILED", "bad"
+	case RunRunning:
+		return "RUNNING", ""
+	case "":
+		return "NOT RUN YET", ""
+	}
+	return strings.ToUpper(status), ""
 }
 
 // agentRowLabel is a fleet Scheduler row's title, led by the name of the agent
@@ -233,6 +280,41 @@ func schedulerRow(row any, section, kind string) map[string]any {
 	return m
 }
 
+// handleConsoleSchedulerAttention is the schedules that need attention, one row
+// each, for the nav badge. Built from the schedule records alone: the full
+// list reads the run ledger for every standing agent and writes missing
+// mission summaries, and doing that whenever a session changed is what made
+// the Scheduler slow to open (scheduler_load_test.go). Attention needs none of
+// it: parked, and the failure and guardrail streaks, are on the records.
+func (T *OrchestrateApp) handleConsoleSchedulerAttention(c *jsonapi.Call) (any, error) {
+	user, udb := c.User, c.UDB
+	family := schedulerFamily(udb, user, strings.TrimSpace(c.R.URL.Query().Get("agent")))
+	out := []map[string]any{}
+	seen := map[string]bool{}
+	add := func(kind, id string, m map[string]any) {
+		addSchedulerFilterFlags(m)
+		if !schedFlag(m, "_attention") || seen[kind+":"+id] {
+			return
+		}
+		seen[kind+":"+id] = true
+		out = append(out, map[string]any{"name": id, "_attention": true, "_kind": kind})
+	}
+	for _, id := range family {
+		for _, sa := range ListStandingAgents(RootDB, user) {
+			if standingAgentOnRailOf(sa, id) {
+				add(schedKindStanding, sa.Name, map[string]any{"_broken": sa.Broken, "_fail_streak": float64(sa.ConsecutiveFailures)})
+			}
+		}
+		for _, row := range consoleRecurringRows(user, id) {
+			add(schedKindRecurring, row.ID, map[string]any{"_broken": row.Broken, "_fail_streak": float64(row.FailStreak), "_guard_streak": float64(row.GuardStreak)})
+		}
+		for _, row := range consoleMonitorRows(user, id) {
+			add(schedKindMonitor, row.ID, map[string]any{"_broken": row.Broken, "_fail_streak": float64(row.FailStreak)})
+		}
+	}
+	return out, nil
+}
+
 // addSchedulerFilterFlags composes the two questions the page's filter chips
 // ask, into one field each.
 //
@@ -247,12 +329,74 @@ func schedulerRow(row any, section, kind string) map[string]any {
 // without anything being wrong with it.
 func addSchedulerFilterFlags(m map[string]any) {
 	broken := schedFlag(m, "_broken")
-	// Failing carries the streak, and is empty while nothing is wrong.
-	failing, _ := m["failing"].(string)
-	m["_attention"] = broken || failing != ""
+	// Needs attention: parked, or failing or being stopped by a guardrail
+	// again and again. Once is not "again": one failed fire is usually a
+	// blip, and one stop is usually the guardrail doing its job.
+	failing := schedInt(m, "_fail_streak") >= schedAttentionStreak
+	guarded := schedInt(m, "_guard_streak") >= schedAttentionStreak
+	m["_attention"] = broken || failing || guarded
+	// The row's warning marker (ui: "_warn", "_warn_why"), saying why in the
+	// row's own words: the parked state, the failing streak, the guardrail.
+	if broken || failing || guarded {
+		m["_warn"] = true
+		var why []string
+		if broken {
+			why = append(why, strings.TrimSpace(strings.TrimPrefix(schedStr(m, "state"), "⚠")))
+		}
+		if failing {
+			why = append(why, schedStr(m, "failing"))
+		}
+		if guarded {
+			why = append(why, schedStr(m, "guarded"))
+		}
+		m["_warn_why"] = strings.Join(nonBlank(why), "; ")
+		// Said once: the warning line carries these, so their own cells go
+		// rather than repeat it in grey beside it.
+		if broken {
+			delete(m, "state")
+		}
+		if failing {
+			delete(m, "failing")
+		}
+		if guarded {
+			delete(m, "guarded")
+		}
+	}
 	// At rest: not going to fire again until somebody does something: paused
 	// (any kind) or parked.
 	m["_at_rest"] = broken || schedFlag(m, "_paused")
+}
+
+// schedAttentionStreak is how many failures, or guardrail stops, in a row it
+// takes for a schedule to need attention.
+const schedAttentionStreak = 2
+
+// schedInt reads a count off a row map (JSON numbers arrive as float64).
+func schedInt(m map[string]any, key string) int {
+	switch v := m[key].(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	}
+	return 0
+}
+
+// schedStr reads a text field off a row map.
+func schedStr(m map[string]any, key string) string {
+	s, _ := m[key].(string)
+	return strings.TrimSpace(s)
+}
+
+// nonBlank drops empty strings.
+func nonBlank(in []string) []string {
+	var out []string
+	for _, s := range in {
+		if strings.TrimSpace(s) != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // addSchedulerActionFlags composes one flag per row action.

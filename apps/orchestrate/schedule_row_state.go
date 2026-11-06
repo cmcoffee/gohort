@@ -17,6 +17,7 @@ package orchestrate
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -29,6 +30,19 @@ import (
 // the time says when to expect the next word — a schedule that has gone quiet
 // because it backed off reads nothing like one that has stopped. stopsAt is the
 // streak at which this kind of schedule parks itself, 0 where none does.
+// scheduleGuardedLabel says a guardrail keeps stopping a task, or "" while it
+// is not: "stopped by guardrail "<rule>" 3 times in a row".
+func scheduleGuardedLabel(streak int, rule string) string {
+	if streak <= 0 {
+		return ""
+	}
+	label := fmt.Sprintf("stopped by a guardrail %d time(s) in a row", streak)
+	if rule = strings.TrimSpace(rule); rule != "" {
+		label = fmt.Sprintf("stopped by guardrail %q %d time(s) in a row", truncateObs(rule, 80), streak)
+	}
+	return label
+}
+
 func scheduleFailingLabel(streak, stopsAt int, nextAt time.Time, loc *time.Location) string {
 	if streak <= 0 {
 		return ""

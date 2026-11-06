@@ -247,3 +247,53 @@ func TestAFireWhoseModelFailsIsRecordedAsFailed(t *testing.T) {
 		t.Error("a failed fire lost the chain")
 	}
 }
+
+// A fire a guardrail stops carries the streak onto the armed next occurrence,
+// naming the rule, so the Scheduler can say the task keeps being stopped; the
+// first fire that completes clears it.
+func TestAGuardrailStopIsCarriedToTheNextFire(t *testing.T) {
+	ff := newFireFixture(t)
+	ff.p.GuardrailStreak, ff.p.GuardrailRule = 1, "Always verify first."
+	fr := &fireRun{p: ff.p, reArm: true, udb: ff.udb}
+	fr.preArm()
+	if fr.armedID == "" {
+		t.Fatal("no next fire was armed")
+	}
+	fr.noteGuardrailStop("Always verify first.")
+	next, ok := ff.successor()
+	if !ok || next.GuardrailStreak != 2 || next.GuardrailRule != "Always verify first." {
+		t.Fatalf("the next fire carries streak %d, rule %q; want 2 and the rule", next.GuardrailStreak, next.GuardrailRule)
+	}
+
+	// The next one completes: the streak is gone.
+	fr2 := &fireRun{p: next, reArm: true, udb: ff.udb, armedID: ff.queued()[0].ID, armed: next}
+	fr2.renewArmed()
+	if again, _ := ff.successor(); again.GuardrailStreak != 0 || again.GuardrailRule != "" {
+		t.Errorf("a completed fire left the streak at %d (%q)", again.GuardrailStreak, again.GuardrailRule)
+	}
+}
+
+// The stopped-fire path records the stop: without the call there, a task the
+// same rule cuts short every time never shows as needing attention.
+func TestAStoppedFireRecordsItsGuardrailStop(t *testing.T) {
+	src := readFile(t, "scheduled_updates.go")
+	i := strings.Index(src, `fmt.Sprintf("Stopped by guardrail %s.", named)`)
+	if i < 0 {
+		t.Fatal("the stopped-fire path is gone; this test's premise needs rechecking")
+	}
+	if !strings.Contains(src[i:i+300], "fr.noteGuardrailStop(rules[0])") {
+		t.Error("a fire a guardrail stopped no longer records the stop")
+	}
+}
+
+// A recurring task's Scheduler row names the task its runs are filed under,
+// which its title (the prompt's first line) is not, so its badge finds them.
+func TestARecurringRowNamesItsLedgerTask(t *testing.T) {
+	ff := newFireFixture(t)
+	fr := &fireRun{p: ff.p, reArm: true, udb: ff.udb}
+	fr.preArm()
+	rows := consoleRecurringRows("u", ff.agent.ID)
+	if len(rows) != 1 || rows[0].TaskName != recurringName(ff.p) {
+		t.Fatalf("rows %+v; want one naming task %q", rows, recurringName(ff.p))
+	}
+}

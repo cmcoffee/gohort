@@ -211,6 +211,13 @@ type orchUpdatePayload struct {
 	// next one off (see failure_backoff.go). Named the way EventMonitor already
 	// names the same idea. Reset by the first fire that works.
 	ConsecutiveFailures int `json:"consecutive_failures,omitempty"`
+	// GuardrailStreak counts fires a guardrail stopped back to back, and
+	// GuardrailRule names the rule that stopped the latest. A stopped fire
+	// records as needing attention but is not a failure, so without these a
+	// task the same rule cuts short every time looked healthy on the Scheduler.
+	// Reset by the first fire that completes.
+	GuardrailStreak int    `json:"guardrail_streak,omitempty"`
+	GuardrailRule   string `json:"guardrail_rule,omitempty"`
 	// RemainingToday holds the random pattern's still-pending fire times for the
 	// current day (RFC3339), so the plan survives restarts and each fire just
 	// pops the next. Empty for fixed, or when a fresh day needs planning.
@@ -1210,6 +1217,7 @@ func (fr *fireRun) reportable() bool {
 		fr.record(RunAttention,
 			fmt.Sprintf("Stopped by guardrail %s.", named),
 			strings.TrimSpace(respContent(fr.resp)), "")
+		fr.noteGuardrailStop(rules[0])
 		return fr.exit(nil)
 	}
 	fr.reply = ""
@@ -1589,6 +1597,20 @@ func (fr *fireRun) recordOutcome() {
 		fr.agentLabel, p.SessionID, p.FireCount+1, len(fr.reply))
 }
 
+// noteGuardrailStop carries a guardrail stop onto the already-armed next
+// occurrence, so the Scheduler can say a task keeps being stopped
+// (GuardrailStreak). Nothing to carry it on when nothing is armed.
+func (fr *fireRun) noteGuardrailStop(rule string) {
+	if !fr.reArm || fr.armedID == "" {
+		return
+	}
+	fr.armed.GuardrailStreak = fr.p.GuardrailStreak + 1
+	fr.armed.GuardrailRule = strings.TrimSpace(rule)
+	if !UpdateScheduledTaskPayload(fr.armedID, fr.armed) {
+		Log("[orchestrate/scheduled] session=%s: armed next fire already consumed, guardrail streak not carried", fr.p.SessionID)
+	}
+}
+
 func (fr *fireRun) renewArmed() {
 	p := fr.p
 	if fr.reArm && fr.armedID != "" && !fr.objStopped {
@@ -1604,6 +1626,7 @@ func (fr *fireRun) renewArmed() {
 		// or suppressed fire leaves the streak where it was, which is the honest
 		// reading: neither of those proves the thing is fixed.
 		fr.armed.ConsecutiveFailures = 0
+		fr.armed.GuardrailStreak, fr.armed.GuardrailRule = 0, ""
 		if !UpdateScheduledTaskPayload(fr.armedID, fr.armed) {
 			Log("[orchestrate/scheduled] session=%s: armed next fire already consumed, idle-clock renewal skipped", p.SessionID)
 		}

@@ -279,6 +279,9 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// The merged view the Scheduler nav entry reads — the three lists above in
 	// one page, grouped. See console_scheduler.go.
 	T.HandleFunc("/api/console/scheduler", jsonapi.Get(T.DB, T.handleConsoleScheduler))
+	// Just the schedules that need attention, for the nav badge: cheap where
+	// the whole list is not (console_scheduler.go).
+	T.HandleFunc("/api/console/scheduler/attention", jsonapi.Get(T.DB, T.handleConsoleSchedulerAttention))
 	// Keep a finished schedule past the cleanup, or let it go. See
 	// done_schedules.go.
 	T.HandleFunc("/api/console/scheduler/keep", jsonapi.Post(T.DB, T.handleConsoleScheduleKeep))

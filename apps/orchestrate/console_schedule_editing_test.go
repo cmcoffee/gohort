@@ -540,7 +540,12 @@ func TestTheTwoStateQuestionsAreAnsweredServerSide(t *testing.T) {
 		wantAtRest    bool
 	}{
 		{"healthy and running", map[string]any{}, false, false},
-		{"a live failing streak", map[string]any{"failing": "failed 2 time(s) in a row"}, true, false},
+		// Again and again, not once: one failed fire is usually a blip, and
+		// one guardrail stop is usually the guardrail doing its job.
+		{"a live failing streak", map[string]any{"failing": "failed 2 time(s) in a row", "_fail_streak": float64(2)}, true, false},
+		{"one failure", map[string]any{"failing": "failed 1 time(s) in a row", "_fail_streak": float64(1)}, false, false},
+		{"stopped by a guardrail again and again", map[string]any{"guarded": "stopped by guardrail \"x\" 3 time(s) in a row", "_guard_streak": float64(3)}, true, false},
+		{"stopped by a guardrail once", map[string]any{"_guard_streak": float64(1)}, false, false},
 		{"parked", map[string]any{"_broken": true}, true, true},
 		// A parked row needs attention whether or not its checks were failing:
 		// relink-needed arrives with no streak at all.
@@ -766,5 +771,36 @@ func TestAnAnnualDateReachesTheDialogAsYearly(t *testing.T) {
 	}
 	if got := StandingScheduleLabel(StandingAgent{Name: "greeting", Cron: "DEC-25 09:00"}); got != "every year on Dec 25 at 09:00" {
 		t.Errorf("label = %q", got)
+	}
+}
+
+// A row that needs attention carries the marker and says why once: its own
+// reason cells move into the warning line instead of repeating beside it.
+func TestARowThatNeedsAttentionSaysWhyOnce(t *testing.T) {
+	m := map[string]any{"_broken": true, "state": "⚠ needs relink: its agent is gone",
+		"failing": "failed 3 time(s) in a row", "_fail_streak": float64(3),
+		"guarded": "stopped by guardrail \"verify first\" 2 time(s) in a row", "_guard_streak": float64(2)}
+	addSchedulerFilterFlags(m)
+	if m["_warn"] != true {
+		t.Fatal("a row needing attention is not marked")
+	}
+	why, _ := m["_warn_why"].(string)
+	for _, want := range []string{"needs relink: its agent is gone", "failed 3 time(s) in a row", "verify first"} {
+		if !strings.Contains(why, want) {
+			t.Errorf("the reason %q leaves out %q", why, want)
+		}
+	}
+	if strings.Contains(why, "⚠") {
+		t.Errorf("the reason carries the old glyph: %q", why)
+	}
+	for _, k := range []string{"state", "failing", "guarded"} {
+		if _, ok := m[k]; ok {
+			t.Errorf("%s is said twice, in its own cell and in the warning", k)
+		}
+	}
+	quiet := map[string]any{"failing": "failed 1 time(s) in a row", "_fail_streak": float64(1)}
+	addSchedulerFilterFlags(quiet)
+	if quiet["_warn"] != nil || quiet["failing"] == nil {
+		t.Error("a row that does not need attention was marked, or lost its own line")
 	}
 }

@@ -53,7 +53,11 @@ func TestTheSchedulerIsNotRebuiltForABadge(t *testing.T) {
 			if it.Source == "api/console/scheduler" {
 				n++
 				if !it.NoBadge {
-					t.Errorf("%s (%s) still draws a badge", it.Label, it.Scope)
+					t.Errorf("%s (%s) still draws a badge from the whole Scheduler", it.Label, it.Scope)
+				}
+				// Its badge counts what needs attention, from the cheap list.
+				if it.BadgeSource != "api/console/scheduler/attention" || it.BadgeField != "_attention" {
+					t.Errorf("%s (%s) counts %q/%q, not what needs attention", it.Label, it.Scope, it.BadgeSource, it.BadgeField)
 				}
 			}
 		}
@@ -62,7 +66,50 @@ func TestTheSchedulerIsNotRebuiltForABadge(t *testing.T) {
 		t.Errorf("expected the agent and fleet Schedulers, found %d", n)
 	}
 	js := readFile(t, "../../core/ui/assets/runtime/30_agent_loop_panel.js")
-	if !strings.Contains(js, "} else if (item.source && !item.no_badge) {") {
+	if !strings.Contains(js, "} else if (item.badge_source || (item.source && !item.no_badge)) {") {
 		t.Error("the runtime still makes a badge, and fetches its source, for an item with no_badge")
+	}
+	// Whatever the row's placement (a pinned row always has a badge element),
+	// no_badge without a badge_source fetches nothing for a count.
+	if !strings.Contains(js, "if (item.no_badge && !item.badge_source) return;") {
+		t.Error("a pinned item with no_badge still fetches its source for a count")
+	}
+	// And a badge_source is what the count is fetched from.
+	if !strings.Contains(js, "var bsrc = item.badge_source || item.source;") || !strings.Contains(js, "fetch(orchSourceURL(bsrc, item))") {
+		t.Error("the badge is not counted from badge_source")
+	}
+}
+
+// Each schedule's badge says how its latest run went, found by what that kind
+// files its runs under: a standing agent by name, a recurring task by its
+// agent and task name, a monitor by name. One read serves them all.
+func TestEachScheduleIsBadgedWithItsLatestRun(t *testing.T) {
+	db := pinRootDB(t)
+	now := time.Now()
+	RecordRun(db, RunRecord{Owner: "u", Agent: "Nightly", Status: RunFailed, Started: now.Add(-2 * time.Hour)}.AboutStanding("Nightly"))
+	RecordRun(db, RunRecord{Owner: "u", Agent: "Nightly", Status: RunOK, Started: now.Add(-time.Hour)}.AboutStanding("Nightly"))
+	RecordRun(db, RunRecord{Owner: "u", Agent: "Herald", Task: "Morning summary", Status: RunAttention, Started: now}.AboutAgent("a-herald"))
+	// The same agent's other task ran since: the badge is the task's own.
+	RecordRun(db, RunRecord{Owner: "u", Agent: "Herald", Task: "Evening summary", Status: RunOK, Started: now.Add(time.Minute)}.AboutAgent("a-herald"))
+	RecordRun(db, RunRecord{Owner: "u", Agent: "Site up", Status: RunFailed, Started: now}.AboutMonitor("Site up"))
+
+	rows := []map[string]any{
+		{"_kind": schedKindStanding, "_id": "Nightly", "status": "ok"},
+		{"_kind": schedKindRecurring, "_id": "t1", "_task": "Morning summary", "_agent": "a-herald"},
+		{"_kind": schedKindMonitor, "_id": "Site up"},
+		{"_kind": schedKindStanding, "_id": "Brand new"},
+		{"_section": "a heading row"},
+	}
+	addLastRunBadges(rows, newStandingRunIndex("u"))
+	for i, want := range []struct{ label, tone string }{{"OK", "ok"}, {"ATTENTION", "warn"}, {"FAILED", "bad"}, {"NOT RUN YET", ""}} {
+		if rows[i]["_status"] != want.label || rows[i]["_status_tone"] != want.tone {
+			t.Errorf("row %d: %v/%v, want %s/%s", i, rows[i]["_status"], rows[i]["_status_tone"], want.label, want.tone)
+		}
+	}
+	if _, ok := rows[0]["status"]; ok {
+		t.Error("the standing row says its status twice, in grey and in the badge")
+	}
+	if _, ok := rows[4]["_status"]; ok {
+		t.Error("a row that is not a schedule was badged")
 	}
 }

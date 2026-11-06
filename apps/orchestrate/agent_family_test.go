@@ -128,6 +128,10 @@ func TestTheFleetSchedulerSaysWhoseEachScheduleIs(t *testing.T) {
 			t.Errorf("the fleet Scheduler should have %s:\n%s", want, fleet)
 		}
 	}
+	// Every schedule carries its last-run badge; none of these has run.
+	if strings.Count(fleet, `"_status":"NOT RUN YET"`) < 3 {
+		t.Errorf("the fleet Scheduler does not badge each schedule with its last run:\n%s", fleet)
+	}
 	own := get("?agent=a-scout")
 	if !strings.Contains(own, `"name":"Hourly sweep"`) || strings.Contains(own, "(Scout)") {
 		t.Errorf("an agent's own Scheduler does not name it on each row:\n%s", own)
@@ -799,5 +803,44 @@ func TestAttachingAChannelLeavesTheCortexSettingAlone(t *testing.T) {
 	post("/api/channels", fmt.Sprintf(`{"id":%q,"name":"Team","agent_id":"a-other"}`, ch.ID))
 	if a, _ := loadAgent(udb, "a-other"); a.Cortex {
 		t.Error("re-pointing a channel switched on the new agent's Cortex reading")
+	}
+}
+
+// The Scheduler's badge counts what needs attention, from a list built off the
+// records alone: parked, or failing again and again, and nothing healthy. Each
+// agent's own badge counts its family's.
+func TestTheSchedulerBadgeCountsWhatNeedsAttention(t *testing.T) {
+	app, udb := familyFixture(t)
+	if _, err := saveAgent(udb, AgentRecord{ID: "a-scout", Name: "Scout", Owner: "alice", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, sa := range []StandingAgent{
+		{Owner: "alice", Name: "Healthy", AgentID: "a-scout", Mission: "m", IntervalSeconds: 3600},
+		{Owner: "alice", Name: "Once", AgentID: "a-scout", Mission: "m", IntervalSeconds: 3600, ConsecutiveFailures: 1},
+		{Owner: "alice", Name: "Keeps failing", AgentID: "a-scout", Mission: "m", IntervalSeconds: 3600, ConsecutiveFailures: 3},
+		{Owner: "alice", Name: "Parked", AgentID: "a-writer", Mission: "m", IntervalSeconds: 3600, Broken: true},
+	} {
+		SaveStandingAgent(RootDB, sa)
+	}
+	SaveEventMonitor(RootDB, EventMonitor{Owner: "alice", Name: "Site down", Kind: EventKindHTTP, URL: "http://example.invalid", WakeAgent: "a-scout", IntervalSeconds: 300, ConsecutiveFailures: 2})
+	get := func(q string) string {
+		r := httptest.NewRequest(http.MethodGet, "/api/console/scheduler/attention"+q, nil)
+		w := httptest.NewRecorder()
+		routed(app)(w, asUser(r, "alice"))
+		return w.Body.String()
+	}
+	fleet := get("")
+	for _, want := range []string{`"name":"Keeps failing"`, `"name":"Parked"`, `"name":"Site down"`} {
+		if !strings.Contains(fleet, want) {
+			t.Errorf("the attention list leaves out %s:\n%s", want, fleet)
+		}
+	}
+	for _, not := range []string{`"name":"Healthy"`, `"name":"Once"`} {
+		if strings.Contains(fleet, not) {
+			t.Errorf("the attention list counts %s:\n%s", not, fleet)
+		}
+	}
+	if own := get("?agent=a-scout"); strings.Contains(own, `"name":"Parked"`) || !strings.Contains(own, `"name":"Keeps failing"`) {
+		t.Errorf("Scout's badge counts another family's schedules, or misses its own:\n%s", own)
 	}
 }

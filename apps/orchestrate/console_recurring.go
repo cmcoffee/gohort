@@ -28,14 +28,24 @@ type consoleRecurringRow struct {
 	// them — and State is the cell that answers "is it running".
 	Objective string `json:"objective,omitempty"`
 	Failing   string `json:"failing,omitempty"`
-	ID        string `json:"_id"`               // hidden; row-action target (the scheduler task id)
-	UID       string `json:"_uid,omitempty"`    // hidden; the task's own id, stable across fires (link groups key on it)
-	Broken    bool   `json:"_broken,omitempty"` // hidden gate (Delete-only on a broken row)
-	Paused    bool   `json:"_paused,omitempty"` // hidden gate: Pause on a live row, Resume on a paused one
+	// Guarded says a guardrail keeps stopping the task ("stopped by guardrail
+	// "…" 3 times in a row"); empty while it is not. A stopped fire is not a
+	// failure, so Failing never said it.
+	Guarded string `json:"guarded,omitempty"`
+	// The counts behind Failing and Guarded, for the attention flag.
+	FailStreak  int    `json:"_fail_streak,omitempty"`
+	GuardStreak int    `json:"_guard_streak,omitempty"`
+	ID          string `json:"_id"`               // hidden; row-action target (the scheduler task id)
+	UID         string `json:"_uid,omitempty"`    // hidden; the task's own id, stable across fires (link groups key on it)
+	Broken      bool   `json:"_broken,omitempty"` // hidden gate (Delete-only on a broken row)
+	Paused      bool   `json:"_paused,omitempty"` // hidden gate: Pause on a live row, Resume on a paused one
 	// Relinkable gates the Relink row action: only a schedule whose target is
 	// GONE has anything to relink. A stalled objective gets Resume instead.
 	Relinkable bool   `json:"_relinkable,omitempty"`
 	Agent      string `json:"_agent,omitempty"` // hidden; whose task it is, named on the fleet Scheduler
+	// TaskName is the name its runs are filed under in the ledger
+	// (recurringName), which the card title, the prompt's first line, is not.
+	TaskName string `json:"_task,omitempty"`
 }
 
 // subAgentRunsLabel is a schedule's "runs" line when its parent hands the
@@ -76,14 +86,15 @@ func consoleRecurringRows(user, agentID string) []consoleRecurringRow {
 			fires = fmt.Sprintf("%d / %d fired", rt.Payload.FireCount, cap)
 		}
 		row := consoleRecurringRow{
-			Name:    label,
-			Cadence: recurringDetail(rt.Payload),
-			Fires:   fires,
-			Runs:    subAgentRunsLabel(rt.Payload.Prompt),
-			NextRun: rt.RunAt,
-			ID:      rt.TaskID,
-			UID:     recurringTaskUID(rt.Payload),
-			Agent:   rt.Payload.AgentID,
+			TaskName: recurringName(rt.Payload),
+			Name:     label,
+			Cadence:  recurringDetail(rt.Payload),
+			Fires:    fires,
+			Runs:     subAgentRunsLabel(rt.Payload.Prompt),
+			NextRun:  rt.RunAt,
+			ID:       rt.TaskID,
+			UID:      recurringTaskUID(rt.Payload),
+			Agent:    rt.Payload.AgentID,
 		}
 		// Where an objective stands, for the rows that have a goal.
 		row.Objective = objectiveStateLabel(rt.Payload.objective())
@@ -93,6 +104,9 @@ func consoleRecurringRows(user, agentID string) []consoleRecurringRow {
 		// asked to wait, which only shows up here when there is no objective
 		// line already carrying it.
 		row.Failing = scheduleFailingLabel(rt.Payload.ConsecutiveFailures, 0, parseSchedTime(rt.Payload.NextAttemptAt), UserLocation(user))
+		row.FailStreak = rt.Payload.ConsecutiveFailures
+		row.GuardStreak = rt.Payload.GuardrailStreak
+		row.Guarded = scheduleGuardedLabel(rt.Payload.GuardrailStreak, rt.Payload.GuardrailRule)
 		if row.Objective == "" && row.Failing == "" {
 			if w := strings.TrimSpace(rt.Payload.NextAttemptWhy); w != "" {
 				row.State = "waiting: " + truncateObs(w, 120)
