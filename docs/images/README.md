@@ -5,9 +5,9 @@ Images referenced from the top-level `README.md`:
 | file | what it shows | where it appears |
 |---|---|---|
 | `wordmark-dark.svg`, `wordmark-light.svg` | the logo: the favicon's three squares and GOHORT in the dashboard's block letters, one per GitHub theme (a `<picture>` picks) | the very top, with the same logo as text in a comment below it for raw readers |
-| `dashboard-2026-10-18.png` | the dashboard with its apps and one agent card: the "this is a platform, not a bot" shot. Taken from a public-only build (`git archive` export, no private apps) on a fresh instance, a placeholder `admin` account, and a worker model set so the setup notice is absent | under the badges, above **Three ways to think about it** |
-| `agent-turn-2026-10-28.png` | one agent turn with its tool trace open: the reply *and* what produced it, in the centred conversation column with the composer below it (mic, read-aloud, Private and Fresh at the left, Attach and Send at the right) | under **What it looks like in practice**, making the status-page story concrete |
-| `admin-2026-10-18.png` | the administrator console's System Status: its tabs, and the sandbox it reports | near the end, beside the administrator section |
+| `dashboard-2026-11-05.png` | the dashboard with its apps and one agent card: the "this is a platform, not a bot" shot. Taken from a public-only build (`git archive` export, no private apps) on a fresh instance, a placeholder `admin` account, and a worker model set so the setup notice is absent | under the badges, above **Three ways to think about it** |
+| `agent-turn-2026-11-05.png` | one agent turn with its tool trace open: the reply *and* what produced it, in the centred conversation column with the composer below it (mic, read-aloud, Private and Fresh at the left, Attach and Send at the right) | under **What it looks like in practice**, making the status-page story concrete |
+| `admin-2026-11-05.png` | the administrator console's System Status: its tabs, and the sandbox it reports | near the end, beside the administrator section |
 
 The logo copies the app's, it is not a separate design: the letter grid is the
 dashboard masthead's (`core/dashboard_page.go`), one rect per run of blocks, and
@@ -38,6 +38,25 @@ transcription and speech turned on, or the mic and the read-aloud switch are
 absent from the composer. The emoji font came from the distribution's
 google-noto-emoji-color-fonts package, unpacked into a private font directory
 the headless browser was pointed at (FONTCONFIG_FILE), nothing installed.
+
+The 2026-11-05 set retook all three, the same assistant and question, after the
+dashboard's sections, the administrator's tabs and the composer had changed:
+dashboard 1440 x 1090, agent turn 1440 x 640, administrator 1440 x 640 (the
+System Status card had grown a row, and 610 put a scrollbar beside it), all at
+2x. What a fresh instance needs for them now:
+
+- Moneypenny made from the conversational shape (the agents wizard with
+  `shape: conversational`), the shape the Assistant kind builds.
+- The dashboard's Agents section shows nothing until something is picked for
+  it, and marks a new agent "1 new": show the agent's card
+  (`/api/dashboard/show?path=/agents/<id>`) and mark the section seen
+  (`/api/dashboard/seen?band=Agents`), or the shot has an empty section and a
+  badge.
+- Transcription and speech are chosen from connectors, not a typed-in
+  endpoint: add the whisper.cpp / OpenAI-compatible transcription and speech
+  templates (Admin > Services) and choose them, or the mic and read-aloud are
+  absent. They need not reach a server; the composer shows them once chosen.
+- The tool trace starts folded behind "3 tools": open it before the shot.
 
 ## Keep them light and slow-moving
 

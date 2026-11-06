@@ -30,7 +30,7 @@
      chat content, and a README image is in git history for good. Drop the files
      at the paths below and these render as-is. -->
 
-![The Gohort dashboard: every installed app on one page, running from a single binary](docs/images/dashboard-2026-10-18.png)
+![The Gohort dashboard: every installed app on one page, running from a single binary](docs/images/dashboard-2026-11-05.png)
 
 You talk to one agent. It reads what you want and hands the job to the agent that owns that part, each with its own tools, its own memory, and the right to delegate further.
 
@@ -112,7 +112,7 @@ You tell the Builder agent:
 
 It drafts an API credential for the status endpoint, authors a poll connector that checks it on a schedule, wires the result to a channel agent that speaks to your team's messaging service, and asks your admin for one approval, where the secret is pasted in. No code, no flow editor, no key pasted into a chat, and the model that assembled it cannot read the key.
 
-![An agent turn: the reply alongside the tool calls that produced it](docs/images/agent-turn-2026-10-28.png)
+![An agent turn: the reply alongside the tool calls that produced it](docs/images/agent-turn-2026-11-05.png)
 
 ## The primitives
 
@@ -229,7 +229,7 @@ Add `WebPath()` / `WebName()` / `WebDesc()` / `Routes()` and it gets a web dashb
 
 Full descriptions in the [reference](docs/REFERENCE.md#built-in-apps).
 
-![The administrator console: one tab per operator concern, from models and credentials to governance and maintenance](docs/images/admin-2026-10-18.png)
+![The administrator console: one tab per operator concern, from models and credentials to governance and maintenance](docs/images/admin-2026-11-05.png)
 
 ## Companion client
 
