@@ -33,8 +33,21 @@ func TestV1TakesOnlyAPersonalAccessToken(t *testing.T) {
 	if w := models(desktop); w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "personal access token") {
 		t.Errorf("a desktop key on /v1: %d %s", w.Code, w.Body.String())
 	}
+	// The Model API is Closed: administrators always, anyone else once
+	// granted. A good key alone is not enough.
+	if w := models(pat.Token); w.Code != http.StatusForbidden {
+		t.Errorf("a scoped personal token before the Model API was granted: %d %s", w.Code, w.Body.String())
+	}
+	SetFeatureAllowedUsers(RootDB, OpenAIFeatureKey, []string{"alice"})
 	if w := models(pat.Token); w.Code != http.StatusOK {
 		t.Errorf("a scoped personal token on /v1: %d %s", w.Code, w.Body.String())
+	}
+	// An administrator has it with nothing granted.
+	RootDB.Set(AuthTable, "user:root", AuthUser{Username: "root", Admin: true})
+	adminKey := MintAccountTokenScoped("root", "voice", &TokenScope{Features: []string{OpenAIFeatureKey}, Targets: []string{"worker"}})
+	SetFeatureAllowedUsers(RootDB, OpenAIFeatureKey, nil)
+	if w := models(adminKey.Token); w.Code != http.StatusOK {
+		t.Errorf("an administrator's key with the Model API granted to nobody: %d %s", w.Code, w.Body.String())
 	}
 }
 

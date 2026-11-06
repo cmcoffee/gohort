@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/modelaccess"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -56,9 +57,18 @@ func TestRemoteWithAKeyIsAllowed(t *testing.T) {
 	prev := RootDB
 	RootDB = testRoot()
 	t.Cleanup(func() { RootDB = prev })
-	tok := MintAccountToken("craig", "workstation")
-
+	tok := MintAccountToken("alice", "workstation")
 	p := &ollamaProxy{}
+
+	// Model access is closed until an administrator grants it: a valid key
+	// alone is not enough.
+	req := from("203.0.113.9:5555")
+	req.Header.Set("X-API-Key", tok.Token)
+	if p.allow(httptest.NewRecorder(), req) {
+		t.Fatal("a key reached the proxy without Model access granted")
+	}
+	SetFeatureAllowedUsers(RootDB, ModelAccessFeature, []string{"alice"})
+
 	for _, set := range []func(*http.Request){
 		func(r *http.Request) { r.Header.Set("X-API-Key", tok.Token) },
 		func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+tok.Token) },
@@ -190,6 +200,7 @@ func TestTheProxyWantsAModelScopedToken(t *testing.T) {
 	desktop, _ := MintDesktopKey("alice")
 	mcpOnly := MintAccountTokenScoped("alice", "mcp", &TokenScope{Features: []string{"mcp"}})
 	models := MintAccountTokenScoped("alice", "models", &TokenScope{Features: []string{inferenceFeatureKey}})
+	SetFeatureAllowedUsers(RootDB, ModelAccessFeature, []string{"alice"})
 
 	p := &ollamaProxy{}
 	try := func(key string) bool {
@@ -218,5 +229,70 @@ func TestTheProxyHoldsCallersToTheLentModel(t *testing.T) {
 		if _, ok := holdToLentModel([]byte(`{"model":"`+m+`"}`), "qwen3"); !ok {
 			t.Errorf("%s was refused", m)
 		}
+	}
+}
+
+// A keyed request counts against its owner's Model access limits; one from
+// this machine with no key is not counted.
+func TestAKeyedRequestCountsAgainstModelAccessLimits(t *testing.T) {
+	prevRoot, prevAuth := RootDB, AuthDB
+	RootDB = testRoot()
+	AuthDB = func() Database { return RootDB }
+	t.Cleanup(func() { RootDB, AuthDB = prevRoot, prevAuth })
+	if err := modelaccess.Save(modelaccess.Limits{PerMinute: 100, AtOnce: 1}); err != nil {
+		t.Fatal(err)
+	}
+	tok := MintAccountToken("alice", "workstation")
+	p := &ollamaProxy{}
+	keyed := func() *http.Request {
+		r := from("203.0.113.9:5555")
+		r.Header.Set("X-API-Key", tok.Token)
+		return r
+	}
+	done, ok := p.admit(httptest.NewRecorder(), keyed())
+	if !ok {
+		t.Fatal("the first request was refused")
+	}
+	w := httptest.NewRecorder()
+	if _, ok := p.admit(w, keyed()); ok || w.Code != http.StatusTooManyRequests {
+		t.Errorf("a second request at once past a limit of one: ok=%v code=%d", ok, w.Code)
+	}
+	for i := 0; i < 3; i++ {
+		if _, ok := p.admit(httptest.NewRecorder(), from("127.0.0.1:5555")); !ok {
+			t.Error("a keyless request from this machine was counted")
+		}
+	}
+	done()
+	if _, ok := p.admit(httptest.NewRecorder(), keyed()); !ok {
+		t.Error("a request finishing did not free its place")
+	}
+}
+
+// Through the proxy's own router, a keyed caller past the per-minute limit is
+// turned away before the model is asked.
+func TestTheRouterHoldsCallersToModelAccessLimits(t *testing.T) {
+	prevRoot, prevAuth := RootDB, AuthDB
+	RootDB = testRoot()
+	AuthDB = func() Database { return RootDB }
+	t.Cleanup(func() { RootDB, AuthDB = prevRoot, prevAuth })
+	SetFeatureAllowedUsers(RootDB, ModelAccessFeature, []string{"alice"})
+	if err := modelaccess.Save(modelaccess.Limits{PerMinute: 1, AtOnce: 5}); err != nil {
+		t.Fatal(err)
+	}
+	tok := MintAccountToken("alice", "workstation")
+	mux := (&ollamaProxy{}).routes()
+	send := func() int {
+		r := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"model":"gohort"}`))
+		r.RemoteAddr = "203.0.113.9:5555"
+		r.Header.Set("X-API-Key", tok.Token)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		return w.Code
+	}
+	if code := send(); code == http.StatusTooManyRequests {
+		t.Fatal("the first request was refused for a limit")
+	}
+	if code := send(); code != http.StatusTooManyRequests {
+		t.Errorf("past the per-minute limit through the router: %d, want 429", code)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/cmcoffee/gohort/core/accountname"
 	"github.com/cmcoffee/gohort/core/activity"
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/core/modelaccess"
 	"github.com/cmcoffee/gohort/core/notices"
 	"github.com/cmcoffee/gohort/core/promotion"
 )
@@ -26,6 +27,13 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 	// API: user candidates for ACL pickers ([{value,label}], approved users only).
 	// Shared source for every ui.ACLPicker on this page (credential + tool access).
 	sub.HandleFunc("/api/user-candidates", jsonapi.Get(a.db, a.handleUserCandidates, a.gate()))
+	// Who a feature can be granted to: Everyone, each person, each team.
+	sub.HandleFunc("/api/feature-candidates", jsonapi.Get(a.db, a.handleFeatureCandidates, a.gate()))
+	// The per-user limits on Model access (raw compute).
+	sub.HandleFunc("/api/model-access-limits", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleModelAccessLimits, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleModelAccessLimitsSave, a.gate()),
+	}.Serve)
 
 	// API: feature access — the admin gate on outward-facing surfaces a user can
 	// expose through their own keys (the OpenAI /v1 endpoint is the first). Reads
@@ -138,6 +146,86 @@ func (a *AdminApp) handleUserCandidates(c *jsonapi.Call) (any, error) {
 	return json.RawMessage(UserCandidatesJSON(a.db, "")), nil
 }
 
+// handleFeatureCandidates serves /api/feature-candidates: Everyone, then each
+// person, then each team, for the Feature Access picker. Any team an
+// administrator made: granting a feature is theirs to do, not a member's share.
+func (a *AdminApp) handleFeatureCandidates(c *jsonapi.Call) (any, error) {
+	type candidate struct {
+		Value string `json:"value"`
+		Label string `json:"label"`
+		Desc  string `json:"desc,omitempty"`
+	}
+	var people []candidate
+	json.Unmarshal(UserCandidatesJSON(a.db, ""), &people)
+	out := append([]candidate{{Value: FeatureEveryone, Label: "Everyone", Desc: "every signed-in user, now and later"}}, people...)
+	users := AuthListUsers(a.db)
+	for _, g := range LoadAppGroups(a.db) {
+		n := 0
+		for _, u := range users {
+			for _, id := range u.Groups {
+				if id == g.ID && !u.Pending {
+					n++
+				}
+			}
+		}
+		out = append(out, candidate{Value: "group:" + g.ID, Label: "Team: " + g.Name,
+			Desc: fmt.Sprintf("%d %s", n, map[bool]string{true: "member", false: "members"}[n == 1])})
+	}
+	return out, nil
+}
+
+// handleModelAccessLimits is the per-user limits on Model access.
+func (a *AdminApp) handleModelAccessLimits(c *jsonapi.Call) (any, error) {
+	return modelaccess.Load(), nil
+}
+
+// handleModelAccessLimitsSave sets them. Each is at least 1: raw compute is
+// never unlimited by leaving a field empty.
+func (a *AdminApp) handleModelAccessLimitsSave(c *jsonapi.Call, l modelaccess.Limits) (any, error) {
+	if err := modelaccess.Save(l); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	adminChange(c.R, activity.Settings, "set Model access limits: %d a minute, %d at once, per person", l.PerMinute, l.AtOnce)
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// featureAccessSummary says who a policy admits, for the table; closed is
+// whether its feature is Closed (administrators always, nobody else until
+// granted).
+func featureAccessSummary(p FeatureAccessPolicy, closed bool) string {
+	if p.Everyone() {
+		if len(p.AllowedUsers) == 0 {
+			return "Everyone (not set yet)"
+		}
+		return "Everyone"
+	}
+	people, teams := 0, 0
+	for _, e := range p.AllowedUsers {
+		if strings.HasPrefix(strings.TrimSpace(e), "group:") {
+			teams++
+		} else {
+			people++
+		}
+	}
+	var parts []string
+	if people > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s", people, map[bool]string{true: "person", false: "people"}[people == 1]))
+	}
+	if teams > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s", teams, map[bool]string{true: "team", false: "teams"}[teams == 1]))
+	}
+	if len(parts) == 0 {
+		if closed {
+			return "Administrators only"
+		}
+		return "Nobody"
+	}
+	if closed {
+		parts = append(parts, "and administrators")
+	}
+	return strings.Join(parts, ", ")
+}
+
 // handleFeatureAccess serves /api/feature-access; registerUsersRoutes says what it is for.
 func (a *AdminApp) handleFeatureAccess(c *jsonapi.Call) (any, error) {
 	if feature := strings.TrimSpace(c.R.URL.Query().Get("feature")); feature != "" {
@@ -154,11 +242,7 @@ func (a *AdminApp) handleFeatureAccess(c *jsonapi.Call) (any, error) {
 	rows := []row{}
 	for _, f := range ShareableFeatures() {
 		p := LoadFeaturePolicy(a.db, f.Key)
-		access := "All users"
-		if len(p.AllowedUsers) > 0 {
-			access = fmt.Sprintf("%d user(s)", len(p.AllowedUsers))
-		}
-		rows = append(rows, row{Feature: f.Key, Label: f.Label, Desc: f.Desc, AllowedUsers: p.AllowedUsers, Access: access})
+		rows = append(rows, row{Feature: f.Key, Label: f.Label, Desc: f.Desc, AllowedUsers: p.AllowedUsers, Access: featureAccessSummary(p, p.Closed())})
 	}
 	return rows, nil
 }

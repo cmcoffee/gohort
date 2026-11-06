@@ -27,6 +27,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/modelaccess"
 	"github.com/cmcoffee/gohort/core/netgate"
 )
 
@@ -64,32 +65,7 @@ func StartOllamaServer(port int) {
 		},
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/tags", func(w http.ResponseWriter, r *http.Request) {
-		if !p.allow(w, r) {
-			return
-		}
-		p.handleTags(w)
-	})
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" {
-			// The liveness probe every Ollama client makes before it will
-			// talk to an endpoint. Left open on purpose: it discloses nothing
-			// beyond "something is listening", which the TCP handshake
-			// already said, and gating it means a client cannot even discover
-			// it needs a key.
-			w.Header().Set("Content-Type", "text/plain")
-			w.Write([]byte("Ollama is running"))
-			return
-		}
-		if !p.allow(w, r) {
-			return
-		}
-		if !p.allowPath(w, r) {
-			return
-		}
-		p.handle(w, r)
-	})
+	mux := p.routes()
 
 	// Bind deliberately. This used to be ":port" — every interface — on a
 	// server with no authentication of any kind, which on a host with a public
@@ -193,11 +169,15 @@ func (p *ollamaProxy) allow(w http.ResponseWriter, r *http.Request) bool {
 		// Not a key for people outside gohort: it reaches agents only, and the
 		// proxy is the raw models.
 		tok := AccountTokenFromRequest(r)
-		if tok != nil && !tok.ForOutsideAudience() && tok.AllowsFeature(inferenceFeatureKey) && FeatureAllowedForUser(RootDB, inferenceFeatureKey, user) {
+		//
+		// The administrator's grant is Model access (raw compute, closed until
+		// granted); the key's own door is the Model API's, or Model access.
+		if tok != nil && !tok.ForOutsideAudience() && (tok.AllowsFeature(inferenceFeatureKey) || tok.AllowsFeature(ModelAccessFeature)) &&
+			FeatureAllowedForUser(RootDB, ModelAccessFeature, user) {
 			return true
 		}
 		Warn("[ollama-proxy] refused %s's key for %s %s: not a token scoped for model access", user, r.Method, r.URL.Path)
-		http.Error(w, "this key may not use the model proxy: it needs a personal access token with the model API enabled (Account > API keys > Scope), for an account the admin allows it", http.StatusForbidden)
+		http.Error(w, "this key may not use the model proxy: it needs Model access, which an administrator grants (Admin, People, Feature Access), and a personal access token with it enabled (Account > API keys > Access)", http.StatusForbidden)
 		return false
 	}
 	Warn("[ollama-proxy] refused unauthenticated request from %s %s %s", directPeer(r), r.Method, r.URL.Path)
@@ -243,6 +223,61 @@ var ollamaManagePaths = map[string]bool{
 // without a key, so it cannot prove it is an administrator and gets the
 // client set only; the backend may be on another host a local user cannot
 // otherwise reach.
+// routes is the proxy's router: the liveness reply open, everything else
+// through the key check, the path check and the Model access limits.
+func (p *ollamaProxy) routes() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/tags", func(w http.ResponseWriter, r *http.Request) {
+		if !p.allow(w, r) {
+			return
+		}
+		p.handleTags(w)
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			// The liveness probe every Ollama client makes before it will
+			// talk to an endpoint. Left open on purpose: it discloses nothing
+			// beyond "something is listening", which the TCP handshake
+			// already said, and gating it means a client cannot even discover
+			// it needs a key.
+			w.Header().Set("Content-Type", "text/plain")
+			w.Write([]byte("Ollama is running"))
+			return
+		}
+		if !p.allow(w, r) {
+			return
+		}
+		if !p.allowPath(w, r) {
+			return
+		}
+		done, ok := p.admit(w, r)
+		if !ok {
+			return
+		}
+		defer done()
+		p.handle(w, r)
+	})
+	return mux
+}
+
+// admit counts a keyed caller's request against their Model access limits,
+// the same ones the Model API's raw tiers count against, returning the func
+// that ends it, or false with a 429 written. A request from this machine with
+// no key has nobody to count it against.
+func (p *ollamaProxy) admit(w http.ResponseWriter, r *http.Request) (func(), bool) {
+	user := APIKeyUser(r)
+	if user == "" {
+		return func() {}, true
+	}
+	done, refusal := modelaccess.Admit(user)
+	if refusal != "" {
+		w.Header().Set("Retry-After", "30")
+		http.Error(w, refusal, http.StatusTooManyRequests)
+		return nil, false
+	}
+	return done, true
+}
+
 func (p *ollamaProxy) allowPath(w http.ResponseWriter, r *http.Request) bool {
 	path := r.URL.Path
 	if ollamaClientPaths[path] {

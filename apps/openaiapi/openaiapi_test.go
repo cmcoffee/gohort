@@ -11,6 +11,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/gohort/core/modelaccess"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -429,5 +430,54 @@ func TestAnOutsideKeyRunsEachPersonInTheirOwnStore(t *testing.T) {
 	call(plain.Token, map[string]string{"X-End-User": "cust-7"}, "")
 	if got := host.runs[len(host.runs)-1].RuntimeUser; got != "alice" {
 		t.Errorf("an ordinary key's turn ran as %q, want its owner", got)
+	}
+}
+
+// The raw tiers are Model access: refused until an administrator grants it,
+// listed only then, and every call counts against its per-user limits.
+func TestTheRawTiersAreModelAccess(t *testing.T) {
+	prevRoot, prevAuth := RootDB, AuthDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	AuthDB = func() Database { return RootDB }
+	t.Cleanup(func() { RootDB, AuthDB = prevRoot, prevAuth })
+	RootDB.Set(AuthTable, "user:alice", AuthUser{Username: "alice"})
+	SetFeatureAllowedUsers(RootDB, OpenAIFeatureKey, []string{"alice"}) // the Model API itself, which is Closed
+	tok := MintAccountTokenScoped("alice", "client", &TokenScope{Features: []string{OpenAIFeatureKey}, Targets: []string{"worker"}})
+	api := &OpenAIAPI{}
+	api.LLM = &FakeLLM{Turns: []FakeTurn{{Content: "hi", Repeat: true}}}
+
+	chat := func() int {
+		r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"worker","messages":[{"role":"user","content":"hello"}]}`))
+		r.Header.Set("X-API-Key", tok.Token)
+		w := httptest.NewRecorder()
+		api.handleChatCompletions(w, r)
+		return w.Code
+	}
+	listsWorker := func() bool {
+		r := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+		r.Header.Set("X-API-Key", tok.Token)
+		w := httptest.NewRecorder()
+		api.handleModels(w, r)
+		return strings.Contains(w.Body.String(), `"id":"worker"`)
+	}
+
+	if code := chat(); code != http.StatusForbidden {
+		t.Errorf("a raw tier without Model access: %d, want 403", code)
+	}
+	if listsWorker() {
+		t.Error("the model list offered a raw tier without Model access")
+	}
+	SetFeatureAllowedUsers(RootDB, ModelAccessFeature, []string{"alice"})
+	if err := modelaccess.Save(modelaccess.Limits{PerMinute: 1, AtOnce: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if code := chat(); code != http.StatusOK {
+		t.Errorf("a raw tier with Model access: %d, want 200", code)
+	}
+	if !listsWorker() {
+		t.Error("the model list left out a raw tier the key may reach")
+	}
+	if code := chat(); code != http.StatusTooManyRequests {
+		t.Errorf("past the per-minute limit: %d, want 429", code)
 	}
 }

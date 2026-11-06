@@ -11,7 +11,7 @@ root PATCH /api/users "{}"
 alice GET /api/feature-access ""
   403 forbidden
 root GET /api/feature-access ""
-  200 [{"feature":"desktop","label":"Desktop bridge","desc":"Let a user's personal access tokens connect gohort-desktop, whose tools then run on that machine for the user's agents.","access":"All users"}]
+  200 [{"feature":"desktop","label":"Desktop bridge","desc":"Let a user's personal access tokens connect gohort-desktop, whose tools then run on that machine for the user's agents.","access":"Everyone (not … (472 bytes, sha1 2a8d3c8ab7a78db21567c376d950a72e4a4dd8ef)
 root PATCH /api/feature-access "{}"
   405 method not allowed
 (signed out) GET /api/feature-access?feature=desktop ""
@@ -21,6 +21,14 @@ alice GET /api/feature-access?feature=desktop ""
 root GET /api/feature-access?feature=desktop ""
   200 {"allowed_users":null,"feature":"desktop"}
 root PATCH /api/feature-access?feature=desktop "{}"
+  405 method not allowed
+(signed out) GET /api/feature-candidates ""
+  403 forbidden
+alice GET /api/feature-candidates ""
+  403 forbidden
+root GET /api/feature-candidates ""
+  200 [{"value":"*","label":"Everyone","desc":"every signed-in user, now and later"},{"value":"alice","label":"alice"},{"value":"root","label":"root"}]
+root PATCH /api/feature-candidates "{}"
   405 method not allowed
 (signed out) GET /api/users/alice ""
   403 forbidden
@@ -67,7 +75,27 @@ root POST /api/feature-access?feature=desktop "{\"allowed_users\":"
 root POST /api/feature-access?feature=desktop ""
   400 invalid JSON: EOF
 root GET /api/feature-access ""
-  200 [{"feature":"desktop","label":"Desktop bridge","desc":"Let a user's personal access tokens connect gohort-desktop, whose tools then run on that machine for the user's agents.","allowed_users":["alice"],"access":"1 user(s)"}]
+  200 [{"feature":"desktop","label":"Desktop bridge","desc":"Let a user's personal access tokens connect gohort-desktop, whose tools then run on that machine for the user's agents.","allowed_users":["alice"… (484 bytes, sha1 8655975e2553a3acb5dc7aaa19e4ecff88bbbd62)
+root POST /api/feature-access?feature=desktop "{\"allowed_users\":[\"group:g1\",\"*\"]}"
+  204 
+root GET /api/feature-access ""
+  200 [{"feature":"desktop","label":"Desktop bridge","desc":"Let a user's personal access tokens connect gohort-desktop, whose tools then run on that machine for the user's agents.","allowed_users":["*","gr… (491 bytes, sha1 f8d37723e3acd6a7b81feb7dad79ca0e6559a97d)
+root POST /api/feature-access?feature=desktop "{\"allowed_users\":[]}"
+  204 
+root GET /api/feature-access ""
+  200 [{"feature":"desktop","label":"Desktop bridge","desc":"Let a user's personal access tokens connect gohort-desktop, whose tools then run on that machine for the user's agents.","access":"Nobody"},{"fea… (456 bytes, sha1 a1cec8ec1cd292b04939c6f48b8755ea7734d491)
+alice GET /api/model-access-limits ""
+  403 forbidden
+root GET /api/model-access-limits ""
+  200 {"per_minute":30,"at_once":2}
+alice POST /api/model-access-limits "{\"per_minute\":5,\"at_once\":1}"
+  403 forbidden
+root POST /api/model-access-limits "{\"per_minute\":0,\"at_once\":1}"
+  400 each limit is at least 1
+root POST /api/model-access-limits "{\"per_minute\":5,\"at_once\":1}"
+  204 
+root GET /api/model-access-limits ""
+  200 {"per_minute":5,"at_once":1}
 root GET /api/users/nobody ""
   404 user not found
 root GET /api/users/ ""
@@ -161,7 +189,7 @@ root POST /api/users/carol/reset-password "{\"mode\":\"set\",\"password\":\"pw-7
 root POST /api/users/carol/reset-password "{\"mode\":\"set\",\"password\":"
   400 invalid JSON: unexpected EOF
 root POST /api/users/alice/revoke-sessions ""
-  200 {"revoked":16}
+  200 {"revoked":19}
 root POST /api/users/carol/data-action "{}"
   400 app and action required
 root POST /api/users/carol/data-action "{\"app\":\"nope\",\"action\":\"purge\"}"
@@ -190,7 +218,7 @@ root DELETE /api/users/carol ""
   404 user not found
 root GET /api/users ""
   200 [{"username":"alice","admin":false,"pending":false,"apps":[]},{"username":"erin","admin":false,"pending":false,"apps":[]},{"username":"pat","admin":false,"pending":false,"apps":[]},{"username":"root","admin":true,"pending":false,"apps":[]}]
-activity log, 14 entries:
+activity log, 15 entries:
   account root: added the account carol
   account root: approved the account pat
   account root: changed the account carol
@@ -205,3 +233,4 @@ activity log, 14 entries:
   account root: reset the password of carol
   account root: reset the password of carol
   account root: signed alice out everywhere
+  settings root: set Model access limits: 5 a minute, 1 at once, per person

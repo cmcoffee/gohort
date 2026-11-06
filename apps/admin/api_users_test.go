@@ -45,3 +45,25 @@ func TestAnAddedAccountFollowsTheNameRule(t *testing.T) {
 		t.Error("the refused name was stored")
 	}
 }
+
+// The Allowed column says who a list admits, in words: an unset feature is
+// everyone and says so, an emptied one is nobody, a Closed one keeps its
+// administrators.
+func TestFeatureAccessSaysWhoItAdmits(t *testing.T) {
+	for _, c := range []struct {
+		p      FeatureAccessPolicy
+		closed bool
+		want   string
+	}{
+		{FeatureAccessPolicy{Feature: "openai"}, false, "Everyone (not set yet)"},
+		{FeatureAccessPolicy{Feature: "openai", Saved: true}, false, "Nobody"},
+		{FeatureAccessPolicy{Feature: "openai", Saved: true, AllowedUsers: []string{"*"}}, false, "Everyone"},
+		{FeatureAccessPolicy{Feature: "openai", Saved: true, AllowedUsers: []string{"ann", "group:ops", "group:dev"}}, false, "1 person, 2 teams"},
+		{FeatureAccessPolicy{Feature: "model-access", Saved: true}, true, "Administrators only"},
+		{FeatureAccessPolicy{Feature: "model-access", Saved: true, AllowedUsers: []string{"ann", "bo"}}, true, "2 people, and administrators"},
+	} {
+		if got := featureAccessSummary(c.p, c.closed); got != c.want {
+			t.Errorf("%+v: %q, want %q", c.p, got, c.want)
+		}
+	}
+}

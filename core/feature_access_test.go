@@ -31,10 +31,22 @@ func TestFeatureAllowedForUser(t *testing.T) {
 		t.Error("allow-list match should fold case")
 	}
 
-	// Clearing the list re-opens to everyone.
+	// A list an administrator saved empty is nobody: removing the last person
+	// closes the feature rather than opening it to the deployment.
 	SetFeatureAllowedUsers(db, "openai", nil)
+	if FeatureAllowedForUser(db, "openai", "alice") || FeatureAllowedForUser(db, "openai", "bob") {
+		t.Error("a list saved empty let someone in")
+	}
+	// Everyone is an entry of its own.
+	SetFeatureAllowedUsers(db, "openai", []string{FeatureEveryone})
 	if !FeatureAllowedForUser(db, "openai", "alice") {
-		t.Error("cleared allow-list must re-open to all")
+		t.Error("Everyone did not admit alice")
+	}
+	// A record from before lists were marked saved keeps its meaning: empty
+	// was everyone, and still is.
+	db.Set(featureAccessTable, "openai", FeatureAccessPolicy{Feature: "openai"})
+	if !FeatureAllowedForUser(db, "openai", "alice") {
+		t.Error("an old empty record closed a live feature")
 	}
 
 	// Empty feature/user never allowed.
@@ -120,4 +132,64 @@ func TestAppsReadFeaturePoliciesFromTheRootStore(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+// A team on the list admits its members, now and later, and nobody once the
+// team is gone; a person off the team is not admitted by it.
+func TestAFeatureGrantedToATeamAdmitsItsMembers(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	prevAuth := AuthDB
+	AuthDB = func() Database { return db }
+	t.Cleanup(func() { AuthDB = prevAuth })
+	SaveAppGroup(db, AppGroup{ID: "ops", Name: "Ops"})
+	db.Set(AuthTable, "user:ann", AuthUser{Username: "ann", Groups: []string{"ops"}})
+	db.Set(AuthTable, "user:ben", AuthUser{Username: "ben"})
+
+	SetFeatureAllowedUsers(db, "openai", []string{"group:ops"})
+	if !FeatureAllowedForUser(db, "openai", "ann") {
+		t.Error("a member of the team was not admitted")
+	}
+	if FeatureAllowedForUser(db, "openai", "ben") {
+		t.Error("someone off the team was admitted")
+	}
+	// ben joins later: admitted without the list changing.
+	db.Set(AuthTable, "user:ben", AuthUser{Username: "ben", Groups: []string{"ops"}})
+	if !FeatureAllowedForUser(db, "openai", "ben") {
+		t.Error("a new member was not admitted")
+	}
+	DeleteAppGroup(db, "ops")
+	if FeatureAllowedForUser(db, "openai", "ann") {
+		t.Error("a removed team still admits its old members")
+	}
+}
+
+// A Closed feature is nobody's but the administrators' until it is granted,
+// and always theirs.
+func TestAClosedFeatureStartsWithTheAdministratorsOnly(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	prevAuth := AuthDB
+	AuthDB = func() Database { return db }
+	t.Cleanup(func() { AuthDB = prevAuth })
+	db.Set(AuthTable, "user:root", AuthUser{Username: "root", Admin: true})
+	db.Set(AuthTable, "user:ann", AuthUser{Username: "ann"})
+	RegisterShareableFeature(ShareableFeature{Key: "test-closed", Label: "Closed", Closed: true})
+
+	if FeatureAllowedForUser(db, "test-closed", "ann") {
+		t.Error("a Closed feature admitted a user before anyone granted it")
+	}
+	if !FeatureAllowedForUser(db, "test-closed", "root") {
+		t.Error("a Closed feature shut out an administrator")
+	}
+	SetFeatureAllowedUsers(db, "test-closed", []string{"ann"})
+	if !FeatureAllowedForUser(db, "test-closed", "ann") || !FeatureAllowedForUser(db, "test-closed", "root") {
+		t.Error("granting ann changed who else may use it")
+	}
+	// Only a Closed feature: an ordinary one holds an administrator to its list.
+	SetFeatureAllowedUsers(db, "openai", []string{"ann"})
+	if FeatureAllowedForUser(db, "openai", "root") {
+		t.Error("an administrator was let into an ordinary feature they are not on")
+	}
+	if LoadFeaturePolicy(db, "nothing-set").Everyone() != true || (FeatureAccessPolicy{Feature: "test-closed"}).Everyone() {
+		t.Error("Everyone() does not read an unset policy by its feature")
+	}
 }

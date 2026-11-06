@@ -56,6 +56,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/core/modelaccess"
 	"github.com/cmcoffee/gohort/core/netgate"
 )
 
@@ -67,13 +68,15 @@ const OpenAIFeatureKey = "openai"
 
 func init() {
 	RegisterApp(new(OpenAIAPI))
-	// Declare the /v1 endpoint as an admin-gateable feature. Absent an admin
-	// policy it's open to all users (non-breaking on the live integration); the
-	// admin narrows it under Admin → Feature Access.
+	// Declare the /v1 endpoint as an admin-gateable feature. Closed, like Model
+	// access (docs/design/external-access.md): a key here reaches the user's
+	// agents, with their tools, from a service outside the deployment, so it is
+	// the administrators' until they grant it to people or teams.
 	RegisterShareableFeature(ShareableFeature{
-		Key:   OpenAIFeatureKey,
-		Label: "Model API (OpenAI-compatible /v1 endpoint and the Ollama proxy)",
-		Desc:  "Let a user drive the deployment's models, and expose their agents, to external clients (voice platforms, OpenAI SDKs, Ollama-protocol apps) through their own personal access tokens.",
+		Key:    OpenAIFeatureKey,
+		Label:  "Model API (OpenAI-compatible /v1 endpoint)",
+		Desc:   "Let a user reach their agents and conversations from external clients (voice platforms, OpenAI SDKs) through their own personal access tokens. Administrators always; anyone else once granted.",
+		Closed: true,
 	})
 }
 
@@ -282,10 +285,12 @@ func (T *OpenAIAPI) handleModels(w http.ResponseWriter, r *http.Request) {
 	// (nil-scope) key lists everything (AllowsTarget → true).
 	allow := func(canonical string) bool { return token == nil || token.AllowsTarget(canonical) }
 	data := []map[string]any{}
-	if allow("worker") {
+	// The raw tiers only for someone with Model access.
+	models := FeatureAllowedForUser(RootDB, ModelAccessFeature, user)
+	if models && allow("worker") {
 		data = append(data, map[string]any{"id": "worker", "object": "model", "owned_by": "gohort"})
 	}
-	if allow("lead") {
+	if models && allow("lead") {
 		data = append(data, map[string]any{"id": "lead", "object": "model", "owned_by": "gohort"})
 	}
 	for _, a := range modelAgents(user, token) {
@@ -444,10 +449,22 @@ func (T *OpenAIAPI) handleChatCompletions(w http.ResponseWriter, r *http.Request
 		Log("[openai_api] %s: model %q matched no channel or agent, answering from the WORKER tier (no persona, tools, memory or thread). If you meant a conversation, check the id and that its agent has \"Reachable over MCP\" on.", user, target)
 	}
 	// Tier passthrough (worker/lead, or an unresolved bare name that falls back
-	// to worker). Gate on the canonical tier.
+	// to worker). Raw compute: Model access, which an administrator grants, and
+	// its per-user limits, then the key's own scope on the canonical tier.
+	if !FeatureAllowedForUser(RootDB, ModelAccessFeature, user) {
+		writeErr(w, http.StatusForbidden, "the raw model tiers are Model access, which an administrator grants (Admin, People, Feature Access): use an agent:<id> model, or ask for it")
+		return
+	}
 	if !gateTarget(w, user, token, canonicalTier(target)) {
 		return
 	}
+	done, refusal := modelaccess.Admit(user)
+	if refusal != "" {
+		w.Header().Set("Retry-After", "30")
+		writeErr(w, http.StatusTooManyRequests, refusal)
+		return
+	}
+	defer done()
 	T.servePassthrough(w, r, user, req)
 }
 

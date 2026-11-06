@@ -34,7 +34,7 @@ func TestUsersRoutesContract(t *testing.T) {
 	app.RegisterRoutes(mux, "")
 	do := func(user, method, path, body string) { ct.run(mux, adb, user, method, path, body) }
 
-	for _, p := range []string{"/api/users", "/api/feature-access", "/api/feature-access?feature=desktop", "/api/users/alice", "/api/users/alice/data"} {
+	for _, p := range []string{"/api/users", "/api/feature-access", "/api/feature-access?feature=desktop", "/api/feature-candidates", "/api/users/alice", "/api/users/alice/data"} {
 		do("", "GET", p, "")
 		do("alice", "GET", p, "")
 		do("root", "GET", p, "")
@@ -57,6 +57,18 @@ func TestUsersRoutesContract(t *testing.T) {
 	do("root", "POST", "/api/feature-access?feature=desktop", `{"allowed_users":`)
 	do("root", "POST", "/api/feature-access?feature=desktop", ``)
 	do("root", "GET", "/api/feature-access", "")
+	// A team and Everyone, then an emptied list: nobody, not everyone.
+	do("root", "POST", "/api/feature-access?feature=desktop", `{"allowed_users":["group:g1","*"]}`)
+	do("root", "GET", "/api/feature-access", "")
+	do("root", "POST", "/api/feature-access?feature=desktop", `{"allowed_users":[]}`)
+	do("root", "GET", "/api/feature-access", "")
+	// Model access limits: never unlimited by a zero.
+	do("alice", "GET", "/api/model-access-limits", "")
+	do("root", "GET", "/api/model-access-limits", "")
+	do("alice", "POST", "/api/model-access-limits", `{"per_minute":5,"at_once":1}`)
+	do("root", "POST", "/api/model-access-limits", `{"per_minute":0,"at_once":1}`)
+	do("root", "POST", "/api/model-access-limits", `{"per_minute":5,"at_once":1}`)
+	do("root", "GET", "/api/model-access-limits", "")
 
 	do("root", "GET", "/api/users/nobody", "")
 	do("root", "GET", "/api/users/", "")

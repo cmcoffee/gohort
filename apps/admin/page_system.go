@@ -1,7 +1,10 @@
 package admin
 
 import (
+	"fmt"
+
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/modelaccess"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -301,8 +304,8 @@ func (a *AdminApp) systemSections() []ui.Section {
 		},
 		{
 			Title:    "Feature Access",
-			Subtitle: "Which users may expose outward-facing surfaces through their own access tokens.",
-			Detail:   "Reaching the OpenAI /v1 endpoint bypasses cookie auth, being guarded only by a token, so this is the gate on who may use it at all.\n\nEmpty means every user, and the surface's own per-key scope still applies; listing users restricts it to them. Each feature is declared by its app.",
+			Subtitle: "Which people and teams may use each outward-facing surface through their own access tokens.",
+			Detail:   "Reaching the OpenAI /v1 endpoint bypasses cookie auth, being guarded only by a token, so this is the gate on who may use it at all.\n\nAdd people, teams (every member, now and later) or Everyone. Once a list is set, an empty one means nobody. A feature not set yet reads as Everyone, so its arrival did not lock anyone out; a feature marked closed reads as nobody but the administrators. The surface's own per-key scope still applies. Each feature is declared by its app.",
 			Body: ui.Table{
 				Source: "api/feature-access",
 				RowKey: "feature",
@@ -312,14 +315,14 @@ func (a *AdminApp) systemSections() []ui.Section {
 					{Field: "desc", Flex: 2, Mute: true},
 				},
 				RowActions: []ui.RowAction{
-					ui.Expand("Set users", ui.ACLPicker(ui.ACLPickerConfig{
-						OptionsSource: "api/user-candidates",
+					ui.Expand("Who may use it", ui.ACLPicker(ui.ACLPickerConfig{
+						OptionsSource: "api/feature-candidates",
 						RecordSource:  "api/feature-access?feature={feature}",
 						Field:         "allowed_users",
 						PostTo:        "api/feature-access?feature={feature}",
 						Method:        "POST",
-						Noun:          "user",
-						Intro:         "Which users may use this feature. Empty = every user. Each granted user then decides which of THEIR keys use it and what each key may reach.",
+						Noun:          "person or team",
+						Intro:         "People, teams or Everyone. Empty means nobody once saved. Each person granted then decides which of THEIR keys use it and what each key may reach.",
 						EmptyText:     "No users to grant yet.",
 						// "Allowed" on the row is this list, summarised. A
 						// picker broadcasts nothing on its own, so setting
@@ -328,6 +331,22 @@ func (a *AdminApp) systemSections() []ui.Section {
 					})),
 				},
 				EmptyText: "No shareable features are registered.",
+			},
+		},
+		{
+			Title:    "Model access limits",
+			Subtitle: "How much raw model use each person granted Model access may make, through the Ollama proxy and the Model API's worker and lead tiers together.",
+			Detail:   "Raw compute has no agent in front of it, so no agent's spend limit applies: these are its limits. Over one, the client is told which and to wait. A request from this machine with no key is not counted, since nobody can be named for it.",
+			Body: ui.FormPanel{
+				Source:  "api/model-access-limits",
+				PostURL: "api/model-access-limits",
+				Method:  "POST",
+				Fields: []ui.FormField{
+					{Field: "per_minute", Label: "Requests a minute, each person", Type: "number", Min: 1, Max: 10000,
+						Help: fmt.Sprintf("Default %d.", modelaccess.DefaultPerMinute)},
+					{Field: "at_once", Label: "Requests at once, each person", Type: "number", Min: 1, Max: 100,
+						Help: fmt.Sprintf("Default %d.", modelaccess.DefaultAtOnce)},
+				},
 			},
 		},
 		{

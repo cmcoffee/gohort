@@ -18,6 +18,11 @@ func TestAKeyScopeKeepsOnlyWhatTheEditorOffers(t *testing.T) {
 
 	T := &Account{}
 	T.DB = RootDB.(*DBase).Bucket("account")
+	// The raw tiers are Model access, closed until granted.
+	if got := T.grantableScope("alice", &TokenScope{Targets: []string{"worker", "lead"}}); len(got.Targets) != 0 {
+		t.Errorf("tiers kept without Model access: %v", got.Targets)
+	}
+	SetFeatureAllowedUsers(RootDB, ModelAccessFeature, []string{"alice"})
 	got := T.grantableScope("alice", &TokenScope{
 		Features: []string{"desktop", "made-up"},
 		Targets:  []string{"worker", "agent:bobs-agent", "lead"},

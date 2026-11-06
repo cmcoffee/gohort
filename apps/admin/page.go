@@ -43,7 +43,7 @@ var adminLayout = []struct {
 	{"Overview", []string{"System Status", "Site", "Cost History (Last 30 Days)", "Cost by source", "Prices"}},
 	{"People", []string{
 		"Sign-in", "Add account", "Users", "People outside gohort", "Teams", "Default Apps",
-		"Feature Access", "Personal integrations", "Activity Log",
+		"Feature Access", "Model access limits", "Personal integrations", "Activity Log",
 	}},
 	{"Models", []string{"Worker LLM", "Lead LLM", "Model Privacy", "LLM Routing", "Local Model Scheduler"}},
 	// System Hooks first: the settings below it are what some of its rows

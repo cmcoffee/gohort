@@ -10,17 +10,20 @@ import (
 // Feature access: the ADMIN gate on outward-facing surfaces a user can expose
 // through their own keys. The first is the OpenAI-compatible /v1 endpoint. An
 // app DECLARES a shareable feature (RegisterShareableFeature); the admin sets,
-// per feature, which users may use it; the surface checks FeatureAllowedForUser
-// before doing anything else.
+// per feature, which people and teams may use it; the surface checks
+// FeatureAllowedForUser before doing anything else.
 //
-// Two independent layers, deliberately with OPPOSITE defaults:
-//   - This admin gate is introduced onto a LIVE feature, so absence of a policy
-//     means "all users" — turning the gate on doesn't lock out the existing
-//     integration. The admin narrows from there. (Mirrors the "empty
-//     allowed_users = everyone" convention already used for shared tools and
-//     credentials.)
-//   - The per-KEY scope (AccountToken.Scope) is deny-by-default: a new key
-//     reaches nothing until its owner grants targets.
+// A list holds people, teams ("group:<id>", every member) and Everyone ("*").
+// Once an administrator has saved a list it means exactly what it says, and an
+// empty one means nobody (docs/design/external-access.md). Before that:
+//   - a feature introduced onto a LIVE surface reads as everyone, so the gate
+//     arriving did not lock out an existing integration; the admin narrows
+//     from there;
+//   - a feature declared Closed (raw compute, say) reads as nobody but the
+//     administrators, who always have a Closed feature.
+//
+// The per-KEY scope (AccountToken.Scope) is a second, independent layer, and
+// deny-by-default: a new key reaches nothing until its owner grants targets.
 //
 // So the admin says WHETHER a user may use the endpoint at all; the user then
 // says which of THEIR keys use it and what each key may reach.
@@ -30,6 +33,10 @@ type ShareableFeature struct {
 	Key   string // stable id, e.g. "openai"; the string checked at the surface
 	Label string // admin-facing name
 	Desc  string // one line: what granting it lets a user's keys do
+	// Closed: nobody but the administrators until an administrator adds
+	// people or teams, and the administrators always. For a feature whose
+	// harm does not wait for a policy, raw compute among them.
+	Closed bool
 }
 
 var (
@@ -64,6 +71,18 @@ func ShareableFeatures() []ShareableFeature {
 	return out
 }
 
+// featureClosed reports whether a registered feature is Closed.
+func featureClosed(key string) bool {
+	shareableFeaturesMu.RLock()
+	defer shareableFeaturesMu.RUnlock()
+	for _, f := range shareableFeatures {
+		if f.Key == strings.TrimSpace(key) {
+			return f.Closed
+		}
+	}
+	return false
+}
+
 // IsShareableFeature reports whether a key names a registered feature.
 func IsShareableFeature(key string) bool {
 	foldAppAgentFeatures()
@@ -74,12 +93,51 @@ func IsShareableFeature(key string) bool {
 
 const featureAccessTable = "feature_access"
 
-// FeatureAccessPolicy is the admin's per-feature grant. AllowedUsers empty (or
-// no stored record at all) = every user — the non-breaking default. Non-empty =
-// only those usernames.
+// ModelAccessFeature is Model access: raw use of the deployment's models with
+// no agent in front, the Ollama proxy and the Model API's worker and lead
+// tiers (docs/design/external-access.md). Raw compute, so Closed: nobody's
+// but the administrators' until granted. Its per-user limits are
+// core/modelaccess.
+const ModelAccessFeature = "models"
+
+func init() {
+	RegisterShareableFeature(ShareableFeature{
+		Key:    ModelAccessFeature,
+		Label:  "Model access",
+		Desc:   "Raw use of the deployment's models with no agent in front: the Ollama proxy, and the Model API's worker and lead tiers. Raw compute, so nobody but administrators until granted.",
+		Closed: true,
+	})
+}
+
+// FeatureEveryone is the list entry for every signed-in user.
+const FeatureEveryone = "*"
+
+// FeatureAccessPolicy is the admin's per-feature grant: people, teams
+// ("group:<id>") and Everyone ("*"). Saved marks a list an administrator has
+// set, which means exactly what it holds, empty being nobody. A list never
+// saved this way, a record from before Saved or none at all, keeps its old
+// meaning: empty is everyone, unless the feature is Closed.
 type FeatureAccessPolicy struct {
 	Feature      string   `json:"feature"`
 	AllowedUsers []string `json:"allowed_users,omitempty"`
+	Saved        bool     `json:"saved,omitempty"`
+}
+
+// Closed reports whether the policy's feature is Closed: administrators always
+// have it, and nobody else until granted.
+func (p FeatureAccessPolicy) Closed() bool { return featureClosed(p.Feature) }
+
+// Everyone reports whether the policy, as it reads now, admits every user.
+func (p FeatureAccessPolicy) Everyone() bool {
+	if len(p.AllowedUsers) == 0 {
+		return !p.Saved && !featureClosed(p.Feature)
+	}
+	for _, e := range p.AllowedUsers {
+		if strings.TrimSpace(e) == FeatureEveryone {
+			return true
+		}
+	}
+	return false
 }
 
 // LoadFeaturePolicy returns the stored policy for a feature, or a zero policy
@@ -93,8 +151,9 @@ func LoadFeaturePolicy(db Database, feature string) FeatureAccessPolicy {
 	return p
 }
 
-// SetFeatureAllowedUsers stores the admin grant for a feature. An empty list
-// clears the restriction (back to all users). Admin-authorized at the caller.
+// SetFeatureAllowedUsers stores the admin grant for a feature: people, teams
+// ("group:<id>") and Everyone ("*"). An empty list is nobody. Admin-authorized
+// at the caller.
 func SetFeatureAllowedUsers(db Database, feature string, users []string) {
 	if db == nil {
 		return
@@ -114,24 +173,63 @@ func SetFeatureAllowedUsers(db Database, feature string, users []string) {
 		clean = append(clean, u)
 	}
 	sort.Strings(clean)
-	db.Set(featureAccessTable, feature, FeatureAccessPolicy{Feature: feature, AllowedUsers: clean})
+	db.Set(featureAccessTable, feature, FeatureAccessPolicy{Feature: feature, AllowedUsers: clean, Saved: true})
 }
 
-// FeatureAllowedForUser reports whether user may use feature. An unknown feature
-// (never registered) is allowed — the gate only constrains features that opted
-// in. A feature with no policy, or an empty allow-list, is open to everyone.
+// FeatureAllowedForUser reports whether user may use feature: by name, through
+// a team they are on, or through Everyone; always for an administrator on a
+// Closed feature. An unknown feature (never registered) is allowed, since the
+// gate only constrains features that opted in. A list an administrator saved
+// empty is nobody; one never saved is everyone, or nobody for a Closed one.
 func FeatureAllowedForUser(db Database, feature, user string) bool {
 	feature = strings.TrimSpace(feature)
 	user = strings.TrimSpace(user)
 	if feature == "" || user == "" {
 		return false
 	}
-	p := LoadFeaturePolicy(db, feature)
-	if len(p.AllowedUsers) == 0 {
-		return true // no restriction set — every user (non-breaking default)
+	// A Closed feature is always the administrators'.
+	if featureClosed(feature) && UserIsAdmin(user) {
+		return true
 	}
-	for _, u := range p.AllowedUsers {
-		if strings.EqualFold(strings.TrimSpace(u), user) {
+	p := LoadFeaturePolicy(db, feature)
+	if p.Everyone() {
+		return true
+	}
+	for _, e := range p.AllowedUsers {
+		e = strings.TrimSpace(e)
+		if id, team := strings.CutPrefix(e, shareGroupPrefix); team {
+			if id != "" && userInTeam(user, id) {
+				return true
+			}
+			continue
+		}
+		if strings.EqualFold(e, user) {
+			return true
+		}
+	}
+	return false
+}
+
+// userInTeam reports whether user is a member of the team (app group) id.
+// Any team an administrator made, shareable or not: granting a feature is an
+// administrator's act, not a member's share.
+func userInTeam(user, id string) bool {
+	if AuthDB == nil {
+		return false
+	}
+	adb := AuthDB()
+	if adb == nil {
+		return false
+	}
+	if _, ok := LoadAppGroup(adb, id); !ok {
+		return false // a removed team grants nothing
+	}
+	u, ok := AuthGetUser(adb, user)
+	if !ok {
+		return false
+	}
+	for _, g := range u.Groups {
+		if g == id {
 			return true
 		}
 	}
@@ -201,9 +299,12 @@ var ListExternalReachableAgentsFn func(db Database, owner string, granted func(c
 // them. The candidate set for the scope picker; enforcement matches against the
 // key's chosen subset, not this list.
 func ListExternalTargets(db Database, user string) []ExternalTarget {
-	out := []ExternalTarget{
-		{Value: "worker", Label: "worker: fast tier, no agent", Group: "Tiers"},
-		{Value: "lead", Label: "lead: strong tier, no agent", Group: "Tiers"},
+	var out []ExternalTarget
+	// The raw tiers are Model access, which an administrator grants.
+	if FeatureAllowedForUser(RootDB, ModelAccessFeature, user) {
+		out = append(out,
+			ExternalTarget{Value: "worker", Label: "worker: fast tier, no agent", Group: "Tiers"},
+			ExternalTarget{Value: "lead", Label: "lead: strong tier, no agent", Group: "Tiers"})
 	}
 	if ListExternalTargetsFn != nil {
 		out = append(out, ListExternalTargetsFn(db, user)...)
