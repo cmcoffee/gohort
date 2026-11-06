@@ -40,7 +40,7 @@ func (t *chatTurn) proposeRuleToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "propose_rule",
-			Description: "Suggest a rule for your owner to add to your Rules, the operating policy you follow on every turn. Use it when you learn something that should bind every future turn and keep catching yourself on it: a mistake you made twice, a line you were told not to cross, a thread or contact to leave alone. You do not add it: your owner reads it and adds it or not, and until they do it is not one of your rules. One rule per call, in the words it should have, plus why. Never use it to relax or work around a rule you have.",
+			Description: "Suggest a rule for your owner to add to your Rules, the operating policy you follow on every turn. Use it when your owner tells you never to do something, or always to do something, in how you work (this, not a pinned note), and when you learn something that should bind every future turn: a mistake you made twice, a thread or contact to leave alone. You do not add it: your owner reads it and adds it or not, and until they do it is not one of your rules. One rule per call, in the words it should have, plus why. Never use it to relax or work around a rule you have.",
 			Parameters: map[string]ToolParam{
 				"rule": {Type: "string", Description: "The rule as it should read in your Rules, one or two sentences, e.g. \"Before replying on a thread, check it against ENGAGED in your notes; a listed thread gets no new comment.\""},
 				"why":  {Type: "string", Description: "What happened that makes it worth a rule, in a sentence."},

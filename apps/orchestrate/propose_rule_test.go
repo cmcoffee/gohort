@@ -107,3 +107,21 @@ func TestAProposalFromSomeoneElsesConversationIsFlagged(t *testing.T) {
 		}
 	}
 }
+
+// "Don't do that" from the owner goes to the Rules, not a pinned note: a note
+// is the agent's own to forget or overwrite, a rule is the owner's. The
+// memory tool must not offer itself for standing orders, and must name the
+// tool that takes them; propose_rule must name the moment.
+func TestAStandingOrderIsARuleNotAPinnedNote(t *testing.T) {
+	remember := (&chatTurn{}).rememberToolDef().Tool.Description
+	if strings.Contains(remember, "standing instruction") {
+		t.Error("remember still offers a pinned note for a standing instruction")
+	}
+	if !strings.Contains(remember, "propose_rule") {
+		t.Error("remember does not send a standing order to propose_rule")
+	}
+	propose := (&chatTurn{}).proposeRuleToolDef().Tool.Description
+	if !strings.Contains(propose, "tells you never to do something, or always to do something") {
+		t.Error("propose_rule does not name being told never or always to do something")
+	}
+}
