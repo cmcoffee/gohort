@@ -561,3 +561,53 @@ func TestAKeysKindIsReadOffWhatItHolds(t *testing.T) {
 		}
 	}
 }
+
+// The administrator's Desktop bridge grant governs every way the desktop app
+// comes in. It was asked of personal tokens alone, so a user left off a saved
+// list still lent their computer by signing in to the app, or with the key the
+// app is handed on sign-in.
+func TestTheDesktopGrantGovernsTheSignedInApp(t *testing.T) {
+	acctFixture(t)
+	prevAuth := AuthDB
+	AuthDB = func() Database { return RootDB }
+	t.Cleanup(func() { AuthDB = prevAuth })
+	RootDB.Set(AuthTable, "user:user1", AuthUser{Username: "user1"})
+	session := AuthCreateSession(RootDB, "user1")
+	desktopKey, _ := MintDesktopKey("user1")
+	scoped := MintAccountTokenScoped("user1", "desktop", &TokenScope{Features: []string{desktopBridgeFeatureKey}})
+
+	signedIn := func() *http.Request {
+		r := httptest.NewRequest("GET", "/api/desktop/ws", nil)
+		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: session})
+		return r
+	}
+	client := func(key string) *http.Request {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.Header.Set("X-Gohort-Desktop-Client-Key", key)
+		return r
+	}
+	// Granted to everyone until an administrator saves a list.
+	if u := DesktopBridgeUserOf(signedIn()); u != "user1" {
+		t.Fatalf("the signed-in app with no list saved: %q", u)
+	}
+	SetFeatureAllowedUsers(RootDB, desktopBridgeFeatureKey, []string{"someone-else"})
+	if u := DesktopBridgeUserOf(signedIn()); u != "" {
+		t.Errorf("the signed-in app of a user left off the list opened the bridge as %q", u)
+	}
+	if u := DesktopBridgeUserOf(reqWithKey(desktopKey)); u != "" {
+		t.Errorf("the app's own key opened the bridge as %q", u)
+	}
+	if u := DesktopBridgeUserOf(reqWithKey(scoped.Token)); u != "" {
+		t.Errorf("a desktop-scoped token opened the bridge as %q", u)
+	}
+	if u := DesktopClientUser(client(desktopKey)); u != "" {
+		t.Errorf("the app's own key reached the client tools as %q", u)
+	}
+	SetFeatureAllowedUsers(RootDB, desktopBridgeFeatureKey, []string{"user1"})
+	if u := DesktopBridgeUserOf(signedIn()); u != "user1" {
+		t.Errorf("a granted user's signed-in app was refused (%q)", u)
+	}
+	if u := DesktopClientUser(client(desktopKey)); u != "user1" {
+		t.Errorf("a granted user's app key was refused the client tools (%q)", u)
+	}
+}

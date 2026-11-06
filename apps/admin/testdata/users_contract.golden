@@ -11,7 +11,7 @@ root PATCH /api/users "{}"
 alice GET /api/feature-access ""
   403 forbidden
 root GET /api/feature-access ""
-  200 [{"feature":"desktop","label":"Desktop bridge","desc":"Let a user's personal access tokens connect gohort-desktop, whose tools then run on that machine for the user's agents.","access":"Everyone (not … (472 bytes, sha1 2a8d3c8ab7a78db21567c376d950a72e4a4dd8ef)
+  200 [{"feature":"desktop","label":"Desktop bridge","desc":"Let a user connect gohort-desktop, signed in or with a key, and lend the computer it runs on to their agents as tools.","access":"Everyone (not s… (471 bytes, sha1 2204c94bf43ad1338382830e6a22f1f4b33f4f92)
 root PATCH /api/feature-access "{}"
   405 method not allowed
 (signed out) GET /api/feature-access?feature=desktop ""
@@ -75,15 +75,15 @@ root POST /api/feature-access?feature=desktop "{\"allowed_users\":"
 root POST /api/feature-access?feature=desktop ""
   400 invalid JSON: EOF
 root GET /api/feature-access ""
-  200 [{"feature":"desktop","label":"Desktop bridge","desc":"Let a user's personal access tokens connect gohort-desktop, whose tools then run on that machine for the user's agents.","allowed_users":["alice"… (484 bytes, sha1 8655975e2553a3acb5dc7aaa19e4ecff88bbbd62)
+  200 [{"feature":"desktop","label":"Desktop bridge","desc":"Let a user connect gohort-desktop, signed in or with a key, and lend the computer it runs on to their agents as tools.","allowed_users":["alice"]… (483 bytes, sha1 67854beee31c282bf9f856e16b63f758e9b815b3)
 root POST /api/feature-access?feature=desktop "{\"allowed_users\":[\"group:g1\",\"*\"]}"
   204 
 root GET /api/feature-access ""
-  200 [{"feature":"desktop","label":"Desktop bridge","desc":"Let a user's personal access tokens connect gohort-desktop, whose tools then run on that machine for the user's agents.","allowed_users":["*","gr… (491 bytes, sha1 f8d37723e3acd6a7b81feb7dad79ca0e6559a97d)
+  200 [{"feature":"desktop","label":"Desktop bridge","desc":"Let a user connect gohort-desktop, signed in or with a key, and lend the computer it runs on to their agents as tools.","allowed_users":["*","gro… (490 bytes, sha1 4d4bc750e5a4e2f687714eb1b84327326fe2467f)
 root POST /api/feature-access?feature=desktop "{\"allowed_users\":[]}"
   204 
 root GET /api/feature-access ""
-  200 [{"feature":"desktop","label":"Desktop bridge","desc":"Let a user's personal access tokens connect gohort-desktop, whose tools then run on that machine for the user's agents.","access":"Nobody"},{"fea… (456 bytes, sha1 a1cec8ec1cd292b04939c6f48b8755ea7734d491)
+  200 [{"feature":"desktop","label":"Desktop bridge","desc":"Let a user connect gohort-desktop, signed in or with a key, and lend the computer it runs on to their agents as tools.","access":"Nobody"},{"feat… (455 bytes, sha1 7b5470bcb3a57278727ba2298bb90b1d37f2bf48)
 alice GET /api/model-access-limits ""
   403 forbidden
 root GET /api/model-access-limits ""

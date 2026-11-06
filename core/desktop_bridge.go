@@ -329,6 +329,9 @@ func DesktopClientUser(r *http.Request) string {
 	defer apiKeyValidatorsMu.RUnlock()
 	for _, fn := range apiKeyValidators {
 		if u, ok := fn(key); ok && u != "" {
+			if !desktopGranted(u) {
+				return ""
+			}
 			return u
 		}
 	}
@@ -344,8 +347,21 @@ func init() {
 	RegisterShareableFeature(ShareableFeature{
 		Key:   desktopBridgeFeatureKey,
 		Label: "Desktop bridge",
-		Desc:  "Let a user's personal access tokens connect gohort-desktop, whose tools then run on that machine for the user's agents.",
+		Desc:  "Let a user connect gohort-desktop, signed in or with a key, and lend the computer it runs on to their agents as tools.",
 	})
+}
+
+// desktopGranted reports whether the administrator lets this user lend a
+// computer through gohort-desktop. Asked of every way the desktop app comes
+// in: signed in, with the key it is handed on sign-in, or with a personal
+// token. It used to be asked of personal tokens alone, so the grant did not
+// govern the signed-in app at all.
+func desktopGranted(user string) bool {
+	if FeatureAllowedForUser(RootDB, desktopBridgeFeatureKey, user) {
+		return true
+	}
+	Warn("[desktop-bridge] %s is not granted the desktop bridge (Feature Access): refused", user)
+	return false
 }
 
 // desktopScopeAllows reports whether a presented secret may authenticate the
@@ -368,16 +384,20 @@ func desktopScopeAllows(secret string) bool {
 // DesktopBridgeUserOf is the auth resolver the desktop WS mount uses:
 // cookie session first (the viewer's logged-in webview), then the
 // X-API-Key header (the headless daemon), which must be scoped for the
-// desktop when it is a personal access token. Returning "" rejects the
-// connection.
+// desktop when it is a personal access token. Either way the user must be
+// granted the desktop bridge. Returning "" rejects the connection.
 func DesktopBridgeUserOf(r *http.Request) string {
-	if u := AuthCurrentUser(r); u != "" {
-		return u
+	u := AuthCurrentUser(r)
+	if u == "" {
+		if !desktopScopeAllows(rawAPIKey(r)) {
+			return ""
+		}
+		u = userFromAPIKey(r)
 	}
-	if !desktopScopeAllows(rawAPIKey(r)) {
+	if u == "" || !desktopGranted(u) {
 		return ""
 	}
-	return userFromAPIKey(r)
+	return u
 }
 
 // HandleDesktopBridge is the WS endpoint handler. Mount at
