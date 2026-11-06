@@ -856,6 +856,9 @@ select:-webkit-autofill {
 }
 .ui-panic-btn:active { background: var(--danger); transform: scale(0.98); }
 .ui-panic-status { font-size: var(--fs-sm); color: var(--text-mute); text-align: center; display: block; margin-top: 0.3rem; min-height: 1em; }
+/* Nothing to say until the button is pressed, and an empty line held room
+ * below it that left the button floating high in its bar. */
+.ui-panic-status:empty { display: none; }
 
 /* --- EmptyState (centered "nothing here yet" placeholder) --- */
 .ui-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 3rem 1rem; min-height: 200px; }
