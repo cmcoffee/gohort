@@ -7092,8 +7092,10 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 @media (min-width: 700px) {
   .ui-panic-bar { padding-top: 1rem; padding-bottom: 1rem; }
 }
-/* Under a page header the bar does not clear a notch: the header did. */
-.ui-page-header + #ui-root .ui-panic-bar { padding-top: 0.6rem; }
+/* Under a page header the bar does not clear a notch: the header did. It
+ * keeps the room it has below the button, so the button does not sit hard
+ * under the header's tabs. */
+.ui-page-header + #ui-root .ui-panic-bar { padding-top: 1rem; }
 
 /* A message handed to a turn that is already running. It is real and it will
  * be delivered between rounds, but it has not been picked up yet — so it reads
