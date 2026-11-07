@@ -345,3 +345,25 @@ func TestAWebhookFeedsALinkedService(t *testing.T) {
 		t.Errorf("%q", got)
 	}
 }
+
+// The link form's chats arrive as the tag box's list, or as the text an API
+// client may still send, split on commas, spaces and new lines; blanks go.
+func TestALinksChatsAreAListOrText(t *testing.T) {
+	for body, want := range map[string]string{
+		`{"chats":["C01"," C02 ",""]}`: "C01|C02",
+		`{"chats":"C01, C02\nC03 C04"}`: "C01|C02|C03|C04",
+		`{"chats":[]}`:                  "",
+		`{}`:                            "",
+	} {
+		var f linkForm
+		if err := json.Unmarshal([]byte(body), &f); err != nil {
+			t.Fatalf("%s: %v", body, err)
+		}
+		if got := strings.Join(f.Chats, "|"); got != want {
+			t.Errorf("%s: %q, want %q", body, got, want)
+		}
+	}
+	if fields := linkFields(); fields[2].Field != "chats" || fields[2].Type != "tags" {
+		t.Errorf("the chats field: %+v", fields[2])
+	}
+}

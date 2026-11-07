@@ -501,10 +501,33 @@ type linkRow struct {
 
 // linkForm is the link form, as posted.
 type linkForm struct {
-	Service      string `json:"service"`
-	Connector    string `json:"connector"`
-	Chats        string `json:"chats"`
-	IntervalSecs int    `json:"interval_secs"`
+	Service      string   `json:"service"`
+	Connector    string   `json:"connector"`
+	Chats        chatList `json:"chats"`
+	IntervalSecs int      `json:"interval_secs"`
+}
+
+// chatList is the chats a link reads, as the form's tag box sends them (a
+// list), or as text separated by commas, spaces or new lines (an API client
+// still sending the old shape).
+type chatList []string
+
+func (l *chatList) UnmarshalJSON(b []byte) error {
+	var items []string
+	if err := json.Unmarshal(b, &items); err != nil {
+		var text string
+		if err := json.Unmarshal(b, &text); err != nil {
+			return err
+		}
+		items = strings.FieldsFunc(text, func(r rune) bool { return r == ',' || r == '\n' || r == ' ' })
+	}
+	*l = nil
+	for _, it := range items {
+		if it = strings.TrimSpace(it); it != "" {
+			*l = append(*l, it)
+		}
+	}
+	return nil
 }
 
 // handleLinks is the person's linked services:
@@ -544,10 +567,7 @@ func (T *Bridges) handleLinks(c *jsonapi.Call) (any, error) {
 
 // handleLinkSave adds or replaces one.
 func (T *Bridges) handleLinkSave(c *jsonapi.Call, f linkForm) (any, error) {
-	var chats []string
-	for _, ch := range strings.FieldsFunc(f.Chats, func(r rune) bool { return r == ',' || r == '\n' || r == ' ' }) {
-		chats = append(chats, ch)
-	}
+	chats := []string(f.Chats)
 	l := serviceLink{Owner: c.User, Service: f.Service, Connector: f.Connector, Chats: chats, IntervalSecs: f.IntervalSecs}
 	if err := T.saveLink(l); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())

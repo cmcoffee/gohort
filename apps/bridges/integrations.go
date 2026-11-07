@@ -82,8 +82,8 @@ func linkFields() []ui.FormField {
 			Help: "A connector that both fetches and sends messages, which you may use."},
 		{Field: "service", Label: "Service name", Required: true, Placeholder: "e.g. slack",
 			Help: "What channels bind to. Use slack or discord for those services."},
-		{Field: "chats", Label: "Chats", Placeholder: "e.g. C0123456789",
-			Help: "Comma-separated: the conversations to read. Slack needs them (its channel ids); Discord reads the channel its connector is set to when blank."},
+		{Field: "chats", Label: "Chats", Type: "tags", Placeholder: "e.g. C0123456789",
+			Help: "The conversations to read, one each. Slack needs them (its channel ids); Discord reads the channel its connector is set to when blank."},
 		{Field: "interval_secs", Label: "Poll every (seconds)", Type: "number", Min: linkMinSecs, Placeholder: "30"},
 	}
 }

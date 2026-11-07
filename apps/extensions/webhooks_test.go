@@ -53,14 +53,25 @@ func TestAPersonsWebhooks(t *testing.T) {
 		t.Errorf("the list: %s", list)
 	}
 	_, form := do("GET", "/api/webhooks?name=repo", "")
-	if strings.Contains(form, "sekret-value") || !strings.Contains(form, `"kinds":"push, release"`) {
+	// Posted as the old comma text, read back as the list the tag box edits.
+	if strings.Contains(form, "sekret-value") || !strings.Contains(form, `"kinds":["push","release"]`) {
 		t.Errorf("the edit form: %s", form)
+	}
+	if h, ok := webhooks.Get("repo"); !ok || strings.Join(h.Kinds, "|") != "push|release" {
+		t.Errorf("kinds saved from comma text: %+v", h.Kinds)
 	}
 	if code, _ := do("POST", "/api/webhooks?name=repo", `{"label":"Repo events","verify":"none","header":"X-Hub-Signature-256","algorithm":"sha256","prefix":"sha256=","feeds":"watch:repo","reach":"direct"}`); code >= 300 {
 		t.Errorf("edit: %d", code)
 	}
 	if h, _ := webhooks.Get("repo"); h.Label != "Repo events" || h.Verify != webhooks.VerifyHMAC || len(h.Kinds) != 0 {
 		t.Errorf("after the edit: %+v", h)
+	}
+	// The tag box sends a list.
+	if code, _ := do("POST", "/api/webhooks?name=repo", `{"label":"Repo events","verify":"none","header":"X-Hub-Signature-256","algorithm":"sha256","prefix":"sha256=","kind":"header:X-GitHub-Event","kinds":["push"," tag ",""],"feeds":"watch:repo","reach":"direct"}`); code >= 300 {
+		t.Errorf("edit with a list of kinds: %d", code)
+	}
+	if h, _ := webhooks.Get("repo"); strings.Join(h.Kinds, "|") != "push|tag" {
+		t.Errorf("kinds saved from the tag box: %+v", h.Kinds)
 	}
 	if code, _ := do("POST", "/api/webhooks?action=secret&name=repo", `{"secret":""}`); code != 400 {
 		t.Errorf("a blank new secret: %d", code)
@@ -118,5 +129,24 @@ func TestAWebhookMayFeedALinkedService(t *testing.T) {
 	linked = nil
 	if _, list := do("GET", "/api/webhooks", ""); !strings.Contains(list, "no longer one of your linked services") {
 		t.Errorf("unlinked: %s", list)
+	}
+}
+
+// The kinds a webhook passes on are a tag box, one kind each, on both the add
+// and the edit form.
+func TestAWebhooksKindsAreATagBox(t *testing.T) {
+	for _, adding := range []bool{true, false} {
+		found := false
+		for _, f := range webhookFields(adding) {
+			if f.Field == "kinds" {
+				found = true
+				if f.Type != "tags" {
+					t.Errorf("adding=%v: kinds is a %q field", adding, f.Type)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("adding=%v: no kinds field", adding)
+		}
 	}
 }

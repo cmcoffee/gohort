@@ -5,6 +5,7 @@ package extensions
 // to one of their linked services' channels.
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -86,28 +87,48 @@ func linkedService(owner, svc string) bool {
 
 // webhookForm is the webhook form, as posted.
 type webhookForm struct {
-	Label     string `json:"label"`
-	Verify    string `json:"verify"`
-	Secret    string `json:"secret"`
-	Header    string `json:"header"`
-	Algorithm string `json:"algorithm"`
-	Prefix    string `json:"prefix"`
-	Text      string `json:"text"`
-	Kind      string `json:"kind"`
-	ID        string `json:"id"`
-	From      string `json:"from"`
-	Chat      string `json:"chat"`
-	Kinds     string `json:"kinds"`
-	Feeds     string `json:"feeds"`
-	Reach     string `json:"reach"`
-	Address   string `json:"address,omitempty"` // shown, never saved
+	Label     string   `json:"label"`
+	Verify    string   `json:"verify"`
+	Secret    string   `json:"secret"`
+	Header    string   `json:"header"`
+	Algorithm string   `json:"algorithm"`
+	Prefix    string   `json:"prefix"`
+	Text      string   `json:"text"`
+	Kind      string   `json:"kind"`
+	ID        string   `json:"id"`
+	From      string   `json:"from"`
+	Chat      string   `json:"chat"`
+	Kinds     kindList `json:"kinds"`
+	Feeds     string   `json:"feeds"`
+	Reach     string   `json:"reach"`
+	Address   string   `json:"address,omitempty"` // shown, never saved
+}
+
+// kindList is the kinds a webhook passes on, as the form's tag box sends them
+// (a list), or as text separated by commas or new lines (an API client still
+// sending the old shape). It goes back to the form as a list.
+type kindList []string
+
+func (l *kindList) UnmarshalJSON(b []byte) error {
+	var items []string
+	if err := json.Unmarshal(b, &items); err != nil {
+		var text string
+		if err := json.Unmarshal(b, &text); err != nil {
+			return err
+		}
+		items = strings.FieldsFunc(text, func(r rune) bool { return r == ',' || r == '\n' })
+	}
+	*l = nil
+	for _, it := range items {
+		if it = strings.TrimSpace(it); it != "" {
+			*l = append(*l, it)
+		}
+	}
+	return nil
 }
 
 func (f webhookForm) webhook(owner string) webhooks.Webhook {
-	var kinds []string
-	for _, k := range strings.FieldsFunc(f.Kinds, func(r rune) bool { return r == ',' || r == '\n' }) {
-		kinds = append(kinds, strings.TrimSpace(k))
-	}
+	kinds := []string(f.Kinds)
 	return webhooks.Webhook{Label: f.Label, Owner: owner, Verify: f.Verify, Header: f.Header, Algorithm: f.Algorithm,
 		Prefix: f.Prefix, Map: webhooks.Map{Text: f.Text, Kind: f.Kind, ID: f.ID, From: f.From, Chat: f.Chat},
 		Kinds: kinds, Feeds: f.Feeds, Reach: f.Reach}
@@ -173,7 +194,7 @@ func (T *Extensions) handleWebhooks(c *jsonapi.Call) (any, error) {
 			addr = "Shown once its peer relay connects."
 		}
 		return webhookForm{Address: addr, Label: h.Label, Verify: h.Verify, Header: h.Header, Algorithm: h.Algorithm, Prefix: h.Prefix,
-			Text: h.Map.Text, Kind: h.Map.Kind, ID: h.Map.ID, From: h.Map.From, Chat: h.Map.Chat, Kinds: strings.Join(h.Kinds, ", "),
+			Text: h.Map.Text, Kind: h.Map.Kind, ID: h.Map.ID, From: h.Map.From, Chat: h.Map.Chat, Kinds: kindList(append([]string{}, h.Kinds...)),
 			Feeds: h.Feeds, Reach: h.Reach}, nil
 	}
 	rows := []webhookRow{}
@@ -258,8 +279,8 @@ func webhookFields(adding bool) []ui.FormField {
 				"Any of these may instead be header:<Name> to read a header, as header:X-GitHub-Event."},
 		ui.FormField{Field: "kind", Label: "Kind", Placeholder: "e.g. header:X-GitHub-Event",
 			Help: "What sort of event it is, if the service says."},
-		ui.FormField{Field: "kinds", Label: "Pass on only these kinds", Placeholder: "e.g. push, release",
-			Help: "Comma-separated. Blank passes on every kind. Needs Kind."},
+		ui.FormField{Field: "kinds", Label: "Pass on only these kinds", Type: "tags", Placeholder: "e.g. push",
+			Help: "One kind each. None passes on every kind. Needs Kind."},
 		ui.FormField{Field: "id", Label: "Event id", Placeholder: "e.g. header:X-GitHub-Delivery",
 			Help: "The event's own id, so a service sending one again is passed on once."},
 		ui.FormField{Field: "from", Label: "From", Placeholder: "e.g. sender.login",
