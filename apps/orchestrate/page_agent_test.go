@@ -362,3 +362,14 @@ func TestTheMemorySwitchesReadPositively(t *testing.T) {
 		}
 	}
 }
+
+// Memory mode's help says what pinning does, not the tool argument behind it.
+func TestMemoryModeIsExplainedInPlainWords(t *testing.T) {
+	src, err := os.ReadFile("page_agent.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := string(src); strings.Contains(s, "remember (pin=true)") || strings.Contains(s, "remember (pin=false)") {
+		t.Error("memory mode's help is in the tool's terms again")
+	}
+}

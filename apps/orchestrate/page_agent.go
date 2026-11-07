@@ -385,8 +385,8 @@ func (ed *agentEditor) formFields() {
 					{Value: memoryModeAgent, Label: "Agent: generalized lessons only"},
 					{Value: memoryModeChatbot, Label: "Chatbot: lessons + user personalization"},
 				},
-				Help:   "Shapes what the agent pins with remember (pin=true).",
-				Detail: "Agent, the default, pins generalized lessons only; specifics go to remember (pin=false), which is searchable rather than always in prompt. Chatbot pins the same, plus user personalization and conversation notes."},
+				Help:   "What the agent pins: the notes shown to it on every turn.",
+				Detail: "Agent, the default, pins general lessons only; specifics are saved to searchable memory instead, to look up when they come up rather than shown every turn. Chatbot pins the same, plus what it learns about you and notes from the conversation."},
 			// Beside the mode it defaults from: reading the Cortex is what the
 			// agent knows of what reached it outside the conversation, so it is
 			// memory, not a capability grant. Its own setting all the same (a
