@@ -2,7 +2,7 @@
 
 ## What this framework is for
 
-`core/ui` lets an app developer with no web experience add capabilities to gohort from primitives that already exist. You should not have to write HTML, CSS, or DOM-manipulation JavaScript to ship a working app. You write a Go struct, declare a page in terms of pre-built components (Table, FormPanel, ChatPanel, PipelinePanel, …), and the framework renders it.
+`core/ui` lets an app developer with no web experience add capabilities to gohort from primitives that already exist. You should not have to write HTML, CSS, or DOM-manipulation JavaScript to ship a working app. You write a Go struct, declare a page in terms of pre-built components (Table, FormPanel, AgentLoopPanel, PipelinePanel, …), and the framework renders it.
 
 Every primitive in `core/ui` is generic: no primitive knows what a particular app means. When an app needs behavior beyond what the primitives offer, it plugs into one of four extension registries (block renderer, markdown extension, client action, `ExtraHeadHTML`) from its own package. This separation is enforced; see `CLAUDE.md` at the repo root for the rule and `scripts/hooks/pre-commit` for the guard.
 
@@ -130,7 +130,7 @@ An app is one struct that implements `core.Agent`. Its `Routes()` registers HTTP
 `ui.Page` is a Go struct describing the page. You don't write HTML or CSS. The framework's runtime JS (`/_ui/ui.js`) reads your page config and builds the DOM.
 
 ### Sections wrap Components
-A `ui.Section` has a Title, Subtitle, and a Body (one Component). Common components: `Table`, `FormPanel`, `ChatPanel`, `PipelinePanel`, `DisplayPanel`, `Card`, `Frame`. List them in `Sections: []ui.Section{...}`.
+A `ui.Section` has a Title, Subtitle, and a Body (one Component). Common components: `Table`, `FormPanel`, `AgentLoopPanel`, `PipelinePanel`, `DisplayPanel`, `Card`, `Frame`. List them in `Sections: []ui.Section{...}`.
 
 `Card` splices raw HTML into the page; `Frame` gives a COMPLETE HTML document (a game, a canvas animation, an embedded mini-app) its own iframe so its CSS reset and `body` rules style only itself and its `100vh` measures its own box. Reach for `Frame` whenever the markup starts with a doctype or carries its own `<body>`: same origin either way, so relative fetches and storage keep working.
 
@@ -171,7 +171,7 @@ The public surface, ordered most → least stable:
 
 1. **The `Agent` interface** + `RegisterApp` + the `WebApp`/`SimpleWebApp` interfaces + `AppCore`: frozen.
 2. **The logging/aliasing helpers** re-exported from `core` (`Log`, `Fatal`, `Notice`, `Err`, `RequireUser`, config/DB/`LimitGroup` type aliases): frozen names.
-3. **`ui.Page` + the well-known components** (Table, FormPanel, ChatPanel, PipelinePanel, FormField types) + **`ui.Head`**: adds-only; field renames go through a deprecation pass.
+3. **`ui.Page` + the well-known components** (Table, FormPanel, AgentLoopPanel, PipelinePanel, FormField types) + **`ui.Head`**: adds-only; field renames go through a deprecation pass. (`ChatPanel` is deprecated and goes in 0.10: see "Chat app" below.)
 4. **The extension registries** (block renderer, markdown extension, client action) reached via **`ui.Head`**: frozen signatures; new registries are additive.
 5. **The runtime helpers exposed on `window`** (`uiEl`, `uiMdToHTML`, `uiRenderMarkdown`, `uiOpenModal`, `uiRegister*`): frozen names.
 6. **CSS class names**: generic `ui-pl-*`, `ui-chat-*`, `ui-form-*` classes are stable; app-specific class names belong in the app's package.
@@ -194,7 +194,7 @@ core/ui/` is the authoritative history.
 | A guided multi-step create flow (wizard with Back/Next) | `ui.FormPanel` with `Steps` (see below) |
 | A labeled key-value display (read-only) | `ui.DisplayPanel` |
 | Two related lists in one section (your own, and the ones shared with you) | `ui.Stack` of `ui.Subsection`s, each with its own Title / Subtitle / Detail / Body |
-| A chat with sessions sidebar | `ui.ChatPanel` |
+| A chat with sessions sidebar | `ui.AgentLoopPanel` with an app agent (see "Chat app" below) |
 | A pipeline: submit a job, watch SSE blocks stream in, view past runs | `ui.PipelinePanel` (with a bridge that emits `block`/`chunk`/`status` events) |
 | A live-watch page for an in-flight pipeline (separate from submit) | `ui.PipelineWatchPanel` |
 | An LLM-backed suggestion list ("Suggest topics") | `ui.SuggestPanel` |
@@ -473,9 +473,9 @@ You write a *bridge* in a `chat_endpoints.go` that:
 
 ### 3. Chat app
 
-User-and-assistant message thread, optionally with tools and attachments. Use `ui.ChatPanel`.
+User-and-assistant message thread, with sessions, tools and attachments. A chat runs on an agent (the agent plans, calls tools, and the app hands it tools that write into the app's own data, as Scribe's Guide Author does): use `ui.AgentLoopPanel` and let orchestrate run the turns.
 
-**A chat that runs on an agent** (the agent plans, calls tools, and the app hands it tools that write into the app's own data, as Scribe's Guide Author does): use `ui.AgentLoopPanel` and let orchestrate run the turns.
+`ui.ChatPanel` is deprecated and goes in 0.10: no app used it, and a chat on your own endpoint is better served by an app agent (below) or, for a run of your own pipeline with streamed blocks, by `ui.PipelinePanel`.
 
 1. Register the agent with `appagents.RegisterAppAgent` (an `AppAgentSpec`: id, owning app, prompt, allowed tools; `Hidden: true` when it only makes sense inside your app). Each user gets their own copy layered over your definition. It is your app's: orchestrate does not list it, it cannot be deleted, and it is set up in your app (step 3).
 2. Send through `orch.PublicHandleSendWithAppTools(w, r, agent, tools)`, with the agent from `orch.LookupAppAgent(user, id)` and your tools as `[]AgentToolDef`.

@@ -689,9 +689,9 @@ func buildWorkbench(spec AppSpec, m map[string]any) (ui.WorkbenchPanel, error) {
 	// AgentLoopPanel in no-list mode: one chat window, NO sessions rail (we omit
 	// list/load/delete URLs) and NO activity pane (LockActivity). The workbench's
 	// own document list is the app nav, so a second session list is redundant.
-	// MUST be AgentLoopPanel (not ChatPanel): chat/send emits the AgentLoopPanel
-	// SSE format (sse.Send) — ChatPanel's parser ignores those frames, so its
-	// replies never render. See sseWriter.SendChatEvent vs Send.
+	// MUST be AgentLoopPanel (not the deprecated ChatPanel): chat/send emits
+	// the AgentLoopPanel SSE format (sse.Send), which ChatPanel's parser
+	// ignores, so its replies would never render.
 	chat := ui.AgentLoopPanel{
 		SendURL:      "chat/send",
 		InjectURL:    "chat/inject",

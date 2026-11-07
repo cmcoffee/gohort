@@ -36,7 +36,7 @@ For the overview and quick start, see the [README](../README.md).
 - **Vision + multimodal**: image and video attachments go to vision-capable models.
 
 ### Web platform
-- **Declarative UI framework** (`core/ui`): `FormPanel`, `Table`, `ChatPanel`, `PipelinePanel`, `DisplayPanel`, `ChipPicker`, `Stack`, `RecordView`, `JSONView`, plus per-field affordances like `Presets` (static one-click fills), `ChipsSource` (dynamic chips), `SuggestURL` (per-field AI fill), `TestURL` (connectivity check button), and `Templates` (a "start from template" picker that prefills a create-form from named presets).
+- **Declarative UI framework** (`core/ui`): `FormPanel`, `Table`, `AgentLoopPanel`, `PipelinePanel`, `DisplayPanel`, `ChipPicker`, `Stack`, `RecordView`, `JSONView`, plus per-field affordances like `Presets` (static one-click fills), `ChipsSource` (dynamic chips), `SuggestURL` (per-field AI fill), `TestURL` (connectivity check button), and `Templates` (a "start from template" picker that prefills a create-form from named presets).
 - **Channel agents (the Cortex)**: a fleet-capable agent gets a persistent **Cortex** home thread pinned above its ordinary sessions, where its event-monitor wakes and standing-agent reports land as distinct titled cards (producer + fire time) rather than chat bubbles. A pinned **Permissions** page is the agent's permission center: a three-state policy control per delegation target / contact (Always allow - Needs approval - **Blocked**, the last enforced server-side as auto-deny) plus the live approval queue, all on one page. Fleet-management views collapse into a topbar **Manage** menu; the rail stays a clean list of threads.
 - **Reserved internal marker**: anything an agent wraps in `<gohort-meta>…</gohort-meta>` is scrubbed from user-facing output (both the saved/exported copy and the client render).
 - **Web-based admin**: most operator config (LLM provider/model/key, embeddings, STT, image gen, web search, SMTP, cost rates, routing, worker thinking) lives in the admin web UI with inline test buttons. `--setup` is first-boot bootstrap (TLS, listen addr, admin user).
@@ -317,7 +317,7 @@ gohort/
 │   ├── secure_api.go        # Encrypted credential store (bearer/header/query/basic/oauth2), Base URL + endpoints allow-list, agent-draftable drafts, per-credential TLS-skip, auto-generated fetch_url_<credential> tools
 │   ├── connector.go         # Connector: LLM-authored "bridge type" (RegisterConnectorKind registry + draft→approve lifecycle); kinds in connector_{mcp,restpoll,desktop,command}.go
 │   ├── editor/              # Shared editor primitives (clipboard, resize, import, diff widget)
-│   ├── ui/                  # Declarative UI framework — FormPanel, ChatPanel, PipelinePanel, ChipPicker, etc.
+│   ├── ui/                  # Declarative UI framework — FormPanel, AgentLoopPanel, PipelinePanel, ChipPicker, etc.
 │   └── webui/               # Shared web UI theme + embedded Orbitron wordmark font
 ├── apps/                # Built-in apps
 │   ├── admin/               # Administrator panel — users, settings, credentials, pending tools, skills, tool groups, all service config

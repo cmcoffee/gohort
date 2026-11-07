@@ -20,7 +20,7 @@ import (
 //   - run: the in-memory Run buffer. Optional — exposed agents and
 //     the design endpoint use the response-only path.
 //
-// Send / SendChatEvent write to BOTH (they're real events worth
+// Send writes to BOTH (they're real events worth
 // replaying). Ping writes ONLY to live (it's a keepalive comment;
 // putting it in the buffer would inflate sequence numbers on the
 // server without inflating the client's received-event counter,
@@ -37,7 +37,7 @@ func newSSEWriter(w http.ResponseWriter) *sseWriter {
 	return &sseWriter{live: w, flusher: f}
 }
 
-// newTeeSSEWriter writes Send/SendChatEvent frames to BOTH the live
+// newTeeSSEWriter writes Send frames to BOTH the live
 // HTTP response AND the given Run's event buffer. Pings go to live
 // only. Used by handleSend so a fresh /api/runs/<id>/stream
 // subscriber after a reconnect can replay every real event from any
@@ -93,29 +93,6 @@ func (s *sseWriter) Send(payload map[string]any) {
 	}
 	frame := make([]byte, 0, len(body)+8)
 	frame = append(frame, "data: "...)
-	frame = append(frame, body...)
-	frame = append(frame, '\n', '\n')
-	s.emit(frame, true)
-}
-
-// SendChatEvent writes an SSE event in the ChatPanel runtime's format:
-// `event: <type>\ndata: <json>\n\n`. ChatPanel's parser dispatches on
-// the SSE event-name and ignores any frame without one. Used by the
-// design endpoint (which mounts a ChatPanel); AgentLoopPanel uses
-// Send() — different parser, different shape, kept distinct so
-// callers pick the one matching their UI primitive.
-func (s *sseWriter) SendChatEvent(eventType string, payload map[string]any) {
-	if s == nil {
-		return
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return
-	}
-	frame := make([]byte, 0, len(body)+len(eventType)+16)
-	frame = append(frame, "event: "...)
-	frame = append(frame, eventType...)
-	frame = append(frame, "\ndata: "...)
 	frame = append(frame, body...)
 	frame = append(frame, '\n', '\n')
 	s.emit(frame, true)

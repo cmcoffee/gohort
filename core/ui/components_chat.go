@@ -25,6 +25,11 @@ import (
 //     latest assistant bubble; tool_call/tool_result render inline
 //     pills; session events update the active session id; done/error
 //     finalize the round.
+//
+// Deprecated: no app uses ChatPanel. A chat runs on an agent: use
+// AgentLoopPanel with an app agent, wired as AUTHORING.md's "Chat app"
+// section describes. A run of your own pipeline with streamed blocks is a
+// PipelinePanel. ChatPanel goes in 0.10.
 type ChatPanel struct {
 	SessionsListURL  string `json:"sessions_list_url"`
 	SessionLoadURL   string `json:"session_load_url"`
