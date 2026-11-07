@@ -96,12 +96,12 @@ func (handler) Materialize(c Connector) error {
 	} else {
 		unregisterOwned(name)
 	}
-	if _, _, err := s.binding("image.edit"); err == nil && !backend {
-		RegisterImageEditBackend(name, func(sess *ToolSession, prompt string, image []byte) (*ImageGenResult, error) {
-			return editImage(sess, name, prompt, image)
+	if b, _, err := s.binding("image.edit"); err == nil && !backend {
+		RegisterImageEditBackend(name, s.editPictures(b), func(sess *ToolSession, prompt string, images [][]byte) (*ImageGenResult, error) {
+			return editImage(sess, name, prompt, images)
 		})
 	} else {
-		RegisterImageEditBackend(name, nil)
+		RegisterImageEditBackend(name, 0, nil)
 	}
 	if _, _, err := s.binding("music.generate"); err == nil {
 		registerMusicTool(name)
@@ -125,7 +125,7 @@ func (handler) Teardown(c Connector) error {
 	if mine {
 		UnregisterImageBackend(name)
 	}
-	RegisterImageEditBackend(name, nil)
+	RegisterImageEditBackend(name, 0, nil)
 	if s, err := Parse(c.Spec); err == nil {
 		if _, backend := imageOperation(s); backend {
 			c.StopImageBackend()
@@ -339,19 +339,49 @@ func generateImage(ctx context.Context, name, prompt string, landscape bool) (*I
 	return &ImageGenResult{URL: res["image"].File.Path, Prompt: prompt}, nil
 }
 
-// editImage is the edit backend a service registers: the source picture
-// written to a file, sent as the contract's image input.
-func editImage(sess *ToolSession, name, prompt string, image []byte) (*ImageGenResult, error) {
-	f, _, err := writeFile(bytes.NewReader(image), defaultMaxBytes)
-	if err != nil {
-		return nil, err
+// editPictureInputs are image.edit's source-picture inputs, in order: the
+// first is required, the rest make it a blend or a composite.
+var editPictureInputs = []string{"image", "image2", "image3"}
+
+// editPictures is how many source pictures b's operations take: image, then
+// as many of image2 and image3, in order, as they use.
+func (s Spec) editPictures(b Binding) int {
+	used := map[string]bool{}
+	for _, st := range b.Steps {
+		for _, tok := range opTokens(s.Provider.Operations[st.Call+st.Wait]) {
+			used[tok] = true
+		}
 	}
-	defer os.Remove(f.Path)
+	n := 1
+	for _, in := range editPictureInputs[1:] {
+		if !used[in] {
+			break
+		}
+		n++
+	}
+	return n
+}
+
+// editImage is the edit backend a service registers: each source picture
+// written to a file and sent as the contract's image inputs, in order.
+func editImage(sess *ToolSession, name, prompt string, images [][]byte) (*ImageGenResult, error) {
+	if len(images) == 0 || len(images) > len(editPictureInputs) {
+		return nil, fmt.Errorf("image.edit takes 1 to %d pictures, not %d", len(editPictureInputs), len(images))
+	}
+	vars := map[string]any{"prompt": prompt}
+	for i, data := range images {
+		f, _, err := writeFile(bytes.NewReader(data), defaultMaxBytes)
+		if err != nil {
+			return nil, err
+		}
+		defer os.Remove(f.Path)
+		vars[editPictureInputs[i]] = f
+	}
 	ctx := context.Background()
 	if sess != nil && sess.Ctx != nil {
 		ctx = sess.Ctx
 	}
-	res, err := Call(ctx, sess, name, "image.edit", map[string]any{"prompt": prompt, "image": f})
+	res, err := Call(ctx, sess, name, "image.edit", vars)
 	if err != nil {
 		return nil, err
 	}

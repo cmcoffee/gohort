@@ -628,3 +628,39 @@ func TestAConnectorPackKeepsTheSameSettings(t *testing.T) {
 		t.Errorf("kept: %v", kept)
 	}
 }
+
+// The Gemini template edits from up to three pictures, so the image tool
+// offers it for a blend of two or three; a spec using only image edits one.
+func TestAnEditSpecTakesAsManyPicturesAsItUses(t *testing.T) {
+	raw, err := os.ReadFile("../recipes/builtin/gemini-images.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tmpl struct {
+		Bundle struct {
+			Artifacts []struct {
+				Recipe struct {
+					Spec json.RawMessage `json:"spec"`
+				} `json:"recipe"`
+			} `json:"artifacts"`
+		} `json:"bundle"`
+	}
+	if err := json.Unmarshal(raw, &tmpl); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Parse(tmpl.Bundle.Artifacts[0].Recipe.Spec)
+	if err != nil {
+		t.Fatalf("the Gemini template's spec does not parse: %v", err)
+	}
+	b, _, err := s.binding("image.edit")
+	if err != nil {
+		t.Fatalf("the Gemini template does not edit: %v", err)
+	}
+	if n := s.editPictures(b); n != 3 {
+		t.Errorf("Gemini edits from %d pictures, want 3", n)
+	}
+	one := Spec{Provider: Provider{Operations: map[string]Operation{"e": {Body: map[string]any{"img": "{image.base64}"}}}}}
+	if n := one.editPictures(Binding{Steps: []Step{{Call: "e"}}}); n != 1 {
+		t.Errorf("a spec using only image takes %d pictures, want 1", n)
+	}
+}

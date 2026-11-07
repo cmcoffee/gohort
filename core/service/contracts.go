@@ -165,6 +165,10 @@ func init() {
 		Inputs: []Port{
 			{Name: "prompt", Type: TypeText, Required: true},
 			{Name: "image", Type: TypeFile, Required: true},
+			// More pictures to work from: a blend, a composite, a face from
+			// one onto another. A spec that uses them takes that many.
+			{Name: "image2", Type: TypeFile},
+			{Name: "image3", Type: TypeFile},
 			{Name: "negative", Type: TypeText},
 			{Name: "width", Type: TypeNumber},
 			{Name: "height", Type: TypeNumber},

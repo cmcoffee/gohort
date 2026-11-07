@@ -1319,7 +1319,7 @@ func reachableImageBackends(sess *ToolSession) []ImageBackendChoice {
 		// Registered means Materialize ran: the spec parsed and the backend
 		// closure exists. An approved-but-unmaterialized connector would
 		// advertise a name that can't dispatch.
-		_, edits := lookupImageEditBackend(c.Name)
+		editor, edits := lookupImageEditBackend(c.Name)
 		if !c.Served() || !(ImageBackendRegistered(c.Name) || edits) {
 			continue
 		}
@@ -1336,7 +1336,7 @@ func reachableImageBackends(sess *ToolSession) []ImageBackendChoice {
 		if !graph {
 			choice := ImageBackendChoice{Name: c.Name, Default: c.Name == defaultProvider, Edits: edits}
 			if edits {
-				choice.MaxImages, choice.CascadeMax = 1, 1
+				choice.MaxImages, choice.CascadeMax = editor.max, editor.max
 			}
 			out = append(out, choice)
 			continue
@@ -1465,20 +1465,30 @@ func EditImageWithBackend(sess *ToolSession, req EditImageRequest) (*ImageGenRes
 	}
 	defer queueRender(qctx)()
 
-	// Another kind's edit backend (a service): one source picture, verified
-	// here as for every backend, and no mask.
-	if fn, ok := lookupImageEditBackend(req.Backend); ok {
-		if len(req.Images) != 1 {
-			return nil, fmt.Errorf("image backend %q edits one picture at a time and %d were given. Do NOT retry with fewer and present it as what was asked for: tell the user it takes one", req.Backend, len(req.Images))
+	// Another kind's edit backend (a service): up to its count of source
+	// pictures, verified here as for every backend, and no mask.
+	if eb, ok := lookupImageEditBackend(req.Backend); ok {
+		if len(req.Images) == 0 {
+			return nil, fmt.Errorf("editing needs at least one source image")
+		}
+		if len(req.Images) > eb.max {
+			if eb.max == 1 {
+				return nil, fmt.Errorf("image backend %q edits one picture at a time and %d were given. Do NOT retry with fewer and present it as what was asked for: tell the user it takes one", req.Backend, len(req.Images))
+			}
+			return nil, fmt.Errorf("image backend %q combines at most %d pictures and %d were given. Do NOT retry with fewer and present it as what was asked for: tell the user it takes %d at a time", req.Backend, eb.max, len(req.Images), eb.max)
 		}
 		if strings.TrimSpace(req.Mask) != "" {
 			return nil, fmt.Errorf("image backend %q has no mask input: omit mask", req.Backend)
 		}
-		images, err := resolveInputImages(sess, req.Images, 1)
+		images, err := resolveInputImages(sess, req.Images, eb.max)
 		if err != nil {
 			return nil, err
 		}
-		return fn(sess, req.Prompt, images[0].data)
+		data := make([][]byte, len(images))
+		for i, im := range images {
+			data[i] = im.data
+		}
+		return eb.fn(sess, req.Prompt, data)
 	}
 
 	s, err := resolveImageConnector(req.Backend)

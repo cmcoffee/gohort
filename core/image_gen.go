@@ -56,16 +56,24 @@ func UnregisterImageBackend(name string) {
 	imageBackendMu.Unlock()
 }
 
-// ImageEditFunc edits one picture for a named backend of another kind than
-// rest_image (a service, core/service): the prompt and the source picture's
-// verified bytes in, the edited picture out.
-type ImageEditFunc func(sess *ToolSession, prompt string, image []byte) (*ImageGenResult, error)
+// ImageEditFunc edits pictures for a named backend of another kind than
+// rest_image (a service, core/service): the prompt and the source pictures'
+// verified bytes in, in order, the edited picture out. Several pictures are a
+// blend or a composite.
+type ImageEditFunc func(sess *ToolSession, prompt string, images [][]byte) (*ImageGenResult, error)
 
-var imageEditBackends = map[string]ImageEditFunc{}
+// imageEditBackend is a registered edit backend and how many source pictures
+// one call takes.
+type imageEditBackend struct {
+	fn  ImageEditFunc
+	max int
+}
 
-// RegisterImageEditBackend installs (or replaces) a named edit backend, or
-// with fn nil drops it.
-func RegisterImageEditBackend(name string, fn ImageEditFunc) {
+var imageEditBackends = map[string]imageEditBackend{}
+
+// RegisterImageEditBackend installs (or replaces) a named edit backend taking
+// up to max source pictures a call (at least one), or with fn nil drops it.
+func RegisterImageEditBackend(name string, max int, fn ImageEditFunc) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return
@@ -76,14 +84,17 @@ func RegisterImageEditBackend(name string, fn ImageEditFunc) {
 		delete(imageEditBackends, name)
 		return
 	}
-	imageEditBackends[name] = fn
+	if max < 1 {
+		max = 1
+	}
+	imageEditBackends[name] = imageEditBackend{fn: fn, max: max}
 }
 
-func lookupImageEditBackend(name string) (ImageEditFunc, bool) {
+func lookupImageEditBackend(name string) (imageEditBackend, bool) {
 	imageBackendMu.RLock()
 	defer imageBackendMu.RUnlock()
-	fn, ok := imageEditBackends[strings.TrimSpace(name)]
-	return fn, ok
+	b, ok := imageEditBackends[strings.TrimSpace(name)]
+	return b, ok
 }
 
 // ImageBackendRegistered reports whether a named backend exists — lets the admin
