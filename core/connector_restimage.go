@@ -1239,11 +1239,14 @@ type ImageBackendChoice struct {
 	Guidance string // this backend's prompting quirks (RestImageSpec.PromptGuidance)
 	Default  bool   // the configured default — where a caller that omits `backend` lands
 	// Edits is true when this backend takes SOURCE PHOTOS ("change this photo",
-	// "combine these two") rather than generating from text alone. The two are
-	// disjoint — an img2img graph requires its input and a txt2img graph has
-	// nowhere to put one — so this splits the backends across the generate and
-	// edit actions rather than being an extra flag on one list.
+	// "combine these two"). For a ComfyUI or A1111 graph it is the whole
+	// story: an img2img graph requires its input and a txt2img graph has
+	// nowhere to put one. A connector can do both (Gemini makes a picture
+	// from a prompt and edits one it is given), and says so with Generates.
 	Edits bool
+	// Generates is true when this backend ALSO makes a picture from text
+	// alone, beside Edits. A backend that does not edit always generates.
+	Generates bool
 	// MaxImages is how many source photos an editing backend accepts.
 	MaxImages int
 	// CascadeMax is how many it can combine in TOTAL, by chaining calls: the
@@ -1334,7 +1337,8 @@ func reachableImageBackends(sess *ToolSession) []ImageBackendChoice {
 		}
 		// Another image backend (OpenAI or Gemini images) is offered by name.
 		if !graph {
-			choice := ImageBackendChoice{Name: c.Name, Default: c.Name == defaultProvider, Edits: edits}
+			choice := ImageBackendChoice{Name: c.Name, Default: c.Name == defaultProvider, Edits: edits,
+				Generates: edits && ImageBackendRegistered(c.Name)}
 			if edits {
 				choice.MaxImages, choice.CascadeMax = editor.max, editor.max
 			}
@@ -1754,6 +1758,9 @@ func OutlineImageBackend(c Connector) ImageBackendOutline {
 		o := ImageBackendOutline{Does: ComfyTypeGenerate, Size: "the backend's own"}
 		if edits || (err == nil && s.SupportsImageInput()) {
 			o.Does = ComfyTypeEdit
+		}
+		if edits && ImageBackendRegistered(c.Name) {
+			o.Does = "generate and edit"
 		}
 		if err == nil && s.DefaultWidth > 0 && s.DefaultHeight > 0 {
 			o.Size = fmt.Sprintf("%d×%d", s.DefaultWidth, s.DefaultHeight)

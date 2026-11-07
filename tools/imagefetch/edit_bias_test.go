@@ -85,3 +85,32 @@ func TestNoMediaNoteWithoutAnEditor(t *testing.T) {
 		t.Error("without an edit action the media note points at nothing")
 	}
 }
+
+// A connector that both generates and edits (Gemini) is offered for both: it
+// makes a picture from a prompt, and edits or blends the ones it is given. It
+// was filed under editing alone, so an agent with only Gemini had no way to
+// make a picture from text. Named once among the backends a caller picks.
+func TestABackendThatGeneratesAndEditsIsOfferedForBoth(t *testing.T) {
+	gens, eds := splitBackends([]ImageBackendChoice{
+		{Name: "gemini", Default: true, Edits: true, Generates: true, MaxImages: 3},
+		{Name: "comfy_edit", Edits: true, MaxImages: 3},
+		{Name: "comfy_gen"},
+	})
+	names := func(bs []ImageBackendChoice) string {
+		var out []string
+		for _, b := range bs {
+			out = append(out, b.Name)
+		}
+		return strings.Join(out, ",")
+	}
+	if names(gens) != "gemini,comfy_gen" || names(eds) != "gemini,comfy_edit" {
+		t.Errorf("generators %s, editors %s", names(gens), names(eds))
+	}
+	a := imageActions{generate: true, edit: true, backends: gens, editors: eds}
+	if got := strings.Join(a.backendNames(), ","); got != "comfy_edit,comfy_gen,gemini" {
+		t.Errorf("selectable backends %s: a backend doing both must be listed once", got)
+	}
+	if a.defaultBackend() != "gemini" {
+		t.Errorf("default %q", a.defaultBackend())
+	}
+}

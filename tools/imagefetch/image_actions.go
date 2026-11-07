@@ -32,9 +32,9 @@ type imageActions struct {
 	// keep/forget, not per turn and not per image operation, so unlike the
 	// recent ring they do not churn the prefix cache.
 	kept []keptRef
-	// editors are the subset that take source photos. Disjoint from backends:
-	// an img2img graph requires its input, a txt2img graph has nowhere to put
-	// one, so a backend belongs to exactly one action.
+	// editors are the subset that take source photos. A ComfyUI or A1111
+	// graph belongs to one action (img2img requires its input, txt2img has
+	// nowhere to put one); a connector that does both (Gemini) is in both.
 	editors []ImageBackendChoice
 }
 
@@ -43,14 +43,7 @@ type imageActions struct {
 // cheapness contract holds across repeated catalog builds.
 func liveImageActions(sess *ToolSession) imageActions {
 	_, canFind := imageSearchConnector()
-	var generators, editors []ImageBackendChoice
-	for _, b := range ReachableImageBackends(sess) {
-		if b.Edits {
-			editors = append(editors, b)
-		} else {
-			generators = append(generators, b)
-		}
-	}
+	generators, editors := splitBackends(ReachableImageBackends(sess))
 	return imageActions{
 		kept:         keptRefsFor(sess),
 		inboundMedia: sess.InboundMediaCount(),
@@ -65,6 +58,21 @@ func liveImageActions(sess *ToolSession) imageActions {
 		backends: generators,
 		editors:  editors,
 	}
+}
+
+// splitBackends sorts reachable backends into the ones that make a picture
+// from text and the ones that take source photos. A connector doing both is
+// in both lists.
+func splitBackends(all []ImageBackendChoice) (generators, editors []ImageBackendChoice) {
+	for _, b := range all {
+		if b.Edits {
+			editors = append(editors, b)
+		}
+		if !b.Edits || b.Generates {
+			generators = append(generators, b)
+		}
+	}
+	return generators, editors
 }
 
 // maxEditImages is the largest source-photo count any reachable editing backend
@@ -174,8 +182,14 @@ func (a imageActions) selectableBackends() []ImageBackendChoice {
 	for _, e := range a.editors {
 		perCount[e.MaxImages]++
 	}
+	// A backend that both generates and edits is already listed as a
+	// generator: named once.
+	listed := map[string]bool{}
+	for _, b := range out {
+		listed[b.Name] = true
+	}
 	for _, e := range a.editors {
-		if perCount[e.MaxImages] > 1 {
+		if perCount[e.MaxImages] > 1 && !listed[e.Name] {
 			out = append(out, e)
 		}
 	}
