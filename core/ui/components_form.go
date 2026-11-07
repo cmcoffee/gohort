@@ -451,6 +451,18 @@ type FormField struct {
 	// AddLabel overrides the "+ Add" button's text on a "rows" field.
 	// Name the THING being added ("+ Add output"), not the act.
 	AddLabel string `json:"add_label,omitempty"`
+	// AddBlockedWhen greys out a "rows" field's "+ Add" while ANY row
+	// matches it (the ShowWhen grammar, read against the row), and
+	// AddBlockedNote says why on the button and under it. For a list whose
+	// last row closes it ("an Else is the last one"): adding after it would
+	// make a row nothing can reach, so the button says what to change.
+	AddBlockedWhen string `json:"add_blocked_when,omitempty"`
+	AddBlockedNote string `json:"add_blocked_note,omitempty"`
+	// FirstDefault is the value a "rows" column takes on the first row added
+	// to an empty list; Default is what it takes on every later one. For a
+	// list whose first row is a different kind from the rest (an If, then
+	// Else ifs).
+	FirstDefault string `json:"first_default,omitempty"`
 	// Width is a flex weight for a column inside a "rows" field, so a
 	// description can be wider than a type. Ignored elsewhere.
 	Width int `json:"width,omitempty"`

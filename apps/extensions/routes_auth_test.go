@@ -22,7 +22,7 @@ func TestEveryJSONRouteRefusesTheSignedOut(t *testing.T) {
 	if err := AdminPersistTempTool(RootDB, "alice", TempTool{Name: "rt_auth_tool", Description: "d", CommandTemplate: "echo x"}); err != nil {
 		t.Fatal(err)
 	}
-	skill, err := SaveSkill(AuthDB(), "alice", SkillRecord{Name: "rt_auth_mine", Instructions: "i", Playbook: []PlaybookRule{{Fact: "f", How: "h"}}})
+	skill, err := SaveSkill(AuthDB(), "alice", SkillRecord{Name: "rt_auth_mine", Instructions: "i", Conditions: []SkillCase{{Kind: "if", Question: "q", How: "h"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,8 +53,6 @@ func TestEveryJSONRouteRefusesTheSignedOut(t *testing.T) {
 		{"POST", "/api/skills?action=disable&id=nope", "", ""},
 		{"PATCH", "/api/skills?id=nope", `{"allowed_tools":[]}`, ""},
 		{"DELETE", "/api/skills?id=nope", "", ""},
-		{"GET", "/api/skill-playbook?id=nope&rule=new", "", "DELETE"},
-		{"POST", "/api/skill-playbook?id=nope&rule=add", `{"fact":"f"}`, ""},
 		{"GET", "/api/user-candidates", "", "POST"},
 		{"GET", "/api/skill-tools", "", "POST"},
 		{"GET", "/api/skill-collections", "", "POST"},
@@ -101,7 +99,7 @@ func TestEveryJSONRouteRefusesTheSignedOut(t *testing.T) {
 	if code := as("GET", "/api/tools?name=rt_auth_tool"); code != http.StatusNotFound {
 		t.Errorf("bob read alice's tool: %d, want 404", code)
 	}
-	for _, p := range []string{"/api/skills?id=" + skill.ID, "/api/skill-playbook?id=" + skill.ID + "&rule=0"} {
+	for _, p := range []string{"/api/skills?id=" + skill.ID} {
 		if code := as("GET", p); code != http.StatusNotFound {
 			t.Errorf("bob read alice's skill at %s: %d, want 404", p, code)
 		}

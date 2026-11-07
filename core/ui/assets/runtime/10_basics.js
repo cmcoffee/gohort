@@ -2859,6 +2859,8 @@
         // fields are declared in) but ↑↓ is keyboard-reachable, works on
         // a phone, and cannot drop a row somewhere nobody meant.
         var cols = Array.isArray(f.columns) ? f.columns : [];
+        // Set once the add button exists; every redraw and save re-reads it.
+        var syncAddBlocked = function() {};
         var rowsVal = Array.isArray(initial) ? initial.map(function(r) {
           return (r && typeof r === 'object') ? JSON.parse(JSON.stringify(r)) : {};
         }) : [];
@@ -2899,6 +2901,7 @@
             });
           });
           save(f.field, clean);
+          syncAddBlocked();
         }
 
         // rowConditions: whether any column's visibility or lockedness
@@ -2927,6 +2930,7 @@
 
         function drawRows() {
           body.innerHTML = '';
+          syncAddBlocked();
           if (rowsVal.length === 0) {
             body.appendChild(el('div', {
               style: 'color:var(--text-mute);font-style:italic;font-size:var(--fs-xs, 0.78rem);padding:0.3rem 0',
@@ -3021,6 +3025,28 @@
                   row[c.field] = ctl.checked;
                   commit();
                 });
+              } else if (c.type === 'sections') {
+                // A DOCUMENT in a cell: its first lines, and an Edit that
+                // opens the same Outline / Raw editor a sections field has,
+                // in a modal. A row can then hold a whole set of
+                // instructions without the row turning into the document.
+                var docVal = row[c.field] === undefined || row[c.field] === null ? '' : String(row[c.field]);
+                var docPrev = el('div', {class: 'ui-rows-doc-preview'});
+                var showDocPrev = function() {
+                  var empty = docVal.trim() === '';
+                  docPrev.textContent = empty ? (c.placeholder || 'Empty: use Edit to add.') : docVal;
+                  docPrev.classList.toggle('empty', empty);
+                };
+                showDocPrev();
+                var docEdit = el('button', {type: 'button', class: 'ui-form-suggest-btn'}, ['✎ Edit']);
+                docEdit.addEventListener('click', function() {
+                  window.uiOpenDocEditor({
+                    title: c.label || 'Edit', subtitle: c.help || undefined, value: docVal,
+                    specs: c.sections, allowFree: c.sections_allow_free !== false, level: c.sections_level,
+                    onSave: function(text) { docVal = text; row[c.field] = text; showDocPrev(); commit(); },
+                  });
+                });
+                ctl = el('div', {class: 'ui-rows-doc'}, [docPrev, docEdit]);
               } else if (c.type === 'textarea') {
                 // A cell that holds an INSTRUCTION rather than a label.
                 // A single-line input teaches people to write three words;
@@ -3102,20 +3128,40 @@
             }
           });
         }
-        drawRows();
-        input.appendChild(el('button', {
+        // "+ Add", greyed while a row matches add_blocked_when: a list closed
+        // by its last row says what to change rather than adding a row
+        // nothing can reach.
+        var addBtn = el('button', {
           type: 'button', class: 'ui-row-btn',
           style: 'margin-top:0.2rem',
           onclick: function() {
+            if (addBtn.disabled) return;
             var blank = {};
-            cols.forEach(function(c) { blank[c.field] = c.type === 'toggle' || c.type === 'checkbox' ? false : ''; });
+            var first = rowsVal.length === 0;
+            cols.forEach(function(c) {
+              if (first && c.first_default) blank[c.field] = c.first_default;
+              else if (c.default) blank[c.field] = c.default;
+              else blank[c.field] = c.type === 'toggle' || c.type === 'checkbox' ? false : '';
+            });
             rowsVal.push(blank);
             drawRows();
             // No save here: an empty row is not data yet, and persisting
             // it would make validation complain about a field the person
             // has not reached.
           },
-        }, [f.add_label || '+ Add']));
+        }, [f.add_label || '+ Add']);
+        var addNote = el('div', {class: 'ui-rows-add-note'});
+        addNote.style.display = 'none';
+        syncAddBlocked = function() {
+          var blocked = !!f.add_blocked_when && rowsVal.some(function(r) { return matchesWhen(f.add_blocked_when, r); });
+          addBtn.disabled = blocked;
+          addBtn.title = blocked ? (f.add_blocked_note || '') : '';
+          addNote.textContent = blocked ? (f.add_blocked_note || '') : '';
+          addNote.style.display = blocked && f.add_blocked_note ? '' : 'none';
+        };
+        drawRows();
+        input.appendChild(addBtn);
+        input.appendChild(addNote);
       } else if (t === 'tags') {
         // Tag-style array editor — values render as compact chips
         // with × removers, plus an inline input that accepts new

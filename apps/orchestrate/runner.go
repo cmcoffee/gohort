@@ -372,11 +372,12 @@ func (pr *planRun) assemblePrompt() {
 	// turn re-prefilled ~16k instead of reusing the cached prefix). Keeping
 	// sys byte-stable lets turns 2+ reuse the prefix; the hints also belong
 	// next to the user message (highest salience) per their own design intent.
-	t.playbookMsg = pr.triggerMsg
-	// A playbook skill the turn matches is delivered NOW, so its check runs
-	// and its arm is in the first round's prompt — renderTriggeredSkills
-	// below renders every delivered skill, this one included.
-	t.autoDeliverPlaybooks(pr.triggerMsg)
+	t.conditionMsg = pr.triggerMsg
+	// A conditional skill the turn matches is checked NOW, so the first
+	// round's prompt carries it (or why it does not apply):
+	// renderTriggeredSkills below renders every delivered skill and every
+	// verdict, these included.
+	t.checkConditionalSkills(pr.triggerMsg)
 	pr.turnContext = t.renderTriggeredSkills()
 	// full instructions for skills already consulted
 	pr.turnContext += t.renderSkillTriggerHints(pr.triggerMsg)

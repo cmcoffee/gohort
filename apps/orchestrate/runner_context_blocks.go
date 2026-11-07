@@ -38,14 +38,29 @@ func (t *chatTurn) renderTriggeredSkills() string {
 			continue
 		}
 		if !t.deliveredSkills[s.ID] {
+			// A conditional skill checked this turn that does not apply is
+			// said, in every round, so the model neither follows it nor goes
+			// looking for it.
+			if v, checked := t.skillVerdicts[s.ID]; checked && !v.applies {
+				b.WriteString("\n\n")
+				b.WriteString(v.note)
+			}
 			continue
 		}
-		b.WriteString(SkillPromptSection(s))
-		// A consulted skill's playbook rides with its instructions into
-		// every later round, resolved once (playbookBlock caches).
-		if block := t.playbookBlock(t.ctx, s); block != "" {
+		// A conditional skill is handed over only when its check says it
+		// applies, with what the check found beside it. Delivered through a
+		// door that did not check (none should), it is checked here.
+		chosen, applies, note := t.skillGate(s)
+		if !applies {
+			delete(t.deliveredSkills, s.ID)
 			b.WriteString("\n\n")
-			b.WriteString(block)
+			b.WriteString(note)
+			continue
+		}
+		b.WriteString(SkillPromptSection(chosen))
+		if note != "" {
+			b.WriteString("\n\n")
+			b.WriteString(note)
 		}
 	}
 	return b.String()
@@ -77,7 +92,9 @@ func (t *chatTurn) renderSkillTriggerHints(userMsg string) string {
 	}
 	var names []string
 	for _, s := range set {
-		if t.deliveredSkills[s.ID] {
+		// Delivered, or checked and found not to apply: either way there is
+		// nothing to hint at.
+		if _, checked := t.skillVerdicts[s.ID]; t.deliveredSkills[s.ID] || checked {
 			continue
 		}
 		if SkillTriggersMatch(s, userMsg, t.docNames) {
@@ -697,15 +714,13 @@ func (t *chatTurn) skillToolDefs() []AgentToolDef {
 	// the runner's, which is where a collection id is (or is not) a grant.
 	odb, owner := t.ownerView()
 	return []AgentToolDef{
-		BuildReadSkillTool(odb, owner, allowed, t.deliveredSkills, func(s SkillRecord) string {
-			return t.playbookBlock(t.ctx, s)
-		}),
-		BuildSkillKnowledgeSearchTool(odb, owner, allowed, t.deliveredSkills,
+		BuildReadSkillTool(odb, owner, allowed, t.deliveredSkills, t.skillGate),
+		BuildSkillKnowledgeSearchTool(odb, owner, allowed, t.deliveredSkills, t.skillGate,
 			func(skill SkillRecord, query string) string {
 				res, _ := t.knowledgeToolDefScoped([]SkillRecord{skill}).Handler(t.ctx, map[string]any{"query": query})
 				return res
 			}),
-		BuildSkillKnowledgeFetchDocTool(odb, owner, allowed, t.deliveredSkills,
+		BuildSkillKnowledgeFetchDocTool(odb, owner, allowed, t.deliveredSkills, t.skillGate,
 			func(skill SkillRecord, docID string) (string, error) {
 				return t.fetchKnowledgeDocScoped([]SkillRecord{skill}).Handler(t.ctx, map[string]any{"doc_id": docID})
 			}),

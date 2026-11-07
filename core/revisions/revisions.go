@@ -92,7 +92,7 @@ type Revision struct {
 	// than for addressing.
 	Stamp string `json:"stamp"`
 	// Reason names the edit that REPLACED this version ("edited instructions",
-	// "playbook changed", "rolled back to #4"), so a list reads as a history of
+	// "condition changed", "rolled back to #4"), so a list reads as a history of
 	// what happened instead of a column of timestamps.
 	Reason string `json:"reason,omitempty"`
 	// Body is the whole prior record, marshaled. The whole record rather than

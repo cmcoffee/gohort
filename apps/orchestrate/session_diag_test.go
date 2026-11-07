@@ -141,7 +141,7 @@ func TestDiagLevelReadsTheVerbInTheKind(t *testing.T) {
 	// reader has to be interrupted for.
 	for _, k := range []string{
 		"guardrail-no-verdict", "guardrail-error", "guardrail-appeal-honored",
-		"skill_playbook_fired", "machine_not_on_dispatch", "consulted", "tool-grant",
+		"skill_condition_checked", "machine_not_on_dispatch", "consulted", "tool-grant",
 		// Carries a blocking verb but is not a block: prose held on a bet
 		// about the final reply, restored by lead-in-restored when the bet
 		// loses. Shown as a card it read BLOCKED, in guardrail amber, twice in
@@ -208,7 +208,7 @@ func TestNonBlockingDiagStaysInTheTrail(t *testing.T) {
 		sse:     &sseWriter{live: buf},
 		session: &ChatSession{ID: "conv-1", AgentID: "lead"},
 	}
-	turn.turnDiag("skill_playbook_fired", "playbook 'triage' established the branch")
+	turn.turnDiag("skill_condition_checked", "checked the condition of Triage: it applies.")
 
 	if got := noticeFrames(t, buf.String()); len(got) != 0 {
 		t.Fatalf("a note must not take a card: %+v", got)

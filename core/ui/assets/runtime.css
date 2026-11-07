@@ -7517,3 +7517,14 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-wb-file-media { width: 100%; max-width: 100%; }
 .ui-wb-file-img { max-width: 100%; max-height: 16rem; border-radius: 6px; align-self: flex-start; }
 .ui-wb-has-files .ui-wb-edit-ta { min-height: 10rem; }
+
+/* A document in a "rows" cell: its first lines, muted when empty, and Edit. */
+.ui-rows-doc { display: flex; align-items: flex-start; gap: 0.5rem; min-width: 0; }
+.ui-rows-doc-preview {
+  flex: 1 1 auto; min-width: 0; white-space: pre-wrap; word-break: break-word;
+  font-size: var(--fs-sm, 0.85rem); line-height: 1.45; color: var(--text);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.ui-rows-doc-preview.empty { color: var(--text-mute); font-style: italic; }
+/* Why "+ Add" is greyed, under it. */
+.ui-rows-add-note { color: var(--text-mute); font-size: var(--fs-xs, 0.78rem); margin-top: 0.25rem; }

@@ -868,7 +868,7 @@
   // uiGoTo navigates to dest, or REFRESHES when dest is the page already open.
   //
   // A form that saves and redirects back to itself is the common shape for an
-  // editor with several independent parts — the playbook editor posts one rule
+  // editor with several independent parts — a page of several forms posts one
   // and comes back for the next. Done with location.href that is a NAVIGATION,
   // so every save pushes another history entry for the same URL, and the back
   // arrow then walks them one at a time: you press ‹ and stay exactly where you

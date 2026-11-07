@@ -38,7 +38,7 @@ func TestAdminSkillEditsKeepWhatTheyDoNotCarry(t *testing.T) {
 	}
 
 	made, err := SaveSkill(db, "root", SkillRecord{Name: "pdf", Description: "d", Instructions: "extract",
-		AllowedTools: []string{"t1"}, AllowedUsers: []string{"bo"}, Playbook: []PlaybookRule{{Fact: "f", How: "h", Then: "x", Else: "y"}}})
+		AllowedTools: []string{"t1"}, AllowedUsers: []string{"bo"}, Conditions: []SkillCase{{Kind: "if", Question: "Is it a PDF?", How: "Look at the file."}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,17 +68,17 @@ func TestAdminSkillEditsKeepWhatTheyDoNotCarry(t *testing.T) {
 	if strings.Join(s.AllowedUsers, ",") != "bo" {
 		t.Errorf("an edit dropped the share list: %v", s.AllowedUsers)
 	}
-	if s.Instructions != "summarize" || len(s.Playbook) != 1 {
-		t.Errorf("the form's edit should land and the playbook stay: %q %d", s.Instructions, len(s.Playbook))
+	if s.Instructions != "summarize" || len(s.Conditions) != 1 || s.Conditions[0].Question != "Is it a PDF?" {
+		t.Errorf("the form's edit should land and the conditions stay: %q %+v", s.Instructions, s.Conditions)
 	}
 
-	// Emptying the playbook box still clears the rules.
-	form["playbook_text"] = ""
+	// An empty list clears them.
+	form["conditions"] = []any{}
 	body, _ = json.Marshal(form)
 	if w := call("POST", "/api/skills", string(body)); w.Code/100 != 2 {
 		t.Fatalf("clear: %d %s", w.Code, w.Body.String())
 	}
-	if s := LoadSkills(db, "root")[0]; len(s.Playbook) != 0 {
-		t.Errorf("an empty playbook box has to clear the rules: %d left", len(s.Playbook))
+	if s := LoadSkills(db, "root")[0]; len(s.Conditions) != 0 {
+		t.Errorf("an empty list has to clear the conditions: %+v", s.Conditions)
 	}
 }

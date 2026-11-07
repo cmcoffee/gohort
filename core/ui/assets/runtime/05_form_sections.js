@@ -312,6 +312,60 @@
   // Returns {node, setValue, getValue}. setValue reloads without firing
   // onChange, so a programmatic write (the Suggest path, a raw-mode
   // switch) does not echo back as a change.
+  // uiOpenDocEditor edits one markdown document in a modal, in the two views a
+  // sections field offers: the Outline (headed blocks, each prose or a list)
+  // and Raw (the exact text). For a document that lives somewhere too small to
+  // edit it in place, such as a cell of a "rows" field. opts: {title,
+  // subtitle, value, specs, allowFree, level, onSave(text)}. Cancel leaves the
+  // value as it was; Save hands back the text from whichever view is open.
+  function uiOpenDocEditor(opts) {
+    opts = opts || {};
+    var value = String(opts.value == null ? '' : opts.value);
+    var editor = buildSectionsEditor({
+      specs: opts.specs || [], allowFree: opts.allowFree !== false,
+      level: opts.level || 2, initial: value, onChange: function() {},
+    });
+    var raw = el('textarea', {class: 'ui-form-textarea ui-sections-raw'});
+    raw.value = value;
+    raw.style.cssText = 'width:100%;min-height:50vh;resize:vertical;box-sizing:border-box;display:none';
+    var outlineBtn = el('button', {type: 'button', class: 'ui-sections-view on'}, ['Outline']);
+    var rawBtn = el('button', {type: 'button', class: 'ui-sections-view'}, ['Raw']);
+    var rawOn = function() { return rawBtn.classList.contains('on'); };
+    outlineBtn.addEventListener('click', function() {
+      if (!rawOn()) return;
+      editor.setValue(raw.value);
+      editor.node.style.display = ''; raw.style.display = 'none';
+      outlineBtn.classList.add('on'); rawBtn.classList.remove('on');
+    });
+    rawBtn.addEventListener('click', function() {
+      if (rawOn()) return;
+      raw.value = editor.getValue();
+      raw.style.display = ''; editor.node.style.display = 'none';
+      rawBtn.classList.add('on'); outlineBtn.classList.remove('on');
+    });
+    window.uiOpenModal({
+      title: opts.title || 'Edit',
+      subtitle: opts.subtitle,
+      width: 'min(920px, 94vw)',
+      actions: [
+        {label: 'Cancel'},
+        {label: 'Save', primary: true, onClick: function(api) {
+          var text = rawOn() ? raw.value : editor.getValue();
+          if (typeof opts.onSave === 'function') opts.onSave(text);
+          api.close();
+        }},
+      ],
+      mount: function(body) {
+        body.appendChild(el('div', {class: 'ui-sections-viewrow'}, [outlineBtn, rawBtn]));
+        body.appendChild(editor.node);
+        body.appendChild(raw);
+      },
+    });
+  }
+  // Guarded: this file is also loaded on its own, outside a page, by the
+  // sections round-trip harnesses.
+  if (typeof window !== 'undefined') window.uiOpenDocEditor = uiOpenDocEditor;
+
   function buildSectionsEditor(opts) {
     var specs = Array.isArray(opts.specs) ? opts.specs : [];
     var level = opts.level > 0 ? opts.level : 2;

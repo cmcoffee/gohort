@@ -91,18 +91,18 @@ func TestSkillsRoutesContract(t *testing.T) {
 
 	do("alice", "POST", "/api/skills", `{"name":"mine","description":"d"}`)
 	s1 := save("<skill-1>", `{"name":"Release notes","description":"Write release notes","triggers":["release"],"instructions":"Be brief.","allowed_tools":["git"],"attached_collections":["col-root"]}`)
-	s2 := save("<skill-2>", `{"name":"Triage","description":"Sort tickets","playbook_text":"[{\"fact\":\"severity\",\"how\":\"ask the reporter\",\"then\":\"label it urgent\"}]"}`)
+	s2 := save("<skill-2>", `{"name":"Triage","description":"Sort tickets","conditions":[{"kind":"if","check":"lookup","question":"Is it severe?","how":"ask the reporter"},{"kind":"else","instructions":"Queue it."}]}`)
 	do("root", "POST", "/api/skills", `{"name":"release NOTES","description":"a second one"}`)
 	do("root", "POST", "/api/skills", `{"description":"no name"}`)
 	do("root", "POST", "/api/skills", `{"name":"No description"}`)
-	do("root", "POST", "/api/skills", `{"name":"Bad playbook","description":"d","playbook_text":"not json"}`)
-	do("root", "POST", "/api/skills", `{"name":"Odd playbook","description":"d","playbook_text":"[{\"when\":\"bug\"}]"}`)
-	do("root", "POST", "/api/skills", `{"name":"Empty rule","description":"d","playbook_text":"[{}]"}`)
+	do("root", "POST", "/api/skills", `{"name":"Bad condition","description":"d","conditions":"yes"}`)
+	do("root", "POST", "/api/skills", `{"name":"Half condition","description":"d","conditions":[{"kind":"if","question":"Is it severe?"}]}`)
+	do("root", "POST", "/api/skills", `{"name":"Else first","description":"d","conditions":[{"kind":"else","instructions":"x"}]}`)
 	do("root", "POST", "/api/skills", `{"name":`)
 	do("root", "POST", "/api/skills", ``)
 	do("root", "PATCH", "/api/skills?id="+s1, `{"instructions":"Be very brief."}`)
 	do("root", "POST", "/api/skills", `{"id":"`+s2+`","name":"Release Notes","description":"rename onto a taken name"}`)
-	do("root", "POST", "/api/skills", `{"id":"`+s2+`","playbook_text":""}`)
+	do("root", "POST", "/api/skills", `{"id":"`+s2+`","conditions":[]}`)
 	do("root", "GET", "/api/skills", "")
 
 	for _, id := range []string{s1, s2, "nope", ""} {

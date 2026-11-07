@@ -27,10 +27,8 @@ func (a *AdminApp) skillsSections() []ui.Section {
 							{Value: false, Label: "Active", Color: "success"},
 						},
 					},
-					// Rule count only. The visual editor lives in the Extensions
-					// app, where a user edits their OWN skills; this page edits
-					// everyone's, and its door to a playbook is the JSON below.
-					{Field: "playbook", Label: "Playbook", Mute: true},
+					// The cases in a few words; blank unless the skill has them.
+					{Field: "conditions", Label: "Conditions", Mute: true},
 				},
 				RowActions: []ui.RowAction{
 					ui.Expand("Edit", ui.Stack{
@@ -48,12 +46,10 @@ func (a *AdminApp) skillsSections() []ui.Section {
 									{Field: "triggers", Type: "tags", Label: "Triggers (optional)",
 										Help:   "When ANY trigger matches the turn, the skill's instructions inject automatically.",
 										Detail: "The injection is deterministic. A pattern with * or ?, such as *.pdf, matches attachment filenames; anything else is a case-insensitive substring of the message.\n\nLeave it empty for a knowledge skill the LLM reaches for explicitly via skill_knowledge_search."},
-									{Field: "instructions", Type: "textarea", Label: "Instructions (markdown)", Rows: 10,
+									{Field: "instructions", Type: "sections", SectionsAllowFree: true, Label: "Instructions (markdown)", Rows: 6,
 										Help:   "The skill's approach: the lens for applying its knowledge.",
 										Detail: "It is returned by read_skill, attached to the first skill_knowledge_search result, and injected when a trigger matches."},
-									{Field: "playbook_text", Type: "textarea", Label: "Playbook (optional, JSON)", Rows: 8,
-										Help:   "Conditional behaviour the framework ENFORCES: a JSON array of branching rules.",
-										Detail: "Each rule is \"establish Y; if Y then Z, else U\". When the skill is consulted, each rule's fact is established by a step with the skill's tools, and the agent is handed only the arm that applies.\n\nA rule looks like {\"fact\": \"queue_draining\", \"how\": \"Read the consumer lag for the orders queue.\", \"then\": \"Look at the consumer.\", \"else\": \"Look at the broker.\"}. Optional keys: \"when\" takes a list of triggers; \"type\": \"choice\" takes \"values\" and \"cases\"; \"then_rule\" and \"else_rule\" nest one level.\n\nA playbook skill fires on its own when the skill's Triggers above, or a rule's when, match the message. Without either it runs only when the agent consults the skill. Prose that does not branch belongs in Instructions."},
+									skillConditionsField(),
 								},
 							},
 							// Allowed tools — picker from the registered
@@ -142,6 +138,38 @@ func (a *AdminApp) skillsSections() []ui.Section {
 				},
 				EmptyText: "No agent has outward or spending capability: none can text people, send email, or spend through a paid credential.",
 			},
+		},
+	}
+}
+
+// skillConditionsField is the conditions list on the skill editor, the same
+// list the Extensions skill form offers: the first row is the If (when it
+// holds, the skill applies as written), a row after it an Else if with its
+// own condition and instructions, or the Else, which closes the list.
+func skillConditionsField() ui.FormField {
+	return ui.FormField{
+		Field: "conditions", Type: "rows", Label: "Conditions (optional)",
+		AddLabel:       "+ Add condition",
+		Placeholder:    "None: the skill applies whenever it is used.",
+		AddBlockedWhen: "kind:else",
+		AddBlockedNote: "The Else is last. To add another condition, change it to Else if.",
+		Help:           "Add one when this skill is right only in some cases. The first is the If: when it holds, the skill applies as written. Add more for Else if (another case, with its own instructions) or Else (everything the cases above do not cover).",
+		Detail:         "The framework settles the conditions before the skill is handed over, and the agent gets only the case that applies. A lookup is answered by a short check with the skill's tools (one check for all of them); a mention is decided from the message. With no Else, the skill does not apply when no condition holds. Give the skill Triggers so this happens before the agent answers on matching messages.",
+		Columns: []ui.FormField{
+			{Field: "kind", Label: "Case", Type: "select", FirstDefault: "if", Default: "else_if", Options: []ui.SelectOption{
+				{Value: "if", Label: "If"}, {Value: "else_if", Label: "Else if"}, {Value: "else", Label: "Else"},
+			}},
+			{Field: "check", Label: "Decided by", Type: "select", HideWhen: "kind:else", Options: []ui.SelectOption{
+				{Value: "lookup", Label: "Looking it up"}, {Value: "mentions", Label: "The message mentioning"},
+			}},
+			{Field: "question", Label: "Question", Width: 3, HideWhen: "kind:else||check:mentions",
+				Placeholder: "Is the customer on version 4 or later?"},
+			{Field: "mentions", Label: "Words", Width: 3, HideWhen: "kind:else||check:!mentions",
+				Placeholder: "refund, chargeback, *.pdf"},
+			{Field: "how", Label: "How to check", OwnLine: true, HideWhen: "kind:else||check:mentions",
+				Placeholder: "Look up the account with the CRM tool and read its app version."},
+			{Field: "instructions", Label: "Instructions for this case", Type: "sections", OwnLine: true, HideWhen: "kind:if",
+				Placeholder: "Empty: use Edit to write what the agent does in this case."},
 		},
 	}
 }

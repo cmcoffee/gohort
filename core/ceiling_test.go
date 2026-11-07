@@ -270,6 +270,12 @@ const (
 	// get exported is the firing rule: PlaybookApplies is a method on
 	// SkillRecord, which the count excludes.
 	//
+	// (v0.9.096) The playbook was replaced by skill conditions: PlaybookRule
+	// and PlaybookEvidenceField left, SkillCase (one entry of the if / else
+	// if / else list, the field's type) and SkillGate (what the app hands the
+	// three skill tools) came in. Net zero; everything else is a method or
+	// unexported.
+	//
 	// 2208 -> 2234 (v0.6.858). The band filled with a real subsystem's worth
 	// of API, which is what it is meant to catch rather than absorb: revision
 	// history for the four authored definitions (SaveSkillAs /

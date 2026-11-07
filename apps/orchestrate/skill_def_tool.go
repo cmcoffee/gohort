@@ -66,9 +66,9 @@ func (skillDefImpl) Params() map[string]ToolParam {
 			Type:        "string",
 			Description: "(create / update) Markdown body that gets appended to the active agent's system prompt when this skill activates. Write it as additive guidance, \"when this kind of task comes up, also do X, Y, Z.\" The framework prepends an `## Skill: <name>` H2 header automatically.",
 		},
-		"playbook": {
+		"conditions": {
 			Type:        "string",
-			Description: "(create / update) Optional. The skill's CONDITIONAL behaviour as a JSON array of rules, each \"establish Y; if Y then Z, else U\". When the skill is consulted the framework ESTABLISHES each rule's fact itself (a step with the skill's tools and a declared output), and hands the host agent only the arm that applies, so the condition is settled before either branch can start. Rule shape: {\"fact\": \"queue_draining\", \"how\": \"Read the consumer lag for the orders queue over the last five minutes.\", \"then\": \"Look at the consumer: its log, restart count, lag trend.\", \"else\": \"Look at the broker: connectivity from the consumer host, partition state, disk.\"}. Optional: \"when\": [triggers] to apply the rule only on matching turns; \"type\": \"choice\" with \"values\": [...] and \"cases\": {value: arm} for a many-way branch; \"then_rule\" / \"else_rule\" / \"case_rules\" to nest another rule (two levels max). A playbook skill FIRES ON ITS OWN when the skill's triggers or a rule's when match the message (the facts are established before the agent's first round), so give a playbook skill triggers; without them it runs only when the agent chooses to consult the skill. Put prose that does not branch in instructions, not here. Pass \"[]\" to clear.",
+			Description: "(create / update) Optional. Makes the skill apply by case, as a JSON array read top to bottom: the first entry {\"kind\": \"if\", ...} is the primary condition (when it holds, the skill applies as written); then any {\"kind\": \"else_if\", ..., \"instructions\": \"...\"} (its own condition, and instructions used in place of the skill's when it is the first to hold); then at most one {\"kind\": \"else\", \"instructions\": \"...\"} last (for anything the conditions above do not cover; without it, the skill does not apply when none holds). A condition is a lookup, {\"question\": \"Is the customer on version 4 or later?\", \"how\": \"Look up the account with the CRM tool and read its app version.\"}, answered yes or no by a check with the skill's tools before the skill is handed over (one check for all of them), or a mention, {\"check\": \"mentions\", \"mentions\": [\"refund\", \"*.pdf\"]}, decided from the message alone. Give the skill triggers so it is settled before the agent's first round on matching turns. Pass \"[]\" to clear.",
 		},
 	}
 }
@@ -290,7 +290,7 @@ func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 	triggers := stringSliceFromArgs(args, "triggers")
 	allowedTools := stringSliceFromArgs(args, "allowed_tools")
 	attachedCollections := stringSliceFromArgs(args, "attached_collections")
-	playbook, hasPlaybook, err := playbookFromArgs(args)
+	conditions, hasConditions, err := conditionsFromArgs(args)
 	if err != nil {
 		return "", err
 	}
@@ -351,8 +351,8 @@ func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 		AttachedCollections: attachedCollections,
 		Instructions:        instructions,
 	}
-	if hasPlaybook {
-		rec.Playbook = playbook
+	if hasConditions {
+		rec.Conditions = conditions
 	}
 	// Snapshot any allowed_tools that name a local session/persistent tool INTO
 	// the skill so it ships its own executable code (portable, self-contained).
@@ -393,14 +393,14 @@ func attachNote(attached, unknown []string) string {
 }
 
 // activationNote says how the skill comes into a turn — which differs once it
-// carries a playbook, because a playbook fires on a match rather than waiting
-// to be consulted.
+// carries a condition, because a conditional skill is checked on a match
+// rather than waiting to be consulted.
 func activationNote(s SkillRecord) string {
-	if len(s.Playbook) > 0 {
+	if s.Conditional() {
 		if len(s.Triggers) > 0 {
-			return "It carries a playbook, so on a turn matching its triggers the framework establishes its facts BEFORE the agent's first round and hands the agent only the arm that applies."
+			return "It applies by case, so on a turn matching its triggers the framework settles its conditions BEFORE the agent's first round and hands over the case that applies, or says it does not apply."
 		}
-		return "It carries a playbook but NO triggers, so it fires only when the agent chooses to consult it: give it triggers if it should fire on its own."
+		return "It applies by case, but has NO triggers, so its conditions are settled only when the agent chooses to consult it: give it triggers if it should be settled on its own."
 	}
 	return "Host agents activate it by reading its description in their skill list; a trigger match adds a \"likely relevant\" hint on matching turns."
 }
@@ -564,15 +564,15 @@ func skillDefUpdate(args map[string]any, sess *ToolSession) (string, error) {
 		rec.AttachedCollections = stringSliceFromArgs(args, "attached_collections")
 		changed = append(changed, "attached_collections")
 	}
-	if playbook, has, err := playbookFromArgs(args); err != nil {
+	if conditions, has, err := conditionsFromArgs(args); err != nil {
 		return "", err
 	} else if has {
-		rec.Playbook = playbook
-		changed = append(changed, "playbook")
+		rec.Conditions = conditions
+		changed = append(changed, "conditions")
 	}
 	attached, unknown := attachSkillToAgents(sess, args["attach_to_agents"], rec.ID)
 	if len(changed) == 0 && len(attached) == 0 && len(unknown) == 0 {
-		return "", errors.New("nothing to update: pass at least one of description, instructions, triggers, allowed_tools, attached_collections, playbook, attach_to_agents")
+		return "", errors.New("nothing to update: pass at least one of description, instructions, triggers, allowed_tools, attached_collections, conditions, attach_to_agents")
 	}
 	saved, err := SaveSkill(sess.DB, sess.Username, rec)
 	if err != nil {
@@ -622,12 +622,12 @@ func skillDefDelete(args map[string]any, sess *ToolSession) (string, error) {
 	return fmt.Sprintf("Skill %q deleted.", s.Name), nil
 }
 
-// playbookFromArgs reads the playbook argument: a JSON array of rules as a
-// string (the shape the tool declares), or an already-decoded array. has is
-// false when the argument was not passed; an empty array clears. The rules
-// are validated here so the error names the rule, not the save.
-func playbookFromArgs(args map[string]any) (rules []PlaybookRule, has bool, err error) {
-	raw, present := args["playbook"]
+// conditionsFromArgs reads the conditions argument: a JSON array as a string
+// (the shape the tool declares), or an already-decoded array. has is false
+// when it was not passed; an empty array clears. Validated here, so the error
+// names the condition rather than the save.
+func conditionsFromArgs(args map[string]any) (cases []SkillCase, has bool, err error) {
+	raw, present := args["conditions"]
 	if !present {
 		return nil, false, nil
 	}
@@ -641,11 +641,14 @@ func playbookFromArgs(args map[string]any) (rules []PlaybookRule, has bool, err 
 	default:
 		data, _ = json.Marshal(v)
 	}
-	if err := json.Unmarshal(data, &rules); err != nil {
-		return nil, true, fmt.Errorf("playbook must be a JSON array of rules: %w", err)
+	if err := json.Unmarshal(data, &cases); err != nil {
+		return nil, true, fmt.Errorf("conditions must be a JSON array of {kind, question, how} / {kind, check: \"mentions\", mentions} entries: %w", err)
 	}
-	if probs := (SkillRecord{Playbook: rules}).PlaybookProblems(); len(probs) > 0 {
-		return nil, true, errors.New("playbook: " + strings.Join(probs, "; "))
+	if len(cases) == 0 {
+		return nil, true, nil
 	}
-	return rules, true, nil
+	if probs := (SkillRecord{Conditions: cases}).ConditionProblems(); len(probs) > 0 {
+		return nil, true, errors.New(strings.Join(probs, "; "))
+	}
+	return cases, true, nil
 }

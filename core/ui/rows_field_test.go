@@ -605,3 +605,30 @@ func TestARowsCellFillsItsCell(t *testing.T) {
 		t.Error("the rows textarea no longer carries the class the rule styles")
 	}
 }
+
+// A list of cases (an If, then Else ifs, then an Else that closes it) says
+// so on the wire: the first row's default apart from the rest, and when
+// "+ Add" is greyed and why. A document cell keeps its type.
+func TestRowsCarryWhatACaseListNeeds(t *testing.T) {
+	f := FormField{
+		Field: "conditions", Type: "rows",
+		AddBlockedWhen: "kind:else", AddBlockedNote: "The Else is last.",
+		Columns: []FormField{
+			{Field: "kind", Type: "select", FirstDefault: "if", Default: "else_if"},
+			{Field: "instructions", Type: "sections", OwnLine: true},
+		},
+	}
+	raw, _ := json.Marshal(f)
+	for _, want := range []string{`"add_blocked_when":"kind:else"`, `"add_blocked_note":"The Else is last."`,
+		`"first_default":"if"`, `"default":"else_if"`, `"type":"sections"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("missing %s:\n%s", want, raw)
+		}
+	}
+	plain, _ := json.Marshal(FormField{Field: "x", Type: "text"})
+	for _, unwanted := range []string{"add_blocked", "first_default"} {
+		if strings.Contains(string(plain), unwanted) {
+			t.Errorf("%q should be omitted on a plain field: %s", unwanted, plain)
+		}
+	}
+}

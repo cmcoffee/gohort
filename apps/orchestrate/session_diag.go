@@ -70,7 +70,7 @@ const (
 // convention: name the kind for what the guard DID ("tool-denied",
 // "guardrail-output-withheld") and it surfaces on the card for free. A kind
 // naming a condition rather than an action ("guardrail-no-verdict",
-// "skill_playbook_fired") stays in the trail, which is where a note nobody
+// "skill_condition_checked") stays in the trail, which is where a note nobody
 // has to act on belongs. Sixty-eight call sites and counting: a hand-kept
 // list of blocking kinds would be wrong within a release.
 var diagBlockingVerbs = []string{"blocked", "denied", "withheld", "halted", "discarded", "refus"}

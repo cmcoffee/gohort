@@ -74,14 +74,15 @@ func (t *chatTurn) dispatchCatalogPrompt() string {
 }
 
 // dispatchTurnContext is what a web turn puts beside the person's message
-// (runner.go, turnContext): the playbooks the message matches, delivered now;
+// (runner.go, turnContext): the conditional skills the message matches,
+// checked now;
 // the skills already consulted; skill and agent trigger hints; recall hints.
 // A dispatched run built none of it, so a skill whose rules the message called
 // for was never delivered. Run-only, beside the message, never stored, and
 // kept out of the system prompt so its prefix stays cached.
 func (t *chatTurn) dispatchTurnContext(message string) string {
-	t.playbookMsg = message
-	t.autoDeliverPlaybooks(message)
+	t.conditionMsg = message
+	t.checkConditionalSkills(message)
 	out := t.renderTriggeredSkills()
 	out += t.renderSkillTriggerHints(message)
 	// The owner's other agents, by name, with a nudge to hand the work to

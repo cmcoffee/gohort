@@ -1,15 +1,17 @@
 package extensions
 
-// What the skill, publish-request, catalog, category and playbook routes do,
+// What the skill, publish-request, catalog and category routes do,
 // read back from the store: a request carries its note and is refused for a
 // tool that is not the caller's, a lent tool is added and removed by query
-// and by body, a category reads back what was filed under it, a playbook rule is
-// read empty, added and removed, and a skill is the owner's alone to change
-// or delete.
+// and by body, a category reads back what was filed under it, a skill's
+// conditions are set, refused half-written, kept by a form that does not
+// carry them and cleared by an empty list, and a skill is the owner's alone
+// to change or delete.
 
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -86,23 +88,49 @@ func TestTheCatalogAndSkillRoutesChangeWhatTheySay(t *testing.T) {
 		t.Errorf("category record: %s", body)
 	}
 
-	// A playbook rule: the empty form, then one added and the first removed.
-	skill, err := SaveSkill(adb, "alice", SkillRecord{Name: "cr_skill", Instructions: "i", Playbook: []PlaybookRule{{Fact: "first", How: "ask"}}})
+	// A skill's conditions: set as rows, read back on the form and in the
+	// list, refused half-written, kept by a save that does not carry them,
+	// cleared by an empty list.
+	skill, err := SaveSkill(adb, "alice", SkillRecord{Name: "cr_skill", Instructions: "i"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pb := "/api/skill-playbook?id=" + skill.ID + "&rule="
-	if code, body := call("", "GET", pb+"new", ""); code != 200 || body != `{"else":"","fact":"","how":"","then":""}`+"\n" {
-		t.Errorf("new rule form: %d %s", code, body)
+	edit := "/api/skills?id=" + skill.ID
+	chain := `{"name":"cr_skill","instructions":"i","conditions":[` +
+		`{"kind":"","check":"","question":"Is it v4?","how":"Read the version.","mentions":"","instructions":"left over"},` +
+		`{"kind":"","check":"mentions","question":"","how":"","mentions":"refund, *.pdf","instructions":"Billing steps."},` +
+		`{"kind":"else","check":"lookup","question":"stray","how":"","mentions":"","instructions":"Upgrade first."}]}`
+	if code, body := call("", "POST", edit, chain); code/100 != 2 {
+		t.Fatalf("set the conditions: %d %s", code, body)
 	}
-	if code, _ := call("", "POST", pb+"add", `{"fact":"second","how":"say"}`); code != 200 {
-		t.Fatalf("add: %d", code)
+	own, _ := findOwnSkill("alice", skill.ID)
+	if c := own.Conditions; len(c) != 3 || c[0].Kind != "if" || c[0].Instructions != "" || c[1].Kind != "else_if" ||
+		strings.Join(c[1].Mentions, "|") != "refund|*.pdf" || c[2].Question != "" || c[2].Instructions != "Upgrade first." {
+		t.Fatalf("conditions after setting them: %+v", own.Conditions)
 	}
-	if code, _ := call("", "POST", pb+"0", `{"remove":true}`); code != 200 {
-		t.Fatalf("remove: %d", code)
+	if _, body := call("", "GET", edit, ""); !strings.Contains(body, `"mentions":"refund, *.pdf"`) || !strings.Contains(body, `"question":"Is it v4?"`) {
+		t.Errorf("the form does not read the conditions back: %s", body)
 	}
-	if own, _ := findOwnSkill("alice", skill.ID); len(own.Playbook) != 1 || own.Playbook[0].Fact != "second" {
-		t.Errorf("playbook after add and remove: %+v", own.Playbook)
+	if _, body := call("", "GET", "/api/skills", ""); !strings.Contains(body, `"conditions":"If Is it v4? (+2 cases)"`) {
+		t.Errorf("the list does not show the conditions: %s", body)
+	}
+	if code, body := call("", "POST", edit, `{"name":"cr_skill","instructions":"i","conditions":[{"kind":"if","question":"Is it v5?"}]}`); code != 400 || !strings.Contains(body, "how to check") {
+		t.Errorf("a condition with no way to check it: %d %s", code, body)
+	}
+	if code, body := call("", "POST", edit, `{"name":"cr_skill","instructions":"i","conditions":[{"kind":"if","question":"q","how":"h"},{"kind":"else","instructions":"x"},{"kind":"else_if","question":"q","how":"h","instructions":"y"}]}`); code != 400 || !strings.Contains(body, "Else is the last") {
+		t.Errorf("a row after the Else: %d %s", code, body)
+	}
+	if code, _ := call("", "POST", edit, `{"name":"cr_skill","instructions":"changed"}`); code/100 != 2 {
+		t.Fatalf("a save without the conditions: %d", code)
+	}
+	if own, _ := findOwnSkill("alice", skill.ID); len(own.Conditions) != 3 {
+		t.Errorf("a save that did not carry the conditions changed them: %+v", own.Conditions)
+	}
+	if code, _ := call("", "POST", edit, `{"name":"cr_skill","instructions":"i","conditions":[]}`); code/100 != 2 {
+		t.Fatalf("clear the conditions: %d", code)
+	}
+	if own, _ := findOwnSkill("alice", skill.ID); len(own.Conditions) != 0 {
+		t.Errorf("an empty list should clear the conditions: %+v", own.Conditions)
 	}
 
 	// Bob cannot share alice's skill; alice can delete it.

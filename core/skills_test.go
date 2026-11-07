@@ -14,181 +14,255 @@ import (
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
-func boolRule() PlaybookRule {
-	return PlaybookRule{
-		Fact: "queue_draining",
-		How:  "Read the consumer lag for the orders queue over the last five minutes.",
-		Then: "Look at the consumer.",
-		Else: "Look at the broker.",
+func versionSkill() SkillRecord {
+	return SkillRecord{ID: "sv4", Name: "Sync settings", Instructions: "Walk them through the v4 sync settings.",
+		Triggers: []string{"sync"}, AllowedTools: []string{"crm_lookup"},
+		Conditions: []SkillCase{{Kind: "if", Question: "Is the customer on version 4 or later?", How: "Look up the account with the CRM tool and read its app version."}}}
+}
+
+// A chain: if v4, the skill as written; else if v3, clear the cache; else,
+// upgrade first.
+func versionChain() SkillRecord {
+	s := versionSkill()
+	s.Conditions = append(s.Conditions,
+		SkillCase{Kind: "else_if", Question: "Is the customer on version 3?", How: "Same lookup.", Instructions: "Have them clear the sync cache."},
+		SkillCase{Kind: "else", Instructions: "Tell them to upgrade first."})
+	return s
+}
+
+// What makes a list of conditions complete, by position: the If first and
+// only first, an Else last and only last, an Else if or Else with its own
+// instructions, and every condition with what it checks. An incomplete list
+// is stored (storage stores) but gates nothing.
+func TestSkillConditionsMustBeComplete(t *testing.T) {
+	if p := versionChain().ConditionProblems(); len(p) != 0 || !versionChain().Conditional() {
+		t.Fatalf("a complete chain: %v", p)
+	}
+	for _, c := range []struct {
+		name  string
+		cases []SkillCase
+		want  string
+	}{
+		{"no how", []SkillCase{{Kind: "if", Question: "q"}}, "how to check"},
+		{"no question", []SkillCase{{Kind: "if", How: "h"}}, "its question"},
+		{"else first", []SkillCase{{Kind: "else", Instructions: "x"}}, "the first condition is the If"},
+		{"else if first", []SkillCase{{Kind: "else_if", Question: "q", How: "h", Instructions: "x"}}, "the first condition is the If"},
+		{"two ifs", []SkillCase{{Kind: "if", Question: "q", How: "h"}, {Kind: "if", Question: "q", How: "h"}}, "only the first condition is an If"},
+		{"else not last", []SkillCase{{Kind: "if", Question: "q", How: "h"}, {Kind: "else", Instructions: "x"}, {Kind: "else_if", Question: "q", How: "h", Instructions: "y"}}, "an Else is the last one"},
+		{"else if without instructions", []SkillCase{{Kind: "if", Question: "q", How: "h"}, {Kind: "else_if", Question: "q", How: "h"}}, "needs the instructions"},
+		{"else without instructions", []SkillCase{{Kind: "if", Question: "q", How: "h"}, {Kind: "else"}}, "needs the instructions"},
+		{"mentions without words", []SkillCase{{Kind: "if", Check: "mentions"}}, "the words"},
+		{"odd kind", []SkillCase{{Kind: "unless"}}, "the kind must be"},
+	} {
+		s := SkillRecord{Name: "s", Conditions: c.cases}
+		p := strings.Join(s.ConditionProblems(), "; ")
+		if !strings.Contains(p, c.want) || s.Conditional() {
+			t.Errorf("%s: %q", c.name, p)
+		}
+	}
+	if (SkillRecord{}).Conditional() {
+		t.Error("a skill with no conditions is not conditional")
+	}
+	if _, err := SaveSkill(memDB(t), "u", SkillRecord{Name: "s", Description: "d", Conditions: []SkillCase{{Kind: "if"}}}); err != nil {
+		t.Errorf("incomplete conditions should still save: %v", err)
 	}
 }
 
-// A rule must name its fact and how to establish it, and carry at least one
-// arm; a choice covers its values; nesting stops at two levels.
-func TestPlaybookProblems(t *testing.T) {
-	if p := boolRule().Problems("rule 1", 1); len(p) != 0 {
-		t.Fatalf("a sound rule has no problems: %v", p)
-	}
-	bad := PlaybookRule{Fact: "a fact", Then: "x"}
-	p := bad.Problems("rule 1", 1)
-	if len(p) != 2 || !strings.Contains(p[0], "one word") || !strings.Contains(p[1], "how is required") {
-		t.Fatalf("expected the fact-name and how problems, got %v", p)
-	}
-	if p := (PlaybookRule{Fact: "f", How: "h"}).Problems("r", 1); len(p) != 1 || !strings.Contains(p[0], "at least one arm") {
-		t.Fatalf("an armless bool rule: %v", p)
-	}
-	choice := PlaybookRule{Fact: "state", How: "check", Type: "choice", Values: []string{"up", "down"}, Cases: map[string]string{"up": "fine", "sideways": "?"}}
-	p = choice.Problems("r", 1)
-	if len(p) != 1 || !strings.Contains(p[0], `"sideways"`) {
-		t.Fatalf("a case outside the values: %v", p)
-	}
-	if p := (PlaybookRule{Fact: "state", How: "check", Type: "choice", Values: []string{"up"}}).Problems("r", 1); len(p) < 2 {
-		t.Fatalf("one value and no arm are two problems: %v", p)
-	}
-	deep := boolRule()
-	deep.Then, deep.ThenRule = "", &PlaybookRule{Fact: "l2", How: "h", ThenRule: &PlaybookRule{Fact: "l3", How: "h", Then: "x"}}
-	p = deep.Problems("rule 1", 1)
-	if len(p) != 1 || !strings.Contains(p[0], "rule 1.then_rule.then_rule") || !strings.Contains(p[0], "more than 2 levels") {
-		t.Fatalf("three levels must be refused by path: %v", p)
-	}
-	if p := (PlaybookRule{Fact: "f", How: "h", Then: "x", ThenRule: &PlaybookRule{Fact: "g", How: "h", Then: "y"}}).Problems("r", 1); len(p) != 1 || !strings.Contains(p[0], "both prose and a rule") {
-		t.Fatalf("an arm is prose or a rule: %v", p)
-	}
-	// Storage stores: a half-built rule saves (the editor's door), and the
-	// record-level check still names it for the doors that refuse.
-	if _, err := SaveSkill(memDB(t), "u", SkillRecord{Name: "s", Description: "d", Playbook: []PlaybookRule{bad}}); err != nil {
-		t.Fatalf("save must store a half-built rule: %v", err)
-	}
-	if p := (SkillRecord{Playbook: []PlaybookRule{bad}}).PlaybookProblems(); len(p) == 0 || !strings.HasPrefix(p[0], "rule 1:") {
-		t.Fatalf("record-level problems name the rule: %v", p)
-	}
-}
-
-// The sentence reads the fields back the way the author would say them.
-func TestPlaybookSentence(t *testing.T) {
-	r := boolRule()
-	if got := r.Sentence(); got != "Whenever this skill is consulted, establish queue_draining; if yes, Look at the consumer; if no, Look at the broker." {
-		t.Fatalf("got %q", got)
-	}
-	r.When = []string{"stuck order", "order status"}
-	r.Else, r.ElseRule = "", &PlaybookRule{Fact: "broker_up", How: "h", Then: "restart the consumer"}
-	if got := r.Sentence(); !strings.HasPrefix(got, "When the message mentions stuck order or order status, establish queue_draining; if yes, Look at the consumer; if no, whenever this skill is consulted, establish broker_up; if yes, restart the consumer.") {
-		t.Fatalf("got %q", got)
-	}
-	c := PlaybookRule{Fact: "state", How: "h", Type: "choice", Values: []string{"up", "down"}, Cases: map[string]string{"up": "fine", "down": "bad"}}
-	if got := c.Sentence(); got != "Whenever this skill is consulted, establish state; if up, fine; if down, bad." {
-		t.Fatalf("got %q", got)
-	}
-}
-
-// A rule compiles to a one-phase unattended machine that validates, with
-// the fact as a required declared output of the right type and the skill's
-// tools on the step.
-func TestPlaybookRuleCompilesToAValidMachine(t *testing.T) {
-	skill := SkillRecord{Name: "Orders", AllowedTools: []string{"run_command"}, Playbook: []PlaybookRule{boolRule()}}
-	def := boolRule().Machine(skill)
+// Every lookup condition compiles into ONE check: one unattended phase with
+// the skill's tools, an answer and its evidence per question. A condition the
+// message decides, and the Else, are not in it.
+func TestSkillConditionsCompileToOneCheck(t *testing.T) {
+	s := versionChain()
+	s.Conditions = append([]SkillCase{s.Conditions[0], {Kind: "else_if", Check: "mentions", Mentions: []string{"refund"}, Instructions: "Point them to billing."}}, s.Conditions[1:]...)
+	def := s.ConditionMachine()
 	if err := def.Validate(); err != nil {
 		t.Fatalf("does not validate: %v", err)
 	}
-	if !def.Unattended || len(def.Phases) != 1 || def.Phases[0].Name != playbookEstablishPhase {
-		t.Fatalf("one unattended establishing phase expected, got %+v", def)
+	if !def.Unattended || len(def.Phases) != 1 {
+		t.Fatalf("one unattended phase expected, got %+v", def)
 	}
 	ph := def.Phases[0]
-	if len(ph.Output) != 2 || ph.Output[0].Name != "queue_draining" || ph.Output[0].Type != FieldBool || !ph.Output[0].Required {
-		t.Fatalf("the fact must be the required bool output, got %+v", ph.Output)
-	}
-	if ph.Output[1].Name != PlaybookEvidenceField || !ph.Output[1].Required {
-		t.Fatalf("the step must also report the evidence that decided it, got %+v", ph.Output[1])
-	}
-	if len(ph.Tools) != 1 || ph.Tools[0] != "run_command" {
-		t.Fatalf("the step carries the skill's tools, got %v", ph.Tools)
-	}
-	if !strings.Contains(ph.Prompt, "consumer lag") || !strings.Contains(ph.Prompt, "{input}") {
-		t.Fatalf("the prompt carries how and the input: %q", ph.Prompt)
-	}
-	choice := PlaybookRule{Fact: "state", How: "check", Type: "choice", Values: []string{"up", "down"}, Cases: map[string]string{"up": "a", "down": "b"}}
-	cdef := choice.Machine(skill)
-	if err := cdef.Validate(); err != nil {
-		t.Fatalf("choice does not validate: %v", err)
-	}
-	if cdef.Phases[0].Output[0].Type != FieldString || !strings.Contains(cdef.Phases[0].Output[0].Desc, "up, down") {
-		t.Fatalf("a choice fact is a string over its values, got %+v", cdef.Phases[0].Output[0])
-	}
-}
-
-// Decide reads a bool from a bool or from the words a model writes, a choice
-// case-insensitively, and refuses what decides nothing.
-func TestPlaybookDecide(t *testing.T) {
-	r := boolRule()
-	for _, v := range []any{true, "true", "Yes", " y "} {
-		if shown, arm, _, ok := r.Decide(v); !ok || shown != "true" || arm != "Look at the consumer." {
-			t.Fatalf("%v must decide true: %q %q %v", v, shown, arm, ok)
+	var names []string
+	for _, f := range ph.Output {
+		names = append(names, f.Name)
+		if !f.Required {
+			t.Errorf("%s is not required", f.Name)
 		}
 	}
-	if _, arm, _, ok := r.Decide("no"); !ok || arm != "Look at the broker." {
-		t.Fatal("no must decide false")
+	if strings.Join(names, ",") != "case_1,case_1_evidence,case_3,case_3_evidence" {
+		t.Fatalf("outputs %v", names)
 	}
-	if _, _, _, ok := r.Decide("maybe"); ok {
-		t.Fatal("maybe decides nothing")
+	if ph.Output[0].Type != FieldBool || len(ph.Tools) != 1 || ph.Tools[0] != "crm_lookup" || ph.Reach != ReachAll {
+		t.Fatalf("the check's shape: %+v", ph)
 	}
-	if _, _, _, ok := r.Decide(3); ok {
-		t.Fatal("a number decides nothing")
-	}
-	nested := boolRule()
-	nested.Else, nested.ElseRule = "", &PlaybookRule{Fact: "broker_up", How: "h", Then: "x", Else: "y"}
-	if _, arm, next, ok := nested.Decide(false); !ok || arm != "" || next == nil || next.Fact != "broker_up" {
-		t.Fatal("a rule arm comes back as the nested rule")
-	}
-	c := PlaybookRule{Fact: "state", How: "h", Type: "choice", Values: []string{"Up", "down"}, Cases: map[string]string{"Up": "fine", "down": "bad"}}
-	if shown, arm, _, ok := c.Decide("UP"); !ok || shown != "Up" || arm != "fine" {
-		t.Fatalf("choice must match case-insensitively and show the declared value: %q %q %v", shown, arm, ok)
-	}
-	if _, _, _, ok := c.Decide("left"); ok {
-		t.Fatal("a value outside the set decides nothing")
-	}
-}
-
-// The fallback tells the model to establish the fact itself and gives every
-// arm with its condition, nested rules included.
-func TestPlaybookFallbackCarriesEveryArm(t *testing.T) {
-	r := boolRule()
-	r.Else, r.ElseRule = "", &PlaybookRule{Fact: "broker_up", How: "ping it", Then: "restart consumer", Else: "page the on-call"}
-	fb := r.Fallback()
-	for _, want := range []string{"Establish queue_draining first", "if true: Look at the consumer.", "if false: then Establish broker_up first: ping it", "if true: restart consumer", "if false: page the on-call"} {
-		if !strings.Contains(fb, want) {
-			t.Fatalf("missing %q in:\n%s", want, fb)
+	for _, want := range []string{"version 4 or later", "version 3?", "read its app version", "{input}"} {
+		if !strings.Contains(ph.Prompt, want) {
+			t.Errorf("the check's prompt is missing %q: %q", want, ph.Prompt)
 		}
 	}
-}
-
-// A playbook fires on the framework's say-so when the skill's triggers or a
-// rule's When match the turn; a skill with neither waits to be consulted.
-func TestPlaybookApplies(t *testing.T) {
-	s := SkillRecord{Triggers: []string{"disk"}, Playbook: []PlaybookRule{boolRule()}}
-	if !s.PlaybookApplies("is this box low on disk?", nil) || s.PlaybookApplies("how are you", nil) {
-		t.Fatal("the skill's triggers decide")
-	}
-	s.Triggers = nil
-	s.Playbook[0].When = []string{"stuck order"}
-	if !s.PlaybookApplies("order 12 is a stuck order", nil) || s.PlaybookApplies("is this box low on disk?", nil) {
-		t.Fatal("a rule's when decides")
-	}
-	s.Playbook[0].When = nil
-	if s.PlaybookApplies("is this box low on disk?", nil) {
-		t.Fatal("no triggers and no when: the model consults, the framework does not fire")
-	}
-	s.Triggers, s.Disabled = []string{"disk"}, true
-	if s.PlaybookApplies("disk", nil) {
-		t.Fatal("a disabled skill never fires")
+	if strings.Contains(ph.Prompt, "refund") {
+		t.Error("a condition the message decides was sent to the check")
 	}
 }
 
-// The available-skills list says a playbook skill establishes its facts on
-// consult, so the model reaches for it early rather than working them out.
-func TestAvailableSkillsNamesPlaybookFacts(t *testing.T) {
-	out := RenderAvailableSkills([]SkillRecord{{Name: "Orders", Description: "orders help", Playbook: []PlaybookRule{boolRule()}}})
-	if !strings.Contains(out, "playbook: consulting it establishes queue_draining") {
-		t.Fatalf("missing playbook note:\n%s", out)
+// The first condition that holds wins; the Else covers the rest; with no Else
+// a skill none of whose conditions hold does not apply. One lookup however
+// many questions, and none when the message settles it first.
+func TestDecidingASkillsConditions(t *testing.T) {
+	runs := 0
+	answer := func(v4, v3 any) func(MachineDef) (map[string]any, string, error) {
+		return func(MachineDef) (map[string]any, string, error) {
+			runs++
+			return map[string]any{"case_1": v4, "case_1_evidence": "app_version: x", "case_2": v3, "case_2_evidence": "app_version: y"}, "", nil
+		}
+	}
+	s := versionChain()
+	for _, c := range []struct {
+		name          string
+		v4, v3        any
+		applies       bool
+		instr, inNote string
+	}{
+		{"the If holds", true, false, true, "v4 sync settings", "version 4 or later? Yes: app_version: x"},
+		{"the Else if holds", false, "yes", true, "clear the sync cache", "version 3? Yes"},
+		{"nothing holds, the Else", false, false, true, "upgrade first", "None held"},
+		{"no clear answer", "maybe", false, false, "", "could not be checked"},
+	} {
+		runs = 0
+		chosen, applies, note := s.DecideConditions("my app won't sync", nil, answer(c.v4, c.v3))
+		if applies != c.applies || (c.instr != "" && !strings.Contains(chosen.Instructions, c.instr)) || !strings.Contains(note, c.inNote) || runs != 1 {
+			t.Errorf("%s: applies=%v instr=%q note=%q runs=%d", c.name, applies, chosen.Instructions, note, runs)
+		}
+	}
+	// No Else: none holds, the skill does not apply.
+	if _, applies, note := versionSkill().DecideConditions("sync", nil, answer(false, false)); applies || !strings.Contains(note, "does not apply") {
+		t.Errorf("no Else and nothing holds: %v %q", applies, note)
+	}
+	// A failed lookup settles nothing.
+	if _, applies, note := s.DecideConditions("sync", nil, func(MachineDef) (map[string]any, string, error) { return nil, "", errString("the CRM is down") }); applies || !strings.Contains(note, "the CRM is down") {
+		t.Errorf("a failed lookup: %v %q", applies, note)
+	}
+	// The message settles a mentions condition with no lookup at all.
+	m := SkillRecord{Name: "Refunds", Instructions: "Refund steps.", Conditions: []SkillCase{
+		{Kind: "if", Check: "mentions", Mentions: []string{"refund"}},
+		{Kind: "else_if", Question: "Is the order late?", How: "Look it up.", Instructions: "Late-order steps."},
+	}}
+	runs = 0
+	if chosen, applies, note := m.DecideConditions("I want a refund", nil, answer(true, true)); !applies || chosen.Instructions != "Refund steps." || runs != 0 || !strings.Contains(note, "mentions refund: Yes") {
+		t.Errorf("a mention that settles it: %v %q %q runs=%d", applies, chosen.Instructions, note, runs)
+	}
+	runs = 0
+	if chosen, applies, _ := m.DecideConditions("where is my order", nil, answer(false, true)); !applies || chosen.Instructions != "Late-order steps." || runs != 1 {
+		t.Errorf("past the mention to the lookup: %v %q runs=%d", applies, chosen.Instructions, runs)
+	}
+	// The step's text stands in for missing evidence, but not its JSON.
+	only := func(text string) string {
+		_, _, note := versionSkill().DecideConditions("sync", nil, func(MachineDef) (map[string]any, string, error) {
+			return map[string]any{"case_1": true}, text, nil
+		})
+		return note
+	}
+	if !strings.Contains(only("found 4.2 on the account"), "found 4.2") || strings.Contains(only(`{"case_1": true}`), "{") {
+		t.Error("evidence from the step's words, never its structured output")
+	}
+}
+
+// A conditional skill is checked before the first round when its triggers
+// match; one without conditions, or muted, or not matched, is not.
+func TestConditionsFireOnTheSkillsTriggers(t *testing.T) {
+	s := versionSkill()
+	if !s.ConditionFires("my app won't sync", nil) || s.ConditionFires("how are you", nil) {
+		t.Error("a conditional skill fires on its triggers and only them")
+	}
+	s.Disabled = true
+	if s.ConditionFires("sync", nil) {
+		t.Error("a muted skill does not fire")
+	}
+	plain := versionSkill()
+	plain.Conditions = nil
+	if plain.ConditionFires("sync", nil) {
+		t.Error("a skill with no conditions is not checked")
+	}
+}
+
+// The available-skills list gives a conditional skill's cases, so the model
+// knows it may come back as "does not apply" and that the check is done for it.
+func TestAvailableSkillsNamesTheConditions(t *testing.T) {
+	out := RenderAvailableSkills([]SkillRecord{versionChain()})
+	if !strings.Contains(out, "applies by case: if Is the customer on version 4 or later?; else if Is the customer on version 3?; else; checked for you when used") {
+		t.Fatalf("missing the conditions:\n%s", out)
+	}
+	if out := RenderAvailableSkills([]SkillRecord{{Name: "Plain", Description: "d"}}); strings.Contains(out, "applies by case") {
+		t.Errorf("a plain skill was listed as conditional:\n%s", out)
+	}
+}
+
+// The three skill tools hand over a conditional skill as the gate chose it
+// (the instructions of the case that applied), or, when it does not apply,
+// only what the gate said. read_skill mentions conditions only where an
+// allowed skill has them.
+func TestTheSkillToolsHonourTheConditions(t *testing.T) {
+	db := skillShareStore(t)
+	if _, err := SaveSkill(db, "alice", versionChain()); err != nil {
+		t.Fatal(err)
+	}
+	SaveSkill(db, "alice", SkillRecord{ID: "plain", Name: "Plain", Instructions: "Plain body."})
+	allowed := []string{"sv4", "plain"}
+	var asked []string
+	verdict := true
+	gate := SkillGate(func(s SkillRecord) (SkillRecord, bool, string) {
+		asked = append(asked, s.Name)
+		if verdict {
+			s.Instructions = "Have them clear the sync cache."
+			return s, true, "Checked: version 3."
+		}
+		return s, false, "Sync settings does not apply: version 2."
+	})
+	call := func(def AgentToolDef, args map[string]any) string {
+		out, err := def.Handler(context.Background(), args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	delivered := map[string]bool{}
+	read := BuildReadSkillTool(db, "alice", allowed, delivered, gate)
+	if !strings.Contains(read.Tool.Description, "applies by case") {
+		t.Error("read_skill does not mention conditions where a skill has them")
+	}
+	out := call(read, map[string]any{"skill": "Sync settings"})
+	if !strings.Contains(out, "clear the sync cache") || strings.Contains(out, "v4 sync settings") || !strings.Contains(out, "version 3") || !delivered["sv4"] {
+		t.Errorf("the case that applied: %q (delivered %v)", out, delivered)
+	}
+	if out := call(read, map[string]any{"skill": "Plain"}); !strings.Contains(out, "Plain body.") || len(asked) != 1 {
+		t.Errorf("a plain skill is handed over without a check: %q, asked %v", out, asked)
+	}
+	search := BuildSkillKnowledgeSearchTool(db, "alice", allowed, map[string]bool{}, gate, func(SkillRecord, string) string { return "hit" })
+	if out := call(search, map[string]any{"skill": "Sync settings", "query": "q"}); !strings.Contains(out, "clear the sync cache") || strings.Contains(out, "v4 sync settings") {
+		t.Errorf("a search attaches the instructions of the case that applied: %q", out)
+	}
+
+	verdict = false
+	delivered = map[string]bool{}
+	read = BuildReadSkillTool(db, "alice", allowed, delivered, gate)
+	out = call(read, map[string]any{"skill": "Sync settings"})
+	if strings.Contains(out, "sync settings.") || !strings.Contains(out, "does not apply") || delivered["sv4"] {
+		t.Errorf("a skill that does not apply was handed over: %q (delivered %v)", out, delivered)
+	}
+	searched := false
+	search = BuildSkillKnowledgeSearchTool(db, "alice", allowed, delivered, gate, func(SkillRecord, string) string { searched = true; return "hit" })
+	if out := call(search, map[string]any{"skill": "Sync settings", "query": "q"}); searched || !strings.Contains(out, "does not apply") {
+		t.Errorf("a skill that does not apply searched its sources: %q", out)
+	}
+	fetched := false
+	fetch := BuildSkillKnowledgeFetchDocTool(db, "alice", allowed, delivered, gate, func(SkillRecord, string) (string, error) { fetched = true; return "doc", nil })
+	if out := call(fetch, map[string]any{"skill": "Sync settings", "doc_id": "d1"}); fetched || !strings.Contains(out, "does not apply") {
+		t.Errorf("a skill that does not apply fetched a document: %q", out)
+	}
+
+	if d := BuildReadSkillTool(db, "alice", []string{"plain"}, nil, gate).Tool.Description; strings.Contains(d, "applies by case") {
+		t.Error("read_skill mentions conditions where no allowed skill has them")
 	}
 }
 

@@ -137,26 +137,20 @@ func (a *AdminApp) handleSkills(c *jsonapi.Call) (any, error) {
 		Instructions        string   `json:"instructions"`
 		Disabled            bool     `json:"disabled"`
 		Updated             string   `json:"updated"`
-		// Playbook is the rule count as a label, and PlaybookURL the
-		// visual editor for it; the column links one to the other.
-		Playbook string `json:"playbook"`
+		// Conditions is the skill's cases in a few words, for a skill that
+		// applies by case; empty otherwise.
+		Conditions string `json:"conditions,omitempty"`
 	}
 	out := make([]wire, 0, len(skills))
 	for _, s := range skills {
-		pb := "add"
-		if n := len(s.Playbook); n == 1 {
-			pb = "1 rule"
-		} else if n > 1 {
-			pb = fmt.Sprintf("%d rules", n)
-		}
 		out = append(out, wire{
 			ID: s.ID, Name: s.Name,
 			Description: s.Description,
 			Triggers:    s.Triggers, AllowedTools: s.AllowedTools,
 			AttachedCollections: s.AttachedCollections,
 			Instructions:        s.Instructions, Disabled: s.Disabled,
-			Updated:  s.Updated.Format("2006-01-02 15:04:05"),
-			Playbook: pb,
+			Updated:    s.Updated.Format("2006-01-02 15:04:05"),
+			Conditions: s.ConditionLine(),
 		})
 	}
 	return out, nil
@@ -224,8 +218,8 @@ func (a *AdminApp) handleSkillSave(c *jsonapi.Call, raw map[string]json.RawMessa
 	if err != nil {
 		return nil, jsonapi.BadRequest("invalid body: " + err.Error())
 	}
-	if probs := body.PlaybookProblems(); len(probs) > 0 {
-		return nil, jsonapi.BadRequest("playbook: " + strings.Join(probs, "; "))
+	if probs := body.ConditionProblems(); len(probs) > 0 {
+		return nil, jsonapi.BadRequest(strings.Join(probs, "; "))
 	}
 	if strings.TrimSpace(body.Name) == "" {
 		return nil, jsonapi.BadRequest("name is required")
@@ -303,23 +297,17 @@ func (a *AdminApp) handleSkillOne(c *jsonapi.Call) (any, error) {
 			AttachedCollections []string `json:"attached_collections"`
 			Instructions        string   `json:"instructions"`
 			Disabled            bool     `json:"disabled"`
-			// The playbook travels as text: the editor is a textarea,
-			// and the save handler parses it back (decodeSkillBody).
-			PlaybookText string `json:"playbook_text"`
-		}
-		pb := ""
-		if len(s.Playbook) > 0 {
-			if raw, err := json.MarshalIndent(s.Playbook, "", "  "); err == nil {
-				pb = string(raw)
-			}
+			// The conditions as the form's rows (decodeSkillBody reads
+			// them back).
+			Conditions []map[string]any `json:"conditions"`
 		}
 		rec := wire{
 			ID: s.ID, Name: s.Name, Description: s.Description,
 			Triggers: s.Triggers, AllowedTools: s.AllowedTools,
 			AttachedCollections: s.AttachedCollections,
 			Instructions:        s.Instructions, Disabled: s.Disabled,
-			PlaybookText: pb,
 		}
+		rec.Conditions = s.ConditionRows()
 		if c.R.URL.Query().Get("view") != "form" {
 			return rec, nil
 		}
@@ -382,8 +370,8 @@ func ownSkillNamedLike(db Database, user string, s SkillRecord) (SkillRecord, bo
 }
 
 // decodeSkillBody reads a skill from the posted body and the ?id= it was
-// posted to. The editor sends the playbook as playbook_text, a JSON array in a
-// textarea; an empty text clears it.
+// posted to. The editor sends the conditions as the form's rows
+// (SkillRecord.SetConditionRows reads them); an empty list clears.
 //
 // The body is decoded ONTO the stored record when it names one (?id= or an
 // "id" key), so a key the caller did not send keeps its stored value. The
@@ -394,22 +382,20 @@ func decodeSkillBody(raw map[string]json.RawMessage, queryID string, prior func(
 	if raw == nil {
 		raw = map[string]json.RawMessage{}
 	}
-	if pt, ok := raw["playbook_text"]; ok {
-		var text string
-		if err := json.Unmarshal(pt, &text); err != nil {
-			return SkillRecord{}, err
+	if rows, ok := raw["conditions"]; ok {
+		var list []map[string]any
+		if err := json.Unmarshal(rows, &list); err != nil {
+			return SkillRecord{}, fmt.Errorf("conditions: %w", err)
 		}
-		delete(raw, "playbook_text")
-		if strings.TrimSpace(text) == "" {
+		var parsed SkillRecord
+		parsed.SetConditionRows(list)
+		if len(parsed.Conditions) == 0 {
 			// null, not absent: onto a stored record, absent would keep the
-			// rules the person just emptied the box to remove.
-			raw["playbook"] = json.RawMessage("null")
+			// conditions the person just removed.
+			raw["conditions"] = json.RawMessage("null")
 		} else {
-			var rules []PlaybookRule
-			if err := json.Unmarshal([]byte(text), &rules); err != nil {
-				return SkillRecord{}, fmt.Errorf("playbook is not a JSON array of rules: %w", err)
-			}
-			raw["playbook"] = json.RawMessage(text)
+			c, _ := json.Marshal(parsed.Conditions)
+			raw["conditions"] = c
 		}
 	}
 	id := strings.TrimSpace(queryID)

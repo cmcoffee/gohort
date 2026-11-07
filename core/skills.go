@@ -142,15 +142,16 @@ type SkillRecord struct {
 	// the skill is delivered (read_skill / skill_knowledge_search), never in
 	// unrelated turns. Empty by default; most skills carry no code.
 	Tools []TempTool `json:"tools,omitempty"`
-	// Playbook is the skill's conditional behaviour, declared: rules of the
-	// form "establish Y, then Z if it holds, U if not". A rule's fact is
-	// ESTABLISHED by the framework when the skill is consulted — a
-	// one-phase run with the skill's tools and a declared output — and only
-	// the arm that applies is handed to the model, so Y is settled before Z
-	// or U can start and the model never sees the branch it did not earn.
-	// Instructions carry the prose that does not branch; this carries what
-	// does. Validated on save (PlaybookProblems); empty for most skills.
-	Playbook []PlaybookRule `json:"playbook,omitempty"`
+	// Conditions, when set, make the skill apply only in some cases, as an
+	// if / else if / else list. The first is the primary condition: when it
+	// holds, the skill applies as written. An else if holds its own
+	// condition and instructions, used in place of the skill's when it is the
+	// first to hold; an else holds instructions for whatever the conditions
+	// above it do not cover. With no else, a skill none of whose conditions
+	// hold does not apply. The framework decides them before the skill is
+	// handed over (DecideConditions), and the agent never sees the cases that
+	// did not apply. Empty for most skills.
+	Conditions []SkillCase `json:"conditions,omitempty"`
 	// Embedding is cached at save time so the classifier doesn't
 	// have to re-embed on every turn. Re-computed in SaveSkill from
 	// the current Description. Persisted with the record so reloads
@@ -160,327 +161,361 @@ type SkillRecord struct {
 	Updated   time.Time `json:"updated"`
 }
 
-// PlaybookRule is one conditional in a skill's playbook.
+// SkillCase is one entry in a skill's if / else if / else list.
 //
-// The rule an author would otherwise write as a sentence — "when asked about
-// X, establish Y; if Y then Z, else U" — as data the framework can enforce.
-// When names the turns it applies to, matched like the skill's triggers;
-// empty means every time the skill is consulted. Fact is what to establish
-// and How is the instruction for establishing it; the framework runs that as
-// a step with the skill's tools and a declared output of Type: "bool" (the
-// default) or "choice" over Values. Then and Else are the arms of a bool;
-// Cases maps each value of a choice to its arm. An arm is prose the model is
-// then told to follow, or — through ThenRule, ElseRule and CaseRules —
-// another rule, which establishes its own fact first. Two levels deep at
-// most: beyond that it is a machine, and the author should write one.
-type PlaybookRule struct {
-	When      []string                 `json:"when,omitempty"`
-	Fact      string                   `json:"fact"`
-	How       string                   `json:"how"`
-	Type      string                   `json:"type,omitempty"`
-	Values    []string                 `json:"values,omitempty"`
-	Then      string                   `json:"then,omitempty"`
-	Else      string                   `json:"else,omitempty"`
-	Cases     map[string]string        `json:"cases,omitempty"`
-	ThenRule  *PlaybookRule            `json:"then_rule,omitempty"`
-	ElseRule  *PlaybookRule            `json:"else_rule,omitempty"`
-	CaseRules map[string]*PlaybookRule `json:"case_rules,omitempty"`
+// Kind is "if" (the first, primary condition), "else_if" or "else". A
+// condition is checked one of two ways: "lookup" (the default) asks Question,
+// answered yes or no by a short run with the skill's tools following How;
+// "mentions" holds when the message mentions any of Mentions (words, phrases,
+// or *.ext for an attachment), decided by the framework with no run at all.
+// Instructions belong to an else if or an else: what the agent follows in
+// place of the skill's own when that case is the one that applies.
+type SkillCase struct {
+	Kind         string   `json:"kind"`
+	Check        string   `json:"check,omitempty"`
+	Question     string   `json:"question,omitempty"`
+	How          string   `json:"how,omitempty"`
+	Mentions     []string `json:"mentions,omitempty"`
+	Instructions string   `json:"instructions,omitempty"`
 }
 
-// playbookMaxDepth bounds nesting: a rule inside a rule is allowed, a rule
-// inside that is a machine wearing a playbook's clothes.
-const playbookMaxDepth = 2
-
-// The two fact types.
 const (
-	playbookBool   = "bool"
-	playbookChoice = "choice"
+	caseIf        = "if"
+	caseElseIf    = "else_if"
+	caseElse      = "else"
+	checkLookup   = "lookup"
+	checkMentions = "mentions"
+	// conditionPhase is the one phase the lookups compile to.
+	conditionPhase = "check"
 )
 
-// playbookEstablishPhase is the name of the one phase a rule compiles to,
-// and the MachineState key its fact lands under.
-const playbookEstablishPhase = "establish"
+// byMention reports whether the case is decided from the message alone.
+func (c SkillCase) byMention() bool { return strings.TrimSpace(c.Check) == checkMentions }
 
-// PlaybookEvidenceField is the second output the establishing step declares:
-// the line of what it saw that decided the fact. Shown beside the fact so
-// the model (and the person reading the export) sees WHY, and so an arm that
-// needs the number the check found — "give the free space" — has it without
-// running the check again.
-const PlaybookEvidenceField = "evidence"
-
-// kind normalizes Type: empty is bool.
-func (r PlaybookRule) kind() string {
-	if strings.TrimSpace(r.Type) == "" {
-		return playbookBool
+// label is the case's condition as the agent and the person read it.
+func (c SkillCase) label() string {
+	if c.byMention() {
+		return "the message mentions " + strings.Join(c.Mentions, " or ")
 	}
-	return strings.ToLower(strings.TrimSpace(r.Type))
+	return strings.TrimSpace(c.Question)
 }
 
-// Problems lists what is wrong with the rule, each prefixed with path so a
-// nested rule's problem says where it is. Empty when the rule is sound.
-func (r PlaybookRule) Problems(path string, depth int) []string {
+// caseField is the check's output for the lookup case at index i, and the
+// evidence beside it.
+func caseField(i int) string    { return "case_" + strconv.Itoa(i+1) }
+func caseEvidence(i int) string { return caseField(i) + "_evidence" }
+
+// ConditionProblems says what the skill's conditions are missing, by
+// position. Validated at the doors that take them (the skill forms,
+// Builder); a skill whose conditions have problems is not gated by them, so
+// it behaves as unconditional until they are complete.
+func (s SkillRecord) ConditionProblems() []string {
 	var probs []string
-	at := func(msg string) { probs = append(probs, path+": "+msg) }
-	if depth > playbookMaxDepth {
-		at("nested more than " + strconv.Itoa(playbookMaxDepth) + " levels deep, past that it is a machine, and the author should write one")
-		return probs
-	}
-	fact := strings.TrimSpace(r.Fact)
-	switch {
-	case fact == "":
-		at("fact is required: the name of what the rule establishes")
-	case strings.ContainsAny(fact, " ."):
-		at("fact must be one word with no spaces or dots (it is a field name), got " + strconv.Quote(fact))
-	}
-	if strings.TrimSpace(r.How) == "" {
-		at("how is required: the instruction for establishing the fact")
-	}
-	armText := func(arm string) bool { return strings.TrimSpace(arm) != "" }
-	switch r.kind() {
-	case playbookBool:
-		if len(r.Values) > 0 || len(r.Cases) > 0 || len(r.CaseRules) > 0 {
-			at("values and cases belong to a choice rule; a bool rule has then and else")
-		}
-		if armText(r.Then) && r.ThenRule != nil {
-			at("then is both prose and a rule: an arm is one or the other")
-		}
-		if armText(r.Else) && r.ElseRule != nil {
-			at("else is both prose and a rule: an arm is one or the other")
-		}
-		if !armText(r.Then) && r.ThenRule == nil && !armText(r.Else) && r.ElseRule == nil {
-			at("a bool rule needs at least one arm: then, else, then_rule or else_rule")
-		}
-		if r.ThenRule != nil {
-			probs = append(probs, r.ThenRule.Problems(path+".then_rule", depth+1)...)
-		}
-		if r.ElseRule != nil {
-			probs = append(probs, r.ElseRule.Problems(path+".else_rule", depth+1)...)
-		}
-	case playbookChoice:
-		if len(r.Values) < 2 {
-			at("a choice rule needs at least two values")
-		}
-		if armText(r.Then) || armText(r.Else) || r.ThenRule != nil || r.ElseRule != nil {
-			at("then and else belong to a bool rule; a choice rule has cases")
-		}
-		seen := map[string]bool{}
-		for _, v := range r.Values {
-			v = strings.ToLower(strings.TrimSpace(v))
-			if v == "" || seen[v] {
-				at("values must be distinct and non-empty")
-				break
+	for i, c := range s.Conditions {
+		at := func(msg string) { probs = append(probs, "condition "+strconv.Itoa(i+1)+": "+msg) }
+		switch strings.TrimSpace(c.Kind) {
+		case caseIf:
+			if i != 0 {
+				at("only the first condition is an If; this one is Else if or Else")
 			}
-			seen[v] = true
-		}
-		covered := 0
-		for _, v := range r.Values {
-			text, hasText := r.Cases[v]
-			rule, hasRule := r.CaseRules[v]
-			hasText = hasText && strings.TrimSpace(text) != ""
-			hasRule = hasRule && rule != nil
-			if hasText && hasRule {
-				at("case " + strconv.Quote(v) + " is both prose and a rule: an arm is one or the other")
+		case caseElseIf:
+			if i == 0 {
+				at("the first condition is the If; an Else if comes after it")
 			}
-			if hasText || hasRule {
-				covered++
+			if strings.TrimSpace(c.Instructions) == "" {
+				at("an Else if needs the instructions to follow when it holds")
 			}
-			if hasRule {
-				probs = append(probs, rule.Problems(path+".case_rules."+v, depth+1)...)
+		case caseElse:
+			if i == 0 {
+				at("the first condition is the If; an Else comes after it")
 			}
-		}
-		if covered == 0 {
-			at("a choice rule needs an arm for at least one of its values (cases or case_rules)")
-		}
-		for v := range r.Cases {
-			if !seen[strings.ToLower(strings.TrimSpace(v))] {
-				at("cases names " + strconv.Quote(v) + ", which is not one of the values")
+			if i != len(s.Conditions)-1 {
+				at("an Else is the last one, since nothing after it can apply")
 			}
+			if strings.TrimSpace(c.Instructions) == "" {
+				at("an Else needs the instructions to follow when nothing above holds")
+			}
+			continue
+		default:
+			at("the kind must be if, else_if or else")
+			continue
 		}
-	default:
-		at("type must be \"bool\" (the default) or \"choice\", got " + strconv.Quote(r.Type))
+		switch strings.TrimSpace(c.Check) {
+		case "", checkLookup:
+			if strings.TrimSpace(c.Question) == "" {
+				at("it needs its question (answered yes or no)")
+			}
+			if strings.TrimSpace(c.How) == "" {
+				at("it needs how to check it")
+			}
+		case checkMentions:
+			if len(c.Mentions) == 0 {
+				at("it needs the words the message must mention")
+			}
+		default:
+			at("the check must be lookup or mentions")
+		}
 	}
 	return probs
 }
 
-// PlaybookProblems validates every rule of the skill's playbook.
-func (s SkillRecord) PlaybookProblems() []string {
-	var probs []string
-	for i, r := range s.Playbook {
-		probs = append(probs, r.Problems("rule "+strconv.Itoa(i+1), 1)...)
-	}
-	return probs
+// Conditional reports whether the skill carries complete conditions.
+func (s SkillRecord) Conditional() bool {
+	return len(s.Conditions) > 0 && len(s.ConditionProblems()) == 0
 }
 
-// Machine compiles the rule's establishing step to a one-phase unattended
-// machine: the skill's tools, thinking on, and the fact as a declared,
-// required output. Running it through the ordinary machine host is what
-// makes the fact a decoded field rather than a claim in prose.
-func (r PlaybookRule) Machine(skill SkillRecord) MachineDef {
-	fact := strings.TrimSpace(r.Fact)
-	field := PipelineField{Name: fact, Required: true}
-	evidence := PipelineField{Name: PlaybookEvidenceField, Type: FieldString, Required: true,
-		Desc: "the one line of what you saw that decided it (a command's output line, a number, a status), quoted, not described"}
-	prompt := "Establish ONE thing and report it; do not answer the person's question here, and do not go past what is asked.\n\n" +
-		"What to establish: " + fact + "\n\nHow: " + strings.TrimSpace(r.How) + "\n\n"
-	switch r.kind() {
-	case playbookChoice:
-		field.Type = FieldString
-		field.Desc = "exactly one of: " + strings.Join(r.Values, ", ")
-		prompt += "Use the tools you have to check, then report " + fact + " as exactly one of: " + strings.Join(r.Values, ", ") + ". If what you find fits none of them, say which is closest and why in your text, and report the closest."
-	default:
-		field.Type = FieldBool
-		field.Desc = "true or false"
-		prompt += "Use the tools you have to check, then report " + fact + " as true or false. Report what the evidence shows, not what would be convenient; if you could not check, say so in your text and report false."
+// ConditionMachine compiles every lookup condition of the skill into ONE
+// check: an unattended phase with the skill's tools that answers each
+// question yes or no and quotes what decided it. One run however many
+// conditions there are, so an if / else if list costs a single lookup.
+func (s SkillRecord) ConditionMachine() MachineDef {
+	var qs strings.Builder
+	var out []PipelineField
+	for i, c := range s.Conditions {
+		if c.Kind == caseElse || c.byMention() {
+			continue
+		}
+		fmt.Fprintf(&qs, "%s: %s\n   How to check: %s\n", caseField(i), strings.TrimSpace(c.Question), strings.TrimSpace(c.How))
+		out = append(out,
+			PipelineField{Name: caseField(i), Type: FieldBool, Required: true, Desc: "true (yes) or false (no) for " + caseField(i)},
+			PipelineField{Name: caseEvidence(i), Type: FieldString, Required: true,
+				Desc: "the one line of what you saw that decided " + caseField(i) + " (a command's output line, a number, a status), quoted, not described"})
 	}
-	prompt += " Report as " + PlaybookEvidenceField + " the one line of output that decided it, quoted."
-	prompt += "\n\nThe person's message, for context:\n\n{input}"
+	prompt := "Answer the questions below and report them; do not answer the person's message here, and do not go past what is asked.\n\n" +
+		qs.String() + "\n" +
+		"Use the tools you have to check, then report each as true (yes) or false (no), with the one line that decided it as its _evidence. " +
+		"Report what the evidence shows, not what would be convenient. If you could not check one, say why in your text and report it false." +
+		"\n\nThe person's message, for context:\n\n{input}"
 	return MachineDef{
-		Name:        skill.Name + " playbook: " + fact,
-		Description: "Establishes " + fact + " for the " + skill.Name + " skill.",
-		Start:       playbookEstablishPhase,
+		Name:        s.Name + " conditions",
+		Description: "Checks which case of the " + s.Name + " skill applies.",
+		Start:       conditionPhase,
 		Unattended:  true,
 		Phases: []MachinePhase{{
-			Name:   playbookEstablishPhase,
-			Desc:   "Establishing " + fact,
+			Name:   conditionPhase,
+			Desc:   "Checking which case of " + s.Name + " applies",
 			Prompt: prompt,
 			Think:  "on",
-			// It goes and finds the fact, so it reaches the catalog. Said
-			// outright: an unset reach on a step like this one reaches
-			// nothing whenever the skill allows no tools by name.
+			// It goes and finds the answers, so it reaches the catalog. Said
+			// outright: an unset reach on a step like this one reaches nothing
+			// whenever the skill allows no tools by name.
 			Reach:  ReachAll,
-			Tools:  append([]string(nil), skill.AllowedTools...),
-			Output: []PipelineField{field, evidence},
+			Tools:  append([]string(nil), s.AllowedTools...),
+			Output: out,
 		}},
 	}
 }
 
-// Applies reports whether the skill's playbook should fire on this turn
-// without waiting for the model to consult the skill: the skill's own
-// triggers match, or any rule's When does. Firing is the framework's call
-// here on purpose — "when asked about X, establish Y" is a rule about the
-// turn, and a rule the model may decline to look up is a suggestion.
-func (s SkillRecord) PlaybookApplies(message string, attachmentNames []string) bool {
-	if len(s.Playbook) == 0 || s.Disabled {
-		return false
-	}
-	if SkillTriggersMatch(s, message, attachmentNames) {
-		return true
-	}
-	for _, r := range s.Playbook {
-		if len(r.When) > 0 && TriggersMatch(r.When, message, attachmentNames) {
-			return true
+// readYesNo reads a decoded answer: a bool, or the words a model writes.
+func readYesNo(v any) (answer, ok bool) {
+	switch t := v.(type) {
+	case bool:
+		return t, true
+	case string:
+		switch strings.ToLower(strings.TrimSpace(t)) {
+		case "true", "yes", "y":
+			return true, true
+		case "false", "no", "n":
+			return false, true
 		}
 	}
-	return false
+	return false, false
 }
 
-// Decide reads the established value and picks the arm. value is the
-// decoded field (a bool, or a string for either kind — a model that writes
-// "yes" has still answered). Returns the value as it will be shown, the arm's
-// prose, the nested rule if the arm is one, and ok=false when the value does
-// not decide anything (not a bool, not one of the values).
-func (r PlaybookRule) Decide(value any) (shown, arm string, next *PlaybookRule, ok bool) {
-	switch r.kind() {
-	case playbookChoice:
-		s := strings.ToLower(strings.TrimSpace(fmt.Sprint(value)))
-		for _, v := range r.Values {
-			if strings.EqualFold(strings.TrimSpace(v), s) {
-				return v, r.Cases[v], r.CaseRules[v], true
-			}
+// DecideConditions settles the skill's conditions for one message: the cases
+// in order, the first that holds wins, an else when none does. lookup runs the
+// skill's ConditionMachine; it is called at most once, and only when a lookup
+// condition is reached (a message the primary mentions-condition already
+// settles costs nothing). chosen is the skill as the agent gets it, its
+// instructions those of the case that applied. note says what was found, so
+// the agent neither follows instructions meant for another case nor goes
+// looking for a skill that does not apply. A lookup that fails or gives no
+// clear yes or no settles nothing: the skill does not apply, and the note says
+// why, since following the wrong case is what this exists to prevent.
+func (s SkillRecord) DecideConditions(message string, attachmentNames []string, lookup func(MachineDef) (fields map[string]any, text string, err error)) (chosen SkillRecord, applies bool, note string) {
+	chosen = s
+	if !s.Conditional() {
+		return chosen, true, ""
+	}
+	var fields map[string]any
+	var text string
+	looked := false
+	var seen []string
+	for i, c := range s.Conditions {
+		if c.Kind == caseElse {
+			chosen.Instructions = c.Instructions
+			return chosen, true, fmt.Sprintf("Checked before applying %q: %s. None held, so these are its instructions for every other case.", s.Name, strings.Join(seen, "; "))
 		}
-		return s, "", nil, false
-	default:
-		var b bool
-		switch v := value.(type) {
-		case bool:
-			b = v
-		case string:
-			switch strings.ToLower(strings.TrimSpace(v)) {
-			case "true", "yes", "y":
-				b = true
-			case "false", "no", "n":
-				b = false
-			default:
-				return v, "", nil, false
+		held := false
+		if c.byMention() {
+			held = TriggersMatch(c.Mentions, message, attachmentNames)
+			seen = append(seen, c.label()+": "+yesNo(held))
+		} else {
+			if !looked {
+				looked = true
+				var err error
+				if lookup == nil {
+					err = errString("no way to look it up here")
+				} else {
+					fields, text, err = lookup(s.ConditionMachine())
+				}
+				if err != nil {
+					return chosen, false, fmt.Sprintf("The %q skill does not apply this turn: its conditions could not be checked (%s). Do not follow it; if it matters, ask the person.", s.Name, err.Error())
+				}
 			}
+			answer, ok := readYesNo(fields[caseField(i)])
+			ev := conditionEvidence(fields[caseEvidence(i)], text)
+			if !ok {
+				return chosen, false, fmt.Sprintf("The %q skill does not apply this turn: its condition (%s) could not be checked (the check gave no yes or no%s). Do not follow it; if it matters, ask the person.", s.Name, c.label(), ev)
+			}
+			held = answer
+			seen = append(seen, c.label()+" "+yesNo(held)+ev)
+		}
+		if held {
+			if c.Kind == caseElseIf {
+				chosen.Instructions = c.Instructions
+				return chosen, true, fmt.Sprintf("Checked before applying %q: %s. So these are its instructions for that case.", s.Name, strings.Join(seen, "; "))
+			}
+			return chosen, true, fmt.Sprintf("Checked before applying %q: %s.", s.Name, strings.Join(seen, "; "))
+		}
+	}
+	return chosen, false, fmt.Sprintf("The %q skill does not apply this turn. Its conditions were checked and none holds: %s.", s.Name, strings.Join(seen, "; "))
+}
+
+func yesNo(b bool) string {
+	if b {
+		return "Yes"
+	}
+	return "No"
+}
+
+// conditionEvidence is the line that decided a lookup, as ": <line>", or ""
+// when there is none. The step's text stands in for a missing evidence field,
+// but not the structured output itself, which is the answer restated.
+func conditionEvidence(v any, text string) string {
+	ev := strings.TrimSpace(fmt.Sprint(v))
+	if ev == "" || ev == "<nil>" {
+		ev = strings.TrimSpace(text)
+		if strings.HasPrefix(ev, "{") {
+			ev = ""
+		}
+	}
+	if len(ev) > 240 {
+		ev = ev[:240] + "..."
+	}
+	if ev == "" {
+		return ""
+	}
+	return ": " + ev
+}
+
+// conditionSummary is the skill's conditions as the Available skills list
+// gives them: "if X; else if Y; else".
+func (s SkillRecord) conditionSummary() string {
+	var parts []string
+	for _, c := range s.Conditions {
+		switch c.Kind {
+		case caseElse:
+			parts = append(parts, "else")
+		case caseElseIf:
+			parts = append(parts, "else if "+c.label())
 		default:
-			return fmt.Sprint(value), "", nil, false
+			parts = append(parts, "if "+c.label())
 		}
-		if b {
-			return "true", r.Then, r.ThenRule, true
-		}
-		return "false", r.Else, r.ElseRule, true
 	}
+	return strings.Join(parts, "; ")
 }
 
-// Fallback renders the rule as prose for when the fact could not be
-// established by the framework: the model is told to establish it itself,
-// and is given every arm with its condition. Less than enforcement, more
-// than silence.
-func (r PlaybookRule) Fallback() string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "Establish %s first: %s\n", strings.TrimSpace(r.Fact), strings.TrimSpace(r.How))
-	arm := func(label, text string, rule *PlaybookRule) {
-		if rule != nil {
-			fmt.Fprintf(&b, "- %s: then %s", label, rule.Fallback())
-			return
+// ConditionRows is the skill's conditions as a form's "rows" field edits them:
+// one row per case, its mentions as one comma-separated line.
+func (s SkillRecord) ConditionRows() []map[string]any {
+	out := make([]map[string]any, 0, len(s.Conditions))
+	for _, c := range s.Conditions {
+		check := c.Check
+		if check == "" {
+			check = checkLookup
 		}
-		if strings.TrimSpace(text) != "" {
-			fmt.Fprintf(&b, "- %s: %s\n", label, strings.TrimSpace(text))
-		}
+		out = append(out, map[string]any{
+			"kind": c.Kind, "check": check, "question": c.Question, "how": c.How,
+			"mentions": strings.Join(c.Mentions, ", "), "instructions": c.Instructions,
+		})
 	}
-	switch r.kind() {
-	case playbookChoice:
-		for _, v := range r.Values {
-			arm("if "+v, r.Cases[v], r.CaseRules[v])
-		}
-	default:
-		arm("if true", r.Then, r.ThenRule)
-		arm("if false", r.Else, r.ElseRule)
-	}
-	return b.String()
+	return out
 }
 
-// Sentence reads the rule back as the sentence its author would have
-// written, so an editor can show that the fields mean what they think.
-func (r PlaybookRule) Sentence() string {
-	var b strings.Builder
-	if len(r.When) > 0 {
-		b.WriteString("When the message mentions " + strings.Join(r.When, " or ") + ", ")
-	} else {
-		b.WriteString("Whenever this skill is consulted, ")
+// SetConditionRows reads a form's condition rows onto the skill. A row's
+// kind left unset is the If when it is first and an Else if after; its check
+// left unset is a lookup; mentions split on commas. An empty list clears. The
+// result is not validated here: the caller asks ConditionProblems, so the
+// error reaches the person while the form is still on screen.
+func (s *SkillRecord) SetConditionRows(rows []map[string]any) {
+	str := func(r map[string]any, k string) string {
+		v, ok := r[k]
+		if !ok || v == nil {
+			return ""
+		}
+		return strings.TrimSpace(fmt.Sprint(v))
 	}
-	fact := strings.TrimSpace(r.Fact)
-	if fact == "" {
-		fact = "(unnamed fact)"
-	}
-	b.WriteString("establish " + fact)
-	arm := func(label, text string, rule *PlaybookRule) {
+	var cases []SkillCase
+	for _, r := range rows {
+		c := SkillCase{Kind: str(r, "kind"), Check: str(r, "check"), Question: str(r, "question"),
+			How: str(r, "how"), Instructions: str(r, "instructions")}
+		for _, m := range strings.Split(str(r, "mentions"), ",") {
+			if m = strings.TrimSpace(m); m != "" {
+				c.Mentions = append(c.Mentions, m)
+			}
+		}
+		if c.Kind == "" {
+			if len(cases) == 0 {
+				c.Kind = caseIf
+			} else {
+				c.Kind = caseElseIf
+			}
+		}
+		if c.Check == "" || c.Check == checkLookup {
+			c.Check = ""
+		}
+		// What the case does not use is not kept: an Else has no condition,
+		// a lookup no mentions, a mention no question, and the If's
+		// instructions are the skill's own.
 		switch {
-		case rule != nil:
-			b.WriteString("; " + label + ", " + lowerFirst(rule.Sentence()))
-		case strings.TrimSpace(text) != "":
-			b.WriteString("; " + label + ", " + strings.TrimRight(strings.TrimSpace(text), "."))
+		case c.Kind == caseElse:
+			c.Check, c.Question, c.How, c.Mentions = "", "", "", nil
+		case c.Check == checkMentions:
+			c.Question, c.How = "", ""
+		default:
+			c.Mentions = nil
 		}
-	}
-	switch r.kind() {
-	case playbookChoice:
-		for _, v := range r.Values {
-			arm("if "+v, r.Cases[v], r.CaseRules[v])
+		if c.Kind == caseIf {
+			c.Instructions = ""
 		}
-	default:
-		arm("if yes", r.Then, r.ThenRule)
-		arm("if no", r.Else, r.ElseRule)
+		cases = append(cases, c)
 	}
-	b.WriteString(".")
-	return b.String()
+	s.Conditions = cases
 }
 
-func lowerFirst(s string) string {
-	if s == "" {
-		return s
+// ConditionLine is the skill's conditions in a few words, for a list: the
+// primary, and how many cases follow it.
+func (s SkillRecord) ConditionLine() string {
+	if !s.Conditional() {
+		return ""
 	}
-	return strings.ToLower(s[:1]) + s[1:]
+	line := "If " + s.Conditions[0].label()
+	if n := len(s.Conditions) - 1; n == 1 {
+		line += " (+1 case)"
+	} else if n > 1 {
+		line += fmt.Sprintf(" (+%d cases)", n)
+	}
+	return line
+}
+
+// ConditionFires reports whether a conditional skill is checked on this turn
+// before the model's first round, without waiting for it to be consulted: its
+// triggers match. A trigger on a conditional skill is a rule about the turn
+// ("on sync problems, check the version first"), not a hint the model may
+// decline, which is what the conditions are for.
+func (s SkillRecord) ConditionFires(message string, attachmentNames []string) bool {
+	return s.Conditional() && !s.Disabled && SkillTriggersMatch(s, message, attachmentNames)
 }
 
 // LoadSkills returns every skill in the user's pool, ordered by
@@ -667,11 +702,9 @@ func SaveSkillAs(db Database, username string, s SkillRecord, reason string) (Sk
 	}
 	s.Owner = username
 	s.Updated = time.Now()
-	// The playbook is NOT validated here. Storage stores; the doors validate
-	// (the Builder tool, the admin save) and the visual editor saves a rule
-	// half-built on purpose — refusing to store the third field until the
-	// tenth exists is how an editor becomes a puzzle. The resolver skips a
-	// rule with problems, so a half-built one never runs.
+	// The condition is NOT validated here. Storage stores; the doors validate
+	// (the skill forms, the Builder tool). An incomplete condition is not
+	// checked (Conditional), so it never gates anything.
 	// Description-embedding removed. Was used by the cosine
 	// gatekeeper / fuzzy classifier that auto-fired skills; with
 	// activation now exclusively LLM-driven via activate_skill, the
@@ -900,28 +933,16 @@ func RenderAvailableSkills(skills []SkillRecord) string {
 			b.WriteString(trig)
 			b.WriteString(")")
 		}
-		if facts := s.playbookFacts(); len(facts) > 0 {
-			// A playbook skill is worth consulting EARLY: consulting it runs
-			// the checks and hands back only what applies, which is cheaper
-			// than working the same thing out by hand and then being told.
-			b.WriteString(" (playbook: consulting it establishes ")
-			b.WriteString(strings.Join(facts, ", "))
-			b.WriteString(" for you and tells you what follows: consult before working it out yourself)")
+		if s.Conditional() {
+			// Said in the listing so the model knows the skill may come back
+			// as "does not apply", and that the check is done for it.
+			b.WriteString(" (applies by case: ")
+			b.WriteString(s.conditionSummary())
+			b.WriteString("; checked for you when used)")
 		}
 		b.WriteString("\n")
 	}
 	return b.String()
-}
-
-// playbookFacts lists the top-level facts a skill's playbook establishes.
-func (s SkillRecord) playbookFacts() []string {
-	var out []string
-	for _, r := range s.Playbook {
-		if f := strings.TrimSpace(r.Fact); f != "" {
-			out = append(out, f)
-		}
-	}
-	return out
 }
 
 // SkillTriggersMatch reports whether a skill's Triggers match this turn: a
@@ -1324,6 +1345,33 @@ func AttachDeliveredSkillTools(sess *ToolSession, db Database, user string, deli
 	return attached
 }
 
+// SkillGate settles a conditional skill for this turn: the skill as the agent
+// gets it (its instructions those of the case that applied), whether it
+// applies at all, and the line the agent is told either way
+// (SkillRecord.DecideConditions). The app caches it per turn, so whichever
+// tool asks first runs the check and the rest reuse the answer. Never called
+// for a skill without conditions.
+type SkillGate func(SkillRecord) (chosen SkillRecord, applies bool, note string)
+
+// check runs the gate on a conditional skill. An unconditional skill, or no
+// gate at all, applies as written with nothing to add.
+func (g SkillGate) check(s SkillRecord) (SkillRecord, bool, string) {
+	if g == nil || !s.Conditional() {
+		return s, true, ""
+	}
+	return g(s)
+}
+
+// anyConditional reports whether any of the skills carries a condition.
+func anyConditional(skills []SkillRecord) bool {
+	for _, s := range skills {
+		if s.Conditional() {
+			return true
+		}
+	}
+	return false
+}
+
 // BuildReadSkillTool builds read_skill(skill): returns the named skill's
 // instructions to apply this turn. One-shot, no state — for when the LLM
 // just wants the skill's approach (a PDF-handling method, an output
@@ -1335,16 +1383,20 @@ func AttachDeliveredSkillTools(sess *ToolSession, db Database, user string, deli
 // shared with them, published), narrowed to allowed, which is the same set the
 // "Available skills" block lists.
 //
-// playbook, when set, resolves a skill's playbook for this turn — runs each
-// rule's establishing step and renders only the arm that applies — and its
-// result is appended to the instructions. The app supplies it because
-// establishing a fact runs a step through the turn's machine host, which
-// core does not have; nil leaves playbooks unresolved.
-func BuildReadSkillTool(db Database, owner string, allowed []string, delivered map[string]bool, playbook func(SkillRecord) string) AgentToolDef {
+// gate, when set, checks a conditional skill before it is handed over (see
+// SkillGate). The app supplies it because the check runs a step through the
+// turn's machine host, which core does not have; nil leaves conditions
+// unchecked, so a conditional skill is handed over as a plain one.
+func BuildReadSkillTool(db Database, owner string, allowed []string, delivered map[string]bool, gate SkillGate) AgentToolDef {
+	desc := "Pull a named skill's instructions/approach into this turn and apply them now. Use when you want the skill's METHOD itself (how to handle a PDF, an output format, a voice): not to search its knowledge (that's skill_knowledge_search). One-shot: it returns the instructions; there's nothing to activate or turn off."
+	if anyConditional(allowedSkillSet(db, owner, allowed)) {
+		// Only where it can happen, so it costs nothing on the turns it cannot.
+		desc += " A skill that applies by case is checked for you when read: the reply says which case applies, or that none does, and what the check found."
+	}
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "read_skill",
-			Description: "Pull a named skill's instructions/approach into this turn and apply them now. Use when you want the skill's METHOD itself (how to handle a PDF, an output format, a voice): not to search its knowledge (that's skill_knowledge_search). One-shot: it returns the instructions; there's nothing to activate or turn off. A skill with a playbook also ESTABLISHES its facts when read: the reply tells you what was found and what follows from it, so read it before working those out yourself.",
+			Description: desc,
 			Parameters: map[string]ToolParam{
 				"skill": {Type: "string", Description: "Exact skill name from the 'Available skills' block (case-insensitive).", Enum: allowedSkillNames(db, owner, allowed)},
 			},
@@ -1356,13 +1408,13 @@ func BuildReadSkillTool(db Database, owner string, allowed []string, delivered m
 			if err != nil {
 				return "", err
 			}
-			body := strings.TrimSpace(found.Instructions)
+			chosen, applies, resolved := gate.check(*found)
+			if !applies {
+				return resolved, nil
+			}
+			body := strings.TrimSpace(chosen.Instructions)
 			if delivered != nil {
 				delivered[found.ID] = true
-			}
-			resolved := ""
-			if playbook != nil && len(found.Playbook) > 0 {
-				resolved = strings.TrimSpace(playbook(*found))
 			}
 			if body == "" && resolved == "" {
 				return fmt.Sprintf("Skill %q has no instructions body: its value is its knowledge sources (use skill_knowledge_search).", found.Name), nil
@@ -1382,7 +1434,7 @@ func BuildReadSkillTool(db Database, owner string, allowed []string, delivered m
 // merged. The skill's instructions are attached the FIRST time the skill is
 // touched this turn (deduped via delivered) so the LLM gets the lens with
 // the evidence even if it skipped read_skill.
-func BuildSkillKnowledgeSearchTool(db Database, owner string, allowed []string, delivered map[string]bool, searchCollections func(SkillRecord, string) string) AgentToolDef {
+func BuildSkillKnowledgeSearchTool(db Database, owner string, allowed []string, delivered map[string]bool, gate SkillGate, searchCollections func(SkillRecord, string) string) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "skill_knowledge_search",
@@ -1403,8 +1455,19 @@ func BuildSkillKnowledgeSearchTool(db Database, owner string, allowed []string, 
 			if query == "" {
 				return "", fmt.Errorf("query is required")
 			}
+			// A skill that does not apply this turn brings nothing: not its
+			// approach, and not its sources either.
+			chosen, applies, note := gate.check(*found)
+			if !applies {
+				return note, nil
+			}
 			var out strings.Builder
-			out.WriteString(skillInstructionsBlock(*found, delivered))
+			if instr := skillInstructionsBlock(chosen, delivered); instr != "" {
+				if note != "" {
+					out.WriteString(note + "\n\n")
+				}
+				out.WriteString(instr)
+			}
 			var collHits string
 			if searchCollections != nil {
 				collHits = strings.TrimSpace(searchCollections(*found, query))
@@ -1436,7 +1499,7 @@ func BuildSkillKnowledgeSearchTool(db Database, owner string, allowed []string, 
 // first touch this turn (deduped via delivered) — so even if the LLM jumps
 // straight to a fetch without read_skill / skill_knowledge_search first,
 // it still gets the skill's lens.
-func BuildSkillKnowledgeFetchDocTool(db Database, owner string, allowed []string, delivered map[string]bool, fetchDoc func(SkillRecord, string) (string, error)) AgentToolDef {
+func BuildSkillKnowledgeFetchDocTool(db Database, owner string, allowed []string, delivered map[string]bool, gate SkillGate, fetchDoc func(SkillRecord, string) (string, error)) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "skill_knowledge_fetch_doc",
@@ -1460,11 +1523,19 @@ func BuildSkillKnowledgeFetchDocTool(db Database, owner string, allowed []string
 			if fetchDoc == nil {
 				return "", fmt.Errorf("document fetch isn't available for skill %q here", found.Name)
 			}
+			chosen, applies, note := gate.check(*found)
+			if !applies {
+				return note, nil
+			}
 			doc, err := fetchDoc(*found, docID)
 			if err != nil {
 				return "", err
 			}
-			return skillInstructionsBlock(*found, delivered) + doc, nil
+			instr := skillInstructionsBlock(chosen, delivered)
+			if instr != "" && note != "" {
+				instr = note + "\n\n" + instr
+			}
+			return instr + doc, nil
 		},
 	}
 }

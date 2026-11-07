@@ -716,13 +716,12 @@ type chatTurn struct {
 	// injection) so they aren't repeated. Per-turn only — never persisted,
 	// so there's no cross-turn state for the LLM to track. Init'd per turn.
 	deliveredSkills map[string]bool
-	// playbookBlocks caches each consulted skill's resolved playbook for
-	// this turn (skill ID → rendered block), so a skill delivered by two
-	// doors establishes its facts once. playbookMsg is the newest user
-	// message the rules' When are matched against and the establishing
-	// step is given as {input}.
-	playbookBlocks map[string]string
-	playbookMsg    string
+	// skillVerdicts caches each conditional skill's check for this turn
+	// (skill ID → whether it applies, and what the agent is told), so a skill
+	// asked for by two doors is checked once. conditionMsg is the newest user
+	// message, given to the check as {input}.
+	skillVerdicts map[string]skillVerdict
+	conditionMsg  string
 
 	// Per-turn tool log + dedup cache. Wrapped handlers append to
 	// the log on first call and short-circuit to the cached result

@@ -138,13 +138,6 @@ func (T *Extensions) Routes() {
 	T.HandleFunc("/api/skills/", T.handleUserSkillOne)
 	T.HandleFunc("/api/skill-tools", jsonapi.Get(T.DB, T.handleSkillToolOptions))
 	T.HandleFunc("/api/skill-collections", jsonapi.Get(T.DB, T.handleSkillCollectionOptions))
-	T.HandleFunc("/api/skill-playbook", jsonapi.Methods{
-		"GET":   jsonapi.Get(T.DB, T.handleSkillPlaybookRule),
-		"POST":  jsonapi.Post(T.DB, T.handleSkillPlaybookRuleSet),
-		"PUT":   jsonapi.Put(T.DB, T.handleSkillPlaybookRuleSet),
-		"PATCH": jsonapi.Patch(T.DB, T.handleSkillPlaybookRuleSet),
-	}.Serve)
-	T.HandleFunc("/skill-playbook", T.handleSkillPlaybookPage)
 	T.HandleFunc("/", T.servePage)
 }
 
@@ -1246,17 +1239,8 @@ func (T *Extensions) handleUserSkills(c *jsonapi.Call) (any, error) {
 				"description":  s.Description,
 				"triggers":     append([]string{}, s.Triggers...),
 				"instructions": s.Instructions,
-				// Two doors, both here: the rules as JSON to edit in
-				// place (what the admin form offers), and the address of
-				// the visual editor for anyone who would rather answer
-				// questions than write braces.
-				// Twice, deliberately: one copy is the read-only view,
-				// the other is what the textarea edits once Edit JSON
-				// is on. One field cannot be both without the form
-				// echoing its own display back into the payload.
-				"playbook_text": playbookText(s),
-				"playbook_url":  playbookEditorURL(s.ID),
 			}
+			out["conditions"] = s.ConditionRows()
 			// ?view=form is the behaviour form's own load. It leaves
 			// the grants out: a form posts back the whole record it
 			// loaded, so a grant on the wire here would be written back
@@ -1283,10 +1267,9 @@ func (T *Extensions) handleUserSkills(c *jsonapi.Call) (any, error) {
 		Triggers    int    `json:"triggers"`
 		Disabled    bool   `json:"disabled"`
 		Updated     string `json:"updated,omitempty"`
-		// The rule count, and the editor it links to: the count is the
-		// way in, rather than a separate control on every row.
-		Playbook    string `json:"playbook"`
-		PlaybookURL string `json:"playbook_url"`
+		// The conditions in a few words, for a skill that applies by case;
+		// empty for every other skill, so the column says nothing.
+		Conditions string `json:"conditions,omitempty"`
 		// Where this skill sits on the three rungs. A published skill has
 		// left the author's pool, so without listing it here they would
 		// watch it disappear and have no way back.
@@ -1310,7 +1293,7 @@ func (T *Extensions) handleUserSkills(c *jsonapi.Call) (any, error) {
 		return row{
 			ID: s.ID, Name: s.Name, Description: s.Description,
 			Triggers: len(s.Triggers), Disabled: s.Disabled, Updated: updated,
-			Playbook: playbookCount(s), PlaybookURL: playbookEditorURL(s.ID),
+			Conditions: s.ConditionLine(),
 			Published: published, PublishPending: pending, EditPending: published && s.AwaitingApproval,
 			CanPublish: !published && !pending && !admin,
 			PublishNow: !published && !pending && admin,
@@ -1396,7 +1379,9 @@ type skillSave struct {
 	Description  string        `json:"description"`
 	Triggers     skillTriggers `json:"triggers"`
 	Instructions string        `json:"instructions"`
-	PlaybookText *string       `json:"playbook_text"`
+	// The conditions as the form's rows. A pointer, so a form that did not
+	// carry them (a chip picker) leaves them alone; an empty list clears.
+	Conditions *[]map[string]any `json:"conditions"`
 	// Pointers, so a form that did not carry a grant leaves it alone
 	// while one that carried an empty list clears it. The chip
 	// pickers post the whole record; the behaviour form posts neither.
@@ -1416,18 +1401,16 @@ type skillSave struct {
 // ships code or grants tools stays in Builder. Own namespace only.
 func (T *Extensions) handleSkillSave(c *jsonapi.Call, body skillSave) (any, error) {
 	user, id := c.User, strings.TrimSpace(c.R.URL.Query().Get("id"))
-	// A POINTER, so a form that did not carry the field (the Add form, a
-	// chip picker) leaves the rules alone, while one that carried it empty
-	// clears them. Validated here rather than at the store: the error has
-	// to name the rule while the person still has it on screen.
-	var playbook []PlaybookRule
-	if body.PlaybookText != nil && strings.TrimSpace(*body.PlaybookText) != "" {
-		if err := json.Unmarshal([]byte(*body.PlaybookText), &playbook); err != nil {
-			return nil, jsonapi.BadRequest("playbook rules: not a JSON array: " + err.Error())
+	// Validated here rather than at the store: the error has to say what
+	// is missing while the person still has the form on screen.
+	var conditions []SkillCase
+	if body.Conditions != nil {
+		var parsed SkillRecord
+		parsed.SetConditionRows(*body.Conditions)
+		if probs := parsed.ConditionProblems(); len(probs) > 0 {
+			return nil, jsonapi.BadRequest(strings.Join(probs, "; "))
 		}
-		if probs := (SkillRecord{Playbook: playbook}).PlaybookProblems(); len(probs) > 0 {
-			return nil, jsonapi.BadRequest("playbook rules: " + strings.Join(probs, "; "))
-		}
+		conditions = parsed.Conditions
 	}
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
@@ -1459,8 +1442,8 @@ func (T *Extensions) handleSkillSave(c *jsonapi.Call, body skillSave) (any, erro
 	rec.Description = strings.TrimSpace(body.Description)
 	rec.Instructions = body.Instructions
 	rec.Triggers = []string(body.Triggers)
-	if body.PlaybookText != nil {
-		rec.Playbook = playbook // nil when the field came through blank — clears
+	if body.Conditions != nil {
+		rec.Conditions = conditions
 	}
 	if body.AllowedTools != nil {
 		rec.AllowedTools = *body.AllowedTools
@@ -1875,38 +1858,35 @@ func lendingListLabel(c SecureCredential) string {
 // tools, tool grants (AllowedTools), and attached collections are NOT here:
 // those ship code or grant capability and stay Builder-authored. An edit
 // preserves them (the handler load-then-mutates).
-// playbookEditorURL is the editor's address, absolute. Relative would resolve
-// against whatever page is showing — and the hub links to /extensions with no
-// trailing slash, so a relative href lands at the site root instead.
-func playbookEditorURL(skillID string) string {
-	return "/extensions/skill-playbook?id=" + url.QueryEscape(skillID)
-}
-
-// playbookText is the skill's rules as the JSON the form edits. Empty for a
-// skill with none, so the textarea opens blank rather than showing "null".
-func playbookText(s SkillRecord) string {
-	if len(s.Playbook) == 0 {
-		return ""
-	}
-	raw, err := json.MarshalIndent(s.Playbook, "", "  ")
-	if err != nil {
-		return ""
-	}
-	return string(raw)
-}
-
-// playbookCount is what the playbook link says: how many rules there are, or
-// an invitation when there are none. A count rather than the rules
-// themselves — the rules are long, and the place to read them in full is the
-// editor the link goes to.
-func playbookCount(s SkillRecord) string {
-	switch n := len(s.Playbook); n {
-	case 0:
-		return "add"
-	case 1:
-		return "1 rule"
-	default:
-		return fmt.Sprintf("%d rules", n)
+// skillConditionsField is the conditions list on the skill form, where an if
+// / else if / else is built one row at a time. The first row is the If: when
+// it holds, the skill applies as written. A row after it is an Else if, with
+// its own condition and instructions, or the Else, which closes the list.
+func skillConditionsField() ui.FormField {
+	return ui.FormField{
+		Field: "conditions", Type: "rows", Label: "Conditions",
+		AddLabel:       "+ Add condition",
+		Placeholder:    "None: the skill applies whenever it is used.",
+		AddBlockedWhen: "kind:else",
+		AddBlockedNote: "The Else is last. To add another condition, change it to Else if.",
+		Help:           "Add one when this skill is right only in some cases. The first is the If: when it holds, the skill applies as written. Add more for Else if (another case, with its own instructions) or Else (everything the cases above do not cover).",
+		Detail:         "gohort settles the conditions before the skill is handed over, and the agent gets only the case that applies. A lookup is answered by a short check with the skill's tools (one check for all of them); a mention is decided from the message. With no Else, the skill does not apply when no condition holds. Give the skill triggers so this happens before the agent answers on matching messages.",
+		Columns: []ui.FormField{
+			{Field: "kind", Label: "Case", Type: "select", FirstDefault: "if", Default: "else_if", Options: []ui.SelectOption{
+				{Value: "if", Label: "If"}, {Value: "else_if", Label: "Else if"}, {Value: "else", Label: "Else"},
+			}},
+			{Field: "check", Label: "Decided by", Type: "select", HideWhen: "kind:else", Options: []ui.SelectOption{
+				{Value: "lookup", Label: "Looking it up"}, {Value: "mentions", Label: "The message mentioning"},
+			}},
+			{Field: "question", Label: "Question", Width: 3, HideWhen: "kind:else||check:mentions",
+				Placeholder: "Is the customer on version 4 or later?"},
+			{Field: "mentions", Label: "Words", Width: 3, HideWhen: "kind:else||check:!mentions",
+				Placeholder: "refund, chargeback, *.pdf"},
+			{Field: "how", Label: "How to check", OwnLine: true, HideWhen: "kind:else||check:mentions",
+				Placeholder: "Look up the account with the CRM tool and read its app version."},
+			{Field: "instructions", Label: "Instructions for this case", Type: "sections", OwnLine: true, HideWhen: "kind:if",
+				Placeholder: "Empty: use Edit to write what the agent does in this case."},
+		},
 	}
 }
 
@@ -1916,21 +1896,12 @@ func userSkillFormFields() []ui.FormField {
 		{Field: "description", Label: "Description", Help: "One line: when this skill applies. The assistant reads it to decide relevance."},
 		{Field: "triggers", Label: "Triggers", Type: "tags", Placeholder: "contract, or *.pdf", Help: "Words or phrases matched as whole words, or *.ext for attachments, one each. Any match activates the skill.",
 			Detail: "Leave it blank to rely on the description instead."},
-		{Field: "instructions", Label: "Instructions", Type: "textarea", Rows: 12, Help: "Markdown appended to the assistant's prompt while the skill is active.",
-			Detail: "The approach, voice, or method it should apply."},
-		// The rules as they stand, then the two ways to change them. Read-only
-		// until asked: the common visit is to look, and a textarea full of
-		// JSON invites an accidental edit to something the editor writes
-		// correctly.
-		// Reads exactly like Instructions above: a preview of the value with an
-		// Edit button that opens it in a modal. The extra button beside Edit is
-		// the other way to write the same rules — by answering questions
-		// instead of typing JSON.
-		{Field: "playbook_text", Label: "Playbook", Type: "textarea", Rows: 8,
-			Placeholder: "No rules yet: use Playbook Editor, or Edit to type them.",
-			Links:       []ui.FormFieldLink{{Label: "Playbook Editor", Field: "playbook_url", Target: "_blank"}},
-			Help:        "Conditional rules the framework settles BEFORE the assistant answers.",
-			Detail:      "The shape is \"establish Y first; if yes do Z, if no do U\". It is a JSON array, and each rule looks like {\"fact\": \"queue_draining\", \"how\": \"Read the consumer lag.\", \"then\": \"Look at the consumer.\", \"else\": \"Look at the broker.\"}.\n\nOptional keys: \"when\" takes a list of triggers; \"type\": \"choice\" takes \"values\" and \"cases\"; \"then_rule\" and \"else_rule\" nest one level."},
+		// Read as a document and edited on Edit (Outline or Raw), not shown
+		// whole: beside a list of conditions the full text buries them.
+		{Field: "instructions", Label: "Instructions", Type: "sections", SectionsAllowFree: true, Rows: 6,
+			Help:   "Markdown appended to the assistant's prompt while the skill is active.",
+			Detail: "The approach, voice, or method it should apply. With conditions, these are the If's instructions; an Else if or Else carries its own."},
+		skillConditionsField(),
 	}
 }
 
@@ -2547,7 +2518,7 @@ func (T *Extensions) skillsSection() ui.Section {
 				Title:    "Your skills",
 				Subtitle: "Behavior packs your agents draw on.",
 				Detail: "A skill is instructions the assistant applies when its triggers or description match the turn. Author or edit one right here (name, triggers, instructions, the tools it may call and the collections it may search), or ask Builder in Agents for skills that ship their own code.\n\n" +
-					"Open a skill to give it a playbook: conditional rules (\"establish Y first; if yes do Z, if no do U\") that the framework runs and settles before the assistant answers. Disable to mute a skill without losing it; delete to retire it.\n\n" +
+					"A skill can apply by case: open it and add conditions (if the customer is on version 4, as written; else if on 3, other instructions; else, upgrade first). gohort settles them before handing the skill over, and the agent gets only the case that applies. Disable to mute a skill without losing it; delete to retire it.\n\n" +
 					"A skill reaches other people on three rungs: yours alone, shared with people you name, or published to the whole deployment. The first two are your own call; the third is an admin's, and a skill you published is listed here with a Deployment-wide badge and a Take back button.",
 				Body: ui.Stack{Children: []ui.Component{
 					importToolbar("Bring in skills or tools somebody exported"),
@@ -2558,9 +2529,9 @@ func (T *Extensions) skillsSection() ui.Section {
 							{Field: "name", Flex: 1},
 							{Field: "description", Mute: true, Flex: 2},
 							{Field: "triggers", Label: "Triggers", Mute: true},
-							// How many conditional rules this skill carries, and the
-							// way into them: the count is the link.
-							{Field: "playbook", Label: "Playbook", Link: "playbook_url", Mute: true},
+							// Blank unless the skill is conditional, so most rows
+							// say nothing here.
+							{Field: "conditions", Label: "Conditions", Mute: true, Flex: 1},
 							{Field: "published", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
 								{Value: true, Label: "Deployment-wide", Color: "info"},
 							}},
