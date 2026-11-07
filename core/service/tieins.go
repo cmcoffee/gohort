@@ -33,6 +33,11 @@ func TieInConnector(kind string) bool { return kind == Kind }
 // as tools, under "agents".
 const MusicTable = "music_config"
 
+// MediaTable holds the Media Generation tie-in for the open kinds
+// (media.generate): the connectors offered to agents as tools, under
+// "agents".
+const MediaTable = "media_config"
+
 // connectorReviewTable holds a connector changed by someone who is not an
 // administrator, by whom, until an administrator accepts it.
 const connectorReviewTable = "connector_review"
@@ -117,6 +122,11 @@ func TieIns(db Database) map[string][]string {
 	db.Get(MusicTable, "agents", &agents)
 	for _, a := range agents {
 		add(a, "Music (offered to agents)")
+	}
+	agents = nil
+	db.Get(MediaTable, "agents", &agents)
+	for _, a := range agents {
+		add(a, "Media Generation (offered to agents)")
 	}
 	for _, rs := range ListResearchSources(db) {
 		if !rs.Off {
@@ -208,7 +218,7 @@ func StaleSettings(db Database) []StaleSetting {
 	}
 	add("Page Rendering (Browser)", StaleWhy(db, str(BrowseTable, "source")))
 	add("Mail (SMTP)", StaleWhy(db, str(MailTable, "provider")))
-	for table, page := range map[string]string{ImageTable: "Image Generation", MusicTable: "Music"} {
+	for table, page := range map[string]string{ImageTable: "Image Generation", MusicTable: "Music", MediaTable: "Media Generation"} {
 		var agents []string
 		db.Get(table, "agents", &agents)
 		for _, a := range agents {
@@ -254,7 +264,7 @@ func AgentConnections(db Database) []string {
 	var s string
 	db.Get(ImageTable, "provider", &s)
 	names = append(names, strings.TrimSpace(s))
-	for _, table := range []string{ImageTable, MusicTable} {
+	for _, table := range []string{ImageTable, MusicTable, MediaTable} {
 		var agents []string
 		db.Get(table, "agents", &agents)
 		names = append(names, agents...)

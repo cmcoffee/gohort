@@ -257,6 +257,33 @@ func init() {
 		Check:   checkAudio("audio"),
 		units:   func(map[string]any, Result) float64 { return 1 },
 	})
+	// media.generate is the open end of media generation: any kind of media
+	// a service makes from a prompt (video, 3D models, sound effects, icons),
+	// named by its binding's kind, so a kind nobody planned for needs a spec
+	// and no code. A file in, when given, is what to work from.
+	register(Contract{
+		Name:   "media.generate",
+		About:  "A media file made from a prompt, of the kind the connector says it makes (its binding's kind: video, 3D model, sound effects), from a file to work from when given.",
+		Checks: "file is a file that is not empty; what kind of file is the connector's to say.",
+		Where:  "Admin > Services > Media Generation, and an agent tool of its own named generate_<kind>_<connector>",
+		Gives:  "Media Generation",
+		Inputs: []Port{
+			{Name: "prompt", Type: TypeText, Required: true},
+			{Name: "file", Type: TypeFile},
+			{Name: "model", Type: TypeText},
+		},
+		Outputs: []Port{{Name: "file", Type: TypeFile, Required: true}},
+		Units:   []string{"item"},
+		Test:    map[string]any{"prompt": "A short, simple test of what you make."},
+		Check: func(r Result) error {
+			v, ok := r["file"]
+			if !ok || v.File == nil || v.File.Size == 0 {
+				return fmt.Errorf("no file came back")
+			}
+			return nil
+		},
+		units: func(map[string]any, Result) float64 { return 1 },
+	})
 	// message.send is a messaging API's send: a linked service's replies go
 	// out through it. to is whom to send to, when the service needs one
 	// and the connector does not set it; id is what the service calls the

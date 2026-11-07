@@ -106,6 +106,9 @@ func (handler) Materialize(c Connector) error {
 	if _, _, err := s.binding("music.generate"); err == nil {
 		registerMusicTool(name)
 	}
+	if _, _, err := s.binding("media.generate"); err == nil {
+		registerMediaTool(name)
+	}
 	if s.Provider.Health != nil {
 		startHealth()
 	}

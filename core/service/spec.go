@@ -131,6 +131,23 @@ type Binding struct {
 	// Plain, for a search, takes a query's site: filters out before it is
 	// sent: an API searching its own collection reads them as words.
 	Plain bool `json:"plain,omitempty"`
+	// Kind and About, for media.generate, say what it makes: Kind a short
+	// name ("video", "3D model", "sound effects") that names its agent tool
+	// (generate_<kind>_<connector>), About one line for the tool's
+	// description. A blank kind is "media".
+	Kind  string `json:"kind,omitempty"`
+	About string `json:"about,omitempty"`
+}
+
+// mediaKindRE is what a media.generate kind may be: a short name in words.
+var mediaKindRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 -]{0,31}$`)
+
+// MediaKind is binding b's kind as people read it: its kind, or "media".
+func (b Binding) MediaKind() string {
+	if k := strings.TrimSpace(b.Kind); k != "" {
+		return k
+	}
+	return "media"
 }
 
 // ResearchUse is the research topics a search is asked on (legal, medical,
@@ -410,6 +427,15 @@ func (b Binding) validate(p Provider) error {
 	c, ok := Lookup(b.Capability)
 	if !ok {
 		return fmt.Errorf("unknown capability %q (known: %s)", b.Capability, strings.Join(Names(), ", "))
+	}
+	if (b.Kind != "" || b.About != "") && b.Capability != "media.generate" {
+		return fmt.Errorf("kind and about say what a media.generate makes: media.generate only")
+	}
+	if b.Kind != "" && !mediaKindRE.MatchString(strings.TrimSpace(b.Kind)) {
+		return fmt.Errorf("kind %q: a short name in words, up to 32 letters, digits, spaces or dashes (video, 3D model, sound effects)", b.Kind)
+	}
+	if len(b.About) > 200 {
+		return fmt.Errorf("about is one line: up to 200 characters")
 	}
 	if b.Plain && b.Capability != "web.search" && b.Capability != "image.search" {
 		return fmt.Errorf("plain takes site: filters out of a search's query: web.search and image.search only")

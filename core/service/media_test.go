@@ -275,3 +275,86 @@ func speakSpec(base string) map[string]any {
 			"output": map[string]any{"audio": map[string]any{"from": "body"}}}},
 	}
 }
+
+// A media.generate connector is a tool named for the kind it declares,
+// offered only while Media Generation offers it and only to an agent that may
+// reach its connection. What it makes is saved in the workspace under its
+// kind and attached; a file passed from the workspace goes along to work from.
+func TestAMediaServiceIsAToolNamedForItsKind(t *testing.T) {
+	world(t)
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got = string(b)
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Write([]byte("\x00\x00\x00\x18ftypmp42 not really a video"))
+	}))
+	defer srv.Close()
+	install(t, "clips", map[string]any{
+		"provider": map[string]any{"transport": "http", "base_url": srv.URL, "auth": map[string]any{"none": true},
+			"operations": map[string]any{"make": map[string]any{"method": "POST", "path": "/videos",
+				"body": map[string]any{"prompt": "{prompt}", "start": "{file.base64}"}, "read": "file"}}},
+		"provides": []any{map[string]any{"capability": "media.generate", "kind": "video", "about": "Makes a short video clip from a prompt.",
+			"steps": []any{map[string]any{"call": "make"}}, "output": map[string]any{"file": map[string]any{"from": "body"}}}},
+	})
+	var tool ChatTool
+	for _, ct := range RegisteredChatTools() {
+		if ct.Name() == "generate_video_clips" {
+			tool = ct
+		}
+	}
+	if tool == nil {
+		t.Fatal("the media service is not a tool named for its kind")
+	}
+	if _, params := tool.(DynamicChatTool).SchemaWithSession(nil); params != nil {
+		t.Error("a media connector Media Generation does not offer is offered")
+	}
+	RootDB.Set(MediaTable, "agents", []string{"clips"})
+	desc, params := tool.(DynamicChatTool).SchemaWithSession(nil)
+	if params == nil || !strings.HasPrefix(desc, "Makes a short video clip from a prompt.") {
+		t.Errorf("offered: %q %v", desc, params)
+	}
+	off := &ToolSession{Username: "u", WorkspaceDir: t.TempDir(), DeniedCredentials: map[string]bool{"connection:clips": true}}
+	if _, params := tool.(DynamicChatTool).SchemaWithSession(off); params != nil {
+		t.Error("an agent with the connection switched off is offered it")
+	}
+	ws := t.TempDir()
+	os.WriteFile(ws+"/start.png", []byte("\x89PNG\r\n\x1a\nstart frame"), 0o600)
+	sess := &ToolSession{WorkspaceDir: ws}
+	out, err := tool.(SessionChatTool).RunWithSession(map[string]any{"prompt": "a cat on a skateboard", "file": "start.png"}, sess)
+	if err != nil || !strings.Contains(out, "video") {
+		t.Fatalf("run: %q %v", out, err)
+	}
+	if len(sess.Videos) != 1 || len(sess.StagedFiles()) != 1 {
+		t.Errorf("the clip is not attached and staged: %v", sess.StagedFiles())
+	}
+	if !strings.Contains(got, `"prompt":"a cat on a skateboard"`) || !strings.Contains(got, `"start":"iVBORw0K`) {
+		t.Errorf("the request did not carry the prompt and the start frame: %s", got)
+	}
+}
+
+// kind and about belong to media.generate, and a kind is a short name in
+// words, since it names the agent's tool.
+func TestAMediaKindIsAShortNameOnMediaGenerateOnly(t *testing.T) {
+	op := map[string]any{"make": map[string]any{"method": "POST", "path": "/x", "body": map[string]any{"prompt": "{prompt}"}, "read": "file"}}
+	spec := func(capability, kind string) []byte {
+		b, _ := json.Marshal(map[string]any{
+			"provider": map[string]any{"transport": "http", "base_url": "https://media.example.test", "auth": map[string]any{"none": true}, "operations": op},
+			"provides": []any{map[string]any{"capability": capability, "kind": kind, "steps": []any{map[string]any{"call": "make"}},
+				"output": map[string]any{map[bool]string{true: "file", false: "audio"}[capability == "media.generate"]: map[string]any{"from": "body"}}}},
+		})
+		return b
+	}
+	if s, err := Parse(spec("media.generate", "3D model")); err != nil || s.Validate() != nil {
+		t.Errorf("a 3D model kind was refused: %v %v", err, s.Validate())
+	}
+	for _, c := range []struct{ capability, kind string }{{"music.generate", "song"}, {"media.generate", "video; rm -rf"}} {
+		s, err := Parse(spec(c.capability, c.kind))
+		if err == nil {
+			err = s.Validate()
+		}
+		if err == nil {
+			t.Errorf("%s with kind %q was accepted", c.capability, c.kind)
+		}
+	}
+}

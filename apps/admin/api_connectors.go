@@ -243,7 +243,7 @@ func keptSecretsLine(c Connector) string {
 const (
 	groupSearch   = "Web Search"
 	groupResearch = "Research Sources"
-	groupImages   = "Images"
+	groupImages   = "Images and media"
 	groupAudio    = "Speech and Music"
 	groupEmbed    = "Embeddings"
 	groupPages    = "Pages and Files"
@@ -263,7 +263,7 @@ var connectorGroups = []string{groupSearch, groupResearch, groupImages, groupAud
 // capability it gives.
 var capabilityGroups = map[string]string{
 	"web.search": groupSearch, "image.search": groupSearch,
-	"image.generate": groupImages, "image.edit": groupImages,
+	"image.generate": groupImages, "image.edit": groupImages, "media.generate": groupImages,
 	"speech.transcribe": groupAudio, "speech.synthesize": groupAudio, "speech.voices": groupAudio, "music.generate": groupAudio,
 	"embed.text": groupEmbed, "page.render": groupPages, "file.convert": groupPages,
 	"mail.send": groupMail, "message.send": groupMessages, "message.fetch": groupMessages,

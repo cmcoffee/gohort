@@ -3,7 +3,7 @@
 alice GET /api/connectors ""
   403 forbidden
 root GET /api/connectors ""
-  200 [{"name":"ct-art","title":"ct-art","kind":"service","summary":"Image Generation ⇐ render ⇐ 127.0.0.1:1 (its API login)","owner":"root","approved":false,"last_error":"","template":"a1111","edit_for… (809 bytes, sha1 7cae524530179db0ba9c98dfaf2dfcf1a4df1ce3)
+  200 [{"name":"ct-art","title":"ct-art","kind":"service","summary":"Image Generation ⇐ render ⇐ 127.0.0.1:1 (its API login)","owner":"root","approved":false,"last_error":"","template":"a1111","edit_for… (819 bytes, sha1 f6358e8f9962ac00b4ca807238711605c6f3c196)
 root PUT /api/connectors "{}"
   405 method not allowed
 (signed out) GET /api/connectors/other ""
@@ -59,7 +59,7 @@ root POST /api/connectors?action=update_spec&name=ct-nope "{}"
 root POST /api/connectors?action=update_spec&name=ct-art "{\"config\":[{\"name\":\"api_key\",\"label\":\"API login\",\"help\":\"Only for a server started with --api-auth: its user:password. A local one takes none.\",\"type\":\"secret\",\"send\":\"basic\"}],\"provider\":{\"transport\":\"http\",\"base_url\":\"http://127.0.0.1:2\",\"auth\":{\"secret\":\"api_key\"},\"operations\":{\"render\":{\"builtin\":\"a1111\",\"options\":{\"mode\":\"txt2img\"}}}},\"provides\":[{\"capability\":\"image.generate\",\"steps\":[{\"call\":\"render\"}],\"output\":{\"image\":{\"from\":\"body\"}}}]}"
   204 
 root GET /api/connectors ""
-  200 [{"name":"ct-art","title":"ct-art","kind":"service","summary":"Image Generation ⇐ render ⇐ 127.0.0.1:2 (its API login)","owner":"root","approved":false,"last_error":"","template":"a1111","edit_for… (809 bytes, sha1 83c25c49a5eb6b6ed8ef262b410266a6ac5f1e2e)
+  200 [{"name":"ct-art","title":"ct-art","kind":"service","summary":"Image Generation ⇐ render ⇐ 127.0.0.1:2 (its API login)","owner":"root","approved":false,"last_error":"","template":"a1111","edit_for… (819 bytes, sha1 9ac18fc8530a358198e66ae75f23dcab078f692c)
 root GET /api/connectors/spec?name=ct-nope ""
   404 no connector named ct-nope
 alice POST /api/research-sources "{\"connector\":\"ct-find\",\"topics\":[\"legal\"]}"
