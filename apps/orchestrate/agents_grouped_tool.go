@@ -1393,12 +1393,7 @@ func (ar *agentsRun) buildSession() {
 
 func (ar *agentsRun) buildToolkit() {
 	t := ar.t
-	ar.toolNames = ar.target.AllowedTools
-	if len(ar.toolNames) == 0 {
-		for _, td := range RegisteredChatTools() {
-			ar.toolNames = append(ar.toolNames, td.Name())
-		}
-	}
+	ar.toolNames = dispatchToolNames(ar.target.AllowedTools)
 	ar.tools, ar.err = GetAgentToolsWithSession(ar.subSess, ar.toolNames...)
 	if ar.err != nil {
 		ar.tools = nil

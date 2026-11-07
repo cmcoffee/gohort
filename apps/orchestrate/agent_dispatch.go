@@ -905,47 +905,7 @@ func (sd *syncDispatch) buildToolkit() {
 	// the background), and cancellation only reaches a tool that is watching
 	// the turn's context rather than a background one.
 	sd.subSess.Ctx = sd.ctx
-	// Clone so the force-adds below never mutate the stored agent's AllowedTools.
-	toolNames := append([]string(nil), sd.target.AllowedTools...)
-	if len(toolNames) == 0 {
-		// The SAME default pool the interactive turn uses.
-		//
-		// This read RegisteredChatTools() — the raw registry, with no filtering
-		// at all — while resolveWorkerTools fills the identical case from
-		// availableWorkerToolNames(), which is that registry minus BlockedTools
-		// and minus the framework / infrastructure / superseded sets. So an
-		// agent with no allowlist got a WIDER catalog by being dispatched than
-		// by being talked to, and the wider one was the permissive reading of a
-		// field the owner never set.
-		//
-		// Small blast radius today — BlockedTools holds one name — and that is
-		// the argument for fixing it now rather than after the second entry
-		// lands and the two paths disagree about something that matters.
-		toolNames = append(toolNames, availableWorkerToolNames()...)
-	}
-	if !isNoToolsSentinel(toolNames) {
-		// A curated allowlist and the default pool both get the always-on
-		// tools the interactive turn force-includes (runner.go): workspace
-		// (the delivery primitive every producer routes through) and the
-		// framework utilities (calculate, date_math, time_in_zone). Without
-		// this, a channel or dispatched agent with a tight list can't tell the
-		// time or deliver an attachment, and one with no list at all could not
-		// either: the default pool leaves framework tools out, workspace among
-		// them. The always-on contract has to hold on every path.
-		has := func(n string) bool {
-			for _, x := range toolNames {
-				if x == n {
-					return true
-				}
-			}
-			return false
-		}
-		for _, n := range append([]string{"workspace"}, frameworkUtilityTools...) {
-			if !has(n) {
-				toolNames = append(toolNames, n)
-			}
-		}
-	}
+	toolNames := dispatchToolNames(sd.target.AllowedTools)
 	sd.tools, sd.err = GetAgentToolsWithSession(sd.subSess, toolNames...)
 	if sd.err != nil {
 		sd.tools = nil
@@ -1938,47 +1898,7 @@ func (cr *continuingRun) buildToolkit() {
 	// the background), and cancellation only reaches a tool that is watching
 	// the turn's context rather than a background one.
 	cr.subSess.Ctx = cr.ctx
-	// Clone so the force-adds below never mutate the stored agent's AllowedTools.
-	toolNames := append([]string(nil), cr.target.AllowedTools...)
-	if len(toolNames) == 0 {
-		// The SAME default pool the interactive turn uses.
-		//
-		// This read RegisteredChatTools() — the raw registry, with no filtering
-		// at all — while resolveWorkerTools fills the identical case from
-		// availableWorkerToolNames(), which is that registry minus BlockedTools
-		// and minus the framework / infrastructure / superseded sets. So an
-		// agent with no allowlist got a WIDER catalog by being dispatched than
-		// by being talked to, and the wider one was the permissive reading of a
-		// field the owner never set.
-		//
-		// Small blast radius today — BlockedTools holds one name — and that is
-		// the argument for fixing it now rather than after the second entry
-		// lands and the two paths disagree about something that matters.
-		toolNames = append(toolNames, availableWorkerToolNames()...)
-	}
-	if !isNoToolsSentinel(toolNames) {
-		// A curated allowlist and the default pool both get the always-on
-		// tools the interactive turn force-includes (runner.go): workspace
-		// (the delivery primitive every producer routes through) and the
-		// framework utilities (calculate, date_math, time_in_zone). Without
-		// this, a channel or dispatched agent with a tight list can't tell the
-		// time or deliver an attachment, and one with no list at all could not
-		// either: the default pool leaves framework tools out, workspace among
-		// them. The always-on contract has to hold on every path.
-		has := func(n string) bool {
-			for _, x := range toolNames {
-				if x == n {
-					return true
-				}
-			}
-			return false
-		}
-		for _, n := range append([]string{"workspace"}, frameworkUtilityTools...) {
-			if !has(n) {
-				toolNames = append(toolNames, n)
-			}
-		}
-	}
+	toolNames := dispatchToolNames(cr.target.AllowedTools)
 	cr.tools, cr.err = GetAgentToolsWithSession(cr.subSess, toolNames...)
 	if cr.err != nil {
 		cr.tools = nil
@@ -3384,6 +3304,48 @@ func normalizeAgentKey(s string) string {
 // tool's run action. Both share the same plumbing (delegated marker,
 // Builder-exclusivity gate, sub-session setup, target memory/facts
 // loading).
+
+// dispatchToolNames is the tool list every agent run other than the
+// interactive turn resolves from the agent's AllowedTools: a sync or
+// continuing dispatch, the agents tool's run and a scheduled fire. One builder
+// for all four, which had their own copies; the fire's and the agents tool's
+// still read the raw registry, and the agents tool's left out the always-on
+// tools.
+//
+// An empty list is the SAME default pool the interactive turn uses,
+// availableWorkerToolNames(): the registry minus BlockedTools and the
+// framework / infrastructure / superseded sets. Reading RegisteredChatTools()
+// instead gave an agent with no allowlist a WIDER catalog by being dispatched
+// or scheduled than by being talked to, the permissive reading of a field the
+// owner never set.
+//
+// A curated list and the default pool both get the always-on tools the
+// interactive turn force-includes (runner.go): workspace (the delivery
+// primitive every producer routes through) and the framework utilities
+// (calculate, date_math, time_in_zone). Without them a tightly scoped agent
+// cannot tell the time or deliver an attachment, and the default pool leaves
+// framework tools out, workspace among them. The no-tools sentinel stays as
+// it is. The stored AllowedTools is never mutated.
+func dispatchToolNames(allowed []string) []string {
+	toolNames := append([]string(nil), allowed...)
+	if len(toolNames) == 0 {
+		toolNames = append(toolNames, availableWorkerToolNames()...)
+	}
+	if isNoToolsSentinel(toolNames) {
+		return toolNames
+	}
+	has := map[string]bool{}
+	for _, n := range toolNames {
+		has[n] = true
+	}
+	for _, n := range append([]string{"workspace"}, frameworkUtilityTools...) {
+		if !has[n] {
+			toolNames = append(toolNames, n)
+			has[n] = true
+		}
+	}
+	return toolNames
+}
 
 // failureMemoryKey names what a run's failures belong to: the agent, and the
 // thread it is working when there is one. Standing work has no thread, and

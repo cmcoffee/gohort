@@ -982,3 +982,73 @@ func TestAContinuingRunHonoursTheOwnersMarks(t *testing.T) {
 		t.Errorf("a tool marked never unattended ran on a channel turn: %v", df.looked)
 	}
 }
+
+// An agent run other than the interactive turn resolves the same default pool
+// the interactive turn does, plus the always-on tools, and never widens it.
+// The scheduled fire and the agents tool read the raw registry when the agent
+// allowed nothing in particular, so a scheduled or delegated run got tools
+// the same agent is not offered when talked to.
+func TestDispatchToolNamesIsTheInteractivePool(t *testing.T) {
+	always := append([]string{"workspace"}, frameworkUtilityTools...)
+	pool := map[string]bool{}
+	for _, n := range append(availableWorkerToolNames(), always...) {
+		pool[n] = true
+	}
+	got := dispatchToolNames(nil)
+	seen := map[string]bool{}
+	for _, n := range got {
+		if !pool[n] {
+			t.Errorf("an agent with no allowlist gets %q, which the interactive pool does not offer", n)
+		}
+		if seen[n] {
+			t.Errorf("%q listed twice", n)
+		}
+		seen[n] = true
+	}
+	for _, n := range always {
+		if !seen[n] {
+			t.Errorf("the default pool lacks the always-on %q", n)
+		}
+	}
+
+	allowed := []string{"web_search"}
+	curated := dispatchToolNames(allowed)
+	if len(allowed) != 1 || curated[0] != "web_search" {
+		t.Errorf("the stored allowlist was changed or reordered: %v", allowed)
+	}
+	if len(curated) != 1+len(always) {
+		t.Errorf("a curated list gets exactly the always-on tools added: %v", curated)
+	}
+	if got := dispatchToolNames([]string{noToolsSentinel}); len(got) != 1 {
+		t.Errorf("the no-tools sentinel gained tools: %v", got)
+	}
+}
+
+// Each run path other than the interactive turn takes its list from the one
+// builder, and the fire tells its judges about background work and holds an
+// authoring agent's build plan to its steps, as the dispatch paths do.
+func TestEveryDispatchPathUsesTheOneToolPool(t *testing.T) {
+	for _, c := range []struct{ file, header string }{
+		{"agent_dispatch.go", "func (sd *syncDispatch) buildToolkit("},
+		{"agent_dispatch.go", "func (cr *continuingRun) buildToolkit("},
+		{"agents_grouped_tool.go", "func (ar *agentsRun) buildToolkit("},
+		{"scheduled_updates.go", "func (fr *fireRun) buildToolkit("},
+	} {
+		body := funcBody(t, readFile(t, c.file), c.header)
+		if !strings.Contains(body, "dispatchToolNames(") {
+			t.Errorf("%s: %s does not take its tools from dispatchToolNames", c.file, c.header)
+		}
+		if strings.Contains(body, "RegisteredChatTools()") {
+			t.Errorf("%s: %s reads the raw registry", c.file, c.header)
+		}
+	}
+	fire := collapseSpaces(funcBody(t, readFile(t, "scheduled_updates.go"), "func (fr *fireRun) runLoop("))
+	for _, want := range []string{"Backgrounded: func() bool { return fr.subSess.Detach.Any() }",
+		"BackgroundEstimate: func() string { return fr.subSess.Detach.EstimateText() }",
+		"FinishCheck: fr.buildCheck.finishCheck(),", "FinishUnmet: fr.buildCheck.finishUnmet(),",
+		"fr.buildCheck = newDispatchBuildCheck(fr.agent, fr.subSess)"} {
+		if !strings.Contains(fire, collapseSpaces(want)) {
+			t.Errorf("the fire's loop lacks %q", want)
+		}
+	}
+}

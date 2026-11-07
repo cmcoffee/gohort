@@ -502,13 +502,16 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 // Each field is a local of the function it was cut from; the function is now
 // the order of the phases and the defers between them.
 type fireRun struct {
-	ctx   context.Context
-	p     orchUpdatePayload
-	reArm bool
-	app   *OrchestrateApp
-	udb   Database
-	agent AgentRecord
-	ok    bool
+	// buildCheck is the build-plan finish check an authoring agent's run
+	// gets on every dispatch path (newDispatchBuildCheck); nil otherwise.
+	buildCheck *dispatchBuildCheck
+	ctx        context.Context
+	p          orchUpdatePayload
+	reArm      bool
+	app        *OrchestrateApp
+	udb        Database
+	agent      AgentRecord
+	ok         bool
 	// The network state this fire runs under - see withAgentNetwork for why
 	// both halves are set together. There is no per-fire privacy toggle to OR
 	// in the way a live turn ORs the user's, so the agent's own ForcePrivate is
@@ -845,29 +848,10 @@ func (fr *fireRun) buildSession() {
 
 func (fr *fireRun) buildToolkit() {
 	p := fr.p
-	// Clone AllowedTools; force-add the always-on delivery + utility tools the
-	// interactive turn includes so a tightly-scoped agent can still deliver an
-	// attachment / tell the time (parity with the dispatch path).
-	toolNames := append([]string(nil), fr.agent.AllowedTools...)
-	if len(toolNames) == 0 {
-		for _, td := range RegisteredChatTools() {
-			toolNames = append(toolNames, td.Name())
-		}
-	} else if !isNoToolsSentinel(toolNames) {
-		has := func(n string) bool {
-			for _, x := range toolNames {
-				if x == n {
-					return true
-				}
-			}
-			return false
-		}
-		for _, n := range append([]string{"workspace"}, frameworkUtilityTools...) {
-			if !has(n) {
-				toolNames = append(toolNames, n)
-			}
-		}
-	}
+	// The dispatch paths' list (dispatchToolNames). This read the raw
+	// registry when the agent allowed nothing in particular, so a scheduled
+	// run got tools the same agent is not offered when talked to.
+	toolNames := dispatchToolNames(fr.agent.AllowedTools)
 	fr.tools, fr.err = GetAgentToolsWithSession(fr.subSess, toolNames...)
 	if fr.err != nil {
 		fr.tools = nil
@@ -1015,6 +999,7 @@ func (fr *fireRun) workForSession() {
 func (fr *fireRun) runLoop() {
 	p := fr.p
 	fr.msgs, fr.gDecline = fr.subTurn.applyInputGuardrail(fr.msgs)
+	fr.buildCheck = newDispatchBuildCheck(fr.agent, fr.subSess)
 	// A scheduled fire reasons on the model the agent chose, as its direct
 	// chats and every dispatched run do (dispatchRouting).
 	firePin, fireRoute := dispatchRouting(fr.ctx, fr.subTurn)
@@ -1092,7 +1077,16 @@ func (fr *fireRun) runLoop() {
 		// What is still running in the conversation, and, on a task's wake,
 		// the finished work this fire delivers.
 		BackgroundWork: backgroundWorkOf(fr.subSess, func() string { return fr.p.Prompt }),
-		PriorTurnWork:  func() []string { return priorTurnWorkFrom(fr.sess.Messages) },
+		// Whether work went to the background and what wait it was given, as
+		// the dispatch paths tell their judges: without them a fire that put a
+		// render in the background read as one that did nothing.
+		Backgrounded:       func() bool { return fr.subSess.Detach.Any() },
+		BackgroundEstimate: func() string { return fr.subSess.Detach.EstimateText() },
+		// An authoring agent's build plan is held to its steps on a schedule
+		// too, as on every dispatch: the run does not finish with steps open.
+		FinishCheck:   fr.buildCheck.finishCheck(),
+		FinishUnmet:   fr.buildCheck.finishUnmet(),
+		PriorTurnWork: func() []string { return priorTurnWorkFrom(fr.sess.Messages) },
 		// And the reports this thread already holds, which on a recurring
 		// schedule are this fire's own earlier cycles: their replies are stored
 		// as ReportFrom cards right here, so a cycle whose job is to report on

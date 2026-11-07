@@ -38,8 +38,10 @@ func TestDispatchAndInteractiveShareTheDefaultPool(t *testing.T) {
 			sites++
 		}
 	}
-	if sites != 2 {
-		t.Errorf("both dispatch sites should fill from the shared pool, found %d", sites)
+	// One site: dispatchToolNames, which every non-interactive run path takes
+	// its list from (TestEveryDispatchPathUsesTheOneToolPool).
+	if sites != 1 {
+		t.Errorf("the one dispatch tool builder should fill from the shared pool, found %d sites", sites)
 	}
 
 	interactive, err := os.ReadFile("runner_tool_catalog.go")
