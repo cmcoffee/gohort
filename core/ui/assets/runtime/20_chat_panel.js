@@ -546,9 +546,6 @@
 
     function openSession(id) {
       currentSessionId = id;
-      // Record the surface for this agent's next open (cortex hero vs a session).
-      var landAg = window.GOHORT_AGENT_ID || '';
-      setLanding(landAg, (id && id === altPinnedSession(landAg)) ? 'cortex' : 'session');
       thread.innerHTML = '';
       history = [];
       // Reset cumulative stats — historical rounds aren't summed

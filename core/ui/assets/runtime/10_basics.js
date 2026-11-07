@@ -4261,44 +4261,14 @@
     }
 
     function renderFormChips(host, f, input) {
-      var valueField = f.chips_value_field || 'value';
       function applyChip(chipObj) {
-        var v = chipObj ? (chipObj[valueField] || '') : '';
+        var v = chipObj ? (chipObj.value || '') : '';
         input.value = v;
         save(f.field, v);
-        // Companion fields — chips_also_set maps {targetField: chipProp}
-        // so a single click can fan a multi-property chip out into
-        // multiple inputs (persona chip → personality + persona_name).
-        if (f.chips_also_set && chipObj) {
-          Object.keys(f.chips_also_set).forEach(function(targetField) {
-            var src = f.chips_also_set[targetField];
-            var newVal = chipObj[src];
-            if (newVal == null) return;
-            var fw = fieldEls[targetField];
-            if (!fw) return;
-            var targetInput = fw.querySelector('input, textarea, select');
-            if (!targetInput) return;
-            targetInput.value = newVal;
-            save(targetField, newVal);
-          });
-        }
       }
-      // Clear chip path — wipes both the primary input and any
-      // companion fields declared via chips_also_set so the form
-      // returns to a fully-empty state on a single click.
       function clearChip() {
         input.value = '';
         save(f.field, '');
-        if (f.chips_also_set) {
-          Object.keys(f.chips_also_set).forEach(function(targetField) {
-            var fw = fieldEls[targetField];
-            if (!fw) return;
-            var targetInput = fw.querySelector('input, textarea, select');
-            if (!targetInput) return;
-            targetInput.value = '';
-            save(targetField, '');
-          });
-        }
       }
       function refresh() {
         host.innerHTML = '';
@@ -4306,121 +4276,21 @@
         fetchJSON(f.chips_source).then(function(items) {
           host.innerHTML = '';
           (items || []).forEach(function(p) {
-            var chip = el('span', {class: 'ui-form-chip', title: p.builtin ? 'Built-in' : 'Click to apply, double-click to delete'},
+            var chip = el('span', {class: 'ui-form-chip', title: p.builtin ? 'Built-in' : 'Click to apply'},
               [p.name || '?']);
             chip.addEventListener('click', function() { applyChip(p); });
-            if (!p.builtin && f.chips_delete_url) {
-              chip.addEventListener('dblclick', async function(ev) {
-                ev.stopPropagation();
-                if (!(await window.uiConfirm('Delete "' + p.name + '"?'))) return;
-                var url = f.chips_delete_url.replace('{id}', encodeURIComponent(p.id || ''));
-                fetch(url, {method: 'DELETE'}).then(refresh);
-              });
-            }
             host.appendChild(chip);
           });
           // Clear chip.
           var clr = el('span', {class: 'ui-form-chip'}, ['Clear']);
           clr.addEventListener('click', clearChip);
           host.appendChild(clr);
-          // + New chip (only if create endpoint set).
-          if (f.chips_create_url) {
-            var add = el('span', {class: 'ui-form-chip ui-form-chip-add'}, [f.chips_add_label || '+ New']);
-            add.addEventListener('click', function() {
-              showFormChipCreate(f, input, refresh);
-            });
-            host.appendChild(add);
-          }
         }).catch(function() {
           host.innerHTML = '';
           host.appendChild(el('span', {class: 'ui-form-chips-loading'}, ['(failed to load)']));
         });
       }
       refresh();
-    }
-
-    function showFormChipCreate(f, targetInput, onSaved) {
-      var valueField = f.chips_value_field || 'value';
-      // Modal overlay rendered in document.body so it isn't clipped
-      // by parent containers.
-      var overlay = el('div', {class: 'ui-form-modal-overlay'});
-      var modal = el('div', {class: 'ui-form-modal'});
-      modal.appendChild(el('div', {class: 'ui-form-modal-h'}, ['New ' + (f.label || 'preset')]));
-      modal.appendChild(el('div', {class: 'ui-form-modal-hint'},
-        ['Type a name (e.g. "Hank Hill"). Click AI Assist to expand into a full prompt, then save.']));
-
-      modal.appendChild(el('label', {class: 'ui-form-label'}, ['Name']));
-      var nameIn = el('input', {type: 'text', class: 'ui-form-input', placeholder: 'e.g. Hank Hill'});
-      modal.appendChild(nameIn);
-
-      modal.appendChild(el('label', {class: 'ui-form-label'}, ['Personality']));
-      var textIn = el('textarea', {class: 'ui-form-textarea', rows: '6',
-        placeholder: 'Type a seed name and click AI Assist below, or write your own.'});
-      modal.appendChild(textIn);
-
-      var actions = el('div', {class: 'ui-form-modal-actions'});
-      var assistBtn = null;
-      if (f.chips_assist_url) {
-        assistBtn = el('button', {class: 'ui-pl-btn secondary'}, ['✨ AI Assist']);
-        assistBtn.addEventListener('click', function() {
-          var seed = nameIn.value.trim() || textIn.value.trim();
-          if (!seed) { showToast('Type a name or seed first.'); return; }
-          var orig = assistBtn.textContent;
-          assistBtn.textContent = 'Generating…';
-          assistBtn.disabled = true;
-          fetch(f.chips_assist_url, {
-            method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({seed: seed}),
-          }).then(function(r) {
-            if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); });
-            return r.text();
-          }).then(function(text) {
-            textIn.value = text;
-          }).catch(function(err) {
-            showToast('AI Assist failed: ' + err.message);
-          }).then(function() {
-            assistBtn.textContent = orig;
-            assistBtn.disabled = false;
-          });
-        });
-        actions.appendChild(assistBtn);
-      }
-      var spacer = el('div', {style: 'flex:1'});
-      actions.appendChild(spacer);
-      var cancelBtn = el('button', {class: 'ui-pl-btn secondary'}, ['Cancel']);
-      cancelBtn.addEventListener('click', function() { overlay.remove(); });
-      actions.appendChild(cancelBtn);
-      var saveBtn = el('button', {class: 'ui-pl-btn primary'}, ['Save']);
-      saveBtn.addEventListener('click', function() {
-        var nm = nameIn.value.trim();
-        var val = textIn.value.trim();
-        if (!nm) { showToast('Name required.'); return; }
-        if (!val) { showToast('Value required (use AI Assist or type your own).'); return; }
-        var body = {name: nm};
-        body[valueField] = val;
-        fetch(f.chips_create_url, {
-          method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify(body),
-        }).then(function(r) {
-          if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); });
-          return r.json().catch(function(){ return null; });
-        }).then(function() {
-          targetInput.value = val;
-          save(f.field, val);
-          overlay.remove();
-          if (onSaved) onSaved();
-        }).catch(function(err) {
-          showToast('Save failed: ' + err.message);
-        });
-      });
-      actions.appendChild(saveBtn);
-      modal.appendChild(actions);
-
-      overlay.appendChild(modal);
-      // No backdrop-click-to-close: a text-selection drag ending on the
-      // backdrop would dismiss mid-copy. Use Cancel to close.
-      document.body.appendChild(overlay);
-      nameIn.focus();
     }
 
     // ✨ Get assistance, in the form's corner: on every wizard, and on any
@@ -6382,92 +6252,8 @@
     return btn;
   };
 
-  // nav_shell — app-shell layout: left rail of nav buttons, a content pane
-  // that swaps to the selected item's body, and an optional header pinned at
-  // the top of the content pane (always visible — e.g. a live activity
-  // strip). Each item body is a plain component, mounted via mountComponent.
-  // The first item is active by default, so the heaviest body (a ChatPanel)
-  // should be first to avoid a hidden initial mount.
-  components.nav_shell = function(cfg, ctx) {
-    // Fill the viewport below the page header so the content pane reaches
-    // the window bottom. --ui-vh / --ui-chrome-h are measured by the runtime
-    // (syncViewport in the epilogue) — the literals are the pre-JS fallback.
-    // Guessing the chrome overflowed the page on a phone, where the header is
-    // taller than 70px, and pushed a hosted composer below the fold.
-    // Embedded shells size to content (capped, internal scroll) since they sit
-    // below a page's header + tabs; the default fills the viewport (app-shell).
-    var shellHeight = cfg.embedded
-      ? 'min-height:320px;max-height:calc(var(--ui-vh, 100dvh) - var(--ui-chrome-h, 70px) - 140px)'
-      : 'height:calc(var(--ui-vh, 100dvh) - var(--ui-chrome-h, 70px));min-height:420px';
-    var outer = el('div', {class: 'ui-navshell' + (cfg.embedded ? ' ui-navshell-embedded' : ''), style: 'display:flex;flex-direction:column;' + shellHeight + ';border:1px solid var(--border, rgba(127,127,127,0.3));border-radius:6px;overflow:hidden'});
-
-    // Optional top control bar — a horizontal row of controls/dials.
-    if (cfg.toolbar && cfg.toolbar.length) {
-      var bar = el('div', {style: 'display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap;padding:0.4rem 0.6rem;border-bottom:1px solid var(--border, rgba(127,127,127,0.3));background:var(--bg-1, rgba(127,127,127,0.06))'});
-      cfg.toolbar.forEach(function(c) { mountComponent(c, bar, ctx); });
-      outer.appendChild(bar);
-    }
-
-    var railRight = (cfg.rail_side === 'right');
-    var body = el('div', {class: 'ui-navshell-body', style: 'display:flex;flex:1;min-height:0'});
-    var railBorder = railRight ? 'border-left' : 'border-right';
-    // Classed so the stylesheet can reflow the rail into a horizontal strip on
-    // a phone — a 190px column leaves almost nothing for the content pane on a
-    // 390px-wide screen. The layout stays inline for desktop; the mobile rules
-    // in runtime.css override with !important because of it.
-    var rail = el('div', {class: 'ui-navshell-rail', style: 'display:flex;flex-direction:column;gap:0.25rem;padding:0.5rem;min-width:190px;' + railBorder + ':1px solid var(--border, rgba(127,127,127,0.3));background:var(--bg-1, rgba(127,127,127,0.06));overflow:auto'});
-    var right = el('div', {class: 'ui-navshell-right', style: 'flex:1;display:flex;flex-direction:column;min-width:0'});
-
-    // Pinned activity strip — always visible regardless of selection.
-    if (cfg.header) {
-      var hdr = el('div', {class: 'ui-navshell-header', style: 'border-bottom:1px solid var(--border, rgba(127,127,127,0.3));padding:0.4rem 0.6rem;background:var(--bg-1, rgba(127,127,127,0.06));max-height:34vh;overflow:auto'});
-      mountComponent(cfg.header, hdr, ctx);
-      right.appendChild(hdr);
-    }
-
-    var content = el('div', {class: 'ui-navshell-content', style: 'flex:1;padding:0.75rem;overflow:auto;min-width:0'});
-    right.appendChild(content);
-
-    var entries = [];
-    function activate(idx) {
-      entries.forEach(function(e, i) {
-        var on = (i === idx);
-        e.panel.style.display = on ? '' : 'none';
-        e.btn.style.background = on ? 'var(--bg-2, rgba(127,127,127,0.18))' : 'transparent';
-        e.btn.style.fontWeight = on ? '600' : '400';
-      });
-    }
-
-    (cfg.items || []).forEach(function(item, i) {
-      var panel = el('div', {style: 'display:none;height:100%'});
-      mountComponent(item.body, panel, ctx);
-      content.appendChild(panel);
-
-      var btn = el('button', {
-        type: 'button',
-        class: 'ui-navshell-item',
-        style: 'text-align:left;padding:0.5rem 0.7rem;border:none;border-radius:var(--btn-radius, 6px);cursor:pointer;font:inherit;color:var(--text, inherit);background:transparent;width:100%',
-        onclick: function() { activate(i); },
-      }, [item.label || ('Item ' + (i + 1))]);
-      rail.appendChild(btn);
-
-      entries.push({btn: btn, panel: panel});
-    });
-
-    if (railRight) {
-      body.appendChild(right);
-      body.appendChild(rail);
-    } else {
-      body.appendChild(rail);
-      body.appendChild(right);
-    }
-    outer.appendChild(body);
-    if (entries.length) activate(0);
-    return outer;
-  };
-
   // toolbar — a standalone horizontal row of action buttons (ToolbarAction
-  // shape). Lets any page or nav_shell host a reusable control bar; client
+  // shape). Lets any page host a reusable control bar; client
   // actions dispatch via window.UIClientActions (the same registry the panel
   // toolbars use), so a specialized seed agent's config controls work here.
   components.toolbar = function(cfg) {

@@ -274,14 +274,12 @@ select:-webkit-autofill {
 @media (max-width: 700px) {
   /* Descendant match, not child: a panel may be mounted bare on the root
    * (NoChrome section), inside a .ui-section-inner, or inside a tab panel. */
-  #ui-root:has(.ui-chat, .ui-tw, .ui-wb, .ui-frame-fill,
-               .ui-navshell:not(.ui-navshell-embedded)):not(:has(.ui-agent)) {
+  #ui-root:has(.ui-chat, .ui-tw, .ui-wb, .ui-frame-fill):not(:has(.ui-agent)) {
     --page-pad-top: calc(0.35rem + env(safe-area-inset-top, 0px));
     padding-bottom: 0;
   }
   /* The same, under a header: it clears the notch, so the root does not. */
-  .ui-page-header + #ui-root:has(.ui-chat, .ui-tw, .ui-wb, .ui-frame-fill,
-               .ui-navshell:not(.ui-navshell-embedded)):not(:has(.ui-agent)) {
+  .ui-page-header + #ui-root:has(.ui-chat, .ui-tw, .ui-wb, .ui-frame-fill):not(:has(.ui-agent)) {
     --page-pad-top: 0.35rem;
   }
 }
@@ -3052,7 +3050,6 @@ input[type="checkbox"].ui-input { width: auto; }
   user-select: none;
 }
 .ui-form-chip:hover { color: var(--text); border-color: var(--accent); }
-.ui-form-chip-add { color: var(--accent); border-color: var(--accent); }
 .ui-form-chips-loading { color: var(--text-mute); font-size: var(--fs-2xs); padding: 0.2rem 0.55rem; }
 /* Inline static presets — small click-to-fill chips. Slightly more
  * compact than ui-form-chip since presets are reference fills, not
@@ -7024,57 +7021,6 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
  * look needs no stylesheet at all. These classes exist purely so the phone
  * layout can override it — hence the !important, which is the only way to
  * beat an inline style. */
-@media (max-width: 700px) {
-  /* A 190px rail on a 390px-wide screen leaves the content pane unusable.
-   * Reflow the rail into a horizontal scrolling strip above the content, the
-   * standard phone pattern for a small fixed set of destinations. */
-  .ui-navshell-body { flex-direction: column !important; }
-  .ui-navshell-rail {
-    flex-direction: row !important;
-    min-width: 0 !important;
-    flex: 0 0 auto !important;
-    gap: 0.2rem !important;
-    padding: 0.35rem 0.4rem !important;
-    /* The rail's side border made sense as a column divider; as a top strip it
-     * needs a bottom rule instead, on whichever side rail_side put it. */
-    border-right: 0 !important;
-    border-left: 0 !important;
-    border-bottom: 1px solid var(--border) !important;
-    overflow-x: auto !important;
-    overflow-y: hidden !important;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-  }
-  .ui-navshell-rail::-webkit-scrollbar { height: 0; }
-  /* Buttons were full-width column rows; as strip tabs they size to their
-   * label and take a button's height, as the other tab rows do. */
-  .ui-navshell-item {
-    width: auto !important;
-    flex: 0 0 auto !important;
-    min-height: var(--btn-h);
-    white-space: nowrap;
-    text-align: center !important;
-    -webkit-tap-highlight-color: transparent;
-  }
-  /* rail_side:"right" reverses the DOM order to put the rail second. In a
-   * column that would drop the strip BELOW the content; pull it back to the
-   * top so both variants read the same on a phone. */
-  .ui-navshell-body > .ui-navshell-rail { order: -1; }
-  /* The shell owns the full screen here, so its rounded card edges just clip
-   * content against the curve at the viewport boundary. */
-  .ui-navshell:not(.ui-navshell-embedded) {
-    border-left: 0; border-right: 0; border-radius: 0;
-  }
-  .ui-navshell-content { padding: 0.5rem !important; }
-  /* The shell now reaches the bottom of the screen (the root's gutter is gone),
-   * so something has to clear the home indicator. A hosted chat or agent panel
-   * pads its own composer for it — anything else gets the inset here, so the
-   * two never stack up into a double gap. */
-  .ui-navshell-content:not(:has(.ui-chat, .ui-agent)) {
-    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px)) !important;
-  }
-}
-
 /* A toast: a short note at the foot of the screen, above every modal layer
  * (dialogs start at 1000 and climb by 10 as they stack). Centred by its
  * edges rather than by left:50% and a shift back, which caps a box at half

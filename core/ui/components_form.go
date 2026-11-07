@@ -599,32 +599,9 @@ type FormField struct {
 	Required bool `json:"required,omitempty"`
 
 	// Chips — when ChipsSource is set, the field renders with a row
-	// of clickable preset chips above the input. Each chip applies a
-	// preset value to the field. Designed for things like persona
-	// pickers where users want fast access to saved presets plus
-	// optional AI-assisted creation of new ones.
-	ChipsSource     string `json:"chips_source,omitempty"`      // GET → [{id, name, <value-field>, builtin?}]
-	ChipsValueField string `json:"chips_value_field,omitempty"` // field on each chip whose value goes into the input (default "value")
-	// ChipsCreate enables "+ New" affordance. POSTed body =
-	// {name, <value-field>: "..."}. Server returns updated list.
-	ChipsCreateURL string `json:"chips_create_url,omitempty"`
-	// ChipsDeleteURL deletes a custom chip. {id} substituted at click.
-	// Only fires for non-builtin chips (double-click to delete).
-	ChipsDeleteURL string `json:"chips_delete_url,omitempty"`
-	// ChipsAssistURL takes a seed (POST {seed}) and returns plain
-	// text — used for the "AI Assist" button inside the create dialog.
-	ChipsAssistURL string `json:"chips_assist_url,omitempty"`
-	// ChipsAddLabel — text on the "+ New" chip; defaults to "+ New".
-	ChipsAddLabel string `json:"chips_add_label,omitempty"`
-	// ChipsAlsoSet — additional form fields to populate when a chip
-	// is picked. Map keys name target form fields; values name the
-	// property on the chip record to read. Example: persona chips
-	// carry both {personality, name}; the personality chip-picker
-	// declares ChipsAlsoSet: {"persona_name": "name"} so picking a
-	// persona auto-fills the separate Persona name field with the
-	// persona's name. Generic — any chip with multiple useful
-	// fields can fan them out into companion form inputs.
-	ChipsAlsoSet map[string]string `json:"chips_also_set,omitempty"`
+	// of clickable preset chips above the input. Each chip applies its
+	// value to the field; Clear empties it.
+	ChipsSource string `json:"chips_source,omitempty"` // GET → [{name, value, builtin?}]
 
 	// AssistPrompt tells the assistant what THIS field is for, in the
 	// app's own words: who it should write as, what the value is used

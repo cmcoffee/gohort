@@ -191,13 +191,7 @@ func TestFullHeightPanelsMeasureTheChrome(t *testing.T) {
 	}
 }
 
-func TestNavShellMeasuresTheChrome(t *testing.T) {
-	// nav_shell sets its height in an inline style from JS, so the CSS scan
-	// above can't see it. It's the app-shell surface (the Operator), the one
-	// most likely to host a composer, so check it directly.
-	if !strings.Contains(runtimeJS, "var(--ui-chrome-h") {
-		t.Fatal("nav_shell no longer sizes itself from the measured chrome")
-	}
+func TestTheRuntimePublishesTheChrome(t *testing.T) {
 	// The runtime must actually publish what everything else reads.
 	for _, prop := range []string{"--ui-vh", "--ui-chrome-h"} {
 		if !strings.Contains(runtimeJS, "setProperty('"+prop+"'") {
