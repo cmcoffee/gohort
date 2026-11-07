@@ -470,14 +470,14 @@ func TestTheBackendListSharesTheConnectorActions(t *testing.T) {
 	for _, act := range tbl.RowActions {
 		labels = append(labels, act.Label)
 	}
-	if got := strings.Join(labels, ","); got != "Make default,Offer to agents,Stop offering,Stop using,Update from template,Edit,✨ Edit,✨ Fix,Settings,Test" {
+	if got := strings.Join(labels, ","); got != "Make default,Offer to agents,Stop offering,Stop using,Update from template,Edit setup,✨ Edit,✨ Fix,Settings,Test" {
 		t.Errorf("row actions = %s", got)
 	}
 	// The spec editor is in the row's Advanced menu, not beside Settings,
 	// where it read as the place to change a connector's key and model.
 	for _, act := range tbl.RowActions {
-		if act.Label == "✨ Edit" && act.Group != "Advanced" {
-			t.Errorf("the spec editor is in group %q, want Advanced", act.Group)
+		if (act.Label == "✨ Edit" || act.Label == "Edit setup") && act.Group != "Advanced" {
+			t.Errorf("the editor %q is in group %q, want Advanced", act.Label, act.Group)
 		}
 		if act.Label == "Settings" && act.Group != "" {
 			t.Errorf("Settings is tucked into %q", act.Group)

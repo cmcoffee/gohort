@@ -452,11 +452,12 @@ func connectorSettingsAction() ui.RowAction {
 }
 
 // connectorEditRowActions are a connector row's one editor, by the flags
-// connectorEditors sets: Edit for its setup form, Edit for its spec, or Fix.
-// The spec editor sits in the row's Advanced menu: it changes how the
-// connector calls its service, and beside Settings (its key and model) it
-// read as the place to change them. Fix stays in view: it shows only when
-// the connector is broken, which is when it is wanted.
+// connectorEditors sets: Edit setup for its setup form (ComfyUI, A1111), Edit
+// for its spec, or Fix. Either editor sits in the row's Advanced menu: each
+// changes how the connector calls its service, and beside Settings (its key
+// and model) a plain Edit read as the place to change them. Every row keeps
+// Settings as its obvious button. Fix stays in view: it shows only when the
+// connector is broken, which is when it is wanted.
 func connectorEditRowActions() []ui.RowAction {
 	spec := connectorEditAction("Edit", "edit_spec", "What should change in how this service is called, and why?")
 	spec.Group = "Advanced"
@@ -466,7 +467,7 @@ func connectorEditRowActions() []ui.RowAction {
 		{Type: "button", Label: "Update from template", Method: "POST", PostTo: "api/connectors/update-template?name={name}",
 			OnlyIf: "template_update", Variant: "primary", Invalidate: connectorListSources,
 			Confirm: "Update this connector to what its template writes now? Its settings and key are kept. A change made to its spec by hand (Advanced, ✨ Edit) is replaced."},
-		{Type: "button", Label: "Edit", Method: "client", PostTo: "configure_backend", OnlyIf: "edit_form"},
+		{Type: "button", Label: "Edit setup", Method: "client", PostTo: "configure_backend", OnlyIf: "edit_form", Group: "Advanced"},
 		spec,
 		connectorEditAction("Fix", "needs_fix", "Why is this service failing, and what would fix it?"),
 	}
