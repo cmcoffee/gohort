@@ -514,20 +514,20 @@ func (s stubWebApp) WebDesc() string                                  { return "
 func (s stubWebApp) RegisterRoutes(mux *http.ServeMux, prefix string) {}
 
 // TestAllWebAppsSpansEveryRegistry. Only the admin panel calls RegisterWebApp;
-// every other app arrives as an App or an Agent and is picked up because it
+// every other app arrives as an App and is picked up because it
 // implements the interface. Anything reading RegisteredWebApps() alone
 // therefore sees ONE app and believes that is the deployment — which is what
 // the admin Apps switchboard did: it listed what it could find, excluded the
 // admin panel as undisablable, and rendered an empty table under a heading
 // promising one row per app.
 func TestAllWebAppsSpansEveryRegistry(t *testing.T) {
-	savedWeb, savedApps, savedAgents := registeredWebApps, registeredApps, registeredAgents
-	t.Cleanup(func() { registeredWebApps, registeredApps, registeredAgents = savedWeb, savedApps, savedAgents })
-	registeredWebApps, registeredApps, registeredAgents = nil, nil, nil
+	savedWeb, savedApps := registeredWebApps, registeredApps
+	t.Cleanup(func() { registeredWebApps, registeredApps = savedWeb, savedApps })
+	registeredWebApps, registeredApps = nil, nil
 
 	RegisterWebApp(stubWebApp{path: "/admin"})
 	RegisterApp(stubWebApp{path: "/research"})
-	RegisterAgent(stubWebApp{path: "/debate"})
+	RegisterApp(stubWebApp{path: "/debate"})
 	// A component registered twice is one app, not two rows.
 	RegisterApp(stubWebApp{path: "/research"})
 
@@ -537,7 +537,7 @@ func TestAllWebAppsSpansEveryRegistry(t *testing.T) {
 	}
 	want := []string{"/admin", "/research", "/debate"}
 	if len(paths) != len(want) {
-		t.Fatalf("AllWebApps returned %v, want the three registries deduped: %v", paths, want)
+		t.Fatalf("AllWebApps returned %v, want both registries deduped: %v", paths, want)
 	}
 	for i, w := range want {
 		if paths[i] != w {
@@ -557,9 +557,9 @@ func (a everyUserApp) WebEveryUser() bool                    { return true }
 // An app that is every user's own is reached without a grant; any other app
 // still needs one.
 func TestAnAppForEveryUserNeedsNoGrant(t *testing.T) {
-	savedWeb, savedApps, savedAgents := registeredWebApps, registeredApps, registeredAgents
-	t.Cleanup(func() { registeredWebApps, registeredApps, registeredAgents = savedWeb, savedApps, savedAgents })
-	registeredWebApps, registeredApps, registeredAgents = nil, nil, nil
+	savedWeb, savedApps := registeredWebApps, registeredApps
+	t.Cleanup(func() { registeredWebApps, registeredApps = savedWeb, savedApps })
+	registeredWebApps, registeredApps = nil, nil
 	RegisterWebApp(everyUserApp{path: "/account"})
 	RegisterWebApp(&mockHubApp{path: "/research", label: "Research"})
 	if !appForEveryUser("/account") {

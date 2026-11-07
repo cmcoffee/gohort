@@ -32,7 +32,7 @@ import (
 const maxExportBytes = 20 * 1024 * 1024
 
 // userFormatsTable holds per-user runtime-defined formats, keyed
-// owner+":"+name. GoGen is `json:"-"` so only script formats persist.
+// owner+":"+name.
 const userFormatsTable = "export_user_formats"
 
 // validFormatName restricts format + interpreter names to identifier
@@ -108,11 +108,6 @@ func handleFormats(_ map[string]any, sess *ToolSession) (string, error) {
 	b.WriteString("Formats:\n")
 	for _, j := range flows.Exports() {
 		fmt.Fprintf(&b, "- %s (.%s), %s\n    data: %s\n", j.Gives, j.Gives, j.Title, dataHint(j))
-	}
-	apps := ListExportFormats()
-	sort.Slice(apps, func(i, k int) bool { return apps[i].Name < apps[k].Name })
-	for _, f := range apps {
-		fmt.Fprintf(&b, "- %s (%s), %s\n    data: %s\n", f.Name, f.Ext, f.Desc, f.InputHint)
 	}
 	if user := listUserFormats(sess); len(user) > 0 {
 		b.WriteString("\nYour defined formats:\n")
@@ -230,7 +225,7 @@ func handleDefine(args map[string]any, sess *ToolSession) (string, error) {
 	if !validFormatName.MatchString(name) {
 		return "", Error("invalid format name: use lowercase letters, digits, _ or - (max 40 chars)")
 	}
-	if _, ok := LookupExportFormat(name); ok || isDeploymentFormat(name) {
+	if isDeploymentFormat(name) {
 		return "", Error("cannot define " + name + ": it is one of this deployment's formats, so it already exists")
 	}
 	script := StringArg(args, "script")
@@ -337,10 +332,6 @@ func checkPyRequires(sess *ToolSession, specs []string) error {
 }
 
 func resolveFormat(sess *ToolSession, name string) (*ExportFormat, error) {
-	// A format an app registered in code.
-	if f, ok := LookupExportFormat(name); ok {
-		return f, nil
-	}
 	if f, ok := loadUserFormat(sess, name); ok {
 		return f, nil
 	}

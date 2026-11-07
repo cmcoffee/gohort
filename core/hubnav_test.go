@@ -60,9 +60,9 @@ func TestHubNavIncludesRegisterAppMembers(t *testing.T) {
 // tabs led to the 503. Same reasoning the card gate already states: a tab that
 // leads nowhere is worse than an absent one.
 func TestASwitchedOffAppKeepsNoTab(t *testing.T) {
-	savedWeb, savedApps, savedAgents := registeredWebApps, registeredApps, registeredAgents
-	t.Cleanup(func() { registeredWebApps, registeredApps, registeredAgents = savedWeb, savedApps, savedAgents })
-	registeredWebApps, registeredApps, registeredAgents = nil, nil, nil
+	savedWeb, savedApps := registeredWebApps, registeredApps
+	t.Cleanup(func() { registeredWebApps, registeredApps = savedWeb, savedApps })
+	registeredWebApps, registeredApps = nil, nil
 	RegisterApp(&mockHubApp{path: "/bridges", label: "Bridges", order: 2})
 	RegisterApp(&mockHubApp{path: "/knowledge", label: "Knowledge", order: 1})
 

@@ -193,11 +193,11 @@ func RegisterWebApp(app WebApp) {
 }
 
 // AllWebApps is every web-capable component this deployment ships, deduped by
-// mount path: explicitly registered WebApps, plus any registered App or Agent
-// that implements the interface.
+// mount path: explicitly registered WebApps, plus any registered App that
+// implements the interface.
 //
-// Three registries, because an app may arrive as any of the three, and only
-// the admin panel uses RegisterWebApp directly. Anything that reads that one
+// Two registries, because an app may arrive as either, and only the admin
+// panel uses RegisterWebApp directly. Anything that reads that one
 // registry alone therefore sees exactly one app and believes that is the
 // deployment — which is what the Apps-tab switchboard did: it listed every app
 // it could find, excluded the admin panel as undisablable, and rendered an
@@ -219,11 +219,6 @@ func AllWebApps() []WebApp {
 		add(wa)
 	}
 	for _, a := range RegisteredApps() {
-		if wa, ok := a.(WebApp); ok {
-			add(wa)
-		}
-	}
-	for _, a := range RegisteredAgents() {
 		if wa, ok := a.(WebApp); ok {
 			add(wa)
 		}

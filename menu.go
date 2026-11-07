@@ -19,12 +19,11 @@ var command menu
 
 // menu represents a menu structure for managing and executing agents.
 type menu struct {
-	mutex        sync.RWMutex
-	text         *tabwriter.Writer
-	entries      map[string]*menu_elem
-	agents       []string
-	apps         []string
-	admin_agents []string
+	mutex   sync.RWMutex
+	text    *tabwriter.Writer
+	entries map[string]*menu_elem
+	agents  []string
+	apps    []string
 }
 
 // cmd_text writes a command and its description to the menu text.
@@ -35,7 +34,6 @@ func (m *menu) cmd_text(cmd string, desc string) {
 const (
 	_normal_agent = 1 << iota
 	_app
-	_admin_agent
 )
 
 // menu_elem represents a single menu entry.
@@ -46,16 +44,6 @@ type menu_elem struct {
 	t_flag uint
 	agent  Agent
 	flags  *FlagSet
-}
-
-// RegisterAdmin registers an admin agent with the menu.
-func (m *menu) RegisterAdmin(agent Agent) {
-	m.register(agent.Name(), _admin_agent, agent)
-}
-
-// Register registers a new agent with the menu.
-func (m *menu) Register(agent Agent) {
-	m.register(agent.Name(), _normal_agent, agent)
 }
 
 // RegisterApp registers an app with the menu.
@@ -194,8 +182,6 @@ func (m *menu) register(name string, t_flag uint, agent Agent) {
 	my_entry.flags.BoolVar(&global.snoop, "snoop", NONE)
 
 	switch t_flag {
-	case _admin_agent:
-		m.admin_agents = append(m.admin_agents, name)
 	case _app:
 		m.apps = append(m.apps, name)
 	default:
@@ -272,7 +258,6 @@ func (m *menu) Show() {
 
 	m.showAgentSection("Agents:\n", m.agents)
 	m.showAgentSection("Apps:\n", m.apps)
-	m.showAgentSection("Admin:\n", m.admin_agents)
 
 	os.Stderr.Write([]byte("\nCommands:\n"))
 	os.Stderr.Write([]byte("  serve [addr] .......... \"Start the dashboard daemon (default :8080).\"\n"))

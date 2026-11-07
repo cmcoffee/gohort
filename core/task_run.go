@@ -310,32 +310,6 @@ func taskDetachThreshold(sess *ToolSession) time.Duration {
 	return TuneDuration("tune_task_detach_threshold")
 }
 
-// ShouldDetach reports whether this call should run detached, and how long it
-// is expected to take. All three conditions have to hold: a host that can run
-// tasks, a tool that estimates its own duration, and an estimate past the
-// threshold.
-func ShouldDetach(ct ChatTool, args map[string]any, sess *ToolSession) (time.Duration, bool) {
-	if TaskRunnerFunc == nil || sess == nil {
-		return 0, false
-	}
-	d, ok := ct.(DetachableTool)
-	if !ok {
-		return 0, false
-	}
-	expected := d.ExpectedDuration(args, sess)
-	// A tool that says this work is background work outranks the clock. See
-	// AlwaysDetachTool — the estimate can be twenty seconds and the answer
-	// still be yes, because the cost being avoided is a blocked conversation,
-	// not a long one.
-	if a, ok := ct.(AlwaysDetachTool); ok && a.AlwaysDetach(args, sess) {
-		return expected, true
-	}
-	if expected <= 0 {
-		return 0, false
-	}
-	return expected, expected >= taskDetachThreshold(sess)
-}
-
 // frameworkResultMark tags a tool result the FRAMEWORK wrote rather than one the
 // tool returned — today, the notice a detached call hands back in place of its
 // result. It is stripped before the model ever sees it (safeInvoke, and the

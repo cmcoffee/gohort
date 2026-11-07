@@ -11,7 +11,7 @@ import (
 // fragment carrying any client actions the section's controls need. It lets an
 // app whose configuration is FRAMEWORK tuning rather than agent behavior — e.g.
 // the prompt-block editor — live inside the admin UI WITHOUT admin importing the
-// app. The app self-registers here (init, like RegisterApp / RegisterAdminAgent)
+// app. The app self-registers here (init, like RegisterApp)
 // and the admin page reads the registry when it assembles its tabs. The section
 // carries its own Group (the tab it lands under) and Wide flag.
 type AdminSectionEntry struct {

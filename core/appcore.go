@@ -141,6 +141,8 @@ func (T *AppCore) SetSystemPrompt(prompt string) {
 }
 
 // SetTools sets the tool names to resolve from the registry when Run() is called.
+//
+// Deprecated: only Run reads it, and Run is deprecated. Removed in 0.10.
 func (T *AppCore) SetTools(names ...string) {
 	T.tools = names
 }
@@ -184,6 +186,8 @@ func (T *AppCore) LeadDenied() bool { return T.NoLead && !AllLLMsPrivate() }
 // fall back to a real chat call with a generous 5-minute timeout, since
 // that call may have to wait behind an in-flight long-running request
 // and a short timeout would produce false negatives under load.
+//
+// Deprecated: no caller left. Removed in 0.10.
 func (T *AppCore) PingLLM(ctx context.Context) error {
 	if T.LLM == nil {
 		return fmt.Errorf("LLM not configured")
@@ -210,6 +214,8 @@ func (T *AppCore) PingLLM(ctx context.Context) error {
 // PingLeadLLM performs a quick connectivity check against the lead LLM.
 // If no lead LLM is configured, returns nil (the primary handles fallback).
 // Returns nil immediately when NoLead is set — no probe is sent.
+//
+// Deprecated: no caller left. Removed in 0.10.
 func (T *AppCore) PingLeadLLM(ctx context.Context) error {
 	if T.LeadDenied() || T.LeadLLM == nil {
 		return nil

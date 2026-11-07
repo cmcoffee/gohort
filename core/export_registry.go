@@ -1,16 +1,10 @@
-// Export format registry: the formats an app or an agent defines at
-// runtime, beyond the export jobs every deployment has (PDF, Word,
-// OpenDocument, Excel, PowerPoint: core/flows, listed and adaptable under
-// Admin > Services > System Hooks). A format here is data + a
-// generator; the registry maps its name to the generator that turns a JSON
-// payload into file bytes.
-//
-// Two generator kinds share one execution path (RunExportFormat):
-//
-//   - Go (GoGen != nil): in-process.
-//   - Sandboxed script (Interp + Script): runs under bwrap via
-//     RunSandboxedScript, with PyRequires provisioned host-side by
-//     EnsurePyDeps first. Every format an agent defines is one.
+// Export formats an agent defines at runtime, beyond the export jobs every
+// deployment has (PDF, Word, OpenDocument, Excel, PowerPoint: core/flows,
+// listed and adaptable under Admin > Services > System Hooks). A format is
+// data + a sandboxed script generator that turns a JSON payload into file
+// bytes: Interp + Script run under bwrap via RunSandboxedScript, with
+// PyRequires provisioned host-side by EnsurePyDeps first. The formats
+// themselves are stored per user by tools/export.
 //
 // The generator contract for script formats is deliberately tiny so it
 // composes with anything: read the ExportInput JSON on stdin, write the
@@ -25,7 +19,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -54,50 +47,17 @@ type ExportFormat struct {
 	Desc        string   // one-line, shown to the LLM in the format list
 	InputHint   string   // documents the expected `data` shape
 	PyRequires  []string // pip specs provisioned before a script run
-	Interp      string   // "python3" etc.; "" => Go built-in (GoGen)
-	Script      string   // generator body for script formats
-	UserDefined bool     // true for app/LLM-registered formats
-
-	// GoGen is the in-process generator for built-in Go formats. When
-	// set, Interp/Script/PyRequires are ignored.
-	GoGen func(in ExportInput) ([]byte, error) `json:"-"`
+	Interp      string   // "python3" etc.
+	Script      string   // generator body
+	UserDefined bool     // true for formats an agent defined
 }
 
-var (
-	exportRegistryMu sync.RWMutex
-	exportRegistry   = map[string]*ExportFormat{}
-)
-
-// LookupExportFormat returns a registered built-in/app format by name.
-func LookupExportFormat(name string) (*ExportFormat, bool) {
-	exportRegistryMu.RLock()
-	defer exportRegistryMu.RUnlock()
-	f, ok := exportRegistry[strings.TrimSpace(name)]
-	return f, ok
-}
-
-// ListExportFormats returns all registered built-in/app formats.
-func ListExportFormats() []*ExportFormat {
-	exportRegistryMu.RLock()
-	defer exportRegistryMu.RUnlock()
-	out := make([]*ExportFormat, 0, len(exportRegistry))
-	for _, f := range exportRegistry {
-		out = append(out, f)
-	}
-	return out
-}
-
-// RunExportFormat executes a format (built-in OR user-defined — the
-// caller supplies the resolved *ExportFormat) against the given input
-// and returns the generated file bytes. For script formats it
-// provisions PyRequires host-side, runs the generator under the sandbox,
-// and decodes the base64 marker line.
+// RunExportFormat executes a format against the given input and returns
+// the generated file bytes: it provisions PyRequires host-side, runs the
+// generator under the sandbox, and decodes the base64 marker line.
 func RunExportFormat(ctx context.Context, f *ExportFormat, in ExportInput) ([]byte, error) {
 	if f == nil {
 		return nil, Error("export: nil format")
-	}
-	if f.GoGen != nil {
-		return f.GoGen(in)
 	}
 	if strings.TrimSpace(f.Interp) == "" || strings.TrimSpace(f.Script) == "" {
 		return nil, Error("export: format " + f.Name + " has no generator")

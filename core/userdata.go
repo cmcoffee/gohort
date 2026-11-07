@@ -183,7 +183,7 @@ func dropUserScopes(uid string) int {
 		n++
 	}
 	drop(RootDB)
-	for _, a := range append(append([]Agent(nil), RegisteredAgents()...), RegisteredApps()...) {
+	for _, a := range RegisteredApps() {
 		if c := a.Get(); c != nil {
 			drop(c.DB)
 		}

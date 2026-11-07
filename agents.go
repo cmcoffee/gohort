@@ -40,15 +40,9 @@ import (
 	_ "github.com/cmcoffee/gohort/apps/servitor"
 )
 
-// loadAgents drains the core agent registry and registers agents and apps with the command menu.
+// loadAgents registers every app with the command menu.
 func loadAgents() {
-	for _, a := range RegisteredAgents() {
-		command.Register(a)
-	}
 	for _, a := range RegisteredApps() {
 		command.RegisterApp(a)
-	}
-	for _, a := range RegisteredAdminAgents() {
-		command.RegisterAdmin(a)
 	}
 }

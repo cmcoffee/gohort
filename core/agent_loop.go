@@ -224,6 +224,8 @@ func countBatchDupes(pairs [][2]int, canon int) int {
 // Run is a convenience method that resolves tools from SetTools(), uses the
 // stored system prompt, and applies MaxRounds, then calls RunAgentLoop.
 // Additional ChatOptions can be passed for per-call settings like WithMaxTokens.
+//
+// Deprecated: no caller left; build an AgentLoopConfig and call RunAgentLoop. Removed in 0.10.
 func (T *AppCore) Run(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, []Message, error) {
 	if err := T.RequireLLM(); err != nil {
 		return nil, messages, err

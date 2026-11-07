@@ -219,11 +219,11 @@ func TestAToolCanDeclareItsWorkBackgroundWork(t *testing.T) {
 
 	sess := &ToolSession{}
 	quick := &fakeAlwaysDetachTool{expected: 2 * time.Second, always: true}
-	if _, detach := ShouldDetach(quick, nil, sess); !detach {
+	if detach := shouldDetach(quick, nil, sess); !detach {
 		t.Error("a tool that declares background work must detach on a two-second estimate")
 	}
 	quick.always = false
-	if _, detach := ShouldDetach(quick, nil, sess); detach {
+	if detach := shouldDetach(quick, nil, sess); detach {
 		t.Error("with the declaration off, the duration rule must decide again")
 	}
 }
@@ -280,10 +280,10 @@ func TestAMediumCallDetachesOnAChannelAndNotInChat(t *testing.T) {
 	// Between the two thresholds: longer than a texter should wait in silence,
 	// shorter than a watched chat bothers to detach for.
 	tool := &fakeAlwaysDetachTool{expected: 90 * time.Second}
-	if _, detach := ShouldDetach(tool, nil, &ToolSession{}); detach {
+	if detach := shouldDetach(tool, nil, &ToolSession{}); detach {
 		t.Error("a watched chat can show 90s of work happening — no need to detach")
 	}
-	if _, detach := ShouldDetach(tool, nil, &ToolSession{ChannelChatID: "c"}); !detach {
+	if detach := shouldDetach(tool, nil, &ToolSession{ChannelChatID: "c"}); !detach {
 		t.Error("90s of silence on a text thread is an assistant that looks gone")
 	}
 }

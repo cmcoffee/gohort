@@ -126,52 +126,45 @@ func statusSink(status func(string)) PipelineSink {
 	}
 }
 
-// RunPipelineDefSyncWithSink is the streaming entry point: same execution as
-// RunPipelineDefSync, but progress arrives as typed events rather than
-// pre-formatted strings.
+// The five Run* entry points below predate PipelineHooks and have no caller
+// left. They stay through 0.9 under the public-surface deprecation rule
+// (core/ui/AUTHORING.md) and go in 0.10.
+
+// RunPipelineDefSyncWithSink runs a pipeline with typed progress events.
+//
+// Deprecated: use RunPipelineDefHooks. Removed in 0.10.
 func (T *AppCore) RunPipelineDefSyncWithSink(ctx context.Context, def PipelineDef, input string, dispatch PipelineDispatch, sink PipelineSink, inheritedTools []AgentToolDef) (string, error) {
-	return T.executePipelineDefSink(ctx, def, input, dispatch, sink, inheritedTools)
+	out, _, err := T.executePipelineHooks(ctx, def, input, nil, sink, PipelineHooks{Dispatch: dispatch, Tools: inheritedTools})
+	return out, err
 }
 
+// RunPipelineDefSync runs a pipeline with progress as status lines.
+//
+// Deprecated: use RunPipelineDefHooks. Removed in 0.10.
 func (T *AppCore) RunPipelineDefSync(ctx context.Context, def PipelineDef, input string, dispatch PipelineDispatch, status func(string)) (string, error) {
 	return T.executePipelineDef(ctx, def, input, dispatch, status, nil)
 }
 
-// RunPipelineDefSyncWithTools is the tools-aware variant. inheritedTools
-// is the calling context's tool catalog (typically an agent's resolved
-// worker pool). Worker stages whose Tools field is non-empty use those
-// specific tools (overrides inherited). Worker stages with an empty
-// Tools field fall back to inheritedTools — letting workers actually
-// fetch/search via the calling agent's tools without per-stage config.
-// When both are empty, the worker runs in the historic tool-less mode.
+// RunPipelineDefSyncWithTools is RunPipelineDefSync with the calling
+// context's tool catalog, used by worker stages that name no tools.
+//
+// Deprecated: use RunPipelineDefHooks with PipelineHooks.Tools. Removed in 0.10.
 func (T *AppCore) RunPipelineDefSyncWithTools(ctx context.Context, def PipelineDef, input string, dispatch PipelineDispatch, status func(string), inheritedTools []AgentToolDef) (string, error) {
 	return T.executePipelineDef(ctx, def, input, dispatch, status, inheritedTools)
 }
 
-// RunPipelineDefAsync compiles a pipeline definition into a
-// PipelineWork and runs it through RunPipeline (queue, slot, session
-// lifecycle, notification, cleanup). onResult, if set, receives the
-// final output when the pipeline completes — the caller persists it /
-// delivers it. Returns the pipeline ID immediately.
-// RunPipelineDefSyncFields is RunPipelineDefSyncWithTools plus the declared
-// fields behind the text it returns.
+// RunPipelineDefSyncFields is RunPipelineDefSyncWithTools plus the fields
+// the final stage declared.
 //
-// A pipeline whose final stage declared an Output has already produced a
-// validated, typed result; a caller that wants those values should not have
-// to ask a model to read them back out of the text. That second call is what
-// this exists to avoid (see the machine's pipeline phase, which otherwise
-// pays for a shaping call to recover a shape the pipeline already had).
-//
-// Returns nil fields when the final stage declared nothing, which is not an
-// error: a prose pipeline is a normal pipeline.
+// Deprecated: use RunPipelineDefHooks, which returns the fields. Removed in 0.10.
 func (T *AppCore) RunPipelineDefSyncFields(ctx context.Context, def PipelineDef, input string, dispatch PipelineDispatch, status func(string), inheritedTools []AgentToolDef) (string, map[string]any, error) {
-	out, r, err := T.executePipelineDefRun(ctx, def, input, nil, dispatch, statusSink(status), inheritedTools)
-	if err != nil || r == nil {
-		return out, nil, err
-	}
-	return out, r.outputs[r.lastStage].Fields, nil
+	return T.RunPipelineDefHooks(ctx, def, input, PipelineHooks{Dispatch: dispatch, Tools: inheritedTools, Status: status})
 }
 
+// RunPipelineDefAsync runs a pipeline through RunPipeline (queue, slot,
+// session lifecycle) and hands the final output to onResult.
+//
+// Deprecated: wrap RunPipelineDefHooks in RunPipeline. Removed in 0.10.
 func (T *AppCore) RunPipelineDefAsync(cfg PipelineConfig, def PipelineDef, input string, dispatch PipelineDispatch, onResult func(string)) string {
 	return T.RunPipeline(cfg, func(ctx context.Context, pc *PipelineCtx) error {
 		out, err := T.executePipelineDef(ctx, def, input, dispatch, pc.Status, nil)
@@ -185,30 +178,11 @@ func (T *AppCore) RunPipelineDefAsync(cfg PipelineConfig, def PipelineDef, input
 	})
 }
 
-// executePipelineDef is the stage loop shared by the sync + async
-// entry points. Stages run in order; each output is captured under its
-// name and made available to later stages via {stage:NAME} templating.
-// Returns the final stage's output.
+// executePipelineDef runs a pipeline with a dispatcher, status lines and an
+// inherited tool catalog, and returns the final stage's output.
 func (T *AppCore) executePipelineDef(ctx context.Context, def PipelineDef, input string, dispatch PipelineDispatch, status func(string), inheritedTools []AgentToolDef) (string, error) {
-	return T.executePipelineDefSink(ctx, def, input, dispatch, statusSink(status), inheritedTools)
-}
-
-func (T *AppCore) executePipelineDefSink(ctx context.Context, def PipelineDef, input string, dispatch PipelineDispatch, sink PipelineSink, inheritedTools []AgentToolDef) (string, error) {
-	return T.executePipelineDefVars(ctx, def, input, nil, dispatch, sink, inheritedTools)
-}
-
-// executePipelineDefVars is executePipelineDefSink plus RUN-scoped template
-// values. Unexported and called from within core (the run surface), so the four
-// exported Run* entry points keep the signatures they have.
-func (T *AppCore) executePipelineDefVars(ctx context.Context, def PipelineDef, input string, vars map[string]string, dispatch PipelineDispatch, sink PipelineSink, inheritedTools []AgentToolDef) (string, error) {
-	out, _, err := T.executePipelineDefRun(ctx, def, input, vars, dispatch, sink, inheritedTools)
+	out, _, err := T.executePipelineHooks(ctx, def, input, nil, statusSink(status), PipelineHooks{Dispatch: dispatch, Tools: inheritedTools})
 	return out, err
-}
-
-// executePipelineDefRun is executePipelineDefVars plus the run itself, for
-// the one caller that needs more than the final text: the fields behind it.
-func (T *AppCore) executePipelineDefRun(ctx context.Context, def PipelineDef, input string, vars map[string]string, dispatch PipelineDispatch, sink PipelineSink, inheritedTools []AgentToolDef) (string, *pipelineRun, error) {
-	return T.executePipelineHooks(ctx, def, input, vars, sink, PipelineHooks{Dispatch: dispatch, Tools: inheritedTools})
 }
 
 // RunPipelineDefHooks executes a pipeline with every host-supplied half in

@@ -234,6 +234,8 @@ func (T *AppCore) WorkerChatWithTools(ctx context.Context, messages []Message, k
 
 // LeadChatWithTools is WorkerChatWithTools on the lead LLM. Route config
 // (WithRouteKey) is respected — a stage routed to "worker" still redirects.
+//
+// Deprecated: no caller left; use WorkerChatWithTools with a route, or RunAgentLoop. Removed in 0.10.
 func (T *AppCore) LeadChatWithTools(ctx context.Context, messages []Message, kit []AgentToolDef, opts ...ChatOption) (*Response, error) {
 	return chatToolLoop(ctx, T.LeadChat, messages, kit, toolChatMaxRounds, opts...)
 }

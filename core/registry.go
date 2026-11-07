@@ -25,19 +25,10 @@ type SetupSection struct {
 
 var (
 	registryMu              sync.Mutex
-	registeredAgents        []Agent
 	registeredApps          []Agent
-	registeredAdminAgents   []Agent
 	registeredChatTools     []ChatTool
 	registeredSetupSections []SetupSection
 )
-
-// RegisterAgent registers a standard agent.
-func RegisterAgent(agent Agent) {
-	registryMu.Lock()
-	defer registryMu.Unlock()
-	registeredAgents = append(registeredAgents, agent)
-}
 
 // RegisterApp registers an app (structured pipeline with web UI).
 func RegisterApp(agent Agent) {
@@ -76,14 +67,8 @@ func RegisteredSetupSections() []SetupSection {
 	return out
 }
 
-// RegisteredAgents returns all registered standard agents.
-func RegisteredAgents() []Agent { return registeredAgents }
-
 // RegisteredApps returns all registered apps.
 func RegisteredApps() []Agent { return registeredApps }
-
-// RegisteredAdminAgents returns all registered admin agents.
-func RegisteredAdminAgents() []Agent { return registeredAdminAgents }
 
 // RegisteredChatTools returns all registered chat tools.
 func RegisteredChatTools() []ChatTool { return registeredChatTools }
@@ -139,17 +124,7 @@ func FindAgent(name string) (Agent, bool) {
 		return false
 	}
 
-	for _, a := range registeredAgents {
-		if check(a) {
-			return a, true
-		}
-	}
 	for _, a := range registeredApps {
-		if check(a) {
-			return a, true
-		}
-	}
-	for _, a := range registeredAdminAgents {
 		if check(a) {
 			return a, true
 		}

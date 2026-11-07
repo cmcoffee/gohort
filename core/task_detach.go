@@ -88,10 +88,12 @@ func (p DetachPolicy) key() string {
 	return p.Tool
 }
 
-// shouldDetachPolicy is ShouldDetach for a policy rather than a ChatTool. The
-// two must agree, so the ordering here mirrors it exactly: a declaration of
-// background work outranks the clock, and the clock is read against the
-// threshold for the surface this turn is happening on.
+// shouldDetachPolicy reports whether a call runs detached. All three have to
+// hold: a host that can run tasks, a policy that can run the call detached,
+// and either a declaration of background work (which outranks the clock: the
+// cost avoided is a blocked conversation, not a long one) or an expected
+// duration past the threshold for the surface this turn is happening on.
+// A ChatTool reaches it through detachPolicyForChatTool.
 func shouldDetachPolicy(p DetachPolicy, args map[string]any, sess *ToolSession) bool {
 	if TaskRunnerFunc == nil || sess == nil || p.Detached == nil || p.Tool == "" {
 		return false

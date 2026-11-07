@@ -50,18 +50,18 @@ func TestSlowCallsDetachAndFastOnesDoNot(t *testing.T) {
 	sess := &ToolSession{}
 	threshold := taskDetachThreshold(nil)
 
-	if _, ok := ShouldDetach(&slowTool{dur: threshold + time.Minute}, nil, sess); !ok {
+	if ok := shouldDetach(&slowTool{dur: threshold + time.Minute}, nil, sess); !ok {
 		t.Error("a call past the threshold must detach")
 	}
-	if _, ok := ShouldDetach(&slowTool{dur: threshold - time.Second}, nil, sess); ok {
+	if ok := shouldDetach(&slowTool{dur: threshold - time.Second}, nil, sess); ok {
 		t.Error("a call under the threshold must stay inline")
 	}
 	// Zero means the tool has no estimate — the safe reading is "inline".
-	if _, ok := ShouldDetach(&slowTool{dur: 0}, nil, sess); ok {
+	if ok := shouldDetach(&slowTool{dur: 0}, nil, sess); ok {
 		t.Error("no estimate must not detach")
 	}
 	// A tool that doesn't implement the interface at all.
-	if _, ok := ShouldDetach(&staticProbeTool{}, nil, sess); ok {
+	if ok := shouldDetach(&staticProbeTool{}, nil, sess); ok {
 		t.Error("a tool with no duration estimate must stay inline")
 	}
 }
@@ -72,10 +72,10 @@ func TestDetachNeedsAHostThatCanRunTasks(t *testing.T) {
 	saved := TaskRunnerFunc
 	TaskRunnerFunc = nil
 	t.Cleanup(func() { TaskRunnerFunc = saved })
-	if _, ok := ShouldDetach(&slowTool{dur: time.Hour}, nil, &ToolSession{}); ok {
+	if ok := shouldDetach(&slowTool{dur: time.Hour}, nil, &ToolSession{}); ok {
 		t.Error("no runner installed must mean no detaching")
 	}
-	if _, ok := ShouldDetach(&slowTool{dur: time.Hour}, nil, nil); ok {
+	if ok := shouldDetach(&slowTool{dur: time.Hour}, nil, nil); ok {
 		t.Error("no session must mean no detaching")
 	}
 }
@@ -510,4 +510,10 @@ func TestTheMarkNeverReachesTheModel(t *testing.T) {
 	if out != "the notice" {
 		t.Errorf("safeInvoke must strip the mark, got %q", out)
 	}
+}
+
+// shouldDetach is the detach decision for a ChatTool, made the way the tool
+// wrapper makes it.
+func shouldDetach(ct ChatTool, args map[string]any, sess *ToolSession) bool {
+	return shouldDetachPolicy(detachPolicyForChatTool(ct, sess), args, sess)
 }

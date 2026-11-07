@@ -931,7 +931,7 @@ func TestFanoutBody_CollectsDeclaredShapesPerBranch(t *testing.T) {
 			return "looked"
 		}
 	}}
-	out, r, err := new(AppCore).executePipelineDefRun(context.Background(), def, "seed", nil, rec.fn, nil, nil)
+	out, r, err := new(AppCore).executePipelineHooks(context.Background(), def, "seed", nil, nil, PipelineHooks{Dispatch: rec.fn})
 	if err != nil {
 		t.Fatalf("pipeline failed: %v", err)
 	}
@@ -964,7 +964,7 @@ func TestFanoutBody_NoDeclaredShapeMeansNoItems(t *testing.T) {
 		}
 		return "prose"
 	}}
-	_, r, err := new(AppCore).executePipelineDefRun(context.Background(), def, "seed", nil, rec.fn, nil, nil)
+	_, r, err := new(AppCore).executePipelineHooks(context.Background(), def, "seed", nil, nil, PipelineHooks{Dispatch: rec.fn})
 	if err != nil {
 		t.Fatalf("pipeline failed: %v", err)
 	}
@@ -1046,7 +1046,7 @@ func TestFanoutWithoutABodyIsUnchanged(t *testing.T) {
 		}
 		return "got: " + prompt
 	}}
-	out, r, err := new(AppCore).executePipelineDefRun(context.Background(), def, "seed", nil, rec.fn, nil, nil)
+	out, r, err := new(AppCore).executePipelineHooks(context.Background(), def, "seed", nil, nil, PipelineHooks{Dispatch: rec.fn})
 	if err != nil {
 		t.Fatalf("pipeline failed: %v", err)
 	}
