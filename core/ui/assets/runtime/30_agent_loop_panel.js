@@ -2402,6 +2402,7 @@
       }).observe(convoPane);
     }
     inputArea.addEventListener('input', autosizeInput);
+    inputArea.addEventListener('input', syncInterjectSend);
     // Defer the initial sizing past mount so the element has a real
     // computed scrollHeight to read.
     setTimeout(autosizeInput, 0);
@@ -5561,6 +5562,7 @@
           activeSessionId = ev.id || '';
           if (cfg.deep_link_param) updateURLParam(cfg.deep_link_param, activeSessionId);
           refreshStatusPill();
+          syncInterjectSend(); // a note typed before the turn had its session can go now
           // The server just told us which thread this is. Watch it — a
           // background task started by this very turn will post its result
           // here, and nothing else on the client is looking.
@@ -6108,6 +6110,7 @@
       startHeartbeat();
       turnLive = true;
       refreshPins();
+      syncInterjectSend();
     }
     // markUndeliveredInterjections says so when a queued note was never read.
     //
@@ -6173,6 +6176,20 @@
     // on the reply to a particular send.
     function announceSent(text) {
       try { window.dispatchEvent(new CustomEvent('ui-agent-sent', {detail: {text: text}})); } catch (e) {}
+    }
+
+    // syncInterjectSend puts Send back beside Cancel while a turn runs, once
+    // something is typed: tapping it adds a note to the running turn, as Enter
+    // does on a keyboard. On a phone the return key starts a new line
+    // (uiComposerEnterSends), so with Send hidden for the whole run nothing
+    // could be added until the turn ended. Only where the app takes notes
+    // mid-turn (inject_url), and once the turn has a session to take them:
+    // before that, a send would start a second turn rather than a note.
+    function syncInterjectSend() {
+      if (!turnLive) return;
+      var can = !!(cfg.inject_url && activeSessionId && !recordLocked && inputArea.value.trim());
+      sendBtn.style.display = can ? '' : 'none';
+      sendBtn.disabled = !can;
     }
 
     function enableInput() {
@@ -6311,6 +6328,7 @@
         }
         inputArea.value = '';
         announceSent(text);
+        syncInterjectSend(); // the box is empty again: back to Cancel alone
         // Match the normal-send path: reset the inline style.height
         // so a multi-line message (or a retry that put long text
         // back into the input) doesn't leave the textarea visually
