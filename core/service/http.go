@@ -425,6 +425,10 @@ func renderRequest(op Operation, vars map[string]any) (string, string, error) {
 	if op.Body == nil || op.Send == "none" {
 		return "", "", nil
 	}
+	vars, err := withFileFields(op.Body, vars, defaultMaxBytes)
+	if err != nil {
+		return "", "", err
+	}
 	if op.Send == "form" {
 		form := url.Values{}
 		for k, v := range op.Body.(map[string]any) {
@@ -441,6 +445,50 @@ func renderRequest(op Operation, vars map[string]any) (string, string, error) {
 	return string(b), "application/json", nil
 }
 
+// withFileFields resolves the {name.base64} and {name.type} fields a body
+// uses, under those names in a copy of vars, so renderValue fills them as it
+// fills any token. A file input not given leaves its fields out, as any
+// optional input is; one given that cannot be read is an error, not an empty
+// picture sent to a paid API.
+func withFileFields(body any, vars map[string]any, max int64) (map[string]any, error) {
+	b, _ := json.Marshal(body)
+	ms := fileFieldRE.FindAllStringSubmatch(string(b), -1)
+	if len(ms) == 0 {
+		return vars, nil
+	}
+	out := make(map[string]any, len(vars)+len(ms))
+	for k, v := range vars {
+		out[k] = v
+	}
+	for _, m := range ms {
+		key := m[1] + "." + m[2]
+		if _, done := out[key]; done {
+			continue
+		}
+		if v, ok := vars[m[1]]; !ok || v == nil {
+			continue
+		}
+		f, err := fileVar(vars, m[1])
+		if err != nil {
+			return nil, err
+		}
+		switch m[2] {
+		case "type":
+			out[key] = f.Type
+		case "base64":
+			if max > 0 && f.Size > max {
+				return nil, fmt.Errorf("{%s} is %d bytes, over the %d-byte limit", m[1], f.Size, max)
+			}
+			data, err := os.ReadFile(f.Path)
+			if err != nil {
+				return nil, fmt.Errorf("{%s}: %w", m[1], err)
+			}
+			out[key] = base64.StdEncoding.EncodeToString(data)
+		}
+	}
+	return out, nil
+}
+
 // renderValue fills a body template: a string that is exactly one token
 // becomes the value itself, typed (a width stays a number), and a field
 // whose token names an input not given is left out; a token inside a longer
@@ -454,25 +502,51 @@ func renderValue(v any, vars map[string]any) any {
 			}
 			return nil
 		}
+		// A file field (withFileFields put its value under "name.kind").
+		if m := fileFieldRE.FindStringSubmatch(t); m != nil && m[0] == t {
+			if val, ok := vars[m[1]+"."+m[2]]; ok {
+				return val
+			}
+			return nil
+		}
 		return fill(t, vars, func(s string) string { return s })
 	case map[string]any:
 		out := make(map[string]any, len(t))
 		for k, x := range t {
 			// An optional input left out is no field, as in a multipart
-			// send, rather than a null a server may refuse.
-			if rv := renderValue(x, vars); rv != nil {
+			// send, rather than a null a server may refuse. An object all
+			// of whose fields were left out is no field either.
+			if rv := renderValue(x, vars); rv != nil && !emptiedObject(x, rv) {
 				out[k] = rv
 			}
 		}
 		return out
 	case []any:
-		out := make([]any, len(t))
-		for i, x := range t {
-			out[i] = renderValue(x, vars)
+		// An element whose inputs were all left out is no element: a list of
+		// pictures where only the first was given is one picture, not one
+		// and two empty objects a server refuses.
+		out := make([]any, 0, len(t))
+		for _, x := range t {
+			rv := renderValue(x, vars)
+			if rv == nil || emptiedObject(x, rv) {
+				continue
+			}
+			out = append(out, rv)
 		}
 		return out
 	}
 	return v
+}
+
+// emptiedObject reports a template object that rendered to no fields at all
+// because every input it named was left out. A template written as {} stays.
+func emptiedObject(tmpl, rendered any) bool {
+	m, ok := rendered.(map[string]any)
+	if !ok || len(m) > 0 {
+		return false
+	}
+	orig, ok := tmpl.(map[string]any)
+	return ok && len(orig) > 0
 }
 
 // sameHost reports whether rawURL is on the service's own host.

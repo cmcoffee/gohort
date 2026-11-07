@@ -219,6 +219,13 @@ func Parse(raw []byte) (Spec, error) {
 
 var tokenRE = regexp.MustCompile(`\{([a-z_][a-z0-9_]*)\}`)
 
+// fileFieldRE is a file input written into a JSON body: {image.base64} is its
+// bytes, base64-encoded, and {image.type} its media type ("image/png"). An API
+// that takes a picture inline in its JSON (Gemini's inlineData) is the case: a
+// file send or a multipart part carries the file whole, and neither fits a
+// JSON request. Only a whole string may be one, and it must name a file input.
+var fileFieldRE = regexp.MustCompile(`\{([a-z_][a-z0-9_]*)\.(base64|type)\}`)
+
 // later says which stage brings a mode that is designed but not built, so a
 // spec asking for it is refused with when, not accepted and ignored.
 var later = map[string]string{
@@ -681,6 +688,11 @@ func (c Contract) checkFileSend(name string, op Operation) error {
 		p, ok := c.input(tok)
 		return ok && p.Type == TypeFile
 	}
+	if op.Send == "" || op.Send == "json" || op.Send == "form" {
+		if err := checkFileFields(name, op.Body, isFile); err != nil {
+			return err
+		}
+	}
 	switch op.Send {
 	case "file":
 		if tok := tokenName(op.Body.(string)); !isFile(tok) {
@@ -702,6 +714,36 @@ func (c Contract) checkFileSend(name string, op Operation) error {
 		}
 		if files > 1 {
 			return fmt.Errorf("operation %q has %d file parts: one per request for now", name, files)
+		}
+	}
+	return nil
+}
+
+// checkFileFields refuses a {name.base64} or {name.type} that is not a whole
+// string, or that names something other than one of the contract's file
+// inputs.
+func checkFileFields(name string, v any, isFile func(string) bool) error {
+	switch t := v.(type) {
+	case string:
+		for _, m := range fileFieldRE.FindAllStringSubmatch(t, -1) {
+			if m[0] != strings.TrimSpace(t) {
+				return fmt.Errorf("operation %q writes {%s.%s} into text; a file field is the token alone", name, m[1], m[2])
+			}
+			if !isFile(m[1]) {
+				return fmt.Errorf("operation %q writes {%s.%s}, and %s is not one of the contract's file inputs", name, m[1], m[2], m[1])
+			}
+		}
+	case map[string]any:
+		for _, x := range t {
+			if err := checkFileFields(name, x, isFile); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for _, x := range t {
+			if err := checkFileFields(name, x, isFile); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -731,6 +773,9 @@ func opTokens(op Operation) []string {
 		if len(op.Run) > 0 && (m[1] == "in" || m[1] == "out") {
 			continue // a command's own: the line before's result, and its own
 		}
+		set[m[1]] = true
+	}
+	for _, m := range fileFieldRE.FindAllStringSubmatch(text, -1) {
 		set[m[1]] = true
 	}
 	out := make([]string, 0, len(set))
