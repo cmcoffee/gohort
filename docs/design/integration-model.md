@@ -1079,6 +1079,119 @@ once:
    needs it, and the word stays with spec authors, the Builder and Fix,
    never a thing an admin manages on a page.
 
+## Keystore (proposed answer to Q3, 2026-11-07)
+
+**Status:** proposed, for the owner's review. Nothing built.
+
+### The problem
+
+A key is kept where it was typed, once per place that needs it. One OpenAI
+account can mean the same key typed six times: the worker model, the lead
+model (each tier's `LLMProviderConfig.APIKey`), and a connector per job made
+from its own template (`openai-embeddings`, `openai-transcription`,
+`openai-speech`, `openai-images`). Gemini is the same across the lead model,
+`gemini-images` and an embeddings connector. Rotating a key means finding
+every copy. Anthropic has chat models only, so for it the repeat is worker
+and lead.
+
+Borrowing a key from wherever it was typed first ("use the Lead model's
+key") was considered and set aside: the key's home would be an accident of
+setup order, and changing Lead to another provider would break every job
+borrowing from it.
+
+### The shape
+
+**Services > Keystore** holds one entry per provider account:
+
+- a name ("Google Gemini", "OpenAI", "Anthropic", or one the admin gives);
+- the key, encrypted, shown only as the saved-key line
+  (`ends in ...WXYZ, given <date>`);
+- the addresses it may be sent to (for a provider template, the provider's
+  official hosts);
+- who may use it: admin-managed, with the access list connections already
+  have (per user, and per agent through the credential scope);
+- what uses it: every model tier and connector that names it;
+- its check: the startup self-check and its row, as connections have now.
+
+Every key field becomes a picker. On a model tier or a connector it reads
+`Key: Google Gemini (Keystore)`, with **+ New key...** to add one in place.
+Only entries whose addresses match where the key would go are offered, so a
+key still goes only to the addresses it was given for. Rotating it in the
+Keystore rotates it for everything that names it.
+
+Changing Lead from Gemini to Anthropic changes which entry Lead names and
+nothing else: image generation and embeddings keep naming Google Gemini.
+
+**Not every entry is one key.** Amazon Bedrock signs each request (SigV4)
+with an access key, a secret and a region, or an SSO profile. Its entry
+holds that set, and the Bedrock chat tiers and Bedrock embeddings (Titan
+Text Embeddings V2, Cohere Embed v4, Nova Multimodal Embeddings) name the
+one entry. Bedrock embeddings also need SigV4 as a connector auth kind,
+which connectors lack today (chat signs in `core/llm_bedrock_runtime.go`,
+API Credentials has `aws_sigv4`). Anthropic offers chat models only and no
+embeddings; its docs point to Voyage AI, a separate account and entry.
+
+### What stays where
+
+- **API Credentials (the vault) is unchanged.** Keys that agents' API tools
+  call (`call_<cred>`), OAuth, credentials lent between users and the
+  credential audit stay there. Two stores with the same rules (bound to
+  addresses, per-user and per-agent access, shown safely, checked, deleted
+  with their owner), with different jobs: the vault is for what agents call,
+  the Keystore for keys gohort's own services use. The 2026-10-31 rule
+  (keys for things with a menu are not API Credentials) holds.
+- **One home for provider keys.** A new key typed anywhere goes into the
+  Keystore. A new connector does not hold a private key of its own.
+
+### Existing keys: no migration
+
+Keys already held by a model tier or a connection stay where they are and
+keep working. The Keystore lists them as derived rows, the pattern the
+Connectors page uses for built-ins and peers: "held by Lead model", "held by
+`gemini-images`". Each has **Move to Keystore**, which makes it an entry
+and points its holder at it; after that other services can pick it. Nothing
+is rewritten at startup.
+
+### When a named entry goes away
+
+A model tier or connector naming an entry that was deleted, or whose
+addresses no longer cover where the key would go, shows on its row and in
+the startup self-check: "Needs attention: Keystore entry Google Gemini is
+gone" or "... is not given for <host>". It never falls back to another key.
+
+### With it (same change set, separate commits)
+
+From the owner's report on Image Generation, 2026-11-07:
+
+- **No connector settings on the capability pages.** The pickers on Image
+  Generation, Embeddings, Speech-to-text, Text-to-speech, Mail, Web Search
+  and Page Rendering stop listing the chosen connector's own fields (model,
+  key; `connectorSettingsFields`). An **Edit settings** button beside the
+  picker opens that connector's settings dialog, the one its row already
+  has.
+- **Adding a connector reloads the picker.** "+ Add another..." reloads the
+  page only on "Back to the list"; closing the dialog after a successful add
+  leaves the picker without it. Closing after an add reloads too. A plain
+  bug: fixed whatever is decided here.
+- **Gemini image editing.** The Gemini template declares `image.generate`
+  only, though its model edits pictures. A spec cannot yet put an input file
+  into a JSON body as base64 (Gemini's `inlineData`); that is one spec engine
+  addition, then the template gains `image.edit`. OpenAI's edits endpoint is
+  multipart, which specs already send. A template change reaches new
+  installs; an installed connector gets it from **Update from template** on
+  its row (no migration).
+
+### To agree before code
+
+- The page name and place: **Services > Keystore** (proposed).
+- Entry names: the provider's name by default, editable, unique.
+- A connector holding its own key: no for new connectors (proposed); existing
+  ones keep theirs until moved.
+- Who manages entries: admins, with an access list (proposed), as model tiers
+  and connections are today.
+- Whether "+ New key..." on a page creates the entry there and then, or opens
+  the Keystore (proposed: in place, in a dialog).
+
 ## Still open
 
 - **Q2. Trust,** with DLP: leaning toward a policy per destination, set by
@@ -1086,4 +1199,5 @@ once:
   never inferred from the address.
 - **Q3. The key store's shape:** the vault absorbs connection keys, connection
   spaces absorb the vault, or two stores with the same rules. Not needed for
-  the rework.
+  the rework. Proposed 2026-11-07: two stores with the same rules, the new
+  one a Services > Keystore page (see "Keystore" above).
