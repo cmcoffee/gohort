@@ -76,8 +76,7 @@ func TestAServiceConnectorRowAndThePicker(t *testing.T) {
 		t.Errorf("status %q, has health %v", status, hasHealth)
 	}
 	offered := func() bool {
-		rows, _ := (&AdminApp{db: RootDB}).handleImageBackends(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/image-backends", nil)})
-		for _, r := range rows.([]imageBackendRow) {
+		for _, r := range (&AdminApp{db: RootDB}).imageRows() {
 			if r.Name == "acme-images" {
 				return true
 			}
@@ -289,14 +288,14 @@ func TestAServicesConnectorIsReferencedFromItsPage(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, n := range []string{"nothing", "finder"} {
-		if _, err := a.handleMusicSave(call("POST", "/api/music"), musicConfig{Agents: []string{n}}); err == nil {
-			t.Errorf("Music took %s, which does not make music", n)
+		if _, err := a.handleMediaBackendRole(call("POST", "/api/media-backends/role?name="+n+"&role=offered"), struct{}{}); err == nil {
+			t.Errorf("Media Generation offered %s, which does not make music", n)
 		}
 	}
-	if _, err := a.handleMusicSave(call("POST", "/api/music"), musicConfig{Agents: []string{"tunes"}}); err != nil || !referenced() {
-		t.Fatalf("offering it on Music: %v, referenced %v", err, referenced())
+	if _, err := a.handleMediaBackendRole(call("POST", "/api/media-backends/role?name=tunes&role=offered"), struct{}{}); err != nil || !referenced() {
+		t.Fatalf("offering it on Media Generation: %v, referenced %v", err, referenced())
 	}
-	if r := row(); r["state"] != "referenced" || !strings.HasPrefix(r["status"].(string), "Referenced by Music (offered to agents).") {
+	if r := row(); r["state"] != "referenced" || !strings.HasPrefix(r["status"].(string), "Referenced by Media Generation (offered to agents).") {
 		t.Errorf("a referenced row: %v", r)
 	}
 
@@ -306,16 +305,16 @@ func TestAServicesConnectorIsReferencedFromItsPage(t *testing.T) {
 	if r := row(); r["state"] != "changed" || !strings.HasPrefix(r["status"].(string), "Changed by someone on ") {
 		t.Errorf("a changed row: %v", r)
 	}
-	if opts := musicOptions(); len(opts) != 1 || opts[0].Label != "tunes (changed, waiting to be accepted)" {
-		t.Errorf("the page's choice: %+v", opts)
+	if rows, _ := a.handleMediaBackends(call("GET", "/api/media-backends")); !strings.Contains(func() string { b, _ := json.Marshal(rows); return string(b) }(), "tunes (changed, waiting to be accepted)") {
+		t.Errorf("its row on Media Generation: %+v", rows)
 	}
-	if _, err := a.handleMusicSave(call("POST", "/api/music"), musicConfig{Agents: []string{"tunes"}}); err != nil {
+	if _, err := a.handleMediaBackendRole(call("POST", "/api/media-backends/role?name=tunes&role=offered"), struct{}{}); err != nil {
 		t.Errorf("saving the page with it chosen: %v", err)
 	}
 	if _, waiting := service.PendingChange(RootDB, "tunes"); waiting {
 		t.Error("accepted, still waiting")
 	}
-	if _, err := a.handleMusicSave(call("POST", "/api/music"), musicConfig{}); err != nil || referenced() {
-		t.Errorf("taken off Music: %v, referenced %v", err, referenced())
+	if _, err := a.handleMediaBackendRole(call("POST", "/api/media-backends/role?name=tunes&role=off"), struct{}{}); err != nil || referenced() {
+		t.Errorf("taken off Media Generation: %v, referenced %v", err, referenced())
 	}
 }

@@ -612,7 +612,7 @@ const templateInstallAction = `function(ctx){
               if (ctx.onDone) lines.push('', 'It joins the list once this page reloads: choose it there and save.');
               out.textContent = lines.join('\n');
               go.textContent = 'Done'; go.disabled = true;
-              if (window.uiInvalidate) window.uiInvalidate(['api/connectors','api/image-backends','api/keystore','api/persistent-tools','api/secure-api','api/skills','api/templates']);
+              if (window.uiInvalidate) window.uiInvalidate(['api/connectors','api/media-backends','api/keystore','api/persistent-tools','api/secure-api','api/skills','api/templates']);
               // Opened from a page's "+ Add another…": the button goes back
               // to the page, reloaded so its list holds what was added.
               if (ctx.onDone) { added = d; addedNow = d; go.textContent = 'Back to the list'; go.disabled = false; }
@@ -656,7 +656,7 @@ const connectorAddAnotherAction = `function(ctx){
             if (typeof install !== 'function') return;
             if (dlg && dlg.close) dlg.close();
             install({record: {id: r.id, title: r.title}, onDone: function(){
-              if (fromList && window.uiInvalidate) { window.uiInvalidate(['api/connectors','api/image-backends','api/keystore']); return; }
+              if (fromList && window.uiInvalidate) { window.uiInvalidate(['api/connectors','api/media-backends','api/keystore']); return; }
               location.reload();
             }});
           });

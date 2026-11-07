@@ -148,8 +148,8 @@ func TestBuilderDraftsAServiceConnector(t *testing.T) {
 	if ch, ok := service.PendingChange(RootDB, "acme-images"); !ok || ch.By != "alice" {
 		t.Errorf("the change waiting: %+v %v", ch, ok)
 	}
-	// Image Generation still names it, so her Builder cannot delete it.
-	if _, err := connectorDelete(map[string]any{"name": "acme-images"}, sess); err == nil || !strings.Contains(err.Error(), "referenced by Image Generation") {
+	// Media Generation still names it, so her Builder cannot delete it.
+	if _, err := connectorDelete(map[string]any{"name": "acme-images"}, sess); err == nil || !strings.Contains(err.Error(), "referenced by Media Generation") {
 		t.Errorf("deleting one a page names: %v", err)
 	}
 	if _, ok := GetConnector(RootDB, "acme-images"); !ok {
@@ -171,7 +171,7 @@ func TestBuilderSetsUpAComfyUIConnection(t *testing.T) {
 	if !ok || c.Kind != service.Kind || c.Template != "comfyui" || c.Approved || c.Owner != "alice" {
 		t.Fatalf("set up as: %+v", c)
 	}
-	if !strings.Contains(msg, "Image Generation") || !strings.Contains(msg, "Settings") {
+	if !strings.Contains(msg, "Media Generation") || !strings.Contains(msg, "Settings") {
 		t.Errorf("what Builder is told: %s", msg)
 	}
 	if _, err = connectorCreate(map[string]any{"name": "old", "kind": "rest_image"}, sess); err == nil {

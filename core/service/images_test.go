@@ -620,3 +620,64 @@ func TestAnImageConnectionKeepsItsKeyAndItsScope(t *testing.T) {
 		t.Errorf("bob's call, with the key given for its address: %q", stub.seen)
 	}
 }
+
+// Used for, on Media Generation, keeps a backend that both makes and edits
+// pictures to one of them: agents are offered it for that alone, and a call
+// for the other is refused, saying where it was set.
+func TestUsedForKeepsABothWaysBackendToOneJob(t *testing.T) {
+	world(t)
+	png := pngBytes(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(png)
+	}))
+	defer srv.Close()
+	op := func(path, body string) map[string]any {
+		return map[string]any{"method": "POST", "path": path, "body": map[string]any{"prompt": "{prompt}", "x": body}, "read": "file"}
+	}
+	install(t, "both", map[string]any{
+		"provider": map[string]any{"transport": "http", "base_url": srv.URL, "auth": map[string]any{"none": true},
+			"operations": map[string]any{"make": op("/make", "{prompt}"), "edit": op("/edit", "{image.base64}")}},
+		"provides": []any{
+			map[string]any{"capability": "image.generate", "steps": []any{map[string]any{"call": "make"}}, "output": map[string]any{"image": map[string]any{"from": "body"}}},
+			map[string]any{"capability": "image.edit", "steps": []any{map[string]any{"call": "edit"}}, "output": map[string]any{"image": map[string]any{"from": "body"}}},
+		},
+	})
+	RootDB.Set(ImageTable, "agents", []string{"both"})
+	choice := func() ImageBackendChoice {
+		for _, b := range ReachableImageBackends(&ToolSession{}) {
+			if b.Name == "both" {
+				return b
+			}
+		}
+		t.Fatal("not offered")
+		return ImageBackendChoice{}
+	}
+	if c := choice(); !c.Edits || !c.Generates {
+		t.Fatalf("used for both, offered as %+v", c)
+	}
+
+	RootDB.Set(ImageTable, "uses", map[string]string{"both": ImageUseEdit})
+	if c := choice(); !c.Edits || c.Generates {
+		t.Errorf("used for editing only, offered as %+v", c)
+	}
+	if _, err := GenerateImageWithBackend(context.Background(), "both", "a red circle", false); err == nil || !strings.Contains(err.Error(), "editing and blending only") {
+		t.Errorf("a picture from text alone on an editing-only backend: %v", err)
+	}
+
+	RootDB.Set(ImageTable, "uses", map[string]string{"both": ImageUseGenerate})
+	if c := choice(); c.Edits || c.Generates {
+		t.Errorf("used for generating only, offered as %+v (an editor, or one that also generates)", c)
+	}
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "a.png"), png, 0o600)
+	_, err := EditImageWithBackend(&ToolSession{WorkspaceDir: dir}, EditImageRequest{Backend: "both", Prompt: "blend", Images: []string{"a.png"}})
+	if err == nil || !strings.Contains(err.Error(), "generating only") {
+		t.Errorf("an edit on a generating-only backend: %v", err)
+	}
+	res, err := GenerateImageWithBackend(context.Background(), "both", "a red circle", false)
+	if err != nil {
+		t.Fatalf("generating on a generating-only backend: %v", err)
+	}
+	os.Remove(res.URL)
+}

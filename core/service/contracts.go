@@ -136,8 +136,8 @@ func init() {
 		Name:   "image.generate",
 		About:  "A picture made from a prompt.",
 		Checks: "image is a picture gohort can show: PNG, JPEG, GIF or WebP, with a size.",
-		Where:  "Admin > Services > Image Generation, and agents' image tools",
-		Gives:  "Image Generation",
+		Where:  "Admin > Services > Media Generation, and agents' image tools",
+		Gives:  "Media Generation",
 		Inputs: []Port{
 			{Name: "prompt", Type: TypeText, Required: true},
 			{Name: "negative", Type: TypeText},
@@ -160,7 +160,7 @@ func init() {
 		Name:   "image.edit",
 		About:  "A picture changed as a prompt asks.",
 		Checks: "image is a picture gohort can show: PNG, JPEG, GIF or WebP, with a size.",
-		Where:  "Admin > Services > Image Generation, and agents' image tools",
+		Where:  "Admin > Services > Media Generation, and agents' image tools",
 		Gives:  "Image editing",
 		Inputs: []Port{
 			{Name: "prompt", Type: TypeText, Required: true},
@@ -242,7 +242,7 @@ func init() {
 		Name:   "music.generate",
 		About:  "A piece of music made from a prompt, with lyrics, a style, a title and a length when given.",
 		Checks: "audio is sound gohort can play: MP3, WAV, OGG, FLAC, AAC or MP4 audio, judged by its first bytes.",
-		Where:  "an agent tool of its own, named generate_music_ and the connector's name",
+		Where:  "Admin > Services > Media Generation, and an agent tool of its own named generate_music_ and the connector's name",
 		Inputs: []Port{
 			{Name: "prompt", Type: TypeText, Required: true},
 			{Name: "lyrics", Type: TypeText},

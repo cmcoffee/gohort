@@ -470,7 +470,7 @@ func (a *AdminApp) handleConnectorAction(c *jsonapi.Call, body json.RawMessage) 
 	var err error
 	action := q.Get("action")
 	if conn, ok := GetConnector(RootDB, name); ok && service.TieInConnector(conn.Kind) && (action == "approve" || action == "unapprove") {
-		return nil, jsonapi.BadRequest(name + " has no approval: it is reached through the pages that reference it (Web Search, Image Generation, Research Sources, ...)")
+		return nil, jsonapi.BadRequest(name + " has no approval: it is reached through the pages that reference it (Web Search, Media Generation, Research Sources, ...)")
 	}
 	switch action {
 	case "approve":
@@ -629,7 +629,7 @@ func tieInState(c Connector, pages []string, status string) (string, string) {
 		return "changed", join(changedNote(ch))
 	}
 	if len(pages) == 0 {
-		return "unreferenced", join("Not referenced: no page names it, so it makes no calls. Choose it where it is to be used (Web Search, Image Generation, Research Sources, ...).")
+		return "unreferenced", join("Not referenced: no page names it, so it makes no calls. Choose it where it is to be used (Web Search, Media Generation, Research Sources, ...).")
 	}
 	return "referenced", join("Referenced by " + strings.Join(pages, ", ") + ".")
 }

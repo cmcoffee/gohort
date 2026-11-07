@@ -827,7 +827,7 @@ func peerSharingSections() []ui.Section {
 							PostURL:     "api/peers/{name}/key",
 							Method:      "POST",
 							SubmitLabel: "Re-pair",
-							Invalidate:  []string{"api/peers", "api/image-backends"},
+							Invalidate:  []string{"api/peers", mediaBackendsSource},
 							Fields: []ui.FormField{{
 								Field: "key", Label: "New peer key", Type: "text", Required: true,
 								Help: "Issued on the OTHER instance: Capabilities › Resource Sharing › Re-issue key. " +

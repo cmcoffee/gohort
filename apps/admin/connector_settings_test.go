@@ -413,17 +413,13 @@ func TestAKeptKeyShowsItsEnd(t *testing.T) {
 }
 
 // A ComfyUI backend kept as a connection is configured from its template, and
-// from Image Generation: its row on the backend list opens the template's form,
+// from Media Generation: its row on the backend list opens the template's form,
 // the same Edit its Connectors row opens, and says what the workflow does.
 func TestAComfyUIConnectionIsConfiguredFromImageGeneration(t *testing.T) {
 	settingsWorld(t)
 	a := &AdminApp{db: RootDB}
 	list := func() []imageBackendRow {
-		out, err := a.handleImageBackends(&jsonapi.Call{R: httptest.NewRequest("GET", "/"+imageBackendsSource, nil)})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return out.([]imageBackendRow)
+		return a.imageRows()
 	}
 	if rows := list(); len(rows) != 0 {
 		t.Fatalf("listed with no image backend: %+v", rows)
@@ -465,12 +461,12 @@ func TestAComfyUIConnectionIsConfiguredFromImageGeneration(t *testing.T) {
 // table's own actions, so the two open one editor, and an edit from either
 // reloads both.
 func TestTheBackendListSharesTheConnectorActions(t *testing.T) {
-	tbl := imageBackendsTable()
+	tbl := mediaBackendsTable()
 	var labels []string
 	for _, act := range tbl.RowActions {
 		labels = append(labels, act.Label)
 	}
-	if got := strings.Join(labels, ","); got != "Make default,Offer to agents,Stop offering,Stop using,Update from template,Edit setup,✨ Edit,✨ Fix,Settings,Test" {
+	if got := strings.Join(labels, ","); got != "Make default,Offer to agents,Stop offering,Stop using,Generating and editing,Editing and blending only,Generating only,Update from template,Edit setup,✨ Edit,✨ Fix,Settings,Test" {
 		t.Errorf("row actions = %s", got)
 	}
 	// The spec editor is in the row's Advanced menu, not beside Settings,
@@ -483,7 +479,7 @@ func TestTheBackendListSharesTheConnectorActions(t *testing.T) {
 			t.Errorf("Settings is tucked into %q", act.Group)
 		}
 	}
-	if !slices.Contains(connectorListSources, imageBackendsSource) || !slices.Contains(connectorListSources, "api/connectors") {
+	if !slices.Contains(connectorListSources, mediaBackendsSource) || !slices.Contains(connectorListSources, "api/connectors") {
 		t.Errorf("an edit reloads %v, want both lists", connectorListSources)
 	}
 }

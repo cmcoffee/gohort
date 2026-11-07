@@ -465,12 +465,12 @@ func TestAServiceReadsAsItsWrapper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := s.Describe("pics"), "Image Generation ⇐ submit, then wait on status ⇐ api.example.test (its API key)"; got != want {
+	if got, want := s.Describe("pics"), "Media Generation ⇐ submit, then wait on status ⇐ api.example.test (its API key)"; got != want {
 		t.Errorf("got  %q\nwant %q", got, want)
 	}
 	s.Provides = append(s.Provides, Binding{Capability: "music.generate", Steps: []Step{{Call: "a"}, {Wait: "b"}}})
 	s.Provider.Auth = Auth{None: true}
-	if got := s.Describe("My Songs"); got != "Image Generation, agent tool generate_music_my_songs ⇐ api.example.test (no key), 3 endpoints" {
+	if got := s.Describe("My Songs"); got != "Media Generation, agent tool generate_music_my_songs ⇐ api.example.test (no key), 3 endpoints" {
 		t.Errorf("two capabilities stay one line, naming them and counting endpoints: %q", got)
 	}
 }
@@ -495,8 +495,8 @@ func TestAServiceListsItsEndpoints(t *testing.T) {
 		got = append(got, strings.Join([]string{e.Name, e.Address, e.UsedBy, e.Sends, e.Reads}, " | "))
 	}
 	want := []string{
-		`submit | POST /v1/jobs | Image Generation, step 1 | json: prompt ← {prompt}; size ← "{width}x{height}"; w ← {width} (default 64) | job.id → id`,
-		`status | GET /v1/jobs/{id} | Image Generation, step 2 |  | until state == done, failing on state == failed; outputs[type=image].url → image (a file, fetched)`,
+		`submit | POST /v1/jobs | Media Generation, step 1 | json: prompt ← {prompt}; size ← "{width}x{height}"; w ← {width} (default 64) | job.id → id`,
+		`status | GET /v1/jobs/{id} | Media Generation, step 2 |  | until state == done, failing on state == failed; outputs[type=image].url → image (a file, fetched)`,
 		`speak | POST /v1/speech | Speech | json: text ← {text}; voice ← {voice} (default alloy) | the reply → audio (a file)`,
 		`models | GET /v1/models | health check |  | expects data`,
 		`cleanup | DELETE /v1/files/{id} | not used |  | `,

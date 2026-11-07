@@ -102,20 +102,25 @@ func (a *AdminApp) handleTemplates(c *jsonapi.Call) (any, error) {
 // templateNeed is what one page's list of connectors takes: the template
 // category its templates are filed under, and the job their connector must
 // do ("" for any).
-type templateNeed struct{ category, capability string }
+type templateNeed struct {
+	category, capability string
+	// also are more template categories the list offers ("media" offers
+	// Images, Music and Media).
+	also []string
+}
 
 // templateNeeds are the lists "+ Add another…" ends, by the need its option
 // names: what each offers to add.
 var templateNeeds = map[string]templateNeed{
-	"web.search":        {"Web Search", "web.search"},
-	"research":          {"Research Sources", "web.search"},
-	"image.generate":    {"Images", ""},
-	"embed.text":        {"Embeddings", "embed.text"},
-	"speech.transcribe": {"Speech", "speech.transcribe"},
-	"speech.synthesize": {"Speech", "speech.synthesize"},
-	"page.render":       {"Page rendering", "page.render"},
-	"mail.send":         {"Mail", "mail.send"},
-	"file.convert":      {"File conversion", "file.convert"},
+	"web.search":        {"Web Search", "web.search", nil},
+	"research":          {"Research Sources", "web.search", nil},
+	"media":             {"Images", "", []string{"Music", "Media"}},
+	"embed.text":        {"Embeddings", "embed.text", nil},
+	"speech.transcribe": {"Speech", "speech.transcribe", nil},
+	"speech.synthesize": {"Speech", "speech.synthesize", nil},
+	"page.render":       {"Page rendering", "page.render", nil},
+	"mail.send":         {"Mail", "mail.send", nil},
+	"file.convert":      {"File conversion", "file.convert", nil},
 }
 
 // handleTemplatesFor is the templates for the ?need= list: those filed
@@ -129,7 +134,7 @@ func (a *AdminApp) handleTemplatesFor(c *jsonapi.Call) (any, error) {
 	}
 	rows := []templateRow{}
 	for _, s := range recipes.List(RootDB) {
-		if s.Category != need.category {
+		if s.Category != need.category && !slices.Contains(need.also, s.Category) {
 			continue
 		}
 		if gives, known := templateGives(s.ID); need.capability != "" && known && !slices.Contains(gives, need.capability) {

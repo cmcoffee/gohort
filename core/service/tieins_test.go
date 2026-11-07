@@ -60,7 +60,7 @@ func TestAConnectorIsReferencedByThePagesThatNameIt(t *testing.T) {
 	}
 	uses := TieIns(RootDB)
 	for name, page := range map[string]string{"engine": "Web Search", "papers": "Research Sources",
-		"pics": "Image Generation (offered to agents)", "tunes": "Music (offered to agents)"} {
+		"pics": "Media Generation (offered to agents)", "tunes": "Media Generation (offered to agents)"} {
 		if !slices.Contains(uses[name], page) || !Referenced(RootDB, name) {
 			t.Errorf("%s: pages %v, want %s", name, uses[name], page)
 		}
@@ -250,8 +250,8 @@ func TestStaleSettingsSayWhatNeedsSettingAgain(t *testing.T) {
 		got = append(got, st.Page+": "+st.Why)
 	}
 	want := []string{
-		"Image Generation: it names gone, which is not a connection here",
-		"Image Generation: offered to agents, it names the connection pics the old way",
+		"Media Generation: it names gone, which is not a connection here",
+		"Media Generation: offered to agents, it names the connection pics the old way",
 		"Web Search: it names the connection engine the old way",
 		"Worker LLM: it names the connection chat, which LLM tiers no longer use",
 	}

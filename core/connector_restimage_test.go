@@ -264,7 +264,7 @@ func TestImageBackendRegistryRouting(t *testing.T) {
 	// clearly, and so does no setting at all.
 	for name, want := range map[string]string{
 		"gemini": "no approved image connector named gemini",
-		"":       "choose an image connector under Admin > Services > Image Generation",
+		"":       "choose an image connector under Admin > Services > Media Generation",
 	} {
 		if _, err := generateWithBackend(context.Background(), name, "x", false); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%q: got %v, want %q", name, err, want)

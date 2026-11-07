@@ -49,8 +49,8 @@ var adminLayout = []struct {
 	// System Hooks first: the settings below it are what some of its rows
 	// point to. The Keystore next: the keys every page below names.
 	{"Services", []string{
-		"System Hooks", "Keystore", "Embeddings", "Audio Transcription (STT)", "Speech (TTS)", "Image Generation",
-		"Music", "Web Search", "Page Rendering (Browser)", "Mail (SMTP)", "Research Sources",
+		"System Hooks", "Keystore", "Embeddings", "Audio Transcription (STT)", "Speech (TTS)", "Media Generation",
+		"Web Search", "Page Rendering (Browser)", "Mail (SMTP)", "Research Sources",
 		"Connectors", "Templates",
 	}},
 	{"Integrations", []string{
@@ -468,7 +468,7 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 	page.Sections = append(page.Sections, timed("tunables", buildTunableSections)...)
 	// Resource sharing — lending this instance's capabilities to a peer
 	// instance. Lands under Capabilities via sectionGroup, next to the
-	// Embeddings and Image Generation settings it shares.
+	// Embeddings and Media Generation settings it shares.
 	page.Sections = append(page.Sections, timed("peer-sharing", peerSharingSections)...)
 	// The Apps tab: one table of apps (apps_tab.go).
 	builtOwn := time.Since(started)
@@ -663,7 +663,7 @@ var retiredTabs = map[string]string{
 	"extensions": "integrations", "files": "integrations",
 }
 
-// addImageBackendAction (Image Generation toolbar) → Add flow for image templates.
+// addImageBackendAction (Media Generation toolbar) → Add flow for image templates.
 var addImageBackendAction = `function(ctx){
   if(!window.uiTemplateForm){` + connectorFormDef + `}
   window.uiAddBackend('Image generation', function(){ location.reload(); });

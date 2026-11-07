@@ -49,19 +49,6 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 		"POST": jsonapi.Post(a.db, a.handleImageGenSave, a.gate()),
 	}.Serve)
 
-	// Every image backend, with what it does and the editor its row opens:
-	// the list under Image Generation's picker, so a backend is configured
-	// from the page that chooses it.
-	sub.HandleFunc("/"+imageBackendsSource, jsonapi.Get(a.db, a.handleImageBackends, a.gate()))
-	// A row's role: the default, offered to agents, or not offered.
-	sub.HandleFunc("/"+imageBackendsSource+"/role", jsonapi.Post(a.db, a.handleImageBackendRole, a.gate()))
-
-	// Music: the music connectors offered to agents as tools.
-	sub.HandleFunc("/api/music", jsonapi.Methods{
-		"GET":  jsonapi.Get(a.db, a.handleMusic, a.gate()),
-		"POST": jsonapi.Post(a.db, a.handleMusicSave, a.gate()),
-	}.Serve)
-
 	// STT test: the form as it stands, saved or not. A connector
 	// transcribes a second of a tone; a peer is checked through its
 	// manifest.
@@ -332,17 +319,13 @@ func (a *AdminApp) handleSpeechVoices(c *jsonapi.Call) (any, error) {
 	return media.VoiceChips(media.SpeechVoices(ctx, cfg)), nil
 }
 
-// imageBackendsSource is the image backend list's address, named once because
-// the edits made from any connector row reload it (connectorListSources), and
-// a reload names its source exactly.
-const imageBackendsSource = "api/image-backends"
-
-// imageBackendRow is one image backend on Image Generation's list.
+// imageBackendRow is one connector on Media Generation's list: an image
+// backend, or a music or media connector.
 type imageBackendRow struct {
 	Name    string `json:"name"`
 	Title   string `json:"title"`
 	Summary string `json:"summary"`
-	// Role is how Image Generation uses it: "default" (what agents' image
+	// Role is how Media Generation uses it: "default" (what agents' image
 	// tools use unless told otherwise), "offered" (agents may choose it by
 	// name), or "unused". IsDefault, IsOffered and IsUnused say the same for
 	// the row's buttons.
@@ -359,16 +342,26 @@ type imageBackendRow struct {
 	EditSpec bool `json:"edit_spec,omitempty"`
 	NeedsFix bool `json:"needs_fix,omitempty"`
 	// TemplateUpdate: its template now writes a different spec.
-	TemplateUpdate bool   `json:"template_update,omitempty"`
-	HasSettings    bool   `json:"has_settings,omitempty"`
-	Testable       bool   `json:"testable,omitempty"`
-	TestConfirm    string `json:"test_confirm,omitempty"`
-	LastError      string `json:"last_error,omitempty"`
+	TemplateUpdate bool `json:"template_update,omitempty"`
+	// On Media Generation: the band it sits in (Images, Music, or the kind
+	// a media connector makes), and for an image backend that both makes and
+	// edits pictures, what it is used for.
+	Group        string `json:"group,omitempty"`
+	IsImage      bool   `json:"is_image,omitempty"`
+	BothWays     bool   `json:"both_ways,omitempty"`
+	UsedFor      string `json:"used_for,omitempty"`
+	UsedBoth     bool   `json:"used_both,omitempty"`
+	UsedEdit     bool   `json:"used_edit,omitempty"`
+	UsedGenerate bool   `json:"used_generate,omitempty"`
+	HasSettings  bool   `json:"has_settings,omitempty"`
+	Testable     bool   `json:"testable,omitempty"`
+	TestConfirm  string `json:"test_confirm,omitempty"`
+	LastError    string `json:"last_error,omitempty"`
 }
 
-// handleImageBackends lists every connector Image Generation's picker offers,
-// the default first, then the ones offered to agents, then the rest.
-func (a *AdminApp) handleImageBackends(c *jsonapi.Call) (any, error) {
+// imageRows are the image backends, the default first, then the ones
+// offered to agents, then the rest.
+func (a *AdminApp) imageRows() []imageBackendRow {
 	provider := a.storedString(ImageTable, "provider")
 	var agents []string
 	if a.db != nil {
@@ -380,7 +373,7 @@ func (a *AdminApp) handleImageBackends(c *jsonapi.Call) (any, error) {
 			continue
 		}
 		o := OutlineImageBackend(conn)
-		row := imageBackendRow{Name: conn.Name, Title: conn.Title(), Summary: ConnectorSummary(conn),
+		row := imageBackendRow{Name: conn.Name, Title: rowTitle(conn), Summary: ConnectorSummary(conn),
 			Role: "unused", Does: o.Does, Size: o.Size, Steps: o.Steps,
 			HasSettings: conn.Kind == service.Kind, LastError: conn.LastError}
 		switch {
@@ -400,10 +393,10 @@ func (a *AdminApp) handleImageBackends(c *jsonapi.Call) (any, error) {
 	}
 	rank := map[string]int{"default": 0, "offered": 1, "unused": 2}
 	sort.SliceStable(rows, func(i, j int) bool { return rank[rows[i].Role] < rank[rows[j].Role] })
-	return rows, nil
+	return rows
 }
 
-// handleImageBackendRole changes how Image Generation uses backend ?name=
+// handleImageBackendRole changes how Media Generation uses image backend ?name=
 // (?role=): "default" makes it what agents' image tools use unless told
 // otherwise, keeping the one it replaces offered by name; "offered" lets
 // agents choose it by name; "off" stops using it (the default off leaves no
@@ -720,54 +713,6 @@ func acceptChanges(named ...string) {
 		}
 	}
 	service.AcceptChanges(RootDB, names...)
-}
-
-// musicConfig is the Music tie-in: the music connectors offered to agents.
-type musicConfig struct {
-	Agents []string `json:"agents"`
-}
-
-func (a *AdminApp) handleMusic(c *jsonapi.Call) (any, error) {
-	var agents []string
-	if a.db != nil {
-		a.db.Get(service.MusicTable, "agents", &agents)
-	}
-	return markStale(map[string]any{"agents": agents}, "", "agents"), nil
-}
-
-// handleMusicSave offers the music connectors chosen to agents, as tools of
-// their own (generate_music_<connector>), which puts them to use.
-func (a *AdminApp) handleMusicSave(c *jsonapi.Call, req musicConfig) (any, error) {
-	var agents []string
-	for _, n := range req.Agents {
-		n = strings.TrimSpace(n)
-		conn, ok := GetConnector(RootDB, n)
-		if !ok || !service.Provides(conn, "music.generate") {
-			return nil, jsonapi.BadRequest("no connector named " + n + " makes music")
-		}
-		agents = append(agents, n)
-	}
-	if a.db != nil {
-		a.db.Set(service.MusicTable, "agents", agents)
-	}
-	acceptChanges(agents...)
-	adminChange(c.R, activity.Settings, "music offered to agents: %s", strings.Join(agents, ", "))
-	return jsonapi.Empty(http.StatusNoContent), nil
-}
-
-// musicOptions are the connectors that make music.
-func musicOptions() []ui.SelectOption {
-	var out []ui.SelectOption
-	for _, c := range ListConnectors(RootDB) {
-		if c.Kind == service.Kind && service.Provides(c, "music.generate") {
-			label := c.Name
-			if _, waiting := service.PendingChange(RootDB, c.Name); waiting {
-				label += " (changed, waiting to be accepted)"
-			}
-			out = append(out, ui.SelectOption{Value: c.Name, Label: label, Help: ConnectorSummary(c)})
-		}
-	}
-	return out
 }
 
 // previewTieIn lets the settings page's own test reach the connector its

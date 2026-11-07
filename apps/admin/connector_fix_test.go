@@ -134,7 +134,7 @@ func TestTemplatesAreBrowsedByCategory(t *testing.T) {
 			t.Errorf("%s: %d %s", need, code, ids(rows))
 		}
 	}
-	if _, rows := get("/api/templates/for?need=image.generate"); !strings.Contains(ids(rows), "comfyui") || !strings.Contains(ids(rows), "a1111") {
+	if _, rows := get("/api/templates/for?need=media"); !strings.Contains(ids(rows), "comfyui") || !strings.Contains(ids(rows), "a1111") {
 		t.Errorf("images, a ComfyUI one among them though its job is known only once added: %s", ids(rows))
 	}
 	if code, _ := get("/api/templates/for?need=nothing"); code != http.StatusBadRequest {

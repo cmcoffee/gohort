@@ -55,6 +55,21 @@ func (t *mediaTool) binding() (Binding, bool) {
 	return Binding{}, false
 }
 
+// MediaKindOf is the kind connector c's media.generate says it makes, or ""
+// when it gives no media.generate.
+func MediaKindOf(c Connector) string {
+	s, err := Parse(c.Spec)
+	if err != nil {
+		return ""
+	}
+	for _, b := range s.Provides {
+		if b.Capability == "media.generate" {
+			return b.MediaKind()
+		}
+	}
+	return ""
+}
+
 // slug is s as part of a tool name: lower case, runs of anything else one _.
 func slug(s string) string {
 	return strings.Trim(unsafeToolChars.ReplaceAllString(strings.ToLower(s), "_"), "_")

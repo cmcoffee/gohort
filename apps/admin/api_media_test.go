@@ -218,6 +218,7 @@ func TestImageGenerationTakesAConnectorThatMakesPictures(t *testing.T) {
 	a := &AdminApp{db: RootDB}
 	sub := http.NewServeMux()
 	a.registerMediaRoutes(sub)
+	a.registerMediaGenerationRoutes(sub)
 	call := func(method, path, body string) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
 		sub.ServeHTTP(w, httptest.NewRequest(method, path, strings.NewReader(body)))
@@ -230,8 +231,7 @@ func TestImageGenerationTakesAConnectorThatMakesPictures(t *testing.T) {
 		"provides":[{"capability":"embed.text","steps":[{"call":"embed"}],"output":{"vectors":{"path":"data","each":"embedding"}}}]}`
 	SaveConnector(RootDB, Connector{Name: "vectors", Kind: "service", Spec: json.RawMessage(embedSpec)})
 	backends := func() []imageBackendRow {
-		rows, _ := a.handleImageBackends(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/image-backends", nil)})
-		return rows.([]imageBackendRow)
+		return a.imageRows()
 	}
 	if got := backends(); len(got) != 0 {
 		t.Errorf("with nothing that makes pictures, the list: %+v", got)
@@ -286,7 +286,7 @@ func TestImageGenerationTakesAConnectorThatMakesPictures(t *testing.T) {
 	// A row's buttons: Make default keeps the one it replaces offered by
 	// name; Stop using leaves no default; Offer to agents and Stop offering
 	// change only the offered list.
-	if w := call("POST", "/api/image-backends/role?name=sketcher&role=default", ""); w.Code >= 300 {
+	if w := call("POST", "/api/media-backends/role?name=sketcher&role=default", ""); w.Code >= 300 {
 		t.Fatalf("make default: %d %s", w.Code, w.Body.String())
 	}
 	if w := call("GET", "/api/image-gen", ""); strings.TrimSpace(w.Body.String()) != `{"agents":["painter"],"provider":"sketcher"}` {
@@ -295,15 +295,15 @@ func TestImageGenerationTakesAConnectorThatMakesPictures(t *testing.T) {
 	if got := backends(); len(got) != 2 || got[0].Name != "sketcher" || !got[0].IsDefault || !got[1].IsOffered {
 		t.Errorf("the list after Make default: %+v", got)
 	}
-	if w := call("POST", "/api/image-backends/role?name=nothing&role=default", ""); w.Code != http.StatusBadRequest {
+	if w := call("POST", "/api/media-backends/role?name=nothing&role=default", ""); w.Code != http.StatusBadRequest {
 		t.Errorf("a role for a backend that is not there: %d", w.Code)
 	}
-	call("POST", "/api/image-backends/role?name=painter&role=off", "")
-	call("POST", "/api/image-backends/role?name=sketcher&role=off", "")
+	call("POST", "/api/media-backends/role?name=painter&role=off", "")
+	call("POST", "/api/media-backends/role?name=sketcher&role=off", "")
 	if w := call("GET", "/api/image-gen", ""); strings.TrimSpace(w.Body.String()) != `{"agents":[],"provider":"none"}` {
 		t.Errorf("after Stop using and Stop offering: %s", w.Body.String())
 	}
-	call("POST", "/api/image-backends/role?name=sketcher&role=offered", "")
+	call("POST", "/api/media-backends/role?name=sketcher&role=offered", "")
 	if w := call("GET", "/api/image-gen", ""); strings.TrimSpace(w.Body.String()) != `{"agents":["sketcher"],"provider":"none"}` {
 		t.Errorf("after Offer to agents: %s", w.Body.String())
 	}

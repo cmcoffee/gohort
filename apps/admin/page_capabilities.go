@@ -5,7 +5,7 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
-// capabilitiesSections is the capabilities part of the admin page: System Hooks, Embeddings, Audio Transcription (STT), Speech (TTS), Image Generation, Web Search, Page Rendering (Browser), Mail (SMTP), Network Timeouts.
+// capabilitiesSections is the capabilities part of the admin page: System Hooks, Embeddings, Audio Transcription (STT), Speech (TTS), Media Generation, Web Search, Page Rendering (Browser), Mail (SMTP), Network Timeouts.
 func (a *AdminApp) capabilitiesSections() []ui.Section {
 	return []ui.Section{
 		// First: what this machine can and cannot do, which the settings
@@ -52,32 +52,23 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 			},
 		},
 		{
-			Title:    "Image Generation",
-			Subtitle: "Image generation for tools that produce illustrations or thumbnails.",
-			Detail: "Every image backend is listed here: Gemini or OpenAI added from their templates, a local ComfyUI or Automatic1111, a peer's renderer, or any backend declared as a spec.\n\n" +
-				"Each has a role. The Default is what agents' image tools use unless they ask for another; Offered to agents can be asked for by name; Not offered is not used. Make default, Offer to agents and Stop offering on a row change it.\n\n" +
-				"A backend's own settings (its key, its model) are on its row's Settings, and its key can come from Services > Keystore. Edit opens its editor (for ComfyUI, its workflow and how it is mapped), the same one its row under Connectors opens. Test renders a picture.\n\n" +
+			Title:    "Media Generation",
+			Subtitle: "What makes pictures, music and other media for agents.",
+			Detail: "Every connector that makes media is listed here, banded by what it makes: image backends (Gemini or OpenAI added from their templates, a local ComfyUI or Automatic1111, a peer's renderer), music, and any other kind a connector declares it makes, such as video or 3D models.\n\n" +
+				"Images: the Default is what agents' image tools use unless they ask for another; Offered to agents can be asked for by name; Not offered is not used. A backend that both makes and edits pictures has Used for, to keep it to editing and blending only, or to generating only.\n\n" +
+				"Music and the other kinds: Offer to agents gives each its own agent tool, generate_<kind>_<connector> (generate_music_<connector> for music). A flow may use one as a step without it being offered here.\n\n" +
+				"A connector's own settings (its key, its model) are on its row's Settings, and its key can come from Services > Keystore. Advanced opens its editor, the same one its row under Connectors opens. Test makes a sample.\n\n" +
 				"Add from a template adds Gemini, OpenAI and the rest; Add image backend stands up a local ComfyUI or A1111 in one step.",
 			Body: ui.Stack{
 				Children: []ui.Component{
-					imageBackendsTable(),
+					mediaBackendsTable(),
 					ui.Toolbar{
 						Actions: []ui.ToolbarAction{
-							{Label: "Add from a template…", Method: "client", URL: "connector_add_another", Data: "image.generate", Variant: "primary"},
+							{Label: "Add from a template…", Method: "client", URL: "connector_add_another", Data: "media", Variant: "primary"},
 							{Label: "Add image backend…", Method: "client", URL: "add_image_backend"},
 						},
 					},
 				},
-			},
-		},
-		{
-			Title:    "Music",
-			Subtitle: "Music connectors agents may make songs with.",
-			Detail:   "Each one ticked is offered to agents as a tool of its own, generate_music_<connector>. Add a music connector under Admin > Services > Connectors, from its spec; it is tested and fixed there. A flow may use one as a step without it being offered here.",
-			Body: ui.FormPanel{
-				Source: "api/music",
-				Fields: []ui.FormField{staleField, {Field: "agents", Label: "Offered to agents", Type: "checklist", Options: musicOptions(),
-					Help: "None listed means no connector here makes music yet."}},
 			},
 		},
 		{
@@ -146,36 +137,43 @@ func mailFormFields() []ui.FormField {
 	)
 }
 
-// imageBackendsTable is every image backend under Image Generation's picker,
-// each with the editor its Connectors row opens, so a backend's workflow,
-// size and steps are changed from the page that chooses it. The row actions
-// are the Connectors table's own (connectorEditRowActions and the rest): one
-// editor per connector, reached from two places.
-func imageBackendsTable() ui.Table {
+// mediaBackendsTable is every media connector, banded by what it makes, each
+// with the editor its Connectors row opens, so a backend's workflow, size and
+// steps are changed from the page that chooses it. The row actions after the
+// role buttons are the Connectors table's own (connectorEditRowActions and
+// the rest): one editor per connector, reached from two places.
+func mediaBackendsTable() ui.Table {
+	role := func(r string) string { return mediaBackendsSource + "/role?name={name}&role=" + r }
+	uses := func(u string) string { return mediaBackendsSource + "/uses?name={name}&uses=" + u }
 	return ui.Table{
-		Source: imageBackendsSource,
-		RowKey: "name",
+		Source:  mediaBackendsSource,
+		RowKey:  "name",
+		GroupBy: "group",
 		Columns: []ui.Col{
-			{Field: "title", Label: "Backend", Flex: 2},
+			{Field: "title", Label: "Connector", Flex: 2},
 			{Field: "role", Type: "badge", Badges: []ui.BadgeMapping{
 				{Value: "default", Label: "Default", Color: "success"},
 				{Value: "offered", Label: "Offered to agents", Color: "info"},
 				{Value: "unused", Label: "Not offered", Color: "mute"},
 			}},
 			{Field: "does", Label: "Does", Mute: true},
+			{Field: "used_for", Label: "", Mute: true},
 			{Field: "size", Label: "Size", Mute: true},
 			{Field: "steps", Label: "Steps", Mute: true},
 			{Field: "summary", Label: "", Mute: true, Flex: 4, Line: 2},
 			{Field: "last_error", Label: "", Mute: true, Flex: 4, Line: 2},
 		},
 		RowActions: append(append([]ui.RowAction{
-			{Type: "button", Label: "Make default", PostTo: imageBackendsSource + "/role?name={name}&role=default", Method: "POST", HideIf: "is_default", Variant: "primary"},
-			{Type: "button", Label: "Offer to agents", PostTo: imageBackendsSource + "/role?name={name}&role=offered", Method: "POST", OnlyIf: "is_unused"},
-			{Type: "button", Label: "Stop offering", PostTo: imageBackendsSource + "/role?name={name}&role=off", Method: "POST", OnlyIf: "is_offered"},
-			{Type: "button", Label: "Stop using", PostTo: imageBackendsSource + "/role?name={name}&role=off", Method: "POST", OnlyIf: "is_default",
+			{Type: "button", Label: "Make default", PostTo: role("default"), Method: "POST", OnlyIf: "is_image", HideIf: "is_default", Variant: "primary"},
+			{Type: "button", Label: "Offer to agents", PostTo: role("offered"), Method: "POST", OnlyIf: "is_unused"},
+			{Type: "button", Label: "Stop offering", PostTo: role("off"), Method: "POST", OnlyIf: "is_offered"},
+			{Type: "button", Label: "Stop using", PostTo: role("off"), Method: "POST", OnlyIf: "is_default",
 				Confirm: "Stop using the default image backend? Agents' image tools then use another only when they name one that is offered."},
+			{Type: "button", Label: "Generating and editing", PostTo: uses("both"), Method: "POST", OnlyIf: "both_ways", HideIf: "used_both", Group: "Used for"},
+			{Type: "button", Label: "Editing and blending only", PostTo: uses("edit"), Method: "POST", OnlyIf: "both_ways", HideIf: "used_edit", Group: "Used for"},
+			{Type: "button", Label: "Generating only", PostTo: uses("generate"), Method: "POST", OnlyIf: "both_ways", HideIf: "used_generate", Group: "Used for"},
 		}, connectorEditRowActions()...), connectorSettingsAction(), connectorTestAction()),
-		EmptyText: "No image backend yet. Add from a template… below adds Gemini, OpenAI and more; Add image backend… stands up a local ComfyUI or A1111.",
+		EmptyText: "Nothing makes media yet. Add from a template… below adds Gemini, OpenAI and more; Add image backend… stands up a local ComfyUI or A1111.",
 	}
 }
 

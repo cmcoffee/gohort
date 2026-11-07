@@ -60,7 +60,7 @@ func putImageConnector(t *testing.T, name, credential string, approved bool) {
 	}
 }
 
-// offerImageBackend puts name on Image Generation's "also offered to
+// offerImageBackend puts name on Media Generation's "also offered to
 // agents" list, as the page does: only those (and the default) reach agents.
 func offerImageBackend(name string) {
 	var agents []string
@@ -69,7 +69,7 @@ func offerImageBackend(name string) {
 }
 
 // A backend approved but neither the default nor offered does not reach
-// agents: Image Generation is where image connectors are offered.
+// agents: Media Generation is where image connectors are offered.
 func TestAnImageBackendReachesAgentsOnlyWhenOffered(t *testing.T) {
 	backendTestDB(t)
 	putImageConnector(t, "comfy_lan", "no_auth", true)

@@ -285,7 +285,7 @@ func TestTheMigrationFromBeforePlanB(t *testing.T) {
 	}
 	for _, want := range []string{"Worker LLM: its key was kept before keys were bound", "Embeddings: it was set up before every embedder",
 		"Audio Transcription (STT): it was set up before every transcriber", "Speech (TTS): it was set up before every speech server",
-		"Image Generation: it names openai, which gohort no longer runs itself", "Image Generation: offered to agents, it names sd, an image backend in a shape"} {
+		"Media Generation: it names openai, which gohort no longer runs itself", "Media Generation: offered to agents, it names sd, an image backend in a shape"} {
 		if !strings.Contains(strings.Join(whys, "\n"), want) {
 			t.Errorf("before the migration, missing %q in:\n%s", want, strings.Join(whys, "\n"))
 		}

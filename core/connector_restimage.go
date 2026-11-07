@@ -763,14 +763,14 @@ func (t *restImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	if !ok {
 		return "", fmt.Errorf("image backend %q no longer exists", t.connector)
 	}
-	// Its tool reaches only a backend Image Generation offers (its default,
+	// Its tool reaches only a backend Media Generation offers (its default,
 	// or offered to agents), as the image tool's backend list does: a grant
 	// of the tool alone is no reference to the connection.
 	if !ImageBackendReachable(sess, t.connector) {
 		if err := sess.ConnectionBarred(t.connector); err != nil {
 			return "", err
 		}
-		return "", fmt.Errorf("image backend %q is not offered to agents: an admin offers it under Admin > Services > Image Generation", t.connector)
+		return "", fmt.Errorf("image backend %q is not offered to agents: an admin offers it under Admin > Services > Media Generation", t.connector)
 	}
 	s, graph, err := imageSpecOf(c)
 	if err == nil && !graph {
@@ -1303,7 +1303,7 @@ func reachableImageBackends(sess *ToolSession) []ImageBackendChoice {
 	if ImageProviderFunc != nil {
 		defaultProvider = strings.TrimSpace(ImageProviderFunc())
 	}
-	// Offered to agents: the default, and those Image Generation's "also
+	// Offered to agents: the default, and those Media Generation's "also
 	// offered to agents" names.
 	offered := map[string]bool{defaultProvider: defaultProvider != ""}
 	var agents []string
@@ -1337,8 +1337,22 @@ func reachableImageBackends(sess *ToolSession) []ImageBackendChoice {
 		}
 		// Another image backend (OpenAI or Gemini images) is offered by name.
 		if !graph {
+			// What Media Generation's "Used for" leaves it, when it does both:
+			// a backend used for editing only is offered for no generating,
+			// one used for generating only for no editing.
+			generates := ImageBackendRegistered(c.Name)
+			switch ImageBackendUse(c.Name) {
+			case ImageUseEdit:
+				if edits {
+					generates = false
+				}
+			case ImageUseGenerate:
+				if generates {
+					edits = false
+				}
+			}
 			choice := ImageBackendChoice{Name: c.Name, Default: c.Name == defaultProvider, Edits: edits,
-				Generates: edits && ImageBackendRegistered(c.Name)}
+				Generates: edits && generates}
 			if edits {
 				choice.MaxImages, choice.CascadeMax = editor.max, editor.max
 			}
@@ -1472,6 +1486,9 @@ func EditImageWithBackend(sess *ToolSession, req EditImageRequest) (*ImageGenRes
 	// Another kind's edit backend (a service): up to its count of source
 	// pictures, verified here as for every backend, and no mask.
 	if eb, ok := lookupImageEditBackend(req.Backend); ok {
+		if ImageBackendUse(req.Backend) == ImageUseGenerate {
+			return nil, fmt.Errorf("image backend %s is set to generating only (Admin > Services > Media Generation): edit or blend with another backend", req.Backend)
+		}
 		if len(req.Images) == 0 {
 			return nil, fmt.Errorf("editing needs at least one source image")
 		}

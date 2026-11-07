@@ -56,6 +56,30 @@ func UnregisterImageBackend(name string) {
 	imageBackendMu.Unlock()
 }
 
+// Image backend uses: what an image backend that both makes and edits
+// pictures is used for, set on Media Generation (ImageTable "uses", by
+// backend). Absent is both.
+const (
+	ImageUseBoth     = ""
+	ImageUseEdit     = "edit"
+	ImageUseGenerate = "generate"
+)
+
+// ImageBackendUse is what backend name is used for: ImageUseEdit (editing and
+// blending only), ImageUseGenerate (generating only), or ImageUseBoth.
+func ImageBackendUse(name string) string {
+	if RootDB == nil {
+		return ImageUseBoth
+	}
+	var uses map[string]string
+	RootDB.Get(ImageTable, "uses", &uses)
+	switch u := uses[strings.TrimSpace(name)]; u {
+	case ImageUseEdit, ImageUseGenerate:
+		return u
+	}
+	return ImageUseBoth
+}
+
 // ImageEditFunc edits pictures for a named backend of another kind than
 // rest_image (a service, core/service): the prompt and the source pictures'
 // verified bytes in, in order, the edited picture out. Several pictures are a
@@ -339,7 +363,10 @@ type ImageGenResult struct {
 // by its name. Every image comes from one; none is written in Go.
 func generateWithBackend(ctx context.Context, backend, prompt string, landscape bool) (*ImageGenResult, error) {
 	if backend == "" {
-		return nil, fmt.Errorf("image generation is not set up: choose an image connector under Admin > Services > Image Generation")
+		return nil, fmt.Errorf("image generation is not set up: choose an image connector under Admin > Services > Media Generation")
+	}
+	if ImageBackendUse(backend) == ImageUseEdit {
+		return nil, fmt.Errorf("image backend %s is set to editing and blending only (Admin > Services > Media Generation): pass the pictures to work from, or make the picture with another backend", backend)
 	}
 	fn, ok := lookupImageBackend(backend)
 	if !ok {

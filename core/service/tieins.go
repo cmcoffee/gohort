@@ -2,7 +2,7 @@ package service
 
 // A connector is how a service is reached and read; whether gohort uses it is
 // decided where it is referenced: a configuration page that names it (Web
-// Search's engine, Image Generation, Research Sources, ...).
+// Search's engine, Media Generation, Research Sources, ...).
 // Those are its references: they guard its deletion and show on its row. A
 // connector has no on/off state of its own; it is served from its save, and
 // whatever reaches it does so through a reference.
@@ -91,12 +91,12 @@ func TieIns(db Database) map[string][]string {
 	s = ""
 	db.Get(ImageTable, "provider", &s)
 	if s = strings.TrimSpace(s); s != "none" && !strings.HasPrefix(s, "peer:") {
-		add(s, "Image Generation")
+		add(s, "Media Generation")
 	}
 	var agents []string
 	db.Get(ImageTable, "agents", &agents)
 	for _, a := range agents {
-		add(a, "Image Generation (offered to agents)")
+		add(a, "Media Generation (offered to agents)")
 	}
 	var emb EmbeddingConfig
 	db.Get(EmbeddingTable, "current", &emb)
@@ -118,15 +118,12 @@ func TieIns(db Database) map[string][]string {
 		db.Get(table, "provider", &s)
 		add(serviceName(s), page)
 	}
-	agents = nil
-	db.Get(MusicTable, "agents", &agents)
-	for _, a := range agents {
-		add(a, "Music (offered to agents)")
-	}
-	agents = nil
-	db.Get(MediaTable, "agents", &agents)
-	for _, a := range agents {
-		add(a, "Media Generation (offered to agents)")
+	for _, table := range []string{MusicTable, MediaTable} {
+		agents = nil
+		db.Get(table, "agents", &agents)
+		for _, a := range agents {
+			add(a, "Media Generation (offered to agents)")
+		}
 	}
 	for _, rs := range ListResearchSources(db) {
 		if !rs.Off {
@@ -185,9 +182,9 @@ func StaleSettings(db Database) []StaleSetting {
 	add("Web Search", StaleWhy(db, str(SearchTable, "provider")))
 	switch image := strings.TrimSpace(str(ImageTable, "provider")); image {
 	case "openai", "gemini":
-		add("Image Generation", "it names "+image+", which gohort no longer runs itself: add it from its template under + Add another…")
+		add("Media Generation", "it names "+image+", which gohort no longer runs itself: add it from its template under + Add another…")
 	default:
-		add("Image Generation", StaleWhy(db, image))
+		add("Media Generation", StaleWhy(db, image))
 	}
 	// A record from before every one was a connector names none: blank or
 	// local, with the address of the server it used.
@@ -218,12 +215,12 @@ func StaleSettings(db Database) []StaleSetting {
 	}
 	add("Page Rendering (Browser)", StaleWhy(db, str(BrowseTable, "source")))
 	add("Mail (SMTP)", StaleWhy(db, str(MailTable, "provider")))
-	for table, page := range map[string]string{ImageTable: "Image Generation", MusicTable: "Music", MediaTable: "Media Generation"} {
+	for _, table := range []string{ImageTable, MusicTable, MediaTable} {
 		var agents []string
 		db.Get(table, "agents", &agents)
 		for _, a := range agents {
 			if why := StaleWhy(db, a); why != "" {
-				add(page, "offered to agents, "+why)
+				add("Media Generation", "offered to agents, "+why)
 			}
 		}
 	}
@@ -251,7 +248,7 @@ func StaleWhy(db Database, v string) string {
 }
 
 // AgentConnections are the connections an agent's tools reach, by name:
-// the image connectors (the one Image Generation uses and those offered to
+// the image connectors (the one Media Generation uses and those offered to
 // agents), the music connectors offered to agents, the Research Sources
 // offered to agents as tools. An agent's
 // credential scope and a connection's Access decide who reaches these; a

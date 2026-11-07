@@ -185,7 +185,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 			Title:    "Connectors",
 			Subtitle: "The REST services gohort reaches for a job: search, pictures, speech, embeddings, page rendering, mail, conversions, message sends. Each is reached through the pages that reference it; edit, test or remove it here.",
 			Detail: "A connector is how gohort calls one outside service: its address and key, the requests it makes, how each reply is read, and the job it does for gohort (its contract). It comes from a template (Admin > Services > Templates), from an imported bundle, or from the assistant.\n\n" +
-				"It is reached through the pages that reference it: choosing it on the page that uses it (Web Search, Image Generation, Research Sources, ...) and saving. Its row says which pages reference it, or that none does; one no page references makes no calls. One referenced cannot be deleted: take it off those pages first. A change made by someone who is not an administrator holds it, so no call reaches it, until an administrator saves a page with it chosen.\n\n" +
+				"It is reached through the pages that reference it: choosing it on the page that uses it (Web Search, Media Generation, Research Sources, ...) and saving. Its row says which pages reference it, or that none does; one no page references makes no calls. One referenced cannot be deleted: take it off those pages first. A change made by someone who is not an administrator holds it, so no call reaches it, until an administrator saves a page with it chosen.\n\n" +
 				"Settings on its row are its values and its key, the same form the page that chooses it shows. Edit opens how it runs: its spec beside an assistant, with the job it must do; a connector a setup form made (ComfyUI, A1111) opens that form. When its spec does not validate, Edit is Fix. Endpoints lists each request it makes, what it is sent and what is read back. Test makes the smallest real call and runs its contract's check.\n\n" +
 				"What gohort does in Go (the LLM providers, SMTP, the browser, DuckDuckGo) is set up on its own page, peers under Admin > Integrations > Peers, and the integrations of other kinds are listed below.",
 			Body: ui.Stack{
@@ -482,7 +482,7 @@ func connectorTestAction() ui.RowAction {
 
 // connectorListSources are the tables that list connectors. A change made
 // from either one's row reloads both, since a page can hold both.
-var connectorListSources = []string{"api/connectors", imageBackendsSource}
+var connectorListSources = []string{"api/connectors", mediaBackendsSource}
 
 func connectorColumns() []ui.Col {
 	return []ui.Col{
