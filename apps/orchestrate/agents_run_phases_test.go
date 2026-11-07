@@ -52,3 +52,24 @@ func TestARunReportsItsAgentsFailure(t *testing.T) {
 		t.Fatalf("the agent's failure should come back as the call's error: %q %v", out, err)
 	}
 }
+
+// The agents tool's run is held to the agent's own caps, as every other run
+// path is. It set none of them: an agent run this way spent past its daily cap
+// and its action quotas, and its duplicate-send guard was off.
+func TestARunCarriesTheAgentsCaps(t *testing.T) {
+	_, turn, _ := inlineRun(t)
+	target := AgentRecord{ID: "scout-id", Name: "Scout", Owner: "u",
+		DailySpendUSD: 0.5, ActionQuotas: ActionQuotaMap{"send_message": 3}}
+	ar := &agentsRun{t: turn, target: target, subTurn: turn, subSess: &ToolSession{Username: "u"}, ctx: t.Context()}
+	ar.configureLoop()
+	cfg := ar.runCfg
+	if cfg.BudgetKey != "scout-id" || cfg.DailySpendUSD != 0.5 {
+		t.Errorf("the daily spend cap is not applied: key %q, cap %v", cfg.BudgetKey, cfg.DailySpendUSD)
+	}
+	if cfg.ActionQuotas["send_message"] != 3 {
+		t.Errorf("the action quotas are not applied: %v", cfg.ActionQuotas)
+	}
+	if cfg.SendGuardKey == nil {
+		t.Error("the duplicate-send guard is off")
+	}
+}

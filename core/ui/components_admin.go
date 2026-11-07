@@ -29,8 +29,10 @@ func (p PanicBar) MarshalJSON() ([]byte, error) {
 
 // ToggleGroup renders a list of iOS-style switches bound to fields
 // from a single JSON document (Source URL). Each toggle's change POSTs
-// the entire updated document back to Source — server is the source of
-// truth, the runtime just round-trips.
+// only its own field ({field: true|false}) back to Source, so Source's POST
+// must merge onto the stored record. Posting the whole document loaded with
+// the page wrote a stale copy of every other field back over anything saved
+// since (a form beside it on the same record).
 type ToggleGroup struct {
 	Source  string   `json:"source"` // GET + POST endpoint
 	Toggles []Toggle `json:"toggles"`

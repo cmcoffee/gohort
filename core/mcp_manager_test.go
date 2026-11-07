@@ -4,12 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cmcoffee/gohort/core/internal/mcpclient"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // A failed CALL and a failed CONNECTION need opposite handling: one is
@@ -380,5 +384,76 @@ func TestTwoServersNeverShareAToolName(t *testing.T) {
 	m.registerTools(MCPServerConfig{Name: "tncol_git"}, []mcpclient.ToolDef{{Name: "hub_search", Description: "from git, again"}})
 	if p := m.proxies["tncol_git_hub_search"]; p.server != "tncol_git" || p.desc != "from git, again" {
 		t.Errorf("a reconnect moved or lost the server's own tool: %+v", p)
+	}
+}
+
+// Waiting on somebody else's reconnect must not hold the refresh lock.
+//
+// It did: a call that found the refresh token dead while another call had
+// already asked the person to reconnect waited for that reconnect under the
+// manager-wide lock, so every other user's MCP token stalled behind it. And
+// when the reconnect landed it re-resolved by calling itself, which took the
+// same lock again and hung MCP sign-in for everyone until a restart.
+func TestMCPReauthWaitDoesNotHoldTheRefreshLock(t *testing.T) {
+	resetReauth(t)
+	refreshed := make(chan struct{}, 1)
+	as := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case refreshed <- struct{}{}:
+		default:
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, `{"error":"invalid_grant"}`)
+	}))
+	defer as.Close()
+
+	const server = "tracker"
+	m := &MCPManager{db: &DBase{Store: kvlite.MemStore()}}
+	m.saveOAuthCfg(server, mcpOAuthConfig{ClientID: "c", TokenEndpoint: as.URL})
+	m.db.CryptSet(mcpServersTable, mcpOAuthTokKey(server, "alice"),
+		mcpOAuthToken{AccessToken: "old", RefreshToken: "dead", Expiry: time.Now().Add(-time.Hour)})
+	m.db.CryptSet(mcpServersTable, mcpOAuthTokKey(server, "bob"),
+		mcpOAuthToken{AccessToken: "bobs", Expiry: time.Now().Add(time.Hour)})
+
+	// Another of alice's calls already asked her to reconnect.
+	ReauthAnnounce("alice", mcpReauthKey(server))
+
+	type result struct {
+		tok string
+		err error
+	}
+	alice := make(chan result, 1)
+	go func() {
+		tok, err := m.validOAuthToken("alice", server)
+		alice <- result{tok, err}
+	}()
+	select {
+	case <-refreshed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("alice's call never tried the refresh")
+	}
+	time.Sleep(20 * time.Millisecond) // let it reach the wait
+
+	// While alice waits, bob's token resolves without queueing behind her.
+	bob := make(chan string, 1)
+	go func() { tok, _ := m.validOAuthToken("bob", server); bob <- tok }()
+	select {
+	case tok := <-bob:
+		if tok != "bobs" {
+			t.Errorf("bob got %q", tok)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("bob's token waited behind alice's reconnect: the wait holds the refresh lock")
+	}
+
+	// Alice reconnects; her waiting call carries on with the new token.
+	m.saveOAuthToken(server, "alice", mcpOAuthToken{AccessToken: "fresh", Expiry: time.Now().Add(time.Hour)})
+	select {
+	case r := <-alice:
+		if r.err != nil || r.tok != "fresh" {
+			t.Errorf("after the reconnect alice got %q, %v; want the fresh token", r.tok, r.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("alice's call never returned after the reconnect: the retry deadlocked")
 	}
 }

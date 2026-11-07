@@ -929,15 +929,39 @@ func (m *MCPManager) oauthAuthorizer(user, server string) mcpclient.Authorizer {
 	}
 }
 
-// validOAuthToken returns a current access token for (user, server),
-// refreshing if it is missing/near expiry. Serialized to avoid refresh
-// storms.
 // mcpReauthKey namespaces an MCP server in the reauth barrier, which is shared
 // with the SecureAPI credentials. A server and a credential could otherwise
 // answer to one name and release each other's waiters.
 func mcpReauthKey(server string) string { return "mcp:" + server }
 
+// validOAuthToken returns a current access token for (user, server),
+// refreshing if it is missing/near expiry. The refresh is serialized to avoid
+// refresh storms; waiting on somebody else's reconnect is NOT. That wait runs
+// with the lock released: holding it stalled every user's MCP token for the
+// whole wait, and the retry after a completed reconnect re-took the lock this
+// goroutine still held and hung MCP auth until restart.
 func (m *MCPManager) validOAuthToken(user, server string) (string, error) {
+	tok, wait, err := m.resolveOAuthToken(user, server)
+	if !wait {
+		return tok, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if !ReauthWait(ctx, user, mcpReauthKey(server)) {
+		return "", MCPNotConnectedError{Server: server}
+	}
+	// Reconnected while we held. Resolve once more; a second dead end is
+	// reported, not waited on again.
+	if tok, wait, err = m.resolveOAuthToken(user, server); wait {
+		return "", MCPNotConnectedError{Server: server}
+	}
+	return tok, err
+}
+
+// resolveOAuthToken is validOAuthToken's body under the refresh lock. wait
+// reports that the refresh token is dead and a reconnect is already being
+// asked for, so the caller should wait for it (outside the lock) and retry.
+func (m *MCPManager) resolveOAuthToken(user, server string) (_ string, wait bool, _ error) {
 	m.oauthMu.Lock()
 	defer m.oauthMu.Unlock()
 	// RAW: a record with only a refresh token is the state a 401 leaves, and
@@ -945,19 +969,19 @@ func (m *MCPManager) validOAuthToken(user, server string) (string, error) {
 	// it "no token" and dead-end on a reconnect the user does not need.
 	tok, ok := m.loadOAuthTokenRaw(server, user)
 	if !ok || (tok.AccessToken == "" && tok.RefreshToken == "") {
-		return "", fmt.Errorf("no token for user %q on %q", user, server)
+		return "", false, fmt.Errorf("no token for user %q on %q", user, server)
 	}
 	// A zero Expiry means the provider told us nothing, NOT that the token is
 	// good forever — so it only rides while we still hold one.
 	if tok.AccessToken != "" && (tok.Expiry.IsZero() || time.Until(tok.Expiry) > 60*time.Second) {
-		return tok.AccessToken, nil
+		return tok.AccessToken, false, nil
 	}
 	cfg, ok := m.loadOAuthCfg(server)
 	if !ok {
 		if tok.AccessToken != "" {
-			return tok.AccessToken, nil // best effort
+			return tok.AccessToken, false, nil // best effort
 		}
-		return "", fmt.Errorf("no oauth config for %q", server)
+		return "", false, fmt.Errorf("no oauth config for %q", server)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -976,21 +1000,18 @@ func (m *MCPManager) validOAuthToken(user, server string) (string, error) {
 			// reported this six times, once per tool that happened to be
 			// called. See oauth_reauth.go.
 			if !ReauthAnnounce(user, mcpReauthKey(server)) {
-				if ReauthWait(ctx, user, mcpReauthKey(server)) {
-					return m.validOAuthToken(user, server)
-				}
-				return "", MCPNotConnectedError{Server: server}
+				return "", true, nil
 			}
 			Log("[mcp] %q refused %q's refresh token (%v): cleared; reconnect required", server, user, err)
-			return "", MCPNotConnectedError{Server: server}
+			return "", false, MCPNotConnectedError{Server: server}
 		}
 		if tok.AccessToken != "" && (tok.Expiry.IsZero() || time.Now().Before(tok.Expiry)) {
-			return tok.AccessToken, nil // not yet expired; ride it out
+			return tok.AccessToken, false, nil // not yet expired; ride it out
 		}
-		return "", fmt.Errorf("token refresh failed for %q: %w", server, err)
+		return "", false, fmt.Errorf("token refresh failed for %q: %w", server, err)
 	}
 	m.saveOAuthToken(server, user, nt)
-	return nt.AccessToken, nil
+	return nt.AccessToken, false, nil
 }
 
 // Test connects to a candidate config (without persisting) and reports

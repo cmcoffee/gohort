@@ -351,9 +351,14 @@
         input.checked = !!current[t.field];
         input.addEventListener('change', function() {
           current[t.field] = input.checked;
+          // Only the switch that moved. Sending the whole record loaded with
+          // the page wrote its stale copy of every other field back, undoing
+          // a form beside it that saved the same record since.
+          var change = {};
+          change[t.field] = input.checked;
           fetchJSON(cfg.source, {
             method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(current)
+            body: JSON.stringify(change)
           }).catch(function(err){ showToast('Save failed: ' + err.message); input.checked = !input.checked; });
         });
         var labelText = el('span', {class: 'ui-toggle-label'}, [t.label,

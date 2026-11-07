@@ -1753,6 +1753,16 @@ func (ar *agentsRun) configureLoop() {
 		MaxRounds:      resolveMaxWorkerRounds(ar.target),
 		ThinkBudget:    ar.target.ThinkBudget, // per-agent override; 0 = inherit route/global
 		Effort:         ar.target.Effort,      // per-agent level; a budget above wins
+		// The agent's own caps, and its family's, hold here as on every other
+		// run path. This one set none of them, so an agent run through the
+		// agents tool spent past its daily cap and its action quotas, and its
+		// duplicate-send guard was off while it held the channel tools.
+		ActionQuotas:  ar.target.ActionQuotas, // per-agent 24h caps; empty = uncapped
+		BudgetKey:     ar.target.ID,
+		DailySpendUSD: ar.target.DailySpendUSD,
+		SharedBudgets: familyBudgets(ar.target), // a sub-agent counts against its parents' caps
+		SendGuardKey:  sendGuardKey,
+		StampLocation: UserLocation(t.user), // stamp the turn in the acting user's zone
 		// Asked of whoever is watching the calling turn; with nobody
 		// watching, queued for the owner (see runConfirm).
 		Confirm:             ar.runConfirmFn,
