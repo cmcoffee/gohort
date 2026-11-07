@@ -219,8 +219,9 @@ func (T *KnowledgeApp) stewardSection(user, collectionID string) (ui.Section, bo
 					Field: "curator_agent", Type: "select", Label: "Maintained by",
 					Options: append([]ui.SelectOption{{Value: "", Label: "(nobody; this collection is filled by hand)"}},
 						AgentNameOptions(user)...),
-					Help: "That agent may add documents to THIS collection and remove them from it.",
-					Detail: "It cannot touch any other collection you own, and it gets no other new powers: it cannot create or change agents, tools or apps.\n\n" +
+					Help: "That agent may add documents to THIS collection and remove them from it. Then tell it what to fetch in a chat, or give it a schedule.",
+					Detail: "It gets a collection tool for this collection: add a page by its address, a file a tool saved to its workspace (a downloaded PDF), or text; list what is in it; remove a document. It does nothing on its own: ask it in a chat (\"add this month's vendor reports\"), or give it a schedule to keep the collection current.\n\n" +
+						"It cannot touch any other collection you own, and it gets no other new powers: it cannot create or change agents, tools or apps.\n\n" +
 						"Reading is unaffected. Any agent with this collection attached still searches it exactly as before.",
 				},
 			},

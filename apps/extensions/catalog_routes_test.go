@@ -115,6 +115,9 @@ func TestTheCatalogAndSkillRoutesChangeWhatTheySay(t *testing.T) {
 	if _, body := call("", "GET", "/api/skills", ""); !strings.Contains(body, `"conditions":"If Is it v4? (+2 cases)"`) {
 		t.Errorf("the list does not show the conditions: %s", body)
 	}
+	if code, body := call("", "POST", edit, `{"name":"cr_skill","instructions":"","conditions":[{"kind":"if","question":"q","how":"h"}]}`); code != 400 || !strings.Contains(body, "Instructions, which are empty") {
+		t.Errorf("conditions over empty instructions: %d %s", code, body)
+	}
 	if code, body := call("", "POST", edit, `{"name":"cr_skill","instructions":"i","conditions":[{"kind":"if","question":"Is it v5?"}]}`); code != 400 || !strings.Contains(body, "how to check") {
 		t.Errorf("a condition with no way to check it: %d %s", code, body)
 	}
@@ -132,6 +135,11 @@ func TestTheCatalogAndSkillRoutesChangeWhatTheySay(t *testing.T) {
 	}
 	if own, _ := findOwnSkill("alice", skill.ID); len(own.Conditions) != 0 {
 		t.Errorf("an empty list should clear the conditions: %+v", own.Conditions)
+	}
+
+	// A new skill says no agent uses it yet, and where it is added.
+	if code, body := call("", "POST", "/api/skills", `{"name":"cr_new","instructions":"i"}`); code/100 != 2 || !strings.Contains(body, "No agent uses it yet") || !strings.Contains(body, "Configure, Skills") {
+		t.Errorf("creating a skill: %d %s", code, body)
 	}
 
 	// Bob cannot share alice's skill; alice can delete it.

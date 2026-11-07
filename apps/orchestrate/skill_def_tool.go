@@ -290,7 +290,7 @@ func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 	triggers := stringSliceFromArgs(args, "triggers")
 	allowedTools := stringSliceFromArgs(args, "allowed_tools")
 	attachedCollections := stringSliceFromArgs(args, "attached_collections")
-	conditions, hasConditions, err := conditionsFromArgs(args)
+	conditions, hasConditions, err := conditionsFromArgs(args, instructions)
 	if err != nil {
 		return "", err
 	}
@@ -564,7 +564,7 @@ func skillDefUpdate(args map[string]any, sess *ToolSession) (string, error) {
 		rec.AttachedCollections = stringSliceFromArgs(args, "attached_collections")
 		changed = append(changed, "attached_collections")
 	}
-	if conditions, has, err := conditionsFromArgs(args); err != nil {
+	if conditions, has, err := conditionsFromArgs(args, rec.Instructions); err != nil {
 		return "", err
 	} else if has {
 		rec.Conditions = conditions
@@ -625,8 +625,9 @@ func skillDefDelete(args map[string]any, sess *ToolSession) (string, error) {
 // conditionsFromArgs reads the conditions argument: a JSON array as a string
 // (the shape the tool declares), or an already-decoded array. has is false
 // when it was not passed; an empty array clears. Validated here, so the error
-// names the condition rather than the save.
-func conditionsFromArgs(args map[string]any) (cases []SkillCase, has bool, err error) {
+// names the condition rather than the save. instructions are the skill's own,
+// which the If applies, so a list over empty ones is refused here too.
+func conditionsFromArgs(args map[string]any, instructions string) (cases []SkillCase, has bool, err error) {
 	raw, present := args["conditions"]
 	if !present {
 		return nil, false, nil
@@ -647,7 +648,7 @@ func conditionsFromArgs(args map[string]any) (cases []SkillCase, has bool, err e
 	if len(cases) == 0 {
 		return nil, true, nil
 	}
-	if probs := (SkillRecord{Conditions: cases}).ConditionProblems(); len(probs) > 0 {
+	if probs := (SkillRecord{Conditions: cases, Instructions: instructions}).ConditionProblems(); len(probs) > 0 {
 		return nil, true, errors.New(strings.Join(probs, "; "))
 	}
 	return cases, true, nil

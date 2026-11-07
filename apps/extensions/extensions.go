@@ -1405,7 +1405,8 @@ func (T *Extensions) handleSkillSave(c *jsonapi.Call, body skillSave) (any, erro
 	// is missing while the person still has the form on screen.
 	var conditions []SkillCase
 	if body.Conditions != nil {
-		var parsed SkillRecord
+		// With the instructions the save carries: the If applies them.
+		parsed := SkillRecord{Instructions: body.Instructions}
 		parsed.SetConditionRows(*body.Conditions)
 		if probs := parsed.ConditionProblems(); len(probs) > 0 {
 			return nil, jsonapi.BadRequest(strings.Join(probs, "; "))
@@ -1456,6 +1457,11 @@ func (T *Extensions) handleSkillSave(c *jsonapi.Call, body skillSave) (any, erro
 	}
 	if _, err := rec.save(); err != nil {
 		return nil, err
+	}
+	// A new skill does nothing until an agent is given it, and that happens
+	// on the agent's page, not here: say so, or "Saved" reads as done.
+	if id == "" {
+		return map[string]string{"message": "Saved. No agent uses it yet: on an agent's page, Configure, Skills, add " + rec.Name + "."}, nil
 	}
 	return jsonapi.Empty(http.StatusNoContent), nil
 }

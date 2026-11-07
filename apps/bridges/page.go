@@ -66,7 +66,9 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				Title:    "Message bridges",
 				Subtitle: "PUSH sources: a messaging connector delivers inbound into a channel. A Teams bot or a linked service is added under Extensions > Integrations.",
 				Detail:   "iMessage runs as the gohort-desktop daemon; others, Telegram and Slack, are server-side. Toggle one off to pause just that bridge; status shows the last check-in.",
-				Body: ui.Table{
+				// The way to add one, right here: the setup is on another page,
+				// and a sentence naming it left the person to find it.
+				Body: ui.Stack{Children: []ui.Component{ui.Card{HTML: addBridgeLinkHTML}, ui.Table{
 					Source: "/bridges/api/bridges",
 					RowKey: "id",
 					// A row per bridge: its name, whether it is connected, its switch,
@@ -106,7 +108,7 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 						}),
 					},
 					EmptyText: "No message bridges yet. The gohort-desktop daemon registers itself automatically the first time it connects to /bridges/api/hook.",
-				},
+				}}},
 			},
 			{
 				// Stage A of the unified-bridge model: a POLL source is the
@@ -358,3 +360,7 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	page.Render(w)
 }
+
+// addBridgeLinkHTML is the Message bridges section's way to the Integrations
+// list, where a Teams bot or a linked service is set up.
+const addBridgeLinkHTML = `<div style="margin:0 0 0.6rem"><a class="ui-row-btn" href="/extensions">Add a Teams bot or a linked service →</a></div>`

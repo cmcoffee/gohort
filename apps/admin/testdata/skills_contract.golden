@@ -36,8 +36,8 @@ alice POST /api/skills "{\"name\":\"mine\",\"description\":\"d\"}"
   403 forbidden
 root POST /api/skills "{\"name\":\"Release notes\",\"description\":\"Write release notes\",\"triggers\":[\"release\"],\"instructions\":\"Be brief.\",\"allowed_tools\":[\"git\"],\"attached_collections\":[\"col-root\"]}"
   200 {"id":"<skill-1>","name":"Release notes","description":"Write release notes","triggers":["release"],"allowed_tools":["git"],"instructions":"Be brief.","owner":"root","attached_collections":["col-root"],"created":"<time>","updated":"<time>"}
-root POST /api/skills "{\"name\":\"Triage\",\"description\":\"Sort tickets\",\"conditions\":[{\"kind\":\"if\",\"check\":\"lookup\",\"question\":\"Is it severe?\",\"how\":\"ask the reporter\"},{\"kind\":\"else\",\"instructions\":\"Queue it.\"}]}"
-  200 {"id":"<skill-2>","name":"Triage","description":"Sort tickets","instructions":"","owner":"root","conditions":[{"kind":"if","question":"Is it severe?","how":"ask the reporter"},{"kind":"else","instructions":"Queue it."}],"created":"<time>","updated":"<time>"}
+root POST /api/skills "{\"name\":\"Triage\",\"description\":\"Sort tickets\",\"instructions\":\"Sort by severity.\",\"conditions\":[{\"kind\":\"if\",\"check\":\"lookup\",\"question\":\"Is it severe?\",\"how\":\"ask the reporter\"},{\"kind\":\"else\",\"instructions\":\"Queue it.\"}]}"
+  200 {"id":"<skill-2>","name":"Triage","description":"Sort tickets","instructions":"Sort by severity.","owner":"root","conditions":[{"kind":"if","question":"Is it severe?","how":"ask the reporter"},{"kind":"else","instructions":"Queue it."}],"created":"<time>","updated":"<time>"}
 root POST /api/skills "{\"name\":\"release NOTES\",\"description\":\"a second one\"}"
   409 you already have a skill called Release notes; pick another name, or edit that one
 root POST /api/skills "{\"description\":\"no name\"}"
@@ -47,9 +47,9 @@ root POST /api/skills "{\"name\":\"No description\"}"
 root POST /api/skills "{\"name\":\"Bad condition\",\"description\":\"d\",\"conditions\":\"yes\"}"
   400 invalid body: conditions: json: cannot unmarshal string into Go value of type []map[string]interface {}
 root POST /api/skills "{\"name\":\"Half condition\",\"description\":\"d\",\"conditions\":[{\"kind\":\"if\",\"question\":\"Is it severe?\"}]}"
-  400 condition 1: it needs how to check it
+  400 the If applies the skill's own Instructions, which are empty: write them; condition 1: it needs how to check it
 root POST /api/skills "{\"name\":\"Else first\",\"description\":\"d\",\"conditions\":[{\"kind\":\"else\",\"instructions\":\"x\"}]}"
-  400 condition 1: the first condition is the If; an Else comes after it
+  400 the If applies the skill's own Instructions, which are empty: write them; condition 1: the first condition is the If; an Else comes after it
 root POST /api/skills "{\"name\":"
   400 invalid JSON: unexpected EOF
 root POST /api/skills ""
@@ -59,9 +59,9 @@ root PATCH /api/skills?id=<skill-1> "{\"instructions\":\"Be very brief.\"}"
 root POST /api/skills "{\"id\":\"<skill-2>\",\"name\":\"Release Notes\",\"description\":\"rename onto a taken name\"}"
   409 you already have a skill called Release notes; pick another name, or edit that one
 root POST /api/skills "{\"id\":\"<skill-2>\",\"conditions\":[]}"
-  200 {"id":"<skill-2>","name":"Triage","description":"Sort tickets","instructions":"","owner":"root","created":"<time>","updated":"<time>"}
+  200 {"id":"<skill-2>","name":"Triage","description":"Sort tickets","instructions":"Sort by severity.","owner":"root","created":"<time>","updated":"<time>"}
 root GET /api/skills ""
-  200 [{"id":"<skill-1>","name":"Release notes","description":"Write release notes","triggers":["release"],"allowed_tools":["git"],"attached_collections":["col-root"],"instructions":"Be very brief.","disabl… (413 bytes, sha1 3893c006c13f000e5570436dd49c3f8242b51a0e)
+  200 [{"id":"<skill-1>","name":"Release notes","description":"Write release notes","triggers":["release"],"allowed_tools":["git"],"attached_collections":["col-root"],"instructions":"Be very brief.","disabl… (430 bytes, sha1 d63baacb61414652bc2e72b4aec0769edb99aeae)
 alice GET /api/skills/<skill-1> ""
   403 forbidden
 root GET /api/skills/<skill-1> ""
@@ -69,7 +69,7 @@ root GET /api/skills/<skill-1> ""
 alice GET /api/skills/<skill-2> ""
   403 forbidden
 root GET /api/skills/<skill-2> ""
-  200 {"id":"<skill-2>","name":"Triage","description":"Sort tickets","triggers":null,"allowed_tools":null,"attached_collections":null,"instructions":"","disabled":false,"conditions":[]}
+  200 {"id":"<skill-2>","name":"Triage","description":"Sort tickets","triggers":null,"allowed_tools":null,"attached_collections":null,"instructions":"Sort by severity.","disabled":false,"conditions":[]}
 alice GET /api/skills/nope ""
   403 forbidden
 root GET /api/skills/nope ""

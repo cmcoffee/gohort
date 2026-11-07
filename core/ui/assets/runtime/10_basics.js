@@ -4847,7 +4847,12 @@
             // something" gap. A redirect navigates away, so skip the toast there.
             setUnsaved(false);
             msgEl.style.display = 'none';
-            if (!cfg.redirect_url) { showToast(cfg.saved_toast || 'Saved ✓'); }
+            if (!cfg.redirect_url) {
+              // The server's own message when it sends one (what to do next,
+              // what the save could not do): a dialog closes on submit, so a
+              // message left for the form's own line would never be seen.
+              showToast((resp && typeof resp.message === 'string' && resp.message) || cfg.saved_toast || 'Saved ✓');
+            }
             if (cfg.redirect_url) {
               var dest = substitute(cfg.redirect_url, resp || {});
               var target = cfg.redirect_target || '_self';

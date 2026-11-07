@@ -125,23 +125,26 @@ func TestTheTurnShowsWhatTheCheckDecided(t *testing.T) {
 // Builder's conditions: a JSON array (as a string or decoded), validated so
 // the error names the condition; an empty array clears.
 func TestBuilderSetsASkillsConditions(t *testing.T) {
-	cases, has, err := conditionsFromArgs(map[string]any{"conditions": `[{"kind":"if","question":"Is it v4?","how":"Read the version."},{"kind":"else","instructions":"Upgrade first."}]`})
+	cases, has, err := conditionsFromArgs(map[string]any{"conditions": `[{"kind":"if","question":"Is it v4?","how":"Read the version."},{"kind":"else","instructions":"Upgrade first."}]`}, "Sync steps.")
 	if err != nil || !has || len(cases) != 2 || cases[1].Instructions != "Upgrade first." {
 		t.Fatalf("a chain: %+v %v %v", cases, has, err)
 	}
-	if cases, _, err := conditionsFromArgs(map[string]any{"conditions": []any{map[string]any{"kind": "if", "check": "mentions", "mentions": []any{"refund"}}}}); err != nil || len(cases) != 1 || cases[0].Mentions[0] != "refund" {
+	if cases, _, err := conditionsFromArgs(map[string]any{"conditions": []any{map[string]any{"kind": "if", "check": "mentions", "mentions": []any{"refund"}}}}, "Refund steps."); err != nil || len(cases) != 1 || cases[0].Mentions[0] != "refund" {
 		t.Errorf("a decoded array: %+v %v", cases, err)
 	}
-	if cases, has, err := conditionsFromArgs(map[string]any{"conditions": "[]"}); err != nil || !has || cases != nil {
+	if cases, has, err := conditionsFromArgs(map[string]any{"conditions": "[]"}, "x"); err != nil || !has || cases != nil {
 		t.Errorf("an empty array should clear: %+v %v %v", cases, has, err)
 	}
-	if _, _, err := conditionsFromArgs(map[string]any{"conditions": `[{"kind":"if","question":"Is it v4?"}]`}); err == nil || !strings.Contains(err.Error(), "how to check") {
+	if _, _, err := conditionsFromArgs(map[string]any{"conditions": `[{"kind":"if","question":"Is it v4?"}]`}, "x"); err == nil || !strings.Contains(err.Error(), "how to check") {
 		t.Errorf("a question with no way to check it: %v", err)
 	}
-	if _, _, err := conditionsFromArgs(map[string]any{"conditions": "not json"}); err == nil {
+	if _, _, err := conditionsFromArgs(map[string]any{"conditions": "not json"}, "x"); err == nil {
 		t.Error("not an array was accepted")
 	}
-	if _, has, _ := conditionsFromArgs(map[string]any{"name": "x"}); has {
+	if _, _, err := conditionsFromArgs(map[string]any{"conditions": `[{"kind":"if","question":"q","how":"h"}]`}, ""); err == nil || !strings.Contains(err.Error(), "Instructions, which are empty") {
+		t.Errorf("conditions on a skill with no instructions: %v", err)
+	}
+	if _, has, _ := conditionsFromArgs(map[string]any{"name": "x"}, "x"); has {
 		t.Error("no conditions argument should change nothing")
 	}
 }

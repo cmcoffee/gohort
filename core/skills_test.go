@@ -63,6 +63,13 @@ func TestSkillConditionsMustBeComplete(t *testing.T) {
 	if (SkillRecord{}).Conditional() {
 		t.Error("a skill with no conditions is not conditional")
 	}
+	// The If applies the skill's own instructions, so a list over empty ones
+	// is incomplete: the primary case would hand the agent nothing.
+	bare := versionChain()
+	bare.Instructions = " "
+	if p := strings.Join(bare.ConditionProblems(), "; "); !strings.Contains(p, "Instructions, which are empty") || bare.Conditional() {
+		t.Errorf("conditions over empty instructions: %q", p)
+	}
 	if _, err := SaveSkill(memDB(t), "u", SkillRecord{Name: "s", Description: "d", Conditions: []SkillCase{{Kind: "if"}}}); err != nil {
 		t.Errorf("incomplete conditions should still save: %v", err)
 	}

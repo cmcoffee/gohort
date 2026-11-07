@@ -211,6 +211,11 @@ func caseEvidence(i int) string { return caseField(i) + "_evidence" }
 // it behaves as unconditional until they are complete.
 func (s SkillRecord) ConditionProblems() []string {
 	var probs []string
+	// The If applies the skill as written, so with conditions and no
+	// instructions the primary case would hand the agent nothing.
+	if len(s.Conditions) > 0 && strings.TrimSpace(s.Instructions) == "" {
+		probs = append(probs, "the If applies the skill's own Instructions, which are empty: write them")
+	}
 	for i, c := range s.Conditions {
 		at := func(msg string) { probs = append(probs, "condition "+strconv.Itoa(i+1)+": "+msg) }
 		switch strings.TrimSpace(c.Kind) {

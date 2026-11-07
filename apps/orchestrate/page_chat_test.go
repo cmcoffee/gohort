@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -137,5 +138,31 @@ func TestTheChatPageIsAssembledInSteps(t *testing.T) {
 	}
 	if w := get("bob", "/", ""); w.Code != http.StatusOK {
 		t.Errorf("once skipped, the page: %d", w.Code)
+	}
+}
+
+// The chat's empty state does not tell a person to pick an agent from a rail
+// that lists none, with one already picked; and the agent's Skills dialog says
+// what skills are now, not a classifier and a tool name.
+func TestTheChatAndSkillsDialogSayWhatIsTrue(t *testing.T) {
+	src, err := os.ReadFile("page_chat.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(src), "Pick an agent from the rail") {
+		t.Error("the empty state sends people to the rail again")
+	}
+	assets, err := os.ReadFile("assets/web_assets.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := string(assets)
+	for _, gone := range []string{"the classifier may fire", "Author skills via skill_def in chat", "unless toggled on"} {
+		if strings.Contains(a, gone) {
+			t.Errorf("the Skills dialog still says %q", gone)
+		}
+	}
+	if !strings.Contains(a, "Make a skill under Extensions, Skills, then add it here.") {
+		t.Error("the Skills dialog no longer says where a skill is made")
 	}
 }

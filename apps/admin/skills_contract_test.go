@@ -91,7 +91,7 @@ func TestSkillsRoutesContract(t *testing.T) {
 
 	do("alice", "POST", "/api/skills", `{"name":"mine","description":"d"}`)
 	s1 := save("<skill-1>", `{"name":"Release notes","description":"Write release notes","triggers":["release"],"instructions":"Be brief.","allowed_tools":["git"],"attached_collections":["col-root"]}`)
-	s2 := save("<skill-2>", `{"name":"Triage","description":"Sort tickets","conditions":[{"kind":"if","check":"lookup","question":"Is it severe?","how":"ask the reporter"},{"kind":"else","instructions":"Queue it."}]}`)
+	s2 := save("<skill-2>", `{"name":"Triage","description":"Sort tickets","instructions":"Sort by severity.","conditions":[{"kind":"if","check":"lookup","question":"Is it severe?","how":"ask the reporter"},{"kind":"else","instructions":"Queue it."}]}`)
 	do("root", "POST", "/api/skills", `{"name":"release NOTES","description":"a second one"}`)
 	do("root", "POST", "/api/skills", `{"description":"no name"}`)
 	do("root", "POST", "/api/skills", `{"name":"No description"}`)

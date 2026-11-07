@@ -4790,7 +4790,7 @@
         var body = m.body;
         var help = document.createElement('div');
         help.className = 'ui-orch-modal-help';
-        help.textContent = 'Skills modify the agent\'s behavior: instructions + tools that join on activation. Strict allowlist per agent.';
+        help.textContent = 'Skills give the agent an approach for a kind of task: instructions, and sometimes tools and documents, it uses when the task comes up.';
         body.appendChild(help);
 
         // Active skills
@@ -4801,7 +4801,7 @@
         skillsWrap.appendChild(sh);
         var sHelp = document.createElement('div');
         sHelp.style.cssText = 'font-size:0.74rem;color:var(--text-mute);line-height:1.45;margin-bottom:0.5rem';
-        sHelp.textContent = 'Strict allowlist of skills the classifier may fire for this agent. Every skill is opt-in per agent: nothing activates unless toggled on. Author skills via skill_def in chat.';
+        sHelp.textContent = 'The skills this agent may use. It uses one when a message matches its triggers or description; a skill not listed here never applies. Make a skill under Extensions, Skills, then add it here.';
         skillsWrap.appendChild(sHelp);
         var skillsList = document.createElement('div');
         skillsList.style.cssText = 'display:flex;flex-direction:column;gap:0.3rem';

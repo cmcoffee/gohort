@@ -217,6 +217,7 @@ const documentsDetailBody = `
       </div>
     </div>
     <div id="docs-meta" class="docs-detail-meta"></div>
+    <div id="docs-keeper" class="docs-detail-meta"></div>
   </div>
 
   <div class="docs-section">
@@ -374,6 +375,24 @@ const documentsDetailAssets = `<style>
           $('#docs-desc-save').disabled = (ta.value === loadedDescription);
         }
         $('#docs-meta').textContent = (c.documents || 0) + ' documents - ' + (c.chunks || 0) + ' chunks';
+        // Who keeps it current, said at the top: the setting itself is far
+        // down the page, under everything you can do by hand.
+        var keeper = $('#docs-keeper');
+        if (keeper) {
+          keeper.textContent = c.curator_agent
+            ? 'An agent keeps this collection current. '
+            : 'Filled by hand. An agent can keep it current for you. ';
+          var jump = document.createElement('a');
+          jump.href = '#';
+          jump.textContent = 'In charge of this collection ↓';
+          jump.addEventListener('click', function(ev) {
+            ev.preventDefault();
+            var t = Array.from(document.querySelectorAll('h1,h2,h3,h4,.ui-section-title,[class*=section-title]'))
+              .find(function(e) { return /in charge of this collection/i.test(e.textContent); });
+            if (t) t.scrollIntoView({behavior: 'smooth', block: 'start'});
+          });
+          keeper.appendChild(jump);
+        }
         // Filter rules render as a discrete add/remove list.
         // Stored newline-joined server-side; split on load.
         loadedFilterRules = c.filter_rules || '';

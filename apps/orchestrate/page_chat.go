@@ -351,7 +351,7 @@ func (c *chatPage) page(nav []ui.NavLink) ui.Page {
 					DeepLinkParam: "session",
 					AutoSend:      c.builderBrief,
 					LockActivity:  true,
-					EmptyText:     "Pick an agent from the rail, then ask anything. The orchestrator plans the steps, the worker runs each one (tool calls appear inline), then the orchestrator replies.",
+					EmptyText:     "Ask anything. The orchestrator plans the steps, the worker runs each one (tool calls appear inline), then the orchestrator replies.",
 					Placeholder:   "What do you want to do?",
 					// Orchestrator-mode agents (the Operator) swap the session
 					// list for this nav; normal agents ignore it entirely.
