@@ -65,6 +65,9 @@ func keptField(connection, key string) string {
 const (
 	keystoreSuffix = "@keystore"
 	keyOwn         = "own"
+	// keyNone is "None": for a connector or model that may go without
+	// one (a local server). Choosing it forgets any key it had.
+	keyNone = "none"
 )
 
 // keyFromField is the form field choosing where secret setting key's value
@@ -225,6 +228,12 @@ func (s pageSettings) split(c Connector, capability string) (map[string]string, 
 		if st.Field.IsSecret() {
 			from = strings.TrimSpace(from)
 			switch {
+			case from == keyNone:
+				// None: the reference and any key of its own go. A
+				// required key refuses it on save.
+				if service.HasSecret(c, st.Key) {
+					secrets[st.Key] = service.KeystoreValue("")
+				}
 			case from != "" && from != keyOwn:
 				secrets[st.Key] = service.KeystoreValue(from)
 			case v != "" && v != secretUnchanged:
@@ -302,6 +311,9 @@ func settingsValues(name, capability string) map[string]any {
 				// No key of its own yet, and the Keystore has one that fits:
 				// offered, so the key is not typed a second time.
 				out[keyFromField(name, st.Key)] = id
+			} else if !service.HasSecret(c, st.Key) && service.SecretOptional(c, st.Key) {
+				// It holds none and may go without: it says so.
+				out[keyFromField(name, st.Key)] = keyNone
 			} else {
 				out[keyFromField(name, st.Key)] = keyOwn
 				if service.HasSecret(c, st.Key) {

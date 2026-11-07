@@ -377,7 +377,7 @@ func (a *AdminApp) handleLLMConfig(table string, worker bool) func(c *jsonapi.Ca
 			"bedrock_api":             bedrockAPI,
 			"_live":                   liveTierDescription(table),
 			"_kept_key":               LLMProviderConfig{Provider: provider, Endpoint: endpoint}.KeptKey(a.db, table),
-			"api_key_from":            firstNonEmptyStr(TierKeystoreRef(a.db, table), LLMProviderConfig{Provider: provider, Endpoint: endpoint}.DefaultKeystoreFor(a.db, table), keyOwn),
+			"api_key_from":            tierKeyFrom(a.db, table, LLMProviderConfig{Provider: provider, Endpoint: endpoint}),
 			"native_tools":            nativeTools,
 			"disable_thinking":        disableThinking,
 			"no_images":               noImages,
@@ -456,7 +456,10 @@ func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonap
 		// not fit the provider and address being saved refuses the save.
 		tierCfg := LLMProviderConfig{Provider: strings.TrimSpace(req.Provider), Endpoint: strings.TrimSpace(req.Endpoint)}
 		from := strings.TrimSpace(req.APIKeyFrom)
-		if from != "" && from != keyOwn {
+		if from == keyNone && !tierCfg.KeyOptional() {
+			return nil, jsonapi.BadRequest(ProviderTitle(tierCfg.Provider) + "'s own API needs a key: give one, or pick one from the Keystore")
+		}
+		if from != "" && from != keyOwn && from != keyNone {
 			e, ok := keystore.Get(RootDB, from)
 			if !ok {
 				return nil, jsonapi.BadRequest("no such Keystore key")
@@ -495,6 +498,8 @@ func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonap
 			a.db.Set(table, "request_timeout_seconds", req.RequestTimeout)
 		}
 		switch k := strings.TrimSpace(req.APIKey); {
+		case from == keyNone:
+			tierCfg.ClearKey(a.db, table)
 		case from != "" && from != keyOwn:
 			if err := tierCfg.SaveKeyRef(a.db, table, from); err != nil {
 				return nil, jsonapi.BadRequest(err.Error())
@@ -656,6 +661,22 @@ func containsString(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// tierKeyFrom is what the tier's "API key from" shows: the Keystore key it
+// names; else one that fits, offered when it holds no key; else None when it
+// holds none and may go without; else its own.
+func tierKeyFrom(db Database, table string, cfg LLMProviderConfig) string {
+	if id := TierKeystoreRef(db, table); id != "" {
+		return id
+	}
+	if id := cfg.DefaultKeystoreFor(db, table); id != "" {
+		return id
+	}
+	if !HasKey(db, table) && cfg.KeyOptional() {
+		return keyNone
+	}
+	return keyOwn
 }
 
 // formTierKey fills cfg's key for a Test or a model list: the one typed, else

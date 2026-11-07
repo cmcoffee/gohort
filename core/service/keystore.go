@@ -94,6 +94,18 @@ func KeystoreChoices(c Connector, name string) []keystore.Entry {
 	return out
 }
 
+// SecretOptional reports whether connection c may go without its secret
+// name: a local server started with no key, say. Its "Key from" choice then
+// offers No key.
+func SecretOptional(c Connector, name string) bool {
+	s, err := specOf(c)
+	if err != nil {
+		return false
+	}
+	f, ok := s.secretNamed(name)
+	return ok && !f.Required
+}
+
 // KeystoreOf is the Keystore entry connection c's secret name comes from, or
 // "" when it keeps its own key or none.
 func KeystoreOf(c Connector, name string) string {
@@ -166,7 +178,9 @@ func keepsInKeystore(c Connector, f ConfigField, addrs []string) bool {
 // offered by default when it keeps no key of its own yet: the first that
 // fits, so a second connection to a provider needs no key typed.
 func DefaultKeystoreFor(c Connector, name string) string {
-	if HasSecret(c, name) {
+	// Any record, an empty one included, is a choice made: a key of its own,
+	// a Keystore key, or None.
+	if _, chosen := GetConnectionSecret(RootDB, c, name); chosen {
 		return ""
 	}
 	if choices := KeystoreChoices(c, name); len(choices) > 0 {

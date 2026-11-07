@@ -1328,6 +1328,7 @@ func (cfg LLMProviderConfig) SaveKey(db Database, table, key string) {
 	db.CryptSet(table, "api_key", strings.TrimSpace(key))
 	db.Set(table, "api_key_for", ConnectionSecret{Addresses: []string{cfg.KeyAddress()}, Set: time.Now()})
 	db.Unset(table, tierKeyRef)
+	db.Unset(table, tierKeyNone)
 }
 
 // tierKeyRef is the tier table's key naming a Keystore entry in place of a
@@ -1376,6 +1377,7 @@ func (cfg LLMProviderConfig) SaveKeyRef(db Database, table, id string) error {
 	}
 	db.Unset(table, "api_key")
 	db.Unset(table, "api_key_for")
+	db.Unset(table, tierKeyNone)
 	db.Set(table, tierKeyRef, id)
 	return nil
 }
@@ -1401,6 +1403,42 @@ func (cfg *LLMProviderConfig) loadKeystoreKey(id string) error {
 	}
 	cfg.UseKey(v)
 	return nil
+}
+
+// KeyOptional reports whether the tier may go without a key: a local server
+// (Ollama, llama.cpp, vLLM), Bedrock signing as this machine, or a provider
+// at an address of its own. The official Anthropic, OpenAI and Gemini APIs
+// always need one.
+func (cfg LLMProviderConfig) KeyOptional() bool {
+	switch strings.ToLower(strings.TrimSpace(cfg.Provider)) {
+	case "anthropic", "openai":
+		return strings.TrimSpace(cfg.Endpoint) != ""
+	case "gemini":
+		return false
+	}
+	return true
+}
+
+// tierKeyNone marks a tier set to go without a key, chosen: its form then
+// does not offer a Keystore key in its place, and a save does not attach one.
+const tierKeyNone = "api_key_none"
+
+// ClearKey forgets the tier's key, its own and a Keystore key it named, and
+// records that it goes without.
+func (cfg LLMProviderConfig) ClearKey(db Database, table string) {
+	db.Unset(table, "api_key")
+	db.Unset(table, "api_key_for")
+	db.Unset(table, tierKeyRef)
+	db.Set(table, tierKeyNone, true)
+}
+
+// HasKey reports whether the tier holds a key of its own or names one.
+func HasKey(db Database, table string) bool {
+	if TierKeystoreRef(db, table) != "" {
+		return true
+	}
+	key, _ := keptKey(db, table)
+	return key != ""
 }
 
 // keystoreKind is the kind of Keystore entry key is for the tier: an AWS
@@ -1451,6 +1489,10 @@ func (cfg LLMProviderConfig) KeepTypedKey(db Database, table, key string) (bool,
 func (cfg LLMProviderConfig) DefaultKeystoreFor(db Database, table string) string {
 	if TierKeystoreRef(db, table) != "" {
 		return ""
+	}
+	var none bool
+	if db.Get(table, tierKeyNone, &none) && none {
+		return "" // set to go without, by choice
 	}
 	if key, _ := keptKey(db, table); key != "" {
 		return ""

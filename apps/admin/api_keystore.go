@@ -103,6 +103,8 @@ func (a *AdminApp) handleKeystoreChoices(c *jsonapi.Call) (any, error) {
 	// A model tier's choice: every key, since the provider and address on its
 	// form may not be saved yet. Its save says when one does not fit.
 	if q.Get("tier") != "" {
+		out = append(out, map[string]string{"value": keyNone, "label": "None",
+			"help": "For a local server that takes no key, or Bedrock signing as this machine."})
 		for _, e := range keystore.List(RootDB) {
 			out = append(out, map[string]string{"value": e.ID, "label": "Keystore: " + e.Name,
 				"help": strings.Join(e.Addresses, ", ") + "; " + keystore.Hint(RootDB, e)})
@@ -112,6 +114,9 @@ func (a *AdminApp) handleKeystoreChoices(c *jsonapi.Call) (any, error) {
 	conn, ok := GetConnector(RootDB, strings.TrimSpace(q.Get("name")))
 	if !ok {
 		return out, nil
+	}
+	if service.SecretOptional(conn, strings.TrimSpace(q.Get("setting"))) {
+		out = append(out, map[string]string{"value": keyNone, "label": "None", "help": "For a server that takes no key, such as one on this network started without one."})
 	}
 	for _, e := range service.KeystoreChoices(conn, strings.TrimSpace(q.Get("setting"))) {
 		out = append(out, map[string]string{"value": e.ID, "label": "Keystore: " + e.Name, "help": keystore.Hint(RootDB, e)})

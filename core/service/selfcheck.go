@@ -86,7 +86,7 @@ func SelfCheck(db Database, c Connector) []string {
 	switch {
 	case !has && f.Required && !strings.Contains(strings.Join(out, "\n"), "is kept but cannot be read"):
 		out = append(out, "it is in use with no "+f.Title()+": give it under Settings or on the page that uses it")
-	case has && !sameAddresses(kept.Addresses, settled.secretAddresses(f)):
+	case has && kept.Value != "" && !sameAddresses(kept.Addresses, settled.secretAddresses(f)):
 		out = append(out, fmt.Sprintf("its %s was given for %s, and its calls now go to %s, so they are refused: give it again under Settings",
 			f.Title(), strings.Join(kept.Addresses, ", "), strings.Join(settled.secretAddresses(f), ", ")))
 	}

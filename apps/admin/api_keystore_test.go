@@ -117,3 +117,53 @@ func TestAKeyHeldByAConnectorMovesIntoTheKeystore(t *testing.T) {
 		t.Errorf("a second connector for the address is offered %q, want the entry %q", def, sec.Keystore)
 	}
 }
+
+// "None" is a choice where a key may be left out: it forgets the key a
+// connector or model tier held, and a form for one holding none says None.
+// The official APIs that always need a key refuse it.
+func TestNoneLeavesOutAKeyWhereNoneIsNeeded(t *testing.T) {
+	srv, _ := settingsWorld(t)
+	vecConnector(t, srv.URL) // its api_key is not required; it holds sk-old
+	a := &AdminApp{db: RootDB}
+	call := func(method, url string) *jsonapi.Call {
+		return &jsonapi.Call{R: httptest.NewRequest(method, url, nil), W: httptest.NewRecorder(), User: "root"}
+	}
+	choices, _ := a.handleKeystoreChoices(call("GET", "/api/keystore/choices?name=vec&setting=api_key"))
+	if b, _ := json.Marshal(choices); !strings.Contains(string(b), `"label":"None","value":"none"`) {
+		t.Errorf("an optional key is not offered None: %s", b)
+	}
+	form := postedForm[EmbeddingConfig](t, `{"enabled":true,"provider":"vec","config/vec/endpoint":"`+srv.URL+`","config/vec/api_key@keystore":"none"}`)
+	if _, err := a.handleEmbeddingsSave(call("POST", "/api/embeddings"), form); err != nil {
+		t.Fatal(err)
+	}
+	if service.HasSecret(mustConnector(t, "vec"), "api_key") {
+		t.Error("None kept the connector's key")
+	}
+	if got := settingsValues("vec", "embed.text")["config/vec/api_key@keystore"]; got != "none" {
+		t.Errorf("a connector holding no key shows %v", got)
+	}
+	// None is a choice: a Keystore key that fits, added after, is not
+	// offered in its place, so the next save does not attach it unasked.
+	if _, err := keystore.Save(RootDB, keystore.Entry{Name: "Vec account", Addresses: []string{srv.URL}}, "sk-fits"); err != nil {
+		t.Fatal(err)
+	}
+	if got := settingsValues("vec", "embed.text")["config/vec/api_key@keystore"]; got != "none" {
+		t.Errorf("after a fitting Keystore key was added, a connector set to None shows %v", got)
+	}
+
+	if code, body := tierSave(a, LLMTable, `{"provider":"ollama","endpoint":"http://localhost:11434","model":"m","api_key":"ollama-key"}`); code >= 300 {
+		t.Fatalf("saving a local tier: %d %s", code, body)
+	}
+	if code, body := tierSave(a, LLMTable, `{"provider":"ollama","endpoint":"http://localhost:11434","model":"m","api_key_from":"none"}`); code >= 300 {
+		t.Fatalf("None on a local tier: %d %s", code, body)
+	}
+	if HasKey(RootDB, LLMTable) {
+		t.Error("None kept the tier's key")
+	}
+	if got := tierKeyFrom(RootDB, LLMTable, LLMProviderConfig{Provider: "ollama", Endpoint: "http://localhost:11434"}); got != "none" {
+		t.Errorf("a local tier holding no key shows %q", got)
+	}
+	if code, body := tierSave(a, LeadLLMTable, `{"provider":"anthropic","model":"m","api_key_from":"none"}`); code != 400 || !strings.Contains(body, "needs a key") {
+		t.Errorf("None on the official Anthropic API: %d %s", code, body)
+	}
+}

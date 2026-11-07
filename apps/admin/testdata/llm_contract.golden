@@ -35,7 +35,7 @@ root PUT /api/worker-thinking "{}"
 alice GET /api/worker-llm ""
   403 forbidden
 root GET /api/worker-llm ""
-  200 {"_kept_key":"","_live":"","api_key":"","api_key_from":"own","aws_profile":"","aws_region":"","bedrock_api":"","context_size":0,"default_effort":"","disable_thinking":false,"endpoint":"","max_effort":… (454 bytes, sha1 3036b1d7b346c38fcac3341b16f6bdf868da0dc4)
+  200 {"_kept_key":"","_live":"","api_key":"","api_key_from":"none","aws_profile":"","aws_region":"","bedrock_api":"","context_size":0,"default_effort":"","disable_thinking":false,"endpoint":"","max_effort"… (455 bytes, sha1 53989087867b4219a27fa94ac13985b3ffe029b9)
 root PUT /api/worker-llm "{}"
   405 method not allowed
 (signed out) GET /api/lead-llm ""
@@ -43,7 +43,7 @@ root PUT /api/worker-llm "{}"
 alice GET /api/lead-llm ""
   403 forbidden
 root GET /api/lead-llm ""
-  200 {"_kept_key":"","_live":"No lead model is loaded; escalations run on the worker.","api_key":"","api_key_from":"own","aws_profile":"","aws_region":"","bedrock_api":"","context_size":0,"default_effort":… (481 bytes, sha1 9ebdff41602f961ce49dcbcb8c276d4f3550f684)
+  200 {"_kept_key":"","_live":"No lead model is loaded; escalations run on the worker.","api_key":"","api_key_from":"none","aws_profile":"","aws_region":"","bedrock_api":"","context_size":0,"default_effort"… (482 bytes, sha1 97e98ede25807c7a28f804dbee04d521a4d56c43)
 root PUT /api/lead-llm "{}"
   405 method not allowed
 (signed out) GET /api/local-scheduler ""
@@ -169,7 +169,7 @@ root GET /api/worker-llm ""
 root POST /api/worker-llm "{\"provider\":\"ollama\",\"model\":\"qwen3:8b\",\"endpoint\":\"<stub>\"}"
   204 
 root GET /api/lead-llm ""
-  200 {"_kept_key":"","_live":"No lead model is loaded; escalations run on the worker.","api_key":"","api_key_from":"own","aws_profile":"","aws_region":"","bedrock_api":"","context_size":0,"default_effort":… (480 bytes, sha1 5fe3713a359ccc0d8f56260e178296578f0b249d)
+  200 {"_kept_key":"","_live":"No lead model is loaded; escalations run on the worker.","api_key":"","api_key_from":"none","aws_profile":"","aws_region":"","bedrock_api":"","context_size":0,"default_effort"… (481 bytes, sha1 c66c29cc27a7fb2ef7b6d4cbb134a486bb47357d)
 root POST /api/lead-llm "{\"provider\":\"bedrock\",\"model\":\"anthropic.claude-3-5-sonnet\",\"api_key\":\"s3cr3t-llm-l\"}"
   204 
 root POST /api/lead-llm "{\"provider\":\"vllm\",\"model\":\"qwen3:8b\",\"endpoint\":\"<stub>\",\"api_key\":\"s3cr3t-llm-l\",\"no_images\":true}"

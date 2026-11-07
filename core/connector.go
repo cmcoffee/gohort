@@ -714,6 +714,18 @@ func SetConnectionSecretRef(db Database, c Connector, name, id string) error {
 	return nil
 }
 
+// SetConnectionSecretNone records that connection c goes without its secret
+// name, chosen: an empty record, so a form does not offer a Keystore key in
+// its place the next time, and a save does not attach one unasked.
+func SetConnectionSecretNone(db Database, c Connector, name string) error {
+	sp := connectionSpace(db, c)
+	if sp == nil {
+		return fmt.Errorf("connection %s has no space yet: save it once to give it one", c.Name)
+	}
+	sp.Set(connectionSecretTable, name, ConnectionSecret{Set: time.Now()})
+	return nil
+}
+
 // UnsetConnectionSecret forgets connection c's secret name, key or reference.
 func UnsetConnectionSecret(db Database, c Connector, name string) {
 	if sp := connectionSpace(db, c); sp != nil {

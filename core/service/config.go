@@ -629,7 +629,7 @@ func (s Spec) resolveSecret(c Connector, typed map[string]string) *connectionAut
 			if p != "" {
 				profile = p
 			}
-		} else if ok {
+		} else if ok && kept.Value != "" {
 			if !sameAddresses(kept.Addresses, addrs) {
 				return &connectionAuth{err: fmt.Errorf("%s's %s was given for %s, and the connection now goes to %s: give the %s again for the new address",
 					c.Name, f.Title(), strings.Join(kept.Addresses, ", "), strings.Join(addrs, ", "), f.Title())}
@@ -743,7 +743,7 @@ func SaveSettings(c Connector, capability string, values, secrets map[string]str
 				if _, _, err := keystoreSecret(kept.Keystore, f, settled.secretAddresses(f)); err != nil {
 					return err
 				}
-			} else if ok && !sameAddresses(kept.Addresses, settled.secretAddresses(f)) {
+			} else if ok && kept.Value != "" && !sameAddresses(kept.Addresses, settled.secretAddresses(f)) {
 				return fmt.Errorf("the %s was given for %s: give it again for %s", f.Title(), strings.Join(kept.Addresses, ", "), strings.Join(settled.secretAddresses(f), ", "))
 			}
 		}
@@ -757,7 +757,9 @@ func SaveSettings(c Connector, capability string, values, secrets map[string]str
 		}
 		if id, ref := isKeystoreValue(v); ref {
 			if id == "" {
-				UnsetConnectionSecret(RootDB, c, name)
+				if err := SetConnectionSecretNone(RootDB, c, name); err != nil {
+					return err
+				}
 			} else if err := SetConnectionSecretRef(RootDB, c, name, id); err != nil {
 				return err
 			}
