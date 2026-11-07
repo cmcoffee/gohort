@@ -251,17 +251,3 @@ func sameYMD(a, b time.Time) bool {
 	by, bm, bd := b.Date()
 	return ay == by && am == bm && ad == bd
 }
-
-// WindowDurationHours returns the duration of an HH:MM-HH:MM window in hours.
-// Returns 0 if the spec is malformed or the window has zero/negative span.
-func WindowDurationHours(spec string) float64 {
-	sh, sm, eh, em, err := ParseWindowBounds(spec)
-	if err != nil {
-		return 0
-	}
-	mins := (eh*60 + em) - (sh*60 + sm)
-	if mins <= 0 {
-		return 0
-	}
-	return float64(mins) / 60.0
-}

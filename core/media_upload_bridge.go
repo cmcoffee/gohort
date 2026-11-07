@@ -194,9 +194,3 @@ func sessionForMediaUpload(ctx context.Context) *ToolSession {
 	}
 	return &ToolSession{Ctx: ctx}
 }
-
-// MediaUploadHostPattern exposes the allow-list pattern a media upload runs
-// under, so an operator can see what the synthesized credential permits.
-func MediaUploadHostPattern(endpoint string) string {
-	return imageHostPattern(strings.TrimSpace(endpoint))
-}

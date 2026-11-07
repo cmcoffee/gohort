@@ -1145,17 +1145,6 @@ func RearmStrandedEventMonitors(db Database) int {
 	return revived
 }
 
-// RunEventMonitorNow fires a one-off poll check immediately (async), without
-// disturbing the recurring cadence. Webhook monitors have nothing to poll.
-func RunEventMonitorNow(db Database, owner, name string) error {
-	m, ok := GetEventMonitor(db, owner, name)
-	if !ok || !isScheduledKind(m.Kind) {
-		return nil
-	}
-	_, err := ScheduleTask(eventPollKind, eventPollPayload{Owner: owner, Name: name}, time.Now())
-	return err
-}
-
 // StartEventMonitorScheduler registers the event.poll handler. Idempotent;
 // call once at startup. Reads/writes RootDB so its view matches the console's.
 func StartEventMonitorScheduler() {

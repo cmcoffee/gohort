@@ -68,20 +68,6 @@ var (
 	exportRegistry   = map[string]*ExportFormat{}
 )
 
-// RegisterExportFormat adds (or replaces) a format in the process-global
-// registry. Apps call this from init() to grow the catalog; built-ins
-// register the same way below. Runtime per-user formats are NOT stored
-// here — those live in a per-user DB table and are passed to
-// RunExportFormat directly (see the export tool's define/create).
-func RegisterExportFormat(f *ExportFormat) {
-	if f == nil || f.Name == "" {
-		return
-	}
-	exportRegistryMu.Lock()
-	defer exportRegistryMu.Unlock()
-	exportRegistry[f.Name] = f
-}
-
 // LookupExportFormat returns a registered built-in/app format by name.
 func LookupExportFormat(name string) (*ExportFormat, bool) {
 	exportRegistryMu.RLock()

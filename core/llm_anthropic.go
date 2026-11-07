@@ -118,11 +118,6 @@ func (c *anthropicClient) ContextSize() int {
 	return anthropicDefaultContextSize
 }
 
-// NewAnthropicLLM creates an LLM client for Anthropic (Claude) using the default HTTP client.
-func NewAnthropicLLM(apiKey string, model string) LLM {
-	return newAnthropicLLM(apiKey, model, nil)
-}
-
 // newAnthropicLLM creates an LLM client with optional APIClient.
 // at points c at endpoint, an Anthropic-compatible API's address in place of
 // Anthropic's own: its scheme and host, and any path in front of /v1.

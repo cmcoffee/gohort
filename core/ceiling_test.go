@@ -372,7 +372,10 @@ const (
 	// every maintenance pass ended, the scheduled ones too, reaches the admin's
 	// record, so a nightly repair that gave up is on the page and not only in
 	// the server log. The run state and its hold stay unexported.
-	coreExportCeiling = 2388
+	// 2357: down 31. Exported functions nothing called anywhere in the repo
+	// were deleted (old path/date helpers, unused LLM constructors and chat
+	// options, an always-empty registry's setter, unused search variants).
+	coreExportCeiling = 2357
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

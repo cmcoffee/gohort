@@ -1,7 +1,6 @@
 package core
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -104,85 +103,6 @@ const liveRibbonJS = `(function(){
 // A var rather than a const because FaviconSVG is now derived from the icon
 // markup at package init rather than hand-maintained as a second literal.
 var faviconLinkTag = `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,` + webui.FaviconSVG + `">`
-
-// ServeHTMLWithBase serves an HTML string, injecting a <base href> tag and
-// converting absolute API paths to relative when a prefix is set.
-// When prefix is empty (standalone mode), the HTML is served unchanged
-// (other than favicon injection).
-func ServeHTMLWithBase(w http.ResponseWriter, html string, prefix string) {
-	// Inject the favicon into every page, regardless of prefix. Replaces
-	// the first <head> opener with <head><favicon>. Skipped if the page
-	// already has a favicon link (e.g., pages rendered via webui.RenderPage).
-	if !strings.Contains(html, `rel="icon"`) {
-		html = strings.Replace(html, "<head>", "<head>"+faviconLinkTag, 1)
-	}
-	if !strings.Contains(html, `rel="manifest"`) {
-		html = strings.Replace(html, "<head>", "<head>"+webui.AppHeadTags, 1)
-	}
-
-	// Inject the shared @font-face declaration (Orbitron) right after
-	// <head>, so apps that render raw HTML templates (rather than
-	// going through webui.RenderPage) pick up the header font without
-	// wiring it per-app.
-	if ff := webui.FontFaceCSS(); ff != "" && !strings.Contains(html, "@font-face") {
-		html = strings.Replace(html, "<head>", "<head><style>"+ff+"</style>", 1)
-	}
-
-	if prefix != "" {
-		base_href := prefix + "/"
-		html = strings.Replace(html, "<head>",
-			fmt.Sprintf("<head><base href=\"%s\">", base_href), 1)
-		// Convert absolute API paths to relative so <base> resolves them.
-		html = strings.ReplaceAll(html, "'/api/", "'api/")
-		html = strings.ReplaceAll(html, "\"/api/", "\"api/")
-		// Inject a floating back-arrow icon. Default behavior navigates
-		// to the dashboard (/). Apps that have drilled-in views (e.g.,
-		// viewing a single record from a list) can override this by
-		// setting window.drillBackHandler to a function — when set,
-		// clicking the arrow calls that function instead of navigating,
-		// letting the app return to its own list view. Apps clear the
-		// handler when they leave the drilled state so the arrow
-		// reverts to dashboard-navigation.
-		back_btn := `<a id="dashboard-back" href="/" title="Back" style="` +
-			`position:fixed;top:12px;left:12px;z-index:9999;` +
-			`display:inline-flex;align-items:center;justify-content:center;` +
-			`width:32px;height:32px;border-radius:6px;` +
-			`background:#161b22;border:1px solid #30363d;` +
-			`color:#8b949e;text-decoration:none;font-size:var(--fs-lg, 1rem);` +
-			`transition:border-color 0.2s,color 0.2s,background 0.2s;` +
-			`" onclick="if(typeof window.drillBackHandler==='function'){window.drillBackHandler();return false;}return true;"` +
-			` onmouseover="this.style.borderColor='#58a6ff';this.style.color='#f0f6fc';this.style.background='#1c2128'"` +
-			` onmouseout="this.style.borderColor='#30363d';this.style.color='#8b949e';this.style.background='#161b22'"` +
-			`>` +
-			`<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">` +
-			`<path d="M7.78 12.53a.75.75 0 01-1.06 0L2.47 8.28a.75.75 0 010-1.06l4.25-4.25a.75.75 0 011.06 1.06L4.81 7h7.44a.75.75 0 010 1.5H4.81l2.97 2.97a.75.75 0 010 1.06z"/>` +
-			`</svg></a>`
-		dashboard_style := `<style>#dashboard-back~*{} body{padding-top:3.5rem!important;}</style>`
-		// Inject the webui live ribbon for pages that don't use the webui
-		// framework. Pages that DO use webui already have it via BaseCSS/BaseJS.
-		live_widget := ""
-		if !strings.Contains(html, "webui-live-ribbon") && !strings.Contains(html, "refreshRibbon") {
-			live_widget = `<style>` +
-				`:root{--bg-1:#161b22;--bg-2:#21262d;--border:#30363d;--text:#c9d1d9;--text-hi:#f0f6fc;--text-mute:#8b949e;--good:#238636;--warn:#d29922}` +
-				liveRibbonCSS + `</style><script>` + liveRibbonJS + `</script>`
-		}
-		// Inject webui.BaseJS for pages that don't go through
-		// webui.RenderPage. This exposes shared helpers (escapeHtml,
-		// renderMarkdown, etc.) as window globals so app-specific JS
-		// can call them. Keyed on an arbitrary symbol from the bundle
-		// so it only fires once per page.
-		shared_js := ""
-		if !strings.Contains(html, "window.renderMarkdown") {
-			shared_js = `<script>` + webui.BaseJS() + `</script>`
-		}
-		// Replace the LAST </body> tag — earlier occurrences may be inside JS strings.
-		if idx := strings.LastIndex(html, "</body>"); idx >= 0 {
-			html = html[:idx] + dashboard_style + back_btn + live_widget + shared_js + html[idx:]
-		}
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, html)
-}
 
 // MountSubMux registers a sub-mux under a prefix using StripPrefix.
 // When prefix is empty (standalone mode), mounts at root. The sub-mux

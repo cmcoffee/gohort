@@ -130,18 +130,6 @@ var (
 	foreignUsersListers []ForeignUsersLister
 )
 
-// RegisterForeignUsersLister adds an app's foreign-user enumerator.
-// Idempotent calls are fine; duplicates are tolerated. Typically
-// called once during app init.
-func RegisterForeignUsersLister(fn ForeignUsersLister) {
-	if fn == nil {
-		return
-	}
-	foreignUsersMu.Lock()
-	defer foreignUsersMu.Unlock()
-	foreignUsersListers = append(foreignUsersListers, fn)
-}
-
 // ListForeignUsers returns every foreign-user ID from every registered
 // lister. Used by Agency / admin surfaces that need to enumerate
 // synthetic users across apps. Deduplicates so the same ID isn't

@@ -3,7 +3,6 @@ package core
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"sort"
 	"sync"
 
@@ -123,73 +122,6 @@ func QueueHasNotifyUser(id, username string) bool {
 		}
 	}
 	return false
-}
-
-// HandleQueueNotify returns an http.HandlerFunc that toggles notification
-// for a queued/running item. Multiple users can subscribe independently.
-func HandleQueueNotify() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		id := r.URL.Query().Get("id")
-		if id == "" {
-			http.Error(w, "id required", http.StatusBadRequest)
-			return
-		}
-		username := AuthCurrentUser(r)
-		if username == "" {
-			http.Error(w, "not authenticated", http.StatusUnauthorized)
-			return
-		}
-
-		db := queueDB()
-		if db == nil {
-			http.Error(w, "no database", http.StatusInternalServerError)
-			return
-		}
-
-		var entry QueueEntry
-		if !db.Get(pqueueTable, id, &entry) {
-			// Item may have already finished -- just acknowledge.
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{"notify": true})
-			return
-		}
-
-		// Toggle: add or remove this user from the list.
-		found := false
-		var updated []string
-		for _, u := range entry.NotifyUsers {
-			if u == username {
-				found = true
-				continue // remove
-			}
-			updated = append(updated, u)
-		}
-		if !found {
-			updated = append(updated, username)
-		}
-		entry.NotifyUsers = updated
-		db.Set(pqueueTable, id, entry)
-
-		enabled := !found
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{"notify": enabled})
-	}
-}
-
-// HandleQueueNotifyStatus returns an http.HandlerFunc that reports whether
-// the current user is subscribed to notifications for a given item.
-func HandleQueueNotifyStatus() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		id := r.URL.Query().Get("id")
-		username := AuthCurrentUser(r)
-		subscribed := false
-		if id != "" && username != "" {
-			subscribed = QueueHasNotifyUser(id, username)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{"notify": subscribed})
-	}
 }
 
 // QueueRestore loads all persisted queue entries, sorts them by order,

@@ -1,11 +1,8 @@
 package core
 
 import (
-	"crypto/md5"
 	"crypto/rand"
-	"encoding/hex"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -186,101 +183,9 @@ func Err(input ...interface{}) {
 	}
 }
 
-// StringDate converts string to date.
-func StringDate(input string) (output time.Time, err error) {
-	if input == NONE {
-		return
-	}
-	output, err = time.Parse(time.RFC3339, fmt.Sprintf("%sT00:00:00Z", input))
-	if err != nil {
-		if strings.Contains(err.Error(), "parse") {
-			err = fmt.Errorf("Invalid date specified, should be in format: YYYY-MM-DD")
-		} else {
-			err_split := strings.Split(err.Error(), ":")
-			err = fmt.Errorf("Invalid date specified:%s", err_split[len(err_split)-1])
-		}
-	}
-	return
-}
-
-// MyRoot returns the absolute path to the root directory of the executable.
-func MyRoot() string {
-	exec, err := os.Executable()
-	Critical(err)
-
-	root, err := filepath.Abs(filepath.Dir(exec))
-	Critical(err)
-
-	return GetPath(root)
-}
-
-// SplitPath splits a path into components.
-func SplitPath(path string) (folder_path []string) {
-	if strings.Contains(path, "/") {
-		path = strings.TrimSuffix(path, "/")
-		folder_path = strings.Split(path, "/")
-	} else {
-		path = strings.TrimSuffix(path, "\\")
-		folder_path = strings.Split(path, "\\")
-	}
-	for i := 0; i < len(folder_path); i++ {
-		if folder_path[i] == NONE {
-			folder_path = append(folder_path[:i], folder_path[i+1:]...)
-			i--
-		}
-	}
-	return
-}
-
 // DefaultPleaseWait resets the please wait prompt to its default.
 func DefaultPleaseWait() {
 	PleaseWait.Set(func() string { return "Please wait ..." }, []string{"[>  ]", "[>> ]", "[>>>]", "[ >>]", "[  >]", "[  <]", "[ <<]", "[<<<]", "[<< ]", "[<  ]"})
-}
-
-// MD5Sum calculates the MD5 hash of a file.
-func MD5Sum(filename string) (sum string, err error) {
-	checkSum := md5.New()
-	file, err := os.Open(filename)
-	if err != nil {
-		return
-	}
-	defer file.Close()
-
-	var (
-		o int64
-		n int
-		r int
-	)
-
-	for tmp := make([]byte, 16384); ; {
-		r, err = file.ReadAt(tmp, o)
-
-		if err != nil && err != io.EOF {
-			return NONE, err
-		}
-
-		if r == 0 {
-			break
-		}
-
-		tmp = tmp[0:r]
-		n, err = checkSum.Write(tmp)
-		if err != nil {
-			return NONE, err
-		}
-		o = o + int64(n)
-	}
-
-	if err != nil && err != io.EOF {
-		return NONE, err
-	}
-
-	md5sum := checkSum.Sum(nil)
-
-	s := make([]byte, hex.EncodedLen(len(md5sum)))
-	hex.Encode(s, md5sum)
-
-	return string(s), nil
 }
 
 // UUIDv4 generates a UUID v4.
@@ -346,37 +251,6 @@ func MkDir(name ...string) (err error) {
 	return nil
 }
 
-// PadZero pads a number with a leading zero if less than 10.
-func PadZero(num int) string {
-	if num < 10 {
-		return fmt.Sprintf("0%d", num)
-	} else {
-		return fmt.Sprintf("%d", num)
-	}
-}
-
-// DateString creates a standard date YY-MM-DD out of time.Time.
-func DateString(input time.Time) string {
-	pad := func(num int) string {
-		if num < 10 {
-			return fmt.Sprintf("0%d", num)
-		}
-		return fmt.Sprintf("%d", num)
-	}
-	return fmt.Sprintf("%s-%s-%s", pad(input.Year()), pad(int(input.Month())), pad(input.Day()))
-}
-
-// CombinePath combines several paths.
-func CombinePath(name ...string) string {
-	if name == nil {
-		return NONE
-	}
-	if len(name) < 2 {
-		return name[0]
-	}
-	return LocalPath(fmt.Sprintf("%s%s%s", name[0], SLASH, strings.Join(name[1:], SLASH)))
-}
-
 // LocalPath adapts path to whatever local filesystem uses.
 func LocalPath(path string) string {
 	path = strings.Replace(path, "/", SLASH, -1)
@@ -385,16 +259,6 @@ func LocalPath(path string) string {
 		subs[i] = strings.TrimSpace(v)
 	}
 	return strings.Join(subs, SLASH)
-}
-
-// NormalizePath switches windows based slash to forward slash.
-func NormalizePath(path string) string {
-	path = strings.Replace(path, "\\", "/", -1)
-	subs := strings.Split(path, "/")
-	for i, v := range subs {
-		subs[i] = strings.TrimSpace(v)
-	}
-	return strings.Join(subs, "/")
 }
 
 // Rename renames a path.
@@ -410,19 +274,6 @@ func IsBlank(input ...string) bool {
 		}
 	}
 	return false
-}
-
-// Dequote removes leading and trailing quotation marks on string.
-func Dequote(input string) string {
-	var output string
-	output = input
-	if len(output) > 0 && (output)[0] == '"' {
-		output = output[1:]
-	}
-	if len(output) > 0 && (output)[len(output)-1] == '"' {
-		output = output[:len(output)-1]
-	}
-	return output
 }
 
 // Delete removes a file at the given path.

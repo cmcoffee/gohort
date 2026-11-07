@@ -15,7 +15,6 @@ package recipes
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 
@@ -58,18 +57,6 @@ func LookupHelper(name string) (Helper, bool) {
 	defer helpersMu.RUnlock()
 	h, ok := helpers[name]
 	return h, ok
-}
-
-// Helpers lists the helper names, sorted.
-func Helpers() []string {
-	helpersMu.RLock()
-	defer helpersMu.RUnlock()
-	var out []string
-	for n := range helpers {
-		out = append(out, n)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // asJSONValue turns a Go value into the plain JSON value a bundle holds.

@@ -337,9 +337,6 @@ func Resolve(id, tier string) Effective {
 // ModeFor is what a guard does on a tier.
 func ModeFor(id, tier string) Mode { return Resolve(id, tier).Mode }
 
-// DefaultMode is a guard's mode for all tiers.
-func DefaultMode(id string) Mode { return Resolve(id, "").Mode }
-
 // SettingFor returns the stored setting for one scope, if any.
 func SettingFor(id, scope string) (Setting, bool) {
 	mu.Lock()

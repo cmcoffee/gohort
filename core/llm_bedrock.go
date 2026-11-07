@@ -39,7 +39,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -584,31 +583,6 @@ func bedrockRegion(configured string) string {
 // one that catches people out: N. California has no endpoint, us-west-2 does.
 func bedrockEndpointHost(region string) string {
 	return fmt.Sprintf("bedrock-mantle.%s.api.aws", bedrockRegion(region))
-}
-
-// CheckBedrockEndpoint reports whether a Bedrock endpoint exists for a region,
-// by resolving the host. Used as a pre-flight in the admin connectivity test,
-// where a precise message is worth a DNS lookup; the client itself does not
-// call it, so a transient resolver failure can never block startup.
-func CheckBedrockEndpoint(region string) error {
-	host := bedrockEndpointHost(region)
-	if _, err := net.LookupHost(host); err != nil {
-		return Error("no Bedrock endpoint in region " + bedrockRegion(region) + " (" + host +
-			" does not resolve). The Messages-API endpoint exists in a subset of the regions AWS lists for Bedrock; us-east-1, us-east-2, us-west-2, eu-west-1, eu-central-1, and ap-northeast-1 all have one.")
-	}
-	return nil
-}
-
-// DescribeBedrockCredentials reports which credential source would be used for
-// a profile, e.g. "aws CLI [sso-dev]" or "environment". The admin connectivity
-// test surfaces it, because "denied" is unactionable until you know WHICH
-// identity was denied — the single most expensive question in a Bedrock setup.
-func DescribeBedrockCredentials(profile string) (string, error) {
-	creds, _, err := resolveAWSCreds(bedrockProfile(profile), profile != "")
-	if err != nil {
-		return "", err
-	}
-	return creds.Source, nil
 }
 
 // bedrockProfile picks the AWS profile: explicit config first, then the

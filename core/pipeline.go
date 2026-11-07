@@ -117,13 +117,6 @@ func pipelineRoot(cfg PipelineConfig) context.Context {
 	return AppContext()
 }
 
-// PipelineResult is returned to the app after the pipeline completes.
-type PipelineResult struct {
-	ID     string // the generated pipeline ID
-	RecID  string // record ID set by the work function via SetRecordID
-	Cancel context.CancelFunc
-}
-
 // PipelineCtx is passed to the work function so it can report status
 // and set the record ID for notification links.
 type PipelineCtx struct {

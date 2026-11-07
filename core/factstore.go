@@ -1381,22 +1381,6 @@ func ExpiredMemoryFacts(db Database, namespace string) []MemoryFact {
 // enough for the LLM to find the relevant one without dumping the namespace.
 const factSearchTopK = 8
 
-// SearchMemoryFacts recalls facts for a free-form query. Semantic-first when
-// embeddings are enabled: it ranks facts by cosine to the query and returns the
-// most relevant — so "what's Emily's phone" surfaces a fact stored as "wife's
-// number is +1415…" that a substring scan would miss. Falls back to a
-// case-insensitive substring scan when embeddings are off, or when semantic
-// finds nothing above the floor (which still catches exact-token matches a low
-// cosine can miss). Empty query returns all (oldest-first).
-//
-// Facts carry their embedding (MemoryFact.Vector), computed once at save time,
-// so a search embeds only the QUERY and scores against the cached fact vectors —
-// O(1) embed calls, not one per fact. Legacy facts without a vector are
-// backfilled on first touch by factVector.
-func SearchMemoryFacts(db Database, namespace, query string) []MemoryFact {
-	return SearchMemoryFactsVec(db, namespace, query, nil)
-}
-
 // SearchMemoryFactsVec is SearchMemoryFacts with an optional caller-supplied
 // query embedding. Multi-layer callers (unified recall spans facts + chunks +
 // history) embed the query ONCE and hand the vector to every layer — three

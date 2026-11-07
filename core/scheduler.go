@@ -211,14 +211,6 @@ func UnscheduleTask(id string) {
 	wakeScheduler()
 }
 
-// SetPostSchedulerStart sets a callback invoked once after the scheduler loop starts.
-// Apps use this to register reconcilers and perform one-time setup.
-func SetPostSchedulerStart(fn func()) {
-	postStartMu.Lock()
-	defer postStartMu.Unlock()
-	postStart = fn
-}
-
 // RegisterReconciler registers a periodic reconciliation function for the given kind.
 // The scheduler runs all reconcilers every 30 minutes to ensure expected tasks exist.
 func RegisterReconciler(kind string, fn func(context.Context) error) {
@@ -241,13 +233,6 @@ func RunReconcilers(ctx context.Context) {
 			Log("[scheduler] reconciler %q error: %v", name, err)
 		}
 	}
-}
-
-// GetSchedDB returns the scheduler DB (nil if not initialized).
-func GetSchedDB() Database {
-	schedDBMu.Lock()
-	defer schedDBMu.Unlock()
-	return schedDB
 }
 
 func wakeScheduler() {

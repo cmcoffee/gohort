@@ -336,40 +336,6 @@ func TemplateInt(vals map[string]any, key string) int {
 	return 0
 }
 
-// TemplateBool reads a bool field value.
-// TemplateFloat reads a fractional field value, 0 when absent/unparseable.
-// Distinct from TemplateInt because a form's number input hands back a float
-// and truncating it would turn a 0.55 denoise into 0 — i.e. "ignore the source
-// image", which looks like a broken backend rather than a lost decimal.
-func TemplateFloat(vals map[string]any, key string) float64 {
-	switch v := vals[key].(type) {
-	case float64:
-		return v
-	case int:
-		return float64(v)
-	case json.Number:
-		if f, err := v.Float64(); err == nil {
-			return f
-		}
-	case string:
-		if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
-			return f
-		}
-	}
-	return 0
-}
-
-func TemplateBool(vals map[string]any, key string) bool {
-	switch v := vals[key].(type) {
-	case bool:
-		return v
-	case string:
-		b, _ := strconv.ParseBool(strings.TrimSpace(v))
-		return b
-	}
-	return false
-}
-
 // TemplateCSV splits a comma-separated field value into trimmed, non-empty parts.
 func TemplateCSV(vals map[string]any, key string) []string {
 	var out []string

@@ -420,22 +420,6 @@ func CollectAllUsage() []DatedUsage {
 	return out
 }
 
-// RegisteredCostSources returns the labels of every package that
-// registered a cost-record scanner at init time. Used by the admin
-// UI to display which apps are contributing to the cost chart —
-// keeping the public admin code decoupled from private-app names
-// (labels come from the registering package, not a hardcoded list).
-func RegisteredCostSources() []string {
-	costScannersMu.Lock()
-	defer costScannersMu.Unlock()
-	out := make([]string, 0, len(costScanners))
-	for _, s := range costScanners {
-		out = append(out, s.label)
-	}
-	sort.Strings(out)
-	return out
-}
-
 // AggregateDailyCost groups DatedUsage entries by day (YYYY-MM-DD),
 // sums token/call fields, prices the total at current CostRates, and
 // returns a slice sorted by date ascending. Dates are truncated to the

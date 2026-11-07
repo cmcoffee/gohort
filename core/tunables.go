@@ -257,21 +257,6 @@ func LookupTunable(key string) (TunableSpec, bool) {
 	return s, ok
 }
 
-// ResetTunables clears every registered knob's stored override so the getters
-// fall back to their spec defaults, then invalidates the cache.
-func ResetTunables(db Database) {
-	tunablesMu.RLock()
-	keys := make([]string, len(tunRegOrder))
-	copy(keys, tunRegOrder)
-	tunablesMu.RUnlock()
-	if db != nil {
-		for _, k := range keys {
-			db.Unset(WebTable, k)
-		}
-	}
-	InvalidateTunables()
-}
-
 // --- Retrieval knobs (the first batch; registered here, co-located with the
 // accessor names the orchestrate recall code already calls). ---
 

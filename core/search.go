@@ -521,21 +521,6 @@ func IsUnreadableTitle(s string) bool {
 	return false
 }
 
-// ExtractSummary pulls the "SUMMARY: ..." line from the end of a response
-// and returns (body_without_summary, summary_line).
-func ExtractSummary(text string) (string, string) {
-	lines := strings.Split(text, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		trimmed := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(strings.ToUpper(trimmed), "SUMMARY:") {
-			summary := strings.TrimSpace(trimmed[len("SUMMARY:"):])
-			body := strings.TrimSpace(strings.Join(lines[:i], "\n"))
-			return body, summary
-		}
-	}
-	return text, ""
-}
-
 // WebSearchAvailable checks if the web_search tool is registered.
 func WebSearchAvailable() bool {
 	tools, err := GetAgentTools("web_search")

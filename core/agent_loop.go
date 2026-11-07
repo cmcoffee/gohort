@@ -109,9 +109,6 @@ func safeInvoke(ctx context.Context, name string, handler ToolHandlerFunc, args 
 	return output, err
 }
 
-// ErrToolDenied is returned when the user denies a tool call.
-var ErrToolDenied = fmt.Errorf("tool call denied by user")
-
 // LeadTurnTokenBudget caps what ONE agent turn may spend on the lead tier
 // (input + output, summed across the turn's lead-served rounds). Past it the
 // remaining rounds run on the worker — the turn still finishes, it just stops

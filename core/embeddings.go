@@ -140,17 +140,6 @@ func LoadEmbeddingConfigFromDB(db Database) {
 	SetEmbeddingConfig(cfg)
 }
 
-// SaveEmbeddingConfigToDB persists the given config and updates the
-// process-wide config in memory.
-func SaveEmbeddingConfigToDB(db Database, cfg EmbeddingConfig) error {
-	if db == nil {
-		return fmt.Errorf("no database available")
-	}
-	db.Set(EmbeddingTable, "current", cfg)
-	SetEmbeddingConfig(cfg)
-	return nil
-}
-
 // embedSlowWarn is when an embed stops being a detail and becomes the reason a
 // message felt slow. Well under the recall-hint budget, so a hint that is about
 // to be abandoned still leaves a trace explaining why.

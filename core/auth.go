@@ -728,15 +728,6 @@ func AuthSetAPIExplorerMode(db Database, username string, enabled bool) {
 	db.Set(AuthTable, "user:"+username, user)
 }
 
-// AuthGetAPIExplorerMode returns the user's persistent chat API-explorer preference.
-func AuthGetAPIExplorerMode(db Database, username string) bool {
-	var user AuthUser
-	if !db.Get(AuthTable, "user:"+username, &user) {
-		return false
-	}
-	return user.APIExplorerMode
-}
-
 // sessionDuration returns the configured session lifetime.
 func sessionDuration() time.Duration {
 	days := 7

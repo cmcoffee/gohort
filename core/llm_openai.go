@@ -170,7 +170,7 @@ type openAIClient struct {
 	endpoint             string
 	api                  *apiclient.APIClient
 	streamIdleTimeout    time.Duration // Idle-read deadline for streaming chat calls; zero falls back to DefaultStreamIdleTimeout.
-	ollama               bool          // true when created via NewOllamaLLM
+	ollama               bool          // true for a local Ollama endpoint
 	llamacpp             bool          // true when provider is llama.cpp server, or vLLM (see vllm)
 	vllm                 bool          // vLLM: the llama.cpp path (chat_template_kwargs, the local scheduler) without thinking_budget_tokens, which vLLM ignores.
 	llamacppBudget       int           // llama.cpp: default thinking_budget_tokens (0 = server default, >0 = limit)
@@ -685,11 +685,6 @@ func (c *openAIClient) Ping(ctx context.Context) error {
 	return nil
 }
 
-// NewOpenAILLM creates an LLM client for OpenAI (ChatGPT) using the default HTTP client.
-func NewOpenAILLM(apiKey string, model string) LLM {
-	return newOpenAILLM(apiKey, model, openAIEndpoint, nil)
-}
-
 // openAIModelList reads an OpenAI-compatible /v1/models: OpenAI itself,
 // llama.cpp, vLLM and a peer. The endpoint is the one chat goes to, with or
 // without its /v1. chatOnly narrows OpenAI's catalog, which lists its
@@ -764,18 +759,6 @@ func ollamaModelList(ctx context.Context, endpoint string) ([]string, error) {
 		ids = append(ids, m.Name)
 	}
 	return ids, nil
-}
-
-// NewOllamaLLM creates an LLM client for a local Ollama instance.
-// Use endpoint to override the default (http://localhost:11434/v1).
-func NewOllamaLLM(model string, endpoint ...string) LLM {
-	ep := ollamaEndpoint
-	if len(endpoint) > 0 && endpoint[0] != "" {
-		ep = strings.TrimSuffix(endpoint[0], "/")
-	}
-	client := newOpenAILLM("", model, ep, nil)
-	client.(*openAIClient).ollama = true
-	return client
 }
 
 // newOpenAILLM creates an openAIClient with optional APIClient.

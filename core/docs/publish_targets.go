@@ -142,13 +142,6 @@ func RegisterCredentialPublisher(fn CredentialPublisherFunc) {
 	credPublisherMu.Unlock()
 }
 
-// CredentialPublisherReady reports whether a credential runner is installed.
-func CredentialPublisherReady() bool {
-	credPublisherMu.RLock()
-	defer credPublisherMu.RUnlock()
-	return credPublisher != nil
-}
-
 // PublishViaCredential runs a publish through the named credential.
 func PublishViaCredential(ctx context.Context, user, credential, instruction string) (string, string, error) {
 	credPublisherMu.RLock()

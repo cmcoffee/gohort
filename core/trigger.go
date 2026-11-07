@@ -141,13 +141,6 @@ func RegisterTriggerAction(targetKind string, fn TriggerActionFunc) {
 	triggerMu.Unlock()
 }
 
-// RegisterStopConditionChecker installs the LLM-backed stop-condition evaluator.
-func RegisterStopConditionChecker(fn StopConditionFunc) {
-	triggerMu.Lock()
-	triggerStopChecker = fn
-	triggerMu.Unlock()
-}
-
 // --- store -------------------------------------------------------------------
 
 // SaveScheduledTrigger upserts a trigger definition.
@@ -348,17 +341,6 @@ func RearmStrandedScheduledTriggers(db Database) int {
 	return revived
 }
 
-// RunTriggerNow fires a one-off check/callback immediately without disturbing the
-// recurring cadence. Push triggers have nothing to poll.
-func RunTriggerNow(db Database, owner, name string) error {
-	t, ok := GetScheduledTrigger(db, owner, name)
-	if !ok || t.Push {
-		return nil
-	}
-	_, err := ScheduleTask(triggerKind, triggerPayload{Owner: owner, Name: name}, time.Now())
-	return err
-}
-
 // --- run ---------------------------------------------------------------------
 
 // StartTriggerScheduler registers the scheduled.trigger handler. Idempotent;
@@ -545,19 +527,6 @@ func evaluateGate(ctx context.Context, db Database, t ScheduledTrigger) (fire bo
 	default: // GateAlways — no gate; the action (callback prompt / notify brief) carries the payload.
 		return true, ""
 	}
-}
-
-// FireScheduledTrigger fires a push trigger for an external POST. Public so the
-// webhook HTTP handler can call it.
-func FireScheduledTrigger(ctx context.Context, db Database, t ScheduledTrigger, summary string) {
-	if cur, ok := GetScheduledTrigger(db, t.Owner, t.Name); ok {
-		cur.LastFired = time.Now()
-		cur.RepeatCount++
-		SaveScheduledTrigger(db, cur)
-		t = cur
-	}
-	recordTriggerRun(db, t, summary)
-	dispatchTriggerAction(ctx, t, summary)
 }
 
 func dispatchTriggerAction(ctx context.Context, t ScheduledTrigger, summary string) {

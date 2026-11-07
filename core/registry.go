@@ -46,13 +46,6 @@ func RegisterApp(agent Agent) {
 	registeredApps = append(registeredApps, agent)
 }
 
-// RegisterAdminAgent registers an admin-only agent.
-func RegisterAdminAgent(agent Agent) {
-	registryMu.Lock()
-	defer registryMu.Unlock()
-	registeredAdminAgents = append(registeredAdminAgents, agent)
-}
-
 // RegisterChatTool registers a chat tool. Also invalidates the
 // classifier tool-index so the new tool enters the per-turn
 // embedding-match pool on its next lookup. Most tools register via
@@ -777,23 +770,6 @@ func FilterChatTools(blocklist map[string]bool) []ChatTool {
 	var out []ChatTool
 	for _, t := range RegisteredChatTools() {
 		if blocklist[t.Name()] {
-			continue
-		}
-		out = append(out, t)
-	}
-	return out
-}
-
-// FilterChatToolsPrivate returns tools that do not contact the internet.
-// Tools implementing InternetTool with IsInternetTool() returning true are
-// excluded. The global BlockedTools set is always respected.
-func FilterChatToolsPrivate() []ChatTool {
-	var out []ChatTool
-	for _, t := range RegisteredChatTools() {
-		if BlockedTools[t.Name()] {
-			continue
-		}
-		if it, ok := t.(InternetTool); ok && it.IsInternetTool() {
 			continue
 		}
 		out = append(out, t)

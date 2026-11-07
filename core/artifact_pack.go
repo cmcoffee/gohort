@@ -575,14 +575,6 @@ func ArtifactSelectionForTypes(db Database, types ...string) []ArtifactSel {
 	return sels
 }
 
-// ExportAllArtifacts builds a bundle of every registered artifact, optionally
-// restricted to the named types (empty = all types), WITH dependency closure —
-// though for a whole-store export the closure is a no-op (every dependency is
-// already in the selection).
-func ExportAllArtifacts(db Database, types ...string) (ArtifactBundle, error) {
-	return ExportArtifactBundle(db, ArtifactSelectionForTypes(db, types...))
-}
-
 // ParseArtifactBundle decodes bundle bytes, tolerating several shapes so both
 // this format and the legacy connector pack import through one path:
 //   - a full unified bundle ({"bundle":"gohort.bundle/v1","artifacts":[...]})

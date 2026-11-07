@@ -11,61 +11,6 @@ import (
 	"time"
 )
 
-// DynamicThinkBudget scales the model's thinking budget based on the
-// input token count. Short queries stay cheap; large/dense inputs get
-// enough headroom to integrate the context without truncation.
-//
-// Formula:
-//   - Below 4K input tokens: base (8K) — small queries don't need much
-//   - Above 4K: linear growth, +1024 budget tokens per 1K input above
-//   - Capped at 32K — past that, more thinking rarely helps Qwen3
-//
-// Used by the agent loop on prior-round input tokens, and exposed for
-// one-shot callers (consensus synthesis, judge calls, etc.) that want
-// the same scaling without rebuilding the formula. Standalone callers
-// that don't have a token count can use EstimateTokens(text) on the
-// raw input string — close enough for budget sizing.
-//
-// Tunable knobs are intentionally hardcoded; the scaling is universal
-// enough across reasoning models that exposing them as config would
-// be premature optimization.
-func DynamicThinkBudget(inputTokens int) int {
-	const (
-		base      = 8192
-		threshold = 4096
-		ceiling   = 12288
-		// scaleNum/scaleDen = 256/1024 = 0.25 budget tokens per 1 input
-		// token above threshold. Qwen's own best-practice card
-		// (Qwen3-*-Thinking-2507) is explicit: "To avoid overly verbose
-		// reasoning, we set the thinking budget to 8,192 tokens" — a FLAT
-		// number, not input-scaled. The model fills whatever budget it's
-		// handed, so input-size scaling made trivial tool calls sitting in
-		// a long history (e.g. a 21K-token agent turn) deliberate for
-		// ~16K tokens / 2+ minutes. We keep a gentle scale for genuinely
-		// large synthesis turns but anchor on 8192 and cap at 12288 (1.5×)
-		// rather than 32768 — note 32768 is Qwen's recommended TOTAL output
-		// length (thinking + answer), not the thinking budget. Callers that
-		// genuinely need deeper reasoning pass WithThinkBudget(N) explicitly.
-		// At 21K input the budget now lands ~12K instead of ~16.8K; at 26K,
-		// ~12.3K (capped) instead of ~19K.
-		scaleNum = 256
-		scaleDen = 1024
-	)
-	var budget int
-	if inputTokens <= threshold {
-		budget = base
-	} else {
-		extra := (inputTokens - threshold) * scaleNum / scaleDen
-		budget = base + extra
-		if budget > ceiling {
-			budget = ceiling
-		}
-	}
-	Debug("[think_budget] input=%d tokens → budget=%d tokens (base=%d, threshold=%d, ceiling=%d)",
-		inputTokens, budget, base, threshold, ceiling)
-	return budget
-}
-
 // EstimateTokens approximates the token count of a string using the
 // standard ~4-chars-per-token heuristic. Accurate enough for sizing
 // thinking budgets where exact counts don't matter — DynamicThinkBudget

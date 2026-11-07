@@ -97,75 +97,6 @@ func ToolStateDir(owner, name string) (string, error) {
 	return dir, nil
 }
 
-// BuildRecipeFromWorkspace walks workspaceDir and captures every
-// regular file as a RecipeFile entry. Skips symlinks (security) and
-// .fetch_cache (LRU cache, not source). Enforces per-file and total
-// size caps so a runaway workspace can't bloat the persisted record.
-func BuildRecipeFromWorkspace(workspaceDir string) ([]RecipeFile, error) {
-	info, err := os.Stat(workspaceDir)
-	if err != nil {
-		return nil, fmt.Errorf("workspace stat: %w", err)
-	}
-	if !info.IsDir() {
-		return nil, fmt.Errorf("workspace %q is not a directory", workspaceDir)
-	}
-
-	var recipe []RecipeFile
-	var total int64
-
-	walkErr := filepath.Walk(workspaceDir, func(path string, fi os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(workspaceDir, path)
-		if err != nil {
-			return err
-		}
-		if rel == "." {
-			return nil
-		}
-		// Skip symlinks — refuse to bake host-pointer links into a
-		// portable recipe.
-		if fi.Mode()&os.ModeSymlink != 0 {
-			return nil
-		}
-		// Skip the fetch cache; it's LRU runtime, not tool source.
-		if strings.HasPrefix(filepath.ToSlash(rel), ".fetch_cache/") || rel == ".fetch_cache" {
-			return nil
-		}
-		// Directories are recreated implicitly when files are written;
-		// no need to record empty dirs.
-		if fi.IsDir() {
-			return nil
-		}
-		if maxFile := maxRecipeFileSize(); fi.Size() > maxFile {
-			return fmt.Errorf("file %q exceeds recipe per-file size cap (%d bytes)", rel, maxFile)
-		}
-		total += fi.Size()
-		if maxTotal := maxRecipeTotalSize(); total > maxTotal {
-			return fmt.Errorf("recipe exceeds total size cap (%d bytes): simplify the tool's workspace or split into multiple tools", maxTotal)
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("read %q: %w", rel, err)
-		}
-		mode := uint32(fi.Mode().Perm())
-		if mode == 0 {
-			mode = 0700
-		}
-		recipe = append(recipe, RecipeFile{
-			Path:    filepath.ToSlash(rel),
-			Content: string(data),
-			Mode:    mode,
-		})
-		return nil
-	})
-	if walkErr != nil {
-		return nil, walkErr
-	}
-	return recipe, nil
-}
-
 // DeployRecipe writes every RecipeFile into destDir. destDir must
 // exist (caller mkdir's it). Refuses entries whose paths escape
 // destDir as defense in depth (paths from the recipe are admin-
@@ -223,19 +154,6 @@ func CopyToolStateBack(owner, name, srcStateDir string) error {
 		return fmt.Errorf("mkdir state: %w", err)
 	}
 	return copyTree(srcStateDir, dst)
-}
-
-// DeleteToolState removes the on-disk state dir for a tool. Called
-// when an operator wants to fully purge a stateful tool's history.
-func DeleteToolState(owner, name string) error {
-	p, err := ToolStateDir(owner, name)
-	if err != nil {
-		return err
-	}
-	if err := os.RemoveAll(p); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
 }
 
 // copyTree recursively copies src into dst. dst is created (or

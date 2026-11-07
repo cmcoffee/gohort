@@ -850,11 +850,6 @@ type ChatConfig struct {
 // ChatOption is a functional option for configuring an LLM call.
 type ChatOption func(*ChatConfig)
 
-// WithModel overrides the default model for this call.
-func WithModel(model string) ChatOption {
-	return func(c *ChatConfig) { c.Model = model }
-}
-
 // WithReasoningStream installs a per-chunk handler for the reasoning
 // channel. When set on a streaming Chat call, the handler receives
 // reasoning text as the model emits it — useful for "live thinking"
@@ -882,21 +877,6 @@ func WithMaxTokens(n int) ChatOption {
 // WithTemperature sets the sampling temperature.
 func WithTemperature(t float64) ChatOption {
 	return func(c *ChatConfig) { c.Temperature = &t }
-}
-
-// WithTopK sets the top-k sampling cutoff for this call.
-func WithTopK(k int) ChatOption {
-	return func(c *ChatConfig) { c.TopK = &k }
-}
-
-// WithTopP sets the nucleus-sampling top-p for this call.
-func WithTopP(p float64) ChatOption {
-	return func(c *ChatConfig) { c.TopP = &p }
-}
-
-// WithMinP sets the min-p sampling cutoff for this call.
-func WithMinP(p float64) ChatOption {
-	return func(c *ChatConfig) { c.MinP = &p }
 }
 
 // WithSystemPrompt sets the system prompt for this call.

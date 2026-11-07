@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 
@@ -85,18 +84,6 @@ func lookupImageEditBackend(name string) (ImageEditFunc, bool) {
 	defer imageBackendMu.RUnlock()
 	fn, ok := imageEditBackends[strings.TrimSpace(name)]
 	return fn, ok
-}
-
-// RegisteredImageBackends returns the currently-registered backend names.
-func RegisteredImageBackends() []string {
-	imageBackendMu.RLock()
-	defer imageBackendMu.RUnlock()
-	out := make([]string, 0, len(imageBackends))
-	for n := range imageBackends {
-		out = append(out, n)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // ImageBackendRegistered reports whether a named backend exists — lets the admin

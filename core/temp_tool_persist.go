@@ -2762,24 +2762,6 @@ func SetUserToolAsksInChat(db Database, username, agentID, name string, ask bool
 	return true
 }
 
-func SetUserToolConfirmInChat(db Database, username, name string, confirm bool) bool {
-	db = tempToolStore(db)
-	if db == nil || username == "" {
-		return false
-	}
-	tempToolPersistMu.Lock()
-	defer tempToolPersistMu.Unlock()
-	list := LoadPersistentTempTools(db, username)
-	for i := range list {
-		if list[i].Tool.Name == name {
-			list[i].Tool.ConfirmInChat = confirm
-			db.Set(persistentTempToolsTable, username, list)
-			return true
-		}
-	}
-	return false
-}
-
 // sameStringSet reports whether a and b hold the same strings, in any order.
 func sameStringSet(a, b []string) bool {
 	if len(a) != len(b) {

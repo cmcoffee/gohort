@@ -21,7 +21,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 )
 
 // IngestRecallSpan folds a raw conversation span into the recall store under
@@ -69,24 +68,6 @@ func RedactSecretLines(s string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
-}
-
-// SearchRecall searches a conversation's recall store (scoped by source):
-// semantic when embeddings are enabled (with substring fallback if it returns
-// nothing), substring otherwise. Returns up to k hits.
-func SearchRecall(db Database, source, query string, k int) []SearchHit {
-	var vec []float32
-	if GetEmbeddingConfig().Enabled && strings.TrimSpace(query) != "" {
-		// Bounded like every other query-embed path (SearchMemoryFacts et al):
-		// a stalled embed server must degrade recall to keyword-only, not hang
-		// the turn indefinitely.
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if v, err := Embed(ctx, query); err == nil && len(v) > 0 {
-			vec = v
-		}
-	}
-	return SearchRecallVec(db, source, query, vec, k)
 }
 
 // SearchRecallVec is SearchRecall with a caller-supplied query embedding, so a

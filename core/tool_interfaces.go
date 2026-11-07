@@ -1,12 +1,8 @@
 package core
 
 import (
-	"bytes"
 	"context"
-	"io"
 	"strings"
-
-	"github.com/cmcoffee/snugforge/nfo"
 )
 
 // Agent defines the interface for fuzz agents.
@@ -333,16 +329,4 @@ type DynamicChatTool interface {
 type RedirectedTool interface {
 	ChatTool
 	RedirectTo(sess *ToolSession) []string
-}
-
-// NeedInteract pauses for user input.
-func NeedInteract() {
-	nfo.PressEnter("\n(press enter to continue)")
-}
-
-// GetBodyBytes returns a function that returns an io.ReadCloser for the given byte slice.
-func GetBodyBytes(input []byte) func() (io.ReadCloser, error) {
-	return func() (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(input)), nil
-	}
 }

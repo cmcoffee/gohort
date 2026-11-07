@@ -81,43 +81,6 @@ func CustomStyleRules() []StyleRule {
 	return out
 }
 
-// AddStyleRule stores an operator-authored rule, replacing one with the same
-// key. Never builtin: an added rule asks, it cannot enforce.
-func AddStyleRule(r StyleRule) {
-	db := promptOverrideStore()
-	if db == nil || r.Key == "" || strings.TrimSpace(r.Text) == "" {
-		return
-	}
-	r.Builtin = false
-	rules := CustomStyleRules()
-	for i := range rules {
-		if rules[i].Key == r.Key {
-			rules[i] = r
-			db.Set(OverrideTable, customStyleKey, rules)
-			return
-		}
-	}
-	db.Set(OverrideTable, customStyleKey, append(rules, r))
-}
-
-// RemoveStyleRule deletes an operator-authored rule. A builtin is not removable
-// this way: disable it instead, which is reversible and leaves the shipped text
-// on the page to switch back on.
-func RemoveStyleRule(key string) {
-	db := promptOverrideStore()
-	if db == nil {
-		return
-	}
-	rules := CustomStyleRules()
-	out := rules[:0]
-	for _, r := range rules {
-		if r.Key != key {
-			out = append(out, r)
-		}
-	}
-	db.Set(OverrideTable, customStyleKey, out)
-}
-
 // SetCustomStyleRules replaces the operator's whole list. The editor is a
 // textarea of one rule per line, so the save is a replace rather than a diff:
 // a line that is gone is a rule that is gone, which is the behaviour a text box

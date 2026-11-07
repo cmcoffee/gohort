@@ -82,7 +82,6 @@ list, detail, delete := HistoryHandlers[Record, Summary](dbFunc, tableName, tran
 ### Other Web Utilities
 
 - `NewSSEWriter(w)`: Creates SSE stream writer
-- `ServeHTMLWithBase(w, html, prefix)`: Serves HTML with base href injection
 - `MountSubMux(mux, prefix, sub)`: Mounts a sub-mux under a path prefix
 
 ## Search Utilities
