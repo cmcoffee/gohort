@@ -65,7 +65,7 @@ func TestMediaGenerationListsEveryKindInBands(t *testing.T) {
 		return out
 	}
 	got := rows()
-	if r := got["both"]; !r.IsImage || !r.BothWays || !r.UsedBoth || r.UsedFor != "used for generating and editing" {
+	if r := got["both"]; !r.IsImage || !r.BothWays || !r.UsedBoth || r.UsedFor != "used for everything it does" {
 		t.Errorf("a backend that makes and edits: %+v", r)
 	}
 	if r := got["painter"]; r.BothWays || r.UsedFor != "" {

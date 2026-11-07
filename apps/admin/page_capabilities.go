@@ -55,7 +55,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 			Title:    "Media Generation",
 			Subtitle: "What makes pictures, music and other media for agents.",
 			Detail: "Every connector that makes media is listed here, banded by what it makes: image backends (Gemini or OpenAI added from their templates, a local ComfyUI or Automatic1111, a peer's renderer), music, and any other kind a connector declares it makes, such as video or 3D models.\n\n" +
-				"Images: the Default is what agents' image tools use unless they ask for another; Offered to agents can be asked for by name; Not offered is not used. A backend that both makes and edits pictures has Used for, to keep it to editing and blending only, or to generating only.\n\n" +
+				"Images: the Default is what agents' image tools use unless they ask for another; Offered to agents can be asked for by name; Not offered is not used. A backend that both makes and edits pictures has Used for: everything it does (the default), editing and blending only, or generating only.\n\n" +
 				"Music and the other kinds: Offer to agents gives each its own agent tool, generate_<kind>_<connector> (generate_music_<connector> for music). A flow may use one as a step without it being offered here.\n\n" +
 				"A connector's own settings (its key, its model) are on its row's Settings, and its key can come from Services > Keystore. Advanced opens its editor, the same one its row under Connectors opens. Test makes a sample.\n\n" +
 				"Add from a template adds Gemini, OpenAI and the rest; Add image backend stands up a local ComfyUI or A1111 in one step.",
@@ -169,7 +169,7 @@ func mediaBackendsTable() ui.Table {
 			{Type: "button", Label: "Stop offering", PostTo: role("off"), Method: "POST", OnlyIf: "is_offered"},
 			{Type: "button", Label: "Stop using", PostTo: role("off"), Method: "POST", OnlyIf: "is_default",
 				Confirm: "Stop using the default image backend? Agents' image tools then use another only when they name one that is offered."},
-			{Type: "button", Label: "Generating and editing", PostTo: uses("both"), Method: "POST", OnlyIf: "both_ways", HideIf: "used_both", Group: "Used for"},
+			{Type: "button", Label: "Everything it does", PostTo: uses("both"), Method: "POST", OnlyIf: "both_ways", HideIf: "used_both", Group: "Used for"},
 			{Type: "button", Label: "Editing and blending only", PostTo: uses("edit"), Method: "POST", OnlyIf: "both_ways", HideIf: "used_edit", Group: "Used for"},
 			{Type: "button", Label: "Generating only", PostTo: uses("generate"), Method: "POST", OnlyIf: "both_ways", HideIf: "used_generate", Group: "Used for"},
 		}, connectorEditRowActions()...), connectorSettingsAction(), connectorTestAction()),
