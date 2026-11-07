@@ -864,8 +864,14 @@
         } else row.appendChild(cellsWrap);
 
         var actionsWrap = el('div', {class: 'ui-row-actions'});
+        var actionGroups = {}, actionGroupOrder = [];
         (cfg.row_actions || []).forEach(function(act, ai) {
           if (act.leading) return;
+          if (act.group) {
+            if (!actionGroups[act.group]) { actionGroups[act.group] = []; actionGroupOrder.push(act.group); }
+            actionGroups[act.group].push({act: act, ai: ai});
+            return;
+          }
           // parent = where to append the control (actionsWrap so all
           // buttons live in one flex group). rowEl = the actual table
           // row, so expand handlers can insert their panel as a true
@@ -873,6 +879,9 @@
           // actionsWrap (which would render the panel beside or
           // beneath the buttons inside the row).
           appendAction(actionsWrap, act, ai, rec, rowKey, row);
+        });
+        actionGroupOrder.forEach(function(g) {
+          appendActionMenu(actionsWrap, g, actionGroups[g], rec, rowKey, row);
         });
         if (actionsWrap.childNodes.length > 0) {
           row.appendChild(actionsWrap);
@@ -965,6 +974,43 @@
     // working in and drop their focus on the next field.
     function invalidateElsewhere(act) {
       if (act.invalidate && act.invalidate.length) window.uiInvalidate(act.invalidate);
+    }
+
+    // appendActionMenu puts a row's grouped actions (RowAction.Group) under one
+    // "<group> ▾" button. The menu is built when the button is pressed and
+    // removed when it closes: rows are rebuilt on every refresh, and a menu
+    // made per row up front would leave one behind on the page each time.
+    function appendActionMenu(parent, group, items, rec, rowKey, rowEl) {
+      var shown = items.filter(function(it) {
+        return !(it.act.only_if && !lookup(rec, it.act.only_if)) && !(it.act.hide_if && lookup(rec, it.act.hide_if));
+      });
+      if (!shown.length) return;
+      var toggle = el('button', {type: 'button', class: 'ui-row-btn ui-row-menu-btn', 'aria-haspopup': 'menu', 'aria-expanded': 'false'}, [group + ' \u25be']);
+      var open = null;
+      function closeMenu() {
+        if (!open) return;
+        open.api.close();
+        if (open.menu.parentNode) open.menu.parentNode.removeChild(open.menu);
+        document.removeEventListener('click', open.outside, true);
+        open = null;
+        toggle.setAttribute('aria-expanded', 'false');
+      }
+      toggle.addEventListener('click', function(ev) {
+        ev.stopPropagation();
+        if (open) { closeMenu(); return; }
+        var menu = el('div', {class: 'ui-row-menu', role: 'menu'});
+        shown.forEach(function(it) { appendAction(menu, it.act, it.ai, rec, rowKey, rowEl); });
+        // Choosing an action closes the menu once its own handler has run.
+        menu.addEventListener('click', function() { setTimeout(closeMenu, 0); });
+        var api = window.uiAnchorMenu(toggle, menu, {display: 'flex', align: 'right'});
+        open = {menu: menu, api: api, outside: function(e) {
+          if (!menu.contains(e.target) && e.target !== toggle) closeMenu();
+        }};
+        document.addEventListener('click', open.outside, true);
+        api.open();
+        toggle.setAttribute('aria-expanded', 'true');
+      });
+      parent.appendChild(toggle);
     }
 
     function appendAction(parent, act, ai, rec, rowKey, rowEl) {

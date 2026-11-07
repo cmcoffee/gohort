@@ -473,6 +473,16 @@ func TestTheBackendListSharesTheConnectorActions(t *testing.T) {
 	if got := strings.Join(labels, ","); got != "Make default,Offer to agents,Stop offering,Stop using,Edit,✨ Edit,✨ Fix,Settings,Test" {
 		t.Errorf("row actions = %s", got)
 	}
+	// The spec editor is in the row's Advanced menu, not beside Settings,
+	// where it read as the place to change a connector's key and model.
+	for _, act := range tbl.RowActions {
+		if act.Label == "✨ Edit" && act.Group != "Advanced" {
+			t.Errorf("the spec editor is in group %q, want Advanced", act.Group)
+		}
+		if act.Label == "Settings" && act.Group != "" {
+			t.Errorf("Settings is tucked into %q", act.Group)
+		}
+	}
 	if !slices.Contains(connectorListSources, imageBackendsSource) || !slices.Contains(connectorListSources, "api/connectors") {
 		t.Errorf("an edit reloads %v, want both lists", connectorListSources)
 	}

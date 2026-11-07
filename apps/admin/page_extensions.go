@@ -453,10 +453,16 @@ func connectorSettingsAction() ui.RowAction {
 
 // connectorEditRowActions are a connector row's one editor, by the flags
 // connectorEditors sets: Edit for its setup form, Edit for its spec, or Fix.
+// The spec editor sits in the row's Advanced menu: it changes how the
+// connector calls its service, and beside Settings (its key and model) it
+// read as the place to change them. Fix stays in view: it shows only when
+// the connector is broken, which is when it is wanted.
 func connectorEditRowActions() []ui.RowAction {
+	spec := connectorEditAction("Edit", "edit_spec", "What should change in how this service is called, and why?")
+	spec.Group = "Advanced"
 	return []ui.RowAction{
 		{Type: "button", Label: "Edit", Method: "client", PostTo: "configure_backend", OnlyIf: "edit_form"},
-		connectorEditAction("Edit", "edit_spec", "What should change in how this service is called, and why?"),
+		spec,
 		connectorEditAction("Fix", "needs_fix", "Why is this service failing, and what would fix it?"),
 	}
 }

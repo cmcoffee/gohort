@@ -313,6 +313,12 @@ type RowAction struct {
 	// table, since the control already shows the new value. Name here the
 	// other tables that render the same rows, or they keep the old one.
 	Invalidate []string `json:"invalidate,omitempty"`
+	// Group puts the action in a menu on its row, under a "<Group> ▾" button,
+	// instead of beside the others: for what a row rarely needs (a spec
+	// editor, an export), so the button people want is the obvious one.
+	// Actions sharing a Group share the menu, in declared order; only_if and
+	// hide_if gate each one as usual, and a menu left empty is not shown.
+	Group string `json:"group,omitempty"`
 }
 
 // Expand is a helper to wrap a nested Component for expand-type RowActions.

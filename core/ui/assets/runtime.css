@@ -7483,3 +7483,15 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 
 /* A row of a "rows" field still missing a required cell, and so not saved. */
 .ui-rows-waiting { color: var(--warn, #d29922); font-size: var(--fs-xs, 0.78rem); margin: -0.1rem 0 0.4rem; }
+
+/* A row's grouped actions (RowAction.Group): the menu its "<group> ▾" button
+ * opens, anchored to the page by uiAnchorMenu, its buttons one per line. */
+.ui-row-menu {
+  flex-direction: column; align-items: stretch; gap: 0.25rem;
+  padding: 0.35rem; min-width: 10rem;
+  background: var(--bg-1, var(--bg)); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+}
+.ui-row-menu > .ui-row-btn { justify-content: flex-start; text-align: left; width: 100%; }
+
