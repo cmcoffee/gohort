@@ -764,7 +764,21 @@ func SaveSettings(c Connector, capability string, values, secrets map[string]str
 			continue
 		}
 		f, _ := settled.secretNamed(name)
-		if err := SetConnectionSecret(RootDB, c, name, v, settled.secretAddresses(f)); err != nil {
+		addrs := settled.secretAddresses(f)
+		// The first key for a provider is kept once, in the Keystore, and
+		// the connection names it: the next connection to that provider
+		// finds it there. With an entry already fitting, a key typed here is
+		// a deliberate one of the connection's own.
+		if keepsInKeystore(c, f, addrs) {
+			e, _, err := keystore.Keep(RootDB, secretKind(f), c.Title(), addrs, v)
+			if err == nil {
+				if err := SetConnectionSecretRef(RootDB, c, name, e.ID); err != nil {
+					return err
+				}
+				continue
+			}
+		}
+		if err := SetConnectionSecret(RootDB, c, name, v, addrs); err != nil {
 			return err
 		}
 	}

@@ -24,6 +24,73 @@ func (a *AdminApp) registerKeystoreRoutes(sub *http.ServeMux) {
 		"DELETE": jsonapi.Delete(a.db, a.handleKeystoreDelete, a.gate()),
 	}.Serve)
 	sub.HandleFunc("/"+keystoreSource+"/choices", jsonapi.Get(a.db, a.handleKeystoreChoices, a.gate()))
+	sub.HandleFunc("/"+keystoreSource+"/move", jsonapi.Post(a.db, a.handleKeystoreMove, a.gate()))
+}
+
+// heldPrefix marks a row for a key a connector or model tier keeps of its
+// own, listed so it can be moved into the Keystore: "held:connector:<name>"
+// or "held:tier:<table>". The colons cannot occur in an entry's ID.
+const heldPrefix = "held:"
+
+// keystoreTiers are the model tiers whose own keys the page lists.
+var keystoreTiers = []struct{ table, label string }{{LLMTable, "Worker model"}, {LeadLLMTable, "Lead model"}}
+
+// heldRows are the keys connectors and model tiers keep of their own, as the
+// Keystore page lists them under its entries.
+func (a *AdminApp) heldRows() []map[string]any {
+	var rows []map[string]any
+	for _, h := range service.KeysHeldByConnections() {
+		rows = append(rows, map[string]any{"id": heldPrefix + "connector:" + h.Connector, "name": h.Title,
+			"kind": "Held by a connector", "key": h.Hint, "addresses": strings.Join(h.Addresses, ", "),
+			"used_by": "kept by connector " + h.Title + " itself", "held": true})
+	}
+	for _, t := range keystoreTiers {
+		if hint, addrs := TierKeyHeld(a.db, t.table); hint != "" {
+			rows = append(rows, map[string]any{"id": heldPrefix + "tier:" + t.table, "name": t.label,
+				"kind": "Held by a model tier", "key": hint, "addresses": strings.Join(addrs, ", "),
+				"used_by": "kept by the " + strings.ToLower(t.label) + " itself", "held": true})
+		}
+	}
+	return rows
+}
+
+// handleKeystoreMove moves a held key (?holder= a held row's ID) into the
+// Keystore, pointing its connector or tier at the entry.
+func (a *AdminApp) handleKeystoreMove(c *jsonapi.Call, _ struct{}) (any, error) {
+	holder, _ := strings.CutPrefix(strings.TrimSpace(c.R.URL.Query().Get("holder")), heldPrefix)
+	kind, name, _ := strings.Cut(holder, ":")
+	var moved string
+	switch kind {
+	case "connector":
+		conn, ok := GetConnector(RootDB, name)
+		if !ok {
+			return nil, jsonapi.NotFound("no connector named " + name)
+		}
+		names, err := service.MoveToKeystore(conn)
+		if err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+		moved = strings.Join(names, ", ")
+	case "tier":
+		if name != LLMTable && name != LeadLLMTable {
+			return nil, jsonapi.BadRequest("no such model tier")
+		}
+		var provider, endpoint string
+		a.db.Get(name, "provider", &provider)
+		a.db.Get(name, "endpoint", &endpoint)
+		n, err := (LLMProviderConfig{Provider: provider, Endpoint: endpoint}).MoveKeyToKeystore(a.db, name)
+		if err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+		moved = n
+		if err := ReloadLLMs(); err != nil {
+			Log("[admin] reloading the models after moving a key: %v", err)
+		}
+	default:
+		return nil, jsonapi.BadRequest("say which key to move")
+	}
+	adminChange(c.R, activity.Settings, "moved %s's key into the Keystore as %s", name, moved)
+	return map[string]any{"message": "Moved into the Keystore as " + moved + "."}, nil
 }
 
 // handleKeystoreChoices is where connection ?name='s secret ?setting= may
@@ -105,10 +172,10 @@ func (a *AdminApp) handleKeystore(c *jsonapi.Call) (any, error) {
 		rows = append(rows, map[string]any{
 			"id": e.ID, "name": e.Name, "kind": keystoreKindLabel(e.Kind),
 			"addresses": strings.Join(e.Addresses, ", "), "key": keystore.Hint(RootDB, e),
-			"used_by": usedBy, "in_use": len(used) > 0,
+			"used_by": usedBy, "in_use": len(used) > 0, "entry": true,
 		})
 	}
-	return rows, nil
+	return append(rows, a.heldRows()...), nil
 }
 
 // handleKeystoreSave adds or changes an entry. A blank key keeps the one

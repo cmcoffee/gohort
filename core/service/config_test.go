@@ -253,12 +253,14 @@ func TestAConnectionCarriesItsSecret(t *testing.T) {
 		t.Errorf("after a save: %+v", c2)
 	}
 
-	// Moved: refused without the key, and nothing is sent there.
+	// Moved: refused without the key, and nothing is sent there. The first
+	// key for this address went into the Keystore, whose entry is given for
+	// the address it was typed for and not another path on the same host.
 	moved := map[string]string{"endpoint": srv.URL + "/elsewhere"}
-	if err := SaveSettings(c, "embed.text", moved, nil); err == nil || !strings.Contains(err.Error(), "give it again") {
+	if err := SaveSettings(c, "embed.text", moved, nil); err == nil || !strings.Contains(err.Error(), "is not given for "+srv.URL+"/elsewhere") {
 		t.Errorf("a move keeping a key given elsewhere: %v", err)
 	}
-	if _, err := Call(WithConfig(context.Background(), moved), nil, "vec", "embed.text", in); err == nil || !strings.Contains(err.Error(), "give the API key again") {
+	if _, err := Call(WithConfig(context.Background(), moved), nil, "vec", "embed.text", in); err == nil || !strings.Contains(err.Error(), "is not given for "+srv.URL+"/elsewhere") {
 		t.Errorf("a Test moving the key: %v", err)
 	}
 	if len(*got) != 1 {

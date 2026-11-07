@@ -75,8 +75,8 @@ type Error string
 func (e Error) Error() string { return string(e) }
 
 // NormalizeAddress is an address as entries compare it: a URL's scheme and
-// host in lower case with no path or trailing slash, or BedrockAddress.
-// It reports false for anything else.
+// host in lower case and its path with no trailing slash (no query), or
+// BedrockAddress. It reports false for anything else.
 func NormalizeAddress(a string) (string, bool) {
 	a = strings.TrimSpace(a)
 	if strings.EqualFold(a, BedrockAddress) {
@@ -86,18 +86,28 @@ func NormalizeAddress(a string) (string, bool) {
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 		return "", false
 	}
-	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host), true
+	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host) + strings.TrimRight(u.EscapedPath(), "/"), true
+}
+
+// hostRoot is an address's scheme and host alone.
+func hostRoot(n string) string {
+	if u, err := url.Parse(n); err == nil && u.Host != "" {
+		return u.Scheme + "://" + u.Host
+	}
+	return n
 }
 
 // Covers reports whether e may be sent to address addr: addr is one of the
-// addresses it was given for.
+// addresses it was given for, or beneath one ("https://api.openai.com"
+// covers "https://api.openai.com/v1"; ".../v1" does not cover
+// ".../elsewhere"), as the vault's base address covers what is under it.
 func (e Entry) Covers(addr string) bool {
 	n, ok := NormalizeAddress(addr)
 	if !ok {
 		return false
 	}
 	for _, a := range e.Addresses {
-		if a == n {
+		if a == n || (a != BedrockAddress && strings.HasPrefix(n, a+"/")) {
 			return true
 		}
 	}
@@ -141,12 +151,12 @@ func Secret(db Store, id string) (string, bool) {
 }
 
 // Hint says which secret is kept without showing it: "ends in …WXYZ, given
-// 2026-11-07" for a key long enough that four characters give nothing away,
+// 7 Nov 2026" for a key long enough that four characters give nothing away,
 // "set, given ..." otherwise, or the profile an AWS entry signs with.
 func Hint(db Store, e Entry) string {
 	given := ""
 	if !e.Set.IsZero() {
-		given = ", given " + e.Set.Format("2006-01-02")
+		given = ", given " + e.Set.Format("2 Jan 2006")
 	}
 	v, ok := Secret(db, e.ID)
 	switch {
@@ -310,6 +320,93 @@ func changed(id string) {
 	}
 }
 
+// providerNames are what an entry is called by default for the big
+// providers' addresses.
+var providerNames = map[string]string{
+	"https://generativelanguage.googleapis.com": "Google Gemini",
+	"https://api.openai.com":                    "OpenAI",
+	"https://api.anthropic.com":                 "Anthropic",
+	BedrockAddress:                              "Amazon Bedrock",
+}
+
+// ProviderName is the name an entry for addresses gets by default: the big
+// provider's ("Google Gemini"), else fallback.
+func ProviderName(addresses []string, fallback string) string {
+	for _, a := range addresses {
+		if n, ok := NormalizeAddress(a); ok {
+			if name, ok := providerNames[hostRoot(n)]; ok {
+				return name
+			}
+		}
+	}
+	return strings.TrimSpace(fallback)
+}
+
+// FreeName is base, or base with a number after it, not already an entry's.
+func FreeName(db Store, base string) string {
+	taken := map[string]bool{}
+	for _, e := range List(db) {
+		taken[strings.ToLower(e.Name)] = true
+	}
+	name := base
+	for i := 2; taken[strings.ToLower(name)]; i++ {
+		name = fmt.Sprintf("%s (%d)", base, i)
+	}
+	return name
+}
+
+// Fits reports whether e is of kind and given for every one of addresses.
+func (e Entry) Fits(kind string, addresses []string) bool {
+	if e.Kind != kind {
+		return false
+	}
+	for _, a := range addresses {
+		if !e.Covers(a) {
+			return false
+		}
+	}
+	return len(addresses) > 0
+}
+
+// Keep is where a key typed for addresses lands: an entry of kind given for
+// all of them that already holds this very key, or else a new entry, named
+// for the provider (or name), holding it. It answers the entry, and whether
+// it was made now.
+func Keep(db Store, kind, name string, addresses []string, key string) (Entry, bool, error) {
+	key = strings.TrimSpace(key)
+	// A big provider's own host is one account wherever on it a call goes
+	// (a model at /v1, images at its root), so its entry covers the host;
+	// any other address keeps the exact one the key was given for.
+	widened := make([]string, 0, len(addresses))
+	for _, a := range addresses {
+		if n, ok := NormalizeAddress(a); ok {
+			if _, big := providerNames[hostRoot(n)]; big {
+				a = hostRoot(n)
+			}
+		}
+		widened = append(widened, a)
+	}
+	addresses = widened
+	for _, e := range List(db) {
+		if v, ok := Secret(db, e.ID); ok && v == key && e.Fits(kind, addresses) {
+			return e, false, nil
+		}
+	}
+	e, err := Save(db, Entry{Name: FreeName(db, ProviderName(addresses, name)), Kind: kind, Addresses: addresses}, key)
+	return e, err == nil, err
+}
+
+// FirstFit is the first entry, by name, of kind given for every one of
+// addresses: the one a form offers by default where nothing is chosen yet.
+func FirstFit(db Store, kind string, addresses []string) (Entry, bool) {
+	for _, e := range List(db) {
+		if e.Fits(kind, addresses) {
+			return e, true
+		}
+	}
+	return Entry{}, false
+}
+
 func sameAddresses(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
@@ -325,5 +422,5 @@ func sameAddresses(a, b []string) bool {
 func newID() string {
 	var b [8]byte
 	_, _ = rand.Read(b[:])
-	return "k_" + hex.EncodeToString(b[:])
+	return "k-" + hex.EncodeToString(b[:])
 }

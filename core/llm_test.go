@@ -1349,3 +1349,38 @@ func TestATierTakesItsKeyFromTheKeystore(t *testing.T) {
 		t.Error("an Anthropic key was accepted for OpenAI")
 	}
 }
+
+// The first key typed for a provider lands in the Keystore, which the tier
+// names; the other tier for the same address is offered it, and a key typed
+// there anyway stays that tier's own. A key a tier kept before moves in.
+func TestATiersFirstKeyLandsInTheKeystore(t *testing.T) {
+	prevRoot, prevReload := RootDB, llmReloader
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	llmReloader = func() error { return nil }
+	t.Cleanup(func() { RootDB, llmReloader = prevRoot, prevReload })
+
+	lead := LLMProviderConfig{Provider: "anthropic"}
+	if in, err := lead.KeepTypedKey(RootDB, LeadLLMTable, "sk-ant-first-0000WXYZ"); err != nil || !in {
+		t.Fatalf("the first Anthropic key did not go into the Keystore: %v %v", in, err)
+	}
+	ref := TierKeystoreRef(RootDB, LeadLLMTable)
+	if e, ok := keystore.Get(RootDB, ref); !ok || e.Name != "Anthropic" || !e.Covers("https://api.anthropic.com/v1/messages") {
+		t.Fatalf("the entry made: %+v", e)
+	}
+	worker := LLMProviderConfig{Provider: "anthropic"}
+	if def := worker.DefaultKeystoreFor(RootDB, LLMTable); def != ref {
+		t.Errorf("the worker for the same provider is offered %q, want %q", def, ref)
+	}
+	if in, _ := worker.KeepTypedKey(RootDB, LLMTable, "sk-ant-second"); in {
+		t.Error("a key typed where an entry already fits went into the Keystore too")
+	}
+	if TierKeystoreRef(RootDB, LLMTable) != "" {
+		t.Error("the worker's own key was turned into a reference")
+	}
+	if name, err := worker.MoveKeyToKeystore(RootDB, LLMTable); err != nil || name != "Anthropic (2)" {
+		t.Errorf("moving the worker's own key: %q %v", name, err)
+	}
+	if len(keystore.List(RootDB)) != 2 {
+		t.Errorf("entries: %+v", keystore.List(RootDB))
+	}
+}

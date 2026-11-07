@@ -151,7 +151,7 @@ alice POST /api/worker-llm "{\"provider\":\"ollama\",\"model\":\"qwen3:8b\"}"
 root POST /api/worker-llm "{\"provider\":\" ollama \",\"model\":\" qwen3:8b \",\"endpoint\":\" <stub> \",\"api_key\":\"s3cr3t-llm-w\",\"context_size\":8192,\"request_timeout_seconds\":120,\"default_effort\":\" HIGH \",\"max_effort\":\"extreme\",\"thinking_budget\":2048}"
   204 
 root GET /api/worker-llm ""
-  200 {"_kept_key":"set, given <today>","_live":"","api_key":"","api_key_from":"own","aws_profile":"","aws_region":"","bedrock_api":"","context_size":8192,"default_effort":"high","disable_thinking":false,"e… (503 bytes, sha1 b5b285b1731d05cdef7305ad4d67328975d6b85b)
+  200 {"_kept_key":"from the Keystore: Worker model key (set, given <today>)","_live":"","api_key":"","api_key_from":"k-<hex>","aws_profile":"","aws_region":"","bedrock_api":"","context_size":8192,"default_… (545 bytes, sha1 9266690a9fc7aa3daf36601f8258389b2df0e8c8)
 root POST /api/worker-llm/models "{\"provider\":\"ollama\",\"endpoint\":\"<stub>\"}"
   200 {"note":"What Ollama offers. Pick one, or type any id in the field.","suggestions":["llama3.2","qwen3:8b"]}
 root POST /api/worker-llm "{\"provider\":\"ollama\",\"model\":\"qwen3:8b\",\"endpoint\":\"<stub>\"}"
@@ -165,7 +165,7 @@ root POST /api/worker-llm "{\"provider\":"
 root POST /api/worker-llm ""
   400 invalid JSON: EOF
 root GET /api/worker-llm ""
-  200 {"_kept_key":"set, given <today>","_live":"","api_key":"","api_key_from":"own","aws_profile":"","aws_region":"","bedrock_api":"","context_size":0,"default_effort":"","disable_thinking":false,"endpoint… (489 bytes, sha1 2eb6d0f5d5448d68f95936e03e4a92aadb6c2f59)
+  200 {"_kept_key":"from the Keystore: Worker model key (set, given <today>)","_live":"","api_key":"","api_key_from":"k-<hex>","aws_profile":"","aws_region":"","bedrock_api":"","context_size":0,"default_eff… (531 bytes, sha1 61913060ac14d356269c9de3e6d615442519c8de)
 root POST /api/worker-llm "{\"provider\":\"ollama\",\"model\":\"qwen3:8b\",\"endpoint\":\"<stub>\"}"
   204 
 root GET /api/lead-llm ""

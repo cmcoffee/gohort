@@ -377,7 +377,7 @@ func (a *AdminApp) handleLLMConfig(table string, worker bool) func(c *jsonapi.Ca
 			"bedrock_api":             bedrockAPI,
 			"_live":                   liveTierDescription(table),
 			"_kept_key":               LLMProviderConfig{Provider: provider, Endpoint: endpoint}.KeptKey(a.db, table),
-			"api_key_from":            firstNonEmptyStr(TierKeystoreRef(a.db, table), keyOwn),
+			"api_key_from":            firstNonEmptyStr(TierKeystoreRef(a.db, table), LLMProviderConfig{Provider: provider, Endpoint: endpoint}.DefaultKeystoreFor(a.db, table), keyOwn),
 			"native_tools":            nativeTools,
 			"disable_thinking":        disableThinking,
 			"no_images":               noImages,
@@ -500,7 +500,11 @@ func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonap
 				return nil, jsonapi.BadRequest(err.Error())
 			}
 		case k != "" && k != secretUnchanged:
-			tierCfg.SaveKey(a.db, table, k)
+			// The first key for this provider goes into the Keystore, which
+			// the tier then names; with one already there, it is the tier's.
+			if _, err := tierCfg.KeepTypedKey(a.db, table, k); err != nil {
+				return nil, jsonapi.BadRequest(err.Error())
+			}
 		case from == keyOwn && TierKeystoreRef(a.db, table) != "":
 			// Back to a key of its own with none typed: it has none.
 			tierCfg.SaveKeyRef(a.db, table, "")

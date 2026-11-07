@@ -1403,6 +1403,113 @@ func (cfg *LLMProviderConfig) loadKeystoreKey(id string) error {
 	return nil
 }
 
+// keystoreKind is the kind of Keystore entry key is for the tier: an AWS
+// signing set for a Bedrock key pair, a key otherwise.
+func (cfg LLMProviderConfig) keystoreKind(key string) string {
+	if strings.EqualFold(strings.TrimSpace(cfg.Provider), "bedrock") {
+		if _, err := awsKeyPair(key); err == nil {
+			return keystore.KindAWS
+		}
+	}
+	return keystore.KindKey
+}
+
+// tierLabel is what a tier is called on the Keystore's rows.
+func tierLabel(table string) string {
+	if table == LeadLLMTable {
+		return "Lead model"
+	}
+	return "Worker model"
+}
+
+// KeepTypedKey keeps a key typed on the tier's form: in the Keystore, which
+// the tier then names, when no entry there fits the tier's address yet, so
+// the first key for a provider is kept once; otherwise as the tier's own,
+// since with one already there a key typed here is a deliberate other one.
+// It reports whether the key went into the Keystore.
+func (cfg LLMProviderConfig) KeepTypedKey(db Database, table, key string) (bool, error) {
+	addr := cfg.KeyAddress()
+	kind := cfg.keystoreKind(key)
+	if _, ok := keystore.NormalizeAddress(addr); !ok || RootDB == nil {
+		cfg.SaveKey(db, table, key)
+		return false, nil
+	}
+	if _, fits := keystore.FirstFit(RootDB, kind, []string{addr}); fits {
+		cfg.SaveKey(db, table, key)
+		return false, nil
+	}
+	e, _, err := keystore.Keep(RootDB, kind, tierLabel(table)+" key", []string{addr}, key)
+	if err != nil {
+		cfg.SaveKey(db, table, key)
+		return false, nil
+	}
+	return true, cfg.SaveKeyRef(db, table, e.ID)
+}
+
+// DefaultKeystoreFor is the Keystore entry the tier in table is offered by
+// default when it keeps no key yet: the first that fits its address.
+func (cfg LLMProviderConfig) DefaultKeystoreFor(db Database, table string) string {
+	if TierKeystoreRef(db, table) != "" {
+		return ""
+	}
+	if key, _ := keptKey(db, table); key != "" {
+		return ""
+	}
+	if RootDB == nil {
+		return ""
+	}
+	for _, e := range keystore.List(RootDB) {
+		if cfg.KeystoreFits(e) == nil {
+			return e.ID
+		}
+	}
+	return ""
+}
+
+// MoveKeyToKeystore moves the tier's own key into the Keystore and points
+// the tier at it: an entry already holding that key for the tier's address
+// is reused, else one is made, named for the provider. It answers the
+// entry's name.
+func (cfg LLMProviderConfig) MoveKeyToKeystore(db Database, table string) (string, error) {
+	key, given := keptKey(db, table)
+	if key == "" {
+		return "", fmt.Errorf("%s keeps no key of its own", tierLabel(table))
+	}
+	addrs := given.Addresses
+	if len(addrs) == 0 {
+		return "", fmt.Errorf("%s's key was kept before keys were bound to an address: give it again", tierLabel(table))
+	}
+	e, _, err := keystore.Keep(RootDB, cfg.keystoreKind(key), tierLabel(table)+" key", addrs, key)
+	if err != nil {
+		return "", err
+	}
+	if err := cfg.SaveKeyRef(db, table, e.ID); err != nil {
+		return "", err
+	}
+	return e.Name, nil
+}
+
+// TierKeyHeld is the hint for a key the tier in table keeps of its own, and
+// the address it was given for; "" when it keeps none (or names the
+// Keystore).
+func TierKeyHeld(db Database, table string) (hint string, addrs []string) {
+	if TierKeystoreRef(db, table) != "" {
+		return "", nil
+	}
+	key, given := keptKey(db, table)
+	if key == "" {
+		return "", nil
+	}
+	hint, v := "set", []rune(key)
+	if len(v) >= 16 {
+		hint = "ends in …" + string(v[len(v)-4:])
+	}
+	if !given.Set.IsZero() {
+		hint += ", given " + given.Set.Format("2 Jan 2006")
+	}
+	return hint, given.Addresses
+}
+
 // tiersUsing is which model tiers name Keystore entry id, as the Keystore's
 // row says.
 func tiersUsing(id string) []string {

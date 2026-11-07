@@ -13,6 +13,7 @@ func (a *AdminApp) keystoreSections() []ui.Section {
 		Subtitle: "Provider keys, kept once and used by every model and connector that talks to that provider.",
 		Detail: "Add a key here for each provider account you use: a Google Gemini key, an OpenAI key, an Anthropic key, or the AWS sign-in Bedrock uses. A model tier or a connector that talks to that provider then names the key instead of holding a copy of it, so a key is typed once and rotated in one place.\n\n" +
 			"A key is sent only to the addresses it is given for. Changing those addresses means giving the key again. The key is never shown back: its row says which one is kept and when it was given.\n\n" +
+			"The first key typed for a provider anywhere (a connector's settings, a model tier) lands here by itself, and the next connector or model for that provider is offered it. A key typed where one already fits stays that connector's or model's own. Keys kept before the Keystore are listed below its entries, held where they are, with Move to Keystore.\n\n" +
 			"A key something uses cannot be deleted: its row says what uses it. Keys agents' API tools call are a different store, under API Credentials.",
 		Body: ui.Stack{Children: []ui.Component{
 			ui.Table{
@@ -23,13 +24,15 @@ func (a *AdminApp) keystoreSections() []ui.Section {
 					{Field: "kind", Type: "badge", Label: "", Badges: []ui.BadgeMapping{
 						{Value: "Key", Label: "Key", Color: "info"},
 						{Value: "AWS signing", Label: "AWS signing", Color: "info"},
+						{Value: "Held by a connector", Label: "Held by a connector", Color: "mute"},
+						{Value: "Held by a model tier", Label: "Held by a model tier", Color: "mute"},
 					}},
 					{Field: "key", Label: "", Mute: true, Flex: 3},
 					{Field: "addresses", Label: "", Mute: true, Flex: 4, Line: 2},
 					{Field: "used_by", Label: "", Mute: true, Flex: 4, Line: 2},
 				},
 				RowActions: []ui.RowAction{
-					ui.ModalAction("Edit", ui.FormPanel{
+					ui.ModalActionIf("Edit", "entry", "", ui.FormPanel{
 						Source:      keystoreSource + "?id={id}",
 						PostURL:     keystoreSource,
 						Method:      "POST",
@@ -37,7 +40,9 @@ func (a *AdminApp) keystoreSections() []ui.Section {
 						Invalidate:  []string{keystoreSource},
 						Fields:      keystoreFields(true),
 					}),
-					{Type: "button", Label: "Delete", PostTo: keystoreSource + "?id={id}", Method: "DELETE", HideIf: "in_use",
+					{Type: "button", Label: "Move to Keystore", PostTo: keystoreSource + "/move?holder={id}", Method: "POST", OnlyIf: "held", Variant: "primary",
+						Confirm: "Move this key into the Keystore? It becomes an entry (or joins one already holding it) that other connectors and models talking to this provider can pick, and this one names it from now on."},
+					{Type: "button", Label: "Delete", PostTo: keystoreSource + "?id={id}", Method: "DELETE", OnlyIf: "entry", HideIf: "in_use",
 						Confirm: "Delete this key? It is removed from this instance; the account at the provider is not changed.", Variant: "danger"},
 				},
 				EmptyText: "No keys kept yet. Add one below for each provider account you use.",

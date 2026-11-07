@@ -30,8 +30,9 @@ func tierSave(a *AdminApp, table, body string) (int, string) {
 }
 
 // A tier saves its provider, address and key: the key kept for that address
-// and shown as saved, never sent back; an address changed with no new key
-// leaves the key unsent until it is given again. A tier naming a connection
+// (the first key for an address goes into the Keystore, which the tier then
+// names) and shown as saved, never sent back; an address changed with no new
+// key leaves the key unsent until it is given again. A tier naming a connection
 // is refused, and one still stored that way reads as not set, with a notice.
 func TestATierSavesItsProviderAddressAndKey(t *testing.T) {
 	providedWorld(t)
@@ -48,7 +49,7 @@ func TestATierSavesItsProviderAddressAndKey(t *testing.T) {
 	}
 	got := read()
 	if got["provider"] != "openai" || got["endpoint"] != "https://api.groq.example/openai/v1" || got["api_key"] != "" ||
-		!strings.HasPrefix(got["_kept_key"].(string), "ends in …WXYZ, given ") {
+		!strings.HasPrefix(got["_kept_key"].(string), "from the Keystore: Lead model key (ends in …WXYZ, given ") {
 		t.Errorf("read back: %v", got)
 	}
 	cfg := LLMProviderConfig{Provider: "openai", Endpoint: "https://api.groq.example/openai/v1"}
@@ -59,7 +60,7 @@ func TestATierSavesItsProviderAddressAndKey(t *testing.T) {
 	if code, body := tierSave(a, LeadLLMTable, `{"provider":"openai","endpoint":"https://openrouter.example/api/v1","model":"llama-x"}`); code >= 300 {
 		t.Fatalf("moving: %d %s", code, body)
 	}
-	if kept := read()["_kept_key"].(string); !strings.Contains(kept, "not sent while the tier goes elsewhere") {
+	if kept := read()["_kept_key"].(string); !strings.Contains(kept, "not sent, the Keystore key Lead model key is not given for https://openrouter.example/api/v1") {
 		t.Errorf("moved with no new key: %q", kept)
 	}
 

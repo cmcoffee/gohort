@@ -58,11 +58,16 @@ func vecConnector(t *testing.T, base string) {
 	}
 }
 
-// kept is what connection vec keeps: its settings, and its key.
+// kept is what connection vec keeps: its settings, and the key it sends,
+// its own or the Keystore entry's it names.
 func kept(t *testing.T) (map[string]string, string) {
 	t.Helper()
 	c, _ := GetConnector(RootDB, "vec")
 	sec, _ := GetConnectionSecret(RootDB, c, "api_key")
+	if sec.Keystore != "" {
+		v, _ := keystore.Secret(RootDB, sec.Keystore)
+		return ConnectionConfig(RootDB, c), v
+	}
 	return ConnectionConfig(RootDB, c), sec.Value
 }
 
@@ -112,7 +117,10 @@ func TestAPageSetsUpItsConnector(t *testing.T) {
 	}
 	out, _ := a.handleEmbeddings(call)
 	read := out.(map[string]any)
-	if read["config/vec/endpoint"] != srv.URL || read["config/vec/model"] != "big-embed" || read["config/vec/api_key"] != secretUnchanged || read["config"] != nil {
+	// The first key for this address went into the Keystore, which the
+	// connection names; the form shows that, and no key.
+	if read["config/vec/endpoint"] != srv.URL || read["config/vec/model"] != "big-embed" || read["config/vec/api_key"] != nil ||
+		read["config/vec/api_key@keystore"] != service.KeystoreOf(mustConnector(t, "vec"), "api_key") || read["config"] != nil {
 		t.Errorf("read back: %v", read)
 	}
 	if _, err := Embed(t.Context(), "hello"); err != nil {
@@ -155,8 +163,8 @@ func TestAConnectorTakesItsKeyFromTheKeystore(t *testing.T) {
 	if err := save(`"config/vec/api_key@keystore":"` + e.ID + `"`); err != nil {
 		t.Fatal(err)
 	}
-	if _, key := kept(t); key != "" {
-		t.Errorf("the connection kept a copy of the key: %q", key)
+	if sec, _ := GetConnectionSecret(RootDB, mustConnector(t, "vec"), "api_key"); sec.Value != "" || sec.Keystore != e.ID {
+		t.Errorf("the connection kept a copy of the key, or does not name the entry: %+v", sec)
 	}
 	Embed(t.Context(), "hello")
 	keystore.Save(RootDB, e, "sk-keystore-2")
@@ -500,4 +508,14 @@ func TestConfiguringAnOldComfyUIBackendMovesIt(t *testing.T) {
 	if c.Kind != service.Kind || strings.Contains(string(c.Spec), "submit_url") || !strings.Contains(string(c.Spec), "crisp") {
 		t.Errorf("saved as %s: %s", c.Kind, c.Spec)
 	}
+}
+
+// mustConnector is the connector name.
+func mustConnector(t *testing.T, name string) Connector {
+	t.Helper()
+	c, ok := GetConnector(RootDB, name)
+	if !ok {
+		t.Fatalf("no connector %s", name)
+	}
+	return c
 }

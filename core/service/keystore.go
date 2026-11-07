@@ -130,3 +130,118 @@ func connectionsUsing(id string) []string {
 }
 
 func init() { keystore.RegisterUse(connectionsUsing) }
+
+// secretKind is the kind of Keystore entry field f takes.
+func secretKind(f ConfigField) string {
+	if strings.HasPrefix(f.Send, "aws_sigv4") {
+		return keystore.KindAWS
+	}
+	return keystore.KindKey
+}
+
+// keepsInKeystore reports whether a key typed for connection c's field f,
+// going to addrs, goes into the Keystore rather than staying the
+// connection's own: when nothing there fits yet, so the first key for a
+// provider is kept once and the next connection finds it. A connection a
+// peer manages keeps the peer's key; an address the Keystore cannot hold
+// keeps the key where it is.
+func keepsInKeystore(c Connector, f ConfigField, addrs []string) bool {
+	if strings.HasPrefix(c.Name, "peer-") || len(addrs) == 0 {
+		return false
+	}
+	for _, a := range addrs {
+		if _, ok := keystore.NormalizeAddress(a); !ok {
+			return false
+		}
+	}
+	for _, e := range keystore.List(RootDB) {
+		if keystoreFits(e, f, addrs) == nil {
+			return false
+		}
+	}
+	return true
+}
+
+// DefaultKeystoreFor is the Keystore entry connection c's secret name is
+// offered by default when it keeps no key of its own yet: the first that
+// fits, so a second connection to a provider needs no key typed.
+func DefaultKeystoreFor(c Connector, name string) string {
+	if HasSecret(c, name) {
+		return ""
+	}
+	if choices := KeystoreChoices(c, name); len(choices) > 0 {
+		return choices[0].ID
+	}
+	return ""
+}
+
+// MoveToKeystore moves each key connection c keeps of its own into the
+// Keystore and points the connection at it: an entry already holding that
+// key for those addresses is reused, else one is made, named for the
+// provider. It answers the entries' names.
+func MoveToKeystore(c Connector) ([]string, error) {
+	if c.Kind != Kind || strings.HasPrefix(c.Name, "peer-") {
+		return nil, fmt.Errorf("%s keeps no key the Keystore can hold", c.Name)
+	}
+	s, err := specOf(c)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, f := range s.Config {
+		if !f.IsSecret() {
+			continue
+		}
+		kept, ok := GetConnectionSecret(RootDB, c, f.Name)
+		if !ok || kept.Keystore != "" || kept.Value == "" {
+			continue
+		}
+		e, _, err := keystore.Keep(RootDB, secretKind(f), c.Title(), kept.Addresses, kept.Value)
+		if err != nil {
+			return names, fmt.Errorf("%s's %s: %w", c.Name, f.Title(), err)
+		}
+		if err := SetConnectionSecretRef(RootDB, c, f.Name, e.ID); err != nil {
+			return names, err
+		}
+		names = append(names, e.Name)
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("%s keeps no key of its own", c.Name)
+	}
+	return names, nil
+}
+
+// HeldKey is a key a connection keeps of its own, as the Keystore page lists
+// it beside its entries, to be moved in.
+type HeldKey struct {
+	Connector string
+	Title     string
+	Addresses []string
+	Hint      string
+}
+
+// KeysHeldByConnections are the keys connections keep of their own that the
+// Keystore could hold.
+func KeysHeldByConnections() []HeldKey {
+	var out []HeldKey
+	for _, c := range ListConnectors(RootDB) {
+		if c.Kind != Kind || strings.HasPrefix(c.Name, "peer-") {
+			continue
+		}
+		s, err := specOf(c)
+		if err != nil {
+			continue
+		}
+		hints := KeptSecrets(RootDB, c)
+		for _, f := range s.Config {
+			if !f.IsSecret() {
+				continue
+			}
+			if kept, ok := GetConnectionSecret(RootDB, c, f.Name); ok && kept.Keystore == "" && kept.Value != "" {
+				out = append(out, HeldKey{Connector: c.Name, Title: c.Title(), Addresses: kept.Addresses, Hint: hints[f.Name]})
+				break
+			}
+		}
+	}
+	return out
+}

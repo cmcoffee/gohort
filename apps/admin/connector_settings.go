@@ -298,6 +298,10 @@ func settingsValues(name, capability string) map[string]any {
 		case st.Field.IsSecret():
 			if id := service.KeystoreOf(c, st.Key); id != "" {
 				out[keyFromField(name, st.Key)] = id
+			} else if id := service.DefaultKeystoreFor(c, st.Key); id != "" {
+				// No key of its own yet, and the Keystore has one that fits:
+				// offered, so the key is not typed a second time.
+				out[keyFromField(name, st.Key)] = id
 			} else {
 				out[keyFromField(name, st.Key)] = keyOwn
 				if service.HasSecret(c, st.Key) {

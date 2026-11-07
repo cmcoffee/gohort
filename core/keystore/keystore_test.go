@@ -114,7 +114,7 @@ func TestAnAWSEntrySignsWithAPairOrAProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a profile entry was refused: %v", err)
 	}
-	if h := Hint(db, p); h != "signs with AWS profile work, given "+p.Set.Format("2006-01-02") {
+	if h := Hint(db, p); h != "signs with AWS profile work, given "+p.Set.Format("2 Jan 2006") {
 		t.Errorf("hint %q", h)
 	}
 	k, err := Save(db, Entry{Name: "Bedrock", Kind: KindAWS, Addresses: []string{"bedrock"}}, "TESTKEYIDTESTKEYID12:secretsecret")

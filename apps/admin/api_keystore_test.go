@@ -9,6 +9,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/keystore"
+	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -68,5 +69,51 @@ func TestTheKeystoreKeepsAKeyAndNeverSendsItBack(t *testing.T) {
 	}
 	if len(keystore.List(db)) != 0 {
 		t.Error("the entry was not deleted")
+	}
+}
+
+// A key a connector kept before the Keystore is listed on the Keystore page,
+// held where it is; Move to Keystore makes it an entry the connector names,
+// still sending the same key, and a second connector for the same address is
+// offered that entry with nothing typed.
+func TestAKeyHeldByAConnectorMovesIntoTheKeystore(t *testing.T) {
+	srv, got := settingsWorld(t)
+	vecConnector(t, srv.URL) // keeps sk-old of its own
+	a := &AdminApp{db: RootDB}
+	call := func(method, url string) *jsonapi.Call {
+		return &jsonapi.Call{R: httptest.NewRequest(method, url, nil), W: httptest.NewRecorder(), User: "root"}
+	}
+	rows, _ := a.handleKeystore(call("GET", "/api/keystore"))
+	b, _ := json.Marshal(rows)
+	if !strings.Contains(string(b), `"id":"held:connector:vec"`) || !strings.Contains(string(b), "Held by a connector") {
+		t.Fatalf("the connector's own key is not listed: %s", b)
+	}
+	if _, err := a.handleKeystoreMove(call("POST", "/api/keystore/move?holder=held:connector:vec"), struct{}{}); err != nil {
+		t.Fatal(err)
+	}
+	sec, _ := GetConnectionSecret(RootDB, mustConnector(t, "vec"), "api_key")
+	if sec.Value != "" || sec.Keystore == "" {
+		t.Fatalf("after the move the connector holds %+v", sec)
+	}
+	if v, _ := keystore.Secret(RootDB, sec.Keystore); v != "sk-old" {
+		t.Errorf("the entry holds %q", v)
+	}
+	rows, _ = a.handleKeystore(call("GET", "/api/keystore"))
+	if b, _ = json.Marshal(rows); strings.Contains(string(b), "held:connector:vec") {
+		t.Errorf("the moved key is still listed as held: %s", b)
+	}
+	if _, err := Embed(t.Context(), "hi"); err == nil && len(*got) > 0 && !strings.Contains((*got)[len(*got)-1], "Bearer sk-old") {
+		t.Errorf("after the move it sent: %v", *got)
+	}
+
+	spec := mustConnector(t, "vec").Spec
+	if err := SaveConnector(RootDB, Connector{Name: "vec2", Kind: "service", Spec: spec}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetConnectionConfig(RootDB, mustConnector(t, "vec2"), map[string]string{"endpoint": srv.URL}); err != nil {
+		t.Fatal(err)
+	}
+	if def := service.DefaultKeystoreFor(mustConnector(t, "vec2"), "api_key"); def != sec.Keystore {
+		t.Errorf("a second connector for the address is offered %q, want the entry %q", def, sec.Keystore)
 	}
 }
