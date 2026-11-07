@@ -487,7 +487,7 @@ func checkRenderBudget(sess *ToolSession) error {
 	if sess == nil || sess.Detached {
 		return nil
 	}
-	_, total := sess.NextImageAttempt(false)
+	total := sess.CountImageRender()
 	cap := ImageGenHardCap()
 	if total <= cap {
 		return nil

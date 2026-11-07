@@ -892,7 +892,7 @@ func TestAnInlineSetCountsAndThenStops(t *testing.T) {
 	args := map[string]any{"prompt": "a red bicycle", "variations": 3}
 
 	for i := 1; i <= 2; i++ {
-		sess.NextImageAttempt(false) // the render the tool would have counted
+		sess.CountImageRender() // the render the tool would have counted
 		out := tool.noteSeriesPiece(sess, args, "Stored.")
 		if !strings.Contains(out, fmt.Sprintf("picture %d of the 3", i)) {
 			t.Errorf("render %d must say where in the set it is:\n%s", i, out)
@@ -904,7 +904,7 @@ func TestAnInlineSetCountsAndThenStops(t *testing.T) {
 		}
 	}
 
-	sess.NextImageAttempt(false)
+	sess.CountImageRender()
 	out := tool.noteSeriesPiece(sess, args, "Stored.")
 	if !strings.Contains(out, "LAST of the 3") || !strings.Contains(out, "Do NOT render another") {
 		t.Errorf("the set must terminate at the number the model asked for:\n%s", out)
@@ -951,7 +951,7 @@ func TestTheCapLeavesDetachedRendersAlone(t *testing.T) {
 
 func TestALonePictureGetsNoSetNote(t *testing.T) {
 	sess := &ToolSession{ChatSessionID: "sess-imgseries-3b"}
-	sess.NextImageAttempt(false)
+	sess.CountImageRender()
 	out := (&ImageTool{}).noteSeriesPiece(sess, map[string]any{"prompt": "a red bicycle"}, "Stored.")
 	if out != "Stored." {
 		t.Errorf("one picture is not a set:\n%s", out)

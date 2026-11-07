@@ -387,27 +387,18 @@ func (s *ToolSession) ImageRenderCount() int {
 	return s.imgGenTotal
 }
 
-// NextImageAttempt records one generate_image call and returns (attempt, total),
-// both 1-based. `attempt` is the CHAIN position that drives the retry budget:
-// refine=true continues the chain (the model is regenerating the previous image
-// to fix a checkable miss), refine=false resets it (a new, distinct subject gets
-// a fresh budget). `total` is the absolute count this turn — never reset, so the
-// runaway hard cap can't be evaded by mislabeling retries as new subjects. The
-// counters are session-scoped, so a fresh ToolSession each turn zeroes both.
+// CountImageRender records one render and returns how many this turn has run,
+// 1-based: what the runaway hard cap (ImageGenHardCap) is checked against. The
+// count is session-scoped, so a fresh ToolSession each turn zeroes it.
 // Nil-safe.
-func (s *ToolSession) NextImageAttempt(refine bool) (attempt, total int) {
+func (s *ToolSession) CountImageRender() int {
 	if s == nil {
-		return 1, 1
+		return 1
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.imgGenTotal++
-	if refine {
-		s.imgGenAttempts++ // continue the retry chain
-	} else {
-		s.imgGenAttempts = 1 // new subject → fresh retry budget
-	}
-	return s.imgGenAttempts, s.imgGenTotal
+	return s.imgGenTotal
 }
 
 // HoldInThreadReply keeps a message addressed to the conversation this turn is

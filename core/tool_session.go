@@ -31,8 +31,7 @@ type ToolSession struct {
 	Videos            []string           // base64-encoded video data accumulated by video tools; consumers (phantom outbox) deliver as attachments
 	PendingViewImages []ViewImage        // images a tool wants the LLM to see on its NEXT round, each carrying a label saying what it is; the agent loop's caller injects these as a synthetic user message before the next LLM call, then clears. NOT delivered to the user — different channel from Images.
 	InboundMedia      []InboundMediaItem // turn-scoped registry of media that arrived on THIS turn (a contact's photo/clip), each addressable by a stable id (media#1, …) so the model can post a specific inbound item back BY ID. Populated at dispatch, listed via the media manifest, resolved by the outbound attachment collector. See RegisterInboundMedia.
-	imgGenAttempts    int                // Tier-2 auto-retry CHAIN length for the current image (resets on a new subject); drives the retry budget. See NextImageAttempt.
-	imgGenTotal       int                // Tier-2 absolute generate_image calls this turn (never resets); the runaway hard cap. See NextImageAttempt.
+	imgGenTotal       int                // renders this turn (never resets); the runaway hard cap. See CountImageRender.
 	imageRefsFrozen   []string           // what image#1, image#2 … meant when this round's tool calls were written; index i is the stable ref for image#(i+1), "" where the picture has no stable id. Positional refs in tool arguments resolve against THIS, not the live ring. See SnapshotImageRefs.
 	Silenced          bool               // set true by the stay_silent tool — caller suppresses the LLM's text reply but still flushes attachments
 	SilencedReason    string             // why stay_silent was called, in the model's words: shown to the owner on the turn's card, never sent
