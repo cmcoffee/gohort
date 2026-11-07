@@ -57,6 +57,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 			Detail: "Every connector that makes media is listed here, banded by what it makes: image backends (Gemini or OpenAI added from their templates, a local ComfyUI or Automatic1111, a peer's renderer), music, and any other kind a connector declares it makes, such as video or 3D models.\n\n" +
 				"Images: the Default is what agents' image tools use unless they ask for another; Offered to agents can be asked for by name; Not offered is not used. A backend that both makes and edits pictures has Used for: everything it does (the default), editing and blending only, or generating only.\n\n" +
 				"Music and the other kinds: Offer to agents gives each its own agent tool, generate_<kind>_<connector> (generate_music_<connector> for music). A flow may use one as a step without it being offered here.\n\n" +
+				"A choice that no longer reads (it names a connection that is not here, or one named the old way) is listed first, under Needs setting again, with why; Remove takes it off, and choosing a backend below sets it again.\n\n" +
 				"A connector's own settings (its key, its model) are on its row's Settings, and its key can come from Services > Keystore. Advanced opens its editor, the same one its row under Connectors opens. Test makes a sample.\n\n" +
 				"Add from a template adds Gemini, OpenAI and the rest; Add image backend stands up a local ComfyUI or A1111 in one step.",
 			Body: ui.Stack{
@@ -158,12 +159,15 @@ func mediaBackendsTable() ui.Table {
 			}},
 			{Field: "does", Label: "Does", Mute: true},
 			{Field: "used_for", Label: "", Mute: true},
+			{Field: "stale", Label: "", Flex: 4, Line: 2},
 			{Field: "size", Label: "Size", Mute: true},
 			{Field: "steps", Label: "Steps", Mute: true},
 			{Field: "summary", Label: "", Mute: true, Flex: 4, Line: 2},
 			{Field: "last_error", Label: "", Mute: true, Flex: 4, Line: 2},
 		},
 		RowActions: append(append([]ui.RowAction{
+			{Type: "button", Label: "Remove", PostTo: role("off"), Method: "POST", OnlyIf: "is_stale", Variant: "danger",
+				Confirm: "Remove it from Media Generation? It no longer reads, so nothing uses it now."},
 			{Type: "button", Label: "Make default", PostTo: role("default"), Method: "POST", OnlyIf: "is_image", HideIf: "is_default", Variant: "primary"},
 			{Type: "button", Label: "Offer to agents", PostTo: role("offered"), Method: "POST", OnlyIf: "is_unused"},
 			{Type: "button", Label: "Stop offering", PostTo: role("off"), Method: "POST", OnlyIf: "is_offered"},

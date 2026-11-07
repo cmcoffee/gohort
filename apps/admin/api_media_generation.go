@@ -74,7 +74,57 @@ func (a *AdminApp) handleMediaBackends(c *jsonapi.Call) (any, error) {
 		}
 		return rank[other[i].Role] < rank[other[j].Role]
 	})
-	return append(append(rows, music...), other...), nil
+	out := append([]imageBackendRow{}, staleRows()...)
+	return append(append(append(out, rows...), music...), other...), nil
+}
+
+// staleBand is the band of choices that no longer read, drawn first.
+const staleBand = "Needs setting again"
+
+// mediaTableJob is what a Media Generation table offers agents, as a stale
+// row says it.
+var mediaTableJob = map[string]string{ImageTable: "images", service.MusicTable: "music", service.MediaTable: "media"}
+
+// staleRows are the choices Media Generation holds that no longer read
+// (service.StaleMediaChoices), one row per name with every reason, so the
+// page says why its dashboard card sent the reader here, and Remove clears
+// the name. A name stale nowhere gives no row.
+func staleRows() []imageBackendRow {
+	var out []imageBackendRow
+	at := map[string]int{}
+	for _, st := range service.StaleMediaChoices(RootDB) {
+		why := "Offered to agents for " + mediaTableJob[st.Table] + ": " + st.Why + "."
+		if st.Role == "default" {
+			why = "The default image backend: " + st.Why + "."
+		}
+		if i, seen := at[st.Name]; seen {
+			out[i].Stale += " " + why
+			continue
+		}
+		at[st.Name] = len(out)
+		out = append(out, imageBackendRow{Name: st.Name, Title: st.Name, Group: staleBand, Role: st.Role, Stale: why, IsStale: true})
+	}
+	return out
+}
+
+// dropStale takes name off every Media Generation choice where it no longer
+// reads, answering whether it held one.
+func (a *AdminApp) dropStale(name string) bool {
+	dropped := false
+	for _, st := range service.StaleMediaChoices(RootDB) {
+		if st.Name != name || a.db == nil {
+			continue
+		}
+		dropped = true
+		if st.Role == "default" {
+			a.db.Set(st.Table, "provider", "")
+			continue
+		}
+		var agents []string
+		a.db.Get(st.Table, "agents", &agents)
+		a.db.Set(st.Table, "agents", slices.DeleteFunc(agents, func(n string) bool { return n == name }))
+	}
+	return dropped
 }
 
 // rowTitle is connector conn as its row names it, saying when a change
@@ -127,6 +177,10 @@ func (a *AdminApp) handleMediaBackendRole(c *jsonapi.Call, _ struct{}) (any, err
 	name, role := strings.TrimSpace(q.Get("name")), strings.TrimSpace(q.Get("role"))
 	if name == "" {
 		return nil, jsonapi.BadRequest(noConnectorNamed)
+	}
+	if role == "off" && a.dropStale(name) {
+		adminChange(c.R, activity.Settings, "media generation: removed %s, which no longer reads", name)
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
 	conn, ok := GetConnector(RootDB, name)
 	table := ""

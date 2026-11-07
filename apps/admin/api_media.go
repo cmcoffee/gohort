@@ -339,10 +339,15 @@ type imageBackendRow struct {
 	UsedBoth     bool   `json:"used_both,omitempty"`
 	UsedEdit     bool   `json:"used_edit,omitempty"`
 	UsedGenerate bool   `json:"used_generate,omitempty"`
-	HasSettings  bool   `json:"has_settings,omitempty"`
-	Testable     bool   `json:"testable,omitempty"`
-	TestConfirm  string `json:"test_confirm,omitempty"`
-	LastError    string `json:"last_error,omitempty"`
+	// Stale says why a choice Media Generation holds no longer reads (it
+	// names a connection not here, or one named the old way); IsStale gives
+	// its row Remove.
+	Stale       string `json:"stale,omitempty"`
+	IsStale     bool   `json:"is_stale,omitempty"`
+	HasSettings bool   `json:"has_settings,omitempty"`
+	Testable    bool   `json:"testable,omitempty"`
+	TestConfirm string `json:"test_confirm,omitempty"`
+	LastError   string `json:"last_error,omitempty"`
 }
 
 // imageRows are the image backends, the default first, then the ones

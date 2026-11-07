@@ -180,11 +180,12 @@ func StaleSettings(db Database) []StaleSetting {
 		}
 	}
 	add("Web Search", StaleWhy(db, str(SearchTable, "provider")))
-	switch image := strings.TrimSpace(str(ImageTable, "provider")); image {
-	case "openai", "gemini":
-		add("Media Generation", "it names "+image+", which gohort no longer runs itself: add it from its template under + Add another…")
-	default:
-		add("Media Generation", StaleWhy(db, image))
+	for _, st := range StaleMediaChoices(db) {
+		if st.Role == "offered" {
+			add("Media Generation", "offered to agents, "+st.Why)
+		} else {
+			add("Media Generation", st.Why)
+		}
 	}
 	// A record from before every one was a connector names none: blank or
 	// local, with the address of the server it used.
@@ -215,16 +216,45 @@ func StaleSettings(db Database) []StaleSetting {
 	}
 	add("Page Rendering (Browser)", StaleWhy(db, str(BrowseTable, "source")))
 	add("Mail (SMTP)", StaleWhy(db, str(MailTable, "provider")))
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Page < out[j].Page })
+	return out
+}
+
+// StaleMediaChoice is a Media Generation choice that no longer reads: Name
+// as Table holds it, as the image default (Role "default") or offered to
+// agents ("offered"), and Why it does not read.
+type StaleMediaChoice struct {
+	Table, Name, Role, Why string
+}
+
+// StaleMediaChoices are the Media Generation choices that no longer read:
+// the image default, then those offered to agents for images, music and the
+// other kinds. The dashboard's card and the page's rows both read them.
+func StaleMediaChoices(db Database) []StaleMediaChoice {
+	if db == nil {
+		return nil
+	}
+	var out []StaleMediaChoice
+	var image string
+	db.Get(ImageTable, "provider", &image)
+	switch image = strings.TrimSpace(image); image {
+	case "", "none":
+	case "openai", "gemini":
+		out = append(out, StaleMediaChoice{ImageTable, image, "default", "it names " + image + ", which gohort no longer runs itself: add it from its template under + Add another…"})
+	default:
+		if why := StaleWhy(db, image); why != "" {
+			out = append(out, StaleMediaChoice{ImageTable, image, "default", why})
+		}
+	}
 	for _, table := range []string{ImageTable, MusicTable, MediaTable} {
 		var agents []string
 		db.Get(table, "agents", &agents)
 		for _, a := range agents {
 			if why := StaleWhy(db, a); why != "" {
-				add("Media Generation", "offered to agents, "+why)
+				out = append(out, StaleMediaChoice{table, a, "offered", why})
 			}
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Page < out[j].Page })
 	return out
 }
 

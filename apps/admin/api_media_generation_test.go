@@ -119,3 +119,62 @@ func TestMediaGenerationListsEveryKindInBands(t *testing.T) {
 		t.Errorf("after Stop offering: %v", media)
 	}
 }
+
+// A choice Media Generation holds that no longer reads is a row of its own,
+// first, under Needs setting again, saying why: the page answers the
+// dashboard's card that sent the reader there. Remove takes the name off
+// every choice that holds it and touches nothing else.
+func TestMediaGenerationShowsWhatNeedsSettingAgain(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved })
+	a := &AdminApp{db: RootDB}
+	sub := http.NewServeMux()
+	a.registerMediaGenerationRoutes(sub)
+	call := func(method, path string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		sub.ServeHTTP(w, httptest.NewRequest(method, path, nil))
+		return w
+	}
+	tunes := `{"provider":{"transport":"http","base_url":"https://api.example.test","auth":{"none":true},"operations":{"make":{"method":"POST","path":"/make","body":{"prompt":"{prompt}"},"read":"file"}}},"provides":[{"capability":"music.generate","steps":[{"call":"make"}],"output":{"audio":{"from":"body"}}}]}`
+	if err := SaveConnector(RootDB, Connector{Name: "tunes", Kind: service.Kind, Spec: json.RawMessage(tunes)}); err != nil {
+		t.Fatal(err)
+	}
+	RootDB.Set(ImageTable, "provider", "gone")
+	RootDB.Set(service.MusicTable, "agents", []string{"gone", "tunes", "lost"})
+	list := func() []imageBackendRow {
+		var rows []imageBackendRow
+		if w := call("GET", "/api/media-backends"); json.Unmarshal(w.Body.Bytes(), &rows) != nil {
+			t.Fatalf("the list: %s", w.Body.String())
+		}
+		return rows
+	}
+	rows := list()
+	if len(rows) != 3 || rows[0].Group != staleBand || rows[1].Group != staleBand || rows[2].Name != "tunes" {
+		t.Fatalf("rows = %+v, want the two that no longer read first, then tunes", rows)
+	}
+	if r := rows[0]; r.Name != "gone" || !r.IsStale || r.Role != "default" ||
+		!strings.Contains(r.Stale, "The default image backend: it names gone, which is not a connection here.") ||
+		!strings.Contains(r.Stale, "Offered to agents for music: it names gone") {
+		t.Errorf("the row for gone says: %+v", r)
+	}
+	if r := rows[1]; r.Name != "lost" || r.Role != "offered" || !strings.HasPrefix(r.Stale, "Offered to agents for music: it names lost") {
+		t.Errorf("the row for lost says: %+v", r)
+	}
+
+	if w := call("POST", "/api/media-backends/role?name=gone&role=off"); w.Code >= 300 {
+		t.Fatalf("Remove: %d %s", w.Code, w.Body.String())
+	}
+	var music []string
+	RootDB.Get(service.MusicTable, "agents", &music)
+	if a.storedString(ImageTable, "provider") != "" || strings.Join(music, ",") != "tunes,lost" {
+		t.Errorf("after Remove: default %q, music %v", a.storedString(ImageTable, "provider"), music)
+	}
+	if rows := list(); len(rows) != 2 || rows[0].Name != "lost" {
+		t.Errorf("after Remove, rows = %+v", rows)
+	}
+	call("POST", "/api/media-backends/role?name=lost&role=off")
+	if rows := list(); len(rows) != 1 || rows[0].IsStale || len(service.StaleSettings(RootDB)) != 0 {
+		t.Errorf("with nothing stale, rows = %+v, stale settings %v", rows, service.StaleSettings(RootDB))
+	}
+}
