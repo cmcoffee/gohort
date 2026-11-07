@@ -41,24 +41,10 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 		"POST": jsonapi.Post(a.db, a.handleTranscribeSave, a.gate()),
 	}.Serve)
 
-	// Image generation — provider + api_key live in per-key rows under
-	// ImageTable. Shape mirrors the legacy --setup wiring so existing
-	// installs read/write the same kvlite keys.
-	sub.HandleFunc("/api/image-gen", jsonapi.Methods{
-		"GET":  jsonapi.Get(a.db, a.handleImageGen, a.gate()),
-		"POST": jsonapi.Post(a.db, a.handleImageGenSave, a.gate()),
-	}.Serve)
-
 	// STT test: the form as it stands, saved or not. A connector
 	// transcribes a second of a tone; a peer is checked through its
 	// manifest.
 	sub.HandleFunc("/api/transcribe/test", jsonapi.Post(a.db, a.handleTranscribeTest, a.gate()))
-
-	// Image gen connectivity test — same shape as STT but per-provider
-	// (each has its own models URL convention). Validates the API key
-	// is recognized; doesn't actually generate an image (which would
-	// cost money on every test click).
-	sub.HandleFunc("/api/image-gen/test", jsonapi.Post(a.db, a.handleImageGenTest, a.gate()))
 
 	// Speech (TTS): spoken replies to voice notes. Same GET/POST shape as
 	// transcription; the test speaks a sentence, because a connector that
@@ -445,66 +431,9 @@ func (a *AdminApp) handleImageBackendRole(c *jsonapi.Call, _ struct{}) (any, err
 }
 
 // imageBackendListed is a connector the picker offers: every image
-// connector, and any other backend already registered (imageFormFields).
+// connector, and any other backend already registered (a peer's renderer).
 func imageBackendListed(conn Connector) bool {
 	return imageConnector(conn.Name) || (conn.Approved && ImageBackendRegistered(conn.Name))
-}
-
-// handleImageGen serves /api/image-gen; registerMediaRoutes says what it is for.
-func (a *AdminApp) handleImageGen(c *jsonapi.Call) (any, error) {
-	provider := a.storedString(ImageTable, "provider")
-	if provider == "" {
-		provider = "none"
-	}
-	agents := []string{}
-	if a.db != nil {
-		a.db.Get(ImageTable, "agents", &agents)
-	}
-	out := map[string]any{"provider": provider, "agents": agents}
-	for k, v := range settingsValues(provider, "image.generate") {
-		out[k] = v
-	}
-	return markStale(out, "provider", "agents"), nil
-}
-
-// handleImageGenSave persists the image connector and the others offered to
-// agents, refusing a name that is not a connector making pictures: saved, it
-// would leave every picture failing on a connector that is not there. Saving
-// accepts a change waiting on one it names.
-func (a *AdminApp) handleImageGenSave(c *jsonapi.Call, form withSettings[imageGenConfig]) (any, error) {
-	req := form.Form
-	req.Provider = strings.TrimSpace(req.Provider)
-	names := []string{}
-	if req.Provider != "" && req.Provider != "none" {
-		names = append(names, req.Provider)
-	}
-	var agents []string
-	for _, n := range req.Agents {
-		if n = strings.TrimSpace(n); n != "" && n != req.Provider {
-			agents = append(agents, n)
-		}
-	}
-	for _, n := range append(names, agents...) {
-		if !imageConnector(n) {
-			return nil, jsonapi.BadRequest("no connector named " + n + " makes pictures: add one under Admin > Services > Connectors or Templates first")
-		}
-	}
-	if len(names) > 0 {
-		if err := form.Settings.save(req.Provider, "image.generate"); err != nil {
-			return nil, jsonapi.BadRequest(err.Error())
-		}
-	}
-	if a.db != nil {
-		a.db.Set(ImageTable, "provider", req.Provider)
-		a.db.Set(ImageTable, "agents", agents)
-	}
-	acceptChanges(append(names, agents...)...)
-	offered := ""
-	if len(agents) > 0 {
-		offered = ", also offered to agents: " + strings.Join(agents, ", ")
-	}
-	adminChange(c.R, activity.Settings, "updated image-gen config (provider=%q%s)", req.Provider, offered)
-	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // imageConnector reports whether name is a connector that makes or edits
@@ -557,28 +486,6 @@ func (a *AdminApp) handleTranscribeTest(c *jsonapi.Call, form withSettings[Trans
 		heard = fmt.Sprintf("%q", text)
 	}
 	return testResultBody(true, "OK: "+ProviderTitle(req.Provider)+" transcribed a second of a tone and heard "+heard, ""), nil
-}
-
-// handleImageGenTest serves /api/image-gen/test; registerMediaRoutes says what it is for.
-// It does not render: a picture can be billed. It says whether the chosen
-// connector makes pictures and is served, and where its own Test renders one.
-func (a *AdminApp) handleImageGenTest(c *jsonapi.Call, req imageGenConfig) (any, error) {
-	if req.Provider == "" || req.Provider == "none" {
-		return testResultBody(false, "", "pick a connector first"), nil
-	}
-	if !imageConnector(req.Provider) && !ImageBackendRegistered(req.Provider) {
-		return testResultBody(false, "", "no connector named "+req.Provider+" makes pictures"), nil
-	}
-	if !ImageBackendRegistered(req.Provider) {
-		return testResultBody(false, "", ProviderTitle(req.Provider)+" makes pictures but is not served: a change waits on it (save here with it chosen to accept it), or its spec does not read (Fix it under Admin > Services > Connectors)"), nil
-	}
-	return testResultBody(true, "The connector "+ProviderTitle(req.Provider)+" is ready. Its Test under Admin > Services > Connectors renders a picture end to end.", ""), nil
-}
-
-// imageGenConfig is the image-generation form: the connector chosen.
-type imageGenConfig struct {
-	Provider string   `json:"provider"`
-	Agents   []string `json:"agents"`
 }
 
 // storedEmbeddingConfig / storedTranscribeConfig read the saved config, so a

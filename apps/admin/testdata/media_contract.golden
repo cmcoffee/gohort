@@ -22,13 +22,13 @@ root GET /api/speech ""
   200 {"api_key":"","enabled":false,"endpoint":"","model":"","provider":"none","voice":""}
 root PUT /api/speech "{}"
   405 method not allowed
-(signed out) GET /api/image-gen ""
+(signed out) GET /api/media-backends ""
   403 forbidden
-alice GET /api/image-gen ""
+alice GET /api/media-backends ""
   403 forbidden
-root GET /api/image-gen ""
-  200 {"agents":[],"provider":"none"}
-root PUT /api/image-gen "{}"
+root GET /api/media-backends ""
+  200 []
+root PUT /api/media-backends "{}"
   405 method not allowed
 (signed out) GET /api/speech/voices ""
   403 forbidden
@@ -62,14 +62,22 @@ root POST /api/speech/test "{\"enabled\":"
   400 invalid JSON: unexpected EOF
 root POST /api/speech/test ""
   400 invalid JSON: EOF
-alice POST /api/image-gen/test "{\"enabled\":true}"
+alice POST /api/media-backends/role "{\"enabled\":true}"
   403 forbidden
-root GET /api/image-gen/test ""
+root GET /api/media-backends/role ""
   405 method not allowed
-root POST /api/image-gen/test "{\"enabled\":"
-  400 invalid JSON: unexpected EOF
-root POST /api/image-gen/test ""
-  400 invalid JSON: EOF
+root POST /api/media-backends/role "{\"enabled\":"
+  400 name the connector: ?name=
+root POST /api/media-backends/role ""
+  400 name the connector: ?name=
+alice POST /api/media-backends/uses "{\"enabled\":true}"
+  403 forbidden
+root GET /api/media-backends/uses ""
+  405 method not allowed
+root POST /api/media-backends/uses "{\"enabled\":"
+  400 name the connector: ?name=
+root POST /api/media-backends/uses ""
+  400 name the connector: ?name=
 alice POST /api/embeddings "{\"enabled\":true,\"provider\":\"vectors\"}"
   403 forbidden
 root POST /api/embeddings "{\"enabled\":true,\"provider\":\"local\",\"endpoint\":\"<stub>/embed/v1\",\"api_key\":\"s3cr3t-embed-1\"}"
@@ -150,28 +158,19 @@ root POST /api/speech "{\"enabled\":true,\"provider\":\"peer:nope\"}"
   400 no peer named "nope" is registered: add it under Peers first
 root POST /api/speech "{\"enabled\":true,\"provider\":\"nope\"}"
   400 no connector named "nope"
-alice POST /api/image-gen "{\"provider\":\"none\"}"
+alice POST /api/media-backends/role?name=openai&role=default ""
   403 forbidden
-root GET /api/image-gen ""
-  200 {"agents":[],"provider":"none"}
-root POST /api/image-gen "{\"provider\":\"openai\",\"api_key\":\"s3cr3t-img\"}"
-  400 no connector named openai makes pictures: add one under Admin > Services > Connectors or Templates first
-root POST /api/image-gen "{\"provider\":\"none\"}"
-  204 
-root GET /api/image-gen ""
-  200 {"agents":[],"provider":"none"}
-root POST /api/image-gen "{\"provider\":"
-  400 invalid JSON: unexpected EOF
-root POST /api/image-gen/test "{\"provider\":\"\"}"
-  200 {"error":"pick a connector first","ok":false}
-root POST /api/image-gen/test "{\"provider\":\"none\"}"
-  200 {"error":"pick a connector first","ok":false}
-root POST /api/image-gen/test "{\"provider\":\"gemini\"}"
-  200 {"error":"no connector named gemini makes pictures","ok":false}
-activity log, 6 entries:
+root GET /api/media-backends ""
+  200 []
+root POST /api/media-backends/role?name=openai&role=default ""
+  400 no image backend named openai
+root POST /api/media-backends/role?name=openai&role=sometimes ""
+  400 no image backend named openai
+root POST /api/media-backends/uses?name=openai&uses=edit ""
+  400 openai does not both make and edit pictures
+activity log, 5 entries:
   settings root: updated embeddings config (enabled=false provider="vectors" endpoint="vectors" model="nomic-embed-text")
   settings root: updated embeddings config (enabled=true provider="vectors" endpoint="vectors" model="nomic-embed-text")
-  settings root: updated image-gen config (provider="none")
   settings root: updated speech config (enabled=true provider="voice" model="kokoro" voice="af_heart")
   settings root: updated transcribe config (enabled=false provider="ears" model="whisper-1")
   settings root: updated transcribe config (enabled=true provider="ears" model="whisper-1")

@@ -74,7 +74,7 @@ func TestMediaRoutesContract(t *testing.T) {
 
 	ct := &contract{
 		t:       t,
-		secrets: []string{"s3cr3t-embed", "s3cr3t-stt", "s3cr3t-tts", "s3cr3t-img"},
+		secrets: []string{"s3cr3t-embed", "s3cr3t-stt", "s3cr3t-tts"},
 		rewrite: strings.NewReplacer(srv.URL, "<stub>"),
 	}
 	app := &AdminApp{}
@@ -82,13 +82,13 @@ func TestMediaRoutesContract(t *testing.T) {
 	app.RegisterRoutes(mux, "")
 	do := func(user, method, path, body string) { ct.run(mux, adb, user, method, path, body) }
 
-	for _, p := range []string{"/api/embeddings", "/api/transcribe", "/api/speech", "/api/image-gen", "/api/speech/voices"} {
+	for _, p := range []string{"/api/embeddings", "/api/transcribe", "/api/speech", "/api/media-backends", "/api/speech/voices"} {
 		do("", "GET", p, "")
 		do("alice", "GET", p, "")
 		do("root", "GET", p, "")
 		do("root", "PUT", p, "{}")
 	}
-	for _, p := range []string{"/api/embeddings/test", "/api/transcribe/test", "/api/speech/test", "/api/image-gen/test"} {
+	for _, p := range []string{"/api/embeddings/test", "/api/transcribe/test", "/api/speech/test", "/api/media-backends/role", "/api/media-backends/uses"} {
 		do("alice", "POST", p, `{"enabled":true}`)
 		do("root", "GET", p, "")
 		do("root", "POST", p, `{"enabled":`)
@@ -159,19 +159,15 @@ func TestMediaRoutesContract(t *testing.T) {
 	do("root", "POST", "/api/speech", `{"enabled":true,"provider":"peer:nope"}`)
 	do("root", "POST", "/api/speech", `{"enabled":true,"provider":"nope"}`)
 
-	do("alice", "POST", "/api/image-gen", `{"provider":"none"}`)
-	do("root", "GET", "/api/image-gen", "")
-	do("root", "POST", "/api/image-gen", `{"provider":"openai","api_key":"s3cr3t-img"}`)
-	// Refused, it stores nothing: not the name, and never a key.
-	if adb.Get(ImageTable, "provider", new(string)) || adb.Get(ImageTable, "api_key", new(string)) {
-		t.Error("a refused image save stored something")
+	do("alice", "POST", "/api/media-backends/role?name=openai&role=default", "")
+	do("root", "GET", "/api/media-backends", "")
+	do("root", "POST", "/api/media-backends/role?name=openai&role=default", "")
+	do("root", "POST", "/api/media-backends/role?name=openai&role=sometimes", "")
+	do("root", "POST", "/api/media-backends/uses?name=openai&uses=edit", "")
+	// Refused, it stores nothing.
+	if adb.Get(ImageTable, "provider", new(string)) || adb.Get(ImageTable, "uses", new(map[string]string)) {
+		t.Error("a refused image role or use stored something")
 	}
-	do("root", "POST", "/api/image-gen", `{"provider":"none"}`)
-	do("root", "GET", "/api/image-gen", "")
-	do("root", "POST", "/api/image-gen", `{"provider":`)
-	do("root", "POST", "/api/image-gen/test", `{"provider":""}`)
-	do("root", "POST", "/api/image-gen/test", `{"provider":"none"}`)
-	do("root", "POST", "/api/image-gen/test", `{"provider":"gemini"}`)
 
 	ct.activity(mux, adb, "root")
 	ct.check(t, "testdata/media_contract.golden")

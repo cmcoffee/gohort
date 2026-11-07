@@ -207,45 +207,44 @@ func TestCapabilityPagesEndWithAddAnother(t *testing.T) {
 	}
 }
 
-// Image Generation is set to an approved connector that makes pictures, or
-// Disabled. With none, the form points to the templates, Add image backend
-// and peers. A name that is not such a connector, the old built-in ones
-// included, is refused on save and by the Test, and the form keeps no key.
-func TestImageGenerationTakesAConnectorThatMakesPictures(t *testing.T) {
+// Media Generation's image rows are the connectors that make pictures, and
+// only those. A role for a name that is not such a connector, the old
+// built-in ones included, is refused and stores nothing. A role given puts
+// the connector to use; agents are offered the default and those offered,
+// and once neither names it, it is no longer in use.
+func TestImageRolesTakeAConnectorThatMakesPictures(t *testing.T) {
 	saved := RootDB
 	RootDB = &DBase{Store: kvlite.MemStore()}
 	t.Cleanup(func() { RootDB = saved })
 	a := &AdminApp{db: RootDB}
 	sub := http.NewServeMux()
-	a.registerMediaRoutes(sub)
 	a.registerMediaGenerationRoutes(sub)
-	call := func(method, path, body string) *httptest.ResponseRecorder {
+	role := func(name, role string) int {
 		w := httptest.NewRecorder()
-		sub.ServeHTTP(w, httptest.NewRequest(method, path, strings.NewReader(body)))
-		return w
+		sub.ServeHTTP(w, httptest.NewRequest("POST", "/api/media-backends/role?name="+name+"&role="+role, nil))
+		return w.Code
+	}
+	stored := func() string {
+		var agents []string
+		RootDB.Get(ImageTable, "agents", &agents)
+		return a.storedString(ImageTable, "provider") + " / " + strings.Join(agents, ",")
 	}
 
-	// A connector that does something else is not offered.
+	// A connector that does something else is not listed.
 	embedSpec := `{"provider":{"transport":"http","base_url":"https://api.example.test","auth":{"none":true},
 		"operations":{"embed":{"method":"POST","path":"/v1/embeddings","body":{"input":"{texts}"}}}},
 		"provides":[{"capability":"embed.text","steps":[{"call":"embed"}],"output":{"vectors":{"path":"data","each":"embedding"}}}]}`
 	SaveConnector(RootDB, Connector{Name: "vectors", Kind: "service", Spec: json.RawMessage(embedSpec)})
-	backends := func() []imageBackendRow {
-		return a.imageRows()
-	}
-	if got := backends(); len(got) != 0 {
+	if got := a.imageRows(); len(got) != 0 {
 		t.Errorf("with nothing that makes pictures, the list: %+v", got)
 	}
-	if w := call("GET", "/api/image-gen", ""); strings.TrimSpace(w.Body.String()) != `{"agents":[],"provider":"none"}` {
-		t.Errorf("never set: %s", w.Body.String())
+	for _, name := range []string{"gemini", "openai", "nothing", "vectors"} {
+		if code := role(name, "default"); code != http.StatusBadRequest {
+			t.Errorf("%s was made the default: %d", name, code)
+		}
 	}
-	for _, name := range []string{"gemini", "openai", "nothing"} {
-		if w := call("POST", "/api/image-gen", `{"provider":"`+name+`"}`); w.Code != http.StatusBadRequest {
-			t.Errorf("%s was saved: %d", name, w.Code)
-		}
-		if w := call("POST", "/api/image-gen/test", `{"provider":"`+name+`"}`); !strings.Contains(w.Body.String(), "no connector named "+name+" makes pictures") {
-			t.Errorf("%s tested: %s", name, w.Body.String())
-		}
+	if got := stored(); got != " / " {
+		t.Errorf("refused roles stored %q", got)
 	}
 
 	spec := `{"provider":{"transport":"http","base_url":"https://api.example.test","auth":{"none":true},
@@ -254,14 +253,11 @@ func TestImageGenerationTakesAConnectorThatMakesPictures(t *testing.T) {
 	SaveConnector(RootDB, Connector{Name: "painter", Kind: "service", Spec: json.RawMessage(spec)})
 	t.Cleanup(func() { UnapproveConnector(RootDB, "painter"); UnapproveConnector(RootDB, "sketcher") })
 	SaveConnector(RootDB, Connector{Name: "sketcher", Kind: "service", Spec: json.RawMessage(strings.Replace(spec, "/v1/images", "/v2/images", 1))})
-	if got := backends(); len(got) != 2 || !got[0].IsUnused || !got[1].IsUnused {
+	if got := a.imageRows(); len(got) != 2 || !got[0].IsUnused || !got[1].IsUnused {
 		t.Errorf("with two that make pictures, the list: %+v", got)
 	}
-	if w := call("POST", "/api/image-gen", `{"provider":"painter","agents":["sketcher","vectors"]}`); w.Code != http.StatusBadRequest {
-		t.Errorf("a connector that does not make pictures offered to agents: %d", w.Code)
-	}
-	if w := call("POST", "/api/image-gen", `{"provider":"painter","agents":["sketcher","painter"],"api_key":"sk-stray"}`); w.Code >= 300 {
-		t.Fatalf("a connector that makes pictures was refused: %d %s", w.Code, w.Body.String())
+	if role("painter", "default") >= 300 || role("sketcher", "offered") >= 300 {
+		t.Fatalf("roles for connectors that make pictures were refused: %q", stored())
 	}
 	for _, n := range []string{"painter", "sketcher"} {
 		if !service.Referenced(RootDB, n) {
@@ -274,42 +270,29 @@ func TestImageGenerationTakesAConnectorThatMakesPictures(t *testing.T) {
 	if got := ReachableImageBackends(&ToolSession{}); len(got) != 2 {
 		t.Errorf("agents are offered %+v, want the default and the one also offered", got)
 	}
-	if a.storedString(ImageTable, "provider") != "painter" || a.storedString(ImageTable, "api_key") != "" {
-		t.Errorf("stored: %q, key %q", a.storedString(ImageTable, "provider"), a.storedString(ImageTable, "api_key"))
+
+	// Make default keeps the one it replaces offered by name; Stop using
+	// leaves no default; Offer to agents and Stop offering change only the
+	// offered list.
+	if code := role("sketcher", "default"); code >= 300 {
+		t.Fatalf("make default: %d", code)
 	}
-	if w := call("GET", "/api/image-gen", ""); strings.TrimSpace(w.Body.String()) != `{"agents":["sketcher"],"provider":"painter"}` {
-		t.Errorf("set: %s", w.Body.String())
+	if got := stored(); got != "sketcher / painter" {
+		t.Errorf("after Make default: %q", got)
 	}
-	if w := call("POST", "/api/image-gen/test", `{"provider":"painter"}`); !strings.Contains(w.Body.String(), "is ready") {
-		t.Errorf("tested: %s", w.Body.String())
-	}
-	// A row's buttons: Make default keeps the one it replaces offered by
-	// name; Stop using leaves no default; Offer to agents and Stop offering
-	// change only the offered list.
-	if w := call("POST", "/api/media-backends/role?name=sketcher&role=default", ""); w.Code >= 300 {
-		t.Fatalf("make default: %d %s", w.Code, w.Body.String())
-	}
-	if w := call("GET", "/api/image-gen", ""); strings.TrimSpace(w.Body.String()) != `{"agents":["painter"],"provider":"sketcher"}` {
-		t.Errorf("after Make default: %s", w.Body.String())
-	}
-	if got := backends(); len(got) != 2 || got[0].Name != "sketcher" || !got[0].IsDefault || !got[1].IsOffered {
+	if got := a.imageRows(); len(got) != 2 || got[0].Name != "sketcher" || !got[0].IsDefault || !got[1].IsOffered {
 		t.Errorf("the list after Make default: %+v", got)
 	}
-	if w := call("POST", "/api/media-backends/role?name=nothing&role=default", ""); w.Code != http.StatusBadRequest {
-		t.Errorf("a role for a backend that is not there: %d", w.Code)
+	role("painter", "off")
+	role("sketcher", "off")
+	if got := stored(); got != " / " {
+		t.Errorf("after Stop using and Stop offering: %q", got)
 	}
-	call("POST", "/api/media-backends/role?name=painter&role=off", "")
-	call("POST", "/api/media-backends/role?name=sketcher&role=off", "")
-	if w := call("GET", "/api/image-gen", ""); strings.TrimSpace(w.Body.String()) != `{"agents":[],"provider":"none"}` {
-		t.Errorf("after Stop using and Stop offering: %s", w.Body.String())
+	role("sketcher", "offered")
+	if got := stored(); got != " / sketcher" {
+		t.Errorf("after Offer to agents: %q", got)
 	}
-	call("POST", "/api/media-backends/role?name=sketcher&role=offered", "")
-	if w := call("GET", "/api/image-gen", ""); strings.TrimSpace(w.Body.String()) != `{"agents":["sketcher"],"provider":"none"}` {
-		t.Errorf("after Offer to agents: %s", w.Body.String())
-	}
-	if w := call("POST", "/api/image-gen", `{"provider":"none"}`); w.Code >= 300 || a.storedString(ImageTable, "provider") != "none" {
-		t.Errorf("turning it off: %d", w.Code)
-	}
+	role("sketcher", "off")
 	if c, _ := GetConnector(RootDB, "painter"); c.Approved {
 		t.Error("a connector no page names any more is still in use")
 	}

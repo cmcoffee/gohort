@@ -60,11 +60,6 @@ func TestAStaleChoiceReadsAsNotSetAndIsOneCard(t *testing.T) {
 	if got["provider"] != "" || !strings.Contains(fmt.Sprint(got["_stale"]), "names the connection finder the old way") {
 		t.Errorf("web search: provider %q, %q", got["provider"], got["_stale"])
 	}
-	out, _ = a.handleImageGen(call)
-	got = out.(map[string]any)
-	if fmt.Sprint(got["agents"]) != "[]" || got["provider"] != "none" || !strings.Contains(fmt.Sprint(got["_stale"]), "gone") {
-		t.Errorf("image generation: %+v", got)
-	}
 
 	var n DashboardNotice
 	ok := false

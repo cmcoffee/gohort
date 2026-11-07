@@ -116,12 +116,18 @@ func (a *AdminApp) offeredRow(conn Connector, table, group, does string) imageBa
 	return row
 }
 
+// noConnectorNamed refuses a row's button sent with no ?name=.
+const noConnectorNamed = "name the connector: ?name="
+
 // handleMediaBackendRole is a row's role buttons for any media connector: an
 // image backend's (default, offered, off) as Image Generation had them, and
 // a music or media connector's (offered, off).
 func (a *AdminApp) handleMediaBackendRole(c *jsonapi.Call, _ struct{}) (any, error) {
 	q := c.R.URL.Query()
 	name, role := strings.TrimSpace(q.Get("name")), strings.TrimSpace(q.Get("role"))
+	if name == "" {
+		return nil, jsonapi.BadRequest(noConnectorNamed)
+	}
 	conn, ok := GetConnector(RootDB, name)
 	table := ""
 	if ok && conn.Kind == service.Kind {
@@ -162,6 +168,9 @@ func (a *AdminApp) handleMediaBackendRole(c *jsonapi.Call, _ struct{}) (any, err
 func (a *AdminApp) handleImageBackendUses(c *jsonapi.Call, _ struct{}) (any, error) {
 	q := c.R.URL.Query()
 	name, use := strings.TrimSpace(q.Get("name")), strings.TrimSpace(q.Get("uses"))
+	if name == "" {
+		return nil, jsonapi.BadRequest(noConnectorNamed)
+	}
 	conn, ok := GetConnector(RootDB, name)
 	if !ok || conn.Kind != service.Kind || !service.Provides(conn, "image.generate") || !service.Provides(conn, "image.edit") {
 		return nil, jsonapi.BadRequest(name + " does not both make and edit pictures")
