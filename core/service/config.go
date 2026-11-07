@@ -30,6 +30,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/keystore"
 )
 
 // ConfigField is one setting a connection takes.
@@ -615,10 +616,20 @@ func (s Spec) resolveSecret(c Connector, typed map[string]string) *connectionAut
 		return nil
 	}
 	addrs := s.secretAddresses(f)
+	profile, fromKeystore := f.Profile, false
 	value, have := typed[f.Name]
 	if !have || strings.TrimSpace(value) == "" {
 		kept, ok := GetConnectionSecret(RootDB, c, f.Name)
-		if ok {
+		if ok && kept.Keystore != "" {
+			v, p, err := keystoreSecret(kept.Keystore, f, addrs)
+			if err != nil {
+				return &connectionAuth{err: fmt.Errorf("%s: %w", c.Name, err)}
+			}
+			value, fromKeystore = v, true
+			if p != "" {
+				profile = p
+			}
+		} else if ok {
 			if !sameAddresses(kept.Addresses, addrs) {
 				return &connectionAuth{err: fmt.Errorf("%s's %s was given for %s, and the connection now goes to %s: give the %s again for the new address",
 					c.Name, f.Title(), strings.Join(kept.Addresses, ", "), strings.Join(addrs, ", "), f.Title())}
@@ -635,10 +646,11 @@ func (s Spec) resolveSecret(c Connector, typed map[string]string) *connectionAut
 	}
 	// Signing as this machine is the deployment's identity: a connection
 	// drafted by someone who is not an administrator signs with a key pair.
-	if strings.HasPrefix(f.Send, "aws_sigv4") && strings.TrimSpace(value) == "" && c.Owner != "" && !UserIsAdmin(c.Owner) {
+	// A Keystore entry's profile is an administrator's choice.
+	if strings.HasPrefix(f.Send, "aws_sigv4") && strings.TrimSpace(value) == "" && !fromKeystore && c.Owner != "" && !UserIsAdmin(c.Owner) {
 		return &connectionAuth{err: fmt.Errorf("%s was drafted by %s, who is not an administrator: it does not sign as this machine. Give it an AWS key pair", c.Name, c.Owner)}
 	}
-	cred, err := ConnectionCredential(c.Name, f.Send, value, f.Profile, addrs)
+	cred, err := ConnectionCredential(c.Name, f.Send, value, profile, addrs)
 	return &connectionAuth{cred: cred, err: err}
 }
 
@@ -703,6 +715,22 @@ func SaveSettings(c Connector, capability string, values, secrets map[string]str
 		if !ok {
 			return fmt.Errorf("%s keeps no secret %q", c.Name, name)
 		}
+		if id, ref := isKeystoreValue(v); ref {
+			if id == "" {
+				if f.Required {
+					return fmt.Errorf("give the %s, or pick a key from the Keystore", f.Title())
+				}
+				continue
+			}
+			e, ok := keystore.Get(RootDB, id)
+			if !ok {
+				return fmt.Errorf("no Keystore key %s", id)
+			}
+			if err := keystoreFits(e, f, settled.secretAddresses(f)); err != nil {
+				return err
+			}
+			continue
+		}
 		if strings.HasPrefix(f.Send, "aws_sigv4") {
 			if _, err := ConnectionCredential(c.Name, f.Send, v, "", []string{"https://x"}); err != nil {
 				return fmt.Errorf("%s: %v", f.Title(), err)
@@ -711,7 +739,11 @@ func SaveSettings(c Connector, capability string, values, secrets map[string]str
 	}
 	if f, ok := settled.secretField(); ok {
 		if strings.TrimSpace(secrets[f.Name]) == "" {
-			if kept, ok := GetConnectionSecret(RootDB, c, f.Name); ok && !sameAddresses(kept.Addresses, settled.secretAddresses(f)) {
+			if kept, ok := GetConnectionSecret(RootDB, c, f.Name); ok && kept.Keystore != "" {
+				if _, _, err := keystoreSecret(kept.Keystore, f, settled.secretAddresses(f)); err != nil {
+					return err
+				}
+			} else if ok && !sameAddresses(kept.Addresses, settled.secretAddresses(f)) {
 				return fmt.Errorf("the %s was given for %s: give it again for %s", f.Title(), strings.Join(kept.Addresses, ", "), strings.Join(settled.secretAddresses(f), ", "))
 			}
 		}
@@ -721,6 +753,14 @@ func SaveSettings(c Connector, capability string, values, secrets map[string]str
 	}
 	for name, v := range secrets {
 		if strings.TrimSpace(v) == "" {
+			continue
+		}
+		if id, ref := isKeystoreValue(v); ref {
+			if id == "" {
+				UnsetConnectionSecret(RootDB, c, name)
+			} else if err := SetConnectionSecretRef(RootDB, c, name, id); err != nil {
+				return err
+			}
 			continue
 		}
 		f, _ := settled.secretNamed(name)
@@ -744,7 +784,7 @@ func (s Spec) secretNamed(name string) (ConfigField, bool) {
 // HasSecret reports whether connection c keeps its secret name.
 func HasSecret(c Connector, name string) bool {
 	s, ok := GetConnectionSecret(RootDB, c, name)
-	return ok && s.Value != ""
+	return ok && (s.Value != "" || s.Keystore != "")
 }
 
 // hintLength is how long a key must be before its last four characters are
@@ -775,6 +815,14 @@ func KeptSecrets(db Database, c Connector) map[string]string {
 			continue
 		}
 		kept, ok := GetConnectionSecret(db, c, f.Name)
+		if ok && kept.Keystore != "" {
+			if e, found := keystore.Get(db, kept.Keystore); found {
+				out[f.Name] = "from the Keystore: " + e.Name + " (" + keystore.Hint(db, e) + ")"
+			} else {
+				out[f.Name] = "names a Keystore key that is gone: pick another"
+			}
+			continue
+		}
 		if !ok || kept.Value == "" {
 			continue
 		}

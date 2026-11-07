@@ -60,15 +60,35 @@ func keptField(connection, key string) string {
 	return "kept/" + connection + "/" + key
 }
 
+// keystoreSuffix marks a secret setting's "Key from" choice: the Keystore
+// entry its key comes from, or keyOwn for one the connection keeps itself.
+const (
+	keystoreSuffix = "@keystore"
+	keyOwn         = "own"
+)
+
+// keyFromField is the form field choosing where secret setting key's value
+// comes from.
+func keyFromField(connection, key string) string {
+	return settingField(connection, key+keystoreSuffix)
+}
+
 // settingFormFields are the controls a setting's kind of value draws: its
-// own, and for a secret, a line saying which one is kept while one is.
+// own, and for a secret, where it comes from (a Keystore key, or its own,
+// typed below), its own box, and a line saying which one is kept while one
+// is.
 func settingFormFields(connection string, st service.Setting, when string) []ui.FormField {
 	ff := settingFormField(connection, st, when)
 	if !st.Field.IsSecret() {
 		return []ui.FormField{ff}
 	}
+	from := keyFromField(connection, st.Key)
+	choose := ui.FormField{Field: from, Label: st.Field.Title() + " from", Type: "select", Default: keyOwn, ShowWhen: when,
+		OptionsSource: keystoreSource + "/choices?name=" + connection + "&setting=" + st.Key,
+		Help:          "A key kept once under Services > Keystore, used by everything that talks to this provider, or one this connection keeps for itself."}
+	ff.ShowWhen = when + ";" + from + ":" + keyOwn
 	kept := keptField(connection, st.Key)
-	return []ui.FormField{ff, {Field: kept, Type: "readonly", Label: "Saved " + st.Field.Title(), ShowWhen: when + ";" + kept}}
+	return []ui.FormField{choose, ff, {Field: kept, Type: "readonly", Label: "Saved " + st.Field.Title(), ShowWhen: when + ";" + kept}}
 }
 
 // settingFormField is the control a setting's kind of value draws.
@@ -196,12 +216,23 @@ func (s pageSettings) split(c Connector, capability string) (map[string]string, 
 	posted := s[c.Name]
 	for _, st := range service.SettingsFor(c, capability) {
 		v, ok := posted[st.Key]
-		if !ok {
+		// A secret's key box is not posted while a Keystore key is chosen:
+		// its "Key from" choice alone says where the key comes from.
+		from, chose := posted[st.Key+keystoreSuffix]
+		if !ok && !(st.Field.IsSecret() && chose) {
 			continue
 		}
 		if st.Field.IsSecret() {
-			if v != "" && v != secretUnchanged {
+			from = strings.TrimSpace(from)
+			switch {
+			case from != "" && from != keyOwn:
+				secrets[st.Key] = service.KeystoreValue(from)
+			case v != "" && v != secretUnchanged:
 				secrets[st.Key] = v
+			case from == keyOwn && service.KeystoreOf(c, st.Key) != "":
+				// Back to a key of its own with none typed: the reference
+				// goes, and a required key says it is needed.
+				secrets[st.Key] = service.KeystoreValue("")
 			}
 			continue
 		}
@@ -265,8 +296,13 @@ func settingsValues(name, capability string) map[string]any {
 		field := settingField(name, st.Key)
 		switch {
 		case st.Field.IsSecret():
-			if service.HasSecret(c, st.Key) {
-				out[field] = secretUnchanged
+			if id := service.KeystoreOf(c, st.Key); id != "" {
+				out[keyFromField(name, st.Key)] = id
+			} else {
+				out[keyFromField(name, st.Key)] = keyOwn
+				if service.HasSecret(c, st.Key) {
+					out[field] = secretUnchanged
+				}
 			}
 			if hint, ok := secrets[st.Key]; ok {
 				out[keptField(name, st.Key)] = hint

@@ -12,6 +12,7 @@ import (
 	"github.com/cmcoffee/gohort/core/activity"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/keystore"
+	"github.com/cmcoffee/gohort/core/service"
 )
 
 const keystoreSource = "api/keystore"
@@ -22,6 +23,35 @@ func (a *AdminApp) registerKeystoreRoutes(sub *http.ServeMux) {
 		"POST":   jsonapi.Post(a.db, a.handleKeystoreSave, a.gate()),
 		"DELETE": jsonapi.Delete(a.db, a.handleKeystoreDelete, a.gate()),
 	}.Serve)
+	sub.HandleFunc("/"+keystoreSource+"/choices", jsonapi.Get(a.db, a.handleKeystoreChoices, a.gate()))
+}
+
+// handleKeystoreChoices is where connection ?name='s secret ?setting= may
+// come from, for its "Key from" choice: its own key, then every Keystore key
+// of the right kind given for its address. Read when the form opens, so a
+// key added a moment ago is there.
+func (a *AdminApp) handleKeystoreChoices(c *jsonapi.Call) (any, error) {
+	q := c.R.URL.Query()
+	out := []map[string]string{{"value": keyOwn, "label": "Its own key (below)"}}
+	conn, ok := GetConnector(RootDB, strings.TrimSpace(q.Get("name")))
+	if !ok {
+		return out, nil
+	}
+	for _, e := range service.KeystoreChoices(conn, strings.TrimSpace(q.Get("setting"))) {
+		out = append(out, map[string]string{"value": e.ID, "label": "Keystore: " + e.Name, "help": keystore.Hint(RootDB, e)})
+	}
+	// The one it names now, even if it no longer fits, so the form shows it
+	// and its row's check says why.
+	if cur := service.KeystoreOf(conn, strings.TrimSpace(q.Get("setting"))); cur != "" {
+		listed := false
+		for _, o := range out {
+			listed = listed || o["value"] == cur
+		}
+		if e, found := keystore.Get(RootDB, cur); found && !listed {
+			out = append(out, map[string]string{"value": e.ID, "label": "Keystore: " + e.Name + " (does not fit this connection)"})
+		}
+	}
+	return out, nil
 }
 
 // keystoreForm is an entry as its form reads and saves it. The secret is

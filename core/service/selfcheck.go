@@ -77,6 +77,12 @@ func SelfCheck(db Database, c Connector) []string {
 		return out
 	}
 	kept, has := GetConnectionSecret(db, c, f.Name)
+	if has && kept.Keystore != "" {
+		if _, _, err := keystoreSecret(kept.Keystore, f, settled.secretAddresses(f)); err != nil {
+			out = append(out, "it is in use, and "+err.Error())
+		}
+		return out
+	}
 	switch {
 	case !has && f.Required && !strings.Contains(strings.Join(out, "\n"), "is kept but cannot be read"):
 		out = append(out, "it is in use with no "+f.Title()+": give it under Settings or on the page that uses it")

@@ -11,6 +11,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/core/keystore"
 	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/gohort/core/ui"
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -86,8 +87,11 @@ func TestAPageSetsUpItsConnector(t *testing.T) {
 	for _, f := range embeddingFormFields() {
 		fields[f.Field] = f.Type + " " + f.ShowWhen + " " + f.Default
 	}
+	// The key box shows while its own key is chosen; "Key from" offers the
+	// Keystore keys that fit, read when the form opens.
 	if fields["config/vec/endpoint"] != "text provider:vec " || fields["config/vec/model"] != "text provider:vec small-embed" ||
-		fields["config/vec/api_key"] != "password provider:vec " {
+		fields["config/vec/api_key"] != "password provider:vec;config/vec/api_key@keystore:own " ||
+		fields["config/vec/api_key@keystore"] != "select provider:vec own" {
 		t.Errorf("the settings shown: %v", fields)
 	}
 
@@ -127,6 +131,62 @@ func TestAPageSetsUpItsConnector(t *testing.T) {
 	Embed(t.Context(), "again")
 	if len(*got) != 2 || (*got)[1] != "/embeddings Bearer sk-new small-embed" {
 		t.Errorf("a kept key and a model left blank (its default): %v", *got)
+	}
+}
+
+// A connection whose key comes from the Keystore keeps no copy of it: every
+// call sends the entry's key, a rotation reaches the next call with nothing
+// re-saved, a key not given for the connection's address is refused, and the
+// entry cannot be deleted while the connection names it.
+func TestAConnectorTakesItsKeyFromTheKeystore(t *testing.T) {
+	srv, got := settingsWorld(t)
+	vecConnector(t, srv.URL)
+	a := &AdminApp{db: RootDB}
+	call := &jsonapi.Call{R: httptest.NewRequest("POST", "/api/embeddings", nil)}
+	e, err := keystore.Save(RootDB, keystore.Entry{Name: "Vec account", Addresses: []string{srv.URL}}, "sk-keystore-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	save := func(extra string) error {
+		form := postedForm[EmbeddingConfig](t, `{"enabled":true,"provider":"vec","config/vec/endpoint":"`+srv.URL+`",`+extra+`}`)
+		_, err := a.handleEmbeddingsSave(call, form)
+		return err
+	}
+	if err := save(`"config/vec/api_key@keystore":"` + e.ID + `"`); err != nil {
+		t.Fatal(err)
+	}
+	if _, key := kept(t); key != "" {
+		t.Errorf("the connection kept a copy of the key: %q", key)
+	}
+	Embed(t.Context(), "hello")
+	keystore.Save(RootDB, e, "sk-keystore-2")
+	Embed(t.Context(), "again")
+	if len(*got) != 2 || !strings.Contains((*got)[0], "Bearer sk-keystore-1") || !strings.Contains((*got)[1], "Bearer sk-keystore-2") {
+		t.Errorf("sent: %v", *got)
+	}
+
+	out, _ := a.handleEmbeddings(call)
+	read := out.(map[string]any)
+	if read["config/vec/api_key@keystore"] != e.ID || !strings.HasPrefix(read["kept/vec/api_key"].(string), "from the Keystore: Vec account") {
+		t.Errorf("the page does not say where the key comes from: %v", read)
+	}
+	if err := keystore.Delete(RootDB, e.ID); err == nil || !strings.Contains(err.Error(), "connector vec") {
+		t.Errorf("a key a connection names was deleted, or the refusal does not say by what: %v", err)
+	}
+
+	other, _ := keystore.Save(RootDB, keystore.Entry{Name: "Elsewhere", Addresses: []string{"https://elsewhere.example.com"}}, "sk-elsewhere")
+	if err := save(`"config/vec/api_key@keystore":"` + other.ID + `"`); err == nil {
+		t.Error("a key not given for the connection's address was accepted")
+	}
+	if err := save(`"config/vec/api_key@keystore":"own","config/vec/api_key":"sk-own"`); err != nil {
+		t.Fatal(err)
+	}
+	Embed(t.Context(), "own")
+	if n := len(*got); n != 3 || !strings.Contains((*got)[2], "Bearer sk-own") {
+		t.Errorf("back on its own key, sent: %v", *got)
+	}
+	if err := keystore.Delete(RootDB, e.ID); err != nil {
+		t.Errorf("a key nothing names was not deleted: %v", err)
 	}
 }
 

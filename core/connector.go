@@ -647,11 +647,14 @@ func SetConnectionConfig(db Database, c Connector, values map[string]string) err
 }
 
 // ConnectionSecret is one secret a connection keeps: its value, and the
-// addresses it was given for, the only ones a call may take it to.
+// addresses it was given for, the only ones a call may take it to. Or, with
+// Keystore set, a Keystore entry's ID in place of a value: the key is the
+// entry's, checked against the entry's addresses on every call.
 type ConnectionSecret struct {
 	Value     string    `json:"value"`
 	Addresses []string  `json:"addresses"`
 	Set       time.Time `json:"set"`
+	Keystore  string    `json:"keystore,omitempty"`
 }
 
 // GetConnectionSecret is connection c's secret name.
@@ -698,6 +701,24 @@ func SetConnectionSecret(db Database, c Connector, name, value string, addresses
 	}
 	sp.CryptSet(connectionSecretTable, name, ConnectionSecret{Value: strings.TrimSpace(value), Addresses: clean, Set: time.Now()})
 	return nil
+}
+
+// SetConnectionSecretRef makes connection c's secret name the Keystore entry
+// id's: the connection keeps no copy of the key.
+func SetConnectionSecretRef(db Database, c Connector, name, id string) error {
+	sp := connectionSpace(db, c)
+	if sp == nil {
+		return fmt.Errorf("connection %s has no space yet: save it once to give it one", c.Name)
+	}
+	sp.Set(connectionSecretTable, name, ConnectionSecret{Keystore: strings.TrimSpace(id), Set: time.Now()})
+	return nil
+}
+
+// UnsetConnectionSecret forgets connection c's secret name, key or reference.
+func UnsetConnectionSecret(db Database, c Connector, name string) {
+	if sp := connectionSpace(db, c); sp != nil {
+		sp.Unset(connectionSecretTable, name)
+	}
 }
 
 // dropConnectionSpace removes everything connection c kept.
