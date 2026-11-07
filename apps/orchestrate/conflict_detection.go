@@ -94,12 +94,16 @@ func (t *chatTurn) detectFindingConflict(newContent string, neighbors []SearchHi
 // renderFindingConflictNote formats the surfacing message: names each conflicting
 // finding with its saved date + recall id so the user can pull it up and forget
 // the outdated one. Both are kept — the rail flags, it does not resolve.
+// findingConflictMarker opens the conflict note, and is how a reader of a
+// remember result (finishAfterSideNotes) knows one is there.
+const findingConflictMarker = "⚠ Possible conflict:"
+
 func renderFindingConflictNote(conflicts []SearchHit) string {
 	var b strings.Builder
 	if len(conflicts) == 1 {
-		b.WriteString("\n\n⚠ Possible conflict: this may contradict a finding you already saved: ")
+		b.WriteString("\n\n" + findingConflictMarker + " this may contradict a finding you already saved: ")
 	} else {
-		fmt.Fprintf(&b, "\n\n⚠ Possible conflict: this may contradict %d findings you already saved: ", len(conflicts))
+		fmt.Fprintf(&b, "\n\n"+findingConflictMarker+" this may contradict %d findings you already saved: ", len(conflicts))
 	}
 	for i, h := range conflicts {
 		if i > 0 {

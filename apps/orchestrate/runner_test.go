@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -205,5 +206,95 @@ func TestNothingShownRestores(t *testing.T) {
 
 	if !strings.Contains(buf.String(), "what I did and why") {
 		t.Fatalf("a turn that showed nothing must get the held text back:\n%s", buf.String())
+	}
+}
+
+// A reply written beside a note the agent files away is the reply: saving
+// what the user said changes nothing in it. Observed live, twice in six
+// minutes: 1442 characters beside remember, held back, and a final "Noted."
+// that left the restore to put them back; then 838 beside remember, held,
+// and the final round's rewrite shown in their place.
+func TestAReplyBesideASideNoteIsTheReply(t *testing.T) {
+	for _, c := range []struct {
+		calls []string
+		want  bool
+	}{
+		{[]string{"remember"}, true},
+		{[]string{"remember", "link_entities", "note_to_cortex"}, true},
+		{[]string{"remember", "web_search"}, false}, // real work beside it
+		{[]string{"propose_rule"}, false},           // its outcome is the owner's answer
+		{[]string{"forget"}, false},                 // may find nothing to forget
+		{nil, false},
+	} {
+		var calls []ToolCall
+		for _, n := range c.calls {
+			calls = append(calls, ToolCall{Name: n})
+		}
+		if got := sideNoteRound(calls); got != c.want {
+			t.Errorf("%v: side notes = %v", c.calls, got)
+		}
+	}
+
+	long := strings.Repeat("Here is what that means for the rollout. ", 20)
+	saved := []ToolResult{{Content: "Saved 120 chars under topic \"x\" in Memory."}}
+	remember := []ToolCall{{Name: "remember"}}
+	pr, _ := emitFixture()
+	if !pr.finishAfterSideNotes(long, remember, saved) {
+		t.Error("a reply beside a clean note should end the turn")
+	}
+	if pr.finishAfterSideNotes("Let me note that.", remember, saved) {
+		t.Error("a lead-in is not a reply")
+	}
+	if pr.finishAfterSideNotes(long, remember, []ToolResult{{Content: "Saved.\n\n" + findingConflictMarker + " this may contradict..."}}) {
+		t.Error("a note that may contradict an earlier one is the user's to hear about")
+	}
+	if pr.finishAfterSideNotes(long, remember, []ToolResult{{Content: "failed", IsError: true}}) {
+		t.Error("a note that failed is the user's to hear about")
+	}
+	if pr.finishAfterSideNotes(long, []ToolCall{{Name: "web_search"}}, saved) {
+		t.Error("a round that did work is not ended on its prose")
+	}
+	pr.holdStream = true
+	if pr.finishAfterSideNotes(long, remember, saved) {
+		t.Error("an agent whose output a guardrail judges keeps its final round")
+	}
+}
+
+// On screen: the reply beside a side note is shown, not held back, and an
+// ordinary tool round's long prose is still held.
+func TestAReplyBesideASideNoteIsShown(t *testing.T) {
+	long := strings.Repeat("Here is what that means for the rollout. ", 20)
+	pr, buf := emitFixture()
+	pr.streamHandler(long)
+	pr.onStepHandler(StepInfo{Round: 1, Content: long, ToolCalls: []ToolCall{{Name: "remember"}}})
+	if pr.withheldLeadIn != "" || !strings.Contains(buf.String(), "what that means for the rollout") {
+		t.Errorf("the reply beside a side note was held back:\n%s", buf.String())
+	}
+
+	pr, _ = emitFixture()
+	pr.streamHandler(long)
+	pr.onStepHandler(StepInfo{Round: 1, Content: long, ToolCalls: []ToolCall{{Name: "web_search"}}})
+	if pr.withheldLeadIn == "" {
+		t.Error("long prose beside real work should still be held")
+	}
+
+	pr, _ = emitFixture()
+	pr.holdStream = true
+	pr.streamHandler(long)
+	pr.onStepHandler(StepInfo{Round: 1, Content: long, ToolCalls: []ToolCall{{Name: "remember"}}})
+	if pr.withheldLeadIn == "" {
+		t.Error("an agent whose output a guardrail judges should keep the hold")
+	}
+}
+
+// The chat turn's loop is the one that asks: without the wiring, the reply is
+// shown and the model still gets a round to say "Noted." under it.
+func TestTheChatLoopAsksWhetherSideNotesEndTheTurn(t *testing.T) {
+	src, err := os.ReadFile("runner.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), "FinishAfterTools: pr.finishAfterSideNotes,") {
+		t.Error("the chat turn's loop no longer ends on a reply beside side notes")
 	}
 }

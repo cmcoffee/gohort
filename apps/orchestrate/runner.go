@@ -1347,7 +1347,11 @@ func (pr *planRun) onStepHandler(info StepInfo) {
 		// where long prose beside a call is correct rather than early: the
 		// tool is the delivery and the prose is the explanation that goes
 		// with it. Clearing it leaves a link with nothing said about it.
-		if len(cleaned) > leadInMaxLen && !isBuilderAgent(t.agent.ID) && !presentationOnlyRound(info.ToolCalls) && earlyAnswerActs(info.Tier, info.Model, cleaned) {
+		// So is one whose only tools are side notes to what it says (saving
+		// something the user told it): the prose is the reply, and the loop
+		// ends the turn on it (finishAfterSideNotes) instead of asking for a
+		// round that could only restate it or say "Noted.".
+		if len(cleaned) > leadInMaxLen && !isBuilderAgent(t.agent.ID) && !presentationOnlyRound(info.ToolCalls) && !pr.sideNoteReply(info.ToolCalls) && earlyAnswerActs(info.Tier, info.Model, cleaned) {
 			pr.withholdLeadIn(id, cleaned)
 			return
 		}
@@ -1590,6 +1594,55 @@ func presentationOnlyRound(calls []ToolCall) bool {
 		switch c.Name {
 		case "show_link", "show_html":
 		default:
+			return false
+		}
+	}
+	return true
+}
+
+// sideNoteTools are the tools whose call only files away something from the
+// conversation: a note, a cortex entry, a link in the graph. A reply written
+// beside them is not an answer written early, because nothing they return
+// changes it.
+//
+// Not propose_rule, though it files something too: in chat it asks the owner
+// and comes back added or declined, and the reply has to say which. Not
+// forget either: it can find nothing to forget, and the prose written before
+// it would already have said it was gone.
+var sideNoteTools = map[string]bool{"remember": true, "note_to_cortex": true, "link_entities": true}
+
+// sideNoteRound reports whether every tool this round called is a side note.
+func sideNoteRound(calls []ToolCall) bool {
+	if len(calls) == 0 {
+		return false
+	}
+	for _, c := range calls {
+		if !sideNoteTools[c.Name] {
+			return false
+		}
+	}
+	return true
+}
+
+// sideNoteReply reports whether a round's prose is to be shown as the reply
+// because its tools are only side notes. Not for an agent whose output a
+// guardrail judges (holdStream): its reply is held until the output check
+// clears it, and that check runs on the final round, so it keeps one.
+func (pr *planRun) sideNoteReply(calls []ToolCall) bool {
+	return !pr.holdStream && sideNoteRound(calls)
+}
+
+// finishAfterSideNotes is the loop's FinishAfterTools: the turn ends on the
+// prose of a side-note round when that prose is long enough to be the reply
+// (a lead-in, "let me note that", is not one) and every note went in cleanly.
+// A failed call, or a note that may contradict one saved before, is something
+// the user should hear about, so the model gets its round to say so.
+func (pr *planRun) finishAfterSideNotes(content string, calls []ToolCall, results []ToolResult) bool {
+	if len(content) <= leadInMaxLen || isBuilderAgent(pr.t.agent.ID) || !pr.sideNoteReply(calls) {
+		return false
+	}
+	for i, r := range results {
+		if r.IsError || (calls[i].Name == "remember" && strings.Contains(r.Content, findingConflictMarker)) {
 			return false
 		}
 	}
@@ -2578,6 +2631,7 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		// once explorer mode is on, raised again to the plan-scaled cap
 		// once a build plan is presented. max() semantics — a later phase
 		// never lowers the budget a prior one granted.
+		FinishAfterTools: pr.finishAfterSideNotes,
 		StopRound: func() bool {
 			pr.orchRoundsUsed++
 			cap := pr.maxR

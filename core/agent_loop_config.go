@@ -672,6 +672,17 @@ type AgentLoopConfig struct {
 	// mode keeps it lifted to the absolute MaxRounds).
 	StopRound func() bool
 
+	// FinishAfterTools, when set, is asked after a tool round runs whether the
+	// prose the model wrote beside its calls is the turn's reply and the calls
+	// only side notes to it: saving something the user said, while answering
+	// them. True ends the turn with that prose, through the final checks
+	// (notes that arrived meanwhile, the host's finish check, the turn judge,
+	// the output guardrail), without another model round. Without it the
+	// next round either restates the reply or says "Noted.", and the host
+	// cannot tell which one to show. calls and results are the round's, in
+	// order.
+	FinishAfterTools func(content string, calls []ToolCall, results []ToolResult) bool
+
 	// GraceRounds is the wrap-up runway. When the cap is reached (MaxRounds
 	// or StopRound), instead of hard-stopping — which strips tools and makes
 	// some models emit their intended call as TEXT to compensate — the loop

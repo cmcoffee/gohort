@@ -4797,7 +4797,44 @@ func (lr *loopRun) settleToolRound() loopAction {
 			}
 		}
 	}
-	return actNone
+	return lr.finishAfterTools()
+}
+
+// finishAfterTools ends the turn on the prose of a round whose tools the host
+// calls side notes to it (AgentLoopConfig.FinishAfterTools).
+//
+// The prose moves out from beside the calls into a closing assistant message,
+// the shape of a turn that ran its tools and then answered. That is the shape
+// the final checks work on: each of them rewrites the last message of history
+// as the reply, and in a tool round the last message is a tool result. It is
+// also what the next turn should read: the reply once, after the work.
+//
+// Any check that sends the reply back continues the loop as it would from a
+// final round, so the model gets the round it would otherwise have had.
+func (lr *loopRun) finishAfterTools() loopAction {
+	resp := lr.rs.resp
+	if lr.cfg.FinishAfterTools == nil || resp == nil || len(resp.ToolCalls) == 0 || len(lr.rs.results) != len(resp.ToolCalls) {
+		return actNone
+	}
+	content := strings.TrimSpace(resp.Content)
+	if content == "" || !lr.cfg.FinishAfterTools(content, resp.ToolCalls, lr.rs.results) {
+		return actNone
+	}
+	for i := len(lr.history) - 1; i >= 0; i-- {
+		if m := lr.history[i]; m.Role == "assistant" && len(m.ToolCalls) > 0 {
+			lr.history[i].Content = ""
+			break
+		}
+	}
+	lr.history = append(lr.history, Message{Role: "assistant", Content: resp.Content, Reasoning: resp.Reasoning})
+	final := *resp
+	final.ToolCalls = nil
+	lr.rs.resp = &final
+	if act := lr.finalRoundJudges(); act != actNone {
+		return act
+	}
+	Debug("[agent_loop] round %d: the prose beside its side-note tools is the reply (%d chars); finishing without another round", lr.round, len(content))
+	return lr.exit(lr.rs.resp, lr.history, nil)
 }
 
 // Probing what an agent reaches for.

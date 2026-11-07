@@ -877,3 +877,72 @@ func TestEachCallIsReportedForTheGuardrail(t *testing.T) {
 		t.Errorf("reported %v, want verify ok then fetch failed", seen)
 	}
 }
+
+// A round whose tools the host calls side notes to its prose ends the turn on
+// that prose: one model call, the prose as the reply, and in history once,
+// after the work, not beside the calls. A host that says no, and a note from
+// the user that arrived meanwhile, each get the next round as before.
+func TestARoundOfSideNotesEndsOnItsProse(t *testing.T) {
+	answer := strings.Repeat("Here is the whole answer to what you asked. ", 20)
+	note := AgentToolDef{
+		Tool:    Tool{Name: "note", Description: "d", Parameters: map[string]ToolParam{"text": {Type: "string"}}},
+		Handler: func(context.Context, map[string]any) (string, error) { return "Saved.", nil },
+	}
+	script := func() *FakeLLM {
+		return &FakeLLM{Turns: []FakeTurn{
+			{Content: answer, ToolCalls: []ToolCall{{ID: "c1", Name: "note", Args: map[string]any{"text": "x"}}}},
+			{Content: "Noted.", Repeat: true},
+		}}
+	}
+	var asked []string
+	finish := func(content string, calls []ToolCall, results []ToolResult) bool {
+		asked = append(asked, calls[0].Name+":"+results[0].Content)
+		return content == strings.TrimSpace(answer)
+	}
+
+	fake := script()
+	resp, hist, err := (&AppCore{LLM: fake}).RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "q"}},
+		AgentLoopConfig{Tools: []AgentToolDef{note}, MaxRounds: 4, FinishAfterTools: finish})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fake.Calls() != 1 || resp.Content != answer || len(resp.ToolCalls) != 0 {
+		t.Fatalf("after %d call(s) the reply was %q (tool calls %d)", fake.Calls(), resp.Content, len(resp.ToolCalls))
+	}
+	if len(asked) != 1 || asked[0] != "note:Saved." {
+		t.Errorf("the host was asked %v", asked)
+	}
+	last := hist[len(hist)-1]
+	if last.Role != "assistant" || last.Content != answer || len(last.ToolCalls) != 0 {
+		t.Errorf("history does not end on the reply: %+v", last)
+	}
+	for _, m := range hist[:len(hist)-1] {
+		if strings.Contains(m.Content, "whole answer") {
+			t.Errorf("the reply is in history twice, once as %s", m.Role)
+		}
+	}
+
+	// The host says no: the next round answers.
+	fake = script()
+	resp, _, _ = (&AppCore{LLM: fake}).RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "q"}},
+		AgentLoopConfig{Tools: []AgentToolDef{note}, MaxRounds: 4,
+			FinishAfterTools: func(string, []ToolCall, []ToolResult) bool { return false }})
+	if fake.Calls() != 2 || resp.Content != "Noted." {
+		t.Errorf("a host that said no: %d call(s), %q", fake.Calls(), resp.Content)
+	}
+
+	// A note from the user arrived during the round: it is read, not dropped.
+	fake = script()
+	var pending []Message
+	arrives := note
+	arrives.Handler = func(context.Context, map[string]any) (string, error) {
+		pending = []Message{{Role: "user", Content: "one more thing"}}
+		return "Saved.", nil
+	}
+	resp, _, _ = (&AppCore{LLM: fake}).RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "q"}},
+		AgentLoopConfig{Tools: []AgentToolDef{arrives}, MaxRounds: 4, FinishAfterTools: finish,
+			InjectionDrain: func() []Message { out := pending; pending = nil; return out }})
+	if fake.Calls() != 2 || !strings.Contains(fake.Prompt(1), "one more thing") {
+		t.Errorf("a note that arrived meanwhile: %d call(s)", fake.Calls())
+	}
+}
