@@ -1162,11 +1162,9 @@ func (sd *syncDispatch) configureLoop() {
 		// text and never calls a model. Empty on every other turn.
 		PreEmptedReply:  sd.gDecline,
 		RoundToolFilter: sd.subTurn.machineToolFilter(),
-		SendGuardKey:    sendGuardKey,
 		SystemPrompt:    sd.sysPrompt,
 		Tools:           sd.tools,
 		MaxRounds:       resolveMaxWorkerRounds(sd.target),
-		StampLocation:   UserLocation(sd.runtimeUser), // stamp the turn in the acting user's zone
 		// Standing fires and Fleet dispatches both land here, and neither
 		// carries tool results into the next run's history — so without this
 		// each one re-learns yesterday's dead endpoint from scratch. One
@@ -1181,7 +1179,6 @@ func (sd *syncDispatch) configureLoop() {
 		TurnNotes: func(user string) string {
 			return sd.subTurn.withBulletins(turnNotes(sd.subSess, sd.runtimeDB, sd.subSessID, user, sd.subTurn.datesTurnNote(UserLocation(sd.runtimeUser))))
 		},
-		CapturePrompt:  sd.target.CapturePrompt,
 		TurnClaimJudge: sd.subTurn.claimJudge(sd.ctx),
 		// What the machine's steps did before the loop ran, as on the web turn.
 		PriorWork: sd.subTurn.priorWorkForJudge,
@@ -2371,7 +2368,6 @@ func (cr *continuingRun) configureLoop() {
 	cr.subTurn.neverUnattended = gate.neverUnattended
 	cr.loopCfg = cr.subTurn.withLoopBase(AgentLoopConfig{
 		TierOverride: dispatchPin,
-		SendGuardKey: sendGuardKey,
 		SystemPrompt: cr.sysPrompt,
 		Tools:        cr.tools,
 		MaxRounds:    resolveMaxWorkerRounds(cr.target),
@@ -2438,7 +2434,6 @@ func (cr *continuingRun) configureLoop() {
 	// Feed view_video's sampled frames to the model on the next round.
 	cr.loopCfg.DrainViewImages = cr.subSess.DrainViewImages
 	cr.loopCfg.BeforeToolRound = func() { SnapshotImageRefs(cr.subSess) }
-	cr.loopCfg.StampLocation = UserLocation(cr.runtimeUser) // stamp the turn in the acting user's zone
 	// A person outside: no tool found mid-turn that the kit left out, and
 	// their own spend allowance beside the agent's.
 	if agenthost.IsOutsideScope(cr.runtimeUser) {

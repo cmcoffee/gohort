@@ -2397,7 +2397,6 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		// The pre_input check. A terminal-rule block ends the turn on its
 		// decline; a steer reruns round 1 with the directive in place.
 		FirstRoundGate: pr.inputGate,
-		SendGuardKey:   sendGuardKey,
 		SystemPrompt:   pr.sys,
 		Tools:          pr.allTools,
 		// A machine phase may pin the tier for turns spent in it.
@@ -2405,7 +2404,6 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		// the route stage exactly as before. Resolved with the route key
 		// above so the two cannot disagree — see turnRouting.
 		TierOverride:         pr.tierPin,
-		StampLocation:        UserLocation(t.user), // stamp the turn in the interactive user's zone
 		DynamicTools:         pr.dynamicTools(),
 		ToolFallbackResolver: pr.toolFallback(),
 		Stream:               pr.streamHandler,
@@ -2481,7 +2479,6 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		// Last look before the reply goes out: is it true about what this turn
 		// actually did? Backstops the phrase-list guards on the shapes they don't
 		// know. See turn_judge.go.
-		CapturePrompt:  t.agent.CapturePrompt,
 		TurnClaimJudge: t.claimJudge(t.ctx),
 		// The lead's review of a turn that did work, when this agent asks for one
 		// (lead_review.go).

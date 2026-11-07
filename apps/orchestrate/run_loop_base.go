@@ -14,8 +14,9 @@ import (
 // spend cap and action quotas, its family's budgets, its guardrails and its
 // ask-first marks, and the think settings it was given. Each path used to set
 // those by hand, and the agents tool's run left the caps out entirely, so an
-// agent run that way spent past its own cap. Built here once, a path cannot
-// drop one by leaving a line out.
+// agent run that way spent past its own cap. The same goes for its
+// duplicate-send guard, the user's zone it is stamped in, and prompt capture.
+// Built here once, a path cannot drop one by leaving a line out.
 //
 // t is the turn the agent runs in (a dispatch's sub-turn, whose agent is the
 // target). The fields below are set unconditionally, so a path that needs a
@@ -36,5 +37,12 @@ func (t *chatTurn) withLoopBase(cfg AgentLoopConfig) AgentLoopConfig {
 	cfg.GuardrailReject = g.Reject
 	cfg.GuardrailDeclines = t.agent.GuardrailDeclines
 	cfg.AskFirst = t.asksFirst // its marks and, through delegation, its caller's (ask_first.go)
+	// The duplicate-send guard, the acting user's zone on the turn, and the
+	// agent's own "capture prompt" debug switch. A lead plan's dispatched step
+	// had no guard, neither of its steps had the stamp, and the continuing
+	// run, the agents tool and that step ignored capture.
+	cfg.SendGuardKey = sendGuardKey
+	cfg.StampLocation = UserLocation(t.user)
+	cfg.CapturePrompt = t.agent.CapturePrompt
 	return cfg
 }

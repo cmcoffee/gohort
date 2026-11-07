@@ -470,7 +470,6 @@ func (ws *workerStep) runLoop() bool {
 	logPromptComposition(fmt.Sprintf("step %d", cur.ID), t.chatSessionID(), ws.sysPrompt, ws.tools,
 		[]Message{{Role: "user", Content: ws.stepUser}})
 	ws.resp, _, ws.err = t.app.RunAgentLoop(t.ctx, []Message{{Role: "user", Content: ws.stepUser}}, t.withLoopBase(AgentLoopConfig{
-		SendGuardKey: sendGuardKey,
 		SystemPrompt: ws.sysPrompt,
 		Tools:        ws.tools,
 		DynamicTools: t.dynamicNewTempTools(ws.sess),
@@ -491,7 +490,6 @@ func (ws *workerStep) runLoop() bool {
 		// Last look before the reply goes out: is it true about what this turn
 		// actually did? Backstops the phrase-list guards on the shapes they don't
 		// know. See turn_judge.go.
-		CapturePrompt:  t.agent.CapturePrompt,
 		TurnClaimJudge: t.claimJudge(t.ctx),
 		// What ran for this turn BEFORE the loop did — the machine steps. The
 		// loop cannot see them (they run during system-prompt assembly, on a

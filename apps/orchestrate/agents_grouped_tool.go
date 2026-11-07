@@ -1751,8 +1751,6 @@ func (ar *agentsRun) configureLoop() {
 		SystemPrompt:   ar.sysPrompt,
 		Tools:          ar.tools,
 		MaxRounds:      resolveMaxWorkerRounds(ar.target),
-		SendGuardKey:   sendGuardKey,
-		StampLocation:  UserLocation(t.user), // stamp the turn in the acting user's zone
 		// Asked of whoever is watching the calling turn; with nobody
 		// watching, queued for the owner (see runConfirm).
 		Confirm:        ar.runConfirmFn,

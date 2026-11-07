@@ -29,6 +29,9 @@ func TestTheLoopBaseCarriesTheAgentsLimits(t *testing.T) {
 	if cfg.AskFirst == nil {
 		t.Error("ask-first marks not consulted")
 	}
+	if cfg.SendGuardKey == nil || cfg.StampLocation == nil {
+		t.Error("the duplicate-send guard or the user's zone stamp is missing")
+	}
 }
 
 // loopBaseFields are the fields withLoopBase sets. A literal it wraps must
@@ -36,7 +39,8 @@ func TestTheLoopBaseCarriesTheAgentsLimits(t *testing.T) {
 var loopBaseFields = map[string]bool{"ActionQuotas": true, "BudgetKey": true, "DailySpendUSD": true,
 	"SharedBudgets": true, "ThinkBudget": true, "Effort": true, "GuardrailCheck": true,
 	"GuardrailObserve": true, "GuardrailActionGate": true, "GuardrailHalted": true,
-	"GuardrailReject": true, "GuardrailDeclines": true, "AskFirst": true}
+	"GuardrailReject": true, "GuardrailDeclines": true, "AskFirst": true,
+	"SendGuardKey": true, "StampLocation": true, "CapturePrompt": true}
 
 // narrowLoops build a loop that is not an agent's run (a pipeline stage, a
 // publisher's single instruction) and so carries no agent limits of its own.

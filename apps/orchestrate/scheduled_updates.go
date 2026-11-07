@@ -1030,7 +1030,6 @@ func (fr *fireRun) runLoop() {
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
 		PreEmptedReply: fr.gDecline,
-		SendGuardKey:   sendGuardKey,
 		SystemPrompt:   fr.sysPrompt,
 		Tools:          fr.tools,
 		MaxRounds:      fr.softCap,
@@ -1039,7 +1038,6 @@ func (fr *fireRun) runLoop() {
 		// Keyed on the agent and the thread this schedule runs in, so what
 		// keeps failing at 09:00 is still failing at 09:00 tomorrow.
 		FailureMemoryKey: failureMemoryKey(p.AgentID, p.SessionID),
-		StampLocation:    UserLocation(p.Username), // stamp the turn in the owning user's zone
 		TurnNotes: func(string) string {
 			return oneFrameworkNote(nonEmpty(dependencyTurnNote(fr.subSess), backgroundTurnNote(fr.subSess)))
 		},
@@ -1080,7 +1078,6 @@ func (fr *fireRun) runLoop() {
 		// convicts: earlier actions never back a claim about THIS turn, which
 		// the evidence says in as many words, so the fire that reads nine times
 		// and reports three posts is caught exactly as before.
-		CapturePrompt:  fr.agent.CapturePrompt,
 		TurnClaimJudge: fr.subTurn.claimJudge(fr.ctx),
 		// The lead's review of a turn that did work, when this agent asks for one
 		// (lead_review.go).
