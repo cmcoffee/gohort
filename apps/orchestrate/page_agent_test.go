@@ -338,3 +338,27 @@ func TestTheAssistScriptCannotBeClosedByAnID(t *testing.T) {
 		t.Errorf("the id is not a JSON string in the script")
 	}
 }
+
+// The memory switches read positively: on means the thing is there. They store
+// negatives (disable_*), so each is inverted, and none says "Disable".
+func TestTheMemorySwitchesReadPositively(t *testing.T) {
+	src, err := os.ReadFile("page_agent.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+	for _, want := range []string{
+		`Field: "disable_explicit", Type: "toggle", Invert: true, Label: "Pinned notes"`,
+		`Field: "disable_inferred", Type: "toggle", Invert: true, Label: "Searchable memory"`,
+		`Field: "disable_compaction", Type: "toggle", Invert: true, Label: "Summarize older messages"`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("page_agent.go no longer has %s", want)
+		}
+	}
+	for _, old := range []string{"Disable Explicit Memory", "Disable Reference Memory", "Disable rolling summary"} {
+		if strings.Contains(s, old) {
+			t.Errorf("%q is back", old)
+		}
+	}
+}

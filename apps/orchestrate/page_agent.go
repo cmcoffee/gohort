@@ -402,12 +402,15 @@ func (ed *agentEditor) formFields() {
 				},
 				Help:   "Lets the agent find earlier sessions with recall and link you to them.",
 				Detail: "After each turn the session keeps a marker: its title and dates, what you asked, what it made or changed, and the files it delivered. recall searches the markers, and reading a hit reads the conversation itself, so the agent answers from what was said rather than from a summary of it, and gives you the link. Nothing is added to the cortex. Incognito sessions and Clean turns leave no marker, and deleting a session deletes its marker."},
-			ui.FormField{Field: "disable_explicit", Type: "toggle", Label: "Disable Explicit Memory",
-				Help:   "Strips the pinned-notes half of remember and forget, and the pre-injected facts block.",
-				Detail: "For impersonal or stateless agents."},
-			ui.FormField{Field: "disable_inferred", Type: "toggle", Label: "Disable Reference Memory",
-				Help:   "Strips the searchable half of remember, recall and forget, and drops derived chunks from recall.",
-				Detail: "For agents that should answer from authoritative sources only. The per-turn Clean toggle does the same thing, scoped to one turn."},
+			// The three below store a negative (disable_*); Invert turns
+			// round what the switch shows and sets, so on means the thing is
+			// there, as it does for every other switch on this page.
+			ui.FormField{Field: "disable_explicit", Type: "toggle", Invert: true, Label: "Pinned notes",
+				Help:   "Notes you or the agent pin, and the facts it knows about you, shown to it on every turn.",
+				Detail: "Off: it keeps no pinned notes and is shown no facts block, and remember and forget lose their pinned half. For an impersonal or stateless agent."},
+			ui.FormField{Field: "disable_inferred", Type: "toggle", Invert: true, Label: "Searchable memory",
+				Help:   "Findings it saves as it works and looks up later with recall.",
+				Detail: "Off: it saves no findings and recall does not offer the ones it has, so it answers from its sources only. For an agent that should answer from authoritative material alone. The per-turn Clean switch does the same for one turn."},
 			// (Working notes toggle removed: agent-wide notes were retired in
 			// favour of task and link-group notes on the Scheduler, and an
 			// agent's existing notes were kept as facts. See notes_retire.go.)
@@ -425,10 +428,10 @@ func (ed *agentEditor) formFields() {
 			ui.FormField{Field: "context_depth", Type: "number", Label: "Context depth (recent messages)", Min: 0, Max: 200,
 				Placeholder: "0",
 				Help:        "How many recent messages are kept verbatim. 0 = framework default (12).",
-				Detail:      "Older messages fold into a rolling summary unless that is disabled below."},
-			ui.FormField{Field: "disable_compaction", Type: "toggle", Label: "Disable rolling summary",
-				Help:   "Whether older messages are summarized or simply dropped.",
-				Detail: "Off, the default, summarizes older messages into a running summary. On drops them to the context-depth tail instead. Both stay bounded; this only chooses summarize-old over forget-old."},
+				Detail:      "Older messages fold into a running summary, unless Summarize older messages is off below."},
+			ui.FormField{Field: "disable_compaction", Type: "toggle", Invert: true, Label: "Summarize older messages",
+				Help:   "On, the default: messages past the context depth fold into a running summary.",
+				Detail: "Off: they are dropped instead, and only the recent ones stay. Either way the prompt stays bounded; this only chooses summarizing the old part over forgetting it."},
 
 			ui.FormField{Type: "header", Label: "Capability",
 				Help:   "Tools the agent is granted beyond its own.",
