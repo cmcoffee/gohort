@@ -819,7 +819,10 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 	// ten lines of prose first was asking somebody to write against a
 	// spec they had not been shown yet.
 	fields = append(fields,
-		ui.FormField{Field: "prompt", Type: "textarea", Rows: 10, Label: promptLabel, Help: promptHelp},
+		// Markdown, read as a document and edited on Edit (Markdown or Raw):
+		// a step's instructions are what its model follows, and headings and
+		// lists are how a long one stays readable.
+		ui.FormField{Field: "prompt", Type: "sections", SectionsAllowFree: true, Rows: 10, Label: promptLabel, Help: promptHelp},
 	)
 	if p.Resident {
 		fields = append(fields,

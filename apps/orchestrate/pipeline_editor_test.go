@@ -421,3 +421,23 @@ func TestFillOptionsOnlyOfferWhatHasAlreadyRun(t *testing.T) {
 		t.Errorf("the first stage should offer input and prev only: %+v", first)
 	}
 }
+
+// A stage's instructions are a Markdown document, except a Gather stage's,
+// which is a list of searches, one per line.
+func TestAStagesInstructionsAreMarkdownExceptASearchList(t *testing.T) {
+	def := PipelineDef{Name: "p"}
+	typeOf := func(kind PipelineStageKind) string {
+		for _, f := range stageFormFields(def, PipelineStage{Name: "x", Kind: kind}, editorCatalog{}) {
+			if f.Field == "prompt" {
+				return f.Type
+			}
+		}
+		return ""
+	}
+	if got := typeOf(StageWorker); got != "sections" {
+		t.Errorf("a worker stage's instructions are a %q field", got)
+	}
+	if got := typeOf(StageGather); got != "textarea" {
+		t.Errorf("a gather stage's searches are a %q field", got)
+	}
+}

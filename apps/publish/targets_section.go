@@ -76,7 +76,7 @@ func targetFormFields(user string) []ui.FormField {
 			Detail:  "Set API integrations up under API credentials above; their own address and allowed paths still apply. An MCP server is one an administrator connected with its tools offered to agents; a publish holds only that server's tools, without any that delete, remove or archive."},
 		{Field: "agent", Label: "Agent", Type: "select", ShowWhen: "uses:agent", Options: AgentNameOptions(user),
 			Help: "For a place with no API of its own: the agent is handed the document and your instruction."},
-		{Field: "instructions", Label: "How to publish there", Type: "textarea", Rows: 5, Required: true,
+		{Field: "instructions", Label: "How to publish there", Type: "sections", SectionsAllowFree: true, Rows: 5, Required: true,
 			Placeholder: "Create a draft post with the document as its body. The title is the post title. Put it in the category given.",
 			Help:        "What the publish does with the document: which endpoint, draft or live, where the answers below go.",
 			Detail:      "The document, its title and the answers to the questions below are handed over with this. Name the API call if you know it (\"POST /wp-json/wp/v2/posts with status draft\"); otherwise describe the result you want and the pass works it out from the API."},

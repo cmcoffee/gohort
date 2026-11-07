@@ -471,7 +471,7 @@ func commandUsesFields() []ui.FormField {
 				{Value: "always", Label: "Always run it in the background"}},
 			Help:   "Always: the agent hears it has started and carries on, and is woken with the result when it ends.",
 			Detail: "For a command that is always slow, a download or an extraction. With the first choice an agent waits for it up to the detach time (Admin, Timeouts) before it moves to the background. Either way a run is stopped as stuck only when it has printed nothing and written nothing to its folders for the no-output limit, so a quiet download that keeps writing keeps going."},
-		{Field: "guide", Type: "textarea", Label: "How to use it", Rows: 6,
+		{Field: "guide", Type: "sections", SectionsAllowFree: true, Label: "How to use it", Rows: 6,
 			Placeholder: "What it is for, the order of its steps, what each value means, where its output goes, what to watch for.",
 			Help:        "Optional, in markdown. Builder reads it to map the command, and agents read it where they list this store's commands.",
 			Detail:      "Runs in Show it how teach Builder the syntax; this says what runs cannot: that a signature is answered by someone in support, that a response is single-use, that output lands in a folder named after the archive. Changing it does not switch Agents off: it changes what agents are told, not what they can run."},

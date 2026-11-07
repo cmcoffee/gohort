@@ -79,8 +79,14 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 
 	// The prompt: every kind that makes a model call, a panel's question
 	// to its voices, and the input a machine stage starts its run with.
+	// Markdown (Markdown or Raw) for the instructions a model follows. Not
+	// for a Gather stage, whose box is a list of searches, one per line.
+	promptType := "sections"
+	if kind == string(StageGather) {
+		promptType = "textarea"
+	}
 	fields = append(fields, ui.FormField{
-		Field: "prompt", Type: "textarea", Rows: 6, Label: "Instructions",
+		Field: "prompt", Type: promptType, SectionsAllowFree: true, Rows: 6, Label: "Instructions",
 		ShowWhen: keepWhileSet(s.Prompt, "kind:worker|synthesize|agent|fanout|panel|machine|gather"),
 		Help: chIf(kind == string(StageGather),
 			"What to search for, one search per line (up to 4), or a list from an earlier stage: {stage:plan.queries}. Empty searches the run's input.",

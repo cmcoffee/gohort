@@ -2083,3 +2083,23 @@ func TestModelStepStillShowsItsToolLimits(t *testing.T) {
 		}
 	}
 }
+
+// A step's instructions are edited as Markdown (Markdown or Raw) in the step's
+// editor; the add form, which only names the step, keeps a plain box.
+func TestAStepsInstructionsAreAMarkdownDocument(t *testing.T) {
+	def := MachineDef{Name: "m", Start: "a", Phases: []MachinePhase{{Name: "a"}}}
+	typeOf := func(fields []ui.FormField) string {
+		for _, f := range fields {
+			if f.Field == "prompt" {
+				return f.Type
+			}
+		}
+		return ""
+	}
+	if got := typeOf(phaseFieldsFor(def, def.Phases[0], editorCatalog{})); got != "sections" {
+		t.Errorf("the step editor's instructions are a %q field", got)
+	}
+	if got := typeOf(phaseFormFields(def)); got != "textarea" {
+		t.Errorf("the add form's instructions are a %q field", got)
+	}
+}
