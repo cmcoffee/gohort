@@ -76,7 +76,7 @@ func TestSetupWizardWiring(t *testing.T) {
 // actually decodes, or the answer is silently dropped on submit.
 func TestSetupWizardFieldsMatchHandler(t *testing.T) {
 	handled := map[string]bool{
-		"provider": true, "model": true, "api_key": true,
+		"provider": true, "model": true, "api_key": true, "api_key_from": true,
 		"endpoint": true, "aws_region": true, "aws_profile": true, "bedrock_api": true,
 	}
 	panel := wizardPanel(t)
@@ -103,26 +103,34 @@ func TestSetupWizardFieldsMatchHandler(t *testing.T) {
 // with String(actual) === opt, so a near-miss just hides the field forever.
 func TestSetupWizardShowWhenMatchesOptions(t *testing.T) {
 	panel := wizardPanel(t)
-	values := map[string]bool{}
+	// The values each field can hold: its options, and for a select whose
+	// options load when the form opens (OptionsSource), its default.
+	values := map[string]map[string]bool{}
 	for _, step := range panel.Steps {
 		for _, f := range step.Fields {
+			if values[f.Field] == nil {
+				values[f.Field] = map[string]bool{}
+			}
 			for _, o := range f.Options {
-				values[o.Value] = true
+				values[f.Field][o.Value] = true
+			}
+			if f.OptionsSource != "" && f.Default != "" {
+				values[f.Field][f.Default] = true
 			}
 		}
 	}
 	for _, step := range panel.Steps {
 		for _, f := range step.Fields {
-			if f.ShowWhen == "" {
-				continue
-			}
-			_, rhs, found := strings.Cut(f.ShowWhen, ":")
-			if !found {
-				continue
-			}
-			for _, v := range strings.Split(rhs, "|") {
-				if !values[v] {
-					t.Errorf("field %q gates on provider %q, which is not one of the select's options", f.Field, v)
+			// "a:x|y;b:z" is a AND b: each condition names its own field.
+			for _, cond := range strings.Split(f.ShowWhen, ";") {
+				field, rhs, found := strings.Cut(cond, ":")
+				if !found {
+					continue
+				}
+				for _, v := range strings.Split(rhs, "|") {
+					if !values[field][v] {
+						t.Errorf("field %q gates on %s %q, which is not one of its options", f.Field, field, v)
+					}
 				}
 			}
 		}

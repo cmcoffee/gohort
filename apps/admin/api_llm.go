@@ -8,6 +8,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/activity"
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/core/keystore"
 	"github.com/cmcoffee/gohort/core/media"
 )
 
@@ -376,6 +377,7 @@ func (a *AdminApp) handleLLMConfig(table string, worker bool) func(c *jsonapi.Ca
 			"bedrock_api":             bedrockAPI,
 			"_live":                   liveTierDescription(table),
 			"_kept_key":               LLMProviderConfig{Provider: provider, Endpoint: endpoint}.KeptKey(a.db, table),
+			"api_key_from":            firstNonEmptyStr(TierKeystoreRef(a.db, table), keyOwn),
 			"native_tools":            nativeTools,
 			"disable_thinking":        disableThinking,
 			"no_images":               noImages,
@@ -410,6 +412,7 @@ type llmConfigSave struct {
 	Provider             string `json:"provider"`
 	Model                string `json:"model"`
 	APIKey               string `json:"api_key"`
+	APIKeyFrom           string `json:"api_key_from"`
 	Endpoint             string `json:"endpoint"`
 	AWSRegion            string `json:"aws_region"`
 	AWSProfile           string `json:"aws_profile"`
@@ -449,6 +452,19 @@ func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonap
 		if err := tierProviderOK(req.Provider); err != nil {
 			return nil, jsonapi.BadRequest(err.Error())
 		}
+		// A Keystore key is checked before anything is saved: one that does
+		// not fit the provider and address being saved refuses the save.
+		tierCfg := LLMProviderConfig{Provider: strings.TrimSpace(req.Provider), Endpoint: strings.TrimSpace(req.Endpoint)}
+		from := strings.TrimSpace(req.APIKeyFrom)
+		if from != "" && from != keyOwn {
+			e, ok := keystore.Get(RootDB, from)
+			if !ok {
+				return nil, jsonapi.BadRequest("no such Keystore key")
+			}
+			if err := tierCfg.KeystoreFits(e); err != nil {
+				return nil, jsonapi.BadRequest(err.Error())
+			}
+		}
 		// Trimmed on the way in, so the STORED value is clean and the form
 		// stops displaying a leading space nobody can see. The providers trim
 		// defensively too; this is what keeps the two from disagreeing about
@@ -478,8 +494,16 @@ func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonap
 		if worker {
 			a.db.Set(table, "request_timeout_seconds", req.RequestTimeout)
 		}
-		if k := strings.TrimSpace(req.APIKey); k != "" && k != secretUnchanged {
-			LLMProviderConfig{Provider: strings.TrimSpace(req.Provider), Endpoint: req.Endpoint}.SaveKey(a.db, table, k)
+		switch k := strings.TrimSpace(req.APIKey); {
+		case from != "" && from != keyOwn:
+			if err := tierCfg.SaveKeyRef(a.db, table, from); err != nil {
+				return nil, jsonapi.BadRequest(err.Error())
+			}
+		case k != "" && k != secretUnchanged:
+			tierCfg.SaveKey(a.db, table, k)
+		case from == keyOwn && TierKeystoreRef(a.db, table) != "":
+			// Back to a key of its own with none typed: it has none.
+			tierCfg.SaveKeyRef(a.db, table, "")
 		}
 		// Apply live — rebuild the shared LLMs from the new config so the change
 		// takes effect without a restart. Best-effort: on a bad config the prior

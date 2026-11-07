@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/cmcoffee/gohort/core/keystore"
 	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/snugforge/kvlite"
 	"github.com/cmcoffee/snugforge/nfo"
@@ -1287,5 +1288,64 @@ func TestAModelThatRefusesPicturesIsLearnedBlind(t *testing.T) {
 	odd.Chat(context.Background(), msgs)
 	if odd.blind() {
 		t.Error("an unsupported image format must not mark a model as not reading images")
+	}
+}
+
+// A model tier naming a Keystore key sends that key, keeps no copy of its
+// own, is rebuilt when the key is rotated (a client copies its key when it is
+// built), refuses a key not given for its address, and is listed as using
+// the key, which keeps the key from being deleted.
+func TestATierTakesItsKeyFromTheKeystore(t *testing.T) {
+	prevRoot, prevReload := RootDB, llmReloader
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	reloads := 0
+	llmReloader = func() error { reloads++; return nil }
+	t.Cleanup(func() { RootDB, llmReloader = prevRoot, prevReload })
+
+	e, err := keystore.Save(RootDB, keystore.Entry{Name: "Anthropic", Addresses: []string{"https://api.anthropic.com"}}, "sk-ant-first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := LLMProviderConfig{Provider: "anthropic"}
+	cfg.SaveKey(RootDB, LeadLLMTable, "sk-ant-own")
+	if err := cfg.SaveKeyRef(RootDB, LeadLLMTable, e.ID); err != nil {
+		t.Fatal(err)
+	}
+	var own string
+	if RootDB.Get(LeadLLMTable, "api_key", &own) {
+		t.Errorf("the tier kept its own copy beside the Keystore key: %q", own)
+	}
+	if err := cfg.LoadKey(RootDB, LeadLLMTable); err != nil || cfg.APIKey != "sk-ant-first" {
+		t.Fatalf("loaded %q, %v", cfg.APIKey, err)
+	}
+	if h := cfg.KeptKey(RootDB, LeadLLMTable); !strings.HasPrefix(h, "from the Keystore: Anthropic") {
+		t.Errorf("the form does not say where the key comes from: %q", h)
+	}
+
+	before := reloads
+	if _, err := keystore.Save(RootDB, e, "sk-ant-second"); err != nil {
+		t.Fatal(err)
+	}
+	if reloads == before {
+		t.Error("rotating a key a tier names did not rebuild the models")
+	}
+	cfg.LoadKey(RootDB, LeadLLMTable)
+	if cfg.APIKey != "sk-ant-second" {
+		t.Errorf("after the rotation the tier loads %q", cfg.APIKey)
+	}
+
+	if uses := keystore.UsedBy(e.ID); len(uses) != 1 || uses[0] != "Lead model" {
+		t.Errorf("used by %v", uses)
+	}
+	if err := keystore.Delete(RootDB, e.ID); err == nil {
+		t.Error("a key a tier names was deleted")
+	}
+
+	moved := LLMProviderConfig{Provider: "anthropic", Endpoint: "https://proxy.example.com/v1"}
+	if err := moved.LoadKey(RootDB, LeadLLMTable); err == nil {
+		t.Error("a tier pointed at another address loaded a key not given for it")
+	}
+	if err := (LLMProviderConfig{Provider: "openai"}).SaveKeyRef(RootDB, LLMTable, e.ID); err == nil {
+		t.Error("an Anthropic key was accepted for OpenAI")
 	}
 }

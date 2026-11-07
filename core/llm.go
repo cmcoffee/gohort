@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/keystore"
 	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/snugforge/apiclient"
 )
@@ -1322,9 +1323,114 @@ func (cfg LLMProviderConfig) KeyAddress() string {
 }
 
 // SaveKey keeps key as the tier's in table, for the address it now goes to.
+// A key of its own replaces a Keystore key it named.
 func (cfg LLMProviderConfig) SaveKey(db Database, table, key string) {
 	db.CryptSet(table, "api_key", strings.TrimSpace(key))
 	db.Set(table, "api_key_for", ConnectionSecret{Addresses: []string{cfg.KeyAddress()}, Set: time.Now()})
+	db.Unset(table, tierKeyRef)
+}
+
+// tierKeyRef is the tier table's key naming a Keystore entry in place of a
+// key of its own.
+const tierKeyRef = "api_key_ref"
+
+// TierKeystoreRef is the Keystore entry the tier in table takes its key
+// from, or "".
+func TierKeystoreRef(db Database, table string) string {
+	var id string
+	if db != nil {
+		db.Get(table, tierKeyRef, &id)
+	}
+	return strings.TrimSpace(id)
+}
+
+// KeystoreFits refuses Keystore entry e as the tier's key: a signing set for
+// a provider that takes a key, or an entry not given for the address the
+// tier goes to. Bedrock takes either kind: a key pair or profile to sign
+// with, or a Bedrock API key.
+func (cfg LLMProviderConfig) KeystoreFits(e keystore.Entry) error {
+	bedrock := strings.EqualFold(strings.TrimSpace(cfg.Provider), "bedrock")
+	if e.Kind == keystore.KindAWS && !bedrock {
+		return fmt.Errorf("%s is an AWS signing entry, and this provider takes a key", e.Name)
+	}
+	if !e.Covers(cfg.KeyAddress()) {
+		return fmt.Errorf("the Keystore key %s is not given for %s: add that address to it under Services > Keystore, or pick another", e.Name, cfg.KeyAddress())
+	}
+	return nil
+}
+
+// SaveKeyRef makes the tier in table take its key from Keystore entry id,
+// keeping no copy of its own; "" goes back to none.
+func (cfg LLMProviderConfig) SaveKeyRef(db Database, table, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		db.Unset(table, tierKeyRef)
+		return nil
+	}
+	e, ok := keystore.Get(RootDB, id)
+	if !ok {
+		return fmt.Errorf("no Keystore key %s", id)
+	}
+	if err := cfg.KeystoreFits(e); err != nil {
+		return err
+	}
+	db.Unset(table, "api_key")
+	db.Unset(table, "api_key_for")
+	db.Set(table, tierKeyRef, id)
+	return nil
+}
+
+// loadKeystoreKey puts Keystore entry id's key into cfg, checked as for a
+// connection: the entry is there, of a kind the provider takes, and given
+// for the address the tier goes to.
+func (cfg *LLMProviderConfig) loadKeystoreKey(id string) error {
+	e, ok := keystore.Get(RootDB, id)
+	if !ok {
+		return fmt.Errorf("it names a Keystore key that is gone: pick another")
+	}
+	if err := cfg.KeystoreFits(e); err != nil {
+		return err
+	}
+	v, _ := keystore.Secret(RootDB, id)
+	if e.Kind == keystore.KindAWS && v == "" {
+		cfg.APIKey, cfg.awsKeys = "", nil
+		if e.Profile != "" {
+			cfg.Profile = e.Profile
+		}
+		return nil
+	}
+	cfg.UseKey(v)
+	return nil
+}
+
+// tiersUsing is which model tiers name Keystore entry id, as the Keystore's
+// row says.
+func tiersUsing(id string) []string {
+	if RootDB == nil {
+		return nil
+	}
+	var out []string
+	for _, t := range []struct{ table, name string }{{LLMTable, "Worker model"}, {LeadLLMTable, "Lead model"}} {
+		if TierKeystoreRef(RootDB, t.table) == id {
+			out = append(out, t.name)
+		}
+	}
+	return out
+}
+
+func init() {
+	keystore.RegisterUse(tiersUsing)
+	// A model client copies its key when it is built: a tier naming a
+	// changed entry is rebuilt, or it would send the old key until the next
+	// save or restart.
+	keystore.OnChange(func(id string) {
+		if len(tiersUsing(id)) == 0 {
+			return
+		}
+		if err := ReloadLLMs(); err != nil {
+			Warn("[keystore] reloading the models after a key change: %v", err)
+		}
+	})
 }
 
 // keptKey is the tier's key in table and where it was given for; given is
@@ -1342,6 +1448,9 @@ func keptKey(db Database, table string) (key string, given ConnectionSecret) {
 // before keys were bound to one, is not sent, and the error says to give it
 // again.
 func (cfg *LLMProviderConfig) LoadKey(db Database, table string) error {
+	if id := TierKeystoreRef(db, table); id != "" {
+		return cfg.loadKeystoreKey(id)
+	}
 	key, given := keptKey(db, table)
 	switch {
 	case key == "":
@@ -1359,6 +1468,17 @@ func (cfg *LLMProviderConfig) LoadKey(db Database, table string) error {
 // last four characters of a long one, the day it was given, and whether it
 // goes where the tier does. "" when none is saved.
 func (cfg LLMProviderConfig) KeptKey(db Database, table string) string {
+	if id := TierKeystoreRef(db, table); id != "" {
+		e, ok := keystore.Get(RootDB, id)
+		if !ok {
+			return "names a Keystore key that is gone: pick another"
+		}
+		hint := "from the Keystore: " + e.Name + " (" + keystore.Hint(RootDB, e) + ")"
+		if err := cfg.KeystoreFits(e); err != nil {
+			hint += ": not sent, " + err.Error()
+		}
+		return hint
+	}
 	key, given := keptKey(db, table)
 	if key == "" {
 		return ""

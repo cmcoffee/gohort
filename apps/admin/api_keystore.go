@@ -33,6 +33,15 @@ func (a *AdminApp) registerKeystoreRoutes(sub *http.ServeMux) {
 func (a *AdminApp) handleKeystoreChoices(c *jsonapi.Call) (any, error) {
 	q := c.R.URL.Query()
 	out := []map[string]string{{"value": keyOwn, "label": "Its own key (below)"}}
+	// A model tier's choice: every key, since the provider and address on its
+	// form may not be saved yet. Its save says when one does not fit.
+	if q.Get("tier") != "" {
+		for _, e := range keystore.List(RootDB) {
+			out = append(out, map[string]string{"value": e.ID, "label": "Keystore: " + e.Name,
+				"help": strings.Join(e.Addresses, ", ") + "; " + keystore.Hint(RootDB, e)})
+		}
+		return out, nil
+	}
 	conn, ok := GetConnector(RootDB, strings.TrimSpace(q.Get("name")))
 	if !ok {
 		return out, nil
