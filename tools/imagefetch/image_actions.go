@@ -234,7 +234,14 @@ func (a imageActions) backendParamDesc() string {
 	for _, c := range a.selectableBackends() {
 		note := c.Name + ": "
 		if c.Edits {
-			note += "works from pictures you pass in images"
+			if c.Generates {
+				// Both, said as both: "works from pictures" alone told the
+				// model a backend that also makes pictures from a prompt
+				// could not, and it told the person so.
+				note += "generates from text alone, or works from pictures you pass in images"
+			} else {
+				note += "works from pictures you pass in images"
+			}
 			if c.MaxImages > 1 {
 				// Fewer is fine: the unused inputs are taken out of the graph
 				// (core BuildComfyBody). It said "needs all", which was true
