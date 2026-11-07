@@ -6178,11 +6178,13 @@
       try { window.dispatchEvent(new CustomEvent('ui-agent-sent', {detail: {text: text}})); } catch (e) {}
     }
 
-    // syncInterjectSend puts Send back beside Cancel while a turn runs, once
-    // something is typed: tapping it adds a note to the running turn, as Enter
-    // does on a keyboard. On a phone the return key starts a new line
-    // (uiComposerEnterSends), so with Send hidden for the whole run nothing
-    // could be added until the turn ended. Only where the app takes notes
+    // syncInterjectSend turns Cancel into Send while a turn runs and something
+    // is typed: tapping it adds a note to the running turn, as Enter does on a
+    // keyboard. Emptying the box turns it back into Cancel. On a phone the
+    // return key starts a new line (uiComposerEnterSends), so with Send hidden
+    // for the whole run nothing could be added until the turn ended. One
+    // button rather than two side by side: the row on a phone has no room to
+    // spare, and the box says which one it is. Only where the app takes notes
     // mid-turn (inject_url), and once the turn has a session to take them:
     // before that, a send would start a second turn rather than a note.
     function syncInterjectSend() {
@@ -6190,6 +6192,7 @@
       var can = !!(cfg.inject_url && activeSessionId && !recordLocked && inputArea.value.trim());
       sendBtn.style.display = can ? '' : 'none';
       sendBtn.disabled = !can;
+      cancelBtn.style.display = can ? 'none' : '';
     }
 
     function enableInput() {
@@ -6328,7 +6331,7 @@
         }
         inputArea.value = '';
         announceSent(text);
-        syncInterjectSend(); // the box is empty again: back to Cancel alone
+        syncInterjectSend(); // the box is empty again: back to Cancel
         // Match the normal-send path: reset the inline style.height
         // so a multi-line message (or a retry that put long text
         // back into the input) doesn't leave the textarea visually

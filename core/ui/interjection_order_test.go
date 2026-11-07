@@ -120,10 +120,11 @@ func TestEveryConvoAppendRepinsPendingNotes(t *testing.T) {
 	}
 }
 
-// While a turn runs, Send comes back beside Cancel once there is a note to
-// send. On a phone the return key starts a new line, so Send is the only way
-// to add a note to a running turn, and it used to stay hidden for the whole
-// run: the owner could interject on the desktop and not on the phone.
+// While a turn runs, Cancel turns into Send once there is a note to send, and
+// back when the box is emptied. On a phone the return key starts a new line,
+// so Send is the only way to add a note to a running turn, and it used to stay
+// hidden for the whole run: the owner could interject on the desktop and not
+// on the phone.
 func TestANoteCanBeSentMidTurnWithoutAKeyboard(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node not available")
@@ -144,7 +145,13 @@ var cfg = {inject_url: 'api/inject'};
 var turnLive = true, activeSessionId = 's1', recordLocked = false;
 var inputArea = {value: ''};
 var sendBtn = {style: {display: 'none'}, disabled: true};
-function shown() { return sendBtn.style.display !== 'none' && !sendBtn.disabled; }
+var cancelBtn = {style: {display: ''}};
+function shown() {
+  var send = sendBtn.style.display !== 'none' && !sendBtn.disabled;
+  var cancel = cancelBtn.style.display !== 'none';
+  if (send === cancel) throw new Error('Send and Cancel should take turns, got send=' + send + ' cancel=' + cancel);
+  return send;
+}
 ` + fn + `
 
 syncInterjectSend();
@@ -175,6 +182,7 @@ recordLocked = false;
 // Between turns the composer is enableInput's: this leaves it alone.
 turnLive = false;
 sendBtn = {style: {display: ''}, disabled: false};
+cancelBtn = {style: {display: 'none'}};
 inputArea.value = '';
 syncInterjectSend();
 if (!shown()) throw new Error('the check touched Send between turns');
