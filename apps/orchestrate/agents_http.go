@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -517,7 +518,14 @@ func (T *OrchestrateApp) patchAgent(c *jsonapi.Call, patch map[string]any, pathI
 	}
 	var rec AgentRecord
 	if err := json.Unmarshal(out, &rec); err != nil {
-		return nil, jsonapi.BadRequest("bad field value: " + err.Error())
+		// A field's own check (an action limit missing its number) says what
+		// is wrong in words, and is shown as it is. Only a value of the wrong
+		// kind, which no form sends, gets the generic framing.
+		var typeErr *json.UnmarshalTypeError
+		if errors.As(err, &typeErr) {
+			return nil, jsonapi.BadRequest("a field has the wrong kind of value: " + err.Error())
+		}
+		return nil, jsonapi.BadRequest(err.Error())
 	}
 	rec.ID = existing.ID
 	rec.Owner = existing.Owner

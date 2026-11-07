@@ -1872,15 +1872,18 @@ func skillConditionsField() ui.FormField {
 		Help:           "Add one when this skill is right only in some cases. The first is the If: when it holds, the skill applies as written. Add more for Else if (another case, with its own instructions) or Else (everything the cases above do not cover).",
 		Detail:         "gohort settles the conditions before the skill is handed over, and the agent gets only the case that applies. A lookup is answered by a short check with the skill's tools (one check for all of them); a mention is decided from the message. With no Else, the skill does not apply when no condition holds. Give the skill triggers so this happens before the agent answers on matching messages.",
 		Columns: []ui.FormField{
-			{Field: "kind", Label: "Case", Type: "select", FirstDefault: "if", Default: "else_if", Options: []ui.SelectOption{
+			// The top line holds the two choices; the question, or the words,
+			// gets a line of its own, so it is never the box squeezed beside
+			// a hidden column.
+			{Field: "kind", Label: "Case", Type: "select", Width: 1, FirstDefault: "if", Default: "else_if", Options: []ui.SelectOption{
 				{Value: "if", Label: "If"}, {Value: "else_if", Label: "Else if"}, {Value: "else", Label: "Else"},
 			}},
-			{Field: "check", Label: "Decided by", Type: "select", HideWhen: "kind:else", Options: []ui.SelectOption{
+			{Field: "check", Label: "Decided by", Type: "select", Width: 2, HideWhen: "kind:else", Options: []ui.SelectOption{
 				{Value: "lookup", Label: "Looking it up"}, {Value: "mentions", Label: "The message mentioning"},
 			}},
-			{Field: "question", Label: "Question", Width: 3, HideWhen: "kind:else||check:mentions",
+			{Field: "question", Label: "Question", OwnLine: true, HideWhen: "kind:else||check:mentions",
 				Placeholder: "Is the customer on version 4 or later?"},
-			{Field: "mentions", Label: "Words", Width: 3, HideWhen: "kind:else||check:!mentions",
+			{Field: "mentions", Label: "Words", OwnLine: true, HideWhen: "kind:else||check:!mentions",
 				Placeholder: "refund, chargeback, *.pdf"},
 			{Field: "how", Label: "How to check", OwnLine: true, HideWhen: "kind:else||check:mentions",
 				Placeholder: "Look up the account with the CRM tool and read its app version."},

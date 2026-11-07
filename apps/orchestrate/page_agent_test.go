@@ -10,6 +10,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // The whole-agent dialog, run: its real script under node, over a stand-in
@@ -371,5 +372,30 @@ func TestMemoryModeIsExplainedInPlainWords(t *testing.T) {
 	}
 	if s := string(src); strings.Contains(s, "remember (pin=true)") || strings.Contains(s, "remember (pin=false)") {
 		t.Error("memory mode's help is in the tool's terms again")
+	}
+}
+
+// A new agent's Name and Orchestrator prompt are marked required on the form,
+// so the person learns before Save; the examples read as examples; and a save
+// without a prompt says so in words, not the field's code name.
+func TestTheAgentFormSaysWhatItNeeds(t *testing.T) {
+	src, err := os.ReadFile("page_agent.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+	for _, want := range []string{
+		`{Field: "name", Type: "text", Label: "Name", Placeholder: "e.g. Research helper", Required: true,`,
+		`{Field: "orchestrator_prompt", Type: "sections", Label: "Orchestrator prompt", Required: true,`,
+		`Placeholder: "e.g. Markets"`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("page_agent.go no longer has %s", want)
+		}
+	}
+	udb := UserDB(&DBase{Store: kvlite.MemStore()}, "user1")
+	_, err = saveAgent(udb, AgentRecord{Name: "Ada", Owner: "user1"})
+	if err == nil || strings.Contains(err.Error(), "orchestrator_prompt") || !strings.Contains(err.Error(), "orchestrator prompt is required") {
+		t.Errorf("a save with no prompt: %v", err)
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/ui"
 )
 
 func TestTheCatalogAndSkillRoutesChangeWhatTheySay(t *testing.T) {
@@ -148,5 +149,21 @@ func TestTheCatalogAndSkillRoutesChangeWhatTheySay(t *testing.T) {
 	}
 	if code, _ := call("", "DELETE", "/api/skills?id="+skill.ID, ""); code != 404 {
 		t.Errorf("deleting it again answered %d", code)
+	}
+}
+
+// On the skill form's conditions, the top line holds the two choices and the
+// question, or the words, gets a line of its own: in the dialog a question
+// beside a hidden column was squeezed to a few characters.
+func TestAConditionsQuestionHasItsOwnLine(t *testing.T) {
+	cols := map[string]ui.FormField{}
+	for _, c := range skillConditionsField().Columns {
+		cols[c.Field] = c
+	}
+	if !cols["question"].OwnLine || !cols["mentions"].OwnLine {
+		t.Errorf("question own line %v, words own line %v", cols["question"].OwnLine, cols["mentions"].OwnLine)
+	}
+	if cols["kind"].OwnLine || cols["check"].OwnLine {
+		t.Error("the two choices should share the top line")
 	}
 }

@@ -51,9 +51,9 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 						Source: "/bridges/api/config",
 						Method: "PATCH",
 						Fields: []ui.FormField{
-							{Field: "self_name", Label: "Your name", Type: "text", Placeholder: "Sam",
+							{Field: "self_name", Label: "Your name", Type: "text", Placeholder: "e.g. Sam",
 								Help: "How your own messages are labeled in group chats."},
-							{Field: "self_handle", Label: "Your handle", Type: "text", Placeholder: "+15551234567",
+							{Field: "self_handle", Label: "Your handle", Type: "text", Placeholder: "e.g. +15551234567",
 								Help: "Your own phone/email: lets the agent text you directly (notify_me) and resolve \"me\" as a recipient."},
 							{Field: "tag_override", Label: "Outbound name tag (global override)", Type: "text", Placeholder: "(agent's own name)",
 								Help:   "Optional. A deployment-wide signing name, so all agents present as one identity.",
@@ -217,7 +217,7 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 								Invalidate: []string{"/bridges/api/conversations"},
 								Fields: []ui.FormField{
 									{Field: "handle", Label: "Number / handle", Type: "text",
-										Placeholder: "+15551234567"},
+										Placeholder: "e.g. +15551234567"},
 									{Field: "service", Label: "Service", Type: "text", Placeholder: "imessage",
 										Help: "imessage, telegram, slack, …"},
 								},

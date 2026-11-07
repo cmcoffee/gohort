@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/ui"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -80,5 +81,21 @@ func TestAdminSkillEditsKeepWhatTheyDoNotCarry(t *testing.T) {
 	}
 	if s := LoadSkills(db, "root")[0]; len(s.Conditions) != 0 {
 		t.Errorf("an empty list has to clear the conditions: %+v", s.Conditions)
+	}
+}
+
+// On the skill form's conditions, the top line holds the two choices and the
+// question, or the words, gets a line of its own: in the dialog a question
+// beside a hidden column was squeezed to a few characters.
+func TestAConditionsQuestionHasItsOwnLine(t *testing.T) {
+	cols := map[string]ui.FormField{}
+	for _, c := range skillConditionsField().Columns {
+		cols[c.Field] = c
+	}
+	if !cols["question"].OwnLine || !cols["mentions"].OwnLine {
+		t.Errorf("question own line %v, words own line %v", cols["question"].OwnLine, cols["mentions"].OwnLine)
+	}
+	if cols["kind"].OwnLine || cols["check"].OwnLine {
+		t.Error("the two choices should share the top line")
 	}
 }

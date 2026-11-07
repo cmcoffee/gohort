@@ -184,7 +184,11 @@ func TestTheActionLimitsAreAList(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(src)
-	for _, want := range []string{`Source:  ap.patchURL + "/limits"`, `{Field: "action_quotas", Type: "rows"`, `AddLabel:    "+ Add limit"`, `Options: narrowableActionOptions(ap.user)`} {
+	for _, want := range []string{`Source:  ap.patchURL + "/limits"`, `{Field: "action_quotas", Type: "rows"`, `AddLabel:    "+ Add limit"`, `Options: narrowableActionOptions(ap.user)`,
+		// Both halves required, so a row waits until it is whole rather than
+		// being refused while the person is still filling it in.
+		`{Field: "action", Label: "Action", Type: "combo", Width: 3, Required: true,`,
+		`{Field: "limit", Label: "Times per 24 hours", Type: "number", Width: 1, Required: true,`} {
 		if !strings.Contains(s, want) {
 			t.Errorf("page_agent_access.go no longer has %s", want)
 		}

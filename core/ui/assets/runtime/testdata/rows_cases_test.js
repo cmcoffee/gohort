@@ -128,5 +128,30 @@ check('Save from Raw hands back the raw text', saved.length === 1 && saved[0] ==
 v = open('kept');
 check('Cancel saves nothing', !modal.actions[0].onClick && saved.length === 0);
 
+// An empty document opens with a box to write in, and an untouched box
+// still saves as nothing.
+var pure = new Function(sections.slice(0, sections.indexOf('function uiOpenDocEditor')) + '\nreturn {s:uiSerializeSections,st:uiSectionState};')();
+check('an empty document starts with one untitled box', /if \(!secs\.length\) secs\.push\(uiSectionState\(\{title: '', level: 0, lines: \[\]\}, null, false\)\);/.test(sections));
+check('an untouched box saves as nothing', pure.s([pure.st({title: '', level: 0, lines: []}, null, false)]) === '');
+check('alone, the box is labelled Text, not Unsectioned', /\[alone \? 'Text' : 'Unsectioned'\]/.test(sections));
+
+// A required field says so on its label, and a placeholder reads as a hint.
+check('a required field is marked on its label', /if \(f\.required\) labelKids\.push\(el\('span', \{class: 'ui-form-required'\}, \['required'\]\)\);/.test(src));
+check('placeholders are italic and fainter than values', /input::placeholder, textarea::placeholder \{ color: var\(--text-mute\); opacity: 0\.8; font-style: italic; \}/.test(css));
+
+// A row missing a required cell waits: not saved, and it says so.
+var wcols = [{field: 'action', label: 'Action', required: true}, {field: 'limit', label: 'Times', required: true, type: 'number'}, {field: 'note', label: 'Note'}];
+var cols = wcols;
+function cellHidden() { return false; }
+eval(liftBody(src, 'function cellFilled(v) {'));
+eval(liftBody(src, 'function rowMissing(r) {'));
+check('a row with both required cells is complete', rowMissing({action: 'send_email', limit: 3}).length === 0);
+check('a row missing its number waits on it', rowMissing({action: 'send_email', limit: ''}).join() === 'Times');
+check('an untouched row misses both', rowMissing({}).length === 2);
+check('a zero someone typed counts as filled', rowMissing({action: 'a', limit: 0}).length === 0);
+check('only complete rows are saved', /return cols\.some\(function\(c\) \{ return cellFilled\(r\[c\.field\]\); \}\) && rowMissing\(r\)\.length === 0;/.test(src));
+check('an emptied number box is empty, not 0', /\(ctl\.value === '' \? '' : Number\(ctl\.value\)\)/.test(src));
+check('a waiting row says what it waits on', /'Not saved until ' \+ gone\.join\(' and '\)/.test(src));
+
 console.log(fail === 0 ? '\nALL ROWS CASES TESTS PASS' : '\n' + fail + ' FAILURES');
 process.exit(fail ? 1 : 0);

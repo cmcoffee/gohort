@@ -296,10 +296,10 @@ func writeAgent(db Database, a AgentRecord, reason string) (AgentRecord, error) 
 	// decision the caller made: it is the same decision, written by id.
 	a.AllowedDispatchTargets, _ = pinDispatchTargetNames(db, a.Owner, a.AllowedDispatchTargets)
 	if strings.TrimSpace(a.Name) == "" {
-		return a, fmt.Errorf("name is required")
+		return a, fmt.Errorf("name is required: give the agent a name")
 	}
 	if strings.TrimSpace(a.OrchestratorPrompt) == "" {
-		return a, fmt.Errorf("orchestrator_prompt is required")
+		return a, fmt.Errorf("orchestrator prompt is required: say how the agent works")
 	}
 	if err := checkOwnedByChain(db, a); err != nil {
 		return a, err

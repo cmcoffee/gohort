@@ -407,6 +407,11 @@
         if (used[String(sp.title).toLowerCase()]) return;
         secs.push(uiSectionState({title: sp.title, level: level, lines: []}, sp, false));
       });
+      // An empty document with no declared outline starts with one box to
+      // write in, not a bare "+ Add section": most instructions are a few
+      // sentences, and a blank outline asks for a structure before a word.
+      // An untouched box still saves as nothing (uiSerializeSections).
+      if (!secs.length) secs.push(uiSectionState({title: '', level: 0, lines: []}, null, false));
     }
 
     // convert reshapes a section between modes without losing text.
@@ -475,10 +480,15 @@
         // whole thing. Labeling it "Unsectioned" rather than giving it a
         // content-sounding name says what it actually is and hints that
         // it wants breaking up into the slots below.
+        // Alone, it is simply the document; beside headed sections, it is
+        // the part that sits ahead of them.
+        var alone = secs.length === 1;
         head.appendChild(el('span', {
           class: 'ui-sec-title-fixed intro',
-          title: 'Text ahead of the first heading. Move it into sections, or leave it: it stays at the top either way.',
-        }, ['Unsectioned']));
+          title: alone
+            ? 'Write here. Add a section below to break it into headed parts.'
+            : 'Text ahead of the first heading. Move it into sections, or leave it: it stays at the top either way.',
+        }, [alone ? 'Text' : 'Unsectioned']));
       } else if (s.spec) {
         head.appendChild(el('span', {class: 'ui-sec-title-fixed'}, [s.title]));
       } else {

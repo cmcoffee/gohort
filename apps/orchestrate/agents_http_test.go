@@ -54,7 +54,7 @@ func TestTheLimitsListRoundTrips(t *testing.T) {
 		{`{"action_quotas":[{"action":"send_email","limit":1.5}]}`, "how many times"},
 		{`{"action_quotas":[{"action":"","limit":4}]}`, "name the action"},
 	} {
-		if w := patchAs(app, user, "/api/agents/a1", bad.body); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), bad.want) {
+		if w := patchAs(app, user, "/api/agents/a1", bad.body); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), bad.want) || strings.Contains(w.Body.String(), "bad field value") {
 			t.Errorf("%s: %d %s", bad.body, w.Code, w.Body.String())
 		}
 	}

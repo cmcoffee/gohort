@@ -2547,7 +2547,13 @@
         return fieldWrap;
       }
 
-      if (f.label) fieldWrap.appendChild(window.uiAttachInfo(el('label', {class: 'ui-form-label'}, [f.label]), f.detail));
+      if (f.label) {
+        // A required field says so before Save does: finding out from a
+        // failed save, after filling in everything else, is the slow way.
+        var labelKids = [f.label];
+        if (f.required) labelKids.push(el('span', {class: 'ui-form-required'}, ['required']));
+        fieldWrap.appendChild(window.uiAttachInfo(el('label', {class: 'ui-form-label'}, labelKids), f.detail));
+      }
 
       var input;
       // toggleHandled — set by the 'toggle' branch when it has already
@@ -2890,15 +2896,26 @@
         var body = el('div', {});
         input.appendChild(body);
 
+        // rowMissing lists the required cells a row has not filled in yet,
+        // among the ones it shows. A row still missing one is not saved: on
+        // a form that saves as you go, sending it would have the server
+        // refuse the row while the person is still filling it in, the
+        // moment they tab from its first box to its second.
+        function cellFilled(v) {
+          return v !== undefined && v !== null && String(v).trim() !== '' && v !== false;
+        }
+        function rowMissing(r) {
+          return cols.filter(function(c) {
+            return c.required && !cellHidden(c, r) && !cellFilled(r[c.field]);
+          }).map(function(c) { return c.label || c.field; });
+        }
         function persistRows() {
           // Drop rows where every declared column is blank. A row someone
           // added and walked away from is not data, and saving it makes
           // the next validation complain about a field nobody filled in.
+          // And rows still missing a required cell, which wait (rowMissing).
           var clean = rowsVal.filter(function(r) {
-            return cols.some(function(c) {
-              var v = r[c.field];
-              return v !== undefined && v !== null && String(v).trim() !== '' && v !== false;
-            });
+            return cols.some(function(c) { return cellFilled(r[c.field]); }) && rowMissing(r).length === 0;
           });
           save(f.field, clean);
           syncAddBlocked();
@@ -2943,8 +2960,19 @@
             // commits through the closure below, so a change that flips
             // a condition redraws and one that does not costs nothing.
             var shapeAtDraw = rowShape(row);
+            // The row says it is not saved yet while a required cell is
+            // empty, and stops saying so the moment it is filled.
+            var waitNote = el('div', {class: 'ui-rows-waiting'});
+            var syncWait = function() {
+              var gone = rowMissing(row);
+              var started = cols.some(function(c) { return cellFilled(row[c.field]); });
+              waitNote.textContent = gone.length && started ? 'Not saved until ' + gone.join(' and ') + (gone.length > 1 ? ' are' : ' is') + ' filled in.' : '';
+              waitNote.style.display = waitNote.textContent ? '' : 'none';
+            };
+            syncWait();
             function commit() {
               persistRows();
+              syncWait();
               if (rowShape(row) !== shapeAtDraw) drawRows();
             }
             cols.forEach(function(c) {
@@ -3078,7 +3106,9 @@
                 var cellVal = row[c.field];
                 ctl.value = cellVal === undefined || cellVal === null ? '' : (Array.isArray(cellVal) ? cellVal.join(', ') : String(cellVal));
                 ctl.addEventListener('input', function() {
-                  row[c.field] = c.type === 'number' ? Number(ctl.value) : ctl.value;
+                  // An emptied number box is empty, not 0: a required
+                  // number left blank must read as missing, not as zero.
+                  row[c.field] = c.type === 'number' ? (ctl.value === '' ? '' : Number(ctl.value)) : ctl.value;
                 });
                 // Commit on blur rather than per keystroke: a row edit is
                 // a whole-array save, and one POST per character would be
@@ -3122,7 +3152,9 @@
             if (wide.length === 0) {
               top.style.marginBottom = '0.3rem';
               body.appendChild(top);
+              body.appendChild(waitNote);
             } else {
+              wide.push(waitNote);
               // A row that spans lines needs to read as ONE row, so it
               // gets a block of its own with a rule under it. Without
               // that, a three-line row and the next row's first line are

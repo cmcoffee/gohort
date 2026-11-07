@@ -663,9 +663,9 @@ func (ap *accessPage) limitsSections() []ui.Section {
 						Help:        "How often one action may run in a rolling 24 hours.",
 						Detail:      "Name a grouped tool's action (moltbook/create_post) or a whole tool (send_email). The action wins where both are set.",
 						Columns: []ui.FormField{
-							{Field: "action", Label: "Action", Type: "combo", Width: 3, Placeholder: "moltbook/create_post",
+							{Field: "action", Label: "Action", Type: "combo", Width: 3, Required: true, Placeholder: "e.g. moltbook/create_post",
 								Options: narrowableActionOptions(ap.user)},
-							{Field: "limit", Label: "Times per 24 hours", Type: "number", Width: 1, Placeholder: "6"},
+							{Field: "limit", Label: "Times per 24 hours", Type: "number", Width: 1, Required: true, Placeholder: "e.g. 6"},
 						}},
 					{Field: "daily_spend_usd", Type: "number", Label: "Spend limit (US$ per 24 hours)", Min: 0, Max: 1000,
 						Placeholder: "0",
