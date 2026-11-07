@@ -47,9 +47,9 @@ var adminLayout = []struct {
 	}},
 	{"Models", []string{"Worker LLM", "Lead LLM", "Model Privacy", "LLM Routing", "Local Model Scheduler"}},
 	// System Hooks first: the settings below it are what some of its rows
-	// point to.
+	// point to. The Keystore next: the keys every page below names.
 	{"Services", []string{
-		"System Hooks", "Embeddings", "Audio Transcription (STT)", "Speech (TTS)", "Image Generation",
+		"System Hooks", "Keystore", "Embeddings", "Audio Transcription (STT)", "Speech (TTS)", "Image Generation",
 		"Music", "Web Search", "Page Rendering (Browser)", "Mail (SMTP)", "Research Sources",
 		"Connectors", "Templates",
 	}},
@@ -433,6 +433,7 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 		{"governance", a.governanceSections},
 		{"extensions", a.extensionsSections},
 		{"research-sources", a.researchSourcesSections},
+		{"keystore", a.keystoreSections},
 		{"tools", a.toolsSections},
 		{"skills", a.skillsSections},
 	} {
@@ -446,7 +447,7 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 		"System Status": true, "Users": true, "LLM Routing": true, "Activity Log": true,
 		"Cost History (Last 30 Days)": true, "Cost by source": true, "Scheduled Tasks": true,
 		"API Credentials": true, "MCP Servers": true, "Connectors": true, "Other integrations": true, "Research Sources": true,
-		"Drafted tools waiting for review": true, "Users' tools": true, "System Hooks": true,
+		"Keystore": true, "Drafted tools waiting for review": true, "Users' tools": true, "System Hooks": true,
 		"Requests to share": true, "Shared tools": true,
 		"Agent-Scoped Tools": true, "Orphaned Tools": true,
 		"Skills": true, "Teams": true, "People outside gohort": true,
