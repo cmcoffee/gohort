@@ -75,3 +75,25 @@ func TestARunCarriesTheAgentsCaps(t *testing.T) {
 		t.Error("the duplicate-send guard is off")
 	}
 }
+
+// The agents tool's run gets what the sync dispatch gives its run. It went
+// without: a file it delivered or a task it detached read to the judges as
+// nothing done, and with only the brief and the reply saved on its thread, a
+// dead endpoint was re-learned on every follow-up.
+func TestARunGetsTheDispatchExtras(t *testing.T) {
+	_, turn, _ := inlineRun(t)
+	target := AgentRecord{ID: "scout-id", Name: "Scout", Owner: "u"}
+	sub := &chatTurn{app: turn.app, user: turn.user, udb: turn.udb, agent: target, ctx: t.Context(), sse: turn.sse}
+	ar := &agentsRun{t: turn, target: target, subTurn: sub, subSess: &ToolSession{Username: "u"}, subSessID: "thread-1", ctx: t.Context()}
+	ar.configureLoop()
+	cfg := ar.runCfg
+	if cfg.DeliveredCount == nil || cfg.Backgrounded == nil || cfg.BackgroundEstimate == nil {
+		t.Error("the judges cannot see delivered files or background work")
+	}
+	if cfg.BeforeToolRound == nil || cfg.PriorReports == nil {
+		t.Error("the image snapshot or a Cortex agent's prior reports are missing")
+	}
+	if want := failureMemoryKey("scout-id", "thread-1"); cfg.FailureMemoryKey != want {
+		t.Errorf("failure memory key %q, want %q (kept per thread)", cfg.FailureMemoryKey, want)
+	}
+}

@@ -1776,6 +1776,21 @@ func (ar *agentsRun) configureLoop() {
 		// dispatched Builder's claims went to the caller unread.
 		TurnClaimJudge: ar.subTurn.claimJudge(ar.ctx),
 		BackgroundWork: backgroundWorkOf(ar.subSess, func() string { return "" }),
+		// What the sync dispatch already gives its run, which this inline twin
+		// went without: the files it delivered and whether work went to the
+		// background (so the judges do not read a sent file or a detached task
+		// as nothing done), the image refs before each tool round, the facts it
+		// holds unverified, a Cortex agent's recent reports, and a memory of
+		// what failed on this thread. Its saved thread keeps only the brief and
+		// the reply, so without that memory a dead endpoint is re-learned on
+		// every follow-up.
+		DeliveredCount:     func() int { return len(ar.subSess.Images) + len(ar.subSess.Videos) + len(ar.subSess.Files) },
+		Backgrounded:       func() bool { return ar.subSess.Detach.Any() },
+		BackgroundEstimate: func() string { return ar.subSess.Detach.EstimateText() },
+		BeforeToolRound:    func() { SnapshotImageRefs(ar.subSess) },
+		UncheckedClaims:    UncheckedFactNotes(ar.subFacts),
+		PriorReports:       func() []string { return dispatchPriorReports(ar.target, ar.subSessID, t.udb) },
+		FailureMemoryKey:   failureMemoryKey(ar.target.ID, ar.subSessID),
 		// What the machine's steps did before the loop ran, as on the web turn,
 		// so a reply relaying a step's findings is not convicted as unsupported.
 		PriorWork: ar.subTurn.priorWorkForJudge,
