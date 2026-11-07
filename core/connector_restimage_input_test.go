@@ -17,6 +17,7 @@ package core
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -270,5 +271,25 @@ func TestCascadeImageCounts(t *testing.T) {
 	}
 	if got, want := cascadeImageCounts(2), []int{2, 3, 4, 5, 6, 7}; !reflect.DeepEqual(got, want) {
 		t.Errorf("cascadeImageCounts(2) = %v, want %v", got, want)
+	}
+}
+
+// An edit on a connector's edit backend (Gemini) passes the preflight a task
+// runs before it detaches: held to that backend's own picture count and to
+// having no mask, never refused as "not a ComfyUI or REST image backend",
+// which is what stopped every Gemini edit and blend before it ran.
+func TestTheEditPreflightTakesAConnectorsEditor(t *testing.T) {
+	RegisterImageEditBackend("zz-gemini", 3, func(*ToolSession, string, [][]byte) (*ImageGenResult, error) { return nil, nil })
+	t.Cleanup(func() { RegisterImageEditBackend("zz-gemini", 0, nil) })
+	sess := &ToolSession{}
+	err := CheckImageInputs(sess, "zz-gemini", []string{"image#1"}, "")
+	if err != nil && strings.Contains(err.Error(), "not a ComfyUI") {
+		t.Fatalf("a connector's editor was refused for its kind: %v", err)
+	}
+	if err := CheckImageInputs(sess, "zz-gemini", []string{"a", "b", "c", "d"}, ""); err == nil || !strings.Contains(err.Error(), "at most 3") {
+		t.Errorf("four pictures for a three-picture editor: %v", err)
+	}
+	if err := CheckImageInputs(sess, "zz-gemini", []string{"a"}, "mask.png"); err == nil || !strings.Contains(err.Error(), "no mask") {
+		t.Errorf("a mask for an editor with none: %v", err)
 	}
 }

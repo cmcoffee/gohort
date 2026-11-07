@@ -274,6 +274,21 @@ func CheckImageInputs(sess *ToolSession, backend string, refs []string, mask str
 	if len(refs) == 0 && strings.TrimSpace(mask) == "" {
 		return nil
 	}
+	// Another kind's edit backend (a service connector such as Gemini): its
+	// own picture count and no mask, as RunImageEdit holds it to. Asking
+	// resolveImageConnector refused every one of them here as "not a ComfyUI
+	// or REST image backend", so an edit or blend on Gemini failed before
+	// it ran.
+	if eb, ok := lookupImageEditBackend(backend); ok {
+		if strings.TrimSpace(mask) != "" {
+			return fmt.Errorf("image backend %q has no mask input: omit mask", backend)
+		}
+		if len(refs) > eb.max {
+			return fmt.Errorf("image backend %q combines at most %d pictures and %d were given. Do NOT retry with fewer and present it as what was asked for: tell the user it takes %d at a time", backend, eb.max, len(refs), eb.max)
+		}
+		_, err := resolveInputImages(sess, refs, eb.max)
+		return err
+	}
 	s, err := resolveImageConnector(backend)
 	if err != nil {
 		return err
