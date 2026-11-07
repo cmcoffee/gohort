@@ -461,15 +461,16 @@ func TestAComfyUIConnectionIsConfiguredFromImageGeneration(t *testing.T) {
 	}
 }
 
-// The backend list's rows carry the Connectors table's own actions, so the two
-// open one editor, and an edit from either reloads both.
+// The backend list's rows carry their role buttons, then the Connectors
+// table's own actions, so the two open one editor, and an edit from either
+// reloads both.
 func TestTheBackendListSharesTheConnectorActions(t *testing.T) {
 	tbl := imageBackendsTable()
 	var labels []string
 	for _, act := range tbl.RowActions {
 		labels = append(labels, act.Label)
 	}
-	if got := strings.Join(labels, ","); got != "Edit,✨ Edit,✨ Fix,Settings,Test" {
+	if got := strings.Join(labels, ","); got != "Make default,Offer to agents,Stop offering,Stop using,Edit,✨ Edit,✨ Fix,Settings,Test" {
 		t.Errorf("row actions = %s", got)
 	}
 	if !slices.Contains(connectorListSources, imageBackendsSource) || !slices.Contains(connectorListSources, "api/connectors") {

@@ -162,7 +162,7 @@ func TestAJobThatCanBeOffStartsWithDisabled(t *testing.T) {
 	saved := RootDB
 	RootDB = &DBase{Store: kvlite.MemStore()}
 	t.Cleanup(func() { RootDB = saved })
-	for name, fields := range map[string]func() []ui.FormField{"images": imageFormFields, "embeddings": embeddingFormFields,
+	for name, fields := range map[string]func() []ui.FormField{"embeddings": embeddingFormFields,
 		"transcription": transcribeFormFields, "speech": speechFormFields, "web search": webSearchFormFields} {
 		f, ok := findField(fields(), "provider")
 		if !ok || len(f.Options) == 0 || f.Options[0].Value != "none" || f.Options[0].Label != "Disabled" {
@@ -229,12 +229,12 @@ func TestImageGenerationTakesAConnectorThatMakesPictures(t *testing.T) {
 		"operations":{"embed":{"method":"POST","path":"/v1/embeddings","body":{"input":"{texts}"}}}},
 		"provides":[{"capability":"embed.text","steps":[{"call":"embed"}],"output":{"vectors":{"path":"data","each":"embedding"}}}]}`
 	SaveConnector(RootDB, Connector{Name: "vectors", Kind: "service", Spec: json.RawMessage(embedSpec)})
-	f := imageFormFields()
-	if len(f) != 2 || f[0].Field != "_stale" || !strings.Contains(f[1].Help, "+ Add another…") || !strings.Contains(f[1].Help, "Admin > Integrations > Peers") {
-		t.Errorf("with nothing that makes pictures: %+v", f)
+	backends := func() []imageBackendRow {
+		rows, _ := a.handleImageBackends(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/image-backends", nil)})
+		return rows.([]imageBackendRow)
 	}
-	if got := choicesOf(t, f[1], "image.generate"); len(got) != 0 {
-		t.Errorf("with nothing that makes pictures, the choices: %+v", got)
+	if got := backends(); len(got) != 0 {
+		t.Errorf("with nothing that makes pictures, the list: %+v", got)
 	}
 	if w := call("GET", "/api/image-gen", ""); strings.TrimSpace(w.Body.String()) != `{"agents":[],"provider":"none"}` {
 		t.Errorf("never set: %s", w.Body.String())
@@ -254,12 +254,8 @@ func TestImageGenerationTakesAConnectorThatMakesPictures(t *testing.T) {
 	SaveConnector(RootDB, Connector{Name: "painter", Kind: "service", Spec: json.RawMessage(spec)})
 	t.Cleanup(func() { UnapproveConnector(RootDB, "painter"); UnapproveConnector(RootDB, "sketcher") })
 	SaveConnector(RootDB, Connector{Name: "sketcher", Kind: "service", Spec: json.RawMessage(strings.Replace(spec, "/v1/images", "/v2/images", 1))})
-	f = imageFormFields()
-	if len(f) != 3 || !strings.Contains(f[1].Detail, "Admin > Integrations > Peers") || f[2].Field != "agents" || len(f[2].Options) != 2 {
-		t.Errorf("with a connector to choose: %+v", f)
-	}
-	if got := choicesOf(t, f[1], "image.generate"); len(got) != 2 || got[0].Value != "painter" {
-		t.Errorf("with a connector to choose, the choices: %+v", got)
+	if got := backends(); len(got) != 2 || !got[0].IsUnused || !got[1].IsUnused {
+		t.Errorf("with two that make pictures, the list: %+v", got)
 	}
 	if w := call("POST", "/api/image-gen", `{"provider":"painter","agents":["sketcher","vectors"]}`); w.Code != http.StatusBadRequest {
 		t.Errorf("a connector that does not make pictures offered to agents: %d", w.Code)
@@ -286,6 +282,30 @@ func TestImageGenerationTakesAConnectorThatMakesPictures(t *testing.T) {
 	}
 	if w := call("POST", "/api/image-gen/test", `{"provider":"painter"}`); !strings.Contains(w.Body.String(), "is ready") {
 		t.Errorf("tested: %s", w.Body.String())
+	}
+	// A row's buttons: Make default keeps the one it replaces offered by
+	// name; Stop using leaves no default; Offer to agents and Stop offering
+	// change only the offered list.
+	if w := call("POST", "/api/image-backends/role?name=sketcher&role=default", ""); w.Code >= 300 {
+		t.Fatalf("make default: %d %s", w.Code, w.Body.String())
+	}
+	if w := call("GET", "/api/image-gen", ""); strings.TrimSpace(w.Body.String()) != `{"agents":["painter"],"provider":"sketcher"}` {
+		t.Errorf("after Make default: %s", w.Body.String())
+	}
+	if got := backends(); len(got) != 2 || got[0].Name != "sketcher" || !got[0].IsDefault || !got[1].IsOffered {
+		t.Errorf("the list after Make default: %+v", got)
+	}
+	if w := call("POST", "/api/image-backends/role?name=nothing&role=default", ""); w.Code != http.StatusBadRequest {
+		t.Errorf("a role for a backend that is not there: %d", w.Code)
+	}
+	call("POST", "/api/image-backends/role?name=painter&role=off", "")
+	call("POST", "/api/image-backends/role?name=sketcher&role=off", "")
+	if w := call("GET", "/api/image-gen", ""); strings.TrimSpace(w.Body.String()) != `{"agents":[],"provider":"none"}` {
+		t.Errorf("after Stop using and Stop offering: %s", w.Body.String())
+	}
+	call("POST", "/api/image-backends/role?name=sketcher&role=offered", "")
+	if w := call("GET", "/api/image-gen", ""); strings.TrimSpace(w.Body.String()) != `{"agents":["sketcher"],"provider":"none"}` {
+		t.Errorf("after Offer to agents: %s", w.Body.String())
 	}
 	if w := call("POST", "/api/image-gen", `{"provider":"none"}`); w.Code >= 300 || a.storedString(ImageTable, "provider") != "none" {
 		t.Errorf("turning it off: %d", w.Code)

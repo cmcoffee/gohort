@@ -545,7 +545,12 @@ const templateInstallAction = `function(ctx){
   fetch('api/templates/recipe?id=' + encodeURIComponent(r.id), {credentials:'same-origin', cache:'no-store'})
     .then(function(res){ return res.text().then(function(t){ if(!res.ok) throw new Error(t || ('HTTP ' + res.status)); return JSON.parse(t); }); })
     .then(function(rec){
-      window.uiOpenSimpleModal({title: 'Add ' + (rec.title || r.title), width: '600px', mount: function(body, dlg){
+      // Once something was added from a page's "+ Add another...", the page
+      // is brought up to date however the dialog closes: by its button, or
+      // by Close or the cross, which used to leave the page's list without it.
+      var addedNow = null, finished = false;
+      function finish(){ if (finished || !addedNow || !ctx.onDone) return; finished = true; ctx.onDone(addedNow); }
+      window.uiOpenSimpleModal({title: 'Add ' + (rec.title || r.title), width: '600px', onClose: finish, mount: function(body, dlg){
         function note(text, style){ body.appendChild(el('p', {style: 'margin:0 0 0.6rem;font-size:var(--fs-sm, 0.86rem);line-height:1.45;' + (style || 'color:var(--text-mute)'), text: text})); }
         if (rec.description) note(rec.description, 'color:var(--text)');
         if (rec.setup_notes) note(rec.setup_notes);
@@ -592,7 +597,7 @@ const templateInstallAction = `function(ctx){
         var added = null;
         go.addEventListener('click', function(){
           // Once added, from a page's "+ Add another…", the button goes back.
-          if (added) { if (ctx.onDone) ctx.onDone(added); return; }
+          if (added) { finish(); return; }
           var answers = {};
           Object.keys(inputs).forEach(function(k){ answers[k] = inputs[k].value; });
           go.disabled = true; out.textContent = 'Adding...';
@@ -607,10 +612,10 @@ const templateInstallAction = `function(ctx){
               if (ctx.onDone) lines.push('', 'It joins the list once this page reloads: choose it there and save.');
               out.textContent = lines.join('\n');
               go.textContent = 'Done'; go.disabled = true;
-              if (window.uiInvalidate) window.uiInvalidate(['api/connectors','api/persistent-tools','api/secure-api','api/skills','api/templates']);
+              if (window.uiInvalidate) window.uiInvalidate(['api/connectors','api/image-backends','api/keystore','api/persistent-tools','api/secure-api','api/skills','api/templates']);
               // Opened from a page's "+ Add another…": the button goes back
               // to the page, reloaded so its list holds what was added.
-              if (ctx.onDone) { added = d; go.textContent = 'Back to the list'; go.disabled = false; }
+              if (ctx.onDone) { added = d; addedNow = d; go.textContent = 'Back to the list'; go.disabled = false; }
             })
             .catch(function(e){ go.disabled = false; out.textContent = 'Not added: ' + ((e && e.message) || e); });
         });
@@ -628,7 +633,11 @@ const templateInstallAction = `function(ctx){
 // with Add…, which asks its questions and adds the connector; the page then
 // reloads, so its list holds it.
 const connectorAddAnotherAction = `function(ctx){
-  var need = ctx && ctx.value;
+  // From a select's "+ Add another..." (ctx.value), whose page reloads so its
+  // choices hold what was added; or from a list's toolbar button
+  // (ctx.action.data), whose lists refresh in place.
+  var fromList = !(ctx && ctx.value);
+  var need = (ctx && ctx.value) || (ctx && ctx.action && ctx.action.data);
   if(!need || !window.uiOpenSimpleModal){ return; }
   var el = window.uiEl;
   fetch('api/templates/for?need=' + encodeURIComponent(need), {credentials:'same-origin', cache:'no-store'})
@@ -646,7 +655,10 @@ const connectorAddAnotherAction = `function(ctx){
             var install = window.UIClientActions && window.UIClientActions.template_install;
             if (typeof install !== 'function') return;
             if (dlg && dlg.close) dlg.close();
-            install({record: {id: r.id, title: r.title}, onDone: function(){ location.reload(); }});
+            install({record: {id: r.id, title: r.title}, onDone: function(){
+              if (fromList && window.uiInvalidate) { window.uiInvalidate(['api/connectors','api/image-backends','api/keystore']); return; }
+              location.reload();
+            }});
           });
           var text = el('div', {style: 'flex:1;min-width:0'}, [
             el('div', {style: 'font-weight:600', text: r.title}),

@@ -1564,6 +1564,7 @@
       subtitle: opts.subtitle,
       width: opts.width || '680px',
       closeLabel: opts.closeLabel || 'Close',
+      onClose: opts.onClose,
       mount: function(body, api) {
         // Preserve the legacy dlg.close()/dlg.remove() idiom: both tear the
         // whole overlay down, not just the inner card.

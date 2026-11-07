@@ -53,6 +53,8 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 	// the list under Image Generation's picker, so a backend is configured
 	// from the page that chooses it.
 	sub.HandleFunc("/"+imageBackendsSource, jsonapi.Get(a.db, a.handleImageBackends, a.gate()))
+	// A row's role: the default, offered to agents, or not offered.
+	sub.HandleFunc("/"+imageBackendsSource+"/role", jsonapi.Post(a.db, a.handleImageBackendRole, a.gate()))
 
 	// Music: the music connectors offered to agents as tools.
 	sub.HandleFunc("/api/music", jsonapi.Methods{
@@ -340,12 +342,17 @@ type imageBackendRow struct {
 	Name    string `json:"name"`
 	Title   string `json:"title"`
 	Summary string `json:"summary"`
-	// Role is how Image Generation uses it: "default" (the picker's choice),
-	// "offered" (also offered to agents), or "unused".
-	Role  string `json:"role"`
-	Does  string `json:"does"`
-	Size  string `json:"size"`
-	Steps string `json:"steps,omitempty"`
+	// Role is how Image Generation uses it: "default" (what agents' image
+	// tools use unless told otherwise), "offered" (agents may choose it by
+	// name), or "unused". IsDefault, IsOffered and IsUnused say the same for
+	// the row's buttons.
+	Role      string `json:"role"`
+	IsDefault bool   `json:"is_default,omitempty"`
+	IsOffered bool   `json:"is_offered,omitempty"`
+	IsUnused  bool   `json:"is_unused,omitempty"`
+	Does      string `json:"does"`
+	Size      string `json:"size"`
+	Steps     string `json:"steps,omitempty"`
 	// What its row can do, set exactly as a Connectors row's are, so it opens
 	// the same editor there and here.
 	EditForm    bool   `json:"edit_form,omitempty"`
@@ -376,9 +383,11 @@ func (a *AdminApp) handleImageBackends(c *jsonapi.Call) (any, error) {
 			HasSettings: conn.Kind == service.Kind, LastError: conn.LastError}
 		switch {
 		case conn.Name == provider:
-			row.Role = "default"
+			row.Role, row.IsDefault = "default", true
 		case slices.Contains(agents, conn.Name):
-			row.Role = "offered"
+			row.Role, row.IsOffered = "offered", true
+		default:
+			row.IsUnused = true
 		}
 		row.EditForm, row.EditSpec, row.NeedsFix = connectorEditors(conn)
 		if service.Testable(conn) {
@@ -389,6 +398,54 @@ func (a *AdminApp) handleImageBackends(c *jsonapi.Call) (any, error) {
 	rank := map[string]int{"default": 0, "offered": 1, "unused": 2}
 	sort.SliceStable(rows, func(i, j int) bool { return rank[rows[i].Role] < rank[rows[j].Role] })
 	return rows, nil
+}
+
+// handleImageBackendRole changes how Image Generation uses backend ?name=
+// (?role=): "default" makes it what agents' image tools use unless told
+// otherwise, keeping the one it replaces offered by name; "offered" lets
+// agents choose it by name; "off" stops using it (the default off leaves no
+// default). The row's buttons send it; the save is the page's own, so it
+// accepts a change waiting on the backend as the page's save does.
+func (a *AdminApp) handleImageBackendRole(c *jsonapi.Call, _ struct{}) (any, error) {
+	q := c.R.URL.Query()
+	name, role := strings.TrimSpace(q.Get("name")), strings.TrimSpace(q.Get("role"))
+	if !imageConnector(name) && !ImageBackendRegistered(name) {
+		return nil, jsonapi.BadRequest("no image backend named " + name)
+	}
+	provider := a.storedString(ImageTable, "provider")
+	if provider == "none" {
+		provider = "" // off, as the old form stored it
+	}
+	var agents []string
+	if a.db != nil {
+		a.db.Get(ImageTable, "agents", &agents)
+	}
+	agents = slices.DeleteFunc(agents, func(n string) bool { return n == name })
+	switch role {
+	case "default":
+		if provider != "" && provider != name && !slices.Contains(agents, provider) {
+			agents = append(agents, provider)
+		}
+		provider = name
+	case "offered":
+		if provider == name {
+			provider = ""
+		}
+		agents = append(agents, name)
+	case "off":
+		if provider == name {
+			provider = ""
+		}
+	default:
+		return nil, jsonapi.BadRequest("role is default, offered or off")
+	}
+	if a.db != nil {
+		a.db.Set(ImageTable, "provider", provider)
+		a.db.Set(ImageTable, "agents", agents)
+	}
+	acceptChanges(name)
+	adminChange(c.R, activity.Settings, "image backend %s: %s (default=%q, offered: %s)", name, role, provider, strings.Join(agents, ", "))
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // imageBackendListed is a connector the picker offers: every image

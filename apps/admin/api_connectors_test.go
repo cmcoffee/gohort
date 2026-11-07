@@ -76,8 +76,9 @@ func TestAServiceConnectorRowAndThePicker(t *testing.T) {
 		t.Errorf("status %q, has health %v", status, hasHealth)
 	}
 	offered := func() bool {
-		for _, o := range imageFormFields()[1].Options {
-			if o.Value == "acme-images" {
+		rows, _ := (&AdminApp{db: RootDB}).handleImageBackends(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/image-backends", nil)})
+		for _, r := range rows.([]imageBackendRow) {
+			if r.Name == "acme-images" {
 				return true
 			}
 		}

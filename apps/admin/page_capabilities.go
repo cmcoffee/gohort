@@ -2,7 +2,6 @@ package admin
 
 import (
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -55,22 +54,18 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		{
 			Title:    "Image Generation",
 			Subtitle: "Image generation for tools that produce illustrations or thumbnails.",
-			Detail:   "Every picture comes from a connector chosen here: Gemini or OpenAI added from their templates, a local ComfyUI or Automatic1111, a peer's renderer, or any backend declared as a spec.\n\nThe list below is every image backend: which is the default, which are offered to agents, what each does and how its size and steps are decided. Edit on a row opens that backend's own editor (for ComfyUI, its workflow and how it is mapped), the same one its row under Connectors opens.\n\nUse “Add image backend” to stand up a local ComfyUI or A1111 in one step.",
+			Detail: "Every image backend is listed here: Gemini or OpenAI added from their templates, a local ComfyUI or Automatic1111, a peer's renderer, or any backend declared as a spec.\n\n" +
+				"Each has a role. The Default is what agents' image tools use unless they ask for another; Offered to agents can be asked for by name; Not offered is not used. Make default, Offer to agents and Stop offering on a row change it.\n\n" +
+				"A backend's own settings (its key, its model) are on its row's Settings, and its key can come from Services > Keystore. Edit opens its editor (for ComfyUI, its workflow and how it is mapped), the same one its row under Connectors opens. Test renders a picture.\n\n" +
+				"Add from a template adds Gemini, OpenAI and the rest; Add image backend stands up a local ComfyUI or A1111 in one step.",
 			Body: ui.Stack{
 				Children: []ui.Component{
-					ui.FormPanel{
-						Assist:    true,
-						Source:    "api/image-gen",
-						TestURL:   "api/image-gen/test",
-						TestLabel: "Test",
-						Fields:    imageFormFields(),
-						// Which backend is the default, and which are offered,
-						// is the list's Role column.
-						Invalidate: []string{imageBackendsSource},
-					},
 					imageBackendsTable(),
 					ui.Toolbar{
-						Actions: []ui.ToolbarAction{{Label: "Add image backend…", Method: "client", URL: "add_image_backend"}},
+						Actions: []ui.ToolbarAction{
+							{Label: "Add from a template…", Method: "client", URL: "connector_add_another", Data: "image.generate", Variant: "primary"},
+							{Label: "Add image backend…", Method: "client", URL: "add_image_backend"},
+						},
 					},
 				},
 			},
@@ -173,42 +168,15 @@ func imageBackendsTable() ui.Table {
 			{Field: "summary", Label: "", Mute: true, Flex: 4, Line: 2},
 			{Field: "last_error", Label: "", Mute: true, Flex: 4, Line: 2},
 		},
-		RowActions: append(append([]ui.RowAction{}, connectorEditRowActions()...),
-			connectorSettingsAction(), connectorTestAction()),
-		EmptyText: "No image backend yet. Add image backend… stands up a local ComfyUI or A1111; + Add another… above adds one from a template.",
+		RowActions: append(append([]ui.RowAction{
+			{Type: "button", Label: "Make default", PostTo: imageBackendsSource + "/role?name={name}&role=default", Method: "POST", HideIf: "is_default", Variant: "primary"},
+			{Type: "button", Label: "Offer to agents", PostTo: imageBackendsSource + "/role?name={name}&role=offered", Method: "POST", OnlyIf: "is_unused"},
+			{Type: "button", Label: "Stop offering", PostTo: imageBackendsSource + "/role?name={name}&role=off", Method: "POST", OnlyIf: "is_offered"},
+			{Type: "button", Label: "Stop using", PostTo: imageBackendsSource + "/role?name={name}&role=off", Method: "POST", OnlyIf: "is_default",
+				Confirm: "Stop using the default image backend? Agents' image tools then use another only when they name one that is offered."},
+		}, connectorEditRowActions()...), connectorSettingsAction(), connectorTestAction()),
+		EmptyText: "No image backend yet. Add from a template… below adds Gemini, OpenAI and more; Add image backend… stands up a local ComfyUI or A1111.",
 	}
-}
-
-// imageFormFields builds the Image Generation settings: the connector that
-// makes pictures, chosen from every one that does (a service giving
-// image.generate or image.edit, or a peer's renderer), or Disabled.
-// A new connector appears here with no edit.
-func imageFormFields() []ui.FormField {
-	var opts []ui.SelectOption
-	for _, c := range ListConnectors(RootDB) {
-		// Every image connector (choosing it here references it), and any
-		// other backend already registered.
-		if imageBackendListed(c) {
-			label := connectorLabel(c)
-			if _, waiting := service.PendingChange(RootDB, c.Name); waiting {
-				label += " (changed, waiting to be accepted)"
-			}
-			opts = append(opts, ui.SelectOption{Value: c.Name, Label: label, Help: ConnectorSummary(c)})
-		}
-	}
-	f := ui.FormField{Field: "provider", Label: "Make pictures with", Type: "select",
-		Options: append(append([]ui.SelectOption{disabledOption}, opts...), addAnother("image.generate"))}
-	if len(opts) == 0 {
-		f.Help = "Nothing here makes pictures yet: + Add another… adds one from a template (Gemini, OpenAI, ComfyUI, Automatic1111), or connect a peer that lends image generation (Admin > Integrations > Peers)."
-		return []ui.FormField{staleField, f}
-	}
-	f.Help = "The connector that makes pictures; + Add another… adds one from a template. Its settings (an address, a model, a key) are set here below it."
-	f.Detail = "A peer that lends image generation is connected under Admin > Integrations > Peers. A connector changed by someone who is not an administrator is held, so no call reaches it: read the change on its row, then save here with it chosen to accept it."
-	agents := ui.FormField{Field: "agents", Label: "Also offered to agents", Type: "checklist", Options: opts,
-		Help:   "Other image connectors agents may choose by name, and peers borrowing image generation. The one above is always offered.",
-		Detail: "Agents' image tools, and a backend's own generate_image_<name> tool, reach only the connector above and the ones ticked here. They offer the connector above as the default and these by name; a peer that borrows image generation from this machine may name them too."}
-	fields := append([]ui.FormField{staleField, f}, connectorSettingsFields("image.generate", "", "provider")...)
-	return append(fields, agents)
 }
 
 // databaseBrowserCard is the read-only kvlite table/key/record browser.
