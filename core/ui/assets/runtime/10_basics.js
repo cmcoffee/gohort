@@ -3073,7 +3073,10 @@
                   class: 'ui-input',
                   placeholder: c.placeholder || c.label || c.field,
                 });
-                ctl.value = row[c.field] === undefined || row[c.field] === null ? '' : String(row[c.field]);
+                // A list held in a text cell (a field's choices) reads as one
+                // comma-separated line; the server splits it back.
+                var cellVal = row[c.field];
+                ctl.value = cellVal === undefined || cellVal === null ? '' : (Array.isArray(cellVal) ? cellVal.join(', ') : String(cellVal));
                 ctl.addEventListener('input', function() {
                   row[c.field] = c.type === 'number' ? Number(ctl.value) : ctl.value;
                 });
@@ -3162,6 +3165,21 @@
         drawRows();
         input.appendChild(addBtn);
         input.appendChild(addNote);
+        // A value set from outside (✨ Suggest): an array of rows, or a JSON
+        // string of one. Without a setter a rows field offered no Suggest,
+        // which quietly dropped it from any field that became a list.
+        fieldSetters[f.field] = function(v) {
+          var next = v;
+          if (typeof next === 'string') {
+            try { next = JSON.parse(next); } catch (_) { return; }
+          }
+          if (!Array.isArray(next)) return;
+          rowsVal = next.map(function(r) {
+            return (r && typeof r === 'object') ? JSON.parse(JSON.stringify(r)) : {};
+          });
+          drawRows();
+          persistRows();
+        };
       } else if (t === 'tags') {
         // Tag-style array editor — values render as compact chips
         // with × removers, plus an inline input that accepts new
@@ -3460,7 +3478,7 @@
         });
 
         var secViewRow = el('div', {class: 'ui-sections-viewrow'});
-        var secOutlineBtn = el('button', {type: 'button', class: 'ui-sections-view on'}, ['Outline']);
+        var secOutlineBtn = el('button', {type: 'button', class: 'ui-sections-view on'}, ['Markdown']);
         var secRawBtn = el('button', {type: 'button', class: 'ui-sections-view'}, ['Raw']);
         // Whole-document assist, RAW MODE ONLY. In the outline the ✨
         // lives per section, because that is where a targeted revision

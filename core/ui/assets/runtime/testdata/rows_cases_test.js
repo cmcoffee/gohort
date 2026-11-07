@@ -1,7 +1,7 @@
 // A rows field that holds a list of cases: the first row a different kind
 // from the rest (FirstDefault / Default), "+ Add" greyed while a row closes
 // the list (AddBlockedWhen, with its note), and a cell that holds a whole
-// document, previewed and edited in a modal with the Outline / Raw views
+// document, previewed and edited in a modal with the Markdown / Raw views
 // (uiOpenDocEditor). The pieces are lifted out of the runtime and run.
 var fs = require('fs');
 var src = fs.readFileSync(__dirname + '/../10_basics.js', 'utf8');
@@ -50,6 +50,24 @@ check('the check runs on every redraw and every save',
   /save\(f\.field, clean\);\s*syncAddBlocked\(\);/.test(src));
 check('a greyed add does nothing when pressed', /if \(addBtn\.disabled\) return;/.test(src));
 
+// A value set from outside (Suggest) replaces the rows, as an array or a
+// JSON string of one, and is saved.
+var setter = src.slice(src.indexOf('fieldSetters[f.field] = function(v) {\n          var next = v;'));
+setter = setter.slice(0, setter.indexOf('\n        };') + 11);
+var fieldSetters = {}, saves = [], drawn = 0;
+f = {field: 'conditions'};
+rowsVal = [{kind: 'if'}];
+function drawRows() { drawn++; }
+function persistRows() { saves.push(JSON.stringify(rowsVal)); }
+eval(setter);
+fieldSetters.conditions('[{"kind":"if","question":"q"},{"kind":"else"}]');
+check('a JSON string of rows replaces them and saves', rowsVal.length === 2 && rowsVal[1].kind === 'else' && saves.length === 1 && drawn === 1);
+fieldSetters.conditions([{kind: 'if'}]);
+check('so does an array', rowsVal.length === 1 && saves.length === 2);
+fieldSetters.conditions('not json');
+fieldSetters.conditions({kind: 'if'});
+check('anything else changes nothing', rowsVal.length === 1 && saves.length === 2);
+
 // The first row takes first_default, later rows default.
 check('a new first row takes first_default, a later one default',
   /var first = rowsVal\.length === 0;/.test(src) &&
@@ -65,7 +83,7 @@ check('saving in the editor writes the row and commits it',
 check('the preview is a few lines, not the document',
   /\.ui-rows-doc-preview \{[^}]*-webkit-line-clamp: 3;/.test(css));
 
-// uiOpenDocEditor: Outline and Raw, Save hands back the open view's text,
+// uiOpenDocEditor: Markdown and Raw, Save hands back the open view's text,
 // Cancel hands back nothing.
 function node(tag) {
   var n = {tag: tag, children: [], style: {}, value: '', textContent: '', listeners: {},
@@ -98,10 +116,10 @@ function open(value) {
   return {outline: row.children[0], raw: row.children[1], ta: modal.body.children[2]};
 }
 var v = open('## Steps\n\nClear the cache.');
-check('it opens in the Outline view', v.outline.classList.contains('on') && v.ta.style.cssText.indexOf('display:none') >= 0);
+check('it opens in the Markdown view, so labelled', v.outline.classList.contains('on') && v.outline.textContent === 'Markdown' && v.ta.style.cssText.indexOf('display:none') >= 0);
 editorValue = '## Steps\n\nClear the cache, then sign in again.';
 modal.actions[1].onClick({close: function() {}});
-check('Save from the Outline hands back the outline text', saved.length === 1 && saved[0].indexOf('sign in again') >= 0);
+check('Save from the Markdown view hands back its text', saved.length === 1 && saved[0].indexOf('sign in again') >= 0);
 v = open('first');
 v.raw.listeners.click();
 v.ta.value = 'typed raw';

@@ -1861,8 +1861,8 @@ func (f *IntakeFormSpec) UnmarshalJSON(data []byte) error {
 	}
 	switch trimmed[0] {
 	case '[':
-		var arr []IntakeField
-		if err := json.Unmarshal(data, &arr); err != nil {
+		arr, err := decodeIntakeFields(data)
+		if err != nil {
 			return err
 		}
 		*f = arr
@@ -1877,14 +1877,81 @@ func (f *IntakeFormSpec) UnmarshalJSON(data []byte) error {
 			*f = nil
 			return nil
 		}
-		var arr []IntakeField
-		if err := json.Unmarshal([]byte(s), &arr); err != nil {
+		arr, err := decodeIntakeFields([]byte(s))
+		if err != nil {
 			return fmt.Errorf("intake_form must be a JSON array of field objects: %w", err)
 		}
 		*f = arr
 		return nil
 	}
 	return fmt.Errorf("intake_form must be an array or a JSON-string array, got %s", string(data))
+}
+
+// decodeIntakeFields reads an array of intake fields as the editor and the
+// authoring tools send them. The editor's list sends a field's options as one
+// comma-separated line and may leave the name blank; options are split, and a
+// blank name is made from the label, so a field typed into the list needs
+// only what a person thinks of (its label) and still has a key to pack under.
+// A field with neither a label nor a name is not a field and is dropped.
+func decodeIntakeFields(data []byte) ([]IntakeField, error) {
+	var raws []json.RawMessage
+	if err := json.Unmarshal(data, &raws); err != nil {
+		return nil, err
+	}
+	out := make([]IntakeField, 0, len(raws))
+	for _, r := range raws {
+		type plain IntakeField
+		var p struct {
+			plain
+			Options json.RawMessage `json:"options,omitempty"`
+		}
+		if err := json.Unmarshal(r, &p); err != nil {
+			return nil, err
+		}
+		f := IntakeField(p.plain)
+		f.Options = nil
+		if opts := bytes.TrimSpace(p.Options); len(opts) > 0 && !bytes.Equal(opts, []byte("null")) {
+			if opts[0] == '"' {
+				var line string
+				if err := json.Unmarshal(opts, &line); err != nil {
+					return nil, err
+				}
+				for _, o := range strings.Split(line, ",") {
+					if o = strings.TrimSpace(o); o != "" {
+						f.Options = append(f.Options, o)
+					}
+				}
+			} else if err := json.Unmarshal(opts, &f.Options); err != nil {
+				return nil, err
+			}
+		}
+		f.Name, f.Label = strings.TrimSpace(f.Name), strings.TrimSpace(f.Label)
+		if f.Name == "" {
+			f.Name = intakeFieldName(f.Label)
+		}
+		if f.Name == "" {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out, nil
+}
+
+// intakeFieldName makes a field's key from its label: lowercased, runs of
+// anything but letters and digits as one underscore.
+func intakeFieldName(label string) string {
+	var b strings.Builder
+	sep := false
+	for _, r := range strings.ToLower(label) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			sep = false
+		} else if !sep && b.Len() > 0 {
+			b.WriteByte('_')
+			sep = true
+		}
+	}
+	return strings.Trim(b.String(), "_")
 }
 
 // IntakeField is one field on an agent's IntakeForm. Shape mirrors

@@ -83,11 +83,11 @@ When it is settled:
 - `apps/orchestrate/skill_condition.go`: the turn's gate, run through the
   machine host (approval gate, activity line), and the pre-round check.
 - Forms (Extensions › Skills, admin Skills): the Conditions rows field, and
-  the instructions shown as a document with Edit (Outline or Raw) rather than
+  the instructions shown as a document with Edit (Markdown or Raw) rather than
   in full. Builder: `skill_def`'s `conditions`, a JSON array.
 - `core/ui`, generic: a rows field's `AddBlockedWhen` / `AddBlockedNote`, a
   column's `FirstDefault`, a `sections` cell (preview plus Edit), and
-  `uiOpenDocEditor`, the modal Outline / Raw editor.
+  `uiOpenDocEditor`, the modal Markdown / Raw editor.
 
 ## Stored shape
 

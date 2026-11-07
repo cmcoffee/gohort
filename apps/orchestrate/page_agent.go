@@ -475,11 +475,31 @@ func (ed *agentEditor) formFields() {
 			// page under Delegation with the target list beside them.
 			ui.FormField{Type: "header", Label: "Intake form",
 				Help: "Optional structured input form for a new session's first turn."},
-			ui.FormField{Field: "intake_form", Type: "textarea", Label: "Intake form (JSON)", Rows: 6,
-				Help:        "Optional. A form shown instead of the text input on the first turn of a new session.",
-				Detail:      "Submitting packs the values into a markdown user message and uploads any file fields as attachments. PDFs and DOCX get text-extracted server-side, images go to vision. Leave it blank for a normal chat-first agent.\n\nFormat: a JSON array of {name, label, type, placeholder, help, required, options}. type is \"text\" (the default), \"textarea\", \"select\" (single-choice dropdown), \"checklist\" (multi-pick checkboxes, whose selected values get comma-joined into the packed markdown), \"number\", \"file\", or \"button\" (self-submitting). options is an array of strings, used by select, checklist and button.",
-				Placeholder: "[\n  {\"name\": \"company\", \"label\": \"Company name\", \"type\": \"text\", \"required\": true},\n  {\"name\": \"audience\", \"label\": \"Target audience\", \"type\": \"textarea\"},\n  {\"name\": \"deadline\", \"label\": \"Deadline\", \"type\": \"select\", \"options\": [\"This week\", \"This month\", \"No rush\"]},\n  {\"name\": \"topics\", \"label\": \"Topics of interest\", \"type\": \"checklist\", \"options\": [\"AI\", \"Healthcare\", \"Finance\", \"Education\"]}\n]",
-				SuggestURL:  orchPath("api/agents/suggest")},
+			// A list, one row a field: the label, what kind of answer, its
+			// choices when it has some, whether it must be answered. The
+			// name each answer is packed under is made from the label, and
+			// what a row does not show (a button's follow-up question, a
+			// ShowWhen, options fetched from a URL) rides along untouched,
+			// so a form Builder wrote keeps its finer parts when edited here.
+			ui.FormField{Field: "intake_form", Type: "rows", Label: "Intake form",
+				AddLabel:    "+ Add field",
+				Placeholder: "None: the first turn starts with the normal text box.",
+				Help:        "Optional. A form shown instead of the text box on the first turn of a new session.",
+				Detail:      "Submitting packs the answers into one message (\"**Label:** answer\" per field) and uploads any file fields as attachments: PDFs and DOCX are read as text, images go to vision. Several choices are joined with commas. Buttons send the form the moment one is picked.",
+				Columns: []ui.FormField{
+					{Field: "label", Label: "Label", Width: 3, Placeholder: "Company name"},
+					{Field: "type", Label: "Answer", Type: "select", Width: 2, Default: "text", FirstDefault: "text", Options: []ui.SelectOption{
+						{Value: "text", Label: "Short text"}, {Value: "textarea", Label: "Long text"},
+						{Value: "select", Label: "One choice"}, {Value: "checklist", Label: "Several choices"},
+						{Value: "number", Label: "Number"}, {Value: "file", Label: "File"}, {Value: "button", Label: "Buttons"},
+					}},
+					{Field: "required", Label: "Required", Type: "toggle"},
+					{Field: "options", Label: "Choices", OwnLine: true, HideWhen: "type:!select|checklist|button",
+						Placeholder: "This week, This month, No rush"},
+					{Field: "placeholder", Label: "Hint inside the box", OwnLine: true, HideWhen: "type:select|checklist|button|file",
+						Placeholder: "e.g. Acme Corp"},
+					{Field: "help", Label: "Help under it", OwnLine: true, Placeholder: "Optional"},
+				}},
 		)
 	}
 	// (Sub-agent surface has no extra toggles — memory / publishing / intake are

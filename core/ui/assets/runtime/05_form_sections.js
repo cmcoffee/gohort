@@ -328,7 +328,7 @@
     var raw = el('textarea', {class: 'ui-form-textarea ui-sections-raw'});
     raw.value = value;
     raw.style.cssText = 'width:100%;min-height:50vh;resize:vertical;box-sizing:border-box;display:none';
-    var outlineBtn = el('button', {type: 'button', class: 'ui-sections-view on'}, ['Outline']);
+    var outlineBtn = el('button', {type: 'button', class: 'ui-sections-view on'}, ['Markdown']);
     var rawBtn = el('button', {type: 'button', class: 'ui-sections-view'}, ['Raw']);
     var rawOn = function() { return rawBtn.classList.contains('on'); };
     outlineBtn.addEventListener('click', function() {

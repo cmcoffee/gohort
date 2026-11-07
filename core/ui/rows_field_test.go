@@ -282,9 +282,10 @@ func TestEveryRowCellCommitsThroughTheSameGate(t *testing.T) {
 		t.Error("the redraw should be conditional on the row's shape changing")
 	}
 	// No cell handler may save directly: persistRows is the low-level
-	// write, reachable from the commit gate and the row add/remove/move
-	// controls (which redraw themselves) — nowhere else.
-	if n := strings.Count(src, "persistRows()"); n > 4 {
+	// write, reachable from the commit gate, the row add/remove/move
+	// controls (which redraw themselves) and the field's setter for a value
+	// set from outside (Suggest), which redraws too — nowhere else.
+	if n := strings.Count(src, "persistRows()"); n > 5 {
 		t.Errorf("a cell handler is saving without the commit gate (%d direct calls)", n)
 	}
 	for _, branch := range []string{

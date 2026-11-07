@@ -73,6 +73,10 @@ func TestEveryEditorFieldIsSaveable(t *testing.T) {
 		// The same over think and effort (applyReasoning,
 		// TestTheReasoningChoiceSavesThroughPATCH).
 		"reasoning": true,
+		// Cells of the intake form's list, not fields of the record: each
+		// row is one entry of intake_form, which is on the allowlist and
+		// saves them with it (TestTheIntakeFormListDecodes).
+		"label": true, "type": true, "required": true, "options": true, "placeholder": true, "help": true,
 	}
 	// Two spellings: ui.FormField{Field: ...} on its own, and a bare
 	// {Field: ...} inside a []ui.FormField{...} list. Reading only the first

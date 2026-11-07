@@ -487,7 +487,7 @@
     var docViewBtn = el('button', {
       class: 'ui-cw-doc-view', type: 'button',
       title: 'Switch between the raw text and a section outline',
-    }, ['Outline']);
+    }, ['Markdown']);
     docViewBtn.style.display = 'none';
     // docSetValue writes the snippet body from OUTSIDE the editors —
     // loading a snippet or a revision, applying a diff, substituting
@@ -513,7 +513,7 @@
       editor.value = docOutline.getValue();
       docOutlineHost.style.display = 'none';
       editor.style.display = '';
-      docViewBtn.textContent = 'Outline';
+      docViewBtn.textContent = 'Markdown';
       docViewBtn.classList.remove('on');
       if (docAssistBtn && langIsMarkdown()) docAssistBtn.style.display = '';
     }
@@ -690,13 +690,13 @@
       if (ctxOutline && ctxOutlineOn()) ctxOutline.setValue(ctxEditor.value);
     }
     var ctxViewBtn = el('button', {class: 'ui-cw-ctx-btn', title: 'Switch between the raw text and a section outline',
-      onclick: function(ev) { ev.stopPropagation(); toggleCtxOutline(); }}, ['Outline']);
+      onclick: function(ev) { ev.stopPropagation(); toggleCtxOutline(); }}, ['Markdown']);
     function toggleCtxOutline() {
       if (ctxOutlineOn()) {
         ctxEditor.value = ctxOutline.getValue();
         ctxOutlineHost.style.display = 'none';
         ctxEditor.style.display = '';
-        ctxViewBtn.textContent = 'Outline';
+        ctxViewBtn.textContent = 'Markdown';
         ctxViewBtn.classList.remove('on');
         return;
       }
