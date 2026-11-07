@@ -162,7 +162,7 @@ func (t *chatTurn) runDispatchedStep(ctx context.Context, sess *ToolSession, n i
 	}
 	what := truncate(chFirst(title, brief), 80)
 	line(fmt.Sprintf("Step %d: %s", n, what))
-	resp, _, err := t.app.RunAgentLoop(ctx, []Message{{Role: "user", Content: user}}, AgentLoopConfig{
+	resp, _, err := t.app.RunAgentLoop(ctx, []Message{{Role: "user", Content: user}}, t.withLoopBase(AgentLoopConfig{
 		OnRoundStart:    roundStart,
 		ReasoningStream: reasoning,
 		OnStep: func(info StepInfo) {
@@ -179,24 +179,11 @@ func (t *chatTurn) runDispatchedStep(ctx context.Context, sess *ToolSession, n i
 		DrainViewImages:      sess.DrainViewImages,
 		TierOverride:         WORKER,
 		MaxRounds:            resolveMaxWorkerRounds(t.agent),
-		ThinkBudget:          t.agent.ThinkBudget,
-		Effort:               t.agent.Effort,
-		ActionQuotas:         t.agent.ActionQuotas,
-		BudgetKey:            t.agent.ID,
-		DailySpendUSD:        t.agent.DailySpendUSD,
-		SharedBudgets:        familyBudgets(t.agent),
 		Confirm:              confirm,
-		AskFirst:             t.asksFirst,
-		GuardrailCheck:       t.guardrailEnforcer().Check,
-		GuardrailObserve:     t.guardrailEnforcer().Observe,
-		GuardrailActionGate:  t.guardrailEnforcer().ActionGate,
-		GuardrailHalted:      t.guardrailEnforcer().Halted,
-		GuardrailReject:      t.guardrailEnforcer().Reject,
-		GuardrailDeclines:    t.agent.GuardrailDeclines,
 		RoundAbortTools:      workerAbortTools,
 		InterimContentHidden: true,
 		ChatOptions:          []ChatOption{WithRouteKey("app.orchestrate.worker"), WithThink(false)},
-	})
+	}))
 	if err != nil {
 		line(fmt.Sprintf("Step %d failed", n))
 		return "", fmt.Errorf("step %d failed: %w", n, err)

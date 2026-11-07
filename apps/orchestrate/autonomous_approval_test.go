@@ -394,8 +394,12 @@ func TestEveryUnattendedDoorMarksItsContext(t *testing.T) {
 	}
 	// And the recurring fire's loop consults the owner's ask marks, which it
 	// did not, so an ask mark on a tool that asks nothing of its own meant
-	// nothing on a schedule.
-	if !strings.Contains(funcBody(t, readFile(t, "scheduled_updates.go"), "func (fr *fireRun) runLoop("), "AskFirst:") {
-		t.Error("the recurring fire's loop has no AskFirst")
+	// nothing on a schedule. The loop base sets AskFirst (run_loop_base.go),
+	// so the fire's loop has to start from it.
+	if !strings.Contains(funcBody(t, readFile(t, "scheduled_updates.go"), "func (fr *fireRun) runLoop("), "fr.subTurn.withLoopBase(AgentLoopConfig{") {
+		t.Error("the recurring fire's loop does not start from the loop base, which carries AskFirst")
+	}
+	if !strings.Contains(readFile(t, "run_loop_base.go"), "cfg.AskFirst = t.asksFirst") {
+		t.Error("the loop base no longer consults the ask marks")
 	}
 }

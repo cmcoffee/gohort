@@ -257,8 +257,15 @@ func TestEveryRefusingRunSaysWhy(t *testing.T) {
 		{"pipeline_tools.go", "ConfirmRefusal:      stageRefusal,"},
 		{"standing_runner.go", "withConfirmRefusal(ctx, gate.refusal)"},
 	} {
-		if !strings.Contains(readFile(t, c.file), c.want) {
+		// Spacing-blind: gofmt realigns a literal's keys whenever a field
+		// moves in or out of it, and that is not the code changing.
+		if !strings.Contains(collapseSpaces(readFile(t, c.file)), collapseSpaces(c.want)) {
 			t.Errorf("%s no longer has %q", c.file, c.want)
 		}
 	}
+}
+
+// collapseSpaces folds every run of spaces and tabs to one space.
+func collapseSpaces(s string) string {
+	return strings.Join(strings.FieldsFunc(s, func(r rune) bool { return r == ' ' || r == '\t' }), " ")
 }

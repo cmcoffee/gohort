@@ -2390,7 +2390,7 @@ func (pr *planRun) finish() (steps []PlanStep, question, directReply string, err
 // budget governors. Read alongside runLoop, which is the call.
 func (pr *planRun) loopConfig() AgentLoopConfig {
 	t := pr.t
-	return AgentLoopConfig{
+	return t.withLoopBase(AgentLoopConfig{
 		// A machine step's reply_with: the reply IS the text, and no model runs.
 		// Empty on every other turn.
 		PreEmptedReply: pr.relay,
@@ -2620,13 +2620,7 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		// explorer mode, then lets it run to orchHardCap. Most chat turns
 		// need 1-3 rounds; deep research / large builds bump via the
 		// agent's worker-rounds budget + enter_explorer_mode.
-		MaxRounds:     pr.absoluteCeiling,
-		ThinkBudget:   t.agent.ThinkBudget,  // per-agent override; 0 = inherit route/global
-		Effort:        t.agent.Effort,       // per-agent level; a ThinkBudget wins over it
-		ActionQuotas:  t.agent.ActionQuotas, // per-agent 24h caps; empty = uncapped
-		BudgetKey:     t.agent.ID,
-		DailySpendUSD: t.agent.DailySpendUSD,
-		SharedBudgets: familyBudgets(t.agent),
+		MaxRounds: pr.absoluteCeiling,
 		// StopRound is the dynamic governor (MaxRounds is just the safety
 		// ceiling). Effective cap = soft cap, raised to the explorer cap
 		// once explorer mode is on, raised again to the plan-scaled cap
@@ -2648,15 +2642,8 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		// credential flagged "Require confirm" park on an in-chat
 		// approval card; every other NeedsConfirm tool (delete_agent
 		// etc.) auto-approves as before so nothing hangs on stdin.
-		Confirm:             t.confirmFuncFor(pr.sess),
-		ConfirmRefusal:      t.confirmRefusal,
-		AskFirst:            t.asksFirst, // the owner's ask marks reach every tool (ask_first.go)
-		GuardrailCheck:      t.guardrailEnforcer().Check,
-		GuardrailObserve:    t.guardrailEnforcer().Observe,
-		GuardrailActionGate: t.guardrailEnforcer().ActionGate,
-		GuardrailHalted:     t.guardrailEnforcer().Halted,
-		GuardrailReject:     t.guardrailEnforcer().Reject,
-		GuardrailDeclines:   t.agent.GuardrailDeclines,
+		Confirm:        t.confirmFuncFor(pr.sess),
+		ConfirmRefusal: t.confirmRefusal,
 		// Control tools end the round immediately. If the LLM bundles
 		// ask_user with create_agent in the same response, only ask_user
 		// fires and the turn pauses for the user's actual answer.
@@ -2674,7 +2661,7 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 			WithRouteKey(pr.routeKey),
 			WithThink(pr.think),
 		},
-	}
+	})
 }
 
 func plural(n int) string {

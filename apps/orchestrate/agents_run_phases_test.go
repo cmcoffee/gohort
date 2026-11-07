@@ -60,7 +60,9 @@ func TestARunCarriesTheAgentsCaps(t *testing.T) {
 	_, turn, _ := inlineRun(t)
 	target := AgentRecord{ID: "scout-id", Name: "Scout", Owner: "u",
 		DailySpendUSD: 0.5, ActionQuotas: ActionQuotaMap{"send_message": 3}}
-	ar := &agentsRun{t: turn, target: target, subTurn: turn, subSess: &ToolSession{Username: "u"}, ctx: t.Context()}
+	// The sub-turn runs the target, as subTurn is built in production.
+	sub := &chatTurn{app: turn.app, user: turn.user, udb: turn.udb, agent: target, ctx: t.Context(), sse: turn.sse}
+	ar := &agentsRun{t: turn, target: target, subTurn: sub, subSess: &ToolSession{Username: "u"}, ctx: t.Context()}
 	ar.configureLoop()
 	cfg := ar.runCfg
 	if cfg.BudgetKey != "scout-id" || cfg.DailySpendUSD != 0.5 {

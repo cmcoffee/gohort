@@ -469,7 +469,7 @@ func (ws *workerStep) runLoop() bool {
 	// be inferred, and it was: the 212k read as one enormous prompt for days.
 	logPromptComposition(fmt.Sprintf("step %d", cur.ID), t.chatSessionID(), ws.sysPrompt, ws.tools,
 		[]Message{{Role: "user", Content: ws.stepUser}})
-	ws.resp, _, ws.err = t.app.RunAgentLoop(t.ctx, []Message{{Role: "user", Content: ws.stepUser}}, AgentLoopConfig{
+	ws.resp, _, ws.err = t.app.RunAgentLoop(t.ctx, []Message{{Role: "user", Content: ws.stepUser}}, t.withLoopBase(AgentLoopConfig{
 		SendGuardKey: sendGuardKey,
 		SystemPrompt: ws.sysPrompt,
 		Tools:        ws.tools,
@@ -479,12 +479,6 @@ func (ws *workerStep) runLoop() bool {
 		DrainViewImages:      ws.sess.DrainViewImages,
 		ToolFallbackResolver: t.lazyToolDef,
 		MaxRounds:            ws.hardCap,
-		ThinkBudget:          t.agent.ThinkBudget, // per-agent override; 0 = inherit route/global
-		Effort:               t.agent.Effort,      // per-agent level; a budget above wins
-		ActionQuotas:         t.agent.ActionQuotas,
-		BudgetKey:            t.agent.ID,
-		DailySpendUSD:        t.agent.DailySpendUSD,
-		SharedBudgets:        familyBudgets(t.agent),
 		Stream:               ws.stream,
 		OnResponse:           t.thinkResponse, // the footer totals every call of the turn
 		// Same turn-scoped notes the orchestrator round gets. A worker step is
@@ -552,15 +546,8 @@ func (ws *workerStep) runLoop() bool {
 		// orchestrator loop: flagged-credential calls park on the
 		// in-chat approval card; everything else auto-approves (no
 		// stdin fallback — gohort runs as a service).
-		Confirm:             t.confirmFuncFor(ws.sess),
-		ConfirmRefusal:      t.confirmRefusal,
-		AskFirst:            t.asksFirst, // the owner's ask marks reach every tool (ask_first.go)
-		GuardrailCheck:      t.guardrailEnforcer().Check,
-		GuardrailObserve:    t.guardrailEnforcer().Observe,
-		GuardrailActionGate: t.guardrailEnforcer().ActionGate,
-		GuardrailHalted:     t.guardrailEnforcer().Halted,
-		GuardrailReject:     t.guardrailEnforcer().Reject,
-		GuardrailDeclines:   t.agent.GuardrailDeclines,
+		Confirm:        t.confirmFuncFor(ws.sess),
+		ConfirmRefusal: t.confirmRefusal,
 		// A step must be able to END ITSELF. Without these, respond_directly
 		// inside a worker step is an ordinary tool call: it returns, the round
 		// completes, and the loop takes another turn — observed as a step that
@@ -576,7 +563,7 @@ func (ws *workerStep) runLoop() bool {
 			WithRouteKey("app.orchestrate.worker"),
 			WithThink(ws.f),
 		},
-	})
+	}))
 	ws.stopKeepalive()
 	// A step can close the whole turn too: stay_silent inside a step means the
 	// same thing it means anywhere else, and the driver checks this before the

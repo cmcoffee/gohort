@@ -371,8 +371,8 @@ type scheduledOutcome struct {
 	objStalled  bool
 	hitCap      bool
 	softCap     int
-	detections  int // injection-scan hits during the fire
-	taintBlocks int // follow-up actions the tainted-action check stopped
+	detections  int      // injection-scan hits during the fire
+	taintBlocks int      // follow-up actions the tainted-action check stopped
 	partly      []string // guardrails that blocked some of the fire's actions
 }
 
@@ -1025,7 +1025,7 @@ func (fr *fireRun) runLoop() {
 	// The session rides the loop's context, as on a web turn: a tool that
 	// queues something for the owner reads where it was asked from off it
 	// (stampRequestOrigin), and without it a queued request lost its way back.
-	fr.resp, fr.transcript, fr.runErr = fr.app.RunAgentLoop(fr.subSess.ContextWithSession(fr.ctx), fr.msgs, AgentLoopConfig{
+	fr.resp, fr.transcript, fr.runErr = fr.app.RunAgentLoop(fr.subSess.ContextWithSession(fr.ctx), fr.msgs, fr.subTurn.withLoopBase(AgentLoopConfig{
 		TierOverride: firePin,
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
@@ -1038,26 +1038,13 @@ func (fr *fireRun) runLoop() {
 		// results — so the repeat guard starts every cycle knowing nothing.
 		// Keyed on the agent and the thread this schedule runs in, so what
 		// keeps failing at 09:00 is still failing at 09:00 tomorrow.
-		FailureMemoryKey:    failureMemoryKey(p.AgentID, p.SessionID),
-		StampLocation:       UserLocation(p.Username), // stamp the turn in the owning user's zone
+		FailureMemoryKey: failureMemoryKey(p.AgentID, p.SessionID),
+		StampLocation:    UserLocation(p.Username), // stamp the turn in the owning user's zone
 		TurnNotes: func(string) string {
 			return oneFrameworkNote(nonEmpty(dependencyTurnNote(fr.subSess), backgroundTurnNote(fr.subSess)))
 		},
-		ThinkBudget:         fr.agent.ThinkBudget,
-		Effort:              fr.agent.Effort,
-		ActionQuotas:        fr.agent.ActionQuotas,
-		BudgetKey:           fr.agent.ID,
-		DailySpendUSD:       fr.agent.DailySpendUSD,
-		SharedBudgets:       familyBudgets(fr.agent),
-		Confirm:             fr.gate.confirm,
-		ConfirmRefusal:      fr.gate.refusal,
-		AskFirst:            fr.subTurn.asksFirst, // the owner's ask marks, and never-unattended ones
-		GuardrailCheck:      fr.subTurn.guardrailEnforcer().Check,
-		GuardrailObserve:    fr.subTurn.guardrailEnforcer().Observe,
-		GuardrailActionGate: fr.subTurn.guardrailEnforcer().ActionGate,
-		GuardrailHalted:     fr.subTurn.guardrailEnforcer().Halted,
-		GuardrailReject:     fr.subTurn.guardrailEnforcer().Reject,
-		GuardrailDeclines:   fr.subTurn.agent.GuardrailDeclines,
+		Confirm:        fr.gate.confirm,
+		ConfirmRefusal: fr.gate.refusal,
 		OnStep: func(s StepInfo) {
 			if s.Round > fr.lastRound {
 				fr.lastRound = s.Round
@@ -1138,7 +1125,7 @@ func (fr *fireRun) runLoop() {
 			WithRouteKey(fireRoute),
 			WithThink(fr.think),
 		},
-	})
+	}))
 
 	// CANCELED (superseded / shutdown) is distinct from FAILED — see runOutcomeStatus.
 	fr.liveRun.Complete(runOutcomeStatus(fr.runErr, fr.resp != nil))

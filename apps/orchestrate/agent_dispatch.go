@@ -1153,7 +1153,7 @@ func (sd *syncDispatch) configureLoop() {
 	// call's card (dispatch_progress.go). nil from anywhere else.
 	prog := dispatchProgressFrom(sd.ctx, sd.target.Name)
 	progRoundStart, progReasoning := prog.hooks()
-	sd.syncCfg = AgentLoopConfig{
+	sd.syncCfg = sd.subTurn.withLoopBase(AgentLoopConfig{
 		OnRoundStart:    progRoundStart,
 		ReasoningStream: progReasoning,
 		TierOverride:    sd.dispatchPin,
@@ -1167,12 +1167,6 @@ func (sd *syncDispatch) configureLoop() {
 		Tools:           sd.tools,
 		MaxRounds:       resolveMaxWorkerRounds(sd.target),
 		StampLocation:   UserLocation(sd.runtimeUser), // stamp the turn in the acting user's zone
-		ThinkBudget:     sd.target.ThinkBudget,        // per-agent override; 0 = inherit route/global
-		Effort:          sd.target.Effort,             // per-agent level; a budget above wins
-		ActionQuotas:    sd.target.ActionQuotas,       // per-agent 24h caps; empty = uncapped
-		BudgetKey:       sd.target.ID,
-		DailySpendUSD:   sd.target.DailySpendUSD,
-		SharedBudgets:   familyBudgets(sd.target), // a sub-agent counts against its parents' caps
 		// Standing fires and Fleet dispatches both land here, and neither
 		// carries tool results into the next run's history — so without this
 		// each one re-learns yesterday's dead endpoint from scratch. One
@@ -1206,21 +1200,14 @@ func (sd *syncDispatch) configureLoop() {
 		//
 		// No LiveClaimSpeaker: this path has no third party writing to it, so
 		// there is no live claim and nothing to be cautious about.
-		TurnGroundingJudge:  T.turnGroundingJudge(sd.ctx),
-		UncheckedClaims:     UncheckedFactNotes(sd.subFacts),
-		DeliveredCount:      func() int { return len(sd.subSess.Images) + len(sd.subSess.Videos) + len(sd.subSess.Files) },
-		Backgrounded:        func() bool { return sd.subSess.Detach.Any() },
-		BackgroundWork:      backgroundWorkOf(sd.subSess, func() string { return "" }),
-		BackgroundEstimate:  func() string { return sd.subSess.Detach.EstimateText() },
-		Confirm:             confirm,
-		ConfirmRefusal:      sd.refusal,
-		AskFirst:            sd.subTurn.asksFirst, // its marks and its delegators' (ask_first.go)
-		GuardrailCheck:      sd.subTurn.guardrailEnforcer().Check,
-		GuardrailObserve:    sd.subTurn.guardrailEnforcer().Observe,
-		GuardrailActionGate: sd.subTurn.guardrailEnforcer().ActionGate,
-		GuardrailHalted:     sd.subTurn.guardrailEnforcer().Halted,
-		GuardrailReject:     sd.subTurn.guardrailEnforcer().Reject,
-		GuardrailDeclines:   sd.subTurn.agent.GuardrailDeclines,
+		TurnGroundingJudge: T.turnGroundingJudge(sd.ctx),
+		UncheckedClaims:    UncheckedFactNotes(sd.subFacts),
+		DeliveredCount:     func() int { return len(sd.subSess.Images) + len(sd.subSess.Videos) + len(sd.subSess.Files) },
+		Backgrounded:       func() bool { return sd.subSess.Detach.Any() },
+		BackgroundWork:     backgroundWorkOf(sd.subSess, func() string { return "" }),
+		BackgroundEstimate: func() string { return sd.subSess.Detach.EstimateText() },
+		Confirm:            confirm,
+		ConfirmRefusal:     sd.refusal,
 		// Custom-tool resolution, same as the web runPlan: lazyToolFallback
 		// resolves a direct call to a has-args custom tool; dynamicNewTempTools
 		// surfaces tools the LLM loaded via load_tool this turn.
@@ -1240,7 +1227,7 @@ func (sd *syncDispatch) configureLoop() {
 			WithRouteKey(sd.dispatchRoute),
 			WithThink(sd.think),
 		},
-	}
+	})
 }
 
 func (sd *syncDispatch) runLoop() {
@@ -2382,18 +2369,12 @@ func (cr *continuingRun) configureLoop() {
 	dispatchPin, dispatchRoute := dispatchRouting(cr.ctx, cr.subTurn)
 	gate := T.newAutonomousGate(cr.agentOwner, cr.target.ID, cr.subSess)
 	cr.subTurn.neverUnattended = gate.neverUnattended
-	cr.loopCfg = AgentLoopConfig{
-		TierOverride:  dispatchPin,
-		SendGuardKey:  sendGuardKey,
-		SystemPrompt:  cr.sysPrompt,
-		Tools:         cr.tools,
-		MaxRounds:     resolveMaxWorkerRounds(cr.target),
-		ThinkBudget:   cr.target.ThinkBudget,                 // per-agent override; 0 = inherit route/global
-		Effort:        chFirst(run.Effort, cr.target.Effort), // the caller's level, else the agent's; a budget above wins
-		ActionQuotas:  cr.target.ActionQuotas,
-		BudgetKey:     cr.target.ID,
-		DailySpendUSD: cr.target.DailySpendUSD,
-		SharedBudgets: familyBudgets(cr.target),
+	cr.loopCfg = cr.subTurn.withLoopBase(AgentLoopConfig{
+		TierOverride: dispatchPin,
+		SendGuardKey: sendGuardKey,
+		SystemPrompt: cr.sysPrompt,
+		Tools:        cr.tools,
+		MaxRounds:    resolveMaxWorkerRounds(cr.target),
 		// A channel turn and a monitor wake run here, unattended and
 		// repeatedly, against the same thread. Keyed to the thread so what
 		// keeps failing in one conversation is not held against another.
@@ -2405,15 +2386,6 @@ func (cr *continuingRun) configureLoop() {
 		// settings without effect on exactly the runs a stranger can start.
 		Confirm:        gate.confirm,
 		ConfirmRefusal: gate.refusal,
-		// And what the owner asked to be asked about first, which this loop
-		// never consulted, so an ask mark meant nothing on a channel turn.
-		AskFirst:            cr.subTurn.asksFirst,
-		GuardrailCheck:      cr.subTurn.guardrailEnforcer().Check,
-		GuardrailObserve:    cr.subTurn.guardrailEnforcer().Observe,
-		GuardrailActionGate: cr.subTurn.guardrailEnforcer().ActionGate,
-		GuardrailHalted:     cr.subTurn.guardrailEnforcer().Halted,
-		GuardrailReject:     cr.subTurn.guardrailEnforcer().Reject,
-		GuardrailDeclines:   cr.subTurn.agent.GuardrailDeclines,
 		// Custom-tool resolution, same as the web runPlan (see RunAgentSync).
 		ToolFallbackResolver: cr.subTurn.lazyToolDef,
 		DynamicTools:         cr.subTurn.dynamicNewTempTools(cr.subSess),
@@ -2432,7 +2404,9 @@ func (cr *continuingRun) configureLoop() {
 			WithRouteKey(dispatchRoute),
 			WithThink(think),
 		},
-	}
+	})
+	// The run's own effort level, when it carries one, outranks the agent's.
+	cr.loopCfg.Effort = chFirst(run.Effort, cr.target.Effort)
 	// Caller loop overrides (enabler #3) — a template instance with a sophisticated
 	// loop (servitor's investigator: step pacing, stuck detection, plan-aware
 	// wrap-up) supplies these so the scoped run matches its bespoke RunAgentLoop.
