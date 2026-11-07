@@ -355,13 +355,15 @@ type imageBackendRow struct {
 	Steps     string `json:"steps,omitempty"`
 	// What its row can do, set exactly as a Connectors row's are, so it opens
 	// the same editor there and here.
-	EditForm    bool   `json:"edit_form,omitempty"`
-	EditSpec    bool   `json:"edit_spec,omitempty"`
-	NeedsFix    bool   `json:"needs_fix,omitempty"`
-	HasSettings bool   `json:"has_settings,omitempty"`
-	Testable    bool   `json:"testable,omitempty"`
-	TestConfirm string `json:"test_confirm,omitempty"`
-	LastError   string `json:"last_error,omitempty"`
+	EditForm bool `json:"edit_form,omitempty"`
+	EditSpec bool `json:"edit_spec,omitempty"`
+	NeedsFix bool `json:"needs_fix,omitempty"`
+	// TemplateUpdate: its template now writes a different spec.
+	TemplateUpdate bool   `json:"template_update,omitempty"`
+	HasSettings    bool   `json:"has_settings,omitempty"`
+	Testable       bool   `json:"testable,omitempty"`
+	TestConfirm    string `json:"test_confirm,omitempty"`
+	LastError      string `json:"last_error,omitempty"`
 }
 
 // handleImageBackends lists every connector Image Generation's picker offers,
@@ -390,6 +392,7 @@ func (a *AdminApp) handleImageBackends(c *jsonapi.Call) (any, error) {
 			row.IsUnused = true
 		}
 		row.EditForm, row.EditSpec, row.NeedsFix = connectorEditors(conn)
+		_, row.TemplateUpdate = templateUpdate(conn)
 		if service.Testable(conn) {
 			row.Testable, row.TestConfirm = true, testConfirm(conn.Name)
 		}

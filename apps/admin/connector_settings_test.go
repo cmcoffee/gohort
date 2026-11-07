@@ -470,7 +470,7 @@ func TestTheBackendListSharesTheConnectorActions(t *testing.T) {
 	for _, act := range tbl.RowActions {
 		labels = append(labels, act.Label)
 	}
-	if got := strings.Join(labels, ","); got != "Make default,Offer to agents,Stop offering,Stop using,Edit,✨ Edit,✨ Fix,Settings,Test" {
+	if got := strings.Join(labels, ","); got != "Make default,Offer to agents,Stop offering,Stop using,Update from template,Edit,✨ Edit,✨ Fix,Settings,Test" {
 		t.Errorf("row actions = %s", got)
 	}
 	// The spec editor is in the row's Advanced menu, not beside Settings,

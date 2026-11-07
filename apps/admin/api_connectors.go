@@ -92,6 +92,9 @@ func connectorRows(connectors bool) any {
 		EditForm bool `json:"edit_form,omitempty"`
 		EditSpec bool `json:"edit_spec,omitempty"`
 		NeedsFix bool `json:"needs_fix,omitempty"`
+		// TemplateUpdate is a connector whose template now writes a
+		// different spec than it holds (Update from template).
+		TemplateUpdate bool `json:"template_update,omitempty"`
 		// A connector with a contract test and a health check (core/service):
 		// how it has been doing, and the question asked before a test.
 		Status      string `json:"status,omitempty"`
@@ -143,6 +146,7 @@ func connectorRows(connectors bool) any {
 			Deletable: len(uses[conn.Name]) == 0, HasSettings: conn.Kind == service.Kind,
 			HasAccess: conn.Kind == service.Kind && conn.ID != ""}
 		row.EditForm, row.EditSpec, row.NeedsFix = connectorEditors(conn)
+		_, row.TemplateUpdate = templateUpdate(conn)
 		row.Key = keptSecretsLine(conn)
 		if problems := service.SelfCheck(RootDB, conn); len(problems) > 0 {
 			row.Check = "Needs attention: " + strings.Join(problems, "; ") + "."

@@ -333,3 +333,21 @@ func TestWebhookSecretQuestionsAreChecked(t *testing.T) {
 		t.Error("a plain answer cannot name a secret's destination")
 	}
 }
+
+// A connector made from a template is brought up to date by filling the
+// template again, which is only right when its spec takes nothing answered
+// at install but the connector's name. Gemini's does; Automatic1111's takes
+// its address, which only the person who installed it knows.
+func TestATemplateIsUpdatableOnlyWhenItsSpecTakesNoAnswers(t *testing.T) {
+	db := &core.DBase{Store: kvlite.MemStore()}
+	spec, ok := UpdatableConnectorSpec(db, "gemini-images")
+	if !ok || !strings.Contains(string(spec), `"image.edit"`) {
+		t.Errorf("the Gemini template is not updatable, or does not edit: %v %s", ok, spec)
+	}
+	if _, ok := UpdatableConnectorSpec(db, "a1111"); ok {
+		t.Error("a template whose spec takes its install answers was offered as an update")
+	}
+	if _, ok := UpdatableConnectorSpec(db, "no-such-template"); ok {
+		t.Error("a template that is not there was offered")
+	}
+}

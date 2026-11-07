@@ -19,8 +19,10 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/activity"
 	"github.com/cmcoffee/gohort/core/assist"
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/core/recipes"
 	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/gohort/core/ui"
 )
@@ -33,6 +35,7 @@ func (a *AdminApp) registerConnectorFixRoutes(sub *http.ServeMux) {
 	}))
 	sub.HandleFunc("/api/connectors/fix-form", jsonapi.Get(a.db, a.handleConnectorFixForm, a.gate()))
 	sub.HandleFunc("/api/connectors/fix-save", jsonapi.Post(a.db, a.handleConnectorFixSave, a.gate(), jsonapi.MaxBody(1<<20)))
+	sub.HandleFunc("/api/connectors/update-template", jsonapi.Post(a.db, a.handleConnectorTemplateUpdate, a.gate()))
 }
 
 // connectorEditAction is the row's editor, labelled label and shown when
@@ -110,6 +113,64 @@ func (a *AdminApp) handleConnectorFixSave(c *jsonapi.Call, body struct {
 	// with it.
 	acceptChanges(name)
 	return map[string]any{"message": "Saved."}, nil
+}
+
+// canonicalSpec is a service spec as it is saved: parsed and written again,
+// so two specs that say the same thing compare equal however each was laid
+// out. ok is false for one that does not parse.
+func canonicalSpec(raw []byte) (string, bool) {
+	s, err := service.Parse(raw)
+	if err != nil {
+		return "", false
+	}
+	b, err := json.Marshal(s)
+	return string(b), err == nil
+}
+
+// templateUpdate is the spec connector conn's template writes now, when it
+// differs from conn's own and the template can be rendered again without the
+// answers given at install (recipes.UpdatableConnectorSpec). A connector made
+// before its template learned a job (Gemini's editing) gets it this way, with
+// its settings and key, which live apart from the spec, kept.
+func templateUpdate(conn Connector) (string, bool) {
+	if conn.Kind != service.Kind || strings.TrimSpace(conn.Template) == "" {
+		return "", false
+	}
+	raw, ok := recipes.UpdatableConnectorSpec(RootDB, conn.Template)
+	if !ok {
+		return "", false
+	}
+	now, ok := canonicalSpec(raw)
+	if !ok {
+		return "", false
+	}
+	if held, ok := canonicalSpec(conn.Spec); ok && held == now {
+		return "", false
+	}
+	return now, true
+}
+
+// handleConnectorTemplateUpdate replaces connector ?name='s spec with the one
+// its template writes now. Its settings and key are kept: they live in the
+// connection's own space, which the spec does not hold. A change made to the
+// spec by hand is replaced, which its button says before it runs.
+func (a *AdminApp) handleConnectorTemplateUpdate(c *jsonapi.Call, _ struct{}) (any, error) {
+	name := strings.TrimSpace(c.R.URL.Query().Get("name"))
+	conn, ok := GetConnector(RootDB, name)
+	if !ok {
+		return nil, jsonapi.NotFound("no connector named " + name)
+	}
+	spec, ok := templateUpdate(conn)
+	if !ok {
+		return nil, jsonapi.BadRequest(name + " already has what its template writes, or its template cannot be written again without its install answers")
+	}
+	conn.Spec = json.RawMessage(spec)
+	if err := SaveConnector(RootDB, conn); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	acceptChanges(name)
+	adminChange(c.R, activity.Settings, "updated connector %s from its template %s", name, conn.Template)
+	return map[string]any{"message": "Updated from its template. Its settings and key are kept."}, nil
 }
 
 // connectorFixAbout is what the assistant is told first: the connector, how

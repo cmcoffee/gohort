@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/recipes"
 	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
@@ -141,5 +142,60 @@ func TestTemplatesAreBrowsedByCategory(t *testing.T) {
 	}
 	if code, _ := get("/api/templates/builtins"); code != http.StatusNotFound {
 		t.Errorf("the list to add templates to is still there: %d", code)
+	}
+}
+
+// A connector made from the Gemini template before the template learned to
+// edit is offered Update from template on its row. Updating gives it what the
+// template writes now, editing included, and keeps its key, which lives apart
+// from the spec; after it, the row offers nothing, and a second update is
+// refused.
+func TestAConnectorIsUpdatedFromItsTemplate(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved })
+	now, ok := recipes.UpdatableConnectorSpec(RootDB, "gemini-images")
+	if !ok {
+		t.Fatal("the Gemini template is not updatable")
+	}
+	// The template as it was: generation only.
+	var old map[string]any
+	json.Unmarshal(now, &old)
+	old["provides"] = old["provides"].([]any)[:1]
+	oldSpec, _ := json.Marshal(old)
+	if err := SaveConnector(RootDB, Connector{Name: "gemini-images", Kind: service.Kind, Template: "gemini-images", Spec: oldSpec}); err != nil {
+		t.Fatal(err)
+	}
+	conn, _ := GetConnector(RootDB, "gemini-images")
+	if err := SetConnectionSecret(RootDB, conn, "api_key", "AIza-kept-key", []string{"https://generativelanguage.googleapis.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := templateUpdate(conn); !ok {
+		t.Fatal("a connector behind its template is not offered the update")
+	}
+
+	a := &AdminApp{db: RootDB}
+	sub := http.NewServeMux()
+	a.registerConnectorFixRoutes(sub)
+	post := func() *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		sub.ServeHTTP(w, httptest.NewRequest("POST", "/api/connectors/update-template?name=gemini-images", nil))
+		return w
+	}
+	if w := post(); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "settings and key are kept") {
+		t.Fatalf("update: %d %s", w.Code, w.Body.String())
+	}
+	conn, _ = GetConnector(RootDB, "gemini-images")
+	if !service.Provides(conn, "image.edit") || !service.Provides(conn, "image.generate") {
+		t.Errorf("after the update it does not both generate and edit: %s", conn.Spec)
+	}
+	if sec, _ := GetConnectionSecret(RootDB, conn, "api_key"); sec.Value != "AIza-kept-key" {
+		t.Errorf("the update lost the key: %+v", sec)
+	}
+	if _, ok := templateUpdate(conn); ok {
+		t.Error("after the update the row still offers it")
+	}
+	if w := post(); w.Code != http.StatusBadRequest {
+		t.Errorf("a second update: %d", w.Code)
 	}
 }

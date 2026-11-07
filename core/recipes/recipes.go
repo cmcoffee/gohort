@@ -869,6 +869,36 @@ func TemplateConnectorSpec(id string) (json.RawMessage, bool) {
 	return nil, false
 }
 
+// UpdatableConnectorSpec is the spec template id (built in or imported) makes
+// now, for a connector made from it, when that spec does not depend on what
+// was answered at install beyond the connector's name: filled with the
+// defaults, it is then exactly what the template would make it today. It
+// reports false for a template whose spec takes other answers (an address,
+// a workflow), which only the person who installed it knows.
+func UpdatableConnectorSpec(db core.Database, id string) (json.RawMessage, bool) {
+	r, _, ok := Get(db, id)
+	if !ok {
+		return nil, false
+	}
+	spec, ok := connectorSpec(r, nil)
+	if !ok {
+		return nil, false
+	}
+	probe := map[string]string{}
+	named := ConnectorNameQuestion(r)
+	for _, q := range r.Questions {
+		if q.Name != named {
+			probe[q.Name] = "zz-answer-probe"
+		}
+	}
+	if len(probe) > 0 {
+		if other, ok := connectorSpec(r, probe); !ok || string(other) != string(spec) {
+			return nil, false
+		}
+	}
+	return spec, true
+}
+
 // connectorSpec is the spec of the connector template r makes, answered.
 func connectorSpec(r Recipe, answers map[string]string) (json.RawMessage, bool) {
 	bundle, _, _, err := Fill(r, answers)

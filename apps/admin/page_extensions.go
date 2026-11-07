@@ -461,6 +461,11 @@ func connectorEditRowActions() []ui.RowAction {
 	spec := connectorEditAction("Edit", "edit_spec", "What should change in how this service is called, and why?")
 	spec.Group = "Advanced"
 	return []ui.RowAction{
+		// Shown only when the template it was made from now writes something
+		// different: a job it learned since (Gemini's editing), a fix.
+		{Type: "button", Label: "Update from template", Method: "POST", PostTo: "api/connectors/update-template?name={name}",
+			OnlyIf: "template_update", Variant: "primary", Invalidate: connectorListSources,
+			Confirm: "Update this connector to what its template writes now? Its settings and key are kept. A change made to its spec by hand (Advanced, ✨ Edit) is replaced."},
 		{Type: "button", Label: "Edit", Method: "client", PostTo: "configure_backend", OnlyIf: "edit_form"},
 		spec,
 		connectorEditAction("Fix", "needs_fix", "Why is this service failing, and what would fix it?"),
