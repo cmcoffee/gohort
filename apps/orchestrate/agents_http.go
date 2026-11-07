@@ -573,6 +573,11 @@ func (T *OrchestrateApp) registerAgentRoutes() {
 		"PATCH":  jsonapi.Patch(T.DB, patchOne),
 		"DELETE": jsonapi.Delete(T.DB, T.agentDelete),
 	}.Serve)
+	// The Limits form's load: the action limits as the rows its list edits
+	// (the record carries them as "action = N" lines, which every API client
+	// and the authoring tools read and write, so they stay that shape there).
+	// The form saves through the PATCH above, which reads either.
+	T.HandleFunc("/api/agents/{id}/limits", jsonapi.Get(T.DB, T.agentLimits))
 	T.HandleFunc("/api/agents/{id}/clone", jsonapi.Post(T.DB, T.agentClone))
 	T.HandleFunc("/api/agents/{id}/detach", jsonapi.Post(T.DB, T.agentDetach))
 	T.HandleFunc("/api/agents/{id}/move", jsonapi.Methods{
@@ -659,6 +664,24 @@ func (T *OrchestrateApp) agentGet(c *jsonapi.Call) (any, error) {
 	// With lead_use and reasoning: the editor's one choice over
 	// LeadModel + ConsultLead, and over Think + Effort.
 	return withEditorChoices(RootDB, a), nil
+}
+
+// agentLimits is the Limits form's view of an agent: its action limits as
+// rows, and its spend limit. The same caller lookup as agentGet, the owner's
+// or a maintained agent's record, so the form opens on what that GET shows.
+func (T *OrchestrateApp) agentLimits(c *jsonapi.Call) (any, error) {
+	a, ok := loadAgent(c.UDB, c.R.PathValue("id"))
+	if !ok {
+		if m, _, mok := maintainedAgent(T.DB, c.User, c.R.PathValue("id")); mok {
+			a, ok = m, true
+		}
+	} else if a.Owner != c.User && a.Owner != seedOwner {
+		ok = false
+	}
+	if !ok {
+		return nil, errNotFound
+	}
+	return map[string]any{"action_quotas": a.ActionQuotas.Rows(), "daily_spend_usd": a.DailySpendUSD}, nil
 }
 
 // agentDelete removes the agent, and with ?schedules=delete its schedules.

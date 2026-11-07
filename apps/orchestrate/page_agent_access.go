@@ -650,15 +650,23 @@ func (ap *accessPage) limitsSections() []ui.Section {
 				"Counted here, a call is refused when the allowance is spent and the agent is told when it frees up. Only SUCCESSFUL calls count, so an outage never spends the day.\n\n" +
 				"These ratchet. An agent with authoring tools may lower its own limits and cannot raise or clear them - an update that tries is reverted and the agent is told to ask you.",
 			Body: ui.FormPanel{
-				Assist:  true,
-				Source:  ap.patchURL,
+				Assist: true,
+				// Loads the limits as the rows the list edits; saves through
+				// the agent's PATCH like every other section here.
+				Source:  ap.patchURL + "/limits",
 				PostURL: ap.patchURL,
 				Method:  "PATCH",
 				Fields: []ui.FormField{
-					{Field: "action_quotas", Type: "tags", Label: "Action limits (per 24 hours)",
-						Placeholder: "moltbook/create_post = 6",
-						Help:        "How often one action may run in a rolling 24 hours, one per line as `action = number`.",
-						Detail:      "Name a grouped tool's action (moltbook/create_post) or a whole tool (send_email). The action wins where both are set. Empty = no limit."},
+					{Field: "action_quotas", Type: "rows", Label: "Action limits (per 24 hours)",
+						AddLabel:    "+ Add limit",
+						Placeholder: "None: no action is limited.",
+						Help:        "How often one action may run in a rolling 24 hours.",
+						Detail:      "Name a grouped tool's action (moltbook/create_post) or a whole tool (send_email). The action wins where both are set.",
+						Columns: []ui.FormField{
+							{Field: "action", Label: "Action", Type: "combo", Width: 3, Placeholder: "moltbook/create_post",
+								Options: narrowableActionOptions(ap.user)},
+							{Field: "limit", Label: "Times per 24 hours", Type: "number", Width: 1, Placeholder: "6"},
+						}},
 					{Field: "daily_spend_usd", Type: "number", Label: "Spend limit (US$ per 24 hours)", Min: 0, Max: 1000,
 						Placeholder: "0",
 						Help:        "What this agent may cost in a rolling 24 hours. 0 = no limit.",

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -172,5 +173,23 @@ func TestAnUnknownViewFallsBackToTheToolList(t *testing.T) {
 	rows := accessRowsFor(t, app, "a6", "")
 	if rows == nil {
 		t.Error("the default view returned null rather than an empty list")
+	}
+}
+
+// The Limits section edits action limits as a list (an action, how many times
+// a day), loaded as rows from its own view, not typed as "action = N" tags.
+func TestTheActionLimitsAreAList(t *testing.T) {
+	src, err := os.ReadFile("page_agent_access.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+	for _, want := range []string{`Source:  ap.patchURL + "/limits"`, `{Field: "action_quotas", Type: "rows"`, `AddLabel:    "+ Add limit"`, `Options: narrowableActionOptions(ap.user)`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("page_agent_access.go no longer has %s", want)
+		}
+	}
+	if strings.Contains(s, "one per line as `action = number`") {
+		t.Error("the limits are typed as lines again")
 	}
 }

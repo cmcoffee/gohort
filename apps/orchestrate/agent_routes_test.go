@@ -51,6 +51,7 @@ func TestEveryAgentRouteTakesItsMethodsAndRefusesTheSignedOut(t *testing.T) {
 		"guardrail-test":   "POST",
 		"decline-suggest":  "POST",
 		"persona-rules":    "POST",
+		"limits":           "GET",
 	}
 	src := funcBody(t, readFile(t, "agents_http.go"), "func (T *OrchestrateApp) registerAgentRoutes")
 	if n := strings.Count(src, `T.HandleFunc("/api/agents/{id}`); n != len(takes)+7 {

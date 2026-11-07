@@ -65,3 +65,22 @@ func TestTheAgentPageEditsTheIntakeFormAsAList(t *testing.T) {
 		t.Error("the intake form is a JSON box again")
 	}
 }
+
+// Action limits read the lines every API client and the authoring tools send
+// (a line that does not parse is dropped, as always) and the list's rows (a
+// half-filled row is an error, not a silent drop).
+func TestActionLimitsReadLinesAndRows(t *testing.T) {
+	var m ActionQuotaMap
+	if err := json.Unmarshal([]byte(`["send_email = 3", "nonsense", "x = 0"]`), &m); err != nil || len(m) != 1 || m["send_email"] != 3 {
+		t.Errorf("lines: %v %v", m, err)
+	}
+	if err := json.Unmarshal([]byte(`[{"action":"a","limit":2},{"action":"b","limit":"4"},{"action":" ","limit":""}]`), &m); err != nil || len(m) != 2 || m["b"] != 4 {
+		t.Errorf("rows: %v %v", m, err)
+	}
+	if err := json.Unmarshal([]byte(`[{"action":"a"}]`), &m); err == nil || !strings.Contains(err.Error(), "how many times") {
+		t.Errorf("a row with no limit: %v", err)
+	}
+	if rows := (ActionQuotaMap{"b": 1, "a": 2}).Rows(); len(rows) != 2 || rows[0]["action"] != "a" {
+		t.Errorf("rows are sorted by action: %v", rows)
+	}
+}

@@ -2038,16 +2038,87 @@ func (m *ActionQuotaMap) UnmarshalJSON(b []byte) error {
 		}
 		return nil
 	}
-	var lines []string
-	if err := json.Unmarshal(b, &lines); err != nil {
+	// An array of "action = N" lines (the tags editor, the authoring tools),
+	// or of {action, limit} rows (the Access page's list). A line that does
+	// not parse is dropped, as it always was. A row is refused instead: it
+	// came from a form with a box for each half, so a half left empty is a
+	// mistake to show while the form is on screen, not one to save around.
+	var items []json.RawMessage
+	if err := json.Unmarshal(b, &items); err != nil {
 		return err
 	}
-	for _, l := range lines {
+	for i, item := range items {
+		item = bytes.TrimSpace(item)
+		if len(item) > 0 && item[0] == '{' {
+			var row struct {
+				Action string          `json:"action"`
+				Limit  json.RawMessage `json:"limit"`
+			}
+			if err := json.Unmarshal(item, &row); err != nil {
+				return err
+			}
+			name := strings.TrimSpace(row.Action)
+			n, ok := quotaRowLimit(row.Limit)
+			switch {
+			case name == "" && !ok:
+				continue // a row nobody filled in
+			case name == "":
+				return fmt.Errorf("limit %d: name the action it limits", i+1)
+			case !ok:
+				return fmt.Errorf("limit %d (%s): give how many times a day, a whole number above 0", i+1, name)
+			}
+			(*m)[name] = n
+			continue
+		}
+		var l string
+		if err := json.Unmarshal(item, &l); err != nil {
+			return err
+		}
 		if name, n, ok := parseActionQuotaLine(l); ok {
 			(*m)[name] = n
 		}
 	}
 	return nil
+}
+
+// quotaRowLimit reads a row's limit: a number, or the text a form's number box
+// may send. ok only for a whole number above 0.
+func quotaRowLimit(raw json.RawMessage) (int, bool) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) || bytes.Equal(raw, []byte(`""`)) {
+		return 0, false
+	}
+	var f float64
+	if err := json.Unmarshal(raw, &f); err != nil {
+		var s string
+		if json.Unmarshal(raw, &s) != nil {
+			return 0, false
+		}
+		v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+		if err != nil {
+			return 0, false
+		}
+		f = v
+	}
+	if f <= 0 || f != float64(int(f)) {
+		return 0, false
+	}
+	return int(f), true
+}
+
+// Rows is the map as the Access page's list edits it: {action, limit} rows,
+// sorted by action so the list reads the same on every load.
+func (m ActionQuotaMap) Rows() []map[string]any {
+	names := make([]string, 0, len(m))
+	for k := range m {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	out := make([]map[string]any, 0, len(names))
+	for _, k := range names {
+		out = append(out, map[string]any{"action": k, "limit": m[k]})
+	}
+	return out
 }
 
 // parseActionQuotaLine reads one "action = N" entry. A line that does not say
