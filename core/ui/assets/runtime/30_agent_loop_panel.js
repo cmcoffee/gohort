@@ -3110,6 +3110,19 @@
     if (attachBtn) inputRow.appendChild(attachBtn);
     inputRow.appendChild(sendBtn);
     inputRow.appendChild(cancelBtn);
+    // Pressing Send must not take focus from the message box. On a phone it
+    // did: the box lost focus as the finger came down, the keyboard began to
+    // close, the panel (sized to what the keyboard leaves) grew, and Send
+    // moved out from under the finger before it lifted, so the tap landed on
+    // nothing and the message stayed unsent, now and then. Keeping focus where
+    // it is keeps the keyboard, the panel and the button still; the click
+    // still comes, and the keyboard stays up for the next message.
+    sendBtn.addEventListener('pointerdown', function(ev) {
+      if (document.activeElement === inputArea) ev.preventDefault();
+    });
+    sendBtn.addEventListener('mousedown', function(ev) {
+      if (document.activeElement === inputArea) ev.preventDefault();
+    });
 
     // uiRegisterComposerAction adds a button to the input row:
     // { label, title?, first?, prominent?, onclick(ctx) } where ctx = { button, input,

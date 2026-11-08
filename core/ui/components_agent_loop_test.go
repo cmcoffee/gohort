@@ -125,3 +125,46 @@ console.log('OK');
 		}
 	}
 }
+
+// Pressing Send while typing keeps focus in the message box: on a phone a
+// press that took it closed the keyboard, the panel sized to what the
+// keyboard leaves grew, and Send moved out from under the finger before it
+// lifted, so the tap now and then sent nothing. With the box not focused, a
+// press is left as it is.
+func TestPressingSendKeepsTheKeyboardUp(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed")
+	}
+	src := readRuntimeFile(t, "30_agent_loop_panel.js")
+	start := strings.Index(src, "    sendBtn.addEventListener('pointerdown', function(ev) {")
+	end := strings.Index(src[start:], "    });\n    sendBtn.addEventListener('mousedown'")
+	if start < 0 || end < 0 {
+		t.Fatal("Send's press handling is gone")
+	}
+	block := src[start : start+end+len("    });\n")]
+	block += src[start+end+len("    });\n") : start+end+len("    });\n")+strings.Index(src[start+end+len("    });\n"):], "    });\n")+len("    });\n")]
+	harness := `
+var handlers = {};
+var sendBtn = {addEventListener: function(e, f) { handlers[e] = f; }};
+var inputArea = {};
+var document = {activeElement: null};
+` + block + `
+function press(kind) { var stopped = false; handlers[kind]({preventDefault: function() { stopped = true; }}); return stopped; }
+var fail = 0;
+document.activeElement = inputArea;
+if (!press('pointerdown') || !press('mousedown')) { console.log('FAIL a press while typing takes the focus'); fail++; }
+document.activeElement = null;
+if (press('pointerdown') || press('mousedown')) { console.log('FAIL a press with the box not focused is changed'); fail++; }
+if (!fail) console.log('OK');
+`
+	tmp := filepath.Join(t.TempDir(), "send_press.js")
+	if err := os.WriteFile(tmp, []byte(harness), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("node", tmp).CombinedOutput(); err != nil || !strings.Contains(string(out), "OK") {
+		t.Fatalf("Send's press:\n%s", out)
+	}
+	if !strings.Contains(src, "onclick: function(){ sendMessage(); }}, [cfg.submit_label || 'Send']);") {
+		t.Error("Send no longer sends on click")
+	}
+}
