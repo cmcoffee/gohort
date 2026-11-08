@@ -332,13 +332,10 @@ type imageBackendRow struct {
 	// On Media Generation: the band it sits in (Images, Music, or the kind
 	// a media connector makes), and for an image backend that both makes and
 	// edits pictures, what it is used for.
-	Group        string `json:"group,omitempty"`
-	IsImage      bool   `json:"is_image,omitempty"`
-	BothWays     bool   `json:"both_ways,omitempty"`
-	UsedFor      string `json:"used_for,omitempty"`
-	UsedBoth     bool   `json:"used_both,omitempty"`
-	UsedEdit     bool   `json:"used_edit,omitempty"`
-	UsedGenerate bool   `json:"used_generate,omitempty"`
+	Group    string `json:"group,omitempty"`
+	IsImage  bool   `json:"is_image,omitempty"`
+	BothWays bool   `json:"both_ways,omitempty"`
+	Uses     string `json:"uses,omitempty"`
 	// Stale says why a choice Media Generation holds no longer reads (it
 	// names a connection not here, or one named the old way); IsStale gives
 	// its row Remove.

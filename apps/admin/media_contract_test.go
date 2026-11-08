@@ -163,7 +163,7 @@ func TestMediaRoutesContract(t *testing.T) {
 	do("root", "GET", "/api/media-backends", "")
 	do("root", "POST", "/api/media-backends/role?name=openai&role=default", "")
 	do("root", "POST", "/api/media-backends/role?name=openai&role=sometimes", "")
-	do("root", "POST", "/api/media-backends/uses?name=openai&uses=edit", "")
+	do("root", "POST", "/api/media-backends/uses", `{"name":"openai","uses":"edit"}`)
 	// Refused, it stores nothing.
 	if adb.Get(ImageTable, "provider", new(string)) || adb.Get(ImageTable, "uses", new(map[string]string)) {
 		t.Error("a refused image role or use stored something")

@@ -18,6 +18,7 @@ import (
 	"github.com/cmcoffee/gohort/core/activity"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/service"
+	"github.com/cmcoffee/gohort/core/ui"
 )
 
 // mediaBackendsSource is the list's address, named once because the edits
@@ -31,12 +32,21 @@ func (a *AdminApp) registerMediaGenerationRoutes(sub *http.ServeMux) {
 	sub.HandleFunc("/"+mediaBackendsSource+"/uses", jsonapi.Post(a.db, a.handleImageBackendUses, a.gate()))
 }
 
-// usedForLabels is what a row says an image backend that both makes and
-// edits pictures is used for.
-var usedForLabels = map[string]string{
-	ImageUseBoth:     "used for generating, editing and blending",
-	ImageUseEdit:     "used for editing and blending only",
-	ImageUseGenerate: "used for generating only",
+// usedForOptions are the Used for choices on a row for an image backend
+// that both makes and edits pictures: the image tool's jobs it is used for.
+// The values are what the row sends; "both" is stored as ImageUseBoth.
+var usedForOptions = []ui.SelectOption{
+	{Value: "both", Label: "Generating, editing and blending"},
+	{Value: ImageUseEdit, Label: "Editing and blending"},
+	{Value: ImageUseGenerate, Label: "Generating"},
+}
+
+// usedForValue is the Used for choice use (ImageBackendUse) reads as.
+func usedForValue(use string) string {
+	if use == ImageUseBoth {
+		return "both"
+	}
+	return use
 }
 
 // handleMediaBackends is every media connector as its row reads: the image
@@ -47,9 +57,7 @@ func (a *AdminApp) handleMediaBackends(c *jsonapi.Call) (any, error) {
 		r.Group, r.IsImage = "Images", true
 		if conn, ok := GetConnector(RootDB, r.Name); ok && conn.Kind == service.Kind &&
 			service.Provides(conn, "image.generate") && service.Provides(conn, "image.edit") {
-			use := ImageBackendUse(r.Name)
-			r.BothWays, r.UsedFor = true, usedForLabels[use]
-			r.UsedBoth, r.UsedEdit, r.UsedGenerate = use == ImageUseBoth, use == ImageUseEdit, use == ImageUseGenerate
+			r.BothWays, r.Uses = true, usedForValue(ImageBackendUse(r.Name))
 		}
 		rows = append(rows, r)
 	}
@@ -219,21 +227,26 @@ func (a *AdminApp) handleMediaBackendRole(c *jsonapi.Call, _ struct{}) (any, err
 // and edits pictures, is used for (?uses=): both, edit (editing and blending
 // only) or generate (generating only). Agents' image tool then offers it for
 // that alone, and a call for the other is refused.
-func (a *AdminApp) handleImageBackendUses(c *jsonapi.Call, _ struct{}) (any, error) {
-	q := c.R.URL.Query()
-	name, use := strings.TrimSpace(q.Get("name")), strings.TrimSpace(q.Get("uses"))
+func (a *AdminApp) handleImageBackendUses(c *jsonapi.Call, req usesForm) (any, error) {
+	name, use := strings.TrimSpace(req.Name), strings.TrimSpace(req.Uses)
 	if name == "" {
-		return nil, jsonapi.BadRequest(noConnectorNamed)
+		return nil, jsonapi.BadRequest("name the connector: name")
 	}
 	conn, ok := GetConnector(RootDB, name)
 	if !ok || conn.Kind != service.Kind || !service.Provides(conn, "image.generate") || !service.Provides(conn, "image.edit") {
 		return nil, jsonapi.BadRequest(name + " does not both make and edit pictures")
 	}
+	label := ""
+	for _, o := range usedForOptions {
+		if o.Value == use {
+			label = o.Label
+		}
+	}
+	if label == "" {
+		return nil, jsonapi.BadRequest("uses is both, edit or generate")
+	}
 	if use == "both" {
 		use = ImageUseBoth
-	}
-	if _, known := usedForLabels[use]; !known {
-		return nil, jsonapi.BadRequest("uses is both, edit or generate")
 	}
 	uses := map[string]string{}
 	if a.db != nil {
@@ -248,6 +261,13 @@ func (a *AdminApp) handleImageBackendUses(c *jsonapi.Call, _ struct{}) (any, err
 		}
 		a.db.Set(ImageTable, "uses", uses)
 	}
-	adminChange(c.R, activity.Settings, "image backend %s %s", name, usedForLabels[use])
+	adminChange(c.R, activity.Settings, "image backend %s used for %s", name, strings.ToLower(label))
 	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// usesForm is what a row's Used for sends: the backend (the row's key) and
+// the choice.
+type usesForm struct {
+	Name string `json:"name"`
+	Uses string `json:"uses"`
 }

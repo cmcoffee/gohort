@@ -30,6 +30,13 @@ func TestMediaGenerationListsEveryKindInBands(t *testing.T) {
 		sub.ServeHTTP(w, httptest.NewRequest(method, path, nil))
 		return w
 	}
+	// usedFor is what a row's Used for dropdown sends: the row's key and
+	// the choice.
+	usedFor := func(name, uses string) int {
+		w := httptest.NewRecorder()
+		sub.ServeHTTP(w, httptest.NewRequest("POST", "/api/media-backends/uses", strings.NewReader(`{"name":"`+name+`","uses":"`+uses+`"}`)))
+		return w.Code
+	}
 	save := func(name, spec string) {
 		t.Helper()
 		if err := SaveConnector(RootDB, Connector{Name: name, Kind: service.Kind, Spec: json.RawMessage(spec)}); err != nil {
@@ -66,10 +73,10 @@ func TestMediaGenerationListsEveryKindInBands(t *testing.T) {
 		return out
 	}
 	got := rows()
-	if r := got["both"]; !r.IsImage || !r.BothWays || !r.UsedBoth || r.UsedFor != "used for generating, editing and blending" {
+	if r := got["both"]; !r.IsImage || !r.BothWays || r.Uses != "both" {
 		t.Errorf("a backend that makes and edits: %+v", r)
 	}
-	if r := got["painter"]; r.BothWays || r.UsedFor != "" {
+	if r := got["painter"]; r.BothWays || r.Uses != "" {
 		t.Errorf("a backend that only makes pictures has Used for: %+v", r)
 	}
 	if r := got["clips"]; r.IsImage || !r.IsUnused || r.Does != "video" {
@@ -77,22 +84,22 @@ func TestMediaGenerationListsEveryKindInBands(t *testing.T) {
 	}
 
 	// Used for, on the one that does both, and on no other.
-	if w := call("POST", "/api/media-backends/uses?name=both&uses=edit"); w.Code >= 300 {
-		t.Fatalf("Used for: %d %s", w.Code, w.Body.String())
+	if code := usedFor("both", "edit"); code >= 300 {
+		t.Fatalf("Used for: %d", code)
 	}
 	if ImageBackendUse("both") != ImageUseEdit {
 		t.Errorf("stored use = %q", ImageBackendUse("both"))
 	}
-	if r := rows()["both"]; !r.UsedEdit || r.UsedBoth || r.UsedFor != "used for editing and blending only" {
+	if r := rows()["both"]; r.Uses != "edit" {
 		t.Errorf("after editing only: %+v", r)
 	}
-	if w := call("POST", "/api/media-backends/uses?name=painter&uses=edit"); w.Code != http.StatusBadRequest {
-		t.Errorf("Used for on a backend that only makes pictures: %d", w.Code)
+	if code := usedFor("painter", "edit"); code != http.StatusBadRequest {
+		t.Errorf("Used for on a backend that only makes pictures: %d", code)
 	}
-	if w := call("POST", "/api/media-backends/uses?name=both&uses=sometimes"); w.Code != http.StatusBadRequest {
-		t.Errorf("an unknown use: %d", w.Code)
+	if code := usedFor("both", "sometimes"); code != http.StatusBadRequest {
+		t.Errorf("an unknown use: %d", code)
 	}
-	call("POST", "/api/media-backends/uses?name=both&uses=both")
+	usedFor("both", "both")
 	if ImageBackendUse("both") != ImageUseBoth {
 		t.Errorf("back to both, stored use = %q", ImageBackendUse("both"))
 	}

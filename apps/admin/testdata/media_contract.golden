@@ -75,9 +75,9 @@ alice POST /api/media-backends/uses "{\"enabled\":true}"
 root GET /api/media-backends/uses ""
   405 method not allowed
 root POST /api/media-backends/uses "{\"enabled\":"
-  400 name the connector: ?name=
+  400 invalid JSON: unexpected EOF
 root POST /api/media-backends/uses ""
-  400 name the connector: ?name=
+  400 invalid JSON: EOF
 alice POST /api/embeddings "{\"enabled\":true,\"provider\":\"vectors\"}"
   403 forbidden
 root POST /api/embeddings "{\"enabled\":true,\"provider\":\"local\",\"endpoint\":\"<stub>/embed/v1\",\"api_key\":\"s3cr3t-embed-1\"}"
@@ -166,7 +166,7 @@ root POST /api/media-backends/role?name=openai&role=default ""
   400 no image backend named openai
 root POST /api/media-backends/role?name=openai&role=sometimes ""
   400 no image backend named openai
-root POST /api/media-backends/uses?name=openai&uses=edit ""
+root POST /api/media-backends/uses "{\"name\":\"openai\",\"uses\":\"edit\"}"
   400 openai does not both make and edit pictures
 activity log, 5 entries:
   settings root: updated embeddings config (enabled=false provider="vectors" endpoint="vectors" model="nomic-embed-text")

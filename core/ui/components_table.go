@@ -201,6 +201,7 @@ type Col struct {
 //   - "select" — inline dropdown. Options must be set; on change POSTs
 //     {Field: newValue} (or full record if not PATCH). Use for tables
 //     where each row picks from a small enum (e.g. routing tier).
+//     Label, when set, captions it on its left, as a toggle's does.
 //   - "number" — inline numeric input. Min/Max bound the value; on
 //     blur or change POSTs {Field: newValue}.
 //   - "button" — labeled button. On click, POSTs (or GETs if Method

@@ -1104,7 +1104,16 @@
             .catch(function(err){ showToast('Save failed: ' + err.message); });
           rec[act.field] = sel.value;
         });
-        parent.appendChild(sel);
+        // An optional caption to the left, as a toggle and a segmented
+        // track get: a bare dropdown says its choices, never the question.
+        if (act.label) {
+          parent.appendChild(el('span', {class: 'ui-row-toggle-pair'}, [
+            el('span', {class: 'ui-row-toggle-label'}, [act.label]),
+            sel,
+          ]));
+        } else {
+          parent.appendChild(sel);
+        }
       } else if (act.type === 'segmented') {
         // Single-select pill track: each option is a segment, the one
         // matching rec[field] is highlighted. Picking a segment POSTs
