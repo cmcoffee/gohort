@@ -175,6 +175,97 @@ func TestTheOpenAITemplateEditsAndBlends(t *testing.T) {
 	}
 }
 
+// ElevenLabs' music template composes a song from the prompt with the
+// model its row sets, and reads the reply as the song; its health check
+// asks who the key belongs to.
+func TestTheElevenLabsMusicTemplateComposes(t *testing.T) {
+	world(t)
+	var path, body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && r.URL.Path == "/v1/user" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"user_id":"u","subscription":{"tier":"creator"}}`))
+			return
+		}
+		b, _ := io.ReadAll(r.Body)
+		path, body = r.URL.Path, string(b)
+		w.Header().Set("Content-Type", "audio/mpeg")
+		w.Write(ttsClip)
+	}))
+	defer srv.Close()
+	install(t, "elevenlabs-music", templateSpec(t, "elevenlabs-music", srv.URL))
+	res, err := Call(context.Background(), &ToolSession{WorkspaceDir: t.TempDir()}, "elevenlabs-music", "music.generate", map[string]any{"prompt": "a calm piano piece, about a minute"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := res["audio"]; v.File == nil || v.File.Size == 0 {
+		t.Fatalf("no song: %+v", res)
+	}
+	if path != "/v1/music" || !strings.Contains(body, `"prompt":"a calm piano piece, about a minute"`) || !strings.Contains(body, `"model_id":"music_v2_5"`) {
+		t.Errorf("request: %s %s", path, body)
+	}
+	if h, err := CheckHealth(context.Background(), "elevenlabs-music"); err != nil || !h.OK {
+		t.Errorf("health: %+v %v", h, err)
+	}
+}
+
+// Gemini Omni Flash makes a video in three steps: start it, asking for the
+// video by link (inline replies stop at 4MB), wait on that file until Google
+// says it is ACTIVE, then download it from the address the file gives. The
+// link is read where the REST docs put it (steps) or where their example
+// reads it (output_video), and a FAILED file is refused with Google's reason.
+func TestTheGeminiVideoTemplateWaitsForItsVideo(t *testing.T) {
+	world(t)
+	clip := []byte("\x00\x00\x00\x18ftypmp42 a short clip")
+	var created string
+	reply, state := "", "ACTIVE"
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/v1beta/interactions":
+			b, _ := io.ReadAll(r.Body)
+			created = string(b)
+			w.Write([]byte(reply))
+		case r.URL.Path == "/v1beta/files/abc123":
+			w.Write([]byte(`{"name":"files/abc123","state":"` + state + `","error":{"message":"the prompt was refused"},"downloadUri":"` + srv.URL + `/v1beta/files/abc123:download?alt=media"}`))
+		case r.URL.Path == "/v1beta/files/abc123:download":
+			w.Header().Set("Content-Type", "video/mp4")
+			w.Write(clip)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	spec := templateSpec(t, "gemini-video", srv.URL)
+	spec["provider"].(map[string]any)["base_url"] = srv.URL + "/v1beta/"
+	install(t, "gemini-video", spec)
+	run := func() (Result, error) {
+		return Call(context.Background(), &ToolSession{WorkspaceDir: t.TempDir()}, "gemini-video", "media.generate", map[string]any{"prompt": "a marble rolling down a track"})
+	}
+	for _, at := range []string{
+		`{"steps":[{"type":"user_input","content":[{"type":"text","text":"x"}]},{"type":"model_output","content":[{"type":"video","mime_type":"video/mp4","uri":"files/abc123"}]}],"status":"completed"}`,
+		`{"output_video":{"uri":"files/abc123"},"status":"completed"}`,
+	} {
+		reply = at
+		res, err := run()
+		if err != nil {
+			t.Fatalf("%s: %v", at, err)
+		}
+		if got, _ := os.ReadFile(res["file"].File.Path); string(got) != string(clip) {
+			t.Errorf("%s: the video is not the one downloaded", at)
+		}
+	}
+	for _, want := range []string{`"model":"gemini-omni-1.2-flash"`, `"input":"a marble rolling down a track"`, `"delivery":"uri"`, `"duration":"10s"`, `"aspect_ratio":"16:9"`, `"resolution":"720p"`} {
+		if !strings.Contains(created, want) {
+			t.Errorf("the request has no %s: %s", want, created)
+		}
+	}
+	state = "FAILED"
+	if _, err := run(); err == nil || !strings.Contains(err.Error(), "the prompt was refused") {
+		t.Errorf("a failed video: %v", err)
+	}
+}
+
 // The search templates ask what their APIs take and read each one's results
 // into the contract's title, url and snippet; Search gives them in the
 // numbered shape the web_search tool reads. A reply with no results is no

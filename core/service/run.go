@@ -75,12 +75,19 @@ func (s Spec) run(ctx context.Context, sess *ToolSession, capability string, inp
 		if err != nil {
 			return out, err
 		}
-		for v, path := range st.Save {
-			val := apijob.Lookup(r.node, fillPath(path, vars), "")
-			if !apijob.Present(r.node, fillPath(path, vars), "") {
-				return out, fmt.Errorf("step %d (%s): the reply has nothing at %q to save as %s: %s", i+1, st.Call+st.Wait, path, v, clip(r.text, 300))
+		for v, paths := range st.Save {
+			// A path may name others to try after a |, the first the reply
+			// has: an API whose docs show it in two places.
+			found := false
+			for _, path := range strings.Split(paths, "|") {
+				if p := fillPath(strings.TrimSpace(path), vars); apijob.Present(r.node, p, "") {
+					vars[v], found = apijob.Lookup(r.node, p, ""), true
+					break
+				}
 			}
-			vars[v] = val
+			if !found {
+				return out, fmt.Errorf("step %d (%s): the reply has nothing at %q to save as %s: %s", i+1, st.Call+st.Wait, paths, v, clip(r.text, 300))
+			}
 		}
 		last = r
 	}

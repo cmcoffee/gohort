@@ -28,7 +28,7 @@ func TestTheBuiltInTemplatesAreValid(t *testing.T) {
 		"openai-embeddings": false, "slack-messages": false, "discord-messages": false,
 		"brave-search": false, "serper-search": false, "tavily-search": false,
 		"jina-reader": false, "firecrawl": false, "resend-mail": false, "postmark-mail": false, "mailgun-mail": false,
-		"convertapi": false}
+		"convertapi": false, "elevenlabs-music": false, "gemini-video": false}
 	for _, r := range builtins() {
 		if err := Validate(r); err != nil {
 			t.Errorf("%s: %v", r.ID, err)

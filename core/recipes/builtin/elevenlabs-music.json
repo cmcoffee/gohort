@@ -1,0 +1,104 @@
+{
+  "id": "elevenlabs-music",
+  "title": "ElevenLabs (music)",
+  "description": "ElevenLabs' Eleven Music as a music generator, declared as a service: it makes a song from a prompt, and agents get a tool of their own for it once it is offered. Its request and reply are data you can test and fix from Admin > Connectors.",
+  "category": "Music",
+  "setup_notes": "The Music API is for paid ElevenLabs plans. Get an API key at elevenlabs.io (Profile > API keys); the one your ElevenLabs speech connector uses works. It installs out of use: choose it under Admin > Services > Media Generation, as Secondary, to give agents a generate_music tool for it. The song's length is the model's to choose from the prompt (say how long in it). ElevenLabs bills in credits, so no price is declared: set one under Overview > Cost by source if you want its calls counted.",
+  "questions": [
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; its agent tool is named after it.",
+      "default": "elevenlabs-music"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "elevenlabs-music",
+          "desc": "ElevenLabs music",
+          "spec": {
+            "config": [
+              {
+                "name": "model",
+                "label": "Model",
+                "type": "choice",
+                "help": "The Eleven Music model that composes.",
+                "default": "music_v2_5",
+                "options": [
+                  {
+                    "value": "music_v2_5",
+                    "label": "Music v2.5"
+                  },
+                  {
+                    "value": "music_v2",
+                    "label": "Music v2"
+                  }
+                ]
+              },
+              {
+                "name": "api_key",
+                "label": "ElevenLabs API key",
+                "type": "secret",
+                "send": "header:xi-api-key",
+                "help": "Kept with this connection, and sent only to the address it is given for.",
+                "required": true
+              }
+            ],
+            "provider": {
+              "transport": "http",
+              "base_url": "https://api.elevenlabs.io",
+              "auth": {
+                "secret": "api_key"
+              },
+              "operations": {
+                "compose": {
+                  "method": "POST",
+                  "path": "/v1/music",
+                  "body": {
+                    "prompt": "{prompt}",
+                    "model_id": "{model}"
+                  },
+                  "read": "file",
+                  "timeout_secs": 600
+                },
+                "user": {
+                  "path": "/v1/user"
+                }
+              },
+              "health": {
+                "call": "user",
+                "expect": "subscription",
+                "every_mins": 60
+              }
+            },
+            "provides": [
+              {
+                "capability": "music.generate",
+                "steps": [
+                  {
+                    "call": "compose"
+                  }
+                ],
+                "output": {
+                  "audio": {
+                    "from": "body"
+                  }
+                },
+                "defaults": {
+                  "model": "{config.model}"
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

@@ -245,7 +245,7 @@ func TestAddAIGeneratorListsTemplatesByKind(t *testing.T) {
 			images[r.ID] = true
 		}
 	}
-	if got := strings.Join(kinds, ","); got != "Images,Music,Media" {
+	if got := strings.Join(kinds, ","); got != "Images,Music,Video,Media" {
 		t.Errorf("kinds in order = %s", got)
 	}
 	// What Add image backend opened is among them: a local ComfyUI or A1111.

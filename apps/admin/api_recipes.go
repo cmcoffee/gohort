@@ -114,7 +114,7 @@ type templateNeed struct {
 var templateNeeds = map[string]templateNeed{
 	"web.search":        {"Web Search", "web.search", nil},
 	"research":          {"Research Sources", "web.search", nil},
-	"media":             {"Images", "", []string{"Music", "Media"}},
+	"media":             {"Images", "", []string{"Music", "Video", "Media"}},
 	"embed.text":        {"Embeddings", "embed.text", nil},
 	"speech.transcribe": {"Speech", "speech.transcribe", nil},
 	"speech.synthesize": {"Speech", "speech.synthesize", nil},

@@ -527,8 +527,13 @@ func (b Binding) validate(p Provider) error {
 			if !tokenRE.MatchString("{" + v + "}") {
 				return fmt.Errorf("step %d saves %q, which is not a variable name", i+1, v)
 			}
-			if err := apijob.ValidPath(path); err != nil {
-				return fmt.Errorf("step %d save %s: %w", i+1, v, err)
+			for _, p := range strings.Split(path, "|") {
+				if err := apijob.ValidPath(p); err != nil || strings.TrimSpace(p) == "" {
+					if err == nil {
+						err = fmt.Errorf("path %q has an empty alternative", path)
+					}
+					return fmt.Errorf("step %d save %s: %w", i+1, v, err)
+				}
 			}
 			have[v] = true
 		}
@@ -708,7 +713,9 @@ func (s Spec) validateCommand() error {
 func (st Step) paths() []string {
 	out := []string{st.Reason}
 	for _, p := range st.Save {
-		out = append(out, p)
+		for _, alt := range strings.Split(p, "|") {
+			out = append(out, strings.TrimSpace(alt))
+		}
 	}
 	for _, cond := range []string{st.Until, st.Fail} {
 		if c, _ := parseCond(cond); c != nil {

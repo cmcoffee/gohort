@@ -1,0 +1,180 @@
+{
+  "id": "gemini-video",
+  "title": "Gemini Omni Flash (video)",
+  "description": "Google's Gemini Omni Flash as a video generator, declared as a service: it makes a 3 to 15 second video with sound from a prompt, and agents get a tool of their own for it once it is offered. Its requests, its wait for the video and its price are data you can test and fix from Admin > Connectors.",
+  "category": "Video",
+  "setup_notes": "Gemini Omni Flash is on the Gemini API's paid tier. Get an API key at aistudio.google.com/apikey; the one your Gemini images connector uses works. It installs out of use: choose it under Admin > Services > Media Generation, as Secondary, to give agents a generate_video tool for it. Its row's Settings set the length, shape and resolution. A video takes a while: the connector starts it, waits for Google to finish it, then downloads it. The price per video is Google's for 10 seconds at 720p (about $0.07 a second) when this template was written: set yours under Overview > Cost by source if you change the length or resolution.",
+  "questions": [
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; its agent tool is named after it.",
+      "default": "gemini-video"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "gemini-video",
+          "desc": "Gemini Omni Flash video",
+          "spec": {
+            "config": [
+              {
+                "name": "model",
+                "label": "Model",
+                "help": "A Gemini model that makes video through the Interactions API.",
+                "default": "gemini-omni-1.2-flash"
+              },
+              {
+                "name": "seconds",
+                "label": "Length (seconds)",
+                "type": "number",
+                "help": "How long each video is, 3 to 15 seconds. The price grows with it.",
+                "default": "10",
+                "min": 3,
+                "max": 15
+              },
+              {
+                "name": "aspect",
+                "label": "Shape",
+                "type": "choice",
+                "default": "16:9",
+                "options": [
+                  {
+                    "value": "16:9",
+                    "label": "Landscape (16:9)"
+                  },
+                  {
+                    "value": "9:16",
+                    "label": "Portrait (9:16)"
+                  }
+                ]
+              },
+              {
+                "name": "resolution",
+                "label": "Resolution",
+                "type": "choice",
+                "help": "Higher costs more: about $0.023 a second at 360p, $0.07 at 720p, $0.10 at 1080p.",
+                "default": "720p",
+                "options": [
+                  {
+                    "value": "360p",
+                    "label": "360p"
+                  },
+                  {
+                    "value": "720p",
+                    "label": "720p"
+                  },
+                  {
+                    "value": "1080p",
+                    "label": "1080p"
+                  }
+                ]
+              },
+              {
+                "name": "api_key",
+                "label": "Gemini API key",
+                "type": "secret",
+                "send": "header:x-goog-api-key",
+                "help": "Kept with this connection, and sent only to the address it is given for.",
+                "required": true
+              }
+            ],
+            "provider": {
+              "transport": "http",
+              "base_url": "https://generativelanguage.googleapis.com/v1beta/",
+              "auth": {
+                "secret": "api_key"
+              },
+              "limits": {
+                "max_bytes": 104857600
+              },
+              "operations": {
+                "create": {
+                  "method": "POST",
+                  "path": "/interactions",
+                  "body": {
+                    "model": "{model}",
+                    "input": "{prompt}",
+                    "response_format": {
+                      "type": "video",
+                      "delivery": "uri",
+                      "aspect_ratio": "{config.aspect}",
+                      "resolution": "{config.resolution}",
+                      "duration": "{config.seconds}s"
+                    }
+                  },
+                  "timeout_secs": 600
+                },
+                "file": {
+                  "method": "GET",
+                  "url": "{file}"
+                },
+                "download": {
+                  "method": "GET",
+                  "url": "{download}",
+                  "read": "file",
+                  "timeout_secs": 300
+                },
+                "models": {
+                  "path": "/models"
+                }
+              },
+              "health": {
+                "call": "models",
+                "expect": "models",
+                "every_mins": 60
+              }
+            },
+            "provides": [
+              {
+                "capability": "media.generate",
+                "kind": "video",
+                "about": "A 3 to 15 second video with sound, from a description of the scene, its camera movement, lighting and mood.",
+                "steps": [
+                  {
+                    "call": "create",
+                    "save": {
+                      "file": "steps[type=model_output].content[type=video].uri|output_video.uri"
+                    }
+                  },
+                  {
+                    "wait": "file",
+                    "until": "state == ACTIVE",
+                    "fail": "state == FAILED",
+                    "reason": "error.message",
+                    "every_secs": 5,
+                    "max_secs": 900,
+                    "save": {
+                      "download": "downloadUri"
+                    }
+                  },
+                  {
+                    "call": "download"
+                  }
+                ],
+                "output": {
+                  "file": {
+                    "from": "body"
+                  }
+                },
+                "defaults": {
+                  "model": "{config.model}"
+                },
+                "cost": {
+                  "per_call": 0.7
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}
