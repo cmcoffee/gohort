@@ -286,6 +286,31 @@ func TestImageRolesTakeAConnectorThatMakesPictures(t *testing.T) {
 	if got := a.imageRows(); len(got) != 2 || got[0].Name != "sketcher" || got[0].Role != "default" || got[1].Role != "offered" {
 		t.Errorf("the list after Make default: %+v", got)
 	}
+	// The default's switch reads Enabled; saying Enabled again keeps it the
+	// default. Make default, its own button, moves the default and keeps the
+	// one it replaces enabled; the rows say which is which.
+	role("sketcher", "offered")
+	if got := stored(); got != "sketcher / painter" {
+		t.Errorf("Enabled on the default took its default away: %q", got)
+	}
+	w := httptest.NewRecorder()
+	sub.ServeHTTP(w, httptest.NewRequest("POST", "/api/media-backends/default?name=painter", nil))
+	if w.Code >= 300 || stored() != "painter / sketcher" {
+		t.Errorf("Make default: %d, %q", w.Code, stored())
+	}
+	out, _ := a.handleMediaBackends(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/media-backends", nil)})
+	for _, r := range out.([]imageBackendRow) {
+		switch r.Name {
+		case "painter":
+			if !r.IsDefault || r.Use != "offered" || r.CanMakeDefault {
+				t.Errorf("the default's row: %+v", r)
+			}
+		case "sketcher":
+			if r.IsDefault || r.Use != "offered" || !r.CanMakeDefault {
+				t.Errorf("an enabled row that is not the default: %+v", r)
+			}
+		}
+	}
 	role("painter", "off")
 	role("sketcher", "off")
 	if got := stored(); got != " / " {

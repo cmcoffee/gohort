@@ -506,29 +506,29 @@ func TestTheBackendListSharesTheConnectorActions(t *testing.T) {
 	for _, act := range tbl.RowActions {
 		labels = append(labels, act.Label)
 	}
-	if got := strings.Join(labels, ","); got != "Remove,,,Used for,Used for,Update from template,Edit setup,✨ Edit,✨ Fix,Settings,Test" {
+	if got := strings.Join(labels, ","); got != "Remove,,Used for,Used for,Make default,Update from template,Edit setup,✨ Edit,✨ Fix,Settings,Test" {
 		t.Errorf("row actions = %s", got)
 	}
-	// A row's role is a switch leading its second line, under its name:
-	// Primary (the default), Secondary (offered to agents) or Disabled; a
-	// music or media row has no Primary, so it is Enabled or Disabled. Used
-	// for sits beside it. The
-	// default's row wears a Default badge.
-	for i, want := range []string{"Primary,Secondary,Disabled", "Enabled,Disabled"} {
-		act := tbl.RowActions[1+i]
-		var opts []string
-		for _, o := range act.Options {
-			opts = append(opts, o.Label)
-		}
-		if act.Type != "segmented" || act.Line != 2 || act.Leading || act.Field != "role" || strings.Join(opts, ",") != want {
-			t.Errorf("role control %d: %s %v line=%d, want %s on the second line", i, act.Type, opts, act.Line, want)
-		}
+	// Every row's switch leads its second line, under its name: Enabled or
+	// Disabled, one switch for every kind. Used for sits beside it, then an
+	// enabled image backend's Make default; the default's row wears a
+	// Default badge instead.
+	act := tbl.RowActions[1]
+	var opts []string
+	for _, o := range act.Options {
+		opts = append(opts, o.Label)
 	}
-	if act := tbl.RowActions[3]; act.Label != "Used for" || act.Line != 2 || act.OnlyIf != "both_ways" {
+	if act.Type != "segmented" || act.Line != 2 || act.Leading || act.Field != "use" || act.OnlyIf != "use" || strings.Join(opts, ",") != "Enabled,Disabled" {
+		t.Errorf("the switch: %s %v line=%d field=%q, want Enabled,Disabled on the second line", act.Type, opts, act.Line, act.Field)
+	}
+	if act := tbl.RowActions[2]; act.Label != "Used for" || act.Line != 2 || act.OnlyIf != "both_ways" {
 		t.Errorf("Used for: %+v, want it on the second line", act)
 	}
-	if act := tbl.RowActions[4]; act.Label != "Used for" || act.Line != 2 || act.OnlyIf != "one_job" || act.DisableIf != "one_job" {
+	if act := tbl.RowActions[3]; act.Label != "Used for" || act.Line != 2 || act.OnlyIf != "one_job" || act.DisableIf != "one_job" {
 		t.Errorf("a one-job backend's Used for: %+v, want it greyed on the second line", act)
+	}
+	if act := tbl.RowActions[4]; act.Label != "Make default" || act.Line != 2 || act.OnlyIf != "can_make_default" || !strings.Contains(act.PostTo, "/default?name={name}") {
+		t.Errorf("Make default: %+v, want it on an enabled image row's second line", act)
 	}
 	badged := false
 	for _, c := range tbl.Columns {

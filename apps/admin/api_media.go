@@ -311,17 +311,21 @@ type imageBackendRow struct {
 	Name    string `json:"name"`
 	Title   string `json:"title"`
 	Summary string `json:"summary"`
-	// Role is how Media Generation uses it, as the control at its row's left
-	// says: "default" (Primary: what agents' image tools use unless told
-	// otherwise, badged Default), "offered" (Secondary: agents may choose it
-	// by name), or "unused" (Disabled). OfferOnly marks a music or media
+	// Role is how Media Generation uses it: "default" (what agents' image
+	// tools use unless told otherwise, badged Default), "offered" (agents
+	// may choose it by name), or "unused". OfferOnly marks a music or media
 	// row, which has no default.
 	Role      string `json:"role"`
 	IsDefault bool   `json:"is_default,omitempty"`
 	OfferOnly bool   `json:"offer_only,omitempty"`
-	Does      string `json:"does"`
-	Size      string `json:"size"`
-	Steps     string `json:"steps,omitempty"`
+	// Use is its row's switch: "offered" (Enabled, the default among them)
+	// or "unused" (Disabled). CanMakeDefault is an enabled image backend
+	// that is not the default, which its Make default button makes it.
+	Use            string `json:"use,omitempty"`
+	CanMakeDefault bool   `json:"can_make_default,omitempty"`
+	Does           string `json:"does"`
+	Size           string `json:"size"`
+	Steps          string `json:"steps,omitempty"`
 	// What its row can do, set exactly as a Connectors row's are, so it opens
 	// the same editor there and here.
 	EditForm bool `json:"edit_form,omitempty"`
@@ -389,7 +393,9 @@ func (a *AdminApp) imageRows() []imageBackendRow {
 // setImageRole changes how Media Generation uses image backend name: role
 // "default" makes it what agents' image tools use unless told otherwise,
 // keeping the one it replaces offered by name; "offered" lets agents choose
-// it by name; "off" stops using it (the default off leaves no default). The
+// it by name, and leaves the default the default (Enabled, on the row whose
+// switch already reads it); "off" stops using it (the default off leaves no
+// default). The
 // row's role control sends it; the save is the page's own, so it accepts a change
 // waiting on the backend as the page's save does.
 func (a *AdminApp) setImageRole(r *http.Request, name, role string) (any, error) {
@@ -412,10 +418,11 @@ func (a *AdminApp) setImageRole(r *http.Request, name, role string) (any, error)
 		}
 		provider = name
 	case "offered":
-		if provider == name {
-			provider = ""
+		// The default is enabled already: its switch saying Enabled again
+		// must not quietly take its default away.
+		if provider != name {
+			agents = append(agents, name)
 		}
-		agents = append(agents, name)
 	case "off":
 		if provider == name {
 			provider = ""

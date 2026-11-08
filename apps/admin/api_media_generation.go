@@ -29,6 +29,7 @@ const mediaBackendsSource = "api/media-backends"
 func (a *AdminApp) registerMediaGenerationRoutes(sub *http.ServeMux) {
 	sub.HandleFunc("/"+mediaBackendsSource, jsonapi.Get(a.db, a.handleMediaBackends, a.gate()))
 	sub.HandleFunc("/"+mediaBackendsSource+"/role", jsonapi.Post(a.db, a.handleMediaBackendRole, a.gate()))
+	sub.HandleFunc("/"+mediaBackendsSource+"/default", jsonapi.Post(a.db, a.handleMediaBackendDefault, a.gate()))
 	sub.HandleFunc("/"+mediaBackendsSource+"/remove", jsonapi.Post(a.db, a.handleMediaBackendRemove, a.gate()))
 	sub.HandleFunc("/"+mediaBackendsSource+"/uses", jsonapi.Post(a.db, a.handleImageBackendUses, a.gate()))
 }
@@ -88,6 +89,10 @@ func (a *AdminApp) handleMediaBackends(c *jsonapi.Call) (any, error) {
 	rows := []imageBackendRow{}
 	for _, r := range a.imageRows() {
 		r.Group, r.IsImage = "Images", true
+		r.Use, r.CanMakeDefault = "offered", r.Role == "offered"
+		if r.Role == "unused" {
+			r.Use = "unused"
+		}
 		conn, ok := GetConnector(RootDB, r.Name)
 		gen := ok && conn.Kind == service.Kind && service.Provides(conn, "image.generate")
 		edit := ok && conn.Kind == service.Kind && service.Provides(conn, "image.edit")
@@ -206,6 +211,7 @@ func (a *AdminApp) offeredRow(conn Connector, table, group, does string) imageBa
 	if slices.Contains(agents, conn.Name) {
 		row.Role = "offered"
 	}
+	row.Use = row.Role
 	row.EditForm, row.EditSpec, row.NeedsFix = connectorEditors(conn)
 	_, row.TemplateUpdate = templateUpdate(conn)
 	if service.Testable(conn) {
@@ -214,21 +220,15 @@ func (a *AdminApp) offeredRow(conn Connector, table, group, does string) imageBa
 	return row
 }
 
-// Role choices on a row: an image backend's, and a music or media
-// connector's, which has no default. Primary is the default, Secondary is
-// offered to agents by name, and Disabled is "unused", as the row's role
-// reads; with no Primary beside it, offered reads as Enabled.
-var (
-	imageUseOptions = []ui.SelectOption{
-		{Value: "default", Label: "Primary"},
-		{Value: "offered", Label: "Secondary"},
-		{Value: "unused", Label: "Disabled"},
-	}
-	offerUseOptions = []ui.SelectOption{
-		{Value: "offered", Label: "Enabled"},
-		{Value: "unused", Label: "Disabled"},
-	}
-)
+// useOptions is every media row's switch: Enabled (offered to agents; for
+// an image backend, the default is enabled too) or Disabled ("unused").
+// Which image backend is the default is its own button, Make default, and
+// its row's badge: one switch holding both questions read as three ranks
+// (Primary, Secondary, Disabled) of one thing.
+var useOptions = []ui.SelectOption{
+	{Value: "offered", Label: "Enabled"},
+	{Value: "unused", Label: "Disabled"},
+}
 
 // roleForm is what a row's role control sends: the connector (the row's key)
 // and its role.
@@ -279,6 +279,17 @@ func (a *AdminApp) handleMediaBackendRole(c *jsonapi.Call, req roleForm) (any, e
 	acceptChanges(name)
 	adminChange(c.R, activity.Settings, "media connector %s: %s (offered: %s)", name, role, strings.Join(agents, ", "))
 	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// handleMediaBackendDefault is an enabled image backend's Make default:
+// ?name= becomes what agents' image tools use unless told otherwise, and
+// the one it replaces stays enabled.
+func (a *AdminApp) handleMediaBackendDefault(c *jsonapi.Call, _ struct{}) (any, error) {
+	name := strings.TrimSpace(c.R.URL.Query().Get("name"))
+	if name == "" {
+		return nil, jsonapi.BadRequest("name the image backend: ?name=")
+	}
+	return a.setImageRole(c.R, name, "default")
 }
 
 // handleMediaBackendRemove is a stale row's Remove: ?name= taken off every
