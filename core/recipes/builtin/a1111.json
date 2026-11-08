@@ -1,9 +1,9 @@
 {
   "id": "a1111",
-  "title": "Automatic1111 (image generation)",
-  "description": "An image connector for a local or self-hosted Automatic1111 server: synchronous text-to-image, no workflow needed. Gives agents a generate_image tool.",
+  "title": "Automatic1111",
+  "description": "An image connector for a local or self-hosted Automatic1111 server, no workflow needed: it makes pictures from text (txt2img), or changes a photo you give it (img2img), as you choose when adding it. Change it later with Edit setup on its row.",
   "category": "Images",
-  "setup_notes": "Automatic1111 (stable-diffusion-webui) must be started with --api and be reachable from the gohort server; the default port is 7860. It installs out of use: choose it under Admin > Capabilities > Image Generation, as the default or offered to agents, to put it to use. Configure on its row edits the defaults (size, steps, timeouts) afterwards.",
+  "setup_notes": "Automatic1111 (stable-diffusion-webui) must be started with --api and be reachable from the gohort server; the default port is 7860. It installs out of use: choose it under Admin > Services > Media Generation, as the default or offered to agents, to put it to use. One connector does one job: add a second, pointed at the same server, for the other. Edit setup, under Advanced on its row, changes what it does and its defaults (size, steps, timeouts).",
   "questions": [
     {
       "name": "base_url",
@@ -11,6 +11,16 @@
       "help": "The address gohort reaches it at, e.g. http://192.168.1.20:7860",
       "kind": "http_url",
       "required": true
+    },
+    {
+      "name": "does",
+      "label": "What it does",
+      "help": "generate = make pictures from text. edit = change a photo you give it.",
+      "default": "generate",
+      "options": [
+        "generate",
+        "edit"
+      ]
     },
     {
       "name": "name",
@@ -40,7 +50,7 @@
           "name": "{{name}}",
           "kind": "service",
           "template": "a1111",
-          "desc": "Automatic1111 image generation at {{base_url}}",
+          "desc": "Automatic1111 at {{base_url}} ({{does}})",
           "spec": {
             "config": [
               {
@@ -61,7 +71,7 @@
                 "render": {
                   "builtin": "a1111",
                   "options": {
-                    "mode": "txt2img",
+                    "mode": "{{does}}",
                     "prompt_suffix": "{{prompt_suffix}}",
                     "prompt_guidance": "{{prompt_guidance}}"
                   }
@@ -70,7 +80,7 @@
             },
             "provides": [
               {
-                "capability": "image.generate",
+                "capability": "image.{{does}}",
                 "steps": [
                   {
                     "call": "render"

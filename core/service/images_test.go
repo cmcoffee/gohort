@@ -473,7 +473,7 @@ func TestAnA1111OperationIsChecked(t *testing.T) {
 		change     func(*Spec)
 	}{
 		{"as made", "", func(*Spec) {}},
-		{"no mode", "txt2img or img2img", func(s *Spec) { delete(s.Provider.Operations["render"].Options, "mode") }},
+		{"no mode", "txt2img (generate) or img2img (edit)", func(s *Spec) { delete(s.Provider.Operations["render"].Options, "mode") }},
 		{"a misspelt option", "unknown field", func(s *Spec) { s.Provider.Operations["render"].Options["prompt_sufix"] = "x" }},
 		{"a request of its own", "makes its own requests", func(s *Spec) {
 			op := s.Provider.Operations["render"]
@@ -499,16 +499,19 @@ func TestAnA1111OperationIsChecked(t *testing.T) {
 	}
 }
 
-// The Automatic1111 starters add a connection out of use, pointed at the
-// address given, its prompt suffix kept.
-func TestTheA1111RecipesAddAConnection(t *testing.T) {
+// The Automatic1111 template adds a connection out of use, pointed at the
+// address given, its prompt suffix kept, doing what was chosen when it was
+// added: making pictures from text, or changing a photo. Edit setup opens
+// its form on that choice, and builds the same backend from it.
+func TestTheA1111RecipeAddsAConnectionForEitherJob(t *testing.T) {
 	world(t)
-	for _, tc := range []struct{ recipe, name, url string }{
-		{"a1111", "a1111", "http://192.168.1.20:7860/sdapi/v1/txt2img"},
-		{"a1111-img2img", "a1111_edit", "http://192.168.1.20:7860/sdapi/v1/img2img"},
+	for _, tc := range []struct{ does, name, url, capability string }{
+		{"generate", "a1111", "http://192.168.1.20:7860/sdapi/v1/txt2img", "image.generate"},
+		{"edit", "a1111_edit", "http://192.168.1.20:7860/sdapi/v1/img2img", "image.edit"},
 	} {
-		if _, err := recipes.Install(RootDB, tc.recipe, "admin", map[string]string{"base_url": "http://192.168.1.20:7860", "prompt_suffix": "crisp"}); err != nil {
-			t.Fatalf("%s: %v", tc.recipe, err)
+		tc := struct{ recipe, does, name, url, capability string }{"a1111", tc.does, tc.name, tc.url, tc.capability}
+		if _, err := recipes.Install(RootDB, tc.recipe, "admin", map[string]string{"base_url": "http://192.168.1.20:7860", "prompt_suffix": "crisp", "does": tc.does, "name": tc.name}); err != nil {
+			t.Fatalf("%s: %v", tc.does, err)
 		}
 		c, ok := GetConnector(RootDB, tc.name)
 		if !ok || c.Kind != Kind || c.Approved {
@@ -523,7 +526,13 @@ func TestTheA1111RecipesAddAConnection(t *testing.T) {
 		if !ok || tpl.Name != c.Template {
 			t.Fatalf("%s: Configure would not open its form", tc.recipe)
 		}
-		raw, _, err := tpl.BuildSpec(map[string]any{"base_url": "http://192.168.1.20:7860", "prompt_suffix": "crisp"})
+		if !Provides(c, tc.capability) {
+			t.Errorf("%s: added without %s", tc.does, tc.capability)
+		}
+		if got := tpl.ReadValues(c.Spec)["mode"]; got != tc.does {
+			t.Errorf("%s: Edit setup opens on %v", tc.does, got)
+		}
+		raw, _, err := tpl.BuildSpec(map[string]any{"base_url": "http://192.168.1.20:7860", "prompt_suffix": "crisp", "mode": tc.does})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -532,6 +541,34 @@ func TestTheA1111RecipesAddAConnection(t *testing.T) {
 			form.DefaultWidth != spec.DefaultWidth || form.ImageB64Path != spec.ImageB64Path || form.PromptSuffix != spec.PromptSuffix {
 			t.Errorf("%s: the recipe's connection differs from the form's:\n got %+v\nwant %+v", tc.recipe, spec, form)
 		}
+	}
+}
+
+// A connector added from the old editing template keeps its name for the
+// form (a1111_img2img): that is the same form, opening on edit, and it
+// builds the editing backend even when no mode is sent.
+func TestTheOldA1111EditFormIsTheSameForm(t *testing.T) {
+	tpl, ok := GetConnectorTemplate("a1111_img2img")
+	if !ok {
+		t.Fatal("the old editing form's name no longer opens a form")
+	}
+	raw, _, err := tpl.BuildSpec(map[string]any{"base_url": "http://h:7860"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, _, _ := handler{}.ImageSpec(Connector{Name: "old", Kind: Kind, Spec: raw})
+	if !strings.HasSuffix(spec.SubmitURL, "/sdapi/v1/img2img") {
+		t.Errorf("with no mode sent it builds %s, want the editing backend", spec.SubmitURL)
+	}
+	if got := tpl.ReadValues(raw)["mode"]; got != "edit" {
+		t.Errorf("it opens on %v, want edit", got)
+	}
+	var keys []string
+	for _, f := range tpl.Fields {
+		keys = append(keys, f.Key)
+	}
+	if !strings.Contains(strings.Join(keys, ","), "mode") {
+		t.Errorf("no What this backend does on it: %v", keys)
 	}
 }
 

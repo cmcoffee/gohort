@@ -30,10 +30,38 @@ func init() {
 
 // --- rest_image_preset strategy (generic; reused by a1111 and future presets) --
 
+// presetFor is the preset template t builds for the form's values: the one
+// its "modes" param maps the form's mode to ("generate=a1111,edit=..."), so
+// one form makes a backend for either job, else its "preset" param.
+func presetFor(t ConnectorTemplate, mode string) string {
+	for _, pair := range strings.Split(t.Params["modes"], ",") {
+		if m, preset, ok := strings.Cut(strings.TrimSpace(pair), "="); ok && m == strings.TrimSpace(mode) {
+			return preset
+		}
+	}
+	return t.Params["preset"]
+}
+
+// modeOf is the mode whose preset made a backend submitting to submitURL, or
+// "" when template t has no modes or none matches.
+func modeOf(t ConnectorTemplate, submitURL string) string {
+	for _, pair := range strings.Split(t.Params["modes"], ",") {
+		m, preset, ok := strings.Cut(strings.TrimSpace(pair), "=")
+		if !ok {
+			continue
+		}
+		probe, err := ApplyRestImagePreset(preset, RestImageSpec{}, map[string]string{"base_url": ""})
+		if err == nil && probe.SubmitURL != "" && strings.HasSuffix(submitURL, probe.SubmitURL) {
+			return m
+		}
+	}
+	return ""
+}
+
 func restImagePresetBuildSpec(t ConnectorTemplate, vals map[string]any) (json.RawMessage, []string, error) {
 	// No credential: the connection keeping it takes its key, if it has one,
 	// under Settings on its row.
-	spec, err := ApplyRestImagePreset(t.Params["preset"], RestImageSpec{}, map[string]string{"base_url": TemplateStr(vals, "base_url")})
+	spec, err := ApplyRestImagePreset(presetFor(t, TemplateStr(vals, "mode")), RestImageSpec{}, map[string]string{"base_url": TemplateStr(vals, "base_url")})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -55,8 +83,9 @@ func restImagePresetBuildSpec(t ConnectorTemplate, vals map[string]any) (json.Ra
 
 func restImagePresetReadValues(t ConnectorTemplate, spec json.RawMessage) map[string]any {
 	s := imageStored(spec)
-	return map[string]any{
-		"base_url":        restImagePresetBaseURL(t.Params["preset"], s.SubmitURL),
+	mode := modeOf(t, s.SubmitURL)
+	out := map[string]any{
+		"base_url":        restImagePresetBaseURL(presetFor(t, mode), s.SubmitURL),
 		"poll_max_secs":   s.PollMaxSecs,
 		"default_width":   s.DefaultWidth,
 		"default_height":  s.DefaultHeight,
@@ -64,6 +93,10 @@ func restImagePresetReadValues(t ConnectorTemplate, spec json.RawMessage) map[st
 		"prompt_suffix":   s.PromptSuffix,
 		"prompt_guidance": s.PromptGuidance,
 	}
+	if mode != "" {
+		out["mode"] = mode
+	}
+	return out
 }
 
 // restImagePresetBaseURL recovers base_url by stripping the preset's own endpoint
@@ -417,18 +450,31 @@ func comfyuiTemplate() ConnectorTemplate {
 	}
 }
 
+// a1111Modes maps the A1111 form's "What this backend does" to its preset.
+const a1111Modes = "generate=a1111,edit=a1111_img2img"
+
+// a1111Template is the Automatic1111 form: one form for either job, picked
+// by "What this backend does". A PURE DECLARATION: it reuses
+// rest_image_preset, which builds the preset the mode names.
 func a1111Template() ConnectorTemplate {
-	// Pure declaration — NO strategy code of its own; it reuses rest_image_preset.
+	return a1111Form("a1111", "Automatic1111", "generate")
+}
+
+// a1111Form is the Automatic1111 form under name, starting on mode.
+func a1111Form(name, label, mode string) ConnectorTemplate {
 	return ConnectorTemplate{
-		Name:        "a1111",
-		Label:       "Automatic1111",
+		Name:        name,
+		Label:       label,
 		Category:    "Image generation",
-		Description: "A local or self-hosted Automatic1111 (stable-diffusion-webui) server. Synchronous txt2img: no workflow needed.",
+		Description: "A local or self-hosted Automatic1111 (stable-diffusion-webui) server: text to image (txt2img), or changing a photo you give it (img2img). No workflow needed.",
 		Kind:        serviceConnectorKind,
 		Strategy:    "rest_image_preset",
-		Params:      map[string]string{"preset": "a1111"},
+		Params:      map[string]string{"preset": presetFor(ConnectorTemplate{Params: map[string]string{"modes": a1111Modes}}, mode), "modes": a1111Modes},
 		Fields: []TemplateField{
 			{Key: "base_url", Label: "Automatic1111 URL", Type: "text", Group: "Connection", Help: "e.g. http://localhost:7860"},
+			{Key: "mode", Label: "What this backend does", Type: "select", Group: "Connection", Options: []string{"generate", "edit"}, Default: mode,
+				Help:   "generate = text to image. edit = change a photo you give it.",
+				Detail: "One backend does one of these: add a second, pointed at the same server, for the other. Changing it here changes what this one does."},
 			{Key: "default_width", Label: "Default width", Type: "number", Group: "Defaults"},
 			{Key: "default_height", Label: "Default height", Type: "number", Group: "Defaults"},
 			{Key: "default_steps", Label: "Default steps", Type: "number", Group: "Defaults"},
@@ -436,8 +482,8 @@ func a1111Template() ConnectorTemplate {
 			{Key: "poll_max_secs", Label: "Render timeout (seconds)", Type: "number", Group: "Defaults", Help: "How long to wait for this backend to finish.",
 				Detail: "Leave it blank to use the deadline in Admin, Tuning, Images, which is higher for backends that edit photos, since a large edit model has to load first. Raise it here only if THIS workflow is slower than the rest."},
 			{Key: "prompt_suffix", Label: "Append to every prompt", Type: "textarea", Group: "House style", Help: "e.g. crisp, high-contrast, sharp typography"},
-			{Key: "prompt_guidance", Label: "Prompt guidance for the model", Type: "textarea", Group: "House style", Help: "Added to the generate_image tool's description the model reads, not to the prompt.",
-				Detail: "Teach it this backend's quirks. For example, 'put any words you want rendered as text inside \"double quotes\"'."},
+			{Key: "prompt_guidance", Label: "Prompt guidance for the model", Type: "textarea", Group: "House style", Help: "Added to the image tool's description the model reads, not to the prompt.",
+				Detail: "Teach it this backend's quirks. For example, 'put any words you want rendered as text inside \"double quotes\"'. For an editing backend, say what it is good at changing."},
 		},
 	}
 }
@@ -458,27 +504,9 @@ func TemplateForConnector(c Connector) (ConnectorTemplate, bool) {
 	return ConnectorTemplate{}, false
 }
 
-// a1111Img2ImgTemplate is a PURE DECLARATION, like a1111 — no strategy code of
-// its own, just a different preset. That it takes one line to add an EDITING
-// backend is the point of the split: image input is a property of the preset's
-// request body, not of the machinery.
+// a1111Img2ImgTemplate is the same Automatic1111 form, starting on edit,
+// under the name an editing backend added before the forms were one keeps
+// as its provenance (Connector.Template), so Edit setup still opens it.
 func a1111Img2ImgTemplate() ConnectorTemplate {
-	return ConnectorTemplate{
-		Name:        "a1111_img2img",
-		Label:       "Automatic1111 (edit a photo)",
-		Category:    "Image generation",
-		Description: "A local or self-hosted Automatic1111, wired for img2img: it takes a source photo and a prompt and returns a changed version. Add the plain Automatic1111 template as well if you also want text-to-image.",
-		Kind:        serviceConnectorKind,
-		Strategy:    "rest_image_preset",
-		Params:      map[string]string{"preset": "a1111_img2img"},
-		Fields: []TemplateField{
-			{Key: "base_url", Label: "Automatic1111 URL", Type: "text", Group: "Connection", Help: "e.g. http://localhost:7860, the same server as your text-to-image backend, if you have one."},
-			{Key: "default_width", Label: "Default width", Type: "number", Group: "Defaults"},
-			{Key: "default_height", Label: "Default height", Type: "number", Group: "Defaults"},
-			{Key: "default_steps", Label: "Default steps", Type: "number", Group: "Defaults"},
-			{Key: "prompt_suffix", Label: "Append to every prompt", Type: "textarea", Group: "House style", Help: "e.g. crisp, high-contrast, sharp typography"},
-			{Key: "prompt_guidance", Label: "Prompt guidance for the model", Type: "textarea", Group: "House style", Help: "Added to the image tool's description the model reads, not to the prompt.",
-				Detail: "For an editing backend, say what it is good at changing."},
-		},
-	}
+	return a1111Form("a1111_img2img", "Automatic1111 (edit a photo)", "edit")
 }

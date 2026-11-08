@@ -51,7 +51,8 @@ type comfyOptions struct {
 }
 
 // a1111Options are an a1111 operation's options: its mode, txt2img (draw from
-// a prompt) or img2img (change a photo), and the rest by the names a
+// a prompt) or img2img (change a photo), also read as generate and edit (the
+// words its template's "What it does" uses), and the rest by the names a
 // rest_image connector gave them. SubmitURL and SubmitBody are given only
 // where the server is not A1111 itself (a peer's renderer, under a path of its
 // own and naming which renderer); the mode's own are used otherwise.
@@ -70,7 +71,8 @@ type a1111Options struct {
 }
 
 // a1111Presets are the presets each mode starts from.
-var a1111Presets = map[string]string{"txt2img": "a1111", "img2img": "a1111_img2img"}
+var a1111Presets = map[string]string{"txt2img": "a1111", "img2img": "a1111_img2img",
+	"generate": "a1111", "edit": "a1111_img2img"}
 
 // decodeOptions reads options into out, refusing a name it does not take.
 func decodeOptions(builtin string, options map[string]any, out any) error {
@@ -116,7 +118,7 @@ func imageRestSpec(base string, op Operation) (RestImageSpec, error) {
 		}
 		preset, ok := a1111Presets[o.Mode]
 		if !ok {
-			return RestImageSpec{}, fmt.Errorf("its a1111 mode %q: it is txt2img or img2img", o.Mode)
+			return RestImageSpec{}, fmt.Errorf("its a1111 mode %q: it is txt2img (generate) or img2img (edit)", o.Mode)
 		}
 		s, err := ApplyRestImagePreset(preset, RestImageSpec{}, map[string]string{"base_url": base})
 		if err != nil {

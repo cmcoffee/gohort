@@ -27,7 +27,7 @@ root PUT /api/tool-templates "{}"
 alice GET /api/extensions ""
   403 forbidden
 root GET /api/extensions ""
-  200 [{"name":"a1111","label":"Automatic1111","target":"connector","category":"Image generation","description":"A local or self-hosted Automatic1111 (stable-diffusion-webui) server. Synchronous txt2img: no… (1413 bytes, sha1 34fb5a899e89b378aa15b3892a75ba42a04b932d)
+  200 [{"name":"a1111","label":"Automatic1111","target":"connector","category":"Image generation","description":"A local or self-hosted Automatic1111 (stable-diffusion-webui) server: text to image (txt2img)… (1416 bytes, sha1 b4bf4a7660878036198e4a6a3e9a17f5276fc33c)
 root PUT /api/extensions "{}"
   405 method not allowed
 (signed out) GET /api/tool-template?name=nope ""
