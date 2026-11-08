@@ -471,6 +471,9 @@ func TestAComfyUIConnectionIsConfiguredFromImageGeneration(t *testing.T) {
 	if len(rows) != 2 || rows[0].Name != "sketch" || rows[0].Role != "default" || rows[1].Role != "unused" {
 		t.Fatalf("rows = %+v, want the default first", rows)
 	}
+	if !rows[0].IsDefault || rows[1].IsDefault {
+		t.Errorf("only the default wears its badge: %v %v", rows[0].IsDefault, rows[1].IsDefault)
+	}
 	row := rows[1]
 	// The same editor as its Connectors row: the template's form.
 	if !row.EditForm || row.EditSpec || row.NeedsFix {
@@ -495,8 +498,30 @@ func TestTheBackendListSharesTheConnectorActions(t *testing.T) {
 	for _, act := range tbl.RowActions {
 		labels = append(labels, act.Label)
 	}
-	if got := strings.Join(labels, ","); got != "Remove,Use,Use,Used for,Update from template,Edit setup,✨ Edit,✨ Fix,Settings,Test" {
+	if got := strings.Join(labels, ","); got != "Remove,,,Used for,Update from template,Edit setup,✨ Edit,✨ Fix,Settings,Test" {
 		t.Errorf("row actions = %s", got)
+	}
+	// A row's role is a switch at its left, Primary (the default),
+	// Secondary (offered to agents) or Disabled; a music or media row has no
+	// Primary. The default's row wears a Default badge.
+	for i, want := range []string{"Primary,Secondary,Disabled", "Secondary,Disabled"} {
+		act := tbl.RowActions[1+i]
+		var opts []string
+		for _, o := range act.Options {
+			opts = append(opts, o.Label)
+		}
+		if act.Type != "segmented" || !act.Leading || act.Field != "role" || strings.Join(opts, ",") != want {
+			t.Errorf("role control %d: %s %v leading=%v, want a leading %s", i, act.Type, opts, act.Leading, want)
+		}
+	}
+	badged := false
+	for _, c := range tbl.Columns {
+		if c.Field == "is_default" && c.Type == "badge" && len(c.Badges) == 1 && c.Badges[0].Value == true && c.Badges[0].Label == "Default" {
+			badged = true
+		}
+	}
+	if !badged {
+		t.Errorf("no Default badge among the columns: %+v", tbl.Columns)
 	}
 	// The spec editor is in the row's Advanced menu, not beside Settings,
 	// where it read as the place to change a connector's key and model.

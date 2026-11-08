@@ -175,29 +175,30 @@ func (a *AdminApp) offeredRow(conn Connector, table, group, does string) imageBa
 	return row
 }
 
-// Use choices on a row: an image backend's, and a music or media
-// connector's, which has no default. Disabled is "unused", as the row's
-// role reads.
+// Role choices at a row's left: an image backend's, and a music or media
+// connector's, which has no default. Primary is the default, Secondary is
+// offered to agents by name, and Disabled is "unused", as the row's role
+// reads.
 var (
 	imageUseOptions = []ui.SelectOption{
-		{Value: "default", Label: "Default"},
-		{Value: "offered", Label: "Offered to agents"},
+		{Value: "default", Label: "Primary"},
+		{Value: "offered", Label: "Secondary"},
 		{Value: "unused", Label: "Disabled"},
 	}
 	offerUseOptions = []ui.SelectOption{
-		{Value: "offered", Label: "Offered to agents"},
+		{Value: "offered", Label: "Secondary"},
 		{Value: "unused", Label: "Disabled"},
 	}
 )
 
-// roleForm is what a row's Use dropdown sends: the connector (the row's key)
+// roleForm is what a row's role control sends: the connector (the row's key)
 // and its role.
 type roleForm struct {
 	Name string `json:"name"`
 	Role string `json:"role"`
 }
 
-// handleMediaBackendRole is a row's Use for any media connector: an image
+// handleMediaBackendRole is a row's role for any media connector: an image
 // backend's (default, offered, Disabled), and a music or media connector's
 // (offered, Disabled). Disabled comes as "unused".
 func (a *AdminApp) handleMediaBackendRole(c *jsonapi.Call, req roleForm) (any, error) {

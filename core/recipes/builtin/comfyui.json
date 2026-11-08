@@ -1,7 +1,7 @@
 {
   "id": "comfyui",
   "title": "ComfyUI (image generation)",
-  "description": "An image connector for a ComfyUI server, running the workflow you paste in (or a basic SD1.5 graph). Gives agents a generate_image tool. It installs out of use: review the node map, then choose it under Admin > Capabilities > Image Generation, as the default or offered to agents, to put it to use.",
+  "description": "An image connector for a ComfyUI server, running the workflow you paste in (or a basic SD1.5 graph). Gives agents a generate_image tool. It installs out of use: review the node map, then choose it under Admin > Services > Media Generation, as Primary (the default) or Secondary (offered to agents), to put it to use.",
   "category": "Images",
   "setup_notes": "ComfyUI must be reachable from the gohort server (the default port is 8188). To use your own workflow, build it in ComfyUI with a SaveImage node, export it with Workflow > Export (API) (older versions: turn on Dev mode in Settings, then Save (API Format)) and paste that file's contents below. Leave it blank for a basic SD1.5 graph.",
   "questions": [

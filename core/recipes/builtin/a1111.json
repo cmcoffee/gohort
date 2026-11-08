@@ -3,7 +3,7 @@
   "title": "Automatic1111",
   "description": "An image connector for a local or self-hosted Automatic1111 server, no workflow needed: it makes pictures from text (txt2img), or changes a photo you give it (img2img), as you choose when adding it. Change it later with Edit setup on its row.",
   "category": "Images",
-  "setup_notes": "Automatic1111 (stable-diffusion-webui) must be started with --api and be reachable from the gohort server; the default port is 7860. It installs out of use: choose it under Admin > Services > Media Generation, as the default or offered to agents, to put it to use. One connector does one job: add a second, pointed at the same server, for the other. Edit setup, under Advanced on its row, changes what it does and its defaults (size, steps, timeouts).",
+  "setup_notes": "Automatic1111 (stable-diffusion-webui) must be started with --api and be reachable from the gohort server; the default port is 7860. It installs out of use: choose it under Admin > Services > Media Generation, as Primary (the default) or Secondary (offered to agents), to put it to use. One connector does one job: add a second, pointed at the same server, for the other. Edit setup, under Advanced on its row, changes what it does and its defaults (size, steps, timeouts).",
   "questions": [
     {
       "name": "base_url",

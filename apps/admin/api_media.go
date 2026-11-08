@@ -311,11 +311,13 @@ type imageBackendRow struct {
 	Name    string `json:"name"`
 	Title   string `json:"title"`
 	Summary string `json:"summary"`
-	// Role is how Media Generation uses it, as its row's Use dropdown says:
-	// "default" (what agents' image tools use unless told otherwise),
-	// "offered" (agents may choose it by name), or "unused" (Disabled).
-	// OfferOnly marks a music or media row, which has no default.
+	// Role is how Media Generation uses it, as the control at its row's left
+	// says: "default" (Primary: what agents' image tools use unless told
+	// otherwise, badged Default), "offered" (Secondary: agents may choose it
+	// by name), or "unused" (Disabled). OfferOnly marks a music or media
+	// row, which has no default.
 	Role      string `json:"role"`
+	IsDefault bool   `json:"is_default,omitempty"`
 	OfferOnly bool   `json:"offer_only,omitempty"`
 	Does      string `json:"does"`
 	Size      string `json:"size"`
@@ -364,7 +366,7 @@ func (a *AdminApp) imageRows() []imageBackendRow {
 			HasSettings: conn.Kind == service.Kind, LastError: conn.LastError}
 		switch {
 		case conn.Name == provider:
-			row.Role = "default"
+			row.Role, row.IsDefault = "default", true
 		case slices.Contains(agents, conn.Name):
 			row.Role = "offered"
 		}
@@ -384,7 +386,7 @@ func (a *AdminApp) imageRows() []imageBackendRow {
 // "default" makes it what agents' image tools use unless told otherwise,
 // keeping the one it replaces offered by name; "offered" lets agents choose
 // it by name; "off" stops using it (the default off leaves no default). The
-// row's Use sends it; the save is the page's own, so it accepts a change
+// row's role control sends it; the save is the page's own, so it accepts a change
 // waiting on the backend as the page's save does.
 func (a *AdminApp) setImageRole(r *http.Request, name, role string) (any, error) {
 	if !imageConnector(name) && !ImageBackendRegistered(name) {
