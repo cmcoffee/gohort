@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"strings"
 	"time"
 )
@@ -97,6 +98,64 @@ type StepInfo struct {
 
 // StepCallback is called after each round of the agent loop for observability.
 type StepCallback func(step StepInfo)
+
+// ToolTrace hears an agent turn's work AS IT HAPPENS: each round that calls
+// tools, with what the model said there, and each tool call from its start to
+// its end. It rides on the context, so every agent loop running under it (a
+// chat turn, a scheduled fire, a standing agent, a dispatched sub-agent)
+// reports with no change to its config, and a run that starts its own loop
+// replaces it with its own.
+//
+// It exists for the person watching a background run. The run ledger keeps
+// the full trace, but only once the run has ENDED; until then the only thing
+// on show was the latest tool's name, which cannot tell a run that is
+// working from one that is stuck.
+//
+// Calls arrive from the loop's goroutines, several at once when a round runs
+// its tools in parallel; an implementation does its own locking. Each must be
+// quick: it is on the path of every tool call.
+type ToolTrace interface {
+	// RoundStarted is called as a round's tool calls are about to run. said
+	// is the text the model wrote that round, "" when it wrote none.
+	RoundStarted(round int, said string)
+	// ToolStarted is called as a tool call starts. The func it returns is
+	// called once, when the call ends, with its output or its error; nil
+	// when the trace does not want to hear the end.
+	ToolStarted(name string, args map[string]any) (finished func(output string, err error))
+}
+
+type toolTraceKey struct{}
+
+// WithToolTrace returns ctx carrying t, in place of any trace already on it.
+func WithToolTrace(ctx context.Context, t ToolTrace) context.Context {
+	return context.WithValue(ctx, toolTraceKey{}, t)
+}
+
+// toolTraceFrom returns the trace on ctx, or nil.
+func toolTraceFrom(ctx context.Context) ToolTrace {
+	if ctx == nil {
+		return nil
+	}
+	t, _ := ctx.Value(toolTraceKey{}).(ToolTrace)
+	return t
+}
+
+// traceRound tells the trace on ctx, if there is one, that a round's tools
+// are about to run.
+func traceRound(ctx context.Context, round int, said string) {
+	if t := toolTraceFrom(ctx); t != nil {
+		t.RoundStarted(round, said)
+	}
+}
+
+// traceToolStart tells the trace on ctx, if there is one, that a call is
+// starting, and returns what to call when it ends (nil when nothing listens).
+func traceToolStart(ctx context.Context, name string, args map[string]any) func(string, error) {
+	if t := toolTraceFrom(ctx); t != nil {
+		return t.ToolStarted(name, args)
+	}
+	return nil
+}
 
 // wantsLead reports whether this loop's configuration asks for the lead tier,
 // IGNORING whether the deployment currently permits one.

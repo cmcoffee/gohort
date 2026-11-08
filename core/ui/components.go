@@ -52,6 +52,9 @@ type BadgeMapping struct {
 	Value any    `json:"value"`           // matched against the record's field value
 	Label string `json:"label"`           // shown inside the badge
 	Color string `json:"color,omitempty"` // "success", "warning", "danger", "mute"
+	// Spin puts a turning spinner in the badge: for a state that means work
+	// is going on ("running"), which a static badge cannot tell from stuck.
+	Spin bool `json:"spin,omitempty"`
 }
 
 // FieldPreset is one entry in a FormField.Presets list. Label is the

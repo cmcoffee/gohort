@@ -198,6 +198,8 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/agents/update", jsonapi.Post(T.DB, T.handleConsoleAgentUpdate))
 	T.HandleFunc("/api/console/activity", jsonapi.Get(T.DB, T.handleConsoleActivity))
 	T.HandleFunc("/api/console/activity/cancel", jsonapi.Post(T.DB, T.handleConsoleActivityCancel))
+	// One run's steps so far, and its sub-agents': the Monitor's Trace view.
+	T.HandleFunc("/api/console/trace", jsonapi.Get(T.DB, T.handleConsoleTrace))
 	// The two summaries. Overview answers for the agent in view; fleet answers
 	// for everything the user owns and is marked fleet-scoped in the menu so no
 	// agent is appended to its request.

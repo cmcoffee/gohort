@@ -1448,7 +1448,14 @@
       }
     }
 
-    uiAutoRefresh(cfg.auto_refresh_ms, function(){ return reload(true); });
+    // A table that has left the page stops asking. One opened in a dialog
+    // otherwise went on polling its source after the dialog closed, every
+    // few seconds, for as long as the page stayed open.
+    var stopRefresh = uiAutoRefresh(cfg.auto_refresh_ms, function(){
+      if (listEl.isConnected) listEl._uiShown = true;
+      else if (listEl._uiShown) { stopRefresh(); return; }
+      return reload(true);
+    });
     if (cfg.pull_to_refresh) setupPTR(function(){ reload(false); });
     reload(true);
 
@@ -6337,7 +6344,11 @@
     if (!match && (value == null || value === false || value === '')) {
       return cell;
     }
-    cell.appendChild(el('span', {class: 'ui-badge ' + color}, [label]));
+    // Spin: the state means work is going on, so it moves (a static badge
+    // reads the same as a hung one).
+    var kids = [label];
+    if (match && match.spin) kids.unshift(el('span', {class: 'ui-watch-spinner'}));
+    cell.appendChild(el('span', {class: 'ui-badge ' + color}, kids));
     return cell;
   }
 

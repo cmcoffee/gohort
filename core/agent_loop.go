@@ -72,6 +72,11 @@ func ToolCallIDFrom(ctx context.Context) string {
 // panicked: …" and can adjust. The full stack goes to the debug log, never into
 // the model's context (stacks are large and not useful to the LLM).
 func safeInvoke(ctx context.Context, name string, handler ToolHandlerFunc, args map[string]any) (output string, err error) {
+	// Deferred FIRST so it runs LAST: after the recover below has turned a
+	// panic into the error this call ends with.
+	if finished := traceToolStart(ctx, name, args); finished != nil {
+		defer func() { finished(output, err) }()
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 8192)
@@ -2524,6 +2529,8 @@ func (lr *loopRun) recordResponse() loopAction {
 		}
 
 		// Execute the tool.
+		// No text: a prompt-tool round's content IS the call, written as prose.
+		traceRound(lr.ctx, lr.round, "")
 		output, toolErr := safeInvoke(WithToolCallID(lr.ctx, tc.ID), tc.Name, lr.handlers[tc.Name], tc.Args)
 		lr.toolFiredThisTurn = true
 		lr.toolsRun++
@@ -4166,6 +4173,7 @@ func (lr *loopRun) dispatchTools() loopAction {
 	if len(lr.rs.work) > 0 {
 		lr.toolFiredThisTurn = true
 		lr.toolsRun++
+		traceRound(lr.ctx, lr.round, lr.rs.resp.Content)
 	}
 	if len(lr.rs.work) == 1 {
 		// Single call — no goroutine overhead.

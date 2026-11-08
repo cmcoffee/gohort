@@ -124,7 +124,7 @@ func (T *OrchestrateApp) startTask(bt backgroundTask, fn func(ctx context.Contex
 		Describe("task", bt.agentName, bt.title).
 		Parent(bt.parentID)
 	// The tree hangs off this run from here, so what fn starts nests under it.
-	ctx = withParentRun(ctx, run.ID)
+	ctx = withRun(ctx, run)
 
 	// Findable, and stoppable, from inside the conversation. The runs
 	// registry keys by user and agent, and this run deliberately carries no

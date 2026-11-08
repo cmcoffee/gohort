@@ -39,6 +39,29 @@ func TestAutoRefreshIsOnePollerWithTheThreeGuards(t *testing.T) {
 	}
 }
 
+// A table that refreshes itself stops once it has left the page. A table in a
+// dialog (a row's live trace) went on polling its source after the dialog
+// closed, every few seconds, for as long as the page stayed open; and it must
+// not stop before it has been shown, since a table is built before it is
+// placed.
+func TestARefreshingTableStopsWhenItLeavesThePage(t *testing.T) {
+	basics := mustRuntimePart(t, "10_basics.js")
+	table := basics[strings.Index(basics, "components.table = function"):]
+	at := strings.Index(table, "uiAutoRefresh(cfg.auto_refresh_ms")
+	if at < 0 {
+		t.Fatal("the table's poller is gone")
+	}
+	poll := table[at : at+300]
+	for _, want := range []string{"var stopRefresh = uiAutoRefresh", "listEl.isConnected", "listEl._uiShown", "stopRefresh()"} {
+		if !strings.Contains(table[at-40:at+300], want) {
+			t.Errorf("the table's poller lost %q:\n%s", want, poll)
+		}
+	}
+	if strings.Index(poll, "if (listEl.isConnected) listEl._uiShown = true") > strings.Index(poll, "stopRefresh()") {
+		t.Error("it has to note that it was shown before it can decide it has gone")
+	}
+}
+
 // A chart of live data is the case auto-refresh exists for, and this was the
 // one source-backed component that could not do it at all.
 func TestChartCanRefreshAndReactToRecordWrites(t *testing.T) {

@@ -88,11 +88,43 @@ func monitorAgentsTable(source string) ui.Table {
 		// endpoint at this same interval — a second copy of this table, whose
 		// one distinction was the button. The copy is gone; the button stayed.
 		RowActions: []ui.RowAction{
+			monitorTraceAction(),
 			{Type: "button", Label: "Cancel", OnlyIf: "_cancellable", Compact: true,
 				PostTo:  "/orchestrate/api/console/activity/cancel?id={_id}",
 				Confirm: "Cancel this in-flight run? The agent stops mid-turn; anything it already did stays done."},
 		},
 	}
+}
+
+// monitorTraceAction opens a run's trace: what it has done so far, step by
+// step, its sub-agents' steps among them, refreshing while it goes. The row
+// says what a run is doing now; this is how it got there, which is what tells
+// a run that is working from one that is stuck. Every row has it, a finished
+// one too: its trace is kept for a while after it ends.
+func monitorTraceAction() ui.RowAction {
+	a := ui.ModalAction("Trace", ui.Table{
+		Source:        "/orchestrate/api/console/trace?id={_id}",
+		RowKey:        "_id",
+		AutoRefreshMS: 2000,
+		EmptyText:     "Nothing to show: this run's trace has been cleared, as a finished run's is a while after it ends. Its run record keeps the full list: Agents, Fleet menu, Runs.",
+		Columns: []ui.Col{
+			{Field: "step", Label: "Step", Flex: 3},
+			{Field: "state", Label: "State", Type: "badge", Badges: []ui.BadgeMapping{
+				{Value: "running", Label: "running", Color: "accent", Spin: true},
+				{Value: "done", Label: "done", Color: "success"},
+				{Value: "completed", Label: "completed", Color: "success"},
+				{Value: "failed", Label: "failed", Color: "danger"},
+				{Value: "canceled", Label: "canceled", Color: "warning"},
+				{Value: "said", Label: "said", Color: "mute"},
+				{Value: "note", Label: "progress", Color: "mute"},
+			}},
+			{Field: "time", Label: "Time", Mute: true},
+			{Field: "detail", Label: "Detail", Line: 2, Mute: true},
+			{Field: "result", Label: "Result", Line: 2},
+		},
+	})
+	a.Width = "820px"
+	return a
 }
 
 func (T *MonitorApp) handlePage(w http.ResponseWriter, r *http.Request) {

@@ -331,7 +331,7 @@ func (t *chatTurn) agentsRunMachineActionFor(card toolCard, args map[string]any)
 	defer liveRun.Complete(RunStatusFailed) // safety net; the explicit calls below win
 
 	ctx = withDispatchedMachine(ctx, def.ID)
-	ctx = withParentRun(ctx, liveRun.ID)
+	ctx = withRun(ctx, liveRun)
 	// The caller's rules travel INTO the run, so a step's tool calls are judged
 	// the way the caller's own would be. A machine's steps reach them through
 	// the same core.runWorkerStageConfirm a pipeline's worker stages do.
@@ -386,7 +386,7 @@ func (t *chatTurn) runDetachedMachine(d *ToolSession, def MachineDef, msg string
 	defer liveRun.Complete(RunStatusFailed)
 
 	ctx = withDispatchedMachine(ctx, def.ID)
-	ctx = withParentRun(ctx, liveRun.ID)
+	ctx = withRun(ctx, liveRun)
 	ctx = t.guardedRunContext(ctx) // as inline; see agentsRunMachineAction
 
 	Log("[orchestrate.agents.run] %s handed off machine %q%s (%d steps)", t.agent.ID, def.Name, machineOwnerNote(t, def), len(def.Phases))

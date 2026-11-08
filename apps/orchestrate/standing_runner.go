@@ -510,7 +510,7 @@ func runStandingPipeline(ctx context.Context, app *OrchestrateApp, sa StandingAg
 	defer liveRun.Complete(RunStatusFailed) // safety net; the explicit calls below win
 	// What the target runs below (each stage's or step's agent) nests under
 	// this row instead of standing beside it as a second top-level entry.
-	ctx = withParentRun(ctx, liveRun.ID)
+	ctx = withRun(ctx, liveRun)
 
 	// A pipeline makes no tool calls of its own — its agent stages do, and
 	// those are the calls somebody opening this run wants to see. Collect each
@@ -624,7 +624,7 @@ func runStandingMachine(ctx context.Context, app *OrchestrateApp, sa StandingAge
 	defer liveRun.Complete(RunStatusFailed) // safety net; the explicit calls below win
 	// What the target runs below (each stage's or step's agent) nests under
 	// this row instead of standing beside it as a second top-level entry.
-	ctx = withParentRun(ctx, liveRun.ID)
+	ctx = withRun(ctx, liveRun)
 
 	// The owner's pool, narrowed per step by each step's own Tools list.
 	catalog := machineRunCatalog(UserDB(app.DB, sa.Owner), sa.Owner, "", def).Tools

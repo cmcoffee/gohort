@@ -144,6 +144,11 @@ type Run struct {
 	detail    string // a background run's latest progress line
 	parentID  string // the run that spawned this one (a delegating turn); "" for a top-level turn
 	bgLabel   string // what an open page says this run is doing for its session (WorkFor)
+
+	// trace is what the run has done so far, oldest first, bounded; see
+	// run_trace.go. traceDropped counts the steps that fell off its front.
+	trace        []*runTraceStep
+	traceDropped int
 }
 
 // runCtxKey carries the enclosing run's ID down the context so a nested
@@ -207,6 +212,7 @@ func (r *Run) SetDetail(line string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.detail = line
+	r.noteLocked(line)
 }
 
 // RunSnapshot is a lock-free copy of a run's activity view.

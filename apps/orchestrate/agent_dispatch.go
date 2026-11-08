@@ -884,7 +884,7 @@ func (sd *syncDispatch) startLiveRun() {
 }
 
 func (sd *syncDispatch) tagRun() {
-	sd.ctx = withParentRun(sd.ctx, sd.liveRun.ID)
+	sd.ctx = withRun(sd.ctx, sd.liveRun)
 	// A delegated run bills to ITSELF. Its spend used to ride the
 	// delegator's context tracker, so a turn that dispatched three
 	// sub-agents printed one line carrying all four runs' tokens, with no
@@ -1880,7 +1880,7 @@ func (cr *continuingRun) startLiveRun() {
 }
 
 func (cr *continuingRun) tagRun() {
-	cr.ctx = withParentRun(cr.ctx, cr.liveRun.ID)
+	cr.ctx = withRun(cr.ctx, cr.liveRun)
 	// Same as the sync path: this run's spend is its own, not the
 	// delegator's. Labelled with the run KIND so a channel turn and a
 	// delegation are told apart in the log.

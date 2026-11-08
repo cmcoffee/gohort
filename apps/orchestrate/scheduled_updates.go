@@ -968,7 +968,7 @@ func (fr *fireRun) startLiveRun() {
 	// per-piece wake, the delivery of what it made — was off in exactly the
 	// turns that needed it, because the dispatch paths tag their runs here and
 	// this one never did.
-	fr.ctx = withParentRun(fr.ctx, fr.liveRun.ID)
+	fr.ctx = withRun(fr.ctx, fr.liveRun)
 	// A scheduled fire has no request behind it, so nothing ever reported
 	// what one costs — the tokens landed in the process counter and the
 	// admin rollup and nowhere a reader would look. Give the fire its own

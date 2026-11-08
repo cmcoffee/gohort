@@ -531,7 +531,7 @@ func (sr *sendRun) startRun() {
 		// Tag the ctx with this run's ID so any sub-agent dispatched during the turn
 	// records it as parent — the chain the live surface renders as a tree. This
 	// ctx flows into turn.ctx below, which the dispatch tools inherit.
-	sr.ctx = withParentRun(sr.ctx, sr.run.ID)
+	sr.ctx = withRun(sr.ctx, sr.run)
 	sr.sse = newTeeSSEWriter(sr.w, sr.run)
 
 	// SSE response headers — handleSend streams frames inline off this response.

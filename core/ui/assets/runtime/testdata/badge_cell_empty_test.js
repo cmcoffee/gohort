@@ -24,5 +24,12 @@ var col = {field: 'disabled', type: 'badge', badges: [{value: true, label: 'Disa
 var on = renderBadgeCell(col, true);
 check('an on badge carries its pill', on.childNodes.length === 1 && /ui-badge danger/.test(on.childNodes[0].className));
 
+// A Spin badge (work going on) turns; the others stay still.
+var live = {field: 'state', type: 'badge', badges: [{value: 'running', label: 'running', color: 'accent', spin: true}, {value: 'done', label: 'done', color: 'success'}]};
+var spinning = renderBadgeCell(live, 'running').childNodes[0];
+check('a spin badge carries a spinner before its label', spinning.childNodes.length === 2 && /ui-watch-spinner/.test(spinning.childNodes[0].className) && spinning.childNodes[1].text === 'running');
+var still = renderBadgeCell(live, 'done').childNodes[0];
+check('a plain badge has no spinner', still.childNodes.length === 1 && still.childNodes[0].text === 'done');
+
 console.log(fail === 0 ? '\nALL BADGE CELL TESTS PASS' : '\n' + fail + ' FAILURES');
 process.exit(fail ? 1 : 0);

@@ -1158,7 +1158,7 @@ func (t *chatTurn) machineRun(args map[string]any) (string, error) {
 		Parent(parentRunFromCtx(t.ctx))
 	defer liveRun.Complete(RunStatusFailed) // safety net; the explicit calls below win
 	ctx = withDispatchedMachine(ctx, def.ID)
-	ctx = withParentRun(ctx, liveRun.ID)
+	ctx = withRun(ctx, liveRun)
 	ctx = t.guardedRunContext(ctx)
 
 	note := func(kind, detail string) {

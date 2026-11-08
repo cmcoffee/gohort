@@ -7,10 +7,15 @@
 package core
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -122,5 +127,98 @@ func TestEveryAgentLoopShowsWhatItsToolsQueue(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(root, f)); err != nil {
 			t.Errorf("%s is listed as having no tool session but is gone: take it off the list", f)
 		}
+	}
+}
+
+// recordingTrace is a ToolTrace that writes down what it hears.
+type recordingTrace struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (r *recordingTrace) add(s string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lines = append(r.lines, s)
+}
+
+func (r *recordingTrace) RoundStarted(round int, said string) {
+	r.add(fmt.Sprintf("round %d said %q", round, said))
+}
+
+func (r *recordingTrace) ToolStarted(name string, args map[string]any) func(string, error) {
+	r.add("start " + name + " " + fmt.Sprint(args["n"]))
+	return func(out string, err error) {
+		if err != nil {
+			r.add("end " + name + " err " + err.Error())
+			return
+		}
+		r.add("end " + name + " " + out)
+	}
+}
+
+// An agent loop running under a trace tells it each round that calls tools,
+// with what the model said, and each call from start to end: alone or beside
+// others, a failing call with its error, a panicking one with the error the
+// panic became. A loop with no trace on its context runs as it always did.
+func TestATraceHearsEachCallAsItHappens(t *testing.T) {
+	probe := AgentToolDef{
+		Tool: Tool{Name: "probe", Description: "d", Parameters: map[string]ToolParam{"n": {Type: "string"}}},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			switch args["n"] {
+			case "bad":
+				return "", errors.New("no such thing")
+			case "boom":
+				panic("kaboom")
+			}
+			return "ok " + args["n"].(string), nil
+		},
+	}
+	turns := func() *AppCore {
+		return &AppCore{LLM: &FakeLLM{Turns: []FakeTurn{
+			{Content: "Looking it up.", ToolCalls: []ToolCall{{ID: "c1", Name: "probe", Args: map[string]any{"n": "alone"}}}},
+			{ToolCalls: []ToolCall{
+				{ID: "c2", Name: "probe", Args: map[string]any{"n": "bad"}},
+				{ID: "c3", Name: "probe", Args: map[string]any{"n": "boom"}}}},
+			{Content: "done", Repeat: true},
+		}}}
+	}
+	tr := &recordingTrace{}
+	ctx := WithToolTrace(context.Background(), tr)
+	if _, _, err := turns().RunAgentLoop(ctx, []Message{{Role: "user", Content: "go"}},
+		AgentLoopConfig{Tools: []AgentToolDef{probe}, MaxRounds: 4}); err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	got := tr.lines
+	if len(got) < 3 || got[0] != `round 1 said "Looking it up."` || got[1] != "start probe alone" || got[2] != "end probe ok alone" {
+		t.Fatalf("the first round, in order: %q", got)
+	}
+	rest := append([]string(nil), got[3:]...)
+	sort.Strings(rest)
+	want := []string{
+		"end probe err no such thing",
+		"end probe err tool panicked: kaboom",
+		`round 2 said ""`,
+		"start probe bad",
+		"start probe boom",
+	}
+	if strings.Join(rest, "|") != strings.Join(want, "|") {
+		t.Errorf("the parallel round:\n got %q\nwant %q", rest, want)
+	}
+
+	// A run that starts its own loop puts its own trace on, and the one
+	// beneath hears nothing of it.
+	inner := &recordingTrace{}
+	if _, _, err := turns().RunAgentLoop(WithToolTrace(ctx, inner), []Message{{Role: "user", Content: "go"}},
+		AgentLoopConfig{Tools: []AgentToolDef{probe}, MaxRounds: 4}); err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if len(inner.lines) == 0 || len(tr.lines) != len(got) {
+		t.Errorf("the inner trace heard %d, the outer %d more", len(inner.lines), len(tr.lines)-len(got))
+	}
+
+	if _, _, err := turns().RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}},
+		AgentLoopConfig{Tools: []AgentToolDef{probe}, MaxRounds: 4}); err != nil {
+		t.Fatalf("a loop with no trace: %v", err)
 	}
 }

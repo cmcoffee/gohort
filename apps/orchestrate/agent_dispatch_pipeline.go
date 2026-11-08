@@ -409,7 +409,7 @@ func (t *chatTurn) agentsRunPipelineActionFor(card toolCard, args map[string]any
 	defer liveRun.Complete(RunStatusFailed) // safety net; the explicit calls below win
 
 	ctx = withDispatchedPipeline(ctx, def.ID)
-	ctx = withParentRun(ctx, liveRun.ID)
+	ctx = withRun(ctx, liveRun)
 	// The caller's rules travel INTO the run, so a worker stage's tool calls
 	// are judged the way the caller's own would be. Withheld output is a
 	// redaction; a blocked action is the only guard that prevents.
@@ -470,7 +470,7 @@ func (t *chatTurn) runDetachedPipeline(d *ToolSession, def PipelineDef, msg stri
 	defer liveRun.Complete(RunStatusFailed)
 
 	ctx = withDispatchedPipeline(ctx, def.ID)
-	ctx = withParentRun(ctx, liveRun.ID)
+	ctx = withRun(ctx, liveRun)
 	ctx = t.guardedRunContext(ctx) // as inline; see agentsRunPipelineAction
 
 	Log("[orchestrate.agents.run] %s handed off pipeline %q%s (%d stages)", t.agent.ID, def.Name, pipelineOwnerNote(t, def), len(def.Stages))
