@@ -67,9 +67,9 @@ alice POST /api/media-backends/role "{\"enabled\":true}"
 root GET /api/media-backends/role ""
   405 method not allowed
 root POST /api/media-backends/role "{\"enabled\":"
-  400 name the connector: ?name=
+  400 invalid JSON: unexpected EOF
 root POST /api/media-backends/role ""
-  400 name the connector: ?name=
+  400 invalid JSON: EOF
 alice POST /api/media-backends/uses "{\"enabled\":true}"
   403 forbidden
 root GET /api/media-backends/uses ""
@@ -158,14 +158,16 @@ root POST /api/speech "{\"enabled\":true,\"provider\":\"peer:nope\"}"
   400 no peer named "nope" is registered: add it under Peers first
 root POST /api/speech "{\"enabled\":true,\"provider\":\"nope\"}"
   400 no connector named "nope"
-alice POST /api/media-backends/role?name=openai&role=default ""
+alice POST /api/media-backends/role "{\"name\":\"openai\",\"role\":\"default\"}"
   403 forbidden
 root GET /api/media-backends ""
   200 []
-root POST /api/media-backends/role?name=openai&role=default ""
+root POST /api/media-backends/role "{\"name\":\"openai\",\"role\":\"default\"}"
   400 no image backend named openai
-root POST /api/media-backends/role?name=openai&role=sometimes ""
+root POST /api/media-backends/role "{\"name\":\"openai\",\"role\":\"sometimes\"}"
   400 no image backend named openai
+root POST /api/media-backends/remove?name=openai ""
+  400 openai holds no choice here that needs setting again
 root POST /api/media-backends/uses "{\"name\":\"openai\",\"uses\":\"edit\"}"
   400 openai does not both make and edit pictures
 activity log, 5 entries:

@@ -30,6 +30,12 @@ func TestMediaGenerationListsEveryKindInBands(t *testing.T) {
 		sub.ServeHTTP(w, httptest.NewRequest(method, path, nil))
 		return w
 	}
+	// post sends body, as a row's Use dropdown does.
+	post := func(path, body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		sub.ServeHTTP(w, httptest.NewRequest("POST", path, strings.NewReader(body)))
+		return w
+	}
 	// usedFor is what a row's Used for dropdown sends: the row's key and
 	// the choice.
 	usedFor := func(name, uses string) int {
@@ -79,7 +85,7 @@ func TestMediaGenerationListsEveryKindInBands(t *testing.T) {
 	if r := got["painter"]; r.BothWays || r.Uses != "" {
 		t.Errorf("a backend that only makes pictures has Used for: %+v", r)
 	}
-	if r := got["clips"]; r.IsImage || !r.IsUnused || r.Does != "video" {
+	if r := got["clips"]; r.IsImage || !r.OfferOnly || r.Role != "unused" || r.Does != "video" {
 		t.Errorf("a video connector: %+v", r)
 	}
 
@@ -106,22 +112,22 @@ func TestMediaGenerationListsEveryKindInBands(t *testing.T) {
 
 	// One role endpoint for every kind: the open kinds and music go to their
 	// own offered lists; an image backend to Image's default and list.
-	call("POST", "/api/media-backends/role?name=clips&role=offered")
-	call("POST", "/api/media-backends/role?name=tunes&role=offered")
-	call("POST", "/api/media-backends/role?name=painter&role=default")
+	post("/api/media-backends/role", `{"name":"clips","role":"offered"}`)
+	post("/api/media-backends/role", `{"name":"tunes","role":"offered"}`)
+	post("/api/media-backends/role", `{"name":"painter","role":"default"}`)
 	var media, music []string
 	RootDB.Get(service.MediaTable, "agents", &media)
 	RootDB.Get(service.MusicTable, "agents", &music)
 	if strings.Join(media, ",") != "clips" || strings.Join(music, ",") != "tunes" || a.storedString(ImageTable, "provider") != "painter" {
 		t.Errorf("offered: media %v, music %v, image default %q", media, music, a.storedString(ImageTable, "provider"))
 	}
-	if r := rows()["clips"]; !r.IsOffered {
+	if r := rows()["clips"]; r.Role != "offered" {
 		t.Errorf("an offered video connector reads %+v", r)
 	}
-	if w := call("POST", "/api/media-backends/role?name=clips&role=default"); w.Code != http.StatusBadRequest {
+	if w := post("/api/media-backends/role", `{"name":"clips","role":"default"}`); w.Code != http.StatusBadRequest {
 		t.Errorf("a video connector made the default: %d", w.Code)
 	}
-	call("POST", "/api/media-backends/role?name=clips&role=off")
+	post("/api/media-backends/role", `{"name":"clips","role":"unused"}`)
 	RootDB.Get(service.MediaTable, "agents", &media)
 	if len(media) != 0 {
 		t.Errorf("after Stop offering: %v", media)
@@ -170,7 +176,7 @@ func TestMediaGenerationShowsWhatNeedsSettingAgain(t *testing.T) {
 		t.Errorf("the row for lost says: %+v", r)
 	}
 
-	if w := call("POST", "/api/media-backends/role?name=gone&role=off"); w.Code >= 300 {
+	if w := call("POST", "/api/media-backends/remove?name=gone"); w.Code >= 300 {
 		t.Fatalf("Remove: %d %s", w.Code, w.Body.String())
 	}
 	var music []string
@@ -181,7 +187,7 @@ func TestMediaGenerationShowsWhatNeedsSettingAgain(t *testing.T) {
 	if rows := list(); len(rows) != 2 || rows[0].Name != "lost" {
 		t.Errorf("after Remove, rows = %+v", rows)
 	}
-	call("POST", "/api/media-backends/role?name=lost&role=off")
+	call("POST", "/api/media-backends/remove?name=lost")
 	if rows := list(); len(rows) != 1 || rows[0].IsStale || len(service.StaleSettings(RootDB)) != 0 {
 		t.Errorf("with nothing stale, rows = %+v, stale settings %v", rows, service.StaleSettings(RootDB))
 	}

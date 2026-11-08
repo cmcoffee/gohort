@@ -29,6 +29,7 @@ const mediaBackendsSource = "api/media-backends"
 func (a *AdminApp) registerMediaGenerationRoutes(sub *http.ServeMux) {
 	sub.HandleFunc("/"+mediaBackendsSource, jsonapi.Get(a.db, a.handleMediaBackends, a.gate()))
 	sub.HandleFunc("/"+mediaBackendsSource+"/role", jsonapi.Post(a.db, a.handleMediaBackendRole, a.gate()))
+	sub.HandleFunc("/"+mediaBackendsSource+"/remove", jsonapi.Post(a.db, a.handleMediaBackendRemove, a.gate()))
 	sub.HandleFunc("/"+mediaBackendsSource+"/uses", jsonapi.Post(a.db, a.handleImageBackendUses, a.gate()))
 }
 
@@ -162,9 +163,9 @@ func (a *AdminApp) offeredRow(conn Connector, table, group, does string) imageBa
 		a.db.Get(table, "agents", &agents)
 	}
 	row := imageBackendRow{Name: conn.Name, Title: rowTitle(conn), Summary: ConnectorSummary(conn), Does: does,
-		Group: group, Role: "unused", IsUnused: true, HasSettings: true, LastError: conn.LastError}
+		Group: group, Role: "unused", OfferOnly: true, HasSettings: true, LastError: conn.LastError}
 	if slices.Contains(agents, conn.Name) {
-		row.Role, row.IsOffered, row.IsUnused = "offered", true, false
+		row.Role = "offered"
 	}
 	row.EditForm, row.EditSpec, row.NeedsFix = connectorEditors(conn)
 	_, row.TemplateUpdate = templateUpdate(conn)
@@ -174,21 +175,38 @@ func (a *AdminApp) offeredRow(conn Connector, table, group, does string) imageBa
 	return row
 }
 
-// noConnectorNamed refuses a row's button sent with no ?name=.
-const noConnectorNamed = "name the connector: ?name="
-
-// handleMediaBackendRole is a row's role buttons for any media connector: an
-// image backend's (default, offered, off) as Image Generation had them, and
-// a music or media connector's (offered, off).
-func (a *AdminApp) handleMediaBackendRole(c *jsonapi.Call, _ struct{}) (any, error) {
-	q := c.R.URL.Query()
-	name, role := strings.TrimSpace(q.Get("name")), strings.TrimSpace(q.Get("role"))
-	if name == "" {
-		return nil, jsonapi.BadRequest(noConnectorNamed)
+// Use choices on a row: an image backend's, and a music or media
+// connector's, which has no default. Disabled is "unused", as the row's
+// role reads.
+var (
+	imageUseOptions = []ui.SelectOption{
+		{Value: "default", Label: "Default"},
+		{Value: "offered", Label: "Offered to agents"},
+		{Value: "unused", Label: "Disabled"},
 	}
-	if role == "off" && a.dropStale(name) {
-		adminChange(c.R, activity.Settings, "media generation: removed %s, which no longer reads", name)
-		return jsonapi.Empty(http.StatusNoContent), nil
+	offerUseOptions = []ui.SelectOption{
+		{Value: "offered", Label: "Offered to agents"},
+		{Value: "unused", Label: "Disabled"},
+	}
+)
+
+// roleForm is what a row's Use dropdown sends: the connector (the row's key)
+// and its role.
+type roleForm struct {
+	Name string `json:"name"`
+	Role string `json:"role"`
+}
+
+// handleMediaBackendRole is a row's Use for any media connector: an image
+// backend's (default, offered, Disabled), and a music or media connector's
+// (offered, Disabled). Disabled comes as "unused".
+func (a *AdminApp) handleMediaBackendRole(c *jsonapi.Call, req roleForm) (any, error) {
+	name, role := strings.TrimSpace(req.Name), strings.TrimSpace(req.Role)
+	if name == "" {
+		return nil, jsonapi.BadRequest("name the connector: name")
+	}
+	if role == "unused" {
+		role = "off"
 	}
 	conn, ok := GetConnector(RootDB, name)
 	table := ""
@@ -201,7 +219,7 @@ func (a *AdminApp) handleMediaBackendRole(c *jsonapi.Call, _ struct{}) (any, err
 		}
 	}
 	if table == "" {
-		return a.handleImageBackendRole(c, struct{}{})
+		return a.setImageRole(c.R, name, role)
 	}
 	var agents []string
 	if a.db != nil {
@@ -213,13 +231,27 @@ func (a *AdminApp) handleMediaBackendRole(c *jsonapi.Call, _ struct{}) (any, err
 		agents = append(agents, name)
 	case "off":
 	default:
-		return nil, jsonapi.BadRequest("role is offered or off")
+		return nil, jsonapi.BadRequest("role is offered or unused")
 	}
 	if a.db != nil {
 		a.db.Set(table, "agents", agents)
 	}
 	acceptChanges(name)
 	adminChange(c.R, activity.Settings, "media connector %s: %s (offered: %s)", name, role, strings.Join(agents, ", "))
+	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// handleMediaBackendRemove is a stale row's Remove: ?name= taken off every
+// Media Generation choice where it no longer reads.
+func (a *AdminApp) handleMediaBackendRemove(c *jsonapi.Call, _ struct{}) (any, error) {
+	name := strings.TrimSpace(c.R.URL.Query().Get("name"))
+	if name == "" {
+		return nil, jsonapi.BadRequest("name the connector: ?name=")
+	}
+	if !a.dropStale(name) {
+		return nil, jsonapi.BadRequest(name + " holds no choice here that needs setting again")
+	}
+	adminChange(c.R, activity.Settings, "media generation: removed %s, which no longer reads", name)
 	return jsonapi.Empty(http.StatusNoContent), nil
 }
 

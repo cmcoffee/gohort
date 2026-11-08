@@ -159,10 +159,11 @@ func TestMediaRoutesContract(t *testing.T) {
 	do("root", "POST", "/api/speech", `{"enabled":true,"provider":"peer:nope"}`)
 	do("root", "POST", "/api/speech", `{"enabled":true,"provider":"nope"}`)
 
-	do("alice", "POST", "/api/media-backends/role?name=openai&role=default", "")
+	do("alice", "POST", "/api/media-backends/role", `{"name":"openai","role":"default"}`)
 	do("root", "GET", "/api/media-backends", "")
-	do("root", "POST", "/api/media-backends/role?name=openai&role=default", "")
-	do("root", "POST", "/api/media-backends/role?name=openai&role=sometimes", "")
+	do("root", "POST", "/api/media-backends/role", `{"name":"openai","role":"default"}`)
+	do("root", "POST", "/api/media-backends/role", `{"name":"openai","role":"sometimes"}`)
+	do("root", "POST", "/api/media-backends/remove?name=openai", "")
 	do("root", "POST", "/api/media-backends/uses", `{"name":"openai","uses":"edit"}`)
 	// Refused, it stores nothing.
 	if adb.Get(ImageTable, "provider", new(string)) || adb.Get(ImageTable, "uses", new(map[string]string)) {

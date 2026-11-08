@@ -288,11 +288,11 @@ func TestAServicesConnectorIsReferencedFromItsPage(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, n := range []string{"nothing", "finder"} {
-		if _, err := a.handleMediaBackendRole(call("POST", "/api/media-backends/role?name="+n+"&role=offered"), struct{}{}); err == nil {
+		if _, err := a.handleMediaBackendRole(call("POST", "/api/media-backends/role"), roleForm{Name: n, Role: "offered"}); err == nil {
 			t.Errorf("Media Generation offered %s, which does not make music", n)
 		}
 	}
-	if _, err := a.handleMediaBackendRole(call("POST", "/api/media-backends/role?name=tunes&role=offered"), struct{}{}); err != nil || !referenced() {
+	if _, err := a.handleMediaBackendRole(call("POST", "/api/media-backends/role"), roleForm{Name: "tunes", Role: "offered"}); err != nil || !referenced() {
 		t.Fatalf("offering it on Media Generation: %v, referenced %v", err, referenced())
 	}
 	if r := row(); r["state"] != "referenced" || !strings.HasPrefix(r["status"].(string), "Referenced by Media Generation (offered to agents).") {
@@ -308,13 +308,13 @@ func TestAServicesConnectorIsReferencedFromItsPage(t *testing.T) {
 	if rows, _ := a.handleMediaBackends(call("GET", "/api/media-backends")); !strings.Contains(func() string { b, _ := json.Marshal(rows); return string(b) }(), "tunes (changed, waiting to be accepted)") {
 		t.Errorf("its row on Media Generation: %+v", rows)
 	}
-	if _, err := a.handleMediaBackendRole(call("POST", "/api/media-backends/role?name=tunes&role=offered"), struct{}{}); err != nil {
+	if _, err := a.handleMediaBackendRole(call("POST", "/api/media-backends/role"), roleForm{Name: "tunes", Role: "offered"}); err != nil {
 		t.Errorf("saving the page with it chosen: %v", err)
 	}
 	if _, waiting := service.PendingChange(RootDB, "tunes"); waiting {
 		t.Error("accepted, still waiting")
 	}
-	if _, err := a.handleMediaBackendRole(call("POST", "/api/media-backends/role?name=tunes&role=off"), struct{}{}); err != nil || referenced() {
+	if _, err := a.handleMediaBackendRole(call("POST", "/api/media-backends/role"), roleForm{Name: "tunes", Role: "unused"}); err != nil || referenced() {
 		t.Errorf("taken off Media Generation: %v, referenced %v", err, referenced())
 	}
 }

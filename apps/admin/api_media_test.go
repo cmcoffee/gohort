@@ -221,7 +221,10 @@ func TestImageRolesTakeAConnectorThatMakesPictures(t *testing.T) {
 	a.registerMediaGenerationRoutes(sub)
 	role := func(name, role string) int {
 		w := httptest.NewRecorder()
-		sub.ServeHTTP(w, httptest.NewRequest("POST", "/api/media-backends/role?name="+name+"&role="+role, nil))
+		if role == "off" {
+			role = "unused"
+		}
+		sub.ServeHTTP(w, httptest.NewRequest("POST", "/api/media-backends/role", strings.NewReader(`{"name":"`+name+`","role":"`+role+`"}`)))
 		return w.Code
 	}
 	stored := func() string {
@@ -253,7 +256,7 @@ func TestImageRolesTakeAConnectorThatMakesPictures(t *testing.T) {
 	SaveConnector(RootDB, Connector{Name: "painter", Kind: "service", Spec: json.RawMessage(spec)})
 	t.Cleanup(func() { UnapproveConnector(RootDB, "painter"); UnapproveConnector(RootDB, "sketcher") })
 	SaveConnector(RootDB, Connector{Name: "sketcher", Kind: "service", Spec: json.RawMessage(strings.Replace(spec, "/v1/images", "/v2/images", 1))})
-	if got := a.imageRows(); len(got) != 2 || !got[0].IsUnused || !got[1].IsUnused {
+	if got := a.imageRows(); len(got) != 2 || got[0].Role != "unused" || got[1].Role != "unused" {
 		t.Errorf("with two that make pictures, the list: %+v", got)
 	}
 	if role("painter", "default") >= 300 || role("sketcher", "offered") >= 300 {
@@ -280,7 +283,7 @@ func TestImageRolesTakeAConnectorThatMakesPictures(t *testing.T) {
 	if got := stored(); got != "sketcher / painter" {
 		t.Errorf("after Make default: %q", got)
 	}
-	if got := a.imageRows(); len(got) != 2 || got[0].Name != "sketcher" || !got[0].IsDefault || !got[1].IsOffered {
+	if got := a.imageRows(); len(got) != 2 || got[0].Name != "sketcher" || got[0].Role != "default" || got[1].Role != "offered" {
 		t.Errorf("the list after Make default: %+v", got)
 	}
 	role("painter", "off")

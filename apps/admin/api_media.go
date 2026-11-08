@@ -311,14 +311,12 @@ type imageBackendRow struct {
 	Name    string `json:"name"`
 	Title   string `json:"title"`
 	Summary string `json:"summary"`
-	// Role is how Media Generation uses it: "default" (what agents' image
-	// tools use unless told otherwise), "offered" (agents may choose it by
-	// name), or "unused". IsDefault, IsOffered and IsUnused say the same for
-	// the row's buttons.
+	// Role is how Media Generation uses it, as its row's Use dropdown says:
+	// "default" (what agents' image tools use unless told otherwise),
+	// "offered" (agents may choose it by name), or "unused" (Disabled).
+	// OfferOnly marks a music or media row, which has no default.
 	Role      string `json:"role"`
-	IsDefault bool   `json:"is_default,omitempty"`
-	IsOffered bool   `json:"is_offered,omitempty"`
-	IsUnused  bool   `json:"is_unused,omitempty"`
+	OfferOnly bool   `json:"offer_only,omitempty"`
 	Does      string `json:"does"`
 	Size      string `json:"size"`
 	Steps     string `json:"steps,omitempty"`
@@ -366,11 +364,9 @@ func (a *AdminApp) imageRows() []imageBackendRow {
 			HasSettings: conn.Kind == service.Kind, LastError: conn.LastError}
 		switch {
 		case conn.Name == provider:
-			row.Role, row.IsDefault = "default", true
+			row.Role = "default"
 		case slices.Contains(agents, conn.Name):
-			row.Role, row.IsOffered = "offered", true
-		default:
-			row.IsUnused = true
+			row.Role = "offered"
 		}
 		row.EditForm, row.EditSpec, row.NeedsFix = connectorEditors(conn)
 		_, row.TemplateUpdate = templateUpdate(conn)
@@ -384,15 +380,13 @@ func (a *AdminApp) imageRows() []imageBackendRow {
 	return rows
 }
 
-// handleImageBackendRole changes how Media Generation uses image backend ?name=
-// (?role=): "default" makes it what agents' image tools use unless told
-// otherwise, keeping the one it replaces offered by name; "offered" lets
-// agents choose it by name; "off" stops using it (the default off leaves no
-// default). The row's buttons send it; the save is the page's own, so it
-// accepts a change waiting on the backend as the page's save does.
-func (a *AdminApp) handleImageBackendRole(c *jsonapi.Call, _ struct{}) (any, error) {
-	q := c.R.URL.Query()
-	name, role := strings.TrimSpace(q.Get("name")), strings.TrimSpace(q.Get("role"))
+// setImageRole changes how Media Generation uses image backend name: role
+// "default" makes it what agents' image tools use unless told otherwise,
+// keeping the one it replaces offered by name; "offered" lets agents choose
+// it by name; "off" stops using it (the default off leaves no default). The
+// row's Use sends it; the save is the page's own, so it accepts a change
+// waiting on the backend as the page's save does.
+func (a *AdminApp) setImageRole(r *http.Request, name, role string) (any, error) {
 	if !imageConnector(name) && !ImageBackendRegistered(name) {
 		return nil, jsonapi.BadRequest("no image backend named " + name)
 	}
@@ -421,14 +415,14 @@ func (a *AdminApp) handleImageBackendRole(c *jsonapi.Call, _ struct{}) (any, err
 			provider = ""
 		}
 	default:
-		return nil, jsonapi.BadRequest("role is default, offered or off")
+		return nil, jsonapi.BadRequest("role is default, offered or unused")
 	}
 	if a.db != nil {
 		a.db.Set(ImageTable, "provider", provider)
 		a.db.Set(ImageTable, "agents", agents)
 	}
 	acceptChanges(name)
-	adminChange(c.R, activity.Settings, "image backend %s: %s (default=%q, offered: %s)", name, role, provider, strings.Join(agents, ", "))
+	adminChange(r, activity.Settings, "image backend %s: %s (default=%q, offered: %s)", name, role, provider, strings.Join(agents, ", "))
 	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
