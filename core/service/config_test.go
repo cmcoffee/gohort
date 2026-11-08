@@ -423,3 +423,76 @@ func TestAKeptKeyShowsOnlyItsEnd(t *testing.T) {
 		t.Errorf("an unreadable key: %q", got)
 	}
 }
+
+// Every capability has a Price on the connector's row, its spec's price shown
+// greyed in the box. Set, it is what a call costs and what a Test is
+// estimated at, with no edit to the spec; blank, the spec's price is used.
+// A provider's own figure in its reply is still read first, and a spec may
+// not declare a setting of that name.
+func TestAPriceSetOnTheRowIsWhatACallCosts(t *testing.T) {
+	world(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"hits":[{"t":"A","u":"https://a.example"}]}`))
+	}))
+	defer srv.Close()
+	install(t, "finder", map[string]any{
+		"provider": map[string]any{"transport": "http", "base_url": srv.URL, "auth": map[string]any{"none": true},
+			"operations": map[string]any{"find": map[string]any{"path": "/s?q={query}"}}},
+		"provides": []any{map[string]any{"capability": "web.search", "steps": []any{map[string]any{"call": "find"}},
+			"output": map[string]any{"results": map[string]any{"path": "hits", "fields": map[string]any{"title": "t", "url": "u"}}},
+			"cost":   map[string]any{"per_call": 0.005}}},
+	})
+	c, _ := GetConnector(RootDB, "finder")
+	var price Setting
+	for _, st := range SettingsFor(c, "web.search") {
+		if st.Key == "web.search/price" {
+			price = st
+		}
+	}
+	if price.Field.Label != "Price per call ($)" || price.Field.Placeholder != "0.005" || price.Field.Default != "" {
+		t.Fatalf("the Price setting: %+v", price.Field)
+	}
+	spend := func() float64 {
+		return RecordOf("finder").Capabilities["web.search"].Spend
+	}
+	if _, err := Call(context.Background(), nil, "finder", "web.search", map[string]any{"query": "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := spend(); got != 0.005 {
+		t.Errorf("blank, a call cost %v, want the spec's 0.005", got)
+	}
+	if est, known := Estimate("finder"); !known || est != 0.005 {
+		t.Errorf("blank, a Test is estimated at %v %v", est, known)
+	}
+	if err := SaveSettings(c, "", map[string]string{"web.search/price": "0.02"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Call(context.Background(), nil, "finder", "web.search", map[string]any{"query": "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := spend(); got < 0.0249 || got > 0.0251 {
+		t.Errorf("set to 0.02, two calls spent %v, want 0.025", got)
+	}
+	if est, _ := Estimate("finder"); est != 0.02 {
+		t.Errorf("set to 0.02, a Test is estimated at %v", est)
+	}
+	if err := SaveSettings(c, "", map[string]string{"web.search/price": "-1"}, nil); err == nil {
+		t.Error("a negative price was kept")
+	}
+
+	raw, _ := json.Marshal(map[string]any{
+		"provider": map[string]any{"transport": "http", "base_url": "https://api.example.test", "auth": map[string]any{"none": true},
+			"operations": map[string]any{"find": map[string]any{"path": "/s?q={query}"}}},
+		"provides": []any{map[string]any{"capability": "web.search", "config": []any{map[string]any{"name": "price", "label": "Price"}},
+			"steps":  []any{map[string]any{"call": "find"}},
+			"output": map[string]any{"results": map[string]any{"path": "hits", "fields": map[string]any{"title": "t", "url": "u"}}}}},
+	})
+	s, err := Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Validate(); err == nil || !strings.Contains(err.Error(), "own Price setting") {
+		t.Errorf("a spec declaring price: %v", err)
+	}
+}

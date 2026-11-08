@@ -30,6 +30,8 @@ func Estimate(name string) (float64, bool) {
 	if err != nil {
 		return 0, false
 	}
+	// At the prices set on its row, where they are.
+	s = s.withPrices(ConnectionConfig(RootDB, c))
 	total, known := 0.0, true
 	for _, b := range s.Provides {
 		v, k := b.estimate()

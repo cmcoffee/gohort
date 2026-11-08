@@ -65,8 +65,8 @@ func (a *AdminApp) costSections() []ui.Section {
 		{
 			Title:    "Prices",
 			Subtitle: "Per-token and per-call dollar rates that feed the dollar estimate above.",
-			Detail:   "Worker is the local LLM, Lead the remote one. Set 0 for free tiers. Saved automatically as you edit.\n\nThe two cached-prompt weights at the bottom are multipliers on the input rates, not dollar figures. With prompt caching on, most of a prompt is billed through them rather than at the full input rate.",
-			Body: ui.FormPanel{
+			Detail:   "Worker is the local LLM, Lead the remote one. Set 0 for free tiers. Saved automatically as you edit.\n\nThe two cached-prompt weights at the bottom are multipliers on the input rates, not dollar figures. With prompt caching on, most of a prompt is billed through them rather than at the full input rate.\n\nConnectors (search engines, image backends and the rest) each carry their own price, per job, listed below: set on a row's Settings, else its template's. A provider that reports its price in its reply is read first.",
+			Body: ui.Stack{Children: []ui.Component{ui.FormPanel{
 				Assist: true,
 				Source: "api/cost-rates",
 				Method: "PUT",
@@ -96,6 +96,8 @@ func (a *AdminApp) costSections() []ui.Section {
 						Detail: "Anthropic charges 1.25 for the 5-minute TTL and 2.0 for the 1-hour one. Set 2.0 if this deployment uses 1-hour caching, or every write is under-reported by 37.5%.\n\nWrites are the premium side: a fresh long prompt is nearly all writes, so this drives the cost of first messages rather than follow-ups."},
 				},
 			},
+				ui.Subsection{Title: "Connectors", Subtitle: "Each connector's price per job. Change one under its row's Settings.", Body: connectorPricesTable()},
+			}},
 		},
 	}
 }

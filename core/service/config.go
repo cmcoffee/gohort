@@ -141,7 +141,7 @@ func settingKey(capability, name string) string {
 }
 
 // settings are every setting the spec declares: the provider's, then each
-// capability's.
+// capability's, each capability's ending on its Price.
 func (s Spec) settings() []Setting {
 	var out []Setting
 	for _, f := range s.Config {
@@ -151,8 +151,112 @@ func (s Spec) settings() []Setting {
 		for _, f := range b.Config {
 			out = append(out, Setting{Key: settingKey(b.Capability, f.Name), Capability: b.Capability, Field: f})
 		}
+		out = append(out, Setting{Key: settingKey(b.Capability, priceSetting), Capability: b.Capability, Field: priceField(b, len(s.Provides) > 1)})
 	}
 	return out
+}
+
+// priceSetting is the setting every capability's price is kept under
+// (<capability>/price). No spec declares it: set on the connector's row, it
+// is used in place of the price the spec declares, so a price is changed
+// without editing the spec, and a provider that reports its own price in
+// its reply is still read first.
+const priceSetting = "price"
+
+// priceUnit is what binding b is priced by, and what its spec says one
+// costs (0 when it declares none): per unit when it declares only that,
+// else per call.
+func priceUnit(b Binding) (string, float64) {
+	if b.Cost == nil {
+		return "call", 0
+	}
+	if b.Cost.PerUnit > 0 && b.Cost.PerCall == 0 && strings.TrimSpace(b.Cost.Unit) != "" {
+		return b.Cost.Unit, b.Cost.PerUnit
+	}
+	return "call", b.Cost.PerCall
+}
+
+// priceField is binding b's Price setting: blank uses its spec's price,
+// shown greyed in the box. named says which capability it prices, for a
+// connector giving more than one.
+func priceField(b Binding, named bool) ConfigField {
+	unit, v := priceUnit(b)
+	min := 0.0
+	label := "Price per " + unit + " ($)"
+	if named {
+		label = "Price per " + unit + " for " + b.Capability + " ($)"
+	}
+	f := ConfigField{Name: priceSetting, Label: label, Type: "number", Min: &min, Decimals: 4,
+		Help: "What one " + unit + " costs, for Cost by source and a Test's estimate. Blank uses its template's price."}
+	if v > 0 {
+		f.Placeholder = strconv.FormatFloat(v, 'f', -1, 64)
+	} else {
+		f.Help = "What one " + unit + " costs, for Cost by source and a Test's estimate. Blank, it is unpriced."
+	}
+	return f
+}
+
+// JobPrice is one capability's price on a connector, as Overview > Prices
+// lists it: per Unit, Price dollars (0 unpriced), Set on the connector's row
+// or else its spec's, and FromReply when the provider reports its own price,
+// which is read first.
+type JobPrice struct {
+	Capability string
+	Unit       string
+	Price      float64
+	Set        bool
+	FromReply  bool
+}
+
+// Prices are connector c's prices, one per capability, at the prices set on
+// its row where they are.
+func Prices(c Connector) []JobPrice {
+	if c.Kind != Kind {
+		return nil
+	}
+	s, err := Parse(c.Spec)
+	if err != nil {
+		return nil
+	}
+	values := ConnectionConfig(RootDB, c)
+	settled := s.withPrices(values)
+	var out []JobPrice
+	for i, b := range s.Provides {
+		_, set := strconv.ParseFloat(strings.TrimSpace(values[settingKey(b.Capability, priceSetting)]), 64)
+		unit, v := priceUnit(settled.Provides[i])
+		out = append(out, JobPrice{Capability: b.Capability, Unit: unit, Price: v, Set: set == nil,
+			FromReply: b.Cost != nil && strings.TrimSpace(b.Cost.FromReply) != ""})
+	}
+	return out
+}
+
+// withPrices is s with each capability's Price from values in place of the
+// price its spec declares, where one is set.
+func (s Spec) withPrices(values map[string]string) Spec {
+	var provides []Binding
+	for i, b := range s.Provides {
+		v, err := strconv.ParseFloat(strings.TrimSpace(values[settingKey(b.Capability, priceSetting)]), 64)
+		if err != nil || v < 0 {
+			continue
+		}
+		if provides == nil {
+			provides = append([]Binding(nil), s.Provides...)
+		}
+		cost := Cost{}
+		if b.Cost != nil {
+			cost = *b.Cost
+		}
+		if unit, _ := priceUnit(b); unit != "call" {
+			cost.PerUnit = v
+		} else {
+			cost.PerCall = v
+		}
+		provides[i].Cost = &cost
+	}
+	if provides != nil {
+		s.Provides = provides
+	}
+	return s
 }
 
 // checkField checks one declared setting.
@@ -250,6 +354,9 @@ func (s Spec) validateConfig() error {
 			}
 			if _, clash := provider[f.Name]; clash || seen[f.Name] {
 				return fmt.Errorf("%s config: %s is declared twice", b.Capability, f.Name)
+			}
+			if f.Name == priceSetting {
+				return fmt.Errorf("%s config: price is every capability's own Price setting, kept on the connector's row; declare a cost instead", b.Capability)
 			}
 			seen[f.Name] = true
 			scope[f.Name] = f
@@ -393,6 +500,9 @@ func (s Spec) placeholders() map[string]string {
 	out := map[string]string{}
 	for _, st := range s.settings() {
 		f := st.Field
+		if st.Capability != "" && st.Key == settingKey(st.Capability, priceSetting) {
+			continue // a blank price is the spec's own, not a stand-in
+		}
 		v := f.Default
 		if v == "" {
 			switch f.kind() {
@@ -429,6 +539,7 @@ func (s Spec) placeholders() map[string]string {
 // capability is asked for (binding). A token that is a whole JSON string of
 // a number or toggle setting becomes the number or the boolean.
 func (s Spec) settle(values map[string]string) (Spec, error) {
+	s = s.withPrices(values)
 	if !s.UsesConfig() {
 		return s, nil
 	}
