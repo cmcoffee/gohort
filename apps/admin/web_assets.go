@@ -670,11 +670,11 @@ const connectorAddAnotherAction = `function(ctx){
           rows.forEach(function(r){ body.appendChild(rowFor(r)); });
           return;
         }
-        var track = el('div', {class: 'ui-row-segmented', style: 'display:inline-flex;margin:0 0 0.6rem'});
+        var track = el('div', {class: 'ui-row-segmented'});
         var list = el('div');
         var segs = kinds.map(function(k){
           var n = rows.filter(function(r){ return (r.category || 'Other') === k; }).length;
-          var seg = el('button', {type: 'button', class: 'ui-seg', text: k + ' (' + n + ')'});
+          var seg = el('button', {type: 'button', class: 'ui-seg', style: 'font-size:var(--fs-xs, 0.78rem);padding:0.2rem 0.65rem', text: k + ' (' + n + ')'});
           seg.addEventListener('click', function(){ show(k); });
           track.appendChild(seg);
           return seg;
@@ -684,7 +684,7 @@ const connectorAddAnotherAction = `function(ctx){
           while (list.firstChild) list.removeChild(list.firstChild);
           rows.forEach(function(r){ if ((r.category || 'Other') === kind) list.appendChild(rowFor(r)); });
         }
-        body.appendChild(track);
+        body.appendChild(el('div', {style: 'display:flex;justify-content:center;margin:0 0 0.6rem'}, [track]));
         body.appendChild(list);
         show(kinds[0]);
       }});

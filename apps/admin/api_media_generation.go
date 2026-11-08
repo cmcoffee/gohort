@@ -214,10 +214,10 @@ func (a *AdminApp) offeredRow(conn Connector, table, group, does string) imageBa
 	return row
 }
 
-// Role choices at a row's left: an image backend's, and a music or media
+// Role choices on a row: an image backend's, and a music or media
 // connector's, which has no default. Primary is the default, Secondary is
 // offered to agents by name, and Disabled is "unused", as the row's role
-// reads.
+// reads; with no Primary beside it, offered reads as Enabled.
 var (
 	imageUseOptions = []ui.SelectOption{
 		{Value: "default", Label: "Primary"},
@@ -225,7 +225,7 @@ var (
 		{Value: "unused", Label: "Disabled"},
 	}
 	offerUseOptions = []ui.SelectOption{
-		{Value: "offered", Label: "Secondary"},
+		{Value: "offered", Label: "Enabled"},
 		{Value: "unused", Label: "Disabled"},
 	}
 )

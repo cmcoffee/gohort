@@ -511,9 +511,10 @@ func TestTheBackendListSharesTheConnectorActions(t *testing.T) {
 	}
 	// A row's role is a switch leading its second line, under its name:
 	// Primary (the default), Secondary (offered to agents) or Disabled; a
-	// music or media row has no Primary. Used for sits beside it. The
+	// music or media row has no Primary, so it is Enabled or Disabled. Used
+	// for sits beside it. The
 	// default's row wears a Default badge.
-	for i, want := range []string{"Primary,Secondary,Disabled", "Secondary,Disabled"} {
+	for i, want := range []string{"Primary,Secondary,Disabled", "Enabled,Disabled"} {
 		act := tbl.RowActions[1+i]
 		var opts []string
 		for _, o := range act.Options {

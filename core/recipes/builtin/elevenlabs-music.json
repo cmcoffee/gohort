@@ -3,7 +3,7 @@
   "title": "ElevenLabs (music)",
   "description": "ElevenLabs' Eleven Music as a music generator, declared as a service: it makes a song from a prompt, and agents get a tool of their own for it once it is offered. Its request and reply are data you can test and fix from Admin > Connectors.",
   "category": "Music",
-  "setup_notes": "The Music API is for paid ElevenLabs plans. Get an API key at elevenlabs.io (Profile > API keys); the one your ElevenLabs speech connector uses works. It installs out of use: choose it under Admin > Services > Media Generation, as Secondary, to give agents a generate_music tool for it. The song's length is the model's to choose from the prompt (say how long in it). ElevenLabs bills in credits, so no price is declared: set one under Overview > Cost by source if you want its calls counted.",
+  "setup_notes": "The Music API is for paid ElevenLabs plans. Get an API key at elevenlabs.io (Profile > API keys); the one your ElevenLabs speech connector uses works. It installs out of use: set it to Enabled under Admin > Services > Media Generation to give agents a generate_music tool for it. The song's length is the model's to choose from the prompt (say how long in it). ElevenLabs bills in credits, so no price is declared: set one under Overview > Cost by source if you want its calls counted.",
   "questions": [
     {
       "name": "name",
