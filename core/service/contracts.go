@@ -270,13 +270,18 @@ func init() {
 	// and no code. A file in, when given, is what to work from.
 	register(Contract{
 		Name:   "media.generate",
-		About:  "A media file made from a prompt, of the kind the connector says it makes (its binding's kind: video, 3D model, sound effects), from a file to work from when given.",
+		About:  "A media file made from a prompt, of the kind the connector says it makes (its binding's kind: video, 3D model, sound effects), from files to work from when given (file, then file2 to file6: a video's reference pictures).",
 		Checks: "file is a file that is not empty; what kind of file is the connector's to say.",
 		Where:  "Admin > Services > Media Generation, and an agent tool of its own named generate_<kind>_<connector>",
 		Gives:  "Media Generation",
 		Inputs: []Port{
 			{Name: "prompt", Type: TypeText, Required: true},
 			{Name: "file", Type: TypeFile},
+			{Name: "file2", Type: TypeFile},
+			{Name: "file3", Type: TypeFile},
+			{Name: "file4", Type: TypeFile},
+			{Name: "file5", Type: TypeFile},
+			{Name: "file6", Type: TypeFile},
 			{Name: "model", Type: TypeText},
 		},
 		Outputs: []Port{{Name: "file", Type: TypeFile, Required: true}},

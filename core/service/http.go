@@ -527,11 +527,13 @@ func renderValue(v any, vars map[string]any) any {
 	case []any:
 		// An element whose inputs were all left out is no element: a list of
 		// pictures where only the first was given is one picture, not one
-		// and two empty objects a server refuses.
+		// and two empty objects a server refuses. That holds for an element
+		// with fixed fields beside its inputs too ({"type": "image", "data":
+		// "{file2.base64}"}): without the picture it is not a picture.
 		out := make([]any, 0, len(t))
 		for _, x := range t {
 			rv := renderValue(x, vars)
-			if rv == nil || emptiedObject(x, rv) {
+			if rv == nil || emptiedObject(x, rv) || inputsLeftOut(x, rv) {
 				continue
 			}
 			out = append(out, rv)
@@ -539,6 +541,33 @@ func renderValue(v any, vars map[string]any) any {
 		return out
 	}
 	return v
+}
+
+// inputsLeftOut reports a template object some of whose fields name inputs
+// and none of those came through: only its fixed fields are left.
+func inputsLeftOut(tmpl, rendered any) bool {
+	orig, ok := tmpl.(map[string]any)
+	got, ok2 := rendered.(map[string]any)
+	if !ok || !ok2 {
+		return false
+	}
+	named := false
+	for k, x := range orig {
+		if !namesInput(x) {
+			continue
+		}
+		named = true
+		if _, kept := got[k]; kept {
+			return false
+		}
+	}
+	return named
+}
+
+// namesInput reports a template value that holds a token anywhere in it.
+func namesInput(v any) bool {
+	b, _ := json.Marshal(v)
+	return tokenRE.Match(b) || fileFieldRE.Match(b)
 }
 
 // emptiedObject reports a template object that rendered to no fields at all

@@ -1,7 +1,7 @@
 {
   "id": "gemini-video",
   "title": "Gemini Omni Flash (video)",
-  "description": "Google's Gemini Omni Flash as a video generator, declared as a service: it makes a 3 to 15 second video with sound from a prompt, and agents get a tool of their own for it once it is offered. Its requests and its price are data you can test and fix from Admin > Connectors.",
+  "description": "Google's Gemini Omni Flash as a video generator, declared as a service: it makes a 3 to 15 second video with sound from a prompt and up to six reference pictures, and agents get a tool of their own for it once it is offered. Its requests and its price are data you can test and fix from Admin > Connectors.",
   "category": "Video",
   "setup_notes": "Gemini Omni Flash is on the Gemini API's paid tier. Get an API key at aistudio.google.com/apikey; the one your Gemini images connector uses works. It installs out of use: set it to Enabled under Admin > Services > Media Generation to give agents a generate_video tool for it. Its row's Settings set the length, shape and resolution. A video takes a while: the connector asks for it, Google answers when it is made with a link to it, and the connector downloads it. The price per video is Google's for 10 seconds at 720p (about $0.07 a second) when this template was written: set yours under Overview > Cost by source if you change the length or resolution.",
   "questions": [
@@ -101,7 +101,42 @@
                   "path": "/interactions",
                   "body": {
                     "model": "{model}",
-                    "input": "{prompt}",
+                    "input": [
+                      {
+                        "type": "image",
+                        "data": "{file.base64}",
+                        "mime_type": "{file.type}"
+                      },
+                      {
+                        "type": "image",
+                        "data": "{file2.base64}",
+                        "mime_type": "{file2.type}"
+                      },
+                      {
+                        "type": "image",
+                        "data": "{file3.base64}",
+                        "mime_type": "{file3.type}"
+                      },
+                      {
+                        "type": "image",
+                        "data": "{file4.base64}",
+                        "mime_type": "{file4.type}"
+                      },
+                      {
+                        "type": "image",
+                        "data": "{file5.base64}",
+                        "mime_type": "{file5.type}"
+                      },
+                      {
+                        "type": "image",
+                        "data": "{file6.base64}",
+                        "mime_type": "{file6.type}"
+                      },
+                      {
+                        "type": "text",
+                        "text": "{prompt}"
+                      }
+                    ],
                     "response_format": {
                       "type": "video",
                       "delivery": "uri",
@@ -132,7 +167,7 @@
               {
                 "capability": "media.generate",
                 "kind": "video",
-                "about": "A 3 to 15 second video with sound, from a description of the scene, its camera movement, lighting and mood.",
+                "about": "A 3 to 15 second video with sound, from a description of the scene, camera, light and mood, and up to six reference pictures: one to bring to life, a first and last frame, or who to keep in it.",
                 "steps": [
                   {
                     "call": "create",

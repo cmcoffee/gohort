@@ -320,6 +320,15 @@ func (s *ToolSession) ResolveImageRef(ref string) (data []byte, mime string, err
 	return img.data, img.mime, nil
 }
 
+// ResolveSourceImage is the picture ref names, read as an image edit reads
+// its sources: a picture from this conversation (image#…), one someone sent
+// (media#N), or a workspace path, verified as an image. For another kind of
+// generator that works from pictures (a video's references).
+func ResolveSourceImage(sess *ToolSession, ref string) (data []byte, mime string, err error) {
+	im, err := resolveInputImage(sess, ref)
+	return im.data, im.mime, err
+}
+
 func resolveInputImage(sess *ToolSession, ref string) (inputImage, error) {
 	var out inputImage
 	ref = strings.TrimSpace(ref)

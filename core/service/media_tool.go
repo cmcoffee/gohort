@@ -5,6 +5,7 @@ package service
 // its connection, as a music connector's tool is (media.go).
 
 import (
+	"bytes"
 	"encoding/base64"
 	"fmt"
 	"net/http"
@@ -97,14 +98,98 @@ func (t *mediaTool) Desc() string {
 	if what == "" {
 		what = "Makes " + b.MediaKind() + " from a prompt."
 	}
-	return what + " Uses the " + t.connector + " service. Give it a prompt, and a file from your workspace to work from when it takes one. What it makes is saved in your workspace and goes out with your reply."
+	takes := ""
+	switch n := t.files(); {
+	case n == 1:
+		takes = " It takes one picture or file to work from."
+	case n > 1:
+		takes = fmt.Sprintf(" It takes up to %d pictures or files to work from, in order (a video's reference pictures; the first can be its opening frame).", n)
+	}
+	return what + " Uses the " + t.connector + " service." + takes + " What it makes is saved in your workspace and goes out with your reply."
 }
 
 func (t *mediaTool) Params() map[string]ToolParam {
-	return map[string]ToolParam{
+	p := map[string]ToolParam{
 		"prompt": {Type: "string", Description: "What to make, in words. Required."},
-		"file":   {Type: "string", Description: "A file in your workspace to work from, by its name there, when the service takes one."},
 	}
+	if t.files() > 0 {
+		p["files"] = ToolParam{Type: "array", Items: &ToolParam{Type: "string"},
+			Description: "What to work from, in order: a picture from this conversation (image#r.…), one someone sent (media#N), or a file in your workspace by its name there."}
+	}
+	return p
+}
+
+// mediaFileInputs are media.generate's file inputs, in order.
+var mediaFileInputs = []string{"file", "file2", "file3", "file4", "file5", "file6"}
+
+// files is how many files the connector's media.generate sends: file, then
+// as many of file2 to file6, in order, as its operations use; 0 when it
+// takes none.
+func (t *mediaTool) files() int {
+	c, ok := GetConnector(RootDB, t.connector)
+	if !ok {
+		return 0
+	}
+	s, err := Parse(c.Spec)
+	if err != nil {
+		return 0
+	}
+	b, ok := t.binding()
+	if !ok {
+		return 0
+	}
+	used := map[string]bool{}
+	for _, st := range b.Steps {
+		for _, tok := range opTokens(s.Provider.Operations[st.Call+st.Wait]) {
+			used[tok] = true
+		}
+	}
+	n := 0
+	for _, in := range mediaFileInputs {
+		if !used[in] {
+			break
+		}
+		n++
+	}
+	return n
+}
+
+// sourceFile is the file ref names, as a File the call can send: a picture
+// from this conversation or one someone sent (image#…, media#N), read as an
+// image edit reads its sources into a file of its own (temp: the caller
+// removes it), or any file in the workspace by its name.
+func sourceFile(sess *ToolSession, ref string) (f *File, temp bool, err error) {
+	ref = strings.TrimSpace(ref)
+	low := strings.ToLower(ref)
+	if strings.HasPrefix(low, RecentImageRefPrefix) || strings.HasPrefix(low, "media#") {
+		data, mime, err := ResolveSourceImage(sess, ref)
+		if err != nil {
+			return nil, false, err
+		}
+		f, _, err := writeFile(bytes.NewReader(data), defaultMaxBytes)
+		if err != nil {
+			return nil, false, err
+		}
+		if mime != "" {
+			f.Type = mime
+		}
+		return f, true, nil
+	}
+	abs, err := ResolveWorkspacePath(sess.WorkspaceDir, ref)
+	if err != nil {
+		return nil, false, err
+	}
+	info, err := os.Stat(abs)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, false, fmt.Errorf("no file %q in your workspace, and it is not a picture's id (image#r.…, media#N)", ref)
+	}
+	head := make([]byte, 512)
+	if fh, err := os.Open(abs); err == nil {
+		n, _ := fh.Read(head)
+		fh.Close()
+		head = head[:n]
+	}
+	return &File{Path: abs, Type: http.DetectContentType(head), Size: info.Size()}, false, nil
 }
 
 // Caps: a service on the network goes online; a local program runs.
@@ -158,22 +243,33 @@ func (t *mediaTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 		return "", fmt.Errorf("say what to make in prompt")
 	}
 	in := map[string]any{"prompt": strings.TrimSpace(prompt)}
+	// files, or the one file an older call names.
+	var refs []string
+	if list, ok := args["files"].([]any); ok {
+		for _, v := range list {
+			if s, _ := v.(string); strings.TrimSpace(s) != "" {
+				refs = append(refs, s)
+			}
+		}
+	}
 	if name, _ := args["file"].(string); strings.TrimSpace(name) != "" {
-		abs, err := ResolveWorkspacePath(sess.WorkspaceDir, strings.TrimSpace(name))
+		refs = append([]string{name}, refs...)
+	}
+	if max := t.files(); len(refs) > max {
+		if max == 0 {
+			return "", fmt.Errorf("%s makes from a prompt alone and takes no pictures or files: leave files out, or use another generator. Do NOT drop them and present the result as made from them", t.Name())
+		}
+		return "", fmt.Errorf("%s takes at most %d pictures or files, and %d were given. Do NOT retry with fewer and present it as what was asked for: tell the user it takes %d", t.Name(), max, len(refs), max)
+	}
+	for i, ref := range refs {
+		f, temp, err := sourceFile(sess, ref)
 		if err != nil {
 			return "", err
 		}
-		info, err := os.Stat(abs)
-		if err != nil || !info.Mode().IsRegular() {
-			return "", fmt.Errorf("no file %q in your workspace", name)
+		if temp {
+			defer os.Remove(f.Path)
 		}
-		head := make([]byte, 512)
-		if fh, err := os.Open(abs); err == nil {
-			n, _ := fh.Read(head)
-			fh.Close()
-			head = head[:n]
-		}
-		in["file"] = &File{Path: abs, Type: http.DetectContentType(head), Size: info.Size()}
+		in[mediaFileInputs[i]] = f
 	}
 	res, err := Call(sess.Context(), sess, t.connector, "media.generate", in)
 	if err != nil {

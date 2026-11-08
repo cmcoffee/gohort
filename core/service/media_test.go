@@ -393,3 +393,72 @@ func TestTheMediaToolsAreFiledTogether(t *testing.T) {
 		t.Error("AI Media Generation is not a category with a description")
 	}
 }
+
+// A media tool takes files as a list, in order, as many as its connector's
+// spec sends (file, then file2 to file6), each a workspace file or a
+// picture's id; more than it takes is refused, never quietly cut, and one
+// that takes none offers no files at all.
+func TestAMediaToolTakesItsFilesInOrder(t *testing.T) {
+	world(t)
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got = string(b)
+		w.Write([]byte("\x00\x00\x00\x18ftypmp42 clip"))
+	}))
+	defer srv.Close()
+	spec := func(body map[string]any) map[string]any {
+		return map[string]any{
+			"provider": map[string]any{"transport": "http", "base_url": srv.URL, "auth": map[string]any{"none": true},
+				"operations": map[string]any{"make": map[string]any{"method": "POST", "path": "/v", "body": body, "read": "file"}}},
+			"provides": []any{map[string]any{"capability": "media.generate", "kind": "video",
+				"steps": []any{map[string]any{"call": "make"}}, "output": map[string]any{"file": map[string]any{"from": "body"}}}}}
+	}
+	install(t, "clips", spec(map[string]any{"prompt": "{prompt}", "refs": []any{
+		map[string]any{"type": "image", "data": "{file.base64}"}, map[string]any{"type": "image", "data": "{file2.base64}"}}}))
+	install(t, "plain", spec(map[string]any{"prompt": "{prompt}"}))
+	RootDB.Set(MediaTable, "agents", []string{"clips", "plain"})
+	tools := map[string]ChatTool{}
+	for _, ct := range RegisteredChatTools() {
+		tools[ct.Name()] = ct
+	}
+	clips, plain := tools["generate_video_clips"], tools["generate_video_plain"]
+	if clips == nil || plain == nil {
+		t.Fatal("the media tools are not registered")
+	}
+	if _, params := clips.(DynamicChatTool).SchemaWithSession(nil); params["files"].Type != "array" {
+		t.Errorf("a two-picture generator's params: %+v", params)
+	}
+	if desc, params := plain.(DynamicChatTool).SchemaWithSession(nil); params == nil || params["files"].Type != "" || strings.Contains(desc, "pictures or files") {
+		t.Errorf("a prompt-only generator offers files: %q %+v", desc, params)
+	}
+	ws := t.TempDir()
+	os.WriteFile(ws+"/a.png", []byte("\x89PNG\r\n\x1a\nfirst"), 0o600)
+	os.WriteFile(ws+"/b.png", []byte("\x89PNG\r\n\x1a\nsecond"), 0o600)
+	os.WriteFile(ws+"/c.png", []byte("\x89PNG\r\n\x1a\nthird"), 0o600)
+	sess := &ToolSession{WorkspaceDir: ws}
+	run := func(ct ChatTool, files ...any) error {
+		_, err := ct.(SessionChatTool).RunWithSession(map[string]any{"prompt": "a cat", "files": files}, sess)
+		return err
+	}
+	if err := run(clips, "a.png", "b.png"); err != nil {
+		t.Fatal(err)
+	}
+	var body struct {
+		Refs []map[string]string `json:"refs"`
+	}
+	json.Unmarshal([]byte(got), &body)
+	if len(body.Refs) != 2 || body.Refs[0]["data"] != "iVBORw0KGgpmaXJzdA==" || body.Refs[1]["data"] != "iVBORw0KGgpzZWNvbmQ=" {
+		t.Errorf("two pictures, in order: %s", got)
+	}
+	got = ""
+	if err := run(clips, "a.png", "b.png", "c.png"); err == nil || !strings.Contains(err.Error(), "at most 2") || got != "" {
+		t.Errorf("three pictures to a two-picture generator: %v, sent %q", err, got)
+	}
+	if err := run(plain, "a.png"); err == nil || !strings.Contains(err.Error(), "takes no pictures") || got != "" {
+		t.Errorf("a picture to a prompt-only generator: %v, sent %q", err, got)
+	}
+	if err := run(clips, "image#r.nothere"); err == nil || strings.Contains(err.Error(), "workspace") {
+		t.Errorf("a picture id is read as a picture, not a workspace file: %v", err)
+	}
+}

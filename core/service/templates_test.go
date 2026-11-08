@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -253,10 +254,46 @@ func TestTheGeminiVideoTemplateDownloadsItsVideo(t *testing.T) {
 			t.Errorf("%s: the video is not the one downloaded", at)
 		}
 	}
-	for _, want := range []string{`"model":"gemini-omni-1.2-flash"`, `"input":"a marble rolling down a track"`, `"delivery":"uri"`, `"duration":"10s"`, `"aspect_ratio":"16:9"`, `"resolution":"720p"`} {
+	for _, want := range []string{`"model":"gemini-omni-1.2-flash"`, `"delivery":"uri"`, `"duration":"10s"`, `"aspect_ratio":"16:9"`, `"resolution":"720p"`} {
 		if !strings.Contains(created, want) {
 			t.Errorf("the request has no %s: %s", want, created)
 		}
+	}
+	type part struct{ Type, Text, Data, MimeType string }
+	parts := func() []part {
+		var body struct {
+			Input []map[string]string `json:"input"`
+		}
+		if err := json.Unmarshal([]byte(created), &body); err != nil {
+			t.Fatalf("the request: %v %s", err, created)
+		}
+		var out []part
+		for _, p := range body.Input {
+			out = append(out, part{p["type"], p["text"], p["data"], p["mime_type"]})
+		}
+		return out
+	}
+	// With no pictures, the prompt alone: no empty picture parts.
+	if got := parts(); len(got) != 1 || got[0].Type != "text" || got[0].Text != "a marble rolling down a track" {
+		t.Errorf("a prompt alone sent %+v", got)
+	}
+	// Reference pictures go first, in order, each with its type.
+	png := pngBytes(t)
+	dir := t.TempDir()
+	var files []*File
+	for i, data := range [][]byte{png, []byte("\xff\xd8\xff\xe0 a jpeg")} {
+		path := filepath.Join(dir, fmt.Sprintf("ref%d", i))
+		os.WriteFile(path, data, 0o600)
+		files = append(files, &File{Path: path, Type: []string{"image/png", "image/jpeg"}[i], Size: int64(len(data))})
+	}
+	if _, err := Call(context.Background(), &ToolSession{WorkspaceDir: t.TempDir()}, "gemini-video", "media.generate",
+		map[string]any{"prompt": "the cat chases the yarn", "file": files[0], "file2": files[1]}); err != nil {
+		t.Fatal(err)
+	}
+	got := parts()
+	if len(got) != 3 || got[0].Type != "image" || got[0].MimeType != "image/png" || got[0].Data != b64(png) ||
+		got[1].Type != "image" || got[1].MimeType != "image/jpeg" || got[2].Type != "text" || got[2].Text != "the cat chases the yarn" {
+		t.Errorf("two references and a prompt sent %+v", got)
 	}
 	ready = false
 	if _, err := run(); err == nil {
