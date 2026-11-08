@@ -393,6 +393,12 @@ func isResolvableToolName(db Database, owner, name string) bool {
 	if _, ok := FindChatTool(name); ok {
 		return true
 	}
+	// A tool a stored connector makes (a music or video generator's), which
+	// a restart registers only once the connectors are served: read before
+	// that, the agent kept losing it.
+	if ToolNameClaimed(name) {
+		return true
+	}
 	if owner == "" || db == nil {
 		return false
 	}

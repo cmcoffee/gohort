@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -134,5 +135,30 @@ func TestDisableGlobalToolForAgentKeepsSiblings(t *testing.T) {
 		if n == "from_client.drop_me" {
 			t.Fatalf("drop_me still present: %v", rec.AllowedTools)
 		}
+	}
+}
+
+// A tool a stored connector makes (a music or video generator's) is kept on
+// an agent read before it is registered: a restart serves the connectors after
+// agents are first read, and healing it away then lost it for good, so the
+// agent's video tool came back unticked after every rebuild.
+func TestSelfHealKeepsAToolAConnectorWillRegister(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	const owner = "alice"
+	udb := agentUserDB(root, owner)
+	RegisterToolNameClaim(func(name string) bool { return name == "generate_video_not_served_yet" })
+	saved, err := saveAgent(udb, AgentRecord{
+		Name: "Video", OrchestratorPrompt: "makes videos", Owner: owner,
+		AllowedTools: []string{"generate_video_not_served_yet", "ghost_tool"},
+	})
+	if err != nil {
+		t.Fatalf("saveAgent: %v", err)
+	}
+	rec, ok := loadAgent(udb, saved.ID)
+	if !ok {
+		t.Fatal("loadAgent failed")
+	}
+	if strings.Join(rec.AllowedTools, ",") != "generate_video_not_served_yet" {
+		t.Fatalf("AllowedTools = %v; want the connector's tool kept and only the ghost dropped", rec.AllowedTools)
 	}
 }

@@ -462,3 +462,32 @@ func TestAMediaToolTakesItsFilesInOrder(t *testing.T) {
 		t.Errorf("a picture id is read as a picture, not a workspace file: %v", err)
 	}
 }
+
+// A stored music or media connector's tool is claimed before it is
+// registered: an agent naming it keeps it through a restart, which serves
+// the connectors after the agents are first read. A name no connector makes
+// is not claimed.
+func TestAStoredConnectorClaimsItsTool(t *testing.T) {
+	world(t)
+	prov := map[string]any{"transport": "http", "base_url": "https://api.example.test", "auth": map[string]any{"none": true},
+		"operations": map[string]any{"make": map[string]any{"method": "POST", "path": "/m", "body": map[string]any{"prompt": "{prompt}"}, "read": "file"}}}
+	for name, binding := range map[string]map[string]any{
+		"tunes": {"capability": "music.generate", "steps": []any{map[string]any{"call": "make"}}, "output": map[string]any{"audio": map[string]any{"from": "body"}}},
+		"clips": {"capability": "media.generate", "kind": "video", "steps": []any{map[string]any{"call": "make"}}, "output": map[string]any{"file": map[string]any{"from": "body"}}},
+	} {
+		raw, _ := json.Marshal(map[string]any{"provider": prov, "provides": []any{binding}})
+		if err := SaveConnector(RootDB, Connector{Name: name, Kind: Kind, Spec: raw}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"generate_music_tunes", "generate_video_clips"} {
+		if !ToolNameClaimed(name) {
+			t.Errorf("%s, made by a stored connector, is not claimed", name)
+		}
+	}
+	for _, name := range []string{"generate_video_gone", "generate_music_clips", "web_search"} {
+		if ToolNameClaimed(name) {
+			t.Errorf("%s is claimed, and no connector makes it", name)
+		}
+	}
+}

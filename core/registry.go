@@ -143,6 +143,39 @@ func FindAgent(name string) (Agent, bool) {
 }
 
 // FindChatTool looks up a registered chat tool by name.
+// toolNameClaims answer whether a tool name is one something will register,
+// though it has not yet: a connector's tool (a music or media generator's)
+// is registered when the connector is served, which on a restart comes after
+// the agents naming it are first read.
+var (
+	toolNameClaimsMu sync.Mutex
+	toolNameClaims   []func(name string) bool
+)
+
+// RegisterToolNameClaim adds claim to what ToolNameClaimed asks: a package
+// that registers tools from stored data (core/service, from connectors)
+// says which names that data makes, without registering them.
+func RegisterToolNameClaim(claim func(name string) bool) {
+	toolNameClaimsMu.Lock()
+	defer toolNameClaimsMu.Unlock()
+	toolNameClaims = append(toolNameClaims, claim)
+}
+
+// ToolNameClaimed reports whether name is a tool something stored here makes,
+// registered yet or not. A list naming it should keep it: dropping it as
+// stale on a read that came before it was registered loses it for good.
+func ToolNameClaimed(name string) bool {
+	toolNameClaimsMu.Lock()
+	claims := append([]func(string) bool(nil), toolNameClaims...)
+	toolNameClaimsMu.Unlock()
+	for _, c := range claims {
+		if c(name) {
+			return true
+		}
+	}
+	return false
+}
+
 func FindChatTool(name string) (ChatTool, bool) {
 	registryMu.Lock()
 	defer registryMu.Unlock()

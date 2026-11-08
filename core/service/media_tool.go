@@ -22,6 +22,36 @@ var (
 	mediaTools   = map[string]bool{}
 )
 
+// A music or media connector's tool is claimed from the stored connectors,
+// so a list naming one keeps it through a restart, when it is registered
+// only once the connectors are served.
+func init() { RegisterToolNameClaim(connectorMakesTool) }
+
+// connectorMakesTool reports whether a stored connector makes the agent tool
+// name: a music connector's generate_music_<name>, or a media connector's
+// generate_<kind>_<name>.
+func connectorMakesTool(name string) bool {
+	if RootDB == nil || !strings.HasPrefix(name, "generate_") {
+		return false
+	}
+	for _, c := range ListConnectors(RootDB) {
+		if c.Kind != Kind {
+			continue
+		}
+		s, err := Parse(c.Spec)
+		if err != nil {
+			continue
+		}
+		if _, _, err := s.binding("music.generate"); err == nil && (&musicTool{connector: c.Name}).Name() == name {
+			return true
+		}
+		if _, _, err := s.binding("media.generate"); err == nil && (&mediaTool{connector: c.Name}).Name() == name {
+			return true
+		}
+	}
+	return false
+}
+
 // registerMediaTool registers connector name's agent tool once; the tool
 // reads its kind and what it makes from the spec on each use, so an edited
 // kind is the next schema's.
