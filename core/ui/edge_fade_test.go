@@ -78,7 +78,7 @@ func TestARowsButtonsFadeWhereTheyScroll(t *testing.T) {
 	if at < 0 {
 		t.Fatal("the row's buttons moved")
 	}
-	block := src[at : at+2000]
+	block := src[at : at+6000]
 	if !strings.Contains(block, "window.uiEdgeFade(actionsWrap)") || !strings.Contains(block, "matchMedia('(max-width: 800px)')") {
 		t.Error("a row's buttons do not fade where they scroll on a phone")
 	}

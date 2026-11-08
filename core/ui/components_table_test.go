@@ -77,3 +77,55 @@ if (!process.exitCode) console.log('OK');
 		t.Error("the second line's actions have no layout")
 	}
 }
+
+// On a phone a table row's buttons are one line; where they do not fit, the
+// last ones fold into one More menu, a group's actions flattened into it, so
+// none is cut off at the edge. A wide screen shows them all again, and a row
+// that fits is left as it was.
+func TestARowFoldsTheButtonsThatDoNotFitIntoMore(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed")
+	}
+	src := readRuntimeFile(t, "10_basics.js")
+	start := strings.Index(src, "        var actionGroups = {}, actionGroupOrder = [];")
+	endMark := "            folded = true;\n          }\n        };\n"
+	end := strings.Index(src, endMark)
+	if start < 0 || end < start {
+		t.Fatal("the row's button layout is not found")
+	}
+	if !strings.Contains(src, "acts.forEach(function(a) { a.style.minWidth = ''; if (a._uiFit) a._uiFit(phone); });") {
+		t.Error("rows are not fitted after a render or a resize")
+	}
+	harness := `
+var wrapW = 0;
+var actionsWrap = {kids: [], get firstChild() { return this.kids[0]; },
+  removeChild: function(k) { this.kids.splice(this.kids.indexOf(k), 1); },
+  get scrollWidth() { return this.kids.reduce(function(a, k) { return a + k.w; }, 0); },
+  get clientWidth() { return wrapW; }};
+var rec = {}, rowKey = 'name', row = {};
+function appendAction(parent, act) { if (act.only_if && !rec[act.only_if]) return; parent.kids.push({label: act.label, w: 100}); }
+function appendActionMenu(parent, group, items) { parent.kids.push({label: group + '[' + items.map(function(it){ return it.act.label; }).join(',') + ']', w: 90}); }
+function shown() { return actionsWrap.kids.map(function(k){ return k.label; }).join(' '); }
+function want(got, exp, why) { if (got !== exp) { console.log('FAIL ' + why + ': ' + got); process.exitCode = 1; } }
+var cfg = {row_actions: [{label: 'Update'}, {label: 'Settings'}, {label: 'Test'},
+  {label: 'Edit setup', group: 'Advanced'}, {label: 'Fix', group: 'Advanced'}, {label: 'Lead', leading: true}]};
+` + src[start:end+len(endMark)] + `
+want(shown(), 'Update Settings Test Advanced[Edit setup,Fix]', 'drawn whole at first');
+wrapW = 1000; actionsWrap._uiFit(true);
+want(shown(), 'Update Settings Test Advanced[Edit setup,Fix]', 'a phone row that fits is left as it is');
+wrapW = 300; actionsWrap._uiFit(true);
+want(shown(), 'Update Settings More[Test,Edit setup,Fix]', 'what does not fit folds into More, the group flattened');
+wrapW = 300; actionsWrap._uiFit(false);
+want(shown(), 'Update Settings Test Advanced[Edit setup,Fix]', 'a wide screen shows them all again');
+wrapW = 50; actionsWrap._uiFit(true);
+want(shown(), 'More[Update,Settings,Test,Edit setup,Fix]', 'at the narrowest, everything is under More');
+if (!process.exitCode) console.log('OK');
+`
+	tmp := filepath.Join(t.TempDir(), "fold.js")
+	if err := os.WriteFile(tmp, []byte(harness), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("node", tmp).CombinedOutput(); err != nil || !strings.Contains(string(out), "OK") {
+		t.Fatalf("the row's buttons:\n%s", out)
+	}
+}

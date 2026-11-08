@@ -881,6 +881,10 @@
 
         var actionsWrap = el('div', {class: 'ui-row-actions'});
         var actionGroups = {}, actionGroupOrder = [];
+        // The row's buttons in order: its plain actions, then a menu per
+        // group (RowAction.Group). Kept as a list so the row can be laid out
+        // again with fewer of them showing (fitActions).
+        var actionItems = [];
         (cfg.row_actions || []).forEach(function(act, ai) {
           if (act.leading) return;
           if (!cfg.cards && Number(act.line) === 2) return; // on the second line
@@ -889,19 +893,56 @@
             actionGroups[act.group].push({act: act, ai: ai});
             return;
           }
-          // parent = where to append the control (actionsWrap so all
-          // buttons live in one flex group). rowEl = the actual table
-          // row, so expand handlers can insert their panel as a true
-          // sibling of the row in the list rather than as a child of
-          // actionsWrap (which would render the panel beside or
-          // beneath the buttons inside the row).
-          appendAction(actionsWrap, act, ai, rec, rowKey, row);
+          actionItems.push({act: act, ai: ai});
         });
-        actionGroupOrder.forEach(function(g) {
-          appendActionMenu(actionsWrap, g, actionGroups[g], rec, rowKey, row);
-        });
+        actionGroupOrder.forEach(function(g) { actionItems.push({group: g, items: actionGroups[g]}); });
+        // layActions draws the first k items as they are and the rest, a
+        // group's actions among them, under one "More" menu. parent = where
+        // to append the control (actionsWrap so all buttons live in one flex
+        // group). rowEl = the actual table row, so expand handlers can insert
+        // their panel as a true sibling of the row in the list rather than as
+        // a child of actionsWrap (which would render the panel beside or
+        // beneath the buttons inside the row).
+        function layActions(k) {
+          while (actionsWrap.firstChild) actionsWrap.removeChild(actionsWrap.firstChild);
+          var rest = [];
+          actionItems.forEach(function(it, i) {
+            if (i < k) {
+              if (it.group) appendActionMenu(actionsWrap, it.group, it.items, rec, rowKey, row);
+              else appendAction(actionsWrap, it.act, it.ai, rec, rowKey, row);
+            } else if (it.group) rest = rest.concat(it.items);
+            else rest.push(it);
+          });
+          if (rest.length) appendActionMenu(actionsWrap, 'More', rest, rec, rowKey, row);
+        }
+        layActions(actionItems.length);
+        // On a phone a row's buttons are one line (runtime.css). Where they
+        // do not fit, the last ones fold into More rather than run past the
+        // row's edge, so every button is a tap away and none is cut in half.
+        // A wide screen shows them all.
+        var folded = false; // some are under More now
+        actionsWrap._uiFit = function(phone) {
+          if (folded) { layActions(actionItems.length); folded = false; }
+          if (!phone) return;
+          for (var k = actionItems.length - 1; k >= 0 && actionsWrap.scrollWidth > actionsWrap.clientWidth + 1; k--) {
+            layActions(k);
+            folded = true;
+          }
+        };
         if (actionsWrap.childNodes.length > 0) {
           row.appendChild(actionsWrap);
+          // A row drawn where it cannot be measured (a section not open yet)
+          // fits when it first takes a width, and again when the width
+          // changes; alignRowActions fits every row after a render.
+          if (window.ResizeObserver && window.matchMedia && window.matchMedia('(max-width: 800px)').matches) {
+            var fitWidth = -1;
+            new ResizeObserver(function() {
+              var w = actionsWrap.clientWidth;
+              if (!w || w === fitWidth) return;
+              fitWidth = w;
+              actionsWrap._uiFit(true);
+            }).observe(actionsWrap);
+          }
           // On a phone a row's buttons are one line that scrolls sideways
           // (runtime.css), so the one cut off at the edge, Delete most often,
           // fades as a tab bar's does and reads as "swipe" rather than as the
@@ -968,7 +1009,8 @@
       var run = function() {
         var acts = list.querySelectorAll('.ui-table-row > .ui-row-actions');
         var max = 0;
-        acts.forEach(function(a) { a.style.minWidth = ''; });
+        var phone = !!(window.matchMedia && window.matchMedia('(max-width: 800px)').matches);
+        acts.forEach(function(a) { a.style.minWidth = ''; if (a._uiFit) a._uiFit(phone); });
         if (!window.matchMedia || !window.matchMedia('(min-width: 801px)').matches) return;
         acts.forEach(function(a) { max = Math.max(max, a.getBoundingClientRect().width); });
         if (max > 0) acts.forEach(function(a) { a.style.minWidth = Math.ceil(max) + 'px'; });

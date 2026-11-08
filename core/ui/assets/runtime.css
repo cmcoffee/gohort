@@ -1502,8 +1502,10 @@ select:-webkit-autofill {
 /* A ROW OF BUTTONS ON A PHONE is one line, never a wrap: wrapped, the last
  * button or two (Delete, most often) dropped to a line of their own and read
  * as a separate control. A destructive action goes to the far end, apart
- * from the everyday ones, and a row whose buttons do not fit scrolls
- * sideways rather than wrapping. Every crowded button row is named here;
+ * from the everyday ones. A table row whose buttons do not fit folds its
+ * last ones into a More menu (10_basics.js, _uiFit); any other row, or one
+ * that still does not fit, scrolls sideways rather than wrapping. Every
+ * crowded button row is named here;
  * one that wraps on purpose (chips, tags, a list of choices) is not.
  *
  * contain: inline-size is what makes "scrolls" true. Without it the row's

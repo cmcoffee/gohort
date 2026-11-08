@@ -14,7 +14,8 @@ function check(label, cond) {
 check("a grouped action is held back from the row's buttons",
   /if \(act\.group\) \{[\s\S]{0,200}actionGroups\[act\.group\]\.push\(\{act: act, ai: ai\}\);\s*\n\s*return;/.test(src));
 check("each group becomes a menu after the row's buttons",
-  /actionGroupOrder\.forEach\(function\(g\) \{\s*\n\s*appendActionMenu\(actionsWrap, g, actionGroups\[g\], rec, rowKey, row\);/.test(src));
+  src.indexOf("actionGroupOrder.forEach(function(g) { actionItems.push({group: g, items: actionGroups[g]}); });") >= 0 &&
+  src.indexOf("if (it.group) appendActionMenu(actionsWrap, it.group, it.items, rec, rowKey, row);") >= 0);
 var i = src.indexOf('function appendActionMenu(');
 var body = i >= 0 ? src.slice(i, i + 2600) : '';
 check('the menu respects only_if and hide_if, and an empty one is not shown',
