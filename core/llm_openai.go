@@ -880,6 +880,17 @@ func (c *openAIClient) warmupContext() {
 // logFirstToken says how long a streamed call waited for its first token:
 // the time a person stares at nothing, made of the wait for a free slot on
 // the server and the prompt's processing (most of it on a cache miss).
+// logCallDone says how long a call took from send to its last byte, and its
+// size, by what it was for. The send was logged and the end was not, so the
+// time each call site costs (a judge, a check, a turn's round) could only be
+// guessed from its neighbours in the log; one line per call makes it a sum.
+func logCallDone(provider, route string, sent time.Time, r *Response) {
+	if r == nil {
+		return
+	}
+	Debug("[%s] call done in %dms (route=%s, in=%d out=%d)", provider, time.Since(sent).Milliseconds(), route, r.InputTokens, r.OutputTokens)
+}
+
 func logFirstToken(provider, route string, sent, first time.Time) {
 	if first.IsZero() {
 		return
@@ -2153,6 +2164,7 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 	// operator's RequestTimeout (the header-wait / response budget)
 	// applies directly.
 	// What the call is for rides with it, so a peer serving it can say so.
+	sentAt := time.Now()
 	resp, err := c.doRequest(withCallRoute(ctx, routeForLog(cfg)), body, c.api.RequestTimeout)
 	if err != nil {
 		return nil, err
@@ -2265,6 +2277,7 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 		out.PromptTokensPrefilled = prefilledFromCacheReport(result.Usage.PromptTokens, result.Usage.PromptTokensDetails.CachedTokens)
 	}
 	logPrefillReuse(c.provider(), out)
+	logCallDone(c.provider(), routeForLog(cfg), sentAt, out)
 	return out, nil
 }
 
@@ -2662,6 +2675,7 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 	}
 	logFirstToken(c.provider(), routeForLog(cfg), sentAt, clock.first)
 	logPrefillReuse(c.provider(), streamed)
+	logCallDone(c.provider(), routeForLog(cfg), sentAt, streamed)
 	return streamed, nil
 }
 
