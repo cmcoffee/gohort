@@ -22,22 +22,6 @@ root GET /api/tool-templates ""
   200 [{"name":"github_issue","label":"GitHub: create issue","category":"Tools","description":"Open an issue on a GitHub repo. Needs a SecureAPI credential holding a GitHub token."},{"name":"openapi_tool","… (605 bytes, sha1 d68e30672557f075353278906cd877938cbda5cc)
 root PUT /api/tool-templates "{}"
   405 method not allowed
-(signed out) GET /api/connector-templates ""
-  403 forbidden
-alice GET /api/connector-templates ""
-  403 forbidden
-root GET /api/connector-templates ""
-  200 [{"name":"a1111","label":"Automatic1111","category":"Image generation","description":"A local or self-hosted Automatic1111 (stable-diffusion-webui) server. Synchronous txt2img: no workflow needed."},{… (698 bytes, sha1 228fa8c431955d7615a7f916df6f28398468f035)
-root PUT /api/connector-templates "{}"
-  405 method not allowed
-(signed out) GET /api/connector-templates?category=none ""
-  403 forbidden
-alice GET /api/connector-templates?category=none ""
-  403 forbidden
-root GET /api/connector-templates?category=none ""
-  200 null
-root PUT /api/connector-templates?category=none "{}"
-  405 method not allowed
 (signed out) GET /api/extensions ""
   403 forbidden
 alice GET /api/extensions ""
@@ -53,14 +37,6 @@ alice GET /api/tool-template?name=nope ""
 root GET /api/tool-template?name=nope ""
   404 no such tool template
 root PUT /api/tool-template?name=nope "{}"
-  405 method not allowed
-(signed out) GET /api/connector-template?name=nope ""
-  403 forbidden
-alice GET /api/connector-template?name=nope ""
-  403 forbidden
-root GET /api/connector-template?name=nope ""
-  404 no such template
-root PUT /api/connector-template?name=nope "{}"
   405 method not allowed
 (signed out) GET /api/extension-template?name=nope ""
   403 forbidden

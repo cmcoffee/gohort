@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/recipes"
 	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
@@ -65,7 +66,7 @@ func TestMediaGenerationListsEveryKindInBands(t *testing.T) {
 		return out
 	}
 	got := rows()
-	if r := got["both"]; !r.IsImage || !r.BothWays || !r.UsedBoth || r.UsedFor != "used for everything it does" {
+	if r := got["both"]; !r.IsImage || !r.BothWays || !r.UsedBoth || r.UsedFor != "used for generating, editing and blending" {
 		t.Errorf("a backend that makes and edits: %+v", r)
 	}
 	if r := got["painter"]; r.BothWays || r.UsedFor != "" {
@@ -176,5 +177,62 @@ func TestMediaGenerationShowsWhatNeedsSettingAgain(t *testing.T) {
 	call("POST", "/api/media-backends/role?name=lost&role=off")
 	if rows := list(); len(rows) != 1 || rows[0].IsStale || len(service.StaleSettings(RootDB)) != 0 {
 		t.Errorf("with nothing stale, rows = %+v, stale settings %v", rows, service.StaleSettings(RootDB))
+	}
+}
+
+// Add AI generator lists the templates for every kind Media Generation holds,
+// in the page's order (images, then music, then the other kinds), so its
+// picker reads under a heading per kind; another page's list stays its own.
+func TestAddAIGeneratorListsTemplatesByKind(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved })
+	a := &AdminApp{db: RootDB}
+	sub := http.NewServeMux()
+	a.registerRecipeRoutes(sub)
+	// Imported templates of the other kinds: a template's category is the
+	// kind its picker heading names.
+	rec, _, ok := recipes.Get(RootDB, "resend-mail")
+	if !ok {
+		t.Fatal("no resend-mail template to copy")
+	}
+	for id, category := range map[string]string{"zz-video": "Media", "aa-tunes": "Music"} {
+		r := rec
+		r.ID, r.Title, r.Category = id, id, category
+		raw, _ := json.Marshal(r)
+		if _, err := recipes.Import(RootDB, raw, "root"); err != nil {
+			t.Fatalf("import %s: %v", id, err)
+		}
+	}
+	list := func(need string) []templateRow {
+		w := httptest.NewRecorder()
+		sub.ServeHTTP(w, httptest.NewRequest("GET", "/api/templates/for?need="+need, nil))
+		var rows []templateRow
+		if json.Unmarshal(w.Body.Bytes(), &rows) != nil {
+			t.Fatalf("%s: %s", need, w.Body.String())
+		}
+		return rows
+	}
+	var kinds []string
+	images := map[string]bool{}
+	for _, r := range list("media") {
+		if len(kinds) == 0 || kinds[len(kinds)-1] != r.Category {
+			kinds = append(kinds, r.Category)
+		}
+		if r.Category == "Images" {
+			images[r.ID] = true
+		}
+	}
+	if got := strings.Join(kinds, ","); got != "Images,Music,Media" {
+		t.Errorf("kinds in order = %s", got)
+	}
+	// What Add image backend opened is among them: a local ComfyUI or A1111.
+	if !images["comfyui"] || !images["a1111"] {
+		t.Errorf("image templates = %v, want ComfyUI and A1111 among them", images)
+	}
+	for _, r := range list("mail.send") {
+		if r.Category != "Mail" {
+			t.Errorf("the mail list holds %s (%s)", r.ID, r.Category)
+		}
 	}
 }

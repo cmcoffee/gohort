@@ -380,7 +380,6 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 			ClientAction("connector_edit_spec", connectorEditSpecAction).
 			ClientAction("system_deps_test", systemDepsTestAction).
 			ClientAction("connector_webhook", connectorWebhookAction).
-			ClientAction("add_image_backend", addImageBackendAction).
 			ClientAction("configure_backend", configureBackendAction).
 			ClientAction("add_tool_from_template", addToolFromTemplateAction).
 			ClientAction("add_extension", addExtensionAction).
@@ -662,12 +661,6 @@ var retiredTabs = map[string]string{
 	"agents": "quality", "governance": "oversight", "sharing": "oversight",
 	"extensions": "integrations", "files": "integrations",
 }
-
-// addImageBackendAction (Media Generation toolbar) → Add flow for image templates.
-var addImageBackendAction = `function(ctx){
-  if(!window.uiTemplateForm){` + connectorFormDef + `}
-  window.uiAddBackend('Image generation', function(){ location.reload(); });
-}`
 
 // configureBackendAction (Connectors row "Configure") → Configure the row's backend.
 var configureBackendAction = `function(ctx){

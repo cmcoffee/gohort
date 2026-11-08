@@ -19,12 +19,6 @@ func (a *AdminApp) registerTemplatesRoutes(sub *http.ServeMux) {
 	// value↔spec mapping + optional Detect, and these endpoints render/save it. No
 	// per-backend admin code (that's the point).
 
-	// List templates for the Add menu (optional ?category=).
-	sub.HandleFunc("/api/connector-templates", jsonapi.Get(a.db, a.handleConnectorTemplates, a.gate()))
-
-	// Field schema for one template (Add mode — no values).
-	sub.HandleFunc("/api/connector-template", jsonapi.Get(a.db, a.handleConnectorTemplate, a.gate()))
-
 	// Auto-detect (Detect hook) — powers the panel's Detect button.
 	sub.HandleFunc("/api/connector-detect", jsonapi.Post(a.db, a.handleConnectorDetect, a.gate()))
 
@@ -70,36 +64,6 @@ func (a *AdminApp) registerTemplatesRoutes(sub *http.ServeMux) {
 		"POST": jsonapi.Post(a.db, a.handleToolConfigSave, a.gate()),
 	}.Serve)
 
-}
-
-// handleConnectorTemplates serves /api/connector-templates; registerTemplatesRoutes says what it is for.
-func (a *AdminApp) handleConnectorTemplates(c *jsonapi.Call) (any, error) {
-	r := c.R
-	cat := strings.TrimSpace(r.URL.Query().Get("category"))
-	type row struct {
-		Name        string `json:"name"`
-		Label       string `json:"label"`
-		Category    string `json:"category"`
-		Description string `json:"description"`
-	}
-	var out []row
-	for _, t := range ConnectorTemplates() {
-		if cat != "" && t.Category != cat {
-			continue
-		}
-		out = append(out, row{t.Name, t.Label, t.Category, t.Description})
-	}
-	return out, nil
-}
-
-// handleConnectorTemplate serves /api/connector-template; registerTemplatesRoutes says what it is for.
-func (a *AdminApp) handleConnectorTemplate(c *jsonapi.Call) (any, error) {
-	r := c.R
-	t, ok := GetConnectorTemplate(r.URL.Query().Get("name"))
-	if !ok {
-		return nil, jsonapi.NotFound("no such template")
-	}
-	return templateSchemaMap(t, nil, "", true), nil
 }
 
 // templateValues is what a template's form posts: its values.

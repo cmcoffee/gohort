@@ -258,18 +258,6 @@ window.uiTemplateForm = function(cfg, reload){
     body.appendChild(msg); dlg.addAction(save);
   }});
 };
-window.uiAddBackend=function(category, reload){
-  fetch('api/connector-templates'+(category?('?category='+encodeURIComponent(category)):''),{cache:'no-store',credentials:'same-origin'})
-    .then(function(r){ return r.json(); })
-    .then(function(list){
-      if(!list||!list.length){ window.uiAlert && window.uiAlert('No backend templates available.'); return; }
-      function open(name){ fetch('api/connector-template?name='+encodeURIComponent(name),{cache:'no-store',credentials:'same-origin'}).then(function(r){return r.json();}).then(function(sc){ window.uiTemplateForm(sc, reload); }); }
-      if(list.length===1){ open(list[0].name); return; }
-      var options=list.map(function(x){return {label:x.label, value:x.name, detail:x.name};});
-      window.uiChoose('Add which backend?', options).then(function(pick){ if(pick){ open(pick); } });
-    })
-    .catch(function(e){ window.uiAlert && window.uiAlert((e&&e.message)||(''+e)); });
-};
 window.uiAddTool=function(reload){
   fetch('api/tool-templates',{cache:'no-store',credentials:'same-origin'})
     .then(function(r){ return r.json(); })
@@ -643,13 +631,25 @@ const connectorAddAnotherAction = `function(ctx){
   fetch('api/templates/for?need=' + encodeURIComponent(need), {credentials:'same-origin', cache:'no-store'})
     .then(function(res){ return res.text().then(function(t){ if(!res.ok) throw new Error(t || ('HTTP ' + res.status)); return JSON.parse(t); }); })
     .then(function(rows){
-      window.uiOpenSimpleModal({title: 'Add another', width: '600px', mount: function(body, dlg){
+      // A toolbar button titles the list after itself ("Add AI generator").
+      var title = (fromList && ctx.action && ctx.action.label) ? String(ctx.action.label).replace(/[\u2026.]+$/, '') : 'Add another';
+      // Templates of more than one kind, or a toolbar's list of kinds, read
+      // under a heading per kind (the server orders them).
+      var kinds = {};
+      (rows || []).forEach(function(r){ if (r.category) kinds[r.category] = true; });
+      var headed = Object.keys(kinds).length > 1 || (fromList && Object.keys(kinds).length > 0);
+      window.uiOpenSimpleModal({title: title, width: '600px', mount: function(body, dlg){
         if (!(rows || []).length) {
           body.appendChild(el('p', {style: 'margin:0;font-size:var(--fs-sm, 0.86rem)', text: 'No template does this yet. Import one under Admin > Services > Templates, or add a connector from its spec under Admin > Services > Connectors.'}));
           return;
         }
         body.appendChild(el('p', {style: 'margin:0 0 0.7rem;font-size:var(--fs-sm, 0.86rem);color:var(--text-mute)', text: 'Pick one. It asks a few questions and adds the connector, which then joins the list.'}));
+        var lastKind = null;
         rows.forEach(function(r){
+          if (headed && r.category !== lastKind) {
+            lastKind = r.category;
+            body.appendChild(el('div', {style: 'font-weight:600;font-size:var(--fs-xs, 0.78rem);text-transform:uppercase;letter-spacing:0.04em;color:var(--text-mute);margin:0.9rem 0 0.2rem', text: r.category || 'Other'}));
+          }
           var add = el('button', {class: 'ui-row-btn', text: 'Add\u2026'});
           add.addEventListener('click', function(){
             var install = window.UIClientActions && window.UIClientActions.template_install;

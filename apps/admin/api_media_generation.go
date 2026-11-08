@@ -34,7 +34,7 @@ func (a *AdminApp) registerMediaGenerationRoutes(sub *http.ServeMux) {
 // usedForLabels is what a row says an image backend that both makes and
 // edits pictures is used for.
 var usedForLabels = map[string]string{
-	ImageUseBoth:     "used for everything it does",
+	ImageUseBoth:     "used for generating, editing and blending",
 	ImageUseEdit:     "used for editing and blending only",
 	ImageUseGenerate: "used for generating only",
 }

@@ -25,8 +25,6 @@ func TestEachTemplatePathReachesItsOwnHandler(t *testing.T) {
 		code         int
 		prefix       string
 	}{
-		{"GET", "/api/connector-templates", 200, `[{"name":"a1111","label":"Automatic1111","category"`},
-		{"GET", "/api/connector-template?name=a1111&target=tool", 200, `{"category":"Image generation"`},
 		{"POST", "/api/connector-detect?template=comfyui", 400, "empty workflow"},
 		{"GET", "/api/connector-config", 404, "no such connector\n"},
 		{"GET", "/api/extensions", 200, `[{"name":"a1111","label":"Automatic1111","target":"connector"`},

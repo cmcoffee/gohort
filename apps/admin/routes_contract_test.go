@@ -42,8 +42,7 @@ func TestRoutesContract(t *testing.T) {
 
 	reads := []string{
 		"/api/app-panels?path=/servitor", "/api/app-summary?path=/nope", "/api/tool-templates",
-		"/api/connector-templates", "/api/connector-templates?category=none",
-		"/api/extensions", "/api/tool-template?name=nope", "/api/connector-template?name=nope",
+		"/api/extensions", "/api/tool-template?name=nope",
 		"/api/extension-template?name=nope", "/api/db/tables", "/api/db/keys?table=auth", "/api/db/keys",
 		"/api/activity", "/api/activity?limit=2", "/api/user-agents", "/api/user-machines", "/api/user-pipelines",
 		"/api/user-credentials", "/api/personal-mcp-servers", "/api/personal-integrations", "/api/user-candidates",

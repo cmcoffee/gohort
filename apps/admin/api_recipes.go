@@ -143,6 +143,12 @@ func (a *AdminApp) handleTemplatesFor(c *jsonapi.Call) (any, error) {
 		rows = append(rows, templateRow{ID: s.ID, Kind: "template", Title: s.Title, Category: s.Category,
 			Description: s.Description, Source: s.Source, Recipe: true})
 	}
+	// A list over several categories (a kind each) reads in the need's
+	// order, so the picker's headings come in the order the page names them.
+	order := append([]string{need.category}, need.also...)
+	sort.SliceStable(rows, func(i, j int) bool {
+		return slices.Index(order, rows[i].Category) < slices.Index(order, rows[j].Category)
+	})
 	return rows, nil
 }
 
