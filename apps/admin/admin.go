@@ -100,6 +100,11 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// How every maintenance pass ended, the scheduled ones too, is kept
 	// beside its button (maintenance_history.go).
 	OnMaintenanceEnded = a.recordMaintenanceEnd
+	// Connectors nobody changed take what their templates write now: a
+	// rebuild is how a template revision arrives (connector_template_update.go).
+	// In line, not in the background: it is one pass over the connectors,
+	// and the first page served should already show its outcome.
+	updateFromTemplates()
 
 	sub := http.NewServeMux()
 

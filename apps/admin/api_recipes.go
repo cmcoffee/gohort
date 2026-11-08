@@ -240,6 +240,9 @@ func (a *AdminApp) handleTemplateInstall(c *jsonapi.Call, body struct {
 	if err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
+	// What the template wrote, kept now, so the connector follows its
+	// template's next revision (connector_template_update.go).
+	noteTemplateSpecs()
 	return struct {
 		ArtifactImportResult
 		Message string `json:"message"`

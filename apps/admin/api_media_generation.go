@@ -258,7 +258,7 @@ func (a *AdminApp) offeredRow(conn Connector, table, group, does string) imageBa
 	}
 	row.Use = row.Role
 	row.EditForm, row.EditSpec, row.NeedsFix = connectorEditors(conn)
-	_, row.TemplateUpdate = templateUpdate(conn)
+	row.TemplateUpdate, row.TemplateConfirm, row.TemplateUndo = templateRowState(conn)
 	if service.Testable(conn) {
 		row.Testable, row.TestConfirm = true, testConfirm(conn.Name)
 	}

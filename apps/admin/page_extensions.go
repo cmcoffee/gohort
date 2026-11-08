@@ -466,9 +466,17 @@ func connectorEditRowActions() []ui.RowAction {
 	return []ui.RowAction{
 		// Shown only when the template it was made from now writes something
 		// different: a job it learned since (Gemini's editing), a fix.
+		// A connector nobody has changed takes it at start, on its own; this
+		// is the one somebody did change, and its question says what the
+		// update replaces (template_confirm).
 		{Type: "button", Label: "Update from template", Method: "POST", PostTo: "api/connectors/update-template?name={name}",
 			OnlyIf: "template_update", Variant: "primary", Invalidate: connectorListSources,
-			Confirm: "Update this connector to what its template writes now? Its settings and key are kept. A change made to its spec by hand (Advanced, ✨ Edit) is replaced."},
+			ConfirmField: "template_confirm",
+			Confirm:      "Update this connector to what its template writes now? Its settings and key are kept. A change made to its spec by hand (Advanced, ✨ Edit) is replaced."},
+		// After an automatic update: the spec it had, back.
+		{Type: "button", Label: "Undo template update", Method: "POST", PostTo: "api/connectors/update-template/undo?name={name}",
+			OnlyIf: "template_undo", Group: "Advanced", Invalidate: connectorListSources,
+			Confirm: "Put this connector back as it was before its template updated it? It then stops following its template on its own."},
 		{Type: "button", Label: "Edit setup", Method: "client", PostTo: "configure_backend", OnlyIf: "edit_form", Group: "Advanced"},
 		spec,
 		connectorEditAction("Fix", "needs_fix", "Why is this service failing, and what would fix it?"),

@@ -96,6 +96,10 @@ func connectorRows(connectors bool) any {
 		// TemplateUpdate is a connector whose template now writes a
 		// different spec than it holds (Update from template).
 		TemplateUpdate bool `json:"template_update,omitempty"`
+		// TemplateConfirm is Update from template's question; TemplateUndo a
+		// connector its template updated on its own (Undo template update).
+		TemplateConfirm string `json:"template_confirm,omitempty"`
+		TemplateUndo    bool   `json:"template_undo,omitempty"`
 		// A connector with a contract test and a health check (core/service):
 		// how it has been doing, and the question asked before a test.
 		Status      string `json:"status,omitempty"`
@@ -147,7 +151,7 @@ func connectorRows(connectors bool) any {
 			Deletable: len(uses[conn.Name]) == 0, HasSettings: conn.Kind == service.Kind,
 			HasAccess: conn.Kind == service.Kind && conn.ID != ""}
 		row.EditForm, row.EditSpec, row.NeedsFix = connectorEditors(conn)
-		_, row.TemplateUpdate = templateUpdate(conn)
+		row.TemplateUpdate, row.TemplateConfirm, row.TemplateUndo = templateRowState(conn)
 		row.Key = keptSecretsLine(conn)
 		if problems := service.SelfCheck(RootDB, conn); len(problems) > 0 {
 			row.Check = "Needs attention: " + strings.Join(problems, "; ") + "."

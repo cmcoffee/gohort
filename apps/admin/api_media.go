@@ -332,7 +332,9 @@ type imageBackendRow struct {
 	EditSpec bool `json:"edit_spec,omitempty"`
 	NeedsFix bool `json:"needs_fix,omitempty"`
 	// TemplateUpdate: its template now writes a different spec.
-	TemplateUpdate bool `json:"template_update,omitempty"`
+	TemplateUpdate  bool   `json:"template_update,omitempty"`
+	TemplateConfirm string `json:"template_confirm,omitempty"`
+	TemplateUndo    bool   `json:"template_undo,omitempty"`
 	// On Media Generation: the band it sits in (Images, Music, or the kind
 	// a media connector makes), and for an image backend that both makes and
 	// edits pictures, what it is used for.
@@ -379,7 +381,7 @@ func (a *AdminApp) imageRows() []imageBackendRow {
 			row.Role = "offered"
 		}
 		row.EditForm, row.EditSpec, row.NeedsFix = connectorEditors(conn)
-		_, row.TemplateUpdate = templateUpdate(conn)
+		row.TemplateUpdate, row.TemplateConfirm, row.TemplateUndo = templateRowState(conn)
 		if service.Testable(conn) {
 			row.Testable, row.TestConfirm = true, testConfirm(conn.Name)
 		}

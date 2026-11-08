@@ -36,6 +36,7 @@ func (a *AdminApp) registerConnectorFixRoutes(sub *http.ServeMux) {
 	sub.HandleFunc("/api/connectors/fix-form", jsonapi.Get(a.db, a.handleConnectorFixForm, a.gate()))
 	sub.HandleFunc("/api/connectors/fix-save", jsonapi.Post(a.db, a.handleConnectorFixSave, a.gate(), jsonapi.MaxBody(1<<20)))
 	sub.HandleFunc("/api/connectors/update-template", jsonapi.Post(a.db, a.handleConnectorTemplateUpdate, a.gate()))
+	sub.HandleFunc("/api/connectors/update-template/undo", jsonapi.Post(a.db, a.handleConnectorTemplateUndo, a.gate()))
 }
 
 // connectorEditAction is the row's editor, labelled label and shown when
@@ -168,6 +169,10 @@ func (a *AdminApp) handleConnectorTemplateUpdate(c *jsonapi.Call, _ struct{}) (a
 	if err := SaveConnector(RootDB, conn); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
+	// It holds what its template writes now, so it follows the template's
+	// next revision on its own (connector_template_update.go).
+	RootDB.Set(templateSpecTable, name, conn.Spec)
+	RootDB.Unset(templateUndoTable, name)
 	acceptChanges(name)
 	adminChange(c.R, activity.Settings, "updated connector %s from its template %s", name, conn.Template)
 	return map[string]any{"message": "Updated from its template. Its settings and key are kept."}, nil
