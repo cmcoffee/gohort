@@ -242,11 +242,12 @@ func Parse(raw []byte) (Spec, error) {
 var tokenRE = regexp.MustCompile(`\{([a-z_][a-z0-9_]*)\}`)
 
 // fileFieldRE is a file input written into a JSON body: {image.base64} is its
-// bytes, base64-encoded, and {image.type} its media type ("image/png"). An API
-// that takes a picture inline in its JSON (Gemini's inlineData) is the case: a
+// bytes, base64-encoded, {image.type} its media type ("image/png"), and
+// {image.dataurl} the two as one data: URL. An API that takes a picture
+// inline in its JSON (Gemini's inlineData, OpenAI's image_url) is the case: a
 // file send or a multipart part carries the file whole, and neither fits a
 // JSON request. Only a whole string may be one, and it must name a file input.
-var fileFieldRE = regexp.MustCompile(`\{([a-z_][a-z0-9_]*)\.(base64|type)\}`)
+var fileFieldRE = regexp.MustCompile(`\{([a-z_][a-z0-9_]*)\.(base64|type|dataurl)\}`)
 
 // later says which stage brings a mode that is designed but not built, so a
 // spec asking for it is refused with when, not accepted and ignored.
@@ -767,9 +768,9 @@ func (c Contract) checkFileSend(name string, op Operation) error {
 	return nil
 }
 
-// checkFileFields refuses a {name.base64} or {name.type} that is not a whole
-// string, or that names something other than one of the contract's file
-// inputs.
+// checkFileFields refuses a {name.base64}, {name.type} or {name.dataurl} that
+// is not a whole string, or that names something other than one of the
+// contract's file inputs.
 func checkFileFields(name string, v any, isFile func(string) bool) error {
 	switch t := v.(type) {
 	case string:

@@ -88,7 +88,8 @@ func TestTheGeminiTemplateReadsItsReply(t *testing.T) {
 	}
 }
 
-// OpenAI's wide picture is 1792x1024, a square one 1024x1024.
+// OpenAI's wide picture is 1536x1024, a square one 1024x1024, from a GPT
+// image model, which refuses response_format (it always answers in base64).
 func TestTheOpenAITemplateReadsItsReply(t *testing.T) {
 	world(t)
 	img := pngBytes(t)
@@ -96,7 +97,7 @@ func TestTheOpenAITemplateReadsItsReply(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == "GET" {
-			w.Write([]byte(`{"data":[{"id":"dall-e-3"}]}`))
+			w.Write([]byte(`{"data":[{"id":"gpt-image-2.5-sunburst"}]}`))
 			return
 		}
 		b, _ := io.ReadAll(r.Body)
@@ -110,11 +111,67 @@ func TestTheOpenAITemplateReadsItsReply(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if len(bodies) != 2 || !strings.Contains(bodies[0], `"size":"1792x1024"`) || !strings.Contains(bodies[1], `"size":"1024x1024"`) || !strings.Contains(bodies[0], `"model":"dall-e-3"`) {
+	if len(bodies) != 2 || !strings.Contains(bodies[0], `"size":"1536x1024"`) || !strings.Contains(bodies[1], `"size":"1024x1024"`) || !strings.Contains(bodies[0], `"model":"gpt-image-2.5-sunburst"`) {
 		t.Errorf("requests: %v", bodies)
+	}
+	if strings.Contains(bodies[0], "response_format") || strings.Contains(bodies[0], "quality") {
+		t.Errorf("a GPT image model refuses these: %s", bodies[0])
 	}
 	if h, err := CheckHealth(context.Background(), "openai-images"); err != nil || !h.OK {
 		t.Errorf("health: %+v %v", h, err)
+	}
+}
+
+// OpenAI's template edits and blends too: the pictures given go as data URLs
+// in a JSON edit, only those given, up to its Pictures per blend; doing both
+// jobs, it is offered for both until its row's Used for says otherwise.
+func TestTheOpenAITemplateEditsAndBlends(t *testing.T) {
+	world(t)
+	img := pngBytes(t)
+	var path string
+	var body struct {
+		Model  string              `json:"model"`
+		Prompt string              `json:"prompt"`
+		Images []map[string]string `json:"images"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		path = r.URL.Path
+		json.NewDecoder(r.Body).Decode(&body)
+		w.Write([]byte(`{"data":[{"b64_json":"` + b64(img) + `"}]}`))
+	}))
+	defer srv.Close()
+	install(t, "openai-images", templateSpec(t, "openai-images", srv.URL))
+	if n := editLimit("openai-images"); n != 10 {
+		t.Errorf("it blends %d pictures, want 10", n)
+	}
+	RootDB.Set(ImageTable, "agents", []string{"openai-images"})
+	offered := false
+	for _, b := range ReachableImageBackends(&ToolSession{}) {
+		if b.Name == "openai-images" {
+			offered = b.Edits && b.Generates
+		}
+	}
+	if !offered {
+		t.Errorf("not offered for both jobs: %+v", ReachableImageBackends(&ToolSession{}))
+	}
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "a.png"), img, 0o600)
+	os.WriteFile(filepath.Join(dir, "b.png"), img, 0o600)
+	res, err := EditImageWithBackend(&ToolSession{WorkspaceDir: dir}, EditImageRequest{Backend: "openai-images", Prompt: "put them side by side", Images: []string{"a.png", "b.png"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(res.URL); string(got) != string(img) {
+		t.Error("the picture is not the one in the reply")
+	}
+	os.Remove(res.URL)
+	if path != "/v1/images/edits" || body.Model != "gpt-image-2.5-sunburst" || body.Prompt != "put them side by side" {
+		t.Errorf("request: %s %+v", path, body)
+	}
+	want := "data:image/png;base64," + b64(img)
+	if len(body.Images) != 2 || body.Images[0]["image_url"] != want || body.Images[1]["image_url"] != want {
+		t.Errorf("sent %d pictures, want the two given as data URLs: %.200v", len(body.Images), body.Images)
 	}
 }
 

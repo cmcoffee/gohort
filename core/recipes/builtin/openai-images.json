@@ -1,9 +1,9 @@
 {
   "id": "openai-images",
-  "title": "OpenAI (image generation)",
-  "description": "OpenAI's image model as an image backend, declared as a service: its request, reply and price are data you can test and fix from Admin > Connectors.",
+  "title": "OpenAI (image generation and editing)",
+  "description": "OpenAI's GPT image model as an image backend, declared as a service: it makes pictures from a prompt, and edits or blends up to ten pictures you give it (Pictures per blend, on its row's Settings, holds it to fewer). Its requests, replies and price are data you can test and fix from Admin > Connectors.",
   "category": "Images",
-  "setup_notes": "Create an API key at platform.openai.com/api-keys. Choose it under Capabilities > Image Generation, where its model is set and its key can be changed. The price per image is OpenAI's for a standard square image at the time this template was written; a wide image costs more, so edit the spec's cost if most of yours are wide or the price has changed.",
+  "setup_notes": "Create an API key at platform.openai.com/api-keys. Choose it under Admin > Services > Media Generation; its model, its key and how many pictures it blends at once are on its row's Settings. The price per picture is an estimate for a square picture at the model's default quality: set the real one under Overview > Cost by source if yours differs.",
   "questions": [
     {
       "name": "name",
@@ -22,14 +22,14 @@
           "name": "{{name}}",
           "kind": "service",
           "template": "openai-images",
-          "desc": "OpenAI image generation",
+          "desc": "OpenAI image generation and editing",
           "spec": {
             "config": [
               {
                 "name": "model",
                 "label": "Model",
-                "help": "An OpenAI image model that takes a size and returns base64.",
-                "default": "dall-e-3"
+                "help": "An OpenAI GPT image model; it makes pictures and edits them.",
+                "default": "gpt-image-2.5-sunburst"
               },
               {
                 "name": "api_key",
@@ -54,9 +54,48 @@
                     "model": "{model}",
                     "prompt": "{prompt}",
                     "n": 1,
-                    "size": "{width}x{height}",
-                    "quality": "standard",
-                    "response_format": "b64_json"
+                    "size": "{width}x{height}"
+                  }
+                },
+                "edit": {
+                  "method": "POST",
+                  "path": "/v1/images/edits",
+                  "body": {
+                    "model": "{model}",
+                    "prompt": "{prompt}",
+                    "images": [
+                      {
+                        "image_url": "{image.dataurl}"
+                      },
+                      {
+                        "image_url": "{image2.dataurl}"
+                      },
+                      {
+                        "image_url": "{image3.dataurl}"
+                      },
+                      {
+                        "image_url": "{image4.dataurl}"
+                      },
+                      {
+                        "image_url": "{image5.dataurl}"
+                      },
+                      {
+                        "image_url": "{image6.dataurl}"
+                      },
+                      {
+                        "image_url": "{image7.dataurl}"
+                      },
+                      {
+                        "image_url": "{image8.dataurl}"
+                      },
+                      {
+                        "image_url": "{image9.dataurl}"
+                      },
+                      {
+                        "image_url": "{image10.dataurl}"
+                      }
+                    ],
+                    "n": 1
                   }
                 },
                 "models": {
@@ -89,12 +128,44 @@
                   "height": 1024
                 },
                 "wide": {
-                  "width": 1792,
+                  "width": 1536,
                   "height": 1024
                 },
                 "cost": {
                   "per_call": 0.04
                 }
+              },
+              {
+                "capability": "image.edit",
+                "config": [
+                  {
+                    "name": "max_images",
+                    "label": "Pictures per blend",
+                    "type": "number",
+                    "help": "At most how many pictures one edit or blend sends, up to 10.",
+                    "default": "10",
+                    "min": 1,
+                    "max": 10
+                  }
+                ],
+                "steps": [
+                  {
+                    "call": "edit"
+                  }
+                ],
+                "output": {
+                  "image": {
+                    "path": "data.0.b64_json",
+                    "as": "base64"
+                  }
+                },
+                "defaults": {
+                  "model": "{config.model}"
+                },
+                "cost": {
+                  "per_call": 0.04
+                },
+                "pictures": "{config.max_images}"
               }
             ]
           }

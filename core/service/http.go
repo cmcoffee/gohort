@@ -445,9 +445,9 @@ func renderRequest(op Operation, vars map[string]any) (string, string, error) {
 	return string(b), "application/json", nil
 }
 
-// withFileFields resolves the {name.base64} and {name.type} fields a body
-// uses, under those names in a copy of vars, so renderValue fills them as it
-// fills any token. A file input not given leaves its fields out, as any
+// withFileFields resolves the {name.base64}, {name.type} and {name.dataurl}
+// fields a body uses, under those names in a copy of vars, so renderValue
+// fills them as it fills any token. A file input not given leaves its fields out, as any
 // optional input is; one given that cannot be read is an error, not an empty
 // picture sent to a paid API.
 func withFileFields(body any, vars map[string]any, max int64) (map[string]any, error) {
@@ -475,7 +475,7 @@ func withFileFields(body any, vars map[string]any, max int64) (map[string]any, e
 		switch m[2] {
 		case "type":
 			out[key] = f.Type
-		case "base64":
+		case "base64", "dataurl":
 			if max > 0 && f.Size > max {
 				return nil, fmt.Errorf("{%s} is %d bytes, over the %d-byte limit", m[1], f.Size, max)
 			}
@@ -484,6 +484,9 @@ func withFileFields(body any, vars map[string]any, max int64) (map[string]any, e
 				return nil, fmt.Errorf("{%s}: %w", m[1], err)
 			}
 			out[key] = base64.StdEncoding.EncodeToString(data)
+			if m[2] == "dataurl" {
+				out[key] = "data:" + f.Type + ";base64," + out[key].(string)
+			}
 		}
 	}
 	return out, nil
