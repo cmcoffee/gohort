@@ -83,7 +83,9 @@ const describeBlindPrompt = "Describe this picture for someone who will compare 
 // checkSourcesInResult runs the check for an edit made from sources with the
 // given instruction. Only decisive answers are returned: a source whose
 // description or verdict did not come back is left out, not counted either way.
-func checkSourcesInResult(sess *ToolSession, sources []sourceImage, result []byte, instruction string) []sourceVerdict {
+// think is a judge that thinks it over (Thorough checking): about 15s more on
+// a worker, for a verdict on a close call.
+func checkSourcesInResult(sess *ToolSession, sources []sourceImage, result []byte, instruction string, think bool) []sourceVerdict {
 	if sess == nil || sess.LLM == nil || len(sources) == 0 || len(result) == 0 {
 		return nil
 	}
@@ -134,7 +136,7 @@ func checkSourcesInResult(sess *ToolSession, sources []sourceImage, result []byt
 		[]Message{{Role: "user", Content: b.String()}},
 		WithCaller("imagefetch/source_check"),
 		WithMaxRetries(0),
-		WithThink(true),
+		WithThink(think),
 	)
 	if err != nil || resp == nil {
 		Debug("[imagefetch/source_check] no verdict (%v)", err)
@@ -235,7 +237,10 @@ func unmark(s string) string {
 // delivered; no rewording or extra pass on this side changes what the model
 // can draw. One plain retry, then the truth, and a word when the source
 // picture is small, which is the one thing worth changing.
-func sourceCheckNote(verdicts []sourceVerdict, total int, held bool) string {
+//
+// last is a result that was the last picture its sources may give
+// (ImageCheckAttempts): it says not to try again, rather than once more.
+func sourceCheckNote(verdicts []sourceVerdict, total int, held, last bool) string {
 	if len(verdicts) == 0 {
 		return ""
 	}
@@ -265,6 +270,9 @@ func sourceCheckNote(verdicts []sourceVerdict, total int, held bool) string {
 		return " AUTOMATIC CHECK: the result was described by a separate look that had not seen the sources, and what the instruction takes from each source was found in it."
 	}
 	next := " Try once more at most, with that named as the thing to keep. If it still does not come through, tell the person plainly what was lost: the image model did not draw it from the picture."
+	if last {
+		next = " That was the last try these sources allow: do not render them again. Tell the person plainly what was lost: the image model did not draw it from the picture."
+	}
 	if small {
 		next += " Say that a larger, clearer picture of it may come through better."
 	}

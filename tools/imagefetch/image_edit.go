@@ -6,6 +6,7 @@ import (
 	_ "image/png"
 	"strconv"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	_ "golang.org/x/image/webp" // register the WebP decoder for image.Decode
@@ -137,6 +138,25 @@ func editImage(sess *ToolSession, args map[string]any, avail imageActions) (stri
 	if err != nil {
 		return "", err
 	}
+	// How much this edit is checked, and how many pictures its sources may
+	// give before it gives up (image_attempts.go).
+	level := editChecking(args)
+	limit := ImageCheckAttempts(level)
+	tries := attemptKey(sess, p.refs)
+	if made := attemptsMade(tries, time.Now()); made >= limit {
+		return "", attemptsRefusal(made, limit, level)
+	}
+	// Quick has no face pass, unless the call asks for one by name.
+	if level == ImageCheckQuick {
+		if _, asked := args["preserve_faces"]; !asked {
+			p.refineFaces = false
+		}
+	}
+	if p.refineFaces {
+		editProgress(sess, "rendering, with a pass over the faces")
+	} else {
+		editProgress(sess, "rendering")
+	}
 	result, err := EditImageWithBackend(sess, EditImageRequest{
 		Backend:     p.backend,
 		Prompt:      p.prompt,
@@ -147,6 +167,8 @@ func editImage(sess *ToolSession, args map[string]any, avail imageActions) (stri
 	if err != nil {
 		return "", fmt.Errorf("image edit via %q failed: %w", p.backend, err)
 	}
+	made := recordAttempt(tries, time.Now())
+	last := tries != "" && made >= limit
 	// A one-photo edit: the source BEFORE the result, so the two pictures the
 	// model is about to compare arrive in the order the instruction claims.
 	// A step from several photos is shown as one contact sheet instead, made
@@ -177,8 +199,15 @@ func editImage(sess *ToolSession, args map[string]any, avail imageActions) (stri
 	}
 	// And the check that does not rest on the agent's own look, for a
 	// one-photo edit as for a blend: the agent's look at a source beside its
-	// result is the look that reported a lost ship as present.
-	note += sourceCheckNote(checkSourcesInResult(sess, sources, rendered, p.prompt), len(sources), holdsResult(args))
+	// result is the look that reported a lost ship as present. Not on Quick:
+	// that is the render and the agent's look, and no more.
+	if level != ImageCheckQuick && len(sources) > 0 {
+		editProgress(sess, "checking the result against the sources")
+		note += sourceCheckNote(checkSourcesInResult(sess, sources, rendered, p.prompt, level == ImageCheckThorough), len(sources), holdsResult(args), last)
+	}
+	if last {
+		note += lastAttemptNote(made, limit)
+	}
 	return out + p.note + note, nil
 }
 

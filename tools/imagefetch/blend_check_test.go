@@ -36,7 +36,7 @@ func describeTurns(n int, judge string) []FakeTurn {
 func TestNothingThatJudgesSeesWhatItIsLookingFor(t *testing.T) {
 	llm := &FakeLLM{Turns: describeTurns(3, "Source 1 takes: the white starship whole\nSource 1 in result: none has the saucer section\nSource 1 FOUND: no\n"+
 		"Source 2 takes: the red battleship whole\nSource 2 in result: the battleship on the right\nSource 2 FOUND: yes")}
-	got := checkSourcesInResult(checkSession(t, llm), twoSources, []byte("RESULT"), "the ship from the first picture fires on the ship from the second"+editCompositingGuard())
+	got := checkSourcesInResult(checkSession(t, llm), twoSources, []byte("RESULT"), "the ship from the first picture fires on the ship from the second"+editCompositingGuard(), true)
 	if llm.Calls() != 4 {
 		t.Fatalf("%d calls, want three descriptions and one judge", llm.Calls())
 	}
@@ -71,7 +71,7 @@ func TestNothingThatJudgesSeesWhatItIsLookingFor(t *testing.T) {
 	if len(got) != 2 || got[0].found || !got[1].found || got[0].takes != "the white starship whole" {
 		t.Fatalf("verdicts = %+v", got)
 	}
-	note := sourceCheckNote(got, 2, true)
+	note := sourceCheckNote(got, 2, true, false)
 	for _, want := range []string{
 		"outranks your own look",
 		"source 1 (image#r.ship1), from which the instruction takes the white starship whole",
@@ -114,7 +114,7 @@ func TestASmallLostSourceIsNamedWithItsSize(t *testing.T) {
 	}
 	sources := []sourceImage{{ref: "image#r.ship1", data: tiny.Bytes()}, {ref: "image#r.ship2", data: big.Bytes()}}
 	llm := &FakeLLM{Turns: describeTurns(3, "Source 1 FOUND: no\nSource 2 FOUND: no")}
-	note := sourceCheckNote(checkSourcesInResult(checkSession(t, llm), sources, []byte("RESULT"), "both ships"), 2, false)
+	note := sourceCheckNote(checkSourcesInResult(checkSession(t, llm), sources, []byte("RESULT"), "both ships", true), 2, false, false)
 	if !strings.Contains(note, "source 1 (image#r.ship1); its picture is only 421x237") || !strings.Contains(note, "a larger, clearer picture of it may come through better") {
 		t.Errorf("the small source was not named with its size:\n%s", note)
 	}
@@ -129,8 +129,8 @@ func TestASmallLostSourceIsNamedWithItsSize(t *testing.T) {
 func TestAFaceSwapIsJudgedByWhatItTakes(t *testing.T) {
 	llm := &FakeLLM{Turns: describeTurns(3, "Source 1 takes: the body, pose and background, its face meant to be replaced\nSource 1 in result: the same armoured figure and hall\nSource 1 FOUND: yes\n"+
 		"Source 2 takes: the face\nSource 2 in result: the armoured figure's face has the same square jaw and grey beard\nSource 2 FOUND: yes")}
-	got := checkSourcesInResult(checkSession(t, llm), twoSources, []byte("RESULT"), "the face from the second picture on the person in the first")
-	if note := sourceCheckNote(got, 2, false); !strings.Contains(note, "what the instruction takes from each source was found") {
+	got := checkSourcesInResult(checkSession(t, llm), twoSources, []byte("RESULT"), "the face from the second picture on the person in the first", true)
+	if note := sourceCheckNote(got, 2, false, false); !strings.Contains(note, "what the instruction takes from each source was found") {
 		t.Errorf("a correct swap was not reported as found: %q", note)
 	}
 }
@@ -139,8 +139,8 @@ func TestAFaceSwapIsJudgedByWhatItTakes(t *testing.T) {
 // result is the look that reported a lost ship as present.
 func TestAOnePhotoEditIsCheckedToo(t *testing.T) {
 	llm := &FakeLLM{Turns: describeTurns(2, "Source 1 takes: the man, his face and build\nSource 1 in result: a different, younger man\nSource 1 FOUND: no")}
-	got := checkSourcesInResult(checkSession(t, llm), twoSources[:1], []byte("RESULT"), "give him a crown")
-	note := sourceCheckNote(got, 1, false)
+	got := checkSourcesInResult(checkSession(t, llm), twoSources[:1], []byte("RESULT"), "give him a crown", true)
+	note := sourceCheckNote(got, 1, false, false)
 	if !strings.Contains(note, "NOT in the result: source 1") || strings.Contains(note, "a pass of its own") {
 		t.Errorf("one-photo note = %q", note)
 	}
@@ -151,16 +151,16 @@ func TestAOnePhotoEditIsCheckedToo(t *testing.T) {
 func TestAnAbstentionSaysNothing(t *testing.T) {
 	// The result could not be described: nothing to judge against.
 	blind := &FakeLLM{Turns: []FakeTurn{{Content: "I can't see any image in your message.", Repeat: true}}}
-	if got := checkSourcesInResult(checkSession(t, blind), twoSources, []byte("R"), "x"); got != nil {
+	if got := checkSourcesInResult(checkSession(t, blind), twoSources, []byte("R"), "x", true); got != nil {
 		t.Errorf("judged with no description of the result: %+v", got)
 	}
 	// The judge gave no FOUND line for anything.
 	llm := &FakeLLM{Turns: describeTurns(3, "Source 1 takes: a ship\nSource 1 in result: hard to say")}
-	if note := sourceCheckNote(checkSourcesInResult(checkSession(t, llm), twoSources, []byte("R"), "x"), 2, false); note != "" {
+	if note := sourceCheckNote(checkSourcesInResult(checkSession(t, llm), twoSources, []byte("R"), "x", true), 2, false, false); note != "" {
 		t.Errorf("an undecided judge produced %q", note)
 	}
 	// No model, no result: no check.
-	if got := checkSourcesInResult(&ToolSession{}, twoSources, []byte("R"), "x"); got != nil {
+	if got := checkSourcesInResult(&ToolSession{}, twoSources, []byte("R"), "x", true); got != nil {
 		t.Error("checked with no model")
 	}
 }
@@ -168,10 +168,10 @@ func TestAnAbstentionSaysNothing(t *testing.T) {
 // Only some answered: the lost ones are still named, but "each was found" is
 // not claimed on a partial set.
 func TestAPartialAnswerClaimsOnlyWhatItKnows(t *testing.T) {
-	if note := sourceCheckNote([]sourceVerdict{{n: 1, ref: "a", found: true}}, 2, false); note != "" {
+	if note := sourceCheckNote([]sourceVerdict{{n: 1, ref: "a", found: true}}, 2, false, false); note != "" {
 		t.Errorf("claimed all found from one answer of two: %q", note)
 	}
-	note := sourceCheckNote([]sourceVerdict{{n: 2, ref: "b", takes: "the battleship"}}, 3, false)
+	note := sourceCheckNote([]sourceVerdict{{n: 2, ref: "b", takes: "the battleship"}}, 3, false, false)
 	if !strings.Contains(note, "source 2 (b), from which the instruction takes the battleship") {
 		t.Errorf("a lost source in a partial answer went unnamed: %q", note)
 	}

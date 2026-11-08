@@ -32,6 +32,51 @@ func (a *AdminApp) registerMediaGenerationRoutes(sub *http.ServeMux) {
 	sub.HandleFunc("/"+mediaBackendsSource+"/default", jsonapi.Post(a.db, a.handleMediaBackendDefault, a.gate()))
 	sub.HandleFunc("/"+mediaBackendsSource+"/remove", jsonapi.Post(a.db, a.handleMediaBackendRemove, a.gate()))
 	sub.HandleFunc("/"+mediaBackendsSource+"/uses", jsonapi.Post(a.db, a.handleImageBackendUses, a.gate()))
+	sub.HandleFunc("/"+imageCheckingSource, jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleImageChecking, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleImageCheckingSave, a.gate()),
+	}.Serve)
+}
+
+// imageCheckingSource is Media Generation's Checking setting.
+const imageCheckingSource = "api/image-checking"
+
+// imageCheckingForm is the Checking setting as its form reads and saves it.
+type imageCheckingForm struct {
+	Checking string `json:"checking"`
+}
+
+// imageCheckingFields is the Checking setting's one field.
+func imageCheckingFields() []ui.FormField {
+	return []ui.FormField{{Field: "checking", Label: "Checking", Type: "select",
+		Options: []ui.SelectOption{
+			{Value: ImageCheckQuick, Label: "Quick: render it, no extra checks, 1 picture"},
+			{Value: ImageCheckStandard, Label: "Standard: face pass and a quick check, up to 2 pictures"},
+			{Value: ImageCheckThorough, Label: "Thorough: face pass and a careful check, up to 3 pictures"},
+		},
+		Help: "How much an edit from source pictures is checked before its result is given, and how many pictures the same sources may give before it gives up. Agents can ask for another level on one call.",
+		Detail: "A picture made from a prompt alone is not checked at any level. An edit from source pictures (a blend, a face onto a scene) is: Standard runs a second render over the faces " +
+			"and has separate looks describe the result and each source, which a quick judge compares; Thorough has that judge think it over, about 15 seconds more. " +
+			"Quick does neither: the render, and the agent's own look at it. When a check finds a source lost, the agent may try again, up to the level's limit " +
+			"(counted per conversation, for the same source pictures), and then must deliver the best result and say what did not come through."}}
+}
+
+// handleImageChecking is the Checking setting.
+func (a *AdminApp) handleImageChecking(c *jsonapi.Call) (any, error) {
+	return imageCheckingForm{Checking: ImageChecking()}, nil
+}
+
+// handleImageCheckingSave stores the Checking setting.
+func (a *AdminApp) handleImageCheckingSave(c *jsonapi.Call, f imageCheckingForm) (any, error) {
+	level, ok := ImageCheckLevel(f.Checking)
+	if !ok {
+		return nil, jsonapi.BadRequest("checking is quick, standard or thorough")
+	}
+	if a.db != nil {
+		a.db.Set(ImageTable, "checking", level)
+	}
+	adminChange(c.R, activity.Settings, "image checking: %s", level)
+	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
 // usedForOptions are the Used for choices on a row for an image backend

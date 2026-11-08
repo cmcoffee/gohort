@@ -79,6 +79,59 @@ func ImageBackendUse(name string) string {
 	return ImageUseBoth
 }
 
+// How much an image edit made from source pictures is checked, and how many
+// pictures it may make from the same sources before it gives up. Set on
+// Media Generation (ImageTable "checking"); an agent may ask for another
+// level on one call.
+//
+//   - Quick: the render, and the agent's own look at it. No face pass, no
+//     separate check; one picture from the same sources.
+//   - Standard: the face pass, and a check by separate looks at the result
+//     and each source with a quick judge; two pictures.
+//   - Thorough: the same check with a judge that thinks it over (about 15s
+//     more); three pictures.
+//
+// The limit is what makes the advice after a failed check ("try once
+// more") true: the advice alone was followed as far as the per-turn
+// runaway cap.
+const (
+	ImageCheckQuick    = "quick"
+	ImageCheckStandard = "standard"
+	ImageCheckThorough = "thorough"
+)
+
+// ImageCheckLevel reads v as a checking level, ok false when it is none.
+func ImageCheckLevel(v string) (string, bool) {
+	switch l := strings.ToLower(strings.TrimSpace(v)); l {
+	case ImageCheckQuick, ImageCheckStandard, ImageCheckThorough:
+		return l, true
+	}
+	return "", false
+}
+
+// ImageChecking is the deployment's checking level, Standard when none is set.
+func ImageChecking() string {
+	var v string
+	if RootDB != nil {
+		RootDB.Get(ImageTable, "checking", &v)
+	}
+	if l, ok := ImageCheckLevel(v); ok {
+		return l
+	}
+	return ImageCheckStandard
+}
+
+// ImageCheckAttempts is how many pictures level allows from the same sources.
+func ImageCheckAttempts(level string) int {
+	switch level {
+	case ImageCheckQuick:
+		return 1
+	case ImageCheckThorough:
+		return 3
+	}
+	return 2
+}
+
 // ImageEditFunc edits pictures for a named backend of another kind than
 // rest_image (a service, core/service): the prompt and the source pictures'
 // verified bytes in, in order, the edited picture out. Several pictures are a

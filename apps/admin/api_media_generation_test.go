@@ -258,3 +258,39 @@ func TestAddAIGeneratorListsTemplatesByKind(t *testing.T) {
 		}
 	}
 }
+
+// Media Generation's Checking setting reads Standard until set, stores a level
+// the image tool then reads, and refuses anything else. It sits on the page
+// beside the generators it governs.
+func TestTheCheckingSettingIsKept(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved })
+	a := &AdminApp{db: RootDB}
+	sub := http.NewServeMux()
+	a.registerMediaGenerationRoutes(sub)
+	call := func(method, body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		sub.ServeHTTP(w, httptest.NewRequest(method, "/"+imageCheckingSource, strings.NewReader(body)))
+		return w
+	}
+	if w := call("GET", ""); !strings.Contains(w.Body.String(), `"checking":"standard"`) {
+		t.Errorf("unset reads %s", w.Body)
+	}
+	if w := call("POST", `{"checking":"thorough"}`); w.Code >= 300 || ImageChecking() != ImageCheckThorough {
+		t.Errorf("saving thorough: %d, the tool reads %q", w.Code, ImageChecking())
+	}
+	if w := call("POST", `{"checking":"careful"}`); w.Code != http.StatusBadRequest || ImageChecking() != ImageCheckThorough {
+		t.Errorf("a level that is none: %d, now %q", w.Code, ImageChecking())
+	}
+	for _, sec := range a.capabilitiesSections() {
+		if sec.Title != "Media Generation" {
+			continue
+		}
+		if page, _ := json.Marshal(sec.Body); !strings.Contains(string(page), imageCheckingSource) {
+			t.Error("the Checking setting is not on the Media Generation page")
+		}
+		return
+	}
+	t.Error("no Media Generation section")
+}

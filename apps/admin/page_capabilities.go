@@ -68,6 +68,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 							{Label: "Add AI generator…", Method: "client", URL: "connector_add_another", Data: "media", Variant: "primary"},
 						},
 					},
+					ui.FormPanel{Source: imageCheckingSource, Fields: imageCheckingFields()},
 				},
 			},
 		},

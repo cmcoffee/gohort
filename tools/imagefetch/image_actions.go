@@ -405,8 +405,12 @@ func imageSchemaFor(a imageActions) imageSchema {
 			params["mask"] = ToolParam{Type: "string", Description: "Optional black-and-white mask image (same reference forms as images) marking WHICH PART to change. White = repaint, black = keep. Use for \"change just the sky\"."}
 		}
 		if a.canRefineFaces() {
-			params["preserve_faces"] = ToolParam{Type: "boolean", Description: "Defaults to TRUE and you rarely need to send it. When a source picture shows a person, the edit runs a second pass over the face so the result still looks like them: an edit that redraws the whole scene renders the face too small to keep a likeness. Set FALSE only when the instruction is deliberately ABOUT the face and must be free to change it: ageing someone, changing their expression, making them somebody else, or turning them into a statue, a cartoon, an animal. Setting it false on an ordinary edit costs you the likeness; leaving it true on a face-changing one fights the change you asked for."}
+			params["preserve_faces"] = ToolParam{Type: "boolean", Description: "Defaults to TRUE and you rarely need to send it. When a source picture shows a person, the edit runs a second pass over the face so the result still looks like them: an edit that redraws the whole scene renders the face too small to keep a likeness. Set FALSE only when the instruction is deliberately ABOUT the face and must be free to change it: ageing someone, changing their expression, making them somebody else, or turning them into a statue, a cartoon, an animal. Setting it false on an ordinary edit costs you the likeness; leaving it true on a face-changing one fights the change you asked for. With checking quick it is off unless you send it."}
 		}
+		params["checking"] = ToolParam{Type: "string", Enum: []string{ImageCheckQuick, ImageCheckStandard, ImageCheckThorough},
+			Description: "Leave it out unless the person asks for faster or more careful pictures; it defaults to the deployment's setting (" + ImageChecking() + "). " +
+				"How much an edit from source pictures is checked, and how many pictures the same sources may give: quick (no face pass, no separate check, 1 picture), " +
+				"standard (face pass and a quick check, 2), thorough (face pass and a careful check, about 15 seconds more, 3)."}
 	}
 	if len(a.backendNames()) > 1 {
 		params["backend"] = ToolParam{Type: "string", Enum: a.backendNames(), Description: a.backendParamDesc()}
