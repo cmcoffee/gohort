@@ -80,6 +80,9 @@ func (t *mediaTool) kind() string {
 	return b.MediaKind()
 }
 
+// Category files the tool with the others that make media.
+func (t *mediaTool) Category() string { return MediaGenerationToolCategory }
+
 func (t *mediaTool) Name() string {
 	k := slug(t.kind())
 	if k == "" {

@@ -282,6 +282,9 @@ var unsafeToolChars = regexp.MustCompile(`[^a-z0-9_]+`)
 // musicTool is generate_music_<connector>.
 type musicTool struct{ connector string }
 
+// Category files the tool with the others that make media.
+func (t *musicTool) Category() string { return MediaGenerationToolCategory }
+
 func (t *musicTool) Name() string {
 	return "generate_music_" + strings.Trim(unsafeToolChars.ReplaceAllString(strings.ToLower(t.connector), "_"), "_")
 }

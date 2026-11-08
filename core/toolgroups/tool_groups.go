@@ -199,8 +199,20 @@ func MemberSet(db Store) map[string]bool {
 // Adding a new builtin: append here with a stable ID prefixed
 // "builtin-". Describe the bundle's capability without enumerating
 // members (the framework lists those alongside the description).
+// MediaGenerationCategory is the category the tools that make media claim:
+// the image tool, and each music and media connector's tool, which appear
+// when a connector is set up (a name nobody can list here ahead of time).
+const MediaGenerationCategory = "AI Media Generation"
+
 func builtinToolGroups() []ToolGroup {
 	return []ToolGroup{
+		// AI Media Generation: no Members, because its tools claim it on
+		// themselves (Category), as an MCP server's do.
+		{
+			ID:          "builtin-ai-media",
+			Name:        MediaGenerationCategory,
+			Description: "Tools that make new media with AI: pictures (made from a prompt, or edited and blended from pictures given), music, video and other kinds, each from a generator set up under Admin > Services > Media Generation. Use when the user asks for a picture, song, video or other media to be made or changed.",
+		},
 		// Retired builtins (kept in comments as documentation for why
 		// they're gone — the rewriter looks tools up in the global
 		// ChatTool registry, and the listed members aren't there):

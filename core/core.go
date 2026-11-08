@@ -728,6 +728,10 @@ var (
 
 type ToolGroup = toolgroups.ToolGroup
 
+// MediaGenerationToolCategory is the category the tools that make media
+// claim (toolgroups.MediaGenerationCategory).
+const MediaGenerationToolCategory = toolgroups.MediaGenerationCategory
+
 var (
 	LoadToolGroups        = toolgroups.LoadToolGroups
 	LoadToolGroup         = toolgroups.LoadToolGroup

@@ -17,7 +17,8 @@ import (
 
 type GenerateImageTool struct{}
 
-func (t *GenerateImageTool) Name() string { return "generate_image" }
+func (t *GenerateImageTool) Name() string     { return "generate_image" }
+func (t *GenerateImageTool) Category() string { return MediaGenerationToolCategory }
 
 func (t *GenerateImageTool) Caps() []Capability { return []Capability{CapNetwork, CapRead} }
 

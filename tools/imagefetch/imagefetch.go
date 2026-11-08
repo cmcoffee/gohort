@@ -95,6 +95,7 @@ func (t *ImageTool) AlwaysDetach(args map[string]any, sess *ToolSession) bool {
 }
 
 func (t *ImageTool) Name() string         { return "image" }
+func (t *ImageTool) Category() string     { return MediaGenerationToolCategory }
 func (t *ImageTool) Caps() []Capability   { return []Capability{CapNetwork, CapRead} }
 func (t *ImageTool) IsInternetTool() bool { return true }
 

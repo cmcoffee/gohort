@@ -358,3 +358,38 @@ func TestAMediaKindIsAShortNameOnMediaGenerateOnly(t *testing.T) {
 		}
 	}
 }
+
+// Each music and media connector's tool claims AI Media Generation, a
+// category of its own with a description for the model, since its name is
+// only known once a connector is set up.
+func TestTheMediaToolsAreFiledTogether(t *testing.T) {
+	world(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(mp3ish) }))
+	defer srv.Close()
+	prov := map[string]any{"transport": "http", "base_url": srv.URL, "auth": map[string]any{"none": true},
+		"operations": map[string]any{"make": map[string]any{"method": "POST", "path": "/m", "body": map[string]any{"prompt": "{prompt}"}, "read": "file"}}}
+	install(t, "tunes", map[string]any{"provider": prov, "provides": []any{map[string]any{"capability": "music.generate",
+		"steps": []any{map[string]any{"call": "make"}}, "output": map[string]any{"audio": map[string]any{"from": "body"}}}}})
+	install(t, "clips", map[string]any{"provider": prov, "provides": []any{map[string]any{"capability": "media.generate", "kind": "video",
+		"steps": []any{map[string]any{"call": "make"}}, "output": map[string]any{"file": map[string]any{"from": "body"}}}}})
+	found := map[string]string{}
+	for _, ct := range RegisteredChatTools() {
+		if ct.Name() == "generate_music_tunes" || ct.Name() == "generate_video_clips" {
+			found[ct.Name()] = ToolCategory(ct)
+		}
+	}
+	for _, name := range []string{"generate_music_tunes", "generate_video_clips"} {
+		if found[name] != MediaGenerationToolCategory {
+			t.Errorf("%s is filed under %q", name, found[name])
+		}
+	}
+	var described bool
+	for _, g := range LoadToolGroups(AuthDB()) {
+		if g.Name == MediaGenerationToolCategory && strings.TrimSpace(g.Description) != "" {
+			described = true
+		}
+	}
+	if !described {
+		t.Error("AI Media Generation is not a category with a description")
+	}
+}

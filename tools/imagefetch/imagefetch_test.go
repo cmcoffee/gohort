@@ -1086,3 +1086,16 @@ func TestAnInferredRenderIsStillTreatedAsARender(t *testing.T) {
 		t.Errorf("named action = %q, want it to win", got)
 	}
 }
+
+// The image tool, and generate_image beside it, are filed under AI Media
+// Generation with the music and video tools, in every tool picker.
+func TestTheImageToolsAreFiledWithMediaGeneration(t *testing.T) {
+	for _, ct := range []ChatTool{new(ImageTool), new(GenerateImageTool)} {
+		if got := ToolCategory(ct); got != "AI Media Generation" {
+			t.Errorf("%s is filed under %q", ct.Name(), got)
+		}
+	}
+	if got := ToolCategory(new(FindImageTool)); got == "AI Media Generation" {
+		t.Error("find_image, which makes nothing, is filed with media generation")
+	}
+}
