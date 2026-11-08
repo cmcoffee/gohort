@@ -1,9 +1,9 @@
 {
   "id": "gemini-video",
   "title": "Gemini Omni Flash (video)",
-  "description": "Google's Gemini Omni Flash as a video generator, declared as a service: it makes a 3 to 15 second video with sound from a prompt, and agents get a tool of their own for it once it is offered. Its requests, its wait for the video and its price are data you can test and fix from Admin > Connectors.",
+  "description": "Google's Gemini Omni Flash as a video generator, declared as a service: it makes a 3 to 15 second video with sound from a prompt, and agents get a tool of their own for it once it is offered. Its requests and its price are data you can test and fix from Admin > Connectors.",
   "category": "Video",
-  "setup_notes": "Gemini Omni Flash is on the Gemini API's paid tier. Get an API key at aistudio.google.com/apikey; the one your Gemini images connector uses works. It installs out of use: set it to Enabled under Admin > Services > Media Generation to give agents a generate_video tool for it. Its row's Settings set the length, shape and resolution. A video takes a while: the connector starts it, waits for Google to finish it, then downloads it. The price per video is Google's for 10 seconds at 720p (about $0.07 a second) when this template was written: set yours under Overview > Cost by source if you change the length or resolution.",
+  "setup_notes": "Gemini Omni Flash is on the Gemini API's paid tier. Get an API key at aistudio.google.com/apikey; the one your Gemini images connector uses works. It installs out of use: set it to Enabled under Admin > Services > Media Generation to give agents a generate_video tool for it. Its row's Settings set the length, shape and resolution. A video takes a while: the connector asks for it, Google answers when it is made with a link to it, and the connector downloads it. The price per video is Google's for 10 seconds at 720p (about $0.07 a second) when this template was written: set yours under Overview > Cost by source if you change the length or resolution.",
   "questions": [
     {
       "name": "name",
@@ -112,13 +112,9 @@
                   },
                   "timeout_secs": 600
                 },
-                "file": {
-                  "method": "GET",
-                  "url": "{file}"
-                },
                 "download": {
                   "method": "GET",
-                  "url": "{download}",
+                  "url": "{file}",
                   "read": "file",
                   "timeout_secs": 300
                 },
@@ -142,17 +138,6 @@
                     "call": "create",
                     "save": {
                       "file": "steps[type=model_output].content[type=video].uri|output_video.uri"
-                    }
-                  },
-                  {
-                    "wait": "file",
-                    "until": "state == ACTIVE",
-                    "fail": "state == FAILED",
-                    "reason": "error.message",
-                    "every_secs": 5,
-                    "max_secs": 900,
-                    "save": {
-                      "download": "downloadUri"
                     }
                   },
                   {

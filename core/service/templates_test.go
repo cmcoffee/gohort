@@ -209,16 +209,16 @@ func TestTheElevenLabsMusicTemplateComposes(t *testing.T) {
 	}
 }
 
-// Gemini Omni Flash makes a video in three steps: start it, asking for the
-// video by link (inline replies stop at 4MB), wait on that file until Google
-// says it is ACTIVE, then download it from the address the file gives. The
-// link is read where the REST docs put it (steps) or where their example
-// reads it (output_video), and a FAILED file is refused with Google's reason.
-func TestTheGeminiVideoTemplateWaitsForItsVideo(t *testing.T) {
+// Gemini Omni Flash answers the request when the video is made, with a link
+// to it (asked for by link: inline replies stop at 4MB), and the connector
+// downloads it. The link is read where the REST docs put it (steps) or where
+// their example reads it (output_video), whole or under the API's address;
+// a download that fails is refused rather than kept as a video.
+func TestTheGeminiVideoTemplateDownloadsItsVideo(t *testing.T) {
 	world(t)
 	clip := []byte("\x00\x00\x00\x18ftypmp42 a short clip")
 	var created string
-	reply, state := "", "ACTIVE"
+	reply, ready := "", true
 	var srv *httptest.Server
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -226,13 +226,11 @@ func TestTheGeminiVideoTemplateWaitsForItsVideo(t *testing.T) {
 			b, _ := io.ReadAll(r.Body)
 			created = string(b)
 			w.Write([]byte(reply))
-		case r.URL.Path == "/v1beta/files/abc123":
-			w.Write([]byte(`{"name":"files/abc123","state":"` + state + `","error":{"message":"the prompt was refused"},"downloadUri":"` + srv.URL + `/v1beta/files/abc123:download?alt=media"}`))
-		case r.URL.Path == "/v1beta/files/abc123:download":
+		case r.URL.Path == "/v1beta/files/abc123:download" && r.URL.Query().Get("alt") == "media" && ready:
 			w.Header().Set("Content-Type", "video/mp4")
 			w.Write(clip)
 		default:
-			http.NotFound(w, r)
+			http.Error(w, `{"error":{"message":"no such file"}}`, http.StatusNotFound)
 		}
 	}))
 	defer srv.Close()
@@ -243,8 +241,8 @@ func TestTheGeminiVideoTemplateWaitsForItsVideo(t *testing.T) {
 		return Call(context.Background(), &ToolSession{WorkspaceDir: t.TempDir()}, "gemini-video", "media.generate", map[string]any{"prompt": "a marble rolling down a track"})
 	}
 	for _, at := range []string{
-		`{"steps":[{"type":"user_input","content":[{"type":"text","text":"x"}]},{"type":"model_output","content":[{"type":"video","mime_type":"video/mp4","uri":"files/abc123"}]}],"status":"completed"}`,
-		`{"output_video":{"uri":"files/abc123"},"status":"completed"}`,
+		`{"steps":[{"type":"user_input","content":[{"type":"text","text":"x"}]},{"type":"model_output","content":[{"type":"video","mime_type":"video/mp4","uri":"` + srv.URL + `/v1beta/files/abc123:download?alt=media"}]}],"status":"completed"}`,
+		`{"output_video":{"uri":"files/abc123:download?alt=media"},"status":"completed"}`,
 	} {
 		reply = at
 		res, err := run()
@@ -260,9 +258,9 @@ func TestTheGeminiVideoTemplateWaitsForItsVideo(t *testing.T) {
 			t.Errorf("the request has no %s: %s", want, created)
 		}
 	}
-	state = "FAILED"
-	if _, err := run(); err == nil || !strings.Contains(err.Error(), "the prompt was refused") {
-		t.Errorf("a failed video: %v", err)
+	ready = false
+	if _, err := run(); err == nil {
+		t.Error("a download that failed came back as a video")
 	}
 }
 
