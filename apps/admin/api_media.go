@@ -336,9 +336,10 @@ type imageBackendRow struct {
 	IsImage  bool   `json:"is_image,omitempty"`
 	BothWays bool   `json:"both_ways,omitempty"`
 	Uses     string `json:"uses,omitempty"`
-	// UsedFor is a one-job image backend's job, as its row says it
-	// ("Used for: Generating"), where a both-ways one has the dropdown.
-	UsedFor string `json:"used_for,omitempty"`
+	// OneJob marks an image backend that does one job, and Job is that job
+	// (oneJobOptions), shown greyed where a both-ways one has its choice.
+	OneJob bool   `json:"one_job,omitempty"`
+	Job    string `json:"job,omitempty"`
 	// Stale says why a choice Media Generation holds no longer reads (it
 	// names a connection not here, or one named the old way); IsStale gives
 	// its row Remove.

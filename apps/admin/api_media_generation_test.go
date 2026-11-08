@@ -55,6 +55,11 @@ func TestMediaGenerationListsEveryKindInBands(t *testing.T) {
 	}
 	save("painter", `{`+base+`,"provides":[`+bind("image.generate", "image", "")+`]}`)
 	save("both", `{`+base+`,"provides":[`+bind("image.generate", "image", "")+`,{"capability":"image.edit","steps":[{"call":"edit"}],"output":{"image":{"from":"body"}}}]}`)
+	// An editor only: an A1111 in img2img, whose outline reads as a
+	// workflow's and says generate; its capability says what it does.
+	if _, err := recipes.Install(RootDB, "a1111", "admin", map[string]string{"base_url": "http://127.0.0.1:7860", "does": "edit", "name": "touchup"}); err != nil {
+		t.Fatal(err)
+	}
 	save("tunes", `{`+base+`,"provides":[`+bind("music.generate", "audio", "")+`]}`)
 	save("clips", `{`+base+`,"provides":[`+bind("media.generate", "file", `,"kind":"video"`)+`]}`)
 	save("shapes", `{`+base+`,"provides":[`+bind("media.generate", "file", `,"kind":"3D model"`)+`]}`)
@@ -73,18 +78,21 @@ func TestMediaGenerationListsEveryKindInBands(t *testing.T) {
 			out[r.Name] = r
 		}
 		// The server orders the bands: a band is drawn where its rows arrive.
-		if got := strings.Join(order, ","); got != "Images,Music,3D model,Video" || len(out) != 5 {
+		if got := strings.Join(order, ","); got != "Images,Music,3D model,Video" || len(out) != 6 {
 			t.Errorf("bands = %s", got)
 		}
 		return out
 	}
 	got := rows()
-	if r := got["both"]; !r.IsImage || !r.BothWays || r.Uses != "both" || r.UsedFor != "" {
+	if r := got["both"]; !r.IsImage || !r.BothWays || r.Uses != "both" || r.OneJob {
 		t.Errorf("a backend that makes and edits: %+v", r)
 	}
 	// One that only makes pictures says so, with no choice to make.
-	if r := got["painter"]; r.BothWays || r.Uses != "" || r.UsedFor != "Used for: Generating" {
+	if r := got["painter"]; r.BothWays || r.Uses != "" || !r.OneJob || r.Job != ImageUseGenerate {
 		t.Errorf("a backend that only makes pictures: %+v", r)
+	}
+	if r := got["touchup"]; r.BothWays || !r.OneJob || r.Job != ImageUseEdit {
+		t.Errorf("a backend that only edits: %+v", r)
 	}
 	if r := got["clips"]; r.IsImage || !r.OfferOnly || r.Role != "unused" || r.Does != "video" {
 		t.Errorf("a video connector: %+v", r)

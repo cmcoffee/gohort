@@ -148,13 +148,10 @@ func mediaBackendsTable() ui.Table {
 		RowKey:  "name",
 		GroupBy: "group",
 		Columns: []ui.Col{
-			{Field: "title", Label: "Connector", Flex: 2},
+			{Field: "title", Label: "Connector"},
 			{Field: "is_default", Type: "badge", Badges: []ui.BadgeMapping{{Value: true, Label: "Default", Color: "success"}}},
 			{Field: "does", Label: "Does", Mute: true},
 			{Field: "stale", Label: "", Flex: 4, Line: 2},
-			{Field: "used_for", Label: "", Mute: true, Line: 2},
-			{Field: "size", Label: "Size", Mute: true},
-			{Field: "steps", Label: "Steps", Mute: true},
 			{Field: "summary", Label: "", Mute: true, Flex: 4, Line: 2},
 			{Field: "last_error", Label: "", Mute: true, Flex: 4, Line: 2},
 		},
@@ -165,6 +162,7 @@ func mediaBackendsTable() ui.Table {
 			{Type: "segmented", Field: "role", Options: imageUseOptions, PostTo: mediaBackendsSource + "/role", OnlyIf: "is_image", Line: 2},
 			{Type: "segmented", Field: "role", Options: offerUseOptions, PostTo: mediaBackendsSource + "/role", OnlyIf: "offer_only", Line: 2},
 			{Type: "select", Label: "Used for", Field: "uses", Options: usedForOptions, PostTo: mediaBackendsSource + "/uses", OnlyIf: "both_ways", Line: 2},
+			{Type: "select", Label: "Used for", Field: "job", Options: oneJobOptions, OnlyIf: "one_job", DisableIf: "one_job", Line: 2},
 		}, connectorEditRowActions()...), connectorSettingsAction(), connectorTestAction()),
 		EmptyText: "Nothing makes media yet. Add AI generator… below adds Gemini, OpenAI, a local ComfyUI or A1111, and more.",
 	}

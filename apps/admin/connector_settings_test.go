@@ -474,12 +474,12 @@ func TestAComfyUIConnectionIsConfiguredFromImageGeneration(t *testing.T) {
 	if !rows[0].IsDefault || rows[1].IsDefault {
 		t.Errorf("only the default wears its badge: %v %v", rows[0].IsDefault, rows[1].IsDefault)
 	}
-	// On the page, a one-job backend says its job as Used for, in place of
-	// Does; it has no dropdown, which only a both-ways backend has.
+	// On the page, a one-job backend says its job as Used for, greyed, in
+	// place of Does; only a both-ways backend has the choice.
 	page, _ := (&AdminApp{db: RootDB}).handleMediaBackends(&jsonapi.Call{})
 	for _, r := range page.([]imageBackendRow) {
-		if r.UsedFor != "Used for: Generating" || r.Does != "" || r.BothWays {
-			t.Errorf("%s on the page: used_for %q does %q both %v, want Used for: Generating", r.Name, r.UsedFor, r.Does, r.BothWays)
+		if !r.OneJob || r.Job != ImageUseGenerate || r.Does != "" || r.BothWays {
+			t.Errorf("%s on the page: one job %v %q, does %q, both %v, want generating", r.Name, r.OneJob, r.Job, r.Does, r.BothWays)
 		}
 	}
 	row := rows[1]
@@ -506,7 +506,7 @@ func TestTheBackendListSharesTheConnectorActions(t *testing.T) {
 	for _, act := range tbl.RowActions {
 		labels = append(labels, act.Label)
 	}
-	if got := strings.Join(labels, ","); got != "Remove,,,Used for,Update from template,Edit setup,✨ Edit,✨ Fix,Settings,Test" {
+	if got := strings.Join(labels, ","); got != "Remove,,,Used for,Used for,Update from template,Edit setup,✨ Edit,✨ Fix,Settings,Test" {
 		t.Errorf("row actions = %s", got)
 	}
 	// A row's role is a switch leading its second line, under its name:
@@ -523,8 +523,11 @@ func TestTheBackendListSharesTheConnectorActions(t *testing.T) {
 			t.Errorf("role control %d: %s %v line=%d, want %s on the second line", i, act.Type, opts, act.Line, want)
 		}
 	}
-	if act := tbl.RowActions[3]; act.Label != "Used for" || act.Line != 2 {
+	if act := tbl.RowActions[3]; act.Label != "Used for" || act.Line != 2 || act.OnlyIf != "both_ways" {
 		t.Errorf("Used for: %+v, want it on the second line", act)
+	}
+	if act := tbl.RowActions[4]; act.Label != "Used for" || act.Line != 2 || act.OnlyIf != "one_job" || act.DisableIf != "one_job" {
+		t.Errorf("a one-job backend's Used for: %+v, want it greyed on the second line", act)
 	}
 	badged := false
 	for _, c := range tbl.Columns {

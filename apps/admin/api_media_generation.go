@@ -42,23 +42,36 @@ var usedForOptions = []ui.SelectOption{
 	{Value: ImageUseGenerate, Label: "Generating"},
 }
 
-// imageJobText is what a backend that does one job (its outline's Does) is
-// used for, in Used for's words: a ComfyUI workflow or an A1111 mode does
-// one job, set up with it, so its row says it rather than offering a choice.
-func imageJobText(does string) string {
-	switch does {
-	case ComfyTypeGenerate:
-		return "Generating"
-	case ComfyTypeEdit:
-		return "Editing and blending"
-	case ComfyTypeBlend:
-		return "Blending"
-	case ComfyTypeCustom:
-		return "Its own workflow"
-	case "generate and edit":
-		return "Generating, editing and blending"
+// oneJobOptions are the jobs a backend that does one can show in its row's
+// Used for, greyed: a ComfyUI workflow or an A1111 mode does one job, set up
+// with it (Advanced, Edit setup), so its row says it rather than offering a
+// choice. The first three are Used for's own words.
+var oneJobOptions = []ui.SelectOption{
+	{Value: "both", Label: "Generating, editing and blending"},
+	{Value: ImageUseEdit, Label: "Editing and blending"},
+	{Value: ImageUseGenerate, Label: "Generating"},
+	{Value: ComfyTypeBlend, Label: "Blending"},
+	{Value: ComfyTypeCustom, Label: "Its own workflow"},
+}
+
+// oneJob is the job of an image backend that does one, as oneJobOptions
+// names it. A connector's capability says whether it makes or edits (an
+// A1111 mode reads as a workflow, whose outline always says generate); its
+// outline (does) adds a ComfyUI workflow's blend or custom.
+func oneJob(does string, gen, edit bool) string {
+	switch {
+	case does == ComfyTypeBlend || does == ComfyTypeCustom:
+		return does
+	case edit:
+		return ImageUseEdit
+	case gen:
+		return ImageUseGenerate
+	case does == ComfyTypeEdit:
+		return ImageUseEdit
+	case does == "generate and edit":
+		return "both"
 	}
-	return does
+	return ImageUseGenerate
 }
 
 // usedForValue is the Used for choice use (ImageBackendUse) reads as.
@@ -75,14 +88,16 @@ func (a *AdminApp) handleMediaBackends(c *jsonapi.Call) (any, error) {
 	rows := []imageBackendRow{}
 	for _, r := range a.imageRows() {
 		r.Group, r.IsImage = "Images", true
-		if conn, ok := GetConnector(RootDB, r.Name); ok && conn.Kind == service.Kind &&
-			service.Provides(conn, "image.generate") && service.Provides(conn, "image.edit") {
+		conn, ok := GetConnector(RootDB, r.Name)
+		gen := ok && conn.Kind == service.Kind && service.Provides(conn, "image.generate")
+		edit := ok && conn.Kind == service.Kind && service.Provides(conn, "image.edit")
+		if gen && edit {
 			r.BothWays, r.Uses = true, usedForValue(ImageBackendUse(r.Name))
-		} else if job := imageJobText(r.Does); job != "" {
-			r.UsedFor = "Used for: " + job
+		} else {
+			r.OneJob, r.Job = true, oneJob(r.Does, gen, edit)
 		}
-		// An image row says its job as Used for, the dropdown or the line
-		// above; Does is for the other kinds, where it is what they make.
+		// An image row says its job as Used for, a choice or the one it does;
+		// Does is for the other kinds, where it is what they make.
 		r.Does = ""
 		rows = append(rows, r)
 	}
