@@ -200,7 +200,7 @@ func TestBuilderSetsUpAnA1111Connection(t *testing.T) {
 	if _, err := connectorCreate(map[string]any{"name": "sd2", "kind": service.Kind, "display_name": "SD 2",
 		"service_spec": map[string]any{"provider": map[string]any{"transport": "http", "base_url": "http://sd.example:7860", "auth": map[string]any{"none": true},
 			"operations": map[string]any{"render": map[string]any{"builtin": "a1111", "options": map[string]any{"mode": "sketch"}}}},
-			"provides": spec["provides"]}}, sess); err == nil || !strings.Contains(err.Error(), "txt2img or img2img") {
+			"provides": spec["provides"]}}, sess); err == nil || !strings.Contains(err.Error(), "txt2img (generate) or img2img (edit)") {
 		t.Errorf("an unknown mode: %v", err)
 	}
 }
