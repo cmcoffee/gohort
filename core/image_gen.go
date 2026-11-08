@@ -86,17 +86,30 @@ func ImageBackendUse(name string) string {
 type ImageEditFunc func(sess *ToolSession, prompt string, images [][]byte) (*ImageGenResult, error)
 
 // imageEditBackend is a registered edit backend and how many source pictures
-// one call takes.
+// one call takes, read on each use: a setting can change it without the
+// backend registering again.
 type imageEditBackend struct {
-	fn  ImageEditFunc
-	max int
+	fn    ImageEditFunc
+	limit func() int
+}
+
+// max is how many source pictures one call takes now: at least one.
+func (b imageEditBackend) max() int {
+	if b.limit == nil {
+		return 1
+	}
+	if n := b.limit(); n > 1 {
+		return n
+	}
+	return 1
 }
 
 var imageEditBackends = map[string]imageEditBackend{}
 
 // RegisterImageEditBackend installs (or replaces) a named edit backend taking
-// up to max source pictures a call (at least one), or with fn nil drops it.
-func RegisterImageEditBackend(name string, max int, fn ImageEditFunc) {
+// up to limit() source pictures a call (at least one), or with fn nil drops
+// it. limit is read on each use.
+func RegisterImageEditBackend(name string, limit func() int, fn ImageEditFunc) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return
@@ -107,10 +120,7 @@ func RegisterImageEditBackend(name string, max int, fn ImageEditFunc) {
 		delete(imageEditBackends, name)
 		return
 	}
-	if max < 1 {
-		max = 1
-	}
-	imageEditBackends[name] = imageEditBackend{fn: fn, max: max}
+	imageEditBackends[name] = imageEditBackend{fn: fn, limit: limit}
 }
 
 func lookupImageEditBackend(name string) (imageEditBackend, bool) {

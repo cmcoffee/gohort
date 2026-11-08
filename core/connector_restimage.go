@@ -1354,7 +1354,7 @@ func reachableImageBackends(sess *ToolSession) []ImageBackendChoice {
 			choice := ImageBackendChoice{Name: c.Name, Default: c.Name == defaultProvider, Edits: edits,
 				Generates: edits && generates}
 			if edits {
-				choice.MaxImages, choice.CascadeMax = editor.max, editor.max
+				choice.MaxImages, choice.CascadeMax = editor.max(), editor.max()
 			}
 			out = append(out, choice)
 			continue
@@ -1492,16 +1492,16 @@ func EditImageWithBackend(sess *ToolSession, req EditImageRequest) (*ImageGenRes
 		if len(req.Images) == 0 {
 			return nil, fmt.Errorf("editing needs at least one source image")
 		}
-		if len(req.Images) > eb.max {
-			if eb.max == 1 {
+		if len(req.Images) > eb.max() {
+			if eb.max() == 1 {
 				return nil, fmt.Errorf("image backend %q edits one picture at a time and %d were given. Do NOT retry with fewer and present it as what was asked for: tell the user it takes one", req.Backend, len(req.Images))
 			}
-			return nil, fmt.Errorf("image backend %q combines at most %d pictures and %d were given. Do NOT retry with fewer and present it as what was asked for: tell the user it takes %d at a time", req.Backend, eb.max, len(req.Images), eb.max)
+			return nil, fmt.Errorf("image backend %q combines at most %d pictures and %d were given. Do NOT retry with fewer and present it as what was asked for: tell the user it takes %d at a time", req.Backend, eb.max(), len(req.Images), eb.max())
 		}
 		if strings.TrimSpace(req.Mask) != "" {
 			return nil, fmt.Errorf("image backend %q has no mask input: omit mask", req.Backend)
 		}
-		images, err := resolveInputImages(sess, req.Images, eb.max)
+		images, err := resolveInputImages(sess, req.Images, eb.max())
 		if err != nil {
 			return nil, err
 		}

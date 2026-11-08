@@ -258,6 +258,11 @@ func (s Spec) validateConfig() error {
 		if err := check(b.Capability, b, scope); err != nil {
 			return err
 		}
+		if ref, ok := b.Pictures.(string); ok {
+			if m := configRE.FindStringSubmatch(ref); m != nil && scope[m[1]].kind() != "number" {
+				return fmt.Errorf("%s: pictures names {config.%s}, which is not a number setting", b.Capability, m[1])
+			}
+		}
 	}
 	if name := strings.TrimSpace(s.Provider.Auth.Secret); name != "" {
 		f, ok := provider[name]

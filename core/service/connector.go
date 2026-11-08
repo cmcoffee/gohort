@@ -96,12 +96,12 @@ func (handler) Materialize(c Connector) error {
 	} else {
 		unregisterOwned(name)
 	}
-	if b, _, err := s.binding("image.edit"); err == nil && !backend {
-		RegisterImageEditBackend(name, s.editPictures(b), func(sess *ToolSession, prompt string, images [][]byte) (*ImageGenResult, error) {
+	if _, _, err := s.binding("image.edit"); err == nil && !backend {
+		RegisterImageEditBackend(name, func() int { return editLimit(name) }, func(sess *ToolSession, prompt string, images [][]byte) (*ImageGenResult, error) {
 			return editImage(sess, name, prompt, images)
 		})
 	} else {
-		RegisterImageEditBackend(name, 0, nil)
+		RegisterImageEditBackend(name, nil, nil)
 	}
 	if _, _, err := s.binding("music.generate"); err == nil {
 		registerMusicTool(name)
@@ -128,7 +128,7 @@ func (handler) Teardown(c Connector) error {
 	if mine {
 		UnregisterImageBackend(name)
 	}
-	RegisterImageEditBackend(name, 0, nil)
+	RegisterImageEditBackend(name, nil, nil)
 	if s, err := Parse(c.Spec); err == nil {
 		if _, backend := imageOperation(s); backend {
 			c.StopImageBackend()
@@ -344,10 +344,10 @@ func generateImage(ctx context.Context, name, prompt string, landscape bool) (*I
 
 // editPictureInputs are image.edit's source-picture inputs, in order: the
 // first is required, the rest make it a blend or a composite.
-var editPictureInputs = []string{"image", "image2", "image3"}
+var editPictureInputs = []string{"image", "image2", "image3", "image4", "image5", "image6", "image7", "image8", "image9", "image10"}
 
 // editPictures is how many source pictures b's operations take: image, then
-// as many of image2 and image3, in order, as they use.
+// as many of image2 to image10, in order, as they use.
 func (s Spec) editPictures(b Binding) int {
 	used := map[string]bool{}
 	for _, st := range b.Steps {
@@ -361,6 +361,33 @@ func (s Spec) editPictures(b Binding) int {
 			break
 		}
 		n++
+	}
+	return n
+}
+
+// editLimit is how many source pictures connector name's image.edit takes
+// now, read from its spec and settings on each use: the picture inputs its
+// operations use, held to its pictures (a number, or the setting it names)
+// when that is fewer. A connector that does not read takes one.
+func editLimit(name string) int {
+	c, ok := GetConnector(RootDB, name)
+	if !ok {
+		return 1
+	}
+	s, err := specOf(c)
+	if err != nil {
+		return 1
+	}
+	if settled, err := s.settle(ConnectionConfig(RootDB, c)); err == nil {
+		s = settled
+	}
+	b, _, err := s.binding("image.edit")
+	if err != nil {
+		return 1
+	}
+	n := s.editPictures(b)
+	if v, ok := b.Pictures.(float64); ok && int(v) >= 1 && int(v) < n {
+		n = int(v)
 	}
 	return n
 }

@@ -629,8 +629,8 @@ func TestAConnectorPackKeepsTheSameSettings(t *testing.T) {
 	}
 }
 
-// The Gemini template edits from up to three pictures, so the image tool
-// offers it for a blend of two or three; a spec using only image edits one.
+// The Gemini template's spec sends up to ten pictures, so the image tool
+// offers it for a blend of up to ten; a spec using only image edits one.
 func TestAnEditSpecTakesAsManyPicturesAsItUses(t *testing.T) {
 	raw, err := os.ReadFile("../recipes/builtin/gemini-images.json")
 	if err != nil {
@@ -656,8 +656,8 @@ func TestAnEditSpecTakesAsManyPicturesAsItUses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the Gemini template does not edit: %v", err)
 	}
-	if n := s.editPictures(b); n != 3 {
-		t.Errorf("Gemini edits from %d pictures, want 3", n)
+	if n := s.editPictures(b); n != 10 {
+		t.Errorf("Gemini's spec sends %d pictures, want 10", n)
 	}
 	one := Spec{Provider: Provider{Operations: map[string]Operation{"e": {Body: map[string]any{"img": "{image.base64}"}}}}}
 	if n := one.editPictures(Binding{Steps: []Step{{Call: "e"}}}); n != 1 {

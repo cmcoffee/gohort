@@ -137,6 +137,11 @@ type Binding struct {
 	// description. A blank kind is "media".
 	Kind  string `json:"kind,omitempty"`
 	About string `json:"about,omitempty"`
+	// Pictures, for image.edit, is at most how many source pictures one
+	// call takes: a number, or {config.<name>} naming a number setting (a
+	// model's limit, set on the connector's row). Never more than the
+	// picture inputs its operations use; absent, that many.
+	Pictures any `json:"pictures,omitempty"`
 }
 
 // mediaKindRE is what a media.generate kind may be: a short name in words.
@@ -436,6 +441,23 @@ func (b Binding) validate(p Provider) error {
 	}
 	if len(b.About) > 200 {
 		return fmt.Errorf("about is one line: up to 200 characters")
+	}
+	if b.Pictures != nil {
+		if b.Capability != "image.edit" {
+			return fmt.Errorf("pictures is how many pictures an edit takes: image.edit only")
+		}
+		switch v := b.Pictures.(type) {
+		case float64:
+			if v < 1 || v != float64(int(v)) {
+				return fmt.Errorf("pictures is a whole number, at least 1")
+			}
+		case string:
+			if m := configRE.FindStringSubmatch(v); m == nil || m[0] != v {
+				return fmt.Errorf("pictures is a number, or one {config.<name>} naming a number setting")
+			}
+		default:
+			return fmt.Errorf("pictures is a number, or one {config.<name>} naming a number setting")
+		}
 	}
 	if b.Plain && b.Capability != "web.search" && b.Capability != "image.search" {
 		return fmt.Errorf("plain takes site: filters out of a search's query: web.search and image.search only")

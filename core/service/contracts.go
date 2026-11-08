@@ -169,6 +169,13 @@ func init() {
 			// one onto another. A spec that uses them takes that many.
 			{Name: "image2", Type: TypeFile},
 			{Name: "image3", Type: TypeFile},
+			{Name: "image4", Type: TypeFile},
+			{Name: "image5", Type: TypeFile},
+			{Name: "image6", Type: TypeFile},
+			{Name: "image7", Type: TypeFile},
+			{Name: "image8", Type: TypeFile},
+			{Name: "image9", Type: TypeFile},
+			{Name: "image10", Type: TypeFile},
 			{Name: "negative", Type: TypeText},
 			{Name: "width", Type: TypeNumber},
 			{Name: "height", Type: TypeNumber},

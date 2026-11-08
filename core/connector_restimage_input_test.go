@@ -279,8 +279,8 @@ func TestCascadeImageCounts(t *testing.T) {
 // having no mask, never refused as "not a ComfyUI or REST image backend",
 // which is what stopped every Gemini edit and blend before it ran.
 func TestTheEditPreflightTakesAConnectorsEditor(t *testing.T) {
-	RegisterImageEditBackend("zz-gemini", 3, func(*ToolSession, string, [][]byte) (*ImageGenResult, error) { return nil, nil })
-	t.Cleanup(func() { RegisterImageEditBackend("zz-gemini", 0, nil) })
+	RegisterImageEditBackend("zz-gemini", func() int { return 3 }, func(*ToolSession, string, [][]byte) (*ImageGenResult, error) { return nil, nil })
+	t.Cleanup(func() { RegisterImageEditBackend("zz-gemini", nil, nil) })
 	sess := &ToolSession{}
 	err := CheckImageInputs(sess, "zz-gemini", []string{"image#1"}, "")
 	if err != nil && strings.Contains(err.Error(), "not a ComfyUI") {

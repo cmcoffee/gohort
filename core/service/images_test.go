@@ -681,3 +681,140 @@ func TestUsedForKeepsABothWaysBackendToOneJob(t *testing.T) {
 	}
 	os.Remove(res.URL)
 }
+
+// An edit takes as many pictures as its spec's picture inputs, held to its
+// pictures: a number, or the setting it names, read on each use so a change
+// on the row's Settings takes effect with no save of the spec. More than that
+// is refused before any call; fewer sends only the pictures given.
+func TestAnEditTakesThePicturesItsSettingAllows(t *testing.T) {
+	world(t)
+	png := pngBytes(t)
+	var parts []int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Pics []map[string]string `json:"pics"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		parts = append(parts, len(body.Pics))
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(png)
+	}))
+	defer srv.Close()
+	var pics []any
+	for _, n := range editPictureInputs {
+		pics = append(pics, map[string]any{"type": "{" + n + ".type}", "data": "{" + n + ".base64}"})
+	}
+	install(t, "blend10", map[string]any{
+		"provider": map[string]any{"transport": "http", "base_url": srv.URL, "auth": map[string]any{"none": true},
+			"operations": map[string]any{"edit": map[string]any{"method": "POST", "path": "/edit",
+				"body": map[string]any{"prompt": "{prompt}", "pics": pics}, "read": "file"}}},
+		"provides": []any{map[string]any{"capability": "image.edit",
+			"config":   []any{map[string]any{"name": "max_images", "label": "Pictures per blend", "type": "number", "default": "10", "min": 1, "max": 10}},
+			"pictures": "{config.max_images}",
+			"steps":    []any{map[string]any{"call": "edit"}}, "output": map[string]any{"image": map[string]any{"from": "body"}}}},
+	})
+	RootDB.Set(ImageTable, "agents", []string{"blend10"})
+	offered := func() int {
+		for _, b := range ReachableImageBackends(&ToolSession{}) {
+			if b.Name == "blend10" {
+				return b.MaxImages
+			}
+		}
+		t.Fatal("not offered")
+		return 0
+	}
+	if n := offered(); n != 10 {
+		t.Fatalf("by default it takes %d pictures, want all ten its spec sends", n)
+	}
+	if err := SetConnectionConfig(RootDB, func() Connector { c, _ := GetConnector(RootDB, "blend10"); return c }(), map[string]string{"image.edit/max_images": "4"}); err != nil {
+		t.Fatal(err)
+	}
+	if n := offered(); n != 4 {
+		t.Errorf("set to 4, it takes %d", n)
+	}
+	dir := t.TempDir()
+	var names []string
+	for i := 1; i <= 5; i++ {
+		n := fmt.Sprintf("p%d.png", i)
+		os.WriteFile(filepath.Join(dir, n), png, 0o600)
+		names = append(names, n)
+	}
+	sess := &ToolSession{WorkspaceDir: dir}
+	if _, err := EditImageWithBackend(sess, EditImageRequest{Backend: "blend10", Prompt: "blend", Images: names}); err == nil || !strings.Contains(err.Error(), "at most 4") {
+		t.Errorf("five pictures for a four-picture setting: %v", err)
+	}
+	if len(parts) != 0 {
+		t.Errorf("a refused blend made %d calls", len(parts))
+	}
+	res, err := EditImageWithBackend(sess, EditImageRequest{Backend: "blend10", Prompt: "blend", Images: names[:2]})
+	if err != nil {
+		t.Fatalf("two pictures: %v", err)
+	}
+	os.Remove(res.URL)
+	if len(parts) != 1 || parts[0] != 2 {
+		t.Errorf("two pictures sent as %v parts, want only the two given", parts)
+	}
+}
+
+// pictures belongs to image.edit, and names a number setting or is one.
+func TestPicturesIsAnEditsNumber(t *testing.T) {
+	base := func(capability string, pictures any, typ string) Spec {
+		raw, _ := json.Marshal(map[string]any{
+			"provider": map[string]any{"transport": "http", "base_url": "https://api.example.test", "auth": map[string]any{"none": true},
+				"operations": map[string]any{"edit": map[string]any{"method": "POST", "path": "/edit", "body": map[string]any{"prompt": "{prompt}", "a": "{image.base64}"}, "read": "file"}}},
+			"provides": []any{map[string]any{"capability": capability, "pictures": pictures,
+				"config": []any{map[string]any{"name": "max_images", "label": "Pictures", "type": typ}},
+				"steps":  []any{map[string]any{"call": "edit"}}, "output": map[string]any{"image": map[string]any{"from": "body"}}}},
+		})
+		s, err := Parse(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	for _, tc := range []struct {
+		name     string
+		s        Spec
+		refusing string
+	}{
+		{"a number setting", base("image.edit", "{config.max_images}", "number"), ""},
+		{"a number", base("image.edit", 4, "number"), ""},
+		{"on another job", base("image.generate", 4, "number"), "image.edit only"},
+		{"a text setting", base("image.edit", "{config.max_images}", "text"), "not a number setting"},
+		{"no whole number", base("image.edit", 2.5, "number"), "whole number"},
+		{"words", base("image.edit", "lots", "number"), "a number, or one {config"},
+	} {
+		err := tc.s.Validate()
+		if tc.refusing == "" && err != nil {
+			t.Errorf("%s: refused: %v", tc.name, err)
+		}
+		if tc.refusing != "" && (err == nil || !strings.Contains(err.Error(), tc.refusing)) {
+			t.Errorf("%s: %v, want it refused for %q", tc.name, err, tc.refusing)
+		}
+	}
+}
+
+// The Gemini template blends up to ten pictures, held to fewer by its row's
+// Pictures per blend.
+func TestGeminiBlendsUpToTenPictures(t *testing.T) {
+	world(t)
+	c := installed(t, "gemini-images", "gem")
+	if n := editLimit("gem"); n != 10 {
+		t.Errorf("Gemini takes %d pictures, want 10", n)
+	}
+	found := false
+	for _, st := range SettingsFor(c, "image.edit") {
+		if st.Key == "image.edit/max_images" && st.Field.Label == "Pictures per blend" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no Pictures per blend among its settings: %+v", SettingsFor(c, "image.edit"))
+	}
+	if err := SetConnectionConfig(RootDB, c, map[string]string{"image.edit/max_images": "3"}); err != nil {
+		t.Fatal(err)
+	}
+	if n := editLimit("gem"); n != 3 {
+		t.Errorf("set to 3, Gemini takes %d", n)
+	}
+}
