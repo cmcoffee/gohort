@@ -4221,6 +4221,7 @@
     function commitUserEdit(bubble, newText) {
       var at = userBubbleIndex(bubble);
       if (at < 0) return Promise.reject(new Error('bubble not found'));
+      var was = userBubbleText(bubble);
       // Cancel any in-flight turn before truncating + re-sending.
       // Without this, an active stream keeps writing assistant
       // bubbles below the just-truncated point AND the server
@@ -4229,7 +4230,7 @@
       // cancelMessage aborts the active EventSource + POSTs the
       // server's /api/cancel so the in-flight runner stops cleanly.
       cancelMessage();
-      return truncateSession(at).then(function() {
+      return truncateSession(at, was).then(function() {
         while (convoLog.lastChild && convoLog.lastChild !== bubble) {
           convoLog.removeChild(convoLog.lastChild);
         }
@@ -4258,15 +4259,23 @@
       messageEditors.push({match: matchFn, edit: editFn});
     };
 
+    // userBubbleText is what the person sent in a bubble: the text it was
+    // drawn from, or what it shows.
+    function userBubbleText(bubble) {
+      var body = bubble.querySelector(':scope > .ui-agent-msg-body');
+      var shown = body ? body.textContent : '';
+      return (msgEls && Object.keys(msgEls).reduce(function(acc, k) {
+        if (msgEls[k] && msgEls[k].bubble === bubble) return msgEls[k].rawText || shown;
+        return acc;
+      }, '')) || shown;
+    }
+
     function beginUserEdit(bubble) {
       if (!activeSessionId) return;
       var body = bubble.querySelector(':scope > .ui-agent-msg-body');
       var actions = bubble.querySelector(':scope > .ui-agent-msg-actions');
       if (!body) return;
-      var raw = (msgEls && Object.keys(msgEls).reduce(function(acc, k) {
-        if (msgEls[k] && msgEls[k].bubble === bubble) return msgEls[k].rawText || body.textContent;
-        return acc;
-      }, '')) || body.textContent;
+      var raw = userBubbleText(bubble);
       // Check registered editors first. The override gets a ctx with
       // bubble + body + actions + rawText + commit(newText) so it can
       // build whatever UI fits its bubble type. cancel() is a no-op
@@ -4414,7 +4423,7 @@
       if (!(await window.uiConfirm('Delete this message and everything below it?'))) return;
       var at = userBubbleIndex(bubble);
       if (at < 0) return;
-      truncateSession(at).then(function() {
+      truncateSession(at, userBubbleText(bubble)).then(function() {
         // Wipe DOM from this bubble onward.
         while (convoLog.lastChild && convoLog.lastChild !== bubble) {
           convoLog.removeChild(convoLog.lastChild);
@@ -4435,12 +4444,18 @@
     // truncateSession PATCHes the server's session record to drop
     // messages from index "at" onward. Returns the fetch promise so
     // callers can chain DOM updates on success or surface the error.
-    function truncateSession(at) {
+    // text is the user message being cut from: a position counted on the
+    // page misses what reached the thread without a bubble of its own (a
+    // background result's turn), so the server checks the message there is
+    // this one, and finds it when it is not, rather than cut too early.
+    function truncateSession(at, text) {
       var url = substituteExtras(cfg.truncate_url.replace('{id}', encodeURIComponent(activeSessionId)));
+      var cut = {at: at};
+      if (typeof text === 'string') cut.text = text;
       return fetch(url, {
         method: 'PATCH',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({at: at}),
+        body: JSON.stringify(cut),
       }).then(function(r) {
         if (!r.ok) {
           return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });

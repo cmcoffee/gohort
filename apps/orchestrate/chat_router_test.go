@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -76,5 +77,58 @@ func TestTruncatedBodyIsUnparseable(t *testing.T) {
 		t.Fatal("a truncated send body parsed cleanly; this test no longer guards anything")
 	} else if !strings.Contains(fmt.Sprint(err), "unexpected end") {
 		t.Logf("truncated body failed to parse as expected: %v", err)
+	}
+}
+
+// An edit cuts the thread at the message it edits, named by its text as well
+// as its position: a position the page counted misses what reached the thread
+// without a bubble (a background result's turn and the picture it delivered),
+// and the cut there took them with it. A position that names another message
+// is corrected to the latest with that text, and a text the thread does not
+// have is refused, rather than cut anywhere.
+func TestAnEditCutsAtTheMessageItEdits(t *testing.T) {
+	msgs := []ChatMessage{
+		{Role: "user", Content: "make a frame"},
+		{Role: "assistant", Content: "on it"},
+		{Role: "user", Content: "[BACKGROUND TASK FINISHED] the frame", Hidden: true},
+		{Role: "assistant", Content: "here is the frame"},
+		{Role: "user", Content: "make it into a video"},
+	}
+	str := func(s string) *string { return &s }
+	// The page counted 2 visible messages before the edited one: the
+	// background turn was not among them.
+	if at, ok := cutPoint(msgs, 2, str("make it into a video ")); !ok || at != 4 {
+		t.Errorf("an edit whose page position missed the background turn cuts at %d (%v), want 4", at, ok)
+	}
+	if at, ok := cutPoint(msgs, 4, str("make it into a video")); !ok || at != 4 {
+		t.Errorf("a right position stays: %d %v", at, ok)
+	}
+	if at, ok := cutPoint(msgs, 3, str("not something anyone sent")); ok {
+		t.Errorf("a message the thread does not have is cut at %d, want refused", at)
+	}
+	if at, ok := cutPoint(msgs, 2, nil); !ok || at != 2 {
+		t.Errorf("a cut with no text is where it says: %d %v", at, ok)
+	}
+	// Assistant text matching is not the user message being edited.
+	if at, ok := cutPoint(msgs, 0, str("here is the frame")); ok {
+		t.Errorf("an assistant message is not an edit point: %d", at)
+	}
+}
+
+// Both of the chat's cuts (Edit, and Delete-from-here) send the message's text.
+func TestThePageSendsTheTextOfWhatItCuts(t *testing.T) {
+	raw, err := os.ReadFile("../../core/ui/assets/runtime/30_agent_loop_panel.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(raw)
+	for _, want := range []string{
+		"return truncateSession(at, was).then(function() {",
+		"truncateSession(at, userBubbleText(bubble)).then(function() {",
+		"if (typeof text === 'string') cut.text = text;",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("the page's cut does not carry the message's text: no %q", want)
+		}
 	}
 }

@@ -418,6 +418,34 @@ type sessionCut struct {
 	// the index onward. Raw index (client carries it from the load
 	// payload, which includes hidden messages), so it lands precisely.
 	DeleteAt *int `json:"delete_at"`
+	// Text (pointer = presence) is the user message At is meant to name, as
+	// the page has it. A position the page counted misses messages that
+	// reached the thread without a bubble (a background result's turn), and
+	// cutting there took them, and what they delivered, with the edit.
+	Text *string `json:"text"`
+}
+
+// cutPoint is where a truncate cuts: at, when the message there is the user
+// message text names (or no text was given); else the latest user message
+// with that text. ok is false when text names a message the thread does not
+// have: cutting anywhere would take what the person did not mean to.
+func cutPoint(msgs []ChatMessage, at int, text *string) (int, bool) {
+	if text == nil {
+		return at, true
+	}
+	want := strings.TrimSpace(*text)
+	is := func(i int) bool {
+		return i >= 0 && i < len(msgs) && msgs[i].Role == "user" && strings.TrimSpace(msgs[i].Content) == want
+	}
+	if is(at) {
+		return at, true
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if is(i) {
+			return i, true
+		}
+	}
+	return at, false
 }
 
 // sessionTruncate is PATCH: {at: N} drops messages from index N onward, and
@@ -460,6 +488,14 @@ func (T *OrchestrateApp) sessionTruncate(c *jsonapi.Call, at sessionAt, body ses
 	}
 	if body.At > len(s.Messages) {
 		body.At = len(s.Messages)
+	}
+	cut, found := cutPoint(s.Messages, body.At, body.Text)
+	if !found {
+		return nil, jsonapi.Status(http.StatusConflict, "that message is not in this conversation as the page has it: reload the conversation, then edit it again")
+	}
+	if cut != body.At {
+		Log("[orchestrate.session] truncate of %s: the page said %d, the message it edits is at %d", sid, body.At, cut)
+		body.At = cut
 	}
 	// What the cut turns recorded about the tools they edited goes with
 	// them, or the build check holds the next turn to it.
