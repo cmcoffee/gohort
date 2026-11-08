@@ -635,21 +635,16 @@ const connectorAddAnotherAction = `function(ctx){
       var title = (fromList && ctx.action && ctx.action.label) ? String(ctx.action.label).replace(/[\u2026.]+$/, '') : 'Add another';
       // Templates of more than one kind, or a toolbar's list of kinds, read
       // under a heading per kind (the server orders them).
-      var kinds = {};
-      (rows || []).forEach(function(r){ if (r.category) kinds[r.category] = true; });
-      var headed = Object.keys(kinds).length > 1 || (fromList && Object.keys(kinds).length > 0);
+      // The kinds in the server's order (the order the page names them).
+      var kinds = [];
+      (rows || []).forEach(function(r){ var k = r.category || 'Other'; if (kinds.indexOf(k) < 0) kinds.push(k); });
       window.uiOpenSimpleModal({title: title, width: '600px', mount: function(body, dlg){
         if (!(rows || []).length) {
           body.appendChild(el('p', {style: 'margin:0;font-size:var(--fs-sm, 0.86rem)', text: 'No template does this yet. Import one under Admin > Services > Templates, or add a connector from its spec under Admin > Services > Connectors.'}));
           return;
         }
         body.appendChild(el('p', {style: 'margin:0 0 0.7rem;font-size:var(--fs-sm, 0.86rem);color:var(--text-mute)', text: 'Pick one. It asks a few questions and adds the connector, which then joins the list.'}));
-        var lastKind = null;
-        rows.forEach(function(r){
-          if (headed && r.category !== lastKind) {
-            lastKind = r.category;
-            body.appendChild(el('div', {style: 'font-weight:600;font-size:var(--fs-xs, 0.78rem);text-transform:uppercase;letter-spacing:0.04em;color:var(--text-mute);margin:0.9rem 0 0.2rem', text: r.category || 'Other'}));
-          }
+        function rowFor(r) {
           var add = el('button', {class: 'ui-row-btn', text: 'Add\u2026'});
           add.addEventListener('click', function(){
             var install = window.UIClientActions && window.UIClientActions.template_install;
@@ -664,8 +659,34 @@ const connectorAddAnotherAction = `function(ctx){
             el('div', {style: 'font-weight:600', text: r.title}),
             el('div', {style: 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);line-height:1.4', text: r.description || ''})
           ]);
-          body.appendChild(el('div', {style: 'display:flex;gap:0.6rem;align-items:flex-start;padding:0.5rem 0;border-top:1px solid var(--border)'}, [text, add]));
+          return el('div', {style: 'display:flex;gap:0.6rem;align-items:flex-start;padding:0.5rem 0;border-top:1px solid var(--border)'}, [text, add]);
+        }
+        // One kind: its templates under its name, from a toolbar's list (Add
+        // AI generator says what it adds), or bare. Several: a switch of the
+        // kinds over the list, open on the first, so each kind's templates
+        // are a tap away rather than a scroll past the others.
+        if (kinds.length < 2) {
+          if (fromList) body.appendChild(el('div', {style: 'font-weight:600;font-size:var(--fs-xs, 0.78rem);text-transform:uppercase;letter-spacing:0.04em;color:var(--text-mute);margin:0.9rem 0 0.2rem', text: kinds[0]}));
+          rows.forEach(function(r){ body.appendChild(rowFor(r)); });
+          return;
+        }
+        var track = el('div', {class: 'ui-row-segmented', style: 'display:inline-flex;margin:0 0 0.6rem'});
+        var list = el('div');
+        var segs = kinds.map(function(k){
+          var n = rows.filter(function(r){ return (r.category || 'Other') === k; }).length;
+          var seg = el('button', {type: 'button', class: 'ui-seg', text: k + ' (' + n + ')'});
+          seg.addEventListener('click', function(){ show(k); });
+          track.appendChild(seg);
+          return seg;
         });
+        function show(kind) {
+          segs.forEach(function(seg, i){ seg.classList.toggle('active', kinds[i] === kind); });
+          while (list.firstChild) list.removeChild(list.firstChild);
+          rows.forEach(function(r){ if ((r.category || 'Other') === kind) list.appendChild(rowFor(r)); });
+        }
+        body.appendChild(track);
+        body.appendChild(list);
+        show(kinds[0]);
       }});
     })
     .catch(function(e){ window.uiAlert && window.uiAlert((e && e.message) || ('' + e)); });
