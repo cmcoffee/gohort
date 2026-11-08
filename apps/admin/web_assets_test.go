@@ -64,3 +64,53 @@ setTimeout(function() {
 		t.Fatalf("the picker:\n%s", out)
 	}
 }
+
+// After a template is added from a page's list, the dialog's one way back is
+// Close: Add hides (a "Back to the list" beside Close did nothing the dialog
+// could see, and read as a second way out), and closing hands the page what
+// was added, once, so its list holds it.
+func TestAnAddedTemplateClosesBackToTheList(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed")
+	}
+	harness := `
+function mk(tag, opts, kids) {
+  opts = opts || {};
+  var n = {tag: tag, text: opts.text || '', kids: [], on: {}, style: {}, value: '',
+    appendChild: function(k) { this.kids.push(k); return k; },
+    addEventListener: function(e, f) { this.on[e] = f; }};
+  Object.defineProperty(n, 'textContent', {get: function() { return n.text; }, set: function(v) { n.text = v; }});
+  return n;
+}
+var window = {uiEl: mk};
+function fetch(url) {
+  var body = url.indexOf('recipe') >= 0 ? {id: 'gemini-video', title: 'Omni', questions: []} : {message: 'Added gemini-video.'};
+  return Promise.resolve({ok: true, text: function(){ return Promise.resolve(JSON.stringify(body)); }});
+}
+var opts, actions = [];
+window.uiOpenSimpleModal = function(o) { opts = o; o.mount(mk('div'), {addAction: function(b) { actions.push(b); }}); };
+var action = ` + templateInstallAction + `;
+var done = 0;
+function want(cond, why) { if (!cond) { console.log('FAIL ' + why); process.exitCode = 1; } }
+action({record: {id: 'gemini-video'}, onDone: function() { done++; }});
+setTimeout(function() {
+  var go = actions[0];
+  want(go && go.text === 'Add', 'the footer has Add');
+  go.on.click();
+  setTimeout(function() {
+    want(go.style.display === 'none', 'Add hides once added');
+    want(done === 0, 'nothing is handed back before the dialog closes');
+    opts.onClose(); opts.onClose();
+    want(done === 1, 'closing hands back what was added, once: ' + done);
+    if (!process.exitCode) console.log('OK');
+  }, 20);
+}, 20);
+`
+	tmp := filepath.Join(t.TempDir(), "install.js")
+	if err := os.WriteFile(tmp, []byte(harness), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("node", tmp).CombinedOutput(); err != nil || !strings.Contains(string(out), "OK") {
+		t.Fatalf("the install dialog:\n%s", out)
+	}
+}

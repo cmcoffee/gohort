@@ -582,10 +582,7 @@ const templateInstallAction = `function(ctx){
         });
         var out = el('div', {style: 'margin-top:0.7rem;font-size:var(--fs-sm, 0.85rem);white-space:pre-wrap'});
         var go = el('button', {class: 'ui-row-btn primary', text: 'Add'});
-        var added = null;
         go.addEventListener('click', function(){
-          // Once added, from a page's "+ Add another…", the button goes back.
-          if (added) { finish(); return; }
           var answers = {};
           Object.keys(inputs).forEach(function(k){ answers[k] = inputs[k].value; });
           go.disabled = true; out.textContent = 'Adding...';
@@ -597,13 +594,14 @@ const templateInstallAction = `function(ctx){
               (d.warnings || []).forEach(function(w){ lines.push('Note: ' + w); });
               var todo = (d.checklist || []).map(function(c){ return '- ' + c.type + ' ' + c.name + ': ' + c.action; });
               if (todo.length) { lines.push(''); lines.push('Next:'); lines = lines.concat(todo); }
-              if (ctx.onDone) lines.push('', 'It joins the list once this page reloads: choose it there and save.');
+              if (ctx.onDone) lines.push('', 'Close this, and it is in the list.');
               out.textContent = lines.join('\n');
               go.textContent = 'Done'; go.disabled = true;
               if (window.uiInvalidate) window.uiInvalidate(['api/connectors','api/media-backends','api/keystore','api/persistent-tools','api/secure-api','api/skills','api/templates']);
-              // Opened from a page's "+ Add another…": the button goes back
-              // to the page, reloaded so its list holds what was added.
-              if (ctx.onDone) { added = d; addedNow = d; go.textContent = 'Back to the list'; go.disabled = false; }
+              // Opened from a page's "+ Add another…": Close is the one way
+              // back, and closing brings the page's list up to date (finish).
+              // A second button beside it that did the same read as two.
+              if (ctx.onDone) { addedNow = d; go.style.display = 'none'; }
             })
             .catch(function(e){ go.disabled = false; out.textContent = 'Not added: ' + ((e && e.message) || e); });
         });

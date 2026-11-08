@@ -195,6 +195,7 @@ func runTests(ctx context.Context, name string, s Spec) []TestReport {
 	var reports []TestReport
 	s, err := settledFor(ctx, name, s)
 	if err != nil {
+		Log("[connectors] test %s: its settings do not read: %v", name, err)
 		return []TestReport{{Capability: "config", Detail: err.Error()}}
 	}
 	for _, b := range s.Provides {
@@ -203,6 +204,7 @@ func runTests(ctx context.Context, name string, s Spec) []TestReport {
 		in, err := ct.testInputs()
 		if err != nil {
 			rep.Detail = err.Error()
+			Warn("[connectors] test %s %s failed: %s", name, b.Capability, rep.Detail)
 			reports = append(reports, rep)
 			continue
 		}
@@ -223,6 +225,14 @@ func runTests(ctx context.Context, name string, s Spec) []TestReport {
 					rep.File = v.File.Path
 				}
 			}
+		}
+		// The server's log keeps each outcome: a test's answer goes only to
+		// the page that ran it, and a failure is what someone asks about
+		// after the page is gone.
+		if rep.OK {
+			Log("[connectors] test %s %s: %s", name, b.Capability, rep.Detail)
+		} else {
+			Warn("[connectors] test %s %s failed: %s", name, b.Capability, rep.Detail)
 		}
 		reports = append(reports, rep)
 	}

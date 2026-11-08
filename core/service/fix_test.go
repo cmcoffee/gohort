@@ -3,8 +3,13 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	. "github.com/cmcoffee/gohort/core"
 )
 
 func draftOf(t *testing.T, m map[string]any) string {
@@ -73,5 +78,52 @@ func TestAFixSeesTheServiceAndTriesADraft(t *testing.T) {
 	// The stored spec is untouched until someone saves.
 	if c, _, _, _ := ForFix("acme-images"); c.Provider.Operations["submit"].Path != "/v2/jobs" {
 		t.Error("trying a draft changed the stored spec")
+	}
+}
+
+// A connector test's outcome is in the server's log: a failure with the
+// connector, the job and the provider's reason, since the answer otherwise
+// reaches only the page that ran it.
+func TestATestsOutcomeIsLogged(t *testing.T) {
+	world(t)
+	var logged []string
+	prevLog, prevWarn := Log, Warn
+	capture := func(level string) func(...any) {
+		return func(v ...any) {
+			if f, ok := v[0].(string); ok {
+				logged = append(logged, level+" "+fmt.Sprintf(f, v[1:]...))
+			}
+		}
+	}
+	Log, Warn = capture("LOG"), capture("WARN")
+	t.Cleanup(func() { Log, Warn = prevLog, prevWarn })
+	fail := true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fail {
+			http.Error(w, `{"error":{"message":"model not found"}}`, http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "audio/mpeg")
+		w.Write(mp3ish)
+	}))
+	defer srv.Close()
+	install(t, "tunes", map[string]any{
+		"provider": map[string]any{"transport": "http", "base_url": srv.URL, "auth": map[string]any{"none": true},
+			"operations": map[string]any{"song": map[string]any{"method": "POST", "path": "/songs", "body": map[string]any{"prompt": "{prompt}"}, "read": "file"}}},
+		"provides": []any{map[string]any{"capability": "music.generate", "steps": []any{map[string]any{"call": "song"}},
+			"output": map[string]any{"audio": map[string]any{"from": "body"}}}},
+	})
+	if _, err := Test(context.Background(), "tunes"); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(logged, "\n"); !strings.Contains(got, "WARN [connectors] test tunes music.generate failed:") || !strings.Contains(got, "model not found") {
+		t.Errorf("a failed test is not logged with its reason:\n%s", got)
+	}
+	logged, fail = nil, false
+	if _, err := Test(context.Background(), "tunes"); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(logged, "\n"); !strings.Contains(got, "LOG [connectors] test tunes music.generate: passed") {
+		t.Errorf("a passed test is not logged:\n%s", got)
 	}
 }
