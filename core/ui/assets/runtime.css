@@ -1214,6 +1214,11 @@ select:-webkit-autofill {
 .ui-row-lines .ui-row-cells { min-width: 0; }
 .ui-row-cells-2 { opacity: 0.85; }
 .ui-table-row:has(.ui-row-lines) { align-items: flex-start; }
+/* Controls on the second line (RowAction.Line = 2) lead it, its text beside
+ * them; on a narrow row the text wraps under them. */
+.ui-row-line-2 { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; min-width: 0; }
+.ui-row-line-2 > .ui-row-cells-2 { flex: 1 1 12rem; min-width: 0; }
+.ui-row-line-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; flex: none; }
 .ui-table-row-link { cursor: pointer; }
 /* Accent the border on hover, matching the other bordered hover targets.
  * The row's own background is already --bg-2, so tinting it isn't an

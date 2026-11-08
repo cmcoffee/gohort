@@ -55,7 +55,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 			Title:    "Media Generation",
 			Subtitle: "What makes pictures, music and other media for agents.",
 			Detail: "Every connector that makes media is listed here, banded by what it makes: image backends (Gemini or OpenAI added from their templates, a local ComfyUI or Automatic1111, a peer's renderer), music, and any other kind a connector declares it makes, such as video or 3D models.\n\n" +
-				"The switch at each row's left says how it is used. Images: Primary is the default, what agents' image tools use unless they ask for another, and its row is badged Default; Secondary can be asked for by name; Disabled is not used. A backend that both makes and edits pictures has Used for on its row, the image tool's jobs it is used for: generating, editing and blending (the default), editing and blending, or generating.\n\n" +
+				"The switch under each row's name says how it is used. Images: Primary is the default, what agents' image tools use unless they ask for another, and its row is badged Default; Secondary can be asked for by name; Disabled is not used. Each image row's Used for says the image tool's jobs it is used for. A backend that both makes and edits pictures (Gemini, OpenAI) has a choice there: generating, editing and blending (the default), editing and blending, or generating. One that does one job (a ComfyUI workflow, an A1111 mode) says that job: its Edit setup, under Advanced, changes it.\n\n" +
 				"Music and the other kinds: Secondary gives each its own agent tool, generate_<kind>_<connector> (generate_music_<connector> for music). A flow may use one as a step without it being offered here.\n\n" +
 				"A choice that no longer reads (it names a connection that is not here, or one named the old way) is listed first, under Needs setting again, with why; Remove takes it off, and choosing a backend below sets it again.\n\n" +
 				"A connector's own settings (its key, its model) are on its row's Settings, and its key can come from Services > Keystore. Advanced opens its editor, the same one its row under Connectors opens. Test makes a sample.\n\n" +
@@ -152,6 +152,7 @@ func mediaBackendsTable() ui.Table {
 			{Field: "is_default", Type: "badge", Badges: []ui.BadgeMapping{{Value: true, Label: "Default", Color: "success"}}},
 			{Field: "does", Label: "Does", Mute: true},
 			{Field: "stale", Label: "", Flex: 4, Line: 2},
+			{Field: "used_for", Label: "", Mute: true, Line: 2},
 			{Field: "size", Label: "Size", Mute: true},
 			{Field: "steps", Label: "Steps", Mute: true},
 			{Field: "summary", Label: "", Mute: true, Flex: 4, Line: 2},
@@ -160,9 +161,10 @@ func mediaBackendsTable() ui.Table {
 		RowActions: append(append([]ui.RowAction{
 			{Type: "button", Label: "Remove", PostTo: mediaBackendsSource + "/remove?name={name}", Method: "POST", OnlyIf: "is_stale", Variant: "danger",
 				Confirm: "Remove it from Media Generation? It no longer reads, so nothing uses it now."},
-			{Type: "segmented", Field: "role", Options: imageUseOptions, PostTo: mediaBackendsSource + "/role", OnlyIf: "is_image", Leading: true},
-			{Type: "segmented", Field: "role", Options: offerUseOptions, PostTo: mediaBackendsSource + "/role", OnlyIf: "offer_only", Leading: true},
-			{Type: "select", Label: "Used for", Field: "uses", Options: usedForOptions, PostTo: mediaBackendsSource + "/uses", OnlyIf: "both_ways"},
+			// The row's own settings lead its second line, under its name.
+			{Type: "segmented", Field: "role", Options: imageUseOptions, PostTo: mediaBackendsSource + "/role", OnlyIf: "is_image", Line: 2},
+			{Type: "segmented", Field: "role", Options: offerUseOptions, PostTo: mediaBackendsSource + "/role", OnlyIf: "offer_only", Line: 2},
+			{Type: "select", Label: "Used for", Field: "uses", Options: usedForOptions, PostTo: mediaBackendsSource + "/uses", OnlyIf: "both_ways", Line: 2},
 		}, connectorEditRowActions()...), connectorSettingsAction(), connectorTestAction()),
 		EmptyText: "Nothing makes media yet. Add AI generator… below adds Gemini, OpenAI, a local ComfyUI or A1111, and more.",
 	}

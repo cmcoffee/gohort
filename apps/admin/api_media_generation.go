@@ -42,6 +42,25 @@ var usedForOptions = []ui.SelectOption{
 	{Value: ImageUseGenerate, Label: "Generating"},
 }
 
+// imageJobText is what a backend that does one job (its outline's Does) is
+// used for, in Used for's words: a ComfyUI workflow or an A1111 mode does
+// one job, set up with it, so its row says it rather than offering a choice.
+func imageJobText(does string) string {
+	switch does {
+	case ComfyTypeGenerate:
+		return "Generating"
+	case ComfyTypeEdit:
+		return "Editing and blending"
+	case ComfyTypeBlend:
+		return "Blending"
+	case ComfyTypeCustom:
+		return "Its own workflow"
+	case "generate and edit":
+		return "Generating, editing and blending"
+	}
+	return does
+}
+
 // usedForValue is the Used for choice use (ImageBackendUse) reads as.
 func usedForValue(use string) string {
 	if use == ImageUseBoth {
@@ -59,7 +78,12 @@ func (a *AdminApp) handleMediaBackends(c *jsonapi.Call) (any, error) {
 		if conn, ok := GetConnector(RootDB, r.Name); ok && conn.Kind == service.Kind &&
 			service.Provides(conn, "image.generate") && service.Provides(conn, "image.edit") {
 			r.BothWays, r.Uses = true, usedForValue(ImageBackendUse(r.Name))
+		} else if job := imageJobText(r.Does); job != "" {
+			r.UsedFor = "Used for: " + job
 		}
+		// An image row says its job as Used for, the dropdown or the line
+		// above; Does is for the other kinds, where it is what they make.
+		r.Does = ""
 		rows = append(rows, r)
 	}
 	var music, other []imageBackendRow

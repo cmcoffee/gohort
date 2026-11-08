@@ -474,6 +474,14 @@ func TestAComfyUIConnectionIsConfiguredFromImageGeneration(t *testing.T) {
 	if !rows[0].IsDefault || rows[1].IsDefault {
 		t.Errorf("only the default wears its badge: %v %v", rows[0].IsDefault, rows[1].IsDefault)
 	}
+	// On the page, a one-job backend says its job as Used for, in place of
+	// Does; it has no dropdown, which only a both-ways backend has.
+	page, _ := (&AdminApp{db: RootDB}).handleMediaBackends(&jsonapi.Call{})
+	for _, r := range page.([]imageBackendRow) {
+		if r.UsedFor != "Used for: Generating" || r.Does != "" || r.BothWays {
+			t.Errorf("%s on the page: used_for %q does %q both %v, want Used for: Generating", r.Name, r.UsedFor, r.Does, r.BothWays)
+		}
+	}
 	row := rows[1]
 	// The same editor as its Connectors row: the template's form.
 	if !row.EditForm || row.EditSpec || row.NeedsFix {
@@ -501,18 +509,22 @@ func TestTheBackendListSharesTheConnectorActions(t *testing.T) {
 	if got := strings.Join(labels, ","); got != "Remove,,,Used for,Update from template,Edit setup,✨ Edit,✨ Fix,Settings,Test" {
 		t.Errorf("row actions = %s", got)
 	}
-	// A row's role is a switch at its left, Primary (the default),
-	// Secondary (offered to agents) or Disabled; a music or media row has no
-	// Primary. The default's row wears a Default badge.
+	// A row's role is a switch leading its second line, under its name:
+	// Primary (the default), Secondary (offered to agents) or Disabled; a
+	// music or media row has no Primary. Used for sits beside it. The
+	// default's row wears a Default badge.
 	for i, want := range []string{"Primary,Secondary,Disabled", "Secondary,Disabled"} {
 		act := tbl.RowActions[1+i]
 		var opts []string
 		for _, o := range act.Options {
 			opts = append(opts, o.Label)
 		}
-		if act.Type != "segmented" || !act.Leading || act.Field != "role" || strings.Join(opts, ",") != want {
-			t.Errorf("role control %d: %s %v leading=%v, want a leading %s", i, act.Type, opts, act.Leading, want)
+		if act.Type != "segmented" || act.Line != 2 || act.Leading || act.Field != "role" || strings.Join(opts, ",") != want {
+			t.Errorf("role control %d: %s %v line=%d, want %s on the second line", i, act.Type, opts, act.Line, want)
 		}
+	}
+	if act := tbl.RowActions[3]; act.Label != "Used for" || act.Line != 2 {
+		t.Errorf("Used for: %+v, want it on the second line", act)
 	}
 	badged := false
 	for _, c := range tbl.Columns {

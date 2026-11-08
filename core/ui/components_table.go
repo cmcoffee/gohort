@@ -236,6 +236,12 @@ type RowAction struct {
 	// "take this back?" is not when one row's recipient depends on it and
 	// the next one's does not.
 	ConfirmField string `json:"confirm_field,omitempty"`
+	// Line 2 puts the action at the start of the row's SECOND line (as
+	// Col.Line does a column), under the name and ahead of that line's
+	// text, rather than among the buttons at the row's end: for a row's own
+	// setting (its role, what it is used for) that reads with the row. In a
+	// plain table; a Cards table and a Leading action ignore it.
+	Line int `json:"line,omitempty"`
 	// Leading places the action at the FAR LEFT of the row, before the
 	// columns. Use for the most-frequently-tapped control (typically a
 	// primary toggle) so it's always thumb-reachable on narrow phones,

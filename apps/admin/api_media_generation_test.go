@@ -79,11 +79,12 @@ func TestMediaGenerationListsEveryKindInBands(t *testing.T) {
 		return out
 	}
 	got := rows()
-	if r := got["both"]; !r.IsImage || !r.BothWays || r.Uses != "both" {
+	if r := got["both"]; !r.IsImage || !r.BothWays || r.Uses != "both" || r.UsedFor != "" {
 		t.Errorf("a backend that makes and edits: %+v", r)
 	}
-	if r := got["painter"]; r.BothWays || r.Uses != "" {
-		t.Errorf("a backend that only makes pictures has Used for: %+v", r)
+	// One that only makes pictures says so, with no choice to make.
+	if r := got["painter"]; r.BothWays || r.Uses != "" || r.UsedFor != "Used for: Generating" {
+		t.Errorf("a backend that only makes pictures: %+v", r)
 	}
 	if r := got["clips"]; r.IsImage || !r.OfferOnly || r.Role != "unused" || r.Does != "video" {
 		t.Errorf("a video connector: %+v", r)

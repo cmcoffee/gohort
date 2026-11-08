@@ -854,12 +854,28 @@
           });
           if (headActs.childNodes.length) cellsWrap.appendChild(headActs);
         }
-        if (secondLine) {
+        // Controls on the second line (RowAction.Line = 2) open it, under
+        // the name, ahead of its text: a row's own setting read with the row
+        // rather than among the buttons at its end. Kept outside the line's
+        // muted text, so a control is never dimmed. A card ignores it.
+        var lineActs = null;
+        if (!cfg.cards) {
+          var la = el('div', {class: 'ui-row-line-actions'});
+          (cfg.row_actions || []).forEach(function(act, ai) {
+            if (act.leading || Number(act.line) !== 2) return;
+            appendAction(la, act, ai, rec, rowKey, row);
+          });
+          if (la.childNodes.length) lineActs = la;
+        }
+        if (secondLine || lineActs) {
           // The two lines stack; the row's own flex then lays them out
           // beside any actions exactly as it did with one.
           var stacked = el('div', {class: 'ui-row-lines'});
           stacked.appendChild(cellsWrap);
-          stacked.appendChild(secondLine);
+          if (lineActs) {
+            stacked.appendChild(el('div', {class: 'ui-row-line-2'},
+              secondLine ? [lineActs, secondLine] : [lineActs]));
+          } else stacked.appendChild(secondLine);
           row.appendChild(stacked);
         } else row.appendChild(cellsWrap);
 
@@ -867,6 +883,7 @@
         var actionGroups = {}, actionGroupOrder = [];
         (cfg.row_actions || []).forEach(function(act, ai) {
           if (act.leading) return;
+          if (!cfg.cards && Number(act.line) === 2) return; // on the second line
           if (act.group) {
             if (!actionGroups[act.group]) { actionGroups[act.group] = []; actionGroupOrder.push(act.group); }
             actionGroups[act.group].push({act: act, ai: ai});
