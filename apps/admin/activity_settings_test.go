@@ -41,7 +41,7 @@ func TestAChangedSettingIsInTheActivityLog(t *testing.T) {
 	}
 	knob := overridable(t, 1)[0]
 	do("POST", "/api/settings", `{"session_days":7,"`+knob.Key+`":`+strconv.FormatFloat(knob.Default+1, 'g', -1, 64)+`}`)
-	do("PUT", "/api/cost-rates", `{"search_per_call":0.02}`)
+	do("PUT", "/api/cost-rates", `{"cache_read_multiplier":0.2}`)
 
 	got := map[string]bool{}
 	for _, e := range activity.List(db, activity.Filter{Kind: activity.Settings}) {
@@ -53,7 +53,7 @@ func TestAChangedSettingIsInTheActivityLog(t *testing.T) {
 	for _, want := range []string{
 		"set session_days=7",
 		"set " + knob.Key + "=" + strconv.FormatFloat(knob.Default+1, 'g', -1, 64),
-		"set search_per_call=0.02",
+		"set cache_read_multiplier=0.2",
 	} {
 		if !got[want] {
 			t.Errorf("missing %q in %v", want, got)

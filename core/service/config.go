@@ -204,6 +204,7 @@ type JobPrice struct {
 	Capability string
 	Unit       string
 	Price      float64
+	Declared   float64 // its spec's price, used while none is Set
 	Set        bool
 	FromReply  bool
 }
@@ -224,10 +225,34 @@ func Prices(c Connector) []JobPrice {
 	for i, b := range s.Provides {
 		_, set := strconv.ParseFloat(strings.TrimSpace(values[settingKey(b.Capability, priceSetting)]), 64)
 		unit, v := priceUnit(settled.Provides[i])
-		out = append(out, JobPrice{Capability: b.Capability, Unit: unit, Price: v, Set: set == nil,
+		_, declared := priceUnit(b)
+		out = append(out, JobPrice{Capability: b.Capability, Unit: unit, Price: v, Declared: declared, Set: set == nil,
 			FromReply: b.Cost != nil && strings.TrimSpace(b.Cost.FromReply) != ""})
 	}
 	return out
+}
+
+// SetPrice sets connector c's Price for capability to price, or with nil
+// clears it, so its spec's price is used again. Its other settings are kept.
+func SetPrice(c Connector, capability string, price *float64) error {
+	s, err := Parse(c.Spec)
+	if err != nil {
+		return err
+	}
+	if _, _, err := s.binding(capability); err != nil {
+		return fmt.Errorf("%s does not give %s", c.Name, capability)
+	}
+	values := ConnectionConfig(RootDB, c)
+	key := settingKey(capability, priceSetting)
+	switch {
+	case price == nil:
+		delete(values, key)
+	case *price < 0:
+		return fmt.Errorf("a price is not negative")
+	default:
+		values[key] = strconv.FormatFloat(*price, 'f', -1, 64)
+	}
+	return SetConnectionConfig(RootDB, c, values)
 }
 
 // withPrices is s with each capability's Price from values in place of the

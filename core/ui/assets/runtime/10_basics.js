@@ -1157,12 +1157,18 @@
         if (act.width) ninput.style.width = act.width;
         if (act.min) ninput.min = String(act.min);
         if (act.max) ninput.max = String(act.max);
+        if (act.decimals) ninput.step = String(Math.pow(10, -act.decimals));
         var v = rec[act.field];
-        ninput.value = (v == null || v === 0) ? '' : String(v);
+        ninput.value = (v == null || (v === 0 && !act.placeholder_field)) ? '' : String(v);
         if (act.label) ninput.placeholder = act.label;
+        // A row's own fallback, greyed in the empty box; emptying the box
+        // then posts null, going back to it, instead of 0.
+        if (act.placeholder_field && rec[act.placeholder_field] != null && rec[act.placeholder_field] !== '') {
+          ninput.placeholder = String(rec[act.placeholder_field]);
+        }
         ninput.addEventListener('change', function() {
-          var n = parseInt(ninput.value, 10);
-          if (isNaN(n)) n = 0;
+          var n = act.decimals ? parseFloat(ninput.value) : parseInt(ninput.value, 10);
+          if (isNaN(n)) n = act.placeholder_field ? null : 0;
           var url = substitute(act.post_to, rec);
           var body = {}; body[act.field] = n;
           if (cfg.row_key) body[cfg.row_key] = rec[cfg.row_key];

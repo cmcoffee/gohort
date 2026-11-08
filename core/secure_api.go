@@ -554,6 +554,17 @@ func Secure() *SecureAPI {
 	return secureAPIInstance
 }
 
+// RebindSecure drops the credential store's database binding, so the next
+// Secure() binds AuthDB as it is then: for a test that swaps AuthDB and
+// must not see the credentials another test saved in the one bound before.
+func RebindSecure() {
+	secureAPIInstanceMu.Lock()
+	defer secureAPIInstanceMu.Unlock()
+	if secureAPIInstance != nil {
+		secureAPIInstance.db = nil
+	}
+}
+
 // migrateLegacyURLPatterns retires the legacy single-glob
 // AllowedURLPattern from records where its meaning is exactly
 // preservable as Base URL + (empty) Allowed Endpoints — i.e. plain
@@ -1387,6 +1398,26 @@ func (s *SecureAPI) SetDisabled(name string, disabled bool) error {
 		return fmt.Errorf("credential %q not found", name)
 	}
 	c.Disabled = disabled
+	s.db.Set(secureAPITable, name, c)
+	return nil
+}
+
+// SetCostPerCall prices each call through credential name at cost dollars
+// (0 untracked), from Overview > Cost by source as from its own form.
+func (s *SecureAPI) SetCostPerCall(name string, cost float64) error {
+	if !s.ready() || name == "" {
+		return fmt.Errorf("name required")
+	}
+	if cost < 0 {
+		return fmt.Errorf("a cost per call is not negative")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var c SecureCredential
+	if !s.db.Get(secureAPITable, name, &c) {
+		return fmt.Errorf("credential %q not found", name)
+	}
+	c.CostPerCall = cost
 	s.db.Set(secureAPITable, name, c)
 	return nil
 }

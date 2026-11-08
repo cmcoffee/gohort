@@ -28,7 +28,11 @@ func TestSystemRoutesContract(t *testing.T) {
 	prevAuth, prevRoot, prevRates := AuthDB, RootDB, GetCostRates()
 	AuthDB = func() Database { return adb }
 	RootDB = &DBase{Store: kvlite.MemStore()}
+	// Its own credential store: Cost by source lists every API credential,
+	// and another test's would otherwise be in the store bound first.
+	RebindSecure()
 	t.Cleanup(func() {
+		RebindSecure()
 		AuthDB, RootDB = prevAuth, prevRoot
 		SetCostRates(prevRates)
 		InvalidateTunables()
@@ -135,10 +139,10 @@ func TestSystemRoutesContract(t *testing.T) {
 	do("root", "POST", "/api/settings/reset-tunables", "")
 	do("root", "PUT", "/api/settings/reset-tunables", "")
 
-	do("alice", "PUT", "/api/cost-rates", `{"search_per_call":0.01}`)
-	do("root", "PUT", "/api/cost-rates", `{"search_per_call":0.01,"image_per_call":0.04,"cache_read_multiplier":0.1}`)
+	do("alice", "PUT", "/api/cost-rates", `{"cache_read_multiplier":0.1}`)
+	do("root", "PUT", "/api/cost-rates", `{"lead_input_per_1m":3,"cache_read_multiplier":0.1}`)
 	do("root", "PUT", "/api/cost-rates", `{"worker_input_per_1k":0.002,"worker_input_per_1m":1.5,"lead_output_per_1m":9}`)
-	do("root", "PUT", "/api/cost-rates", `{"search_per_call":`)
+	do("root", "PUT", "/api/cost-rates", `{"cache_read_multiplier":`)
 	do("root", "PUT", "/api/cost-rates", ``)
 	do("root", "POST", "/api/cost-rates", `{}`)
 	do("root", "GET", "/api/cost-rates", "")

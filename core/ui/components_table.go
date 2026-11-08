@@ -204,6 +204,8 @@ type Col struct {
 //     Label, when set, captions it on its left, as a toggle's does.
 //   - "number" — inline numeric input. Min/Max bound the value; on
 //     blur or change POSTs {Field: newValue}.
+//     Decimals takes a fraction; PlaceholderField shows a row's fallback
+//     greyed and posts null for an emptied box.
 //   - "button" — labeled button. On click, POSTs (or GETs if Method
 //     set) to PostTo. Optional Confirm shows a dialog first.
 //     Method "client" instead dispatches to a browser handler
@@ -264,6 +266,14 @@ type RowAction struct {
 	// Min, Max for number-type row actions.
 	Min int `json:"min,omitempty"`
 	Max int `json:"max,omitempty"`
+	// Decimals lets a number-type row action take a fraction, to that many
+	// places (a price); 0 takes whole numbers.
+	Decimals int `json:"decimals,omitempty"`
+	// PlaceholderField names a record field shown greyed in a number-type
+	// row action's empty box: what an empty box stands for (a default from
+	// elsewhere). With it, emptying the box posts null, so the row goes back
+	// to that, rather than 0.
+	PlaceholderField string `json:"placeholder_field,omitempty"`
 	// DisableIf hides/disables the control when record[field] is truthy.
 	// Use for "private" rows that can't pick certain options (e.g. a
 	// private routing stage that can't route to lead).

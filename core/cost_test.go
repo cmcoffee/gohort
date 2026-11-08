@@ -475,3 +475,32 @@ func TestHasDistinctLeadDrivesTheAttribution(t *testing.T) {
 		t.Error("a genuinely distinct lead is not being recognized")
 	}
 }
+
+// A rates record saved while search and image calls had global per-call
+// rates still loads, with its token rates kept; the two per-call rates are
+// read past, so a search or picture is priced only by what made it (its
+// connector or credential) and never counts twice in the chart.
+func TestRatesSavedWithPerCallRatesStillLoad(t *testing.T) {
+	db := memDB(t)
+	type before struct {
+		WorkerInputPer1K  float64 `json:"worker_input_per_1k"`
+		WorkerOutputPer1K float64 `json:"worker_output_per_1k"`
+		LeadInputPer1K    float64 `json:"lead_input_per_1k"`
+		LeadOutputPer1K   float64 `json:"lead_output_per_1k"`
+		SearchPerCall     float64 `json:"search_per_call"`
+		ImagePerCall      float64 `json:"image_per_call"`
+	}
+	db.Set(costRatesTable, costRatesKey, before{LeadInputPer1K: 0.003, SearchPerCall: 0.01, ImagePerCall: 0.04})
+	saved := GetCostRates()
+	t.Cleanup(func() { SetCostRates(saved) })
+	if !LoadCostRatesFromDB(db) {
+		t.Fatal("the old record did not load")
+	}
+	r := GetCostRates()
+	if r.LeadInputPer1K != 0.003 {
+		t.Errorf("its token rate was lost: %+v", r)
+	}
+	if got := r.Estimate(UsageDiff{SearchCalls: 10, ImageCalls: 2}); got != 0 {
+		t.Errorf("ten searches and two pictures cost %v by the global rates, want none", got)
+	}
+}

@@ -25,8 +25,9 @@ type CostRates struct {
 	WorkerOutputPer1K float64 `json:"worker_output_per_1k"`
 	LeadInputPer1K    float64 `json:"lead_input_per_1k"`
 	LeadOutputPer1K   float64 `json:"lead_output_per_1k"`
-	SearchPerCall     float64 `json:"search_per_call"`
-	ImagePerCall      float64 `json:"image_per_call"`
+	// Search and image calls are priced by what makes them: a connector's
+	// Price, a credential's cost per call (Overview > Cost by source). The
+	// per-call rates once kept here are read past, so none counts twice.
 	// Cache multipliers, applied to the tier's INPUT rate. A prompt served
 	// from cache bills at a fraction of an ordinary input token and one
 	// written to cache at slightly more, so pricing the cached share at the
@@ -100,8 +101,6 @@ func (r CostRates) Estimate(d UsageDiff) float64 {
 	cost += float64(d.WorkerCacheWrite) / 1000.0 * r.WorkerInputPer1K * r.cacheWriteMultiplier()
 	cost += float64(d.LeadCacheRead) / 1000.0 * r.LeadInputPer1K * r.cacheReadMultiplier()
 	cost += float64(d.LeadCacheWrite) / 1000.0 * r.LeadInputPer1K * r.cacheWriteMultiplier()
-	cost += float64(d.SearchCalls) * r.SearchPerCall
-	cost += float64(d.ImageCalls) * r.ImagePerCall
 	return cost
 }
 

@@ -482,7 +482,7 @@ func connectorTestAction() ui.RowAction {
 
 // connectorListSources are the tables that list connectors. A change made
 // from either one's row reloads both, since a page can hold both.
-var connectorListSources = []string{"api/connectors", mediaBackendsSource, connectorPricesSource}
+var connectorListSources = []string{"api/connectors", mediaBackendsSource, costBySourceSource}
 
 func connectorColumns() []ui.Col {
 	return []ui.Col{

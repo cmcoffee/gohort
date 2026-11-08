@@ -49,24 +49,15 @@ func (a *AdminApp) costSections() []ui.Section {
 		},
 		{
 			Title:    "Cost by source",
-			Subtitle: "Metered connector and credential spend over the last 30 days.",
-			Detail:   "One row per source. Set a per-call cost on an API credential, or a cost in a connector's spec, to track it here; it also folds into the chart total above.",
-			Body: ui.Table{
-				Source:    costBySourceSource,
-				RowKey:    "source_id",
-				EmptyText: "No metered external calls recorded yet. Set a \"Cost per call\" on an API credential, or a cost in a connector's spec, to track its spend here.",
-				Columns: []ui.Col{
-					{Field: "label", Label: "Source", Flex: 2},
-					{Field: "calls", Label: "Calls", Format: "thousands", Flex: 1},
-					{Field: "cost", Label: "Cost ($)", Flex: 1},
-				},
-			},
+			Subtitle: "What each connector and API credential spent over the last 30 days, and its price.",
+			Detail:   "One row per source: each job a connector does, and each API credential. Its price is set in the box on its row, per call or per the unit it is priced by: blank uses its template's, shown greyed. It is kept with the source (a connector's Settings show the same Price), and what the source spends folds into the chart total above. A provider that reports its price in its reply is read first. Other rows (a peer's share, a search engine gohort runs itself) are priced where they are made.",
+			Body:     costBySourceTable(),
 		},
 		{
 			Title:    "Prices",
-			Subtitle: "Per-token and per-call dollar rates that feed the dollar estimate above.",
-			Detail:   "Worker is the local LLM, Lead the remote one. Set 0 for free tiers. Saved automatically as you edit.\n\nThe two cached-prompt weights at the bottom are multipliers on the input rates, not dollar figures. With prompt caching on, most of a prompt is billed through them rather than at the full input rate.\n\nConnectors (search engines, image backends and the rest) each carry their own price, per job, listed below: set on a row's Settings, else its template's. A provider that reports its price in its reply is read first.",
-			Body: ui.Stack{Children: []ui.Component{ui.FormPanel{
+			Subtitle: "Per-million-token rates for the LLMs, which feed the dollar estimate above.",
+			Detail:   "Worker is the local LLM, Lead the remote one. Set 0 for free tiers. Saved automatically as you edit.\n\nThe two cached-prompt weights at the bottom are multipliers on the input rates, not dollar figures. With prompt caching on, most of a prompt is billed through them rather than at the full input rate.\n\nEverything priced per call (search, pictures, any API) is priced by what makes it, under Cost by source above.",
+			Body: ui.FormPanel{
 				Assist: true,
 				Source: "api/cost-rates",
 				Method: "PUT",
@@ -81,11 +72,6 @@ func (a *AdminApp) costSections() []ui.Section {
 						Help: "Cost of one million input tokens to the lead (remote) LLM, as provider price pages list it."},
 					{Field: "lead_output_per_1m", Label: "Lead output ($/1M tokens)",
 						Type: "number", Decimals: 4, Min: 0},
-					{Field: "search_per_call", Label: "Search ($/call)",
-						Type: "number", Decimals: 6, Min: 0,
-						Help: "Cost per web-search API call (Brave, Tavily, etc.)."},
-					{Field: "image_per_call", Label: "Image generation ($/call)",
-						Type: "number", Decimals: 6, Min: 0},
 					{Field: "cache_read_multiplier", Label: "Cached-read weight (× input rate)",
 						Type: "number", Decimals: 4, Min: 0,
 						Help:   "What a token served FROM cache costs, as a fraction of the input rate above.",
@@ -96,8 +82,6 @@ func (a *AdminApp) costSections() []ui.Section {
 						Detail: "Anthropic charges 1.25 for the 5-minute TTL and 2.0 for the 1-hour one. Set 2.0 if this deployment uses 1-hour caching, or every write is under-reported by 37.5%.\n\nWrites are the premium side: a fresh long prompt is nearly all writes, so this drives the cost of first messages rather than follow-ups."},
 				},
 			},
-				ui.Subsection{Title: "Connectors", Subtitle: "Each connector's price per job. Change one under its row's Settings.", Body: connectorPricesTable()},
-			}},
 		},
 	}
 }

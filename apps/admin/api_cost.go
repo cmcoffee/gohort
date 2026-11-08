@@ -27,9 +27,6 @@ func (a *AdminApp) registerCostRoutes(sub *http.ServeMux) {
 	// init time via core.RegisterCostRecordScanner. Apps plug in their
 	// own record sources — admin stays generic.
 	sub.HandleFunc("/api/cost-history", jsonapi.Get(a.db, a.handleCostHistory, a.gate()))
-
-	sub.HandleFunc("/api/cost-by-source", jsonapi.Get(a.db, a.handleCostBySource, a.gate()))
-
 }
 
 // handleGetCostRates returns the currently configured dollar-rate values
@@ -95,14 +92,6 @@ func (a *AdminApp) handleUpdateCostRates(c *jsonapi.Call, req costRatesUpdate) (
 		rates.LeadOutputPer1K = *req.LeadOutputPer1K
 		adminChange(r, activity.Settings, "set lead_output_per_1k=%g", *req.LeadOutputPer1K)
 	}
-	if req.SearchPerCall != nil {
-		rates.SearchPerCall = *req.SearchPerCall
-		adminChange(r, activity.Settings, "set search_per_call=%g", *req.SearchPerCall)
-	}
-	if req.ImagePerCall != nil {
-		rates.ImagePerCall = *req.ImagePerCall
-		adminChange(r, activity.Settings, "set image_per_call=%g", *req.ImagePerCall)
-	}
 	if req.CacheReadMultiplier != nil {
 		rates.CacheReadMultiplier = *req.CacheReadMultiplier
 		adminChange(r, activity.Settings, "set cache_read_multiplier=%g", *req.CacheReadMultiplier)
@@ -148,8 +137,6 @@ type costRatesUpdate struct {
 	WorkerOutputPer1M *float64 `json:"worker_output_per_1m,omitempty"`
 	LeadInputPer1M    *float64 `json:"lead_input_per_1m,omitempty"`
 	LeadOutputPer1M   *float64 `json:"lead_output_per_1m,omitempty"`
-	SearchPerCall     *float64 `json:"search_per_call,omitempty"`
-	ImagePerCall      *float64 `json:"image_per_call,omitempty"`
 	// Cached-prompt weights. Not rates in dollars — multipliers on the
 	// matching input rate, which is how both providers price them.
 	CacheReadMultiplier  *float64 `json:"cache_read_multiplier,omitempty"`
@@ -190,12 +177,6 @@ func (a *AdminApp) handleCostHistory(c *jsonapi.Call) (any, error) {
 		}
 	}
 	return daily, nil
-}
-
-// handleCostBySource returns each metered source's total spend over the
-// window — the admin "Cost by source" breakdown table.
-func (a *AdminApp) handleCostBySource(c *jsonapi.Call) (any, error) {
-	return map[string]any{"items": CostBySource(costDays(c))}, nil
 }
 
 // costDays is the ?days= window: 30 unless it names another, 0 for all data.

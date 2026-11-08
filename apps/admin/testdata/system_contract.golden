@@ -39,7 +39,7 @@ root GET /api/settings?app=/nope ""
 alice GET /api/cost-rates ""
   403 forbidden
 root GET /api/cost-rates ""
-  200 {"worker_input_per_1k":0,"worker_output_per_1k":0,"lead_input_per_1k":0,"lead_output_per_1k":0,"search_per_call":0,"image_per_call":0,"cache_read_multiplier":0.1,"cache_write_multiplier":1.25,"configured":true,"worker_input_per_1m":0,"worker_output_per_1m":0,"lead_input_per_1m":0,"lead_output_per_1m":0}
+  200 {"worker_input_per_1k":0,"worker_output_per_1k":0,"lead_input_per_1k":0,"lead_output_per_1k":0,"cache_read_multiplier":0.1,"cache_write_multiplier":1.25,"configured":true,"worker_input_per_1m":0,"worker_output_per_1m":0,"lead_input_per_1m":0,"lead_output_per_1m":0}
 (signed out) GET /api/cost-history ""
   403 forbidden
 alice GET /api/cost-history ""
@@ -184,21 +184,21 @@ root POST /api/settings/reset-tunables ""
   200 {"status":"reset"}
 root PUT /api/settings/reset-tunables ""
   405 method not allowed
-alice PUT /api/cost-rates "{\"search_per_call\":0.01}"
+alice PUT /api/cost-rates "{\"cache_read_multiplier\":0.1}"
   403 forbidden
-root PUT /api/cost-rates "{\"search_per_call\":0.01,\"image_per_call\":0.04,\"cache_read_multiplier\":0.1}"
-  200 {"worker_input_per_1k":0,"worker_output_per_1k":0,"lead_input_per_1k":0,"lead_output_per_1k":0,"search_per_call":0.01,"image_per_call":0.04,"cache_read_multiplier":0.1}
+root PUT /api/cost-rates "{\"lead_input_per_1m\":3,\"cache_read_multiplier\":0.1}"
+  200 {"worker_input_per_1k":0,"worker_output_per_1k":0,"lead_input_per_1k":0.003,"lead_output_per_1k":0,"cache_read_multiplier":0.1}
 root PUT /api/cost-rates "{\"worker_input_per_1k\":0.002,\"worker_input_per_1m\":1.5,\"lead_output_per_1m\":9}"
-  200 {"worker_input_per_1k":0.0015,"worker_output_per_1k":0,"lead_input_per_1k":0,"lead_output_per_1k":0.009,"search_per_call":0.01,"image_per_call":0.04,"cache_read_multiplier":0.1}
-root PUT /api/cost-rates "{\"search_per_call\":"
+  200 {"worker_input_per_1k":0.0015,"worker_output_per_1k":0,"lead_input_per_1k":0.003,"lead_output_per_1k":0.009,"cache_read_multiplier":0.1}
+root PUT /api/cost-rates "{\"cache_read_multiplier\":"
   400 invalid JSON: unexpected EOF
 root PUT /api/cost-rates ""
   400 invalid JSON: EOF
 root POST /api/cost-rates "{}"
   405 method not allowed
 root GET /api/cost-rates ""
-  200 {"worker_input_per_1k":0.0015,"worker_output_per_1k":0,"lead_input_per_1k":0,"lead_output_per_1k":0.009,"search_per_call":0.01,"image_per_call":0.04,"cache_read_multiplier":0.1,"cache_write_multiplier":1.25,"configured":true,"worker_input_per_1m":1.5,"worker_output_per_1m":0,"lead_input_per_1m":0,"lead_output_per_1m":9}
-activity log, 32 entries:
+  200 {"worker_input_per_1k":0.0015,"worker_output_per_1k":0,"lead_input_per_1k":0.003,"lead_output_per_1k":0.009,"cache_read_multiplier":0.1,"cache_write_multiplier":1.25,"configured":true,"worker_input_per_1m":1.5,"worker_output_per_1m":0,"lead_input_per_1m":3,"lead_output_per_1m":9}
+activity log, 31 entries:
   settings root: cleared timezone (host zone; applies on restart)
   settings root: reverted tunables to defaults (app="/nope")
   settings root: reverted tunables to defaults (category="")
@@ -210,14 +210,13 @@ activity log, 32 entries:
   settings root: set doc_brand="Brand"
   settings root: set external_url="https://example.test"
   settings root: set fetch_cache_quota_mb=0
-  settings root: set image_per_call=0.04
+  settings root: set lead_input=$3 per 1M tokens
   settings root: set lead_output=$9 per 1M tokens
   settings root: set lockout_minutes=30
   settings root: set max_login_attempts=7
   settings root: set notify_from="ops@example.test"
   settings root: set ollama_proxy_bind=127.0.0.1
   settings root: set ollama_proxy_port=11500
-  settings root: set search_per_call=0.01
   settings root: set service_name="Example"
   settings root: set session_absolute_days=0
   settings root: set session_days=14
