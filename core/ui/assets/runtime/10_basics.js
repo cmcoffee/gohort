@@ -2245,6 +2245,7 @@
     // defaults) sees the usual single field list; the stepper is a
     // presentation layer over the same one-record state.
     var stepsMode = Array.isArray(cfg.steps) && cfg.steps.length > 0;
+    if (!cfg.fields) cfg.fields = []; // FieldsSource fills them as it opens
     if (stepsMode) {
       cfg.fields = cfg.steps.reduce(function(acc, st) {
         return acc.concat(st.fields || []);
@@ -5028,11 +5029,26 @@
         }).catch(function() { f.options = f.options || []; });
       }));
     }
+    // FieldsSource: the fields are read as the form opens, in place of the
+    // ones the page was built with, so a form over data added since (a
+    // record the page never knew) has that data's fields. The answer is a
+    // list of fields or {fields: [...]}; a read that fails says so, as a
+    // failed Source does, unless the form declared fields to fall back on.
+    function loadFields() {
+      if (!cfg.fields_source || stepsMode) return Promise.resolve();
+      return fetchJSON(cfg.fields_source).then(function(raw) {
+        var list = Array.isArray(raw) ? raw : ((raw && raw.fields) || []);
+        cfg.fields = list;
+      }, function(err) {
+        if (cfg.fields && cfg.fields.length) return;
+        throw err;
+      });
+    }
     // Source empty / unset → render with an empty record. Lets a
     // FormPanel act as a create-form when there's nothing to load,
     // posting the typed fields to PostURL on save.
     function load() {
-      loadOptionSources().then(function() {
+      loadFields().then(loadOptionSources).then(function() {
         if (cfg.source) {
           fetchJSON(cfg.source).then(function(d){ current = d || {}; render(); wrap.uiForm.loaded = true; })
             .catch(function(err){ wrap.textContent = 'Failed to load: ' + err.message; });
@@ -5040,7 +5056,7 @@
           render();
           wrap.uiForm.loaded = true;
         }
-      });
+      }).catch(function(err){ wrap.textContent = 'Failed to load: ' + err.message; });
     }
     // RefreshOn — reload when ANOTHER view of these values saves. Exact
     // match, so this form's own saves never reload it. Deferred while focus

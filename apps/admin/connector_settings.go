@@ -422,21 +422,31 @@ func chosenConnection(provider string) string {
 // connection by, so each connection's fields show for it alone.
 const connectionNameField = "_conn"
 
-// connectionSettingsFields are every connection's settings, each shown while
-// the form is for that connection: the row's Settings.
-func connectionSettingsFields() []ui.FormField {
+// connectionSettingsFields are connection c's settings, the row's Settings:
+// its display name and what its spec takes, read when the form opens, so a
+// connection added or updated since the page loaded has its own.
+func connectionSettingsFields(c Connector) []ui.FormField {
 	out := []ui.FormField{{Field: connectionNameField, Type: "hidden"},
 		{Field: "display_name", Label: "Display name", Placeholder: "(its name)",
 			Help: "What the pages that offer it, and its row, show it as. Blank shows its name."}}
-	for _, c := range ListConnectors(RootDB) {
-		if c.Kind != service.Kind {
-			continue
-		}
-		for _, st := range service.SettingsFor(c, "") {
-			out = append(out, settingFormFields(c.Name, st, connectionNameField+":"+c.Name)...)
-		}
+	if c.Kind != service.Kind {
+		return out
+	}
+	for _, st := range service.SettingsFor(c, "") {
+		out = append(out, settingFormFields(c.Name, st, connectionNameField+":"+c.Name)...)
 	}
 	return out
+}
+
+// handleConnectionSettingsFields is the fields of connection name's Settings
+// form (its FieldsSource).
+func (a *AdminApp) handleConnectionSettingsFields(c *jsonapi.Call) (any, error) {
+	name := strings.TrimSpace(c.R.URL.Query().Get("name"))
+	conn, ok := GetConnector(RootDB, name)
+	if !ok {
+		return nil, jsonapi.NotFound("no connector named " + name)
+	}
+	return connectionSettingsFields(conn), nil
 }
 
 // handleConnectionSettings is connection name's settings, as its row's

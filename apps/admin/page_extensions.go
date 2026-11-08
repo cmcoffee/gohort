@@ -439,15 +439,17 @@ func templateSaveButton() ui.ModalButton {
 // connectorColumns are a connector row's columns, in both lists.
 // connectorSettingsAction is a connector row's Settings: its values and its
 // key, the form the page that chooses it shows. Every table listing
-// connectors uses this one, so a connector's settings are one form.
+// connectors uses this one, so a connector's settings are one form. Its
+// fields are read as it opens, so a connector added from a template, or
+// updated from one, since the page loaded has its key and settings there.
 func connectorSettingsAction() ui.RowAction {
 	return ui.ModalActionIf("Settings", "has_settings", "", ui.FormPanel{
-		Source:      "api/connectors/settings?name={name}",
-		PostURL:     "api/connectors/settings?name={name}",
-		Method:      "POST",
-		SubmitLabel: "Save",
-		Invalidate:  connectorListSources,
-		Fields:      connectionSettingsFields(),
+		Source:       "api/connectors/settings?name={name}",
+		FieldsSource: "api/connectors/settings/fields?name={name}",
+		PostURL:      "api/connectors/settings?name={name}",
+		Method:       "POST",
+		SubmitLabel:  "Save",
+		Invalidate:   connectorListSources,
 	})
 }
 

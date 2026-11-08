@@ -53,6 +53,7 @@ func (a *AdminApp) registerConnectorsRoutes(sub *http.ServeMux) {
 		"GET":  jsonapi.Get(a.db, a.handleConnectionSettings, a.gate()),
 		"POST": jsonapi.Post(a.db, a.handleConnectionSettingsSave, a.gate(), jsonapi.MaxBody(1<<20)),
 	}.Serve)
+	sub.HandleFunc("/api/connectors/settings/fields", jsonapi.Get(a.db, a.handleConnectionSettingsFields, a.gate()))
 	sub.HandleFunc("/api/connectors/options", jsonapi.Post(a.db, a.handleConnectionOptions, a.gate(), jsonapi.MaxBody(1<<20)))
 	// Who may reach a connection through agents' tools (its row's Access).
 	sub.HandleFunc("/api/connectors/access", jsonapi.Methods{

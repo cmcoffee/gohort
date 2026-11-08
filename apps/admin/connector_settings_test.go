@@ -359,6 +359,35 @@ func TestAConnectionsRowSaysWhatNeedsAttention(t *testing.T) {
 	}
 }
 
+// A row's Settings reads its fields as it opens: a connection added after the
+// page was built (from a template, by Add AI generator) has its key and
+// settings there, with no reload.
+func TestSettingsOfAConnectionAddedSinceThePageLoaded(t *testing.T) {
+	srv, _ := settingsWorld(t)
+	built, _ := json.Marshal(connectorSettingsAction())
+	if !strings.Contains(string(built), `"fields_source":"api/connectors/settings/fields?name={name}"`) {
+		t.Fatalf("Settings does not read its fields as it opens: %s", built)
+	}
+	vecConnector(t, srv.URL)
+	a := &AdminApp{db: RootDB}
+	out, err := a.handleConnectionSettingsFields(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/connectors/settings/fields?name=vec", nil)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	have := map[string]bool{}
+	for _, f := range out.([]ui.FormField) {
+		have[f.Field] = true
+	}
+	for _, f := range []string{connectionNameField, "display_name", "config/vec/api_key", "config/vec/api_key" + keystoreSuffix, "config/vec/endpoint"} {
+		if !have[f] {
+			t.Errorf("no %s among its fields: %v", f, have)
+		}
+	}
+	if _, err := a.handleConnectionSettingsFields(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/connectors/settings/fields?name=gone", nil)}); err == nil {
+		t.Error("fields for a connector that does not exist")
+	}
+}
+
 // Which key a connection keeps shows beside its key field, on the pages that
 // choose it and its row's Settings, and on its row: its last four
 // characters and the day it was given, never the key.
@@ -370,7 +399,7 @@ func TestAKeptKeyShowsItsEnd(t *testing.T) {
 	SetConnectionSecret(RootDB, c, "api_key", key, []string{srv.URL})
 	want := "ends in …WXYZ, given " + time.Now().Format("2 Jan 2006")
 
-	for name, fields := range map[string][]ui.FormField{"the page": embeddingFormFields(), "its Settings": connectionSettingsFields()} {
+	for name, fields := range map[string][]ui.FormField{"the page": embeddingFormFields(), "its Settings": connectionSettingsFields(c)} {
 		var shown *ui.FormField
 		for i, f := range fields {
 			if f.Field == "kept/vec/api_key" {

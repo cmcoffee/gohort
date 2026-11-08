@@ -38,6 +38,14 @@ type FormPanel struct {
 	SideNav bool `json:"side_nav,omitempty"`
 
 	Fields []FormField `json:"fields"`
+	// FieldsSource is a URL whose reply is the form's fields (a list of
+	// FormField, or {fields: [...]}), read each time the form opens, before
+	// its Source, in place of Fields: for a form whose fields depend on
+	// data that can change after the page is built (a record added since,
+	// whose settings the page never knew). {field} placeholders fill from
+	// the row, as Source's do. Fields, if any, show when the read fails.
+	// Not for Steps.
+	FieldsSource string `json:"fields_source,omitempty"`
 	// Steps — when set, the form renders as a multi-step wizard
 	// instead of one flat field list: a numbered progress rail, one
 	// step's fields visible at a time, Back/Next navigation, and the
