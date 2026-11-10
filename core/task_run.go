@@ -30,18 +30,14 @@ func init() {
 	RegisterTunable(TunableSpec{
 		Key: "tune_task_detach_threshold", Category: "Tools & background work",
 		Label:  "Detach long tool calls after",
-		Help:   "A tool call expected to take longer than this runs detached.",
-		Detail: "It returns straight away, keeps working in the background, and delivers its result into the conversation when it finishes. Set it high to keep everything inline.",
-		// 300s clears the image-generate deadline (180s) and sits under the edit
-		// one (900s), so today only edits detach.
-		//
-		// It is a workaround, and worth replacing. A tool's estimate is its
-		// DEADLINE — how long before we give up — not how long the work takes,
-		// so it over-reports by however much headroom the operator left. At 120s
-		// that made every generate detach, including ones that finish in twenty
-		// seconds. Tuning the threshold around a bad estimate only holds while
-		// the two backends stay this far apart; measuring what a backend
-		// actually takes is the fix.
+		Help:   "A tool call that usually takes longer than this runs detached.",
+		Detail: "It returns straight away, keeps working in the background, and delivers its result into the conversation when it finishes. Usually is measured: once a generator (an image backend, music, video, speech) has run, what it took decides; until then, the most it is allowed to take. Set it high to keep everything inline.",
+		// A tool's declared estimate is its DEADLINE, how long before we give
+		// up, not how long the work takes, so it over-reports by however much
+		// headroom the operator left: at 120s every image generate detached,
+		// including ones that finish in twenty seconds. So the deadline decides
+		// only until the call has been measured (TypicalConnectorDuration), and
+		// what it was measured to take decides after (shouldDetachPolicy).
 		//
 		// Detaching is not free either: the conversation pauses between rounds,
 		// and a long enough gap lets other traffic evict its prefix from the

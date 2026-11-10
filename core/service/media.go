@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/flows"
@@ -337,6 +338,26 @@ func (t *musicTool) SchemaWithSession(sess *ToolSession) (string, map[string]Too
 	return t.Desc(), t.Params()
 }
 
+// TypicalDuration is what this connector has been taking to make a song,
+// measured: once known, it decides whether the call goes to the background
+// (a song that takes minutes no longer holds the conversation shut) and is
+// the time the agent may quote. Zero until it has made one.
+func (t *musicTool) TypicalDuration(args map[string]any, sess *ToolSession) time.Duration {
+	return TypicalConnectorDuration(t.connector)
+}
+
+// Preflight is what the call can be refused for before it is sent to the
+// background, while the agent can still fix it.
+func (t *musicTool) Preflight(args map[string]any, sess *ToolSession) error {
+	if !t.offered() {
+		return fmt.Errorf("%s is not offered: the Music settings no longer offer the connector %s to agents", t.Name(), t.connector)
+	}
+	if v, _ := args["prompt"].(string); strings.TrimSpace(v) == "" {
+		return fmt.Errorf("say what the song is in prompt")
+	}
+	return nil
+}
+
 func (t *musicTool) Run(args map[string]any) (string, error) {
 	return "", fmt.Errorf("%s needs a session to save the song in", t.Name())
 }
@@ -358,10 +379,12 @@ func (t *musicTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 	if sess != nil {
 		ctx = sess.Context()
 	}
+	started := time.Now()
 	res, err := Call(ctx, sess, t.connector, "music.generate", in)
 	if err != nil {
 		return "", err
 	}
+	RecordConnectorDuration(t.connector, time.Since(started))
 	f := res["audio"].File
 	defer os.Remove(f.Path)
 	data, err := os.ReadFile(f.Path)

@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/media"
@@ -489,5 +490,54 @@ func TestAStoredConnectorClaimsItsTool(t *testing.T) {
 		if ToolNameClaimed(name) {
 			t.Errorf("%s is claimed, and no connector makes it", name)
 		}
+	}
+}
+
+// A song is timed as it is made, so the next one can go to the background
+// when songs are slow: the tool reports what its connector has been taking
+// (zero until it has made one) and refuses a call it can tell is wrong
+// before it is sent there, where the agent could no longer fix it.
+func TestAMusicToolKnowsHowLongItTakes(t *testing.T) {
+	world(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(20 * time.Millisecond)
+		w.Header().Set("Content-Type", "audio/mpeg")
+		w.Write(mp3ish)
+	}))
+	defer srv.Close()
+	install(t, "timedtunes", map[string]any{
+		"provider": map[string]any{"transport": "http", "base_url": srv.URL, "auth": map[string]any{"none": true},
+			"operations": map[string]any{"song": map[string]any{"method": "POST", "path": "/songs",
+				"body": map[string]any{"prompt": "{prompt}"}, "read": "file"}}},
+		"provides": []any{map[string]any{"capability": "music.generate", "steps": []any{map[string]any{"call": "song"}},
+			"output": map[string]any{"audio": map[string]any{"from": "body"}}}},
+	})
+	RootDB.Set(MusicTable, "agents", []string{"timedtunes"})
+	var tool ChatTool
+	for _, ct := range RegisteredChatTools() {
+		if ct.Name() == "generate_music_timedtunes" {
+			tool = ct
+		}
+	}
+	est, ok := tool.(EstimatingTool)
+	pre, ok2 := tool.(PreflightTool)
+	if !ok || !ok2 {
+		t.Fatalf("the music tool does not report its time or preflight: %v %v", ok, ok2)
+	}
+	sess := &ToolSession{WorkspaceDir: t.TempDir()}
+	if d := est.TypicalDuration(nil, sess); d != 0 {
+		t.Errorf("before any song it claims %s", d)
+	}
+	if err := pre.Preflight(map[string]any{}, sess); err == nil || !strings.Contains(err.Error(), "prompt") {
+		t.Errorf("a song with no prompt passed preflight: %v", err)
+	}
+	if err := pre.Preflight(map[string]any{"prompt": "a calm song"}, sess); err != nil {
+		t.Errorf("a good call failed preflight: %v", err)
+	}
+	if _, err := tool.(SessionChatTool).RunWithSession(map[string]any{"prompt": "a calm song"}, sess); err != nil {
+		t.Fatal(err)
+	}
+	if d := est.TypicalDuration(nil, sess); d < 20*time.Millisecond || d > 5*time.Second {
+		t.Errorf("after a song it reports %s", d)
 	}
 }

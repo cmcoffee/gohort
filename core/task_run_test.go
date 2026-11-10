@@ -383,18 +383,18 @@ func TestMeasuredDurationsUseTheMedian(t *testing.T) {
 	// described by.
 	const backend = "test_backend_median"
 	for _, d := range []time.Duration{30 * time.Second, 35 * time.Second, 40 * time.Second, 15 * time.Minute} {
-		RecordImageBackendDuration(backend, d)
+		RecordConnectorDuration(backend, d)
 	}
-	got := TypicalImageBackendDuration(backend)
+	got := TypicalConnectorDuration(backend)
 	if got > time.Minute {
 		t.Errorf("typical = %s — one cold start dragged the estimate", got)
 	}
-	if TypicalImageBackendDuration("never_measured_backend") != 0 {
+	if TypicalConnectorDuration("never_measured_backend") != 0 {
 		t.Error("an unmeasured backend must report zero, which reads as \"say nothing\"")
 	}
 	// A failed render measures the deadline, not the backend.
-	RecordImageBackendDuration(backend, 0)
-	if TypicalImageBackendDuration(backend) > time.Minute {
+	RecordConnectorDuration(backend, 0)
+	if TypicalConnectorDuration(backend) > time.Minute {
 		t.Error("a zero sample should be ignored, not folded in")
 	}
 }

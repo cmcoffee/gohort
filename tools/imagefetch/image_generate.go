@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	_ "golang.org/x/image/webp" // register the WebP decoder for image.Decode
@@ -34,6 +35,20 @@ func (t *GenerateImageTool) Params() map[string]ToolParam {
 }
 
 func (t *GenerateImageTool) IsInternetTool() bool { return true }
+
+// The standalone tool renders through the default backend, the same act as
+// `image`'s generate, so it goes to the background on the same terms: one
+// slot and one set with it, the same knob, and its backend's measured time.
+func (t *GenerateImageTool) DetachIdentity() string { return RenderDetachIdentity }
+func (t *GenerateImageTool) AlwaysDetach(args map[string]any, sess *ToolSession) bool {
+	return TuneBool("tune_image_always_detach")
+}
+func (t *GenerateImageTool) ExpectedDuration(args map[string]any, sess *ToolSession) time.Duration {
+	return ImageBackendDeadline(sess, "")
+}
+func (t *GenerateImageTool) TypicalDuration(args map[string]any, sess *ToolSession) time.Duration {
+	return ImageBackendTypicalDuration(sess, "")
+}
 
 func (t *GenerateImageTool) Run(args map[string]any) (string, error) {
 	return "", fmt.Errorf("generate_image requires a session context: use GetAgentToolsWithSession")

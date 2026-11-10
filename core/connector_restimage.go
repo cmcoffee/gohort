@@ -2376,5 +2376,5 @@ func ImageBackendTypicalDuration(sess *ToolSession, backend string) time.Duratio
 	if backend == "" {
 		return 0
 	}
-	return TypicalImageBackendDuration(backend)
+	return TypicalConnectorDuration(backend)
 }

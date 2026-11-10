@@ -54,8 +54,9 @@ type DetachPolicy struct {
 	Always func(args map[string]any, sess *ToolSession) bool
 
 	// Typical mirrors EstimatingTool.TypicalDuration — a MEASURED number, and
-	// the only one the agent may quote. Nil means the notice puts no time on
-	// it rather than inventing one.
+	// the only one the agent may quote. Once it is known it, not Expected,
+	// decides whether the call goes to the background. Nil or zero means the
+	// notice puts no time on it rather than inventing one.
 	Typical func(args map[string]any, sess *ToolSession) time.Duration
 
 	// Preflight mirrors PreflightTool: the part of the call that can be
@@ -91,8 +92,15 @@ func (p DetachPolicy) key() string {
 // shouldDetachPolicy reports whether a call runs detached. All three have to
 // hold: a host that can run tasks, a policy that can run the call detached,
 // and either a declaration of background work (which outranks the clock: the
-// cost avoided is a blocked conversation, not a long one) or an expected
-// duration past the threshold for the surface this turn is happening on.
+// cost avoided is a blocked conversation, not a long one) or a duration past
+// the threshold for the surface this turn is happening on.
+//
+// The duration is what the call is measured to take (Typical) once it has
+// been measured, and only until then the declared one (Expected). The
+// declared one is a deadline, the most the call is allowed: an image backend
+// declares fifteen minutes and renders in forty seconds, so judged by its
+// deadline every call went to the background, and a generator that declared
+// none never did, however long it ran.
 // A ChatTool reaches it through detachPolicyForChatTool.
 func shouldDetachPolicy(p DetachPolicy, args map[string]any, sess *ToolSession) bool {
 	if TaskRunnerFunc == nil || sess == nil || p.Detached == nil || p.Tool == "" {
@@ -100,6 +108,11 @@ func shouldDetachPolicy(p DetachPolicy, args map[string]any, sess *ToolSession) 
 	}
 	if p.Always != nil && p.Always(args, sess) {
 		return true
+	}
+	if p.Typical != nil {
+		if typical := p.Typical(args, sess); typical > 0 {
+			return typical >= taskDetachThreshold(sess)
+		}
 	}
 	if p.Expected == nil {
 		return false

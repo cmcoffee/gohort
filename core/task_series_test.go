@@ -538,3 +538,46 @@ func TestAHeldPassWakesTheNextOne(t *testing.T) {
 		t.Error("nothing held, no instruction")
 	}
 }
+
+// Once a call has been measured, what it takes decides whether it goes to the
+// background, not the deadline it declares. An image backend declares fifteen
+// minutes and renders in forty seconds; a generator that declares nothing used
+// never to detach however long it ran. Until measured, the declared one
+// decides, and a declaration of background work outranks both.
+func TestAMeasuredDurationDecidesOverTheDeadline(t *testing.T) {
+	saved := TaskRunnerFunc
+	TaskRunnerFunc = func(*ToolSession, string, func(context.Context) (TaskProduct, error)) (TaskRun, error) {
+		return TaskRun{ID: "t"}, nil
+	}
+	t.Cleanup(func() { TaskRunnerFunc = saved })
+	watched, texting := &ToolSession{}, &ToolSession{ChannelChatID: "c"}
+
+	var typical, expected time.Duration
+	always := false
+	p := DetachPolicy{
+		Tool:     "generate_music_test",
+		Detached: func(map[string]any, *ToolSession) (string, error) { return "", nil },
+		Expected: func(map[string]any, *ToolSession) time.Duration { return expected },
+		Typical:  func(map[string]any, *ToolSession) time.Duration { return typical },
+		Always:   func(map[string]any, *ToolSession) bool { return always },
+	}
+	expected = 15 * time.Minute
+	if !shouldDetachPolicy(p, nil, watched) {
+		t.Error("not measured yet, the declared deadline decides")
+	}
+	typical = 40 * time.Second
+	if shouldDetachPolicy(p, nil, watched) {
+		t.Error("measured at forty seconds, a watched chat waits for it, whatever the deadline")
+	}
+	if !shouldDetachPolicy(p, nil, texting) {
+		t.Error("forty seconds of silence on a text thread still goes to the background")
+	}
+	expected, typical = 0, 6*time.Minute
+	if !shouldDetachPolicy(p, nil, watched) {
+		t.Error("a generator that declares no deadline detaches once it is measured as slow")
+	}
+	typical, always = 2*time.Second, true
+	if !shouldDetachPolicy(p, nil, watched) {
+		t.Error("a declaration of background work outranks a fast measurement")
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -257,6 +258,28 @@ func (t *mediaTool) SchemaWithSession(sess *ToolSession) (string, map[string]Too
 	return t.Desc(), t.Params()
 }
 
+// TypicalDuration is what this connector has been taking, measured: once
+// known, it decides whether the call goes to the background and is the time
+// the agent may quote. Zero until it has made something.
+func (t *mediaTool) TypicalDuration(args map[string]any, sess *ToolSession) time.Duration {
+	return TypicalConnectorDuration(t.connector)
+}
+
+// Preflight is what the call can be refused for before it is sent to the
+// background, while the agent can still fix it.
+func (t *mediaTool) Preflight(args map[string]any, sess *ToolSession) error {
+	if !t.offered() {
+		return fmt.Errorf("%s is not offered: Media Generation no longer offers the connector %s to agents", t.Name(), t.connector)
+	}
+	if sess == nil || strings.TrimSpace(sess.WorkspaceDir) == "" {
+		return fmt.Errorf("%s needs a workspace to save what it makes in", t.Name())
+	}
+	if v, _ := args["prompt"].(string); strings.TrimSpace(v) == "" {
+		return fmt.Errorf("say what to make in prompt")
+	}
+	return nil
+}
+
 func (t *mediaTool) Run(args map[string]any) (string, error) {
 	return "", fmt.Errorf("%s needs a session to save what it makes in", t.Name())
 }
@@ -301,10 +324,12 @@ func (t *mediaTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 		}
 		in[mediaFileInputs[i]] = f
 	}
+	started := time.Now()
 	res, err := Call(sess.Context(), sess, t.connector, "media.generate", in)
 	if err != nil {
 		return "", err
 	}
+	RecordConnectorDuration(t.connector, time.Since(started))
 	f := res["file"].File
 	if f == nil {
 		return "", fmt.Errorf("%s made nothing", t.connector)

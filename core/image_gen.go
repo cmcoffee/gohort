@@ -267,7 +267,7 @@ func init() {
 	RegisterTunable(TunableSpec{Key: "tune_image_always_detach", Category: "Images",
 		Label:  "Run image renders in the background",
 		Help:   "Send every image generate and edit to the background instead of holding the turn open.",
-		Detail: "The agent answers immediately and each finished picture arrives as its own message, so a set of variations is delivered one at a time rather than after the whole batch. Turn it off to keep renders inline unless they are slower than the detach threshold.",
+		Detail: "The agent answers immediately and each finished picture arrives as its own message, so a set of variations is delivered one at a time rather than after the whole batch. Turn it off to keep renders inline unless the backend usually takes longer than the detach threshold.",
 		Kind:   KindBool, Default: 1, Min: 0, Max: 1})
 }
 

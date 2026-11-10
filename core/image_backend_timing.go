@@ -1,5 +1,6 @@
 // How long a backend ACTUALLY takes, as opposed to how long we are willing to
-// wait for it.
+// wait for it: an image backend, or any connector that generates (music,
+// video, speech), keyed by the connector's name.
 //
 // Those two numbers were the same number, and it read badly. The deadline is a
 // ceiling — fifteen minutes for an edit, because a large model loading cold on
@@ -8,10 +9,11 @@
 // quoted as an estimate is wrong every time the ceiling isn't hit, which is
 // almost always.
 //
-// So the ceiling keeps its job (deciding whether a call can hold a turn open,
-// and when to give up) and this keeps the other one: what to TELL someone. It
-// is measured, and until a backend has been measured it says nothing rather
-// than guessing.
+// So the ceiling keeps its job (when to give up, and whether a call can hold a
+// turn open until it has been measured) and this keeps the other one: what it
+// really costs. That decides whether a call goes to the background once it
+// is known (shouldDetachPolicy), and is the only number told to someone. Until
+// a backend has been measured it says nothing rather than guessing.
 //
 // In memory on purpose. A restart forgets, the next render re-learns, and the
 // only cost of forgetting is that the agent declines to put a number on it for
@@ -35,11 +37,12 @@ var (
 	renderTimings  = map[string][]time.Duration{}
 )
 
-// RecordImageBackendDuration notes how long one successful render took.
+// RecordConnectorDuration notes how long one successful call to a
+// generating connector took.
 // Failures and timeouts are deliberately NOT recorded: a call that gave up at
 // the deadline measures the deadline, not the backend, and folding those in
 // would drag the estimate back toward the very ceiling this exists to replace.
-func RecordImageBackendDuration(backend string, d time.Duration) {
+func RecordConnectorDuration(backend string, d time.Duration) {
 	if backend == "" || d <= 0 {
 		return
 	}
@@ -52,14 +55,14 @@ func RecordImageBackendDuration(backend string, d time.Duration) {
 	renderTimings[backend] = s
 }
 
-// TypicalImageBackendDuration reports what this backend usually takes, or zero
+// TypicalConnectorDuration reports what this connector usually takes, or zero
 // when it has not been measured yet — which callers must read as "say nothing
 // about the time", never as "instant".
 //
 // The MEDIAN, not the mean: one cold start that paid a full model load is not
 // what the next call will cost, and an average lets that single outlier set the
 // number every render is described by.
-func TypicalImageBackendDuration(backend string) time.Duration {
+func TypicalConnectorDuration(backend string) time.Duration {
 	renderTimingMu.Lock()
 	defer renderTimingMu.Unlock()
 	s := renderTimings[backend]
@@ -76,7 +79,7 @@ func timeImageRender(backend string, fn func() (restImageOutcome, error)) (restI
 	started := time.Now()
 	out, err := fn()
 	if err == nil {
-		RecordImageBackendDuration(backend, time.Since(started))
+		RecordConnectorDuration(backend, time.Since(started))
 	}
 	return out, err
 }
