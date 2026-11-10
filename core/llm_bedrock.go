@@ -360,6 +360,9 @@ func (c *bedrockCreds) get() (awsCreds, error) {
 	creds, expires, err := resolveAWSCredsFn(c.profile, c.explicit)
 	if err != nil && awsSignInExpired(err) && refreshAWSSignIn() {
 		creds, expires, err = resolveAWSCredsFn(c.profile, c.explicit)
+	} else if err != nil && !awsSignInExpired(err) && strings.TrimSpace(os.Getenv(AWSAuthRefreshEnv)) != "" {
+		// The sign-in runs only for an expired one, by the CLI's words.
+		Debug("[bedrock] credentials failed, but not as an expired sign-in, so %s was not run: %v", AWSAuthRefreshEnv, err)
 	}
 	if err != nil {
 		return awsCreds{}, err
@@ -408,6 +411,7 @@ const (
 var awsSignIn struct {
 	sync.Mutex
 	lastOK, lastFail time.Time
+	lastSaid         time.Time // when a skipped sign-in was last explained
 }
 
 // runAWSSignIn runs the sign-in command, logging what it prints as it prints
@@ -423,18 +427,28 @@ var runAWSSignIn = func(ctx context.Context, command string) error {
 	pr, pw := io.Pipe()
 	cmd.Stdout, cmd.Stderr = pw, pw
 	done := make(chan struct{})
+	// Its last lines ride on a failure, so the reason sits in the warning
+	// itself rather than lines above it: "exit status 255" alone says
+	// nothing about what the CLI disliked.
+	var last []string
 	go func() {
 		defer close(done)
 		sc := bufio.NewScanner(pr)
 		for sc.Scan() {
 			if line := strings.TrimSpace(sc.Text()); line != "" {
 				Log("[bedrock] sign-in: %s", line)
+				if last = append(last, line); len(last) > 3 {
+					last = last[1:]
+				}
 			}
 		}
 	}()
 	err := cmd.Run()
 	pw.Close()
 	<-done
+	if err != nil && len(last) > 0 {
+		return fmt.Errorf("%v: %s", err, strings.Join(last, " / "))
+	}
 	return err
 }
 
@@ -460,16 +474,26 @@ func awsSignInExpired(err error) bool {
 // running, and reports whether resolving again is worth trying.
 func refreshAWSSignIn() bool {
 	command := strings.TrimSpace(os.Getenv(AWSAuthRefreshEnv))
-	if command == "" {
-		return false
-	}
 	awsSignIn.Lock()
 	defer awsSignIn.Unlock()
 	now := time.Now()
+	// The reasons nothing runs, said once in a while: each was silent, so an
+	// operator who set the command saw neither a sign-in nor why not.
+	say := func(format string, args ...any) {
+		if now.Sub(awsSignIn.lastSaid) >= awsSignInCooldown {
+			awsSignIn.lastSaid = now
+			Log("%s", fmt.Sprintf(format, args...))
+		}
+	}
+	if command == "" {
+		say("[bedrock] the AWS sign-in has expired, and %s is not set in gohort's own environment (a service does not read your shell's): sign in by hand, or set it where gohort starts", AWSAuthRefreshEnv)
+		return false
+	}
 	if now.Sub(awsSignIn.lastOK) < awsSignInFresh {
 		return true // a sign-in finished while this call waited for it
 	}
 	if now.Sub(awsSignIn.lastFail) < awsSignInCooldown {
+		say("[bedrock] the AWS sign-in has expired; the last sign-in failed at %s, so the next is tried after %s", awsSignIn.lastFail.Format("15:04:05"), awsSignIn.lastFail.Add(awsSignInCooldown).Format("15:04:05"))
 		return false
 	}
 	Log("[bedrock] the AWS sign-in has expired: running %s (%s), waiting up to %s for it", AWSAuthRefreshEnv, command, awsSignInTimeout)

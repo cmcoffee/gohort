@@ -28,8 +28,10 @@
               {
                 "name": "model",
                 "label": "Model",
-                "help": "A Gemini model that makes video through the Interactions API.",
-                "default": "gemini-omni-1.2-flash"
+                "help": "A Gemini model that makes video through the Interactions API. List shows the ones this key can use.",
+                "default": "gemini-omni-1.2-flash",
+                "options_from": "models",
+                "options_match": "^models/(gemini-[a-z0-9.-]*omni[a-z0-9.-]*)$"
               },
               {
                 "name": "seconds",

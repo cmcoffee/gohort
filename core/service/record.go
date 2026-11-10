@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -53,6 +54,11 @@ type CapabilityRecord struct {
 	LastOK    time.Time `json:"last_ok,omitempty"`
 	LastFail  time.Time `json:"last_fail,omitempty"`
 	LastError string    `json:"last_error,omitempty"`
+	// LastRefused and LastRefusal are the last call the provider declined
+	// for its CONTENT (a safety or usage policy): kept apart from failures,
+	// since the service worked and said no to what was asked.
+	LastRefused time.Time `json:"last_refused,omitempty"`
+	LastRefusal string    `json:"last_refusal,omitempty"`
 	// Hours are call counts for this clock hour and the one before.
 	Hours [2]HourCount `json:"hours"`
 	// Spend and Unpriced are today's: what priced calls cost, and how many
@@ -63,9 +69,10 @@ type CapabilityRecord struct {
 
 // HourCount is one clock hour's calls.
 type HourCount struct {
-	Hour   int64 `json:"hour"`
-	Calls  int   `json:"calls"`
-	Failed int   `json:"failed"`
+	Hour    int64 `json:"hour"`
+	Calls   int   `json:"calls"`
+	Failed  int   `json:"failed"`
+	Refused int   `json:"refused,omitempty"`
 }
 
 // HealthCheck is the last free check.
@@ -116,8 +123,9 @@ func updateRecord(name string, fn func(*Record)) {
 func noteCall(ctx context.Context, name, capability string, out outcome, err error) {
 	now := time.Now()
 	var after CapabilityRecord
+	refused := contentRefused(err)
 	defer func() {
-		if err != nil {
+		if err != nil && !refused {
 			failingNotice(name, capability, after)
 		}
 	}()
@@ -145,6 +153,15 @@ func noteCall(ctx context.Context, name, capability string, out outcome, err err
 			c.Spend += out.cost
 		} else if err == nil {
 			c.Unpriced++
+		}
+		// A refusal of the content is the service answering, not failing:
+		// counted as a refusal, it does not make the service "failing" or
+		// send an admin to Fix a spec that is fine.
+		if refused {
+			c.Hours[0].Refused++
+			c.LastRefused, c.LastRefusal = now, clip(err.Error(), 500)
+			c.LastOK = now
+			return
 		}
 		if err != nil {
 			c.Hours[0].Failed++
@@ -184,6 +201,32 @@ func (c *CapabilityRecord) Recent() (calls, failed int) {
 		}
 	}
 	return calls, failed
+}
+
+// RecentRefused is how many of a capability's calls over this hour and the
+// last the provider declined for their content.
+func (c *CapabilityRecord) RecentRefused() int {
+	if c == nil {
+		return 0
+	}
+	h, n := time.Now().Unix()/3600, 0
+	for _, b := range c.Hours {
+		if b.Hour >= h-1 {
+			n += b.Refused
+		}
+	}
+	return n
+}
+
+// contentRefusalMark is the fixed phrase gohort's HTTP layer puts in an
+// error when a provider refused what was asked (core's refusal note), "how a
+// failure reader tells a refusal from a broken tool".
+const contentRefusalMark = "REFUSED THE CONTENT"
+
+// contentRefused reports whether err is a provider declining a call's
+// content rather than the call failing.
+func contentRefused(err error) bool {
+	return err != nil && strings.Contains(err.Error(), contentRefusalMark)
 }
 
 // failNoticeAfter is how many failures, in two hours and more than half the

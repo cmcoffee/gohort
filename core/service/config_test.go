@@ -496,3 +496,20 @@ func TestAPriceSetOnTheRowIsWhatACallCosts(t *testing.T) {
 		t.Errorf("a spec declaring price: %v", err)
 	}
 }
+
+// options_match filters what options_from lists, so it needs one, and it
+// must compile.
+func TestOptionsMatchIsChecked(t *testing.T) {
+	for _, tc := range []struct {
+		f    ConfigField
+		fail bool
+	}{
+		{ConfigField{Name: "model", OptionsFrom: "models", OptionsMatch: "^models/(.*)$"}, false},
+		{ConfigField{Name: "model", OptionsMatch: "^models/(.*)$"}, true},
+		{ConfigField{Name: "model", OptionsFrom: "models", OptionsMatch: "(unclosed"}, true},
+	} {
+		if err := checkField("test", tc.f, false); (err != nil) != tc.fail {
+			t.Errorf("%+v: %v", tc.f, err)
+		}
+	}
+}

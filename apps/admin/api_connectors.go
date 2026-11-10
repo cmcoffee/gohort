@@ -370,7 +370,14 @@ func connectorStatus(conn Connector) (string, bool) {
 			if calls == 1 {
 				noun = "call"
 			}
-			parts = append(parts, fmt.Sprintf("%s: %d %s in the last two hours, %d failed", capability, calls, noun, failed))
+			line := fmt.Sprintf("%s: %d %s in the last two hours, %d failed", capability, calls, noun, failed)
+			if refused := c.RecentRefused(); refused > 0 {
+				line += fmt.Sprintf(", %d refused for their content", refused)
+			}
+			parts = append(parts, line)
+		}
+		if !c.LastRefused.IsZero() && c.LastRefused.After(time.Now().Add(-2*time.Hour)) {
+			parts = append(parts, "last refused for its content "+ago(c.LastRefused)+" (a usage policy, not a fault: the wording asked for is what to change)")
 		}
 		if !c.LastFail.IsZero() && c.LastFail.After(c.LastOK) {
 			parts = append(parts, "failing since "+ago(c.LastFail)+": "+c.LastError)

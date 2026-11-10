@@ -947,3 +947,30 @@ func TestTheSystemOneTemplateDecides(t *testing.T) {
 		t.Error("a wrong answer to the known-answer test passed it")
 	}
 }
+
+// The Gemini templates' Model setting lists the models the key can use, from
+// the provider's own list: only the ones the template can drive (image models
+// for pictures, omni models for video), named as the setting takes them.
+func TestTheGeminiTemplatesListTheirModels(t *testing.T) {
+	world(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"models":[{"name":"models/gemini-2.5-flash"},{"name":"models/gemini-2.5-flash-image"},` +
+			`{"name":"models/gemini-3-pro-image-preview"},{"name":"models/gemini-omni-1.2-flash"},{"name":"models/text-embedding-004"}]}`))
+	}))
+	defer srv.Close()
+	install(t, "gemini-images", templateSpec(t, "gemini-images", srv.URL))
+	install(t, "gemini-video", templateSpec(t, "gemini-video", srv.URL+"/v1beta/"))
+	for name, want := range map[string]string{
+		"gemini-images": "gemini-2.5-flash-image,gemini-3-pro-image-preview",
+		"gemini-video":  "gemini-omni-1.2-flash",
+	} {
+		got, err := ListOptions(context.Background(), name, "model")
+		if err != nil || strings.Join(got, ",") != want {
+			t.Errorf("%s lists %v (%v), want %s", name, got, err, want)
+		}
+	}
+	if got := matchOptions([]string{"a", "b"}, ""); strings.Join(got, ",") != "a,b" {
+		t.Errorf("no match keeps every value: %v", got)
+	}
+}

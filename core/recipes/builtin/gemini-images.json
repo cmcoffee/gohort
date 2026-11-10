@@ -28,8 +28,10 @@
               {
                 "name": "model",
                 "label": "Model",
-                "help": "A Gemini model that returns images.",
-                "default": "gemini-2.5-flash-image"
+                "help": "A Gemini model that returns images. List shows the image models this key can use.",
+                "default": "gemini-2.5-flash-image",
+                "options_from": "models",
+                "options_match": "^models/(gemini-[a-z0-9.-]*image[a-z0-9.-]*)$"
               },
               {
                 "name": "api_key",

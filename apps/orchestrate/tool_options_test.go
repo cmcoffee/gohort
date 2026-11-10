@@ -213,3 +213,43 @@ func TestAResearchSourceIsAnAgentsTool(t *testing.T) {
 		}
 	}
 }
+
+// The framework's own tools that reach outside sit under Built-In Network,
+// first in the list: exactly the ones Private mode takes away, unless a tool
+// names a heading of its own. Nothing else is under it.
+func TestBuiltInNetworkIsWhatPrivateModeTakesAway(t *testing.T) {
+	net := map[string]bool{}
+	for _, n := range internetWorkerToolNames() {
+		net[n] = true
+	}
+	opts := availableWorkerToolOptions("")
+	if len(opts) == 0 || !net["browse_page"] {
+		t.Fatalf("no tools to group (%d options; browse_page reaching outside: %v)", len(opts), net["browse_page"])
+	}
+	under := 0
+	for i, o := range opts {
+		if o.Group != builtinNetworkGroup {
+			continue
+		}
+		under++
+		if !net[o.Value] {
+			t.Errorf("%s is under %s but Private mode keeps it", o.Value, builtinNetworkGroup)
+		}
+		if i >= under {
+			t.Errorf("%s is under %s but not at the top of the list", o.Value, builtinNetworkGroup)
+		}
+	}
+	for _, o := range opts {
+		switch o.Value {
+		case "browse_page", "screenshot_page":
+			if o.Group != builtinNetworkGroup {
+				t.Errorf("%s is under %q, not %s", o.Value, o.Group, builtinNetworkGroup)
+			}
+		case "image":
+			// Reaches outside, but names a heading of its own.
+			if o.Group == builtinNetworkGroup {
+				t.Errorf("image lost its own heading to %s", builtinNetworkGroup)
+			}
+		}
+	}
+}

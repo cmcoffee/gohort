@@ -1231,3 +1231,18 @@ func TestAnExpiredAWSSignInIsRefreshedOnce(t *testing.T) {
 		t.Error("the CLI's expired-session message was not recognised")
 	}
 }
+
+// A sign-in that fails says why in its error, from what the command printed
+// last: "exit status 255" alone said nothing about what the AWS CLI refused.
+func TestAFailedSignInSaysWhatTheCommandPrinted(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sh")
+	}
+	err := runAWSSignIn(context.Background(), `echo "Attempting to open your browser"; echo "The config profile (work) could not be found" >&2; exit 255`)
+	if err == nil || !strings.Contains(err.Error(), "exit status 255") || !strings.Contains(err.Error(), "The config profile (work) could not be found") {
+		t.Errorf("the failure: %v", err)
+	}
+	if err := runAWSSignIn(context.Background(), `echo ok`); err != nil {
+		t.Errorf("a sign-in that worked: %v", err)
+	}
+}

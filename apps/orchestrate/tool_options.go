@@ -115,6 +115,9 @@ func availableWorkerToolOptions(user string) []ui.SelectOption {
 
 	pool := FilterChatTools(BlockedTools)
 	defs := make([]AgentToolDef, 0, len(pool))
+	// The framework's own tools that reach outside: what Private mode
+	// takes away, so the heading and the switch name the same set.
+	builtinNet := map[string]bool{}
 	for _, t := range pool {
 		// Framework-tagged tools hide via the interface — single
 		// source of truth across every picker in the codebase.
@@ -134,6 +137,9 @@ func availableWorkerToolOptions(user string) []ui.SelectOption {
 		// way or the other as it is set): the picker shows the shape that is.
 		if rt, ok := t.(RedirectedTool); ok && len(rt.RedirectTo(nil)) > 0 {
 			continue
+		}
+		if it, ok := t.(InternetTool); ok && it.IsInternetTool() {
+			builtinNet[t.Name()] = true
 		}
 		defs = append(defs, ChatToolToAgentToolDefWithSession(t, nil))
 	}
@@ -200,11 +206,16 @@ func availableWorkerToolOptions(user string) []ui.SelectOption {
 			continue
 		}
 		// Grouping precedence: the category the tool CLAIMS for itself wins
-		// (self-declared, ownership-scoped), then the legacy ToolGroup.Members
-		// mapping (admin-curated), then the capability label as a last resort.
+		// (self-declared, ownership-scoped), then Built-In Network for the
+		// framework's own tools that reach outside, then the legacy
+		// ToolGroup.Members mapping (admin-curated), then the capability
+		// label as a last resort.
 		group := capGroupLabel(d.Tool.Caps)
 		if gName, ok := memberToGroup[d.Tool.Name]; ok {
 			group = gName
+		}
+		if builtinNet[d.Tool.Name] {
+			group = builtinNetworkGroup
 		}
 		if d.Tool.Category != "" {
 			group = d.Tool.Category
@@ -299,14 +310,23 @@ func capGroupLabel(caps []Capability) string {
 	}
 }
 
-// capGroupOrder sorts section headers in the checklist. Capability
-// groups land first in their familiar order (Network, Network+Read,
-// Read, Other); anything else — i.e. a toolbox display name — sorts
-// alphabetically below them by returning a high constant. Toolbox
-// sections then cluster together, ordered by name within the
-// alpha-sort below.
+// builtinNetworkGroup is the heading for the framework's own tools that
+// reach outside this deployment (web search, fetching, the browser, images
+// and video): exactly those Private mode takes away. First in the list, and
+// apart from the "Network" heading an owner's own network tools keep, so
+// what gohort itself reaches is always plain.
+const builtinNetworkGroup = "Built-In Network"
+
+// capGroupOrder sorts section headers in the checklist. Built-In Network
+// comes first, then the capability groups in their familiar order
+// (Network, Network+Read, Read, Other); anything else — i.e. a toolbox
+// display name — sorts alphabetically below them by returning a high
+// constant. Toolbox sections then cluster together, ordered by name within
+// the alpha-sort below.
 func capGroupOrder(g string) int {
 	switch g {
+	case builtinNetworkGroup:
+		return -1
 	case "Network":
 		return 0
 	case "Network + Read":

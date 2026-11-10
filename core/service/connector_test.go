@@ -56,6 +56,7 @@ type fakeAPI struct {
 	fail   bool
 	bad    bool
 	down   bool
+	refuse bool
 	bodies []string
 	img    []byte
 	srv    *httptest.Server
@@ -70,6 +71,8 @@ func newProvider(t *testing.T) *fakeAPI {
 		switch {
 		case p.down:
 			http.Error(w, `{"error":"service unavailable"}`, http.StatusServiceUnavailable)
+		case p.refuse:
+			http.Error(w, `{"error":{"message":"The request was blocked by our usage policy."}}`, http.StatusBadRequest)
 		case r.Method == "POST" && r.URL.Path == "/v1/jobs":
 			b := new(bytes.Buffer)
 			b.ReadFrom(r.Body)
@@ -412,6 +415,31 @@ func TestAFailingServiceTellsTheAdmins(t *testing.T) {
 	}
 	if len(notices.List(RootDB, "bob")) != 0 {
 		t.Error("a non-admin was told")
+	}
+}
+
+// A provider that refuses what was asked, again and again, has a service
+// that works: its refusals are counted as refusals, not failures, and no
+// admin is told it is failing or sent to Fix a spec that is fine.
+func TestARefusalIsNotAFailure(t *testing.T) {
+	world(t)
+	AuthDB().Set(AuthTable, "user:root", AuthUser{Username: "root", Admin: true})
+	p := newProvider(t)
+	install(t, "acme-images", imageSpec(p.srv.URL))
+	p.refuse = true
+	for i := 0; i < 5; i++ {
+		_, err := Call(context.Background(), nil, "acme-images", "image.generate", map[string]any{"prompt": "x"})
+		if err == nil || !strings.Contains(err.Error(), "REFUSED THE CONTENT") {
+			t.Fatalf("call %d: the refusal was not said as one: %v", i, err)
+		}
+	}
+	if list := notices.List(RootDB, "root"); len(list) != 0 {
+		t.Errorf("an admin was told a refusing service is failing: %+v", list)
+	}
+	c := RecordOf("acme-images").Capabilities["image.generate"]
+	calls, failed := c.Recent()
+	if calls != 5 || failed != 0 || c.RecentRefused() != 5 || c.LastRefusal == "" || c.LastError != "" {
+		t.Errorf("the record: %d calls, %d failed, %d refused, last refusal %q, last error %q", calls, failed, c.RecentRefused(), c.LastRefusal, c.LastError)
 	}
 }
 

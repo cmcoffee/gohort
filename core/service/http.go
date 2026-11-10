@@ -168,6 +168,10 @@ func (t transport) do(ctx context.Context, name string, vars map[string]any) (re
 	} else if req.Body, req.ContentType, err = renderRequest(op, vars); err != nil {
 		return reply{}, err
 	}
+	// What went out, for comparing a call with the same request made by hand:
+	// the path (never the query, where a key may ride) and the body with its
+	// pictures shown by size. Debug only: the body is the person's prompt.
+	Debug("[service] %s: %s %s %s", name, method, pathOnly(addr), elideData(req.Body))
 	raw, err := t.send(req)
 	if err != nil {
 		return reply{}, fmt.Errorf("%s: %w", name, err)
@@ -710,4 +714,26 @@ func clip(s string, n int) string {
 		return string(r[:n]) + "..."
 	}
 	return s
+}
+
+// pathOnly is a URL without its query or fragment, where a key may ride.
+func pathOnly(raw string) string {
+	if u, err := url.Parse(raw); err == nil {
+		u.RawQuery, u.Fragment, u.User = "", "", nil
+		return u.String()
+	}
+	if i := strings.IndexAny(raw, "?#"); i >= 0 {
+		return raw[:i]
+	}
+	return raw
+}
+
+// dataRun is a long run of base64, a picture or a file in a request body.
+var dataRun = regexp.MustCompile(`[A-Za-z0-9+/=]{400,}`)
+
+// elideData is a request body with each long base64 run shown by its size.
+func elideData(body string) string {
+	return dataRun.ReplaceAllStringFunc(body, func(m string) string {
+		return fmt.Sprintf("<%s of data>", HumanSize(int64(len(m)*3/4)))
+	})
 }

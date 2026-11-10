@@ -54,6 +54,12 @@ type ConfigField struct {
 	// OptionsFrom names an operation of the connection whose reply lists
 	// values to pick from (its models, say), for text or a choice.
 	OptionsFrom string `json:"options_from,omitempty"`
+	// OptionsMatch is a regular expression the listed values are kept by,
+	// its first group, when it has one, the value: a provider that lists
+	// every model it has, text ones too, under names with a prefix
+	// ("models/gemini-2.5-flash-image"), offers only the ones this
+	// connection can use, as the setting takes them.
+	OptionsMatch string `json:"options_match,omitempty"`
 	// Pattern is a regular expression a text value must match.
 	Pattern string `json:"pattern,omitempty"`
 	// Rows is how tall a longtext box is.
@@ -299,6 +305,14 @@ func checkField(where string, f ConfigField, provider bool) error {
 	if f.Pattern != "" {
 		if _, err := regexp.Compile(f.Pattern); err != nil {
 			return fmt.Errorf("%s %s: pattern: %v", where, f.Name, err)
+		}
+	}
+	if f.OptionsMatch != "" {
+		if f.OptionsFrom == "" {
+			return fmt.Errorf("%s %s: options_match filters what options_from lists, and it has none", where, f.Name)
+		}
+		if _, err := regexp.Compile(f.OptionsMatch); err != nil {
+			return fmt.Errorf("%s %s: options_match: %v", where, f.Name, err)
 		}
 	}
 	if k == "number" && f.Min != nil && f.Max != nil && *f.Min > *f.Max {
@@ -1081,7 +1095,33 @@ func ListOptions(ctx context.Context, name, key string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return optionValues(r.node), nil
+	return matchOptions(optionValues(r.node), st.Field.OptionsMatch), nil
+}
+
+// matchOptions keeps the values match matches, each as its first group when
+// it has one; every value, unchanged, when match is "" (or does not compile,
+// which checkField refuses before it gets here).
+func matchOptions(values []string, match string) []string {
+	re, err := regexp.Compile(match)
+	if match == "" || err != nil {
+		return values
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, v := range values {
+		m := re.FindStringSubmatch(v)
+		if m == nil {
+			continue
+		}
+		if len(m) > 1 {
+			v = m[1]
+		}
+		if v != "" && !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // optionValues reads a list from a reply: the reply itself, or the list

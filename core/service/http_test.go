@@ -105,3 +105,16 @@ func TestAFileFieldIsAWholeStringNamingAFileInput(t *testing.T) {
 		t.Errorf("a whole-string file field was refused: %v", err)
 	}
 }
+
+// A request is logged by its path, never its query, where a key may ride, and
+// with its pictures shown by size.
+func TestARequestIsLoggedWithoutKeysOrData(t *testing.T) {
+	if got := pathOnly("https://api.example.test/v1/models?key=SECRET#x"); got != "https://api.example.test/v1/models" {
+		t.Errorf("path: %q", got)
+	}
+	body := `{"prompt":"make it snowy","data":"` + strings.Repeat("QUJD", 300) + `"}`
+	got := elideData(body)
+	if strings.Contains(got, "QUJDQUJD") || !strings.Contains(got, "make it snowy") || !strings.Contains(got, "of data>") {
+		t.Errorf("body: %s", got)
+	}
+}
