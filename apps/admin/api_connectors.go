@@ -251,6 +251,7 @@ const (
 	groupImages   = "Images and media"
 	groupAudio    = "Speech and Music"
 	groupEmbed    = "Embeddings"
+	groupDecide   = "System One"
 	groupPages    = "Pages and Files"
 	groupMail     = "Mail"
 	groupMessages = "Messaging"
@@ -261,7 +262,7 @@ const (
 	groupPeers    = "Peer relays"
 )
 
-var connectorGroups = []string{groupSearch, groupResearch, groupImages, groupAudio, groupEmbed, groupPages,
+var connectorGroups = []string{groupSearch, groupResearch, groupImages, groupAudio, groupEmbed, groupDecide, groupPages,
 	groupMail, groupMessages, groupOther, groupWatches, groupTools, groupHooks, groupPeers}
 
 // capabilityGroups is the band a services connector sits in, by the first
@@ -270,7 +271,7 @@ var capabilityGroups = map[string]string{
 	"web.search": groupSearch, "image.search": groupSearch,
 	"image.generate": groupImages, "image.edit": groupImages, "media.generate": groupImages,
 	"speech.transcribe": groupAudio, "speech.synthesize": groupAudio, "speech.voices": groupAudio, "music.generate": groupAudio,
-	"embed.text": groupEmbed, "page.render": groupPages, "file.convert": groupPages,
+	"embed.text": groupEmbed, service.DecideChoice: groupDecide, "page.render": groupPages, "file.convert": groupPages,
 	"mail.send": groupMail, "message.send": groupMessages, "message.fetch": groupMessages,
 }
 

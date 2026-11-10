@@ -23,6 +23,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 				Fields:    embeddingFormFields(),
 			},
 		},
+		systemOneSection(),
 		{
 			Title:    "Audio Transcription (STT)",
 			Subtitle: "Transcription for video and audio attachments.",

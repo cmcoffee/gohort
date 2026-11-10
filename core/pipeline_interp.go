@@ -821,7 +821,13 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 		}
 		if call != nil {
 			if len(stage.ModelOutput()) > 0 {
+				settle := r.shadowStage(ctx, stage, prompt)
 				out, fields, err = T.runDeclaredStage(ctx, stage, prompt, call, status)
+				if settle != nil && err == nil {
+					if s := settle(shadowAnswer(stage, fields)); s != "" && status != nil {
+						status(stageLabel + ": " + s)
+					}
+				}
 			} else {
 				out, err = call(prompt)
 			}
@@ -901,6 +907,50 @@ func (r *pipelineRun) runStage(ctx context.Context, stage PipelineStage, prev, s
 		}
 		return out, nil
 	}
+}
+
+// shadowStage starts ShadowRoute for a worker stage whose whole output is
+// one yes/no field or one field with fixed values (what a branch reads), nil
+// for any other. Its answers are the field's values, each shown as the
+// field's name and value with what the field is for.
+func (r *pipelineRun) shadowStage(ctx context.Context, stage PipelineStage, prompt string) func(string) string {
+	out := stage.ModelOutput()
+	if ShadowRoute == nil || stage.Kind != StageWorker || len(stage.Tools) > 0 || len(out) != 1 {
+		return nil
+	}
+	f := out[0]
+	var choices []string
+	switch {
+	case f.Type == FieldBool:
+		choices = []string{"true", "false"}
+	case (f.Type == "" || f.Type == FieldString) && len(f.Enum) >= 2:
+		choices = append(choices, f.Enum...)
+	default:
+		return nil
+	}
+	descs := make([]string, len(choices))
+	for i, c := range choices {
+		descs[i] = f.Name + " is " + c
+		if d := strings.TrimSpace(f.Desc); d != "" {
+			descs[i] += " (" + d + ")"
+		}
+	}
+	return ShadowRoute(ctx, "pipeline "+chooseStr(r.defID, "run"), stage.Name, prompt, choices, descs)
+}
+
+// shadowAnswer is a shadowed stage's own answer, as its choices name it.
+func shadowAnswer(stage PipelineStage, fields map[string]any) string {
+	out := stage.ModelOutput()
+	if len(out) != 1 {
+		return ""
+	}
+	switch v := fields[out[0].Name].(type) {
+	case bool:
+		return strconv.FormatBool(v)
+	case string:
+		return strings.TrimSpace(v)
+	}
+	return ""
 }
 
 // stageOutput is one completed stage's result. Text is always populated

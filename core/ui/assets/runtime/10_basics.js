@@ -4708,6 +4708,20 @@
           }).then(settle);
         });
         testRow.appendChild(testBtn);
+        // A link to a fuller test elsewhere (cfg.test_link): "#id" scrolls to
+        // that part of the page, anything else is followed.
+        if (cfg.test_link && cfg.test_link.href) {
+          var tl = el('a', {class: 'ui-row-btn', href: cfg.test_link.href}, [cfg.test_link.label || 'More tests']);
+          if (cfg.test_link.href.charAt(0) === '#') {
+            tl.addEventListener('click', function(ev) {
+              var target = document.getElementById(cfg.test_link.href.slice(1));
+              if (!target) return;
+              ev.preventDefault();
+              target.scrollIntoView({behavior: 'smooth', block: 'start'});
+            });
+          }
+          testRow.appendChild(tl);
+        }
         testRow.appendChild(testResult);
         host.appendChild(testRow);
       }
@@ -6362,6 +6376,7 @@
   // an optional subtitle and info detail, then its body.
   components.subsection = function(cfg, ctx) {
     var wrap = el('div', {class: 'ui-subsection'});
+    if (cfg.id) wrap.id = cfg.id;
     wrap.appendChild(el('div', {class: 'ui-subsection-h'}, [
       el('span', {text: cfg.title || ''}),
       window.uiInfoIcon(cfg.detail),

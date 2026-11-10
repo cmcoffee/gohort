@@ -1844,3 +1844,54 @@ func TestMoveCursorLogsTheHopAndRefusesUnknown(t *testing.T) {
 		t.Fatal("nil cursor must be refused")
 	}
 }
+
+// A step whose whole job is routing is shadowed: ShadowRoute is asked with
+// what the step is sent, its destinations and what each is for, and told the
+// step's own choice, which still decides; its account goes in the trace. A
+// router that also runs tools is not a question with fixed answers alone,
+// and is not shadowed.
+func TestARouterIsShadowedAndStillDecides(t *testing.T) {
+	saved := ShadowRoute
+	t.Cleanup(func() { ShadowRoute = saved })
+	var asked []string
+	var gotChoices, gotDescs []string
+	var settled []string
+	ShadowRoute = func(_ context.Context, machine, step, prompt string, choices, descs []string) func(string) string {
+		asked = append(asked, machine+"/"+step+": "+prompt)
+		gotChoices, gotDescs = choices, descs
+		return func(chosen string) string {
+			settled = append(settled, chosen)
+			return "System One chose right"
+		}
+	}
+	def := MachineDef{Name: "m", Start: "route", Unattended: true, Phases: []MachinePhase{
+		{Name: "route", Prompt: "pick the side", Choices: []string{"left", "right"}},
+		{Name: "left", Desc: "the left side", Prompt: "l"},
+		{Name: "right", Desc: "the right side", Prompt: "r"},
+	}}
+	run := func(_ context.Context, ph MachinePhase, _ string) (string, error) {
+		if ph.Name == "route" {
+			return `{"next_step":"left"}`, nil
+		}
+		return ph.Name + " ran", nil
+	}
+	note, kinds, _ := collectNotes()
+	final, _, err := new(AppCore).RunUnattended(context.Background(), def, &MachineCursor{}, MachineTurn{Input: "go"}, run, note)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.Name != "left" || len(asked) != 1 || !strings.Contains(asked[0], "m/route: ") || !strings.Contains(asked[0], "pick the side") {
+		t.Fatalf("finished at %s; asked %v", final.Name, asked)
+	}
+	if strings.Join(gotChoices, ",") != "left,right" || strings.Join(gotDescs, ",") != "Go to left: the left side,Go to right: the right side" || strings.Join(settled, ",") != "left" {
+		t.Errorf("choices %v, descs %v, settled with %v", gotChoices, gotDescs, settled)
+	}
+	if !hasNote(*kinds, "machine_route_shadow") {
+		t.Errorf("the shadow's account is not in the trace: %v", *kinds)
+	}
+	def.Phases[0].Tools = []string{"x"}
+	asked = nil
+	if _, _, err := new(AppCore).RunUnattended(context.Background(), def, &MachineCursor{}, MachineTurn{Input: "go"}, run, note); err != nil || len(asked) != 0 {
+		t.Errorf("a router that runs tools was shadowed (%v, %v)", asked, err)
+	}
+}

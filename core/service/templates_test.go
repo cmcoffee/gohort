@@ -899,3 +899,51 @@ func TestAFetchedMessageNeedsAnID(t *testing.T) {
 		t.Error("messages that are not a list passed")
 	}
 }
+
+// The vLLM System One template asks the server's /systemone with the
+// options as an object in the order given, thinking off and the model set,
+// reads each option's share and the label mass back, and passes its own
+// known-answer test.
+func TestTheSystemOneTemplateDecides(t *testing.T) {
+	world(t)
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/models" {
+			w.Write([]byte(`{"data":[{"id":"judge"}]}`))
+			return
+		}
+		b, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(b))
+		w.Write([]byte(`{"answers":{"d":{"type":"choice","choice":"o00","probabilities":{"o00":0.9,"o01":0.1}}},"diagnostics":{"d":{"label_mass":0.95}}}`))
+	}))
+	defer srv.Close()
+	install(t, "local-system-one", templateSpec(t, "vllm-system-one", srv.URL+"/v1"))
+	res, err := Call(context.Background(), nil, "local-system-one", DecideChoice, map[string]any{
+		"instructions": "You filter.", "state": "a message", "ask": "Take it up?",
+		"criteria": map[string]any{"o00": "Take it up", "o01": "Leave it"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := Probabilities(res)
+	if err != nil || p["o00"] != 0.9 || p["o01"] != 0.1 || strings.TrimSpace(res["label_mass"].Text) != "0.95" {
+		t.Errorf("the reply read as %v, label mass %q (%v)", p, res["label_mass"].Text, err)
+	}
+	var sent map[string]any
+	if err := json.Unmarshal([]byte(bodies[0]), &sent); err != nil {
+		t.Fatalf("the request: %s", bodies[0])
+	}
+	q, _ := sent["questions"].(map[string]any)["d"].(map[string]any)
+	crit, ok := q["criteria"].(map[string]any)
+	if !ok || crit["o01"] != "Leave it" || q["instructions"] != "Take it up?" || sent["model"] != "judge" || sent["state"] != "a message" ||
+		!strings.Contains(bodies[0], `"enable_thinking":false`) || strings.Index(bodies[0], `"o00"`) > strings.Index(bodies[0], `"o01"`) {
+		t.Errorf("the request: %s", bodies[0])
+	}
+	if c := contracts[DecideChoice]; c.testCheck == nil || c.Check(res) != nil || c.testCheck(res) != nil {
+		t.Error("a right answer to the known-answer test did not pass it")
+	}
+	wrong := Result{"probabilities": {Text: `{"o00":0.2,"o01":0.8}`}}
+	if contracts[DecideChoice].testCheck(wrong) == nil {
+		t.Error("a wrong answer to the known-answer test passed it")
+	}
+}

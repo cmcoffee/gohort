@@ -349,6 +349,7 @@ func (T *AppCore) walk(ctx context.Context, def MachineDef, cur *MachineCursor, 
 		}
 
 		stepCtx, skipped := withSkipSlot(ctx)
+		settle := def.shadowRoute(ctx, ph, cur.State, vars)
 		text, fields, err := T.runPhase(stepCtx, def, ph, vars, cur.State, run, note)
 		var next, why string
 		if reason, ok := skipped(); ok {
@@ -373,6 +374,11 @@ func (T *AppCore) walk(ctx context.Context, def MachineDef, cur *MachineCursor, 
 			if why != "" {
 				note("machine_route_fallback", why)
 			}
+			if settle != nil {
+				if s := settle(next); s != "" {
+					note("machine_route_shadow", s)
+				}
+			}
 		}
 		// A step that hands off nowhere ENDS an unattended run, and the
 		// step we just ran is the result. The conversational path treats
@@ -396,6 +402,53 @@ func (T *AppCore) walk(ctx context.Context, def MachineDef, cur *MachineCursor, 
 		cur.moveTo(ph.Name, nph, chooseStr(why, "routed by "+ph.Name), note, def.accumulatorNames())
 		ph = nph
 	}
+}
+
+// ShadowRoute, when set (core/decide sets it), asks System One the question
+// a step with fixed answers answers, beside the step and never instead of
+// it: a machine step that only routes, or a pipeline stage whose whole
+// output is one yes/no or one-of field. machine and step name the step,
+// prompt is what the step is sent, choices are its answers as the step
+// gives them and descs each one as the question shows it. It returns
+// settle, called with the step's own answer once it has one, which compares
+// the two, keeps the tally and says how they compared for the step's trace
+// ("" for nothing to say); nil when nothing was asked. A shadow never
+// changes an answer: it is how a step earns being decided by System One.
+var ShadowRoute func(ctx context.Context, machine, step, prompt string, choices, descs []string) (settle func(chosen string) string)
+
+// shadowRoute starts ShadowRoute for a step that only routes, nil for any
+// other.
+func (d MachineDef) shadowRoute(ctx context.Context, ph MachinePhase, st MachineState, v PhaseVars) func(string) string {
+	if ShadowRoute == nil || !ph.onlyRoutes() {
+		return nil
+	}
+	descs := make([]string, len(ph.Choices))
+	for i, c := range ph.Choices {
+		descs[i] = "Go to " + strings.TrimSpace(c)
+		if p, ok := d.Phase(strings.TrimSpace(c)); ok && strings.TrimSpace(p.Desc) != "" {
+			descs[i] += ": " + strings.TrimSpace(p.Desc)
+		}
+	}
+	return ShadowRoute(ctx, d.Name, ph.Name, d.phasePrompt(ph, st, v), ph.Choices, descs)
+}
+
+// onlyRoutes reports whether a step's whole job is choosing where to go: it
+// picks among two or more Choices, declares no other output, and runs no
+// tool, agent, pipeline or machine. Only such a step's choice is a question
+// with fixed answers and nothing else.
+func (p MachinePhase) onlyRoutes() bool {
+	if p.RoutesBy() != BuiltinNextStep || len(p.Choices) < 2 {
+		return false
+	}
+	if p.Tool != "" || p.Agent != "" || p.Pipeline != "" || p.Machine != "" || len(p.Tools) > 0 {
+		return false
+	}
+	for _, f := range p.Output {
+		if f.Name != BuiltinNextStep {
+			return false
+		}
+	}
+	return true
 }
 
 // resume resolves the phase a turn opens on, healing a cursor that no

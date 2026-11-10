@@ -106,6 +106,8 @@ const (
 )
 
 func init() {
+	RegisterJudgeCall(JudgeCall{Key: "memory.gate", Label: "Memory gate",
+		Help: "Whether something said is worth remembering."})
 	RegisterTunable(TunableSpec{Key: TunableFactSweepThreshold, Category: "Memory",
 		Label:  "Memory sweep threshold (0 = off)",
 		Help:   "When an agent's saved-fact count reaches this, a prune pass runs.",

@@ -45,11 +45,11 @@ var adminLayout = []struct {
 		"Sign-in", "Add account", "Users", "People outside gohort", "Teams", "Default Apps",
 		"Feature Access", "Model access limits", "Personal integrations", "Activity Log",
 	}},
-	{"Models", []string{"Worker LLM", "Lead LLM", "Model Privacy", "LLM Routing", "Local Model Scheduler"}},
+	{"Models", []string{"Worker LLM", "Lead LLM", "Judge model", "Model Privacy", "LLM Routing", "Local Model Scheduler"}},
 	// System Hooks first: the settings below it are what some of its rows
 	// point to. The Keystore next: the keys every page below names.
 	{"Services", []string{
-		"System Hooks", "Keystore", "Embeddings", "Audio Transcription (STT)", "Speech (TTS)", "Media Generation",
+		"System Hooks", "Keystore", "Embeddings", "System One", "Audio Transcription (STT)", "Speech (TTS)", "Media Generation",
 		"Web Search", "Page Rendering (Browser)", "Mail (SMTP)", "Research Sources",
 		"Connectors", "Templates",
 	}},

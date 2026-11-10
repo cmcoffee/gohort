@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/ollama"
 	"github.com/cmcoffee/gohort/core/prompts"
 )
 
@@ -256,6 +257,16 @@ type reloadableLLM struct {
 }
 
 func (r reloadableLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
+	if judge, key := r.judgeFor(messages, opts); judge != nil {
+		jctx, cancel := judgeShare(ctx)
+		resp, err := judge.Chat(jctx, messages, r.withTierText(opts)...)
+		cancel()
+		if err == nil || ctx.Err() != nil {
+			r.record(ctx, resp)
+			return resp, err
+		}
+		judgeFailed(key, err)
+	}
 	llm := r.get()
 	if llm == nil {
 		return nil, errors.New("no LLM configured")
@@ -272,6 +283,16 @@ func (r reloadableLLM) Chat(ctx context.Context, messages []Message, opts ...Cha
 }
 
 func (r reloadableLLM) ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
+	if judge, key := r.judgeFor(messages, opts); judge != nil {
+		jctx, cancel := judgeShare(ctx)
+		resp, err := judge.ChatStream(jctx, messages, handler, r.withTierText(opts)...)
+		cancel()
+		if err == nil || ctx.Err() != nil {
+			r.record(ctx, resp)
+			return resp, err
+		}
+		judgeFailed(key, err)
+	}
 	llm := r.get()
 	if llm == nil {
 		return nil, errors.New("no LLM configured")
@@ -918,4 +939,241 @@ func holdForLaneWith(ctx context.Context, tier LLMTier, progress func(time.Durat
 		Debug("[llm.lane] a %s call to %s waited %s for people", RunLaneOf(ctx), tier, held.Round(100*time.Millisecond))
 	}
 	return held, nil
+}
+
+// The Judge model: a third model, beside the worker and the lead, for the
+// quick checks gohort makes around every turn (the guardrail warden, the
+// tool-result scan, the turn and grounding judges, the image source check,
+// the memory gate). They were all worker calls, so each one waited its turn
+// on the same model as the agents' own rounds, and an agent's next round
+// waited behind them. A judge on a model of its own (a second GPU) takes them
+// off that queue.
+//
+// A check is a worker call with a name (its route key, or its caller when
+// it has none) that registers as a judge call. The worker handle sends a
+// registered, switched-on check to the judge when one is set, and to the
+// worker as before when it is not, or when the judge has just failed: one
+// failure sets it aside for judgeRestFor, so a judge that is switched off
+// costs one timeout, not one per check. A check with pictures goes to the
+// judge only when the judge reads images, and a check that asks to think
+// goes to the worker (see judgeFor).
+//
+// Local or peer only: a check reads what the worker reads (the person's
+// messages, tool results, replies), so the judge is held to a model on
+// hardware this deployment controls (JudgePrivate), checked when it is saved
+// and again when it is built.
+
+// JudgeCall is one check that may run on the Judge model: Key is its route
+// key, or its caller when it has none; Label and Help say what it is on the
+// Judge model's list.
+type JudgeCall struct {
+	Key   string
+	Label string
+	Help  string
+}
+
+var judgeState struct {
+	mu          sync.RWMutex
+	llm         LLM
+	readsImages bool
+	live        string // what is running, for the admin page ("" when none)
+	initErr     string // why the configured judge did not build
+	restUntil   time.Time
+	calls       []JudgeCall
+	byKey       map[string]bool
+}
+
+// judgeRestFor is how long a judge that failed a call is passed over.
+const judgeRestFor = 3 * time.Minute
+
+// RegisterJudgeCall lists a check as one the Judge model may take. Called
+// from init(); a key registered twice keeps its first entry.
+func RegisterJudgeCall(c JudgeCall) {
+	judgeState.mu.Lock()
+	defer judgeState.mu.Unlock()
+	if judgeState.byKey == nil {
+		judgeState.byKey = map[string]bool{}
+	}
+	if c.Key == "" || judgeState.byKey[c.Key] {
+		return
+	}
+	judgeState.byKey[c.Key] = true
+	judgeState.calls = append(judgeState.calls, c)
+}
+
+// JudgeCalls is every registered check, in registration order.
+func JudgeCalls() []JudgeCall {
+	judgeState.mu.RLock()
+	defer judgeState.mu.RUnlock()
+	return append([]JudgeCall(nil), judgeState.calls...)
+}
+
+// JudgeCallOn reports whether check key is registered and not switched off
+// on the Judge model's list (JudgeLLMTable "off"). Every check is on until
+// switched off.
+func JudgeCallOn(key string) bool {
+	judgeState.mu.RLock()
+	registered := judgeState.byKey[key]
+	judgeState.mu.RUnlock()
+	if !registered {
+		return false
+	}
+	var off []string
+	if RootDB != nil {
+		RootDB.Get(JudgeLLMTable, "off", &off)
+	}
+	for _, k := range off {
+		if k == key {
+			return false
+		}
+	}
+	return true
+}
+
+// SetSharedJudgeLLM installs the Judge model (nil for none), whether it
+// reads images, and what it is as the admin page says it ("" for none).
+// initErr is why a configured judge did not build ("" when it did).
+func SetSharedJudgeLLM(llm LLM, readsImages bool, live, initErr string) {
+	judgeState.mu.Lock()
+	defer judgeState.mu.Unlock()
+	judgeState.llm, judgeState.readsImages = llm, readsImages
+	judgeState.live, judgeState.initErr = live, initErr
+	judgeState.restUntil = time.Time{}
+}
+
+// JudgeLLM is the Judge model itself, nil when none is set: for the check
+// tests (core/checktest), which run a check's cases on the judge directly
+// rather than through the worker handle's routing.
+func JudgeLLM() LLM {
+	judgeState.mu.RLock()
+	defer judgeState.mu.RUnlock()
+	return judgeState.llm
+}
+
+// LiveJudgeLLM is what the Judge model is running as, why a configured one
+// did not build, and until when it is passed over after a failure.
+func LiveJudgeLLM() (live, initErr string, restingUntil time.Time) {
+	judgeState.mu.RLock()
+	defer judgeState.mu.RUnlock()
+	return judgeState.live, judgeState.initErr, judgeState.restUntil
+}
+
+// JudgePrivate reports whether a provider and endpoint may serve as the
+// Judge model: a peer, or a model gohort reads as running on hardware this
+// deployment controls.
+func JudgePrivate(provider, endpoint string) (bool, string) {
+	if _, ok := PeerFromProvider(provider); ok {
+		return true, "a peer instance, which lends only its own local models"
+	}
+	return ProviderLooksPrivate(provider, endpoint)
+}
+
+// judgeFor is the Judge model, and the check's key, when this call is a
+// switched-on check the judge should take; nil to send it to the worker.
+func (r reloadableLLM) judgeFor(messages []Message, opts []ChatOption) (LLM, string) {
+	if r.lead {
+		return nil, ""
+	}
+	judgeState.mu.RLock()
+	judge, images, rest := judgeState.llm, judgeState.readsImages, judgeState.restUntil
+	judgeState.mu.RUnlock()
+	if judge == nil || time.Now().Before(rest) {
+		return nil, ""
+	}
+	var probe ChatConfig
+	for _, opt := range opts {
+		opt(&probe)
+	}
+	key := strings.TrimSpace(probe.RouteKey)
+	if !JudgeCallOn(key) {
+		key = strings.TrimSpace(probe.Caller)
+		if !JudgeCallOn(key) {
+			return nil, ""
+		}
+	}
+	if !images {
+		for _, m := range messages {
+			if len(m.Images) > 0 || len(m.Videos) > 0 {
+				return nil, ""
+			}
+		}
+	}
+	// A check that asks to think goes to the worker. The Judge model is a
+	// small model on a small card, quick at a short verdict and slow at a
+	// long reasoning: the turn judge's confirming reading thought for 2,582
+	// and 4,774 tokens there (43s and 78s), held up the checks behind it,
+	// and a reasoning budget did not bound it (vLLM ignores one). The
+	// readings that think are the rare, careful ones (a confirmation, a
+	// thorough guardrail), which is where the worker's larger model earns
+	// its place.
+	if probe.Think != nil && *probe.Think {
+		return nil, ""
+	}
+	return judge, key
+}
+
+// judgeShareMax is the most time the Judge model is given for one check.
+const judgeShareMax = 20 * time.Second
+
+// judgeShare is the part of a check's time the Judge model may use: a third
+// of what is left of the check's deadline, at most judgeShareMax. The rest is
+// the worker's, should the judge not answer in time.
+//
+// The judge used to have the check's whole deadline, so a judge that was slow
+// (busy with a long reasoning on its small card) ran the check out of time
+// with nothing left to fall back on: a guardrail check timed out there and,
+// failing closed, blocked the action it was checking.
+func judgeShare(ctx context.Context) (context.Context, context.CancelFunc) {
+	share := judgeShareMax
+	if d, ok := ctx.Deadline(); ok {
+		if third := time.Until(d) / 3; third < share {
+			share = third
+		}
+	}
+	return context.WithTimeout(ctx, share)
+}
+
+// judgeFailed sets the judge aside for judgeRestFor after a failed call;
+// the call goes to the worker instead.
+func judgeFailed(key string, err error) {
+	judgeState.mu.Lock()
+	judgeState.restUntil = time.Now().Add(judgeRestFor)
+	judgeState.mu.Unlock()
+	Warn("[llm] the Judge model failed %s (%v): checks go to the worker for %s", key, err, judgeRestFor)
+}
+
+// checkPriority marks ctx so a check goes first in the local model queue
+// (ollama.WithCheckPriority): a registered check, from a turn a person is
+// waiting on. On the worker each one used to wait its turn behind whatever
+// else was queued (another agent's round, a background task), and the
+// checks before an action or a reply hold the turn while they wait. Checks
+// are short, so letting them through first costs the others little.
+// Background work's checks keep their place: nobody is waiting on them.
+func checkPriority(ctx context.Context, cfg ChatConfig) context.Context {
+	if RunLaneOf(ctx) != LaneInteractive || !(registeredCheck(cfg.RouteKey) || registeredCheck(cfg.Caller)) {
+		return ctx
+	}
+	return ollama.WithCheckPriority(ctx)
+}
+
+// registeredCheck reports whether key names a registered check, switched
+// on for the Judge model or not.
+func registeredCheck(key string) bool {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false
+	}
+	judgeState.mu.RLock()
+	defer judgeState.mu.RUnlock()
+	return judgeState.byKey[key]
+}
+
+// checkKeepsItsCap reports whether a call to a local model keeps the output
+// cap it asked for: a registered check's does. Local calls otherwise send
+// none, since a cap clips a long structured answer mid-string; a check's
+// answer is short by design, and without its cap a small model at
+// temperature 0 that fell into a loop wrote thousands of tokens of one
+// gatekeeper answer, holding the judge's card for minutes.
+func checkKeepsItsCap(cfg ChatConfig) bool {
+	return cfg.MaxTokens > 0 && (registeredCheck(cfg.RouteKey) || registeredCheck(cfg.Caller))
 }

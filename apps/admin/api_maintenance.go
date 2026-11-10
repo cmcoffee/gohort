@@ -419,7 +419,7 @@ func dbProbeRecord(store interface {
 // the wrong section. Adding a maintenanceList for a group is only half of it;
 // the name has to be known here too, or the new list asks for a group the
 // endpoint has already renamed and renders empty.
-var maintenanceGroups = []string{"Vector index", "Reclaim space", "Reports", "Housekeeping", "Migrations"}
+var maintenanceGroups = []string{"Vector index", "Reclaim space", "Reports", "Housekeeping", "Migrations", "Check tests"}
 
 const maintenanceGroupOther = "Housekeeping"
 

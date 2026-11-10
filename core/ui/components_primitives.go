@@ -156,6 +156,8 @@ func (s Stack) MarshalJSON() ([]byte, error) {
 // two parts of one place instead of two places in the navigation. Put them in
 // a Stack.
 type Subsection struct {
+	// ID names the part, for a link to it ("#id", FormPanel.TestLink).
+	ID       string    `json:"id,omitempty"`
 	Title    string    `json:"title"`
 	Subtitle string    `json:"subtitle,omitempty"`
 	Detail   string    `json:"detail,omitempty"`
@@ -171,11 +173,12 @@ func (s Subsection) MarshalJSON() ([]byte, error) {
 	}
 	return json.Marshal(struct {
 		Type     string          `json:"type"`
+		ID       string          `json:"id,omitempty"`
 		Title    string          `json:"title"`
 		Subtitle string          `json:"subtitle,omitempty"`
 		Detail   string          `json:"detail,omitempty"`
 		Body     json.RawMessage `json:"body,omitempty"`
-	}{"subsection", s.Title, s.Subtitle, s.Detail, body})
+	}{"subsection", s.ID, s.Title, s.Subtitle, s.Detail, body})
 }
 
 // Card is a free-form container that just renders raw HTML. Use

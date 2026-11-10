@@ -121,6 +121,7 @@ var templateNeeds = map[string]templateNeed{
 	"page.render":       {"Page rendering", "page.render", nil},
 	"mail.send":         {"Mail", "mail.send", nil},
 	"file.convert":      {"File conversion", "file.convert", nil},
+	"decide.choice":     {"System One", "decide.choice", nil},
 }
 
 // handleTemplatesFor is the templates for the ?need= list: those filed

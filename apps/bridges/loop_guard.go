@@ -195,6 +195,12 @@ var loopGuard struct {
 	tripped map[string]time.Time
 	// tags: outbound name-tag prefixes we have emitted ("[gohort] ").
 	tags map[string]bool
+	// reviewing: identity → a tripped budget whose loop check is running
+	// (loop_check.go), so a second trip meanwhile does not start another.
+	reviewing map[string]bool
+	// reprieves: identity → when a loop check found progress and reset the
+	// counts, at most loopReprieves within one reply window.
+	reprieves map[string][]time.Time
 }
 
 func loopGuardInit() {
@@ -204,6 +210,8 @@ func loopGuardInit() {
 		loopGuard.replies = map[string][]time.Time{}
 		loopGuard.tripped = map[string]time.Time{}
 		loopGuard.tags = map[string]bool{}
+		loopGuard.reviewing = map[string]bool{}
+		loopGuard.reprieves = map[string][]time.Time{}
 	}
 }
 
@@ -421,11 +429,16 @@ func seenContent(chatID, handle, text string) bool {
 }
 
 // noteReply records that the agent answered into this conversation and
-// reports why that has blown the budget, or "" when it has not. The caller
-// stops routing on a reason. In a self thread every reply counts against the
-// strict limit; elsewhere replies to anything that could be our own reply
-// returning (mayBeEcho: the owner's handle, or none) have their own limit, and
-// all replies together the looser one.
+// reports why that has blown the budget, or "" when it has not. In a self
+// thread every reply counts against the strict limit; elsewhere replies to
+// anything that could be our own reply returning (mayBeEcho: the owner's
+// handle, or none) have their own limit, and all replies together the looser
+// one.
+//
+// A reason does not cut routing by itself: the caller settles it, by
+// tripLoop, or by liftLoopCut when the loop check (loop_check.go) finds the
+// conversation moving. While that runs the conversation is under review, and
+// a trip meanwhile reports nothing, so one check settles it.
 func noteReply(chatOwner, chatID, handle string, selfThread, mayBeEcho bool) (cut string) {
 	id := ownerLoopIdentity(chatOwner, chatID, handle)
 	if id == "" {
@@ -452,9 +465,78 @@ func noteReply(chatOwner, chatID, handle string, selfThread, mayBeEcho bool) (cu
 		cut = fmt.Sprintf("%d agent replies", all)
 	}
 	if cut != "" {
-		loopGuard.tripped[id] = now
+		if loopGuard.reviewing[id] {
+			return ""
+		}
+		loopGuard.reviewing[id] = true
 	}
 	return cut
+}
+
+// tripLoop cuts routing for a conversation for its cooldown, settling a
+// noteReply reason.
+func tripLoop(chatOwner, chatID, handle string) {
+	id := ownerLoopIdentity(chatOwner, chatID, handle)
+	if id == "" {
+		return
+	}
+	loopGuard.mu.Lock()
+	defer loopGuard.mu.Unlock()
+	loopGuardInit()
+	delete(loopGuard.reviewing, id)
+	loopGuard.tripped[id] = time.Now()
+}
+
+// loopReprieves is how many times within one reply window a loop check may
+// find progress and reset a conversation's counts. After that the budget cuts
+// whatever the check says: a loop runs at machine speed, and no wrong answer
+// may keep one going.
+const loopReprieves = 2
+
+// reprievesLeft is how many more resets a conversation may have this window.
+func reprievesLeft(chatOwner, chatID, handle string) int {
+	id := ownerLoopIdentity(chatOwner, chatID, handle)
+	loopGuard.mu.Lock()
+	defer loopGuard.mu.Unlock()
+	loopGuardInit()
+	return loopReprieves - len(recentReprievesLocked(id, time.Now()))
+}
+
+// liftLoopCut settles a noteReply reason the loop check found to be progress:
+// the counts start again, and routing goes on. It reports which reprieve in
+// this window it was, or false when none is left and the caller must cut.
+func liftLoopCut(chatOwner, chatID, handle string) (int, bool) {
+	id := ownerLoopIdentity(chatOwner, chatID, handle)
+	loopGuard.mu.Lock()
+	defer loopGuard.mu.Unlock()
+	loopGuardInit()
+	now := time.Now()
+	kept := recentReprievesLocked(id, now)
+	if len(kept) >= loopReprieves {
+		return len(kept), false
+	}
+	kept = append(kept, now)
+	loopGuard.reprieves[id] = kept
+	delete(loopGuard.reviewing, id)
+	clearRepliesLocked(id)
+	return len(kept), true
+}
+
+// recentReprievesLocked is id's reprieves within the reply window. Caller
+// holds the lock.
+func recentReprievesLocked(id string, now time.Time) []time.Time {
+	var kept []time.Time
+	for _, at := range loopGuard.reprieves[id] {
+		if now.Sub(at) < replyWindowFor() {
+			kept = append(kept, at)
+		}
+	}
+	if len(kept) == 0 {
+		delete(loopGuard.reprieves, id)
+	} else {
+		loopGuard.reprieves[id] = kept
+	}
+	return kept
 }
 
 // recordReplyLocked adds a reply at now to key's window and returns how many
@@ -517,6 +599,9 @@ func sweepLocked() {
 			delete(loopGuard.tripped, k)
 			clearRepliesLocked(k)
 		}
+	}
+	for k := range loopGuard.reprieves {
+		recentReprievesLocked(k, now)
 	}
 }
 

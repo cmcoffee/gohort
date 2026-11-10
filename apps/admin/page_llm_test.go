@@ -7,8 +7,9 @@ import (
 )
 
 // The thinking switch on a model reads positively: on lets the model think.
-// It stores disable_thinking, so it is inverted, on both the worker's and the
-// lead's form, and the old "force think=false" wording is gone.
+// It stores disable_thinking, so it is inverted, on the worker's and the
+// lead's form (the Judge model never thinks, so has none), and the old
+// "force think=false" wording is gone.
 func TestTheThinkingSwitchReadsPositively(t *testing.T) {
 	src, err := os.ReadFile("page_llm.go")
 	if err != nil {

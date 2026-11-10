@@ -173,6 +173,7 @@ type openAIClient struct {
 	ollama               bool          // true for a local Ollama endpoint
 	llamacpp             bool          // true when provider is llama.cpp server, or vLLM (see vllm)
 	vllm                 bool          // vLLM: the llama.cpp path (chat_template_kwargs, the local scheduler) without thinking_budget_tokens, which vLLM ignores.
+	ownServer            bool          // a server of its own (LLMProviderConfig.SeparateServer): skips the process-wide local queue
 	llamacppBudget       int           // llama.cpp: default thinking_budget_tokens (0 = server default, >0 = limit)
 	contextSize          int           // Ollama num_ctx; 0 uses ollamaDefaultCtx
 	disableThinking      bool          // master override forcing think=false / thinking_budget_tokens=0 on every call.
@@ -813,6 +814,14 @@ type oaiRequest struct {
 	ThinkingBudgetTokens *int               `json:"thinking_budget_tokens,omitempty"` // llama.cpp: budget when thinking is on; do NOT use 0 to disable (unreliable on Qwen 3.6)
 	ChatTemplateKwargs   map[string]any     `json:"chat_template_kwargs,omitempty"`   // llama.cpp: per-request {"enable_thinking": bool} — works reliably even when launch is --reasoning on
 	Options              map[string]any     `json:"options,omitempty"`                // Ollama-specific options (num_ctx, etc.)
+
+	// A decision (ChatConfig.DecidePrefix), vLLM: the last message is a
+	// pre-started reply the server continues rather than answers, and the
+	// first token's alternatives come back with their log-probabilities.
+	Logprobs             bool  `json:"logprobs,omitempty"`
+	TopLogprobs          int   `json:"top_logprobs,omitempty"`
+	ContinueFinalMessage bool  `json:"continue_final_message,omitempty"`
+	AddGenerationPrompt  *bool `json:"add_generation_prompt,omitempty"`
 }
 
 type oaiStreamOptions struct {
@@ -1192,6 +1201,14 @@ type oaiResponse struct {
 			ToolCalls        []oaiToolCallMsg `json:"tool_calls,omitempty"`
 		} `json:"message"`
 		FinishReason string `json:"finish_reason,omitempty"`
+		Logprobs     *struct {
+			Content []struct {
+				TopLogprobs []struct {
+					Token   string  `json:"token"`
+					Logprob float64 `json:"logprob"`
+				} `json:"top_logprobs"`
+			} `json:"content"`
+		} `json:"logprobs,omitempty"`
 	} `json:"choices"`
 	Model string `json:"model"`
 	Usage struct {
@@ -1561,6 +1578,48 @@ func (c *openAIClient) totalResponseBudget() time.Duration {
 	return 5 * time.Minute
 }
 
+// SystemOne posts a structured decision to a vLLM server's /v1/systemone
+// (vLLM 0.32+, started with --logprobs-mode raw_logprobs), the model filled
+// in as this client's, and returns the HTTP status and the reply's body.
+// core/decide asks through it when the model has it, and reads its own
+// answer from the first token's probabilities when it does not (a status of
+// 404 or 501, or a server that is not vLLM: status 0).
+func (c *openAIClient) SystemOne(ctx context.Context, req map[string]any) (int, []byte, error) {
+	if !c.vllm {
+		return 0, nil, nil
+	}
+	req["model"] = c.model
+	body, err := json.Marshal(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	if c.llamacpp && !c.ownServer {
+		if err := AcquireLlamacppSlot(ctx, "systemone"); err != nil {
+			return 0, nil, err
+		}
+		defer ReleaseLlamacppSlot("systemone")
+	}
+	path := "/v1/systemone"
+	if u, err := url.Parse(c.endpoint); err == nil && u.Path != "" {
+		path = u.Path + "/systemone"
+	}
+	hreq, err := c.api.NewRequestWithContext(ctx, "POST", path)
+	if err != nil {
+		return 0, nil, err
+	}
+	hreq.Header.Set("Content-Type", "application/json")
+	hreq.Body = io.NopCloser(bytes.NewReader(body))
+	hreq.ContentLength = int64(len(body))
+	hreq.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
+	resp, err := c.api.SendRawRequest("", hreq)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	out, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return resp.StatusCode, out, err
+}
+
 func (c *openAIClient) doRequest(ctx context.Context, body []byte, readTimeout time.Duration) (*http.Response, error) {
 	Debug("[%s]: Sending request to %s/chat/completions", c.provider(), c.endpoint)
 
@@ -1775,10 +1834,12 @@ func (c *openAIClient) chatViaOllamaNative(ctx context.Context, cfg ChatConfig, 
 	// round-robin so one app can't monopolize the local model.
 	// Unconfigured → passes through immediately.
 	caller := cfg.Caller
-	if err := AcquireOllamaSlot(ctx, caller); err != nil {
-		return nil, err
+	if !c.ownServer {
+		if err := AcquireOllamaSlot(checkPriority(ctx, cfg), caller); err != nil {
+			return nil, err
+		}
+		defer ReleaseOllamaSlot(caller)
 	}
-	defer ReleaseOllamaSlot(caller)
 
 	// Master override: if DisableThinking is set in the provider config,
 	// force think=false regardless of what the caller passed. This is the
@@ -1902,10 +1963,12 @@ func (c *openAIClient) chatStreamViaOllamaNative(ctx context.Context, cfg ChatCo
 	// Acquire a slot from the global Ollama fair-queueing scheduler.
 	// See chatViaOllamaNative for details.
 	caller := cfg.Caller
-	if err := AcquireOllamaSlot(ctx, caller); err != nil {
-		return nil, err
+	if !c.ownServer {
+		if err := AcquireOllamaSlot(checkPriority(ctx, cfg), caller); err != nil {
+			return nil, err
+		}
+		defer ReleaseOllamaSlot(caller)
 	}
-	defer ReleaseOllamaSlot(caller)
 
 	// Master overrides: see chatViaOllamaNative for rationale.
 	if c.disableThinking {
@@ -2099,8 +2162,8 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 	// llama.cpp is single-threaded. Serialize requests so concurrent
 	// callers (e.g. background consolidation + a new session) queue up
 	// here instead of racing to the server and getting 503s.
-	if c.llamacpp {
-		if err := AcquireLlamacppSlot(ctx, cfg.Caller); err != nil {
+	if c.llamacpp && !c.ownServer {
+		if err := AcquireLlamacppSlot(checkPriority(ctx, cfg), cfg.Caller); err != nil {
 			return nil, err
 		}
 		defer ReleaseLlamacppSlot(cfg.Caller)
@@ -2122,7 +2185,7 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 	// caller underestimates response size. Cloud providers keep the
 	// cap as a billing guard.
 	maxTokens := cfg.MaxTokens
-	if c.isLocal() {
+	if c.isLocal() && !checkKeepsItsCap(cfg) {
 		maxTokens = 0
 	}
 	cfg, messages = c.renderLateToolsInline(cfg, messages)
@@ -2131,6 +2194,17 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 		Messages:  c.buildMessages(cfg, messages),
 		MaxTokens: maxTokens,
 		Tools:     buildOAITools(cfg.Tools),
+	}
+	if cfg.DecidePrefix != "" {
+		if !c.vllm {
+			return nil, &APIError{Provider: c.provider(), Message: "a decision needs a vLLM server: this model is served by " + c.provider()}
+		}
+		// The reply is pre-started and continued by one token, whose
+		// alternatives are the decision's answer.
+		no := false
+		payload.Messages = append(payload.Messages, oaiMessage{Role: "assistant", Content: oaiTextContent(cfg.DecidePrefix)})
+		payload.ContinueFinalMessage, payload.AddGenerationPrompt, payload.MaxTokens = true, &no, 1
+		payload.Logprobs, payload.TopLogprobs = true, max(cfg.TopLogprobs, 1)
 	}
 	c.applySamplers(&payload, cfg)
 	if c.llamacpp {
@@ -2268,6 +2342,14 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 		// let a cleanly-finished answer get re-read as a tool call.
 		StopReason: finishReason,
 	}
+	if len(result.Choices) > 0 && result.Choices[0].Logprobs != nil && len(result.Choices[0].Logprobs.Content) > 0 {
+		for _, tl := range result.Choices[0].Logprobs.Content[0].TopLogprobs {
+			out.TopLogprobs = append(out.TopLogprobs, struct {
+				Token   string
+				Logprob float64
+			}{tl.Token, tl.Logprob})
+		}
+	}
 	if result.Timings != nil {
 		out.PredictedPerSecond = result.Timings.PredictedPerSecond
 		out.PromptPerSecond = result.Timings.PromptPerSecond
@@ -2330,8 +2412,8 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 	}
 
 	// Serialize llama.cpp requests — see Chat() for rationale.
-	if c.llamacpp {
-		if err := AcquireLlamacppSlot(ctx, cfg.Caller); err != nil {
+	if c.llamacpp && !c.ownServer {
+		if err := AcquireLlamacppSlot(checkPriority(ctx, cfg), cfg.Caller); err != nil {
 			return nil, err
 		}
 		defer ReleaseLlamacppSlot(cfg.Caller)
@@ -2348,7 +2430,7 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 	// Drop max_tokens for local providers — see non-streaming path
 	// above for rationale.
 	streamMaxTokens := cfg.MaxTokens
-	if c.isLocal() {
+	if c.isLocal() && !checkKeepsItsCap(cfg) {
 		streamMaxTokens = 0
 	}
 	cfg, messages = c.renderLateToolsInline(cfg, messages)

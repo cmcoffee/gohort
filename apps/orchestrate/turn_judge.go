@@ -20,6 +20,15 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
+// turnJudgeRoute names the turn judge's call: its own, so it can run on the
+// Judge model (it shared the agents' own "app.orchestrate.worker").
+const turnJudgeRoute = "app.orchestrate.turn_judge"
+
+func init() {
+	RegisterJudgeCall(JudgeCall{Key: turnJudgeRoute, Label: "Turn judge",
+		Help: "After a turn that changed things, whether its reply is true about what the turn did."})
+}
+
 // turnJudgeSysPrompt is deliberately narrow.
 //
 // Every line of it exists to stop the judge doing something other than its job.
@@ -169,7 +178,7 @@ func (T *OrchestrateApp) readTurnClaims(ctx context.Context, ev TurnClaimEvidenc
 		return TurnClaimVerdict{}, false
 	}
 	opts := append([]ChatOption{WithSystemPrompt(turnJudgeSysPrompt), WithJSONMode(),
-		WithRouteKey("app.orchestrate.worker")}, think...)
+		WithRouteKey(turnJudgeRoute)}, think...)
 	resp, err := T.LLM.Chat(ctx, []Message{{Role: "user", Content: turnJudgeEvidenceMessage(ev)}}, opts...)
 	if err != nil {
 		Debug("[turn-judge] %s reading: LLM error: %v, no opinion", pass, err)

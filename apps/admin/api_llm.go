@@ -3,7 +3,9 @@ package admin
 import (
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/activity"
@@ -62,6 +64,16 @@ func (a *AdminApp) registerLLMRoutes(sub *http.ServeMux) {
 	// --setup "Precision LLM" step. Writes lead_llm_config; an empty provider
 	// means "use the primary worker". Same key-masking + restart semantics.
 	sub.HandleFunc("/api/lead-llm", a.llmConfigRoutes(LeadLLMTable, false))
+
+	// The Judge model (judge_llm_config): the checks' own model, local or a
+	// peer only. Same form and key handling as the lead's; an empty provider
+	// leaves every check on the worker. Its list says which checks run there.
+	sub.HandleFunc("/api/judge-llm", a.llmConfigRoutes(JudgeLLMTable, false))
+	sub.HandleFunc("/api/judge-llm/test", a.handleLLMTest(JudgeLLMTable))
+	sub.HandleFunc("/api/judge-llm/models", jsonapi.Post(a.db, a.handleLLMModels(JudgeLLMTable), a.gate()))
+	sub.HandleFunc("/api/judge-llm/calls", jsonapi.Get(a.db, a.handleJudgeCalls, a.gate()))
+	sub.HandleFunc("/api/judge-llm/calls/toggle", jsonapi.Post(a.db, a.handleJudgeCallToggle, a.gate()))
+	sub.HandleFunc("/api/check-tests", jsonapi.Get(a.db, a.handleCheckTests, a.gate()))
 
 	// Local model scheduler: GET returns max parallel for Ollama and for
 	// llama.cpp / vLLM (one shared queue), POST updates both values. Applied
@@ -452,6 +464,13 @@ func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonap
 		if err := tierProviderOK(req.Provider); err != nil {
 			return nil, jsonapi.BadRequest(err.Error())
 		}
+		// The checks read what the worker reads, so the Judge model is one
+		// this deployment runs: a local server, or a peer.
+		if table == JudgeLLMTable && strings.TrimSpace(req.Provider) != "" {
+			if ok, why := JudgePrivate(strings.TrimSpace(req.Provider), strings.TrimSpace(req.Endpoint)); !ok {
+				return nil, jsonapi.BadRequest("the Judge model must run locally or on a peer, since the checks read everything the worker does: " + why)
+			}
+		}
 		// A Keystore key is checked before anything is saved: one that does
 		// not fit the provider and address being saved refuses the save.
 		tierCfg := LLMProviderConfig{Provider: strings.TrimSpace(req.Provider), Endpoint: strings.TrimSpace(req.Endpoint)}
@@ -562,6 +581,9 @@ func (a *AdminApp) newLeadSkipsImages() bool {
 }
 
 func liveTierDescription(table string) string {
+	if table == JudgeLLMTable {
+		return liveJudgeDescription()
+	}
 	worker, lead := LiveLLMs()
 	live := worker
 	if table == LeadLLMTable {
@@ -712,4 +734,63 @@ func tierProviderOK(provider string) error {
 		return fmt.Errorf("a tier no longer runs on a connection (%s): choose its provider, and give an address for an OpenAI- or Anthropic-compatible one", name)
 	}
 	return fmt.Errorf("%q is not a provider a tier runs on", p)
+}
+
+// liveJudgeDescription is what the Judge model is running as, or why it is
+// not, and whether a failure has the checks on the worker for now.
+func liveJudgeDescription() string {
+	live, initErr, rest := LiveJudgeLLM()
+	switch {
+	case initErr != "":
+		return "Not running: " + initErr + ". The checks run on the worker."
+	case live == "":
+		return "No Judge model: the checks run on the worker."
+	}
+	out := "Running now: " + live
+	if time.Now().Before(rest) {
+		out += ". It failed a call, so the checks run on the worker until " + rest.Format("15:04") + ", then try it again."
+	}
+	return out
+}
+
+// judgeCallRow is one check on the Judge model's list.
+type judgeCallRow struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	Help  string `json:"help"`
+	On    bool   `json:"on"`
+}
+
+// handleJudgeCalls is every check that may run on the Judge model, and
+// whether it does.
+func (a *AdminApp) handleJudgeCalls(c *jsonapi.Call) (any, error) {
+	rows := []judgeCallRow{}
+	for _, jc := range JudgeCalls() {
+		rows = append(rows, judgeCallRow{Key: jc.Key, Label: jc.Label, Help: jc.Help, On: JudgeCallOn(jc.Key)})
+	}
+	return rows, nil
+}
+
+// handleJudgeCallToggle switches check ?key= on or off for the Judge model:
+// off, it stays on the worker. Every check is on until switched off.
+func (a *AdminApp) handleJudgeCallToggle(c *jsonapi.Call, req struct {
+	On bool `json:"on"`
+}) (any, error) {
+	key := strings.TrimSpace(c.R.URL.Query().Get("key"))
+	known := false
+	for _, jc := range JudgeCalls() {
+		known = known || jc.Key == key
+	}
+	if !known {
+		return nil, jsonapi.BadRequest("no check named " + key)
+	}
+	var off []string
+	a.db.Get(JudgeLLMTable, "off", &off)
+	off = slices.DeleteFunc(off, func(k string) bool { return k == key })
+	if !req.On {
+		off = append(off, key)
+	}
+	a.db.Set(JudgeLLMTable, "off", off)
+	adminChange(c.R, activity.Settings, "Judge model: %s %s", key, map[bool]string{true: "on", false: "off (stays on the worker)"}[req.On])
+	return jsonapi.Empty(http.StatusNoContent), nil
 }

@@ -6,6 +6,7 @@ package core
 const (
 	LLMTable         = "llm_config"
 	LeadLLMTable     = "lead_llm_config"
+	JudgeLLMTable    = "judge_llm_config" // the Judge model: the checks' own (local or peer) model
 	MailTable        = "mail_config"
 	SearchTable      = "search_config"
 	ImageTable       = "image_config"

@@ -3,6 +3,7 @@
 package core
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -87,5 +88,43 @@ func TestToolStageBodyUnwrapsTheAnswer(t *testing.T) {
 		if got, _ := toolStageBody(plain); got != plain {
 			t.Errorf("%q came back as %q", plain, got)
 		}
+	}
+}
+
+// A worker stage whose whole output is one yes/no field is shadowed like a
+// router step: ShadowRoute is asked with the stage's prompt and the field's
+// values, each shown with what the field is for, and told the stage's own
+// answer, which still decides. A stage with tools, or with more than one
+// field, is not.
+func TestAYesNoStageIsShadowedAndStillDecides(t *testing.T) {
+	saved := ShadowRoute
+	t.Cleanup(func() { ShadowRoute = saved })
+	var asked, settled []string
+	var gotDescs []string
+	ShadowRoute = func(_ context.Context, machine, step, prompt string, choices, descs []string) func(string) string {
+		asked = append(asked, step+": "+strings.Join(choices, ","))
+		gotDescs = descs
+		return func(chosen string) string { settled = append(settled, chosen); return "" }
+	}
+	def := PipelineDef{Stages: []PipelineStage{
+		{Name: "frame", Kind: StageWorker, Prompt: "is {input} a real question?",
+			Output: []PipelineField{{Name: "rejected", Type: FieldBool, Desc: "true when it is not a real question", Required: true}}},
+		{Name: "gate", Kind: StageBranch, When: "frame.rejected"},
+		{Name: "work", Kind: StageWorker, Prompt: "answer {input}"},
+	}}
+	fake := &FakeLLM{Turns: []FakeTurn{{Content: `{"rejected": false}`}, {Content: "the answer", Repeat: true}}}
+	out, err := (&AppCore{LLM: fake}).executePipelineDef(context.Background(), def, "why is the sky blue", nil, nil, nil)
+	if err != nil || out != "the answer" {
+		t.Fatalf("the run: %q %v", out, err)
+	}
+	if strings.Join(asked, "|") != "frame: true,false" || strings.Join(settled, ",") != "false" ||
+		!strings.Contains(gotDescs[0], "rejected is true (true when it is not a real question)") {
+		t.Errorf("asked %v, settled %v, descs %v", asked, settled, gotDescs)
+	}
+	def.Stages[0].Output = append(def.Stages[0].Output, PipelineField{Name: "why"})
+	asked = nil
+	fake = &FakeLLM{Turns: []FakeTurn{{Content: `{"rejected": false, "why": "fine"}`}, {Content: "the answer", Repeat: true}}}
+	if _, err := (&AppCore{LLM: fake}).executePipelineDef(context.Background(), def, "q", nil, nil, nil); err != nil || len(asked) != 0 {
+		t.Errorf("a stage with two fields was shadowed (%v, %v)", asked, err)
 	}
 }

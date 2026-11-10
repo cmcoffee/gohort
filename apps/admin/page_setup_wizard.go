@@ -28,6 +28,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/service"
+	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -257,7 +258,18 @@ func (a *AdminApp) testLLM(w http.ResponseWriter, r *http.Request, table string)
 	// from a server that turns out to be a different kind is half-diagnosed.
 	serverNote := ""
 	if LocalDialect(cfg.Provider) {
-		serverNote = probeModelServer(ctx, cfg.Provider, cfg.Endpoint, cfg.APIKey).describe(cfg.Provider, req.ContextSize)
+		probe := probeModelServer(ctx, cfg.Provider, cfg.Endpoint, cfg.APIKey)
+		contextSize := req.ContextSize
+		if table == JudgeLLMTable && contextSize <= 0 {
+			// The Judge model has no context field: checks are a few thousand
+			// tokens, well inside any server's own limit, which is its context.
+			contextSize = probe.Context
+		}
+		serverNote = probe.describe(cfg.Provider, contextSize)
+	}
+	if table == JudgeLLMTable {
+		a.testJudge(ctx, w, llm, req.Model, serverNote)
+		return
 	}
 
 	// From here the test takes several calls, so it says which one it is on:
@@ -451,4 +463,35 @@ func (a *AdminApp) firstRunNotices(dismissed bool) []DashboardNotice {
 		Action: "Set up a model",
 		URL:    a.setupWizardPath(),
 	}}
+}
+
+// testJudge is the Judge model's test: what the checks ask of it, not the
+// tiers' tool-call handoff (checks never call tools, so that test's failures
+// would read a working judge as broken). It answers, and it answers in JSON
+// with thinking off, the way most checks ask.
+func (a *AdminApp) testJudge(ctx context.Context, w http.ResponseWriter, llm LLM, model, serverNote string) {
+	started := time.Now()
+	resp, err := llm.Chat(ctx,
+		[]Message{{Role: "user", Content: `Is the sky usually blue on a clear day? Answer with JSON only: {"answer": "yes"} or {"answer": "no"}.`}},
+		WithJSONMode(), WithThink(false), WithMaxTokens(64), WithTemperature(0))
+	if err != nil {
+		writeTestResult(w, false, "", err.Error()+serverNote)
+		return
+	}
+	took := time.Since(started).Round(time.Millisecond)
+	if resp.Model != "" {
+		model = resp.Model
+	}
+	if model == "" {
+		model = "the provider default"
+	}
+	var out struct {
+		Answer string `json:"answer"`
+	}
+	text := strings.TrimSpace(resp.Content)
+	if err := json.Unmarshal([]byte(text), &out); err != nil || out.Answer == "" {
+		writeTestResult(w, false, "", "Connected: "+model+" answered in "+took.String()+", but not in the JSON the checks need: "+textutil.Clip(text, 120)+"."+serverNote)
+		return
+	}
+	writeTestResult(w, true, "Connected: "+model+" answered a check in "+took.String()+", in JSON with thinking off, as the checks ask."+serverNote, "")
 }

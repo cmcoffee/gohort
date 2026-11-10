@@ -51,6 +51,13 @@ import (
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
+func init() {
+	RegisterJudgeCall(JudgeCall{Key: ToolScanRouteKey, Label: "Tool-result scan",
+		Help: "Whether what a tool brought back (a page, a file) carries instructions aimed at the agent."})
+	RegisterJudgeCall(JudgeCall{Key: TaintedActionRouteKey, Label: "Action after a flagged result",
+		Help: "Whether an action that follows a flagged tool result does what it was told by that result."})
+}
+
 // Scan statuses. Two values the scanner may return, plus one it is never told
 // about — the same split, and the same reason, as the guardrail warden's
 // violate/comply/no_verdict.

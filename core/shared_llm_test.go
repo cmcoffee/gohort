@@ -7,6 +7,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/ollama"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // A lead that built fine and later stopped answering used to be recorded
@@ -574,5 +577,149 @@ func TestALeadThatRecoversSaysSo(t *testing.T) {
 	noteLeadCall(errors.New("timeout"))
 	if got := LeadCalls(); got.OKStreak != 0 || !got.LastFailure.After(got.Acknowledged) {
 		t.Errorf("a failure after the acknowledgement: %+v", got)
+	}
+}
+
+// A check registered as a judge call goes to the Judge model when one is set,
+// by its route key or, without one, its caller; anything else stays on the
+// worker. A check switched off, a check with pictures for a judge that does
+// not read them, a lead call, and every check for a while after the judge
+// fails one (that one served by the worker instead) stay on the worker too.
+func TestChecksRunOnTheJudgeModel(t *testing.T) {
+	savedDB := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	prevW, prevL := SharedWorkerLLM(), SharedLeadLLM()
+	worker := &FakeLLM{Turns: []FakeTurn{{Content: "worker", Repeat: true}}}
+	judge := &FakeLLM{Turns: []FakeTurn{{Content: "judge", Repeat: true}}}
+	SetSharedLLMs(worker, nil)
+	SetSharedJudgeLLM(judge, false, "judge-model", "")
+	t.Cleanup(func() {
+		RootDB = savedDB
+		SetSharedLLMs(prevW, prevL)
+		SetSharedJudgeLLM(nil, false, "", "")
+	})
+	RegisterJudgeCall(JudgeCall{Key: "test.check", Label: "A check"})
+	RegisterJudgeCall(JudgeCall{Key: "test.caller_check", Label: "A check by caller"})
+	h := ReloadableWorkerLLM()
+	ask := func(msgs []Message, opts ...ChatOption) string {
+		t.Helper()
+		resp, err := h.Chat(context.Background(), msgs, opts...)
+		if err != nil {
+			t.Fatalf("chat: %v", err)
+		}
+		return resp.Content
+	}
+	hi := []Message{{Role: "user", Content: "hi"}}
+
+	if got := ask(hi, WithRouteKey("test.check")); got != "judge" {
+		t.Errorf("a registered check went to the %s", got)
+	}
+	if resp, err := h.ChatStream(context.Background(), hi, func(string) {}, WithRouteKey("test.check")); err != nil || resp.Content != "judge" {
+		t.Errorf("a streamed check went elsewhere: %v %+v", err, resp)
+	}
+	if got := ask(hi, WithCaller("test.caller_check")); got != "judge" {
+		t.Errorf("a check named by its caller went to the %s", got)
+	}
+	if got := ask(hi, WithRouteKey("app.orchestrate.worker")); got != "worker" {
+		t.Errorf("an agent's own round went to the %s", got)
+	}
+	if got := ask(hi, WithRouteKey("test.check"), WithThink(true), WithEffort("low")); got != "worker" {
+		t.Errorf("a check that asks to think went to the %s", got)
+	}
+	if got := ask(hi, WithRouteKey("test.check"), WithThink(false)); got != "judge" {
+		t.Errorf("a check with thinking off went to the %s", got)
+	}
+	if got := ask([]Message{{Role: "user", Content: "look", Images: [][]byte{{1}}}}, WithRouteKey("test.check")); got != "worker" {
+		t.Errorf("a check with pictures, for a judge that does not read them, went to the %s", got)
+	}
+	if resp, _ := ReloadableLeadLLM().Chat(context.Background(), hi, WithRouteKey("test.check")); resp == nil || resp.Content != "worker" {
+		t.Errorf("a lead call (no lead set, so the worker) went elsewhere: %+v", resp)
+	}
+	RootDB.Set(JudgeLLMTable, "off", []string{"test.check"})
+	if got := ask(hi, WithRouteKey("test.check")); got != "worker" || !JudgeCallOn("test.caller_check") {
+		t.Errorf("a check switched off went to the %s", got)
+	}
+	RootDB.Unset(JudgeLLMTable, "off")
+
+	// The judge fails: that check is served by the worker, and the next
+	// check goes straight to the worker, without trying the judge again.
+	failing := &FakeLLM{Turns: []FakeTurn{{Err: errors.New("connection refused"), Repeat: true}}}
+	SetSharedJudgeLLM(failing, false, "judge-model", "")
+	if got := ask(hi, WithRouteKey("test.check")); got != "worker" {
+		t.Errorf("a failed check was not served by the worker: %s", got)
+	}
+	tries := failing.Calls()
+	ask(hi, WithRouteKey("test.check"))
+	if failing.Calls() != tries {
+		t.Error("the judge was tried again straight after it failed")
+	}
+	if _, _, rest := LiveJudgeLLM(); !rest.After(time.Now()) {
+		t.Error("the judge's rest is not on record for the admin page")
+	}
+}
+
+// A registered check from a turn a person is waiting on goes first in the
+// local queue; the same check from background work, and an agent's own
+// round, keep their places.
+func TestACheckAPersonWaitsOnGoesFirst(t *testing.T) {
+	RegisterJudgeCall(JudgeCall{Key: "test.queue_check", Label: "A check"})
+	live := WithRunLane(context.Background(), LaneInteractive)
+	if !ollama.HasCheckPriority(checkPriority(live, ChatConfig{RouteKey: "test.queue_check"})) {
+		t.Error("a check in a turn a person waits on did not go first")
+	}
+	if !ollama.HasCheckPriority(checkPriority(live, ChatConfig{Caller: "test.queue_check"})) {
+		t.Error("a check named by its caller did not go first")
+	}
+	if ollama.HasCheckPriority(checkPriority(WithRunLane(context.Background(), LaneBackground), ChatConfig{RouteKey: "test.queue_check"})) {
+		t.Error("a background run's check went first")
+	}
+	if ollama.HasCheckPriority(checkPriority(live, ChatConfig{RouteKey: "app.orchestrate.worker"})) {
+		t.Error("an agent's own round went first")
+	}
+}
+
+// A judge that does not answer in its share of a check's time leaves the
+// rest to the worker: the check is answered inside its own deadline, not
+// timed out (a guardrail check that timed out on a busy judge failed closed
+// and blocked its action). The judge is then set aside.
+func TestASlowJudgeLeavesTimeForTheWorker(t *testing.T) {
+	savedDB := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	prevW, prevL := SharedWorkerLLM(), SharedLeadLLM()
+	never := make(chan struct{})
+	slow := &FakeLLM{Turns: []FakeTurn{{Content: "judge", Wait: never, Repeat: true}}}
+	worker := &FakeLLM{Turns: []FakeTurn{{Content: "worker", Repeat: true}}}
+	SetSharedLLMs(worker, nil)
+	SetSharedJudgeLLM(slow, false, "slow-judge", "")
+	t.Cleanup(func() {
+		close(never)
+		RootDB = savedDB
+		SetSharedLLMs(prevW, prevL)
+		SetSharedJudgeLLM(nil, false, "", "")
+	})
+	RegisterJudgeCall(JudgeCall{Key: "test.slow_check", Label: "A check"})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	began := time.Now()
+	resp, err := ReloadableWorkerLLM().Chat(ctx, []Message{{Role: "user", Content: "check"}}, WithRouteKey("test.slow_check"))
+	took := time.Since(began)
+	if err != nil || resp == nil || resp.Content != "worker" {
+		t.Fatalf("the check, with the judge silent: %v %+v", err, resp)
+	}
+	if took > 2*time.Second {
+		t.Errorf("the judge held the check %s of its 3s; its share is a third", took)
+	}
+	if _, _, rest := LiveJudgeLLM(); !rest.After(time.Now()) {
+		t.Error("a judge that ran out its share was not set aside")
+	}
+
+	// No deadline on the check: the judge still gets at most its cap.
+	if s, c := judgeShare(context.Background()); true {
+		d, ok := s.Deadline()
+		c()
+		if !ok || time.Until(d) > judgeShareMax {
+			t.Errorf("a check with no deadline gave the judge %v", time.Until(d))
+		}
 	}
 }

@@ -72,3 +72,55 @@ func TestATierSavesItsProviderAddressAndKey(t *testing.T) {
 		t.Errorf("still naming a connection: provider %q, notice %q", got["provider"], got["_stale"])
 	}
 }
+
+// The Judge model takes a local server or a peer, and refuses a hosted
+// model: the checks read everything the worker reads. Its list holds every
+// registered check, each on until switched off, and a switch stays put.
+func TestTheJudgeModelIsLocalAndListsItsChecks(t *testing.T) {
+	providedWorld(t)
+	a := &AdminApp{db: RootDB}
+	if code, body := tierSave(a, JudgeLLMTable, `{"provider":"anthropic","model":"claude-x","api_key":"k"}`); code != http.StatusBadRequest || !strings.Contains(body, "locally or on a peer") {
+		t.Errorf("a hosted Judge model: %d %s", code, body)
+	}
+	var provider string
+	RootDB.Get(JudgeLLMTable, "provider", &provider)
+	if provider != "" {
+		t.Errorf("a refused Judge model was stored: %q", provider)
+	}
+	if code, body := tierSave(a, JudgeLLMTable, `{"provider":"vllm","model":"Qwen/Qwen3.5-4B","endpoint":"http://192.168.0.40:8000"}`); code >= 300 {
+		t.Errorf("a local Judge model: %d %s", code, body)
+	}
+	for _, p := range judgeProviderOptions() {
+		if p.Value == "anthropic" || p.Value == "gemini" || p.Value == "bedrock" {
+			t.Errorf("the Judge model offers the hosted %s", p.Value)
+		}
+	}
+
+	RegisterJudgeCall(JudgeCall{Key: "test.admin_check", Label: "A check"})
+	rows := func() map[string]judgeCallRow {
+		out, _ := a.handleJudgeCalls(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/judge-llm/calls", nil)})
+		m := map[string]judgeCallRow{}
+		for _, r := range out.([]judgeCallRow) {
+			m[r.Key] = r
+		}
+		return m
+	}
+	if r, ok := rows()["test.admin_check"]; !ok || !r.On {
+		t.Fatalf("a registered check, on until switched off: %+v", r)
+	}
+	toggle := func(key string, on bool) error {
+		_, err := a.handleJudgeCallToggle(&jsonapi.Call{R: httptest.NewRequest("POST", "/api/judge-llm/calls/toggle?key="+key, nil)}, struct {
+			On bool `json:"on"`
+		}{on})
+		return err
+	}
+	if err := toggle("test.admin_check", false); err != nil || rows()["test.admin_check"].On || JudgeCallOn("test.admin_check") {
+		t.Errorf("switched off: %v, listed %+v", err, rows()["test.admin_check"])
+	}
+	if err := toggle("test.admin_check", true); err != nil || !JudgeCallOn("test.admin_check") {
+		t.Errorf("switched back on: %v", err)
+	}
+	if err := toggle("no.such.check", false); err == nil {
+		t.Error("a check that is not registered was switched")
+	}
+}

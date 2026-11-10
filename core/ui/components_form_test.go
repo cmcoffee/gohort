@@ -124,3 +124,21 @@ setTimeout(function(){ if (!process.exitCode) console.log('OK'); }, 60);
 		t.Fatalf("the form's fields read:\n%s", out)
 	}
 }
+
+// A form can show a link beside its Test button, to a fuller test elsewhere,
+// and a subsection can carry the id such a link scrolls to.
+func TestATestLinkSitsBesideTheTestButton(t *testing.T) {
+	b, _ := json.Marshal(FormPanel{TestURL: "api/x/test", TestLink: &FormLink{Label: "More tests", Href: "#more"}})
+	if !strings.Contains(string(b), `"test_link":{"label":"More tests","href":"#more"}`) {
+		t.Errorf("the form's test link: %s", b)
+	}
+	if b, _ := json.Marshal(Subsection{ID: "more", Title: "More"}); !strings.Contains(string(b), `"id":"more"`) {
+		t.Errorf("the subsection's id: %s", b)
+	}
+	basics := mustRuntimePart(t, "10_basics.js")
+	for _, want := range []string{"cfg.test_link.href", "scrollIntoView", "if (cfg.id) wrap.id = cfg.id;"} {
+		if !strings.Contains(basics, want) {
+			t.Errorf("the runtime lost %q", want)
+		}
+	}
+}

@@ -15,6 +15,14 @@ import (
 	"github.com/cmcoffee/gohort/core/provenance"
 )
 
+// groundingJudgeRoute names the grounding judge's call (see turnJudgeRoute).
+const groundingJudgeRoute = "app.orchestrate.grounding_judge"
+
+func init() {
+	RegisterJudgeCall(JudgeCall{Key: groundingJudgeRoute, Label: "Grounding judge",
+		Help: "Whether a reply claims something its sources do not support."})
+}
+
 // groundingJudgeSysPrompt is deliberately narrow. A judge given "is this reply
 // well grounded?" convicts anything confident, and the correction it triggers
 // teaches hedging — which is the failure this whole design is most often
@@ -73,7 +81,7 @@ func (T *OrchestrateApp) judgeTurnGrounding(ctx context.Context, ev TurnGroundin
 	// a coin the user could see being tossed.
 	resp, err := T.LLM.Chat(ctx, []Message{{Role: "user", Content: b.String()}},
 		WithSystemPrompt(groundingJudgeSysPrompt), WithJSONMode(),
-		WithRouteKey("app.orchestrate.worker"), WithThink(false), WithTemperature(0))
+		WithRouteKey(groundingJudgeRoute), WithThink(false), WithTemperature(0))
 	if err != nil {
 		Debug("[grounding-judge] LLM error: %v, no opinion", err)
 		return TurnGroundingVerdict{}, false

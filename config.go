@@ -99,6 +99,62 @@ func (d dbCFG) leadLLM() LLMProviderConfig {
 	return c
 }
 
+// judgeLLM is the Judge model's config, the lead's shape, on a server of its
+// own (SeparateServer): the worker's queue and slot counts are not its.
+func (d dbCFG) judgeLLM() LLMProviderConfig {
+	var c LLMProviderConfig
+	global.db.Get(JudgeLLMTable, "provider", &c.Provider)
+	global.db.Get(JudgeLLMTable, "model", &c.Model)
+	global.db.Get(JudgeLLMTable, "endpoint", &c.Endpoint)
+	if err := c.LoadKey(global.db, JudgeLLMTable); err != nil {
+		Warn("[llm] the Judge model: %v", err)
+	}
+	global.db.Get(JudgeLLMTable, "context_size", &c.ContextSize)
+	// The Judge model never thinks. A check that asks to think goes to the
+	// worker (judgeFor), so every call that reaches the judge wants an
+	// answer straight off; and a model that thinks by default (Qwen3.5)
+	// asked by a check that forgot to say so would think for a minute on a
+	// small card, as a confirmation reading did at 43s and 78s. Forced here
+	// rather than offered as a setting, since no value but off is right.
+	c.DisableThinking = true
+	global.db.Get(JudgeLLMTable, "no_images", &c.NoImages)
+	global.db.Get(JudgeLLMTable, "native_tools", &c.NativeTools)
+	// A server of its own: not the worker's queue, and not its slot count.
+	c.SeparateServer = true
+	loadNoThinkConfig(JudgeLLMTable, &c)
+	var timeout_seconds int
+	global.db.Get(JudgeLLMTable, "request_timeout_seconds", &timeout_seconds)
+	if timeout_seconds > 0 {
+		c.RequestTimeout = time.Duration(timeout_seconds) * time.Second
+	}
+	return c
+}
+
+// reloadJudgeLLM builds the Judge model from its config and installs it, or
+// installs none when none is set. A judge that fails to build, or is not one
+// this deployment controls (JudgePrivate), is not installed: the checks stay
+// on the worker, and the admin page says why.
+func reloadJudgeLLM() error {
+	cfg := dbcfg.judgeLLM()
+	if cfg.Provider == "" {
+		SetSharedJudgeLLM(nil, false, "", "")
+		return nil
+	}
+	if ok, why := JudgePrivate(cfg.Provider, cfg.Endpoint); !ok {
+		err := fmt.Errorf("the Judge model must run locally or on a peer: %s", why)
+		SetSharedJudgeLLM(nil, false, "", err.Error())
+		return err
+	}
+	judge, err := NewLLMFromConfig(cfg)
+	if err != nil {
+		SetSharedJudgeLLM(nil, false, "", err.Error())
+		return fmt.Errorf("judge LLM: %w", err)
+	}
+	SetSharedJudgeLLM(judge, !cfg.NoImages, describeLLMConfig(cfg), "")
+	Log("[llm] the Judge model is %s: checks run there", describeLLMConfig(cfg))
+	return nil
+}
+
 // loadNoThinkConfig overlays the no-think signal toggles from the given table
 // onto c. When the operator has never configured no-think (no_think_configured
 // key absent), it falls back to the empirically-proven combo — kwarg + budget
@@ -266,7 +322,9 @@ func reloadSharedLLMs() error {
 	}
 	SetPromptToolsMode(promptTools)
 	Log("[llm] reloaded shared LLMs (worker=%s/%s)", cfg.Provider, cfg.Model)
-	return nil
+	// The Judge model last: the worker and lead are already in place, so a
+	// judge that will not build leaves its checks on a worker that works.
+	return reloadJudgeLLM()
 }
 
 func (d dbCFG) mail() MailConfig {

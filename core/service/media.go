@@ -27,7 +27,7 @@ func init() {
 	media.SpeechService = speakVia
 	media.SpeechVoicesService = voicesVia
 	media.EmbedService = embedVia
-	media.ServiceAddress = serviceAddress
+	media.ServiceAddress = Address
 	media.PageService = renderVia
 	media.MailService = mailVia
 	flows.ConvertService = convertVia
@@ -109,9 +109,9 @@ func embedVia(ctx context.Context, name, model string, texts []string) ([][]floa
 	return Vectors(res)
 }
 
-// serviceAddress is the base URL of the service connector named name, or
-// "".
-func serviceAddress(name string) string {
+// Address is the base URL of the service connector named name, or "": where
+// its calls go, for a caller that judges whether that stays private.
+func Address(name string) string {
 	c, ok := GetConnector(RootDB, name)
 	if !ok || c.Kind != Kind {
 		return ""

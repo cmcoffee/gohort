@@ -39,6 +39,8 @@ import (
 const TunableConflictDetection = "tune_conflict_detection"
 
 func init() {
+	RegisterJudgeCall(JudgeCall{Key: "memory.conflict_check", Label: "Memory conflict check",
+		Help: "Whether something to remember contradicts what is already remembered."})
 	RegisterTunable(TunableSpec{App: "/orchestrate", Key: TunableConflictDetection, Category: "Memory",
 		Label:  "Finding conflict detection",
 		Help:   "When saving a finding, check for one it contradicts and surface the conflict in the result.",

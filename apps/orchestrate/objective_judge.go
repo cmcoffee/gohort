@@ -22,6 +22,14 @@ import (
 	"github.com/cmcoffee/gohort/core/pacing"
 )
 
+// objectiveJudgeRoute names the objective judge's call (see turnJudgeRoute).
+const objectiveJudgeRoute = "app.orchestrate.objective_judge"
+
+func init() {
+	RegisterJudgeCall(JudgeCall{Key: objectiveJudgeRoute, Label: "Objective judge",
+		Help: "Whether a standing goal's run met its objective."})
+}
+
 // objectiveEvidence is what the check reasons over: the goal, the attempt's
 // actions, and its report, in that order of authority.
 type objectiveEvidence struct {
@@ -106,7 +114,7 @@ func (T *OrchestrateApp) judgeWithPrompt(ctx context.Context, sysPrompt, message
 	}
 	resp, err := T.LLM.Chat(ctx, []Message{{Role: "user", Content: message}},
 		WithSystemPrompt(sysPrompt), WithJSONMode(),
-		WithRouteKey("app.orchestrate.worker"), WithThink(false))
+		WithRouteKey(objectiveJudgeRoute), WithThink(false))
 	if err != nil {
 		Debug("[objective] LLM error: %v, no opinion", err)
 		return objectiveVerdict{}, false

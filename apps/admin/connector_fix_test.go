@@ -129,6 +129,7 @@ func TestTemplatesAreBrowsedByCategory(t *testing.T) {
 		"speech.synthesize": "elevenlabs-speech,openai-compatible-speech",
 		"speech.transcribe": "openai-compatible-transcription,openai-transcription",
 		"mail.send":         "mailgun-mail,postmark-mail,resend-mail",
+		"decide.choice":     "vllm-system-one",
 	} {
 		if code, rows := get("/api/templates/for?need=" + need); code != 200 || ids(rows) != want {
 			t.Errorf("%s: %d %s", need, code, ids(rows))

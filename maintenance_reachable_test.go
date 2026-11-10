@@ -29,6 +29,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -38,15 +39,39 @@ import (
 
 var maintenanceListRe = regexp.MustCompile(`maintenanceList\(\s*"([^"]+)"`)
 
+// renderedMaintenanceGroups is every group some admin page lays out: the
+// Maintenance page's lists, and any other page's (the check tests are on
+// Models, beside the Judge model they test). A group laid out by a constant
+// (checkTestsGroup) is matched through the constant's value.
 func renderedMaintenanceGroups(t *testing.T) map[string]bool {
 	t.Helper()
-	src, err := os.ReadFile("apps/admin/page_maintenance.go")
+	files, err := filepath.Glob("apps/admin/*.go")
 	if err != nil {
 		t.Fatal(err)
 	}
+	var all strings.Builder
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		all.Write(src)
+	}
+	consts := map[string]string{}
+	for _, m := range regexp.MustCompile(`(\w+Group) = "([^"]+)"`).FindAllStringSubmatch(all.String(), -1) {
+		consts[m[1]] = m[2]
+	}
 	out := map[string]bool{}
-	for _, m := range maintenanceListRe.FindAllStringSubmatch(string(src), -1) {
+	for _, m := range maintenanceListRe.FindAllStringSubmatch(all.String(), -1) {
 		out[m[1]] = true
+	}
+	for _, m := range regexp.MustCompile(`maintenanceList\(\s*(\w+Group)\b`).FindAllStringSubmatch(all.String(), -1) {
+		if v, ok := consts[m[1]]; ok {
+			out[v] = true
+		}
 	}
 	if len(out) == 0 {
 		t.Fatal("no maintenance lists render at all; the admin page has been reshaped")

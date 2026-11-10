@@ -137,6 +137,10 @@ type FormPanel struct {
 	// for a setting ("Test token" on a credential that has no token) should
 	// not be offered for it. Empty = always shown.
 	TestShowWhen string `json:"test_show_when,omitempty"`
+	// TestLink is a link beside the Test button, to a fuller test elsewhere:
+	// Href is a page address, or "#id" for a part of this page (a Subsection
+	// with that ID), which the page scrolls to. Shown with the Test button.
+	TestLink *FormLink `json:"test_link,omitempty"`
 
 	// HistoryURL — when set, renders a "History" button next to the form's
 	// other controls. Click GETs the URL and shows what comes back in the
@@ -751,4 +755,10 @@ type FormField struct {
 	// file" flows where the file's text IS the value. Ignored by other
 	// field types.
 	Accept string `json:"accept,omitempty"`
+}
+
+// FormLink is a labelled link a form shows (FormPanel.TestLink).
+type FormLink struct {
+	Label string `json:"label"`
+	Href  string `json:"href"`
 }

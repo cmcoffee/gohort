@@ -485,6 +485,39 @@ func init() {
 		units: func(map[string]any, Result) float64 { return 1 },
 	})
 	register(Contract{
+		Name:   DecideChoice,
+		About:  "A System One decision: a pick among fixed options, read from a model's first token. criteria is an object of the options, keyed o00, o01, ... in the order they are shown; probabilities is an object of each key's share among the options, and label_mass how much of the model's probability fell on the options at all (0 to 1).",
+		Checks: "probabilities names the options asked, with numbers that are not all zero. The test asks what colour a clear blue sky is, and blue must come out ahead.",
+		Where:  "Admin > Services > System One: \"Answered by\"",
+		Gives:  "System One",
+		Inputs: []Port{
+			{Name: "instructions", Type: TypeText},
+			{Name: "state", Type: TypeText},
+			{Name: "ask", Type: TypeText, Required: true},
+			{Name: "criteria", Type: TypeJSON, Required: true},
+			{Name: "model", Type: TypeText},
+		},
+		Outputs: []Port{
+			{Name: "probabilities", Type: TypeJSON, Required: true},
+			{Name: "label_mass", Type: TypeNumber},
+		},
+		Units: []string{"decision"},
+		Test: map[string]any{"state": "The sky is clear and blue today.", "ask": "What colour is the sky?",
+			"criteria": map[string]any{"o00": "blue", "o01": "green"}},
+		Check: checkChoice("probabilities"),
+		testCheck: func(r Result) error {
+			p, err := Probabilities(r)
+			if err != nil {
+				return err
+			}
+			if p["o00"] <= p["o01"] {
+				return fmt.Errorf("it answered the test question wrong (blue %.2f, green %.2f)", p["o00"], p["o01"])
+			}
+			return nil
+		},
+		units: func(map[string]any, Result) float64 { return 1 },
+	})
+	register(Contract{
 		Name:   "embed.text",
 		About:  "Vectors for texts, for semantic search: texts is a list of strings, and vectors a list of lists of numbers, one for each text.",
 		Checks: "At least one vector came back, none of them empty, all the same length. The test embeds two texts.",
@@ -728,6 +761,40 @@ func textsOf(v any) []string {
 		return out
 	}
 	return nil
+}
+
+// DecideChoice is the System One capability (core/decide).
+const DecideChoice = "decide.choice"
+
+// Probabilities reads a decide.choice result: each option key's share.
+func Probabilities(r Result) (map[string]float64, error) {
+	var p map[string]float64
+	if err := json.Unmarshal([]byte(r["probabilities"].Text), &p); err != nil {
+		return nil, fmt.Errorf("the probabilities are not an object of numbers: %v", err)
+	}
+	return p, nil
+}
+
+// checkChoice passes probabilities that are an object of numbers, not all
+// zero.
+func checkChoice(output string) func(Result) error {
+	return func(r Result) error {
+		if _, ok := r[output]; !ok {
+			return fmt.Errorf("no %s came back", output)
+		}
+		p, err := Probabilities(Result{"probabilities": r[output]})
+		if err != nil {
+			return err
+		}
+		total := 0.0
+		for _, v := range p {
+			total += v
+		}
+		if len(p) == 0 || total <= 0 {
+			return fmt.Errorf("no option was given any probability")
+		}
+		return nil
+	}
 }
 
 // Vectors reads an embed.text result: one vector of numbers per text.

@@ -153,3 +153,42 @@ func TestTotalQueuedSumsCallers(t *testing.T) {
 		t.Fatalf("totalQueued on empty = %d, want 0", got)
 	}
 }
+
+// A check a person is waiting on goes ahead of everything queued before it:
+// another caller's ordinary request and a background one. A check marked
+// from background work gets no such place.
+func TestACheckGoesFirstInTheQueue(t *testing.T) {
+	s := newLaneTestScheduler()
+	ctx := context.Background()
+	if err := s.acquire(ctx, "llama.cpp", "holder"); err != nil {
+		t.Fatal(err)
+	}
+	served := make(chan string, 4)
+	queue := func(caller string, c context.Context, background bool) {
+		go func() {
+			if err := s.acquireLane(c, "llama.cpp", caller, background); err == nil {
+				served <- caller
+				time.Sleep(20 * time.Millisecond)
+				s.release <- caller
+			}
+		}()
+		time.Sleep(20 * time.Millisecond) // queued in this order
+	}
+	queue("agent-round", ctx, false)
+	queue("schedule", ctx, true)
+	queue("background-check", WithCheckPriority(ctx), true)
+	queue("check", WithCheckPriority(ctx), false)
+	s.release <- "holder"
+	var got []string
+	for range 4 {
+		select {
+		case c := <-served:
+			got = append(got, c)
+		case <-time.After(3 * time.Second):
+			t.Fatalf("stalled after %v", got)
+		}
+	}
+	if got[0] != "check" || got[1] != "agent-round" {
+		t.Errorf("served %v, want the waiting check first, then the agent's round", got)
+	}
+}

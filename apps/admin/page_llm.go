@@ -119,6 +119,51 @@ func (a *AdminApp) llmSections() []ui.Section {
 			},
 		},
 		{
+			Title:    "Judge model",
+			Subtitle: "Takes gohort's own checks off the worker, so the worker spends its time on the agents.",
+			Detail: "What it is for. Around every turn gohort makes short checks of its own: the guardrail checks before input, each action and each reply, the tool-result scan, the turn and grounding judges, the image source check, the memory checks. " +
+				"On the worker, each one waits its turn behind the agents' rounds, and the agents' next round waits behind it. A Judge model is a second, usually smaller, model that answers the checks instead, so neither waits for the other.\n\n" +
+				"Who it fits. A deployment with a second GPU or a spare machine (a small model there, such as a 4B or 9B), or a peer that lends a model: the checks move off the main model and busy turns get faster. " +
+				"A deployment whose worker is a hosted API: the checks stop being paid calls, and what they read stays on your hardware. " +
+				"It helps little with one GPU that the worker already fills: a second model there mostly moves the wait.\n\n" +
+				"How to set it up. Run the model on its own server (vLLM suits bursts of checks best; llama.cpp and Ollama work too), give its address and model here, and Test connection. " +
+				"Each check switched on under Checks, below, runs on it. Check tests, at the foot of this section (Test the checks, beside Test connection), ask each check's cases of it and the worker side by side; watch the log for a day too (call done in, route=).\n\n" +
+				"Limits. Local or a peer only: the checks read everything the worker reads, the person's messages, tool results and replies, so a hosted model is refused. " +
+				"A smaller model is a weaker reader: if a check's decisions get worse, switch that check off and it goes back to the worker. " +
+				"A check with pictures goes to it only when Reads images is on. The Judge model never thinks: a check that asks to think (a confirming reading, a thorough guardrail) runs on the worker, which reasons faster at length, and every other call is sent with thinking off. If it fails a call, that call and the next few minutes of checks run on the worker. Its tokens count with the worker's in usage.",
+			Body: ui.Stack{Children: []ui.Component{
+				ui.FormPanel{
+					Assist:       true,
+					Source:       "api/judge-llm",
+					TestURL:      "api/judge-llm/test",
+					TestLabel:    "Test connection",
+					TestShowWhen: "provider",
+					TestLink:     &ui.FormLink{Label: "Test the checks ↓", Href: "#" + checkTestsAnchor},
+					Invalidate:   []string{"api/judge-llm/calls"},
+					Fields: tierReach([]ui.FormField{
+						{Field: "_live", Type: "readonly", Label: "In use"},
+						{Field: "provider", Label: "Provider", Type: "select", Options: judgeProviderOptions(),
+							Help: "(use the worker) leaves the checks where they are. A peer offering inference appears here too."},
+						{Field: "model", Label: "Model", Type: "text", Placeholder: "e.g. Qwen/Qwen3.5-4B", SaveOnBlur: true,
+							ShowWhen:          "provider",
+							SuggestionsSource: "api/judge-llm/models", SuggestionsLabel: "List models",
+							Help: "List models asks the server what it serves."},
+						readsImagesField("provider"),
+					}),
+				},
+				// Which checks it answers, and how it does on their cases, at
+				// the foot of its own section: one place for the Judge model.
+				// Test connection links down to the check tests, so they are
+				// found without scrolling past the list.
+				ui.Subsection{
+					Title:    "Checks",
+					Subtitle: "Switched on, a check runs on the Judge model; off, on the worker.",
+					Body:     judgeCallsTable(),
+				},
+				checkTestsPanel(),
+			}},
+		},
+		{
 			Title:    "Model Privacy",
 			Subtitle: "Some stages are pinned to the worker tier and cannot escalate.",
 			Detail: "They handle material that must not reach a third-party model: SSH credentials, log contents, system facts." +
@@ -473,4 +518,41 @@ func tierReach(fields []ui.FormField) []ui.FormField {
 	out := append([]ui.FormField{}, fields[:at+1]...)
 	out = append(out, reach...)
 	return append(out, fields[at+1:]...)
+}
+
+// judgeProviderOptions are the providers a Judge model may use: the local
+// servers, an OpenAI-compatible one at a local address, and peers. Hosted
+// providers are left off (the save refuses them too: JudgePrivate).
+func judgeProviderOptions() []ui.SelectOption {
+	out := []ui.SelectOption{{Value: "", Label: "(use the worker)", Help: "The checks run on the worker model."}}
+	for _, o := range LLMProviderOptions(false) {
+		switch {
+		case o.Value == "ollama", o.Value == "llama.cpp", o.Value == "vllm":
+		case o.Value == "openai":
+			o.Label = "OpenAI-compatible, at a local address"
+			o.Help = "A server on this network that speaks the OpenAI API: give its address below."
+		case strings.HasPrefix(o.Value, PeerProviderValue("")):
+		default:
+			continue
+		}
+		out = append(out, o)
+	}
+	return out
+}
+
+// judgeCallsTable is the checks that may run on the Judge model, each with
+// its switch.
+func judgeCallsTable() ui.Table {
+	return ui.Table{
+		Source:    "api/judge-llm/calls",
+		RowKey:    "key",
+		EmptyText: "No checks are registered.",
+		Columns: []ui.Col{
+			{Field: "label", Label: "Check"},
+			{Field: "help", Label: "", Mute: true, Flex: 4, Line: 2},
+		},
+		RowActions: []ui.RowAction{
+			{Type: "toggle", Field: "on", PostTo: "api/judge-llm/calls/toggle?key={key}", Leading: true},
+		},
+	}
 }

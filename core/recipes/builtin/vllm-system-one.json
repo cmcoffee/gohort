@@ -1,0 +1,106 @@
+{
+  "id": "vllm-system-one",
+  "title": "vLLM System One",
+  "description": "Quick decisions for gohort's checks from a vLLM server's own /v1/systemone: a pick among fixed answers read from the model's first token, with no reply written. The request and the reply are data you can test and fix from Admin > Connectors.",
+  "category": "System One",
+  "setup_notes": "Needs vLLM 0.32 or later, started with --logprobs-mode raw_logprobs, on this machine or your network. The connector takes no key. Choose it under Services > System One and give the server's address and the model there; Test there asks a question with a known answer. A server that takes a key: declare a secret setting sent as bearer in its spec's config, name it in auth in place of none, and give the key under the choice. System One sees what gohort's checks see (messages, conversations, replies), so an address outside this machine and its network is offered only when every model is declared private (Admin > Models).",
+  "questions": [
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; the System One settings list it by this name.",
+      "default": "local-system-one"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "vllm-system-one",
+          "desc": "System One decisions on a vLLM server",
+          "spec": {
+            "config": [
+              {
+                "name": "base_url",
+                "label": "Server address",
+                "help": "The address its /systemone is under, ending in /v1: http://localhost:8000/v1.",
+                "type": "url",
+                "default": "http://localhost:8000/v1",
+                "required": true
+              },
+              {
+                "name": "model",
+                "label": "Model",
+                "help": "The name the server loaded the model as (its --served-model-name).",
+                "default": "judge"
+              }
+            ],
+            "provider": {
+              "transport": "http",
+              "base_url": "{config.base_url}",
+              "auth": {
+                "none": true
+              },
+              "operations": {
+                "decide": {
+                  "method": "POST",
+                  "path": "/systemone",
+                  "body": {
+                    "model": "{model}",
+                    "instructions": "{instructions}",
+                    "state": "{state}",
+                    "questions": {
+                      "d": {
+                        "type": "choice",
+                        "instructions": "{ask}",
+                        "criteria": "{criteria}"
+                      }
+                    },
+                    "chat_template_kwargs": {
+                      "enable_thinking": false
+                    }
+                  }
+                },
+                "models": {
+                  "path": "/models"
+                }
+              },
+              "health": {
+                "call": "models",
+                "expect": "data",
+                "every_mins": 60
+              }
+            },
+            "provides": [
+              {
+                "capability": "decide.choice",
+                "steps": [
+                  {
+                    "call": "decide"
+                  }
+                ],
+                "output": {
+                  "probabilities": {
+                    "path": "answers.d.probabilities",
+                    "as": "json"
+                  },
+                  "label_mass": {
+                    "path": "diagnostics.d.label_mass"
+                  }
+                },
+                "defaults": {
+                  "model": "{config.model}"
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

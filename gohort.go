@@ -229,6 +229,9 @@ func main() {
 			// it from the first request rather than only after a save. See
 			// SetLiveLLMs for why stored and running are different questions.
 			SetLiveLLMs(describeLLMConfig(dbcfg.llm()), describeLLMConfig(dbcfg.leadLLM()))
+			if err := reloadJudgeLLM(); err != nil {
+				Warn("[llm] %v: checks stay on the worker", err)
+			}
 			shared_llm = ReloadableWorkerLLM()
 			shared_lead_llm = ReloadableLeadLLM()
 			shared_prompt_tools = T.PromptTools

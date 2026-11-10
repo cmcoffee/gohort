@@ -375,7 +375,11 @@ const (
 	// 2357: down 31. Exported functions nothing called anywhere in the repo
 	// were deleted (old path/date helpers, unused LLM constructors and chat
 	// options, an always-empty registry's setter, unused search variants).
-	coreExportCeiling = 2357
+	// 2384: the slack had been spent again (HEAD stood at 2383), plus
+	// ShadowRoute, the hook core/decide fills so a machine step that only
+	// routes is asked of System One beside the step (core cannot import
+	// decide). The shadow itself and its tally live in core/decide.
+	coreExportCeiling = 2384
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

@@ -44,7 +44,31 @@ type ollamaReqToken struct {
 	// monitor); the dispatcher serves a waiting person's first, and serves
 	// a background one anyway once it has waited backgroundWaitCap.
 	background bool
-	queued     time.Time
+	// priority marks a check a person is waiting on (WithCheckPriority): it
+	// is short, and it holds a turn while it waits, so it goes first.
+	priority bool
+	queued   time.Time
+}
+
+type checkPriorityKey struct{}
+
+// WithCheckPriority marks ctx's model calls as checks a person is waiting
+// on: short calls that hold a turn (a guardrail check before an action, the
+// scan of a tool's result) and so go ahead of everything else in the queue.
+// Fairness among them is the usual round-robin.
+func WithCheckPriority(ctx context.Context) context.Context {
+	return context.WithValue(ctx, checkPriorityKey{}, true)
+}
+
+// HasCheckPriority reports whether ctx carries WithCheckPriority.
+func HasCheckPriority(ctx context.Context) bool {
+	return hasCheckPriority(ctx)
+}
+
+// hasCheckPriority reports whether ctx carries WithCheckPriority.
+func hasCheckPriority(ctx context.Context) bool {
+	p, _ := ctx.Value(checkPriorityKey{}).(bool)
+	return p
 }
 
 // backgroundWaitCap is how long a background request can be passed over for
@@ -138,6 +162,7 @@ func (s *OllamaScheduler) acquireLane(ctx context.Context, backend, callerID str
 		ctx:        ctx,
 		done:       make(chan error, 1),
 		background: background,
+		priority:   !background && hasCheckPriority(ctx),
 		queued:     time.Now(),
 	}
 	started := time.Now()
@@ -392,7 +417,29 @@ func (s *OllamaScheduler) dispatch(initialMax int) {
 	}
 
 	pickNext := func() int {
-		// A waiting person's request first: among callers whose next
+		// A check a person is waiting on before anything: it is short and
+		// holds a turn while it waits. Round-robin among callers with one.
+		prio, prioFallback := -1, -1
+		for i, cid := range order {
+			q := queues[cid]
+			if len(q) == 0 || !q[0].priority {
+				continue
+			}
+			if cid != lastDispatched {
+				prio = i
+				break
+			}
+			if prioFallback == -1 {
+				prioFallback = i
+			}
+		}
+		if prio != -1 {
+			return prio
+		}
+		if prioFallback != -1 {
+			return prioFallback
+		}
+		// A waiting person's request next: among callers whose next
 		// request somebody waits on (or a background one past its wait
 		// cap), the usual round-robin. Only when there is none does a
 		// background request get the slot.

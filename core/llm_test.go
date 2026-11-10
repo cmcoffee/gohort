@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cmcoffee/gohort/core/keystore"
 	"github.com/cmcoffee/gohort/core/textutil"
@@ -1382,5 +1383,144 @@ func TestATiersFirstKeyLandsInTheKeystore(t *testing.T) {
 	}
 	if len(keystore.List(RootDB)) != 2 {
 		t.Errorf("entries: %+v", keystore.List(RootDB))
+	}
+}
+
+// A model on a server of its own (the Judge model) neither waits in the
+// process-wide llama.cpp/vLLM queue nor resets it. Waiting there kept every
+// check behind the worker's calls, and building it set the worker's cap to
+// the judge's own (1, for llama.cpp), throttling a vLLM worker to one call.
+func TestASeparateServerKeepsOutOfTheWorkersQueue(t *testing.T) {
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`))
+	}))
+	defer stub.Close()
+	if _, err := NewLLMFromConfig(LLMProviderConfig{Provider: "vllm", Endpoint: stub.URL, LlamacppMaxParallel: 2}); err != nil {
+		t.Fatal(err)
+	}
+	waitCap := func(want int) int {
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			got := LlamacppSchedulerStats().MaxParallel
+			if got == want || time.Now().After(deadline) {
+				return got
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if got := waitCap(2); got != 2 {
+		t.Fatalf("the worker's queue: cap %d", got)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, who := range []string{"turn-a", "turn-b"} {
+		if err := AcquireLlamacppSlot(ctx, who); err != nil {
+			t.Fatal(err)
+		}
+		defer ReleaseLlamacppSlot(who)
+	}
+	judge, err := NewLLMFromConfig(LLMProviderConfig{Provider: "llama.cpp", Endpoint: stub.URL, SeparateServer: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	short, stop := context.WithTimeout(context.Background(), 2*time.Second)
+	defer stop()
+	if resp, err := judge.Chat(short, []Message{{Role: "user", Content: "check"}}); err != nil || resp.Content != "ok" {
+		t.Errorf("with the worker's queue full, the judge's call: %v %+v", err, resp)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := LlamacppSchedulerStats().MaxParallel; got != 2 {
+		t.Errorf("building the judge changed the worker's cap to %d", got)
+	}
+}
+
+// End to end on the worker's own queue: with its one slot busy, a check from
+// a turn a person waits on reaches the server before an agent's round that
+// was queued first.
+func TestACheckReachesTheWorkerBeforeAQueuedRound(t *testing.T) {
+	var mu sync.Mutex
+	var order []string
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		switch {
+		case strings.Contains(string(b), "round-text"):
+			order = append(order, "round")
+		case strings.Contains(string(b), "check-text"):
+			order = append(order, "check")
+		}
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`))
+	}))
+	defer stub.Close()
+	RegisterJudgeCall(JudgeCall{Key: "test.e2e_check", Label: "A check"})
+	worker, err := NewLLMFromConfig(LLMProviderConfig{Provider: "vllm", Endpoint: stub.URL, LlamacppMaxParallel: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for LlamacppSchedulerStats().MaxParallel != 1 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := AcquireLlamacppSlot(ctx, "holder"); err != nil {
+		t.Fatal(err)
+	}
+	live := WithRunLane(ctx, LaneInteractive)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		worker.Chat(live, []Message{{Role: "user", Content: "round-text"}}, WithRouteKey("app.orchestrate.worker"), WithCaller("agent"))
+	}()
+	time.Sleep(60 * time.Millisecond)
+	go func() {
+		defer wg.Done()
+		worker.Chat(live, []Message{{Role: "user", Content: "check-text"}}, WithRouteKey("test.e2e_check"), WithCaller("warden"))
+	}()
+	time.Sleep(60 * time.Millisecond)
+	ReleaseLlamacppSlot("holder")
+	wg.Wait()
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(order, ",") != "check,round" {
+		t.Errorf("the server saw %v, want the check before the round queued ahead of it", order)
+	}
+}
+
+// A local model is sent a registered check's output cap, and no cap for
+// anything else: a check's answer is short by design, and an uncapped one
+// ran on for thousands of tokens.
+func TestALocalModelKeepsACheckOutputCap(t *testing.T) {
+	var mu sync.Mutex
+	var bodies []string
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(b))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`))
+	}))
+	defer stub.Close()
+	RegisterJudgeCall(JudgeCall{Key: "test.capped_check", Label: "A check"})
+	llm, err := NewLLMFromConfig(LLMProviderConfig{Provider: "vllm", Endpoint: stub.URL, SeparateServer: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	hi := []Message{{Role: "user", Content: "hi"}}
+	llm.Chat(ctx, hi, WithRouteKey("test.capped_check"), WithMaxTokens(600))
+	llm.Chat(ctx, hi, WithRouteKey("app.orchestrate.worker"), WithMaxTokens(600))
+	mu.Lock()
+	defer mu.Unlock()
+	if len(bodies) != 2 || !strings.Contains(bodies[0], `"max_tokens":600`) {
+		t.Errorf("the check's cap was not sent: %v", bodies)
+	}
+	if len(bodies) == 2 && strings.Contains(bodies[1], `"max_tokens"`) {
+		t.Errorf("an ordinary call to a local model was capped: %s", bodies[1])
 	}
 }

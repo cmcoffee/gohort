@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -238,4 +239,41 @@ func TestSetupIsNotSkippedFromAnotherSite(t *testing.T) {
 	if !AuthGetFirstRunDismissed(db, "root") {
 		t.Error("the page's own Skip did nothing")
 	}
+}
+
+// The Judge model's test asks what the checks ask, one answer in JSON with
+// thinking off, and nothing more: no tool-call handoff, which checks never
+// use, so its failures would read a working judge as broken.
+func TestTheJudgeTestAsksWhatTheChecksAsk(t *testing.T) {
+	run := func(reply string) (map[string]any, *FakeLLM) {
+		t.Helper()
+		llm := &FakeLLM{Turns: []FakeTurn{{Content: reply, Repeat: true}}}
+		w := httptest.NewRecorder()
+		(&AdminApp{}).testJudge(context.Background(), w, llm, "judge-4b", " Server: vLLM.")
+		var out map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatalf("result: %v %s", err, w.Body)
+		}
+		return out, llm
+	}
+	out, llm := run(`{"answer": "yes"}`)
+	if out["ok"] != true || !strings.Contains(out["message"].(string), "in JSON with thinking off") {
+		t.Errorf("a judge that answers in JSON: %+v", out)
+	}
+	if llm.Calls() != 1 {
+		t.Errorf("the test made %d calls; one check, no handoff", llm.Calls())
+	}
+	cfg := llm.Config(0)
+	if !cfg.JSONMode || cfg.Think == nil || *cfg.Think {
+		t.Errorf("asked as a check is: json=%v think=%v", cfg.JSONMode, cfg.Think)
+	}
+	if out, _ := run("Sure! The sky is blue."); out["ok"] != false || !strings.Contains(asText(out["error"]), "not in the JSON the checks need") {
+		t.Errorf("a judge that answers in prose: %+v", out)
+	}
+}
+
+// asText is a decoded JSON value as a string, "" when it is not one.
+func asText(v any) string {
+	s, _ := v.(string)
+	return s
 }

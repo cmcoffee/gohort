@@ -91,6 +91,12 @@ type Message struct {
 
 // Response represents the result of an LLM call.
 type Response struct {
+	// TopLogprobs are the most likely first tokens of the reply and their
+	// log-probabilities, for a decision (ChatConfig.DecidePrefix).
+	TopLogprobs []struct {
+		Token   string
+		Logprob float64
+	}
 	Content      string
 	Reasoning    string // Thinking model reasoning (populated but not promoted to Content)
 	ToolCalls    []ToolCall
@@ -764,8 +770,14 @@ type ToolResult struct {
 
 // ChatConfig holds configuration for a single LLM call.
 type ChatConfig struct {
-	Model        string
-	MaxTokens    int
+	Model     string
+	MaxTokens int
+	// DecidePrefix makes the call a decision (core/decide): the reply is
+	// pre-started with this text, the server continues it by ONE token, and
+	// TopLogprobs of that token's alternatives come back with their
+	// probabilities. vLLM only, for now.
+	DecidePrefix string
+	TopLogprobs  int
 	Temperature  *float64 // Per-call temperature; nil = the mode's global default (tune_sampling_temperature_{think,nothink}), then server default.
 	TopK         *int     // Per-call top-k cutoff; nil = the mode's global default (tune_sampling_top_k_{think,nothink}), then server default.
 	TopP         *float64 // Per-call nucleus-sampling top-p; nil = the mode's global default (tune_sampling_top_p_{think,nothink}), then server default.
@@ -1268,6 +1280,12 @@ type LLMProviderConfig struct {
 	NativeTools         bool          // When true, use native function calling. When false, tools are described in the system prompt and parsed from <tool_call> tags. Default false for ollama models without tool support.
 	OllamaMaxParallel   int           // Ollama only: global concurrency cap. 0 or negative = scheduler disabled; 1 = strict serial (default). Requests are fair-queued across sessions.
 	LlamacppMaxParallel int           // llama.cpp and vLLM: global concurrency cap. Default 1 for llama.cpp (single-threaded), vllmDefaultMaxParallel for vLLM (it batches). Raise only when the server supports concurrent requests.
+	// SeparateServer is a local model on a server of its own (the Judge
+	// model): it neither starts nor waits in the process-wide Ollama or
+	// llama.cpp/vLLM queue, which is the worker's server's. Waiting there
+	// put every check behind the agents' rounds, the queue the Judge model
+	// exists to leave; and starting it set the worker's cap to the judge's.
+	SeparateServer bool
 	// NoThink* fields control individual signals sent to llama.cpp on
 	// WithThink(false) calls. Defaults are what's empirically proven
 	// to work on Qwen 3 unified — kwarg + budget alone is sufficient,
@@ -1873,6 +1891,19 @@ func isTransientError(err error) bool {
 	return false
 }
 
+// SystemOne passes a structured decision through to the model inside (core's
+// vLLM client, see its SystemOne); a status of 0 is a model without one.
+// Not retried: a decision that fails falls back to the first-token reading,
+// and a check to its full question.
+func (r *retryLLM) SystemOne(ctx context.Context, req map[string]any) (int, []byte, error) {
+	if so, ok := r.inner.(interface {
+		SystemOne(context.Context, map[string]any) (int, []byte, error)
+	}); ok {
+		return so.SystemOne(ctx, req)
+	}
+	return 0, nil, nil
+}
+
 func (r *retryLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
 	return r.chat(ctx, messages, opts...)
 }
@@ -2359,6 +2390,7 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		oc.disableThinking = cfg.DisableThinking
 		oc.nativeTools = cfg.NativeTools
 		oc.streamIdleTimeout = cfg.StreamIdleTimeout
+		oc.ownServer = cfg.SeparateServer
 		inner = client
 		// Start (or adjust) the global Ollama scheduler so concurrent
 		// sessions get fair-queued. Safe to call multiple times; the
@@ -2367,7 +2399,9 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		if maxParallel < 1 {
 			maxParallel = 1
 		}
-		StartOllamaScheduler(maxParallel)
+		if !cfg.SeparateServer {
+			StartOllamaScheduler(maxParallel)
+		}
 	case "llama.cpp", "vllm":
 		// vLLM speaks the same OpenAI-compatible dialect and reads
 		// chat_template_kwargs the same way, so it is this client with the
@@ -2397,6 +2431,7 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		oc.noThinkBudget = cfg.NoThinkBudget
 		oc.contextSize = cfg.ContextSize
 		oc.streamIdleTimeout = cfg.StreamIdleTimeout
+		oc.ownServer = cfg.SeparateServer
 		inner = client
 		// Start the serializer so concurrent callers queue here instead
 		// of racing to llama.cpp and getting 503s. Default 1 matches
@@ -2412,7 +2447,9 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 				mp = vllmDefaultMaxParallel
 			}
 		}
-		StartLlamacppScheduler(mp)
+		if !cfg.SeparateServer {
+			StartLlamacppScheduler(mp)
+		}
 	default:
 		return nil, Error("no LLM provider is configured: set one in the web UI under Admin → Models → Worker LLM")
 	}

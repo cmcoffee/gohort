@@ -695,8 +695,10 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 		// reply come back: the owner's handle, or no handle at all (a
 		// transport that could not name the sender could be naming us).
 		mayBeEcho := T.isOwnerHandleFor(svc, handle) || strings.TrimSpace(handle) == ""
+		// A blown budget is a guess, so it is checked before routing is cut
+		// (loop_check.go): a conversation still moving goes on.
 		if cut := noteReply(ch.Owner, chatID, handle, T.isSelfThread(chatID, handle), mayBeEcho); cut != "" {
-			logLoopCut(chatID, cut)
+			T.settleLoopCut(loopCut{chatOwner: ch.Owner, owner: owner, chatID: chatID, handle: handle, reply: reply.Text, cut: cut})
 		}
 		if hasOutput {
 			item := OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: reply.Text, Images: reply.Images, Videos: reply.Videos, Audios: reply.Audios, Agent: reply.AgentName, Owner: ch.Owner, Type: "reply"}
