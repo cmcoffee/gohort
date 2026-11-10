@@ -537,7 +537,7 @@ func TestTextBesideAToolCallIsJudgedAsAReply(t *testing.T) {
 	}{
 		{[]string{"pre_output"}, guardHookPreOutput},
 		{[]string{"pre_input", "pre_action", "pre_output"}, guardHookPreOutput},
-		{[]string{"pre_output", "periodic"}, guardHookPeriodic}, // Strict judges every rule there already
+		{[]string{"pre_output", "periodic"}, guardHookPeriodic}, // ticked on its own, periodic judges every rule there already
 		{[]string{"periodic"}, guardHookPeriodic},
 		{[]string{"pre_input"}, guardHookPeriodic}, // no reply check: nothing to judge it as
 	} {

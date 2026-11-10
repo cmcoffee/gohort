@@ -5685,9 +5685,7 @@
             {name: 'Light', hooks: ['pre_input', 'pre_output'],
              desc: 'Checks the incoming request (with recent context) and what the agent says: its reply, and anything it writes beside a tool call. Covers what the agent says but not what it DOES: a consequential tool call runs unjudged.'},
             {name: 'Balanced', hooks: ['pre_input', 'pre_action', 'pre_output'],
-             desc: 'Also checks consequential tool calls before they run, free unless one is actually called. The reply check is the only one that reads what is about to be SAID, so this is the first setting that covers all three ends. Where a new agent starts.'},
-            {name: 'Strict', hooks: ['pre_input', 'pre_action', 'pre_output', 'periodic'],
-             desc: 'Judges what the agent says WHILE it works with every rule, as its own check point. Balanced already judges that text with the reply check, so this costs the same and adds nothing for most agents: one check per round that produces text.'}
+             desc: 'Also checks consequential tool calls before they run, free unless one is actually called. The reply check is the only one that reads what is about to be SAID, including what the agent writes while it works, so this is the first setting that covers all three ends. Where a new agent starts.'}
           ];
           var activeHooks = {};
           (agent.guardrail_hooks || []).forEach(function(h) { activeHooks[h] = true; });
