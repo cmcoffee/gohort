@@ -233,6 +233,26 @@ func TestAlwaysRulesTakeExceptions(t *testing.T) {
 	if len(back.Exceptions) != 2 || back.Exceptions[0].Rule != law {
 		t.Errorf("returned rows: %+v", back.Exceptions)
 	}
+	// The owner exception is a row of its own kind, saved as the rule's
+	// setting rather than a condition, and returned as that row.
+	call("POST", `{"rules":"`+law+`","exceptions":[{"rule":"`+law+`","who":"owner","condition":""}]}`)
+	if got := rules.EnabledGlobalRules(); len(got) != 1 || !got[0].ExceptOwner || len(got[0].Except) != 0 {
+		t.Fatalf("the owner exception saved: %+v", got)
+	}
+	json.Unmarshal([]byte(call("GET", "")), &back)
+	if len(back.Exceptions) != 1 || back.Exceptions[0].Who != "owner" {
+		t.Errorf("the owner row returned: %+v", back.Exceptions)
+	}
+	call("POST", `{"rules":"`+law+`"}`)
+	if got := rules.EnabledGlobalRules(); !got[0].ExceptOwner {
+		t.Error("a save without exceptions dropped the owner exception")
+	}
+	call("POST", `{"rules":"`+law+`\nNever share an address.","exceptions":[`+
+		`{"rule":"`+law+`","condition":"it involves only the owner's own likeness, at the owner's request"},`+
+		`{"rule":"`+law+`","condition":"the owner says it is a joke between friends"}]}`)
+	if got := rules.EnabledGlobalRules(); got[0].ExceptOwner {
+		t.Error("exceptions sent without the owner row kept it")
+	}
 	// A save of the rules alone keeps them.
 	call("POST", `{"rules":"`+law+`\nNever share an address."}`)
 	if got := rules.EnabledGlobalRules(); len(got[0].Except) != 2 {
@@ -245,7 +265,7 @@ func TestAlwaysRulesTakeExceptions(t *testing.T) {
 	}
 	found := false
 	for _, f := range alwaysRulesForm().Fields {
-		if f.Field == "exceptions" && f.Type == "rows" && len(f.Columns) == 2 && f.Columns[0].Type == "select" {
+		if f.Field == "exceptions" && f.Type == "rows" && len(f.Columns) == 3 && f.Columns[0].Type == "select" && f.Columns[1].Field == "who" {
 			found = true
 		}
 	}

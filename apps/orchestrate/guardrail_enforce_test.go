@@ -525,3 +525,43 @@ func TestAnAgentWithoutRulesAsksFreely(t *testing.T) {
 func wardenDown() *FakeLLM {
 	return &FakeLLM{Turns: []FakeTurn{{Err: errors.New("warden LLM down"), Repeat: true}}}
 }
+
+// What an agent writes beside a tool call reaches the reader as the turn runs,
+// so an agent whose replies are judged has it judged as a reply. Live: an
+// answer written beside show_link went out unjudged and the final round's
+// decline sat under it.
+func TestTextBesideAToolCallIsJudgedAsAReply(t *testing.T) {
+	for _, c := range []struct {
+		hooks []string
+		want  string
+	}{
+		{[]string{"pre_output"}, guardHookPreOutput},
+		{[]string{"pre_input", "pre_action", "pre_output"}, guardHookPreOutput},
+		{[]string{"pre_output", "periodic"}, guardHookPeriodic}, // Strict judges every rule there already
+		{[]string{"periodic"}, guardHookPeriodic},
+		{[]string{"pre_input"}, guardHookPeriodic}, // no reply check: nothing to judge it as
+	} {
+		agent := AgentRecord{Name: "X", Guardrails: "never mention fruit", GuardrailHooks: c.hooks}
+		if got := interimHook(agent, guardHookPeriodic); got != c.want {
+			t.Errorf("hooks %v: interim text judged at %q, want %q", c.hooks, got, c.want)
+		}
+		if got := interimHook(agent, guardHookPreAction); got != guardHookPreAction {
+			t.Errorf("hooks %v: only the interim check point moves, pre_action became %q", c.hooks, got)
+		}
+	}
+
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"it names a fruit","answer":"violate"}]}`}
+	turn := guardTurn(t, stub, AgentRecord{Name: "X", Guardrails: "never mention fruit", GuardrailHooks: []string{"pre_output"}})
+	if dec := turn.guardrailCheckHook()(guardHookPeriodic, "Here is the pineapple salsa recipe."); !dec.Blocked {
+		t.Fatal("text beside a tool call that breaks a reply rule must be blocked")
+	}
+	if !strings.Contains(stub.seen(), "pineapple salsa") {
+		t.Error("the warden was not shown the text written beside the tool call")
+	}
+
+	stub = &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"it names a fruit","answer":"violate"}]}`}
+	turn = guardTurn(t, stub, AgentRecord{Name: "X", Guardrails: "never mention fruit", GuardrailHooks: []string{"pre_input"}})
+	if dec := turn.guardrailCheckHook()(guardHookPeriodic, "Here is the pineapple salsa recipe."); dec.Blocked || stub.seen() != "" {
+		t.Error("an agent whose replies are not judged must not have its interim text judged")
+	}
+}

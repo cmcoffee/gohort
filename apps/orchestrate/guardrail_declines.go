@@ -126,7 +126,9 @@ const maxGuardrailExceptions = 16
 // no condition on it, which is indistinguishable from no rule at all.
 func sanitizeGuardrailExceptions(in []GuardrailException) []GuardrailException {
 	var out []GuardrailException
-	seen := map[string]bool{}
+	// "owner" is taken: "@owner" is the owner exemption, not an item. A
+	// derived name that comes out as it is suffixed like a duplicate.
+	seen := map[string]bool{guardrailOwnerLink: true}
 	for _, raw := range in {
 		text := strings.TrimSpace(raw.Text)
 		if text == "" {
@@ -226,6 +228,17 @@ func sanitizeAuthorizedIdentities(in []string) []string {
 		}
 	}
 	return out
+}
+
+// reservedExceptionName reports a name the owner TYPED that is kept for the
+// framework ("owner"), or "".
+func reservedExceptionName(in []GuardrailException) string {
+	for _, raw := range in {
+		if strings.TrimSpace(raw.Text) != "" && slugifyExceptionName(raw.Name) == guardrailOwnerLink {
+			return guardrailOwnerLink
+		}
+	}
+	return ""
 }
 
 // checkExceptionNames reports the first name the owner TYPED twice, or "" when

@@ -45,6 +45,9 @@ func (a *AdminApp) handleGlobalRules(c *jsonapi.Call) (any, error) {
 	exceptions := []ruleException{}
 	for _, rule := range rules.EnabledGlobalRules() {
 		lines = append(lines, rule.Text)
+		if rule.ExceptOwner {
+			exceptions = append(exceptions, ruleException{Rule: rule.Text, Who: exceptOwnerRow})
+		}
 		for _, e := range rule.Except {
 			exceptions = append(exceptions, ruleException{Rule: rule.Text, Condition: e})
 		}
@@ -70,27 +73,38 @@ func (a *AdminApp) handleGlobalRulesSave(c *jsonapi.Call, req struct {
 	// A rule's exceptions travel with its text: the ones sent, or, when none
 	// were sent, the ones it had. A rule whose wording changed starts with
 	// none, and an exception naming no rule there is dropped, said in the log.
-	kept := map[string][]string{}
+	kept := map[string]rules.StyleRule{}
 	for _, r := range rules.GlobalRules() {
-		kept[r.Text] = r.Except
+		kept[r.Text] = r
 	}
 	var sent map[string][]string
+	var owner map[string]bool
 	if req.Exceptions != nil {
-		sent = map[string][]string{}
+		sent, owner = map[string][]string{}, map[string]bool{}
 		for _, e := range *req.Exceptions {
+			rule := strings.TrimSpace(e.Rule)
+			if strings.TrimSpace(e.Who) == exceptOwnerRow {
+				owner[rule] = true
+				// A row says one thing; a condition typed on an owner row
+				// before the choice changed is still kept as a condition.
+			}
 			if cond := strings.TrimSpace(e.Condition); cond != "" {
-				sent[strings.TrimSpace(e.Rule)] = append(sent[strings.TrimSpace(e.Rule)], cond)
+				sent[rule] = append(sent[rule], cond)
 			}
 		}
 	}
 	var list []rules.StyleRule
 	for _, line := range splitRuleLines(req.Rules) {
-		r := rules.StyleRule{Text: line, Except: kept[line]}
+		r := rules.StyleRule{Text: line, Except: kept[line].Except, ExceptOwner: kept[line].ExceptOwner}
 		if sent != nil {
-			r.Except = sent[line]
+			r.Except, r.ExceptOwner = sent[line], owner[line]
 			delete(sent, line)
+			delete(owner, line)
 		}
 		list = append(list, r)
+	}
+	for rule := range owner {
+		Log("[admin] global rules: the owner exception for %q dropped, no Always rule has that wording", rule)
 	}
 	for rule, conds := range sent {
 		Log("[admin] global rules: %d exception(s) for %q dropped, no Always rule has that wording", len(conds), rule)
@@ -113,9 +127,15 @@ func (a *AdminApp) handleGlobalRulesSave(c *jsonapi.Call, req struct {
 // ruleException is one exception row: the Always rule it belongs to, by its
 // text, and the condition under which that rule does not apply.
 type ruleException struct {
-	Rule      string `json:"rule"`
+	Rule string `json:"rule"`
+	// Who is exceptOwnerRow for the owner exception, settled by gohort from
+	// who is asking; empty for a condition the check judges.
+	Who       string `json:"who,omitempty"`
 	Condition string `json:"condition"`
 }
+
+// exceptOwnerRow is an exception row's Who for the owner exception.
+const exceptOwnerRow = "owner"
 
 // handleStyleRules is the Style rules in force, one per line.
 func (a *AdminApp) handleStyleRules(c *jsonapi.Call) (any, error) {
@@ -231,11 +251,15 @@ func alwaysRulesForm() ui.FormPanel {
 			Field: "exceptions", Type: "rows", Label: "Exceptions", AddLabel: "+ Add exception", ShowWhen: "rules",
 			Columns: []ui.FormField{
 				{Field: "rule", Label: "Rule", Type: "select", Options: alwaysRuleOptions()},
+				{Field: "who", Label: "Kind", Type: "select", Options: []ui.SelectOption{
+					{Value: "", Label: "A condition, judged by the check"},
+					{Value: exceptOwnerRow, Label: "The agent's owner is asking (decided by gohort)"}}},
 				{Field: "condition", Label: "Except when", Type: "text",
 					Placeholder: "when this rule should not apply…"},
 			},
-			Help: "When a rule does not apply: pick the rule and say the condition. A rule can have several, and any one that plainly holds excuses it.",
-			Detail: "The check reads each one under its rule and decides whether it holds, from who is actually asking (the framework establishes that, not the message): \"the owner\" is whoever owns the agent being checked. " +
+			Help: "When a rule does not apply: pick the rule, then either the owner exception or a condition. A rule can have several, and any one that holds excuses it.",
+			Detail: "The owner exception is settled by gohort itself, from the verified account asking, before the check runs: the rule is not checked at all when the agent's owner is the one asking, and no wording can claim it. " +
+				"A condition is read by the check under its rule, which decides whether it holds, from who is actually asking (the framework establishes that, not the message): \"the owner\" is whoever owns the agent being checked. " +
 				"Keep them few and narrow: each is weighed on every reply its rule judges. Exceptions belong to the rule's wording, so a rule reworded starts with none. " +
 				"Only these loosen the deployment's rules: an agent's own exceptions never reach them. A rule added here appears in the picker once the page is reloaded.",
 		}, {

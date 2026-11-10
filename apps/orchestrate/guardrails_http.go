@@ -159,6 +159,9 @@ func (T *OrchestrateApp) agentGuardrailsSave(c *jsonapi.Call, body guardrailsBod
 		// Refused, not renamed. A rule links an exception by name, so two
 		// answering to one name means the link reaches whichever was stored
 		// first and the other looks just as live in the editor.
+		if name := reservedExceptionName(*body.Exceptions); name != "" {
+			return nil, jsonapi.BadRequest("\"" + name + "\" is kept for the owner exception: a rule marked @" + name + " does not apply when you are the one asking. Give this exception another name.")
+		}
 		if dup := checkExceptionNames(*body.Exceptions); dup != "" {
 			return nil, jsonapi.BadRequest("Two exceptions are named \"" + dup + "\". A rule links an exception by its name and can only reach one of them, so give each a name of its own.")
 		}

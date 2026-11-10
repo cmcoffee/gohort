@@ -92,6 +92,9 @@ func GlobalRulesMarkdown() string {
 // exceptClause is a rule's exceptions as the model reads them, "" for none.
 func exceptClause(r StyleRule) string {
 	var conds []string
+	if r.ExceptOwner {
+		conds = append(conds, "the agent's owner is the one asking")
+	}
 	for _, e := range r.Except {
 		if e = strings.TrimSpace(e); e != "" {
 			conds = append(conds, e)

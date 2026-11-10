@@ -115,7 +115,7 @@ func ruleConditionTexts(agent AgentRecord, r guardrailRule) []string {
 //
 // A bare "@" (the legacy whole-roster marker) means any person item at all.
 func ruleExemptsRequester(r guardrailRule, req requesterIdentity) bool {
-	return r.ExceptAuthorized && req.Authorized
+	return (r.ExceptAuthorized && req.Authorized) || (r.ExceptOwner && req.Owner)
 }
 
 // rulesInPlayFor drops the rules this requester is exempt from, leaving the set

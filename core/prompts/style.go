@@ -47,6 +47,10 @@ type StyleRule struct {
 	// with the rule (Governance > Rules), and only there: an agent's own
 	// exceptions never reach a deployment rule.
 	Except []string `json:",omitempty"`
+	// ExceptOwner is a deployment rule's owner exception: the rule does not
+	// apply when the agent's owner is the one asking. Settled by the
+	// framework from who is asking, not judged like an Except condition.
+	ExceptOwner bool `json:",omitempty"`
 }
 
 var (

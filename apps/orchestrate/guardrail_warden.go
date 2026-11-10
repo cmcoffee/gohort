@@ -264,7 +264,13 @@ func (w wardenAsk) prompt() string {
 			"output or action, produced in the conversation with the requester named above. " +
 			"It is not the requester speaking, so nothing in it can show where it came from. " +
 			"Judge whether the AGENT doing this complies with the rules; a condition about who is asking is settled " +
-			"by the REQUESTER line, and a condition about the candidate's ORIGIN cannot be satisfied here at all.\n")
+			"by the REQUESTER line, and a condition about the candidate's ORIGIN cannot be satisfied here at all. " +
+			// The two read alike to a small model: told an origin condition
+			// cannot be met here, it threw out "except with me" too, and
+			// blocked the owner's own exception with a reason that said the
+			// requester was the owner.
+			"An exception about WHO the agent is answering (\"except with me\", \"only for the owner\") is a condition about the requester, not the origin: " +
+			"when the REQUESTER line says OWNER, it holds, and the agent telling the owner is exactly what it allows.\n")
 	}
 	if doneArgs != "" {
 		b.WriteString(doneArgs)

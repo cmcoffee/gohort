@@ -176,6 +176,7 @@ func (t *chatTurn) guardrailCheckHookCtx(ctx context.Context) func(hookPoint, ca
 	// early returns below read as a decision rather than a bare pair.
 	pass := GuardrailDecision{}
 	return func(hookPoint, candidate string) GuardrailDecision {
+		hookPoint = interimHook(t.agent, hookPoint)
 		// The tainted-action check runs FIRST and independently of the hook
 		// selection. An owner who turned pre_action off chose not to have their
 		// RULES judged there; they did not choose to let a steered agent act
@@ -324,6 +325,20 @@ func (t *chatTurn) guardrailCheckHookCtx(ctx context.Context) func(hookPoint, ca
 		}
 		return GuardrailDecision{Blocked: true, Correctable: correctable, Message: msg}
 	}
+}
+
+// interimHook is the check point that judges what the agent writes beside a
+// tool call (core's interim check, asked at periodic). An agent whose replies
+// are judged has it judged as a reply, by the same rules: that text reaches
+// the reader as the turn runs, and a reply check that read only the last
+// round let an answer written beside show_link go out unjudged, with the
+// final round's decline under it. Where periodic is chosen (Strict), it stays
+// periodic, which judges every rule already.
+func interimHook(agent AgentRecord, hookPoint string) string {
+	if hookPoint == guardHookPeriodic && !guardrailHookActive(agent, guardHookPeriodic) && guardrailHookActive(agent, guardHookPreOutput) {
+		return guardHookPreOutput
+	}
+	return hookPoint
 }
 
 // guardrailBlockMessage is the trusted, unfenced message handed back on a

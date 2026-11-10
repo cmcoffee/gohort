@@ -140,6 +140,13 @@ const guardrailContestableMarker = "~"
 // doesn't match, an empty handle — all leave the rule enforced.
 const guardrailAuthorizedMarker = "@"
 
+// guardrailOwnerLink is the one link name that is not a carve-out item:
+// "@owner" exempts a rule when the agent's owner is the one asking, settled
+// like the bare "@" before the warden is asked. Writing "except me" into a
+// rule left it to the model, and a small one read "me" as the agent and
+// refused the owner their own exception.
+const guardrailOwnerLink = "owner"
+
 // guardrailToolMarker binds a rule to a tool: "#send_email never email
 // anyone outside the company". Each marker binds one, so "#web_search
 // #fetch_url never put an internal name in a search" is judged when either is
@@ -195,6 +202,10 @@ type guardrailRule struct {
 	// established the requester as an authorized person. See
 	// guardrailAuthorizedMarker.
 	ExceptAuthorized bool
+	// ExceptOwner marks a rule that does not apply when the requester is the
+	// agent's owner ("@owner", or a deployment rule's owner exception). See
+	// guardrailOwnerLink.
+	ExceptOwner bool
 	// Tools are the tools this rule is about, in the order written, or none
 	// for a rule about the agent's conduct generally. See guardrailToolMarker.
 	Tools []string
@@ -237,9 +248,23 @@ func guardrailRules(agent AgentRecord) []guardrailRule {
 		if s == "" {
 			continue
 		}
-		out = append(out, parseGuardrailRule(s))
+		out = append(out, ownerLinkAsItem(agent, parseGuardrailRule(s)))
 	}
 	return out
+}
+
+// ownerLinkAsItem keeps "@owner" a link to the agent's own item of that name
+// when one was saved before the name was reserved: the rule reads its
+// condition as it always did, rather than becoming a broader exemption.
+func ownerLinkAsItem(agent AgentRecord, r guardrailRule) guardrailRule {
+	if !r.ExceptOwner {
+		return r
+	}
+	if _, has := guardrailItemsByName(agent)[guardrailOwnerLink]; has {
+		r.ExceptOwner = false
+		r.Links = append(r.Links, guardrailLink{Name: guardrailOwnerLink})
+	}
+	return r
 }
 
 // enforcedGuardrailRules is the subset actually judged this turn.
@@ -263,8 +288,10 @@ func globalGuardrailRules() []guardrailRule {
 		r.Global = true
 		// Its own exceptions, and only those: a name linked in its text
 		// would otherwise be looked up in each agent's list, so an agent's
-		// owner could write what loosens the deployment's rule.
+		// owner could write what loosens the deployment's rule. The owner
+		// exception is the rule's own setting, never its text.
 		r.Links = nil
+		r.ExceptOwner = g.ExceptOwner
 		for _, e := range g.Except {
 			if e = strings.TrimSpace(e); e != "" {
 				r.Excepts = append(r.Excepts, e)
@@ -348,6 +375,11 @@ func stripGuardrailMarker(s string, r *guardrailRule) (string, bool) {
 			rest = strings.TrimPrefix(rest, guardrailLinkOffMarker)
 		}
 		name := leadingExceptionName(rest)
+		if strings.EqualFold(name, guardrailOwnerLink) {
+			// "@-owner" names the exemption switched off: inert, like "@-".
+			r.ExceptOwner = r.ExceptOwner || !off
+			return rest[len(name):], true
+		}
 		if name == "" {
 			if off {
 				// "@-" names nothing, so it grants nothing: the marker is

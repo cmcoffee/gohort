@@ -11,10 +11,10 @@ import (
 // guardrailInputDirective is the pre_input pre-pass: it runs the warden on the
 // INCOMING request before round 1. A topical/disclosure guardrail ("never
 // mention salary") is given away by the question itself, so it can be caught
-// once at the door — cheaper and more reliable than policing every interim
-// round of prose, where the model can leak the answer in a narration turn that
-// carries tool calls (which pre_output, checking only the terminal reply, never
-// sees). Returns the directive to inject ahead of round 1, or "" when the
+// once at the door, before the model has written anything. Prose written beside
+// a tool call is judged as a reply too, before that round's tools run
+// (interimHook). Returns the
+// directive to inject ahead of round 1, or "" when the
 // feature is inert, pre_input isn't enabled, or nothing was flagged.
 //
 // Inject-and-continue: the model still runs, steered to decline in its own

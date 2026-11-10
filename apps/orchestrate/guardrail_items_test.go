@@ -15,6 +15,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/cmcoffee/gohort/core/prompts"
 )
 
 func itemAgent(rules string) AgentRecord {
@@ -364,5 +366,66 @@ func TestTheEchoWarningFiresOnlyOnAnEmptyCarveOut(t *testing.T) {
 	// The old any-word-shared form must not come back.
 	if strings.Contains(page, "if (ruleWords.indexOf(words[k]) >= 0) { return true; }") {
 		t.Error("the detector is back to warning on any shared word, which fires on correct carve-outs")
+	}
+}
+
+// "@owner" exempts a rule for the agent's owner and nobody else, settled
+// before the warden is asked: an authorized person is still checked, "@-owner"
+// is inert, the rule text the warden would read carries no marker, and an
+// item saved as "owner" before the name was reserved keeps being read as a
+// condition rather than becoming a broader exemption.
+func TestTheOwnerExceptionIsSettledInCode(t *testing.T) {
+	r := parseGuardrailRule("@owner Never share the home address.")
+	if !r.ExceptOwner || r.Text != "Never share the home address." || len(r.Links) != 0 {
+		t.Fatalf("parsed %+v", r)
+	}
+	owner := requesterIdentity{Owner: true, Authorized: true}
+	authorized := requesterIdentity{Authorized: true, AuthorizedAs: "dana"}
+	if !ruleExemptsRequester(r, owner) {
+		t.Error("the owner was checked against their own exception")
+	}
+	if ruleExemptsRequester(r, authorized) || ruleExemptsRequester(r, requesterIdentity{}) {
+		t.Error("someone other than the owner was exempted")
+	}
+	if ruleExemptsRequester(parseGuardrailRule("@-owner Never share the home address."), owner) {
+		t.Error("a switched-off owner exception exempted the owner")
+	}
+	if got := rulesInPlayFor(guardrailRules(itemAgent("@owner never share the address\nno jokes")), owner); len(got) != 1 || got[0].Text != "no jokes" {
+		t.Errorf("in play for the owner: %+v", got)
+	}
+
+	legacy := itemAgent("@owner never share the address")
+	legacy.GuardrailExceptions = append(legacy.GuardrailExceptions, GuardrailException{Name: "owner", Text: "the owner is travelling"})
+	rules := guardrailRules(legacy)
+	got := rules[len(rules)-1]
+	if got.ExceptOwner || len(got.Links) != 1 || got.Links[0].Name != "owner" {
+		t.Errorf("an item named owner, saved before the name was kept: %+v", got)
+	}
+	if conds := ruleConditionTexts(legacy, got); len(conds) != 1 || conds[0] != "the owner is travelling" {
+		t.Errorf("its condition: %v", conds)
+	}
+
+	if reservedExceptionName([]GuardrailException{{Name: "Owner", Text: "x"}}) != "owner" || reservedExceptionName([]GuardrailException{{Name: "night", Text: "x"}}) != "" {
+		t.Error("the reserved name is not refused, or another is")
+	}
+	if out := sanitizeGuardrailExceptions([]GuardrailException{{Text: "owner asks politely"}}); len(out) != 1 || out[0].Name == "owner" {
+		t.Errorf("a derived name took the reserved one: %+v", out)
+	}
+}
+
+// A deployment rule's owner exception is its own setting: "@owner" written in
+// its text grants nothing, the setting does.
+func TestADeploymentRulesOwnerExceptionIsItsSetting(t *testing.T) {
+	restore := withGlobalRules(t, "@owner Never share the home address.")
+	defer restore()
+	if g := globalGuardrailRules(); len(g) != 1 || g[0].ExceptOwner {
+		t.Errorf("the marker in a deployment rule's text exempted the owner: %+v", g)
+	}
+	prompts.SetGlobalRules([]prompts.StyleRule{{Text: "Never share the home address.", ExceptOwner: true}})
+	if g := globalGuardrailRules(); len(g) != 1 || !g[0].ExceptOwner {
+		t.Errorf("the setting did not exempt the owner: %+v", g)
+	}
+	if c := prompts.GlobalRulesClause(); !strings.Contains(c, "except when the agent's owner is the one asking") {
+		t.Errorf("the agent is not told: %s", c)
 	}
 }

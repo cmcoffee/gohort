@@ -5271,7 +5271,11 @@
             });
             return dupes;
           }
+          // "@owner" is not an item: gohort exempts the rule itself when the
+          // agent's owner is the one asking (guardrailOwnerLink).
+          var G_OWNER_LINK = 'owner';
           function gLinkExists(name) {
+            if (name === G_OWNER_LINK) { return true; }
             for (var i = 0; i < gexceptions.length; i++) {
               if (gExcSlug(gexceptions[i]) === name) { return true; }
             }
@@ -5279,7 +5283,7 @@
           }
           function gLinkSummary(text) {
             var names = gLinks(text).map(function(l) {
-              var label = l.name + ' (deleted)';
+              var label = l.name === G_OWNER_LINK ? 'you (the owner)' : l.name + ' (deleted)';
               for (var i = 0; i < gexceptions.length; i++) {
                 if (gExcSlug(gexceptions[i]) === l.name) { label = gexceptions[i].name || l.name; break; }
               }
@@ -5362,10 +5366,24 @@
                       onLink: function(on) { builtin = on; commit(); redraw(); },
                     });
                   }
+                  var ownerAt = findLink(G_OWNER_LINK);
+                  drawRow({
+                    label: 'You are the one asking',
+                    hint: 'Decided by gohort from your signed-in account before the check runs, so no message can claim it. Writing "except me" into the rule instead leaves it to the check to work out.',
+                    badge: 'checked by gohort',
+                    linked: ownerAt >= 0 && !chosen[ownerAt].off,
+                    onLink: function(on) {
+                      var i = findLink(G_OWNER_LINK);
+                      if (on && i < 0) { chosen.push({name: G_OWNER_LINK, off: false}); }
+                      if (on && i >= 0) { chosen[i].off = false; }
+                      if (!on && i >= 0) { chosen.splice(i, 1); }
+                      commit(); redraw();
+                    },
+                  });
                   if (!gexceptions.length) {
                     var none = document.createElement('div');
                     none.style.cssText = 'font-size:0.78rem;color:var(--text-mute);line-height:1.45;padding-top:0.5rem';
-                    none.textContent = 'Nothing to link yet. Add people and conditions under “Exceptions” at the bottom of this panel, then come back.';
+                    none.textContent = 'No conditions to link yet. Add people and conditions under “Exceptions” at the bottom of this panel, then come back.';
                     rows.appendChild(none);
                   }
                   // Links whose carve-out is GONE. Listed first, because they
@@ -5601,6 +5619,7 @@
               if (gExempt(text)) { excuses.push('an authorized person is asking'); }
               gLinks(text).forEach(function(l) {
                 if (l.off) { return; }
+                if (l.name === G_OWNER_LINK) { excuses.push('you (the owner) are asking'); return; }
                 for (var i = 0; i < gexceptions.length; i++) {
                   if (gExcSlug(gexceptions[i]) === l.name && String(gexceptions[i].text || '').trim()) {
                     excuses.push(String(gexceptions[i].text).trim());
@@ -5664,11 +5683,11 @@
             {name: 'Fast', hooks: ['pre_input', 'pre_action'],
              desc: 'Checks the incoming request (with recent context) and consequential tool calls before they run. The cheapest setting that still enforces: one check per turn plus one per consequential call. It does NOT judge what the agent SAYS against your rules, so a rule about disclosure can be broken by a reply: pick it when latency matters more than that. The deployment\u2019s own Rules are checked on replies regardless, and replies are held for them unless an administrator set them to be checked while replies stream.'},
             {name: 'Light', hooks: ['pre_input', 'pre_output'],
-             desc: 'Checks the incoming request (with recent context) and the reply before it is sent. Covers what the agent says but not what it DOES: a consequential tool call runs unjudged.'},
+             desc: 'Checks the incoming request (with recent context) and what the agent says: its reply, and anything it writes beside a tool call. Covers what the agent says but not what it DOES: a consequential tool call runs unjudged.'},
             {name: 'Balanced', hooks: ['pre_input', 'pre_action', 'pre_output'],
              desc: 'Also checks consequential tool calls before they run, free unless one is actually called. The reply check is the only one that reads what is about to be SAID, so this is the first setting that covers all three ends. Where a new agent starts.'},
             {name: 'Strict', hooks: ['pre_input', 'pre_action', 'pre_output', 'periodic'],
-             desc: 'Also judges what the agent says WHILE it works, not just its final reply \u2014 the only setting that covers mid-turn narration, which is delivered to the reader as the turn runs. One extra check per round that produces text, so cost grows with how long the turn runs.'}
+             desc: 'Judges what the agent says WHILE it works with every rule, as its own check point. Balanced already judges that text with the reply check, so this costs the same and adds nothing for most agents: one check per round that produces text.'}
           ];
           var activeHooks = {};
           (agent.guardrail_hooks || []).forEach(function(h) { activeHooks[h] = true; });
@@ -5705,6 +5724,28 @@
           }
           var level = levelFromHooks();
           var custom = level < 0;
+          // The slider's last stop is Custom: the check points ticked by hand.
+          // The set is remembered, so sliding to a preset and back to Custom
+          // restores it instead of losing it.
+          var customAt = hookLevels.length;
+          var customHooks = custom ? Object.assign({}, activeHooks) : null;
+          function hooksOn() {
+            return Object.keys(activeHooks).filter(function(h) { return activeHooks[h]; });
+          }
+          function offIndex() {
+            for (var i = 0; i < hookLevels.length; i++) {
+              if (hookLevels[i].off) { return i; }
+            }
+            return -1;
+          }
+          // The preset whose check points are exactly the ones ticked, or -1.
+          function presetForHooks() {
+            var have = hooksOn().sort().join(',');
+            for (var i = 0; i < hookLevels.length; i++) {
+              if (!hookLevels[i].off && hookLevels[i].hooks.slice().sort().join(',') === have) { return i; }
+            }
+            return -1;
+          }
 
           var hookWrap = document.createElement('div');
           hookWrap.style.cssText = 'margin-top:0.6rem';
@@ -5714,21 +5755,37 @@
           hookWrap.appendChild(hookLbl);
 
           var slider = document.createElement('input');
-          slider.type = 'range'; slider.min = '0'; slider.max = String(hookLevels.length - 1);
-          slider.step = '1'; slider.value = String(custom ? defaultLevelIndex() : level);
+          slider.type = 'range'; slider.min = '0'; slider.max = String(customAt);
+          slider.step = '1'; slider.value = String(custom ? customAt : level);
           slider.style.cssText = 'width:100%;max-width:380px;display:block';
-          slider.disabled = custom;
 
           var ticks = document.createElement('div');
           ticks.style.cssText = 'display:flex;justify-content:space-between;max-width:380px;font-size:0.72rem;color:var(--text-mute);margin-top:0.1rem';
-          hookLevels.forEach(function(lv) {
+          hookLevels.concat([{name: 'Custom'}]).forEach(function(lv) {
             var s = document.createElement('span'); s.textContent = lv.name; ticks.appendChild(s);
           });
 
           var lvlDesc = document.createElement('div');
           lvlDesc.style.cssText = 'font-size:0.78rem;color:var(--text-mute);margin-top:0.3rem;line-height:1.35';
 
+          function describeCustom() {
+            var on = hooksOn();
+            guardrailsOff = on.length === 0;
+            lvlDesc.style.color = on.length ? 'var(--text-mute)' : 'var(--warning)';
+            lvlDesc.textContent = on.length
+              ? 'Custom: the check points ticked below (' + on.join(', ') + '). Slide to a preset to replace them; sliding back to Custom restores this selection.'
+              : 'No check points selected, so enforcement is OFF. Your rules stay exactly as written and nothing checks them. Tick one to turn it back on.';
+          }
           function applyLevel() {
+            if (parseInt(slider.value, 10) === customAt) {
+              // Back to the hand-picked set, or, with none yet, start one from
+              // what the last preset ticked, with the boxes open to edit it.
+              if (customHooks) { activeHooks = Object.assign({}, customHooks); }
+              else { customHooks = Object.assign({}, activeHooks); }
+              if (adv) { adv.open = true; }
+              describeCustom();
+              return;
+            }
             var lv = hookLevels[parseInt(slider.value, 10)];
             guardrailsOff = !!lv.off;
             if (lv.off) {
@@ -5750,9 +5807,8 @@
           slider.oninput = applyLevel;
           if (custom) {
             // Never silently coerce a hand-built combination into the nearest
-            // preset — that would change enforcement on save without saying so.
-            lvlDesc.textContent = 'Custom selection (' + (agent.guardrail_hooks || []).join(', ') +
-              '), not one of the presets, so the slider is disabled. Use the checkboxes below, or pick a preset to replace it.';
+            // preset: that would change enforcement on save without saying so.
+            describeCustom();
           } else {
             applyLevel();
           }
@@ -5774,8 +5830,8 @@
           var hookDefs = [
             {v: 'pre_input', label: 'On the incoming request (judges what was asked, before the model sees it)'},
             {v: 'pre_action', label: 'Before a consequential action (judges tool calls, NOT replies)'},
-            {v: 'pre_output', label: 'Before the final reply (judges what the agent says)'},
-            {v: 'periodic', label: 'On every mid-turn remark (judges what it says WHILE working \u2014 the rounds pre_output never sees)'}
+            {v: 'pre_output', label: 'On what the agent says (its reply, and anything it writes beside a tool call)'},
+            {v: 'periodic', label: 'On every mid-turn remark, as its own check point (the reply check above already covers these)'}
           ];
           var boxes = [];
           hookDefs.forEach(function(hd) {
@@ -5785,20 +5841,25 @@
             cb.type = 'checkbox'; cb.checked = !!activeHooks[hd.v];
             cb.onchange = function() {
               activeHooks[hd.v] = cb.checked;
-              // Hand-editing leaves the presets behind; say so rather than let
-              // the slider keep showing a level that is no longer in force.
-              slider.disabled = true;
+              // The slider follows the boxes: to the preset they now match, or
+              // to Custom, which remembers them for sliding back to.
+              //
               // Unchecking the LAST box is the off switch, and it has to be said
-              // explicitly here. An empty hook set is ambiguous on its own — the
+              // explicitly here. An empty hook set is ambiguous on its own (the
               // resolver reads "no hooks stored" as "never configured" and applies
-              // the default set — so without this, clearing every box turned three
+              // the default set), so without this, clearing every box turned three
               // checks back on, which is the opposite of what clearing them means.
-              var anyOn = boxes.some(function(b) { return b.cb.checked; });
-              guardrailsOff = !anyOn;
-              lvlDesc.style.color = anyOn ? 'var(--text-mute)' : 'var(--warning)';
-              lvlDesc.textContent = anyOn
-                ? 'Custom selection: the slider no longer applies.'
-                : 'No check points selected, so enforcement is OFF. Your rules stay exactly as written and nothing checks them. Tick one to turn it back on.';
+              // So the slider goes to Off, which keeps the custom set to come
+              // back to.
+              var match = hooksOn().length ? presetForHooks() : offIndex();
+              if (match >= 0) {
+                slider.value = String(match);
+                applyLevel();
+                return;
+              }
+              customHooks = Object.assign({}, activeHooks);
+              slider.value = String(customAt);
+              describeCustom();
             };
             boxes.push({def: hd, cb: cb});
             row.appendChild(cb);
