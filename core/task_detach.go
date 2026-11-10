@@ -387,6 +387,24 @@ func (d *DetachLedger) Any() bool {
 	return len(d.slots) > 0
 }
 
+// Runs is every background job this turn started, by its run (with the
+// conversation it delivers into). A turn a guardrail halted stops them: the
+// work its reply was refused over must not arrive a minute later anyway.
+func (d *DetachLedger) Runs() []TaskRun {
+	if d == nil {
+		return nil
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var out []TaskRun
+	for _, run := range d.slots {
+		if strings.TrimSpace(run.ID) != "" {
+			out = append(out, run)
+		}
+	}
+	return out
+}
+
 func (d *DetachLedger) release(tool string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()

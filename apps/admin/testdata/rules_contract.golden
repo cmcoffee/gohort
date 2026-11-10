@@ -3,7 +3,7 @@
 alice GET /api/global-rules ""
   403 forbidden
 root GET /api/global-rules ""
-  200 {"depth":"quick","if_unchecked":"block","rules":"","when_checked":"before"}
+  200 {"depth":"quick","exceptions":[],"if_unchecked":"block","rules":"","when_checked":"before"}
 root PUT /api/global-rules "{}"
   405 method not allowed
 alice POST /api/global-rules "{\"rules\":\"be kind\"}"
@@ -29,15 +29,15 @@ root POST /api/style-rules ""
 root POST /api/global-rules "{\"rules\":\"Never share a password.\\n\\n  Ask before deleting anything.  \",\"depth\":\"thorough\",\"if_unchecked\":\"allow\",\"when_checked\":\"stream\"}"
   200 {"ok":true}
 root GET /api/global-rules ""
-  200 {"depth":"thorough","if_unchecked":"allow","rules":"Never share a password.\nAsk before deleting anything.","when_checked":"stream"}
+  200 {"depth":"thorough","exceptions":[],"if_unchecked":"allow","rules":"Never share a password.\nAsk before deleting anything.","when_checked":"stream"}
 root POST /api/global-rules "{\"rules\":\"Never share a password.\"}"
   200 {"ok":true}
 root GET /api/global-rules ""
-  200 {"depth":"thorough","if_unchecked":"allow","rules":"Never share a password.","when_checked":"stream"}
+  200 {"depth":"thorough","exceptions":[],"if_unchecked":"allow","rules":"Never share a password.","when_checked":"stream"}
 root POST /api/global-rules "{\"rules\":\"\",\"depth\":\"quick\",\"if_unchecked\":\"block\",\"when_checked\":\"whole\"}"
   200 {"ok":true}
 root GET /api/global-rules ""
-  200 {"depth":"quick","if_unchecked":"block","rules":"","when_checked":"before"}
+  200 {"depth":"quick","exceptions":[],"if_unchecked":"block","rules":"","when_checked":"before"}
 root POST /api/style-rules "{\"rules\":\"<shipped 2>\\n<the other shipped rules>\\nWrite dates as YYYY-MM-DD.\\n  Sign off with the team name.  \"}"
   200 {"ok":true}
 root GET /api/style-rules ""

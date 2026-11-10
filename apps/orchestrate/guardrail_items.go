@@ -82,6 +82,9 @@ func guardrailItemsByName(agent AgentRecord) map[string]guardrailItem {
 // All three leave the rule at full strength, which is the direction every
 // unresolvable thing in this file fails in.
 func ruleConditionTexts(agent AgentRecord, r guardrailRule) []string {
+	if r.Global {
+		return r.Excepts
+	}
 	if len(r.Links) == 0 {
 		return nil
 	}

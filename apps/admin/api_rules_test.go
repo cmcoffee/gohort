@@ -200,3 +200,56 @@ func TestTheRulesListsSaveOnChange(t *testing.T) {
 		t.Error("the Rules lists should save on change, with no Save button")
 	}
 }
+
+// An Always rule's exceptions are rows naming the rule by its text: saved
+// onto the rule, returned as rows, kept when a save sends none, gone when the
+// rule is reworded; an exception naming no rule is dropped. The form offers
+// them, one row each.
+func TestAlwaysRulesTakeExceptions(t *testing.T) {
+	store := &DBase{Store: kvlite.MemStore()}
+	SetPromptOverrideDB(store)
+	t.Cleanup(func() { SetPromptOverrideDB(nil) })
+	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
+	mux := http.NewServeMux()
+	a.registerRulesRoutes(mux)
+	call := func(method, body string) string {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest(method, "/api/global-rules", strings.NewReader(body)))
+		return w.Body.String()
+	}
+	law := "Do not get me in trouble."
+	call("POST", `{"rules":"`+law+`\nNever share an address.","exceptions":[`+
+		`{"rule":"`+law+`","condition":"it involves only the owner's own likeness, at the owner's request"},`+
+		`{"rule":"`+law+`","condition":"the owner says it is a joke between friends"},`+
+		`{"rule":"A rule that is not there","condition":"anything"},{"rule":"`+law+`","condition":"  "}]}`)
+	got := rules.EnabledGlobalRules()
+	if len(got) != 2 || len(got[0].Except) != 2 || got[0].Except[1] != "the owner says it is a joke between friends" || len(got[1].Except) != 0 {
+		t.Fatalf("exceptions saved: %+v", got)
+	}
+	var back struct {
+		Exceptions []ruleException `json:"exceptions"`
+	}
+	json.Unmarshal([]byte(call("GET", "")), &back)
+	if len(back.Exceptions) != 2 || back.Exceptions[0].Rule != law {
+		t.Errorf("returned rows: %+v", back.Exceptions)
+	}
+	// A save of the rules alone keeps them.
+	call("POST", `{"rules":"`+law+`\nNever share an address."}`)
+	if got := rules.EnabledGlobalRules(); len(got[0].Except) != 2 {
+		t.Errorf("a save without exceptions dropped them: %+v", got[0])
+	}
+	// Reworded, the rule starts with none.
+	call("POST", `{"rules":"Do not get me into trouble.\nNever share an address."}`)
+	if got := rules.EnabledGlobalRules(); len(got[0].Except) != 0 {
+		t.Errorf("a reworded rule kept exceptions written for the old wording: %+v", got[0])
+	}
+	found := false
+	for _, f := range alwaysRulesForm().Fields {
+		if f.Field == "exceptions" && f.Type == "rows" && len(f.Columns) == 2 && f.Columns[0].Type == "select" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the Always form offers no exception rows")
+	}
+}

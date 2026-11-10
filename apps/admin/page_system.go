@@ -128,7 +128,7 @@ func (a *AdminApp) systemSections() []ui.Section {
 				Method: settingsSaveMethod,
 				Fields: []ui.FormField{
 					{Field: "channel_wake_rules", Label: "Master rules", Type: "rules",
-						Placeholder: "Respond only when called by name",
+						Placeholder: "when an agent should answer a message here…",
 						Help:        "A cheap worker-LLM check runs these on each inbound.",
 						Detail:      "Follow-ups to the agent's own last message bypass the rules. Owner messages are evaluated like anyone else's unless a rule says otherwise."},
 				},

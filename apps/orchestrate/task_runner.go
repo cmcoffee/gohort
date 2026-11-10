@@ -155,6 +155,7 @@ func (T *OrchestrateApp) startTask(bt backgroundTask, fn func(ctx context.Contex
 			}
 		}()
 		out, err := fn(ctx)
+		withdrawn := runWithdrawn(run.ID)
 		if ctx.Err() != nil {
 			// Cancelled. The user already knows they stopped it; announcing
 			// it again in the conversation is noise.
@@ -162,6 +163,13 @@ func (T *OrchestrateApp) startTask(bt backgroundTask, fn func(ctx context.Contex
 			if bt.onCancel != nil {
 				bt.onCancel(run.ID)
 			}
+			return
+		}
+		if withdrawn {
+			// Finished in the moment the turn that started it was halted by a
+			// guardrail, too late to be cancelled: it delivers nothing either.
+			run.Complete(RunStatusCanceled)
+			Log("[orchestrate/task] %s finished, but its turn was halted by a guardrail: withdrawn, nothing delivered", run.ID)
 			return
 		}
 		if err != nil {
@@ -176,6 +184,37 @@ func (T *OrchestrateApp) startTask(bt backgroundTask, fn func(ctx context.Contex
 		T.deliverTaskResult(bt.origin, bt.label, out, err)
 	}()
 	return job
+}
+
+// withdrawnRuns are background runs whose turn a guardrail halted: each is
+// cancelled, and one that had already finished, too late to cancel, is
+// dropped instead of delivered (runWithdrawn). By run id; an entry goes when
+// its run ends.
+var withdrawnRuns sync.Map
+
+// runWithdrawn reports, once, whether run id was withdrawn.
+func runWithdrawn(id string) bool {
+	_, ok := withdrawnRuns.LoadAndDelete(id)
+	return ok
+}
+
+// withdrawHaltedWork stops the background work a halted turn started. A
+// guardrail that refused the reply refused what the reply was about: tonight
+// the reply about a face swap was blocked, and the swap, already running,
+// arrived a second later anyway.
+func (t *chatTurn) withdrawHaltedWork(hook string) {
+	for _, run := range t.detachLedger().Runs() {
+		withdrawnRuns.Store(run.ID, time.Now())
+		what := "stopped"
+		if len(CancelBackgroundJobs(run.Session, run.ID)) == 0 {
+			what = "withdrawn as it finished"
+		}
+		Log("[orchestrate.guardrail] agent=%s turn halted at %s: background task %s (%s) %s, so it delivers nothing", t.agent.ID, hook, run.ID, run.Label, what)
+		if t.udb != nil && strings.TrimSpace(run.Session) != "" {
+			appendSessionDiag(t.udb, t.agent.ID, run.Session, "guardrail-withdrew-task",
+				fmt.Sprintf("A guardrail halted the turn at %s, so the background task it had started (%s) was %s and delivers nothing.", hook, run.Label, what))
+		}
+	}
 }
 
 // deliverTaskResult wakes the conversation with what the task produced.

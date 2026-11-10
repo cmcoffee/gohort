@@ -42,6 +42,11 @@ type StyleRule struct {
 	Key     string // stable id, e.g. "style.no_em_dash"
 	Text    string // the instruction, as injected
 	Builtin bool   // shipped with gohort, vs added by an operator
+	// Except are a deployment rule's exceptions, each a condition under
+	// which the rule does not apply: any one plainly holding excuses it. Set
+	// with the rule (Governance > Rules), and only there: an agent's own
+	// exceptions never reach a deployment rule.
+	Except []string `json:",omitempty"`
 }
 
 var (

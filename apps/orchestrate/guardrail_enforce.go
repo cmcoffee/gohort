@@ -76,6 +76,8 @@ func (t *chatTurn) guardrailEnforcerCtx(ctx context.Context) guardrailEnforcemen
 		// rejection writer is itself a model call, and one made on a dead
 		// context falls through to the canned decline every time.
 		Reject: func(h GuardrailHalt) string {
+			// What the turn started goes with it (withdrawHaltedWork).
+			t.withdrawHaltedWork(h.Reason)
 			if t.nobodyAsked(ctx) {
 				return t.guardrailWithheldReport(h)
 			}

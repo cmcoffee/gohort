@@ -846,7 +846,7 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 				Detail: "Set it to make this a ONE-turn step: it replies once, then moves on. That is how an intake beat asks its questions and continues."},
 			ui.FormField{Type: "header", Label: "Leaving early"},
 			ui.FormField{Field: "guard", Type: "textarea", Rows: 2, Label: "Leave this step when…",
-				Placeholder: "the person has moved to a different problem",
+				Placeholder: "the sign that the conversation no longer belongs in this step…",
 				Help:        "Plain words, judged on each new turn that arrives here.",
 				Detail:      "Empty means the conversation stays until something else moves it. It costs one model call per turn, so say something worth checking."},
 			ui.FormField{Field: "guard_to", Type: "select", Label: "…and go to", Options: phaseOptions(def, true),
@@ -918,7 +918,7 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 					// to write in or they were too narrow to read.
 					{Field: "desc", Type: "textarea", Rows: 3, OwnLine: true, HideWhen: builtinOrUnansweredExpr(),
 						Label:       "What to work out: write it as the instruction for this field",
-						Placeholder: "e.g. the single best explanation, stated so it could be wrong. Not three ranked possibilities: one, committed to."},
+						Placeholder: "what this field holds, written as an instruction to the model…"},
 				}},
 
 			ui.FormField{Type: "header", Label: "What it adds to the running lists", Collapsed: true,
@@ -1181,7 +1181,7 @@ func phaseFormFields(def MachineDef) []ui.FormField {
 		{Field: "name", Type: "text", Label: "Name", Placeholder: "short_lowercase_name",
 			Help: "Short handle, lowercase: triage, hunch, verify. It is how other steps point here."},
 		{Field: "desc", Type: "text", Label: "What this step does",
-			Placeholder: "e.g. Work out whether there is something to explain",
+			Placeholder: "what this step does, in one line…",
 			Help:        "One line, for whoever reads the machine later. Not shown to the agent."},
 		{Field: "prompt", Type: "textarea", Rows: 8, Label: "Instructions for this step",
 			Help:   "What the agent should be doing here. Write the JOB, not the identity.",

@@ -410,7 +410,7 @@ func (T *OrchestrateApp) servePipelineDescribePage(w http.ResponseWriter, r *htt
 				Fields: []ui.FormField{{
 					Field: "description", Type: "textarea", Rows: 8,
 					Label:       "In plain words",
-					Placeholder: "Break a research question into separate sub-questions, look each one up on the web in parallel, then write one answer that cites what it found and says what it could not settle.",
+					Placeholder: "what the pipeline does, from what it is given to what it hands back, in plain words…",
 					Help:        "It runs a model, so it takes a moment.",
 					Detail:      "If it cannot produce something that runs, it says so here rather than failing quietly.",
 				}},
@@ -462,7 +462,7 @@ func pipelineAssist(def PipelineDef) definitionAssist {
 		Noun:        "pipeline",
 		Base:        orchPath("api/pipelines/") + url_(def.ID),
 		Intro:       "Ask about this pipeline, or for a change to any part of it: a stage, the order, the instructions. A change is drafted and shown before anything is saved, and one that would not run is not saved.",
-		Placeholder: "What should be different? For example: research each query with the web tools, and add a stage that checks the sources.",
+		Placeholder: "what you want changed, or a question about how it works…",
 		Starters:    []string{"Look it over: what would you change?", "Walk me through what it does."},
 	}
 }

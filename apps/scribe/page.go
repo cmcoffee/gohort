@@ -28,7 +28,7 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 				PostURL:     "new",
 				SubmitLabel: "Create",
 				Fields: []ui.FormField{
-					{Field: "title", Label: "Title", Type: "text", Placeholder: "e.g. Getting Started with Kubernetes"},
+					{Field: "title", Label: "Title", Type: "text", Placeholder: "the guide's title…"},
 					{Field: "subtitle", Label: "Subtitle", Type: "text", Placeholder: "Optional one-line description"},
 					{Field: "template", Label: "Start from", Type: "select", Options: templateOptions(),
 						Help: "A starting skeleton for a document people write repeatedly."},
@@ -126,7 +126,7 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 						Text: "Reorganize this guide into the clearest reading order for someone new to the topic: " +
 							"overview and prerequisites first, then setup and steps in sequence, then advanced and reference material, " +
 							"with troubleshooting or FAQ last. Only change the order; don't rewrite any section's content."},
-					{Label: "Something else", Input: true, Placeholder: "e.g. move troubleshooting up front: that's what people open this for",
+					{Label: "Something else", Input: true, Placeholder: "what to change about it…",
 						Help: "Say how you want it ordered.",
 						// Seeded with the rule the default enforces, so the common
 						// edit ("…but keep X first") is a change to one clause rather
@@ -172,7 +172,7 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 							"3. Where it does not, call edit_section with the whole revised body. Keep every fact, step, command, value and citation, and remove only what the brief says to leave out. Add nothing from elsewhere, and do no research.\n" +
 							"4. Leave a section that already fits the brief unchanged: don't rewrite for the sake of it.\n\n" +
 							"When done, reply with a short bulleted summary of which sections you changed and what about them. If the guide has no writing brief, say so and change nothing."},
-					{Label: "Something else", Input: true, Placeholder: "e.g. only Troubleshooting, and make it a checklist",
+					{Label: "Something else", Input: true, Placeholder: "what to change about it…",
 						Help: "Say which sections, or what to change about how they read.",
 						Text: "Edit this guide to its writing brief. Change how it is presented, not what it says: keep every fact, step and citation. "},
 				}},

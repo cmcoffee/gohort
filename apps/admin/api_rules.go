@@ -42,10 +42,14 @@ func (a *AdminApp) registerRulesRoutes(sub *http.ServeMux) {
 // checked.
 func (a *AdminApp) handleGlobalRules(c *jsonapi.Call) (any, error) {
 	var lines []string
+	exceptions := []ruleException{}
 	for _, rule := range rules.EnabledGlobalRules() {
 		lines = append(lines, rule.Text)
+		for _, e := range rule.Except {
+			exceptions = append(exceptions, ruleException{Rule: rule.Text, Condition: e})
+		}
 	}
-	return map[string]any{"rules": strings.Join(lines, "\n"),
+	return map[string]any{"rules": strings.Join(lines, "\n"), "exceptions": exceptions,
 		"depth": rules.GlobalRulesDepth(), "if_unchecked": uncheckedWord(rules.GlobalRulesFailOpen()),
 		"when_checked": whenCheckedWord(rules.GlobalRulesStreaming())}, nil
 }
@@ -54,15 +58,42 @@ func (a *AdminApp) handleGlobalRules(c *jsonapi.Call) (any, error) {
 // when the body says.
 func (a *AdminApp) handleGlobalRulesSave(c *jsonapi.Call, req struct {
 	Rules string `json:"rules"`
+	// Exceptions, each naming its rule by its text. Nil (not sent) keeps
+	// the ones the rules have.
+	Exceptions *[]ruleException `json:"exceptions"`
 	// Pointers: a caller that sends only the rules leaves how they
 	// are checked alone rather than resetting it.
 	Depth     *string `json:"depth"`
 	Unchecked *string `json:"if_unchecked"`
 	When      *string `json:"when_checked"`
 }) (any, error) {
+	// A rule's exceptions travel with its text: the ones sent, or, when none
+	// were sent, the ones it had. A rule whose wording changed starts with
+	// none, and an exception naming no rule there is dropped, said in the log.
+	kept := map[string][]string{}
+	for _, r := range rules.GlobalRules() {
+		kept[r.Text] = r.Except
+	}
+	var sent map[string][]string
+	if req.Exceptions != nil {
+		sent = map[string][]string{}
+		for _, e := range *req.Exceptions {
+			if cond := strings.TrimSpace(e.Condition); cond != "" {
+				sent[strings.TrimSpace(e.Rule)] = append(sent[strings.TrimSpace(e.Rule)], cond)
+			}
+		}
+	}
 	var list []rules.StyleRule
 	for _, line := range splitRuleLines(req.Rules) {
-		list = append(list, rules.StyleRule{Text: line})
+		r := rules.StyleRule{Text: line, Except: kept[line]}
+		if sent != nil {
+			r.Except = sent[line]
+			delete(sent, line)
+		}
+		list = append(list, r)
+	}
+	for rule, conds := range sent {
+		Log("[admin] global rules: %d exception(s) for %q dropped, no Always rule has that wording", len(conds), rule)
 	}
 	rules.SetGlobalRules(list)
 	if req.Depth != nil {
@@ -77,6 +108,13 @@ func (a *AdminApp) handleGlobalRulesSave(c *jsonapi.Call, req struct {
 	Log("[admin] global rules saved by %s: %d, checked %s, if unchecked %s", c.User, len(list),
 		rules.GlobalRulesDepth(), uncheckedWord(rules.GlobalRulesFailOpen()))
 	return map[string]any{"ok": true}, nil
+}
+
+// ruleException is one exception row: the Always rule it belongs to, by its
+// text, and the condition under which that rule does not apply.
+type ruleException struct {
+	Rule      string `json:"rule"`
+	Condition string `json:"condition"`
 }
 
 // handleStyleRules is the Style rules in force, one per line.
@@ -160,6 +198,15 @@ func rulesSection() ui.Section {
 	}
 }
 
+// alwaysRuleOptions are the Always rules, for an exception to name its rule.
+func alwaysRuleOptions() []ui.SelectOption {
+	var out []ui.SelectOption
+	for _, r := range rules.EnabledGlobalRules() {
+		out = append(out, ui.SelectOption{Value: r.Text, Label: r.Text})
+	}
+	return out
+}
+
 // alwaysRulesForm edits the Always list. No Save button: like the rest of
 // the admin settings it saves as it changes (each line as it is left, each
 // select as it is picked), posting the whole record so no field is blanked.
@@ -173,13 +220,24 @@ func alwaysRulesForm() ui.FormPanel {
 			Label:     "Always",
 			Type:      "rules",
 			RowEditor: true,
-			Help:      "Obligations, checked on every reply. One per line, e.g. \"Do not perform any action that may potentially be deemed illegal.\" The picker beside each rule says what happens when a reply breaks it. Nothing ships here; the list is yours.",
+			Help:      "What no agent here may do, whatever it is asked: one rule per line, written as a plain instruction. Each is checked on every request, action and reply, and the picker beside it says what happens when one is broken. Nothing ships here; the list is yours.",
 			// What a breach does, per rule: the same three modes, and the
 			// same markers, as an agent's own guardrails, because every
 			// agent's guardrail check reads these lines with that parser.
 			RowModes:     alwaysRuleModes,
 			SuggestURL:   "api/rules-assist",
 			AssistPrompt: alwaysAssistPrompt,
+		}, {
+			Field: "exceptions", Type: "rows", Label: "Exceptions", AddLabel: "+ Add exception", ShowWhen: "rules",
+			Columns: []ui.FormField{
+				{Field: "rule", Label: "Rule", Type: "select", Options: alwaysRuleOptions()},
+				{Field: "condition", Label: "Except when", Type: "text",
+					Placeholder: "when this rule should not apply…"},
+			},
+			Help: "When a rule does not apply: pick the rule and say the condition. A rule can have several, and any one that plainly holds excuses it.",
+			Detail: "The check reads each one under its rule and decides whether it holds, from who is actually asking (the framework establishes that, not the message): \"the owner\" is whoever owns the agent being checked. " +
+				"Keep them few and narrow: each is weighed on every reply its rule judges. Exceptions belong to the rule's wording, so a rule reworded starts with none. " +
+				"Only these loosen the deployment's rules: an agent's own exceptions never reach them. A rule added here appears in the picker once the page is reloaded.",
 		}, {
 			// The three settings below are read only when a global rule is
 			// judged, and the list ships empty, so they wait for a rule.

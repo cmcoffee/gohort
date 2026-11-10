@@ -65,7 +65,7 @@ func targetFormFields(user string) []ui.FormField {
 		{Field: "id", Type: "hidden"},
 		{Field: "label", Label: "Name", Type: "text", Required: true, Placeholder: "Team blog",
 			Help: "What you pick in Scribe's Publish list."},
-		{Field: "desc", Label: "What it is", Type: "text", Placeholder: "Posts go up as drafts for review"},
+		{Field: "desc", Label: "What it is", Type: "text", Placeholder: "what this place is, in a few words…"},
 		{Field: "uses", Label: "Publishes through", Type: "select", Options: []ui.SelectOption{
 			{Value: "api", Label: "One of your integrations (API or MCP)"},
 			{Value: "agent", Label: "One of your agents"},
@@ -77,7 +77,7 @@ func targetFormFields(user string) []ui.FormField {
 		{Field: "agent", Label: "Agent", Type: "select", ShowWhen: "uses:agent", Options: AgentNameOptions(user),
 			Help: "For a place with no API of its own: the agent is handed the document and your instruction."},
 		{Field: "instructions", Label: "How to publish there", Type: "sections", SectionsAllowFree: true, Rows: 5, Required: true,
-			Placeholder: "Create a draft post with the document as its body. The title is the post title. Put it in the category given.",
+			Placeholder: "what the publish does with the document: which call, draft or live, where the answers go…",
 			Help:        "What the publish does with the document: which endpoint, draft or live, where the answers below go.",
 			Detail:      "The document, its title and the answers to the questions below are handed over with this. Name the API call if you know it (\"POST /wp-json/wp/v2/posts with status draft\"); otherwise describe the result you want and the pass works it out from the API."},
 		{Field: "fields", Label: "Questions to settle", Type: "rows", AddLabel: "Add a question",

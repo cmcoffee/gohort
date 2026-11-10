@@ -201,6 +201,9 @@ type TaskRun struct {
 	// the conversation (FinishBackgroundJob). Listed until it arrives, so a
 	// turn in between does not start it again; no longer stoppable.
 	Delivering bool
+	// Session is the conversation it delivers into, set when the turn that
+	// started it records it (RecordDetachSlot), so that turn can stop it.
+	Session string
 }
 
 // TaskProduct is everything a detached call produced: the text the model reads,

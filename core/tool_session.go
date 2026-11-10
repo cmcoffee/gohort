@@ -534,6 +534,7 @@ func (s *ToolSession) RecordDetachSlot(tool string, run TaskRun) {
 	if s == nil {
 		return
 	}
+	run.Session = s.DeliverySession()
 	s.detachLedger().record(tool, run)
 }
 

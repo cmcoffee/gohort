@@ -232,7 +232,7 @@ func adminSection(r *http.Request) ui.Section {
 							Help:    "Resolved in the store of whoever publishes, so this is a NAME, not a pick from one person's agents.",
 							Detail:  "The list is what you have; anything typed is accepted."},
 						{Field: "prompt", Label: "How to put it", Type: "textarea", Rows: 2,
-							Placeholder: "File {title} as a documentation task for the area owner."},
+							Placeholder: "how the agent should put the document there ({title} is its title)…"},
 					},
 				},
 			},

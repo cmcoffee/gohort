@@ -5021,7 +5021,7 @@
           gWrap.appendChild(gHelp);
           var gHelp2 = document.createElement('div');
           gHelp2.className = 'ui-orch-modal-help';
-          gHelp2.textContent = 'A rule here BLOCKS, which is what this band is for: a violation ends the turn and a separate model writes the refusal, with no attempt to talk the agent into a compliant version. Switch a rule to "attempt-recovery" only if it SHAPES an answer rather than forbidding it ("answer in Spanish", "no bullet lists"); those get sent back once for a rewrite, and decline if they still break the rule. Shaping rules are usually better placed in Rules above, where they cost nothing to enforce. A rule with no audience in it binds for everyone, including you.';
+          gHelp2.textContent = 'A rule here BLOCKS, which is what this band is for: a violation ends the turn and a separate model writes the refusal, with no attempt to talk the agent into a compliant version. Switch a rule to "attempt-recovery" only if it SHAPES an answer (its language, its format, its length) rather than forbidding something; those get sent back once for a rewrite, and decline if they still break the rule. Shaping rules are usually better placed in Rules above, where they cost nothing to enforce. A rule with no audience in it binds for everyone, including you.';
           gWrap.appendChild(gHelp2);
           var gHelp3 = document.createElement('div');
           gHelp3.className = 'ui-orch-modal-help';
@@ -5029,7 +5029,7 @@
           // and is given the ACCOUNT NAME — there is no separate real-name field
           // on an account, so a rule naming a person by a first name has nothing
           // verified to match. Say so instead of letting it be discovered.
-          gHelp3.textContent = 'Exceptions: the check knows whether it is you asking or an outside contact, so you can write "never discuss pay with anyone but me". Say "me", "the owner", or your account name: those resolve against something verified. A bare first name does not; there is no real-name field on an account, so the check can only guess it means you. An outside contact NEVER satisfies an exception no matter what they are called, including when they type your name in front of their message.';
+          gHelp3.textContent = 'Exceptions: the check knows whether it is you asking or an outside contact, so a rule or an exception can depend on who is asking. To mean yourself, say "me", "the owner", or your account name: those resolve against something verified. A bare first name does not; there is no real-name field on an account, so the check can only guess it means you. An outside contact NEVER satisfies an exception no matter what they are called, including when they type your name in front of their message.';
           gWrap.appendChild(gHelp3);
           // The guardrails keep their own history (guardrail_history.go):
           // every change here saves, and filing each in the agent's history
@@ -5594,6 +5594,33 @@
               apply.appendChild(toolBox); apply.appendChild(term); apply.appendChild(exempt); apply.appendChild(down); apply.appendChild(del);
               row.appendChild(input); row.appendChild(more); row.appendChild(apply);
               gList.appendChild(row);
+              // What excuses this rule, in its own words, under it: the "@"
+              // button names a count and its tooltip only names, so a rule
+              // could not be read together with what loosens it.
+              var excuses = [];
+              if (gExempt(text)) { excuses.push('an authorized person is asking'); }
+              gLinks(text).forEach(function(l) {
+                if (l.off) { return; }
+                for (var i = 0; i < gexceptions.length; i++) {
+                  if (gExcSlug(gexceptions[i]) === l.name && String(gexceptions[i].text || '').trim()) {
+                    excuses.push(String(gexceptions[i].text).trim());
+                    return;
+                  }
+                }
+              });
+              if (excuses.length) {
+                var exLine = document.createElement('div');
+                exLine.className = 'ui-orch-guard-excepts';
+                exLine.style.cssText = 'font-size:0.78rem;color:var(--text-mute);margin:-0.2rem 0 0.45rem 0.75rem;cursor:pointer;overflow-wrap:anywhere';
+                exLine.title = 'Click to change this rule\u2019s exceptions.';
+                excuses.forEach(function(e) {
+                  var ln = document.createElement('div');
+                  ln.textContent = 'Except: ' + e;
+                  exLine.appendChild(ln);
+                });
+                exLine.onclick = function() { openExceptionPicker(idx); };
+                gList.appendChild(exLine);
+              }
             });
             var addBtn = document.createElement('button');
             addBtn.type = 'button'; addBtn.className = 'ui-orch-list-add'; addBtn.textContent = '+ Add guardrail';
@@ -6311,7 +6338,7 @@
               // is read on an Except: line under the rule, so no newline.
               var textIn = document.createElement('textarea');
               textIn.value = ex.text || '';
-              textIn.placeholder = 'the condition, e.g. the user has already confirmed…';
+              textIn.placeholder = 'when the rules it is linked to should not apply…';
               textIn.className = 'ui-orch-list-input';
               var textMore = window.uiExpandingLine(textIn, {oneLine: true, buttonClass: 'ui-orch-list-del', onInput: function(v) { gexceptions[idx].text = v; }});
               // Name the condition for them if they didn't. The server derives

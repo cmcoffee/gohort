@@ -216,10 +216,10 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 					{Value: "help me think something through before I commit to it", Label: "Think things through with me"},
 				}},
 			{Field: "purpose", Type: "textarea", Label: "What should it do?", Rows: 4,
-				Placeholder: "e.g. Answer questions about our internal deployment runbooks: find the relevant doc, quote the exact steps, and flag anything out of date."},
+				Placeholder: "what this agent is for, and how it should go about it…"},
 			{Field: "example_tasks", Type: "textarea", Label: "Example requests", Rows: 3,
 				Help:        "A few real asks users will make of it, one per line. These sharpen the draft a lot.",
-				Placeholder: "How do I roll back the api tier?\nWhich runbooks mention the standby database?"},
+				Placeholder: "real requests people will send it, one per line…"},
 		},
 	}
 	if assistantRun {
@@ -343,7 +343,7 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 				}},
 			{Field: "style_notes", Type: "textarea", Label: "Anything else about how it should behave?", Rows: 3,
 				Help:        "Habits, not capabilities. What it should always do, or never do, in how it responds to you.",
-				Placeholder: "e.g. Ask before assuming what I meant.\nLead with the answer, then the reasoning.\nNever apologise for things that aren't its fault."},
+				Placeholder: "habits it should always, or never, have in how it responds, one per line…"},
 		},
 	}
 

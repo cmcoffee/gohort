@@ -744,3 +744,33 @@ func TestAHandOffShowsInAWebThreadOnly(t *testing.T) {
 		}
 	}
 }
+
+// A turn a guardrail halts withdraws the background work it started: a run
+// still going is cancelled, and one that finished in that moment, too late to
+// cancel, is marked so it delivers nothing. Observed: the reply about a face
+// swap was blocked, and the swap arrived a second later anyway.
+func TestAHaltedTurnWithdrawsItsBackgroundWork(t *testing.T) {
+	turn := &chatTurn{agent: AgentRecord{ID: "a1"}}
+	sess := &ToolSession{DeliverySessionID: "s-halt", Detach: turn.detachLedger()}
+	cancelled := 0
+	RegisterBackgroundJob("s-halt", TaskRun{ID: "run-going", Label: "image edit"}, func() { cancelled++ })
+	RegisterBackgroundJob("s-halt", TaskRun{ID: "run-done", Label: "image edit"}, func() { cancelled++ })
+	t.Cleanup(func() { CompleteBackgroundJob("s-halt", "run-going"); CompleteBackgroundJob("s-halt", "run-done") })
+	FinishBackgroundJob("s-halt", "run-done") // finished: on its way, no longer stoppable
+	sess.RecordDetachSlot("image", TaskRun{ID: "run-going", Label: "image edit"})
+	sess.RecordDetachSlot("video", TaskRun{ID: "run-done", Label: "video"})
+
+	turn.withdrawHaltedWork(guardHookPreOutput)
+	if cancelled != 1 {
+		t.Errorf("%d runs cancelled, want the one still going", cancelled)
+	}
+	if !runWithdrawn("run-done") || !runWithdrawn("run-going") {
+		t.Error("a halted turn's runs were not marked to deliver nothing")
+	}
+	if runWithdrawn("run-done") {
+		t.Error("a withdrawal is read once, when its run ends")
+	}
+	if runWithdrawn("someone-else") {
+		t.Error("a run no halted turn started was withdrawn")
+	}
+}

@@ -198,6 +198,9 @@ type guardrailRule struct {
 	// Tools are the tools this rule is about, in the order written, or none
 	// for a rule about the agent's conduct generally. See guardrailToolMarker.
 	Tools []string
+	// Excepts are a deployment rule's own exceptions (Governance > Rules),
+	// read on "Except:" lines like an agent rule's linked ones.
+	Excepts []string
 	// Links are the carve-outs this rule is linked to, in the order written.
 	// "@night-shift" links one; "@-night-shift" links it and switches it OFF
 	// for THIS rule, leaving every other rule that shares it untouched.
@@ -258,6 +261,15 @@ func globalGuardrailRules() []guardrailRule {
 	for _, g := range prompts.EnabledGlobalRules() {
 		r := parseGuardrailRule(strings.TrimSpace(g.Text))
 		r.Global = true
+		// Its own exceptions, and only those: a name linked in its text
+		// would otherwise be looked up in each agent's list, so an agent's
+		// owner could write what loosens the deployment's rule.
+		r.Links = nil
+		for _, e := range g.Except {
+			if e = strings.TrimSpace(e); e != "" {
+				r.Excepts = append(r.Excepts, e)
+			}
+		}
 		out = append(out, r)
 	}
 	return out

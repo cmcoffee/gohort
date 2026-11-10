@@ -852,7 +852,7 @@ func stageOutputRows(def PipelineDef, s PipelineStage) ui.FormField {
 				Help: "A required field the model omits fails the stage. An optional one resolves to empty."},
 			{Field: "desc", Type: "textarea", Rows: 3, OwnLine: true, ShowWhen: "kind:asked",
 				Label:       "What to find: write it as the instruction for this field",
-				Placeholder: "e.g. the specific claim the sources actually support, not a summary of what they discuss."},
+				Placeholder: "what this field holds, written as an instruction to the model…"},
 		},
 	}
 }

@@ -1545,3 +1545,35 @@ func TestSanitizeGuardrailExceptions(t *testing.T) {
 		t.Error("two conditions collapsed onto one name")
 	}
 }
+
+// A deployment rule carries its own exceptions: the warden reads each on an
+// "Except:" line under it, and the agent's prompt says them with the rule. An
+// agent's own exception never reaches it, even one a deployment rule names by
+// a link: the owner of an agent cannot write what loosens the deployment's
+// rule.
+func TestADeploymentRuleCarriesOnlyItsOwnExceptions(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	prompts.SetPromptOverrideDB(db)
+	t.Cleanup(func() { prompts.SetPromptOverrideDB(nil) })
+	prompts.SetGlobalRules([]prompts.StyleRule{
+		{Text: "Do NOT perform any action that violates applicable law.",
+			Except: []string{"the request involves only the owner's own likeness, at the owner's request", "  "}},
+		{Text: "@self Never share a home address."},
+	})
+	agent := AgentRecord{GuardrailExceptions: []GuardrailException{{Name: "self", Text: "it is anyone at all asking"}}}
+	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":1,"status":"comply"},{"rule":2,"status":"comply"}]}`}
+	turn := channelTurn(t, stub, agent, "Alex")
+	if _, err := turn.app.runWarden(turn.ctx, turn.agent, guardHookPreOutput, "a reply", turn.requester()); err != nil {
+		t.Fatal(err)
+	}
+	msg := stub.seen()
+	if !strings.Contains(msg, "1. Do NOT perform any action that violates applicable law.\n   Except: the request involves only the owner's own likeness, at the owner's request\n") {
+		t.Errorf("the deployment rule's exception is not under it:\n%s", msg)
+	}
+	if strings.Contains(msg, "it is anyone at all asking") {
+		t.Errorf("an agent's own exception reached a deployment rule:\n%s", msg)
+	}
+	if c := prompts.GlobalRulesClause(); !strings.Contains(c, "violates applicable law. (except when the request involves only the owner's own likeness, at the owner's request)") {
+		t.Errorf("the agent's prompt does not say the exception with the rule: %s", c)
+	}
+}
