@@ -581,7 +581,7 @@ func guardrailRuleTexts(agent AgentRecord) []string {
 // Stamped on the record at creation rather than left to the resolver's fallback
 // so it is a starting point an owner can see and change, not a rule buried in
 // code. It happens to match the fallback today; the slider exposes it as
-// "Balanced".
+// "Full".
 func defaultNewAgentGuardrailHooks() []string {
 	return []string{guardHookPreInput, guardHookPreAction, guardHookPreOutput}
 }

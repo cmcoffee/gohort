@@ -5682,31 +5682,32 @@
              desc: 'Enforcement of your rules suspended. They stay exactly as written and nothing checks them. Use it to find out whether one of your guardrails is behind a wrong refusal, or what a turn costs without them, instead of deleting the rules to test. The deployment\u2019s own Rules are still checked on every request, action and reply, and replies are held for them unless an administrator set them to be checked while replies stream.'},
             {name: 'Fast', hooks: ['pre_input', 'pre_action'],
              desc: 'Checks the incoming request (with recent context) and consequential tool calls before they run. The cheapest setting that still enforces: one check per turn plus one per consequential call. It does NOT judge what the agent SAYS against your rules, so a rule about disclosure can be broken by a reply: pick it when latency matters more than that. The deployment\u2019s own Rules are checked on replies regardless, and replies are held for them unless an administrator set them to be checked while replies stream.'},
-            {name: 'Light', hooks: ['pre_input', 'pre_output'],
-             desc: 'Checks the incoming request (with recent context) and what the agent says: its reply, and anything it writes beside a tool call. Covers what the agent says but not what it DOES: a consequential tool call runs unjudged.'},
-            {name: 'Balanced', hooks: ['pre_input', 'pre_action', 'pre_output'],
-             desc: 'Also checks consequential tool calls before they run, free unless one is actually called. The reply check is the only one that reads what is about to be SAID, including what the agent writes while it works, so this is the first setting that covers all three ends. Where a new agent starts.'}
+            {name: 'Full', hooks: ['pre_input', 'pre_action', 'pre_output'],
+             desc: 'Checks the incoming request (with recent context), consequential tool calls before they run, and what the agent says: its reply, and anything it writes beside a tool call. The action check costs nothing until one is called; the reply check holds a reply until it passes, so replies do not stream. Where a new agent starts.'}
           ];
           var activeHooks = {};
           (agent.guardrail_hooks || []).forEach(function(h) { activeHooks[h] = true; });
           // Match the stored set to a level. An EMPTY set means this agent has
-          // never had one stored, and the server falls back to Balanced for it —
-          // so that is what the slider shows, rather than reading as "off". New
-          // agents are stamped with Fast at creation and so never land here;
+          // never had one stored, and the server falls back to Full for it, so
+          // that is what the slider shows, rather than reading as "off". New
+          // agents are stamped with Full at creation and so never land here;
           // this branch is the older records.
           //
-          // Fast and Light both check two things and are NOT ordered by coverage
-          // — one watches actions, the other watches speech. The slider puts
-          // Fast lower because it is cheaper (nothing buffers the reply), and
-          // the descriptions carry what each one gives up, since a position on
-          // a line cannot say "different, not less".
+          // Two levels, because there is one real trade. Fast leaves the reply
+          // unjudged against the owner's own rules, so it streams and costs no
+          // check per reply; Full judges it. The action check is in both: it
+          // costs nothing until a consequential call is made. A level that
+          // judged replies and not actions (Light) cost what Full costs on
+          // almost every turn and covered less, and one that added periodic
+          // (Strict) added nothing once the reply check read text beside tool
+          // calls; a record saved on either opens on Custom, unchanged.
           // Tracked separately from the hook set so turning enforcement off and back
           // on RESTORES the strictness that was chosen, rather than dropping the
           // agent to the default.
           var guardrailsOff = !!agent.guardrails_disabled;
           function defaultLevelIndex() {
             for (var i = 0; i < hookLevels.length; i++) {
-              if (hookLevels[i].name === 'Balanced') { return i; }
+              if (hookLevels[i].name === 'Full') { return i; }
             }
             return 0;
           }
