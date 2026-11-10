@@ -16,6 +16,8 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/clientcert"
+	"github.com/cmcoffee/snugforge/jwcrypt"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -330,5 +332,73 @@ func TestAnApprovalHoldsOnlyForTheBotThatWasApproved(t *testing.T) {
 func TestTheVerifierAllowsFiveMinutesOfSkew(t *testing.T) {
 	if got := Verifier().Leeway; got < 5*time.Minute {
 		t.Errorf("leeway %v, want five minutes", got)
+	}
+}
+
+// A bot that signs in with a certificate needs no secret. Its token request
+// carries a client assertion in the secret's place, signed with the
+// certificate's key for the very token endpoint it is sent to; a new
+// certificate drops the token minted under the old one, and removing the bot
+// removes its certificate.
+func TestACertificateBotSignsInWithAnAssertion(t *testing.T) {
+	world(t)
+	m := newMicrosoft(t)
+	b := bot()
+	b.SignIn, b.ServiceHost = SignInCertificate, m.srv.URL
+	b, err := Save(b, "", false)
+	if err != nil {
+		t.Fatalf("a certificate bot needs no secret: %v", err)
+	}
+	ctx := context.Background()
+	if err := Send(ctx, b, m.srv.URL+"/amer", "c", nil); err == nil || !strings.Contains(err.Error(), "has none") {
+		t.Fatalf("a certificate bot with no certificate: %v", err)
+	}
+	cert, err := clientcert.Generate("test bot", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SetCertificate(b.Owner, b.Service, cert); err != nil {
+		t.Fatal(err)
+	}
+	if err := Send(ctx, b, m.srv.URL+"/amer", "c", nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(m.asked) != 1 {
+		t.Fatalf("token asked %d times", len(m.asked))
+	}
+	got := m.asked[0]
+	if got.Get("client_secret") != "" || got.Get("client_assertion_type") != clientcert.AssertionType ||
+		got.Get("client_id") != appID || got.Get("grant_type") != "client_credentials" {
+		t.Errorf("token request: %v", got)
+	}
+	aud := m.srv.URL + "/" + b.TenantID + "/oauth2/v2.0/token"
+	claims, err := jwcrypt.VerifyJWT(got.Get("client_assertion"), &cert.Key.PublicKey,
+		jwcrypt.VerifyOptions{Audience: aud, Algorithms: []jwcrypt.JWTAlgorithm{jwcrypt.PS256}})
+	if err != nil {
+		t.Fatalf("the assertion is not the certificate's, for this endpoint: %v", err)
+	}
+	if claims.String("iss") != appID || claims.String("sub") != appID {
+		t.Errorf("assertion claims: %v", claims)
+	}
+	next, _ := clientcert.Generate("test bot", 0)
+	SetCertificate(b.Owner, b.Service, next)
+	Send(ctx, b, m.srv.URL+"/amer", "c", nil)
+	if len(m.asked) != 2 {
+		t.Errorf("a new certificate must mint a new token, asked %d times", len(m.asked))
+	}
+	if have, ok := Certificate(b.Owner, b.Service); !ok || have.Thumbprint() != next.Thumbprint() {
+		t.Error("the certificate kept is not the new one")
+	}
+	if Remove(b.Owner, b.Service) != nil {
+		t.Fatal("remove")
+	}
+	if _, ok := Certificate(b.Owner, b.Service); ok {
+		t.Error("removing the bot left its certificate")
+	}
+	plain := bot()
+	plain.Service = "teams3"
+	plain.AppID = "77777777-8888-9999-aaaa-bbbbbbbbbbbb"
+	if _, err := Save(plain, "", false); err == nil {
+		t.Error("a bot that signs in with a secret still needs one")
 	}
 }

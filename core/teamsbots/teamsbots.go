@@ -28,12 +28,18 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/clientcert"
 	"github.com/cmcoffee/gohort/core/jwks"
 )
 
 const (
 	table       = "teams_bots"        // owner \x00 service -> Bot
 	secretTable = "teams_bot_secrets" // owner \x00 service -> the app's client secret (encrypted)
+	certTable   = "teams_bot_certs"   // owner \x00 service -> its certificate and key, PEM (encrypted)
+
+	// SignInCertificate is a bot that signs in with a certificate instead of
+	// a client secret (Bot.SignIn).
+	SignInCertificate = "certificate"
 
 	// DefaultService is the service a bot's channels bind to.
 	DefaultService = "teams"
@@ -64,7 +70,11 @@ type Bot struct {
 	// makes new bots single-tenant); blank for a multi-tenant one. It names
 	// where reply tokens come from, and an activity from another tenant is
 	// refused.
-	TenantID      string   `json:"tenant_id,omitempty"`
+	TenantID string `json:"tenant_id,omitempty"`
+	// SignIn is how it signs in to get a reply token: with its client secret
+	// (blank, as every bot did before certificates), or SignInCertificate,
+	// with a certificate whose key stays here (core/clientcert).
+	SignIn        string   `json:"sign_in,omitempty"`
 	ServiceHost   string   `json:"service_host,omitempty"`
 	ReplyInThread bool     `json:"reply_in_thread,omitempty"`
 	Accept        []string `json:"accept,omitempty"` // conversation types answered; none = every one
@@ -176,6 +186,37 @@ func Secret(owner, svc string) string {
 	return s
 }
 
+// UsesCertificate reports whether b signs in with a certificate.
+func (b Bot) UsesCertificate() bool { return b.SignIn == SignInCertificate }
+
+// Certificate is the certificate owner's bot for svc signs in with.
+func Certificate(owner, svc string) (clientcert.Cert, bool) {
+	var text string
+	if db() == nil || !db().Get(certTable, key(owner, svc), &text) || strings.TrimSpace(text) == "" {
+		return clientcert.Cert{}, false
+	}
+	c, err := clientcert.Parse(text)
+	if err != nil {
+		Log("[teamsbots] the stored certificate for %s could not be read: %v", svc, err)
+		return clientcert.Cert{}, false
+	}
+	return c, true
+}
+
+// SetCertificate stores c, key and certificate, as the certificate owner's
+// bot for svc signs in with. The token cached under the one before goes.
+func SetCertificate(owner, svc string, c clientcert.Cert) error {
+	if db() == nil {
+		return fmt.Errorf("the store is not ready")
+	}
+	if _, ok := Load(owner, svc); !ok {
+		return fmt.Errorf("there is no bot for %s", svc)
+	}
+	db().CryptSet(certTable, key(owner, svc), c.PEM())
+	forgetToken(key(owner, svc))
+	return nil
+}
+
 // check settles b's fields and says what is wrong with them, or nil.
 func (b *Bot) check() error {
 	b.Service = strings.ToLower(strings.TrimSpace(b.Service))
@@ -185,6 +226,10 @@ func (b *Bot) check() error {
 	b.Name = strings.TrimSpace(b.Name)
 	b.AppID = strings.ToLower(strings.TrimSpace(b.AppID))
 	b.TenantID = strings.ToLower(strings.TrimSpace(b.TenantID))
+	b.SignIn = strings.ToLower(strings.TrimSpace(b.SignIn))
+	if b.SignIn != SignInCertificate {
+		b.SignIn = "" // a client secret, the way every bot signed in before
+	}
 	b.ServiceHost = strings.TrimRight(strings.TrimSpace(b.ServiceHost), "/")
 	if b.ServiceHost == "" {
 		b.ServiceHost = DefaultServiceHost
@@ -235,7 +280,9 @@ func conversationTypes(in []string) ([]string, error) {
 }
 
 // Save adds or updates b, its secret when one is given (an update keeps the
-// one it has otherwise), held for an administrator's approval when hold. An
+// one it has otherwise), held for an administrator's approval when hold. A bot
+// that signs in with a certificate needs no secret; its certificate is set
+// apart (SetCertificate), once the bot exists. An
 // update keeps what an administrator decided, approval and a switch-off,
 // unless it changes what was approved: a different app, or a different tenant
 // (blanking it opens the bot to every tenant). That is a bot the administrator
@@ -261,14 +308,14 @@ func Save(b Bot, secret string, hold bool) (Bot, error) {
 		if b.Webhook == "" {
 			b.Webhook = prev.Webhook
 		}
-		if prev.AppID != b.AppID && secret == "" {
+		if prev.AppID != b.AppID && secret == "" && !b.UsesCertificate() {
 			return b, fmt.Errorf("a new app id needs its own client secret")
 		}
 		if hold && (prev.AppID != b.AppID || prev.TenantID != b.TenantID) {
 			b.AwaitingApproval = true
 		}
 	} else {
-		if secret == "" {
+		if secret == "" && !b.UsesCertificate() {
 			return b, fmt.Errorf("give it the app's client secret")
 		}
 		b.Created, b.AwaitingApproval = time.Now(), hold
@@ -315,7 +362,7 @@ func AdminSetDisabled(owner, svc string, disabled bool) error {
 	return nil
 }
 
-// Remove deletes owner's bot for svc and its secret.
+// Remove deletes owner's bot for svc, its secret and its certificate.
 func Remove(owner, svc string) error {
 	b, ok := Load(owner, svc)
 	if !ok {
@@ -323,6 +370,7 @@ func Remove(owner, svc string) error {
 	}
 	db().Unset(table, b.Key())
 	db().Unset(secretTable, b.Key())
+	db().Unset(certTable, b.Key())
 	forgetToken(b.Key())
 	return nil
 }

@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/clientcert"
 	"github.com/cmcoffee/gohort/core/governance"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/teamsbots"
@@ -30,17 +32,24 @@ type teamsBotRow struct {
 
 // teamsBotForm is the bot form, as posted.
 type teamsBotForm struct {
-	Name          string   `json:"name"`
-	AppID         string   `json:"app_id"`
-	TenantID      string   `json:"tenant_id"`
-	Secret        string   `json:"secret"`
-	Accept        []string `json:"accept"`
-	Mention       []string `json:"mention"`
-	ReplyInThread bool     `json:"reply_in_thread"`
-	Reach         string   `json:"reach"`
-	Service       string   `json:"service"`
-	Package       string   `json:"package,omitempty"`
-	Endpoint      string   `json:"endpoint,omitempty"` // shown, never saved
+	Name     string `json:"name"`
+	AppID    string `json:"app_id"`
+	TenantID string `json:"tenant_id"`
+	Secret   string `json:"secret"`
+	SignIn   string `json:"sign_in"`
+	// Certificate is a certificate and key pasted to sign in with, PEM;
+	// posted, never sent back. NewCertificate asks for a new one made here.
+	Certificate    string   `json:"certificate,omitempty"`
+	NewCertificate bool     `json:"new_certificate,omitempty"`
+	CertInfo       string   `json:"cert_info,omitempty"`     // shown, never saved
+	CertDownload   string   `json:"cert_download,omitempty"` // shown, never saved
+	Accept         []string `json:"accept"`
+	Mention        []string `json:"mention"`
+	ReplyInThread  bool     `json:"reply_in_thread"`
+	Reach          string   `json:"reach"`
+	Service        string   `json:"service"`
+	Package        string   `json:"package,omitempty"`
+	Endpoint       string   `json:"endpoint,omitempty"` // shown, never saved
 }
 
 // botEndpoint is where Azure is to send b's activities: its webhook's
@@ -83,8 +92,14 @@ func (T *Bridges) handleTeamsBots(c *jsonapi.Call) (any, error) {
 			reach = h.Reach
 		}
 		endpoint, _ := botEndpoint(c.R, b)
-		return teamsBotForm{Endpoint: endpoint, Name: b.Name, AppID: b.AppID, TenantID: b.TenantID, Accept: b.Accept, Mention: b.Mention, ReplyInThread: b.ReplyInThread,
-			Reach: reach, Service: b.Service, Package: "/bridges/api/teams-bots/package?service=" + b.Service}, nil
+		f := teamsBotForm{Endpoint: endpoint, Name: b.Name, AppID: b.AppID, TenantID: b.TenantID, SignIn: b.SignIn, Accept: b.Accept, Mention: b.Mention, ReplyInThread: b.ReplyInThread,
+			Reach: reach, Service: b.Service, Package: "/bridges/api/teams-bots/package?service=" + b.Service}
+		f.CertInfo = "None yet: save with Certificate chosen and one is made."
+		if cert, ok := teamsbots.Certificate(b.Owner, b.Service); ok {
+			f.CertInfo = certSummary(cert)
+			f.CertDownload = "/bridges/api/teams-bots/certificate?service=" + b.Service
+		}
+		return f, nil
 	}
 	rows := []teamsBotRow{}
 	for _, b := range teamsbots.List(c.User) {
@@ -160,10 +175,24 @@ func (T *Bridges) handleTeamsBotSave(c *jsonapi.Call, f teamsBotForm) (any, erro
 	if adding && len(accept) == 0 && len(mention) == 0 {
 		accept, mention = teamsbots.NewBotDefaults()
 	}
-	b, err := teamsbots.Save(teamsbots.Bot{Owner: user, Service: svc, Name: f.Name, AppID: f.AppID, TenantID: f.TenantID,
+	// A pasted certificate is read before anything is saved, so one that
+	// cannot sign in is refused with the bot as it was.
+	var pasted *clientcert.Cert
+	if f.SignIn == teamsbots.SignInCertificate && strings.TrimSpace(f.Certificate) != "" {
+		cert, err := clientcert.Parse(f.Certificate)
+		if err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+		pasted = &cert
+	}
+	b, err := teamsbots.Save(teamsbots.Bot{Owner: user, Service: svc, Name: f.Name, AppID: f.AppID, TenantID: f.TenantID, SignIn: f.SignIn,
 		Accept: accept, Mention: mention, ReplyInThread: f.ReplyInThread, Webhook: prev.Webhook}, f.Secret, hold)
 	if err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
+	}
+	made, err := settleBotCertificate(b, pasted, f.NewCertificate)
+	if err != nil {
+		return nil, jsonapi.BadRequest("the bot is saved, but its certificate is not: " + err.Error())
 	}
 	reach := strings.TrimSpace(f.Reach)
 	if reach == "" {
@@ -198,7 +227,63 @@ func (T *Bridges) handleTeamsBotSave(c *jsonapi.Call, f teamsBotForm) (any, erro
 	} else if b.AwaitingApproval && !prev.AwaitingApproval {
 		msg = "Saved. Its app or tenant changed, so it waits for an administrator's approval again, and answers once one approves it."
 	}
+	if made {
+		msg += " A certificate was made for it: under Edit, download the public certificate and upload it to the bot's app registration (Certificates & secrets, Certificates). Replies fail until it is there."
+	}
 	return map[string]string{"message": msg}, nil
+}
+
+// settleBotCertificate gives a bot that signs in with a certificate the one
+// it should have: the one pasted, a new one when asked or when it has none,
+// otherwise the one it has. made reports a certificate made here, which is
+// one the app registration does not have yet.
+func settleBotCertificate(b teamsbots.Bot, pasted *clientcert.Cert, renew bool) (made bool, err error) {
+	if !b.UsesCertificate() {
+		return false, nil
+	}
+	if pasted != nil {
+		return false, teamsbots.SetCertificate(b.Owner, b.Service, *pasted)
+	}
+	if _, has := teamsbots.Certificate(b.Owner, b.Service); has && !renew {
+		return false, nil
+	}
+	cert, err := clientcert.Generate(b.Name+" (Teams bot)", 0)
+	if err != nil {
+		return false, err
+	}
+	return true, teamsbots.SetCertificate(b.Owner, b.Service, cert)
+}
+
+// certSummary is a certificate the way the bot's form shows it: the
+// thumbprint the Azure portal lists it by, and when it runs out.
+func certSummary(c clientcert.Cert) string {
+	s := "Thumbprint " + c.ThumbprintSHA1() + ", expires " + c.Expires().Format("Jan 2, 2006")
+	if left := time.Until(c.Expires()); left < 30*24*time.Hour {
+		s += " (soon: make a new one and upload it)"
+	}
+	return s
+}
+
+// handleTeamsBotCertificate sends the ?service= bot's public certificate,
+// the part its app registration is given. It holds no secret; the key stays.
+func (T *Bridges) handleTeamsBotCertificate(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	svc := strings.TrimSpace(r.URL.Query().Get("service"))
+	if _, found := teamsbots.Load(user, svc); !found {
+		http.Error(w, "you have no such Teams bot", http.StatusNotFound)
+		return
+	}
+	cert, has := teamsbots.Certificate(user, svc)
+	if !has {
+		http.Error(w, "the bot has no certificate yet: choose Certificate under Edit and save", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-pem-file")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+svc+`-teams-bot.cer"`)
+	w.Write([]byte(cert.CertificatePEM()))
 }
 
 // handleTeamsBotDelete removes the ?service= bot and its webhook.
@@ -264,18 +349,36 @@ func teamsBotFields(adding bool) []ui.FormField {
 			Help: "Paste it into the Azure Bot's Configuration, as its Messaging endpoint."})
 	}
 	fields = append(fields, []ui.FormField{
-		{Field: "name", Label: "Name", Required: true, Placeholder: "e.g. Wren", Help: "What Teams shows it as, up to 30 characters."},
+		{Field: "name", Label: "Name", Required: true, Placeholder: "the bot's name in Teams", Help: "What Teams shows it as, up to 30 characters."},
 		{Field: "app_id", Label: "Microsoft App ID", Required: true, Placeholder: "00000000-0000-0000-0000-000000000000",
 			Help: "On the Azure Bot's Configuration page."},
 		{Field: "tenant_id", Label: "App tenant ID", Placeholder: "00000000-0000-0000-0000-000000000000",
 			Help: "On the same page, for a single-tenant bot (Azure makes new bots single-tenant). Blank for a multi-tenant one."},
 	}...)
 	secretHelp := "A client secret of the bot's app registration (Manage Password, New client secret). Stored encrypted; used only to sign its replies."
+	certHelp := "Leave it blank and a certificate is made here, its private key never leaving this site: download the public part under Edit and upload it to the app registration. To use one your organisation issued, paste its certificate and private key, in PEM, without a passphrase."
 	if !adding {
 		secretHelp = "Leave it blank to keep the one it has. " + secretHelp
+		certHelp = "Leave it blank to keep the one it has. To use one your organisation issued instead, paste its certificate and private key, in PEM, without a passphrase."
 	}
 	fields = append(fields,
-		ui.FormField{Field: "secret", Label: "Client secret", Type: "password", Required: adding, Help: secretHelp},
+		ui.FormField{Field: "sign_in", Label: "Signs in with", Type: "select", Options: []ui.SelectOption{
+			{Value: "", Label: "A client secret"},
+			{Value: teamsbots.SignInCertificate, Label: "A certificate"},
+		}, Help: "How it proves it is the bot when it replies. A certificate keeps its key here, where a secret is sent with every sign-in; many organisations require one."},
+		ui.FormField{Field: "secret", Label: "Client secret", Type: "password", ShowWhen: "!sign_in", Help: secretHelp})
+	if !adding {
+		fields = append(fields,
+			ui.FormField{Field: "cert_info", Label: "Certificate", Type: "readonly", ShowWhen: "sign_in:certificate"},
+			ui.FormField{Field: "cert_download", Label: "Public certificate", Type: "link", ShowWhen: "sign_in:certificate",
+				Placeholder: "Download the public certificate",
+				Help:        "Upload it to the app registration, under Certificates & secrets, Certificates. It holds no secret."},
+			ui.FormField{Field: "new_certificate", Label: "Make a new certificate", Type: "toggle", ShowWhen: "sign_in:certificate",
+				Help: "Replaces the one it has when you save. Replies fail until the new one is uploaded to the app registration, so do it before the old one runs out, not after."})
+	}
+	fields = append(fields,
+		ui.FormField{Field: "certificate", Label: "Your own certificate", Type: "textarea", Rows: 4, ShowWhen: "sign_in:certificate",
+			Placeholder: "certificate and private key, PEM", Help: certHelp},
 		accept,
 		mention,
 		ui.FormField{Field: "reply_in_thread", Label: "Reply in the thread", Type: "toggle",
@@ -301,14 +404,14 @@ func teamsBotRowActions() []ui.RowAction {
 			SubmitLabel: "Save", Fields: teamsBotFields(false)}),
 		teamsBotConversationsUI(),
 		{Type: "button", Label: "Delete", Method: "DELETE", PostTo: "/bridges/api/teams-bots?service={service}", Variant: "danger",
-			Confirm: "Delete this Teams bot? It stops answering, and its secret and webhook are removed. The Azure registration stays yours to remove."},
+			Confirm: "Delete this Teams bot? It stops answering, and its secret or certificate and its webhook are removed. The Azure registration stays yours to remove."},
 	}
 }
 
 // teamsBotHelp is how to set one up.
 const teamsBotHelp = "How to set one up:\n\n" +
-	"1. In the Azure portal, create an Azure Bot (single tenant). On its Configuration page copy the Microsoft App ID and App tenant ID; under Manage Password make a new client secret.\n" +
-	"2. Add it here. Its messaging endpoint is on its row, and under Edit with a Copy button: paste it into the Azure Bot's Configuration as the Messaging endpoint.\n" +
+	"1. In the Azure portal, create an Azure Bot (single tenant). On its Configuration page copy the Microsoft App ID and App tenant ID. To sign in with a client secret, make one under Manage Password.\n" +
+	"2. Add it here, with the secret or with Certificate chosen. A certificate is made here unless you paste one: under Edit, download its public part and upload it to the bot's app registration (Certificates & secrets, Certificates). Its messaging endpoint is on its row, and under Edit with a Copy button: paste it into the Azure Bot's Configuration as the Messaging endpoint.\n" +
 	"3. In the Azure Bot's Channels, add Microsoft Teams.\n" +
 	"4. Under Edit, download its Teams app package and upload it in Teams (Apps, Manage your apps, Upload an app). Your organisation may need to allow custom apps.\n" +
 	"5. On the Bridges page, bind a channel to teams (or its service name) with the agent that answers.\n\n" +

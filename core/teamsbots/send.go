@@ -1,7 +1,8 @@
 package teamsbots
 
-// Replies: a token minted from the bot's own app id and secret (the client
-// credentials grant), sent only to an address under the bot's service host.
+// Replies: a token minted from the bot's own app id and its secret or a
+// certificate's signed assertion (the client credentials grant), sent only to
+// an address under the bot's service host.
 
 import (
 	"bytes"
@@ -13,6 +14,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/clientcert"
 )
 
 // TokenURL is the token endpoint of tenant. A variable so a test can point
@@ -30,6 +33,34 @@ func (b Bot) tokenTenant() string {
 	return b.TenantID
 }
 
+// signIn is b's reply-token request: the client credentials grant, proven
+// with its client secret or, for a bot that signs in with a certificate, a
+// client assertion signed with the certificate's key (the secret's place
+// taken by client_assertion_type and client_assertion). The assertion's
+// audience is the token endpoint it is sent to.
+func (b Bot) signIn(now time.Time) (url.Values, error) {
+	form := url.Values{"grant_type": {"client_credentials"}, "client_id": {b.AppID}, "scope": {tokenScope}}
+	if !b.UsesCertificate() {
+		secret := Secret(b.Owner, b.Service)
+		if secret == "" {
+			return nil, fmt.Errorf("the bot has no client secret")
+		}
+		form.Set("client_secret", secret)
+		return form, nil
+	}
+	cert, ok := Certificate(b.Owner, b.Service)
+	if !ok {
+		return nil, fmt.Errorf("the bot signs in with a certificate and has none: make or upload one under Edit")
+	}
+	assertion, err := cert.Assertion(b.AppID, TokenURL(b.tokenTenant()), now)
+	if err != nil {
+		return nil, err
+	}
+	form.Set("client_assertion_type", clientcert.AssertionType)
+	form.Set("client_assertion", assertion)
+	return form, nil
+}
+
 // tokenScope is what a reply token is asked for.
 const tokenScope = "https://api.botframework.com/.default"
 
@@ -45,12 +76,10 @@ func token(ctx context.Context, b Bot) (string, error) {
 	if ok && time.Now().Before(t.until) {
 		return t.value, nil
 	}
-	secret := Secret(b.Owner, b.Service)
-	if secret == "" {
-		return "", fmt.Errorf("the bot has no client secret")
+	form, err := b.signIn(time.Now())
+	if err != nil {
+		return "", err
 	}
-	form := url.Values{"grant_type": {"client_credentials"}, "client_id": {b.AppID},
-		"client_secret": {secret}, "scope": {tokenScope}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, TokenURL(b.tokenTenant()), strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", err

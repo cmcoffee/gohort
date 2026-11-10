@@ -18,6 +18,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/gohort/core/clientcert"
 	"github.com/cmcoffee/gohort/core/teamsbots"
 	"github.com/cmcoffee/gohort/core/webhooks"
 	"github.com/cmcoffee/snugforge/jwcrypt"
@@ -522,5 +523,73 @@ func TestATeamsReplyWaitsWhileBridgesAreOffAndNotForever(t *testing.T) {
 	T.deliverTeams(context.Background())
 	if len(m.replies) != 1 {
 		t.Errorf("a reply held past its age was sent: %q", m.replies)
+	}
+}
+
+// A bot can sign in with a certificate instead of a secret. Added that way
+// with nothing pasted, it gets one made here and is told to upload it; Edit
+// shows the certificate and offers its public part, which holds no key; a
+// pasted certificate that cannot sign in is refused before anything is
+// saved, and one that can replaces what it had.
+func TestATeamsBotSignsInWithACertificate(t *testing.T) {
+	f := newOwnershipFixture(t)
+	f.adb.Set(WebTable, "external_url", "https://gohort.example.test")
+	T := f.T
+	T.wireWebhooks()
+	t.Cleanup(func() { webhooks.LinkedServices, webhooks.ToChannel, webhooks.ServiceCheck = nil, nil, nil })
+	do := func(user, method, path, body string) (int, string) {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(f.adb, user)})
+		w := httptest.NewRecorder()
+		f.routes()(w, r)
+		return w.Code, w.Body.String()
+	}
+	form := `{"name":"Helper","app_id":"` + botApp + `","tenant_id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","sign_in":"certificate","accept":["personal"]}`
+	code, body := do("alice", "POST", "/api/teams-bots", form)
+	if code >= 300 || !strings.Contains(body, "A certificate was made") {
+		t.Fatalf("add with a certificate: %d %s", code, body)
+	}
+	made, ok := teamsbots.Certificate("alice", "teams")
+	if b, _ := teamsbots.Load("alice", "teams"); !ok || !b.UsesCertificate() {
+		t.Fatalf("bot %+v, certificate %v", b, ok)
+	}
+	_, edit := do("alice", "GET", "/api/teams-bots?service=teams", "")
+	if !strings.Contains(edit, made.ThumbprintSHA1()) || !strings.Contains(edit, "/bridges/api/teams-bots/certificate?service=teams") ||
+		!strings.Contains(edit, `"sign_in":"certificate"`) {
+		t.Errorf("the edit form does not show the certificate: %s", edit)
+	}
+	code, pub := do("alice", "GET", "/api/teams-bots/certificate?service=teams", "")
+	if code != 200 || !strings.Contains(pub, "BEGIN CERTIFICATE") || strings.Contains(pub, "PRIVATE KEY") {
+		t.Errorf("the public certificate: %d %s", code, pub)
+	}
+	if code, _ := do("bob", "GET", "/api/teams-bots/certificate?service=teams", ""); code != 404 {
+		t.Errorf("someone else's bot's certificate: %d", code)
+	}
+	// Saved again with nothing pasted, it keeps the certificate it has.
+	if code, body := do("alice", "POST", "/api/teams-bots?service=teams", form); code >= 300 || strings.Contains(body, "A certificate was made") {
+		t.Errorf("saved again: %d %s", code, body)
+	}
+	if again, _ := teamsbots.Certificate("alice", "teams"); again.Thumbprint() != made.Thumbprint() {
+		t.Error("saving again replaced the certificate")
+	}
+	// A pasted certificate with no key is refused, and the bot keeps its own.
+	ours, _ := clientcert.Generate("ours", 0)
+	bad, _ := json.Marshal(ours.CertificatePEM())
+	if code, body := do("alice", "POST", "/api/teams-bots?service=teams", strings.Replace(form, `"accept"`, `"certificate":`+string(bad)+`,"accept"`, 1)); code != 400 || !strings.Contains(body, "no private key") {
+		t.Errorf("a certificate without its key: %d %s", code, body)
+	}
+	good, _ := json.Marshal(ours.PEM())
+	if code, body := do("alice", "POST", "/api/teams-bots?service=teams", strings.Replace(form, `"accept"`, `"certificate":`+string(good)+`,"accept"`, 1)); code >= 300 {
+		t.Fatalf("a pasted certificate: %d %s", code, body)
+	}
+	if now, _ := teamsbots.Certificate("alice", "teams"); now.Thumbprint() != ours.Thumbprint() {
+		t.Error("the pasted certificate is not the one it signs in with")
+	}
+	// Asked for a new one, it makes one.
+	if code, body := do("alice", "POST", "/api/teams-bots?service=teams", strings.Replace(form, `"accept"`, `"new_certificate":true,"accept"`, 1)); code >= 300 || !strings.Contains(body, "A certificate was made") {
+		t.Errorf("a new certificate: %d %s", code, body)
+	}
+	if now, _ := teamsbots.Certificate("alice", "teams"); now.Thumbprint() == ours.Thumbprint() {
+		t.Error("asking for a new certificate kept the old one")
 	}
 }
