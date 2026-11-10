@@ -5680,27 +5680,28 @@
           var hookLevels = [
             {name: 'Off', hooks: [], off: true,
              desc: 'Enforcement of your rules suspended. They stay exactly as written and nothing checks them. Use it to find out whether one of your guardrails is behind a wrong refusal, or what a turn costs without them, instead of deleting the rules to test. The deployment\u2019s own Rules are still checked on every request, action and reply, and replies are held for them unless an administrator set them to be checked while replies stream.'},
-            {name: 'Fast', hooks: ['pre_input', 'pre_action'],
-             desc: 'Checks the incoming request (with recent context) and consequential tool calls before they run. The cheapest setting that still enforces: one check per turn plus one per consequential call. It does NOT judge what the agent SAYS against your rules, so a rule about disclosure can be broken by a reply: pick it when latency matters more than that. The deployment\u2019s own Rules are checked on replies regardless, and replies are held for them unless an administrator set them to be checked while replies stream.'},
-            {name: 'Full', hooks: ['pre_input', 'pre_action', 'pre_output'],
-             desc: 'Checks the incoming request (with recent context), consequential tool calls before they run, and what the agent says: its reply, and anything it writes beside a tool call. The action check costs nothing until one is called; the reply check holds a reply until it passes, so replies do not stream. Where a new agent starts.'}
+            {name: 'Actions', hooks: ['pre_input', 'pre_action'],
+             desc: 'Checks the incoming request (with recent context) and consequential tool calls (sending, posting, deleting, spending) before they run: where the harm that cannot be taken back happens. Replies stream as they are written. It does NOT judge what the agent SAYS against your rules, so a rule about what must not be said or shared can be broken by a reply. The deployment\u2019s own Rules are checked on replies regardless, and replies are held for them unless an administrator set them to be checked while replies stream.'},
+            {name: 'Actions & Replies (Disables Streaming)', hooks: ['pre_input', 'pre_action', 'pre_output'],
+             desc: 'Everything Actions checks, and what the agent says: its reply, and anything it writes beside a tool call. Each reply is held until it passes, so replies do not stream, and each costs one more check. Pick it when a rule is about what must not be said or shared. Where a new agent starts.'}
           ];
           var activeHooks = {};
           // A stored periodic is the reply check: the server reads it so
           // (ownGuardrailHooks), and the box it had is gone. Shown and saved
-          // as what it does, a record saved on Strict lands on Full.
+          // as what it does, a record saved on Strict lands on Actions & Replies.
           (agent.guardrail_hooks || []).forEach(function(h) { activeHooks[h === 'periodic' ? 'pre_output' : h] = true; });
           // Match the stored set to a level. An EMPTY set means this agent has
-          // never had one stored, and the server falls back to Full for it, so
-          // that is what the slider shows, rather than reading as "off". New
-          // agents are stamped with Full at creation and so never land here;
+          // never had one stored, and the server falls back to the reply check
+          // for it, so that is what the slider shows, rather than reading as
+          // "off". New agents are stamped with it at creation and never land here;
           // this branch is the older records.
           //
-          // Two levels, because there is one real trade. Fast leaves the reply
-          // unjudged against the owner's own rules, so it streams and costs no
-          // check per reply; Full judges it. The action check is in both: it
+          // Two levels, because there is one real trade, and the names say it.
+          // Actions leaves the reply unjudged against the owner's own rules, so
+          // it streams and costs no check per reply; Actions & Replies judges
+          // it, holding each reply until it passes. The action check is in both: it
           // costs nothing until a consequential call is made. A level that
-          // judged replies and not actions (Light) cost what Full costs on
+          // judged replies and not actions (Light) cost what the top level costs on
           // almost every turn and covered less, and one that added periodic
           // (Strict) added nothing once the reply check read text beside tool
           // calls; a record saved on either opens on Custom, unchanged.
@@ -5710,7 +5711,7 @@
           var guardrailsOff = !!agent.guardrails_disabled;
           function defaultLevelIndex() {
             for (var i = 0; i < hookLevels.length; i++) {
-              if (hookLevels[i].name === 'Full') { return i; }
+              if (hookLevels[i].hooks.indexOf('pre_output') >= 0) { return i; }
             }
             return 0;
           }
@@ -5762,9 +5763,12 @@
           slider.style.cssText = 'width:100%;max-width:380px;display:block';
 
           var ticks = document.createElement('div');
-          ticks.style.cssText = 'display:flex;justify-content:space-between;max-width:380px;font-size:0.72rem;color:var(--text-mute);margin-top:0.1rem';
+          ticks.style.cssText = 'display:flex;justify-content:space-between;align-items:flex-start;gap:0.4rem;max-width:380px;font-size:0.72rem;color:var(--text-mute);margin-top:0.1rem';
           hookLevels.concat([{name: 'Custom'}]).forEach(function(lv) {
-            var s = document.createElement('span'); s.textContent = lv.name; ticks.appendChild(s);
+            // A long name wraps under its tick instead of pushing the row wider.
+            var s = document.createElement('span'); s.textContent = lv.name;
+            s.style.cssText = 'flex:0 1 auto;max-width:8.5rem;text-align:center;line-height:1.2';
+            ticks.appendChild(s);
           });
 
           var lvlDesc = document.createElement('div');
