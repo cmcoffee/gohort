@@ -342,6 +342,11 @@ type SecureCredential struct {
 	JWTSubject   string `json:"jwt_subject,omitempty"`   // jwt_bearer: sub claim (optional)
 	JWTAudience  string `json:"jwt_audience,omitempty"`  // jwt_bearer: aud (defaults to token_url)
 	JWTKeyID     string `json:"jwt_key_id,omitempty"`    // jwt_bearer: kid header (optional)
+	// ClientAuth is how a client_credentials sign-in proves the client: ""
+	// with its client secret (HTTP Basic), or "private_key_jwt" with a
+	// certificate, the secret then holding its key and certificate (PEM),
+	// sent as a signed client assertion (core/clientcert).
+	ClientAuth string `json:"client_auth,omitempty"`
 	// CredScope selects whose secret a request uses:
 	//   "" / "shared" — one deployment secret (the admin's), used for every
 	//     user's calls (the legacy/default behavior). Right for a shared service

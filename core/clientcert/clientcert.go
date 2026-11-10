@@ -50,6 +50,10 @@ const (
 type Cert struct {
 	Key  *rsa.PrivateKey
 	Leaf *x509.Certificate
+	// KeyID, when set, is sent as the assertion's kid, for a provider that
+	// finds the key by an id it was registered under (a JWK set) rather than
+	// by the certificate's thumbprint. Not stored.
+	KeyID string
 }
 
 // Generate makes a new key and a self-signed certificate for it, named name
@@ -217,5 +221,9 @@ func (c Cert) Assertion(clientID, audience string, now time.Time) (string, error
 		"iat": now.Unix(),
 		"exp": now.Add(assertionLife).Unix(),
 	}
-	return jwcrypt.SignPS256(c.Key, claims, map[string]string{"typ": "JWT", "x5t#S256": c.Thumbprint()})
+	header := map[string]string{"typ": "JWT", "x5t#S256": c.Thumbprint()}
+	if c.KeyID != "" {
+		header["kid"] = c.KeyID
+	}
+	return jwcrypt.SignPS256(c.Key, claims, header)
 }

@@ -2,11 +2,15 @@ package admin
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/activity"
+	"github.com/cmcoffee/gohort/core/clientcert"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
@@ -28,6 +32,8 @@ func (a *AdminApp) registerCredentialsRoutes(sub *http.ServeMux) {
 	// pre-save (uses the typed secret) and on edit (falls back to the stored
 	// secret when the password field is left blank).
 	sub.HandleFunc("/api/secure-api/test", jsonapi.Post(a.db, a.handleSecureAPITest, a.gate()))
+	// The public certificate of a credential that signs in with one.
+	sub.HandleFunc("/api/secure-api/certificate", a.handleCredentialCertificate)
 
 }
 
@@ -123,9 +129,27 @@ func (a *AdminApp) credentialBindings(name string) any {
 // stored secret unchanged unless the admin types a new one).
 func (a *AdminApp) credentialRecord(name string) (any, error) {
 	for _, c := range Secure().ListWithPending() {
-		if c.Name == name {
+		if c.Name != name {
+			continue
+		}
+		if c.ClientAuth == "" {
 			return c, nil
 		}
+		// A credential signing in with a certificate shows it: the
+		// thumbprint a provider lists it by, its expiry, and its public part.
+		rec := struct {
+			SecureCredential
+			CertInfo     string `json:"cert_info"`
+			CertDownload string `json:"cert_download,omitempty"`
+		}{SecureCredential: c, CertInfo: "None yet: save and one is made."}
+		if cert, ok := Secure().ClientCertificate(name); ok {
+			rec.CertInfo = "Thumbprint " + cert.ThumbprintSHA1() + ", expires " + cert.Expires().Format("Jan 2, 2006")
+			if time.Until(cert.Expires()) < 30*24*time.Hour {
+				rec.CertInfo += " (soon: make a new one and register it)"
+			}
+			rec.CertDownload = "api/secure-api/certificate?name=" + url.QueryEscape(name)
+		}
+		return rec, nil
 	}
 	return nil, jsonapi.NotFound("not found")
 }
@@ -300,6 +324,12 @@ type credentialSave struct {
 	JWTSubject   string `json:"jwt_subject"`
 	JWTAudience  string `json:"jwt_audience"`
 	JWTKeyID     string `json:"jwt_key_id"`
+	// ClientAuth is how client_credentials proves the client: "" its secret,
+	// "private_key_jwt" a certificate. ClientCert is a certificate and key
+	// pasted for it (PEM), ClientCertNew asks for one made here.
+	ClientAuth    string `json:"client_auth"`
+	ClientCert    string `json:"client_cert"`
+	ClientCertNew bool   `json:"client_cert_new"`
 	// AWS (type == "aws_sigv4").
 	AWSService string `json:"aws_service"`
 	AWSRegion  string `json:"aws_region"`
@@ -347,12 +377,68 @@ func (a *AdminApp) saveCredential(c *jsonapi.Call, req credentialSave) (any, err
 	} else if prev, ok := Secure().Load(cred.Name); ok {
 		cred.AlsoCovers = prev.AlsoCovers
 	}
-	if err := saveCredWithPassword(cred, req.Secret, req.Password); err != nil {
+	secret, made, err := credentialSecret(&cred, req)
+	if err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	if err := saveCredWithPassword(cred, secret, req.Password); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
 	// By name only: the log is read by every administrator.
 	RecordActivity(c.R, activity.Credential, c.User, "saved the credential "+cred.Name)
+	if made {
+		return map[string]string{"message": "Saved. A certificate was made for it: under Edit, download the public certificate and register it with the provider (for Microsoft Entra, the app registration's Certificates & secrets). Sign-in fails until it is there."}, nil
+	}
 	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// credentialSecret is the secret to save with cred: the one posted, or, for a
+// client_credentials credential that signs in with a certificate, its
+// certificate and key (PEM): the one pasted, a new one when asked or when it
+// has none, otherwise "" to keep the one it has. made reports a certificate
+// made here, which the provider does not have yet. A certificate is the
+// deployment's: each person's own secret is not one.
+func credentialSecret(cred *SecureCredential, req credentialSave) (secret string, made bool, err error) {
+	cred.ClientAuth = strings.TrimSpace(req.ClientAuth)
+	if cred.Type != SecureCredOAuth2 || cred.Grant != OAuthGrantClientCredentials || cred.ClientAuth != "private_key_jwt" {
+		cred.ClientAuth = ""
+		return req.Secret, false, nil
+	}
+	if cred.CredScope == "per_user" {
+		return "", false, fmt.Errorf("a certificate signs in for everyone: set Whose credentials to Shared, or sign in with a client secret")
+	}
+	if pasted := strings.TrimSpace(req.ClientCert); pasted != "" {
+		cert, err := clientcert.Parse(pasted)
+		if err != nil {
+			return "", false, err
+		}
+		return cert.PEM(), false, nil
+	}
+	if _, has := Secure().ClientCertificate(cred.Name); has && !req.ClientCertNew {
+		return "", false, nil
+	}
+	cert, err := clientcert.Generate(cred.Name+" (gohort)", 0)
+	if err != nil {
+		return "", false, err
+	}
+	return cert.PEM(), true, nil
+}
+
+// handleCredentialCertificate sends the ?name= credential's public
+// certificate, the part a provider is given. It holds no secret.
+func (a *AdminApp) handleCredentialCertificate(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	cert, ok := Secure().ClientCertificate(name)
+	if !ok {
+		http.Error(w, "that credential does not sign in with a certificate", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-pem-file")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`.cer"`)
+	w.Write([]byte(cert.CertificatePEM()))
 }
 
 // Preserve the OAuth config of an existing credential when the
@@ -412,11 +498,18 @@ func (a *AdminApp) deleteCredential(c *jsonapi.Call, _ struct{}) (any, error) {
 // handleSecureAPITest serves /api/secure-api/test; registerCredentialsRoutes says what it is for.
 func (a *AdminApp) handleSecureAPITest(c *jsonapi.Call, body struct {
 	SecureCredential
-	Secret string `json:"secret"`
+	Secret     string `json:"secret"`
+	ClientCert string `json:"client_cert"`
 }) (any, error) {
 	// Under the request's context, so Cancel ends the token request.
 	ctx := c.R.Context()
-	msg, err := Secure().TestMintFromPosted(ctx, body.SecureCredential, body.Secret)
+	// A certificate pasted into the form is tested before it is saved, as a
+	// typed secret is; blank falls back to the stored one.
+	secret := body.Secret
+	if body.Grant == OAuthGrantClientCredentials && body.ClientAuth == "private_key_jwt" {
+		secret = body.ClientCert
+	}
+	msg, err := Secure().TestMintFromPosted(ctx, body.SecureCredential, secret)
 	if err != nil {
 		if ctx.Err() != nil {
 			err = errors.New("cancelled before the token endpoint answered")

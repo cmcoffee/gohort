@@ -196,3 +196,52 @@ func TestTheAPIsPageRefusesWhatItCannotDo(t *testing.T) {
 		}
 	}
 }
+
+// A client_credentials credential can sign in with a certificate. Saved that
+// way with nothing pasted, one is made and the save says so; its record shows
+// the certificate and offers the public part, which holds no key; saved again
+// it keeps it; a pasted certificate without its key is refused; a per-user
+// credential cannot use one, and another grant drops the choice.
+func TestACredentialSignsInWithACertificate(t *testing.T) {
+	f := newCredsFixture(t)
+	rec := `{"name":"sso_cert","type":"oauth2","grant":"client_credentials","token_url":"https://login.example.test/token","client_id":"cid","base_url":"https://api.example.test","client_auth":"private_key_jwt"`
+	w := f.do(t, "POST", "/api/secure-api", rec+`}`)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "A certificate was made") {
+		t.Fatalf("save with a certificate: %d %s", w.Code, w.Body.String())
+	}
+	made, ok := Secure().ClientCertificate("sso_cert")
+	if !ok {
+		t.Fatal("no certificate was stored")
+	}
+	edit := f.do(t, "GET", "/api/secure-api?name=sso_cert", "").Body.String()
+	if !strings.Contains(edit, made.ThumbprintSHA1()) || !strings.Contains(edit, "api/secure-api/certificate?name=sso_cert") || !strings.Contains(edit, `"client_auth":"private_key_jwt"`) {
+		t.Errorf("the record does not show its certificate: %s", edit)
+	}
+	pub := f.do(t, "GET", "/api/secure-api/certificate?name=sso_cert", "")
+	if pub.Code != 200 || !strings.Contains(pub.Body.String(), "BEGIN CERTIFICATE") || strings.Contains(pub.Body.String(), "PRIVATE KEY") {
+		t.Errorf("the public certificate: %d %s", pub.Code, pub.Body.String())
+	}
+	f.ok(t, "POST", "/api/secure-api", rec+`}`)
+	if again, _ := Secure().ClientCertificate("sso_cert"); again.Thumbprint() != made.Thumbprint() {
+		t.Error("saving again replaced the certificate")
+	}
+	certOnly, _ := json.Marshal(made.CertificatePEM())
+	if w := f.do(t, "POST", "/api/secure-api", rec+`,"client_cert":`+string(certOnly)+`}`); w.Code != 400 || !strings.Contains(w.Body.String(), "no private key") {
+		t.Errorf("a certificate without its key: %d %s", w.Code, w.Body.String())
+	}
+	if w := f.do(t, "POST", "/api/secure-api", rec+`,"client_cert_new":true}`); w.Code != 200 {
+		t.Errorf("a new certificate: %d %s", w.Code, w.Body.String())
+	} else if now, _ := Secure().ClientCertificate("sso_cert"); now.Thumbprint() == made.Thumbprint() {
+		t.Error("asking for a new certificate kept the old one")
+	}
+	if w := f.do(t, "POST", "/api/secure-api", strings.Replace(rec, `"sso_cert"`, `"sso_mine"`, 1)+`,"cred_scope":"per_user"}`); w.Code != 400 || !strings.Contains(w.Body.String(), "Shared") {
+		t.Errorf("a per-user certificate: %d %s", w.Code, w.Body.String())
+	}
+	f.ok(t, "POST", "/api/secure-api", `{"name":"sso_rt","type":"oauth2","grant":"refresh_token","token_url":"https://login.example.test/token","client_id":"cid","base_url":"https://api.example.test","client_auth":"private_key_jwt","secret":"rt"}`)
+	if c, _ := Secure().Load("sso_rt"); c.ClientAuth != "" {
+		t.Errorf("a refresh_token credential kept a certificate choice: %q", c.ClientAuth)
+	}
+	if w := f.do(t, "GET", "/api/secure-api/certificate?name=sso_rt", ""); w.Code != 404 {
+		t.Errorf("a credential with no certificate offered one: %d", w.Code)
+	}
+}

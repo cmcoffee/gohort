@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/clientcert"
 	"github.com/cmcoffee/snugforge/apiclient"
 	"github.com/cmcoffee/snugforge/jwcrypt"
 )
@@ -144,6 +145,18 @@ func (s *SecureAPI) mintOAuthGrantCtx(ctx context.Context, c SecureCredential, s
 	switch c.Grant {
 	case OAuthGrantClientCredentials:
 		form.Set("grant_type", "client_credentials")
+		if c.ClientAuth == oauthClientAuthCertificate {
+			// The certificate's signed assertion takes the secret's place
+			// (RFC 7523 2.2), and the client names itself in the body.
+			assertion, err := clientAssertion(c, secret)
+			if err != nil {
+				return "", "", 0, err
+			}
+			form.Set("client_id", c.ClientID)
+			form.Set("client_assertion_type", clientcert.AssertionType)
+			form.Set("client_assertion", assertion)
+			break
+		}
 		basicAuth = true // client_id:client_secret via HTTP Basic (eBay + most)
 	case OAuthGrantJWTBearer:
 		assertion, err := buildJWTAssertion(c, secret)
@@ -216,6 +229,45 @@ func (s *SecureAPI) mintOAuthGrantCtx(ctx context.Context, c SecureCredential, s
 		ttl = time.Hour // sane default when the provider omits expires_in
 	}
 	return parsed.AccessToken, parsed.RefreshToken, ttl, nil
+}
+
+// oauthClientAuthCertificate is SecureCredential.ClientAuth for a client that
+// signs in with a certificate (private key JWT).
+const oauthClientAuthCertificate = "private_key_jwt"
+
+// clientAssertion is c's client assertion: signed with the certificate and
+// key in secret, for the token endpoint (or jwt_audience, when a provider
+// names another), with the jwt_key_id as its kid where the provider looks a
+// key up by that rather than by the certificate's thumbprint.
+func clientAssertion(c SecureCredential, secret string) (string, error) {
+	cert, err := clientcert.Parse(secret)
+	if err != nil {
+		return "", fmt.Errorf("the certificate for %q: %w", c.Name, err)
+	}
+	if strings.TrimSpace(c.ClientID) == "" {
+		return "", fmt.Errorf("oauth credential %q signs in with a certificate and needs its client_id", c.Name)
+	}
+	cert.KeyID = strings.TrimSpace(c.JWTKeyID)
+	aud := strings.TrimSpace(c.JWTAudience)
+	if aud == "" {
+		aud = c.TokenURL
+	}
+	return cert.Assertion(c.ClientID, aud, time.Now())
+}
+
+// ClientCertificate is the certificate the named credential signs in with,
+// when it signs in with one: for its form to show and offer the public part.
+func (s *SecureAPI) ClientCertificate(name string) (clientcert.Cert, bool) {
+	c, ok := s.Load(name)
+	if !ok || c.Type != SecureCredOAuth2 || c.ClientAuth != oauthClientAuthCertificate {
+		return clientcert.Cert{}, false
+	}
+	secret, ok := s.loadSecret(name)
+	if !ok {
+		return clientcert.Cert{}, false
+	}
+	cert, err := clientcert.Parse(secret)
+	return cert, err == nil
 }
 
 // buildJWTAssertion signs the JWT assertion for the jwt_bearer grant
