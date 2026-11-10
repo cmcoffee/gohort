@@ -108,6 +108,9 @@ func TestTheJudgeModelIsLocalAndListsItsChecks(t *testing.T) {
 	if r, ok := rows()["test.admin_check"]; !ok || !r.On {
 		t.Fatalf("a registered check, on until switched off: %+v", r)
 	}
+	if r := rows()["test.admin_check"]; r.Tested != "untested" {
+		t.Errorf("a check with no test cases is not marked: %+v", r)
+	}
 	toggle := func(key string, on bool) error {
 		_, err := a.handleJudgeCallToggle(&jsonapi.Call{R: httptest.NewRequest("POST", "/api/judge-llm/calls/toggle?key="+key, nil)}, struct {
 			On bool `json:"on"`

@@ -276,6 +276,8 @@ func ServeDashboard(addr string) error {
 	// <base>/api/peer/v1 and every existing code path keeps working.
 	RegisterPublicPath("/api/peer/v1/chat/completions")
 	mux.HandleFunc("/api/peer/v1/chat/completions", HandlePeerChatCompletions)
+	RegisterPublicPath("/api/peer/v1/systemone")
+	mux.HandleFunc("/api/peer/v1/systemone", HandlePeerSystemOne)
 	// The model picker on the far side asks for this list before it can offer
 	// a choice.
 	RegisterPublicPath("/api/peer/v1/models")

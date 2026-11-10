@@ -49,7 +49,7 @@ const (
 // systemOneModels are gohort's own models System One can use, in the order
 // offered.
 var systemOneModels = []struct{ value, label, unset string }{
-	{decide.ProviderJudge, "Use the Judge model", "no Judge model is set (Admin > Models > Judge model)"},
+	{decide.ProviderJudge, "Use the Offload model", "no Offload model is set (Admin > Models > Decision Offloading)"},
 	{decide.ProviderWorker, "Use the Worker model", "no Worker model is set (Admin > Models)"},
 	{decide.ProviderLead, "Use the Lead model", "no separate Lead model is set (Admin > Models)"},
 }
@@ -108,31 +108,7 @@ func systemOneSet(choice string) bool {
 
 // systemOneIdentity is what a check of choice was made on, so its finding is
 // kept until that changes.
-func systemOneIdentity(choice string) string {
-	switch choice {
-	case decide.ProviderJudge:
-		live, _, _ := LiveJudgeLLM()
-		return "judge:" + live
-	case decide.ProviderWorker:
-		return "worker:" + tierIdentity(LLMTable)
-	case decide.ProviderLead:
-		return "lead:" + tierIdentity(LeadLLMTable)
-	}
-	return "connection:" + choice + "@" + service.Address(choice)
-}
-
-// tierIdentity is a model tier's provider, address and model, as stored.
-func tierIdentity(table string) string {
-	var p, e, m string
-	if AuthDB != nil {
-		if db := AuthDB(); db != nil {
-			db.Get(table, "provider", &p)
-			db.Get(table, "endpoint", &e)
-			db.Get(table, "model", &m)
-		}
-	}
-	return p + "|" + e + "|" + m
-}
+func systemOneIdentity(choice string) string { return decide.Identity(choice) }
 
 // checkSystemOne asks choice a question with a known answer as a decision,
 // and keeps what it found against what it asked. Nothing is asked of a
@@ -349,14 +325,14 @@ func systemOneSection() ui.Section {
 	fields = append(fields, ui.FormField{Field: "_status", Label: "Status", Type: "readonly", ShowWhen: "provider"},
 		ui.FormField{Field: "_shadows", Label: "Router shadows", Type: "readonly", ShowWhen: "_shadows",
 			Help:   "How System One does on machine steps that only choose where to go, asked beside each step and never deciding.",
-			Detail: fmt.Sprintf("Sure means confidence %.1f or more, the mark a route would need to stand on System One. Each step's own choice still decides; a router that is sure and agrees nearly every time on your traffic is one System One could take.", decide.RouteSure)})
+			Detail: fmt.Sprintf("Sure means both asks (the options shown in order, then reversed) chose the route, the weaker with probability %.2f or more, the mark a route would need to stand on System One. Each step's own choice still decides; a router that is sure and agrees nearly every time on your traffic is one System One could take.", decide.RouteSure)})
 	return ui.Section{
 		Title:    "System One",
 		Subtitle: "Quick decisions for gohort's checks: a pick among fixed answers, read from a model's first token.",
 		Detail: "A check asked as a System One decision gets its answer in one read of the prompt, with no reason written, and a confidence; it falls back to its full answer when that is not confident. " +
 			"Off until chosen here. A model is asked by vLLM's own /v1/systemone where its server has one (vLLM 0.32 or later, started with --logprobs-mode raw_logprobs), " +
 			"and by gohort's own reading of the first token where it does not, which also needs vLLM. A connection is a System One server of its own. Status says which, from a test question asked when this page opens after the choice changed; Test asks it again.\n\n" +
-			"The channel gatekeeper and the Bridges loop check use it now, and machine steps that only route are shadowed (Router shadows, below). The check tests (Admin > Models > Judge model > Check tests) show how it does beside each check's full answer.",
+			"The channel gatekeeper and the Bridges loop check use it now, and machine steps that only route are shadowed (Router shadows, below). The check tests (Admin > Models > Decision Offloading > Check tests) show how it does beside each check's full answer.",
 		Body: ui.FormPanel{
 			Source:       systemOneSource,
 			TestURL:      systemOneSource + "/test",

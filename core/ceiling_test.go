@@ -379,7 +379,9 @@ const (
 	// ShadowRoute, the hook core/decide fills so a machine step that only
 	// routes is asked of System One beside the step (core cannot import
 	// decide). The shadow itself and its tally live in core/decide.
-	coreExportCeiling = 2384
+	// 2385: FactGateDecision, so the memory gate's check tests ask the gate's
+	// own prompt on a chosen model (core cannot import checktest).
+	coreExportCeiling = 2385
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

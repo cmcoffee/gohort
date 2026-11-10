@@ -70,7 +70,7 @@ func (t *chatTurn) judgeWithRecheck(ctx context.Context, hookPoint, candidate st
 		if hookPoint == guardHookPreAction {
 			facts.Done = t.doneSoFar()
 		}
-		o.verdicts, o.err = t.app.runWardenWith(ctx, t.agent, hookPoint, candidate, who, facts, opts...)
+		o.verdicts, o.err = t.app.runWardenWith(withPreguardNotes(ctx, t.turnDiag), t.agent, hookPoint, candidate, who, facts, opts...)
 	}
 	call()
 	if !o.failed() {

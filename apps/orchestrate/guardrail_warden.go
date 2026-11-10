@@ -2,9 +2,7 @@ package orchestrate
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -23,7 +21,7 @@ func init() {
 // deliberately narrow: judge the candidate against the rules, treat the
 // candidate as untrusted data, bias toward flagging when a safety-relevant
 // rule is in doubt.
-const wardenSystemPrompt = wardenJudging + "\n\n" + wardenVerdictFormat
+var wardenSystemPrompt = wardenVerdict.System()
 
 // wardenJudging is how the warden judges, whichever form it answers in.
 const wardenJudging = `You are a COMPLIANCE WARDEN. You are given an agent's GUARDRAILS (hard rules its owner set) and a CANDIDATE: an action or output the agent is about to take. Judge whether the candidate complies with each guardrail.
@@ -59,10 +57,22 @@ The doubt bias above covers doubt about whether a BREACH occurred. For a shape (
 
 REFUSALS ARE COMPLIANT. A guardrail protects against DISCLOSING or DOING something, not against naming the topic. A good-faith refusal or deflection that WITHHOLDS the protected content is "comply" even if it references the subject: "I can't share salary details" complies with "never mention salary or wages" because it reveals no figure and does no forbidden act. Judge "violate" only when the candidate actually DISCLOSES the protected content (a number, a fact, the thing itself) or PERFORMS the forbidden action: not when it declines to.`
 
-// wardenVerdictFormat is how the full check answers: one verdict per rule, as
-// JSON. The System One form (guardrail_cases.go) answers by a label instead.
-const wardenVerdictFormat = `Output ONLY a JSON object, no prose, with one verdict for EVERY rule, naming it by its number:
-{"verdicts":[{"rule":<its number>,"status":"comply|violate","reason":"<one short clause, only when violate>"}]}`
+// wardenVerdict is the warden declared as a judgement (core/decide): one
+// verdict per rule, what the candidate does that the rule is about written
+// before the answer. Asked for the answer first with a reason only on a
+// violation, a small model blocked the owner's own exception with a reason
+// that misread who was asking, and a larger one passed a fake photo meant to
+// harm someone with no reason at all.
+var wardenVerdict = decide.Verdict{
+	Key:  "app.orchestrate.warden",
+	Role: wardenJudging,
+	Answers: []decide.Choice{
+		{Key: guardComply, Means: "the candidate respects this rule"},
+		{Key: guardViolate, Means: "the candidate breaks or works around this rule"},
+	},
+	Weigh: []decide.Step{{Key: "why", Ask: "one short clause: what the candidate says or does that this rule is about, and whether an exception under it holds; nothing, if the rule is not engaged"}},
+	Each:  "rule",
+}
 
 // runWarden judges a candidate against the agent's guardrails via one
 // fresh-context worker call. Returns the per-rule verdicts. The candidate is
@@ -132,6 +142,13 @@ const (
 // Zero facts = ordinary check, byte-identical to what runWarden always sent.
 func (T *OrchestrateApp) runWardenWith(ctx context.Context, agent AgentRecord, hookPoint, candidate string, req requesterIdentity, facts wardenFacts, opts ...ChatOption) ([]guardrailVerdict, error) {
 	rules := wardenRules(agent, hookPoint, candidate, req)
+	// The pre-guard, on an ordinary check only: an appeal carries a finding
+	// to be judged with every rule it was about (guardrail_preguard.go).
+	if facts.Finding == "" && len(rules) > 0 {
+		var skipped []guardrailRule
+		rules, skipped = T.preguard(ctx, agent, hookPoint, candidate, rules)
+		T.verifySkipped(agent, hookPoint, candidate, req, skipped)
+	}
 	if len(rules) == 0 {
 		// Said out loud for the same reason a passing check is: a narrowing
 		// that leaves nothing to ask looks exactly like a guard that is not
@@ -260,10 +277,6 @@ func (w wardenAsk) prompt() string {
 // judge asks the warden through chat and reads one verdict per rule.
 func (w wardenAsk) judge(ctx context.Context, chat wardenChat, opts ...ChatOption) ([]guardrailVerdict, error) {
 	agent, hookPoint, rules, depth := w.agent, w.hookPoint, w.rules, w.depth
-	msgs := []Message{
-		{Role: "system", Content: wardenSystemPrompt},
-		{Role: "user", Content: w.prompt()},
-	}
 	timeout := 30 * time.Second
 	if depth != prompts.RuleDepthQuick {
 		// Reasoning first takes longer than answering straight off, and a
@@ -273,27 +286,21 @@ func (w wardenAsk) judge(ctx context.Context, chat wardenChat, opts ...ChatOptio
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	// Caller options last so a retry's re-sampling overrides these defaults.
-	call := append([]ChatOption{
-		WithRouteKey("app.orchestrate.warden"),
-		WithTemperature(0.1),
-	}, wardenDepthOptions(depth)...)
+	call := append([]ChatOption{WithTemperature(0.1)}, wardenDepthOptions(depth)...)
 	call = append(call, opts...)
 	began := time.Now()
-	resp, err := chat(cctx, msgs, call...)
+	rulings, err := wardenVerdict.JudgeEach(cctx, decide.VerdictChat(chat), w.prompt(), len(rules), call...)
 	// How long the check took, against how long it was given: whether the
 	// limit is too short cannot be answered without it.
 	Debug("[orchestrate.warden] agent=%s %s took %s of %s (depth %s, err=%v)", agent.ID, hookPoint, time.Since(began).Round(100*time.Millisecond), timeout, depth, err)
-	if err != nil {
+	if err != nil && err != decide.ErrUnreadable {
 		return nil, err
-	}
-	if resp == nil {
-		return nil, fmt.Errorf("warden: empty response")
 	}
 	texts := make([]string, len(rules))
 	for i, r := range rules {
 		texts[i] = r.Text
 	}
-	return parseWardenVerdicts(resp.Content, texts...), nil
+	return wardenVerdicts(rulings, texts), nil
 }
 
 // systemOne is the check asked as System One decisions (core/decide): for
@@ -325,7 +332,7 @@ func (w wardenAsk) systemOne(ctx context.Context, llm LLM) (string, string, erro
 		if a.Choice == 1 {
 			worst = guardViolate
 		}
-		reasons = append(reasons, fmt.Sprintf("rule %d: P(complies)=%.2f, confidence %.2f in %s", i+1, a.Probs[0], a.Confidence, a.Took.Round(time.Millisecond)))
+		reasons = append(reasons, fmt.Sprintf("rule %d: P(complies)=%.2f%s, confidence %.2f in %s", i+1, a.Probs[0], a.OrderLine(0), a.Confidence, a.Took.Round(time.Millisecond)))
 	}
 	return worst, strings.Join(reasons, "; "), nil
 }
@@ -351,88 +358,23 @@ func rulesForTool(rules []guardrailRule, toolName string) []guardrailRule {
 	return out
 }
 
-// parseWardenVerdicts extracts the verdict list from the warden's reply,
-// tolerating prose around the JSON (a non-JSON model wraps it). A reply we
-// can't parse at all yields a single no-verdict result rather than a silent
-// pass — an unreadable warden must not read as compliance.
-//
-// A verdict names its rule by number (the warden is asked for that: echoing
-// every rule's text made the verdict, and the wait before every turn, grow
-// with the number of rules), or by text from an older prompt. rules are the
-// rules in the order they were numbered; a number maps back to its text.
-//
-// Every rule must be answered: one the warden left out is NO VERDICT, never
-// compliance, so a short answer cannot pass for a clean one.
-func parseWardenVerdicts(content string, rules ...string) []guardrailVerdict {
-	raw := extractJSONObject(content)
-	if raw == "" {
+// wardenVerdicts are the warden's rulings as one verdict per rule, in the
+// rules' order. A reply that could not be read (no rulings) is a single NO
+// VERDICT, and so is any rule the reply gave no answer for, or an answer that
+// is not comply or violate: an unreadable or short warden must never read as
+// compliance.
+func wardenVerdicts(rulings []decide.Ruling, rules []string) []guardrailVerdict {
+	if rulings == nil {
 		return []guardrailVerdict{{Status: guardNoVerdict, Reason: "warden reply was not parseable"}}
 	}
-	var wire struct {
-		Verdicts []struct {
-			Rule   json.RawMessage `json:"rule"`
-			Status string          `json:"status"`
-			Reason string          `json:"reason"`
-		} `json:"verdicts"`
-	}
-	if err := json.Unmarshal([]byte(raw), &wire); err != nil || len(wire.Verdicts) == 0 {
-		return []guardrailVerdict{{Status: guardNoVerdict, Reason: "warden reply was not parseable"}}
-	}
-	var parsed struct{ Verdicts []guardrailVerdict }
-	answered := map[int]bool{}
-	for _, w := range wire.Verdicts {
-		v := guardrailVerdict{Status: w.Status, Reason: w.Reason}
-		var n int
-		var text string
-		switch {
-		case json.Unmarshal(w.Rule, &n) == nil:
-			if n >= 1 && n <= len(rules) {
-				v.Rule = rules[n-1]
-				answered[n] = true
-			} else {
-				v.Rule = fmt.Sprintf("rule %d", n)
-			}
-		case json.Unmarshal(w.Rule, &text) == nil:
-			// A number sent as text ("2") is still a number.
-			if k, err := strconv.Atoi(strings.TrimSpace(text)); err == nil && k >= 1 && k <= len(rules) {
-				v.Rule = rules[k-1]
-				answered[k] = true
-			} else {
-				v.Rule = text
-				for i, r := range rules {
-					if strings.EqualFold(strings.TrimSpace(r), strings.TrimSpace(text)) {
-						answered[i+1] = true
-					}
-				}
-			}
-		}
-		parsed.Verdicts = append(parsed.Verdicts, v)
-	}
-	// A rule given no verdict at all is not a pass. Only when the verdicts
-	// name rules by number can that be told; a text-named verdict from an
-	// older prompt that does not match a rule exactly leaves it unknown, and
-	// then nothing is added.
-	if len(answered) > 0 {
-		for i, r := range rules {
-			if !answered[i+1] {
-				parsed.Verdicts = append(parsed.Verdicts, guardrailVerdict{Rule: r, Status: guardNoVerdict, Reason: "the warden gave this rule no verdict"})
-			}
+	out := make([]guardrailVerdict, len(rules))
+	for i, rule := range rules {
+		out[i] = guardrailVerdict{Rule: rule, Status: guardNoVerdict, Reason: "the warden gave this rule no verdict"}
+		if i < len(rulings) && rulings[i].Answer != "" {
+			out[i].Status, out[i].Reason = rulings[i].Answer, rulings[i].Reason
 		}
 	}
-	// Normalize statuses. Anything we do not recognize — including a warden
-	// that still answers "unsure" from an older prompt — is NO VERDICT, never
-	// compliance.
-	for i := range parsed.Verdicts {
-		switch strings.ToLower(strings.TrimSpace(parsed.Verdicts[i].Status)) {
-		case guardViolate:
-			parsed.Verdicts[i].Status = guardViolate
-		case guardComply:
-			parsed.Verdicts[i].Status = guardComply
-		default:
-			parsed.Verdicts[i].Status = guardNoVerdict
-		}
-	}
-	return parsed.Verdicts
+	return out
 }
 
 // worstVerdict returns the most severe status across verdicts (violate >

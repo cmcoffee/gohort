@@ -353,9 +353,9 @@ func allowLabel(allow bool) string {
 // the agent by name. Written first, the reason is the reading the answer
 // rests on. Read by field name, so the order costs the parser nothing.
 const gatekeeperSysPrompt = `You are a message filter. Reply with ONLY a JSON object, no other text, with the reason FIRST and the answer LAST:
-{"reason": "rule 1: yes or no, why in a few words. rule 2: ... (one short line per rule), then which rule fired, if any", "answer": "YES"}
+{"reason": "1 no, 2 yes, 3 no (a bare yes or no for EVERY rule, in order), then the rule that fired and why in a few words, or, if none did, what was missing", "answer": "YES"}
 
-Write the reason before deciding: check each rule against the message in turn, then give the answer that follows from those lines.
+Write the reason before deciding: check each rule against the message in turn, writing only yes or no for each, then give the answer that follows. Words go only on the rule that fired, or on what was missing when none did: a sentence for every rule is time the reply does not need.
 
 The rules are TRIGGERS connected by OR: each numbered rule describes a condition under which the agent should respond. answer is YES if the message satisfies AT LEAST ONE rule, NO if it satisfies NONE.
 
@@ -473,7 +473,7 @@ func gateSystemOne(ctx context.Context, llm LLM, q gateQuestion) (allow bool, co
 	if a.Native {
 		how = fmt.Sprintf("native, label mass %.2f", a.LabelMass)
 	}
-	return a.Choice == 0, a.Confidence, fmt.Sprintf("P(take it up)=%.2f, confidence %.2f, asked both ways (%s) in %s", a.Probs[0], a.Confidence, how, a.Took.Round(time.Millisecond)), nil
+	return a.Choice == 0, a.Firm(), fmt.Sprintf("P(take it up)=%.2f%s, firm %.2f, asked both ways (%s) in %s", a.Probs[0], a.OrderLine(0), a.Firm(), how, a.Took.Round(time.Millisecond)), nil
 }
 
 // systemOneQuestion is the gate as a System One decision: take the message
@@ -503,14 +503,14 @@ func (q gateQuestion) systemOneQuestion() decide.Question {
 // decisions (core/decide).
 const systemOneTable = decide.ConfigTable
 
-// The confidence a System One decision needs to stand without the gate's
-// full answer. Letting a message through wrongly costs a reply from the
-// agent; keeping one out wrongly drops what a person said, so leaving it
-// takes more. From the check tests on a 9B judge: every answer was right,
-// the "take it up"s at 0.17 to 0.85, the "leave it"s at 0.37 to 0.79; at
-// these marks eight of eleven are decided by System One and the three it
-// was least sure of go to the full answer.
+// How firmly System One must choose for its answer to stand without the
+// gate's full answer (decide's Answer.Firm: both asks chose it, the weaker
+// at least this probability). Letting a message through wrongly costs a
+// reply from the agent; keeping one out wrongly drops what a person said,
+// so leaving it takes more. They were averaged confidences of 0.3 and 0.6,
+// about these probabilities, until the averaging was found to read an
+// answer right both ways as a coin flip.
 const (
-	gateTakeConfidence  = 0.3
-	gateLeaveConfidence = 0.6
+	gateTakeConfidence  = 0.6
+	gateLeaveConfidence = 0.75
 )

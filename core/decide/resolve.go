@@ -23,8 +23,9 @@ type Decision struct {
 	// it was about in them ("chat=...").
 	Name, About string
 	Question
-	// Sure[i] is the confidence System One needs for option i to stand
-	// alone. An option with none set never stands on System One.
+	// Sure[i] is how firmly System One must choose option i for it to stand
+	// alone (Answer.Firm: every ask chose it, the weakest at least this). An
+	// option with none set never stands on System One.
 	Sure []float64
 	// Full answers in full, with a reason: the worker, an agent. Nil is no
 	// full answer, so an unsure System One gives the safe answer.
@@ -61,7 +62,10 @@ func Resolve(ctx context.Context, d Decision) Resolution {
 		about = " (" + a + ")"
 	}
 	why := "System One is off"
-	if m := Model(); m != nil {
+	key := d.key()
+	if m := Model(); m != nil && !Mapped(key) {
+		why = "System One is not mapped for this check"
+	} else if m != nil {
 		timeout := d.Timeout
 		if timeout <= 0 {
 			timeout = 10 * time.Second
@@ -71,10 +75,11 @@ func Resolve(ctx context.Context, d Decision) Resolution {
 		cancel()
 		switch {
 		case err != nil:
+			Rest(err)
 			why = fmt.Sprintf("System One gave no decision (%v)", err)
 		case !a.OK:
 			why = "System One gave no decision (neither option was a likely first token)"
-		case a.Choice < len(d.Sure) && d.Sure[a.Choice] > 0 && a.Confidence >= d.Sure[a.Choice]:
+		case a.Choice < len(d.Sure) && d.Sure[a.Choice] > 0 && a.Firm() >= d.Sure[a.Choice]:
 			return Resolution{Choice: a.Choice, By: BySystemOne, Reason: a.line(d.Options), Confidence: a.Confidence}
 		default:
 			why = "System One unsure (" + a.line(d.Options) + ")"
@@ -96,6 +101,20 @@ func Resolve(ctx context.Context, d Decision) Resolution {
 	return Resolution{Choice: d.Safe, By: BySafe, Reason: why}
 }
 
+// key is the check the decision is for: its route key, from its options.
+func (d Decision) key() string {
+	var probe ChatConfig
+	for _, opt := range d.Opts {
+		opt(&probe)
+	}
+	return strings.TrimSpace(probe.RouteKey)
+}
+
+// Mapped reports whether System One is mapped for check key: its answers
+// that would have stood on the check's cases were all right, on the model
+// System One is now. Unmapped, a decision goes to its full answer.
+func Mapped(key string) bool { return MappedTo(key, MapSystemOne) }
+
 // line is an answer as a log line: the chosen option's probability, the
 // confidence, how it was read and how long it took.
 func (a Answer) line(options []string) string {
@@ -108,5 +127,16 @@ func (a Answer) line(options []string) string {
 		label, _, _ = strings.Cut(options[a.Choice], ":")
 		label = strings.ToLower(strings.TrimSpace(label))
 	}
-	return fmt.Sprintf("P(%s)=%.2f, confidence %.2f (%s) in %s", label, a.Probs[a.Choice], a.Confidence, how, a.Took.Round(time.Millisecond))
+	return fmt.Sprintf("P(%s)=%.2f%s, firm %.2f (%s) in %s", label, a.Probs[a.Choice], a.OrderLine(a.Choice), a.Firm(), how, a.Took.Round(time.Millisecond))
+}
+
+// OrderLine is option i's probability in each order it was asked
+// (" (0.95 in order, 0.23 reversed)"), or "" when it was asked once. Two far
+// apart is a model leaning to a position; two close and low is a question
+// it found hard.
+func (a Answer) OrderLine(i int) string {
+	if len(a.Orders) < 2 || i < 0 || i >= len(a.Orders[0]) || i >= len(a.Orders[1]) {
+		return ""
+	}
+	return fmt.Sprintf(" (%.2f in order, %.2f reversed)", a.Orders[0][i], a.Orders[1][i])
 }

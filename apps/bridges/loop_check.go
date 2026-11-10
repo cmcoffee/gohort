@@ -33,11 +33,12 @@ const (
 	loopCheckMessages = 12
 	// loopCheckChars bounds one message as shown.
 	loopCheckChars = 600
-	// The confidence a System One answer needs to stand without the worker.
-	// Cutting is the safe way to be wrong, so a loop stands on less than a
-	// reprieve does.
-	loopStopConfidence   = 0.3
-	loopGoOnConfidence   = 0.6
+	// How firmly System One must choose for its answer to stand without the
+	// worker (decide's Answer.Firm: both asks chose it, the weaker at least
+	// this probability). Cutting is the safe way to be wrong, so a loop
+	// stands on less than a reprieve does.
+	loopStopConfidence   = 0.6
+	loopGoOnConfidence   = 0.75
 	loopSystemOneTimeout = 10 * time.Second
 	loopWorkerTimeout    = 30 * time.Second
 	loopWorkerMaxTokens  = 300
@@ -82,11 +83,17 @@ func (q loopQuestion) state() string {
 // option 0 is looping.
 func (q loopQuestion) question() decide.Question {
 	return decide.Question{
-		System:  loopCheckSys,
-		State:   q.state(),
-		Ask:     "Is this conversation stuck in a loop?",
-		Options: []string{"Looping: nothing new is being said", "Making progress: the messages bring something new"},
-		Both:    true,
+		System: loopCheckSys,
+		State:  q.state(),
+		// Each option names what it would see, so the pick is made on the
+		// messages: with "nothing new" against "something new", a small
+		// model fell back on whichever was listed second.
+		Ask: "Do the latest messages bring anything new, or only repeat what came before?",
+		Options: []string{
+			"Looping: the latest messages only repeat thanks, acknowledgements, or answers already given",
+			"Making progress: the latest messages ask for, change, or report something not said before",
+		},
+		Both: true,
 	}
 }
 
@@ -99,7 +106,7 @@ func (q loopQuestion) systemOne(ctx context.Context, llm LLM) (loop bool, confid
 	if !a.OK {
 		return false, 0, "", fmt.Errorf("no decision: neither option was a likely first token")
 	}
-	return a.Choice == 0, a.Confidence, fmt.Sprintf("P(looping)=%.2f, confidence %.2f in %s", a.Probs[0], a.Confidence, a.Took.Round(time.Millisecond)), nil
+	return a.Choice == 0, a.Firm(), fmt.Sprintf("P(looping)=%.2f%s, firm %.2f in %s", a.Probs[0], a.OrderLine(0), a.Firm(), a.Took.Round(time.Millisecond)), nil
 }
 
 // loopChat is how the full check reaches its model: the app's worker call
@@ -220,6 +227,8 @@ func init() {
 		Cases:  loopCases,
 		Run:    runLoopCase,
 		Decide: decideLoopCase,
+		// Structured: offloadable (checktest.Check.Structured).
+		Structured: true,
 	})
 }
 
@@ -318,9 +327,14 @@ func runLoopCase(ctx context.Context, llm LLM, tc checktest.Case) checktest.Outc
 
 // decideLoopCase checks one case on llm as a System One decision.
 func decideLoopCase(ctx context.Context, llm LLM, tc checktest.Case) checktest.Outcome {
-	loop, _, reason, err := loopCaseQuestion(tc).systemOne(ctx, llm)
+	loop, confidence, reason, err := loopCaseQuestion(tc).systemOne(ctx, llm)
 	if err != nil {
 		return checktest.Outcome{Err: err}
 	}
-	return checktest.Outcome{Got: loopOutcome(loop), Reason: reason}
+	// Below the bar its answer needs live, the full check would be asked.
+	bar := loopGoOnConfidence
+	if loop {
+		bar = loopStopConfidence
+	}
+	return checktest.Outcome{Got: loopOutcome(loop), Reason: reason, Unsure: confidence < bar}
 }

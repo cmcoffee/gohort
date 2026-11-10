@@ -105,7 +105,7 @@ func TestOnlyPreActionHasAToolInPlay(t *testing.T) {
 // to ask — and then the warden call itself is skipped, which is the whole
 // efficiency argument.
 func TestACheckWithNothingToJudgeCostsNoWardenCall(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"r","status":"violate","reason":"x"}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"x","answer":"violate"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "Wren", Guardrails: "#send_email never email outside the company",
 		GuardrailHooks: []string{"pre_action"},

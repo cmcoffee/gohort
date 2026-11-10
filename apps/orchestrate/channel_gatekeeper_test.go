@@ -176,7 +176,10 @@ func TestTheGateAsksSystemOneFirst(t *testing.T) {
 	df := newDispatchFixture(t, FakeTurn{Content: `{"reason": "rule 1: no", "answer": "NO"}`, Repeat: true})
 	prevRoot := RootDB
 	RootDB = df.app.DB
-	t.Cleanup(func() { RootDB = prevRoot; SetSharedJudgeLLM(nil, false, "", "") })
+	prevGate := JudgeMapGate
+	// The gate's System One form is mapped (its cases came out right).
+	JudgeMapGate = func(key, tier string) bool { return key == gatekeeperRoute && tier == MapSystemOne }
+	t.Cleanup(func() { RootDB = prevRoot; SetSharedJudgeLLM(nil, false, "", ""); JudgeMapGate = prevGate })
 	SaveChannel(RootDB, Channel{ID: "c1", Owner: "u", Service: "imessage", Address: "chat-1", AgentID: df.agent.ID,
 		Gatekeeper: "Answer only questions about the weather."})
 	take := 0.95

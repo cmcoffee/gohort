@@ -107,7 +107,7 @@ func (d dbCFG) judgeLLM() LLMProviderConfig {
 	global.db.Get(JudgeLLMTable, "model", &c.Model)
 	global.db.Get(JudgeLLMTable, "endpoint", &c.Endpoint)
 	if err := c.LoadKey(global.db, JudgeLLMTable); err != nil {
-		Warn("[llm] the Judge model: %v", err)
+		Warn("[llm] the Offload model: %v", err)
 	}
 	global.db.Get(JudgeLLMTable, "context_size", &c.ContextSize)
 	// The Judge model never thinks. A check that asks to think goes to the
@@ -141,7 +141,7 @@ func reloadJudgeLLM() error {
 		return nil
 	}
 	if ok, why := JudgePrivate(cfg.Provider, cfg.Endpoint); !ok {
-		err := fmt.Errorf("the Judge model must run locally or on a peer: %s", why)
+		err := fmt.Errorf("the Offload model must run locally or on a peer: %s", why)
 		SetSharedJudgeLLM(nil, false, "", err.Error())
 		return err
 	}
@@ -150,8 +150,11 @@ func reloadJudgeLLM() error {
 		SetSharedJudgeLLM(nil, false, "", err.Error())
 		return fmt.Errorf("judge LLM: %w", err)
 	}
-	SetSharedJudgeLLM(judge, !cfg.NoImages, describeLLMConfig(cfg), "")
-	Log("[llm] the Judge model is %s: checks run there", describeLLMConfig(cfg))
+	// Never given pictures: the checks it can be mapped to are text, and a
+	// vision stack kept loaded for none of them costs VRAM the GPU it shares
+	// needs. A check with pictures runs on the worker.
+	SetSharedJudgeLLM(judge, false, describeLLMConfig(cfg), "")
+	Log("[llm] the Offload model is %s: checks run there", describeLLMConfig(cfg))
 	return nil
 }
 

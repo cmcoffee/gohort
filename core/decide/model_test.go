@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -23,12 +24,21 @@ func privateWorld(t *testing.T) Database {
 	RootDB = &DBase{Store: kvlite.MemStore()}
 	adb := &DBase{Store: kvlite.MemStore()}
 	AuthDB = func() Database { return adb }
+	clearRest()
 	t.Cleanup(func() {
 		RootDB, AuthDB = root, auth
 		SetSharedLLMs(worker, lead)
 		SetSharedJudgeLLM(nil, false, "", "")
+		clearRest()
 	})
 	return adb
+}
+
+// clearRest ends a rest a test's deliberate failure began.
+func clearRest() {
+	rest.Lock()
+	rest.until, rest.why = time.Time{}, ""
+	rest.Unlock()
 }
 
 // systemOneConnector saves a connector giving decisions at base, the shape

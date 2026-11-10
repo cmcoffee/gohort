@@ -3,6 +3,7 @@ package orchestrate
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -64,7 +65,7 @@ func TestGuardrailRulesParseSeverityMarker(t *testing.T) {
 // The marker is stripped before the warden sees the rule: the same rule authored
 // with and without it must be judged on identical text.
 func TestSeverityMarkerStrippedFromWardenPrompt(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never mention salary","status":"comply","reason":"ok"}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"ok","answer":"comply"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{Name: "X", Guardrails: "? never mention salary"})
 	if _, err := turn.app.runWarden(turn.ctx, turn.agent, guardHookPreOutput, "hi", requesterIdentity{Owner: true}); err != nil {
 		t.Fatalf("runWarden: %v", err)
@@ -116,7 +117,7 @@ func TestRuleIsCorrectableMatchesWardenRequoting(t *testing.T) {
 
 // A rule marked correctable gets the revise pass.
 func TestCorrectableRuleGetsItsRevisePass(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"answer in Spanish","status":"violate","reason":"it is English"}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"it is English","answer":"violate"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "X", Guardrails: "? answer in Spanish", GuardrailHooks: []string{"pre_output"},
 	})
@@ -129,28 +130,22 @@ func TestCorrectableRuleGetsItsRevisePass(t *testing.T) {
 	}
 }
 
-// THE reason the marker names the exception rather than the rule. The warden hands
-// back a rule as TEXT ("verbatim or trimmed"), so mapping it to an authored line is
-// a fuzzy match — and a fuzzy match can fail. When it does, the rule must stay
-// blocking. Marking the blocking case instead would have made a match failure silently
-// downgrade a hard limit to a suggestion, in a mechanism whose whole job is to not
-// fail open.
+// THE reason the marker names the exception rather than the rule: a rule name
+// that matches no authored rule stays blocking. The warden's verdicts name
+// rules by number now, so the text it is matched by is the rule's own; the
+// match still fails closed for any name it cannot place.
 func TestUnmatchedRuleStaysBlocking(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"some paraphrase the matcher will not place","status":"violate","reason":"x"}]}`}
-	turn := guardTurn(t, stub, AgentRecord{
-		Name: "X", Guardrails: "? answer in Spanish", GuardrailHooks: []string{"pre_output"},
-	})
-	dec := turn.guardrailCheckHook()(guardHookPreOutput, "anything")
-	if !dec.Blocked {
-		t.Fatal("a violation must block")
+	agent := AgentRecord{Name: "X", Guardrails: "? answer in Spanish"}
+	if !ruleIsCorrectable(agent, "answer in Spanish") {
+		t.Fatal("the marked rule, by its own text, is not correctable")
 	}
-	if dec.Correctable {
+	if ruleIsCorrectable(agent, "some paraphrase nobody wrote") || ruleIsCorrectable(agent, "") {
 		t.Fatal("an unmatchable rule name must fail CLOSED (blocking), never open")
 	}
 }
 
 func TestUnmarkedRuleBlocks(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never mention salary or wages","status":"violate","reason":"states a figure"}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"states a figure","answer":"violate"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "X", Guardrails: "never mention salary or wages", GuardrailHooks: []string{"pre_output"},
 	})
@@ -168,7 +163,7 @@ func TestUnmarkedRuleBlocks(t *testing.T) {
 // would convert every recoverable detour into a dead end. Pinned in core, where
 // the decision is honored; here we only pin that the app still reports it.
 func TestSeverityIsReportedAtPreActionToo(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never spend money","status":"violate","reason":"a purchase"}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"a purchase","answer":"violate"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "X", Guardrails: "never spend money", GuardrailHooks: []string{"pre_action"},
 	})
@@ -186,7 +181,7 @@ func TestSeverityIsReportedAtPreActionToo(t *testing.T) {
 // thousands of reasoning tokens spent working out how to refuse without saying
 // why — and when the answer is already "no", none of that buys anything.
 func TestBlockingRuleAtPreInputRefusesOutright(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never mention salary or wages","status":"violate","reason":"asks for pay"}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"asks for pay","answer":"violate"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "X", Guardrails: "never mention salary or wages", GuardrailHooks: []string{"pre_input"},
 	})
@@ -212,7 +207,7 @@ func TestBlockingRuleAtPreInputRefusesOutright(t *testing.T) {
 // able to answer within the constraint, and killing the turn would turn a
 // shaping rule into a hard refusal.
 func TestCorrectableRuleAtPreInputStillSteers(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"answer in Spanish","status":"violate","reason":"asked in English"}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"asked in English","answer":"violate"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "X", Guardrails: "? answer in Spanish", GuardrailHooks: []string{"pre_input"},
 	})
@@ -279,7 +274,7 @@ func TestGuardrailsDisabledIsFullyInert(t *testing.T) {
 		t.Error("a disabled agent must not be treated as having an output guardrail — live streaming should return")
 	}
 	// And core must take its no-guardrails fast path: a nil check hook.
-	turn := guardTurn(t, &wardenStubLLM{reply: `{"verdicts":[{"rule":"r","status":"violate","reason":"x"}]}`}, agent)
+	turn := guardTurn(t, &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"x","answer":"violate"}]}`}, agent)
 	if turn.guardrailCheckHook() != nil {
 		t.Error("a disabled agent must yield a nil check hook (zero overhead)")
 	}
@@ -560,7 +555,7 @@ func withGlobalRules(t *testing.T, lines ...string) func() {
 	return func() { prompts.SetPromptOverrideDB(nil) }
 }
 
-// parseWardenVerdicts documents its own contract:
+// The warden's reading documents its own contract:
 //
 //	"A reply we can't parse at all yields a single 'unsure' verdict rather
 //	 than a silent pass — an unreadable warden must not read as compliance."
@@ -574,10 +569,10 @@ func TestUnparseableWardenReplyIsUnsureNotComply(t *testing.T) {
 		"",
 		"I think this is fine.",
 		"{{{ garbage",
-		`{"verdicts": []}`,
-		`{"verdicts": [{"status": "banana"}]}`,
+		`{"rules":[]}`,
+		`{"rules":[{"rule":1,"answer":"banana"}]}`,
 	} {
-		got := worstVerdict(parseWardenVerdicts(reply))
+		got := worstVerdict(readWarden(reply))
 		if got == guardComply {
 			t.Errorf("reply %q read as COMPLY — an unreadable warden must never mean 'allowed'", reply)
 		}
@@ -589,7 +584,7 @@ func TestUnparseableWardenReplyIsUnsureNotComply(t *testing.T) {
 
 // A real verdict still parses, so the retry path can't fire on healthy output.
 func TestWellFormedWardenVerdictsParse(t *testing.T) {
-	v := parseWardenVerdicts(`{"verdicts":[{"rule":"no secrets","status":"violate","reason":"leaks a key"}]}`)
+	v := readWarden(`{"rules":[{"rule":1,"why":"leaks a key","answer":"violate"}]}`, "no secrets")
 	if worstVerdict(v) != guardViolate {
 		t.Fatalf("violate verdict not recognized: %+v", v)
 	}
@@ -598,7 +593,7 @@ func TestWellFormedWardenVerdictsParse(t *testing.T) {
 		t.Errorf("violation detail lost: rule=%q reason=%q", rule, reason)
 	}
 
-	ok := parseWardenVerdicts(`{"verdicts":[{"rule":"r","status":"comply"}]}`)
+	ok := readWarden(`{"rules":[{"rule":1,"answer":"comply"}]}`)
 	if worstVerdict(ok) != guardComply {
 		t.Errorf("comply verdict not recognized: %+v", ok)
 	}
@@ -708,7 +703,7 @@ func TestWardenVocabularyIsBinary(t *testing.T) {
 	if strings.Contains(wardenSystemPrompt, "unsure") {
 		t.Error("the warden must not be offered a third option")
 	}
-	if !strings.Contains(wardenSystemPrompt, `"status":"comply|violate"`) {
+	if !strings.Contains(wardenSystemPrompt, `<one of: comply, violate>`) {
 		t.Error("the output schema should name exactly the two allowed statuses")
 	}
 	if !strings.Contains(wardenSystemPrompt, "no third option") {
@@ -721,11 +716,11 @@ func TestWardenVocabularyIsBinary(t *testing.T) {
 // blocks or leaves a breadcrumb. Never on comply.
 func TestLegacyUnsureStatusIsNotCompliance(t *testing.T) {
 	for _, reply := range []string{
-		`{"verdicts":[{"rule":"no secrets","status":"unsure","reason":"can't tell"}]}`,
-		`{"verdicts":[{"rule":"no secrets","status":"UNSURE"}]}`,
-		`{"verdicts":[{"rule":"no secrets","status":"maybe"}]}`,
+		`{"rules":[{"rule":1,"why":"can't tell","answer":"unsure"}]}`,
+		`{"rules":[{"rule":1,"answer":"UNSURE"}]}`,
+		`{"rules":[{"rule":1,"answer":"maybe"}]}`,
 	} {
-		got := worstVerdict(parseWardenVerdicts(reply))
+		got := worstVerdict(readWarden(reply))
 		if got == guardComply {
 			t.Errorf("reply %q read as COMPLY — an answer we don't recognize is not permission", reply)
 		}
@@ -738,12 +733,12 @@ func TestLegacyUnsureStatusIsNotCompliance(t *testing.T) {
 // The two real verdicts still work, and violate still outranks comply when a
 // multi-rule reply mixes them.
 func TestBinaryVerdictsAggregate(t *testing.T) {
-	mixed := `{"verdicts":[{"rule":"a","status":"comply"},{"rule":"b","status":"violate","reason":"leaks"}]}`
-	if got := worstVerdict(parseWardenVerdicts(mixed)); got != guardViolate {
+	mixed := `{"rules":[{"rule":1,"answer":"comply"},{"rule":2,"why":"leaks","answer":"violate"}]}`
+	if got := worstVerdict(readWarden(mixed)); got != guardViolate {
 		t.Errorf("a violation among complies must win, got %q", got)
 	}
-	allClear := `{"verdicts":[{"rule":"a","status":"comply"},{"rule":"b","status":"comply"}]}`
-	if got := worstVerdict(parseWardenVerdicts(allClear)); got != guardComply {
+	allClear := `{"rules":[{"rule":1,"answer":"comply"},{"rule":2,"answer":"comply"}]}`
+	if got := worstVerdict(readWarden(allClear)); got != guardComply {
 		t.Errorf("all-comply should be comply, got %q", got)
 	}
 }
@@ -820,7 +815,7 @@ func TestResolveGuardrailHooks(t *testing.T) {
 
 func TestParseWardenVerdicts(t *testing.T) {
 	// Prose-wrapped JSON with mixed statuses.
-	out := parseWardenVerdicts(`Sure! {"verdicts":[{"rule":"no spend","status":"VIOLATE","reason":"buys a thing"},{"rule":"cite","status":"comply","reason":"ok"}]} done`)
+	out := readWarden(`Sure! {"rules":[{"rule":1,"why":"buys a thing","answer":"VIOLATE"},{"rule":2,"why":"ok","answer":"comply"}]} done`)
 	if len(out) != 2 || out[0].Status != guardViolate || out[1].Status != guardComply {
 		t.Fatalf("parse/normalize failed: %+v", out)
 	}
@@ -828,7 +823,7 @@ func TestParseWardenVerdicts(t *testing.T) {
 		t.Fatal("worstVerdict should surface violate")
 	}
 	// Unparseable → a single unsure verdict, never a silent comply.
-	bad := parseWardenVerdicts("I think it's fine, no JSON here")
+	bad := readWarden("I think it's fine, no JSON here")
 	if len(bad) != 1 || bad[0].Status != guardNoVerdict {
 		t.Fatalf("unparseable reply must yield unsure; got %+v", bad)
 	}
@@ -836,14 +831,14 @@ func TestParseWardenVerdicts(t *testing.T) {
 		t.Fatal("empty verdicts = comply")
 	}
 	// Unknown status normalizes to unsure.
-	unk := parseWardenVerdicts(`{"verdicts":[{"rule":"r","status":"maybe"}]}`)
+	unk := readWarden(`{"rules":[{"rule":1,"answer":"maybe"}]}`)
 	if unk[0].Status != guardNoVerdict {
 		t.Fatalf("unknown status should normalize to unsure; got %q", unk[0].Status)
 	}
 }
 
 func TestRunWardenFencesCandidateAndReturnsVerdict(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never post about a private individual","status":"violate","reason":"names a person"}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"names a person","answer":"violate"}]}`}
 	app := &OrchestrateApp{}
 	app.LLM = stub
 
@@ -1065,7 +1060,7 @@ func TestThePickerOnlyOffersBindableNames(t *testing.T) {
 // starts. Unmarked, a slow model server showed up in the prep-time line as 19
 // seconds of "other"; it must be named.
 func TestTheInputGuardrailWaitIsNamedInPrepTime(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"answer in Spanish","status":"ok","reason":""}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"","answer":"ok"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "X", Guardrails: "? answer in Spanish", GuardrailHooks: []string{"pre_input"},
 	})
@@ -1151,21 +1146,16 @@ func TestGovernanceRulesAreJudgedWhateverHooksTheOwnerPicked(t *testing.T) {
 // back to its rule; a rule given no verdict is NO VERDICT, never a pass.
 func TestWardenVerdictsByNumber(t *testing.T) {
 	rules := []string{"never share the address", "no jokes", "cite sources"}
-	v := parseWardenVerdicts(`{"verdicts":[{"rule":1,"status":"comply"},{"rule":"2","status":"violate","reason":"tells a joke"},{"rule":3,"status":"comply"}]}`, rules...)
+	v := readWarden(`{"rules":[{"rule":1,"answer":"comply"},{"rule":"2","why":"tells a joke","answer":"violate"},{"rule":3,"answer":"comply"}]}`, rules...)
 	if len(v) != 3 || v[0].Rule != "never share the address" || v[1].Rule != "no jokes" || v[1].Status != guardViolate {
 		t.Fatalf("verdicts: %+v", v)
 	}
 	if worstVerdict(v) != guardViolate {
 		t.Error("a violation was lost")
 	}
-	short := parseWardenVerdicts(`{"verdicts":[{"rule":1,"status":"comply"},{"rule":3,"status":"comply"}]}`, rules...)
+	short := readWarden(`{"rules":[{"rule":1,"answer":"comply"},{"rule":3,"answer":"comply"}]}`, rules...)
 	if worstVerdict(short) != guardNoVerdict {
 		t.Errorf("a skipped rule passed: %+v", short)
-	}
-	// An older prompt's text-named verdicts still read.
-	old := parseWardenVerdicts(`{"verdicts":[{"rule":"no jokes","status":"comply","reason":"ok"}]}`, rules...)
-	if len(old) == 0 || old[0].Rule != "no jokes" {
-		t.Errorf("text-named verdict: %+v", old)
 	}
 }
 
@@ -1207,7 +1197,7 @@ func TestTheCheckReadsAsCarefullyAsItsRulesAsk(t *testing.T) {
 
 	// The depth reaches the checker as a reasoning level.
 	prompts.SetGlobalRulesDepth(prompts.RuleDepthModerate)
-	llm := &FakeLLM{Turns: []FakeTurn{{Content: `{"verdicts":[{"rule":"Never discuss the lunar calendar.","status":"comply","reason":"unrelated"}]}`}}}
+	llm := &FakeLLM{Turns: []FakeTurn{{Content: `{"rules":[{"rule":1,"why":"unrelated","answer":"comply"}]}`}}}
 	turn := guardTurn(t, llm, AgentRecord{Name: "X"})
 	if turn.guardrailCheckHook()(guardHookPreOutput, "The weather is fine.").Blocked {
 		t.Fatal("a complying reply was blocked")
@@ -1426,7 +1416,7 @@ func TestExceptionNameStopsAtTheRule(t *testing.T) {
 // TestExceptionTextReachesTheWarden — the linked condition arrives under its
 // rule, and the instruction explaining "Except:" arrives with it.
 func TestExceptionTextReachesTheWarden(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never send money","status":"comply","reason":"ok"}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"ok","answer":"comply"}]}`}
 	agent := exceptionAgent("@confirmed never send money\nnever share addresses")
 	turn := guardTurn(t, stub, agent)
 	if _, err := turn.app.runWarden(turn.ctx, agent, guardHookPreOutput, "hi", requesterIdentity{Owner: true}); err != nil {
@@ -1456,7 +1446,7 @@ func TestExceptionTextReachesTheWarden(t *testing.T) {
 // TestNoExceptionsLeavesThePromptAlone — an agent not using the feature must
 // pay nothing for it, in prompt bytes or in a rule shape it never sees.
 func TestNoExceptionsLeavesThePromptAlone(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never send money","status":"comply","reason":"ok"}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"ok","answer":"comply"}]}`}
 	agent := AgentRecord{Name: "X", Owner: "u", Guardrails: "never send money"}
 	turn := guardTurn(t, stub, agent)
 	if _, err := turn.app.runWarden(turn.ctx, agent, guardHookPreOutput, "hi", requesterIdentity{Owner: true}); err != nil {
@@ -1476,7 +1466,7 @@ func TestDanglingLinkTightensTheRule(t *testing.T) {
 		t.Errorf("a link to a missing exception resolved to %v, want nothing", got)
 	}
 	// And the warden sees a bare rule rather than a dangling name.
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never send money","status":"comply","reason":"ok"}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"ok","answer":"comply"}]}`}
 	turn := guardTurn(t, stub, agent)
 	if _, err := turn.app.runWarden(turn.ctx, agent, guardHookPreOutput, "hi", requesterIdentity{Owner: true}); err != nil {
 		t.Fatalf("runWarden: %v", err)
@@ -1489,7 +1479,7 @@ func TestDanglingLinkTightensTheRule(t *testing.T) {
 // TestExceptionTextIsSharedNotCopied — one wording, many rules. This is the
 // whole reason the indirection exists.
 func TestExceptionTextIsSharedNotCopied(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[]}`}
 	agent := exceptionAgent("@confirmed never send money\n@confirmed never delete records")
 	turn := guardTurn(t, stub, agent)
 	if _, err := turn.app.runWarden(turn.ctx, agent, guardHookPreOutput, "hi", requesterIdentity{Owner: true}); err != nil {
@@ -1561,7 +1551,7 @@ func TestADeploymentRuleCarriesOnlyItsOwnExceptions(t *testing.T) {
 		{Text: "@self Never share a home address."},
 	})
 	agent := AgentRecord{GuardrailExceptions: []GuardrailException{{Name: "self", Text: "it is anyone at all asking"}}}
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":1,"status":"comply"},{"rule":2,"status":"comply"}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"answer":"comply"},{"rule":2,"answer":"comply"}]}`}
 	turn := channelTurn(t, stub, agent, "Alex")
 	if _, err := turn.app.runWarden(turn.ctx, turn.agent, guardHookPreOutput, "a reply", turn.requester()); err != nil {
 		t.Fatal(err)
@@ -1576,4 +1566,23 @@ func TestADeploymentRuleCarriesOnlyItsOwnExceptions(t *testing.T) {
 	if c := prompts.GlobalRulesClause(); !strings.Contains(c, "violates applicable law. (except when the request involves only the owner's own likeness, at the owner's request)") {
 		t.Errorf("the agent's prompt does not say the exception with the rule: %s", c)
 	}
+}
+
+// readWarden is a warden reply as the warden reads it, through the verdict
+// it asks (wardenVerdict), for rules: by default, one per entry the reply
+// lists, or one.
+func readWarden(reply string, rules ...string) []guardrailVerdict {
+	if len(rules) == 0 {
+		rules = []string{"r"}
+		var wire struct{ Rules []json.RawMessage }
+		if json.Unmarshal([]byte(extractJSONObject(reply)), &wire) == nil && len(wire.Rules) > 1 {
+			rules = nil
+			for i := range wire.Rules {
+				rules = append(rules, fmt.Sprintf("rule %d", i+1))
+			}
+		}
+	}
+	chat := func(context.Context, []Message, ...ChatOption) (*Response, error) { return &Response{Content: reply}, nil }
+	rulings, _ := wardenVerdict.JudgeEach(context.Background(), chat, "state", len(rules))
+	return wardenVerdicts(rulings, rules)
 }

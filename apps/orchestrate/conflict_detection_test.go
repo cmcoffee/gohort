@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -95,5 +96,25 @@ func TestConflictDetectionCanStillBeTurnedOff(t *testing.T) {
 
 	if conflictDetectionEnabled() {
 		t.Error("an explicit 0 must win over the default")
+	}
+}
+
+// Where System One settles the conflict check ("none", sure, on a mapped
+// check), the full check is not asked; a contradiction is never taken from
+// it, since the full check names which findings.
+func TestTheConflictCheckTakesASettledNone(t *testing.T) {
+	prev := QuickDecide
+	t.Cleanup(func() { QuickDecide = prev })
+	QuickDecide = func(ctx context.Context, q QuickChoice) (string, bool) {
+		return "none", q.Key == "memory.conflict_check"
+	}
+	full := &FakeLLM{Turns: []FakeTurn{{Content: `{"findings":[{"finding":1,"why":"closed vs reopened","answer":"contradicts"}]}`, Repeat: true}}}
+	hits := []SearchHit{{ID: "1", Text: "The bridge is closed."}}
+	if got := judgeFindingConflicts(full.Chat, "The bridge reopened.", hits); got != nil || full.Calls() != 0 {
+		t.Errorf("settled none, the full check still ran: %v after %d calls", got, full.Calls())
+	}
+	QuickDecide = func(context.Context, QuickChoice) (string, bool) { return "", false }
+	if got := judgeFindingConflicts(full.Chat, "The bridge reopened.", hits); len(got) != 1 || full.Calls() != 1 {
+		t.Errorf("unsettled, the full check decides: %v after %d calls", got, full.Calls())
 	}
 }

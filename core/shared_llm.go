@@ -1015,19 +1015,7 @@ func JudgeCallOn(key string) bool {
 	judgeState.mu.RLock()
 	registered := judgeState.byKey[key]
 	judgeState.mu.RUnlock()
-	if !registered {
-		return false
-	}
-	var off []string
-	if RootDB != nil {
-		RootDB.Get(JudgeLLMTable, "off", &off)
-	}
-	for _, k := range off {
-		if k == key {
-			return false
-		}
-	}
-	return true
+	return registered && OffloadAllowed(key)
 }
 
 // SetSharedJudgeLLM installs the Judge model (nil for none), whether it
@@ -1084,10 +1072,13 @@ func (r reloadableLLM) judgeFor(messages []Message, opts []ChatOption) (LLM, str
 	for _, opt := range opts {
 		opt(&probe)
 	}
+	// A check goes to the judge only when it is on AND the judge map gives
+	// it to the judge: its cases were all right on this judge (core/checktest).
+	takes := func(k string) bool { return JudgeCallOn(k) && MappedTo(k, MapJudge) }
 	key := strings.TrimSpace(probe.RouteKey)
-	if !JudgeCallOn(key) {
+	if !takes(key) {
 		key = strings.TrimSpace(probe.Caller)
-		if !JudgeCallOn(key) {
+		if !takes(key) {
 			return nil, ""
 		}
 	}
@@ -1109,7 +1100,127 @@ func (r reloadableLLM) judgeFor(messages []Message, opts []ChatOption) (LLM, str
 	if probe.Think != nil && *probe.Think {
 		return nil, ""
 	}
+	// A big question goes to the worker. The map is earned on short cases,
+	// and a small judge reading a long tool output or a long list of notes
+	// is the call they never asked it.
+	if n, limit := EstimateMessagesTokens(messages)+EstimateTokens(probe.SystemPrompt), judgePromptLimit(judge); n > limit {
+		Debug("[judge] %s: a %d-token question is over the Offload model's %d, sent to the worker", key, n, limit)
+		return nil, ""
+	}
 	return judge, key
+}
+
+// tunableJudgePromptMax is the largest question, in tokens, a check may put
+// to the Judge model.
+const tunableJudgePromptMax = "tune_judge_prompt_max"
+
+func init() {
+	RegisterTunable(TunableSpec{Key: tunableJudgePromptMax, Category: "Model calls", Label: "Offload model: largest question (tokens)",
+		Help: "A check whose prompt is longer than this goes to the worker, not the Offload model.",
+		Detail: "The judge map is earned on short test cases, and a smaller model reading a long tool output or a long list of notes is the question those cases never asked it. " +
+			"Half the Offload model's context window is the limit whenever that is smaller.",
+		Kind: KindInt, Default: 6000, Min: 500, Max: 200000})
+}
+
+// judgePromptLimit is the largest question the Judge model is asked: the
+// tunable, or half its context window when that is smaller.
+func judgePromptLimit(judge LLM) int {
+	limit := TuneInt(tunableJudgePromptMax)
+	if limit <= 0 {
+		limit = 6000
+	}
+	if cs, ok := judge.(ContextSizer); ok {
+		if half := cs.ContextSize() / 2; half > 0 && half < limit {
+			limit = half
+		}
+	}
+	return limit
+}
+
+// The tiers a check can be mapped to, beside the worker every check falls
+// back to: the Judge model, and System One (core/decide).
+const (
+	MapJudge     = "judge"
+	MapSystemOne = "system one"
+)
+
+// JudgeMapGate reports whether check key is mapped to tier: its test cases
+// all came out right there, on the model that tier is now, for the check as
+// it is now. Set by core/checktest, which keeps the map; nil, nothing is
+// mapped and every check stays on the worker.
+var JudgeMapGate func(key, tier string) bool
+
+// MappedTo reports whether check key is mapped to tier (JudgeMapGate), and
+// the Decision Offloading mode lets that tier be used.
+func MappedTo(key, tier string) bool {
+	gate := JudgeMapGate
+	return gate != nil && key != "" && OffloadUses(tier) && OffloadAllowed(key) && gate(key, tier)
+}
+
+// OffloadAllowed reports whether check key's switch on the judge map lets it
+// go to the Offload model or System One at all: on unless switched off,
+// except the warden pre-guard, off until switched on (PreguardRecord.On).
+func OffloadAllowed(key string) bool {
+	if key == PreguardRoute {
+		return LoadPreguard().On
+	}
+	var off []string
+	if RootDB != nil {
+		RootDB.Get(JudgeLLMTable, "off", &off)
+	}
+	for _, k := range off {
+		if k == key {
+			return false
+		}
+	}
+	return true
+}
+
+// The Decision Offloading modes: which tiers the map may give checks to.
+// A mode only ever takes a tier out; checks are still tested and mapped for
+// every tier that is set, so turning one back on uses its mapping at once.
+const (
+	OffloadBoth      = "both"
+	OffloadSystemOne = "system_one"
+	OffloadModelOnly = "offload"
+	OffloadOff       = "off"
+)
+
+// offloadModeKey is where the mode is kept, in JudgeLLMTable.
+const offloadModeKey = "offload_mode"
+
+// OffloadMode is the Decision Offloading mode; one never set, or not one of
+// the modes, is OffloadBoth, as before there was a mode.
+func OffloadMode() string {
+	var m string
+	if RootDB != nil {
+		RootDB.Get(JudgeLLMTable, offloadModeKey, &m)
+	}
+	switch m {
+	case OffloadSystemOne, OffloadModelOnly, OffloadOff:
+		return m
+	}
+	return OffloadBoth
+}
+
+// SetOffloadMode keeps the Decision Offloading mode.
+func SetOffloadMode(m string) {
+	if RootDB != nil {
+		RootDB.Set(JudgeLLMTable, offloadModeKey, m)
+	}
+}
+
+// OffloadUses reports whether the mode lets checks go to tier.
+func OffloadUses(tier string) bool {
+	switch OffloadMode() {
+	case OffloadOff:
+		return false
+	case OffloadSystemOne:
+		return tier == MapSystemOne
+	case OffloadModelOnly:
+		return tier == MapJudge
+	}
+	return true
 }
 
 // judgeShareMax is the most time the Judge model is given for one check.
@@ -1139,7 +1250,7 @@ func judgeFailed(key string, err error) {
 	judgeState.mu.Lock()
 	judgeState.restUntil = time.Now().Add(judgeRestFor)
 	judgeState.mu.Unlock()
-	Warn("[llm] the Judge model failed %s (%v): checks go to the worker for %s", key, err, judgeRestFor)
+	Warn("[llm] the Offload model failed %s (%v): checks go to the worker for %s", key, err, judgeRestFor)
 }
 
 // checkPriority marks ctx so a check goes first in the local model queue
@@ -1176,4 +1287,100 @@ func registeredCheck(key string) bool {
 // gatekeeper answer, holding the judge's card for minutes.
 func checkKeepsItsCap(cfg ChatConfig) bool {
 	return cfg.MaxTokens > 0 && (registeredCheck(cfg.RouteKey) || registeredCheck(cfg.Caller))
+}
+
+// QuickChoice is a check's question as a fixed choice, declared once: what
+// System One is told (System), what it decides about (State), the question
+// (Ask), and the answers. Each answer says whether it needs the full
+// answer's written reason. One that does (a flag, a block, a contradiction)
+// never stands on System One; one that does not (clean, on task, nothing to
+// keep) stands when System One is sure of it and the judge map gives the
+// check to System One.
+//
+// The same declaration is the check's System One form in its check tests
+// (core/checktest builds it), so what is tested is what runs.
+type QuickChoice struct {
+	Key     string
+	System  string
+	State   string
+	Ask     string
+	Answers []QuickAnswer
+	// Sure is the confidence an answer needs to stand; 0 is QuickSure. A
+	// question whose standing answer skips a safety check sets it higher.
+	Sure float64
+}
+
+// QuickAnswer is one answer: its key (the check's own word for it), what it
+// means (the option System One reads), and whether it needs a written
+// reason.
+type QuickAnswer struct {
+	Key    string
+	Means  string
+	Reason bool
+}
+
+// QuickSure is how firmly System One must choose an answer that needs no
+// reason for it to stand (decide's Answer.Firm: both asks chose it, the
+// weaker at least this probability). The map is the gate (only a check
+// whose cases System One got right is asked at all); this keeps an answer
+// it leans to, or one that follows the order the options were shown in,
+// from standing in for the full one.
+const QuickSure = 0.6
+
+// PreguardRecord is the warden pre-guard's switch and its record: rules it
+// skipped, how many of those the full warden re-checked after the turn, and
+// any it then found violated. A miss turns it off, with why.
+type PreguardRecord struct {
+	On       bool      `json:"on"`
+	Skipped  int       `json:"skipped"`
+	Verified int       `json:"verified"`
+	Missed   int       `json:"missed"`
+	OffWhy   string    `json:"off_why,omitempty"`
+	At       time.Time `json:"at"`
+}
+
+// PreguardRoute is the warden pre-guard's check key on the judge map.
+const PreguardRoute = "app.orchestrate.warden.preguard"
+
+// preguardKey is where the record is kept, in JudgeLLMTable.
+const preguardKey = "warden_preguard"
+
+var preguardMu sync.Mutex
+
+// LoadPreguard is the pre-guard's record; off when never set.
+func LoadPreguard() PreguardRecord {
+	var r PreguardRecord
+	if RootDB != nil {
+		RootDB.Get(JudgeLLMTable, preguardKey, &r)
+	}
+	return r
+}
+
+// UpdatePreguard changes the record under one lock, so counts from checks
+// running at once are not lost.
+func UpdatePreguard(change func(*PreguardRecord)) PreguardRecord {
+	preguardMu.Lock()
+	defer preguardMu.Unlock()
+	r := LoadPreguard()
+	change(&r)
+	r.At = time.Now()
+	if RootDB != nil {
+		RootDB.Set(JudgeLLMTable, preguardKey, r)
+	}
+	return r
+}
+
+// QuickDecide asks System One q, set by core/decide. ok is true only when it
+// gave, sure enough, an answer that needs no reason, on a check mapped to
+// it; otherwise the check asks its full question. Nil: never.
+var QuickDecide func(ctx context.Context, q QuickChoice) (answer string, ok bool)
+
+// AskQuick is QuickDecide when it is set: the answer key, and whether it
+// stands in for the full question.
+func AskQuick(ctx context.Context, q QuickChoice) (string, bool) {
+	ask := QuickDecide
+	if ask == nil || strings.TrimSpace(q.Key) == "" {
+		return "", false
+	}
+	return ask(ctx, q)
 }

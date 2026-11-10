@@ -699,9 +699,35 @@ type factJudgement struct {
 	kindSet    bool
 }
 
+// factGateQuickSystem is the memory gate's first question as System One
+// reads it.
+const factGateQuickSystem = `A personal assistant keeps a small set of durable facts about a user, and every saved fact is read in every later conversation. You decide whether a new note is worth keeping.
+
+Keep: a name, a stable preference, an identity, role or relationship, ongoing project context, a standing instruction, something on a date that matters, or something still to do.
+Drop: small talk, a greeting, a one-off remark, or a passing state that will not matter next session.
+
+When in doubt, keep it.`
+
+// FactGateQuick is the memory gate's first question as a fixed choice
+// (core.QuickChoice): drop stands on System One when it is sure; keep needs
+// the full gate, which also says what the note replaces and what kind it is.
+func FactGateQuick(note string) QuickChoice {
+	return QuickChoice{Key: "memory.gate", System: factGateQuickSystem, State: fmt.Sprintf("New note: %q", note),
+		Ask: "Is this note worth keeping?",
+		Answers: []QuickAnswer{
+			{Key: "drop", Means: "Drop: small talk or a passing state"},
+			{Key: "keep", Means: "Keep: a durable fact worth recalling later", Reason: true},
+		}}
+}
+
 func judgeFactWrite(chat FactChatFunc, newNote string, candidates []MemoryFact, now time.Time) factJudgement {
 	if chat == nil {
 		return factJudgement{relevant: true}
+	}
+	// System One first, where the map gives the gate to it: a sure "drop"
+	// is the answer; keeping a note needs the full gate.
+	if ans, ok := AskQuick(context.Background(), FactGateQuick(newNote)); ok && ans == "drop" {
+		return factJudgement{relevant: false}
 	}
 	var list strings.Builder
 	for i, f := range candidates {
@@ -763,6 +789,28 @@ Reply with ONLY JSON: {"relevant": true or false, "supersedes": [numbers], "kind
 		}
 	}
 	return j
+}
+
+// FactGateDecision is the memory gate's judgement of note against existing
+// notes, through the gate's own prompt and reading on chat: whether it is
+// kept, which existing notes (1-based) it replaces, and its kind ("fact",
+// "event", "open", or "" when the judge did not say). For the gate's check
+// tests, which ask it on a chosen model.
+func FactGateDecision(chat FactChatFunc, note string, existing []string, now time.Time) (keep bool, replaces []int, kind string) {
+	candidates := make([]MemoryFact, len(existing))
+	index := map[string]int{}
+	for i, e := range existing {
+		candidates[i] = MemoryFact{Note: e}
+		index[e] = i + 1
+	}
+	j := judgeFactWrite(chat, note, candidates, now)
+	for _, f := range j.supersedes {
+		replaces = append(replaces, index[f.Note])
+	}
+	if j.kindSet {
+		kind = j.kind.String()
+	}
+	return j.relevant, replaces, kind
 }
 
 // factSaveMu serializes StoreMemoryFactP per namespace (see the lock note

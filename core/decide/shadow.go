@@ -24,10 +24,10 @@ func init() { ShadowRoute = shadowRoute }
 const (
 	// ShadowTable keeps the tallies, one record per machine step.
 	ShadowTable = "system_one_shadow"
-	// RouteSure is the confidence a route would need to stand on System
-	// One: one mark for every destination, since an author's routes have
-	// no direction that is cheap to be wrong about.
-	RouteSure = 0.6
+	// RouteSure is how firmly a route must be chosen to stand on System One
+	// (Answer.Firm): one mark for every destination, since an author's
+	// routes have no direction that is cheap to be wrong about.
+	RouteSure = 0.75
 	// shadowWait is how long a step that has chosen waits for System One's
 	// answer before its trace moves on; the answer is still tallied.
 	shadowWait = 2 * time.Second
@@ -123,6 +123,7 @@ func shadowRoute(ctx context.Context, machine, step, prompt string, choices, des
 		defer cancel()
 		a, err := Ask(sctx, m, Question{System: routeShadowSys, State: prompt, Ask: "Which answer does the step give?", Options: opts, Both: true},
 			WithRouteKey("machine.route_shadow"))
+		Rest(err)
 		ch <- shadowResult{a, err}
 	}()
 	return func(chosen string) string {
@@ -138,9 +139,9 @@ func shadowRoute(ctx context.Context, machine, step, prompt string, choices, des
 				return "System One gave no answer (" + why + ")"
 			}
 			picked := strings.TrimSpace(choices[r.a.Choice])
-			line := fmt.Sprintf("System One chose %s at confidence %.2f in %s", picked, r.a.Confidence, r.a.Took.Round(time.Millisecond))
+			line := fmt.Sprintf("System One chose %s, firm %.2f%s, in %s", picked, r.a.Firm(), r.a.OrderLine(r.a.Choice), r.a.Took.Round(time.Millisecond))
 			switch {
-			case r.a.Confidence < RouteSure:
+			case r.a.Firm() < RouteSure:
 				tally(machine, step, line, func(t *ShadowTally) { t.Unsure++ })
 				return line + ": unsure, it would have left the answer to the step"
 			case picked == chosen:

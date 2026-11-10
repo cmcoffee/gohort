@@ -2,9 +2,12 @@ package decide
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/service"
@@ -33,8 +36,51 @@ func Chosen() string {
 }
 
 // Model is what answers decisions: Services > System One's choice, or nil
-// when it is off or its choice cannot answer (For).
-func Model() LLM { return For(Chosen()) }
+// when it is off, its choice cannot answer (For), or it is resting after a
+// failure (Rest).
+func Model() LLM {
+	if _, _, resting := Resting(); resting {
+		return nil
+	}
+	return For(Chosen())
+}
+
+// restFor is how long System One is passed over after a failed answer: a
+// server that is down fails every ask, and one that hangs held each check
+// for its whole timeout before it went on.
+const restFor = 3 * time.Minute
+
+var rest struct {
+	sync.Mutex
+	until time.Time
+	why   string
+}
+
+// Rest sets System One aside for restFor after err, an answer that failed
+// (an error, or no answer in time), with one warning for the whole rest.
+// A stop from the caller is not a failure of System One's.
+func Rest(err error) {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return
+	}
+	rest.Lock()
+	already := time.Now().Before(rest.until)
+	if !already {
+		rest.until, rest.why = time.Now().Add(restFor), err.Error()
+	}
+	rest.Unlock()
+	if !already {
+		Warn("[decide] System One failed (%v): checks skip it for %s", err, restFor)
+	}
+}
+
+// Resting reports whether System One is set aside after a failure, until
+// when, and why.
+func Resting() (until time.Time, why string, resting bool) {
+	rest.Lock()
+	defer rest.Unlock()
+	return rest.until, rest.why, time.Now().Before(rest.until)
+}
 
 // For is what provider answers decisions with, or nil: off, a model that is
 // not set, a connection that gives no decisions, or one that may not be used
@@ -63,6 +109,37 @@ func For(provider string) LLM {
 	return m
 }
 
+// Identity is what a choice is: the model or connection behind it, so a
+// result kept for one (a status, the judge map) is known to be stale when
+// the choice now means something else.
+func Identity(choice string) string {
+	switch choice {
+	case "":
+		return ""
+	case ProviderJudge:
+		live, _, _ := LiveJudgeLLM()
+		return "judge:" + live
+	case ProviderWorker:
+		return "worker:" + tierIdentity(LLMTable)
+	case ProviderLead:
+		return "lead:" + tierIdentity(LeadLLMTable)
+	}
+	return "connection:" + choice + "@" + service.Address(choice)
+}
+
+// tierIdentity is a model tier's provider, address and model, as stored.
+func tierIdentity(table string) string {
+	var p, e, m string
+	if AuthDB != nil {
+		if db := AuthDB(); db != nil {
+			db.Get(table, "provider", &p)
+			db.Get(table, "endpoint", &e)
+			db.Get(table, "model", &m)
+		}
+	}
+	return p + "|" + e + "|" + m
+}
+
 // Privacy is whether provider may answer decisions (ok), and whether it is
 // private in its own right (own) rather than allowed by the deployment's
 // declaration that every model is (Admin > Models), with why. A decision
@@ -72,7 +149,7 @@ func For(provider string) LLM {
 func Privacy(provider string) (ok, own bool, why string) {
 	switch provider {
 	case ProviderJudge:
-		own, why = true, "the Judge model, which is local or a peer's"
+		own, why = true, "the Offload model, which is local or a peer's"
 	case ProviderWorker, ProviderLead:
 		tier := "Worker"
 		if provider == ProviderLead {

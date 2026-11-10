@@ -10,7 +10,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
-const wardenComply = `{"verdicts":[{"rule":"never email outside the company","status":"comply","reason":"internal address"}]}`
+const wardenComply = `{"rules":[{"rule":1,"why":"internal address","answer":"comply"}]}`
 
 // flakyWarden fails its first n calls as a timeout, then complies.
 func flakyWarden(n int) *FakeLLM {

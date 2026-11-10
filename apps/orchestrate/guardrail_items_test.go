@@ -119,7 +119,7 @@ func TestTheRosterNeverReachesTheWarden(t *testing.T) {
 		t.Fatalf("only the CONDITION should render: %v", texts)
 	}
 
-	stub := &wardenStubLLM{reply: `{"verdicts":[]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[]}`}
 	turn := guardTurn(t, stub, agent)
 	// A requester who is nobody: the rule stays in play and gets rendered.
 	if _, err := turn.app.runWarden(turn.ctx, agent, guardHookPreOutput, "hi", requesterIdentity{}); err != nil {
@@ -264,7 +264,7 @@ func TestTheJudgeIsToldWhatTheCandidateIs(t *testing.T) {
 		Name: "X", Owner: "u", Guardrails: "@confirmed never say that",
 		GuardrailExceptions: []GuardrailException{{Name: "confirmed", Text: "the user has already confirmed"}},
 	}
-	stub := &wardenStubLLM{reply: `{"verdicts":[]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[]}`}
 	turn := guardTurn(t, stub, agent)
 	who := requesterIdentity{Authorized: true, AuthorizedAs: "Craig Coffee", AuthorizedVia: guardAuthAuthenticated}
 	if _, err := turn.app.runWarden(turn.ctx, agent, guardHookPreOutput, "some draft reply", who); err != nil {
@@ -291,7 +291,7 @@ func TestTheJudgeIsToldWhatTheCandidateIs(t *testing.T) {
 // depends on.
 func TestPreInputIsToldTheCandidateIsTheRequestersOwnWords(t *testing.T) {
 	agent := AgentRecord{Name: "X", Owner: "u", Guardrails: "never say that"}
-	stub := &wardenStubLLM{reply: `{"verdicts":[]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[]}`}
 	turn := guardTurn(t, stub, agent)
 	who := requesterIdentity{Authorized: true, AuthorizedAs: "Craig Coffee", AuthorizedVia: guardAuthAuthenticated}
 	if _, err := turn.app.runWarden(turn.ctx, agent, guardHookPreInput, "what did you call me?", who); err != nil {

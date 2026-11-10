@@ -119,19 +119,27 @@ func (a *AdminApp) llmSections() []ui.Section {
 			},
 		},
 		{
-			Title:    "Judge model",
+			Title:    "Decision Offloading",
 			Subtitle: "Takes gohort's own checks off the worker, so the worker spends its time on the agents.",
 			Detail: "What it is for. Around every turn gohort makes short checks of its own: the guardrail checks before input, each action and each reply, the tool-result scan, the turn and grounding judges, the image source check, the memory checks. " +
-				"On the worker, each one waits its turn behind the agents' rounds, and the agents' next round waits behind it. A Judge model is a second, usually smaller, model that answers the checks instead, so neither waits for the other.\n\n" +
+				"On the worker, each one waits its turn behind the agents' rounds, and the agents' next round waits behind it. An Offload model is a second, usually smaller, model that answers the checks instead, so neither waits for the other.\n\n" +
 				"Who it fits. A deployment with a second GPU or a spare machine (a small model there, such as a 4B or 9B), or a peer that lends a model: the checks move off the main model and busy turns get faster. " +
 				"A deployment whose worker is a hosted API: the checks stop being paid calls, and what they read stays on your hardware. " +
 				"It helps little with one GPU that the worker already fills: a second model there mostly moves the wait.\n\n" +
 				"How to set it up. Run the model on its own server (vLLM suits bursts of checks best; llama.cpp and Ollama work too), give its address and model here, and Test connection. " +
-				"Each check switched on under Checks, below, runs on it. Check tests, at the foot of this section (Test the checks, beside Test connection), ask each check's cases of it and the worker side by side; watch the log for a day too (call done in, route=).\n\n" +
+				"A check goes to it once the Offload map below shows its test cases all right on it, twice in a row; until then it stays on the worker. The map tests a new Offload model on its own a few minutes after it is set. Check tests, at the foot of this section (Test the checks, beside Test connection), show each case's answers side by side; watch the log for a day too (call done in, route=).\n\n" +
 				"Limits. Local or a peer only: the checks read everything the worker reads, the person's messages, tool results and replies, so a hosted model is refused. " +
-				"A smaller model is a weaker reader: if a check's decisions get worse, switch that check off and it goes back to the worker. " +
-				"A check with pictures goes to it only when Reads images is on. The Judge model never thinks: a check that asks to think (a confirming reading, a thorough guardrail) runs on the worker, which reasons faster at length, and every other call is sent with thinking off. If it fails a call, that call and the next few minutes of checks run on the worker. Its tokens count with the worker's in usage.",
+				"A smaller model is a weaker reader: a check it gets wrong is not mapped to it, and one you want kept off it whatever its cases say can be switched off under Keep checks on the worker. " +
+				"A check with pictures always runs on the worker: the checks the Offload model can be mapped to are text, so it needs no vision stack. The Offload model never thinks: a check that asks to think (a confirming reading, a thorough guardrail) runs on the worker, which reasons faster at length, and every other call is sent with thinking off. If it fails a call, that call and the next few minutes of checks run on the worker. Its tokens count with the worker's in usage.",
 			Body: ui.Stack{Children: []ui.Component{
+				// What the map may use, first: it caps the tiers below.
+				ui.FormPanel{
+					Source:     "api/judge-llm/mode",
+					PostURL:    "api/judge-llm/mode",
+					Invalidate: []string{"api/judge-llm", "api/judge-llm/map"},
+					Fields: []ui.FormField{{Field: "mode", Label: "Use", Type: "select", Options: offloadModeOptions(),
+						Help: "Which of the Offload model and System One checks may go to. The map below still decides check by check."}},
+				},
 				ui.FormPanel{
 					Assist:       true,
 					Source:       "api/judge-llm",
@@ -139,16 +147,16 @@ func (a *AdminApp) llmSections() []ui.Section {
 					TestLabel:    "Test connection",
 					TestShowWhen: "provider",
 					TestLink:     &ui.FormLink{Label: "Test the checks ↓", Href: "#" + checkTestsAnchor},
-					Invalidate:   []string{"api/judge-llm/calls"},
+					Invalidate:   []string{"api/judge-llm/calls", "api/judge-llm/map"},
 					Fields: tierReach([]ui.FormField{
 						{Field: "_live", Type: "readonly", Label: "In use"},
+						{Field: "_path", Type: "readonly", Label: "Decision path"},
 						{Field: "provider", Label: "Provider", Type: "select", Options: judgeProviderOptions(),
 							Help: "(use the worker) leaves the checks where they are. A peer offering inference appears here too."},
 						{Field: "model", Label: "Model", Type: "text", Placeholder: "e.g. Qwen/Qwen3.5-4B", SaveOnBlur: true,
 							ShowWhen:          "provider",
 							SuggestionsSource: "api/judge-llm/models", SuggestionsLabel: "List models",
 							Help: "List models asks the server what it serves."},
-						readsImagesField("provider"),
 					}),
 				},
 				// Which checks it answers, and how it does on their cases, at
@@ -156,9 +164,12 @@ func (a *AdminApp) llmSections() []ui.Section {
 				// Test connection links down to the check tests, so they are
 				// found without scrolling past the list.
 				ui.Subsection{
-					Title:    "Checks",
-					Subtitle: "Switched on, a check runs on the Judge model; off, on the worker.",
-					Body:     judgeCallsTable(),
+					Title:    "Offload map",
+					Subtitle: "A check goes to the Offload model, or asks System One first, only once its test cases came out all right there twice in a row. Everything else stays on the worker. A row's switch keeps that check on the worker whatever the map says.",
+					Detail: "A mapping is kept against what earned it: the Offload model as it runs, System One's choice, and the check's own prompts. When any of those changes, that check goes back to the worker, and the map tests it again on its own a few minutes later. " +
+						"A model that missed a case is not tested on it again until Map the checks (below) is pressed, so a check it cannot do does not cost a run every few minutes. " +
+						"A check with no test cases is never mapped.",
+					Body: judgeMapTable(),
 				},
 				checkTestsPanel(),
 			}},
@@ -538,21 +549,4 @@ func judgeProviderOptions() []ui.SelectOption {
 		out = append(out, o)
 	}
 	return out
-}
-
-// judgeCallsTable is the checks that may run on the Judge model, each with
-// its switch.
-func judgeCallsTable() ui.Table {
-	return ui.Table{
-		Source:    "api/judge-llm/calls",
-		RowKey:    "key",
-		EmptyText: "No checks are registered.",
-		Columns: []ui.Col{
-			{Field: "label", Label: "Check"},
-			{Field: "help", Label: "", Mute: true, Flex: 4, Line: 2},
-		},
-		RowActions: []ui.RowAction{
-			{Type: "toggle", Field: "on", PostTo: "api/judge-llm/calls/toggle?key={key}", Leading: true},
-		},
-	}
 }

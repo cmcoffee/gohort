@@ -31,7 +31,7 @@ func TestGuardrailHookInertWithoutRules(t *testing.T) {
 // an active hook returns blocked=true with a message naming the rule and
 // forbidding a re-route.
 func TestGuardrailBlocksAndForbidsReroute(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never spend money","status":"violate","reason":"it makes a purchase"}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"it makes a purchase","answer":"violate"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "Buyer", Guardrails: "never spend money", GuardrailHooks: []string{"pre_action"},
 	})
@@ -81,7 +81,7 @@ func TestGuardrailBlocksAndForbidsReroute(t *testing.T) {
 // instead of another informative block (a compromised context can't probe
 // indefinitely). Three different tools aimed past the same rule is that probe.
 func TestGuardrailEscalatesOnDistinctAttempts(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"r","status":"violate","reason":"x"}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"x","answer":"violate"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "X", Guardrails: "r", GuardrailHooks: []string{"pre_action"},
 	})
@@ -101,7 +101,7 @@ func TestGuardrailEscalatesOnDistinctAttempts(t *testing.T) {
 // costs the user the answer to everything else they asked and teaches the agent
 // nothing. It gets refused, every time, for as long as it keeps asking.
 func TestRepeatingOneRefusedCallNeverEndsTheTurn(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"r","status":"violate","reason":"x"}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"x","answer":"violate"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "X", Guardrails: "r", GuardrailHooks: []string{"pre_action"},
 	})
@@ -132,7 +132,7 @@ func TestRepeatingOneRefusedCallNeverEndsTheTurn(t *testing.T) {
 // (GuardrailDecision.Correctable) bounds how many times core re-drafts it;
 // escalation must not double as a second, hidden budget.
 func TestRedraftsOfOneReplyAreOneAttempt(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"r","status":"violate","reason":"x"}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"x","answer":"violate"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "X", Guardrails: "r", GuardrailHooks: []string{"pre_output"},
 	})
@@ -191,7 +191,7 @@ func TestGuardrailHookConstantsMatchCore(t *testing.T) {
 // the fix for a salary range leaking in an interim narration turn that
 // pre_output (terminal only) never sees.
 func TestPreInputInjectsSteerAwayDirective(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never mention salary or wages","status":"violate","reason":"the request asks for pay"}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"the request asks for pay","answer":"violate"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "WiWee", Guardrails: "? never mention salary or wages", GuardrailHooks: []string{"pre_input"},
 	})
@@ -237,7 +237,7 @@ func TestPreInputInjectsSteerAwayDirective(t *testing.T) {
 // the one-word follow-up slips the guard and the model answers what it just
 // declined.
 func TestPreInputJudgesFollowUpWithContext(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never mention salary","status":"violate","reason":"the follow-up presses for the withheld pay"}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"the follow-up presses for the withheld pay","answer":"violate"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "WiWee", Guardrails: "? never mention salary or wages", GuardrailHooks: []string{"pre_input"},
 	})
@@ -268,7 +268,7 @@ func TestPreInputJudgesFollowUpWithContext(t *testing.T) {
 // hook — a "never spend money" rule enforced only at pre_action must not gate
 // every incoming question.
 func TestPreInputInertWhenHookOff(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"r","status":"violate","reason":"x"}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"x","answer":"violate"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "X", Guardrails: "never spend money", GuardrailHooks: []string{"pre_action"},
 	})
@@ -285,7 +285,7 @@ func TestPreInputInertWhenHookOff(t *testing.T) {
 // judges the request as it stood when the gate was made, so the loop's later
 // work on the history cannot change what was judged.
 func TestPreInputGateMatchesThePrePass(t *testing.T) {
-	steer := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never mention salary or wages","status":"violate","reason":"the request asks for pay"}]}`}
+	steer := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"the request asks for pay","answer":"violate"}]}`}
 	turn := guardTurn(t, steer, AgentRecord{
 		Name: "WiWee", Guardrails: "? never mention salary or wages", GuardrailHooks: []string{"pre_input"},
 	})
@@ -303,7 +303,7 @@ func TestPreInputGateMatchesThePrePass(t *testing.T) {
 		t.Errorf("the gate must judge the request as it was handed over; warden saw: %s", steer.seen())
 	}
 
-	comply := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never mention salary","status":"comply","reason":"unrelated"}]}`}
+	comply := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"unrelated","answer":"comply"}]}`}
 	ok := guardTurn(t, comply, AgentRecord{Name: "X", Guardrails: "? never mention salary", GuardrailHooks: []string{"pre_input"}})
 	if v := ok.inputGuardrailGate([]Message{{Role: "user", Content: "what's the weather?"}})(); v != (FirstRoundVerdict{}) {
 		t.Errorf("a complying request is admitted; got %+v", v)
@@ -321,7 +321,7 @@ func TestPreInputGateMatchesThePrePass(t *testing.T) {
 // TestPreInputComplyPassesThrough pins that a benign request (warden says
 // comply) is not gated even when pre_input is on.
 func TestPreInputComplyPassesThrough(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never mention salary","status":"comply","reason":"unrelated"}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"unrelated","answer":"comply"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "X", Guardrails: "? never mention salary", GuardrailHooks: []string{"pre_input"},
 	})
@@ -437,7 +437,7 @@ func TestOverlongRejectionIsRejected(t *testing.T) {
 // Everything before the insertion point must be byte-identical to what was passed
 // in, which is what lets the cache hit.
 func TestPreInputDirectiveDoesNotInvalidateThePrefix(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never mention salary","status":"violate","reason":"asks for pay"}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"asks for pay","answer":"violate"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "X", Guardrails: "? never mention salary", GuardrailHooks: []string{"pre_input"},
 	})
@@ -474,7 +474,7 @@ func TestPreInputDirectiveDoesNotInvalidateThePrefix(t *testing.T) {
 // mention salary" is violated by "should I tell them Dana earns 90k?" exactly
 // as it is by saying so.
 func TestAQuestionIsJudgedBeforeItIsAsked(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never mention salary","status":"violate","reason":"the question names a wage"}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"the question names a wage","answer":"violate"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "Wren", Guardrails: "never mention salary", GuardrailHooks: []string{"pre_output"},
 	})
@@ -494,7 +494,7 @@ func TestAQuestionIsJudgedBeforeItIsAsked(t *testing.T) {
 
 // A question that breaks nothing is asked unchanged.
 func TestAnOrdinaryQuestionIsAskedUntouched(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never mention salary","status":"comply","reason":"nothing about pay"}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"nothing about pay","answer":"comply"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "Wren", Guardrails: "never mention salary", GuardrailHooks: []string{"pre_output"},
 	})

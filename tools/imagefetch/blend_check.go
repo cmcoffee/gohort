@@ -46,7 +46,7 @@ import (
 
 func init() {
 	RegisterJudgeCall(JudgeCall{Key: "imagefetch/source_check", Label: "Image source check",
-		Help: "After an edit from source pictures, separate looks describe each picture and a judge compares them. The descriptions go to the Judge model only when it reads images."})
+		Help: "After an edit from source pictures, separate looks describe each picture and a judge compares them. The descriptions run on the worker."})
 }
 
 // sourceVerdict is the check's answer about one source.

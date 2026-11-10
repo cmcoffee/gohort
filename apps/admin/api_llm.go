@@ -9,9 +9,12 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/activity"
+	"github.com/cmcoffee/gohort/core/checktest"
+	"github.com/cmcoffee/gohort/core/decide"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/keystore"
 	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/gohort/core/ui"
 )
 
 // registerLLMRoutes wires the llm API under the admin sub-mux.
@@ -72,6 +75,11 @@ func (a *AdminApp) registerLLMRoutes(sub *http.ServeMux) {
 	sub.HandleFunc("/api/judge-llm/test", a.handleLLMTest(JudgeLLMTable))
 	sub.HandleFunc("/api/judge-llm/models", jsonapi.Post(a.db, a.handleLLMModels(JudgeLLMTable), a.gate()))
 	sub.HandleFunc("/api/judge-llm/calls", jsonapi.Get(a.db, a.handleJudgeCalls, a.gate()))
+	sub.HandleFunc("/api/judge-llm/map", jsonapi.Get(a.db, a.handleJudgeMap, a.gate()))
+	sub.HandleFunc("/api/judge-llm/mode", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleOffloadMode, a.gate()),
+		"POST": jsonapi.Post(a.db, a.handleOffloadModeSave, a.gate()),
+	}.Serve)
 	sub.HandleFunc("/api/judge-llm/calls/toggle", jsonapi.Post(a.db, a.handleJudgeCallToggle, a.gate()))
 	sub.HandleFunc("/api/check-tests", jsonapi.Get(a.db, a.handleCheckTests, a.gate()))
 
@@ -403,6 +411,10 @@ func (a *AdminApp) handleLLMConfig(table string, worker bool) func(c *jsonapi.Ca
 			"no_think_prepend_user":   ntPrependUser,
 			"api_key":                 "", // masked; blank on the form means "keep existing"
 		}
+		// The way a check's decision goes, on the Offload model's form only.
+		if p := decisionPathFor(table); p != "" {
+			out["_path"] = p
+		}
 		a.db.Get(table, "context_size", &contextSize)
 		out["context_size"] = contextSize
 		if worker {
@@ -468,7 +480,7 @@ func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonap
 		// this deployment runs: a local server, or a peer.
 		if table == JudgeLLMTable && strings.TrimSpace(req.Provider) != "" {
 			if ok, why := JudgePrivate(strings.TrimSpace(req.Provider), strings.TrimSpace(req.Endpoint)); !ok {
-				return nil, jsonapi.BadRequest("the Judge model must run locally or on a peer, since the checks read everything the worker does: " + why)
+				return nil, jsonapi.BadRequest("the Offload model must run locally or on a peer, since the checks read everything the worker does: " + why)
 			}
 		}
 		// A Keystore key is checked before anything is saved: one that does
@@ -578,6 +590,118 @@ func (a *AdminApp) newLeadSkipsImages() bool {
 	a.db.Get(LLMTable, "provider", &workerProvider)
 	a.db.Get(LLMTable, "no_images", &workerNoImages)
 	return workerProvider != "" && !workerNoImages && !AllLLMsPrivate()
+}
+
+// offloadModeOptions are the Decision Offloading modes, as the select offers
+// them.
+func offloadModeOptions() []ui.SelectOption {
+	return []ui.SelectOption{
+		{Value: OffloadBoth, Label: "Offload model and System One", Help: "System One is asked first where the map gives it a check, then the Offload model, then the worker."},
+		{Value: OffloadSystemOne, Label: "System One only", Help: "System One is asked first where the map gives it a check; full checks stay on the worker. For a peer's System One without lending it your full checks, set the peer as the Offload model and System One to use it."},
+		{Value: OffloadModelOnly, Label: "Offload model only", Help: "Full checks go to the Offload model where the map gives them to it; System One is not asked."},
+		{Value: OffloadOff, Label: "Off", Help: "Every check runs on the worker. The map is kept, so turning this back on uses it at once."},
+	}
+}
+
+// handleOffloadMode is the Decision Offloading mode.
+func (a *AdminApp) handleOffloadMode(c *jsonapi.Call) (any, error) {
+	return map[string]any{"mode": OffloadMode()}, nil
+}
+
+// handleOffloadModeSave sets the Decision Offloading mode.
+func (a *AdminApp) handleOffloadModeSave(c *jsonapi.Call, req struct {
+	Mode string `json:"mode"`
+}) (any, error) {
+	known := false
+	for _, o := range offloadModeOptions() {
+		known = known || o.Value == req.Mode
+	}
+	if !known {
+		return nil, jsonapi.BadRequest("no Decision Offloading mode named " + req.Mode)
+	}
+	SetOffloadMode(req.Mode)
+	adminChange(c.R, activity.Settings, "Decision Offloading: %s", req.Mode)
+	return map[string]any{"mode": OffloadMode()}, nil
+}
+
+// preguardLine is the warden pre-guard's record as the section says it.
+func preguardLine(r PreguardRecord) string {
+	var b strings.Builder
+	switch {
+	case r.On && !MappedTo(PreguardRoute, MapSystemOne):
+		b.WriteString("Pre-guard on, but not used yet: its cases are not mapped to System One, or the Use mode leaves System One out.")
+	case r.On:
+		b.WriteString("Pre-guard on: System One skips the agent's own rules it is sure are not engaged.")
+	default:
+		b.WriteString("Pre-guard off: switch it on here to let System One skip rules that are not engaged.")
+	}
+	if r.Skipped > 0 || r.Missed > 0 {
+		fmt.Fprintf(&b, " Skipped %d rule(s) so far; %d of those re-checked by the full warden after the turn; %d found violated.", r.Skipped, r.Verified, r.Missed)
+	}
+	if r.OffWhy != "" && !r.On {
+		b.WriteString("\nTurned itself off: " + r.OffWhy + ".")
+	}
+	return b.String()
+}
+
+// decisionPathFor is the Decision Offloading section's path, for the
+// Offload model's form: "" on the other tiers' forms.
+func decisionPathFor(table string) string {
+	if table != JudgeLLMTable {
+		return ""
+	}
+	return decisionPath()
+}
+
+// decisionPath is the way a check's decision goes, from what is set: System
+// One when a connection or model answers it, the Offload model when one is
+// set, and the worker always last. Said outright because an unset Offload
+// model reads as "offloading is off" while System One is still in use.
+func decisionPath() string {
+	var steps, idle []string
+	// Resting after a failure, System One is skipped: said so, with until
+	// when, rather than left out as if it were not set.
+	resting := ""
+	if until, why, ok := decide.Resting(); ok && decide.For(decide.Chosen()) != nil {
+		resting = fmt.Sprintf("\nSystem One failed (%s); checks skip it until %s, then try it again.", why, until.Format("15:04"))
+	}
+	if decide.Model() != nil {
+		if OffloadUses(MapSystemOne) {
+			steps = append(steps, "System One ("+systemOneChoiceName(decide.Chosen())+")")
+		} else {
+			idle = append(idle, "System One")
+		}
+	}
+	if JudgeLLM() != nil {
+		live, _, _ := LiveJudgeLLM()
+		if OffloadUses(MapJudge) {
+			steps = append(steps, "Offload model ("+live+")")
+		} else {
+			idle = append(idle, "the Offload model")
+		}
+	}
+	steps = append(steps, "Worker")
+	out := strings.Join(steps, " → ") + "\nA check takes a step only where the map below shows it earned it; otherwise it goes on to the next."
+	if len(steps) == 1 {
+		out = "Worker only: every check runs on the worker."
+	}
+	if len(idle) > 0 {
+		out += "\nSet but not used in this mode: " + strings.Join(idle, " and ") + "."
+	}
+	return out + resting
+}
+
+// systemOneChoiceName is a System One choice as the path says it.
+func systemOneChoiceName(choice string) string {
+	switch choice {
+	case decide.ProviderJudge:
+		return "the Offload model"
+	case decide.ProviderWorker:
+		return "the worker model"
+	case decide.ProviderLead:
+		return "the lead model"
+	}
+	return choice
 }
 
 func liveTierDescription(table string) string {
@@ -744,7 +868,7 @@ func liveJudgeDescription() string {
 	case initErr != "":
 		return "Not running: " + initErr + ". The checks run on the worker."
 	case live == "":
-		return "No Judge model: the checks run on the worker."
+		return "No Offload model: the checks run on the worker."
 	}
 	out := "Running now: " + live
 	if time.Now().Before(rest) {
@@ -759,14 +883,25 @@ type judgeCallRow struct {
 	Label string `json:"label"`
 	Help  string `json:"help"`
 	On    bool   `json:"on"`
+	// Tested is "untested" for a check with no check-test cases: no run
+	// says how a model does on it before it is moved.
+	Tested string `json:"tested,omitempty"`
 }
 
 // handleJudgeCalls is every check that may run on the Judge model, and
 // whether it does.
 func (a *AdminApp) handleJudgeCalls(c *jsonapi.Call) (any, error) {
 	rows := []judgeCallRow{}
+	tested := map[string]bool{}
+	for _, ch := range checktest.Checks() {
+		tested[ch.Key] = true
+	}
 	for _, jc := range JudgeCalls() {
-		rows = append(rows, judgeCallRow{Key: jc.Key, Label: jc.Label, Help: jc.Help, On: JudgeCallOn(jc.Key)})
+		row := judgeCallRow{Key: jc.Key, Label: jc.Label, Help: jc.Help, On: JudgeCallOn(jc.Key)}
+		if !tested[jc.Key] {
+			row.Tested = "untested"
+		}
+		rows = append(rows, row)
 	}
 	return rows, nil
 }
@@ -781,8 +916,23 @@ func (a *AdminApp) handleJudgeCallToggle(c *jsonapi.Call, req struct {
 	for _, jc := range JudgeCalls() {
 		known = known || jc.Key == key
 	}
+	for _, ch := range checktest.Checks() {
+		known = known || (ch.Key == key && ch.Structured)
+	}
 	if !known {
 		return nil, jsonapi.BadRequest("no check named " + key)
+	}
+	// The pre-guard's switch is its own record, off until switched on, and
+	// switching it on clears why it last turned itself off.
+	if key == PreguardRoute {
+		UpdatePreguard(func(r *PreguardRecord) {
+			r.On = req.On
+			if req.On {
+				r.OffWhy = ""
+			}
+		})
+		adminChange(c.R, activity.Settings, "Warden pre-guard: %s", map[bool]string{true: "on", false: "off"}[req.On])
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
 	var off []string
 	a.db.Get(JudgeLLMTable, "off", &off)
@@ -791,6 +941,6 @@ func (a *AdminApp) handleJudgeCallToggle(c *jsonapi.Call, req struct {
 		off = append(off, key)
 	}
 	a.db.Set(JudgeLLMTable, "off", off)
-	adminChange(c.R, activity.Settings, "Judge model: %s %s", key, map[bool]string{true: "on", false: "off (stays on the worker)"}[req.On])
+	adminChange(c.R, activity.Settings, "Offload model: %s %s", key, map[bool]string{true: "on", false: "off (stays on the worker)"}[req.On])
 	return jsonapi.Empty(http.StatusNoContent), nil
 }

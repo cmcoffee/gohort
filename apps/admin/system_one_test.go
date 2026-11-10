@@ -106,7 +106,7 @@ func TestSystemOneIsChosenUnderServices(t *testing.T) {
 	conn("home-system-one", srv.URL+"/v1")
 	conn("far-system-one", "http://203.0.113.5/v1")
 	got := strings.Join(values(), " | ")
-	if !strings.HasPrefix(got, "=Off | judge=Use the Judge model | home-system-one=") || strings.Contains(got, "far-system-one") ||
+	if !strings.HasPrefix(got, "=Off | judge=Use the Offload model | home-system-one=") || strings.Contains(got, "far-system-one") ||
 		strings.Contains(got, "worker=") || strings.Contains(got, "lead=") || !strings.HasSuffix(got, "decide.choice=+ Add another…") {
 		t.Errorf("the private choices: %s", got)
 	}

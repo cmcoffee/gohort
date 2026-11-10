@@ -1025,3 +1025,91 @@ func TestPeerPromptsFromAnOlderPeerAreEmpty(t *testing.T) {
 		t.Error("an earlier copy survived an answer of no wording")
 	}
 }
+
+// The Judge model is lent as a tier of its own, named by its model or by
+// "judge", and only while it is local. It runs on a server of its own, so a
+// peer's request for it neither waits for the worker's slot nor takes it.
+func TestTheJudgeIsLentOnItsOwnServer(t *testing.T) {
+	db := peerModelDB(t)
+	StartLlamacppScheduler(1)
+	if err := AcquireLlamacppSlot(context.Background(), "local"); err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	t.Cleanup(func() { ReleaseLlamacppSlot("local") })
+	var reached atomic.Bool
+	judge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached.Store(true)
+		fmt.Fprint(w, `{}`)
+	}))
+	defer judge.Close()
+	setTier(db, LLMTable, "llama.cpp", "qwen-27b", "http://127.0.0.1:8080/v1")
+	setTier(db, JudgeLLMTable, "vllm", "judge-9b", judge.URL+"/v1")
+	if got, err := resolvePeerTier("judge"); err != nil || got.Model != "judge-9b" || got.Tier != "judge" {
+		t.Fatalf("the judge tier: %+v %v", got, err)
+	}
+	if got, _ := resolvePeerTier(""); got.Tier != "worker" {
+		t.Errorf("a bare request went to %q, not the worker", got.Tier)
+	}
+	pk, _ := MintPeerKey("mac", []string{PeerCapModels}, 0)
+	r := httptest.NewRequest(http.MethodPost, "/api/peer/v1/chat/completions", strings.NewReader(`{"model":"judge-9b","messages":[]}`))
+	r.Header.Set(peerKeyHeader, peerAuth(t, pk))
+	done := make(chan struct{})
+	go func() { defer close(done); HandlePeerChatCompletions(httptest.NewRecorder(), r) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("a judge request waited behind the worker's held slot")
+	}
+	if !reached.Load() {
+		t.Error("the judge request never reached the judge's server")
+	}
+	setTier(db, JudgeLLMTable, "openai", "gpt-4o", "")
+	if _, err := resolvePeerTier("judge"); err == nil {
+		t.Error("a hosted judge was lent")
+	}
+}
+
+// A peer's System One decision reaches the lent model's own /v1/systemone,
+// body and answer untouched; the Judge model takes no slot, so it answers
+// while the worker's is held. A lent model not on vLLM answers 404, which
+// sends the caller to the first-token reading.
+func TestAPeerSystemOneDecisionReachesTheLentModel(t *testing.T) {
+	db := peerModelDB(t)
+	StartLlamacppScheduler(1)
+	if err := AcquireLlamacppSlot(context.Background(), "local"); err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	t.Cleanup(func() { ReleaseLlamacppSlot("local") })
+	var gotPath, gotBody string
+	judge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotPath, gotBody = r.URL.Path, string(b)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"answers":{"d":{"probabilities":{"o00":0.9,"o01":0.1}}}}`)
+	}))
+	defer judge.Close()
+	setTier(db, LLMTable, "llama.cpp", "qwen-27b", "http://127.0.0.1:8080/v1")
+	setTier(db, JudgeLLMTable, "vllm", "judge-9b", judge.URL+"/v1")
+	pk, _ := MintPeerKey("mac", []string{PeerCapModels}, 0)
+	ask := func(body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/api/peer/v1/systemone", strings.NewReader(body))
+		r.Header.Set(peerKeyHeader, peerAuth(t, pk))
+		w := httptest.NewRecorder()
+		done := make(chan struct{})
+		go func() { defer close(done); HandlePeerSystemOne(w, r) }()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("a System One decision waited behind the worker's held slot")
+		}
+		return w
+	}
+	w := ask(`{"model":"judge","state":"a message","questions":{"d":{"type":"choice"}}}`)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"o00":0.9`) || gotPath != "/v1/systemone" ||
+		!strings.Contains(gotBody, `"model":"judge-9b"`) || !strings.Contains(gotBody, `"state":"a message"`) {
+		t.Errorf("the decision: %d %s, upstream %s %s", w.Code, w.Body.String(), gotPath, gotBody)
+	}
+	if w := ask(`{"model":"qwen-27b"}`); w.Code != http.StatusNotFound {
+		t.Errorf("a lent llama.cpp model answered System One: %d", w.Code)
+	}
+}

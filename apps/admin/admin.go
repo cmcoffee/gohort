@@ -97,6 +97,8 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	if AuthDB != nil {
 		a.db = AuthDB()
 	}
+	// The judge map maps what it is missing on its own (check_tests.go).
+	startCheckMap()
 	// How every maintenance pass ended, the scheduled ones too, is kept
 	// beside its button (maintenance_history.go).
 	OnMaintenanceEnded = a.recordMaintenanceEnd

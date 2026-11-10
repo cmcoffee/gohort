@@ -21,7 +21,7 @@ func moltbookCall(action, content string) ToolCall {
 // tool ran and how it ended in the trusted block, what the agent passed fenced
 // apart. A rule about order is judgeable from that and was not before.
 func TestTheWardenSeesWhatTheTurnAlreadyDid(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":1,"status":"comply","reason":"verified first"}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"verified first","answer":"comply"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{Name: "Poster", Guardrails: verifyRule})
 	turn.noteDoneCall(moltbookCall("verify_content", "Nice point about tide pools."), false)
 	turn.noteDoneCall(moltbookCall("get_feed", ""), true)
@@ -50,7 +50,7 @@ func TestTheWardenSeesWhatTheTurnAlreadyDid(t *testing.T) {
 // exactly what it always was.
 func TestNothingDoneIsTheOldCheck(t *testing.T) {
 	ask := func(hook string, done []ToolCall) string {
-		stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":1,"status":"comply","reason":"ok"}]}`}
+		stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"ok","answer":"comply"}]}`}
 		turn := guardTurn(t, stub, AgentRecord{Name: "Poster", Guardrails: verifyRule})
 		for _, c := range done {
 			turn.noteDoneCall(c, false)
@@ -59,7 +59,7 @@ func TestNothingDoneIsTheOldCheck(t *testing.T) {
 		return stub.seen()
 	}
 	plain := func(hook string) string {
-		stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":1,"status":"comply","reason":"ok"}]}`}
+		stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"ok","answer":"comply"}]}`}
 		app := &OrchestrateApp{}
 		app.LLM = stub
 		app.runWarden(context.Background(), AgentRecord{Name: "Poster", Guardrails: verifyRule}, hook, "moltbook post", requesterIdentity{Owner: true})
@@ -122,7 +122,7 @@ func TestEveryGuardedLoopRecordsWhatItDid(t *testing.T) {
 // The warden itself shows what was done at pre_action only, whatever it is
 // handed; and the enforcement set every loop is given is what records it.
 func TestOnlyAnActionCheckIsShownWhatWasDone(t *testing.T) {
-	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":1,"status":"comply","reason":"ok"}]}`}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"ok","answer":"comply"}]}`}
 	app := &OrchestrateApp{}
 	app.LLM = stub
 	facts := wardenFacts{Done: []doneCall{{Tool: "moltbook/verify_content"}}}

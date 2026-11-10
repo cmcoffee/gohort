@@ -100,6 +100,14 @@ func TestBothWaysCancelsAPositionBias(t *testing.T) {
 	if math.Abs(a.Probs[0]-0.5) > 1e-9 || a.Confidence > 1e-9 {
 		t.Errorf("a pure position bias read as %v, confidence %v", a.Probs, a.Confidence)
 	}
+	// And each order is kept, so a low confidence can be told apart: a
+	// lean to the label shown second reads 0.10 in order, 0.90 reversed.
+	if got := a.OrderLine(0); got != " (0.10 in order, 0.90 reversed)" {
+		t.Errorf("order line %q", got)
+	}
+	if (Answer{}).OrderLine(0) != "" {
+		t.Error("an answer asked once has an order line")
+	}
 }
 
 // No option's label among the likely first tokens is no decision; labels
@@ -169,5 +177,31 @@ func TestTheServersOwnSystemOneIsAskedFirst(t *testing.T) {
 	// weighed by the label mass 0.9.
 	if math.Abs(a.Probs[0]-0.9) > 1e-9 || math.Abs(a.Confidence-0.72) > 1e-9 || math.Abs(a.LabelMass-0.9) > 1e-9 {
 		t.Errorf("probs %v, confidence %v, label mass %v", a.Probs, a.Confidence, a.LabelMass)
+	}
+}
+
+// An answer stands on how firmly it was chosen: the weaker of the two asks'
+// probabilities when both chose it, nothing when they chose differently.
+// An answer right both ways but not by much is firm; one that followed the
+// order the options were shown in is not, however its average reads.
+func TestAnAnswerIsAsFirmAsItsWeakerAsk(t *testing.T) {
+	both := Answer{OK: true, Choice: 0, Orders: [][]float64{{0.73, 0.27}, {0.53, 0.47}}}
+	if f := both.Firm(); math.Abs(f-0.53) > 1e-9 {
+		t.Errorf("both asks chose it: firm %v, want 0.53", f)
+	}
+	lean := Answer{OK: true, Choice: 1, Orders: [][]float64{{0.90, 0.10}, {0.07, 0.93}}}
+	if f := lean.Firm(); f != 0 {
+		t.Errorf("the asks chose differently: firm %v, want 0", f)
+	}
+	once := Answer{OK: true, Choice: 1, Orders: [][]float64{{0.2, 0.8}}}
+	if f := once.Firm(); math.Abs(f-0.8) > 1e-9 {
+		t.Errorf("asked once: firm %v", f)
+	}
+	weighed := Answer{OK: true, Choice: 0, Native: true, LabelMass: 0.5, Orders: [][]float64{{0.9, 0.1}, {0.9, 0.1}}}
+	if f := weighed.Firm(); math.Abs(f-0.45) > 1e-9 {
+		t.Errorf("weighed by label mass: firm %v, want 0.45", f)
+	}
+	if (Answer{}).Firm() != 0 {
+		t.Error("no answer is firm")
 	}
 }

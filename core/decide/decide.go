@@ -51,6 +51,11 @@ type Answer struct {
 	// (native only; 0 when not known).
 	Native    bool
 	LabelMass float64
+	// Orders are the options' probabilities as each ask saw them, the
+	// options in order first, then reversed (Both), each renormalised among
+	// the labels: an answer that follows the position it was shown in is a
+	// leaning toward a label, not a judgement.
+	Orders [][]float64
 }
 
 // prefix is what the reply is pre-started with, so its next token is a label.
@@ -90,18 +95,20 @@ func Ask(ctx context.Context, llm LLM, q Question, opts ...ChatOption) (Answer, 
 	if err != nil {
 		return Answer{}, err
 	}
+	orders := [][]float64{normalised(probs)}
 	if q.Both {
 		second, mass2, _, err := ask(rev)
 		if err != nil {
 			return Answer{}, err
 		}
+		orders = append(orders, normalised(second))
 		for i := range probs {
 			probs[i] = (probs[i] + second[i]) / 2
 		}
 		mass = (mass + mass2) / 2
 	}
 	a := answerFrom(probs, time.Since(began))
-	a.Native, a.LabelMass = native, mass
+	a.Native, a.LabelMass, a.Orders = native, mass, orders
 	// Weighted by how much of the model's probability was on the labels at
 	// all, as the server's own confidence is: an answer the model barely put
 	// on the options reads as the weak one it is.
@@ -109,6 +116,39 @@ func Ask(ctx context.Context, llm LLM, q Question, opts ...ChatOption) (Answer, 
 		a.Confidence *= mass
 	}
 	return a, nil
+}
+
+// Firm is how firmly the answer was chosen: the weaker of the probabilities
+// each ask gave the chosen option, when every ask chose it, and 0 when the
+// asks chose differently. It is what decides whether an answer stands.
+//
+// The averaged Confidence read an answer right both times but not by much
+// (0.73 one way, 0.53 the other) as a coin flip, and could not tell it from
+// one that followed whichever option came first (0.10 one way, 0.93 the
+// other), which is the answer that should not stand. Weighted by label mass
+// like Confidence, when the server reported it.
+func (a Answer) Firm() float64 {
+	if !a.OK || len(a.Orders) == 0 {
+		return 0
+	}
+	weakest := 1.0
+	for _, o := range a.Orders {
+		if a.Choice >= len(o) {
+			return 0
+		}
+		for i, p := range o {
+			if i != a.Choice && p > o[a.Choice] {
+				return 0 // this ask chose otherwise
+			}
+		}
+		if o[a.Choice] < weakest {
+			weakest = o[a.Choice]
+		}
+	}
+	if a.Native && a.LabelMass > 0 {
+		weakest *= a.LabelMass
+	}
+	return weakest
 }
 
 // systemOner is a model that can be asked a structured decision directly:
@@ -240,6 +280,22 @@ func labelIndex(token string, n int) (int, bool) {
 	}
 	k := int(c) - 'A'
 	return k, k >= 0 && k < n
+}
+
+// normalised is p renormalised to sum to one, or p when it sums to nothing.
+func normalised(p []float64) []float64 {
+	total := 0.0
+	for _, v := range p {
+		total += v
+	}
+	out := append([]float64(nil), p...)
+	if total <= 0 {
+		return out
+	}
+	for i := range out {
+		out[i] /= total
+	}
+	return out
 }
 
 // answerFrom renormalises the options' probabilities among themselves, picks

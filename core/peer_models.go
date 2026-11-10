@@ -159,6 +159,10 @@ func peerServableTiers() []peerServableTier {
 	for _, t := range []struct{ tier, table string }{
 		{"worker", LLMTable},
 		{"lead", LeadLLMTable},
+		// The Judge model, the checks' own: lent as a tier of its own, so a
+		// peer can use this instance's checks model as its Judge. Local only
+		// (peerTierConfig), as the Judge itself is.
+		{"judge", JudgeLLMTable},
 	} {
 		cfg, ok := peerTierConfig(t.tier, t.table)
 		if !ok {
@@ -245,6 +249,101 @@ func upstreamChatURL(endpoint string) (string, error) {
 	}
 	u.Path = path + "/chat/completions"
 	return u.String(), nil
+}
+
+// HandlePeerSystemOne serves POST /api/peer/v1/systemone: a System One
+// decision (core/decide) asked of a lent model, forwarded to that model's own
+// server's /v1/systemone (vLLM 0.32+). The borrowing side's client asks this
+// path of a peer as it would of a local vLLM, so a peer's Judge model answers
+// decisions natively; an upstream without the endpoint answers 404, and the
+// caller reads the first token through chat completions instead.
+//
+// A resource and its output only, as everything behind a peer key is: the
+// question goes in and the decision comes out, through the same models
+// permission. The Judge model runs on a server of its own and takes no slot;
+// a worker or lead takes the slot its chat does.
+func HandlePeerSystemOne(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		peerDeny(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	k, ok := peerAuthorize(w, r, PeerCapModels)
+	if !ok {
+		return
+	}
+	r, held, ok := peerHold(w, r, k, PeerCapModels)
+	if !ok {
+		return
+	}
+	defer held()
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, peerModelMaxBody))
+	if err != nil {
+		peerDeny(w, http.StatusBadRequest, "could not read the request body: "+err.Error())
+		return
+	}
+	var peek struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(body, &peek); err != nil {
+		peerDeny(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+		return
+	}
+	tier, err := resolvePeerTier(peek.Model)
+	if err != nil {
+		peerDeny(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if tier.Provider != "vllm" {
+		// Only vLLM has the endpoint; said as the 404 a local server without it
+		// gives, which is what tells the caller to read the first token.
+		peerDeny(w, http.StatusNotFound, "the model lent here is not served by vLLM, which System One decisions need")
+		return
+	}
+	target, err := upstreamChatURL(tier.Endpoint)
+	if err != nil {
+		peerDeny(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	target = strings.TrimSuffix(target, "/chat/completions") + "/systemone"
+	if want := strings.TrimSpace(peek.Model); want != "" && want != tier.Model {
+		if patched, err := patchJSONModel(body, tier.Model); err == nil {
+			body = patched
+		}
+	}
+	ctx := WithCostAttribution(r.Context(), "peer:"+k.Label)
+	if tier.Tier != "judge" {
+		release, err := acquirePeerModelSlot(ctx, tier.Provider, "peer:"+k.Label)
+		if err != nil {
+			peerDeny(w, http.StatusServiceUnavailable, "gave up waiting for a slot on this instance's model: "+err.Error())
+			return
+		}
+		defer release()
+	}
+	defer notePeerCall("peer:"+k.Label, peerCall{tier: tier.Tier, app: peerCallApp(r), route: peerCallRoute(r)})()
+	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(cctx, http.MethodPost, target, strings.NewReader(string(body)))
+	if err != nil {
+		peerDeny(w, http.StatusInternalServerError, "could not build the upstream request: "+err.Error())
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if key := strings.TrimSpace(tier.APIKey); key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		peerDeny(w, http.StatusBadGateway, "the local model did not answer: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	out, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+	w.WriteHeader(resp.StatusCode)
+	w.Write(out)
+	touchPeerKey(k)
 }
 
 // upstreamModelsURL builds the upstream /v1/models URL, matching LlamaCppModels.
@@ -373,11 +472,20 @@ func HandlePeerChatCompletions(w http.ResponseWriter, r *http.Request) {
 	lane := peerCallLane(r)
 	ctx = WithRunLane(ctx, lane)
 	served := peerServedTier(tier.Tier)
-	if _, err := holdForLane(ctx, served); err != nil {
-		peerDeny(w, http.StatusServiceUnavailable, "gave up waiting for this instance's people to finish with the model: "+err.Error())
-		return
+	// The Judge model runs on a server of its own (LLMProviderConfig.
+	// SeparateServer): it neither waits for this instance's people on the
+	// worker nor takes the worker's slot, as this instance's own checks do not.
+	ownServer := tier.Tier == "judge"
+	if !ownServer {
+		if _, err := holdForLane(ctx, served); err != nil {
+			peerDeny(w, http.StatusServiceUnavailable, "gave up waiting for this instance's people to finish with the model: "+err.Error())
+			return
+		}
 	}
-	release, err := acquirePeerModelSlot(ctx, tier.Provider, "peer:"+k.Label)
+	release, err := func() {}, error(nil)
+	if !ownServer {
+		release, err = acquirePeerModelSlot(ctx, tier.Provider, "peer:"+k.Label)
+	}
 	if err != nil {
 		// Queued and the caller went away, or the deadline passed while
 		// waiting. Not an upstream failure, and saying so keeps a busy GPU from

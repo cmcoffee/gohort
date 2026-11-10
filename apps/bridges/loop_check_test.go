@@ -88,7 +88,10 @@ func TestABlownBudgetIsCheckedBeforeItCuts(t *testing.T) {
 func TestTheLoopCheckAsksSystemOneFirst(t *testing.T) {
 	prevRoot := RootDB
 	RootDB = &DBase{Store: kvlite.MemStore()}
-	t.Cleanup(func() { RootDB = prevRoot; SetSharedJudgeLLM(nil, false, "", "") })
+	prevGate := JudgeMapGate
+	// The loop check's System One form is mapped (its cases came out right).
+	JudgeMapGate = func(key, tier string) bool { return key == loopCheckRoute && tier == MapSystemOne }
+	t.Cleanup(func() { RootDB = prevRoot; SetSharedJudgeLLM(nil, false, "", ""); JudgeMapGate = prevGate })
 	looping, asked := 0.0, 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		asked++

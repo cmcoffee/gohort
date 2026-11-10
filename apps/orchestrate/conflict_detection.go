@@ -20,6 +20,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/decide"
 )
 
 // TunableConflictDetection gates the finding conflict rail.
@@ -152,8 +153,34 @@ func conflictJudgeExcerpt(text string) string {
 // Mirrors the fact layer's judgeSupersedes: a plain JSON array of indices, worker
 // tier, no-think. Best-effort — nil chat, no candidates, error, or unparseable
 // reply yields no conflict (the finding is simply saved without a flag).
+// conflictQuickSystem is the conflict check's first question as System One
+// reads it.
+const conflictQuickSystem = `A memory holds saved research findings, and a new finding is being saved. You decide whether the new finding contradicts any existing one: an incompatible claim about the same thing, so both cannot be currently true. A finding that adds detail, covers a different aspect, or agrees is not a contradiction.`
+
+// conflictQuick is the conflict check's first question as a fixed choice
+// (core.QuickChoice): none stands on System One when it is sure; a
+// contradiction needs the full check, which names which findings.
+func conflictQuick(newContent string, candidates []SearchHit) QuickChoice {
+	var list strings.Builder
+	for i, h := range candidates {
+		fmt.Fprintf(&list, "%d. %s\n", i+1, strings.ReplaceAll(conflictJudgeExcerpt(h.Text), "\n", " "))
+	}
+	return QuickChoice{Key: "memory.conflict_check", System: conflictQuickSystem,
+		State: fmt.Sprintf("NEW finding: %q\n\nEXISTING findings:\n%s", newContent, list.String()),
+		Ask:   "Does the new finding contradict any existing finding?",
+		Answers: []QuickAnswer{
+			{Key: "none", Means: "None: it contradicts none of them"},
+			{Key: "contradicts", Means: "Contradicts: it is incompatible with at least one", Reason: true},
+		}}
+}
+
 func judgeFindingConflicts(chat FactChatFunc, newContent string, candidates []SearchHit) []SearchHit {
 	if chat == nil || len(candidates) == 0 {
+		return nil
+	}
+	// System One first, where the map gives the check to it: a sure "none"
+	// is the answer; a contradiction needs the full check to say which.
+	if ans, ok := AskQuick(context.Background(), conflictQuick(newContent, candidates)); ok && ans == "none" {
 		return nil
 	}
 	var list strings.Builder
@@ -166,32 +193,34 @@ func judgeFindingConflicts(chat FactChatFunc, newContent string, candidates []Se
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
-	resp, err := chat(ctx, []Message{
-		{Role: "user", Content: fmt.Sprintf(`A memory holds saved research findings. A NEW finding is being saved. For each EXISTING finding listed, decide whether the new finding CONTRADICTS it: they make INCOMPATIBLE claims about the same thing and cannot both be currently true.
-
-Do NOT flag a finding that merely adds detail, covers a different aspect, or agrees: only a genuine contradiction of the same claim. When unsure, do NOT flag.
-
-NEW finding: %q
-
-EXISTING findings:
-%s
-Reply with ONLY a JSON array of the numbers of existing findings the new one contradicts. Reply [] if none.`, newContent, list.String())},
-	}, WithSystemPrompt("You detect when a new finding contradicts existing ones (incompatible claims about the same thing). Reply with ONLY a JSON array of indices."),
-		WithCaller("memory.conflict_check"),
-		WithThink(false),
-		WithMaxTokens(128))
-	if err != nil || resp == nil {
-		return nil
-	}
-	var idx []int
-	if DecodeJSON(ResponseText(resp), &idx) != nil {
+	rulings, err := conflictVerdict.JudgeEach(ctx, decide.VerdictChat(chat),
+		fmt.Sprintf("NEW finding: %q\n\nEXISTING findings:\n%s", newContent, list.String()), len(candidates),
+		WithCaller("memory.conflict_check"), WithThink(false), WithMaxTokens(600))
+	if err != nil {
 		return nil
 	}
 	var out []SearchHit
-	for _, n := range idx {
-		if n >= 1 && n <= len(candidates) {
-			out = append(out, candidates[n-1])
+	for i, r := range rulings {
+		if r.Answer == "contradicts" {
+			out = append(out, candidates[i])
 		}
 	}
 	return out
+}
+
+// conflictVerdict is the conflict check, one verdict per existing finding,
+// what each claims set beside the new one before the answer. It answered
+// with bare numbers, and called "about 120 employees" a contradiction of
+// "roughly 120 people" with nothing to say why.
+var conflictVerdict = decide.Verdict{
+	Key: "memory.conflict_check",
+	Role: `A memory holds saved research findings, and a NEW finding is being saved. For each EXISTING finding listed, decide whether the new finding CONTRADICTS it: they make incompatible claims about the same thing, so both cannot be currently true.
+
+Not a contradiction: a finding that adds detail, covers a different aspect, or agrees, including the same claim in other words or with a rounded or approximate figure. When unsure, it is not a contradiction.`,
+	Answers: []decide.Choice{
+		{Key: "consistent", Means: "both can be true: different aspect, added detail, or the same claim"},
+		{Key: "contradicts", Means: "incompatible claims about the same thing"},
+	},
+	Weigh: []decide.Step{{Key: "why", Ask: "one short clause: what each claims about the same thing, or why they are about different things"}},
+	Each:  "finding",
 }

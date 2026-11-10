@@ -26,6 +26,8 @@ func init() {
 		Cases:  gateCases,
 		Run:    runGateCase,
 		Decide: decideGateCase,
+		// Structured: offloadable (checktest.Check.Structured).
+		Structured: true,
 	})
 }
 
@@ -104,7 +106,7 @@ func runGateCase(ctx context.Context, llm LLM, tc checktest.Case) checktest.Outc
 // decideGateCase decides one case on llm as a System One decision.
 func decideGateCase(ctx context.Context, llm LLM, tc checktest.Case) checktest.Outcome {
 	in := tc.Input
-	allow, _, reason, err := gateSystemOne(ctx, llm, gateQuestion{
+	allow, confidence, reason, err := gateSystemOne(ctx, llm, gateQuestion{
 		Rules:     mergeWakeRules(in["rules"], ""),
 		AgentName: in["agent"],
 		Sender:    in["sender"],
@@ -115,8 +117,10 @@ func decideGateCase(ctx context.Context, llm LLM, tc checktest.Case) checktest.O
 	if err != nil {
 		return checktest.Outcome{Err: err}
 	}
+	// Below the bar its answer needs live, the full question would be
+	// asked: unsure, whatever it answered.
 	if allow {
-		return checktest.Outcome{Got: "allow", Reason: reason}
+		return checktest.Outcome{Got: "allow", Reason: reason, Unsure: confidence < gateTakeConfidence}
 	}
-	return checktest.Outcome{Got: "block", Reason: reason}
+	return checktest.Outcome{Got: "block", Reason: reason, Unsure: confidence < gateLeaveConfidence}
 }

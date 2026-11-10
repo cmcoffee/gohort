@@ -148,3 +148,62 @@ func TestSystemOneUsesTheDecisionForm(t *testing.T) {
 		}
 	}
 }
+
+// A System One answer below its bar is unsure: neither a pass nor a fail,
+// whatever it answered, because live the full question would be asked. The
+// summary counts it apart.
+func TestAnUnsureAnswerIsNotAFailure(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved })
+	registry.mu.Lock()
+	prev := registry.checks
+	registry.checks = nil
+	registry.mu.Unlock()
+	t.Cleanup(func() { registry.mu.Lock(); registry.checks = prev; registry.mu.Unlock() })
+	Register(Check{Key: "k", Label: "Check", Cases: func() []Case {
+		return []Case{{ID: "sure", Want: "yes"}, {ID: "unsure", Want: "yes"}}
+	},
+		Run: func(context.Context, LLM, Case) Outcome { return Outcome{Got: "yes"} },
+		Decide: func(_ context.Context, _ LLM, c Case) Outcome {
+			return Outcome{Got: "no", Unsure: c.ID == "unsure"}
+		}})
+	// An answer that always goes to the full check, right: handed off and
+	// graded as agreeing, neither a pass nor a fail.
+	Register(Check{Key: "h", Label: "Hand-off", Cases: func() []Case { return []Case{{ID: "flag", Want: "flagged"}} },
+		Run:    func(context.Context, LLM, Case) Outcome { return Outcome{Got: "flagged"} },
+		Decide: func(context.Context, LLM, Case) Outcome { return Outcome{Got: "flagged", HandOff: true} }})
+	rep := Run(context.Background(), []Model{{Name: "system one", LLM: &FakeLLM{}, Decide: true}})
+	if h := rep.Rows[2].Answers["system one"]; h.Pass || !h.Unsure || !h.HandOff || !h.Right {
+		t.Errorf("a right hand-off: %+v", h)
+	}
+	rep.Rows = rep.Rows[:2]
+	sure, unsure := rep.Rows[0].Answers["system one"], rep.Rows[1].Answers["system one"]
+	if sure.Pass || sure.Unsure || unsure.Pass || !unsure.Unsure {
+		t.Errorf("sure %+v, unsure %+v", sure, unsure)
+	}
+	if got := Summary(rep); got != "system one 0 of 2, 1 unsure (0 right in all) (Check 0/2)" {
+		t.Errorf("summary %q", got)
+	}
+}
+
+// A quick choice's answer says less than the full one, and is right when
+// the case's answer is a fuller form of it; a whole answer must match.
+func TestACoarseAnswerIsRightWhenTheFullOneBeginsWithIt(t *testing.T) {
+	for _, c := range []struct {
+		o    Outcome
+		want string
+		ok   bool
+	}{
+		{Outcome{Got: "contradicts", Coarse: true}, "contradicts 1, 3", true},
+		{Outcome{Got: "keep", Coarse: true}, "keep fact, replaces 1", true},
+		{Outcome{Got: "none", Coarse: true}, "contradicts 1", false},
+		{Outcome{Got: "keep", Coarse: true}, "keeper", false},
+		{Outcome{Got: "keep"}, "keep fact", false},
+		{Outcome{Got: "Drop"}, "drop", true},
+	} {
+		if got := answers(c.o, c.want); got != c.ok {
+			t.Errorf("%+v against %q: %v, want %v", c.o, c.want, got, c.ok)
+		}
+	}
+}

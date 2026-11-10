@@ -40,7 +40,7 @@ func TestTheWardenCasesRunThroughTheWarden(t *testing.T) {
 		}
 		seen[c.ID] = true
 	}
-	llm := &FakeLLM{Turns: []FakeTurn{{Content: `{"verdicts":[{"rule":1,"status":"violate","reason":"discloses a figure"}]}`, Repeat: true}}}
+	llm := &FakeLLM{Turns: []FakeTurn{{Content: `{"rules":[{"rule":1,"why":"discloses a figure","answer":"violate"}]}`, Repeat: true}}}
 	o := runWardenCase(context.Background(), llm, wardenCaseByID(t, "reply-discloses"))
 	if o.Err != nil || o.Got != guardViolate || o.Reason != "discloses a figure" {
 		t.Fatalf("a violation: %+v", o)
@@ -59,7 +59,7 @@ func TestTheWardenCasesRunThroughTheWarden(t *testing.T) {
 	}
 	// The requester as the case says: the owner by the framework's word, a
 	// claimed name only fenced.
-	owner := &FakeLLM{Turns: []FakeTurn{{Content: `{"verdicts":[{"rule":1,"status":"comply"}]}`, Repeat: true}}}
+	owner := &FakeLLM{Turns: []FakeTurn{{Content: `{"rules":[{"rule":1,"answer":"comply"}]}`, Repeat: true}}}
 	if o := runWardenCase(context.Background(), owner, wardenCaseByID(t, "exception-owner")); o.Got != guardComply {
 		t.Errorf("a comply: %+v", o)
 	}
@@ -123,7 +123,7 @@ func TestTheWardenAsSystemOne(t *testing.T) {
 	msgs, _ := json.Marshal(reqs[0]["messages"])
 	s := string(msgs)
 	if !strings.Contains(s, "COMPLIANCE WARDEN") || strings.Contains(s, "Output ONLY a JSON") ||
-		!strings.Contains(s, "candidate action/output") || !strings.Contains(s, "someone@elsewhere.net") {
+		!strings.Contains(s, "candidate action/output") || !strings.Contains(s, "someone@other.example.test") {
 		t.Errorf("the decision lacks the warden's instructions, the fence or the candidate, or carries the JSON format: %s", s)
 	}
 	// Two rules are two decisions, each both ways.

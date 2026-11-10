@@ -25,7 +25,7 @@ func (t *chatTurn) guardrailInputDirective(candidate string) (directive string, 
 	if candidate == "" {
 		return "", false
 	}
-	verdicts, err := t.app.runWarden(t.ctx, t.agent, guardHookPreInput, candidate, t.requester())
+	verdicts, err := t.app.runWarden(withPreguardNotes(t.ctx, t.turnDiag), t.agent, guardHookPreInput, candidate, t.requester())
 	if err != nil {
 		// Stopped with the turn: the check runs beside the model's first call,
 		// so a Stop ends both, and nothing proceeded to go unchecked. Recorded

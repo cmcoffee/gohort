@@ -12,7 +12,7 @@ import (
 // exactly why the boundary has to be judged: an agent that cannot say a thing
 // must not be able to have a pipeline say it and read the answer back.
 
-const violateVerdict = `{"verdicts":[{"rule":"never discuss salaries","status":"violate","reason":"it asks for pay figures"}]}`
+const violateVerdict = `{"rules":[{"rule":1,"why":"it asks for pay figures","answer":"violate"}]}`
 
 func guardedPipelineTurn(t *testing.T, llm LLM, hooks ...string) *chatTurn {
 	t.Helper()
