@@ -14,7 +14,7 @@ import (
 // answered success, and the work carried on. The activity endpoint sends
 // _cancellable now; this is the half that reads it.
 func TestCancelIsOfferedOnlyWhereItWorks(t *testing.T) {
-	agents := monitorAgentsTable("/orchestrate/api/console/activity")
+	agents := monitorTable("/monitor/api/activity")
 
 	var found bool
 	for _, a := range agents.RowActions {
@@ -37,10 +37,12 @@ func TestCancelIsOfferedOnlyWhereItWorks(t *testing.T) {
 	}
 }
 
-// Every row opens its run's trace, live: the trace endpoint for THAT row, a
-// refresh a person watching can see move, and a spinner on what is running.
+// Every agent run of the viewer's opens its trace, live: the trace endpoint
+// for THAT row, a refresh a person watching can see move, and a spinner on
+// what is running. An app's row opens the app instead, so the Trace is gated
+// on _run, which only the viewer's own agent runs carry.
 func TestEveryRunOpensItsTrace(t *testing.T) {
-	agents := monitorAgentsTable("/orchestrate/api/console/activity")
+	agents := monitorTable("/monitor/api/activity")
 	var trace *ui.RowAction
 	for i, a := range agents.RowActions {
 		if a.Label == "Trace" {
@@ -50,8 +52,8 @@ func TestEveryRunOpensItsTrace(t *testing.T) {
 	if trace == nil {
 		t.Fatal("the Monitor rows have no Trace")
 	}
-	if trace.Type != "modal" || trace.OnlyIf != "" {
-		t.Errorf("Trace is a dialog on every row, finished ones too: type %q, only if %q", trace.Type, trace.OnlyIf)
+	if trace.Type != "modal" || trace.OnlyIf != "_run" {
+		t.Errorf("Trace is a dialog on every agent run, finished ones too: type %q, only if %q", trace.Type, trace.OnlyIf)
 	}
 	var tbl struct {
 		Type string `json:"type"`

@@ -152,6 +152,7 @@ func ServeDashboard(addr string) error {
 	// The dashboard's own endpoints; each handler is documented where it is
 	// defined, below ServeDashboard.
 	host := dashboardHost{apps: apps}
+	liveHost = host
 	mux.HandleFunc("/", host.handleRoot)
 	mux.HandleFunc("/dashboard/customize", host.handleCustomize)
 	mux.HandleFunc("/api/dashboard/items", host.handleDashboardItems)
@@ -479,14 +480,34 @@ func (d dashboardHost) handleRoot(w http.ResponseWriter, r *http.Request) {
 	serve_dashboard(w, r, visible, notices, bands)
 }
 
-// handleLive is the global live view. Deep links are gated HERE rather than
-// in the client: whether this viewer may re-enter the owning app is a
-// server-side fact (per-user grants + the app's own WebRestricted), and the
-// browser has no business guessing it. An entry the viewer can't follow gets
-// its url/path cleared, which is exactly the signal the live pill reads to
-// fall back to the Monitor.
+// handleLive is the global live view: every live entry, as this viewer may
+// see it (ViewLive).
 func (d dashboardHost) handleLive(w http.ResponseWriter, r *http.Request) {
-	entries := AllLiveSessions()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(d.viewLive(r, AllLiveSessions()))
+}
+
+// liveHost is the mounted dashboard, for ViewLive: which apps there are to
+// link into. Set once, before anything is served.
+var liveHost dashboardHost
+
+// ViewLive is entries as the viewer of r may see them, the way /api/live
+// serves them: each label masked unless it is the viewer's own work, and a
+// link (Href) only into an app the viewer can reach. For a page that shows
+// live work alongside something of its own (the Monitor keeps finished work
+// for a while), so it shows it exactly as /api/live would. entries is not
+// changed.
+func ViewLive(r *http.Request, entries []LiveEntry) []LiveEntry {
+	return liveHost.viewLive(r, entries)
+}
+
+// viewLive gates deep links HERE rather than in the client: whether this
+// viewer may re-enter the owning app is a server-side fact (per-user grants +
+// the app's own WebRestricted), and the browser has no business guessing it.
+// An entry the viewer can't follow gets its url/path cleared, which is exactly
+// the signal the live pill reads to fall back to the Monitor.
+func (d dashboardHost) viewLive(r *http.Request, entries []LiveEntry) []LiveEntry {
+	entries = append([]LiveEntry(nil), entries...)
 	viewer := AuthCurrentUser(r)
 	for i := range entries {
 		// Label masking runs FIRST and unconditionally — it is about who
@@ -505,8 +526,7 @@ func (d dashboardHost) handleLive(w http.ResponseWriter, r *http.Request) {
 		}
 		entries[i].Href = entries[i].ResolveHref()
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(entries)
+	return entries
 }
 
 // pageTopics are the core/changes topics a page may follow, by the name it

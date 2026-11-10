@@ -1,8 +1,8 @@
 // Package monitor is a central live-activity dashboard: one page that shows
-// what every agent and app on the deployment is doing right now, refreshed on
-// an interval. It owns no data of its own — it composes the framework's live
-// endpoints (the orchestrate runs ledger + the global live feed) into a couple
-// of auto-refreshing ui.Table surfaces, so it's a thin read-only view.
+// what every agent and app on the deployment is doing right now, and what
+// finished recently, refreshed on an interval. It merges the orchestrate runs
+// ledger and the global live feed into one table (activity.go), keeping
+// finished app work for a while itself, since the live feed forgets it.
 //
 // It appears as a "Monitor" tab in the hub nav (WebAppHubTab).
 package monitor
@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -52,6 +53,8 @@ func (T *MonitorApp) WebDesc() string { return "Live view of everything happenin
 func (T *MonitorApp) WebHidden() bool { return true }
 
 func (T *MonitorApp) Routes() {
+	T.watch()
+	T.HandleFunc("/api/activity", jsonapi.Get(T.DB, T.handleActivity))
 	T.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
@@ -61,21 +64,26 @@ func (T *MonitorApp) Routes() {
 	})
 }
 
-// monitorAgentsTable is the live agent-activity table. Split out of the page so
-// its row action can be asserted on: the Cancel button's gate is a contract
-// with the activity endpoint, and getting it wrong is invisible (a button that
-// appears, posts, reports success, and stops nothing).
-func monitorAgentsTable(source string) ui.Table {
+// monitorTable is the Monitor's one table: running work first, then what
+// finished recently. Split out of the page so its row actions can be asserted
+// on: the Cancel button's gate is a contract with the activity endpoint, and
+// getting it wrong is invisible (a button that appears, posts, reports
+// success, and stops nothing).
+func monitorTable(source string) ui.Table {
 	return ui.Table{
 		Source:        source,
 		RowKey:        "_id",
 		AutoRefreshMS: 3000,
-		EmptyText:     "No agent activity right now.",
+		EmptyText:     "Nothing running, and nothing finished recently.",
+		// An app's row opens the app, at that work, when the viewer can reach
+		// it (href, gated server-side like the live pill's links). An agent
+		// run's row has its Trace instead.
+		RowLink: "href",
 		Columns: []ui.Col{
-			{Field: "agent", Label: "Agent", Flex: 2},
-			{Field: "surface", Label: "Via", Flex: 1, Mute: true},
-			{Field: "activity", Label: "Status", Flex: 3, Mute: true},
-			{Field: "brief", Label: "Doing", Flex: 3, Mute: true},
+			{Field: "name", Label: "Agent or app", Flex: 2},
+			{Field: "via", Label: "Via", Flex: 1, Mute: true},
+			{Field: "status", Label: "Status", Flex: 3, Mute: true},
+			{Field: "doing", Label: "Doing", Flex: 3, Mute: true},
 		},
 		// The kill switch for a runaway run, on the only rows that HAVE one:
 		// _cancellable marks a turn that is both in flight and running under a
@@ -99,8 +107,9 @@ func monitorAgentsTable(source string) ui.Table {
 // monitorTraceAction opens a run's trace: what it has done so far, step by
 // step, its sub-agents' steps among them, refreshing while it goes. The row
 // says what a run is doing now; this is how it got there, which is what tells
-// a run that is working from one that is stuck. Every row has it, a finished
-// one too: its trace is kept for a while after it ends.
+// a run that is working from one that is stuck. Every one of the viewer's
+// agent runs has it (_run), a finished one too: its trace is kept for a while
+// after it ends. An app's row opens the app instead.
 func monitorTraceAction() ui.RowAction {
 	a := ui.ModalAction("Trace", ui.Table{
 		Source:        "/orchestrate/api/console/trace?id={_id}",
@@ -124,6 +133,7 @@ func monitorTraceAction() ui.RowAction {
 		},
 	})
 	a.Width = "820px"
+	a.OnlyIf = "_run"
 	return a
 }
 
@@ -131,62 +141,38 @@ func (T *MonitorApp) handlePage(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := RequireUser(w, r, T.DB); !ok {
 		return
 	}
-	// Agents — the orchestrate runs ledger, tree-ordered (sub-agents nested
-	// under the turn that called them) with recently-finished runs lingering.
-	// Absolute path: the endpoint lives under the orchestrate app's mux, and it
-	// self-gates (admin), so a non-admin viewer just sees an empty table.
 	// ?run=<id> arrives from the live pill: somebody clicked a background task
 	// to see what it is doing. The page narrows to that run and the sub-agents
 	// it started, rather than sending them to a table of the whole deployment
 	// and leaving them to find the row again.
 	focus := strings.TrimSpace(r.URL.Query().Get("run"))
-	agentSource := "/orchestrate/api/console/activity"
+	// Absolute: a relative source resolves against the page's own URL, which
+	// is /monitor without the slash when it is reached from the pill.
+	source := "/monitor/api/activity"
 	if focus != "" {
-		agentSource += "?run=" + url.QueryEscape(focus)
+		source += "?run=" + url.QueryEscape(focus)
 	}
-	agents := monitorAgentsTable(agentSource)
-	// Everything running now — the same instantaneous feed the live pill shows:
-	// apps and pipelines alongside active agent turns.
-	live := ui.Table{
-		Source: "/api/live",
-		RowKey: "id",
-		// /api/live resolves each row's way back into the app that owns the
-		// work and blanks it for viewers who can't reach that app, so rows
-		// link exactly when there's somewhere to go. Agent runs and queued
-		// tasks have no owning page and stay inert — which is right, since
-		// this page IS where they'd otherwise send you.
-		RowLink:       "href",
-		AutoRefreshMS: 3000,
-		EmptyText:     "Nothing running.",
-		Columns: []ui.Col{
-			{Field: "app", Label: "Source", Flex: 1},
-			{Field: "topic", Label: "Task", Flex: 3},
-			{Field: "status", Label: "Status", Flex: 2, Mute: true},
-		},
-	}
+	table := monitorTable(source)
 	title, backURL := "Monitor", "/"
-	agentsTitle := "Agents: live & recent"
-	agentsSubtitle := "Every agent turn: chat, scheduled, standing, channel, dispatch, and the OpenAI endpoint. Sub-agents nest (↳) under the turn that called them; recently finished runs linger briefly."
-	sections := []ui.Section{
-		{Title: agentsTitle, Subtitle: agentsSubtitle, Body: agents},
-		{
-			Title:    "Everything running now",
-			Subtitle: "The instantaneous snapshot behind the live pill: apps and pipelines alongside active agents.",
-			Body:     live,
-		},
-	}
+	sections := []ui.Section{{
+		Title:    "Running & recent",
+		Subtitle: "What is running now, then what finished recently, newest first. Open an agent's Trace to see each step it took; click an app's row to open it.",
+		Detail: "Running comes first: agent turns (chat, scheduled, standing, channel, dispatch, and the OpenAI endpoint) with their sub-agents nested (↳) under the turn that called them, then apps, pipelines and queued work. Cancel appears on the runs that can be stopped. " +
+			"A finished agent run says how it ended (completed, failed, canceled). An app only reports that it ended, so its row says \"ended\" and the app's own page has the result. " +
+			"Other people's work shows without its details, and without Trace or Cancel. Finished work drops off after about half an hour (for agent runs, Run buffer retention under Tuning).",
+		Body: table,
+	}}
 	if focus != "" {
 		// A focused view drops the global feed. Someone who followed a link to
-		// one task is asking about that task; a second table of everything
-		// happening on the deployment is the thing they just navigated away
-		// from, and it would be the larger of the two.
+		// one task is asking about that task; a table of everything happening
+		// on the deployment is the thing they just navigated away from.
 		title, backURL = "Task", "/monitor"
-		agents.EmptyText = "That task has finished: it is no longer running, and finished runs are kept only briefly."
+		table.EmptyText = "That task has finished: it is no longer running, and finished runs are kept only briefly."
 		sections = []ui.Section{{
 			Title:    "This task",
 			Subtitle: "The run you followed, and any sub-agents it started.",
 			Detail:   "It refreshes every 3 seconds, and disappears shortly after it finishes.",
-			Body:     agents,
+			Body:     table,
 		}}
 	}
 	page := ui.Page{

@@ -200,10 +200,9 @@ func consoleRunDetailOf(rec RunRecord, loc *time.Location) consoleRunDetail {
 	return d
 }
 
-// consoleActivityRow is one row of the live "Active now" pane. Cards layout:
-// Agent renders bold as the title, the rest as detail lines. _id / _running
-// are hidden plumbing for the Cancel row action.
-type consoleActivityRow struct {
+// ActivityRow is one agent run as the activity view shows it: the Monitor's
+// rows. _id / _running are hidden plumbing for the row actions.
+type ActivityRow struct {
 	Agent    string `json:"agent"`
 	Activity string `json:"activity"`
 	Brief    string `json:"brief,omitempty"`
@@ -214,6 +213,9 @@ type consoleActivityRow struct {
 	// were silently different: every running row offered the button and most of
 	// them had nothing behind it.
 	Cancellable bool `json:"_cancellable,omitempty"`
+	// Ended is when a finished run ended (zero while it runs), for a view
+	// that sorts it among other finished work.
+	Ended time.Time `json:"-"`
 }
 
 // runOwnerDestination is the conversation a run's owner rejoins from the live
@@ -241,15 +243,20 @@ func runOwnerDestination(prefix string, s RunSnapshot) string {
 // the per-session live card can't provide: it only ever shows the session
 // you're looking at, while the fleet works in the background.
 func (T *OrchestrateApp) handleConsoleActivity(c *jsonapi.Call) (any, error) {
-	r := c.R
-	user := c.User
-	rows := []consoleActivityRow{}
+	return T.Activity(c.User, c.R.URL.Query().Get("run")), nil
+}
+
+// Activity is user's agent runs, running ones first (sub-agents nested under
+// the run that started them) and then the recently finished, newest first.
+// run, when set, narrows it to that run and everything it started — the
+// destination the live pill points a background entry at. An id that matches
+// nothing returns nothing rather than falling back to the whole list, so a
+// stale link says "that work is over" instead of quietly showing the
+// deployment.
+func (T *OrchestrateApp) Activity(user, run string) []ActivityRow {
+	rows := []ActivityRow{}
 	now := time.Now()
-	// ?run=<id> narrows to one run and everything it started — the destination
-	// the live pill points a background entry at. An id that matches nothing
-	// returns nothing rather than falling back to the whole list, so a stale
-	// link says "that work is over" instead of quietly showing the deployment.
-	snaps := descendantsOf(T.runsRegistry().Activity(user), strings.TrimSpace(r.URL.Query().Get("run")))
+	snaps := descendantsOf(T.runsRegistry().Activity(user), strings.TrimSpace(run))
 	background := markBackground(snaps)
 	for _, s := range snaps {
 		name := s.AgentName
@@ -278,7 +285,7 @@ func (T *OrchestrateApp) handleConsoleActivity(c *jsonapi.Call) (any, error) {
 			// people who arrived from a link rather than from the pill.
 			surface += " - background"
 		}
-		rows = append(rows, consoleActivityRow{
+		row := ActivityRow{
 			Agent:       runIndentPrefix(s.Depth) + name,
 			Activity:    activity,
 			Brief:       s.Label,
@@ -286,9 +293,13 @@ func (T *OrchestrateApp) handleConsoleActivity(c *jsonapi.Call) (any, error) {
 			ID:          s.ID,
 			Running:     s.Status == RunStatusRunning,
 			Cancellable: s.Status == RunStatusRunning && s.Cancellable,
-		})
+		}
+		if s.Status != RunStatusRunning {
+			row.Ended = s.EndedAt
+		}
+		rows = append(rows, row)
 	}
-	return rows, nil
+	return rows
 }
 
 // handleConsoleActivityCancel cancels one in-flight run from the Active-now

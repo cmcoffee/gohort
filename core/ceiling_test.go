@@ -381,7 +381,10 @@ const (
 	// decide). The shadow itself and its tally live in core/decide.
 	// 2385: FactGateDecision, so the memory gate's check tests ask the gate's
 	// own prompt on a chosen model (core cannot import checktest).
-	coreExportCeiling = 2385
+	// 2386: ViewLive, so the Monitor shows live work it keeps after it ends
+	// exactly as /api/live shows it (masked labels, gated links) rather than
+	// a second copy of that gate.
+	coreExportCeiling = 2386
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

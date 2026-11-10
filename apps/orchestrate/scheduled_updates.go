@@ -239,6 +239,14 @@ func registerOrchestrateScheduledUpdates(o *OrchestrateApp) {
 	orchRef = o
 	orchRefMu.Unlock()
 	RegisterScheduleHandler(OrchestrateScheduledUpdateKind, handleOrchestrateScheduledUpdate)
+	// A fire an earlier process never finished: a cortex note, and once more
+	// where that still makes sense (scheduled_interrupted.go). After a short
+	// wait, so it settles after start rather than on it.
+	RegisterScheduleHandler(OrchestrateScheduledRefireKind, handleScheduledRefire)
+	go func() {
+		time.Sleep(20 * time.Second)
+		o.recoverInterrupted()
+	}()
 	// Label recurring-update tasks in the admin scheduler view + logs with the
 	// owning agent + interval + prompt snippet, instead of a bare kind + uuid.
 	// Registered here (not in core) because resolving the agent id to a friendly
@@ -470,6 +478,9 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	fr.buildToolkit()
 	fr.prepareLoop()
 	fr.startLiveRun()
+	// Marked while it runs, so a restart that cuts it off is noticed on the
+	// next start instead of leaving nothing behind.
+	defer fr.app.markInflight(fr.ctx, fr.liveRun.ID, p, fr.armedID)()
 	defer fr.reportUsage()
 	defer bankScopedSpend(fr.ctx, spendOwner(fr.agent, p.Username), fr.agent) // a fire bills to the agent it ran (agent_spend.go)
 	fr.subSess.Ctx = fr.ctx
