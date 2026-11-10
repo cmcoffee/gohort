@@ -115,7 +115,9 @@ func (T *Scribe) generateHeader(ctx context.Context, g Guide, udb Database) (str
 		res, err = job.edit(ctx, "picture as the header", one.Name, job.editPrompt(), [][]byte{job.from})
 	} else {
 		Log("[scribe.header] guide %s: generating the header from the scene", g.ID)
-		res, err = GenerateImage(ctx, job.prompt())
+		// For the guide's owner, so a generator limited to other people
+		// refuses, as the edits below already do.
+		res, err = GenerateImage((&ToolSession{Ctx: ctx, Username: g.Owner}).ContextWithSession(ctx), job.prompt())
 		if err == nil && job.from != nil {
 			res, err = job.add(ctx, res, "picture", two.Name, headerPlacePicture, job.from)
 		}

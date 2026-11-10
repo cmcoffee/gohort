@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"image"
+	"math"
 	"net/url"
 	"os"
 	"sort"
@@ -306,6 +308,33 @@ func Call(ctx context.Context, sess *ToolSession, name, capability string, input
 	return out.result, err
 }
 
+// editAspects are the shapes an image model is asked for by name (Gemini's
+// list), as width over height.
+var editAspects = []struct {
+	name  string
+	ratio float64
+}{
+	{"1:1", 1}, {"2:3", 2.0 / 3}, {"3:2", 3.0 / 2}, {"3:4", 3.0 / 4}, {"4:3", 4.0 / 3},
+	{"4:5", 4.0 / 5}, {"5:4", 5.0 / 4}, {"9:16", 9.0 / 16}, {"16:9", 16.0 / 9}, {"21:9", 21.0 / 9},
+}
+
+// editAspect is the named shape nearest a picture's own, "" when its size
+// cannot be read (a WebP, which the standard library does not decode).
+func editAspect(data []byte) string {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || cfg.Width <= 0 || cfg.Height <= 0 {
+		return ""
+	}
+	r := math.Log(float64(cfg.Width) / float64(cfg.Height))
+	best, gap := "", math.Inf(1)
+	for _, a := range editAspects {
+		if d := math.Abs(r - math.Log(a.ratio)); d < gap {
+			best, gap = a.name, d
+		}
+	}
+	return best
+}
+
 // generateImage is the image backend a service registers.
 func generateImage(ctx context.Context, name, prompt string, landscape bool) (*ImageGenResult, error) {
 	c, ok := GetConnector(RootDB, name)
@@ -399,6 +428,12 @@ func editImage(sess *ToolSession, name, prompt string, images [][]byte) (*ImageG
 		return nil, fmt.Errorf("image.edit takes 1 to %d pictures, not %d", len(editPictureInputs), len(images))
 	}
 	vars := map[string]any{"prompt": prompt}
+	// The shape of the picture being edited, for a template that sets the
+	// output's: left to itself, a model given a scene and a portrait came
+	// back in the portrait's shape, the scene cut to fit.
+	if a := editAspect(images[0]); a != "" {
+		vars["aspect"] = a
+	}
 	for i, data := range images {
 		f, _, err := writeFile(bytes.NewReader(data), defaultMaxBytes)
 		if err != nil {

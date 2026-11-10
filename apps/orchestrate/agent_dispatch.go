@@ -1297,7 +1297,7 @@ func buildInboundMediaManifest(sender string, imageCount int, captions []string)
 			}
 		}
 	}
-	b.WriteString("\n  To CHANGE one of these pictures, pass its id to the image tool: image(action=\"edit\", images=[\"media#1\"], prompt=\"...\"). That is how \"put the cat in this photo\", \"make it night\", or \"blend these two\" is done. Do NOT generate a new picture from a text prompt when you were asked to change one you were sent: generating invents a different scene, and what came back was supposed to be THEIR photo.")
+	b.WriteString("\n  To CHANGE one of these pictures, edit it with the image tool: image(action=\"edit\", picture=\"media#1\", prompt=\"...\"), adding references=[...] for a face or a thing to bring in. That is how \"put the cat in this photo\" or \"make it night\" is done; \"blend these two\" into a new picture is generate with them in references. Do NOT generate a new picture from a text prompt when you were asked to change one you were sent: generating invents a different scene, and what came back was supposed to be THEIR photo.")
 	b.WriteString("\n  Everyone in THIS conversation already received these, so do NOT send one back UNCHANGED; re-attaching a photo that was just posted only echoes it to the same group. An EDITED version is a new picture and is fine to send here. Reference a media#N to forward it to a DIFFERENT recipient, by passing attachments:[\"media#N\"] to a messaging tool. Refer to an item by its id in your text; do NOT retype or invent a filename for it, the id is its only handle.")
 	return b.String()
 }

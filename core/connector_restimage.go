@@ -1261,6 +1261,11 @@ type ImageBackendChoice struct {
 	// upscale. Requiring a prompt there would force the model to invent one
 	// that goes nowhere.
 	NeedsPrompt bool
+	// Graph is true for a ComfyUI or A1111 workflow, whose prompt goes into a
+	// text node of the graph; false for a model that reads plain language (a
+	// Gemini or OpenAI image model), which can be told what each picture is
+	// for.
+	Graph bool
 }
 
 // ReachableImageBackends returns the image backends sess may generate through,
@@ -1361,6 +1366,7 @@ func reachableImageBackends(sess *ToolSession) []ImageBackendChoice {
 		}
 		out = append(out, ImageBackendChoice{
 			Name:        c.Name,
+			Graph:       true,
 			Guidance:    s.promptGuidance(),
 			Default:     c.Name == defaultProvider,
 			Edits:       s.SupportsImageInput(),

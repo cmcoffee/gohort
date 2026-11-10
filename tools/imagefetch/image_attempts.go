@@ -54,7 +54,7 @@ func attemptKey(sess *ToolSession, refs []string) string {
 	}
 	ids := make([]string, 0, len(refs))
 	for _, ref := range refs {
-		if data, ok := ResolveRecentImage(sess, ref); ok && len(data) > 0 {
+		if data, ok := sourceData(sess, ref); ok {
 			sum := sha256.Sum256(data)
 			ids = append(ids, hex.EncodeToString(sum[:8]))
 			continue

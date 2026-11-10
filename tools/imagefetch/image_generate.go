@@ -101,7 +101,7 @@ func planGenerate(sess *ToolSession, args map[string]any, avail imageActions) (s
 	// reason: reachability is the broadest failure, so running it first
 	// reports every mistake as a permissions problem.
 	if backend != "" && !isGenerator(avail, backend) {
-		return "", fmt.Errorf("image backend %q works from source pictures and can't create from text alone, use one of: %s, or pass the pictures to work from in images", backend, strings.Join(generatorNames(avail), ", "))
+		return "", fmt.Errorf("image backend %q works from source pictures and can't create from text alone, use one of: %s, or pass the photos to work from in references", backend, strings.Join(generatorNames(avail), ", "))
 	}
 	// ENFORCEMENT. The filtered enum is a hint to the model; nothing stops
 	// it naming a backend that isn't in it, so reachability is re-checked
@@ -156,6 +156,14 @@ func generateImageInto(sess *ToolSession, prompt, backend string, hold bool) (st
 // hold keeps the picture back (deliver=false): recorded under its id for the
 // next pass, and not attached.
 func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note string, origin ImageOrigin, hold bool) (string, error) {
+	msg, _, err := saveImageResultRef(sess, result, prefix, note, origin, hold)
+	return msg, err
+}
+
+// saveImageResultRef is saveImageResult with the id the saved picture goes by
+// ("" when it was not recorded), for a caller that names it later: a chain of
+// passes pointing a retry at the last picture that passed its check.
+func saveImageResultRef(sess *ToolSession, result *ImageGenResult, prefix, note string, origin ImageOrigin, hold bool) (string, string, error) {
 	var data []byte
 	var err error
 	if strings.HasPrefix(result.URL, "http://") || strings.HasPrefix(result.URL, "https://") {
@@ -165,19 +173,19 @@ func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note str
 		os.Remove(result.URL)
 	}
 	if err != nil {
-		return "", fmt.Errorf("failed to retrieve the finished image: %w", err)
+		return "", "", fmt.Errorf("failed to retrieve the finished image: %w", err)
 	}
 	wsDir, err := EnsureSessionWorkspace(sess)
 	if err != nil {
-		return "", fmt.Errorf("session workspace unavailable: %w", err)
+		return "", "", fmt.Errorf("session workspace unavailable: %w", err)
 	}
 	name := prefix + "-" + shortID() + ".png"
 	target := filepath.Join(wsDir, name)
 	if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
-		return "", fmt.Errorf("create parent dir: %w", err)
+		return "", "", fmt.Errorf("create parent dir: %w", err)
 	}
 	if err := os.WriteFile(target, data, 0600); err != nil {
-		return "", fmt.Errorf("save image: %w", err)
+		return "", "", fmt.Errorf("save image: %w", err)
 	}
 	Log("[imagefetch] %s → %s (%d bytes)", note, name, len(data))
 
@@ -205,7 +213,7 @@ func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note str
 			sess.HoldImage(base64.StdEncoding.EncodeToString(data), id)
 			msg = fmt.Sprintf("This pass was HELD (deliver=false): the picture (%d bytes) was kept and NOT sent. It is %s: pass it to the next pass by that id.", len(data), id)
 			sess.AppendViewImageAs(data, "the held step (the AFTER picture of this pass)")
-			return msg + " LOOK AT IT FIRST: if it came back wrong, say so instead of building the next pass on it.", nil
+			return msg + " LOOK AT IT FIRST: if it came back wrong, say so instead of building the next pass on it.", id, nil
 		}
 		sess.AppendImage(base64.StdEncoding.EncodeToString(data))
 		if ref != "" {
@@ -236,7 +244,7 @@ func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note str
 		// delivery channel, so this cannot send the image twice.
 		sess.AppendViewImageAs(data, "the finished render (the AFTER picture)")
 		msg += " LOOK AT IT FIRST: the picture is included with this result. Describe what is actually there, not what was asked for: if the render came back wrong (blank, garbled, the wrong number of things, an edit that did nothing), say so plainly instead of announcing it as a match."
-		return msg, nil
+		return msg, firstNonBlank(stable, ref), nil
 	}
 
 	if hold {
@@ -248,7 +256,7 @@ func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note str
 			id = ref
 		}
 		msg := fmt.Sprintf("This pass is HELD (deliver=false): it was saved and NOT sent. Do not attach it: pass %s to the next pass, and attach only the finished picture.", id)
-		return msg + showToModel(sess, data, "the held step (the AFTER picture of this pass)", "This is what the backend produced, which is not always what was asked for"), nil
+		return msg + showToModel(sess, data, "the held step (the AFTER picture of this pass)", "This is what the backend produced, which is not always what was asked for"), id, nil
 	}
 	msg := fmt.Sprintf("Stored at %q (%d bytes). This is normally meant for delivery: call workspace(action=\"attach\", path=%q, cleanup=true) and then write a short line describing it. (Skip the attach only if the user explicitly asked you NOT to send it: rare.)", name, len(data), name)
 	// Spell out that the workspace copy is one-shot. Saying "do not delete it"
@@ -256,12 +264,14 @@ func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note str
 	// what it did instead was attach with cleanup and then try to attach the
 	// same path AGAIN — which errors, because the file is gone. From there it
 	// regenerated the picture and delivered the wrong one.
+	saved := ""
 	if ref, stable := RecordRecentImageStable(sess, data, note, origin); ref != "" {
+		saved = firstNonBlank(stable, ref)
 		msg += fmt.Sprintf(" The workspace copy is consumed by that attach and the path stops working. This picture is %s RIGHT NOW, and that is a POSITION: whatever is saved next becomes image#1 and this one moves down.%s Never re-attach the workspace path after a cleanup, it is already delivered.", ref, stableRefNote(stable))
 	}
 	// A render is a guess at the prompt, not a rendering of it: the wrong
 	// number of people, the text unreadable, the edit applied to nothing. The
 	// agent used to find that out when the user did.
 	msg += showToModel(sess, data, "the finished render (the AFTER picture)", "This is what the backend produced, which is not always what was asked for")
-	return msg, nil
+	return msg, saved, nil
 }

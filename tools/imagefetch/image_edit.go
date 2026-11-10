@@ -44,13 +44,14 @@ func planEdit(sess *ToolSession, args map[string]any, avail imageActions) (editP
 		return p, fmt.Errorf("the edit action is unavailable: no image backend here is wired for image input (img2img / inpaint). Tell the user editing isn't set up; do NOT retry")
 	}
 	prompt := strings.TrimSpace(StringArg(args, "prompt"))
-	refs := stringsArg(args, "images")
-	if len(refs) == 0 {
-		hint := "pass the image to change"
+	refs := imageSources(args)
+	if len(refs) == 0 || (strings.EqualFold(StringArg(args, "action"), "edit") && !editsPicture(args)) {
+		hint := "its id"
 		if m := RecentImageManifest(sess); m != "" {
 			hint = m
 		}
-		return p, fmt.Errorf("edit needs at least one source image: %s", hint)
+		return p, fmt.Errorf("edit changes one picture: name it as picture, and put pictures to take people or things from in references. "+
+			"To make a NEW picture from reference photos, use generate with them as references. The pictures you can name: %s", hint)
 	}
 	// Before anything is dispatched: take attached people's NAMES out of the
 	// prompt, and refuse outright if it names somebody whose picture we have
@@ -79,7 +80,7 @@ func planEdit(sess *ToolSession, args map[string]any, avail imageActions) (editP
 		if len(avail.editors) == 0 {
 			return p, fmt.Errorf("no image backend here can edit photos")
 		}
-		return p, fmt.Errorf("image backend %q creates from text and cannot work from a source picture, use one of: %s, or drop images to render from the prompt alone", backend, strings.Join(editorNames(avail), ", "))
+		return p, fmt.Errorf("image backend %q creates from text and cannot work from a source picture, use one of: %s, or generate from the prompt alone", backend, strings.Join(editorNames(avail), ", "))
 	}
 	// Count mismatch, named in terms of what this deployment can do. Checked
 	// here rather than left to the backend so the answer arrives before an
@@ -107,13 +108,18 @@ func planEdit(sess *ToolSession, args map[string]any, avail imageActions) (editP
 	if !ImageBackendReachable(sess, backend) {
 		return p, fmt.Errorf("image backend %q is not available to you, use one of: %s", backend, strings.Join(editorNames(avail), ", "))
 	}
+	// What each picture is for, said to a model that reads plain language
+	// (framePictures). Not to a graph, whose prompt is a diffusion prompt.
+	if !backendIsGraph(avail, backend) {
+		prompt = framePictures(prompt, editsPicture(args), len(refs))
+	}
 	return editPlan{
 		backend: backend, prompt: prompt, refs: refs,
 		mask: StringArg(args, "mask"),
 		// Gated on the BACKEND, not just the argument: the pass needs a second
 		// input slot for the identity reference, and asking for it where there
 		// is none would spend a whole extra render sharpening a stranger.
-		refineFaces: avail.canRefineFaces() && boolArgDefault(args, "preserve_faces", true),
+		refineFaces: backendRefinesFaces(avail, backend) && boolArgDefault(args, "preserve_faces", true),
 		note:        note,
 	}, nil
 }
@@ -145,6 +151,10 @@ func editImage(sess *ToolSession, args map[string]any, avail imageActions) (stri
 	tries := attemptKey(sess, p.refs)
 	if made := attemptsMade(tries, time.Now()); made >= limit {
 		return "", attemptsRefusal(made, limit, level)
+	}
+	// And the chain this pass is part of, counted as one (image_chain.go).
+	if err := chainBegin(sess, p.refs, time.Now()); err != nil {
+		return "", err
 	}
 	// Quick has no face pass, unless the call asks for one by name.
 	if level == ImageCheckQuick {
@@ -179,7 +189,7 @@ func editImage(sess *ToolSession, args map[string]any, avail imageActions) (stri
 	if sess != nil {
 		queued = len(sess.PendingViewImages)
 	}
-	out, serr := saveImageResult(sess, result, "edit", "edited "+strings.Join(p.refs, "+")+": "+truncate(p.prompt, 60), ImageFromEdited, holdsResult(args))
+	out, saved, serr := saveImageResultRef(sess, result, "edit", "edited "+strings.Join(p.refs, "+")+": "+truncate(p.prompt, 60), ImageFromEdited, holdsResult(args))
 	if serr != nil {
 		return out, serr
 	}
@@ -201,9 +211,27 @@ func editImage(sess *ToolSession, args map[string]any, avail imageActions) (stri
 	// one-photo edit as for a blend: the agent's look at a source beside its
 	// result is the look that reported a lost ship as present. Not on Quick:
 	// that is the render and the agent's look, and no more.
+	checked, failed := false, false
 	if level != ImageCheckQuick && len(sources) > 0 {
 		editProgress(sess, "checking the result against the sources")
-		note += sourceCheckNote(checkSourcesInResult(sess, sources, rendered, p.prompt, level == ImageCheckThorough), len(sources), holdsResult(args), last)
+		verdicts := checkSourcesInResult(sess, sources, rendered, p.prompt, level == ImageCheckThorough)
+		checked = len(verdicts) > 0
+		for _, v := range verdicts {
+			failed = failed || !v.found
+		}
+		note += sourceCheckNote(verdicts, len(sources), holdsResult(args), last)
+	}
+	// And whether it changed anything at all, measured, for an edit of a
+	// picture (a new one from references has no "before").
+	if editsPicture(args) && len(sources) > 0 && sources[0].ref == p.refs[0] && len(rendered) > 0 {
+		if most, ok := largestChange(sources[0].data, rendered); ok && most < unchangedBelow {
+			Log("[imagefetch] edit of %s changed nothing visible (largest change %.1f%%)", sources[0].ref, most*100)
+			note += unchangedNote(most)
+			checked, failed = true, true
+		}
+	}
+	if base := chainRecord(sess, checked, failed, saved, time.Now()); failed {
+		note += chainRetryNote(base)
 	}
 	if last {
 		note += lastAttemptNote(made, limit)
@@ -252,10 +280,9 @@ func queueSourceForComparison(sess *ToolSession, refs []string) []string {
 	if sess == nil || sess.LLM == nil || len(refs) != 1 {
 		return nil
 	}
-	src, ok := ResolveRecentImage(sess, refs[0])
-	if !ok || len(src) == 0 {
-		// A workspace filename or a media id: resolvable elsewhere, not
-		// here. No source to compare against means no question about it.
+	src, ok := sourceData(sess, refs[0])
+	if !ok {
+		// No source to compare against means no question about it.
 		return nil
 	}
 	// Named, not merely ordered. Ordering alone carried this before, and
@@ -273,19 +300,32 @@ type sourceImage struct {
 
 // checkSources resolves every source of an edit, in the order passed, for the
 // source check and (for several) the contact sheet. Nil with no model to look
-// with. A reference that does not resolve here (a workspace file, a media id)
-// is left off rather than guessed at.
+// with. Read as the edit read them (sourceData): a media id or a workspace
+// file used to be left off here, and the picture being edited is usually one,
+// so the check judged a face swap that dropped a person and cut the frame
+// with nothing to compare the scene to, and passed it.
 func checkSources(sess *ToolSession, refs []string) []sourceImage {
 	if sess == nil || sess.LLM == nil || len(refs) == 0 {
 		return nil
 	}
 	var out []sourceImage
 	for _, ref := range refs {
-		if data, ok := ResolveRecentImage(sess, ref); ok && len(data) > 0 {
+		if data, ok := sourceData(sess, ref); ok {
 			out = append(out, sourceImage{ref: ref, data: data})
 		}
 	}
 	return out
+}
+
+// sourceData is the picture ref names, read exactly as the edit reads its
+// sources (core.ResolveSourceImage): a picture from this conversation
+// (image#…), one someone sent (media#N), or a workspace path.
+func sourceData(sess *ToolSession, ref string) ([]byte, bool) {
+	if data, ok := ResolveRecentImage(sess, ref); ok && len(data) > 0 {
+		return data, true
+	}
+	data, _, err := ResolveSourceImage(sess, ref)
+	return data, err == nil && len(data) > 0
 }
 
 // sheetInPlaceOfResult swaps the result picture saveImageResult just queued for
@@ -338,7 +378,7 @@ func blendNote(refs []string, held bool) string {
 		"the sources %s, then the tile labelled RESULT (its label band is blue). "+
 		"Check each numbered source against RESULT: is that source's subject in it, and the SAME ONE (not swapped with another, merged into one, duplicated, or left out)? "+
 		"This is a question looking CAN settle: not who anyone is, but whether each subject in the sources survived into the result. "+
-		"If one is missing or came out as somebody or something else, say which number and try once more with it named as the thing to keep.%s "+
+		"If one is missing or came out as somebody or something else, say which number, plainly, and offer to try again: do NOT try again on your own, the person can see it.%s "+
 		"If every one survived, %s and do not raise this again.", strings.Join(order, ", "), stop, next)
 }
 
@@ -349,7 +389,7 @@ func blendNote(refs []string, held bool) string {
 func fidelityNote(ref string) string {
 	return fmt.Sprintf(" COMPARE: two pictures are included with this result, FIRST the source you passed (%s), SECOND the edited result. "+
 		"This is the one identity question looking CAN settle: not who the person is, but whether the person in the second picture is the SAME ONE as in the first. "+
-		"If a face, animal or product came out visibly different, say so and try once more with the likeness named as the thing to preserve; "+
+		"If a face, animal or product came out visibly different, say so plainly and offer to try again, do NOT try again on your own: the person can see it; "+
 		"if it survived, deliver it and do not raise this again.", ref)
 }
 
@@ -400,7 +440,84 @@ func editCompositingGuard() string {
 // This is the whole routing decision, and it is a fact about the arguments
 // rather than a judgement about the request.
 func hasImageSources(args map[string]any) bool {
-	return len(stringsArg(args, "images")) > 0
+	return len(imageSources(args)) > 0
+}
+
+// rendersFromPictures reports a render that goes through the edit path: one
+// given pictures, or an edit, which changes a picture even when the call
+// forgot to name it (and is told to).
+func rendersFromPictures(args map[string]any) bool {
+	return hasImageSources(args) || strings.EqualFold(strings.TrimSpace(StringArg(args, "action")), "edit")
+}
+
+// imageSources are the pictures an image call names, in the order the backend
+// gets them: the picture to change first (picture), then the pictures to take
+// people or things from (references). images is the older single list, still
+// accepted from calls that send it; its first picture was the one to change.
+func imageSources(args map[string]any) []string {
+	var out []string
+	if p := strings.TrimSpace(StringArg(args, "picture")); p != "" {
+		out = append(out, p)
+	}
+	out = append(out, stringsArg(args, "references")...)
+	if len(out) == 0 {
+		out = stringsArg(args, "images")
+	}
+	return out
+}
+
+// editsPicture reports whether the call changes a picture that exists, the
+// first of its sources, rather than making a new one from references.
+func editsPicture(args map[string]any) bool {
+	if strings.TrimSpace(StringArg(args, "picture")) != "" {
+		return true
+	}
+	return len(stringsArg(args, "references")) == 0 && len(stringsArg(args, "images")) > 0
+}
+
+// framePictures says what each picture is for, ahead of what the call asked:
+// the picture being changed and what must stay in it, or the references a new
+// picture is made from. Two asks a model given a list of pictures otherwise
+// has to tell apart itself: given a scene and a portrait for a face swap, it
+// came back in the portrait's shape with a person gone.
+func framePictures(prompt string, edits bool, n int) string {
+	// The compositing guard says every picture is only a reference, which is
+	// wrong for the photo being edited: that one IS the result. Said here by
+	// role instead (framedGuard).
+	guarded := strings.HasSuffix(prompt, editCompositingGuard())
+	prompt = strings.TrimSuffix(prompt, editCompositingGuard())
+	var b strings.Builder
+	switch {
+	case edits && n > 1:
+		fmt.Fprintf(&b, "Picture 1 is the photo to edit. Change only what is asked below, and keep everything else in it as it is: its framing, its shape, and everyone and everything the change does not name. "+
+			"Pictures 2 to %d are references: take from each only what the change asks for, such as a face.", n)
+	case edits:
+		b.WriteString("The picture is the photo to edit. Change only what is asked below, and keep everything else in it as it is: its framing, its shape, and everyone and everything the change does not name.")
+	default:
+		b.WriteString("Make a new picture from the request below. The pictures are references: take from each what the request asks for.")
+	}
+	label := "The change: "
+	if !edits {
+		label = "The request: "
+	}
+	b.WriteString("\n\n" + label + strings.TrimSpace(prompt))
+	if guarded {
+		b.WriteString(framedGuard(edits, n))
+	}
+	return b.String()
+}
+
+// framedGuard is the compositing guard said by role: the photo being edited
+// is the result, and only the references must stay out of the frame.
+func framedGuard(edits bool, n int) string {
+	const artifacts = " No inset, thumbnail, corner overlay, watermark, picture-in-picture, side-by-side panel, collage, or duplicate of a face anywhere in the frame."
+	switch {
+	case edits && n > 1:
+		return "\n\nProduce ONE finished image: the photo to edit, changed. The references must not appear as objects inside it." + artifacts
+	case edits:
+		return "\n\nProduce ONE finished image: the photo, changed." + artifacts
+	}
+	return "\n\nProduce ONE finished image. The references are for likeness and content only: they must not appear as objects inside the result." + artifacts
 }
 
 // routeRender is the single render entry point.
@@ -420,7 +537,7 @@ func hasImageSources(args map[string]any) bool {
 // "edit" still arrives — from older prompts, stored tools, habit — and lands
 // here too. It is not an error, it is the same request.
 func routeRender(sess *ToolSession, args map[string]any, avail imageActions) (string, error) {
-	if hasImageSources(args) {
+	if rendersFromPictures(args) {
 		return editImage(sess, args, avail)
 	}
 	return generateImage(sess, args, avail)

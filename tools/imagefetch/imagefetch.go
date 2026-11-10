@@ -150,9 +150,9 @@ func (t *ImageTool) Preflight(args map[string]any, sess *ToolSession) error {
 	avail := liveImageActions(sess)
 	switch effectiveImageAction(args) {
 	case "generate", "edit":
-		// One path, chosen by whether sources were passed rather than by which
-		// word the model picked. See routeRender.
-		if !hasImageSources(args) {
+		// One path, chosen by whether sources were passed (or edit, which
+		// always has one to change). See routeRender.
+		if !rendersFromPictures(args) {
 			_, err := planGenerate(sess, args, avail)
 			return err
 		}
@@ -175,7 +175,7 @@ func (t *ImageTool) InputImages(args map[string]any, sess *ToolSession) (refs []
 	default:
 		return nil, nil
 	}
-	for _, ref := range stringsArg(args, "images") {
+	for _, ref := range imageSources(args) {
 		if ref = strings.TrimSpace(ref); ref == "" {
 			continue
 		}
@@ -406,6 +406,8 @@ func effectiveImageAction(args map[string]any) string {
 var imageArgOwner = map[string]string{
 	"prompt":     "generate", // generate or edit — routeRender picks, from the sources
 	"images":     "generate",
+	"picture":    "edit",
+	"references": "generate",
 	"variations": "generate",
 	"deliver":    "generate",
 	"query":      "find",

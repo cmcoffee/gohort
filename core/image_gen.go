@@ -306,6 +306,14 @@ func generateWithBackend(ctx context.Context, backend, prompt string, landscape 
 	if !ok {
 		return nil, fmt.Errorf("no approved image connector named %s", backend)
 	}
+	// Whoever the render is for may be kept off this backend (its
+	// connection limited to named users, or switched off for the agent).
+	// The image tool checks before it gets here; this holds for any other
+	// caller that says who it renders for. One that says no one is the
+	// instance rendering for everyone, as an admin chose.
+	if err := ToolSessionFromContext(ctx).ConnectionBarred(backend); err != nil {
+		return nil, err
+	}
 	result, err := fn(ctx, prompt, landscape)
 	if err == nil && result != nil {
 		ProcessUsage().AddImageCall()

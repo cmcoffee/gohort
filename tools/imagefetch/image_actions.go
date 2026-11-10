@@ -115,7 +115,7 @@ func (a imageActions) imagesParamDesc() string {
 	// Origin is the axis that actually separates them: the user attached it, or
 	// a tool made it. And when a tool made it, the filename that tool returned
 	// is the most direct handle there is — no numbering to keep straight.
-	d := "Pictures to work FROM: the thing that turns a render into a change of YOUR picture rather than an invention. " +
+	d := "Photos to take people or things FROM: a face, a pet, a product, a place. With edit they go into the picture; with generate a NEW picture is made from them. " +
 		"For a picture a TOOL gave you (found, downloaded or generated), use the workspace filename it returned. That names one picture and goes on naming it. " +
 		"Use \"media#1\", \"media#2\" ONLY for a photo the USER ATTACHED to their message, numbered in the order they arrived, so media#1 is the first one they sent. Nothing you produced yourself is ever a media#N. " +
 		"For a picture from earlier in the conversation whose filename is gone, \"image#1\" is the most recent one either of you produced or received (call action=\"help\" to list them; these numbers SHIFT as new pictures are saved). "
@@ -125,7 +125,7 @@ func (a imageActions) imagesParamDesc() string {
 		// right one is selected from how many you pass — so the model supplies
 		// what the request needs and never has to know which connector holds
 		// how many inputs.
-		d += "This deployment composes " + joinCounts(editorImageCounts(a)) + " pictures at a time and the right backend is chosen automatically from how many you pass: supply exactly what the request needs, all of them in one call. ORDER MATTERS: the first is the base/subject, later ones composite onto it. "
+		d += "This deployment composes " + joinCounts(editorImageCounts(a)) + " pictures at a time, the picture being edited included, and the right backend is chosen automatically from how many you pass: supply exactly what the request needs, all of them in one call. "
 	case n == 1:
 		// Stated, because the alternative is discovering it by failing: asked to
 		// combine three pictures the model picked one, blended nothing, and
@@ -135,7 +135,8 @@ func (a imageActions) imagesParamDesc() string {
 	// Said here and not only in the list of recent pictures, which a turn
 	// may never ask for: "change it" after two renders went back to the
 	// original photo, because every line about renders said not to use one.
-	d += "Asked to change a picture you just made, pass that render (first, when there are several): going back to the original photo starts over and loses every change since. "
+	d += "Asked to change a picture you just made, edit that render as picture: going back to the original photo starts over and loses every change since. " +
+		"But told it came out WRONG and asked to try again, edit the original picture again, not the wrong render: building on it keeps its mistakes and loses more. "
 	d += "A picture you kept under a name is \"image#<that name>\" and stays valid indefinitely. "
 	return d + "A web URL is NOT accepted: fetch it first, then pass the saved filename."
 }
@@ -157,8 +158,34 @@ func (a imageActions) anyEditorTakesMask() bool {
 // cannot be told an identity, so the parameter is withheld rather than offered
 // and ignored — an advertised switch that does nothing is the shape a model
 // reaches for and then reports as done.
+//
+// And it runs only where the rendering is gohort's own: a ComfyUI or A1111
+// graph (core/image_face_refine.go, on a rest_image connector). A model behind
+// a service connector (Gemini, OpenAI) gets one request and returns one
+// picture, so no face pass runs there, and offering the switch, or saying
+// "rendering, with a pass over the faces", told the agent and the person
+// something that never happened.
 func (a imageActions) canRefineFaces() bool {
-	return a.maxEditImages() >= 2
+	for _, e := range a.editors {
+		if refinesFaces(e) {
+			return true
+		}
+	}
+	return false
+}
+
+// refinesFaces reports whether the face pass can run on editor e.
+func refinesFaces(e ImageBackendChoice) bool { return e.Graph && e.MaxImages >= 2 }
+
+// backendRefinesFaces reports whether the face pass can run on the named
+// editor.
+func backendRefinesFaces(a imageActions, name string) bool {
+	for _, e := range a.editors {
+		if strings.EqualFold(e.Name, name) {
+			return refinesFaces(e)
+		}
+	}
+	return false
 }
 
 // selectableBackends is every backend a caller may name, generators and editors
@@ -238,9 +265,9 @@ func (a imageActions) backendParamDesc() string {
 				// Both, said as both: "works from pictures" alone told the
 				// model a backend that also makes pictures from a prompt
 				// could not, and it told the person so.
-				note += "generates from text alone, or works from pictures you pass in images"
+				note += "generates from text alone or from references, and edits a picture you pass"
 			} else {
-				note += "works from pictures you pass in images"
+				note += "edits a picture you pass, or makes one from references"
 			}
 			if c.MaxImages > 1 {
 				// Fewer is fine: the unused inputs are taken out of the graph
@@ -276,11 +303,15 @@ func (a imageActions) names() []string {
 	for _, c := range []struct {
 		name string
 		on   bool
-		// No "edit". It is still ACCEPTED — older prompts and stored tools send
-		// it — but it is not offered, because offering it recreates the choice
-		// this merge removed. A backend that can only edit still advertises
-		// generate: passing images is what makes it an edit.
-	}{{"find", a.find}, {"fetch", a.fetch}, {"generate", a.generate || a.edit}} {
+		// Two asks, two actions: edit changes a picture that exists (named
+		// as picture), generate makes a new one (from text, or from
+		// references). They were one action from 2026-09 because a model
+		// given both picked generate from text when it should have passed
+		// the photo. Generate now takes references, so picking it with a
+		// photo in hand still uses the photo; and one action with a list of
+		// pictures left a backend to guess which one was being changed: a
+		// face swap came back in the reference's shape with a person gone.
+	}{{"find", a.find}, {"fetch", a.fetch}, {"generate", a.generate || a.edit}, {"edit", a.edit}} {
 		if c.on {
 			out = append(out, c.name)
 		}
@@ -336,19 +367,18 @@ func imageSchemaFor(a imageActions) imageSchema {
 		params["url"] = ToolParam{Type: "string", Description: "(fetch) Direct URL of the image to download (must resolve to an image file: jpg, png, gif, webp, etc.)."}
 	}
 	if a.generate || a.edit {
-		// One action, and what it DOES depends on whether sources are given.
-		// Written as a single sentence on purpose: describing two behaviours as
-		// two actions is what made the model choose between them, and choose
-		// wrong, for as long as there were two.
+		// The two asks, each said as what it is for. Edit's line carries the
+		// rule that decides between them: a request about a picture that
+		// exists is an edit of it.
+		editLine := "edit (change a picture that EXISTS: name it as `picture`, say in `prompt` what to change in it, and pass in `references` any photos to take a face or a thing from. It keeps the picture as it is apart from the change. A request about a picture that already exists, \"this photo\", \"the one you just made\", is always an edit of it), "
 		switch {
 		case a.generate && a.edit:
-			desc += "generate (make a picture, from a text prompt alone, or FROM PICTURES YOU PASS in `images`: change one, combine several, restyle, replace a background. Passing images is what makes it work from them rather than inventing; a request about a picture that already exists should always pass it), "
+			desc += "generate (make a NEW picture: from a text prompt alone, or from reference photos you pass in `references`, taking from them the people or things the request names), " + editLine
 		case a.edit:
 			// Editors only. Saying "from a text prompt alone" here would be a
 			// lie about this deployment, and the model would discover it by
-			// failing — the old two-action shape at least made the limit
-			// visible by omitting generate, and the merge must not lose that.
-			desc += "generate (make a picture FROM PICTURES YOU PASS in `images`: change one, combine several, restyle, replace a background. This deployment cannot create from a text prompt alone: `images` is required, and a request with nothing to work from cannot be served), "
+			// failing.
+			desc += "generate (make a NEW picture from reference photos you pass in `references`: this deployment cannot create from a text prompt alone, and a request with nothing to work from cannot be served), " + editLine
 		default:
 			desc += "generate (create a NEW image from a text prompt), "
 		}
@@ -362,9 +392,9 @@ func imageSchemaFor(a imageActions) imageSchema {
 		// One prompt, described once. It used to be labelled "(generate)" and
 		// so was skipped on edits, and a blend with no instructions is the
 		// backend's guess rather than the request.
-		d := "What you want. With no images: a detailed description of the picture to create."
+		d := "What you want. For a new picture from no photos: a detailed description of the picture to create."
 		if a.edit {
-			d += " With images: what should CHANGE about them, or HOW they should combine. Give one whenever you pass images, unless you genuinely want the backend's default treatment." +
+			d += " For an edit: what should CHANGE in the picture. For a new picture from references: the scene to make, and which reference is which. Give one whenever you pass pictures, unless you genuinely want the backend's default treatment." +
 				" POINT AT THE PICTURES, DO NOT REDESCRIBE THEM. Name the part you mean and which image it comes from: \"the face from the first picture on the body in the second\", \"the background of the second, everything else from the first\", \"make it snowy\"." +
 				" That is the instruction, and a combine that does not say which part comes from where is the backend's guess." +
 				" What must NOT go in is who the subject IS or what they LOOK like: no names, no \"a man with a short beard\", no borrowing the wording of a caption." +
@@ -396,13 +426,15 @@ func imageSchemaFor(a imageActions) imageSchema {
 		}
 	}
 	if a.edit {
-		params["images"] = ToolParam{
+		params["picture"] = ToolParam{Type: "string",
+			Description: "(edit) The ONE picture to change, by id (the same forms as references). The result keeps it as it is apart from the change: its framing, its shape, and everyone in it."}
+		params["references"] = ToolParam{
 			Type:        "array",
 			Items:       &ToolParam{Type: "string"},
 			Description: a.imagesParamDesc(),
 		}
 		if a.anyEditorTakesMask() {
-			params["mask"] = ToolParam{Type: "string", Description: "Optional black-and-white mask image (same reference forms as images) marking WHICH PART to change. White = repaint, black = keep. Use for \"change just the sky\"."}
+			params["mask"] = ToolParam{Type: "string", Description: "Optional black-and-white mask image (the same forms as picture) marking WHICH PART of the picture to change. White = repaint, black = keep. Use for \"change just the sky\"."}
 		}
 		if a.canRefineFaces() {
 			params["preserve_faces"] = ToolParam{Type: "boolean", Description: "Defaults to TRUE and you rarely need to send it. When a source picture shows a person, the edit runs a second pass over the face so the result still looks like them: an edit that redraws the whole scene renders the face too small to keep a likeness. Set FALSE only when the instruction is deliberately ABOUT the face and must be free to change it: ageing someone, changing their expression, making them somebody else, or turning them into a statue, a cartoon, an animal. Setting it false on an ordinary edit costs you the likeness; leaving it true on a face-changing one fights the change you asked for. With checking quick it is off unless you send it."}
@@ -448,7 +480,7 @@ func imageSchemaFor(a imageActions) imageSchema {
 		if a.inboundMedia > 1 {
 			desc += fmt.Sprintf("-media#%d", a.inboundMedia)
 		}
-		desc += ". If the request concerns them, PASS THOSE IDS IN images, that is what makes the result their picture changed rather than a new one that ignores it." +
+		desc += ". If the request is to change one, EDIT it, with that id as picture; to put who or what is in them into a new picture, pass them in references. That is what makes the result their picture rather than a new one that ignores it." +
 			"If one shows a subject you could be asked for again (a person, a pet, a product, a place), keep it NOW" +
 			" (action=\"keep\", ref=\"media#1\", name=\"…\", of=\"who or what it shows\", and is_person=true for a person):" +
 			" a media id lasts only this turn and ring ids age out as new pictures arrive, whereas a kept name works indefinitely." +
@@ -461,7 +493,7 @@ func imageSchemaFor(a imageActions) imageSchema {
 	// by inventing a fresh one that looks like somebody else.
 	if a.edit && len(a.kept) > 0 {
 		desc += " You have reference images kept under stable ids: " + describeKeptRefs(a.kept) +
-			". If a request names a subject you hold a reference for, pass that id in images" +
+			". If a request names a subject you hold a reference for, pass that id in references" +
 			", generating instead invents a DIFFERENT-looking subject, which is rarely what was asked for."
 	}
 	// The decision rule only helps when there's a decision to make.
@@ -477,11 +509,11 @@ func imageSchemaFor(a imageActions) imageSchema {
 		// generate over edit: an ordering rule, a phrasings list, and a
 		// "generate is almost never right" warning. All of it was compensating
 		// for a choice that no longer exists — there is one render action, and
-		// the question is only whether to pass `images`.
+		// the question is only which picture the request is about.
 		//
 		// What remains is that question, stated once.
 		if a.edit {
-			desc += " Wants a picture and one already exists that the request is ABOUT (\"this photo\", \"the one you just made\", \"combine these\", \"make x sit in y\") → generate WITH those pictures in images."
+			desc += " Wants a picture and one already exists that the request is ABOUT (\"this photo\", \"the one you just made\", \"swap the guy on the left\") → edit it, as picture. A NEW picture of people or things you hold photos of (\"make x sit in y\", \"combine these\", \"the four of us on a stage\") → generate with those photos in references."
 		}
 		// Text-to-image cannot depict a REAL subject, only invent one that fits
 		// the words. For a specific person that means the wrong face — and a
@@ -526,15 +558,18 @@ func imageSchemaFor(a imageActions) imageSchema {
 				// backend two sources for one face and invites it to draw from
 				// the words. Say what they DO, not what they look like.
 				desc += " Do NOT describe the appearance of someone you passed a picture of: say what they are doing, wearing or where they are, and let the picture carry the likeness. Words about a face compete with the reference rather than reinforcing it."
-				// Asked to put everyone in at once, a render places some, merges
-				// two into one, or gives one person another's face, and nothing
-				// says which. A scene that already has a figure where each person
-				// goes turns the job into a swap per figure, which is the edit a
-				// backend does reliably, and each pass is small enough to check.
+				// Several people go in with ONE call carrying every person's
+				// picture. Placeholder passes (a scene of stand-ins, then one
+				// swap per pass) were tried and did worse on live use: each
+				// pass redraws the whole picture, so a face placed earlier was
+				// lost and the picture degraded pass by pass, and a chain whose
+				// check kept failing ran on. Observed: the single call with the
+				// scene and all four people came back with four; the passes
+				// after it alternated between three and four.
 				// People only: a blend of two ships that lost one was the edit
 				// model failing to draw it from a small reference, not the prompt's
 				// words, and nothing showed passes would have saved it.
-				desc += " Putting SEVERAL real people into one scene goes in passes, never all at once: first get a scene with one PLACEHOLDER figure standing where each person goes (generate it with that many people in the right places, or use the scene you were given if it has them), then swap ONE person per pass onto their placeholder, naming it by position (\"the person on the left\"), passing the scene so far and that one person's picture. Hold every pass but the last (deliver=false) and look at each before starting the next."
+				desc += " Putting SEVERAL real people into one scene goes in ONE call: with a scene to put them in, edit it as picture with every person's photo in references; with none, generate with every person's photo in references. Name in the prompt which photo is which person and where each one stands. Do NOT build the scene up one person at a time: every pass redraws the whole picture, so a long chain of passes loses more than it fixes. Look at the result. If one person did not come through, make at most one fix pass: edit that result as picture, with EVERY person's photo in references again, saying who to fix and that everyone else stays as they are."
 			}
 		}
 	}

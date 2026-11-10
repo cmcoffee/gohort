@@ -10,6 +10,7 @@ package imagefetch
 
 import (
 	"bytes"
+	"image/color"
 	"image/jpeg"
 	"strings"
 	"testing"
@@ -44,9 +45,10 @@ func TestFidelityCheckAsksTheAnswerableQuestion(t *testing.T) {
 	if !strings.Contains(note, "FIRST the source") || !strings.Contains(note, "SECOND the edited result") {
 		t.Errorf("the note must name which picture is which, got %q", note)
 	}
-	// A finding has to lead somewhere, and a non-finding has to stop.
-	if !strings.Contains(note, "try once more") {
-		t.Error("a visible mismatch should have a next step")
+	// A finding has to lead somewhere: to the person, who decides whether to
+	// try again. And a non-finding has to stop.
+	if !strings.Contains(note, "offer to try again") || !strings.Contains(note, "do NOT try again on your own") {
+		t.Error("a visible mismatch should go to the person with an offer, not to a retry")
 	}
 	if !strings.Contains(note, "do not raise this again") {
 		t.Error("a survived likeness must not loop")
@@ -316,5 +318,30 @@ func TestSavingAnImageRenumbersEveryEarlierRef(t *testing.T) {
 	moved, _ := ResolveRecentImage(sess, "image#2")
 	if string(now) != "RESULT" || string(moved) != "ORIGINAL" {
 		t.Errorf("after a save, image#1=%q image#2=%q — the ref the model held now means something else", now, moved)
+	}
+}
+
+// The picture being edited is checked even when it is a photo someone sent
+// (media#N) or a workspace file: those were left off, so a face swap that
+// dropped a person from the photo being edited had no scene to be compared to.
+func TestTheCheckSeesThePhotoBeingEdited(t *testing.T) {
+	sess := fidelitySession(t)
+	scene := pngOf(t, 40, 20, color.RGBA{10, 20, 30, 255})
+	ref := pngOf(t, 10, 20, color.RGBA{200, 0, 0, 255})
+	sent := sess.RegisterInboundMediaDescribed("image", scene, "a friend", "")
+	if sent != "media#1" || RecordRecentImage(sess, ref, "received", ImageFromUser) == "" {
+		t.Fatalf("setup: %q", sent)
+	}
+	got := checkSources(sess, []string{"media#1", "image#1"})
+	if len(got) != 2 || got[0].ref != "media#1" || string(got[0].data) != string(scene) {
+		t.Fatalf("sources checked: %d, first %q", len(got), func() string {
+			if len(got) == 0 {
+				return ""
+			}
+			return got[0].ref
+		}())
+	}
+	if len(queueSourceForComparison(sess, []string{"media#1"})) != 1 {
+		t.Error("a one-photo edit of a sent photo shows no source to compare")
 	}
 }

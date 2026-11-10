@@ -759,7 +759,7 @@ func TestChannelManifestTeachesEditing(t *testing.T) {
 	for _, want := range []string{
 		"media#1",         // the handle
 		"action=\"edit\"", // and what to do with it
-		"images=[\"media#1\"]",
+		"picture=\"media#1\"",
 	} {
 		if !strings.Contains(m, want) {
 			t.Errorf("manifest never mentions %q:\n%s", want, m)

@@ -250,20 +250,28 @@ func editActions(editors ...ImageBackendChoice) imageActions {
 // The old assertion (edit present in the enum) tested the mechanism that caused
 // the failure this merge removes: with two actions to pick between, "make x sit
 // in y" reads as creation and generate won every time.
-func TestImagesParamAppearsOnlyWithAnEditingBackend(t *testing.T) {
+func TestPictureParamsAppearOnlyWithAnEditingBackend(t *testing.T) {
 	none := imageSchemaFor(genActions(ImageBackendChoice{Name: "comfy_txt", Default: true}))
-	if _, ok := none.params["images"]; ok {
-		t.Error("the images param must not appear with no image-input backend wired")
+	for _, k := range []string{"picture", "references", "images"} {
+		if _, ok := none.params[k]; ok {
+			t.Errorf("the %s param must not appear with no image-input backend wired", k)
+		}
 	}
 	if slices.Contains(none.params["action"].Enum, "edit") {
-		t.Error("edit must never be advertised as an action")
+		t.Error("edit must not be advertised with nothing that can edit")
 	}
 	with := imageSchemaFor(editActions(ImageBackendChoice{Name: "comfy_edit", Edits: true, MaxImages: 1, NeedsPrompt: true}))
-	if p, ok := with.params["images"]; !ok || p.Type != "array" {
-		t.Errorf("images param = %+v, want an array", p)
+	if p, ok := with.params["references"]; !ok || p.Type != "array" {
+		t.Errorf("references param = %+v, want an array", p)
 	}
-	if slices.Contains(with.params["action"].Enum, "edit") {
-		t.Errorf("edit must not be offered even where it is supported: %v", with.params["action"].Enum)
+	if p, ok := with.params["picture"]; !ok || p.Type != "string" {
+		t.Errorf("picture param = %+v, want a string", p)
+	}
+	if _, ok := with.params["images"]; ok {
+		t.Error("the old images list is still offered beside picture and references")
+	}
+	if !slices.Contains(with.params["action"].Enum, "edit") {
+		t.Errorf("edit must be offered where something can edit: %v", with.params["action"].Enum)
 	}
 	// The single entry point is offered instead, so an edit-only backend is
 	// reachable at all.
@@ -276,7 +284,7 @@ func TestImagesParamNamesTheSpaceFirst(t *testing.T) {
 	// image#N is what makes "edit the one you just made" work; a model that
 	// doesn't know the form falls back to guessing filenames.
 	s := imageSchemaFor(editActions(ImageBackendChoice{Name: "comfy_edit", Edits: true, MaxImages: 1, NeedsPrompt: true}))
-	d := s.params["images"].Description
+	d := s.params["references"].Description
 	for _, want := range []string{"image#1", "media#1", "workspace filename"} {
 		if !strings.Contains(d, want) {
 			t.Errorf("images description missing %q:\n%s", want, d)
@@ -292,11 +300,11 @@ func TestMultiImageBackendAdvertisesOrderAndCount(t *testing.T) {
 	// Order decides subject vs background in a compose. Silence here produces a
 	// swapped result that looks like a backend bug.
 	one := imageSchemaFor(editActions(ImageBackendChoice{Name: "e1", Edits: true, MaxImages: 1, NeedsPrompt: true}))
-	if strings.Contains(one.params["images"].Description, "ORDER MATTERS") {
-		t.Error("a single-image backend has no order to explain")
+	if strings.Contains(one.params["references"].Description, "composes") {
+		t.Error("a single-image backend has no count to explain")
 	}
 	two := imageSchemaFor(editActions(ImageBackendChoice{Name: "blend", Edits: true, MaxImages: 2}))
-	d := two.params["images"].Description
+	d := two.params["references"].Description
 	// "Up to 2" became "composes 2 pictures at a time" with count routing: the
 	// number is not a CAP the model works under, it is what this deployment
 	// serves and what selects the backend. A cap invited passing fewer, which a
@@ -304,12 +312,14 @@ func TestMultiImageBackendAdvertisesOrderAndCount(t *testing.T) {
 	if !strings.Contains(d, "composes 2 pictures at a time") {
 		t.Errorf("images description should state the servable count:\n%s", d)
 	}
-	if !strings.Contains(d, "ORDER MATTERS") {
-		t.Errorf("a multi-image backend must explain ordering:\n%s", d)
+	// Which picture is the base is said by picture, not by order: the count
+	// includes it.
+	if !strings.Contains(d, "the picture being edited included") || !strings.Contains(two.params["picture"].Description, "The ONE picture to change") {
+		t.Errorf("a multi-image backend must say which picture is the one changed:\n%s", d)
 	}
 	// "Change it" works from the render either way, one picture or several.
-	for _, desc := range []string{d, one.params["images"].Description} {
-		if !strings.Contains(desc, "Asked to change a picture you just made, pass that render") {
+	for _, desc := range []string{d, one.params["references"].Description} {
+		if !strings.Contains(desc, "Asked to change a picture you just made, edit that render as picture") || !strings.Contains(desc, "edit the original picture again, not the wrong render") {
 			t.Errorf("the images description should say a change to a render starts from it:\n%s", desc)
 		}
 	}
@@ -362,7 +372,7 @@ func TestEditWithNoImagesSaysWhatToPass(t *testing.T) {
 	if err == nil {
 		t.Fatal("edit with no source image must fail")
 	}
-	if !strings.Contains(err.Error(), "source image") {
+	if !strings.Contains(err.Error(), "name it as picture") {
 		t.Errorf("error should name what's missing: %v", err)
 	}
 }
@@ -486,7 +496,7 @@ func TestEditOnlyDeploymentStatesThatImagesAreRequired(t *testing.T) {
 	if !strings.Contains(s.desc, "cannot create from a text prompt alone") {
 		t.Errorf("an edit-only deployment must say so in the schema, got: %s", s.desc)
 	}
-	if !strings.Contains(s.desc, "`images` is required") {
+	if !strings.Contains(s.desc, "from reference photos you pass in `references`") {
 		t.Errorf("the requirement should be explicit, got: %s", s.desc)
 	}
 }
@@ -543,7 +553,7 @@ func TestMediaRefIsScopedToWhatTheUserAttached(t *testing.T) {
 	// media#2, which named nothing — the description split the forms by THIS
 	// TURN vs EARLIER, and finding them had happened this turn. Origin, not
 	// timing, is what separates the two id spaces.
-	d := imageSchemaFor(editActions(ImageBackendChoice{Name: "comfy_edit", Edits: true, MaxImages: 2, NeedsPrompt: true})).params["images"].Description
+	d := imageSchemaFor(editActions(ImageBackendChoice{Name: "comfy_edit", Edits: true, MaxImages: 2, NeedsPrompt: true})).params["references"].Description
 	if !strings.Contains(d, "ONLY for a photo the USER ATTACHED") {
 		t.Errorf("media#N must be scoped to user-attached photos:\n%s", d)
 	}

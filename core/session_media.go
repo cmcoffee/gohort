@@ -208,6 +208,10 @@ func (s *ToolSession) RegisterInboundMediaDescribed(kind string, raw []byte, sen
 		if who != "" {
 			note += " from " + who
 		}
+		// The id it came as, which names nothing once this turn is over: a
+		// later turn reaching for "media#1" is told which picture that was
+		// (receivedAs) rather than left to guess among the received ones.
+		note += " as " + id
 		// Recorded WITHOUT a description. The model is about to be handed this
 		// very image as part of the turn, so describing it here would be a
 		// second vision call for the same picture — racing the user's own

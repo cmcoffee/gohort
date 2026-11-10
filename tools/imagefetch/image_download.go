@@ -198,7 +198,7 @@ func stableRefNote(stable string) string {
 // So the filename leads: it means this picture and no other, for as long as the
 // file is there. image#N follows, with what it actually means.
 func editHandleHint(name, ref string) string {
-	return fmt.Sprintf(" To change or blend it rather than send it, pass %q in images on your next image call, that filename keeps meaning THIS picture. It also entered your recent images as %s, but those are positional: whatever is saved next becomes image#1 and this one moves down, so don't hold onto that number across another image call.", name, ref)
+	return fmt.Sprintf(" To change or blend it rather than send it, edit it with %q as picture on your next image call, that filename keeps meaning THIS picture. It also entered your recent images as %s, but those are positional: whatever is saved next becomes image#1 and this one moves down, so don't hold onto that number across another image call.", name, ref)
 }
 
 // extForMime returns a file extension matching a mime type. Used to

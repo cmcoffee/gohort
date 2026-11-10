@@ -176,3 +176,28 @@ func TestOnlyAnEditInAConversationIsCounted(t *testing.T) {
 		t.Error("a wake turn's retry is the same conversation's attempt")
 	}
 }
+
+// The pictures an image call names reach the backend in one order: the
+// picture to change, then the references. The older images list still works
+// and still means its first picture is the one changed; references alone make
+// a new picture.
+func TestThePicturesAnImageCallNames(t *testing.T) {
+	for _, tc := range []struct {
+		args  map[string]any
+		want  string
+		edits bool
+	}{
+		{map[string]any{"picture": "image#p", "references": []any{"image#a", "image#b"}}, "image#p,image#a,image#b", true},
+		{map[string]any{"references": []any{"image#a"}}, "image#a", false},
+		{map[string]any{"images": []any{"image#x", "image#y"}}, "image#x,image#y", true},
+		{map[string]any{"picture": "image#p", "images": []any{"image#x"}}, "image#p", true},
+		{map[string]any{"prompt": "a cat"}, "", false},
+	} {
+		if got := strings.Join(imageSources(tc.args), ","); got != tc.want || editsPicture(tc.args) != tc.edits {
+			t.Errorf("%v: %q (edits %v), want %q (edits %v)", tc.args, got, editsPicture(tc.args), tc.want, tc.edits)
+		}
+	}
+	if !rendersFromPictures(map[string]any{"action": "edit"}) {
+		t.Error("an edit naming no picture went to the text-only render, not to the refusal")
+	}
+}

@@ -23,12 +23,12 @@ func TestPromptIsOfferedForEditNotJustGenerate(t *testing.T) {
 		// point survives intact and gets sharper: the prompt must describe BOTH
 		// situations, or a blend runs with no instructions again.
 		{"images accepted", imageActions{fetch: true, edit: true,
-			editors: []ImageBackendChoice{{Name: "blend", MaxImages: 2}}}, []string{"With images", "combine"}},
+			editors: []ImageBackendChoice{{Name: "blend", MaxImages: 2}}}, []string{"For an edit", "For a new picture from references", "combine"}},
 		{"text only", imageActions{fetch: true, generate: true,
-			backends: []ImageBackendChoice{{Name: "gen"}}}, []string{"With no images"}},
+			backends: []ImageBackendChoice{{Name: "gen"}}}, []string{"For a new picture from no photos"}},
 		{"both", imageActions{fetch: true, generate: true, edit: true,
 			backends: []ImageBackendChoice{{Name: "gen"}},
-			editors:  []ImageBackendChoice{{Name: "blend", MaxImages: 2}}}, []string{"With no images", "With images", "combine"}},
+			editors:  []ImageBackendChoice{{Name: "blend", MaxImages: 2}}}, []string{"For a new picture from no photos", "For an edit", "combine"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

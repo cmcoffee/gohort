@@ -183,6 +183,16 @@ func backendNeedsPrompt(a imageActions, name string) bool {
 	return true
 }
 
+// backendIsGraph reports whether the named editor is a ComfyUI or A1111 graph.
+func backendIsGraph(a imageActions, name string) bool {
+	for _, e := range a.editors {
+		if strings.EqualFold(e.Name, name) {
+			return e.Graph
+		}
+	}
+	return false
+}
+
 func isEditor(a imageActions, name string) bool {
 	for _, e := range a.editors {
 		if e.Name == name {

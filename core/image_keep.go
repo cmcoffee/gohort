@@ -625,7 +625,7 @@ func KeptImageManifest(sess *ToolSession) string {
 	// tries the id as a filename, fails, and reaches for the only thing that
 	// does produce a deliverable file — rendering a new one, which for a person
 	// is a different face handed over as their reference.
-	b.WriteString("To WORK FROM one, pass its id in the images list of an image call. To SEND one, call workspace(action=\"attach\", path=\"image#<name>\"): the id goes straight in, it is not a file in your workspace, and the kept copy survives being sent. Never re-render a kept picture to make it sendable.\n")
+	b.WriteString("To WORK FROM one, pass its id to an image call: as picture to change it, in references to bring in who or what it shows. To SEND one, call workspace(action=\"attach\", path=\"image#<name>\"): the id goes straight in, it is not a file in your workspace, and the kept copy survives being sent. Never re-render a kept picture to make it sendable.\n")
 	return strings.TrimRight(b.String(), "\n")
 }
 

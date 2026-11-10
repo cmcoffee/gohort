@@ -32,8 +32,8 @@ func TestKeptRefsAreNamedInTheSchema(t *testing.T) {
 		}
 	}
 	// And say what to DO with them, or naming them changes nothing.
-	if !strings.Contains(desc, "pass that id in images") {
-		t.Error("schema should tell the model to pass a matching reference in images")
+	if !strings.Contains(desc, "pass that id in references") {
+		t.Error("schema should tell the model to pass a matching reference in references")
 	}
 }
 
@@ -324,7 +324,7 @@ func TestSchemaNamesTheServableCounts(t *testing.T) {
 		editors: []ImageBackendChoice{
 			{Name: "blend2", Edits: true, MaxImages: 2},
 			{Name: "blend3", Edits: true, MaxImages: 3, Default: true},
-		}}).params["images"].Description
+		}}).params["references"].Description
 	if !strings.Contains(desc, "composes 2 or 3 pictures at a time") {
 		t.Errorf("the schema should name the servable counts, got %q", desc)
 	}
@@ -369,24 +369,29 @@ func TestCountMismatchAdviceMatchesTheDirection(t *testing.T) {
 	}
 }
 
-// Several real people go into a scene through placeholders, one swap per pass:
-// a render asked to place everyone at once drops one, merges two, or swaps a
-// face, and nothing says which. People only: things are not sent through
-// passes on the strength of one blend the edit model could not draw.
-func TestSeveralPeopleGoInThroughPlaceholders(t *testing.T) {
+// Several real people go into a scene in one call carrying every person's
+// picture, with at most one fix pass that carries them all again: placeholder
+// passes, one swap per pass, redrew the whole picture each time and lost a
+// face placed earlier, degrading as they went. People only: things are not
+// sent through passes on the strength of one blend the edit model could not
+// draw.
+func TestSeveralPeopleGoInInOneCall(t *testing.T) {
 	desc := imageSchemaFor(imageActions{fetch: true, generate: true, edit: true, find: true,
 		editors: []ImageBackendChoice{{Name: "comfy_lan", Default: true}}}).desc
 	if strings.Contains(desc, "ships") || strings.Contains(desc, "someone or something") {
 		t.Error("the people-only rules were widened to things again")
 	}
-	for _, want := range []string{"SEVERAL real people", "never all at once", "PLACEHOLDER figure standing where each person goes", "swap ONE person per pass", "naming it by position", "deliver=false", "look at each before starting the next"} {
+	for _, want := range []string{"SEVERAL real people into one scene goes in ONE call", "edit it as picture with every person's photo in references", "generate with every person's photo in references", "which photo is which person", "Do NOT build the scene up one person at a time", "at most one fix pass", "EVERY person's photo in references again"} {
 		if !strings.Contains(desc, want) {
 			t.Errorf("the edit guidance lacks %q", want)
 		}
 	}
-	// Only where something can edit: with no editor there is no swap to make.
+	if strings.Contains(desc, "PLACEHOLDER") || strings.Contains(desc, "swap ONE person per pass") {
+		t.Error("the placeholder passes are offered again")
+	}
+	// Only where something can edit: with no editor there is no picture to pass.
 	noEdit := imageSchemaFor(imageActions{fetch: true, generate: true, find: true}).desc
-	if strings.Contains(noEdit, "PLACEHOLDER") {
-		t.Error("placeholder passes offered where nothing can edit")
+	if strings.Contains(noEdit, "SEVERAL real people into one scene") {
+		t.Error("the multi-person guidance is offered where nothing can edit")
 	}
 }

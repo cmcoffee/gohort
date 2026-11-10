@@ -678,8 +678,30 @@ func RecentImages(sess *ToolSession) []RecentImage {
 // find-dmcxqdrfq5dy.jpg says nothing about what is in it: two blends listed by
 // filename alone were mistaken for each other.
 func (s *ToolSession) RecentImageAbout(data []byte) string {
-	if len(data) == 0 {
+	r, ok := s.recentImageOf(data)
+	if !ok {
 		return ""
+	}
+	if c := strings.TrimSpace(r.Caption); c != "" {
+		return c
+	}
+	return strings.TrimSpace(r.Note)
+}
+
+// LastingImageID is the stable ring id (image#r.…) of the recent picture
+// whose bytes are data, "" when none is. For a caller holding a picture by a
+// name that dies with its turn (media#N) that must name it again later.
+func (s *ToolSession) LastingImageID(data []byte) string {
+	if r, ok := s.recentImageOf(data); ok {
+		return r.ID
+	}
+	return ""
+}
+
+// recentImageOf is the recent picture whose bytes are data.
+func (s *ToolSession) recentImageOf(data []byte) (RecentImage, bool) {
+	if len(data) == 0 {
+		return RecentImage{}, false
 	}
 	for _, r := range RecentImages(s) {
 		if info, err := os.Stat(r.path); err != nil || info.Size() != int64(len(data)) {
@@ -688,12 +710,9 @@ func (s *ToolSession) RecentImageAbout(data []byte) string {
 		if b, err := os.ReadFile(r.path); err != nil || !bytes.Equal(b, data) {
 			continue
 		}
-		if c := strings.TrimSpace(r.Caption); c != "" {
-			return c
-		}
-		return strings.TrimSpace(r.Note)
+		return r, true
 	}
-	return ""
+	return RecentImage{}, false
 }
 
 // ResolveRecentImage reads the bytes behind an "image#N" reference. Returns
@@ -886,12 +905,12 @@ func RecentImageManifest(sess *ToolSession) string {
 	}
 	if len(made) > 0 {
 		b.WriteString("Pictures YOU MADE: not evidence of what anything really looks like, so never the likeness for a real person on their own. " +
-			"Asked to change one (\"change it\", \"now make him...\", \"add a hat\"), it is the picture to change: pass it FIRST, usually the newest below, and add a picture you were given after it only to keep a face true (newest first):\n")
+			"Asked to change one (\"change it\", \"now make him...\", \"add a hat\"), it is the picture to change: edit it as picture, usually the newest below, and pass a picture you were given in references only to keep a face true. Told one came out WRONG and asked to try again, do NOT build on it: redo it from the picture you were given, since a wrong render only carries its mistakes forward. Newest first:\n")
 		for _, r := range made {
 			fmt.Fprintf(&b, "- %s: %s\n", label(r), describe(r))
 		}
 	}
-	b.WriteString("Pass an id in the images list of an image call to work from it. PREFER the image#r.… form: it always means that same picture. " +
+	b.WriteString("Pass an id to an image call to work from it: as picture to change it, in references to bring in who or what it shows. PREFER the image#r.… form: it always means that same picture. " +
 		"The image#N form is only its position right now: saving any picture, including your own render, makes that one image#1 and pushes the rest down. " +
 		"They are kept automatically; you never need to delete them.")
 	return b.String()

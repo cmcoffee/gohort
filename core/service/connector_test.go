@@ -8,6 +8,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -690,5 +691,55 @@ func TestAnEditSpecTakesAsManyPicturesAsItUses(t *testing.T) {
 	one := Spec{Provider: Provider{Operations: map[string]Operation{"e": {Body: map[string]any{"img": "{image.base64}"}}}}}
 	if n := one.editPictures(Binding{Steps: []Step{{Call: "e"}}}); n != 1 {
 		t.Errorf("a spec using only image takes %d pictures, want 1", n)
+	}
+}
+
+// sizedPNG is a PNG w by h.
+func sizedPNG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	var b bytes.Buffer
+	png.Encode(&b, image.NewRGBA(image.Rect(0, 0, w, h)))
+	return b.Bytes()
+}
+
+// An edit asks for the shape of the picture being edited, the first one, as
+// the nearest named ratio: given a wide scene and a portrait, a model left to
+// itself came back in the portrait's shape, the scene cut to fit. A picture
+// whose size cannot be read asks for no shape, as before.
+func TestAnEditKeepsTheShapeOfThePictureBeingEdited(t *testing.T) {
+	world(t)
+	img := pngBytes(t)
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == "GET" {
+			w.Write([]byte(`{"models":[{"name":"m"}]}`))
+			return
+		}
+		b, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(b))
+		w.Write([]byte(`{"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"image/png","data":"` + b64(img) + `"}}]}}]}`))
+	}))
+	defer srv.Close()
+	install(t, "gemini-images", templateSpec(t, "gemini-images", srv.URL))
+	scene, portrait := sizedPNG(t, 1600, 900), sizedPNG(t, 600, 900)
+	if _, err := editImage(nil, "gemini-images", "swap the man on the left", [][]byte{scene, portrait}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(bodies[0], `"aspectRatio":"16:9"`) {
+		t.Errorf("a wide scene edited with a portrait beside it: %.400s", bodies[0])
+	}
+	if _, err := editImage(nil, "gemini-images", "make it blue", [][]byte{portrait}); err != nil || !strings.Contains(bodies[1], `"aspectRatio":"2:3"`) {
+		t.Errorf("a portrait alone: %v %.300s", err, bodies[1])
+	}
+	webp := append([]byte("RIFF\x00\x00\x00\x00WEBPVP8 "), make([]byte, 32)...)
+	editImage(nil, "gemini-images", "make it blue", [][]byte{webp})
+	if len(bodies) > 2 && strings.Contains(bodies[2], "aspectRatio") {
+		t.Errorf("an unreadable size still asked for a shape: %.300s", bodies[2])
+	}
+	for in, want := range map[[2]int]string{{1024, 1024}: "1:1", {1920, 1080}: "16:9", {1080, 1350}: "4:5", {2520, 1080}: "21:9", {768, 1024}: "3:4"} {
+		if got := editAspect(sizedPNG(t, in[0], in[1])); got != want {
+			t.Errorf("%dx%d read as %q, want %q", in[0], in[1], got, want)
+		}
 	}
 }

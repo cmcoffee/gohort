@@ -150,7 +150,10 @@
                       "responseModalities": [
                         "TEXT",
                         "IMAGE"
-                      ]
+                      ],
+                      "imageConfig": {
+                        "aspectRatio": "{aspect}"
+                      }
                     }
                   }
                 },

@@ -329,6 +329,23 @@ func ResolveSourceImage(sess *ToolSession, ref string) (data []byte, mime string
 	return im.data, im.mime, err
 }
 
+// receivedAs is the lasting id of the latest picture that arrived as the
+// media id ref ("media#1"), "" when none did. Its note says what it came as
+// (RegisterInboundMediaDescribed).
+func receivedAs(sess *ToolSession, ref string) string {
+	id := normalizeMediaID(ref)
+	if id == "" {
+		return ""
+	}
+	for _, r := range RecentImages(sess) {
+		n := strings.TrimSpace(r.Note)
+		if r.Origin == ImageFromUser && (strings.HasSuffix(n, " as "+id) || strings.Contains(n, " as "+id+" ")) {
+			return r.ID
+		}
+	}
+	return ""
+}
+
 func resolveInputImage(sess *ToolSession, ref string) (inputImage, error) {
 	var out inputImage
 	ref = strings.TrimSpace(ref)
@@ -383,7 +400,13 @@ func resolveInputImage(sess *ToolSession, ref string) (inputImage, error) {
 		// needs to be told which namespace it wanted. Some attached but N is
 		// past the end is an off-by-one, and the count is the useful fact.
 		var lead string
-		if n := sess.InboundMediaCount(); n == 0 {
+		if was := receivedAs(sess, ref); was != "" && sess.InboundMediaCount() == 0 {
+			// The usual case by far: the photo the person sent with an earlier
+			// message, still meant. Name it, rather than leave the agent to
+			// pick among received pictures that all say "received".
+			lead = fmt.Sprintf("%s named a photo sent with an EARLIER message: media ids last only for the message they came with. "+
+				"The latest photo sent as %s is %s: pass that id", ref, ref, was)
+		} else if n := sess.InboundMediaCount(); n == 0 {
 			lead = fmt.Sprintf("%s doesn't exist. media#N only ever names a photo the USER attached to a message, and nothing was attached here. Pictures you found, downloaded or generated are NOT media#N: they are the workspace filename the tool handed back, or image#N", ref)
 		} else {
 			lead = fmt.Sprintf("%s is past the end: %d item(s) came in with this message, so the ids stop at media#%d", ref, n, n)

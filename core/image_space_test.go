@@ -275,10 +275,16 @@ func TestRingManifestSeparatesGivenFromMade(t *testing.T) {
 	// But a render is still the picture to change when asked to change it:
 	// "never as the reference" alone sent "change it" back to the original
 	// photo, losing every change since.
-	if !strings.Contains(m, "it is the picture to change: pass it FIRST") {
+	// Unless it came out wrong: a redo starts from the picture given, not
+	// from the render that failed. Observed: a face swap the person called
+	// wrong was redone on the render, and came back as more of the same.
+	if !strings.Contains(m, "Told one came out WRONG and asked to try again, do NOT build on it: redo it from the picture you were given") {
+		t.Errorf("the manifest should say a redo starts from the picture given, got:\n%s", m)
+	}
+	if !strings.Contains(m, "it is the picture to change: edit it as picture") {
 		t.Errorf("the manifest should say a render is what a change to it works from, got:\n%s", m)
 	}
-	// And the instruction must point at the parameter, not the removed action.
+	// And the instruction names the parameter, picture, not a call to copy.
 	if strings.Contains(m, `action="edit"`) {
 		t.Errorf("the manifest should not name a removed action, got:\n%s", m)
 	}
@@ -1425,7 +1431,7 @@ func TestAReceivedPhotoKeepsItsArrivalDescription(t *testing.T) {
 		t.Fatalf("recording made %d vision calls; the arrival already described them", llm.calls)
 	}
 	m := RecentImageManifest(sess)
-	for _, want := range []string{"received from Henry - A brown dog on a porch.", "received from Henry - A receipt from a gas station."} {
+	for _, want := range []string{"received from Henry as media#1 - A brown dog on a porch.", "received from Henry as media#2 - A receipt from a gas station."} {
 		if !strings.Contains(m, want) {
 			t.Errorf("list is missing %q:\n%s", want, m)
 		}
@@ -1436,5 +1442,35 @@ func TestAReceivedPhotoKeepsItsArrivalDescription(t *testing.T) {
 	}
 	if kept.Caption != "A brown dog on a porch." || !strings.Contains(kept.Description, "wooden porch") {
 		t.Errorf("kept = caption %q, description %q", kept.Caption, kept.Description)
+	}
+}
+
+// A photo sent with a message is noted with the media id it came as, and a
+// later turn reaching for that id (which names nothing once its turn is over)
+// is told which picture it was, by its lasting id, instead of guessing among
+// pictures that all say "received".
+func TestALaterTurnIsToldWhichPictureMediaWas(t *testing.T) {
+	sess := imageSpaceSession(t)
+	photo := testPNG(t, 12, 8)
+	if id := sess.RegisterInboundMediaDescribed("image", photo, "", ""); id != "media#1" {
+		t.Fatalf("registered as %q", id)
+	}
+	var stable string
+	for _, r := range RecentImages(sess) {
+		if strings.HasSuffix(r.Note, " as media#1") {
+			stable = r.ID
+		}
+	}
+	if stable == "" {
+		t.Fatal("the received picture's note does not say the id it came as")
+	}
+	// The next turn: nothing attached.
+	sess.InboundMedia = nil
+	_, err := resolveInputImage(sess, "media#1")
+	if err == nil || !strings.Contains(err.Error(), "named a photo sent with an EARLIER message") || !strings.Contains(err.Error(), "is "+stable+": pass that id") {
+		t.Errorf("a later turn's media#1: %v", err)
+	}
+	if receivedAs(sess, "media#10") != "" {
+		t.Error("media#10 matched a photo that came as media#1")
 	}
 }

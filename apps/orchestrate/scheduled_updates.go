@@ -1356,6 +1356,7 @@ func (fr *fireRun) sendHeldIfStalled() bool {
 	}
 	if fr.subSess.Detach.Any() {
 		Log("[orchestrate/task] agent=%s session=%s: a held step's wake started the next pass", fr.agentLabel, fr.p.SessionID)
+		fr.postHandOff()
 		return true
 	}
 	for _, img := range fr.held {
@@ -1369,6 +1370,34 @@ func (fr *fireRun) sendHeldIfStalled() bool {
 		fr.reply = "Here is where the picture got to."
 	}
 	return false
+}
+
+// postHandOff marks in a web thread that a held step finished and the next
+// pass is running: the step's picture and a line saying so. Without it the
+// thread showed a background task end with nothing, which read as a result
+// that was promised and never came. Not on a messaging channel, where every
+// step sent is the noise holding a step exists to avoid; the live row says
+// the next pass is running, with its progress and its time, either way.
+func (fr *fireRun) postHandOff() {
+	p := fr.p
+	if fr.app == nil || fr.udb == nil {
+		return
+	}
+	if _, _, ok := wakeChannelTarget(p); ok || strings.HasPrefix(p.SessionID, "chan:") || p.SessionID == cortexSessionID(p.AgentID) {
+		return
+	}
+	card := ChatMessage{
+		Role:         "assistant",
+		Content:      "A step toward the picture is done: this is where it has got to, not the finished one. The next pass is running.",
+		Created:      time.Now(),
+		ReportFrom:   recurringName(p),
+		ReportKind:   cortexKindResult,
+		ReportDetail: "a held step",
+		Attachments:  keepDeliveredAttachments(p.Username, fr.held),
+	}
+	if err := fr.app.appendToThread(fr.udb, p.AgentID, fr.loadSession, fr.sess, card); err != nil {
+		Log("[orchestrate/scheduled] save of a hand-off failed for session %s: %v", p.SessionID, err)
+	}
 }
 
 // recoverClaimedDelivery ships the file a fire's reply says it sent when

@@ -347,7 +347,7 @@ func refuseUnpassedPeople(sess *ToolSession, prompt string, attached []ImageSubj
 		return nil
 	}
 	return fmt.Errorf("nothing was rendered. Your prompt names %s, and you HAVE a picture of them: rendering now would invent a face instead of using theirs, which is the whole failure the library exists to prevent. "+
-		"Put the id in images and take the name out of the prompt; refer to them by position instead (\"the person in the first image\"). "+
+		"Put the id in references and take the name out of the prompt; refer to them by position instead (\"the person in the first image\"). "+
 		"If that word did not mean a person here, reword it so it is not capitalized and call again",
 		strings.Join(missed, ", "))
 }

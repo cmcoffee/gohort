@@ -134,7 +134,7 @@ func TestRenderIsRefusedBeforeItInventsAFaceWeHave(t *testing.T) {
 		t.Fatal("a prompt naming someone we have a picture of must not render")
 	}
 	// The refusal has to carry the fix, or the model retries the same call.
-	for _, want := range []string{"image#rory", "images", "not capitalized"} {
+	for _, want := range []string{"image#rory", "references", "not capitalized"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("refusal missing %q: %v", want, err)
 		}

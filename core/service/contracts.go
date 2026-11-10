@@ -179,6 +179,10 @@ func init() {
 			{Name: "negative", Type: TypeText},
 			{Name: "width", Type: TypeNumber},
 			{Name: "height", Type: TypeNumber},
+			// The shape of the first picture, the one being edited, as a
+			// named ratio ("16:9"): gohort fills it, for a template that sets
+			// the output's shape.
+			{Name: "aspect", Type: TypeText},
 			{Name: "seed", Type: TypeNumber},
 			{Name: "steps", Type: TypeNumber},
 			{Name: "model", Type: TypeText},

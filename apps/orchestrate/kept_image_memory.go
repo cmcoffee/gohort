@@ -81,7 +81,7 @@ func keptImageMemoryBody(k KeptImage) string {
 	if k.Note != "" {
 		fmt.Fprintf(&b, "Kept because: %s\n", k.Note)
 	}
-	fmt.Fprintf(&b, "To USE it, pass %s in the images list of an image call. That description is how you find this entry, NOT how you reproduce the picture: "+
+	fmt.Fprintf(&b, "To USE it, pass %s in references of an image call (or as picture, to change it). That description is how you find this entry, NOT how you reproduce the picture: "+
 		"writing a prompt from those words renders something that merely matches the description, which for a person is a different face and for a logo is a different logo. "+
 		"The picture itself is still stored and passing %s costs nothing, so pass it rather than describing it. "+
 		"This name does not expire and does not shift the way recent-image numbers do.", k.Ref, k.Ref)

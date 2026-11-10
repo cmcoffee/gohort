@@ -274,7 +274,11 @@ func sourceCheckNote(verdicts []sourceVerdict, total int, held, last bool) strin
 		}
 		return " AUTOMATIC CHECK: the result was described by a separate look that had not seen the sources, and what the instruction takes from each source was found in it."
 	}
-	next := " Try once more at most, with that named as the thing to keep. If it still does not come through, tell the person plainly what was lost: the image model did not draw it from the picture."
+	// Advisory: the person decides whether to try again. Verdicts on a
+	// likeness flipped between nearly identical results ("not found", then
+	// "found" twenty seconds later), and every "try once more" an agent
+	// acted on started another render, and another wake.
+	next := " Do NOT try again on your own: this check compares descriptions written by separate looks, and is unsure about likeness. Deliver it, tell the person plainly what may not have come through, and that you can try again if they want: the image model may not have drawn it from the picture."
 	if last {
 		next = " That was the last try these sources allow: do not render them again. Tell the person plainly what was lost: the image model did not draw it from the picture."
 	}

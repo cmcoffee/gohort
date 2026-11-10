@@ -15,23 +15,21 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
-// OBSOLETE AS WRITTEN, and kept as the record of why.
-//
-// These two used to assert an ORDERING between an edit rule and a generate
-// rule, and the phrasings that had to appear in the edit one — scaffolding
-// built to stop the model choosing generate when a photo was involved. The
-// choice is gone: there is one render action, and the only question is whether
-// `images` is passed. So what is pinned now is that the decision block names
-// that question, in the words people actually use.
-func TestDecisionPointsAtTheImagesParameter(t *testing.T) {
+// The decision between the two asks, stated in the words people use: a
+// request about a picture that exists is an edit of it (named as picture); a
+// new picture of people or things there are photos of is a generate with them
+// as references. Edit and generate were one action from 2026-09 to 2026-11,
+// because a model given both picked generate from text with a photo in hand;
+// generate takes references now, so that choice still uses the photo.
+func TestDecisionNamesTheTwoAsks(t *testing.T) {
 	desc := imageSchemaFor(imageActions{fetch: true, generate: true, edit: true,
 		editors: []ImageBackendChoice{{Name: "comfy_lan", Default: true}}}).desc
 
-	if strings.Contains(desc, "→ edit") {
-		t.Error("edit is no longer an action to route to; the rule should point at the images parameter")
+	if !strings.Contains(desc, "→ edit it, as picture") {
+		t.Errorf("the decision should route a request about an existing picture to edit, got %q", desc)
 	}
-	if !strings.Contains(desc, "generate WITH those pictures in images") {
-		t.Errorf("the decision should say to pass the pictures, got %q", desc)
+	if !strings.Contains(desc, "→ generate with those photos in references") {
+		t.Errorf("the decision should route a new picture of people in photos to generate with references, got %q", desc)
 	}
 	// The phrasings that actually failed in the field still have to be named —
 	// that part of the old test was right and survives the merge.

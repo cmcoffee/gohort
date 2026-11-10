@@ -59,3 +59,39 @@ func TestTheRenderYieldSetting(t *testing.T) {
 		t.Error("never should make every render first come, first served")
 	}
 }
+
+// A render through a backend whose connection is limited to named users
+// refuses anyone else the render says it is for; one for nobody in
+// particular is the instance's own, and goes ahead.
+func TestARenderHoldsToWhoTheConnectionIsFor(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved; RegisterImageBackend("pics", nil) })
+	RegisterConnectorKind("probe_test_kind", noProbeHandler{})
+	if err := SaveConnector(RootDB, Connector{Name: "pics", Kind: "probe_test_kind"}); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := GetConnector(RootDB, "pics")
+	if err := c.SetAccess(RootDB, []string{"alice"}); err != nil {
+		t.Fatal(err)
+	}
+	rendered := 0
+	RegisterImageBackend("pics", func(context.Context, string, bool) (*ImageGenResult, error) {
+		rendered++
+		return &ImageGenResult{URL: "x.png"}, nil
+	})
+	for _, tc := range []struct {
+		who  string
+		pass bool
+	}{{"bob", false}, {"alice", true}, {"", true}} {
+		ctx := context.Background()
+		if tc.who != "" {
+			ctx = (&ToolSession{Ctx: ctx, Username: tc.who}).ContextWithSession(ctx)
+		}
+		before := rendered
+		_, err := generateWithBackend(ctx, "pics", "a cat", true)
+		if (err == nil) != tc.pass || (rendered > before) != tc.pass {
+			t.Errorf("a render for %q: err %v, rendered %v", tc.who, err, rendered > before)
+		}
+	}
+}

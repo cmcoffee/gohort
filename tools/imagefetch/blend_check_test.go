@@ -77,8 +77,9 @@ func TestNothingThatJudgesSeesWhatItIsLookingFor(t *testing.T) {
 		"source 1 (image#r.ship1), from which the instruction takes the white starship whole",
 		"in the result: none has the saucer section",
 		"Do NOT present this picture as containing it",
-		"Try once more at most",
-		"tell the person plainly what was lost",
+		"Do NOT try again on your own",
+		"that you can try again if they want",
+		"tell the person plainly what may not have come through",
 		"Do NOT build the next pass on this step",
 	} {
 		if !strings.Contains(note, want) {

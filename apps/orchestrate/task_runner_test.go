@@ -710,3 +710,37 @@ func TestASubAgentKnowsTheConversationButMayNotReplyInIt(t *testing.T) {
 		}
 	}
 }
+
+// A held step whose wake started the next pass shows in a web thread as a
+// card with the step's picture and a line saying the next pass is running,
+// so a background task does not look as if it ended with nothing. On a
+// messaging channel it posts nothing: sending every step is what holding one
+// avoids.
+func TestAHandOffShowsInAWebThreadOnly(t *testing.T) {
+	df := newDispatchFixture(t)
+	for _, sid := range []string{"web-thread", "chan:imessage;-;+15550100"} {
+		if _, err := saveChatSession(df.udb, ChatSession{ID: sid, AgentID: df.agent.ID}); err != nil {
+			t.Fatal(err)
+		}
+		fr := &fireRun{app: df.app, udb: df.udb, p: orchUpdatePayload{SessionID: sid, AgentID: df.agent.ID, Username: "u"},
+			loadSession: sid, subSess: &ToolSession{}, held: []string{"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="}}
+		fr.subSess.ClaimDetachSlot(RenderDetachIdentity)
+		if !fr.sendHeldIfStalled() {
+			t.Fatalf("%s: the chain went on but was read as stopped", sid)
+		}
+		got, _ := loadChatSession(df.udb, df.agent.ID, sid)
+		var cards []ChatMessage
+		for _, m := range got.Messages {
+			if m.ReportDetail == "a held step" {
+				cards = append(cards, m)
+			}
+		}
+		web := sid == "web-thread"
+		if web && (len(cards) != 1 || len(cards[0].Attachments) != 1 || !strings.Contains(cards[0].Content, "The next pass is running")) {
+			t.Errorf("a web thread's hand-off: %+v", cards)
+		}
+		if !web && len(cards) != 0 {
+			t.Errorf("a messaging channel was sent the step: %+v", cards)
+		}
+	}
+}

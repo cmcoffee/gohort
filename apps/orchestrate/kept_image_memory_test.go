@@ -114,7 +114,7 @@ func TestMemoryBodyForbidsRenderingFromTheDescription(t *testing.T) {
 	if !strings.Contains(body, "passing image#wren costs nothing") {
 		t.Errorf("the body should make passing the ref the obvious move, got:\n%s", body)
 	}
-	if !strings.Contains(body, "pass image#wren in the images list") {
+	if !strings.Contains(body, "pass image#wren in references of an image call") {
 		t.Errorf("the body should name exactly where the ref goes, got:\n%s", body)
 	}
 }
@@ -122,7 +122,7 @@ func TestMemoryBodyForbidsRenderingFromTheDescription(t *testing.T) {
 // With no description at all the entry still has to point at the picture.
 func TestMemoryBodyWithoutADescriptionStillPointsAtTheRef(t *testing.T) {
 	body := keptImageMemoryBody(KeptImage{Name: "mark", Ref: "image#mark", Note: "our logo"})
-	if !strings.Contains(body, "pass image#mark in the images list") {
+	if !strings.Contains(body, "pass image#mark in references of an image call") {
 		t.Errorf("an entry with no description must still say how to use it, got:\n%s", body)
 	}
 }
