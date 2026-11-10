@@ -236,7 +236,7 @@ func setThreadWakeToolDef(owner, controllerAgentID string) AgentToolDef {
 			}
 			ch.AutoReply = wake
 			if wake {
-				ch.Gatekeeper = threadBindingGatekeeperRule
+				ch.Gatekeeper = threadBindingGatekeeperRule()
 			} else {
 				ch.Gatekeeper = ""
 			}

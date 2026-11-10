@@ -992,9 +992,11 @@ func ownerAgent(owner, agentID string) (AgentRecord, bool) {
 }
 
 // threadBindingGatekeeperRule is the wake rule stamped on an agent-requested 1:1
-// thread binding. It's the shared DM default (also seeded on inbound DM
-// connections in apps/bridges) — see core.DefaultDMGatekeeperRule for the rules.
-const threadBindingGatekeeperRule = DefaultDMGatekeeperRule
+// thread binding: the deployment's rules for new channels (also seeded on
+// inbound DM connections in apps/bridges and pre-filled on a channel added in
+// the rail), the built-in core.DefaultDMGatekeeperRule unless an administrator
+// set others.
+func threadBindingGatekeeperRule() string { return AuthGetChannelDefaultWakeRules(AuthDB()) }
 
 // formatRunSteps renders a run's tool trace as a compact "steps:" block for
 // inspect_run, so the model (and the audit trail) can see WHAT the run did — each

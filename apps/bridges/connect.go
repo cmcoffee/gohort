@@ -293,7 +293,7 @@ func (T *Bridges) handleConnectChannel(c *jsonapi.Call, req *connectChannelReq) 
 	// otherwise fail open (answer everyone). Only fill when empty so an operator's
 	// explicit gate (or an intentional blank on an outbound-only channel) is kept.
 	if strings.TrimSpace(ch.Gatekeeper) == "" && ChannelDirection(ch) != DirectionOutbound {
-		ch.Gatekeeper = DefaultDMGatekeeperRule
+		ch.Gatekeeper = AuthGetChannelDefaultWakeRules(AuthDB())
 	}
 	SaveChannel(RootDB, ch)
 	clearSiblings(ch.ID)

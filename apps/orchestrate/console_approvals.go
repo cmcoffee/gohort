@@ -253,7 +253,7 @@ func bindReplyThread(owner, agent, chatID, handle, name string, wake bool) {
 	if name == "" {
 		name = addr
 	}
-	gk := threadBindingGatekeeperRule
+	gk := threadBindingGatekeeperRule()
 	if !wake {
 		gk = "" // no-wake = record-only; the gatekeeper is skipped anyway
 	}

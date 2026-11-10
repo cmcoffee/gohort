@@ -6812,7 +6812,9 @@
       function syncHandles() { handlesField.hidden = sendSel.value !== 'listed'; }
       sendSel.addEventListener('change', syncHandles);
       syncHandles();
-      var gkEditor = railRulesEditor(ch.gatekeeper);
+      // A new channel opens with the app's default rules, to keep, edit or
+      // clear before saving; an existing one shows its own, blank included.
+      var gkEditor = railRulesEditor(isEdit ? ch.gatekeeper : (ch.gatekeeper || cfg.default_gatekeeper_rule || ''));
       // Bound-agent picker — only on EDIT, to RE-POINT an existing channel at a
       // different agent. On ADD there's no selector: a new channel binds to the
       // agent you're on (the save URL carries its agent_id), so picking one would
@@ -6856,7 +6858,7 @@
       // tweak before saving; nothing persists until Save.
       if (cfg.default_gatekeeper_rule) {
         var gkReset = el('button', {class: 'ui-rules-add', type: 'button',
-          title: 'Replace the rules above with the built-in default wake rule',
+          title: 'Replace the rules above with the default wake rules for new channels',
           style: 'margin-top:0.25rem'}, ['↺ Reset to default']);
         gkReset.addEventListener('click', function() { gkEditor.setValue(cfg.default_gatekeeper_rule); });
         body.appendChild(gkReset);

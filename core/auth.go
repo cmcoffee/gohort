@@ -1000,6 +1000,31 @@ func AuthSetChannelWakeRules(db Database, rules string) {
 	db.Set(WebTable, "channel_wake_rules", rules)
 }
 
+// AuthGetChannelDefaultWakeRules returns the wake rules a new channel starts
+// with: copied onto it once, when it is created, unlike the master rules,
+// which are added to every channel's on every message. The built-in
+// DefaultDMGatekeeperRule when an administrator has set none.
+func AuthGetChannelDefaultWakeRules(db Database) string {
+	var s string
+	if db != nil {
+		db.Get(WebTable, "channel_default_wake_rules", &s)
+	}
+	if s = strings.TrimSpace(s); s == "" {
+		return DefaultDMGatekeeperRule
+	}
+	return s
+}
+
+// AuthSetChannelDefaultWakeRules stores the wake rules new channels start
+// with. Blank, or the built-in rules themselves, stores nothing, so the
+// deployment follows the built-in rules rather than a copy of them.
+func AuthSetChannelDefaultWakeRules(db Database, rules string) {
+	if rules = strings.TrimSpace(rules); rules == DefaultDMGatekeeperRule {
+		rules = ""
+	}
+	db.Set(WebTable, "channel_default_wake_rules", rules)
+}
+
 // AuthGetUITheme returns the deployment-wide UI theme name (the data-theme
 // value, e.g. "indigo"), or "" when unset — callers fall back to the framework
 // default. Deployment-wide for now; could become per-user later.

@@ -121,8 +121,8 @@ func (a *AdminApp) systemSections() []ui.Section {
 		},
 		{
 			Title:    "Channel Wake Rules",
-			Subtitle: "Master gatekeeper applied to every channel before an inbound message wakes its agent.",
-			Detail:   "Rules are OR'd: a message matching ANY rule wakes the agent. These merge on top of each channel's own rules, set in the channel rail. With none, no global rule applies.",
+			Subtitle: "When an inbound message wakes a channel's agent: the rules every channel is checked against, and the rules a new channel starts with.",
+			Detail:   "Rules are OR'd: a message matching ANY rule wakes the agent. Master rules are added to every channel's own rules on every message; with none, no deployment rule applies. Default rules are copied onto a channel once, when it is created, and from then on they are that channel's own, edited in the channel rail.",
 			Body: ui.FormPanel{
 				Source: "api/settings",
 				Method: settingsSaveMethod,
@@ -131,6 +131,10 @@ func (a *AdminApp) systemSections() []ui.Section {
 						Placeholder: "when an agent should answer a message here…",
 						Help:        "A cheap worker-LLM check runs these on each inbound.",
 						Detail:      "Follow-ups to the agent's own last message bypass the rules. Owner messages are evaluated like anyone else's unless a rule says otherwise."},
+					{Field: "channel_default_wake_rules", Label: "Default rules for new channels", Type: "rules",
+						Placeholder: "when a new channel's agent should answer…",
+						Help:        "Copied onto each new channel; existing channels keep the rules they have.",
+						Detail:      "A channel added from the rail opens with these filled in, to keep, edit or clear before saving. A chat connected through Bridges to a channel with no rules, and a thread an agent opens itself, start with them too.\n\nClear them all to go back to the built-in rules: wake when the agent is named, or when a message answers or follows up on something said to it; otherwise stay silent."},
 				},
 			},
 		},

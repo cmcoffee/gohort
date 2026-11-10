@@ -210,28 +210,29 @@ func (a *AdminApp) handleGetSettings(c *jsonapi.Call) (any, error) {
 	var apiKeyAllowQuery string
 	a.db.Get(WebTable, "api_key_allow_query", &apiKeyAllowQuery)
 	resp := map[string]interface{}{
-		"api_key_allow_query":   apiKeyAllowQuery == "on",
-		"allow_signup":          allow_signup,
-		"session_days":          session_days,
-		"session_absolute_days": session_absolute_days,
-		"max_login_attempts":    max_attempts,
-		"lockout_minutes":       lockout_minutes,
-		"service_name":          service_name,
-		"external_url":          external_url,
-		"notify_from":           notify_from,
-		"default_apps":          AuthGetDefaultApps(a.db),
-		"ollama_proxy_enabled":  ollama_proxy_enabled,
-		"ollama_proxy_port":     ollama_proxy_port,
-		"ollama_proxy_bind":     ollama_proxy_bind,
-		"ollama_proxy_url":      proxy_url,
-		"ollama_active":         ollama_active,
-		"fetch_cache_quota_mb":  fetch_cache_quota_mb,
-		"channel_wake_rules":    AuthGetChannelWakeRules(a.db),
-		"ui_theme":              ui_theme,
-		"ui_style":              ui_style,
-		"doc_brand":             AuthGetDocBrand(a.db),
-		"site_name":             AuthGetSiteName(a.db),
-		"timezone":              DeploymentTimezoneName(a.db),
+		"api_key_allow_query":        apiKeyAllowQuery == "on",
+		"allow_signup":               allow_signup,
+		"session_days":               session_days,
+		"session_absolute_days":      session_absolute_days,
+		"max_login_attempts":         max_attempts,
+		"lockout_minutes":            lockout_minutes,
+		"service_name":               service_name,
+		"external_url":               external_url,
+		"notify_from":                notify_from,
+		"default_apps":               AuthGetDefaultApps(a.db),
+		"ollama_proxy_enabled":       ollama_proxy_enabled,
+		"ollama_proxy_port":          ollama_proxy_port,
+		"ollama_proxy_bind":          ollama_proxy_bind,
+		"ollama_proxy_url":           proxy_url,
+		"ollama_active":              ollama_active,
+		"fetch_cache_quota_mb":       fetch_cache_quota_mb,
+		"channel_wake_rules":         AuthGetChannelWakeRules(a.db),
+		"channel_default_wake_rules": AuthGetChannelDefaultWakeRules(a.db),
+		"ui_theme":                   ui_theme,
+		"ui_style":                   ui_style,
+		"doc_brand":                  AuthGetDocBrand(a.db),
+		"site_name":                  AuthGetSiteName(a.db),
+		"timezone":                   DeploymentTimezoneName(a.db),
 	}
 	// Tunables — effective values (stored override or spec default), generated
 	// from the registry so a newly-registered knob surfaces here automatically.
@@ -256,26 +257,27 @@ func tunableWireValue(s TunableSpec) any {
 func (a *AdminApp) handleUpdateSettings(c *jsonapi.Call, raw json.RawMessage) (any, error) {
 	r := c.R
 	var req struct {
-		AllowSignup         *bool     `json:"allow_signup,omitempty"`
-		SessionDays         *int      `json:"session_days,omitempty"`
-		SessionAbsoluteDays *int      `json:"session_absolute_days,omitempty"`
-		MaxLoginAttempts    *int      `json:"max_login_attempts,omitempty"`
-		LockoutMinutes      *int      `json:"lockout_minutes,omitempty"`
-		ServiceName         *string   `json:"service_name,omitempty"`
-		ExternalURL         *string   `json:"external_url,omitempty"`
-		NotifyFrom          *string   `json:"notify_from,omitempty"`
-		DefaultApps         *[]string `json:"default_apps,omitempty"`
-		OllamaProxyEnabled  *bool     `json:"ollama_proxy_enabled,omitempty"`
-		OllamaProxyPort     *int      `json:"ollama_proxy_port,omitempty"`
-		OllamaProxyBind     *string   `json:"ollama_proxy_bind,omitempty"`
-		FetchCacheQuotaMB   *int      `json:"fetch_cache_quota_mb,omitempty"`
-		ChannelWakeRules    *string   `json:"channel_wake_rules,omitempty"`
-		UITheme             *string   `json:"ui_theme,omitempty"`
-		UIStyle             *string   `json:"ui_style,omitempty"`
-		DocBrand            *string   `json:"doc_brand,omitempty"`
-		SiteName            *string   `json:"site_name,omitempty"`
-		Timezone            *string   `json:"timezone,omitempty"`
-		APIKeyAllowQuery    *bool     `json:"api_key_allow_query,omitempty"`
+		AllowSignup             *bool     `json:"allow_signup,omitempty"`
+		SessionDays             *int      `json:"session_days,omitempty"`
+		SessionAbsoluteDays     *int      `json:"session_absolute_days,omitempty"`
+		MaxLoginAttempts        *int      `json:"max_login_attempts,omitempty"`
+		LockoutMinutes          *int      `json:"lockout_minutes,omitempty"`
+		ServiceName             *string   `json:"service_name,omitempty"`
+		ExternalURL             *string   `json:"external_url,omitempty"`
+		NotifyFrom              *string   `json:"notify_from,omitempty"`
+		DefaultApps             *[]string `json:"default_apps,omitempty"`
+		OllamaProxyEnabled      *bool     `json:"ollama_proxy_enabled,omitempty"`
+		OllamaProxyPort         *int      `json:"ollama_proxy_port,omitempty"`
+		OllamaProxyBind         *string   `json:"ollama_proxy_bind,omitempty"`
+		FetchCacheQuotaMB       *int      `json:"fetch_cache_quota_mb,omitempty"`
+		ChannelWakeRules        *string   `json:"channel_wake_rules,omitempty"`
+		ChannelDefaultWakeRules *string   `json:"channel_default_wake_rules,omitempty"`
+		UITheme                 *string   `json:"ui_theme,omitempty"`
+		UIStyle                 *string   `json:"ui_style,omitempty"`
+		DocBrand                *string   `json:"doc_brand,omitempty"`
+		SiteName                *string   `json:"site_name,omitempty"`
+		Timezone                *string   `json:"timezone,omitempty"`
+		APIKeyAllowQuery        *bool     `json:"api_key_allow_query,omitempty"`
 	}
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return nil, jsonapi.BadRequest("invalid request")
@@ -376,6 +378,10 @@ func (a *AdminApp) handleUpdateSettings(c *jsonapi.Call, raw json.RawMessage) (a
 	if req.ChannelWakeRules != nil {
 		AuthSetChannelWakeRules(a.db, strings.TrimSpace(*req.ChannelWakeRules))
 		adminChange(r, activity.Settings, "updated channel_wake_rules (%d chars)", len(strings.TrimSpace(*req.ChannelWakeRules)))
+	}
+	if req.ChannelDefaultWakeRules != nil && strings.TrimSpace(*req.ChannelDefaultWakeRules) != strings.TrimSpace(AuthGetChannelDefaultWakeRules(a.db)) {
+		AuthSetChannelDefaultWakeRules(a.db, *req.ChannelDefaultWakeRules)
+		adminChange(r, activity.Settings, "updated channel_default_wake_rules (%d chars)", len(strings.TrimSpace(*req.ChannelDefaultWakeRules)))
 	}
 	if req.UITheme != nil {
 		// Validate against the theme registry (core/ui) so a typo can't blank

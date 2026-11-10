@@ -131,6 +131,9 @@ func TestChannelWakeRulesAreAList(t *testing.T) {
 		if !strings.Contains(string(b), `"field":"channel_wake_rules"`) || !strings.Contains(string(b), `"type":"rules"`) {
 			t.Fatalf("the master rules are not a rules list: %s", b)
 		}
+		if !strings.Contains(string(b), `"field":"channel_default_wake_rules"`) {
+			t.Fatalf("no default rules for new channels beside the master rules: %s", b)
+		}
 		return
 	}
 	t.Fatal("no Channel Wake Rules section on System")

@@ -111,6 +111,8 @@ func TestSystemRoutesContract(t *testing.T) {
 	do("root", "PATCH", "/api/settings", `{"ollama_proxy_bind":"10.0.0.1"}`)
 	do("root", "PATCH", "/api/settings", `{"ollama_proxy_port":11500,"ollama_proxy_bind":"127.0.0.1","fetch_cache_quota_mb":0}`)
 	do("root", "PATCH", "/api/settings", `{"channel_wake_rules":"  wake on mention  "}`)
+	do("root", "PATCH", "/api/settings", `{"channel_default_wake_rules":"  WAKE when the owner writes.  "}`)
+	do("root", "PATCH", "/api/settings", `{"channel_default_wake_rules":""}`)
 	do("root", "PATCH", "/api/settings", `{"allow_signup":`)
 	do("root", "PATCH", "/api/settings", ``)
 	do("root", "PATCH", "/api/settings", `[]`)

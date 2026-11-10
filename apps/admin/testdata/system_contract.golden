@@ -27,7 +27,7 @@ root POST /api/apps "{}"
 alice GET /api/settings ""
   403 forbidden
 root GET /api/settings ""
-  200 {"allow_signup":false,"api_key_allow_query":false,"channel_wake_rules":"","default_apps":null,"doc_brand":"","external_url":"","fetch_cache_quota_mb":100,"lockout_minutes":15,"max_login_attempts":5,"n… (473 bytes, sha1 ffd7bab7f985ca8812a0402c389944c554db2431)
+  200 {"allow_signup":false,"api_key_allow_query":false,"channel_default_wake_rules":"WAKE when the incoming message mentions or addresses the agent by name, including common nicknames or obvious typos of t… (979 bytes, sha1 f2b07b03cdd5282e3579d5eab813a51de1307e9d)
 (signed out) GET /api/settings?app=/nope ""
   403 forbidden
 alice GET /api/settings?app=/nope ""
@@ -156,6 +156,10 @@ root PATCH /api/settings "{\"ollama_proxy_port\":11500,\"ollama_proxy_bind\":\"1
   200 {"status":"updated"}
 root PATCH /api/settings "{\"channel_wake_rules\":\"  wake on mention  \"}"
   200 {"status":"updated"}
+root PATCH /api/settings "{\"channel_default_wake_rules\":\"  WAKE when the owner writes.  \"}"
+  200 {"status":"updated"}
+root PATCH /api/settings "{\"channel_default_wake_rules\":\"\"}"
+  200 {"status":"updated"}
 root PATCH /api/settings "{\"allow_signup\":"
   400 invalid JSON: unexpected EOF
 root PATCH /api/settings ""
@@ -173,7 +177,7 @@ root PATCH /api/settings "{\"tune_account_key_lifetime\":90}"
 root PATCH /api/settings?app=/nope "{\"tune_account_key_lifetime\":3650}"
   200 {"status":"updated"}
 root GET /api/settings ""
-  200 {"allow_signup":true,"api_key_allow_query":false,"channel_wake_rules":"wake on mention","default_apps":["/chat"],"doc_brand":"Brand","external_url":"https://example.test","fetch_cache_quota_mb":0,"loc… (568 bytes, sha1 f0e1b5f6c7f1f0ea53ef660f005b66b95307748a)
+  200 {"allow_signup":true,"api_key_allow_query":false,"channel_default_wake_rules":"WAKE when the incoming message mentions or addresses the agent by name, including common nicknames or obvious typos of th… (1074 bytes, sha1 a2fc7bd9d75f254e9a7487ec562fa6c81db2c46a)
 alice POST /api/settings/reset-tunables ""
   403 forbidden
 root POST /api/settings/reset-tunables?category=nope ""
@@ -198,7 +202,7 @@ root POST /api/cost-rates "{}"
   405 method not allowed
 root GET /api/cost-rates ""
   200 {"worker_input_per_1k":0.0015,"worker_output_per_1k":0,"lead_input_per_1k":0.003,"lead_output_per_1k":0.009,"cache_read_multiplier":0.1,"cache_write_multiplier":1.25,"configured":true,"worker_input_per_1m":1.5,"worker_output_per_1m":0,"lead_input_per_1m":3,"lead_output_per_1m":9}
-activity log, 31 entries:
+activity log, 33 entries:
   settings root: cleared timezone (host zone; applies on restart)
   settings root: reverted tunables to defaults (app="/nope")
   settings root: reverted tunables to defaults (category="")
@@ -229,4 +233,6 @@ activity log, 31 entries:
   settings root: set ui_theme="indigo"
   settings root: set worker_input=$1.5 per 1M tokens
   settings root: set worker_input_per_1k=0.002
+  settings root: updated channel_default_wake_rules (0 chars)
+  settings root: updated channel_default_wake_rules (27 chars)
   settings root: updated channel_wake_rules (15 chars)

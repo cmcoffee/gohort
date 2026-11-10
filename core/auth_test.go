@@ -844,3 +844,28 @@ func TestWithNoAccountsAnotherSiteCannotChangeAnything(t *testing.T) {
 		t.Errorf("a cross-site read was refused: %d", code)
 	}
 }
+
+// A new channel's wake rules are the administrator's, or the built-in ones
+// until they set any. Saving the built-in rules, or none, follows the built-in
+// rules instead of keeping a copy that would not change with them.
+func TestNewChannelWakeRulesFallBackToTheBuiltIn(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	if got := AuthGetChannelDefaultWakeRules(db); got != DefaultDMGatekeeperRule {
+		t.Fatalf("unset, new channels start with %q, want the built-in rules", got)
+	}
+	AuthSetChannelDefaultWakeRules(db, "  WAKE when the owner writes.  ")
+	if got := AuthGetChannelDefaultWakeRules(db); got != "WAKE when the owner writes." {
+		t.Fatalf("set, new channels start with %q", got)
+	}
+	for _, back := range []string{"", "   ", DefaultDMGatekeeperRule} {
+		AuthSetChannelDefaultWakeRules(db, back)
+		var stored string
+		db.Get(WebTable, "channel_default_wake_rules", &stored)
+		if stored != "" || AuthGetChannelDefaultWakeRules(db) != DefaultDMGatekeeperRule {
+			t.Errorf("saving %q stored %q: it should follow the built-in rules", back, stored)
+		}
+	}
+	if got := AuthGetChannelDefaultWakeRules(nil); got != DefaultDMGatekeeperRule {
+		t.Errorf("with no store, new channels start with %q", got)
+	}
+}

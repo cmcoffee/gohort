@@ -384,7 +384,10 @@ const (
 	// 2386: ViewLive, so the Monitor shows live work it keeps after it ends
 	// exactly as /api/live shows it (masked labels, gated links) rather than
 	// a second copy of that gate.
-	coreExportCeiling = 2386
+	// 2388: AuthGetChannelDefaultWakeRules and its setter, the admin's wake
+	// rules for new channels, read by orchestrate and bridges alike, beside
+	// the master rules they sit next to in core/auth.go.
+	coreExportCeiling = 2388
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

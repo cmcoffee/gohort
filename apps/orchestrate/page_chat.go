@@ -306,9 +306,9 @@ func (c *chatPage) page(nav []ui.NavLink) ui.Page {
 					// A sub-agent's channels are its parent's.
 					ChannelsHideFlag: "ORCH_SUB_AGENT_OF",
 					ChannelAgentsURL: "api/agents",
-					// Canonical default wake rule, so the channel editor can offer
-					// "Reset to default" on the gatekeeper rules (source of truth is Go).
-					DefaultGatekeeperRule: DefaultDMGatekeeperRule,
+					// The deployment's wake rules for new channels: a channel added
+					// here opens with them, and "Reset to default" puts them back.
+					DefaultGatekeeperRule: AuthGetChannelDefaultWakeRules(AuthDB()),
 					TruncateURL:           "api/sessions/{id}?agent_id={agent_id}",
 					// Per-turn scrub (✕ on each bubble) — replaces the separate
 					// History view's row-delete; works on every thread, not just
