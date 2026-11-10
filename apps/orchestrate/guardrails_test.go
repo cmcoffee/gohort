@@ -796,17 +796,17 @@ func TestResolveGuardrailHooks(t *testing.T) {
 	if !def[guardHookPreInput] || !def[guardHookPreAction] || !def[guardHookPreOutput] || len(def) != 3 {
 		t.Fatalf("rules with no hook should default to pre_input + pre_action + pre_output; got %v", def)
 	}
-	// periodic stays opt-in — its cost grows with turn length.
 	if def[guardHookPeriodic] {
-		t.Error("periodic must not be on by default")
+		t.Error("periodic is never a hook in force")
 	}
-	// Explicit hooks, invalid dropped.
+	// Explicit hooks honored, invalid dropped, and a stored periodic read as
+	// the reply check (ownGuardrailHooks).
 	got := resolveGuardrailHooks(AgentRecord{
 		Guardrails:     "never spend money",
-		GuardrailHooks: []string{"pre_output", "periodic", "bogus"},
+		GuardrailHooks: []string{"pre_input", "periodic", "bogus"},
 	})
-	if !got[guardHookPreOutput] || !got[guardHookPeriodic] || got["bogus"] || got[guardHookPreAction] {
-		t.Fatalf("explicit hooks should be honored, invalid dropped; got %v", got)
+	if !got[guardHookPreInput] || !got[guardHookPreOutput] || got[guardHookPeriodic] || got["bogus"] || got[guardHookPreAction] {
+		t.Fatalf("explicit hooks should be honored, invalid dropped, periodic read as pre_output; got %v", got)
 	}
 	if guardrailHookActive(AgentRecord{}, guardHookPreAction) {
 		t.Fatal("inert agent must report no active hook")

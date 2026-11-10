@@ -537,8 +537,8 @@ func TestTextBesideAToolCallIsJudgedAsAReply(t *testing.T) {
 	}{
 		{[]string{"pre_output"}, guardHookPreOutput},
 		{[]string{"pre_input", "pre_action", "pre_output"}, guardHookPreOutput},
-		{[]string{"pre_output", "periodic"}, guardHookPeriodic}, // ticked on its own, periodic judges every rule there already
-		{[]string{"periodic"}, guardHookPeriodic},
+		{[]string{"pre_output", "periodic"}, guardHookPreOutput},
+		{[]string{"periodic"}, guardHookPreOutput}, // a stored periodic is the reply check
 		{[]string{"pre_input"}, guardHookPeriodic}, // no reply check: nothing to judge it as
 	} {
 		agent := AgentRecord{Name: "X", Guardrails: "never mention fruit", GuardrailHooks: c.hooks}
@@ -563,5 +563,24 @@ func TestTextBesideAToolCallIsJudgedAsAReply(t *testing.T) {
 	turn = guardTurn(t, stub, AgentRecord{Name: "X", Guardrails: "never mention fruit", GuardrailHooks: []string{"pre_input"}})
 	if dec := turn.guardrailCheckHook()(guardHookPeriodic, "Here is the pineapple salsa recipe."); dec.Blocked || stub.seen() != "" {
 		t.Error("an agent whose replies are not judged must not have its interim text judged")
+	}
+}
+
+// A stored periodic is the reply check. On its own it judged text written
+// beside tool calls and left the final reply unjudged against the owner's
+// rules; read as the reply check, both are judged, and nothing that was
+// judged before stops being.
+func TestAStoredPeriodicIsTheReplyCheck(t *testing.T) {
+	only := AgentRecord{Name: "X", Guardrails: "never mention fruit", GuardrailHooks: []string{"periodic"}}
+	if !guardrailHookActive(only, guardHookPreOutput) || guardrailHookActive(only, guardHookPeriodic) {
+		t.Error("periodic alone must read as the reply check, and never as a hook of its own")
+	}
+	if !agentHasOutputGuardrail(only) {
+		t.Error("an agent whose replies are judged holds them until they pass")
+	}
+	stub := &wardenStubLLM{reply: `{"rules":[{"rule":1,"why":"it names a fruit","answer":"violate"}]}`}
+	turn := guardTurn(t, stub, only)
+	if dec := turn.guardrailCheckHook()(guardHookPreOutput, "A pineapple salsa."); !dec.Blocked {
+		t.Error("the final reply of a periodic-only agent went unjudged")
 	}
 }

@@ -332,10 +332,10 @@ func (t *chatTurn) guardrailCheckHookCtx(ctx context.Context) func(hookPoint, ca
 // are judged has it judged as a reply, by the same rules: that text reaches
 // the reader as the turn runs, and a reply check that read only the last
 // round let an answer written beside show_link go out unjudged, with the
-// final round's decline under it. Where periodic is ticked as a check point of
-// its own, it stays periodic, which judges every rule already.
+// final round's decline under it. A stored periodic is read as the reply
+// check (ownGuardrailHooks), so periodic itself is never a hook in force.
 func interimHook(agent AgentRecord, hookPoint string) string {
-	if hookPoint == guardHookPeriodic && !guardrailHookActive(agent, guardHookPeriodic) && guardrailHookActive(agent, guardHookPreOutput) {
+	if hookPoint == guardHookPeriodic && guardrailHookActive(agent, guardHookPreOutput) {
 		return guardHookPreOutput
 	}
 	return hookPoint

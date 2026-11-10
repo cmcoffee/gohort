@@ -652,9 +652,18 @@ func resolveGuardrailHooks(agent AgentRecord) map[string]bool {
 func ownGuardrailHooks(agent AgentRecord) map[string]bool {
 	active := map[string]bool{}
 	for _, h := range agent.GuardrailHooks {
-		if validGuardHooks[strings.TrimSpace(h)] {
-			active[strings.TrimSpace(h)] = true
+		h = strings.TrimSpace(h)
+		if !validGuardHooks[h] {
+			continue
 		}
+		// periodic was a check point of its own for what an agent writes
+		// mid-turn. The reply check judges that text now (interimHook), so a
+		// stored periodic is the reply check: the same text judged, and the
+		// final reply with it, which periodic alone left unjudged.
+		if h == guardHookPeriodic {
+			h = guardHookPreOutput
+		}
+		active[h] = true
 	}
 	if len(active) == 0 {
 		// Default: judge the REQUEST, consequential tool calls, and the reply.

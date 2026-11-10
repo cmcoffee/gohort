@@ -1156,13 +1156,13 @@ type AgentRecord struct {
 	// figures" leaks what "no salary figures" was protecting).
 	GuardrailDeclines []string `json:"guardrail_declines,omitempty"`
 
-	// GuardrailHooks selects WHERE the warden runs — the interception points,
-	// configurable per agent: "pre_action" (before a consequential tool call),
-	// "pre_output" (before the final reply), "periodic" (sampling the turn
-	// every few rounds). Empty with a non-empty Guardrails defaults to
-	// pre_action (the highest-value point — where irreversible harm happens).
-	// Ignored entirely when Guardrails is empty. The live interception is
-	// wired in a later slice; this records the owner's choice.
+	// GuardrailHooks selects WHERE the warden judges the agent's own rules:
+	// "pre_input" (the request), "pre_action" (before a consequential tool
+	// call), "pre_output" (what the agent says: its reply, and text beside a
+	// tool call). "periodic", from before the reply check read text beside
+	// tool calls, is read as pre_output (ownGuardrailHooks). Empty with a
+	// non-empty Guardrails defaults to all three. Ignored entirely when
+	// Guardrails is empty.
 	GuardrailHooks []string `json:"guardrail_hooks,omitempty"`
 
 	// ScanToolResults turns on injection scanning of what TOOLS RETURN

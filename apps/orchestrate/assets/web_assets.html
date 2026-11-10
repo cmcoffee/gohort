@@ -5686,7 +5686,10 @@
              desc: 'Checks the incoming request (with recent context), consequential tool calls before they run, and what the agent says: its reply, and anything it writes beside a tool call. The action check costs nothing until one is called; the reply check holds a reply until it passes, so replies do not stream. Where a new agent starts.'}
           ];
           var activeHooks = {};
-          (agent.guardrail_hooks || []).forEach(function(h) { activeHooks[h] = true; });
+          // A stored periodic is the reply check: the server reads it so
+          // (ownGuardrailHooks), and the box it had is gone. Shown and saved
+          // as what it does, a record saved on Strict lands on Full.
+          (agent.guardrail_hooks || []).forEach(function(h) { activeHooks[h === 'periodic' ? 'pre_output' : h] = true; });
           // Match the stored set to a level. An EMPTY set means this agent has
           // never had one stored, and the server falls back to Full for it, so
           // that is what the slider shows, rather than reading as "off". New
@@ -5713,7 +5716,7 @@
           }
           function levelFromHooks() {
             if (guardrailsOff) { return 0; } // Off, whatever hooks are stored
-            var have = (agent.guardrail_hooks || []).slice().sort().join(',');
+            var have = Object.keys(activeHooks).filter(function(h) { return activeHooks[h]; }).sort().join(',');
             if (!have) { return defaultLevelIndex(); }
             for (var i = 0; i < hookLevels.length; i++) {
               if (hookLevels[i].off) { continue; }
@@ -5818,7 +5821,7 @@
 
           // Per-hook control stays available, folded away. The slider covers the
           // combinations worth having; this is the escape hatch for the ones it
-          // can't express (e.g. periodic without pre_input).
+          // can't express (e.g. the reply check without the request check).
           var adv = document.createElement('details');
           adv.style.cssText = 'margin-top:0.45rem';
           adv.open = custom;
@@ -5829,8 +5832,7 @@
           var hookDefs = [
             {v: 'pre_input', label: 'On the incoming request (judges what was asked, before the model sees it)'},
             {v: 'pre_action', label: 'Before a consequential action (judges tool calls, NOT replies)'},
-            {v: 'pre_output', label: 'On what the agent says (its reply, and anything it writes beside a tool call)'},
-            {v: 'periodic', label: 'On every mid-turn remark, as its own check point (the reply check above already covers these)'}
+            {v: 'pre_output', label: 'On what the agent says (its reply, and anything it writes beside a tool call)'}
           ];
           var boxes = [];
           hookDefs.forEach(function(hd) {
