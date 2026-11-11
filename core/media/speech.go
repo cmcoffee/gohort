@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -447,6 +448,23 @@ func VoiceChips(voices []Voice) []map[string]string {
 			name = v.ID
 		}
 		out = append(out, map[string]string{"id": v.ID, "name": name, "value": v.ID})
+	}
+	return out
+}
+
+// speechVoiceWeight is the weight a voice in a mix may carry: the (2) of
+// af_bella(2).
+var speechVoiceWeight = regexp.MustCompile(`\(\s*[0-9.]+\s*\)$`)
+
+// SpeechVoiceParts is the voices a voice name is made of: itself, or for a
+// mix (Kokoro's af_bella+af_sky, or af_bella(2)+af_sky(1) for two parts to
+// one) each voice in it without its weight.
+func SpeechVoiceParts(voice string) []string {
+	var out []string
+	for _, p := range strings.Split(voice, "+") {
+		if p = strings.TrimSpace(speechVoiceWeight.ReplaceAllString(strings.TrimSpace(p), "")); p != "" {
+			out = append(out, p)
+		}
 	}
 	return out
 }

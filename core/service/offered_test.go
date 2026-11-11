@@ -8,6 +8,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/media"
 )
 
 // A value in use that its provider no longer offers is listed once per
@@ -63,6 +64,32 @@ func TestAStaleChoiceIsListedAndMappedEverywhere(t *testing.T) {
 		if r.Choice == "test.listed" {
 			t.Errorf("a value nothing holds any more is still on the card: %+v", r)
 		}
+	}
+}
+
+// A mix of voices (Kokoro's af_bella(2)+af_sky) is offered when every voice
+// in it is; a mix with one the server dropped is listed like any other name.
+func TestAVoiceMixIsOfferedWhenEachVoiceIs(t *testing.T) {
+	forgetStaleChoices(t)
+	RegisterOfferedChoices(func() []OfferedChoice {
+		return []OfferedChoice{{ID: "test.mix", Label: "Mix", Parts: media.SpeechVoiceParts,
+			Offered: func(context.Context) ([]string, bool, error) { return []string{"af_bella", "af_sky"}, true, nil },
+			Uses: func() []ChoiceUse {
+				return []ChoiceUse{
+					{Where: "even", Value: "af_bella+af_sky"},
+					{Where: "weighted", Value: "af_bella(2) + af_sky(1)"},
+					{Where: "dropped", Value: "af_bella+af_gone"},
+				}
+			}}}
+	})
+	var got []string
+	for _, r := range StaleChoices(context.Background()) {
+		if r.Choice == "test.mix" {
+			got = append(got, r.Value)
+		}
+	}
+	if len(got) != 1 || got[0] != "af_bella+af_gone" {
+		t.Errorf("stale mixes = %q, want only the one with a dropped voice", got)
 	}
 }
 

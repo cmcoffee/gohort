@@ -152,7 +152,7 @@ type AgentRecord struct {
 	// Voice is the speech voice this agent talks in, when it answers a voice
 	// note and when its replies are read aloud in the web chat. Empty uses the
 	// deployment's voice (Admin > Services > Speech). A name the speech
-	// server does not offer fails there, and the reply goes as text.
+	// server refuses falls back to the deployment's voice (media.SpeakIn).
 	Voice string `json:"voice,omitempty"`
 
 	// Triggers are word/glob patterns (same shape as a skill's

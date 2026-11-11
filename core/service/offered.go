@@ -56,6 +56,27 @@ type OfferedChoice struct {
 	// no list, and then nothing can be judged stale.
 	Offered func(ctx context.Context) (values []string, listed bool, err error)
 	Uses    func() []ChoiceUse
+	// Parts, when set, is the names a value is made of, each of which must
+	// be offered: a mix of voices is offered when every voice in it is.
+	Parts func(value string) []string
+}
+
+// offers reports whether a value is offered: listed whole, or made only of
+// names that are.
+func (ch OfferedChoice) offers(have map[string]bool, v string) bool {
+	if have[v] {
+		return true
+	}
+	if ch.Parts == nil {
+		return false
+	}
+	parts := ch.Parts(v)
+	for _, p := range parts {
+		if !have[p] {
+			return false
+		}
+	}
+	return len(parts) > 0
 }
 
 var (
@@ -161,7 +182,7 @@ func StaleChoices(ctx context.Context) []StaleChoice {
 		byValue := map[string]*StaleChoice{}
 		for _, u := range uses {
 			v := strings.TrimSpace(u.Value)
-			if v == "" || have[v] {
+			if v == "" || ch.offers(have, v) {
 				continue
 			}
 			row := byValue[v]
@@ -405,6 +426,7 @@ func speechVoiceChoice() []OfferedChoice {
 			}
 			return ids, len(ids) > 0, nil
 		},
+		Parts: media.SpeechVoiceParts,
 		Uses: func() []ChoiceUse {
 			cfg := media.GetSpeechConfig()
 			if !cfg.Enabled {
