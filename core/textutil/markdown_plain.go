@@ -8,6 +8,7 @@ package textutil
 import (
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 var (
@@ -99,14 +100,21 @@ var (
 	spokenSpaces    = regexp.MustCompile(`[ \t]{2,}`)
 	spokenEmptyPair = regexp.MustCompile(`\(\s*\)`)
 	spokenLoosePunc = regexp.MustCompile(`[ \t]+([.,;:!?)])`)
+	// Emoji, and what joins and shapes them (the variation selector, the
+	// zero-width joiner, a keycap, a flag's tags).
+	spokenEmoji = regexp.MustCompile(`[\x{1F000}-\x{1FAFF}\x{2600}-\x{27BF}\x{2B00}-\x{2BFF}\x{FE0F}\x{200D}\x{20E3}\x{E0020}-\x{E007F}]+`)
+	// A smiley written in text, standing on its own: :) ;-) :D :P <3.
+	spokenSmiley = regexp.MustCompile(`(^|[ \t])(?:[:;=][-']?[()DPp/|\]\[]|<3|\^_\^)([ \t]|$|[.,!?])`)
 )
 
 // SpeakableText is MarkdownToPlain for a voice: the part of a reply worth
 // reading aloud. A speech model reads a code block or a web address out
 // character by character and a listener can use neither, so code blocks are
 // dropped, a link keeps only its words, a bare address goes, and bullets lose
-// their mark, and abbreviations are written out (SpokenWords). The written
-// reply still carries all of it.
+// their mark, and abbreviations are written out (SpokenWords). A voice
+// says emoji and smileys by name, or as their punctuation, so they go. Each
+// line ends as a sentence (spokenLineEnds), since the break between lines is
+// lost on the way to the voice. The written reply still carries all of it.
 func SpeakableText(md string) string {
 	var kept []string
 	inCode := false
@@ -122,9 +130,54 @@ func SpeakableText(md string) string {
 	s := mdLink.ReplaceAllString(strings.Join(kept, "\n"), "$1")
 	s = MarkdownToPlain(s)
 	s = spokenURL.ReplaceAllString(s, "")
+	s = spokenEmoji.ReplaceAllString(s, "")
+	for i := 0; i < 3 && spokenSmiley.MatchString(s); i++ { // two in a row share a space
+		s = spokenSmiley.ReplaceAllString(s, "$1$2")
+	}
+	// The page sends read-aloud a line at a time, ending in its break, which
+	// MarkdownToPlain trims: put it back so that line is ended too.
+	if strings.HasSuffix(strings.TrimRight(md, " \t"), "\n") {
+		s += "\n"
+	}
+	s = spokenLineEnds(s)
 	s = strings.ReplaceAll(s, "• ", "")
 	s = spokenEmptyPair.ReplaceAllString(s, "")
 	s = spokenSpaces.ReplaceAllString(s, " ")
 	s = spokenLoosePunc.ReplaceAllString(s, "$1")
 	return SpokenWords(strings.TrimSpace(s))
+}
+
+// spokenLineEnds ends each line as a sentence. A heading, a list item, or a
+// line that ends in a colon ("What you'd need now:") has no stop of its own,
+// and the voice gets the lines joined, so without one they run together as
+// one sentence. A line ending in a colon gets a full stop in its place, one
+// with no closing punctuation gets one added. A line that runs on into the
+// next (a comma, a semicolon, or the line after starting lowercase) is left
+// as it is, except before or in a list. So is the text's last line, with
+// no break after it: the end of the text ends it.
+func spokenLineEnds(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, ln := range lines[:len(lines)-1] {
+		t := strings.TrimRight(ln, " \t")
+		body := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(t), "• "))
+		if body == "" {
+			continue
+		}
+		// A blank line between them is a paragraph's end, never a run-on.
+		next := strings.TrimSpace(lines[i+1])
+		inList := strings.HasPrefix(strings.TrimSpace(t), "• ") || strings.HasPrefix(next, "• ")
+		if !inList && next != "" && unicode.IsLower(firstRune(next)) {
+			continue
+		}
+		last := lastRune(t)
+		switch {
+		case last == ':':
+			lines[i] = strings.TrimSuffix(t, ":") + "."
+		case strings.ContainsRune(".!?,;", last):
+		case strings.ContainsRune(")]\"'\u201d\u2019", last) && strings.ContainsRune(".!?", lastRune(strings.TrimRight(t, ")]\"'\u201d\u2019"))):
+		default:
+			lines[i] = t + "."
+		}
+	}
+	return strings.Join(lines, "\n")
 }

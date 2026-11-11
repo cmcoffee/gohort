@@ -558,7 +558,7 @@ func TestSpokenReplySkipsWhatIsNotWorthSaying(t *testing.T) {
 	if got := spokenReply(t.Context(), in, ChannelReply{Text: "one", More: []string{"two"}}, true); len(got) != 1 {
 		t.Fatalf("parts: %d clips", len(got))
 	}
-	if got := spoken(); len(got) != 1 || got[0] != "one\n\ntwo" {
+	if got := spoken(); len(got) != 1 || got[0] != "one.\n\ntwo" {
 		t.Errorf("parts read aloud: %q", got)
 	}
 }
