@@ -452,7 +452,7 @@ func (ed *agentEditor) formFields() {
 			ui.FormField{Field: "voice", Type: "text", Label: "Voice",
 				Placeholder: "the deployment's voice",
 				Help:        "Pick a voice from the chips, then Preview voice to hear it.",
-				Detail:      "Leave it blank for the deployment's voice (Admin, Capabilities, Speech). A voice the server refuses falls back to the deployment's voice, and the log says so; Preview voice plays only the voice typed here, so it shows a refusal before you save. Kokoro also takes a mix of its voices: af_bella+af_sky, or af_bella(2)+af_sky(1) for two parts to one.",
+				Detail:      "Leave it blank for the deployment's voice (Admin, Capabilities, Speech). A voice the server refuses falls back to the deployment's voice, and the log says so; Preview voice plays only the voice typed here, so it shows a refusal before you save. Kokoro also takes a mix of its voices, written the way its server reads one: af_bella,af_sky for a server on the kokoro library itself (name a voice twice to weight it), af_bella+af_sky or af_bella(2)+af_sky(1) for Kokoro-FastAPI. Preview voice says which it takes.",
 				ChipsSource: media.ReadAloudPath + "/voices"},
 
 			// Where it shows up is not here. Your own dashboard is the gear

@@ -263,3 +263,31 @@ func TestARefusedVoiceFallsBackInsteadOfLosingTheSpeech(t *testing.T) {
 		t.Fatalf("speech off should not try voice after voice: err %v, asked %q", err, asked)
 	}
 }
+
+// Kokoro pauses at a full stop inside a line barely longer than at a comma,
+// and well at a line break, so each sentence goes to the server on a line of
+// its own; an initial, a title or a number's dot is not a sentence's end.
+func TestSpeechLinesPutEachSentenceOnItsOwnLine(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"sentences", "The vote is Tuesday. Democrats hold 52 seats! Is that enough? Yes.", "The vote is Tuesday.\nDemocrats hold 52 seats!\nIs that enough?\nYes."},
+		{"a number starts one", "It passed. 52 voted for it.", "It passed.\n52 voted for it."},
+		{"a quote closes one", "He said \"go.\" Then he left.", "He said \"go.\"\nThen he left."},
+		{"lowercase runs on", "Wait... what happened.", "Wait... what happened."},
+		{"initials", "The U.S. Senate met. J. Smith spoke.", "The U.S. Senate met.\nJ. Smith spoke."},
+		{"a title", "Ask Mr. Lee. He knows.", "Ask Mr. Lee.\nHe knows."},
+		{"I ends one", "So did I. Then we left.", "So did I.\nThen we left."},
+		{"a number's dots", "Version 0.9.282. It shipped.", "Version 0.9.282.\nIt shipped."},
+		{"lines kept", "One.\nTwo.", "One.\nTwo."},
+	}
+	for _, c := range cases {
+		if got := speechLines(c.in); got != c.want {
+			t.Errorf("%s:\n  speechLines(%q)\n  = %q\n want %q", c.name, c.in, got, c.want)
+		}
+	}
+	if got := SpeechVoiceParts("af_bella,af_bella, af_sky"); strings.Join(got, "|") != "af_bella|af_bella|af_sky" {
+		t.Errorf("a comma mix: %q", got)
+	}
+	if got := SpeechVoiceParts("af_bella(2)+af_sky(1)"); strings.Join(got, "|") != "af_bella|af_sky" {
+		t.Errorf("a weighted plus mix: %q", got)
+	}
+}

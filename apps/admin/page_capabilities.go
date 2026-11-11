@@ -244,7 +244,7 @@ func speechFormFields() []ui.FormField {
 		ui.FormField{Field: "voice", Label: "Voice", Type: "text",
 			Placeholder: "af_heart",
 			Help:        "Optional. A voice it offers, such as Kokoro's 'af_heart' or OpenAI's 'alloy'. Blank uses the connector's own default.",
-			Detail:      "Save the connector or peer first, then click a chip to pick from its own list, and Preview voice to hear it before you save. One without a voice list shows no chips; type the voice instead. Kokoro also takes a mix of its voices: af_bella+af_sky, or af_bella(2)+af_sky(1) for two parts to one. A voice the server refuses falls back to the connector's default, then the first voice it lists.",
+			Detail:      "Save the connector or peer first, then click a chip to pick from its own list, and Preview voice to hear it before you save. One without a voice list shows no chips; type the voice instead. Kokoro also takes a mix of its voices, written the way its server reads one: af_bella,af_sky for a server on the kokoro library itself (name a voice twice to weight it), af_bella+af_sky or af_bella(2)+af_sky(1) for Kokoro-FastAPI. Preview voice says which it takes. A voice the server refuses falls back to the connector's default, then the first voice it lists.",
 			ShowWhen:    "provider:!none",
 			ChipsSource: "api/speech/voices"},
 	)

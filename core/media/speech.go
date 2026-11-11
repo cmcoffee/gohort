@@ -22,6 +22,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/cmcoffee/snugforge/nfo"
 )
@@ -243,6 +245,7 @@ func SpeakWith(ctx context.Context, cfg SpeechConfig, text string) ([]byte, stri
 	if !cfg.Enabled {
 		return nil, "", fmt.Errorf("speech disabled")
 	}
+	text = speechLines(text)
 	if name, ok := ChosenConnection(cfg.Provider); ok {
 		if SpeechService == nil {
 			return nil, "", fmt.Errorf("speech is set to the service %q, and services are not available here", name)
@@ -457,14 +460,80 @@ func VoiceChips(voices []Voice) []map[string]string {
 var speechVoiceWeight = regexp.MustCompile(`\(\s*[0-9.]+\s*\)$`)
 
 // SpeechVoiceParts is the voices a voice name is made of: itself, or for a
-// mix (Kokoro's af_bella+af_sky, or af_bella(2)+af_sky(1) for two parts to
-// one) each voice in it without its weight.
+// mix each voice in it without its weight. Kokoro servers write a mix two
+// ways: the kokoro library's own averages a comma list (af_bella,af_sky;
+// a voice named twice counts twice), Kokoro-FastAPI joins with plus signs
+// and takes weights (af_bella(2)+af_sky(1)).
 func SpeechVoiceParts(voice string) []string {
 	var out []string
-	for _, p := range strings.Split(voice, "+") {
+	for _, p := range strings.FieldsFunc(voice, func(r rune) bool { return r == '+' || r == ',' }) {
 		if p = strings.TrimSpace(speechVoiceWeight.ReplaceAllString(strings.TrimSpace(p), "")); p != "" {
 			out = append(out, p)
 		}
 	}
 	return out
+}
+
+// speechLines puts each sentence on a line of its own. Kokoro pauses at a
+// full stop inside a line barely longer than at a comma (0.3 to 0.5s,
+// measured), and splits what it is sent at line breaks with a real pause
+// between the parts (about 0.8s), so sentences sent on one line ran
+// together. Only a stop followed by a space and a new sentence (a capital or
+// a digit) ends one; an initial or a short title before the stop (the U.S.
+// of "U.S. Senate", Mr.) does not.
+func speechLines(text string) string {
+	runes := []rune(text)
+	var out strings.Builder
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		out.WriteRune(r)
+		if r != '.' && r != '!' && r != '?' {
+			continue
+		}
+		j := i + 1
+		for j < len(runes) && (runes[j] == '"' || runes[j] == '\'' || runes[j] == ')' || runes[j] == '\u201d' || runes[j] == '\u2019') {
+			out.WriteRune(runes[j])
+			j++
+		}
+		k := j
+		for k < len(runes) && (runes[k] == ' ' || runes[k] == '\t') {
+			k++
+		}
+		if k == j || k == len(runes) || !(unicode.IsUpper(runes[k]) || unicode.IsDigit(runes[k]) || runes[k] == '"' || runes[k] == '\u201c') {
+			i = j - 1
+			continue
+		}
+		if r == '.' && speechAbbrevBefore(runes[:i]) {
+			i = j - 1
+			continue
+		}
+		out.WriteRune('\n')
+		i = k - 1
+	}
+	return out.String()
+}
+
+// speechNoStop are the short titles a full stop follows without ending the
+// sentence.
+var speechNoStop = map[string]bool{"Mr": true, "Mrs": true, "Ms": true, "Mx": true, "Jr": true, "Sr": true, "St": true, "Dr": true, "vs": true}
+
+// speechAbbrevBefore reports whether the word before a full stop is an
+// initial (J., or the S of U.S.) or a short title, so the stop is not a
+// sentence's end. "I" is a word, not an initial.
+func speechAbbrevBefore(before []rune) bool {
+	start := len(before)
+	for start > 0 && !unicode.IsSpace(before[start-1]) {
+		start--
+	}
+	word := strings.TrimLeft(string(before[start:]), "(\"'\u201c")
+	if word == "" {
+		return false
+	}
+	if speechNoStop[word] {
+		return true
+	}
+	if strings.Contains(word, ".") {
+		return strings.IndexFunc(word, func(r rune) bool { return r != '.' && !unicode.IsLetter(r) }) < 0
+	}
+	return word != "I" && utf8.RuneCountInString(word) == 1 && unicode.IsLetter([]rune(word)[0])
 }

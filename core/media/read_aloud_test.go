@@ -28,6 +28,7 @@ func readAloudServer(t *testing.T) (asked func() []string) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]string
 		json.NewDecoder(r.Body).Decode(&body)
+		body["input"] = sentOnOneLine(body["input"])
 		mu.Lock()
 		got = append(got, body["input"])
 		mu.Unlock()
@@ -116,6 +117,7 @@ func TestTheFirstSentenceIsSentBeforeTheRestIsMade(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]string
 		json.NewDecoder(r.Body).Decode(&body)
+		body["input"] = sentOnOneLine(body["input"])
 		if body["input"] == readAloudLong("Then the rest") {
 			atomic.StoreInt32(&seen, atomic.LoadInt32(&flushes))
 		}
@@ -210,6 +212,7 @@ func TestReadAloudWithoutMP3IsOnePiece(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]string
 		json.NewDecoder(r.Body).Decode(&body)
+		body["input"] = sentOnOneLine(body["input"])
 		asked = append(asked, body["input"])
 		w.Write(append([]byte("RIFF\x24\x00\x00\x00WAVEfmt "), make([]byte, 32)...))
 	}))
@@ -733,6 +736,7 @@ func countingSpeech(t *testing.T) (counts func() map[string]int) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]string
 		json.NewDecoder(r.Body).Decode(&body)
+		body["input"] = sentOnOneLine(body["input"])
 		mu.Lock()
 		made[body["input"]]++
 		mu.Unlock()
@@ -914,6 +918,7 @@ func TestReadAloudSpeaksInTheAgentsVoice(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]string
 		json.NewDecoder(r.Body).Decode(&body)
+		body["input"] = sentOnOneLine(body["input"])
 		mu.Lock()
 		voices[body["voice"]] = true
 		mu.Unlock()
@@ -988,6 +993,7 @@ func TestAnAgentsVoicePreview(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]string
 		json.NewDecoder(r.Body).Decode(&body)
+		body["input"] = sentOnOneLine(body["input"])
 		asked = append(asked, body)
 		if body["voice"] == "nobody" {
 			http.Error(w, `{"detail":"voice not found"}`, http.StatusBadRequest)
@@ -1098,6 +1104,7 @@ func TestAJoinedStreamSaysNoLength(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]string
 		json.NewDecoder(r.Body).Decode(&body)
+		body["input"] = sentOnOneLine(body["input"])
 		w.Write(bytes.Join([][]byte{[]byte("ID3\x04\x00\x00\x00\x00\x00\x03abc"), mp3Frame(true, false, "Info", 36), []byte("[" + body["input"] + "]")}, nil))
 	}))
 	defer srv.Close()
@@ -1253,6 +1260,7 @@ func TestAnOpenReadOnAWAVServerSpeaksTheWholeReply(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]string
 		json.NewDecoder(r.Body).Decode(&body)
+		body["input"] = sentOnOneLine(body["input"])
 		asked = append(asked, body["input"])
 		w.Write(append([]byte("RIFF\x24\x00\x00\x00WAVEfmt "), make([]byte, 32)...))
 	}))
@@ -1279,3 +1287,8 @@ func TestAnOpenReadOnAWAVServerSpeaksTheWholeReply(t *testing.T) {
 		t.Errorf("a server known to answer WAV is asked once, for the whole reply: %d, asked %q", code, asked)
 	}
 }
+
+// sentOnOneLine is what a fake speech server was sent, with its sentences on one
+// line again: speech puts each on a line of its own (speechLines, tested
+// beside it), and these tests are about which pieces were spoken.
+func sentOnOneLine(s string) string { return strings.ReplaceAll(s, "\n", " ") }

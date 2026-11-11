@@ -503,7 +503,7 @@ func TestAVoiceNoteIsAnsweredOutLoud(t *testing.T) {
 	if clip, _ := base64.StdEncoding.DecodeString(reply.Audios[0]); !strings.HasPrefix(string(clip), "ID3") {
 		t.Errorf("the voice note is the speech server's clip: %q", clip)
 	}
-	if got := spoken(); len(got) != 1 || got[0] != "Sure, at noon. Details:" {
+	if got := spoken(); len(got) != 1 || got[0] != "Sure, at noon.\nDetails:" {
 		t.Errorf("read aloud: %q", got)
 	}
 
