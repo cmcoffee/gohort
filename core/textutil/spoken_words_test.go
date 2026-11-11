@@ -66,6 +66,10 @@ func TestSpokenWords(t *testing.T) {
 		{"money stays", "It costs $3.50, or £2.10.", "It costs $3.50, or £2.10."},
 		{"thousands with a decimal", "1,234.5 people", "1,234 point 5 people"},
 		{"a percent", "up 3.5%", "up 3 point 5%"},
+		// Versions.
+		{"v is version", "Running v0.9.290 now, up from v3.", "Running version 0 dot 9 dot 290 now, up from version 3."},
+		{"a v decimal", "the v3.5 model", "the version 3 point 5 model"},
+		{"a capital V or a v inside a word stays", "a V8 engine on dev3", "a V8 engine on dev3"},
 		// Four digits, in pairs.
 		{"four digits in pairs", "In 1520 and 2026, 1520 people came.", "In 15 20 and 20 26, 15 20 people came."},
 		{"a zero third is oh", "It opened in 1905.", "It opened in 19 oh 5."},

@@ -109,6 +109,9 @@ var (
 	spokenWith      = regexp.MustCompile(`(^|[\s(])[wW]/(o\b)?[ \t]*`)
 	spokenDotted    = regexp.MustCompile(`\d+(?:\.\d+)+`)
 	spokenFour      = regexp.MustCompile(`\$?\b[1-9]\d{3}\b`)
+	// A version: the v of v0.9.290 or v3, lowercase and at a word's start
+	// (a V8 engine is not one).
+	spokenVersion = regexp.MustCompile(`\bv(\d)`)
 )
 
 var spokenRules = []spokenRule{
@@ -123,6 +126,7 @@ var spokenRules = []spokenRule{
 	{spokenMonthDay, sayMonthDay},
 	// Last, so a unit rule has already seen the number whole ("1.5 hrs"),
 	// the four digits before the dots, which leave a dotted number's alone.
+	{spokenVersion, func(s string, m []int) (string, bool) { return "version " + s[m[2]:m[3]], true }},
 	{spokenFour, sayFourDigits},
 	{spokenDotted, sayDotted},
 }
