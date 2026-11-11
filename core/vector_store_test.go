@@ -1024,3 +1024,43 @@ func TestOnlyAShortLineOutsideCodeIsAHeading(t *testing.T) {
 		t.Error("a line that is not a heading must stay in the text, where it is searched")
 	}
 }
+
+// A write patches the cached snapshot instead of dropping it, so the next
+// search does not load the whole store again (54,623 chunks took about 4s).
+// Rows replace by ID, deletes leave, and a reader holding the snapshot from
+// before the write keeps the corpus it had.
+func TestAWritePatchesTheChunkCache(t *testing.T) {
+	invalidateChunkCache()
+	t.Cleanup(invalidateChunkCache)
+	db := &DBase{Store: kvlite.MemStore()}
+	texts := func(cs []EmbeddedChunk) string {
+		var out []string
+		for _, c := range cs {
+			out = append(out, c.ID+"="+c.Text)
+		}
+		return strings.Join(out, ",")
+	}
+	db.Set(EmbeddedChunks, "a", EmbeddedChunk{ID: "a", Text: "first"})
+	before := snapshotChunks(db)
+	if texts(before) != "a=first" {
+		t.Fatalf("loaded %s", texts(before))
+	}
+	// Written behind the cache's back: it shows only if the cache reloads.
+	db.Set(EmbeddedChunks, "b", EmbeddedChunk{ID: "b", Text: "unseen"})
+	putChunks(db, []EmbeddedChunk{{ID: "c", Text: "added"}})
+	if got := texts(snapshotChunks(db)); got != "a=first,c=added" {
+		t.Fatalf("after a put the cache holds %s (a reload would show b)", got)
+	}
+	if texts(before) != "a=first" {
+		t.Errorf("a reader's earlier snapshot changed under it: %s", texts(before))
+	}
+	putChunks(db, []EmbeddedChunk{{ID: "a", Text: "rewritten"}})
+	unsetChunks(db, []string{"c"})
+	if got := texts(snapshotChunks(db)); got != "a=rewritten" {
+		t.Fatalf("after a rewrite and a delete the cache holds %s", got)
+	}
+	var stored EmbeddedChunk
+	if !db.Get(EmbeddedChunks, "a", &stored) || stored.Text != "rewritten" || db.Get(EmbeddedChunks, "c", &stored) {
+		t.Error("the store and the cache disagree")
+	}
+}

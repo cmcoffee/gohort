@@ -105,10 +105,18 @@ func rebuildChunkCache(db Database) []EmbeddedChunk {
 	// So: degrade this ONE call and cache nothing. The next call retries and
 	// gets a real answer the moment the store is well again, which is the
 	// difference between a blip and an outage that outlives itself.
+	started := time.Now()
 	keys, err := db.TryKeys(EmbeddedChunks)
 	if err != nil {
 		return nil
 	}
+	// A load past a second is logged: it is a wait on whatever search asked,
+	// and it showed nowhere, so a slow remember read as a slow tool.
+	defer func() {
+		if d := time.Since(started); d > time.Second {
+			Debug("[vector] chunk cache loaded: %d chunks in %s", len(keys), d.Round(time.Millisecond))
+		}
+	}()
 	var chunks []EmbeddedChunk
 	for _, key := range keys {
 		var c EmbeddedChunk
@@ -145,11 +153,14 @@ func rebuildChunkCache(db Database) []EmbeddedChunk {
 // an ingest of a long document paid an fsync per chunk (5,000 rows: 9s
 // against a quarter second), and a crash part-way left half a document
 // searchable; now it is all of it or none.
+//
+// The cached snapshot follows (patchChunkCache) once the commit is in, or is
+// dropped when it failed, so the next read sees what the store holds.
 func putChunks(db Database, rows []EmbeddedChunk) {
 	if len(rows) == 0 {
 		return
 	}
-	db.Batch(func(b DBBatch) error {
+	err := db.Batch(func(b DBBatch) error {
 		for _, r := range rows {
 			if err := b.Set(EmbeddedChunks, r.ID, r); err != nil {
 				return err
@@ -157,7 +168,20 @@ func putChunks(db Database, rows []EmbeddedChunk) {
 		}
 		return nil
 	})
+	if err != nil {
+		invalidateChunkCacheFor(db)
+	} else {
+		patchChunkCache(db, rows, nil)
+	}
 	noteChunksWithoutVectors(rows) // a repair once the embedder is back
+}
+
+// PutChunks writes rows back under their IDs, for a caller outside core that
+// changes chunks it read (a tag, a date), and keeps the read cache in step.
+func PutChunks(db Database, rows []EmbeddedChunk) {
+	if db != nil {
+		putChunks(db, rows)
+	}
 }
 
 // unsetChunks deletes the rows with these IDs in one commit (5,000: 6.8s one
@@ -166,7 +190,7 @@ func unsetChunks(db Database, ids []string) {
 	if len(ids) == 0 {
 		return
 	}
-	db.Batch(func(b DBBatch) error {
+	err := db.Batch(func(b DBBatch) error {
 		for _, id := range ids {
 			if id == "" {
 				continue
@@ -177,6 +201,11 @@ func unsetChunks(db Database, ids []string) {
 		}
 		return nil
 	})
+	if err != nil {
+		invalidateChunkCacheFor(db)
+	} else {
+		patchChunkCache(db, nil, ids)
+	}
 }
 
 // ChunksForSource returns every stored chunk whose Source exactly matches —
@@ -232,6 +261,44 @@ func invalidateChunkCacheFor(db Database) {
 	chunkCache.mu.Lock()
 	delete(chunkCache.entries, db)
 	chunkCache.mu.Unlock()
+}
+
+// patchChunkCache brings db's cached snapshot up to date with a write that
+// is already in the store: put rows replace the ones with their IDs or join,
+// gone IDs leave. A db with no snapshot is left alone; its next read loads
+// the store.
+//
+// Writes used to drop the snapshot instead, and the next search loaded every
+// chunk again: 54,623 of them took about 4 seconds, so one remember (a search,
+// a save, a tag) paid it twice. A patch copies the slice (copy on write: a
+// reader holding the old one keeps a consistent corpus) and is milliseconds.
+//
+// A rebuild holds the lock while it loads, so a patch waits for it, and is
+// applied by ID: a write the rebuild already read is replaced, not doubled.
+func patchChunkCache(db Database, put []EmbeddedChunk, gone []string) {
+	if db == nil || len(put)+len(gone) == 0 {
+		return
+	}
+	chunkCache.mu.Lock()
+	defer chunkCache.mu.Unlock()
+	e := chunkCache.entries[db]
+	if e == nil {
+		return
+	}
+	drop := make(map[string]bool, len(put)+len(gone))
+	for _, id := range gone {
+		drop[id] = true
+	}
+	for _, r := range put {
+		drop[r.ID] = true
+	}
+	next := make([]EmbeddedChunk, 0, len(e.chunks)+len(put))
+	for _, c := range e.chunks {
+		if !drop[c.ID] {
+			next = append(next, c)
+		}
+	}
+	e.chunks = append(next, put...)
 }
 
 // InvalidateChunkCache is the exported wrapper for callers outside the
@@ -520,9 +587,6 @@ func BackfillChunkTitles(db Database, kind string, resolve func(reportID string)
 		updated++
 	}
 	putChunks(db, titled)
-	if updated > 0 {
-		invalidateChunkCacheFor(db)
-	}
 	return updated
 }
 
@@ -621,7 +685,6 @@ func ingestReport(ctx context.Context, db Database, source, reportID, title, rep
 		}
 	}
 	putChunks(db, rows)
-	invalidateChunkCacheFor(db)
 	tagSuffix := ""
 	if kind != "" {
 		tagSuffix = " [kind=" + kind + "]"
@@ -703,7 +766,6 @@ func IngestPagedReport(ctx context.Context, db Database, source, reportID, repor
 		}
 	}
 	putChunks(db, rows)
-	invalidateChunkCacheFor(db)
 	if split > 0 {
 		Debug("[vector] paged-ingested %s/%s: %d pages, %d chunks → %d rows (%d embedded, %d empty, %d sub-split rows from oversize chunks)",
 			source, reportID, len(pages), totalChunks, embedded+empty, embedded, empty, split)
@@ -883,7 +945,7 @@ func bestBoundaryNear(text string, mid int, sep string) int {
 }
 
 // DeleteChunksByIDs removes the chunks with the given EmbeddedChunk
-// IDs and invalidates the read cache. Used by surface-level "forget
+// IDs and takes them out of the read cache. Used by surface-level "forget
 // these specific hits" flows (e.g. knowledge_forget) that already
 // resolved IDs via SearchChunks. Missing IDs are silently skipped —
 // idempotent.
@@ -892,18 +954,17 @@ func DeleteChunksByIDs(db Database, ids []string) {
 		return
 	}
 	unsetChunks(db, ids)
-	invalidateChunkCacheFor(db)
 }
 
-// DeleteChunksWhere removes every chunk keep accepts and invalidates the
-// read cache when anything went. Returns the number removed. THE way to
+// DeleteChunksWhere removes every chunk keep accepts and takes them out of
+// the read cache. Returns the number removed. THE way to
 // delete chunks by any rule — a report, a source prefix, a scope, one id.
 //
 // It reads the cached snapshot rather than walking kvlite, so a delete costs
 // a slice scan plus one Unset per victim instead of a Keys walk and a gob
 // decode per row in the store (brutal on NFS, and every hand-rolled delete
-// paid it). And it invalidates, which is the part the hand-rolled ones got
-// wrong: four of them Unset rows and never told the cache, and the helper
+// paid it). And it keeps the cache in step, which is the part the
+// hand-rolled ones got wrong: four of them Unset rows and never told the cache, and the helper
 // they called instead was a no-op whose comment assumed a TTL this cache
 // does not have. A deleted chunk kept surfacing in search until some
 // unrelated ingest happened to invalidate.
@@ -920,11 +981,7 @@ func DeleteChunksWhere(db Database, keep func(c EmbeddedChunk) bool) int {
 		}
 	}
 	unsetChunks(db, gone)
-	removed := len(gone)
-	if removed > 0 {
-		invalidateChunkCacheFor(db)
-	}
-	return removed
+	return len(gone)
 }
 
 // DeleteReportChunks removes every chunk belonging to the given report.

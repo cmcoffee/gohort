@@ -304,7 +304,7 @@ func closeOpenItem(udb Database, agentID string, f MemoryFact, now time.Time) {
 // tagFindingChunks stamps a finding's chunks as an event (fresh or past) with
 // the date it happened, carrying the note's origin across.
 func tagFindingChunks(reportID, kind string, at time.Time, from MemoryProvenance) int {
-	n := 0
+	var tagged []EmbeddedChunk
 	for _, c := range ChunksWhere(VectorDB, func(c EmbeddedChunk) bool { return c.ReportID == reportID }) {
 		c.Kind = kind
 		c.MemKind, c.EventAt = provenance.MemKindEvent, at
@@ -313,13 +313,12 @@ func tagFindingChunks(reportID, kind string, at time.Time, from MemoryProvenance
 		if from.Source != MemSourceUnknown {
 			c.MemoryProvenance.Source = from.Source
 		}
-		VectorDB.Set(EmbeddedChunks, c.ID, c)
-		n++
+		tagged = append(tagged, c)
 	}
-	if n > 0 {
-		InvalidateChunkCache()
-	}
-	return n
+	// Written back in one commit, and the read cache patched rather than
+	// dropped: dropping it made the next search load every chunk again.
+	PutChunks(VectorDB, tagged)
+	return len(tagged)
 }
 
 // dateEventFindings walks the saved findings and (1) classifies ones written
@@ -330,7 +329,7 @@ func dateEventFindings(now time.Time) int {
 		return 0
 	}
 	fresh := eventFreshFor()
-	changed := 0
+	var dated []EmbeddedChunk
 	for _, c := range ChunksWhere(VectorDB, func(c EmbeddedChunk) bool {
 		return strings.HasPrefix(c.Source, "orchestrate:") && strings.HasPrefix(c.ReportID, "orch-know-") &&
 			(c.Kind == "" || c.Kind == chunkKindEvent)
@@ -348,14 +347,11 @@ func dateEventFindings(now time.Time) int {
 			c.Kind = chunkKindPastEvent
 		}
 		if c.Kind != orig {
-			VectorDB.Set(EmbeddedChunks, c.ID, c)
-			changed++
+			dated = append(dated, c)
 		}
 	}
-	if changed > 0 {
-		InvalidateChunkCache()
-	}
-	return changed
+	PutChunks(VectorDB, dated)
+	return len(dated)
 }
 
 // chunkWritten is when a chunk was ingested, from its RFC3339 Date.
