@@ -520,7 +520,7 @@ func fallbackTitle(s ChatSession) string {
 		if m.Role == "user" {
 			t := strings.TrimSpace(m.Content)
 			if words := strings.Fields(t); len(words) > 8 {
-				t = strings.Join(words[:8], " ") + "…"
+				t = strings.Join(words[:8], " ") + "..."
 			}
 			if t != "" {
 				return t

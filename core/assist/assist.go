@@ -450,7 +450,7 @@ func progressLabel(name string, args map[string]any) string {
 		if s, ok := args[k].(string); ok && strings.TrimSpace(s) != "" {
 			s = strings.Join(strings.Fields(s), " ")
 			if len([]rune(s)) > 60 {
-				s = string([]rune(s)[:60]) + "…"
+				s = string([]rune(s)[:60]) + "..."
 			}
 			return label + ": " + s
 		}

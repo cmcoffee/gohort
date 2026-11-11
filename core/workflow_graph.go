@@ -536,7 +536,7 @@ func gTrunc(s string, max int) string {
 	if max < 2 {
 		return string(r[:max])
 	}
-	return strings.TrimRight(string(r[:max-1]), " ") + "…"
+	return strings.TrimRight(string(r[:max-1]), " ") + "..."
 }
 
 // xmlEscape makes a string safe as SVG text content.

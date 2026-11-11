@@ -156,7 +156,7 @@ func TestSearchTruncatesAMonstrousLine(t *testing.T) {
 	if len(matches) != 1 {
 		t.Fatalf("expected one match, got %d", len(matches))
 	}
-	if runes := []rune(matches[0].Text); len(runes) > maxLineRunes+1 {
+	if runes := []rune(matches[0].Text); len(runes) > maxLineRunes+len("...") {
 		t.Errorf("line came back %d runes long, cap is %d", len(runes), maxLineRunes)
 	}
 }
@@ -314,7 +314,7 @@ func TestSearchFindsAHitPastTheDisplayCap(t *testing.T) {
 		if len(res.Matches) != 1 || res.Matches[0].Line != 2 {
 			t.Fatalf("%s: a hit past the display cap was not found: %+v", name, res.Matches)
 		}
-		if runes := []rune(res.Matches[0].Text); len(runes) > maxLineRunes+1 {
+		if runes := []rune(res.Matches[0].Text); len(runes) > maxLineRunes+len("...") {
 			t.Errorf("%s: shown line is %d runes, cap is %d", name, len(runes), maxLineRunes)
 		}
 	}

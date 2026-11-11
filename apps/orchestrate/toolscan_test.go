@@ -976,10 +976,10 @@ func TestASessionWithNoUserMessageFallsBackToo(t *testing.T) {
 func TestTheRequestIsTruncatedFromEitherSource(t *testing.T) {
 	long := strings.Repeat("x", 2500)
 	fromIntent := (&chatTurn{ctx: context.Background(), intentText: long}).lastUserRequestText()
-	if len([]rune(fromIntent)) != 2001 { // 2000 + the ellipsis
+	if len([]rune(fromIntent)) != 2000+len("...") { // 2000 + the "..."
 		t.Errorf("a long mission should be bounded, got %d runes", len([]rune(fromIntent)))
 	}
-	if !strings.HasSuffix(fromIntent, "…") {
+	if !strings.HasSuffix(fromIntent, "...") {
 		t.Error("truncation should be visible to the judge")
 	}
 	fromSession := (&chatTurn{

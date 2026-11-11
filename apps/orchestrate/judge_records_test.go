@@ -103,7 +103,7 @@ func TestAFiringIsRecordedWithBothReadingsAndTheArm(t *testing.T) {
 	if r.Claim != "Here's the picture you asked for." {
 		t.Errorf("the quoted sentence was not kept: %q", r.Claim)
 	}
-	if n := len([]rune(r.Reply)); n == 0 || n > firingExcerptMax+1 {
+	if n := len([]rune(r.Reply)); n == 0 || n > firingExcerptMax+len("...") {
 		t.Errorf("the reply excerpt should be short and present, got %d chars", n)
 	}
 	if r.Retry != "the retry passed" || !strings.Contains(r.RetryReply, "backend failed") {

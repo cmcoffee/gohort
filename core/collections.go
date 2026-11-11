@@ -671,7 +671,7 @@ func excerptText(text string, max int) string {
 	if idx := strings.LastIndex(cut, " "); idx > max/2 {
 		cut = cut[:idx]
 	}
-	return strings.TrimRight(cut, " \t\n") + "…"
+	return strings.TrimRight(cut, " \t\n") + "..."
 }
 
 // AssembleChunkDoc reconstructs a readable document from its embedded

@@ -498,7 +498,7 @@ func toolResultExcerpt(content string, max int) string {
 	// carries the notes, so the tail gets the larger share.
 	head := max / 3
 	tail := max - head
-	return s[:head] + " …[" + strconv.Itoa(len(s)-max) + " chars elided]… " + s[len(s)-tail:]
+	return s[:head] + " ...[" + strconv.Itoa(len(s)-max) + " chars elided]... " + s[len(s)-tail:]
 }
 
 // toolOutputEvidence renders the per-call excerpts into the block a judge

@@ -473,7 +473,7 @@ func truncateTaskLabel(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return strings.TrimSpace(s[:n]) + "…"
+	return strings.TrimSpace(s[:n]) + "..."
 }
 
 // errNoTaskHost is what a host returns when it cannot start a task — no chat

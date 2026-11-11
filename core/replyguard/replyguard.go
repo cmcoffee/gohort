@@ -619,9 +619,10 @@ func answersTheNote(reply string) bool {
 // SameReply reports two replies that say the same thing: equal once spacing
 // and case are set aside, or near enough word for word (a model resending its
 // reply rarely reproduces every character). Nine in ten of the words of either
-// shared by the other. "…" from a kept tail is ignored.
+// shared by the other. The "..." a kept tail starts with is ignored (and the
+// "…" one saved before the switch).
 func SameReply(a, b string) bool {
-	norm := func(s string) []string { return strings.Fields(strings.ToLower(strings.TrimPrefix(strings.TrimSpace(s), "…"))) }
+	norm := func(s string) []string { return strings.Fields(strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(s), "..."), "…"))) }
 	wa, wb := norm(a), norm(b)
 	if strings.Join(wa, " ") == strings.Join(wb, " ") {
 		return len(wa) > 0
@@ -671,5 +672,5 @@ func tail(s string, n int) string {
 	if len(r) <= n {
 		return s
 	}
-	return "…" + string(r[len(r)-n:])
+	return "..." + string(r[len(r)-n:])
 }

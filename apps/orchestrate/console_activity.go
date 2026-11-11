@@ -75,7 +75,7 @@ func (T *OrchestrateApp) handleConsoleRuns(c *jsonapi.Call) (any, error) {
 			When:    consoleRunWhen(rec, loc),
 			Trigger: rec.Trigger,
 			Brief:   truncateObs(rec.Brief, 120),
-			Summary: truncateObs(firstNonEmpty(rec.Summary, rec.Err), 160),
+			Summary: truncateObs(firstNonEmpty(rec.Summary, rec.Err), cardTextMax),
 			ID:      rec.ID,
 		})
 	}

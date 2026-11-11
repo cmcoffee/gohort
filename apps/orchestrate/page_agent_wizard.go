@@ -947,7 +947,7 @@ func wizardFallbackDescription(purpose string) string {
 	}
 	s = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(s), "\n"))
 	if len(s) > 160 {
-		s = strings.TrimSpace(s[:157]) + "…"
+		s = strings.TrimSpace(s[:157]) + "..."
 	}
 	return s
 }

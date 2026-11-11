@@ -269,7 +269,7 @@ func (a *RunActivity) Summary() string {
 		tail = strings.TrimSpace(tail[i+1:])
 	}
 	if utf8.RuneCountInString(tail) > 80 {
-		tail = string([]rune(tail)[:79]) + "…"
+		tail = string([]rune(tail)[:79]) + "..."
 	}
 	head := countOf(a.lines, "line")
 	if a.lines == 0 {

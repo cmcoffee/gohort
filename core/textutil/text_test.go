@@ -139,14 +139,14 @@ func TestClip(t *testing.T) {
 	}{
 		{"short", 10, "short"},
 		{"exactly10!", 10, "exactly10!"},
-		{"hello world", 5, "hello…"},
+		{"hello world", 5, "hello..."},
 		{"", 3, ""},
-		{"abc", 0, "…"},
+		{"abc", 0, "..."},
 		// "é" is two bytes; a limit landing inside it drops the whole rune.
-		{"café au lait", 4, "caf…"},
-		{"café au lait", 5, "café…"},
+		{"café au lait", 4, "caf..."},
+		{"café au lait", 5, "café..."},
 		// A four-byte emoji straddling the limit.
-		{"ok \U0001F3DA end", 5, "ok …"},
+		{"ok \U0001F3DA end", 5, "ok ..."},
 	}
 	for _, c := range cases {
 		got := Clip(c.in, c.n)
@@ -168,7 +168,7 @@ func TestFirstMessageTitle(t *testing.T) {
 		want string
 	}{
 		{"  how do I rotate keys?  ", 60, "how do I rotate keys?"},
-		{"abcdefghij", 4, "abcd…"},
+		{"abcdefghij", 4, "abcd..."},
 		{"   ", 60, "New session"},
 		{"", 60, "New session"},
 	} {

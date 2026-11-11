@@ -121,7 +121,7 @@ func TestAnAWSEntrySignsWithAPairOrAProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if h := Hint(db, k); !strings.HasPrefix(h, "key pair TEST…ID12") {
+	if h := Hint(db, k); !strings.HasPrefix(h, "key pair TEST...ID12") {
 		t.Errorf("hint %q", h)
 	}
 	if !k.Covers("bedrock") {

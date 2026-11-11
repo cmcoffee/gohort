@@ -2777,7 +2777,7 @@
               if (summary) {
                 var sm = document.createElement('span');
                 sm.className = 'ui-orch-custom-tool-summary';
-                if (summary.length > 140) summary = summary.slice(0, 140) + '…';
+                if (summary.length > 140) summary = summary.slice(0, 140) + '...';
                 sm.textContent = summary;
                 meta.appendChild(sm);
               }
@@ -7101,7 +7101,7 @@
             var fold = document.createElement('details');
             fold.className = 'orch-view-v orch-view-fold';
             var sum = document.createElement('summary');
-            sum.textContent = lines > 1 ? lines + ' lines' : text.slice(0, 80).trim() + '…';
+            sum.textContent = lines > 1 ? lines + ' lines' : text.slice(0, 80).trim() + '...';
             fold.appendChild(sum);
             var pre = document.createElement('pre');
             pre.className = 'orch-view-code';
@@ -7145,8 +7145,10 @@
               w.textContent = it.when + (it.trigger ? ' - ' + it.trigger : '');
               head.appendChild(w);
               item.appendChild(head);
+              // The whole of what the run said, folded past a few lines with
+              // "more" rather than cut: it is often the run's whole report.
               var said = it.summary || it.note || '';
-              if (said) line(item, 'orch-view-said', said);
+              if (said) item.appendChild(window.uiFoldText(said, {'class': 'orch-view-said', pre: true, lines: 4}));
               going.appendChild(item);
             });
             if (d.notes) {

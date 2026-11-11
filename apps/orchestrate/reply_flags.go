@@ -165,7 +165,7 @@ type replyFlag struct {
 func clip(s string, n int) string {
 	s = strings.TrimSpace(s)
 	if r := []rune(s); len(r) > n {
-		return string(r[:n]) + "…"
+		return string(r[:n]) + "..."
 	}
 	return s
 }

@@ -108,7 +108,7 @@ func cloneArgs(in map[string]any) map[string]any {
 func oneLine(s string, max int) string {
 	s = strings.TrimSpace(strings.Join(strings.Fields(s), " "))
 	if len(s) > max {
-		return s[:max] + "…"
+		return s[:max] + "..."
 	}
 	return s
 }

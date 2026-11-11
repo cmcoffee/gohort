@@ -305,7 +305,7 @@ func firstLineLabel(s string) string {
 		s = strings.TrimSpace(s[:i])
 	}
 	if r := []rune(s); len(r) > 60 {
-		s = string(r[:59]) + "…"
+		s = string(r[:59]) + "..."
 	}
 	return s
 }

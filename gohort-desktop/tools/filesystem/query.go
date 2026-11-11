@@ -300,7 +300,7 @@ func format_stat(abs string) (string, error) {
 		first_line = strings.TrimSpace(string(sniff))
 	}
 	if len(first_line) > 200 {
-		first_line = first_line[:200] + "…"
+		first_line = first_line[:200] + "..."
 	}
 	line_count_str := "(unknown: file too large to count cheaply)"
 	if line_count >= 0 {

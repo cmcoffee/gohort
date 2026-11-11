@@ -167,7 +167,7 @@ func (t *RunTrace) add(level, msg string) {
 	}
 	line := strings.TrimSpace(msg)
 	if r := []rune(line); len(r) > runLogWidth {
-		line = string(r[:runLogWidth]) + "…"
+		line = string(r[:runLogWidth]) + "..."
 	}
 	if level != "" && level != "info" {
 		line = level + ": " + line
@@ -193,7 +193,7 @@ func (t *RunTrace) Done(err error) {
 	if err != nil {
 		msg := err.Error()
 		if rs := []rune(msg); len(rs) > runErrorTail {
-			msg = "…" + string(rs[len(rs)-runErrorTail:])
+			msg = "..." + string(rs[len(rs)-runErrorTail:])
 		}
 		r.Error = msg
 	}

@@ -145,7 +145,7 @@ func conflictJudgeExcerpt(text string) string {
 	if idx := strings.LastIndex(cut, " "); idx > conflictJudgeExcerptMaxChars/2 {
 		cut = cut[:idx]
 	}
-	return strings.TrimRight(cut, " \t\n") + "…"
+	return strings.TrimRight(cut, " \t\n") + "..."
 }
 
 // judgeFindingConflicts asks the worker which candidate findings the new finding

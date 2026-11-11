@@ -53,7 +53,7 @@ func fetchSources(args map[string]any, result string) []sources.Fetched {
 	for _, line := range strings.Split(text, "\n") {
 		if line = strings.TrimSpace(strings.TrimLeft(line, "# ")); len(line) > 3 {
 			if len(line) > 120 {
-				line = line[:120] + "…"
+				line = line[:120] + "..."
 			}
 			title = line
 			break

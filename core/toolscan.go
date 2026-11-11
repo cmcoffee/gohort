@@ -374,7 +374,7 @@ func sanitizeScanSpan(s string) string {
 	for len(cut) > 0 && !utf8.ValidString(cut) {
 		cut = cut[:len(cut)-1]
 	}
-	return strings.TrimSpace(cut) + "…"
+	return strings.TrimSpace(cut) + "..."
 }
 
 // ToolScanHardFence is the banner a flagged result carries INSTEAD OF the

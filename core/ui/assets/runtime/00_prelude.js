@@ -1208,6 +1208,41 @@
     }, 0);
   };
 
+  // uiFoldText(text, opts) is text that is never cut where it cannot be read.
+  // Short text (up to opts.fold characters, 240 by default) is one plain span,
+  // as it would have been. Longer text shows its first opts.lines lines (3),
+  // with "more" to open the whole of it in place and "less" to fold it again.
+  // The clamp is the browser's, so the whole text is on the page and nothing
+  // is fetched to open it. opts.class and opts.style go on the outer element;
+  // opts.pre keeps the text's own line breaks.
+  window.uiFoldText = function(text, opts) {
+    opts = opts || {};
+    text = String(text == null ? '' : text);
+    var fold = opts.fold || 240, lines = opts.lines || 3;
+    var style = opts.style || '';
+    var wrap = opts.pre ? 'white-space:pre-wrap;' : '';
+    var at = {style: style};
+    if (opts['class']) at['class'] = opts['class'];
+    if (text.length <= fold) {
+      if (wrap) at.style = style + (style ? ';' : '') + wrap;
+      return el('span', at, [text]);
+    }
+    var clamp = 'display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:' + lines + ';line-clamp:' + lines + ';overflow:hidden;';
+    var body = el('span', {class: 'ui-fold-text', style: 'display:block;' + wrap + clamp}, [text]);
+    var open = false;
+    var toggle = el('button', {type: 'button', class: 'ui-fold-more', 'aria-expanded': 'false',
+      style: 'background:none;border:none;padding:0;margin-top:0.1rem;cursor:pointer;font:inherit;font-size:var(--fs-2xs, 0.72rem);font-weight:600;color:var(--accent, #4a9eff)',
+      onclick: function(ev) {
+        if (ev) ev.stopPropagation();
+        open = !open;
+        body.style.cssText = 'display:block;' + wrap + (open ? 'overflow-wrap:anywhere' : clamp);
+        toggle.textContent = open ? 'less' : 'more';
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      }}, ['more']);
+    at.style = style + (style ? ';' : '') + 'display:block';
+    return el('div', at, [body, toggle]);
+  };
+
   // uiExpandingLine(ta, opts) makes a textarea in a list of entries read as one
   // line, and open to its whole text while it is edited or from the arrow it
   // hands back. The arrow shows only when there is more to see than the line.

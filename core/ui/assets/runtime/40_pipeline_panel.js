@@ -650,7 +650,7 @@
               body.appendChild(el('h2', {class: 'ui-pl-modal-headline'}, [headline]));
             }
             if (data.Topic && data.AgainstPosition) {
-              var topicLine = data.Topic.length > 150 ? data.Topic.slice(0, 150) + '…' : data.Topic;
+              var topicLine = data.Topic.length > 150 ? data.Topic.slice(0, 150) + '...' : data.Topic;
               body.appendChild(el('div', {class: 'ui-pl-modal-sub'}, ['Topic: ' + topicLine]));
             }
             if (data.Summary || data.Body) {
@@ -1661,7 +1661,7 @@
             if (raw === undefined || raw === null || raw === '') return;
             var text = String(raw);
             if (mf.truncate && text.length > mf.truncate) {
-              text = text.slice(0, mf.truncate - 1).trimEnd() + '…';
+              text = text.slice(0, Math.max(0, mf.truncate - 3)).trimEnd() + '...';
             }
             var style = mf.style || 'text';
             if (style === 'badge' || style === 'pill') {

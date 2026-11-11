@@ -1679,7 +1679,7 @@ func truncateWatchStep(s string) string {
 	s = strings.TrimSpace(s)
 	const max = 200
 	if len([]rune(s)) > max {
-		return string([]rune(s)[:max]) + "…"
+		return string([]rune(s)[:max]) + "..."
 	}
 	return s
 }
@@ -2446,7 +2446,7 @@ func truncateEvent(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
-	return strings.TrimSpace(s[:max]) + "…"
+	return strings.TrimSpace(s[:max]) + "..."
 }
 
 // A watch monitor fires when the hash of its tool's output changes. That is

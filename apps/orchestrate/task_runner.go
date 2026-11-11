@@ -324,7 +324,7 @@ func wakeRequestQuote(request string) string {
 		return ""
 	}
 	if r := []rune(request); len(r) > 300 {
-		request = string(r[:300]) + "…"
+		request = string(r[:300]) + "..."
 	}
 	return "\"" + request + "\""
 }

@@ -39,7 +39,7 @@ func firstWords(s string, n int) string {
 	if len(words) <= n {
 		return strings.Join(words, " ")
 	}
-	return strings.Join(words[:n], " ") + "…"
+	return strings.Join(words[:n], " ") + "..."
 }
 
 // missionForList is what the Scheduler shows for a mission.

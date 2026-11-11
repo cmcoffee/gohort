@@ -72,7 +72,7 @@ func notifier(recipient, owner, slug string) func(title, body string) (string, e
 
 func clipRunes(s string, n int) string {
 	if r := []rune(s); len(r) > n {
-		return string(r[:n-1]) + "…"
+		return string(r[:n-1]) + "..."
 	}
 	return s
 }

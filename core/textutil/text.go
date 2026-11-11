@@ -51,7 +51,7 @@ func safeInlineImageURL(url string) bool {
 	return inlineImageDataRE.MatchString(url)
 }
 
-// Clip shortens s to at most n bytes followed by "…", and returns s as is
+// Clip shortens s to at most n bytes followed by "...", and returns s as is
 // when it already fits. The cut lands on a rune boundary: slicing bytes
 // splits any multi-byte character straddling the limit and leaves invalid
 // UTF-8 behind, which shows as a replacement glyph in a title or a log line.
@@ -65,7 +65,7 @@ func Clip(s string, n int) string {
 	for n > 0 && !utf8.RuneStart(s[n]) {
 		n--
 	}
-	return s[:n] + "…"
+	return s[:n] + "..."
 }
 
 // FirstMessageTitle is a session's name before it has a better one: the

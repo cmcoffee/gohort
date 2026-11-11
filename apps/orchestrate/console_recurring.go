@@ -109,7 +109,7 @@ func consoleRecurringRows(user, agentID string) []consoleRecurringRow {
 		row.Guarded = scheduleGuardedLabel(rt.Payload.GuardrailStreak, rt.Payload.GuardrailRule)
 		if row.Objective == "" && row.Failing == "" {
 			if w := strings.TrimSpace(rt.Payload.NextAttemptWhy); w != "" {
-				row.State = "waiting: " + truncateObs(w, 120)
+				row.State = "waiting: " + truncateObs(w, cardTextMax)
 			}
 		}
 		if rt.Payload.Paused && !rt.Payload.Broken {

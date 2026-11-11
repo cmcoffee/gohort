@@ -268,5 +268,5 @@ func clip(s string, n int) string {
 	if len(r) <= n {
 		return s
 	}
-	return string(r[:n]) + "…"
+	return string(r[:n]) + "..."
 }

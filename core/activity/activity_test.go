@@ -80,7 +80,7 @@ func TestWhatAStrangerSentIsCut(t *testing.T) {
 	db := memStore{}
 	Record(db, Event{Kind: SignInFailed, User: strings.Repeat("x", 500), Browser: strings.Repeat("é", 300), Detail: "d"})
 	e := List(db, Filter{})[0]
-	if len(e.User) > 124 || len(e.Browser) > 204 || !strings.HasSuffix(e.Browser, "…") {
+	if len(e.User) > 124 || len(e.Browser) > 204 || !strings.HasSuffix(e.Browser, "...") {
 		t.Errorf("long fields should be cut: user %d, browser %d", len(e.User), len(e.Browser))
 	}
 	if !strings.HasPrefix(e.Browser, "é") || strings.ContainsRune(e.Browser, '�') {

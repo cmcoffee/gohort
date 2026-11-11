@@ -116,7 +116,7 @@ func (T *Bridges) handleRelayLogView(c *jsonapi.Call) (any, error) {
 func clipRelayLine(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
 	if r := []rune(s); len(r) > relayLogLineMax {
-		s = string(r[:relayLogLineMax]) + "…"
+		s = string(r[:relayLogLineMax]) + "..."
 	}
 	return s
 }

@@ -72,7 +72,7 @@ func TestLongCommandIsTruncatedInTheRefusal(t *testing.T) {
 	if strings.Contains(msg, long) {
 		t.Error("a 400-char pipeline should not be quoted whole")
 	}
-	if !strings.Contains(msg, "…") {
+	if !strings.Contains(msg, "...") {
 		t.Error("truncation should be visible")
 	}
 }

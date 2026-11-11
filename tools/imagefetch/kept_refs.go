@@ -112,9 +112,9 @@ func truncateLabel(s string, max int) string {
 		return s
 	}
 	if cut := strings.LastIndex(s[:max], " "); cut > max/2 {
-		return s[:cut] + "…"
+		return s[:cut] + "..."
 	}
-	return s[:max] + "…"
+	return s[:max] + "..."
 }
 
 // describeKeptRefs renders the list for the schema. An unlabelled reference

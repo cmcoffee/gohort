@@ -16,7 +16,7 @@ func TestWizardFallbackDescription(t *testing.T) {
 	}{
 		{"Answer ops questions. Also do other things later.", "Answer ops questions."},
 		{"First line only\nsecond line ignored", "First line only"},
-		{strings.Repeat("x", 200), strings.Repeat("x", 157) + "…"},
+		{strings.Repeat("x", 200), strings.Repeat("x", 157) + "..."},
 	}
 	for _, c := range cases {
 		if got := wizardFallbackDescription(c.in); got != c.want {

@@ -1016,11 +1016,11 @@ func formatRunSteps(steps []RunStep) string {
 		}
 		outcome = strings.TrimSpace(strings.ReplaceAll(outcome, "\n", " "))
 		if r := []rune(outcome); len(r) > 200 {
-			outcome = string(r[:200]) + "…"
+			outcome = string(r[:200]) + "..."
 		}
 		args := strings.TrimSpace(s.Args)
 		if r := []rune(args); len(r) > 200 {
-			args = string(r[:200]) + "…"
+			args = string(r[:200]) + "..."
 		}
 		b.WriteString(fmt.Sprintf("  %d. %s(%s) -> %s\n", i+1, s.Name, args, outcome))
 	}

@@ -312,15 +312,15 @@ func objectiveStateLabel(o objectiveRun) string {
 		last := o.Attempts[n-1]
 		switch {
 		case last.Met:
-			label = "objective, met: " + truncateObs(last.Reason, 160)
+			label = "objective, met: " + truncateObs(last.Reason, cardTextMax)
 		default:
-			label = fmt.Sprintf("objective, not yet (%d attempt(s)): %s", n, truncateObs(last.Reason, 160))
+			label = fmt.Sprintf("objective, not yet (%d attempt(s)): %s", n, truncateObs(last.Reason, cardTextMax))
 		}
 	}
 	// The Next run cell already shows WHEN. This is the half it cannot carry:
 	// that the time was chosen by the last attempt, and what it is waiting for.
 	if w := strings.TrimSpace(o.PacedWhy); w != "" {
-		label += " - waiting: " + truncateObs(w, 120)
+		label += " - waiting: " + truncateObs(w, cardTextMax)
 	}
 	return label
 }

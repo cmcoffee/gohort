@@ -151,7 +151,7 @@ func TestSanitizeScanSpanCollapsesAndTruncates(t *testing.T) {
 	if !isValidUTF8(long) {
 		t.Error("truncation broke a rune")
 	}
-	if !strings.HasSuffix(long, "…") {
+	if !strings.HasSuffix(long, "...") {
 		t.Error("a truncated span should say it was truncated")
 	}
 }

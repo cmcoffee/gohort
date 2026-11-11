@@ -614,6 +614,13 @@
           }
           if (item && item.layout === 'cards') {
             var cactions = (item && item.row_actions) || [];
+            // A card's text is never cut where it cannot be read: long text
+            // folds to three lines with "more" (uiFoldText), the width of
+            // the card; short text sits inline as it always has.
+            function cardText(text, style, cls) {
+              if (text.length > 240) style += ';flex:1 1 100%';
+              return window.uiFoldText(text, {style: style, 'class': cls});
+            }
             var lastSection = null;
             var lastGroup = null, groupBox = null;
             rows.forEach(function(row) {
@@ -701,11 +708,11 @@
                   info.appendChild(el('span', {style: 'font-size:0.56rem;text-transform:uppercase;letter-spacing:0.04em;padding:0.05rem 0.42rem;border-radius:999px;font-weight:700;align-self:center;' +
                     (pend ? 'background:var(--accent, #4a9eff);color:var(--text-on-accent, #fff)' : 'background:var(--bg-2, rgba(127,127,127,0.22));color:var(--text-mute, #999)')}, [s]));
                 } else {
-                  info.appendChild(el('span', {style: 'color:var(--text-mute, #999);font-size:var(--fs-xs, 0.78rem);word-break:break-word'}, [s]));
+                  info.appendChild(cardText(s, 'color:var(--text-mute, #999);font-size:var(--fs-xs, 0.78rem);word-break:break-word'));
                 }
               });
               if (warn && row._warn_why) {
-                info.appendChild(el('span', {class: 'ui-card-warn-why', style: 'color:var(--warning, #d29922);font-size:var(--fs-xs, 0.78rem);font-weight:600;word-break:break-word'}, [String(row._warn_why)]));
+                info.appendChild(cardText(String(row._warn_why), 'color:var(--warning, #d29922);font-size:var(--fs-xs, 0.78rem);font-weight:600;word-break:break-word', 'ui-card-warn-why'));
               }
               card.appendChild(info);
               // Right: segmented state control (rows that carry it) + actions.
@@ -776,7 +783,7 @@
               var s = (v == null) ? '' : String(v);
               if (s.length > 80 || s.indexOf('\n') >= 0) {
                 s = s.replace(/\n/g, ' ');
-                if (s.length > 80) s = s.slice(0, 80) + '…';
+                if (s.length > 80) s = s.slice(0, 80) + '...';
               }
               tr.appendChild(el('td', {style: 'padding:0.35rem 0.5rem;border-bottom:1px solid var(--border, rgba(127,127,127,0.15));vertical-align:top'}, [s]));
             });
@@ -2184,7 +2191,7 @@
         };
         var setFail = function(err) {
           if (btn) { btn.disabled = false; btn.textContent = prior; }
-          var dispUrl = path.length > 120 ? path.slice(0, 117) + '…' : path;
+          var dispUrl = path.length > 120 ? path.slice(0, 117) + '...' : path;
           showToast('Copy failed: ' + (err && err.message || err) + ' (url: ' + dispUrl + ')');
         };
         setBusy();

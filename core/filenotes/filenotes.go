@@ -194,7 +194,7 @@ func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 func clip(s string, n int) string {
 	if r := []rune(s); len(r) > n {
-		return string(r[:n-1]) + "…"
+		return string(r[:n-3]) + "..."
 	}
 	return s
 }

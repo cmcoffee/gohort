@@ -176,7 +176,7 @@ func replyWakeNote(ev messaging.InboundEvent, r replyRelay) wakeNote {
 	}
 	answer := strings.TrimSpace(ev.Text)
 	if a := []rune(answer); len(a) > 2000 {
-		answer = string(a[:2000]) + "…"
+		answer = string(a[:2000]) + "..."
 	}
 	fact.WriteString(":\n\"" + answer + "\"\n")
 	act := "Tell the user what they said now, as the answer you said you would pass on. Their own conversation with them goes on separately: do not message them again unless the user asks you to."

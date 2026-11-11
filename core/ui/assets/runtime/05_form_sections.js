@@ -774,7 +774,7 @@
 
       if (s.collapsed) {
         var prev = uiSectionBody(s).replace(/\s+/g, ' ').trim();
-        if (prev.length > 90) prev = prev.substring(0, 90) + '…';
+        if (prev.length > 90) prev = prev.substring(0, 90) + '...';
         wrap.appendChild(el('div', {class: 'ui-sec-preview'},
           [prev || hintFor(s) || 'Empty']));
         return wrap;

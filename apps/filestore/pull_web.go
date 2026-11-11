@@ -176,7 +176,7 @@ func (T *FileStoreApp) pullToolDef(sess *ToolSession, user string, dest Store) (
 	var names []string
 	for _, row := range T.pullItems(dest) {
 		if len(names) >= 30 {
-			names = append(names, "…")
+			names = append(names, "...")
 			break
 		}
 		names = append(names, row["item"].(string))

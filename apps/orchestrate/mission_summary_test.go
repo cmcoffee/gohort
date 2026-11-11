@@ -20,7 +20,7 @@ func TestMissionForList(t *testing.T) {
 	}
 	long := strings.Repeat("word ", 120)
 	sa := StandingAgent{Mission: long}
-	if got := missionForList(sa); len(strings.Fields(got)) != missionListWords || !strings.HasSuffix(got, "…") {
+	if got := missionForList(sa); len(strings.Fields(got)) != missionListWords || !strings.HasSuffix(got, "...") {
 		t.Fatalf("long mission not cut to %d words: %q", missionListWords, got)
 	}
 	if !missionNeedsSummary(sa) {

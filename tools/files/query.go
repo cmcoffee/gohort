@@ -312,7 +312,7 @@ func StatFileWS(sess *ToolSession, rel string) (string, error) {
 		firstLine = strings.TrimSpace(string(sniff))
 	}
 	if len(firstLine) > 200 {
-		firstLine = firstLine[:200] + "…"
+		firstLine = firstLine[:200] + "..."
 	}
 	lineCountStr := "(unknown: file too large to count cheaply)"
 	if lineCount >= 0 {

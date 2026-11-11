@@ -15,7 +15,7 @@ check('a row can declare it needs attention', /var warn = !!row\._warn;/.test(sr
 check('it gets a warning edge in the theme colour', /if \(warn\) card\.style\.borderLeft = '3px solid var\(--warning/.test(src));
 check('a dot leads the title, named for a screen reader', /class: 'ui-card-warn', role: 'img', 'aria-label': 'Needs attention'/.test(src));
 // Visible, not only a tooltip: a phone has no hover.
-check('the reason is visible text', /if \(warn && row\._warn_why\) \{\s*info\.appendChild\(el\('span', \{class: 'ui-card-warn-why'/.test(src));
+check('the reason is visible text', /if \(warn && row\._warn_why\) \{\s*info\.appendChild\(cardText\(String\(row\._warn_why\), '[^']*', 'ui-card-warn-why'\)\)/.test(src));
 // A row that declares nothing renders as before.
 check('no _warn, no marker', /if \(warn\) \{\s*info\.appendChild/.test(src));
 

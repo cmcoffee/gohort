@@ -260,7 +260,7 @@ func main() {
 		sort.Strings(refs)
 		show := refs
 		if len(show) > 6 {
-			show = append(append([]string{}, refs[:6]...), "…")
+			show = append(append([]string{}, refs[:6]...), "...")
 		}
 		fmt.Printf("%-34s OUT=%-3d %v", b, len(refs), show)
 		if p := pinned[b]; len(p) > 0 {
@@ -310,7 +310,7 @@ func main() {
 		}
 		show := r.syms
 		if len(show) > 8 {
-			show = append(append([]string{}, r.syms[:8]...), "…")
+			show = append(append([]string{}, r.syms[:8]...), "...")
 		}
 		fmt.Printf("%-34s %d: %v\n", r.file, len(r.syms), show)
 	}

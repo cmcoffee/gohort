@@ -406,7 +406,7 @@ func (t *chatTurn) confirmAppToolCall(name string, spec *ToolConfirmation, args 
 			req.grantLabel = "Always allow " + name
 		} else if prefix := GrantPrefixFor(argValue); prefix != "" {
 			req.grant = &ToolGrant{Scope: spec.Scope, Tool: name, Prefix: prefix}
-			req.grantLabel = "Always allow " + prefix + "…"
+			req.grantLabel = "Always allow " + prefix + "..."
 		}
 	}
 	if req.grant != nil {

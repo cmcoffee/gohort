@@ -167,7 +167,7 @@ func Hint(db Store, e Entry) string {
 	case e.Kind == KindAWS:
 		id, _, _ := strings.Cut(v, ":")
 		if len(id) >= 16 {
-			return "key pair " + id[:4] + "…" + id[len(id)-4:] + given
+			return "key pair " + id[:4] + "..." + id[len(id)-4:] + given
 		}
 		return "key pair set" + given
 	case len(v) >= 16:

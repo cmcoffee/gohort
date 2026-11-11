@@ -72,7 +72,7 @@ func TestTheAuthorsNoteIsKeptForTheDigest(t *testing.T) {
 	if got := authorNote("  Merged the timeout line.\n Left out: the restart command (not in the brief). "); got != "Merged the timeout line. Left out: the restart command (not in the brief)." {
 		t.Errorf("got %q", got)
 	}
-	if got := authorNote(strings.Repeat("x", 500)); len([]rune(got)) != authorNoteMax+1 || !strings.HasSuffix(got, "…") {
+	if got := authorNote(strings.Repeat("x", 500)); len([]rune(got)) != authorNoteMax+len("...") || !strings.HasSuffix(got, "...") {
 		t.Errorf("a long note is cut: %d runes", len([]rune(got)))
 	}
 	if authorSaid("") != "" || !strings.HasPrefix(authorSaid("ok"), " The Author said: ok") {

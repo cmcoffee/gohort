@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -67,5 +68,51 @@ func TestTheSchedulerViewIsTheCallersOwn(t *testing.T) {
 	}
 	if _, has := out["checks"]; !has {
 		t.Error("a monitor's View carries no checks")
+	}
+}
+
+// A run in the View reads as the whole of what it said: its full output,
+// not the feed's summary line (cut at 280) and not its first 300 runes. The
+// page folds a long one with "more"; a cut here left the rest unreadable
+// anywhere on the page.
+func TestTheSchedulerViewShowsARunsWholeSummary(t *testing.T) {
+	parkedTestSetup(t)
+	SaveEventMonitor(RootDB, EventMonitor{Owner: "u", Name: "watch", Kind: EventKindPoll, LastResult: "NONE"})
+	report := "Posted and verified. " + strings.Repeat("The framing and the link follow. ", 30) + "END OF REPORT"
+	RecordRun(RootDB, RunRecord{Owner: "u", Agent: "watch", Status: RunOK, Summary: standingSummary(report), Raw: report}.AboutMonitor("watch"))
+	out, ok := schedulerViewFor("u", "monitor", "watch")
+	if !ok {
+		t.Fatal("the owner could not view their monitor")
+	}
+	runs, _ := out["runs"].([]schedulerViewRun)
+	if len(runs) != 1 || runs[0].Summary != report {
+		t.Fatalf("the summary came back cut (%d of %d runes)", len([]rune(firstRunSummary(runs))), len([]rune(report)))
+	}
+	page := readFile(t, "assets/web_assets.html")
+	if !strings.Contains(page, "item.appendChild(window.uiFoldText(said, {'class': 'orch-view-said', pre: true, lines: 4}))") {
+		t.Error("the View does not fold a run's summary with uiFoldText")
+	}
+}
+
+func firstRunSummary(runs []schedulerViewRun) string {
+	if len(runs) == 0 {
+		return ""
+	}
+	return runs[0].Summary
+}
+
+// The feed's summary line is cut in characters, never inside one, and ends
+// in three dots.
+func TestAStandingSummaryIsCutOnACharacter(t *testing.T) {
+	out := strings.Repeat("stranded on‚Äî ", 40)
+	got := standingSummary(out)
+	if !utf8.ValidString(got) {
+		t.Fatalf("the cut split a character: %q", got)
+	}
+	if !strings.HasSuffix(got, "...") || len([]rune(got)) > 283 {
+		t.Errorf("summary = %d runes, ending %q", len([]rune(got)), got[len(got)-6:])
+	}
+	if standingSummary("posted") != "posted" {
+		t.Error("a short reply was changed")
 	}
 }

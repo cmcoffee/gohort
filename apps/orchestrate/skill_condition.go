@@ -143,7 +143,7 @@ func excerptLine(s string, max int) string {
 		if i := strings.LastIndex(cut, " "); i > max/2 {
 			cut = cut[:i]
 		}
-		return cut + "…"
+		return cut + "..."
 	}
 	return s
 }

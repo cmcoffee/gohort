@@ -589,7 +589,7 @@ func consoleMonitorRows(user, agentID string) []consoleMonitorRow {
 		}
 		seen := strings.ReplaceAll(m.LastResult, "\n", " ")
 		if r := []rune(seen); len(r) > 80 {
-			seen = string(r[:80]) + "…"
+			seen = string(r[:80]) + "..."
 		}
 		// An agent-judged monitor's last answer is a verdict, said as one:
 		// the card shows values without labels, and its checker's bare
@@ -597,7 +597,7 @@ func consoleMonitorRows(user, agentID string) []consoleMonitorRow {
 		if verdict, note := PollVerdict(m); verdict != "" {
 			seen = "Last check: " + verdict
 			if r := []rune(note); len(r) > 80 {
-				note = string(r[:80]) + "…"
+				note = string(r[:80]) + "..."
 			}
 			if note != "" {
 				seen += " (" + note + ")"

@@ -144,7 +144,7 @@ func resolveTemplatePieces(user string, raw any) ([]ArtifactSel, error) {
 		case len(matches) == 0:
 			sort.Strings(names)
 			if len(names) > 25 {
-				names = append(names[:25], "…")
+				names = append(names[:25], "...")
 			}
 			if len(names) == 0 {
 				return nil, fmt.Errorf("there is no %s named %q, and no %s at all: build it first", typ, name, typ)

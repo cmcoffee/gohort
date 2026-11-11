@@ -361,7 +361,7 @@ func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	return s[:n] + "..."
 }
 
 func hasColumn(db *sql.DB, table, column string) bool {
@@ -457,7 +457,7 @@ func runTest(dbPath string) {
 		}
 		ts := appleTimeToRFC3339(appleDate)
 		if len(text) > 80 {
-			text = text[:80] + "…"
+			text = text[:80] + "..."
 		}
 		imgNote := ""
 		if imgCount > 0 {

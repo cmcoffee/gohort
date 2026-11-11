@@ -223,7 +223,7 @@ func (c *wsClient) connectAndServe(serverURL string) error {
 	}
 	masked := "(empty)"
 	if len(apiKey) >= 6 {
-		masked = apiKey[:6] + "…"
+		masked = apiKey[:6] + "..."
 	}
 	core.Log("[wsbridge] auth: key_src=%s key=%s key_len=%d configdir=%s", keySrc, masked, len(apiKey), core.ConfigDir())
 	if apiKey == "" {

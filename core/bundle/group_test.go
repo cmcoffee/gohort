@@ -44,7 +44,7 @@ func TestShapeCapsLongLines(t *testing.T) {
 	if !utf8.ValidString(got) {
 		t.Fatalf("the cap split a rune: %q", got)
 	}
-	if !strings.HasSuffix(got, "…") || len(got) > maxShapeBytes+len("…") {
+	if !strings.HasSuffix(got, "...") || len(got) > maxShapeBytes+len("...") {
 		t.Errorf("shape is %d bytes, want at most %d and marked as cut", len(got), maxShapeBytes)
 	}
 	if Shape(line+" more") != got {

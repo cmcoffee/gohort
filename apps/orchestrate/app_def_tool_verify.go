@@ -961,7 +961,7 @@ func appOutputPreview(out string, max int) string {
 		return s
 	}
 	head := textutil.Clip(s, max)
-	head = strings.TrimSuffix(head, "…")
+	head = strings.TrimSuffix(head, "...")
 	return fmt.Sprintf("%s... (%d more chars; the whole output is kept, one JSON field per line: read_output(output_id=%q, grep=\"PATTERN\") finds a field in it, offset=N pages it, nothing re-runs)",
 		head, len(s)-len(head), KeepOutput(kept))
 }

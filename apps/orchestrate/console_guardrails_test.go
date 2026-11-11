@@ -161,7 +161,7 @@ func TestGuardrailRowTitleTrimsALongRule(t *testing.T) {
 	if n := len([]rune(got)); n > 90 {
 		t.Errorf("title not trimmed: %d runes", n)
 	}
-	if !strings.HasSuffix(got, "…") {
+	if !strings.HasSuffix(got, "...") {
 		t.Errorf("a trimmed title should say so: %q", got)
 	}
 	if guardrailRowTitle("   ") != "(rule not recorded)" {

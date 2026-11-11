@@ -406,7 +406,7 @@ func quoteAround(text string, at int) string {
 func truncateQuote(s string) string {
 	s = strings.TrimSpace(s)
 	if r := []rune(s); len(r) > 180 {
-		return strings.TrimSpace(string(r[:180])) + "…"
+		return strings.TrimSpace(string(r[:180])) + "..."
 	}
 	return s
 }

@@ -611,7 +611,7 @@ func TestHitFormatCarriesEverythingTheStoreStamps(t *testing.T) {
 			t.Fatalf("missing %q in:\n%s", want, pane)
 		}
 	}
-	if !strings.HasSuffix(pane, "…") || strings.Count(pane, "word") > 10 {
+	if !strings.HasSuffix(pane, "...") || strings.Count(pane, "word") > 10 {
 		t.Fatalf("excerpt must cut at the cap with an ellipsis:\n%s", pane)
 	}
 	// A title-less, section-only hit does not repeat itself as its own section.

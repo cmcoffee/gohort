@@ -58,7 +58,7 @@ func (t *chatTurn) noteDoneCall(call ToolCall, failed bool) {
 		}
 	}
 	if len(args) > doneCallArgsCap {
-		args = args[:doneCallArgsCap] + "…"
+		args = args[:doneCallArgsCap] + "..."
 	}
 	t.doneMu.Lock()
 	defer t.doneMu.Unlock()

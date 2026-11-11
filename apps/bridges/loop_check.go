@@ -71,7 +71,7 @@ func (q loopQuestion) state() string {
 		}
 		text := strings.TrimSpace(m.Text)
 		if r := []rune(text); len(r) > loopCheckChars {
-			text = string(r[:loopCheckChars]) + "…"
+			text = string(r[:loopCheckChars]) + "..."
 		}
 		fmt.Fprintf(&b, "[%s] %s\n", who, text)
 	}

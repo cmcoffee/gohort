@@ -407,7 +407,7 @@ func readableFailureSig(sig string, n int) string {
 	}
 	args = strings.TrimSpace(args)
 	if r := []rune(args); len(r) > 80 {
-		args = string(r[:80]) + "…"
+		args = string(r[:80]) + "..."
 	}
 	out := name + "(" + args + ")"
 	if n > 0 {

@@ -256,7 +256,7 @@ func truncateMiddle(s string, max int) string {
 		return s
 	}
 	keep := (max - 1) / 2
-	return s[:keep] + "…" + s[len(s)-(max-1-keep):]
+	return s[:keep] + "..." + s[len(s)-(max-1-keep):]
 }
 
 func init() {

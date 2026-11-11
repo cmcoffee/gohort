@@ -593,7 +593,7 @@ func lastDispatchTopic(msgs []ChatMessage) string {
 		}
 		topic = strings.ReplaceAll(topic, "\n", " ")
 		if len(topic) > 80 {
-			topic = strings.TrimSpace(topic[:80]) + "…"
+			topic = strings.TrimSpace(topic[:80]) + "..."
 		}
 		return topic
 	}

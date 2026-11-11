@@ -1353,7 +1353,7 @@
           info.appendChild(el('div', {class: 'ui-cw-list-title'}, [it.name || '(unnamed)']));
           if (it.desc) info.appendChild(el('div', {class: 'ui-cw-list-meta'}, [it.desc]));
           var preview = String(it.value || '');
-          if (preview.length > 80) preview = preview.slice(0, 80) + '…';
+          if (preview.length > 80) preview = preview.slice(0, 80) + '...';
           info.appendChild(el('div', {class: 'ui-cw-list-meta mono'}, [preview]));
           var editBtn = el('button', {class: 'ui-cw-list-btn'}, ['Edit']);
           editBtn.addEventListener('click', function(){ editValueModal(it); });

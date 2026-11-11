@@ -304,7 +304,7 @@ func TestOneLineShape(t *testing.T) {
 	}
 	long := strings.Repeat("x", 200)
 	got := oneLineShape(long)
-	if len([]rune(got)) != 121 || !strings.HasSuffix(got, "…") {
+	if len([]rune(got)) != 120+len("...") || !strings.HasSuffix(got, "...") {
 		t.Errorf("long shapes truncate with an ellipsis, got %d runes", len([]rune(got)))
 	}
 }

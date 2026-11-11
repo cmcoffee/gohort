@@ -628,5 +628,5 @@ func maskAccountToken(s string) string {
 	if len(s) <= 12 {
 		return "••••"
 	}
-	return s[:8] + "…" + s[len(s)-4:]
+	return s[:8] + "..." + s[len(s)-4:]
 }

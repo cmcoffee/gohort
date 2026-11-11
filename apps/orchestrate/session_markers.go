@@ -377,5 +377,5 @@ func trimRunes(s string, n int) string {
 		return s
 	}
 	r := []rune(s)
-	return strings.TrimSpace(string(r[:n])) + "…"
+	return strings.TrimSpace(string(r[:n])) + "..."
 }

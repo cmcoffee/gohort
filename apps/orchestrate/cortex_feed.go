@@ -303,11 +303,13 @@ func init() {
 		Kind:   KindInt, Default: 5, Min: 0, Max: 20})
 }
 
-// truncateObs shortens an observation snippet to n runes, appending an ellipsis.
+// truncateObs shortens an observation snippet to n runes, ending it with
+// "..." (three dots, which survive a copy and paste the single-character
+// ellipsis does not, and which the owner prefers).
 func truncateObs(s string, n int) string {
 	r := []rune(strings.TrimSpace(s))
 	if len(r) <= n {
 		return string(r)
 	}
-	return string(r[:n]) + "…"
+	return string(r[:n]) + "..."
 }

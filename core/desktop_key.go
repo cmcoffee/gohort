@@ -69,7 +69,7 @@ func maskKey(k string) string {
 	if len(k) < 6 {
 		return "(short/empty)"
 	}
-	return k[:6] + "…"
+	return k[:6] + "..."
 }
 
 // RotateDesktopKey revokes the user's current key(s) and mints a fresh one.

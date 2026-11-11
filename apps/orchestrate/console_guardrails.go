@@ -109,7 +109,7 @@ func guardrailRowTitle(rule string) string {
 	if len(r) <= max {
 		return rule
 	}
-	return strings.TrimRight(string(r[:max-1]), " ") + "…"
+	return strings.TrimRight(string(r[:max-3]), " ") + "..."
 }
 
 // guardrailRowWhere collapses hook + surface + contact into the detail line.

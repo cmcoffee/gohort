@@ -262,7 +262,7 @@ func cutText(s string, max int) string {
 	n := 0
 	for i := range s {
 		if n == max {
-			return s[:i] + "…"
+			return s[:i] + "..."
 		}
 		n++
 	}
@@ -313,7 +313,7 @@ func appendShape[T string | []byte](dst []byte, line T) []byte {
 			}
 			dst = dst[:cut]
 		}
-		dst = append(dst, "…"...)
+		dst = append(dst, "..."...)
 	}
 	return dst
 }

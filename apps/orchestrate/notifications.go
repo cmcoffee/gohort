@@ -207,7 +207,7 @@ func recordAgentNotice(owner, agentID, text string) {
 		title, body = strings.TrimSpace(line), strings.TrimSpace(rest)
 	}
 	if r := []rune(title); len(r) > 120 {
-		title, body = strings.TrimSpace(string(r[:120]))+"…", text
+		title, body = strings.TrimSpace(string(r[:120]))+"...", text
 	}
 	notices.Record(RootDB, notices.Notice{
 		Owner: owner, Agent: agentID, Kind: notices.KindReport,

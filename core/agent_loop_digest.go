@@ -325,7 +325,7 @@ func systemSectionRanking(systemPrompt string) string {
 				rows = append(rows, cur)
 			}
 			if r := []rune(head); len(r) > 48 {
-				head = string(r[:48]) + "…"
+				head = string(r[:48]) + "..."
 			}
 			cur = section{head: head}
 		}

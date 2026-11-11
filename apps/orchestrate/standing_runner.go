@@ -441,17 +441,18 @@ func (T *OrchestrateApp) reportStanding(ctx context.Context, sa StandingAgent, r
 
 // standingSummary makes a short feed line from an agent's full output. The
 // ledger keeps the full text as Raw (encrypted, fetched on demand); this is
-// just what shows in the Activity feed.
+// just what shows in the Activity feed. Cut in runes: a byte cut could land
+// inside a character and save half of it.
 func standingSummary(out string) string {
 	out = strings.TrimSpace(out)
 	if out == "" {
 		return "(no output)"
 	}
 	const max = 280
-	if len(out) <= max {
-		return out
+	if r := []rune(out); len(r) > max {
+		return strings.TrimSpace(string(r[:max])) + "..."
 	}
-	return strings.TrimSpace(out[:max]) + "…"
+	return out
 }
 
 // runStandingPipeline fires a schedule whose target is a pipeline.

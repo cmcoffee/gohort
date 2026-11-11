@@ -91,10 +91,10 @@ func TestPipelineRunTitleTrims(t *testing.T) {
 	}
 	long := strings.Repeat("a", 200)
 	got := PipelineRunTitle(long)
-	if len([]rune(got)) > 91 {
+	if len([]rune(got)) > 90+len("...") {
 		t.Errorf("title should be capped for the sidebar, got %d chars", len(got))
 	}
-	if !strings.HasSuffix(got, "…") {
+	if !strings.HasSuffix(got, "...") {
 		t.Errorf("a truncated title should show it was cut: %q", got)
 	}
 }

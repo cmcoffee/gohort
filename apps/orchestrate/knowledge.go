@@ -1043,7 +1043,7 @@ func knowledgeSearchExcerpt(text string) string {
 	if idx := strings.LastIndex(cut, " "); idx > knowledgeSearchExcerptMaxChars/2 {
 		cut = cut[:idx]
 	}
-	return strings.TrimRight(cut, " \t\n") + "…"
+	return strings.TrimRight(cut, " \t\n") + "..."
 }
 
 // aboveRelevanceFloor drops hits under core.RelevanceFloor — the one floor

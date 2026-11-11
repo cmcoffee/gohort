@@ -50,6 +50,13 @@ type overviewCard struct {
 	Failed bool `json:"_failed,omitempty"`
 }
 
+// cardTextMax bounds a card's text from a stored message (an error, a
+// summary, a mission, a guardrail's reason). Generous: the cards layout folds
+// long text to three lines with "more", so this is only a guard on the
+// payload, not where the reader's view ends. A cut at 120-140 runes left no
+// way to read the rest.
+const cardTextMax = 1000
+
 // Section headings. Named once so the two panes agree on what a section is
 // called and a heading cannot drift between them.
 const (
@@ -115,7 +122,7 @@ func (T *OrchestrateApp) handleConsoleOverview(c *jsonapi.Call) (any, error) {
 			Title:   consoleRunTitle(rec),
 			Status:  string(rec.Status),
 			Detail:  consoleRunWhen(rec, loc),
-			Extra:   truncateObs(firstNonEmpty(rec.Summary, rec.Err), 140),
+			Extra:   truncateObs(firstNonEmpty(rec.Summary, rec.Err), cardTextMax),
 			Section: secRuns,
 			Run:     true,
 			ID:      rec.ID,
@@ -133,7 +140,7 @@ func (T *OrchestrateApp) handleConsoleOverview(c *jsonapi.Call) (any, error) {
 		}
 		cards = append(cards, overviewCard{
 			Title: sa.Name, Status: state, Detail: StandingScheduleLabel(sa),
-			Extra: truncateObs(sa.Mission, 120), Section: secStanding,
+			Extra: truncateObs(sa.Mission, cardTextMax), Section: secStanding,
 		})
 	}
 	for _, m := range monitors {
@@ -165,14 +172,14 @@ func (T *OrchestrateApp) handleConsoleOverview(c *jsonapi.Call) (any, error) {
 	for _, b := range blocks {
 		cards = append(cards, overviewCard{
 			Title: guardrailRowTitle(b.Rule), Status: "blocked",
-			Detail: guardrailRowWhere(b), Extra: truncateObs(b.Reason, 140),
+			Detail: guardrailRowWhere(b), Extra: truncateObs(b.Reason, cardTextMax),
 			Section: secAttention,
 		})
 	}
 	for _, rec := range failedRuns(runs, now, 3) {
 		cards = append(cards, overviewCard{
 			Title: consoleRunTitle(rec), Status: string(rec.Status),
-			Detail: consoleRunWhen(rec, loc), Extra: truncateObs(firstNonEmpty(rec.Err, rec.Summary), 140),
+			Detail: consoleRunWhen(rec, loc), Extra: truncateObs(firstNonEmpty(rec.Err, rec.Summary), cardTextMax),
 			Section: secAttention, Run: true, ID: rec.ID,
 		})
 	}
@@ -239,7 +246,7 @@ func (T *OrchestrateApp) handleConsoleFleet(c *jsonapi.Call) (any, error) {
 		cards = append(cards, overviewCard{
 			Title: consoleRunAgent(rec), Status: string(rec.Status),
 			Detail:  joinDetail(consoleRunTask(rec), consoleRunWhen(rec, loc)),
-			Extra:   truncateObs(firstNonEmpty(rec.Summary, rec.Err), 140),
+			Extra:   truncateObs(firstNonEmpty(rec.Summary, rec.Err), cardTextMax),
 			Section: secRuns, Run: true, ID: rec.ID,
 		})
 	}
@@ -253,7 +260,7 @@ func (T *OrchestrateApp) handleConsoleFleet(c *jsonapi.Call) (any, error) {
 		cards = append(cards, overviewCard{
 			Title: rec.Tool + " - " + rec.Action, Status: "broken",
 			Detail:  fmt.Sprintf("%d failure(s), never succeeded", rec.Fail),
-			Extra:   truncateObs(rec.LastError, 140),
+			Extra:   truncateObs(rec.LastError, cardTextMax),
 			Section: secAttention,
 		})
 	}
@@ -271,13 +278,13 @@ func (T *OrchestrateApp) handleConsoleFleet(c *jsonapi.Call) (any, error) {
 		}
 		cards = append(cards, overviewCard{
 			Title: title, Status: lbl, Detail: detail,
-			Extra: truncateObs(sa.Mission, 120), Section: secAttention,
+			Extra: truncateObs(sa.Mission, cardTextMax), Section: secAttention,
 		})
 	}
 	for _, rec := range failedRuns(runs, now, 4) {
 		cards = append(cards, overviewCard{
 			Title: consoleRunTitle(rec), Status: string(rec.Status),
-			Detail: consoleRunWhen(rec, loc), Extra: truncateObs(firstNonEmpty(rec.Err, rec.Summary), 140),
+			Detail: consoleRunWhen(rec, loc), Extra: truncateObs(firstNonEmpty(rec.Err, rec.Summary), cardTextMax),
 			Section: secAttention, Run: true, ID: rec.ID,
 		})
 	}
@@ -287,7 +294,7 @@ func (T *OrchestrateApp) handleConsoleFleet(c *jsonapi.Call) (any, error) {
 		cards = append(cards, overviewCard{
 			Title: chFirst(e.agent.Name, e.agent.ID), Status: "blocked",
 			Detail: joinDetail(guardrailRowTitle(e.block.Rule), guardrailRowWhere(e.block)),
-			Extra:  truncateObs(e.block.Reason, 140), Section: secAttention,
+			Extra:  truncateObs(e.block.Reason, cardTextMax), Section: secAttention,
 		})
 	}
 

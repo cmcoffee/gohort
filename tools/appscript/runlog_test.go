@@ -88,10 +88,10 @@ func TestARunsRecordIsBounded(t *testing.T) {
 	if len(r.Log) != runLogLines+1 || r.Log[runLogLines] != "(5 more lines not kept)" {
 		t.Errorf("lines past the limit are counted, not kept: %d lines, last %q", len(r.Log), r.Log[len(r.Log)-1])
 	}
-	if n := len([]rune(r.Log[0])); n != runLogWidth+1 {
+	if n := len([]rune(r.Log[0])); n != runLogWidth+len("...") {
 		t.Errorf("a long line is cut to the width: %d", n)
 	}
-	if !strings.HasSuffix(r.Error, "THE END") || len([]rune(r.Error)) != runErrorTail+1 {
+	if !strings.HasSuffix(r.Error, "THE END") || len([]rune(r.Error)) != runErrorTail+len("...") {
 		t.Errorf("an error keeps its end, where the exception is: %d chars", len([]rune(r.Error)))
 	}
 }

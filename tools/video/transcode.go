@@ -195,7 +195,7 @@ func runFfmpegEncode(ctx context.Context, wsDir, inputAbs, outputAbs, vf string,
 		// actionable hints.
 		tail := strings.TrimSpace(res.Output)
 		if len(tail) > 600 {
-			tail = "…" + tail[len(tail)-600:]
+			tail = "..." + tail[len(tail)-600:]
 		}
 		return fmt.Errorf("%v: %s", res.Err, tail)
 	}

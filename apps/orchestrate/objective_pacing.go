@@ -139,7 +139,7 @@ func pacedLine(at time.Time, why string, loc *time.Location) string {
 	if time.Until(at) > 20*time.Hour {
 		format = "Mon 2006-01-02 15:04"
 	}
-	return fmt.Sprintf("next attempt %s: %s", local.Format(format), truncateObs(why, 160))
+	return fmt.Sprintf("next attempt %s: %s", local.Format(format), truncateObs(why, cardTextMax))
 }
 
 // stampPacedAttempt records the paced time on the attempt that asked for it.

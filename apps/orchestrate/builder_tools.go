@@ -1266,7 +1266,7 @@ func indexLead(desc string, max int) string {
 	}
 	// A cut that lands just after "e.g." leaves an example with no example.
 	cut = strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(cut), "e.g."), "i.e.")
-	return strings.TrimRight(cut, " ,;:-(") + "…"
+	return strings.TrimRight(cut, " ,;:-(") + "..."
 }
 
 // sentenceEnd is the index of the period ending desc's first sentence, or -1.

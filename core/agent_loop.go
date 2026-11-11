@@ -164,7 +164,7 @@ func toolFailureNote(content string) string {
 	}
 	const max = 90
 	if len(note) > max {
-		note = strings.TrimSpace(note[:max]) + "…"
+		note = strings.TrimSpace(note[:max]) + "..."
 	}
 	if note == "" {
 		note = "no detail"
@@ -2442,7 +2442,7 @@ func (lr *loopRun) recordResponse() loopAction {
 	if len(lr.rs.resp.ToolCalls) == 0 && len(strings.TrimSpace(lr.rs.resp.Content)) < 200 && len(lr.rs.resp.Reasoning) > 2000 {
 		tail := lr.rs.resp.Reasoning
 		if len(tail) > 4000 {
-			tail = "…" + tail[len(tail)-4000:]
+			tail = "..." + tail[len(tail)-4000:]
 		}
 		Debug("[agent_loop] COLLAPSE-DIAG round %d: content=%q | reasoning_tail(%d total)=%q",
 			lr.round, strings.TrimSpace(lr.rs.resp.Content), len(lr.rs.resp.Reasoning), tail)
@@ -3141,7 +3141,7 @@ func (lr *loopRun) finalRoundStallGuards() loopAction {
 		}
 		tail := trimmedContent
 		if r := []rune(tail); len(r) > 160 {
-			tail = "…" + string(r[len(r)-160:])
+			tail = "..." + string(r[len(r)-160:])
 		}
 		// The reply's tail is logged so a firing can be judged from the log
 		// alone: without it there was no telling a real stall from a finished

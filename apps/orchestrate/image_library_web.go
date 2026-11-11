@@ -140,7 +140,7 @@ func libraryShows(k KeptImage) string {
 		out += c
 	}
 	if len([]rune(out)) > 110 {
-		out = string([]rune(out)[:110]) + "…"
+		out = string([]rune(out)[:110]) + "..."
 	}
 	return out
 }

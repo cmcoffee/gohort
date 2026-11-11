@@ -231,7 +231,7 @@ func listPart(label string, names []string) string {
 		return ""
 	}
 	if len(names) > 6 {
-		names = append(names[:6:6], "…")
+		names = append(names[:6:6], "...")
 	}
 	return label + strings.Join(names, ",")
 }
@@ -264,7 +264,7 @@ func snippet(s string, at int) string {
 	}
 	out := strings.ReplaceAll(s[at:end], "\n", "⏎")
 	if end < len(s) {
-		out += "…"
+		out += "..."
 	}
 	return out
 }

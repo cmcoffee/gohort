@@ -250,7 +250,7 @@ func speechExt(b []byte) (string, bool) {
 func clipSpeechError(b []byte) string {
 	s := strings.TrimSpace(string(b))
 	if len(s) > 300 {
-		s = s[:300] + "…"
+		s = s[:300] + "..."
 	}
 	return s
 }

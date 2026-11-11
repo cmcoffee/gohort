@@ -19,6 +19,10 @@ import (
 // View shows.
 const schedulerViewRuns = 8
 
+// schedulerViewSummaryMax bounds one run's output in a View. It is the run's
+// whole report, so it is generous; the page folds it.
+const schedulerViewSummaryMax = 8000
+
 type schedulerViewRun struct {
 	When    string `json:"when"`
 	Status  string `json:"status"`
@@ -90,13 +94,19 @@ func schedulerViewFor(user, kind, id string) (map[string]any, bool) {
 		filter.Limit = schedulerViewRuns
 		rows := []schedulerViewRun{}
 		for _, rec := range ListRuns(RootDB, user, filter) {
+			// What the run said in full: its whole output where the ledger
+			// kept one (the summary is a short feed line, cut at 280), else
+			// the summary; a failure's error over either.
 			summary := strings.TrimSpace(rec.Summary)
+			if full, ok := GetRun(RootDB, user, rec.ID); ok && strings.TrimSpace(full.Raw) != "" {
+				summary = strings.TrimSpace(full.Raw)
+			}
 			if rec.Status == RunFailed && strings.TrimSpace(rec.Err) != "" {
 				summary = strings.TrimSpace(rec.Err)
 			}
-			if r := []rune(summary); len(r) > 300 {
-				summary = string(r[:300]) + "…"
-			}
+			// Whole, up to a bound on the payload: the View folds a long one
+			// with "more", and a cut here left the rest unreadable.
+			summary = truncateObs(summary, schedulerViewSummaryMax)
 			rows = append(rows, schedulerViewRun{When: consoleRunWhen(rec, loc), Status: string(rec.Status), Trigger: rec.Trigger, Summary: summary})
 		}
 		out["runs"] = rows

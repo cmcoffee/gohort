@@ -612,7 +612,7 @@ func leadErrorKey(err error) string {
 		msg = msg[:i]
 	}
 	if r := []rune(msg); len(r) > 200 {
-		msg = string(r[:200]) + "…"
+		msg = string(r[:200]) + "..."
 	}
 	return msg
 }

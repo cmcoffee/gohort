@@ -169,7 +169,7 @@ func traceCut(s string) string {
 	if len(rs) <= runTraceText {
 		return s
 	}
-	return string(rs[:runTraceText]) + "…"
+	return string(rs[:runTraceText]) + "..."
 }
 
 // consoleTraceRow is one line of the Monitor's Trace view.

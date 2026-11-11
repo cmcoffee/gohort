@@ -390,7 +390,7 @@ func sortExamplesByUse(ex []CommandExample) {
 func lastLines(s string, n int) string {
 	lines := strings.Split(strings.TrimSpace(s), "\n")
 	if len(lines) > n {
-		lines = append([]string{"…"}, lines[len(lines)-n:]...)
+		lines = append([]string{"..."}, lines[len(lines)-n:]...)
 	}
 	return strings.Join(lines, "\n")
 }

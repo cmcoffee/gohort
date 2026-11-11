@@ -233,7 +233,7 @@ func appKeys(m map[string]any) string {
 	}
 	sort.Strings(keys)
 	if len(keys) > 12 {
-		keys = append(keys[:12], "…")
+		keys = append(keys[:12], "...")
 	}
 	return strings.Join(keys, ", ")
 }

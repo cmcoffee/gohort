@@ -116,7 +116,7 @@ func leadPlansBlock(delegable []AgentToolDef) string {
 func stepToolLine(s string) string {
 	s = firstSentence(strings.Join(strings.Fields(s), " "))
 	if r := []rune(s); len(r) > 160 {
-		s = string(r[:160]) + "…"
+		s = string(r[:160]) + "..."
 	}
 	return s
 }

@@ -250,7 +250,7 @@ func TestAWakeQuotesTheMessageThatAskedForIt(t *testing.T) {
 	if !strings.Contains(failed.prompt, quoted) || !strings.Contains(failed.prompt, "Do not silently retry") {
 		t.Errorf("a failure should name its request and still not retry:\n%s", failed.prompt)
 	}
-	if long := wakeRequestQuote(strings.Repeat("a", 400)); len([]rune(long)) != 303 {
+	if long := wakeRequestQuote(strings.Repeat("a", 400)); len([]rune(long)) != 300+len("...")+2 { // the cut, its "...", and the quotes around it
 		t.Errorf("a long request should be clipped to 300 characters: %d", len([]rune(long)))
 	}
 	if wakeRequestQuote("  \n ") != "" {

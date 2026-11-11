@@ -437,7 +437,7 @@ const authorNoteMax = 400
 func authorNote(said string) string {
 	said = strings.Join(strings.Fields(said), " ")
 	if r := []rune(said); len(r) > authorNoteMax {
-		said = strings.TrimSpace(string(r[:authorNoteMax])) + "…"
+		said = strings.TrimSpace(string(r[:authorNoteMax])) + "..."
 	}
 	return said
 }

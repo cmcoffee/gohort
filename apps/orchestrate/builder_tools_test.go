@@ -499,7 +499,7 @@ func TestIndexLeadIsShortAndClean(t *testing.T) {
 	}
 	long := strings.Repeat("wordy ", 30) + "é"
 	got := indexLead(long, indexLeadMax)
-	if n := len([]rune(got)); n > indexLeadMax+1 || !strings.HasSuffix(got, "…") || strings.HasSuffix(got, " …") {
+	if n := len([]rune(got)); n > indexLeadMax+len("...") || !strings.HasSuffix(got, "...") || strings.HasSuffix(got, " ...") {
 		t.Errorf("long lead not cut cleanly: %q (%d runes)", got, n)
 	}
 	if !utf8.ValidString(indexLead(strings.Repeat("é", 200), indexLeadMax)) {
@@ -689,8 +689,8 @@ func TestSurveyHelpers(t *testing.T) {
 	if got := oneLine("", 10); got != "(no description)" {
 		t.Errorf("oneLine(empty) = %q", got)
 	}
-	if got := oneLine("abcdefghij", 5); got != "abcde…" {
-		t.Errorf("oneLine truncate = %q, want abcde…", got)
+	if got := oneLine("abcdefghij", 5); got != "abcde..." {
+		t.Errorf("oneLine truncate = %q, want abcde...", got)
 	}
 }
 

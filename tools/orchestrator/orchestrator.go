@@ -296,7 +296,7 @@ func truncForStatus(s string) string {
 	if i := strings.LastIndexAny(cut, " \t\n"); i > max/2 {
 		cut = cut[:i]
 	}
-	return cut + "…"
+	return cut + "..."
 }
 
 // workerPrompt is the system prompt for the execution layer.

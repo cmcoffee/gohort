@@ -901,7 +901,7 @@ func truncateRunes(s string, max int) string {
 	if len(r) <= max {
 		return s
 	}
-	return string(r[:max]) + "…"
+	return string(r[:max]) + "..."
 }
 
 // Folder is one subfolder of a store root — a ticket, a run, a customer,

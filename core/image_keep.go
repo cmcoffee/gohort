@@ -757,10 +757,10 @@ func CaptionImage(sess *ToolSession, data []byte) (caption, description string) 
 	// Bounded so a model that ignores the limits can't put a paragraph into
 	// every future manifest, or a page into every memory entry.
 	if len(caption) > 200 {
-		caption = strings.TrimSpace(caption[:200]) + "…"
+		caption = strings.TrimSpace(caption[:200]) + "..."
 	}
 	if len(description) > 1200 {
-		description = strings.TrimSpace(description[:1200]) + "…"
+		description = strings.TrimSpace(description[:1200]) + "..."
 	}
 	return caption, description
 }

@@ -861,7 +861,7 @@ func truncateRestImagePrompt(s string) string {
 	if len(s) <= 60 {
 		return s
 	}
-	return strings.TrimSpace(s[:60]) + "…"
+	return strings.TrimSpace(s[:60]) + "..."
 }
 
 // persistImageToWorkspace decodes a generated image and writes it into the

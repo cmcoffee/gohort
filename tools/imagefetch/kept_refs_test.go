@@ -100,7 +100,7 @@ func TestLabelTruncationKeepsItShort(t *testing.T) {
 	}
 	words := "one two three four five six seven eight nine ten eleven twelve"
 	got := truncateLabel(words, maxKeptLabelChars)
-	if !strings.HasSuffix(got, "…") || strings.HasSuffix(got, " …") {
+	if !strings.HasSuffix(got, "...") || strings.HasSuffix(got, " ...") {
 		t.Errorf("a truncated label should end in an ellipsis at a word break, got %q", got)
 	}
 }

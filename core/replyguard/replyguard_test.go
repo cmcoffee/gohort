@@ -100,7 +100,7 @@ func TestFiringsAreTalliedWithRecentSamples(t *testing.T) {
 	if len(st) != 1 || st[0].Acted+st[0].Shadowed != maxSamples+3 || st[0].Shadowed == 0 || st[0].Tier != Worker {
 		t.Fatalf("tallied per guard and model, both kinds: %+v", st)
 	}
-	if len(st[0].Samples) != maxSamples || !strings.HasSuffix(st[0].Samples[0].Text, " and") || len([]rune(st[0].Samples[0].Text)) > maxSampleChars+1 {
+	if len(st[0].Samples) != maxSamples || !strings.HasSuffix(st[0].Samples[0].Text, " and") || len([]rune(st[0].Samples[0].Text)) > maxSampleChars+len("...") {
 		t.Errorf("the last %d replies' tails are kept: %d samples, first %q", maxSamples, len(st[0].Samples), st[0].Samples[0].Text[:20])
 	}
 	SetStore(nil)
