@@ -2,6 +2,7 @@ package servitor
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -493,5 +494,39 @@ func TestRunPtyIsWithheldWhenReachedThroughAPeer(t *testing.T) {
 			continue // the declaration, not a registration
 		}
 		t.Errorf("run_pty is registered outside the ptyLocal gate: %s", strings.TrimSpace(line))
+	}
+}
+
+// A command's output long enough to be worth searching is kept with an
+// output_id, though it fits in one reply, so the agent greps what it already
+// has instead of running the command again through "| grep": each such
+// re-run read as a new command and asked the owner again. A short output is
+// left alone, an exec notice stays last, and an output past the cap pages as
+// before.
+func TestAMediumOutputIsKeptForSearching(t *testing.T) {
+	short := "one\ntwo\nthree"
+	if got := keepCommandOutput(short); got != short {
+		t.Errorf("a short output changed: %q", got)
+	}
+	var help strings.Builder
+	for i := 0; i < 30; i++ {
+		fmt.Fprintf(&help, "  --option-%d   does thing %d\n", i, i)
+	}
+	help.WriteString("  --export     writes the users out")
+	got := keepCommandOutput(help.String() + "\n[exit code 2]")
+	if !strings.HasPrefix(got, help.String()) || !strings.HasSuffix(got, "\n[exit code 2]") {
+		t.Fatalf("the output should come back whole with its exit notice last:\n%s", got)
+	}
+	m := regexp.MustCompile(`output_id="([^"]+)"`).FindStringSubmatch(got)
+	if m == nil {
+		t.Fatalf("no output_id offered:\n%s", got)
+	}
+	found, ok, err := pageCommandOutput(map[string]any{"output_id": m[1], "grep": "export"})
+	if !ok || err != nil || !strings.Contains(found, "--export") || strings.Contains(found, "--option-3 ") {
+		t.Errorf("searching the kept output: ok=%v err=%v\n%s", ok, err, found)
+	}
+	long := strings.Repeat("x", max_output+500)
+	if got := keepCommandOutput(long); len(got) >= len(long) || !strings.Contains(got, "output_id") {
+		t.Error("an output past the cap should still page")
 	}
 }

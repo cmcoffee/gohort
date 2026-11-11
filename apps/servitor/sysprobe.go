@@ -1082,7 +1082,7 @@ const peerCaptureMax = 2 << 20
 // notice the caller will keep visible (see splitExecTrailer).
 func spillCapture(ctx context.Context, text string) string {
 	if !rawCapture(ctx) {
-		return SpillOutput(text, max_output, "run_command")
+		return keepCommandOutput(text)
 	}
 	if len(text) <= peerCaptureMax {
 		return text
@@ -1129,13 +1129,35 @@ func splitExecTrailer(text string) (body, trailer string) {
 // instance's store, keeping the peer's exec notices visible after the note.
 func spillPeerCapture(text string) string {
 	body, trailer := splitExecTrailer(text)
-	return SpillOutput(body, max_output, "run_command") + trailer
+	return keepCommandOutput(body) + trailer
+}
+
+// keptOutputLines is how long an output has to be, in lines, to be kept for
+// searching though it fits in one reply.
+const keptOutputLines = 15
+
+// keepCommandOutput is a command's output as its reply: spilled and paged
+// past max_output, as before, and otherwise whole, with an output_id when it
+// runs to keptOutputLines lines or more. The id lets the agent search what it
+// already has (run_command(output_id=..., grep=...)) rather than run the
+// command again through "| grep" or "| head": each of those reads as a new
+// command and asks the owner again, though nothing new is being run.
+func keepCommandOutput(text string) string {
+	if len(text) > max_output {
+		return SpillOutput(text, max_output, "run_command")
+	}
+	body, trailer := splitExecTrailer(text)
+	if strings.Count(body, "\n") < keptOutputLines {
+		return text
+	}
+	id := KeepOutput(body)
+	return body + fmt.Sprintf("\n[kept as output_id=%q: run_command(output_id=%q, grep=\"PATTERN\") finds lines in it without running anything again]", id, id) + trailer
 }
 
 // runCommandDescription and runCommandParams are shared by every run_command
 // the app hands out (the CLI probe here, the web probe session), so paging
 // reads the same everywhere.
-const runCommandDescription = "Execute a shell command on the remote Linux system via SSH and return combined stdout+stderr. Output is capped at 10,000 characters per reply; a truncated reply ends with an output_id. Call again with output_id and NO command to work with the full capture from memory, the command is not re-run: offset reads the next window; grep returns every matching line with its line number and @offset, and offset then reads around a hit. Do this instead of re-running through a pipe or saving the output to a file to grep."
+const runCommandDescription = "Execute a shell command on the remote Linux system via SSH and return combined stdout+stderr. Output is capped at 10,000 characters per reply; a truncated reply, or one of 15 lines or more, ends with an output_id. Call again with output_id and NO command to work with the full capture from memory, the command is not re-run: offset reads the next window; grep returns every matching line with its line number and @offset, and offset then reads around a hit. Do this instead of re-running through a pipe or saving the output to a file to grep."
 
 func runCommandParams() map[string]ToolParam {
 	return map[string]ToolParam{

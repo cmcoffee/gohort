@@ -472,7 +472,7 @@ func (pr *probeRun) reconnect(failed *ssh.Client) (*ssh.Client, error) {
 // enforces — including with its `input` lines, which are commands typed into
 // an interactive session and are gated individually below.
 func (pr *probeRun) gateCommand(cmd string) error {
-	return pr.gateHits(cmd, assess_command(cmd, pr.scratch, lookup_scope_for(pr.appliance)))
+	return pr.gateLine(cmd, assess_command(cmd, pr.scratch, lookup_scope_for(pr.appliance)), true)
 }
 
 // gateHits is the gate over an already-classified command: label is what the
@@ -480,6 +480,14 @@ func (pr *probeRun) gateCommand(cmd string) error {
 // found in it. A category grant must cover ALL of the hits; one that covers
 // only some would let "rm x; python3 y" through on a file_delete grant alone.
 func (pr *probeRun) gateHits(cmd string, hits []risk_hit) error {
+	return pr.gateLine(cmd, hits, false)
+}
+
+// gateLine is gateHits, with shell saying cmd is a shell line: only then is it
+// judged command by command against the Always rules (lineCoveredByRules). A
+// line typed into an interactive session is in that session's language, which
+// the shell split would misread.
+func (pr *probeRun) gateLine(cmd string, hits []risk_hit, shell bool) error {
 	// Ahead of everything a grant can allow (gohort_data_guard.go).
 	if err := gohortDataRefusal(pr.appliance, cmd); err != nil {
 		emit(pr.id, probeEvent{Kind: "status", Text: "Refused: names gohort's own data on this machine"})
@@ -495,6 +503,14 @@ func (pr *probeRun) gateHits(cmd string, hits []risk_hit) error {
 		if commandAlwaysAllowed(pr.udb, pr.appliance.ID, cmd) {
 			emit(pr.id, probeEvent{Kind: "status", Text: "Auto-allowed: " + cmd})
 			return nil
+		}
+		// Or command by command: each one read-only or allowed by a rule,
+		// so the pipes and checks around an allowed command do not ask.
+		if shell {
+			if ok, covered := lineCoveredByRules(pr.udb, pr.appliance.ID, cmd, pr.scratch, lookup_scope_for(pr.appliance)); ok {
+				emit(pr.id, probeEvent{Kind: "status", Text: "Auto-allowed: " + cmd + " (" + alwaysCoveredNote(covered) + ")"})
+				return nil
+			}
 		}
 		// Per-category allowance (operator trusts this whole class of command
 		// — the web analog of the CLI --allow flag, set via the Permissions
