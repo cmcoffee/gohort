@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -11,39 +13,55 @@ import (
 	"github.com/cmcoffee/gohort/core/media"
 )
 
+// offeredTestRuns numbers the runs of a test that registers choices.
+var offeredTestRuns atomic.Int64
+
 // A value in use that its provider no longer offers is listed once per
 // value with every use, an app's uses beside the source's own; a provider
 // with no list is not judged; mapping takes only a value now offered and
 // changes every use of the old one.
 func TestAStaleChoiceIsListedAndMappedEverywhere(t *testing.T) {
 	forgetStaleChoices(t)
+	// Registered for good, so its uses are held only while this test runs.
+	var live atomic.Bool
+	live.Store(true)
+	t.Cleanup(func() { live.Store(false) })
+	// Its own ids each run, since a registration outlives the test.
+	n := strconv.FormatInt(offeredTestRuns.Add(1), 10)
+	listed, unlisted := "test.listed."+n, "test.unlisted."+n
 	offered := []string{"a", "b"}
 	values := map[string]string{"one": "a", "two": "x", "three": "x"}
 	use := func(where string) ChoiceUse {
 		return ChoiceUse{Where: where, Value: values[where], Set: func(to string) error { values[where] = to; return nil }}
 	}
+	uses := func(u ...ChoiceUse) []ChoiceUse {
+		if !live.Load() {
+			return nil
+		}
+		return u
+	}
 	RegisterOfferedChoices(func() []OfferedChoice {
 		return []OfferedChoice{
-			{ID: "test.listed", Label: "Test choice", Page: "Test",
+			{ID: listed, Label: "Test choice", Page: "Test",
 				Offered: func(context.Context) ([]string, bool, error) { return offered, true, nil },
-				Uses:    func() []ChoiceUse { return []ChoiceUse{use("one"), use("two")} }},
-			{ID: "test.unlisted", Label: "Unlisted",
+				Uses:    func() []ChoiceUse { return uses(use("one"), use("two")) }},
+			{ID: unlisted, Label: "Unlisted",
 				Offered: func(context.Context) ([]string, bool, error) { return nil, false, nil },
-				Uses:    func() []ChoiceUse { return []ChoiceUse{{Where: "w", Value: "anything"}} }},
+				Uses:    func() []ChoiceUse { return uses(ChoiceUse{Where: "w", Value: "anything"}) }},
 		}
 	})
-	RegisterChoiceUses("test.listed", func() []ChoiceUse { return []ChoiceUse{use("three")} })
+	RegisterChoiceUses(listed, func() []ChoiceUse { return uses(use("three")) })
 	mine := func() []StaleChoice {
 		var out []StaleChoice
 		for _, r := range StaleChoices(context.Background()) {
-			if r.Choice == "test.listed" || r.Choice == "test.unlisted" {
+			if r.Choice == listed || r.Choice == unlisted {
 				out = append(out, r)
 			}
 		}
 		return out
 	}
 	rows := mine()
-	if len(rows) != 1 || rows[0].Value != "x" || len(rows[0].Uses) != 2 || rows[0].Choice != "test.listed" {
+	if len(rows) != 1 || rows[0].Value != "x" || len(rows[0].Uses) != 2 || rows[0].Choice != listed {
 		t.Fatalf("stale rows: %+v", rows)
 	}
 	if _, err := MapStaleChoice(context.Background(), rows[0].Key, "c"); err == nil {
@@ -61,7 +79,7 @@ func TestAStaleChoiceIsListedAndMappedEverywhere(t *testing.T) {
 	StaleChoices(context.Background())
 	values["one"] = "a"
 	for _, r := range CachedStaleChoices() {
-		if r.Choice == "test.listed" {
+		if r.Choice == listed {
 			t.Errorf("a value nothing holds any more is still on the card: %+v", r)
 		}
 	}
@@ -71,10 +89,18 @@ func TestAStaleChoiceIsListedAndMappedEverywhere(t *testing.T) {
 // in it is; a mix with one the server dropped is listed like any other name.
 func TestAVoiceMixIsOfferedWhenEachVoiceIs(t *testing.T) {
 	forgetStaleChoices(t)
+	// Registered for good, so it holds its uses only while this test runs:
+	// a later test's check (StaleSettings starts one) must not find them.
+	var live atomic.Bool
+	live.Store(true)
+	t.Cleanup(func() { live.Store(false) })
 	RegisterOfferedChoices(func() []OfferedChoice {
 		return []OfferedChoice{{ID: "test.mix", Label: "Mix", Parts: media.SpeechVoiceParts,
 			Offered: func(context.Context) ([]string, bool, error) { return []string{"af_bella", "af_sky"}, true, nil },
 			Uses: func() []ChoiceUse {
+				if !live.Load() {
+					return nil
+				}
 				return []ChoiceUse{
 					{Where: "even", Value: "af_bella+af_sky"},
 					{Where: "weighted", Value: "af_bella(2) + af_sky(1)"},
