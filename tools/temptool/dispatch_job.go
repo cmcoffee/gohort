@@ -106,6 +106,10 @@ func jobRequest(sess *ToolSession, tt *TempTool, method, u, saveTo string) (stri
 		return "", fmt.Errorf("network is blocked for this turn (private mode is on)")
 	}
 	if tt.Credential == "" {
+		// The same question a direct api call asks (dispatch_api.go).
+		if refusal := sess.OutboundWriteRefusal(method, u, true); refusal != "" {
+			return "", fmt.Errorf("%s", refusal)
+		}
 		return dispatchPublicAPICall(sess.Context(), u, method, "", "", tt.Headers, tt.TimeoutSec)
 	}
 	args := map[string]any{"url": u, "method": method, "__pipe_following": true}

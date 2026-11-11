@@ -100,8 +100,10 @@ NETWORK
     its requests go through gohort, signed in where a credential
     covers the host. git push is refused.
   * A client that makes its own requests (requests, pip, npm, go):
-    declare hook_capabilities=["proxy"] and it reaches public
-    addresses through gohort's proxy (HTTPS_PROXY is set for it).
+    declare hook_capabilities=["proxy"] and it connects through
+    gohort's proxy (HTTPS_PROXY is set for it) to package
+    registries (pip, npm, go, cargo, gem, GitHub downloads) and
+    to sites the owner has trusted; any other site is refused.
     No credentials go that way, gohort records the host and bytes
     but not the contents, and the tool asks before each run. Use
     it for a library or installer, not instead of fetch_url.

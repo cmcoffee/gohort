@@ -94,6 +94,34 @@ At rest, credentials and all other stored data are encrypted with a key derived 
 host, so the database file on its own is not enough to read them. The corollary matters for
 backups: a copied database does not open on a different machine.
 
+## Sending data out
+
+A model does not need a credential to leak data, only a request to somewhere that will
+take it. What gohort checks:
+
+- **Writes to a site no credential covers ask the owner first.** A POST, PUT, PATCH or
+  DELETE from `fetch_url`, an API tool with no credential, a script's fetch hook (its `curl`
+  and `wget` stand-ins) or the proxy's plain-HTTP path. In a chat it is a card; a script
+  cannot wait for one and is refused; an unattended run is refused and queued for the
+  owner, and approving it trusts the site.
+- **The sandbox's HTTPS proxy goes only to package registries and trusted sites.** A tunnel
+  shows the host and never the method, so a read and an upload look the same. Anything else
+  is refused, and queued on an unattended run. An owner's block wins, even over a registry.
+- **A site a credential covers** follows that credential's own "ask before writes" setting.
+- **Raw sockets** are closed to shell tools by default (`tune_shell_network_closed`). A tool
+  that declares `raw_network` asks before it runs in a chat; attaching it to an agent is the
+  approval for unattended runs.
+- **Private mode** cuts the network for the turn.
+
+Trusted and blocked sites are kept per owner, not per agent, on each agent's Security page
+(Network) and the Permissions page. An administrator can also decide a site for every user
+(**Admin → Oversight → Sites agents may send to**): their Never wins over an owner's Always allow and
+the package registries, and their Always allow gives way to an owner's own Never.
+
+Not covered: reads. Data packed into a GET's URL to an untrusted site passes, and so does
+anything a tool with raw network sends. These checks narrow the ways out; they do not close
+them.
+
 ## Deployment posture
 
 Before gohort faces anything wider than localhost:

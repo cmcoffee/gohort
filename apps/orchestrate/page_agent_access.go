@@ -780,6 +780,38 @@ func (ap *accessPage) networkSections() []ui.Section {
 			},
 		},
 		{
+			Group:    "Network",
+			Title:    "Sites it may send changes to",
+			Subtitle: "A POST, PUT, PATCH or DELETE to a site none of your API credentials cover asks first. These are the sites you decided about, for every agent you own.",
+			Detail: "Covers the fetch_url tool, an api tool with no credential, and a script's fetch, curl, wget or plain-http request. Reads never ask, and a site an API credential covers follows that credential's own setting instead.\n\n" +
+				"In a chat it shows a card. A script cannot wait for one, so it is refused and told to use fetch_url, which can ask. A run nobody is watching is refused and waits in your requests; approving it trusts the site.\n\n" +
+				"A client in a script or the shell that goes through the proxy (pip, npm, go, Python requests) is held to this list too. gohort sees only which site it connects to, not whether it reads or uploads, so it connects to package registries and to sites set to Always allow here, and nowhere else: Ask first refuses it, since a client cannot wait for a card.\n\n" +
+				"Kept for you rather than this agent, so a tool tried with one agent keeps working when another one runs it.",
+			Body: ui.Table{
+				Source:     ap.decisions("workspace", "fleet"),
+				RowKey:     "_id",
+				EmptyText:  "None yet. A site appears here when you answer its card, approve its request, or add it below.",
+				Columns:    []ui.Col{{Field: "Who", Label: ""}},
+				RowActions: ap.policyLadder(),
+			},
+		},
+		{
+			Group:    "Network",
+			Title:    "Add a site",
+			Subtitle: "Decide about a site before an agent first sends to it, such as a webhook a scheduled run will post to.",
+			Body: ui.FormPanel{
+				PostURL:     ap.grantURL("writehost"),
+				Method:      "POST",
+				SubmitLabel: "Add",
+				Fields: []ui.FormField{
+					{Field: "subject", Type: "text", Label: "Site",
+						Help: "The site's address. A full link works too; only the site part is kept, and it covers that exact site, not others under the same domain."},
+					{Field: "value", Type: "select", Label: "And then", Options: ap.policyChoice,
+						Help: "Always allow sends without asking. Ask first stops and waits for you. Never refuses it outright."},
+				},
+			},
+		},
+		{
 			Title:    "How it stands now",
 			Group:    "Network",
 			Subtitle: "The sandbox its shell and file work happen in.",

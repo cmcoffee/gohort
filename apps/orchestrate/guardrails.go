@@ -209,7 +209,7 @@ type guardrailRule struct {
 	// Tools are the tools this rule is about, in the order written, or none
 	// for a rule about the agent's conduct generally. See guardrailToolMarker.
 	Tools []string
-	// Excepts are a deployment rule's own exceptions (Governance > Rules),
+	// Excepts are a deployment rule's own exceptions (Oversight > Rules),
 	// read on "Except:" lines like an agent rule's linked ones.
 	Excepts []string
 	// Links are the carve-outs this rule is linked to, in the order written.

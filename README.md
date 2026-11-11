@@ -63,7 +63,7 @@ Reliability comes from the loop, not the model. The model is told its round budg
 
 ### 2. Credential isolation, where the model orchestrates and never holds
 
-Keys are registered once and stored encrypted. They are injected **server-side at call time**, never rendered into a prompt. Every outbound call is checked against a base-URL and endpoint allowlist **before** the secret attaches. A universal rule forbids any agent from asking for one in chat. Shell work runs in a bubblewrap sandbox whose only network path is an audited hook, with `urllib` / `requests` / `curl` / `wget` refused at authoring time. On the normal paths, no prompt, tool result or chat message carries a credential.
+Keys are registered once and stored encrypted. They are injected **server-side at call time**, never rendered into a prompt. Every outbound call is checked against a base-URL and endpoint allowlist **before** the secret attaches. A universal rule forbids any agent from asking for one in chat. Shell work runs in a bubblewrap sandbox whose only network path is gohort itself: `curl` and `wget` there are stand-ins for an audited fetch hook, and a script's own HTTP library (`urllib`, `requests`) is refused at authoring time unless its tool declares the proxy. On the normal paths, no prompt, tool result or chat message carries a credential.
 
 There are two deliberate exceptions, granted per tool when the tool is approved:
 
@@ -71,6 +71,8 @@ There are two deliberate exceptions, granted per tool when the tool is approved:
 - A script can be handed a key outright, with a `secret:<name>` capability.
 
 A tool with both can send that key anywhere its network reaches, and any script holding a key can print it into output the model reads. Approving such a tool is trusting it with the key. In a chat, such a tool asks the person watching before its first call, with the reason on the card ("It has raw network access"), and "Allow for this session" covers the rest of that conversation. A Private conversation cuts the network either way. A scheduled or unattended run does not stop for either: attaching the tool to the agent is the approval.
+
+**Sending data out asks first.** Leaking data takes no credential, only a request to somewhere that will accept it. So a POST, PUT, PATCH or DELETE to a site none of your credentials cover asks before it goes, whether it comes from `fetch_url`, an API tool, or a script's `curl`: a card in a chat (Allow once / Always allow / Deny), a refusal for a script, which cannot wait, and a refusal queued for the owner on an unattended run. An HTTPS connection through the sandbox's proxy (pip, npm, Python `requests`) hides its method, so it goes only to package registries and to sites the owner has trusted. Trust is kept per owner, on each agent's Security page. Reads are not asked about, so this narrows the ways out rather than closing them.
 
 **Skills can carry tools**, and activating one lets its bundled scripts run. Skills are per-user and authored in-product rather than installed from a public registry, and what they bring runs inside the sandbox under the same credential allowlist as everything else.
 

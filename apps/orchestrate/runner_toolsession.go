@@ -364,6 +364,11 @@ func (t *chatTurn) wireLiveCallbacks(sess *ToolSession) {
 	// A blocking question card, for a tool that needs the person's answer on
 	// the spot.
 	sess.AskInChat = t.askInChat
+	// A write to a host no credential covers asks the agent's owner, or is
+	// queued for them when nobody is watching (outbound_write.go).
+	if sess.ApproveWrite == nil {
+		sess.ApproveWrite = t.approveWrite
+	}
 	// Changes to what already exists ask the owner first (change_approval.go).
 	// A sub-run that set its own approver keeps it: an agent this turn sends
 	// is asked about as itself, and its queue entries and grants are its own,

@@ -387,7 +387,18 @@ const (
 	// 2388: AuthGetChannelDefaultWakeRules and its setter, the admin's wake
 	// rules for new channels, read by orchestrate and bridges alike, beside
 	// the master rules they sit next to in core/auth.go.
-	coreExportCeiling = 2388
+	// 2391: OutboundWrite, SetWriteHostPolicy and ListWriteHostPolicies, the
+	// owner's trusted hosts for writes no credential covers. The check runs
+	// in the fetch hook (core) and the fetch_url tool, so it lives beside the
+	// other allow/ask/block policies in core/authorizations.go; the check
+	// itself is a ToolSession method and adds no name.
+	// 2393: AdminSites, the administrator's Always allow / Never for sending
+	// to a site, for every user, read by the same outbound check as each
+	// owner's list (one value with methods, not three functions); and
+	// SiteFromInput, moved from orchestrate so the admin page and an agent's
+	// Security page key a typed site the same way. The slack was spent
+	// (2417) before them.
+	coreExportCeiling = 2393
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

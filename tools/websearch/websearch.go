@@ -765,6 +765,21 @@ func enforceFetchCacheQuota(workspaceDir string) {
 // injected; URL has already cleared the SSRF guard upstream. Returns
 // either {status, headers, body} as text or a save_to metadata line.
 func fetchURLDirect(sess *ToolSession, target, method, body string, customHeaders map[string]any, saveTo string) (string, error) {
+	// Every request that is not a plain read is logged, because the tool-call
+	// line says only how big the arguments were: without this an upload made
+	// through fetch_url left nothing in the server log. A credential-covered
+	// host never gets here (it was routed through its credential above), so
+	// what reaches the check is a write to a host nobody registered.
+	if IsWriteMethod(method) {
+		shown := target
+		if u, err := url.Parse(target); err == nil {
+			shown = u.Redacted()
+		}
+		Log("[fetch_url] %s %s (%d-byte body)", method, shown, len(body))
+		if refusal := sess.OutboundWriteRefusal(method, target, true); refusal != "" {
+			return refusal, nil
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	var bodyReader io.Reader

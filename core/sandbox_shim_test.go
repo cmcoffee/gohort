@@ -282,6 +282,7 @@ func TestGitRelayCarriesFetchesOnly(t *testing.T) {
 //   - without the proxy grant the tunnel is refused;
 //   - with no token the proxy asks for one;
 //   - a port other than https's is refused;
+//   - a site the owner has not trusted is refused;
 //   - loopback stays out of reach once the test's opening is gone.
 func TestProxyReachesOutOfAClosedSandboxThroughTheRelay(t *testing.T) {
 	if _, err := exec.LookPath("bwrap"); err != nil {
@@ -320,6 +321,12 @@ func TestProxyReachesOutOfAClosedSandboxThroughTheRelay(t *testing.T) {
 	work := filepath.Join(root, "workspaces", "owner", "w")
 	os.MkdirAll(work, 0o755)
 	sess := &ToolSession{Username: "owner", WorkspaceDir: work}
+	// A tunnel goes to a package registry or a site the owner trusts; the
+	// test's server stands in for a trusted one, and the loopback address
+	// below is trusted too, so what stops it is the dial.
+	outboundTestDB(t)
+	SetWriteHostPolicy(RootDB, "owner", "repo.example.test", PolicyAllow)
+	SetWriteHostPolicy(RootDB, "owner", "127.0.0.2", PolicyAllow)
 	closed := netgate.WithWorkspaceNetwork(context.Background(), false)
 	// fetch writes the probe: an HTTPS GET of target, through the proxy the
 	// run was given, or through proxyExpr (a Python expression) instead.
@@ -348,6 +355,10 @@ func TestProxyReachesOutOfAClosedSandboxThroughTheRelay(t *testing.T) {
 	}
 	if out := run([]string{"fetch"}); !strings.Contains(out, "403") || strings.Contains(out, "through the tunnel") {
 		t.Errorf("without the proxy grant the tunnel is refused:\n%s", out)
+	}
+	fetch("https://upload.example.test:"+port+"/x", "")
+	if out := run([]string{"fetch", "proxy"}); !strings.Contains(out, "403") || strings.Contains(out, "through the tunnel") {
+		t.Errorf("a site the owner has not trusted is refused:\n%s", out)
 	}
 	fetch("https://repo.example.test:"+port+"/x", "'http://127.0.0.1:' + os.environ['GOHORT_RELAY_PORT']")
 	if out := run([]string{"fetch", "proxy"}); !strings.Contains(out, "407") {

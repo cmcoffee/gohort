@@ -131,6 +131,12 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 		// directly). Used for public JSON endpoints (Reddit,
 		// Wikipedia, public data feeds) where requiring a fake
 		// credential just to satisfy the dispatcher would be silly.
+		// A write with no credential is a write to a host nobody registered:
+		// it asks the owner like fetch_url's does, or the tool would be a way
+		// around that question.
+		if refusal := sess.OutboundWriteRefusal(method, urlStr, true); refusal != "" {
+			return refusal, nil
+		}
 		raw, err = dispatchPublicAPICall(sess.Context(), urlStr, method, body, tt.ContentType, tt.Headers, tt.TimeoutSec)
 	} else {
 		// Headers ride along: a protocol like CalDAV carries required

@@ -82,6 +82,8 @@ func approvalDisplay(udb Database, user string, a Authorization) (who, detail st
 			who = "Builder"
 		}
 		detail = a.Brief + " (approving lets it make this change in its next run, for a day)"
+	case outboundWriteAction:
+		who, detail = outboundWriteDisplay(udb, a)
 	case "autonomous_tool":
 		if rec, found := loadAgent(udb, a.Agent); found {
 			who = rec.Name
@@ -176,7 +178,7 @@ func (T *OrchestrateApp) handleConsolePermissions(c *jsonapi.Call) (any, error) 
 			// Activating a drafted sub-agent is a ONE-TIME decision — approving it
 			// makes the agent live and the authorization disappears, so "Always"
 			// has no meaning. Present just Approve / Deny for it.
-			OneShot: a.Action == "activate_sub_agent",
+			OneShot: a.Action == "activate_sub_agent" || a.Action == outboundWriteAction,
 		})
 	}
 	out = append(out, suggested...)
@@ -234,6 +236,16 @@ func (T *OrchestrateApp) handleConsolePermissions(c *jsonapi.Call) (any, error) 
 			row.Promotable = true
 		}
 		out = append(out, row)
+	}
+	// Hosts the owner decided about sending changes to (core/outbound_write.go):
+	// writes to a host no credential covers ask unless it is here. One row per
+	// host, binding every agent, because the trust is the owner's: a tool tried
+	// on one agent and handed to another must not start asking again.
+	for _, e := range ListWriteHostPolicies(RootDB, user) {
+		out = append(out, permRow{
+			Who: e.Target, Detail: "Sending changes (POST, PUT, PATCH, DELETE) to this host, and a script's proxy connecting to it: every agent",
+			ID: "writehost:" + e.Target, Managed: true, Policy: e.Policy,
+		})
 	}
 	// Zone 3 — autonomous-run tool grants: the tools you "Always allowed" a
 	// scheduled/standing agent to run unattended (AutoApproveTools). Surfaced so
@@ -469,7 +481,7 @@ func permRowKind(id string) string {
 	switch kind {
 	case "confirmtool", "autotool", "subaction":
 		return "tools"
-	case "workspace":
+	case "workspace", "writehost":
 		return "workspace"
 	case "contact", "contactfor":
 		return "access"
@@ -665,6 +677,8 @@ func (T *OrchestrateApp) handleConsolePermissionPolicy(c *jsonapi.Call, body *st
 		if from, tgt, ok := strings.Cut(target, ":"); ok && tgt != "" {
 			setDelegationDecision(user, from, tgt, value)
 		}
+	case "writehost":
+		SetWriteHostPolicy(RootDB, user, target, value)
 	case "contact":
 		SetContactPolicy(RootDB, user, "", target, value)
 	case "contactfor":
@@ -753,6 +767,8 @@ func (T *OrchestrateApp) handleConsolePermissionRemove(c *jsonapi.Call, _ struct
 		if from, tgt, ok := strings.Cut(target, ":"); ok && tgt != "" {
 			removeDelegationDecision(user, from, tgt)
 		}
+	case "writehost":
+		SetWriteHostPolicy(RootDB, user, target, "")
 	case "contact":
 		RemoveContactPolicy(RootDB, user, "", target)
 	case "contactfor":
@@ -907,6 +923,14 @@ func (T *OrchestrateApp) handleConsolePermissionGrant(c *jsonapi.Call, body stru
 		return nil, jsonapi.BadRequest("policy must be allow, ask or block")
 	}
 	switch kind {
+	case "writehost":
+		// The owner's, for every agent: the agent in the URL is only the page
+		// it was added from (outbound_write.go says why it is not per agent).
+		host, why := SiteFromInput(subject)
+		if why != "" {
+			return nil, jsonapi.BadRequest(why)
+		}
+		SetWriteHostPolicy(RootDB, user, host, value)
 	case "contact":
 		SetContactPolicy(RootDB, user, agentID, subject, value)
 	case "agent":

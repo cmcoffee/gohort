@@ -2,6 +2,7 @@ package core
 
 import (
 	"bufio"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net"
@@ -560,5 +561,29 @@ func TestASaveToGoesNowhereThroughALink(t *testing.T) {
 	}
 	if info, err := os.Stat(filepath.Join(ws, "img")); err != nil || !info.IsDir() {
 		t.Error("the folder it goes in was not made")
+	}
+}
+
+// A plain-HTTP request through the proxy shows its method, so a write to a
+// host the owner has not trusted is refused there as the fetch hook refuses
+// it, before anything is dialled.
+func TestThePlainProxyRefusesAnUntrustedWrite(t *testing.T) {
+	outboundTestDB(t)
+	hook, err := NewSandboxHook(t.TempDir(), []string{"fetch", "proxy"}, &ToolSession{Username: "owner"})
+	if err != nil || hook == nil {
+		t.Fatalf("hook: %v", err)
+	}
+	defer hook.Close()
+	c, err := net.Dial("unix", hook.SocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	auth := base64.StdEncoding.EncodeToString([]byte("gohort:" + hook.RelayToken))
+	c.Write([]byte("{\"method\":\"relay\",\"params\":{}}\nPUT http://upload.example/bucket/file HTTP/1.1\r\nHost: upload.example\r\n" +
+		"Proxy-Authorization: Basic " + auth + "\r\nContent-Length: 7\r\n\r\npayload"))
+	out, _ := io.ReadAll(c)
+	if !strings.HasPrefix(string(out), "HTTP/1.1 403") || !strings.Contains(string(out), "NOT SENT") || !strings.Contains(string(out), "upload.example") {
+		t.Fatalf("proxy answer: %q", out)
 	}
 }

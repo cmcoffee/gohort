@@ -196,6 +196,16 @@ type ToolSession struct {
 	// once at session creation, don't mutate after.
 	AskInChat func(prompt, detail string, yes []string) string
 
+	// ApproveWrite, if set, decides a request that changes something (POST,
+	// PUT, ...) sent to a host no credential covers (s.OutboundWriteRefusal).
+	// "" lets it go out; anything else is the refusal to return. The app sets
+	// it because it knows whose decision it is (it fills in w.Owner, then
+	// w.Decided and w.Ask), whether anybody is watching, and where an
+	// unanswered one is queued. Nil ⇒ the session user's decision, then a
+	// plain AskInChat card, or a refusal when there is nobody to ask. Must be
+	// safe to call from a tool goroutine.
+	ApproveWrite func(w OutboundWrite) string
+
 	// SubAgentRunner spawns a one-shot sub-agent loop for tools that
 	// need to dispatch their OWN LLM round (today: pipeline-mode
 	// temp tools). Apps wire this on session creation; nil means

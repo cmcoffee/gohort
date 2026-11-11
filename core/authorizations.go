@@ -14,6 +14,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net"
+	neturl "net/url"
 	"sort"
 	"strings"
 	"time"
@@ -515,4 +517,341 @@ func trimIDs(in []string) []string {
 		}
 	}
 	return out
+}
+
+// --- Outbound writes --------------------------------------------------------
+//
+// Outbound writes: a request that changes something (POST, PUT, PATCH,
+// DELETE) sent to a host none of the owner's credentials cover.
+//
+// A write to an API the owner set up goes through that API's credential,
+// which has its own "ask before writes" setting. What is left is a write to a
+// host nobody registered: a webhook, a public form, or a model sending data
+// somewhere on its own. Nothing about the call says which, so it asks.
+//
+// The answer is kept per OWNER and per host, never per agent. A tool tried in
+// Builder and then handed to a scheduled agent must keep working, which it
+// would not if the trust stayed with the agent that happened to be asked.
+//
+// Reads pass. Only a call that changes something is held, and only on the
+// paths where gohort sees the method: the fetch_url tool and the fetch hook a
+// sandboxed script calls (its curl and wget stand-ins included).
+
+// writeHostPolicyTable holds the owner's decision per host: <owner>:<host> ->
+// allow | ask | block. No entry is ask.
+const writeHostPolicyTable = "write_host_policy"
+
+// OutboundWrite is one write waiting on a decision.
+type OutboundWrite struct {
+	// Owner is whose decision it is: their trusted and blocked hosts apply,
+	// and Always allow records for them.
+	Owner  string
+	Method string // upper case
+	URL    string
+	Host   string // as the decision is keyed (writeHostOf)
+	// CanAsk is false for a script, which cannot wait for an answer.
+	CanAsk bool
+	// Tunnel is an HTTPS connection through a run's proxy (Method CONNECT):
+	// gohort sees the host, never the method, so it may carry a read or an
+	// upload alike, and is decided by host. Package registries pass.
+	Tunnel bool
+}
+
+// tunnelRegistryHosts are the hosts a proxy tunnel reaches without the
+// owner's decision: package installers' (pip, npm, go, cargo, gem) and the
+// GitHub download hosts they fetch from. Exact names only, never a suffix,
+// so a bucket under a cloud provider's domain stays the owner's to decide.
+// The owner blocking one still wins.
+var tunnelRegistryHosts = map[string]bool{
+	"pypi.org":                             true,
+	"files.pythonhosted.org":               true,
+	"registry.npmjs.org":                   true,
+	"registry.yarnpkg.com":                 true,
+	"proxy.golang.org":                     true,
+	"sum.golang.org":                       true,
+	"index.crates.io":                      true,
+	"static.crates.io":                     true,
+	"rubygems.org":                         true,
+	"github.com":                           true,
+	"codeload.github.com":                  true,
+	"objects.githubusercontent.com":        true,
+	"raw.githubusercontent.com":            true,
+	"release-assets.githubusercontent.com": true,
+}
+
+// Summary names the call for a person: "a POST to host", or for a tunnel
+// "an HTTPS connection to host through the proxy".
+func (w OutboundWrite) Summary() string {
+	if w.Tunnel {
+		return "an HTTPS connection to " + w.Host + " through the proxy"
+	}
+	return fmt.Sprintf("a %s to %s", w.Method, w.Host)
+}
+
+// writeHostOf is the host a write to rawURL goes to, as the decision is
+// keyed: lower case, no port, no trailing dot. "" when the URL has no host.
+func writeHostOf(rawURL string) string {
+	u, err := neturl.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+}
+
+func writeHostKey(owner, host string) string {
+	return owner + ":" + strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+}
+
+// writeHostPolicy is the owner's decision about writes to host: PolicyAllow,
+// PolicyBlock, or PolicyAsk when they have not decided.
+func writeHostPolicy(db Database, owner, host string) string {
+	if db == nil || owner == "" || strings.TrimSpace(host) == "" {
+		return PolicyAsk
+	}
+	var p string
+	if db.Get(writeHostPolicyTable, writeHostKey(owner, host), &p) {
+		return normPolicy(p)
+	}
+	return PolicyAsk
+}
+
+// adminWriteHostTable holds the administrator's decisions about sending to a
+// site, for every user: <host> -> allow | block. Read by Decided, around the
+// owner's own: a block here wins over everything, an allow here gives way to
+// an owner's block.
+const adminWriteHostTable = "write_host_policy_admin"
+
+// AdminSites is the administrator's site list. One name with methods, so the
+// list adds one word to the namespace of every file that dot-imports core.
+var AdminSites adminSiteList
+
+type adminSiteList struct{}
+
+// Policy is the administrator's decision about host: PolicyAllow,
+// PolicyBlock, or "" when they have made none.
+func (adminSiteList) Policy(db Database, host string) string {
+	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	if db == nil || host == "" {
+		return ""
+	}
+	var p string
+	if !db.Get(adminWriteHostTable, host, &p) {
+		return ""
+	}
+	switch p = normPolicy(p); p {
+	case PolicyAllow, PolicyBlock:
+		return p
+	}
+	return ""
+}
+
+// Set records the administrator's decision about host for every user. Only
+// allow and block are decisions at this level; anything else, empty
+// included, removes it, so the owners' own decisions apply.
+func (adminSiteList) Set(db Database, host, policy string) {
+	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	if db == nil || host == "" {
+		return
+	}
+	if p := normPolicy(policy); p == PolicyAllow || p == PolicyBlock {
+		db.Set(adminWriteHostTable, host, p)
+		return
+	}
+	db.Unset(adminWriteHostTable, host)
+}
+
+// List is every site the administrator decided about, sorted by host.
+func (l adminSiteList) List(db Database) []PolicyEntry {
+	if db == nil {
+		return nil
+	}
+	var out []PolicyEntry
+	for _, k := range db.Keys(adminWriteHostTable) {
+		if p := l.Policy(db, k); p != "" {
+			out = append(out, PolicyEntry{Target: k, Policy: p})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Target < out[j].Target })
+	return out
+}
+
+// SiteFromInput is the site a typed address names, keyed as the write check
+// keys it (lower case, no port, path or trailing dot), or why it cannot be one.
+// A full link is accepted, since that is what people have to hand.
+func SiteFromInput(in string) (host, why string) {
+	in = strings.TrimSpace(in)
+	if !strings.Contains(in, "://") {
+		in = "https://" + in
+	}
+	u, err := neturl.Parse(in)
+	if err != nil {
+		return "", "that is not a site address"
+	}
+	host = strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+	switch {
+	case host == "" || strings.ContainsAny(host, " *"):
+		return "", "name one site, like hooks.example.com"
+	case !strings.Contains(host, ".") && net.ParseIP(host) == nil:
+		return "", host + " is not a public site: a site needs a domain, like hooks.example.com"
+	case IsNonPublicHost(host):
+		return "", host + " is a private address, which nothing here sends to without an API credential naming it"
+	}
+	return host, ""
+}
+
+// SetWriteHostPolicy records the owner's decision about writes to host. An
+// empty policy forgets it, so writes there ask again.
+func SetWriteHostPolicy(db Database, owner, host, policy string) {
+	if db == nil || owner == "" || strings.TrimSpace(host) == "" {
+		return
+	}
+	if strings.TrimSpace(policy) == "" {
+		db.Unset(writeHostPolicyTable, writeHostKey(owner, host))
+		return
+	}
+	db.Set(writeHostPolicyTable, writeHostKey(owner, host), normPolicy(policy))
+}
+
+// ListWriteHostPolicies is every host the owner has decided about, sorted.
+func ListWriteHostPolicies(db Database, owner string) []PolicyEntry {
+	return listPolicies(db, writeHostPolicyTable, owner, nil)
+}
+
+// OutboundWriteRefusal is "" when this request may go out, or the refusal to
+// return instead. Call it after a credential has had the chance to claim the
+// URL: a covered host is the credential's to govern, and never reaches here.
+//
+// canAsk says whether the caller can wait for a person's answer. The fetch_url
+// tool can; a script calling the fetch hook cannot, so it is refused with what
+// to do instead.
+//
+// The session's ApproveWrite decides when the app set one: it knows whose
+// decision it is (an agent's owner, not whoever is running it), who is
+// watching, and where an unanswered one is queued. Otherwise the session
+// user's own decision applies, and an undecided host gets a plain question
+// card, or is refused when there is nobody to ask.
+//
+// A method so a nil session works, and so it adds no name to every file that
+// dot-imports core.
+func (sess *ToolSession) OutboundWriteRefusal(method, rawURL string, canAsk bool) string {
+	if !IsWriteMethod(method) {
+		return ""
+	}
+	w := OutboundWrite{Method: strings.ToUpper(strings.TrimSpace(method)), URL: rawURL, Host: writeHostOf(rawURL), CanAsk: canAsk}
+	if w.Host == "" {
+		return ""
+	}
+	if sess != nil && sess.ApproveWrite != nil {
+		return sess.ApproveWrite(w)
+	}
+	var ask func(prompt, detail string, yes []string) string
+	if sess != nil {
+		w.Owner, ask = sess.Username, sess.AskInChat
+	}
+	if refusal, decided := w.Decided(); decided {
+		return refusal
+	}
+	return w.Ask(ask, true)
+}
+
+// OutboundTunnelRefusal is "" when the run's proxy may open an HTTPS tunnel
+// to host, or the refusal to answer the CONNECT with. A tunnel can carry an
+// upload as easily as a download, and gohort cannot see which, so it goes
+// only to a package registry or a site the owner has trusted for writes; any
+// other host is refused, and on an unattended run queued for the owner the
+// way a write is (approving trusts the host). A proxy client cannot wait for
+// a card, so nobody is asked.
+func (sess *ToolSession) OutboundTunnelRefusal(host string) string {
+	w := OutboundWrite{Method: "CONNECT", Host: strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), "."), Tunnel: true}
+	if w.Host == "" {
+		return "NOT CONNECTED: the proxy needs a host to connect to."
+	}
+	w.URL = net.JoinHostPort(w.Host, "443")
+	if sess != nil && sess.ApproveWrite != nil {
+		return sess.ApproveWrite(w)
+	}
+	if sess != nil {
+		w.Owner = sess.Username
+	}
+	if refusal, decided := w.Decided(); decided {
+		return refusal
+	}
+	return w.Ask(nil, false)
+}
+
+// Decided applies the standing decisions: decided is true when the host is
+// trusted (refusal "") or blocked (refusal says so), false when it is still
+// the owner's to answer. In order:
+//
+//   - the administrator's Never, for every user, over everything below;
+//   - the owner's own Never, then their Always allow;
+//   - the administrator's Always allow;
+//   - for a tunnel, a package registry.
+func (w OutboundWrite) Decided() (refusal string, decided bool) {
+	if AdminSites.Policy(RootDB, w.Host) == PolicyBlock {
+		Log("[outbound] %s %s: blocked by the administrator, refused", w.Method, w.Host)
+		if w.Tunnel {
+			return fmt.Sprintf("NOT CONNECTED: the administrator has blocked sending to %s, for every user. Do not reach it another way.", w.Host), true
+		}
+		return fmt.Sprintf("NOT SENT: the administrator has blocked sending to %s, for every user. Do not send it another way.", w.Host), true
+	}
+	switch writeHostPolicy(RootDB, w.Owner, w.Host) {
+	case PolicyAllow:
+		Log("[outbound] %s %s: trusted by %s, sent", w.Method, w.Host, w.Owner)
+		return "", true
+	case PolicyBlock:
+		Log("[outbound] %s %s: blocked by %s, refused", w.Method, w.Host, w.Owner)
+		if w.Tunnel {
+			return fmt.Sprintf("NOT CONNECTED: the owner has blocked sending to %s. Do not reach it another way.", w.Host), true
+		}
+		return fmt.Sprintf("NOT SENT: the owner has blocked sending changes to %s. Do not send it another way.", w.Host), true
+	}
+	if AdminSites.Policy(RootDB, w.Host) == PolicyAllow {
+		Log("[outbound] %s %s: trusted by the administrator, sent", w.Method, w.Host)
+		return "", true
+	}
+	if w.Tunnel && tunnelRegistryHosts[w.Host] {
+		return "", true
+	}
+	return "", false
+}
+
+// Ask puts the write to the person on ask's card: Allow once, Always allow
+// <host> when offerAlways (it trusts the host for the owner), or Deny. ""
+// when they allowed it, the refusal otherwise. A script (CanAsk false) is
+// refused without a card, and pointed at fetch_url, which can ask; nil ask
+// means nobody is watching, and is refused too.
+func (w OutboundWrite) Ask(ask func(prompt, detail string, yes []string) string, offerAlways bool) string {
+	if w.Tunnel {
+		Log("[outbound] %s %s: tunnel to a host not trusted, refused", w.Method, w.Host)
+		return fmt.Sprintf("NOT CONNECTED: the proxy opens HTTPS connections only to package registries and to sites the owner has trusted, and %s is neither: a connection through it could carry an upload as easily as a download, and gohort cannot see which. To read from %s, use curl or wget here, or the fetch_url tool; to send to it, use fetch_url, which asks the owner first. The owner can also add %s under Network on the agent's Security page.", w.Host, w.Host, w.Host)
+	}
+	if !w.CanAsk {
+		Log("[outbound] %s %s: a script cannot ask, refused", w.Method, w.Host)
+		return fmt.Sprintf("NOT SENT: a %s to %s sends data to a host the owner has not trusted, and a script cannot stop to ask them. Make this one request with the fetch_url tool instead, which asks the owner first, or ask them to set %s to Always allow on the Permissions page.", w.Method, w.Host, w.Host)
+	}
+	if ask == nil {
+		Log("[outbound] %s %s: not trusted and nobody to ask, refused", w.Method, w.Host)
+		return fmt.Sprintf("NOT SENT: a %s to %s needs the owner's approval: no credential covers that host and they have not trusted it, and nobody is watching this run to ask. Do not send it another way; tell them what you meant to send.", w.Method, w.Host)
+	}
+	detail := fmt.Sprintf("%s %s\n\nThis sends data to a host none of the owner's API credentials cover, and it has not been trusted.", w.Method, w.URL)
+	yes := []string{"Allow once"}
+	always := "Always allow " + w.Host
+	if offerAlways {
+		yes = append(yes, always)
+		detail += " Always allow trusts the host for every agent you own; you can take that back on the Permissions page."
+	}
+	// The host ends the line with no "?" after it, which would read as part
+	// of the address.
+	switch ask(fmt.Sprintf("Send a %s request to this site: %s", w.Method, w.Host), detail, yes) {
+	case "":
+		Log("[outbound] %s %s: declined", w.Method, w.Host)
+		return fmt.Sprintf("NOT SENT: the owner declined this %s to %s. Do not send it another way.", w.Method, w.Host)
+	case always:
+		SetWriteHostPolicy(RootDB, w.Owner, w.Host, PolicyAllow)
+		Log("[outbound] %s %s: %s trusted the host", w.Method, w.Host, w.Owner)
+	default:
+		Log("[outbound] %s %s: allowed once", w.Method, w.Host)
+	}
+	return ""
 }

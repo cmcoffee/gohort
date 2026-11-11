@@ -529,7 +529,7 @@ func (t *chatTurn) askInChat(prompt, detail string, yes []string) string {
 		allows[v] = true
 	}
 	actions = append(actions, map[string]any{"label": "Deny", "value": "deny", "variant": "danger"})
-	picked, ok := t.parkConfirm(toolConfirmRequest{tool: "a question", prompt: prompt, detail: detail, because: prompt}, actions, allows)
+	picked, ok := t.parkConfirm(toolConfirmRequest{tool: questionCard, prompt: prompt, detail: detail, because: prompt}, actions, allows)
 	if !ok {
 		return ""
 	}
@@ -539,6 +539,19 @@ func (t *chatTurn) askInChat(prompt, detail string, yes []string) string {
 		}
 	}
 	return ""
+}
+
+// questionCard is the tool name askInChat's cards carry: the card is a
+// question, not a call, so its breadcrumbs quote the question instead.
+const questionCard = "a question"
+
+// deniedNote is the breadcrumb for a card that ended without a yes: how it
+// ended (how), about the call it held or the question it asked.
+func (r toolConfirmRequest) deniedNote(how string) string {
+	if r.tool == questionCard {
+		return fmt.Sprintf("Not done: %s to \u201c%s\u201d.", how, r.prompt)
+	}
+	return fmt.Sprintf("%s was not run: %s, and %s.", r.tool, r.because, how)
 }
 
 // parkConfirm renders a card with actions and parks until it is answered.
@@ -556,7 +569,7 @@ func (t *chatTurn) parkConfirm(req toolConfirmRequest, actions []map[string]any,
 	if t == nil || t.sse == nil {
 		Log("[orchestrate.confirm] %s stopped: %s, and this run has no interactive viewer, denied (fail closed)", req.tool, req.because)
 		if t != nil {
-			t.turnDiag("tool-denied", fmt.Sprintf("%s was not run: %s, and this run had no interactive viewer to ask, denied fail-closed.", req.tool, req.because))
+			t.turnDiag("tool-denied", req.deniedNote("this run had no interactive viewer to ask, so it was denied (fail closed)"))
 			t.recordApproval(req, "Denied: nobody was watching to ask")
 		}
 		return "", false
@@ -584,7 +597,11 @@ func (t *chatTurn) parkConfirm(req toolConfirmRequest, actions []map[string]any,
 	select {
 	case v := <-p.ch:
 		if !v {
-			t.turnDiag("tool-denied", fmt.Sprintf("You denied the %s call (%s).", req.tool, req.because))
+			if req.tool == questionCard {
+				t.turnDiag("tool-denied", req.deniedNote("you said no"))
+			} else {
+				t.turnDiag("tool-denied", fmt.Sprintf("You denied the %s call (%s).", req.tool, req.because))
+			}
 			t.sendConfirmResolved(id, false)
 			t.recordApproval(req, "Denied")
 			return "", false
@@ -767,7 +784,7 @@ func (t *chatTurn) parkConfirmVia(req toolConfirmRequest, actions []map[string]a
 	}
 	picked := values[t.askVia(prompt, req.detail, labels)]
 	if picked == "" {
-		t.turnDiag("tool-denied", fmt.Sprintf("%s was not run: %s, and the person watching said no (or did not answer).", req.tool, req.because))
+		t.turnDiag("tool-denied", req.deniedNote("the person watching said no (or did not answer)"))
 		return "", false
 	}
 	if allows != nil {

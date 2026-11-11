@@ -599,6 +599,14 @@ func fetchDoneLog(status int) func(...interface{}) {
 	return Log
 }
 
+// session is the run's session, nil on a nil hook.
+func (h *SandboxHook) session() *ToolSession {
+	if h == nil {
+		return nil
+	}
+	return h.Sess
+}
+
 // granted is the first-pass gate: does any capability entry name this
 // method? Matches both bare ("fetch") and qualified ("secret:openweather")
 // forms — the per-method handler does the qualifier check when needed
@@ -1058,8 +1066,9 @@ func (h *SandboxHook) relayProxyRefused(conn net.Conn, req *http.Request) bool {
 }
 
 // relayConnect opens a tunnel for an HTTPS client: CONNECT host:443 to a
-// public address, then bytes both ways until either side closes, Private
-// mode turns on, or relayTunnelMax passes. gohort sees the host, the port and
+// public address that is a package registry or a site the owner has trusted
+// (ToolSession.OutboundTunnelRefusal), then bytes both ways until either
+// side closes, Private mode turns on, or relayTunnelMax passes. gohort sees the host, the port and
 // how much went each way, which is what the log records; it cannot see the
 // contents, and adds no credential (curl and fetch_url do that).
 func (h *SandboxHook) relayConnect(conn net.Conn, br *bufio.Reader, req *http.Request) {
@@ -1069,6 +1078,14 @@ func (h *SandboxHook) relayConnect(conn net.Conn, br *bufio.Reader, req *http.Re
 	host, port, err := net.SplitHostPort(req.Host)
 	if err != nil || !relayConnectPorts[port] {
 		relayReply(conn, http.StatusForbidden, fmt.Sprintf("the proxy tunnels https (port 443) only, not %s", req.Host))
+		return
+	}
+	// A tunnel's method is out of sight, so a read and an upload look the
+	// same: it goes to a package registry or a site the owner trusts, and
+	// anything else is refused (and queued for them on an unattended run).
+	if refusal := h.Sess.OutboundTunnelRefusal(host); refusal != "" {
+		h.relayNote(refusal)
+		relayReply(conn, http.StatusForbidden, refusal)
 		return
 	}
 	baseCtx, releaseConn := h.Sess.Network.DeriveCancelCtx(context.Background())
@@ -1134,6 +1151,14 @@ func (h *SandboxHook) relayPlain(conn net.Conn, req *http.Request) {
 	}
 	if IsNonPublicHost(req.URL.Hostname()) {
 		relayReply(conn, http.StatusForbidden, fmt.Sprintf("refusing to reach non-public host %s, same rule as fetch_url", req.URL.Hostname()))
+		return
+	}
+	// Plain HTTP shows its method, unlike a CONNECT tunnel, so a write to a
+	// host the owner has not trusted meets the fetch hook's rule. No
+	// credential is ever added on this path, so every host is uncovered.
+	if refusal := h.Sess.OutboundWriteRefusal(req.Method, req.URL.String(), false); refusal != "" {
+		h.relayNote(refusal)
+		relayReply(conn, http.StatusForbidden, refusal)
 		return
 	}
 	baseCtx, releaseConn := h.Sess.Network.DeriveCancelCtx(context.Background())
@@ -1403,6 +1428,15 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 	// the LLM-callable fetch_url tool.
 	if host := parsed.Hostname(); host != "" && IsNonPublicHost(host) {
 		writeHookError(conn, fmt.Sprintf("fetch refused: refusing to reach non-public host %s, same rule as the LLM-callable fetch_url tool", host))
+		return
+	}
+	// A write to a host no credential covered (a covered one was routed
+	// above). A script cannot wait for a person's answer, so an untrusted
+	// host is refused with what to do instead, and a run nobody is watching
+	// queues it for the owner. A hook with no session has no owner to ask
+	// and is refused the same way.
+	if refusal := h.session().OutboundWriteRefusal(hookMethod(params), rawURL, false); refusal != "" {
+		writeHookError(conn, "fetch refused: "+refusal)
 		return
 	}
 

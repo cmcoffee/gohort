@@ -44,7 +44,7 @@ type StyleRule struct {
 	Builtin bool   // shipped with gohort, vs added by an operator
 	// Except are a deployment rule's exceptions, each a condition under
 	// which the rule does not apply: any one plainly holding excuses it. Set
-	// with the rule (Governance > Rules), and only there: an agent's own
+	// with the rule (Oversight > Rules), and only there: an agent's own
 	// exceptions never reach a deployment rule.
 	Except []string `json:",omitempty"`
 	// ExceptOwner is a deployment rule's owner exception: the rule does not

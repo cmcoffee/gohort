@@ -79,6 +79,14 @@ func (T *OrchestrateApp) resolveApproval(c *jsonapi.Call, always bool) (any, err
 		Log("[operator.approval] build_agent approved: dispatching Builder for owner=%s requester=%s", a.Owner, a.FromAgent)
 		return jsonapi.Empty(http.StatusNoContent), nil
 	}
+	// outbound_write: an unattended run was held from sending to a host no
+	// credential covers. Approving trusts the host for every agent the owner
+	// has, so the next run sends (outbound_write.go).
+	if a.Action == outboundWriteAction {
+		SetWriteHostPolicy(RootDB, user, a.Handle, PolicyAllow)
+		Log("[outbound] %s approved %s: trusted for every agent", user, a.Handle)
+		return jsonapi.Empty(http.StatusNoContent), nil
+	}
 	// autonomous_tool: an unattended (standing/scheduled) fire wanted a
 	// NeedsConfirm tool the agent isn't pre-authorized for. Approving adds the tool
 	// to the PARENT's AutoApproveTools when the requester is a sub-agent — the grant

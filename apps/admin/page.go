@@ -68,7 +68,8 @@ var adminLayout = []struct {
 	// shared, and what users have built.
 	{"Oversight", []string{
 		"Rules", "Channel Wake Rules", "Agent security across the deployment",
-		"Agent Capabilities: Outward & Spending", "Requests to share", "Shared with everyone",
+		"Agent Capabilities: Outward & Spending", "Sites agents may send to",
+		"Requests to share", "Shared with everyone",
 		"User-owned agents", "User-owned pipelines", "User-owned machines",
 	}},
 	// How the checks on agents' replies are doing: the queues to review

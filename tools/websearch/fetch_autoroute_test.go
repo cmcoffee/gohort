@@ -86,3 +86,21 @@ func TestFetchURLRefusesDirectCredentialAccess(t *testing.T) {
 		t.Fatalf("a direct fetch to a covered host should be refused with the agent's alternatives: %v (asked %q)", err, asked)
 	}
 }
+
+// A write to a host no credential covers goes to the session's write check
+// before anything is sent, and its refusal is what the model reads.
+func TestFetchURLPutsAnUncoveredWriteToTheOwner(t *testing.T) {
+	secStore := &DBase{Store: kvlite.MemStore()}
+	prev := AuthDB
+	AuthDB = func() Database { return secStore }
+	defer func() { AuthDB = prev }()
+	var held []string
+	sess := &ToolSession{Username: "alice", ApproveWrite: func(w OutboundWrite) string {
+		held = append(held, w.Method+" "+w.Host)
+		return "NOT SENT: held for the test"
+	}}
+	out, err := new(FetchURLTool).runImpl(map[string]any{"url": "https://upload.example/bucket/file", "method": "put", "body": "payload"}, sess)
+	if err != nil || out != "NOT SENT: held for the test" || len(held) != 1 || held[0] != "PUT upload.example" {
+		t.Fatalf("out %q err %v held %v", out, err, held)
+	}
+}
