@@ -126,7 +126,7 @@ func TestTemplatesAreBrowsedByCategory(t *testing.T) {
 	}
 	for need, want := range map[string]string{
 		"web.search":        "brave-search,google-search,searxng-search,serper-search,tavily-search",
-		"speech.synthesize": "elevenlabs-speech,openai-compatible-speech",
+		"speech.synthesize": "elevenlabs-speech,openai-compatible-speech,qwen3-tts-speech",
 		"speech.transcribe": "openai-compatible-transcription,openai-transcription",
 		"mail.send":         "mailgun-mail,postmark-mail,resend-mail",
 		"decide.choice":     "vllm-system-one",

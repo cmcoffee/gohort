@@ -1,0 +1,124 @@
+{
+  "id": "qwen3-tts-speech",
+  "title": "Qwen3-TTS (speech)",
+  "description": "Qwen3-TTS on a server that speaks OpenAI's speech API, on this machine or your network, as gohort's voice. Such a server lists its voices at /voices rather than /audio/voices, and this template reads them there, for the Voice field's choices and for the check that a voice in use is still offered.",
+  "category": "Speech",
+  "setup_notes": "Start the Qwen3-TTS server, then give its address here, usually ending in /v1. The connector takes no key. Model and Default voice each have a List of what the server offers: a CustomVoice model names a fixed set of voices (ryan, serena, vivian and others). Always name a voice: a request with none can stop such a server. Choose it under Capabilities > Speech (TTS); Test there speaks a short sentence.",
+  "questions": [
+    {
+      "name": "name",
+      "label": "Connector name",
+      "help": "Lowercase letters, digits, dashes and underscores; the speech settings list it by this name.",
+      "default": "qwen3-tts"
+    }
+  ],
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "connector",
+        "name": "{{name}}",
+        "recipe": {
+          "name": "{{name}}",
+          "kind": "service",
+          "template": "qwen3-tts-speech",
+          "desc": "Speech on a Qwen3-TTS server",
+          "spec": {
+            "config": [
+              {
+                "name": "base_url",
+                "label": "Server address",
+                "help": "The address its /audio/speech is under, usually ending in /v1: http://localhost:8090/v1, say.",
+                "type": "url",
+                "default": "http://localhost:8090/v1",
+                "required": true
+              },
+              {
+                "name": "model",
+                "label": "Model",
+                "help": "The Qwen3-TTS model the server runs. List shows the models it offers (its /models).",
+                "default": "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+                "options_from": "models"
+              },
+              {
+                "name": "voice",
+                "label": "Default voice",
+                "help": "Used when the speech settings name none: one of the model's voices, ryan say. The speech settings' Voice overrides it. List shows the voices the server's model offers.",
+                "default": "ryan",
+                "options_from": "voices",
+                "required": true
+              }
+            ],
+            "provider": {
+              "transport": "http",
+              "base_url": "{config.base_url}",
+              "auth": {
+                "none": true
+              },
+              "limits": {
+                "max_bytes": 33554432
+              },
+              "operations": {
+                "speak": {
+                  "method": "POST",
+                  "path": "/audio/speech",
+                  "body": {
+                    "input": "{text}",
+                    "model": "{model}",
+                    "voice": "{voice}",
+                    "response_format": "mp3"
+                  },
+                  "read": "file"
+                },
+                "voices": {
+                  "path": "/voices"
+                },
+                "models": {
+                  "path": "/models"
+                }
+              },
+              "health": {
+                "call": "voices",
+                "expect": "voices",
+                "every_mins": 60
+              }
+            },
+            "provides": [
+              {
+                "capability": "speech.synthesize",
+                "steps": [
+                  {
+                    "call": "speak"
+                  }
+                ],
+                "output": {
+                  "audio": {
+                    "from": "body"
+                  }
+                },
+                "defaults": {
+                  "model": "{config.model}",
+                  "voice": "{config.voice}"
+                }
+              },
+              {
+                "capability": "speech.voices",
+                "steps": [
+                  {
+                    "call": "voices"
+                  }
+                ],
+                "output": {
+                  "voices": {
+                    "path": "voices",
+                    "as": "json"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

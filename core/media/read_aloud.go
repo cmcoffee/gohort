@@ -29,6 +29,7 @@
 package media
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -112,7 +113,24 @@ type readAloudJob struct {
 	// closed says how an open read came to close, for the log: a stream
 	// that sent all it had may still have been closed before the reply was.
 	closed string
+	// whole is a read on a server whose audio does not join into one
+	// stream (WAV): it takes the reply's text as it is written, in
+	// wholeText, and speaks it in one piece once the read closes, into
+	// first. A listener waits for it. Read in pieces as it came, it said
+	// only what had arrived when it started, and the rest was dropped.
+	whole     bool
+	wholeText string
 }
+
+// readAloudWholeWait bounds how long a listener waits for a whole read to be
+// spoken, after the read has closed.
+var readAloudWholeWait = 3 * time.Minute
+
+// readAloudUnjoined remembers the speech servers (by provider) that answered
+// in a format that does not join into one stream, so a read opened early on
+// one waits for the whole reply instead of first making a clip it throws
+// away.
+var readAloudUnjoined sync.Map
 
 // ReadAloudVoice, when set, names the voice of the agent whose reply is read:
 // orchestrate installs it, since this package knows nothing of agents. It is
@@ -198,16 +216,29 @@ func startReadAloud(w http.ResponseWriter, r *http.Request, user string) {
 			user, utf8.RuneCountInString(text), req.Seen, readAloudClient(r.UserAgent()))
 	}
 	pieces := readAloudPieces(text)
-	first, ext, err := SpeakIn(r.Context(), pieces[0], voice)
 	open := req.Open
-	if err == nil && ext != ".mp3" && (len(pieces) > 1 || open) {
+	provider := GetSpeechConfig().Provider
+	_, unjoined := readAloudUnjoined.Load(provider)
+	var first []byte
+	var ext string
+	var err error
+	whole := open && unjoined
+	if !whole {
+		first, ext, err = SpeakIn(r.Context(), pieces[0], voice)
+		if err == nil && ext != ".mp3" {
+			readAloudUnjoined.Store(provider, true)
+		}
+	}
+	if err == nil && !whole && ext != ".mp3" && (len(pieces) > 1 || open) {
 		// Only mp3 pieces join into one stream. A server that answers in
-		// another format is asked for the whole reply in one piece instead,
-		// and an open read takes nothing more: what it has is what plays.
-		if len(pieces) > 1 {
+		// another format speaks the whole reply in one piece instead: a
+		// finished reply at once, one still being written once it is done.
+		if open {
+			whole, first = true, nil
+		} else {
 			first, ext, err = SpeakIn(r.Context(), text, voice)
 		}
-		pieces, open = pieces[:1], false
+		pieces = pieces[:1]
 	}
 	if err == nil && (len(pieces) > 1 || open) {
 		// Its length frame gives the first piece's length, which WebKit
@@ -243,6 +274,10 @@ func startReadAloud(w http.ResponseWriter, r *http.Request, user string) {
 	job := &readAloudJob{user: user, first: first, firstType: SpeechMIME(ext),
 		rest: pieces[1:], voice: voice, expires: now.Add(readAloudTTL),
 		open: open, chars: utf8.RuneCountInString(text)}
+	if whole {
+		job.whole, job.wholeText, job.rest = true, text, nil
+		nfo.Debug("[speech] read aloud for %s: the speech server answers audio that does not join into a stream, so the reply is spoken whole once it is written", user)
+	}
 	job.cond = sync.NewCond(&job.mu)
 	if open {
 		job.idle = time.AfterFunc(readAloudOpenIdle, job.close)
@@ -266,6 +301,10 @@ func streamReadAloud(w http.ResponseWriter, r *http.Request, user, key string) {
 	// to learn.
 	if !ok || job.user != user {
 		http.NotFound(w, r)
+		return
+	}
+	if !job.waitWhole(r.Context()) {
+		http.Error(w, "the reply could not be spoken", http.StatusBadGateway)
 		return
 	}
 	w.Header().Set("Content-Type", job.firstType)
@@ -302,6 +341,20 @@ func streamReadAloud(w http.ResponseWriter, r *http.Request, user, key string) {
 			nfo.Debug("%s", line)
 		}
 	}()
+	// Audio that is whole already (one piece, nothing more coming) goes out
+	// as a file, with its length and the ranges a player asks for. WebKit
+	// opens audio with "Range: bytes=0-1" and, given a stream with no
+	// length, plays an mp3 but refuses WAV ("the operation is not
+	// supported"): a server that answers WAV (Qwen3-TTS) is spoken as one
+	// piece, so this is every one of its reads.
+	job.mu.Lock()
+	whole := len(job.rest) == 0 && !job.open
+	job.mu.Unlock()
+	if whole && skip == 0 {
+		http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(job.first))
+		sent, sentBytes = 1, len(job.first)
+		return
+	}
 	first := job.first
 	if skip > 0 {
 		first, skip = mp3After(first, skip)
@@ -390,7 +443,7 @@ func (j *readAloudJob) listen() {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	j.listeners++
-	if j.making || j.failed || (len(j.made) >= len(j.rest) && !j.open) {
+	if j.whole || j.making || j.failed || (len(j.made) >= len(j.rest) && !j.open) {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -563,7 +616,13 @@ func (j *readAloudJob) add(text string, done bool, why string) bool {
 			j.closed = fmt.Sprintf("it reached %d chars", readAloudMaxChars)
 		}
 		j.chars += utf8.RuneCountInString(text)
+		if j.whole {
+			j.wholeText = strings.TrimSpace(j.wholeText + " " + text)
+		}
 		for _, piece := range readAloudPiecesFrom(text, len(j.rest)+1) {
+			if j.whole {
+				break
+			}
 			last := len(j.rest) - 1
 			if last >= j.next && utf8.RuneCountInString(j.rest[last])+1+utf8.RuneCountInString(piece) <= readAloudLimit(last+1) {
 				j.rest[last] += " " + piece
@@ -577,11 +636,69 @@ func (j *readAloudJob) add(text string, done bool, why string) bool {
 		if j.idle != nil {
 			j.idle.Stop()
 		}
+		j.speakWholeLocked()
 	} else if j.idle != nil {
 		j.idle.Reset(readAloudOpenIdle)
 	}
 	j.cond.Broadcast()
 	return j.open
+}
+
+// speakWholeLocked starts speaking a whole read's text, once it has closed.
+// Called with j.mu held.
+func (j *readAloudJob) speakWholeLocked() {
+	if !j.whole || j.open || j.first != nil || j.failed || j.making {
+		return
+	}
+	j.making = true
+	text, voice := j.wholeText, j.voice
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), readAloudWholeWait)
+		defer cancel()
+		audio, ext, err := SpeakIn(ctx, text, voice)
+		if err == nil && ext == ".mp3" {
+			// The server answers mp3 now (its address was changed): the next
+			// read streams again.
+			readAloudUnjoined.Delete(GetSpeechConfig().Provider)
+		}
+		j.mu.Lock()
+		defer j.mu.Unlock()
+		j.making = false
+		if err != nil {
+			nfo.Log("[speech] read aloud for %s failed: %v", j.user, err)
+			j.failed = true
+		} else {
+			j.first, j.firstType = audio, SpeechMIME(ext)
+		}
+		j.cond.Broadcast()
+	}()
+}
+
+// waitWhole waits for a whole read to be spoken (at once for any other), and
+// reports whether there is audio to play.
+func (j *readAloudJob) waitWhole(ctx context.Context) bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if !j.whole {
+		return true
+	}
+	stop := context.AfterFunc(ctx, func() {
+		j.mu.Lock()
+		j.cond.Broadcast()
+		j.mu.Unlock()
+	})
+	defer stop()
+	timer := time.AfterFunc(readAloudOpenIdle+readAloudWholeWait, func() {
+		j.mu.Lock()
+		j.cond.Broadcast()
+		j.mu.Unlock()
+	})
+	defer timer.Stop()
+	deadline := readAloudNow().Add(readAloudOpenIdle + readAloudWholeWait)
+	for j.first == nil && !j.failed && ctx.Err() == nil && readAloudNow().Before(deadline) {
+		j.cond.Wait()
+	}
+	return j.first != nil
 }
 
 // lastWholeSentence is text up to the end of its last finished sentence, or
@@ -601,6 +718,7 @@ func (j *readAloudJob) close() {
 		j.closed = fmt.Sprintf("nothing was added for %s", readAloudOpenIdle)
 	}
 	j.open = false
+	j.speakWholeLocked()
 	j.cond.Broadcast()
 	j.mu.Unlock()
 }
@@ -633,7 +751,9 @@ func servePreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	voice := strings.TrimSpace(req.Voice)
-	audio, ext, err := SpeakIn(r.Context(), PreviewSentence, voice)
+	// Exactly the voice asked for: a preview is heard, or fails, as
+	// itself, never in a fallback voice that would pass for it.
+	audio, ext, err := speakExactly(r.Context(), PreviewSentence, voice)
 	if err != nil {
 		result["error"] = err.Error()
 		reply()

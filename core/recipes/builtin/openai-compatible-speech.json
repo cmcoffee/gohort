@@ -1,9 +1,9 @@
 {
   "id": "openai-compatible-speech",
-  "title": "Kokoro / OpenAI-compatible (speech)",
-  "description": "A text-to-speech model on any server that speaks OpenAI's speech API (Kokoro-FastAPI, openedai-speech, Speaches), on this machine or your network, as gohort's voice, with the server's voice list for the Voice field: the request and the reply are data you can test and fix from Admin > Connectors.",
+  "title": "Kokoro / Chatterbox / OpenAI-compatible (speech)",
+  "description": "A text-to-speech model on any server that speaks OpenAI's speech API (Kokoro-FastAPI, Chatterbox TTS API, openedai-speech, Speaches), on this machine or your network, as gohort's voice, with the server's voice list for the Voice field: the request and the reply are data you can test and fix from Admin > Connectors.",
   "category": "Speech",
-  "setup_notes": "Start the server (Kokoro-FastAPI: docker run -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu). The connector takes no key. gohort provides one, named local-speech and listed as Local speech server; another, for a second server, is added from here. Choose it under Capabilities > Speech (TTS) and give the server's address and the model there; Test there speaks a short sentence, and its voices are offered to choose from. A server with no voice list (/audio/voices) fails that part of the Test: remove the speech.voices entry from its spec, and type the voice. A server that takes a key: declare a secret setting sent as bearer in its spec's config, name it in auth in place of none, and give the key under the choice.",
+  "setup_notes": "Start the server (Kokoro-FastAPI: docker run -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu; Chatterbox: the chatterbox-tts-api project's docker compose, then its address and port from its own .env). The connector takes no key. Model and Default voice each have a List of what the server offers; a server with no /models list leaves the model typed. Moving from one server to another, a voice or model the new one does not offer is listed under Admin > Services > Names no longer offered, to change in every place it is used; until then speech falls back to the default voice rather than to text. gohort provides one, named local-speech and listed as Local speech server; another, for a second server, is added from here. Choose it under Capabilities > Speech (TTS) and give the server's address and the model there; Test there speaks a short sentence, and its voices are offered to choose from. A server with no voice list (/audio/voices) fails that part of the Test: remove the speech.voices entry from its spec, and type the voice. A Qwen3-TTS server lists its voices at /voices instead: add it from its own template, Qwen3-TTS (speech). A server that takes a key: declare a secret setting sent as bearer in its spec's config, name it in auth in place of none, and give the key under the choice.",
   "questions": [
     {
       "name": "name",
@@ -36,14 +36,16 @@
               {
                 "name": "model",
                 "label": "Model",
-                "help": "The model the server speaks with: Kokoro-FastAPI takes kokoro.",
-                "default": "kokoro"
+                "help": "The model the server speaks with: Kokoro-FastAPI takes kokoro. List shows the models the server offers (its /models).",
+                "default": "kokoro",
+                "options_from": "models"
               },
               {
                 "name": "voice",
                 "label": "Default voice",
-                "help": "Used when the speech settings name none: Kokoro's af_heart, say. The speech settings' Voice overrides it.",
-                "default": "af_heart"
+                "help": "Used when the speech settings name none: Kokoro's af_heart, say. The speech settings' Voice overrides it. List shows the voices the server offers.",
+                "default": "af_heart",
+                "options_from": "voices"
               }
             ],
             "provider": {
@@ -69,6 +71,9 @@
                 },
                 "voices": {
                   "path": "/audio/voices"
+                },
+                "models": {
+                  "path": "/models"
                 }
               },
               "health": {

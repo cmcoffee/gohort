@@ -51,7 +51,7 @@ var adminLayout = []struct {
 	{"Services", []string{
 		"System Hooks", "Keystore", "Embeddings", "System One", "Audio Transcription (STT)", "Speech (TTS)", "Media Generation",
 		"Web Search", "Page Rendering (Browser)", "Mail (SMTP)", "Research Sources",
-		"Connectors", "Templates",
+		"Connectors", "Names no longer offered", "Templates",
 	}},
 	{"Integrations", []string{
 		"API Credentials", "User-owned credentials", "File stores",
@@ -432,6 +432,7 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 		{"credentials", a.credentialsSections},
 		{"governance", a.governanceSections},
 		{"extensions", a.extensionsSections},
+		{"offered-choices", func() []ui.Section { return []ui.Section{offeredChoicesSection()} }},
 		{"research-sources", a.researchSourcesSections},
 		{"keystore", a.keystoreSections},
 		{"tools", a.toolsSections},
@@ -446,7 +447,7 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 	wideSections := map[string]bool{
 		"System Status": true, "Users": true, "LLM Routing": true, "Activity Log": true,
 		"Cost History (Last 30 Days)": true, "Cost by source": true, "Scheduled Tasks": true,
-		"API Credentials": true, "MCP Servers": true, "Connectors": true, "Other integrations": true, "Research Sources": true,
+		"API Credentials": true, "MCP Servers": true, "Connectors": true, "Names no longer offered": true, "Other integrations": true, "Research Sources": true,
 		"Keystore": true, "Drafted tools waiting for review": true, "Users' tools": true, "System Hooks": true,
 		"Requests to share": true, "Shared tools": true,
 		"Agent-Scoped Tools": true, "Orphaned Tools": true,

@@ -216,6 +216,12 @@ func StaleSettings(db Database) []StaleSetting {
 	}
 	add("Page Rendering (Browser)", StaleWhy(db, str(BrowseTable, "source")))
 	add("Mail (SMTP)", StaleWhy(db, str(MailTable, "provider")))
+	// A name inside a connection that is still here: a voice or a model its
+	// provider no longer offers (offered.go). From the last check, never a
+	// call to a provider from here; an old check starts a new one.
+	for _, sc := range CachedStaleChoices() {
+		add(StaleChoicesPage, fmt.Sprintf("%s is %q, which it no longer offers: used by %s", sc.Label, sc.Value, strings.Join(sc.Uses, "; ")))
+	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Page < out[j].Page })
 	return out
 }

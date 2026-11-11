@@ -107,6 +107,7 @@ var (
 	spokenUnitAfter = regexp.MustCompile(`\b(\d+(?:[.,]\d+)?)([ \t]?)(km/h|km|mi|ft|lbs?|oz|kg|mph|kph|mins?|hrs?|secs?)\b\.?|\b(\d+(?:\.\d+)?)[ \t]?(°[FC]?)`)
 	spokenLatin     = regexp.MustCompile(`\b([eE])\.[gG]\.|\b([iI])\.[eE]\.|\betc\.|\bvs\b\.?|\bapprox\b\.?`)
 	spokenWith      = regexp.MustCompile(`(^|[\s(])[wW]/(o\b)?[ \t]*`)
+	spokenDotted    = regexp.MustCompile(`\d+(?:\.\d+)+`)
 )
 
 var spokenRules = []spokenRule{
@@ -119,6 +120,8 @@ var spokenRules = []spokenRule{
 	{spokenMonthWord, sayMonth},
 	{spokenRange, func(s string, m []int) (string, bool) { return s[m[2]:m[3]] + " to " + s[m[4]:m[5]], true }},
 	{spokenMonthDay, sayMonthDay},
+	// Last, so a unit rule has already seen the number whole ("1.5 hrs").
+	{spokenDotted, sayDotted},
 }
 
 func sayLatin(s string, m []int) (string, bool) {
@@ -292,5 +295,26 @@ func wordBefore(s string, i int) (string, bool) {
 
 func firstRune(s string) rune {
 	r, _ := utf8.DecodeRuneInString(s)
+	return r
+}
+
+// sayDotted reads the dots in a number. One dot is a decimal point, said with
+// the digits after it one by one ("3.14" as 3 point 1 4, never "fourteen").
+// Two or more make a version, an address or a date, each part said whole
+// ("0.9.282" as 0 dot 9 dot 282). Money is left as written: a voice already
+// says "$3.50" as dollars and cents.
+func sayDotted(s string, m []int) (string, bool) {
+	if m[0] > 0 && strings.ContainsRune("$€£¥.", lastRune(s[:m[0]])) {
+		return "", false
+	}
+	parts := strings.Split(s[m[0]:m[1]], ".")
+	if len(parts) > 2 {
+		return strings.Join(parts, " dot "), true
+	}
+	return parts[0] + " point " + strings.Join(strings.Split(parts[1], ""), " "), true
+}
+
+func lastRune(s string) rune {
+	r, _ := utf8.DecodeLastRuneInString(s)
 	return r
 }

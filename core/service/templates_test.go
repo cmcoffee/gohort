@@ -974,3 +974,80 @@ func TestTheGeminiTemplatesListTheirModels(t *testing.T) {
 		t.Errorf("no match keeps every value: %v", got)
 	}
 }
+
+// A Qwen3-TTS server lists its voices at /voices and has no /audio/voices.
+// Its template reads them there: the voice List, the Speech page's voices
+// (speech.voices), the health check, and a speak in its default voice,
+// which is one of them. Its models come from /models.
+func TestTheQwenSpeechTemplateReadsItsOwnVoiceList(t *testing.T) {
+	world(t)
+	var spoke []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			w.Write([]byte(`{"object":"list","data":[{"id":"Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice","object":"model","available_voices":["serena","ryan","aiden"]}]}`))
+		case "/v1/voices":
+			w.Write([]byte(`{"voices":["serena","ryan","aiden"],"languages":["auto","english"]}`))
+		case "/v1/audio/speech":
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			spoke = append(spoke, body)
+			w.Write(ttsClip)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	install(t, "qwen", templateSpec(t, "qwen3-tts-speech", srv.URL+"/v1"))
+	if v, err := ListOptions(context.Background(), "qwen", "voice"); err != nil || strings.Join(v, ",") != "serena,ryan,aiden" {
+		t.Errorf("the voice List: %v %v", v, err)
+	}
+	if v, err := ListOptions(context.Background(), "qwen", "model"); err != nil || len(v) != 1 || v[0] != "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice" {
+		t.Errorf("the model List: %v %v", v, err)
+	}
+	if v, err := voicesVia(context.Background(), "qwen"); err != nil || len(v) != 3 || v[1].ID != "ryan" {
+		t.Errorf("the speech voices: %+v %v", v, err)
+	}
+	if h, err := CheckHealth(context.Background(), "qwen"); err != nil || !h.OK {
+		t.Errorf("health: %+v %v", h, err)
+	}
+	if _, _, err := speakVia(context.Background(), "qwen", "Hi.", ""); err != nil || len(spoke) != 1 || spoke[0]["voice"] != "ryan" {
+		t.Fatalf("speak in its default voice: %v %v", err, spoke)
+	}
+}
+
+// options_path reads a list from inside a reply, for a server that keeps its
+// list in another (each model's available_voices inside /models).
+func TestOptionsPathReadsAListInsideAReply(t *testing.T) {
+	world(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":[{"id":"m","available_voices":["serena","ryan"]}]}`))
+	}))
+	defer srv.Close()
+	spec := templateSpec(t, "qwen3-tts-speech", srv.URL+"/v1")
+	for _, f := range spec["config"].([]any) {
+		if m := f.(map[string]any); m["name"] == "voice" {
+			m["options_from"], m["options_path"] = "models", "data.0.available_voices"
+		}
+	}
+	install(t, "nested", spec)
+	if v, err := ListOptions(context.Background(), "nested", "voice"); err != nil || strings.Join(v, ",") != "serena,ryan" {
+		t.Errorf("the list at options_path: %v %v", v, err)
+	}
+}
+
+// options_path is a spec path, checked when the spec is: it needs the
+// options_from it reads, and a path in the grammar.
+func TestOptionsPathIsChecked(t *testing.T) {
+	for _, f := range []ConfigField{
+		{Name: "voice", OptionsPath: "data.0.available_voices"},
+		{Name: "voice", OptionsFrom: "models", OptionsPath: "data..voices"},
+	} {
+		if err := checkField("config", f, true); err == nil {
+			t.Errorf("accepted %+v", f)
+		}
+	}
+	if err := checkField("config", ConfigField{Name: "voice", OptionsFrom: "models", OptionsPath: "data.0.available_voices"}, true); err != nil {
+		t.Errorf("refused a good one: %v", err)
+	}
+}

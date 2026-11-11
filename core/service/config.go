@@ -30,6 +30,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/apijob"
 	"github.com/cmcoffee/gohort/core/keystore"
 )
 
@@ -60,6 +61,12 @@ type ConfigField struct {
 	// ("models/gemini-2.5-flash-image"), offers only the ones this
 	// connection can use, as the setting takes them.
 	OptionsMatch string `json:"options_match,omitempty"`
+	// OptionsPath is where in options_from's reply the list is, as a spec's
+	// paths are written ("data.0.available_voices"): for a server that lists
+	// one thing inside another (Qwen3-TTS names its voices inside its
+	// /models). Blank finds the list on its own (the reply itself, or under
+	// data, models, voices, items or results).
+	OptionsPath string `json:"options_path,omitempty"`
 	// Pattern is a regular expression a text value must match.
 	Pattern string `json:"pattern,omitempty"`
 	// Rows is how tall a longtext box is.
@@ -305,6 +312,14 @@ func checkField(where string, f ConfigField, provider bool) error {
 	if f.Pattern != "" {
 		if _, err := regexp.Compile(f.Pattern); err != nil {
 			return fmt.Errorf("%s %s: pattern: %v", where, f.Name, err)
+		}
+	}
+	if f.OptionsPath != "" {
+		if f.OptionsFrom == "" {
+			return fmt.Errorf("%s %s: options_path says where options_from's list is, and it has none", where, f.Name)
+		}
+		if err := apijob.ValidPath(f.OptionsPath); err != nil {
+			return fmt.Errorf("%s %s: options_path: %v", where, f.Name, err)
 		}
 	}
 	if f.OptionsMatch != "" {
@@ -1095,7 +1110,17 @@ func ListOptions(ctx context.Context, name, key string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return matchOptions(optionValues(r.node), st.Field.OptionsMatch), nil
+	node := r.node
+	if p := strings.TrimSpace(st.Field.OptionsPath); p != "" {
+		raw := apijob.LookupJSON(r.node, p, "")
+		if raw == "" {
+			return nil, fmt.Errorf("%s's reply has nothing at %s", st.Field.OptionsFrom, p)
+		}
+		if err := json.Unmarshal([]byte(raw), &node); err != nil {
+			return nil, fmt.Errorf("%s's reply at %s is not a list: %v", st.Field.OptionsFrom, p, err)
+		}
+	}
+	return matchOptions(optionValues(node), st.Field.OptionsMatch), nil
 }
 
 // matchOptions keeps the values match matches, each as its first group when

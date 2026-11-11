@@ -225,6 +225,19 @@ func TestReadAloudWithoutMP3IsOnePiece(t *testing.T) {
 	if w.Header().Get("Content-Type") != "audio/wav" || len(asked) != 2 || asked[0] != "One." || asked[1] != whole {
 		t.Errorf("one whole clip: type=%q asked=%q", w.Header().Get("Content-Type"), asked)
 	}
+	// Whole, it goes out as a file: its length, and the range WebKit opens
+	// audio with ("bytes=0-1"), without which it refuses a WAV it was
+	// streamed with no length.
+	if w.Header().Get("Content-Length") == "" || w.Header().Get("Accept-Ranges") != "bytes" {
+		t.Errorf("a whole clip should go out as a file: %v", w.Header())
+	}
+	r := httptest.NewRequest("GET", start.URL, nil)
+	r.Header.Set("Range", "bytes=0-1")
+	rw := httptest.NewRecorder()
+	ServeReadAloud(rw, r, "alice")
+	if rw.Code != http.StatusPartialContent || rw.Body.String() != "RI" || !strings.HasPrefix(rw.Header().Get("Content-Range"), "bytes 0-1/") {
+		t.Errorf("the first two bytes, as WebKit asks: %d %q %v", rw.Code, rw.Body.String(), rw.Header())
+	}
 }
 
 func TestReadAloudPieces(t *testing.T) {
@@ -1226,5 +1239,43 @@ func TestAnOpenReadIsBounded(t *testing.T) {
 	}
 	if got := strings.Join(j.rest, " "); got != "Short one." {
 		t.Errorf("the overflow should be cut at a sentence: %q", got)
+	}
+}
+
+// A reply read while it is still being written, on a server whose audio does
+// not join into one stream (WAV): the read takes the text as it comes and
+// speaks it whole once the reply is done, so its end is heard. Read in
+// pieces, it said only what had arrived when it started, and the rest was
+// dropped ("chars arrived after the read closed"). Once the server is known
+// to answer WAV, a read opened early makes no clip it throws away.
+func TestAnOpenReadOnAWAVServerSpeaksTheWholeReply(t *testing.T) {
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body)
+		asked = append(asked, body["input"])
+		w.Write(append([]byte("RIFF\x24\x00\x00\x00WAVEfmt "), make([]byte, 32)...))
+	}))
+	defer srv.Close()
+	prev := GetSpeechConfig()
+	SetSpeechConfig(SpeechConfig{Provider: "peer:wav-den", Endpoint: srv.URL, Enabled: true})
+	t.Cleanup(func() { SetSpeechConfig(prev); readAloudUnjoined.Delete("peer:wav-den") })
+
+	read := func() (int, string, string) {
+		var start struct{ URL string }
+		json.Unmarshal(readAloudDo("POST", ReadAloudPath, "alice", `{"text":"The first sentence.","open":true}`).Body.Bytes(), &start)
+		readAloudDo("POST", start.URL, "alice", `{"text":"The second sentence."}`)
+		readAloudDo("POST", start.URL, "alice", `{"text":"And the end of it.","done":true}`)
+		w := readAloudDo("GET", start.URL, "alice", "")
+		return w.Code, w.Header().Get("Content-Type"), w.Header().Get("Content-Length")
+	}
+	want := "The first sentence. The second sentence. And the end of it."
+	code, ctype, length := read()
+	if code != 200 || ctype != "audio/wav" || length == "" || len(asked) == 0 || asked[len(asked)-1] != want {
+		t.Fatalf("the whole reply, spoken once it was done: %d %q %q, asked %q", code, ctype, length, asked)
+	}
+	asked = nil
+	if code, _, _ := read(); code != 200 || len(asked) != 1 || asked[0] != want {
+		t.Errorf("a server known to answer WAV is asked once, for the whole reply: %d, asked %q", code, asked)
 	}
 }

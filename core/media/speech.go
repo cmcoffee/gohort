@@ -133,17 +133,107 @@ const speechMaxBytes = 32 << 20
 // Returns an error when speech is disabled or unreachable; callers treat that
 // as "send the text without a voice", never as a failed reply.
 func Speak(ctx context.Context, text string) ([]byte, string, error) {
-	return SpeakWith(ctx, GetSpeechConfig(), text)
+	return SpeakIn(ctx, text, "")
 }
 
 // SpeakIn is Speak in a given voice, for an agent with a voice of its own.
 // An empty voice is the configured one.
+//
+// A voice the server refuses falls back rather than losing the speech: the
+// agent's voice, then the configured one, then the connector's own default,
+// then the first voice the server lists. A voice is a name one server offers
+// and the next does not (Kokoro's af_heart means nothing to Chatterbox or
+// Qwen3-TTS), so swapping the server would otherwise turn every agent with a
+// voice of its own back into text with nothing said. Each fallback is
+// logged, and the names no longer offered are listed for the owner to map
+// (service.StaleChoices).
+//
+// Never a request with no voice at all: a Qwen3-TTS server sent one hung,
+// dropped the connection and restarted. The last resort is a voice the
+// server itself names, and a server that names none is not guessed at.
+//
+// The admin's Preview calls SpeakWith, and an agent's voice preview
+// speakExactly, neither of which falls back: a voice under test is heard,
+// or fails, as itself.
 func SpeakIn(ctx context.Context, text, voice string) ([]byte, string, error) {
+	cfg := GetSpeechConfig()
+	wanted := firstNonBlank(voice, cfg.Voice)
+	var firstErr error
+	tried := map[string]bool{}
+	try := func(v string) ([]byte, string, bool) {
+		if tried[v] {
+			return nil, "", false
+		}
+		tried[v] = true
+		c := cfg
+		c.Voice = v
+		audio, ext, err := SpeakWith(ctx, c, text)
+		if err == nil {
+			if firstErr != nil {
+				nfo.Log("[speech] the voice %q was refused (%v): spoke in %s instead", wanted, firstErr, voiceLabel(v))
+			}
+			return audio, ext, true
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+		return nil, "", false
+	}
+	// The voices named, the agent's then the configured one, and then blank:
+	// the connector's own default, which it names in its request, so still
+	// a voice.
+	var order []string
+	for _, v := range []string{voice, cfg.Voice} {
+		if v = strings.TrimSpace(v); v != "" {
+			order = append(order, v)
+		}
+	}
+	for _, v := range append(order, "") {
+		if audio, ext, ok := try(v); ok {
+			return audio, ext, nil
+		}
+		// Off, unset, or the caller gave up: no other voice changes that.
+		if !cfg.Enabled || ctx.Err() != nil {
+			return nil, "", firstErr
+		}
+	}
+	for _, v := range SpeechVoices(ctx, cfg) {
+		if id := strings.TrimSpace(v.ID); id != "" && !tried[id] {
+			if audio, ext, ok := try(id); ok {
+				return audio, ext, nil
+			}
+			break // one voice it names; a second refusal is not the voice
+		}
+	}
+	return nil, "", firstErr
+}
+
+// firstNonBlank is the first of vs with something in it.
+func firstNonBlank(vs ...string) string {
+	for _, v := range vs {
+		if v = strings.TrimSpace(v); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// speakExactly is SpeakIn with no fallback, for a preview: the voice given
+// (the configured one when blank), heard or failing as itself.
+func speakExactly(ctx context.Context, text, voice string) ([]byte, string, error) {
 	cfg := GetSpeechConfig()
 	if v := strings.TrimSpace(voice); v != "" {
 		cfg.Voice = v
 	}
 	return SpeakWith(ctx, cfg, text)
+}
+
+// voiceLabel names a voice for the log: the server's own default when blank.
+func voiceLabel(v string) string {
+	if v == "" {
+		return "the server's default voice"
+	}
+	return fmt.Sprintf("the voice %q", v)
 }
 
 // SpeakWith is Speak against an explicit config, for the admin Test button,

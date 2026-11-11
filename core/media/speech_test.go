@@ -3,6 +3,7 @@ package media
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -200,5 +201,65 @@ func TestSpeechThroughAConnector(t *testing.T) {
 	}
 	if v := SpeechVoices(context.Background(), cfg); len(v) != 1 || v[0].ID != "voice-voice" {
 		t.Errorf("voices: %+v", v)
+	}
+}
+
+// A voice the server refuses falls back rather than losing the speech: an
+// agent's voice, then the configured one, then the server's own default,
+// each logged. The admin's Preview (SpeakWith) does not: a voice under test
+// is heard, or fails, as itself.
+func TestARefusedVoiceFallsBackInsteadOfLosingTheSpeech(t *testing.T) {
+	prevSvc, prevCfg := SpeechService, GetSpeechConfig()
+	t.Cleanup(func() { SpeechService = prevSvc; SetSpeechConfig(prevCfg) })
+	var asked []string
+	offered := map[string]bool{"": true, "narrator": true}
+	SpeechService = func(ctx context.Context, connector, text, voice string) ([]byte, string, error) {
+		asked = append(asked, voice)
+		if !offered[voice] {
+			return nil, "", fmt.Errorf("unknown voice %q", voice)
+		}
+		return fakeMP3, ".mp3", nil
+	}
+	SetSpeechConfig(SpeechConfig{Enabled: true, Provider: "local-speech", Voice: "af_heart"})
+
+	if _, _, err := SpeakIn(context.Background(), "Hi.", "bm_george"); err != nil || strings.Join(asked, ",") != "bm_george,af_heart," {
+		t.Fatalf("both stale: err %v, asked %q", err, asked)
+	}
+	asked = nil
+	SetSpeechConfig(SpeechConfig{Enabled: true, Provider: "local-speech", Voice: "narrator"})
+	if _, _, err := SpeakIn(context.Background(), "Hi.", "bm_george"); err != nil || strings.Join(asked, ",") != "bm_george,narrator" {
+		t.Fatalf("the agent's stale, the deployment's good: err %v, asked %q", err, asked)
+	}
+	asked = nil
+	if _, _, err := Speak(context.Background(), "Hi."); err != nil || strings.Join(asked, ",") != "narrator" {
+		t.Fatalf("a good voice is asked once: err %v, asked %q", err, asked)
+	}
+	asked = nil
+	if _, _, err := SpeakWith(context.Background(), SpeechConfig{Enabled: true, Provider: "local-speech", Voice: "bm_george"}, "Hi."); err == nil || strings.Join(asked, ",") != "bm_george" {
+		t.Fatalf("Preview fell back: err %v, asked %q", err, asked)
+	}
+	// The connector's own default refused too (a Kokoro default left on a
+	// Qwen3-TTS server): the last try is the first voice the server names,
+	// never a request with no voice, which can stop such a server.
+	prevVoices := SpeechVoicesService
+	t.Cleanup(func() { SpeechVoicesService = prevVoices })
+	SpeechVoicesService = func(ctx context.Context, connector string) ([]Voice, error) {
+		return []Voice{{ID: "narrator"}, {ID: "storyteller"}}, nil
+	}
+	delete(offered, "")
+	asked = nil
+	SetSpeechConfig(SpeechConfig{Enabled: true, Provider: "local-speech", Voice: "af_heart"})
+	if _, _, err := SpeakIn(context.Background(), "Hi.", "bm_george"); err != nil || strings.Join(asked, ",") != "bm_george,af_heart,,narrator" {
+		t.Fatalf("the server's first voice is the last resort: err %v, asked %q", err, asked)
+	}
+	offered["narrator"] = false
+	asked = nil
+	if _, _, err := SpeakIn(context.Background(), "Hi.", "bm_george"); err == nil || strings.Join(asked, ",") != "bm_george,af_heart,,narrator" {
+		t.Fatalf("one listed voice is tried, not each in turn: err %v, asked %q", err, asked)
+	}
+	asked = nil
+	SetSpeechConfig(SpeechConfig{Enabled: false, Provider: "local-speech"})
+	if _, _, err := SpeakIn(context.Background(), "Hi.", "bm_george"); err == nil || len(asked) != 0 {
+		t.Fatalf("speech off should not try voice after voice: err %v, asked %q", err, asked)
 	}
 }

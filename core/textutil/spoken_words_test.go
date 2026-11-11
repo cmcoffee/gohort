@@ -50,11 +50,22 @@ func TestSpokenWords(t *testing.T) {
 		{"fort", "near Ft. Worth", "near Fort Worth"},
 		// Units.
 		{"units after a number", "about 5 km, or 3 mi, away", "about 5 kilometers, or 3 miles, away"},
-		{"one is singular", "1 mi and 1.5 hrs", "1 mile and 1.5 hours"},
+		{"one is singular", "1 mi and 1.5 hrs", "1 mile and 1 point 5 hours"},
 		{"speed", "going 65 mph", "going 65 miles per hour"},
 		{"temperature", "It is 72°F, 22°C.", "It is 72 degrees Fahrenheit, 22 degrees Celsius."},
 		{"minutes period mid-sentence", "in 10 min. or so", "in 10 minutes or so"},
 		{"a unit needs a number", "the ft of the hill", "the ft of the hill"},
+		// Dots in numbers.
+		{"a decimal is a point", "about 3.5 miles", "about 3 point 5 miles"},
+		{"a decimal unit", "it weighs 2.75 kg.", "it weighs 2 point 7 5 kilograms."},
+		{"digits after the point one by one", "pi is 3.14, or 3.05 rounded", "pi is 3 point 1 4, or 3 point 0 5 rounded"},
+		{"a name's number is a decimal too", "Qwen 3.5 is out.", "Qwen 3 point 5 is out."},
+		{"two dots are a version", "Version 0.9.282 shipped.", "Version 0 dot 9 dot 282 shipped."},
+		{"an address", "at 192.168.1.1 now", "at 192 dot 168 dot 1 dot 1 now"},
+		{"a sentence's period is not a dot", "It took 4.5. Then 2.", "It took 4 point 5. Then 2."},
+		{"money stays", "It costs $3.50, or £2.10.", "It costs $3.50, or £2.10."},
+		{"thousands with a decimal", "1,234.5 people", "1,234 point 5 people"},
+		{"a percent", "up 3.5%", "up 3 point 5%"},
 		// Latin and shorthand.
 		{"e.g. gets its pause", "Bring snacks, e.g. chips, salsa, etc.", "Bring snacks, for example, chips, salsa, et cetera."},
 		{"e.g. keeps a written comma", "things, e.g., chips", "things, for example, chips"},
