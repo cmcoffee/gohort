@@ -4,6 +4,8 @@
 package browser
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -242,10 +244,23 @@ func browsePageTotalBudget() time.Duration {
 	return 3 * HTTPRequestTimeout()
 }
 
-// fetch wraps fetchImpl in an outer-budget guard. On timeout, the
-// goroutine is allowed to leak (it'll complete eventually when rod
-// errors out or the process exits); the caller gets a clear error
-// immediately rather than waiting alongside a hung browser.
+// browsePageReadWait bounds reading a rendered page (default 5s). Reading
+// runs on the page's own thread, so a page whose scripts never let go of it
+// answers nothing at all, and without a bound the call waits until the
+// outer budget gives up on it.
+func browsePageReadWait() time.Duration {
+	return HTTPRequestTimeout() / 3
+}
+
+// errScriptsHeld is a page that loaded and then could not be read: its
+// scripts keep the renderer busy. Rendering it again with scripts off reads
+// what the server sent, which for most such pages is the whole article.
+var errScriptsHeld = errors.New("the page's scripts kept the browser busy, so it could not be read")
+
+// fetch wraps fetchImpl in an outer-budget guard. The render runs on a
+// context the budget ends, so a call stuck in the browser returns and its
+// page is closed, rather than leaving a tab spinning a core until the
+// process exits; the caller gets a clear error at the budget either way.
 //
 // It is also the local renderer's own guard. Chromium will render file://,
 // loopback and metadata URLs without complaint, and Fetch is exported for
@@ -262,6 +277,7 @@ func (t *BrowsePageTool) fetchPage(target string, maxChars int) (string, []textu
 		return "", nil, err
 	}
 	budget := browsePageTotalBudget()
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	type result struct {
 		text   string
 		images []textutil.PageImage
@@ -269,26 +285,34 @@ func (t *BrowsePageTool) fetchPage(target string, maxChars int) (string, []textu
 	}
 	ch := make(chan result, 1)
 	go func() {
-		text, images, err := t.fetchImpl(target, maxChars)
+		// Ended here, not by the caller, which may have gone at the budget.
+		defer cancel()
+		text, images, err := t.fetchImpl(ctx, target, maxChars)
 		if err == nil {
 			noteRenderedImages(target, images)
 		}
 		ch <- result{text: text, images: images, err: err}
 	}()
+	// The render sends before it cancels, so a finished one is ready on both:
+	// its result wins.
 	select {
 	case r := <-ch:
 		return r.text, r.images, r.err
-	case <-time.After(budget):
-		Log("[browse_page] outer budget %v exceeded for %s: Chromium likely wedged (page creation / CDP / idle wait); goroutine leaks until rod errors out", budget, target)
-		return "", nil, fmt.Errorf("browse_page timed out after %v on %s: Chromium appears wedged. Try fetch_url for static content, or wait and retry if this is transient. Persistent wedge → restart the gohort process.", budget, target)
+	case <-ctx.Done():
+		select {
+		case r := <-ch:
+			return r.text, r.images, r.err
+		default:
+		}
+		Log("[browse_page] outer budget %v exceeded for %s: the page is closed (page creation / CDP / navigation did not finish)", budget, target)
+		return "", nil, fmt.Errorf("browse_page timed out after %v on %s: the browser did not finish the page. Try fetch_url for static content, or wait and retry if this is transient. If every page times out, the gohort process needs a restart.", budget, target)
 	}
 }
 
-// fetchImpl is the real fetch — the outer fetch() bounds its overall
-// runtime via browsePageTotalBudget so rod hangs outside the inner
-// page.Timeout calls (page creation, CDP wedge, etc.) don't outlast
-// the call.
-func (t *BrowsePageTool) fetchImpl(target string, maxChars int) (string, []textutil.PageImage, error) {
+// fetchImpl is the real fetch, bounded by ctx (the outer budget). A page
+// that loads and then cannot be read, because its scripts keep the renderer
+// busy, is rendered once more with scripts off.
+func (t *BrowsePageTool) fetchImpl(ctx context.Context, target string, maxChars int) (string, []textutil.PageImage, error) {
 	parsed, err := url.Parse(target)
 	if err != nil {
 		return "", nil, fmt.Errorf("parsing url: %w", err)
@@ -303,56 +327,17 @@ func (t *BrowsePageTool) fetchImpl(target string, maxChars int) (string, []textu
 	b := t.browser
 	t.mu.Unlock()
 
-	// A throwaway context per call: one profile is shared by every user of
-	// this server, and a page visited for one must not see the cookies or
-	// storage another left behind.
-	inc, err := b.Incognito()
+	start := time.Now()
+	html, base, err := renderPage(ctx, b, target, true)
+	if errors.Is(err, errScriptsHeld) && ctx.Err() == nil {
+		Log("[browse_page] %s: %v after %s; reading it again with scripts off", target, err, time.Since(start).Round(time.Millisecond))
+		html, base, err = renderPage(ctx, b, target, false)
+	}
 	if err != nil {
-		return "", nil, fmt.Errorf("creating browser context: %w", err)
+		return "", nil, err
 	}
-	defer inc.Close()
-	page, err := inc.Page(proto.TargetCreateTarget{})
-	if err != nil {
-		return "", nil, fmt.Errorf("creating browser page: %w", err)
-	}
-	defer page.MustClose()
-
-	page.MustSetUserAgent(&proto.NetworkSetUserAgentOverride{
-		UserAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-	})
-
-	navErr := rod.Try(func() {
-		page.Timeout(browsePageNavTimeout()).MustNavigate(target)
-		// Wait for network to settle; ignore timeout — get whatever rendered so far.
-		_ = page.Timeout(browsePageIdleWait()).WaitIdle(500 * time.Millisecond)
-	})
-	if navErr != nil {
-		// rod.Try returns *TryError, whose .Error() formats with
-		// the full debug.Stack baked in — noisy in logs and useless
-		// to the LLM. Unwrap to the underlying panic value (a
-		// rod.NavigationError or similar) and report that cleanly.
-		msg := navErr.Error()
-		if te, ok := navErr.(*rod.TryError); ok {
-			if inner, isErr := te.Value.(error); isErr {
-				msg = inner.Error()
-			} else {
-				msg = fmt.Sprintf("%v", te.Value)
-			}
-		}
-		return "", nil, fmt.Errorf("navigation failed: %s", msg)
-	}
-
-	html, err := page.HTML()
-	if err != nil {
-		return "", nil, fmt.Errorf("getting rendered HTML: %w", err)
-	}
-	// The images, against the address the page ended up at: a redirect
-	// moves where a relative src points.
-	base := parsed
-	if info, ierr := page.Info(); ierr == nil && info != nil {
-		if u, perr := url.Parse(info.URL); perr == nil && u.Host != "" {
-			base = u
-		}
+	if base == nil {
+		base = parsed
 	}
 	images := textutil.PageImages(html, base, pageImageCap)
 
@@ -380,6 +365,77 @@ func (t *BrowsePageTool) fetchImpl(target string, maxChars int) (string, []textu
 	return strings.TrimSpace(text), images, nil
 }
 
+// renderPage loads target in a throwaway browser context and returns its
+// rendered HTML and the address it ended up at (nil when unknown). scripts
+// false renders with JavaScript off, which reads what the server sent.
+//
+// Its own context each time: one profile is shared by every user of this
+// server, and a page visited for one must not see the cookies or storage
+// another left behind. And a new one for the scripts-off try, because a
+// page of the same site in the same context can share the busy renderer.
+// Closing the context ends its renderer, busy or not.
+func renderPage(ctx context.Context, b *rod.Browser, target string, scripts bool) (string, *url.URL, error) {
+	inc, err := b.Incognito()
+	if err != nil {
+		return "", nil, fmt.Errorf("creating browser context: %w", err)
+	}
+	defer inc.Close()
+	opened, err := inc.Page(proto.TargetCreateTarget{})
+	if err != nil {
+		return "", nil, fmt.Errorf("creating browser page: %w", err)
+	}
+	page := opened.Context(ctx)
+
+	if err := page.SetUserAgent(&proto.NetworkSetUserAgentOverride{
+		UserAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+	}); err != nil {
+		return "", nil, fmt.Errorf("setting up the page: %w", err)
+	}
+	if !scripts {
+		if err := (proto.EmulationSetScriptExecutionDisabled{Value: true}).Call(page); err != nil {
+			return "", nil, fmt.Errorf("turning scripts off: %w", err)
+		}
+	}
+
+	navErr := rod.Try(func() {
+		page.Timeout(browsePageNavTimeout()).MustNavigate(target)
+		// Wait for network to settle; ignore timeout — get whatever rendered so far.
+		_ = page.Timeout(browsePageIdleWait()).WaitIdle(500 * time.Millisecond)
+	})
+	if navErr != nil {
+		// rod.Try returns *TryError, whose .Error() formats with
+		// the full debug.Stack baked in — noisy in logs and useless
+		// to the LLM. Unwrap to the underlying panic value (a
+		// rod.NavigationError or similar) and report that cleanly.
+		msg := navErr.Error()
+		if te, ok := navErr.(*rod.TryError); ok {
+			if inner, isErr := te.Value.(error); isErr {
+				msg = inner.Error()
+			} else {
+				msg = fmt.Sprintf("%v", te.Value)
+			}
+		}
+		return "", nil, fmt.Errorf("navigation failed: %s", msg)
+	}
+
+	html, err := page.Timeout(browsePageReadWait()).HTML()
+	if err != nil {
+		if scripts && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+			return "", nil, errScriptsHeld
+		}
+		return "", nil, fmt.Errorf("getting rendered HTML: %w", err)
+	}
+	// The address the page ended up at: a redirect moves where a relative
+	// image src points.
+	var base *url.URL
+	if info, ierr := page.Timeout(browsePageReadWait()).Info(); ierr == nil && info != nil {
+		if u, perr := url.Parse(info.URL); perr == nil && u.Host != "" {
+			base = u
+		}
+	}
+	return html, base, nil
+}
+
 // FetchPageImage renders pageURL in the headless browser and returns the
 // bytes of the page's representative image (og:image / twitter:image, else
 // the first <img>), fetched THROUGH the browser so referer-based hotlink
@@ -403,18 +459,21 @@ func (t *BrowsePageTool) fetchImage(pageURL string) ([]byte, error) {
 		data []byte
 		err  error
 	}
+	// Ended at the budget, so a call stuck in the browser returns and the
+	// context (and its renderer) is closed instead of left running.
+	ctx, cancel := context.WithTimeout(context.Background(), browsePageTotalBudget())
 	ch := make(chan result, 1)
 	go func() {
+		defer cancel()
 		var data []byte
 		var noImg bool
 		err := rod.Try(func() {
-			// A throwaway context, as fetchImpl's: the profile is shared by
+			// A throwaway context, as renderPage's: the profile is shared by
 			// every user, and a page opened for one must not carry the
-			// cookies another left behind.
+			// cookies another left behind. Closing it closes its page.
 			inc := b.MustIncognito()
 			defer inc.Close()
-			page := inc.MustPage()
-			defer page.MustClose()
+			page := inc.MustPage().Context(ctx)
 			page.MustSetUserAgent(&proto.NetworkSetUserAgentOverride{
 				UserAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 			})
@@ -457,8 +516,7 @@ func (t *BrowsePageTool) fetchImage(pageURL string) ([]byte, error) {
 		}
 		ch <- result{data: data, err: err}
 	}()
-	select {
-	case r := <-ch:
+	finish := func(r result) ([]byte, error) {
 		if r.err != nil {
 			// rod.Try bakes a debug.Stack into *TryError.Error(); unwrap to
 			// the underlying value so the log line is a clean one-liner, not
@@ -477,7 +535,17 @@ func (t *BrowsePageTool) fetchImage(pageURL string) ([]byte, error) {
 			return nil, fmt.Errorf("browser image fetch returned no data")
 		}
 		return r.data, nil
-	case <-time.After(browsePageTotalBudget()):
+	}
+	select {
+	case r := <-ch:
+		return finish(r)
+	case <-ctx.Done():
+		// The fetch sends before it cancels: a finished one is not a timeout.
+		select {
+		case r := <-ch:
+			return finish(r)
+		default:
+		}
 		return nil, fmt.Errorf("browser image fetch timed out after %v on %s", browsePageTotalBudget(), pageURL)
 	}
 }
