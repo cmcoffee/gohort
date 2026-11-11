@@ -54,7 +54,9 @@ func testBrowser(t *testing.T) *rod.Browser {
 func TestAPageWhoseScriptsNeverFinishIsReadWithScriptsOff(t *testing.T) {
 	b := testBrowser(t)
 	prev := sourcehooks.HTTPRequestTimeout
-	sourcehooks.HTTPRequestTimeout = 3 * time.Second // read 1s, idle 1.5s, budget 9s
+	// read 2s, idle 3s, budget 18s: room for a slow runner, whose first page
+	// in a new Chromium has taken 7s, to make both renders in one budget.
+	sourcehooks.HTTPRequestTimeout = 6 * time.Second
 	t.Cleanup(func() { sourcehooks.HTTPRequestTimeout = prev })
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -70,12 +72,10 @@ func TestAPageWhoseScriptsNeverFinishIsReadWithScriptsOff(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), browsePageTotalBudget())
 	defer cancel()
 
-	start := time.Now()
+	// errScriptsHeld comes only from the bounded read, while the budget still
+	// runs: an unbounded read would end with the budget's own deadline.
 	if _, _, err := renderPage(ctx, b, srv.URL+"/busy", true); !errors.Is(err, errScriptsHeld) {
 		t.Fatalf("a page whose scripts never finish: %v", err)
-	}
-	if took := time.Since(start); took > browsePageTotalBudget()/2 {
-		t.Errorf("finding the page held took %v, near the outer budget", took)
 	}
 	html, _, err := renderPage(ctx, b, srv.URL+"/busy", false)
 	if err != nil || !strings.Contains(html, "The article text the server sent.") {
