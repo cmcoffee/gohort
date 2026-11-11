@@ -7057,6 +7057,23 @@
       // own fields), how it has been going (its last runs, or a monitor's last
       // checks as True, False or Issue) and its notes, with Edit beside them
       // for the rare correction. Served by api/console/scheduler/view.
+      // ✨ Fix, from an item's View: the shared assist, the schedule's own
+      // words beside a helper already told why its card says it is in
+      // trouble and what its last runs said. The window is the server's
+      // (api/console/scheduler/fix-panel, scheduler_fix.go), opened in the
+      // shared dialog.
+      function openSchedFix(kind, id, row) {
+        fetch('api/console/scheduler/fix-panel?kind=' + encodeURIComponent(kind) + '&id=' + encodeURIComponent(id), {credentials: 'same-origin'})
+          .then(function(r) {
+            if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+            return r.json();
+          })
+          .then(function(d) {
+            window.uiOpenComponentDialog({title: d.title, subtitle: d.subtitle, width: d.width, component: d.panel, ctx: row});
+          })
+          .catch(function(e) { window.uiAlert('Could not open the fix: ' + ((e && e.message) || e)); });
+      }
+
       window.uiRegisterClientAction('orchestrate_view_task', function(ctx) {
         var row = (ctx && ctx.row) || {};
         var kind = row._kind || '';
@@ -7174,6 +7191,19 @@
             if (wait && wait.parentNode) wait.parentNode.removeChild(wait);
             line(going, 'orch-view-empty', 'Could not load: ' + (e && e.message || e));
           });
+        // Fix sits here, on every item rather than only a flagged one: a
+        // schedule can fall short the same way every run with nothing on
+        // its card, and this is where its runs are read. A link group runs
+        // as its members, so each member's View has its own.
+        if (kind !== 'link') {
+          var fix = document.createElement('button');
+          fix.type = 'button';
+          fix.className = 'ui-row-btn';
+          fix.textContent = '✨ Fix';
+          fix.title = 'Work out what keeps going wrong in its runs, and change what it does or say what to change';
+          fix.addEventListener('click', function() { m.close(); openSchedFix(kind, id, row); });
+          m.footer.appendChild(fix);
+        }
         var close = document.createElement('button');
         close.type = 'button';
         close.className = 'ui-row-btn';

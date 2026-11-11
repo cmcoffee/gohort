@@ -295,6 +295,15 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// One item's overview for the row's View: its last runs (or a monitor's
 	// checks) and its notes. Read only; see scheduler_view.go.
 	T.HandleFunc("/api/console/scheduler/view", jsonapi.Get(T.DB, T.handleConsoleSchedulerView))
+	// ✨ Fix on a row that needs attention (scheduler_fix.go): the window,
+	// its assistant, and the form it fills, which saves through the row's
+	// own update.
+	T.HandleFunc("/api/console/scheduler/fix-panel", jsonapi.Get(T.DB, T.handleSchedFixPanel))
+	T.registerSchedFixAssist()
+	T.HandleFunc("/api/console/scheduler/fix-form", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handleSchedFixFormGet),
+		"POST": T.handleSchedFixFormSave,
+	}.Serve)
 	T.HandleFunc("/api/console/scheduler/notes", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.taskNotesGet),
 		"POST": jsonapi.Post(T.DB, T.taskNotesSave),

@@ -24,6 +24,7 @@ const schedulerViewRuns = 8
 const schedulerViewSummaryMax = 8000
 
 type schedulerViewRun struct {
+	ID      string `json:"id,omitempty"` // the run's ledger id, for a tool that reads one whole
 	When    string `json:"when"`
 	Status  string `json:"status"`
 	Trigger string `json:"trigger,omitempty"`
@@ -107,7 +108,7 @@ func schedulerViewFor(user, kind, id string) (map[string]any, bool) {
 			// Whole, up to a bound on the payload: the View folds a long one
 			// with "more", and a cut here left the rest unreadable.
 			summary = truncateObs(summary, schedulerViewSummaryMax)
-			rows = append(rows, schedulerViewRun{When: consoleRunWhen(rec, loc), Status: string(rec.Status), Trigger: rec.Trigger, Summary: summary})
+			rows = append(rows, schedulerViewRun{ID: rec.ID, When: consoleRunWhen(rec, loc), Status: string(rec.Status), Trigger: rec.Trigger, Summary: summary})
 		}
 		out["runs"] = rows
 	}
