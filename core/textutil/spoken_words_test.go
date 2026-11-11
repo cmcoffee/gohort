@@ -21,9 +21,9 @@ func TestSpokenWords(t *testing.T) {
 		{"the Sun stays", "The Sun is out.", "The Sun is out."},
 		// Months.
 		{"month before a day", "Due Jan 5.", "Due January 5th."},
-		{"day after a month name", "Due November 22, 2026.", "Due November 22nd, 2026."},
+		{"day after a month name", "Due November 22, 2026.", "Due November 22nd, 20 26."},
 		{"teens are th", "on Dec 11 and Dec 13", "on December 11th and December 13th"},
-		{"a year is not a day", "since Sept 2026", "since September 2026"},
+		{"a year is not a day", "since Sept 2026", "since September 20 26"},
 		{"a day before the month", "on 5 Mar", "on 5 March"},
 		{"month range", "Jan-Mar", "January to March"},
 		{"a range of full names", "Monday – Friday", "Monday to Friday"},
@@ -66,6 +66,15 @@ func TestSpokenWords(t *testing.T) {
 		{"money stays", "It costs $3.50, or £2.10.", "It costs $3.50, or £2.10."},
 		{"thousands with a decimal", "1,234.5 people", "1,234 point 5 people"},
 		{"a percent", "up 3.5%", "up 3 point 5%"},
+		// Four digits, in pairs.
+		{"four digits in pairs", "In 1520 and 2026, 1520 people came.", "In 15 20 and 20 26, 15 20 people came."},
+		{"a zero third is oh", "It opened in 1905.", "It opened in 19 oh 5."},
+		{"hundreds", "By 1500 it was over.", "By 15 hundred it was over."},
+		{"thousands and two thousand five stay", "In 2000, 2005 and 3000.", "In 2000, 2005 and 3000."},
+		{"a comma is an amount", "We counted 1,520 votes.", "We counted 1,520 votes."},
+		{"a price", "It costs $1520 now.", "It costs 15 20 dollars now."},
+		{"inside a dotted number", "Version 0.9.1520 and 1520.5 km", "Version 0 dot 9 dot 1520 and 1520 point 5 kilometers"},
+		{"five digits and a leading zero stay", "Zip 15201, code 0420.", "Zip 15201, code 0420."},
 		// Latin and shorthand.
 		{"e.g. gets its pause", "Bring snacks, e.g. chips, salsa, etc.", "Bring snacks, for example, chips, salsa, et cetera."},
 		{"e.g. keeps a written comma", "things, e.g., chips", "things, for example, chips"},

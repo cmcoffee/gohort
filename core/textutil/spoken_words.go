@@ -108,6 +108,7 @@ var (
 	spokenLatin     = regexp.MustCompile(`\b([eE])\.[gG]\.|\b([iI])\.[eE]\.|\betc\.|\bvs\b\.?|\bapprox\b\.?`)
 	spokenWith      = regexp.MustCompile(`(^|[\s(])[wW]/(o\b)?[ \t]*`)
 	spokenDotted    = regexp.MustCompile(`\d+(?:\.\d+)+`)
+	spokenFour      = regexp.MustCompile(`\$?\b[1-9]\d{3}\b`)
 )
 
 var spokenRules = []spokenRule{
@@ -120,7 +121,9 @@ var spokenRules = []spokenRule{
 	{spokenMonthWord, sayMonth},
 	{spokenRange, func(s string, m []int) (string, bool) { return s[m[2]:m[3]] + " to " + s[m[4]:m[5]], true }},
 	{spokenMonthDay, sayMonthDay},
-	// Last, so a unit rule has already seen the number whole ("1.5 hrs").
+	// Last, so a unit rule has already seen the number whole ("1.5 hrs"),
+	// the four digits before the dots, which leave a dotted number's alone.
+	{spokenFour, sayFourDigits},
 	{spokenDotted, sayDotted},
 }
 
@@ -317,4 +320,37 @@ func sayDotted(s string, m []int) (string, bool) {
 func lastRune(s string) rune {
 	r, _ := utf8.DecodeLastRuneInString(s)
 	return r
+}
+
+// sayFourDigits reads a four-digit number in pairs, the way one is said:
+// 1520 as 15 20 (fifteen twenty), 1905 as 19 oh 5, 1500 as 15 hundred. One
+// a pair cannot say is left as written: 3000, and 2005 or 1007 (two thousand
+// five). A price is said the same way ($1520 as 15 20 dollars). Left alone:
+// a number written with a comma (1,520, an amount), and four digits inside a
+// longer or dotted one (0.9.1520, 1520.5).
+func sayFourDigits(s string, m []int) (string, bool) {
+	match := s[m[0]:m[1]]
+	dollars := strings.HasPrefix(match, "$")
+	d := strings.TrimPrefix(match, "$")
+	if m[0] > 0 && strings.ContainsRune(".,", lastRune(s[:m[0]])) {
+		return "", false
+	}
+	if rest := s[m[1]:]; len(rest) > 1 && (rest[0] == '.' || rest[0] == ',') && rest[1] >= '0' && rest[1] <= '9' {
+		return "", false
+	}
+	var words string
+	switch {
+	case d[1] == '0' && d[2] == '0':
+		return "", false
+	case d[2:] == "00":
+		words = d[:2] + " hundred"
+	case d[2] == '0':
+		words = d[:2] + " oh " + d[3:]
+	default:
+		words = d[:2] + " " + d[2:]
+	}
+	if dollars {
+		words += " dollars"
+	}
+	return words, true
 }
