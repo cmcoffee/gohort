@@ -3,8 +3,10 @@ package core
 import (
 	"context"
 	"errors"
+	"net"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -814,5 +816,31 @@ func TestTheOffloadModeCapsTheMap(t *testing.T) {
 			t.Errorf("mode %q: judge %v, System One %v; want %v, %v", c.mode,
 				MappedTo("test.both", MapJudge), MappedTo("test.both", MapSystemOne), c.judge, c.s1)
 		}
+	}
+}
+
+// A check on the Offload model is tried once: any failure goes to the worker,
+// so retrying a refused connection only spent the check's time (1s, then 4s,
+// while a server restarted in a loop). The worker's own calls keep retrying.
+func TestTheOffloadModelIsTriedOnce(t *testing.T) {
+	refused := &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
+	calls := 0
+	start := time.Now()
+	_, err := doWithRetry(context.Background(), 5, judgeOpts(nil), func() (*Response, error) {
+		calls++
+		return nil, refused
+	})
+	if err == nil || calls != 1 || time.Since(start) > time.Second {
+		t.Fatalf("calls %d in %s, err %v", calls, time.Since(start), err)
+	}
+	calls = 0
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	doWithRetry(ctx, 5, nil, func() (*Response, error) {
+		calls++
+		return nil, refused
+	})
+	if calls < 2 {
+		t.Fatalf("an ordinary call stopped retrying a refused connection: %d call(s)", calls)
 	}
 }

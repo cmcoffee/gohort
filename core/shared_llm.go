@@ -259,7 +259,7 @@ type reloadableLLM struct {
 func (r reloadableLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
 	if judge, key := r.judgeFor(messages, opts); judge != nil {
 		jctx, cancel := judgeShare(ctx)
-		resp, err := judge.Chat(jctx, messages, r.withTierText(opts)...)
+		resp, err := judge.Chat(jctx, messages, judgeOpts(r.withTierText(opts))...)
 		cancel()
 		if err == nil || ctx.Err() != nil {
 			r.record(ctx, resp)
@@ -285,7 +285,7 @@ func (r reloadableLLM) Chat(ctx context.Context, messages []Message, opts ...Cha
 func (r reloadableLLM) ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
 	if judge, key := r.judgeFor(messages, opts); judge != nil {
 		jctx, cancel := judgeShare(ctx)
-		resp, err := judge.ChatStream(jctx, messages, handler, r.withTierText(opts)...)
+		resp, err := judge.ChatStream(jctx, messages, handler, judgeOpts(r.withTierText(opts))...)
 		cancel()
 		if err == nil || ctx.Err() != nil {
 			r.record(ctx, resp)
@@ -1242,6 +1242,15 @@ func judgeShare(ctx context.Context) (context.Context, context.CancelFunc) {
 		}
 	}
 	return context.WithTimeout(ctx, share)
+}
+
+// judgeOpts is a check's options as the Offload model gets them: tried once.
+// Any failure there already goes to the worker, so a retry only spends the
+// check's time. A server restarting in a loop refused every attempt and the
+// backoff (1s, then 4s) ran the check's share out before it fell back, about
+// 8s on each check, every time the rest below ran out.
+func judgeOpts(opts []ChatOption) []ChatOption {
+	return append(opts, WithMaxRetries(0))
 }
 
 // judgeFailed sets the judge aside for judgeRestFor after a failed call;
