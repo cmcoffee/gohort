@@ -74,6 +74,13 @@ func (T *OrchestrateApp) resolveApproval(c *jsonapi.Call, always bool) (any, err
 		}
 		return jsonapi.Empty(http.StatusNoContent), nil
 	}
+	// builder_as_owner: a Builder job an agent sent touched a tool the agent
+	// may not use (builder_owner_job.go). Approving runs it as the owner.
+	if a.Action == builderAsOwnerAction {
+		go T.runApprovedOwnerJob(a)
+		Log("[operator.approval] builder_as_owner approved: running Builder as owner=%s for requester=%s", a.Owner, a.FromAgent)
+		return jsonapi.Empty(http.StatusNoContent), nil
+	}
 	if a.Action == buildAgentAction {
 		go T.runApprovedDelegation(a, "builder")
 		Log("[operator.approval] build_agent approved: dispatching Builder for owner=%s requester=%s", a.Owner, a.FromAgent)
@@ -356,6 +363,11 @@ func (T *OrchestrateApp) denyApproval(c *jsonapi.Call, mode string) (any, error)
 	}
 	if found && a.Action == proposeRuleAction {
 		recordProposalDecline(udb, a.Agent, proposalKindRule, a.Brief, a.Text, mode)
+	}
+	// A Builder job held for the owner: the no is kept, and the agent told.
+	if found && a.Action == builderAsOwnerAction {
+		recordProposalDecline(udb, a.FromAgent, proposalKindBuilderJob, a.Brief, "", mode)
+		T.noteDeniedDelegation(a)
 	}
 	if found {
 		RecordActivity(r, activity.Approval, user, approvalActivity(a, "denied"))

@@ -848,7 +848,7 @@ func (sd *syncDispatch) buildSession() {
 		}
 	}
 	// And it works within that agent's limits (builder_delegation.go).
-	applyBuilderDelegation(sd.subSess, sd.ownerDB)
+	applyBuilderDelegation(sd.subSess, sd.ownerDB, ownerJob{brief: message})
 	// Nobody to ask here: a change to what already exists queues
 	// (change_approval.go).
 	sd.subSess.ApproveChange = changeApprover(sd.subSess, sd.runtimeUser, sd.target.ID, sd.target.Name, nil)
@@ -1838,7 +1838,7 @@ func (cr *continuingRun) buildSession() {
 	// agent's, and works within that agent's limits (builder_delegation.go).
 	if id := strings.TrimSpace(run.DelegatorAgentID); id != "" && isBuilderAgent(cr.target.ID) {
 		cr.subSess.DispatchParentAgentID = id
-		applyBuilderDelegation(cr.subSess, cr.ownerDB)
+		applyBuilderDelegation(cr.subSess, cr.ownerDB, ownerJob{brief: cr.message})
 	}
 	// Nobody to ask here: a change to what already exists queues
 	// (change_approval.go).

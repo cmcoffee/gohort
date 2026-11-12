@@ -71,7 +71,7 @@ func builderKit(udb Database, sess *ToolSession) map[string]bool {
 func TestOwnerDrivenBuilderIsUnrestricted(t *testing.T) {
 	udb := delegationFixture(t)
 	sess := builderSession(udb, "")
-	applyBuilderDelegation(sess, udb)
+	applyBuilderDelegation(sess, udb, ownerJob{})
 	if sess.ToolEditRefusal != nil {
 		t.Error("the owner's own Builder run was given a refusal")
 	}
@@ -101,7 +101,7 @@ func TestSentBuilderWorksWithinTheSendersLimits(t *testing.T) {
 	}
 
 	sess := builderSession(udb, "a-other")
-	applyBuilderDelegation(sess, udb)
+	applyBuilderDelegation(sess, udb, ownerJob{})
 	if !sess.CredentialDenied("weather") {
 		t.Error("a run sent by an agent off the API's list may call the API")
 	}
@@ -121,7 +121,7 @@ func TestSentBuilderWorksWithinTheSendersLimits(t *testing.T) {
 
 	// Sent by the allowed agent, the API is there.
 	ok := builderSession(udb, "a-allowed")
-	applyBuilderDelegation(ok, udb)
+	applyBuilderDelegation(ok, udb, ownerJob{})
 	if ok.CredentialDenied("weather") {
 		t.Error("a run sent by an agent on the API's list was denied it")
 	}
@@ -134,7 +134,7 @@ func TestSentBuilderWorksWithinTheSendersLimits(t *testing.T) {
 func TestSentBuilderAPIToolsRefuse(t *testing.T) {
 	udb := delegationFixture(t)
 	sess := builderSession(udb, "a-other")
-	applyBuilderDelegation(sess, udb)
+	applyBuilderDelegation(sess, udb, ownerJob{})
 	called := false
 	tools := limitCredentialToolsToDelegator(sess, []AgentToolDef{{
 		Tool:    Tool{Name: "check_credential"},
@@ -157,7 +157,7 @@ func TestUnreadableSenderFailsClosed(t *testing.T) {
 		t.Errorf("a run sent by an unknown agent loaded tools: %v", kit)
 	}
 	sess := builderSession(udb, "a-gone")
-	applyBuilderDelegation(sess, udb)
+	applyBuilderDelegation(sess, udb, ownerJob{})
 	if !sess.CredentialDenied("weather") {
 		t.Error("a run sent by an unknown agent may call a narrowed API")
 	}
@@ -168,7 +168,7 @@ func TestUnreadableSenderFailsClosed(t *testing.T) {
 func TestSentBuilderCannotGiveAnAgentWhatTheSenderLacks(t *testing.T) {
 	udb := delegationFixture(t)
 	sess := builderSession(udb, "a-other")
-	applyBuilderDelegation(sess, udb)
+	applyBuilderDelegation(sess, udb, ownerJob{})
 
 	refused := map[string]struct {
 		inline  []TempTool
@@ -193,7 +193,7 @@ func TestSentBuilderCannotGiveAnAgentWhatTheSenderLacks(t *testing.T) {
 		t.Fatal(err)
 	}
 	listed := builderSession(udb, "a-listed")
-	applyBuilderDelegation(listed, udb)
+	applyBuilderDelegation(listed, udb, ownerJob{})
 	if msg := agentToolsRefusal(listed, nil, []string{"*"}); !strings.Contains(msg, "NOT DONE") {
 		t.Error("a sender with a tool list handed out every tool")
 	}

@@ -86,8 +86,10 @@ func credentialDenyFor(a AgentRecord, sess *ToolSession) map[string]bool {
 
 // applyBuilderDelegation puts the sending agent's limits on a Builder run's
 // session: its API deny set, and the tool_def refusal. db is the store the
-// agents and the tool pool live in. A no-op for any other session.
-func applyBuilderDelegation(sess *ToolSession, db Database) {
+// agents and the tool pool live in. job is the work the run was sent, which
+// is queued for the owner when it is refused for a tool the sender may not use
+// (builder_owner_job.go). A no-op for any other session.
+func applyBuilderDelegation(sess *ToolSession, db Database, job ownerJob) {
 	from, ok := builderDelegator(sess, db)
 	if !ok {
 		return
@@ -101,6 +103,7 @@ func applyBuilderDelegation(sess *ToolSession, db Database) {
 	gate := newPoolToolGate(db, from)
 	who := delegatorName(from)
 	owner := sess.Username
+	hold := &ownerJobHold{job: job}
 	sess.ToolEditRefusal = func(toolName, credName string) string {
 		if credName != "" && sess.CredentialDenied(credName) {
 			return delegationRefusal(who, "the API "+credName)
@@ -109,7 +112,13 @@ func applyBuilderDelegation(sess *ToolSession, db Database) {
 			if p.Tool.Name != toolName {
 				continue
 			}
-			if !gate.admits(p) || sess.CredentialDenied(p.Tool.Credential) {
+			if sess.CredentialDenied(p.Tool.Credential) {
+				return delegationRefusal(who, "the tool "+toolName)
+			}
+			if !gate.admits(p) {
+				if held := hold.heldForOwner(sess, db, from, toolName); held != "" {
+					return fmt.Sprintf("NOT DONE: %s sent this job, and %s may not use the tool %s, so this run cannot use or change it.%s", who, who, toolName, held)
+				}
 				return delegationRefusal(who, "the tool "+toolName)
 			}
 			break

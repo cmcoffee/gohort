@@ -49,7 +49,7 @@ func TestADispatchedBuilderCanBuildApps(t *testing.T) {
 func TestASentBuilderCannotBuildAnAppAroundItsSender(t *testing.T) {
 	udb := delegationFixture(t)
 	sess := builderSession(udb, "a-other")
-	applyBuilderDelegation(sess, udb)
+	applyBuilderDelegation(sess, udb, ownerJob{})
 	sent := &chatTurn{user: "alice", udb: udb, editRefusal: sess.ToolEditRefusal}
 	withCaps := func(caps ...string) AppSpec {
 		return AppSpec{DataSources: []AppDataSource{{Name: "d", Script: "print(1)", Capabilities: caps}}}

@@ -143,6 +143,11 @@ type approvedRun struct {
 	brief         string        // what it is asked to do
 	label         string        // how the wake names it to the agent that asked
 	ownerApproved string        // the agent whose edits the approval covers (withOwnerApprovedRun); "" for none
+	// asOwner runs the target as the owner, with no agent handing it over:
+	// a Builder job the owner approved to run with their own permissions
+	// (builder_owner_job.go). Otherwise the agent that asked rides along, and
+	// a Builder run keeps that agent's limits.
+	asOwner bool
 }
 
 // runApproved runs ar. With a conversation to come back to, it is a background
@@ -165,7 +170,7 @@ func (T *OrchestrateApp) runApproved(ar approvedRun) {
 	// Who handed it over, unless that is the agent running: an agent asking
 	// for its own change is not on its own call path twice.
 	var via []string
-	if from := strings.TrimSpace(a.FromAgent); from != "" && from != ar.target {
+	if from := strings.TrimSpace(a.FromAgent); from != "" && from != ar.target && !ar.asOwner {
 		via = []string{from}
 	}
 	if strings.TrimSpace(a.FromSession) == "" || strings.TrimSpace(a.FromAgent) == "" {

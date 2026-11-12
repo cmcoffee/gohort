@@ -683,7 +683,7 @@ func chatAgentNav() []ui.OrchestratorNavItem {
 				// One-shot decisions (activating a drafted sub-agent): just
 				// Approve — "Allow once"/"Always" don't apply, since approving
 				// activates the agent and consumes the authorization.
-				{Label: "Approve", Method: "POST", URL: "api/console/approvals/approve", Variant: "success", OnlyIf: "_oneshot", Confirm: "Approve this sub-agent? It goes live and becomes dispatchable."},
+				{Label: "Approve", Method: "POST", URL: "api/console/approvals/approve", Variant: "success", OnlyIf: "_oneshot", Confirm: "Approve this request, as described?"},
 				{Label: "Allow once", Method: "POST", URL: "api/console/approvals/approve", OnlyIf: "_request", HideIf: "_oneshot", Confirm: "Approve and run this once?"},
 				{Label: "Always allow", Method: "POST", URL: "api/console/approvals/always", Variant: "success", OnlyIf: "_request", HideIf: "_oneshot", Confirm: "Approve, run, and always allow this in future?"},
 				// Suggestions (_suggestion) are offers, not requests —

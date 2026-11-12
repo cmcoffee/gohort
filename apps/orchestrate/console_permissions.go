@@ -61,6 +61,17 @@ func approvalDisplay(udb Database, user string, a Authorization) (who, detail st
 			}
 		}
 		detail = "build a sub-agent: " + a.Brief
+	case builderAsOwnerAction:
+		// Who asked, and what Builder would do as the owner.
+		if rec, found := loadAgent(udb, a.FromAgent); found {
+			who = rec.Name
+		} else {
+			who = a.FromAgent
+		}
+		detail = "run this Builder job with your permissions: " + a.Brief
+		if why := strings.TrimSpace(a.Text); why != "" {
+			detail += " (" + why + ")"
+		}
 	case "bind_thread":
 		who = operatorApprovalRecipient(user, a)
 		detail = "bind 1:1 thread so the agent can read replies"
@@ -185,7 +196,7 @@ func (T *OrchestrateApp) handleConsolePermissions(c *jsonapi.Call) (any, error) 
 			// Activating a drafted sub-agent is a ONE-TIME decision — approving it
 			// makes the agent live and the authorization disappears, so "Always"
 			// has no meaning. Present just Approve / Deny for it.
-			OneShot:  a.Action == "activate_sub_agent" || a.Action == outboundWriteAction,
+			OneShot:  a.Action == "activate_sub_agent" || a.Action == outboundWriteAction || a.Action == builderAsOwnerAction,
 			Proposal: approvalIsProposal(a.Action),
 			Request:  !approvalIsProposal(a.Action),
 		})

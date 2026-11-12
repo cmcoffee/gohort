@@ -1372,7 +1372,11 @@ func (ar *agentsRun) buildSession() {
 	}
 	// Builder sent work by this agent works within this agent's limits
 	// (builder_delegation.go).
-	applyBuilderDelegation(ar.subSess, t.udb)
+	job := ownerJob{brief: ar.msg}
+	if ar.caller != nil {
+		job.live = ar.caller.PendingApprovalPrompt
+	}
+	applyBuilderDelegation(ar.subSess, t.udb, job)
 	// A change it makes to what already exists asks the owner in THIS chat,
 	// when somebody is watching it (change_approval.go).
 	ar.subSess.ApproveChange = changeApprover(ar.subSess, t.user, ar.target.ID, ar.target.Name, t.chatAsker())

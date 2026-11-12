@@ -71,7 +71,7 @@ func pendingApprovalBlocks(udb Database, owner, agentID string) []UIBlock {
 // user was having.
 func approvalBelongsToAgent(udb Database, a Authorization, agentID string) bool {
 	home := strings.TrimSpace(a.Agent)
-	if (a.Action == buildAgentAction || a.Action == changeApprovalAction) && strings.TrimSpace(a.FromAgent) != "" {
+	if (a.Action == buildAgentAction || a.Action == changeApprovalAction || a.Action == builderAsOwnerAction) && strings.TrimSpace(a.FromAgent) != "" {
 		home = strings.TrimSpace(a.FromAgent)
 	}
 	if home == "" {

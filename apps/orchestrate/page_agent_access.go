@@ -313,12 +313,13 @@ func (ap *accessPage) requestsSections() []ui.Section {
 				// silently stopped appearing would leave a turn waiting
 				// with no way to answer it.
 				RowActions: []ui.RowAction{
-					// Activating a drafted sub-agent is a ONE-TIME decision:
+					// A ONE-TIME decision (activating a drafted sub-agent, a Builder
+					// job run as the owner):
 					// approving it consumes the authorization, so "once" and
 					// "always" have nothing to mean.
 					{Type: "button", Label: "Approve", Variant: "success", OnlyIf: "_oneshot",
 						PostTo:  ap.approveURL,
-						Confirm: "Approve this sub-agent? It goes live and becomes dispatchable."},
+						Confirm: "Approve this request, as described?"},
 					{Type: "button", Label: "Allow once", OnlyIf: "_request", HideIf: "_oneshot",
 						PostTo:  ap.approveURL,
 						Confirm: "Approve and run this once?"},
