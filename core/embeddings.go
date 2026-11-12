@@ -8,11 +8,15 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/gohort/core/staticembed"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
@@ -127,17 +131,27 @@ func GetEmbeddingConfig() EmbeddingConfig {
 }
 
 // LoadEmbeddingConfigFromDB reads persisted embedding config from the
-// kvlite DB and installs it via SetEmbeddingConfig. Silent no-op when
-// the DB handle is nil or no record exists.
+// kvlite DB and installs it via SetEmbeddingConfig. An instance that has
+// never saved one embeds with the built-in embedder (BuiltinEmbeddingConfig);
+// a saved config, Off included, is used as saved. When the built-in is what
+// embeds, its model is loaded, or downloaded if it is not here yet. Silent
+// no-op when the DB handle is nil.
 func LoadEmbeddingConfigFromDB(db Database) {
 	if db == nil {
 		return
 	}
 	var cfg EmbeddingConfig
 	if !db.Get(EmbeddingTable, "current", &cfg) {
-		return
+		cfg = BuiltinEmbeddingConfig()
 	}
 	SetEmbeddingConfig(cfg)
+	if cfg.Enabled && cfg.Provider == EmbeddingProviderBuiltin {
+		go func() {
+			if _, err := builtinEmbedderModel(); err != nil {
+				Debug("[embed] built-in embedder not ready at startup: %v", err)
+			}
+		}()
+	}
 }
 
 // embedSlowWarn is when an embed stops being a detail and becomes the reason a
@@ -251,6 +265,9 @@ func embedTextsVia(ctx context.Context, cfg EmbeddingConfig, texts []string) ([]
 	}
 	if !cfg.Enabled {
 		return nil, fmt.Errorf("embeddings disabled")
+	}
+	if strings.TrimSpace(cfg.Provider) == EmbeddingProviderBuiltin {
+		return embedBuiltin(ctx, texts)
 	}
 	if name, ok := media.ChosenConnection(cfg.Provider); ok {
 		return embedThroughService(ctx, cfg, name, texts, chars)
@@ -489,4 +506,206 @@ func Cosine(a, b []float32) float32 {
 		return 0
 	}
 	return float32(dot / (math.Sqrt(na) * math.Sqrt(nb)))
+}
+
+// --- the built-in embedder ----------------------------------------------------
+
+// EmbeddingProviderBuiltin is the Provider of the embedder that runs inside
+// this process (core/staticembed): no connector, no peer, no GPU. It is what
+// an instance that never chose one embeds with.
+const EmbeddingProviderBuiltin = "builtin"
+
+// BuiltinEmbeddingConfig is the config that embeds with the built-in
+// embedder. It takes no prefixes: the model is symmetric, a question and a
+// passage embedded alike.
+func BuiltinEmbeddingConfig() EmbeddingConfig {
+	return EmbeddingConfig{Enabled: true, Provider: EmbeddingProviderBuiltin,
+		Endpoint: EmbeddingProviderBuiltin, Model: staticembed.Name}
+}
+
+// builtinEmbedKey is the maintenance pass that downloads the built-in
+// embedder's model, listed under Admin > Embeddings.
+const builtinEmbedKey = "builtin_embedder_download"
+
+// builtinRetryAfter is how long after a failed download or load the next
+// embed waits before trying again on its own, so an outage does not start a
+// 130 MB download on every embed. Run, on the page, tries again at once.
+const builtinRetryAfter = 5 * time.Minute
+
+var builtinEmbed struct {
+	mu       sync.Mutex
+	dir      string
+	model    *staticembed.Model
+	err      error     // why the last download or load failed
+	failedAt time.Time // when
+}
+
+// SetBuiltinEmbedderDir sets the folder models are kept in (<data
+// dir>/models); the built-in embedder's is the folder in it named for the
+// model. Called from config.go.
+func SetBuiltinEmbedderDir(models string) {
+	builtinEmbed.mu.Lock()
+	builtinEmbed.dir = filepath.Join(models, staticembed.Name)
+	builtinEmbed.mu.Unlock()
+}
+
+func builtinEmbedderDir() string {
+	builtinEmbed.mu.Lock()
+	defer builtinEmbed.mu.Unlock()
+	if builtinEmbed.dir != "" {
+		return builtinEmbed.dir
+	}
+	return filepath.Join(os.TempDir(), "gohort-models", staticembed.Name)
+}
+
+// BuiltinEmbedderReady reports whether the built-in embedder's model is
+// loaded, so an embed through it would answer now.
+func BuiltinEmbedderReady() bool {
+	builtinEmbed.mu.Lock()
+	defer builtinEmbed.mu.Unlock()
+	return builtinEmbed.model != nil
+}
+
+// builtinEmbedderModel is the loaded model, loading it from disk the first
+// time. When it is not on disk yet it starts the download (once; an embed
+// arriving meanwhile is told it is downloading) and says so.
+func builtinEmbedderModel() (*staticembed.Model, error) {
+	builtinEmbed.mu.Lock()
+	if m := builtinEmbed.model; m != nil {
+		builtinEmbed.mu.Unlock()
+		return m, nil
+	}
+	if builtinEmbed.err != nil && time.Since(builtinEmbed.failedAt) < builtinRetryAfter {
+		err := builtinEmbed.err
+		builtinEmbed.mu.Unlock()
+		return nil, fmt.Errorf("the built-in embedder is not ready: %w (Run under Admin > Embeddings tries again)", err)
+	}
+	dir := builtinEmbed.dir
+	builtinEmbed.mu.Unlock()
+	if dir == "" {
+		dir = builtinEmbedderDir()
+	}
+	if !staticembed.Present(dir) {
+		startBuiltinEmbedderDownload()
+		return nil, fmt.Errorf("the built-in embedder is downloading its model (%s, once): progress is under Admin > Embeddings", HumanSize(staticembed.TotalBytes()))
+	}
+	return loadBuiltinEmbedder(dir)
+}
+
+// loadBuiltinEmbedder loads the model from dir and keeps it, or keeps why it
+// could not.
+func loadBuiltinEmbedder(dir string) (*staticembed.Model, error) {
+	builtinEmbed.mu.Lock()
+	defer builtinEmbed.mu.Unlock()
+	if builtinEmbed.model != nil {
+		return builtinEmbed.model, nil
+	}
+	started := time.Now()
+	m, err := staticembed.Load(dir)
+	if err != nil {
+		builtinEmbed.err, builtinEmbed.failedAt = err, time.Now()
+		Log("[embed] the built-in embedder did not load from %s: %v", dir, err)
+		return nil, err
+	}
+	builtinEmbed.model, builtinEmbed.err = m, nil
+	Log("[embed] built-in embedder %s loaded in %s", staticembed.Name, time.Since(started).Round(time.Millisecond))
+	return m, nil
+}
+
+// startBuiltinEmbedderDownload runs the download pass in the background,
+// joining one already running. Never from a test against the real source: a
+// test points staticembed.Source at its own server first.
+var startBuiltinEmbedderDownload = func() {
+	if testing.Testing() && staticembed.Source == staticembed.DefaultSource {
+		return
+	}
+	go RunMaintenanceFunc(AppContext(), builtinEmbedKey) // stopped by shutdown, not by any request
+}
+
+// embedBuiltin is embedTexts for the built-in embedder: in this process, on
+// the CPU, at well under a millisecond a text, so nothing is queued.
+func embedBuiltin(ctx context.Context, texts []string) ([][]float32, error) {
+	m, err := builtinEmbedderModel()
+	if err != nil {
+		return nil, err
+	}
+	out := make([][]float32, len(texts))
+	for i, t := range texts {
+		if i%64 == 0 && ctx != nil && ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		out[i] = m.Embed(t)
+	}
+	return out, nil
+}
+
+// runBuiltinEmbedderDownload is the download pass: what the model is missing
+// is fetched and checked, with how far along on a two-second tick, then the
+// model is loaded. Files already here that fail their check are deleted and
+// fetched again, once. When the built-in is what embeds, the vector repair
+// runs after, to embed what was stored while it was downloading.
+func runBuiltinEmbedderDownload(ctx context.Context) int {
+	dir := builtinEmbedderDir()
+	builtinEmbed.mu.Lock()
+	builtinEmbed.err = nil // Run is a retry now, whatever failed before
+	builtinEmbed.mu.Unlock()
+	if staticembed.Present(dir) {
+		if _, err := loadBuiltinEmbedder(dir); err != nil {
+			Log("[embed] the built-in embedder's files did not pass their check, downloading them again: %v", err)
+			if err := staticembed.Remove(dir); err != nil {
+				ReportMaintenanceFailure(ctx, "the files here did not pass their check and could not be removed: "+err.Error())
+				return 0
+			}
+		}
+	}
+	started := time.Now()
+	fetched := false
+	if !staticembed.Present(dir) {
+		fetched = true
+		ReportMaintenanceProgress(ctx, fmt.Sprintf("Downloading %s: starting", staticembed.Name))
+		var last time.Time
+		err := staticembed.Fetch(ctx, dir, func(done, total int64) {
+			if time.Since(last) < 2*time.Second {
+				return
+			}
+			last = time.Now()
+			ReportMaintenanceProgress(ctx, fmt.Sprintf("Downloading %s: %s of %s - %ds",
+				staticembed.Name, HumanSize(done), HumanSize(total), int(time.Since(started).Seconds())))
+		})
+		if err != nil {
+			builtinEmbed.mu.Lock()
+			builtinEmbed.err, builtinEmbed.failedAt = err, time.Now()
+			builtinEmbed.mu.Unlock()
+			Log("[embed] downloading the built-in embedder failed: %v", err)
+			ReportMaintenanceFailure(ctx, "the download did not finish: "+err.Error())
+			return 0
+		}
+	}
+	ReportMaintenanceProgress(ctx, "Checking and loading the model")
+	builtinEmbed.mu.Lock()
+	builtinEmbed.err = nil
+	builtinEmbed.mu.Unlock()
+	if _, err := loadBuiltinEmbedder(dir); err != nil {
+		ReportMaintenanceFailure(ctx, "the model did not load: "+err.Error())
+		return 0
+	}
+	took := time.Since(started).Round(time.Second)
+	if fetched {
+		ReportMaintenanceOutcome(ctx, fmt.Sprintf("downloaded %s (%s), checked and loaded in %s", staticembed.Name, HumanSize(staticembed.TotalBytes()), took))
+	} else {
+		ReportMaintenanceOutcome(ctx, fmt.Sprintf("%s is here and loaded; nothing to download", staticembed.Name))
+	}
+	if cfg := GetEmbeddingConfig(); cfg.Enabled && cfg.Provider == EmbeddingProviderBuiltin && TuneBool(TunableVectorUpkeep) {
+		startVectorUpkeep("the built-in embedder is ready")
+	}
+	return 1
+}
+
+func init() {
+	RegisterMaintenanceFunc("Embeddings", builtinEmbedKey, "Download the built-in embedder",
+		fmt.Sprintf("Downloads the model the Built-in choice embeds with (%s, %s) from Hugging Face, once, and checks it. "+
+			"It runs on its own when Built-in is chosen; run it again if it failed. "+
+			"On a machine that cannot reach Hugging Face, copy model.safetensors and tokenizer.json from that model's page into the data folder's models/%s folder instead.",
+			staticembed.Name, HumanSize(staticembed.TotalBytes()), staticembed.Name),
+		runBuiltinEmbedderDownload)
 }

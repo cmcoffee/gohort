@@ -126,7 +126,7 @@ var legacyJobs = map[string]bool{"llm": true, "embed": true, "transcribe": true,
 // itself, the built-in LLM providers, and the words that mean nothing or
 // the default. No connection may take one.
 var reserved = map[string]bool{
-	"none": true, "default": true, "local": true, "commands": true,
+	"none": true, "default": true, "local": true, "builtin": true, "commands": true,
 	"duckduckgo": true, "searxng": true, "smtp": true,
 	"anthropic": true, "openai": true, "gemini": true, "bedrock": true,
 	"ollama": true, "llama.cpp": true, "vllm": true,

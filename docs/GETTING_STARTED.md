@@ -41,9 +41,12 @@ While you are here, set your **timezone** on the **Account** page, so dates,
 
 Agents can answer from your own documents.
 
-1. Choose an embedding model under **Administrator › Services › Embeddings**.
-   Knowledge searches by meaning, so nothing can be searched until one is set.
-   Add a connector from its template if your embedding server is not listed.
+1. Knowledge searches by meaning, with an embedding model. Out of the box
+   that is the built-in embedder, which runs inside gohort and downloads its
+   model (about 130 MB) once, the first time it is used; its progress is under
+   **Administrator › Services › Embeddings**. To use an embedding server
+   instead, choose it there, adding a connector from its template if it is
+   not listed.
 2. Open **Knowledge**, press **+ New collection**, and add documents (PDF,
    Word, Markdown, text, web pages and more).
 3. On your agent's page, open **Configure › Knowledge** and attach the

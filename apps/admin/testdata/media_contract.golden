@@ -3,7 +3,7 @@
 alice GET /api/embeddings ""
   403 forbidden
 root GET /api/embeddings ""
-  200 {"api_key":"","enabled":false,"endpoint":"","model":"","provider":"none"}
+  200 {"api_key":"","enabled":true,"endpoint":"builtin","model":"potion-retrieval-32M","provider":"builtin"}
 root PUT /api/embeddings "{}"
   405 method not allowed
 (signed out) GET /api/transcribe ""

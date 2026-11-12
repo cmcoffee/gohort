@@ -13,6 +13,7 @@ require (
 	golang.org/x/image v0.15.0
 	golang.org/x/net v0.35.0
 	golang.org/x/sys v0.45.0
+	golang.org/x/text v0.22.0
 )
 
 require (
@@ -47,5 +48,4 @@ require (
 	github.com/ysmood/leakless v0.9.0 // indirect
 	go.etcd.io/bbolt v1.5.0 // indirect
 	golang.org/x/term v0.29.0 // indirect
-	golang.org/x/text v0.22.0 // indirect
 )

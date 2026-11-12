@@ -18,7 +18,7 @@ func TestEachMediaPathReachesItsOwnHandler(t *testing.T) {
 	mux := http.NewServeMux()
 	a.registerMediaRoutes(mux)
 	for _, tc := range []struct{ method, path, want string }{
-		{"GET", "/api/embeddings", `"enabled":false`},
+		{"GET", "/api/embeddings", `"provider":"builtin"`}, // never saved: the built-in embedder
 		{"GET", "/api/transcribe", `"model":"","provider":"none"}`},
 		{"GET", "/api/speech", `"voice":""`},
 		{"GET", "/api/speech/voices", "[]"},

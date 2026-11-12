@@ -2,6 +2,7 @@ package admin
 
 import (
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/staticembed"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -14,14 +15,19 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		{
 			Title:    "Embeddings",
 			Subtitle: "Vector store ingestion and semantic search.",
-			Detail:   "Made by a connector or a peer that embeds, often on the same host as the worker LLM. Disabling it makes ingestion and search no-ops.",
-			Body: ui.FormPanel{
-				Assist:    true,
-				Source:    "api/embeddings",
-				TestURL:   "api/embeddings/test",
-				TestLabel: "Test embed call",
-				Fields:    embeddingFormFields(),
-			},
+			Detail:   "Made by the built-in embedder, which runs on this machine and is used until another is chosen, or by a connector or a peer that embeds, often on the same host as the worker LLM. Disabling it makes ingestion and search no-ops.",
+			Body: ui.Stack{Children: []ui.Component{
+				ui.FormPanel{
+					Assist:    true,
+					Source:    "api/embeddings",
+					TestURL:   "api/embeddings/test",
+					TestLabel: "Test embed call",
+					Fields:    embeddingFormFields(),
+				},
+				// The built-in embedder's one-time download: how far along,
+				// Stop, and Run again when it failed.
+				maintenanceList("Embeddings", "Nothing to download."),
+			}},
 		},
 		systemOneSection(),
 		{
@@ -181,12 +187,14 @@ func mediaBackendsTable() ui.Table {
 // connector or peer that embeds, and the prefixes its model wants. The
 // endpoint, model and key are the connector's own, set up, tested and fixed
 // under Admin > Services > Connectors, so there is one place each is kept.
+// The built-in embedder has none of them, and takes no prefixes.
 func embeddingFormFields() []ui.FormField {
-	choices := append(serviceProviderOptions("embed.text", "Embed"), EmbeddingProviderOptions()...)
+	choices := append([]ui.SelectOption{builtinEmbedderOption()}, serviceProviderOptions("embed.text", "Embed")...)
+	choices = append(choices, EmbeddingProviderOptions()...)
 	fields := []ui.FormField{staleField,
 		{Field: "provider", Label: "Embed with", Type: "select",
 			Options: append(append([]ui.SelectOption{disabledOption}, choices...), addAnother("embed.text")),
-			Help:    "The connector or peer that makes embeddings; + Add another... adds one from a template. A connector's settings (its address, its model, a key) are set here below it.",
+			Help:    "What makes embeddings: the built-in embedder, or a connector or peer; + Add another... adds one from a template. A connector's settings (its address, its model, a key) are set here below it.",
 			Detail:  "A peer that lends embeddings is connected under Admin > Integrations > Peers. Changing what embeds, or its model, changes the embedding space: saving starts re-embedding the stored documents (progress and Stop under Maintenance, Vector index), and through a paid service that is billed."}}
 	fields = append(fields, connectorSettingsFields("embed.text", "", "provider")...)
 	return append(fields,
@@ -196,7 +204,7 @@ func embeddingFormFields() []ui.FormField {
 			Placeholder: "search_query: ",
 			Help:        "Prepended to every search query before embedding. Asymmetric retrieval models need it.",
 			Detail:      "e5 uses \"query: \", nomic-embed uses \"search_query: \", bge uses \"Represent this sentence for searching relevant passages: \". Leave it blank for symmetric models. It is included verbatim, trailing space and all, and is safe to change at any time.",
-			ShowWhen:    "provider:!none",
+			ShowWhen:    "provider:!none|builtin",
 			Presets: []ui.FieldPreset{
 				{Label: "e5", Value: "query: ", Hint: "intfloat/e5 family"},
 				{Label: "nomic", Value: "search_query: ", Hint: "nomic-embed-text"},
@@ -206,12 +214,19 @@ func embeddingFormFields() []ui.FormField {
 			Placeholder: "search_document: ",
 			Help:        "Prepended to every chunk, fact and tool description before embedding.",
 			Detail:      "e5 uses \"passage: \" and nomic-embed uses \"search_document: \"; bge and Qwen3-Embedding use none. Changing it changes the embedding space: saving starts re-embedding the stored documents, with its progress under Maintenance, Vector index.",
-			ShowWhen:    "provider:!none",
+			ShowWhen:    "provider:!none|builtin",
 			Presets: []ui.FieldPreset{
 				{Label: "e5", Value: "passage: ", Hint: "intfloat/e5 family"},
 				{Label: "nomic", Value: "search_document: ", Hint: "nomic-embed-text"},
 			}},
 	)
+}
+
+// builtinEmbedderOption is the built-in embedder in the "Embed with" choice.
+func builtinEmbedderOption() ui.SelectOption {
+	return ui.SelectOption{Value: EmbeddingProviderBuiltin, Label: "Built-in (runs on this machine)",
+		Help: "A small model that runs inside gohort on the CPU, with no server to set up. Its model (" +
+			HumanSize(staticembed.TotalBytes()) + ") is downloaded from Hugging Face once, the first time it is used; the progress is below."}
 }
 
 // transcribeFormFields builds the STT settings: on or off, and the connector

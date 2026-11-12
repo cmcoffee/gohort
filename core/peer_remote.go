@@ -805,9 +805,14 @@ func ResolveEmbeddingProvider(cfg EmbeddingConfig) (EmbeddingConfig, error) {
 		cfg.Provider, cfg.Endpoint, cfg.APIKey = provider, endpoint, ""
 		return cfg, nil
 	}
+	if provider == EmbeddingProviderBuiltin {
+		builtin := BuiltinEmbeddingConfig()
+		builtin.Enabled = cfg.Enabled
+		return builtin, nil
+	}
 	if provider == "" || provider == EmbeddingProviderLocal {
-		// Embedding is done by a connector or a peer; this instance has no
-		// embedder of its own. Off is still off.
+		// Embedding is done by a connector or a peer, or by the built-in
+		// embedder, chosen by its own name. Off is still off.
 		if !cfg.Enabled {
 			return cfg, nil
 		}

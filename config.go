@@ -934,6 +934,8 @@ func init_database() {
 	SetBrowserDir(data_dir + "/browser")
 	SetGeocodeDir(data_dir + "/geocode")
 	SetWorkspacesDir(data_dir + "/workspaces")
+	// The built-in embedder's model, downloaded once when it is chosen.
+	SetBuiltinEmbedderDir(data_dir + "/models")
 	// Per-app static assets (images/fonts an app references), served read-only
 	// at /custom/<slug>/assets/<name>.
 	SetAppAssetsDir(data_dir + "/app_assets")

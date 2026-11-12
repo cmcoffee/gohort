@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/gohort/core/staticembed"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // useConnectorEmbedder points embeddings at a service connector at endpoint,
@@ -339,5 +341,101 @@ func TestChoosingTheSameConnectionAgainKeepsTheSpace(t *testing.T) {
 		if other, _ := ResolveEmbeddingProvider(EmbeddingConfig{Enabled: true, Provider: "other"}); other.Endpoint != "other" {
 			t.Errorf("over %+v, another connection kept the old space: %+v", stored, other)
 		}
+	}
+}
+
+// useBuiltinEmbedder points the built-in embedder at an empty folder and
+// records, rather than runs, every download it would start; the state it
+// keeps (a loaded model, a failure) is put back after.
+func useBuiltinEmbedder(t *testing.T) *atomic.Int32 {
+	t.Helper()
+	builtinEmbed.mu.Lock()
+	saved := struct {
+		dir   string
+		model *staticembed.Model
+		err   error
+		at    time.Time
+	}{builtinEmbed.dir, builtinEmbed.model, builtinEmbed.err, builtinEmbed.failedAt}
+	builtinEmbed.dir, builtinEmbed.model, builtinEmbed.err = t.TempDir(), nil, nil
+	builtinEmbed.mu.Unlock()
+	savedStart, savedSource, savedCfg := startBuiltinEmbedderDownload, staticembed.Source, GetEmbeddingConfig()
+	var starts atomic.Int32
+	startBuiltinEmbedderDownload = func() { starts.Add(1) }
+	t.Cleanup(func() {
+		builtinEmbed.mu.Lock()
+		builtinEmbed.dir, builtinEmbed.model, builtinEmbed.err, builtinEmbed.failedAt = saved.dir, saved.model, saved.err, saved.at
+		builtinEmbed.mu.Unlock()
+		startBuiltinEmbedderDownload, staticembed.Source = savedStart, savedSource
+		SetEmbeddingConfig(savedCfg)
+	})
+	return &starts
+}
+
+// An instance that never saved an embedding config embeds with the built-in
+// embedder. One that saved any, Off included, keeps what it saved.
+func TestNoSavedEmbeddingConfigIsTheBuiltin(t *testing.T) {
+	useBuiltinEmbedder(t)
+	db := &DBase{Store: kvlite.MemStore()}
+	LoadEmbeddingConfigFromDB(db)
+	if got := GetEmbeddingConfig(); got != BuiltinEmbeddingConfig() {
+		t.Errorf("never saved: %+v, want the built-in %+v", got, BuiltinEmbeddingConfig())
+	}
+	db.Set(EmbeddingTable, "current", EmbeddingConfig{Provider: "none"})
+	LoadEmbeddingConfigFromDB(db)
+	if got := GetEmbeddingConfig(); got.Enabled || got.Provider != "none" {
+		t.Errorf("saved off: %+v, want it still off", got)
+	}
+}
+
+// An embed before the model is here starts its download and says so, and
+// so does saving the built-in, whose repair waits for the download (it
+// would fail every chunk until then).
+func TestTheBuiltinDownloadsBeforeItEmbeds(t *testing.T) {
+	starts := useBuiltinEmbedder(t)
+	var repairs []string
+	prevUpkeep := startVectorUpkeep
+	startVectorUpkeep = func(why string) { repairs = append(repairs, why) }
+	t.Cleanup(func() { startVectorUpkeep = prevUpkeep })
+
+	SetEmbeddingConfig(BuiltinEmbeddingConfig())
+	if _, err := Embed(context.Background(), "a question"); err == nil || !strings.Contains(err.Error(), "downloading") {
+		t.Fatalf("an embed with no model: %v, want it to say it is downloading", err)
+	}
+	if starts.Load() != 1 {
+		t.Errorf("the download was started %d times, want 1", starts.Load())
+	}
+	was := EmbeddingConfig{Enabled: true, Model: "nomic-embed-text", Endpoint: "http://embed.example.test/v1"}
+	if RepairAfterSpaceChange(was, BuiltinEmbeddingConfig()) || len(repairs) != 0 {
+		t.Errorf("the repair started before the model was here: %v", repairs)
+	}
+	if starts.Load() != 2 {
+		t.Errorf("saving the built-in did not start its download (%d starts)", starts.Load())
+	}
+}
+
+// A download that fails says why, and an embed after it says the same
+// without starting another: an outage does not mean a fresh 130 MB download
+// on every embed.
+func TestAFailedBuiltinDownloadWaitsToRetry(t *testing.T) {
+	starts := useBuiltinEmbedder(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "gone", http.StatusNotFound)
+	}))
+	defer srv.Close()
+	staticembed.Source = srv.URL + "/"
+	SetEmbeddingConfig(BuiltinEmbeddingConfig())
+
+	if n := RunMaintenanceFunc(context.Background(), builtinEmbedKey); n != 0 {
+		t.Errorf("a failed download counted %d", n)
+	}
+	// Counted from the failure on: an embed from another goroutine of the
+	// package, between the config change and the failure, rightly starts one.
+	starts.Store(0)
+	_, err := Embed(context.Background(), "a question")
+	if err == nil || !strings.Contains(err.Error(), "not ready") || !strings.Contains(err.Error(), "HTTP 404") {
+		t.Fatalf("an embed after a failed download: %v, want it to say why", err)
+	}
+	if starts.Load() != 0 {
+		t.Errorf("an embed right after a failure started another download")
 	}
 }

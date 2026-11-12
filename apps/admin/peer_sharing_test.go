@@ -317,16 +317,16 @@ func findField(fields []ui.FormField, name string) (ui.FormField, bool) {
 	return ui.FormField{}, false
 }
 
-// With nothing that embeds, "Embed with" holds only "+ Add another...", which
-// opens the templates for embedding. The endpoint, model and key are the
-// connector's, never fields here.
-func TestEmbeddingFormOffersOnlyAddAnotherWithNothingToPick(t *testing.T) {
+// With no connector or peer that embeds, "Embed with" holds the built-in
+// embedder and "+ Add another...", which opens the templates for embedding.
+// The endpoint, model and key are the connector's, never fields here.
+func TestEmbeddingFormOffersTheBuiltinWithNothingElseToPick(t *testing.T) {
 	prev := RootDB
 	t.Cleanup(func() { RootDB = prev })
 	RootDB = nil // no peer or connector store
 
 	fields := embeddingFormFields()
-	if f, ok := findField(fields, "provider"); !ok || len(choicesOf(t, f, "embed.text")) != 0 {
+	if f, ok := findField(fields, "provider"); !ok || len(choicesOf(t, f, "embed.text")) != 1 || choicesOf(t, f, "embed.text")[0].Value != EmbeddingProviderBuiltin {
 		t.Errorf("with nothing to pick: %+v", f)
 	}
 	for _, name := range []string{"endpoint", "model", "api_key"} {
@@ -337,7 +337,7 @@ func TestEmbeddingFormOffersOnlyAddAnotherWithNothingToPick(t *testing.T) {
 }
 
 // The paired case: register a peer and the dropdown comes back, offering the
-// connector that embeds here and the peer. Testing only the empty case would
+// built-in, the connector that embeds here and the peer. Testing only the empty case would
 // let a change that drops the dropdown pass while breaking peer selection.
 func TestEmbeddingFormShowsTheProviderPickerWithAPeer(t *testing.T) {
 	prevDB, prevAuth, prevCfg := RootDB, AuthDB, GetEmbeddingConfig()
@@ -378,8 +378,8 @@ func TestEmbeddingFormShowsTheProviderPickerWithAPeer(t *testing.T) {
 	for _, o := range choicesOf(t, provider, "embed.text") {
 		values = append(values, o.Value)
 	}
-	if strings.Join(values, ",") != "embeddings,peer:gpu-box" {
-		t.Errorf("provider dropdown should offer the connector and the peer, got %v", values)
+	if strings.Join(values, ",") != "builtin,embeddings,peer:gpu-box" {
+		t.Errorf("provider dropdown should offer the built-in, the connector and the peer, got %v", values)
 	}
 }
 

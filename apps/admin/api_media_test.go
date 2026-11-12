@@ -181,17 +181,20 @@ func TestCapabilityPagesEndWithAddAnother(t *testing.T) {
 	saved := RootDB
 	RootDB = &DBase{Store: kvlite.MemStore()}
 	t.Cleanup(func() { RootDB = saved })
+	// Embeddings always has its built-in embedder to choose; the others
+	// have nothing of their own.
 	pages := []struct {
 		name, need string
+		own        int
 		fields     func() []ui.FormField
-	}{{"embeddings", "embed.text", embeddingFormFields}, {"transcription", "speech.transcribe", transcribeFormFields}, {"speech", "speech.synthesize", speechFormFields}}
+	}{{"embeddings", "embed.text", 1, embeddingFormFields}, {"transcription", "speech.transcribe", 0, transcribeFormFields}, {"speech", "speech.synthesize", 0, speechFormFields}}
 	for _, p := range pages {
 		f, ok := findField(p.fields(), "provider")
 		if !ok {
 			t.Errorf("%s: no list", p.name)
 			continue
 		}
-		if got := choicesOf(t, f, p.need); len(got) != 0 {
+		if got := choicesOf(t, f, p.need); len(got) != p.own {
 			t.Errorf("%s with nothing else: %+v", p.name, got)
 		}
 	}
@@ -199,7 +202,7 @@ func TestCapabilityPagesEndWithAddAnother(t *testing.T) {
 		"operations":{"embed":{"method":"POST","path":"/v1/embeddings","body":{"input":"{texts}"}}}},
 		"provides":[{"capability":"embed.text","steps":[{"call":"embed"}],"output":{"vectors":{"path":"data","each":"embedding"}}}]}`
 	SaveConnector(RootDB, Connector{Name: "vectors", Kind: "service", Spec: json.RawMessage(spec)})
-	if f, _ := findField(embeddingFormFields(), "provider"); len(choicesOf(t, f, "embed.text")) != 1 {
+	if f, _ := findField(embeddingFormFields(), "provider"); len(choicesOf(t, f, "embed.text")) != 2 {
 		t.Errorf("embeddings with a connector to choose: %+v", f.Options)
 	}
 	if f, _ := findField(speechFormFields(), "provider"); len(choicesOf(t, f, "speech.synthesize")) != 0 {

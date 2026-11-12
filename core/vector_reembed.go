@@ -521,6 +521,12 @@ func RepairAfterSpaceChange(prev, next EmbeddingConfig) bool {
 	if !next.Enabled || !TuneBool(TunableVectorUpkeep) || prev.spaceStamp() == next.spaceStamp() {
 		return false
 	}
+	// The built-in embedder still downloading would fail every chunk: its
+	// download starts the repair when it ends (runBuiltinEmbedderDownload).
+	if next.Provider == EmbeddingProviderBuiltin && !BuiltinEmbedderReady() {
+		startBuiltinEmbedderDownload()
+		return false
+	}
 	startVectorUpkeep("the embedding settings moved stored vectors to another space")
 	return true
 }

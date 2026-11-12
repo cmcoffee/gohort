@@ -92,8 +92,13 @@ func (a *AdminApp) handleEmbeddingsSave(c *jsonapi.Call, form withSettings[Embed
 		req.Enabled, req.Provider, req.Endpoint, req.Model)
 	// A new model or document prefix leaves every stored vector in the old
 	// space, out of semantic search until re-embedded: start that now rather
-	// than leave it to a button nobody knows to press.
-	if RepairAfterSpaceChange(prev, GetEmbeddingConfig()) {
+	// than leave it to a button nobody knows to press. The built-in embedder
+	// still downloading starts it when the download ends.
+	repairing := RepairAfterSpaceChange(prev, GetEmbeddingConfig())
+	if req.Enabled && req.Provider == EmbeddingProviderBuiltin && !BuiltinEmbedderReady() {
+		return map[string]string{"message": "Saved. The built-in embedder is downloading its model, once: the progress is below. Stored documents are embedded with it when the download ends."}, nil
+	}
+	if repairing {
 		return map[string]string{"message": "Saved. Stored documents are being re-embedded for the new model or prefix: progress is under Maintenance, Vector index, where it can be stopped."}, nil
 	}
 	return jsonapi.Empty(http.StatusNoContent), nil
@@ -147,6 +152,8 @@ func (a *AdminApp) handleEmbeddingsTest(c *jsonapi.Call, form withSettings[Embed
 		}
 	} else if name, ok := media.ChosenConnection(req.Provider); ok {
 		where = "the service " + name
+	} else if req.Provider == EmbeddingProviderBuiltin {
+		where = "the built-in embedder"
 	}
 	return testResultBody(true, fmt.Sprintf("OK: %d-dim embedding from %s via %s", len(vec), modelLabel, where), ""), nil
 }
@@ -503,10 +510,12 @@ func (a *AdminApp) handleTranscribeTest(c *jsonapi.Call, form withSettings[Trans
 // posted secretUnchanged can be swapped back for the stored key.
 func (a *AdminApp) storedEmbeddingConfig() EmbeddingConfig {
 	var cfg EmbeddingConfig
-	if a.db != nil {
-		a.db.Get(EmbeddingTable, "current", &cfg)
+	if a.db != nil && a.db.Get(EmbeddingTable, "current", &cfg) {
+		return cfg
 	}
-	return cfg
+	// Never saved: the built-in embedder is what embeds
+	// (LoadEmbeddingConfigFromDB), so it is what the page shows chosen.
+	return BuiltinEmbeddingConfig()
 }
 
 func (a *AdminApp) storedSpeechConfig() media.SpeechConfig {
