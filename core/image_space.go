@@ -555,6 +555,44 @@ func recordRecentImage(sess *ToolSession, data []byte, note string, origin Image
 	return RecentImageRefPrefix + "1"
 }
 
+// RecordReceivedImage adds a picture someone sent to the space with no turn
+// looking at it (a message in a group the agent was not woken for), so a
+// later "that photo" has something to point at. It is described in the
+// background, as any recorded picture is, so the list says what it shows
+// and not only who sent it. A picture already in the space is not added
+// again: the same one reaching a woken turn later (the blocked message's
+// pictures carried into its sender's next one) stays one entry.
+func RecordReceivedImage(sess *ToolSession, data []byte, sender string) {
+	if recentImageHolds(sess, data) {
+		return
+	}
+	note := "received"
+	if who := strings.TrimSpace(sender); who != "" {
+		note += " from " + who
+	}
+	note += ", in a message you were not woken for"
+	recordRecentImage(sess, data, note, ImageFromUser, CaptionOnRecord, "")
+}
+
+// recentImageHolds reports whether the space already holds a picture with
+// exactly these bytes.
+func recentImageHolds(sess *ToolSession, data []byte) bool {
+	dir := recentImageDir(sess)
+	if dir == "" || len(data) == 0 {
+		return false
+	}
+	for _, name := range recentImageFiles(dir) {
+		abs := filepath.Join(dir, name)
+		if st, err := os.Stat(abs); err != nil || st.Size() != int64(len(data)) {
+			continue
+		}
+		if b, err := os.ReadFile(abs); err == nil && bytes.Equal(b, data) {
+			return true
+		}
+	}
+	return false
+}
+
 // RecordRecentImageStable records a picture and returns BOTH references to it:
 // the positional one it currently occupies, and the stable id that keeps
 // meaning this picture after other pictures are saved.

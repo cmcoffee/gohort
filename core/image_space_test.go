@@ -1474,3 +1474,33 @@ func TestALaterTurnIsToldWhichPictureMediaWas(t *testing.T) {
 		t.Error("media#10 matched a photo that came as media#1")
 	}
 }
+
+// A picture from a message the agent was not woken for joins the space,
+// described, so a later "that photo" has something to point at; and the same
+// picture arriving again, recorded or carried into a woken turn, stays one
+// entry.
+func TestAReceivedPictureNotWokenForIsKeptOnce(t *testing.T) {
+	sess := imageSpaceSession(t)
+	llm := &countingCaptionLLM{reply: "A dog on a porch\n\nA brown dog lying on a wooden porch."}
+	sess.LLM = llm
+	pic := testPNG(t, 8, 8)
+	RecordReceivedImage(sess, pic, "Alex")
+	RecordReceivedImage(sess, pic, "Alex")
+	if id := sess.RegisterInboundMediaDescribed("image", pic, "Alex", ""); id != "media#1" {
+		t.Errorf("the carried picture was not this turn's media#1: %q", id)
+	}
+	got := RecentImages(sess)
+	if len(got) != 1 {
+		t.Fatalf("the space holds %d entries for one picture, want 1: %+v", len(got), got)
+	}
+	if !strings.HasPrefix(got[0].Note, "received from Alex") || got[0].Caption != "A dog on a porch" {
+		t.Errorf("entry %+v: want it received from Alex and described", got[0])
+	}
+	if llm.calls != 1 {
+		t.Errorf("described %d times, want once", llm.calls)
+	}
+	RecordReceivedImage(sess, testPNG(t, 9, 9), "Sam")
+	if n := len(RecentImages(sess)); n != 2 {
+		t.Errorf("a different picture was not added: %d entries", n)
+	}
+}

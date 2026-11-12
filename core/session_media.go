@@ -202,7 +202,9 @@ func (s *ToolSession) RegisterInboundMediaDescribed(kind string, raw []byte, sen
 	// this turn ends. media#N is turn-scoped and vanishes; without this, "blend
 	// the two photos I sent" worked only while they were still in the live
 	// message, and a later "now make that one snowy" had nothing to point at.
-	if kind == "image" {
+	// One already there (recorded when its message was not woken for, then
+	// carried into this one) is not added twice.
+	if kind == "image" && !recentImageHolds(s, raw) {
 		who := strings.TrimSpace(sender)
 		note := "received"
 		if who != "" {

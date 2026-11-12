@@ -14,6 +14,9 @@
 package orchestrate
 
 import (
+	"encoding/base64"
+	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -101,11 +104,18 @@ func registerChannelSilentRecorder(app *OrchestrateApp) {
 // wake's history build sees the same "Sender: text" line. Bumps LastAt (not
 // LastSeen) via saveChatSession, so the session lights unread until reopened.
 func (app *OrchestrateApp) recordChannelSilent(in ChannelInbound) {
-	if strings.TrimSpace(in.Text) == "" {
-		return // media-only inbounds are handled on the wake path; nothing to mirror
-	}
 	db := UserDB(app.DB, in.Owner)
 	if db == nil || in.AgentID == "" {
+		return
+	}
+	// Its pictures join the agent's image space, as a woken message's do,
+	// and the thread says they were sent: a photo from one member and "what
+	// do you make of that photo" from another, woken, found nothing. Before,
+	// a photo with no text left no trace at all, and one with text left only
+	// the text.
+	pictures := app.recordSilentPictures(in)
+	content := strings.TrimSpace(in.Text + buildInboundImageRecord(in.SenderName, pictures, nil) + silentVideoRecord(in.SenderName, len(in.Videos)))
+	if content == "" {
 		return
 	}
 	// Resolve the same session id the runner and gatekeeper use (a dedicated
@@ -126,7 +136,7 @@ func (app *OrchestrateApp) recordChannelSilent(in ChannelInbound) {
 		}
 		s.Messages = append(s.Messages, ChatMessage{
 			Role:         "user",
-			Content:      in.Text,
+			Content:      content,
 			Created:      time.Now(),
 			Sender:       in.SenderName,
 			SenderHandle: strings.TrimSpace(in.Handle),
@@ -144,5 +154,35 @@ func (app *OrchestrateApp) recordChannelSilent(in ChannelInbound) {
 	// thread as the record of the room, so a partial one reads as messages
 	// having gone missing. No-op when cortex is off (AppendCortexObservation),
 	// and skipped when the mirror above already landed IN the cortex.
-	app.observeChannelInbound(in, sessionID, strings.TrimSpace(in.Text))
+	app.observeChannelInbound(in, sessionID, content)
+}
+
+// recordSilentPictures puts a not-woken message's pictures in the agent's
+// image space, described in the background, and returns how many it held.
+// Connectors put any attachment in the images field, so only what reads as a
+// picture counts: a voice memo there is not one.
+func (app *OrchestrateApp) recordSilentPictures(in ChannelInbound) int {
+	sess := &ToolSession{Username: in.Owner, AgentID: in.AgentID, LLM: app.LLM}
+	n := 0
+	for _, b64 := range in.Images {
+		data, err := base64.StdEncoding.DecodeString(b64)
+		if err != nil || !strings.HasPrefix(http.DetectContentType(data), "image/") {
+			continue
+		}
+		RecordReceivedImage(sess, data, in.SenderName)
+		n++
+	}
+	return n
+}
+
+// silentVideoRecord is the line a not-woken message's videos leave in the
+// thread, worded as a woken message's pictures are.
+func silentVideoRecord(sender string, count int) string {
+	if count <= 0 {
+		return ""
+	}
+	if who := strings.TrimSpace(sender); who != "" {
+		return fmt.Sprintf("\n[%d video(s) attached from %s]", count, who)
+	}
+	return fmt.Sprintf("\n[%d video(s) attached]", count)
 }
