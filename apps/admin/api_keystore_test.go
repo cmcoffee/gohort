@@ -44,7 +44,7 @@ func TestTheKeystoreKeepsAKeyAndNeverSendsItBack(t *testing.T) {
 	if strings.Contains(string(b), key) {
 		t.Fatalf("the list sent the key back: %s", b)
 	}
-	if !strings.Contains(string(b), "ends in …WXYZ") || !strings.Contains(string(b), "not used yet") {
+	if !strings.Contains(string(b), "ends in ...WXYZ") || !strings.Contains(string(b), "not used yet") {
 		t.Errorf("the row does not say which key is kept, or what uses it: %s", b)
 	}
 
@@ -52,7 +52,7 @@ func TestTheKeystoreKeepsAKeyAndNeverSendsItBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f := form.(keystoreForm); f.Key != "" || f.AWSPair != "" || !strings.HasPrefix(f.Kept, "ends in …WXYZ") {
+	if f := form.(keystoreForm); f.Key != "" || f.AWSPair != "" || !strings.HasPrefix(f.Kept, "ends in ...WXYZ") {
 		t.Errorf("the edit form sent a key back, or does not say which is kept: %+v", f)
 	}
 

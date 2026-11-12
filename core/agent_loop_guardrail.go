@@ -448,7 +448,7 @@ func lastUserRequestAt(history []Message) (int, string) {
 			continue
 		}
 		// Payload turns the LOOP built, recognized by what they CARRY rather
-		// than by a tag. The queued-images turn ("Here are N image(s)…") is
+		// than by a tag. The queued-images turn ("Here are N image(s)...") is
 		// framework-authored but must never wear the notice tag: the tag tells
 		// the model not to act on the message, and that one exists precisely to
 		// be acted on. Its Images field says what it is without putting a word
@@ -619,5 +619,5 @@ func truncateRunes(s string, max int) string {
 	if len(r) <= max {
 		return s
 	}
-	return string(r[:max]) + "…[truncated for length; more follows that is NOT shown here]"
+	return string(r[:max]) + "...[truncated for length; more follows that is NOT shown here]"
 }

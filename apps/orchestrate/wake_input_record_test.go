@@ -15,17 +15,17 @@ import (
 // A monitor firing is not something the owner said.
 //
 // The wake prompt — "[EVENT — monitor "x" fired]", the diff payload, and the
-// closing "React in this thread…" instruction — was stored as a plain user
+// closing "React in this thread..." instruction — was stored as a plain user
 // message, so the owner's cortex showed the whole thing in a bubble attributed
 // to them. It read back to the model that way too: on the next turn it is the
 // owner's words, not an event, with nothing saying where it came from.
 func TestAnEventInputIsStoredAsACardNotAsTheUsersMessage(t *testing.T) {
 	now := time.Now()
 	got := storedRunInput(AgentSyncRun{
-		Message:         "[EVENT: monitor \"molty\" fired]\n…",
+		Message:         "[EVENT: monitor \"molty\" fired]\n...",
 		InputReportFrom: "molty",
 		InputReportKind: cortexKindMonitor,
-	}, "[EVENT — monitor \"molty\" fired]\n…", now)
+	}, "[EVENT — monitor \"molty\" fired]\n...", now)
 
 	if got.Role == "user" {
 		t.Error("an event stored as a user turn is attributed to the owner")
@@ -91,7 +91,7 @@ func TestAnEventCardIsCappedAndSaysSo(t *testing.T) {
 	if cap <= 0 {
 		t.Fatal("the cap must have a default, or nothing bounds a firing monitor")
 	}
-	payload := "[EVENT — monitor \"molty\" fired]\n" + strings.Repeat("{\"comments\":[…]}", 400)
+	payload := "[EVENT — monitor \"molty\" fired]\n" + strings.Repeat("{\"comments\":[...]}", 400)
 	got := storedRunInput(AgentSyncRun{
 		InputReportFrom: "molty", InputReportKind: cortexKindMonitor,
 	}, payload, time.Now())
@@ -126,7 +126,7 @@ func TestAnEventCardIsCappedAndSaysSo(t *testing.T) {
 // gets the prompt: the two readers get the text written for them.
 func TestAnEventCardPrefersItsReadableText(t *testing.T) {
 	now := time.Now()
-	prompt := "[EVENT — monitor \"molty\" fired]\nWatch monitor \"molty\" detected a change.\n\nWhat changed:\n+ {\"author\":{\"name\":\"x\"}}\n\nCurrent output:\nHTTP 200 OK\n{…}"
+	prompt := "[EVENT — monitor \"molty\" fired]\nWatch monitor \"molty\" detected a change.\n\nWhat changed:\n+ {\"author\":{\"name\":\"x\"}}\n\nCurrent output:\nHTTP 200 OK\n{...}"
 	got := storedRunInput(AgentSyncRun{
 		Message: prompt, InputReportFrom: "molty", InputReportKind: cortexKindMonitor,
 		InputCardText: "Watch \"molty\" changed.\n\nNew (1):\n• x — \"hi\"",

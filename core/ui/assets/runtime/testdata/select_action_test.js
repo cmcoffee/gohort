@@ -20,7 +20,7 @@ var window = {UIClientActions: {}};
 eval(keySrc[0]);
 eval(runSrc[0]);
 
-var add = {value: 'web.search', label: '+ Add another…', action: 'connector_add_another'};
+var add = {value: 'web.search', label: '+ Add another...', action: 'connector_add_another'};
 var key = selectActionKey(add);
 check('its value is no real value', key !== 'web.search' && key.indexOf('\u0001') === 0);
 var got = null;

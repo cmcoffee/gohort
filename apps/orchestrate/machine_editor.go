@@ -355,7 +355,7 @@ func phaseOptions(def MachineDef, withNone bool) []ui.SelectOption {
 //
 // Built from the same table everything else reads, so a variable added
 // to the vocabulary is selectable here without anybody remembering to
-// come back. {state:…} is deliberately NOT offered — those name another
+// come back. {state:...} is deliberately NOT offered — those name another
 // step and its field, which is a picker with two dependent levels rather
 // than a wheel, and typing one into "from" stays available.
 func fieldKindOptions() []ui.SelectOption {
@@ -845,11 +845,11 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 				Help:   "Leave it empty for the usual case: the conversation stays here.",
 				Detail: "Set it to make this a ONE-turn step: it replies once, then moves on. That is how an intake beat asks its questions and continues."},
 			ui.FormField{Type: "header", Label: "Leaving early"},
-			ui.FormField{Field: "guard", Type: "textarea", Rows: 2, Label: "Leave this step when…",
-				Placeholder: "the sign that the conversation no longer belongs in this step…",
+			ui.FormField{Field: "guard", Type: "textarea", Rows: 2, Label: "Leave this step when...",
+				Placeholder: "the sign that the conversation no longer belongs in this step...",
 				Help:        "Plain words, judged on each new turn that arrives here.",
 				Detail:      "Empty means the conversation stays until something else moves it. It costs one model call per turn, so say something worth checking."},
-			ui.FormField{Field: "guard_to", Type: "select", Label: "…and go to", Options: phaseOptions(def, true),
+			ui.FormField{Field: "guard_to", Type: "select", Label: "...and go to", Options: phaseOptions(def, true),
 				ShowWhen: keepWhileSet(p.GuardTo, "guard"),
 				Help:     "Empty means back to the start."},
 			// Both ways a conversation leaves on the AGENT's initiative —
@@ -918,7 +918,7 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 					// to write in or they were too narrow to read.
 					{Field: "desc", Type: "textarea", Rows: 3, OwnLine: true, HideWhen: builtinOrUnansweredExpr(),
 						Label:       "What to work out: write it as the instruction for this field",
-						Placeholder: "what this field holds, written as an instruction to the model…"},
+						Placeholder: "what this field holds, written as an instruction to the model..."},
 				}},
 
 			ui.FormField{Type: "header", Label: "What it adds to the running lists", Collapsed: true,
@@ -954,7 +954,7 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 			// worst way to enforce it. Live, because show_when reads the
 			// form rather than the stored record: pick a field to route
 			// on and this goes away under your hand.
-			ui.FormField{Field: "choices", Type: "checklist", Label: "…or let this step choose between", ShowWhen: routingShowWhen(p, "!next_from"),
+			ui.FormField{Field: "choices", Type: "checklist", Label: "...or let this step choose between", ShowWhen: routingShowWhen(p, "!next_from"),
 				Options: otherPhaseOptions(def, p.Name),
 				Help:    "Tick the steps it may send the conversation to, and it decides at run time.",
 				Detail:  "You do not declare a field for the decision. The framework adds next_step to what this step returns, writes the instruction naming each destination and what that step is for, draws those arrows, and refuses to save a name that is not a step. \"Then go to\" is the fallback if the choice does not resolve."},
@@ -979,7 +979,7 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 					Options: ownFieldOptions(p),
 					Help:    "One of this step's own text fields, whose value is a step NAME.",
 					Detail:  "A step can route ONE way: picking a field here hides the list above, and ticking that list hides this."},
-				ui.FormField{Field: "targets", Type: "checklist", Label: "…which may name", ShowWhen: routingShowWhen(p, "!choices"),
+				ui.FormField{Field: "targets", Type: "checklist", Label: "...which may name", ShowWhen: routingShowWhen(p, "!choices"),
 					Options: otherPhaseOptions(def, p.Name),
 					Help:    "The steps that field is allowed to name.",
 					Detail:  "Leave it empty and anything the step returns is tried, with \"Then go to\" as the fallback."},
@@ -1181,7 +1181,7 @@ func phaseFormFields(def MachineDef) []ui.FormField {
 		{Field: "name", Type: "text", Label: "Name", Placeholder: "short_lowercase_name",
 			Help: "Short handle, lowercase: triage, hunch, verify. It is how other steps point here."},
 		{Field: "desc", Type: "text", Label: "What this step does",
-			Placeholder: "what this step does, in one line…",
+			Placeholder: "what this step does, in one line...",
 			Help:        "One line, for whoever reads the machine later. Not shown to the agent."},
 		{Field: "prompt", Type: "textarea", Rows: 8, Label: "Instructions for this step",
 			Help:   "What the agent should be doing here. Write the JOB, not the identity.",

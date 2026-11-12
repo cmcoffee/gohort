@@ -234,7 +234,7 @@ func EnsurePyDeps(ctx context.Context, specs ...string) error {
 
 // PyDepsAvailable reports whether the managed deps dir currently records
 // every given spec as installed, WITHOUT triggering an install. Cheap
-// pre-check for callers that want to branch (e.g. show "provisioning…"
+// pre-check for callers that want to branch (e.g. show "provisioning..."
 // only when something is actually missing).
 func PyDepsAvailable(specs ...string) bool {
 	specs = dedupeNonEmpty(specs)

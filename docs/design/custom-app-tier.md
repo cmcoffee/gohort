@@ -9,7 +9,7 @@ to gohort only through a small, scoped primitive API.
 ## Why a second tier (and why not a pivot)
 
 The declarative tier composes pre-built primitives (`Table`, `FormPanel`,
-`WorkbenchPanel`, …). Its wall: a genuinely new shape needs a new primitive added
+`WorkbenchPanel`, ...). Its wall: a genuinely new shape needs a new primitive added
 to `core/ui` by hand. A custom tier dissolves that wall: the LLM writes the page
 instead of waiting for a primitive.
 
@@ -138,8 +138,8 @@ Keeps custom pages from reinventing dialogs. Optional; ship after the core three
 
 ```
 app_def(action="create", kind="custom",
-        name="…", agent_id="…",
-        html="<!doctype html>…",
+        name="...", agent_id="...",
+        html="<!doctype html>...",
         grants={ data: true, agent: "<id>", net: [] })
 ```
 

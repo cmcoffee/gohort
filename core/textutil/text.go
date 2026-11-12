@@ -254,7 +254,7 @@ func InlineMarkdownToHTML(s string) string {
 	// Markdown links: [text](url) → <a href="url">text</a>. These run BEFORE
 	// the bare-URL autolinker below — otherwise the autolinker links the URL
 	// inside `](url)` first, which breaks the [text](url) match and leaves the
-	// literal brackets in the output (the "Sources: [name](url) | …" bug).
+	// literal brackets in the output (the "Sources: [name](url) | ..." bug).
 	// Two passes:
 	//   1) MDLinkPattern handles http/https URLs with one level of
 	//      balanced parens (Wikipedia disambiguation paths, MSDN
@@ -303,10 +303,10 @@ func InlineMarkdownToHTML(s string) string {
 	})
 
 	// Bare URL in prose — match http/https URLs not already linked. Runs AFTER
-	// markdown links, so a URL inside a [text](url) is already in an href="…"
+	// markdown links, so a URL inside a [text](url) is already in an href="..."
 	// (preceded by a quote) and won't re-match. Only truly loose URLs in prose
 	// get autolinked. Match URLs preceded by start/whitespace/`>`/`(` (the last
-	// for parenthetical "(https://…)"); the quote exclusion in the char class
+	// for parenthetical "(https://...)"); the quote exclusion in the char class
 	// keeps it off href values.
 	bareURL := regexp.MustCompile(`(^|[\s>(])(https?://[^\s<>"'()\x00]+)`)
 	s = bareURL.ReplaceAllStringFunc(s, func(m string) string {

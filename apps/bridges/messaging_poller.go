@@ -3,7 +3,7 @@
 // connector it runs one goroutine that, every interval:
 //
 //  1. polls the service's REST list endpoint through the connector's SecureAPI
-//     credential (Microsoft Graph channel-message delta, Slack conversations, …),
+//     credential (Microsoft Graph channel-message delta, Slack conversations, ...),
 //  2. maps each new message onto the existing Bridges inbound contract via the
 //     connector's declarative dot-paths and feeds it IN-PROCESS through
 //     ingestInbound — reusing dedup, channel binding, agent dispatch, and outbox,
@@ -470,7 +470,7 @@ func (T *Bridges) setPollCursor(name string, c pollCursor) {
 
 // authedRequest issues one credential-authorized request through SecureAPI's
 // central dispatch — so EVERY credential type works (bearer for Slack, oauth2 for
-// Graph, header/basic/…), and the credential's URL allow-list, rate limit, audit,
+// Graph, header/basic/...), and the credential's URL allow-list, rate limit, audit,
 // and secret redaction all apply. dispatch returns an LLM-formatted string ("HTTP
 // <status> <text>\n<pretty-json>"); parseDispatchResult splits it back to a status
 // + raw body for the poller to parse.

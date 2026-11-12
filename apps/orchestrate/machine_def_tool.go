@@ -339,7 +339,7 @@ A fixed vocabulary of primitives, no declaring, no naming, same meaning in every
 {now} the date and time where the person is - {user} - {agent} - {step} - {machine}.
 Transient phases only (a resident phase's prompt is pinned across turns).
 You do not have to place {input} or {established}: a transient phase is handed the message when its
-prompt mentions none, and the blackboard when it places no {state:…} reference of its own. Reach for
+prompt mentions none, and the blackboard when it places no {state:...} reference of its own. Reach for
 {state:PHASE.field} only when you need ONE value inside a sentence.
 {state:NAME} a phase's reply - {state:NAME.field} one declared field, anywhere, any turn.
 Every reference is checked when the machine is saved.
@@ -821,7 +821,7 @@ func (t *chatTurn) ownAgentByNameOrID(key string) (ag AgentRecord, why string) {
 func (t *chatTurn) machineList() (string, error) {
 	defs := ListMachineDefs(t.udb, t.user)
 	if len(defs) == 0 {
-		return "You have no machines. machine(action=\"create\", name=…, phases=[…]) authors one; call action=\"help\" first for the spec.", nil
+		return "You have no machines. machine(action=\"create\", name=..., phases=[...]) authors one; call action=\"help\" first for the spec.", nil
 	}
 	// Which agents point at what, so the answer to "what do I have" also
 	// answers "and is any of it live" — an unattached machine is inert,

@@ -11,7 +11,7 @@ import (
 )
 
 // TestApplianceMemScope locks the synthetic scope-user format the orchestrate
-// seeding APIs + the …ForScope handlers key off. Drifting this silently
+// seeding APIs + the ...ForScope handlers key off. Drifting this silently
 // detaches the modal from whatever the lead writes.
 func TestApplianceMemScope(t *testing.T) {
 	if got := applianceMemScope("abc-123"); got != "app:servitor:abc-123" {

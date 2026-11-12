@@ -1291,7 +1291,7 @@ func (pr *planRun) onStepHandler(info StepInfo) {
 	if id == "" {
 		return
 	}
-	// Models on llama.cpp sometimes emit <tool_call><function=…>
+	// Models on llama.cpp sometimes emit <tool_call><function=...>
 	// XML as TEXT instead of native tool_calls — the agent loop
 	// catches it and dispatches via ParseTextToolCall, but the
 	// markup already streamed to the user's bubble. Strip on
@@ -1403,7 +1403,7 @@ func (pr *planRun) onStepHandler(info StepInfo) {
 // it (via AgentLoopConfig.SettleRound) right before a correction guard
 // re-prompts and continues. Without it, the rejected round's text is left
 // in an open bubble and the retry round concatenates into it (the
-// "…What API?Fair point…" double). Deliberately mirrors the onStep
+// "...What API?Fair point..." double). Deliberately mirrors the onStep
 // final-round finalize but OMITS the !info.Done length-clear: a correction
 // retry is not guaranteed to repeat the earlier text, so clearing it could
 // lose real content — finalize instead (lossless), and setting

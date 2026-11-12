@@ -15,7 +15,7 @@ func LatestUserContent(msgs []Message) string {
 	return ""
 }
 
-// StripDeliveryMarkers removes [ATTACH: …] markers from a reply. Used when the
+// StripDeliveryMarkers removes [ATTACH: ...] markers from a reply. Used when the
 // files they name do not exist: the marker is the claim, so removing it is what
 // stops the claim from being delivered or persisted.
 func StripDeliveryMarkers(s string) string {

@@ -12,7 +12,7 @@ import (
 // Quoted prose carries its own quotation marks, and a worker-tier model in JSON
 // mode reliably copies them in unescaped:
 //
-//	{"verdict":"ASSERTED","claim":"it runs "in **descending order**" first","basis":"…"}
+//	{"verdict":"ASSERTED","claim":"it runs "in **descending order**" first","basis":"..."}
 //
 // That is invalid JSON, so a strict decode fails and the judge had to say "no
 // opinion" — on a verdict it had in hand, in the exact case (a quoted claim)

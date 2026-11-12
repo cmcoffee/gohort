@@ -91,7 +91,7 @@ func TestFixingAnImageConnection(t *testing.T) {
 
 // Templates are browsed, not installed: the list holds every template, by
 // category, each added from its row; there is no list to put one on first.
-// A page's "+ Add another…" lists the templates for its kind: those filed
+// A page's "+ Add another..." lists the templates for its kind: those filed
 // under its category whose connector does its job.
 func TestTemplatesAreBrowsedByCategory(t *testing.T) {
 	saved := RootDB

@@ -37,7 +37,7 @@ const (
 
 // CheckDescriptionBudget rejects an over-long description with an error
 // that says what to cut. where names the offender for the LLM
-// ("description", "actions[2] (list_issues) description", …).
+// ("description", "actions[2] (list_issues) description", ...).
 func CheckDescriptionBudget(where, text string, max int) error {
 	n := len([]rune(text))
 	if n <= max {

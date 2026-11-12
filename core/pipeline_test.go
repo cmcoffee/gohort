@@ -341,13 +341,13 @@ func TestAPanelsSecondRoundSeesTheFirst(t *testing.T) {
 	if len(*asked) != 4 {
 		t.Fatalf("two voices over two rounds is four calls, got %d", len(*asked))
 	}
-	// Round one carries no transcript…
+	// Round one carries no transcript...
 	for _, q := range (*asked)[:2] {
 		if strings.Contains(q, "Already said") {
 			t.Errorf("round one has nothing behind it:\n%s", q)
 		}
 	}
-	// …round two carries what round one said, for BOTH voices.
+	// ...round two carries what round one said, for BOTH voices.
 	for _, q := range (*asked)[2:] {
 		if !strings.Contains(q, "Already said") || !strings.Contains(q, "Optimist says yes") {
 			t.Errorf("round two should read round one:\n%s", q)

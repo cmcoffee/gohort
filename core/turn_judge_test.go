@@ -188,7 +188,7 @@ func TestWorkDoneByAStepCountsAsTheTurnsWork(t *testing.T) {
 
 	// A step that FAILED is not work the reply may claim: the host records
 	// only what succeeded, so an empty PriorWork keeps the arm live.
-	if !turnClaimWorthJudging(TurnClaimEvidence{Reply: "Based on the research…", PriorWork: nil}) {
+	if !turnClaimWorthJudging(TurnClaimEvidence{Reply: "Based on the research...", PriorWork: nil}) {
 		t.Error("no recorded step work means the turn is still worth judging")
 	}
 }

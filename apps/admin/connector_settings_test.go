@@ -397,7 +397,7 @@ func TestAKeptKeyShowsItsEnd(t *testing.T) {
 	c, _ := GetConnector(RootDB, "vec")
 	const key = "sk-live-0123456789abWXYZ"
 	SetConnectionSecret(RootDB, c, "api_key", key, []string{srv.URL})
-	want := "ends in …WXYZ, given " + time.Now().Format("2 Jan 2006")
+	want := "ends in ...WXYZ, given " + time.Now().Format("2 Jan 2006")
 
 	for name, fields := range map[string][]ui.FormField{"the page": embeddingFormFields(), "its Settings": connectionSettingsFields(c)} {
 		var shown *ui.FormField

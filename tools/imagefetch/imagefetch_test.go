@@ -1006,7 +1006,7 @@ func TestTheSchemaOffersTheCountWhereRendersAreOffered(t *testing.T) {
 	}
 }
 
-// The misfire that cost a whole request: image(prompt=…) with no action came
+// The misfire that cost a whole request: image(prompt=...) with no action came
 // back as the usage spec, the agent read it as success, announced four
 // variations, and delivered two pictures from an earlier session. The
 // arguments said exactly what was meant.

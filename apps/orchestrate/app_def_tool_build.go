@@ -124,7 +124,7 @@ func allHTMLSections(secs []map[string]any) bool {
 }
 
 // normalizeSection makes a section object parseable when the author sent a
-// near-miss instead of the documented {kind, …} shape. Two arrive constantly:
+// near-miss instead of the documented {kind, ...} shape. Two arrive constantly:
 // a section read back from a RENDERED page (fields nested under `body`, kind
 // carried as the body's component `type`), and a section whose kind is simply
 // implied by the field that was set (an `html` blob, a `columns` list). Both
@@ -345,7 +345,7 @@ func normalizeSection(m map[string]any) map[string]any {
 	for k, v := range m {
 		out[k] = v
 	}
-	// Rendered shape: {title, body:{type:"card", html:…}} — lift the body's
+	// Rendered shape: {title, body:{type:"card", html:...}} — lift the body's
 	// fields up and translate its component type to the authoring kind.
 	if body, ok := m["body"].(map[string]any); ok {
 		delete(out, "body")
@@ -515,7 +515,7 @@ func buildAppSection(spec AppSpec, m map[string]any, createFields []ui.FormField
 			ListPosition: "top",
 			Markdown:     true,
 			EmptyText:    firstNonEmptyStr(mapStr(m, "empty_text"), "Ask the assistant to get started."),
-			Placeholder:  firstNonEmptyStr(mapStr(m, "placeholder"), "Ask anything…"),
+			Placeholder:  firstNonEmptyStr(mapStr(m, "placeholder"), "Ask anything..."),
 		}
 	case "pipeline", "run":
 		// The RUN surface: submit form on top, live stage-by-stage transcript
@@ -637,7 +637,7 @@ func buildAppSection(spec AppSpec, m map[string]any, createFields []ui.FormField
 		}
 		// A COMPLETE document gets its own frame; a fragment is inlined. An
 		// author writing a game or an animation writes a whole document
-		// (doctype, <head>, a `* { margin: 0 }` reset, `body { … 100vh }`),
+		// (doctype, <head>, a `* { margin: 0 }` reset, `body { ... 100vh }`),
 		// and inlining that leaks its reset and body rules into the host page
 		// while its 100vh layout measures the browser window instead of its
 		// own box. Framing it keeps both cascades to themselves — same origin
@@ -699,7 +699,7 @@ func buildWorkbench(spec AppSpec, m map[string]any) (ui.WorkbenchPanel, error) {
 		Markdown:     true,
 		LockActivity: true,
 		EmptyText:    firstNonEmptyStr(mapStr(m, "chat_empty"), "Ask the assistant to draft or add a section."),
-		Placeholder:  firstNonEmptyStr(mapStr(m, "placeholder"), "Ask the assistant…"),
+		Placeholder:  firstNonEmptyStr(mapStr(m, "placeholder"), "Ask the assistant..."),
 	}
 
 	noun := firstNonEmptyStr(mapStr(m, "item_noun"), "document")
@@ -814,7 +814,7 @@ func entryListError(section, item, plural string, raw any) error {
 	arr, isArr := raw.([]any)
 	switch {
 	case raw == nil, !isArr && raw == nil:
-		return fmt.Errorf("a %s section needs at least one %s, pass %s:[{%q:…, \"label\":…}]", section, item, plural, "field")
+		return fmt.Errorf("a %s section needs at least one %s, pass %s:[{%q:..., \"label\":...}]", section, item, plural, "field")
 	case !isArr:
 		return fmt.Errorf("a %s section's %s must be an ARRAY of objects, got %T", section, plural, raw)
 	case len(arr) == 0:

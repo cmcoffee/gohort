@@ -80,7 +80,7 @@ func guardLaunch(next http.Handler, secret string, port int) http.Handler {
 			w.Header().Set("Cache-Control", "no-store")
 			fmt.Fprintf(w, `<!DOCTYPE html><html><head><meta charset="utf-8">`+
 				core.FirstPaintHead()+
-				`<title>Loading…</title></head><body><script>location.replace(%s);</script></body></html>`,
+				`<title>Loading...</title></head><body><script>location.replace(%s);</script></body></html>`,
 				strings.ReplaceAll(strconv.Quote(dest), "<", `\u003c`))
 			return
 		}

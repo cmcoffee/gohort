@@ -28,7 +28,7 @@ import (
 const guideAgentID = "app-guides-author"
 
 // Where the app lived before it was Scribe. Bookmarks, capability links and
-// other apps' "open in …" buttons still point at these; both now redirect.
+// other apps' "open in ..." buttons still point at these; both now redirect.
 const (
 	legacyGuidesPath     = "/guides"
 	legacyTechWriterPath = "/techwriter"
@@ -53,7 +53,7 @@ func init() {
 		Prompt: "You are the Guide Author. You help the user craft living, multi-section GUIDES.\n\n" +
 			"The guide is shown in the middle of the screen, rendered as a formatted page. You edit it by CALLING TOOLS, not by pasting content into chat. The user may also edit it directly, a section at a time or the whole guide at once.\n\n" +
 			"GUIDE tools (a guide is sections under a title):\n" +
-			"- add_section(section_title, markdown): append a new section. The markdown is the section BODY: do NOT repeat the section title inside it. Use sub-headings (### …), lists, and fenced code blocks for structure. Write real, substantive content, not placeholders.\n" +
+			"- add_section(section_title, markdown): append a new section. The markdown is the section BODY: do NOT repeat the section title inside it. Use sub-headings (### ...), lists, and fenced code blocks for structure. Write real, substantive content, not placeholders.\n" +
 			"- edit_section(section_title, markdown): replace the body of an existing section (matched by its title).\n" +
 			"- draft_section(section_title, instructions): the GROUNDED writer. It deterministically gathers material from BOTH the guide's knowledge collections AND every attached Source on the topic, then writes the section from that material and commits it (creates it, or re-drafts if it exists). Use this (NOT add_section), whenever a section should be backed by the guide's attached knowledge/Sources: you don't gather first, it does. You only supply the title and a brief of what to cover.\n" +
 			"- rename_section(section_title, new_title): change a section's title.\n" +

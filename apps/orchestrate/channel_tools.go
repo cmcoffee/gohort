@@ -648,7 +648,7 @@ func channelForChat(owner, chatID, handle string) (Channel, bool) {
 // recordChannelPost makes a channel's bound agent SEE a message sent down its
 // channel — by ANY agent (the Operator sharing a profile into a group WiWee
 // fronts) OR by the channel agent itself via a dispatch (which runs in a
-// throwaway dispatch:<…> session, disconnected from the channel thread). Direct
+// throwaway dispatch:<...> session, disconnected from the channel thread). Direct
 // messaging is allowed; the rule is just that the channel's agent sees
 // everything on its channel. Without this the post is delivered but never enters
 // the channel agent's session or cortex, so when the group replies the agent has

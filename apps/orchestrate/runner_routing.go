@@ -130,7 +130,7 @@ func dispatchListNamesARunnable(list []string, udb Database, user string) bool {
 // (runPlan) and the channel/dispatch (buildDispatchTurnExtras) surfaces. Built
 // once here so the two catalogs can't drift: the recurring "works in the web UI
 // but not over a channel" class of bug (send_status, stay_silent, graph memory,
-// fetch_knowledge_doc, …) all came from these being hand-maintained in two
+// fetch_knowledge_doc, ...) all came from these being hand-maintained in two
 // places. Genuinely path-specific tools stay in their callers: compact_context
 // (web closure var), the Builder authoring set, the agents-grouped tool's
 // per-path gating, recurring, Fleet, and attached pipelines (the web wraps those
@@ -158,7 +158,7 @@ func dispatchListNamesARunnable(list []string, udb Database, user string) bool {
 // catalog already applied, and for its stated reason: a knowledge tool over an
 // empty corpus invites doc_ids the handler must then refuse.
 func (t *chatTurn) corpusToolDefs() []AgentToolDef {
-	// recall fronts knowledge search, and recall(id="doc:…") is the drill-down.
+	// recall fronts knowledge search, and recall(id="doc:...") is the drill-down.
 	if t.hasAnyMemoryLayer() {
 		return t.unifiedMemoryTools()
 	}
@@ -217,7 +217,7 @@ func (t *chatTurn) frameworkConversationalTools(sess *ToolSession) []AgentToolDe
 	out := []AgentToolDef{t.introspectToolDef()} // self-awareness — always
 	// Knowledge — only when the agent has a corpus, else it hallucinates
 	// doc_ids the handler must refuse. Skipped under the unified surface:
-	// recall fronts knowledge search, and recall(id="doc:…") the drill-down.
+	// recall fronts knowledge search, and recall(id="doc:...") the drill-down.
 	out = append(out, t.corpusToolDefs()...)
 	// read_output / release_output are round-shape plumbing, not reach: every
 	// capped reply names read_output in its trailer, so an agent without it is

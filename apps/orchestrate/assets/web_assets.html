@@ -870,7 +870,7 @@
           return;
         }
         apply.disabled = true;
-        note.textContent = 'Saving…';
+        note.textContent = 'Saving...';
         fetch('api/console/privileges', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
@@ -1133,7 +1133,7 @@
           var secret = secretTa.value.trim();
           if (!secret) { window.uiAlert('Paste the secret first.'); return; }
           saveBtn.disabled = true;
-          status.textContent = 'Saving…';
+          status.textContent = 'Saving...';
           var payload = Object.assign({}, rec, {secret: secret});
           if (pwTa && pwTa.value.trim()) { payload.password = pwTa.value.trim(); }
           fetch('/admin/api/secure-api', {
@@ -1149,7 +1149,7 @@
             // OAuth configs get a free round-trip test so a bad secret
             // surfaces NOW, on this screen, not three tool calls later.
             if (rec.type === 'oauth2') {
-              status.textContent = 'Saved. Testing token mint…';
+              status.textContent = 'Saved. Testing token mint...';
               return fetch('/admin/api/secure-api?action=test&name=' + encodeURIComponent(name), {method: 'POST'})
                 .then(function(tr) { return tr.ok ? tr.json() : null; })
                 .then(function(res) {
@@ -1585,7 +1585,7 @@
 
     // Show the active agent's description after a selection. Two
     // shapes depending on whether the agent has an intake form:
-    //   - No intake → REPLACE the "Pick an agent above…" placeholder
+    //   - No intake → REPLACE the "Pick an agent above..." placeholder
     //     text on .ui-agent-empty (single line, no separate block).
     //   - Intake present → ADD a separate description block ABOVE
     //     the intake form so both render (description as context;
@@ -1627,7 +1627,7 @@
               block.className = 'ui-agency-agent-desc';
               block.textContent = desc;
               log.insertBefore(block, log.firstChild);
-              // Hide the generic "Pick an agent from the rail…"
+              // Hide the generic "Pick an agent from the rail..."
               // placeholder when we've put the actual description
               // above; otherwise the two appear stacked.
               if (empty) empty.style.display = 'none';
@@ -2587,7 +2587,7 @@
                 keep.title = 'Make the version you were running your own tool; the agent uses it again';
                 keep.addEventListener('click', function() {
                   keep.disabled = true; rm.disabled = true;
-                  keep.textContent = 'Keeping…';
+                  keep.textContent = 'Keeping...';
                   recreateAgentReference(id, n).then(function() {
                     delete goneTools[n];
                     delete removedRefs[n];
@@ -2727,7 +2727,7 @@
             function addScopedRow(t, idx, host, bucketCbs) {
               // A div, not a <label>: the row carries buttons, and inside a
               // label every click on them would also toggle the checkbox.
-              // The text gets its own <label for=…> so clicking it still does.
+              // The text gets its own <label for=...> so clicking it still does.
               var row = document.createElement('div');
               row.className = 'ui-checklist-row';
               var cbID = 'orch-scoped-cb-' + idx;
@@ -3302,7 +3302,7 @@
             undo.title = 'Put it back in the saved notes';
             undo.addEventListener('click', function() {
               undo.disabled = true;
-              undo.textContent = 'Undoing…';
+              undo.textContent = 'Undoing...';
               fetch(auditURL, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({undo: mv.id})})
                 .then(function(r) { if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); }); })
                 .then(function() {
@@ -3418,7 +3418,7 @@
         searchRow.style.cssText = 'display:flex;gap:0.4rem;align-items:center';
         var searchInput = document.createElement('input');
         searchInput.type = 'text';
-        searchInput.placeholder = 'Search this agent’s memory…';
+        searchInput.placeholder = 'Search this agent’s memory...';
         searchInput.style.cssText = 'flex:1;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.35rem 0.55rem;font:inherit';
         searchRow.appendChild(searchInput);
         var searchMode = 'grep';
@@ -3524,7 +3524,7 @@
           if (!q || memSearchBusy) return;
           memSearchBusy = true;
           searchResults.style.display = '';
-          searchResults.innerHTML = '<div style="color:var(--text-mute);font-style:italic;font-size:0.82rem;padding:0.3rem 0">Searching…</div>';
+          searchResults.innerHTML = '<div style="color:var(--text-mute);font-style:italic;font-size:0.82rem;padding:0.3rem 0">Searching...</div>';
           fetch(memsearchURL + '?q=' + encodeURIComponent(q) + '&mode=' + searchMode)
             .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
             .then(renderMemSearch)
@@ -3685,7 +3685,7 @@
           if (!sections || sections.length < 2) { notesSizes.textContent = ''; return; }
           notesSizes.textContent = 'Sections: ' + sections.slice(0, 4).map(function(x) {
             return x.name + ' (' + x.runes + ')';
-          }).join(', ') + (sections.length > 4 ? ', …' : '');
+          }).join(', ') + (sections.length > 4 ? ', ...' : '');
         }
         function refreshNotesSizes() {
           fetch(notesURL).then(function(r){ return r.ok ? r.json() : null; }).then(function(d) {
@@ -4232,7 +4232,7 @@
         scaffoldBtn.onclick = function() {
           scaffoldBtn.disabled = true;
           scaffoldStatus.style.color = 'var(--text-mute)';
-          scaffoldStatus.textContent = 'Creating…';
+          scaffoldStatus.textContent = 'Creating...';
           fetch('api/agents/' + encodeURIComponent(id) + '/knowledge/scaffold-collection', {method: 'POST'})
             .then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error(t); }); return r.json(); })
             .then(function(out) {
@@ -4384,7 +4384,7 @@
         var linkBtn = document.createElement('button');
         linkBtn.className = 'ui-row-btn';
         linkBtn.style.cssText = 'font-size:0.78rem;padding:0.25rem 0.55rem';
-        linkBtn.textContent = 'Linked agents…';
+        linkBtn.textContent = 'Linked agents...';
         linkBtn.title = 'See and change which of your agents each source is linked to';
         linkWrap.appendChild(linkBtn);
         body.appendChild(linkWrap);
@@ -4921,7 +4921,7 @@
               // breaks; the save keeps such a rule together.
               var input = document.createElement('textarea');
               input.value = text;
-              input.placeholder = 'rule…';
+              input.placeholder = 'rule...';
               var more = window.uiExpandingLine(input, {buttonClass: 'ui-orch-list-del', onInput: function(v) { rules[idx] = v; }});
               // Elevate: promote this soft rule into the protected, enforced
               // guardrails band below. It MOVES (a rule and its guardrail would
@@ -5466,7 +5466,7 @@
               // One line that opens to the whole rule (uiExpandingLine). One rule
               // is one line of the stored list, so it never takes a newline.
               var input = document.createElement('textarea');
-              input.value = gBody(text); input.placeholder = 'guardrail rule…';
+              input.value = gBody(text); input.placeholder = 'guardrail rule...';
               // Re-read the marker from the stored line on every keystroke rather
               // than closing over it: the toggle below rewrites grules[idx], and a
               // captured copy would put the stale severity back.
@@ -6021,7 +6021,7 @@
             if (!rows.length) {
               var none = document.createElement('div');
               none.className = 'ui-orch-modal-help';
-              none.textContent = scanLoaded ? 'No listed network tools on this agent.' : 'Loading…';
+              none.textContent = scanLoaded ? 'No listed network tools on this agent.' : 'Loading...';
               leftList.appendChild(none);
               return;
             }
@@ -6087,7 +6087,7 @@
                   if (n && gToolChoices.indexOf(n) < 0) choices.unshift(n);
                   if (!n) {
                     var ph = document.createElement('option');
-                    ph.value = ''; ph.textContent = 'pick a tool…';
+                    ph.value = ''; ph.textContent = 'pick a tool...';
                     inp.appendChild(ph);
                   }
                   choices.forEach(function(c) {
@@ -6100,7 +6100,7 @@
                   inp.onchange = function() { arr[i] = inp.value; render(); renderCovers(); };
                 } else {
                   inp = document.createElement('input');
-                  inp.type = 'text'; inp.value = n; inp.placeholder = pickTools ? 'tool name…' : 'host or URL prefix…';
+                  inp.type = 'text'; inp.value = n; inp.placeholder = pickTools ? 'tool name...' : 'host or URL prefix...';
                   inp.className = 'ui-orch-list-input';
                   inp.oninput = function() { arr[i] = inp.value; };
                   inp.onblur = function() { renderCovers(); };
@@ -6407,7 +6407,7 @@
               var row = document.createElement('div');
               row.className = 'ui-orch-list-row';
               var nameIn = document.createElement('input');
-              nameIn.type = 'text'; nameIn.value = ex.name || ''; nameIn.placeholder = 'name…';
+              nameIn.type = 'text'; nameIn.value = ex.name || ''; nameIn.placeholder = 'name...';
               nameIn.style.cssText = 'flex:0 0 8rem' +
                 (dupes[idx] ? ';border-color:var(--warning,#d29922)' : '');
               if (dupes[idx]) {
@@ -6424,7 +6424,7 @@
               // is read on an Except: line under the rule, so no newline.
               var textIn = document.createElement('textarea');
               textIn.value = ex.text || '';
-              textIn.placeholder = 'when the rules it is linked to should not apply…';
+              textIn.placeholder = 'when the rules it is linked to should not apply...';
               textIn.className = 'ui-orch-list-input';
               var textMore = window.uiExpandingLine(textIn, {oneLine: true, buttonClass: 'ui-orch-list-del', onInput: function(v) { gexceptions[idx].text = v; }});
               // Name the condition for them if they didn't. The server derives
@@ -6535,7 +6535,7 @@
               // One line that opens to the whole decline (uiExpandingLine): a
               // decline is one line a blocked reply is replaced with.
               var input = document.createElement('textarea');
-              input.value = text; input.placeholder = 'decline line\u2026';
+              input.value = text; input.placeholder = 'decline line...';
               input.className = 'ui-orch-list-input';
               var more = window.uiExpandingLine(input, {oneLine: true, buttonClass: 'ui-orch-list-del', onInput: function(v) { declines[idx] = v; }});
               var del = document.createElement('button');
@@ -6556,7 +6556,7 @@
             genD.textContent = genLabel;
             genD.title = 'Draft a set now, in the agent\u2019s voice. Written here, not when a block happens, and reviewed by you before it is ever shown.';
             genD.onclick = function() {
-              genD.disabled = true; genD.textContent = 'Writing\u2026';
+              genD.disabled = true; genD.textContent = 'Writing...';
               fetch('api/agents/' + encodeURIComponent(id) + '/decline-suggest', {method: 'POST'})
                 .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
                 .then(function(d) {
@@ -6639,7 +6639,7 @@
           testBtn.onclick = function() {
             var cand = testIn.value.trim();
             if (!cand) { return; }
-            testOut.textContent = 'Checking…'; testBtn.disabled = true;
+            testOut.textContent = 'Checking...'; testBtn.disabled = true;
             fetch('api/agents/' + encodeURIComponent(id) + '/guardrail-test', {
               method: 'POST', headers: {'Content-Type': 'application/json'},
               body: JSON.stringify({
@@ -6721,7 +6721,7 @@
             var gclean = grules.map(function(r) { return r.trim(); })
                                .filter(function(r) { return r.length > 0; });
             var hooks = hookDefs.map(function(h){ return h.v; }).filter(function(v){ return activeHooks[v]; });
-            gSaid('Saving\u2026');
+            gSaid('Saving...');
             return (
             // Two saves, STRICTLY SEQUENCED — never Promise.all.
             //
@@ -7410,7 +7410,7 @@
         var machineSel = document.createElement('select');
         machineSel.className = 'ui-orch-sec-filter';
         var loading = document.createElement('option');
-        loading.textContent = 'Loading…';
+        loading.textContent = 'Loading...';
         machineSel.appendChild(loading);
         m.body.appendChild(schedLabeled('Which machine', machineSel));
 
@@ -7632,7 +7632,7 @@
         var how = schedSelect([
           ['daily', 'Once a day'],
           ['times', 'At set times'],
-          ['every', 'Every…'],
+          ['every', 'Every...'],
           ['random_count', 'At random, a number of times a day'],
           ['random_gap', 'At random gaps'],
           ['monthly', 'Once a month'],
@@ -7810,7 +7810,7 @@
         var hasDate = !!until.stop_on, hasRuns = (parseInt(until.max_runs, 10) || 0) > 0, hasGoal = goals && !!(until.goal || '').trim();
 
         // One choice first: indefinitely, or until something. The conditions
-        // only show once "Until…" is picked, so a schedule that runs forever
+        // only show once "Until..." is picked, so a schedule that runs forever
         // reads as one line.
         // Two radios rather than a dropdown: both choices in view, one click.
         var limited = hasDate || hasRuns || hasGoal;
@@ -7827,7 +7827,7 @@
           return r;
         }
         var foreverRadio = radio('forever', 'Indefinitely', !limited);
-        var untilRadio = radio('until', 'Until…', limited);
+        var untilRadio = radio('until', 'Until...', limited);
         host.appendChild(schedLabeled('Runs', modeWrap));
 
         function check(label, on) {
@@ -8020,18 +8020,18 @@
           host.appendChild(schedLabeled('Fire when the answer contains (blank = YES)', match));
           if (mon.check_agent) host.appendChild(schedReadOnly('Checked by', mon.check_agent));
         } else if (kind === 'http_poll') {
-          url = schedTxt(mon.url || '', 'https://…');
+          url = schedTxt(mon.url || '', 'https://...');
           host.appendChild(schedLabeled('URL fetched each interval', url));
           jsonPath = schedTxt(mon.json_path || '', 'result.0.price');
           host.appendChild(schedLabeled('Extract by JSON path (optional)', jsonPath));
           regex = schedTxt(mon.regex || '', 'first capture group');
-          host.appendChild(schedLabeled('…or by regex (optional)', regex));
+          host.appendChild(schedLabeled('...or by regex (optional)', regex));
           op = schedSelect([['<', 'is less than'], ['>', 'is greater than'], ['<=', 'is at most'],
             ['>=', 'is at least'], ['==', 'equals'], ['!=', 'does not equal'], ['contains', 'contains']],
             mon.compare_op || '>');
-          host.appendChild(schedLabeled('Fire when the extracted value…', op));
+          host.appendChild(schedLabeled('Fire when the extracted value...', op));
           threshold = schedTxt(mon.threshold || '', 'the value compared against');
-          host.appendChild(schedLabeled('…this value', threshold));
+          host.appendChild(schedLabeled('...this value', threshold));
         } else if (kind === 'watch') {
           if (mon.tool_name) host.appendChild(schedReadOnly('Watches', mon.tool_name));
           host.appendChild(schedReadOnly('Fires when', 'the watched output changes'));

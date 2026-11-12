@@ -118,7 +118,7 @@ const guideCuratorAction = `function(ctx){
 
         function load(){
           host.innerHTML = '';
-          host.appendChild(el('div', {class:'gc-empty'}, [window.uiLoading ? window.uiLoading() : 'Loading…']));
+          host.appendChild(el('div', {class:'gc-empty'}, [window.uiLoading ? window.uiLoading() : 'Loading...']));
           fetch('curator/runs').then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
             host.innerHTML = '';
             if (!d) { host.appendChild(el('div', {class:'gc-empty'}, ['Could not load the digest.'])); return; }

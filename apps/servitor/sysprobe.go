@@ -1097,7 +1097,7 @@ var execTrailerPrefixes = []string{"TIMED OUT", "CANCELLED", "exit code", "signa
 
 // splitExecTrailer peels the exec notices off the end of a capture, so a
 // caller that spills the body can put them AFTER the spill note where the
-// agent sees them. Spilled whole, a "[TIMED OUT …]" or "[exit code 3]" sat
+// agent sees them. Spilled whole, a "[TIMED OUT ...]" or "[exit code 3]" sat
 // at the tail of a 2 MB capture, past the first window, and the agent read
 // a truncated success. Only lines that begin with a known notice are
 // peeled; a command whose own output ends in a bracketed line keeps it.

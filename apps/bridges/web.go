@@ -34,7 +34,7 @@ type bridgesConfig struct {
 	// addressable handle the MessagingLink owner-handle seam needs.
 	SelfHandle string `json:"self_handle,omitempty"`
 	// TagOverride is the GLOBAL layer of the outbound name tag: when set, it
-	// replaces each agent's own name in the "[Name] …" prefix on outbound
+	// replaces each agent's own name in the "[Name] ..." prefix on outbound
 	// messages — a deployment-wide label (e.g. a brand or assistant name) so
 	// every agent signs with the same identity. A per-channel override still
 	// wins over it, and it's inert on any agent that hasn't enabled tagging.
@@ -148,7 +148,7 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// API-key validator was the core desktop key — so the gohort-desktop
 	// daemon authenticating its WS bridge (/api/desktop/ws) with a bridges-
 	// minted X-API-Key got 401'd and never connected, and from_client_*
-	// (filesystem, screenshot, …) calls failed with "desktop isn't connected"
+	// (filesystem, screenshot, ...) calls failed with "desktop isn't connected"
 	// even though the iMessage hook (which uses validateBridgeKey) worked.
 	// Registered here, at route time, because T.DB must be live (not init()).
 	RegisterAPIKeyValidator(T.bridgeKeyOwner)
@@ -163,7 +163,7 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// BridgeKey exists for a service and reflect the connector's enabled state.
 	RegisterBridgeProvisioner(T.ensureServiceBridge)
 
-	// Server-side poll loops for the rest_messaging connector kind (Teams/Slack/…
+	// Server-side poll loops for the rest_messaging connector kind (Teams/Slack/...
 	// via a REST API + SecureAPI credential). Materialize starts a loop; Teardown
 	// stops it. Registered here (store live) before ReloadApprovedConnectors runs at
 	// startup, so approved pollers restart automatically. The probe backs the

@@ -64,7 +64,7 @@ type HTTPTransport struct {
 
 // HTTPOptions configures a Streamable-HTTP transport.
 type HTTPOptions struct {
-	// Auth attaches credentials per request (bearer token, OAuth, …).
+	// Auth attaches credentials per request (bearer token, OAuth, ...).
 	Auth Authorizer
 	// Client overrides the default *http.Client (e.g. for timeouts/proxy).
 	Client *http.Client

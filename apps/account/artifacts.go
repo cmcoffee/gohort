@@ -188,7 +188,7 @@ func artifactsSection() ui.Section {
 			"Import shows what a file would bring in before anything happens. It accepts a full bundle or a single agent, pipeline or machine file. Everything lands in your account inert: agents private, tools waiting for an administrator's approval, skills and apps switched off, monitors paused.",
 		Body: ui.Toolbar{Actions: []ui.ToolbarAction{
 			{Label: "Export everything", Title: "Download everything you own as one file", Method: "client", URL: "account_export_all", Variant: "primary"},
-			{Label: "Import…", Title: "Preview a file, then import it into your account", Method: "client", URL: "account_import"},
+			{Label: "Import...", Title: "Preview a file, then import it into your account", Method: "client", URL: "account_import"},
 		}},
 	}
 }

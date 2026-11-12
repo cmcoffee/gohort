@@ -7,7 +7,7 @@
 // the same layered model orchestrate agents use — instead of servitor's flat
 // ssh_facts. This file mounts the SAME editable Memory modal apps/agents
 // uses (agenthost.AgentMemoryModalScript) pointed at a per-appliance scope,
-// and routes its data endpoints to orchestrate's …ForScope handlers.
+// and routes its data endpoints to orchestrate's ...ForScope handlers.
 //
 // Scope only — no runtime swap. Servitor still runs its own RunAgentLoop for
 // probing today; the lead-migration slice swaps that to a scoped run that
@@ -363,7 +363,7 @@ func seedApplianceMemoryFromFacts(udb Database, a Appliance) {
 //
 //	/servitor/api/appliances/<applianceID>/<suffix>
 //
-// dispatching each suffix to orchestrate's …ForScope handlers (which read +
+// dispatching each suffix to orchestrate's ...ForScope handlers (which read +
 // write the appliance's scoped memory). Ownership: the appliance must exist in
 // the requesting user's per-user store; the orchestrate handlers layer a
 // session gate on top. The suffix routing mirrors apps/agents exactly so the

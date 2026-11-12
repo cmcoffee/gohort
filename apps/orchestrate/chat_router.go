@@ -316,7 +316,7 @@ func (T *OrchestrateApp) sessionGet(c *jsonapi.Call, at sessionAt) (any, error) 
 		return nil, err
 	}
 	r, user, udb := c.R, c.User, c.UDB
-	// External-source row (e.g. ?source=phantom&chat_id=…)?
+	// External-source row (e.g. ?source=phantom&chat_id=...)?
 	// Delegate to the registered source so it can resolve to
 	// the right per-source storage scope. Sources gate user
 	// permission internally; on a false result we serve the

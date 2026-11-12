@@ -3,7 +3,7 @@
 alice GET /api/pipelines ""
   403 forbidden
 root GET /api/pipelines ""
-  200 {"pipelines":[{"id":"pl-alice","owner":"alice","name":"Alice's flow","description":"two steps","stages":2,"detail":{"id":"pl-alice","name":"Alice's flow","description":"two steps","stages":[{"name":"o… (521 bytes, sha1 4fb774c7bba6c0a4553b72542bb9f7823bc65a21)
+  200 {"pipelines":[{"id":"pl-alice","owner":"alice","name":"Alice's flow","description":"two steps","stages":2,"detail":{"id":"pl-alice","name":"Alice's flow","description":"two steps","stages":[{"name":"o... (521 bytes, sha1 4fb774c7bba6c0a4553b72542bb9f7823bc65a21)
 root PUT /api/pipelines "{}"
   405 method not allowed
 (signed out) GET /api/skills ""
@@ -61,7 +61,7 @@ root POST /api/skills "{\"id\":\"<skill-2>\",\"name\":\"Release Notes\",\"descri
 root POST /api/skills "{\"id\":\"<skill-2>\",\"conditions\":[]}"
   200 {"id":"<skill-2>","name":"Triage","description":"Sort tickets","instructions":"Sort by severity.","owner":"root","created":"<time>","updated":"<time>"}
 root GET /api/skills ""
-  200 [{"id":"<skill-1>","name":"Release notes","description":"Write release notes","triggers":["release"],"allowed_tools":["git"],"attached_collections":["col-root"],"instructions":"Be very brief.","disabl… (430 bytes, sha1 d63baacb61414652bc2e72b4aec0769edb99aeae)
+  200 [{"id":"<skill-1>","name":"Release notes","description":"Write release notes","triggers":["release"],"allowed_tools":["git"],"attached_collections":["col-root"],"instructions":"Be very brief.","disabl... (430 bytes, sha1 d63baacb61414652bc2e72b4aec0769edb99aeae)
 alice GET /api/skills/<skill-1> ""
   403 forbidden
 root GET /api/skills/<skill-1> ""

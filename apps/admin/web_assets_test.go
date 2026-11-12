@@ -39,7 +39,7 @@ var action = ` + connectorAddAnotherAction + `;
 function want(cond, why) { if (!cond) { console.log('FAIL ' + why); process.exitCode = 1; } }
 rows = [{id: 'a', title: 'Gemini', category: 'Images'}, {id: 'b', title: 'ComfyUI', category: 'Images'},
   {id: 'c', title: 'ElevenLabs', category: 'Music'}, {id: 'd', title: 'Omni', category: 'Video'}];
-action({action: {data: 'media', label: 'Add AI generator…'}});
+action({action: {data: 'media', label: 'Add AI generator...'}});
 setTimeout(function() {
   var segs = find(body, 'ui-seg');
   want(segs.map(function(s){ return s.text; }).join(',') === 'Images (2),Music (1),Video (1)', 'the kinds, in order, with counts: ' + segs.map(function(s){ return s.text; }));

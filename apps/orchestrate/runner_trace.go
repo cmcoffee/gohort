@@ -375,7 +375,7 @@ func quietLabel(reason string) string {
 // to overlap). The longest-common-prefix ratio (vs the shorter string)
 // is the narrowest catch: a 1500-char shared analysis with a 200-char
 // diverging conclusion (LCP / short ≈ 0.88) drops; a short opener
-// like "Looking into your question, …" shared between a brief
+// like "Looking into your question, ..." shared between a brief
 // narration bubble and a long final reply (LCP / short ≈ 0.2) doesn't.
 //
 // Threshold 0.6: tuned conservative — error toward keeping bubbles
@@ -422,7 +422,7 @@ func commonPrefixLen(a, b string) int {
 // The prefix ratio is measured against the SHORTER string, so a one-sentence
 // lead-in that a long answer happens to open with scores a perfect 1.0 —
 // "Let me pull the numbers." against "Let me pull the numbers. Revenue rose
-// in every region…". Treating that as a duplicate suppresses whichever side
+// in every region...". Treating that as a duplicate suppresses whichever side
 // the caller was about to keep, and on the live path that is the answer: the
 // user is left looking at a sentence of preamble with the reply only in the
 // saved transcript. Requiring the new tail to be no longer than the repeated
@@ -553,7 +553,7 @@ func (t *chatTurn) lookupToolCache(name string, args map[string]any) (string, bo
 // subsequent step's user prompt. Empty when nothing has run yet.
 //
 // Each entry is clipped so the prompt doesn't explode — the LLM
-// sees a snippet ("X costs $20…"); if it wants the full result it
+// sees a snippet ("X costs $20..."); if it wants the full result it
 // can re-call deliberately (the cache will short-circuit).
 func (t *chatTurn) toolLogPromptSection() string {
 	t.toolMu.Lock()

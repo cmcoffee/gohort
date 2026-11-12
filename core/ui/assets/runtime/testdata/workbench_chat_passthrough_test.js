@@ -44,14 +44,14 @@ var m = mount({
   markdown: true,
   lock_activity: true,
   empty_text: 'Ask me to draft a section.',
-  placeholder: 'Ask the Guide Author…',
+  placeholder: 'Ask the Guide Author...',
 });
 check('a mid-flight message has somewhere to go',   m.inject_url === 'chat/inject');
 check('the session rail survives (list)',           m.list_url === 'chat/sessions');
 check('the session rail survives (load)',           m.load_url === 'chat/sessions/{id}');
 check('the session rail survives (delete)',         m.delete_url === 'chat/sessions/{id}');
 check('the rail keeps its heading',                 m.list_title === 'Past sessions');
-check("the app's own copy is not overwritten",      m.placeholder === 'Ask the Guide Author…');
+check("the app's own copy is not overwritten",      m.placeholder === 'Ask the Guide Author...');
 check('and its empty state is not either',          m.empty_text === 'Ask me to draft a section.');
 
 // The rail is opt-in on all three together (see hasList). An app that declares

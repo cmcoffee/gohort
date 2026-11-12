@@ -121,7 +121,7 @@ func TestTheSubstitutedReplyIsTrueAndBlamesNobody(t *testing.T) {
 }
 
 // A tool call written as a BRACKETED DIRECTIVE. The shape that reached a
-// contact verbatim: "[CALL_FUNCTION] fetch_image: find a photo of …" wrapped in
+// contact verbatim: "[CALL_FUNCTION] fetch_image: find a photo of ..." wrapped in
 // seven hundred characters of narration — invented progress, second thoughts,
 // "OK found a good one" — none of which had happened.
 
@@ -238,7 +238,7 @@ func TestEveryGuardStopUsesTheSharedPrefix(t *testing.T) {
 	}
 	for _, o := range offenders {
 		if len(o) > 160 {
-			o = o[:160] + "…"
+			o = o[:160] + "..."
 		}
 		t.Errorf("a STOP verdict that isGuardStopResult will not recognise:\n  %s", o)
 	}

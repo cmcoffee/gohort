@@ -156,7 +156,7 @@ func (connectorArtifact) ImportName(db Database, recipe json.RawMessage) string 
 
 // connectorImportName is the name pc lands under, and whether it is here
 // already: its own when that is free, or the one of its name or numbered
-// after it ("finder", "finder-2", …) that is the same connector (kind and
+// after it ("finder", "finder-2", ...) that is the same connector (kind and
 // spec), so a bundle imported again skips; else its name numbered past
 // every one taken, so an import never stands in for a different connector
 // that was here already. Nothing else a bundle carries names a connector (a

@@ -148,7 +148,7 @@ func TestNoAbsoluteHomePaths(t *testing.T) {
 func TestNoKeyMaterial(t *testing.T) {
 	walkScrubFiles(t, func(path string, line int, text string) {
 		if m := keyMaterialRE.FindString(text); m != "" {
-			t.Errorf("%s:%d: key material (%.12s…) must never be committed", path, line, m)
+			t.Errorf("%s:%d: key material (%.12s...) must never be committed", path, line, m)
 		}
 	})
 }

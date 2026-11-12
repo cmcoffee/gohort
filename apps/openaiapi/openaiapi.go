@@ -253,7 +253,7 @@ func tokenGrant(token *AccountToken) func(string) bool {
 }
 
 // gateAppTarget applies the per-APP feature gate (gate 4) when the canonical
-// target is an app-owned agent (Servitor investigator, Guide Author, …):
+// target is an app-owned agent (Servitor investigator, Guide Author, ...):
 // admin tier + key tier via KeyAllowsAppAgent. No-op for every other target.
 func (T *OpenAIAPI) gateAppTarget(w http.ResponseWriter, user string, token *AccountToken, canonical string) bool {
 	if !strings.HasPrefix(canonical, "agent:") {

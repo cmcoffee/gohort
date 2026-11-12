@@ -894,7 +894,7 @@ func viewImageBytes(imgs []ViewImage) [][]byte {
 
 // viewImageNote writes the note that accompanies queued images.
 //
-// It enumerates them ("Image 1 of 3: …") instead of claiming they arrive "in
+// It enumerates them ("Image 1 of 3: ...") instead of claiming they arrive "in
 // order" against "the preceding tool result". That claim was not true when it
 // mattered: image producers run in parallel by design, they append to one queue
 // from separate goroutines as each backend answers, and a round with several of

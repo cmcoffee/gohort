@@ -37,7 +37,7 @@ Answer ASSERTED only when ALL of these hold:
 3. The claim matters to the answer. An aside is not worth a correction.
 
 Answer CLEAN for everything else, including:
-- The reply repeats an unverified note WITH attribution ("you mentioned…", "per your notes…"). That is exactly what is wanted.
+- The reply repeats an unverified note WITH attribution ("you mentioned...", "per your notes..."). That is exactly what is wanted.
 - The reply is confident about anything else. Only the listed notes are in scope.
 - The reply asserts something the turn verified this turn.
 - The reply is about the user's own preferences, goals or identity. They are the authority on those.
@@ -48,7 +48,7 @@ What the tools returned is ABRIDGED: long results have their middle elided and t
 
 Quote the offending sentence from the REPLY verbatim as "claim", and the note it traces to verbatim as "basis".
 
-Reply with JSON only: {"verdict":"ASSERTED"|"CLEAN","claim":"…","basis":"…"}`
+Reply with JSON only: {"verdict":"ASSERTED"|"CLEAN","claim":"...","basis":"..."}`
 
 // judgeTurnGrounding is the TurnGroundingJudge implementation. ok=false on any
 // doubt about the judgement itself, which the loop reads as no opinion.

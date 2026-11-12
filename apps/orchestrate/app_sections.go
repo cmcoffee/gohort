@@ -127,7 +127,7 @@ func sectionIDList(sections []map[string]any) string {
 func sectionArg(args map[string]any) (map[string]any, error) {
 	m, ok := args["section_def"].(map[string]any)
 	if !ok || len(m) == 0 {
-		return nil, errors.New("section_def is required: the section OBJECT ({kind, title, fields…}), the same shape one entry of `sections` takes")
+		return nil, errors.New("section_def is required: the section OBJECT ({kind, title, fields...}), the same shape one entry of `sections` takes")
 	}
 	m = normalizeSection(m)
 	if strings.TrimSpace(mapStr(m, "kind")) == "" {

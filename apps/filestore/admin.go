@@ -304,7 +304,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 									EmptyText: "Builder maps this command: what it works out lands on this row as the actions an agent can call. " +
 										"It reads the runs you made in Show it how, and can run the command with any arguments to learn it, asking you before a run that would change anything. " +
 										"Nothing it writes can be called until you turn Agents on for this command; that switch is the approval.",
-									Placeholder: "Or ask Builder something…",
+									Placeholder: "Or ask Builder something...",
 								}),
 								{Type: "button", Label: "Delete", Method: "DELETE",
 									PostTo:     "/filestore/api/commands?id={cmd}",
@@ -687,7 +687,7 @@ func (T *FileStoreApp) handleStores(c *jsonapi.Call) (any, error) {
 // handleStoreSave adds a store (POST) or changes one (PATCH).
 //
 // Decoded ONTO the stored record, not into a blank one. Two editors
-// now write this record — the form (name, path, retention…) and the
+// now write this record — the form (name, path, retention...) and the
 // access picker (members, full_access) — and neither sends the other's
 // fields. Into a blank Store, whichever saved second would silently
 // erase what the first had just set: json.Unmarshal leaves absent

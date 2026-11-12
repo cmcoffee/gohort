@@ -20,7 +20,7 @@ var runtimeCSS string
 
 // runtimeJSParts — the shared client runtime, split across ordered fragments in
 // assets/runtime/. It was one ~14k-line file; splitting it keeps each section
-// (chat_panel, agent_loop_panel, pipeline_panel, …) editable on its own with
+// (chat_panel, agent_loop_panel, pipeline_panel, ...) editable on its own with
 // small diffs. Kept as real .js files so backticks/template literals are legal.
 //
 //go:embed assets/runtime/*.js

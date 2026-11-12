@@ -106,7 +106,7 @@ func TestSandboxPythonPathUsesMountPathsUnderBwrap(t *testing.T) {
 // The shim bin dir is the other half of the bridge and broke the same way. The
 // old code prepended the mount path unconditionally and called it harmless — "a
 // dead PATH entry, which the PATH search simply skips". Skipping it is exactly
-// the problem: `fetch_url https://…` becomes command-not-found on a host whose
+// the problem: `fetch_url https://...` becomes command-not-found on a host whose
 // hook is present and granted, so the documented shell interface is silently
 // absent everywhere bwrap is not installed.
 func TestSandboxShimBinDirResolvesWithoutBwrap(t *testing.T) {

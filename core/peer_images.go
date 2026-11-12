@@ -206,7 +206,7 @@ func HandlePeerImageRender(w http.ResponseWriter, r *http.Request) {
 // resolves every ref against sess.WorkspaceDir and rejects absolute paths
 // outright, so a bare &ToolSession{} plus full temp paths fell through to the
 // last branch and failed with "no workspace available to read
-// /opt/gohort/data/images/….png from" — an error quoting a serving-side path,
+// /opt/gohort/data/images/....png from" — an error quoting a serving-side path,
 // returned to a peer, about a directory that exists and a file that had just
 // been written to it. Rooting the session where writeImageTemp actually puts
 // them and passing basenames puts the refs back inside the containment check

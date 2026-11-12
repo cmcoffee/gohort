@@ -426,7 +426,7 @@ func fixPanel(form ui.FormPanel) ui.AssistPanel {
 		Work: form, URL: "api/system-deps/fix?id={id}", Ask: fixAsk,
 		Attach: true, Web: true,
 		Intro:       "It knows this row and why it fails. It tries steps before it suggests them, and what it suggests fills the form: nothing is saved until you save it. Attach a sample file (📎) for a job that reads one.",
-		Placeholder: "Ask about it, or say what to try…",
+		Placeholder: "Ask about it, or say what to try...",
 	}
 }
 

@@ -51,7 +51,7 @@ func TestActivityToInboundChannelMessage(t *testing.T) {
 	if req.ChatID != "19:thread@thread.tacv2" {
 		t.Errorf("chat id = %q", req.ChatID)
 	}
-	// The Entra object id is stable where the channel-scoped "29:…" id is not.
+	// The Entra object id is stable where the channel-scoped "29:..." id is not.
 	if req.Handle != "aad-ada" {
 		t.Errorf("handle = %q, want the aad object id", req.Handle)
 	}

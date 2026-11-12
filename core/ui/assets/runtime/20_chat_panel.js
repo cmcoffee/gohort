@@ -216,7 +216,7 @@
       inputArea.appendChild(attachInput);
       inputArea.appendChild(attachBtn);
     }
-    var input  = el('textarea', {class: 'ui-chat-input', rows: '1', placeholder: 'Message…'});
+    var input  = el('textarea', {class: 'ui-chat-input', rows: '1', placeholder: 'Message...'});
     var prefillBtn = null;
     if (cfg.prefill_url) {
       var prefillRun = null; // {busy, ctl} while a suggestion is being fetched
@@ -725,7 +725,7 @@
         if (argBox) body.appendChild(argBox);
         var trimmed = String(t.output || '').trim();
         if (t.output === null) {
-          body.appendChild(el('div', {class: 'ui-chat-tool-empty'}, ['(running…)']));
+          body.appendChild(el('div', {class: 'ui-chat-tool-empty'}, ['(running...)']));
         } else if (!trimmed) {
           body.appendChild(el('div', {class: 'ui-chat-tool-empty'}, ['(no output)']));
         } else {
@@ -773,7 +773,7 @@
       if (toggle) {
         toggle.textContent = label;
         // Re-render an open panel so newly-arrived tool_result data
-        // replaces the "(running…)" placeholders for finished tools.
+        // replaces the "(running...)" placeholders for finished tools.
         if (panel && panel.style.display !== 'none') renderToolPanel(panel);
         return;
       }
@@ -1083,7 +1083,7 @@
               // details body. Server sends as a map; we keep it raw
               // and let renderToolPanel format on display so a long
               // command_template value (e.g. "python3
-              // /opt/gohort/data/workspaces/foo/script.py …") is
+              // /opt/gohort/data/workspaces/foo/script.py ...") is
               // fully visible instead of clipped to 60 chars.
               argsFull: data.args_full || null,
               output: null,
@@ -1128,7 +1128,7 @@
             if (data.id) currentSessionId = data.id;
             break;
           case 'status':
-            // Light status line (e.g. "Investigating…"). Append as a
+            // Light status line (e.g. "Investigating..."). Append as a
             // mute system-style line.
             thread.appendChild(el('div', {class: 'ui-chat-status'}, [data.text || '']));
             scrollToBottom();

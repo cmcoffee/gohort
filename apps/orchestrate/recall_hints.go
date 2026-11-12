@@ -22,9 +22,9 @@ import (
 //
 // Sources (each hint is tagged so the model knows which tool to reach for):
 //   - knowledge : the curated corpus (uploaded docs / attached collections),
-//                 pulled with recall(id="doc:…").
+//                 pulled with recall(id="doc:...").
 //   - memory    : the agent's own saved findings (Reference Memory), pulled
-//                 with recall(id="mem:…").
+//                 with recall(id="mem:...").
 //   - graph     : entities the message names that the agent has relationships
 //                 recorded for. Not a pointer: their recorded facts go in with
 //                 the hint (graphFactLines), since a graph fact is a line and the
@@ -224,7 +224,7 @@ func knowledgeHints(hits []SearchHit, threshold float64, exclude map[string]bool
 }
 
 // memoryHints converts derived Reference-Memory hits into recall pointers,
-// each read whole with recall(id="mem:…").
+// each read whole with recall(id="mem:...").
 func memoryHints(hits []SearchHit, threshold float64) []recallHint {
 	var out []recallHint
 	now := time.Now()

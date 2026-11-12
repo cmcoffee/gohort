@@ -370,7 +370,7 @@ func TestTheOwnerEndpointTakesASectionToo(t *testing.T) {
 	}
 	src := string(raw)
 	if !strings.Contains(src, "Section string `json:\"section\"`") {
-		t.Error("POST …/notes must accept an optional section")
+		t.Error("POST .../notes must accept an optional section")
 	}
 	if strings.Count(src, "notes.ApplyNoteSection(") != 2 {
 		t.Error("both the tool and the endpoint must splice through ApplyNoteSection — a second implementation drifts")
@@ -383,7 +383,7 @@ func TestTheOwnerEndpointTakesASectionToo(t *testing.T) {
 	// And the panel is measured by the same parser rather than a browser-side
 	// count that disagrees the first time a heading sits inside a code fence.
 	if !strings.Contains(src, "notes.SectionSizes(") {
-		t.Error("GET …/notes must serve the section sizes the panel shows")
+		t.Error("GET .../notes must serve the section sizes the panel shows")
 	}
 }
 

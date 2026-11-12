@@ -828,7 +828,7 @@ func (g *GroupedTool) helpIgnoredParamsBanner(extras []string) string {
 		strings.Join(extras, ", "), g.name, strings.Join(extras, "/"))
 	for _, k := range extras {
 		if takers := g.actionsWithParam(k); len(takers) > 0 {
-			fmt.Fprintf(&b, "  To act on %q, call one of: %s, e.g. %s(action=%q, %s=…).\n",
+			fmt.Fprintf(&b, "  To act on %q, call one of: %s, e.g. %s(action=%q, %s=...).\n",
 				k, strings.Join(takers, ", "), g.name, takers[0], k)
 		}
 	}

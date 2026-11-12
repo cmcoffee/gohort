@@ -1,4 +1,4 @@
-// Server-pushed bridge state — which BUILT-IN messaging relays (iMessage, …)
+// Server-pushed bridge state — which BUILT-IN messaging relays (iMessage, ...)
 // the server has enabled on this device, and their poll overrides.
 //
 // A separate file from bridge-config.json on purpose: the VIEWER owns

@@ -211,7 +211,7 @@ func (T *CodeWriterAgent) handleCollectionsList(c *jsonapi.Call) (any, error) {
 // handleReferenceSources feeds the chat-header reference picker: every
 // registered reference source's items available to this user, grouped. The
 // data is generic (core.ReferenceGroup) — codewriter doesn't know or care
-// which services contributed (servitor systems, MCP doc sources, …).
+// which services contributed (servitor systems, MCP doc sources, ...).
 func (T *CodeWriterAgent) handleReferenceSources(c *jsonapi.Call) (any, error) {
 	groups := ReferenceGroups(c.User)
 	if groups == nil {

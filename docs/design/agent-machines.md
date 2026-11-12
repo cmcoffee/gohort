@@ -440,7 +440,7 @@ agent (the checkbox attaches, the buttons open), so a × that destroyed the mach
 and a form built against a moving schema is the expensive thing to throw away. That held until the
 fields people actually keep editing were known: they turned out to be the guard wording, the phase
 prompts, and whether a phase is resident, which is exactly what the argument predicted. The editor
-page (`/orchestrate/machine?id=…`) is a form per step now, with the map pinned above it; the JSON
+page (`/orchestrate/machine?id=...`) is a form per step now, with the map pinned above it; the JSON
 door stays behind *Edit as JSON* for anyone who already knows the shape. See **Editing one** below.
 
 A graph view of a machine's phases and transitions is **built** (see
@@ -504,8 +504,8 @@ Go and look.                          ← your instructions
 Settled. Work from it rather than re-deriving it, and do not re-ask what it already answers.
 
 ### triage — Is there something to explain?
-Observation: …
-Next phase: …
+Observation: ...
+Next phase: ...
 
 ## Other phases in this workflow
 Reachable with change_phase, and only when the request has genuinely moved on.
@@ -588,7 +588,7 @@ placed it themselves.
 whole blackboard, composed into its block; a transient step was handed nothing, so its author
 hand-copied `{state:triage.observation}`, `{state:triage.source}`, `{state:triage.asked}` one
 reference at a time: three chances to typo a name the definition already knows, and three lines to
-fix after a rename. Now it is prepended unless the prompt places a `{state:…}` reference of its own.
+fix after a rename. Now it is prepended unless the prompt places a `{state:...}` reference of its own.
 
 The vocabulary is FIXED, and that is what makes it a built-in: no name to choose, nothing to
 declare, the same meaning in every machine. It lives in one table (`MachineVars`), which the
@@ -599,7 +599,7 @@ place and implemented in another is how one of them silently stops being true.
 |---|---|---|
 | `{input}` | what the person said this turn | supplied when the prompt places none |
 | `{original_input}` | the message that opened the CONVERSATION, unchanged on turn nine | |
-| `{established}` | everything earlier steps worked out, with their names | supplied when the prompt places no `{state:…}` |
+| `{established}` | everything earlier steps worked out, with their names | supplied when the prompt places no `{state:...}` |
 | `{prev}` | what the step before produced, this turn | |
 | `{now}` | the date and time where the PERSON is | |
 | `{user}` - `{agent}` | who is talking, and which agent they opened | |
@@ -680,7 +680,7 @@ file as TEXT in the browser and submits its contents, so this is a form rather t
 and the imported machine opens in the editor the way a draft or a duplicate does.
 
 That last part needed the endpoint to accept both shapes it legitimately arrives in: the recipe
-itself (what a script or the tool posts) and `{"recipe": "…"}` (what a form posts). Accepting only
+itself (what a script or the tool posts) and `{"recipe": "..."}` (what a form posts). Accepting only
 the first is why `POST /api/machines/import` sat fully implemented and unreachable from any page
 since machines shipped.
 
@@ -739,7 +739,7 @@ report sitting next to it.
 A transient phase can name another agent:
 
 ```json
-{"name": "verify", "agent": "Log analyst", "prompt": "Test the hypothesis…", "next": "report"}
+{"name": "verify", "agent": "Log analyst", "prompt": "Test the hypothesis...", "next": "report"}
 ```
 
 The other two ways a phase differs from the agent running the conversation (a narrowed tool
@@ -846,7 +846,7 @@ where the second went.
 > a STAGE from a pipeline refuses while anything still reads it, because a pipeline's live in prose.
 
 
-**Or describe one.** "Describe one…" next to New machine takes a paragraph: what kinds of turns
+**Or describe one.** "Describe one..." next to New machine takes a paragraph: what kinds of turns
 arrive, what should happen to each, and drafts a complete machine, landing you in the editor to
 adjust it. The drafter reads the machine tool's own spec (`machineHelpText`) and its output goes
 through the tool's own decoder, so a drafted machine cannot be a third dialect. A draft with
@@ -875,7 +875,7 @@ lists them, and `machine(action="repair")` settles the mechanical half: the same
 `core/machine_repair.go` the button uses, so the two surfaces cannot settle different things.
 Problems never appear on a create reply, and that is not an omission: `Validate` refuses them first.
 
-**Describe a CHANGE, not just a machine.** "Describe one…" was one shot: a paragraph in, a whole
+**Describe a CHANGE, not just a machine.** "Describe one..." was one shot: a paragraph in, a whole
 machine out, and if it missed the only recourse was editing twelve fields by hand: the wrong
 recourse for "make triage decide between three lanes instead of two", which is a sentence somebody
 can say. The editor carries the same door for a machine that already exists. It reuses the drafter
@@ -917,7 +917,7 @@ stay in the list, and there is a test that keeps them there.
 **The one finding whose fix is prose gets a draft, not an edit.** "the prompt asks for JSON, but
 this step already declares fields" is answered by deleting sentences from what the author wrote, and
 which sentences are formatting instructions and which are the subject is a judgement: "return the
-JSON object's key" is content. So that finding carries a *Rewrite the instructions…* button which
+JSON object's key" is content. So that finding carries a *Rewrite the instructions...* button which
 opens the framework's assist workbench (`uiOpenAssist`) on the stored prompt, with the finding as
 its opening request. Every version including the original stays one click away, which is what makes
 accepting a suggestion safe. It drives the same `/suggest` endpoint the step's own ✨ button uses
@@ -935,7 +935,7 @@ already follows for a checked value whose option is gone: what is STORED stays v
 removed, while exclusivity is untouched whenever only one side is in use.
 
 **Renaming a step is one edit.** `RenameStep` rewrites every reference the definition holds
-`next`, `choices`, `keep`, `guard_to`, routing targets, `start`, and `{state:old.…}` in prompts,
+`next`, `choices`, `keep`, `guard_to`, routing targets, `start`, and `{state:old....}` in prompts,
 guards and fills, so a rename never sends you hunting through the checklist. A rename onto an
 existing step is refused (its references would silently re-point), the name field reloads the
 editor (everything on the page carries the old name until it does), and a form still addressing
@@ -950,7 +950,7 @@ belongs to: `next_from` offers only that step's own TEXT fields (a list cannot n
 another step's field is not readable there), `keep` offers the other steps by name, the delegate is
 picked from your agents, `tools` is a checklist of the user's actual pool (the same list the agent
 editor's Tools modal shows, grouped and filterable), and the prompt's help SPELLS OUT the
-`{state:…}` references available. Nothing in the editor is typed from memory.
+`{state:...}` references available. Nothing in the editor is typed from memory.
 
 A tool an imported machine names that this deployment does not have stays on the list, labelled
 a checklist only persists what it can show, so a name left off would be silently dropped by the
@@ -993,7 +993,7 @@ open.
 what the framework composes, so showing the pre-edit composition after a save is the same lie as an
 added step that never appears. It refreshes in place rather than reloading: the prompt box saves on
 a typing debounce, and a reload would yank the page out from under someone mid-sentence. It rides
-the framework's own invalidation broadcast: a phase form writes to `…/phases?name=<step>`, so the
+the framework's own invalidation broadcast: a phase form writes to `.../phases?name=<step>`, so the
 stale step is named in the event, and re-fetches from the same function that drew it.
 
 A step the conversation waits in establishes NOTHING, and the form says so where the section would
@@ -1066,7 +1066,7 @@ than running it. Where a turn GOES is the question here; what it would say is th
 The form asks questions rather than naming fields. *"The conversation waits here"* is
 `resident`, with the consequence spelled out where the choice is made. *"Then go to"* is a
 select of phases that actually exist, so a typo is not something the form can produce.
-*"…or let this step choose between"* is a checklist of the machine's real steps, because picking
+*"...or let this step choose between"* is a checklist of the machine's real steps, because picking
 the destinations IS the routing decision; the field that carries it is the framework's problem.
 Hand-wiring a field lives under *Routing by hand*, collapsed unless it is in use.
 

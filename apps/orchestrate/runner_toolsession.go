@@ -463,7 +463,7 @@ func (t *chatTurn) dispatchThreadID(target string) string {
 // deliver into), otherwise one this turn mints.
 //
 // A dispatch run's own session is otherwise a synthetic thread nobody reads
-// ("external-dispatch:…"), and a result delivered there never reaches the
+// ("external-dispatch:..."), and a result delivered there never reaches the
 // conversation that asked. A minted session names no conversation, so the
 // work runs inline instead, as it always has there.
 func (t *chatTurn) detachSession() *ToolSession {
@@ -495,7 +495,7 @@ func (t *chatTurn) newToolSession() *ToolSession {
 		// Whose turn this is — an authoring tool commits what it writes to
 		// this agent rather than to a per-chat-session pool.
 		AgentID: t.agent.ID,
-		// …unless the turn is authoring FOR another agent, which is Builder's
+		// ...unless the turn is authoring FOR another agent, which is Builder's
 		// whole job. Read live: focus moves when get_agent / create_agent runs.
 		AuthoringAgentFn: func() string {
 			if t.session != nil {

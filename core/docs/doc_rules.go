@@ -28,7 +28,7 @@ const docRulesKey = "default"
 var InheritedRules = func() string { return "" }
 
 // DocRulesTable returns the per-user table name backing one app's rules.
-// Namespace is the app's own name ("techwriter", "codewriter", …).
+// Namespace is the app's own name ("techwriter", "codewriter", ...).
 func DocRulesTable(namespace string) string {
 	return strings.TrimSpace(namespace) + "_rules"
 }

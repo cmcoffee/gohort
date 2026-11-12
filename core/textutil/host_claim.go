@@ -33,7 +33,7 @@ type ToolClaim struct {
 // when there isn't one to compare.
 //
 // Templates carry {arg} placeholders. One in the path is irrelevant here, but
-// one in the HOST ("https://{region}.api.example.com/…") means the host is not
+// one in the HOST ("https://{region}.api.example.com/...") means the host is not
 // known until dispatch — those compare as nothing rather than as something
 // wrong.
 //

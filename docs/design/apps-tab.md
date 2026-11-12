@@ -73,17 +73,17 @@ type RouteStage struct {
 	// convention and are two conventions plus exceptions, and a wrong guess
 	// here does not read as a guess: it reads as a dial that is yours.
 	App string
-	// … existing fields unchanged
+	// ... existing fields unchanged
 }
 
 type TunableSpec struct {
 	App string // same contract
-	// … existing fields unchanged
+	// ... existing fields unchanged
 }
 
 type AdminSectionEntry struct {
 	App string // same contract; Group still names the tab it also lands on
-	// … existing fields unchanged
+	// ... existing fields unchanged
 }
 ```
 

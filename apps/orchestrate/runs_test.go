@@ -322,7 +322,7 @@ func TestNoRunIsCreatedWithoutAWayToStopIt(t *testing.T) {
 			last := strings.TrimSpace(args[len(args)-1])
 			if last == "nil" {
 				t.Errorf("%s: %s passes no cancel func, so its Cancel button would do nothing. "+
-					"Use runsRegistry().CreateCancellable(ctx, …) and run the work under the ctx it returns.", f, m[0])
+					"Use runsRegistry().CreateCancellable(ctx, ...) and run the work under the ctx it returns.", f, m[0])
 			}
 		}
 	}

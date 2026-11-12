@@ -833,7 +833,7 @@ func slimAgentJSON(udb Database, user string, a AgentRecord) []byte {
 		if len(s) <= n {
 			return s
 		}
-		return s[:n] + fmt.Sprintf("…[%d chars total: previewed. get with full=true returns all of it; read that before changing it, since update replaces the whole field]", len(s))
+		return s[:n] + fmt.Sprintf("...[%d chars total: previewed. get with full=true returns all of it; read that before changing it, since update replaces the whole field]", len(s))
 	}
 	type toolSummary struct {
 		Name        string `json:"name"`
@@ -881,7 +881,7 @@ func slimAgentJSON(udb Database, user string, a AgentRecord) []byte {
 		"owned_by":                 a.OwnedBy,
 		"category":                 a.Category,
 		"build_notes":              a.BuildNotes,
-		"_note":                    "Compact view: orchestrator_prompt / plan_guidance / rules are previewed (full text omitted to save context); tools listed by name+mode. To change a prose field, send the complete new text via update_agent. If you need to READ the full prose you didn't write this session (e.g. to edit an inherited prompt after clone_agent), call agents(action=\"get\", id=…, full=true).",
+		"_note":                    "Compact view: orchestrator_prompt / plan_guidance / rules are previewed (full text omitted to save context); tools listed by name+mode. To change a prose field, send the complete new text via update_agent. If you need to READ the full prose you didn't write this session (e.g. to edit an inherited prompt after clone_agent), call agents(action=\"get\", id=..., full=true).",
 	}
 	// A sub-agent's family is described on its top-level agent: shown here
 	// so the notes it must keep to are read before it is changed.
@@ -1267,7 +1267,7 @@ func (ar *agentsRun) admit() bool {
 	//       no new input. Keyed on target+message so it trips ONLY on true
 	//       repeats. This is the one the Builder kept false-positiving: it
 	//       drives one agent with a DIFFERENT message per tool (profile, then
-	//       post, then feed…), which is real verification progress, not a loop.
+	//       post, then feed...), which is real verification progress, not a loop.
 	//   (2) THRASH — an outsized TOTAL volume of (possibly distinct) dispatches
 	//       to one target in a turn. Ceiling is generous, and higher still when
 	//       the dispatcher is the Builder, whose job is to sweep an agent's
@@ -1854,7 +1854,7 @@ func (ar *agentsRun) finish() bool {
 	// Feed the request into the target's cortex, every agent's record of what
 	// reached it, so a dispatched cortex/channel agent is AWARE another agent
 	// asked it to do something. The dispatch ran in the throwaway
-	// dispatch:<…> session, disconnected from the agent's standing thread, so
+	// dispatch:<...> session, disconnected from the agent's standing thread, so
 	// without this a channel agent (WiWee) posts to its group on request and
 	// then can't field follow-ups about what it just "said". from = the
 	// dispatching parent; the request text itself is the observation. Not a

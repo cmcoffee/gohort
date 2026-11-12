@@ -127,7 +127,7 @@ func (T *OrchestrateApp) unattendedHost(run unattendedRun) *machineHost {
 	if cur := run.Cursor; cur != nil {
 		h.state = func() MachineState { return cur.State }
 	}
-	// A sub-run's progress is narrated as its own line: "researcher: searching…".
+	// A sub-run's progress is narrated as its own line: "researcher: searching...".
 	// Falls back to the step narration when the door named no separate sink, and
 	// to nothing at all when it named neither — which is the schedule.
 	if run.Activity != nil {

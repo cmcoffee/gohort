@@ -15,8 +15,8 @@
 // surfacing one poisoned item above everything else — grep finds what you
 // already suspect; recall preview finds what you don't.
 //
-// Every hit carries the same id grammar recall/forget use (fact:… mem:…
-// doc:… span:… plus cortex:<nano> and notes:block for the stores recall
+// Every hit carries the same id grammar recall/forget use (fact:... mem:...
+// doc:... span:... plus cortex:<nano> and notes:block for the stores recall
 // doesn't front), so the DELETE route can dispatch on prefix and reuse the
 // existing removal paths.
 package orchestrate
@@ -189,7 +189,7 @@ func (T *OrchestrateApp) memSearchGrep(user string, udb Database, rec AgentRecor
 // the rendered block back into items. Reusing the real pipeline (not a
 // parallel implementation) is the point: the preview is exactly what a turn
 // would inject, including layer gating, relevance floors, dedup, and recency
-// re-ranking. The renderer's line grammar is stable ("- [tag] …" bullet, an
+// re-ranking. The renderer's line grammar is stable ("- [tag] ..." bullet, an
 // indented "id: kind:ref" line, indented snippet lines), so the parse is a
 // few prefix checks rather than a format contract.
 func (T *OrchestrateApp) memSearchRecall(user string, udb Database, rec AgentRecord, q string) ([]memSearchItem, string) {

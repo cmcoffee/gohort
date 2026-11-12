@@ -269,8 +269,8 @@ func earlyAnswerActs(tier, model, text string) bool {
 }
 
 // emitStatus pushes a phase-narration row into the activity pane.
-// Mirrors servitor's status events ("Investigator: synthesizing…",
-// "Verifying names…") — high-level signposts distinct from the plan
+// Mirrors servitor's status events ("Investigator: synthesizing...",
+// "Verifying names...") — high-level signposts distinct from the plan
 // block's per-step pips and the per-tool-call cmd/output rows.
 //
 // No bubble reset here. orchestrate locks the activity pane off, so

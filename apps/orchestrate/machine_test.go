@@ -794,18 +794,18 @@ func TestEveryStepSaysWhatItIsDoing(t *testing.T) {
 	}{
 		"the author's description": {
 			MachinePhase{Name: "triage", Desc: "Work out what kind of turn this is."},
-			"triage: Work out what kind of turn this is…",
+			"triage: Work out what kind of turn this is...",
 		},
 		"a step that never got one": {
 			MachinePhase{Name: "hunch"},
-			"Working through hunch…",
+			"Working through hunch...",
 		},
 		// A guard is a call paid on EVERY turn spent in a step, and it
 		// arrives as a synthetic phase. Naming it is the only honest
 		// account of where that second went.
 		"a guard": {
 			MachinePhase{Name: "guard:answer", Desc: "unused"},
-			"Checking whether this is still the same job…",
+			"Checking whether this is still the same job...",
 		},
 	}
 	for name, c := range cases {
@@ -1764,7 +1764,7 @@ func TestATransientStepCanReachTheAgentsCorpus(t *testing.T) {
 		names = append(names, td.Tool.Name)
 	}
 	joined := strings.Join(names, " ")
-	// recall fronts the corpus now, and recall(id="doc:…") is the drill-down
+	// recall fronts the corpus now, and recall(id="doc:...") is the drill-down
 	// the separate fetch tool used to be. The property is the same one: a step
 	// told to search must hold the tool that searches.
 	for _, want := range []string{"recall"} {

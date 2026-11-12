@@ -1,7 +1,7 @@
 // Native menu — the discoverable surface for the two things the
 // embedded webview can't easily expose:
 //
-//   Account > Change Server…   ⌘,    wipes session, returns to configure form
+//   Account > Change Server...   ⌘,    wipes session, returns to configure form
 //   Account > Log Out          ⌘⇧L   wipes session, navigates to /login
 //   Account > Reload           ⌘R    standard reload, here for keyboard parity
 //
@@ -39,7 +39,7 @@ func build_app_menu(app *App) *wails_menu.Menu {
 	// prefilled and the bridge API-key field — to set/update the key (or
 	// the URL) WITHOUT clearing the session. This is where you configure
 	// the API key the Gohort-Bridge agent uses.
-	custom.AddText("Server & Bridge Settings…", keys.CmdOrCtrl(","), func(_ *wails_menu.CallbackData) {
+	custom.AddText("Server & Bridge Settings...", keys.CmdOrCtrl(","), func(_ *wails_menu.CallbackData) {
 		if app.ctx == nil {
 			return
 		}
@@ -48,8 +48,8 @@ func build_app_menu(app *App) *wails_menu.Menu {
 	})
 
 	// Dedicated, probe-free bridge API-key editor — separate from the
-	// server-connection flow so it can never hang on "Checking server…".
-	custom.AddText("Set Bridge API Key…", nil, func(_ *wails_menu.CallbackData) {
+	// server-connection flow so it can never hang on "Checking server...".
+	custom.AddText("Set Bridge API Key...", nil, func(_ *wails_menu.CallbackData) {
 		if app.ctx == nil {
 			return
 		}
@@ -59,7 +59,7 @@ func build_app_menu(app *App) *wails_menu.Menu {
 
 	// Destructive escape hatch: wipe URL + cookies and reconfigure from
 	// scratch (for when the saved URL responds but is the wrong service).
-	custom.AddText("Change Server (reset)…", nil, func(_ *wails_menu.CallbackData) {
+	custom.AddText("Change Server (reset)...", nil, func(_ *wails_menu.CallbackData) {
 		if app.ctx == nil {
 			return
 		}
@@ -108,7 +108,7 @@ func build_app_menu(app *App) *wails_menu.Menu {
 	// proxy-served pages don't carry the Wails runtime, so we inject the
 	// current list straight into the in-page manager via WindowExecJS
 	// rather than relying on an EventsEmit the page may never receive.
-	custom.AddText("Manage Tool Approvals…", nil, func(_ *wails_menu.CallbackData) {
+	custom.AddText("Manage Tool Approvals...", nil, func(_ *wails_menu.CallbackData) {
 		if app.ctx == nil {
 			return
 		}
@@ -127,7 +127,7 @@ func build_app_menu(app *App) *wails_menu.Menu {
 	// Gohort-Bridge.app must already exist (in /Applications or beside
 	// this app). After install we point the user at Full Disk Access,
 	// which iMessage needs and can't be granted programmatically.
-	custom.AddText("Install Gohort-Bridge…", nil, func(_ *wails_menu.CallbackData) {
+	custom.AddText("Install Gohort-Bridge...", nil, func(_ *wails_menu.CallbackData) {
 		if app.ctx == nil {
 			return
 		}
@@ -204,7 +204,7 @@ func build_app_menu(app *App) *wails_menu.Menu {
 	// window.find(). The ⌘F key equivalent lands here (Cocoa menus consume it
 	// before the page sees a keydown); the shim also captures Cmd/Ctrl+F
 	// itself for iframes and any surface where the menu doesn't fire.
-	custom.AddText("Find on Page…", keys.CmdOrCtrl("F"), func(_ *wails_menu.CallbackData) {
+	custom.AddText("Find on Page...", keys.CmdOrCtrl("F"), func(_ *wails_menu.CallbackData) {
 		if app.ctx == nil {
 			return
 		}

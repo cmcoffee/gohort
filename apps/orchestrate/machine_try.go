@@ -474,7 +474,7 @@ const machineTryJS = `function(ctx) {
   }
 
   var btn = ctx && ctx.button, label = btn && btn.textContent;
-  if (btn) { btn.disabled = true; btn.textContent = 'Running…'; }
+  if (btn) { btn.disabled = true; btn.textContent = 'Running...'; }
   // Each message gets its own block, appended: the rehearsal reads as
   // the conversation it is, and turn 4 firing a guard sits under the
   // three turns that led to it.

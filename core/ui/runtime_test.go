@@ -96,7 +96,7 @@ func TestRuntimeJSParses(t *testing.T) {
 // 100dvh is a legitimate choice there and must stay allowed; only the chrome
 // subtraction is ever a guess.
 
-// stripCSSComments removes /* … */ runs. Without this the scan below reads a
+// stripCSSComments removes /* ... */ runs. Without this the scan below reads a
 // comment that merely NAMES --ui-vh as if the rule declared it — which is
 // exactly what these rules' comments do.
 func stripCSSComments(css string) string {
@@ -185,7 +185,7 @@ func TestFullHeightPanelsMeasureTheChrome(t *testing.T) {
 		}
 		if guesses && !measured {
 			t.Errorf("rule subtracts a hardcoded page chrome from the viewport "+
-				"without the measured var(--ui-chrome-h, …):\n%s",
+				"without the measured var(--ui-chrome-h, ...):\n%s",
 				strings.TrimSpace(block))
 		}
 	}

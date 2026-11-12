@@ -317,7 +317,7 @@ func TestWhatAnAgentSaysIsKept(t *testing.T) {
 		if len([]rune(x.Title)) > 130 {
 			t.Errorf("an untruncated title of %d runes would break the row", len([]rune(x.Title)))
 		}
-		if strings.HasSuffix(x.Title, "…") && len(x.Body) < 300 {
+		if strings.HasSuffix(x.Title, "...") && len(x.Body) < 300 {
 			t.Error("the truncated text was not kept in full anywhere")
 		}
 	}

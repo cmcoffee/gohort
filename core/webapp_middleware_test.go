@@ -99,7 +99,7 @@ func TestTokenIsNotGuessableOrShared(t *testing.T) {
 func TestTheAccessLogKeepsARelayedPathToItsRelay(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, peerRelayInboundPrefix+"abc123/orchestrate/api/operator/event/not-hex-secret?code=s3cr3t", nil)
 	got := accessLogPath(r)
-	if got != peerRelayInboundPrefix+"abc123/…" {
+	if got != peerRelayInboundPrefix+"abc123/..." {
 		t.Errorf("relayed request logged as %q", got)
 	}
 	for _, leak := range []string{"operator", "not-hex-secret", "s3cr3t"} {

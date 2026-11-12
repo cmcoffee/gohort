@@ -620,9 +620,9 @@ func answersTheNote(reply string) bool {
 // and case are set aside, or near enough word for word (a model resending its
 // reply rarely reproduces every character). Nine in ten of the words of either
 // shared by the other. The "..." a kept tail starts with is ignored (and the
-// "…" one saved before the switch).
+// "..." one saved before the switch).
 func SameReply(a, b string) bool {
-	norm := func(s string) []string { return strings.Fields(strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(s), "..."), "…"))) }
+	norm := func(s string) []string { return strings.Fields(strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(s), "..."), "..."))) }
 	wa, wb := norm(a), norm(b)
 	if strings.Join(wa, " ") == strings.Join(wb, " ") {
 		return len(wa) > 0

@@ -46,7 +46,7 @@ func (t *chatTurn) appDefReplaceFunction(args map[string]any) (string, error) {
 	}
 	replace := stringArg(args, "replace")
 	if strings.TrimSpace(replace) == "" {
-		return "", errors.New("replace is required: the WHOLE new function, definition line included (e.g. \"function drawBird() { … }\"). To delete a function instead, use patch_html")
+		return "", errors.New("replace is required: the WHOLE new function, definition line included (e.g. \"function drawBird() { ... }\"). To delete a function instead, use patch_html")
 	}
 
 	sections, err := appAuthoringSections(spec)
@@ -68,7 +68,7 @@ func (t *chatTurn) appDefReplaceFunction(args map[string]any) (string, error) {
 	// the diff below would catch anyway — but saying it HERE names the actual
 	// mistake instead of listing its consequences.
 	if !definesFunction(replace, fn) {
-		return "", fmt.Errorf("the replacement text does not define %q: pass the WHOLE new function including its definition line (e.g. \"function %s(…) { … }\"), not just the body", fn, fn)
+		return "", fmt.Errorf("the replacement text does not define %q: pass the WHOLE new function including its definition line (e.g. \"function %s(...) { ... }\"), not just the body", fn, fn)
 	}
 
 	next := prior[:start] + strings.TrimRight(replace, "\n") + prior[end:]

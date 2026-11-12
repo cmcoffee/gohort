@@ -446,7 +446,7 @@ func TestMachineScriptsOnlyCallFrameworkNamesThatExist(t *testing.T) {
 			if browserGlobals[called] {
 				continue
 			}
-			// The runtime defines its exports as window.X = …
+			// The runtime defines its exports as window.X = ...
 			if !strings.Contains(runtime, "window."+called+" =") &&
 				!strings.Contains(runtime, "window."+called+"=") {
 				t.Errorf("%s calls window.%s, which the runtime never defines — a button that runs and does nothing", name, called)

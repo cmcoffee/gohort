@@ -2,8 +2,8 @@
 // about.
 //
 //	POST /orchestrate/api/sessions/start
-//	     {"agent":"<id-or-name>", "message":"…", "title":"…"}
-//	  → {"session":"<id>", "agent":"<id>", "url":"/orchestrate/?agent=…&session=…"}
+//	     {"agent":"<id-or-name>", "message":"...", "title":"..."}
+//	  → {"session":"<id>", "agent":"<id>", "url":"/orchestrate/?agent=...&session=..."}
 //
 // The case that wanted it: an app finishes processing a bundle and hands
 // off to an agent that can answer questions about it. Everything needed

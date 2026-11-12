@@ -169,7 +169,7 @@ func TestElevationIsCappedMostRecentFirst(t *testing.T) {
 	hist := map[string][]toolLoadEntry{}
 	var all []AgentToolDef
 	base := time.Now().Add(-24 * time.Hour)
-	// tool_00 oldest … tool_09 newest.
+	// tool_00 oldest ... tool_09 newest.
 	for i := 0; i < 10; i++ {
 		name := string(rune('a'+i)) + "_tool"
 		hist[name] = []toolLoadEntry{{Session: "s", At: base.Add(time.Duration(i) * time.Hour)}}

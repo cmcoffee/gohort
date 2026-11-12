@@ -4,7 +4,7 @@ package extensions
 // against THAT page, not against the app that wrote it. Two ways to get a 404
 // out of that, and this pins both:
 //
-//   - reaching into a sibling app ("../agents/api/…"), which also makes this
+//   - reaching into a sibling app ("../agents/api/..."), which also makes this
 //     app's sharing depend on that app being installed and enabled
 //   - guessing the sibling's mount path, which is not the app's own name
 //

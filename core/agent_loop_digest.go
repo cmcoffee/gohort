@@ -314,7 +314,7 @@ func systemSectionRanking(systemPrompt string) string {
 		case isMarkdownHeading(t):
 			head, starts = strings.TrimSpace(strings.TrimLeft(t, "#")), true
 		case bracketClauseRE.MatchString(t):
-			// A loop clause ("[Grounding: …]") is a section of its own. With no
+			// A loop clause ("[Grounding: ...]") is a section of its own. With no
 			// heading, the clauses appended after the last one were counted
 			// under it: about 8k of standing rules read as an 8k "Other phases
 			// in this workflow" or "Tools available".

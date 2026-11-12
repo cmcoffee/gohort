@@ -20,8 +20,8 @@ func TestTheAgentPickerIsKeyedByNameNotID(t *testing.T) {
 	t.Cleanup(func() { RegisterAgentNamer(nil) })
 	RegisterAgentNamer(func(string) []ui.SelectOption {
 		return []ui.SelectOption{
-			{Value: "3f2a…-uuid", Label: "Tickets"},
-			{Value: "9c1b…-uuid", Label: "Release Notes"},
+			{Value: "3f2a...-uuid", Label: "Tickets"},
+			{Value: "9c1b...-uuid", Label: "Release Notes"},
 		}
 	})
 	got := agentNameChoices("alice")
@@ -32,7 +32,7 @@ func TestTheAgentPickerIsKeyedByNameNotID(t *testing.T) {
 		if o.Value != o.Label {
 			t.Errorf("the stored value must be the NAME, not an id: value=%q label=%q", o.Value, o.Label)
 		}
-		if o.Value == "3f2a…-uuid" || o.Value == "9c1b…-uuid" {
+		if o.Value == "3f2a...-uuid" || o.Value == "9c1b...-uuid" {
 			t.Errorf("an agent id reached the picker as a value (%q) — it resolves in one store only", o.Value)
 		}
 	}

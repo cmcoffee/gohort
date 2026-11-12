@@ -119,7 +119,7 @@
     var text = document.createElement('textarea');
     text.className = 'ui-ask-extra ui-ask-other-text';
     text.rows = 1;
-    text.placeholder = multi ? 'Something not listed, or a note…' : 'Your own answer, or push back…';
+    text.placeholder = multi ? 'Something not listed, or a note...' : 'Your own answer, or push back...';
     text.addEventListener('input', function() { if (text.value.trim()) other.checked = true; });
     other.addEventListener('change', function() { if (other.checked) text.focus(); });
     var lbl = el('label', {class: 'ui-ask-other-lbl'}, [other, el('span', {}, ['Other:'])]);
@@ -229,7 +229,7 @@
         var extra = document.createElement('textarea');
         extra.className = 'ui-ask-extra';
         extra.rows = 3;
-        extra.placeholder = 'Type your answer…';
+        extra.placeholder = 'Type your answer...';
         wrap.appendChild(extra);
         get = function() { return {picks: [], other: (extra.value || '').trim()}; };
         set = function(st) { extra.value = (st && st.other) || ''; };

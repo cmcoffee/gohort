@@ -233,7 +233,7 @@ can have two halves:
 type Rule struct {
     Key      string // stable id, e.g. "style.no_em_dash"
     Title    string
-    Category string // "Style", "Grounding", "Safety", …
+    Category string // "Style", "Grounding", "Safety", ...
     Gate     string // when it applies, in words
     Text     string // prompt text; empty for enforce-only rules
     Enforce  func(string) string // delivery-boundary transform; nil for ask-only rules

@@ -141,7 +141,7 @@ type AgentRecord struct {
 	RecallHints bool `json:"recall_hints,omitempty"`
 
 	// TagName, when true, prefixes this agent's OUTBOUND messages on a
-	// messaging channel/bridge with its own name — "[Assistant] …" — so the
+	// messaging channel/bridge with its own name — "[Assistant] ..." — so the
 	// recipient can tell the agent's texts apart from the owner's own messages
 	// in the same thread. Per-agent because the tag IS the agent's identity: one
 	// agent may sign its messages while another shouldn't. Off by default (it
@@ -580,7 +580,7 @@ type AgentRecord struct {
 
 	// AllowPrivateMode publishes a "Private" toggle on the public
 	// /agents/<slug>/ surface. When the user flips it on, network-
-	// capability tools (web_search, fetch_url, …) are filtered out
+	// capability tools (web_search, fetch_url, ...) are filtered out
 	// of the agent's allowed tool set for that turn so nothing
 	// leaves the deployment. Off by default — admin opts in per
 	// agent because a Research-style agent becomes useless without
@@ -1541,7 +1541,7 @@ type UIBlock struct {
 	// click that re-fires an already-applied change.
 	//
 	// So the answer writes back here, and the note is what the card says
-	// on replay in place of its buttons ("Applied — …", "Dismissed …").
+	// on replay in place of its buttons ("Applied — ...", "Dismissed ...").
 	// Non-empty means answered; renderers must render settled and offer
 	// no controls. Display-only blocks (html_artifact, link_hint) never
 	// set it. Written by handleSessionBlockResolve, and derived at load
@@ -1639,7 +1639,7 @@ type ChatMessage struct {
 	// in the back-and-forth. It carries the producer's display name; the UI
 	// renders such messages as a distinct card (header = name + fire time, from
 	// Created) instead of a normal chat bubble. The body stays clean; the LLM
-	// still gets a "[standing agent …]" context marker prepended at history-
+	// still gets a "[standing agent ...]" context marker prepended at history-
 	// build time (see toLLMMessages).
 	ReportFrom string `json:"report_from,omitempty"`
 	// ReportKind classifies a ReportFrom card so the UI can pick a fitting

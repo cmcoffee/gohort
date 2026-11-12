@@ -128,7 +128,7 @@ func (c *ChannelCoalescer) Dispatch(key string, in ChannelInbound, run ChannelAg
 		// So the batch closes and this message waits for a batch of its OWN.
 		// One speaker per turn is an assumption the rest of the system makes.
 		//
-		// Not c.lead(key, …): that leads whatever is in the slot, which is the
+		// Not c.lead(key, ...): that leads whatever is in the slot, which is the
 		// OTHER speaker's batch. Two goroutines then drove one state, and the
 		// loser found the slot already deleted and returned silently — so
 		// refusing to merge dropped the message instead of merging it, which is

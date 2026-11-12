@@ -480,7 +480,7 @@ func buildLeadSystemPrompt(udb Database, appliance Appliance, docs map[string]st
 	}
 	var b strings.Builder
 	writePersona(&b, appliance)
-	// No timestamp here: the agent loop stamps [Current date & time: …] on
+	// No timestamp here: the agent loop stamps [Current date & time: ...] on
 	// the newest user message. A per-minute value this early in the system
 	// prompt invalidated the llama.cpp prefix cache on every turn.
 	b.WriteString(fmt.Sprintf(

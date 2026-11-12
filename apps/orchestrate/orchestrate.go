@@ -235,7 +235,7 @@ func (T *OrchestrateApp) WebRestricted(r *http.Request) bool {
 // deleted so the next person to ask "was this ever admin-only?" finds the
 // answer and the reason instead of an absence.
 func (T *OrchestrateApp) webRestrictedLegacy(r *http.Request) bool {
-	// RequestIsAdmin, not AuthIsAdmin(T.DB, …). An app's T.DB is
+	// RequestIsAdmin, not AuthIsAdmin(T.DB, ...). An app's T.DB is
 	// global.db.Bucket("orchestrate") — a namespaced substore with no
 	// auth table — so the old check found nothing and AuthHasUsers(T.DB)
 	// was false for the same reason, short-circuiting the condition

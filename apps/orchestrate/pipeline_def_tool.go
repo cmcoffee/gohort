@@ -506,7 +506,7 @@ func (t *chatTurn) pipelineCreateOrUpdate(args map[string]any, isUpdate bool) (s
 		attached = append(attached, agent.Name)
 	}
 
-	msg := fmt.Sprintf("%s pipeline %q (%d stage%s, id %s). Run it with pipeline(action=\"run\", name=%q, input=…).",
+	msg := fmt.Sprintf("%s pipeline %q (%d stage%s, id %s). Run it with pipeline(action=\"run\", name=%q, input=...).",
 		verb, saved.Name, len(saved.Stages), plural(len(saved.Stages)), saved.ID, saved.Name)
 	if replaced != "" {
 		switch {
@@ -578,7 +578,7 @@ func (t *chatTurn) pipelineCreateOrUpdate(args map[string]any, isUpdate bool) (s
 func (t *chatTurn) pipelineList() (string, error) {
 	defs := ListPipelineDefs(t.udb, t.user)
 	if len(defs) == 0 {
-		return "No pipelines yet. Author one with pipeline(action=\"create\", name=…, stages=[…]).", nil
+		return "No pipelines yet. Author one with pipeline(action=\"create\", name=..., stages=[...]).", nil
 	}
 	type row struct {
 		ID          string `json:"id"`
@@ -644,7 +644,7 @@ func slimPipelineJSON(def PipelineDef) []byte {
 		if len(s) <= n {
 			return s
 		}
-		return s[:n] + fmt.Sprintf("…[%d chars total: previewed; re-send the full stage prompt to change it, or get full=true to read it]", len(s))
+		return s[:n] + fmt.Sprintf("...[%d chars total: previewed; re-send the full stage prompt to change it, or get full=true to read it]", len(s))
 	}
 	type stageSummary struct {
 		Name    string            `json:"name"`

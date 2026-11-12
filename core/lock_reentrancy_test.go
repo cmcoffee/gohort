@@ -14,7 +14,7 @@ import (
 // This has now happened twice in this file:
 //
 //	ApprovePendingTempTool -> RemoveSessionTempTool                  (direct)
-//	AdminPersistTempTool   -> cleanupSessionDraftsByName -> Remove…  (transitive)
+//	AdminPersistTempTool   -> cleanupSessionDraftsByName -> Remove...  (transitive)
 //
 // The second survived a one-level audit because the middle function does not
 // lock. So this check is TRANSITIVE: it walks the call graph from every
@@ -97,7 +97,7 @@ func TestNoReentrantToolPersistLock(t *testing.T) {
 	}
 	if len(bad) > 0 {
 		t.Errorf("re-entrant tempToolPersistMu acquisition — the holder blocks forever AND keeps the global lock, freezing tool persistence process-wide.\n"+
-			"Call the lock-free \"…Locked\" core instead:\n  %s", strings.Join(bad, "\n  "))
+			"Call the lock-free \"...Locked\" core instead:\n  %s", strings.Join(bad, "\n  "))
 	}
 }
 

@@ -288,7 +288,7 @@ func dispatchPublicAPICall(ctx context.Context, urlStr, method, body, contentTyp
 		return "", fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("User-Agent", publicAPIUserAgent)
-	// Tool-declared headers (Depth, Accept, X-Api-Version, …). Auth headers
+	// Tool-declared headers (Depth, Accept, X-Api-Version, ...). Auth headers
 	// are refused on this path: an unauthenticated dispatch that carries a
 	// hand-written credential is exactly what the credential machinery
 	// exists to replace.

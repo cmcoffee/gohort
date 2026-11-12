@@ -310,7 +310,7 @@ func accessLogPath(r *http.Request) string {
 	// redaction below does not recognize. The relay id is all that is ours.
 	if rest, ok := strings.CutPrefix(r.URL.Path, peerRelayInboundPrefix); ok {
 		id, _, _ := strings.Cut(rest, "/")
-		return peerRelayInboundPrefix + id + "/…"
+		return peerRelayInboundPrefix + id + "/..."
 	}
 	path := redactPathSecrets(r.URL.Path)
 	// A peer's request is done as its proxy, and this instance keeps nothing

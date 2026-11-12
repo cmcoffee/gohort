@@ -213,7 +213,7 @@
     chatMount.send_url      = chatCfg.send_url   || 'chat/send';
     chatMount.cancel_url    = chatCfg.cancel_url || 'chat/cancel';
     chatMount.empty_text    = chatCfg.empty_text || 'Ask the assistant to draft or add a section.';
-    chatMount.placeholder   = chatCfg.placeholder || 'Ask the assistant…';
+    chatMount.placeholder   = chatCfg.placeholder || 'Ask the assistant...';
     if (chatMount.markdown === undefined) chatMount.markdown = true;
     mountComponent(chatMount, right);
 
@@ -402,7 +402,7 @@
       }
       function doSave() {
         if (!selectedId) return;
-        save.disabled = true; status.textContent = 'Saving…';
+        save.disabled = true; status.textContent = 'Saving...';
         var url = cfg.edit_url.replace('{id}', encodeURIComponent(selectedId));
         var body = {id: selectedId};
         body[editField] = ta.value;
@@ -462,7 +462,7 @@
         (sectionId ? '&section=' + encodeURIComponent(sectionId) : '');
       var fd = new FormData();
       fd.append('file', file, file.name || 'image.png');
-      showToast('Adding picture…');
+      showToast('Adding picture...');
       fetch(url, {method: 'POST', credentials: 'same-origin', body: fd})
         .then(function(r) {
           if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
@@ -605,7 +605,7 @@
     // The shape is deliberately small: a list of ways this control gets used,
     // the first one preselected, and a Send. One click for the usual case, one
     // more for the unusual one. A free-text row (option.input) reveals a box
-    // seeded with that option's text, so "like the default but…" is an edit
+    // seeded with that option's text, so "like the default but..." is an edit
     // rather than a retype — and it is visibly there, which a pre-filled
     // composer never manages to say about itself.
     //
@@ -620,7 +620,7 @@
         if (!box) return;
         box.style.display = o.input ? '' : 'none';
         if (o.input) {
-          box.placeholder = o.placeholder || 'Describe what you want…';
+          box.placeholder = o.placeholder || 'Describe what you want...';
           // Seed once per selection rather than on every keystroke, or an edit
           // would be wiped by the radio it belongs to.
           if (box.dataset.seededFor !== String(picked)) {
@@ -684,7 +684,7 @@
         // Browser-side action — dispatch by name (a.url carries the action
         // name) to a handler registered via window.uiRegisterClientAction.
         // The handler gets the open record id + a refresh hook so app-specific
-        // toolbar behavior (open a picker, copy, print, …) stays out of core/ui.
+        // toolbar behavior (open a picker, copy, print, ...) stays out of core/ui.
         var fn = window.UIClientActions && window.UIClientActions[a.url];
         if (typeof fn === 'function') {
           fn({recordId: selectedId, button: btn, action: a, refresh: function(){ loadViewer(selectedId); }});
@@ -719,7 +719,7 @@
       }
       if (a.kind === 'report') {
         var orig = btn.textContent;
-        btn.disabled = true; btn.textContent = a.spinner || 'Working…';
+        btn.disabled = true; btn.textContent = a.spinner || 'Working...';
         // Cancellable: the working modal's Stop aborts the request, which
         // cancels the server-side run (the handler drives its agent loop off the
         // request context). It sits in the footer beside Close, which only
@@ -731,7 +731,7 @@
         window.uiOpenSimpleModal({title: a.label, width: '420px', mount: function(body, dlg) {
           workDlg = dlg;
           body.appendChild(el('div', {class: 'ui-wb-working'}, [
-            el('span', {class: 'ui-spinner'}), el('span', {text: a.spinner || 'Working…'}),
+            el('span', {class: 'ui-spinner'}), el('span', {text: a.spinner || 'Working...'}),
           ]));
           dlg.addAction(el('button', {class: 'ui-row-btn', text: 'Stop', onclick: function() {
             cancelled = true;
@@ -797,7 +797,7 @@
                 applyBtn.addEventListener('click', function() {
                   function go() {
                     var aurl = (ap.url || '').replace('{id}', encodeURIComponent(selectedId));
-                    applyBtn.disabled = true; applyBtn.textContent = ap.spinner || 'Applying…';
+                    applyBtn.disabled = true; applyBtn.textContent = ap.spinner || 'Applying...';
                     fetch(aurl, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({report: (d && d.report) || ''})})
                       .then(function(r){ return r.ok ? r.json() : r.text().then(function(t){ throw new Error(t); }); })
                       .then(function(res) {
@@ -843,7 +843,7 @@
                   var vb = el('button', {class: 'ui-wb-action-btn', text: 'View'});
                   vb.addEventListener('click', function() {
                     var purl = a.preview_url.replace('{id}', encodeURIComponent(selectedId)).replace('{rev}', encodeURIComponent(it.id));
-                    vb.disabled = true; vb.textContent = 'Opening…';
+                    vb.disabled = true; vb.textContent = 'Opening...';
                     fetchJSON(purl)
                       .then(function(res) {
                         vb.disabled = false; vb.textContent = 'View';
@@ -868,7 +868,7 @@
                   window.uiConfirm('Restore this version? The current state is saved to history first, so this is undoable.').then(function(ok) {
                     if (!ok) return;
                     var rurl = (a.restore_url || '').replace('{id}', encodeURIComponent(selectedId)).replace('{rev}', encodeURIComponent(it.id));
-                    rb.disabled = true; rb.textContent = 'Restoring…';
+                    rb.disabled = true; rb.textContent = 'Restoring...';
                     fetch(rurl, {method: 'POST', credentials: 'same-origin'})
                       .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); })
                       .then(function() { try { dlg.close(); dlg.remove(); } catch(e){} loadList(); loadViewer(selectedId); })
@@ -1002,7 +1002,7 @@
         btn.addEventListener('click', function() {
           if (!selectedId) { window.uiAlert('Select an item on the left first, then add this to it.'); return; }
           if (!cfg.record_url) return;
-          btn.disabled = true; btn.textContent = 'Adding…';
+          btn.disabled = true; btn.textContent = 'Adding...';
           var getURL = cfg.record_url.replace('{id}', encodeURIComponent(selectedId));
           fetchJSON(getURL).then(function(rec) {
             rec[bodyField] = ((rec[bodyField] || '').trim() + '\n\n' + raw).trim();
@@ -1217,7 +1217,7 @@
       return chain.then(function(ok) {
         if (!ok) return;
         if (!cfg.finalize_url) { finish(); return; }
-        status.textContent = 'Starting…';
+        status.textContent = 'Starting...';
         return fetch(cfg.finalize_url, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
@@ -1234,7 +1234,7 @@
       started = true;
       goBtn.disabled = true;
       pick.disabled = true;
-      status.textContent = 'Uploading…';
+      status.textContent = 'Uploading...';
       runRemaining();
     });
 
@@ -1259,7 +1259,7 @@
             return;
           }
           if (done) { finish(); return; }
-          status.textContent = labelFor(state) || 'Working…';
+          status.textContent = labelFor(state) || 'Working...';
           setTimeout(poll, pollMs);
         })
         .catch(function() {

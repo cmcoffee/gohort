@@ -984,7 +984,7 @@
       }
       // orchSourceURL pins a nav source/action fetch to the agent currently
       // in view. Data views like History are per-agent on the server (they key
-      // off ?agent=…); without this the fetch omits the param and the server
+      // off ?agent=...); without this the fetch omits the param and the server
       // falls back to its default agent, so a non-default channel's History
       // always renders empty. Mirrors the action_url agent-stamping below.
       // A fleet-scoped item (scope:"fleet") is asked about everything the user
@@ -1150,7 +1150,7 @@
         closeDrawer();
         if (!orchView) return;
         if (item.source) {
-          // A data view (Permissions / Enabled agents / …): overlay the chat
+          // A data view (Permissions / Enabled agents / ...): overlay the chat
           // pane with the fetched table. The overlay now covers the chat, so
           // de-accent the Master Control hero — the selected indicator belongs
           // to the nav row whose view is showing, not the underlying thread.
@@ -1195,7 +1195,7 @@
             .then(function(rows) { renderOrchTable(rows, item, reload); paintNarrowNote(idx, item, extraQuery, note); })
             .catch(function(err) { orchView.textContent = 'Failed to load: ' + err.message; });
           // Live views: silently re-fetch + re-render on the configured
-          // interval while this view stays open. No "Loading…" flash; a
+          // interval while this view stays open. No "Loading..." flash; a
           // failed poll keeps the last rendered rows. Stops itself when the
           // overlay is hidden or detached (view switched / chat resumed).
           if (item.auto_refresh_ms > 0) {
@@ -1859,7 +1859,7 @@
                 if (a.confirm && window.uiConfirm && !(await window.uiConfirm(a.confirm))) return;
                 var url = a.url;
                 if (select) url += (url.indexOf('?') >= 0 ? '&' : '?') + 'value=' + encodeURIComponent(select.value || '');
-                status.textContent = 'Working…';
+                status.textContent = 'Working...';
                 fetch(url, {method: a.method || 'POST'}).then(function(r) {
                   if (!r.ok) { return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); }); }
                   status.textContent = '';
@@ -2182,7 +2182,7 @@
         var qIdx = loaded.indexOf('?');
         var path = (qIdx >= 0 ? loaded.slice(0, qIdx) : loaded) + '/export' + (qIdx >= 0 ? loaded.slice(qIdx) : '');
         var prior = btn ? btn.textContent : '';
-        var setBusy = function() { if (btn) { btn.disabled = true; btn.textContent = 'Copying…'; } };
+        var setBusy = function() { if (btn) { btn.disabled = true; btn.textContent = 'Copying...'; } };
         var setDone = function() {
           if (btn) {
             btn.textContent = 'Copied';
@@ -2281,7 +2281,7 @@
     // the existing disable/enable null-guards still compile.
     var statusPill = null;
     // ExtraFields strip lives in the topbar so context selectors
-    // (active appliance, project, …) sit alongside the toolbar
+    // (active appliance, project, ...) sit alongside the toolbar
     // buttons. The strip itself is built further below; we just
     // reserve its DOM slot here. In the DEFAULT (rail) layout the
     // topbar is flex-direction:column, so DOM order = vertical
@@ -2385,7 +2385,7 @@
     // as the message does.
     var inputArea = el('textarea', {
       class: 'ui-agent-input',
-      placeholder: cfg.placeholder || 'Ask something…',
+      placeholder: cfg.placeholder || 'Ask something...',
       rows: 1,
     });
     inputArea.addEventListener('keydown', function(ev) {
@@ -2642,7 +2642,7 @@
     //
     // opts.body is a BLOCK the message carries but the reader does not need to
     // scroll through — an audit's findings, a log, a diff. Over the paste
-    // threshold it becomes the same "[Pasted text #N …]" placeholder a large
+    // threshold it becomes the same "[Pasted text #N ...]" placeholder a large
     // paste gets: the composer stays a readable instruction with one line
     // standing for the payload, and sendMessage expands it before the send.
     // Without this, handing a control its own findings meant either dropping
@@ -3218,7 +3218,7 @@
       // fight the bundle's CSS grid.
       //
       //   ┌─────────────────┬──────────────────────────────────┐
-      //   │ Agent: <picker> │ New Edit Clone Export …        │
+      //   │ Agent: <picker> │ New Edit Clone Export ...        │
       //   └─────────────────┴──────────────────────────────────┘
       //
       // The mode switches are not up here: they are per message, and
@@ -4089,7 +4089,7 @@
         var detail = (entry && (entry.report_detail || entry.reportDetail)) || '';
         var kind = (entry && (entry.report_kind || entry.reportKind)) || '';
         var head = reportRequestLine(kind, label);
-        // A card whose body ends in "↳ …" lines records what came in and,
+        // A card whose body ends in "↳ ..." lines records what came in and,
         // under it, what the agent did about it. What came in is the request;
         // the "↳" lines are the round. A card with no such lines is a reply
         // in its own right and stays the round it always was.
@@ -4701,7 +4701,7 @@
         m.bubble.classList.remove('ui-agent-msg-streaming');
       }
       // Fire registered decorators so apps can append per-message
-      // affordances (save buttons, copy actions, …).
+      // affordances (save buttons, copy actions, ...).
       var decorators = window.UIMessageDecorators || [];
       for (var i = 0; i < decorators.length; i++) {
         try {
@@ -4752,7 +4752,7 @@
       var argBox = toolArgsBlock(t.argsFull, 'ui-agent-tool');
       if (argBox) body.appendChild(argBox);
       if (t.output === null) {
-        body.appendChild(el('div', {class: 'ui-agent-tool-empty'}, ['(running…)']));
+        body.appendChild(el('div', {class: 'ui-agent-tool-empty'}, ['(running...)']));
       } else {
         var trimmed = String(t.output || '').trim();
         if (!trimmed) {
@@ -5515,7 +5515,7 @@
 
     // --- SSE handling -----------------------------------------------------
 
-    // Heartbeat watch — fires "Still processing… (Ns)" into the
+    // Heartbeat watch — fires "Still processing... (Ns)" into the
     // activity pane after a configurable quiet period (28s). Lets
     // the user see that a long LLM round is still in flight, not
     // a hung session. Cleared on every incoming event and torn
@@ -5537,7 +5537,7 @@
           heartbeatEl = el('div', {class: 'ui-agent-act ui-agent-act-watch'});
           heartbeatEl.appendChild(el('span', {class: 'ui-spinner'}));
           heartbeatEl.appendChild(document.createTextNode(
-            ' Still processing… (' + secs + 's)'));
+            ' Still processing... (' + secs + 's)'));
           activityLog.appendChild(heartbeatEl);
           activityLog.scrollTop = activityLog.scrollHeight;
         } else {
@@ -5546,7 +5546,7 @@
           heartbeatEl.innerHTML = '';
           if (spin) heartbeatEl.appendChild(spin);
           heartbeatEl.appendChild(document.createTextNode(
-            ' Still processing… (' + secs + 's)'));
+            ' Still processing... (' + secs + 's)'));
         }
       }, 5000);
     }
@@ -5572,7 +5572,7 @@
       // CONVERSATION-PANE content. activity rows go to the activity
       // pane (which some apps lock off entirely), so they
       // shouldn't kill the spinner — otherwise an early
-      // emitStatus("Thinking…") would clear the spinner before any
+      // emitStatus("Thinking...") would clear the spinner before any
       // real reply arrives and leave the user staring at empty space.
       // session/status events also don't clear; they fire before
       // content arrives and the spinner bridges that gap.
@@ -6138,7 +6138,7 @@
       // Drop the empty-state placeholder as soon as any work
       // starts (chat send, Map subscribe, reconnect) so the user
       // sees a clean canvas the events fill into. Without this the
-      // "Pick an appliance below…" hint sits above the first
+      // "Pick an appliance below..." hint sits above the first
       // activity / intent / plan event.
       clearEmpty();
       showThinking();
@@ -6237,7 +6237,7 @@
       sendBtn.style.display = '';
       cancelBtn.style.display = 'none';
       cancelBtn.disabled = false;
-      cancelLabel.textContent = 'Cancel'; // reset from any "Cancelling…" state
+      cancelLabel.textContent = 'Cancel'; // reset from any "Cancelling..." state
       if (statusPill) statusPill.style.display = 'none';
       clearThinking();
       if (activeStream) { try { activeStream.abort(); } catch(_) {} activeStream = null; }
@@ -6258,7 +6258,7 @@
       recordLocked = altLocked || !!(sid && sid === recordPinnedSession(agentId));
       inputArea.disabled = recordLocked;
       sendBtn.disabled = recordLocked;
-      inputArea.placeholder = cfg.placeholder || 'Ask something…';
+      inputArea.placeholder = cfg.placeholder || 'Ask something...';
       var lockedText = (altLocked && cfg.alt_locked_text) || cfg.record_locked_text ||
         'This thread is a record. Start a new session to talk.';
       if (recordLocked && !lockNote && inputRow.parentNode) {
@@ -6649,7 +6649,7 @@
       // gets feedback that the stop is in progress rather than the button just
       // vanishing while the run winds down server-side.
       cancelBtn.disabled = true;
-      cancelLabel.textContent = 'Cancelling…';
+      cancelLabel.textContent = 'Cancelling...';
       if (activeStream) {
         try { activeStream.abort(); } catch(_) {}
         activeStream = null;
@@ -6676,7 +6676,7 @@
     // cancelMessage, which also POSTs cancel_url to stop the run. Called when
     // opening/switching a session so a stale send (or resume) stream from the
     // previous view can't keep appending deltas into the new one — that overlap
-    // is what produced token-by-token doubling ("AllAll four four …") when a
+    // is what produced token-by-token doubling ("AllAll four four ...") when a
     // user left a running session and came back: the old stream and the resume
     // stream both fed the same bubble.
     function detachActiveStream() {
@@ -6728,7 +6728,7 @@
           wrap.appendChild(el('div', {class: 'ui-rules-empty'}, ['No rules yet: add one below.']));
         }
         rules.forEach(function(r, idx) {
-          var ti = el('input', {type: 'text', class: 'ui-rules-input', placeholder: 'rule…'});
+          var ti = el('input', {type: 'text', class: 'ui-rules-input', placeholder: 'rule...'});
           ti.value = r;
           ti.addEventListener('blur', function() { rules[idx] = ti.value; });
           ti.addEventListener('keydown', function(ev) {
@@ -7031,7 +7031,7 @@
         var stop = el('button', {type: 'button', class: 'ui-row-btn ui-agent-bg-stop'}, ['Stop']);
         stop.addEventListener('click', function() {
           stop.disabled = true;
-          stop.textContent = 'Stopping…';
+          stop.textContent = 'Stopping...';
           fetchJSON(cfg.runs_url_base + encodeURIComponent(id) + '/cancel', {method: 'POST'})
             .catch(function() { stop.disabled = false; stop.textContent = 'Stop'; });
         });
@@ -7865,7 +7865,7 @@
       enableInput();
       applyRecordLock(sid);
       // CONTEXT mode — list rows are reference contexts (workspaces,
-      // projects, …). Selecting one binds future sends to that id
+      // projects, ...). Selecting one binds future sends to that id
       // via cfg.list_body_field. Server-side LoadURL still gets
       // fetched if set, and any messages it returns replay into the
       // conversation pane so the user sees the context's history
@@ -7931,7 +7931,7 @@
       channelTranscript = null;
       // Channel threads are READ-ONLY in the web UI — messages arrive from the
       // messaging surface, not by typing here. Hide the composer for a channel
-      // thread (id "chan:…") and restore it for ordinary sessions.
+      // thread (id "chan:...") and restore it for ordinary sessions.
       if (inputRow) inputRow.style.display = (recordLocked || (sid || '').indexOf('chan:') === 0) ? 'none' : '';
       // Stop any prior channel poll; a channel open re-starts it after replay.
       stopChannelPolling();
@@ -8390,7 +8390,7 @@
           if (cfg.list_is_context) activeContextId = sid;
           else activeSessionId = sid;
           // Defer openSession until any extra inputs (Agency's
-          // agent picker, an app's custom picker, …) have
+          // agent picker, an app's custom picker, ...) have
           // populated. This bootstrap fires very early during panel
           // mount — before those picker fetches resolve — and the
           // session-load URL templates expect every extra to be

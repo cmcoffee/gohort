@@ -49,7 +49,7 @@ func TestATierSavesItsProviderAddressAndKey(t *testing.T) {
 	}
 	got := read()
 	if got["provider"] != "openai" || got["endpoint"] != "https://api.groq.example/openai/v1" || got["api_key"] != "" ||
-		!strings.HasPrefix(got["_kept_key"].(string), "from the Keystore: Lead model key (ends in …WXYZ, given ") {
+		!strings.HasPrefix(got["_kept_key"].(string), "from the Keystore: Lead model key (ends in ...WXYZ, given ") {
 		t.Errorf("read back: %v", got)
 	}
 	cfg := LLMProviderConfig{Provider: "openai", Endpoint: "https://api.groq.example/openai/v1"}

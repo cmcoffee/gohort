@@ -71,7 +71,7 @@
         {label: 'Cancel'},
         {label: 'Import ' + n + (n === 1 ? ' item' : ' items'), primary: true, onClick: function (api, btn) {
           btn.disabled = true;
-          btn.textContent = 'Importing…';
+          btn.textContent = 'Importing...';
           postJSON(opts.importURL, {pack: text}).then(function (d) {
             api.close();
             if (opts.invalidate && window.uiInvalidate) window.uiInvalidate(opts.invalidate);

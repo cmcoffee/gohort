@@ -26,7 +26,7 @@ const (
 )
 
 // baseConversation is the conversation a channel thread belongs to: its id
-// without the ";messageid=…" Teams adds for a reply in a thread.
+// without the ";messageid=..." Teams adds for a reply in a thread.
 func baseConversation(id string) string {
 	base, _, _ := strings.Cut(strings.TrimSpace(id), ";")
 	return base

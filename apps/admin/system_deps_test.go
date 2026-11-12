@@ -391,7 +391,7 @@ func TestSystemDependenciesIsOneSection(t *testing.T) {
 	if len(parts) != 2 {
 		t.Fatalf("want the custom table and Add, got %d", len(parts))
 	}
-	if mb, ok := parts[1].(ui.ModalButton); !ok || mb.Label != "Add…" {
+	if mb, ok := parts[1].(ui.ModalButton); !ok || mb.Label != "Add..." {
 		t.Errorf("Add should follow the custom table: %+v", parts[1])
 	}
 	raw, _ := json.Marshal(sec)

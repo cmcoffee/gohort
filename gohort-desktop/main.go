@@ -154,7 +154,7 @@ func runViewer() {
 					`<!DOCTYPE html><html><head><meta charset="utf-8">`+
 						core.FirstPaintHead()+
 						`<meta http-equiv="refresh" content="0;url=%s">`+
-						`<title>Loading…</title></head>`+
+						`<title>Loading...</title></head>`+
 						`<body><script>location.replace(%q);</script></body></html>`,
 					html.EscapeString(target), target)
 			}),

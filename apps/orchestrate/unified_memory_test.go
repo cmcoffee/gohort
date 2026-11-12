@@ -271,7 +271,7 @@ func TestOnlyFindingsCarryTheAgeCaution(t *testing.T) {
 }
 
 // The live failure, 2026-09-03: an agent three messages into a session with no
-// recall behind it called recall(id:"2bd98b45-…") — a UUID nobody gave it, for
+// recall behind it called recall(id:"2bd98b45-...") — a UUID nobody gave it, for
 // "that research" that did not exist. The old error described the FORMAT, so
 // the model corrected the format and re-sent the same invented reference twice.
 func TestAnInventedRecallIDIsNamedAsInvented(t *testing.T) {

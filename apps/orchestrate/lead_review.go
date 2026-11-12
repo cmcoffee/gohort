@@ -142,7 +142,7 @@ func reviewExcerpt(s string) string {
 	if len(r) <= 600 {
 		return string(r)
 	}
-	return string(r[:420]) + " … " + string(r[len(r)-160:])
+	return string(r[:420]) + " ... " + string(r[len(r)-160:])
 }
 
 // leadReviewEvidence is the reviewer's view of the turn. Built for this

@@ -32,7 +32,7 @@ func TestEnforceFindingCap(t *testing.T) {
 
 	base := knowledgeSource("u", "ag", "")
 	now := time.Now()
-	for i := 0; i < 4; i++ { // f0 oldest … f3 newest
+	for i := 0; i < 4; i++ { // f0 oldest ... f3 newest
 		seedFindingChunk(VectorDB, fmt.Sprintf("c%d", i), base+":apis",
 			fmt.Sprintf("orch-know-f%d", i), fmt.Sprintf("finding %d", i), now.Add(time.Duration(i-4)*time.Hour))
 	}

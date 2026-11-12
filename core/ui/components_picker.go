@@ -28,7 +28,7 @@ type ChipPicker struct {
 
 	OptionsSource string `json:"options_source"` // GET — array, or a shaped object (see RecordsField)
 	// RecordsField overrides the auto-detected array key when
-	// OptionsSource returns a shaped object ({records|items|…: [...]}).
+	// OptionsSource returns a shaped object ({records|items|...: [...]}).
 	RecordsField string `json:"records_field,omitempty"`
 
 	// Current selection comes from ONE of two sources:
@@ -174,7 +174,7 @@ type UploadPanel struct {
 	StatusFailed     []string `json:"status_failed,omitempty"`
 	StatusErrorField string   `json:"status_error_field,omitempty"`
 	// StatusLabels maps a raw state value to what the user should read
-	// ("ingesting" → "Expanding and indexing…"). A state with no entry is
+	// ("ingesting" → "Expanding and indexing..."). A state with no entry is
 	// shown as-is rather than hidden: an unlabelled state is still progress.
 	StatusLabels map[string]string `json:"status_labels,omitempty"`
 	// PollSeconds is the status poll interval. Default 3.

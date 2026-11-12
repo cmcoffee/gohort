@@ -145,7 +145,7 @@ func TestSanitizeScanSpanCollapsesAndTruncates(t *testing.T) {
 		t.Errorf("whitespace not collapsed: %q", got)
 	}
 	long := sanitizeScanSpan(strings.Repeat("é", toolScanSpanMax))
-	if len(long) > toolScanSpanMax+len("…") {
+	if len(long) > toolScanSpanMax+len("...") {
 		t.Errorf("span exceeded the cap: %d bytes", len(long))
 	}
 	if !isValidUTF8(long) {

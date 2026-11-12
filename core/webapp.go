@@ -341,7 +341,7 @@ func registeredWebAppsOnly() []WebApp {
 // WebAppHubTab is optionally implemented by a WebApp that should appear as a tab
 // in the shared top-nav "hub" — the persistent Page.Nav tab row rendered on the
 // header of every hub member, so a user can move between the related surfaces
-// (Agency, Bridges, Knowledge, …). Label is the tab text (it may differ from
+// (Agency, Bridges, Knowledge, ...). Label is the tab text (it may differ from
 // WebName — e.g. the Agency app shows as "Agents"); Order sorts the tabs, lower
 // first. Purely opt-in: only apps that implement this appear as tabs.
 type WebAppHubTab interface {

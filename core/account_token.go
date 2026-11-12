@@ -76,7 +76,7 @@ type TokenScope struct {
 	// Targets the key may drive: "worker", "lead", "agent:<id>",
 	// "channel:<chat>". Matched against the resolved /v1 target.
 	Targets []string `json:"targets,omitempty"`
-	// Tools the key may call over MCP ("ask_agent", "list_agents", …).
+	// Tools the key may call over MCP ("ask_agent", "list_agents", ...).
 	//
 	// A POINTER, and deliberately not the deny-by-default of the two fields
 	// above. Nil means NOT NARROWED — every exposed tool — because this field

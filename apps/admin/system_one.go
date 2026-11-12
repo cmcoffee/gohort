@@ -5,7 +5,7 @@ package admin
 // someone chooses it here. The choices are gohort's own models (the Judge,
 // Worker or Lead model) that answer a known-answer question right, found by
 // asking each rather than set, and connections that give decisions
-// (decide.choice), added from a template with + Add another….
+// (decide.choice), added from a template with + Add another....
 //
 // Private first. A decision sees what the checks see, messages and replies,
 // so a model or connection that sends them to a third party is not offered,
@@ -163,7 +163,7 @@ func currentSystemOne(ctx context.Context, choice string) systemOneStatus {
 // systemOneChoices are the section's choices: Off; the models that answer
 // the test right and the connections that give decisions, the private ones
 // first and those allowed only because every model is declared private
-// after, marked; then + Add another…. The saved choice is always listed, so
+// after, marked; then + Add another.... The saved choice is always listed, so
 // a choice that stopped working says so rather than vanishing.
 func systemOneChoices() []ui.SelectOption {
 	saved := decide.Chosen()
@@ -318,7 +318,7 @@ func (a *AdminApp) handleSystemOneTest(c *jsonapi.Call, form withSettings[system
 func systemOneSection() ui.Section {
 	fields := []ui.FormField{
 		{Field: "provider", Label: "Answered by", Type: "select", Options: systemOneChoices(),
-			Help:   "Off, one of gohort's own models that answers System One, or a connection that does; + Add another… adds one from a template.",
+			Help:   "Off, one of gohort's own models that answers System One, or a connection that does; + Add another... adds one from a template.",
 			Detail: "A model is offered once it answers a test question right, and only while it is private: System One sees what the checks see, messages and replies. A model or connection that is not private is offered only when every model is declared private (Admin > Models), and then marked. A connection's settings (its address, its model, a key) are set here below it."},
 	}
 	fields = append(fields, connectorSettingsFields(service.DecideChoice, "", "provider")...)

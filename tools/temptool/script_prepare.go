@@ -182,12 +182,12 @@ func inferCommandTemplate(scriptName, scriptBody string, paramOrder []string) st
 //
 // Patterns:
 //
-//	import requests / from requests import …      → requests library
+//	import requests / from requests import ...      → requests library
 //	import urllib2                                → Py2 legacy net
 //	urllib.request.urlopen / urllib.urlopen       → urllib network
-//	from urllib.request import …                  → urllib network
+//	from urllib.request import ...                  → urllib network
 //	from urllib import urlopen                    → urllib network
-//	import http.client / from http.client …       → http.client
+//	import http.client / from http.client ...       → http.client
 //	socket.create_connection / socket.connect(    → raw socket dialing
 //
 // curl and wget are NOT here, though they once were. The ones on the
@@ -202,14 +202,14 @@ func detectForbiddenNetworkPatterns(script string) string {
 	}{
 		// Python network libs.
 		{"import requests", "import requests"},
-		{"from requests import", "from requests import …"},
+		{"from requests import", "from requests import ..."},
 		{"import urllib2", "import urllib2"},
 		{"urllib.request", "urllib.request"},
-		{"from urllib.request import", "from urllib.request import …"},
+		{"from urllib.request import", "from urllib.request import ..."},
 		{"from urllib import urlopen", "from urllib import urlopen"},
 		{"urllib.urlopen", "urllib.urlopen"},
 		{"import http.client", "import http.client"},
-		{"from http.client import", "from http.client import …"},
+		{"from http.client import", "from http.client import ..."},
 		{"socket.create_connection", "socket.create_connection"},
 		{"socket.connect(", "socket.connect()"},
 	}

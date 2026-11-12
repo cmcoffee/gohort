@@ -331,7 +331,7 @@ func (a *App) SetBridgeAPIKey(api_key string) save_result {
 // next request hits the configure form with no leftover session
 // state. JS reloads after calling. Used by the "Change server"
 // button on the unreachable-server error page and by the Mac menu's
-// Change Server… item.
+// Change Server... item.
 func (a *App) ResetSettings() save_result {
 	if a.cookies != nil {
 		a.cookies.Clear()
@@ -598,7 +598,7 @@ func (a *App) RequestApprovalBlocking(id, name string, args map[string]any) bool
 }
 
 // probe_gohort hits the URL's root with a short timeout. Any HTTP
-// response (200, 302→/login, 401, 403, …) means gohort is answering;
+// response (200, 302→/login, 401, 403, ...) means gohort is answering;
 // only network/transport errors count as unreachable.
 func probe_gohort(target string) error {
 	client := &http.Client{Timeout: 4 * time.Second}

@@ -200,7 +200,7 @@ func (w wardenAsk) prompt() string {
 		// The carve-outs sit UNDER the rule they belong to, indented, so the
 		// warden reads one rule and its conditions as a unit. Written once by
 		// the owner and rendered identically wherever they are linked — which
-		// is the difference between this and pasting "unless…" into fifteen
+		// is the difference between this and pasting "unless..." into fifteen
 		// rules and hoping all fifteen are read the same way.
 		for _, except := range ruleConditionTexts(agent, r) {
 			fmt.Fprintf(&b, "   Except: %s\n", except)

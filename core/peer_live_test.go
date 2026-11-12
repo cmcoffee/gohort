@@ -95,7 +95,7 @@ func TestQueuedPeerWorkReadsDifferently(t *testing.T) {
 }
 
 // TestTheRowNamesThePeer — the key's LABEL is what somebody typed so they could
-// recognize the far side later. A row reading "peer:3f2a…" answers none of the
+// recognize the far side later. A row reading "peer:3f2a..." answers none of the
 // question it exists to answer.
 func TestTheRowNamesThePeer(t *testing.T) {
 	if got := peerDisplayName("peer:studio-mac"); got != "Peer studio-mac" {

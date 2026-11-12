@@ -235,7 +235,7 @@ reject somebody's work is worse than no rule.
 One rule, and it exists because declaring output fields IS this feature: the framework asks for
 those keys, encodes them, and validates what comes back. A stage whose prompt ALSO specifies a
 format leaves two sets of formatting rules, and the usual result is a JSON string nested inside a
-JSON field. `AsksForRawJSON` spots the phrasings ("as json", "valid json", "respond only with", …)
+JSON field. `AsksForRawJSON` spots the phrasings ("as json", "valid json", "respond only with", ...)
 and fires only when the stage already declares model-facing fields: a stage whose subject happens
 to be JSON declares nothing and is left alone, and so is one whose only declarations are FILLED
 from variables, since the model is never asked for those.

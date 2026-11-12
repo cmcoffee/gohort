@@ -21,7 +21,7 @@ type consoleRecurringRow struct {
 	Fires   string `json:"fires,omitempty"`    // "<fired> / <cap>" so far
 	Runs    string `json:"runs,omitempty"`     // "for sub-agent X" when the parent hands its work on
 	NextRun string `json:"next_run,omitempty"` // RFC3339 next fire (matches consoleAgentRow)
-	State   string `json:"state,omitempty"`    // visible only when broken ("⚠ needs relink — …")
+	State   string `json:"state,omitempty"`    // visible only when broken ("⚠ needs relink — ...")
 	// Objective and Failing are the same two lines the other scheduled kinds
 	// carry (schedule_row_state.go). The objective used to live in State,
 	// which meant a task that had both a goal and a park could only say one of
@@ -29,7 +29,7 @@ type consoleRecurringRow struct {
 	Objective string `json:"objective,omitempty"`
 	Failing   string `json:"failing,omitempty"`
 	// Guarded says a guardrail keeps stopping the task ("stopped by guardrail
-	// "…" 3 times in a row"); empty while it is not. A stopped fire is not a
+	// "..." 3 times in a row"); empty while it is not. A stopped fire is not a
 	// failure, so Failing never said it.
 	Guarded string `json:"guarded,omitempty"`
 	// The counts behind Failing and Guarded, for the attention flag.
@@ -554,7 +554,7 @@ func (T *OrchestrateApp) handleConsoleRecurringForOptions(c *jsonapi.Call) (any,
 // session_id (the open thread), defaulting to the agent's home thread when none
 // is open so an agent-level task always lands somewhere sensible. The per-session
 // active-task cap is enforced inside ScheduleOrchestrateUpdate. POST JSON
-// {agent_id, session_id, name, prompt, pattern, timing…}.
+// {agent_id, session_id, name, prompt, pattern, timing...}.
 func (T *OrchestrateApp) handleConsoleRecurringCreate(c *jsonapi.Call, body struct {
 	AgentID         string `json:"agent_id"`
 	SessionID       string `json:"session_id"`

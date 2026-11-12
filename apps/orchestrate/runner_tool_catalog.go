@@ -194,7 +194,7 @@ func (wc *workerCatalog) chooseNames() {
 	}
 	// Per-turn Private mode drops tools that contact the internet.
 	// Applied AFTER the agent's allowlist so non-network tools the
-	// agent allowed (list_agents, calculate, …) keep working.
+	// agent allowed (list_agents, calculate, ...) keep working.
 	// Checks BOTH the legacy IsInternetTool interface AND the modern
 	// Caps() declaration — a tool tagged CapNetwork via Caps() but
 	// missing IsInternetTool would otherwise slip past this filter
@@ -597,7 +597,7 @@ func dedupeToolsByName(tools []AgentToolDef, names []string) ([]AgentToolDef, []
 //     way users see tool use when the activity pane is hidden)
 //   - per-turn tool log recording (for later step prompts)
 //
-// Lazy-materializes an "orch-…" bubble if a tool fires before any
+// Lazy-materializes an "orch-..." bubble if a tool fires before any
 // text has streamed in this round, so the call has somewhere to land
 // agentCanAuthorAgents reports whether the active agent has access to
 // the create_agent tool — i.e. whether it's an agent-authoring agent.
@@ -742,7 +742,7 @@ func (t *chatTurn) gateAgentCRUDTools(tools []AgentToolDef) {
 			if err == nil {
 				// Auto-advance the next pending plan step. Summary is
 				// the first line of the tool result (typically the
-				// directive line like "AGENT_CREATED ok. id=…").
+				// directive line like "AGENT_CREATED ok. id=...").
 				summary := firstLineSnippet(result, 120)
 				if n := t.autoAdvanceBuildPlan(summary); n > 0 {
 					Debug("[orchestrate.build_plan] auto-advanced step %d after %s success", n, toolName)

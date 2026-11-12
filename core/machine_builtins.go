@@ -125,7 +125,7 @@ func MachineVars() []MachineVar {
 			"handed to the step anyway when the prompt never places it"},
 		{"{original_input}", "the words that opened the conversation, unchanged on turn nine", ""},
 		{"{established}", "everything earlier steps worked out, with their names",
-			"handed to the step anyway when the prompt places no {state:…} reference of its own"},
+			"handed to the step anyway when the prompt places no {state:...} reference of its own"},
 		{"{prev}", "what the step just before this one produced, this turn", ""},
 		{"{now}", "the date and time where the person is", ""},
 		{"{user}", "the person, by name", ""},
@@ -163,7 +163,7 @@ func BuiltinRefForFieldName(name string) (string, bool) {
 
 // isBuiltinVarRef reports whether a reference is exactly one of the
 // built-ins, which is what a field filled from a variable is allowed to
-// name (that, or a {state:…} reference).
+// name (that, or a {state:...} reference).
 func isBuiltinVarRef(ref string) bool {
 	ref = strings.TrimSpace(ref)
 	for _, v := range MachineVars() {

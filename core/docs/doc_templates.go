@@ -31,7 +31,7 @@ var MarkdownDocTemplates = []ui.DocTemplate{
 		Body: `# <agent name>
 
 ## Role & voice
-*Who this agent is, what it's accountable for, and how it sounds. Two or three sentences, written to the agent: "You are…"*
+*Who this agent is, what it's accountable for, and how it sounds. Two or three sentences, written to the agent: "You are..."*
 
 ## Approach
 *How it works a request: what it does first, how it decomposes, when it asks instead of assuming.*
@@ -55,7 +55,7 @@ var MarkdownDocTemplates = []ui.DocTemplate{
 		Body: `# <skill name>
 
 ## Use when
-*The activation cue, written as if completing "Use when the user…". This is what the host model reads to decide whether to consult the skill, so name situations, not topics.*
+*The activation cue, written as if completing "Use when the user...". This is what the host model reads to decide whether to consult the skill, so name situations, not topics.*
 
 ## Triggers
 *Optional precision nudge: disambiguating phrases, not standalone words.*

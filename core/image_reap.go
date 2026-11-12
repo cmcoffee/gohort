@@ -388,7 +388,7 @@ func FormatImageReapCandidates(list []ImageReapCandidate) string {
 	b.WriteString("\nLargest:\n")
 	for i, c := range list {
 		if i >= 10 {
-			fmt.Fprintf(&b, "  … and %d more\n", len(list)-10)
+			fmt.Fprintf(&b, "  ... and %d more\n", len(list)-10)
 			break
 		}
 		where := c.Owner

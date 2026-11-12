@@ -128,11 +128,11 @@ func (a *AdminApp) systemSections() []ui.Section {
 				Method: settingsSaveMethod,
 				Fields: []ui.FormField{
 					{Field: "channel_wake_rules", Label: "Master rules", Type: "rules",
-						Placeholder: "when an agent should answer a message here…",
+						Placeholder: "when an agent should answer a message here...",
 						Help:        "A cheap worker-LLM check runs these on each inbound.",
 						Detail:      "Follow-ups to the agent's own last message bypass the rules. Owner messages are evaluated like anyone else's unless a rule says otherwise."},
 					{Field: "channel_default_wake_rules", Label: "Default rules for new channels", Type: "rules",
-						Placeholder: "when a new channel's agent should answer…",
+						Placeholder: "when a new channel's agent should answer...",
 						Help:        "Copied onto each new channel; existing channels keep the rules they have.",
 						Detail:      "A channel added from the rail opens with these filled in, to keep, edit or clear before saving. A chat connected through Bridges to a channel with no rules, and a thread an agent opens itself, start with them too.\n\nClear them all to go back to the built-in rules: wake when the agent is named, or when a message answers or follows up on something said to it; otherwise stay silent."},
 				},
@@ -437,7 +437,7 @@ const userAdminHTML = `<div class="uadm">
     var method=(document.querySelector('input[name="uadm-add-method"]:checked')||{}).value;
     var body={username:email, admin:$('uadm-add-admin').checked, invite: method==='invite'};
     if(method==='password'){ var pw=$('uadm-add-pw').value; if(pw.length<6){ setMsg(msg,'Password must be at least 6 characters.',false); return; } body.password=pw; }
-    var btn=$('uadm-add-btn'); btn.disabled=true; var orig=btn.textContent; btn.textContent='Working…';
+    var btn=$('uadm-add-btn'); btn.disabled=true; var orig=btn.textContent; btn.textContent='Working...';
     fetch('api/users',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
       .then(function(r){ return r.ok ? r.json() : r.text().then(function(t){ throw new Error(t||('HTTP '+r.status)); }); })
       .then(function(d){

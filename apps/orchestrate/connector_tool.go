@@ -73,7 +73,7 @@ lives in one governed surface (Admin > Connectors). These kinds ship:
       requires the tenant admin to grant the credential the Graph channel-read
       permission (a Microsoft-side gate).
     - preset="slack": Slack Web API; needs a BEARER credential holding a bot
-      token (xoxb-…) with channels:history + chat:write, the bot added to the
+      token (xoxb-...) with channels:history + chat:write, the bot added to the
       channel, and var {channel_id}.
   Or author poll_url + map (dot-paths) + cursor + send_url by hand for any other
   service. Created UNAPPROVED (it routes external messages to agents and sends
@@ -132,7 +132,7 @@ Typical flow for a calendar:
   2. connector(action="create", kind="remote_mcp", name="gcal",
      url="https://<calendar-mcp-endpoint>", auth_mode="oauth").
   3. Tell the user to approve it in Admin > Connectors. Once approved its tools
-     (gcal.list_events, gcal.create_event, …) are available to agents.`))
+     (gcal.list_events, gcal.create_event, ...) are available to agents.`))
 
 	gt.AddAction("create", &GroupedToolAction{
 		Description: "Declare a new connector (bridge type). remote_mcp is created UNAPPROVED (admin approves in Admin > Connectors); rest_poll goes live immediately (it uses an already-approved credential).",

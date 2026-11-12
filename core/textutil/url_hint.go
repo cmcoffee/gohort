@@ -20,7 +20,7 @@ import (
 // tools that actually do this. The capability existed the whole time.
 //
 // So the message names it. app_def(action="verify") loads an app page in a
-// real browser and reports JS errors and failed requests; show_html(url=…)
+// real browser and reports JS errors and failed requests; show_html(url=...)
 // renders any same-origin path beside the conversation for the user to see.
 func SameOriginURLHint(target string) string {
 	t := strings.TrimSpace(target)
@@ -36,7 +36,7 @@ func SameOriginURLHint(target string) string {
 	return ", that is a path on THIS server, not a public URL. These tools reach the public internet. To display a page from this server to the user, call show_html(url=\"" + t + "\")."
 }
 
-// customAppSlug extracts the app slug from a /apps/<slug>/… path, or "" when
+// customAppSlug extracts the app slug from a /apps/<slug>/... path, or "" when
 // the path isn't a custom-app page.
 func customAppSlug(path string) string {
 	// Both mounts. The app moved from /custom to /apps and the old path still

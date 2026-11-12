@@ -307,7 +307,7 @@ func (pr *probeRun) connect() probeAction {
 		// self-heals an empty store (e.g. right after Clear Memory). Q&A runs
 		// use whatever is already ingested.
 		if pr.saveProfile {
-			emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Cloning %s…", repoDisplayTarget(pr.appliance))})
+			emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Cloning %s...", repoDisplayTarget(pr.appliance))})
 			withHeartbeat(pr.ctx, pr.id, "Cloning repository", func() {
 				pr.T.cloneAndIngestRepo(pr.ctx, pr.ownerUser, pr.ownerUDB, pr.appliance.ID)
 			})
@@ -432,7 +432,7 @@ func (pr *probeRun) sshExec(cmd string) (string, error) {
 		emit(pr.id, probeEvent{Kind: "error", Text: "Reconnect failed: " + rerr.Error()})
 		return reconnMsg, nil
 	}
-	emit(pr.id, probeEvent{Kind: "status", Text: "SSH reconnected: retrying command…"})
+	emit(pr.id, probeEvent{Kind: "status", Text: "SSH reconnected: retrying command..."})
 	return execOverSSH(pr.ctx, newClient, cmd)
 }
 
@@ -452,7 +452,7 @@ func (pr *probeRun) reconnect(failed *ssh.Client) (*ssh.Client, error) {
 	if pr.a.conn != failed && pr.a.conn != nil {
 		return pr.a.conn, nil
 	}
-	emit(pr.id, probeEvent{Kind: "status", Text: "SSH connection lost: reconnecting…"})
+	emit(pr.id, probeEvent{Kind: "status", Text: "SSH connection lost: reconnecting..."})
 	dropConn(pr.userID, pr.appliance.ID)
 	newClient, err := acquireConn(pr.userID, pr.appliance)
 	if err != nil {
@@ -2020,19 +2020,19 @@ func (pr *probeRun) mapMode() probeAction {
 
 func (pr *probeRun) mapSnapshot() probeAction {
 	if pr.appliance.Type == "repo" {
-		emit(pr.id, probeEvent{Kind: "status", Text: "Reading repository layout…"})
+		emit(pr.id, probeEvent{Kind: "status", Text: "Reading repository layout..."})
 		pr.m.snapshot = runRepoSnapshot(pr.ownerUser, pr.appliance.ID)
 	} else if pr.appliance.Type == "bundle" {
-		emit(pr.id, probeEvent{Kind: "status", Text: "Reading the bundle index…"})
+		emit(pr.id, probeEvent{Kind: "status", Text: "Reading the bundle index..."})
 		pr.m.snapshot = runBundleSnapshot(pr.ownerUser, pr.appliance.ID)
 	} else if pr.appliance.Type == "toolset" {
 		// One owner-nominated tool, or nothing. See runToolsetSnapshot.
 		if pr.resolvedTools.Snapshot != "" {
-			emit(pr.id, probeEvent{Kind: "status", Text: "Orienting via " + pr.resolvedTools.Snapshot + "…"})
+			emit(pr.id, probeEvent{Kind: "status", Text: "Orienting via " + pr.resolvedTools.Snapshot + "..."})
 		}
 		pr.m.snapshot = runToolsetSnapshot(pr.ctx, pr.resolvedTools)
 	} else {
-		emit(pr.id, probeEvent{Kind: "status", Text: "Taking system snapshot…"})
+		emit(pr.id, probeEvent{Kind: "status", Text: "Taking system snapshot..."})
 		pr.m.snapshot = runQuickSnapshot(pr.ctx, pr.sshExec)
 	}
 	if pr.ctx.Err() != nil {
@@ -2438,7 +2438,7 @@ func (pr *probeRun) stuckMsgFn() []Message {
 }
 
 func (pr *probeRun) mapInvestigate() probeAction {
-	emit(pr.id, probeEvent{Kind: "status", Text: "Investigator starting…"})
+	emit(pr.id, probeEvent{Kind: "status", Text: "Investigator starting..."})
 	pr.m.investigatorTools = []AgentToolDef{
 		pr.m.set_plan_tool, pr.m.mark_step_in_progress_tool, pr.m.record_step_findings_tool, pr.m.mark_step_blocked_tool,
 		pr.m.revise_plan_tool, pr.m.report_gaps_tool,
@@ -2547,7 +2547,7 @@ func (pr *probeRun) mapInvestigate() probeAction {
 		}
 		pr.m.prevPending = pending
 		emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf(
-			"Investigator reached its round budget with %d step(s) pending: continuing the investigation…", pending)})
+			"Investigator reached its round budget with %d step(s) pending: continuing the investigation...", pending)})
 		// Fresh stuck-detector window for the new budget.
 		pr.m.stuckTrackedStep, pr.m.stuckRoundCount, pr.m.softNudgeFired, pr.m.firmNudgeFired = 0, 0, false, false
 		withHeartbeat(pr.ctx, pr.id, "Investigator (continued)", func() {
@@ -2566,7 +2566,7 @@ func (pr *probeRun) mapInvestigate() probeAction {
 
 func (pr *probeRun) mapSynthesize() probeAction {
 	// Phase 3: Synthesis — structured profile from accumulated discoveries + facts.
-	emit(pr.id, probeEvent{Kind: "status", Text: "Synthesizing profile from investigation findings…"})
+	emit(pr.id, probeEvent{Kind: "status", Text: "Synthesizing profile from investigation findings..."})
 	pr.m.now = time.Now()
 	pr.m.finalFacts = ""
 	if facts := factsForAppliance(pr.udb, pr.appliance.ID); len(facts) > 0 {
@@ -2869,7 +2869,7 @@ func (pr *probeRun) chatInvestigate() probeAction {
 		}
 	}
 	pr.c.leadPrompt = buildLeadSystemPrompt(pr.udb, pr.appliance, pr.c.docs, pr.cachedFacts, pr.cachedNotes, pr.cachedTechniques, pr.cachedRules, pr.cachedDiscoveries, pr.c.hasFreshImage)
-	emit(pr.id, probeEvent{Kind: "status", Text: "Investigator analyzing…"})
+	emit(pr.id, probeEvent{Kind: "status", Text: "Investigator analyzing..."})
 
 	// Resolve the per-session injection queue so the orchestrator picks
 	// up mid-flight user notes between rounds. Workers don't get the hook
@@ -2952,9 +2952,9 @@ func (pr *probeRun) chatInvestigate() probeAction {
 		before := len(pr.c.allProbeResults)
 		if pending := pr.c.chatPlan.Pending(); pending > 0 {
 			emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf(
-				"Investigator reached its round budget with %d plan step(s) pending: continuing…", pending)})
+				"Investigator reached its round budget with %d plan step(s) pending: continuing...", pending)})
 		} else {
-			emit(pr.id, probeEvent{Kind: "status", Text: "Investigator reached its round budget: continuing the investigation…"})
+			emit(pr.id, probeEvent{Kind: "status", Text: "Investigator reached its round budget: continuing the investigation..."})
 		}
 		withHeartbeat(pr.ctx, pr.id, "Investigator: working (continued)", func() {
 			pr.c.res, pr.c.err = pr.c.orch.RunScopedAgentRich(pr.ctx, pr.c.leadScope, agenthost.Run{
@@ -3036,7 +3036,7 @@ func (pr *probeRun) chatAfter() probeAction {
 		if unverified := unverifiedIdentifiers(pr.reply, rawFindings); len(unverified) == 0 {
 			Debug("[servitor] verification skipped: every identifier in the reply appears in the findings")
 		} else {
-			emit(pr.id, probeEvent{Kind: "status", Text: "Verifying names and identifiers…"})
+			emit(pr.id, probeEvent{Kind: "status", Text: "Verifying names and identifiers..."})
 			// Targeted find/replace pairs instead of "regenerate the whole
 			// response": the old shape accepted ANY differing output as the
 			// corrected answer, so a 27B that reformatted prose (or invented

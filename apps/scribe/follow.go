@@ -343,7 +343,7 @@ const guideUpdateSourcesJS = `function(ctx){
         extra.style.width = '100%'; extra.style.padding = '0.45rem 0.6rem'; extra.style.background = 'var(--bg-0)';
         extra.style.color = 'var(--text)'; extra.style.border = '1px solid var(--border)'; extra.style.borderRadius = '6px';
         function go(text, btn){
-          btn.disabled = true; btn.textContent = 'Starting\u2026';
+          btn.disabled = true; btn.textContent = 'Starting...';
           fetch('sources/update?' + qp, {method:'POST', credentials:'same-origin'})
             .then(function(r){ return r.ok ? r.json() : r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); }); })
             .then(function(d){

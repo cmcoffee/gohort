@@ -1,4 +1,4 @@
-// Two editors write one store record: the form (name, path, retention…) and
+// Two editors write one store record: the form (name, path, retention...) and
 // the access picker (members, full_access). Neither sends the other's fields.
 package filestore
 

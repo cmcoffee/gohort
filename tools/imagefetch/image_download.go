@@ -179,10 +179,10 @@ func showToModel(sess *ToolSession, data []byte, what, caveat string) string {
 // mix-up where a change lands on a picture nobody mentioned.
 func stableRefNote(stable string) string {
 	if strings.TrimSpace(stable) == "" {
-		return " If you will need it after any other image call, keep it under a name first: image(action=\"keep\", name=\"…\")."
+		return " If you will need it after any other image call, keep it under a name first: image(action=\"keep\", name=\"...\")."
 	}
 	return fmt.Sprintf(" Use %s instead whenever you refer to it later, that one always means THIS picture, however many others are saved after it."+
-		" (For a name you will recognise months from now, image(action=\"keep\", name=\"…\") still gives image#<name>.)", stable)
+		" (For a name you will recognise months from now, image(action=\"keep\", name=\"...\") still gives image#<name>.)", stable)
 }
 
 // editHandleHint names the handle to EDIT this picture by, and says plainly

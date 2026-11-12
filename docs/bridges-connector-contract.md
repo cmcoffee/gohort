@@ -17,7 +17,7 @@ See [design/channel-model.md](design/channel-model.md) for that half, and
 Every request carries `X-API-Key: <bridge key>`. Both endpoints are registered
 as public paths so the key, not a session cookie, is what authenticates them.
 
-The key **declares the service** (`imessage`, `telegram`, …). The server reads
+The key **declares the service** (`imessage`, `telegram`, ...). The server reads
 the service off the key rather than off the request, so one key relays one
 service and a compromised key cannot post as another.
 

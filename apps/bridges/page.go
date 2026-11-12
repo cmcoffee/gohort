@@ -221,7 +221,7 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 									{Field: "handle", Label: "Number / handle", Type: "text",
 										Placeholder: "e.g. +15551234567"},
 									{Field: "service", Label: "Service", Type: "text", Placeholder: "imessage",
-										Help: "imessage, telegram, slack, …"},
+										Help: "imessage, telegram, slack, ..."},
 								},
 							},
 						}},

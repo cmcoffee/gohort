@@ -1,6 +1,6 @@
 // The rest_messaging connector kind: a GENERIC, server-side-polled, TWO-SIDED
 // messaging bridge for any REST-pollable chat service (Microsoft Teams, Slack,
-// Discord, …) declared entirely from a spec — no Go per service.
+// Discord, ...) declared entirely from a spec — no Go per service.
 //
 // Where messaging_bridge (connector_bridge.go) pairs a server key with a relay
 // COMPILED INTO the desktop daemon (iMessage), rest_messaging is SERVER-ONLY: a
@@ -369,8 +369,8 @@ var restMessagingPresets = map[string]RestMessagingSpec{
 		StripHTML:   true,
 	},
 
-	// Slack via the Web API. Var: channel_id (a "C…" channel id). Requires a
-	// SecureAPI BEARER credential holding a bot token (xoxb-…) with scopes
+	// Slack via the Web API. Var: channel_id (a "C..." channel id). Requires a
+	// SecureAPI BEARER credential holding a bot token (xoxb-...) with scopes
 	// channels:history (read) and chat:write (reply); the bot must be a member of
 	// the channel. conversations.history returns newest-first and omits the channel
 	// on each message, so chat_id is fixed and the poll-forward cursor is the newest

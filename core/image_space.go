@@ -244,7 +244,7 @@ func TransientImageRefs(text string) []string {
 	return out
 }
 
-// SnapshotImageRefs freezes what image#1, image#2 … mean for the length of one
+// SnapshotImageRefs freezes what image#1, image#2 ... mean for the length of one
 // tool round, and is why a positional ref cannot come to mean a different
 // picture between the model writing it and the call running.
 //
@@ -483,7 +483,7 @@ func originFromNote(note string) ImageOrigin {
 	case strings.HasPrefix(n, "generated:"):
 		return ImageFromGenerated
 	case strings.HasPrefix(n, "edited "), strings.HasPrefix(n, "edited:"):
-		// Both spellings: the framework writes "edited <refs>: …", but a note
+		// Both spellings: the framework writes "edited <refs>: ...", but a note
 		// with no refs collapses to "edited:" — and an unmatched render falls
 		// to unknown, which lists it among the pictures you were GIVEN. Wrong
 		// in the direction that matters.
@@ -688,7 +688,7 @@ func (s *ToolSession) RecentImageAbout(data []byte) string {
 	return strings.TrimSpace(r.Note)
 }
 
-// LastingImageID is the stable ring id (image#r.…) of the recent picture
+// LastingImageID is the stable ring id (image#r....) of the recent picture
 // whose bytes are data, "" when none is. For a caller holding a picture by a
 // name that dies with its turn (media#N) that must name it again later.
 func (s *ToolSession) LastingImageID(data []byte) string {
@@ -910,7 +910,7 @@ func RecentImageManifest(sess *ToolSession) string {
 			fmt.Fprintf(&b, "- %s: %s\n", label(r), describe(r))
 		}
 	}
-	b.WriteString("Pass an id to an image call to work from it: as picture to change it, in references to bring in who or what it shows. PREFER the image#r.… form: it always means that same picture. " +
+	b.WriteString("Pass an id to an image call to work from it: as picture to change it, in references to bring in who or what it shows. PREFER the image#r.... form: it always means that same picture. " +
 		"The image#N form is only its position right now: saving any picture, including your own render, makes that one image#1 and pushes the rest down. " +
 		"They are kept automatically; you never need to delete them.")
 	return b.String()

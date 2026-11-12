@@ -629,7 +629,7 @@ func BrowseProviderOptions() []ui.SelectOption {
 //
 // It exists because the two ends of a share were speaking different languages.
 // The lending end offered "Run commands (the peer gets a shell on these
-// systems…)" in its mint checklist, while the borrowing end's Offers column —
+// systems...)" in its mint checklist, while the borrowing end's Offers column —
 // and this end's own Granted column — printed the raw storage slug, so an
 // operator reading the peer they had just connected saw "exec" and had to
 // remember which of the friendly sentences that was. A grant nobody can name

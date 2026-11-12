@@ -26,7 +26,7 @@ var agentAuthoringToolNames = map[string]bool{
 }
 
 // authoringWriteActions are the grouped-authoring-tool actions that CHANGE
-// something. The grouped tools (app_def, tool_def, …) also read — get, list,
+// something. The grouped tools (app_def, tool_def, ...) also read — get, list,
 // help, test, verify — and a successful read must not vouch for a failed
 // write. The live case: app_def get succeeded, all three app_def updates
 // errored, and the reply announced the fixes as applied; counting the read as
@@ -381,7 +381,7 @@ func claimsSuccessWithoutAck(reply string) bool {
 		"is working now", "it's working", "built the", "set up",
 		// The changelog shape: a reply that never says "done" but lists the
 		// repairs as landed and hands the thing back. The live app_def session
-		// closed with exactly this ("Fixes applied: … Try it now —") and slipped
+		// closed with exactly this ("Fixes applied: ... Try it now —") and slipped
 		// past a list built around "done"/"created".
 		"fixes applied", "fix applied", "changes applied", "corrected",
 		"try it now", "should work now", "now works", "updated the",

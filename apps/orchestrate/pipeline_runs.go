@@ -5,7 +5,7 @@
 // stays here is exactly what does: the dispatch hook that sends an agent stage
 // to RunAgentSync, and the tool catalog a page-launched run inherits.
 //
-// Routes remain orchestrate's too (/api/pipelines/{id}/…, see pipelines_http.go)
+// Routes remain orchestrate's too (/api/pipelines/{id}/..., see pipelines_http.go)
 // and the host-app surface it exposes for customapps (PublicHandlePipeline).
 package orchestrate
 
@@ -46,7 +46,7 @@ func (T *OrchestrateApp) pipelineRunSurface(ctx context.Context, user string, de
 }
 
 // handlePipelineRuns serves the panel protocol for one of the caller's own
-// pipelines, under /api/pipelines/{id}/…
+// pipelines, under /api/pipelines/{id}/...
 func (T *OrchestrateApp) handlePipelineRuns(w http.ResponseWriter, r *http.Request, user string, def PipelineDef, sub string) {
 	T.ServePipelineRuns(w, r, T.ownPipelineSurface(r.Context(), user, def), sub)
 }

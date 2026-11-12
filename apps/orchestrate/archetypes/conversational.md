@@ -111,7 +111,7 @@ tool-use posture permissive.
 
 "I built your assistant: chat with it at /chat/<name>. It answers directly,
 reaches for tools when a question needs them, and remembers what you tell it."
-For the conductor variant: "…and it can schedule and delegate to your other
+For the conductor variant: "...and it can schedule and delegate to your other
 agents when you ask."
 
 ## Persona

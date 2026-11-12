@@ -138,14 +138,14 @@ func TestEmbeddingSettingsTakeAServiceThatEmbeds(t *testing.T) {
 }
 
 // choicesOf are select f's options that are choices: its list ends with
-// "+ Add another…" for need, a command that opens need's templates, and a
+// "+ Add another..." for need, a command that opens need's templates, and a
 // list for a job that can be off starts with Disabled; both are checked here
 // and left out.
 func choicesOf(t *testing.T, f ui.FormField, need string) []ui.SelectOption {
 	t.Helper()
 	n := len(f.Options)
-	if n == 0 || f.Options[n-1].Action != "connector_add_another" || f.Options[n-1].Value != need || f.Options[n-1].Label != "+ Add another…" {
-		t.Errorf("%s does not end with + Add another… for %s: %+v", f.Field, need, f.Options)
+	if n == 0 || f.Options[n-1].Action != "connector_add_another" || f.Options[n-1].Value != need || f.Options[n-1].Label != "+ Add another..." {
+		t.Errorf("%s does not end with + Add another... for %s: %+v", f.Field, need, f.Options)
 		return f.Options
 	}
 	opts := f.Options[:n-1]
@@ -175,7 +175,7 @@ func TestAJobThatCanBeOffStartsWithDisabled(t *testing.T) {
 }
 
 // Each page that chooses a connector always shows its list, ending with
-// "+ Add another…" for its own kind: with nothing to choose yet, that is the
+// "+ Add another..." for its own kind: with nothing to choose yet, that is the
 // list. A connector that embeds is offered on Embeddings, not on Speech.
 func TestCapabilityPagesEndWithAddAnother(t *testing.T) {
 	saved := RootDB
@@ -439,7 +439,7 @@ func TestMailTakesAConnectorThatSends(t *testing.T) {
 		}
 		return ui.FormField{}, false
 	}
-	if f, ok := field("provider"); !ok || len(choicesOf(t, f, "mail.send")) != 1 || !strings.Contains(f.Help, "+ Add another…") {
+	if f, ok := field("provider"); !ok || len(choicesOf(t, f, "mail.send")) != 1 || !strings.Contains(f.Help, "+ Add another...") {
 		t.Errorf("SMTP alone: %+v", f)
 	}
 	if f, _ := field("server"); f.ShowWhen != "provider:smtp" {

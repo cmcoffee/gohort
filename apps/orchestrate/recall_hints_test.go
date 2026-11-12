@@ -143,7 +143,7 @@ func corpusNames(turn *chatTurn) string {
 // The live failure this signal exists for. agentHasRetrievableContent INFERS a
 // corpus from collection attachments; renderRecallHints SEARCHES one. They
 // disagreed, and the losing reading was the damaging one: the hint block
-// printed document titles and named fetch_knowledge_doc(doc_id=…) as the way to
+// printed document titles and named fetch_knowledge_doc(doc_id=...) as the way to
 // read them, while the catalog carried neither tool. The agent reported,
 // accurately, that the tool was not in its tool set, and kept reporting it.
 //
@@ -234,7 +234,7 @@ func TestOnlyCorpusToolDefsMintsTheKnowledgePair(t *testing.T) {
 			t.Fatalf("read %s: %v", name, err)
 		}
 		// searchKnowledgeToolDef is gone with the legacy surface; the fetch
-		// def survives because recall(id="doc:…") uses its handler, so it is
+		// def survives because recall(id="doc:...") uses its handler, so it is
 		// still worth guarding against a second caller building it directly.
 		for _, ctor := range []string{"fetchKnowledgeDocToolDef()"} {
 			if strings.Contains(string(body), ctor) {

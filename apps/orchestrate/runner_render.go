@@ -50,7 +50,7 @@ func formatToolCall(name string, args map[string]any) string {
 			}
 			s = "[" + strings.Join(elems, ", ") + "]"
 		case map[string]any:
-			s = "{…}"
+			s = "{...}"
 		case nil:
 			s = "null"
 		default:
@@ -105,7 +105,7 @@ func truncate(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
-	return s[:max] + "\n…[truncated]"
+	return s[:max] + "\n...[truncated]"
 }
 
 // planBlockID is the stable id for one plan's in-chat block. Each

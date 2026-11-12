@@ -310,7 +310,7 @@ func GraphEntitiesMentionedIn(db Database, namespace, text string, limit int) []
 // is bumped — on a plain re-mention too, at most once per graphTouchInterval,
 // so the entity cap evicts what stopped being mentioned rather than what was
 // learned first; otherwise a fresh node is created with a "<kind>:<slug>" ID
-// (suffixed -2, -3… on slug collision with a different node). Returns the
+// (suffixed -2, -3... on slug collision with a different node). Returns the
 // resolved entity and whether it was newly created.
 func UpsertGraphEntity(db Database, namespace, kind, name string, aliases []string, attrs map[string]string) (GraphEntity, bool) {
 	namespace = strings.TrimSpace(namespace)

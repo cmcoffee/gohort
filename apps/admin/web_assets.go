@@ -45,7 +45,7 @@ const adminUsersModalJS = `function el(tag, attrs, kids){ var n=document.createE
       var body = {mode:mode};
       msg.textContent=''; msg.className='admu-msg';
       if(mode==='set'){ if(pw.value.length<6){ msg.textContent='Password must be at least 6 characters.'; msg.className='admu-msg err'; return; } body.password=pw.value; }
-      doBtn.disabled=true; var o=doBtn.textContent; doBtn.textContent='Working…';
+      doBtn.disabled=true; var o=doBtn.textContent; doBtn.textContent='Working...';
       fetch('api/users/'+encodeURIComponent(user)+'/reset-password', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
         .then(function(r){ return r.ok ? r.json() : r.text().then(function(t){ throw new Error(t||('HTTP '+r.status)); }); })
         .then(function(d){
@@ -235,7 +235,7 @@ window.uiTemplateForm = function(cfg, reload){
     // out of sight, a row apart from Close.
     if(cfg.detect){
       var det=document.createElement('button'); det.className='ui-row-btn'; det.textContent='Detect';
-      det.onclick=function(){ msg.textContent=''; det.disabled=true; det.textContent='Detecting…';
+      det.onclick=function(){ msg.textContent=''; det.disabled=true; det.textContent='Detecting...';
         fetch(apiBase+'-detect?template='+encodeURIComponent(cfg.template),{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({values:collect()})})
           .then(function(r){ if(!r.ok) return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));}); return r.json(); })
           .then(function(d){ var dv=d.values||{}; Object.keys(dv).forEach(function(k){ if(inputs[k]){ var it=inputs[k]; if(it.type==='bool')it.el.checked=!!dv[k]; else it.el.value=dv[k]; } }); fillSuggestions(dv); det.disabled=false; det.textContent='Detect';
@@ -250,7 +250,7 @@ window.uiTemplateForm = function(cfg, reload){
     save.onclick=function(){ msg.style.color='#e5484d'; msg.textContent='';
       var payload={ template:cfg.template, connector:(cfg.create?'':cfg.connector), owner:(cfg.owner||''), name:(nameInp?nameInp.value.trim():''), values:collect(), set_default:(defChk?defChk.checked:false) };
       if(cfg.create && !payload.name){ msg.textContent='Name is required.'; return; }
-      save.disabled=true; save.textContent='Saving…';
+      save.disabled=true; save.textContent='Saving...';
       fetch(apiBase+'-config',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
         .then(function(r){ if(!r.ok) return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));}); try{dlg.close();dlg.remove();}catch(e){} if(reload)reload(); })
         .catch(function(e){ save.disabled=false; save.textContent=cfg.create?'Create & approve':'Save'; msg.textContent=(e&&e.message)||(''+e); });
@@ -309,7 +309,7 @@ const connectorEditSpecAction = `function(ctx){
           msg.textContent = '';
           var parsed;
           try { parsed = JSON.parse(ta.value); } catch(e){ msg.textContent = 'Invalid JSON: ' + ((e && e.message)||e); return; }
-          save.disabled = true; save.textContent = 'Saving…';
+          save.disabled = true; save.textContent = 'Saving...';
           fetch('api/connectors?action=update_spec&name=' + encodeURIComponent(name), {
             method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(parsed)
           }).then(function(res){
@@ -324,7 +324,7 @@ const connectorEditSpecAction = `function(ctx){
     }).catch(function(e){ window.uiAlert && window.uiAlert((e && e.message)||(''+e)); });
 }`
 
-// connectorWebhookAction (Connectors row "Webhook…", on a push bridge) shows
+// connectorWebhookAction (Connectors row "Webhook...", on a push bridge) shows
 // the address to give the service and sets the secret each push is checked
 // against: a signing secret or a shared token, kept encrypted by the bridges
 // app and never shown again.
@@ -505,7 +505,7 @@ window.__artifactImportPreview = function(){
   });
 };`
 
-// artifactsImportPreviewAction dispatches the "Import bundle…" toolbar button
+// artifactsImportPreviewAction dispatches the "Import bundle..." toolbar button
 // into the preview flow above.
 const artifactsImportPreviewAction = `function(){ window.__artifactImportPreview(); }`
 
@@ -523,7 +523,7 @@ const skillsExportAllAction = `function(){
   __artifactExport('?all=skill', 'skills.gohort.json');
 }`
 
-// templateInstallAction (a template's "Add…", on the Templates page or under a page's "+ Add another…") asks the
+// templateInstallAction (a template's "Add...", on the Templates page or under a page's "+ Add another...") asks the
 // template's questions and adds it: the pieces land as drafts, a secret answer
 // goes into its credential, and the result lists what is left to do.
 const templateInstallAction = `function(ctx){
@@ -598,7 +598,7 @@ const templateInstallAction = `function(ctx){
               out.textContent = lines.join('\n');
               go.textContent = 'Done'; go.disabled = true;
               if (window.uiInvalidate) window.uiInvalidate(['api/connectors','api/media-backends','api/keystore','api/persistent-tools','api/secure-api','api/skills','api/templates']);
-              // Opened from a page's "+ Add another…": Close is the one way
+              // Opened from a page's "+ Add another...": Close is the one way
               // back, and closing brings the page's list up to date (finish).
               // A second button beside it that did the same read as two.
               if (ctx.onDone) { addedNow = d; go.style.display = 'none'; }
@@ -614,9 +614,9 @@ const templateInstallAction = `function(ctx){
     .catch(function(e){ window.uiAlert && window.uiAlert((e && e.message) || ('' + e)); });
 }`
 
-// connectorAddAnotherAction is a page's "+ Add another…" (addAnother): the
+// connectorAddAnotherAction is a page's "+ Add another..." (addAnother): the
 // templates for the list it ends (ctx.value, a need from templateNeeds), each
-// with Add…, which asks its questions and adds the connector; the page then
+// with Add..., which asks its questions and adds the connector; the page then
 // reloads, so its list holds it.
 const connectorAddAnotherAction = `function(ctx){
   // From a select's "+ Add another..." (ctx.value), whose page reloads so its
@@ -643,7 +643,7 @@ const connectorAddAnotherAction = `function(ctx){
         }
         body.appendChild(el('p', {style: 'margin:0 0 0.7rem;font-size:var(--fs-sm, 0.86rem);color:var(--text-mute)', text: 'Pick one. It asks a few questions and adds the connector, which then joins the list.'}));
         function rowFor(r) {
-          var add = el('button', {class: 'ui-row-btn', text: 'Add\u2026'});
+          var add = el('button', {class: 'ui-row-btn', text: 'Add...'});
           add.addEventListener('click', function(){
             var install = window.UIClientActions && window.UIClientActions.template_install;
             if (typeof install !== 'function') return;
@@ -697,7 +697,7 @@ const templateExportAction = `function(ctx){
   __artifactDownload('api/templates/export?id=' + encodeURIComponent(id), 'gohort-template-' + id + '.json');
 }`
 
-// templateImportAction ("Import a template…") uploads a template file.
+// templateImportAction ("Import a template...") uploads a template file.
 const templateImportAction = `function(){
   var input = document.createElement('input');
   input.type = 'file'; input.accept = '.json,application/json'; input.style.display = 'none';

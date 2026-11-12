@@ -188,7 +188,7 @@ per person and never shared between accounts unless the owner lends one.
 
 ## Which one do I want?
 
-| You want… | Use |
+| You want... | Use |
 |---|---|
 | a hosted provider to do something gohort already does | a connector from a template, then pick it under Admin > Services |
 | an agent to call an API | a credential, plus a tool (Builder drafts both) |
@@ -215,7 +215,7 @@ The connector: inside `embed.text`, mapping one request, outside OpenAI with
 its key.
 
 1. **Admin > Services > Embeddings:** in "Embed with", choose
-   **+ Add another…**, then **Add…** on *OpenAI (embeddings)* and give it a
+   **+ Add another...**, then **Add...** on *OpenAI (embeddings)* and give it a
    name. This creates the connection, shown as *OpenAI (embeddings)*, and
    the page reloads with it in the list. (The same templates are under
    Admin > Services > Templates, by category.)

@@ -602,7 +602,7 @@ func (sd *shellDispatch) deployScripts() bool {
 	// the redeploy block above doesn't fire — so a command_template
 	// that references {workspace_dir}/<script>.py relies on the file
 	// already being on disk (either left over from a prior local(write)
-	// or… missing). Without this check the dispatch runs `python3
+	// or... missing). Without this check the dispatch runs `python3
 	// .../foo.py`, python exits with "can't open file" within ms, and
 	// the agent-loop's retry behavior + SSE buffering make it look
 	// like a hang. Surface the missing script as a directive error

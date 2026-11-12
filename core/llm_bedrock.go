@@ -633,8 +633,8 @@ func bedrockProfile(configured string) string {
 }
 
 // bedrockModelID applies the provider prefix Bedrock expects, leaving a model
-// that already carries one alone. Inference-profile ids ("us.anthropic.…",
-// "global.anthropic.…") contain the prefix mid-string, so the test is
+// that already carries one alone. Inference-profile ids ("us.anthropic....",
+// "global.anthropic....") contain the prefix mid-string, so the test is
 // contains-not-prefix: prepending to those would produce a name Bedrock
 // rejects with a confusing "model not found".
 //

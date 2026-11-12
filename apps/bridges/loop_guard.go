@@ -256,7 +256,7 @@ func carriesOurTag(text string) bool {
 // conversations. That defeated every guard here at once: the fingerprint never
 // matched because it was scoped to the id, and the reply budget split across
 // two buckets instead of filling one. chatHandle already strips the service
-// prefix ("iMessage;-;+1650…" and "SMS;-;+1650…" both reduce to "+1650…"), so
+// prefix ("iMessage;-;+1650..." and "SMS;-;+1650..." both reduce to "+1650..."), so
 // both legs collapse onto one key.
 //
 // Groups keep their own chat id — a group is identified by the group, never by

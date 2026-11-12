@@ -46,7 +46,7 @@ function paste(t) {
   t.selectionStart = t.selectionEnd = 'Before the picture.'.length;
   uiImagePaste(t, 'images?id=g1');
   if (!paste(t)) throw new Error('a pasted image should not also paste as text');
-  if (t.value !== 'Before the picture.\n\n![Uploading image 1…]()\n\nAfter it.') throw new Error('placeholder not its own paragraph: ' + JSON.stringify(t.value));
+  if (t.value !== 'Before the picture.\n\n![Uploading image 1...]()\n\nAfter it.') throw new Error('placeholder not its own paragraph: ' + JSON.stringify(t.value));
   respond({ok: true, json: function() { return Promise.resolve({markdown: '![Screenshot](/app/img?id=x)'}); }});
   await new Promise(function(r) { setTimeout(r, 0); });
   if (t.value !== 'Before the picture.\n\n![Screenshot](/app/img?id=x)\n\nAfter it.') throw new Error('placeholder not replaced: ' + JSON.stringify(t.value));

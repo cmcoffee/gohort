@@ -1,6 +1,6 @@
 // Scoped flat memory primitive shared across apps that learn from
 // conversation (orchestrate, servitor, future). Each MemoryFact is a
-// freeform note under a namespace ("agent:<id>", "appliance:<id>", …);
+// freeform note under a namespace ("agent:<id>", "appliance:<id>", ...);
 // no key dimension, no tags. Dedup at the save site (text normalize +
 // semantic similarity) keeps the store unique without requiring the
 // LLM to invent stable keys — that was the source of the duplicate-

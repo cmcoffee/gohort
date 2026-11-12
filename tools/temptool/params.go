@@ -97,12 +97,12 @@ func checkMisplacedActionFields(loose map[string]any) error {
 	if len(bad) == 1 {
 		k := bad[0]
 		if k == "required" {
-			return fmt.Errorf(`"required" here is a list of mandatory param NAMES, which belongs to the tool/action rather than inside params, move it out alongside params: {name: …, params: {…}, required: ["a","b"]}`)
+			return fmt.Errorf(`"required" here is a list of mandatory param NAMES, which belongs to the tool/action rather than inside params, move it out alongside params: {name: ..., params: {...}, required: ["a","b"]}`)
 		}
-		return fmt.Errorf("%q is %s for the tool/action itself, not one of its params: it is nested one level too deep. Move it out alongside params: {name: …, params: {…}, %s: …}. params maps each PARAMETER name to {type, description}", k, actionOnlyFields[k], k)
+		return fmt.Errorf("%q is %s for the tool/action itself, not one of its params: it is nested one level too deep. Move it out alongside params: {name: ..., params: {...}, %s: ...}. params maps each PARAMETER name to {type, description}", k, actionOnlyFields[k], k)
 	}
-	return fmt.Errorf("%s are fields of the tool/action itself, not its params: they are nested one level too deep. Move ALL of them out alongside params in one edit: {name: …, params: {…}, %s: …}. params maps each PARAMETER name to {type, description}",
-		quotedList(bad), strings.Join(bad, ": …, "))
+	return fmt.Errorf("%s are fields of the tool/action itself, not its params: they are nested one level too deep. Move ALL of them out alongside params in one edit: {name: ..., params: {...}, %s: ...}. params maps each PARAMETER name to {type, description}",
+		quotedList(bad), strings.Join(bad, ": ..., "))
 }
 
 // quotedList renders names as `"a", "b" and "c"` for an error sentence.

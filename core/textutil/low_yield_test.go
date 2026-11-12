@@ -30,7 +30,7 @@ func TestConsentBannerIsCalledOut(t *testing.T) {
 // A page too short to be content, with no wall wording, is still worth
 // flagging — it just gets the plainer explanation.
 func TestVeryShortPageIsFlaggedWithoutAMarker(t *testing.T) {
-	if note := LowYieldNote("Loading…"); note == "" {
+	if note := LowYieldNote("Loading..."); note == "" {
 		t.Error("an 8-character page returned no note")
 	}
 }

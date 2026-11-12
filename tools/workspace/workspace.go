@@ -1250,7 +1250,7 @@ func handleViewImage(args map[string]any, sess *ToolSession) (string, error) {
 }
 
 // viewableImage is the picture ref names: something sent to the agent
-// (media#N), a picture in its recent or kept images (image#…, which holds a
+// (media#N), a picture in its recent or kept images (image#..., which holds a
 // photo the person just sent), or a workspace path. Looking is not sending, so
 // the echo rules that keep a person's photo from being posted back to them do
 // not apply. A picture handed to a model that does not read images reaches it

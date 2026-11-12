@@ -564,8 +564,8 @@
   // with rendered markdown — it is what keeps headings / code / lists
   // consistent across every surface.
   // uiStripMetaTags removes framework-internal markers from anything rendered
-  // for the user — the reserved <gohort-meta>…</gohort-meta> convention plus
-  // leaked delivery markers ([ATTACH:…], <<<ATTACH:…>>>…<<<END>>>). Mirrors core
+  // for the user — the reserved <gohort-meta>...</gohort-meta> convention plus
+  // leaked delivery markers ([ATTACH:...], <<<ATTACH:...>>>...<<<END>>>). Mirrors core
   // StripMetaTags (Go) so the saved copy and the rendered copy agree.
   // The half-block rules matter as much as the balanced one: a reply cut at
   // the output limit resumes in a new segment, so an opener and its closer can
@@ -1886,7 +1886,7 @@
     function saveTo(sink, btn) {
       if (!state.html) return;
       var label = btn.textContent;
-      btn.disabled = true; btn.textContent = 'Saving…';
+      btn.disabled = true; btn.textContent = 'Saving...';
       fetch('/api/document-sinks/save?name=' + encodeURIComponent(sink.name), {
         method: 'POST', credentials: 'same-origin',
         headers: {'Content-Type': 'application/json'},
@@ -2267,7 +2267,7 @@
 
   // busyButton shows a button working until stop(): a spinner frame and,
   // past three seconds, the seconds elapsed, in place of its label. The rule
-  // for anything a click waits on, because a static "…" reads the same as a
+  // for anything a click waits on, because a static "..." reads the same as a
   // request that hung. stoppable keeps the button live, for a caller whose
   // next click stops the work (and says so on hover); otherwise it is
   // disabled while it works.
@@ -2447,7 +2447,7 @@
   }
 
   // uiLoading(label) — the toolkit's "working on it" mark, for anything that
-  // fetches before it can show. A bare "Loading…" cannot be told apart from a
+  // fetches before it can show. A bare "Loading..." cannot be told apart from a
   // hung one, so this moves: the braille spinner, the label, and the seconds
   // once past three. It fades in after 300ms, so a fast load never flashes it.
   // One shared ticker drives every one on the page and stops itself when the
@@ -2509,7 +2509,7 @@
     }
     function upload(file) {
       if (!file || !/^image\//.test(file.type || '')) return;
-      var token = '![Uploading image ' + (++imagePasteSeq) + '\u2026]()';
+      var token = '![Uploading image ' + (++imagePasteSeq) + '...]()';
       insertAt(token);
       var fd = new FormData();
       fd.append('file', file, file.name || 'image.png');
@@ -2636,7 +2636,7 @@
   function makeSideSearch(sideList, itemSelector) {
     var input = el('input', {
       type: 'search', class: 'ui-chat-side-search',
-      placeholder: 'Search…',
+      placeholder: 'Search...',
       autocomplete: 'off', autocorrect: 'off', spellcheck: 'false',
     });
     var sel = itemSelector || '.ui-chat-side-item';

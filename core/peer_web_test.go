@@ -464,7 +464,7 @@ func TestARefusedStaticKeyExplainsItselfOnce(t *testing.T) {
 // than having to infer that refreshing worked.
 func TestAdoptingTokensClearsTheWarning(t *testing.T) {
 	prev := peerResolveWarned
-	peerResolveWarned = map[string]string{"tokens:den": "peer \"den\" refused our credential…"}
+	peerResolveWarned = map[string]string{"tokens:den": "peer \"den\" refused our credential..."}
 	t.Cleanup(func() { peerResolveWarned = prev })
 
 	required := true

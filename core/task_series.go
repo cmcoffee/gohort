@@ -317,7 +317,7 @@ func seriesContinuation(piece, of int, what, next string) string {
 	//
 	// This instruction used to open with "deliver this one, and in the SAME turn
 	// start the next", and what came back was a turn that delivered beautifully
-	// and started nothing: "Here is your first take… Starting the second
+	// and started nothing: "Here is your first take... Starting the second
 	// variation now." — no tool call, set stranded at 1 of 3. A model told to
 	// write and then act writes, and a turn that has produced its reply is over.
 	// Asking for the act first costs nothing and is the difference between a set

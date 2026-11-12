@@ -83,7 +83,7 @@ exactly.
 
 ```
 update_notes(text: "...")                      → replaces the whole block (today)
-update_notes(section: "in flight", text: "…")  → replaces that section only
+update_notes(section: "in flight", text: "...")  → replaces that section only
 update_notes(section: "in flight", text: "")   → removes that section
 ```
 
@@ -192,7 +192,7 @@ reader what they can already see.
    naming the largest sections, and the reply telling the agent which section it
    wrote. Tests: create, update in place, remove, order stability, sectionless
    write still replaces everything, case-folded match.
-3. **The HTTP surface.** `POST …/notes` accepts an optional `section` with the
+3. **The HTTP surface.** `POST .../notes` accepts an optional `section` with the
    same semantics, so the owner-facing path and the agent-facing path cannot
    drift.
 4. **The framing line** in `RenderOperatingNotesBlock` and the tool description.

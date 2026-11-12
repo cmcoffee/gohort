@@ -151,7 +151,7 @@ func buildTunableSections() []ui.Section {
 	}
 	// One category per SECTION, so the framework's SectionNav renders the Tuning
 	// tab as a compact left-rail side-index of areas (Model calls, Images,
-	// …) with only the selected category's fields shown — instead of one long
+	// ...) with only the selected category's fields shown — instead of one long
 	// stack that grows every time a knob is registered. This replaces the app's
 	// own embedded NavShell rail with the shared menu system, so Tuning navigates
 	// exactly like Extensions. Each category still saves as you edit and carries

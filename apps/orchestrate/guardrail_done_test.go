@@ -94,7 +94,7 @@ func TestTheTurnKeepsItsRecentCalls(t *testing.T) {
 	if len(got) != doneCallsKept || !strings.Contains(got[0].Args, `"n":5`) {
 		t.Errorf("kept %d, oldest %q", len(got), got[0].Args)
 	}
-	if len(got[0].Args) > doneCallArgsCap+len("…") {
+	if len(got[0].Args) > doneCallArgsCap+len("...") {
 		t.Errorf("an argument was kept at %d bytes", len(got[0].Args))
 	}
 }

@@ -265,7 +265,7 @@ func IsDeploymentScope(c Collection) bool {
 // SearchCollections runs a RAG search over a FIXED set of Document
 // Collections and returns the top-k chunks across them. This is the
 // app-agnostic retrieval primitive behind any "attach reference
-// corpora to my app" feature (codewriter, techwriter, …): no
+// corpora to my app" feature (codewriter, techwriter, ...): no
 // AgentRecord, no skills, no per-(user, agent) corpus — just "given
 // these collection IDs and a query, hand me the most relevant chunks."
 // searchAgentKnowledge in apps/orchestrate layers agent/skill/memory
@@ -566,7 +566,7 @@ func SortChunksForAssembly(chunks []EmbeddedChunk) {
 
 // chunkPartOrder splits a section heading into its base name and the
 // sequence of part numbers the chunker appended, outermost first: "Guide
-// (part 2) (part 1/3)" → ("Guide", [2, 1]). A trailing "(part …)" that is not
+// (part 2) (part 1/3)" → ("Guide", [2, 1]). A trailing "(part ...)" that is not
 // digits (or digits "/" digits) is left on the base name. Headings with no
 // suffix return a nil sequence, which sorts before any suffixed sibling.
 func chunkPartOrder(section string) (string, []int) {
@@ -716,7 +716,7 @@ func AssembleChunkDoc(chunks []EmbeddedChunk, maxChars int) string {
 		if idx := strings.LastIndex(truncated, "\n\n"); idx > maxChars/2 {
 			truncated = truncated[:idx]
 		}
-		out = truncated + fmt.Sprintf("\n\n[…truncated; full document is %d chars. Search with a tighter query to find the section you need.]", len(out))
+		out = truncated + fmt.Sprintf("\n\n[...truncated; full document is %d chars. Search with a tighter query to find the section you need.]", len(out))
 	}
 	return out
 }

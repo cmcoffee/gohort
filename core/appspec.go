@@ -181,7 +181,7 @@ type AppSpec struct {
 	// Schema is the wire schema the spec was last saved under (appSpecSchema).
 	Schema int `json:"schema,omitempty"`
 	// RecordFields is the record schema DERIVED from the sections at save time:
-	// field name → the form type that writes it ("text", "number", "select"…),
+	// field name → the form type that writes it ("text", "number", "select"...),
 	// or "column" for a field a table reads that no form writes, or "key" for
 	// the record key. Nothing declares it; the host computes it so a later
 	// author can see what the records look like without parsing the sections,
@@ -349,7 +349,7 @@ func (s AppSetting) PerUser() bool { return strings.EqualFold(strings.TrimSpace(
 // must print a JSON value to stdout — an array for a table, an object for a
 // display. The script may reach out via the gohort sandbox hook (capabilities
 // like "fetch", "log") so it can pull + transform external data (an API,
-// Confluence, …). Owner-only: custom apps are per-owner, and the script runs in
+// Confluence, ...). Owner-only: custom apps are per-owner, and the script runs in
 // the owner's sandbox with the owner's network gate.
 type AppDataSource struct {
 	Name         string   `json:"name"`                   // referenced by a section's source_script

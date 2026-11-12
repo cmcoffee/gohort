@@ -45,7 +45,7 @@ type ModalButton struct {
 	Title    string    `json:"title,omitempty"`    // dialog header (defaults to Label)
 	Subtitle string    `json:"subtitle,omitempty"` // optional description below title
 	Body     Component `json:"-"`                  // dialog content
-	Variant  string    `json:"variant,omitempty"`  // button variant (primary, danger, …)
+	Variant  string    `json:"variant,omitempty"`  // button variant (primary, danger, ...)
 	Width    string    `json:"width,omitempty"`    // dialog max-width CSS (default "520px")
 	Align    string    `json:"align,omitempty"`    // "left" | "center" | "right" (default), where the button sits in its row
 }

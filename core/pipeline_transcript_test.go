@@ -64,7 +64,7 @@ func TestTranscriptLabelsMultipleFieldsInDeclaredOrder(t *testing.T) {
 // return value — still sees the exact JSON the stage produced.
 func TestTranscriptLeavesFreeTextAndTheDataPathAlone(t *testing.T) {
 	plain := PipelineStage{Name: "synthesize", Kind: StageWorker}
-	const answer = "Taqueria Vallarta, by a wide margin.\n\nSources: …"
+	const answer = "Taqueria Vallarta, by a wide margin.\n\nSources: ..."
 	if got := transcriptBody(plain, answer, nil); got != answer {
 		t.Errorf("a free-text stage must pass through untouched, got:\n%s", got)
 	}

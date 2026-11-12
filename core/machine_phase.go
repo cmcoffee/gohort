@@ -209,7 +209,7 @@ func (d MachineDef) CompleteTurn(cur *MachineCursor, ph MachinePhase, note func(
 // receive and hiding the output contract they do:
 //
 //   - A TRANSIENT step gets its own prompt with {input} / {prev} /
-//     {state:…} resolved, plus the declared-output contract appended by
+//     {state:...} resolved, plus the declared-output contract appended by
 //     runDeclaredOutput.
 //   - A RESIDENT step gets PhaseBlock, layered into the agent's system
 //     prompt: its directive, what earlier steps established, where else
@@ -251,7 +251,7 @@ func (d MachineDef) phasePrompt(ph MachinePhase, st MachineState, v PhaseVars) s
 	}
 	// And what earlier steps worked out, unless the prompt reaches for it
 	// itself. A resident step has always been handed this; a transient
-	// one was left to hand-copy {state:…} references for values the
+	// one was left to hand-copy {state:...} references for values the
 	// definition already knows.
 	if !mentionsEstablished(ph.Prompt) {
 		out = v.establishedBlock() + out

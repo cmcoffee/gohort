@@ -13,7 +13,7 @@ import (
 func (t *chatTurn) appDefList() (string, error) {
 	specs := ListAppSpecs(t.user)
 	if len(specs) == 0 {
-		return "No apps yet. Author one with app_def(action=\"create\", name=…, sections=[…]).", nil
+		return "No apps yet. Author one with app_def(action=\"create\", name=..., sections=[...]).", nil
 	}
 	type row struct {
 		Slug     string `json:"slug"`

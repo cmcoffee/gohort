@@ -361,7 +361,7 @@ func capsSubset(want, have []Capability) bool {
 
 // tempToolNeedsConfirm reports whether a temp tool is consequential enough to
 // require per-call approval. RawNetwork leaves the sandbox; a hook capability
-// outside the read-only set (secret:<name>, fetch_via:<name>, …) grants more
+// outside the read-only set (secret:<name>, fetch_via:<name>, ...) grants more
 // than a benign fetch; a credential-less api tool is a raw endpoint with no
 // admin-declared tier. A plain shell tool that at most does an audited
 // read-only fetch/log/browse is not consequential and runs freely.

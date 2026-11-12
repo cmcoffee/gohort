@@ -145,7 +145,7 @@ func (s storeSource) folderMenu(st Store) string {
 	fmt.Fprintf(&b, "Subfolders in %s, newest first:\n", st.Name)
 	for i, f := range folders {
 		if i >= 40 {
-			fmt.Fprintf(&b, "…and %d more.\n", len(folders)-i)
+			fmt.Fprintf(&b, "...and %d more.\n", len(folders)-i)
 			break
 		}
 		fmt.Fprintf(&b, "- %s: %d file%s, %s, last written %s%s\n",
@@ -363,7 +363,7 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 				spansCut := false
 				for i, f := range files {
 					if i >= 200 {
-						fmt.Fprintf(&b, "…and %d more.\n", len(files)-i)
+						fmt.Fprintf(&b, "...and %d more.\n", len(files)-i)
 						break
 					}
 					span := ""

@@ -107,7 +107,7 @@ func (T *Bridges) setBotConv(chatID string, bc botConv) {
 
 // botActivity is the subset of a Bot Framework Activity this bridge reads.
 type botActivity struct {
-	Type       string `json:"type"` // message | conversationUpdate | typing | invoke | …
+	Type       string `json:"type"` // message | conversationUpdate | typing | invoke | ...
 	ID         string `json:"id"`
 	Timestamp  string `json:"timestamp"`
 	ServiceURL string `json:"serviceUrl"`
@@ -189,7 +189,7 @@ func (a botActivity) outsideScope(bot teamsbots.Bot) string {
 		return agenthost.OutsideScope(source, person)
 	}
 	// A channel reply's conversation id names the thread it is in
-	// (";messageid=…"); the channel is the conversation.
+	// (";messageid=..."); the channel is the conversation.
 	conv, _, _ := strings.Cut(strings.TrimSpace(a.Conversation.ID), ";")
 	return agenthost.OutsideScope(source, "conv-"+shortHash(conv))
 }
@@ -217,7 +217,7 @@ func (a botActivity) title() string {
 	return firstNonEmpty(strings.TrimSpace(a.Conversation.Name), strings.TrimSpace(a.From.Name))
 }
 
-// atTagRE matches the <at>…</at> spans Teams wraps around a mention.
+// atTagRE matches the <at>...</at> spans Teams wraps around a mention.
 var atTagRE = regexp.MustCompile(`(?is)<at\b[^>]*>.*?</at>`)
 
 // stripMentions removes the mention markup Teams puts in the text of any
@@ -276,7 +276,7 @@ func activityToInbound(a botActivity, bot teamsbots.Bot) (*hookRequest, error) {
 		ChatID: chatID,
 		// Prefer the Entra object id: it is stable across Teams installs and is
 		// the same identity other Microsoft surfaces use, where the channel-scoped
-		// "29:…" id is not.
+		// "29:..." id is not.
 		Handle:           firstNonEmpty(strings.TrimSpace(a.From.AadObjectID), strings.TrimSpace(a.From.ID)),
 		DisplayName:      strings.TrimSpace(a.From.Name),
 		ConversationName: a.title(),

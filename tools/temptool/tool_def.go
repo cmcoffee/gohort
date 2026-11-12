@@ -29,7 +29,7 @@ const jobDesc = "(api, optional) For an API that answers with a JOB instead of t
 // schema. Shared across the create/action/update schemas so the shape stays
 // consistent. Namespace-agnostic (local names) is the headline — it's what
 // makes XML/CalDAV parseable without hand-written ElementTree/xpath.
-const responseExtractDesc = "(api mode, optional) Parse an XML response into JSON declaratively: prefer it over a hand-written XML pipe or script. Shape {\"select\":\"<repeating element>\", \"where\":{…}, \"fields\":{\"<out>\":\"<selector>\"}}; matching is by local element name, namespaces ignored. Full grammar, selectors, filters, and a worked example: tool_def(action=\"help\")."
+const responseExtractDesc = "(api mode, optional) Parse an XML response into JSON declaratively: prefer it over a hand-written XML pipe or script. Shape {\"select\":\"<repeating element>\", \"where\":{...}, \"fields\":{\"<out>\":\"<selector>\"}}; matching is by local element name, namespaces ignored. Full grammar, selectors, filters, and a worked example: tool_def(action=\"help\")."
 
 // BuildToolDef constructs the tool_def grouped tool. NOT globally
 // registered — callers (Builder's catalog assembly) construct a

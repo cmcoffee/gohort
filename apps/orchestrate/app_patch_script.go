@@ -233,7 +233,7 @@ func pyDefinedFunctions(src string) []string {
 // scriptFunctionSpan dispatches on the script's language.
 func scriptFunctionSpan(lang, src, name string) (int, int, error) {
 	if strings.EqualFold(strings.TrimSpace(lang), "bash") {
-		return jsFunctionSpan(src, name) // `name() { … }` matches the shorthand form; braces are braces
+		return jsFunctionSpan(src, name) // `name() { ... }` matches the shorthand form; braces are braces
 	}
 	return pyFunctionSpan(src, name)
 }

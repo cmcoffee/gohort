@@ -133,7 +133,7 @@ func (T *Servitor) handleRepoRefresh(c *jsonapi.Call, req applianceReq) (any, er
 	sessionAppliances.Store(sid, rec.ID)
 	go func() {
 		defer cancel()
-		emit(sid, probeEvent{Kind: "status", Text: fmt.Sprintf("Re-cloning %s…", repoDisplayTarget(rec))})
+		emit(sid, probeEvent{Kind: "status", Text: fmt.Sprintf("Re-cloning %s...", repoDisplayTarget(rec))})
 		T.cloneAndIngestRepo(ctx, ownerUser, ownerUDB, rec.ID)
 		if ctx.Err() != nil {
 			probeSessions.AppendEvent(sid, probeEvent{Kind: "error", Text: "Refresh cancelled."}, true)

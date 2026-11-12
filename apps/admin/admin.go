@@ -33,7 +33,7 @@ func testResultBody(ok bool, message, errMsg string) map[string]any {
 // what writes one progress line. The result still goes out through
 // writeTestResult, as the stream's last line. For a test that runs several
 // checks in turn: the form shows each step as it starts, beside the elapsed
-// seconds, rather than a bare "Testing…" for the whole minute.
+// seconds, rather than a bare "Testing..." for the whole minute.
 func testProgress(w http.ResponseWriter) func(text string) {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	fl, _ := w.(http.Flusher)

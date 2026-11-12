@@ -644,7 +644,7 @@ select:-webkit-autofill {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .ui-page-title {
-  /* Truncates with "…" (full name on the title tooltip) when the left group
+  /* Truncates with "..." (full name on the title tooltip) when the left group
      runs out of room; the cap keeps a long name from taking a phone's whole
      bar from the tabs. */
   margin: 0; flex: 0 1 auto; min-width: 0; max-width: 13.5rem;
@@ -4623,7 +4623,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
  * stacked) on the left, conversation pane on the right. Both wear
  * rounded card chrome with a gap between them; the conversation
  * pane's topbar reads as a single header bar (☰  agent-name  +New
- * …actions). The activity pane is hidden via LockActivity at the app
+ * ...actions). The activity pane is hidden via LockActivity at the app
  * level.
  *
  * Earlier this mode dropped all chrome to read as a chat-style
@@ -4720,7 +4720,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   padding-left: 2.6rem;
 }
 /* Two-row chat-pane topbar in list-top mode:
- *   Row 1: action buttons (New / Edit / Clone / Tools / Memory / …)
+ *   Row 1: action buttons (New / Edit / Clone / Tools / Memory / ...)
  *   Row 2: extras-slot (Agent picker + Private mode pill)
  * Each block claims a full row via flex-basis: 100% so the line
  * break is structural, not "happens to fit when wrapped." */
@@ -4754,7 +4754,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent.ui-agent-list-top .ui-agent-actions .ui-row-btn:not(.primary):not(.copied) {
   background: transparent;
 }
-/* Extras strip (Agent picker, etc.) + Modes (Private, Explorer, …)
+/* Extras strip (Agent picker, etc.) + Modes (Private, Explorer, ...)
  * inline in the topbar — strip the default bg-2 / border / padding
  * so they blend with the action buttons instead of reading as a
  * separate block, AND match the same compact size the action
@@ -4769,10 +4769,10 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
  * rail's column footprint (no flex negotiation, no width drift).
  *
  *   ┌─────────────┬─────────────────────────────┐
- *   │ Agent: <…>  │ New Edit Clone …           │  top bundle
+ *   │ Agent: <...>  │ New Edit Clone ...           │  top bundle
  *   ├─────────────┼─────────────────────────────┤
  *   │ Sessions    │ Chat pane                   │  grid row
- *   │ …           │                             │
+ *   │ ...           │                             │
  *   └─────────────┴─────────────────────────────┘
  *
  * Inner divider element ignored in grid mode — the picker block
@@ -6159,7 +6159,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   width: 20px; height: 20px; border-width: 3px; margin-right: 0;
 }
 
-/* Top-bar in-flight status indicator. Spinner + "Running…" label,
+/* Top-bar in-flight status indicator. Spinner + "Running..." label,
  * pill-shaped and quiet so it reads as status, not as an action
  * button. Right-aligned in its parent (action row / topBundle row1
  * cell) via margin-left:auto. Display toggled inline by JS:

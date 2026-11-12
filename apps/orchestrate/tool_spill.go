@@ -188,7 +188,7 @@ func renderSpillStub(toolName, rel, body string) string {
 	fmt.Fprintf(&b, "  workspace(action=\"head\", path=%q, lines=N)      → first N lines\n", rel)
 	fmt.Fprintf(&b, "  workspace(action=\"tail\", path=%q, lines=N)      → last N lines\n", rel)
 	fmt.Fprintf(&b, "  workspace(action=\"read_lines\", path=%q, start=A, end=B) → lines A–B\n", rel)
-	fmt.Fprintf(&b, "  workspace(action=\"grep\", path=%q, pattern=\"…\")  → matching lines (RE2)\n", rel)
+	fmt.Fprintf(&b, "  workspace(action=\"grep\", path=%q, pattern=\"...\")  → matching lines (RE2)\n", rel)
 	b.WriteString("Pick the action that matches what you need. Don't re-call the original tool: its full output is already on disk.")
 	return b.String()
 }
@@ -342,7 +342,7 @@ func renderAttachmentStub(name, mime, rel, text string) string {
 	fmt.Fprintf(&b, "  workspace(action=\"head\", path=%q, lines=N)      → first N lines\n", rel)
 	fmt.Fprintf(&b, "  workspace(action=\"tail\", path=%q, lines=N)      → last N lines\n", rel)
 	fmt.Fprintf(&b, "  workspace(action=\"read_lines\", path=%q, start=A, end=B) → lines A–B\n", rel)
-	fmt.Fprintf(&b, "  workspace(action=\"grep\", path=%q, pattern=\"…\")  → matching lines (RE2)\n", rel)
+	fmt.Fprintf(&b, "  workspace(action=\"grep\", path=%q, pattern=\"...\")  → matching lines (RE2)\n", rel)
 	b.WriteString("Reach for grep when looking for a specific section; head/tail for orientation; read_lines once you know roughly where the answer is. Don't pull the whole document in: pull the slice that answers the question.\n\n---\n\n")
 	return b.String()
 }

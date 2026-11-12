@@ -199,10 +199,10 @@ func TestTheDashboardBellIsTheDrawnOne(t *testing.T) {
 		"M23 53h18c-1 6-4 9-9 9s-8-3-9-9z",
 	} {
 		if !strings.Contains(src, d) {
-			t.Errorf("the dashboard bell no longer draws the shared artwork (%.20s…)", d)
+			t.Errorf("the dashboard bell no longer draws the shared artwork (%.20s...)", d)
 		}
 		if !strings.Contains(string(runtime), d) {
-			t.Errorf("the header bell no longer draws the shared artwork (%.20s…)", d)
+			t.Errorf("the header bell no longer draws the shared artwork (%.20s...)", d)
 		}
 	}
 }

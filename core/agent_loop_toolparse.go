@@ -236,7 +236,7 @@ func parseJSONToolCall(content string, handlers map[string]ToolHandlerFunc) *Too
 }
 
 // parseCallArgs parses a narrated call's parenthesized argument list — the
-// name(key="value", key2=…) or name({…json…}) that follows a tool name when a
+// name(key="value", key2=...) or name({...json...}) that follows a tool name when a
 // model writes a call as prose instead of emitting a structured tool call. It
 // returns nil when `after` has no parenthesized list. Quoted values may contain
 // commas (they don't split); bare true/false/number values are coerced.
@@ -391,7 +391,7 @@ func parseNaturalToolCall(content string, handlers map[string]ToolHandlerFunc) *
 	// Common-word guard. A name with no underscore is a word the user and
 	// the model may simply be TALKING about, so the only shape trusted for
 	// it is one prose does not produce: the paren opening immediately, with
-	// no space ("image(prompt=…)" is a call; "the image (a 4x6 print)" is a
+	// no space ("image(prompt=...)" is a call; "the image (a 4x6 print)" is a
 	// sentence). Snake_case names skip this — they read as tool names
 	// wherever they appear, so the looser forms below stay available.
 	if !strings.Contains(bestName, "_") {
@@ -440,7 +440,7 @@ func parseNaturalToolCall(content string, handlers map[string]ToolHandlerFunc) *
 
 	// Guard: don't fire on bare tool-name mentions. If no args were
 	// extractable from the prose, the model was almost certainly
-	// just REASONING about the tool ("I should call web_search…")
+	// just REASONING about the tool ("I should call web_search...")
 	// rather than emitting an actual call. Firing here produces a
 	// missing-required-arg failure that forces a wasted round.
 	// Returning nil lets the loop terminate cleanly when the model

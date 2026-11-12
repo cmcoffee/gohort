@@ -42,7 +42,7 @@ func (T *Bridges) handleKeyMint(c *jsonapi.Call, req *keyMintReq) (any, error) {
 		req = &keyMintReq{}
 	}
 	svc := strings.TrimSpace(req.Service)
-	// A key for a messaging service (imessage, …) polls and drains that
+	// A key for a messaging service (imessage, ...) polls and drains that
 	// service's outbox, which is the deployment owner's outgoing
 	// messages: an administrator's to mint. Anybody may mint a generic
 	// API key for their own clients.

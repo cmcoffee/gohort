@@ -146,7 +146,7 @@ func toolScopeState(db Database, owner, toolName string) (ToolScopeState, bool) 
 	agents := listAgents(udb, owner)
 	// scopeTarget: only top-level, user-managed agents are tool-scope targets.
 	// Exclusions are by IDENTITY, never by the Hidden flag:
-	//   - app-specific agents (Guide Author, Servitor Investigator, …) carry an
+	//   - app-specific agents (Guide Author, Servitor Investigator, ...) carry an
 	//     app-declared kit, so they're never a tool-scope target;
 	//   - clone-only seeds are templates you clone, not agents you run;
 	//   - sub-agents (OwnedBy) are managed through their parent.
@@ -178,7 +178,7 @@ func toolScopeState(db Database, owner, toolName string) (ToolScopeState, bool) 
 		if isAppAgent(a.ID) {
 			return false
 		}
-		// Framework seeds (Builder, the retired Chat seed, Research, …) are
+		// Framework seeds (Builder, the retired Chat seed, Research, ...) are
 		// not offered as per-agent targets for USER tools: Builder always
 		// loads the full pool (its pill would be a no-op), and the seed
 		// personas are retired in favour of archetype recipes. Matched BY
@@ -735,7 +735,7 @@ func attachGlobalToolToAgent(db Database, owner, agentID, toolName string) error
 }
 
 // agentName is the agent's display name, falling back to its id — for error
-// text a user reads, where "agent-1754…" is better than an empty string.
+// text a user reads, where "agent-1754..." is better than an empty string.
 func agentName(rec AgentRecord) string {
 	if n := strings.TrimSpace(rec.Name); n != "" {
 		return n

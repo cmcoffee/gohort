@@ -120,7 +120,7 @@ func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 		// polls one URL; connector registers a capability type.
 		ChatToolToAgentToolDefWithSession(connectorDefTool(), sess),
 		// tool_template — author a tool from a ready-made TEMPLATE (a REST call,
-		// a GitHub issue, …) instead of hand-crafting a tool_def: pick a template,
+		// a GitHub issue, ...) instead of hand-crafting a tool_def: pick a template,
 		// fill its options, and the framework builds + attaches the tool. Governed
 		// exactly like add_tool (attaches to the focused agent, verifiable).
 		ChatToolToAgentToolDefWithSession(toolTemplateTool(), sess),
@@ -672,7 +672,7 @@ func checkCredentialToolDef(t *chatTurn) AgentToolDef {
 				// probe. The failure to break: the model guesses ONE path, gets a
 				// 4xx, and asks the user (or concludes "no API exists") instead of
 				// TRYING more paths. Tell it to map the API by probing first.
-				cfg += fmt.Sprintf("\nNeed an endpoint you don't have yet? MAP IT YOURSELF: this credential is LIVE. Probe candidate paths with fetch_url_%s(url=\"/try/this\") and read what returns 2xx; a 4xx just means THAT path is wrong, so try another (/x, /1/x, /serverinfo, list a base path, …). Discover the working endpoints AND the response shape by TRYING them before you ask the user or conclude anything: only ask for what a probe genuinely can't reveal (which instance/account, what the built thing should do).", name)
+				cfg += fmt.Sprintf("\nNeed an endpoint you don't have yet? MAP IT YOURSELF: this credential is LIVE. Probe candidate paths with fetch_url_%s(url=\"/try/this\") and read what returns 2xx; a 4xx just means THAT path is wrong, so try another (/x, /1/x, /serverinfo, list a base path, ...). Discover the working endpoints AND the response shape by TRYING them before you ask the user or conclude anything: only ask for what a probe genuinely can't reveal (which instance/account, what the built thing should do).", name)
 				return fmt.Sprintf("Credential %q is READY: enabled and its secret is set. Safe to wire the tool/agent to it and finish.%s", name, cfg), nil
 			}
 			var missing []string
@@ -743,7 +743,7 @@ func surveyWorkspace(owner string) string {
 	}
 	capNote := func(n int) {
 		if n > cap {
-			fmt.Fprintf(&b, "  … and %d more (showing first %d)\n", n-cap, cap)
+			fmt.Fprintf(&b, "  ... and %d more (showing first %d)\n", n-cap, cap)
 		}
 	}
 

@@ -20,7 +20,7 @@ func (a *AdminApp) registerArtifactsRoutes(sub *http.ServeMux) {
 	// functions they called are still used by the orchestrate connector tool.
 
 	// Artifact export — the UNIFIED, cross-type download. Builds a
-	// gohort.bundle/v1 carrying any registered artifact (connector, tool, …).
+	// gohort.bundle/v1 carrying any registered artifact (connector, tool, ...).
 	// An individual export is just a one-item bundle:
 	//   ?type=<t>&name=<n>[&owner=<u>]  → one artifact (owner scopes tools)
 	//   ?all=<t1,t2>                    → every artifact of those types

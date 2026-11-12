@@ -241,7 +241,7 @@ func StripToolCallMarkup(s string) string {
 // narrative text" and inject a corrective re-prompt instead of
 // silently terminating with the call un-executed.
 // bracketedCallDirectiveRe matches a tool call written as a BRACKETED
-// DIRECTIVE — "[CALL_FUNCTION] fetch_image: find a photo of …" and its
+// DIRECTIVE — "[CALL_FUNCTION] fetch_image: find a photo of ..." and its
 // siblings. A shape worth naming separately because of how it got out: the
 // prose scan is gated off for a long body that finished cleanly (a real answer
 // must not be re-read as a tool call), and this arrived inside 700 characters
@@ -348,7 +348,7 @@ func containsFakeJSONToolBlock(s string) bool {
 // message can reference it ("You appeared to invoke 'tool_def'").
 // Returns "" when no name can be extracted.
 func extractFakeToolCodeName(s string) string {
-	// [CALL_FUNCTION] name: … form
+	// [CALL_FUNCTION] name: ... form
 	if m := bracketedCallDirectiveRe.FindStringSubmatch(s); m != nil {
 		return m[1]
 	}
@@ -395,7 +395,7 @@ func extractFakeToolCodeName(s string) string {
 // content so the user-visible message doesn't show the fake
 // invocation alongside the narrative that introduced it.
 func stripFakeToolCodeBlocks(s string) string {
-	// [CALL_FUNCTION] name: … — drop from the directive to the end of its line.
+	// [CALL_FUNCTION] name: ... — drop from the directive to the end of its line.
 	// The narration around it is left alone: the correction re-prompt replaces
 	// the whole reply anyway, and cutting more than the directive would be
 	// guessing at where the model's real sentence began.
@@ -482,7 +482,7 @@ const frameworkNoticeTag = "[AUTOMATED FRAMEWORK NOTICE: not written by the user
 // marker: one side's wording was edited, the other side's literal was not, and
 // the mismatch was silent because a non-match is a legal outcome. There are
 // three producers of this one, in two packages, and the doc comment here
-// carried the PRE-sweep spelling ("STOP — you have already…") long after the
+// carried the PRE-sweep spelling ("STOP — you have already...") long after the
 // producers moved to a colon, which is the drift made visible.
 //
 // Named here so the core producers point at one spelling, and pinned across

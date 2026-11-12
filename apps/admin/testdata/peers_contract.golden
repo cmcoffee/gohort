@@ -47,7 +47,7 @@ root POST /api/peer-keys/mint ""
 root PUT /api/peer-keys/mint "{}"
   405 method not allowed
 root GET /api/peer-keys ""
-  200 [{"id":"<k1>","label":"consumer","caps":["Embeddings"],"enabled":true,"rate_per_min":30,"created":"<time>","last_seen":"","calls":0,"paired":"","status":"Not connected yet: the code is still unspent"}… (611 bytes, sha1 a7eb663819044b72b9b092d071276efe5ed03568)
+  200 [{"id":"<k1>","label":"consumer","caps":["Embeddings"],"enabled":true,"rate_per_min":30,"created":"<time>","last_seen":"","calls":0,"paired":"","status":"Not connected yet: the code is still unspent"}... (611 bytes, sha1 a7eb663819044b72b9b092d071276efe5ed03568)
 alice GET /api/peer-keys/<k1> ""
   403 forbidden
 root GET /api/peer-keys/<k1> ""
@@ -115,7 +115,7 @@ root PUT /api/peers/add "{}"
 root GET /api/peers ""
   200 [{"name":"gpu-box","instance":"<this host>","base_url":"<peer>","caps":["Embeddings"],"embed_model":"nomic-embed-text","backends":0,"status":"ok","last_checked":"<time>"}]
 root GET /api/peer-keys ""
-  200 [{"id":"<k1>","label":"consumer","caps":["Embeddings"],"enabled":true,"rate_per_min":30,"created":"<time>","last_seen":"<time>","calls":2,"paired":"<time>","status":"Paired: running on rotating tokens… (625 bytes, sha1 3a39c6d5f38176b1468d1675802589e280f35eb4)
+  200 [{"id":"<k1>","label":"consumer","caps":["Embeddings"],"enabled":true,"rate_per_min":30,"created":"<time>","last_seen":"<time>","calls":2,"paired":"<time>","status":"Paired: running on rotating tokens... (625 bytes, sha1 3a39c6d5f38176b1468d1675802589e280f35eb4)
 alice POST /api/peers/gpu-box/refresh ""
   403 forbidden
 root POST /api/peers/gpu-box/refresh ""
@@ -159,7 +159,7 @@ root DELETE /api/peer-keys/<k1> ""
 root DELETE /api/peer-keys/ ""
   400 missing key id
 root GET /api/peer-keys ""
-  200 [{"id":"<k2>","label":"listed","caps":["Embeddings","Inference (Offload model)"],"enabled":true,"rate_per_min":0,"created":"<time>","last_seen":"","calls":0,"paired":"","status":"Not connected yet: th… (425 bytes, sha1 fbad367fe4bbef9d83c35dc6c836349c96d18a6a)
+  200 [{"id":"<k2>","label":"listed","caps":["Embeddings","Inference (Offload model)"],"enabled":true,"rate_per_min":0,"created":"<time>","last_seen":"","calls":0,"paired":"","status":"Not connected yet: th... (425 bytes, sha1 fbad367fe4bbef9d83c35dc6c836349c96d18a6a)
 root GET /api/peers ""
   200 []
 activity log, 16 entries:

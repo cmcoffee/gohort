@@ -28,7 +28,7 @@ func (a *AdminApp) registerSystemRoutes(sub *http.ServeMux) {
 	sub.HandleFunc("/api/status", jsonapi.Get(a.db, a.handleStatus, a.gate()))
 
 	// System Hooks — probes optional host binaries (ffmpeg, pdftotext,
-	// bwrap, …) so the admin panel can show what's installed and what each gates.
+	// bwrap, ...) so the admin panel can show what's installed and what each gates.
 	sub.HandleFunc("/api/dependencies", jsonapi.Get(a.db, func(c *jsonapi.Call) (any, error) {
 		return CheckDependencies(), nil
 	}, a.gate()))

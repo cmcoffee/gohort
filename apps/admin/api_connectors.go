@@ -86,7 +86,7 @@ func connectorRows(connectors bool) any {
 		Approved  bool   `json:"approved"`
 		LastError string `json:"last_error"`
 		Template  string `json:"template,omitempty"` // provenance (which template authored it)
-		Webhook   string `json:"webhook,omitempty"`  // a push bridge's provider → gets "Webhook…"
+		Webhook   string `json:"webhook,omitempty"`  // a push bridge's provider → gets "Webhook..."
 		// Its one editor: EditForm, the Go setup form a template made it with
 		// (ComfyUI, A1111); EditSpec, its spec beside the assistant; NeedsFix,
 		// the same, as Fix, when its spec does not validate.
@@ -234,7 +234,7 @@ func connectorEditors(conn Connector) (form, spec, fix bool) {
 }
 
 // keptSecretsLine is connection c's row's word on the secrets it keeps:
-// "API key ends in …ab12, given 1 Nov 2026", in the order its spec declares
+// "API key ends in ...ab12, given 1 Nov 2026", in the order its spec declares
 // them.
 func keptSecretsLine(c Connector) string {
 	kept := service.KeptSecrets(RootDB, c)

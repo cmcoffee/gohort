@@ -10,9 +10,9 @@
 // Three calls, because drafting a revision takes up to a minute and the
 // conversation's reply cannot wait on it:
 //
-//	POST …/assist  {message, history} → {reply, change?}   the conversation
-//	POST …/propose {description}      → {proposal, from, changed, changes, checklist}
-//	POST …/revise  {proposal, from}   → saved, the version before kept for Undo
+//	POST .../assist  {message, history} → {reply, change?}   the conversation
+//	POST .../propose {description}      → {proposal, from, changed, changes, checklist}
+//	POST .../revise  {proposal, from}   → saved, the version before kept for Undo
 //
 // Apply starts from the definition AS STORED and takes only what a revision
 // may change (name, description, and the steps or stages). The drafter knows
@@ -240,7 +240,7 @@ const definitionAssistJS = `(function(){
 
           apply.onclick = function() {
             if (!proposal) return;
-            apply.disabled = true; apply.textContent = 'Applying…';
+            apply.disabled = true; apply.textContent = 'Applying...';
             fetch(cfg.base + '/revise', {method: 'POST', headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({proposal: proposal.proposal, from: proposal.from})})
               .then(function(r) { if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); }); location.reload(); })

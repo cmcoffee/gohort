@@ -2,7 +2,7 @@
 //
 // Go enforces the boundary at compile time: anything under core/internal/ can
 // be imported only by packages rooted at core/ (i.e. package core and its
-// sub-packages). Apps (under apps/…, private/…) and main (repo root) physically
+// sub-packages). Apps (under apps/..., private/...) and main (repo root) physically
 // cannot import it — so code moved here can be refactored freely without
 // breaking any app.
 //

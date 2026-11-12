@@ -246,7 +246,7 @@ func StaleMediaChoices(db Database) []StaleMediaChoice {
 	switch image = strings.TrimSpace(image); image {
 	case "", "none":
 	case "openai", "gemini":
-		out = append(out, StaleMediaChoice{ImageTable, image, "default", "it names " + image + ", which gohort no longer runs itself: add it from its template under + Add another…"})
+		out = append(out, StaleMediaChoice{ImageTable, image, "default", "it names " + image + ", which gohort no longer runs itself: add it from its template under + Add another..."})
 	default:
 		if why := StaleWhy(db, image); why != "" {
 			out = append(out, StaleMediaChoice{ImageTable, image, "default", why})

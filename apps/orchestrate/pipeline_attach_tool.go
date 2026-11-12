@@ -41,7 +41,7 @@ import (
 //
 // This is the CATALOG question — which pipelines get a run_<name> tool of
 // their own, advertised in the agent's prompt. It is deliberately not the
-// dispatch question: agents(run, pipeline=…) reaches any pipeline the owner
+// dispatch question: agents(run, pipeline=...) reaches any pipeline the owner
 // has, because arranging an attachment first means knowing the need before it
 // arises. Attachment is now about prominence, not permission.
 func (t *chatTurn) effectivePipelineIDs() []string {
@@ -129,7 +129,7 @@ func (t *chatTurn) buildAttachedPipelineToolDefs() []AgentToolDef {
 // attachedPipelineToolName derives a stable, collision-resistant tool
 // name from a pipeline's display name: snake_cased and prefixed with
 // run_ so it reads as an action and can't shadow a built-in tool. On
-// collision (or an empty/garbage display name) it suffixes _2, _3, …
+// collision (or an empty/garbage display name) it suffixes _2, _3, ...
 func attachedPipelineToolName(display string, used map[string]bool) string {
 	base := SnakeFromDisplay(display)
 	base = strings.Trim(base, "_")

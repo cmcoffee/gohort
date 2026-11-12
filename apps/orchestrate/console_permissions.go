@@ -546,7 +546,7 @@ func removeAutoApproveTool(udb Database, agentID, tool string) {
 // loaded from that user's own store — an id belonging to someone else simply
 // isn't there. POST body:
 //
-//	{"agent_id":"…","tools":{"send_message":"allow","call_x":"ask"},
+//	{"agent_id":"...","tools":{"send_message":"allow","call_x":"ask"},
 //	 "flags":{"fleet":true,"exposed":false}}
 //
 // Tool policy is binary: "allow" pre-authorizes the tool for unattended runs
@@ -652,7 +652,7 @@ func appendUnique(list []string, s string) []string {
 }
 
 // handleConsolePermissionPolicy sets a subject's standing policy.
-// POST ?id=<agent:…|contact:…>&value=<allow|ask|block>.
+// POST ?id=<agent:...|contact:...>&value=<allow|ask|block>.
 func (T *OrchestrateApp) handleConsolePermissionPolicy(c *jsonapi.Call, body *struct {
 	Policy string `json:"_policy"` // a table row's segmented control
 }) (any, error) {
@@ -752,7 +752,7 @@ func (T *OrchestrateApp) handleConsolePermissionPolicy(c *jsonapi.Call, body *st
 }
 
 // handleConsolePermissionRemove forgets a subject's policy entirely (back to
-// the ask default, dropped from the list). POST ?id=<agent:…|contact:…>.
+// the ask default, dropped from the list). POST ?id=<agent:...|contact:...>.
 func (T *OrchestrateApp) handleConsolePermissionRemove(c *jsonapi.Call, _ struct{}) (any, error) {
 	r := c.R
 	user := c.User

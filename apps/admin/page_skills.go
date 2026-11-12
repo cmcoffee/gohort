@@ -41,7 +41,7 @@ func (a *AdminApp) skillsSections() []ui.Section {
 								Fields: []ui.FormField{
 									{Field: "name", Type: "text", Label: "Name"},
 									{Field: "description", Type: "textarea", Label: "Description", Rows: 2,
-										Help:   "One-sentence \"use when…\" hint. Write it as a decision shape, not a label.",
+										Help:   "One-sentence \"use when...\" hint. Write it as a decision shape, not a label.",
 										Detail: "It surfaces in the LLM's \"Available skills\" prompt block, so the model can judge when to call read_skill or skill_knowledge_search."},
 									{Field: "triggers", Type: "tags", Label: "Triggers (optional)",
 										Help:   "When ANY trigger matches the turn, the skill's instructions inject automatically.",
@@ -114,7 +114,7 @@ func (a *AdminApp) skillsSections() []ui.Section {
 						Confirm: "Delete this skill? The definition is gone for good; Builder will need to re-author if you want it back.",
 						Variant: "danger"},
 				},
-				EmptyText: "No skills defined. Talk to Builder in Agents to author one: \"create a skill called X that fires when…\".",
+				EmptyText: "No skills defined. Talk to Builder in Agents to author one: \"create a skill called X that fires when...\".",
 			},
 				// Export all skills (every owner) as one bundle.
 				ui.Toolbar{
@@ -166,11 +166,11 @@ func skillConditionsField() ui.FormField {
 				{Value: "lookup", Label: "Looking it up"}, {Value: "mentions", Label: "The message mentioning"},
 			}},
 			{Field: "question", Label: "Question", OwnLine: true, HideWhen: "kind:else||check:mentions",
-				Placeholder: "a yes-or-no question about the request, which this case turns on…"},
+				Placeholder: "a yes-or-no question about the request, which this case turns on..."},
 			{Field: "mentions", Label: "Words", OwnLine: true, HideWhen: "kind:else||check:!mentions",
 				Placeholder: "refund, chargeback, *.pdf"},
 			{Field: "how", Label: "How to check", OwnLine: true, HideWhen: "kind:else||check:mentions",
-				Placeholder: "how the agent finds the answer: which tool it uses, and what it reads there…"},
+				Placeholder: "how the agent finds the answer: which tool it uses, and what it reads there..."},
 			{Field: "instructions", Label: "Instructions for this case", Type: "sections", OwnLine: true, HideWhen: "kind:if",
 				Placeholder: "Empty: use Edit to write what the agent does in this case."},
 		},

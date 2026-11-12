@@ -319,7 +319,7 @@ select.ui-orch-intake-input {
       function conversationIsEmpty() {
         var log = document.querySelector('.ui-agent-convo-log');
         if (!log) return true;
-        // Empty when only the placeholder "Start typing…" lives in
+        // Empty when only the placeholder "Start typing..." lives in
         // there. Real bubbles get class ui-agent-msg.
         return log.querySelector('.ui-agent-msg') == null;
       }
@@ -394,7 +394,7 @@ select.ui-orch-intake-input {
             var held = safeText(values[f.name] || '');
             var first = document.createElement('option');
             first.value = held;
-            first.textContent = held || 'Choose…';
+            first.textContent = held || 'Choose...';
             inp.appendChild(first);
             inp.addEventListener('change', changed);
           } else if (t === 'select') {
@@ -513,7 +513,7 @@ select.ui-orch-intake-input {
               otherText.type = 'text';
               otherText.className = 'ui-orch-intake-checklist-other-text';
               otherText.dataset.otherText = '1';
-              otherText.placeholder = 'type your own…';
+              otherText.placeholder = 'type your own...';
               if (prefillOther) otherText.value = prefillOther;
               if (disabled) otherText.disabled = true;
               // Typing in the text field auto-checks the Other box so
@@ -682,14 +682,14 @@ select.ui-orch-intake-input {
             var sel = e.input, keep = sel.value;
             sel.innerHTML = '';
             var wait = document.createElement('option');
-            wait.value = ''; wait.textContent = 'Loading…';
+            wait.value = ''; wait.textContent = 'Loading...';
             sel.appendChild(wait);
             fetch(url, {credentials: 'same-origin'}).then(function(r) { return r.ok ? r.json() : []; }).then(function(list) {
               if (lastURL[f.name] !== url) return; // a newer answer asked since
               sel.innerHTML = '';
               var head = document.createElement('option');
               head.value = '';
-              head.textContent = (list && list.length) ? 'Choose…' : 'Nothing of this kind yet';
+              head.textContent = (list && list.length) ? 'Choose...' : 'Nothing of this kind yet';
               sel.appendChild(head);
               (list || []).forEach(function(o) {
                 var opt = document.createElement('option');
@@ -723,7 +723,7 @@ select.ui-orch-intake-input {
           Array.prototype.slice.call(box.children).forEach(function(c) { if (c !== other && c !== exRow) box.removeChild(c); });
           var note = document.createElement('div');
           note.className = 'ui-orch-intake-help';
-          note.textContent = 'Loading…';
+          note.textContent = 'Loading...';
           box.insertBefore(note, other);
           fetch(url, {credentials: 'same-origin'}).then(function(r) { return r.ok ? r.json() : []; }).then(function(list) {
             if (lastURL[f.name] !== url) return;

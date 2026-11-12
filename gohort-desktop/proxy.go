@@ -87,7 +87,7 @@ const SETTINGS_PATH = "/__desktop/settings"
 
 // APIKEY_PATH is a dedicated, self-contained page that updates ONLY the
 // Gohort-Bridge API key (via App.SetBridgeAPIKey). No server URL, no
-// reachability probe — so it can't get stuck on "Checking server…".
+// reachability probe — so it can't get stuck on "Checking server...".
 const APIKEY_PATH = "/__desktop/apikey"
 
 // SAVE_PATH receives a file attachment (name + mime + base64) from popup_shim.js
@@ -132,7 +132,7 @@ const DIALOG_PATH = "/__desktop/dialog"
 // App.SaveSettings / App.GetSettings directly. It POSTs/GETs here
 // instead and the proxy invokes the same App methods in Go. Same
 // pattern as APIKEY_PATH; without it, clicking Connect threw a
-// ReferenceError and wedged the form on "Checking server…".
+// ReferenceError and wedged the form on "Checking server...".
 const SAVE_SETTINGS_PATH = "/__desktop/savesettings"
 const GET_SETTINGS_PATH = "/__desktop/getsettings"
 
@@ -169,7 +169,7 @@ bridge: no server connection needed, so this can't hang.</p>
 var key=document.getElementById('key'),msg=document.getElementById('msg');
 key.addEventListener('keydown',function(e){if(e.key==='Enter')savekey();});
 function savekey(){var k=key.value.trim();if(!k){msg.textContent='Enter a key.';return;}
-msg.style.color='';msg.textContent='Saving…';
+msg.style.color='';msg.textContent='Saving...';
 fetch('/__desktop/apikey',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k})})
 .then(function(r){return r.json();})
 .then(function(d){if(!d.ok){msg.style.color='#f85149';msg.textContent=d.error||'Could not save.';return;}
@@ -194,7 +194,7 @@ func (gp *gohort_proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// the key to the sidecar IN GO (the page can't use window.go — Wails
 	// doesn't inject its bridge into proxy-served pages — so it POSTs
 	// here instead). No server probe, so it never hangs on "Checking
-	// server…".
+	// server...".
 	if r.URL.Path == APIKEY_PATH {
 		if r.Method == http.MethodPost {
 			gp.handle_apikey_post(w, r)
@@ -277,7 +277,7 @@ func (gp *gohort_proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// navigate to the dashboard, click "Home" links, etc. Used to
 	// be an in-place URL rewrite, but that left the BROWSER URL
 	// stuck at "/" while content was orchestrate — relative URLs
-	// in the page (api/sessions, …) then 404'd against "/" instead
+	// in the page (api/sessions, ...) then 404'd against "/" instead
 	// of "/orchestrate/". The HTML+JS bounce lets WKWebView's
 	// normal page-load path update the URL bar (WKURLSchemeHandler
 	// doesn't follow HTTP redirects natively, but JS-driven
@@ -292,7 +292,7 @@ func (gp *gohort_proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `<!DOCTYPE html><html><head><meta charset="utf-8">`+
 			core.FirstPaintHead()+
 			`<meta http-equiv="refresh" content="0;url=%s">`+
-			`<title>Loading…</title></head>`+
+			`<title>Loading...</title></head>`+
 			`<body><script>location.replace(%q);</script></body></html>`,
 			html.EscapeString(landing), landing)
 		return
@@ -719,7 +719,7 @@ func rewrite_redirect_as_js(resp *http.Response) error {
 // window itself, since the window's colour is behind the webview and this
 // gap is inside it.
 var redirect_bounce_html = `<!DOCTYPE html><html><head>` +
-	`<meta charset="utf-8">` + core.FirstPaintHead() + `<title>Redirecting…</title>` +
+	`<meta charset="utf-8">` + core.FirstPaintHead() + `<title>Redirecting...</title>` +
 	`<meta http-equiv="refresh" content="0;url=%s">` +
 	`</head><body><script>location.replace(%q);</script></body></html>`
 
@@ -818,7 +818,7 @@ func inject_popup_shim(resp *http.Response) error {
 // place before window.open is first called.
 //
 // Routing rules:
-//   - http://… / https://… URL → external → open in system browser
+//   - http://... / https://... URL → external → open in system browser
 //     via Wails' BrowserOpenURL (no auth — cookie jar is desktop-side
 //     and not shared with the user's regular browser).
 //   - Anything else (relative paths like "/techwriter/?article=42",
@@ -892,7 +892,7 @@ var GOHORT_NOT_RUNNING_HTML = `<!DOCTYPE html>
     <div class="err">%v</div>
     <div class="actions">
       <button class="primary" onclick="location.reload()">Retry</button>
-      <button onclick="change_server()">Change server…</button>
+      <button onclick="change_server()">Change server...</button>
     </div>
   </div>
 <script>

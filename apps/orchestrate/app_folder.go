@@ -250,7 +250,7 @@ const appFolderStarterPage = `<!DOCTYPE html>
 <body>
 <main>
   <h1>APP_NAME</h1>
-  <div class="card" id="content"><span class="muted">Loading…</span></div>
+  <div class="card" id="content"><span class="muted">Loading...</span></div>
 </main>
 <script>
 // The backend: app.data(name, params) loads a data source (data/<name>.py),

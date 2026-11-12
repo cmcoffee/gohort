@@ -548,7 +548,7 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 			// and a state in front of six buttons, and the description was the
 			// part that got cut.
 			Body: ui.Stack{Children: []ui.Component{ui.Toolbar{Actions: []ui.ToolbarAction{{
-				Label: "Import…", Title: "Preview an app somebody exported, then bring it in",
+				Label: "Import...", Title: "Preview an app somebody exported, then bring it in",
 				Method: "client", URL: "customapps_import",
 			}}}, ui.Table{
 				Source:  "_apps",
@@ -1077,7 +1077,7 @@ func (T *CustomApps) handleScheduleToggle(c *jsonapi.Call, _ struct{}) (any, err
 	return map[string]any{"ok": true, "changed": changed}, nil
 }
 
-// handleEnableApp flips an imported (disabled) app live: POST ?slug=…. This is
+// handleEnableApp flips an imported (disabled) app live: POST ?slug=.... This is
 // the review gate for bundle imports — a recipe can carry sandboxed
 // data-source/action scripts, and none of them run until the owner has looked
 // and enabled the app here. Enabling an already-live app is a no-op.
@@ -1738,7 +1738,7 @@ func (T *CustomApps) resolveSpec(reqUser, slug string) (AppSpec, string, bool) {
 }
 
 // handleShareApp toggles authenticated (per-user-copy) sharing for an app the
-// requester owns: POST /apps/_app/share?slug=…&on=true|false. Owner-gated by
+// requester owns: POST /apps/_app/share?slug=...&on=true|false. Owner-gated by
 // construction (the spec is looked up in the requester's own store). Sharing a
 // slug another user already shares is rejected — shared slugs are one global
 // namespace.

@@ -276,7 +276,7 @@ func appPageRuntimeErrors(user, slug string) (errs []string, checked bool) {
 		out = append(out, fmt.Sprintf("the page shows %s to the person (%q): render the data as a person reads it (cards, rows, a chart, a sentence); JSON belongs between the page and its endpoints", what, snip))
 	}
 	if len(out) > 6 {
-		out = append(out[:6], fmt.Sprintf("…and %d more", len(out)-6))
+		out = append(out[:6], fmt.Sprintf("...and %d more", len(out)-6))
 	}
 	return out, true
 }

@@ -36,7 +36,7 @@ func (a *AdminApp) registerRecipeRoutes(sub *http.ServeMux) {
 	// GET: every template: those that ship with gohort, and those imported
 	// or saved here, by category.
 	sub.HandleFunc("/api/templates", jsonapi.Get(a.db, a.handleTemplates, a.gate()))
-	// GET ?need=: the templates "+ Add another…" offers at the end of a
+	// GET ?need=: the templates "+ Add another..." offers at the end of a
 	// page's list of connectors (templateNeeds).
 	sub.HandleFunc("/api/templates/for", jsonapi.Get(a.db, a.handleTemplatesFor, a.gate()))
 
@@ -109,7 +109,7 @@ type templateNeed struct {
 	also []string
 }
 
-// templateNeeds are the lists "+ Add another…" ends, by the need its option
+// templateNeeds are the lists "+ Add another..." ends, by the need its option
 // names: what each offers to add.
 var templateNeeds = map[string]templateNeed{
 	"web.search":        {"Web Search", "web.search", nil},
@@ -153,11 +153,11 @@ func (a *AdminApp) handleTemplatesFor(c *jsonapi.Call) (any, error) {
 	return rows, nil
 }
 
-// addAnother is the "+ Add another…" option that ends a page's list of
+// addAnother is the "+ Add another..." option that ends a page's list of
 // connectors: it opens the templates for need (templateNeeds), and what is
 // added from one joins the list (connector_add_another).
 func addAnother(need string) ui.SelectOption {
-	return ui.SelectOption{Value: need, Label: "+ Add another…", Action: "connector_add_another"}
+	return ui.SelectOption{Value: need, Label: "+ Add another...", Action: "connector_add_another"}
 }
 
 // templateGives are the jobs the connectors template id makes do, and

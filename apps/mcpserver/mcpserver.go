@@ -583,7 +583,7 @@ func (T *MCPServer) callTool(ctx context.Context, owner string, token *AccountTo
 			text, err := spec.Handler(ctx, owner, p.Arguments)
 			return text, nil, err
 		}
-		// Name what IS here. An agent's own tools (image, web_search, …) are not
+		// Name what IS here. An agent's own tools (image, web_search, ...) are not
 		// MCP tools — they belong to the agent and are reached by ASKING it — so
 		// a bare "unknown tool" leaves a caller guessing whether it typed the
 		// name wrong or the server is broken.
@@ -593,7 +593,7 @@ func (T *MCPServer) callTool(ctx context.Context, owner string, token *AccountTo
 				have = append(have, n)
 			}
 		}
-		return "", nil, fmt.Errorf("unknown tool %q, this server exposes: %s. An agent's own tools (image, web_search, …) are not callable here; ask the agent to use them via ask_agent", p.Name, strings.Join(have, ", "))
+		return "", nil, fmt.Errorf("unknown tool %q, this server exposes: %s. An agent's own tools (image, web_search, ...) are not callable here; ask the agent to use them via ask_agent", p.Name, strings.Join(have, ", "))
 	}
 }
 
@@ -657,7 +657,7 @@ func (T *MCPServer) listAgents(owner string, token *AccountToken) (string, error
 	if len(agents) == 0 {
 		// Say which switch turns this on. An empty list otherwise reads as "you
 		// have no agents", which is almost never what happened.
-		return "No agents are reachable over MCP. Open the agent's editor in gohort → Access & visibility → turn on \"Reachable over MCP\", then reconnect this connector so it re-reads the list. Only your own agents appear here; an app's built-in agents (Servitor, Guides, …) are reached by app name, not listed.", nil
+		return "No agents are reachable over MCP. Open the agent's editor in gohort → Access & visibility → turn on \"Reachable over MCP\", then reconnect this connector so it re-reads the list. Only your own agents appear here; an app's built-in agents (Servitor, Guides, ...) are reached by app name, not listed.", nil
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%d agent(s) you can ask:\n", len(agents))
@@ -771,7 +771,7 @@ func (T *MCPServer) askAgent(ctx context.Context, owner string, token *AccountTo
 	// Only reachable agents can be dispatched, so a bridge key can't reach every
 	// agent. Fails closed. Resolution goes name-or-id → canonical ID so the
 	// per-app gate below sees the real id: for USER agents reachable means the
-	// MCPExposed toggle; for APP agents (Servitor, Guides, …) it means the admin
+	// MCPExposed toggle; for APP agents (Servitor, Guides, ...) it means the admin
 	// enabled the app under Feature Access — they have no editor page, so the
 	// feature grant IS their exposure consent.
 	if ResolveExternalAgentFn != nil {
@@ -784,13 +784,13 @@ func (T *MCPServer) askAgent(ctx context.Context, owner string, token *AccountTo
 		}
 		id, ok := ResolveExternalAgentFn(T.DB, owner, agent, granted)
 		if !ok {
-			return "", nil, fmt.Errorf("agent %q is not reachable over MCP, for your own agents, turn on \"Reachable over MCP\" (agent editor → Access & visibility); for an app's agents (Servitor, Guides, …), an admin enables the app under Feature Access", agent)
+			return "", nil, fmt.Errorf("agent %q is not reachable over MCP, for your own agents, turn on \"Reachable over MCP\" (agent editor → Access & visibility); for an app's agents (Servitor, Guides, ...), an admin enables the app under Feature Access", agent)
 		}
 		agent = id
 	} else if !MCPAgentExposed(owner, agent) {
 		return "", nil, fmt.Errorf("agent %q is not reachable over MCP: turn on \"Reachable over MCP\" in its settings (agent editor → Access & visibility)", agent)
 	}
-	// Per-APP feature gate: dispatching an app-owned agent (Servitor, Guides, …)
+	// Per-APP feature gate: dispatching an app-owned agent (Servitor, Guides, ...)
 	// needs the app enabled for this user (admin) AND on this key (user scope).
 	// No-op for ordinary agents; nil token (session/bridge-key auth) skips the
 	// key tier, same as the endpoint-level mcp gate.

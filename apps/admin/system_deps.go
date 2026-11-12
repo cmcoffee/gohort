@@ -833,11 +833,11 @@ func flowFields(withName, custom bool) []ui.FormField {
 			}})
 	}
 	// A connector that converts files can do it in place of commands; + Add
-	// another… adds one from a template.
+	// another... adds one from a template.
 	by := append(append([]ui.SelectOption{{Value: "commands", Label: "Commands on this machine (the steps below)"}}, serviceProviderOptions("file.convert", "Convert")...), addAnother("file.convert"))
 	cmds := "by:commands"
 	out = append(out, ui.FormField{Field: "by", Label: "Done by", Type: "select", Default: "commands", Options: by,
-		Help:   "Programs on this machine, or a connector that converts files through an API; + Add another… adds one from a template (ConvertAPI).",
+		Help:   "Programs on this machine, or a connector that converts files through an API; + Add another... adds one from a template (ConvertAPI).",
 		Detail: "A connector is sent the file and asked for the format this gives; what comes back is checked the same way a command's result is. It cannot do a job that starts from a link, or one that gives several files."})
 	return append(out, []ui.FormField{
 		{Field: "steps", Label: "Steps", Type: "rows", AddLabel: "+ Add step", ShowWhen: cmds,
@@ -859,7 +859,7 @@ func flowFields(withName, custom bool) []ui.FormField {
 func depsRowActions() []ui.RowAction {
 	// A row that cannot run, or failed its test, has ✨ Need help?: the same form
 	// as its Adapt or Edit, with the assist beside it.
-	adapt := ui.ModalAction("Adapt…", adaptForm())
+	adapt := ui.ModalAction("Adapt...", adaptForm())
 	adapt.OnlyIf, adapt.Width = "adapt", flowFormWidth
 	fixJob := ui.AssistAction(needHelpLabel, fixPanel(adaptForm()))
 	fixJob.OnlyIf, fixJob.Variant = "fix_job", "primary"
@@ -935,7 +935,7 @@ func systemDepsSection() ui.Section {
 						EmptyText:  "Nothing custom yet. Add one to read a format gohort does not, or to write documents as one.",
 					},
 					ui.ModalButton{
-						Label: "Add…", Variant: "primary", Align: "left", Width: flowFormWidth,
+						Label: "Add...", Variant: "primary", Align: "left", Width: flowFormWidth,
 						Title:    "Add a custom input or output",
 						Subtitle: "Saved off: test it from its row, then turn it on.",
 						Body:     addForm(),

@@ -20,7 +20,7 @@
   var ptrCallbacks = [];
   function setupPTR(cb) { ptrCallbacks.push(cb); }
   (function() {
-    var indicator = el('div', {class: 'ui-ptr'}, [el('span', {class: 'ui-spinner'}), 'Refreshing…']);
+    var indicator = el('div', {class: 'ui-ptr'}, [el('span', {class: 'ui-spinner'}), 'Refreshing...']);
     document.body.appendChild(indicator);
     var startY = 0, pulling = false, triggered = false;
     var THRESHOLD = 70;
@@ -855,7 +855,7 @@
               ev.preventDefault();
               ev.stopPropagation();
               stop.disabled = true;
-              stop.textContent = 'Stopping…';
+              stop.textContent = 'Stopping...';
               fetch(it.cancel_url, {method: 'POST'}).then(function() {
                 refreshLive();
               }).catch(function() {

@@ -148,7 +148,7 @@ func peerRowLabel(caller, doing string, n int) string {
 //
 // The key's LABEL, not its id: the label is what was typed when the key was
 // minted precisely so a person could recognize the far side later, and a row
-// reading "peer:3f2a…" answers none of the question it exists to answer.
+// reading "peer:3f2a..." answers none of the question it exists to answer.
 func peerDisplayName(caller string) string {
 	name := strings.TrimSpace(strings.TrimPrefix(caller, peerLivePrefix))
 	if name == "" {

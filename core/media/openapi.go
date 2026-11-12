@@ -291,7 +291,7 @@ func schemaSummary(v any) string {
 			}
 			sort.Strings(names)
 			if len(names) > 8 {
-				return fmt.Sprintf("object {%s, …%d more}", strings.Join(names[:8], ", "), len(names)-8)
+				return fmt.Sprintf("object {%s, ...%d more}", strings.Join(names[:8], ", "), len(names)-8)
 			}
 			return "object {" + strings.Join(names, ", ") + "}"
 		}

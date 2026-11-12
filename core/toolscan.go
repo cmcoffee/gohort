@@ -182,7 +182,7 @@ const (
 
 // toolScanOmitted marks the gap when a payload is windowed. Inside the fence,
 // so a page that forges this line gains nothing a page could not already claim.
-const toolScanOmitted = "\n\n[… middle of this content omitted from the scan …]\n\n"
+const toolScanOmitted = "\n\n[... middle of this content omitted from the scan ...]\n\n"
 
 // ToolScanWorthScanning reports whether content justifies a model call.
 func ToolScanWorthScanning(content string) bool {
@@ -246,7 +246,7 @@ CLEAN is everything else, and that INCLUDES:
 
 A page that a text fetcher renders down to NOTHING BUT its chrome is the common
 case, not a suspicious one: a JavaScript application returns its consent banner
-and a "Loading…" to anything that does not run scripts. Judge such a result
+and a "Loading..." to anything that does not run scripts. Judge such a result
 clean. There is no document purpose to weigh the banner against because the
 document did not load, and flagging it makes every modern site an attack.
 

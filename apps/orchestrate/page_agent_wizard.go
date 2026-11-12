@@ -216,10 +216,10 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 					{Value: "help me think something through before I commit to it", Label: "Think things through with me"},
 				}},
 			{Field: "purpose", Type: "textarea", Label: "What should it do?", Rows: 4,
-				Placeholder: "what this agent is for, and how it should go about it…"},
+				Placeholder: "what this agent is for, and how it should go about it..."},
 			{Field: "example_tasks", Type: "textarea", Label: "Example requests", Rows: 3,
 				Help:        "A few real asks users will make of it, one per line. These sharpen the draft a lot.",
-				Placeholder: "real requests people will send it, one per line…"},
+				Placeholder: "real requests people will send it, one per line..."},
 		},
 	}
 	if assistantRun {
@@ -321,7 +321,7 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 				ShowWhen: "agent_kind:specialist",
 				Options: []ui.SelectOption{
 					{Value: "reports the disagreement and cites both sides rather than picking one", Label: "\"Two sources, two answers. Both cited.\""},
-					{Value: "picks the more authoritative source, says which and why", Label: "\"Going with the vendor doc over the blog, because…\""},
+					{Value: "picks the more authoritative source, says which and why", Label: "\"Going with the vendor doc over the blog, because...\""},
 					{Value: "reports the disagreement and asks which source to trust", Label: "\"These conflict. Which do you trust?\""},
 					{Value: "", Label: "No preference"},
 				}},
@@ -343,7 +343,7 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 				}},
 			{Field: "style_notes", Type: "textarea", Label: "Anything else about how it should behave?", Rows: 3,
 				Help:        "Habits, not capabilities. What it should always do, or never do, in how it responds to you.",
-				Placeholder: "habits it should always, or never, have in how it responds, one per line…"},
+				Placeholder: "habits it should always, or never, have in how it responds, one per line..."},
 		},
 	}
 
@@ -359,7 +359,7 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 			{Field: "call_you", Type: "text", Label: "What should it call you?",
 				Placeholder: "e.g. Craig / boss / Dr. Lee"},
 			{Field: "about_you", Type: "textarea", Label: "Anything it should know about you?", Rows: 3,
-				Placeholder: "Working hours, current projects, people you mention often, preferences…"},
+				Placeholder: "Working hours, current projects, people you mention often, preferences..."},
 		},
 	}
 
@@ -1114,7 +1114,7 @@ func wizardDescribeHTML() string {
             var answers=[];
             var inps=out.querySelectorAll('input[data-ask]');
             for(var i=0;i<inps.length;i++){ answers[parseInt(inps[i].dataset.ask,10)]=inps[i].value||''; }
-            create.disabled=true; create.textContent='Creating…';
+            create.disabled=true; create.textContent='Creating...';
             fetch(` + jsString(orchPath("api/agents/wizard")) + `,{method:'POST',headers:{'Content-Type':'application/json'},
               body:JSON.stringify({shape:d.shape,name:(nameInp.value||d.name),purpose:request,answers:answers})})
               .then(function(r){ if(!r.ok) return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));}); return r.json(); })
@@ -1135,7 +1135,7 @@ func wizardDescribeHTML() string {
         function propose(){
           var req=(input.value||'').trim();
           if(!req) return;
-          go.disabled=true; go.textContent='Looking…';
+          go.disabled=true; go.textContent='Looking...';
           fetch(` + jsString(orchPath("api/agents/propose")) + `,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request:req})})
             .then(function(r){ if(!r.ok) return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));}); return r.json(); })
             .then(function(d){ renderProposal(d,req); })

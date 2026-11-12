@@ -21,7 +21,7 @@ import (
 	"github.com/cmcoffee/snugforge/nfo"
 )
 
-// TestApplyOptsAutoDate: by default a system prompt gets the "Today's date is …"
+// TestApplyOptsAutoDate: by default a system prompt gets the "Today's date is ..."
 // prepend; WithoutAutoDate() suppresses it (for callers that stamp the date onto
 // the user turn instead).
 func TestApplyOptsAutoDate(t *testing.T) {
@@ -1113,7 +1113,7 @@ func TestATiersKeyGoesOnlyWhereItWasGiven(t *testing.T) {
 	if err := got.LoadKey(db, LLMTable); err != nil || got.APIKey != "sk-0123456789abcdWXYZ" {
 		t.Fatalf("at the address it was given for: %q %v", got.APIKey, err)
 	}
-	if hint := official.KeptKey(db, LLMTable); !strings.HasPrefix(hint, "ends in …WXYZ, given ") || strings.Contains(hint, "0123") {
+	if hint := official.KeptKey(db, LLMTable); !strings.HasPrefix(hint, "ends in ...WXYZ, given ") || strings.Contains(hint, "0123") {
 		t.Errorf("the saved key: %q", hint)
 	}
 

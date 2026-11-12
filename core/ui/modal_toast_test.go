@@ -4,7 +4,7 @@ package ui
 //
 // uiOpenModal's overlay sits at z-index 1000 and the form-chip modal's
 // at 1100; the toast was at 50. So every "Saved ✓" and every "Save
-// failed: …" raised from inside a modal rendered BEHIND the backdrop.
+// failed: ..." raised from inside a modal rendered BEHIND the backdrop.
 // The visible result of a failed submit was a button that went back to
 // normal and said nothing — which is the same thing a button that does
 // nothing looks like.
@@ -113,7 +113,7 @@ func TestASubmitFailureIsWrittenIntoTheFormItFailedIn(t *testing.T) {
 	}
 	// A slow submit says it is still working. An endpoint that asks a
 	// model to draft something runs for a minute, and a button reading
-	// "Saving…" for that long is indistinguishable from a hang.
+	// "Saving..." for that long is indistinguishable from a hang.
 	if !strings.Contains(src, "Still working. This one runs a model") {
 		t.Error("a long submit gives no sign it is still alive")
 	}

@@ -171,13 +171,13 @@ the default set, and taken off an agent like any tool; a call shows as the
 source's own tool. The one `query_source` dispatcher, added to every turn
 unseen, and its "Available sources" prompt block are gone. A tool name
 another tool or source has is refused. Web Search keeps research sources
-out of its engines: "Use a research source…" and the list under it choose
+out of its engines: "Use a research source..." and the list under it choose
 one.
 
-**Adding one** (2026-11-01). A template is a recipe, never installed: Add…
+**Adding one** (2026-11-01). A template is a recipe, never installed: Add...
 on it asks its questions and makes the connector, and the template stays
 for next time. Admin > Extensions > Templates lists them all by category.
-Every page's list of connectors ends with **+ Add another…**, which opens
+Every page's list of connectors ends with **+ Add another...**, which opens
 the templates for that kind (those filed under its category whose
 connector does its job) and, once one is added, reloads the page with it
 in the list. The list of templates "added to the system" before they
@@ -260,7 +260,7 @@ connector, webhook, channel or built-in provider holds:
 - **bound to addresses:** a key is sent only to the addresses it was given
   for; moving the address means giving the key again;
 - **who may use it:** per user, and per agent through the credential scope;
-- **seen safely:** the saved-key line (`ends in …WXYZ, given <date>`), never
+- **seen safely:** the saved-key line (`ends in ...WXYZ, given <date>`), never
   the key;
 - **checked:** the startup self-check, and on its row;
 - **deleted with its owner:** deleting a connector, webhook or channel
@@ -296,7 +296,7 @@ The mirror of a connector: a service calls gohort.
 
 The pieces exist today, scattered across kinds:
 
-- the row's Webhook… button;
+- the row's Webhook... button;
 - `rest_messaging`'s `webhook_provider` (`generic`, `graph`, `slack`);
 - Bot Framework's verifier;
 - `peer_relay`'s inbound address;
@@ -643,7 +643,7 @@ whatever the admin notice still lists.
   notes that describe plan B.
 - **Past exports:** bundles already exported with connectors import, or fail
   with a clear reason.
-- **Cost history:** past costs keep their `service:<name>/…` labels; reports
+- **Cost history:** past costs keep their `service:<name>/...` labels; reports
   show old and new labels side by side.
 - **Both build modes** (module and GOPATH) build on every push.
 
@@ -707,8 +707,8 @@ none blocks the migration (step 9); the one new kind is marked.
 
 Today:
 
-1. Admin > Capabilities > Web Search: "Search with" > **+ Add another…**.
-2. Add… on *Serper (web search)*: it asks a name; Add; Back to the list.
+1. Admin > Capabilities > Web Search: "Search with" > **+ Add another...**.
+2. Add... on *Serper (web search)*: it asks a name; Add; Back to the list.
 3. The page reloads with Serper in the list, not chosen: choose it.
 4. Its key field appears under the choice: give the key, Test, Save.
 
@@ -724,24 +724,24 @@ set on arrival (the page told which value to choose as it reloads).
 
 Today, two ways in:
 
-- "Make pictures with" > **+ Add another…**: the Gemini, OpenAI, ComfyUI
+- "Make pictures with" > **+ Add another...**: the Gemini, OpenAI, ComfyUI
   and Automatic1111 templates, then as Web Search above;
-- the section's own toolbar: **Add image backend…** (ComfyUI and A1111's
-  setup forms) and **Configure backend…**.
+- the section's own toolbar: **Add image backend...** (ComfyUI and A1111's
+  setup forms) and **Configure backend...**.
 
-Clumsy: two ways to add ComfyUI or A1111, and Configure backend… does what
+Clumsy: two ways to add ComfyUI or A1111, and Configure backend... does what
 the connector's row Edit already does.
 
 Proposed: one way. The toolbar goes: ComfyUI and A1111 come through
-+ Add another… like the rest (their templates exist), and Edit on the
++ Add another... like the rest (their templates exist), and Edit on the
 connector's row opens their setup form. Plus the arrival choice above.
 
 ### Embed with a hosted or local model
 
 Today:
 
-1. Admin > Capabilities > Embeddings: "Embed with" > + Add another… >
-   Add… on *OpenAI (embeddings)* (or Ollama, llama.cpp/vLLM).
+1. Admin > Capabilities > Embeddings: "Embed with" > + Add another... >
+   Add... on *OpenAI (embeddings)* (or Ollama, llama.cpp/vLLM).
 2. Back to the list, choose it, give its model and key, Test, Save.
 3. Admin > Maintenance > Vector Index: Repair, so stored documents are
    embedded again in the new space.
@@ -762,8 +762,8 @@ Clumsy: only the arrival choice.
 
 ### Send mail through an API (Resend, Postmark, Mailgun)
 
-Today: Admin > **System** > Mail (SMTP): "Send with" > + Add another… >
-Add… > back, choose, key, Save.
+Today: Admin > **System** > Mail (SMTP): "Send with" > + Add another... >
+Add... > back, choose, key, Save.
 
 Clumsy: mail is the one capability on the System tab, so it is not where
 the other "what does gohort use for X" pages are.
@@ -776,7 +776,7 @@ arrival choice.
 Today, two pages and two records:
 
 1. Admin > Extensions > Research Sources > Add: "Search connector" >
-   + Add another… > Add… on *PubMed (research)* > back.
+   + Add another... > Add... on *PubMed (research)* > back.
 2. Choose PubMed, set its topics or Always, and to offer it to agents a
    tool name and description; Save.
 3. Its tool then shows in each agent's tools under Research sources.
@@ -811,7 +811,7 @@ Clumsy: nothing found that this rework should change.
 
 | Proposal | Touches | Stored shape |
 |---|---|---|
-| Arrival choice: a page reloads with what was just added chosen | `core/ui` (a form value set on arrival), each page's + Add another… | none |
+| Arrival choice: a page reloads with what was just added chosen | `core/ui` (a form value set on arrival), each page's + Add another... | none |
 | One way to add an image backend: the toolbar goes | Image Generation | none |
 | Re-embed now on Embeddings after the space changes | Embeddings, the repair's progress | none |
 | Mail moves to Capabilities | the admin page's tabs | none |

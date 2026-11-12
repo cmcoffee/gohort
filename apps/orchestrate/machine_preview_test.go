@@ -115,7 +115,7 @@ func TestPreviewMatchesHowEachKindIsActuallyComposed(t *testing.T) {
 		t.Errorf("a transient step should receive its fields as instructions:\n%s", trans)
 	}
 	// And what earlier steps established, which it did NOT used to get —
-	// the asymmetry that had authors hand-copying {state:…} references
+	// the asymmetry that had authors hand-copying {state:...} references
 	// for values the definition already knows.
 	if !strings.Contains(trans, "Established earlier in this conversation") {
 		t.Errorf("a transient step should be handed what earlier steps worked out:\n%s", trans)

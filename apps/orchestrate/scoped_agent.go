@@ -50,7 +50,7 @@ func (T *OrchestrateApp) RunScopedAgent(ctx context.Context, scope AgentScope, m
 
 // RunScopedAgentRich is the full-control scoped entry: the caller supplies a
 // complete AgentSyncRun (Message, FreshSession, SystemPromptOverride, AppTools,
-// Loop, InjectionQueueID, StatusCallback, …) and the scope fills in the identity
+// Loop, InjectionQueueID, StatusCallback, ...) and the scope fills in the identity
 // fields (owner from the template store, runtime user + agent key from the
 // scope). For sophisticated instances — servitor's investigator — that need the
 // loop knobs and their own per-run prompt while still running in the scope.

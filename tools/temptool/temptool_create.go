@@ -53,7 +53,7 @@ func captureExportScript(t *TempTool, owner string) {
 // the next round's catalog to discover the shape, no guessing param
 // names from its own create_temp_tool args. Important when the
 // model creates a tool and immediately wants to use it in the same
-// reply ("created and now calling…").
+// reply ("created and now calling...").
 func formatTempToolSpec(tt *TempTool) string {
 	if tt == nil {
 		return ""

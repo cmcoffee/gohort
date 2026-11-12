@@ -207,7 +207,7 @@ type Run struct {
 	// The live turn is unaffected: the message is still the user turn this run
 	// answers, because that is what it is. What changes is the record left
 	// behind. Without these, a monitor wake sat in the owner's cortex as their
-	// own message — the whole "[EVENT — monitor "x" fired] …" prompt, diff
+	// own message — the whole "[EVENT — monitor "x" fired] ..." prompt, diff
 	// payload and closing instruction included, in a user bubble, as though
 	// they had typed it. It also read back to the model that way on the next
 	// turn, where an assistant-role card gets a fenced origin marker
@@ -253,7 +253,7 @@ type Run struct {
 	//
 	// It fires for EVERY round, so a turn that calls tools streams the model's
 	// interim prose before the final answer. For a voice caller that reads as
-	// natural filler ("let me check that…"); for a caller that wants only the
+	// natural filler ("let me check that..."); for a caller that wants only the
 	// settled answer, leave this nil and use the returned Text.
 	Stream func(string)
 	// Think overrides the agent's own thinking setting for this run. nil keeps
@@ -316,7 +316,7 @@ type Run struct {
 	// Interactive marks this as a real person's message (a channel inbound),
 	// NOT an agent-to-agent dispatch. When set, the delegated-invocation marker
 	// is skipped — there IS a human, follow-up questions can be answered, and
-	// the "[DELEGATED INVOCATION] no human is listening…" preamble must not leak
+	// the "[DELEGATED INVOCATION] no human is listening..." preamble must not leak
 	// into the message. Default false (dispatch behavior unchanged).
 	Interactive bool
 	// ReplyAuthorizedKey, when set, is the recipient key of the conversation this

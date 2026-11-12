@@ -16,7 +16,7 @@ func (a *AdminApp) registerMaintenanceRoutes(sub *http.ServeMux) {
 	// Vector Index snapshot — backs the admin DisplayPanel (page.go).
 	sub.HandleFunc("/api/vector-stats", jsonapi.Get(a.db, a.handleVectorStats, a.gate()))
 
-	// Per-kind breakdown (research / debate / lcm / collections / …) with doc +
+	// Per-kind breakdown (research / debate / lcm / collections / ...) with doc +
 	// chunk counts — the legible view of what's in the index, vs the opaque
 	// per-source id dump.
 	sub.HandleFunc("/api/vector-stats/by-kind", jsonapi.Get(a.db, a.handleVectorStatsByKind, a.gate()))
@@ -248,7 +248,7 @@ func (a *AdminApp) handleVectorStats(c *jsonapi.Call) (any, error) {
 }
 
 // handleVectorStatsByKind aggregates the index by SOURCE KIND — the prefix
-// before the first ':' (research / debate / answer / lcm / collections / …) —
+// before the first ':' (research / debate / answer / lcm / collections / ...) —
 // reporting a document count (distinct full sources) and a chunk count per kind.
 // The raw per-source ids are opaque; grouping by kind is what's actually legible.
 func (a *AdminApp) handleVectorStatsByKind(c *jsonapi.Call) (any, error) {

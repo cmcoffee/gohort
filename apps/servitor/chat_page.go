@@ -164,7 +164,7 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 					InjectURL:     "api/inject",
 					DeepLinkParam: "session",
 					EmptyText:     "Pick a system below, then ask anything.",
-					Placeholder:   "Ask about this system…",
+					Placeholder:   "Ask about this system...",
 					Markdown:      true,
 					Attachments:   true,
 					BulkSelect:    true,

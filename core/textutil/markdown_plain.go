@@ -20,7 +20,7 @@ var (
 	// emphasis in CommonMark, so snake_case identifiers (link_entities,
 	// recall_about, store_fact) must survive to plain-text transports. A naive
 	// `_([^_]+)_` pairs the underscores across two such tokens on one line and
-	// silently eats them (link_entities … recall_about → linkentities …
+	// silently eats them (link_entities ... recall_about → linkentities ...
 	// recallabout). Boundary chars are captured ($1/$3) and re-emitted.
 	mdItalic2  = regexp.MustCompile(`(^|[^\w])_([^_\n]+)_([^\w]|$)`)
 	mdInlineCo = regexp.MustCompile("`([^`]+)`")                // `x` → x

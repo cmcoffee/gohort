@@ -320,7 +320,7 @@ func buildGeminiTools(tools []Tool) []gemTool {
 
 // sanitizeGeminiSchema fixes the one way our shared JSON schema is invalid to
 // Gemini specifically: Gemini REQUIRES every "array" to declare "items", and
-// rejects the whole request (400 "…items: missing field") when one doesn't.
+// rejects the whole request (400 "...items: missing field") when one doesn't.
 // Anthropic and OpenAI infer array element shape from the description and never
 // complain, so buildToolParamsSchema omits items when a ToolParam has no Items.
 // Rather than force every array param across the codebase to spell out Items

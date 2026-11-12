@@ -587,7 +587,7 @@ func lastDispatchTopic(msgs []ChatMessage) string {
 		}
 		topic := strings.TrimSpace(msgs[i].Content)
 		// Briefs are wrapped by markAsDelegated as "[DELEGATED INVOCATION]
-		// …\n\nBrief: <text>"; show just the brief.
+		// ...\n\nBrief: <text>"; show just the brief.
 		if idx := strings.LastIndex(topic, "Brief: "); idx >= 0 {
 			topic = strings.TrimSpace(topic[idx+len("Brief: "):])
 		}

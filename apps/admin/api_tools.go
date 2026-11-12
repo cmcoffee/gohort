@@ -249,7 +249,7 @@ func (ov *toolsOverview) scoped() {
 					continue // scoped to an agent that no longer exists
 				}
 				// App-specific agents (Guide Author, Servitor
-				// Investigator, …) are Hidden, and sub-agents carry
+				// Investigator, ...) are Hidden, and sub-agents carry
 				// OwnedBy — both have curated, purpose-built kits and
 				// aren't user tool-scope targets. Keep them out of
 				// this list; only top-level user-managed agents show.

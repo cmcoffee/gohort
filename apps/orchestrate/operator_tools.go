@@ -547,7 +547,7 @@ func resolveWorkspaceImages(sess *ToolSession, paths []string) []string {
 }
 
 // resolveAttachmentRef resolves ONE attachment reference the model supplied (a
-// [ATTACH: …] marker name or an attachments[] entry) to its base64 bytes and
+// [ATTACH: ...] marker name or an attachments[] entry) to its base64 bytes and
 // media kind ("image"/"video"). A media-id ref ("media#2") is looked up in the
 // session's inbound registry — post-by-id, the only handle inbound media has
 // since it owns no workspace file. Anything else is treated as a workspace-

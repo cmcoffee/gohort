@@ -18,7 +18,7 @@ import (
 // safety), so no app writes HTML/JS/CSS by hand.
 //
 // The JS passed to ClientAction / BlockRenderer / MarkdownExtension /
-// MessageDecorator is a JS *function expression* — e.g. "function(ctx){ … }".
+// MessageDecorator is a JS *function expression* — e.g. "function(ctx){ ... }".
 // Supply it inline or, for anything sizeable, from an embedded assets/ file
 // (//go:embed), matching the runtime's own asset-splitting convention. Names
 // are JSON-escaped; the JS bodies are trusted, Go-authored, and emitted

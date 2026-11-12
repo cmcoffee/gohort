@@ -91,7 +91,7 @@ func TestAutoThinkLabelResolvesToRealBehaviour(t *testing.T) {
 // wanted what. Whose "I" is whose has to be stated, not left to the examples.
 // A second, mirror-image failure followed: on a channel the sender's name is
 // folded into the message text upstream (attributeSender), so the fence reads
-// "Craig Coffee: …". Nothing told the writer that this person is the one about
+// "Craig Coffee: ...". Nothing told the writer that this person is the one about
 // to READ the reply, so it treated the name as a third party — "Not gonna get
 // into the Wiwee drama with Craig", said to Craig. Both directions have to be
 // stated: whose voice it writes in, and who it is writing to.

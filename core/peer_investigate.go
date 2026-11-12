@@ -49,7 +49,7 @@ func peerInvestigablesFor(k PeerKey) []PeerInvestigable {
 // peerMissingCapErr explains a capability the cached manifest does not list.
 //
 // The capability list is a SNAPSHOT taken at the last probe, and usableCaps
-// keeps only what was both served and granted — so "it offers: …" is three
+// keeps only what was both served and granted — so "it offers: ..." is three
 // different situations wearing one sentence: the far side does not run code
 // that serves this yet, the key was never granted it, or both are fine and this
 // copy is simply old. Naming all three, with the age of the snapshot, is the
@@ -249,7 +249,7 @@ func truncateForAudit(cmd string) string {
 		// actually ran past the cut, where the log never showed it.
 		sum := sha256.Sum256([]byte(cmd))
 		head, tail := cmd[:auditCommandMax*3/5], cmd[len(cmd)-auditCommandMax*2/5:]
-		return fmt.Sprintf("%s … %s (%d bytes total, sha256 %x)", head, tail, len(cmd), sum[:8])
+		return fmt.Sprintf("%s ... %s (%d bytes total, sha256 %x)", head, tail, len(cmd), sum[:8])
 	}
 	return cmd
 }

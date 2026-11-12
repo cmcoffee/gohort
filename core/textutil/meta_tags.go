@@ -7,7 +7,7 @@ import (
 
 // Generic internal meta marker — reserved for framework/agent-internal
 // directives that must NEVER reach the user. Anything an agent wraps in
-// <gohort-meta>…</gohort-meta> is stripped from the final reply, so a leaked
+// <gohort-meta>...</gohort-meta> is stripped from the final reply, so a leaked
 // internal note can't be mistaken for content. The XML-style, namespaced
 // element name is collision-proof (it will never appear in real prose or
 // markdown). Case-insensitive; non-greedy; matches inline or multi-line.
@@ -22,7 +22,7 @@ var (
 	// The same block with the opening "<" lost. A reply cut at the output
 	// limit resumes in a fresh segment, and the cut can land INSIDE the
 	// opening tag: the first half ends with "<", the second half starts
-	// "gohort-meta>…</gohort-meta>" and matches nothing. $1 keeps whatever
+	// "gohort-meta>...</gohort-meta>" and matches nothing. $1 keeps whatever
 	// character preceded the mangled opener.
 	metaMangledOpenRe = regexp.MustCompile(`(?is)(^|[^<])gohort-meta\b[^>]*>.*?</\s*gohort-meta\s*>`)
 
@@ -47,7 +47,7 @@ var (
 	// safety net for ones that leak unconsumed into user-facing text — the
 	// motivating case ([ATTACH: funny-meme.png] showing up verbatim).
 	leakedAttachRe = regexp.MustCompile(`\[ATTACH:\s*[^\]]*\]`)
-	// The canonical shell marker (see tools/temptool: <<<ATTACH:mime … ATTACH_END>>>)
+	// The canonical shell marker (see tools/temptool: <<<ATTACH:mime ... ATTACH_END>>>)
 	// closes with ATTACH_END>>>. Match that AND the older <<<END>>> form some
 	// prompts/tools used, lazily to the first close, so a leaked marker in either
 	// shape never dumps raw base64 into the user-facing text.
@@ -59,8 +59,8 @@ var (
 	metaTrailingWSRe = regexp.MustCompile(`[ \t]+\n`)
 
 	// Leaked tool-call / tool-code markup — the XML-ish shapes models emit when
-	// invoking tools (<tool_call>…</tool_call>, <tool_code>…</tool_code>,
-	// <function=name>…</function>). Normally parsed and consumed by the agent
+	// invoking tools (<tool_call>...</tool_call>, <tool_code>...</tool_code>,
+	// <function=name>...</function>). Normally parsed and consumed by the agent
 	// loop; this strips any that leak verbatim into saved content. Balanced blocks
 	// first, then a sweep for orphan/self-closing openers and stray closers.
 	toolCallBlockRe = regexp.MustCompile(`(?is)<tool_call>.*?</tool_call>`)
@@ -70,8 +70,8 @@ var (
 )
 
 // StripMetaTags removes framework-internal markers from a final, user-facing
-// reply: the reserved <gohort-meta>…</gohort-meta> convention plus known
-// delivery markers ([ATTACH: …], <<<ATTACH:…>>>…<<<END>>>) that leak when
+// reply: the reserved <gohort-meta>...</gohort-meta> convention plus known
+// delivery markers ([ATTACH: ...], <<<ATTACH:...>>>...<<<END>>>) that leak when
 // unconsumed. Safe to call on any reply — a fast no-op when none are present.
 //
 // IMPORTANT: call this at the FINAL output boundary, AFTER any surface that
@@ -101,7 +101,7 @@ func StripMetaTags(s string) string {
 }
 
 var (
-	// codeSpanRe isolates fenced code blocks (```…```) and inline code (`…`) so
+	// codeSpanRe isolates fenced code blocks (```...```) and inline code (`...`) so
 	// the em-dash strip never rewrites a — that legitimately lives in code.
 	codeSpanRe = regexp.MustCompile("(?s)```.*?```|`[^`\n]*`")
 	// emDashRe matches an em-dash (U+2014) with any surrounding spaces/tabs but

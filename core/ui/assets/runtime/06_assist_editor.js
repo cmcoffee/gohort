@@ -118,7 +118,7 @@
       rows: (window.matchMedia && window.matchMedia('(max-width: 760px)').matches) ? '1' : '2',
     });
     function placeholderFor() {
-      return discuss ? (ph.discuss || 'Answer, or say what it needs…') : (ph.write || 'Tighten the second paragraph…');
+      return discuss ? (ph.discuss || 'Answer, or say what it needs...') : (ph.write || 'Tighten the second paragraph...');
     }
     composer.placeholder = placeholderFor();
     var sendBtn = el('button', {type: 'button', class: 'ui-assist-send', 'aria-label': 'Send'}, ['Send']);
@@ -232,7 +232,7 @@
       var frames = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏', fi = 0, started = Date.now(), doing = 'Thinking';
       function paint() {
         var secs = Math.round((Date.now() - started) / 1000);
-        m.textContent = frames.charAt(fi++ % frames.length) + ' ' + doing + '…' + (secs >= 3 ? ' ' + secs + 's' : '');
+        m.textContent = frames.charAt(fi++ % frames.length) + ' ' + doing + '...' + (secs >= 3 ? ' ' + secs + 's' : '');
       }
       paint();
       var timer = setInterval(paint, 250);
@@ -766,7 +766,7 @@
       discuss: false, switchable: false, web: !!opts.web, attach: !!opts.attach,
       intro: opts.intro || 'Ask what any of it means, or say what you are setting up and it will help you fill it in. What it suggests goes into the form, marked, for you to check; nothing is saved until you save it.',
       writeNote: 'Each request can fill the form right away.',
-      placeholders: {write: opts.placeholder || 'Ask about the form, or say what you want…'},
+      placeholders: {write: opts.placeholder || 'Ask about the form, or say what you want...'},
       starters: opts.starters ? ['Help me fill this in', 'What is this for?'] : null,
       send: window.uiAssistPost(opts.url),
       extra: function() { return {form: formDoc, values: shownValues(), page: assistPageContext(formEl)}; },

@@ -12,7 +12,7 @@ import (
 
 // tool_template — the Builder's front door to TOOL TEMPLATES. Instead of
 // hand-crafting a tool_def, the LLM lists ready-made templates (a REST call, a
-// GitHub issue, …), fills their options, and the framework builds + attaches the
+// GitHub issue, ...), fills their options, and the framework builds + attaches the
 // tool. It's the tool-target analog of the connector tool, and it's governed
 // exactly like add_tool: the built TempTool attaches to the focused agent and is
 // verifiable — a template eases authoring, it grants no new power.

@@ -202,7 +202,7 @@ func AudioTrack(ctx context.Context, t Tools, data []byte) ([]byte, error) {
 	return audio, nil
 }
 
-// TranscodeAudioToWAV converts arbitrary input audio (m4a/aac/caf/ogg/amr/…)
+// TranscodeAudioToWAV converts arbitrary input audio (m4a/aac/caf/ogg/amr/...)
 // to 16 kHz mono 16-bit PCM WAV — the one format whisper.cpp decodes NATIVELY,
 // without needing its own ffmpeg/codec build: by the audio preparation job
 // (WAVHook, core/flows) when it is loaded, else by ToWAV here. Inbound voice

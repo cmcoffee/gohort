@@ -120,7 +120,7 @@ func guardrailBlockKey(rule, hookPoint, candidate string) string {
 	if hookPoint != guardHookPreAction {
 		return rule + "\x00" + hookPoint
 	}
-	// The pre_action candidate is "<tool> <args…>" (core builds it that way),
+	// The pre_action candidate is "<tool> <args...>" (core builds it that way),
 	// so the first field is the tool.
 	tool := strings.ToLower(strings.TrimSpace(candidate))
 	if i := strings.IndexAny(tool, " \t\n"); i > 0 {

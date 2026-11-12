@@ -41,7 +41,7 @@ import (
 
 // core.go — the seam that assembles the core namespace from gohort's extracted
 // leaf packages, re-exporting their surface as core symbols. Each leaf (media,
-// textutil, factcheck, …) holds a pure,
+// textutil, factcheck, ...) holds a pure,
 // independently-testable slice of functionality and must NOT import core; this
 // file re-exports their surface so every `import . "core"` file keeps calling
 // MarkdownToPDF / VerifyFacts / StripMetaTags / Transcribe / ExtractDocument

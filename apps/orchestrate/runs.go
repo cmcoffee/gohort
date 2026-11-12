@@ -89,7 +89,7 @@ func runCleanupInterval() time.Duration { return TuneDuration("tune_run_cleanup_
 // RunEvent is one pre-serialized SSE frame plus its sequence number.
 // Stored ready-to-write so subscribers can replay backlog with no
 // re-marshaling. Frame is the literal bytes that would have gone to
-// the live response — `data: …\n\n` or `event: …\ndata: …\n\n`.
+// the live response — `data: ...\n\n` or `event: ...\ndata: ...\n\n`.
 type RunEvent struct {
 	Seq   uint64
 	Frame []byte
@@ -460,7 +460,7 @@ func NewRunRegistry() *RunRegistry {
 // wired to nothing.
 //
 // The returned context MUST be the one the work uses. Shadowing the caller's
-// (ctx, run := ...CreateCancellable(ctx, …)) is the point: a derived context
+// (ctx, run := ...CreateCancellable(ctx, ...)) is the point: a derived context
 // nobody passes on is the same no-op with more steps.
 func (rr *RunRegistry) CreateCancellable(ctx context.Context, userID, agentID, sessionID string) (context.Context, *Run) {
 	ctx, cancel := context.WithCancel(ctx)

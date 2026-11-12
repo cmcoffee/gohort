@@ -150,7 +150,7 @@ func Secret(db Store, id string) (string, bool) {
 	return s.Value, s.Value != ""
 }
 
-// Hint says which secret is kept without showing it: "ends in …WXYZ, given
+// Hint says which secret is kept without showing it: "ends in ...WXYZ, given
 // 7 Nov 2026" for a key long enough that four characters give nothing away,
 // "set, given ..." otherwise, or the profile an AWS entry signs with.
 func Hint(db Store, e Entry) string {
@@ -171,7 +171,7 @@ func Hint(db Store, e Entry) string {
 		}
 		return "key pair set" + given
 	case len(v) >= 16:
-		return "ends in …" + v[len(v)-4:] + given
+		return "ends in ..." + v[len(v)-4:] + given
 	}
 	return "set" + given
 }

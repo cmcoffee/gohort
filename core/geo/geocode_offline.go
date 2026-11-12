@@ -277,7 +277,7 @@ func ensureGeoFiles(dir string) error {
 		maxAttempts := geocodeMaxAttempts()
 		for attempt := 1; attempt <= maxAttempts && !ok; attempt++ {
 			for _, url := range j.mirrors {
-				nfo.Log("[geocode] downloading %s (attempt %d, %s) …", j.filename, attempt, url)
+				nfo.Log("[geocode] downloading %s (attempt %d, %s) ...", j.filename, attempt, url)
 				if err := downloadGeo(dir, j.filename, url); err != nil {
 					lastErr = err
 					nfo.Debug("[geocode] %s failed: %v, trying next mirror", url, err)

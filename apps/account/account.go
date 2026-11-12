@@ -869,7 +869,7 @@ const passwordHTML = `<div class="acct-pw">
     if(!cur.value){ setMsg('Enter your current password.', false); cur.focus(); return; }
     if(nw.value.length < 6){ setMsg('New password must be at least 6 characters.', false); nw.focus(); return; }
     if(nw.value !== cf.value){ setMsg('New passwords do not match.', false); cf.focus(); return; }
-    btn.disabled=true; var orig=btn.textContent; btn.textContent='Changing…';
+    btn.disabled=true; var orig=btn.textContent; btn.textContent='Changing...';
     fetch('api/password', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({current: cur.value, new: nw.value})})
       .then(function(r){
@@ -886,7 +886,7 @@ const passwordHTML = `<div class="acct-pw">
 // masked value + created), an inline create row that reveals the full secret
 // ONCE, and a themed-confirm revoke. App-specific, so it rides in a Card rather
 // than a core/ui primitive — same approach as the connections panel above.
-const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
+const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading...</div>
 <style>
 .acct-tokens { display:flex; flex-direction:column; gap:0.55rem; }
 .acct-tok { border:1px solid var(--border); border-radius:8px; padding:0.55rem 0.75rem; display:flex; align-items:center; gap:0.6rem; }
@@ -1161,7 +1161,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
         box.appendChild(slot);
         save.addEventListener('click',function(){
           if(!ed) return;
-          save.disabled=true; save.textContent='Saving…'; msg.textContent='';
+          save.disabled=true; save.textContent='Saving...'; msg.textContent='';
           fetch('api/tokens?action=scope&id='+encodeURIComponent(t.id),{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(ed.collect())})
             .then(function(r){ if(r.status===204){ load(); return; } return r.text().then(function(x){ throw new Error(x || ('HTTP '+r.status)); }); })
             .catch(function(e){ save.disabled=false; save.textContent='Save'; msg.textContent=e.message; });
@@ -1216,7 +1216,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
           if(!pending) return;
           var req = pending.collect();
           req.name = nameInput.value.trim();
-          create.disabled = true; create.textContent = 'Creating…'; msg.textContent = '';
+          create.disabled = true; create.textContent = 'Creating...'; msg.textContent = '';
           fetch('api/tokens',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(req)})
             .then(function(r){ if(!r.ok) return r.text().then(function(x){ throw new Error(x || ('HTTP '+r.status)); }); return r.json(); })
             .then(function(t){ dlg.close(); load().then(function(){ reveal(t); }); })

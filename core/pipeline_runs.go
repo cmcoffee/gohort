@@ -194,7 +194,7 @@ func PipelineRunTitle(input string) string {
 
 // PipelineRunInput picks the run's input out of the submitted form body.
 //
-// The panel posts exactly what the author declared — {"proposition": "…"} for a
+// The panel posts exactly what the author declared — {"proposition": "..."} for a
 // form whose box is named proposition — and this used to read only "input" and
 // "topic". Any other name meant Start returned 400 "input required" against a
 // filled-in form, with the app's own field staring back at the user. Naming the

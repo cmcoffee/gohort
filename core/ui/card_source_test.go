@@ -44,7 +44,7 @@ func TestACardWithASourceStaysCurrent(t *testing.T) {
 }
 
 // The server still renders the block into the page. A sourced card that
-// mounted empty and then fetched would flash "Loading…" on every arrival
+// mounted empty and then fetched would flash "Loading..." on every arrival
 // for content the page already had.
 func TestASourcedCardKeepsItsServerRenderedFirstPaint(t *testing.T) {
 	b, err := json.Marshal(Card{HTML: "<p>drawn</p>", Source: "api/thing/graph",

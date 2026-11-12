@@ -494,7 +494,7 @@
       } else {
         var ti = el('input', {
           type: 'text', class: 'ui-sec-title-input',
-          value: s.title, placeholder: 'Section title…',
+          value: s.title, placeholder: 'Section title...',
         });
         ti.addEventListener('input', function() { s.title = ti.value; emit(false); });
         ti.addEventListener('blur', function() { s.title = ti.value; emit(true); });
@@ -627,7 +627,7 @@
         var row = el('div', {class: 'ui-rules-row'});
         row.appendChild(el('span', {class: 'ui-rules-num'},
           [s.mode === 'steps' ? (i + 1) + '.' : '•']));
-        var inp = el('input', {type: 'text', class: 'ui-rules-input', value: it, placeholder: 'item…'});
+        var inp = el('input', {type: 'text', class: 'ui-rules-input', value: it, placeholder: 'item...'});
         inp.addEventListener('input', function() { s.items[i] = inp.value; emit(false); });
         inp.addEventListener('blur', function() { s.items[i] = inp.value; emit(true); });
         inp.addEventListener('keydown', function(ev) {

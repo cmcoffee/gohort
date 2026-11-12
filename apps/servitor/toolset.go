@@ -450,7 +450,7 @@ func runToolsetSnapshot(ctx context.Context, rt resolvedToolset) string {
 			return ""
 		}
 		if len(out) > 8000 {
-			out = out[:8000] + "\n…(truncated)"
+			out = out[:8000] + "\n...(truncated)"
 		}
 		return fmt.Sprintf("### Orientation (from `%s`)\n\n```\n%s\n```\n\n", rt.Snapshot, out)
 	}

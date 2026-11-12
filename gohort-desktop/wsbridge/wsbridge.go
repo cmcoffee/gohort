@@ -6,7 +6,7 @@
 //
 // Protocol mirror of core/desktop_bridge.go on the server:
 //
-//   - On connect: send {type:"announce", tools:[…catalog…]}.
+//   - On connect: send {type:"announce", tools:[...catalog...]}.
 //   - Server sends {type:"invoke", id, name, args} for each tool call.
 //   - Reply with {type:"result", id, result, error}.
 //

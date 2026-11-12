@@ -965,7 +965,7 @@ var typedstreamClassNames = map[string]bool{
 // extractTextHeuristic is the fallback: find printable UTF-8 runs in
 // the blob, drop typedstream class-name preamble tokens, and join the
 // rest. The class-name filter prevents the leading
-// "streamtyped NSAttributedString NSObject NSString …" preamble that
+// "streamtyped NSAttributedString NSObject NSString ..." preamble that
 // every macOS-encoded NSAttributedString carries from being prepended
 // to every empty-handle (is_from_me=1) message the server sees.
 //

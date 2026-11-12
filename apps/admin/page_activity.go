@@ -33,7 +33,7 @@ func (a *AdminApp) activitySections() []ui.Section {
 			Source:            "api/activity",
 			RowKey:            "id",
 			Search:            true,
-			SearchPlaceholder: "Filter by user, address, or what happened…",
+			SearchPlaceholder: "Filter by user, address, or what happened...",
 			EmptyText:         "Nothing recorded yet.",
 			Columns: []ui.Col{
 				{Field: "at", Label: "When", Format: "reltime", Mute: true},

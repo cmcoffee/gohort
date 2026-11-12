@@ -76,7 +76,7 @@ func machinesExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 				// a model for up to a minute and can fail; a door that
 				// cannot show you why it failed is the wrong door for it.
 				ui.Toolbar{Actions: []ui.ToolbarAction{{
-					Label:  "Describe one…",
+					Label:  "Describe one...",
 					Title:  "Draft a machine from a description of what it should do",
 					URL:    orchPath("machine?describe=1"),
 					Method: "GET",
@@ -88,7 +88,7 @@ func machinesExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 				// the browser and submits its contents, so this is a form
 				// rather than an upload path.
 				ui.ModalButton{
-					Label:    "Import…",
+					Label:    "Import...",
 					Title:    "Bring in a machine somebody exported",
 					Subtitle: "Pick a .machine.json recipe. It lands as a machine of your own, a copy with its own id, and opens in the editor.",
 					Width:    "480px",
@@ -965,7 +965,7 @@ func findingsHTML(def MachineDef, items []string, empty string) string {
 		}
 		if step, ok := rewritable[it]; ok {
 			b.WriteString(` <button type="button" class="machine-finding-rewrite" data-rewrite-step="` +
-				HTMLEscape(step) + `">✨ Rewrite the instructions…</button>`)
+				HTMLEscape(step) + `">✨ Rewrite the instructions...</button>`)
 		}
 		b.WriteString(`</li>`)
 	}
@@ -978,7 +978,7 @@ func findingsHTML(def MachineDef, items []string, empty string) string {
 //
 // The boundary is a colon OR a space, because the findings are written
 // as sentences and not all of them punctuate the same way ("step x:
-// next names…" but "step x passes on but goes nowhere"). Longest match
+// next names..." but "step x passes on but goes nowhere"). Longest match
 // wins: a step may be named with another step's name as its prefix, and
 // then both match and only the longer one is right.
 func findingStep(def MachineDef, line string) string {

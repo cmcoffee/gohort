@@ -85,10 +85,10 @@ type ArtifactSel struct {
 }
 
 // ArtifactType is the pluggable interface each portable artifact type registers.
-// One implementation per type (connector, tool, …) wraps that type's existing
+// One implementation per type (connector, tool, ...) wraps that type's existing
 // store — the registry adds portability without the types knowing about bundles.
 type ArtifactType interface {
-	// ArtifactType returns the type discriminator ("connector", "tool", …).
+	// ArtifactType returns the type discriminator ("connector", "tool", ...).
 	ArtifactType() string
 	// ListArtifacts enumerates everything of this type that can be exported,
 	// with Owner set for per-user types. Powers "export all" and the future

@@ -1,6 +1,6 @@
 // Sub-session promotion router.
 //
-// When a host (phantom chat, orchestrate chat, …) just dispatched
+// When a host (phantom chat, orchestrate chat, ...) just dispatched
 // to a sub-agent and got a reply, the user's NEXT turn is usually a
 // follow-up to that reply — not a fresh ask to the host. Promotion
 // detects this case and routes the next turn synchronously through

@@ -314,7 +314,7 @@ func ListExternalTargets(db Database, user string) []ExternalTarget {
 
 // --- Per-app features (auto-derived from the app-agent registry) --------------
 //
-// Each app that registers app agents (Servitor, Guides, …) becomes a shareable
+// Each app that registers app agents (Servitor, Guides, ...) becomes a shareable
 // feature "app:<slug>" with zero per-app code: the admin gates WHICH users may
 // reach that app's agents from external clients, and the user toggles it per
 // API key next to "openai"/"mcp" — the same two-tier control, extended to app

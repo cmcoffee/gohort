@@ -343,7 +343,7 @@ func (c *chatPage) page(nav []ui.NavLink) ui.Page {
 					BlockResolveURL: "api/sessions/{id}/blocks/{block_id}/resolve?agent_id={agent_id}",
 					// Enables the run-resume probe in the chat panel:
 					// on session-load the runtime asks
-					// api/runs/active?session_id=… and, if there's an
+					// api/runs/active?session_id=... and, if there's an
 					// in-flight run, opens api/runs/<id>/stream to pick
 					// up live where the prior client left off. See
 					// runs.go / runs_http.go for the server contract.
@@ -535,7 +535,7 @@ func chatAgentNav() []ui.OrchestratorNavItem {
 				{Label: "View", Method: "client", URL: "orchestrate_view_task", OnlyIf: "_kind"},
 				// Link groups (schedule_links.go): the group's own
 				// controls on its header row, the order and the way
-				// out on each member, and Link… on every row that
+				// out on each member, and Link... on every row that
 				// can join one.
 				linkActEditTime, linkActRun, linkActPause, linkActResume,
 				linkActUp, linkActDown, linkActUnlink, linkActLink,
@@ -1038,7 +1038,7 @@ var (
 // The Scheduler's link-group buttons (schedule_links.go), named so both
 // Scheduler views list the same ones. The header row of a group carries the
 // group's own controls; each member carries its place in the order and the
-// way out; Link… is on every row that can join a group.
+// way out; Link... is on every row that can join a group.
 var (
 	linkActEditTime = ui.OrchestratorRowAction{Label: "Edit time", Method: "client", URL: "orchestrate_edit_link", OnlyIf: "_link_head"}
 	linkActRun      = ui.OrchestratorRowAction{Label: "Run now", Icon: "once", Method: "POST", URL: "api/console/links/run", OnlyIf: "_link_head",

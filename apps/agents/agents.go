@@ -387,7 +387,7 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 		DeepLinkParam: "session",
 		LockActivity:  true,
 		EmptyText:     desc,
-		Placeholder:   "Ask " + display + " something…",
+		Placeholder:   "Ask " + display + " something...",
 		Markdown:      true,
 		BulkSelect:    true,
 		Attachments:   true,

@@ -296,7 +296,7 @@ func TestAFieldFilledFromNonsenseIsRefused(t *testing.T) {
 		t.Errorf("expected a problem naming the bad reference, got %v", def.Problems())
 	}
 
-	// A {state:…} reference is allowed, and checked the same way a
+	// A {state:...} reference is allowed, and checked the same way a
 	// prompt's is.
 	def.Phases[0].Output[0].From = "{state:ghost.field}"
 	if !strings.Contains(strings.Join(def.Problems(), "\n"), "unknown step") {
@@ -436,7 +436,7 @@ func TestAResidentPromptResolvesTheStableVariablesOnly(t *testing.T) {
 }
 
 // A rename is one edit. Every reference the definition holds — routing,
-// keep lists, guard targets, the start step, {state:…} in prompts and
+// keep lists, guard targets, the start step, {state:...} in prompts and
 // fills — follows the new name, because the definition knows both names
 // and the author should not be sent hunting through the checklist for
 // the places it forgot.

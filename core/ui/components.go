@@ -151,7 +151,7 @@ type SelectOption struct {
 	// picking it in a form's single select runs the client action of that
 	// name (uiRegisterClientAction) with ctx.value set to Value, and the
 	// select goes back to what it held, so it is never saved. For an
-	// "+ Add another…" at the end of a list: what it opens adds to the list.
+	// "+ Add another..." at the end of a list: what it opens adds to the list.
 	Action string `json:"action,omitempty"`
 }
 

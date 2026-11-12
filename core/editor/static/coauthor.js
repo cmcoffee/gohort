@@ -82,7 +82,7 @@ function coauthorLabel(text) {
   var lines = text.replace(/\n+$/, '').split('\n').length;
   var words = text.trim().split(/\s+/).slice(0, 6).join(' ');
   if (words.length > 40) words = words.slice(0, 40).trim();
-  var opening = '“' + words + (text.trim().length > words.length ? '…' : '') + '”';
+  var opening = '“' + words + (text.trim().length > words.length ? '...' : '') + '”';
   return lines > 1 ? opening + ', ' + lines + ' lines' : opening;
 }
 

@@ -1,5 +1,5 @@
 // Bridges is the messaging-transport layer: it routes inbound from a messaging
-// service (iMessage, Telegram, Slack, …) to the agent bound on a Channel, and
+// service (iMessage, Telegram, Slack, ...) to the agent bound on a Channel, and
 // delivers the agent's reply back out. It is PURE TRANSPORT — no persona, no
 // own LLM engine, no tools. The agent (orchestrate) owns all of that; a Channel
 // (core) is the interface to it; a Bridge is the connector for one service.
@@ -54,7 +54,7 @@ func (T *Bridges) WebPath() string { return "/bridges" }
 func (T *Bridges) HubTab() (string, int) { return "Bridges", 20 }
 func (T *Bridges) WebName() string { return "Bridges" }
 func (T *Bridges) WebDesc() string {
-	return "Connect messaging services (iMessage, Telegram, …) to your channel agents."
+	return "Connect messaging services (iMessage, Telegram, ...) to your channel agents."
 }
 func (T *Bridges) Desc() string { return "Apps: messaging transport, services → channels." }
 
@@ -251,8 +251,8 @@ func isGroupChat(chatID string) bool {
 // chatHandle extracts the raw handle from a 1:1 chat id. iMessage chat ids are
 // "<account>;<type>;<handle>" where type "-" is a 1:1 (the trailing segment is
 // the contact's handle) and "+" is a group (no single handle). Returns "" for
-// groups. Lets a raw-handle alias the user typed ("+1650…") link to the chat-id
-// form ("any;-;+1650…") so the two are recognized as the same person.
+// groups. Lets a raw-handle alias the user typed ("+1650...") link to the chat-id
+// form ("any;-;+1650...") so the two are recognized as the same person.
 func chatHandle(chatID string) string {
 	if chatID == "" || isGroupChat(chatID) {
 		return ""
@@ -533,7 +533,7 @@ type BridgeKey struct {
 	Name     string `json:"name"`    // friendly label, e.g. "Craig's MacBook"
 	Key      string `json:"key"`     // the secret; shown once on creation
 	Owner    string `json:"owner"`   // gohort user this bridge belongs to
-	Service  string `json:"service"` // "imessage", "telegram", … (the bridge's service id)
+	Service  string `json:"service"` // "imessage", "telegram", ... (the bridge's service id)
 	Enabled  bool   `json:"enabled"` // per-bridge switch; create sets true. Disabled = inbound recorded, not routed/delivered
 	Created  string `json:"created"`
 	LastSeen string `json:"last_seen,omitempty"`

@@ -7,7 +7,7 @@
 package sources
 
 var (
-	// ClassifySourceFunc tags a URL ("blog", "press release", …).
+	// ClassifySourceFunc tags a URL ("blog", "press release", ...).
 	ClassifySourceFunc func(rawURL string) string
 	// CleanSourceTitleFunc normalizes a citation title, falling back to a URL.
 	CleanSourceTitleFunc func(title, fallback string) string

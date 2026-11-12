@@ -1267,7 +1267,7 @@ type AgentLoopOverrides = agenthost.LoopOverrides
 type AgentSyncResult = agenthost.Result
 
 // buildInboundMediaManifest individuates the media that arrived on THIS turn,
-// giving the model a stable, referenceable handle per item (media#1, media#2, …)
+// giving the model a stable, referenceable handle per item (media#1, media#2, ...)
 // with sender attribution instead of an anonymous count. It is the media analogue
 // of the source-provenance rule in the grounding block: a stable id per item lets
 // the model bind "the image Alice sent" to a specific object rather than guess
@@ -1535,7 +1535,7 @@ func cappedEventText(text string) string {
 		return text
 	}
 	return strings.TrimSpace(string([]rune(text)[:cap])) +
-		"\n\n…(the rest of this event went to the agent when it fired; see its reply below)"
+		"\n\n...(the rest of this event went to the agent when it fired; see its reply below)"
 }
 
 // RunAgentSyncContinuing is RunAgentSync's continuation variant —
@@ -2188,7 +2188,7 @@ func (cr *continuingRun) buildMessages() {
 		Log("[orchestrate.inbound_media] runtime=%s target=%s sub=%s images=%d captioned=%d",
 			cr.runtimeUser, cr.target.ID, cr.subSessionID, n, captioned)
 		// Register each inbound image in the session's addressable media registry
-		// (media#1, media#2, …) so the model can post a SPECIFIC one back by id.
+		// (media#1, media#2, ...) so the model can post a SPECIFIC one back by id.
 		// Order matches the manifest enumeration appended to llmMessage below.
 		// Each carries its caption into the image space, where it outlives
 		// this turn.
@@ -2229,7 +2229,7 @@ func (cr *continuingRun) buildMessages() {
 	}
 	// Individuated media manifest — RUN-ONLY, same non-persisted treatment as
 	// SurfaceContext. Replaces the anonymous "N image(s)" count with a stable
-	// handle per inbound item (media#1, media#2, …) plus sender attribution, so
+	// handle per inbound item (media#1, media#2, ...) plus sender attribution, so
 	// the model can bind "the image Alice sent" to a specific object instead of
 	// guessing across indistinguishable items in a busy group thread. These are
 	// the ids the delivery tools resolve against (post-by-id), so the model never
@@ -2916,7 +2916,7 @@ func llmHistoryText(m ChatMessage) string {
 	// header); re-attach an origin marker for the LLM so it reads as an
 	// automated report, not something it said itself. Wrapped in <gohort-meta>
 	// so that if the model echoes it into a reply it's scrubbed (a bare
-	// [standing agent …] would leak); the model still reads it as input
+	// [standing agent ...] would leak); the model still reads it as input
 	// (StripMetaTags only touches output).
 	// Except the agent's own reply carried on one (a background task's result):
 	// it said that, and reading it as an outside report it lost track of what

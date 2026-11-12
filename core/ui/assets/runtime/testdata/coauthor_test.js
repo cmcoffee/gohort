@@ -107,7 +107,7 @@ check('no passage is the whole document', lib.locate(doc, '', 9) === 0);
 check('the replacement goes where the passage was', lib.replace(doc, 'la la', 16, 'oh oh') === 'la la\nverse one\noh oh\nchorus\n');
 check('a whole-document proposal is the replacement', lib.replace(doc, '', 0, 'new') === 'new');
 check('a chip names the passage by its opening words and lines',
-  lib.label('Neon on the water\nCity never sleeps\n') === '“Neon on the water City never…”, 2 lines');
+  lib.label('Neon on the water\nCity never sleeps\n') === '“Neon on the water City never...”, 2 lines');
 check('one line is just its words', lib.label('Neon on the water') === '“Neon on the water”');
 var pr = lib.parts('a\nb c d\ne\n', 'c', 4, 'C');
 check('a review splits on whole lines around the change',
@@ -155,7 +155,7 @@ var passage = 'Neon on the water\nCity never sleeps\n';
 select(ta.value.indexOf(passage), ta.value.indexOf(passage) + passage.length);
 ta.fire('mouseup', {});
 check('highlighting a passage shows it in the chat',
-  calls[0] === 'chip:Highlighted: “Neon on the water City never…”, 2 lines');
+  calls[0] === 'chip:Highlighted: “Neon on the water City never...”, 2 lines');
 check('with the page\'s quick actions beside it', chat.actions.length === 1 && chat.actions[0].label === 'Tighten');
 check('and the document keeps its place: nothing jumps to the chat', shown.length === 0 && calls.length === 1);
 var ctx = host.uiSendContext();

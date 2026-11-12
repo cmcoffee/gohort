@@ -633,7 +633,7 @@ type OrchestratorFilterOption struct {
 type OrchestratorStateOption struct {
 	Label  string `json:"label"`
 	Value  string `json:"value"`            // matches StateField's row value
-	URL    string `json:"url"`              // POST <url>?id=<row._id>&agent=…&value=<Value>
+	URL    string `json:"url"`              // POST <url>?id=<row._id>&agent=...&value=<Value>
 	Method string `json:"method,omitempty"` // default POST
 	// OnlyIf / HideIf gate this SEGMENT on a hidden row field, the same
 	// vocabulary row actions already use.

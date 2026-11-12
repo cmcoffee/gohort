@@ -2,7 +2,7 @@
 
 ## What this framework is for
 
-`core/ui` lets an app developer with no web experience add capabilities to gohort from primitives that already exist. You should not have to write HTML, CSS, or DOM-manipulation JavaScript to ship a working app. You write a Go struct, declare a page in terms of pre-built components (Table, FormPanel, AgentLoopPanel, PipelinePanel, …), and the framework renders it.
+`core/ui` lets an app developer with no web experience add capabilities to gohort from primitives that already exist. You should not have to write HTML, CSS, or DOM-manipulation JavaScript to ship a working app. You write a Go struct, declare a page in terms of pre-built components (Table, FormPanel, AgentLoopPanel, PipelinePanel, ...), and the framework renders it.
 
 Every primitive in `core/ui` is generic: no primitive knows what a particular app means. When an app needs behavior beyond what the primitives offer, it plugs into one of four extension registries (block renderer, markdown extension, client action, `ExtraHeadHTML`) from its own package. This separation is enforced; see `CLAUDE.md` at the repo root for the rule and `scripts/hooks/pre-commit` for the guard.
 
@@ -148,7 +148,7 @@ ui.Card{
 ```
 
 `RefreshOn` entries match an invalidated source by PREFIX, so one entry covers
-the per-record writes (`…/parts?name=x`) a form broadcasts when it saves. The
+the per-record writes (`.../parts?name=x`) a form broadcasts when it saves. The
 card coalesces a burst of saves into one fetch, keeps the last good content if
 the fetch fails, and dispatches `ui-card-refreshed` on itself afterwards:
 listen for that if your page decorates the card's elements. Serve the block
@@ -187,7 +187,7 @@ core/ui/` is the authoritative history.
 
 ## Pick a primitive
 
-| Want to build… | Use |
+| Want to build... | Use |
 |---|---|
 | A list of records with row actions (edit / delete / view) | `ui.Table` + `RowAction` (`ui.ModalAction` for an edit dialog, `ui.Expand` for inline detail) |
 | A settings form auto-saving on blur | `ui.FormPanel` |
@@ -362,7 +362,7 @@ A `rows` field edits a LIST of small records inside one field of one record:
  AddLabel: "+ Add output",
  Columns: []ui.FormField{
    {Field: "name", Label: "Field", Type: "text", Width: 2},
-   {Field: "type", Label: "Type", Type: "select", Options: …},
+   {Field: "type", Label: "Type", Type: "select", Options: ...},
    {Field: "required", Label: "Required", Type: "toggle"},
  }}
 ```
@@ -505,7 +505,7 @@ page.Head = ui.NewHead().
     MarkdownExtension(myappMdJS)
 ```
 
-The JS you pass is a **function expression** (`"function(ctx){ … }"`): inline for small handlers, or from an embedded `assets/` file (`//go:embed`) for anything sizeable, matching the runtime's own asset convention. See `apps/hello/hello.go` for a complete button → client action → `window.uiOpenModal` example, and `core/ui/extensions.go` for the API.
+The JS you pass is a **function expression** (`"function(ctx){ ... }"`): inline for small handlers, or from an embedded `assets/` file (`//go:embed`) for anything sizeable, matching the runtime's own asset convention. See `apps/hello/hello.go` for a complete button → client action → `window.uiOpenModal` example, and `core/ui/extensions.go` for the API.
 
 Registration order is handled for you (the assembled block guards on the registries existing), so you do **not** need the manual `DOMContentLoaded` deferral the raw form below requires.
 
@@ -703,7 +703,7 @@ b.sse.SendNamed("block", map[string]interface{}{
 })
 ```
 
-The runtime appends `class` to the wrap div. Your CSS in `ExtraHeadHTML` targets `.ui-my-final-report .ui-pl-block-body p { … }`.
+The runtime appends `class` to the wrap div. Your CSS in `ExtraHeadHTML` targets `.ui-my-final-report .ui-pl-block-body p { ... }`.
 
 ### Don't mention apps in `core/ui/`
 The shared runtime stays domain-agnostic; new code in `core/ui/` that mentions an app name is a bug. An `if (type === "verdict")` you want to add to `core/ui/runtime.go` belongs in a registered renderer in your app's package instead.

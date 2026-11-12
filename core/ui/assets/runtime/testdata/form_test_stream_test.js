@@ -64,7 +64,7 @@ function settled() { return new Promise(function(r) { setTimeout(r, 20); }); }
   check('the result keeps its lines', out.textContent.split('\n').length === 3);
   check('a multi-line result takes its own row', out.style.flexBasis === '100%');
 
-  // While it runs, the step shows beside "Testing…".
+  // While it runs, the step shows beside "Testing...".
   var hold;
   reply = function() {
     return {ok: true, headers: {get: function() { return 'application/x-ndjson'; }},
@@ -78,7 +78,7 @@ function settled() { return new Promise(function(r) { setTimeout(r, 20); }); }
   };
   btn.onclick();
   await settled();
-  check('the running step shows', out.textContent === 'Testing… - step 2 of 5: Two calls in one turn');
+  check('the running step shows', out.textContent === 'Testing... - step 2 of 5: Two calls in one turn');
   hold({done: true});
   await settled();
   check('a stream with no result line reads as failed', out.textContent.indexOf('✗') === 0);

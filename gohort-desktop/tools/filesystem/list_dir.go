@@ -93,7 +93,7 @@ func (t *list_dir_tool) Handler() core.ToolHandler {
 			abs = real
 		}
 		if !core.PathAllowedOrConsent(abs) {
-			return "", fmt.Errorf("filesystem_list_directory refused: %s is not under an allowed read root (allowed: %v), operator can add a root via the Account → Add Allowed Folder… menu in gohort-desktop", abs, core.AllowedReadRoots())
+			return "", fmt.Errorf("filesystem_list_directory refused: %s is not under an allowed read root (allowed: %v), operator can add a root via the Account → Add Allowed Folder... menu in gohort-desktop", abs, core.AllowedReadRoots())
 		}
 		info, err := os.Stat(abs)
 		if err != nil {
@@ -173,7 +173,7 @@ func format_entry(parent string, e os.DirEntry) string {
 func render_roots_listing() string {
 	roots := core.AllowedReadRoots()
 	if len(roots) == 0 {
-		return "No folders are currently exposed by gohort-desktop. The operator can add one via the Account → Add Allowed Folder… menu."
+		return "No folders are currently exposed by gohort-desktop. The operator can add one via the Account → Add Allowed Folder... menu."
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Allowed root folders on the connected gohort-desktop (%d):\n", len(roots))

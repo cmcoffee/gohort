@@ -252,7 +252,7 @@ func (ws *workerStep) addFrameworkTools() {
 	// step smoke-tests what Builder made ("Step N (verify): send the new
 	// agent a representative input"), and its run reaches only that
 	// (builder_run_scope.go).
-	// …when there is something to dispatch TO. A worker step that can reach
+	// ...when there is something to dispatch TO. A worker step that can reach
 	// nothing gets no delegation surface; see agentsToolWanted.
 	if t.agentsToolWanted() {
 		ws.tools = append(ws.tools, t.agentsGroupedToolDef(true))
@@ -378,7 +378,7 @@ func (ws *workerStep) buildPrompt() {
 	// inner tool_def / create_agent / etc. chips blend visually with
 	// Builder's own chips and the conversation reads as if Builder
 	// authored them inline — defeating the whole conductor metaphor.
-	// Mirrors the agents(run) sub-dispatch nesting ("↳ [TargetName] …").
+	// Mirrors the agents(run) sub-dispatch nesting ("↳ [TargetName] ...").
 	ws.workerLabel = strings.TrimSpace(cur.Title)
 	if ws.workerLabel == "" {
 		ws.workerLabel = "step"

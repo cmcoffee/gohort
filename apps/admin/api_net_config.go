@@ -108,7 +108,7 @@ func (a *AdminApp) handleWebSearch(c *jsonapi.Call) (any, error) {
 	for k, v := range settingsValues(conn, "web.search") {
 		out[k] = v
 	}
-	// A research source as the engine shows as "Use a research source…"
+	// A research source as the engine shows as "Use a research source..."
 	// and which one.
 	if c, ok := GetConnector(RootDB, chosenConnection(fmt.Sprint(out["provider"]))); ok && researchConnector(c, researchNamed()) {
 		out["provider"], out["research_source"] = useResearchSource, c.Name
@@ -117,18 +117,18 @@ func (a *AdminApp) handleWebSearch(c *jsonapi.Call) (any, error) {
 }
 
 // webSearchForm is what the Web Search page posts: its config, and the
-// research source chosen when the engine is "Use a research source…".
+// research source chosen when the engine is "Use a research source...".
 type webSearchForm struct {
 	WebSearchConfig
 	ResearchSource string `json:"research_source,omitempty"`
 }
 
-// useResearchSource is the page's "Use a research source…": the engine is
+// useResearchSource is the page's "Use a research source...": the engine is
 // the research source's connector the second list names. A page value only,
 // never stored, and no connector can take it (names have no @).
 const useResearchSource = "@research"
 
-// engine reads "Use a research source…" back as the research source chosen,
+// engine reads "Use a research source..." back as the research source chosen,
 // the engine the setting names.
 func (f *webSearchForm) engine() error {
 	if f.Provider != useResearchSource {

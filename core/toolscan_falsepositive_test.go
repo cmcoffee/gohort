@@ -13,7 +13,7 @@ import (
 	"testing"
 )
 
-// A JavaScript application returns its consent banner and a "Loading…" to any
+// A JavaScript application returns its consent banner and a "Loading..." to any
 // fetcher that does not run scripts. That is the common case on the web, and
 // the banner addresses "you" and asks you to agree to something — so a scanner
 // judging addressee and intent alone convicts nearly every modern site.

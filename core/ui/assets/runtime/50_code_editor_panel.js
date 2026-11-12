@@ -60,7 +60,7 @@
     // top bar, living inside the framework page chrome.
     var nameInput = el('input', {
       type: 'text', class: 'ui-cw-name',
-      placeholder: cfg.placeholder_name || 'Snippet name…',
+      placeholder: cfg.placeholder_name || 'Snippet name...',
     });
     var langSelect = el('select', {class: 'ui-cw-lang'});
     languages.forEach(function(l) {
@@ -80,7 +80,7 @@
           if (!code.trim()) { showToast('Write some code first'); return; }
           suggestNameBtn.disabled = true;
           var orig = suggestNameBtn.textContent;
-          suggestNameBtn.textContent = '…';
+          suggestNameBtn.textContent = '...';
           fetch(cfg.suggest_name_url, {
             method: 'POST', credentials: 'same-origin',
             headers: {'Content-Type': 'application/json'},
@@ -770,7 +770,7 @@
           selectedRef = (o && o.value) ? {kind: o.getAttribute('data-kind'), item_id: o.value} : null;
           rememberSettings();
         }});
-      refSelect.appendChild(el('option', {value: ''}, ['Reference…']));
+      refSelect.appendChild(el('option', {value: ''}, ['Reference...']));
       fetch(cfg.reference_sources_url, {credentials: 'same-origin'})
         .then(function(r){ return r.json(); })
         .then(function(groups) {

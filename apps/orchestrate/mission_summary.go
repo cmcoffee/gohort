@@ -33,7 +33,7 @@ func missionPrint(mission string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
-// firstWords is the first n words of s, with "…" when it was cut.
+// firstWords is the first n words of s, with "..." when it was cut.
 func firstWords(s string, n int) string {
 	words := strings.Fields(s)
 	if len(words) <= n {

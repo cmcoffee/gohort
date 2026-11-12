@@ -60,7 +60,7 @@ func TestLongLibrarySaysItIsTruncated(t *testing.T) {
 	}
 	desc := imageSchemaFor(editable(many...)).desc
 
-	if !strings.Contains(desc, "…and 5 more") {
+	if !strings.Contains(desc, "...and 5 more") {
 		t.Errorf("a truncated library should report how many were omitted, got %q", desc)
 	}
 	if !strings.Contains(desc, `action="help"`) {

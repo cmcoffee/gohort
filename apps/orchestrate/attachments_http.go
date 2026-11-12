@@ -17,7 +17,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
-// handleAttachment serves one stored attachment: /api/attachment?id=att_…
+// handleAttachment serves one stored attachment: /api/attachment?id=att_...
 func (T *OrchestrateApp) handleAttachment(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {

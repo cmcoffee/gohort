@@ -26,7 +26,7 @@ import (
 // CapChannel is one messaging surface the agent can reach real people on.
 type CapChannel struct {
 	Name    string `json:"name"`
-	Service string `json:"service"` // display name of the transport (iMessage, Telegram, …)
+	Service string `json:"service"` // display name of the transport (iMessage, Telegram, ...)
 	Scope   string `json:"scope"`   // "whole service" (every contact) or a specific address/room
 }
 

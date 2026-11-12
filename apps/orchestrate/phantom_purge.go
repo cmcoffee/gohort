@@ -17,7 +17,7 @@ func init() {
 		"purge_phantom_data",
 		"Purge phantom data",
 		"Delete all leftover data from the retired phantom app: its phantom_* tables "+
-			"(convos, messages, outbox, config, …), the per-chat \"phantom:\" user scopes "+
+			"(convos, messages, outbox, config, ...), the per-chat \"phantom:\" user scopes "+
 			"and every session under them, and orphaned phantom_chat triggers / "+
 			"phantom.callback scheduled tasks. Irreversible.",
 		purgePhantomData,
@@ -51,7 +51,7 @@ func purgePhantomData(ctx context.Context) int {
 		var target string
 		switch {
 		case strings.HasPrefix(t, "phantom_"):
-			target = t // a top-level phantom table (phantom_convos, phantom_outbox, …)
+			target = t // a top-level phantom table (phantom_convos, phantom_outbox, ...)
 		case strings.HasPrefix(t, "user:phantom:"):
 			// Reduce to the scope root "user:phantom:<chatID>" (cut the \x1f tail);
 			// Drop() then removes every table inside that user scope.

@@ -147,7 +147,7 @@ miss. It returns the banner and drops the payload.
 **St1 note: not in the original spec; found while building it.** The banner quotes the
 offending text so the user can see what was found. That quote is attacker-authored text being
 placed inside a trusted-looking framework marker, by the mechanism that just flagged it. Left
-raw, a page could get arbitrary text carried into context, including a forged `[ATTACH: …]` or
+raw, a page could get arbitrary text carried into context, including a forged `[ATTACH: ...]` or
 `<gohort-meta>` marker, or a second injection riding in on the detection of the first.
 
 `sanitizeScanSpan` closes it in three passes: `textutil.StripMetaTags` for the framework's own
@@ -340,7 +340,7 @@ tools ARE scanned (every one of them declares `CapNetwork`, which is the entire 
 they simply cannot be enumerated from a settings request. A list rendered as exhaustive would
 understate coverage for exactly the agents that need it most: the ones whose input is a feed
 rather than a person. So the line reads "covers every tool that reaches outside the system,
-including your connector, MCP and source-hook tools: e.g. …", and the skip list is shown in
+including your connector, MCP and source-hook tools: e.g. ...", and the skip list is shown in
 full because removing coverage is the one edit here that can only make things worse.
 
 **St3 note: a detection is logged AND breadcrumbed.** The audit entry (`recordScanDetection`)

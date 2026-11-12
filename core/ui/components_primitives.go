@@ -202,7 +202,7 @@ type Card struct {
 	//
 	// HTML stays the FIRST paint: the server renders the block into the
 	// page as before and the source is what keeps it up to date, so a
-	// card never flashes "Loading…" on arrival. A card with only a
+	// card never flashes "Loading..." on arrival. A card with only a
 	// Source fetches on mount.
 	Source string `json:"source,omitempty"`
 	// RefreshOn names the data whose change should redraw this card,
@@ -242,7 +242,7 @@ func (c Card) MarshalJSON() ([]byte, error) {
 //
 // The distinction matters because a Card inlines its HTML: the browser drops
 // the document's <html>/<head>/<body> wrappers but KEEPS its <style>, so a
-// blob that opens with the usual `* { margin: 0 }` reset and a `body { … }`
+// blob that opens with the usual `* { margin: 0 }` reset and a `body { ... }`
 // rule silently restyles the entire surrounding page, and its `100vh` layout
 // measures the whole window rather than its own box. A Frame gives the
 // document its own viewport, its own cascade, and its own <body> to measure.

@@ -50,7 +50,7 @@ const (
 	// stored text so a reader can tell the line was cut rather than ended.
 	maxLineBytes = 32 << 10
 	// truncMarker is appended to a line cut by maxLineBytes.
-	truncMarker = "…[line truncated]"
+	truncMarker = "...[line truncated]"
 )
 
 // File is one ingested file's index entry. Content lives in the slice

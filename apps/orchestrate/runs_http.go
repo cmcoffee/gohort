@@ -1,6 +1,6 @@
 // HTTP endpoints around the run registry:
 //
-//   GET  /api/runs/active?session_id=…     → {run_id} | {}
+//   GET  /api/runs/active?session_id=...     → {run_id} | {}
 //   GET  /api/runs/<id>/stream?since=N     → SSE replay + tail
 //   POST /api/runs/<id>/cancel             → 200 OK
 //

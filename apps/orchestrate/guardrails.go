@@ -121,7 +121,7 @@ const guardrailContestableMarker = "~"
 // guardrailAuthorizedMarker exempts a rule for a requester the FRAMEWORK has
 // established as authorized (see AgentRecord.AuthorizedIdentities).
 //
-// The alternative was writing "…unless an authorized person asks" into the text
+// The alternative was writing "...unless an authorized person asks" into the text
 // of every rule that wants the carve-out. That fails twice. It is N restatements
 // the warden has to read identically, so a reworded line silently judges
 // differently from its neighbours. And it makes authorization something a model

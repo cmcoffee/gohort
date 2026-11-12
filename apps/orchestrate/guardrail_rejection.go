@@ -32,7 +32,7 @@ import (
 //     it, so the owner's own refusal came back out of the agent's mouth.
 //   - Speaking ABOUT the reader. On a channel the sender's name is folded into
 //     the content upstream (attributeSender), so the fence reads "Craig Coffee:
-//     …". With nothing saying who is about to read the reply, the model treated
+//     ...". With nothing saying who is about to read the reply, the model treated
 //     that name as a third party and produced "Not gonna get into the Wiwee
 //     drama with Craig" — said straight to Craig.
 //   - Speaking ABOUT ITSELF. That same line calls the agent's own name a topic
@@ -188,7 +188,7 @@ func (t *chatTurn) guardrailRejectionAttempt(ctx context.Context, user, reason, 
 		WithThink(false),
 		// Warm, not cold. At 0.3 a one-sentence refusal converged on the same
 		// shape every single time ("I can't help you with X. Let me know if
-		// there's anything else…"), which is the tell that it came from a
+		// there's anything else..."), which is the tell that it came from a
 		// machine. This is the one call in the guardrail path where variety is
 		// the point: nothing downstream parses the output, so the usual reason
 		// for pinning a worker low does not apply here.

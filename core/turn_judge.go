@@ -376,7 +376,7 @@ func turnRanProducer(calls []string) bool {
 		if strings.Contains(c, " [REFUSED before it ran:") {
 			continue
 		}
-		// A failed call carries " [FAILED: …]" after its label. Cut there
+		// A failed call carries " [FAILED: ...]" after its label. Cut there
 		// first: tool labels never contain a space, so the first one ends the
 		// label whatever follows it.
 		if i := strings.IndexByte(c, ' '); i >= 0 {

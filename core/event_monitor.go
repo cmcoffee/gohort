@@ -1615,7 +1615,7 @@ func executeWatchPoll(ctx context.Context, db Database, m EventMonitor) {
 // current payload, everything it needs to react. The thread the wake lands
 // in used to be handed that same text as its card, so a person scrolling
 // their own conversation met "[EVENT — monitor fired] / What changed: +
-// {"author":{"avatarUrl":null,…" and twelve hundred characters of the API's
+// {"author":{"avatarUrl":null,..." and twelve hundred characters of the API's
 // response, every time. The card rides the wake's context so the waker, in
 // another package, can store it in place of the prompt.
 
@@ -1759,7 +1759,7 @@ func writeCardGroup(b *strings.Builder, title string, lines []string) {
 	fmt.Fprintf(b, "\n\n%s (%d):", title, len(lines))
 	for i, l := range lines {
 		if i >= max {
-			fmt.Fprintf(b, "\n• …and %d more", len(lines)-max)
+			fmt.Fprintf(b, "\n• ...and %d more", len(lines)-max)
 			break
 		}
 		fmt.Fprintf(b, "\n• %s", l)
@@ -2063,14 +2063,14 @@ func diffLines(prior, current string) string {
 	var b strings.Builder
 	for i, l := range added {
 		if i >= maxLines {
-			fmt.Fprintf(&b, "+ …and %d more added\n", len(added)-maxLines)
+			fmt.Fprintf(&b, "+ ...and %d more added\n", len(added)-maxLines)
 			break
 		}
 		fmt.Fprintf(&b, "+ %s\n", truncateEvent(l, 200))
 	}
 	for i, l := range removed {
 		if i >= maxLines {
-			fmt.Fprintf(&b, "- …and %d more removed\n", len(removed)-maxLines)
+			fmt.Fprintf(&b, "- ...and %d more removed\n", len(removed)-maxLines)
 			break
 		}
 		fmt.Fprintf(&b, "- %s\n", truncateEvent(l, 200))

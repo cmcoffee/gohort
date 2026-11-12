@@ -28,7 +28,7 @@ import (
 // defense-in-depth so a secret typed into a chat doesn't land in the index.
 // reportID should be unique per span (e.g. include the last message id) so
 // successive folds accumulate distinct docs rather than overwriting. `kind`
-// tags provenance ("phantom_convo", "lcm", …). Raw text, not distilled: the
+// tags provenance ("phantom_convo", "lcm", ...). Raw text, not distilled: the
 // recall target is what was literally said, and the store is private to the
 // conversation so there's no shared-corpus pollution risk.
 //
@@ -55,7 +55,7 @@ func IngestRecallSpan(ctx context.Context, db Database, source, reportID, title,
 }
 
 // RedactSecretLines replaces any line of s that contains a secret-shaped value
-// (Bearer tokens, key=… / token: … forms) with a placeholder, leaving the rest
+// (Bearer tokens, key=... / token: ... forms) with a placeholder, leaving the rest
 // intact. Line-granular so one leaked credential doesn't blank a whole span.
 func RedactSecretLines(s string) string {
 	if !ContainsLikelySecret(s) {

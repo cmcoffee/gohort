@@ -130,7 +130,7 @@ func TestTheGuideButtonAlwaysOffersANewGuide(t *testing.T) {
 		t.Error("one linked guide must not skip the picker")
 	}
 	open := strings.Index(btn, "window.uiOpenSimpleModal({title: 'Add to which guide?'")
-	if open < 0 || !strings.Contains(btn[open:], "choice('New guide…'") {
+	if open < 0 || !strings.Contains(btn[open:], "choice('New guide...'") {
 		t.Error("the picker must always end with New guide")
 	}
 }

@@ -5,7 +5,7 @@
 // query where the file lives and return the matches.
 //
 // All five share the same read-allowlist as filesystem_read_local_file
-// (core.PathAllowed). Adding a folder via "Add Allowed Folder…" once
+// (core.PathAllowed). Adding a folder via "Add Allowed Folder..." once
 // makes it queryable by every tool here.
 
 package filesystem
@@ -60,7 +60,7 @@ func resolve_query_path(path string) (string, error) {
 		abs = real
 	}
 	if !core.PathAllowedOrConsent(abs) {
-		return "", fmt.Errorf("refused: %s is not under an allowed read root (allowed: %v), operator can add a root via Account → Add Allowed Folder…", abs, core.AllowedReadRoots())
+		return "", fmt.Errorf("refused: %s is not under an allowed read root (allowed: %v), operator can add a root via Account → Add Allowed Folder...", abs, core.AllowedReadRoots())
 	}
 	info, err := os.Stat(abs)
 	if err != nil {

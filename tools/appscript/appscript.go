@@ -28,7 +28,7 @@ import (
 // Run executes one custom-app script and returns its stdout. The script is just
 // a TempTool the framework dispatches on the app owner's behalf: it runs in the
 // owner's workspace under the bwrap sandbox, reaches external data only through
-// the gohort hook (fetch/log/…), and receives args as environment variables.
+// the gohort hook (fetch/log/...), and receives args as environment variables.
 // The script file is named per (kind, slug, name) so concurrent apps/scripts
 // don't collide in the owner's workspace.
 func Run(user string, db Database, slug, kind, name, language, script string, caps []string, args map[string]any) (string, error) {

@@ -54,7 +54,7 @@ setTimeout(function() {
     /if \(prefillRun\) \{ prefillRun\.ctl\.abort\(\); return; \}/.test(panel) && /busy: busyButton\(prefillBtn, true\)/.test(panel));
   check('the chat Suggest does the same',
     /if \(prefillRun\) \{ prefillRun\.ctl\.abort\(\); return; \}/.test(chat) && /busy: busyButton\(prefillBtn, true\)/.test(chat));
-  check('no static ellipsis is left on a Suggest button', !/prefillBtn\.textContent = '…'/.test(panel + chat));
+  check('no static ellipsis is left on a Suggest button', !/prefillBtn\.textContent = '...'/.test(panel + chat));
   check('what is typed goes along as ?input=', /'input=' \+ encodeURIComponent\(typed\)/.test(panel));
   check('a page with no suggest of its own asks the surface for one',
     /fetchJSON\(suggestURL \+ '\?probe=1'\)\.then\(function\(p\) \{\s*if \(p && p\.label && !prefillBtn\) addPrefill\(suggestURL, p\.label, true\);/.test(panel));

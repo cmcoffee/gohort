@@ -626,7 +626,7 @@ func (T *Scribe) addImageTool(sc coauthorScope) AgentToolDef {
 		Tool: Tool{
 			Name:        "add_image",
 			Caps:        []Capability{CapWrite},
-			Description: "Put a picture into a section of the open guide, as its own paragraph at the end of that section. image is media#1, media#2 … for a picture the user attached to THIS message (the message says which ids exist), the handle or filename a generate_image call handed back, or an http(s) URL of a picture. Use it when the user sends a screenshot and says where it goes, and after generating a picture for a section: make it first, then place it with this. Never describe a picture in words where the picture should be.",
+			Description: "Put a picture into a section of the open guide, as its own paragraph at the end of that section. image is media#1, media#2 ... for a picture the user attached to THIS message (the message says which ids exist), the handle or filename a generate_image call handed back, or an http(s) URL of a picture. Use it when the user sends a screenshot and says where it goes, and after generating a picture for a section: make it first, then place it with this. Never describe a picture in words where the picture should be.",
 			Parameters: map[string]ToolParam{
 				"section_title": {Type: "string", Description: "Title of the section the picture goes in (must match an existing section)."},
 				"image":         {Type: "string", Description: "media#N for a picture attached to this message, image#N or the filename a generate tool returned, or an http(s) URL."},
@@ -841,7 +841,7 @@ func gatherLinkedSourceSnapshot(ctx context.Context, ownerUser string, g Guide) 
 			continue
 		}
 		if len(txt) > maxRefChars {
-			txt = txt[:maxRefChars] + "\n…(truncated)"
+			txt = txt[:maxRefChars] + "\n...(truncated)"
 		}
 		fmt.Fprintf(&b, "#### Reference source [%s:%s]\n\n%s\n\n", ref.Kind, ref.ItemID, txt)
 	}

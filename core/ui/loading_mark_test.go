@@ -1,7 +1,7 @@
 package ui
 
 // Anything that fetches before it can show puts up uiLoading, not a bare
-// "Loading…": a static word cannot be told apart from a hung one. The mark
+// "Loading...": a static word cannot be told apart from a hung one. The mark
 // spins, shows its seconds once past three, and its one shared ticker stops
 // when the last mark is gone.
 
@@ -62,7 +62,7 @@ console.log('OK');
 		t.Fatalf("uiLoading does not hold:\n%s", out)
 	}
 	// And the runtime does not go back to the static word.
-	if strings.Contains(runtimeJS, "'Loading…'") {
-		t.Error("a bare 'Loading…' is back in the runtime; use uiLoading()")
+	if strings.Contains(runtimeJS, "'Loading...'") {
+		t.Error("a bare 'Loading...' is back in the runtime; use uiLoading()")
 	}
 }

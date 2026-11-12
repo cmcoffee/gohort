@@ -42,7 +42,7 @@ func (T *OrchestrateApp) toolConfirmGet(c *jsonapi.Call) (any, error) {
 	return map[string]any{"tools": tools}, nil
 }
 
-// toolConfirmSet flips one: {"name":…,"on":…}.
+// toolConfirmSet flips one: {"name":...,"on":...}.
 func (T *OrchestrateApp) toolConfirmSet(c *jsonapi.Call, body struct {
 	Name string `json:"name"`
 	On   bool   `json:"on"`

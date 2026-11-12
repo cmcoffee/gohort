@@ -16,7 +16,7 @@
 // several folders. That was worth less than it looked. A command is registered
 // per folder already, so a second folder was never free — it cost a
 // registration, and the attachment only saved the mapping conversation. If that
-// turns out to bite, the answer is a "copy the mapping from…" action on the
+// turns out to bite, the answer is a "copy the mapping from..." action on the
 // command row: still one record, still one place to look.
 //
 // The approval survives the collapse, because it is not the same act as

@@ -179,7 +179,7 @@ func KeepOutput(text string) string {
 type OutputPage struct {
 	ID      string // output_id of a kept capture; ignored when Text is set
 	Text    string // the text itself, when the caller has it (a reassembled document)
-	Ref     string // how the trailer names the source to the agent, e.g. `doc_id="…"`; defaults to output_id=ID
+	Ref     string // how the trailer names the source to the agent, e.g. `doc_id="..."`; defaults to output_id=ID
 	Offset  int    // character offset to read from (into the text, or into the match list when Grep is set)
 	Max     int    // window size; <= 0 means everything
 	Tool    string // the tool name the trailer tells the agent to call

@@ -35,7 +35,7 @@ func exportMenu() []ui.WorkbenchAction {
 	return append(menu, ui.WorkbenchAction{Label: "Bundle (lossless)", Kind: "client", URL: "scribe_export_bundle"})
 }
 
-// handleExport serves a guide in a format. GET ?id=&format=…
+// handleExport serves a guide in a format. GET ?id=&format=...
 //   - pdf:  attachment download (rendered by renderGuidePDF).
 //   - html: inline (a preview that opens in the browser), a self-contained doc.
 //   - md:   attachment download of the assembled markdown.
@@ -148,7 +148,7 @@ func renderGuideStandaloneHTML(g Guide, brand, siteName string) string {
 		`<body><div class="guide-doc">` + head + extractDocInner(renderGuideHTML(g, false)) + foot + `</div></body></html>`
 }
 
-// extractDocInner strips the outer <article class="guide-doc">…</article> wrapper
+// extractDocInner strips the outer <article class="guide-doc">...</article> wrapper
 // from renderGuideHTML so the standalone export can wrap the content in its own
 // .guide-doc div (with brand header + footer) without nesting two.
 func extractDocInner(html string) string {

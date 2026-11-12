@@ -631,7 +631,7 @@ func (lt *toolList) answerOne() (any, bool, error) {
 	// Single-record fetch (?name=) — powers the "View" RecordView and the
 	// "Set category" form prefill. Returns the raw TempTool, whose json tags
 	// already expose every field (category, command_template, script_body,
-	// actions, …). Scoped to this user's own tools, and it must read the SAME
+	// actions, ...). Scoped to this user's own tools, and it must read the SAME
 	// three sources the row listing below builds from — pool, agent-scoped,
 	// then session drafts — or View 404s on a row the table just rendered.
 	// Agent-scoped was the miss: once an authored tool started committing to
@@ -1888,11 +1888,11 @@ func skillConditionsField() ui.FormField {
 				{Value: "lookup", Label: "Looking it up"}, {Value: "mentions", Label: "The message mentioning"},
 			}},
 			{Field: "question", Label: "Question", OwnLine: true, HideWhen: "kind:else||check:mentions",
-				Placeholder: "a yes-or-no question about the request, which this case turns on…"},
+				Placeholder: "a yes-or-no question about the request, which this case turns on..."},
 			{Field: "mentions", Label: "Words", OwnLine: true, HideWhen: "kind:else||check:!mentions",
 				Placeholder: "refund, chargeback, *.pdf"},
 			{Field: "how", Label: "How to check", OwnLine: true, HideWhen: "kind:else||check:mentions",
-				Placeholder: "how the agent finds the answer: which tool it uses, and what it reads there…"},
+				Placeholder: "how the agent finds the answer: which tool it uses, and what it reads there..."},
 			{Field: "instructions", Label: "Instructions for this case", Type: "sections", OwnLine: true, HideWhen: "kind:if",
 				Placeholder: "Empty: use Edit to write what the agent does in this case."},
 		},
@@ -2013,7 +2013,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 		// bigger fixed cap: the tables are the content here, and a laptop and a
 		// wide monitor should both use what they have.
 		MaxWidth:   "100%",
-		SectionNav: true, // left-rail sub-nav: one section (credentials/tools/…) at a time
+		SectionNav: true, // left-rail sub-nav: one section (credentials/tools/...) at a time
 		Sections:   sections,
 		// App-specific behavior stays in the app: core/ui supplies the generic
 		// pill renderer (uiRenderScopePills), this supplies the endpoint it
@@ -2181,7 +2181,7 @@ func (T *Extensions) toolsSection(user string) ui.Section {
 					Source:            "api/tools",
 					RowKey:            "key",
 					Search:            true,
-					SearchPlaceholder: "Filter tools by name, agent, category…",
+					SearchPlaceholder: "Filter tools by name, agent, category...",
 					// Rows arrive pre-ordered and grouped by CATEGORY (see the
 					// regroup pass in the GET handler), with the lifecycle buckets —
 					// legacy session drafts, then orphans — sorted last. "What is
@@ -3531,7 +3531,7 @@ func sharedWithSummary(users []string) string {
 // preview a bundle, then land it in their account (extensions_import).
 func importToolbar(title string) ui.Component {
 	return ui.Toolbar{Actions: []ui.ToolbarAction{{
-		Label: "Import…", Title: title, Method: "client", URL: "extensions_import",
+		Label: "Import...", Title: title, Method: "client", URL: "extensions_import",
 	}}}
 }
 

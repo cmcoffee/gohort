@@ -66,7 +66,7 @@ func pipelinesExtensionSection(r *http.Request, user string) (ui.Section, bool) 
 					Variant: "primary",
 				}}},
 				ui.Toolbar{Actions: []ui.ToolbarAction{{
-					Label:  "Describe one…",
+					Label:  "Describe one...",
 					Title:  "Draft a pipeline from a description of what it should do",
 					URL:    orchPath("pipeline?describe=1"),
 					Method: "GET",
@@ -75,7 +75,7 @@ func pipelinesExtensionSection(r *http.Request, user string) (ui.Section, bool) 
 				// field reads the file as TEXT in the browser and submits
 				// its contents, so this is a form rather than an upload.
 				ui.ModalButton{
-					Label:    "Import…",
+					Label:    "Import...",
 					Title:    "Bring in a pipeline somebody exported",
 					Subtitle: "Pick a .pipeline.json recipe. It lands as a pipeline of your own, with its own id.",
 					Width:    "480px",
@@ -410,7 +410,7 @@ func (T *OrchestrateApp) servePipelineDescribePage(w http.ResponseWriter, r *htt
 				Fields: []ui.FormField{{
 					Field: "description", Type: "textarea", Rows: 8,
 					Label:       "In plain words",
-					Placeholder: "what the pipeline does, from what it is given to what it hands back, in plain words…",
+					Placeholder: "what the pipeline does, from what it is given to what it hands back, in plain words...",
 					Help:        "It runs a model, so it takes a moment.",
 					Detail:      "If it cannot produce something that runs, it says so here rather than failing quietly.",
 				}},
@@ -462,7 +462,7 @@ func pipelineAssist(def PipelineDef) definitionAssist {
 		Noun:        "pipeline",
 		Base:        orchPath("api/pipelines/") + url_(def.ID),
 		Intro:       "Ask about this pipeline, or for a change to any part of it: a stage, the order, the instructions. A change is drafted and shown before anything is saved, and one that would not run is not saved.",
-		Placeholder: "what you want changed, or a question about how it works…",
+		Placeholder: "what you want changed, or a question about how it works...",
 		Starters:    []string{"Look it over: what would you change?", "Walk me through what it does."},
 	}
 }
@@ -983,7 +983,7 @@ func planHTML(def PipelineDef) string {
 		if len(s.Reads) == 0 && s.Kind != StageTool && s.Kind != StageBranch {
 			// The finding, stated where the shape is being read rather than
 			// filed away in a checklist somebody opens separately.
-			b.WriteString(`<span style="color:var(--danger)">reads nothing, its prompt places no {input}, {prev} or {stage:…}, so it sees only its own text</span>`)
+			b.WriteString(`<span style="color:var(--danger)">reads nothing, its prompt places no {input}, {prev} or {stage:...}, so it sees only its own text</span>`)
 		} else if len(s.Reads) > 0 {
 			b.WriteString(`reads ` + HTMLEscape(strings.Join(s.Reads, ", ")))
 		}

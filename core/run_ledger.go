@@ -178,7 +178,7 @@ func runSubject(kind, id string) string {
 }
 
 // AboutAgent / AboutStanding / AboutMonitor / AboutTrigger stamp what a run was
-// about. Chain them onto the literal: RecordRun(db, RunRecord{…}.AboutAgent(id)).
+// about. Chain them onto the literal: RecordRun(db, RunRecord{...}.AboutAgent(id)).
 func (r RunRecord) AboutAgent(agentID string) RunRecord {
 	r.Subject = runSubject("agent", agentID)
 	return r

@@ -525,7 +525,7 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 		// declared param — the same gate the standalone api create has had all
 		// along, previously MISSING here. Without it, dropping a param while a
 		// template still references it passed authoring and died at DISPATCH
-		// ("body template substitution produced invalid JSON: … {comment_id} …"
+		// ("body template substitution produced invalid JSON: ... {comment_id} ..."
 		// — the Moltbook reply_to_comment regression); worse, a raw
 		// content_type body would send the unresolved placeholder to the API
 		// verbatim. Validated AFTER scaffolding so the auto-built body is

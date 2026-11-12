@@ -19,7 +19,7 @@ root PUT /api/app-summary?path=/nope "{}"
 alice GET /api/tool-templates ""
   403 forbidden
 root GET /api/tool-templates ""
-  200 [{"name":"github_issue","label":"GitHub: create issue","category":"Tools","description":"Open an issue on a GitHub repo. Needs a SecureAPI credential holding a GitHub token."},{"name":"openapi_tool","… (605 bytes, sha1 d68e30672557f075353278906cd877938cbda5cc)
+  200 [{"name":"github_issue","label":"GitHub: create issue","category":"Tools","description":"Open an issue on a GitHub repo. Needs a SecureAPI credential holding a GitHub token."},{"name":"openapi_tool","... (605 bytes, sha1 d68e30672557f075353278906cd877938cbda5cc)
 root PUT /api/tool-templates "{}"
   405 method not allowed
 (signed out) GET /api/extensions ""
@@ -27,7 +27,7 @@ root PUT /api/tool-templates "{}"
 alice GET /api/extensions ""
   403 forbidden
 root GET /api/extensions ""
-  200 [{"name":"a1111","label":"Automatic1111","target":"connector","category":"Image generation","description":"A local or self-hosted Automatic1111 (stable-diffusion-webui) server: text to image (txt2img)… (1416 bytes, sha1 b4bf4a7660878036198e4a6a3e9a17f5276fc33c)
+  200 [{"name":"a1111","label":"Automatic1111","target":"connector","category":"Image generation","description":"A local or self-hosted Automatic1111 (stable-diffusion-webui) server: text to image (txt2img)... (1416 bytes, sha1 b4bf4a7660878036198e4a6a3e9a17f5276fc33c)
 root PUT /api/extensions "{}"
   405 method not allowed
 (signed out) GET /api/tool-template?name=nope ""
@@ -205,7 +205,7 @@ alice POST /api/personal-integrations "{}"
 (signed out) GET /api/db/tables ""
   200 null
 (signed out) GET /api/tool-templates ""
-  200 [{"name":"github_issue","label":"GitHub: create issue","category":"Tools","description":"Open an issue on a GitHub repo. Needs a SecureAPI credential holding a GitHub token."},{"name":"openapi_tool","… (605 bytes, sha1 d68e30672557f075353278906cd877938cbda5cc)
+  200 [{"name":"github_issue","label":"GitHub: create issue","category":"Tools","description":"Open an issue on a GitHub repo. Needs a SecureAPI credential holding a GitHub token."},{"name":"openapi_tool","... (605 bytes, sha1 d68e30672557f075353278906cd877938cbda5cc)
 (signed out) GET /api/user-candidates ""
   200 []
 (signed out) GET /api/personal-integrations ""

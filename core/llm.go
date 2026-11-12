@@ -246,7 +246,7 @@ type Tool struct {
 
 	// Prompt is an optional system-prompt fragment that gets appended
 	// when this tool is loaded into an agent. Most tools (web_search,
-	// fetch_url, calculate, …) don't need one — name + description in
+	// fetch_url, calculate, ...) don't need one — name + description in
 	// the catalog is enough. Use this for tools with non-obvious call
 	// cadence, multi-step pipelines exposed as a single tool, or
 	// admin/LLM-authored temp-tools that need usage rules baked in.
@@ -843,7 +843,7 @@ type ChatConfig struct {
 	TierResolved bool
 	Caller       string // Identifier of the app/pipeline making the call; used by the Ollama fair-queueing scheduler. Empty → "unknown".
 	MaskDebug    bool   // Suppress request/response content from debug logs (use for sessions with sensitive data).
-	// SuppressAutoDate skips the "Today's date is …" system-prompt prepend
+	// SuppressAutoDate skips the "Today's date is ..." system-prompt prepend
 	// (see applyOpts). Set by callers that stamp the date onto the latest
 	// user turn instead — the cache-safe placement, since a system-prompt
 	// date sits before the conversation and re-prefills it on every rollover.
@@ -1562,7 +1562,7 @@ func TierKeyHeld(db Database, table string) (hint string, addrs []string) {
 	}
 	hint, v := "set", []rune(key)
 	if len(v) >= 16 {
-		hint = "ends in …" + string(v[len(v)-4:])
+		hint = "ends in ..." + string(v[len(v)-4:])
 	}
 	if !given.Set.IsZero() {
 		hint += ", given " + given.Set.Format("2 Jan 2006")
@@ -1652,7 +1652,7 @@ func (cfg LLMProviderConfig) KeptKey(db Database, table string) string {
 	}
 	hint, v := "set", []rune(key)
 	if len(v) >= 16 {
-		hint = "ends in …" + string(v[len(v)-4:])
+		hint = "ends in ..." + string(v[len(v)-4:])
 	}
 	switch {
 	case len(given.Addresses) == 0:
@@ -1770,8 +1770,8 @@ var ErrContextExceeded = errors.New("llm: context window exceeded")
 // IsContextExceededError reports whether err is (or wraps) a context-
 // window-exceeded signal from the LLM provider. Recognizes the major
 // provider patterns so callers don't have to do provider-specific
-// string matching. Wrap with fmt.Errorf("%w: …", ErrContextExceeded,
-// …) on the provider side; downstream code checks via errors.Is.
+// string matching. Wrap with fmt.Errorf("%w: ...", ErrContextExceeded,
+// ...) on the provider side; downstream code checks via errors.Is.
 //
 // Pattern coverage:
 //   - OpenAI / OpenAI-compatible: "context_length_exceeded" code OR
@@ -2069,7 +2069,7 @@ func (r *retryLLM) chatStream(ctx context.Context, messages []Message, handler S
 // wrapper. Without it, T.LLM (a *retryLLM) fails the T.LLM.(ContextSizer)
 // type assertion in WorkerContextSize()/LeadContextSize(), which then
 // return 0 — silently disabling every context-size-dependent feature
-// (history compaction, debate context math, …). Returns 0 only when the
+// (history compaction, debate context math, ...). Returns 0 only when the
 // inner LLM genuinely exposes no window.
 func (r *retryLLM) ContextSize() int {
 	if cs, ok := r.inner.(ContextSizer); ok {

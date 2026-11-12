@@ -210,7 +210,7 @@
       class: 'ui-doc-rules-ta',
       placeholder: 'One rule per line. Examples:\n  Never post API keys, passwords, or other secrets.\n  Match the existing tone, terse, factual.',
     });
-    ta.value = '(loading…)';
+    ta.value = '(loading...)';
     ta.disabled = true;
     var status = el('span', {class: 'ui-doc-rules-status'});
 
@@ -223,7 +223,7 @@
         {label: 'Close'},
         {label: 'Save rules', primary: true, onClick: function(api, btn) {
           btn.disabled = true;
-          status.textContent = 'saving…';
+          status.textContent = 'saving...';
           fetchJSON(opts.url, {
             method: 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({rules: ta.value}),

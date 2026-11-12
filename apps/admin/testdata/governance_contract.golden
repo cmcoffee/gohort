@@ -3,7 +3,7 @@
 alice GET /api/promotions ""
   403 forbidden
 root GET /api/promotions ""
-  200 [{"id":"<request-nah>","owner":"bob","kind":"tool","name":"ct_nah","note":"please publish","created":"<time>","state":"pending","review":"A new tool for the catalog. Its whole definition:\n\ncommand /… (619 bytes, sha1 d85ecaea30e0f12f6da3f60b1795069322791194)
+  200 [{"id":"<request-nah>","owner":"bob","kind":"tool","name":"ct_nah","note":"please publish","created":"<time>","state":"pending","review":"A new tool for the catalog. Its whole definition:\n\ncommand /... (619 bytes, sha1 d85ecaea30e0f12f6da3f60b1795069322791194)
 root PUT /api/promotions "{}"
   405 method not allowed
 (signed out) GET /api/global-tools ""

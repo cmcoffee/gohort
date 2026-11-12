@@ -145,7 +145,7 @@ func (t *mediaTool) Params() map[string]ToolParam {
 	}
 	if t.files() > 0 {
 		p["files"] = ToolParam{Type: "array", Items: &ToolParam{Type: "string"},
-			Description: "What to work from, in order: a picture from this conversation (image#r.…), one someone sent (media#N), or a file in your workspace by its name there."}
+			Description: "What to work from, in order: a picture from this conversation (image#r....), one someone sent (media#N), or a file in your workspace by its name there."}
 	}
 	return p
 }
@@ -186,7 +186,7 @@ func (t *mediaTool) files() int {
 }
 
 // sourceFile is the file ref names, as a File the call can send: a picture
-// from this conversation or one someone sent (image#…, media#N), read as an
+// from this conversation or one someone sent (image#..., media#N), read as an
 // image edit reads its sources into a file of its own (temp: the caller
 // removes it), or any file in the workspace by its name.
 func sourceFile(sess *ToolSession, ref string) (f *File, temp bool, err error) {
@@ -212,7 +212,7 @@ func sourceFile(sess *ToolSession, ref string) (f *File, temp bool, err error) {
 	}
 	info, err := os.Stat(abs)
 	if err != nil || !info.Mode().IsRegular() {
-		return nil, false, fmt.Errorf("no file %q in your workspace, and it is not a picture's id (image#r.…, media#N)", ref)
+		return nil, false, fmt.Errorf("no file %q in your workspace, and it is not a picture's id (image#r...., media#N)", ref)
 	}
 	head := make([]byte, 512)
 	if fh, err := os.Open(abs); err == nil {

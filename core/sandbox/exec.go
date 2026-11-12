@@ -960,7 +960,7 @@ func sandboxEnv(remaps bool) []string {
 	// simply skips". It is not harmless. Skipping it means that on any host
 	// without a remapping sandbox the documented shell interface is silently
 	// absent, and
-	// `fetch_url https://…` fails as command-not-found on a system whose hook
+	// `fetch_url https://...` fails as command-not-found on a system whose hook
 	// is present, granted, and answering.
 	if binDir := sandboxShimBinDir(remaps); binDir != "" {
 		for i, kv := range env {

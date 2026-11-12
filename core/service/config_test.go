@@ -405,7 +405,7 @@ func TestAKeptKeyShowsOnlyItsEnd(t *testing.T) {
 	SetConnectionSecret(RootDB, c, "api_key", "sk-live-0123456789abWXYZ", []string{"https://find.example"})
 	SetConnectionSecret(RootDB, c, "password", "a-long-password-of-many-letters", []string{"https://find.example"})
 	got := KeptSecrets(RootDB, c)
-	if !strings.HasPrefix(got["api_key"], "ends in …WXYZ, given ") {
+	if !strings.HasPrefix(got["api_key"], "ends in ...WXYZ, given ") {
 		t.Errorf("a long key: %q", got["api_key"])
 	}
 	if strings.Contains(got["api_key"], "0123") {

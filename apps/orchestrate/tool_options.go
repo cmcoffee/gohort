@@ -189,7 +189,7 @@ func availableWorkerToolOptions(user string) []ui.SelectOption {
 	// toolbox organization without losing per-tool toggle granularity.
 	// A tool in agent_management_toolbox shows up under the "Agent
 	// Management" header; tools in no group fall back to their
-	// capability label ("Network", "Read", …).
+	// capability label ("Network", "Read", ...).
 	memberToGroup := map[string]string{}
 	for _, g := range LoadToolGroups(authDB) {
 		for _, m := range g.Members {

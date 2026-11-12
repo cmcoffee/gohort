@@ -66,7 +66,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 					mediaBackendsTable(),
 					ui.Toolbar{
 						Actions: []ui.ToolbarAction{
-							{Label: "Add AI generator…", Method: "client", URL: "connector_add_another", Data: "media", Variant: "primary"},
+							{Label: "Add AI generator...", Method: "client", URL: "connector_add_another", Data: "media", Variant: "primary"},
 						},
 					},
 					ui.FormPanel{Source: imageCheckingSource, Fields: imageCheckingFields()},
@@ -110,7 +110,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 }
 
 // mailFormFields are the mail settings: what sends (SMTP, or a connector that
-// sends mail through an API, or + Add another… for one from a template),
+// sends mail through an API, or + Add another... for one from a template),
 // then SMTP's server and sign-in, shown while SMTP sends, and the From
 // address and Default Recipient, which both use.
 func mailFormFields() []ui.FormField {
@@ -118,7 +118,7 @@ func mailFormFields() []ui.FormField {
 	smtp := "provider:smtp"
 	fields := []ui.FormField{staleField,
 		{Field: "provider", Label: "Send with", Type: "select", Options: append(choices, addAnother("mail.send")),
-			Help: "This instance's SMTP server, or a connector that sends mail through an API, set up below it. + Add another… adds one from a template (Resend, Postmark, Mailgun)."}}
+			Help: "This instance's SMTP server, or a connector that sends mail through an API, set up below it. + Add another... adds one from a template (Resend, Postmark, Mailgun)."}}
 	fields = append(fields, connectorSettingsFields("mail.send", "", "provider")...)
 	return append(fields,
 		ui.FormField{Field: "server", Label: "SMTP Server", Type: "text",
@@ -166,7 +166,7 @@ func mediaBackendsTable() ui.Table {
 			{Type: "select", Label: "Used for", Field: "job", Options: oneJobOptions, OnlyIf: "one_job", DisableIf: "one_job", Line: 2},
 			{Type: "button", Label: "Make default", PostTo: mediaBackendsSource + "/default?name={name}", Method: "POST", OnlyIf: "can_make_default", Compact: true, Line: 2},
 		}, connectorEditRowActions()...), connectorSettingsAction(), connectorTestAction()),
-		EmptyText: "Nothing makes media yet. Add AI generator… below adds Gemini, OpenAI, a local ComfyUI or A1111, and more.",
+		EmptyText: "Nothing makes media yet. Add AI generator... below adds Gemini, OpenAI, a local ComfyUI or A1111, and more.",
 	}
 }
 
@@ -186,7 +186,7 @@ func embeddingFormFields() []ui.FormField {
 	fields := []ui.FormField{staleField,
 		{Field: "provider", Label: "Embed with", Type: "select",
 			Options: append(append([]ui.SelectOption{disabledOption}, choices...), addAnother("embed.text")),
-			Help:    "The connector or peer that makes embeddings; + Add another… adds one from a template. A connector's settings (its address, its model, a key) are set here below it.",
+			Help:    "The connector or peer that makes embeddings; + Add another... adds one from a template. A connector's settings (its address, its model, a key) are set here below it.",
 			Detail:  "A peer that lends embeddings is connected under Admin > Integrations > Peers. Changing what embeds, or its model, changes the embedding space: saving starts re-embedding the stored documents (progress and Stop under Maintenance, Vector index), and through a paid service that is billed."}}
 	fields = append(fields, connectorSettingsFields("embed.text", "", "provider")...)
 	return append(fields,
@@ -223,7 +223,7 @@ func transcribeFormFields() []ui.FormField {
 	fields := []ui.FormField{staleField,
 		{Field: "provider", Label: "Transcribe with", Type: "select",
 			Options: append(append([]ui.SelectOption{disabledOption}, choices...), addAnother("speech.transcribe")),
-			Help:    "The connector or peer that transcribes; + Add another… adds one from a template. A connector's settings (its address, its model, a key) are set here below it.",
+			Help:    "The connector or peer that transcribes; + Add another... adds one from a template. A connector's settings (its address, its model, a key) are set here below it.",
 			Detail:  "A peer that lends transcription is connected under Admin > Integrations > Peers."}}
 	return append(fields, connectorSettingsFields("speech.transcribe", "", "provider")...)
 }
@@ -237,7 +237,7 @@ func speechFormFields() []ui.FormField {
 	fields := []ui.FormField{staleField,
 		{Field: "provider", Label: "Speak with", Type: "select",
 			Options: append(append([]ui.SelectOption{disabledOption}, choices...), addAnother("speech.synthesize")),
-			Help:    "The connector or peer that speaks; + Add another… adds one from a template. A connector's settings (its address, its model, a key) are set here below it.",
+			Help:    "The connector or peer that speaks; + Add another... adds one from a template. A connector's settings (its address, its model, a key) are set here below it.",
 			Detail:  "A peer that lends speech is connected under Admin > Integrations > Peers."}}
 	fields = append(fields, connectorSettingsFields("speech.synthesize", "", "provider")...)
 	return append(fields,
@@ -276,7 +276,7 @@ func webSearchFormFields() []ui.FormField {
 		})
 	}
 	// The engines, and the research sources apart: a research source is
-	// chosen by "Use a research source…" and the list under it, never
+	// chosen by "Use a research source..." and the list under it, never
 	// offered as if it were an engine.
 	research := researchNamed()
 	var engines, sources []ui.SelectOption
@@ -289,14 +289,14 @@ func webSearchFormFields() []ui.FormField {
 	}
 	opts := append([]ui.SelectOption{disabledOption, {Value: "duckduckgo", Label: "DuckDuckGo (built in, no key)"}}, engines...)
 	if len(sources) > 0 {
-		opts = append(opts, ui.SelectOption{Value: useResearchSource, Label: "Use a research source…"})
+		opts = append(opts, ui.SelectOption{Value: useResearchSource, Label: "Use a research source..."})
 	}
 	fields = append(fields,
 		ui.FormField{Field: "provider", Label: "Search with", Type: "select",
 			ShowWhen: local,
 			Options:  append(opts, addAnother("web.search")),
-			Help:     "The engine every search goes to; + Add another… adds one from a template (Brave, Serper, Tavily, Google, SearXNG). A connector's settings (its key, an address) are set here below it.",
-			Detail:   "Disabled withdraws web_search (and find_image) from every agent, and anything else that searches is told it is off. Serper's engine also finds pictures, for agents' find_image. Use a research source… searches with one of the sources set up under Research Sources instead; the source picked here is not also asked as a research source, since it already answers web_search."},
+			Help:     "The engine every search goes to; + Add another... adds one from a template (Brave, Serper, Tavily, Google, SearXNG). A connector's settings (its key, an address) are set here below it.",
+			Detail:   "Disabled withdraws web_search (and find_image) from every agent, and anything else that searches is told it is off. Serper's engine also finds pictures, for agents' find_image. Use a research source... searches with one of the sources set up under Research Sources instead; the source picked here is not also asked as a research source, since it already answers web_search."},
 	)
 	if len(sources) > 0 {
 		when := "provider:" + useResearchSource
@@ -316,7 +316,7 @@ func webSearchFormFields() []ui.FormField {
 // showing an empty form when no peer offers rendering.
 func browseFormFields() []ui.FormField {
 	opts := append(append(BrowseProviderOptions(), serviceProviderOptions("page.render", "Render")...), addAnother("page.render"))
-	help := "Render locally, on a peer, or through a connector; + Add another… adds a connector from a template (Firecrawl, Jina Reader). Borrowing means this machine never downloads or runs Chromium. Public web only, whichever renders."
+	help := "Render locally, on a peer, or through a connector; + Add another... adds a connector from a template (Firecrawl, Jina Reader). Borrowing means this machine never downloads or runs Chromium. Public web only, whichever renders."
 	return append([]ui.FormField{
 		staleField,
 		{Field: "source", Label: "Render pages on", Type: "select", Options: opts, Help: help,

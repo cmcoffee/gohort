@@ -19,7 +19,7 @@ import (
 // set: a model is offered once it answers the test question right, and only
 // while it is private; a connection that gives decisions is offered while
 // its address is private; with every model declared private the rest are
-// offered too, after, and marked; + Add another… ends the list. A finding is
+// offered too, after, and marked; + Add another... ends the list. A finding is
 // kept against what it was made on, asked again once that changes or a
 // failure has stood a while, and a choice that is not set up or not private
 // is refused.
@@ -73,7 +73,7 @@ func TestSystemOneIsChosenUnderServices(t *testing.T) {
 	if systemOneProvider() != "" {
 		t.Error("a refused choice was stored")
 	}
-	if got := strings.Join(values(), " | "); got != "=Off | decide.choice=+ Add another…" {
+	if got := strings.Join(values(), " | "); got != "=Off | decide.choice=+ Add another..." {
 		t.Errorf("with no model that answers and no connection: %s", got)
 	}
 	if worker.Calls() == 0 || lead.Calls() != 0 {
@@ -107,7 +107,7 @@ func TestSystemOneIsChosenUnderServices(t *testing.T) {
 	conn("far-system-one", "http://203.0.113.5/v1")
 	got := strings.Join(values(), " | ")
 	if !strings.HasPrefix(got, "=Off | judge=Use the Offload model | home-system-one=") || strings.Contains(got, "far-system-one") ||
-		strings.Contains(got, "worker=") || strings.Contains(got, "lead=") || !strings.HasSuffix(got, "decide.choice=+ Add another…") {
+		strings.Contains(got, "worker=") || strings.Contains(got, "lead=") || !strings.HasSuffix(got, "decide.choice=+ Add another...") {
 		t.Errorf("the private choices: %s", got)
 	}
 	SetAllLLMsPrivate(true)

@@ -49,7 +49,7 @@ and acting on the first as though it were the second draws a conclusion from a t
 **Configure → Sources** in the chat toolbar. Stores appear grouped under their source label, each row
 carrying the tools it adds. Attaching commits immediately.
 
-The reverse view (which of your agents a given store is linked to), is behind **Linked agents…** in
+The reverse view (which of your agents a given store is linked to), is behind **Linked agents...** in
 the same modal. It is the same pill control tools and credentials use, on the same endpoint
 (`api/tool-scope?kind=source`), because "where did this reach" is the question you ask about a folder
 of somebody's logs, and answering it by opening four agents in turn is how you come to believe an
@@ -178,8 +178,8 @@ second field, a second endpoint and a second UI.
 
 ```
 POST /filestore/api/commands/run?slug=<store>&within=<folder>&command=<name>
-     {}              → one phase: {"output": …} - two phases: {"challenge": …, "input_label": …}
-     {"input":"…"}   → two phases, second call: {"output": …}
+     {}              → one phase: {"output": ...} - two phases: {"challenge": ..., "input_label": ...}
+     {"input":"..."}   → two phases, second call: {"output": ...}
 ```
 
 Two phases exist for the case that prompted this: the answer to the challenge is looked up
@@ -402,7 +402,7 @@ with a first message already in it:
 ```
 POST /orchestrate/api/sessions/start
      {"agent":"Investigator", "message":"What failed in scan-2026-08-14?", "title":"scan-2026-08-14"}
-  → {"session":"s…", "agent":"ag-1", "url":"/orchestrate/?agent=ag-1&session=s…"}
+  → {"session":"s...", "agent":"ag-1", "url":"/orchestrate/?agent=ag-1&session=s..."}
 ```
 
 A new session every time, deliberately: two bundles in one thread is the cross-contamination the

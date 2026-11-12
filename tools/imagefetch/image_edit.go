@@ -319,7 +319,7 @@ func checkSources(sess *ToolSession, refs []string) []sourceImage {
 
 // sourceData is the picture ref names, read exactly as the edit reads its
 // sources (core.ResolveSourceImage): a picture from this conversation
-// (image#…), one someone sent (media#N), or a workspace path.
+// (image#...), one someone sent (media#N), or a workspace path.
 func sourceData(sess *ToolSession, ref string) ([]byte, bool) {
 	if data, ok := ResolveRecentImage(sess, ref); ok && len(data) > 0 {
 		return data, true

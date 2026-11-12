@@ -190,7 +190,7 @@ func (a *AdminApp) toolsSections() []ui.Section {
 				// Add a tool from a template + export all as one bundle.
 				ui.Toolbar{
 					Actions: []ui.ToolbarAction{
-						{Label: "Add tool from template…", Method: "client", URL: "add_tool_from_template"},
+						{Label: "Add tool from template...", Method: "client", URL: "add_tool_from_template"},
 						{Label: "Export all tools", Method: "client", URL: "tools_export_all"},
 					},
 				},

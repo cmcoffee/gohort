@@ -118,7 +118,7 @@
           if (!f.upload_url) { showToast('No upload endpoint configured'); return; }
           var fd = new FormData();
           fd.append('file', file, file.name);
-          fileStatus.textContent = 'Extracting text from ' + file.name + '…';
+          fileStatus.textContent = 'Extracting text from ' + file.name + '...';
           fileStatus.classList.remove('is-error');
           fetch(f.upload_url, {method: 'POST', body: fd}).then(function(r) {
             if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); });
@@ -1065,7 +1065,7 @@
       wrap.addEventListener('click', function(){ wrap.classList.toggle('expanded'); });
       var head = el('div', {class: 'ui-pl-expandable-h'});
       // Title can be multi-line (an app payload may emit a
-      // "Question: …\nAnswer: …" summary). Split on newlines
+      // "Question: ...\nAnswer: ..." summary). Split on newlines
       // and render each as its own <div> so the lines stack
       // instead of collapsing whitespace into a single run.
       var nameWrap = el('span', {class: 'ui-pl-expandable-title'});

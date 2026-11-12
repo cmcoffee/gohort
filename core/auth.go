@@ -367,7 +367,7 @@ func consumeResetToken(db Database, token string) (string, bool) {
 // AuthUser represents a stored user account.
 type AuthUser struct {
 	Username         string   `json:"username"`
-	PassHash         string   `json:"pass_hash"` // bcrypt hash ($2…); legacy SHA-256 hex auto-upgrades on next login
+	PassHash         string   `json:"pass_hash"` // bcrypt hash ($2...); legacy SHA-256 hex auto-upgrades on next login
 	Admin            bool     `json:"admin"`
 	Pending          bool     `json:"pending,omitempty"`           // true if awaiting admin approval
 	Apps             []string `json:"apps,omitempty"`              // allowed app paths; empty = use defaults

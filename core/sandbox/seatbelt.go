@@ -246,7 +246,7 @@ func seatbeltProfile(spec seatbeltSpec) string {
 	b.WriteString("(allow sysctl-read)\n")
 	b.WriteString("(allow mach-lookup)\n")
 
-	// Two rules rather than one combined "(allow file-read* process-exec …)".
+	// Two rules rather than one combined "(allow file-read* process-exec ...)".
 	// Both forms are meant to be legal, but the profile language has no public
 	// specification and a rejected profile aborts with no useful message, so the
 	// plainest construct that expresses the intent is worth preferring on

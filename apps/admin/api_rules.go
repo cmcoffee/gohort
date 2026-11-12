@@ -255,7 +255,7 @@ func alwaysRulesForm() ui.FormPanel {
 					{Value: "", Label: "A condition, judged by the check"},
 					{Value: exceptOwnerRow, Label: "The agent's owner is asking (decided by gohort)"}}},
 				{Field: "condition", Label: "Except when", Type: "text",
-					Placeholder: "when this rule should not apply…"},
+					Placeholder: "when this rule should not apply..."},
 			},
 			Help: "When a rule does not apply: pick the rule, then either the owner exception or a condition. A rule can have several, and any one that holds excuses it.",
 			Detail: "The owner exception is settled by gohort itself, from the verified account asking, before the check runs: the rule is not checked at all when the agent's owner is the one asking, and no wording can claim it. " +

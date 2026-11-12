@@ -635,7 +635,7 @@ func TestLoopBodyProblemsFlattenIntoOneList(t *testing.T) {
 
 // when:"stage:critic.polished" is not a forward reference and not a typo — the
 // stage it names is directly above it. But the whole "stage:critic" read as the
-// NAME, nothing matched, and the answer was "has not run at that point … move
+// NAME, nothing matched, and the answer was "has not run at that point ... move
 // it earlier": false, and unfollowable. The author reordered stages that were
 // already in order, six times in one session.
 func TestBarePrefixIsNamedRatherThanReportedAsOrdering(t *testing.T) {

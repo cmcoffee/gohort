@@ -77,7 +77,7 @@ func TestTruncationNeverSplitsACharacter(t *testing.T) {
 	for _, n := range []int{1, 2, 3, 7, 64, 199, 1000} {
 		got := truncForLog(emoji, n)
 		if !utf8.ValidString(got) {
-			t.Errorf("truncForLog(…, %d) produced invalid UTF-8: %q", n, got)
+			t.Errorf("truncForLog(..., %d) produced invalid UTF-8: %q", n, got)
 		}
 	}
 	// Short input is returned untouched, ellipsis and all.

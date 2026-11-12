@@ -25,7 +25,7 @@ func findBridgeBinary() string {
 	case "darwin":
 		cands = append(cands, "/Applications/Gohort-Bridge.app/Contents/MacOS/gohort-bridge")
 		if exe, err := os.Executable(); err == nil {
-			appBundle := filepath.Dir(filepath.Dir(filepath.Dir(exe))) // …/Gohort.app
+			appBundle := filepath.Dir(filepath.Dir(filepath.Dir(exe))) // .../Gohort.app
 			sibling := filepath.Dir(appBundle)                         // folder holding the bundles
 			cands = append(cands, filepath.Join(sibling, "Gohort-Bridge.app", "Contents", "MacOS", "gohort-bridge"))
 		}

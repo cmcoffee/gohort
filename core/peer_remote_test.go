@@ -544,7 +544,7 @@ func TestUpdatingAPeerKeyRePairsInPlace(t *testing.T) {
 // code.
 //
 // Seen live: Update key logged "now requires credential exchange" and then
-// immediately "could not renew the credential … unrecognized or disabled peer
+// immediately "could not renew the credential ... unrecognized or disabled peer
 // key". Clearing the tokens before writing the new key meant every reader in
 // that window found no credential, kicked off a background renewal, read the
 // record, and spent the code the far side had just revoked. The operator's

@@ -243,7 +243,7 @@ func TestTheLinkActionsSendAKindQualifiedID(t *testing.T) {
 }
 
 // A recurring task can be moved to another surface, as a scheduled agent or a
-// monitor can, from the agent's own Scheduler. It lost its Where (then "Move to…") when the
+// monitor can, from the agent's own Scheduler. It lost its Where (then "Move to...") when the
 // three lists became one page, though the handler and its route stayed. The
 // fleet Scheduler keeps leaving Move out, on purpose: it sweeps every agent.
 func TestNoScheduleAsksWhereItReports(t *testing.T) {

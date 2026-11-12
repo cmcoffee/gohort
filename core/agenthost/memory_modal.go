@@ -23,7 +23,7 @@ import "strings"
 //	           builds each URL as base + "facts", base + "graph", etc.). A
 //	           fixed-URL surface passes a quoted literal — the public agent
 //	           app passes "'api/'" so it hits api/facts, api/graph,
-//	           api/inferred, api/agent, …. A surface whose target varies per
+//	           api/inferred, api/agent, .... A surface whose target varies per
 //	           open passes a call — servitor passes a helper that reads the
 //	           selected appliance and returns "/servitor/api/appliances/<id>/".
 //	           If the expression yields null/undefined the modal aborts
@@ -76,7 +76,7 @@ const agentMemoryModalTemplate = `<script>
       searchRow.style.cssText = 'display:flex;gap:0.4rem;align-items:center';
       var searchInput = document.createElement('input');
       searchInput.type = 'text';
-      searchInput.placeholder = 'Search this agent’s memory…';
+      searchInput.placeholder = 'Search this agent’s memory...';
       searchInput.style.cssText = 'flex:1;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:var(--btn-radius, 6px);padding:0.35rem 0.55rem;font:inherit';
       searchRow.appendChild(searchInput);
       var searchMode = 'grep';
@@ -172,7 +172,7 @@ const agentMemoryModalTemplate = `<script>
         if (!q || memSearchBusy) return;
         memSearchBusy = true;
         searchResults.style.display = '';
-        searchResults.innerHTML = '<div style="color:var(--text-mute);font-style:italic;font-size:var(--fs-sm, 0.82rem);padding:0.3rem 0">Searching…</div>';
+        searchResults.innerHTML = '<div style="color:var(--text-mute);font-style:italic;font-size:var(--fs-sm, 0.82rem);padding:0.3rem 0">Searching...</div>';
         fetch(MEMBASE + 'memsearch?q=' + encodeURIComponent(q) + '&mode=' + searchMode)
           .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
           .then(renderMemSearch)
@@ -294,7 +294,7 @@ const agentMemoryModalTemplate = `<script>
           undo.title = 'Put it back in the saved notes';
           undo.addEventListener('click', function() {
             undo.disabled = true;
-            undo.textContent = 'Undoing…';
+            undo.textContent = 'Undoing...';
             fetch(MEMBASE + 'memaudit', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({undo: mv.id})})
               .then(function(r) { if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); }); })
               .then(function() {
@@ -490,7 +490,7 @@ const agentMemoryModalTemplate = `<script>
         if (!sections || sections.length < 2) { notesSizes.textContent = ''; return; }
         notesSizes.textContent = 'Sections: ' + sections.slice(0, 4).map(function(x) {
           return x.name + ' (' + x.runes + ')';
-        }).join(', ') + (sections.length > 4 ? ', …' : '');
+        }).join(', ') + (sections.length > 4 ? ', ...' : '');
       }
       function refreshNotesSizes() {
         fetch(MEMBASE + 'notes').then(function(r){ return r.ok ? r.json() : null; }).then(function(d) {

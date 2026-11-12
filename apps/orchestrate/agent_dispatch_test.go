@@ -460,7 +460,7 @@ func TestDispatchCap_IdenticalMessageLoopBlocks(t *testing.T) {
 
 func TestDispatchCap_DistinctMessagesDoNotCollide(t *testing.T) {
 	counts := map[string]int{}
-	// Exercising many DIFFERENT tools on one agent (profile, post, feed…) is
+	// Exercising many DIFFERENT tools on one agent (profile, post, feed...) is
 	// real progress — none of these should trip the loop cap even though
 	// they all target the same agent, well past maxSameTargetDispatch calls.
 	for i := 0; i < maxSameTargetDispatch+3; i++ {

@@ -60,7 +60,7 @@ func RegisterDocumentTarget(t DocumentTarget) {
 }
 
 // DocumentTargetKinds returns registered target kinds (ID=kind, Title=label),
-// sorted by label — for a producer's "push to…" picker.
+// sorted by label — for a producer's "push to..." picker.
 func DocumentTargetKinds() []DocItem {
 	docTargetsMu.RLock()
 	defer docTargetsMu.RUnlock()

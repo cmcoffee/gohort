@@ -317,7 +317,7 @@ func findField(fields []ui.FormField, name string) (ui.FormField, bool) {
 	return ui.FormField{}, false
 }
 
-// With nothing that embeds, "Embed with" holds only "+ Add another…", which
+// With nothing that embeds, "Embed with" holds only "+ Add another...", which
 // opens the templates for embedding. The endpoint, model and key are the
 // connector's, never fields here.
 func TestEmbeddingFormOffersOnlyAddAnotherWithNothingToPick(t *testing.T) {
@@ -447,7 +447,7 @@ func TestThePeersTableCanTakeANewKey(t *testing.T) {
 }
 
 // Every capability reads as the same thing on both ends. The lending end used
-// to offer "Run commands (…)" while the borrowing end printed "exec", so an
+// to offer "Run commands (...)" while the borrowing end printed "exec", so an
 // operator auditing what they had just connected saw a slug and had to remember
 // which friendly sentence it was.
 func TestCapabilitiesReadTheSameOnBothEnds(t *testing.T) {

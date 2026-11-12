@@ -2,7 +2,7 @@
 //
 //   - NATIVE tools register at package init() via RegisterTool. They are
 //     compile-time, permanent, and never change for the life of the process
-//     (filesystem, contacts, …).
+//     (filesystem, contacts, ...).
 //
 //   - DYNAMIC tools register at runtime via ReplaceDynamicTools, grouped by a
 //     "source" key (an MCP server, a declared command). A source's tools can be

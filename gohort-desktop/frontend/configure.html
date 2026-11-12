@@ -134,7 +134,7 @@
     </p>
 
     <div id="error" class="error"></div>
-    <div id="status" class="status">Checking…</div>
+    <div id="status" class="status">Checking...</div>
 
     <div class="actions">
       <button id="save" class="primary" onclick="save_url()">Connect</button>
@@ -172,7 +172,7 @@ input.addEventListener('keydown', function(e) {
 function set_busy(on) {
   save_btn.disabled = on;
   if (on) {
-    status_box.textContent = 'Checking server…';
+    status_box.textContent = 'Checking server...';
     status_box.classList.add('show');
     error_box.classList.remove('show');
   } else {

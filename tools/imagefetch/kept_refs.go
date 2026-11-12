@@ -125,7 +125,7 @@ func describeKeptRefs(refs []keptRef) string {
 	var parts []string
 	for i, r := range refs {
 		if i >= maxSchemaKeptRefs {
-			parts = append(parts, fmt.Sprintf("…and %d more (call action=\"help\" for the full library)", len(refs)-maxSchemaKeptRefs))
+			parts = append(parts, fmt.Sprintf("...and %d more (call action=\"help\" for the full library)", len(refs)-maxSchemaKeptRefs))
 			break
 		}
 		if r.Label == "" {

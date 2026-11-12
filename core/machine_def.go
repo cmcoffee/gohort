@@ -531,7 +531,7 @@ func (d MachineDef) StartPhase() string {
 // rename is one edit rather than one edit plus a scavenger hunt.
 //
 // Without this, renaming triage left next, choices, keep, guard_to, the
-// routing targets and every {state:triage.…} reference pointing at a
+// routing targets and every {state:triage....} reference pointing at a
 // name that no longer exists — the checklist then reported three or four
 // problems the author caused by fixing a typo. The definition knows both
 // names; propagating them is its job, not the author's.
@@ -674,7 +674,7 @@ func renameInList(list []string, from, to string) {
 	}
 }
 
-// renameStateRefs rewrites {state:from.…} and {state:from} without
+// renameStateRefs rewrites {state:from....} and {state:from} without
 // touching a step whose name merely starts the same way — the closing
 // brace / dot is part of the match, so "triage" cannot catch
 // "triage_two".

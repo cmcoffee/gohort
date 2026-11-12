@@ -59,7 +59,7 @@ func (addToolTool) Desc() string {
 	base += "  - mode=\"shell\":    a sandboxed shell command template. Use for deterministic file/data ops (\"count lines\", \"extract emails\").\n" +
 		"  - mode=\"api\":      a single HTTP call against a registered credential. Use for \"look this up in our system\" patterns.\n"
 	if pipelineAuthoringDisabled {
-		base += "\nNOTE: pipeline-mode tool authoring is retired. add_tool now builds shell + api tools only. For a multi-step workflow (do X, then Y, then summarize), author a declarative pipeline with the `pipeline` tool (action=\"create\", stages=[…]) and attach it to the agent via attached_pipelines: it surfaces as a callable run_<pipeline> tool."
+		base += "\nNOTE: pipeline-mode tool authoring is retired. add_tool now builds shell + api tools only. For a multi-step workflow (do X, then Y, then summarize), author a declarative pipeline with the `pipeline` tool (action=\"create\", stages=[...]) and attach it to the agent via attached_pipelines: it surfaces as a callable run_<pipeline> tool."
 	}
 	base += "\nOUTPUT SHAPE IS PART OF THE TOOL, not an afterthought. If it returns a list of similar items (search hits, headlines, rows, files, messages), give every item a stable id, and emit a field an item lacks as an explicit null instead of dropping the key. Unanchored items get bound to the wrong neighbor and absent keys get filled in from whatever else is in context: both pass verification and fail in use. Full section: tool_def(action=\"help\")."
 	base += "\nRe-calling with the same name overwrites: that's how you iterate. The tool is installed as a session draft so you can dispatch it by name immediately to verify it works before declaring success. If no agent is in authoring focus, call agents(action=\"get\") on the target agent or create_agent first."
@@ -227,7 +227,7 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 	switch mode {
 	case "pipeline":
 		if pipelineAuthoringDisabled {
-			return "", errors.New("pipeline-mode tool authoring is retired. For a multi-step workflow, author a declarative pipeline with the `pipeline` tool (action=\"create\", name=…, stages=[{name, kind:\"worker\"|\"agent\", prompt, agent?}]), then attach it to this agent via attached_pipelines on create_agent/update_agent, it surfaces as a callable run_<pipeline> tool. For single-step work, use mode=\"shell\" or mode=\"api\" here")
+			return "", errors.New("pipeline-mode tool authoring is retired. For a multi-step workflow, author a declarative pipeline with the `pipeline` tool (action=\"create\", name=..., stages=[{name, kind:\"worker\"|\"agent\", prompt, agent?}]), then attach it to this agent via attached_pipelines on create_agent/update_agent, it surfaces as a callable run_<pipeline> tool. For single-step work, use mode=\"shell\" or mode=\"api\" here")
 		}
 		prompt := strings.TrimSpace(stringArg(args, "pipeline_prompt"))
 		steps := pipelineStepsFromArgs(args, "pipeline_steps")
@@ -325,7 +325,7 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 		// "unknown mode" error, concluded add_tool "can't inspect or update
 		// the sub-actions", and abandoned a real fix it had already
 		// diagnosed. Point it straight at the update path it needed.
-		return "", fmt.Errorf("add_tool does not build toolboxes: use the `tool_def` tool for that. To EDIT one action of the existing %q toolbox without recreating it, call tool_def(action=\"update\", name=%q, actions=[{name:\"<action>\"...just the fields you're changing}]), other actions are preserved. To create a new toolbox, tool_def(action=\"create\", mode=\"toolbox\", credential=…, actions=[…]). Call tool_def(action=\"help\") for the full spec", name, name)
+		return "", fmt.Errorf("add_tool does not build toolboxes: use the `tool_def` tool for that. To EDIT one action of the existing %q toolbox without recreating it, call tool_def(action=\"update\", name=%q, actions=[{name:\"<action>\"...just the fields you're changing}]), other actions are preserved. To create a new toolbox, tool_def(action=\"create\", mode=\"toolbox\", credential=..., actions=[...]). Call tool_def(action=\"help\") for the full spec", name, name)
 	default:
 		return "", fmt.Errorf("unknown mode %q: add_tool supports \"shell\" and \"api\". For a MULTI-action toolbox, use the `tool_def` tool (mode=\"toolbox\"); for a multi-stage workflow, use the `pipeline` tool", mode)
 	}

@@ -164,7 +164,7 @@ recurring view (`console_recurring.go`). An objective is a recurring row with tw
 the count would read `0` for the whole life of every objective and `1` for none of them. The
 State cell carries the verdict instead, which is the thing worth reading.
 
-*(built)* Row actions: Run now, Move to…, Delete on a live row; **Relink** and **Resume** on a
+*(built)* Row actions: Run now, Move to..., Delete on a live row; **Relink** and **Resume** on a
 parked one. Run now stays hidden on a parked task because a parked payload short-circuits at the
 top of the fire, so the button would do nothing.
 
@@ -232,7 +232,7 @@ can offer:
 
 | | recurring task | standing agent |
 |---|---|---|
-| authored with | `schedule(when="every", until=…)`, no agent named | `schedule(when="every", agent=…, until=…)` |
+| authored with | `schedule(when="every", until=...)`, no agent named | `schedule(when="every", agent=..., until=...)` |
 | attempt number | `FireCount + 1 - AttemptsBase` | `UnmetCount + 1`: there is no lifetime fire count to subtract from |
 | met | cancels the pre-armed successor, task retires | sets `Paused`, schedule stays listed and can be started again |
 | stalled | parks via `parkRecurringBroken` | `MarkStandingAgentBroken`, which pauses and unschedules |

@@ -120,7 +120,7 @@ check('no options still seeds and stops',
 check('the chosen option is sent, not parked in the composer',
   /window\.uiComposeMessage\(msg, \{send: true\}\)/.test(wb));
 
-// A free-text row seeded from its own text: "like the default but…" should be
+// A free-text row seeded from its own text: "like the default but..." should be
 // an edit, not a retype.
 check('a free-text row is seeded once per selection',
   /if \(box\.dataset\.seededFor !== String\(picked\)\)/.test(wb));

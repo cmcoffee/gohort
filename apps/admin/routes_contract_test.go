@@ -187,7 +187,7 @@ func (ct *contract) run(mux *http.ServeMux, db Database, user, method, path, bod
 		out = contractDate.ReplaceAllString(out, "<date>")
 	}
 	if len(out) > 400 {
-		out = fmt.Sprintf("%s… (%d bytes, sha1 %x)", out[:200], len(out), sha1.Sum([]byte(out)))
+		out = fmt.Sprintf("%s... (%d bytes, sha1 %x)", out[:200], len(out), sha1.Sum([]byte(out)))
 	}
 	who := user
 	if who == "" {

@@ -746,7 +746,7 @@ func (sr *sendRun) buildTurn() {
 	// This conversation is where a dispatched sub-agent's breadcrumbs are
 	// mirrored (session_diag.go, diagParentKey): the trail a person can open.
 	sr.ctx = withDiagParent(sr.ctx, sr.agent.ID, sr.sess.ID)
-	// …and this is the pane those breadcrumbs are ALSO told to, live. A
+	// ...and this is the pane those breadcrumbs are ALSO told to, live. A
 	// dispatched sub-turn builds its own chatTurn with no sse; the stamp is
 	// how a guard that stopped it reaches the conversation being watched.
 	sr.ctx = withDiagNotices(sr.ctx, sr.sse)
@@ -844,7 +844,7 @@ func (sr *sendRun) plan() bool {
 	// the LLM doesn't pass one.)
 
 	// --- Orchestrator round 1: respond directly, plan, or ask ---
-	sr.turn.emitStatus("Thinking…")
+	sr.turn.emitStatus("Thinking...")
 	sr.steps, sr.question, sr.directReply, sr.planErr = sr.turn.runPlan(sr.planMsgs)
 	if sr.planErr != nil {
 		persistIncompleteTurnTrace(&sr.sess, sr.udb, sr.turn, sr.planErr.Error())
@@ -1033,10 +1033,10 @@ func (sr *sendRun) gapCheck() bool {
 	// gap detection is a cost the conversational surface doesn't
 	// need to pay every turn.
 	if sr.agent.GapCheck && len(sr.steps) > 0 {
-		sr.turn.emitStatus("Checking for gaps…")
+		sr.turn.emitStatus("Checking for gaps...")
 		gaps := sr.turn.runGapCheck(sr.req.Message, sr.steps, len(sr.steps)+1)
 		if len(gaps) > 0 {
-			sr.turn.emitStatus(fmt.Sprintf("Found %d gap%s: filling…", len(gaps), plural(len(gaps))))
+			sr.turn.emitStatus(fmt.Sprintf("Found %d gap%s: filling...", len(gaps), plural(len(gaps))))
 			// Append the new steps onto the plan and re-emit the
 			// block so the user sees them join the existing card.
 			sr.steps = append(sr.steps, gaps...)
@@ -1086,7 +1086,7 @@ func (sr *sendRun) synthesize() bool {
 	if n := len(synthNotes); n > 0 {
 		sr.turn.emitStatus(fmt.Sprintf("Picked up %d user note%s before synthesis.", n, plural(n)))
 	}
-	sr.turn.emitStatus("Composing reply…")
+	sr.turn.emitStatus("Composing reply...")
 	sr.reply, sr.synthErr = sr.turn.runSynthesis(sr.req.Message, sr.steps, synthNotes, nil)
 	if sr.synthErr != nil {
 		persistIncompleteTurnTrace(&sr.sess, sr.udb, sr.turn, sr.synthErr.Error())
@@ -1178,7 +1178,7 @@ func (sr *sendRun) saveReply() {
 func (sr *sendRun) flagFalseClaims() {
 	// Hallucinated-authoring detection. The pattern we keep seeing
 	// on smaller models: the assistant replies "I've created the
-	// agent with tools X, Y, Z…" without ever firing add_tool /
+	// agent with tools X, Y, Z..." without ever firing add_tool /
 	// create_agent this turn. Catch it by cross-checking three
 	// signals — (1) build plan exists with pending steps, (2) zero
 	// authoring tools fired this turn, (3) the reply has non-empty

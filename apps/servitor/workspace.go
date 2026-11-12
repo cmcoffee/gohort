@@ -416,7 +416,7 @@ func scoutBlockFor(ws Appliance, scouts []memberScout, missing []string) string 
 	b.WriteString("Members are NOT interchangeable. A function often lives on exactly one of them. Read **Role** and **Known to run** before dispatching: they tell you where a thing lives, independently of this question.\n\n")
 	b.WriteString("- **Role** is what the operator says the member is FOR. Trust it for routing even when the member's map does not currently show the service: a stopped service or an unmapped box still belongs to the node that owns it.\n")
 	b.WriteString("- **Known to run** is derived from what was actually found on that member last time it was mapped. Trust it for detail, not for completeness.\n")
-	b.WriteString("- A `[last updated: …]` older than a few weeks means you are reading how the system USED to work. Say so, or re-verify with a dispatch, before stating it as current.\n\n")
+	b.WriteString("- A `[last updated: ...]` older than a few weeks means you are reading how the system USED to work. Say so, or re-verify with a dispatch, before stating it as current.\n\n")
 	for _, s := range scouts {
 		m := s.Member
 		fmt.Fprintf(&b, "### %s: `%s`\n", m.Name(), m.ID)
@@ -456,7 +456,7 @@ func scoutBlockFor(ws Appliance, scouts []memberScout, missing []string) string 
 			fmt.Fprintf(&b, "- %s (%d):\n", label, len(s.Hits))
 			for i, h := range s.Hits {
 				if i >= 8 {
-					fmt.Fprintf(&b, "  - …and %d more\n", len(s.Hits)-8)
+					fmt.Fprintf(&b, "  - ...and %d more\n", len(s.Hits)-8)
 					break
 				}
 				fmt.Fprintf(&b, "  - `%s:%d`, %s\n", h.Path, h.Line, h.Text)
@@ -474,7 +474,7 @@ func scoutBlockFor(ws Appliance, scouts []memberScout, missing []string) string 
 			}
 			for i, f := range s.Facts {
 				if i >= 6 {
-					fmt.Fprintf(&b, "  - …and %d more facts\n", len(s.Facts)-6)
+					fmt.Fprintf(&b, "  - ...and %d more facts\n", len(s.Facts)-6)
 					break
 				}
 				fmt.Fprintf(&b, "  - %s\n", f)
@@ -578,7 +578,7 @@ func divergence_report(perNode map[string]string) string {
 	fmt.Fprintf(&b, "\n---\n\n**Cross-node comparison**, %d value(s) appeared in every report; the following did not:\n\n", shared)
 	for i, d := range diffs {
 		if i >= 25 {
-			fmt.Fprintf(&b, "- …and %d more differing value(s).\n", len(diffs)-25)
+			fmt.Fprintf(&b, "- ...and %d more differing value(s).\n", len(diffs)-25)
 			break
 		}
 		fmt.Fprintf(&b, "- `%s`: reported by %s; NOT reported by %s\n", d.value, strings.Join(d.present, ", "), strings.Join(d.absent, ", "))

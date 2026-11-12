@@ -100,8 +100,8 @@ oldest first:
 
 ```json
 [
-  { "id": "…", "chat_id": "tg;-;123456789", "handle": "@alice",
-    "text": "You have 2 events today: …", "images": ["<base64>"],
+  { "id": "...", "chat_id": "tg;-;123456789", "handle": "@alice",
+    "text": "You have 2 events today: ...", "images": ["<base64>"],
     "type": "reply" }
 ]
 ```
@@ -111,7 +111,7 @@ For each item:
 1. Recover the Telegram chat id: strip the `tg;-;` / `tg;+;` prefix from `chat_id`.
 2. If `images` is non-empty, `sendPhoto` each (decode base64 to bytes); then
    `sendMessage` with `text` (send images first so the caption/text reads after).
-3. `type: "status"` items are mid-turn progress pings ("Working on it…"): deliver
+3. `type: "status"` items are mid-turn progress pings ("Working on it..."): deliver
    them like a normal message, or suppress them if you prefer terse threads.
 
 **Markdown**: gohort delivers **plain text** for Telegram by default

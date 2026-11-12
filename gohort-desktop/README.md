@@ -45,7 +45,7 @@ user / tray opens ──── Gohort.app (Wails viewer; quittable, no perms)
   bridge `/api/desktop/ws` (server side: `core.RegisterAPIKeyValidator` +
   the bridge key's `Owner`). Set it once in the viewer.
 - **Config is a lock-free JSON sidecar**: `core.BridgeConfig`
-  (`server_url`, `api_key`, allowed read/write roots, …) at
+  (`server_url`, `api_key`, allowed read/write roots, ...) at
   `<app-support>/gohort-desktop/bridge-config.json` (0600). The viewer
   writes it; the bridge re-reads it live, so edits apply without a restart.
   No shared kvlite lock between the two processes.
@@ -93,7 +93,7 @@ with an HKCU Run-key login item, macOS adds iMessage via launchd.
 
 1. Launch **Gohort.app**, enter the gohort server URL + the bridge API key
    in the configure/settings page (written to the sidecar).
-2. Install the bridge from the viewer's **Account → Install Gohort-Bridge…**
+2. Install the bridge from the viewer's **Account → Install Gohort-Bridge...**
    (or `make bridge-install`); grant **Full Disk Access** to Gohort-Bridge
    under System Settings → Privacy & Security for iMessage.
 3. The bridge connects, announces its tools, and starts the relay. It
@@ -131,8 +131,8 @@ only fill argument values, so there is no shell-injection surface.
 
 | Item | Effect |
 |---|---|
-| Server & Bridge Settings… (⌘,) | Server URL + bridge config |
-| Set Bridge API Key… | Update only the API key (sidecar) |
+| Server & Bridge Settings... (⌘,) | Server URL + bridge config |
+| Set Bridge API Key... | Update only the API key (sidecar) |
 | Auto-approve tool calls | Toggle; off = each server-initiated tool prompts for approval |
 | Install / Remove Gohort-Bridge | Install the bridge as a login item, or remove it |
 | Show Logs (⌘⌥L) | In-app log viewer (in-process ring buffer) |

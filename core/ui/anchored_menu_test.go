@@ -200,11 +200,11 @@ func TestReportCardsExportByKind(t *testing.T) {
 }
 
 // A maintenance pass can take minutes, so the row spins while it runs and
-// shows what the pass reports. A static "…" is indistinguishable from a hung
+// shows what the pass reports. A static "..." is indistinguishable from a hung
 // button, which is what it replaced.
 func TestActionListSpinsAndShowsProgress(t *testing.T) {
 	src := readRuntimeFile(t, "10_basics.js")
-	if strings.Contains(src, "status.textContent = '…';") {
+	if strings.Contains(src, "status.textContent = '...';") {
 		t.Error("the ellipsis is back; a long run must look alive")
 	}
 	for _, want := range []string{

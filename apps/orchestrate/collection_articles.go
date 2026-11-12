@@ -69,7 +69,7 @@ func normalizeArticles(in []string) ([]string, error) {
 			continue
 		}
 		if len([]rune(a)) > maxArticleChars {
-			return nil, fmt.Errorf("an article is a link or a short description, at most %d characters: %.40q… is longer", maxArticleChars, a)
+			return nil, fmt.Errorf("an article is a link or a short description, at most %d characters: %.40q... is longer", maxArticleChars, a)
 		}
 		seen[key] = true
 		out = append(out, a)

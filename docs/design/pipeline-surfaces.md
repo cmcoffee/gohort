@@ -26,17 +26,17 @@ Three ways in, on one line, because they are alternatives rather than steps:
   tools so it works in any deployment, and teaches the rule that is easiest to get wrong by
   demonstrating it: a later stage reads an earlier one by name (`{stage:plan.focus}`). A test asserts
   it validates AND carries no findings: a starter with a finding teaches the finding.
-- **Describe one…** drafts from a paragraph, on its own page rather than in a dialog. That is not a
+- **Describe one...** drafts from a paragraph, on its own page rather than in a dialog. That is not a
   style choice: `ui.ModalButton` opens a native `<dialog>` with `showModal()`, which renders in the
   browser's TOP LAYER above every z-index, so a failure toast raised inside one is invisible
   (v0.6.220). Drafting runs a model for up to a minute and can come back with nothing runnable, so it
   is precisely the door that must be able to say why.
-- **Import…** reads a `.pipeline.json` recipe. A file field reads the file as TEXT in the browser and
+- **Import...** reads a `.pipeline.json` recipe. A file field reads the file as TEXT in the browser and
   submits its contents, so this is a form rather than an upload path.
 
 Row actions: **Assign** (below), **Export**, **Delete**.
 
-## The page (`/orchestrate/pipeline?id=…`)
+## The page (`/orchestrate/pipeline?id=...`)
 
 Sections in the SAME ORDER as the machine editor, asserted by a test that renders both pages and
 compares them as sequences: identity, the wholesale change, the parts, adding one, trying it, what it

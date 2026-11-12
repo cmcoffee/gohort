@@ -446,7 +446,7 @@ func refQueryMatch(text, query string) bool {
 // Every appliance now flows through this one tool builder — an SSH host, a repo,
 // an uploaded evidence bundle, a tool-backed service, a workspace spanning
 // several of them — and until this existed they all described themselves as
-// "the LIVE system … run read-only SSH commands on it right now". Wrong for four
+// "the LIVE system ... run read-only SSH commands on it right now". Wrong for four
 // of the five, and a tool description is not decoration: it is what the model
 // reads to decide whether the tool answers its question. A workspace advertising
 // SSH gets avoided for the cross-domain questions it is the only thing able to
@@ -495,8 +495,8 @@ func refTargetWords(a Appliance) (noun string, live refLiveWords) {
 // refLiveWords are the type-specific fragments the three per-source tool
 // descriptions differ by.
 type refLiveWords struct {
-	searchCaveat   string // completes "it does NOT …"
-	dispatchPhrase string // completes "dispatching Servitor's investigator …"
+	searchCaveat   string // completes "it does NOT ..."
+	dispatchPhrase string // completes "dispatching Servitor's investigator ..."
 	safetyNote     string // a full sentence about what the dispatch may do
 	// checkNote says what "check Servitor" means, on a live machine only:
 	// a health pass across every system. Repos, bundles and services have no

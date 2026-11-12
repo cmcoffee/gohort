@@ -64,7 +64,7 @@ use only app-declared / spec credentials and the secured-cred locking model.
 
 - Today: one `orchestrate_agents` table, gob-serialized `AgentRecord`.
 - kvlite is gob, which **nests** embedded structs (see
-  `reference_kvlite_gob_embedded`), so `UserAgentRecord{*AgentRecord, …}` changes
+  `reference_kvlite_gob_embedded`), so `UserAgentRecord{*AgentRecord, ...}` changes
   the on-disk layout. Need a **read-compat shim**: decode the legacy flat struct,
   map into `UserAgentRecord`, gate on a `SchemaVersion`, re-serialize on next save
   (lazy migration: no big-bang sweep).

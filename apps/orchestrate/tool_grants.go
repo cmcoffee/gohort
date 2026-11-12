@@ -1,6 +1,6 @@
 // Standing answers to a confirmation: what the user allowed, and how narrowly.
 //
-// A grant is created by one click on an approval card ("Always allow …") and
+// A grant is created by one click on an approval card ("Always allow ...") and
 // consulted before every later escalation. It lives in the granting user's own
 // store, so one person's standing yes is never another's.
 //

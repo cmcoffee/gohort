@@ -328,7 +328,7 @@ type imageSchema struct {
 // imageSchemaFor builds the description + parameters for exactly the actions
 // that will run. An action whose backing config is missing is not mentioned at
 // all: advertising `find` with no serper key produced a guaranteed-failing call
-// ("find_image requires the serper search provider…") that the model had no way
+// ("find_image requires the serper search provider...") that the model had no way
 // to predict, and it would retry it.
 //
 // A schema with NO actions returns the zero value (nil params), which marks the
@@ -482,7 +482,7 @@ func imageSchemaFor(a imageActions) imageSchema {
 		}
 		desc += ". If the request is to change one, EDIT it, with that id as picture; to put who or what is in them into a new picture, pass them in references. That is what makes the result their picture rather than a new one that ignores it." +
 			"If one shows a subject you could be asked for again (a person, a pet, a product, a place), keep it NOW" +
-			" (action=\"keep\", ref=\"media#1\", name=\"…\", of=\"who or what it shows\", and is_person=true for a person):" +
+			" (action=\"keep\", ref=\"media#1\", name=\"...\", of=\"who or what it shows\", and is_person=true for a person):" +
 			" a media id lasts only this turn and ring ids age out as new pictures arrive, whereas a kept name works indefinitely." +
 			" Set \"of\": a kept picture with no subject is one you will later have to identify by guessing at its filename," +
 			" and a face you cannot identify is one you will invent instead. Asking the user to re-send a photo they already sent is the other failure this avoids."

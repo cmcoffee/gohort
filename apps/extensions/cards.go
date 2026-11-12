@@ -8,7 +8,7 @@ package extensions
 // Its OAuth/MCP consent + callback endpoints stay registered on /account for
 // redirect-URI stability, so this card calls them by ABSOLUTE path even though it
 // renders under /extensions.
-const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div>
+const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading...</div>
 <style>
 .acct-conns { display: flex; flex-direction: column; gap: 0.6rem; }
 .acct-conn { border: 1px solid var(--border); border-radius: 8px; padding: 0.7rem 0.8rem; }
@@ -37,7 +37,7 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div
   window.addEventListener('message', function(e){ if (e && e.data === 'gohort-mcp-connected'){ load(); if (window.uiInvalidate) window.uiInvalidate('api/mcp-servers'); } });
   function el(t, a, k){ var n=document.createElement(t); if(a) for(var x in a){ if(x==='text') n.textContent=a[x]; else if(x==='class') n.className=a[x]; else n.setAttribute(x,a[x]); } (k||[]).forEach(function(c){ n.appendChild(typeof c==='string'?document.createTextNode(c):c); }); return n; }
   function post(body, btn){
-    btn.disabled = true; var orig = btn.textContent; btn.textContent = '…';
+    btn.disabled = true; var orig = btn.textContent; btn.textContent = '...';
     return fetch(API, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})
       .then(function(r){ if(!r.ok && r.status!==204) return r.text().then(function(t){ throw new Error(t||('HTTP '+r.status)); }); load();
         // An own credential's "Needs its key" badge sits in the API list above.
@@ -78,7 +78,7 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div
             row.appendChild(d2);
           }
         } else {
-          var inp = el('input', {type:'password', placeholder: c.connected?'Replace your key…':'Paste your key / token'});
+          var inp = el('input', {type:'password', placeholder: c.connected?'Replace your key...':'Paste your key / token'});
           var saveBtn = el('button', {class:'ui-row-btn primary', text: c.connected?'Update':'Connect'});
           saveBtn.addEventListener('click', function(){ var v=inp.value.trim(); if(!v){ inp.focus(); return; } save(c, v, saveBtn); });
           row.appendChild(inp); row.appendChild(saveBtn);

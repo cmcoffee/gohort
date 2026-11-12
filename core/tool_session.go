@@ -30,9 +30,9 @@ type ToolSession struct {
 	Images            []string           // base64-encoded images accumulated by image tools (delivered as outbound attachments / displayed inline)
 	Videos            []string           // base64-encoded video data accumulated by video tools; consumers (phantom outbox) deliver as attachments
 	PendingViewImages []ViewImage        // images a tool wants the LLM to see on its NEXT round, each carrying a label saying what it is; the agent loop's caller injects these as a synthetic user message before the next LLM call, then clears. NOT delivered to the user — different channel from Images.
-	InboundMedia      []InboundMediaItem // turn-scoped registry of media that arrived on THIS turn (a contact's photo/clip), each addressable by a stable id (media#1, …) so the model can post a specific inbound item back BY ID. Populated at dispatch, listed via the media manifest, resolved by the outbound attachment collector. See RegisterInboundMedia.
+	InboundMedia      []InboundMediaItem // turn-scoped registry of media that arrived on THIS turn (a contact's photo/clip), each addressable by a stable id (media#1, ...) so the model can post a specific inbound item back BY ID. Populated at dispatch, listed via the media manifest, resolved by the outbound attachment collector. See RegisterInboundMedia.
 	imgGenTotal       int                // renders this turn (never resets); the runaway hard cap. See CountImageRender.
-	imageRefsFrozen   []string           // what image#1, image#2 … meant when this round's tool calls were written; index i is the stable ref for image#(i+1), "" where the picture has no stable id. Positional refs in tool arguments resolve against THIS, not the live ring. See SnapshotImageRefs.
+	imageRefsFrozen   []string           // what image#1, image#2 ... meant when this round's tool calls were written; index i is the stable ref for image#(i+1), "" where the picture has no stable id. Positional refs in tool arguments resolve against THIS, not the live ring. See SnapshotImageRefs.
 	Silenced          bool               // set true by the stay_silent tool — caller suppresses the LLM's text reply but still flushes attachments
 	SilencedReason    string             // why stay_silent was called, in the model's words: shown to the owner on the turn's card, never sent
 	inThreadReply     []string           // what send_message addressed to the conversation this turn is answering: held and sent as the turn's reply, so it goes out once. See HoldInThreadReply.
@@ -133,7 +133,7 @@ type ToolSession struct {
 	SpeakerHandle  string
 	SpeakerIsOwner bool
 	// StatusCallback, if set, is invoked by the send_status tool to deliver
-	// an in-progress status message to the user mid-turn ("Working on it…").
+	// an in-progress status message to the user mid-turn ("Working on it...").
 	// Each app wires it differently: chat emits an SSE status event, phantom
 	// enqueues an outbox item that becomes its own iMessage. If the callback
 	// is nil the tool no-ops gracefully (apps that don't support live status

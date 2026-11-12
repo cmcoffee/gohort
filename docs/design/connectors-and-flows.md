@@ -171,7 +171,7 @@ A template is a connector and its credential, packaged with questions.
    are defined: `Reads Word, OpenDocument and RTF attachments; Writes Word
    (.docx); Writes OpenDocument (.odt) ⇐ pandoc on this machine (no
    network)`. A job that has the network says so on its program
-   (`yt-dlp … (network for Video downloads)`). The status says where it is
+   (`yt-dlp ... (network for Video downloads)`). The status says where it is
    installed, which jobs it does now and which it stands by for (another
    way is used first), or, when it is missing, what to install and for
    what. Endpoints lists each job's command lines, or "run by gohort,
@@ -316,7 +316,7 @@ setting gains a `service:<name>` value.
     template; then a chat contract with streaming.
 
     12a built 2026-10-30: `built-in:worker-llm` and `built-in:lead-llm`,
-    each reading as its tier (`Worker LLM ⇐ anthropic (model …) ⇐
+    each reading as its tier (`Worker LLM ⇐ anthropic (model ...) ⇐
     api.anthropic.com (key set)`, a model server's address, Bedrock's
     region, or the peer it runs on), whether it is set (an unset lead says
     the worker answers for it), and Test running the tier's own live check.

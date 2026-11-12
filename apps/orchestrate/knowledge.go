@@ -1472,10 +1472,10 @@ func (t *chatTurn) fetchKnowledgeDocScoped(scopeSkills []SkillRecord) AgentToolD
 			// the rest, so it is always named; the section list is offered as
 			// the faster route when reading from the top of a structured
 			// document, since the part wanted is usually one heading away.
-			note := fmt.Sprintf("\n\n[…truncated; this document is %d chars and you have read %d to %d. Call again with offset=%d to continue.",
+			note := fmt.Sprintf("\n\n[...truncated; this document is %d chars and you have read %d to %d. Call again with offset=%d to continue.",
 				total, offset, end, end)
 			if offset == 0 && wantSection == "" && len(headings) > 1 {
-				note += fmt.Sprintf(" Or jump straight to a part with section=\"…\", the %d sections are:\n%s",
+				note += fmt.Sprintf(" Or jump straight to a part with section=\"...\", the %d sections are:\n%s",
 					len(headings), headingList(headings))
 			}
 			return window + note + "]", nil
@@ -1753,7 +1753,7 @@ func headingList(headings []string) string {
 	var b strings.Builder
 	for i, h := range headings {
 		if i >= headingListMax {
-			fmt.Fprintf(&b, "  …and %d more.", len(headings)-headingListMax)
+			fmt.Fprintf(&b, "  ...and %d more.", len(headings)-headingListMax)
 			break
 		}
 		fmt.Fprintf(&b, "  %s\n", h)

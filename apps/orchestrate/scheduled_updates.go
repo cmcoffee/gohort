@@ -44,8 +44,8 @@ const OrchestrateScheduledUpdateKind = "orchestrate.scheduled_update"
 
 // scheduledFireDirective is appended to every recurring fire's synthetic user
 // turn. A scheduled fire runs with no human watching the instant it happens, so
-// the conversational reflexes that are fine in live chat ("let me check…",
-// "starting cycle N…", "shall I proceed?") are pure noise here: nobody is there
+// the conversational reflexes that are fine in live chat ("let me check...",
+// "starting cycle N...", "shall I proceed?") are pure noise here: nobody is there
 // to read the narration or answer the question, and on this path the loop ends
 // the moment the model emits text without a tool call, so an intent-stub becomes
 // the whole reply and posts as a bogus report card. This tells the model to skip
@@ -55,7 +55,7 @@ const OrchestrateScheduledUpdateKind = "orchestrate.scheduled_update"
 // no-tool-call reply after the fact, which would also eat a legitimate pure-text
 // fire. If preambles still leak on the 27B, the drop is a small follow-up.
 // Written without em-dashes to match house style.
-const scheduledFireDirective = "[This is an autonomous scheduled fire. No human is watching right now to read narration, answer a question, or approve anything. Do NOT announce what you are about to do or narrate intent (\"let me check…\", \"starting cycle N…\", \"shall I proceed?\"). Call your tools, do the work, and reply with ONLY the concrete result of what you actually did this cycle. If there is nothing to act on or report, produce no output at all rather than a status line or preamble.]"
+const scheduledFireDirective = "[This is an autonomous scheduled fire. No human is watching right now to read narration, answer a question, or approve anything. Do NOT announce what you are about to do or narrate intent (\"let me check...\", \"starting cycle N...\", \"shall I proceed?\"). Call your tools, do the work, and reply with ONLY the concrete result of what you actually did this cycle. If there is nothing to act on or report, produce no output at all rather than a status line or preamble.]"
 
 func init() {
 	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_orch_update_min_interval", Category: "Scheduling", Label: "Scheduled update min interval", Help: "Minimum interval allowed for a recurring orchestrate update.", Kind: KindSeconds, Default: 60, Min: 10, Max: 3600})
@@ -797,7 +797,7 @@ func (fr *fireRun) buildSession() {
 	// recurring task can actually DO its job: call its authored api / toolbox /
 	// shell tools, dispatch through SecureAPI credentials, reach its attached
 	// pipelines, knowledge, and memory. The prior implementation ran the loop
-	// with only GetAgentTools(agent.AllowedTools…) = the STATIC built-in chat
+	// with only GetAgentTools(agent.AllowedTools...) = the STATIC built-in chat
 	// tools and NO ToolSession, so the per-credential call_/fetch_url_ tools,
 	// the persistent temp-tool pool, and the agent-scoped kit were all invisible
 	// — the fire behaved as a disconnected scheduler that couldn't perform the
@@ -1249,7 +1249,7 @@ func (fr *fireRun) reportable() bool {
 
 	// Preamble guard (backstop to scheduledFireDirective): a fire that produced
 	// text but called ZERO tools did no real work this cycle — it narrated intent
-	// ("Starting cycle 5. Let me check notifications…") and stopped. On this path
+	// ("Starting cycle 5. Let me check notifications...") and stopped. On this path
 	// the loop ends the instant the model emits text without a tool call, so that
 	// intent-stub becomes resp.Content and would post as a bogus report card.
 	// Don't append it. Still record the fire in the ledger (Raw = the preamble) so
@@ -1464,7 +1464,7 @@ func (fr *fireRun) composeDetail() {
 	// The no-tool-call suppression above is deliberately OFF for a task wake,
 	// because an ordinary one has nothing left to do but say what came back.
 	// A wake carrying a continuation is the opposite shape: the tool call WAS
-	// the job. Observed — "Here is your first take… Starting the second
+	// the job. Observed — "Here is your first take... Starting the second
 	// variation now", no call, set stranded at 1 of 3, and the only trace was
 	// a ledger entry that expired half an hour later.
 	//

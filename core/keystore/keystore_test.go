@@ -45,7 +45,7 @@ func TestAKeyIsKeptOnceAndShownOnlyByItsEnd(t *testing.T) {
 	if v, ok := Secret(db, e.ID); !ok || v != "AIzaSyExampleKey0000WXYZ" {
 		t.Errorf("the key is not kept: %q", v)
 	}
-	if h := Hint(db, e); !strings.HasPrefix(h, "ends in …WXYZ, given ") {
+	if h := Hint(db, e); !strings.HasPrefix(h, "ends in ...WXYZ, given ") {
 		t.Errorf("hint %q", h)
 	}
 	if list := List(db); len(list) != 1 || list[0].ID != e.ID {

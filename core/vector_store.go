@@ -334,7 +334,7 @@ type EmbeddedChunk struct {
 	// Future kinds (LLM section classifier may add):
 	//   - "opinion" / "editorial"
 	// Knowledge agents are taught to cite these differently
-	// ("one commenter noted…" vs "the doc says…").
+	// ("one commenter noted..." vs "the doc says...").
 	Kind string `json:"kind,omitempty"`
 	// Ord is the chunk's 1-based position within its parent document, in the
 	// order the ingest produced it. It exists because nothing else records
@@ -542,7 +542,7 @@ func IngestReport(ctx context.Context, db Database, source, reportID, report str
 // every chunk it creates. Use for content with non-authoritative
 // provenance (user comments, related-link rails, author bios) so
 // consumers at retrieval time can frame the hits appropriately
-// ("one commenter noted…" vs "the doc says…"). Pass kind="" for
+// ("one commenter noted..." vs "the doc says..."). Pass kind="" for
 // default authoritative (equivalent to IngestReport).
 func IngestReportTagged(ctx context.Context, db Database, source, reportID, report, kind string) {
 	ingestReport(ctx, db, source, reportID, "", report, kind, false)

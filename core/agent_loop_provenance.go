@@ -95,7 +95,7 @@ func idProvenanceRefusal(tool string, args map[string]any, known map[string]bool
 		}
 		v, _ := args[name].(string)
 		// The UUIDs IN the value, not the value: an id is often printed with
-		// a prefix ("fact:58df4d7c-…"), and the model copying it exactly as
+		// a prefix ("fact:58df4d7c-..."), and the model copying it exactly as
 		// printed was refused as having invented it, because only the bare
 		// UUID was ever collected. Each UUID in the argument must be one the
 		// conversation was given; nothing else about the value is judged.

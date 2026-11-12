@@ -51,7 +51,7 @@ root POST /api/templates/import "{\"id\":"
 root POST /api/templates/import ""
   400 this is not a template file: unexpected end of JSON input
 root GET /api/templates ""
-  200 [{"id":"ct-echo","kind":"template","title":"Echo a greeting","category":"Tools","description":"A shell tool that echoes what it was set up with.","contains":"ct_echo (tool)","source":"imported","_reci… (455 bytes, sha1 d23990ca961d2bf56c2b6de3a3ada235eba0c531)
+  200 [{"id":"ct-echo","kind":"template","title":"Echo a greeting","category":"Tools","description":"A shell tool that echoes what it was set up with.","contains":"ct_echo (tool)","source":"imported","_reci... (455 bytes, sha1 d23990ca961d2bf56c2b6de3a3ada235eba0c531)
 root GET /api/templates/recipe?id=ct-echo ""
   200 {"contains":["ct_echo (tool)"],"description":"A shell tool that echoes what it was set up with.","destinations":{},"id":"ct-echo","names_connector":"","questions":[{"name":"greeting","label":"Greeting","required":true}],"setup_notes":"","source":"imported","title":"Echo a greeting"}
 root GET /api/templates/recipe?id=nope ""
@@ -65,13 +65,13 @@ root GET /api/templates/export?id=ct-echo ""
   "questions": [
     {
       "name": "greeting",
-      "… (632 bytes, sha1 9fdf236f5ef0734c42447e076334df78dcbd3a2c)
+      "... (632 bytes, sha1 9fdf236f5ef0734c42447e076334df78dcbd3a2c)
 root GET /api/templates/export?id=nope ""
   404 no template "nope"
 root POST /api/templates/install?id=ct-echo "{\"answers\":{}}"
   400 Greeting is needed
 root POST /api/templates/install?id=ct-echo "{\"answers\":{\"greeting\":\"hello\"}}"
-  200 {"bundle":"gohort.bundle/v1","imported":1,"skipped":0,"outcomes":[{"type":"tool","name":"ct_echo","status":"imported"}],"checklist":[{"type":"tool","name":"ct_echo","action":"Waiting for an administra… (455 bytes, sha1 22612f3b5cf792851220a2188483de82640b0f37)
+  200 {"bundle":"gohort.bundle/v1","imported":1,"skipped":0,"outcomes":[{"type":"tool","name":"ct_echo","status":"imported"}],"checklist":[{"type":"tool","name":"ct_echo","action":"Waiting for an administra... (455 bytes, sha1 22612f3b5cf792851220a2188483de82640b0f37)
 root POST /api/templates/install?id=nope "{\"answers\":{}}"
   400 no template "nope"
 root POST /api/templates/install?id=ct-echo "{\"answers\":"

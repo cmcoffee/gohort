@@ -583,12 +583,12 @@ func declaredFieldsJSON(declared []PipelineField, fields map[string]any) (string
 // job" is the only honest description of where that second went.
 func phaseStatusLine(ph MachinePhase) string {
 	if guarded := strings.TrimPrefix(ph.Name, "guard:"); guarded != ph.Name {
-		return "Checking whether this is still the same job…"
+		return "Checking whether this is still the same job..."
 	}
 	if d := strings.TrimSpace(ph.Desc); d != "" {
-		return ph.Name + ": " + strings.TrimRight(d, ".") + "…"
+		return ph.Name + ": " + strings.TrimRight(d, ".") + "..."
 	}
-	return "Working through " + ph.Name + "…"
+	return "Working through " + ph.Name + "..."
 }
 
 // findPipelineByNameOrID resolves a step's pipeline reference.

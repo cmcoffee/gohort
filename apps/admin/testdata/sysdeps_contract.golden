@@ -65,9 +65,9 @@ root POST /api/system-deps "{\"name\":"
 root POST /api/system-deps ""
   400 invalid JSON: EOF
 root GET /api/system-deps?custom=1 ""
-  200 [{"id":"ctstrip","name":"ctstrip","group":"Reading what arrives","enables":"Reads anything else","by":"dd if={in} of={out} bs=8 skip=1","state":"off","detail":"Becomes an image the model can read.","j… (431 bytes, sha1 c861d7e2a964cb53c7eceaa790f51be9233e5877)
+  200 [{"id":"ctstrip","name":"ctstrip","group":"Reading what arrives","enables":"Reads anything else","by":"dd if={in} of={out} bs=8 skip=1","state":"off","detail":"Becomes an image the model can read.","j... (431 bytes, sha1 c861d7e2a964cb53c7eceaa790f51be9233e5877)
 root GET /api/system-deps ""
-  200 [{"id":"read-heic-adapted","name":"read-heic-adapted","group":"Reading what arrives","enables":"↳ read-heic-adapted","by":"dd if={in} of={out.png}","state":"off","detail":"Adapted, for iPhone photos… (456 bytes, sha1 4ac69adecff8317121d3cf95f923d1b4bf288833)
+  200 [{"id":"read-heic-adapted","name":"read-heic-adapted","group":"Reading what arrives","enables":"↳ read-heic-adapted","by":"dd if={in} of={out.png}","state":"off","detail":"Adapted, for iPhone photos... (456 bytes, sha1 4ac69adecff8317121d3cf95f923d1b4bf288833)
 root GET /api/system-deps/one?name=ctstrip ""
   200 {"name":"ctstrip","direction":"input","takes":"*","becomes":"image","steps":[{"command":"dd if={in} of={out} bs=8 skip=1"}],"timeout_secs":0,"prefer":false,"by":"commands"}
 root GET /api/system-deps/one?name=read-heic-adapted ""
@@ -97,8 +97,8 @@ root POST /api/system-deps/agents?id=nope "{\"agents\":true}"
 root POST /api/system-deps/agents?id=ctstrip "{\"agents\":"
   404 404 page not found
 root GET /api/system-deps?custom=1 ""
-  200 [{"id":"ctstrip","name":"ctstrip","group":"Reading what arrives","enables":"Reads anything else","by":"dd if={in} of={out} bs=4 skip=2","state":"off","detail":"Becomes an image the model can read.","j… (431 bytes, sha1 761d75eacf93fd7b338c8551fb008b69b1ed177b)
+  200 [{"id":"ctstrip","name":"ctstrip","group":"Reading what arrives","enables":"Reads anything else","by":"dd if={in} of={out} bs=4 skip=2","state":"off","detail":"Becomes an image the model can read.","j... (431 bytes, sha1 761d75eacf93fd7b338c8551fb008b69b1ed177b)
 root POST /api/system-deps/agents?id=ctstrip "{\"agents\":false}"
   404 404 page not found
 root GET /api/system-deps?custom=1 ""
-  200 [{"id":"ctstrip","name":"ctstrip","group":"Reading what arrives","enables":"Reads anything else","by":"dd if={in} of={out} bs=4 skip=2","state":"off","detail":"Becomes an image the model can read.","j… (431 bytes, sha1 761d75eacf93fd7b338c8551fb008b69b1ed177b)
+  200 [{"id":"ctstrip","name":"ctstrip","group":"Reading what arrives","enables":"Reads anything else","by":"dd if={in} of={out} bs=4 skip=2","state":"off","detail":"Becomes an image the model can read.","j... (431 bytes, sha1 761d75eacf93fd7b338c8551fb008b69b1ed177b)

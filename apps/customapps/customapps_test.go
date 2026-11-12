@@ -22,7 +22,7 @@ import (
 // "call once" in production; the sandbox pins a global pydeps path under the
 // first workspace root, so per-test dirs that were created and then deleted
 // mid-run left later sandbox tests pointing at a vanished path (bwrap: "Can't
-// find source path …/_gohort_pydeps"). One dir for the whole package run keeps
+// find source path .../_gohort_pydeps"). One dir for the whole package run keeps
 // the sandbox consistent. Built under $HOME because the sandbox mounts a fresh
 // tmpfs over /tmp (which would shadow a workspace placed there).
 func TestMain(m *testing.M) {

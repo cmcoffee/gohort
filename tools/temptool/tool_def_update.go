@@ -220,7 +220,7 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 					// re-passing body_template lost the explicit body, and the
 					// write-action scaffold regenerated the wrong one. Merge so
 					// unspecified fields (body_template, response_pipe, method,
-					// description, disabled, …) survive.
+					// description, disabled, ...) survive.
 					if existingAM, ok := cur[idx].(map[string]any); ok {
 						switchActionKind(existingAM, am)
 						for k, v := range am {

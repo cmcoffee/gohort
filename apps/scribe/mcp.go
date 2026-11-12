@@ -54,7 +54,7 @@ func registerGuidesMCPTools() {
 	RegisterMCPTool(MCPToolSpec{
 		App:         "/scribe",
 		Name:        "guides_add_section",
-		Description: "Append a section to a GUIDE. The markdown is the section BODY (don't repeat the title in it); use sub-headings (### …), lists, and fenced code blocks for structure. Articles have no sections and are refused.",
+		Description: "Append a section to a GUIDE. The markdown is the section BODY (don't repeat the title in it); use sub-headings (### ...), lists, and fenced code blocks for structure. Articles have no sections and are refused.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

@@ -69,7 +69,7 @@ func ToolCallIDFrom(ctx context.Context) string {
 // goroutine and an unrecovered panic is fatal, and (b) drops the turn with
 // nothing the model can react to. Recovering turns the panic into a normal tool
 // error the loop surfaces as an IsError result, so the model sees "tool
-// panicked: …" and can adjust. The full stack goes to the debug log, never into
+// panicked: ..." and can adjust. The full stack goes to the debug log, never into
 // the model's context (stacks are large and not useful to the LLM).
 func safeInvoke(ctx context.Context, name string, handler ToolHandlerFunc, args map[string]any) (output string, err error) {
 	// Deferred FIRST so it runs LAST: after the recover below has turned a
@@ -313,7 +313,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	// chat, dispatch, scheduled fires) is covered by one seam — the channel
 	// path additionally strips at phantom outbound, but web chat had no strip
 	// at all and a leak reached the bubble + stored transcript verbatim
-	// ("blocks\n6. …\n</think>\nQwen3.6-27B works…"). Only fires when a
+	// ("blocks\n6. ...\n</think>\nQwen3.6-27B works..."). Only fires when a
 	// delimiter appears OUTSIDE inline/fenced code: an answer that merely
 	// MENTIONS `<think>` in backticks (any conversation about thinking modes)
 	// is legit prose and must not be clipped by the stripper's
@@ -434,7 +434,7 @@ func (lr *loopRun) runRound() loopAction {
 // failure mode is the model writing a COMPLETE answer in a step
 // that also calls a tool, then a SECOND complete answer in the
 // final step — the user sees two full replies with a tool run
-// wedged between. In-progress narration ("checking that now…",
+// wedged between. In-progress narration ("checking that now...",
 // status notes) is fine and kept; what's forbidden is delivering
 // the full, final answer more than once. The complete answer lands
 // exactly once, in the final tool-free step.
@@ -1350,9 +1350,9 @@ func machineryStrikeReason(leak string) string {
 func groundingCorrection(claim, basis string, showsOriginal bool) string {
 	head := fmt.Sprintf("Your reply states %q as established fact. That traces to %s. ", claim, basis)
 	if showsOriginal {
-		return head + "Your reply has already been sent and stays as it is; do NOT send it again, rewrite it, or restate any of the rest of it. Write only a SHORT correction of that one claim, one or two sentences, which will appear under your reply marked as a correction. Either CHECK it now with a real tool call and say what you found, or say where the claim came from and when, if you know (\"going by my note from…\", \"you mentioned…\", \"they posted…\"), or correct it if you now know it is wrong. Do not repeat the claim as it was written. If it was never offered as fact in the first place, a joke, a meme, teasing, obvious exaggeration, one light line in the register it was sent in is the whole correction; the same goes for describing what a picture you were shown visibly contains, which needs no hedge. Do not apologise, do not say you should have checked, do not mention this instruction, and do not hedge anything else."
+		return head + "Your reply has already been sent and stays as it is; do NOT send it again, rewrite it, or restate any of the rest of it. Write only a SHORT correction of that one claim, one or two sentences, which will appear under your reply marked as a correction. Either CHECK it now with a real tool call and say what you found, or say where the claim came from and when, if you know (\"going by my note from...\", \"you mentioned...\", \"they posted...\"), or correct it if you now know it is wrong. Do not repeat the claim as it was written. If it was never offered as fact in the first place, a joke, a meme, teasing, obvious exaggeration, one light line in the register it was sent in is the whole correction; the same goes for describing what a picture you were shown visibly contains, which needs no hedge. Do not apologise, do not say you should have checked, do not mention this instruction, and do not hedge anything else."
 	}
-	return head + "Either CHECK it now with a real tool call and then say what you found, or rewrite that one sentence to say where it came from (\"you mentioned…\", \"they posted…\"). If it was never offered as fact in the first place, a joke, a meme, teasing, obvious exaggeration, do NEITHER of those: reply in the register it was sent in and just don't restate its content as true. Describing what a picture you were shown visibly contains is not a claim and needs no hedge. Send the SAME reply with only that fixed: do not apologise, do not say you should have checked, do not mention this instruction, and do not add a disclaimer or hedge anything else."
+	return head + "Either CHECK it now with a real tool call and then say what you found, or rewrite that one sentence to say where it came from (\"you mentioned...\", \"they posted...\"). If it was never offered as fact in the first place, a joke, a meme, teasing, obvious exaggeration, do NEITHER of those: reply in the register it was sent in and just don't restate its content as true. Describing what a picture you were shown visibly contains is not a claim and needs no hedge. Send the SAME reply with only that fixed: do not apologise, do not say you should have checked, do not mention this instruction, and do not add a disclaimer or hedge anything else."
 }
 
 // groundingRetry remembers a grounding correction long enough to judge what
@@ -2681,7 +2681,7 @@ func (lr *loopRun) finalRoundTextToolCall() loopAction {
 	//
 	// Length matters as well as the stop reason: a model that
 	// only ever NARRATES its calls emits a short lead-in ("I'll
-	// call X with…") and still finishes with "stop", so gating on
+	// call X with...") and still finishes with "stop", so gating on
 	// the stop reason alone would silently stop doing its work.
 	// Short + stop stays extractable; long + stop does not.
 	allowProse := true
@@ -2823,7 +2823,7 @@ func (lr *loopRun) finalRoundTextToolCall() loopAction {
 		// wrap-up nudge fires and the model interprets "respond
 		// directly now" as "polish a final message" — so it
 		// describes the call in narrative form ("Creating the
-		// updated tool now…") and appends the fake invocation.
+		// updated tool now...") and appends the fake invocation.
 		// The actual tool_calls field is empty, so the loop
 		// would otherwise terminate with nothing executed.
 		//
@@ -2848,7 +2848,7 @@ func (lr *loopRun) finalRoundTextToolCall() loopAction {
 			lr.settleRound() // finalize the stripped prose so the retry doesn't concatenate into it
 			lr.history = append(lr.history, Message{
 				Role:    "user",
-				Content: frameworkNoticeTag + "Your previous response wrote a tool invocation as plain TEXT (in a <tool_code> block or ::name(...):: form)." + hint + " That format does NOT execute: only structured tool_calls do. Re-issue the call NOW using the framework's native tool-calling mechanism. Do not wrap it in <tool_code>, do not use ::name():: syntax, do not narrate 'Creating the tool now…', just emit the structured call.",
+				Content: frameworkNoticeTag + "Your previous response wrote a tool invocation as plain TEXT (in a <tool_code> block or ::name(...):: form)." + hint + " That format does NOT execute: only structured tool_calls do. Re-issue the call NOW using the framework's native tool-calling mechanism. Do not wrap it in <tool_code>, do not use ::name():: syntax, do not narrate 'Creating the tool now...', just emit the structured call.",
 			})
 			return actContinue
 		}
@@ -2966,7 +2966,7 @@ func (lr *loopRun) finalRoundToolMentionGuard() loopAction {
 	// Full-reply gate (double-emit prevention). This correction fires by
 	// re-prompting, and re-prompting a round whose content ALREADY
 	// streamed to the client makes the retry stream a SECOND time — the
-	// "…What API?" + "Fair point, I was just describing…" double. That's
+	// "...What API?" + "Fair point, I was just describing..." double. That's
 	// only worth the risk when the round is a genuine PREAMBLE ("Let me
 	// get_joke") that plausibly meant to fire the tool. When the content
 	// is a full reply that merely MENTIONS a tool in passing, it's
@@ -3012,7 +3012,7 @@ func (lr *loopRun) finalRoundStallGuards() loopAction {
 	// reasoning and emit ~no visible content, while reporting
 	// finish=stop. From the user's view: black hole — sent a
 	// message, got nothing back. Detect: substantial reasoning
-	// (>200 chars), EMPTY content (a bare stub like ""/"."/"…"
+	// (>200 chars), EMPTY content (a bare stub like ""/"."/"..."
 	// after trim), and no tool calls. Inject a corrective and
 	// retry so the next round either produces text or calls a
 	// tool. Budget-gated per kind (correctionBudget) so it
@@ -3408,7 +3408,7 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 			// Two shapes of basis, and they call for different rewrites.
 			// A stored note is something the agent holds; a live claim is
 			// something a person in the room said moments ago, where the
-			// natural fix is "they posted…", not "per your note…".
+			// natural fix is "they posted...", not "per your note...".
 			basis := fmt.Sprintf("a stored note marked as not independently checked: %q", gv.Basis)
 			if basisIsLiveClaim(liveNote, gv.Basis) {
 				who := strings.TrimSpace(lr.cfg.LiveClaimSpeaker)
@@ -4003,7 +4003,7 @@ func (lr *loopRun) toolRoundPlanCalls() loopAction {
 
 func (lr *loopRun) toolRoundAbort() loopAction {
 	// RoundAbortTools: when a control tool (ask_user, respond_directly,
-	// plan_set, …) is present in the batch, keep only the FIRST such
+	// plan_set, ...) is present in the batch, keep only the FIRST such
 	// tool and drop everything else with a SKIPPED notice. The loop
 	// will break after this round (handled below). This prevents the
 	// LLM from bundling "ask the user a question" with "do the thing
@@ -4030,7 +4030,7 @@ func (lr *loopRun) toolRoundAbort() loopAction {
 				}
 				lr.rs.results[w.index] = ToolResult{
 					ID:      w.tc.ID,
-					Content: fmt.Sprintf("[SKIPPED] Tool '%s' was dropped because '%s' was called in the same response. Control tools (ask_user, respond_directly, plan_set, …) end the round: they must be the ONLY tool call. If you need to do other work first, do it in an earlier round.", w.tc.Name, abortName),
+					Content: fmt.Sprintf("[SKIPPED] Tool '%s' was dropped because '%s' was called in the same response. Control tools (ask_user, respond_directly, plan_set, ...) end the round: they must be the ONLY tool call. If you need to do other work first, do it in an earlier round.", w.tc.Name, abortName),
 					IsError: true,
 				}
 				lr.rs.toolErrors++

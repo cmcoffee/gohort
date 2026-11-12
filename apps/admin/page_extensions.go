@@ -14,7 +14,7 @@ func (a *AdminApp) importExportSections() []ui.Section {
 			"No secret ever travels: a credential arrives with its settings and asks for its secret here.",
 		Body: ui.Toolbar{
 			Actions: []ui.ToolbarAction{
-				{Label: "Import a bundle…", Method: "client", URL: "artifacts_import_preview"},
+				{Label: "Import a bundle...", Method: "client", URL: "artifacts_import_preview"},
 				{Label: "Export everything", Method: "client", URL: "artifacts_export_all"},
 			},
 		},
@@ -243,7 +243,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 						),
 						EmptyText: "No connectors yet. Add one from Admin > Services > Templates, or import a bundle.",
 					},
-					// Import: "Import bundle…" opens a file picker, then a
+					// Import: "Import bundle..." opens a file picker, then a
 					// PREVIEW modal (dry-run via /api/artifacts/preview): what
 					// the bundle carries, what would import vs skip, and any
 					// unmet references; nothing lands until the admin confirms.
@@ -283,7 +283,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 						PostTo: "api/connectors?action=unapprove&name={name}",
 						Method: "POST", OnlyIf: "can_unapprove",
 						Invalidate: []string{"api/connectors/other"}},
-					{Type: "button", Label: "Webhook…", Method: "client",
+					{Type: "button", Label: "Webhook...", Method: "client",
 						PostTo: "connector_webhook", OnlyIf: "webhook"},
 					{Type: "button", Label: "Edit spec", Method: "client",
 						PostTo: "connector_edit_spec"},
@@ -357,14 +357,14 @@ func mcpServerFormFields() []ui.FormField {
 func (a *AdminApp) templatesSection() ui.Section {
 	return ui.Section{
 		Title:    "Templates",
-		Subtitle: "Ready-made ways to add a service to gohort, by what it does. Add… on one asks a few questions and adds the connector (and anything else it needs) as a draft for review.",
+		Subtitle: "Ready-made ways to add a service to gohort, by what it does. Add... on one asks a few questions and adds the connector (and anything else it needs) as a draft for review.",
 		Detail: "A template is a recipe, not something installed: adding from it makes the connector, and the template itself stays here for the next time. It asks what it needs (a site address, your email, an API token), fills the answers in, and adds its pieces through the same importer as a bundle file: credentials disabled until you test them, tools pending approval. " +
 			"A secret you give goes straight into its secret store and never into a tool or a file.\n\n" +
-			"The pages that use a connector offer the same templates at the end of their list, under \"+ Add another…\": what is added there joins that list. Import a template file someone shared, or save one from things you have built, turning the values that differ between deployments (an address, an account) into questions. Export any template to share it.\n\n" +
+			"The pages that use a connector offer the same templates at the end of their list, under \"+ Add another...\": what is added there joins that list. Import a template file someone shared, or save one from things you have built, turning the values that differ between deployments (an address, an account) into questions. Export any template to share it.\n\n" +
 			"Builder can do both halves for you: ask it to integrate a service, then to make that a template. It only saves a template when an administrator asks, and stops to show you the title, pieces and questions before it does.",
 		Body: ui.Stack{Children: []ui.Component{
 			ui.Toolbar{Actions: []ui.ToolbarAction{
-				{Label: "Import a template file…", Method: "client", URL: "template_import"},
+				{Label: "Import a template file...", Method: "client", URL: "template_import"},
 			}},
 			templateSaveButton(),
 			ui.Table{
@@ -379,7 +379,7 @@ func (a *AdminApp) templatesSection() ui.Section {
 					{Field: "contains", Label: "", Mute: true, Flex: 4, Line: 2},
 				},
 				RowActions: []ui.RowAction{
-					{Type: "button", Label: "Add…", Method: "client", PostTo: "template_install", Variant: "primary", OnlyIf: "_recipe"},
+					{Type: "button", Label: "Add...", Method: "client", PostTo: "template_install", Variant: "primary", OnlyIf: "_recipe"},
 					{Type: "button", Label: "Export", Method: "client", PostTo: "template_export", Compact: true, OnlyIf: "_recipe"},
 					{Type: "button", Label: "Delete", Variant: "danger", Compact: true, OnlyIf: "_imported",
 						PostTo: "api/templates/delete?id={id}", Confirm: "Delete this template? What was already added from it stays."},
@@ -396,7 +396,7 @@ func (a *AdminApp) templatesSection() ui.Section {
 func templateSaveButton() ui.ModalButton {
 	yesNo := []ui.SelectOption{{Value: "", Label: "No"}, {Value: "yes", Label: "Yes"}}
 	return ui.ModalButton{
-		Label: "Make a new one from what you have built…", Title: "Save as a template", Align: "left",
+		Label: "Make a new one from what you have built...", Title: "Save as a template", Align: "left",
 		Subtitle: "Pick what goes in, then turn the values that differ between deployments into questions.",
 		Width:    "720px",
 		Body: ui.FormPanel{

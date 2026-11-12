@@ -353,7 +353,7 @@ func (t *chatTurn) emitToolCallUnder(parentCallID, msgID, name string, args map[
 
 // chipArgs is args as a tool chip shows them: a hand-off's target agent by
 // its name when the call named it by id. agents(action="list") hands out ids,
-// so a model hands work over by id, and the chip read agent="dfaf35c4-…",
+// so a model hands work over by id, and the chip read agent="dfaf35c4-...",
 // which says nothing about who is being asked. args_full keeps what was sent.
 func (t *chatTurn) chipArgs(name string, args map[string]any) map[string]any {
 	if name != "agents" && name != "delegate" {
@@ -440,7 +440,7 @@ func summarizeToolArgs(args map[string]any) string {
 			}
 			s = "[" + strings.Join(elems, ", ") + "]"
 		case map[string]any:
-			s = "{…}"
+			s = "{...}"
 		case nil:
 			s = "null"
 		default:
@@ -456,7 +456,7 @@ func summarizeToolArgs(args map[string]any) string {
 // compactArgElem renders one element of an []any arg value for the tool-chip
 // summary. Scalars keep the plain %v form; maps/slices (e.g. tool_def's
 // actions array) render as compact JSON — %v on those produced Go-syntax
-// "map[method:POST name:…]" in the chip and in copied transcripts, which
+// "map[method:POST name:...]" in the chip and in copied transcripts, which
 // reads like corrupted args to anyone (or any model) inspecting the paste.
 func compactArgElem(e any) string {
 	switch e.(type) {

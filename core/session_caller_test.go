@@ -3,7 +3,7 @@ package core
 // A session's model calls are named for its app. The caller was a bare UUID,
 // unique so the scheduler takes turns between sessions, but it is also what
 // names a call with no route key, so the request log and a peer lending its
-// model showed "caller:ba0e9587-…" and nothing said whose call it was.
+// model showed "caller:ba0e9587-..." and nothing said whose call it was.
 
 import (
 	"context"

@@ -324,7 +324,7 @@ func scopeAndRecordGuardrailTool(ctx context.Context, app *OrchestrateApp, db Da
 }
 
 // guardrailCandidateTool pulls the tool name out of a pre_action candidate,
-// which core builds as "<tool> <args…>".
+// which core builds as "<tool> <args...>".
 func guardrailCandidateTool(candidate string) string {
 	s := strings.TrimSpace(candidate)
 	if i := strings.IndexAny(s, " \t\n"); i > 0 {

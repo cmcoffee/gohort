@@ -181,7 +181,7 @@ the Global-tools catalog. **Account = identity + preferences**: password, timezo
 and inbound personal-access tokens (the keys an external MCP client uses to reach
 THIS user's agents: the *inbound* side, kept on Account deliberately).
 
-The OAuth/MCP consent + callback endpoints stay registered on `/account/…` for
+The OAuth/MCP consent + callback endpoints stay registered on `/account/...` for
 redirect-URI stability (a provider registered `/account/oauth/callback`); the
 Extensions "Connected accounts" card calls them by absolute path and the callback
 redirects the user back to `/extensions/`.

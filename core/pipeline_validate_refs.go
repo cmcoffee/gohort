@@ -141,7 +141,7 @@ func doubleBraceProblem(stage, where, text string) error {
 // when:"stage:critic.polished" is not a forward reference and not a typo — the
 // stage it names sits directly above it. But SplitStageRef reads the whole
 // "stage:critic" as the stage name, nothing matches, and the generic answer was
-// "has not run at that point … move it earlier", which is false and unfollowable:
+// "has not run at that point ... move it earlier", which is false and unfollowable:
 // the author dutifully reordered stages that were already in order, six times.
 //
 // Covers every bare-reference site at once — when, until, fan_over, and a tool
@@ -179,7 +179,7 @@ func checkStageRef(stage, where, ref string, done map[string]map[string]Pipeline
 		bare := strings.TrimSpace(strings.Trim(trimmed, "{}"))
 		bare = strings.TrimPrefix(bare, "stage:")
 		return Error("stage " + stage + " " + where + " is written as a prompt template (" + trimmed +
-			"). It takes a BARE reference: " + strconv.Quote(bare) + ", not {…}. The {stage:NAME.field} form is for PROMPT text only.")
+			"). It takes a BARE reference: " + strconv.Quote(bare) + ", not {...}. The {stage:NAME.field} form is for PROMPT text only.")
 	}
 	if p := barePrefixProblem(stage, where, ref); p != nil {
 		return p

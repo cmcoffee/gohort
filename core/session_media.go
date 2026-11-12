@@ -157,7 +157,7 @@ func (s *ToolSession) AppendVideo(b64 string) {
 // InboundMediaItem is one addressable piece of media that arrived on THIS turn
 // (a contact's photo or clip on a channel). It carries the bytes inline because,
 // unlike produced media, inbound media has no workspace file to read back at
-// delivery time. The ID (media#1, media#2, …) is the handle exposed to the model
+// delivery time. The ID (media#1, media#2, ...) is the handle exposed to the model
 // via the media manifest so it can post a SPECIFIC inbound item back BY ID.
 type InboundMediaItem struct {
 	ID     string // "media#1" — the handle shown to the model
@@ -167,7 +167,7 @@ type InboundMediaItem struct {
 }
 
 // RegisterInboundMedia records an inbound attachment and returns its assigned id
-// (media#1, media#2, …). Order-stable so the id matches the position the media
+// (media#1, media#2, ...). Order-stable so the id matches the position the media
 // manifest shows the model. Raw bytes in, base64 stored. The gap this closes:
 // produced media (image action=find/generate) is already postable by its
 // workspace filename, but inbound media had NO handle, so the model could only

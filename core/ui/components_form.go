@@ -565,7 +565,7 @@ type FormField struct {
 	// itself worth reading. Picking fills the field; typing stays allowed.
 	// The choices also feed the field's typing suggestions once fetched.
 	SuggestionsSource string `json:"suggestions_source,omitempty"`
-	// SuggestionsLabel is the button's text; "Choose…" when empty.
+	// SuggestionsLabel is the button's text; "Choose..." when empty.
 	SuggestionsLabel string `json:"suggestions_label,omitempty"`
 	// Links renders extra buttons in the same row as a textarea's ✎ Edit
 	// button, styled as its siblings. For a value that has another place it

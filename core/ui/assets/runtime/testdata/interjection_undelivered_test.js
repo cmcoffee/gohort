@@ -33,7 +33,7 @@ check('the marker is not hooked into enableInput',
   !/function enableInput\(\)[\s\S]{0,400}?markUndeliveredInterjections/.test(panel));
 
 // Cancel must say it before the POST — the agent has stopped reading by then.
-var cancelBlock = panel.slice(panel.indexOf('cancelLabel.textContent = \'Cancelling…\''));
+var cancelBlock = panel.slice(panel.indexOf('cancelLabel.textContent = \'Cancelling...\''));
 cancelBlock = cancelBlock.slice(0, cancelBlock.indexOf('function detachActiveStream'));
 check('cancel marks before it posts',
   cancelBlock.indexOf('markUndeliveredInterjections') < cancelBlock.indexOf('cfg.cancel_url'));

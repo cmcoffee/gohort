@@ -92,7 +92,7 @@ type WorkbenchPanel struct {
 	// the attribute; a server that cannot place answers an error.
 	ImageUploadURL string `json:"image_upload_url,omitempty"`
 	// ViewerActions render as a button row above the document — actions on the
-	// SELECTED record (export, history, audit, …). Generic: any workbench can add
+	// SELECTED record (export, history, audit, ...). Generic: any workbench can add
 	// per-document actions without core knowing what they do.
 	ViewerActions []WorkbenchAction `json:"viewer_actions,omitempty"`
 	// ListActions render in the LIST header, to the left of the New button — for
@@ -156,7 +156,7 @@ type SelectionAction struct {
 //   - "client"   — browser-side action: URL carries the name of a handler
 //     registered via window.uiRegisterClientAction. The handler receives
 //     ({recordId, button, action, refresh}) so an app can mount its own toolbar
-//     behavior (open a picker, copy, print, …) without core/ui knowing it.
+//     behavior (open a picker, copy, print, ...) without core/ui knowing it.
 //   - "edit"     — not a button of its own: marks where the Edit toggle
 //     (EditURL / EditLabel) sits in the bar. Without one the toggle leads.
 type WorkbenchAction struct {
@@ -182,7 +182,7 @@ type WorkbenchAction struct {
 	// including any marking of what this version has that the current one lost.
 	PreviewURL string `json:"preview_url,omitempty"`
 	Confirm    string `json:"confirm,omitempty"`
-	Spinner    string `json:"spinner,omitempty"` // busy label for "report" (default "Working…")
+	Spinner    string `json:"spinner,omitempty"` // busy label for "report" (default "Working...")
 	// Invalidate — for a "report" action that CHANGES the open record (e.g. an
 	// LLM pass that rewrites sections), the sources to uiInvalidate after it
 	// finishes so the viewer/list refresh. Empty = show the report only.
@@ -229,7 +229,7 @@ type WorkbenchAction struct {
 	// the button is clicked — e.g. an "Export" button grouping HTML / PDF /
 	// Markdown downloads so related actions don't crowd the toolbar. Each child is
 	// a normal WorkbenchAction dispatched by its own Kind (download / client /
-	// report / …). Ignored for non-menu kinds.
+	// report / ...). Ignored for non-menu kinds.
 	Children []WorkbenchAction `json:"children,omitempty"`
 }
 
@@ -237,7 +237,7 @@ type WorkbenchAction struct {
 //
 // Text is the message that option sends. Input makes the row a free-text one
 // instead: the user types the message, with Text as the starting value, so
-// "like the default but…" costs an edit rather than a retype. An Input row with
+// "like the default but..." costs an edit rather than a retype. An Input row with
 // no Text is an empty box — the plain "something else" escape.
 type ComposeOption struct {
 	Label       string `json:"label"`

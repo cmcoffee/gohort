@@ -62,7 +62,7 @@ func (a *AdminApp) researchSourcesSections() []ui.Section {
 // one), when research asks it, and whether agents can.
 func researchSourceFields(editing bool) []ui.FormField {
 	connector := ui.FormField{Field: "connector", Label: "Search connector", Type: "select", Options: append(researchSourceOptions(), addAnother("research")),
-		Required: true, Help: "A connector that searches; + Add another… adds one from a template (PubMed, OpenAlex, CourtListener, ...)."}
+		Required: true, Help: "A connector that searches; + Add another... adds one from a template (PubMed, OpenAlex, CourtListener, ...)."}
 	if editing {
 		connector = ui.FormField{Field: "connector", Label: "Search connector", Type: "readonly"}
 	}

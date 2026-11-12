@@ -91,7 +91,7 @@ func (t *read_file_tool) Handler() core.ToolHandler {
 			abs = real
 		}
 		if !core.PathAllowedOrConsent(abs) {
-			return "", fmt.Errorf("filesystem_read_local_file refused: %s is not under an allowed read root (allowed: %v), operator can add a root via the Account → Add Allowed Folder… menu in gohort-desktop", abs, core.AllowedReadRoots())
+			return "", fmt.Errorf("filesystem_read_local_file refused: %s is not under an allowed read root (allowed: %v), operator can add a root via the Account → Add Allowed Folder... menu in gohort-desktop", abs, core.AllowedReadRoots())
 		}
 		f, err := os.Open(abs)
 		if err != nil {
@@ -117,7 +117,7 @@ func (t *read_file_tool) Handler() core.ToolHandler {
 				"  filesystem_head_file(path=%q, lines=N)               → first N lines\n"+
 				"  filesystem_tail_file(path=%q, lines=N)               → last N lines\n"+
 				"  filesystem_read_file_range(path=%q, start=A, end=B)  → lines A–B\n"+
-				"  filesystem_grep_file(path=%q, pattern=\"…\")           → matching lines\n"+
+				"  filesystem_grep_file(path=%q, pattern=\"...\")           → matching lines\n"+
 				"Pick the one matching what you need: the whole file never has to cross the WS bridge.",
 				abs, info.Size(), MAX_READ_BYTES, abs, abs, abs, abs, abs)
 		}

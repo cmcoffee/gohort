@@ -35,7 +35,7 @@ import (
 
 // Grant is one shared thing, as either side sees it.
 type Grant struct {
-	Kind  string `json:"kind"`  // registry key: "agent", "skill", …
+	Kind  string `json:"kind"`  // registry key: "agent", "skill", ...
 	Label string `json:"label"` // what to call that kind on screen
 	ID    string `json:"id"`
 	Name  string `json:"name"`

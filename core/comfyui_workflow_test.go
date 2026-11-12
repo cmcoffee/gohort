@@ -747,7 +747,7 @@ func TestPastedWorkflowBeatsTheType(t *testing.T) {
 	// A dropdown that could silently replace a pasted graph would be worse than
 	// no dropdown.
 	s := buildComfy(t, map[string]any{
-		"workflow_type": ComfyTypeGenerate, // says generate…
+		"workflow_type": ComfyTypeGenerate, // says generate...
 		"workflow":      ComfyBlendDefaultGraph(),
 	})
 	if !s.SupportsImageInput() {

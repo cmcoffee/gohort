@@ -408,7 +408,7 @@ func (aw *appWrite) report() {
 	if appHasSectionKind(aw.saved, "table") {
 		stores = " Records save to the app's own store; the table lists them."
 	}
-	aw.msg = fmt.Sprintf("%s app %q at /apps/%s/ (revision %s): open it in the dashboard under My Apps.%s Revise with app_def(action=\"update\", id=%q, …). Status: %s.",
+	aw.msg = fmt.Sprintf("%s app %q at /apps/%s/ (revision %s): open it in the dashboard under My Apps.%s Revise with app_def(action=\"update\", id=%q, ...). Status: %s.",
 		aw.verb, aw.saved.Name, aw.saved.Slug, aw.saved.Updated, stores, aw.saved.Slug, aw.saved.VerifyStatus())
 
 	// On create, the checklist for a complete app: shown once, in the result
@@ -461,7 +461,7 @@ func (aw *appWrite) check() bool {
 			}
 		}
 		if len(scriptProblems) > 0 {
-			return aw.exit(appWithParseNotes(fmt.Sprintf("%s app %q, BUT its inline JavaScript DOES NOT PARSE, the page will be blank/dead until this is fixed:\n- %s\n\nFix the markup with app_def(action=\"update\", id=%q, …) (it re-checks on save). Send the WHOLE corrected document, and do NOT tell the user the app is ready.",
+			return aw.exit(appWithParseNotes(fmt.Sprintf("%s app %q, BUT its inline JavaScript DOES NOT PARSE, the page will be blank/dead until this is fixed:\n- %s\n\nFix the markup with app_def(action=\"update\", id=%q, ...) (it re-checks on save). Send the WHOLE corrected document, and do NOT tell the user the app is ready.",
 				aw.verb, aw.saved.Name, strings.Join(scriptProblems, "\n- "), aw.saved.Slug), aw.parseNotes), nil)
 		}
 		// Parsing says the document is well-formed, not that it is whole. A
@@ -472,7 +472,7 @@ func (aw *appWrite) check() bool {
 		// REFUSED this shape; reaching here means either a create, or a
 		// rewrite the author explicitly confirmed. Say it plainly either way.
 		if dangling := jsDanglingCalls(appProposedHTMLText(raw)); len(dangling) > 0 {
-			return aw.exit(appWithParseNotes(fmt.Sprintf("%s app %q, BUT the page CALLS CODE IT NEVER DEFINES: it parses and loads, and then dies the moment anyone uses it. Nothing defines: %s\n\nEither add those functions or remove the calls to them. Fix it with app_def(action=\"replace_function\", …) if you are adding one back, or action=\"update\" for the whole document. Do NOT tell the user the app is ready.",
+			return aw.exit(appWithParseNotes(fmt.Sprintf("%s app %q, BUT the page CALLS CODE IT NEVER DEFINES: it parses and loads, and then dies the moment anyone uses it. Nothing defines: %s\n\nEither add those functions or remove the calls to them. Fix it with app_def(action=\"replace_function\", ...) if you are adding one back, or action=\"update\" for the whole document. Do NOT tell the user the app is ready.",
 				aw.verb, aw.saved.Name, appNameList(dangling, 12)), aw.parseNotes), nil)
 		}
 
@@ -488,7 +488,7 @@ func (aw *appWrite) check() bool {
 			pageChecked = checked
 			if len(errs) > 0 {
 				t.noteAppStanding(aw.saved.Slug, false, "its page fails in a real browser: "+errs[0])
-				return aw.exit(appWithParseNotes(fmt.Sprintf("%s app %q, BUT the page FAILS IN A REAL BROWSER, this is the revision you just saved, not an older one:\n- %s\n\nFix it with app_def(action=\"update\", id=%q, …) (it re-checks on save). Send the WHOLE corrected document, and do NOT tell the user the app is ready.%s",
+				return aw.exit(appWithParseNotes(fmt.Sprintf("%s app %q, BUT the page FAILS IN A REAL BROWSER, this is the revision you just saved, not an older one:\n- %s\n\nFix it with app_def(action=\"update\", id=%q, ...) (it re-checks on save). Send the WHOLE corrected document, and do NOT tell the user the app is ready.%s",
 					aw.verb, aw.saved.Name, strings.Join(errs, "\n- "), aw.saved.Slug, aw.plan), aw.parseNotes), nil)
 			}
 		}
@@ -505,11 +505,11 @@ func (aw *appWrite) check() bool {
 		report, _, _, fail := t.checkScripts(aw.saved, false, nil, nil)
 		if fail > 0 {
 			t.noteAppStanding(aw.saved.Slug, false, "a data source fails its check (see the last app_def result)")
-			return aw.exit(appWithParseNotes(fmt.Sprintf("%s app %q, BUT a data source FAILED to run, the app will error on load until this is fixed:\n\n%s\nFix the script with app_def(action=\"update\", id=%q, …) (it re-checks on save). Do NOT tell the user the app is ready yet.%s",
+			return aw.exit(appWithParseNotes(fmt.Sprintf("%s app %q, BUT a data source FAILED to run, the app will error on load until this is fixed:\n\n%s\nFix the script with app_def(action=\"update\", id=%q, ...) (it re-checks on save). Do NOT tell the user the app is ready yet.%s",
 				aw.verb, aw.saved.Name, strings.TrimSpace(report), aw.saved.Slug, aw.plan), aw.parseNotes), nil)
 		}
 		aw.msg += "\n\nData source check, all passed:\n" + strings.TrimSpace(report)
-		aw.msg += "\nTip: run app_def(action=\"test\", id=\"" + aw.saved.Slug + "\", sample=[{…example form entry…}]) to confirm the full form→data-source→output chain produces real output."
+		aw.msg += "\nTip: run app_def(action=\"test\", id=\"" + aw.saved.Slug + "\", sample=[{...example form entry...}]) to confirm the full form→data-source→output chain produces real output."
 	}
 	contractBroken := false
 	if len(aw.saved.DataSources) == 0 {

@@ -83,7 +83,7 @@ func appendCortexObs(db Database, agentID, from, kind, text string, trace ...Per
 			Content:    strings.TrimSpace(text),
 			Created:    now,
 			// What the turn DID, structured. It used to be formatted into the
-			// body above as prose ("↳ ran: …"), which is the one shape neither
+			// body above as prose ("↳ ran: ..."), which is the one shape neither
 			// reader can use well: the panel has a renderer for a persisted
 			// trace — the expandable tool-runs section every other card has —
 			// and toLLMMessages rebuilds one into call-and-result protocol, so

@@ -474,8 +474,8 @@ type guideRevisions struct {
 // co-author tools. Capped at the operator's revision-history setting (oldest dropped).
 // sanitizeGuideArtifacts strips stray LLM output that leaked into a section body
 // during drafting/co-authoring but is NOT part of the guide: reasoning
-// delimiters (<think>…</think>), framework markers (<gohort-meta>, [ATTACH:…]),
-// and tool-call markup (<tool_call>, <function=…>, <tool_code>). Returns the
+// delimiters (<think>...</think>), framework markers (<gohort-meta>, [ATTACH:...]),
+// and tool-call markup (<tool_call>, <function=...>, <tool_code>). Returns the
 // cleaned markdown and whether anything changed. Composes the core strippers so
 // the definition of "artifact" stays in one place across the app.
 func sanitizeGuideArtifacts(md string) (string, bool) {

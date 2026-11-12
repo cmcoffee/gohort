@@ -17,7 +17,7 @@
 //   - A bare ast.Inspect counts `x.Field` selectors, composite-literal keys and
 //     parameter names as references to any top-level symbol sharing the name,
 //     which invents edges that are not there.
-//   - A top-level `var _ = …` puts "_" in the symbol table, so every blank
+//   - A top-level `var _ = ...` puts "_" in the symbol table, so every blank
 //     identifier in the package reads as an edge to that file.
 //
 // Both are handled below. Committing the tool is how the corrections stay
@@ -143,7 +143,7 @@ func main() {
 		}
 		use := func(name string) {
 			if name == "_" {
-				return // a top-level `var _ = …` makes every blank a false edge
+				return // a top-level `var _ = ...` makes every blank a false edge
 			}
 			home, known := declFile[name]
 			if !known || home == base {
@@ -305,7 +305,7 @@ func main() {
 	sort.Slice(rows, func(i, j int) bool { return len(rows[i].syms) > len(rows[j].syms) })
 	for i, r := range rows {
 		if i >= 12 {
-			fmt.Printf("… and %d more files\n", len(rows)-12)
+			fmt.Printf("... and %d more files\n", len(rows)-12)
 			break
 		}
 		show := r.syms

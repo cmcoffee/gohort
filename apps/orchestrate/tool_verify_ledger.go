@@ -2,7 +2,7 @@
 // currently stand verified, and why the rest don't.
 //
 // Verification outcomes used to be prose and nothing else: add_tool said
-// "Verification call with test_args FAILED: …", tool_def's test printed a
+// "Verification call with test_args FAILED: ...", tool_def's test printed a
 // PASS/FAIL table, and both scrolled away. Nothing downstream could see them,
 // so report_build_gaps graded on the only signal it had — self-reported step
 // status. A model that marked its own step done after a failed verify was told

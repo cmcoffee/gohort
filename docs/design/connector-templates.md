@@ -65,7 +65,7 @@ type TemplateField struct {
 
 **Field types stay deliberately small.** The ComfyUI node map is *not* a special
 "nodemap" widget: it's just a group of `text` fields (`prompt_nodes`,
-`negative_nodes`, …) under a "Node mapping" group, auto-filled by `Detect`. The
+`negative_nodes`, ...) under a "Node mapping" group, auto-filled by `Detect`. The
 only richness is grouping + the optional Detect button. This keeps the renderer a
 small form engine, not a UI framework.
 
@@ -94,7 +94,7 @@ func ConnectorTemplate(name string) (ConnectorTemplate, bool)
 - Fields: `base_url` (text), `default_width`/`default_height`/`default_steps`
   (number), `prompt_suffix` (textarea), `credential` (credential, advanced).
 - No `Detect`.
-- `BuildSpec` = `ApplyRestImagePreset("a1111", …)` + defaults + suffix.
+- `BuildSpec` = `ApplyRestImagePreset("a1111", ...)` + defaults + suffix.
 
 A future **teams** (`rest_messaging`) is just: fields `credential`, `team_id`,
 `channel_id`; `BuildSpec` = `ApplyRestMessagingPreset("teams", vars)`. No new code
@@ -106,7 +106,7 @@ One admin panel + generic endpoints replace `add_image_backend` and
 `configure_comfyui`:
 
 - `GET /api/connector-templates` → `[{name,label,category,description}]`: powers a
-  grouped "Add…" menu and the catalog.
+  grouped "Add..." menu and the catalog.
 - `GET /api/connector-templates/{name}` → the field schema.
 - `POST /api/connector-templates/{name}/detect` → `Detect(vals)` → auto-filled vals.
 - `POST /api/connector-templates/{name}` (optional `?name=` to edit) →

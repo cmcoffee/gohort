@@ -25,7 +25,7 @@ import (
 	"strings"
 )
 
-// bareRefPattern matches a reference written without the {stage:…}
+// bareRefPattern matches a reference written without the {stage:...}
 // wrapper, which is how fan_over, until, when and skip_to address one
 // ("critic.satisfied == true").
 var bareRefPattern = regexp.MustCompile(`[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`)
@@ -63,7 +63,7 @@ func renameInStages(stages []PipelineStage, from, to, prefix string, touched map
 			s.Prompt, changed = v, true
 		}
 		// fan_over, until, when and skip_to address a stage WITHOUT the
-		// {stage:…} wrapper, so they need the bare rule as well.
+		// {stage:...} wrapper, so they need the bare rule as well.
 		if v, ok := renameBare(s.FanOver, from, to); ok {
 			s.FanOver, changed = v, true
 		}

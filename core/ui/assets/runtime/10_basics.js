@@ -74,7 +74,7 @@
           (async function() {
             if (a.confirm && !(await window.uiConfirm(a.confirm))) return;
             ab.disabled = true;
-            ab.textContent = 'Working…';
+            ab.textContent = 'Working...';
             fetch(url, {method: (a.method || 'post').toUpperCase()})
               .then(function(r) {
                 if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
@@ -129,10 +129,10 @@
       var v = args[k], s;
       if (typeof v === 'string') s = v;
       else if (Array.isArray(v)) s = JSON.stringify(v);
-      else if (v && typeof v === 'object') s = '{…}';
+      else if (v && typeof v === 'object') s = '{...}';
       else s = String(v);
       s = s.replace(/\n/g, ' ');
-      if (s.length > 60) s = s.slice(0, 60) + '…';
+      if (s.length > 60) s = s.slice(0, 60) + '...';
       return k + '=' + JSON.stringify(s);
     }).join(', ');
   }
@@ -145,7 +145,7 @@
     var text = Object.keys(args).sort().map(function(k) {
       return k + ': ' + toolArgValue(args[k]);
     }).join('\n');
-    return text.length > 2000 ? text.slice(0, 2000) + '\n… (expand for the rest)' : text;
+    return text.length > 2000 ? text.slice(0, 2000) + '\n... (expand for the rest)' : text;
   }
 
   // toolArgsBlock is the full args for the expanded view: one labelled row
@@ -189,7 +189,7 @@
     return out;
   }
 
-  // statsFooterNodes builds a reply's stats line ("41.2 tk/s - 18.7s - …") as
+  // statsFooterNodes builds a reply's stats line ("41.2 tk/s - 18.7s - ...") as
   // nodes, each figure in a span whose hover title says what it measures. The
   // bare line was terse enough that tk/s was read as covering the whole turn.
   // One builder for every panel that shows these, so they cannot drift.
@@ -330,7 +330,7 @@
       class: 'ui-panic-btn',
       onclick: async function() {
         if (cfg.confirm && !(await window.uiConfirm(cfg.confirm))) return;
-        status.textContent = 'Engaging…';
+        status.textContent = 'Engaging...';
         fetchJSON(cfg.on_click, {method: 'POST'}).then(function(d) {
           status.textContent = (d && d.message) ? d.message : 'Done.';
         }).catch(function(err) {
@@ -1359,7 +1359,7 @@
               if (optimisticHidden && rowEl) rowEl.style.display = '';
               showToast('Failed: ' + err.message);
             });
-        }}, [act.label || '…']);
+        }}, [act.label || '...']);
         parent.appendChild(btn);
       } else if (act.type === 'modal') {
         // Modal row action — same nested-component + {row_key} substitution
@@ -1471,7 +1471,7 @@
     if (!cfg.search) return listEl;
     var box = el('input', {
       type: 'search', class: 'ui-table-search',
-      placeholder: cfg.search_placeholder || 'Filter…',
+      placeholder: cfg.search_placeholder || 'Filter...',
       'aria-label': cfg.search_placeholder || 'Filter list',
     });
     box.addEventListener('input', function() {
@@ -2093,7 +2093,7 @@
         var desc = (opt[descField] || '').trim();
         // Two lines at most (the stylesheet clamps it), the whole of it on
         // hover: a long description made every row of a big group tall.
-        if (desc) { var full = desc; if (desc.length > 200) desc = desc.slice(0, 200) + '…'; meta.appendChild(el('div', {class: 'ui-cp-desc', text: desc, title: full})); }
+        if (desc) { var full = desc; if (desc.length > 200) desc = desc.slice(0, 200) + '...'; meta.appendChild(el('div', {class: 'ui-cp-desc', text: desc, title: full})); }
         var bits = [];
         (cfg.meta_fields || []).forEach(function(k){ if (opt[k] != null) bits.push(opt[k] + ' ' + k); });
         if (bits.length) meta.appendChild(el('div', {class: 'ui-cp-metaline', text: bits.join(' - ')}));
@@ -2297,7 +2297,7 @@
       });
     }
     var debounceTimers = {}; // field -> setTimeout id
-    var savingIndicator = el('span', {class: 'ui-form-saving'}, ['Saving…']);
+    var savingIndicator = el('span', {class: 'ui-form-saving'}, ['Saving...']);
     var fieldEls = {}; // field name -> rendered field wrap (for show_when)
     // Submit-button mode flips the panel from auto-save-on-change to
     // explicit-submit. Used by create-style forms ("fill in a name,
@@ -2346,7 +2346,7 @@
     // The button spins while it waits, and a second click stops the wait.
     function attachSuggestionsSource(f, input, dl, host) {
       var row = el('div', {class: 'ui-form-presets'});
-      var btn = el('button', {class: 'ui-form-preset-chip', type: 'button'}, [f.suggestions_label || 'Choose…']);
+      var btn = el('button', {class: 'ui-form-preset-chip', type: 'button'}, [f.suggestions_label || 'Choose...']);
       row.appendChild(btn);
       host.appendChild(row);
       var inflight = null;
@@ -2378,7 +2378,7 @@
               body.appendChild(el('div', {class: 'ui-suggest-empty'}, ['Nothing to choose from.']));
               return;
             }
-            var filter = el('input', {type: 'text', class: 'ui-form-input', placeholder: 'Filter ' + items.length + '…'});
+            var filter = el('input', {type: 'text', class: 'ui-form-input', placeholder: 'Filter ' + items.length + '...'});
             var list = el('div', {class: 'ui-suggest-list'});
             var count = el('div', {class: 'ui-suggest-empty'});
             body.appendChild(filter);
@@ -3394,7 +3394,7 @@
             input.appendChild(chip);
           });
           var addInput = el('input', {type: 'text', class: 'ui-tag-input',
-            placeholder: f.add_placeholder || 'Add tag…'});
+            placeholder: f.add_placeholder || 'Add tag...'});
           function commit() {
             var v = addInput.value.trim();
             if (!v) return;
@@ -3461,7 +3461,7 @@
           // back to the list rather than dismissing everything.
           box.setAttribute('data-ui-modal-back', '1');
           box.__uiModalBack = function() { renderRules(); };
-          var ta = el('textarea', {class: 'ui-rules-edit-ta', placeholder: 'The rule…'});
+          var ta = el('textarea', {class: 'ui-rules-edit-ta', placeholder: 'The rule...'});
           ta.value = ruleBody(rules[idx] || '');
           box.appendChild(ta);
 
@@ -3473,7 +3473,7 @@
             function askFor() {
               var msg = (askIn.value || '').trim();
               if (!msg) { return; }
-              askBtn.disabled = true; askBtn.textContent = 'Thinking…';
+              askBtn.disabled = true; askBtn.textContent = 'Thinking...';
               fetch(f.suggest_url, {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
@@ -3523,7 +3523,7 @@
           rules.forEach(function(r, idx) {
             var row = el('div', {class: 'ui-rules-row'});
             var num = el('span', {class: 'ui-rules-num'}, [String(idx + 1) + '.']);
-            var ti = el('input', {type: 'text', class: 'ui-rules-input', value: ruleBody(r), placeholder: 'rule…'});
+            var ti = el('input', {type: 'text', class: 'ui-rules-input', value: ruleBody(r), placeholder: 'rule...'});
             ti.addEventListener('blur', function() {
               rules[idx] = withBody(rules[idx], ti.value);
               persist();
@@ -3810,7 +3810,7 @@
         var filterBox = null;
         if (checkOpts.length > 15) {
           filterBox = el('input', {type: 'text', class: 'ui-input ui-checklist-filter',
-            placeholder: 'Filter…', 'aria-label': 'Filter the list'});
+            placeholder: 'Filter...', 'aria-label': 'Filter the list'});
           filterBox.style.cssText = 'flex:1;min-width:8rem;font-size:var(--fs-sm, 0.8rem);padding:0.2rem 0.5rem';
           filterBox.addEventListener('input', function() {
             var q = filterBox.value.trim().toLowerCase();
@@ -4329,7 +4329,7 @@
       if (suggestHosts[f.field]) {
         suggestHosts[f.field].innerHTML = '';
         suggestHosts[f.field].appendChild(
-          el('div', {class: 'ui-suggest-pick-label'}, ['Finding suggestions…']));
+          el('div', {class: 'ui-suggest-pick-label'}, ['Finding suggestions...']));
       }
       postSuggest(f, {hint: hint || ''}).then(function(d) {
         var setter = fieldSetters[f.field];
@@ -4615,7 +4615,7 @@
           }
         }
         // While a test is in flight the button IS the cancel: a wrong host or
-        // a dead port used to mean staring at "Testing…" until the server's
+        // a dead port used to mean staring at "Testing..." until the server's
         // timeout gave up, with nothing to click. Aborting the request also
         // cancels the server side wherever the handler derives its context
         // from the request, so an upstream call is dropped, not orphaned.
@@ -4637,13 +4637,13 @@
           inflight = ctl || {abort: function() {}};
           testBtn.textContent = 'Cancel';
           testBtn.classList.add('danger');
-          showResult('var(--text-mute)', 'Testing…');
+          showResult('var(--text-mute)', 'Testing...');
           showAudio('');
           var startedAt = Date.now();
           var step = '';   // the step a streaming test last said it started
           function tick() {
             var secs = Math.round((Date.now() - startedAt) / 1000);
-            var text = 'Testing…' + (secs >= 2 ? ' ' + secs + 's' : '');
+            var text = 'Testing...' + (secs >= 2 ? ' ' + secs + 's' : '');
             testResult.textContent = step ? text + ' - ' + step : text;
           }
           ticker = setInterval(tick, 1000);
@@ -4766,7 +4766,7 @@
           if (!(await window.uiConfirm(msg))) return;
           resetBtn.disabled = true;
           var orig = resetBtn.textContent;
-          resetBtn.textContent = 'Reverting…';
+          resetBtn.textContent = 'Reverting...';
           fetch(cfg.reset_url, {method: 'POST'})
             .then(function(r){
               if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); });
@@ -4819,12 +4819,12 @@
           // POST fires. Flat forms have no guard installed.
           if (submitGuard && !submitGuard()) return;
           submitBtn.disabled = true;
-          submitBtn.textContent = 'Saving…';
+          submitBtn.textContent = 'Saving...';
           msgEl.style.display = 'none';
           msgEl.textContent = '';
           // Some submits are a save and some are a JOB — an endpoint that
           // asks a model to draft something can run for a minute. A
-          // button that has said "Saving…" for that long is
+          // button that has said "Saving..." for that long is
           // indistinguishable from one that hung, so say so IN the form
           // rather than leaving somebody to guess.
           var slow = setTimeout(function() {
@@ -5269,7 +5269,7 @@
       titleRow.appendChild(cancelBtn);
     }
     header.appendChild(titleRow);
-    var topicEl = el('div', {class: 'ui-watch-topic'}, ['Connecting…']);
+    var topicEl = el('div', {class: 'ui-watch-topic'}, ['Connecting...']);
     header.appendChild(topicEl);
     wrap.appendChild(header);
 
@@ -5549,7 +5549,7 @@
             }
             connectEvents();
           }).catch(function() {
-            topicEl.textContent = 'Connection lost. Retrying…';
+            topicEl.textContent = 'Connection lost. Retrying...';
             setTimeout(connectEvents, 5000);
           });
         }, 3000);
@@ -5624,7 +5624,7 @@
     var wrap = el('div', {class: 'ui-suggest'});
     var controls = el('div', {class: 'ui-suggest-controls'});
     var direction = el('input', {type: 'text', class: 'ui-form-input ui-suggest-direction',
-      placeholder: cfg.placeholder || 'Focus area (optional)…'});
+      placeholder: cfg.placeholder || 'Focus area (optional)...'});
     var btn = el('button', {class: 'ui-pl-btn ui-suggest-btn'},
       [el('span', {class: 'ui-pl-prefill-icon'}, ['✨']), ' ', cfg.suggest_label || 'Suggest']);
     controls.appendChild(direction);
@@ -5679,7 +5679,7 @@
     function loadSuggestions() {
       var orig = btn.textContent;
       btn.disabled = true;
-      list.innerHTML = '<div class="ui-suggest-loading">Generating suggestions…</div>';
+      list.innerHTML = '<div class="ui-suggest-loading">Generating suggestions...</div>';
       var body = {};
       body[cfg.direction_field || 'direction'] = direction.value || '';
       fetch(cfg.url, {
@@ -5940,7 +5940,7 @@
 
   // Generic multi-series chart renderer (bar / line / area / pie): a
   // pure spec -> SVG-string function. Wrapped in its own IIFE so helper
-  // names (fmt/num/esc/…) don't collide with the runtime's globals.
+  // names (fmt/num/esc/...) don't collide with the runtime's globals.
   // Axis / text / grid colors reference theme tokens so the chart
   // follows light/dark; series use a fixed categorical palette led by
   // the platform accent. Lifted from the app-local prototype once its
@@ -6156,7 +6156,7 @@
           // was still running.
           //
           // A spinner, not an ellipsis: a run that takes minutes has to look
-          // alive, and a static "…" is indistinguishable from a hung one.
+          // alive, and a static "..." is indistinguishable from a hung one.
           var running = null; // {stop} while a run is being shown here
           // Stop, beside the spinner while a run is shown, when the list
           // names where to send it. Anything long enough to watch is long
@@ -6410,7 +6410,7 @@
         btn.disabled = false;
         showToast('Failed: ' + err.message);
       });
-    }}, [cfg.label || '…']);
+    }}, [cfg.label || '...']);
     return btn;
   };
 

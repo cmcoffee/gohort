@@ -118,7 +118,7 @@ scope, the verify gate, and approval: same as a hand-authored `tool_def`. See
   Tool endpoints (`/api/tool-templates`, `/api/tool-template`, `/api/tool-detect`,
   `/api/tool-config`) mirror the connector ones but the save routes to
   `AdminPersistTempTool` (the tool governance), not `SaveConnector`. Admin → Global
-  Tools → **“Add tool from template…”** → pick `rest_call`/`github_issue` → fill →
+  Tools → **“Add tool from template...”** → pick `rest_call`/`github_issue` → fill →
   persists a `TempTool` for the acting admin. One renderer, two targets.
 - **Stage B3: Builder integration + tool provenance. SHIPPED (uncommitted).**
   `TempTool.Template` records the authoring template (the tool-side analog of
@@ -135,7 +135,7 @@ scope, the verify gate, and approval: same as a hand-authored `tool_def`. See
   operation); params derived from path/query, a `requestBody` becomes a `body`
   arg; a path `filter`; `Detect` previews the base URL + operation list. Because
   it's just another tool template, it's **already reachable** through the B2/B3
-  surfaces (admin "Add tool from template…" and the Builder `tool_template`): no
+  surfaces (admin "Add tool from template..." and the Builder `tool_template`): no
   new wiring; the Detect button appears in the generic renderer. Governance
   unchanged (the toolbox goes through the tool approval flow).
 - **Stage B5: NEXT (smaller).** (a) A user-facing tools/Extensions entry so a user

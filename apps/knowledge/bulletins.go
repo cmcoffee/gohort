@@ -42,7 +42,7 @@ func bulletinsSection() ui.Section {
 					Fields: []ui.FormField{
 						{Field: "name", Label: "Name", Type: "text", Required: true, Placeholder: "news",
 							Help: "Lowercase letters, digits, - and _."},
-						{Field: "desc", Label: "What it carries", Type: "text", Placeholder: "what this board carries, and how often…"},
+						{Field: "desc", Label: "What it carries", Type: "text", Placeholder: "what this board carries, and how often..."},
 						{Field: "ttl_hours", Label: "Current for (hours)", Type: "number", Min: 0, Max: 8760,
 							Help:   "How long a post stays current. 0 means it never goes out of date.",
 							Detail: "Followers stop seeing a post once it is older than this, so yesterday's news never passes for today's. Leave 0 for a pinned notice such as a message of the day."},

@@ -290,7 +290,7 @@ type AgentLoopConfig struct {
 	// already streamed into its own bubble and open a fresh one for the retry.
 	// Without it, a correction that `continue`s before the normal end-of-round
 	// finalize orphans the streamed text: the retry round's text concatenates
-	// into the still-open bubble ("…What API?Fair point…") and the post-loop
+	// into the still-open bubble ("...What API?Fair point...") and the post-loop
 	// path can re-emit it as a second bubble. The app MUST settle by finalizing
 	// (never length-clearing) — a correction retry is not guaranteed to repeat
 	// the earlier text, so clearing it would lose real content; finalizing is
@@ -1013,7 +1013,7 @@ type AgentLoopConfig struct {
 	// anything positional, since next turn it would be wrong.
 	TurnNotes func(userMessage string) string
 
-	// StampLocation sets the timezone of the "[Current date & time: …]"
+	// StampLocation sets the timezone of the "[Current date & time: ...]"
 	// marker prefixed onto the newest user turn. Nil = the deployment/host
 	// zone (time.Local). Set it to the acting user's location (UserLocation)
 	// so the model sees the wall-clock in the user's own zone rather than the

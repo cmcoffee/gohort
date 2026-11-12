@@ -25,7 +25,7 @@ import (
 // externallyReachable answers "may external key-authenticated surfaces (/v1,
 // MCP) see and resolve this agent at all". For USER agents that consent is the
 // per-agent MCPExposed toggle (agent editor → Access & visibility). APP agents
-// (Servitor Investigator, Guide Author, …) have NO editor page — they're
+// (Servitor Investigator, Guide Author, ...) have NO editor page — they're
 // Hidden, registry-owned — so their consent is the app FEATURE grant: the
 // admin enabled the app for this user under Feature Access. The per-KEY tier
 // is enforced downstream (KeyAllowsAppAgent at both surfaces); this is only

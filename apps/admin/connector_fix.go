@@ -69,7 +69,7 @@ func connectorEditAction(label, onlyIf, ask string) ui.RowAction {
 		Intro: "It knows this connector, how it has been failing, and what its capabilities must give back. " +
 			"It can ask the service and try a corrected spec, which are real calls on the connector's daily test budget. " +
 			"What it suggests fills the spec: nothing is saved until you save. Turn on web lookups to let it read the provider's documentation.",
-		Placeholder: "Ask about it, or say what changed at the provider…",
+		Placeholder: "Ask about it, or say what changed at the provider...",
 	})
 	act.OnlyIf = onlyIf
 	return act

@@ -23,7 +23,7 @@ func withHeartbeat(ctx context.Context, id, label string, fn func()) {
 			select {
 			case <-ticker.C:
 				elapsed := time.Since(start).Round(time.Second)
-				emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("%s… (%s)", label, elapsed)})
+				emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("%s... (%s)", label, elapsed)})
 			case <-done:
 				return
 			case <-ctx.Done():
@@ -315,7 +315,7 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 		command,
 	)
 
-	emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Mapping %s…", command)})
+	emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Mapping %s...", command)})
 
 	var resp *Response
 	var err error

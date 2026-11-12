@@ -8,8 +8,8 @@
 // scheduled fire runs as the owner with no agent anywhere in the picture.
 //
 // Dispatch is the exception, and it is the one that matters. `agents(run,
-// pipeline=…)` — and, since machines became a dispatch target, `agents(run,
-// machine=…)` — lets a GOVERNED agent hand a request to a multi-stage run and
+// pipeline=...)` — and, since machines became a dispatch target, `agents(run,
+// machine=...)` — lets a GOVERNED agent hand a request to a multi-stage run and
 // take the result back into its own context, and nothing in the interpreter
 // touches a guardrail — core.runWorkerStage builds an AgentLoopConfig with no
 // Guardrail* fields at all. Without this file, an agent whose warden forbids a

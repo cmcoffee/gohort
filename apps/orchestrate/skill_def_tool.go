@@ -36,7 +36,7 @@ func (skillDefImpl) Params() map[string]ToolParam {
 		"name":   {Type: "string", Description: "(get / create / update / delete) Skill name. Human-readable; doubles as the lookup key for get / update / delete (a skill's id also works there, for telling two same-named skills apart)."},
 		"description": {
 			Type:        "string",
-			Description: "(create / update) The activation cue: the host LLM reads this in its skill list and decides whether to consult the skill, so it's the primary activation signal. Write it as if completing \"Use when the user…\", naming the situations it should fire on. Specific descriptions get picked at the right time; generic ones get skipped or over-fire.",
+			Description: "(create / update) The activation cue: the host LLM reads this in its skill list and decides whether to consult the skill, so it's the primary activation signal. Write it as if completing \"Use when the user...\", naming the situations it should fire on. Specific descriptions get picked at the right time; generic ones get skipped or over-fire.",
 		},
 		"triggers": {
 			Type:        "array",

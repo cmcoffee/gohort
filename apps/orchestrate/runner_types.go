@@ -762,7 +762,7 @@ type chatTurn struct {
 	// second+ returns a short stub instead. Serving identical bytes again is
 	// what turns a repetitive model into a STABLE loop — near-identical
 	// context in, identical round out, five times over (the "That's a real
-	// concept…" ×5 transcript) — and each re-serve stuffed duplicate result
+	// concept..." ×5 transcript) — and each re-serve stuffed duplicate result
 	// bodies into history (~10K tokens across that loop). The stub changes
 	// the context and says stop, breaking the orbit at round 2 instead of
 	// waiting for repeatSame to bite at round 6.

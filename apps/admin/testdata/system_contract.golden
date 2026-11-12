@@ -27,7 +27,7 @@ root POST /api/apps "{}"
 alice GET /api/settings ""
   403 forbidden
 root GET /api/settings ""
-  200 {"allow_signup":false,"api_key_allow_query":false,"channel_default_wake_rules":"WAKE when the incoming message mentions or addresses the agent by name, including common nicknames or obvious typos of t… (979 bytes, sha1 f2b07b03cdd5282e3579d5eab813a51de1307e9d)
+  200 {"allow_signup":false,"api_key_allow_query":false,"channel_default_wake_rules":"WAKE when the incoming message mentions or addresses the agent by name, including common nicknames or obvious typos of t... (979 bytes, sha1 f2b07b03cdd5282e3579d5eab813a51de1307e9d)
 (signed out) GET /api/settings?app=/nope ""
   403 forbidden
 alice GET /api/settings?app=/nope ""
@@ -45,7 +45,7 @@ root GET /api/cost-rates ""
 alice GET /api/cost-history ""
   403 forbidden
 root GET /api/cost-history ""
-  200 [{"date":"<date>","cost":0,"worker_input":0,"worker_output":0,"lead_input":0,"lead_output":0,"search_calls":0,"image_calls":0,"external_cost":0,"run_count":0},{"date":"<date>","cost":0,"worker_input":… (4741 bytes, sha1 a7b1b86750ad0d9ae581778899dc4a80a7a93195)
+  200 [{"date":"<date>","cost":0,"worker_input":0,"worker_output":0,"lead_input":0,"lead_output":0,"search_calls":0,"image_calls":0,"external_cost":0,"run_count":0},{"date":"<date>","cost":0,"worker_input":... (4741 bytes, sha1 a7b1b86750ad0d9ae581778899dc4a80a7a93195)
 (signed out) GET /api/cost-history?days=0 ""
   403 forbidden
 alice GET /api/cost-history?days=0 ""
@@ -57,7 +57,7 @@ root GET /api/cost-history?days=0 ""
 alice GET /api/cost-history?days=x ""
   403 forbidden
 root GET /api/cost-history?days=x ""
-  200 [{"date":"<date>","cost":0,"worker_input":0,"worker_output":0,"lead_input":0,"lead_output":0,"search_calls":0,"image_calls":0,"external_cost":0,"run_count":0},{"date":"<date>","cost":0,"worker_input":… (4741 bytes, sha1 a7b1b86750ad0d9ae581778899dc4a80a7a93195)
+  200 [{"date":"<date>","cost":0,"worker_input":0,"worker_output":0,"lead_input":0,"lead_output":0,"search_calls":0,"image_calls":0,"external_cost":0,"run_count":0},{"date":"<date>","cost":0,"worker_input":... (4741 bytes, sha1 a7b1b86750ad0d9ae581778899dc4a80a7a93195)
 (signed out) GET /api/cost-by-source ""
   403 forbidden
 alice GET /api/cost-by-source ""
@@ -177,7 +177,7 @@ root PATCH /api/settings "{\"tune_account_key_lifetime\":90}"
 root PATCH /api/settings?app=/nope "{\"tune_account_key_lifetime\":3650}"
   200 {"status":"updated"}
 root GET /api/settings ""
-  200 {"allow_signup":true,"api_key_allow_query":false,"channel_default_wake_rules":"WAKE when the incoming message mentions or addresses the agent by name, including common nicknames or obvious typos of th… (1074 bytes, sha1 a2fc7bd9d75f254e9a7487ec562fa6c81db2c46a)
+  200 {"allow_signup":true,"api_key_allow_query":false,"channel_default_wake_rules":"WAKE when the incoming message mentions or addresses the agent by name, including common nicknames or obvious typos of th... (1074 bytes, sha1 a2fc7bd9d75f254e9a7487ec562fa6c81db2c46a)
 alice POST /api/settings/reset-tunables ""
   403 forbidden
 root POST /api/settings/reset-tunables?category=nope ""

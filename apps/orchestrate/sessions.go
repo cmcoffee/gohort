@@ -458,7 +458,7 @@ func isBareGreeting(msg string) bool {
 // exchanges (up to titleExchanges). Falls back to the truncated first
 // message on LLM error. Ports chat.GenerateSessionTitle for orchestrate so
 // the sidebar surfaces what each conversation is actually about
-// instead of "Tell me about how to…".
+// instead of "Tell me about how to...".
 func generateSessionTitle(ctx context.Context, llm LLM, s ChatSession) string {
 	if llm == nil || len(s.Messages) == 0 {
 		return fallbackTitle(s)

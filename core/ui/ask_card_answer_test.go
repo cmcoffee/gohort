@@ -68,7 +68,7 @@ var window = {UIBlockRenderers: {}, uiRegisterBlockRenderer: function(n, f) { wi
 function check(ok, why) { if (!ok) throw new Error(why); }
 
 // The catch-alls a model writes, and answers that only look like one.
-['Other', 'other…', 'Something else', 'Other (please specify)', 'Other: type it'].forEach(function(s) {
+['Other', 'other...', 'Something else', 'Other (please specify)', 'Other: type it'].forEach(function(s) {
   check(uiAskIsCatchAll(s), s + ' should be dropped for the Other row');
 });
 ['None', 'Yes', 'Another option', 'Others on the team review it'].forEach(function(s) {

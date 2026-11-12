@@ -80,7 +80,7 @@ type Channel struct {
 	// itself — it can never touch its foundational channels or another agent's.
 	AgentBound bool   `json:"agent_bound,omitempty"`
 	// TagOverride / TagDisabled are the per-channel layer of the outbound name
-	// tag (the "[Assistant] …" prefix an agent adds to distinguish its messages
+	// tag (the "[Assistant] ..." prefix an agent adds to distinguish its messages
 	// from the owner's own). TagOverride, when set, replaces the agent/global
 	// name for THIS channel only (most specific wins). TagDisabled turns the tag
 	// off on this channel even when the bound agent opted in — e.g. a private

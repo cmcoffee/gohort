@@ -611,9 +611,9 @@
       // Rules are stored as a LIST of records (one rule each), not
       // a single blob. Render a list + an "add new" row.
       var listBox = el('div', {class: 'ui-servitor-rules-list'},
-        [el('div', {class: 'ui-pl-empty'}, ['Loading…'])]);
+        [el('div', {class: 'ui-pl-empty'}, ['Loading...'])]);
       var addInput = el('input', {type: 'text', class: 'ui-form-input',
-        placeholder: 'New rule…', style: 'flex:1'});
+        placeholder: 'New rule...', style: 'flex:1'});
       var addBtn = el('button', {class: 'ui-row-btn primary',
         onclick: function() {
           var text = addInput.value.trim();
@@ -697,7 +697,7 @@
          desc: 'Anything the gate cannot confirm is read-only: programs it does not know, scripts and interpreters (python, bash script.sh), and shell syntax it cannot read. Checking this runs them without asking.'},
       ];
       var state = {};
-      var listBox = el('div', {}, [el('div', {class: 'ui-pl-empty'}, ['Loading…'])]);
+      var listBox = el('div', {}, [el('div', {class: 'ui-pl-empty'}, ['Loading...'])]);
       function save() {
         fetch('api/permissions', {
           method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -731,7 +731,7 @@
       // command it matches runs without asking on that system only; Edit
       // changes what it covers (the server keeps its program and operators),
       // Remove makes it ask again.
-      var alwaysBox = el('div', {}, [el('div', {class: 'ui-pl-empty'}, ['Loading…'])]);
+      var alwaysBox = el('div', {}, [el('div', {class: 'ui-pl-empty'}, ['Loading...'])]);
       function renderAlways(list) {
         alwaysBox.innerHTML = '';
         alwaysBox.appendChild(el('div', {style: 'font-weight:600;margin:18px 0 4px'}, ['Always allowed']));
@@ -761,7 +761,7 @@
               var rule = field.value.trim();
               if (!rule || rule === it.command) { cancel.onclick(); return; }
               saveBtn.disabled = true;
-              saveBtn.textContent = 'Saving…';
+              saveBtn.textContent = 'Saving...';
               fetch('api/permissions/always', {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({appliance_id: it.appliance_id, command: it.command, rule: rule}),
@@ -779,7 +779,7 @@
           var btn = el('button', {class: 'ui-row-btn danger', style: 'flex:none'}, ['Remove']);
           btn.onclick = function() {
             btn.disabled = true;
-            btn.textContent = 'Removing…';
+            btn.textContent = 'Removing...';
             fetch('api/permissions/always', {
               method: 'POST', headers: {'Content-Type': 'application/json'},
               body: JSON.stringify({appliance_id: it.appliance_id, command: it.command}),
@@ -820,7 +820,7 @@
       var aid = getApplianceID();
       if (!aid) { window.uiAlert('Pick a system first'); return; }
       var body = el('div', {class: 'ui-pl-modal-body'},
-        [el('div', {text: 'Loading…'})]);
+        [el('div', {text: 'Loading...'})]);
       var m = openModal('System Profile', body);
       fetch('api/profile?appliance_id=' + encodeURIComponent(aid))
         .then(function(r) {
@@ -996,7 +996,7 @@
         repoGitFields, repoLocalFields,
         el('label', {}, ['Skip Directories']), repoSkipIn,
         el('div', {class: 'ui-form-hint'},
-          ['Skip Directories (comma-separated) are excluded from ingest on top of the built-in defaults (.git, node_modules, dist, build, target, vendor, …).']),
+          ['Skip Directories (comma-separated) are excluded from ingest on top of the built-in defaults (.git, node_modules, dist, build, target, vendor, ...).']),
       ]);
 
       // Workspace section — a master appliance that investigates several existing
@@ -1006,7 +1006,7 @@
       var wsRoles = Object.assign({}, rec.member_roles || {});
       var wsLinks = (rec.member_links || []).slice();
       var wsNames = {};
-      var wsMembersBox = el('div', {}, ['Loading systems…']);
+      var wsMembersBox = el('div', {}, ['Loading systems...']);
       var wsLoaded = false;
       function loadWorkspaceMembers() {
         if (wsLoaded) return;
@@ -1141,7 +1141,7 @@
         var wsAgentStatus = el('span', {class: 'ui-form-hint'});
         var wsAgentBtn = el('button', {class: 'ui-row-btn', type: 'button', onclick: function() {
           wsAgentBtn.disabled = true;
-          wsAgentStatus.textContent = 'Making the agent…';
+          wsAgentStatus.textContent = 'Making the agent...';
           fetch('api/workspace/agent', {method: 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({appliance_id: rec.id})})
             .then(function(r) {
@@ -1151,7 +1151,7 @@
             .then(function(d) {
               var note = 'Made ' + d.name + ' with ' + (d.attached || []).length + ' system(s) as Sources.';
               if ((d.skipped || []).length) note += ' Not attached (not ones you can reach): ' + d.skipped.join(', ') + '.';
-              wsAgentStatus.textContent = note + ' Opening it…';
+              wsAgentStatus.textContent = note + ' Opening it...';
               setTimeout(function() { window.location.href = d.url; }, 1500);
             })
             .catch(function(err) {
@@ -1174,7 +1174,7 @@
       // workspace member list, from the same api/appliances listing. Defined
       // BEFORE setType, which toggles it on the initial call at modal open.
       var lrSelected = (rec.linked_repos || []).slice();
-      var lrBox = el('div', {}, ['Loading repositories…']);
+      var lrBox = el('div', {}, ['Loading repositories...']);
       var lrLoaded = false;
       function loadLinkedRepos() {
         if (lrLoaded) return;
@@ -1258,7 +1258,7 @@
           status_failed: ['failed'],
           status_error_field: 'bundle_error',
           status_labels: {
-            staging: 'Receiving files…',
+            staging: 'Receiving files...',
             ingesting: 'Expanding and indexing: this can take a few minutes on a large dump.',
           },
           button_label: 'Upload and ingest',
@@ -1298,7 +1298,7 @@
       domainIn.value = rec.domain || '';
       var tsBound = {};
       (rec.toolset || []).forEach(function(b){ tsBound[b.name] = b; });
-      var tsBox = el('div', {}, ['Loading tools…']);
+      var tsBox = el('div', {}, ['Loading tools...']);
       var tsLoaded = false;
       function loadBindableTools() {
         if (tsLoaded) return;
@@ -1392,7 +1392,7 @@
       // reached through a peer gets the SSH prompts and tools rather than a
       // second, thinner code path that would drift from them.
       var remoteKindIn = el('input', {type: 'hidden', value: rec.remote_kind || 'ssh'});
-      var remoteBox = el('div', {}, ['Loading remote systems…']);
+      var remoteBox = el('div', {}, ['Loading remote systems...']);
       var remoteLoaded = false;
       function loadRemoteAppliances() {
         if (remoteLoaded) return;
@@ -1563,13 +1563,13 @@
 
       // Shared fields
       var instrIn = el('textarea', {class: 'ui-form-input', rows: 3,
-        placeholder: 'Optional. App-specific CLI tools, known quirks, workflow notes…'});
+        placeholder: 'Optional. App-specific CLI tools, known quirks, workflow notes...'});
       instrIn.value = rec.instructions || '';
       var personaNameIn = el('input', {type: 'text', class: 'ui-form-input',
         placeholder: 'Persona name (e.g. Support, QA, DevOps)',
         value: rec.persona_name || ''});
       var personaPromptIn = el('textarea', {class: 'ui-form-input', rows: 3,
-        placeholder: 'Describe how the AI should approach this system…'});
+        placeholder: 'Describe how the AI should approach this system...'});
       personaPromptIn.value = rec.persona_prompt || '';
 
       // Linked Knowledge — collections the investigator can search (via
@@ -1813,8 +1813,8 @@
     // RUN that one command. Neither implies the other.
     function openAccessModal(applianceID, applianceName) {
       var body = el('div', {});
-      var agentsBox = el('div', {}, ['Loading agents…']);
-      var capsBox = el('div', {}, ['Loading requests…']);
+      var agentsBox = el('div', {}, ['Loading agents...']);
+      var capsBox = el('div', {}, ['Loading requests...']);
 
       body.appendChild(el('div', {class: 'ui-form-label'}, ['Agents that may use ' + applianceName]));
       body.appendChild(el('div', {class: 'ui-form-help'},
@@ -2007,7 +2007,7 @@
             var aid = getApplianceID();
             if (!aid) { window.uiAlert('Pick a system first'); return; }
             function pushTo(payload) {
-              gBtn.disabled = true; gBtn.textContent = 'Incorporating…';
+              gBtn.disabled = true; gBtn.textContent = 'Incorporating...';
               payload.appliance_id = aid; payload.text = m.rawText;
               fetch('api/push-to-guide?appliance_id=' + encodeURIComponent(aid), {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -2021,7 +2021,7 @@
                 window.uiAlert('Could not add it to the guide: ' + (err && err.message || err));
               });
             }
-            gBtn.disabled = true; gBtn.textContent = 'Loading…';
+            gBtn.disabled = true; gBtn.textContent = 'Loading...';
             fetch('api/push-to-guide?appliance_id=' + encodeURIComponent(aid))
               .then(function(r) { return r.ok ? r.json() : r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); }); })
               .then(function(d) {
@@ -2063,7 +2063,7 @@
                     others.forEach(function(g) { choice(g.title, function() { pushTo({guide_id: g.id, link: true}); }); });
                   }
                   heading('A new guide', 'Starts a guide with this reply as its first section and this system as its source.');
-                  choice('New guide…', function() {
+                  choice('New guide...', function() {
                     window.uiPrompt('Title for the new guide:', '').then(function(title) {
                       title = (title || '').trim();
                       if (title) pushTo({new_title: title});
@@ -2391,7 +2391,7 @@
       termReconnectDelay = Math.min(termReconnectDelay * 2, 16000);
       termReconnectTimer = setTimeout(function() {
         if (!termAutoReconnect) return;
-        if (termInstance) termInstance.write('\x1b[2m[reconnecting…]\x1b[0m\r\n');
+        if (termInstance) termInstance.write('\x1b[2m[reconnecting...]\x1b[0m\r\n');
         openTerminal();
       }, delay);
     }

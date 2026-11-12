@@ -1014,7 +1014,7 @@ func KeptSecrets(db Database, c Connector) map[string]string {
 		}
 		hint, v := "set", []rune(kept.Value)
 		if !strings.HasPrefix(f.Send, "basic") && len(v) >= hintLength {
-			hint = "ends in …" + string(v[len(v)-4:])
+			hint = "ends in ..." + string(v[len(v)-4:])
 		}
 		if !kept.Set.IsZero() {
 			hint += ", given " + kept.Set.Format("2 Jan 2006")

@@ -56,7 +56,7 @@ when each was added, so an old document reads as old.
 
 To speak to an agent and hear it answer, choose a transcription and a speech
 server under **Administrator › Services**, in **Audio Transcription (STT)** and
-**Speech (TTS)**. Each list ends with **+ Add another…**: the whisper.cpp /
+**Speech (TTS)**. Each list ends with **+ Add another...**: the whisper.cpp /
 OpenAI-compatible templates fit most local servers. Once chosen, the chat
 composer shows a microphone, and each reply gets a read-aloud button.
 

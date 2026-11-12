@@ -213,13 +213,13 @@ Add `WebPath()` / `WebName()` / `WebDesc()` / `Routes()` and it gets a web dashb
 
 | App | What it is |
 |-----|-----------|
-| `orchestrate` | **Agency**: the agent fleet runner. Chat with seed agents (Chat, Builder, Research, …) or your own; multi-layer governed per-(user, agent) memory, plan-driven authoring, sub-agent dispatch, attachable pipelines and machines |
+| `orchestrate` | **Agency**: the agent fleet runner. Chat with seed agents (Chat, Builder, Research, ...) or your own; multi-layer governed per-(user, agent) memory, plan-driven authoring, sub-agent dispatch, attachable pipelines and machines |
 | `admin` | Operator panel: users, permissions, app groups, API credentials, MCP servers, connectors, tool/skill curation, and all service config |
 | `extensions` | What your agents draw on, in one place: credentials, tools, skills, connections, and your own MCP servers |
 | `agents` | One published agent, one URL: a permission-gated chat surface scoped to a single agent |
 | `knowledge` | Named document collections that travel with your skills, recalled by every agent that has those skills on |
 | `filestore` | File stores: make a folder on this server searchable by an agent |
-| `bridges` | Messaging transport: wire iMessage / Telegram / … to a channel agent, with a wake-rule gatekeeper |
+| `bridges` | Messaging transport: wire iMessage / Telegram / ... to a channel agent, with a wake-rule gatekeeper |
 | `servitor` | SSH system investigator + git-repo Q&A, plan-driven, with an xterm pane; systems are shareable |
 | `scribe` | Living multi-section guides with an AI co-author: grounded in their sources, a Changes card on every turn with Undo, a header picture that can carry your logo |
 | `publish` | Sends finished documents out to Confluence and other destinations, and keeps them updated |

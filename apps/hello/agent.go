@@ -329,7 +329,7 @@ func (T *HelloAgent) handleAgentSend(w http.ResponseWriter, r *http.Request) {
 	// Tell the client which session it landed in. The runtime mirrors
 	// this into the URL via DeepLinkParam.
 	sse.Send(map[string]any{"kind": "session", "id": s.ID})
-	sse.Send(map[string]any{"kind": "status", "text": "Thinking…"})
+	sse.Send(map[string]any{"kind": "status", "text": "Thinking..."})
 
 	// Build the message history the LLM sees from the session store.
 	// Demo doesn't preserve tool calls in history — every round

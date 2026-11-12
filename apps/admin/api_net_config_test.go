@@ -119,7 +119,7 @@ func TestMailTestTriesTheChoiceBeforeItIsSaved(t *testing.T) {
 }
 
 // Web Search offers the engines; a research source is never listed as one.
-// "Use a research source…" and the list under it pick one, and what is saved
+// "Use a research source..." and the list under it pick one, and what is saved
 // is the source's own connector, shown back the same way.
 func TestWebSearchKeepsResearchSourcesApart(t *testing.T) {
 	saved := RootDB

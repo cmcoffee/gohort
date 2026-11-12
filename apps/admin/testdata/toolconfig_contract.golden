@@ -3,7 +3,7 @@
 alice GET /api/persistent-tools ""
   403 forbidden
 root GET /api/persistent-tools ""
-  200 {"active":[{"owner":"root","has_missing":false,"can_share":true,"id":"<uuid>","tool":{"name":"ct_shared","description":"Shared one.","command_template":"echo shared","trial_since":"<time>"},"approved_… (638 bytes, sha1 d3de45dce70d40a713ea12168ee3894cac1c165a)
+  200 {"active":[{"owner":"root","has_missing":false,"can_share":true,"id":"<uuid>","tool":{"name":"ct_shared","description":"Shared one.","command_template":"echo shared","trial_since":"<time>"},"approved_... (638 bytes, sha1 d3de45dce70d40a713ea12168ee3894cac1c165a)
 root PUT /api/persistent-tools "{}"
   405 method not allowed
 (signed out) GET /api/persistent-tools?allowed_users=ct_shared ""
@@ -71,7 +71,7 @@ root POST /api/persistent-tools?action=orphan_delete&name=ct_gone ""
 root POST /api/persistent-tools?action=sideways&name=ct_shared ""
   400 action must be approve|reject|share|unshare|set_allowed_users|orphan_promote|orphan_attach|orphan_delete
 root GET /api/persistent-tools ""
-  200 {"active":[{"owner":"bob","has_missing":false,"can_share":false,"id":"<uuid>","tool":{"name":"ct_pending","description":"Waiting.","command_template":"echo ct_pending","trial_since":"<time>"},"approve… (534 bytes, sha1 aa9a18a33fd527147839e32d32d21674448a3c5e)
+  200 {"active":[{"owner":"bob","has_missing":false,"can_share":false,"id":"<uuid>","tool":{"name":"ct_pending","description":"Waiting.","command_template":"echo ct_pending","trial_since":"<time>"},"approve... (534 bytes, sha1 aa9a18a33fd527147839e32d32d21674448a3c5e)
 alice DELETE /api/persistent-tools?owner=bob&name=ct_pending ""
   403 forbidden
 root DELETE /api/persistent-tools?owner=bob ""

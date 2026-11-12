@@ -28,7 +28,7 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 				PostURL:     "new",
 				SubmitLabel: "Create",
 				Fields: []ui.FormField{
-					{Field: "title", Label: "Title", Type: "text", Placeholder: "the guide's title…"},
+					{Field: "title", Label: "Title", Type: "text", Placeholder: "the guide's title..."},
 					{Field: "subtitle", Label: "Subtitle", Type: "text", Placeholder: "Optional one-line description"},
 					{Field: "template", Label: "Start from", Type: "select", Options: templateOptions(),
 						Help: "A starting skeleton for a document people write repeatedly."},
@@ -126,10 +126,10 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 						Text: "Reorganize this guide into the clearest reading order for someone new to the topic: " +
 							"overview and prerequisites first, then setup and steps in sequence, then advanced and reference material, " +
 							"with troubleshooting or FAQ last. Only change the order; don't rewrite any section's content."},
-					{Label: "Something else", Input: true, Placeholder: "what to change about it…",
+					{Label: "Something else", Input: true, Placeholder: "what to change about it...",
 						Help: "Say how you want it ordered.",
 						// Seeded with the rule the default enforces, so the common
-						// edit ("…but keep X first") is a change to one clause rather
+						// edit ("...but keep X first") is a change to one clause rather
 						// than a blank page.
 						Text: "Reorganize this guide. Only change the order; don't rewrite any section's content. "},
 				}},
@@ -172,7 +172,7 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 							"3. Where it does not, call edit_section with the whole revised body. Keep every fact, step, command, value and citation, and remove only what the brief says to leave out. Add nothing from elsewhere, and do no research.\n" +
 							"4. Leave a section that already fits the brief unchanged: don't rewrite for the sake of it.\n\n" +
 							"When done, reply with a short bulleted summary of which sections you changed and what about them. If the guide has no writing brief, say so and change nothing."},
-					{Label: "Something else", Input: true, Placeholder: "what to change about it…",
+					{Label: "Something else", Input: true, Placeholder: "what to change about it...",
 						Help: "Say which sections, or what to change about how they read.",
 						Text: "Edit this guide to its writing brief. Change how it is presented, not what it says: keep every fact, step and citation. "},
 				}},
@@ -180,7 +180,7 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 			// The ones that check it: is it still true, and what the Curator
 			// filed into it.
 			{Label: "Review", Kind: "menu", Children: []ui.WorkbenchAction{
-				{Label: "Audit", Kind: "report", URL: "audit?id={id}", Spinner: "Auditing…", Invalidate: []string{"guides"}},
+				{Label: "Audit", Kind: "report", URL: "audit?id={id}", Spinner: "Auditing...", Invalidate: []string{"guides"}},
 				{Label: "Curator", Kind: "client", URL: "guides_curator"},
 			}},
 			// Ahead of the outbound buttons. Reaching for an earlier version is a
@@ -248,7 +248,7 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 			Markdown:     true,
 			LockActivity: true,
 			EmptyText:    "Ask me to draft or revise: e.g. \"Add an introduction\", \"Expand the setup section\", or \"Rewrite this as a runbook.\"",
-			Placeholder:  "Ask the Guide Author…",
+			Placeholder:  "Ask the Guide Author...",
 		}),
 	}
 
@@ -459,13 +459,13 @@ const scribeImageAction = `function(ctx){
           var status = el('div', {class:'guide-kn-intro'});
           // Working: the shared spinner with seconds, since generating can run
           // a while and a static word cannot be told from a stall.
-          function busy(label){ status.textContent = ''; status.appendChild(window.uiLoading ? window.uiLoading(label) : document.createTextNode(label + '…')); }
+          function busy(label){ status.textContent = ''; status.appendChild(window.uiLoading ? window.uiLoading(label) : document.createTextNode(label + '...')); }
           var row = el('div', {class:'guide-edit-actions scribe-img-actions'});
           var gen = el('button', {class:'ui-row-btn primary', text:'Generate'});
           if (!d.can_generate) { gen.disabled = true; gen.title = 'Image generation is not configured on this deployment'; }
           function genLabel(){ gen.textContent = d.from_url ? 'Generate with picture' : 'Generate from title'; }
           genLabel();
-          var urlIn = el('input', {type:'text', placeholder:'…or paste an image URL, or a screenshot'});
+          var urlIn = el('input', {type:'text', placeholder:'...or paste an image URL, or a screenshot'});
           var use = el('button', {class:'ui-row-btn', text:'Use URL'});
           var rm = el('button', {class:'ui-row-btn', text:'Remove'});
           var up = el('button', {class:'ui-row-btn', text:'Upload'});
@@ -855,7 +855,7 @@ const guideSectionCode = `(function(){
           el('span', {class:'guide-edit-hint', text:'Paste or drop a screenshot to add it.'}), addImg]));
       }
       save.addEventListener('click', function(){
-        save.disabled = true; save.textContent = 'Saving…';
+        save.disabled = true; save.textContent = 'Saving...';
         onSave(tf.input.value, mf.input.value).then(function(){
           try { dlg.close(); dlg.remove(); } catch(e){}
           refresh();
@@ -1088,7 +1088,7 @@ const guideSettingsAction = `function(ctx){
             el('span', {text:'Curate findings as they arrive. When an agent reports something for this guide, the Guide Curator files it within about a minute, with no review first. Every change is in the Curator digest, with Undo.'})]));
           var save = dlg.addAction(el('button', {class:'ui-row-btn primary', text:'Save'}));
           save.addEventListener('click', function(){
-            save.disabled = true; save.textContent = 'Saving…';
+            save.disabled = true; save.textContent = 'Saving...';
             fetch('settings?' + qp, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
               body: JSON.stringify({title: tf.input.value, subtitle: sf.input.value, private: pcb.checked, curate_on_report: ccb.checked, brief: bta.value})})
               .then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); }); })

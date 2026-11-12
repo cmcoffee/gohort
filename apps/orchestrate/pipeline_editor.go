@@ -123,7 +123,7 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 		ui.FormField{Field: "when", Type: "text", Label: "Take the branch when",
 			ShowWhen: keepWhileSet(s.When, "kind:branch"),
 			Help:     "A bool field an EARLIER stage declared, by bare name. True takes the branch."},
-		ui.FormField{Field: "skip_to", Type: "select", Label: "…and skip to",
+		ui.FormField{Field: "skip_to", Type: "select", Label: "...and skip to",
 			ShowWhen: keepWhileSet(s.SkipTo, "kind:branch"),
 			Options:  append([]ui.SelectOption{{Value: "", Label: "(end the pipeline)"}}, laterStageOptions(def, s.Name)...),
 			Help:     "Forward only. Repeating work is what a loop is for.",
@@ -822,7 +822,7 @@ func stageOutputRows(def PipelineDef, s PipelineStage) ui.FormField {
 		Columns: []ui.FormField{
 			{Field: "kind", Type: "select", Label: "What is this?", Width: 4,
 				Options: []ui.SelectOption{
-					{Value: "", Label: "Choose…"},
+					{Value: "", Label: "Choose..."},
 					{Value: "asked", Label: "Something this stage works out"},
 					{Value: "filled", Label: "A value the pipeline already holds"},
 				},
@@ -852,7 +852,7 @@ func stageOutputRows(def PipelineDef, s PipelineStage) ui.FormField {
 				Help: "A required field the model omits fails the stage. An optional one resolves to empty."},
 			{Field: "desc", Type: "textarea", Rows: 3, OwnLine: true, ShowWhen: "kind:asked",
 				Label:       "What to find: write it as the instruction for this field",
-				Placeholder: "what this field holds, written as an instruction to the model…"},
+				Placeholder: "what this field holds, written as an instruction to the model..."},
 		},
 	}
 }
@@ -866,7 +866,7 @@ func stageOutputRows(def PipelineDef, s PipelineStage) ui.FormField {
 // that cannot succeed.
 func stageFillOptions(def PipelineDef, upTo string) []ui.SelectOption {
 	out := []ui.SelectOption{
-		{Value: "", Label: "Choose a value…"},
+		{Value: "", Label: "Choose a value..."},
 		{Value: "{input}", Label: "{input}: what the run was started with"},
 		{Value: "{prev}", Label: "{prev}: the previous stage's whole output"},
 	}

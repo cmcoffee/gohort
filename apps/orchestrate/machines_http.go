@@ -878,7 +878,7 @@ func copyName(base string, existing []string) string {
 //
 // A tool or a script POSTs the recipe itself. The browser posts a FORM,
 // and a file field carries the chosen file as TEXT under its own name —
-// so the body is {"recipe": "{…the json…}"}. Accepting only the first
+// so the body is {"recipe": "{...the json...}"}. Accepting only the first
 // meant the endpoint existed and the page could not reach it, which is
 // how it went unreachable for so long.
 func decodeMachineRecipe(body []byte) (MachineDef, error) {

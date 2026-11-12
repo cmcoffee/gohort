@@ -88,7 +88,7 @@ func jsMaskLiterals(src string) string {
 			prev, prevWord = quote, ""
 		case c == '`':
 			// Template literals are masked whole, interpolations included. Code
-			// inside `${…}` is vanishingly rare in an app's game loop and the
+			// inside `${...}` is vanishingly rare in an app's game loop and the
 			// only cost of ignoring it is a definition this scan doesn't see
 			// which the diff then cancels out anyway.
 			i++
@@ -391,7 +391,7 @@ func jsBindsFunction(masked string, idx int) bool {
 	if strings.HasPrefix(rest, "function") {
 		return true
 	}
-	// An arrow: `(a, b) => …` or `a => …`.
+	// An arrow: `(a, b) => ...` or `a => ...`.
 	if strings.HasPrefix(rest, "(") {
 		if end := jsMatchPair(rest, 0, '(', ')'); end > 0 {
 			return strings.HasPrefix(strings.TrimLeft(rest[end+1:], " \t\r\n"), "=>")
@@ -460,9 +460,9 @@ func jsMatchPair(masked string, i int, open, close byte) int {
 // returns the byte range covering it: declaration keyword through closing
 // brace, plus a trailing semicolon when the form has one.
 //
-// Recognizes the three shapes an app actually uses: `function name(…) {…}`,
-// `const name = function (…) {…}` / `const name = (…) => {…}`, and a bare
-// `name = function (…) {…}` assignment. Ambiguity is refused, never guessed:
+// Recognizes the three shapes an app actually uses: `function name(...) {...}`,
+// `const name = function (...) {...}` / `const name = (...) => {...}`, and a bare
+// `name = function (...) {...}` assignment. Ambiguity is refused, never guessed:
 // two definitions of the same name means an edit cannot say which one it
 // changed, which is the same rule patch_html's uniqueness check enforces.
 func jsFunctionSpan(src, name string) (start, end int, err error) {

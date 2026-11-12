@@ -35,7 +35,7 @@ root PUT /api/worker-thinking "{}"
 alice GET /api/worker-llm ""
   403 forbidden
 root GET /api/worker-llm ""
-  200 {"_kept_key":"","_live":"","api_key":"","api_key_from":"none","aws_profile":"","aws_region":"","bedrock_api":"","context_size":0,"default_effort":"","disable_thinking":false,"endpoint":"","max_effort"… (455 bytes, sha1 53989087867b4219a27fa94ac13985b3ffe029b9)
+  200 {"_kept_key":"","_live":"","api_key":"","api_key_from":"none","aws_profile":"","aws_region":"","bedrock_api":"","context_size":0,"default_effort":"","disable_thinking":false,"endpoint":"","max_effort"... (455 bytes, sha1 53989087867b4219a27fa94ac13985b3ffe029b9)
 root PUT /api/worker-llm "{}"
   405 method not allowed
 (signed out) GET /api/lead-llm ""
@@ -43,7 +43,7 @@ root PUT /api/worker-llm "{}"
 alice GET /api/lead-llm ""
   403 forbidden
 root GET /api/lead-llm ""
-  200 {"_kept_key":"","_live":"No lead model is loaded; escalations run on the worker.","api_key":"","api_key_from":"none","aws_profile":"","aws_region":"","bedrock_api":"","context_size":0,"default_effort"… (482 bytes, sha1 97e98ede25807c7a28f804dbee04d521a4d56c43)
+  200 {"_kept_key":"","_live":"No lead model is loaded; escalations run on the worker.","api_key":"","api_key_from":"none","aws_profile":"","aws_region":"","bedrock_api":"","context_size":0,"default_effort"... (482 bytes, sha1 97e98ede25807c7a28f804dbee04d521a4d56c43)
 root PUT /api/lead-llm "{}"
   405 method not allowed
 (signed out) GET /api/local-scheduler ""
@@ -151,7 +151,7 @@ alice POST /api/worker-llm "{\"provider\":\"ollama\",\"model\":\"qwen3:8b\"}"
 root POST /api/worker-llm "{\"provider\":\" ollama \",\"model\":\" qwen3:8b \",\"endpoint\":\" <stub> \",\"api_key\":\"s3cr3t-llm-w\",\"context_size\":8192,\"request_timeout_seconds\":120,\"default_effort\":\" HIGH \",\"max_effort\":\"extreme\",\"thinking_budget\":2048}"
   204 
 root GET /api/worker-llm ""
-  200 {"_kept_key":"from the Keystore: Worker model key (set, given <today>)","_live":"","api_key":"","api_key_from":"k-<hex>","aws_profile":"","aws_region":"","bedrock_api":"","context_size":8192,"default_… (545 bytes, sha1 9266690a9fc7aa3daf36601f8258389b2df0e8c8)
+  200 {"_kept_key":"from the Keystore: Worker model key (set, given <today>)","_live":"","api_key":"","api_key_from":"k-<hex>","aws_profile":"","aws_region":"","bedrock_api":"","context_size":8192,"default_... (545 bytes, sha1 9266690a9fc7aa3daf36601f8258389b2df0e8c8)
 root POST /api/worker-llm/models "{\"provider\":\"ollama\",\"endpoint\":\"<stub>\"}"
   200 {"note":"What Ollama offers. Pick one, or type any id in the field.","suggestions":["llama3.2","qwen3:8b"]}
 root POST /api/worker-llm "{\"provider\":\"ollama\",\"model\":\"qwen3:8b\",\"endpoint\":\"<stub>\"}"
@@ -165,17 +165,17 @@ root POST /api/worker-llm "{\"provider\":"
 root POST /api/worker-llm ""
   400 invalid JSON: EOF
 root GET /api/worker-llm ""
-  200 {"_kept_key":"from the Keystore: Worker model key (set, given <today>)","_live":"","api_key":"","api_key_from":"k-<hex>","aws_profile":"","aws_region":"","bedrock_api":"","context_size":0,"default_eff… (531 bytes, sha1 61913060ac14d356269c9de3e6d615442519c8de)
+  200 {"_kept_key":"from the Keystore: Worker model key (set, given <today>)","_live":"","api_key":"","api_key_from":"k-<hex>","aws_profile":"","aws_region":"","bedrock_api":"","context_size":0,"default_eff... (531 bytes, sha1 61913060ac14d356269c9de3e6d615442519c8de)
 root POST /api/worker-llm "{\"provider\":\"ollama\",\"model\":\"qwen3:8b\",\"endpoint\":\"<stub>\"}"
   204 
 root GET /api/lead-llm ""
-  200 {"_kept_key":"","_live":"No lead model is loaded; escalations run on the worker.","api_key":"","api_key_from":"none","aws_profile":"","aws_region":"","bedrock_api":"","context_size":0,"default_effort"… (481 bytes, sha1 c66c29cc27a7fb2ef7b6d4cbb134a486bb47357d)
+  200 {"_kept_key":"","_live":"No lead model is loaded; escalations run on the worker.","api_key":"","api_key_from":"none","aws_profile":"","aws_region":"","bedrock_api":"","context_size":0,"default_effort"... (481 bytes, sha1 c66c29cc27a7fb2ef7b6d4cbb134a486bb47357d)
 root POST /api/lead-llm "{\"provider\":\"bedrock\",\"model\":\"anthropic.claude-3-5-sonnet\",\"api_key\":\"s3cr3t-llm-l\"}"
   204 
 root POST /api/lead-llm "{\"provider\":\"vllm\",\"model\":\"qwen3:8b\",\"endpoint\":\"<stub>\",\"api_key\":\"s3cr3t-llm-l\",\"no_images\":true}"
   204 
 root GET /api/lead-llm ""
-  200 {"_kept_key":"set, given <today>","_live":"No lead model is loaded; escalations run on the worker.","api_key":"","api_key_from":"own","aws_profile":"","aws_region":"","bedrock_api":"","context_size":0… (515 bytes, sha1 0dc9c78964fe2518cdb58ff7b0489c5b1a4d3c92)
+  200 {"_kept_key":"set, given <today>","_live":"No lead model is loaded; escalations run on the worker.","api_key":"","api_key_from":"own","aws_profile":"","aws_region":"","bedrock_api":"","context_size":0... (515 bytes, sha1 0dc9c78964fe2518cdb58ff7b0489c5b1a4d3c92)
 root GET /api/llm-privacy ""
   200 {"advice":"Worker: Ollama at <stub> - private (loopback endpoint)\nLead: vLLM at <stub> - private (loopback endpoint)\n\nBoth tiers look local, so turning this on is consistent with how the deployment is configured.","all_private":false,"recommended":true}
 activity log, 7 entries:

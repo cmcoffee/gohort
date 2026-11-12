@@ -43,11 +43,11 @@ is no parked goroutine to keep alive between question and answer.
 `core/sub_session.go` defines the `autonomous` sub-session kind. Its own doc
 describes exactly this shape:
 
-> a long-lived task that drives its OWN runner when a message arrives … spends
-> most of its life idle waiting on an external party … exempt from the
+> a long-lived task that drives its OWN runner when a message arrives ... spends
+> most of its life idle waiting on an external party ... exempt from the
 > promotion-window / turn-cap auto-retirement.
 
-Lifecycle: `active → idle → (re-driven) → active → … → retired`. The record
+Lifecycle: `active → idle → (re-driven) → active → ... → retired`. The record
 carries only lifecycle metadata; the message history stays in the per-app
 `ChatSession`. That separation is the foundation.
 
@@ -63,7 +63,7 @@ the channel agent" and it is the same machine.
 | Need | Already there |
 |---|---|
 | A suspended task record | `SubSession{Kind: autonomous, Status: idle}` (core/sub_session.go) |
-| Resume a sub-agent with a new message | `RunAgentSyncContinuing(…, subSessionID, message, …)` (apps/orchestrate/agent_dispatch.go) |
+| Resume a sub-agent with a new message | `RunAgentSyncContinuing(..., subSessionID, message, ...)` (apps/orchestrate/agent_dispatch.go) |
 | Re-drive on an inbound message | `RouteGoal → runGoalTurn` (apps/phantom/tool_goal_conversation.go) |
 | Deliver a wake/question into a thread | the channel waker (apps/orchestrate/operator_wake.go) |
 | Distinguish "parked, will re-drive" from "worker died" | `SubSessionLivenessChecker` + `RetireOrphanedActiveSubSessions` |

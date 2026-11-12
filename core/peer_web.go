@@ -144,7 +144,7 @@ func peerBrowseServed() bool {
 
 // --- search ------------------------------------------------------------------
 
-// HandlePeerSearch serves GET /api/peer/v1/search?q=… in the SearXNG JSON
+// HandlePeerSearch serves GET /api/peer/v1/search?q=... in the SearXNG JSON
 // shape, so the far side drives it with an ordinary searxng-provider config.
 func HandlePeerSearch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {

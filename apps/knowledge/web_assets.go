@@ -13,7 +13,7 @@ const documentsListBody = `
 <div class="docs-page">
   <div class="docs-hdr">
     <p class="docs-intro">Reusable document collections. Create a named bundle of documents, then attach it to whichever agents or experts need it via their Knowledge picker. The chunks merge into RAG at consult / recall time. Use this for domain-scoped reference material that more than one agent might want; for files private to a single agent, use that agent's own Knowledge button instead.</p>
-    <button id="docs-import" class="ui-row-btn" title="Preview a collection somebody exported, then bring it into your own knowledge">Import…</button>
+    <button id="docs-import" class="ui-row-btn" title="Preview a collection somebody exported, then bring it into your own knowledge">Import...</button>
     <button id="docs-new" class="ui-row-btn primary">+ New collection</button>
   </div>
   <div id="docs-status" class="docs-status"></div>
@@ -232,7 +232,7 @@ const documentsDetailBody = `
       <span id="docs-upload-status"></span>
     </div>
     <div class="docs-upload-row" style="margin-top:0.6rem;align-items:center;gap:0.5rem">
-      <button id="docs-paste" class="ui-row-btn" title="Add a note, runbook, config or JSON you have on the clipboard as one document">Paste text…</button>
+      <button id="docs-paste" class="ui-row-btn" title="Add a note, runbook, config or JSON you have on the clipboard as one document">Paste text...</button>
       <span class="docs-section-help" style="margin:0">Markdown, plain text, or a JSON object. Pasting again under the same title replaces the document.</span>
       <span id="docs-paste-status"></span>
     </div>
@@ -457,7 +457,7 @@ const documentsDetailAssets = `<style>
   function saveFilterRules(newRaw) {
     var st = $('#docs-filter-rules-status');
     st.style.color = 'var(--text-mute)';
-    st.textContent = 'Saving…';
+    st.textContent = 'Saving...';
     fetch(api('/api/collections/' + encodeURIComponent(cid)), {
       method: 'PATCH', credentials: 'same-origin',
       headers: {'Content-Type': 'application/json'},
@@ -552,7 +552,7 @@ const documentsDetailAssets = `<style>
   function saveArticles(list) {
     var st = $('#docs-articles-status');
     st.style.color = 'var(--text-mute)';
-    st.textContent = 'Saving…';
+    st.textContent = 'Saving...';
     fetch(api('/api/collections/' + encodeURIComponent(cid)), {
       method: 'PATCH', credentials: 'same-origin',
       headers: {'Content-Type': 'application/json'},
@@ -600,13 +600,13 @@ const documentsDetailAssets = `<style>
     var fi = 0;
     var started = Date.now();
     var timer = setInterval(function(){
-      btn.textContent = frames[fi] + ' Fetching…';
+      btn.textContent = frames[fi] + ' Fetching...';
       fi = (fi + 1) % frames.length;
       var secs = Math.round((Date.now() - started) / 1000);
       if (secs >= 3) st.textContent = 'Searching and fetching - ' + secs + 's';
     }, 100);
     st.style.color = 'var(--text-mute)';
-    st.textContent = 'Searching and fetching…';
+    st.textContent = 'Searching and fetching...';
     function done() { clearInterval(timer); btn.textContent = orig; delete btn.dataset.busy; }
     fetch(api('/api/collections/' + encodeURIComponent(cid) + '/autofill'), {
       method: 'POST', credentials: 'same-origin',
@@ -638,7 +638,7 @@ const documentsDetailAssets = `<style>
     var v = !!cb.checked;
     cb.disabled = true;
     st.style.color = 'var(--text-mute)';
-    st.textContent = 'Saving…';
+    st.textContent = 'Saving...';
     fetch(api('/api/collections/' + encodeURIComponent(cid)), {
       method: 'PATCH', credentials: 'same-origin',
       headers: {'Content-Type': 'application/json'},
@@ -844,7 +844,7 @@ const documentsDetailAssets = `<style>
     var st = $('#docs-bulk-status');
     btn.disabled = true;
     st.style.color = 'var(--text-mute)';
-    st.textContent = 'Removing ' + ids.length + '…';
+    st.textContent = 'Removing ' + ids.length + '...';
     // Snapshot rows by ID and hide them up front for instant feedback.
     var rowByID = {};
     var box = $('#docs-sources');
@@ -968,7 +968,7 @@ const documentsDetailAssets = `<style>
     var inpT = document.createElement('input'); inpT.type = 'text'; inpT.placeholder = 'e.g. Backup runbook'; form.appendChild(inpT);
     var lblX = document.createElement('label'); lblX.textContent = 'Text'; form.appendChild(lblX);
     var inpX = document.createElement('textarea');
-    inpX.placeholder = 'Paste markdown, plain text, or a JSON object / array. Headings (## …) become sections; JSON keys become sections with path: value lines.';
+    inpX.placeholder = 'Paste markdown, plain text, or a JSON object / array. Headings (## ...) become sections; JSON keys become sections with path: value lines.';
     inpX.style.minHeight = '16rem';
     form.appendChild(inpX);
     var hint = document.createElement('div');
@@ -993,7 +993,7 @@ const documentsDetailAssets = `<style>
           if (text.length < 20) { window.uiAlert('Paste more than a line or two.'); return; }
           btn.disabled = true;
           var orig = btn.textContent;
-          btn.textContent = 'Indexing\u2026';
+          btn.textContent = 'Indexing...';
           fetch(api('/api/collections/' + encodeURIComponent(cid) + '/paste'), {
             method: 'POST', credentials: 'same-origin',
             headers: {'Content-Type': 'application/json'},
@@ -1039,7 +1039,7 @@ const documentsDetailAssets = `<style>
     var spinFrames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
     var spinIdx = 0;
     var spinTimer = setInterval(function(){
-      btn.textContent = spinFrames[spinIdx] + ' Auto-filling…';
+      btn.textContent = spinFrames[spinIdx] + ' Auto-filling...';
       spinIdx = (spinIdx + 1) % spinFrames.length;
     }, 100);
     function stopSpinner(label) {
@@ -1085,9 +1085,9 @@ const documentsDetailAssets = `<style>
     btn.disabled = true;
     var frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
     var fi = 0;
-    var timer = setInterval(function(){ btn.textContent = frames[fi] + ' Researching…'; fi = (fi+1)%frames.length; }, 100);
+    var timer = setInterval(function(){ btn.textContent = frames[fi] + ' Researching...'; fi = (fi+1)%frames.length; }, 100);
     st.style.color = 'var(--text-mute)';
-    st.textContent = 'Searching, reading sources, synthesizing…';
+    st.textContent = 'Searching, reading sources, synthesizing...';
     fetch(api('/api/collections/' + encodeURIComponent(cid) + '/research'), {
       method: 'POST',
       credentials: 'same-origin',
@@ -1124,9 +1124,9 @@ const documentsDetailAssets = `<style>
     btn.disabled = true;
     var frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
     var fi = 0;
-    var timer = setInterval(function(){ btn.textContent = frames[fi] + ' Auditing…'; fi = (fi+1)%frames.length; }, 100);
+    var timer = setInterval(function(){ btn.textContent = frames[fi] + ' Auditing...'; fi = (fi+1)%frames.length; }, 100);
     st.style.color = 'var(--text-mute)';
-    st.textContent = 'Checking the oldest documents: this can take a minute…';
+    st.textContent = 'Checking the oldest documents: this can take a minute...';
     fetch(api('/api/collections/' + encodeURIComponent(cid) + '/audit'), {
       method: 'POST', credentials: 'same-origin',
     }).then(function(r){

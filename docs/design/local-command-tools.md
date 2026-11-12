@@ -90,7 +90,7 @@ Build logs   /var/log/builds   4 subfolders   3 users
     forensics         6 actions                mapped elsewhere [ Detach ]
                                                     [ + Attach a toolbox ]
   Who may reach it
-    …
+    ...
 ```
 
 The mapping conversation opens from the command's own **Map** button and returns
@@ -209,7 +209,7 @@ Build logs   /var/log/builds   4 subfolders   3 users
                      Not mapped                                      [Map] [Delete]
                                                             [ + Add a command ]
   Who may reach it
-    …
+    ...
 ```
 
 **The approval survived; the attachment did not.** They were doing one job in the
@@ -228,7 +228,7 @@ provenance fields and a column that explains them.
 Reuse. One binary mapped once could be attached to several folders. That was
 worth less than it looked: a command is registered per folder already, so a
 second folder was never free: it cost a registration, and the attachment only
-saved the *conversation*. If it bites, the answer is a "copy the mapping from…"
+saved the *conversation*. If it bites, the answer is a "copy the mapping from..."
 action on the command row: still one record, still one place to look.
 
 ## Migration

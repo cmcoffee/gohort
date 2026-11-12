@@ -31,13 +31,13 @@ import (
 // to move it into Rules (personaRulesSection).
 var orchestratorPromptSections = []ui.SectionSpec{
 	{Title: "Role & voice", Mode: "prose", Required: true,
-		Placeholder: "You are a…",
+		Placeholder: "You are a...",
 		Help:        "Who this agent is, what it's accountable for, and how it sounds. Two or three sentences.",
 		Detail:      "Tone lives here rather than in its own slot: nobody writes a persona and then a separate paragraph about its tone, and splitting them just leaves one box empty."},
 	{Title: "Approach", Mode: "prose",
 		Help: "How it works a request: what it does first, how it decomposes, when it asks instead of assuming."},
 	{Title: "Failure modes", Mode: "list",
-		Placeholder: "a way things go wrong here, and what to do when they do…",
+		Placeholder: "a way things go wrong here, and what to do when they do...",
 		Help:        "What commonly goes wrong in this domain, and what to do about it.",
 		Detail:      "The highest-value section. Defaults rarely fit."},
 	{Title: "Output format", Mode: "prose",
@@ -294,7 +294,7 @@ func (ed *agentEditor) formFields() {
 			Detail:     "The orchestrator also briefs the worker per step, so spell out how to handle this agent's common failure modes: ambiguous matches, empty results, conflicting sources. Defaults rarely fit.",
 			SuggestURL: orchPath("api/agents/suggest"),
 			AssistPrompt: "You are writing the system prompt for an AI agent, which the user will run. " +
-				"Write in the second person, addressing the agent directly (\"You are…\", \"When a request is ambiguous, ask…\"). " +
+				"Write in the second person, addressing the agent directly (\"You are...\", \"When a request is ambiguous, ask...\"). " +
 				"Be concrete about behavior rather than aspirational about quality: \"cite the URL you read it from\" beats \"be accurate\". " +
 				"Do not list tools, mention plan_set or ask_user, or describe the orchestration machinery: the framework supplies all of that around your text.",
 			// The outline is a suggestion, not a schema: the prompt is
@@ -498,7 +498,7 @@ func (ed *agentEditor) formFields() {
 					}},
 					{Field: "required", Label: "Required", Type: "toggle"},
 					{Field: "options", Label: "Choices", OwnLine: true, HideWhen: "type:!select|checklist|button",
-						Placeholder: "the choices, separated by commas…"},
+						Placeholder: "the choices, separated by commas..."},
 					{Field: "placeholder", Label: "Hint inside the box", OwnLine: true, HideWhen: "type:select|checklist|button|file",
 						Placeholder: "e.g. Acme Corp"},
 					{Field: "help", Label: "Help under it", OwnLine: true, Placeholder: "Optional"},
@@ -1008,7 +1008,7 @@ func agentAssistHTML(id string) string {
             n++;
           }
           if(!n){ window.uiToast('Nothing selected.'); return; }
-          apply.disabled=true; apply.textContent='Applying…';
+          apply.disabled=true; apply.textContent='Applying...';
           fetch(`+jsString(orchPath("api/agents/"))+`+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)})
             .then(function(r){ if(!r.ok) return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));}); location.reload(); })
             .catch(function(e){ apply.disabled=false; apply.textContent='Apply selected'; window.uiAlert('Could not apply: '+((e&&e.message)||e)); });

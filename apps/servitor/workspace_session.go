@@ -39,7 +39,7 @@ func (T *Servitor) runWorkspaceSession(ctx context.Context, id, userID string, w
 		}
 	}
 
-	emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Scouting %d member(s)…", len(members))})
+	emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Scouting %d member(s)...", len(members))})
 	scouts := T.scoutWorkspace(ctx, ws, members, question)
 	var relevant []string
 	for _, s := range scouts {

@@ -848,7 +848,7 @@ func (m *MCPManager) PerUserOAuthConnectionsFor(user string) []PerUserConnection
 			Connected:   m.connected(user, c.Name),
 			OAuth:       true,
 			Kind:        "mcp",
-			// ABSOLUTE. This was "mcp/connect?server=…", account-relative,
+			// ABSOLUTE. This was "mcp/connect?server=...", account-relative,
 			// and its only consumer is the connections card on the
 			// EXTENSIONS page — where it resolved to /mcp/connect, which
 			// nothing serves. The popup then loaded a page whose own

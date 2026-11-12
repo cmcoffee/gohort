@@ -499,7 +499,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 		// owner's whole kit let a watch run tools the agent was never given, the
 		// Operator's management tools and other agents' scoped tools among them.
 		//
-		// (1) operator-management tools (read_phantom_chat, list_phantom_chats…):
+		// (1) operator-management tools (read_phantom_chat, list_phantom_chats...):
 		// the Operator's own, so a watch for the Operator or for none.
 		if agentID == "" || agentID == defaultConsoleAgent {
 			for _, td := range operatorManagementTools(sess, defaultConsoleAgent) {
@@ -665,7 +665,7 @@ func (T *OrchestrateApp) handleOperatorEvent(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	// Extract the token after the route marker — works regardless of the
-	// app's mount prefix (the full path is /orchestrate/api/operator/event/…).
+	// app's mount prefix (the full path is /orchestrate/api/operator/event/...).
 	const marker = "/api/operator/event/"
 	i := strings.Index(r.URL.Path, marker)
 	if i < 0 {
