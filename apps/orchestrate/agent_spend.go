@@ -242,6 +242,16 @@ func trimMoney(v float64) string {
 func (T *OrchestrateApp) handleConsoleSpend(c *jsonapi.Call) (any, error) {
 	user := c.User
 	rows := agentSpendRows(user, time.Now(), UserLocation(user))
+	// One agent's row, for its Security page's Activity tab.
+	if only := strings.TrimSpace(c.R.URL.Query().Get("agent")); only != "" {
+		var mine []agentSpendRow
+		for _, r := range rows {
+			if r.ID == only {
+				mine = append(mine, r)
+			}
+		}
+		rows = mine
+	}
 	if rows == nil {
 		rows = []agentSpendRow{}
 	}

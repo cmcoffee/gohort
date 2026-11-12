@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
@@ -235,6 +236,12 @@ func (T *OrchestrateApp) handleAgentAccess(c *jsonapi.Call) (any, error) {
 		return accessKnowledgeRows(rec), nil
 	case "subagents":
 		return agentSubAgents(udb, user, rec), nil
+	case "activity":
+		return T.accessActivityRows(r.Context(), udb, user, rec, time.Now()), nil
+	case "credentials":
+		return accessCredentialUseRows(udb, user, rec, time.Now()), nil
+	case "changes":
+		return accessChangeRows(udb, user, rec), nil
 	}
 	// The tools this agent's worker would actually be handed, resolved through
 	// the same call the runner makes.

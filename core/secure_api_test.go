@@ -1000,7 +1000,7 @@ func TestTheLedgerRecordsWhoDispatched(t *testing.T) {
 	cred := SecureCredential{Name: "shared_api", Type: SecureCredNone,
 		AllowedURLPattern: imageHostPattern(srv.URL)}
 	if _, err := Secure().dispatch(cred, map[string]any{"url": srv.URL + "/v1/pages", "method": "GET"},
-		&ToolSession{Username: "bob"}); err != nil {
+		&ToolSession{Username: "bob", AgentID: "agent-7"}); err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
 
@@ -1010,6 +1010,11 @@ func TestTheLedgerRecordsWhoDispatched(t *testing.T) {
 	}
 	if got[0].DispatchedBy != "bob" {
 		t.Errorf("the ledger does not say who called: %+v", got[0])
+	}
+	// And which of bob's agents: an agent's own credential use is read back
+	// from these rows, on its Security page.
+	if got[0].Agent != "agent-7" {
+		t.Errorf("the ledger does not say which agent called: %+v", got[0])
 	}
 	if got[0].Owner != "" {
 		t.Errorf("a global credential's namespace is empty, got %q", got[0].Owner)
@@ -1058,13 +1063,13 @@ func TestAFailedCallStillNamesItsCaller(t *testing.T) {
 	cred := SecureCredential{Name: "strict_api", Type: SecureCredNone,
 		AllowedURLPattern: imageHostPattern(srv.URL)}
 	_, _ = Secure().dispatch(cred, map[string]any{"url": srv.URL + "/v1/pages", "method": "POST", "body": "{}"},
-		&ToolSession{Username: "bob"})
+		&ToolSession{Username: "bob", AgentID: "agent-7"})
 
 	got := Secure().LoadAudit("", "strict_api")
 	if len(got) != 1 {
 		t.Fatalf("expected one row, got %+v", got)
 	}
-	if got[0].Status != http.StatusForbidden || got[0].DispatchedBy != "bob" {
+	if got[0].Status != http.StatusForbidden || got[0].DispatchedBy != "bob" || got[0].Agent != "agent-7" {
 		t.Errorf("the refused row does not name its caller: %+v", got[0])
 	}
 }
@@ -1078,8 +1083,8 @@ func TestLedgerRowsFromBeforeTheFieldDecode(t *testing.T) {
 	if len(got) != 1 || got[0].URL != "https://old" {
 		t.Fatalf("pre-field ledger not readable: %+v", got)
 	}
-	if got[0].DispatchedBy != "" {
-		t.Errorf("a pre-field row claims a caller: %q", got[0].DispatchedBy)
+	if got[0].DispatchedBy != "" || got[0].Agent != "" {
+		t.Errorf("a pre-field row claims a caller: %q, agent %q", got[0].DispatchedBy, got[0].Agent)
 	}
 }
 

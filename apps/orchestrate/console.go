@@ -243,6 +243,7 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/approvals/approve", jsonapi.Post(T.DB, T.handleApprovalApprove))
 	T.HandleFunc("/api/console/approvals/always", jsonapi.Post(T.DB, T.handleApprovalAlways))
 	T.HandleFunc("/api/console/approvals/deny", jsonapi.Post(T.DB, T.handleApprovalDeny))
+	T.HandleFunc("/api/console/approvals/not-now", jsonapi.Post(T.DB, T.handleApprovalNotNow))
 	T.HandleFunc("/api/console/credential-update/apply", jsonapi.Post(T.DB, T.handleCredentialUpdateApply))
 	T.HandleFunc("/api/console/credential-key/replace", jsonapi.Post(T.DB, T.handleKeyReplacement))
 	T.HandleFunc("/api/console/channel/clear", jsonapi.Post(T.DB, T.handleChannelClear))

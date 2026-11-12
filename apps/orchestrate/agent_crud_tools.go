@@ -849,7 +849,7 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		move.agent = existing
 		saved, moveNote, err = move.apply()
 	} else {
-		saved, err = saveAgent(sess.DB, existing)
+		saved, err = saveAgentAs(sess.DB, existing, agentEditReason(sess, changed))
 	}
 	if err != nil {
 		return "", err
@@ -1901,4 +1901,24 @@ func changedAgentFields(before, after map[string]string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// agentEditReason is what an agent's edit of another agent files in that
+// agent's version history: which agent made it and the fields it changed.
+// Without it the edit read "update", like most of the owner's own changes,
+// and the history could not say an agent had done it (the Security page's
+// Activity tab, Changes to it).
+func agentEditReason(sess *ToolSession, changed []string) string {
+	who := "an agent"
+	if sess != nil && strings.TrimSpace(sess.AgentID) != "" {
+		who = sess.AgentID
+		if a, ok := loadAgent(sess.DB, sess.AgentID); ok {
+			who = chFirst(a.Name, a.ID)
+		}
+	}
+	reason := "edited by " + who
+	if len(changed) > 0 {
+		reason += ": " + strings.Join(changed, ", ")
+	}
+	return reason
 }

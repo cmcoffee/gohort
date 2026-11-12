@@ -674,13 +674,18 @@ func chatAgentNav() []ui.OrchestratorNavItem {
 				// wider to go.
 				{Label: "All agents", Method: "POST", URL: "api/console/permissions/promote", OnlyIf: "_promotable",
 					Confirm: "Let every agent you have message this contact, with whatever persona and rules each of them carries? Any agent you have specifically blocked stays blocked."},
-				{Label: "Deny", Method: "POST", URL: "api/console/approvals/deny", Variant: "danger", OnlyIf: "_pending"},
+				{Label: "Deny", Method: "POST", URL: "api/console/approvals/deny", Variant: "danger", OnlyIf: "_request"},
+				// An agent's proposal: its no is kept, so it is not
+				// proposed again; Not now is a no that lapses.
+				{Label: "Add it", Method: "POST", URL: "api/console/approvals/approve", Variant: "success", OnlyIf: "_proposal"},
+				{Label: "Not now", Method: "POST", URL: "api/console/approvals/not-now", OnlyIf: "_proposal"},
+				{Label: "No", Method: "POST", URL: "api/console/approvals/deny", Variant: "danger", OnlyIf: "_proposal"},
 				// One-shot decisions (activating a drafted sub-agent): just
 				// Approve — "Allow once"/"Always" don't apply, since approving
 				// activates the agent and consumes the authorization.
 				{Label: "Approve", Method: "POST", URL: "api/console/approvals/approve", Variant: "success", OnlyIf: "_oneshot", Confirm: "Approve this sub-agent? It goes live and becomes dispatchable."},
-				{Label: "Allow once", Method: "POST", URL: "api/console/approvals/approve", OnlyIf: "_pending", HideIf: "_oneshot", Confirm: "Approve and run this once?"},
-				{Label: "Always allow", Method: "POST", URL: "api/console/approvals/always", Variant: "success", OnlyIf: "_pending", HideIf: "_oneshot", Confirm: "Approve, run, and always allow this in future?"},
+				{Label: "Allow once", Method: "POST", URL: "api/console/approvals/approve", OnlyIf: "_request", HideIf: "_oneshot", Confirm: "Approve and run this once?"},
+				{Label: "Always allow", Method: "POST", URL: "api/console/approvals/always", Variant: "success", OnlyIf: "_request", HideIf: "_oneshot", Confirm: "Approve, run, and always allow this in future?"},
 				// Suggestions (_suggestion) are offers, not requests —
 				// nothing is blocked on them and the tool already works.
 				// They reuse the same resolve endpoints but never borrow

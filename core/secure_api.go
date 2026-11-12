@@ -452,7 +452,12 @@ type SecureAPIAuditEntry struct {
 	// Empty means unattributed — a row written before this field existed, or a
 	// call with no tool session behind it (a render, a boot-time probe). Absence
 	// is not evidence that the owner made the call.
-	DispatchedBy  string    `json:"dispatched_by,omitempty"`
+	DispatchedBy string `json:"dispatched_by,omitempty"`
+	// Agent is the agent whose turn made the call (ToolSession.AgentID), so
+	// an agent's own credential use can be read back: the agent's Security
+	// page, Activity. Empty is a row written before this field existed, or a
+	// call no agent made; it is shown as "not recorded", never guessed.
+	Agent         string    `json:"agent,omitempty"`
 	Method        string    `json:"method"`
 	URL           string    `json:"url"`
 	Status        int       `json:"status"`
@@ -3299,6 +3304,7 @@ func (ac *apiCall) send() bool {
 		CredentialName: c.Name,
 		Owner:          c.Owner,
 		DispatchedBy:   sessUsername(sess),
+		Agent:          sessAgent(sess),
 		Method:         ac.method,
 		URL:            ac.rawURL,
 		Timestamp:      time.Now(),
@@ -3782,6 +3788,14 @@ func sessUsername(sess *ToolSession) string {
 		return ""
 	}
 	return sess.Username
+}
+
+// sessAgent is the agent whose turn sess is, or "" with none.
+func sessAgent(sess *ToolSession) string {
+	if sess == nil {
+		return ""
+	}
+	return sess.AgentID
 }
 
 // ErrCredentialHasKey is StoreAgentSecret refusing a credential that already
@@ -4524,6 +4538,7 @@ func (s *SecureAPI) refuse(c SecureCredential, sess *ToolSession, method, rawURL
 		CredentialName: c.Name,
 		Owner:          c.Owner,
 		DispatchedBy:   sessUsername(sess),
+		Agent:          sessAgent(sess),
 		Method:         method,
 		URL:            rawURL,
 		Timestamp:      time.Now(),

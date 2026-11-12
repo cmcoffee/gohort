@@ -557,7 +557,9 @@ func (r toolConfirmRequest) deniedNote(how string) string {
 // parkConfirm renders a card with actions and parks until it is answered.
 // Returns the picked value and whether it is a yes (allows, or allow/always
 // when nil). False with no viewer attached, on timeout, or on a no; each of
-// those leaves a breadcrumb and settles the card in the event stream.
+// those leaves a breadcrumb and settles the card in the event stream. On a
+// no the value is the button pressed, so a card with more than one kind of
+// no can tell them apart; "" when nothing was pressed.
 func (t *chatTurn) parkConfirm(req toolConfirmRequest, actions []map[string]any, allows map[string]bool) (string, bool) {
 	// A sub-run with no viewer of its own, started from a chat somebody is
 	// watching (agents(run) inline): the question goes to that chat, as it
@@ -597,14 +599,27 @@ func (t *chatTurn) parkConfirm(req toolConfirmRequest, actions []map[string]any,
 	select {
 	case v := <-p.ch:
 		if !v {
+			// Which no, when a card offers more than one (a proposal's Not
+			// now and No): the resolver writes the button before signalling.
+			var picked string
+			select {
+			case picked = <-p.answer:
+			default:
+			}
+			label := "Denied"
+			for _, a := range actions {
+				if a["value"] == picked && picked != "deny" {
+					label = fmt.Sprint(a["label"])
+				}
+			}
 			if req.tool == questionCard {
 				t.turnDiag("tool-denied", req.deniedNote("you said no"))
 			} else {
 				t.turnDiag("tool-denied", fmt.Sprintf("You denied the %s call (%s).", req.tool, req.because))
 			}
-			t.sendConfirmResolved(id, false)
-			t.recordApproval(req, "Denied")
-			return "", false
+			t.sendConfirmResolvedLabel(id, "deny", label)
+			t.recordApproval(req, label)
+			return picked, false
 		}
 		// Reading the answer non-blockingly: the resolver always writes it
 		// before signalling, but a nil-answer pending (an older in-flight

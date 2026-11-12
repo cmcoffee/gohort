@@ -138,6 +138,13 @@ func (T *OrchestrateApp) handleConsolePermissions(c *jsonapi.Call) (any, error) 
 		Policy     string `json:"_policy,omitempty"`     // allow | ask | block (the segmented state)
 		OneShot    bool   `json:"_oneshot,omitempty"`    // one-time decision (Approve/Deny only) — no "Always" grant makes sense (e.g. activating a drafted sub-agent, which the approval consumes)
 		Suggested  bool   `json:"_suggestion,omitempty"` // an OFFER, not a request: nothing is blocked on it (see approvalIsSuggestion)
+		// Proposal marks an agent's proposal (a rule it suggested): Add it,
+		// Not now or No, each no kept so it is not proposed again. Request
+		// is a pending row that is not one, the rows Deny / Allow once /
+		// Always allow belong on (a row action gates on one field). Pending
+		// stays set on both, so a proposal still counts on the badge.
+		Proposal bool `json:"_proposal,omitempty"`
+		Request  bool `json:"_request,omitempty"`
 		// NoAsk hides the "Needs approval" segment on a row that cannot hold
 		// it. A sandbox does not queue: its network namespace is cut at spawn
 		// or it is not, and a switched-off sub-action is gone from the schema
@@ -178,7 +185,9 @@ func (T *OrchestrateApp) handleConsolePermissions(c *jsonapi.Call) (any, error) 
 			// Activating a drafted sub-agent is a ONE-TIME decision — approving it
 			// makes the agent live and the authorization disappears, so "Always"
 			// has no meaning. Present just Approve / Deny for it.
-			OneShot: a.Action == "activate_sub_agent" || a.Action == outboundWriteAction,
+			OneShot:  a.Action == "activate_sub_agent" || a.Action == outboundWriteAction,
+			Proposal: approvalIsProposal(a.Action),
+			Request:  !approvalIsProposal(a.Action),
 		})
 	}
 	out = append(out, suggested...)

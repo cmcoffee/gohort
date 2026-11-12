@@ -703,19 +703,28 @@
       msg.appendChild(sub);
       wrap.appendChild(msg);
       var actions = el('div', {style: 'display:flex;gap:0.5rem;margin-top:0.55rem'});
-      var approve = el('button', {class: 'ui-orch-connect-btn', type: 'button'}, ['Approve']);
+      // An agent's proposal is answered Add it / Not now / No: its no is
+      // kept, so it is not proposed again, and Not now is a no that lapses.
+      var proposal = data.proposal === '1';
+      var approve = el('button', {class: 'ui-orch-connect-btn', type: 'button'}, [proposal ? 'Add it' : 'Approve']);
       actions.appendChild(approve);
+      var notNow = null;
+      if (proposal) {
+        notNow = el('button', {class: 'ui-orch-connect-btn', type: 'button',
+          style: 'background:transparent;border:1px solid var(--border);color:var(--text)'}, ['Not now']);
+        actions.appendChild(notNow);
+      }
       var always = null;
-      if (data.always === '1') {
+      if (data.always === '1' && !proposal) {
         always = el('button', {class: 'ui-orch-connect-btn', type: 'button',
           style: 'background:transparent;border:1px solid var(--accent);color:var(--accent)'}, ['Always allow']);
         actions.appendChild(always);
       }
       var deny = el('button', {class: 'ui-orch-connect-btn', type: 'button',
-        style: 'background:transparent;border:1px solid var(--border);color:var(--text-mute)'}, ['Deny']);
+        style: 'background:transparent;border:1px solid var(--border);color:var(--text-mute)'}, [proposal ? 'No' : 'Deny']);
       actions.appendChild(deny);
       wrap.appendChild(actions);
-      var buttons = [approve, deny].concat(always ? [always] : []);
+      var buttons = [approve, deny].concat(always ? [always] : []).concat(notNow ? [notNow] : []);
       if (!authID) { buttons.forEach(function(b) { b.disabled = true; }); }
       function settle(text) {
         wrap.classList.add('connected');
@@ -731,8 +740,15 @@
             window.uiAlert('Could not ' + verb + ' this request: ' + String(err && err.message || err));
           });
       }
-      approve.addEventListener('click', function() { act('approve', 'approve', 'Approved.'); });
-      deny.addEventListener('click', function() { act('deny', 'deny', 'Denied: the request was dropped.'); });
+      approve.addEventListener('click', function() { act('approve', 'approve', proposal ? 'Added.' : 'Approved.'); });
+      deny.addEventListener('click', function() {
+        act('deny', 'deny', proposal ? 'Declined: it will not be proposed again.' : 'Denied: the request was dropped.');
+      });
+      if (notNow) {
+        notNow.addEventListener('click', function() {
+          act('not-now', 'answer', 'Not now: it can be proposed again in 30 days.');
+        });
+      }
       if (always) {
         always.addEventListener('click', function() {
           act('always', 'approve', 'Approved, and allowed from now on.');

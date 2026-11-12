@@ -22,6 +22,10 @@ import (
 // at the top of every prompt from then on. Proposed, the owner reads it first,
 // told when the turn that proposed it read outside content or was talking to
 // someone else.
+//
+// The owner's "no" is kept (proposal_declines.go): the same rule, or the same
+// rule reworded, is not put to them again, by this agent or any other in its
+// family; one only like it reaches them marked as such.
 
 // Reserved so a temp tool cannot take the name and shadow it.
 func init() { RegisterReservedToolName("propose_rule") }
@@ -40,7 +44,7 @@ func (t *chatTurn) proposeRuleToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "propose_rule",
-			Description: "Suggest a rule for your owner to add to your Rules, the operating policy you follow on every turn. Use it when your owner tells you never to do something, or always to do something, in how you work (this, not a pinned note), and when you learn something that should bind every future turn: a mistake you made twice, a thread or contact to leave alone. You do not add it: your owner reads it and adds it or not, and until they do it is not one of your rules. One rule per call, in the words it should have, plus why. Never use it to relax or work around a rule you have.",
+			Description: "Suggest a rule for your owner to add to your Rules, the operating policy you follow on every turn. Use it when your owner tells you never to do something, or always to do something, in how you work (this, not a pinned note), and when you learn something that should bind every future turn: a mistake you made twice, a thread or contact to leave alone. You do not add it: your owner reads it and adds it or not, and until they do it is not one of your rules. One rule per call, in the words it should have, plus why. Never use it to relax or work around a rule you have. Your owner's no is remembered: a rule they declined, reworded or not, is not put to them again.",
 			Parameters: map[string]ToolParam{
 				"rule": {Type: "string", Description: "The rule as it should read in your Rules, one or two sentences, e.g. \"Before replying on a thread, check it against ENGAGED in your notes; a listed thread gets no new comment.\""},
 				"why":  {Type: "string", Description: "What happened that makes it worth a rule, in a sentence."},
@@ -82,7 +86,13 @@ func (t *chatTurn) proposeRule(rule, why string) (string, error) {
 	if hasRule(rec.Rules, rule) {
 		return "That is already one of your rules.", nil
 	}
-	flags := t.proposalFlags()
+	match := checkProposalDeclines(db, t.agent.ID, proposalKindRule, rule)
+	if d := match.Same; d != nil {
+		t.turnDiag("proposal-dropped", fmt.Sprintf("A proposed rule was not put to you: you said %s to it on %s (%q).",
+			strings.ReplaceAll(d.Mode, "_", " "), d.DeclinedAt.Local().Format("Jan 2"), d.Change))
+		return d.toAgent(), nil
+	}
+	flags := strings.TrimSpace(t.proposalFlags() + " " + likeDeclinedNote(match.Similar))
 	if t.requester().Owner && (t.sse != nil || t.askVia != nil) {
 		detail := rule
 		if why != "" {
@@ -91,9 +101,14 @@ func (t *chatTurn) proposeRule(rule, why string) (string, error) {
 		if flags != "" {
 			detail += "\n\n" + flags
 		}
-		detail += "\n\nIt joins the agent's Rules, which apply on every turn."
-		if t.askInChat(fmt.Sprintf("Add a rule %s suggested?", chFirst(t.agent.Name, "this agent")), detail, []string{"Add it"}) == "" {
-			return "Not added: the owner declined it. Do not propose it again in this conversation; carry on under your current rules.", nil
+		detail += "\n\nIt joins the agent's Rules, which apply on every turn. A no is remembered: it is not proposed again."
+		switch answer := t.askProposal(fmt.Sprintf("Add a rule %s suggested?", chFirst(t.agent.Name, "this agent")), detail, "Add it"); answer {
+		case "yes":
+		case declineNotNow, declineNo:
+			d := recordProposalDecline(db, t.agent.ID, proposalKindRule, rule, why, answer)
+			return d.toAgent(), nil
+		default:
+			return "Not added: your owner did not answer. Carry on under your current rules; you may propose it again another time.", nil
 		}
 		if err := addAgentRule(db, t.agent.ID, rule); err != nil {
 			return "", err
@@ -127,6 +142,26 @@ func (t *chatTurn) proposeRule(rule, why string) (string, error) {
 	})
 	Log("[orchestrate.rules] %s: %s proposed a rule, queued for the owner", owner, t.agent.ID)
 	return "Proposed. It is waiting in your owner's approvals and is not one of your rules until they add it, so work under your current rules meanwhile.", nil
+}
+
+// askProposal puts a proposal to the owner in the conversation: "yes", one of
+// the kinds of no (declineNotNow, declineNo), or "" when nobody answered,
+// which is not a no and is not kept.
+func (t *chatTurn) askProposal(prompt, detail, yes string) string {
+	actions := []map[string]any{
+		{"label": yes, "value": "yes"},
+		{"label": "Not now", "value": declineNotNow},
+		{"label": "No", "value": declineNo, "variant": "danger"},
+	}
+	picked, ok := t.parkConfirm(toolConfirmRequest{tool: questionCard, prompt: prompt, detail: detail, because: prompt},
+		actions, map[string]bool{"yes": true})
+	switch {
+	case ok:
+		return "yes"
+	case picked == declineNotNow || picked == declineNo:
+		return picked
+	}
+	return ""
 }
 
 // proposalFlags says what the owner should know about where a proposal came

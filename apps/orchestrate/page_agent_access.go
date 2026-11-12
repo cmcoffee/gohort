@@ -110,6 +110,7 @@ type accessPage struct {
 	approveURL       string
 	alwaysURL        string
 	denyURL          string
+	notNowURL        string
 	removeURL        string
 	contactPresets   []ui.FieldPreset
 	callable         []ui.SelectOption
@@ -218,6 +219,7 @@ func (ap *accessPage) prepare() bool {
 	ap.approveURL = T.WebPrefix() + "/api/console/approvals/approve?id={_id}"
 	ap.alwaysURL = T.WebPrefix() + "/api/console/approvals/always?id={_id}"
 	ap.denyURL = T.WebPrefix() + "/api/console/approvals/deny?id={_id}"
+	ap.notNowURL = T.WebPrefix() + "/api/console/approvals/not-now?id={_id}"
 	ap.removeURL = T.WebPrefix() + "/api/console/permissions/remove?id={_id}"
 	// The handles this owner already has a decision about, as one-click fills.
 	// Presets rather than a closed list: a contact nobody has decided about
@@ -281,6 +283,7 @@ func (ap *accessPage) sections() []ui.Section {
 		ap.accessSections(),
 		ap.shareSections(),
 		ap.accessReachSections(),
+		ap.activitySections(),
 	} {
 		out = append(out, part...)
 	}
@@ -316,13 +319,21 @@ func (ap *accessPage) requestsSections() []ui.Section {
 					{Type: "button", Label: "Approve", Variant: "success", OnlyIf: "_oneshot",
 						PostTo:  ap.approveURL,
 						Confirm: "Approve this sub-agent? It goes live and becomes dispatchable."},
-					{Type: "button", Label: "Allow once", OnlyIf: "_pending", HideIf: "_oneshot",
+					{Type: "button", Label: "Allow once", OnlyIf: "_request", HideIf: "_oneshot",
 						PostTo:  ap.approveURL,
 						Confirm: "Approve and run this once?"},
-					{Type: "button", Label: "Always allow", Variant: "success", OnlyIf: "_pending", HideIf: "_oneshot",
+					{Type: "button", Label: "Always allow", Variant: "success", OnlyIf: "_request", HideIf: "_oneshot",
 						PostTo:  ap.alwaysURL,
 						Confirm: "Approve, run, and always allow this in future?"},
-					{Type: "button", Label: "Deny", Variant: "danger", OnlyIf: "_pending",
+					{Type: "button", Label: "Deny", Variant: "danger", OnlyIf: "_request",
+						PostTo: ap.denyURL},
+					// An agent's proposal: its no is kept, so it is not
+					// proposed again; Not now is a no that lapses.
+					{Type: "button", Label: "Add it", Variant: "success", OnlyIf: "_proposal",
+						PostTo: ap.approveURL},
+					{Type: "button", Label: "Not now", OnlyIf: "_proposal",
+						PostTo: ap.notNowURL},
+					{Type: "button", Label: "No", Variant: "danger", OnlyIf: "_proposal",
 						PostTo: ap.denyURL},
 					// An OFFER, not a request: nothing is blocked on it and
 					// the tool already works. It never borrows approval

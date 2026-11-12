@@ -325,6 +325,19 @@ func (T *OrchestrateApp) handleCredentialUpdateApply(call *jsonapi.Call, body st
 }
 
 func (T *OrchestrateApp) handleApprovalDeny(c *jsonapi.Call, _ struct{}) (any, error) {
+	return T.denyApproval(c, declineNo)
+}
+
+// handleApprovalNotNow is Deny for a proposal the owner may want later: the
+// decline holds for declineNotNowFor, then the agent may propose it again.
+// Anything that is not a proposal it denies as Deny does.
+func (T *OrchestrateApp) handleApprovalNotNow(c *jsonapi.Call, _ struct{}) (any, error) {
+	return T.denyApproval(c, declineNotNow)
+}
+
+// denyApproval drops the ?id= request, and for a proposal keeps the owner's
+// no (mode) so it is not put to them again (proposal_declines.go).
+func (T *OrchestrateApp) denyApproval(c *jsonapi.Call, mode string) (any, error) {
 	r := c.R
 	user, udb := c.User, c.UDB
 	id := r.URL.Query().Get("id")
@@ -340,6 +353,9 @@ func (T *OrchestrateApp) handleApprovalDeny(c *jsonapi.Call, _ struct{}) (any, e
 	// goes on telling the user it is waiting for approval.
 	if found && a.Action == "" {
 		T.noteDeniedDelegation(a)
+	}
+	if found && a.Action == proposeRuleAction {
+		recordProposalDecline(udb, a.Agent, proposalKindRule, a.Brief, a.Text, mode)
 	}
 	if found {
 		RecordActivity(r, activity.Approval, user, approvalActivity(a, "denied"))

@@ -44,6 +44,9 @@ func pendingApprovalBlocks(udb Database, owner, agentID string) []UIBlock {
 		if approvalAlwaysMeans(a.Action) {
 			data["always"] = "1"
 		}
+		if approvalIsProposal(a.Action) {
+			data["proposal"] = "1"
+		}
 		out = append(out, UIBlock{
 			Type:  "pending_approval",
 			ID:    "approval-" + a.ID,
@@ -111,6 +114,13 @@ func approvalBelongsToAgent(udb Database, a Authorization, agentID string) bool 
 // the badge and the conversation, where they'd read as an obligation.
 func approvalIsSuggestion(action string) bool {
 	return action == "scope_tool" || action == orphanMemoryRefAction
+}
+
+// approvalIsProposal reports whether action is an agent's proposal, answered
+// with Add it, Not now or No rather than Approve or Deny: its no is kept
+// (proposal_declines.go), and Not now is a no that lapses.
+func approvalIsProposal(action string) bool {
+	return action == proposeRuleAction
 }
 
 // approvalAlwaysMeans reports whether "Always allow" does something DIFFERENT

@@ -29,8 +29,8 @@ func TestAProposedRuleIsAddedOnlyWhenTheOwnerSaysSo(t *testing.T) {
 	var asked string
 	turn.askVia = func(prompt, detail string, yes []string) string { asked = prompt + "\n" + detail; return "" }
 	out, err := turn.proposeRule(engagedRule, "I re-commented on two threads my notes said to skip.")
-	if err != nil || !strings.Contains(out, "declined") {
-		t.Fatalf("declined: %q %v", out, err)
+	if err != nil || !strings.Contains(out, "did not answer") {
+		t.Fatalf("unanswered: %q %v", out, err)
 	}
 	if !strings.Contains(asked, "Add a rule Poster suggested?") || !strings.Contains(asked, "Why: I re-commented") {
 		t.Errorf("the card should show the rule and why:\n%s", asked)
