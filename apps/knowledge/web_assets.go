@@ -64,7 +64,11 @@ const documentsListAssets = `<style>
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .docs-card-desc.none { font-style: italic; opacity: 0.7; }
-.docs-card-foot { display: flex; align-items: baseline; gap: 1rem; margin-top: auto; font-size: var(--fs-xs, 0.78rem); color: var(--text-mute); }
+/* The counts and the date wrap rather than run off the card: at a card's
+   narrowest, two large counts leave no room, and the date was pushed past the
+   right edge. A count keeps its word; the date takes the next line, right. */
+.docs-card-foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 1rem; margin-top: auto; font-size: var(--fs-xs, 0.78rem); color: var(--text-mute); }
+.docs-card-stat { white-space: nowrap; }
 .docs-card-stat b { margin-right: 0.25rem; font-size: var(--fs-md, 0.9rem); font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
 .docs-card-when { margin-left: auto; white-space: nowrap; }
 .docs-empty { color: var(--text-mute); font-style: italic; padding: 2rem; text-align: center; border: 1px dashed var(--border); border-radius: calc(var(--btn-radius) * 7 / 3); }
