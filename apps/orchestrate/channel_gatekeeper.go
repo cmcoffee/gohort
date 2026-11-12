@@ -425,11 +425,55 @@ func addressesByName(text, name string) bool {
 // The rules are triggers joined by OR (a message is let through when any one
 // fires), so letting through a message that fires this one decides nothing
 // any other rule could have changed.
+//
+// Only a rule that says nothing else counts: every word of the line must be
+// one an unconditional name rule is written in (nameRuleWords). A rule that
+// adds a condition, "from Henry", "in the morning", "about the game", is
+// the model's to weigh: matched on its wording alone, "WAKE when the
+// incoming message from Henry mentions you by name" let through anyone who
+// named the agent. An unknown word sends the line to the model, which is
+// the slower way, never the wrong one.
 func rulesWakeOnName(rules string) bool {
-	return wakesOnNameRE.MatchString(rules)
+	for _, line := range strings.Split(rules, "\n") {
+		if wakesOnNameRE.MatchString(line) && saysOnlyName(line) {
+			return true
+		}
+	}
+	return false
 }
 
 var wakesOnNameRE = regexp.MustCompile(`(?i)\bby name\b|\byour name\b|\bmention(?:s|ed|ing)? you\b`)
+
+// saysOnlyName reports whether every word of a rule line is one a rule
+// about being called by name is written in, so the line carries no
+// condition of its own.
+func saysOnlyName(line string) bool {
+	for _, w := range ruleWordRE.FindAllString(strings.ToLower(line), -1) {
+		if !nameRuleWords[w] {
+			return false
+		}
+	}
+	return true
+}
+
+var ruleWordRE = regexp.MustCompile(`[a-z]+`)
+
+// nameRuleWords are the words an unconditional "wake when called by name"
+// rule is written in, the shipped default's among them.
+var nameRuleWords = func() map[string]bool {
+	m := map[string]bool{}
+	for _, w := range strings.Fields(`wake wakes respond reply answer react
+		when whenever if only
+		the a an incoming new message messages someone anyone somebody sender it its is are be
+		you your re agent s assistant ai bot
+		call calls called calling name names named mention mentions mentioned mentioning
+		address addresses addressed addressing directly directed speak speaks spoken talk talks
+		to at or and by with in using uses including include common nickname nicknames
+		obvious typo typos misspelling misspellings of that this`) {
+		m[w] = true
+	}
+	return m
+}()
 
 // rawGateAnswer reads a verdict from a reply that is not valid JSON: its
 // answer field when one can be found, else the last YES or NO in it, which is

@@ -99,6 +99,18 @@ func TestAMessageByNameIsNeverDropped(t *testing.T) {
 	if !strings.Contains(sent.String(), "addresses you by name") {
 		t.Error("the model was not told the message names the agent")
 	}
+
+	// A name rule that also says who it is for is not decided in code: Alice
+	// naming the agent under a rule for Henry is the model's to weigh.
+	SaveChannel(RootDB, Channel{ID: "c1", Owner: "u", Service: "imessage", Address: "chat-1", AgentID: df.agent.ID,
+		Gatekeeper: "WAKE when the incoming message from Henry mentions or addresses the agent by name."})
+	before = df.llm.Calls()
+	if df.app.channelGatekeeperAllow(t.Context(), in) {
+		t.Error("a rule for Henry let Alice through on the name: the model said NO")
+	}
+	if df.llm.Calls() != before+1 {
+		t.Errorf("under a rule for Henry the model was asked %d times, want once", df.llm.Calls()-before)
+	}
 }
 
 // What counts as addressing the agent by name, and what is only mentioning it.
@@ -125,6 +137,13 @@ func TestAddressedByName(t *testing.T) {
 		"2. When someone mentions you":                       true,
 		"Skip messages that mention politics.":               false,
 		"Is a continuation of a conversation about the game": false,
+		DefaultDMGatekeeperRule:                              true,
+		gateTestRules:                                        true,
+		// A rule with a condition of its own is the model's to weigh.
+		"WAKE when the incoming message from Henry mentions or addresses the agent by name, including common nicknames or obvious typos of that name.": false,
+		"WAKE only when Henry calls you directly by name":                  false,
+		"Respond when you are called by name in the morning":               false,
+		"1. Respond when called by name and the message is about the game": false,
 	} {
 		if got := rulesWakeOnName(rules); got != want {
 			t.Errorf("rules %q wake on a name=%v, want %v", rules, got, want)
