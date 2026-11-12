@@ -219,3 +219,35 @@ func TestThePreguardIsARowOnTheMap(t *testing.T) {
 		t.Errorf("on, not mapped: %+v", r)
 	}
 }
+
+// A check-test run asks only the tiers the Decision Offloading mode uses,
+// and always the worker, which answers whatever is not offloaded. An
+// Offload model that is set but not used in this mode is not asked: its
+// runs cost time and say nothing about what runs.
+func TestCheckTestsAskOnlyTheTiersInUse(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	prevW, prevL := SharedWorkerLLM(), SharedLeadLLM()
+	t.Cleanup(func() { RootDB = saved; SetSharedJudgeLLM(nil, false, "", ""); SetSharedLLMs(prevW, prevL) })
+	SetSharedLLMs(&FakeLLM{}, nil)
+	SetSharedJudgeLLM(&FakeLLM{}, false, "vLLM/small", "")
+	tiers := func() string {
+		var out []string
+		for _, m := range checkTestModels() {
+			out = append(out, m.Tier)
+		}
+		return strings.Join(out, ",")
+	}
+	SetOffloadMode(OffloadBoth)
+	if got := tiers(); got != checktest.TierWorker+","+MapJudge {
+		t.Errorf("both, no System One: %q", got)
+	}
+	SetOffloadMode(OffloadSystemOne)
+	if got := tiers(); got != checktest.TierWorker {
+		t.Errorf("System One only: %q, want the worker alone (the Offload model is not used)", got)
+	}
+	SetOffloadMode(OffloadOff)
+	if got := tiers(); got != checktest.TierWorker {
+		t.Errorf("off: %q", got)
+	}
+}

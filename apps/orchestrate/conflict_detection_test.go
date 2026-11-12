@@ -110,11 +110,31 @@ func TestTheConflictCheckTakesASettledNone(t *testing.T) {
 	}
 	full := &FakeLLM{Turns: []FakeTurn{{Content: `{"findings":[{"finding":1,"why":"closed vs reopened","answer":"contradicts"}]}`, Repeat: true}}}
 	hits := []SearchHit{{ID: "1", Text: "The bridge is closed."}}
-	if got := judgeFindingConflicts(full.Chat, "The bridge reopened.", hits); got != nil || full.Calls() != 0 {
+	if got, err := judgeFindingConflicts(full.Chat, "The bridge reopened.", hits); got != nil || err != nil || full.Calls() != 0 {
 		t.Errorf("settled none, the full check still ran: %v after %d calls", got, full.Calls())
 	}
 	QuickDecide = func(context.Context, QuickChoice) (string, bool) { return "", false }
-	if got := judgeFindingConflicts(full.Chat, "The bridge reopened.", hits); len(got) != 1 || full.Calls() != 1 {
+	if got, err := judgeFindingConflicts(full.Chat, "The bridge reopened.", hits); len(got) != 1 || err != nil || full.Calls() != 1 {
 		t.Errorf("unsettled, the full check decides: %v after %d calls", got, full.Calls())
+	}
+}
+
+// A conflict check whose reply cannot be read gives no verdict, saying what
+// came back, never "none": a model answering in another shape read as
+// missing every contradiction in the check tests, and live a contradiction
+// went unflagged with nothing said.
+func TestAnUnreadableConflictCheckIsNoVerdict(t *testing.T) {
+	prev := QuickDecide
+	t.Cleanup(func() { QuickDecide = prev })
+	QuickDecide = func(context.Context, QuickChoice) (string, bool) { return "", false }
+	prose := &FakeLLM{Turns: []FakeTurn{{Content: "These two findings disagree about the bridge.", Repeat: true}}}
+	hits := []SearchHit{{ID: "1", Text: "The bridge is closed."}}
+	if got, err := judgeFindingConflicts(prose.Chat, "The bridge reopened.", hits); got != nil || err == nil {
+		t.Fatalf("an unreadable check: %v, %v; want no hits and an error", got, err)
+	}
+	tc := conflictCases()[0]
+	out := runConflictCase(context.Background(), prose, tc)
+	if out.Got != ScanNoVerdict || !strings.Contains(out.Reason, "These two findings disagree") {
+		t.Errorf("the check test reads it as %q (%s), want no_verdict with the reply", out.Got, out.Reason)
 	}
 }

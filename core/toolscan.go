@@ -812,13 +812,17 @@ func VerifyTaintedQuote(injected, quote string) bool {
 // ScanNoVerdict — never on_task, because "the check did not run" must not be
 // storable as "this action is fine".
 func ParseTaintedActionVerdict(reply string) TaintedActionVerdict {
+	// What came back, sanitized as any span of this check is: the reply is
+	// about a hostile payload and may echo it into a diagnostic.
+	unparseable := TaintedActionVerdict{Status: ScanNoVerdict,
+		Reason: "action check reply was not parseable: it was " + sanitizeScanSpan(textutil.ReplyClip(reply, 160))}
 	raw := textutil.FirstJSONObject(reply)
 	if raw == "" {
-		return TaintedActionVerdict{Status: ScanNoVerdict, Reason: "action check reply was not parseable"}
+		return unparseable
 	}
 	var parsed TaintedActionVerdict
 	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
-		return TaintedActionVerdict{Status: ScanNoVerdict, Reason: "action check reply was not parseable"}
+		return unparseable
 	}
 	switch strings.ToLower(strings.TrimSpace(parsed.Status)) {
 	case ActionOnTask:

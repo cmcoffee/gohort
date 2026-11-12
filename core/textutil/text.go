@@ -68,6 +68,18 @@ func Clip(s string, n int) string {
 	return s[:n] + "..."
 }
 
+// ReplyClip is a model reply as an error or a log line quotes it: on one
+// line, meta tags taken out, the first n bytes, quoted, or "empty" for a
+// reply with no text. For a check whose reply could not be read, so the
+// reason says what came back rather than only that it was not the shape.
+func ReplyClip(reply string, n int) string {
+	s := strings.Join(strings.Fields(StripMetaTags(reply)), " ")
+	if s == "" {
+		return "empty"
+	}
+	return fmt.Sprintf("%q", Clip(s, n))
+}
+
 // FirstMessageTitle is a session's name before it has a better one: the
 // first message, trimmed and clipped to n bytes, or "New session" when the
 // message is empty.

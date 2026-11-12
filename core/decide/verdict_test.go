@@ -2,6 +2,7 @@ package decide
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -77,7 +78,7 @@ func TestAVerdictReadsItsReply(t *testing.T) {
 	}
 
 	sent = nil
-	if _, err = testVerdict.Judge(context.Background(), replies(&sent, "no idea"), "state"); err != ErrUnreadable || len(sent) != 2 {
+	if _, err = testVerdict.Judge(context.Background(), replies(&sent, "no idea"), "state"); !errors.Is(err, ErrUnreadable) || len(sent) != 2 {
 		t.Errorf("two unreadable replies: %v after %d asks", err, len(sent))
 	}
 
@@ -104,7 +105,7 @@ func TestAVerdictReadsOneRulingPerThing(t *testing.T) {
 		t.Errorf("rulings %+v", out)
 	}
 	sent = nil
-	if _, err := v.JudgeEach(context.Background(), replies(&sent, `{"answer":"on"}`), "s", 1); err != ErrUnreadable || len(sent) != 2 {
+	if _, err := v.JudgeEach(context.Background(), replies(&sent, `{"answer":"on"}`), "s", 1); !errors.Is(err, ErrUnreadable) || len(sent) != 2 {
 		t.Errorf("a reply with no list: %v after %d asks", err, len(sent))
 	}
 	if _, err := testVerdict.JudgeEach(context.Background(), replies(&sent, "{}"), "s", 1); err == nil {
@@ -124,5 +125,20 @@ func TestAVerdictSaysWhenSystemOneStands(t *testing.T) {
 	q := testVerdict.Question("state", "Is it on topic?")
 	if q.Options[1] != "Off topic: it is about something else" || !q.Both || q.System != testVerdict.Role {
 		t.Errorf("question %+v", q)
+	}
+}
+
+// A reply that is not the verdict's shape, twice, says what came back: a
+// model answering in prose, or with nothing, reads as that, not only as
+// "could not be read".
+func TestAnUnreadableReplySaysWhatCameBack(t *testing.T) {
+	var sent [][]Message
+	_, err := testVerdict.Judge(context.Background(), replies(&sent, "I would rather not judge this."), "state")
+	if !errors.Is(err, ErrUnreadable) || !strings.Contains(err.Error(), `"I would rather not judge this."`) {
+		t.Errorf("prose: %v", err)
+	}
+	_, err = testVerdict.Judge(context.Background(), replies(&sent, "  "), "state")
+	if !errors.Is(err, ErrUnreadable) || !strings.HasSuffix(err.Error(), "the reply was empty") {
+		t.Errorf("empty: %v", err)
 	}
 }

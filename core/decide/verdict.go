@@ -172,7 +172,8 @@ func (v Verdict) JudgeEach(ctx context.Context, chat VerdictChat, state string, 
 	return out, err
 }
 
-// ErrUnreadable is a reply that was not the Verdict's shape, twice.
+// ErrUnreadable is a reply that was not the Verdict's shape, twice. The
+// error returned wraps it with what the last reply was: test with errors.Is.
 const ErrUnreadable = Error("the reply could not be read as the verdict asked")
 
 // ask sends the Verdict and hands the reply's object to read; a reply with
@@ -180,12 +181,14 @@ const ErrUnreadable = Error("the reply could not be read as the verdict asked")
 func (v Verdict) ask(ctx context.Context, chat VerdictChat, state string, opts []ChatOption, read func(map[string]json.RawMessage) bool) error {
 	msgs := []Message{{Role: "system", Content: v.System()}, {Role: "user", Content: state}}
 	call := append([]ChatOption{WithRouteKey(v.Key)}, opts...)
+	last := ""
 	for try := 1; try <= 2; try++ {
 		resp, err := chat(ctx, msgs, call...)
 		if err != nil {
 			return err
 		}
 		if resp != nil {
+			last = resp.Content
 			if obj := readObject(resp.Content); obj != nil && read(obj) {
 				return nil
 			}
@@ -194,8 +197,16 @@ func (v Verdict) ask(ctx context.Context, chat VerdictChat, state string, opts [
 			Debug("[decide] %s: the reply could not be read, asking once more", v.Key)
 		}
 	}
-	return ErrUnreadable
+	// What came back, so a model that keeps answering in another shape can
+	// be seen doing it (a check test's row, the log) instead of only "could
+	// not be read".
+	clip := textutil.ReplyClip(last, unreadableClip)
+	Debug("[decide] %s: the reply could not be read twice; the last was %s", v.Key, clip)
+	return fmt.Errorf("%w: the reply was %s", ErrUnreadable, clip)
 }
+
+// unreadableClip is how much of an unreadable reply its error quotes.
+const unreadableClip = 160
 
 // readObject is the first JSON object in a reply, by field.
 func readObject(content string) map[string]json.RawMessage {

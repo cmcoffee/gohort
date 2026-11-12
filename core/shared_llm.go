@@ -1219,8 +1219,10 @@ func OffloadAllowed(key string) bool {
 }
 
 // The Decision Offloading modes: which tiers the map may give checks to.
-// A mode only ever takes a tier out; checks are still tested and mapped for
-// every tier that is set, so turning one back on uses its mapping at once.
+// A mode only ever takes a tier out. Check tests ask only the tiers the mode
+// uses (and the worker, which answers whatever is not offloaded); a tier
+// taken out keeps the mapping it had, so turning it back on uses that
+// mapping, and the next pass checks it is still current.
 const (
 	OffloadBoth      = "both"
 	OffloadSystemOne = "system_one"

@@ -59,18 +59,22 @@ const (
 type checkMapAuto struct{}
 
 // checkTestModels are the models a run asks, each for its map tier: the
-// worker, the Offload model when one is set, and System One when it answers.
+// worker, which answers every check not offloaded; the Offload model when one
+// is set and the Decision Offloading mode uses it; and System One when it
+// answers and the mode uses it. A tier the mode does not use is not asked:
+// nothing goes to it, so its runs would cost time and say nothing about
+// what runs. Its kept mapping stays for when the mode uses it again.
 func checkTestModels() []checktest.Model {
 	models := []checktest.Model{}
 	if w := SharedWorkerLLM(); w != nil {
 		models = append(models, checktest.Model{Name: "worker", LLM: w, Tier: checktest.TierWorker})
 	}
-	if j := JudgeLLM(); j != nil {
+	if j := JudgeLLM(); j != nil && OffloadUses(MapJudge) {
 		models = append(models, checktest.Model{Name: "offload", LLM: j, Tier: MapJudge})
 	}
 	// And whatever Services > System One has answer decisions, for the
 	// checks that have that form.
-	if d := decide.Model(); d != nil {
+	if d := decide.Model(); d != nil && OffloadUses(MapSystemOne) {
 		models = append(models, checktest.Model{Name: "system one", LLM: d, Decide: true, Tier: MapSystemOne})
 	}
 	return models

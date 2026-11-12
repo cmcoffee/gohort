@@ -87,7 +87,13 @@ func (t *chatTurn) detectFindingConflict(newContent string, neighbors []SearchHi
 	if len(cand) == 0 {
 		return ""
 	}
-	conflicts := judgeFindingConflicts(t.app.WorkerChat, newContent, cand)
+	conflicts, err := judgeFindingConflicts(t.app.WorkerChat, newContent, cand)
+	if err != nil {
+		// The finding is still saved: a broken check must not block saving.
+		// But not silently, as "no conflict", which is what this read as.
+		Log("[memory.conflict_check] the check gave no verdict, so a contradiction with a saved finding would go unflagged: %v", err)
+		return ""
+	}
 	if len(conflicts) == 0 {
 		return ""
 	}
@@ -174,14 +180,18 @@ func conflictQuick(newContent string, candidates []SearchHit) QuickChoice {
 		}}
 }
 
-func judgeFindingConflicts(chat FactChatFunc, newContent string, candidates []SearchHit) []SearchHit {
+// judgeFindingConflicts asks which candidates the new finding contradicts.
+// An error is a check that gave no verdict (its reply could not be read, or
+// the call failed), which is not the same as finding no conflict: the
+// caller decides what to do with it, and a check test reports it.
+func judgeFindingConflicts(chat FactChatFunc, newContent string, candidates []SearchHit) ([]SearchHit, error) {
 	if chat == nil || len(candidates) == 0 {
-		return nil
+		return nil, nil
 	}
 	// System One first, where the map gives the check to it: a sure "none"
 	// is the answer; a contradiction needs the full check to say which.
 	if ans, ok := AskQuick(context.Background(), conflictQuick(newContent, candidates)); ok && ans == "none" {
-		return nil
+		return nil, nil
 	}
 	var list strings.Builder
 	for i, h := range candidates {
@@ -197,7 +207,7 @@ func judgeFindingConflicts(chat FactChatFunc, newContent string, candidates []Se
 		fmt.Sprintf("NEW finding: %q\n\nEXISTING findings:\n%s", newContent, list.String()), len(candidates),
 		WithCaller("memory.conflict_check"), WithThink(false), WithMaxTokens(600))
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var out []SearchHit
 	for i, r := range rulings {
@@ -205,7 +215,7 @@ func judgeFindingConflicts(chat FactChatFunc, newContent string, candidates []Se
 			out = append(out, candidates[i])
 		}
 	}
-	return out
+	return out, nil
 }
 
 // conflictVerdict is the conflict check, one verdict per existing finding,

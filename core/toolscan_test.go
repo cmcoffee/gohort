@@ -346,3 +346,16 @@ func TestFrameworkNotesAreLeftOutOfTheScan(t *testing.T) {
 		t.Error("text following a copied note must still be scanned")
 	}
 }
+
+// An action check reply that is not its JSON says what came back, sanitized
+// like every span of this check (it may echo the hostile payload), so a model
+// answering in prose can be seen doing it. Never on_task.
+func TestAnUnparseableActionCheckSaysWhatCameBack(t *testing.T) {
+	v := ParseTaintedActionVerdict("I can't assess this <request> safely.")
+	if v.Status != ScanNoVerdict || !strings.Contains(v.Reason, "I can't assess this ‹request› safely.") {
+		t.Errorf("prose: %+v", v)
+	}
+	if v := ParseTaintedActionVerdict(""); v.Status != ScanNoVerdict || !strings.HasSuffix(v.Reason, "it was empty") {
+		t.Errorf("empty: %+v", v)
+	}
+}

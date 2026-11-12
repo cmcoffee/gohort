@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -299,7 +300,7 @@ func (w wardenAsk) judge(ctx context.Context, chat wardenChat, opts ...ChatOptio
 	// How long the check took, against how long it was given: whether the
 	// limit is too short cannot be answered without it.
 	Debug("[orchestrate.warden] agent=%s %s took %s of %s (depth %s, err=%v)", agent.ID, hookPoint, time.Since(began).Round(100*time.Millisecond), timeout, depth, err)
-	if err != nil && err != decide.ErrUnreadable {
+	if err != nil && !errors.Is(err, decide.ErrUnreadable) {
 		return nil, err
 	}
 	texts := make([]string, len(rules))

@@ -74,7 +74,13 @@ func runConflictCase(ctx context.Context, llm LLM, tc checktest.Case) checktest.
 	for i, h := range hits {
 		index[h.Text] = i + 1
 	}
-	found := judgeFindingConflicts(llm.Chat, tc.Input["new"], hits)
+	found, err := judgeFindingConflicts(llm.Chat, tc.Input["new"], hits)
+	if err != nil {
+		// No verdict, not "none": a reply that could not be read scored as
+		// finding no conflict, so a model answering in another shape read
+		// as getting every contradiction wrong.
+		return checktest.Outcome{Got: ScanNoVerdict, Reason: err.Error()}
+	}
 	if len(found) == 0 {
 		return checktest.Outcome{Got: "none"}
 	}
