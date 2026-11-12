@@ -49,6 +49,48 @@ func SharedLeadLLM() LLM {
 	return sharedLeadLLM
 }
 
+// workerInit is how the Worker model last came up: none set (provider ""),
+// built, or configured and failed to build, with why. The Worker has no
+// stand-in: a Lead never takes its work (only the other way round), so when
+// it is missing every turn stops, and this is what says why.
+var workerInit struct {
+	sync.RWMutex
+	provider, model, err string
+}
+
+// SetWorkerInitError records how the Worker came up: provider "" is none
+// set, err nil is built.
+func SetWorkerInitError(provider, model string, err error) {
+	workerInit.Lock()
+	defer workerInit.Unlock()
+	workerInit.provider, workerInit.model, workerInit.err = strings.TrimSpace(provider), strings.TrimSpace(model), ""
+	if err != nil {
+		workerInit.err = err.Error()
+	}
+}
+
+// WorkerInitError is why the configured Worker model could not be built, or
+// "" when it was, or none is set.
+func WorkerInitError() string {
+	workerInit.RLock()
+	defer workerInit.RUnlock()
+	if workerInit.err == "" {
+		return ""
+	}
+	return "the Worker model (" + ProviderTitle(workerInit.provider) + "/" + workerInit.model + ") did not start: " + workerInit.err
+}
+
+// noModelError is a call with no model to run on: the Worker is missing,
+// and so is the Lead or the call wanted the Worker. It says why the Worker
+// is missing, and that nothing stands in for it.
+func noModelError() error {
+	why := WorkerInitError()
+	if why == "" {
+		why = "no Worker model is set"
+	}
+	return errors.New("no model to run this on: " + why + ". Fix it under Admin > Models (Worker LLM); the Lead never takes the Worker's place")
+}
+
 // LeadIsDistinct reports whether a separate lead (precision) LLM provider is
 // configured — i.e. escalating to lead reaches a different model than the
 // worker. This is the ONLY safe way to ask that question: do NOT compare the
@@ -269,7 +311,7 @@ func (r reloadableLLM) Chat(ctx context.Context, messages []Message, opts ...Cha
 	}
 	llm := r.get()
 	if llm == nil {
-		return nil, errors.New("no LLM configured")
+		return nil, noModelError()
 	}
 	done, err := r.beginModelUse(ctx)
 	if err != nil {
@@ -295,7 +337,7 @@ func (r reloadableLLM) ChatStream(ctx context.Context, messages []Message, handl
 	}
 	llm := r.get()
 	if llm == nil {
-		return nil, errors.New("no LLM configured")
+		return nil, noModelError()
 	}
 	done, err := r.beginModelUse(ctx)
 	if err != nil {

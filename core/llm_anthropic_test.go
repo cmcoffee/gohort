@@ -1,10 +1,15 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"github.com/cmcoffee/snugforge/kvlite"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -23,20 +28,76 @@ func thinkOn(budget int) ChatConfig {
 	return cfg
 }
 
-// TestNoThinkingUnlessAsked — the whole point of shipping this quietly. Every
-// existing call must be byte-identical, so no bill moves by surprise.
+// TestNoThinkingUnlessAsked — a call that does not ask about thinking sends
+// nothing, so it is byte-identical and no bill moves by surprise. A call that
+// asks for thinking OFF sends the off-switch: leaving it out runs adaptive
+// thinking on the newer models, which spent a short check's whole allowance
+// and returned no text.
 func TestNoThinkingUnlessAsked(t *testing.T) {
-	for name, cfg := range map[string]ChatConfig{
-		"unset":    {},
-		"disabled": func() ChatConfig { off := false; return ChatConfig{Think: &off} }(),
+	blk, out, max := anthThinkingFor(ChatConfig{}, 8192)
+	if blk != nil || out != nil || max != 8192 {
+		t.Errorf("unset: sent %+v %+v, max %d; want nothing", blk, out, max)
+	}
+	off := false
+	blk, out, max = anthThinkingFor(ChatConfig{Model: "claude-test-off-default", Think: &off}, 8192)
+	if blk == nil || blk.Type != "disabled" || out != nil || max != 8192 {
+		t.Errorf("off: sent %+v %+v, max %d; want thinking disabled", blk, out, max)
+	}
+}
+
+// A model that refuses thinking "disabled" is believed about the off-switch
+// it names, however the refusal is worded: the API's words and Bedrock's both
+// name between_tools for Sonnet 5.5; Opus 5.5 cannot turn thinking off and
+// gets no setting, low effort and room to answer. A refusal that names no
+// switch, or of the next step down, ends at sending nothing, the model's own
+// default. Only a 400 naming what was sent counts, and none of it marks the
+// model as wanting adaptive thinking when asked to think.
+func TestTheThinkingOffSwitchIsLearned(t *testing.T) {
+	off := false
+	refuse := func(model, msg string) error {
+		return noteIfAdaptiveThinking(model, &APIError{Provider: "bedrock-runtime", StatusCode: 400, Message: msg})
+	}
+	sent := func(model string, max int) (*anthThinking, *anthOutputConfig, int) {
+		return anthThinkingFor(ChatConfig{Model: model, Think: &off}, max)
+	}
+	for name, msg := range map[string]string{
+		"api":     `"thinking.type.disabled" is not supported for this model. Use "thinking.type.between_tools" for the lowest thinking setting, or "thinking.type.adaptive" and "output_config.effort" to control thinking behavior.`,
+		"bedrock": `To turn thinking off on this model, send "thinking": {"type": "between_tools"} instead of {"type": "disabled"}. The model does not think before responding. The short updates it writes between tool calls come back as thinking blocks.`,
 	} {
-		blk, _, max := anthThinkingFor(cfg, 8192)
-		if blk != nil {
-			t.Errorf("%s: a thinking block was sent anyway: %+v", name, blk)
+		model := "claude-test-sonnet-off-" + name
+		if err := refuse(model, msg); !refusedThinkingOff(err) {
+			t.Errorf("%s: the refusal is not marked for a retry: %v", name, err)
 		}
-		if max != 8192 {
-			t.Errorf("%s: max_tokens moved from 8192 to %d on a call that asked for nothing", name, max)
+		if blk, out, max := sent(model, 300); blk == nil || blk.Type != "between_tools" || out != nil || max != 300 {
+			t.Errorf("%s: sent %+v %+v, max %d; want between_tools", name, blk, out, max)
 		}
+		if thinkingStyleFor(model) == anthThinkAdaptive {
+			t.Errorf("%s: an off-switch refusal marked it adaptive", name)
+		}
+	}
+	opus := "claude-test-opus-off"
+	refuse(opus, `"thinking.type.disabled" is not supported for this model. Use "thinking.type.adaptive" and "output_config.effort" to control thinking behavior.`)
+	if blk, out, max := sent(opus, 300); blk != nil || out == nil || out.Effort != "low" || max != anthThinkOffFloor {
+		t.Errorf("opus: sent %+v %+v, max %d; want no setting, low effort, max %d", blk, out, max, anthThinkOffFloor)
+	}
+	// Low effort refused too: nothing, as before any of this.
+	refuse(opus, `output_config.effort is not supported for this model`)
+	if blk, out, max := sent(opus, 300); blk != nil || out != nil || max != 300 {
+		t.Errorf("opus after low effort was refused: sent %+v %+v, max %d; want nothing", blk, out, max)
+	}
+	// A refusal of disabled that names no switch: nothing.
+	odd := "claude-test-odd-off"
+	refuse(odd, `thinking type disabled is unavailable here`)
+	if blk, out, _ := sent(odd, 300); blk != nil || out != nil {
+		t.Errorf("odd: sent %+v %+v; want nothing", blk, out)
+	}
+	// Not a refusal of what was sent: a thinking-ON refusal, another status.
+	plain := "claude-test-plain"
+	if err := refuse(plain, `"thinking.type.enabled" is not supported for this model. Use "thinking.type.adaptive"`); refusedThinkingOff(err) || thinkingOffFor(plain) != anthOffDisabled {
+		t.Error("a thinking-on refusal moved the off-switch")
+	}
+	if err := noteIfAdaptiveThinking(plain, &APIError{StatusCode: 500, Message: "thinking disabled internal error"}); refusedThinkingOff(err) {
+		t.Error("a 500 moved the off-switch")
 	}
 }
 
@@ -464,5 +525,115 @@ func TestTheOpeningSystemTurnsGoToTheSystemPrompt(t *testing.T) {
 	// Both ways a request goes out (Chat and Stream) take them out.
 	if n := strings.Count(readRepoSource(t, "llm_anthropic.go"), "leadingSystemTurns(msgs)"); n != 2 {
 		t.Errorf("leadingSystemTurns is applied on %d send paths, want 2", n)
+	}
+}
+
+// A user turn's pictures reach Anthropic, and Bedrock's Messages and
+// InvokeModel APIs, as image blocks ahead of its text. They were dropped,
+// and a turn that was only a picture (view_image's) was skipped whole, so the
+// model was never shown it. A picture in a format the API does not take is
+// converted; an assistant turn carries none.
+func TestAnthropicMessagesCarryImages(t *testing.T) {
+	png := smallPNG(t)
+	msgs, err := buildAnthMessages([]Message{
+		{Role: "user", Content: "What is in this?", Images: [][]byte{png}},
+		{Role: "user", Images: [][]byte{png}}, // view_image: a picture and no text
+		{Role: "assistant", Content: "A square.", Images: [][]byte{png}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("got %d messages, want all 3 (an image-only turn must not be skipped)", len(msgs))
+	}
+	var first, only []anthContentBlock
+	if err := json.Unmarshal(msgs[0].Content, &first); err != nil {
+		t.Fatalf("a turn with a picture is not content blocks: %s", msgs[0].Content)
+	}
+	if len(first) != 2 || first[0].Type != "image" || first[1].Type != "text" || first[1].Text != "What is in this?" {
+		t.Fatalf("blocks = %+v, want the image then the text", first)
+	}
+	if s := first[0].Source; s == nil || s.Type != "base64" || s.MediaType != "image/png" || s.Data == "" {
+		t.Errorf("image source = %+v", first[0].Source)
+	}
+	if err := json.Unmarshal(msgs[1].Content, &only); err != nil || len(only) != 1 || only[0].Type != "image" {
+		t.Errorf("the image-only turn: %s", msgs[1].Content)
+	}
+	if !strings.Contains(string(msgs[2].Content), `"A square."`) || strings.Contains(string(msgs[2].Content), "image") {
+		t.Errorf("an assistant turn carried a picture: %s", msgs[2].Content)
+	}
+}
+
+// End to end: a model that refuses thinking "disabled" the way Sonnet 5.5
+// does is asked again with the switch it named, and the call returns its
+// answer; the next thinking-off call goes right the first time.
+func TestAThinkingOffRefusalIsRetriedWithTheNamedSwitch(t *testing.T) {
+	var mu sync.Mutex
+	var sent []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		sent = append(sent, string(b))
+		n := len(sent)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if n == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"type":"error","error":{"type":"invalid_request_error","message":"\"thinking.type.disabled\" is not supported for this model. Use \"thinking.type.between_tools\" for the lowest thinking setting, or \"thinking.type.adaptive\" and \"output_config.effort\" to control thinking behavior."}}`))
+			return
+		}
+		w.Write([]byte(`{"id":"m1","type":"message","role":"assistant","content":[{"type":"text","text":"{\"status\": \"on_task\"}"}],"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":5}}`))
+	}))
+	defer srv.Close()
+	llm, err := NewLLMFromConfig(LLMProviderConfig{Provider: "anthropic", Model: "claude-test-e2e-off", APIKey: "k", Endpoint: srv.URL + "/v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := llm.Chat(context.Background(), []Message{{Role: "user", Content: "judge"}}, WithThink(false), WithMaxTokens(300))
+	if err != nil || !strings.Contains(resp.Content, "on_task") {
+		t.Fatalf("the call: %v, %+v", err, resp)
+	}
+	if _, err := llm.Chat(context.Background(), []Message{{Role: "user", Content: "again"}}, WithThink(false), WithMaxTokens(300)); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sent) != 3 || !strings.Contains(sent[0], `"type":"disabled"`) || !strings.Contains(sent[1], `"type":"between_tools"`) || !strings.Contains(sent[2], `"type":"between_tools"`) {
+		t.Errorf("sent %d requests:\n%s", len(sent), strings.Join(sent, "\n"))
+	}
+}
+
+// End to end, the fallback: a model that refuses every off-switch in words
+// that name none ends with the setting left out, and the call answers rather
+// than failing on its off-switch.
+func TestAThinkingOffThatIsNeverAcceptedFallsBackToNothing(t *testing.T) {
+	var mu sync.Mutex
+	var sent []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		sent = append(sent, string(b))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(string(b), `"thinking"`) {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"type":"error","error":{"type":"invalid_request_error","message":"thinking: disabled is not a value this deployment takes"}}`))
+			return
+		}
+		w.Write([]byte(`{"id":"m1","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":1}}`))
+	}))
+	defer srv.Close()
+	llm, err := NewLLMFromConfig(LLMProviderConfig{Provider: "anthropic", Model: "claude-test-e2e-nothing", APIKey: "k", Endpoint: srv.URL + "/v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := llm.Chat(context.Background(), []Message{{Role: "user", Content: "judge"}}, WithThink(false), WithMaxTokens(300))
+	if err != nil || strings.TrimSpace(resp.Content) != "ok" {
+		t.Fatalf("the call: %v, %+v", err, resp)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sent) != 2 || strings.Contains(sent[1], `"thinking"`) {
+		t.Errorf("sent %d requests:\n%s", len(sent), strings.Join(sent, "\n"))
 	}
 }

@@ -287,6 +287,11 @@ func reloadSharedLLMs() error {
 	}
 	worker, err := NewLLMFromConfig(cfg)
 	if err != nil {
+		// The previous Worker keeps serving. With none (it never started),
+		// this is now why every turn stops.
+		if SharedWorkerLLM() == nil {
+			SetWorkerInitError(cfg.Provider, cfg.Model, err)
+		}
 		return fmt.Errorf("worker LLM: %w", err)
 	}
 	var lead LLM
@@ -304,6 +309,7 @@ func reloadSharedLLMs() error {
 	// Either way any recorded failure is stale — a complaint that outlives its
 	// cause is how somebody stops believing the diagnostics.
 	SetLeadInitError("", "", nil)
+	SetWorkerInitError(cfg.Provider, cfg.Model, nil)
 	SetSharedLLMs(worker, lead)
 	applyBackgroundYield()
 	// Record what is now RUNNING, beside the form that shows what is stored.

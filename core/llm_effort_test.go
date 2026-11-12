@@ -195,9 +195,11 @@ func TestClaudeBudgetedModelsGetTheBudgetTable(t *testing.T) {
 				t.Errorf("%s %s: max_tokens %v does not exceed the budget %v", path, level, max, got)
 			}
 		}
+		// Effort off sends the off-switch rather than nothing: on the newer
+		// models nothing runs adaptive thinking (anthThinkingOff).
 		body := claudeBodyFor(t, path, "us.anthropic.claude-test-budgeted", "high", WithEffort("off"))
-		if _, ok := body["thinking"]; ok {
-			t.Errorf("%s: effort off still sent a thinking block: %v", path, body["thinking"])
+		if typ, _, _ := thinkingOf(body); typ != anthOffDisabled {
+			t.Errorf("%s: effort off sent thinking %v, want disabled", path, body["thinking"])
 		}
 		if _, ok := body["output_config"]; ok {
 			t.Errorf("%s: effort off still sent output_config", path)

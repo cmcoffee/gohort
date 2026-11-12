@@ -478,6 +478,9 @@ func bedrockRegionPresets() []ui.FieldPreset {
 // is for, so none shows on a lead left on "(use primary)". Each saves when
 // left, as the tier's other fields do: a save rebuilds the live model.
 func tierReach(fields []ui.FormField) []ui.FormField {
+	// What a blank region box calls here, read when the page is built, so a
+	// blank box names the region in use rather than a fixed us-east-1.
+	blankRegion, blankFrom := BedrockBlankRegion()
 	reach := []ui.FormField{
 		{Field: "_stale", Type: "readonly", Label: "Needs setting again", ShowWhen: "_stale"},
 		{Field: "endpoint", Label: "Address", Type: "text", Placeholder: "blank: the provider's own", SaveOnBlur: true,
@@ -502,9 +505,9 @@ func tierReach(fields []ui.FormField) []ui.FormField {
 			ShowWhen: "provider:anthropic|openai|gemini|bedrock|llama.cpp|vllm;api_key_from:" + keyOwn,
 			Help:     "Stored encrypted, for the address above. Ollama ignores it; llama.cpp, vLLM and a compatible provider at its own address send it only when given."},
 		{Field: "_kept_key", Type: "readonly", Label: "Saved API key", ShowWhen: "provider;_kept_key"},
-		{Field: "aws_region", Label: "AWS region", Type: "text", Placeholder: "us-east-1", SaveOnBlur: true,
+		{Field: "aws_region", Label: "AWS region", Type: "text", Placeholder: blankRegion, SaveOnBlur: true,
 			ShowWhen: "provider:bedrock",
-			Help:     "AWS Bedrock only. Blank uses $AWS_REGION, then us-east-1.",
+			Help:     "AWS Bedrock only. Blank calls " + blankRegion + " on this host, set by " + blankFrom + ".",
 			Detail: "This tier has its OWN region. Setting it on one tier does not set it on the other, and a blank one falls through to $AWS_REGION on the gohort host and then to us-east-1. The debug log names the region and where it came from as each client is built.\n\n" +
 				"Not every region AWS lists for Bedrock has a Messages-API endpoint. us-west-1 does not; use us-west-2.",
 			Presets: bedrockRegionPresets()},

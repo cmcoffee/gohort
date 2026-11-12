@@ -844,3 +844,44 @@ func TestTheOffloadModelIsTriedOnce(t *testing.T) {
 		t.Fatalf("an ordinary call stopped retrying a refused connection: %d call(s)", calls)
 	}
 }
+
+// With no model to run on, the error says why the Worker is missing (never
+// built, or none set) and that the Lead does not stand in for it, rather
+// than "no LLM configured", which named neither.
+func TestNoModelSaysWhyTheWorkerIsMissing(t *testing.T) {
+	prevW, prevL := SharedWorkerLLM(), SharedLeadLLM()
+	t.Cleanup(func() { SetSharedLLMs(prevW, prevL); SetWorkerInitError("", "", nil) })
+	SetSharedLLMs(nil, nil)
+
+	SetWorkerInitError("", "", nil)
+	_, err := ReloadableLeadLLM().Chat(context.Background(), nil)
+	if err == nil || !strings.Contains(err.Error(), "no Worker model is set") || !strings.Contains(err.Error(), "never takes the Worker's place") {
+		t.Errorf("none set: %v", err)
+	}
+	SetWorkerInitError("bedrock", "claude-x", errors.New("no AWS credentials found"))
+	_, err = ReloadableWorkerLLM().Chat(context.Background(), nil)
+	if err == nil || !strings.Contains(err.Error(), "claude-x) did not start: no AWS credentials found") {
+		t.Errorf("failed to start: %v", err)
+	}
+	SetWorkerInitError("bedrock", "claude-x", nil)
+	if e := WorkerInitError(); e != "" {
+		t.Errorf("a Worker that built still reports %q", e)
+	}
+}
+
+// A blank Bedrock region names what it calls on this host and why.
+func TestBedrockBlankRegionSaysWhere(t *testing.T) {
+	t.Setenv("AWS_REGION", "")
+	t.Setenv("AWS_DEFAULT_REGION", "")
+	if r, from := BedrockBlankRegion(); r != "us-east-1" || from != "gohort's default" {
+		t.Errorf("no env: %s from %s", r, from)
+	}
+	t.Setenv("AWS_DEFAULT_REGION", "eu-west-1")
+	if r, from := BedrockBlankRegion(); r != "eu-west-1" || from != "$AWS_DEFAULT_REGION" {
+		t.Errorf("default env: %s from %s", r, from)
+	}
+	t.Setenv("AWS_REGION", "us-west-2")
+	if r, from := BedrockBlankRegion(); r != "us-west-2" || from != "$AWS_REGION" || bedrockRegion("") != "us-west-2" {
+		t.Errorf("AWS_REGION: %s from %s", r, from)
+	}
+}

@@ -133,3 +133,21 @@ func TestLLMConnectionFieldsSaveOnBlur(t *testing.T) {
 		}
 	}
 }
+
+// A Bedrock tier signs with its own profile in its own region. The listing
+// took only the provider, address and key, so it signed as the machine's
+// default profile in us-east-1 and was refused with "no AWS credentials
+// found" for a tier that chats fine. The form's Bedrock fields reach the
+// config the listing is built from.
+func TestLLMModelsQueryCarriesBedrockSettings(t *testing.T) {
+	var q llmModelsQuery
+	body := `{"provider":" bedrock ","model":"m","aws_region":"us-west-2","aws_profile":" work ","bedrock_api":"converse","api_key_from":"own"}`
+	if err := json.Unmarshal([]byte(body), &q); err != nil {
+		t.Fatal(err)
+	}
+	cfg := q.config()
+	if cfg.Provider != "bedrock" || cfg.Region != "us-west-2" || cfg.Profile != "work" || cfg.BedrockAPI != "converse" {
+		t.Errorf("config = provider %q region %q profile %q api %q, want bedrock, us-west-2, work, converse",
+			cfg.Provider, cfg.Region, cfg.Profile, cfg.BedrockAPI)
+	}
+}

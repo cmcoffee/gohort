@@ -1831,7 +1831,8 @@ func isTransientError(err error) bool {
 	if IsContextExceededError(err) {
 		return false
 	}
-	if apiErr, ok := err.(*APIError); ok {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
 		switch apiErr.StatusCode {
 		case 429, 500, 502, 503, 529:
 			return true
@@ -2185,6 +2186,10 @@ func doWithRetry(ctx context.Context, maxRetries int, opts []ChatOption, fn func
 
 	var lastErr error
 	thinkingRetried := false
+	// A thinking-off refusal the client learned the next step from is
+	// retried down the ladder (disabled, between_tools, low effort, nothing),
+	// each a different request, so up to three of them.
+	offSteps := 0
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		resp, err := fn()
 		if err == nil {
@@ -2210,6 +2215,10 @@ func doWithRetry(ctx context.Context, maxRetries int, opts []ChatOption, fn func
 		// The same holds for a reasoning_effort the model refused: the client
 		// recorded the model (noteIfReasoningEffortRefused) and the rebuilt
 		// request leaves the field out.
+		if refusedThinkingOff(err) && offSteps < 3 {
+			offSteps++
+			continue
+		}
 		if (isUnsupportedThinkingTypeErr(err) || isUnsupportedReasoningEffortErr(err)) && !thinkingRetried {
 			thinkingRetried = true
 			continue

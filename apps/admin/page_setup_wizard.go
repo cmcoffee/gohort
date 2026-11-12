@@ -36,13 +36,24 @@ import (
 // configured. That is the one setting without which nothing works, so it is
 // the whole definition of "new system" here — an operator who has picked a
 // provider is past first-run even if they never touched anything else.
+//
+// No model of ANY tier, not only no Worker. A system with a Lead or an Offload
+// model set and its Worker cleared is not new, and sending it to a wizard
+// that sets only the Worker hid the menu with the rest of the models exactly
+// when someone needed them. That system gets a card on the dashboard instead
+// (workerNotice).
 func systemNeedsSetup(db Database) bool {
 	if db == nil {
 		return false
 	}
-	var provider string
-	db.Get(LLMTable, "provider", &provider)
-	return strings.TrimSpace(provider) == ""
+	for _, table := range []string{LLMTable, LeadLLMTable, JudgeLLMTable} {
+		var provider string
+		db.Get(table, "provider", &provider)
+		if strings.TrimSpace(provider) != "" {
+			return false
+		}
+	}
+	return true
 }
 
 // setupWizardPath is the wizard's absolute URL. Built from WebPath rather than
@@ -380,10 +391,38 @@ func (a *AdminApp) staleNotice() (DashboardNotice, bool) {
 // worker. Invisible from a chat, where the only sign is answers getting worse.
 func (a *AdminApp) llmNotices() []DashboardNotice {
 	var out []DashboardNotice
+	if n, ok := a.workerNotice(); ok {
+		out = append(out, n)
+	}
 	if n, ok := a.leadNotice(); ok {
 		out = append(out, n)
 	}
 	return out
+}
+
+// workerNotice is the card for a Worker that is not running on a system past
+// first-run: none set while another model is, or one set that did not start.
+// Not dismissable: nothing stands in for the Worker, so every turn stops
+// until it is fixed in its settings.
+func (a *AdminApp) workerNotice() (DashboardNotice, bool) {
+	var provider string
+	if a.db != nil {
+		a.db.Get(LLMTable, "provider", &provider)
+	}
+	var text string
+	switch e := WorkerInitError(); {
+	case e != "":
+		text = sentence(strings.ToUpper(e[:1])+e[1:]) + " Every turn stops until it does: the Lead never takes the Worker's place."
+	case a.db != nil && strings.TrimSpace(provider) == "" && !systemNeedsSetup(a.db):
+		text = "No Worker model is set, so every turn stops: the Lead never takes the Worker's place, and lead work falls back to it."
+	default:
+		return DashboardNotice{}, false
+	}
+	return DashboardNotice{
+		Text:   text,
+		Action: "Open Worker settings",
+		URL:    a.WebPath() + "/" + adminSectionLink("Worker LLM"),
+	}, true
 }
 
 // sentence ends s with a full stop unless it already ends in one (an error

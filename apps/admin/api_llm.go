@@ -775,7 +775,7 @@ func (a *AdminApp) handleLLMModels(table string) func(c *jsonapi.Call, req llmMo
 		if strings.TrimSpace(req.Provider) == "" {
 			return map[string]any{"error": "Pick a provider first."}, nil
 		}
-		cfg := LLMProviderConfig{Provider: strings.TrimSpace(req.Provider), Endpoint: req.Endpoint}
+		cfg := req.config()
 		if err := a.formTierKey(table, req.APIKey, &cfg); err != nil {
 			return map[string]any{"error": err.Error()}, nil
 		}
@@ -798,6 +798,25 @@ type llmModelsQuery struct {
 	Model    string `json:"model"`
 	APIKey   string `json:"api_key"`
 	Endpoint string `json:"endpoint"`
+	// Bedrock's: the profile and region its credentials and host come from,
+	// and the API, which decides whether only Claude's models are listed.
+	// Left out, the listing signed as the machine's default profile in
+	// us-east-1, and refused with "no AWS credentials found" a tier that
+	// chats fine through its own profile.
+	AWSRegion  string `json:"aws_region"`
+	AWSProfile string `json:"aws_profile"`
+	BedrockAPI string `json:"bedrock_api"`
+}
+
+// config is the provider config the form's values describe, before its key.
+func (q llmModelsQuery) config() LLMProviderConfig {
+	return LLMProviderConfig{
+		Provider:   strings.TrimSpace(q.Provider),
+		Endpoint:   q.Endpoint,
+		Region:     strings.TrimSpace(q.AWSRegion),
+		Profile:    strings.TrimSpace(q.AWSProfile),
+		BedrockAPI: strings.TrimSpace(q.BedrockAPI),
+	}
 }
 
 func containsString(list []string, s string) bool {

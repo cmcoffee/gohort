@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -286,6 +288,141 @@ func noteAdaptiveThinking(model string) {
 	}
 }
 
+// Turning thinking off, per model. Claude's models each have their own
+// off-switch, and leaving the setting out is not one of them on the newer
+// ones: there it runs adaptive thinking at the model's default effort.
+//
+//   - Most take thinking {type: disabled}.
+//   - Sonnet 5.5 refuses it and names {type: between_tools}, its lowest setting.
+//   - Opus 5.5 and Fable cannot turn thinking off: the setting is left out and
+//     effort set low, with room in max_tokens for what it still thinks.
+//
+// As with the budgeted and adaptive shapes, which one a model takes is not
+// read from its id (Bedrock ids move): disabled is sent first, and a model
+// that refuses what it was sent moves one step down a ladder, believed about
+// the switch its refusal names (nextThinkingOff):
+//
+//	disabled -> between_tools (named) or low effort (cannot turn it off)
+//	between_tools -> low effort
+//	any refusal not read, or of low effort -> nothing: the setting left out,
+//	the model's own default, as every call was before this existed
+//
+// so a thinking-off call never ends in an error because of its off-switch.
+// Kept per model for the process; retryLLM rebuilds the call that met the
+// refusal (thinkingOffRetry), each time with the next step.
+const (
+	anthOffDisabled     = "disabled"
+	anthOffBetweenTools = "between_tools"
+	anthOffEffortLow    = "effort_low"
+	anthOffNothing      = "nothing"
+)
+
+// anthThinkOffFloor is the least max_tokens a thinking-off call is sent with
+// on a model that still thinks: enough that a short check's answer is not
+// spent on thinking first. An allowance not used is not billed.
+const anthThinkOffFloor = 4096
+
+var (
+	thinkOffMu     sync.RWMutex
+	thinkOffModels = map[string]string{}
+)
+
+// thinkingOffFor is the off-switch this model is on, disabled until it says
+// otherwise.
+func thinkingOffFor(model string) string {
+	thinkOffMu.RLock()
+	defer thinkOffMu.RUnlock()
+	if s := thinkOffModels[model]; s != "" {
+		return s
+	}
+	return anthOffDisabled
+}
+
+// anthThinkingOff is the thinking off-switch for model, as anthThinkingFor
+// returns it.
+func anthThinkingOff(model string, maxTokens int) (*anthThinking, *anthOutputConfig, int) {
+	switch thinkingOffFor(model) {
+	case anthOffBetweenTools:
+		return &anthThinking{Type: anthOffBetweenTools}, nil, maxTokens
+	case anthOffEffortLow:
+		return nil, &anthOutputConfig{Effort: effortLow}, max(maxTokens, anthThinkOffFloor)
+	case anthOffNothing:
+		return nil, nil, maxTokens
+	}
+	return &anthThinking{Type: anthOffDisabled}, nil, maxTokens
+}
+
+// nextThinkingOff is the step a model on off-switch current moves to on
+// refusal err, or ok false when err is not a refusal of that switch.
+//
+// A refusal is read by what it NAMES, not by one wording: the API says
+// `"thinking.type.disabled" is not supported for this model. Use
+// "thinking.type.between_tools"...`, Bedrock says `To turn thinking off on
+// this model, send "thinking": {"type": "between_tools"} instead of {"type":
+// "disabled"}`. Each step answers only a 400 that names what it sent, so a
+// refused thinking-ON request (which names "enabled") teaches nothing here.
+func nextThinkingOff(current string, err error) (next string, ok bool) {
+	var api *APIError
+	if !errors.As(err, &api) || api.StatusCode != http.StatusBadRequest {
+		return "", false
+	}
+	msg := strings.ToLower(api.Message)
+	switch current {
+	case anthOffDisabled:
+		if !strings.Contains(msg, "thinking") || !strings.Contains(msg, "disabled") {
+			return "", false
+		}
+		switch {
+		case strings.Contains(msg, "between_tools") && !betweenToolsRefusedRE.MatchString(msg):
+			return anthOffBetweenTools, true
+		case strings.Contains(msg, "adaptive") || strings.Contains(msg, "effort") ||
+			strings.Contains(msg, "cannot be disabled") || strings.Contains(msg, "can't be disabled"):
+			return anthOffEffortLow, true
+		}
+		return anthOffNothing, true
+	case anthOffBetweenTools:
+		if strings.Contains(msg, "between_tools") {
+			return anthOffEffortLow, true
+		}
+	case anthOffEffortLow:
+		if strings.Contains(msg, "output_config") || strings.Contains(msg, "effort") {
+			return anthOffNothing, true
+		}
+	}
+	return "", false
+}
+
+// betweenToolsRefusedRE is a refusal of between_tools itself ("...between_tools"
+// is not supported), quoted or escaped any way.
+var betweenToolsRefusedRE = regexp.MustCompile(`between_tools[\\"'\s]*is not supported`)
+
+// thinkingOffRetry marks a refusal the client learned the next off-switch
+// from: the rebuilt call differs from the refused one, so retryLLM may try
+// again without looping on an identical request.
+type thinkingOffRetry struct{ error }
+
+func (e thinkingOffRetry) Unwrap() error { return e.error }
+
+// refusedThinkingOff reports whether err is a thinking-off refusal the client
+// learned from (thinkingOffRetry).
+func refusedThinkingOff(err error) bool {
+	var r thinkingOffRetry
+	return errors.As(err, &r)
+}
+
+// noteThinkingOff records the step a model moved to.
+func noteThinkingOff(model, was, next string) {
+	thinkOffMu.Lock()
+	thinkOffModels[model] = next
+	thinkOffMu.Unlock()
+	how := map[string]string{
+		anthOffBetweenTools: "a thinking setting of between_tools",
+		anthOffEffortLow:    "no thinking setting and low effort, since it cannot turn thinking off",
+		anthOffNothing:      "no thinking setting at all, its own default, since it took none of the off-switches",
+	}[next]
+	Log("[llm] %s refused thinking off as %s: sending %s from now on", model, was, how)
+}
+
 // budgetAsEffort maps a token budget onto the effort dial adaptive thinking
 // uses.
 //
@@ -345,8 +482,16 @@ func isUnsupportedThinkingTypeErr(err error) bool {
 // Returns nil when thinking is off or unasked-for, which keeps every existing
 // call byte-identical — this changes nothing until a route or an agent asks for
 // thinking, so no bill moves by surprise.
+//
+// Thinking asked OFF is sent as the model's own off-switch (anthThinkingOff),
+// not left out: on the newer models leaving it out runs adaptive thinking,
+// which spent a short check's whole allowance and returned no text at all.
+// Thinking not asked about is still left out, so those calls are unchanged.
 func anthThinkingFor(cfg ChatConfig, maxTokens int) (*anthThinking, *anthOutputConfig, int) {
-	if cfg.Think == nil || !*cfg.Think || cfg.Effort == effortOff {
+	if (cfg.Think != nil && !*cfg.Think) || cfg.Effort == effortOff {
+		return anthThinkingOff(cfg.Model, maxTokens)
+	}
+	if cfg.Think == nil {
 		return nil, nil, maxTokens
 	}
 	budget := anthDefaultThinkBudget
@@ -397,18 +542,54 @@ type anthMessage struct {
 }
 
 type anthContentBlock struct {
-	Type         string          `json:"type"`
-	Text         string          `json:"text,omitempty"`
-	Thinking     string          `json:"thinking,omitempty"`     // a thinking block's text, and a thinking_delta's
-	PartialJSON  string          `json:"partial_json,omitempty"` // streamed tool args; NOT Text — see anthStreamState.feed
-	ID           string          `json:"id,omitempty"`
-	Name         string          `json:"name,omitempty"`
-	Input        json.RawMessage `json:"input,omitempty"`
-	ToolUseID    string          `json:"tool_use_id,omitempty"`
-	Content      string          `json:"content,omitempty"`
-	IsError      bool            `json:"is_error,omitempty"`
-	CacheControl *cacheControl   `json:"cache_control,omitempty"`
-	StopReason   string          `json:"stop_reason,omitempty"` // carried on the message_delta stream event
+	Type         string           `json:"type"`
+	Text         string           `json:"text,omitempty"`
+	Thinking     string           `json:"thinking,omitempty"`     // a thinking block's text, and a thinking_delta's
+	PartialJSON  string           `json:"partial_json,omitempty"` // streamed tool args; NOT Text — see anthStreamState.feed
+	ID           string           `json:"id,omitempty"`
+	Name         string           `json:"name,omitempty"`
+	Input        json.RawMessage  `json:"input,omitempty"`
+	ToolUseID    string           `json:"tool_use_id,omitempty"`
+	Content      string           `json:"content,omitempty"`
+	IsError      bool             `json:"is_error,omitempty"`
+	CacheControl *cacheControl    `json:"cache_control,omitempty"`
+	StopReason   string           `json:"stop_reason,omitempty"` // carried on the message_delta stream event
+	Source       *anthImageSource `json:"source,omitempty"`      // an image block's picture
+}
+
+// anthImageSource is an image block's picture, inline as base64.
+type anthImageSource struct {
+	Type      string `json:"type"` // "base64"
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
+}
+
+// anthImageMaxBytes is the most an image may weigh as sent. Anthropic takes
+// 5 MB; Bedrock, which this format also goes to, 3.75 MB. A larger one is
+// scaled down first rather than refused.
+const anthImageMaxBytes = 3_750_000
+
+// anthImageBlocks are a message's pictures as image blocks: each in a format
+// the API takes (PNG, JPEG, GIF, WebP), converted when it is another, and
+// scaled down when too large to send. One that still cannot be sent is left
+// out. Without these the pictures were dropped: a model on Anthropic, or on
+// Bedrock's Messages or InvokeModel API, was never shown what view_image or
+// an upload handed it, and a message that was only a picture was skipped.
+func anthImageBlocks(images [][]byte) []anthContentBlock {
+	var out []anthContentBlock
+	for _, img := range images {
+		if converseImageFormat(img) == "" || len(img) > anthImageMaxBytes {
+			img = resizeImage(img)
+		}
+		f := converseImageFormat(img)
+		if f == "" || len(img) > anthImageMaxBytes {
+			continue
+		}
+		out = append(out, anthContentBlock{Type: "image", Source: &anthImageSource{
+			Type: "base64", MediaType: "image/" + f, Data: base64.StdEncoding.EncodeToString(img),
+		}})
+	}
+	return out
 }
 
 type anthResponse struct {
@@ -589,6 +770,22 @@ func buildAnthMessages(messages []Message) ([]anthMessage, error) {
 			msgs = append(msgs, anthMessage{Role: "user", Content: raw})
 
 		default:
+			// A user turn's pictures go as image blocks, ahead of its text,
+			// the order Anthropic recommends.
+			if m.Role == "user" && len(m.Images) > 0 {
+				blocks := anthImageBlocks(m.Images)
+				if strings.TrimSpace(m.Content) != "" {
+					blocks = append(blocks, anthContentBlock{Type: "text", Text: m.Content})
+				}
+				if len(blocks) > 0 {
+					raw, err := json.Marshal(blocks)
+					if err != nil {
+						return nil, err
+					}
+					msgs = append(msgs, anthMessage{Role: m.Role, Content: raw})
+					continue
+				}
+			}
 			// Simple text message. An empty one has nothing to send, and the
 			// API refuses empty content anywhere but a final assistant turn;
 			// the same stored turn with no text broke Gemini (llm_gemini.go).
@@ -1195,6 +1392,15 @@ func (c *anthropicClient) ChatStream(ctx context.Context, messages []Message, ha
 // wrong copy of the model name; doing it where the name is unambiguous is what
 // stops there being a third.
 func noteIfAdaptiveThinking(model string, err error) error {
+	// A refused off-switch is its own lesson: it says how this model turns
+	// thinking off, not that it wants adaptive thinking when asked to think.
+	if strings.TrimSpace(model) != "" {
+		was := thinkingOffFor(model)
+		if next, ok := nextThinkingOff(was, err); ok {
+			noteThinkingOff(model, was, next)
+			return thinkingOffRetry{err}
+		}
+	}
 	if isUnsupportedThinkingTypeErr(err) {
 		noteAdaptiveThinking(model)
 	}

@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -276,4 +277,44 @@ func TestTheJudgeTestAsksWhatTheChecksAsk(t *testing.T) {
 func asText(v any) string {
 	s, _ := v.(string)
 	return s
+}
+
+// A system with a Lead or an Offload model set and no Worker is not new: it is
+// not sent to the wizard, which sets only the Worker and hid the menu holding
+// the rest. It gets a card saying every turn stops, with the Worker's
+// settings a click away. A Worker that is set and did not start gets the
+// same card, saying why. Neither is dismissable.
+func TestAMissingWorkerOnAConfiguredSystemIsACardNotTheWizard(t *testing.T) {
+	t.Cleanup(func() { SetWorkerInitError("", "", nil) })
+	SetWorkerInitError("", "", nil)
+	db := &DBase{Store: kvlite.MemStore()}
+	app := &AdminApp{db: db}
+	db.Set(LeadLLMTable, "provider", "bedrock")
+	if systemNeedsSetup(db) {
+		t.Fatal("a system with a Lead set is sent to first-run setup")
+	}
+	n, ok := app.workerNotice()
+	if !ok || !strings.Contains(n.Text, "No Worker model is set") || n.Dismiss != "" || n.URL == "" {
+		t.Fatalf("no Worker on a configured system: %+v %v", n, ok)
+	}
+	db.Unset(LeadLLMTable, "provider")
+	db.Set(JudgeLLMTable, "provider", "vllm")
+	if systemNeedsSetup(db) {
+		t.Error("a system with an Offload model set is sent to first-run setup")
+	}
+	// Set, and did not start.
+	db.Set(LLMTable, "provider", "bedrock")
+	SetWorkerInitError("bedrock", "claude-x", errors.New("no AWS credentials found"))
+	if n, ok := app.workerNotice(); !ok || !strings.Contains(n.Text, "did not start: no AWS credentials found") {
+		t.Errorf("a Worker that did not start: %+v %v", n, ok)
+	}
+	// Running: no card. Nothing set anywhere: first-run, not this card.
+	SetWorkerInitError("bedrock", "claude-x", nil)
+	if _, ok := app.workerNotice(); ok {
+		t.Error("a running Worker has a card")
+	}
+	empty := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
+	if _, ok := empty.workerNotice(); ok || !systemNeedsSetup(empty.db) {
+		t.Error("a new system gets the Worker card instead of first-run setup")
+	}
 }

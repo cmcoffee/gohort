@@ -83,9 +83,11 @@ func init() {
 func set_agent_llm(agent Agent) {
 	cfg := dbcfg.llm()
 	if cfg.Provider == "" {
+		SetWorkerInitError("", "", nil)
 		return
 	}
 	llm, err := NewLLMFromConfig(cfg)
+	SetWorkerInitError(cfg.Provider, cfg.Model, err)
 	if err != nil {
 		// LOUD. A configured worker that fails to build leaves the process with
 		// no model at all, and every symptom downstream of that is some other

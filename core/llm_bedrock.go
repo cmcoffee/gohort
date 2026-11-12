@@ -587,13 +587,23 @@ func bedrockRegion(configured string) string {
 	if configured != "" {
 		return configured
 	}
-	if r := os.Getenv("AWS_REGION"); r != "" {
-		return r
+	r, _ := BedrockBlankRegion()
+	return r
+}
+
+// BedrockBlankRegion is the region a Bedrock tier with no region of its own
+// calls on this host, and what decided it: "$AWS_REGION",
+// "$AWS_DEFAULT_REGION", or "gohort's default". The admin form shows it in a blank
+// region box, so two tiers that look the same there cannot be calling
+// different regions unseen.
+func BedrockBlankRegion() (region, from string) {
+	switch {
+	case os.Getenv("AWS_REGION") != "":
+		return os.Getenv("AWS_REGION"), "$AWS_REGION"
+	case os.Getenv("AWS_DEFAULT_REGION") != "":
+		return os.Getenv("AWS_DEFAULT_REGION"), "$AWS_DEFAULT_REGION"
 	}
-	if r := os.Getenv("AWS_DEFAULT_REGION"); r != "" {
-		return r
-	}
-	return bedrockDefaultRegion
+	return bedrockDefaultRegion, "gohort's default"
 }
 
 // bedrockEndpointHost returns the Messages-API Bedrock hostname for a region.
