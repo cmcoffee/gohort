@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"sync"
 
 	"github.com/cmcoffee/snugforge/apiclient"
 )
@@ -258,19 +257,32 @@ const (
 	anthThinkAdaptive = "adaptive"
 )
 
-var (
-	adaptiveThinkMu     sync.RWMutex
-	adaptiveThinkModels = map[string]bool{}
-)
+// fieldThinkingShape is the thinking shape a model takes, a request field
+// (request_adapt.go): the budgeted shape until the model refuses it for the
+// adaptive one.
+const fieldThinkingShape = "thinking.shape"
+
+func init() {
+	registerRequestField(requestField{
+		key: fieldThinkingShape,
+		top: anthThinkBudgeted,
+		next: func(current string, err error) (string, bool) {
+			if current == anthThinkBudgeted && isUnsupportedThinkingTypeErr(err) {
+				return anthThinkAdaptive, true
+			}
+			return "", false
+		},
+		said: func(model, _, _ string, _ error) {
+			Log("[llm] %s takes adaptive thinking rather than a token budget: switching for this model", model)
+		},
+		label: "Thinking, when asked for",
+		sends: func(string) string { return "adaptive thinking with an effort level, not a token budget" },
+	})
+}
 
 // thinkingStyleFor reports which shape this model has told us it takes.
 func thinkingStyleFor(model string) string {
-	adaptiveThinkMu.RLock()
-	defer adaptiveThinkMu.RUnlock()
-	if adaptiveThinkModels[model] {
-		return anthThinkAdaptive
-	}
-	return anthThinkBudgeted
+	return adaptedStep(model, fieldThinkingShape)
 }
 
 // noteAdaptiveThinking records that a model rejected the budgeted shape, so the
@@ -279,13 +291,7 @@ func noteAdaptiveThinking(model string) {
 	if strings.TrimSpace(model) == "" {
 		return
 	}
-	adaptiveThinkMu.Lock()
-	already := adaptiveThinkModels[model]
-	adaptiveThinkModels[model] = true
-	adaptiveThinkMu.Unlock()
-	if !already {
-		Log("[llm] %s takes adaptive thinking rather than a token budget: switching for this model", model)
-	}
+	setAdaptedStep(model, fieldThinkingShape, anthThinkAdaptive, nil)
 }
 
 // Turning thinking off, per model. Claude's models each have their own
@@ -322,20 +328,38 @@ const (
 // spent on thinking first. An allowance not used is not billed.
 const anthThinkOffFloor = 4096
 
-var (
-	thinkOffMu     sync.RWMutex
-	thinkOffModels = map[string]string{}
-)
+// fieldThinkingOff is how a model turns thinking off, a request field
+// (request_adapt.go) whose ladder is nextThinkingOff.
+const fieldThinkingOff = "thinking.off"
+
+func init() {
+	registerRequestField(requestField{
+		key:  fieldThinkingOff,
+		top:  anthOffDisabled,
+		next: nextThinkingOff,
+		said: func(model, from, to string, _ error) {
+			how := map[string]string{
+				anthOffBetweenTools: "a thinking setting of between_tools",
+				anthOffEffortLow:    "no thinking setting and low effort, since it cannot turn thinking off",
+				anthOffNothing:      "no thinking setting at all, its own default, since it took none of the off-switches",
+			}[to]
+			Log("[llm] %s refused thinking off as %s: sending %s from now on", model, from, how)
+		},
+		label: "Thinking off",
+		sends: func(step string) string {
+			return map[string]string{
+				anthOffBetweenTools: `thinking "between_tools", its lowest setting`,
+				anthOffEffortLow:    "no thinking setting and low effort: it cannot turn thinking off",
+				anthOffNothing:      "no thinking setting at all, its own default",
+			}[step]
+		},
+	})
+}
 
 // thinkingOffFor is the off-switch this model is on, disabled until it says
 // otherwise.
 func thinkingOffFor(model string) string {
-	thinkOffMu.RLock()
-	defer thinkOffMu.RUnlock()
-	if s := thinkOffModels[model]; s != "" {
-		return s
-	}
-	return anthOffDisabled
+	return adaptedStep(model, fieldThinkingOff)
 }
 
 // anthThinkingOff is the thinking off-switch for model, as anthThinkingFor
@@ -396,31 +420,11 @@ func nextThinkingOff(current string, err error) (next string, ok bool) {
 // is not supported), quoted or escaped any way.
 var betweenToolsRefusedRE = regexp.MustCompile(`between_tools[\\"'\s]*is not supported`)
 
-// thinkingOffRetry marks a refusal the client learned the next off-switch
-// from: the rebuilt call differs from the refused one, so retryLLM may try
-// again without looping on an identical request.
-type thinkingOffRetry struct{ error }
-
-func (e thinkingOffRetry) Unwrap() error { return e.error }
-
 // refusedThinkingOff reports whether err is a thinking-off refusal the client
-// learned from (thinkingOffRetry).
+// moved the model down the ladder on (adaptedRetry).
 func refusedThinkingOff(err error) bool {
-	var r thinkingOffRetry
-	return errors.As(err, &r)
-}
-
-// noteThinkingOff records the step a model moved to.
-func noteThinkingOff(model, was, next string) {
-	thinkOffMu.Lock()
-	thinkOffModels[model] = next
-	thinkOffMu.Unlock()
-	how := map[string]string{
-		anthOffBetweenTools: "a thinking setting of between_tools",
-		anthOffEffortLow:    "no thinking setting and low effort, since it cannot turn thinking off",
-		anthOffNothing:      "no thinking setting at all, its own default, since it took none of the off-switches",
-	}[next]
-	Log("[llm] %s refused thinking off as %s: sending %s from now on", model, was, how)
+	field, ok := adaptedField(err)
+	return ok && field == fieldThinkingOff
 }
 
 // budgetAsEffort maps a token budget onto the effort dial adaptive thinking
@@ -981,7 +985,7 @@ func (c *anthropicClient) Chat(ctx context.Context, messages []Message, opts ...
 	payload := anthRequest{
 		Model:        cfg.Model,
 		Messages:     msgs,
-		MaxTokens:    maxTokens,
+		MaxTokens:    clampMaxTokens(cfg.Model, maxTokens),
 		Thinking:     thinking,
 		OutputConfig: outCfg,
 		System:       buildSystemBlocks(systemPrompt),
@@ -1334,7 +1338,7 @@ func (c *anthropicClient) ChatStream(ctx context.Context, messages []Message, ha
 	payload := anthRequest{
 		Model:        cfg.Model,
 		Messages:     msgs,
-		MaxTokens:    maxTokens,
+		MaxTokens:    clampMaxTokens(cfg.Model, maxTokens),
 		Thinking:     thinking,
 		OutputConfig: outCfg,
 		System:       buildSystemBlocks(systemPrompt),
@@ -1395,10 +1399,10 @@ func noteIfAdaptiveThinking(model string, err error) error {
 	// A refused off-switch is its own lesson: it says how this model turns
 	// thinking off, not that it wants adaptive thinking when asked to think.
 	if strings.TrimSpace(model) != "" {
-		was := thinkingOffFor(model)
-		if next, ok := nextThinkingOff(was, err); ok {
-			noteThinkingOff(model, was, next)
-			return thinkingOffRetry{err}
+		for _, field := range []string{fieldThinkingOff, fieldMaxTokens} {
+			if adaptFrom(model, field, err) {
+				return adaptedRetry{field: field, error: err}
+			}
 		}
 	}
 	if isUnsupportedThinkingTypeErr(err) {

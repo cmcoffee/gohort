@@ -269,7 +269,7 @@ func (c *bedrockRuntimeClient) buildBody(messages []Message, cfg ChatConfig) ([]
 	return json.Marshal(bedrockInvokeRequest{
 		AnthropicVersion: bedrockAnthropicVersion,
 		Messages:         msgs,
-		MaxTokens:        maxTokens,
+		MaxTokens:        clampMaxTokens(cfg.Model, maxTokens),
 		Thinking:         thinking,
 		OutputConfig:     outCfg,
 		System:           buildSystemBlocks(systemPrompt),
@@ -830,7 +830,7 @@ func (c *bedrockConverseClient) buildBody(messages []Message, cfg ChatConfig) ([
 	// Other models' output limits run from 2k to 32k and a larger request is
 	// refused, so they get the model's own default unless a caller asked.
 	if maxTokens > 0 {
-		req.InferenceConfig = &cvInference{MaxTokens: maxTokens}
+		req.InferenceConfig = &cvInference{MaxTokens: clampMaxTokens(cfg.Model, maxTokens)}
 	}
 	return json.Marshal(req)
 }

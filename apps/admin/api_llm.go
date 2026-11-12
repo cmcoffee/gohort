@@ -29,6 +29,10 @@ func (a *AdminApp) registerLLMRoutes(sub *http.ServeMux) {
 	// Same form values and same key fallback as the test above.
 	sub.HandleFunc("/api/worker-llm/models", jsonapi.Post(a.db, a.handleLLMModels(LLMTable), a.gate()))
 	sub.HandleFunc("/api/lead-llm/models", jsonapi.Post(a.db, a.handleLLMModels(LeadLLMTable), a.gate()))
+	// What models have refused of a request, and what is sent instead
+	// (core/request_adapt.go), with Forget.
+	sub.HandleFunc("/api/llm-adaptations", jsonapi.Get(a.db, a.handleLLMAdaptations, a.gate()))
+	sub.HandleFunc("/api/llm-adaptations/forget", jsonapi.Post(a.db, a.handleLLMAdaptationForget, a.gate()))
 	// Dismiss on the dashboard's lead notice: the failures so far are
 	// acknowledged (still counted), and only a newer one brings it back.
 	sub.HandleFunc("/api/lead-llm/dismiss", jsonapi.Post(a.db, func(c *jsonapi.Call, _ struct{}) (any, error) {
@@ -553,6 +557,7 @@ func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonap
 		// here reported "saved" for a config the process is not running, and
 		// the only evidence was a log line - which is an evening of changing a
 		// setting that was already correct.
+		wasWorker, wasLead := LiveLLMs()
 		if err := ReloadLLMs(); err != nil {
 			Log("[admin] LLM reload after %s save failed (config saved; prior LLM still active): %v", table, err)
 			_, lead := LiveLLMs()
@@ -564,6 +569,15 @@ func (a *AdminApp) handleLLMConfigSave(table string, worker bool) func(c *jsonap
 				". Calls keep going to "+still+" until this is fixed and the settings are saved again.")
 		}
 		adminChange(c.R, activity.Settings, "updated %s (provider=%q model=%q)", table, req.Provider, req.Model)
+		// A tier now on another model is probed in the background, so what
+		// it refuses of a request is learned before real work meets it.
+		nowWorker, nowLead := LiveLLMs()
+		switch {
+		case table == LLMTable && nowWorker != wasWorker:
+			ProbeOnce(nowWorker, SharedWorkerLLM())
+		case table == LeadLLMTable && nowLead != wasLead && SharedLeadLLM() != nil:
+			ProbeOnce(nowLead, SharedLeadLLM())
+		}
 		return jsonapi.Empty(http.StatusNoContent), nil
 	}
 }
@@ -962,4 +976,42 @@ func (a *AdminApp) handleJudgeCallToggle(c *jsonapi.Call, req struct {
 	a.db.Set(JudgeLLMTable, "off", off)
 	adminChange(c.R, activity.Settings, "Offload model: %s %s", key, map[bool]string{true: "on", false: "off (stays on the worker)"}[req.On])
 	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// llmAdaptationRow is one model's refusal on the Models page: what it
+// refused, what is sent instead, since when, and its own words.
+type llmAdaptationRow struct {
+	Model   string `json:"model"`
+	What    string `json:"what"`
+	Sends   string `json:"sends"`
+	Since   string `json:"since"`
+	Refusal string `json:"refusal,omitempty"`
+	ID      string `json:"_id"`
+}
+
+// handleLLMAdaptations lists every model moved off part of a request.
+func (a *AdminApp) handleLLMAdaptations(c *jsonapi.Call) (any, error) {
+	rows := []llmAdaptationRow{}
+	for _, ad := range ListRequestAdaptations() {
+		rows = append(rows, llmAdaptationRow{
+			Model: ad.Subject, What: ad.What, Sends: ad.Sends,
+			Since: ad.Since.Format(time.RFC3339), Refusal: ad.Refusal,
+			ID: ad.Field + "|" + ad.Subject,
+		})
+	}
+	return rows, nil
+}
+
+// handleLLMAdaptationForget puts one model back on a field as configured:
+// ?id=field|model, as the row carries it.
+func (a *AdminApp) handleLLMAdaptationForget(c *jsonapi.Call, _ struct{}) (any, error) {
+	field, model, ok := strings.Cut(c.R.URL.Query().Get("id"), "|")
+	if !ok || field == "" || model == "" {
+		return nil, jsonapi.BadRequest("expected ?id=field|model")
+	}
+	if !ForgetRequestAdaptation(field, model) {
+		return nil, jsonapi.NotFound("nothing learned about " + model + " for " + field)
+	}
+	adminChange(c.R, activity.Settings, "forgot what %s refused (%s): it is sent as configured again", model, field)
+	return map[string]bool{"ok": true}, nil
 }

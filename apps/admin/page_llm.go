@@ -196,6 +196,29 @@ func (a *AdminApp) llmSections() []ui.Section {
 			},
 		},
 		{
+			Title:    "Learned from model refusals",
+			Subtitle: "Where a model refused part of a request, what gohort sends it instead.",
+			Detail: "A model that refuses part of a request (a way of turning thinking off, a setting it does not take, pictures) is believed: gohort sends what its refusal points to, " +
+				"keeps that for the model, and retries the call, so the call does not fail on it. Each row stands 30 days, then the model is sent the request as configured again, " +
+				"since providers lift limits as well as add them. Forget does that now. A different model is a different row: changing a tier's model starts it fresh.",
+			Body: ui.Table{
+				Source:    "api/llm-adaptations",
+				RowKey:    "_id",
+				EmptyText: "No model has refused part of a request: each is sent every request as configured.",
+				Columns: []ui.Col{
+					{Field: "model", Label: "Model", Flex: 2},
+					{Field: "what", Label: "Refused"},
+					{Field: "sends", Label: "Sent instead", Flex: 2},
+					{Field: "since", Label: "Since", Format: "reltime", Mute: true},
+					{Field: "refusal", Label: "Its refusal", Flex: 3, Mute: true},
+				},
+				RowActions: []ui.RowAction{
+					{Type: "button", Label: "Forget", Method: "POST", PostTo: "api/llm-adaptations/forget?id={_id}", Compact: true,
+						Confirm: "Send this model the request as configured again? If it refuses again, gohort learns it again from that refusal."},
+				},
+			},
+		},
+		{
 			Title:    "LLM Routing",
 			Subtitle: "Pick which tier handles each pipeline stage, and whether it reasons.",
 			Detail:   "\"lead\" uses the precision (remote) LLM; \"worker\" uses the local model; the \"(thinking)\" variant of either enables extended reasoning on that tier.\n\nTier and thinking are independent: a stage escalated to lead keeps thinking only if you pick \"lead (thinking)\". Budget caps thinking tokens for that stage, where 0 is the stage default.\n\nA private stage cannot route to lead unless Model Privacy is turned on above.",

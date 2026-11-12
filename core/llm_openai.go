@@ -363,16 +363,32 @@ func (c *openAIClient) vllmBudgetEffort(cfg ChatConfig) string {
 // the model is BELIEVED when it refuses - the same bargain the Anthropic client
 // makes over thinking shapes (noteAdaptiveThinking). One 400, once per model
 // per process.
-var (
-	noReasoningEffortMu     sync.RWMutex
-	noReasoningEffortModels = map[string]bool{}
-)
+//
+// A request field (request_adapt.go): sent until the model refuses it, then
+// left out.
+const fieldReasoningEffort = "reasoning_effort"
+
+func init() {
+	registerRequestField(requestField{
+		key: fieldReasoningEffort,
+		top: "send",
+		next: func(current string, err error) (string, bool) {
+			if current == "send" && isUnsupportedReasoningEffortErr(err) {
+				return "omit", true
+			}
+			return "", false
+		},
+		said: func(model, _, _ string, _ error) {
+			Log("[llm] %s does not take reasoning_effort: leaving it out for this model", model)
+		},
+		label: "reasoning_effort",
+		sends: func(string) string { return "nothing: the field is left out" },
+	})
+}
 
 // reasoningEffortRefused reports whether this model has refused the field.
 func reasoningEffortRefused(model string) bool {
-	noReasoningEffortMu.RLock()
-	defer noReasoningEffortMu.RUnlock()
-	return noReasoningEffortModels[model]
+	return adaptedStep(model, fieldReasoningEffort) == "omit"
 }
 
 // isUnsupportedReasoningEffortErr reports whether a provider refused
@@ -390,17 +406,26 @@ func isUnsupportedReasoningEffortErr(err error) bool {
 // request actually carried, then returns the error unchanged for the retry
 // layer (doWithRetry) to rebuild the call without the field.
 func noteIfReasoningEffortRefused(payload oaiRequest, err error) error {
-	if payload.ReasoningEffort == "" || !isUnsupportedReasoningEffortErr(err) {
-		return err
+	if payload.ReasoningEffort != "" {
+		adaptFrom(payload.Model, fieldReasoningEffort, err)
 	}
-	noReasoningEffortMu.Lock()
-	already := noReasoningEffortModels[payload.Model]
-	noReasoningEffortModels[payload.Model] = true
-	noReasoningEffortMu.Unlock()
-	if !already {
-		Log("[llm] %s does not take reasoning_effort: leaving it out for this model", payload.Model)
+	if payload.MaxTokens > 0 && adaptFrom(payload.Model, fieldMaxTokens, err) {
+		return adaptedRetry{field: fieldMaxTokens, error: err}
+	}
+	if (payload.Temperature != nil || payload.TopP != nil || payload.TopK != nil) && adaptFrom(payload.Model, fieldSampling, err) {
+		return adaptedRetry{field: fieldSampling, error: err}
 	}
 	return err
+}
+
+// applyAdaptations sets what this model has refused on payload: the output
+// maximum it named, and no sampling settings once it refused them
+// (request_adapt.go).
+func applyAdaptations(payload *oaiRequest) {
+	payload.MaxTokens = clampMaxTokens(payload.Model, payload.MaxTokens)
+	if samplingOmitted(payload.Model) {
+		payload.Temperature, payload.TopP, payload.TopK = nil, nil, nil
+	}
 }
 
 // applyThinkFields sets the thinking fields for a hosted OpenAI-compatible
@@ -2222,6 +2247,7 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 		payload.ResponseFormat = &oaiResponseFormat{Type: "json_object"}
 	}
 
+	applyAdaptations(&payload)
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -2456,6 +2482,7 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 		payload.ResponseFormat = &oaiResponseFormat{Type: "json_object"}
 	}
 
+	applyAdaptations(&payload)
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err

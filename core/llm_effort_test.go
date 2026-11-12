@@ -212,9 +212,7 @@ func TestClaudeBudgetedModelsGetTheBudgetTable(t *testing.T) {
 const oaiOKBody = `{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`
 
 func TestOpenAISendsReasoningEffortAndBelievesARefusal(t *testing.T) {
-	noReasoningEffortMu.Lock()
-	noReasoningEffortModels = map[string]bool{}
-	noReasoningEffortMu.Unlock()
+	forgetAdaptations(fieldReasoningEffort)
 
 	srv, sent := captureServer(t, http.StatusOK, func(b []byte) (int, string) {
 		if strings.Contains(string(b), `"model":"plain-model"`) && strings.Contains(string(b), "reasoning_effort") {

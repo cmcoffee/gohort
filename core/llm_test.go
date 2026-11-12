@@ -810,7 +810,7 @@ func TestALoweredPictureLimitIsLearnedAgain(t *testing.T) {
 	if _, err := r.Chat(context.Background(), msgs); err != nil {
 		t.Fatal(err)
 	}
-	if got := r.imageLimit.Load(); got != 1 {
+	if got := r.imageLimitNow(); got != 1 {
 		t.Errorf("limit %d, want the lowered 1", got)
 	}
 }

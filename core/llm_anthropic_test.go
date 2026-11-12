@@ -188,9 +188,7 @@ func TestInvokeModelCarriesItToo(t *testing.T) {
 
 func clearAdaptive(t *testing.T) {
 	t.Helper()
-	adaptiveThinkMu.Lock()
-	adaptiveThinkModels = map[string]bool{}
-	adaptiveThinkMu.Unlock()
+	forgetAdaptations(fieldThinkingShape)
 }
 
 // TestTheProviderIsBelievedAboutItsOwnShape — which shape a model wants is not

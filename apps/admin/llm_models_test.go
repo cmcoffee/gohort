@@ -9,8 +9,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
@@ -149,5 +151,37 @@ func TestLLMModelsQueryCarriesBedrockSettings(t *testing.T) {
 	if cfg.Provider != "bedrock" || cfg.Region != "us-west-2" || cfg.Profile != "work" || cfg.BedrockAPI != "converse" {
 		t.Errorf("config = provider %q region %q profile %q api %q, want bedrock, us-west-2, work, converse",
 			cfg.Provider, cfg.Region, cfg.Profile, cfg.BedrockAPI)
+	}
+}
+
+// The Models page lists what models have refused of a request, in words, and
+// Forget puts one back to the request as configured.
+func TestLearnedRefusalsAreListedAndForgotten(t *testing.T) {
+	a, _ := modelsAdmin(t)
+	// Stored before the store is read, as a restart finds it.
+	a.db.Set("request_adaptations", "thinking.off\x00claude-test-page", RequestAdaptation{
+		Field: "thinking.off", Subject: "claude-test-page", Step: "between_tools", Since: time.Now(), Refusal: "send between_tools instead"})
+	prev := RootDB
+	RootDB = a.db
+	t.Cleanup(func() { RootDB = prev })
+	mux := http.NewServeMux()
+	a.registerLLMRoutes(mux)
+	do := func(method, path string) (int, string) {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest(method, path, strings.NewReader("{}")))
+		return w.Code, w.Body.String()
+	}
+	code, body := do("GET", "/api/llm-adaptations")
+	if code != 200 || !strings.Contains(body, `"model":"claude-test-page"`) || !strings.Contains(body, `"what":"Thinking off"`) || !strings.Contains(body, `"_id":"thinking.off|claude-test-page"`) {
+		t.Fatalf("listed: %d %s", code, body)
+	}
+	if code, body := do("POST", "/api/llm-adaptations/forget?id="+url.QueryEscape("thinking.off|claude-test-page")); code != 200 {
+		t.Fatalf("forget: %d %s", code, body)
+	}
+	if _, body := do("GET", "/api/llm-adaptations"); strings.TrimSpace(body) != "[]" {
+		t.Errorf("after Forget: %s", body)
+	}
+	if code, _ := do("POST", "/api/llm-adaptations/forget?id=nonsense"); code != 400 {
+		t.Errorf("a malformed id: %d, want 400", code)
 	}
 }

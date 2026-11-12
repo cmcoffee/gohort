@@ -329,7 +329,21 @@ func (a *AdminApp) testLLM(w http.ResponseWriter, r *http.Request, table string)
 		writeTestResult(w, false, "", connected+" The handoff check FAILED:"+h.lines())
 		return
 	}
-	writeTestResult(w, true, connected+" Handoff check:"+h.lines(), "")
+	// The probes: what this model refuses of a request, learned now rather
+	// than by the first real call that carries it (core/request_adapt.go).
+	adapted := ProbeRequestFields(ctx, llm, func(i, n int, name string) {
+		progress(fmt.Sprintf("probing %d of %d: %s", i, n, name))
+	})
+	writeTestResult(w, true, connected+" Handoff check:"+h.lines()+probeLine(adapted), "")
+}
+
+// probeLine is the Test result's word on the probes: what was adapted to,
+// or that the model took every request as configured.
+func probeLine(adapted []string) string {
+	if len(adapted) == 0 {
+		return " Probes: it took every request as configured."
+	}
+	return " Adapted to this model (Learned from model refusals): " + strings.Join(adapted, "; ") + "."
 }
 
 // DashboardNotices tells a fresh admin, on the page they actually land on,
@@ -394,6 +408,9 @@ func (a *AdminApp) llmNotices() []DashboardNotice {
 	if n, ok := a.workerNotice(); ok {
 		out = append(out, n)
 	}
+	if n, ok := a.unmappedRefusalNotice(time.Now()); ok {
+		out = append(out, n)
+	}
 	if n, ok := a.leadNotice(); ok {
 		out = append(out, n)
 	}
@@ -422,6 +439,28 @@ func (a *AdminApp) workerNotice() (DashboardNotice, bool) {
 		Text:   text,
 		Action: "Open Worker settings",
 		URL:    a.WebPath() + "/" + adminSectionLink("Worker LLM"),
+	}, true
+}
+
+// unmappedRefusalNotice is the card for a model refusing a setting of a
+// request that gohort cannot adapt to yet, in the last week: calls carrying
+// it fail until the request changes, so it is worth knowing about rather
+// than finding in a log. Cleared by Forget on its row.
+func (a *AdminApp) unmappedRefusalNotice(now time.Time) (DashboardNotice, bool) {
+	var models []string
+	for _, ad := range ListRequestAdaptations() {
+		if ad.Unmapped && now.Sub(ad.Since) < 7*24*time.Hour {
+			models = append(models, ad.Subject)
+		}
+	}
+	if len(models) == 0 {
+		return DashboardNotice{}, false
+	}
+	return DashboardNotice{
+		Text: fmt.Sprintf("%s refused a setting of a request in a way gohort cannot adapt to yet, so calls carrying it fail. Its words are under Learned from model refusals.",
+			strings.Join(models, ", ")),
+		Action: "Open Models",
+		URL:    a.WebPath() + "/" + adminSectionLink("Learned from model refusals"),
 	}, true
 }
 
@@ -532,5 +571,6 @@ func (a *AdminApp) testJudge(ctx context.Context, w http.ResponseWriter, llm LLM
 		writeTestResult(w, false, "", "Connected: "+model+" answered in "+took.String()+", but not in the JSON the checks need: "+textutil.Clip(text, 120)+"."+serverNote)
 		return
 	}
-	writeTestResult(w, true, "Connected: "+model+" answered a check in "+took.String()+", in JSON with thinking off, as the checks ask."+serverNote, "")
+	adapted := ProbeRequestFields(ctx, llm, nil)
+	writeTestResult(w, true, "Connected: "+model+" answered a check in "+took.String()+", in JSON with thinking off, as the checks ask."+serverNote+probeLine(adapted), "")
 }

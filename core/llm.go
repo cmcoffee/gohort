@@ -16,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/cmcoffee/gohort/core/keystore"
@@ -1716,14 +1715,13 @@ type retryLLM struct {
 	// noImages: this model is not shown images; they are described in their
 	// place (LLMProviderConfig.NoImages, the image gate in llm.go).
 	noImages bool
-	// learnedNoImages is the same, learned from the model refusing a request
-	// for carrying pictures (learnNoImages), for the life of the process.
-	learnedNoImages atomic.Bool
-	// imageLimit is how many pictures this model takes in one request, 0 for
-	// not known. Learned from its own refusal (learnImageLimit) and applied
-	// before every call after (withinImageLimit). A lower limit is learned
-	// again from the next refusal; a raised one is used after a restart.
-	imageLimit atomic.Int32
+	// model names the model this client calls, provider/model: the subject of
+	// what it learns per model (imagesSubject).
+	model string
+	// What it learns of the model's pictures are request fields
+	// (request_adapt.go) with the model as their subject (imagesSubject):
+	// that it takes none (learnNoImages), and how many it takes in one
+	// request (learnImageLimit, applied by withinImageLimit).
 }
 
 // peerRefused reports a peer answering 401 to a model call, and drops the
@@ -1911,7 +1909,7 @@ func (r *retryLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOpt
 
 func (r *retryLLM) chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
 	messages = r.withinImageLimit(ctx, r.withoutImages(ctx, messages))
-	return doWithRetry(ctx, LLMMaxRetries(), opts, func() (*Response, error) {
+	resp, err := doWithRetry(ctx, LLMMaxRetries(), opts, func() (*Response, error) {
 		// First attempt: original opts, original messages.
 		resp, err := r.inner.Chat(ctx, messages, opts...)
 		if r.peerRefused(err) {
@@ -1962,6 +1960,8 @@ func (r *retryLLM) chat(ctx context.Context, messages []Message, opts ...ChatOpt
 		// All paths empty — return the original.
 		return resp, err
 	})
+	r.noteUnmappedRefusal(err)
+	return resp, err
 }
 
 func (r *retryLLM) ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
@@ -1993,7 +1993,7 @@ func (r *retryLLM) chatStream(ctx context.Context, messages []Message, handler S
 		streamCfg.OnStreamRestart()
 		return true
 	}
-	return doWithRetry(ctx, LLMMaxRetries(), opts, func() (*Response, error) {
+	resp, err := doWithRetry(ctx, LLMMaxRetries(), opts, func() (*Response, error) {
 		// Stream-aware empty retry: only safe to retry if the handler
 		// hasn't already received chunks (otherwise the user has seen
 		// partial output and a retry would duplicate or contradict it) —
@@ -2063,6 +2063,8 @@ func (r *retryLLM) chatStream(ctx context.Context, messages []Message, handler S
 		}
 		return resp, err
 	})
+	r.noteUnmappedRefusal(err)
+	return resp, err
 }
 
 // ContextSize forwards the inner LLM's ContextSizer through the retry
@@ -2186,9 +2188,10 @@ func doWithRetry(ctx context.Context, maxRetries int, opts []ChatOption, fn func
 
 	var lastErr error
 	thinkingRetried := false
-	// A thinking-off refusal the client learned the next step from is
-	// retried down the ladder (disabled, between_tools, low effort, nothing),
-	// each a different request, so up to three of them.
+	// A refusal the client moved a request field on (request_adapt.go) is
+	// retried with the field's next step, each a different request: down the
+	// thinking-off ladder, an output maximum named, sampling left out. Up to
+	// four of them in one call.
 	offSteps := 0
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		resp, err := fn()
@@ -2215,7 +2218,7 @@ func doWithRetry(ctx context.Context, maxRetries int, opts []ChatOption, fn func
 		// The same holds for a reasoning_effort the model refused: the client
 		// recorded the model (noteIfReasoningEffortRefused) and the rebuilt
 		// request leaves the field out.
-		if refusedThinkingOff(err) && offSteps < 3 {
+		if _, moved := adaptedField(err); moved && offSteps < 4 {
 			offSteps++
 			continue
 		}
@@ -2480,7 +2483,8 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		c.effort = tier
 	}
 
-	return &retryLLM{inner: inner, maxRetries: 5, peer: peerName, noImages: cfg.NoImages}, nil
+	return &retryLLM{inner: inner, maxRetries: 5, peer: peerName, noImages: cfg.NoImages,
+		model: strings.ToLower(strings.TrimSpace(cfg.Provider)) + "/" + chFirstNonEmpty(strings.TrimSpace(cfg.Model), "(provider default)")}, nil
 }
 
 // ListModels asks a provider which models it offers, from the same settings a
@@ -2973,7 +2977,40 @@ func countImages(messages []Message) (n int) {
 // blind reports whether this model is not shown images: set so ("Reads
 // images" off), or learned from its own refusal.
 func (r *retryLLM) blind() bool {
-	return r.noImages || r.learnedNoImages.Load()
+	return r.noImages || adaptedStep(r.imagesSubject(), fieldImages) == "describe"
+}
+
+// fieldImages is whether a model is sent pictures, a request field
+// (request_adapt.go): sent until it refuses a request for carrying them, then
+// described by a model that reads them.
+const fieldImages = "images"
+
+func init() {
+	registerRequestField(requestField{
+		key: fieldImages,
+		top: "send",
+		next: func(current string, err error) (string, bool) {
+			if current == "send" && imagesRefusedRE.MatchString(err.Error()) {
+				return "describe", true
+			}
+			return "", false
+		},
+		said: func(model, _, _ string, err error) {
+			Log("[llm] %s refused a request for carrying pictures (%v): from now on its pictures are described by a model that reads them", model, err)
+		},
+		label: "Pictures",
+		sends: func(string) string { return "a description of each picture, by a model that reads them" },
+	})
+}
+
+// imagesSubject is the images field's subject: the model this client calls,
+// so what one tier learns about a model holds for every tier on it and
+// survives a reload; the client itself when it names no model (a test's).
+func (r *retryLLM) imagesSubject() string {
+	if r.model != "" {
+		return r.model
+	}
+	return fmt.Sprintf("client:%p", r)
 }
 
 // imagesRefusedRE reads a provider refusing a request because the model takes
@@ -2989,13 +3026,10 @@ var imagesRefusedRE = regexp.MustCompile(`(?i)(image inputs? (is|are) not suppor
 // an owner who left the switch on for a model that cannot see had every
 // picture fail the request, or worse, ignored.
 func (r *retryLLM) learnNoImages(err error, messages []Message) bool {
-	if err == nil || r.blind() || !carriesImages(messages) || !imagesRefusedRE.MatchString(err.Error()) {
+	if err == nil || r.blind() || !carriesImages(messages) {
 		return false
 	}
-	if r.learnedNoImages.CompareAndSwap(false, true) {
-		Log("[llm] the model refused a request for carrying pictures (%v): from now on its pictures are described by a model that reads them. Set \"Reads images\" off for it in Admin > Models to keep this after a restart", err)
-	}
-	return true
+	return adaptFrom(r.imagesSubject(), fieldImages, err)
 }
 
 // carriesImages reports whether messages hold any picture or video.
@@ -3016,17 +3050,48 @@ func (r *retryLLM) learnImageLimit(err error, messages []Message) bool {
 	if n < 1 || have <= n {
 		return false
 	}
-	if int(r.imageLimit.Swap(int32(n))) != n {
-		Log("[llm] the model refused %d pictures in one request and takes at most %d: requests now carry the newest %d, and older ones as descriptions", have, n, n)
+	if r.imageLimitNow() != n {
+		setAdaptedStep(r.imagesSubject(), fieldImageLimit, strconv.Itoa(n), err)
 	}
 	return true
+}
+
+// fieldImageLimit is how many pictures a model takes in one request, a
+// request field (request_adapt.go): any number until a refusal names a
+// limit, then that limit; a lower one named later lowers it again.
+const fieldImageLimit = "images.limit"
+
+func init() {
+	registerRequestField(requestField{
+		key: fieldImageLimit,
+		top: "any",
+		next: func(current string, err error) (string, bool) {
+			n := imageLimitFrom(err)
+			if was, _ := strconv.Atoi(current); n < 1 || (current != "any" && was <= n) {
+				return "", false
+			}
+			return strconv.Itoa(n), true
+		},
+		said: func(model, _, to string, _ error) {
+			Log("[llm] %s takes at most %s pictures in one request: requests now carry the newest %s, and older ones as descriptions", model, to, to)
+		},
+		label: "Pictures in one request",
+		sends: func(step string) string { return "the newest " + step + ", and older ones as descriptions" },
+	})
+}
+
+// imageLimitNow is how many pictures the model takes in one request, 0 for
+// not known.
+func (r *retryLLM) imageLimitNow() int {
+	n, _ := strconv.Atoi(adaptedStep(r.imagesSubject(), fieldImageLimit))
+	return n
 }
 
 // withinImageLimit returns messages carrying at most the model's limit of
 // pictures, the newest kept and each older one replaced by its description.
 // The caller's slice is never changed.
 func (r *retryLLM) withinImageLimit(ctx context.Context, messages []Message) []Message {
-	n := int(r.imageLimit.Load())
+	n := r.imageLimitNow()
 	if n < 1 || countImages(messages) <= n {
 		return messages
 	}

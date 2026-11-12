@@ -261,8 +261,15 @@ func TestTheJudgeTestAsksWhatTheChecksAsk(t *testing.T) {
 	if out["ok"] != true || !strings.Contains(out["message"].(string), "in JSON with thinking off") {
 		t.Errorf("a judge that answers in JSON: %+v", out)
 	}
-	if llm.Calls() != 1 {
-		t.Errorf("the test made %d calls; one check, no handoff", llm.Calls())
+	// The check, then the request probes (core/request_adapt.go); none of
+	// them a tool-call handoff.
+	if llm.Calls() < 1 {
+		t.Fatal("the test asked nothing")
+	}
+	for i := 0; i < llm.Calls(); i++ {
+		if c := llm.Config(i); len(c.Tools) > 0 {
+			t.Errorf("call %d carried tools: the judge is never handed off to", i)
+		}
 	}
 	cfg := llm.Config(0)
 	if !cfg.JSONMode || cfg.Think == nil || *cfg.Think {
@@ -316,5 +323,24 @@ func TestAMissingWorkerOnAConfiguredSystemIsACardNotTheWizard(t *testing.T) {
 	empty := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
 	if _, ok := empty.workerNotice(); ok || !systemNeedsSetup(empty.db) {
 		t.Error("a new system gets the Worker card instead of first-run setup")
+	}
+}
+
+// A model refusing a setting gohort cannot adapt to, in the last week, puts a
+// card on the dashboard naming it; an older one does not.
+func TestAnUnmappedRefusalIsACard(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	db.Set("request_adaptations", "unmapped\x00openai/test-odd", RequestAdaptation{
+		Field: "unmapped", Subject: "openai/test-odd", Step: "seen", Since: time.Now().Add(-time.Hour), Refusal: "logit_bias is not supported"})
+	prev := RootDB
+	RootDB = db
+	t.Cleanup(func() { RootDB = prev })
+	a := &AdminApp{db: db}
+	n, ok := a.unmappedRefusalNotice(time.Now())
+	if !ok || !strings.Contains(n.Text, "openai/test-odd") || n.URL == "" {
+		t.Fatalf("card: %+v %v", n, ok)
+	}
+	if _, ok := a.unmappedRefusalNotice(time.Now().Add(8 * 24 * time.Hour)); ok {
+		t.Error("a refusal older than a week still makes a card")
 	}
 }
