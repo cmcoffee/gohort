@@ -31,8 +31,19 @@ const (
 	askDefaultDailyUSD     = 2.00
 	askDefaultUserDailyUSD = 0.50
 	askUserDailyCalls      = 200
-	askMaxPrompt           = 8000
 )
+
+// appPromptMaxBytes bounds what one model call an app makes may send (an ask,
+// a script's run_agent or run_pipeline): a guard against a runaway script
+// posting something huge, far above what any model reads. Below it the model
+// decides, as it does for a chat message: a prompt too long for it comes back
+// with the model's own error. What bounds an app's model use is the daily caps
+// above. It was 8000 characters for an ask and 32000 for the other two, so an
+// app that sent its agent a document failed where a chat with it would not.
+const appPromptMaxBytes = 1 << 20
+
+// appPromptTooLong is why a prompt over appPromptMaxBytes is refused.
+var appPromptTooLong = fmt.Errorf("the prompt is over %s: send less, or summarize it first", HumanSize(appPromptMaxBytes))
 
 const askSpendTable = "custom_ask_spend"
 
@@ -82,12 +93,14 @@ func (T *CustomApps) handleAsk(w http.ResponseWriter, r *http.Request, ownerDB D
 		Prompt string `json:"prompt"`
 		JSON   bool   `json:"json"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil || strings.TrimSpace(body.Prompt) == "" {
+	// Room for appPromptMaxBytes of any script, escaped: JSON can write a
+	// character three times the size it has as text (a \u pair for four bytes).
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 3*appPromptMaxBytes+4<<10)).Decode(&body); err != nil || strings.TrimSpace(body.Prompt) == "" {
 		http.Error(w, "send {\"prompt\": \"...\"}", http.StatusBadRequest)
 		return
 	}
-	if len([]rune(body.Prompt)) > askMaxPrompt {
-		http.Error(w, fmt.Sprintf("the prompt is over %d characters", askMaxPrompt), http.StatusRequestEntityTooLarge)
+	if len(body.Prompt) > appPromptMaxBytes {
+		http.Error(w, appPromptTooLong.Error(), http.StatusRequestEntityTooLarge)
 		return
 	}
 	// A page's ask is a person waiting: their lane, so background work gives
@@ -117,8 +130,8 @@ func askAppAgent(ctx context.Context, ownerDB Database, owner, user string, spec
 	if strings.TrimSpace(prompt) == "" {
 		return "", http.StatusBadRequest, fmt.Errorf("ask needs a prompt")
 	}
-	if len([]rune(prompt)) > askMaxPrompt {
-		return "", http.StatusRequestEntityTooLarge, fmt.Errorf("the prompt is over %d characters", askMaxPrompt)
+	if len(prompt) > appPromptMaxBytes {
+		return "", http.StatusRequestEntityTooLarge, appPromptTooLong
 	}
 	return appModelCall(ownerDB, spec, user, "ask", func() (string, float64, error) {
 		return appAgentAsk(ctx, owner, user, spec.AgentID, prompt, jsonMode)
@@ -188,8 +201,8 @@ func init() {
 	// run_agent and run_pipeline: the agent or pipeline with its tools, held
 	// to the same allowance as ask.
 	appscript.AppRunAgent = func(ctx context.Context, spec AppSpec, caller, agent, prompt string) (string, []string, error) {
-		if len([]rune(prompt)) > runMaxPrompt {
-			return "", nil, fmt.Errorf("the prompt is over %d characters", runMaxPrompt)
+		if len(prompt) > appPromptMaxBytes {
+			return "", nil, appPromptTooLong
 		}
 		var files []string
 		text, _, err := appModelCall(appscript.RecordBase(spec, spec.Owner), spec, caller, "run_agent", func() (string, float64, error) {
@@ -209,8 +222,8 @@ func init() {
 		return text, files, err
 	}
 	appscript.AppRunPipeline = func(ctx context.Context, spec AppSpec, caller, pipeline, input string) (string, error) {
-		if len([]rune(input)) > runMaxPrompt {
-			return "", fmt.Errorf("the input is over %d characters", runMaxPrompt)
+		if len(input) > appPromptMaxBytes {
+			return "", appPromptTooLong
 		}
 		text, _, err := appModelCall(appscript.RecordBase(spec, spec.Owner), spec, caller, "run_pipeline", func() (string, float64, error) {
 			return appPipelineRun(ctx, spec, caller, pipeline, input)
@@ -218,10 +231,6 @@ func init() {
 		return text, err
 	}
 }
-
-// runMaxPrompt bounds what a script hands an agent or a pipeline: room for a
-// game's whole state, not a document.
-const runMaxPrompt = 32000
 
 // appAgentRun and appPipelineRun run the app's agent with its tools, or its
 // pipeline; tests replace them. appAgentRun writes what the agent's tools

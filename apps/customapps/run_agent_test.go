@@ -52,7 +52,7 @@ func TestRunAgentAndPipelineShareAsksAllowance(t *testing.T) {
 	if strings.Join(got, "|") != "agent bob  attack the drone|pipeline bob a topic|ask" {
 		t.Errorf("calls = %q (a refused call must not reach the agent)", got)
 	}
-	if _, _, err := appscript.AppRunAgent(ctx, spec, "carol", "Quartermaster", strings.Repeat("x", runMaxPrompt+1)); err == nil {
+	if _, _, err := appscript.AppRunAgent(ctx, spec, "carol", "Quartermaster", strings.Repeat("x", appPromptMaxBytes+1)); err == nil {
 		t.Error("an oversized prompt went through")
 	}
 }

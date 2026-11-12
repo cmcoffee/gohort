@@ -110,3 +110,40 @@ func TestAScriptsAskSharesThePagesCaps(t *testing.T) {
 		t.Fatalf("model calls = %d, want 3", calls)
 	}
 }
+
+// A prompt is limited by what the model reads, as a chat message is, not by
+// a character count: a document's worth goes through, in any script and
+// however JSON escapes it, and only something past the runaway guard is
+// refused, by the page's ask and a script's calls alike.
+func TestALongAskGoesThrough(t *testing.T) {
+	ownerDB := &DBase{Store: kvlite.MemStore()}
+	spec := AppSpec{Slug: "notes", Owner: "alice", AgentID: "npc"}
+	prev := appAgentAsk
+	t.Cleanup(func() { appAgentAsk = prev })
+	got := 0
+	appAgentAsk = func(ctx context.Context, owner, user, agentID, prompt string, jsonMode bool) (string, float64, error) {
+		got = len([]rune(prompt))
+		return "ok", 0, nil
+	}
+	T := &CustomApps{}
+	ask := func(body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		T.handleAsk(w, httptest.NewRequest(http.MethodPost, "/apps/notes/ask", strings.NewReader(body)), ownerDB, "alice", "bob", spec)
+		return w
+	}
+	const doc = 200000 // characters: a long document, far past the old 8000
+	if w := ask(`{"prompt":"` + strings.Repeat("a", doc) + `"}`); w.Code != http.StatusOK || got != doc {
+		t.Fatalf("a document-sized prompt: %d %.200s (agent got %d)", w.Code, w.Body.String(), got)
+	}
+	// Three bytes a character as text, six escaped: up to the guard, taken.
+	cjk := appPromptMaxBytes / 3
+	if w := ask(`{"prompt":"` + strings.Repeat(`\u6587`, cjk) + `"}`); w.Code != http.StatusOK || got != cjk {
+		t.Fatalf("an escaped non-Latin prompt up to the guard: %d %.200s (agent got %d)", w.Code, w.Body.String(), got)
+	}
+	if w := ask(`{"prompt":"` + strings.Repeat("a", appPromptMaxBytes+1) + `"}`); w.Code != http.StatusRequestEntityTooLarge || !strings.Contains(w.Body.String(), "summarize") {
+		t.Errorf("a prompt past the guard: %d %.200s", w.Code, w.Body.String())
+	}
+	if _, err := appscript.AppAsk(context.Background(), spec, "bob", strings.Repeat("a", appPromptMaxBytes+1), false); err == nil {
+		t.Error("a script's ask past the guard went through")
+	}
+}
