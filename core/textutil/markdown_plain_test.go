@@ -1,6 +1,9 @@
 package textutil
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestMarkdownToPlainUnderscores: snake_case identifiers must survive the
 // plain-text flattening (the iMessage/SMS outbound path), while genuine
@@ -54,5 +57,17 @@ func TestSpeakableText(t *testing.T) {
 		if got := SpeakableText(c.in); got != c.want {
 			t.Errorf("%s: SpeakableText(%q) = %q, want %q", c.name, c.in, got, c.want)
 		}
+	}
+}
+
+// SpeakablePlain is what a person sees beside speech: the same text the voice
+// gets, but as written. Only SpeakableText writes "v0.9" out as words.
+func TestSpeakablePlainStaysWritten(t *testing.T) {
+	in := "**Sat** at 10.0.0.1 on v0.9, see https://example.com"
+	if got, want := SpeakablePlain(in), "Sat at 10.0.0.1 on v0.9, see"; got != want {
+		t.Errorf("SpeakablePlain = %q, want %q", got, want)
+	}
+	if got := SpeakableText(in); !strings.Contains(got, "10 dot 0 dot 0 dot 1") || !strings.Contains(got, "version 0") {
+		t.Errorf("SpeakableText = %q, want the address and version said as words", got)
 	}
 }

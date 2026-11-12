@@ -652,12 +652,16 @@ func speakReply(ctx context.Context, owner, agentID, reply string) string {
 // spokenReplyNote is the turn note for a reply that will be heard, not read:
 // the answer to a voice note sent back as speech, or to a message dictated in
 // the web chat with read-aloud on. A reply written for the screen (a list, a
-// table, a link, "Sat" for Saturday) is a poor thing to listen to, and the
-// shape of an answer is set by how it is written, not fixed afterwards. Run
-// only: the person's message is stored as they sent it.
+// table, a link) is a poor thing to listen to, and the shape of an answer is
+// set by how it is written, not fixed afterwards. How a word or a number is
+// said is the voice's job, not the reply's: the reply is shown as well as
+// heard, and SpokenWords writes out "Sat", "10.0.0.1" or "v2.1" on the way
+// to the voice only. A note asking the model to write them as said put
+// "10 dot 0 dot 0 dot 1" on the screen. Run only: the person's message is stored as
+// they sent it.
 const spokenReplyNote = "This reply will be heard, not read: it is spoken back to the person. " +
 	"Answer the way you would say it out loud: brief and conversational, without lists, tables, headings, code or links. " +
-	"Say times, dates, numbers and names the way they are spoken, and write words out in full (Saturday, not Sat; Drive, not Dr)."
+	"Write numbers, dates, times, addresses and abbreviations the usual written way: the person also sees the reply, and the voice reads them correctly."
 
 // dictatedNote is the turn note for a message written out from speech: one
 // dictated in the web chat, or a voice note. Speech-to-text mishears now and

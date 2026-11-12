@@ -115,7 +115,17 @@ var (
 // says emoji and smileys by name, or as their punctuation, so they go. Each
 // line ends as a sentence (spokenLineEnds), since the break between lines is
 // lost on the way to the voice. The written reply still carries all of it.
+// Only for what goes to the voice: anything a person sees uses
+// SpeakablePlain, since "v0.9" shown as "version 0 dot 9" reads wrong.
 func SpeakableText(md string) string {
+	return SpokenWords(SpeakablePlain(md))
+}
+
+// SpeakablePlain is SpeakableText still in written form: the same words,
+// with what a voice cannot use taken out, but numbers, dates and
+// abbreviations as written. For a label shown beside speech, such as the
+// name of a voice note.
+func SpeakablePlain(md string) string {
 	var kept []string
 	inCode := false
 	for _, ln := range strings.Split(md, "\n") {
@@ -144,7 +154,7 @@ func SpeakableText(md string) string {
 	s = spokenEmptyPair.ReplaceAllString(s, "")
 	s = spokenSpaces.ReplaceAllString(s, " ")
 	s = spokenLoosePunc.ReplaceAllString(s, "$1")
-	return SpokenWords(strings.TrimSpace(s))
+	return strings.TrimSpace(s)
 }
 
 // spokenLineEnds ends each line as a sentence. A heading, a list item, or a

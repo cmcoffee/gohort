@@ -751,9 +751,10 @@ const voiceNoteWords = 6
 // message: by its first words, with the agent's name in front when the agent
 // signs its messages (agent is empty when it does not, and a clip must not
 // reveal a name the text would not). Messages shows an attachment by its file
-// name, and the connector's own temp name read as noise.
+// name, and the connector's own temp name read as noise. The name is read, not
+// heard, so its words stay as written ("v0.9", not "version 0 dot 9").
 func voiceNoteName(agent, text string) string {
-	words := strings.Fields(textutil.SpeakableText(text))
+	words := strings.Fields(textutil.SpeakablePlain(text))
 	if len(words) > voiceNoteWords {
 		words = words[:voiceNoteWords]
 	}

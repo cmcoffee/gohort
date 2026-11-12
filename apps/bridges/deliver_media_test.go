@@ -161,6 +161,7 @@ func TestVoiceNoteName(t *testing.T) {
 		{"trailing punctuation trimmed", "", "Here's the plan: one, two, three, four, five", "Here's the plan- one, two, three"},
 		{"nothing to say", "", "```\nls\n```", "Voice reply"},
 		{"no path in a name", "a/b", "c:d", "a-b - c-d"},
+		{"written, not spoken", "", "Sat at 10.0.0.1 on v0.9", "Sat at 10.0.0.1 on v0.9"},
 	}
 	for _, c := range cases {
 		if got := voiceNoteName(c.agent, c.text); got != c.want {
