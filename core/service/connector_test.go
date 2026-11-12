@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/costledger"
@@ -741,5 +742,48 @@ func TestAnEditKeepsTheShapeOfThePictureBeingEdited(t *testing.T) {
 		if got := editAspect(sizedPNG(t, in[0], in[1])); got != want {
 			t.Errorf("%dx%d read as %q, want %q", in[0], in[1], got, want)
 		}
+	}
+}
+
+// An agent's call through a connector that fails says where it is mended,
+// and the connector reads as failing until a call works again. A refusal of
+// what was asked does neither: the service worked and said no. The
+// instance's own call, with no session, gets the plain error.
+func TestAFailingConnectorPointsToHelpAndReadsAsFailing(t *testing.T) {
+	world(t)
+	p := newProvider(t)
+	install(t, "acme-images", imageSpec(p.srv.URL))
+	in := map[string]any{"prompt": "a red circle", "width": 8, "height": 8}
+	agent := &ToolSession{Username: "alice"}
+	p.mu.Lock()
+	p.down = true
+	p.mu.Unlock()
+	_, err := Call(context.Background(), agent, "acme-images", "image.generate", in)
+	if err == nil || !strings.Contains(err.Error(), "Need help?") || !strings.Contains(err.Error(), "acme-images") {
+		t.Errorf("an agent's failed call: %v", err)
+	}
+	if _, err := Call(context.Background(), nil, "acme-images", "image.generate", in); err == nil || strings.Contains(err.Error(), "Need help?") {
+		t.Errorf("the instance's own failed call: %v", err)
+	}
+	if !RecordOf("acme-images").Failing(time.Now()) {
+		t.Error("a connector whose last call failed does not read as failing")
+	}
+	if RecordOf("acme-images").Failing(time.Now().Add(2 * failingWithin)) {
+		t.Error("a failure older than a day still reads as failing")
+	}
+	p.mu.Lock()
+	p.down, p.refuse = false, true
+	p.mu.Unlock()
+	if _, err := Call(context.Background(), agent, "acme-images", "image.generate", in); err == nil || strings.Contains(err.Error(), "Need help?") {
+		t.Errorf("a refusal of what was asked: %v", err)
+	}
+	p.mu.Lock()
+	p.refuse = false
+	p.mu.Unlock()
+	if _, err := Call(context.Background(), agent, "acme-images", "image.generate", in); err != nil {
+		t.Fatalf("the service back up: %v", err)
+	}
+	if RecordOf("acme-images").Failing(time.Now()) {
+		t.Error("a connector whose last call worked reads as failing")
 	}
 }

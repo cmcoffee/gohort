@@ -82,6 +82,39 @@ type HealthCheck struct {
 	Message string    `json:"message,omitempty"`
 }
 
+// failingWithin is how recent a connector's latest failure must be to count
+// it as failing now: a failure from last week, with nothing since, is not
+// something to offer help with today.
+const failingWithin = 24 * time.Hour
+
+// Failing reports whether the connector is failing now: its most recent
+// outcome, a real call's or the free health check's, within the last day,
+// was a failure. A call the provider refused for its content is not one: the
+// service worked and said no to what was asked.
+func (r Record) Failing(now time.Time) bool {
+	var lastOK, lastFail time.Time
+	for _, c := range r.Capabilities {
+		if c == nil {
+			continue
+		}
+		if c.LastOK.After(lastOK) {
+			lastOK = c.LastOK
+		}
+		if c.LastFail.After(lastFail) {
+			lastFail = c.LastFail
+		}
+	}
+	if h := r.Health; h != nil {
+		if h.OK && h.At.After(lastOK) {
+			lastOK = h.At
+		}
+		if !h.OK && h.At.After(lastFail) {
+			lastFail = h.At
+		}
+	}
+	return !lastFail.IsZero() && lastFail.After(lastOK) && now.Sub(lastFail) < failingWithin
+}
+
 var recordMu sync.Mutex
 
 // RecordOf returns a connector's record.

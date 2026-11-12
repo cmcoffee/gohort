@@ -506,7 +506,7 @@ func TestTheBackendListSharesTheConnectorActions(t *testing.T) {
 	for _, act := range tbl.RowActions {
 		labels = append(labels, act.Label)
 	}
-	if got := strings.Join(labels, ","); got != "Remove,,Used for,Used for,Make default,Update from template,Undo template update,Edit setup,✨ Edit,✨ Fix,Settings,Test" {
+	if got := strings.Join(labels, ","); got != "Remove,,Used for,Used for,Make default,Update from template,Undo template update,Edit setup,✨ Edit,✨ Need help?,Settings,Test" {
 		t.Errorf("row actions = %s", got)
 	}
 	// Every row's switch leads its second line, under its name: Enabled or

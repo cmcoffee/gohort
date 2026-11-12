@@ -105,7 +105,7 @@ type depRow struct {
 	Output   bool   `json:"output"`
 	// Link rows take a link rather than a file: Test asks for one.
 	Link bool `json:"link"`
-	// A row that cannot run here, or whose last test failed, has a ✨ Fix in
+	// A row that cannot run here, or whose last test failed, has a ✨ Need help? in
 	// place of its plain Adapt or Edit (markFix): the same form, with the
 	// assist beside it.
 	FixJob     bool `json:"fix_job"`
@@ -857,19 +857,19 @@ func flowFields(withName, custom bool) []ui.FormField {
 }
 
 func depsRowActions() []ui.RowAction {
-	// A row that cannot run, or failed its test, has ✨ Fix: the same form
+	// A row that cannot run, or failed its test, has ✨ Need help?: the same form
 	// as its Adapt or Edit, with the assist beside it.
 	adapt := ui.ModalAction("Adapt…", adaptForm())
 	adapt.OnlyIf, adapt.Width = "adapt", flowFormWidth
-	fixJob := ui.AssistAction("Fix", fixPanel(adaptForm()))
+	fixJob := ui.AssistAction(needHelpLabel, fixPanel(adaptForm()))
 	fixJob.OnlyIf, fixJob.Variant = "fix_job", "primary"
 	editFill := ui.ModalAction("Edit", editForm(false))
 	editFill.OnlyIf, editFill.Width = "edit_fill", flowFormWidth
-	fixFill := ui.AssistAction("Fix", fixPanel(editForm(false)))
+	fixFill := ui.AssistAction(needHelpLabel, fixPanel(editForm(false)))
 	fixFill.OnlyIf, fixFill.Variant = "fix_fill", "primary"
 	editCustom := ui.ModalAction("Edit", editForm(true))
 	editCustom.OnlyIf, editCustom.Width = "edit_custom", flowFormWidth
-	fixCustom := ui.AssistAction("Fix", fixPanel(editForm(true)))
+	fixCustom := ui.AssistAction(needHelpLabel, fixPanel(editForm(true)))
 	fixCustom.OnlyIf, fixCustom.Variant = "fix_custom", "primary"
 	return []ui.RowAction{
 		{Type: "button", Label: "Test", Method: "client", PostTo: "system_deps_test", OnlyIf: "testable"},
@@ -911,7 +911,7 @@ func systemDepsSection() ui.Section {
 	return ui.Section{
 		Title:    "System Hooks",
 		Subtitle: "The jobs gohort hands to tools on this machine (reading what arrives, writing documents, media), how each is done here, and where to plug in another tool when one is missing.",
-		Detail: "Each job gohort needs done, reading what arrives or writing documents, has a native flow: Go itself, the app, or the best tool for it when installed. Where that tool is missing, or you want another, adapt the job: give a flow of commands you have, test it, and turn it on. A row that cannot run here, or whose test failed, has ✨ Fix: its form, with an assistant beside it that knows the row, reads a program's help, tries steps on a file you attach, and fills the form for you to save. Fix what cannot run here goes through every such job in turn. Under Custom, add a format gohort does not support at all. Agents already reach every job here through gohort's own tools (video, export, attachments), and every custom format that is on, with the convert_file tool, on files in their workspace. The tools listed without Adapt are not jobs yet: install them.\n\n" +
+		Detail: "Each job gohort needs done, reading what arrives or writing documents, has a native flow: Go itself, the app, or the best tool for it when installed. Where that tool is missing, or you want another, adapt the job: give a flow of commands you have, test it, and turn it on. A row that cannot run here, or whose test failed, has ✨ Need help?: its form, with an assistant beside it that knows the row, reads a program's help, tries steps on a file you attach, and fills the form for you to save. Need help with what cannot run here? goes through every such job in turn. Under Custom, add a format gohort does not support at all. Agents already reach every job here through gohort's own tools (video, export, attachments), and every custom format that is on, with the convert_file tool, on files in their workspace. The tools listed without Adapt are not jobs yet: install them.\n\n" +
 			"A flow's commands run as written, with no shell reading them. They run in the sandbox, which sees the system folders read-only and nothing else on this machine except the folders a flow says it reads, with no network unless the job needs it, and they are stopped at the time limit. What a flow gives is checked before gohort uses it: an image has to be one the model can read, text has to be text, a Word file has to be a Word file, or it is thrown away. On a machine whose sandbox cannot confine commands, none of them run.",
 		Body: ui.Stack{Children: []ui.Component{
 			fixWalkButton(),

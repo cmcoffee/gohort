@@ -218,13 +218,19 @@ func connectorRows(connectors bool) any {
 // the assistant; fix, the same as Fix, when its spec does not validate. At
 // most one is true. Shared by every table that lists connectors, so a
 // connector opens the same editor wherever it is listed.
+//
+// fix is the row's ✨ Need help?: a spec that does not validate, or one whose
+// recent calls are failing (service.Record.Failing), where the assistant
+// starts from how they failed. A connector a setup form made (ComfyUI,
+// A1111) is mended in that form, so only a broken spec offers it there.
 func connectorEditors(conn Connector) (form, spec, fix bool) {
 	if !service.Fixable(conn) {
 		return false, false, false
 	}
 	_, made := TemplateForConnector(conn)
 	valid := ValidateConnector(conn) == nil
-	return made && valid, !made && valid, !valid
+	failing := !made && service.RecordOf(conn.Name).Failing(time.Now())
+	return made && valid, !made && valid, !valid || failing
 }
 
 // keptSecretsLine is connection c's row's word on the secrets it keeps:

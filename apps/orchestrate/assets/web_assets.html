@@ -7057,7 +7057,7 @@
       // own fields), how it has been going (its last runs, or a monitor's last
       // checks as True, False or Issue) and its notes, with Edit beside them
       // for the rare correction. Served by api/console/scheduler/view.
-      // ✨ Fix, from an item's View: the shared assist, the schedule's own
+      // ✨ Need help?, from an item's View: the shared assist, the schedule's own
       // words beside a helper already told why its card says it is in
       // trouble and what its last runs said. The window is the server's
       // (api/console/scheduler/fix-panel, scheduler_fix.go), opened in the
@@ -7199,7 +7199,7 @@
           var fix = document.createElement('button');
           fix.type = 'button';
           fix.className = 'ui-row-btn';
-          fix.textContent = '✨ Fix';
+          fix.textContent = '✨ Need help?';
           fix.title = 'Work out what keeps going wrong in its runs, and change what it does or say what to change';
           fix.addEventListener('click', function() { m.close(); openSchedFix(kind, id, row); });
           m.footer.appendChild(fix);

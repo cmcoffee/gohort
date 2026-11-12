@@ -24,8 +24,15 @@ import (
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/recipes"
 	"github.com/cmcoffee/gohort/core/service"
+	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/core/ui"
 )
+
+// needHelpLabel is the label of every row button that opens an assistant on
+// something that is not working: a failing connector, a System Hooks job
+// that cannot run. Asked as a question, and shown only where something is
+// wrong, so it reads as an offer about this problem rather than a help page.
+const needHelpLabel = "Need help?"
 
 func (a *AdminApp) registerConnectorFixRoutes(sub *http.ServeMux) {
 	sub.HandleFunc("/api/connectors/fix", assist.Handler(assist.Spec{
@@ -201,14 +208,18 @@ func connectorFixAbout(r *http.Request) (string, error) {
 		b.WriteString("\n")
 	}
 	rec := service.RecordOf(name)
+	// The service's own words come from outside: fenced as data, so a reply
+	// that carries instructions is read as what it is.
 	if h := rec.Health; h != nil {
-		fmt.Fprintf(&b, "\nIts last free health check (%s): ok=%v, %s\n", h.At.Format("Jan 2 15:04"), h.OK, h.Message)
+		fmt.Fprintf(&b, "\nIts last free health check (%s): ok=%v.\n%s\n", h.At.Format("Jan 2 15:04"), h.OK,
+			textutil.UntrustedData("the health check's message", h.Message))
 	}
 	for capability, c := range rec.Capabilities {
 		calls, failed := c.Recent()
 		fmt.Fprintf(&b, "%s: %d calls in the last two hours, %d failed.", capability, calls, failed)
 		if c.LastError != "" {
-			fmt.Fprintf(&b, " Last failure (%s): %s", c.LastFail.Format("Jan 2 15:04"), c.LastError)
+			fmt.Fprintf(&b, " Last failure (%s):\n%s", c.LastFail.Format("Jan 2 15:04"),
+				textutil.UntrustedData("the last failure, as the call reported it", c.LastError))
 		}
 		b.WriteString("\n")
 	}

@@ -414,7 +414,7 @@ func TestSystemDepsScriptParses(t *testing.T) {
 
 // --- Fix ------------------------------------------------------------------
 
-// A row whose test failed, or which cannot run, has ✨ Fix in place of its
+// A row whose test failed, or which cannot run, has ✨ Need help? in place of its
 // Adapt or Edit, and says why; a test that passes clears it, and so does a
 // change to the flow.
 func TestABrokenRowHasFixInPlaceOfAdapt(t *testing.T) {

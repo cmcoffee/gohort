@@ -2,7 +2,8 @@ package admin
 
 // Fixing a hook: a row of System Hooks that cannot run here (its tool is not
 // installed, out of date, the sandbox is missing) or whose last test failed
-// has a ✨ Fix, and "Fix what cannot run here" walks every such job in turn.
+// has a ✨ Need help?, and "Need help with what cannot run here?" walks every
+// such job in turn.
 // Each opens the assist (core/assist, ui.AssistPanel): the row's own form
 // on the left, the Adapt form for a job or the flow's form for an adapted
 // one, and on the right the worker, already told which row it is, what the
@@ -469,8 +470,8 @@ func fixWalkButton() ui.ModalButton {
 	p := fixPanel(adaptForm())
 	p.Walk = &ui.AssistWalk{Source: "api/system-deps?fix=1", Label: "enables", Empty: "Every job here can run on this machine."}
 	return ui.ModalButton{
-		Label: "✨ Fix what cannot run here…", Align: "left", Width: ui.AssistWidth,
-		Title:    "Fix what cannot run here",
+		Label: "✨ Need help with what cannot run here?", Align: "left", Width: ui.AssistWidth,
+		Title:    "Help with what cannot run here",
 		Subtitle: "One job after another: a flow of tools you have, on the left, with help on the right. Each saves off: test it from its row, then turn it on.",
 		Body:     p,
 	}

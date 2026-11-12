@@ -305,6 +305,13 @@ func Call(ctx context.Context, sess *ToolSession, name, capability string, input
 	}
 	out, err := s.run(ctx, sess, capability, inputs)
 	noteCall(ctx, name, capability, out, err)
+	// An agent's call that failed says where it is mended, so the agent can
+	// tell the person rather than retrying a broken service. Not for a
+	// refusal of what was asked (the service worked), and not as an
+	// instruction to repair it: changing a connector is the admin's.
+	if err != nil && sess != nil && !contentRefused(err) && ctx.Err() == nil {
+		err = fmt.Errorf("%w (the connector %s did not work; an admin can get help with it under Admin > Services > Connectors, its ✨ Need help?)", err, name)
+	}
 	return out.result, err
 }
 
