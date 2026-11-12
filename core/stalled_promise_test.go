@@ -251,6 +251,10 @@ func TestAnOfferThatWaitsOnTheUserIsNotAStall(t *testing.T) {
 		"Yes, exactly. Web search, live pages, specific sources, your own files and contacts on your desktop, and deeper dives through specialists when the question needs them. Hand me the question and I'll get the answer.",
 		"Send me the file and I'll convert it.",
 		"Just give me the address and I'll look it up.",
+		// The condition after the promise, in its clause. Seen 2026-11-12,
+		// corrected, and the rewrite shown under the original.
+		"Sensible call, 27B is the tier that fits your setup. I'll leave the watch I offered off unless you want it, but if a real release window drops, that's the trigger that changes your answer.",
+		"I'll check the price again if you'd like.",
 	} {
 		if replyStalledOnAPromise(offer) {
 			t.Errorf("an offer waiting on the user is not a stall: %q", offer)
@@ -525,5 +529,40 @@ func TestAnErrorTheTurnRecoveredFromIsNotPending(t *testing.T) {
 	}
 	if calls := run(false); calls != 4 {
 		t.Errorf("with no job running the error is still pending: calls=%d, want 4", calls)
+	}
+}
+
+// A follow-up to a promise correction that calls nothing and only says the
+// reply again in other words is dropped, and the original, already on screen,
+// is the answer: seen 2026-11-12, the rewrite showed under the original. One
+// that says something else stays.
+func TestARestatedReplyAfterAPromiseCorrectionIsDropped(t *testing.T) {
+	replyguard.SetStore(guardStore{})
+	defer replyguard.SetStore(nil)
+	const original = "The build passed on the second try. I'll check the deploy next."
+	run := func(retry string) (*Response, int, int) {
+		t.Helper()
+		stub := &FakeLLM{Turns: []FakeTurn{{Content: original}, {Content: retry, Repeat: true}}}
+		app := &AppCore{LLM: stub, LeadLLM: stub}
+		settled, retracted := 0, 0
+		resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "how did it go?"}}, AgentLoopConfig{MaxRounds: 8,
+			SettleRound: func() { settled++ }, RetractRound: func() { retracted++ }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp, settled, retracted
+	}
+	restated := "The build passed on the second try, so the deploy is next."
+	if !restatesReply(restated, original) {
+		t.Fatalf("the test's restatement does not restate: overlap too low")
+	}
+	resp, settled, retracted := run(restated)
+	if resp.Content != original || settled != 1 || retracted != 1 {
+		t.Errorf("a restated retry: delivered %q, settled=%d retracted=%d; want the original, the retry taken back", resp.Content, settled, retracted)
+	}
+	other := "I can't check the deploy from here: there is no deploy tool in this conversation."
+	resp, _, retracted = run(other)
+	if resp.Content != other || retracted != 0 {
+		t.Errorf("a retry that says something else was dropped: %q retracted=%d", resp.Content, retracted)
 	}
 }

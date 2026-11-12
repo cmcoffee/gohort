@@ -622,6 +622,10 @@ type loopRun struct {
 	// on. The same reply sent back after it is the model saying it was an
 	// offer, and is delivered rather than corrected again.
 	promiseCorrected string
+	// promiseRetry is the reply the action-promise correction fired on, kept
+	// so a follow-up that calls nothing and only says it again in other words
+	// is dropped and the original stands (dropRestatedPromiseRetry).
+	promiseRetry *groundingRetry
 	// toolsRun counts the rounds that ran a tool, and guardPending the
 	// corrections this turn made, so each can be told at the end what it
 	// came to (replyguard.Outcome): a tool run after it, the same reply, or
@@ -1399,6 +1403,42 @@ func (lr *loopRun) dropRepeatedGroundingRetry() loopAction {
 	}
 	Debug("[agent_loop] grounding follow-up repeats the flagged claim (%q): dropping it, the original reply stands", truncForLog(g.claim, 80))
 	lr.emitDiag("ungrounded-claim-retry-dropped", fmt.Sprintf("The follow-up asked for a short correction of %q only said it again, so it was dropped. The original reply stands as the answer.", truncForLog(g.claim, 120)))
+	lr.retractRound()
+	lr.labelNextRound("")
+	lr.withdrawCorrection()
+	if g.historyLen <= len(lr.history) {
+		lr.history = lr.history[:g.historyLen]
+	}
+	lr.rs.resp.Content = g.original
+	lr.rs.resp.Reasoning = g.reasoning
+	lr.rs.resp.ToolCalls = nil
+	if lr.cfg.OnStep != nil {
+		lr.cfg.OnStep(StepInfo{Round: lr.round, Content: lr.rs.resp.Content, Done: true})
+	}
+	return lr.exit(lr.rs.resp, lr.history, nil)
+}
+
+// dropRestatedPromiseRetry ends the turn on the ORIGINAL reply when the
+// follow-up to an action-promise correction called no tool and only says the
+// reply again in other words: the promise was an offer or a figure of speech,
+// and the original, already on screen, is the answer. The word-for-word case
+// is caught where the promise is checked (sameReply); a rewrite was not, so
+// the person saw the reply twice. Observed 2026-11-12: "I'll leave the watch
+// I offered off unless you want it" was corrected, and the retry wrote the
+// same two paragraphs again under it. A follow-up that says something else
+// ("I can't, the image backend is down") stays: that is what the correction
+// was for.
+func (lr *loopRun) dropRestatedPromiseRetry() loopAction {
+	g := lr.promiseRetry
+	if g == nil {
+		return actNone
+	}
+	lr.promiseRetry = nil
+	if len(lr.turnToolCalls) != g.toolCalls || !restatesReply(lr.rs.resp.Content, g.original) {
+		return actNone
+	}
+	Debug("[agent_loop] the reply after an action-promise correction called nothing and only restated the original: dropping it, the original stands")
+	lr.emitDiag("promise-retry-dropped", "The follow-up to the action-promise correction called no tool and only said the reply again, so it was dropped. The original reply stands as the answer.")
 	lr.retractRound()
 	lr.labelNextRound("")
 	lr.withdrawCorrection()
@@ -3124,6 +3164,7 @@ func (lr *loopRun) finalRoundStallGuards() loopAction {
 		// bubble already shown, which no longer says a correction follows.
 		lr.retractRound()
 		lr.withdrawCorrection()
+		lr.promiseRetry = nil // settled here; the restated-retry check has nothing left to take back
 		// And the turn's answer IS the reply already on screen, word for word.
 		// The two copies are the same reply, not the same text: observed, the
 		// retry changed "master program" to "master control program", the
@@ -3178,6 +3219,10 @@ func (lr *loopRun) finalRoundStallGuards() loopAction {
 		}
 		lr.emitDiag("giveup-retried", diag)
 		lr.correctRound(correctedReason) // no-op when nothing streamed; keeps the discipline uniform across guards
+		if kind == correctionActionPromise {
+			lr.promiseRetry = &groundingRetry{original: lr.rs.resp.Content, reasoning: lr.rs.resp.Reasoning,
+				historyLen: len(lr.history), toolCalls: len(lr.turnToolCalls)}
+		}
 		lr.history = append(lr.history, Message{Role: "user", Content: nudge})
 		return actContinue
 	}
@@ -3226,6 +3271,11 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 	// turn judge on purpose: judging a reply that will not be sent can only
 	// strike or re-prompt something nobody should see.
 	if act := lr.dropRepeatedGroundingRetry(); act != actNone {
+		return act
+	}
+	// Nor is a follow-up to a promise correction that did nothing and only
+	// says the reply again in other words.
+	if act := lr.dropRestatedPromiseRetry(); act != actNone {
 		return act
 	}
 

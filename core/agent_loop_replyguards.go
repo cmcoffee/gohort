@@ -709,8 +709,23 @@ func promiseWaitsOnTheUser(lower string) bool {
 	if imperativeHandoverRe.MatchString(sentence) && !momentRe.MatchString(sentence) {
 		return true
 	}
-	return userConditionRe.MatchString(sentence) && youRe.MatchString(sentence)
+	if userConditionRe.MatchString(sentence) && youRe.MatchString(sentence) {
+		return true
+	}
+	// Or the condition follows the promise, in its own clause: "I'll leave the
+	// watch I offered off unless you want it". Only up to the clause's end, so
+	// "I'll draft it now, let me know if you want changes" is still work it
+	// said it would do. Observed 2026-11-12: that reply, which declines a watch,
+	// was sent back as a promise, and the rewrite showed beside the original.
+	after := lower[last[1]:]
+	if m := clauseEndRe.FindStringIndex(after); m != nil {
+		after = after[:m[0]]
+	}
+	return userConditionRe.MatchString(after) && youRe.MatchString(after)
 }
+
+// clauseEndRe ends the clause a promise is made in.
+var clauseEndRe = regexp.MustCompile(`[,;:.!?…—–]|\s-\s|\n`)
 
 // userConditionRe is a condition leading into a promise; it hangs the promise
 // on the person only when the sentence also addresses them.
@@ -1389,6 +1404,9 @@ func (lr *loopRun) authoredJudge(question string, rc replyguard.ReplyContext) (b
 // sameReply reports two replies that say the same thing; see
 // replyguard.SameReply, which the guard outcomes use too.
 func sameReply(a, b string) bool { return replyguard.SameReply(a, b) }
+
+// restatesReply is replyguard.RestatesReply: b says a again in other words.
+func restatesReply(a, b string) bool { return replyguard.RestatesReply(a, b) }
 
 // guardPending is one correction this turn made, waiting to hear what it came
 // to.

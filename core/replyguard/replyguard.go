@@ -622,13 +622,35 @@ func answersTheNote(reply string) bool {
 // shared by the other. The "..." a kept tail starts with is ignored (and the
 // "..." one saved before the switch).
 func SameReply(a, b string) bool {
-	norm := func(s string) []string { return strings.Fields(strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(s), "..."), "..."))) }
-	wa, wb := norm(a), norm(b)
-	if strings.Join(wa, " ") == strings.Join(wb, " ") {
-		return len(wa) > 0
+	if sameWords(a, b) {
+		return true
 	}
+	return wordOverlap(a, b)*10 >= 9
+}
+
+// RestatesReply reports whether b says a again in other words: most of the
+// longer one's words are in both. Looser than SameReply, for a follow-up that
+// rewrote a reply rather than resending it.
+func RestatesReply(a, b string) bool {
+	return sameWords(a, b) || wordOverlap(a, b)*10 >= 6
+}
+
+func replyWords(s string) []string {
+	return strings.Fields(strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(s), "..."), "...")))
+}
+
+// sameWords is a and b word for word, give or take case and spacing.
+func sameWords(a, b string) bool {
+	wa, wb := replyWords(a), replyWords(b)
+	return len(wa) > 0 && strings.Join(wa, " ") == strings.Join(wb, " ")
+}
+
+// wordOverlap is the share of the longer reply's words that both have,
+// punctuation aside: 1 for the same words in any order, 0 for none.
+func wordOverlap(a, b string) float64 {
+	wa, wb := replyWords(a), replyWords(b)
 	if len(wa) == 0 || len(wb) == 0 {
-		return false
+		return 0
 	}
 	count := func(ws []string) map[string]int {
 		m := map[string]int{}
@@ -644,7 +666,7 @@ func SameReply(a, b string) bool {
 			shared += min(n, m)
 		}
 	}
-	return shared*10 >= max(len(wa), len(wb))*9
+	return float64(shared) / float64(max(len(wa), len(wb)))
 }
 
 // Stats lists every guard's firings per model, most recent first.
