@@ -401,7 +401,11 @@ const (
 	// SiteFromInput, moved from orchestrate so the admin page and an agent's
 	// Security page key a typed site the same way. The slack was spent
 	// (2417) before them.
-	coreExportCeiling = 2394
+	// 2421: the slack had been spent again (HEAD stood at 2419), plus
+	// PeerModelTiers and SetPeerKeyTiers: which models a key's Inference
+	// grant lends (the Offload model alone, say), as Appliances scopes Run
+	// commands. LendsTier is a method and adds no name.
+	coreExportCeiling = 2421
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

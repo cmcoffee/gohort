@@ -286,6 +286,10 @@ func HandlePeerManifest(w http.ResponseWriter, r *http.Request) {
 			e.Note = "not implemented by this instance yet"
 		case e.Served && !e.Granted:
 			e.Note = "offered, but this key was not granted it"
+		case name == PeerCapModels && len(k.Tiers) > 0 && len(peerServableTiersFor(k)) == 0:
+			// Lent, but none of the models it is limited to is set to a local
+			// model here: said, or the grant reads as working.
+			e.Note = "granted, but this key lends only " + peerTierNames(k.Tiers) + ", and none of them is set to a local model here"
 		case name == PeerCapExec && len(k.Appliances) == 0:
 			// Granted the capability and no appliances reaches nothing. Said
 			// plainly, because the capability list otherwise reads as working.
@@ -325,7 +329,7 @@ func HandlePeerManifest(w http.ResponseWriter, r *http.Request) {
 		m.Browse = "/api/peer/v1/browse"
 	}
 	if k.Allows(PeerCapModels) && peerCapServed(PeerCapModels) {
-		m.Models = peerModelsInfo("/api/peer/v1")
+		m.Models = peerModelsInfo(k, "/api/peer/v1")
 	}
 	if k.Allows(PeerCapRelay) && peerCapServed(PeerCapRelay) {
 		m.Relay = &PeerRelayInfo{Connect: peerRelayConnectPath, Inbound: peerRelayInboundPath(k.ID)}
@@ -450,12 +454,29 @@ func HandlePeerEmbeddings(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 	// Raw: the calling instance applied its own query/document prefixes
 	// before sending, and marking the text again would corrupt it.
-	for i, text := range inputs {
-		vec, err := embedRaw(ctx, cfg, text)
-		if err != nil {
-			peerDeny(w, http.StatusBadGateway, "embed failed: "+err.Error())
-			return
+	//
+	// The batch goes as ONE request: one turn in the local embed queue. Sent
+	// one text at a time, a batch of 32 waited its turn 32 times, behind
+	// whatever this instance was embedding for itself, and took 6-7s where
+	// the same batch from a local pass took 1s. A backend that will not take
+	// the batch is tried one text at a time, as the re-embed pass does.
+	vecs, err := embedTexts(ctx, cfg, inputs)
+	if err != nil && len(inputs) > 1 && ctx.Err() == nil {
+		Debug("[peer] %q: %d input(s) would not embed in one request (%v): going one at a time", k.Label, len(inputs), err)
+		vecs = vecs[:0]
+		for _, text := range inputs {
+			var vec []float32
+			if vec, err = embedRaw(ctx, cfg, text); err != nil {
+				break
+			}
+			vecs = append(vecs, vec)
 		}
+	}
+	if err != nil {
+		peerDeny(w, http.StatusBadGateway, "embed failed: "+err.Error())
+		return
+	}
+	for i, vec := range vecs {
 		out.Data = append(out.Data, item{Object: "embedding", Index: i, Embedding: vec})
 	}
 	Debug("[peer] %q embedded %d input(s) in %s", k.Label, len(inputs), time.Since(started).Round(time.Millisecond))

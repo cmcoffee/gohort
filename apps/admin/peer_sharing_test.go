@@ -216,7 +216,7 @@ func TestMintFormLoadsTheShapeItSaves(t *testing.T) {
 		Caps     json.RawMessage `json:"caps"`
 		RatePerM int             `json:"rate_per_min"`
 	}
-	if err := json.Unmarshal([]byte(`{"label":"","caps":[],"rate_per_min":0}`), &blank); err != nil {
+	if err := json.Unmarshal([]byte(`{"label":"","caps":[],"models":[],"rate_per_min":0}`), &blank); err != nil {
 		t.Fatalf("the blank record the form loads does not decode as a mint request: %v", err)
 	}
 	if caps := decodeCapsField(blank.Caps); len(caps) != 0 {
@@ -225,7 +225,7 @@ func TestMintFormLoadsTheShapeItSaves(t *testing.T) {
 	// And every field the form declares must exist in that blank record, or it
 	// loads as undefined and posts back something the handler ignores.
 	var record map[string]any
-	json.Unmarshal([]byte(`{"label":"","caps":[],"rate_per_min":0}`), &record)
+	json.Unmarshal([]byte(`{"label":"","caps":[],"models":[],"rate_per_min":0}`), &record)
 	forms, _ := walkSharing(t)
 	mint, ok := forms["api/peer-keys/mint"]
 	if !ok {

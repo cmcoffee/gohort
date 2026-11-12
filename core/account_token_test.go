@@ -618,3 +618,15 @@ func TestTheDesktopGrantGovernsTheSignedInApp(t *testing.T) {
 		t.Errorf("a granted user's app key was refused the client tools (%q)", u)
 	}
 }
+
+// A peer's request is logged by its path alone: a search's query rides in
+// the query string, and this instance keeps nothing of a peer's request.
+func TestAccessLogKeepsNoPeerQuery(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/api/peer/v1/search?q=private+words&count=5", nil)
+	if got := accessLogPath(r); got != "/api/peer/v1/search?..." {
+		t.Errorf("a peer search logs %q, want its path and no query", got)
+	}
+	if got := accessLogPath(httptest.NewRequest(http.MethodGet, "/orchestrate/api/sessions?agent_id=a1", nil)); got != "/orchestrate/api/sessions?agent_id=a1" {
+		t.Errorf("this instance's own request lost its query: %q", got)
+	}
+}

@@ -153,7 +153,16 @@ func peerTierConfig(tier, table string) (peerServableTier, bool) {
 // because it is the tier a bare request with no model name resolves to.
 // Deduplicated by model: when both tiers point at the same model, advertising
 // it twice would present a choice that is not one.
-func peerServableTiers() []peerServableTier {
+func peerServableTiers() []peerServableTier { return peerLendableTiers(nil) }
+
+// peerServableTiersFor is peerServableTiers limited to what key k's
+// Inference grant lends (PeerKey.Tiers). Limited before the models are
+// deduplicated, so a key lending only the Offload model still gets it when
+// the worker runs the same model.
+func peerServableTiersFor(k PeerKey) []peerServableTier { return peerLendableTiers(&k) }
+
+// peerLendableTiers is the servable tiers, each one k lends when k is given.
+func peerLendableTiers(k *PeerKey) []peerServableTier {
 	var out []peerServableTier
 	seen := map[string]bool{}
 	for _, t := range []struct{ tier, table string }{
@@ -164,6 +173,9 @@ func peerServableTiers() []peerServableTier {
 		// (peerTierConfig), as the Judge itself is.
 		{"judge", JudgeLLMTable},
 	} {
+		if k != nil && !k.LendsTier(t.tier) {
+			continue
+		}
 		cfg, ok := peerTierConfig(t.tier, t.table)
 		if !ok {
 			continue
@@ -176,16 +188,35 @@ func peerServableTiers() []peerServableTier {
 	return out
 }
 
-// peerModelsInfo renders the servable tiers for the manifest.
-func peerModelsInfo(path string) []PeerModelInfo {
+// peerModelsInfo renders the tiers key k is lent for the manifest.
+func peerModelsInfo(k PeerKey, path string) []PeerModelInfo {
 	var out []PeerModelInfo
-	for _, t := range peerServableTiers() {
+	for _, t := range peerServableTiersFor(k) {
 		out = append(out, PeerModelInfo{
 			Tier: t.Tier, Model: t.Model, Provider: t.Provider, Path: path,
 			Prompts: path + "/prompts", Context: max(t.Context, 0),
 		})
 	}
 	return out
+}
+
+// peerTierNames says tiers as the admin page names them.
+func peerTierNames(tiers []string) string {
+	names := make([]string, 0, len(tiers))
+	for _, t := range tiers {
+		names = append(names, "the "+peerTierLabel(t))
+	}
+	return strings.Join(names, " and ")
+}
+
+// peerTierLabel is a model tier as the admin pages name it.
+func peerTierLabel(tier string) string {
+	for _, t := range PeerModelTiers {
+		if t.Tier == tier {
+			return t.Label
+		}
+	}
+	return tier
 }
 
 // peerModelsServed reports whether anything is lendable right now. Used by the
@@ -202,9 +233,16 @@ func peerModelsServed() bool { return len(peerServableTiers()) > 0 }
 // attributes to a model it never ran, and nothing downstream can detect that.
 // Same reasoning as the embeddings model check, where the consequence is
 // vectors from the wrong space.
-func resolvePeerTier(want string) (peerServableTier, error) {
-	tiers := peerServableTiers()
+//
+// Only among the tiers key k is lent: a tier it is not lent is refused like
+// one this instance does not serve, naming only what it is lent.
+func resolvePeerTier(k PeerKey, want string) (peerServableTier, error) {
+	tiers := peerServableTiersFor(k)
 	if len(tiers) == 0 {
+		if len(k.Tiers) > 0 && peerModelsServed() {
+			return peerServableTier{}, fmt.Errorf(
+				"this key lends only %s, and this instance has none of them set to a local model", peerTierNames(k.Tiers))
+		}
 		return peerServableTier{}, fmt.Errorf(
 			"this instance has no local model to lend: inference sharing serves llama.cpp and ollama only, " +
 				"because relaying a hosted provider would spend this operator's API key on a peer's prompts")
@@ -288,7 +326,7 @@ func HandlePeerSystemOne(w http.ResponseWriter, r *http.Request) {
 		peerDeny(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return
 	}
-	tier, err := resolvePeerTier(peek.Model)
+	tier, err := resolvePeerTier(k, peek.Model)
 	if err != nil {
 		peerDeny(w, http.StatusServiceUnavailable, err.Error())
 		return
@@ -385,7 +423,7 @@ func HandlePeerModels(w http.ResponseWriter, r *http.Request) {
 		Object string  `json:"object"`
 		Data   []entry `json:"data"`
 	}{Object: "list", Data: []entry{}}
-	for _, t := range peerServableTiers() {
+	for _, t := range peerServableTiersFor(k) {
 		out.Data = append(out.Data, entry{ID: t.Model, Object: "model", OwnedBy: t.Tier})
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -425,7 +463,7 @@ func HandlePeerChatCompletions(w http.ResponseWriter, r *http.Request) {
 		peerDeny(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return
 	}
-	tier, err := resolvePeerTier(peek.Model)
+	tier, err := resolvePeerTier(k, peek.Model)
 	if err != nil {
 		peerDeny(w, http.StatusServiceUnavailable, err.Error())
 		return
@@ -911,9 +949,9 @@ func handlePeerPrompts(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tiers := peerServableTiers()
+	tiers := peerServableTiersFor(k)
 	if len(tiers) == 0 {
-		_, err := resolvePeerTier("")
+		_, err := resolvePeerTier(k, "")
 		peerDeny(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}

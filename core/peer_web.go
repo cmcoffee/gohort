@@ -19,6 +19,7 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -67,6 +68,9 @@ type SearchRequest struct {
 	APIKey string
 	// Source records where the config came from — "local", or "peer:<name>".
 	Source string
+	// Ctx is the request the search is for, nil for none: a peer's carries
+	// its mark (PeerRequestOf), so the query is not logged here.
+	Ctx context.Context
 }
 
 // --- per-capability rate limiting -------------------------------------------
@@ -187,6 +191,7 @@ func HandlePeerSearch(w http.ResponseWriter, r *http.Request) {
 	// instance owns.
 	out, err := SearchWithProviderFunc(SearchRequest{
 		Query: query, Provider: cfg.Provider, APIKey: cfg.APIKey, Endpoint: cfg.Endpoint,
+		Ctx: r.Context(),
 	})
 	// Priced whether or not it answered usefully: the provider bills for the
 	// call, not for the quality of the result, and recording only successes
@@ -197,7 +202,7 @@ func HandlePeerSearch(w http.ResponseWriter, r *http.Request) {
 		peerDeny(w, http.StatusBadGateway, "search failed: "+err.Error())
 		return
 	}
-	Debug("[peer] %q searched %q via %s", k.Label, query, cfg.Provider)
+	Debug("[peer] %q searched via %s (%d results' worth of text)", k.Label, cfg.Provider, len(out))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"results": peerSearchResults(out)})
@@ -297,7 +302,7 @@ func HandlePeerBrowse(w http.ResponseWriter, r *http.Request) {
 	var ferr error
 	go func() {
 		defer close(done)
-		text, ferr = BrowserFetchFunc(req.URL, max)
+		text, ferr = browseRouted(r.Context(), req.URL, max)
 	}()
 	select {
 	case <-done:
@@ -312,7 +317,9 @@ func HandlePeerBrowse(w http.ResponseWriter, r *http.Request) {
 		peerDeny(w, http.StatusBadGateway, "browse failed: "+ferr.Error())
 		return
 	}
-	Debug("[peer] %q browsed %q (%d chars)", k.Label, req.URL, len(text))
+	// The size, never the address: this instance keeps nothing of a peer's
+	// request (PeerRequestOf).
+	Debug("[peer] %q browsed a page (%d chars)", k.Label, len(text))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"url": req.URL, "text": text})

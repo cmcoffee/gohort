@@ -35,7 +35,7 @@ type BrowseConfig struct {
 var (
 	browseMu    sync.RWMutex
 	browseCfg   BrowseConfig
-	localBrowse func(url string, maxChars int) (string, error)
+	localBrowse func(ctx context.Context, url string, maxChars int) (string, error)
 )
 
 // RegisterBrowserFetch installs the LOCAL page-rendering implementation.
@@ -45,6 +45,13 @@ var (
 // without the browser linked registers nothing and browse stays unavailable —
 // which is exactly what it was before.
 func RegisterBrowserFetch(fn func(url string, maxChars int) (string, error)) {
+	RegisterBrowserFetchCtx(func(_ context.Context, url string, maxChars int) (string, error) { return fn(url, maxChars) })
+}
+
+// RegisterBrowserFetchCtx is RegisterBrowserFetch for a renderer that takes
+// the request's context: the browser package's, so a page rendered for a
+// peer carries the peer's mark (PeerRequestOf) and its address is not logged.
+func RegisterBrowserFetchCtx(fn func(ctx context.Context, url string, maxChars int) (string, error)) {
 	browseMu.Lock()
 	localBrowse = fn
 	browseMu.Unlock()
@@ -102,26 +109,33 @@ func BrowsePeer() (RemotePeer, bool) {
 // Chromium a file:// or metadata URL; here, no caller can.
 func installBrowseRouting() {
 	BrowserFetchFunc = func(url string, maxChars int) (string, error) {
-		if err := RefuseNonPublicHost(url); err != nil {
-			return "", err
-		}
-		if name, ok := media.ChosenConnection(strings.TrimSpace(LoadBrowseConfig().Source)); ok {
-			if media.PageService == nil {
-				return "", fmt.Errorf("page rendering is set to the connector %s, and this build has no connectors linked", name)
-			}
-			return media.PageService(context.Background(), name, url, maxChars)
-		}
-		if p, ok := BrowsePeer(); ok {
-			return peerBrowseFetch(p, url, maxChars)
-		}
-		browseMu.RLock()
-		fn := localBrowse
-		browseMu.RUnlock()
-		if fn == nil {
-			return "", fmt.Errorf("no browser is available: this build has none linked and no peer is selected for page rendering")
-		}
-		return fn(url, maxChars)
+		return browseRouted(context.Background(), url, maxChars)
 	}
+}
+
+// browseRouted renders url on whichever renderer the configuration names,
+// with ctx: the peer browse handler passes the peer's request, so the
+// renderer it reaches knows the page is a peer's and does not log it.
+func browseRouted(ctx context.Context, url string, maxChars int) (string, error) {
+	if err := RefuseNonPublicHost(url); err != nil {
+		return "", err
+	}
+	if name, ok := media.ChosenConnection(strings.TrimSpace(LoadBrowseConfig().Source)); ok {
+		if media.PageService == nil {
+			return "", fmt.Errorf("page rendering is set to the connector %s, and this build has no connectors linked", name)
+		}
+		return media.PageService(ctx, name, url, maxChars)
+	}
+	if p, ok := BrowsePeer(); ok {
+		return peerBrowseFetch(p, url, maxChars)
+	}
+	browseMu.RLock()
+	fn := localBrowse
+	browseMu.RUnlock()
+	if fn == nil {
+		return "", fmt.Errorf("no browser is available: this build has none linked and no peer is selected for page rendering")
+	}
+	return fn(ctx, url, maxChars)
 }
 
 // peerBrowseFetchTimeout bounds the round trip. Longer than the far side's own

@@ -82,6 +82,8 @@ func TestPeersRoutesContract(t *testing.T) {
 	k3, key3 := mint("<k3>", `{"label":"quoted","caps":"[\"embeddings\"]"}`)
 	do("root", "POST", "/api/peer-keys/mint", `{"label":"","caps":["embeddings"]}`)
 	do("root", "POST", "/api/peer-keys/mint", `{"label":"odd","caps":["nonsense"]}`)
+	// Refused models take the key with them: the list below shows no "odd-models".
+	do("root", "POST", "/api/peer-keys/mint", `{"label":"odd-models","caps":["models"],"models":["chef"]}`)
 	do("root", "POST", "/api/peer-keys/mint", `{"label":`)
 	do("root", "POST", "/api/peer-keys/mint", ``)
 	do("root", "PUT", "/api/peer-keys/mint", `{}`)
@@ -97,6 +99,9 @@ func TestPeersRoutesContract(t *testing.T) {
 	do("root", "PATCH", "/api/peer-keys/"+k2, `{"enabled":true}`)
 	do("root", "POST", "/api/peer-keys/"+k2, `{"caps":["embeddings","transcribe"]}`)
 	do("root", "PUT", "/api/peer-keys/"+k2, `{"caps":["nonsense"]}`)
+	// Inference limited to the Offload model; an unknown tier is refused.
+	do("root", "PUT", "/api/peer-keys/"+k2, `{"caps":["embeddings","models"],"models":["judge"]}`)
+	do("root", "PUT", "/api/peer-keys/"+k2, `{"models":["chef"]}`)
 	do("root", "PUT", "/api/peer-keys/"+k2, `{"owner":"alice","appliances":[]}`)
 	do("root", "PUT", "/api/peer-keys/"+k2, `{"appliances":["alice:a1","bob:b1"]}`)
 	do("root", "PUT", "/api/peer-keys/"+k2, `{}`)

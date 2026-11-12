@@ -9,7 +9,7 @@ root GET /api/peer-keys ""
 alice GET /api/peer-keys/mint ""
   403 forbidden
 root GET /api/peer-keys/mint ""
-  200 {"label":"","caps":[],"rate_per_min":0}
+  200 {"label":"","caps":[],"models":[],"rate_per_min":0}
 (signed out) GET /api/peers ""
   403 forbidden
 alice GET /api/peers ""
@@ -38,6 +38,8 @@ root POST /api/peer-keys/mint "{\"label\":\"\",\"caps\":[\"embeddings\"]}"
   400 a label is required: it is how you will recognize this peer later
 root POST /api/peer-keys/mint "{\"label\":\"odd\",\"caps\":[\"nonsense\"]}"
   400 unknown capability "nonsense" (known: embeddings, images, transcribe, speech, search, browse, models, exec, relay)
+root POST /api/peer-keys/mint "{\"label\":\"odd-models\",\"caps\":[\"models\"],\"models\":[\"chef\"]}"
+  400 "chef" is not a model tier (known: worker, lead, judge)
 root POST /api/peer-keys/mint "{\"label\":"
   400 invalid JSON: unexpected EOF
 root POST /api/peer-keys/mint ""
@@ -49,7 +51,7 @@ root GET /api/peer-keys ""
 alice GET /api/peer-keys/<k1> ""
   403 forbidden
 root GET /api/peer-keys/<k1> ""
-  200 {"appliances":null,"caps":["embeddings"],"id":"<k1>","label":"consumer"}
+  200 {"appliances":null,"caps":["embeddings"],"id":"<k1>","label":"consumer","models":[]}
 alice GET /api/peer-keys/nope ""
   403 forbidden
 root GET /api/peer-keys/nope ""
@@ -66,6 +68,10 @@ root POST /api/peer-keys/<k2> "{\"caps\":[\"embeddings\",\"transcribe\"]}"
   200 {"ok":true}
 root PUT /api/peer-keys/<k2> "{\"caps\":[\"nonsense\"]}"
   400 unknown capability "nonsense" (known: embeddings, images, transcribe, speech, search, browse, models, exec, relay)
+root PUT /api/peer-keys/<k2> "{\"caps\":[\"embeddings\",\"models\"],\"models\":[\"judge\"]}"
+  200 {"ok":true}
+root PUT /api/peer-keys/<k2> "{\"models\":[\"chef\"]}"
+  400 "chef" is not a model tier (known: worker, lead, judge)
 root PUT /api/peer-keys/<k2> "{\"owner\":\"alice\",\"appliances\":[]}"
   200 {"ok":true}
 root PUT /api/peer-keys/<k2> "{\"appliances\":[\"alice:a1\",\"bob:b1\"]}"
@@ -81,7 +87,7 @@ root PUT /api/peer-keys/nope "{\"enabled\":true}"
 root PUT /api/peer-keys/nope "{\"caps\":[\"embeddings\"]}"
   400 no such key
 root GET /api/peer-keys/<k2> ""
-  200 {"appliances":[],"caps":["embeddings","transcribe"],"id":"<k2>","label":"listed"}
+  200 {"appliances":[],"caps":["embeddings","models"],"id":"<k2>","label":"listed","models":["judge"]}
 root GET /api/peer-keys/<k3>/repair ""
   405 method not allowed
 root POST /api/peer-keys/<k3>/bogus ""
@@ -109,7 +115,7 @@ root PUT /api/peers/add "{}"
 root GET /api/peers ""
   200 [{"name":"gpu-box","instance":"<this host>","base_url":"<peer>","caps":["Embeddings"],"embed_model":"nomic-embed-text","backends":0,"status":"ok","last_checked":"<time>"}]
 root GET /api/peer-keys ""
-  200 [{"id":"<k1>","label":"consumer","caps":["Embeddings"],"enabled":true,"rate_per_min":30,"created":"<time>","last_seen":"<time>","calls":2,"paired":"<time>","status":"Paired: running on rotating tokens… (613 bytes, sha1 cc97d653209804f925e4a2fdf2f0abd9ab331506)
+  200 [{"id":"<k1>","label":"consumer","caps":["Embeddings"],"enabled":true,"rate_per_min":30,"created":"<time>","last_seen":"<time>","calls":2,"paired":"<time>","status":"Paired: running on rotating tokens… (625 bytes, sha1 3a39c6d5f38176b1468d1675802589e280f35eb4)
 alice POST /api/peers/gpu-box/refresh ""
   403 forbidden
 root POST /api/peers/gpu-box/refresh ""
@@ -153,10 +159,10 @@ root DELETE /api/peer-keys/<k1> ""
 root DELETE /api/peer-keys/ ""
   400 missing key id
 root GET /api/peer-keys ""
-  200 [{"id":"<k2>","label":"listed","caps":["Embeddings","Transcription"],"enabled":true,"rate_per_min":0,"created":"<time>","last_seen":"","calls":0,"paired":"","status":"Not connected yet: the code is st… (413 bytes, sha1 c9df86022a8e92c52f2ced0475bde542c3bec4fc)
+  200 [{"id":"<k2>","label":"listed","caps":["Embeddings","Inference (Offload model)"],"enabled":true,"rate_per_min":0,"created":"<time>","last_seen":"","calls":0,"paired":"","status":"Not connected yet: th… (425 bytes, sha1 fbad367fe4bbef9d83c35dc6c836349c96d18a6a)
 root GET /api/peers ""
   200 []
-activity log, 14 entries:
+activity log, 16 entries:
   peer : the peer consumer paired with this machine
   peer : the peer quoted paired with this machine
   peer root: connected to the peer gpu-box (<this host>)
@@ -165,6 +171,8 @@ activity log, 14 entries:
   peer root: issued a peer key for consumer
   peer root: issued a peer key for listed
   peer root: issued a peer key for quoted
+  peer root: peer key "listed" lends: Offload model
+  peer root: re-granted peer key "listed": embeddings, models
   peer root: re-granted peer key "listed": embeddings, transcribe
   peer root: re-paired peer "gpu-box" with a new key
   peer root: re-paired peer key "quoted"

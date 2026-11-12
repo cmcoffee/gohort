@@ -8,6 +8,7 @@ package core
 // browse — the guard that stops a peer key becoming a LAN proxy.
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -157,13 +158,28 @@ func TestPeerBrowseRefusesThePrivateNetwork(t *testing.T) {
 	}
 }
 
+// The page renders on this instance's browser with the peer's request as its
+// context, so the render is marked as the peer's (and its log lines keep no
+// address) and stops when the peer hangs up.
 func TestPeerBrowseRendersAPublicPage(t *testing.T) {
 	peerImageDB(t)
-	prev := BrowserFetchFunc
-	t.Cleanup(func() { BrowserFetchFunc = prev })
-	BrowserFetchFunc = func(url string, maxChars int) (string, error) {
+	browseMu.RLock()
+	prevLocal := localBrowse
+	browseMu.RUnlock()
+	prevFetch, prevCfg := BrowserFetchFunc, LoadBrowseConfig()
+	t.Cleanup(func() {
+		browseMu.Lock()
+		localBrowse = prevLocal
+		browseMu.Unlock()
+		BrowserFetchFunc = prevFetch
+		SetBrowseConfig(prevCfg)
+	})
+	SetBrowseConfig(BrowseConfig{Source: "local"})
+	var mark string
+	RegisterBrowserFetchCtx(func(ctx context.Context, url string, maxChars int) (string, error) {
+		mark = PeerRequestOf(ctx)
 		return "the rendered page text", nil
-	}
+	})
 	pk, _ := MintPeerKey("mac", []string{PeerCapBrowse}, 0)
 
 	body, _ := json.Marshal(map[string]any{"url": "https://example.com/article"})
@@ -179,6 +195,9 @@ func TestPeerBrowseRendersAPublicPage(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &out)
 	if out.Text != "the rendered page text" {
 		t.Errorf("text = %q", out.Text)
+	}
+	if mark != "mac" {
+		t.Errorf("the render ran with mark %q, want the peer's (mac)", mark)
 	}
 }
 

@@ -831,6 +831,9 @@ func (s *SecureAPI) DispatchConnection(sess *ToolSession, c SecureCredential, r 
 	if r.TimeoutSecs > 0 {
 		args[secureTimeoutArg] = r.TimeoutSecs
 	}
+	if r.Ctx != nil {
+		args[secureCtxArg] = r.Ctx
+	}
 	return s.dispatch(c, args, sess)
 }
 

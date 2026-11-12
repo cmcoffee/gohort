@@ -150,6 +150,13 @@ type PeerKey struct {
 	// appliance, including the ones that do not exist yet" is a decision nobody
 	// can review, and a list of ids can be read.
 	Appliances []string `json:"appliances,omitempty"`
+	// Tiers is which of this instance's models an Inference grant
+	// (PeerCapModels) lends: "worker", "lead", "judge" (the Offload model).
+	// Empty lends every one, as every Inference key did before the list
+	// existed; the form says "All models" then. Unlike Appliances, where
+	// empty reaches nothing, because reading an older key as lending nothing
+	// would cut off a peer that works today.
+	Tiers []string `json:"tiers,omitempty"`
 	// Paired stamps when the pairing code was exchanged, and is what makes it
 	// single use. Empty means "not yet" — a key nobody has connected with —
 	// which is the state the admin table shows in place of the secret.
@@ -187,6 +194,68 @@ func (k PeerKey) AllowsApplianceFor(capability, id string) bool {
 		}
 	}
 	return false
+}
+
+// PeerModelTiers are the model tiers an Inference grant can be limited to,
+// in the order offered, each with the name the admin pages give it.
+var PeerModelTiers = []struct{ Tier, Label string }{
+	{"worker", "Worker model"},
+	{"lead", "Lead model"},
+	{"judge", "Offload model"},
+}
+
+// LendsTier reports whether an Inference grant lends tier: every tier when
+// the key names none, else only the ones it names.
+func (k PeerKey) LendsTier(tier string) bool {
+	if len(k.Tiers) == 0 {
+		return true
+	}
+	for _, t := range k.Tiers {
+		if t == tier {
+			return true
+		}
+	}
+	return false
+}
+
+// SetPeerKeyTiers sets which models the key's Inference grant lends; empty
+// lends every one. A name that is not a tier is refused rather than stored:
+// a typo would otherwise read as a limit that lends nothing.
+func SetPeerKeyTiers(id string, tiers []string) (PeerKey, error) {
+	if RootDB == nil || strings.TrimSpace(id) == "" {
+		return PeerKey{}, fmt.Errorf("no such key")
+	}
+	var pk PeerKey
+	if !RootDB.Get(peerKeysTable, id, &pk) {
+		return PeerKey{}, fmt.Errorf("no such key")
+	}
+	known := map[string]bool{}
+	var names []string
+	for _, t := range PeerModelTiers {
+		known[t.Tier] = true
+		names = append(names, t.Tier)
+	}
+	var clean []string
+	seen := map[string]bool{}
+	for _, t := range tiers {
+		t = strings.ToLower(strings.TrimSpace(t))
+		switch {
+		case t == "" || seen[t]:
+			continue
+		case !known[t]:
+			return PeerKey{}, fmt.Errorf("%q is not a model tier (known: %s)", t, strings.Join(names, ", "))
+		}
+		seen[t] = true
+		clean = append(clean, t)
+	}
+	pk.Tiers = clean
+	RootDB.CryptSet(peerKeysTable, id, pk)
+	lends := "every model"
+	if len(clean) > 0 {
+		lends = strings.Join(clean, ", ")
+	}
+	Log("[peer] key %q lends: %s", pk.Label, lends)
+	return pk, nil
 }
 
 // peerCapAppliesToAppliances reports whether a capability is scoped to specific
@@ -651,6 +720,26 @@ func peerNoteAuthFailure(r *http.Request) {
 	}
 }
 
+// --- a peer's request ---------------------------------------------------------
+
+// peerRequestKey marks a context as a peer's request: work this instance does
+// as a proxy for another. Set by peerHold, which every peer handler passes
+// through, so everything downstream of a peer route carries it.
+type peerRequestKey struct{}
+
+// PeerRequestOf is the label of the peer a context's work is done for, or ""
+// for this instance's own. A peer key lends resources, never the instance, so
+// what a peer sends (its text, queries, prompts, URLs) is not written to this
+// instance's logs or stores: a line that would record content records its
+// size instead when this is set.
+func PeerRequestOf(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	s, _ := ctx.Value(peerRequestKey{}).(string)
+	return s
+}
+
 // --- in-flight work per key ---------------------------------------------------
 
 // peerConcurrency is how many requests of one capability a single key may have
@@ -700,7 +789,7 @@ func peerHold(w http.ResponseWriter, r *http.Request, k PeerKey, capability stri
 		peerDeny(w, http.StatusTooManyRequests, fmt.Sprintf("this key already has %d %s request(s) running, the most it may have at once: wait for one to finish", n, capability))
 		return r, func() {}, false
 	}
-	ctx, cancel := context.WithCancel(r.Context())
+	ctx, cancel := context.WithCancel(context.WithValue(r.Context(), peerRequestKey{}, chFirstNonEmpty(k.Label, "a peer")))
 	h := &peerLiveReq{cancel: cancel}
 	if peerLive[id] == nil {
 		peerLive[id] = map[*peerLiveReq]string{}

@@ -59,7 +59,7 @@ func TestHostedProvidersAreNeverLent(t *testing.T) {
 		if peerModelsServed() {
 			t.Errorf("provider %q is advertised as lendable", provider)
 		}
-		if _, err := resolvePeerTier(""); err == nil {
+		if _, err := resolvePeerTier(PeerKey{}, ""); err == nil {
 			t.Errorf("provider %q was resolved for lending", provider)
 		}
 	}
@@ -91,15 +91,15 @@ func TestBothTiersAreOfferedAndWorkerIsTheDefault(t *testing.T) {
 	if tiers[0].Tier != "worker" {
 		t.Errorf("the worker tier is not first, so a bare request would default to %q", tiers[0].Tier)
 	}
-	got, err := resolvePeerTier("")
+	got, err := resolvePeerTier(PeerKey{}, "")
 	if err != nil || got.Model != "qwen-27b" {
 		t.Errorf("a request naming no model resolved to %+v (err %v), want the worker", got, err)
 	}
 	// By model id, and by tier alias.
-	if got, err := resolvePeerTier("qwen-72b"); err != nil || got.Tier != "lead" {
+	if got, err := resolvePeerTier(PeerKey{}, "qwen-72b"); err != nil || got.Tier != "lead" {
 		t.Errorf("naming the lead model resolved to %+v (err %v)", got, err)
 	}
-	if got, err := resolvePeerTier("lead"); err != nil || got.Model != "qwen-72b" {
+	if got, err := resolvePeerTier(PeerKey{}, "lead"); err != nil || got.Model != "qwen-72b" {
 		t.Errorf("the tier alias did not resolve: %+v (err %v)", got, err)
 	}
 }
@@ -122,7 +122,7 @@ func TestTiersSharingAModelAreOfferedOnce(t *testing.T) {
 func TestAnUnknownModelIsRefusedNotSubstituted(t *testing.T) {
 	db := peerModelDB(t)
 	setTier(db, LLMTable, "llama.cpp", "qwen-27b", "http://127.0.0.1:8080/v1")
-	_, err := resolvePeerTier("gpt-4o")
+	_, err := resolvePeerTier(PeerKey{}, "gpt-4o")
 	if err == nil {
 		t.Fatal("a model this instance does not serve was accepted")
 	}
@@ -348,7 +348,7 @@ func TestTheModelListMatchesWhatWillBeServed(t *testing.T) {
 		t.Fatalf("the list is %+v, want only the local model", out.Data)
 	}
 	for _, m := range out.Data {
-		if _, err := resolvePeerTier(m.ID); err != nil {
+		if _, err := resolvePeerTier(PeerKey{}, m.ID); err != nil {
 			t.Errorf("the picker offers %q but the chat endpoint refuses it: %v", m.ID, err)
 		}
 	}
@@ -913,7 +913,7 @@ func TestPeerPromptsServesOnlyRegisteredBlockOverrides(t *testing.T) {
 	if len(out.Blocks) != 1 || out.Blocks[peerPromptsTestKey] != "[Peer block: tuned here, {n} times.]" {
 		t.Errorf("served %v, want only the registered block's shared override", out.Blocks)
 	}
-	if got := peerModelsInfo("/api/peer/v1"); len(got) == 0 || got[0].Prompts != "/api/peer/v1/prompts" {
+	if got := peerModelsInfo(PeerKey{}, "/api/peer/v1"); len(got) == 0 || got[0].Prompts != "/api/peer/v1/prompts" {
 		t.Errorf("the manifest does not say where the wording is: %+v", got)
 	}
 }
@@ -1044,10 +1044,10 @@ func TestTheJudgeIsLentOnItsOwnServer(t *testing.T) {
 	defer judge.Close()
 	setTier(db, LLMTable, "llama.cpp", "qwen-27b", "http://127.0.0.1:8080/v1")
 	setTier(db, JudgeLLMTable, "vllm", "judge-9b", judge.URL+"/v1")
-	if got, err := resolvePeerTier("judge"); err != nil || got.Model != "judge-9b" || got.Tier != "judge" {
+	if got, err := resolvePeerTier(PeerKey{}, "judge"); err != nil || got.Model != "judge-9b" || got.Tier != "judge" {
 		t.Fatalf("the judge tier: %+v %v", got, err)
 	}
-	if got, _ := resolvePeerTier(""); got.Tier != "worker" {
+	if got, _ := resolvePeerTier(PeerKey{}, ""); got.Tier != "worker" {
 		t.Errorf("a bare request went to %q, not the worker", got.Tier)
 	}
 	pk, _ := MintPeerKey("mac", []string{PeerCapModels}, 0)
@@ -1064,7 +1064,7 @@ func TestTheJudgeIsLentOnItsOwnServer(t *testing.T) {
 		t.Error("the judge request never reached the judge's server")
 	}
 	setTier(db, JudgeLLMTable, "openai", "gpt-4o", "")
-	if _, err := resolvePeerTier("judge"); err == nil {
+	if _, err := resolvePeerTier(PeerKey{}, "judge"); err == nil {
 		t.Error("a hosted judge was lent")
 	}
 }
@@ -1112,4 +1112,68 @@ func TestAPeerSystemOneDecisionReachesTheLentModel(t *testing.T) {
 	if w := ask(`{"model":"qwen-27b"}`); w.Code != http.StatusNotFound {
 		t.Errorf("a lent llama.cpp model answered System One: %d", w.Code)
 	}
+}
+
+// A key whose Inference grant is limited to the Offload model lends that
+// model and nothing else: a bare request goes to it, the Worker is refused
+// as if this instance did not have it, and the list and the manifest name
+// only it. Limited before models are deduplicated, so an Offload model that
+// is the Worker's model is still lent. No list lends every model, as every
+// key did before the list.
+func TestAKeyLimitedToTheOffloadModelLendsOnlyIt(t *testing.T) {
+	db := peerModelDB(t)
+	setTier(db, LLMTable, "llama.cpp", "qwen-27b", "http://127.0.0.1:8080/v1")
+	setTier(db, JudgeLLMTable, "vllm", "judge-9b", "http://127.0.0.1:8001/v1")
+	pk, _ := MintPeerKey("mac", []string{PeerCapModels}, 0)
+	if got, _ := resolvePeerTier(pk, ""); got.Tier != "worker" {
+		t.Fatalf("a key with no list: a bare request went to %q, not the worker", got.Tier)
+	}
+	if _, err := SetPeerKeyTiers(pk.ID, []string{"Judge ", "judge", ""}); err != nil {
+		t.Fatal(err)
+	}
+	pk, _ = peerKeyByID(t, pk.ID)
+	if len(pk.Tiers) != 1 || pk.Tiers[0] != "judge" {
+		t.Fatalf("stored tiers = %q, want [judge]", pk.Tiers)
+	}
+	if got, err := resolvePeerTier(pk, ""); err != nil || got.Tier != "judge" {
+		t.Errorf("a bare request: %+v %v, want the Offload model", got, err)
+	}
+	if _, err := resolvePeerTier(pk, "worker"); err == nil || strings.Contains(err.Error(), "qwen-27b") {
+		t.Errorf("the worker for a key lent only the Offload model: %v (it must be refused, without naming it)", err)
+	}
+	if got := peerModelsInfo(pk, "/api/peer/v1"); len(got) != 1 || got[0].Tier != "judge" {
+		t.Errorf("manifest models = %+v, want the Offload model alone", got)
+	}
+	r := httptest.NewRequest(http.MethodGet, "/api/peer/v1/models", nil)
+	r.Header.Set(peerKeyHeader, peerAuth(t, pk))
+	w := httptest.NewRecorder()
+	HandlePeerModels(w, r)
+	if body := w.Body.String(); !strings.Contains(body, "judge-9b") || strings.Contains(body, "qwen-27b") {
+		t.Errorf("/models for the limited key: %s", body)
+	}
+	// The same model on both: still lent to a key limited to the Offload model.
+	setTier(db, JudgeLLMTable, "llama.cpp", "qwen-27b", "http://127.0.0.1:8080/v1")
+	if got, err := resolvePeerTier(pk, ""); err != nil || got.Tier != "judge" {
+		t.Errorf("an Offload model sharing the worker's model: %+v %v", got, err)
+	}
+	// None of its models set locally: refused, saying which it is lent.
+	setTier(db, JudgeLLMTable, "openai", "gpt-4o", "")
+	if _, err := resolvePeerTier(pk, ""); err == nil || !strings.Contains(err.Error(), "Offload model") {
+		t.Errorf("a key lent only a hosted Offload model: %v", err)
+	}
+	if _, err := SetPeerKeyTiers(pk.ID, []string{"judge", "chef"}); err == nil {
+		t.Error("an unknown tier was stored")
+	}
+}
+
+// peerKeyByID reads one stored key back.
+func peerKeyByID(t *testing.T, id string) (PeerKey, bool) {
+	t.Helper()
+	for _, k := range ListPeerKeys() {
+		if k.ID == id {
+			return k, true
+		}
+	}
+	t.Fatalf("no key %q", id)
+	return PeerKey{}, false
 }

@@ -313,6 +313,15 @@ func accessLogPath(r *http.Request) string {
 		return peerRelayInboundPrefix + id + "/…"
 	}
 	path := redactPathSecrets(r.URL.Path)
+	// A peer's request is done as its proxy, and this instance keeps nothing
+	// of it: a search's query rides in the query string
+	// (/api/peer/v1/search?q=...), so a peer route is logged by its path.
+	if strings.HasPrefix(r.URL.Path, "/api/peer/") {
+		if r.URL.RawQuery != "" {
+			return path + "?..."
+		}
+		return path
+	}
 	if raw := r.URL.RawQuery; raw != "" {
 		return path + "?" + redactQuerySecrets(raw)
 	}

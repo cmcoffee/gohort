@@ -2,6 +2,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -2906,4 +2907,24 @@ func TestSkippingVerificationKeepsThePublicOnlyRule(t *testing.T) {
 		t.Fatalf("verification was not skipped: %v", err)
 	}
 	resp.Body.Close()
+}
+
+// A connector call made for a peer is kept as the peer's, by its address
+// alone: a search's query rides in the query string, and this instance keeps
+// nothing of a peer's request.
+func TestTheLedgerKeepsNoPeerQuery(t *testing.T) {
+	secureAPITestStore(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	cred := SecureCredential{Name: "search_api", Type: SecureCredNone, AllowedURLPattern: imageHostPattern(srv.URL)}
+	sess := &ToolSession{Ctx: context.WithValue(context.Background(), peerRequestKey{}, "mac")}
+	if _, err := Secure().dispatch(cred, map[string]any{"url": srv.URL + "/search?q=private+words", "method": "GET"}, sess); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	got := Secure().LoadAudit("", "search_api")
+	if len(got) != 1 || strings.Contains(got[0].URL, "private") || got[0].DispatchedBy != "peer:mac" {
+		t.Errorf("the row for a peer's call: %+v", got)
+	}
 }

@@ -56,7 +56,7 @@ func init() {
 	// directly — getting just the page text without the LLM-shaped
 	// "Fetched X via browser (N chars):" preamble that
 	// BrowsePageTool.Run wraps on for the LLM consumer.
-	RegisterBrowserFetch(Fetch)
+	RegisterBrowserFetchCtx(FetchCtx)
 }
 
 // shared is the singleton used by both the LLM tool and the package-level Fetch function.
@@ -68,6 +68,22 @@ var shared = &BrowsePageTool{}
 // navigate; callers should fall back to HTTP on error.
 func Fetch(target string, maxChars int) (string, error) {
 	return shared.fetch(target, maxChars)
+}
+
+// FetchCtx is Fetch for a caller with a request: the render ends with it, and
+// a peer's request (PeerRequestOf) is rendered without its address logged.
+func FetchCtx(ctx context.Context, target string, maxChars int) (string, error) {
+	text, _, err := shared.fetchPageCtx(ctx, target, maxChars)
+	return text, err
+}
+
+// logTarget is target as a log line names it: a peer's page goes unnamed,
+// since this instance keeps nothing of a peer's request.
+func logTarget(ctx context.Context, target string) string {
+	if peer := PeerRequestOf(ctx); peer != "" {
+		return "a page for " + peer
+	}
+	return target
 }
 
 // FetchPage is Fetch with the content images the rendered page shows
@@ -273,11 +289,17 @@ func (t *BrowsePageTool) fetch(target string, maxChars int) (string, error) {
 
 // fetchPage is fetch with the rendered page's images.
 func (t *BrowsePageTool) fetchPage(target string, maxChars int) (string, []textutil.PageImage, error) {
+	return t.fetchPageCtx(context.Background(), target, maxChars)
+}
+
+// fetchPageCtx is fetchPage within parent: ended when it is, and carrying
+// its peer mark to the log lines below.
+func (t *BrowsePageTool) fetchPageCtx(parent context.Context, target string, maxChars int) (string, []textutil.PageImage, error) {
 	if err := RefuseNonPublicHost(target); err != nil {
 		return "", nil, err
 	}
 	budget := browsePageTotalBudget()
-	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	ctx, cancel := context.WithTimeout(parent, budget)
 	type result struct {
 		text   string
 		images []textutil.PageImage
@@ -304,7 +326,7 @@ func (t *BrowsePageTool) fetchPage(target string, maxChars int) (string, []textu
 			return r.text, r.images, r.err
 		default:
 		}
-		Log("[browse_page] outer budget %v exceeded for %s: the page is closed (page creation / CDP / navigation did not finish)", budget, target)
+		Log("[browse_page] outer budget %v exceeded for %s: the page is closed (page creation / CDP / navigation did not finish)", budget, logTarget(ctx, target))
 		return "", nil, fmt.Errorf("browse_page timed out after %v on %s: the browser did not finish the page. Try fetch_url for static content, or wait and retry if this is transient. If every page times out, the gohort process needs a restart.", budget, target)
 	}
 }
@@ -330,7 +352,7 @@ func (t *BrowsePageTool) fetchImpl(ctx context.Context, target string, maxChars 
 	start := time.Now()
 	html, base, err := renderPage(ctx, b, target, true)
 	if errors.Is(err, errScriptsHeld) && ctx.Err() == nil {
-		Log("[browse_page] %s: %v after %s; reading it again with scripts off", target, err, time.Since(start).Round(time.Millisecond))
+		Log("[browse_page] %s: %v after %s; reading it again with scripts off", logTarget(ctx, target), err, time.Since(start).Round(time.Millisecond))
 		html, base, err = renderPage(ctx, b, target, false)
 	}
 	if err != nil {

@@ -979,7 +979,16 @@ func isBinaryMime(mime string) bool {
 // This is exported so callers can run cross-provider searches.
 func SearchWithProvider(req SearchRequest) (string, error) {
 	query, provider := req.Query, req.Provider
-	Debug("[web_search] provider=%s query=%q", provider, query)
+	ctx := req.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	// A peer's query is done as its proxy: not logged here (PeerRequestOf).
+	if peer := PeerRequestOf(ctx); peer != "" {
+		Debug("[web_search] provider=%s, a query for %s (%d chars)", provider, peer, len(query))
+	} else {
+		Debug("[web_search] provider=%s query=%q", provider, query)
+	}
 	var result string
 	var err error
 	name, named := media.ChosenConnection(provider)
@@ -996,7 +1005,7 @@ func SearchWithProvider(req SearchRequest) (string, error) {
 	case named:
 		// A service connector that searches (core/service, web.search),
 		// chosen under Web Search: it counts and prices its own calls.
-		result, err = service.Search(context.Background(), name, query)
+		result, err = service.Search(ctx, name, query)
 	case provider == "searxng" && strings.HasPrefix(req.Source, "peer:"):
 		// A peer lends its search in SearXNG's shape (ResolveSearchProvider).
 		result, err = searchPeer(req)

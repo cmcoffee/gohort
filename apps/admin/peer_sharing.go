@@ -67,7 +67,7 @@ func peerKeyRows() []peerKeyRow {
 			status = "Disabled"
 		}
 		rows = append(rows, peerKeyRow{
-			ID: k.ID, Label: k.Label, Caps: peerCapShortLabels(k.Caps),
+			ID: k.ID, Label: k.Label, Caps: peerKeyGrantLabels(k),
 			Enabled: !k.Disabled, RatePerM: k.RatePerM,
 			Created: k.Created, LastSeen: k.LastSeen, Calls: k.Calls,
 			Paired: k.Paired, Status: status,
@@ -91,13 +91,14 @@ func (a *AdminApp) handlePeerKeys(c *jsonapi.Call) (any, error) {
 // The form posts back whatever it loaded, so what it loads has to be the shape
 // it saves.
 func (a *AdminApp) peerKeyMintForm(c *jsonapi.Call) (any, error) {
-	return json.RawMessage(`{"label":"","caps":[],"rate_per_min":0}`), nil
+	return json.RawMessage(`{"label":"","caps":[],"models":[],"rate_per_min":0}`), nil
 }
 
 // handlePeerKeyMint issues a key from the mint form.
 func (a *AdminApp) handlePeerKeyMint(c *jsonapi.Call, req struct {
 	Label    string          `json:"label"`
 	Caps     json.RawMessage `json:"caps"`
+	Models   json.RawMessage `json:"models"`
 	RatePerM int             `json:"rate_per_min"`
 }) (any, error) {
 	// A "checklist" field saves as a JSON array, but a form that has never
@@ -107,6 +108,17 @@ func (a *AdminApp) handlePeerKeyMint(c *jsonapi.Call, req struct {
 	pk, err := MintPeerKey(req.Label, caps, req.RatePerM)
 	if err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
+	}
+	// Which models an Inference grant lends, when it is limited. Set after
+	// the mint, so a list that is refused takes the key with it rather than
+	// leaving one that lends more than was asked.
+	if tiers := decodeCapsField(req.Models); len(tiers) > 0 {
+		limited, terr := SetPeerKeyTiers(pk.ID, tiers)
+		if terr != nil {
+			DeletePeerKey(pk.ID)
+			return nil, jsonapi.BadRequest(terr.Error())
+		}
+		pk = limited
 	}
 	// Never the key: the log is read by every administrator.
 	RecordActivity(c.R, activity.Peer, c.User, "issued a peer key for "+pk.Label)
@@ -211,6 +223,7 @@ func (a *AdminApp) handlePeerKeyOne(c *jsonapi.Call) (any, error) {
 		if k.ID == id {
 			return map[string]any{
 				"id": k.ID, "label": k.Label, "caps": k.Caps,
+				"models":     append([]string{}, k.Tiers...),
 				"appliances": peerKeyScopeValues(k),
 			}, nil
 		}
@@ -222,6 +235,7 @@ func (a *AdminApp) handlePeerKeyOne(c *jsonapi.Call) (any, error) {
 type peerKeyEditBody struct {
 	Enabled    *bool     `json:"enabled"`
 	Caps       *[]string `json:"caps"`
+	Models     *[]string `json:"models"`
 	Owner      *string   `json:"owner"`
 	Appliances *[]string `json:"appliances"`
 }
@@ -238,7 +252,7 @@ func (a *AdminApp) handlePeerKeyEdit(c *jsonapi.Call, req *peerKeyEditBody) (any
 	if err != nil {
 		return nil, err
 	}
-	if req.Enabled == nil && req.Caps == nil && req.Owner == nil && req.Appliances == nil {
+	if req.Enabled == nil && req.Caps == nil && req.Models == nil && req.Owner == nil && req.Appliances == nil {
 		return nil, jsonapi.BadRequest("expected {\"enabled\": bool}, {\"caps\": [...]}, or {\"owner\", \"appliances\"}")
 	}
 	if req.Caps != nil {
@@ -248,6 +262,13 @@ func (a *AdminApp) handlePeerKeyEdit(c *jsonapi.Call, req *peerKeyEditBody) (any
 		}
 		adminChange(c.R, activity.Peer, "re-granted peer key %q: %s",
 			pk.Label, strings.Join(pk.Caps, ", "))
+	}
+	if req.Models != nil {
+		pk, terr := SetPeerKeyTiers(id, *req.Models)
+		if terr != nil {
+			return nil, jsonapi.BadRequest(terr.Error())
+		}
+		adminChange(c.R, activity.Peer, "peer key %q lends: %s", pk.Label, peerKeyModelsLabel(pk))
 	}
 	// Scope — whose appliances, and which. Sent together by the Grants
 	// modal: setting one without the other would leave a key naming
@@ -643,6 +664,57 @@ func peerCapShortLabel(cap string) string {
 	return cap
 }
 
+// peerKeyModelsField is the mint form's and the Grants modal's "Models this
+// key lends": which of this instance's models an Inference grant reaches.
+func peerKeyModelsField() ui.FormField {
+	var opts []ui.SelectOption
+	for _, t := range PeerModelTiers {
+		opts = append(opts, ui.SelectOption{Value: t.Tier, Label: t.Label})
+	}
+	return ui.FormField{Field: "models", Label: "Models this key lends", Type: "checklist",
+		Options:  opts,
+		ShowWhen: "caps:" + PeerCapModels,
+		Help:     "For the Inference grant: the models it lends. None ticked lends all of them.",
+		Detail: "A peer can use only the models ticked here: its chat turns, System One decisions and prompts all go to them, and the others are refused as if this instance did not have them. " +
+			"Ticking only the Offload model lends a model kept for checks and System One without lending the Worker or Lead. " +
+			"None ticked is all models, which is what every key lent before this list existed."}
+}
+
+// peerKeyModelsLabel says which models a key's Inference grant lends.
+func peerKeyModelsLabel(k PeerKey) string {
+	if len(k.Tiers) == 0 {
+		return "all models"
+	}
+	labels := map[string]string{}
+	for _, t := range PeerModelTiers {
+		labels[t.Tier] = t.Label
+	}
+	names := make([]string, 0, len(k.Tiers))
+	for _, t := range k.Tiers {
+		if l := labels[t]; l != "" {
+			names = append(names, l)
+		} else {
+			names = append(names, t)
+		}
+	}
+	return strings.Join(names, ", ")
+}
+
+// peerKeyGrantLabels is the Granted column: the capabilities, with an
+// Inference grant that is limited to some models saying which.
+func peerKeyGrantLabels(k PeerKey) []string {
+	out := peerCapShortLabels(k.Caps)
+	if len(k.Tiers) == 0 {
+		return out
+	}
+	for i, c := range k.Caps {
+		if c == PeerCapModels {
+			out[i] += " (" + peerKeyModelsLabel(k) + ")"
+		}
+	}
+	return out
+}
+
 // peerCapShortLabels maps a whole list, for the pill columns.
 func peerCapShortLabels(caps []string) []string {
 	if len(caps) == 0 {
@@ -665,7 +737,8 @@ func peerCapOptions() []ui.SelectOption {
 		PeerCapBrowse:     "Render pages in this instance's headless browser. Public web only: a peer can never reach this machine's private network through it.",
 		PeerCapModels: "Let the peer run its LLM turns on THIS instance's model: the machine with the GPU does the thinking for the one without. " +
 			"The peer configures an ordinary llama.cpp provider pointed here and everything works as if the model were local: streaming, tool calls, images, thinking budgets. " +
-			"Only LOCAL backends are lent (llama.cpp and ollama). A hosted provider is never relayed, because that would spend this operator's API key on someone else's prompts.",
+			"Only LOCAL backends are lent (llama.cpp and ollama). A hosted provider is never relayed, because that would spend this operator's API key on someone else's prompts. " +
+			"Models this key lends, below, can limit it to some of them: the Offload model alone, say, for a peer whose System One should use it.",
 		PeerCapExec: "Let the peer run commands on the systems below through THIS instance's connection to them: the peer as a wire to a machine it cannot route to. " +
 			"The peer's own servitor does the investigating, with its own records; nothing this instance has gathered about the system is shared. " +
 			"Understand what this is: a key granted it has a shell on the named systems, and the CALLING instance decides what runs, not this one. " +
@@ -768,6 +841,7 @@ func peerSharingSections() []ui.Section {
 							Options: peerCapOptions(),
 							Help:    "The key can do these and nothing else.",
 							Detail:  "Change them later with the Grants button on the key row. There is no need to mint a new one."},
+						peerKeyModelsField(),
 						{Field: "rate_per_min", Label: "Calls per minute", Type: "number", Min: 0, Max: 100000,
 							Help: "Ceiling on how hard this peer may work this instance. Leave 0 for the default (600/min)."},
 					},
@@ -883,6 +957,7 @@ func peerSharingSections() []ui.Section {
 								Options: peerCapOptions(),
 								Help:    "The key can do these and nothing else.",
 								Detail:  "Removing one takes effect immediately, and the peer keeps the same key either way."},
+							peerKeyModelsField(),
 							{Field: "appliances", Label: "Systems this key may reach", Type: "checklist",
 								Options:  peerApplianceScopeOptions(),
 								ShowWhen: "caps:" + PeerCapExec,

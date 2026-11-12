@@ -2242,6 +2242,10 @@ type ToolCallRequest struct {
 	// synchronous image render, where the response is the finished picture —
 	// the general cap is the wrong clock entirely.
 	TimeoutSecs int
+	// Ctx is the request the call is made for, when it has no session: a
+	// peer's carries its mark (PeerRequestOf), so its ledger row keeps no
+	// query, and the call ends when the request does.
+	Ctx context.Context
 }
 
 // secureUploadArg keys a *FileUpload inside the dispatch args map. Underscored
@@ -2260,6 +2264,10 @@ const secureUploadArg = "__upload"
 // deadline the operator had actually set (900s for an edit) governed only the
 // POLL loop that a synchronous backend never reaches.
 const secureTimeoutArg = "__timeout_secs"
+
+// secureCtxArg carries a sessionless call's request context into dispatch
+// (ToolCallRequest.Ctx).
+const secureCtxArg = "__ctx"
 
 // FileUpload declares a STREAMING multipart upload. The source is read as the
 // request is written rather than buffered, so a large file never sits in memory
@@ -2318,6 +2326,9 @@ func (s *SecureAPI) DispatchHostScoped(sess *ToolSession, scope string, r ToolCa
 	}
 	if r.TimeoutSecs > 0 {
 		args[secureTimeoutArg] = r.TimeoutSecs
+	}
+	if r.Ctx != nil {
+		args[secureCtxArg] = r.Ctx
 	}
 	return s.dispatch(scoped, args, sess)
 }
@@ -2591,7 +2602,13 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// waiting on ran to completion. On a single 30s request that reads as a slow
 	// cancel; on a tool that makes many calls in sequence it reads as Stop not
 	// working at all.
-	baseCtx, releaseConn := ac.connector.DeriveCancelCtx(sess.Context())
+	parent := sess.Context()
+	if sess == nil {
+		if c, ok := args[secureCtxArg].(context.Context); ok && c != nil {
+			parent = c
+		}
+	}
+	baseCtx, releaseConn := ac.connector.DeriveCancelCtx(parent)
 	defer releaseConn()
 	ac.timeout()
 	ctx, cancel := context.WithTimeout(baseCtx, ac.callTimeout)
@@ -3285,6 +3302,13 @@ func (ac *apiCall) send() bool {
 		Method:         ac.method,
 		URL:            ac.rawURL,
 		Timestamp:      time.Now(),
+	}
+	// A call made for a peer is kept as the peer's, by its address alone:
+	// this instance keeps nothing of a peer's request, and a search's query
+	// rides in the query string.
+	if peer := PeerRequestOf(ac.req.Context()); peer != "" {
+		ac.auditEntry.DispatchedBy = "peer:" + peer
+		ac.auditEntry.URL = urlWithoutQuery(ac.rawURL)
 	}
 	if err != nil {
 		ac.auditEntry.Error = ac.redact(err.Error())
@@ -5281,4 +5305,12 @@ func (s *SecureAPI) RedactSecretsFor(user, text string) (string, int) {
 		}
 	}
 	return text, n
+}
+
+// urlWithoutQuery is raw with its query string and fragment taken off.
+func urlWithoutQuery(raw string) string {
+	if i := strings.IndexAny(raw, "?#"); i >= 0 {
+		return raw[:i]
+	}
+	return raw
 }

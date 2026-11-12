@@ -155,7 +155,7 @@ func (t transport) do(ctx context.Context, name string, vars map[string]any) (re
 		return t.readResponse(name, op, resp, done)
 	}
 	req := ToolCallRequest{URL: addr, Method: method,
-		Headers: t.p.Headers, PipeFollowing: true, TimeoutSecs: t.timeout(op)}
+		Headers: t.p.Headers, PipeFollowing: true, TimeoutSecs: t.timeout(op), Ctx: ctx}
 	if op.Send == "multipart" {
 		up, closer, err := multipartUpload(op, vars, t.maxBytes())
 		if err != nil {
@@ -171,7 +171,13 @@ func (t transport) do(ctx context.Context, name string, vars map[string]any) (re
 	// What went out, for comparing a call with the same request made by hand:
 	// the path (never the query, where a key may ride) and the body with its
 	// pictures shown by size. Debug only: the body is the person's prompt.
-	Debug("[service] %s: %s %s %s", name, method, pathOnly(addr), elideData(req.Body))
+	// A peer's request is done as its proxy, and this instance keeps nothing
+	// of it: its body is logged by size alone.
+	if peer := PeerRequestOf(ctx); peer != "" {
+		Debug("[service] %s: %s %s (%d bytes of %s's request, not logged)", name, method, pathOnly(addr), len(req.Body), peer)
+	} else {
+		Debug("[service] %s: %s %s %s", name, method, pathOnly(addr), elideData(req.Body))
+	}
 	raw, err := t.send(req)
 	if err != nil {
 		return reply{}, fmt.Errorf("%s: %w", name, err)
