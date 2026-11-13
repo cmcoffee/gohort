@@ -736,18 +736,31 @@
         alwaysBox.innerHTML = '';
         alwaysBox.appendChild(el('div', {style: 'font-weight:600;margin:18px 0 4px'}, ['Always allowed']));
         alwaysBox.appendChild(el('div', {class: 'ui-pl-empty', style: 'text-align:left;margin-bottom:6px'},
-          ['Rules saved with Always allow. A command that matches one runs without asking, on that system only. In a rule, <number> stands for any number, <text> for any word that is not a path, and * for any run of characters within one word (a * in a path stays inside its folder). Every other word must be exactly as written. Edit one to widen or narrow it; Remove one and it asks again.']));
+          ['Rules saved with Always allow, or added below. A command that matches one runs without asking, on that system only. Add a rule by its program, the subcommand that may follow it, whether it may run with sudo, and what may follow it. A rule saved from an approval card that is longer than that (a pipeline, say) is edited as text, where <number> stands for any number, <text> for any word that is not a path, and * for any run of characters within one word. Remove a rule and that command asks again.']));
+        alwaysBox.appendChild(addRuleForm());
         if (!list.length) {
           alwaysBox.appendChild(el('div', {class: 'ui-pl-empty', style: 'text-align:left'},
-            ['None yet. Answer Always on an approval card to add one.']));
+            ['None yet. Add one above, or answer Always on an approval card.']));
           return;
         }
         list.forEach(function(it) {
-          var code = el('code', {style: 'display:block;white-space:pre-wrap;word-break:break-all;margin-top:2px'}, [it.command]);
+          // What it allows in words, and the rule as stored under it.
+          var code = el('div', {style: 'margin-top:2px'}, [
+            el('div', {style: 'white-space:pre-wrap;word-break:break-word'}, [String(it.label || it.command).replace(/`/g, '')]),
+            el('code', {style: 'display:block;white-space:pre-wrap;word-break:break-all;margin-top:2px;font-size:0.8em;opacity:0.7'}, [it.command])]);
           var info = el('div', {style: 'min-width:0;flex:1'}, [
             el('div', {style: 'font-weight:600'}, [it.appliance]), code]);
           var edit = el('button', {class: 'ui-row-btn', style: 'flex:none'}, ['Edit']);
           edit.onclick = function() {
+            // A rule that fits the form is edited in it; any other as text.
+            if (it.form) {
+              var editor = ruleFormEditor(it.form, 'Save', function(form, btn) {
+                return postRule({appliance_id: it.appliance_id, command: it.command, form: form}, btn, 'Save');
+              }, function() { editor.replaceWith(code); edit.disabled = false; });
+              code.replaceWith(editor);
+              edit.disabled = true;
+              return;
+            }
             var field = el('input', {type: 'text', value: it.command, spellcheck: 'false', autocomplete: 'off',
               style: 'width:100%;box-sizing:border-box;margin-top:4px;font-family:ui-monospace,Menlo,monospace'});
             var saveBtn = el('button', {class: 'ui-row-btn primary'}, ['Save']);
@@ -796,6 +809,120 @@
             style: 'display:flex;gap:10px;align-items:flex-start;padding:8px 4px;border-bottom:1px solid var(--border)'},
             [info, el('div', {style: 'display:flex;gap:6px;margin-left:auto;flex:none'}, [edit, btn])]));
         });
+      }
+      // postRule saves a rule from the form (an add, or an edit of a rule
+      // that fits it): the server writes it as the rule string and checks
+      // it, and the list reloads.
+      function postRule(body, btn, label) {
+        btn.disabled = true;
+        btn.textContent = 'Saving...';
+        return fetch('api/permissions/always', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body),
+        }).then(function(r) {
+          if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+          loadAlways();
+        }).catch(function(err) {
+          btn.disabled = false;
+          btn.textContent = label;
+          window.uiAlert('Could not save the rule: ' + (err && err.message || err));
+        });
+      }
+
+      // ruleFormEditor sets a rule out as choices: the program, the
+      // subcommand that may follow it (one word, or one of several), whether
+      // it may run with sudo, and its flags (none, any, or only the ones
+      // listed, each taking a value or not). Nobody writes the rule syntax.
+      function ruleFormEditor(init, saveLabel, onSave, onCancel) {
+        init = init || {};
+        var mono = 'font-family:ui-monospace,Menlo,monospace';
+        var row = function(label, ctl, hint) {
+          var kids = [el('div', {style: 'font-size:0.85em;font-weight:600;margin-bottom:2px'}, [label]), ctl];
+          if (hint) kids.push(el('div', {class: 'ui-pl-empty', style: 'text-align:left;margin:2px 0 0;font-size:0.8em'}, [hint]));
+          return el('div', {style: 'margin-bottom:8px'}, kids);
+        };
+        var prog = el('input', {type: 'text', spellcheck: 'false', autocomplete: 'off', placeholder: '/opt/tool.py', value: init.program || '',
+          style: 'width:100%;box-sizing:border-box;' + mono});
+        var subs = el('input', {type: 'text', spellcheck: 'false', autocomplete: 'off', placeholder: 'optional, e.g. report or report, status',
+          value: (init.subcommands || []).join(', '), style: 'width:100%;box-sizing:border-box;' + mono});
+        var sudo = el('input', {type: 'checkbox'});
+        sudo.checked = !!init.sudo;
+        var mode = init.flags || 'any';
+        var modeName = 'rf-' + Math.random().toString(36).slice(2);
+        var flagsBox = el('div', {style: 'margin-top:4px'});
+        var flags = (init.allowed || []).map(function(f) { return {name: f.name, value: f.value || ''}; });
+        function renderFlags() {
+          flagsBox.innerHTML = '';
+          flagsBox.style.display = mode === 'only' ? '' : 'none';
+          flags.forEach(function(f, i) {
+            var name = el('input', {type: 'text', spellcheck: 'false', autocomplete: 'off', placeholder: '--check', value: f.name,
+              style: 'flex:1;min-width:0;' + mono});
+            name.oninput = function() { f.name = name.value.trim(); };
+            var val = el('select', {}, [
+              el('option', {value: ''}, ['no value']),
+              el('option', {value: 'any'}, ['takes any value']),
+              el('option', {value: 'number'}, ['takes a number'])]);
+            val.value = f.value;
+            val.onchange = function() { f.value = val.value; };
+            var rm = el('button', {type: 'button', class: 'ui-row-btn', title: 'Remove this flag'}, ['\u00d7']);
+            rm.onclick = function() { flags.splice(i, 1); renderFlags(); };
+            flagsBox.appendChild(el('div', {style: 'display:flex;gap:6px;margin-bottom:4px;align-items:center'}, [name, val, rm]));
+          });
+          var add = el('button', {type: 'button', class: 'ui-row-btn'}, ['+ Add a flag']);
+          add.onclick = function() { flags.push({name: '', value: ''}); renderFlags(); };
+          flagsBox.appendChild(add);
+        }
+        var radios = el('div', {style: 'display:flex;gap:14px;flex-wrap:wrap'});
+        [['none', 'Nothing after it'], ['any', 'Anything after it'], ['only', 'Only these flags']].forEach(function(m) {
+          var r = el('input', {type: 'radio', name: modeName, value: m[0]});
+          r.checked = mode === m[0];
+          r.onchange = function() { mode = m[0]; if (mode === 'only' && !flags.length) flags.push({name: '', value: ''}); renderFlags(); };
+          radios.appendChild(el('label', {style: 'display:inline-flex;gap:4px;align-items:center;cursor:pointer'}, [r, m[1]]));
+        });
+        renderFlags();
+        var save = el('button', {class: 'ui-row-btn primary'}, [saveLabel]);
+        save.onclick = function() {
+          var form = {
+            program: prog.value.trim(),
+            subcommands: subs.value.split(/[,\s]+/).map(function(x) { return x.trim(); }).filter(Boolean),
+            sudo: sudo.checked,
+            flags: mode,
+            allowed: mode === 'only' ? flags.filter(function(f) { return f.name; }) : [],
+          };
+          if (!form.program) { prog.focus(); return; }
+          onSave(form, save);
+        };
+        var btns = [save];
+        if (onCancel) {
+          var cancel = el('button', {class: 'ui-row-btn'}, ['Cancel']);
+          cancel.onclick = onCancel;
+          btns.push(cancel);
+        }
+        return el('div', {style: 'border:1px solid var(--border);border-radius:6px;padding:8px;margin:4px 0 10px'}, [
+          row('Program', prog, 'Its name or full path, exactly as it is run.'),
+          row('Subcommand', subs, 'The word that may follow the program, if any. Several, separated by commas, allow any one of them.'),
+          el('label', {style: 'display:flex;gap:6px;align-items:center;margin-bottom:8px;cursor:pointer'}, [sudo,
+            el('span', {}, ['Run with sudo: also covers sudo -n, and running it without sudo'])]),
+          row('After it', el('div', {}, [radios, flagsBox]),
+            'Anything after it allows any flags and arguments, as one command (nothing piped or chained on). Only these flags allows just the ones listed, in any order; a flag that takes a value accepts it after = or as the next word.'),
+          el('div', {style: 'display:flex;gap:6px'}, btns)]);
+      }
+
+      // addRuleForm adds a rule for the system picked on the page, before the
+      // command it covers has come up.
+      function addRuleForm() {
+        var aid = getApplianceID();
+        if (!aid) {
+          return el('div', {class: 'ui-pl-empty', style: 'text-align:left;margin:4px 0 8px'},
+            ['Pick a system on the page to add a rule for it.']);
+        }
+        var sel = document.querySelector('.ui-agent-extras select');
+        var name = (sel && sel.options && sel.selectedIndex >= 0 && sel.options[sel.selectedIndex].text) || aid;
+        return el('div', {}, [
+          el('div', {style: 'font-size:0.9em;margin:6px 0 2px'}, ['Add a rule for ' + name]),
+          ruleFormEditor({flags: 'any'}, 'Add', function(form, btn) {
+            return postRule({appliance_id: aid, add: true, form: form}, btn, 'Add');
+          })]);
       }
       function loadAlways() {
         fetch('api/permissions/always')

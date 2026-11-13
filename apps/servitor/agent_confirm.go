@@ -31,26 +31,63 @@ import (
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
-// agentCommandRefusal is what an acting agent is told instead of being made to
-// wait. It names the four things needed to act on it: what was refused, why,
-// where, and what would change the answer.
+// agentRefusal is what an acting agent is told instead of being made to
+// wait. It names what was refused, why, where, and what would change the
+// answer.
 //
-// The category is spelled out because it is the unit a grant is written in —
+// The category is spelled out because it is the unit a grant is written in:
 // "needs approval" sends someone hunting, "needs pkg_install on lab-box" is a
 // setting they can find.
-func agentCommandRefusal(cmd string, cat RiskCategory, reason, appliance string) error {
-	where := strings.TrimSpace(appliance)
+//
+// Near is a rule for the same program that the command missed the shape of;
+// Covered and Rest split a line a rule covers only part of. Either way the
+// agent is told how to run what is allowed, rather than only "no": told only
+// that it had no permission, an agent that added a flag in front of the
+// program, or an exit check after it, gave up on a command the owner had
+// allowed.
+type agentRefusal struct {
+	Cmd       string
+	Cat       RiskCategory
+	Reason    string
+	Appliance string
+	Near      string
+	Covered   string
+	Rest      string
+}
+
+// refuseRetry is how every refusal ends. Refused for now, not for good: a
+// refusal kept in a long conversation (an MCP thread) was read later as a
+// standing answer, and the agent repeated it instead of asking again after
+// the owner had allowed the command. Rewording it to get round the gate is
+// still out.
+const refuseRetry = "This is the answer for now: permissions can change, so if you are asked again later, try it again rather than repeating this. Do NOT reword it or reach the same effect another way to get round this check"
+
+func (r agentRefusal) err() error {
+	where := strings.TrimSpace(r.Appliance)
 	if where == "" {
 		where = "this system"
 	}
-	detail := strings.TrimSpace(reason)
+	detail := strings.TrimSpace(r.Reason)
 	if detail != "" {
 		detail = " (" + detail + ")"
 	}
+	cmd, cat := truncateCmd(r.Cmd, 160), string(r.Cat)
+	if c, rest := strings.TrimSpace(r.Covered), strings.TrimSpace(r.Rest); c != "" && rest != "" {
+		return fmt.Errorf("not run: in %q, the owner's rules on %s allow %s, but the rest of the line, %q, is %s%s and needs approval. "+
+			"Nothing was executed. Run the allowed part without the rest if that does what is needed; it then runs without asking. "+
+			"If the rest is needed, say so plainly and tell the person the owner can allow %s for you on %s. %s",
+			cmd, where, c, rest, cat, detail, cat, where, refuseRetry)
+	}
+	if near := strings.TrimSpace(r.Near); near != "" {
+		return fmt.Errorf("not run: %q is not in the shape of the rule the owner allowed on %s for that program: %s. "+
+			"Run it in exactly that shape if that does what is needed (nothing added in front of the program, words only where the rule has them); it then runs without asking. "+
+			"If it cannot be done in that shape, say so plainly and tell the person the owner can widen the rule or allow %s for you on %s. %s",
+			cmd, where, near, cat, where, refuseRetry)
+	}
 	return fmt.Errorf("not run: %q is %s%s on %s, and you have no standing permission for that. "+
 		"Nothing was executed and nothing is waiting: say so plainly and tell the person that the owner can allow %s for you on %s, "+
-		"or run it themselves from Servitor. Do NOT retry it, reword it, or try to get the same effect another way",
-		truncateCmd(cmd, 160), string(cat), detail, where, string(cat), where)
+		"or run it themselves from Servitor. %s",
+		cmd, cat, detail, where, cat, where, refuseRetry)
 }
 
 // applianceLabel is what a person calls this box: its name when it has one,

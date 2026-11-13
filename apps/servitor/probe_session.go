@@ -542,7 +542,9 @@ func (pr *probeRun) gateLine(cmd string, hits []risk_hit, shell bool) error {
 		if park == nil || !park(cmd) {
 			emit(pr.id, probeEvent{Kind: "status", Text: "Needs approval (" + string(cat) + "): " + cmd})
 			Log("[servitor] agent %s refused %q on %s: no standing permission for %s", acting, cmd, pr.appliance.ID, cat)
-			return agentCommandRefusal(cmd, cat, reason, applianceLabel(pr.appliance.Name, pr.appliance.ID))
+			covered, rest := coveredPart(pr.udb, pr.appliance.ID, cmd)
+			return agentRefusal{Cmd: cmd, Cat: cat, Reason: reason, Appliance: applianceLabel(pr.appliance.Name, pr.appliance.ID),
+				Near: describeNear(nearMissRule(pr.udb, pr.appliance.ID, cmd)), Covered: covered, Rest: rest}.err()
 		}
 		wait = agentApprovalWait
 	} else if !confirmAnswerable(pr.id) {
@@ -2152,7 +2154,7 @@ func (pr *probeRun) mapProbeTool() probeAction {
 						// mapping=true: this is the reconnaissance pass, so the
 						// worker persists through failures rather than handing
 						// the first dead end back to the investigator.
-						SystemPrompt:    buildProbeWorkerPrompt(pr.appliance, pr.scratch, true, pr.resolvedTools),
+						SystemPrompt:    buildProbeWorkerPrompt(pr.appliance, pr.scratch, true, pr.resolvedTools) + allowedCommandsBlock(pr.udb, ActingAgent(pr.ctx), pr.appliance.ID),
 						Tools:           pr.workerLanes(pr.withFreshRunTool(pr.workerTools)),
 						MaxRounds:       12,
 						RouteKey:        "app.servitor",
@@ -2494,7 +2496,7 @@ func (pr *probeRun) mapInvestigate() probeAction {
 	pr.m.softNudgeFired = false
 	pr.m.firmNudgeFired = false
 	pr.m.invCfg = pr.guard.Apply(AgentLoopConfig{
-		SystemPrompt: buildInvestigatorSystemPrompt(pr.appliance, pr.resolvedTools),
+		SystemPrompt: buildInvestigatorSystemPrompt(pr.appliance, pr.resolvedTools) + allowedCommandsBlock(pr.udb, ActingAgent(pr.ctx), pr.appliance.ID),
 		Tools:        pr.m.investigatorTools,
 		MaxRounds:    investigatorRoundBudget,
 		// The investigator's OWN stage, not the worker one. It borrowed
@@ -2795,7 +2797,7 @@ func (pr *probeRun) chatProbeTool() probeAction {
 					pr.guard.Apply(AgentLoopConfig{
 						// mapping=false: a chat probe stops at the first dead end and
 						// lets the investigator pick the next angle.
-						SystemPrompt:    buildProbeWorkerPrompt(pr.appliance, pr.scratch, false, pr.resolvedTools),
+						SystemPrompt:    buildProbeWorkerPrompt(pr.appliance, pr.scratch, false, pr.resolvedTools) + allowedCommandsBlock(pr.udb, ActingAgent(pr.ctx), pr.appliance.ID),
 						Tools:           pr.workerLanes(pr.withFreshRunTool(pr.workerTools)),
 						MaxRounds:       15,
 						RouteKey:        "app.servitor",

@@ -13,7 +13,7 @@ import (
 )
 
 func TestRefusalNamesWhatWouldPermitIt(t *testing.T) {
-	err := agentCommandRefusal("apt-get install nginx", AllRiskCategories[0], "installs software", "lab-box")
+	err := agentRefusal{Cmd: "apt-get install nginx", Cat: AllRiskCategories[0], Reason: "installs software", Appliance: "lab-box"}.err()
 	if err == nil {
 		t.Fatal("an ungranted command must be refused")
 	}
@@ -34,19 +34,21 @@ func TestRefusalNamesWhatWouldPermitIt(t *testing.T) {
 // Nothing ran and nothing is pending — the agent must not report it as
 // "waiting for approval", which would leave the person expecting it to happen.
 func TestRefusalSaysNothingIsPending(t *testing.T) {
-	msg := agentCommandRefusal("rm -rf /tmp/x", AllRiskCategories[0], "", "prod").Error()
+	msg := agentRefusal{Cmd: "rm -rf /tmp/x", Cat: AllRiskCategories[0], Reason: "", Appliance: "prod"}.err().Error()
 	if !strings.Contains(msg, "Nothing was executed and nothing is waiting") {
 		t.Errorf("the refusal must be unambiguous about state, got %q", msg)
 	}
-	// And it must close the obvious workaround.
-	if !strings.Contains(msg, "Do NOT retry it, reword it") {
-		t.Errorf("the refusal should forbid rewording around the gate, got %q", msg)
+	// And it must close the obvious workaround, without reading as a
+	// standing answer: a refusal kept in a long conversation was repeated
+	// after the owner had allowed the command.
+	if !strings.Contains(msg, "Do NOT reword it or reach the same effect another way") || !strings.Contains(msg, "try it again rather than repeating this") {
+		t.Errorf("the refusal should forbid rewording around the gate and leave a later try open, got %q", msg)
 	}
 }
 
 // A missing reason must not render as an empty bracket.
 func TestRefusalWithoutAReasonReadsCleanly(t *testing.T) {
-	msg := agentCommandRefusal("systemctl restart nginx", AllRiskCategories[0], "", "lab-box").Error()
+	msg := agentRefusal{Cmd: "systemctl restart nginx", Cat: AllRiskCategories[0], Reason: "", Appliance: "lab-box"}.err().Error()
 	if strings.Contains(msg, "()") {
 		t.Errorf("an absent reason should be omitted, got %q", msg)
 	}
@@ -68,7 +70,7 @@ func TestApplianceLabelAlwaysReadsAsSomething(t *testing.T) {
 
 func TestLongCommandIsTruncatedInTheRefusal(t *testing.T) {
 	long := strings.Repeat("a", 400)
-	msg := agentCommandRefusal(long, AllRiskCategories[0], "", "box").Error()
+	msg := agentRefusal{Cmd: long, Cat: AllRiskCategories[0], Reason: "", Appliance: "box"}.err().Error()
 	if strings.Contains(msg, long) {
 		t.Error("a 400-char pipeline should not be quoted whole")
 	}

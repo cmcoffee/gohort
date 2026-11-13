@@ -77,6 +77,11 @@ type alwaysAllowed struct {
 	ApplianceID string `json:"appliance_id"`
 	Appliance   string `json:"appliance"` // its name, or the id when it is gone
 	Command     string `json:"command"`
+	// Label says what the rule allows in words (describeRule), and Form is
+	// the rule set out as the form's choices when it fits the form, for
+	// editing there; nil for a rule edited as text.
+	Label string    `json:"label"`
+	Form  *ruleForm `json:"form,omitempty"`
 }
 
 // listAlwaysAllowed is every Always answer in the user's store, by appliance
@@ -102,7 +107,11 @@ func (T *Servitor) listAlwaysAllowed(user string, udb Database) []alwaysAllowed 
 			}
 			names[appliance] = name
 		}
-		out = append(out, alwaysAllowed{ApplianceID: appliance, Appliance: name, Command: cmd})
+		row := alwaysAllowed{ApplianceID: appliance, Appliance: name, Command: cmd, Label: describeRule(cmd)}
+		if f, ok := parseRuleForm(cmd); ok {
+			row.Form = &f
+		}
+		out = append(out, row)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Appliance != out[j].Appliance {
@@ -122,12 +131,54 @@ func (T *Servitor) handleAlwaysAllowed(c *jsonapi.Call) (any, error) {
 	return map[string]any{"commands": T.listAlwaysAllowed(c.User, c.UDB)}, nil
 }
 
-// handleAlwaysAllowedSave removes an always-allow rule, or replaces it with
-// an edited one.
+// handleAlwaysAllowedSave removes an always-allow rule, replaces it with an
+// edited one, or adds a new one typed in.
 func (T *Servitor) handleAlwaysAllowedSave(c *jsonapi.Call, body alwaysAllowedReq) (any, error) {
 	user, udb := c.User, c.UDB
 	if udb == nil {
 		return nil, jsonapi.Status(http.StatusInternalServerError, "no store for this user")
+	}
+	// A rule set out in the form is written as a rule string here, the one
+	// place that knows how, for an add or an edit alike.
+	if body.Form != nil {
+		rule, err := composeRule(*body.Form)
+		if err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+		if !body.Add {
+			// An edit keeps the program: the rule is for that program, and
+			// another one is a rule of its own.
+			old, ok := parseRuleForm(body.Command)
+			var on bool
+			if body.ApplianceID == "" || !udb.Get(alwaysAllowTable, alwaysAllowKey(body.ApplianceID, body.Command), &on) || !on {
+				return nil, jsonapi.NotFound("that rule is no longer saved")
+			}
+			if !ok || old.Program != strings.TrimSpace(body.Form.Program) {
+				return nil, jsonapi.BadRequest("an edit keeps the rule's program: add a new rule for another one")
+			}
+			udb.Unset(alwaysAllowTable, alwaysAllowKey(body.ApplianceID, body.Command))
+			udb.Set(alwaysAllowTable, alwaysAllowKey(body.ApplianceID, rule), true)
+			Log("[servitor] %s changed an always-allow rule on %s: %s -> %s", user, body.ApplianceID, body.Command, rule)
+			return jsonapi.Empty(http.StatusNoContent), nil
+		}
+		body.Rule = rule
+	}
+	if body.Add {
+		// Saved where an Always on that system's card would save it: this
+		// user's store, for a system they can reach.
+		rule := strings.TrimSpace(body.Rule)
+		if body.ApplianceID == "" || rule == "" {
+			return nil, jsonapi.BadRequest("appliance_id and rule are required")
+		}
+		if _, _, _, found := T.resolveAppliance(user, udb, body.ApplianceID); !found {
+			return nil, jsonapi.NotFound("no such system")
+		}
+		if err := validNewRule(rule); err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+		udb.Set(alwaysAllowTable, alwaysAllowKey(body.ApplianceID, rule), true)
+		Log("[servitor] %s added an always-allow rule on %s: %s", user, body.ApplianceID, rule)
+		return jsonapi.Empty(http.StatusNoContent), nil
 	}
 	if body.ApplianceID == "" || body.Command == "" {
 		return nil, jsonapi.BadRequest("appliance_id and command are required")
@@ -157,4 +208,12 @@ type alwaysAllowedReq struct {
 	// Rule, when set, replaces the saved one (an edit) rather than
 	// removing it.
 	Rule string `json:"rule"`
+	// Add saves Rule as a new rule for the appliance, with no command
+	// behind it (Command is not used): one typed into Permissions before
+	// the command it covers has come up.
+	Add bool `json:"add,omitempty"`
+	// Form, when set, is the rule set out as the form's choices: written
+	// as the rule (composeRule) for an add, or to replace Command for an
+	// edit that keeps its program.
+	Form *ruleForm `json:"form,omitempty"`
 }

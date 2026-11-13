@@ -182,7 +182,9 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 		if acting := ActingAgent(ctx); acting != "" {
 			emit(id, probeEvent{Kind: "status", Text: "Needs approval (" + string(cat) + "): " + cmd})
 			Log("[servitor] agent %s refused %q on %s: no standing permission for %s", acting, cmd, appliance.ID, cat)
-			return agentCommandRefusal(cmd, cat, reason, applianceLabel(appliance.Name, appliance.ID))
+			covered, rest := coveredPart(udb, appliance.ID, cmd)
+			return agentRefusal{Cmd: cmd, Cat: cat, Reason: reason, Appliance: applianceLabel(appliance.Name, appliance.ID),
+				Near: describeNear(nearMissRule(udb, appliance.ID, cmd)), Covered: covered, Rest: rest}.err()
 		}
 		pendingCmds.Store(id, cmd)
 		defer pendingCmds.Delete(id)

