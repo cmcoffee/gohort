@@ -2,8 +2,10 @@ package core
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"sync"
+	"time"
 )
 
 // MCPToolHandler runs a registered MCP tool for an authenticated owner and
@@ -187,4 +189,95 @@ func MCPBuiltinTools() []MCPBuiltinTool {
 	mcpBuiltinsMu.RLock()
 	defer mcpBuiltinsMu.RUnlock()
 	return append([]MCPBuiltinTool(nil), mcpBuiltins...)
+}
+
+// --- turns and threads ------------------------------------------------------
+
+// MCP's own seam to the app that hosts agents (orchestrate): an ask over MCP
+// runs as a turn in a thread of its own, and a client can list its threads.
+//
+// An ask used to run as a channel inbound (RunChannelAgent). That is the
+// wrong shape for it: a channel inbound is an arrival from the outside world,
+// so it is also noted into the agent's Cortex, and for an agent whose Cortex
+// is its one channel's home it runs in the Cortex itself. An ask from the
+// owner's own client (Claude Code, Claude Desktop) is neither: it is a
+// conversation of the owner's, held in a thread the owner can look over.
+
+// MCPThreadPrefix begins the id of every thread MCP turns are kept in:
+// "mcp-desktop:<key id>[:<conversation>]" (apps/mcpserver mcpThread). The
+// hosting app reads it to tell these threads from the owner's own sessions.
+const MCPThreadPrefix = "mcp-desktop"
+
+// MCPTurn is one ask over MCP.
+type MCPTurn struct {
+	Owner   string
+	AgentID string
+	// Thread is the session the turn continues or starts.
+	Thread string
+	// Title names a fresh thread: the conversation's name, or the client's.
+	Title string
+	// Sender is the message's author in the transcript: the key's name.
+	Sender string
+	Text   string
+	// Status, when set, receives the agent's progress notes as it works.
+	Status func(string)
+}
+
+// MCPThread is one thread an MCP client's turns are kept in.
+type MCPThread struct {
+	AgentID   string    `json:"agent_id"`
+	AgentName string    `json:"agent_name"`
+	Thread    string    `json:"thread"`
+	Title     string    `json:"title"`
+	LastAt    time.Time `json:"last_at"`
+	Messages  int       `json:"messages"`
+}
+
+// MCPAgentHost is what the hosting app provides: running a turn, and listing
+// the owner's threads under prefix (the id itself, or prefix + ":" + more).
+type MCPAgentHost struct {
+	Run  func(ctx context.Context, t MCPTurn) (ChannelReply, error)
+	List func(owner, prefix string) []MCPThread
+}
+
+var (
+	mcpHostMu sync.RWMutex
+	mcpHost   MCPAgentHost
+)
+
+// RegisterMCPAgentHost installs the hosting app's side of the seam.
+func RegisterMCPAgentHost(h MCPAgentHost) {
+	mcpHostMu.Lock()
+	mcpHost = h
+	mcpHostMu.Unlock()
+}
+
+// MCPAgentHostReady reports whether an app hosts MCP turns.
+func MCPAgentHostReady() bool {
+	mcpHostMu.RLock()
+	defer mcpHostMu.RUnlock()
+	return mcpHost.Run != nil
+}
+
+// RunMCPAgent runs one MCP turn. Errors when no app hosts them.
+func RunMCPAgent(ctx context.Context, t MCPTurn) (ChannelReply, error) {
+	mcpHostMu.RLock()
+	fn := mcpHost.Run
+	mcpHostMu.RUnlock()
+	if fn == nil {
+		return ChannelReply{}, errors.New("no app hosts MCP turns (orchestrate not loaded)")
+	}
+	return fn(ctx, t)
+}
+
+// ListMCPThreads is the owner's threads under prefix, newest first; none when
+// no app hosts them.
+func ListMCPThreads(owner, prefix string) []MCPThread {
+	mcpHostMu.RLock()
+	fn := mcpHost.List
+	mcpHostMu.RUnlock()
+	if fn == nil {
+		return nil
+	}
+	return fn(owner, prefix)
 }

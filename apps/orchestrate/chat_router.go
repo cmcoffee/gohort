@@ -135,6 +135,10 @@ func (T *OrchestrateApp) handleSessionList(c *jsonapi.Call) (any, error) {
 	}
 
 	for _, s := range native {
+		// Threads are listed apart, behind the rail's switch (threads.go).
+		if isThread(s.ID) {
+			continue
+		}
 		item := sessionListItem{ChatSession: s}
 		// Running flag: in-flight Run keyed by session ID. BySession
 		// returns nil for unknown / no-run-active. Cheap map lookup

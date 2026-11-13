@@ -317,7 +317,10 @@ func (c *chatPage) page(nav []ui.NavLink) ui.Page {
 					RenameURL:      "api/sessions/rename?agent_id={agent_id}",
 					MarkAllReadURL: "api/sessions/mark-all-read?agent_id={agent_id}",
 					ListTitle:      "Sessions",
-					NewLabel:       "New session",
+					// The agent's own conversations (over MCP, hand-offs,
+					// pipeline steps), listed apart and read-only (threads.go).
+					ThreadsURL: "api/threads?agent_id={agent_id}",
+					NewLabel:   "New session",
 					// Same chat-app layout the public /agents/ surface
 					// uses: sessions rail extends full-height on the
 					// left, topbar lives inside the chat pane (not

@@ -9,7 +9,7 @@
 // set something up, gohort owns the durable execution and delivery.
 //
 // Auth is an MCP key, a personal access token from the Account page, in
-// X-API-Key. Dispatch reuses core.RunChannelAgent, which is synchronous and returns
+// X-API-Key. Dispatch runs through core.RunMCPAgent, which is synchronous and returns
 // the agent's reply: a perfect fit for an MCP tools/call round trip.
 //
 // Transport note: this speaks JSON-RPC over a single POST, not the full MCP
@@ -60,9 +60,9 @@ const MCPFeatureKey = "mcp"
 const defaultAgent = "seed-chat"
 
 // mcpSession is the single rolling thread Claude Desktop talks to. It is
-// owner-scoped by RunChannelAgent (runs under the resolved user's store), so
+// owner-scoped by RunMCPAgent (runs under the resolved user's store), so
 // one constant is fine for a single-user deployment.
-const mcpSession = "mcp-desktop"
+const mcpSession = MCPThreadPrefix
 
 type MCPServer struct {
 	AppCore
@@ -480,14 +480,34 @@ func toolDefs() []map[string]any {
 	defs := []map[string]any{
 		{
 			"name":        "ask_agent",
-			"description": "Send a message to a gohort agent and get its reply. The agent has persistent memory, scheduling (it can set up recurring tasks that run on gohort's server), and delivery channels. To schedule something, just ask in plain language, e.g. 'every weekday at 8am, summarize my calendar and text it to me'. Pass times exactly as the user said them; do NOT convert to UTC.",
+			"description": "Send a message to a gohort agent and get its reply. The agent has persistent memory, scheduling (it can set up recurring tasks that run on gohort's server), and delivery channels. To schedule something, just ask in plain language, e.g. 'every weekday at 8am, summarize my calendar and text it to me'. Pass times exactly as the user said them; do NOT convert to UTC. A turn still running after about 20 seconds answers \"Still working\" with a job id: call agent_result with that id to get the reply, as often as it takes. The turn keeps running in the meantime.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"message": map[string]any{"type": "string", "description": "What to ask the agent."},
-					"agent":   map[string]any{"type": "string", "description": "Agent id (optional; defaults to the main agent)."},
+					"message":      map[string]any{"type": "string", "description": "What to ask the agent."},
+					"agent":        map[string]any{"type": "string", "description": "Agent id (optional; defaults to the main agent)."},
+					"conversation": map[string]any{"type": "string", "description": "A short name for the piece of work this belongs to, e.g. \"check test review\" (optional). The same name continues that conversation with the agent; a new name starts a fresh one. Without it, every call from this key goes to one ongoing conversation."},
 				},
 				"required": []string{"message"},
+			},
+		},
+		{
+			"name":        "list_conversations",
+			"description": "List the conversations this key has with gohort's agents, newest first: each one's name (pass it as ask_agent's `conversation` to continue it), the agent it is with, how many messages it holds and when it was last active. Use it to pick up earlier work in a new session instead of starting over.",
+			"inputSchema": map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			},
+		},
+		{
+			"name":        "agent_result",
+			"description": "Get the reply to an ask_agent call that answered \"Still working\" with a job id. Waits up to 20 seconds for it; if the agent is still working it says so again, with what it is doing now, and you call this again.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"job": map[string]any{"type": "string", "description": "The job id ask_agent gave."},
+				},
+				"required": []string{"job"},
 			},
 		},
 		{
@@ -536,7 +556,7 @@ func allowedToolDefs(defs []map[string]any, tok *AccountToken) []map[string]any 
 	out := make([]map[string]any, 0, len(defs))
 	for _, d := range defs {
 		name, _ := d["name"].(string)
-		if tok.AllowsTool(name) {
+		if tok.AllowsTool(toolScope(name)) {
 			out = append(out, d)
 		}
 	}
@@ -553,12 +573,16 @@ func (T *MCPServer) callTool(ctx context.Context, owner string, token *AccountTo
 	}
 	// Enforced here as well as in the listing, because a client can call a name
 	// it learned somewhere else — a filtered list is a courtesy, not a gate.
-	if !token.AllowsTool(p.Name) {
+	if !token.AllowsTool(toolScope(p.Name)) {
 		return "", nil, fmt.Errorf("this key may not call %q: enable it on the key under Account → API keys → Access", p.Name)
 	}
 	switch p.Name {
 	case "ask_agent":
 		return T.askAgent(ctx, owner, token, p.Arguments)
+	case "agent_result":
+		return T.agentResult(ctx, owner, token, p.Arguments)
+	case "list_conversations":
+		return T.listConversations(owner, token), nil, nil
 	case "list_agents":
 		text, err := T.listAgents(owner, token)
 		return text, nil, err
@@ -753,11 +777,6 @@ func (T *MCPServer) askAgent(ctx context.Context, owner string, token *AccountTo
 	if !askPerMinute.Allow(owner) {
 		return "", nil, fmt.Errorf("too many ask_agent calls this minute for this account: slow down")
 	}
-	release, ok := askInFlight.Acquire(owner)
-	if !ok {
-		return "", nil, fmt.Errorf("this account already has the most agent turns it may run at once over MCP: wait for one to finish")
-	}
-	defer release()
 	agent, _ := args["agent"].(string)
 	if strings.TrimSpace(agent) == "" {
 		var err error
@@ -765,7 +784,7 @@ func (T *MCPServer) askAgent(ctx context.Context, owner string, token *AccountTo
 			return "", nil, err
 		}
 	}
-	if !ChannelAgentRunnerReady() {
+	if !MCPAgentHostReady() {
 		return "", nil, fmt.Errorf("agent runner not ready (orchestrate not loaded)")
 	}
 	// Only reachable agents can be dispatched, so a bridge key can't reach every
@@ -803,34 +822,49 @@ func (T *MCPServer) askAgent(ctx context.Context, owner string, token *AccountTo
 	if err := keyMayAsk(token, agent); err != nil {
 		return "", nil, err
 	}
-	// Synchronous: blocks until the agent finishes, returns its reply. Exactly
-	// the MCP tools/call contract. SenderName attributes the turn to the
-	// external caller in the transcript.
-	// One thread per KEY: two clients of one owner each keep their own, and
-	// a key narrowed to some agents does not read what another key's turns
-	// left in a shared one.
-	session := mcpSession
-	if token != nil && token.ID != "" {
-		session = mcpSession + ":" + token.ID
+	// Held for the whole turn, which can outlive this request (ask_jobs.go),
+	// so taken only once nothing else can refuse it.
+	release, ok := askInFlight.Acquire(owner)
+	if !ok {
+		return "", nil, fmt.Errorf("this account already has the most agent turns it may run at once over MCP: wait for one to finish")
 	}
-	reply, err := RunChannelAgent(ctx, ChannelInbound{
-		Owner:      owner,
-		AgentID:    agent,
-		SessionID:  session,
-		SenderName: "Claude Desktop",
-		Text:       msg,
+	// The turn runs as a job: answered here when it ends within askWait,
+	// else a job id for agent_result. It runs in a thread of its own (an
+	// ordinary session the owner reads under Threads, not a channel inbound
+	// noted into Cortex): the key's one thread, or a named conversation's,
+	// titled with its name (mcpThread). Sender attributes the turn to the
+	// client in the transcript.
+	conversation, _ := args["conversation"].(string)
+	conversation = strings.TrimSpace(conversation)
+	turn := MCPTurn{
+		Owner:   owner,
+		AgentID: agent,
+		Thread:  mcpThread(token, conversation),
+		Title:   chFirstNonBlank(conversation, mcpSender(token)),
+		Sender:  mcpSender(token),
+		Text:    msg,
+	}
+	job := startAskJob(ctx, owner, keyID(token), agent, conversation, func(ctx context.Context, status func(string)) (string, []string, error) {
+		defer release()
+		turn.Status = status
+		reply, err := RunMCPAgent(ctx, turn)
+		if err != nil {
+			return "", nil, err
+		}
+		return replyText(reply), reply.Images, nil
 	})
-	if err != nil {
-		return "", nil, err
-	}
-	// Videos have no content type every client renders, so they are named
-	// rather than sent — better than a block the other side drops silently.
-	// One reply here, so several messages are one text.
+	return job.await(ctx, askWait)
+}
+
+// replyText is an agent's reply as one text. Videos have no content type
+// every client renders, so they are named rather than sent, which is better
+// than a block the other side drops silently.
+func replyText(reply ChannelReply) string {
 	text := strings.Join(append([]string{reply.Text}, reply.More...), "\n\n")
 	if n := len(reply.Videos); n > 0 {
 		text += fmt.Sprintf("\n\n[%d video(s) produced; this connector carries images only. Ask the agent to deliver them over a messaging channel, or open the thread in gohort.]", n)
 	}
-	return text, reply.Images, nil
+	return text
 }
 
 // recentResults lists the owner's recent runs. A key narrowed to particular

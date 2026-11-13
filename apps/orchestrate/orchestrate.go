@@ -389,6 +389,7 @@ func (T *OrchestrateApp) wireChannelHooks() {
 	// agent on inbound messages (Phase 2). core owns the Channel store + seam;
 	// this registers the agent-execution half. See docs/design/channels-and-agents.md.
 	registerChannelAgentRunner(T)
+	registerMCPAgentHost(T)
 	registerAgentPublisher(T)
 	registerCredentialPublisher(T)
 	registerCredentialReader(T)
@@ -796,6 +797,7 @@ func (T *OrchestrateApp) registerHandlers() {
 	}.Serve)
 	T.HandleFunc("/api/skills/list", jsonapi.Get(T.DB, T.handleSkillsList))
 	T.HandleFunc("/api/sessions", jsonapi.Get(T.DB, T.handleSessionList))
+	T.HandleFunc("/api/threads", jsonapi.Get(T.DB, T.handleThreadList))
 	// More specific than /api/sessions/, so it wins the mux's longest-prefix
 	// match and never reaches handleSessionOne as a session id.
 	T.HandleFunc("/api/sessions/start", jsonapi.Post(T.DB, T.handleSessionStart))

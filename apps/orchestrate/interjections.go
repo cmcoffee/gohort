@@ -63,6 +63,11 @@ func refuseCortexNote(q *injectionQueue, sessionID string) error {
 	if sessionID == cortexSessionID(q.AgentID) {
 		return jsonapi.Forbidden(cortexWriteRefusal)
 	}
+	// Nor into a thread's run (threads.go): a note there speaks in the
+	// agent's conversation with someone else.
+	if isThread(sessionID) {
+		return jsonapi.Forbidden(threadWriteRefusal)
+	}
 	return nil
 }
 

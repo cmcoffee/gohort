@@ -90,13 +90,18 @@ func TestListRowsCarryTheIDAskAgentTakes(t *testing.T) {
 // A key narrowed to one tool must neither be SHOWN the others nor able to call
 // them. The listing filter is a courtesy; the call gate is the gate.
 func TestToolsListAndCallHonorTheKeyScope(t *testing.T) {
+	// ask_agent comes with agent_result, the way to fetch a reply that took
+	// a while, and list_conversations, the way to find a conversation again
+	// (ask_jobs.go), and nothing else.
 	narrow := &AccountToken{Scope: &TokenScope{Tools: &[]string{"ask_agent"}}}
 	defs := allowedToolDefs(toolDefs(), narrow)
-	if len(defs) != 1 {
-		t.Fatalf("listing showed %d tool(s) to a key narrowed to one", len(defs))
+	if len(defs) != 3 {
+		t.Fatalf("listing showed %d tool(s) to a key narrowed to ask_agent", len(defs))
 	}
-	if name, _ := defs[0]["name"].(string); name != "ask_agent" {
-		t.Errorf("wrong tool listed: %q", name)
+	for _, d := range defs {
+		if name, _ := d["name"].(string); name != "ask_agent" && name != "agent_result" && name != "list_conversations" {
+			t.Errorf("wrong tool listed: %q", name)
+		}
 	}
 	// Unnarrowed keys still see everything.
 	if all := allowedToolDefs(toolDefs(), &AccountToken{}); len(all) != len(toolDefs()) {

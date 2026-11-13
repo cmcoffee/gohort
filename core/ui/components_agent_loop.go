@@ -201,6 +201,20 @@ type AgentLoopPanel struct {
 	MessageScrub bool   `json:"msg_scrub,omitempty"`
 	NewLabel     string `json:"new_label,omitempty"`  // default "New"
 	ListTitle    string `json:"list_title,omitempty"` // sidebar header (default "Sessions")
+	// ThreadsURL, when set, gives the rail a second view behind a switch in
+	// its header: the conversations the agent has that nobody here started,
+	// listed apart so they do not crowd the sessions people are working in.
+	// A GET returning [{id, title, group, with, unread, last_at}], in the
+	// order to show them; rows sharing a group sit under its heading (folded
+	// unless one has something new). A thread opens through LoadURL like a
+	// session but read-only: the composer is replaced by ThreadsLockedText.
+	// The server must refuse a send into one too; the hidden composer is a
+	// courtesy. Every load starts on the sessions view, and a dot on the
+	// switch says a thread has something new. ThreadsLabel names the view
+	// (default "Threads").
+	ThreadsURL        string `json:"threads_url,omitempty"`
+	ThreadsLabel      string `json:"threads_label,omitempty"`
+	ThreadsLockedText string `json:"threads_locked_text,omitempty"`
 	// ListPosition picks where the sessions list lives. All three show the same
 	// list — search, unread marks, rename, delete, New — and differ only in what
 	// it costs to have around:

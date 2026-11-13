@@ -412,6 +412,13 @@ func (sr *sendRun) openSession() bool {
 		tmp.Send(map[string]any{"kind": "error", "text": cortexWriteRefusal})
 		return false
 	}
+	// A thread (threads.go) is the agent's own conversation with someone
+	// else: written into from here, it would speak for them.
+	if isThread(sr.req.SessionID) {
+		tmp := newSSEWriter(sr.w)
+		tmp.Send(map[string]any{"kind": "error", "text": threadWriteRefusal})
+		return false
+	}
 	// A conversation belongs to what it started about (AppContext). A send
 	// naming something else, from a page whose chat outlived a switch to
 	// another document, starts a new conversation there: continued, this

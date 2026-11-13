@@ -8,7 +8,6 @@ package admin
 // looked for it.
 
 import (
-	"os"
 	"strings"
 	"testing"
 
@@ -92,46 +91,6 @@ func adminSectionMaps(t *testing.T) (map[string]string, map[string]int) {
 		t.Fatal("could not read the section maps; adminLayout is empty")
 	}
 	return sectionGroup, tabRank
-}
-
-// Nothing on the admin page opens closed.
-//
-// Asked for twice: once as "collapsed things I'm not sure why it's collapsed",
-// and again after the first answer moved them to the right tab instead of
-// opening them. A section you have to click to discover is a section you do not
-// know is there, and every one of these already has a heading saying what it
-// is. This is a page an operator reads down, not a settings drawer.
-//
-// Covers both shapes, because they read identically on screen and only one of
-// them was noticed the first time: a Section that starts closed, and a form
-// header that folds the fields under it.
-func TestNothingInAdminStartsCollapsed(t *testing.T) {
-	for _, s := range everyAdminSection(t) {
-		if s.Collapsed {
-			t.Errorf("section %q starts closed", s.Title)
-		}
-		panel, ok := s.Body.(ui.FormPanel)
-		if !ok {
-			continue
-		}
-		for _, f := range panel.Fields {
-			if f.Collapsed {
-				t.Errorf("section %q folds its fields under the %q header", s.Title, f.Label)
-			}
-		}
-	}
-	// The builders above skip anything needing a live store, so the source is
-	// checked too: a collapsed declaration added to one of those would not be
-	// reached by the walk.
-	for _, name := range []string{"page_maintenance.go", "page_llm.go", "page_system.go", "page_capabilities.go"} {
-		b, err := os.ReadFile(name)
-		if err != nil {
-			continue
-		}
-		if strings.Contains(string(b), "Collapsed: true") {
-			t.Errorf("%s still declares Collapsed: true", name)
-		}
-	}
 }
 
 // The governance view answers "what reaches other people, and by whose

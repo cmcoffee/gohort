@@ -30,9 +30,13 @@ const (
 )
 
 // surfaceForRun is the surface of a run on the dispatch path: a message in a
-// channel conversation has a person on the other end; a wake arriving there,
-// and every other run, has nobody.
+// channel conversation, or an ask from the owner's MCP client, has somebody
+// waiting on the reply; a wake arriving in a channel thread, and every other
+// run, has nobody.
 func surfaceForRun(run AgentSyncRun) promptSurface {
+	if run.Kind == kindMCP {
+		return surfaceConversation
+	}
 	if run.Kind == "channel" && strings.TrimSpace(run.InputReportFrom) == "" {
 		return surfaceConversation
 	}

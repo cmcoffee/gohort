@@ -237,6 +237,11 @@
 
     // --- Optional list sidebar -------------------------------------------
     var side = null, sideList = null, sideSearch = null, drawer = null, sideHdrEl = null, orchView = null, lastSessionTitle = '';
+    // Threads (cfg.threads_url): the rail's second view, the agent's own
+    // conversations nobody here started, read-only. railView is which view
+    // the rail shows; every load starts on sessions. threadIds holds the ids
+    // the last threads fetch returned, so opening one locks its composer.
+    var railView = 'sessions', threadIds = {}, threadsBtn = null, sessionsTab = null, threadsDot = null, sideHdrLabel = null;
     // Nav dropdowns — built in the rail block (where the nav machinery is in
     // scope), shown in the topbar actions for fleet agents. One per distinct
     // item.menu, in the order their first item appears; navMenus holds them in
@@ -354,11 +359,30 @@
         document.addEventListener('click', closeMoreMenu);
         leftExtras.push(el('div', {class: 'ui-side-menu-wrap'}, [moreBtn]));
       }
+      // Threads switch: two tabs on a row of their own under the header, the
+      // rail's whole width. In the header itself it crowded the title and its
+      // controls until a narrow rail cut them off. A dot on the Threads tab
+      // says a thread has something new while the rail shows sessions.
+      var railTabs = null;
+      if (cfg.threads_url) {
+        var tabStyle = 'flex:1 1 0;min-width:0;padding:0.3rem 0.4rem;border:none;background:none;cursor:pointer;font:inherit;font-size:var(--fs-sm, 0.82rem);font-weight:600;color:var(--text-mute, #999);white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+        threadsDot = el('span', {class: 'ui-unread-dot', title: 'A thread has something new',
+          style: 'display:none;width:7px;height:7px;border-radius:50%;background:var(--accent, #4a9eff);margin-left:0.35rem;vertical-align:middle'}, ['']);
+        sessionsTab = el('button', {type: 'button', class: 'ui-rail-tab active', style: tabStyle,
+          onclick: function() { setRailView('sessions'); }}, [cfg.list_title || 'Sessions']);
+        threadsBtn = el('button', {type: 'button', class: 'ui-rail-tab', style: tabStyle,
+          title: 'The agent\'s own conversations: over MCP, hand-offs, pipeline steps',
+          onclick: function() { setRailView('threads'); }}, [el('span', {}, [cfg.threads_label || 'Threads']), threadsDot]);
+        railTabs = el('div', {class: 'ui-rail-tabs', role: 'tablist',
+          style: 'display:flex;margin:0 0.5rem 0.4rem;border:1px solid var(--border, rgba(127,127,127,0.3));border-radius:var(--btn-radius, 6px);overflow:hidden'},
+          [sessionsTab, threadsBtn]);
+        markRailTabs();
+      }
       var sideHdrBuilt = renderSideHeader({
         label:    cfg.list_title || 'Sessions',
         className: 'ui-chat-side-h',
         newTitle: cfg.new_label || 'New',
-        onNew:    function(){ openSession(null); },
+        onNew:    function(){ if (railView === 'threads') setRailView('sessions'); openSession(null); },
         // The × is a mobile-only control (.ui-chat-side-close is display:none
         // above the breakpoint), and what it should dismiss depends on where
         // this rail is mounted. In a modal-position panel it is inside the
@@ -389,9 +413,11 @@
         // via leftExtras — matches the user's "next to new" ask.
         leftExtras: leftExtras,
       });
+      sideHdrLabel = sideHdrBuilt.elt.firstChild;
       sideList = el('div', {class: 'ui-chat-side-list'}, [uiLoading()]);
       sideSearch = makeSideSearch(sideList);
       side.appendChild(sideHdrBuilt.elt);
+      if (railTabs) side.appendChild(railTabs);
       side.appendChild(sideSearch);
       side.appendChild(sideList);
 
@@ -6255,12 +6281,16 @@
     function applyRecordLock(sid) {
       var agentId = window.GOHORT_AGENT_ID;
       var altLocked = !!(cfg.alt_locked && sid && sid === altPinnedSession(agentId));
-      recordLocked = altLocked || !!(sid && sid === recordPinnedSession(agentId));
+      // A thread (cfg.threads_url) is the agent's own conversation: read here,
+      // never written into.
+      var thread = !!(sid && threadIds[sid]);
+      recordLocked = altLocked || thread || !!(sid && sid === recordPinnedSession(agentId));
       inputArea.disabled = recordLocked;
       sendBtn.disabled = recordLocked;
       inputArea.placeholder = cfg.placeholder || 'Ask something...';
-      var lockedText = (altLocked && cfg.alt_locked_text) || cfg.record_locked_text ||
-        'This thread is a record. Start a new session to talk.';
+      var lockedText = (altLocked && cfg.alt_locked_text) ||
+        (thread && (cfg.threads_locked_text || 'This is the agent\'s own conversation, kept for reading. Start a new session to talk.')) ||
+        cfg.record_locked_text || 'This thread is a record. Start a new session to talk.';
       if (recordLocked && !lockNote && inputRow.parentNode) {
         lockNote = el('div', {class: 'ui-agent-locked-note'});
         inputRow.parentNode.insertBefore(lockNote, inputRow);
@@ -7340,9 +7370,116 @@
       }, 8000);
     }
 
+    // setRailView switches the rail between the sessions and the threads,
+    // renaming its header and the switch to match.
+    function setRailView(view) {
+      railView = view === 'threads' ? 'threads' : 'sessions';
+      if (sideHdrLabel) sideHdrLabel.textContent = railView === 'threads' ? (cfg.threads_label || 'Threads') : (cfg.list_title || 'Sessions');
+      markRailTabs();
+      loadSessions();
+    }
+
+    // markRailTabs marks the tab for the view showing, in full text on a tint
+    // of the accent, the other muted.
+    function markRailTabs() {
+      [[sessionsTab, railView === 'sessions'], [threadsBtn, railView === 'threads']].forEach(function(t) {
+        if (!t[0]) return;
+        t[0].classList.toggle('active', t[1]);
+        t[0].setAttribute('aria-selected', t[1] ? 'true' : 'false');
+        t[0].style.color = t[1] ? 'var(--text, inherit)' : 'var(--text-mute, #999)';
+        t[0].style.background = t[1] ? 'color-mix(in srgb, var(--accent, #4a9eff) 14%, transparent)' : 'none';
+      });
+    }
+
+    // refreshThreads reads the threads: their ids (a thread opens locked),
+    // the switch's dot, and, when the rail shows them, the list.
+    function refreshThreads() {
+      if (!cfg.threads_url) return;
+      fetchJSON(substituteExtras(cfg.threads_url)).then(function(list) {
+        if (!Array.isArray(list)) list = [];
+        threadIds = {};
+        var unread = false;
+        list.forEach(function(t) {
+          threadIds[t.id] = t;
+          if (t.unread && t.id !== activeSessionId) unread = true;
+        });
+        if (threadsDot) threadsDot.style.display = (unread && railView !== 'threads') ? 'inline-block' : 'none';
+        if (railView === 'threads') renderThreads(list);
+        if (activeSessionId && threadIds[activeSessionId]) applyRecordLock(activeSessionId);
+      }).catch(function() {
+        if (railView === 'threads') {
+          sideList.innerHTML = '';
+          sideList.appendChild(el('div', {class: 'ui-chat-side-empty'}, ['(failed to load)']));
+        }
+      });
+    }
+
+    // renderThreads lists the threads under their group's heading, in the
+    // order the app sends them. A group starts folded unless one of its
+    // threads has something new; its heading says how many it holds.
+    function renderThreads(list) {
+      sideList.innerHTML = '';
+      if (!list.length) {
+        sideList.appendChild(el('div', {class: 'ui-chat-side-empty'}, ['No threads']));
+        return;
+      }
+      var groups = [], byGroup = {};
+      list.forEach(function(t) {
+        var g = t.group || 'Threads';
+        if (!byGroup[g]) { byGroup[g] = []; groups.push(g); }
+        byGroup[g].push(t);
+      });
+      groups.forEach(function(g) {
+        var rows = byGroup[g];
+        var fresh = rows.some(function(t) { return t.unread && t.id !== activeSessionId; });
+        var holdsActive = rows.some(function(t) { return t.id === activeSessionId; });
+        var body = el('div', {class: 'ui-threads-group-body'});
+        var open = fresh || holdsActive;
+        var caret = el('span', {class: 'ui-threads-caret'}, [open ? '▾' : '▸']);
+        var head = el('button', {type: 'button', class: 'ui-threads-group', 'aria-expanded': open ? 'true' : 'false',
+          style: 'display:flex;align-items:center;gap:0.35rem;width:100%;background:none;border:none;padding:0.45rem 0.5rem 0.2rem;cursor:pointer;font:inherit;font-size:var(--fs-2xs, 0.72rem);font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-mute, #999);text-align:left',
+          onclick: function() {
+            open = !open;
+            body.style.display = open ? '' : 'none';
+            caret.textContent = open ? '▾' : '▸';
+            head.setAttribute('aria-expanded', open ? 'true' : 'false');
+          }}, [caret, el('span', {}, [g + ' (' + rows.length + ')'])]);
+        if (fresh) head.appendChild(el('span', {class: 'ui-unread-dot', style: 'width:7px;height:7px;border-radius:50%;background:var(--accent, #4a9eff)'}, ['']));
+        body.style.display = open ? '' : 'none';
+        rows.forEach(function(t) {
+          var kids = [];
+          if (t.unread && t.id !== activeSessionId) {
+            kids.push(el('span', {class: 'ui-unread-dot', title: 'New activity',
+              style: 'display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent, #4a9eff);margin-right:0.45rem;flex:0 0 auto;vertical-align:middle'}, ['']));
+          }
+          kids.push(el('span', {class: 'ui-chat-side-title', text: t.title || t.id}));
+          if (t.with) kids.push(el('span', {class: 'ui-threads-with', style: 'display:block;font-size:var(--fs-xs, 0.74rem);color:var(--text-mute, #999)'}, [t.with]));
+          var row = el('div', {class: 'ui-chat-side-item' + (t.id === activeSessionId ? ' active' : '')}, kids);
+          row.addEventListener('click', function() { openSession(t.id); closeDrawer(); });
+          if (cfg.delete_url) {
+            row.appendChild(el('button', {class: 'ui-chat-side-del', title: 'Delete',
+              onclick: async function(ev) {
+                ev.stopPropagation();
+                if (!(await window.uiConfirm('Delete this thread? Only the record here is removed; whatever it was part of goes on.'))) return;
+                fetchJSON(substituteExtras(cfg.delete_url.replace('{id}', encodeURIComponent(t.id))), {method: 'DELETE'}).then(function() {
+                  if (activeSessionId === t.id) openSession(null);
+                  refreshThreads();
+                });
+              }}, ['×']));
+          }
+          body.appendChild(row);
+        });
+        sideList.appendChild(head);
+        sideList.appendChild(body);
+      });
+      if (sideSearch && sideSearch.applyFilter) sideSearch.applyFilter();
+    }
+
     function loadSessions() {
       if (!hasList) return;
       loadChannels();
+      refreshThreads();
+      if (railView === 'threads') return;
       var activeID = cfg.list_is_context ? activeContextId : activeSessionId;
       fetchJSON(substituteExtras(cfg.list_url)).then(function(items) {
         sideList.innerHTML = '';
