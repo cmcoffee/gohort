@@ -43,4 +43,25 @@ check('group headings are tracked so they can go with their rows',
 check('badge refresh keys off the flag, not the placement',
   /if \(onlyAllAgents && !item\.all_agents\) return;/.test(src));
 
+// A menu's dot says something in it is waiting on the person, so only a
+// queue (an item declaring badge_field) lights it. A plain count is a size:
+// nonzero nearly always, it kept the dot lit for good. Run, not matched.
+(function() {
+  var from = src.indexOf('      function updateNavMenuDots() {');
+  var to = src.indexOf('\n      }\n', from);
+  check('the menu dot function is in the panel', from > 0 && to > from);
+  if (!(from > 0 && to > from)) return;
+  function badge(n) { return {style: {display: n ? '' : 'none'}, textContent: n ? String(n) : ''}; }
+  var run = new Function('cfg', 'navMenus', 'orchBadges',
+    src.slice(from, to + 8) + '\nupdateNavMenuDots();');
+  var cfg = {orchestrator_nav: [{label: 'Runs'}, {label: 'Spend'}, {label: 'Scheduler', badge_field: '_attention'}]};
+  var manage = {items: [0, 1], dot: {style: {display: 'x'}}};
+  var fleet = {items: [0, 2], dot: {style: {display: 'x'}}};
+  run(cfg, [manage, fleet], [badge(7), badge(3), badge(0)]);
+  check('a menu of plain counts never lights its dot', manage.dot.style.display === 'none');
+  check('an empty queue leaves the dot off, whatever the sizes beside it', fleet.dot.style.display === 'none');
+  run(cfg, [manage, fleet], [badge(7), badge(3), badge(2)]);
+  check('a queue with something in it lights its menu', fleet.dot.style.display === '' && manage.dot.style.display === 'none');
+})();
+
 process.exit(fail ? 1 : 0);

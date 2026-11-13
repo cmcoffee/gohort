@@ -56,15 +56,15 @@ type threadRow struct {
 	Title  string    `json:"title"`
 	Group  string    `json:"group"`
 	With   string    `json:"with,omitempty"`
-	Unread bool      `json:"unread,omitempty"`
 	LastAt time.Time `json:"last_at"`
 }
 
 // threadRowFor is a stored thread as the rail lists it: its title, or one
 // that says what it is, and who it is with.
 func threadRowFor(s ChatSession, group string) threadRow {
-	row := threadRow{ID: s.ID, Title: strings.TrimSpace(s.Title), Group: group,
-		Unread: s.LastAt.After(s.LastSeen), LastAt: s.LastAt}
+	// No unread mark: a thread is for checking in on, not something waiting
+	// on the person, so the rail draws no new-activity dot for one.
+	row := threadRow{ID: s.ID, Title: strings.TrimSpace(s.Title), Group: group, LastAt: s.LastAt}
 	// Who wrote to it: the last author named on an incoming message (an MCP
 	// key's name, a delegating agent's).
 	for i := len(s.Messages) - 1; i >= 0; i-- {

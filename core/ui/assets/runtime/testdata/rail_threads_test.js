@@ -1,7 +1,7 @@
 // Threads (cfg.threads_url): the rail's second view, behind two tabs on a row
 // of their own under its header, lists the agent's own conversations apart
-// from its sessions. A dot on the Threads tab says one has something new
-// while the rail shows sessions.
+// from its sessions. Nothing marks a thread as new: threads are checked in
+// on, not waiting on the person.
 // The list groups them under headings, every thread shown (no group folds
 // away); a thread opens like a session, its composer locked.
 // The shipped functions are run here over a stub page.
@@ -49,7 +49,7 @@ var threads = [
 ];
 var harness = new Function('el', 'cfg', 'list', 'opened', 'locked',
   'var railView = "sessions", threadIds = {}, activeSessionId = "", sideList = el("div"), sideSearch = null;\n' +
-  'var threadsDot = el("span"), threadsBtn = el("button", {}, [el("span", {}, ["Threads"]), threadsDot]), sessionsTab = el("button", {}, ["Sessions"]);\n' +
+  'var threadsBtn = el("button", {}, [el("span", {}, ["Threads"])]), sessionsTab = el("button", {}, ["Sessions"]);\n' +
   'var sideHdrLabel = el("span", {}, ["Sessions"]);\n' +
   'function fetchJSON() { return Promise.resolve(list); }\n' +
   'function substituteExtras(u) { return u; }\n' +
@@ -60,7 +60,7 @@ var harness = new Function('el', 'cfg', 'list', 'opened', 'locked',
   'function loadSessions() { refreshThreads(); }\n' +
   'var window = {uiConfirm: function() { return Promise.resolve(false); }};\n' +
   src.slice(from, to) +
-  '\nreturn {refresh: refreshThreads, view: setRailView, side: sideList, dot: threadsDot, btn: threadsBtn, hdr: sideHdrLabel,' +
+  '\nreturn {refresh: refreshThreads, view: setRailView, side: sideList, btn: threadsBtn, hdr: sideHdrLabel,' +
   ' tab: sessionsTab, ids: function() { return threadIds; }, open: function(id) { activeSessionId = id; }, transcript: transcriptFor};');
 
 var opened = [], locked = [];
@@ -72,7 +72,7 @@ check('the tabs are marked as they are built, Sessions first',
 r.refresh();
 setTimeout(function() {
   check('the threads are known by id once read', !!r.ids()['mcp-desktop:k1'] && !!r.ids()['dispatch:s1:a1']);
-  check('a new thread shows the dot while the rail shows sessions', r.dot.style.display === 'inline-block');
+  check('the Threads tab carries no new-activity dot', !/threadsDot/.test(src) && r.btn.textContent === 'Threads');
   check('the sessions are left as they are', r.side.children.length === 0);
   var tr = r.transcript('mcp-desktop:k1:review', 'Check test review');
   check('an opened thread names its lines: the caller, and the agent replying',
@@ -87,16 +87,17 @@ setTimeout(function() {
   setTimeout(function() {
     check('the header says Threads and the Threads tab is the one marked',
       r.hdr.textContent === 'Threads' && r.btn.attrs['aria-selected'] === 'true' && r.tab.attrs['aria-selected'] === 'false');
-    check('the dot goes while the threads show', r.dot.style.display === 'none');
     var kids = r.side.children;
     check('two groups, each a heading and its threads', kids.length === 4);
     check('headings say how many each holds', kids[0].textContent.indexOf('Over MCP (2)') >= 0 && kids[2].textContent.indexOf('Hand-offs (1)') >= 0);
     check('every group shows its threads, none folded away',
       kids[1].style.display === '' && kids[3].style.display === '' && kids[1].children.length === 2 && kids[3].children.length === 1);
     check('a heading is a label, not a fold toggle', !kids[0].onclick && !kids[2].onclick && kids[0].tag === 'div');
-    check('a heading carries the dot when one of its threads is new',
-      kids[0].children.length === 2 && kids[2].children.length === 1);
+    check('a heading is its label alone, no dot for a new thread',
+      kids[0].children.length === 1 && kids[2].children.length === 1);
     var row = kids[1].children[0];
+    check('a thread the app sends as unread still draws no dot',
+      !row.children.some(function(c) { return c && c.className === 'ui-unread-dot'; }));
     check('a row says who the thread is with', row.textContent.indexOf('Check test review') >= 0 && row.textContent.indexOf('Claude Code') >= 0);
     row.listeners.click();
     check('a click opens the thread', opened[0] === 'mcp-desktop:k1:review');

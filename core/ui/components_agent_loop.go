@@ -537,6 +537,8 @@ type OrchestratorNavItem struct {
 	// BadgeField names a hidden row field; the count badge then reflects only
 	// rows where that field is truthy (e.g. "_pending" counts just the pending
 	// approvals on a page that also lists granted ones). Empty = count all rows.
+	// Only an item with one lights its menu's dot: its count is a queue,
+	// something waiting on the person, where a count of every row is a size.
 	BadgeField string `json:"badge_field,omitempty"`
 	// BadgeSource counts the badge from this URL instead of Source: a cheap
 	// list of just the rows worth counting, for an item whose full Source is

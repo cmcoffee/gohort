@@ -59,10 +59,10 @@ func TestTheThreadsListAndTheSessionListAreApart(t *testing.T) {
 	if strings.Join(ids, " ") != strings.Join(want, " ") {
 		t.Fatalf("threads in order:\n got %v\nwant %v", ids, want)
 	}
-	if r := rows[0]; r.Group != threadGroupMCP || r.Title != "Check test review" || r.With != "Claude Code" || !r.Unread {
+	if r := rows[0]; r.Group != threadGroupMCP || r.Title != "Check test review" || r.With != "Claude Code" {
 		t.Errorf("a named MCP conversation: %+v", r)
 	}
-	if r := rows[1]; r.Title != "Over MCP" || r.Unread {
+	if r := rows[1]; r.Title != "Over MCP" {
 		t.Errorf("the key's default thread: %+v", r)
 	}
 	if r := rows[2]; r.Group != threadGroupHandOff || r.Title != "Hand-off" || r.With == "" {

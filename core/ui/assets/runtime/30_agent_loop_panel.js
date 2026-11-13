@@ -241,7 +241,7 @@
     // conversations nobody here started, read-only. railView is which view
     // the rail shows; every load starts on sessions. threadIds holds the ids
     // the last threads fetch returned, so opening one locks its composer.
-    var railView = 'sessions', threadIds = {}, threadsBtn = null, sessionsTab = null, threadsDot = null, sideHdrLabel = null;
+    var railView = 'sessions', threadIds = {}, threadsBtn = null, sessionsTab = null, sideHdrLabel = null;
     // Nav dropdowns — built in the rail block (where the nav machinery is in
     // scope), shown in the topbar actions for fleet agents. One per distinct
     // item.menu, in the order their first item appears; navMenus holds them in
@@ -361,18 +361,17 @@
       }
       // Threads switch: two tabs on a row of their own under the header, the
       // rail's whole width. In the header itself it crowded the title and its
-      // controls until a narrow rail cut them off. A dot on the Threads tab
-      // says a thread has something new while the rail shows sessions.
+      // controls until a narrow rail cut them off. The Threads tab carries no
+      // new-activity dot: threads are there to check in on, not to be called
+      // to.
       var railTabs = null;
       if (cfg.threads_url) {
         var tabStyle = 'flex:1 1 0;min-width:0;padding:0.3rem 0.4rem;border:none;background:none;cursor:pointer;font:inherit;font-size:var(--fs-sm, 0.82rem);font-weight:600;color:var(--text-mute, #999);white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
-        threadsDot = el('span', {class: 'ui-unread-dot', title: 'A thread has something new',
-          style: 'display:none;width:7px;height:7px;border-radius:50%;background:var(--accent, #4a9eff);margin-left:0.35rem;vertical-align:middle'}, ['']);
         sessionsTab = el('button', {type: 'button', class: 'ui-rail-tab active', style: tabStyle,
           onclick: function() { setRailView('sessions'); }}, [cfg.list_title || 'Sessions']);
         threadsBtn = el('button', {type: 'button', class: 'ui-rail-tab', style: tabStyle,
           title: 'The agent\'s own conversations: over MCP, hand-offs, pipeline steps',
-          onclick: function() { setRailView('threads'); }}, [el('span', {}, [cfg.threads_label || 'Threads']), threadsDot]);
+          onclick: function() { setRailView('threads'); }}, [el('span', {}, [cfg.threads_label || 'Threads'])]);
         railTabs = el('div', {class: 'ui-rail-tabs', role: 'tablist',
           style: 'display:flex;flex:0 0 auto;margin:0.45rem 0.5rem 0.4rem;border:1px solid var(--border, rgba(127,127,127,0.3));border-radius:var(--btn-radius, 6px);overflow:hidden'},
           [sessionsTab, threadsBtn]);
@@ -1255,11 +1254,13 @@
       // refreshChannelBadges fetches each management view's row count and
       // shows it as a badge on that row (hidden when zero). core/ui stays
       // agnostic: any nav item with a source gets a count badge.
-      // updateNavMenuDots lights the dot on a menu's button when ANY view
-      // inside THAT menu currently shows a nonzero count — the at-a-glance "you
-      // have pending items" signal the old rail-box badges gave, now that the
-      // per-view badges live inside a closed dropdown. Per menu, not global: a
-      // dot on every button at once says nothing about where to look.
+      // updateNavMenuDots lights the dot on a menu's button when a QUEUE view
+      // inside THAT menu (one that declares a badge_field) has something in
+      // it: the at-a-glance "something is waiting on you" signal. A count
+      // without a badge_field is a size (every row), which is nonzero nearly
+      // always, so a dot fed by it was lit for good and said nothing. Per
+      // menu, not global: a dot on every button at once says nothing about
+      // where to look.
       // Selection on a topbar control is an OUTLINE, and it has to come off
       // when the user goes somewhere else — opening a session, switching
       // agents. Nothing else clears it: the session-open reset below predates
@@ -1274,6 +1275,8 @@
           // Only the indices that actually render in THIS menu. Pinned and
           // topbar items live elsewhere and were never added to m.items.
           var any = m.items.some(function(i) {
+            var item = (cfg.orchestrator_nav || [])[i];
+            if (!item || !item.badge_field) return false;
             var b = orchBadges[i];
             return b && b.style.display !== 'none' && b.textContent && b.textContent !== '0';
           });
@@ -7392,19 +7395,14 @@
       });
     }
 
-    // refreshThreads reads the threads: their ids (a thread opens locked),
-    // the switch's dot, and, when the rail shows them, the list.
+    // refreshThreads reads the threads: their ids (a thread opens locked)
+    // and, when the rail shows them, the list.
     function refreshThreads() {
       if (!cfg.threads_url) return;
       fetchJSON(substituteExtras(cfg.threads_url)).then(function(list) {
         if (!Array.isArray(list)) list = [];
         threadIds = {};
-        var unread = false;
-        list.forEach(function(t) {
-          threadIds[t.id] = t;
-          if (t.unread && t.id !== activeSessionId) unread = true;
-        });
-        if (threadsDot) threadsDot.style.display = (unread && railView !== 'threads') ? 'inline-block' : 'none';
+        list.forEach(function(t) { threadIds[t.id] = t; });
         if (railView === 'threads') renderThreads(list);
         if (activeSessionId && threadIds[activeSessionId]) applyRecordLock(activeSessionId);
       }).catch(function() {
@@ -7417,7 +7415,8 @@
 
     // renderThreads lists every thread under its group's heading, in the
     // order the app sends them, none folded away; a heading says how many
-    // its group holds and carries a dot when one of them has something new.
+    // its group holds. No new-activity dots: a thread is for checking in on
+    // and troubleshooting, not something waiting on the person.
     function renderThreads(list) {
       sideList.innerHTML = '';
       if (!list.length) {
@@ -7432,18 +7431,12 @@
       });
       groups.forEach(function(g) {
         var rows = byGroup[g];
-        var fresh = rows.some(function(t) { return t.unread && t.id !== activeSessionId; });
         var body = el('div', {class: 'ui-threads-group-body'});
         var head = el('div', {class: 'ui-threads-group',
           style: 'display:flex;align-items:center;gap:0.35rem;padding:0.45rem 0.5rem 0.2rem;font-size:var(--fs-2xs, 0.72rem);font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-mute, #999)'},
           [el('span', {}, [g + ' (' + rows.length + ')'])]);
-        if (fresh) head.appendChild(el('span', {class: 'ui-unread-dot', style: 'width:7px;height:7px;border-radius:50%;background:var(--accent, #4a9eff)'}, ['']));
         rows.forEach(function(t) {
           var kids = [];
-          if (t.unread && t.id !== activeSessionId) {
-            kids.push(el('span', {class: 'ui-unread-dot', title: 'New activity',
-              style: 'display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent, #4a9eff);margin-right:0.45rem;flex:0 0 auto;vertical-align:middle'}, ['']));
-          }
           kids.push(el('span', {class: 'ui-chat-side-title', text: t.title || t.id}));
           if (t.with) kids.push(el('span', {class: 'ui-threads-with', style: 'display:block;font-size:var(--fs-xs, 0.74rem);color:var(--text-mute, #999)'}, [t.with]));
           var row = el('div', {class: 'ui-chat-side-item' + (t.id === activeSessionId ? ' active' : '')}, kids);
