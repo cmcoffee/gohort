@@ -1266,6 +1266,17 @@ type AgentLoopOverrides = agenthost.LoopOverrides
 // AgentSyncResult is agenthost.Result, which apps outside orchestrate use to reach it.
 type AgentSyncResult = agenthost.Result
 
+// answersPerson reports whether a dispatch run answers a person's own
+// message: one arriving on a channel or asked over MCP. A wake landing in a
+// channel thread (InputReportFrom, a finished job's report) answers nobody,
+// and neither does a hand-off from another agent.
+func answersPerson(run AgentSyncRun) bool {
+	if run.Kind != "channel" && run.Kind != kindMCP {
+		return false
+	}
+	return strings.TrimSpace(run.InputReportFrom) == "" && !isTaskWake(run.Message)
+}
+
 // buildInboundMediaManifest individuates the media that arrived on THIS turn,
 // giving the model a stable, referenceable handle per item (media#1, media#2, ...)
 // with sender attribution instead of an anonymous count. It is the media analogue
@@ -1979,6 +1990,17 @@ func (cr *continuingRun) buildTurn() {
 	cr.subTurn.requesterName = run.MessageSender
 	if run.Kind == "channel" {
 		cr.subTurn.requesterChannel = run.Kind
+	}
+	// The person's message this turn answers, when it answers one: a message
+	// on a channel or an ask over MCP, not a wake landing in that thread nor a
+	// hand-off from another agent. The web turn sets it (newToolSession); this
+	// path builds its own session and never did, so on a channel every pass of
+	// an image chain read as a wake continuing the last one. The chain's count
+	// never started over, and a group chat's new requests were refused as
+	// "this chain of passes has stopped" for half an hour after the third.
+	if answersPerson(run) {
+		cr.subTurn.request = run.Message
+		cr.subSess.Request = run.Message
 	}
 	// Name the trail this turn writes its breadcrumbs to. A dispatched run has
 	// no *session — the record belongs to the caller — so without this every

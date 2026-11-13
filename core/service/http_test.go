@@ -1,9 +1,11 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -116,5 +118,30 @@ func TestARequestIsLoggedWithoutKeysOrData(t *testing.T) {
 	got := elideData(body)
 	if strings.Contains(got, "QUJDQUJD") || !strings.Contains(got, "make it snowy") || !strings.Contains(got, "of data>") {
 		t.Errorf("body: %s", got)
+	}
+}
+
+// A JSON reply is read to the connector's own size limit, as a file reply
+// is. Gemini's image edits come back as JSON carrying the picture as base64:
+// held to a fixed 4 MB, a larger picture was cut off mid-reply and failed as
+// "the reply is not JSON". A reply past the limit says so, not that it is
+// not JSON.
+func TestALargeJSONReplyIsReadWhole(t *testing.T) {
+	picture := base64.StdEncoding.EncodeToString(make([]byte, 5<<20)) // ~6.7 MB of base64
+	body, _ := json.Marshal(map[string]any{"candidates": []any{map[string]any{"data": picture}}})
+	reply := func() *http.Response {
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(body))}
+	}
+	r, err := transport{}.readResponse("edit", Operation{}, reply(), nil)
+	if err != nil {
+		t.Fatalf("a %d-byte JSON reply: %v", len(body), err)
+	}
+	if r.node == nil {
+		t.Error("the reply was not read as JSON")
+	}
+	small := transport{p: Provider{Limits: &Limits{MaxBytes: 1 << 20}}}
+	_, err = small.readResponse("edit", Operation{}, reply(), nil)
+	if err == nil || !strings.Contains(err.Error(), "larger than this connector's limit") || strings.Contains(err.Error(), "not JSON") {
+		t.Errorf("a reply past the connector's limit: %v", err)
 	}
 }

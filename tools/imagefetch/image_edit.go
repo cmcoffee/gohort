@@ -489,8 +489,13 @@ func framePictures(prompt string, edits bool, n int) string {
 	var b strings.Builder
 	switch {
 	case edits && n > 1:
-		fmt.Fprintf(&b, "Picture 1 is the photo to edit. Change only what is asked below, and keep everything else in it as it is: its framing, its shape, and everyone and everything the change does not name. "+
-			"Pictures 2 to %d are references: take from each only what the change asks for, such as a face.", n)
+		b.WriteString("Picture 1 is the photo to edit. Change only what is asked below, and keep everything else in it as it is: its framing, its shape, and everyone and everything the change does not name. ")
+		// One reference read "Pictures 2 to 2 are references".
+		if n == 2 {
+			b.WriteString("Picture 2 is a reference: take from it only what the change asks for, such as a face.")
+		} else {
+			fmt.Fprintf(&b, "Pictures 2 to %d are references: take from each only what the change asks for, such as a face.", n)
+		}
 	case edits:
 		b.WriteString("The picture is the photo to edit. Change only what is asked below, and keep everything else in it as it is: its framing, its shape, and everyone and everything the change does not name.")
 	default:

@@ -362,10 +362,19 @@ func (t transport) readResponse(name string, op Operation, resp *http.Response, 
 		}
 		return r, nil
 	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	// Read to the connector's own limit, as a file reply is. A JSON reply
+	// can carry a whole picture as base64 (Gemini's image edits do): held to
+	// a fixed 4 MB, a larger picture was cut off mid-reply and failed as "the
+	// reply is not JSON", which read as the service answering garbage.
+	max := t.maxBytes()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, max+1))
 	n, r.text = int64(len(b)), string(b)
 	if err != nil {
 		return r, fmt.Errorf("%s: %w", name, err)
+	}
+	if int64(len(b)) > max {
+		r.text = ""
+		return r, fmt.Errorf("%s: the reply is larger than this connector's limit of %s; raise the connector's size limit if replies this big are expected", name, HumanSize(max))
 	}
 	if op.Read == "" || op.Read == "json" {
 		if err := json.Unmarshal(b, &r.node); err != nil {

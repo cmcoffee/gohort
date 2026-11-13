@@ -68,7 +68,7 @@ func TestTheGeminiTemplateGeneratesAndEditsForAnAgent(t *testing.T) {
 		t.Fatalf("an edit naming its picture: %v", err)
 	}
 	if strings.Join(edit.refs, ",") != "image#scene,image#face" || !strings.HasPrefix(edit.prompt, "Picture 1 is the photo to edit.") ||
-		!strings.Contains(edit.prompt, "Pictures 2 to 2 are references") || !strings.Contains(edit.prompt, "The change: swap the man on the left") {
+		!strings.Contains(edit.prompt, "Picture 2 is a reference") || !strings.Contains(edit.prompt, "The change: swap the man on the left") {
 		t.Errorf("the edit as Gemini gets it: %v %q", edit.refs, edit.prompt)
 	}
 	// No face pass runs on a service connector, so none is offered or said.

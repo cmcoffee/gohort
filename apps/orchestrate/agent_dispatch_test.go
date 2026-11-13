@@ -1052,3 +1052,45 @@ func TestEveryDispatchPathUsesTheOneToolPool(t *testing.T) {
 		}
 	}
 }
+
+// A turn answering a person's message on a channel, or an ask over MCP,
+// carries that message as the session's request, as a web turn does. A tool
+// reads it to tell a new request from a wake continuing earlier work: the
+// image chain starts its count over on one, and without it every pass of a
+// chain on a channel read as a wake, so a group chat's new requests were
+// refused as a chain that had stopped. A wake landing in the thread, a
+// finished job's report, and a hand-off from another agent answer nobody.
+func TestADispatchTurnCarriesThePersonsRequest(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		run  AgentSyncRun
+		want string
+	}{
+		{"a channel message", AgentSyncRun{Kind: "channel", Message: "make the sky darker", MessageSender: "Alice"}, "make the sky darker"},
+		{"an ask over MCP", AgentSyncRun{Kind: kindMCP, Message: "how did the run go"}, "how did the run go"},
+		{"a wake in a channel thread", AgentSyncRun{Kind: "channel", Message: "price is now 41", InputReportFrom: "Price watch"}, ""},
+		{"a finished job's report", AgentSyncRun{Kind: "channel", Message: taskWakeMarker + " the edit is done"}, ""},
+		{"a hand-off from another agent", AgentSyncRun{Message: "look up A17"}, ""},
+	} {
+		got := "(not called)"
+		see := AgentToolDef{
+			Tool: Tool{Name: "see_request", Description: "d", Caps: []Capability{CapRead}},
+			Handler: func(ctx context.Context, _ map[string]any) (string, error) {
+				got = ""
+				if s := ToolSessionFromContext(ctx); s != nil {
+					got = s.Request
+				}
+				return "ok", nil
+			},
+		}
+		df := newDispatchFixture(t, FakeTurn{ToolCalls: []ToolCall{{ID: "c1", Name: "see_request", Args: map[string]any{}}}},
+			FakeTurn{Content: "done", Repeat: true})
+		r := c.run
+		r.SubSessionID = "thread-req"
+		r.AppTools = []AgentToolDef{see}
+		df.run(r)
+		if got != c.want {
+			t.Errorf("%s: the tool saw request %q, want %q", c.name, got, c.want)
+		}
+	}
+}
