@@ -619,6 +619,54 @@ func TestOwnLanesSurviveAWritingRound(t *testing.T) {
 	}
 }
 
+// Each round of several calls says in the log how it ran: all at once, or in
+// order and which call ordered it and why, or split. A write in a round, or
+// a tool declaring nothing, runs every call in it one after another, and
+// nothing said so: how much parallelism was being lost, and to which tools,
+// could not be read anywhere.
+func TestARoundSaysHowItsCallsRan(t *testing.T) {
+	lines := captureLog(t)
+	shape := func() string {
+		for i := len(*lines) - 1; i >= 0; i-- {
+			if l := (*lines)[i]; strings.Contains(l, "tool calls") {
+				return l
+			}
+		}
+		return ""
+	}
+	p := &orderProbe{}
+	runRound(t, []AgentToolDef{p.tool("search", []Capability{CapRead}, nil)},
+		[]ToolCall{call("search", "1"), call("search", "2"), call("search", "3")})
+	if got := shape(); !strings.Contains(got, "round 1: 3 tool calls ran in parallel") {
+		t.Errorf("a reading round: %q", got)
+	}
+	runRound(t, []AgentToolDef{p.tool("mystery", nil, nil), p.tool("search", []Capability{CapRead}, nil)},
+		[]ToolCall{call("search", "1"), call("mystery", "2")})
+	if got := shape(); !strings.Contains(got, "2 tool calls ran in order, forced by mystery (declares no capabilities, so it counts as a write)") {
+		t.Errorf("a round with an undeclared tool: %q", got)
+	}
+	runRound(t, []AgentToolDef{p.tool("edit", []Capability{CapWrite}, nil), p.tool("search", []Capability{CapRead}, nil)},
+		[]ToolCall{call("search", "1"), call("edit", "2")})
+	if got := shape(); !strings.Contains(got, "ran in order, forced by edit (writes or runs something)") {
+		t.Errorf("a writing round: %q", got)
+	}
+	var n atomic.Int64
+	probe := p.tool("probe", nil, nil)
+	probe.BatchLane = func(map[string]any) string { return strconv.FormatInt(n.Add(1)%2, 10) }
+	runRound(t, []AgentToolDef{probe, p.tool("note", []Capability{CapWrite}, nil)},
+		[]ToolCall{call("note", "1"), call("probe", "a"), call("probe", "b")})
+	if got := shape(); !strings.Contains(got, "3 tool calls: 1 in order (forced by note (writes or runs something)), 2 in 2 lane(s) of their own") {
+		t.Errorf("a writing round with lanes of their own: %q", got)
+	}
+	before := len(*lines)
+	runRound(t, []AgentToolDef{p.tool("search", []Capability{CapRead}, nil)}, []ToolCall{call("search", "1")})
+	for _, l := range (*lines)[before:] {
+		if strings.Contains(l, "tool calls") {
+			t.Errorf("a round of one call logged its shape: %q", l)
+		}
+	}
+}
+
 // A tool the model calls by name, outside the round's catalog, is confirmed
 // and judged as it would be in the catalog. The fallback used to hand the
 // loop a bare handler, which carried none of that: a confirm tool loaded on

@@ -4283,15 +4283,20 @@ func (lr *loopRun) dispatchTools() loopAction {
 		keys := make([]string, len(lr.rs.work))
 		explicit := make([]bool, len(lr.rs.work))
 		ordered := false
+		forcedBy := "" // the first call that ordered the round, and why, for the log
 		for i, w := range lr.rs.work {
 			if fn := lr.batchLaneFns[w.tc.Name]; fn != nil {
 				keys[i] = fn(w.tc.Args)
 				explicit[i] = keys[i] != ""
 			}
 			if !explicit[i] && lr.callWrites(w.tc) {
+				if !ordered {
+					forcedBy = w.tc.Name + " (" + lr.writeReason(w.tc) + ")"
+				}
 				ordered = true
 			}
 		}
+		fanned := 0
 		lanes := map[string][]toolWork{}
 		var laneOrder []string
 		for i, w := range lr.rs.work {
@@ -4305,6 +4310,7 @@ func (lr *loopRun) dispatchTools() loopAction {
 				laned = true
 			}
 			if !laned {
+				fanned++
 				wg.Add(1)
 				go func(w toolWork) {
 					defer wg.Done()
@@ -4317,6 +4323,7 @@ func (lr *loopRun) dispatchTools() loopAction {
 			}
 			lanes[lane] = append(lanes[lane], w)
 		}
+		lr.logBatchShape(fanned, laneOrder, lanes, ordered, forcedBy)
 		for _, key := range laneOrder {
 			wg.Add(1)
 			go func(items []toolWork) {
@@ -4512,13 +4519,7 @@ func (lr *loopRun) dispatchTools() loopAction {
 // guess is a round run in order, and the cost of the other guess is the race
 // this exists to stop.
 func (lr *loopRun) callWrites(tc ToolCall) bool {
-	t := lr.toolCaps[tc.Name]
-	caps := t.Caps
-	if action, _ := tc.Args["action"].(string); action != "" {
-		if c, ok := t.ActionCaps[action]; ok {
-			caps = c
-		}
-	}
+	caps := lr.callCaps(tc)
 	if len(caps) == 0 {
 		return true
 	}
@@ -4528,6 +4529,50 @@ func (lr *loopRun) callWrites(tc ToolCall) bool {
 		}
 	}
 	return false
+}
+
+// callCaps is what one call declares it does: its action's capabilities for
+// a grouped tool, else the tool's own.
+func (lr *loopRun) callCaps(tc ToolCall) []Capability {
+	t := lr.toolCaps[tc.Name]
+	if action, _ := tc.Args["action"].(string); action != "" {
+		if c, ok := t.ActionCaps[action]; ok {
+			return c
+		}
+	}
+	return t.Caps
+}
+
+// writeReason is why callWrites counts tc as a write: it declares a write or
+// an execute, or it declares nothing at all, which is read as one.
+func (lr *loopRun) writeReason(tc ToolCall) string {
+	if len(lr.callCaps(tc)) == 0 {
+		return "declares no capabilities, so it counts as a write"
+	}
+	return "writes or runs something"
+}
+
+// logBatchShape says how a round of several calls ran: all at once, or in
+// order and what ordered it, or split between the two. One line per such
+// round, so how much a round's parallelism is lost, and to which tools, can
+// be read off the log: a write in a round, or a tool declaring nothing,
+// runs every call in it one after another.
+func (lr *loopRun) logBatchShape(fanned int, laneOrder []string, lanes map[string][]toolWork, ordered bool, forcedBy string) {
+	inLanes := 0
+	for _, k := range laneOrder {
+		inLanes += len(lanes[k])
+	}
+	total := fanned + inLanes
+	switch {
+	case inLanes == 0:
+		Log("[agent_loop] round %d: %d tool calls ran in parallel", lr.round, total)
+	case ordered && fanned == 0 && len(laneOrder) == 1:
+		Log("[agent_loop] round %d: %d tool calls ran in order, forced by %s", lr.round, total, forcedBy)
+	case ordered:
+		Log("[agent_loop] round %d: %d tool calls: %d in order (forced by %s), %d in %d lane(s) of their own", lr.round, total, len(lanes[""]), forcedBy, inLanes-len(lanes[""]), len(laneOrder)-1)
+	default:
+		Log("[agent_loop] round %d: %d tool calls: %d in parallel, %d in %d ordered lane(s)", lr.round, total, fanned, inLanes, len(laneOrder))
+	}
 }
 
 func (lr *loopRun) releaseSpentOutputs() {
