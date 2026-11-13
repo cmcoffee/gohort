@@ -15,6 +15,7 @@ package orchestrate
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -112,29 +113,49 @@ func (T *OrchestrateApp) judgeWithPrompt(ctx context.Context, sysPrompt, message
 	if T == nil || T.LLM == nil {
 		return objectiveVerdict{}, false
 	}
-	resp, err := T.LLM.Chat(ctx, []Message{{Role: "user", Content: message}},
-		WithSystemPrompt(sysPrompt), WithJSONMode(),
-		WithRouteKey(objectiveJudgeRoute), WithThink(false))
+	ask := func(jsonMode bool) (string, error) {
+		opts := []ChatOption{WithSystemPrompt(sysPrompt), WithRouteKey(objectiveJudgeRoute), WithThink(false)}
+		if jsonMode {
+			opts = append(opts, WithJSONMode())
+		}
+		resp, err := T.LLM.Chat(ctx, []Message{{Role: "user", Content: message}}, opts...)
+		if err != nil {
+			return "", err
+		}
+		return resp.Content, nil
+	}
+	content, err := ask(true)
 	if err != nil {
 		Debug("[objective] LLM error: %v, no opinion", err)
 		return objectiveVerdict{}, false
 	}
-	var out struct {
-		Verdict string `json:"verdict"`
-		Reason  string `json:"reason"`
-	}
-	if derr := DecodeJSON(resp.Content, &out); derr != nil {
-		// A reason quoting the goal usually carries unescaped quotation marks;
-		// salvageJudgeJSON recovers the object by its keys.
-		fields, ok := salvageJudgeJSON(resp.Content, []string{"verdict", "reason"})
-		if !ok {
-			Debug("[objective] unparseable verdict %q: no opinion", truncateObs(resp.Content, 120))
-			return objectiveVerdict{}, false
+	verdict, reason, parsed := readJudgeVerdict(content)
+	if parsed && strings.TrimSpace(verdict) == "" {
+		// JSON with no verdict in it, most often a bare {}: a provider's JSON
+		// mode (Ollama's format, an OpenAI json_object) holds a model to an
+		// object it would rather answer in words, and the object comes back
+		// empty. Asked once more without JSON mode, the word is read from the
+		// answer however it is written.
+		Debug("[objective] no verdict in %q: asking again without JSON mode", truncateObs(content, 120))
+		if again, aerr := ask(false); aerr != nil {
+			Debug("[objective] LLM error on the retry: %v, no opinion", aerr)
+		} else {
+			content = again
+			verdict, reason, parsed = readJudgeVerdict(again)
+			if !parsed || strings.TrimSpace(verdict) == "" {
+				verdict, parsed = bareJudgeWord(again), true
+				if reason == "" {
+					reason = truncateObs(strings.TrimSpace(again), 200)
+				}
+			}
 		}
-		out.Verdict, out.Reason = fields["verdict"], fields["reason"]
+	}
+	if !parsed {
+		Debug("[objective] unparseable verdict %q: no opinion", truncateObs(content, 120))
+		return objectiveVerdict{}, false
 	}
 	met := false
-	switch strings.ToUpper(strings.TrimSpace(out.Verdict)) {
+	switch strings.ToUpper(strings.TrimSpace(verdict)) {
 	case "MET":
 		met = true
 	case "NOT_YET", "NOT YET", "NOTYET":
@@ -142,10 +163,10 @@ func (T *OrchestrateApp) judgeWithPrompt(ctx context.Context, sysPrompt, message
 	default:
 		// Neither word. Retiring a task on a verdict nobody can read is worse
 		// than one more attempt.
-		Debug("[objective] unusable verdict %q: no opinion", truncateObs(out.Verdict, 60))
+		Debug("[objective] unusable verdict %q in %q: no opinion", truncateObs(verdict, 60), truncateObs(content, 160))
 		return objectiveVerdict{}, false
 	}
-	reason := strings.TrimSpace(out.Reason)
+	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		reason = "no reason given"
 	}
@@ -517,4 +538,44 @@ func (T *OrchestrateApp) settleObjective(ctx context.Context, f objectiveFire) o
 		Stalled: stalled,
 		Judged:  judged,
 	}
+}
+
+// readJudgeVerdict reads an objective checker's JSON answer: decoded strictly,
+// or salvaged by its keys when a quoted reason broke the escaping. parsed is
+// false when the text is not that object at all.
+func readJudgeVerdict(content string) (verdict, reason string, parsed bool) {
+	var out struct {
+		Verdict string `json:"verdict"`
+		Reason  string `json:"reason"`
+	}
+	if DecodeJSON(content, &out) == nil {
+		return out.Verdict, out.Reason, true
+	}
+	fields, ok := salvageJudgeJSON(content, []string{"verdict", "reason"})
+	if !ok {
+		return "", "", false
+	}
+	return fields["verdict"], fields["reason"], true
+}
+
+var (
+	judgeNotYetWord = regexp.MustCompile(`\bNOT[_ ]?(YET|MET)\b`)
+	judgeMetWord    = regexp.MustCompile(`\bMET\b`)
+)
+
+// bareJudgeWord reads the verdict word from an answer written in words: MET
+// or NOT_YET as the prompt spells them, in capitals. A negative ("NOT YET",
+// "NOT MET") is read first, so "NOT MET" never reads as MET; an answer naming
+// both, or neither, is "" and stays no opinion. Lower-case prose is not read:
+// "the goal is not quite met" is a sentence, not a verdict.
+func bareJudgeWord(content string) string {
+	no := judgeNotYetWord.MatchString(content)
+	yes := judgeMetWord.MatchString(judgeNotYetWord.ReplaceAllString(content, ""))
+	switch {
+	case no && !yes:
+		return "NOT_YET"
+	case yes && !no:
+		return "MET"
+	}
+	return ""
 }

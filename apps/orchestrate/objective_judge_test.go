@@ -867,3 +867,46 @@ func TestStandingAgentsSayTheyAreNotForOneRun(t *testing.T) {
 		t.Errorf("the one-off refusal = %q", standingNotOnce)
 	}
 }
+
+// A JSON answer with no verdict in it (a bare {} from a provider's JSON mode)
+// is asked once more without JSON mode, and the word read from that answer
+// however it is written. Only MET or NOT_YET in capitals is a verdict: "NOT
+// MET" is never MET, and an answer naming both, or neither, stays no opinion.
+func TestAnEmptyVerdictIsAskedAgainInWords(t *testing.T) {
+	ev := objectiveEvidence{Objective: "the post is live", Reply: "done", Attempt: 1}
+	cases := []struct {
+		name       string
+		retry      string
+		wantJudged bool
+		wantMet    bool
+	}{
+		{"a bare word", "MET", true, true},
+		{"json the second time", `{"verdict":"NOT_YET","reason":"nothing was published"}`, true, false},
+		{"a sentence with the word", "Verdict: NOT_YET. Nothing was published.", true, false},
+		{"not met is not met", "NOT MET: the post is not live", true, false},
+		{"lower-case prose", "the goal looks met to me", false, false},
+		{"both words", "Either MET or NOT_YET, hard to say", false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			llm := &FakeLLM{Turns: []FakeTurn{{Content: "{}"}, {Content: c.retry}}}
+			T := &OrchestrateApp{AppCore: AppCore{LLM: llm}}
+			v, judged := T.judgeObjective(context.Background(), ev)
+			if judged != c.wantJudged || v.Met != c.wantMet {
+				t.Errorf("judged=%v met=%v, want judged=%v met=%v", judged, v.Met, c.wantJudged, c.wantMet)
+			}
+			if llm.Calls() != 2 || !llm.Config(0).JSONMode || llm.Config(1).JSONMode {
+				t.Errorf("%d call(s); want the second without JSON mode", llm.Calls())
+			}
+			if judged && strings.TrimSpace(v.Reason) == "" {
+				t.Error("an opinion with no reason")
+			}
+		})
+	}
+	// A verdict that is there but not a word the checker knows is not asked
+	// again: the model answered, just not usefully.
+	llm := &FakeLLM{Turns: []FakeTurn{{Content: `{"verdict":"MAYBE","reason":"unsure"}`}}}
+	if _, judged := (&OrchestrateApp{AppCore: AppCore{LLM: llm}}).judgeObjective(context.Background(), ev); judged || llm.Calls() != 1 {
+		t.Errorf("judged=%v after %d call(s)", judged, llm.Calls())
+	}
+}
