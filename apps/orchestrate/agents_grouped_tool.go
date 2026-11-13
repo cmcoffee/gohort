@@ -1877,7 +1877,9 @@ func (ar *agentsRun) finish() bool {
 	}
 	ar.tnow = time.Now()
 	ar.prior.Messages = append(ar.prior.Messages,
-		ChatMessage{Role: "user", Content: ar.msg, Created: ar.tnow},
+		// Sender names the agent that handed this over, for the Threads view;
+		// the re-threaded history above sends Role and Content only.
+		ChatMessage{Role: "user", Content: ar.msg, Created: ar.tnow, Sender: t.agent.Name},
 		ChatMessage{Role: "assistant", Content: ar.cleanReply, Created: ar.tnow},
 	)
 	if len(ar.prior.Messages) > maxDispatchTurns {
@@ -2041,6 +2043,8 @@ func (t *chatTurn) agentsDispatchPolicy(allowRun bool) DetachPolicy {
 			res, rerr := t.app.RunAgentSyncContinuingRich(runCtx, AgentSyncRun{
 				AgentOwner: t.user, RuntimeUser: t.user, AgentKey: target.ID,
 				SubSessionID: thread,
+				// The agent handing it over, named on the brief in the thread.
+				MessageSender: t.agent.Name,
 				// Where a picture the sub-agent makes has to come home to, and
 				// the conversation that is to be delivered into (subAgentChannel).
 				DeliverySessionID: d.DeliverySession(),

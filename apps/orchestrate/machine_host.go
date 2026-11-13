@@ -329,7 +329,10 @@ func (h *machineHost) runDelegatedPhase(ctx context.Context, ph MachinePhase, re
 		RuntimeUser:  h.user,
 		AgentKey:     target.ID,
 		SubSessionID: sub,
-		Message:      task,
+		// The agent whose pipeline this step is, named on the task in the
+		// delegate's thread (empty for a pipeline run with no agent).
+		MessageSender: h.agentName,
+		Message:       task,
 		// A caller mid-turn has a person waiting, so the delegate's progress
 		// rides the same activity surface the rest of the turn uses rather than
 		// disappearing into a silence. A run with nobody watching drops it.

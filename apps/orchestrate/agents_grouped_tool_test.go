@@ -246,3 +246,39 @@ func TestADelegationWaitsForTheOneAheadOfIt(t *testing.T) {
 		t.Error("a stopped run kept waiting for the thread")
 	}
 }
+
+// A hand-off's thread names the agent that handed it over: the Threads view
+// lists who it is with, on the awaited path and the background one alike.
+func TestAHandOffThreadNamesTheCallingAgent(t *testing.T) {
+	SetWorkspacesDir(t.TempDir())
+	t.Cleanup(func() { SetWorkspacesDir("") })
+	df := newDispatchFixture(t, FakeTurn{Content: "Done.", Repeat: true})
+	scout, err := saveAgent(df.udb, AgentRecord{Name: "Scout", Owner: "u", OrchestratorPrompt: "You make songs."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, room := range []string{"chan:room-1", "chan:room-2"} {
+		turn := &chatTurn{app: df.app, user: "u", udb: df.udb, agent: df.agent, ctx: t.Context()}
+		d := &ToolSession{Username: "u", ChatSessionID: room, DB: df.udb, Ctx: t.Context()}
+		turn.dispatchSess = d
+		ask := map[string]any{"action": "run", "agent": "Scout", "message": "make the song"}
+		if room == "chan:room-1" {
+			ask["await"] = false
+			_, err = turn.agentsDispatchPolicy(true).Detached(ask, d)
+		} else {
+			_, err = turn.agentsRunAction(ask)
+		}
+		if err != nil {
+			t.Fatalf("%s: %v", room, err)
+		}
+	}
+	rows := listThreads(df.udb, scout.ID)
+	if len(rows) != 2 {
+		t.Fatalf("want a thread per conversation, got %+v", rows)
+	}
+	for _, r := range rows {
+		if r.Group != threadGroupHandOff || r.With != df.agent.Name {
+			t.Errorf("thread %s is with %q (%s), want %q", r.ID, r.With, r.Group, df.agent.Name)
+		}
+	}
+}
