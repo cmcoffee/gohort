@@ -50,7 +50,8 @@ const agentMemoryModalTemplate = `<script>
       // Escape-to-close, no backdrop-close). It owns the overlay/card and
       // teardown; we fill the body and footer below. dlg.close/.remove are
       // wired to the full teardown so the existing call sites keep working.
-      var _m = window.uiOpenModal({ title: 'Memory', width: '640px', actions: [] });
+      // Cancel and Save in the modal's own footer (added at the end).
+      var _m = window.uiOpenModal({ title: 'Memory', width: '640px', closeLabel: 'Cancel' });
       var dlg = _m.dialog, body = _m.body;
       function closeDlg() { _m.close(); }
       dlg.close = closeDlg; dlg.remove = closeDlg;
@@ -448,11 +449,6 @@ const agentMemoryModalTemplate = `<script>
       notesWrap.appendChild(notesArea);
       var notesBar = document.createElement('div');
       notesBar.style.cssText = 'display:flex;align-items:center;gap:0.4rem;margin-top:0.4rem';
-      var notesSave = document.createElement('button');
-      notesSave.type = 'button';
-      notesSave.className = 'ui-row-btn primary ui-btn-sm';
-      notesSave.textContent = 'Save';
-      notesBar.appendChild(notesSave);
       var notesClear = document.createElement('button');
       notesClear.type = 'button';
       notesClear.className = 'ui-row-btn danger ui-btn-sm';
@@ -497,6 +493,10 @@ const agentMemoryModalTemplate = `<script>
           if (d) renderNotesSizes(d.sections);
         }).catch(function() {});
       }
+      // The notes as stored, null while the section is off or not loaded:
+      // the footer's Save writes them only when they were changed here, so
+      // a configured seed shown unchanged is not saved as the agent's own.
+      var notesSaved = null;
       function notesPut(text, okMsg) {
         notesStatus.style.color = 'var(--text-mute)';
         notesStatus.textContent = 'Saving...';
@@ -507,6 +507,7 @@ const agentMemoryModalTemplate = `<script>
         }).then(function(r) {
           if (!r.ok) { return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); }); }
           notesStatus.textContent = okMsg;
+          notesSaved = text;
           notesCount();
           refreshNotesSizes();
         }).catch(function(e) {
@@ -514,7 +515,6 @@ const agentMemoryModalTemplate = `<script>
           notesStatus.textContent = String(e.message || e);
         });
       }
-      notesSave.addEventListener('click', function() { notesPut(notesArea.value, 'Saved.'); });
       notesClear.addEventListener('click', function() {
         window.uiConfirm('Clear this agent\'s working notes? It will start the next turn with none.').then(function(ok) {
           if (!ok) return;
@@ -534,6 +534,7 @@ const agentMemoryModalTemplate = `<script>
         }
         notesCap = d.cap || 0;
         notesArea.value = d.text || '';
+        notesSaved = notesArea.value;
         notesCount();
         renderNotesSizes(d.sections);
         if (d.from_seed) {
@@ -771,32 +772,38 @@ const agentMemoryModalTemplate = `<script>
         }
       }).catch(function(){});
 
-      // --- Footer: Cancel + Save (saves facts only, Inferred is
-      // per-entry delete; Notes auto-write paths are gone) ---
-      var actions = document.createElement('div');
-      actions.className = 'ui-modal-footer';
-      var cancel = document.createElement('button');
-      cancel.textContent = 'Cancel';
-      cancel.className = 'ui-row-btn';
-      cancel.addEventListener('click', function(){ dlg.close(); dlg.remove(); });
+      // --- Footer: Save beside the modal's Cancel. One Save for the
+      // dialog: the facts, and the working notes when they were changed
+      // here (Reference Memory is per-entry delete, saved as it goes). ---
       var save = document.createElement('button');
       save.textContent = 'Save';
       save.className = 'ui-row-btn primary';
       save.addEventListener('click', function() {
         var cleanFacts = facts.map(function(n){ return String(n||'').trim(); }).filter(Boolean);
         save.disabled = true;
-        fetch(MEMBASE + 'facts', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({notes: cleanFacts}),
+        var notesFirst = Promise.resolve();
+        if (notesSaved !== null && notesArea.value !== notesSaved) {
+          notesFirst = fetch(MEMBASE + 'notes', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({text: notesArea.value})
+          }).then(function(r) {
+            if (!r.ok) return r.text().then(function(t) { throw new Error('working notes: ' + (t || ('HTTP ' + r.status))); });
+            notesSaved = notesArea.value;
+          });
+        }
+        notesFirst.then(function() {
+          return fetch(MEMBASE + 'facts', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({notes: cleanFacts}),
+          });
         }).then(function(r){
           if (!r.ok && r.status !== 204) return r.text().then(function(t){ throw new Error(t); });
           dlg.close(); dlg.remove();
         }).catch(function(err){ save.disabled = false; window.uiAlert('Save failed: ' + (err && err.message || err)); });
       });
-      actions.appendChild(cancel);
-      actions.appendChild(save);
-      dlg.appendChild(actions);
+      _m.addAction(save);
     });
   }
   register();

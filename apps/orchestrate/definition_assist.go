@@ -145,7 +145,6 @@ const definitionAssistCSS = `
 .da-warn{color:var(--text-mute);font-size:var(--fs-sm, .85rem)}
 .da-drafting{display:flex;gap:.6rem;align-items:center}
 .da-error{color:var(--danger, #c33)}
-.da-foot{display:flex;gap:.5rem;justify-content:flex-end;margin-top:.75rem}
 @media (max-width: 760px){.da-chat{height:50vh}}
 `
 
@@ -165,19 +164,19 @@ const definitionAssistJS = `(function(){
   var opener = null;
   window.orchDefinitionAssist = function(cfg) {
     function open(ask) {
+      var proposal = null, ctl = null, tick = null;
+      function stopTick() { if (tick) { clearInterval(tick); tick = null; } }
       window.uiOpenModal({
         title: '✨ Get assistance with this ' + cfg.noun,
         subtitle: 'Ask about it, or for a change to any part of it. A change is drafted and shown to you first; nothing is saved until you apply it.',
         width: '780px',
-        actions: [],
+        // However the dialog goes (Close, Escape, a click outside), a draft
+        // still running is stopped with it.
+        onClose: function() { if (ctl) ctl.abort(); stopTick(); },
         mount: function(body, api) {
           var review = el('div', {class: 'da-review'});
           var apply = el('button', {type: 'button', class: 'ui-row-btn primary', text: 'Apply this change'});
           apply.style.display = 'none';
-          var close = el('button', {type: 'button', class: 'ui-row-btn', text: 'Close'});
-          var proposal = null, ctl = null, tick = null;
-          close.onclick = function() { if (ctl) ctl.abort(); api.close(); };
-          function stopTick() { if (tick) { clearInterval(tick); tick = null; } }
 
           // Drafting runs a model over the whole definition and can take a
           // minute: it moves, says how long, and can be stopped.
@@ -262,7 +261,8 @@ const definitionAssistJS = `(function(){
           });
           body.appendChild(el('div', {class: 'da-chat'}, [chat.right]));
           body.appendChild(review);
-          body.appendChild(el('div', {class: 'da-foot'}, [apply, close]));
+          // In the footer beside the dialog's own Close.
+          api.addAction(apply);
           if (ask) chat.say(ask); else chat.focus();
         }
       });

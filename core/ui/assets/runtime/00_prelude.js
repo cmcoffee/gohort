@@ -1513,8 +1513,10 @@
     body.style.cssText = 'overflow-y:auto;flex:1 1 auto;min-height:0;padding-right:0.3rem;display:flex;flex-direction:column;gap:1rem;-webkit-overflow-scrolling:touch';
     dlg.appendChild(body);
     var api = { overlay: overlay, dialog: dlg, body: body, close: close, primaryButton: null };
-    // Footer: omit opts.actions -> single Close; [] -> no footer (mount builds
-    // its own); otherwise one button per entry.
+    // Footer: omit opts.actions -> single Close (opts.closeLabel renames it);
+    // otherwise one button per entry. A mount's own buttons join it through
+    // api.addAction. [] (no footer) is not for app dialogs: one that used it
+    // put its buttons in its content (modal_footer_test.go refuses it).
     var actions = opts.actions;
     var defaultClose = actions === undefined;
     if (defaultClose) actions = [{label: opts.closeLabel || 'Close', primary: true}];

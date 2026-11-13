@@ -14,9 +14,12 @@ package ui
 // over a stub DOM, and what is asserted is where the buttons ended up.
 
 import (
+	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -157,5 +160,57 @@ console.log('OK');
 	}
 	if out, err := exec.Command("node", tmp).CombinedOutput(); err != nil || !strings.Contains(string(out), "OK") {
 		t.Fatalf("a row's form does not save from the footer:\n%s", out)
+	}
+}
+
+// No dialog turns its footer off to build its own. actions: [] removes the
+// footer, and every dialog that used it then put its buttons in its content:
+// a Save under one section, an Apply and its own Close at the end, Cancel in
+// one row and Create it in another. A dialog's buttons go in the footer
+// beside Close (addAction), the same in every app, so the switch that takes
+// the footer away is not used outside the runtime.
+func TestNoDialogTurnsItsFooterOff(t *testing.T) {
+	off := regexp.MustCompile(`actions\s*:\s*\[\s*\]\s*[,}\n]`)
+	root := filepath.Join("..", "..")
+	var hits []string
+	for _, top := range []string{"apps", "core", "private"} {
+		dir, err := filepath.EvalSymlinks(filepath.Join(root, top))
+		if err != nil {
+			continue // private/ is not in every checkout
+		}
+		filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if d.IsDir() {
+				switch d.Name() {
+				case "testdata", "node_modules", ".git":
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			name := d.Name()
+			if strings.HasSuffix(name, "_test.go") || name == "00_prelude.js" {
+				return nil
+			}
+			switch filepath.Ext(name) {
+			case ".go", ".js", ".html":
+			default:
+				return nil
+			}
+			b, err := os.ReadFile(path)
+			if err != nil {
+				return nil
+			}
+			for _, loc := range off.FindAllIndex(b, -1) {
+				line := 1 + strings.Count(string(b[:loc[0]]), "\n")
+				rel, _ := filepath.Rel(dir, path)
+				hits = append(hits, fmt.Sprintf("%s/%s:%d", top, rel, line))
+			}
+			return nil
+		})
+	}
+	if len(hits) > 0 {
+		t.Errorf("a dialog turns its footer off (actions: []); put its buttons in the footer with addAction instead:\n  %s", strings.Join(hits, "\n  "))
 	}
 }

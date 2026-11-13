@@ -66,9 +66,10 @@ function check(label, cond) { if (!cond) { fail++; console.log('FAIL ' + label);
 var b = slot.kids[0];
 check('the button is in the header, labelled', b && b.textContent === '✨ Get assistance');
 b.onclick();
-var body = node('div');
-modal.mount(body, {close: function() {}});
-var changes = body.kids[1], apply = body.kids[2].kids[0];
+var body = node('div'), footer = [];
+modal.mount(body, {close: function() {}, addAction: function(btn) { footer.push(btn); return btn; }});
+var changes = body.kids[1], apply = footer[0];
+check('Apply is in the footer beside Close, the dialog keeping its own Close', apply && apply.textContent === 'Apply selected' && !('actions' in modal) && body.kids.length === 2);
 check('nothing proposed yet: no Apply', apply.style.display === 'none');
 check('an answer with no changes says nothing of its own', chatOpts.onResult({reply: 'It has no rules.'}) === '');
 var said = chatOpts.onResult({reply: '', changes: [

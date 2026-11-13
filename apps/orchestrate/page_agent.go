@@ -933,7 +933,6 @@ func agentAssistHTML(id string) string {
 .aa-val{margin-left:1.4rem;font-size:var(--fs-sm, .85rem);white-space:pre-wrap;max-height:9rem;overflow:auto;padding:.4rem;background:var(--bg-1);border:1px solid var(--border);border-radius:4px}
 .aa-diff{margin-left:1.4rem}
 .aa-diff .editor-diff{margin:0;max-height:14rem}
-.aa-foot{display:flex;gap:.5rem;justify-content:flex-end;margin-top:.75rem}
 @media (max-width: 760px){.aa-chat{height:52vh}}
 </style>
 <script>
@@ -947,13 +946,10 @@ func agentAssistHTML(id string) string {
       title:'✨ Get assistance with this agent',
       subtitle:'Ask for a change to any part of it and review what it proposes. Nothing is saved until you apply.',
       width:'760px',
-      actions:[],
       mount:function(body,api){
         var changes=el('div',{class:'aa-changes'});
         var apply=el('button',{type:'button',class:'ui-row-btn primary',text:'Apply selected'});
         apply.style.display='none';
-        var close=el('button',{type:'button',class:'ui-row-btn',text:'Close'});
-        close.onclick=function(){api.close();};
 
         function renderChanges(list){
           changes.innerHTML=''; pending=list||[];
@@ -1016,7 +1012,8 @@ func agentAssistHTML(id string) string {
 
         body.appendChild(el('div',{class:'aa-chat'},[chat.right]));
         body.appendChild(changes);
-        body.appendChild(el('div',{class:'aa-foot'},[apply,close]));
+        // In the footer beside the dialog's own Close.
+        api.addAction(apply);
         chat.focus();
       }
     });

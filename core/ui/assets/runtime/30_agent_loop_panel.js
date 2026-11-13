@@ -1831,7 +1831,7 @@
           title: s.label || 'Status',
           subtitle: s.title || '',
           width: 'min(720px, 94vw)',
-          mount: function(body) {
+          mount: function(body, api) {
             var empty = data == null || (typeof data === 'object' && !Object.keys(data).length);
             if (empty) {
               body.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:var(--fs-sm, 0.85rem)'}, ['Nothing to show.']));
@@ -1840,8 +1840,9 @@
             }
             var actions = (s.actions || []);
             if (!actions.length) return;
-            var bar = el('div', {style: 'display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;margin-top:0.9rem;padding-top:0.6rem;border-top:1px solid var(--border, rgba(127,127,127,0.25))'});
-            var status = el('span', {style: 'color:var(--text-mute, #999);font-size:var(--fs-xs, 0.78rem)'});
+            // The actions go in the footer beside Close, each with its
+            // picker when it has one; what they report goes under the detail.
+            var status = el('div', {style: 'color:var(--text-mute, #999);font-size:var(--fs-xs, 0.78rem)'});
             actions.forEach(function(a) {
               var group = el('span', {style: 'display:inline-flex;gap:0.35rem;align-items:center'});
               var select = null;
@@ -1868,10 +1869,9 @@
                 }).catch(function(err) { status.textContent = String(err.message || err); });
               }}, [a.label]);
               group.appendChild(btn);
-              bar.appendChild(group);
+              api.addAction(group);
             });
-            bar.appendChild(status);
-            body.appendChild(bar);
+            body.appendChild(status);
           }
         });
       }).catch(function() {});

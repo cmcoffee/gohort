@@ -47,8 +47,10 @@ const guideCuratorCSS = `
 // toolbar button.
 const guideCuratorAction = `function(ctx){
       if (!window.uiOpenSimpleModal) return;
-      window.uiOpenSimpleModal({title:'Curator', width:'720px', mount: function(body){
+      window.uiOpenSimpleModal({title:'Curator', width:'720px', mount: function(body, dlg){
         var host = el('div', {});
+        // Curate now, in the footer beside Close while anything is waiting.
+        var now = null;
         body.appendChild(host);
 
         function pill(kind){
@@ -121,12 +123,13 @@ const guideCuratorAction = `function(ctx){
           host.appendChild(el('div', {class:'gc-empty'}, [window.uiLoading ? window.uiLoading() : 'Loading...']));
           fetch('curator/runs').then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
             host.innerHTML = '';
+            if (now) { now.remove(); now = null; }
             if (!d) { host.appendChild(el('div', {class:'gc-empty'}, ['Could not load the digest.'])); return; }
             var head = el('div', {class:'gc-head'});
             head.appendChild(el('span', {class:'gc-pending'},
               [d.pending ? (d.pending + ' finding(s) waiting to be curated') : 'Nothing waiting']));
             if (d.pending) {
-              var now = el('button', {class:'ui-row-btn primary'}, ['Curate now']);
+              now = el('button', {class:'ui-row-btn primary'}, ['Curate now']);
               now.addEventListener('click', function(){
                 // A run is a model call over every waiting finding and can
                 // take a minute: a moving frame and the seconds say it is
@@ -153,7 +156,7 @@ const guideCuratorAction = `function(ctx){
                   if (window.uiInvalidate) window.uiInvalidate('guides');
                 });
               });
-              head.appendChild(now);
+              dlg.addAction(now);
             }
             host.appendChild(head);
             // What is waiting, itself, not only how many: a count above a

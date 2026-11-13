@@ -1049,7 +1049,6 @@ func wizardDescribeHTML() string {
 .wd-ask input{width:100%;box-sizing:border-box}
 .wd-row{display:flex;gap:.5rem;align-items:flex-end;margin-top:.5rem}
 .wd-row textarea{flex:1;min-height:3.4rem;resize:vertical}
-.wd-foot{display:flex;flex-wrap:wrap;gap:.5rem;justify-content:flex-end;margin-top:.9rem}
 </style>
 <script>
 (function(){
@@ -1061,14 +1060,12 @@ func wizardDescribeHTML() string {
       title:'Describe it',
       subtitle:'Say what you want it to do. You will see the agent before anything is created.',
       width:'680px',
-      actions:[],
+      closeLabel:'Cancel',
       mount:function(body,api){
         var out=el('div');
         var input=el('textarea',{placeholder:'For example: something that answers questions from our handbook, or watches our status page and tells me when it goes down.'});
         var go=el('button',{type:'button',class:'ui-row-btn primary',text:'Show me'});
-        var close=el('button',{type:'button',class:'ui-row-btn',text:'Cancel'});
-        close.onclick=function(){api.close();};
-        var proposal=null;
+        var proposal=null, create=null;
 
         function askRow(q,i){
           var wrap=el('div',{class:'wd-ask'});
@@ -1081,6 +1078,8 @@ func wizardDescribeHTML() string {
 
         function renderProposal(d,request){
           out.innerHTML=''; proposal=d;
+          // A new proposal replaces the last one's Create it in the footer.
+          if(create){ create.remove(); create=null; }
           if(!d.matched){
             out.appendChild(el('p',{class:'wd-hint',text:'That is not one of the ready-made agents. Ask Builder to make it, and it works out the shape (which agents, what each can reach), or use the guided setup below.'}));
             return;
@@ -1109,7 +1108,7 @@ func wizardDescribeHTML() string {
           (d.asks||[]).forEach(function(q,i){ out.appendChild(askRow(q,i)); });
           out.appendChild(el('p',{class:'wd-hint',text:'Leave the questions blank to take it exactly as described. Answering them tailors what it says.'}));
 
-          var create=el('button',{type:'button',class:'ui-row-btn primary',text:'Create it'});
+          create=el('button',{type:'button',class:'ui-row-btn primary',text:'Create it'});
           create.onclick=function(){
             var answers=[];
             var inps=out.querySelectorAll('input[data-ask]');
@@ -1128,8 +1127,8 @@ func wizardDescribeHTML() string {
                 out.appendChild(el('p',{class:'wd-hint',text:'Could not create it: '+((e&&e.message)||e)}));
               });
           };
-          var foot=el('div',{class:'wd-foot'}); foot.appendChild(create);
-          out.appendChild(foot);
+          // In the footer beside Cancel.
+          api.addAction(create);
         }
 
         function propose(){
@@ -1139,7 +1138,7 @@ func wizardDescribeHTML() string {
           fetch(` + jsString(orchPath("api/agents/propose")) + `,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request:req})})
             .then(function(r){ if(!r.ok) return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));}); return r.json(); })
             .then(function(d){ renderProposal(d,req); })
-            .catch(function(e){ out.innerHTML=''; out.appendChild(el('p',{class:'wd-hint',text:'Could not look: '+((e&&e.message)||e)})); })
+            .catch(function(e){ out.innerHTML=''; if(create){ create.remove(); create=null; } out.appendChild(el('p',{class:'wd-hint',text:'Could not look: '+((e&&e.message)||e)})); })
             .then(function(){ go.disabled=false; go.textContent='Show me'; });
         }
         go.onclick=propose;
@@ -1149,8 +1148,6 @@ func wizardDescribeHTML() string {
 
         body.appendChild(el('div',{class:'wd-row'},[input,go]));
         body.appendChild(out);
-        var foot=el('div',{class:'wd-foot'}); foot.appendChild(close);
-        body.appendChild(foot);
         input.focus();
       }
     });

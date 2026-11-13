@@ -460,7 +460,6 @@ const scribeImageAction = `function(ctx){
           // Working: the shared spinner with seconds, since generating can run
           // a while and a static word cannot be told from a stall.
           function busy(label){ status.textContent = ''; status.appendChild(window.uiLoading ? window.uiLoading(label) : document.createTextNode(label + '...')); }
-          var row = el('div', {class:'guide-edit-actions scribe-img-actions'});
           var gen = el('button', {class:'ui-row-btn primary', text:'Generate'});
           if (!d.can_generate) { gen.disabled = true; gen.title = 'Image generation is not configured on this deployment'; }
           function genLabel(){ gen.textContent = d.from_url ? 'Generate with picture' : 'Generate from title'; }
@@ -513,8 +512,8 @@ const scribeImageAction = `function(ctx){
           rm.addEventListener('click', function(){
             fetch('image?' + qp, {method:'DELETE', credentials:'same-origin'}).then(function(){ showPreview(''); ctx.refresh(); });
           });
-          row.appendChild(gen); row.appendChild(up); row.appendChild(rm);
-          body.appendChild(row);
+          // The image's own actions in the footer beside Close.
+          dlg.addAction(rm); dlg.addAction(up); dlg.addAction(gen);
           body.appendChild(el('div', {class:'scribe-img-url'}, [urlIn, use]));
           // Pictures of your own that go with a generated header. Each is
           // uploaded with the guide and named to it; the next Generate uses it.
@@ -664,7 +663,6 @@ const scribeChangesCSS = `.scribe-changes { border: 1px solid var(--border); bor
 const scribeImageCSS = `.guide-doc-image { display: block; width: 100%; max-height: 320px; object-fit: cover; border-radius: 10px; margin: 0 0 1.4rem; }
 .scribe-img-preview { min-height: 4rem; display: flex; align-items: center; justify-content: center; background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 0.8rem; overflow: hidden; }
 .scribe-img-preview img { width: 100%; max-height: 220px; object-fit: cover; display: block; }
-.scribe-img-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.6rem; }
 .scribe-img-url { display: flex; gap: 0.5rem; }
 .scribe-img-with { margin-top: 0.9rem; border-top: 1px solid var(--border); padding-top: 0.7rem; }
 .scribe-img-slot { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin-top: 0.5rem; }
@@ -1138,12 +1136,21 @@ const guidePublishAction = `function(ctx){
           }
           var view = el('div', {});
           body.appendChild(view);
+          // The buttons of the view showing (Back, Work it out), in the
+          // footer beside Close; a new view replaces them with its own.
+          var viewBtns = [];
+          function setViewActions(btns){
+            viewBtns.forEach(function(b){ b.remove(); });
+            viewBtns = btns || [];
+            viewBtns.forEach(function(b){ dlg.addAction(b); });
+          }
 
           // A publish in flight: alive (spinner + seconds) until it reports
           // its own ending, polled every 2s. Rejoined when the modal opens
           // mid-run.
           function followJob(){
             view.innerHTML = '';
+            setViewActions([]);
             var line = el('div', {class:'guide-pub-status'});
             // Stop beside Close in the footer while it runs. Closing the
             // window leaves the publish running (it outlives the page, and
@@ -1202,9 +1209,9 @@ const guidePublishAction = `function(ctx){
                   talk.addEventListener('click', function(){
                     openChat('Update this guide in my publishing target "' + j.target + '". The last try failed: ' + (j.message || 'no reason given'));
                   });
-                  btns.unshift(talk);
+                  btns.push(talk);
                 }
-                view.appendChild(el('div', {class:'guide-pub-actions', style:'margin-top:0.7rem'}, btns));
+                setViewActions(btns);
                 if (window.uiInvalidate) window.uiInvalidate('guides');
               }).catch(function(){ setTimeout(poll, 3000); });
             }
@@ -1222,13 +1229,14 @@ const guidePublishAction = `function(ctx){
 
           // The Publisher, in this window: it publishes, and asks here
           // whatever it actually needs (a target's questions it cannot
-          // settle from the guide, a value the place refused). Back returns
-          // to the list, which then shows where the guide landed.
+          // settle from the guide, a value the place refused). Back, in the
+          // footer, returns to the list, which then shows where the guide
+          // landed.
           function openChat(ask){
             view.innerHTML = '';
             var back = el('button', {class:'ui-row-btn', text:'Back'});
             back.addEventListener('click', function(){ reload(); });
-            view.appendChild(el('div', {class:'guide-pub-actions'}, [back]));
+            setViewActions([back]);
             var host = el('div', {class:'guide-pub-chat'});
             view.appendChild(host);
             window.uiMountComponent({
@@ -1246,6 +1254,7 @@ const guidePublishAction = `function(ctx){
 
           function showList(){
             view.innerHTML = '';
+            setViewActions([]);
             // Where it already lives, with an update of that same place.
             (d.published || []).forEach(function(p){
               var row = el('div', {class:'guide-pub-row'});
@@ -1363,7 +1372,6 @@ const guidePublishCSS = `.guide-pub-row { display: flex; align-items: center; ga
 .guide-pub-target { display: flex; gap: 0.3rem; align-items: baseline; width: 100%; text-align: left; padding: 0.6rem 0.8rem; margin-bottom: 0.45rem; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--btn-radius, 6px); color: var(--text-hi); cursor: pointer; font: inherit; }
 @media (pointer: coarse) { .guide-pub-target { min-height: var(--tap, 44px); align-items: center; } }
 .guide-pub-target:hover { border-color: var(--accent); }
-.guide-pub-actions { display: flex; gap: 0.5rem; margin-top: 0.8rem; }
 .guide-pub-status { font-size: var(--fs-lg, 0.95rem); color: var(--text-hi); padding: 0.6rem 0; }
 .guide-pub-running { display: flex; align-items: center; gap: 0.6rem; }
 .guide-pub-running .guide-pub-status { flex: 1; min-width: 0; }

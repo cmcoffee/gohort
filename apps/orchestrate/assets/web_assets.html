@@ -5330,6 +5330,9 @@
               title: 'Exceptions for this rule',
               subtitle: 'Tick what this rule does NOT apply to. Each one can be switched off for this rule alone: the link is kept and the other rules using it are untouched.',
               width: '600px',
+              // Each tick is written back as it is made (commit), so the
+              // footer's own button only closes; it says Done.
+              closeLabel: 'Done',
               mount: function(body, api) {
                 var rows = document.createElement('div');
                 body.appendChild(rows);
@@ -5445,12 +5448,6 @@
                   });
                 }
                 redraw();
-
-                var done = document.createElement('button');
-                done.type = 'button'; done.className = 'ui-orch-list-add'; done.textContent = 'Done';
-                done.style.cssText = 'margin-top:0.7rem';
-                done.onclick = function() { commit(); api.close(); };
-                body.appendChild(done);
               },
             });
           }
@@ -8572,7 +8569,7 @@
               body.appendChild(el('p', {style: 'margin:0 0 0.6rem;color:var(--text-mute);font-size:0.88rem;line-height:1.45', text: 'Say what it did wrong and what it should have done. This goes to the admin, with the reply, the message before it and the model, to decide whether a check should catch it in future.'}));
               var ta = el('textarea', {class: 'ui-input', rows: '5', style: 'width:100%;box-sizing:border-box', placeholder: 'It answered twice: the same summary before and after the search.'});
               body.appendChild(ta);
-              var go = el('button', {class: 'ui-row-btn', text: 'Send'});
+              var go = el('button', {class: 'ui-row-btn primary', text: 'Send'});
               go.addEventListener('click', function() {
                 var text = ta.value.trim();
                 if (!text) { ta.focus(); toast('Say what was wrong first.'); return; }
@@ -8580,7 +8577,8 @@
                 send(ctx, 'down', text).then(function(d) { dlg.close(); toast(d.message || 'Sent.'); })
                   .catch(function(e) { go.disabled = false; toast('Could not send it: ' + (e && e.message || e)); });
               });
-              body.appendChild(el('div', {style: 'margin-top:0.6rem;display:flex;gap:0.5rem'}, [go]));
+              // In the footer beside Close.
+              dlg.addAction(go);
               setTimeout(function() { ta.focus(); }, 30);
             }});
           }});
