@@ -3,6 +3,7 @@ package orchestrate
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -280,5 +281,55 @@ func TestAHandOffThreadNamesTheCallingAgent(t *testing.T) {
 		if r.Group != threadGroupHandOff || r.With != df.agent.Name {
 			t.Errorf("thread %s is with %q (%s), want %q", r.ID, r.With, r.Group, df.agent.Name)
 		}
+	}
+}
+
+// A hand-off's thread is the agent's session for that conversation. Kept past
+// the 24 messages it used to be cut at, so an early request is still in it;
+// read back with who sent each brief; and the reply stored with the tools
+// behind it, so a later request can point at what an earlier one did.
+func TestAHandOffThreadIsKeptLikeASession(t *testing.T) {
+	SetWorkspacesDir(t.TempDir())
+	t.Cleanup(func() { SetWorkspacesDir("") })
+	df := newDispatchFixture(t,
+		FakeTurn{ToolCalls: []ToolCall{{ID: "c1", Name: "not_a_real_tool", Args: map[string]any{}}}},
+		FakeTurn{Content: "Done.", Repeat: true})
+	// Compaction off keeps the run view to its plain recent tail, so nothing
+	// folds in the background while the test reads the thread.
+	scout, err := saveAgent(df.udb, AgentRecord{Name: "Scout", Owner: "u", OrchestratorPrompt: "You make songs.", DisableCompaction: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newTurn := func() *chatTurn {
+		turn := &chatTurn{app: df.app, user: "u", udb: df.udb, agent: df.agent, ctx: t.Context()}
+		turn.dispatchSess = &ToolSession{Username: "u", ChatSessionID: "chan:room-1", DB: df.udb, Ctx: t.Context()}
+		return turn
+	}
+	const asks = 14
+	for i := 0; i < asks; i++ {
+		// Each ask a turn of its own, as a conversation's follow-ups are.
+		turn := newTurn()
+		before := df.llm.Calls()
+		if _, err := turn.agentsRunAction(map[string]any{"action": "run", "agent": "Scout", "message": fmt.Sprintf("song number %d", i)}); err != nil {
+			t.Fatalf("ask %d: %v", i, err)
+		}
+		if i == 1 {
+			// The second ask's first model call carries the first ask, from
+			// the agent that sent it.
+			if got := df.llm.Prompt(before); !strings.Contains(got, df.agent.Name+": song number 0") {
+				t.Errorf("the earlier request is not in the thread as the agent reads it:\n%s", got)
+			}
+		}
+	}
+	thread, ok := loadChatSession(df.udb, scout.ID, newTurn().dispatchThreadID(scout.ID))
+	if !ok {
+		t.Fatal("no thread was kept")
+	}
+	if len(thread.Messages) != 2*asks || !strings.Contains(thread.Messages[0].Content, "song number 0") {
+		t.Fatalf("kept %d messages starting %q; want all %d from the first request", len(thread.Messages), thread.Messages[0].Content, 2*asks)
+	}
+	first := thread.Messages[1]
+	if first.Role != "assistant" || len(first.ToolCalls) == 0 || first.ToolCalls[0].Name != "not_a_real_tool" {
+		t.Errorf("the first reply was kept without the tool behind it: %+v", first.ToolCalls)
 	}
 }

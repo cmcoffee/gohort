@@ -1177,8 +1177,6 @@ func (t *chatTurn) agentsRunActionFor(card toolCard, caller *ToolSession, args m
 	return ar.ret, ar.retErr
 }
 
-const maxDispatchTurns = 24 // ~12 exchanges of ephemeral continuity
-
 // agentsRun is one agents(run) of a named agent from a turn, from the checks
 // on the request to the reply its caller gets back. Each field is a local of
 // the method it was cut from; agentsRunActionFor is now the order of the
@@ -1229,6 +1227,7 @@ type agentsRun struct {
 	buildCheck        *dispatchBuildCheck
 	runCfg            AgentLoopConfig
 	resp              *Response
+	transcript        []Message
 	runErr            error
 	back              string
 	cleanReply        string
@@ -1597,7 +1596,7 @@ func (ar *agentsRun) buildMessages() bool {
 	// SAME parent session re-threads the prior exchange, so the parent can
 	// ask "now tell me more about their B2B presence" without re-briefing.
 	// Scoped to dispatch:<conversation>:<target.ID> in the parent's OWN db
-	// (t.udb) and capped to recent turns, so it's:
+	// (t.udb) and kept as a session is (the rolling summary below), so it's:
 	//   - ephemeral: bounded to this parent session, not a permanent ledger;
 	//   - visible/controllable: lives in the parent's namespace, not a hidden
 	//     phantom:<chatID> store the parent can't see (the contamination the
@@ -1622,12 +1621,29 @@ func (ar *agentsRun) buildMessages() bool {
 	}
 	receiveHanded(ar.subSess, ar.handed)
 	ar.deliveredMsg += ar.handedNote
-	ar.llmMessages = make([]Message, 0, len(ar.prior.Messages)+1)
-	for _, m := range ar.prior.Messages {
-		ar.llmMessages = append(ar.llmMessages, Message{Role: m.Role, Content: m.Content})
+	// The thread is the agent's session for this conversation: kept whole, and
+	// read the way the background hand-off and a channel room read theirs, the
+	// older part as a rolling summary and the recent part verbatim, each
+	// message with who sent it. An earlier request in the thread stays one the
+	// agent can come back to, where a cut at the last 24 messages lost it.
+	bounded := t.app.compactOperatorHistory(t.udb, t.user, ar.target, ar.subSessID, ar.prior.Messages)
+	ar.llmMessages = make([]Message, 0, len(bounded)+1)
+	for _, m := range bounded {
+		ar.llmMessages = append(ar.llmMessages, Message{Role: m.Role, Content: llmHistoryContent(m)})
 	}
 	ar.llmMessages = append(ar.llmMessages, Message{Role: "user", Content: ar.deliveredMsg})
 	return true
+}
+
+// savedToolCalls is what the reply's stored message shows as its tools: the
+// machine's steps (they ran first), the model's own calls, then what its own
+// delegates ran, as the background hand-off stores them.
+func (ar *agentsRun) savedToolCalls() []PersistedToolCall {
+	calls := ar.subTurn.withMachineTrace(persistedToolCallsFromTranscript(ar.transcript))
+	if nested := ar.subTurn.nestedToolCalls(); len(nested) > 0 {
+		calls = append(calls, nested...)
+	}
+	return calls
 }
 
 // V1 — per-step status emit. Hooks the orchestrator's per-round
@@ -1809,13 +1825,14 @@ func (ar *agentsRun) configureLoop() {
 func (ar *agentsRun) runLoop() bool {
 	t := ar.t
 	caller := ar.caller
-	ar.resp, _, ar.runErr = t.app.RunAgentLoop(ar.ctx, ar.llmMessages, ar.runCfg)
+	ar.resp, ar.transcript, ar.runErr = t.app.RunAgentLoop(ar.ctx, ar.llmMessages, ar.runCfg)
 	// The agent's gap check, as one more pass when it finds gaps (GapCheck).
 	if ar.runErr == nil && ar.resp != nil && ar.gDecline == "" {
 		if follow := ar.subTurn.dispatchGapFollowUp(ar.msg, ar.resp.Content); follow != "" {
 			again := append(append([]Message(nil), ar.llmMessages...), Message{Role: "assistant", Content: ar.resp.Content}, Message{Role: "user", Content: follow})
-			if r2, _, err2 := t.app.RunAgentLoop(ar.ctx, again, ar.runCfg); err2 == nil && r2 != nil && strings.TrimSpace(r2.Content) != "" {
+			if r2, t2, err2 := t.app.RunAgentLoop(ar.ctx, again, ar.runCfg); err2 == nil && r2 != nil && strings.TrimSpace(r2.Content) != "" {
 				ar.resp = r2
+				ar.transcript = append(ar.transcript, t2...)
 			}
 		}
 	}
@@ -1868,8 +1885,10 @@ func (ar *agentsRun) finish() bool {
 		appendCortexObs(t.udb, ar.target.ID, t.agent.Name, cortexKindRequest, ar.msg)
 	}
 	// Persist the exchange for the next follow-up. Store the RAW brief (not
-	// the delegated wrapper) so re-threaded history reads cleanly, and cap to
-	// the most recent turns to keep continuity cheap and ephemeral.
+	// the delegated wrapper) so re-threaded history reads cleanly, and the
+	// reply as a session keeps it: what it sent (pictures, files) and the tools
+	// behind it, so "the picture you made" or "the list from before" still
+	// names something on a later request.
 	if ar.prior.ID == "" {
 		ar.prior.ID = ar.subSessID
 		ar.prior.AgentID = ar.target.ID
@@ -1880,11 +1899,14 @@ func (ar *agentsRun) finish() bool {
 		// Sender names the agent that handed this over, for the Threads view;
 		// the re-threaded history above sends Role and Content only.
 		ChatMessage{Role: "user", Content: ar.msg, Created: ar.tnow, Sender: t.agent.Name},
-		ChatMessage{Role: "assistant", Content: ar.cleanReply, Created: ar.tnow},
+		ChatMessage{Role: "assistant", Content: ar.cleanReply, Created: ar.tnow,
+			Attachments: keepDeliveredAttachments(ar.subSess.Username, ar.subSess.Images),
+			Files:       keepDeliveredFiles(ar.subSess.Username, ar.subSess.Videos, ar.subSess.Files),
+			ToolCalls:   ar.savedToolCalls()},
 	)
-	if len(ar.prior.Messages) > maxDispatchTurns {
-		ar.prior.Messages = ar.prior.Messages[len(ar.prior.Messages)-maxDispatchTurns:]
-	}
+	// Storage is bounded as the Cortex thread's and a channel room's are: what
+	// is folded into the summary and archived to recall drops off the front.
+	ar.prior.Messages = t.app.trimStoredHistory(t.udb, ar.target, ar.subSessID, ar.prior.Messages)
 	if _, err := saveChatSession(t.udb, ar.prior); err != nil {
 		Log("[orchestrate.agents.run] WARN persist dispatch sub-session %s: %v", ar.subSessID, err)
 	}
