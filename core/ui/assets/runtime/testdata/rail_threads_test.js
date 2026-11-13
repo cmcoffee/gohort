@@ -55,12 +55,13 @@ var harness = new Function('el', 'cfg', 'list', 'opened', 'locked',
   'function substituteExtras(u) { return u; }\n' +
   'function openSession(id) { opened.push(id); activeSessionId = id; }\n' +
   'function closeDrawer() {}\n' +
+  'function currentAgentLabel() { return "Scout"; }\n' +
   'function applyRecordLock(id) { locked.push(id); }\n' +
   'function loadSessions() { refreshThreads(); }\n' +
   'var window = {uiConfirm: function() { return Promise.resolve(false); }};\n' +
   src.slice(from, to) +
   '\nreturn {refresh: refreshThreads, view: setRailView, side: sideList, dot: threadsDot, btn: threadsBtn, hdr: sideHdrLabel,' +
-  ' tab: sessionsTab, ids: function() { return threadIds; }, open: function(id) { activeSessionId = id; }};');
+  ' tab: sessionsTab, ids: function() { return threadIds; }, open: function(id) { activeSessionId = id; }, transcript: transcriptFor};');
 
 var opened = [], locked = [];
 var r = harness(el, {threads_url: 'api/threads'}, threads, opened, locked);
@@ -71,6 +72,14 @@ setTimeout(function() {
   check('the threads are known by id once read', !!r.ids()['mcp-desktop:k1'] && !!r.ids()['dispatch:s1:a1']);
   check('a new thread shows the dot while the rail shows sessions', r.dot.style.display === 'inline-block');
   check('the sessions are left as they are', r.side.children.length === 0);
+  var tr = r.transcript('mcp-desktop:k1:review', 'Check test review');
+  check('an opened thread names its lines: the caller, and the agent replying',
+    !!tr && tr.contact === 'Claude Code' && tr.agent === 'Scout');
+  var room = r.transcript('chan:42', 'Ann');
+  check('a channel room is still named by its contact', !!room && room.contact === 'Ann' && room.agent === 'Scout');
+  check('a plain session stays anonymous', r.transcript('s-123', 'My chat') === null);
+  check('the open view takes its labels from transcriptFor',
+    /channelTranscript = transcriptFor\(sid, rec && rec\[ttlF\]\);/.test(src));
 
   r.view('threads');
   setTimeout(function() {

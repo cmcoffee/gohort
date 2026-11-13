@@ -3589,7 +3589,8 @@
       // Channel-room transcript: name each line by who said it (contact vs the
       // bound agent), the usual chat-transcript treatment. The hover-only
       // timestamp on the action bar still carries the "when". Only when a
-      // channel session is open — plain web sessions stay anonymous.
+      // channel session or a thread is open (transcriptFor); plain web
+      // sessions stay anonymous.
       if (channelTranscript && (role === 'user' || role === 'assistant')) {
         bubble.classList.add('ui-agent-msg-named');
         // Prefer the stored per-message author (set on every channel message,
@@ -7475,6 +7476,22 @@
       if (sideSearch && sideSearch.applyFilter) sideSearch.applyFilter();
     }
 
+    // transcriptFor is how a conversation's bubbles are labelled, or null for
+    // the anonymous bubbles of a plain web session. A channel room is a
+    // messaging thread: "user" lines are the contact (named by the session
+    // title) and "assistant" lines the bound agent. A thread is the agent's own
+    // conversation with whoever reached it (a client, another agent handing it
+    // work): each line is named by the sender stored on it, falling back to who
+    // the Threads list says the thread is with.
+    function transcriptFor(sid, title) {
+      if ((sid || '').indexOf('chan:') === 0) {
+        return {contact: title || 'Contact', agent: currentAgentLabel()};
+      }
+      var t = sid && threadIds[sid];
+      if (t) return {contact: t.with || title || '', agent: currentAgentLabel()};
+      return null;
+    }
+
     function loadSessions() {
       if (!hasList) return;
       loadChannels();
@@ -8138,18 +8155,9 @@
         // press that errors leaves the thread on screen instead of wiping it.
         if (keepLimit) clearConvoPanes();
         setHeaderTitle(rec && rec[ttlF]);
-        // Channel rooms render as a who-said-what transcript: the session is
-        // a 1:1 messaging thread, so "user" lines are the contact (named by
-        // the session title) and "assistant" lines are the bound agent. Plain
-        // web sessions keep the anonymous bubbles (channelTranscript = null).
-        if ((sid || '').indexOf('chan:') === 0) {
-          channelTranscript = {
-            contact: (rec && rec[ttlF]) || 'Contact',
-            agent: currentAgentLabel(),
-          };
-        } else {
-          channelTranscript = null;
-        }
+        // Channel rooms and threads render as a who-said-what transcript;
+        // plain web sessions keep the anonymous bubbles (transcriptFor).
+        channelTranscript = transcriptFor(sid, rec && rec[ttlF]);
         var msgs = rec && rec[msgsF];
         // How many messages the server left off the front. Zero on a full
         // load, which is every load today — but the scrub and truncate
