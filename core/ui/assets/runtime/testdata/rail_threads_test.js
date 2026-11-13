@@ -65,6 +65,8 @@ var harness = new Function('el', 'cfg', 'list', 'opened', 'locked',
 
 var opened = [], locked = [];
 var r = harness(el, {threads_url: 'api/threads'}, threads, opened, locked);
+check('the tab row keeps clear of the header above it, and is not squeezed',
+  /class: 'ui-rail-tabs'[^}]*flex:0 0 auto;margin:0\.45rem /.test(src));
 check('the tabs are marked as they are built, Sessions first',
   /\[sessionsTab, threadsBtn\]\);\s*markRailTabs\(\);/.test(src));
 r.refresh();

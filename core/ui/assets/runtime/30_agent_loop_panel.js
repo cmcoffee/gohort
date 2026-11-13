@@ -374,7 +374,7 @@
           title: 'The agent\'s own conversations: over MCP, hand-offs, pipeline steps',
           onclick: function() { setRailView('threads'); }}, [el('span', {}, [cfg.threads_label || 'Threads']), threadsDot]);
         railTabs = el('div', {class: 'ui-rail-tabs', role: 'tablist',
-          style: 'display:flex;margin:0 0.5rem 0.4rem;border:1px solid var(--border, rgba(127,127,127,0.3));border-radius:var(--btn-radius, 6px);overflow:hidden'},
+          style: 'display:flex;flex:0 0 auto;margin:0.45rem 0.5rem 0.4rem;border:1px solid var(--border, rgba(127,127,127,0.3));border-radius:var(--btn-radius, 6px);overflow:hidden'},
           [sessionsTab, threadsBtn]);
         markRailTabs();
       }
