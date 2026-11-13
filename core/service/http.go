@@ -155,7 +155,7 @@ func (t transport) do(ctx context.Context, name string, vars map[string]any) (re
 		return t.readResponse(name, op, resp, done)
 	}
 	req := ToolCallRequest{URL: addr, Method: method,
-		Headers: t.p.Headers, PipeFollowing: true, TimeoutSecs: t.timeout(op), Ctx: ctx}
+		Headers: t.p.Headers, PipeFollowing: true, TimeoutSecs: t.timeout(op), Ctx: ctx, MaxBytes: t.maxBytes()}
 	if op.Send == "multipart" {
 		up, closer, err := multipartUpload(op, vars, t.maxBytes())
 		if err != nil {

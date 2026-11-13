@@ -145,3 +145,39 @@ func TestALargeJSONReplyIsReadWhole(t *testing.T) {
 		t.Errorf("a reply past the connector's limit: %v", err)
 	}
 }
+
+// The same through the governed dispatch a JSON operation takes, which is
+// where Gemini's edits go: its piped read stopped at 4 MB with no marker, so a
+// larger reply arrived cut and failed as "not JSON". The reply is read to the
+// connector's limit, and one past it says it is too large.
+func TestALargeJSONReplyThroughTheConnectionIsReadWhole(t *testing.T) {
+	world(t)
+	pad := strings.Repeat("A", 6<<20)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"data":[{"embedding":[0.1,0.2,0.3,0.4]}],"pad":"`+pad+`"}`)
+	}))
+	defer srv.Close()
+	for _, tc := range []struct {
+		name  string
+		limit int64
+		want  string
+	}{{"big", 0, ""}, {"small", 1 << 20, "larger than the"}} {
+		spec := embedSpec("m")
+		if tc.limit > 0 {
+			spec["provider"].(map[string]any)["limits"] = map[string]any{"max_bytes": tc.limit}
+		}
+		install(t, tc.name, spec)
+		c, _ := GetConnector(RootDB, tc.name)
+		if err := SaveSettings(c, "", map[string]string{"endpoint": srv.URL}, map[string]string{"api_key": "k"}); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Call(context.Background(), nil, tc.name, "embed.text", map[string]any{"texts": []string{"a"}})
+		switch {
+		case tc.want == "" && err != nil:
+			t.Errorf("%s: a %d MB JSON reply within the limit: %v", tc.name, len(pad)>>20, err)
+		case tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "not JSON")):
+			t.Errorf("%s: a reply past the connector's limit: %v", tc.name, err)
+		}
+	}
+}

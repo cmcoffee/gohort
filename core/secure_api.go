@@ -2251,7 +2251,18 @@ type ToolCallRequest struct {
 	// peer's carries its mark (PeerRequestOf), so its ledger row keeps no
 	// query, and the call ends when the request does.
 	Ctx context.Context
+	// MaxBytes is the caller's own read limit, for a caller that parses the
+	// whole reply (a service connector reading a picture back as base64 JSON).
+	// The body is read up to it, within the save cap, and a body over it is an
+	// error rather than a silently cut one: the piped cap (4MB) cut a Gemini
+	// edit's reply with no marker, which then read as "not JSON". Zero leaves
+	// the usual caps.
+	MaxBytes int64
 }
+
+// secureReadCapArg keys ToolCallRequest.MaxBytes inside the dispatch args
+// map. Typed int64, which no JSON-decoded argument from a model can be.
+const secureReadCapArg = "__read_cap"
 
 // secureUploadArg keys a *FileUpload inside the dispatch args map. Underscored
 // like the other internal arg keys so it can never collide with a caller's
@@ -2294,7 +2305,7 @@ type FileUpload struct {
 // DispatchToolCallRequest is the full-shape entry point behind the
 // DispatchToolCall* wrappers.
 func (s *SecureAPI) DispatchToolCallRequest(sess *ToolSession, r ToolCallRequest) (string, error) {
-	return s.dispatchToolCallFull(sess, r.Credential, r.URL, r.Method, r.Body, r.ContentType, r.PipeFollowing, r.Headers, r.Upload, r.TimeoutSecs)
+	return s.dispatchToolCallFull(sess, r.Credential, r.URL, r.Method, r.Body, r.ContentType, r.PipeFollowing, r.Headers, r.Upload, r.TimeoutSecs, r.MaxBytes)
 }
 
 // DispatchHostScoped makes r with no credential, allowed only to the scheme
@@ -2335,6 +2346,9 @@ func (s *SecureAPI) DispatchHostScoped(sess *ToolSession, scope string, r ToolCa
 	if r.Ctx != nil {
 		args[secureCtxArg] = r.Ctx
 	}
+	if r.MaxBytes > 0 {
+		args[secureReadCapArg] = r.MaxBytes
+	}
 	return s.dispatch(scoped, args, sess)
 }
 
@@ -2342,7 +2356,7 @@ func (s *SecureAPI) DispatchHostScoped(sess *ToolSession, scope string, r ToolCa
 // dispatch. Prefer this over building an http.Client: the allow-list, audit
 // log, rate limit, and Private-mode gate all live on this path.
 func (s *SecureAPI) DispatchUpload(sess *ToolSession, credName, urlStr, method string, up FileUpload) (string, error) {
-	return s.dispatchToolCallFull(sess, credName, urlStr, firstNonEmpty(method, "POST"), "", "", false, nil, &up, 0)
+	return s.dispatchToolCallFull(sess, credName, urlStr, firstNonEmpty(method, "POST"), "", "", false, nil, &up, 0, 0)
 }
 
 // DispatchToolCallCT is DispatchToolCall with an explicit request Content-Type
@@ -2371,10 +2385,10 @@ func (s *SecureAPI) DispatchToolCallForPipe(sess *ToolSession, credName, urlStr,
 }
 
 func (s *SecureAPI) dispatchToolCall(sess *ToolSession, credName, urlStr, method, body, contentType string, pipeFollowing bool, headers map[string]string) (string, error) {
-	return s.dispatchToolCallFull(sess, credName, urlStr, method, body, contentType, pipeFollowing, headers, nil, 0)
+	return s.dispatchToolCallFull(sess, credName, urlStr, method, body, contentType, pipeFollowing, headers, nil, 0, 0)
 }
 
-func (s *SecureAPI) dispatchToolCallFull(sess *ToolSession, credName, urlStr, method, body, contentType string, pipeFollowing bool, headers map[string]string, up *FileUpload, timeoutSecs int) (string, error) {
+func (s *SecureAPI) dispatchToolCallFull(sess *ToolSession, credName, urlStr, method, body, contentType string, pipeFollowing bool, headers map[string]string, up *FileUpload, timeoutSecs int, maxBytes int64) (string, error) {
 	if credName == "" {
 		return "", fmt.Errorf("credential name required")
 	}
@@ -2414,6 +2428,9 @@ func (s *SecureAPI) dispatchToolCallFull(sess *ToolSession, credName, urlStr, me
 		if timeoutSecs > 0 {
 			args[secureTimeoutArg] = timeoutSecs
 		}
+		if maxBytes > 0 {
+			args[secureReadCapArg] = maxBytes
+		}
 		return s.dispatch(synth, args, sess)
 	}
 	c, ok := s.ResolveIn(credName, sessUsername(sess), sessAgentID(sess))
@@ -2441,6 +2458,9 @@ func (s *SecureAPI) dispatchToolCallFull(sess *ToolSession, credName, urlStr, me
 	}
 	if timeoutSecs > 0 {
 		args[secureTimeoutArg] = timeoutSecs
+	}
+	if maxBytes > 0 {
+		args[secureReadCapArg] = maxBytes
 	}
 	return s.dispatch(c, args, sess)
 }
@@ -3424,6 +3444,10 @@ func (ac *apiCall) read() bool {
 	if pipeFollowing {
 		readCap = secureAPIMaxResponseBytesForPipe()
 	}
+	callerCap, _ := args[secureReadCapArg].(int64)
+	if callerCap > 0 {
+		readCap = int(min(callerCap, secureAPIMaxSaveBytes()))
+	}
 	limited := io.LimitReader(ac.resp.Body, int64(readCap)+1)
 	var err error
 	ac.bodyBytes, err = io.ReadAll(limited)
@@ -3447,6 +3471,12 @@ func (ac *apiCall) read() bool {
 		ac.auditEntry.Error = "response over the script read cap"
 		s.recordAudit(ac.auditEntry)
 		return ac.exit("", fmt.Errorf("the response is larger than the %s a script can read in one piece, so none of it was returned: a cut body decodes into a fragment with no error. Pass save_to=\"<file>\" to write the whole response to the workspace (up to %s) and read that file", HumanSize(int64(readCap)), HumanSize(secureAPIMaxSaveBytes())))
+	}
+	if ac.truncated && callerCap > 0 {
+		ac.auditEntry.Status = ac.resp.StatusCode
+		ac.auditEntry.Error = "response over the caller's read limit"
+		s.recordAudit(ac.auditEntry)
+		return ac.exit("", fmt.Errorf("the reply is larger than the %s limit, so none of it was used", HumanSize(int64(readCap))))
 	}
 	// When piping, suppress the truncation marker — the pipe filters
 	// down anyway, the marker would just contaminate the LLM-visible

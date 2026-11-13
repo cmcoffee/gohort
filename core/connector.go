@@ -834,6 +834,9 @@ func (s *SecureAPI) DispatchConnection(sess *ToolSession, c SecureCredential, r 
 	if r.Ctx != nil {
 		args[secureCtxArg] = r.Ctx
 	}
+	if r.MaxBytes > 0 {
+		args[secureReadCapArg] = r.MaxBytes
+	}
 	return s.dispatch(c, args, sess)
 }
 
