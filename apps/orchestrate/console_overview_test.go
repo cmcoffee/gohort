@@ -543,3 +543,24 @@ func TestTheFailuresLinkShowsExactlyWhenThePillCounts(t *testing.T) {
 		}
 	}
 }
+
+// A run's card says the whole of what it said, as the Scheduler's View does:
+// its full output where the ledger kept one, not the feed's summary line,
+// which is cut at 280 with "...". On a card that cut read as the end, and its
+// "more" opened nothing; only Details showed the rest. A run with no output
+// kept says its summary.
+func TestARunsCardSaysItsWholeOutput(t *testing.T) {
+	parkedTestSetup(t)
+	report := "Posted and verified. " + strings.Repeat("The framing and the link follow. ", 30) + "END OF REPORT"
+	rec := RecordRun(RootDB, RunRecord{Owner: "u", Agent: "digest", Status: RunOK, Summary: standingSummary(report), Raw: report}.AboutAgent("a1"))
+	if got := runSaid("u", rec); got != report {
+		t.Errorf("the card says %d of %d runes, ending %q", len([]rune(got)), len([]rune(report)), got[len(got)-12:])
+	}
+	short := RecordRun(RootDB, RunRecord{Owner: "u", Agent: "digest", Status: RunOK, Summary: "nothing new"}.AboutAgent("a1"))
+	if got := runSaid("u", short); got != "nothing new" {
+		t.Errorf("a run with no output kept: %q", got)
+	}
+	if got := runSaid("someone-else", rec); strings.Contains(got, "END OF REPORT") {
+		t.Error("another user's card read this run's output")
+	}
+}

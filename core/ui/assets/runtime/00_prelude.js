@@ -1211,7 +1211,8 @@
   // uiFoldText(text, opts) is text that is never cut where it cannot be read.
   // Short text (up to opts.fold characters, 240 by default) is one plain span,
   // as it would have been. Longer text shows its first opts.lines lines (3),
-  // with "more" to open the whole of it in place and "less" to fold it again.
+  // with "more" to open the whole of it in place and "less" to fold it again;
+  // "more" shows only while the fold actually hides some of it.
   // The clamp is the browser's, so the whole text is on the page and nothing
   // is fetched to open it. opts.class and opts.style go on the outer element;
   // opts.pre keeps the text's own line breaks.
@@ -1239,6 +1240,19 @@
         toggle.textContent = open ? 'less' : 'more';
         toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
       }}, ['more']);
+    // "more" only when the clamp cuts something. Past opts.fold is a guess
+    // made by length: text that fits its lines at the width it has, a wide
+    // card's, had a "more" that opened nothing. Checked once it is laid out
+    // and again whenever its size changes (a narrower window, a panel shown
+    // after it was built); before that it shows, so nothing is ever hidden.
+    function fits() {
+      if (open || !body.isConnected || !body.clientHeight) return;
+      toggle.style.display = body.scrollHeight > body.clientHeight + 1 ? '' : 'none';
+    }
+    if (typeof window.ResizeObserver === 'function') {
+      try { new window.ResizeObserver(fits).observe(body); } catch (_) {}
+    }
+    setTimeout(fits, 0);
     at.style = style + (style ? ';' : '') + 'display:block';
     return el('div', at, [body, toggle]);
   };

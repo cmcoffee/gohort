@@ -62,6 +62,29 @@ var report = fold('line one\nline two\n' + long, {pre: true, lines: 4});
 check('a report keeps its own line breaks', /white-space:pre-wrap/.test(report.children[0].style.cssText));
 check('and folds to the lines asked for', /-webkit-line-clamp:4/.test(report.children[0].style.cssText));
 
+// "more" only when the fold cuts something: long text that fits its lines
+// at the width it has hides it, and a change of size (a narrower window)
+// brings it back when the text no longer fits.
+var watched = [];
+window.ResizeObserver = function(fn) { this.observe = function(n) { watched.push({node: n, fn: fn}); }; };
+var wide = fold(long, {});
+var wbody = wide.children[0], wmore = wide.children[1];
+check('a folded text is watched for its size', watched.length === 1 && watched[0].node === wbody);
+wbody.isConnected = true; wbody.clientHeight = 60; wbody.scrollHeight = 60;
+watched[0].fn();
+check('text that fits its lines has no "more"', wmore.style.display === 'none');
+wbody.clientHeight = 60; wbody.scrollHeight = 140;
+watched[0].fn();
+check('a narrower width that cuts it brings "more" back', wmore.style.display === '');
+var unlaid = fold(long, {});
+watched[1].fn();
+check('before it is laid out, "more" shows', unlaid.children[1].style.display !== 'none');
+wmore.on.click({stopPropagation: function() {}});
+wbody.scrollHeight = 60;
+watched[0].fn();
+check('an opened text keeps its "less"', wmore.style.display === '' && wmore.textContent === 'less');
+delete window.ResizeObserver;
+
 check('the cards layout folds a row\'s text with it', /function cardText\(text, style, cls\) \{[\s\S]*?window\.uiFoldText\(text, \{style: style, 'class': cls\}\)/.test(panel));
 check('long card text takes the card\'s width', /if \(text\.length > 240\) style \+= ';flex:1 1 100%';/.test(panel));
 

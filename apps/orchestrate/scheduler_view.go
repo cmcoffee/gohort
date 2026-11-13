@@ -98,10 +98,7 @@ func schedulerViewFor(user, kind, id string) (map[string]any, bool) {
 			// What the run said in full: its whole output where the ledger
 			// kept one (the summary is a short feed line, cut at 280), else
 			// the summary; a failure's error over either.
-			summary := strings.TrimSpace(rec.Summary)
-			if full, ok := GetRun(RootDB, user, rec.ID); ok && strings.TrimSpace(full.Raw) != "" {
-				summary = strings.TrimSpace(full.Raw)
-			}
+			summary := runSaid(user, rec)
 			if rec.Status == RunFailed && strings.TrimSpace(rec.Err) != "" {
 				summary = strings.TrimSpace(rec.Err)
 			}

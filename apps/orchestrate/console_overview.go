@@ -50,6 +50,18 @@ type overviewCard struct {
 	Failed bool `json:"_failed,omitempty"`
 }
 
+// runSaid is what a run said: its whole output where the ledger kept one,
+// else its summary. The summary is the feed's short line, cut at 280 with
+// "...": on a card it read as cut, its "more" opened nothing, and only
+// Details showed the rest. The card folds the whole output with "more"
+// instead, as the Scheduler's View does.
+func runSaid(user string, rec RunRecord) string {
+	if full, ok := GetRun(RootDB, user, rec.ID); ok && strings.TrimSpace(full.Raw) != "" {
+		return strings.TrimSpace(full.Raw)
+	}
+	return strings.TrimSpace(rec.Summary)
+}
+
 // cardTextMax bounds a card's text from a stored message (an error, a
 // summary, a mission, a guardrail's reason). Generous: the cards layout folds
 // long text to three lines with "more", so this is only a guard on the
@@ -122,7 +134,7 @@ func (T *OrchestrateApp) handleConsoleOverview(c *jsonapi.Call) (any, error) {
 			Title:   consoleRunTitle(rec),
 			Status:  string(rec.Status),
 			Detail:  consoleRunWhen(rec, loc),
-			Extra:   truncateObs(firstNonEmpty(rec.Summary, rec.Err), cardTextMax),
+			Extra:   truncateObs(firstNonEmpty(runSaid(user, rec), rec.Err), cardTextMax),
 			Section: secRuns,
 			Run:     true,
 			ID:      rec.ID,
@@ -179,7 +191,7 @@ func (T *OrchestrateApp) handleConsoleOverview(c *jsonapi.Call) (any, error) {
 	for _, rec := range failedRuns(runs, now, 3) {
 		cards = append(cards, overviewCard{
 			Title: consoleRunTitle(rec), Status: string(rec.Status),
-			Detail: consoleRunWhen(rec, loc), Extra: truncateObs(firstNonEmpty(rec.Err, rec.Summary), cardTextMax),
+			Detail: consoleRunWhen(rec, loc), Extra: truncateObs(firstNonEmpty(rec.Err, runSaid(user, rec)), cardTextMax),
 			Section: secAttention, Run: true, ID: rec.ID,
 		})
 	}
@@ -246,7 +258,7 @@ func (T *OrchestrateApp) handleConsoleFleet(c *jsonapi.Call) (any, error) {
 		cards = append(cards, overviewCard{
 			Title: consoleRunAgent(rec), Status: string(rec.Status),
 			Detail:  joinDetail(consoleRunTask(rec), consoleRunWhen(rec, loc)),
-			Extra:   truncateObs(firstNonEmpty(rec.Summary, rec.Err), cardTextMax),
+			Extra:   truncateObs(firstNonEmpty(runSaid(user, rec), rec.Err), cardTextMax),
 			Section: secRuns, Run: true, ID: rec.ID,
 		})
 	}
@@ -284,7 +296,7 @@ func (T *OrchestrateApp) handleConsoleFleet(c *jsonapi.Call) (any, error) {
 	for _, rec := range failedRuns(runs, now, 4) {
 		cards = append(cards, overviewCard{
 			Title: consoleRunTitle(rec), Status: string(rec.Status),
-			Detail: consoleRunWhen(rec, loc), Extra: truncateObs(firstNonEmpty(rec.Err, rec.Summary), cardTextMax),
+			Detail: consoleRunWhen(rec, loc), Extra: truncateObs(firstNonEmpty(rec.Err, runSaid(user, rec)), cardTextMax),
 			Section: secAttention, Run: true, ID: rec.ID,
 		})
 	}
