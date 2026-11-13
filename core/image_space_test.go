@@ -796,6 +796,34 @@ func TestResolveInputImageAcceptsSpaceAndWorkspace(t *testing.T) {
 	}
 }
 
+// A picture's id written without its image# resolves to that picture: an
+// edit reaching for "r.<id>" (the picture it had just made) was told no such
+// file exists while the same error listed it as image#r.<id>. A workspace file
+// of the same name still comes first.
+func TestAnIDWithoutItsPrefixIsThePicture(t *testing.T) {
+	sess := imageSpaceSession(t)
+	data := testPNG(t, 8, 8)
+	_, stable := RecordRecentImageStable(sess, data, "made", ImageFromEdited)
+	bare := strings.TrimPrefix(stable, RecentImageRefPrefix)
+	if bare == stable || !strings.HasPrefix(bare, "r.") {
+		t.Fatalf("setup: stable id %q", stable)
+	}
+	got, err := resolveInputImage(sess, bare)
+	if err != nil || !bytes.Equal(got.data, data) {
+		t.Fatalf("%q: %v", bare, err)
+	}
+	other := testPNG(t, 4, 4)
+	if err := os.WriteFile(filepath.Join(sess.WorkspaceDir, bare), other, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := resolveInputImage(sess, bare); err != nil || !bytes.Equal(got.data, other) {
+		t.Errorf("a workspace file of the same name should come first: %v", err)
+	}
+	if _, err := resolveInputImage(sess, "r.00000000"); err == nil || !strings.Contains(err.Error(), "no file") {
+		t.Errorf("an id that names nothing: %v", err)
+	}
+}
+
 func TestResolveInputImageRefusesURLs(t *testing.T) {
 	// Fetching an arbitrary URL here would be SSRF through a dispatch scoped to
 	// the backend's own host. The refusal names the tool that CAN do it.

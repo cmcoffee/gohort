@@ -428,6 +428,17 @@ func resolveInputImage(sess *ToolSession, ref string) (inputImage, error) {
 	}
 	info, err := os.Stat(abs)
 	if err != nil {
+		// An id or a kept name written without its image# ("r.345ebc61",
+		// "rory_patio_ref"): no file by that name, but the picture it names is
+		// here. Observed all evening: each edit reaching for the picture it had
+		// just made as "r.<id>" was told the file was missing, with that very
+		// picture listed as image#r.<id> in the same error, and the chain ran
+		// out of passes on the retries. A real file of the name still wins.
+		if !strings.ContainsAny(ref, "/#") {
+			if data, ok := ResolveRecentImage(sess, RecentImageRefPrefix+ref); ok {
+				return verifyInputImage(ref+".png", data)
+			}
+		}
 		// The dead end that sent a turn guessing, and the only branch in this
 		// function that had one. A URL is told to fetch first; an image#N past
 		// the end is told to call help; a media#N in the wrong namespace gets
