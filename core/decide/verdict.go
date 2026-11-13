@@ -3,6 +3,7 @@ package decide
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -176,33 +177,79 @@ func (v Verdict) JudgeEach(ctx context.Context, chat VerdictChat, state string, 
 // error returned wraps it with what the last reply was: test with errors.Is.
 const ErrUnreadable = Error("the reply could not be read as the verdict asked")
 
+// unreadable is ErrUnreadable with what the last reply was, and whether the
+// fingerprint stand-in (StandInModel) wrote it rather than a model.
+type unreadable struct {
+	clip    string
+	standIn bool
+}
+
+func (e unreadable) Error() string        { return ErrUnreadable.Error() + ": the reply was " + e.clip }
+func (e unreadable) Is(target error) bool { return target == ErrUnreadable }
+
+// FromStandIn reports whether err is a reply the fingerprint stand-in wrote
+// (core/checktest), which no model failed to give: a caller that logs a
+// check's error leaves this one out.
+func FromStandIn(err error) bool {
+	var u unreadable
+	return errors.As(err, &u) && u.standIn
+}
+
 // ask sends the Verdict and hands the reply's object to read; a reply with
 // no object, or one read rejects, is asked again once.
 func (v Verdict) ask(ctx context.Context, chat VerdictChat, state string, opts []ChatOption, read func(map[string]json.RawMessage) bool) error {
 	msgs := []Message{{Role: "system", Content: v.System()}, {Role: "user", Content: state}}
 	call := append([]ChatOption{WithRouteKey(v.Key)}, opts...)
-	last := ""
+	last, standIn := "", false
+	var lastResp *Response
 	for try := 1; try <= 2; try++ {
 		resp, err := chat(ctx, msgs, call...)
 		if err != nil {
 			return err
 		}
 		if resp != nil {
-			last = resp.Content
+			last, standIn, lastResp = resp.Content, resp.Model == StandInModel, resp
 			if obj := readObject(resp.Content); obj != nil && read(obj) {
 				return nil
 			}
 		}
-		if try == 1 {
+		// The fingerprint stand-in answers nothing on purpose: no model
+		// failed, so nothing is logged for it.
+		if try == 1 && !standIn {
 			Debug("[decide] %s: the reply could not be read, asking once more", v.Key)
 		}
 	}
 	// What came back, so a model that keeps answering in another shape can
 	// be seen doing it (a check test's row, the log) instead of only "could
 	// not be read".
-	clip := textutil.ReplyClip(last, unreadableClip)
-	Debug("[decide] %s: the reply could not be read twice; the last was %s", v.Key, clip)
-	return fmt.Errorf("%w: the reply was %s", ErrUnreadable, clip)
+	clip := textutil.ReplyClip(last, unreadableClip) + replyEnding(lastResp)
+	if !standIn {
+		Debug("[decide] %s: the reply could not be read twice; the last was %s", v.Key, clip)
+	}
+	return unreadable{clip: clip, standIn: standIn}
+}
+
+// replyEnding is how a reply ended, for an unreadable one: why the model
+// stopped and what it spent, thinking included. An empty reply from a model
+// that says it stops thinking (Sonnet's between_tools) said nothing else, with
+// debug off: whether it ran out of room, stopped on its own after thinking,
+// or wrote its answer somewhere else could not be told apart.
+func replyEnding(resp *Response) string {
+	if resp == nil || resp.Model == StandInModel || (resp.StopReason == "" && resp.OutputTokens == 0) {
+		return ""
+	}
+	var parts []string
+	if resp.StopReason != "" {
+		parts = append(parts, "stopped: "+resp.StopReason)
+	}
+	if resp.OutputTokens > 0 {
+		out := fmt.Sprintf("%d output tokens", resp.OutputTokens)
+		if resp.ReasoningTokens > 0 {
+			out += fmt.Sprintf(", %d of them thinking", resp.ReasoningTokens)
+		}
+		parts = append(parts, out)
+	}
+	return " (" + strings.Join(parts, "; ") + ")"
 }
 
 // unreadableClip is how much of an unreadable reply its error quotes.

@@ -52,6 +52,11 @@ type Outcome struct {
 	// 1, 3", "keep" for "keep fact"): it is right when the case's answer is
 	// it or begins with it.
 	Coarse bool
+	// Confidence is how firmly System One chose its answer, and Bar how
+	// firm that answer had to be to stand live. Zero where a form reads no
+	// confidence, and Bar zero for an answer that never stands alone.
+	Confidence float64
+	Bar        float64
 }
 
 // Check is a check that can be tested: its key (its JudgeCall key), what it is
@@ -145,6 +150,10 @@ type Answer struct {
 	// unsure or handed-off answer that pointed the right way is graded too.
 	Right  bool  `json:"right,omitempty"`
 	TookMS int64 `json:"took_ms"`
+	// Confidence and Bar are Outcome's: how firmly System One chose, and
+	// how firm it had to be to stand. A run kept from before has neither.
+	Confidence float64 `json:"confidence,omitempty"`
+	Bar        float64 `json:"bar,omitempty"`
 }
 
 // Row is one case in a run, with each model's answer to it.
@@ -267,7 +276,7 @@ func Run(ctx context.Context, models []Model, only ...string) RunReport {
 			o := run(cctx, m.LLM, j.c)
 			timedOut := cctx.Err() == context.DeadlineExceeded && ctx.Err() == nil
 			cancel()
-			a := Answer{Got: o.Got, Reason: o.Reason, TookMS: time.Since(began).Milliseconds()}
+			a := Answer{Got: o.Got, Reason: o.Reason, TookMS: time.Since(began).Milliseconds(), Confidence: o.Confidence, Bar: o.Bar}
 			switch {
 			case timedOut:
 				a.Err, a.Got = fmt.Sprintf("no answer in %s", CaseTimeout), "timed out"
@@ -413,11 +422,12 @@ func quickForm(quick func(Case) QuickChoice) func(ctx context.Context, llm LLM, 
 			return Outcome{Got: "no decision"}
 		}
 		reason := fmt.Sprintf("P(%s)=%.2f%s, firm %.2f", q.Answers[a.Choice].Key, a.Probs[a.Choice], a.OrderLine(a.Choice), a.Firm())
-		out := Outcome{Got: q.Answers[a.Choice].Key, Reason: reason, Coarse: true}
+		out := Outcome{Got: q.Answers[a.Choice].Key, Reason: reason, Coarse: true, Confidence: a.Firm()}
 		if q.Answers[a.Choice].Reason {
 			out.HandOff = true // never stands: the full check writes its reason
 		} else {
 			out.Unsure = !decide.QuickStands(q, a.Choice, a.Firm())
+			out.Bar = decide.QuickBar(q)
 		}
 		return out
 	}

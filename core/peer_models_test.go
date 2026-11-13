@@ -1085,6 +1085,11 @@ func TestAPeerSystemOneDecisionReachesTheLentModel(t *testing.T) {
 		b, _ := io.ReadAll(r.Body)
 		gotPath, gotBody = r.URL.Path, string(b)
 		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(gotBody, "unreadable") {
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, `{"error":{"message":"the criteria could not be labelled"}}`)
+			return
+		}
 		fmt.Fprint(w, `{"answers":{"d":{"probabilities":{"o00":0.9,"o01":0.1}}}}`)
 	}))
 	defer judge.Close()
@@ -1111,6 +1116,17 @@ func TestAPeerSystemOneDecisionReachesTheLentModel(t *testing.T) {
 	}
 	if w := ask(`{"model":"qwen-27b"}`); w.Code != http.StatusNotFound {
 		t.Errorf("a lent llama.cpp model answered System One: %d", w.Code)
+	}
+	// A server that refuses the decision: its error goes back to the peer
+	// and into this side's log, without the peer's question.
+	logged := captureLog(t)
+	w = ask(`{"model":"judge","state":"an unreadable question"}`)
+	if w.Code != http.StatusInternalServerError || !strings.Contains(w.Body.String(), "could not be labelled") {
+		t.Errorf("the refusal reached the peer as %d %s", w.Code, w.Body.String())
+	}
+	if all := strings.Join(*logged, "\n"); !strings.Contains(all, "HTTP 500") || !strings.Contains(all, "the criteria could not be labelled") ||
+		!strings.Contains(all, "judge-9b") || strings.Contains(all, "unreadable question") {
+		t.Errorf("this side's log: %q", all)
 	}
 }
 

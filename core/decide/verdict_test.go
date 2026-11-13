@@ -3,6 +3,7 @@ package decide
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -128,6 +129,44 @@ func TestAVerdictSaysWhenSystemOneStands(t *testing.T) {
 	}
 }
 
+// The fingerprint stand-in (core/checktest) answers "{}" on purpose, which a
+// check judging each of several things cannot read. It is asked once more
+// like any unreadable reply, so the prompts it records are
+// the same, and the error reads the same, but it is known for the stand-in's
+// and nothing is logged: it fired every check's "could not be read" lines a
+// few minutes after each restart. A model's unreadable reply still logs.
+func TestTheStandInsEmptyReplyIsNotLogged(t *testing.T) {
+	var logged []string
+	prev := Debug
+	Debug = func(v ...any) {
+		if f, ok := v[0].(string); ok {
+			logged = append(logged, fmt.Sprintf(f, v[1:]...))
+		}
+	}
+	t.Cleanup(func() { Debug = prev })
+
+	calls := 0
+	standIn := func(ctx context.Context, msgs []Message, opts ...ChatOption) (*Response, error) {
+		calls++
+		return &Response{Content: "{}", Model: StandInModel}, nil
+	}
+	each := testVerdict
+	each.Each = "message"
+	_, err := each.JudgeEach(context.Background(), standIn, "state", 1)
+	if !errors.Is(err, ErrUnreadable) || !FromStandIn(err) || calls != 2 || err.Error() != `the reply could not be read as the verdict asked: the reply was "{}"` {
+		t.Errorf("stand-in: %d calls, %v", calls, err)
+	}
+	if len(logged) != 0 {
+		t.Errorf("the stand-in's reply was logged: %q", logged)
+	}
+
+	var sent [][]Message
+	_, err = each.JudgeEach(context.Background(), replies(&sent, "{}"), "state", 1)
+	if !errors.Is(err, ErrUnreadable) || FromStandIn(err) || len(logged) != 2 {
+		t.Errorf("a model's unreadable reply: %v, logged %q", err, logged)
+	}
+}
+
 // A reply that is not the verdict's shape, twice, says what came back: a
 // model answering in prose, or with nothing, reads as that, not only as
 // "could not be read".
@@ -140,5 +179,26 @@ func TestAnUnreadableReplySaysWhatCameBack(t *testing.T) {
 	_, err = testVerdict.Judge(context.Background(), replies(&sent, "  "), "state")
 	if !errors.Is(err, ErrUnreadable) || !strings.HasSuffix(err.Error(), "the reply was empty") {
 		t.Errorf("empty: %v", err)
+	}
+}
+
+// An unreadable reply also says how it ended: why the model stopped and what
+// it spent, thinking included. An empty reply said nothing else, and whether
+// the model ran out of room or stopped on its own after thinking could not be
+// told apart without debug logging.
+func TestAnUnreadableReplySaysHowItEnded(t *testing.T) {
+	empty := func(ctx context.Context, msgs []Message, opts ...ChatOption) (*Response, error) {
+		return &Response{Content: "", StopReason: "end_turn", OutputTokens: 312, ReasoningTokens: 300}, nil
+	}
+	_, err := testVerdict.Judge(context.Background(), empty, "state")
+	if !errors.Is(err, ErrUnreadable) || !strings.HasSuffix(err.Error(), "the reply was empty (stopped: end_turn; 312 output tokens, 300 of them thinking)") {
+		t.Errorf("an empty reply: %v", err)
+	}
+	cut := func(ctx context.Context, msgs []Message, opts ...ChatOption) (*Response, error) {
+		return &Response{Content: `{"subject": "the weather", "why": "it is about`, StopReason: "max_tokens", OutputTokens: 600}, nil
+	}
+	_, err = testVerdict.Judge(context.Background(), cut, "state")
+	if !errors.Is(err, ErrUnreadable) || !strings.HasSuffix(err.Error(), "(stopped: max_tokens; 600 output tokens)") {
+		t.Errorf("a cut-off reply: %v", err)
 	}
 }

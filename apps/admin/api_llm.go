@@ -86,6 +86,7 @@ func (a *AdminApp) registerLLMRoutes(sub *http.ServeMux) {
 	}.Serve)
 	sub.HandleFunc("/api/judge-llm/calls/toggle", jsonapi.Post(a.db, a.handleJudgeCallToggle, a.gate()))
 	sub.HandleFunc("/api/check-tests", jsonapi.Get(a.db, a.handleCheckTests, a.gate()))
+	sub.HandleFunc("/api/check-tests/report", jsonapi.Get(a.db, a.handleCheckTestsReport, a.gate()))
 
 	// Local model scheduler: GET returns max parallel for Ollama and for
 	// llama.cpp / vLLM (one shared queue), POST updates both values. Applied

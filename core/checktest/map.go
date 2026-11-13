@@ -257,7 +257,9 @@ func fingerprint(c Check) string {
 
 // recorder is the stand-in model a fingerprint is taken with: it writes down
 // every call (the options' system prompt and prefix, each message) and
-// answers with an empty object, which every check reads as no verdict.
+// answers with an empty object, which every check reads as no verdict. The
+// reply is marked StandInModel, so a check's "could not be read" is not
+// logged for it.
 type recorder struct {
 	mu    sync.Mutex
 	parts []string
@@ -287,7 +289,7 @@ func (r *recorder) Chat(ctx context.Context, msgs []Message, opts ...ChatOption)
 	for _, m := range msgs {
 		r.write("msg", m.Role, m.Content)
 	}
-	return &Response{Content: "{}"}, nil
+	return &Response{Content: "{}", Model: StandInModel}, nil
 }
 
 func (r *recorder) ChatStream(ctx context.Context, msgs []Message, _ StreamHandler, opts ...ChatOption) (*Response, error) {
@@ -478,8 +480,10 @@ func StableFingerprint(c Check) bool {
 	return a != "" && a == fingerprint(c)
 }
 
-// ClearMap forgets every mapping: every check goes back to the worker until
-// it is mapped again. It returns how many checks had one.
+// ClearMap forgets every mapping, and the last run's results with it: every
+// check goes back to the worker until it is mapped again, and the results
+// table and its report start empty rather than showing answers from before.
+// It returns how many checks had a mapping.
 func ClearMap() int {
 	load()
 	store.mu.Lock()
@@ -490,6 +494,7 @@ func ClearMap() int {
 		for _, k := range RootDB.Keys(mapTable) {
 			RootDB.Unset(mapTable, k)
 		}
+		RootDB.Unset(table, lastKey)
 	}
 	return n
 }

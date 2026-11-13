@@ -298,8 +298,11 @@ func (w wardenAsk) judge(ctx context.Context, chat wardenChat, opts ...ChatOptio
 	began := time.Now()
 	rulings, err := wardenVerdict.JudgeEach(cctx, decide.VerdictChat(chat), w.prompt(), len(rules), call...)
 	// How long the check took, against how long it was given: whether the
-	// limit is too short cannot be answered without it.
-	Debug("[orchestrate.warden] agent=%s %s took %s of %s (depth %s, err=%v)", agent.ID, hookPoint, time.Since(began).Round(100*time.Millisecond), timeout, depth, err)
+	// limit is too short cannot be answered without it. Not for the
+	// fingerprint stand-in, which no model answered.
+	if !decide.FromStandIn(err) {
+		Debug("[orchestrate.warden] agent=%s %s took %s of %s (depth %s, err=%v)", agent.ID, hookPoint, time.Since(began).Round(100*time.Millisecond), timeout, depth, err)
+	}
 	if err != nil && !errors.Is(err, decide.ErrUnreadable) {
 		return nil, err
 	}

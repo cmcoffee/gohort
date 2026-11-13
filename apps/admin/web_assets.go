@@ -493,6 +493,35 @@ const credentialsExportAllAction = `function(){
   __artifactExport('?all=credential', 'credentials.gohort.json');
 }`
 
+// checkTestsReportAction opens the check tests' last run as text, selected,
+// with a Copy button. Shown first rather than copied straight from the
+// click: a copy after a fetch has lost the click on some browsers, and the
+// async clipboard is missing on a plain-HTTP origin.
+const checkTestsReportAction = `function(){
+  fetch('api/check-tests/report', {credentials: 'same-origin'}).then(function(r){
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function(d){
+    var text = (d && d.text) || '';
+    window.uiOpenSimpleModal({title: 'Check tests report', width: '820px', mount: function(body, dlg){
+      var ta = document.createElement('textarea');
+      ta.className = 'ui-input'; ta.readOnly = true; ta.value = text; ta.rows = 22;
+      ta.style.cssText = 'width:100%;box-sizing:border-box;font-family:var(--mono, monospace);font-size:var(--fs-sm, 0.8rem);white-space:pre';
+      var copy = document.createElement('button');
+      copy.className = 'ui-row-btn primary'; copy.textContent = 'Copy';
+      var done = function(){ copy.textContent = 'Copied'; setTimeout(function(){ copy.textContent = 'Copy'; }, 1500); };
+      var fallback = function(){ ta.focus(); ta.select(); try { if(document.execCommand('copy')) done(); } catch(e) {} };
+      copy.addEventListener('click', function(){
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback);
+        else fallback();
+      });
+      // In the footer beside Close, the dialog's buttons in one row.
+      body.appendChild(ta); dlg.addAction(copy);
+      setTimeout(function(){ ta.focus(); ta.select(); }, 0);
+    }});
+  }).catch(function(e){ window.uiAlert && window.uiAlert('Could not build the report: ' + e.message); });
+}`
+
 // artifactImportPreviewJS points the shared preview-then-confirm import flow
 // (core ArtifactClientJS) at the admin's deployment-wide endpoints.
 const artifactImportPreviewJS = `

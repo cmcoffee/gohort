@@ -99,6 +99,12 @@ func TestAMessageByNameIsNeverDropped(t *testing.T) {
 	if !strings.Contains(sent.String(), "addresses you by name") {
 		t.Error("the model was not told the message names the agent")
 	}
+	// And that the name meets a rule only with the rest of it, with who the
+	// message is from: told less, a worker let a name through on a rule
+	// for another sender's messages.
+	if !strings.Contains(sent.String(), "everything else that rule asks for holds too") || !strings.Contains(sent.String(), "This message is from Alice") {
+		t.Errorf("the name note does not say the rest of the rule must hold, from whom:\n%s", sent.String())
+	}
 
 	// A name rule that also says who it is for is not decided in code: Alice
 	// naming the agent under a rule for Henry is the model's to weigh.
@@ -228,5 +234,39 @@ func TestTheGateAsksSystemOneFirst(t *testing.T) {
 	before = df.llm.Calls()
 	if df.app.channelGatekeeperAllow(t.Context(), in) || df.llm.Calls() != before+1 {
 		t.Errorf("an unsure System One did not go on to the full answer (%d full answers)", df.llm.Calls()-before)
+	}
+
+	// A name under a rule's own condition is the full check's, however sure
+	// System One is: told the message addresses it by name, it let through
+	// someone the rule was not about, firmly, both ways round.
+	SaveChannel(RootDB, Channel{ID: "c1", Owner: "u", Service: "imessage", Address: "chat-1", AgentID: df.agent.ID,
+		Gatekeeper: "WAKE when the incoming message from Sam mentions or addresses you by name."})
+	take = 0.99
+	named := in
+	named.Text = df.agent.Name + ", tell me a joke"
+	before = df.llm.Calls()
+	if df.app.channelGatekeeperAllow(t.Context(), named) || df.llm.Calls() != before+1 {
+		t.Errorf("a name under a rule's condition stood on System One (%d full answers)", df.llm.Calls()-before)
+	}
+}
+
+// Which questions System One may settle alone: not one where the message
+// names the agent under a name rule with a condition of its own.
+func TestANameUnderARulesConditionIsTheFullChecks(t *testing.T) {
+	conditional := "WAKE when the incoming message from Sam mentions or addresses you by name."
+	for _, tc := range []struct {
+		rules string
+		named bool
+		full  bool
+	}{
+		{conditional, true, true},
+		{conditional, false, false},
+		{gateTestRules, true, false},
+		{"Answer only questions about the weather.", true, false},
+	} {
+		q := gateQuestion{Rules: tc.rules, AgentName: "Pip", Named: tc.named}
+		if got := q.sure() == nil; got != tc.full {
+			t.Errorf("rules %q, named %v: left to the full check %v, want %v", tc.rules, tc.named, got, tc.full)
+		}
 	}
 }

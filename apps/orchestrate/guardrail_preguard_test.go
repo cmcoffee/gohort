@@ -90,3 +90,16 @@ func TestThePreguardCasesRunThroughItsQuestion(t *testing.T) {
 		caseReply{"other-subject", "not_engaged", []string{`{"why":"it is about the weather","answer":"not_engaged"}`}},
 		caseReply{"refusal", "engaged", []string{`{"why":"it declines to share pay","answer":"engaged"}`}})
 }
+
+// The pre-guard sees the candidate alone, so a person it names only by a
+// pronoun may be the one the rule names: on the rule's topic, that engages
+// the rule, and the full check, which sees the conversation, decides who it
+// is. The worker skipped "she has been at tango every Thursday" under a rule
+// about one person and dancing, because nothing named her.
+func TestAPronounOnTheTopicEngagesTheRule(t *testing.T) {
+	for _, want := range []string{"You see only the candidate", "pronoun", "on the rule's topic, that is engaged"} {
+		if !strings.Contains(preguardSystem, want) {
+			t.Errorf("the pre-guard's question is missing %q", want)
+		}
+	}
+}

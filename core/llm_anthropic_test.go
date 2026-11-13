@@ -47,8 +47,9 @@ func TestNoThinkingUnlessAsked(t *testing.T) {
 
 // A model that refuses thinking "disabled" is believed about the off-switch
 // it names, however the refusal is worded: the API's words and Bedrock's both
-// name between_tools for Sonnet 5.5; Opus 5.5 cannot turn thinking off and
-// gets no setting, low effort and room to answer. A refusal that names no
+// name between_tools for Sonnet 5.5, with room to answer (a 600-token check
+// came back empty on it); Opus 5.5 cannot turn thinking off and gets no
+// setting, low effort and room to answer. A refusal that names no
 // switch, or of the next step down, ends at sending nothing, the model's own
 // default. Only a 400 naming what was sent counts, and none of it marks the
 // model as wanting adaptive thinking when asked to think.
@@ -68,8 +69,11 @@ func TestTheThinkingOffSwitchIsLearned(t *testing.T) {
 		if err := refuse(model, msg); !refusedThinkingOff(err) {
 			t.Errorf("%s: the refusal is not marked for a retry: %v", name, err)
 		}
-		if blk, out, max := sent(model, 300); blk == nil || blk.Type != "between_tools" || out != nil || max != 300 {
-			t.Errorf("%s: sent %+v %+v, max %d; want between_tools", name, blk, out, max)
+		if blk, out, max := sent(model, 300); blk == nil || blk.Type != "between_tools" || out != nil || max != anthThinkOffFloor {
+			t.Errorf("%s: sent %+v %+v, max %d; want between_tools, max %d", name, blk, out, max, anthThinkOffFloor)
+		}
+		if _, _, max := sent(model, 20000); max != 20000 {
+			t.Errorf("%s: a larger allowance was cut to %d", name, max)
 		}
 		if thinkingStyleFor(model) == anthThinkAdaptive {
 			t.Errorf("%s: an off-switch refusal marked it adaptive", name)

@@ -265,4 +265,9 @@ func TestClearingTheMapSendsEverythingBack(t *testing.T) {
 	if m := Missing(judge); len(m) != 1 {
 		t.Errorf("a cleared check is not missing: %v", m)
 	}
+	// And the last run's results go with it: the table showed answers from
+	// before the clear.
+	if rep, ok := Last(); ok {
+		t.Errorf("the last run outlived the clear: %d rows", len(rep.Rows))
+	}
 }

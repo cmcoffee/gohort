@@ -110,21 +110,28 @@ func runGateCase(ctx context.Context, llm LLM, tc checktest.Case) checktest.Outc
 // decideGateCase decides one case on llm as a System One decision.
 func decideGateCase(ctx context.Context, llm LLM, tc checktest.Case) checktest.Outcome {
 	in := tc.Input
-	allow, confidence, reason, err := gateSystemOne(ctx, llm, gateQuestion{
+	q := gateQuestion{
 		Rules:     mergeWakeRules(in["rules"], ""),
 		AgentName: in["agent"],
 		Sender:    in["sender"],
 		Message:   in["message"],
 		Recent:    in["recent"],
 		Named:     addressesByName(in["message"], in["agent"]),
-	})
+	}
+	allow, confidence, reason, err := gateSystemOne(ctx, llm, q)
 	if err != nil {
 		return checktest.Outcome{Err: err}
 	}
-	// Below the bar its answer needs live, the full question would be
-	// asked: unsure, whatever it answered.
+	got, choice := "block", 1
 	if allow {
-		return checktest.Outcome{Got: "allow", Reason: reason, Unsure: confidence < gateTakeConfidence}
+		got, choice = "allow", 0
 	}
-	return checktest.Outcome{Got: "block", Reason: reason, Unsure: confidence < gateLeaveConfidence}
+	// Below the bar its answer needs live, the full question would be
+	// asked: unsure, whatever it answered. With no bar at all (a name under
+	// a rule's condition), it never stands: the full check's.
+	sure := q.sure()
+	if sure == nil {
+		return checktest.Outcome{Got: got, Reason: reason, Unsure: true, HandOff: true, Confidence: confidence}
+	}
+	return checktest.Outcome{Got: got, Reason: reason, Unsure: confidence < sure[choice], Confidence: confidence, Bar: sure[choice]}
 }

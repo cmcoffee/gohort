@@ -394,6 +394,7 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 			ClientAction("category_scope_manage", categoryScopeManageAction).
 			ClientAction("credentials_export", credentialsExportAction).
 			ClientAction("credentials_export_all", credentialsExportAllAction).
+			ClientAction("check_tests_report", checkTestsReportAction).
 			ClientAction("skills_export", skillsExportAction).
 			ClientAction("skills_export_all", skillsExportAllAction).
 			ClientAction("peer_key_issued", peerKeyIssuedAction).

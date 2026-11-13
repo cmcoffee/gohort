@@ -376,6 +376,12 @@ func HandlePeerSystemOne(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 	out, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	// A server that could not answer says why only in its reply, which goes
+	// back to the peer: logged here too, so this side's log says what its own
+	// model refused. Only the server's error, never the peer's question.
+	if resp.StatusCode >= 400 {
+		Log("[peer] System One for %s on %s: the server answered HTTP %d: %s", k.Label, tier.Model, resp.StatusCode, truncateRunes(oneLine(string(out)), 500))
+	}
 	if ct := resp.Header.Get("Content-Type"); ct != "" {
 		w.Header().Set("Content-Type", ct)
 	}

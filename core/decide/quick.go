@@ -26,11 +26,16 @@ func QuickQuestion(q QuickChoice) Question {
 // (Answer.Firm), stands on System One: one that needs no reason, at
 // QuickSure or q's own bar or more.
 func QuickStands(q QuickChoice, choice int, firm float64) bool {
-	bar := QuickSure
+	return choice >= 0 && choice < len(q.Answers) && !q.Answers[choice].Reason && firm >= QuickBar(q)
+}
+
+// QuickBar is how firm an answer to q must be to stand: q's own bar, or
+// QuickSure.
+func QuickBar(q QuickChoice) float64 {
 	if q.Sure > 0 {
-		bar = q.Sure
+		return q.Sure
 	}
-	return choice >= 0 && choice < len(q.Answers) && !q.Answers[choice].Reason && firm >= bar
+	return QuickSure
 }
 
 // quickDecide is core.QuickDecide: System One's answer to q when the map

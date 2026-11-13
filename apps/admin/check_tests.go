@@ -33,11 +33,11 @@ func init() {
 		"Tests every check on each model, and gives each to the cheapest one that gets all its cases right.",
 		runCheckMap)
 	RegisterMaintenanceFunc(checkTestsGroup, "check_map_clear", "Clear the map",
-		"Sends every check back to the worker until it is mapped again.",
+		"Sends every check back to the worker until it is mapped again, and clears the last results.",
 		func(ctx context.Context) int {
 			n := checktest.ClearMap()
-			Log("[checktest] map cleared: %d mapping(s) forgotten, every check on the worker", n)
-			ReportMaintenanceOutcome(ctx, fmt.Sprintf("Cleared %d mapping(s): every check is on the worker until it is mapped again.", n))
+			Log("[checktest] map cleared: %d mapping(s) and the last results forgotten, every check on the worker", n)
+			ReportMaintenanceOutcome(ctx, fmt.Sprintf("Cleared %d mapping(s) and the last results: every check is on the worker until it is mapped again.", n))
 			return n
 		})
 }
@@ -182,22 +182,26 @@ func (a *AdminApp) handleCheckTests(c *jsonapi.Call) (any, error) {
 	}
 	for i, r := range rep.Rows {
 		row := checkTestRow{ID: fmt.Sprintf("%d", i), Check: r.Label, Case: r.Title, Want: r.Want, AllPass: true}
-		// "pass" or "fail" where a model answered, and nothing where it did
-		// not (no Judge model, or a check with no System One form): read as
-		// a bool, a missing answer showed as a fail.
+		// "right", "wrong" or "fail" where a model was asked, and nothing
+		// where it was not (no Judge model, or a check with no System One
+		// form): read as a bool, a missing answer showed as wrong.
+		// Fail is no answer at all (an error, a timeout), which says nothing
+		// about how the model judges, so it is not shown as wrong.
 		// Right or wrong, and whether the answer would have been used:
 		// System One's unsure answers and the ones the full check always
 		// decides were not, so a wrong one did no harm.
 		mark := func(an checktest.Answer) string {
 			switch {
+			case an.Err != "":
+				return "fail"
 			case an.Unsure && an.Right:
 				return "unsure-right"
 			case an.Unsure:
 				return "unsure-wrong"
 			case an.Pass:
-				return "pass"
+				return "right"
 			}
-			return "fail"
+			return "wrong"
 		}
 		if w, ok := r.Answers["worker"]; ok {
 			row.Worker, row.WorkerPass, row.WorkerTook, row.WorkerReason = w.Got, mark(w), shortMillis(w.TookMS), "worker: "+reason(w)
@@ -255,6 +259,35 @@ func (a *AdminApp) handleCheckTests(c *jsonapi.Call) (any, error) {
 	return rows, nil
 }
 
+// handleCheckTestsReport is the last run as plain text ({text}), for the
+// Copy report button: to paste somewhere else for a review.
+func (a *AdminApp) handleCheckTestsReport(c *jsonapi.Call) (any, error) {
+	rep, _ := checktest.Last()
+	return map[string]string{"text": checktest.TextReport(rep, checkTestsReportHeader())}, nil
+}
+
+// checkTestsReportHeader is what the report says about this install: its
+// version and the model on each tier now.
+func checkTestsReportHeader() []string {
+	out := []string{"gohort " + AppVersion}
+	worker, _ := LiveLLMs()
+	if worker == "" {
+		worker = "none set"
+	}
+	out = append(out, "Worker: "+worker)
+	for _, t := range []struct{ tier, name string }{{MapJudge, "Offload model"}, {MapSystemOne, "System One"}} {
+		m := checktest.TierModel(t.tier)
+		switch {
+		case m == "":
+			m = "none set"
+		case !OffloadUses(t.tier):
+			m += " (not used by the Decision Offloading mode)"
+		}
+		out = append(out, t.name+": "+m)
+	}
+	return out
+}
+
 // shortMillis is a duration in milliseconds as a row says it: 340 ms, 2.1 s.
 func shortMillis(ms int64) string {
 	if ms < 1000 {
@@ -268,7 +301,8 @@ func shortMillis(ms int64) string {
 func checkTestsPanel() ui.Component {
 	pass := func(field, label string) ui.Col {
 		return ui.Col{Field: field, Label: label, Type: "badge", Badges: []ui.BadgeMapping{
-			{Value: "pass", Label: "right", Color: "success"}, {Value: "fail", Label: "wrong", Color: "danger"},
+			{Value: "right", Label: "right", Color: "success"}, {Value: "wrong", Label: "wrong", Color: "danger"},
+			{Value: "fail", Label: "fail", Color: "mute"},
 			{Value: "unsure-right", Label: "right, unsure", Color: "warning"},
 			{Value: "unsure-wrong", Label: "wrong, unsure"}}}
 	}
@@ -293,9 +327,9 @@ func checkTestsPanel() ui.Component {
 		ID:    checkTestsAnchor,
 		Title: "Check tests",
 		Subtitle: "Each check's test cases, with known right answers, asked of the worker, the Offload model and System One, side by side. " +
-			"Green right, red wrong; amber right, unsure: System One was right but its answer was not used (below its bar, or one the full check decides); grey wrong, unsure: wrong, but not used, so no harm.",
+			"Green right, red wrong; grey fail: no answer at all (an error or a timeout), which says nothing about the model's judgement; amber right, unsure: System One was right but its answer was not used (below its bar, or one the full check decides); grey wrong, unsure: wrong, but not used, so no harm.",
 		Detail: "Map the checks asks every case through the check's own code (the prompt it builds, the reply it reads) of each model in turn, so a row shows how they did on the same case, and gives each check to the cheapest model that got all its cases right twice in a row: a check one clean run short is run again straight away, so one press settles the map. " +
-			"It also runs on its own, for just the checks whose mapping is missing, a few minutes after start and every " + checkMapEvery.String() + " after. Clear the map sends every check back to the worker, to start over. Local inference: free, and a few minutes. " +
+			"It also runs on its own, for just the checks whose mapping is missing, a few minutes after start and every " + checkMapEvery.String() + " after. Clear the map sends every check back to the worker and clears the last results, to start over. Local inference: free, and a few minutes. " +
 			"Cases a model got wrong come first, with each model's own reason; every case is also in the log ([checktest]). " +
 			"The cases are built in: messages the gatekeeper should let through or not, tool results the scan should pass or flag. " +
 			"With Services > System One set to use the Offload model, System One asks it the check as a fixed choice (no reason written), for the checks that have that form, with its confidence: how much faster it is, and whether it agrees. " +
@@ -303,6 +337,11 @@ func checkTestsPanel() ui.Component {
 			"A case both models get wrong may be a case worth questioning rather than two wrong models.",
 		Body: ui.Stack{Children: []ui.Component{
 			maintenanceList(checkTestsGroup, "No check tests are registered."),
+			// The last run as text to paste somewhere else: the cases a model
+			// got wrong in full, with their input and System One's confidence.
+			ui.Toolbar{Actions: []ui.ToolbarAction{
+				{Label: "Copy report", Method: "client", URL: "check_tests_report"},
+			}},
 			results,
 		}},
 	}

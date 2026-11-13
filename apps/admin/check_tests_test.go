@@ -27,6 +27,8 @@ func TestCheckTestsShowFailuresFirst(t *testing.T) {
 			"worker": {Got: "allow", Pass: true, TookMS: 340}, "judge": {Got: "allow", Pass: true, TookMS: 200}}},
 		{Label: "Beta", Title: "split", Want: "allow", Answers: map[string]checktest.Answer{
 			"worker": {Got: "allow", Pass: true, TookMS: 900, Reason: "rule 2"}, "judge": {Got: "block", Reason: "no rule fires", TookMS: 2100}}},
+		{Label: "Gamma", Title: "broke", Want: "allow", Answers: map[string]checktest.Answer{
+			"worker": {Got: "allow", Pass: true, TookMS: 300}, "judge": {Got: "error", Err: "HTTP 500", TookMS: 350}}},
 	}})
 	a := &AdminApp{db: RootDB}
 	out, err := a.handleCheckTests(&jsonapi.Call{R: httptest.NewRequest("GET", "/api/check-tests", nil)})
@@ -35,9 +37,14 @@ func TestCheckTestsShowFailuresFirst(t *testing.T) {
 	}
 	got := out.([]checkTestRow)
 	// By check (Alpha, then Beta), each check's wrong cases first within it.
-	if len(got) != 2 || got[1].Case != "split" || got[1].AllPass || got[1].WorkerPass != "pass" || got[1].JudgePass != "fail" || got[1].S1Pass != "" ||
+	if len(got) != 3 || got[1].Case != "split" || got[1].AllPass || got[1].WorkerPass != "right" || got[1].JudgePass != "wrong" || got[1].S1Pass != "" ||
 		got[1].Judge != "block" || got[1].JudgeReason != "offload: no rule fires" || got[1].JudgeTook != "2.1 s" || got[0].WorkerTook != "340 ms" {
 		t.Errorf("rows: %+v", got)
+	}
+	// No answer at all is a fail, not a wrong answer: it says nothing about
+	// how the model judges.
+	if got[2].JudgePass != "fail" || got[2].WorkerPass != "right" || got[2].AllPass {
+		t.Errorf("an answer that errored: %+v", got[2])
 	}
 	// The second line says what each answered, with a reason only where wrong.
 	if d := got[1].Detail; !strings.Contains(d, "Offload model: block, 2.1 s (no rule fires)") || strings.Contains(d, "rule 2") {

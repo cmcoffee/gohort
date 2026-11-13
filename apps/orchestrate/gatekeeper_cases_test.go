@@ -59,6 +59,17 @@ func TestTheGateCasesRunThroughTheGate(t *testing.T) {
 	if o := runGateCase(context.Background(), no, cases["others-chatting"]); o.Got != "block" || o.Reason != "no rule fires" {
 		t.Errorf("a NO: %+v", o)
 	}
+	// A follow-up is to what the agent said, not to people talking to each
+	// other: asked whether a message was "a natural follow-up to the recent
+	// exchange", a worker let "anyone up for pizza tonight?" through after
+	// two others chatting about a game.
+	if sent := no.LastSent(); len(sent) == 0 || !containsAll(sent[len(sent)-1].Content,
+		"carry on your own part of the recent exchange", "what Pip said", "talk between other people is not a follow-up to you") {
+		t.Error("the gate's question does not say a follow-up is to the agent's own part of the exchange")
+	}
+	if !strings.Contains(gatekeeperSysPrompt, "is not your conversation") || !strings.Contains(gateSystemOneSys, "Talk between other people that you were not part of is not a follow-up to you") {
+		t.Error("the gate's instructions do not say talk between other people is not a follow-up")
+	}
 }
 
 func containsAll(s string, parts ...string) bool {

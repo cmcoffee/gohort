@@ -205,3 +205,51 @@ func TestAnAnswerIsAsFirmAsItsWeakerAsk(t *testing.T) {
 		t.Error("no answer is firm")
 	}
 }
+
+// A server whose System One fails on an ask (vLLM's has no logprobs while it
+// batches the ask with a request that is generating) is read from the first
+// token for that ask, through a chat, which has them. An answer that was
+// native one way and not the other is not native: a first-token reading has
+// no label mass to average in.
+func TestAFailedSystemOneAskIsReadFromTheFirstToken(t *testing.T) {
+	var mu sync.Mutex
+	natives, chats := 0, 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/systemone") {
+			natives++
+			if natives == 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte(`{"error":{"message":"No logprobs available for item 0.","code":500}}`))
+				return
+			}
+			w.Write([]byte(`{"answers":{"d":{"probabilities":{"o00":0.9,"o01":0.1}}},"diagnostics":{"d":{"label_mass":0.9}}}`))
+			return
+		}
+		chats++
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"A"},"finish_reason":"length",` +
+			`"logprobs":{"content":[{"token":"A","top_logprobs":[{"token":"A","logprob":-0.105},{"token":"B","logprob":-2.303}]}]}}],` +
+			`"usage":{"prompt_tokens":40,"completion_tokens":1}}`))
+	}))
+	defer srv.Close()
+	llm, err := NewLLMFromConfig(LLMProviderConfig{Provider: "vllm", Model: "judge", Endpoint: srv.URL + "/v1", SeparateServer: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := Ask(context.Background(), llm, Question{System: "You filter.", State: "a message", Ask: "Take it up?",
+		Options: []string{"Take it up", "Leave it"}, Both: true})
+	if err != nil || !a.OK || a.Choice != 0 {
+		t.Fatalf("the decision: %+v %v", a, err)
+	}
+	if chats != 1 || natives != 2 {
+		t.Errorf("%d chat and %d native asks: want the failed ask read from the first token, the other native", chats, natives)
+	}
+	if a.Native || a.LabelMass != 0 {
+		t.Errorf("half native, half first-token: native %v, label mass %v", a.Native, a.LabelMass)
+	}
+	if a.Confidence < 0.7 {
+		t.Errorf("both asks chose it at about 0.9: confidence %v", a.Confidence)
+	}
+}

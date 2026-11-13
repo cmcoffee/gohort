@@ -336,5 +336,5 @@ func decideLoopCase(ctx context.Context, llm LLM, tc checktest.Case) checktest.O
 	if loop {
 		bar = loopStopConfidence
 	}
-	return checktest.Outcome{Got: loopOutcome(loop), Reason: reason, Unsure: confidence < bar}
+	return checktest.Outcome{Got: loopOutcome(loop), Reason: reason, Unsure: confidence < bar, Confidence: confidence, Bar: bar}
 }

@@ -89,6 +89,12 @@ type Message struct {
 }
 
 // Response represents the result of an LLM call.
+// StandInModel is the Model of a reply no model wrote. The stand-in a
+// check's prompts are fingerprinted with (core/checktest) answers every call
+// with an empty object under this name, so what reads a reply can leave it
+// out of the log: it is not a model failing.
+const StandInModel = "stand-in"
+
 type Response struct {
 	// TopLogprobs are the most likely first tokens of the reply and their
 	// log-probabilities, for a decision (ChatConfig.DecidePrefix).

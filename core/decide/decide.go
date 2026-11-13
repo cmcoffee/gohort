@@ -82,8 +82,9 @@ func Ask(ctx context.Context, llm LLM, q Question, opts ...ChatOption) (Answer, 
 		rev[i] = n - 1 - i
 	}
 	// The server's own System One when it has one, else decide's reading of
-	// the first token. A server answers natively or not for every ask, so
-	// the second ask goes the way the first did.
+	// the first token: for every ask on a server without it, and for one ask
+	// its System One failed (vLLM's does while another request is
+	// generating, where a chat's logprobs do not).
 	ask := func(ord []int) ([]float64, float64, bool, error) {
 		if p, mass, ok, err := askNative(ctx, llm, q, ord); err != nil || ok {
 			return p, mass, ok, err
@@ -97,7 +98,7 @@ func Ask(ctx context.Context, llm LLM, q Question, opts ...ChatOption) (Answer, 
 	}
 	orders := [][]float64{normalised(probs)}
 	if q.Both {
-		second, mass2, _, err := ask(rev)
+		second, mass2, native2, err := ask(rev)
 		if err != nil {
 			return Answer{}, err
 		}
@@ -105,7 +106,13 @@ func Ask(ctx context.Context, llm LLM, q Question, opts ...ChatOption) (Answer, 
 		for i := range probs {
 			probs[i] = (probs[i] + second[i]) / 2
 		}
-		mass = (mass + mass2) / 2
+		// Native only when both asks were: a first-token reading has no
+		// label mass, and averaged in as nothing it halved the confidence.
+		if native && native2 {
+			mass = (mass + mass2) / 2
+		} else {
+			native, mass = false, 0
+		}
 	}
 	a := answerFrom(probs, time.Since(began))
 	a.Native, a.LabelMass, a.Orders = native, mass, orders
@@ -159,8 +166,8 @@ type systemOner interface {
 
 // askNative asks the server's /v1/systemone with the options in order. ok
 // false (and no error) is a server without it (not vLLM, too old, or a model
-// it cannot read: status 0, 404, 405 or 501), for the caller to ask the
-// first token itself.
+// it cannot read: status 0, 404, 405 or 501), or one whose System One failed
+// on this ask (5xx), for the caller to ask the first token itself.
 func askNative(ctx context.Context, llm LLM, q Question, order []int) ([]float64, float64, bool, error) {
 	// A connection answers only this way: there is no first token to fall
 	// back to.
@@ -200,10 +207,16 @@ func askNative(ctx context.Context, llm LLM, q Question, order []int) ([]float64
 	if err != nil {
 		return nil, 0, false, err
 	}
-	switch status {
-	case 0, http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented:
+	switch {
+	case status == 0, status == http.StatusNotFound, status == http.StatusMethodNotAllowed, status == http.StatusNotImplemented:
 		return nil, 0, false, nil
-	case http.StatusOK:
+	case status >= 500:
+		// The server's System One failed on this ask (vLLM's has no
+		// logprobs while it batches it with a request that is generating):
+		// the first token is read instead, through a chat, which has them.
+		Debug("[decide] the server's System One answered HTTP %d (%s): reading the first token instead", status, strings.TrimSpace(string(body)))
+		return nil, 0, false, nil
+	case status == http.StatusOK:
 	default:
 		return nil, 0, false, fmt.Errorf("the server's System One answered HTTP %d: %s", status, strings.TrimSpace(string(body)))
 	}

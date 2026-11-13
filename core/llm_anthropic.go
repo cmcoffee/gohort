@@ -326,6 +326,11 @@ const (
 // anthThinkOffFloor is the least max_tokens a thinking-off call is sent with
 // on a model that still thinks: enough that a short check's answer is not
 // spent on thinking first. An allowance not used is not billed.
+//
+// between_tools gets it too. Bedrock's refusal says the model "does not think
+// before responding" there, but Sonnet 5.5 on it went from answering a
+// 600-token check in under a second to 5.5 seconds and an empty or cut-off
+// reply, the day it was moved from disabled to between_tools.
 const anthThinkOffFloor = 4096
 
 // fieldThinkingOff is how a model turns thinking off, a request field
@@ -367,7 +372,7 @@ func thinkingOffFor(model string) string {
 func anthThinkingOff(model string, maxTokens int) (*anthThinking, *anthOutputConfig, int) {
 	switch thinkingOffFor(model) {
 	case anthOffBetweenTools:
-		return &anthThinking{Type: anthOffBetweenTools}, nil, maxTokens
+		return &anthThinking{Type: anthOffBetweenTools}, nil, max(maxTokens, anthThinkOffFloor)
 	case anthOffEffortLow:
 		return nil, &anthOutputConfig{Effort: effortLow}, max(maxTokens, anthThinkOffFloor)
 	case anthOffNothing:
