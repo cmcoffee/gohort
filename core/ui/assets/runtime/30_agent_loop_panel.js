@@ -7415,9 +7415,9 @@
       });
     }
 
-    // renderThreads lists the threads under their group's heading, in the
-    // order the app sends them. A group starts folded unless one of its
-    // threads has something new; its heading says how many it holds.
+    // renderThreads lists every thread under its group's heading, in the
+    // order the app sends them, none folded away; a heading says how many
+    // its group holds and carries a dot when one of them has something new.
     function renderThreads(list) {
       sideList.innerHTML = '';
       if (!list.length) {
@@ -7433,20 +7433,11 @@
       groups.forEach(function(g) {
         var rows = byGroup[g];
         var fresh = rows.some(function(t) { return t.unread && t.id !== activeSessionId; });
-        var holdsActive = rows.some(function(t) { return t.id === activeSessionId; });
         var body = el('div', {class: 'ui-threads-group-body'});
-        var open = fresh || holdsActive;
-        var caret = el('span', {class: 'ui-threads-caret'}, [open ? '▾' : '▸']);
-        var head = el('button', {type: 'button', class: 'ui-threads-group', 'aria-expanded': open ? 'true' : 'false',
-          style: 'display:flex;align-items:center;gap:0.35rem;width:100%;background:none;border:none;padding:0.45rem 0.5rem 0.2rem;cursor:pointer;font:inherit;font-size:var(--fs-2xs, 0.72rem);font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-mute, #999);text-align:left',
-          onclick: function() {
-            open = !open;
-            body.style.display = open ? '' : 'none';
-            caret.textContent = open ? '▾' : '▸';
-            head.setAttribute('aria-expanded', open ? 'true' : 'false');
-          }}, [caret, el('span', {}, [g + ' (' + rows.length + ')'])]);
+        var head = el('div', {class: 'ui-threads-group',
+          style: 'display:flex;align-items:center;gap:0.35rem;padding:0.45rem 0.5rem 0.2rem;font-size:var(--fs-2xs, 0.72rem);font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-mute, #999)'},
+          [el('span', {}, [g + ' (' + rows.length + ')'])]);
         if (fresh) head.appendChild(el('span', {class: 'ui-unread-dot', style: 'width:7px;height:7px;border-radius:50%;background:var(--accent, #4a9eff)'}, ['']));
-        body.style.display = open ? '' : 'none';
         rows.forEach(function(t) {
           var kids = [];
           if (t.unread && t.id !== activeSessionId) {

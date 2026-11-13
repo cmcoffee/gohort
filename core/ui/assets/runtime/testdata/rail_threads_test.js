@@ -2,8 +2,8 @@
 // of their own under its header, lists the agent's own conversations apart
 // from its sessions. A dot on the Threads tab says one has something new
 // while the rail shows sessions.
-// The list groups them under headings, a group folded unless one of its
-// threads is new or open; a thread opens like a session, its composer locked.
+// The list groups them under headings, every thread shown (no group folds
+// away); a thread opens like a session, its composer locked.
 // The shipped functions are run here over a stub page.
 var fs = require('fs');
 var src = fs.readFileSync(__dirname + '/../30_agent_loop_panel.js', 'utf8');
@@ -91,10 +91,11 @@ setTimeout(function() {
     var kids = r.side.children;
     check('two groups, each a heading and its threads', kids.length === 4);
     check('headings say how many each holds', kids[0].textContent.indexOf('Over MCP (2)') >= 0 && kids[2].textContent.indexOf('Hand-offs (1)') >= 0);
-    check('a group with something new starts open', kids[1].style.display === '' && kids[0].attrs['aria-expanded'] === 'true');
-    check('one with nothing new starts folded', kids[3].style.display === 'none' && kids[2].attrs['aria-expanded'] === 'false');
-    kids[2].onclick();
-    check('its heading opens it', kids[3].style.display === '');
+    check('every group shows its threads, none folded away',
+      kids[1].style.display === '' && kids[3].style.display === '' && kids[1].children.length === 2 && kids[3].children.length === 1);
+    check('a heading is a label, not a fold toggle', !kids[0].onclick && !kids[2].onclick && kids[0].tag === 'div');
+    check('a heading carries the dot when one of its threads is new',
+      kids[0].children.length === 2 && kids[2].children.length === 1);
     var row = kids[1].children[0];
     check('a row says who the thread is with', row.textContent.indexOf('Check test review') >= 0 && row.textContent.indexOf('Claude Code') >= 0);
     row.listeners.click();
