@@ -1,7 +1,9 @@
 package orchestrate
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -51,5 +53,54 @@ func TestAnMCPTurnRunsInItsOwnThread(t *testing.T) {
 
 	if surfaceForRun(AgentSyncRun{Kind: kindMCP}) != surfaceConversation {
 		t.Error("an MCP run's prompt reads as work nobody is waiting on")
+	}
+}
+
+// An MCP turn has no page, but its thread can be opened while it works: its
+// tool calls are drawn on the run's own stream, which a page opening the
+// thread joins, each chip with the id its result comes back by. Only the
+// drawing: the turn still runs as one nobody is watching.
+func TestAnMCPTurnDrawsItsToolCallsOnItsRun(t *testing.T) {
+	SetWorkspacesDir(t.TempDir())
+	t.Cleanup(func() { SetWorkspacesDir("") })
+	df := newDispatchFixture(t,
+		FakeTurn{ToolCalls: []ToolCall{{ID: "w1", Name: "workspace", Args: map[string]any{"action": "write", "path": "notes.txt", "content": "A-1042 shipped"}}}},
+		FakeTurn{Content: "Noted.", Repeat: true})
+	prevRoot := RootDB
+	RootDB = df.app.DB
+	t.Cleanup(func() { RootDB = prevRoot })
+	thread := MCPThreadPrefix + ":k1:notes"
+	if _, err := df.app.runMCPTurn(context.Background(), MCPTurn{Owner: "u", AgentID: df.agent.ID, Thread: thread,
+		Sender: "Claude Code", Text: "Note that A-1042 shipped."}); err != nil {
+		t.Fatal(err)
+	}
+	rr := df.app.runsRegistry()
+	rr.mu.Lock()
+	run := rr.bySess[runSessKey("u", thread)]
+	rr.mu.Unlock()
+	if run == nil {
+		t.Fatal("the turn left no run under its thread")
+	}
+	sub := run.Subscribe(0)
+	calls, results := map[string]bool{}, map[string]bool{}
+	for _, ev := range sub.Backlog {
+		var f map[string]any
+		if json.Unmarshal(bytes.TrimSpace(bytes.TrimPrefix(ev.Frame, []byte("data: "))), &f) != nil {
+			continue
+		}
+		id, _ := f["call_id"].(string)
+		switch f["kind"] {
+		case "tool_call":
+			if f["name"] == "workspace" {
+				calls[id] = true
+			}
+		case "tool_result":
+			if f["name"] == "workspace" {
+				results[id] = true
+			}
+		}
+	}
+	if !calls["w1"] || !results["w1"] {
+		t.Errorf("the run's stream should carry the call and its result under the model's id w1: calls %v results %v", calls, results)
 	}
 }

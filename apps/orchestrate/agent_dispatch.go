@@ -1980,6 +1980,10 @@ func (cr *continuingRun) buildTurn() {
 	// RunAgentSync — see buildDispatchTurnExtras for rationale).
 	cr.extraTools, cr.availableBlock, cr.customToolPrompt, cr.subTurn = T.buildDispatchTurnExtrasWithOwner(cr.ctx, cr.target, cr.runtimeUser, cr.runtimeDB, cr.subSess, cr.agentOwner, cr.ownerDB)
 	cr.subTurn.dispatchChain, cr.subTurn.dispatchOrigin = cr.chain, cr.origin
+	// No page is waiting on this run, but its thread can be opened while it
+	// works: its tool calls go to the run's own stream, which a page opening
+	// the thread joins (tryResumeRun). Display only: sse stays nil.
+	cr.subTurn.view = &sseWriter{run: cr.liveRun}
 	// A channel inbound is the one path with a third party on the other end: the
 	// run identity is a synthetic per-chat user while the agent record lives in
 	// the owner's store, and MessageSender is the contact's own display name.

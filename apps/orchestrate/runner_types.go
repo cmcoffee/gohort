@@ -119,6 +119,12 @@ type chatTurn struct {
 	// test — and every method on it tolerates that.
 	prep *prepClock
 	sse  *sseWriter
+	// view is a display-only stream for a turn with no page of its own (an
+	// MCP ask, a background hand-off): its tool calls are drawn there, so
+	// someone who opens the thread mid-turn watches them land. Only what a
+	// page draws goes to it (shown); everything that behaves differently
+	// with a person present still asks sse, which stays nil.
+	view *sseWriter
 	// askChain is the agents that handed this run over, nearest last: their
 	// ask-before-every-call marks bind this run too (ask_first.go).
 	askChain []string

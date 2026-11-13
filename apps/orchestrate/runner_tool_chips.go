@@ -269,7 +269,7 @@ func (t *chatTurn) ensureBubbleForTool() string {
 		return id
 	}
 	id = fmt.Sprintf("orch-%d", time.Now().UnixNano())
-	t.sse.Send(map[string]any{
+	t.shown().Send(map[string]any{
 		"kind": "message",
 		"role": "assistant",
 		"id":   id,
@@ -293,6 +293,14 @@ func (t *chatTurn) emitToolCall(msgID, name string, args map[string]any, suffix 
 // emitToolCallUnder is emitToolCall for a call made beneath another one, a
 // dispatched agent's call under the dispatch: parentCallID draws it there.
 func (t *chatTurn) emitToolCallUnder(parentCallID, msgID, name string, args map[string]any, suffix string, namePrefix ...string) string {
+	return t.emitToolCallAs("", parentCallID, msgID, name, args, suffix, namePrefix...)
+}
+
+// emitToolCallAs is emitToolCallUnder with the call's id chosen by the
+// caller, "" for a fresh one: a turn with no page keeps the model's own id
+// for its saved trace, and the chip has to carry that same id for its result
+// to find it.
+func (t *chatTurn) emitToolCallAs(callID, parentCallID, msgID, name string, args map[string]any, suffix string, namePrefix ...string) string {
 	displayName := name
 	// A turn that chose to say nothing shows as having stayed quiet and why
 	// (its reason argument rides in the chip's args), not as a tool named
@@ -312,7 +320,9 @@ func (t *chatTurn) emitToolCallUnder(parentCallID, msgID, name string, args map[
 	// cached short-circuits emitted alongside live calls). The caller
 	// passes the returned ID to emitToolResult; both events ride
 	// together so the client can correlate by ID.
-	callID := UUIDv4()
+	if callID == "" {
+		callID = UUIDv4()
+	}
 	// args is the COMPACT one-line summary shown in the inline chip
 	// — values clipped at 60 chars so a row of tool calls stays
 	// readable. args_full is the unclipped, structured view rendered
@@ -347,8 +357,17 @@ func (t *chatTurn) emitToolCallUnder(parentCallID, msgID, name string, args map[
 	if parentCallID != "" {
 		payload["parent_call_id"] = parentCallID
 	}
-	t.sse.Send(payload)
+	t.shown().Send(payload)
 	return callID
+}
+
+// shown is where what a page draws for this turn goes: its page when it has
+// one, else its display-only view (nil for neither, which drops it).
+func (t *chatTurn) shown() *sseWriter {
+	if t.sse != nil {
+		return t.sse
+	}
+	return t.view
 }
 
 // chipArgs is args as a tool chip shows them: a hand-off's target agent by
@@ -412,7 +431,7 @@ func (t *chatTurn) emitToolResult(msgID, callID, name, out string, err error) {
 	} else {
 		payload["result"] = truncate(out, 4000)
 	}
-	t.sse.Send(payload)
+	t.shown().Send(payload)
 }
 
 // summarizeToolArgs renders the args map into a single compact

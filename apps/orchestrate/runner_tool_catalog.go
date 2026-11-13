@@ -968,7 +968,7 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 			// a sentence in the brief was advice a model could skip.
 			if t.session != nil && triageBlocks(t.session.Triage, name, args) {
 				if !hidden {
-					t.sse.Send(map[string]any{
+					t.shown().Send(map[string]any{
 						"kind": "activity",
 						"type": "error",
 						"id":   activityCheapID(),
@@ -980,7 +980,7 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 			}
 			var msgID, callID, parentCallID string
 			if !hidden {
-				t.sse.Send(map[string]any{
+				t.shown().Send(map[string]any{
 					"kind": "activity",
 					"type": "cmd",
 					"id":   activityCheapID(),
@@ -994,23 +994,27 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 				if msgID == "" {
 					msgID = t.ensureBubbleForTool()
 				}
-				if msgID != "" {
-					callID = t.emitToolCallUnder(parent.callID, msgID, name, shownArgs, "", prefix)
-				}
 				// With no page to draw on (a channel message, a wake), a call
 				// the model made goes by the model's own id: the id the turn's
 				// saved trace gives it, so what runs beneath it (a dispatched
 				// agent's calls) is saved nested there rather than dropped
 				// (continuingRun.savedToolCalls). Not for a call beneath
 				// another: a sub-agent's model ids can repeat its parent's.
+				// Chosen before the chip is drawn, so a chip on the turn's
+				// display-only view carries the id its result comes back by.
+				modelID := ""
 				if t.sse == nil && parent.callID == "" {
-					if id := ToolCallIDFrom(ctx); id != "" {
-						callID = id
-					}
+					modelID = ToolCallIDFrom(ctx)
+				}
+				if msgID != "" {
+					callID = t.emitToolCallAs(modelID, parent.callID, msgID, name, shownArgs, "", prefix)
+				}
+				if modelID != "" {
+					callID = modelID
 				}
 			}
 			// What runs beneath this call knows which card it belongs under.
-			ctx = withToolCard(ctx, toolCard{msgID: msgID, callID: callID, send: t.sse.Send})
+			ctx = withToolCard(ctx, toolCard{msgID: msgID, callID: callID, send: t.shown().Send})
 			imgN, vidN, fileN := sessAttachmentCounts(sess)
 			// Heartbeat. A tool that runs for minutes is indistinguishable
 			// from a hung one: the last thing the log or the pane says is
@@ -1034,7 +1038,7 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 						case <-stopBeat:
 							return
 						case <-tick.C:
-							t.sse.Send(map[string]any{
+							t.shown().Send(map[string]any{
 								"kind": "activity",
 								"type": "cmd",
 								"id":   activityCheapID(),
@@ -1065,7 +1069,7 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 			if err != nil {
 				rec.Err = err.Error()
 				if !hidden {
-					t.sse.Send(map[string]any{
+					t.shown().Send(map[string]any{
 						"kind": "activity",
 						"type": "error",
 						"id":   activityCheapID(),
@@ -1073,7 +1077,7 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 					})
 				}
 			} else if trimmed := strings.TrimSpace(out); trimmed != "" && !hidden {
-				t.sse.Send(map[string]any{
+				t.shown().Send(map[string]any{
 					"kind": "activity",
 					"type": "output",
 					"id":   activityCheapID(),
