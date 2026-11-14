@@ -72,6 +72,14 @@ type Job struct {
 	// OnLog hears each gohort.log the script makes (level, message), which
 	// otherwise reaches only the server log: a check hands it to the author.
 	OnLog func(level, msg string)
+	// Check marks a run made by an app check (docs/design/app-checks.md):
+	// it reads, and changes nothing outside the run. Every outbound write is
+	// refused (ToolSession.CheckRun), and so are the calls whose effects a
+	// check cannot hold to scratch data: tools, agents and pipelines (each
+	// can act on its own), store commands and actions (they run on the host),
+	// and notifications (they reach people). ask, the app's agent with no
+	// tools, is allowed.
+	Check bool
 }
 
 // AppRunAgent and AppRunPipeline answer a script's gohort.run_agent and
@@ -261,6 +269,9 @@ func (j Job) Run() (string, error) {
 		sess.Notify = notifier(caller, user, slug)
 	}
 	sess.ScriptLog = j.OnLog
+	if j.Check {
+		holdToCheck(sess)
+	}
 	var out string
 	if j.Long {
 		out, err = j.runLong(sess, tt, args, bindModel)
@@ -319,6 +330,11 @@ func (j Job) runLong(sess *ToolSession, tt *TempTool, args map[string]any, bindM
 		work.Notify = sess.Notify
 		work.ScriptLog = sess.ScriptLog
 		storeFuncs(work, j.Owner, j.Slug)
+		// The long run works on a session of its own, so a check holds it
+		// as well, after everything above has been bound.
+		if j.Check {
+			holdToCheck(work)
+		}
 		if j.OnProgress != nil {
 			if act := bgrun.RunActivityFrom(work.Context()); act != nil {
 				stop := make(chan struct{})
@@ -507,4 +523,36 @@ func deployLibs(ws, slug string, libs map[string]string) (string, error) {
 		}
 	}
 	return rel, nil
+}
+
+// checkRefusal answers a call an app check's run may not make.
+func checkRefusal(what string) error {
+	return fmt.Errorf("not in a check: %s can act on its own (send, change, run), which a check cannot hold to its scratch data. A check reads; test this part by hand", what)
+}
+
+// holdToCheck makes sess an app check's run: no outbound writes, and none of
+// the calls that act beyond the run.
+func holdToCheck(sess *ToolSession) {
+	sess.CheckRun = true
+	sess.CallTool = func(name string, _ map[string]any) (string, error) {
+		return "", checkRefusal("calling the tool " + name)
+	}
+	sess.RunAgent = func(agent, _ string) (string, []string, error) {
+		return "", nil, checkRefusal("running an agent")
+	}
+	sess.RunPipeline = func(_, _ string) (string, error) {
+		return "", checkRefusal("running a pipeline")
+	}
+	sess.StoreCommand = func(store, _, command, _ string) (string, error) {
+		return "", checkRefusal("the store command " + command)
+	}
+	sess.StoreAction = func(store, command, action string, _ map[string]any) (string, error) {
+		return "", checkRefusal("the store action " + action)
+	}
+	sess.StorePull = func(store, item string, _ bool) (string, error) {
+		return "", checkRefusal("pulling from a store")
+	}
+	sess.Notify = func(title, _ string) (string, error) {
+		return "not sent: a check notifies nobody (" + title + ")", nil
+	}
 }

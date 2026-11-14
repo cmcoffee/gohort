@@ -206,6 +206,13 @@ type ToolSession struct {
 	// safe to call from a tool goroutine.
 	ApproveWrite func(w OutboundWrite) string
 
+	// CheckRun marks a run made by an app check (docs/design/app-checks.md):
+	// it reads, and it writes nothing outward. Every outbound write is
+	// refused, to any host, through a credential or not, and so is a CONNECT
+	// tunnel, whose direction gohort cannot see. Stricter than an unattended
+	// run, where a host the owner trusts takes writes without asking.
+	CheckRun bool
+
 	// SubAgentRunner spawns a one-shot sub-agent loop for tools that
 	// need to dispatch their OWN LLM round (today: pipeline-mode
 	// temp tools). Apps wire this on session creation; nil means

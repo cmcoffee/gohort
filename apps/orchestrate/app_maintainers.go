@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appcheck"
 	"github.com/cmcoffee/gohort/core/peershare"
 )
 
@@ -97,6 +98,7 @@ var appMaintainerActions = map[string]bool{
 var appMaintainerUpdateKeys = map[string]bool{
 	"action": true, "id": true, "slug": true, "name": true, "description": true, "notes": true,
 	"note": true, "sections": true, "full_width": true, "narrow": true, "confirm_rewrite": true, "_reason": true,
+	"checks": true,
 }
 
 // appMaintainerRefusal is why a maintainer may not take this action on the
@@ -152,6 +154,14 @@ func applyAppMaintainerEdit(prior, next AppSpec) (AppSpec, error) {
 	out.Sections, out.Page = next.Sections, next.Page
 	out.RecordFields, out.Sample, out.Verify = next.RecordFields, next.Sample, next.Verify
 	out.Updated = next.Updated
+	// Checks: a maintainer adds and changes them, and removes none, so a
+	// check their change breaks cannot be cleared on the way.
+	for _, had := range prior.Checks {
+		if !appHasCheck(next.Checks, had.Name) {
+			return prior, fmt.Errorf("NOT SAVED: this removes the check %q from %q. Removing a check is %s's: change it if the feature changed on purpose, or ask them", had.Name, prior.Slug, prior.Owner)
+		}
+	}
+	out.Checks = next.Checks
 	if !sameStringSet(prior.PageCode(), out.PageCode()) {
 		return prior, fmt.Errorf("NOT SAVED: this changes the page code of %q (an html or card section's HTML, or script in the page). That runs for everyone who opens the app, so it is %s's to change: ask them", prior.Slug, prior.Owner)
 	}
@@ -196,4 +206,14 @@ func subsetOf(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// appHasCheck reports whether checks has one named name.
+func appHasCheck(checks []appcheck.Check, name string) bool {
+	for _, c := range checks {
+		if strings.EqualFold(strings.TrimSpace(c.Name), strings.TrimSpace(name)) {
+			return true
+		}
+	}
+	return false
 }

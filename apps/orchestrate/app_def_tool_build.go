@@ -157,7 +157,7 @@ var sectionKeys = map[string][]string{
 var topLevelAppKeys = map[string]bool{
 	"actions": true, "data_sources": true, "settings": true, "agent_id": true,
 	"full_width": true, "narrow": true, "private_db": true, "record_key": true,
-	"name": true, "description": true, "slug": true,
+	"name": true, "description": true, "slug": true, "checks": true,
 }
 
 // unknownSectionKeyNotes reports keys a section carried that its kind does not

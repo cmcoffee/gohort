@@ -94,9 +94,13 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 		// pipeline section is bound to — a get that omits a binding invites an
 		// update that silently drops it.
 		"pipeline_id": spec.PipelineID,
-		"full_width":  spec.FullWidth,
-		"narrow":      spec.Narrow,
-		"url":         "/apps/" + spec.Slug + "/",
+		// What the app is supposed to do, as tests that run on every save
+		// (app_checks.go). Shown so an author changing a feature sees what
+		// already pins it.
+		"checks":     spec.Checks,
+		"full_width": spec.FullWidth,
+		"narrow":     spec.Narrow,
+		"url":        "/apps/" + spec.Slug + "/",
 	}
 	// Hand back the AUTHORING sections — the shape action=update accepts — not
 	// the rendered page. Returning the page invited the obvious next move (feed

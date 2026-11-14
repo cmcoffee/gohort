@@ -61,6 +61,8 @@ type appWrite struct {
 	// owner: the save keeps only what a maintainer may change
 	// (applyAppMaintainerEdit), and the history names them.
 	maintained bool
+	// checksReport is how the app's checks did on this save (app_checks.go).
+	checksReport string
 	// promoted is what the bound pipeline puts on a run's sidebar row. Captured
 	// here because this is the only place the DEFINITION is in hand; a meta
 	// field naming something it does not promote renders an empty pill, which
@@ -291,6 +293,20 @@ func (aw *appWrite) readParts() bool {
 		}
 	}
 	aw.parseNotes = append(aw.parseNotes, appScheduleSettingNotes(aw.spec)...)
+	// checks: what the app is supposed to do, as tests that live with it
+	// (app_checks.go). Passed wholesale replaces the list (omit to keep).
+	if raw, ok := args["checks"]; ok && raw != nil {
+		checks, err := appChecksArg(raw)
+		if err != nil {
+			return aw.exit("", fmt.Errorf("NOT SAVED: %v", err))
+		}
+		for _, c := range checks {
+			if c.IsPage() {
+				return aw.exit("", fmt.Errorf("NOT SAVED: check %q has steps, and page checks do not run yet: write it as a script check (script, records, inputs, expect) for now", c.Name))
+			}
+		}
+		aw.spec.Checks = checks
+	}
 
 	// Build the Page from the declarative sections. On update with no sections
 	// passed, keep the existing page.
@@ -400,6 +416,11 @@ func (aw *appWrite) save() bool {
 	if msg := t.appDelegationRefusal(aw.spec); msg != "" {
 		return aw.exit("", errors.New(msg))
 	}
+	// Every check still names a script the app has, whatever this call
+	// changed: dropping a script a check runs is refused naming the check.
+	if err := validateAppChecks(aw.spec); err != nil {
+		return aw.exit("", err)
+	}
 	if aw.maintained {
 		kept, err := applyAppMaintainerEdit(aw.prior, aw.spec)
 		if err != nil {
@@ -408,6 +429,18 @@ func (aw *appWrite) save() bool {
 		aw.spec = kept
 		reason += " by " + t.user
 	}
+	// The checks run on the version about to be saved, before it is: one
+	// that passed on the previous version and fails on this one refuses the
+	// save, and nothing changes.
+	var prior *AppSpec
+	if isUpdate {
+		prior = &aw.prior
+	}
+	report, err := t.appChecksGate(prior, aw.spec)
+	if err != nil {
+		return aw.exit("", err)
+	}
+	aw.checksReport = report
 	aw.saved = SaveAppSpecAs(aw.spec, reason)
 	return true
 }
@@ -447,6 +480,9 @@ func (aw *appWrite) report() {
 	// closely: a page fetching data/balance_step from a source registered as
 	// balance-step was broken by the rename, and the note saying so used to
 	// appear only on the success path, which that page never reached.
+	if aw.checksReport != "" {
+		aw.msg += "\n\n" + aw.checksReport
+	}
 	aw.msg = appWithParseNotes(aw.msg, aw.parseNotes)
 }
 

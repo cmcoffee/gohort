@@ -23,6 +23,7 @@ package orchestrate
 //	  lib/<name>.py     code the scripts share: `from engine import price`
 //	  assets/           images, sounds, models
 //	  NOTES.md          the app's notes: the plan, decisions, what was left out
+//	  checks.json       what the app is supposed to do, as tests (app_checks.go)
 
 import (
 	"crypto/sha256"
@@ -204,6 +205,12 @@ func writeAppFolder(abs string, spec AppSpec, assets map[string][]byte, base str
 	manifest, _ := json.MarshalIndent(m, "", "  ")
 	if err := write("app.json", manifest); err != nil {
 		return out, err
+	}
+	if len(spec.Checks) > 0 {
+		b, _ := json.MarshalIndent(spec.Checks, "", "  ")
+		if err := write("checks.json", append(b, '\n')); err != nil {
+			return out, err
+		}
 	}
 	if err := write("NOTES.md", []byte(spec.Notes)); err != nil {
 		return out, err
@@ -466,6 +473,15 @@ func (t *chatTurn) appFolderRead(abs, rel string) (map[string]any, appFolderMani
 		b, _ := json.Marshal(m.Settings)
 		_ = json.Unmarshal(b, &list)
 		args["settings"] = list
+	}
+	// checks.json is the app's checks; absent keeps the app's own, and a
+	// file that does not parse is refused rather than read as none.
+	if b, err := os.ReadFile(filepath.Join(abs, "checks.json")); err == nil {
+		var list []any
+		if err := json.Unmarshal(b, &list); err != nil {
+			return nil, appFolderManifest{}, fmt.Errorf("%s/checks.json does not parse: %v", rel, err)
+		}
+		args["checks"] = list
 	}
 	if notes, err := os.ReadFile(filepath.Join(abs, "NOTES.md")); err == nil {
 		args["notes"] = strings.TrimSpace(string(notes))

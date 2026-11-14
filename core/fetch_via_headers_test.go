@@ -242,3 +242,26 @@ func TestAScriptReadPastTheCapSaysSaveTo(t *testing.T) {
 		t.Error("the shim's fetch_via should send save_to")
 	}
 }
+
+// A check run's write through a credential is refused before anything is
+// sent: a covered host never reaches the write gate, so the dispatch asks.
+// Its read goes out.
+func TestACheckRunWritesNothingThroughACredential(t *testing.T) {
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
+	if err := s.Save(SecureCredential{Name: "gen", Type: SecureCredNone, BaseURL: srv.URL}, ""); err != nil {
+		t.Fatal(err)
+	}
+	check := &ToolSession{CheckRun: true}
+	if _, err := s.DispatchToolCallArgs(check, "gen", map[string]any{"url": srv.URL + "/send", "method": "POST", "body": "{}"}); err == nil || hits != 0 {
+		t.Fatalf("a check run's POST through a credential went out: err=%v hits=%d", err, hits)
+	}
+	if _, err := s.DispatchToolCallArgs(check, "gen", map[string]any{"url": srv.URL + "/read"}); err != nil || hits != 1 {
+		t.Errorf("a check run's read through a credential did not go out: err=%v hits=%d", err, hits)
+	}
+}

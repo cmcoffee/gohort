@@ -396,3 +396,25 @@ func TestSiteFromInput(t *testing.T) {
 		}
 	}
 }
+
+// An app check's run writes nothing outward: a write is refused even where
+// the app's own decision would let it go, a CONNECT tunnel is refused, and a
+// read goes out as usual.
+func TestAnAppCheckRunWritesNothingOutward(t *testing.T) {
+	trusting := &ToolSession{Username: "owner-a", CheckRun: true, ApproveWrite: func(OutboundWrite) string { return "" }}
+	if r := trusting.OutboundWriteRefusal("POST", "https://api.example.com/send", true); r == "" {
+		t.Error("a check run's write went out because the host was trusted")
+	}
+	if r := trusting.OutboundTunnelRefusal("api.example.com"); r == "" {
+		t.Error("a check run opened a tunnel")
+	}
+	if r := trusting.CheckRunRefusal("PUT"); r == "" {
+		t.Error("a credential-routed write from a check run was not refused")
+	}
+	if r := trusting.OutboundWriteRefusal("GET", "https://api.example.com/read", true); r != "" {
+		t.Errorf("a check run's read was refused: %s", r)
+	}
+	if r := (&ToolSession{Username: "owner-a"}).CheckRunRefusal("POST"); r != "" {
+		t.Errorf("an ordinary run was held to the check rule: %s", r)
+	}
+}

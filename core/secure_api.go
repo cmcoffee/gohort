@@ -3800,6 +3800,15 @@ func (s *SecureAPI) DispatchToolCallArgs(sess *ToolSession, credName string, arg
 	if !ok {
 		return "", fmt.Errorf("credential %q not registered", credName)
 	}
+	// An app check writes nothing outward, through a credential included: a
+	// covered host never reaches OutboundWriteRefusal, so the check is here.
+	method, _ := args["method"].(string)
+	if strings.TrimSpace(method) == "" {
+		method = "GET"
+	}
+	if refusal := sess.CheckRunRefusal(method); refusal != "" {
+		return "", errors.New(refusal)
+	}
 	return s.dispatch(c, args, sess)
 }
 

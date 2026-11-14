@@ -330,8 +330,15 @@ func (t *chatTurn) saveScriptEdit(spec AppSpec, ref appScriptRef, next, summary,
 	if msg := t.appDelegationRefusal(spec); msg != "" {
 		return "", errors.New(msg)
 	}
+	// The app's checks, on the edited version before it is saved: a check
+	// that passed and this edit breaks refuses it (app_checks.go).
+	checks, err := t.appChecksGate(&before, spec)
+	if err != nil {
+		return "", err
+	}
 	saved := SaveAppSpecAs(spec, reason)
 	msg := fmt.Sprintf(summary, saved.Name, saved.Updated)
+
 	if ref.kind == "data" {
 		report, _, _, fail := t.checkScripts(saved, false, nil, nil)
 		if fail > 0 {
@@ -350,7 +357,10 @@ func (t *chatTurn) saveScriptEdit(spec AppSpec, ref appScriptRef, next, summary,
 	} else {
 		t.noteActionsUnrun(saved.Slug, ch.actions)
 	}
-	return msg + " " + saved.VerifyStatus() + "." + ch.summary(saved.Slug), nil
+	if checks != "" {
+		checks = "\n\n" + checks
+	}
+	return msg + " " + saved.VerifyStatus() + "." + ch.summary(saved.Slug) + checks, nil
 }
 
 // scriptSyntaxProblem checks a script body with the language's own parser —

@@ -24,6 +24,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/appcheck"
 )
 
 // AppSpecTable is the per-user kvlite table holding AppSpecs, keyed by slug.
@@ -156,6 +158,11 @@ type AppSpec struct {
 	// owner's (docs/design/app-maintainers.md). Naming one also shares the
 	// app with them. Deployment-local, cleared on export.
 	Maintainers []string `json:"maintainers,omitempty"`
+	// Checks are what the app is supposed to do, as tests that live with it:
+	// written as each feature is built, run on every save, and a save that
+	// breaks one that passed is refused (docs/design/app-checks.md). They
+	// travel with the app.
+	Checks []appcheck.Check `json:"checks,omitempty"`
 	// DataOwner is whose name a PrivateDB app's database file was made under,
 	// set when the app moves to someone else, so its data stays where it is
 	// rather than the new owner's name pointing at an empty file. Read through
@@ -618,6 +625,7 @@ func appServesDifferently(prior, next AppSpec) bool {
 		s.Created, s.Updated, s.Verify, s.Schema = "", "", nil, 0
 		s.Shared, s.SharedGroups, s.SharedWith, s.PublicToken, s.Disabled = false, nil, nil, "", false
 		s.Maintainers = nil
+		s.Checks = nil // what the app is tested for, not what it serves
 		s.FullWidth, s.Narrow, s.AskDailyUSD, s.AskUserDailyUSD = false, false, 0, 0
 		s.RecordFields, s.Sample = nil, nil
 		b, _ := json.Marshal(s)

@@ -124,6 +124,15 @@ func (t *chatTurn) saveHTMLSectionEdit(spec AppSpec, sections []map[string]any, 
 		spec.Sections = src
 	}
 	spec.ChangeNote = strings.TrimSpace(note)
+	// The app's checks, on the edited version before it is saved: a check
+	// that passed and this edit breaks refuses it (app_checks.go).
+	checks, err := t.appChecksGate(&before, spec)
+	if err != nil {
+		return "", err
+	}
+	if checks != "" {
+		checks = "\n\n" + checks
+	}
 	saved := SaveAppSpecAs(spec, reason)
 
 	// Now the accurate check, against the revision that was just written. On
@@ -139,11 +148,11 @@ func (t *chatTurn) saveHTMLSectionEdit(spec AppSpec, sections []map[string]any, 
 	if !checked {
 		t.noteAppStanding(saved.Slug, false, "saved, and no browser check could run: run app_def(action=\"verify\")")
 		return fmt.Sprintf(summary, htmlSectionOrdinal(sections, idx), saved.Name, saved.Updated) +
-			" The page parsed, but no browser check could run on this save: run app_def(action=\"verify\") before telling the user it works.", nil
+			" The page parsed, but no browser check could run on this save: run app_def(action=\"verify\") before telling the user it works." + checks, nil
 	}
 	t.noteAppStanding(saved.Slug, true, "")
 	return fmt.Sprintf(summary, htmlSectionOrdinal(sections, idx), saved.Name, saved.Updated) +
-		" The page was parsed and loaded in a real browser after the change and came up clean, so there is nothing further to verify. Tell the user what changed.", nil
+		" The page was parsed and loaded in a real browser after the change and came up clean, so there is nothing further to verify. Tell the user what changed." + checks, nil
 }
 
 // applyHTMLPatch resolves the find/replace against one section's html and

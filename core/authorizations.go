@@ -717,6 +717,21 @@ func ListWriteHostPolicies(db Database, owner string) []PolicyEntry {
 	return listPolicies(db, writeHostPolicyTable, owner, nil)
 }
 
+// checkRunRefusal answers a write from an app check's run.
+const checkRunRefusal = "NOT SENT: this is an app check, which reads and never writes outward (a post, a send, a purchase). Check what the app does with the result instead, or test the write by hand."
+
+// CheckRunRefusal is "" unless this is an app check's run (CheckRun) and
+// method changes something, when it is the refusal: a check writes nothing
+// outward, to any host, through a credential or not. Asked where a
+// credential-routed request is sent, which never reaches
+// OutboundWriteRefusal.
+func (sess *ToolSession) CheckRunRefusal(method string) string {
+	if sess == nil || !sess.CheckRun || !IsWriteMethod(method) {
+		return ""
+	}
+	return checkRunRefusal
+}
+
 // OutboundWriteRefusal is "" when this request may go out, or the refusal to
 // return instead. Call it after a credential has had the chance to claim the
 // URL: a covered host is the credential's to govern, and never reaches here.
@@ -736,6 +751,9 @@ func ListWriteHostPolicies(db Database, owner string) []PolicyEntry {
 func (sess *ToolSession) OutboundWriteRefusal(method, rawURL string, canAsk bool) string {
 	if !IsWriteMethod(method) {
 		return ""
+	}
+	if sess.CheckRunRefusal(method) != "" {
+		return sess.CheckRunRefusal(method)
 	}
 	w := OutboundWrite{Method: strings.ToUpper(strings.TrimSpace(method)), URL: rawURL, Host: writeHostOf(rawURL), CanAsk: canAsk}
 	if w.Host == "" {
@@ -762,6 +780,9 @@ func (sess *ToolSession) OutboundWriteRefusal(method, rawURL string, canAsk bool
 // way a write is (approving trusts the host). A proxy client cannot wait for
 // a card, so nobody is asked.
 func (sess *ToolSession) OutboundTunnelRefusal(host string) string {
+	if sess != nil && sess.CheckRun {
+		return checkRunRefusal
+	}
 	w := OutboundWrite{Method: "CONNECT", Host: strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), "."), Tunnel: true}
 	if w.Host == "" {
 		return "NOT CONNECTED: the proxy needs a host to connect to."

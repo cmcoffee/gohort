@@ -206,3 +206,20 @@ func TestAMaintainedAppIsOnBuildersStartingForm(t *testing.T) {
 		}
 	}
 }
+
+// A maintainer adds and changes checks and removes none, so the check their
+// change breaks cannot be cleared on the way.
+func TestAMaintainerCannotRemoveACheck(t *testing.T) {
+	prior := AppSpec{Slug: "tally", Owner: "owner-a"}
+	_ = json.Unmarshal([]byte(`[{"name":"keeps the total","script":"now","expect":[{"exists":true}]}]`), &prior.Checks)
+	next := prior
+	next.Checks = nil
+	if _, err := applyAppMaintainerEdit(prior, next); err == nil || !strings.Contains(err.Error(), "keeps the total") {
+		t.Fatalf("a maintainer removed a check: %v", err)
+	}
+	more := prior
+	_ = json.Unmarshal([]byte(`[{"name":"keeps the total","script":"now","expect":[{"exists":true}]},{"name":"another","script":"now","expect":[{"exists":true}]}]`), &more.Checks)
+	if got, err := applyAppMaintainerEdit(prior, more); err != nil || len(got.Checks) != 2 {
+		t.Errorf("a maintainer could not add a check: %v", err)
+	}
+}
