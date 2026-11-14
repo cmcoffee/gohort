@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>gohort downloads</title>
+  <!-- Written by scripts/publish on every release. It reads manifest.json,
+       the same signed list the admin page's Software Update reads, so the
+       version, sizes and checksums here are always the published ones. -->
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface-2: #232733;
+      --border: rgba(255,255,255,0.09);
+      --accent: #6366f1;
+      --accent-2: #818cf8;
+      --accent-deep: #4338ca;
+      --text: #e6e8ee;
+      --muted: #9097a6;
+      --ok: #34d399;
+      --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background: radial-gradient(1200px 600px at 50% -200px, rgba(99,102,241,0.18), transparent 70%) var(--bg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      line-height: 1.5;
+    }
+    .wrap { max-width: 840px; margin: 0 auto; padding: 3.25rem 16px 4rem; }
+    header { text-align: center; margin-bottom: 2.4rem; }
+    header svg { width: 260px; max-width: 80%; height: auto; }
+    .tagline { color: var(--muted); margin: 0.9rem 0 1.1rem; font-size: 1.05rem; }
+    .badges { display: inline-flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; }
+    .badge {
+      display: inline-flex; align-items: center; gap: 0.45rem;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 999px; padding: 0.3rem 0.9rem;
+      font-size: 0.88rem; color: var(--muted);
+    }
+    .badge b { color: var(--accent-2); font-variant-numeric: tabular-nums; }
+
+    .featured {
+      background: linear-gradient(135deg, rgba(99,102,241,0.20), rgba(67,56,202,0.08));
+      border: 1px solid rgba(129,140,248,0.40);
+      border-radius: 16px; padding: 1.5rem 1.6rem;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 1rem; flex-wrap: wrap; margin-bottom: 2.25rem;
+    }
+    .featured .info { min-width: 0; }
+    .eyebrow {
+      text-transform: uppercase; letter-spacing: 0.08em;
+      font-size: 0.72rem; color: var(--accent-2); font-weight: 700; margin-bottom: 0.2rem;
+    }
+    .featured .plat { font-size: 1.35rem; font-weight: 700; }
+    .featured .meta { color: var(--muted); font-size: 0.88rem; margin-top: 0.15rem; }
+    .btn {
+      display: inline-block; background: var(--accent); color: #fff;
+      font-weight: 700; text-decoration: none; padding: 0.8rem 1.6rem;
+      border-radius: 10px; white-space: nowrap;
+      transition: transform .08s ease, background .15s ease;
+    }
+    .btn:hover { background: var(--accent-2); transform: translateY(-1px); }
+    .btn:active { transform: translateY(0); }
+
+    h2 {
+      font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.09em;
+      color: var(--muted); font-weight: 700; margin: 0 0 0.9rem;
+    }
+    ul.downloads { list-style: none; margin: 0 0 2.6rem; padding: 0; }
+    ul.downloads li {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 0.85rem 1.1rem; margin-bottom: 0.6rem;
+    }
+    ul.downloads li.is-current { border-color: rgba(129,140,248,0.55); }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+    .dl-left { display: flex; align-items: center; gap: 0.85rem; min-width: 0; }
+    .os-icon { width: 24px; height: 24px; flex: none; opacity: 0.9; }
+    .dl-name { font-weight: 600; }
+    .dl-sub { color: var(--muted); font-size: 0.82rem; }
+    .dl-right { display: flex; align-items: center; gap: 1rem; flex: none; }
+    .size { color: var(--muted); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+    a.dl {
+      color: var(--accent-2); text-decoration: none; font-weight: 600;
+      border: 1px solid var(--border); padding: 0.45rem 0.9rem; border-radius: 8px;
+      transition: background .15s ease, border-color .15s ease;
+    }
+    a.dl:hover { background: rgba(99,102,241,0.14); border-color: var(--accent-2); }
+    .sum {
+      display: flex; align-items: center; gap: 0.6rem; margin-top: 0.55rem;
+      padding-top: 0.55rem; border-top: 1px dashed var(--border); min-width: 0;
+    }
+    .sum .label { color: var(--muted); font-size: 0.75rem; flex: none; }
+    .sum code {
+      font-family: var(--mono); font-size: 0.74rem; color: var(--muted);
+      min-width: 0; overflow-wrap: anywhere; flex: 1;
+    }
+    button.copy {
+      flex: none; background: transparent; color: var(--muted);
+      border: 1px solid var(--border); border-radius: 6px;
+      font: inherit; font-size: 0.75rem; padding: 0.2rem 0.6rem; cursor: pointer;
+    }
+    button.copy:hover { color: var(--text); border-color: var(--accent-2); }
+    button.copy.done { color: var(--ok); border-color: var(--ok); }
+
+    .notice {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+      padding: 1rem 1.1rem; color: var(--muted); margin-bottom: 2.6rem;
+    }
+    .notice a { color: var(--accent-2); }
+
+    .panel {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; padding: 1.2rem 1.4rem; margin-bottom: 1.2rem;
+    }
+    .panel p { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.92rem; }
+    .panel p b { color: var(--text); font-weight: 600; }
+    .panel code { font-family: var(--mono); font-size: 0.86em; color: var(--text); }
+    pre {
+      font-family: var(--mono); background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; padding: 0.85rem 1rem; overflow-x: auto;
+      font-size: 0.84rem; color: var(--accent-2); margin: 0.7rem 0 0; line-height: 1.6;
+    }
+    pre .c { color: var(--muted); }
+
+    .docs { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 2.2rem; }
+    .docs a {
+      color: var(--accent-2); text-decoration: none; background: var(--surface);
+      border: 1px solid var(--border); padding: 0.5rem 0.95rem; border-radius: 8px; font-size: 0.9rem;
+    }
+    .docs a:hover { border-color: var(--accent-2); background: rgba(99,102,241,0.10); }
+
+    footer { margin-top: 3.25rem; text-align: center; color: var(--muted); font-size: 0.78rem; }
+    footer a { color: var(--accent-2); text-decoration: none; }
+
+    @media (max-width: 560px) {
+      .featured { flex-direction: column; align-items: stretch; }
+      .featured .btn { text-align: center; }
+      .row { flex-direction: column; align-items: stretch; gap: 0.6rem; }
+      .dl-right { justify-content: space-between; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="-4 -4 295.1 58" role="img" aria-label="gohort" shape-rendering="crispEdges">
+        <rect x="19.32" y="0" width="20.45" height="20.45" rx="5.68" shape-rendering="geometricPrecision" fill="#6366f1"/>
+        <rect x="0" y="29.55" width="20.45" height="20.45" rx="5.68" shape-rendering="geometricPrecision" fill="#4338ca"/>
+        <rect x="38.64" y="29.55" width="20.45" height="20.45" rx="5.68" shape-rendering="geometricPrecision" fill="#4338ca"/>
+        <g fill="#c9cdd6">
+          <rect x="83" y="0" width="24" height="10"/><rect x="119" y="0" width="18" height="10"/><rect x="149" y="0" width="6" height="10"/><rect x="173" y="0" width="6" height="10"/><rect x="191" y="0" width="18" height="10"/><rect x="221" y="0" width="24" height="10"/><rect x="257" y="0" width="30" height="10"/>
+          <rect x="77" y="10" width="6" height="10"/><rect x="113" y="10" width="6" height="10"/><rect x="137" y="10" width="6" height="10"/><rect x="149" y="10" width="6" height="10"/><rect x="173" y="10" width="6" height="10"/><rect x="185" y="10" width="6" height="10"/><rect x="209" y="10" width="6" height="10"/><rect x="221" y="10" width="6" height="10"/><rect x="245" y="10" width="6" height="10"/><rect x="269" y="10" width="6" height="10"/>
+          <rect x="77" y="20" width="6" height="10"/><rect x="95" y="20" width="12" height="10"/><rect x="113" y="20" width="6" height="10"/><rect x="137" y="20" width="6" height="10"/><rect x="149" y="20" width="30" height="10"/><rect x="185" y="20" width="6" height="10"/><rect x="209" y="20" width="6" height="10"/><rect x="221" y="20" width="24" height="10"/><rect x="269" y="20" width="6" height="10"/>
+          <rect x="77" y="30" width="6" height="10"/><rect x="101" y="30" width="6" height="10"/><rect x="113" y="30" width="6" height="10"/><rect x="137" y="30" width="6" height="10"/><rect x="149" y="30" width="6" height="10"/><rect x="173" y="30" width="6" height="10"/><rect x="185" y="30" width="6" height="10"/><rect x="209" y="30" width="6" height="10"/><rect x="221" y="30" width="6" height="10"/><rect x="239" y="30" width="6" height="10"/><rect x="269" y="30" width="6" height="10"/>
+          <rect x="83" y="40" width="18" height="10"/><rect x="119" y="40" width="18" height="10"/><rect x="149" y="40" width="6" height="10"/><rect x="173" y="40" width="6" height="10"/><rect x="191" y="40" width="18" height="10"/><rect x="221" y="40" width="6" height="10"/><rect x="245" y="40" width="6" height="10"/><rect x="269" y="40" width="6" height="10"/>
+        </g>
+      </svg>
+      <p class="tagline">Improvise, Adapt, Dispatch. Agents that delegate, in a single binary.</p>
+      <div class="badges">
+        <span class="badge">Latest version <b id="version">checking</b></span>
+        <span class="badge" id="published-badge" hidden>Published <b id="published"></b></span>
+      </div>
+    </header>
+
+    <div class="featured" id="featured" hidden>
+      <div class="info">
+        <div class="eyebrow">Recommended for your system</div>
+        <div class="plat" id="feat-plat"></div>
+        <div class="meta" id="feat-meta"></div>
+      </div>
+      <a class="btn" id="feat-btn" href="#all" download>Download</a>
+    </div>
+
+    <h2 id="all">All platforms</h2>
+    <ul class="downloads" id="downloads"></ul>
+    <div class="notice" id="no-list" hidden>
+      The release list could not be read just now. The files are in the
+      <a id="latest-folder" href="./">release folders</a>.
+    </div>
+
+    <h2>Get started</h2>
+    <div class="panel">
+      <p><b>Linux and macOS.</b> Make it runnable, set it up on this machine, then open the dashboard it prints.</p>
+<pre>chmod +x gohort
+./gohort --setup                  <span class="c"># the admin account, listen address and TLS</span>
+./gohort serve 127.0.0.1:8080     <span class="c"># the web dashboard</span></pre>
+      <p>Everything else (models, embeddings, search, voice, email) is set up in the dashboard, under <b>Administrator</b>.</p>
+      <p>Do <code>--setup</code> first, on loopback: until there is an admin account, the dashboard has nobody to ask for a password.</p>
+    </div>
+    <div class="panel">
+      <p><b>macOS.</b> The download is not signed by Apple, so Gatekeeper holds it back. Before the first run:</p>
+<pre>xattr -d com.apple.quarantine gohort</pre>
+    </div>
+    <div class="panel">
+      <p><b>Windows.</b> Run the Linux build under WSL2, in your Linux home folder, with <code>bubblewrap</code> installed. The Windows build runs chat, agents and tools that need no shell, but not shell commands or scripts: Windows has no sandbox for them, and gohort will not run them unconfined.</p>
+    </div>
+    <div class="panel">
+      <p><b>Check the download.</b> Compare its SHA-256 with the one listed beside it above.</p>
+<pre>sha256sum gohort                  <span class="c"># macOS: shasum -a 256 gohort</span></pre>
+    </div>
+    <div class="panel">
+      <p><b>Updating.</b> A running gohort updates itself from this site: <b>Administrator</b>, <b>Overview</b>, <b>Software Update</b>. It checks the release list's signature against the keys built into it and every file's checksum before it installs, and keeps the version it replaced so it can roll back.</p>
+    </div>
+
+    <div class="docs">
+      <a href="https://github.com/cmcoffee/gohort" target="_blank" rel="noopener">README on GitHub &#8599;</a>
+      <a href="https://github.com/cmcoffee/gohort/blob/main/docs/GETTING_STARTED.md" target="_blank" rel="noopener">Getting started &#8599;</a>
+      <a id="license-link" href="https://github.com/cmcoffee/gohort/blob/main/LICENSE" target="_blank" rel="noopener">License (Apache 2.0)</a>
+      <a id="notice-link" href="https://github.com/cmcoffee/gohort/blob/main/NOTICE" target="_blank" rel="noopener">Notice</a>
+    </div>
+
+    <footer>
+      Released under the <a href="https://www.apache.org/licenses/LICENSE-2.0" target="_blank" rel="noopener">Apache License 2.0</a>.
+      Each platform folder carries the third-party notices for its build.
+    </footer>
+  </div>
+
+  <script>
+    // What each platform key in the manifest is called here. A key not listed
+    // is still shown, under its own name, so a new platform needs no edit.
+    var NAMES = {
+      "linux-amd64":   { os: "Linux",   arch: "64-bit (x86-64)",        order: 1 },
+      "linux-arm64":   { os: "Linux",   arch: "ARM 64-bit (arm64)",     order: 2 },
+      "darwin-arm64":  { os: "macOS",   arch: "Apple Silicon (arm64)",  order: 3 },
+      "darwin-amd64":  { os: "macOS",   arch: "Intel (x86-64)",         order: 4 },
+      "windows-amd64": { os: "Windows", arch: "64-bit (x86-64)",        order: 5 }
+    };
+
+    function humanSize(bytes) { return (bytes / (1024 * 1024)).toFixed(1) + " MB"; }
+    function el(tag, cls, text) {
+      var e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text != null) e.textContent = text;
+      return e;
+    }
+
+    function osIcon(os) {
+      var c = "#c9cdd6", svg;
+      if (os === "Windows") svg = '<path d="M3 5.4 10.3 4.4v7.1H3zM10.3 12.5v7.1L3 18.6v-6.1zM11.4 4.2 21 3v8.5h-9.6zM21 12.5V21l-9.6-1.3v-7.2z"/>';
+      else if (os === "macOS") svg = '<path d="M16.4 12.9c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.8-3.5.8-.7 0-1.8-.8-3-.8-1.5 0-2.9.9-3.7 2.3-1.6 2.7-.4 6.8 1.1 9 .7 1.1 1.6 2.3 2.8 2.3 1.1 0 1.5-.7 2.9-.7 1.3 0 1.7.7 2.9.7 1.2 0 2-1.1 2.7-2.2.9-1.3 1.2-2.5 1.3-2.6-.1 0-2.4-.9-2.4-3.5zM14.2 5.9c.6-.8 1-1.8.9-2.9-.9 0-2 .6-2.6 1.3-.6.7-1.1 1.7-1 2.7 1 .1 2-.5 2.7-1.1z"/>';
+      else svg = '<path d="M12 2c-2 0-3 1.7-3 3.6 0 1.1.1 1.9-.5 2.9-.6 1-2 2.4-2 4.7 0 .8.2 1.4.5 1.9-.3.4-.6 1-.6 1.6 0 .3-.3.5-.7.8-.5.3-1.1.7-1.1 1.5 0 .3.1.6.4.8.6.4 1.7.3 2.8.6.9.3 1.6.9 2.7.9s1.6-.5 2.4-.9c.7-.3 1.9-.4 2.6-.9.3-.2.5-.5.5-.9 0-.9-.7-1.3-1.2-1.7-.4-.3-.7-.5-.7-.8 0-.9-.3-1.5-.7-2 .3-.5.5-1.2.5-2.1 0-2.2-1.5-3.6-2.1-4.6-.5-.9-.4-1.8-.4-2.9C15 3.7 14 2 12 2z"/>';
+      var wrap = document.createElement("span");
+      wrap.innerHTML = '<svg class="os-icon" viewBox="0 0 24 24" fill="' + c + '">' + svg + '</svg>';
+      return wrap.firstChild;
+    }
+
+    // Apple Silicon Macs say "Intel Mac OS X" in their user agent, so the GPU
+    // name decides, and arm64 when it cannot be read: nearly every Mac sold
+    // since late 2020 is Apple Silicon.
+    function macArch() {
+      try {
+        var c = document.createElement("canvas");
+        var gl = c.getContext("webgl") || c.getContext("experimental-webgl");
+        if (gl) {
+          var ext = gl.getExtension("WEBGL_debug_renderer_info");
+          var r = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || "") : "";
+          if (/apple/i.test(r)) return "arm64";
+          if (/intel|amd|radeon|nvidia|geforce/i.test(r)) return "amd64";
+        }
+      } catch (e) {}
+      return "arm64";
+    }
+
+    function guessPlatform() {
+      var probe = (navigator.userAgent || "") + " " + (navigator.platform || "");
+      if (/android|iphone|ipad/i.test(probe)) return "";
+      if (/win/i.test(probe)) return "windows-amd64";
+      if (/mac|darwin/i.test(probe)) return macArch() === "arm64" ? "darwin-arm64" : "darwin-amd64";
+      if (/linux|x11|cros/i.test(probe)) return /aarch64|arm64|armv8/i.test(probe) ? "linux-arm64" : "linux-amd64";
+      return "";
+    }
+
+    function copyButton(text) {
+      var b = el("button", "copy", "Copy");
+      b.type = "button";
+      b.addEventListener("click", function () {
+        var done = function () {
+          b.textContent = "Copied"; b.classList.add("done");
+          setTimeout(function () { b.textContent = "Copy"; b.classList.remove("done"); }, 1600);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done, function () {});
+        }
+      });
+      return b;
+    }
+
+    function render(m) {
+      document.getElementById("version").textContent = m.version;
+      if (m.published) {
+        var d = new Date(m.published);
+        if (!isNaN(d)) {
+          document.getElementById("published").textContent = d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+          document.getElementById("published-badge").hidden = false;
+        }
+      }
+      document.getElementById("license-link").href = m.version + "/LICENSE";
+      document.getElementById("notice-link").href = m.version + "/NOTICE";
+      ["license-link", "notice-link"].forEach(function (id) {
+        var a = document.getElementById(id);
+        a.removeAttribute("target"); a.removeAttribute("rel");
+      });
+
+      var keys = Object.keys(m.files || {}).sort(function (a, b) {
+        return ((NAMES[a] || {}).order || 99) - ((NAMES[b] || {}).order || 99) || (a < b ? -1 : 1);
+      });
+      var mine = guessPlatform();
+      var list = document.getElementById("downloads");
+      keys.forEach(function (k) {
+        var f = m.files[k], n = NAMES[k] || { os: k, arch: "" };
+        var li = el("li", k === mine ? "is-current" : "");
+        var row = el("div", "row");
+        var left = el("div", "dl-left");
+        left.appendChild(osIcon(n.os));
+        var names = el("div");
+        names.appendChild(el("div", "dl-name", n.os));
+        names.appendChild(el("div", "dl-sub", n.arch));
+        left.appendChild(names);
+        var right = el("div", "dl-right");
+        right.appendChild(el("span", "size", humanSize(f.size)));
+        var a = el("a", "dl", "Download");
+        a.href = f.path; a.setAttribute("download", "");
+        right.appendChild(a);
+        row.appendChild(left); row.appendChild(right);
+        li.appendChild(row);
+        var sum = el("div", "sum");
+        sum.appendChild(el("span", "label", "SHA-256"));
+        sum.appendChild(el("code", "", f.sha256));
+        sum.appendChild(copyButton(f.sha256));
+        li.appendChild(sum);
+        list.appendChild(li);
+      });
+
+      if (mine && m.files[mine]) {
+        var f = m.files[mine], n = NAMES[mine];
+        document.getElementById("feat-plat").textContent = "gohort for " + n.os;
+        document.getElementById("feat-meta").textContent = n.arch + " · " + humanSize(f.size) + " · version " + m.version;
+        var btn = document.getElementById("feat-btn");
+        btn.href = f.path;
+        btn.textContent = "Download for " + n.os;
+        document.getElementById("featured").hidden = false;
+      }
+    }
+
+    fetch("manifest.json", { cache: "no-store" })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (m) {
+        if (!m || !m.version || !m.files) throw new Error("not a release list");
+        render(m);
+      })
+      .catch(function () {
+        document.getElementById("version").textContent = "unknown";
+        document.getElementById("no-list").hidden = false;
+        fetch("version.txt", { cache: "no-store" })
+          .then(function (r) { return r.ok ? r.text() : null; })
+          .then(function (t) {
+            if (!t) return;
+            document.getElementById("version").textContent = t.trim();
+            document.getElementById("latest-folder").href = t.trim() + "/";
+          })
+          .catch(function () {});
+      });
+  </script>
+</body>
+</html>

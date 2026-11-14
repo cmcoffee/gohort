@@ -8,7 +8,8 @@
 // read, the public key added to the built-in key list (commit that).
 //
 // release copies what was built in -stage (<os>-<arch>/gohort[.exe] with its
-// THIRD_PARTY_NOTICES, and LICENSE and NOTICE) into <dist>/<version>/, then writes the signed
+// THIRD_PARTY_NOTICES, and LICENSE and NOTICE) into <dist>/<version>/, then
+// writes the download page (index.html, which reads the manifest), the signed
 // manifest, and version.txt last, so no server sees a version before all of
 // it is there. Each file is written under another name and renamed into
 // place: on a network share a move from local disk is a copy, and a copy can
@@ -18,6 +19,7 @@ package main
 import (
 	"crypto/ed25519"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -33,6 +35,14 @@ import (
 
 	"github.com/cmcoffee/gohort/core/selfupdate"
 )
+
+// downloadPage is the dist folder's index.html: the downloads, read from the
+// manifest beside it.
+//
+//go:embed index.html
+var downloadPage []byte
+
+const pageName = "index.html"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -248,6 +258,11 @@ func (r release) publish() (map[string]selfupdate.File, error) {
 		return nil, err
 	}
 	body = append(body, '\n')
+	// The download page reads the manifest, so it is only rewritten here,
+	// with the page from this build.
+	if err := writeInto(filepath.Join(r.dist, pageName), downloadPage); err != nil {
+		return nil, err
+	}
 	if err := writeInto(filepath.Join(r.dist, selfupdate.SignatureName), selfupdate.Sign(body, r.priv)); err != nil {
 		return nil, err
 	}

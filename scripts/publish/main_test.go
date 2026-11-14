@@ -161,3 +161,34 @@ func TestOldReleasesArePrunedPastTheNewestThree(t *testing.T) {
 		t.Errorf("left %v", got)
 	}
 }
+
+// The dist folder's download page is the one this build carries, and it reads
+// the manifest beside it rather than listing versions and sizes of its own.
+func TestTheDownloadPageIsPublishedAndReadsTheManifest(t *testing.T) {
+	f := newFixture(t)
+	if _, err := f.publish(t, "0.9.380"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(f.dist, "index.html"))
+	if err != nil || string(b) != string(downloadPage) {
+		t.Fatalf("the published page is not this build's (%d bytes): %v", len(b), err)
+	}
+	page := string(downloadPage)
+	if !strings.Contains(page, `fetch("manifest.json"`) {
+		t.Error("the page does not read the manifest")
+	}
+	if strings.Contains(page, "0.9.") {
+		t.Error("the page names a version of its own, which goes stale")
+	}
+	// Every platform a release builds has a name on the page.
+	for _, p := range []string{"linux-amd64", "linux-arm64", "darwin-amd64", "darwin-arm64", "windows-amd64"} {
+		if !strings.Contains(page, `"`+p+`":`) {
+			t.Errorf("the page has no name for %s", p)
+		}
+	}
+	for _, bad := range []string{"…", "—"} {
+		if strings.Contains(page, bad) {
+			t.Errorf("the page has %q", bad)
+		}
+	}
+}
