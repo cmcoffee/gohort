@@ -278,8 +278,8 @@ func TestAHandOffThreadNamesTheCallingAgent(t *testing.T) {
 		t.Fatalf("want a thread per conversation, got %+v", rows)
 	}
 	for _, r := range rows {
-		if r.Group != threadGroupHandOff || r.With != df.agent.Name {
-			t.Errorf("thread %s is with %q (%s), want %q", r.ID, r.With, r.Group, df.agent.Name)
+		if r.Tag != threadGroupHandOff || r.With != df.agent.Name {
+			t.Errorf("thread %s is with %q (%s), want %q", r.ID, r.With, r.Tag, df.agent.Name)
 		}
 	}
 }

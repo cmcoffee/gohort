@@ -31,8 +31,8 @@ func TestAThreadIsKnownByItsID(t *testing.T) {
 	}
 }
 
-// The threads list groups an agent's threads in rail order, newest first in
-// each group, each with a title that says what it is, who it is with (the
+// The threads list is one flat list of an agent's threads, newest first
+// whatever their kind, each tagged with its kind and with a title that says what it is, who it is with (the
 // last named author of an incoming message) and whether it has something
 // new. The owner's own sessions are not in it, and the session list leaves
 // the threads out.
@@ -46,7 +46,10 @@ func TestTheThreadsListAndTheSessionListAreApart(t *testing.T) {
 	put(ChatSession{ID: "mine", Title: "My work", LastAt: now, LastSeen: now})
 	put(ChatSession{ID: MCPThreadPrefix + ":k1:review", Title: "Check test review", LastAt: now.Add(-time.Minute), LastSeen: now.Add(-time.Hour),
 		Messages: []ChatMessage{{Role: "user", Content: "how did it go", Sender: "Claude Code"}, {Role: "assistant", Content: "fine"}}})
-	put(ChatSession{ID: MCPThreadPrefix + ":k1", LastAt: now.Add(-2 * time.Minute), LastSeen: now})
+	// The key's default thread, titled with the key's name when it began and
+	// written to since under the key's new one.
+	put(ChatSession{ID: MCPThreadPrefix + ":k1", Title: "Claude Desktop", LastAt: now.Add(-2 * time.Minute), LastSeen: now,
+		Messages: []ChatMessage{{Role: "user", Content: "hi", Sender: "Claude Code"}}})
 	put(ChatSession{ID: "dispatch:sess-1:" + df.agent.ID, LastAt: now.Add(-3 * time.Minute), LastSeen: now})
 	put(ChatSession{ID: "machine:thread-1:sort", LastAt: now, LastSeen: now})
 
@@ -55,21 +58,24 @@ func TestTheThreadsListAndTheSessionListAreApart(t *testing.T) {
 	for _, r := range rows {
 		ids = append(ids, r.ID)
 	}
-	want := []string{MCPThreadPrefix + ":k1:review", MCPThreadPrefix + ":k1", "dispatch:sess-1:" + df.agent.ID, "machine:thread-1:sort"}
+	want := []string{"machine:thread-1:sort", MCPThreadPrefix + ":k1:review", MCPThreadPrefix + ":k1", "dispatch:sess-1:" + df.agent.ID}
 	if strings.Join(ids, " ") != strings.Join(want, " ") {
 		t.Fatalf("threads in order:\n got %v\nwant %v", ids, want)
 	}
-	if r := rows[0]; r.Group != threadGroupMCP || r.Title != "Check test review" || r.With != "Claude Code" {
+	if r := rows[0]; r.Tag != "Step" || r.Title != "Step sort" {
+		t.Errorf("a pipeline step: %+v", r)
+	}
+	if r := rows[1]; r.Tag != "MCP" || r.Title != "Check test review" || r.With != "Claude Code" {
 		t.Errorf("a named MCP conversation: %+v", r)
 	}
-	if r := rows[1]; r.Title != "Over MCP" {
-		t.Errorf("the key's default thread: %+v", r)
+	if r := rows[2]; r.Tag != "MCP" || r.Title != "" || r.With != "Claude Code" {
+		t.Errorf("the key's default thread is who and when, whatever title it kept, with whoever wrote last: %+v", r)
 	}
-	if r := rows[2]; r.Group != threadGroupHandOff || r.Title != "Hand-off" || r.With == "" {
-		t.Errorf("a hand-off: %+v", r)
+	if r := threadRowFor(ChatSession{ID: MCPThreadPrefix + ":k2"}, threadGroupMCP); r.With != "MCP client" || r.Title != "" {
+		t.Errorf("a client that never named itself: %+v", r)
 	}
-	if r := rows[3]; r.Group != threadGroupStep || r.Title != "Step sort" {
-		t.Errorf("a pipeline step: %+v", r)
+	if r := rows[3]; r.Tag != "Agent" || r.Title != "" || r.With == "" || !r.Created.Equal(r.LastAt) {
+		t.Errorf("a hand-off is who and when, no stand-in title, created falling back to its last activity: %+v", r)
 	}
 
 	prevRoot := RootDB

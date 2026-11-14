@@ -23,17 +23,16 @@ import (
 	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
-// Thread groups, in the order the rail lists them.
+// Thread kinds, as the tag the rail draws before each thread's title. Short
+// words, not abbreviations: "PPL" read as people.
 const (
-	threadGroupMCP     = "Over MCP"
-	threadGroupHandOff = "Hand-offs"
-	threadGroupStep    = "Pipeline steps"
+	threadGroupMCP     = "MCP"
+	threadGroupHandOff = "Agent"
+	threadGroupStep    = "Step"
 )
 
-var threadGroupOrder = map[string]int{threadGroupMCP: 0, threadGroupHandOff: 1, threadGroupStep: 2}
-
-// threadGroup is the group a session id belongs to as a thread, or "" for an
-// ordinary session.
+// threadGroup is the kind of thread a session id is, as its tag, or "" for
+// an ordinary session.
 func threadGroup(sid string) string {
 	switch {
 	case sid == MCPThreadPrefix || strings.HasPrefix(sid, MCPThreadPrefix+":"):
@@ -52,11 +51,12 @@ func isThread(sid string) bool { return threadGroup(sid) != "" }
 
 // threadRow is one thread as the rail lists it.
 type threadRow struct {
-	ID     string    `json:"id"`
-	Title  string    `json:"title"`
-	Group  string    `json:"group"`
-	With   string    `json:"with,omitempty"`
-	LastAt time.Time `json:"last_at"`
+	ID      string    `json:"id"`
+	Title   string    `json:"title"`
+	Tag     string    `json:"tag"`
+	With    string    `json:"with,omitempty"`
+	Created time.Time `json:"created"`
+	LastAt  time.Time `json:"last_at"`
 }
 
 // threadRowFor is a stored thread as the rail lists it: its title, or one
@@ -64,7 +64,10 @@ type threadRow struct {
 func threadRowFor(s ChatSession, group string) threadRow {
 	// No unread mark: a thread is for checking in on, not something waiting
 	// on the person, so the rail draws no new-activity dot for one.
-	row := threadRow{ID: s.ID, Title: strings.TrimSpace(s.Title), Group: group, LastAt: s.LastAt}
+	row := threadRow{ID: s.ID, Title: strings.TrimSpace(s.Title), Tag: group, Created: s.Created, LastAt: s.LastAt}
+	if row.Created.IsZero() {
+		row.Created = s.LastAt
+	}
 	// Who wrote to it: the last author named on an incoming message (an MCP
 	// key's name, a delegating agent's).
 	for i := len(s.Messages) - 1; i >= 0; i-- {
@@ -75,20 +78,30 @@ func threadRowFor(s ChatSession, group string) threadRow {
 	}
 	switch group {
 	case threadGroupHandOff:
+		// No stand-in title: "Hand-off" on every row said what the tag
+		// already says. The rail shows who handed it over and when.
 		if row.With == "" {
-			row.With = "handed over by another agent"
+			row.With = "another agent"
 		}
-		if row.Title == "" {
-			row.Title = "Hand-off"
-		}
+		return row
 	case threadGroupStep:
 		if parts := strings.Split(s.ID, ":"); len(parts) >= 3 && row.Title == "" {
 			row.Title = "Step " + parts[len(parts)-1]
 		}
 	case threadGroupMCP:
-		if row.Title == "" {
-			row.Title = "Over MCP"
+		// Like a hand-off: who and when. The key's own thread, the one an ask
+		// without a conversation of its own lands in (mcp-desktop:<key>, one
+		// segment after the prefix), shows no title. It stored the key's name
+		// as one when it began, which said nothing the line above it does not
+		// and went stale when the key was renamed: a thread from "Claude
+		// Code" titled "Claude Desktop". A named conversation keeps its name.
+		if row.With == "" {
+			row.With = "MCP client"
 		}
+		if strings.Count(s.ID, ":") <= 1 {
+			row.Title = ""
+		}
+		return row
 	}
 	if row.Title == "" {
 		row.Title = s.ID
@@ -96,8 +109,9 @@ func threadRowFor(s ChatSession, group string) threadRow {
 	return row
 }
 
-// listThreads is an agent's threads, grouped in rail order and newest first
-// in each group.
+// listThreads is an agent's threads, one flat list, newest first: the one
+// most likely to be looked in on is on top, whatever kind it is, and each
+// row's tag says the kind.
 func listThreads(db Database, agentID string) []threadRow {
 	if db == nil || agentID == "" {
 		return nil
@@ -117,13 +131,7 @@ func listThreads(db Database, agentID string) []threadRow {
 		}
 		out = append(out, threadRowFor(s, group))
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		gi, gj := threadGroupOrder[out[i].Group], threadGroupOrder[out[j].Group]
-		if gi != gj {
-			return gi < gj
-		}
-		return out[i].LastAt.After(out[j].LastAt)
-	})
+	sort.SliceStable(out, func(i, j int) bool { return out[i].LastAt.After(out[j].LastAt) })
 	return out
 }
 

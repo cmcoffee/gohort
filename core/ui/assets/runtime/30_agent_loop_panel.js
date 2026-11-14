@@ -241,7 +241,7 @@
     // conversations nobody here started, read-only. railView is which view
     // the rail shows; every load starts on sessions. threadIds holds the ids
     // the last threads fetch returned, so opening one locks its composer.
-    var railView = 'sessions', threadIds = {}, threadsBtn = null, sessionsTab = null, sideHdrLabel = null;
+    var railView = 'sessions', threadIds = {}, threadsBtn = null, threadsBack = null, sideHdrLabel = null;
     // Nav dropdowns — built in the rail block (where the nav machinery is in
     // scope), shown in the topbar actions for fleet agents. One per distinct
     // item.menu, in the order their first item appears; navMenus holds them in
@@ -312,6 +312,22 @@
       var moreAnchor = null; // set below, once the toggle exists
       function closeMoreMenu() { if (moreAnchor) moreAnchor.close(); else moreMenu.style.display = 'none'; }
       var moreItemCount = 0;
+      // Threads: the agent's own conversations (over MCP, hand-offs, pipeline
+      // steps). A place to check in on now and then, not a second list to
+      // keep an eye on, so the way there is the first item in this menu
+      // rather than a tab row of its own, which spent a full row of the rail
+      // on it. The same item leads back, and so does the arrow the header
+      // shows while the threads are up (markRailView).
+      if (cfg.threads_url) {
+        threadsBtn = el('button', {type: 'button', class: 'ui-side-menu-item',
+          title: 'The agent\'s own conversations: over MCP, hand-offs, pipeline steps',
+          onclick: function() {
+            closeMoreMenu();
+            setRailView(railView === 'threads' ? 'sessions' : 'threads');
+          }}, [cfg.threads_label || 'Threads']);
+        moreMenu.appendChild(threadsBtn);
+        moreItemCount++;
+      }
       if (cfg.mark_all_read_url) {
         moreMenu.appendChild(el('button', {class: 'ui-side-menu-item', onclick: function() {
           closeMoreMenu();
@@ -359,24 +375,6 @@
         document.addEventListener('click', closeMoreMenu);
         leftExtras.push(el('div', {class: 'ui-side-menu-wrap'}, [moreBtn]));
       }
-      // Threads switch: two tabs on a row of their own under the header, the
-      // rail's whole width. In the header itself it crowded the title and its
-      // controls until a narrow rail cut them off. The Threads tab carries no
-      // new-activity dot: threads are there to check in on, not to be called
-      // to.
-      var railTabs = null;
-      if (cfg.threads_url) {
-        var tabStyle = 'flex:1 1 0;min-width:0;padding:0.3rem 0.4rem;border:none;background:none;cursor:pointer;font:inherit;font-size:var(--fs-sm, 0.82rem);font-weight:600;color:var(--text-mute, #999);white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
-        sessionsTab = el('button', {type: 'button', class: 'ui-rail-tab active', style: tabStyle,
-          onclick: function() { setRailView('sessions'); }}, [cfg.list_title || 'Sessions']);
-        threadsBtn = el('button', {type: 'button', class: 'ui-rail-tab', style: tabStyle,
-          title: 'The agent\'s own conversations: over MCP, hand-offs, pipeline steps',
-          onclick: function() { setRailView('threads'); }}, [el('span', {}, [cfg.threads_label || 'Threads'])]);
-        railTabs = el('div', {class: 'ui-rail-tabs', role: 'tablist',
-          style: 'display:flex;flex:0 0 auto;margin:0.45rem 0.5rem 0.4rem;border:1px solid var(--border, rgba(127,127,127,0.3));border-radius:var(--btn-radius, 6px);overflow:hidden'},
-          [sessionsTab, threadsBtn]);
-        markRailTabs();
-      }
       var sideHdrBuilt = renderSideHeader({
         label:    cfg.list_title || 'Sessions',
         className: 'ui-chat-side-h',
@@ -413,10 +411,19 @@
         leftExtras: leftExtras,
       });
       sideHdrLabel = sideHdrBuilt.elt.firstChild;
+      // Back to the sessions, beside the header's title while it reads
+      // Threads; hidden otherwise.
+      if (cfg.threads_url) {
+        threadsBack = el('button', {type: 'button', class: 'ui-chat-side-btn ui-rail-back',
+          title: 'Back to ' + (cfg.list_title || 'Sessions'), 'aria-label': 'Back to ' + (cfg.list_title || 'Sessions'),
+          style: 'display:none;margin-right:0.3rem',
+          onclick: function() { setRailView('sessions'); }}, ['←']);
+        sideHdrBuilt.elt.insertBefore(threadsBack, sideHdrLabel);
+        markRailView();
+      }
       sideList = el('div', {class: 'ui-chat-side-list'}, [uiLoading()]);
       sideSearch = makeSideSearch(sideList);
       side.appendChild(sideHdrBuilt.elt);
-      if (railTabs) side.appendChild(railTabs);
       side.appendChild(sideSearch);
       side.appendChild(sideList);
 
@@ -7375,24 +7382,25 @@
     }
 
     // setRailView switches the rail between the sessions and the threads,
-    // renaming its header and the switch to match.
+    // renaming its header and the way back to match.
     function setRailView(view) {
       railView = view === 'threads' ? 'threads' : 'sessions';
       if (sideHdrLabel) sideHdrLabel.textContent = railView === 'threads' ? (cfg.threads_label || 'Threads') : (cfg.list_title || 'Sessions');
-      markRailTabs();
+      markRailView();
       loadSessions();
     }
 
-    // markRailTabs marks the tab for the view showing, in full text on a tint
-    // of the accent, the other muted.
-    function markRailTabs() {
-      [[sessionsTab, railView === 'sessions'], [threadsBtn, railView === 'threads']].forEach(function(t) {
-        if (!t[0]) return;
-        t[0].classList.toggle('active', t[1]);
-        t[0].setAttribute('aria-selected', t[1] ? 'true' : 'false');
-        t[0].style.color = t[1] ? 'var(--text, inherit)' : 'var(--text-mute, #999)';
-        t[0].style.background = t[1] ? 'color-mix(in srgb, var(--accent, #4a9eff) 14%, transparent)' : 'none';
-      });
+    // markRailView shows the way out of the list the rail holds: in the
+    // threads, the header's back arrow and a menu item that leads back; in the
+    // sessions, the item that leads to the threads. The item's own text node
+    // is edited, not replaced: WebKit drops a click whose target text was
+    // swapped out under it.
+    function markRailView() {
+      var inThreads = railView === 'threads';
+      if (threadsBack) threadsBack.style.display = inThreads ? '' : 'none';
+      if (threadsBtn && threadsBtn.firstChild) {
+        threadsBtn.firstChild.nodeValue = inThreads ? 'Back to ' + (cfg.list_title || 'Sessions') : (cfg.threads_label || 'Threads');
+      }
     }
 
     // refreshThreads reads the threads: their ids (a thread opens locked)
@@ -7413,49 +7421,67 @@
       });
     }
 
-    // renderThreads lists every thread under its group's heading, in the
-    // order the app sends them, none folded away; a heading says how many
-    // its group holds. No new-activity dots: a thread is for checking in on
-    // and troubleshooting, not something waiting on the person.
+    // threadWhen is a thread's time as the rail shows it: month, day and the
+    // time of day, with the year when it is not this one. Empty for a missing
+    // or zero time (a Go zero time arrives as year 1).
+    function threadWhen(iso) {
+      var d = iso ? new Date(iso) : null;
+      if (!d || isNaN(d.getTime()) || d.getFullYear() < 2000) return '';
+      var opts = {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'};
+      if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
+      return d.toLocaleString([], opts);
+    }
+
+    // renderThreads lists the threads as one flat list in the order the app
+    // sends them (newest first), each with the app's short tag for its kind
+    // drawn before its title, so the latest is on top whatever kind it is and
+    // there is nothing to open or fold. No new-activity dots: a thread is for
+    // checking in on and troubleshooting, not something waiting on the person.
     function renderThreads(list) {
       sideList.innerHTML = '';
       if (!list.length) {
         sideList.appendChild(el('div', {class: 'ui-chat-side-empty'}, ['No threads']));
         return;
       }
-      var groups = [], byGroup = {};
       list.forEach(function(t) {
-        var g = t.group || 'Threads';
-        if (!byGroup[g]) { byGroup[g] = []; groups.push(g); }
-        byGroup[g].push(t);
-      });
-      groups.forEach(function(g) {
-        var rows = byGroup[g];
-        var body = el('div', {class: 'ui-threads-group-body'});
-        var head = el('div', {class: 'ui-threads-group',
-          style: 'display:flex;align-items:center;gap:0.35rem;padding:0.45rem 0.5rem 0.2rem;font-size:var(--fs-2xs, 0.72rem);font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-mute, #999)'},
-          [el('span', {}, [g + ' (' + rows.length + ')'])]);
-        rows.forEach(function(t) {
-          var kids = [];
-          kids.push(el('span', {class: 'ui-chat-side-title', text: t.title || t.id}));
-          if (t.with) kids.push(el('span', {class: 'ui-threads-with', style: 'display:block;font-size:var(--fs-xs, 0.74rem);color:var(--text-mute, #999)'}, [t.with]));
-          var row = el('div', {class: 'ui-chat-side-item' + (t.id === activeSessionId ? ' active' : '')}, kids);
-          row.addEventListener('click', function() { openSession(t.id); closeDrawer(); });
-          if (cfg.delete_url) {
-            row.appendChild(el('button', {class: 'ui-chat-side-del', title: 'Delete',
-              onclick: async function(ev) {
-                ev.stopPropagation();
-                if (!(await window.uiConfirm('Delete this thread? Only the record here is removed; whatever it was part of goes on.'))) return;
-                fetchJSON(substituteExtras(cfg.delete_url.replace('{id}', encodeURIComponent(t.id))), {method: 'DELETE'}).then(function() {
-                  if (activeSessionId === t.id) openSession(null);
-                  refreshThreads();
-                });
-              }}, ['×']));
-          }
-          body.appendChild(row);
-        });
-        sideList.appendChild(head);
-        sideList.appendChild(body);
+        // Two lines, the same for every row. On top, the kind's tag at the
+        // left and who it is with centered across the row; below, centered,
+        // its title when it has one and when it began. A row with no title
+        // of its own (a hand-off) is who and when, nothing standing in.
+        // Stacked in the rail's text column, since the row itself lays its
+        // children side by side.
+        var top = el('div', {class: 'ui-threads-meta',
+          style: 'display:grid;grid-template-columns:1fr minmax(0, max-content) 1fr;align-items:center;gap:0.4rem;min-width:0;margin-bottom:0.1rem'}, [
+            el('span', {style: 'justify-self:start;min-width:0'}, t.tag ? [el('span', {class: 'ui-threads-tag',
+              style: 'padding:0 0.3rem;border:1px solid var(--border, rgba(127,127,127,0.3));border-radius:3px;font-size:var(--fs-2xs, 0.68rem);font-weight:700;letter-spacing:0.04em;line-height:1.5;color:var(--text-mute, #999)'}, [t.tag])] : []),
+            el('span', {class: 'ui-threads-with',
+              style: 'min-width:0;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-sm, 0.82rem);font-weight:600;color:var(--accent, #4a9eff)'}, [t.with || '']),
+            el('span', {}, []),
+          ]);
+        var when = threadWhen(t.created || t.last_at);
+        var bottom = el('div', {class: 'ui-threads-when',
+          style: 'text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-xs, 0.74rem);color:var(--text-mute, #999)'}, []);
+        if (t.title) bottom.appendChild(el('span', {class: 'ui-chat-side-title', style: 'display:inline;color:var(--text, inherit)'}, [t.title]));
+        if (t.title && when) bottom.appendChild(document.createTextNode(' \u00b7 '));
+        if (when) bottom.appendChild(document.createTextNode(when));
+        var text = el('div', {class: 'ui-chat-side-text'}, []);
+        if (t.tag || t.with) text.appendChild(top);
+        if (t.title || when) text.appendChild(bottom);
+        if (!t.tag && !t.with && !t.title && !when) text.appendChild(el('span', {class: 'ui-chat-side-title'}, [t.id]));
+        var row = el('div', {class: 'ui-chat-side-item' + (t.id === activeSessionId ? ' active' : '')}, [text]);
+        row.addEventListener('click', function() { openSession(t.id); closeDrawer(); });
+        if (cfg.delete_url) {
+          row.appendChild(el('button', {class: 'ui-chat-side-del', title: 'Delete',
+            onclick: async function(ev) {
+              ev.stopPropagation();
+              if (!(await window.uiConfirm('Delete this thread? Only the record here is removed; whatever it was part of goes on.'))) return;
+              fetchJSON(substituteExtras(cfg.delete_url.replace('{id}', encodeURIComponent(t.id))), {method: 'DELETE'}).then(function() {
+                if (activeSessionId === t.id) openSession(null);
+                refreshThreads();
+              });
+            }}, ['×']));
+        }
+        sideList.appendChild(row);
       });
       if (sideSearch && sideSearch.applyFilter) sideSearch.applyFilter();
     }

@@ -2427,7 +2427,11 @@
       class: 'ui-chat-new', title: opts.newTitle || '',
       onclick: opts.onNew,
     }, [opts.newLabel || '+ New']);
-    var children = [el('span', {text: opts.label})];
+    // The label stretches so the controls after it hug the right edge. By
+    // its class, not by being first: a control a caller puts before it (a
+    // back arrow) would otherwise take :first-child and leave every button
+    // bunched against the title.
+    var children = [el('span', {class: 'ui-chat-side-h-label', text: opts.label})];
     (opts.leftExtras || []).forEach(function(c) { children.push(c); });
     // Optional split control: a caret beside + New opens a menu of
     // alternate new-session modes (opts.newVariants — each {label, title,
