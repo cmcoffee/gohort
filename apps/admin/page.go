@@ -44,7 +44,7 @@ var adminLayout = []struct {
 	// deployment, beside how it is doing now.
 	{"Overview", []string{"System Status", "Activity Log", "Software Update", "Site", "Cost History (Last 30 Days)", "Cost by source", "Prices"}},
 	{"People", []string{
-		"Sign-in", "Add account", "Users", "People outside gohort", "Teams", "Default Apps",
+		"Sign-in", "Microsoft sign-in", "Add account", "Users", "People outside gohort", "Teams", "Default Apps",
 		"Feature Access", "Model access limits", "Personal integrations",
 	}},
 	{"Models", []string{"Worker LLM", "Lead LLM", "Decision Offloading", "Model Privacy", "Learned from model refusals", "LLM Routing", "Local Model Scheduler"}},

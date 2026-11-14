@@ -139,7 +139,13 @@ const (
 	// registry for the request fields a model may refuse. Its users are the
 	// provider clients and retryLLM, all in core, and core cannot import a
 	// subpackage that would need APIError and Log back.
-	coreFileCeiling = 200
+	//
+	// 200 -> 201 (Microsoft sign-in): core/auth_sso.go, the sign-in routes
+	// beside LoginHandler. They make the session the way a password sign-in
+	// does (auth_cookie_name, sessionMaxAge, requestIsHTTPS, authNewName,
+	// serveLoginPage), all unexported here; the protocol, the settings and the
+	// links are core/oidc's.
+	coreFileCeiling = 201
 
 	// coreExportCeiling is the number of exported top-level symbols — funcs,
 	// types, vars, consts. Methods are excluded because they are not what

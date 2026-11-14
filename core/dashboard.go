@@ -211,6 +211,13 @@ func ServeDashboard(addr string) error {
 		mux.HandleFunc("/signup", SignupHandler(db))
 		mux.HandleFunc("/forgot", ForgotHandler(db))
 		mux.HandleFunc("/reset", ResetHandler(db))
+		// Sign-in with Microsoft (auth_sso.go). The two /login/sso pages are
+		// let through like the pages above; the /api/sso ones need a session.
+		mux.HandleFunc(ssoStartPath, ssoStartHandler(db))
+		mux.HandleFunc(ssoCallbackPath, ssoCallbackHandler(db))
+		mux.HandleFunc("/api/sso/connect", ssoConnectHandler(db))
+		mux.HandleFunc("/api/sso/me", ssoMeHandler(db))
+		mux.HandleFunc("/api/sso/unlink", ssoUnlinkHandler(db))
 	}
 
 	// Desktop bridge — gohort-desktop / gohort-bridge opens a

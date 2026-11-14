@@ -16,6 +16,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/mcppersonal"
+	"github.com/cmcoffee/gohort/core/oidc"
 	"github.com/cmcoffee/gohort/core/ui"
 	"strconv"
 )
@@ -537,6 +538,15 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 			Subtitle: "Change the password you sign in with. You'll need your current one.",
 			Body:     ui.Card{HTML: passwordHTML},
 		})
+		// Microsoft sign-in, while the deployment offers it or the account
+		// still has an identity connected (so it can be disconnected).
+		if s := oidc.LoadSettings(db); s.Enabled || len(oidc.LinksFor(db, user)) > 0 {
+			sections = append(sections, ui.Section{
+				Title:    "Microsoft sign-in",
+				Subtitle: "Sign in with your work Microsoft account instead of your password. Your password keeps working.",
+				Body:     ui.Card{HTML: ssoHTML},
+			})
+		}
 	}
 	// Connected accounts, API credentials, and Extensions › Tools moved to the Gateways
 	// app (the per-user "outward reach" surface). Account keeps identity +
@@ -835,6 +845,60 @@ func featureKind(key string) string {
 	}
 	return "door"
 }
+
+// ssoHTML is the Microsoft sign-in panel: the identities connected to this
+// account, each with Disconnect, and a Connect button that takes the person
+// through Microsoft and back (core's /api/sso routes).
+const ssoHTML = `<div class="acct-sso">
+  <div id="acct-sso-list" class="acct-sso-list"></div>
+  <form method="POST" action="/api/sso/connect" id="acct-sso-connect" style="display:none">
+    <button type="submit" class="ui-row-btn primary" id="acct-sso-btn">Connect your Microsoft account</button>
+  </form>
+  <span id="acct-sso-msg" class="acct-pw-msg"></span>
+</div>
+<style>
+.acct-sso { display:flex; flex-direction:column; gap:0.5rem; max-width:32rem; }
+.acct-sso-row { display:flex; align-items:center; gap:0.6rem; }
+.acct-sso-who { flex:1; min-width:0; overflow-wrap:anywhere; }
+.acct-sso-when { color:var(--text-mute); font-size:var(--fs-sm, 0.82rem); }
+</style>
+<script>
+(function(){
+  var list=document.getElementById('acct-sso-list'), form=document.getElementById('acct-sso-connect'),
+      msg=document.getElementById('acct-sso-msg');
+  if(!list) return;
+  function load(){
+    fetch('/api/sso/me', {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(d){
+      list.textContent='';
+      (d.links||[]).forEach(function(l){
+        var row=document.createElement('div'); row.className='acct-sso-row';
+        var who=document.createElement('span'); who.className='acct-sso-who'; who.textContent=l.shown_as;
+        var when=document.createElement('span'); when.className='acct-sso-when';
+        when.textContent='connected '+new Date(l.linked_at).toLocaleDateString();
+        var off=document.createElement('button'); off.className='ui-row-btn'; off.textContent='Disconnect';
+        off.addEventListener('click', function(){
+          var ask='Disconnect '+l.shown_as+'? It will no longer sign in to this account.';
+          (window.uiConfirm ? window.uiConfirm(ask) : Promise.resolve(confirm(ask))).then(function(yes){
+          if(!yes) return;
+          off.disabled=true;
+          fetch('/api/sso/unlink', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify({key: l.key})})
+            .then(function(r){ return r.ok ? r.json() : r.text().then(function(t){ throw new Error(t||('Error '+r.status)); }); })
+            .then(function(){ load(); })
+            .catch(function(e){ off.disabled=false; msg.className='acct-pw-msg err'; msg.textContent='Failed: '+(e&&e.message||e); });
+          });
+        });
+        row.appendChild(who); row.appendChild(when); row.appendChild(off); list.appendChild(row);
+      });
+      if(!(d.links||[]).length){
+        var none=document.createElement('div'); none.className='acct-sso-when';
+        none.textContent='No Microsoft account is connected.'; list.appendChild(none);
+      }
+      form.style.display = d.available ? '' : 'none';
+    }).catch(function(e){ list.textContent='Failed to load: '+(e&&e.message||e); });
+  }
+  load();
+})();
+</script>`
 
 // passwordHTML is the change-password panel: current + new + confirm fields with
 // client-side validation, posting to api/password. App-specific, so it rides in

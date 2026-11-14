@@ -546,7 +546,7 @@ func normalizeAppPath(path string) string {
 // viewer is perfectly entitled to see renders blank.
 func appPathOf(url_path string) string {
 	switch url_path {
-	case "", "/", "/login", "/logout", "/signup", "/forgot", "/reset", "/manifest.webmanifest":
+	case "", "/", "/login", "/logout", "/signup", "/forgot", "/reset", "/manifest.webmanifest", ssoStartPath, ssoCallbackPath:
 		return ""
 	}
 	if strings.HasPrefix(url_path, "/api/") || strings.HasPrefix(url_path, "/_") {

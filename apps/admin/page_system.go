@@ -372,7 +372,8 @@ func (a *AdminApp) systemSections() []ui.Section {
 	// running now, the log who did what afterwards. It was a tab of its own,
 	// one section wide, on a header row already folding tabs under More.
 	// Software Update after it: what is running, and what could replace it.
-	return append(append(append(secs[:1:1], a.activitySections()...), a.updateSections()...), secs[1:]...)
+	// Microsoft sign-in goes with Sign-in; the layout places it.
+	return append(append(append(append(secs[:1:1], a.activitySections()...), a.updateSections()...), secs[1:]...), a.ssoSections()...)
 }
 
 // themePickerOptions builds the Theme dropdown from the core/ui theme

@@ -1,6 +1,8 @@
 # Sign in with OpenID Connect: single-tenant Entra first
 
-Status: proposed (2026-11-13). Nothing built.
+Status: built, steps 1 to 4 (2026-11-14); the live trial against a real
+tenant (step 5) is next. Where the build differs from this design is in
+"As built" at the end.
 
 ## Why
 
@@ -114,7 +116,6 @@ unlike integrations, which are per user.
 | Client credential | A certificate made here (the page shows it to upload to Entra, its thumbprint and when it expires), or a client secret (stored encrypted) | Certificate |
 | Button label | Text | "Sign in with Microsoft" |
 | New people | Refuse (link first) / Wait for approval / Let in | Wait for approval |
-| Password sign-in | On / Administrators only / Off | On |
 | Redirect URI | Read only: `<external_url>/login/sso/callback`, with a copy button, for the Entra registration | (derived) |
 
 The page says what to do in Entra, in order: register an app (single
@@ -204,6 +205,33 @@ Then a live trial against the owner's own tenant.
    already the organization's.
 3. **Session length for SSO sign-ins.** The same as password (proposed),
    or shorter so that Entra offboarding takes effect sooner.
+
+## As built
+
+- **Code.** `core/oidc` (the protocol, the settings, the links) and
+  `core/oidc/oidctest` (the fake provider every test signs in against). The
+  routes are `core/auth_sso.go`, unexported beside `LoginHandler`, which
+  shares their session cookie helper. Core's export count is unchanged, and
+  its file ceiling went from 200 to 201 for that file.
+- **Routes.** `GET /login/sso` and `GET /login/sso/callback` as above, plus
+  three that need a session: `POST /api/sso/connect` (the Account page's
+  Connect button), `GET /api/sso/me`, and `POST /api/sso/unlink` (the
+  person's own links).
+- **Admin.** One section, "Microsoft sign-in", on People after Sign-in: the
+  settings, the certificate (made, downloaded, replaced), and a table of
+  every connected identity with Disconnect. The table replaces unlinking
+  from the user row.
+- **Password sign-in stays on.** The "Password sign-in" setting (On /
+  Administrators only / Off) is not built: with the desktop app still on the
+  password form, Off cannot be offered, and Administrators only is the
+  fallback for an Off that does not exist yet. It comes with the desktop's
+  SSO path.
+- **The open questions** took the proposals: the desktop keeps the password
+  form, New people defaults to wait for approval, and an SSO session lasts
+  as long as a password one.
+- **A link to an account that no longer exists** signs nobody in and is
+  dropped, and deleting an account drops its links, so a later account with
+  the same name does not inherit them.
 
 ## Later
 

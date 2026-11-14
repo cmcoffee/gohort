@@ -218,6 +218,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	a.registerRulesRoutes(sub)
 	a.registerActivityRoutes(sub)
 	a.registerUpdateRoutes(sub)
+	a.registerSSORoutes(sub)
 
 	// Gate the entire sub-mux behind IP allowlist + admin check.
 	gated := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

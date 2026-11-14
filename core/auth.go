@@ -20,6 +20,7 @@ import (
 	"github.com/cmcoffee/gohort/core/activity"
 	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/netgate"
+	"github.com/cmcoffee/gohort/core/oidc"
 	"github.com/cmcoffee/gohort/core/ui"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -1183,6 +1184,11 @@ func AuthDeleteUser(db Database, username string) {
 	if n := dropUserScopes(username); n > 0 {
 		Log("[auth] deleting %q: cleared their data from %d store(s)", username, n)
 	}
+	// An identity linked to the name would otherwise sign in a new account
+	// made later with the same name.
+	if n := oidc.UnlinkAll(db, username); n > 0 {
+		Log("[auth] deleting %q: disconnected %d Microsoft sign-in(s)", username, n)
+	}
 	db.Unset(AuthTable, "user:"+username)
 }
 
@@ -1678,7 +1684,8 @@ func AuthMiddleware(db Database, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Login/logout/signup/forgot/reset endpoints are always accessible.
 		if r.URL.Path == "/login" || r.URL.Path == "/logout" || r.URL.Path == "/signup" ||
-			r.URL.Path == "/forgot" || r.URL.Path == "/reset" {
+			r.URL.Path == "/forgot" || r.URL.Path == "/reset" ||
+			r.URL.Path == ssoStartPath || r.URL.Path == ssoCallbackPath {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -1951,16 +1958,7 @@ func LoginHandler(db Database) http.HandlerFunc {
 			for _, k := range keys {
 				clearLockout(k)
 			}
-			token := AuthCreateSession(db, username)
-			http.SetCookie(w, &http.Cookie{
-				Name:     auth_cookie_name,
-				Value:    token,
-				Path:     "/",
-				HttpOnly: true,
-				SameSite: http.SameSiteLaxMode,
-				Secure:   requestIsHTTPS(r),
-				MaxAge:   sessionMaxAge(),
-			})
+			setSessionCookie(w, r, AuthCreateSession(db, username))
 			Log("[auth] user %q logged in from %s", username, ClientIP(r))
 			RecordActivity(r, activity.SignIn, username, "signed in")
 			http.Redirect(w, r, "/", http.StatusFound)
@@ -2391,9 +2389,13 @@ func serveLoginPage(w http.ResponseWriter, errMsg string) {
 		links += `<a class="alt-link" href="/signup">Don't have an account? Sign up</a>`
 	}
 
+	sso := ""
+	if AuthDB != nil {
+		sso = ssoButton(AuthDB())
+	}
 	body := `    <div class="ascii-logo">Gohort</div>
     ` + error_html + `
-    <form method="POST" action="/login">
+` + sso + `    <form method="POST" action="/login">
       <div class="form-group">
         <label for="username">Email</label>
         <input type="text" id="username" name="username" autocomplete="username" autofocus>
