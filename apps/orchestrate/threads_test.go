@@ -8,6 +8,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // A thread is read from its session id: an ask over MCP, a hand-off from
@@ -113,5 +114,46 @@ func TestAThreadIsNotWrittenInto(t *testing.T) {
 	}
 	if err := refuseCortexNote(q, "ordinary"); err != nil {
 		t.Errorf("a note into a session: %v", err)
+	}
+}
+
+// An idle thread goes once the cleanup's days have passed, in any agent's
+// table, the way a delete from the rail takes it; a recent one stays, a
+// session never goes however old, and 0 days keeps everything.
+func TestAThreadIdleTooLongIsRemoved(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	saved := orchestrateBaseDB
+	orchestrateBaseDB = root
+	t.Cleanup(func() { orchestrateBaseDB = saved })
+	SetTunablesDB(root)
+	t.Cleanup(func() { SetTunablesDB(nil); InvalidateTunables() })
+	setDays := func(n int) { root.Set(WebTable, tuneThreadCleanupDays, float64(n)); InvalidateTunables() }
+
+	db := UserDB(root, "alice")
+	now := time.Now()
+	put := func(agent, id string, age time.Duration) {
+		db.Set(sessionTable(agent), id, ChatSession{ID: id, AgentID: agent, LastAt: now.Add(-age)})
+	}
+	day := 24 * time.Hour
+	put("a1", MCPThreadPrefix+":k1", 40*day)                                        // idle: goes
+	put("a1", "dispatch:s1:a1", 2*day)                                              // recent: stays
+	put("a1", "my-session", 400*day)                                                // a session: never
+	put("seed-helper", "machine:run-1:sort", 31*day)                                // another agent's table: goes
+	db.Set(sessionTable("a1"), "dispatch:s9:a1", ChatSession{ID: "dispatch:s9:a1"}) // no time: left
+
+	setDays(0)
+	if n := sweepIdleThreads([]string{"alice"}, now); n != 0 {
+		t.Fatalf("0 days removed %d thread(s)", n)
+	}
+	setDays(30)
+	if n := sweepIdleThreads([]string{"alice", "nobody"}, now); n != 2 {
+		t.Fatalf("removed %d thread(s), want 2", n)
+	}
+	gone := func(agent, id string) bool { var s ChatSession; return !db.Get(sessionTable(agent), id, &s) }
+	if !gone("a1", MCPThreadPrefix+":k1") || !gone("seed-helper", "machine:run-1:sort") {
+		t.Error("an idle thread was kept")
+	}
+	if gone("a1", "dispatch:s1:a1") || gone("a1", "my-session") || gone("a1", "dispatch:s9:a1") {
+		t.Error("a recent thread, a session, or a thread of unknown age was removed")
 	}
 }

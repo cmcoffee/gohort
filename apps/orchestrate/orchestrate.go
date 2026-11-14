@@ -304,6 +304,7 @@ func (T *OrchestrateApp) wireRunners() {
 	registerLinkGroups()
 	registerParkedSweep()
 	registerDoneSweep()
+	registerThreadSweep()
 
 	// Wire the standing-agent runner: core owns the schedule + run-ledger;
 	// this supplies the agent-execution closure (loads the agent and runs it

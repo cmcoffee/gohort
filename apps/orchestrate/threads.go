@@ -15,6 +15,7 @@ package orchestrate
 // the rail, read-only already. Cortex is its own view.
 
 import (
+	"context"
 	"sort"
 	"strings"
 	"time"
@@ -151,3 +152,77 @@ func (T *OrchestrateApp) handleThreadList(c *jsonapi.Call) (any, error) {
 
 // threadWriteRefusal is what a send into a thread from the web is told.
 const threadWriteRefusal = "this thread is the agent's own conversation, kept for reading: start a new session to talk"
+
+// --- Cleanup -----------------------------------------------------------------
+
+// tuneThreadCleanupDays is how long a thread may sit idle before it goes.
+const tuneThreadCleanupDays = "tune_thread_cleanup_days"
+
+func init() {
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: tuneThreadCleanupDays, Category: "Memory",
+		Label:  "Remove idle threads after (days, 0 = never)",
+		Help:   "A thread nobody has written to in this long is removed: an ask over MCP, a hand-off from another agent, a pipeline step.",
+		Detail: "Threads are an agent's own conversations, kept for checking in on and troubleshooting. Idle this long they have nothing left to show, and a conversation that picks up again starts a fresh one. Sessions people work in are never touched.",
+		Kind:   KindInt, Default: 30, Min: 0, Max: 3650})
+}
+
+// sweepIdleThreads removes every thread, in every one of the owners' agents'
+// session tables, last written to before the cutoff, and says how many went.
+// Every table, not only the owners' own agents: a seed or app agent keeps
+// threads too. A thread with no time on it is left, since its age is not
+// known. Sessions are never touched (isThread), and each thread goes the way
+// a delete from the rail takes it (deleteChatSession), side tables and
+// archived history with it.
+func sweepIdleThreads(owners []string, now time.Time) int {
+	days := TuneInt(tuneThreadCleanupDays)
+	if days <= 0 {
+		return 0
+	}
+	cutoff := now.Add(-time.Duration(days) * 24 * time.Hour)
+	removed := 0
+	for _, owner := range owners {
+		db := agentStore(owner)
+		if db == nil {
+			continue
+		}
+		n := 0
+		for _, tbl := range db.Tables() {
+			agentID, ok := strings.CutPrefix(tbl, sessionTable(""))
+			if !ok || agentID == "" {
+				continue
+			}
+			for _, k := range db.Keys(tbl) {
+				if !isThread(k) {
+					continue
+				}
+				s, ok := loadChatSession(db, agentID, k)
+				if !ok || s.LastAt.IsZero() || !s.LastAt.Before(cutoff) {
+					continue
+				}
+				deleteChatSession(db, agentID, k)
+				n++
+			}
+		}
+		if n > 0 {
+			Log("[orchestrate.threads] removed %d thread(s) of %s idle over %d day(s)", n, owner, days)
+		}
+		removed += n
+	}
+	return removed
+}
+
+// registerThreadSweep runs the sweep with the scheduler's reconcilers, every
+// half hour.
+func registerThreadSweep() {
+	RegisterReconciler("idle_thread_cleanup", func(ctx context.Context) error {
+		if AuthDB == nil || AuthDB() == nil {
+			return nil
+		}
+		var owners []string
+		for _, u := range AuthListUsers(AuthDB()) {
+			owners = append(owners, u.Username)
+		}
+		sweepIdleThreads(owners, time.Now())
+		return nil
+	})
+}
