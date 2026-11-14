@@ -202,8 +202,21 @@ func TestCallerNamePrecedence(t *testing.T) {
 	if got := callerName(newReq(nil), req); got != "+15551234567" {
 		t.Errorf("user field next: %q", got)
 	}
-	if got := callerName(newReq(nil), chatReq{}); got != "Voice caller" {
+	if got := callerName(newReq(nil), chatReq{}); got != "API client" {
 		t.Errorf("fallback should be honest, got %q", got)
+	}
+	// Any other client is named by its key, as an MCP ask is: the name its
+	// owner gave the key, after a caller a voice platform named.
+	prevRoot, prevAuth := RootDB, AuthDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	AuthDB = func() Database { return RootDB }
+	t.Cleanup(func() { RootDB, AuthDB = prevRoot, prevAuth })
+	key := MintAccountTokenScoped("alice", "Open WebUI", &TokenScope{Features: []string{OpenAIFeatureKey}})
+	if got := callerName(newReq(map[string]string{"X-API-Key": key.Token}), chatReq{}); got != "Open WebUI" {
+		t.Errorf("a client that names nobody is its key's name: %q", got)
+	}
+	if got := callerName(newReq(map[string]string{"X-API-Key": key.Token, "X-Caller-Name": "Alice"}), chatReq{}); got != "Alice" {
+		t.Errorf("a named caller still wins over the key: %q", got)
 	}
 }
 

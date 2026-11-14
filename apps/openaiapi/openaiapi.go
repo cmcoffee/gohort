@@ -662,8 +662,10 @@ func (T *OpenAIAPI) serveChannel(w http.ResponseWriter, r *http.Request, user, c
 }
 
 // callerName labels the external speaker in the thread. A voice platform knows
-// who is calling; without a hint the turn is still attributed to something
-// honest rather than silently reading as the room itself.
+// who is calling and says so; any other client is named by the key it called
+// with, as an MCP ask is, the name its owner gave it. Without either the turn
+// is still attributed to something honest rather than silently reading as
+// the room itself.
 func callerName(r *http.Request, req chatReq) string {
 	if h := strings.TrimSpace(r.Header.Get("X-Caller-Name")); h != "" {
 		return h
@@ -671,7 +673,10 @@ func callerName(r *http.Request, req chatReq) string {
 	if req.User != "" {
 		return req.User
 	}
-	return "Voice caller"
+	if tok := AccountTokenFromRequest(r); tok != nil && strings.TrimSpace(tok.Name) != "" {
+		return strings.TrimSpace(tok.Name)
+	}
+	return "API client"
 }
 
 // outsidePerson is who an outside-audience call is for: the X-End-User header,
@@ -937,9 +942,9 @@ const agentTurnTimeout = 3 * time.Minute
 // their own threads, and one key cannot name its way into another's by
 // sending the same session id.
 func sessionKey(r *http.Request, req chatReq) (key string, rolling bool) {
-	ns := "ext:"
+	ns := agenthost.ModelAPIThreadPrefix + ":"
 	if tok := AccountTokenFromRequest(r); tok != nil && tok.ID != "" {
-		ns = "ext:" + tok.ID + ":"
+		ns = agenthost.ModelAPIThreadPrefix + ":" + tok.ID + ":"
 	}
 	if h := strings.TrimSpace(r.Header.Get("X-Session-Id")); h != "" {
 		return ns + h, false

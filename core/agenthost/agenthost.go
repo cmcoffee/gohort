@@ -21,6 +21,14 @@ import (
 	"github.com/cmcoffee/gohort/core"
 )
 
+// ModelAPIThreadPrefix begins the id of every conversation held for a call to
+// the Model API (/v1/chat/completions addressed to an agent):
+// "ext:<key id>:<thread>" (apps/openaiapi sessionKey). Like an MCP ask, it is
+// a conversation the owner's client holds, so the host lists it with its
+// threads, apart from the owner's own sessions. Here rather than in core,
+// whose every export lands in each file that dot-imports it.
+const ModelAPIThreadPrefix = "ext"
+
 // Host is what the agent runtime offers other apps.
 type Host interface {
 	// RunAgentSync runs agentKey (an id or a name) in agentOwner's store as

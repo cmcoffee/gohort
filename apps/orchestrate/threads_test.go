@@ -7,6 +7,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
@@ -21,6 +22,8 @@ func TestAThreadIsKnownByItsID(t *testing.T) {
 		MCPThreadPrefix + ":k1:review":    threadGroupMCP,
 		"dispatch:sess-1:agent-2":         threadGroupHandOff,
 		"machine:thread-1:sort":           threadGroupStep,
+		"ext:key-1:conv:k9":               threadGroupAPI,
+		"extra-session":                   "",
 		"3f2a9c1e-session":                "",
 		"chan:+15550100":                  "",
 		cortexSessionID("agent-1"):        "",
@@ -74,6 +77,13 @@ func TestTheThreadsListAndTheSessionListAreApart(t *testing.T) {
 	}
 	if r := threadRowFor(ChatSession{ID: MCPThreadPrefix + ":k2"}, threadGroupMCP); r.With != "MCP client" || r.Title != "" {
 		t.Errorf("a client that never named itself: %+v", r)
+	}
+	// A Model API conversation: tagged API, named by its caller, keeping the
+	// title it was given from what was said.
+	api := threadRowFor(ChatSession{ID: agenthost.ModelAPIThreadPrefix + ":key-1:conv:k9", Title: "Trip planning",
+		Messages: []ChatMessage{{Role: "user", Content: "hi", Sender: "Open WebUI"}}}, threadGroup(agenthost.ModelAPIThreadPrefix+":key-1:conv:k9"))
+	if api.Tag != "API" || api.With != "Open WebUI" || api.Title != "Trip planning" {
+		t.Errorf("a Model API conversation: %+v", api)
 	}
 	if r := rows[3]; r.Tag != "Agent" || r.Title != "" || r.With == "" || !r.Created.Equal(r.LastAt) {
 		t.Errorf("a hand-off is who and when, no stand-in title, created falling back to its last activity: %+v", r)

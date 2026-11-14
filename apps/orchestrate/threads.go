@@ -8,6 +8,7 @@ package orchestrate
 // What a thread is, is read from its session id, so nothing stored changes:
 //
 //	mcp-desktop:<key>[:<conversation>]  an ask over MCP (core.MCPThreadPrefix)
+//	ext:<key>:<thread>                  a call to the Model API (agenthost.ModelAPIThreadPrefix)
 //	dispatch:<conversation>:<agent>     another agent handing this one work
 //	machine:<thread>:<step>             a pipeline step delegating to it
 //
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
@@ -28,6 +30,7 @@ import (
 // words, not abbreviations: "PPL" read as people.
 const (
 	threadGroupMCP     = "MCP"
+	threadGroupAPI     = "API"
 	threadGroupHandOff = "Agent"
 	threadGroupStep    = "Step"
 )
@@ -38,6 +41,8 @@ func threadGroup(sid string) string {
 	switch {
 	case sid == MCPThreadPrefix || strings.HasPrefix(sid, MCPThreadPrefix+":"):
 		return threadGroupMCP
+	case strings.HasPrefix(sid, agenthost.ModelAPIThreadPrefix+":"):
+		return threadGroupAPI
 	case strings.HasPrefix(sid, "dispatch:"):
 		return threadGroupHandOff
 	case strings.HasPrefix(sid, "machine:"):
@@ -89,6 +94,14 @@ func threadRowFor(s ChatSession, group string) threadRow {
 		if parts := strings.Split(s.ID, ":"); len(parts) >= 3 && row.Title == "" {
 			row.Title = "Step " + parts[len(parts)-1]
 		}
+	case threadGroupAPI:
+		// Who called: the caller a voice platform named, else the key's name
+		// (apps/openaiapi callerName). Its title is the one the conversation
+		// was given from what was said, before when it began.
+		if row.With == "" {
+			row.With = "API client"
+		}
+		return row
 	case threadGroupMCP:
 		// Like a hand-off: who and when. The key's own thread, the one an ask
 		// without a conversation of its own lands in (mcp-desktop:<key>, one
