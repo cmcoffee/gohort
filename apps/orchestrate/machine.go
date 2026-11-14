@@ -120,7 +120,7 @@ func (t *chatTurn) enterMachine(userMsg string) turnMachine {
 	// tools. Refused rather than narrowed, so a step added later cannot open
 	// the hole again.
 	if t.outsideAudience() {
-		t.turnDiag("machine_outside", chFirst(t.agent.Name, t.agent.ID)+" answered a person outside gohort as a plain agent, without its machine: a machine's steps reach more than is lent to people outside")
+		t.turnDiag("machine_outside", chFirst(t.agent.Name, t.agent.ID)+" answered an external contact as a plain agent, without its machine: a machine's steps reach more than is lent to external contacts")
 		return turnMachine{}
 	}
 	if d := machineDelegation(t.ctx); d > maxMachineDelegation {

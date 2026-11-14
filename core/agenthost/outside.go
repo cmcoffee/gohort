@@ -24,7 +24,7 @@ const MaxOutsidePersonLen = 128
 
 // ErrNotForOutsideAudience refuses an outside person's turn on an agent whose
 // owner has not set it to serve people outside.
-var ErrNotForOutsideAudience = errors.New("this agent is not set to serve people outside gohort: its owner turns on \"Serves people outside gohort\" on the agent's Access page")
+var ErrNotForOutsideAudience = errors.New("this agent does not serve external contacts: its owner turns on \"Serves external contacts\" on the agent's Access page")
 
 // OutsideScope is the runtime user an outside person's turns run as: one
 // store per source (the API key's id) and person. Empty when either is.

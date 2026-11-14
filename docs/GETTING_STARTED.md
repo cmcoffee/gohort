@@ -75,8 +75,8 @@ keys, press **+ New API key**. A key does one thing, chosen when you make it:
   and channels at `/v1`.
 - **Raw models**: the worker and lead models with no agent in front, over
   `/v1` or the Ollama-compatible model proxy.
-- **People outside gohort**: a chat widget or similar, calling for people who
-  are not gohort users. Each person gets their own memory.
+- **External contacts**: a chat widget or similar, calling for people with no
+  gohort account. Each person gets their own memory.
 
 The secret is shown once, when the key is made. Copy it then.
 

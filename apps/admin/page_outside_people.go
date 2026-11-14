@@ -29,7 +29,7 @@ func outsidePeopleAdminTable() ui.Table {
 	return ui.Table{
 		Source:    api + "/outside-people/all",
 		RowKey:    "id",
-		EmptyText: "No agent has served anyone outside gohort yet.",
+		EmptyText: "No agent has served an external contact yet.",
 		Columns: []ui.Col{
 			{Field: "owner", Label: "Owner", Flex: 1},
 			{Field: "agent", Label: "Agent", Flex: 1},

@@ -98,7 +98,7 @@ func outsideRunRefusal(runtimeUser, agentOwner string, target AgentRecord) error
 
 // errOutsideNotOwner refuses an outside person's turn on an agent shared with
 // the key's owner rather than owned by them.
-var errOutsideNotOwner = errors.New("this agent is shared with you, not yours: only its owner can set it to serve people outside gohort")
+var errOutsideNotOwner = errors.New("this agent is shared with you, not yours: only its owner can set it to serve external contacts")
 
 // --- Reach (design D) -----------------------------------------------------
 //
@@ -203,15 +203,15 @@ const (
 )
 
 func init() {
-	RegisterTunable(TunableSpec{App: "/orchestrate", Key: tuneOutsideAllPerDay, Category: "People outside gohort",
-		Label:  "Turns per 24 hours, all outside people, per agent",
-		Help:   "The most turns one agent takes from people outside gohort in a day, all of them together.",
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: tuneOutsideAllPerDay, Category: "External contacts",
+		Label:  "Turns per 24 hours, all external contacts, per agent",
+		Help:   "The most turns one agent takes from external contacts in a day, all of them together.",
 		Detail: "Each person also has the agent's own per-person limits. This is the ceiling over all of them, because a platform can give every visitor a fresh id and each new id starts with its own allowance. Past it, every outside person on that agent is told to try again later, and the owner gets one notice a day.",
 		Kind:   KindInt, Default: 2000, Min: 10, Max: 1000000})
-	RegisterTunable(TunableSpec{App: "/orchestrate", Key: tuneOutsideAllSpendUSD, Category: "People outside gohort",
-		Label:  "Spend per 24 hours, all outside people, per agent (US$)",
-		Help:   "The most one agent spends on people outside gohort in a day, all of them together. Counted from recorded usage, so an estimate.",
-		Detail: "The ceiling over every outside person on an agent, beside each person's own limit, so fresh ids cannot add up to an open budget. Spend is estimated from recorded usage and the prices under Costs; with no prices set, it counts nothing.",
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: tuneOutsideAllSpendUSD, Category: "External contacts",
+		Label:  "Spend per 24 hours, all external contacts, per agent (US$)",
+		Help:   "The most one agent spends on external contacts in a day, all of them together. Counted from recorded usage, so an estimate.",
+		Detail: "The ceiling over every external contact on an agent, beside each person's own limit, so fresh ids cannot add up to an open budget. Spend is estimated from recorded usage and the prices under Costs; with no prices set, it counts nothing.",
 		Kind:   KindFloat, Decimals: 2, Default: 20, Min: 0.5, Max: 100000})
 }
 
@@ -356,8 +356,8 @@ func noteOutsideLimit(owner string, a AgentRecord, person, reason string, now ti
 		Owner: owner,
 		Agent: a.ID,
 		Kind:  notices.KindBlocked,
-		Title: fmt.Sprintf("People outside gohort reached a limit on %s (%s)", chFirst(a.Name, a.ID), now.In(UserLocation(owner)).Format("2006-01-02")),
-		Body:  fmt.Sprintf("Latest: %s, %s. They were told to try again later. The limits are on the agent's Access page, under People outside gohort.", strings.TrimPrefix(person, "outside:"), reason),
+		Title: fmt.Sprintf("External contacts reached a limit on %s (%s)", chFirst(a.Name, a.ID), now.In(UserLocation(owner)).Format("2006-01-02")),
+		Body:  fmt.Sprintf("Latest: %s, %s. They were told to try again later. The limits are on the agent's Access page, under External contacts.", strings.TrimPrefix(person, "outside:"), reason),
 	})
 }
 

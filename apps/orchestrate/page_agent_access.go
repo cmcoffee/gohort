@@ -921,9 +921,9 @@ func (ap *accessPage) shareSections() []ui.Section {
 		},
 		{
 			Group:    "Share",
-			Title:    "People outside gohort",
-			Subtitle: "Whether people who are not gohort users can talk to this agent, through a platform's API key marked for an outside audience.",
-			Detail: "For example a chat widget on a customer portal, whose server calls /v1 with a key marked \"For people outside gohort\" (Account, API keys, Access) and names the person each call is for.\n\n" +
+			Title:    "External contacts",
+			Subtitle: "Whether people with no gohort account can talk to this agent, as external contacts: through Teams, or a platform's chat calling with an External contacts key.",
+			Detail: "For example a chat widget on a customer portal, whose server calls /v1 with a key of the kind \"External contacts\" (Account, API keys) and names the person each call is for.\n\n" +
 				"Each person runs in a store of their own: what they tell the agent, and their conversations, stay with them and never reach you or anyone else. The agent's saved notes reach them only if you share them (\"Its saved notes\", below), read-only; your cortex and its saved findings never do. Nothing they say changes the agent's own memory. Your own chats with it are unchanged.\n\n" +
 				"The key has to list it, and it has to be your own: an agent shared with you is yours to use, not to serve to the public. They reach only the tools and credentials you lend them below, never your other agents.",
 			Body: ui.FormPanel{
@@ -931,8 +931,8 @@ func (ap *accessPage) shareSections() []ui.Section {
 				PostURL: ap.patchURL,
 				Method:  "PATCH",
 				Fields: []ui.FormField{
-					{Field: "outside_audience", Type: "toggle", Label: "Serves people outside gohort",
-						Help: "Off: an outside-audience key's calls to this agent are refused, and so are Teams messages from anyone but you."},
+					{Field: "outside_audience", Type: "toggle", Label: "Serves external contacts",
+						Help: "Off: an External contacts key's calls to this agent are refused, and so are Teams messages from anyone but you."},
 					{Field: "outside_tools", Type: "checklist", Label: "Tools they may use",
 						Options:     outsideToolOptions(ap.user, ap.agent),
 						Placeholder: "(this agent carries nothing that can be lent)",
@@ -953,7 +953,7 @@ func (ap *accessPage) shareSections() []ui.Section {
 		{
 			Group:    "Share",
 			Title:    "People it has served",
-			Subtitle: "Everyone outside gohort who has talked to this agent, each in a store of their own.",
+			Subtitle: "Every external contact who has talked to this agent, each in a store of their own.",
 			Detail:   "They have no login, so looking after them is yours. View shows what the agent saved about one of them and their conversations. Clear memory forgets what it saved and keeps the conversations. Delete removes them entirely, from every one of your agents they reached: what to do when someone asks to be forgotten.",
 			Body:     outsidePeopleTableUI(T.WebPrefix(), T.WebPrefix()+"/api/outside-people?agent="+url.QueryEscape(ap.agent.ID), false),
 		},

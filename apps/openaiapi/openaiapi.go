@@ -695,7 +695,7 @@ func outsidePerson(r *http.Request, req chatReq) (string, error) {
 		person = strings.TrimSpace(req.User)
 	}
 	if person == "" {
-		return "", errors.New("this API key is for people outside gohort: name the person each call is for, in the X-End-User header or the request's user field")
+		return "", errors.New("this API key is for external contacts: name the person each call is for, in the X-End-User header or the request's user field")
 	}
 	if err := agenthost.CheckOutsidePerson(person); err != nil {
 		return "", err

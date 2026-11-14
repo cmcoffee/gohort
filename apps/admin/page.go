@@ -44,7 +44,7 @@ var adminLayout = []struct {
 	// deployment, beside how it is doing now.
 	{"Overview", []string{"System Status", "Activity Log", "Software Update", "Site", "Cost History (Last 30 Days)", "Cost by source", "Prices"}},
 	{"People", []string{
-		"Sign-in", "Microsoft sign-in", "Users", "People outside gohort", "Teams", "Default Apps",
+		"Sign-in", "Microsoft sign-in", "Users", "External contacts", "Teams", "Default Apps",
 		"Feature Access", "Model access limits", "Personal integrations",
 	}},
 	{"Models", []string{"Worker LLM", "Lead LLM", "Decision Offloading", "Model Privacy", "Learned from model refusals", "LLM Routing", "Local Model Scheduler"}},
@@ -461,7 +461,7 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 		"Keystore": true, "Drafted tools waiting for review": true, "Users' tools": true, "System Hooks": true,
 		"Requests to share": true, "Shared tools": true,
 		"Agent-Scoped Tools": true, "Orphaned Tools": true,
-		"Skills": true, "Teams": true, "People outside gohort": true,
+		"Skills": true, "Teams": true, "External contacts": true,
 		"Templates":  true,
 		"Migrations": true, "Database Browser": true,
 		"Agent Capabilities: Outward & Spending": true,

@@ -129,7 +129,7 @@ func TestATuningCategoryStaysOnTuning(t *testing.T) {
 	t.Cleanup(func() { AuthDB = prev })
 	// The ceilings are registered by orchestrate, which this package does
 	// not load: one of the same category stands in.
-	RegisterTunable(TunableSpec{Key: "tune_outsidetabtest", Category: "People outside gohort", Label: "T",
+	RegisterTunable(TunableSpec{Key: "tune_outsidetabtest", Category: "External contacts", Label: "T",
 		Kind: KindInt, Default: 1, Min: 0, Max: 10})
 	a := &AdminApp{db: db}
 	mux := http.NewServeMux()
@@ -147,12 +147,12 @@ func TestATuningCategoryStaysOnTuning(t *testing.T) {
 			t.Errorf("the Tuning category %q is moved to %q", s.Title, g)
 		}
 	}
-	title := `"title":"People outside gohort"`
+	title := `"title":"External contacts"`
 	if n := strings.Count(get("/admin/people"), title); n != 1 {
-		t.Errorf("People has %d sections titled People outside gohort, want 1", n)
+		t.Errorf("People has %d sections titled External contacts, want 1", n)
 	}
 	if n := strings.Count(get("/admin/tuning"), title); n != 1 {
-		t.Errorf("Tuning has %d sections titled People outside gohort, want 1", n)
+		t.Errorf("Tuning has %d sections titled External contacts, want 1", n)
 	}
 }
 

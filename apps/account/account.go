@@ -688,7 +688,7 @@ func (T *Account) kindScope(user, kind string, posted *TokenScope) (*TokenScope,
 	case "":
 		return &TokenScope{}, nil
 	case KeyKindSeveral:
-		return nil, jsonapi.BadRequest("a key does one thing: choose its kind (the Model API to your agents, MCP, raw models, the desktop app, or people outside gohort) and make another key for the rest")
+		return nil, jsonapi.BadRequest("a key does one thing: choose its kind (the Model API to your agents, MCP, raw models, the desktop app, or external contacts) and make another key for the rest")
 	}
 	if !kindOpen(user, kind) {
 		return nil, jsonapi.BadRequest("that kind of key is not open to you: an administrator grants it under Feature Access")
@@ -1017,7 +1017,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading...</div>
     mcp:     {label:'MCP', tone:'var(--accent-2, var(--accent))', desc:'Your agents and their tools, from an MCP client such as Claude Desktop.'},
     models:  {label:'Raw models', tone:'var(--warning)', desc:'The worker and lead models with no agent in front, over the Model API or the model proxy. No persona, no guardrails: raw compute.'},
     desktop: {label:'Desktop app', tone:'var(--accent-3, var(--accent))', desc:'The gohort desktop app signs in with it and lends the computer it runs on to your agents, as tools. It reaches no agent.'},
-    outside: {label:'People outside gohort', tone:'var(--success)', desc:'A platform such as a chat widget, calling the Model API from its own server for people who are not gohort users.'}
+    outside: {label:'External contacts', tone:'var(--success)', desc:'A platform such as a chat widget, calling the Model API from its own server for people with no gohort account.'}
   };
   function kindPill(kind){
     if(kind === 'several') return el('span',{class:'acct-tok-badge warn',text:'Several kinds'});
@@ -1116,7 +1116,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading...</div>
     } else if(kind === 'desktop'){
       wrap.appendChild(el('div',{class:'acct-tok-scope-note',text:'Nothing to choose. The desktop app now makes its own key when you sign in to it, so this one is only needed by an app that still uses it.'}));
     } else if(kind === 'outside'){
-      agentsGroup('Only agents set to serve people outside gohort answer, and only the ticked ones.');
+      agentsGroup('Only agents set to serve external contacts answer, and only the ticked ones.');
       wrap.appendChild(el('div',{class:'acct-tok-scope-note',text:'Every call names the person it is for, in the X-End-User header or the request\'s user field, and each person gets their own memory and conversations, apart from yours and from each other\'s. Never put this key in a browser or an app people can open: whoever holds it can speak as anyone.'}));
     }
 

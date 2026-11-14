@@ -235,8 +235,8 @@ func (a *AdminApp) systemSections() []ui.Section {
 			}}},
 		},
 		{
-			Title:    "People outside gohort",
-			Subtitle: "Everyone a user's agents have served through a key marked for people outside gohort, across every owner.",
+			Title:    "External contacts",
+			Subtitle: "Everyone a user's agents have served as external contacts, through Teams or an External contacts key, across every owner.",
 			Detail:   "They have no account, so they never appear above. Each runs in a store of their own. Their owner looks after them on the agent's Access page; this is the same list for every owner, for when one is gone or a request to be forgotten reaches you. Delete removes the person from every agent of that owner's they reached.",
 			Body:     outsidePeopleAdminTable(),
 		},

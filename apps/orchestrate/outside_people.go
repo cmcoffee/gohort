@@ -75,7 +75,7 @@ func personRef(owner, agentID, scope string) string {
 func (T *OrchestrateApp) personFor(c *jsonapi.Call, ref string) (owner string, p outsidePerson, err error) {
 	parts := strings.SplitN(strings.TrimSpace(ref), "|", 3)
 	if len(parts) != 3 || !agenthost.IsOutsideScope(parts[2]) {
-		return "", p, jsonapi.BadRequest("not a person outside gohort")
+		return "", p, jsonapi.BadRequest("not an external contact")
 	}
 	owner = parts[0]
 	if owner != c.User && !UserIsAdmin(c.User) {
@@ -354,7 +354,7 @@ func outsidePeopleTableUI(prefix, source string, admin bool) ui.Table {
 	return ui.Table{
 		Source:    source,
 		RowKey:    "id",
-		EmptyText: "Nobody outside gohort has talked to it yet.",
+		EmptyText: "No external contact has talked to it yet.",
 		Columns:   cols,
 		RowActions: []ui.RowAction{
 			ui.ModalAction("View", view),
