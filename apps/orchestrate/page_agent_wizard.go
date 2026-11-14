@@ -222,14 +222,6 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 				Placeholder: "real requests people will send it, one per line..."},
 		},
 	}
-	if assistantRun {
-		// Fields: 0 = purpose_picks, 1 = purpose (free text), 2 = example_tasks.
-		purposeStep.Fields[1].Label = "Anything else, in your own words?"
-		purposeStep.Fields[1].Rows = 3
-		purposeStep.Intro = "What do you want help with day to day? Plain language is perfect: this becomes the brief your assistant's working prompt is drafted from."
-		purposeStep.Fields[1].Placeholder = "e.g. Keep track of my projects and deadlines, draft and tidy up emails, dig up answers when I ask, and remind me about the things I tell it to remember."
-		purposeStep.Fields[2].Placeholder = "What's on my plate this week?\nDraft a reply to this email.\nRemind me to call the vet tomorrow."
-	}
 
 	// The personalization step — an assistant that knows you from message
 	// one. ShowWhen keys off agent_kind, so in the generic wizard it
@@ -357,7 +349,7 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 		Intro:    "Optional, and worth it: what your assistant knows about you from the start. It keeps these as its working notes: view or edit them any time.",
 		Fields: []ui.FormField{
 			{Field: "call_you", Type: "text", Label: "What should it call you?",
-				Placeholder: "e.g. Craig / boss / Dr. Lee"},
+				Placeholder: "First name / Title (e.g. Boss) / Formal name"},
 			{Field: "about_you", Type: "textarea", Label: "Anything it should know about you?", Rows: 3,
 				Placeholder: "Working hours, current projects, people you mention often, preferences..."},
 		},
@@ -463,7 +455,22 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 					SuggestURL:  orchPath("api/agents/suggest")},
 			},
 		}
-		steps = []ui.FormStep{welcome, personaStep, purposeStep, aboutStep, nameStep, createStep}
+		// Rules where Purpose was. The first assistant is the go-to agent,
+		// for everything, and hands specialised work on: asked what it was
+		// for, people ticked a job or two and its prompt was drafted around
+		// those as if that were all it did, so its purpose is fixed
+		// (firstAssistantPurpose). What is worth asking up front is what it
+		// must always or never do, which is the agent's own Rules field, the
+		// same one the editor shows.
+		rulesStep := ui.FormStep{
+			Title: "Rules",
+			Intro: "Optional. Anything it must always do, or never do. Rules sit above everything else it is told, on every turn, and you can add or change them any time in its editor.",
+			Fields: []ui.FormField{
+				{Field: "rules", Type: "textarea", Label: "Its rules", Rows: 4,
+					Placeholder: "one rule per line: something it must always do, or never do"},
+			},
+		}
+		steps = []ui.FormStep{welcome, personaStep, rulesStep, aboutStep, nameStep, createStep}
 	}
 
 	head := wizardAdvancedLinkHTML()
@@ -697,9 +704,7 @@ func (T *OrchestrateApp) handleAgentWizard(c *jsonapi.Call, req wizardRequest) (
 	}
 
 	kind, kindOK := wizard_kinds[req.Kind]
-	// Picked jobs and typed words are the same answer arriving two ways; either
-	// alone is enough to draft from, which is the point of offering the picks.
-	req.Purpose = strings.TrimSpace(joinWizardPurpose(decodeWizardPicks(req.PurposePicks), req.Purpose))
+	req.Purpose = wizardPurposeFor(req)
 	if !kindOK || req.Name == "" || req.Purpose == "" {
 		return nil, jsonapi.BadRequest("agent type, a name, and at least one thing for it to do are required")
 	}
@@ -709,6 +714,7 @@ func (T *OrchestrateApp) handleAgentWizard(c *jsonapi.Call, req wizardRequest) (
 	rec.Name = req.Name
 	rec.Description = strings.TrimSpace(req.Description)
 	rec.Triggers = req.Triggers
+	rec.Rules = strings.TrimSpace(req.Rules)
 	rec.Cortex = kind.cortex
 	rec.MemoryMode = kind.memory_mode
 	rec.RecallHints = true
@@ -815,6 +821,8 @@ type wizardRequest struct {
 	// drafting brief and seeded as the agent's initial Working notes.
 	CallYou  string `json:"call_you"`
 	AboutYou string `json:"about_you"`
+	// Rules are the agent's own Rules, as written (the first-run Rules step).
+	Rules string `json:"rules"`
 }
 
 // applyWizardMemory maps the Memory-step choices onto the record, over
@@ -975,6 +983,23 @@ func decodeWizardPicks(raw json.RawMessage) []string {
 		return []string{one}
 	}
 	return nil
+}
+
+// firstAssistantPurpose is the first assistant's purpose: the first-run
+// flow does not ask one (see its step list), because this agent's job is
+// everything, with specialised work handed on.
+const firstAssistantPurpose = "Be the user's everyday assistant and first point of contact: answer and handle everyday requests directly, and hand specialised work to the user's other agents when one fits."
+
+// wizardPurposeFor is the purpose an agent is drafted from. Picked jobs and
+// typed words are the same answer arriving two ways; either alone is enough
+// to draft from, which is the point of offering the picks. The first
+// assistant, asked neither, gets firstAssistantPurpose.
+func wizardPurposeFor(req wizardRequest) string {
+	p := strings.TrimSpace(joinWizardPurpose(decodeWizardPicks(req.PurposePicks), req.Purpose))
+	if p == "" && req.Kind == "assistant" && strings.TrimSpace(req.FirstRun) != "" {
+		return firstAssistantPurpose
+	}
+	return p
 }
 
 // joinWizardPurpose renders the picked jobs and the typed sentence as one brief.

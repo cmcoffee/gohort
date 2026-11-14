@@ -2,11 +2,15 @@ package orchestrate
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 func TestWizardFallbackDescription(t *testing.T) {
@@ -262,13 +266,19 @@ func TestTheFirstRunFlowAsksWhoBeforeWhat(t *testing.T) {
 	}
 	order := body[i : i+120]
 	for _, pair := range []struct{ earlier, later string }{
-		{"welcome", "personaStep"},     // say what this is before asking anything
-		{"personaStep", "purposeStep"}, // who it is before what it does
-		{"purposeStep", "nameStep"},    // and the name last, with something to suggest from
+		{"welcome", "personaStep"},   // say what this is before asking anything
+		{"personaStep", "rulesStep"}, // who it is before what it must keep to
+		{"rulesStep", "nameStep"},    // and the name last, with something to suggest from
 	} {
-		if strings.Index(order, pair.earlier) > strings.Index(order, pair.later) {
+		ei, li := strings.Index(order, pair.earlier), strings.Index(order, pair.later)
+		if ei < 0 || li < 0 || ei > li {
 			t.Errorf("%s must come before %s in the first-run flow: %s", pair.earlier, pair.later, order)
 		}
+	}
+	// The first assistant is the go-to agent: asked what it was for, people
+	// ticked a job or two and its prompt was drafted around just those.
+	if strings.Contains(order[:strings.Index(order, "}")], "purposeStep") {
+		t.Errorf("the first-run flow asks for a purpose again: %s", order)
 	}
 
 	// The welcome step carries the two hidden fields the rest of the flow
@@ -427,5 +437,51 @@ func TestDescribeItPostsToRoutesThatExist(t *testing.T) {
 		if !strings.Contains(routes, `HandleFunc("`+route+`"`) {
 			t.Errorf("%q resolves to %s, which is not a registered route", f[1], path)
 		}
+	}
+}
+
+// The first assistant is asked no purpose: it is the go-to agent and gets a
+// fixed one. Any other agent still needs one, and picks or words given to a
+// first assistant (an older form, an API caller) still count.
+func TestTheFirstAssistantNeedsNoPurpose(t *testing.T) {
+	first := wizardRequest{Kind: "assistant", FirstRun: "true"}
+	if got := wizardPurposeFor(first); got != firstAssistantPurpose {
+		t.Errorf("the first assistant's purpose is %q", got)
+	}
+	for _, req := range []wizardRequest{{Kind: "assistant"}, {Kind: "specialist", FirstRun: "true"}} {
+		if got := wizardPurposeFor(req); got != "" {
+			t.Errorf("%+v got a purpose nobody gave: %q", req, got)
+		}
+	}
+	first.Purpose = "keep my calendar straight"
+	if got := wizardPurposeFor(first); got != "keep my calendar straight" {
+		t.Errorf("a purpose given was replaced: %q", got)
+	}
+}
+
+// The first-run Rules step writes the agent's own Rules, the field the
+// editor shows and every turn reads, and the assistant is made with no
+// purpose asked.
+func TestTheFirstAssistantKeepsItsRules(t *testing.T) {
+	T, udb, user := newTestOrchestrate(t)
+	c := &jsonapi.Call{W: httptest.NewRecorder(), R: httptest.NewRequest(http.MethodPost, "/api/agents/wizard", nil), User: user, UDB: udb}
+	out, err := T.handleAgentWizard(c, wizardRequest{Kind: "assistant", FirstRun: "true", Name: "Ada",
+		Rules: "  Never send anything without asking first.\nKeep answers short.  "})
+	if err != nil {
+		t.Fatalf("a first assistant with no purpose was refused: %v", err)
+	}
+	rec, ok := out.(AgentRecord)
+	if !ok {
+		t.Fatalf("returned %T", out)
+	}
+	saved, ok := loadAgent(udb, rec.ID)
+	if !ok {
+		t.Fatal("the agent was not saved")
+	}
+	if saved.Rules != "Never send anything without asking first.\nKeep answers short." {
+		t.Errorf("rules saved as %q", saved.Rules)
+	}
+	if !saved.Fleet {
+		t.Error("the first assistant is not the front door (Fleet)")
 	}
 }
