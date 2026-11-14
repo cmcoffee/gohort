@@ -87,3 +87,28 @@ func TestOwnAgentCardsMoveToTheRestrictedChat(t *testing.T) {
 		t.Errorf("after the move the order reads %v", got)
 	}
 }
+
+// A new account has no agents of its own, and the dashboard gear does not
+// offer it the framework's retired seeds as if it had: not Chat (retired) and
+// not Research (an engine apps run by id). Neither opens from a card either,
+// so a pin made before this, or a typed /agents/<id>, reaches nothing.
+func TestTheDashboardOffersNoRetiredSeedsAsYourOwn(t *testing.T) {
+	T, _, user := newTestOrchestrate(t)
+	pinRootDB(t)
+	token := AuthCreateSession(T.DB, user)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: "gohort_session", Value: token})
+	for _, id := range []string{"seed-chat", "seed-research"} {
+		if _, ok := seedAgentByID(id); !ok {
+			t.Fatalf("%s is not a seed here, so this proves nothing", id)
+		}
+		for _, c := range T.DashboardPinnable(req) {
+			if c.Path == "/agents/"+id {
+				t.Errorf("the gear offers %s (%s) as the viewer's own agent", c.Name, id)
+			}
+		}
+		if _, _, ok := T.LookupExposedAgent(req, id); ok {
+			t.Errorf("a card for %s opens a chat with it", id)
+		}
+	}
+}

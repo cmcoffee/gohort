@@ -133,7 +133,8 @@ const dashboardGroupAgents = 20
 // resolves for the owner alone (ownAgentByID): a dashboard card is a way to
 // talk to an agent, and the full console is a click away in the Orchestrator
 // section. Sub-agents and an app's agents are left out, since they are
-// reached through their parent and their app.
+// reached through their parent and their app, and so are the framework's
+// retired seeds (pinnableOwnAgent).
 func (T *OrchestrateApp) DashboardPinnable(r *http.Request) []DashboardCard {
 	user := AuthCurrentUser(r)
 	if T == nil || T.DB == nil || user == "" {
@@ -151,7 +152,7 @@ func (T *OrchestrateApp) DashboardPinnable(r *http.Request) []DashboardCard {
 	}
 	var out []DashboardCard
 	for _, a := range listAgents(udb, user) {
-		if published[a.ID] || strings.TrimSpace(a.OwnedBy) != "" || strings.TrimSpace(a.OwningApp) != "" || isAppAgent(a.ID) {
+		if published[a.ID] || !pinnableOwnAgent(a) {
 			continue
 		}
 		desc := strings.TrimSpace(a.Description)
@@ -676,12 +677,22 @@ func (T *OrchestrateApp) ownAgentByID(r *http.Request, id string) (AgentRecord, 
 		return AgentRecord{}, ExposedAgentEntry{}, false
 	}
 	a, ok := loadAgent(udb, id)
-	if !ok || (a.Owner != user && a.Owner != seedOwner) ||
-		strings.TrimSpace(a.OwnedBy) != "" || strings.TrimSpace(a.OwningApp) != "" || isAppAgent(a.ID) {
+	if !ok || (a.Owner != user && a.Owner != seedOwner) || !pinnableOwnAgent(a) {
 		return AgentRecord{}, ExposedAgentEntry{}, false
 	}
 	return a, ExposedAgentEntry{Slug: a.ID, BaseSlug: a.ID, Name: ExposedDisplayName(a), Description: a.Description,
 		Owner: user, AgentID: a.ID}, true
+}
+
+// pinnableOwnAgent is an agent of the viewer's the dashboard gear may offer,
+// and so the agent its card may open: not a sub-agent or an app's agent
+// (reached through their parent and their app), and not a seed the picker
+// hides (fleetHidden). listAgents lists every seed for every user, so without
+// that a new account was offered the retired Chat and the Research engine as
+// agents of its own, and a pinned card opened a chat with them.
+func pinnableOwnAgent(a AgentRecord) bool {
+	return strings.TrimSpace(a.OwnedBy) == "" && strings.TrimSpace(a.OwningApp) == "" &&
+		!isAppAgent(a.ID) && !fleetHidden(a.ID)
 }
 
 // lookupReachableAgentByID finds a published or peer-shared agent by record
