@@ -16,6 +16,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appassets"
 	"github.com/cmcoffee/gohort/core/buildledger"
+	"github.com/cmcoffee/gohort/core/deps"
 	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/replyguard"
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -922,6 +923,14 @@ vector_dir =
 # and it need not be backed up (if lost, re-clone). Empty = co-located
 # with data_dir.
 repo_dir =
+
+# python is the interpreter gohort runs scripts with (app, tool and
+# pipeline scripts, exports, monitors), a path or a name on PATH.
+# Empty = the newest python3.N on PATH that is 3.9 or newer, else
+# python3. On RHEL 8 and its relatives python3 is 3.6, out of support,
+# with newer ones installed beside it as python3.11 / python3.12.
+# Example: /usr/bin/python3.12
+python =
 `
 
 // init_database initializes the application database.
@@ -948,6 +957,9 @@ func init_database() {
 	SetBrowserDir(data_dir + "/browser")
 	SetGeocodeDir(data_dir + "/geocode")
 	SetWorkspacesDir(data_dir + "/workspaces")
+	// The interpreter scripts run with, before anything runs one
+	// (docs/design/sandbox-python.md).
+	deps.SetPythonOverride(global.cfg.Get(cfgPathsSection, "python"))
 	// The built-in embedder's model, downloaded once when it is chosen.
 	SetBuiltinEmbedderDir(data_dir + "/models")
 	// Per-app static assets (images/fonts an app references), served read-only

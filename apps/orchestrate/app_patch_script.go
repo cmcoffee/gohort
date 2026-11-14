@@ -29,6 +29,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/deps"
 )
 
 // appScriptRef points at one script body on a spec: which list it lives in
@@ -357,7 +358,9 @@ func (t *chatTurn) saveScriptEdit(spec AppSpec, ref appScriptRef, next, summary,
 // html check: only ever accuse when the interpreter itself says so; a missing
 // interpreter or a timeout yields no verdict.
 func scriptSyntaxProblem(ctx context.Context, lang, body string) (string, bool) {
-	bin, argv, ext := "python3", []string{"-m", "py_compile"}, ".py"
+	// The interpreter the script will run on, so the check agrees with the
+	// run about what parses (a 3.8+ construct is a syntax error on 3.6).
+	bin, argv, ext := deps.Python(), []string{"-m", "py_compile"}, ".py"
 	if strings.EqualFold(strings.TrimSpace(lang), "bash") {
 		bin, argv, ext = "bash", []string{"-n"}, ".sh"
 	}

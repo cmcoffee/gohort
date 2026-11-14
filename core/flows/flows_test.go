@@ -695,6 +695,18 @@ func pyDeps(t *testing.T, pkgs ...string) {
 	if err := deps.EnsurePyDeps(context.Background(), pkgs...); err != nil {
 		t.Skipf("could not provision %v here: %v", pkgs, err)
 	}
+	// The packages are the chosen interpreter's, so the steps have to run
+	// on it: in production core's lib dir puts a python3 shim to it first on
+	// the sandbox's PATH (sandbox_hook.go); here a lib dir holding just that
+	// shim does the same.
+	if interp := deps.Python(); filepath.IsAbs(interp) {
+		lib := t.TempDir()
+		os.MkdirAll(filepath.Join(lib, "bin"), 0o755)
+		os.WriteFile(filepath.Join(lib, "bin", "python3"), []byte(sandbox.PythonShim(interp)), 0o755)
+		prevLib := sandbox.GohortLibDir
+		sandbox.GohortLibDir = func() string { return lib }
+		t.Cleanup(func() { sandbox.GohortLibDir = prevLib })
+	}
 }
 
 // The export formats are one list: PDF in Go, the documents by pandoc, the

@@ -11,6 +11,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/deps"
 	"github.com/cmcoffee/gohort/core/flows"
+	"github.com/cmcoffee/gohort/core/sandbox"
 )
 
 // setup gives flows a folder outside /tmp to run in, as gohort's data
@@ -118,6 +119,18 @@ func TestASpreadsheetIsWrittenFromData(t *testing.T) {
 	defer func() { deps.WorkspacesDir = was }()
 	if err := deps.EnsurePyDeps(context.Background(), "openpyxl"); err != nil {
 		t.Skipf("could not provision openpyxl: %v", err)
+	}
+	// The packages are the chosen interpreter's, so the script has to run on
+	// it: in production core's lib dir puts a python3 shim to it first on the
+	// sandbox's PATH (sandbox_hook.go); here a lib dir holding just that shim
+	// does the same.
+	if interp := deps.Python(); filepath.IsAbs(interp) {
+		lib := t.TempDir()
+		os.MkdirAll(filepath.Join(lib, "bin"), 0o755)
+		os.WriteFile(filepath.Join(lib, "bin", "python3"), []byte(sandbox.PythonShim(interp)), 0o755)
+		prevLib := sandbox.GohortLibDir
+		sandbox.GohortLibDir = func() string { return lib }
+		t.Cleanup(func() { sandbox.GohortLibDir = prevLib })
 	}
 	data := map[string]any{"sheets": []any{map[string]any{"name": "Q3", "rows": []any{[]any{"Item", "Qty"}, []any{"alpha", 1}}}}}
 	if _, err := handleCreate(map[string]any{"format": "xlsx", "title": "Stock", "data": data}, sess); err != nil {

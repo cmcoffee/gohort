@@ -101,6 +101,14 @@ func ensurePyDepsDirLocked() string {
 		return ""
 	}
 	dir := filepath.Join(filepath.Dir(base), "_gohort_pydeps")
+	// Packages are tied to one Python version (lxml ships a .so per
+	// CPython), so an interpreter other than what plain python3 is gets a
+	// directory of its own. One that IS plain python3's version keeps the
+	// directory every install so far went into, so nothing re-installs on a
+	// host whose choice did not change.
+	if sub := pyDepsVersionDir(ChosenPython(), plainPythonChoice()); sub != "" {
+		dir = filepath.Join(dir, sub)
+	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		nfo.Debug("[pydeps] failed to mkdir %s: %v", dir, err)
 		return ""
@@ -190,12 +198,14 @@ func EnsurePyDeps(ctx context.Context, specs ...string) error {
 		return nil
 	}
 
-	if _, err := exec.LookPath("python3"); err != nil {
-		return errors.New("pydeps: python3 not found on PATH, cannot provision packages")
-	}
-
 	ctx, cancel := context.WithTimeout(ctx, pyInstallLimit)
 	defer cancel()
+	// The venv sits beside the package directory, under the data dir, never
+	// inside it: the package directory is on every sandbox's PYTHONPATH.
+	pip, err := pipPython(ctx, filepath.Dir(workspacesDir()))
+	if err != nil {
+		return err
+	}
 
 	// --upgrade is required for the version-pinning contract: pip install
 	// --target skips a package whose dir already exists UNLESS --upgrade
@@ -215,7 +225,7 @@ func EnsurePyDeps(ctx context.Context, specs ...string) error {
 		"--only-binary=:all:",
 	}, missing...)
 	nfo.Debug("[pydeps] installing %v into %s", missing, dir)
-	cmd := exec.CommandContext(ctx, "python3", args...)
+	cmd := exec.CommandContext(ctx, pip, args...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -254,6 +264,53 @@ func PyDepsAvailable(specs ...string) bool {
 		}
 	}
 	return true
+}
+
+// pyDepsVersionDir is the subdirectory packages for chosen go in: "" when it
+// is plain python3's version (the directory every earlier install used), else
+// "py3.N".
+func pyDepsVersionDir(chosen, plain PythonChoice) string {
+	if !chosen.OK || (plain.OK && chosen.Major == plain.Major && chosen.Minor == plain.Minor) {
+		return ""
+	}
+	return "py" + chosen.Version()
+}
+
+var (
+	pipMu     sync.Mutex
+	pipCached string
+)
+
+// pipPython is the interpreter whose pip installs packages for the chosen
+// Python: the chosen one when it has pip, else a private virtual environment
+// made from it under base (venv bootstraps pip from ensurepip, offline). The
+// install target is still --target dir, so only the pip running it changes,
+// and nothing goes into the system or anyone's home directory.
+func pipPython(ctx context.Context, base string) (string, error) {
+	pipMu.Lock()
+	defer pipMu.Unlock()
+	if pipCached != "" {
+		return pipCached, nil
+	}
+	chosen := ChosenPython()
+	if !chosen.OK {
+		return "", errors.New("pydeps: no Python interpreter answered (" + chosen.Path + "), cannot provision packages")
+	}
+	if exec.CommandContext(ctx, chosen.Path, "-m", "pip", "--version").Run() == nil {
+		pipCached = chosen.Path
+		return pipCached, nil
+	}
+	venv := filepath.Join(base, "_gohort_python", "py"+chosen.Version())
+	py := filepath.Join(venv, "bin", "python")
+	if exec.CommandContext(ctx, py, "-m", "pip", "--version").Run() != nil {
+		nfo.Log("[pydeps] Python %s has no pip: making one at %s", chosen.Version(), venv)
+		out, err := exec.CommandContext(ctx, chosen.Path, "-m", "venv", venv).CombinedOutput()
+		if err != nil {
+			return "", errors.New("pydeps: Python " + chosen.Version() + " has no pip, and making one failed: " + tailLines(strings.TrimSpace(string(out)), 6))
+		}
+	}
+	pipCached = py
+	return pipCached, nil
 }
 
 // readInstalledMarker loads the set of already-installed specs. Missing

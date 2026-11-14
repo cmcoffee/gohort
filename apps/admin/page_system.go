@@ -36,6 +36,7 @@ func (a *AdminApp) systemSections() []ui.Section {
 					// to every tool at once.
 					{Label: "Background work", Field: "background_work", StatusField: "background_status"},
 					{Label: "Shell sandbox", Field: "sandbox_backend", StatusField: "sandbox_status"},
+					{Label: "Script Python", Field: "script_python", StatusField: "script_python_status"},
 					{Label: "Shell tools confined", Field: "sandbox_confined", StatusField: "sandbox_status"},
 					{Label: "Sandbox required (fail closed)", Field: "sandbox_required"},
 					// The row an operator on an unconfined host actually

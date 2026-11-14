@@ -846,7 +846,7 @@ func RunSandboxedScript(ctx context.Context, interpreter, script, stdinData stri
 		}
 		warnUnsandboxed("evaluator scripts")
 	}
-	c := buildRun(ctx, sb, sandboxRun{Kind: sandboxScriptRun, Interpreter: interpreter, Command: script})
+	c := buildRun(ctx, sb, sandboxRun{Kind: sandboxScriptRun, Interpreter: scriptInterpreter(sb, interpreter), Command: script})
 	sandbox := sb.confines()
 	c.Env = sandboxEnv(sb.remapsPaths())
 	// The managed python deps reach a remapped run through --setenv on the
@@ -874,6 +874,23 @@ func RunSandboxedScript(ctx context.Context, interpreter, script, stdinData stri
 		Sandbox:  sandbox,
 		TimedOut: timedOut,
 	}
+}
+
+// scriptInterpreter is the interpreter a script run starts: "python3" is the
+// one gohort chose for scripts (deps.Python), on every backend whose userland
+// is the host's. A container brings its own, so it keeps the image's python3.
+func scriptInterpreter(sb sandboxBackend, interpreter string) string {
+	if interpreter != "python3" {
+		return interpreter
+	}
+	switch sb.(type) {
+	case containerSandbox, *containerSandbox:
+		return interpreter
+	}
+	if p := deps.Python(); filepath.IsAbs(p) {
+		return p
+	}
+	return interpreter
 }
 
 // bwrapScriptArgv builds bwrap args for a script invocation. Tighter

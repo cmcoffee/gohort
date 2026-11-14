@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/activity"
+	"github.com/cmcoffee/gohort/core/deps"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
@@ -108,6 +110,10 @@ func (a *AdminApp) handleStatus(c *jsonapi.Call) (any, error) {
 	// and a failed one is named here until it next runs.
 	failed := a.failedMaintenance()
 	status["background_work"] = backgroundWorkLine(failed)
+	// The interpreter every script runs on, and where it came from: a host
+	// whose python3 is out of support used to run everything on it without
+	// saying so (docs/design/sandbox-python.md).
+	status["script_python"], status["script_python_status"] = scriptPythonLine(deps.ChosenPython())
 	status["background_status"] = map[bool]string{true: "ok", false: "bad"}[len(failed) == 0]
 	return status, nil
 }
@@ -576,4 +582,19 @@ func (a *AdminApp) handleListApps(c *jsonapi.Call) (any, error) {
 		}
 	}
 	return unique, nil
+}
+
+// scriptPythonLine is the Script Python row: the version, its path and where
+// it came from, and the severity it shows in. Out of support (older than
+// 3.9) or not answering shows as bad, since every script runs on it.
+func scriptPythonLine(c deps.PythonChoice) (string, string) {
+	if !c.OK {
+		return "none answered (" + c.Path + "): scripts cannot run. Install python3." + strconv.Itoa(deps.MinPreferredPython) + " or newer, or set [paths] python in gohort.ini", "bad"
+	}
+	from := map[string]string{"gohort.ini": "set in gohort.ini", "search": "the newest on PATH", "fallback": "plain python3"}[c.Source]
+	line := c.Version() + " (" + c.Path + ", " + from + ")"
+	if c.Major == 3 && c.Minor < deps.MinPreferredPython {
+		return line + ": out of support. Install python3." + strconv.Itoa(deps.MinPreferredPython) + " or newer, or set [paths] python in gohort.ini", "bad"
+	}
+	return line, "ok"
 }

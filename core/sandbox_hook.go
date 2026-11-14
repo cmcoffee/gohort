@@ -47,6 +47,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/deps"
 	"github.com/cmcoffee/gohort/core/safefile"
 	"github.com/cmcoffee/gohort/core/sandbox"
 	"github.com/cmcoffee/snugforge/iotimeout"
@@ -2346,6 +2347,28 @@ func ensureGohortShims(libBase string) {
 			continue
 		}
 		_ = os.Chmod(p, 0755) // WriteFile mode is pre-umask; force the exec bit
+	}
+	// python3 and python: the interpreter gohort chose (deps.Python), so
+	// every script, shim and command in the sandbox runs it. Only for a
+	// resolved interpreter: with nothing resolved, the sandbox's own python3
+	// is all there is, and a stale shim from an earlier choice is removed.
+	interp := deps.Python()
+	for _, name := range []string{"python3", "python"} {
+		p := filepath.Join(binDir, name)
+		if !filepath.IsAbs(interp) {
+			_ = os.Remove(p)
+			continue
+		}
+		want := sandbox.PythonShim(interp)
+		if existing, err := os.ReadFile(p); err == nil && string(existing) == want {
+			_ = os.Chmod(p, 0755)
+			continue
+		}
+		if err := os.WriteFile(p, []byte(want), 0755); err != nil {
+			Debug("[hook/helpers] failed to write shim %s: %v", p, err)
+			continue
+		}
+		_ = os.Chmod(p, 0755)
 	}
 }
 

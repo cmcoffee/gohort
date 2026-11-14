@@ -12,6 +12,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/deps"
+	"github.com/cmcoffee/gohort/core/sandbox"
 )
 
 func TestIsNonPublicHost(t *testing.T) {
@@ -585,5 +588,22 @@ func TestThePlainProxyRefusesAnUntrustedWrite(t *testing.T) {
 	out, _ := io.ReadAll(c)
 	if !strings.HasPrefix(string(out), "HTTP/1.1 403") || !strings.Contains(string(out), "NOT SENT") || !strings.Contains(string(out), "upload.example") {
 		t.Fatalf("proxy answer: %q", out)
+	}
+}
+
+// The bin dir carries python3 and python pointing at the interpreter gohort
+// chose, so every script and command in the sandbox runs it.
+func TestTheSandboxBinDirHasTheChosenPython(t *testing.T) {
+	interp := deps.Python()
+	if !filepath.IsAbs(interp) {
+		t.Skip("no Python interpreter resolved on this host")
+	}
+	base := t.TempDir()
+	ensureGohortShims(base)
+	for _, name := range []string{"python3", "python"} {
+		b, err := os.ReadFile(filepath.Join(base, "bin", name))
+		if err != nil || string(b) != sandbox.PythonShim(interp) {
+			t.Errorf("bin/%s is not the shim to %s: %v", name, interp, err)
+		}
 	}
 }
