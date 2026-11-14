@@ -329,6 +329,11 @@ func dropEmptyHeadings(fields []FormField) []FormField {
 //     Each option may carry a Help line that renders as
 //     a small subtitle under its label. For "allowlist
 //     N items from this fixed set" configs.
+//   - "cards"    — single choice shown as cards (each option's Label as
+//     its title, Help under it), for a few choices worth
+//     reading side by side. Fills sets other fields when an
+//     option is picked; Shuffle adds a button that picks
+//     one at random.
 //   - "tel"      — phone number (better mobile keyboard)
 //   - "rules"    — line-separated list editor (one input per row,
 //     saves as a newline-joined string)
@@ -703,6 +708,18 @@ type FormField struct {
 	// timeout values. Static-only; for dynamic lists (model browser,
 	// user-curated presets) use ChipsSource instead.
 	Presets []FieldPreset `json:"presets,omitempty"`
+	// Shuffle, on a "cards" field, is the label of a button that picks one of
+	// its options at random (never the one already chosen), applying its
+	// Fills as a pick by hand would. Empty: no button.
+	Shuffle string `json:"shuffle,omitempty"`
+	// Fills, on a "cards" field, is what picking each option sets in other
+	// fields of the same form: option value, then field name to value. Each is
+	// applied as a suggestion would be, through that field's own setter, so a
+	// checklist takes a list and a select its value. One pick then stands for
+	// several answers, a starting point the person still changes field by
+	// field. On the field rather than on each option, so an option stays a
+	// plain comparable value.
+	Fills map[string]map[string]any `json:"fills,omitempty"`
 	// Invert shows and writes the OPPOSITE of the stored value, for a toggle
 	// whose field is negative: no_network, hold_this, disabled_that.
 	//

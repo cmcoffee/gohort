@@ -485,3 +485,40 @@ func TestTheFirstAssistantKeepsItsRules(t *testing.T) {
 		t.Error("the first assistant is not the front door (Fleet)")
 	}
 }
+
+// A starting character fills the Personality step's own answers, so every
+// value it fills has to be one of that field's options: a value nothing
+// offers would be a pick the form cannot show, and a draft from words the
+// person never saw. Checked against the rendered wizard, the page they get.
+func TestEveryCharacterFillsAnswersTheStepOffers(t *testing.T) {
+	T, _, user := newTestOrchestrate(t)
+	w := httptest.NewRecorder()
+	T.renderAgentWizard(w, httptest.NewRequest(http.MethodGet, "/agent/wizard?kind=assistant&first_run=1", nil), user)
+	page := w.Body.String()
+	if !strings.Contains(page, `"type":"cards"`) || !strings.Contains(page, `"shuffle":`) || !strings.Contains(page, `"fills":{"analyst":`) {
+		t.Fatal("the first-run wizard offers no starting characters, or no way to roll one")
+	}
+	quote := func(s string) string { b, _ := json.Marshal(s); return string(b) }
+	if len(wizardCharacters) < 4 {
+		t.Fatalf("only %d characters", len(wizardCharacters))
+	}
+	for _, c := range wizardCharacters {
+		if c.label == "" || c.help == "" || len(c.fills) == 0 {
+			t.Errorf("character %q is missing its title, its line or what it fills", c.value)
+		}
+		for field, v := range c.fills {
+			if !strings.Contains(page, `"field":`+quote(field)) {
+				t.Errorf("%s fills %q, which the step does not have", c.value, field)
+			}
+			vals, isList := v.([]string)
+			if !isList {
+				vals = []string{v.(string)}
+			}
+			for _, one := range vals {
+				if !strings.Contains(page, `"value":`+quote(one)) {
+					t.Errorf("%s fills %s with %q, which is not one of its options", c.value, field, one)
+				}
+			}
+		}
+	}
+}

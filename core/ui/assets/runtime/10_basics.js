@@ -3761,6 +3761,60 @@
           refreshSecPreview();
           save(f.field, text);
         };
+      } else if (t === 'cards') {
+        // A single choice shown as cards: each option's label as its title and
+        // its help under it, for a few choices worth reading side by side.
+        // f.fills[value] sets other fields of this form when that option is
+        // picked, through their own setters (the path a suggestion's extra
+        // takes), so one pick stands for several answers that stay editable
+        // one by one. f.shuffle labels a button that picks one at random.
+        input = el('div', {class: 'ui-form-cards'});
+        var cardOpts = (f.options || []).filter(function(o) { return o && String(o.value) !== ''; });
+        var cardEls = [];
+        var markCard = function(v) {
+          cardEls.forEach(function(c) {
+            var on = String(c.o.value) === String(v == null ? '' : v);
+            c.el.classList.toggle('chosen', on);
+            c.el.setAttribute('aria-pressed', on ? 'true' : 'false');
+          });
+        };
+        var chooseCard = function(o) {
+          markCard(o.value);
+          save(f.field, o.value);
+          var fills = f.fills && f.fills[o.value];
+          if (fills && typeof fills === 'object') {
+            Object.keys(fills).forEach(function(k) {
+              var setter = fieldSetters[k];
+              if (setter) setter(fills[k]);
+            });
+          }
+        };
+        var cardGrid = el('div', {class: 'ui-form-cards-grid'});
+        cardOpts.forEach(function(o) {
+          var card = el('button', {type: 'button', class: 'ui-form-card', 'aria-pressed': 'false'},
+            [el('span', {class: 'ui-form-card-title'}, [o.label || o.value])]);
+          if (o.help) card.appendChild(el('span', {class: 'ui-form-card-help'}, [o.help]));
+          card.addEventListener('click', function() { chooseCard(o); });
+          cardEls.push({el: card, o: o});
+          cardGrid.appendChild(card);
+        });
+        input.appendChild(cardGrid);
+        if (f.shuffle && cardOpts.length > 1) {
+          var shuffleBtn = el('button', {type: 'button', class: 'ui-form-preset-chip ui-form-cards-shuffle'}, [f.shuffle]);
+          shuffleBtn.addEventListener('click', function() {
+            var cur = String(current[f.field] == null ? '' : current[f.field]);
+            var pool = cardOpts.filter(function(o) { return String(o.value) !== cur; });
+            chooseCard(pool[Math.floor(Math.random() * pool.length)]);
+          });
+          input.appendChild(shuffleBtn);
+        }
+        markCard(initial);
+        fieldSetters[f.field] = function(v) {
+          var o = cardOpts.filter(function(x) { return String(x.value) === String(v); })[0];
+          if (o) { chooseCard(o); return; }
+          markCard('');
+          save(f.field, '');
+        };
       } else if (t === 'checklist') {
         // Multi-select checkbox list. Persists as []string of checked
         // values. Options may carry "help" (subtitle below the label)
@@ -3972,6 +4026,18 @@
         });
         refreshGroups();
         refreshCount();
+        // A list of values replaces what is ticked, as a suggestion or another
+        // field's fills sets it. A value the list does not offer is dropped:
+        // it would be a tick on nothing.
+        fieldSetters[f.field] = function(v) {
+          var want = {};
+          (Array.isArray(v) ? v : []).forEach(function(x) { want[String(x)] = true; });
+          rowIndex.forEach(function(e) {
+            selected[e.value] = !!want[e.value];
+            e.cb.checked = selected[e.value];
+          });
+          persist();
+        };
       } else if (t === 'number') {
         input = el('input', {type: 'number', class: 'ui-form-input', placeholder: f.placeholder || ''});
         if (f.min) input.min = String(f.min);

@@ -234,11 +234,19 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 	// for the agent someone is going to talk to every day it is not a detail:
 	// it is most of what makes the thing feel like theirs rather than like a
 	// deployment. Free text still wins if they'd rather write it.
+	characterOpts, characterFills := wizardCharacterCards()
 	personaStep := ui.FormStep{
 		Title:    "Personality",
 		ShowWhen: "!template",
 		Intro:    "How should it write, and what should it do when the work goes sideways? This shapes its voice and its judgement, not what it can reach, and all of it is editable later.",
 		Fields: []ui.FormField{
+			// One pick for the whole step: a character fills the answers
+			// below, which stay there to change one by one. Assistants only,
+			// since the moments it fills are theirs.
+			{Field: "character", Type: "cards", Label: "Start from a character",
+				ShowWhen: "agent_kind:assistant",
+				Help:     "One pick fills in everything below. Change any of it, or skip this and choose yourself.",
+				Options:  characterOpts, Fills: characterFills, Shuffle: "🎲 Surprise me"},
 			{Field: "style", Type: "select", Label: "Its manner",
 				Options: []ui.SelectOption{
 					{Value: "warm and plain-spoken, friendly without being chatty", Label: "Warm and plain-spoken"},
@@ -649,6 +657,83 @@ func wizardBaseRecord(kind string) AgentRecord {
 	base.Fleet = false
 	base.ShapeID = assistantShape
 	return base
+}
+
+// wizardCharacters are the starting characters the Personality step offers
+// an assistant, like picking a character before a game: each fills in the
+// step's answers (its manner, how it handles you, what it says in the
+// moments the step asks about), and the person changes what they like from
+// there. The values are the step's own option values, so a pick is exactly
+// what choosing them by hand would have been, and nothing else is stored.
+var wizardCharacters = []wizardCharacter{
+	{value: "organiser", label: "The steady organiser",
+		help: "Warm, keeps things moving, and breaks big asks into steps.",
+		fills: map[string]any{
+			"style":     "warm and plain-spoken, friendly without being chatty",
+			"traits":    []string{"leads with the answer, then the reasoning", "keeps replies short unless depth is asked for", "offers the next step without being asked"},
+			"on_wrong":  "states the correction plainly but leaves room for the user to know better",
+			"on_unsure": "goes and checks first, and answers once it actually knows",
+			"on_vague":  "breaks the work into steps and asks which one to begin with",
+			"on_done":   "reports completion and proposes the next step",
+		}},
+	{value: "engineer", label: "The blunt engineer",
+		help: "Terse and technical. Tells you when you're wrong, and doesn't pad.",
+		fills: map[string]any{
+			"style":     "terse and technical; assume expertise, skip the preamble",
+			"traits":    []string{"leads with the answer, then the reasoning", "pushes back when something looks wrong rather than agreeing", "keeps replies short unless depth is asked for", "says plainly when it does not know, instead of hedging"},
+			"on_wrong":  "corrects the user directly and immediately, without softening it",
+			"on_unsure": "says plainly that it does not know, and offers to find out",
+			"on_vague":  "takes its best shot immediately and shows the assumptions it made",
+			"on_done":   "reports completion and stops",
+		}},
+	{value: "companion", label: "The warm companion",
+		help: "Friendly and patient. Checks what you meant before it starts.",
+		fills: map[string]any{
+			"style":     "warm and plain-spoken, friendly without being chatty",
+			"traits":    []string{"asks before assuming what was meant, rather than guessing", "says plainly when it does not know, instead of hedging", "offers the next step without being asked"},
+			"on_wrong":  "raises the doubt as a question and invites the user to check",
+			"on_unsure": "says plainly that it does not know, and offers to find out",
+			"on_vague":  "asks one clarifying question before starting",
+			"on_done":   "reports completion and mentions anything it noticed on the way",
+		}},
+	{value: "wit", label: "The dry wit",
+		help: "Wry and quick. Takes a shot first and keeps it brief.",
+		fills: map[string]any{
+			"style":     "dry and a little wry, never at the expense of being useful",
+			"traits":    []string{"leads with the answer, then the reasoning", "pushes back when something looks wrong rather than agreeing", "keeps replies short unless depth is asked for"},
+			"on_wrong":  "states the correction plainly but leaves room for the user to know better",
+			"on_unsure": "gives its best guess, clearly labelled as a guess, with the reasoning",
+			"on_vague":  "takes its best shot immediately and shows the assumptions it made",
+			"on_done":   "reports completion and mentions anything it noticed on the way",
+		}},
+	{value: "analyst", label: "The careful analyst",
+		help: "Formal and precise. Shows its working and checks before it answers.",
+		fills: map[string]any{
+			"style":     "formal and precise, the register of a written brief",
+			"traits":    []string{"asks before assuming what was meant, rather than guessing", "shows its working and cites what it actually used", "says plainly when it does not know, instead of hedging"},
+			"on_wrong":  "states the correction plainly but leaves room for the user to know better",
+			"on_unsure": "goes and checks first, and answers once it actually knows",
+			"on_vague":  "asks one clarifying question before starting",
+			"on_done":   "reports completion and mentions anything it noticed on the way",
+		}},
+}
+
+// wizardCharacter is one starting character: its card, and the answers it
+// fills in.
+type wizardCharacter struct {
+	value, label, help string
+	fills              map[string]any
+}
+
+// wizardCharacterCards is the cards field's options and what each fills.
+func wizardCharacterCards() ([]ui.SelectOption, map[string]map[string]any) {
+	opts := make([]ui.SelectOption, 0, len(wizardCharacters))
+	fills := map[string]map[string]any{}
+	for _, c := range wizardCharacters {
+		opts = append(opts, ui.SelectOption{Value: c.value, Label: c.label, Help: c.help})
+		fills[c.value] = c.fills
+	}
+	return opts, fills
 }
 
 // handleAgentWizard creates an agent from the wizard's brief:

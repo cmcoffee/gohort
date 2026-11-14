@@ -3091,6 +3091,29 @@ input[type="checkbox"].ui-input { width: auto; }
   -webkit-tap-highlight-color: transparent;
 }
 .ui-form-preset-chip:hover { color: var(--text); border-color: var(--accent); background: var(--bg-1); }
+/* A "cards" field: one choice from a few, laid side by side so each can be
+ * read whole, title and a line under it. The chosen card carries the accent;
+ * the shuffle button (a preset chip) sits under the grid. */
+.ui-form-cards { display: flex; flex-direction: column; gap: 0.5rem; }
+.ui-form-cards-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: 0.5rem;
+}
+.ui-form-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 0.2rem;
+  text-align: left; padding: 0.6rem 0.75rem; min-height: var(--btn-h);
+  border: 1px solid var(--border); border-radius: var(--btn-radius);
+  background: var(--bg-1); color: var(--text); font-family: inherit; cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.ui-form-card:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+.ui-form-card.chosen {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-1));
+}
+.ui-form-card-title { font-size: var(--fs-sm); font-weight: 600; }
+.ui-form-card-help { font-size: var(--fs-xs); color: var(--text-mute); line-height: 1.35; }
+.ui-form-cards-shuffle { align-self: flex-start; }
 /* Form chip create modal — AI Assist + Save flow. */
 .ui-form-modal-overlay {
   position: fixed; inset: 0; z-index: 1100;
