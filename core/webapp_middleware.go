@@ -15,6 +15,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/netgate"
 )
 
 // streamingPaths holds URL suffixes whose handlers hold the connection
@@ -203,6 +205,10 @@ func NewInternalRequest(ctx context.Context, method, path string, body io.Reader
 	req.Header.Set(internalAuthHeader, internalAuthToken)
 	return req, nil
 }
+
+// The admin allowlist's one exemption is this process's own calls, proved
+// here rather than inferred from a loopback peer (netgate.IsAdminAllowed).
+func init() { netgate.InternalRequestFunc = IsInternalRequest }
 
 // IsInternalRequest reports whether a request is one this process made to
 // itself.

@@ -129,7 +129,14 @@ Before gohort faces anything wider than localhost:
 - Put TLS in front of it, or bind it to a local interface and reach it through something
   that does.
 - The admin surface takes an IP allowlist (`admin_allowed_ips`, comma-separated CIDR). Set it
-  if the deployment is reachable from more than your own machine.
+  if the deployment is reachable from more than your own machine. Only gohort's own internal
+  calls are exempt, and they carry a per-process token: a browser on the machine itself, such
+  as through an SSH tunnel to `127.0.0.1`, needs `127.0.0.1` in the list.
+- A reverse proxy on the same machine is believed for the client's address and for HTTPS
+  (`X-Forwarded-For`, `X-Forwarded-Proto`). A proxy on another host (a load balancer, a Docker
+  network, a remote nginx) is believed only when listed in `trusted_proxies`. Leave it off and
+  every client looks like the proxy: one address for the login lockout, so a few bad guesses
+  lock everyone out, one address for `admin_allowed_ips`, and the session cookie loses Secure.
 - Multi-user means real accounts with per-user isolation, not a shared password. Create
   accounts rather than sharing one.
 - With a local model, prompts and tool output never leave the host. Wiring a hosted provider is a deliberate choice, and the per-agent privacy

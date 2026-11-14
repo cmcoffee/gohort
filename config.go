@@ -532,7 +532,7 @@ func setup_fuzz() {
 	var webAddr, webTLSCert, webTLSKey string
 	var webTLSSelfSigned bool
 	var webMaxConcurrent int
-	var webAdminIPs string
+	var webAdminIPs, webTrustedProxies string
 	var webAdminUser, webAdminPass string
 	var webMaxLoginAttempts int
 	// Operator-set-once settings live in gohort.ini (with one-time
@@ -544,6 +544,7 @@ func setup_fuzz() {
 	webTLSSelfSigned = loadWebBool("tls_self_signed", false)
 	webMaxConcurrent = loadWebInt("max_concurrent", 0)
 	webAdminIPs = loadWebString("admin_allowed_ips", "")
+	webTrustedProxies = global.cfg.Get(cfgWebSection, "trusted_proxies")
 	global.db.Get(WebTable, "max_login_attempts", &webMaxLoginAttempts)
 	if webMaxLoginAttempts == 0 {
 		webMaxLoginAttempts = 5
@@ -575,7 +576,8 @@ func setup_fuzz() {
 	webmenu.SecretVar(&webAdminPass, "Administrator Password", webAdminPass, "Password for the web admin account (leave blank to keep current).")
 	webmenu.ShowWhen(func() bool { return webAdminUser != "" })
 	webmenu.IntVar(&webMaxLoginAttempts, "Max Login Attempts", webMaxLoginAttempts, "Failed login attempts before IP lockout.", 1, 100)
-	webmenu.StringVar(&webAdminIPs, "Admin Allowed IPs", webAdminIPs, "Comma-separated CIDR/IP allowlist for /admin (empty = no IP restriction).")
+	webmenu.StringVar(&webAdminIPs, "Admin Allowed IPs", webAdminIPs, "Comma-separated CIDR/IP allowlist for /admin (empty = no IP restriction). Reaching it from this machine (an SSH tunnel) needs 127.0.0.1 listed.")
+	webmenu.StringVar(&webTrustedProxies, "Trusted Proxies", webTrustedProxies, "Comma-separated CIDR/IP of reverse proxies on OTHER hosts whose X-Forwarded-For is believed (a proxy on this machine always is). Empty = none.")
 
 	authmenu, _ := BuildAuthSetup(global.db)
 	webmenu.Options("Manage Additional Users", authmenu, false)
@@ -642,6 +644,7 @@ func setup_fuzz() {
 	saveWebBool("tls_self_signed", webTLSSelfSigned)
 	saveWebInt("max_concurrent", webMaxConcurrent)
 	saveWebString("admin_allowed_ips", strings.TrimSpace(webAdminIPs))
+	saveWebString("trusted_proxies", strings.TrimSpace(webTrustedProxies))
 	global.db.Set(WebTable, "max_login_attempts", webMaxLoginAttempts)
 
 	// Create or update the administrator account.
@@ -868,7 +871,18 @@ max_concurrent = 1
 # Comma-separated list of CIDRs / IPs allowed to reach the admin
 # panel. Empty disables the IP gate (anyone with admin credentials
 # can access). Example: "10.0.0.0/8, 192.168.1.42"
+# Reaching the panel from this machine itself (an SSH tunnel to
+# 127.0.0.1) needs 127.0.0.1 in the list like any other address.
 admin_allowed_ips =
+
+# Comma-separated list of CIDRs / IPs of reverse proxies on OTHER
+# hosts (a load balancer, a Docker network, a remote nginx) whose
+# X-Forwarded-For and X-Forwarded-Proto are believed. A proxy on this
+# machine always is. Leave a remote proxy off and every client looks
+# like the proxy: one address for the login lockout and for
+# admin_allowed_ips, and the session cookie loses its Secure flag.
+# Example: "10.0.0.5, 172.18.0.0/16"
+trusted_proxies =
 
 [database]
 # lock = portable (default): the database padlock is kept in this file

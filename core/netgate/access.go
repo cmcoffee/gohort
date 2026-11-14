@@ -12,9 +12,21 @@ import (
 // application from stored config.
 var LoadAdminAllowedIPsFunc func() string
 
+// InternalRequestFunc reports whether a request is one this process made to
+// itself, proved by its per-process token (core.IsInternalRequest). Set by
+// core at init; nil means no request is taken as internal.
+var InternalRequestFunc func(*http.Request) bool
+
 // IsAdminAllowed reports whether the request originates from an IP
 // in the configured Admin allowlist. An empty or unconfigured
 // allowlist allows everyone (auth-only, no IP restriction).
+//
+// The one exemption is this process's own calls, and they have to PROVE it
+// (InternalRequestFunc), not merely arrive from loopback. A reverse proxy on
+// the same machine that sends no X-Forwarded-For makes every visitor a
+// loopback peer, so "looks local" let anyone past the allowlist. A person
+// reaching the admin from the machine itself (an SSH tunnel to 127.0.0.1)
+// lists 127.0.0.1 like any other address.
 func IsAdminAllowed(r *http.Request) bool {
 	if LoadAdminAllowedIPsFunc == nil {
 		return true
@@ -27,7 +39,7 @@ func IsAdminAllowed(r *http.Request) bool {
 	if len(nets) == 0 {
 		return true
 	}
-	if IsGenuineLocalRequest(r) {
+	if InternalRequestFunc != nil && InternalRequestFunc(r) {
 		return true
 	}
 	ip := ClientIP(r)
@@ -130,7 +142,10 @@ func parseCIDRList(list string) []*net.IPNet {
 // TrustedProxiesFunc returns a comma-separated list of CIDR blocks (or bare
 // IPs) of reverse proxies whose X-Forwarded-For / X-Real-IP are believed, in
 // addition to loopback. Empty or unset: loopback only. Set by the application
-// from stored config.
+// from gohort.ini's trusted_proxies. A proxy on another host left off it is
+// every client at once: one address for the login lockout (five bad guesses
+// from anyone lock everyone out), for admin_allowed_ips, and an HTTPS it
+// cannot vouch for, so the session cookie loses Secure.
 var TrustedProxiesFunc func() string
 
 // trustedProxy reports whether ip is a proxy whose forwarding headers count.

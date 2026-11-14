@@ -520,6 +520,12 @@ func main() {
 		netgate.LoadAdminAllowedIPsFunc = func() string {
 			return loadWebString("admin_allowed_ips", "")
 		}
+		// The reverse proxies whose forwarding headers are believed, beyond
+		// loopback. Read from the ini alone: a new key has no legacy DB
+		// value, and ClientIP asks on every request.
+		netgate.TrustedProxiesFunc = func() string {
+			return global.cfg.Get(cfgWebSection, "trusted_proxies")
+		}
 
 		ollama_proxy.StartOllamaServer(OllamaProxyPortFunc())
 		if err := ServeDashboard(bindAddr); err != nil {
