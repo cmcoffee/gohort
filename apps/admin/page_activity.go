@@ -25,7 +25,7 @@ const activityListLimit = 2000
 func (a *AdminApp) activitySections() []ui.Section {
 	return []ui.Section{{
 		Title:    "Activity Log",
-		Subtitle: "Sign-ins, failed sign-ins, and changes to accounts, credentials, peers, approvals and settings, newest first.",
+		Subtitle: "Sign-ins, failed sign-ins, changes to accounts, credentials, peers, approvals and settings, and software updates, newest first.",
 		Detail: "Each event names who acted (for a failed sign-in, the name that was tried), what happened, and the address and browser it came from. " +
 			"Events are kept for the number of days set in People › Sign-in › Activity log retention (also on Tuning › Sign-in & security), 90 by default. " +
 			"Secrets are never recorded: a saved credential is logged by its name only. Filter the list with the box above it.",
@@ -48,6 +48,7 @@ func (a *AdminApp) activitySections() []ui.Section {
 					{Value: activity.Approval, Label: "Approval", Color: "info"},
 					{Value: activity.Settings, Label: "Setting", Color: "mute"},
 					{Value: activity.Maintenance, Label: "Maintenance", Color: "mute"},
+					{Value: activity.Update, Label: "Update", Color: "warning"},
 				}},
 				{Field: "user", Label: "Who"},
 				{Field: "ip", Label: "From", Mute: true},

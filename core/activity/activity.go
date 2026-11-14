@@ -45,6 +45,7 @@ const (
 	Approval     = "approval"
 	Settings     = "settings"
 	Maintenance  = "maintenance" // an administrator ran a maintenance pass
+	Update       = "update"      // an administrator updated the program or rolled it back
 )
 
 // Event is one thing that happened.

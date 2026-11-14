@@ -931,6 +931,17 @@ repo_dir =
 # with newer ones installed beside it as python3.11 / python3.12.
 # Example: /usr/bin/python3.12
 python =
+
+[update]
+# Where Admin > Overview > Software Update checks for a newer release: a
+# dist folder holding version.txt, manifest.json and its signature, and a
+# folder per release. Empty = the dist site release builds come from.
+# Nothing checks on its own: the check runs when an administrator asks.
+url =
+# The public keys a release list must be signed with, base64, separated by
+# commas. Empty = the keys built into gohort. Set it only for a deployment
+# that publishes its own builds with its own key.
+key =
 `
 
 // init_database initializes the application database.

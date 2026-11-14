@@ -31,7 +31,18 @@ export CGO_ENABLED := 0
 # that half-works.
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 
-.PHONY: all build check clean linux notices release vet
+.PHONY: all build check clean linux notices publish release release-key vet
+
+# Where `publish` puts a release: the share the dist site serves, which the
+# admin page's Software Update reads from (docs/design/software-update.md).
+DIST        ?= /mnt/distro/gohort
+# The key `publish` signs with. It stays on this machine, never on the share.
+RELEASE_KEY ?= $(HOME)/.config/gohort/release.key
+# The public keys built into gohort: a release signed with a key not in it is
+# one no server can check.
+KEYLIST     := core/selfupdate/release_keys.txt
+# Where `publish` builds the binaries before copying them to $(DIST).
+PUBDIR      := $(OUTDIR)/publish
 
 # Default: build for the current platform
 all: build
@@ -147,12 +158,62 @@ release:
 	@echo "Release $(VERSION) from $$(git rev-parse --short $(REF)^{}), in $(DISTDIR):"
 	@cd $(DISTDIR) && ls -1 $(APPNAME)_$(VERSION)_* SHA256SUMS | sed 's/^/  /'
 
+# Makes the key `publish` signs with: the private key to $(RELEASE_KEY),
+# readable by you only, and its public key added to $(KEYLIST). Commit that,
+# so the next build trusts it. Run it twice for a spare (RELEASE_KEY=<path>),
+# and keep the spare offline: a release signed with it replaces a lost key.
+release-key:
+	@GOWORK=off go run ./scripts/publish key -out $(RELEASE_KEY) -keys $(KEYLIST)
+
+# Puts a release on the dist site: the same export, vet and checks as
+# `release`, bare binaries instead of archives, then scripts/publish copies
+# them into $(DIST)/<version>/ and writes the signed manifest and version.txt
+# last, so no server sees a version before all of it is there. The version and
+# the key list are the EXPORT's: what the binaries say and what they trust.
+publish:
+	@if [ -z "$(ALLOW_DIRTY)" ] && [ -n "$$(git status --porcelain)" ]; then \
+	  echo "publish: the working tree has uncommitted changes."; \
+	  echo "         A release is built from $(REF), so those changes would not be in it."; \
+	  echo "         Commit them, or re-run with ALLOW_DIRTY=1 to publish HEAD as it stands."; \
+	  exit 1; \
+	fi
+	@[ -d "$(DIST)" ] || { echo "publish: $(DIST) is not there (is the share mounted?)"; exit 1; }
+	@rm -rf $(PUBDIR) $(SRCDIR)
+	@mkdir -p $(PUBDIR) $(SRCDIR)
+	@git archive $(REF) | tar -x -C $(SRCDIR)
+	@if [ -e $(SRCDIR)/private.go ] || [ -e $(SRCDIR)/private ]; then \
+	  echo "publish: the private tree is present in the export, refusing to ship it."; \
+	  exit 1; \
+	fi
+	@echo "  vetting the export"
+	@(cd $(SRCDIR) && GOWORK=off go vet ./...) || { \
+	  echo "publish: go vet failed on the exported source, refusing to ship it."; \
+	  exit 1; \
+	}
+	@(cd $(SRCDIR) && GOWORK=off go build -o $(CURDIR)/$(PUBDIR)/.licensenotice ./scripts/licensenotice)
+	@(cd $(SRCDIR) && GOWORK=off go build -o $(CURDIR)/$(PUBDIR)/.publish ./scripts/publish)
+	@for p in $(PLATFORMS); do \
+	  os=$${p%%/*}; arch=$${p##*/}; \
+	  stage=$(CURDIR)/$(PUBDIR)/stage/$$os-$$arch; \
+	  bin=$(APPNAME); \
+	  if [ "$$os" = "windows" ]; then bin=$(APPNAME).exe; fi; \
+	  echo "  $$os/$$arch"; \
+	  mkdir -p $$stage; \
+	  (cd $(SRCDIR) && GOWORK=off GOOS=$$os GOARCH=$$arch $(CURDIR)/$(PUBDIR)/.licensenotice -out $$stage/THIRD_PARTY_NOTICES .) || exit 1; \
+	  (cd $(SRCDIR) && GOWORK=off GOOS=$$os GOARCH=$$arch go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $$stage/$$bin .) || exit 1; \
+	done
+	@cp $(SRCDIR)/LICENSE $(SRCDIR)/NOTICE $(PUBDIR)/stage/
+	@$(PUBDIR)/.publish release -stage $(PUBDIR)/stage -dist $(DIST) \
+	  -version "$$(cat $(SRCDIR)/version.txt)" -commit "$$(git rev-parse --short $(REF)^{})" \
+	  -key $(RELEASE_KEY) -keys $(SRCDIR)/$(KEYLIST)
+	@rm -rf $(PUBDIR) $(SRCDIR)
+
 # Removes what the build put in $(OUTDIR), and only that. `rm -rf build` would
 # be shorter and would also take out the data/, logs/ and gohort.ini of anyone
 # who runs the binary where it was built — which is the obvious thing to do
 # with a self-contained binary, and a database is not a build artifact.
 clean:
-	rm -rf $(DISTDIR) $(SRCDIR)
+	rm -rf $(DISTDIR) $(SRCDIR) $(PUBDIR)
 	rm -f $(OUTDIR)/$(APPNAME) $(OUTDIR)/$(APPNAME)_* $(OUTDIR)/$(APPNAME).exe
 	rm -f $(OUTDIR)/THIRD_PARTY_NOTICES $(OUTDIR)/LICENSE $(OUTDIR)/NOTICE
 	@rmdir $(OUTDIR) 2>/dev/null || true

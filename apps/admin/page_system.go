@@ -371,7 +371,8 @@ func (a *AdminApp) systemSections() []ui.Section {
 	// The activity log second, after System Status: the status says what is
 	// running now, the log who did what afterwards. It was a tab of its own,
 	// one section wide, on a header row already folding tabs under More.
-	return append(append(secs[:1:1], a.activitySections()...), secs[1:]...)
+	// Software Update after it: what is running, and what could replace it.
+	return append(append(append(secs[:1:1], a.activitySections()...), a.updateSections()...), secs[1:]...)
 }
 
 // themePickerOptions builds the Theme dropdown from the core/ui theme

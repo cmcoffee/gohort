@@ -1,0 +1,7 @@
+# The public keys a release list may be signed with, one per line, base64.
+# `make release-key` makes a key pair and adds its public key here; commit
+# the change. The private key stays on the machine that publishes.
+#
+# Keep two: the main key, and a spare made the same way and kept offline. A
+# lost main key is then replaced by a release signed with the spare.
+PbUpeN6dr/nAtRj1mSj9y7Wd+Tymix2CxB2cMjErl0U= # key b100319675bb0c7a

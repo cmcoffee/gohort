@@ -105,6 +105,10 @@ func main() {
 	// persistent pipelines, and the interactive REPL all wind down
 	// cleanly instead of being killed mid-call on daemon close.
 	InitAppContext(context.Background())
+	// Registered first so it runs last: shutdown runs its deferred work newest
+	// first, and an installed update starts only after every database the
+	// work below opens has closed (selfupdate.go).
+	Defer(relaunchIfUpdated)
 
 	get_runtime_info()
 
@@ -528,6 +532,7 @@ func main() {
 		}
 
 		ollama_proxy.StartOllamaServer(OllamaProxyPortFunc())
+		wireSelfUpdate()
 		if err := ServeDashboard(bindAddr); err != nil {
 			Fatal(err)
 		}
