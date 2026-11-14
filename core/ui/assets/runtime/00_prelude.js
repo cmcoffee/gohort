@@ -1585,6 +1585,10 @@
       footer().appendChild(btn);
       return btn;
     };
+    // On the box too, so content that was not handed api (a component's or a
+    // card's own script, mounted inside a dialog it did not open) can put its
+    // button in the footer: el.closest('.ui-modal-box').addAction(btn).
+    dlg.addAction = api.addAction;
     document.body.appendChild(overlay);
     if (typeof opts.mount === 'function') {
       try { opts.mount(body, api); } catch (e) {

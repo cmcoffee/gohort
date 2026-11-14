@@ -44,7 +44,7 @@ var adminLayout = []struct {
 	// deployment, beside how it is doing now.
 	{"Overview", []string{"System Status", "Activity Log", "Software Update", "Site", "Cost History (Last 30 Days)", "Cost by source", "Prices"}},
 	{"People", []string{
-		"Sign-in", "Microsoft sign-in", "Add account", "Users", "People outside gohort", "Teams", "Default Apps",
+		"Sign-in", "Microsoft sign-in", "Users", "People outside gohort", "Teams", "Default Apps",
 		"Feature Access", "Model access limits", "Personal integrations",
 	}},
 	{"Models", []string{"Worker LLM", "Lead LLM", "Decision Offloading", "Model Privacy", "Learned from model refusals", "LLM Routing", "Local Model Scheduler"}},
@@ -81,7 +81,7 @@ var adminLayout = []struct {
 		"Recent firings", "Build outcomes",
 	}},
 	{AppsTabGroup, nil},
-	{"Tuning", nil},
+	{tuningTab, nil},
 	{"Maintenance", []string{
 		"Scheduled Tasks", "Reclaim space", "Reports", "Housekeeping", "Migrations",
 		"Vector Index", "Database Browser",
@@ -112,7 +112,11 @@ var sectionGroup, tabRank, sectionRank = func() (map[string]string, map[string]i
 // the app having vanished. Sections that have already declared the Apps group
 // keep it.
 func sectionTab(title, declared string) string {
-	if declared == AppsTabGroup {
+	// A Tuning category keeps its tab too: its title is a category's name,
+	// and one shared with a section elsewhere ("People outside gohort" is
+	// both the table on People and the ceilings on Tuning) pulled the
+	// ceilings onto People as a second section of that name.
+	if declared == AppsTabGroup || declared == tuningTab {
 		return declared
 	}
 	if g, ok := sectionGroup[title]; ok {
@@ -120,6 +124,9 @@ func sectionTab(title, declared string) string {
 	}
 	return declared
 }
+
+// tuningTab is the tab the generated tunable sections declare.
+const tuningTab = "Tuning"
 
 // boolOffSuffixRE matches a trailing "(0 = off)"-style parenthetical. On a bool
 // tunable that renders as a toggle, the 0/1 convention is redundant noise, so the
@@ -175,7 +182,7 @@ func buildTunableSections() []ui.Section {
 		}
 		out = append(out, ui.Section{
 			Title:    cat,
-			Group:    "Tuning",
+			Group:    tuningTab,
 			Wide:     true, // each category pane wants full width, not the two-up config column
 			Subtitle: "Saved automatically as you edit.",
 			Body:     body,
@@ -467,8 +474,8 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 	}
 	// Generated tunable sections — one FormPanel per registered category, built
 	// from core's tunable registry so a newly-registered knob appears here with
-	// no admin edit. Pre-grouped under the "Tuning" tab; the loop below skips
-	// them (their titles aren't in sectionGroup, so their Group is preserved).
+	// no admin edit. Pre-grouped under the Tuning tab, which sectionTab keeps
+	// even for a category named like a section on another tab.
 	page.Sections = append(page.Sections, timed("tunables", buildTunableSections)...)
 	// Resource sharing — lending this instance's capabilities to a peer
 	// instance. Lands under Capabilities via sectionGroup, next to the

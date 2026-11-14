@@ -117,3 +117,76 @@ func TestASectionLinkFollowsTheSection(t *testing.T) {
 		}
 	}
 }
+
+// A Tuning category named like a section on another tab stays on Tuning: the
+// ceilings for people outside gohort once showed on People as a second
+// section of the same name as the table there.
+func TestATuningCategoryStaysOnTuning(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	db.Set(LLMTable, "provider", "openai")
+	prev := AuthDB
+	AuthDB = func() Database { return db }
+	t.Cleanup(func() { AuthDB = prev })
+	// The ceilings are registered by orchestrate, which this package does
+	// not load: one of the same category stands in.
+	RegisterTunable(TunableSpec{Key: "tune_outsidetabtest", Category: "People outside gohort", Label: "T",
+		Kind: KindInt, Default: 1, Min: 0, Max: 10})
+	a := &AdminApp{db: db}
+	mux := http.NewServeMux()
+	a.RegisterRoutes(mux, "/admin")
+	get := func(path string) string {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: %d", path, w.Code)
+		}
+		return w.Body.String()
+	}
+	for _, s := range buildTunableSections() {
+		if g := sectionTab(s.Title, s.Group); g != tuningTab {
+			t.Errorf("the Tuning category %q is moved to %q", s.Title, g)
+		}
+	}
+	title := `"title":"People outside gohort"`
+	if n := strings.Count(get("/admin/people"), title); n != 1 {
+		t.Errorf("People has %d sections titled People outside gohort, want 1", n)
+	}
+	if n := strings.Count(get("/admin/tuning"), title); n != 1 {
+		t.Errorf("Tuning has %d sections titled People outside gohort, want 1", n)
+	}
+}
+
+// Adding someone is a button on Users that opens a dialog, not a section of
+// its own.
+func TestAddUserIsADialogOnUsers(t *testing.T) {
+	var users *ui.Section
+	for _, s := range (&AdminApp{}).systemSections() {
+		if s.Title == "Add account" {
+			t.Error("Add account is still a section")
+		}
+		if s.Title == "Users" {
+			s := s
+			users = &s
+		}
+	}
+	if users == nil {
+		t.Fatal("no Users section")
+	}
+	stack, ok := users.Body.(ui.Stack)
+	if !ok || len(stack.Children) != 2 {
+		t.Fatalf("the Users section is %T", users.Body)
+	}
+	btn, ok := stack.Children[0].(ui.ModalButton)
+	if !ok || btn.Label != "Add user" {
+		t.Fatalf("the Users section opens with %#v", stack.Children[0])
+	}
+	if card, ok := btn.Body.(ui.Card); !ok || !strings.Contains(card.HTML, "box.addAction") {
+		t.Error("the Add user dialog's button does not join its footer")
+	}
+	if _, ok := stack.Children[1].(ui.Table); !ok {
+		t.Errorf("the users list is %T", stack.Children[1])
+	}
+	if _, ok := sectionRank["Add account"]; ok {
+		t.Error("Add account is still in the layout")
+	}
+}

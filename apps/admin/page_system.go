@@ -140,16 +140,14 @@ func (a *AdminApp) systemSections() []ui.Section {
 			},
 		},
 		{
-			Title:    "Add account",
-			Subtitle: "Invite a new user by email, or set a password directly.",
-			Detail:   "An invited user clicks a link and sets their own password. To reset an existing user's password, use the Reset password button on their row below.",
-			Body:     ui.Card{HTML: userAdminHTML},
-		},
-		{
 			Title:    "Users",
-			Subtitle: "Approve pending signups, manage access, sign someone out everywhere, or delete accounts.",
-			Detail:   "Granting or revoking admin is here too. Deleting revokes every credential the account holds: sessions, access tokens, desktop and bridge keys, connected accounts. Pending users see a placeholder page until approved.",
-			Body: ui.Table{
+			Subtitle: "Add people, approve pending signups, manage access, sign someone out everywhere, or delete accounts.",
+			Detail:   "Add user invites someone by email (they open a link and set their own password) or sets a password for them now. Granting or revoking admin is here too, and Reset password on a row sets a new one or sends a reset link. Deleting revokes every credential the account holds: sessions, access tokens, desktop and bridge keys, connected accounts. Pending users see a placeholder page until approved.",
+			Body: ui.Stack{Children: []ui.Component{ui.ModalButton{
+				Label: "Add user", Title: "Add user", Variant: "primary",
+				Subtitle: "Invite them by email, or set a password for them now.",
+				Body:     ui.Card{HTML: userAdminHTML},
+			}, ui.Table{
 				Source: "api/users",
 				RowKey: "username",
 				Columns: []ui.Col{
@@ -234,7 +232,7 @@ func (a *AdminApp) systemSections() []ui.Section {
 						Variant: "danger"},
 				},
 				EmptyText: "No users yet.",
-			},
+			}}},
 		},
 		{
 			Title:    "People outside gohort",
@@ -386,7 +384,7 @@ func themePickerOptions() []ui.SelectOption {
 	return opts
 }
 
-// userAdminHTML is the Add-account panel (top of the Users section). It must
+// userAdminHTML is the Add user dialog, opened from the Users section. It must
 // surface the invite LINK for manual copy when mail isn't configured — which
 // the declarative FormPanel can't do — so it rides in a Card. Posts to
 // api/users. Reset lives on each user's row (see admin_reset_password).
@@ -421,6 +419,9 @@ const userAdminHTML = `<div class="uadm">
   var root = document.querySelector('.uadm');
   if(!root) return;
   function $(id){ return document.getElementById(id); }
+  // In the Add user dialog, its button joins Close in the footer.
+  var box = root.closest && root.closest('.ui-modal-box');
+  if(box && box.addAction) box.addAction($('uadm-add-btn'));
   function setMsg(el, t, ok){ el.textContent=t||''; el.className='uadm-msg '+(ok?'ok':'err'); }
   function showLink(box, link, emailed){
     box.innerHTML=''; box.style.display='';

@@ -68,6 +68,15 @@ var api = window.uiOpenModal({title: 'Bare', actions: [], mount: function(b, a) 
 }});
 bar = footerOf(api.dialog);
 if (!bar || labels(bar) !== 'Go*') throw new Error('a footerless dialog put its button ' + (bar ? labels(bar) : 'nowhere'));
+
+// Content that was not handed api reaches the footer through the box: a
+// card's own script inside a dialog a ModalButton opened.
+api = window.uiOpenModal({title: 'Add', mount: function() {}});
+var add = document.createElement('button'); add.className = 'ui-row-btn primary'; add.textContent = 'Add';
+if (typeof api.dialog.addAction !== 'function') throw new Error('the dialog box has no addAction');
+api.dialog.addAction(add);
+bar = footerOf(api.dialog);
+if (labels(bar) !== 'Close,Add*') throw new Error('a button added through the box reads ' + labels(bar));
 console.log('OK');
 `
 	tmp := filepath.Join(t.TempDir(), "modal_footer.js")
