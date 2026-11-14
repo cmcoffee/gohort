@@ -6,7 +6,7 @@
 // mode, so the defaults are pinned here. Keep it equal to go.mod's go line
 // (godebug_default_test.go checks).
 //
-//go:debug default=go1.25
+//go:debug default=go1.26
 package main
 
 import (

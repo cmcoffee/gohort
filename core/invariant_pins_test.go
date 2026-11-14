@@ -76,7 +76,7 @@ func TestTimezoneOptionsComeFromOneBuilder(t *testing.T) {
 	// Same zones in the same order — only the blank label may differ.
 	for i := 1; i < len(admin); i++ {
 		if admin[i] != account[i] {
-			t.Fatalf("zone %d differs between the pickers: %q vs %q", i, admin[i], account[i])
+			t.Fatalf("zone %d differs between the pickers: %+v vs %+v", i, admin[i], account[i])
 		}
 	}
 }
