@@ -202,7 +202,7 @@ func databaseBrowserCard() ui.Card {
 <style>
 .dbb { display:flex; gap:0.75rem; margin-top:0.25rem; min-height:200px; }
 .dbb-pane { display:flex; flex-direction:column; min-width:0; }
-.dbb-label { font-size:var(--fs-2xs, 0.72rem); color:var(--text-mute,#8b949e); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.35rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.dbb-label { font-size:var(--fs-2xs, 0.72rem); color:var(--text-mute,#8b949e); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.35rem; white-space:nowrap; overflow:hidden; text-overflow:clip;animation:ui-cut-fade-x linear both;animation-timeline:scroll(self inline); }
 .dbb-list { background:var(--bg-0,#0d1117); border:1px solid var(--border,#30363d); border-radius:6px; overflow-y:auto; max-height:380px; flex:1; }
 .dbb-item { padding:0.35rem 0.6rem; font-size:var(--fs-sm, 0.8rem); color:var(--text,#c9d1d9); border-bottom:1px solid #161b22; cursor:pointer; word-break:break-all; line-height:1.4; }
 .dbb-item:last-child { border-bottom:none; }

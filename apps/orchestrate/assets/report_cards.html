@@ -22,7 +22,7 @@
   font-size: 0.78rem;
 }
 .orch-report-card-icon { flex: 0 0 auto; }
-.orch-report-card-name { font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.orch-report-card-name { font-weight: 600; flex: 1; overflow: hidden; text-overflow: clip; animation: ui-cut-fade-x linear both; animation-timeline: scroll(self inline); white-space: nowrap; }
 .orch-report-card-time { color: var(--text-mute, #999); font-size: 0.7rem; flex: 0 0 auto; }
 .orch-report-card-detail { flex: 0 0 100%; margin-top: 0.15rem; color: var(--text-mute, #999); font-size: 0.7rem; font-weight: 400; }
 /* The agent's own reply, posted when a background task it started finished:

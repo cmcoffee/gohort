@@ -117,8 +117,8 @@
 .ui-orch-priv-sub { font-size: 0.82rem; color: var(--text-mute); margin-top: 0.15rem; }
 .ui-orch-priv-rows { margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.3rem; }
 .ui-orch-priv-row { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; }
-.ui-orch-priv-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono, monospace); }
-.ui-orch-priv-detail { flex: 1 1 auto; color: var(--text-mute); font-size: 0.78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-orch-priv-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: clip; animation: ui-cut-fade-x linear both; animation-timeline: scroll(self inline); white-space: nowrap; font-family: var(--mono, monospace); }
+.ui-orch-priv-detail { flex: 1 1 auto; color: var(--text-mute); font-size: 0.78rem; overflow: hidden; text-overflow: clip; animation: ui-cut-fade-x linear both; animation-timeline: scroll(self inline); white-space: nowrap; }
 .ui-orch-priv-fixed { color: var(--text-mute); font-size: 0.78rem; white-space: nowrap; }
 .ui-orch-priv-new { color: var(--accent); font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; border: 1px solid var(--accent); border-radius: 999px; padding: 0 0.4rem; white-space: nowrap; }
 .ui-orch-priv-whatsnew { color: var(--text); font-size: 0.82rem; margin: 0.2rem 0 0.4rem; }
@@ -1644,7 +1644,7 @@
               // Two lines of it, the rest behind More: a description also
               // carries the full rundown other agents route on, and a person
               // about to fill in the form needs the opening only.
-              block.appendChild(window.uiClampMore(desc));
+              block.appendChild(window.uiFoldText(desc, {lines: 2, fold: 0, pre: true}));
               log.insertBefore(block, log.firstChild);
               // Hide the generic "Pick an agent from the rail..."
               // placeholder when we've put the actual description
@@ -1656,7 +1656,7 @@
               // to a non-intake agent (we hid it above).
               if (empty) {
                 empty.style.display = '';
-                if (desc) { empty.textContent = ''; empty.appendChild(window.uiClampMore(desc)); }
+                if (desc) { empty.textContent = ''; empty.appendChild(window.uiFoldText(desc, {lines: 2, fold: 0, pre: true})); }
               }
             } else {
               // Intake agent without a description — just un-hide
@@ -4113,7 +4113,7 @@
                 var row = document.createElement('div');
                 row.style.cssText = 'display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0.5rem;background:var(--bg-0);border:1px solid var(--border);border-radius:4px;font-size:0.8rem';
                 var nm = document.createElement('span');
-                nm.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+                nm.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:clip;animation:ui-cut-fade-x linear both;animation-timeline:scroll(self inline);white-space:nowrap';
                 nm.textContent = (s.name || s.id || '(unnamed)').replace(/^#+\s*/, '');
                 nm.title = nm.textContent;
                 var meta = document.createElement('span');

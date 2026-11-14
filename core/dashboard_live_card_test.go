@@ -217,10 +217,10 @@ func TestACardDescriptionIsHeldToTwoLines(t *testing.T) {
 	serve_dashboard(w, httptest.NewRequest("GET", "/", nil),
 		[]dashApp{{name: "Product Researcher", desc: long, path: "/agents/a1", group: "Agents"}}, nil, dashBands{})
 	html := w.Body.String()
-	if desc := rule(t, html, ".card-desc"); !strings.Contains(desc, "-webkit-line-clamp: 2") || !strings.Contains(desc, "overflow: hidden") {
+	if desc := rule(t, html, ".card-desc"); !strings.Contains(desc, "max-height: calc(2 * 1lh)") || !strings.Contains(desc, "overflow: hidden") || !strings.Contains(desc, "animation: ui-cut-fade-y") {
 		t.Errorf(".card-desc is not held to two lines: %s", desc)
 	}
-	if hero := rule(t, html, ".card.featured .card-desc"); !strings.Contains(hero, "line-clamp: unset") {
+	if hero := rule(t, html, ".card.featured .card-desc"); !strings.Contains(hero, "max-height: none") {
 		t.Errorf("the featured card's description should not be cut: %s", hero)
 	}
 	if !strings.Contains(html, `title="`+long+`"`) {

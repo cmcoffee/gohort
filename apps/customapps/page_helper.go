@@ -126,7 +126,7 @@ const appCoauthorCSS = `.ui-coauthor-review .ui-row-btn,.ui-coauthor-undo .ui-ro
 .ui-coauthor-review .ui-coauthor-apply{background:#7c83ff;border-color:#7c83ff;color:#fff}
 .ui-coauthor-review .ui-row-btn:disabled{opacity:0.5;cursor:default}
 .app-coauthor-chip{display:flex;align-items:center;gap:0.4rem;min-width:0;margin:0 0 0.3rem;padding:0.25rem 0.45rem;font-size:0.85em;border-left:3px solid #7c83ff;border-radius:6px;background:rgba(124,131,255,0.12)}
-.app-coauthor-chip-label{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.app-coauthor-chip-label{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:clip;animation:ui-cut-fade-x linear both;animation-timeline:scroll(self inline);white-space:nowrap}
 .app-coauthor-chip-x{flex:0 0 auto;padding:0 0.2rem;font:inherit;color:inherit;background:none;border:0;cursor:pointer}`
 
 // appPagePrelude is the markup at the top of every frame an app's page

@@ -56,12 +56,12 @@ const documentsListAssets = `<style>
 .docs-card-title { min-width: 0; }
 .docs-card-name {
   font-weight: 600; color: var(--text-hi); font-size: var(--fs-lg, 1rem); line-height: 1.25; overflow-wrap: anywhere;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  display: block; max-height: calc(2 * 1lh); overflow: hidden; animation: ui-cut-fade-y linear both; animation-timeline: scroll(self block);
 }
-.docs-card-sub { margin-top: 0.1rem; font-size: var(--fs-xs, 0.78rem); color: var(--text-mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.docs-card-sub { margin-top: 0.1rem; font-size: var(--fs-xs, 0.78rem); color: var(--text-mute); overflow: hidden; text-overflow: clip; animation: ui-cut-fade-x linear both; animation-timeline: scroll(self inline); white-space: nowrap; }
 .docs-card-desc {
   color: var(--text-mute); font-size: var(--fs-sm, 0.84rem); line-height: 1.45; min-height: 2.9em;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  display: block; max-height: calc(2 * 1lh); overflow: hidden; animation: ui-cut-fade-y linear both; animation-timeline: scroll(self block);
 }
 .docs-card-desc.none { font-style: italic; opacity: 0.7; }
 /* The counts and the date wrap rather than run off the card: at a card's
@@ -332,7 +332,7 @@ const documentsDetailAssets = `<style>
 .docs-search-row input { flex: 1; min-width: 0; background: var(--bg-0); color: var(--text); border: 1px solid var(--border); border-radius: var(--btn-radius, 6px); padding: 0.4rem 0.6rem; font: inherit; }
 #docs-sources, #docs-hits, #docs-agents { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.4rem; }
 .docs-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.6rem; background: var(--bg-0); border: 1px solid var(--border); border-radius: var(--btn-radius, 6px); font-size: var(--fs-sm, 0.84rem); }
-.docs-row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.docs-row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: clip; animation: ui-cut-fade-x linear both; animation-timeline: scroll(self inline); white-space: nowrap; }
 .docs-row-meta { color: var(--text-mute); font-size: var(--fs-2xs, 0.72rem); }
 .docs-hit { padding: 0.6rem; background: var(--bg-0); border: 1px solid var(--border); border-radius: 4px; }
 .docs-hit-section { font-weight: 600; color: var(--text); margin-bottom: 0.3rem; font-size: var(--fs-sm, 0.85rem); }

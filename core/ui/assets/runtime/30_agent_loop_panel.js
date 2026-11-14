@@ -1474,7 +1474,7 @@
           // rounded with a faint always-on accent tint that strengthens when the
           // queue has pending items (set in refreshChannelBadges).
           var pAccent = 'var(--accent)';
-          var plabel = el('span', {style: 'font-weight:700;overflow:hidden;text-overflow:ellipsis;min-width:0'}, [item.label || ('View ' + (i + 1))]);
+          var plabel = el('span', {style: 'font-weight:700;overflow:hidden;text-overflow:clip;animation:ui-cut-fade-x linear both;animation-timeline:scroll(self inline);min-width:0'}, [item.label || ('View ' + (i + 1))]);
           // margin-left:auto parks the count on the RIGHT EDGE of the row
           // rather than letting it trail the label. Hugging the text means it
           // sits in a different place for every label length, which reads as
@@ -1486,7 +1486,7 @@
           var ptitle = el('div', {style: 'display:flex;align-items:center;gap:0.4rem;white-space:nowrap;overflow:hidden;width:100%'}, [plabel, badge]);
           var pbody = [ptitle];
           if (item.subtitle) {
-            pbody.push(el('div', {style: 'font-size:var(--fs-xs, 0.74rem);color:var(--text-mute, #999);margin-top:0.1rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'}, [item.subtitle]));
+            pbody.push(el('div', {style: 'font-size:var(--fs-xs, 0.74rem);color:var(--text-mute, #999);margin-top:0.1rem;overflow:hidden;text-overflow:clip;animation:ui-cut-fade-x linear both;animation-timeline:scroll(self inline);white-space:nowrap'}, [item.subtitle]));
           }
           var pkids = [
             el('span', {style: 'flex:0 0 1.1rem;text-align:center;font-size:var(--fs-lg, 0.95rem);color:' + pAccent}, [item.icon || '•']),
@@ -1523,7 +1523,7 @@
             menu.panel.appendChild(ghdr);
             menu.hdrs.push({group: item.group, el: ghdr});
           }
-          var label = el('span', {style: 'flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'}, [item.label || ('View ' + (i + 1))]);
+          var label = el('span', {style: 'flex:1;text-align:left;overflow:hidden;text-overflow:clip;animation:ui-cut-fade-x linear both;animation-timeline:scroll(self inline);white-space:nowrap'}, [item.label || ('View ' + (i + 1))]);
           var kids = [label];
           if (item.action_url) {
             // A channel action (clear / decommission): muted, color by variant.
@@ -2045,7 +2045,7 @@
               msgEls = {}; blockEls = {}; noticeIds = {};
               convoLog.innerHTML = '';
               emptyMsg = el('div', {class: 'ui-agent-empty'},
-                [uiClampMore(cfg.empty_text || 'Start typing below.')]);
+                [window.uiFoldText(cfg.empty_text || 'Start typing below.', {lines: 2, fold: 0, pre: true})]);
               convoLog.appendChild(emptyMsg);
             },
             clearActivity: function() {
@@ -2334,7 +2334,7 @@
     convoPane.appendChild(convoLog);
     uiWidescreenToggle(wrap, convoPane, convoLog);
     var emptyMsg = el('div', {class: 'ui-agent-empty'},
-      [uiClampMore(cfg.empty_text || 'Start typing below.')]);
+      [window.uiFoldText(cfg.empty_text || 'Start typing below.', {lines: 2, fold: 0, pre: true})]);
     convoLog.appendChild(emptyMsg);
     var divider  = el('div', {class: 'ui-agent-divider', title: 'Drag to resize'});
 
@@ -7455,12 +7455,12 @@
             el('span', {style: 'justify-self:start;min-width:0'}, t.tag ? [el('span', {class: 'ui-threads-tag',
               style: 'padding:0 0.3rem;border:1px solid var(--border, rgba(127,127,127,0.3));border-radius:3px;font-size:var(--fs-2xs, 0.68rem);font-weight:700;letter-spacing:0.04em;line-height:1.5;color:var(--text-mute, #999)'}, [t.tag])] : []),
             el('span', {class: 'ui-threads-with',
-              style: 'min-width:0;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-sm, 0.82rem);font-weight:600;color:var(--accent, #4a9eff)'}, [t.with || '']),
+              style: 'min-width:0;text-align:center;overflow:hidden;text-overflow:clip;animation:ui-cut-fade-x linear both;animation-timeline:scroll(self inline);white-space:nowrap;font-size:var(--fs-sm, 0.82rem);font-weight:600;color:var(--accent, #4a9eff)'}, [t.with || '']),
             el('span', {}, []),
           ]);
         var when = threadWhen(t.created || t.last_at);
         var bottom = el('div', {class: 'ui-threads-when',
-          style: 'text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-xs, 0.74rem);color:var(--text-mute, #999)'}, []);
+          style: 'text-align:center;overflow:hidden;text-overflow:clip;animation:ui-cut-fade-x linear both;animation-timeline:scroll(self inline);white-space:nowrap;font-size:var(--fs-xs, 0.74rem);color:var(--text-mute, #999)'}, []);
         if (t.title) bottom.appendChild(el('span', {class: 'ui-chat-side-title', style: 'display:inline;color:var(--text, inherit)'}, [t.title]));
         if (t.title && when) bottom.appendChild(document.createTextNode(' \u00b7 '));
         if (when) bottom.appendChild(document.createTextNode(when));
@@ -7548,7 +7548,7 @@
             var gold = isRecord ? 'var(--text-mute)' : 'var(--warning)';
             var heroLabel = isRecord ? (cfg.record_label || 'Activity') : (cfg.alt_primary_label || 'Cortex');
             var titleLine = el('div', {style: 'display:flex;align-items:center;gap:0.4rem;white-space:nowrap;overflow:hidden'}, [
-              el('span', {style: 'font-weight:700;overflow:hidden;text-overflow:ellipsis'}, [heroLabel]),
+              el('span', {style: 'font-weight:700;overflow:hidden;text-overflow:clip;animation:ui-cut-fade-x linear both;animation-timeline:scroll(self inline)'}, [heroLabel]),
               el('span', {style: 'font-size:0.56rem;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;color:' + gold + ';border:1px solid ' + gold + ';border-radius:999px;padding:0.02rem 0.4rem;flex:0 0 auto'}, [isRecord ? 'record' : 'home']),
             ]);
             if (homeRec.unread && !chActive) {
@@ -7559,7 +7559,7 @@
               el('span', {style: 'flex:0 0 1.1rem;text-align:center;font-size:var(--fs-lg, 0.95rem);color:' + gold}, [isRecord ? '📋' : '🧠']),
               el('div', {style: 'flex:1;min-width:0'}, [
                 titleLine,
-                el('div', {style: 'font-size:var(--fs-xs, 0.74rem);color:var(--text-mute, #999);margin-top:0.1rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'},
+                el('div', {style: 'font-size:var(--fs-xs, 0.74rem);color:var(--text-mute, #999);margin-top:0.1rem;overflow:hidden;text-overflow:clip;animation:ui-cut-fade-x linear both;animation-timeline:scroll(self inline);white-space:nowrap'},
                   [isRecord ? (cfg.record_hint || 'what reached this agent') : 'standing thread']),
               ]),
             ];
@@ -8043,7 +8043,7 @@
         convoLog.innerHTML = '';
         if (!sid) {
           emptyMsg = el('div', {class: 'ui-agent-empty'},
-            [uiClampMore(cfg.empty_text || 'Start typing below.')]);
+            [window.uiFoldText(cfg.empty_text || 'Start typing below.', {lines: 2, fold: 0, pre: true})]);
           convoLog.appendChild(emptyMsg);
           setHeaderTitle('');
           if (hasList) loadSessions();
@@ -8123,7 +8123,7 @@
       if (!sid) {
         clearConvoPanes();
         emptyMsg = el('div', {class: 'ui-agent-empty'},
-          [uiClampMore(cfg.empty_text || 'Start typing below.')]);
+          [window.uiFoldText(cfg.empty_text || 'Start typing below.', {lines: 2, fold: 0, pre: true})]);
         convoLog.appendChild(emptyMsg);
         setHeaderTitle('');
         if (cfg.deep_link_param) updateURLParam(cfg.deep_link_param, '');

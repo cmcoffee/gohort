@@ -395,54 +395,6 @@
   }
   window.uiAttachInfo = uiAttachInfo;
 
-  // uiClampMore(text, lines): a text that may run long, shown as its first
-  // few lines (two by default) with More to open the rest in place. Nothing
-  // is asked of whoever wrote the text: the cut is made on screen, where the
-  // lines actually fall, so a short text shows whole with no button and a
-  // long one is never more than a glance until someone asks for it. Line
-  // breaks in the text are kept. Returns one element, so a caller drops it
-  // wherever the plain text went.
-  //
-  // Whether it overflows can only be known once it is laid out, so the
-  // button stays hidden until the element is on the page and measured.
-  function uiClampMore(text, lines) {
-    text = String(text == null ? '' : text).trim();
-    lines = lines || 2;
-    var body = el('div', {class: 'ui-clamp-more-text', style: 'white-space:pre-line'}, [text]);
-    var btn = el('button', {type: 'button', class: 'ui-clamp-more-btn', 'aria-expanded': 'false',
-      // Quiet on purpose: small and muted, it is a way into the rest, not
-      // something to act on.
-      style: 'display:none;background:none;border:none;padding:0;margin-top:0.25rem;cursor:pointer;font:inherit;font-size:var(--fs-2xs, 0.72rem);font-style:normal;color:var(--text-mute, #999);opacity:0.85'}, ['More']);
-    var wrap = el('div', {class: 'ui-clamp-more'}, [body, btn]);
-    function clamp(on) {
-      body.style.display = on ? '-webkit-box' : '';
-      body.style.overflow = on ? 'hidden' : '';
-      body.style.setProperty('-webkit-box-orient', on ? 'vertical' : '');
-      body.style.setProperty('-webkit-line-clamp', on ? String(lines) : '');
-    }
-    clamp(true);
-    var tries = 0;
-    function measure() {
-      if (!wrap.isConnected) {
-        if (tries++ < 120) requestAnimationFrame(measure);
-        return;
-      }
-      if (body.scrollHeight > body.clientHeight + 1) btn.style.display = '';
-    }
-    requestAnimationFrame(measure);
-    btn.addEventListener('click', function(ev) {
-      ev.stopPropagation();
-      var open = btn.getAttribute('aria-expanded') !== 'true';
-      clamp(!open);
-      // The label's own text node is edited, not replaced: WebKit drops a
-      // click whose target text was swapped out under it.
-      btn.firstChild.nodeValue = open ? 'Less' : 'More';
-      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    });
-    return wrap;
-  }
-  window.uiClampMore = uiClampMore;
-
 
   function fetchJSON(url, opts) {
     // Live dashboard data — never serve a stale HTTP-cached copy. Embedded
@@ -1260,14 +1212,18 @@
   // Short text (up to opts.fold characters, 240 by default) is one plain span,
   // as it would have been. Longer text shows its first opts.lines lines (3),
   // with "more" to open the whole of it in place and "less" to fold it again;
-  // "more" shows only while the fold actually hides some of it.
-  // The clamp is the browser's, so the whole text is on the page and nothing
-  // is fetched to open it. opts.class and opts.style go on the outer element;
-  // opts.pre keeps the text's own line breaks.
+  // "more" shows only while the fold actually hides some of it. opts.fold 0
+  // folds any text by its lines alone (an agent's description above its form:
+  // two lines, whatever their length). The whole text is on the page and
+  // nothing is fetched to open it; the cut fades (ui-cut-fade-y). "more" is
+  // quiet on purpose: small and muted, a way into the rest, not something to
+  // act on. opts.class and opts.style go on the outer element; opts.pre keeps
+  // the text's own line breaks. The one fold helper: there was a second
+  // (uiClampMore) doing the same job, folded into this one.
   window.uiFoldText = function(text, opts) {
     opts = opts || {};
     text = String(text == null ? '' : text);
-    var fold = opts.fold || 240, lines = opts.lines || 3;
+    var fold = opts.fold == null ? 240 : opts.fold, lines = opts.lines || 3;
     var style = opts.style || '';
     var wrap = opts.pre ? 'white-space:pre-wrap;' : '';
     var at = {style: style};
@@ -1276,16 +1232,20 @@
       if (wrap) at.style = style + (style ? ';' : '') + wrap;
       return el('span', at, [text]);
     }
-    var clamp = 'display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:' + lines + ';line-clamp:' + lines + ';overflow:hidden;';
+    // Cut by a max-height of its lines, the end fading where it is cut
+    // (ui-cut-fade-y in runtime.css): no browser ellipsis character.
+    var clamp = 'max-height:calc(' + lines + ' * 1lh);overflow:hidden;animation:ui-cut-fade-y linear both;animation-timeline:scroll(self block);';
     var body = el('span', {class: 'ui-fold-text', style: 'display:block;' + wrap + clamp}, [text]);
     var open = false;
     var toggle = el('button', {type: 'button', class: 'ui-fold-more', 'aria-expanded': 'false',
-      style: 'background:none;border:none;padding:0;margin-top:0.1rem;cursor:pointer;font:inherit;font-size:var(--fs-2xs, 0.72rem);font-weight:600;color:var(--accent, #4a9eff)',
+      style: 'background:none;border:none;padding:0;margin-top:0.15rem;cursor:pointer;font:inherit;font-size:var(--fs-2xs, 0.72rem);font-style:normal;color:var(--text-mute, #999);opacity:0.85',
       onclick: function(ev) {
         if (ev) ev.stopPropagation();
         open = !open;
         body.style.cssText = 'display:block;' + wrap + (open ? 'overflow-wrap:anywhere' : clamp);
-        toggle.textContent = open ? 'less' : 'more';
+        // The label's own text node is edited, not replaced: WebKit drops a
+        // click whose target text was swapped out under it.
+        toggle.firstChild.nodeValue = open ? 'less' : 'more';
         toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
       }}, ['more']);
     // "more" only when the clamp cuts something. Past opts.fold is a guess
@@ -1724,7 +1684,7 @@
     var hdr = document.createElement('div');
     hdr.style.cssText = 'display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0.8rem;padding-top:calc(0.5rem + env(safe-area-inset-top, 0px));border-bottom:1px solid var(--border);flex:0 0 auto';
     var ttl = document.createElement('div');
-    ttl.style.cssText = 'flex:1 1 auto;min-width:0;font-size:var(--fs-sm, 0.85rem);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    ttl.style.cssText = 'flex:1 1 auto;min-width:0;font-size:var(--fs-sm, 0.85rem);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:clip;animation:ui-cut-fade-x linear both;animation-timeline:scroll(self inline)';
     var popBtn = document.createElement('button');
     popBtn.type = 'button'; popBtn.className = 'ui-row-btn'; popBtn.textContent = '↗';
     popBtn.title = 'Open in a new tab';
@@ -2019,7 +1979,7 @@
       'border:1px solid var(--border);border-left:3px solid var(--accent, #6366f1);border-radius:6px;background:var(--bg-1)';
     var icon = document.createElement('span');
     var label = document.createElement('div');
-    label.style.cssText = 'flex:1 1 auto;min-width:0;font-size:var(--fs-sm, 0.85rem);white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    label.style.cssText = 'flex:1 1 auto;min-width:0;font-size:var(--fs-sm, 0.85rem);white-space:nowrap;overflow:hidden;text-overflow:clip;animation:ui-cut-fade-x linear both;animation-timeline:scroll(self inline)';
     // openPane says why when the pane cannot open. A throw while building it
     // used to leave Open doing nothing at all, with nothing on a phone (no
     // console) to say what had gone wrong. quiet is the automatic open on a
@@ -2078,9 +2038,9 @@
     var label = document.createElement('div');
     label.style.cssText = 'flex:1 1 auto;min-width:0;font-size:var(--fs-sm, 0.85rem);overflow:hidden';
     var title = document.createElement('div');
-    title.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    title.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:clip;animation:ui-cut-fade-x linear both;animation-timeline:scroll(self inline)';
     var note = document.createElement('div');
-    note.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    note.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);white-space:nowrap;overflow:hidden;text-overflow:clip;animation:ui-cut-fade-x linear both;animation-timeline:scroll(self inline)';
     label.appendChild(title); label.appendChild(note);
     var a = document.createElement('a');
     a.className = 'ui-row-btn';

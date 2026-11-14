@@ -1,9 +1,11 @@
 package ui
 
 import (
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -228,5 +230,55 @@ func TestTheThreadAndTheComposerAreCentredColumns(t *testing.T) {
 		if !on {
 			t.Errorf("%s is not centred on its column (%s)", sel, column)
 		}
+	}
+}
+
+// No ellipsis character anywhere the UI draws: the owner does not want the
+// single-character "…" at all (it does not survive a copy and paste, and
+// reads as noise). Cut text fades at its end instead (ui-cut-fade-x and -y in
+// runtime.css), so the two CSS cuts that make a browser draw one, an
+// ellipsis text-overflow and a line clamp, are not used, and no shipped
+// source writes the character itself. Reading it is fine: a pattern that
+// matches it in text that arrives is on the list below.
+func TestNothingDrawsAnEllipsisCharacter(t *testing.T) {
+	root := filepath.Join("..", "..")
+	ell := "…"
+	readsIt := map[string]bool{
+		"core/agent_loop_replyguards.go":         true, // sentence and clause ends, in model output
+		"core/ui/assets/runtime/35_ask_cards.js": true, // trims an option label as typed
+	}
+	cuts := regexp.MustCompile(`text-overflow:\s*ellipsis|line-clamp`)
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "node_modules", "testdata", "vendor", "docs":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		ext := filepath.Ext(path)
+		if ext != ".go" && ext != ".js" && ext != ".html" && ext != ".css" || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		s := string(b)
+		if loc := cuts.FindStringIndex(s); loc != nil {
+			t.Errorf("%s:%d cuts with the browser's ellipsis (%q): use the fade, ui-cut-fade-x or -y", rel, strings.Count(s[:loc[0]], "\n")+1, s[loc[0]:loc[1]])
+		}
+		if i := strings.Index(s, ell); i >= 0 && !readsIt[rel] {
+			t.Errorf("%s:%d writes the ellipsis character: cut text ends in \"...\" or fades", rel, strings.Count(s[:i], "\n")+1)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

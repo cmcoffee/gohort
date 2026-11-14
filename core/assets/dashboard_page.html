@@ -9,6 +9,16 @@
 <style>
 %THEMECSS%
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  /* Cut text fades at its end instead of ending in the browser's
+     single-character ellipsis. This page does not load runtime.css, so it
+     carries its own copy of the keyframes (see ui-cut-fade-x there). */
+  :root {
+    --ui-fade-x: linear-gradient(to right, #000 calc(100% - 1.75em), transparent);
+    --ui-fade-y: linear-gradient(#000, #000) top left / 100% calc(100% - 1lh) no-repeat,
+      linear-gradient(to right, #000 calc(100% - 3em), transparent) bottom left / 100% 1lh no-repeat;
+  }
+  @keyframes ui-cut-fade-x { from, to { -webkit-mask-image: var(--ui-fade-x); mask-image: var(--ui-fade-x); } }
+  @keyframes ui-cut-fade-y { from, to { -webkit-mask: var(--ui-fade-y); mask: var(--ui-fade-y); } }
   body {
     font-family: var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif); text-shadow: var(--text-glow, none);
     font-size: var(--fs-base, 1rem);
@@ -122,7 +132,7 @@
      than the rest of its row. The full text is the card's title. */
   .card-desc {
     font-size: var(--fs-md, 0.9rem); color: var(--text-mute, #8b949e); line-height: 1.4;
-    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
+    display: block; max-height: calc(2 * 1lh); overflow: hidden; animation: ui-cut-fade-y linear both; animation-timeline: scroll(self block);
   }
   /* Featured hero card: the primary entry point. Spans the full grid
      width and is larger so it stands apart by SIZE, not color (a blue
@@ -138,7 +148,7 @@
      four of them its one line of description would run the width of the
      screen. A line that long is measurably harder to read, and the card looks
      empty rather than generous. */
-  .card.featured .card-desc { font-size: var(--fs-lg, 1.02rem); max-width: 62ch; display: block; -webkit-line-clamp: unset; line-clamp: unset; }
+  .card.featured .card-desc { font-size: var(--fs-lg, 1.02rem); max-width: 62ch; display: block; max-height: none; animation: none; }
   /* Wide card: spans the full grid row at the REGULAR card height (a
      "double" button). Used for a bottom utility entry like Administrator. */
   .card.wide { grid-column: 1 / -1; }
@@ -249,7 +259,7 @@
     color: var(--text-mute, #8b949e);
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
+    text-overflow: clip; animation: ui-cut-fade-x linear both; animation-timeline: scroll(self inline);
     max-width: 40vw;
   }
   .auth-link {

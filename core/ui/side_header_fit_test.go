@@ -50,8 +50,8 @@ func TestTheListLabelCanGiveUpRoom(t *testing.T) {
 	if !strings.Contains(rule, "min-width: 0") {
 		t.Error("the list label cannot shrink below its content, so it pushes the header's buttons past the edge")
 	}
-	if !strings.Contains(rule, "text-overflow: ellipsis") {
-		t.Error("a shrunk label must ellipsize rather than spill")
+	if !strings.Contains(rule, "animation: ui-cut-fade-x") {
+		t.Error("a shrunk label must fade where it is cut rather than spill")
 	}
 }
 

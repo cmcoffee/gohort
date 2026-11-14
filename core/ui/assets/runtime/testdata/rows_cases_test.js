@@ -81,7 +81,7 @@ check('a sections cell previews its text and opens the doc editor',
 check('saving in the editor writes the row and commits it',
   /onSave: function\(text\) \{ docVal = text; row\[c\.field\] = text; showDocPrev\(\); commit\(\); \}/.test(cell));
 check('the preview is a few lines, not the document',
-  /\.ui-rows-doc-preview \{[^}]*-webkit-line-clamp: 3;/.test(css));
+  /\.ui-rows-doc-preview \{[^}]*max-height: calc\(3 \* 1lh\); overflow: hidden; animation: ui-cut-fade-y/.test(css));
 
 // uiOpenDocEditor: Markdown and Raw, Save hands back the open view's text,
 // Cancel hands back nothing.

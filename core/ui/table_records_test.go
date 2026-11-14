@@ -75,9 +75,9 @@ console.log('OK');
 // and shove the row wider than the card holding it.
 func TestTableCellsTruncateRatherThanCrush(t *testing.T) {
 	cell := cssRule(t, ".ui-table-cell")
-	for _, want := range []string{"min-width: 0", "white-space: nowrap", "text-overflow: ellipsis"} {
+	for _, want := range []string{"min-width: 0", "white-space: nowrap", "animation: ui-cut-fade-x"} {
 		if !strings.Contains(cell, want) {
-			t.Errorf(".ui-table-cell lost %q — a crowded column starts wrapping inside the row instead of truncating", want)
+			t.Errorf(".ui-table-cell lost %q — a crowded column starts wrapping inside the row instead of fading where it is cut", want)
 		}
 	}
 	if !strings.Contains(cssRule(t, ".ui-row-cells"), "min-width: 0") {
