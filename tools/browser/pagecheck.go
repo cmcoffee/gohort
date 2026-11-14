@@ -6,6 +6,7 @@
 package browser
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/appcheck"
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/proto"
 
@@ -241,7 +243,15 @@ func (t *BrowsePageTool) checkPage(target string, cookies []PageCheckCookie, pro
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	if probeJS != "" {
+	if steps, isSteps := appcheck.DecodeStepsProbe(probeJS); isSteps {
+		// A page check's steps (check_steps.go): run by the browser in every
+		// frame, the result handed back where a probe's would be.
+		res := runCheckSteps(page, steps)
+		b, _ := json.Marshal(res)
+		mu.Lock()
+		rep.ProbeJSON = string(b)
+		mu.Unlock()
+	} else if probeJS != "" {
 		if obj, err := page.Eval(probeJS); err == nil && obj != nil {
 			mu.Lock()
 			rep.ProbeJSON = obj.Value.Str()

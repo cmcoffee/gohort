@@ -102,9 +102,12 @@ func appChecksArg(raw any) ([]appcheck.Check, error) {
 	return out, nil
 }
 
-// runAppChecks runs every check spec keeps, script checks side by side, all of
-// them inside appChecksBudget.
-func (t *chatTurn) runAppChecks(spec AppSpec) []appCheckResult {
+// runAppChecks runs every check spec keeps, script checks side by side and
+// page checks after them, one at a time on the one browser, all of them
+// inside appChecksBudget. Page checks drive the page as served, so they run
+// only when served is set: spec is the version serving now.
+func (t *chatTurn) runAppChecks(spec AppSpec, served ...bool) []appCheckResult {
+	pages := len(served) > 0 && served[0]
 	results := make([]appCheckResult, len(spec.Checks))
 	deadline := time.Now().Add(appChecksBudget)
 	slots := make(chan struct{}, appChecksAtOnce)
@@ -112,7 +115,7 @@ func (t *chatTurn) runAppChecks(spec AppSpec) []appCheckResult {
 	for i, c := range spec.Checks {
 		results[i] = appCheckResult{Name: c.Name, Page: c.IsPage()}
 		if c.IsPage() {
-			results[i].Why = "page checks do not run yet"
+			results[i].Why = "page checks run once the version is saved"
 			continue
 		}
 		wg.Add(1)
@@ -128,7 +131,125 @@ func (t *chatTurn) runAppChecks(spec AppSpec) []appCheckResult {
 		}(i, c)
 	}
 	wg.Wait()
+	if pages {
+		for i, c := range spec.Checks {
+			if !c.IsPage() {
+				continue
+			}
+			if time.Now().After(deadline) {
+				results[i].Why = fmt.Sprintf("not run: the checks' %s ran out", appChecksBudget)
+				continue
+			}
+			results[i] = t.runPageCheck(spec, c)
+		}
+	}
 	return results
+}
+
+// runPageCheck drives spec's page as served, as its owner, on scratch records
+// seeded with the check's own: the browser carries the scratch store's token,
+// so every record the page reads or writes, and every script it runs, is the
+// check's (customapps check_scratch.go). No browser here, or one that could
+// not load the page, is a check that did not run, never one that passed.
+func (t *chatTurn) runPageCheck(spec AppSpec, c appcheck.Check) appCheckResult {
+	res := appCheckResult{Name: c.Name, Page: true}
+	if BrowserCheckPage == nil {
+		res.Why = "not run: no browser in this build"
+		return res
+	}
+	token, end := appscript.BeginCheckScratch(spec.Owner, spec.Slug, spec.RecordKey, c.Records)
+	defer end()
+	rep, err := CheckPageAsUser(RootDB, spec.Owner, "/apps/"+spec.Slug+"/", appcheck.StepsProbe(c.Steps),
+		PageCheckCookie{Name: appscript.CheckScratchCookie, Value: token, HTTPOnly: true})
+	if err != nil || rep == nil {
+		res.Why = "not run: the browser could not load the page"
+		if err != nil {
+			res.Why += ": " + appOneLine(err.Error(), 300)
+		}
+		return res
+	}
+	res.Ran = true
+	var steps appcheck.StepsResult
+	if json.Unmarshal([]byte(rep.ProbeJSON), &steps) != nil {
+		res.Why = "the browser did not report on the steps"
+		return res
+	}
+	if !steps.OK {
+		what := "a step"
+		if steps.Step >= 1 && steps.Step <= len(c.Steps) {
+			what = fmt.Sprintf("step %d (%s)", steps.Step, c.Steps[steps.Step-1].Describe())
+		}
+		res.Why = what + " did not hold: " + appOneLine(steps.Saw, 400)
+		return res
+	}
+	var errs []string
+	for _, e := range rep.PageErrors {
+		errs = append(errs, "uncaught JS exception: "+appOneLine(e, 200))
+	}
+	for _, e := range rep.ConsoleErrors {
+		errs = append(errs, "console error: "+appOneLine(e, 200))
+	}
+	for _, e := range rep.FailedRequests {
+		errs = append(errs, "failed request: "+appOneLine(e, 200))
+	}
+	if len(errs) > 0 {
+		if len(errs) > 3 {
+			errs = append(errs[:3], fmt.Sprintf("and %d more", len(errs)-3))
+		}
+		res.Why = "the steps held, but the page hit errors along the way: " + strings.Join(errs, "; ")
+		return res
+	}
+	res.Pass = true
+	return res
+}
+
+// appPageChecksAfterSave runs saved's page checks against it as served. A
+// page check that fails and that this save did not change is run again on
+// prior, put back to serve for it: if it passed there, the save broke it,
+// prior stays serving, and the save is refused. Otherwise saved goes back to
+// serving and the failure is reported. report is the outcome, "" with no page
+// checks.
+func (t *chatTurn) appPageChecksAfterSave(prior *AppSpec, saved AppSpec) (report string, refusal error) {
+	hasPage := false
+	for _, c := range saved.Checks {
+		hasPage = hasPage || c.IsPage()
+	}
+	if !hasPage {
+		return "", nil
+	}
+	results := t.runAppChecks(saved, true)
+	var page []appCheckResult
+	var retry []int
+	for i, r := range results {
+		if !r.Page {
+			continue
+		}
+		page = append(page, r)
+		if r.Ran && !r.Pass && prior != nil {
+			if old, ok := appCheckNamed(prior.Checks, r.Name); ok && sameAppCheck(old, saved.Checks[i]) {
+				retry = append(retry, i)
+			}
+		}
+	}
+	if len(retry) > 0 {
+		SaveAppSpecAs(*prior, AppSaveNoHistory)
+		var broke []string
+		for _, i := range retry {
+			old, _ := appCheckNamed(prior.Checks, results[i].Name)
+			if before := t.runPageCheck(*prior, old); before.Ran && before.Pass {
+				broke = append(broke, fmt.Sprintf("%q: %s", results[i].Name, results[i].Why))
+			}
+		}
+		if len(broke) > 0 {
+			what := "a page check"
+			if len(broke) > 1 {
+				what = fmt.Sprintf("%d page checks", len(broke))
+			}
+			return "", fmt.Errorf("NOT SAVED: this change breaks %s that passed on the version serving before, so it was ROLLED BACK and that version is serving again:\n- %s\n\nFix the change, not the check: change a check only when its feature changed on purpose, and say so.", what, strings.Join(broke, "\n- "))
+		}
+		SaveAppSpecAs(saved, AppSaveNoHistory)
+	}
+	return appChecksReport(page), nil
 }
 
 // runScriptCheck runs one script check against scratch records, in a run that
@@ -240,13 +361,30 @@ func (t *chatTurn) appChecksGate(prior *AppSpec, next AppSpec) (report string, r
 		}
 		return "", fmt.Errorf("NOT SAVED: this change breaks %s that passed on the version serving now:\n- %s\n\nThe app is unchanged and still serving. Fix the change, not the check: change a check only when its feature changed on purpose, and say so.", what, strings.Join(broke, "\n- "))
 	}
-	return appChecksReport(results), nil
+	var scripts []appCheckResult
+	for _, r := range results {
+		if !r.Page {
+			scripts = append(scripts, r)
+		}
+	}
+	return appChecksReport(scripts), nil
+}
+
+// joinChecksReports puts the script and page checks' reports together.
+func joinChecksReports(parts ...string) string {
+	var kept []string
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			kept = append(kept, p)
+		}
+	}
+	return strings.Join(kept, "\n\n")
 }
 
 // runOneAppCheck runs a single check against spec.
 func (t *chatTurn) runOneAppCheck(spec AppSpec, c appcheck.Check) appCheckResult {
 	if c.IsPage() {
-		return appCheckResult{Name: c.Name, Page: true, Why: "page checks do not run yet"}
+		return appCheckResult{Name: c.Name, Page: true, Why: "page checks run once the version is saved"}
 	}
 	return t.runScriptCheck(spec, c)
 }

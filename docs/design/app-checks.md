@@ -1,6 +1,28 @@
 # App checks: tests that live with an app
 
-Status: proposed (2026-11-13). Nothing built.
+Status: built (2026-11-13). Where the build differs from the plan below:
+
+- **Page check steps run in the browser, not as a probe script.** The page
+  check's probe carries the steps (`appcheck.StepsProbe`), and the browser
+  runs each one from Go in the page and every frame inside it
+  (`tools/browser/check_steps.go`): an html section renders in a sandboxed
+  frame that no script on the page can reach.
+- **Scratch records ride a cookie, not a marked session.** A page check's
+  browser carries `gohort_app_check`, naming a store made for the check
+  (`appscript.BeginCheckScratch`). The app host uses it for every record and
+  script of that request, refuses a token that is over or for another app,
+  and closes the routes that act on their own to it: chat, a pipeline,
+  files, settings writes.
+- **A check's run refuses more than writes.** Beside every outbound write
+  (a trusted host and a credential included, and a CONNECT tunnel), it
+  refuses call_tool, run_agent, run_pipeline and store commands, and
+  notifications reach nobody, since none of those can be held to scratch
+  records. ask stays.
+- **Script checks gate before the save, page checks after.** A script runs
+  against the unsaved version, so a break refuses the save with nothing
+  changed. A page check needs the version served: it runs on the saved one,
+  and a break puts the previous version back to serve.
+- **verify counts a failing check** as a failing verify.
 
 ## Why
 

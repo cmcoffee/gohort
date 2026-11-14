@@ -274,3 +274,60 @@ func clip(s string) string {
 	}
 	return s
 }
+
+// StepsProbePrefix marks a page check's steps handed to the browser through
+// the page check's probe argument (core.CheckPageAsUser), which the browser
+// runs itself, in every frame, rather than evaluating as script: an html
+// section renders in a sandboxed frame no script on the page can reach.
+const StepsProbePrefix = "appcheck-steps:"
+
+// StepsProbe is steps as the probe the browser runs.
+func StepsProbe(steps []Step) string {
+	b, _ := json.Marshal(steps)
+	return StepsProbePrefix + string(b)
+}
+
+// DecodeStepsProbe reads the steps back out of a probe; false for a probe
+// that is not one.
+func DecodeStepsProbe(probe string) ([]Step, bool) {
+	rest, ok := strings.CutPrefix(probe, StepsProbePrefix)
+	if !ok {
+		return nil, false
+	}
+	var steps []Step
+	if json.Unmarshal([]byte(rest), &steps) != nil {
+		return nil, false
+	}
+	return steps, true
+}
+
+// StepsResult is how a page check's steps went: OK, or the step (from 1)
+// that did not, and what the browser saw there.
+type StepsResult struct {
+	OK   bool   `json:"ok"`
+	Step int    `json:"step,omitempty"`
+	Saw  string `json:"saw,omitempty"`
+}
+
+// Describe words a step for a report: what it does, as a person would say it.
+func (s Step) Describe() string {
+	in := ""
+	if s.In != "" {
+		in = " in " + strconv.Quote(s.In)
+	}
+	switch {
+	case s.Fill != "":
+		return fmt.Sprintf("fill %q with %q", s.Fill, s.With)
+	case s.Click != "":
+		return fmt.Sprintf("click %q", s.Click)
+	case s.Choose != "":
+		return fmt.Sprintf("choose %q in %q", s.Option, s.Choose)
+	case s.See != "":
+		return fmt.Sprintf("see %q%s", s.See, in)
+	case s.NotSee != "":
+		return fmt.Sprintf("not see %q%s", s.NotSee, in)
+	case s.Rows != nil:
+		return fmt.Sprintf("%d row(s)%s", *s.Rows, in)
+	}
+	return "a step that does nothing"
+}

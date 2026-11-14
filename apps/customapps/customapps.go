@@ -202,6 +202,19 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 	// marker, or co-authored content goes through appdb so a private app's data
 	// stays entirely in its own file.
 	appdb := T.recordBase(spec, user)
+	// A page check's request: its scratch store, and only the routes a check
+	// may use (check_scratch.go).
+	if sc, isCheck, err := appCheckScratch(r, spec, ownerUser); err != nil {
+		jsonapi.Fail(w, r, err)
+		return
+	} else if isCheck {
+		if !checkRouteAllowed(rest, r.Method) {
+			jsonapi.Fail(w, r, errNotInCheck)
+			return
+		}
+		appdb = sc.DB
+		r = withCheckScratch(r, sc)
+	}
 	switch {
 	// Static assets — read-only, owner-scoped, extension-allowlisted. Served
 	// before anything else so an app can reference its own artwork without the
@@ -222,7 +235,7 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		T.handleRecordFile(w, r, appdb, spec, ownerUser, user)
 		return
 	case strings.HasPrefix(rest, "shared/"):
-		T.handleShared(w, r, T.recordBase(spec, ownerUser), spec, strings.TrimPrefix(rest, "shared/"))
+		T.handleShared(w, r, T.scriptBase(r, spec, ownerUser), spec, strings.TrimPrefix(rest, "shared/"))
 		return
 	case rest == "":
 		// Component Source/PostURL are relative ("records"), so the page must
@@ -1226,13 +1239,20 @@ func (T *CustomApps) handleData(w http.ResponseWriter, r *http.Request, owner, u
 	// After the params, as an action does: a page must not hand its own view
 	// a shared collection of its choosing.
 	if len(spec.SharedCollections) > 0 {
-		args["shared"] = sharedInput(T.recordBase(spec, owner), spec)
+		args["shared"] = sharedInput(T.scriptBase(r, spec, owner), spec)
 	}
 	T.applySettings(args, spec, uid) // last: a param never overrides a setting
 
 	// The script executes in the OWNER's context (sandbox identity + hook DB), so
 	// a shared app's data source reaches the owner's credentials/integrations.
-	out, err := cachedRunDataSource(owner, T.recordBase(spec, owner), spec, *ds, args, uid)
+	// A page check's run is held to a check's rules, on its scratch, uncached.
+	var out string
+	var err error
+	if _, isCheck := checkScratchOf(r); isCheck {
+		out, err = runDataSourceIn(owner, T.scriptBase(r, spec, owner), spec, *ds, args, uid, true)
+	} else {
+		out, err = cachedRunDataSource(owner, T.recordBase(spec, owner), spec, *ds, args, uid)
+	}
 	if err != nil {
 		Log("[customapps] data source %q/%q failed: %v", spec.Slug, name, err)
 		http.Error(w, "data source failed: "+err.Error(), http.StatusInternalServerError)
@@ -1293,8 +1313,14 @@ func scriptSlug(name string) string {
 
 // runDataSource executes one data-source script and returns its stdout.
 func runDataSource(user string, db Database, spec AppSpec, ds AppDataSource, args map[string]any, caller string) (string, error) {
+	return runDataSourceIn(user, db, spec, ds, args, caller, false)
+}
+
+// runDataSourceIn is runDataSource, held to a check's rules when check is set
+// (a page check's request).
+func runDataSourceIn(user string, db Database, spec AppSpec, ds AppDataSource, args map[string]any, caller string, check bool) (string, error) {
 	// A data source runs when a page asks for it: someone is looking.
-	j := appscript.Job{Owner: user, DB: db, Slug: spec.Slug, Kind: "data", Name: ds.Name, Language: ds.Language, Script: ds.Script, Caps: ds.Capabilities, Args: args, Caller: caller, Libs: spec.Libraries, Interactive: true}
+	j := appscript.Job{Owner: user, DB: db, Slug: spec.Slug, Kind: "data", Name: ds.Name, Language: ds.Language, Script: ds.Script, Caps: ds.Capabilities, Args: args, Caller: caller, Libs: spec.Libraries, Interactive: true, Check: check}
 	trace := appscript.Track(&j)
 	out, err := runAppScript(j)
 	trace.Done(err)
@@ -1522,13 +1548,14 @@ func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, owner,
 	T.applySettings(args, spec, uid) // last: neither a param nor the body overrides a setting
 	// A job, not a call: it runs on its own context so a slow one outlasts this
 	// request, and answers here if it finishes soon enough (action_jobs.go).
-	ownerDB, action := T.recordBase(spec, owner), *act
+	ownerDB, action := T.scriptBase(r, spec, owner), *act
+	_, isCheck := checkScratchOf(r)
 	what := strings.TrimSpace(act.Label)
 	if what == "" {
 		what = act.Name
 	}
 	job := startActionJob(actionJobKey(owner, spec.Slug, uid, name), appWork{UID: uid, Slug: spec.Slug, AppName: spec.Name, What: what, Kind: "action"}, func(ctx context.Context, progress func(string)) (actionOutcome, error) {
-		return runActionAndPersist(owner, ownerDB, udb, spec, action, args, uid, scriptRun{Interactive: true, Long: true, Ctx: ctx, OnProgress: progress})
+		return runActionAndPersist(owner, ownerDB, udb, spec, action, args, uid, scriptRun{Interactive: true, Long: true, Ctx: ctx, OnProgress: progress, Check: isCheck})
 	})
 	select {
 	case <-job.done:
@@ -1561,6 +1588,8 @@ type scriptRun struct {
 	Long        bool
 	Ctx         context.Context
 	OnProgress  func(string)
+	// Check holds the run to a check's rules (a page check's request).
+	Check bool
 }
 
 // actionOutcome is what one action run did: the message for the button, how
@@ -1593,7 +1622,7 @@ func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act 
 		args["shared"] = sharedInput(ownerDB, spec)
 	}
 	j := appscript.Job{Owner: owner, DB: ownerDB, Slug: spec.Slug, Kind: "action", Name: act.Name, Language: act.Language, Script: act.Script, Caps: act.Capabilities, Args: args, Caller: by, Libs: spec.Libraries,
-		Interactive: how.Interactive, Long: how.Long, Ctx: how.Ctx, OnProgress: how.OnProgress}
+		Interactive: how.Interactive, Long: how.Long, Ctx: how.Ctx, OnProgress: how.OnProgress, Check: how.Check}
 	// The record takes the run's whole ending: a reply the host refuses is
 	// as much the action failing as the script exiting badly.
 	trace := appscript.Track(&j)

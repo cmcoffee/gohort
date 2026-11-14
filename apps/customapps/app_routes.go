@@ -6,6 +6,7 @@ package customapps
 
 import (
 	"net/http"
+	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
@@ -54,7 +55,23 @@ func (T *CustomApps) inApp(c *jsonapi.Call) (*appCall, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &appCall{Call: c, spec: spec, owner: owner, appdb: T.recordBase(spec, c.User)}, nil
+	appdb := T.recordBase(spec, c.User)
+	// A page check's request reads and writes its scratch records alone
+	// (check_scratch.go).
+	sc, isCheck, err := appCheckScratch(c.R, spec, owner)
+	if err != nil {
+		return nil, err
+	}
+	if isCheck {
+		// Settings are the owner's real ones, and chat is refused in a
+		// check: neither is the check's to change.
+		path := c.R.URL.Path
+		if (strings.Contains(path, "/_settings/") && c.R.Method != http.MethodGet) || strings.HasSuffix(path, "/chat/active") {
+			return nil, errNotInCheck
+		}
+		appdb = sc.DB
+	}
+	return &appCall{Call: c, spec: spec, owner: owner, appdb: appdb}, nil
 }
 
 // appGet is a GET on one app.

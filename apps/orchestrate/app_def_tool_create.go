@@ -300,11 +300,6 @@ func (aw *appWrite) readParts() bool {
 		if err != nil {
 			return aw.exit("", fmt.Errorf("NOT SAVED: %v", err))
 		}
-		for _, c := range checks {
-			if c.IsPage() {
-				return aw.exit("", fmt.Errorf("NOT SAVED: check %q has steps, and page checks do not run yet: write it as a script check (script, records, inputs, expect) for now", c.Name))
-			}
-		}
 		aw.spec.Checks = checks
 	}
 
@@ -440,8 +435,14 @@ func (aw *appWrite) save() bool {
 	if err != nil {
 		return aw.exit("", err)
 	}
-	aw.checksReport = report
 	aw.saved = SaveAppSpecAs(aw.spec, reason)
+	// Page checks drive the page as served, so they run on the saved
+	// version; one this save broke puts the previous version back.
+	pageReport, err := t.appPageChecksAfterSave(prior, aw.saved)
+	if err != nil {
+		return aw.exit("", err)
+	}
+	aw.checksReport = joinChecksReports(report, pageReport)
 	return true
 }
 

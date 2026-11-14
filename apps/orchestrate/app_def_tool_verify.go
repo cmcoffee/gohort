@@ -134,7 +134,7 @@ func (t *chatTurn) appDefTest(args map[string]any) (string, error) {
 	}
 	if len(spec.DataSources) == 0 && len(spec.Actions) == 0 {
 		if len(spec.Checks) > 0 {
-			return fmt.Sprintf("App %q has no data sources or actions.\n\n%s", spec.Name, appChecksReport(t.runAppChecks(spec))), nil
+			return fmt.Sprintf("App %q has no data sources or actions.\n\n%s", spec.Name, appChecksReport(t.runAppChecks(spec, true))), nil
 		}
 		return fmt.Sprintf("App %q has no script-backed components (data_sources or actions) to test: a plain form/table app uses the built-in record store and needs no script test.", spec.Name), nil
 	}
@@ -167,7 +167,7 @@ func (t *chatTurn) appDefTest(args map[string]any) (string, error) {
 		b.WriteString("\nNote: the store is empty, so data sources only saw []. Pass sample=[{...}] (example form submissions) to test the full form→data-source→output chain with real input; it is kept on the app for later runs.")
 	}
 	if len(spec.Checks) > 0 {
-		b.WriteString("\n\n" + appChecksReport(t.runAppChecks(spec)))
+		b.WriteString("\n\n" + appChecksReport(t.runAppChecks(spec, true)))
 	}
 	if fail > 0 {
 		b.WriteString(" Fix the failing scripts with app_def action=update, then test again before telling the user the app is ready.")
@@ -396,6 +396,18 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 	}
 
 	b.WriteString("\n" + t.appInventoryLine(spec) + "\n")
+
+	// The app's own checks, page checks included: a failing one is a
+	// failing verify, since it says the app does not do what it should.
+	if len(spec.Checks) > 0 {
+		results := t.runAppChecks(spec, true)
+		b.WriteString("\n" + appChecksReport(results) + "\n")
+		for _, r := range results {
+			if r.Ran && !r.Pass {
+				failures++
+			}
+		}
+	}
 
 	// Pin the verdict to the revision it checked. Before this the report's
 	// own caveat ("if you updated after this...") was the only record, and it

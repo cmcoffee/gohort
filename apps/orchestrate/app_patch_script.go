@@ -337,6 +337,11 @@ func (t *chatTurn) saveScriptEdit(spec AppSpec, ref appScriptRef, next, summary,
 		return "", err
 	}
 	saved := SaveAppSpecAs(spec, reason)
+	pageReport, err := t.appPageChecksAfterSave(&before, saved)
+	if err != nil {
+		return "", err
+	}
+	checks = joinChecksReports(checks, pageReport)
 	msg := fmt.Sprintf(summary, saved.Name, saved.Updated)
 
 	if ref.kind == "data" {

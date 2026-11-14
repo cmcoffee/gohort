@@ -104,7 +104,11 @@ func localWebBase() (base, host string, err error) {
 // A session is minted just for this load and destroyed on return, so
 // the check sees exactly what that user would see — per-user apps,
 // group gating, frozen-seed shadows — without borrowing a live session.
-func CheckPageAsUser(db Database, username, path, probeJS string) (*PageCheckReport, error) {
+//
+// extra are cookies the load carries beside the session: a page check's
+// scratch-store token (tools/appscript.CheckScratchCookie), so everything
+// the page does lands in the check's records rather than the user's.
+func CheckPageAsUser(db Database, username, path, probeJS string, extra ...PageCheckCookie) (*PageCheckReport, error) {
 	if BrowserCheckPage == nil {
 		return nil, errors.New("headless browser is not available in this build")
 	}
@@ -126,5 +130,16 @@ func CheckPageAsUser(db Database, username, path, probeJS string) (*PageCheckRep
 		HTTPOnly: true,
 	}
 	// The local cert is self-signed; only this loopback load trusts it.
-	return BrowserCheckPage(base+path, []PageCheckCookie{cookie}, probeJS, TLSEnabled())
+	cookies := []PageCheckCookie{cookie}
+	for _, c := range extra {
+		if c.Domain == "" {
+			c.Domain = host
+		}
+		if c.Path == "" {
+			c.Path = "/"
+		}
+		c.Secure = TLSEnabled()
+		cookies = append(cookies, c)
+	}
+	return BrowserCheckPage(base+path, cookies, probeJS, TLSEnabled())
 }
