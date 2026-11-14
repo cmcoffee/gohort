@@ -1,9 +1,9 @@
 // Package webui provides shared web UI scaffolding for gohort apps.
 //
 // Goal: eliminate duplicated CSS, JS, and HTML chrome across web
-// frontends. Each app supplies its own body HTML, app-specific CSS,
-// and JS, then calls RenderPage to assemble a complete document with the
-// shared theme, utilities, and access-control hooks already wired in.
+// frontends: the shared theme CSS, the favicon and app icons, and the
+// manifest. Pages are assembled by core/ui; the old RenderPage assembler
+// and its utility script went with their last caller.
 //
 // All static assets are embedded via go:embed, so the binary remains
 // single-file. Apps can also serve raw assets via /webui/<file> if they
@@ -13,7 +13,6 @@ package webui
 import (
 	"embed"
 	"encoding/base64"
-	"html"
 	"strings"
 	"sync"
 )
@@ -32,8 +31,7 @@ func asset(name string) string {
 }
 
 // BaseCSS returns the shared dark theme CSS used by all apps. Apps may
-// append their own styles via PageOpts.AppCSS for app-specific tweaks.
-// Includes self-hosted font @font-face declarations so app headers can
+// append their own styles. Includes self-hosted font @font-face declarations so app headers can
 // reference 'Space Grotesk' without loading anything external.
 func BaseCSS() string { return fontFaceCSS() + asset("base.css") }
 
@@ -47,9 +45,9 @@ var (
 // external HTTP request.
 // Size: ~9KB of base64 text. Loaded once and memoized.
 //
-// Exposed for apps that render their own HTML templates (without
-// going through RenderPage) — they can inject this into their own
-// <style> block or <head> to pick up the shared header font.
+// Exposed for apps that render their own HTML templates: they can inject
+// this into their own <style> block or <head> to pick up the shared header
+// font.
 func FontFaceCSS() string { return fontFaceCSS() }
 
 func fontFaceCSS() string {
@@ -75,108 +73,6 @@ func fontFaceCSS() string {
 	return fontFaceStr
 }
 
-// BaseJS returns the shared utility JS — access-control check that
-// hides Push-to-TechWriter buttons, live session ribbon polling, and
-// small DOM helpers. Apps append pipeline-specific JS via PageOpts.AppJS.
-func BaseJS() string { return asset("base.js") }
-
-// PageOpts describes a single page render. Required fields: Title,
-// AppName, BodyHTML. Everything else is optional.
-type PageOpts struct {
-	Title    string // <title> contents
-	AppName  string // app label (e.g. "MyApp") shown in headers/ribbons
-	BodyHTML string // app-specific HTML body (main panel)
-	AppCSS   string // app-specific CSS appended after BaseCSS
-	AppJS    string // app-specific JS appended after BaseJS
-	InitJS   string // optional inline init script run on DOMContentLoaded
-	HeadHTML string // extra <head> content (link/script tags) injected before </head>
-	Prefix   string // mount prefix (e.g. "/techwriter") — empty for standalone
-}
-
-// RenderPage assembles a full HTML document from the shared theme plus
-// the app-specific pieces. Returns the document as a string ready to
-// write to an http.ResponseWriter.
-//
-// When opts.Prefix is set, RenderPage injects a <base href> so the
-// document's relative API paths resolve correctly under the mounted
-// prefix, and renders a floating back-to-dashboard button in the
-// upper-left corner.
-func RenderPage(opts PageOpts) string {
-	var sb strings.Builder
-	sb.WriteString(`<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,`)
-	sb.WriteString(FaviconSVG)
-	sb.WriteString(`">
-`)
-	sb.WriteString(AppHeadTags)
-	if opts.Prefix != "" {
-		sb.WriteString(`<base href="`)
-		sb.WriteString(html.EscapeString(opts.Prefix + "/"))
-		sb.WriteString("\">\n")
-	}
-	sb.WriteString("<title>")
-	sb.WriteString(html.EscapeString(opts.Title))
-	sb.WriteString(`</title>
-<style>
-`)
-	sb.WriteString(BaseCSS())
-	if opts.Prefix != "" {
-		sb.WriteString("\n/* --- back-to-dashboard chrome --- */\n")
-		sb.WriteString(backChromeCSS)
-	}
-	if opts.AppCSS != "" {
-		sb.WriteString("\n/* --- app-specific --- */\n")
-		sb.WriteString(opts.AppCSS)
-	}
-	sb.WriteString("\n</style>\n")
-	if opts.HeadHTML != "" {
-		sb.WriteString(opts.HeadHTML)
-		sb.WriteString("\n")
-	}
-	sb.WriteString(`</head>
-<body data-app="`)
-	sb.WriteString(html.EscapeString(opts.AppName))
-	sb.WriteString(`">
-`)
-	if opts.Prefix != "" {
-		sb.WriteString(backChromeHTML)
-	}
-	body := strings.ReplaceAll(opts.BodyHTML, "{{AppName}}", html.EscapeString(opts.AppName))
-	if opts.Prefix != "" {
-		// Convert absolute /api/ paths to relative so <base href> resolves
-		// them. Same transform ServeHTMLWithBase historically did.
-		body = strings.ReplaceAll(body, "'/api/", "'api/")
-		body = strings.ReplaceAll(body, "\"/api/", "\"api/")
-	}
-	sb.WriteString(body)
-	sb.WriteString(`
-<script>
-`)
-	sb.WriteString(BaseJS())
-	if opts.AppJS != "" {
-		sb.WriteString("\n// --- app-specific ---\n")
-		appJS := opts.AppJS
-		if opts.Prefix != "" {
-			appJS = strings.ReplaceAll(appJS, "'/api/", "'api/")
-			appJS = strings.ReplaceAll(appJS, "\"/api/", "\"api/")
-		}
-		sb.WriteString(appJS)
-	}
-	if opts.InitJS != "" {
-		sb.WriteString("\ndocument.addEventListener('DOMContentLoaded', function(){\n")
-		sb.WriteString(opts.InitJS)
-		sb.WriteString("\n});\n")
-	}
-	sb.WriteString(`
-</script>
-</body>
-</html>`)
-	return sb.String()
-}
 
 // IconSVG is the raw inline SVG markup for gohort's mark, and the single
 // source of truth for it. Used wherever a surface wants the icon as inline
@@ -235,29 +131,4 @@ func svgDataURI(svg string) string {
 	).Replace(svg)
 }
 
-// Floating back-to-dashboard button rendered when Prefix is set.
-const backChromeCSS = `
-#dashboard-back {
-  position: fixed; top: 12px; left: 12px; z-index: 9999;
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 32px; height: 32px; border-radius: 6px;
-  background: #161b22; border: 1px solid #30363d;
-  color: #8b949e; text-decoration: none; font-size: var(--fs-lg, 1rem);
-  transition: border-color 0.2s, color 0.2s, background 0.2s;
-}
-#dashboard-back:hover { border-color: #58a6ff; color: #f0f6fc; background: #1c2128; }
-body { padding-top: 3.5rem; }
-`
 
-// Back arrow: default navigates to the dashboard (href="/"). Apps
-// with drilled-in views can set window.drillBackHandler to a function;
-// when set, clicking calls that function instead of navigating so the
-// arrow returns to the app's list view (equivalent to clicking the
-// app's in-arena "Back to Reports" / "Back to Debates" button). Apps
-// clear the handler on drill-out so the arrow reverts to
-// dashboard-navigation. Same onclick as ServeHTMLWithBase's back
-// button so all apps (webui-framework + raw-HTML) behave identically.
-const backChromeHTML = `<a id="dashboard-back" href="/" title="Back" onclick="if(typeof window.drillBackHandler==='function'){window.drillBackHandler();return false;}return true;">
-<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M7.78 12.53a.75.75 0 01-1.06 0L2.47 8.28a.75.75 0 010-1.06l4.25-4.25a.75.75 0 011.06 1.06L4.81 7h7.44a.75.75 0 010 1.5H4.81l2.97 2.97a.75.75 0 010 1.06z"/></svg>
-</a>
-`

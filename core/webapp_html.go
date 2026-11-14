@@ -8,8 +8,7 @@ import (
 )
 
 // liveRibbonCSS is the CSS for the webui live session ribbon, inlined
-// for pages that render raw HTML via ServeHTMLWithBase rather than
-// going through webui.RenderPage (which inlines base.css itself).
+// for pages that render raw HTML via ServeHTMLWithBase.
 const liveRibbonCSS = `
 #webui-live-ribbon {
   position: fixed; top: 0; right: 5px; max-width: 360px; margin: 0.5rem;

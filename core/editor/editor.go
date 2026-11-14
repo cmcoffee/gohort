@@ -14,10 +14,7 @@
 // Apps compose primitives alongside their own HTML/CSS/JS when
 // assembling a page:
 //
-//	webui.RenderPage(webui.PageOpts{
-//	    ...
-//	    AppJS: editor.UtilsJS() + myAppJS,
-//	})
+//	page.ExtraHeadHTML = "<script>" + editor.UtilsJS() + myAppJS + "</script>"
 //
 // All static assets are embedded via go:embed so the binary stays
 // single-file, parallel to how core/webui handles its assets.
