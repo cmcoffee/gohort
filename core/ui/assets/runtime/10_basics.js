@@ -2335,6 +2335,11 @@
     // button. Kept beside the setters because the two are looked up together
     // (apply the pick, and put the picks somewhere the user can see them).
     var suggestHosts = {};
+    // Every candidate this form has shown for a field, oldest first. Sent with
+    // each request as "offered", so a backend can offer new ones on a re-roll
+    // instead of drifting back to the same few. A backend that ignores it
+    // answers as before.
+    var suggestOffered = {};
     // Fields that want their suggestion fetched when their step opens, paired
     // with the runner that does it. Filled during field render, fired by the
     // stepper.
@@ -4331,7 +4336,7 @@
         suggestHosts[f.field].appendChild(
           el('div', {class: 'ui-suggest-pick-label'}, ['Finding suggestions...']));
       }
-      postSuggest(f, {hint: hint || ''}).then(function(d) {
+      postSuggest(f, {hint: hint || '', offered: (suggestOffered[f.field] || []).slice(-60)}).then(function(d) {
         var setter = fieldSetters[f.field];
         if (!setter) { showToast('No setter registered for ' + f.field); return; }
         // A backend may answer with SEVERAL candidates instead of one.
@@ -4343,6 +4348,8 @@
           return typeof v === 'string' && v.trim() !== '';
         }) : [];
         if (opts.length > 1 && suggestHosts[f.field]) {
+          var shown = suggestOffered[f.field] || (suggestOffered[f.field] = []);
+          opts.forEach(function(v) { if (shown.indexOf(v) < 0) shown.push(v); });
           var host = suggestHosts[f.field];
           host.innerHTML = ''; // a re-roll replaces the set; stale picks would read as still on offer
           host.appendChild(el('div', {class: 'ui-suggest-pick-label'}, ['Pick one, or write your own:']));

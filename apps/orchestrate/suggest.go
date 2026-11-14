@@ -70,7 +70,7 @@ func sectionGuidance(field, section string) string {
 func fieldGuidance(field string) string {
 	switch field {
 	case "name":
-		return "FIVE candidate names, one per line, nothing else: no numbering, no commentary. Each 1-3 words, the kind of name someone would actually call this agent. Draw on its character and its job: a dry technical assistant that watches deploys earns a different name from a warm one that keeps track of a family calendar. Mix registers: a human first name, something descriptive, something with a bit of wit. Never repeat the user's own words back as the name. Examples of the FORM only: \"Ada\", \"Scout\", \"Deploy Watch\". Original examples: \"Research Helper\", \"Code Reviewer\", \"Travel Planner\"."
+		return "FIVE candidate names, one per line, nothing else: no numbering, no commentary. Each 1-3 words, the kind of name someone would actually call this agent. Draw on its character and its job: a dry technical assistant that watches deploys earns a different name from a warm one that keeps track of a family calendar. Mix registers across the five: a human first name, something descriptive, something with a bit of wit. For first names, range widely across sounds, eras and cultures rather than reaching for the names assistants are usually given. Never repeat the user's own words back as the name."
 	case "description":
 		return "One sentence summarizing what this agent is for. Examples: \"Decomposes research questions into subquestions, drafts factual answers, synthesizes.\""
 	case "orchestrator_prompt":
@@ -165,6 +165,14 @@ func (T *OrchestrateApp) suggestOnce(w http.ResponseWriter, r *http.Request, fie
 	var record map[string]any
 	req.Get("record", &record)
 	prompt := buildSuggestPrompt(field, section, req.String("hint"), record)
+	// The names the form has already shown (each round's set, kept by the
+	// client). Without them every "Suggest again" was the same request and
+	// came back to the same few names.
+	var offered []string
+	if field == "name" {
+		req.Get("offered", &offered)
+		prompt += offeredNamesNote(offered)
+	}
 	resp, err := T.LLM.Chat(ctx,
 		[]Message{{Role: "user", Content: prompt}},
 		WithSystemPrompt(suggestSystemPrompt),
@@ -188,7 +196,7 @@ func (T *OrchestrateApp) suggestOnce(w http.ResponseWriter, r *http.Request, fie
 	// shows them as a pick-one list with "write my own" alongside, and a single
 	// candidate still lands straight in the field as before.
 	if field == "name" {
-		if cands := suggestionCandidates(resp.Content); len(cands) > 1 {
+		if cands := freshCandidates(suggestionCandidates(resp.Content), offered); len(cands) > 1 {
 			out["values"] = cands
 			out["value"] = cands[0]
 		}
@@ -406,6 +414,48 @@ func cleanSuggestion(field, raw string) string {
 		return fmt.Sprintf("%d", n)
 	}
 	return s
+}
+
+// offeredNamesNote tells the model which names were already shown, so a
+// re-roll offers new ones. The newest 60 at most: the client keeps them all.
+func offeredNamesNote(offered []string) string {
+	var keep []string
+	for _, o := range offered {
+		if o = strings.TrimSpace(o); o != "" && len(o) <= 40 {
+			keep = append(keep, o)
+		}
+	}
+	if len(keep) == 0 {
+		return ""
+	}
+	if len(keep) > 60 {
+		keep = keep[len(keep)-60:]
+	}
+	return "\n\nAlready offered, and passed over: " + strings.Join(keep, ", ") +
+		". Offer five names that are none of these and not close variations of them."
+}
+
+// freshCandidates drops candidates already offered, when the model repeats
+// one anyway. If that would leave fewer than two, the set stands as it came:
+// a short list of repeats is still a choice, where an empty one is not.
+func freshCandidates(cands, offered []string) []string {
+	if len(offered) == 0 {
+		return cands
+	}
+	seen := map[string]bool{}
+	for _, o := range offered {
+		seen[strings.ToLower(strings.TrimSpace(o))] = true
+	}
+	var fresh []string
+	for _, c := range cands {
+		if !seen[strings.ToLower(c)] {
+			fresh = append(fresh, c)
+		}
+	}
+	if len(fresh) < 2 {
+		return cands
+	}
+	return fresh
 }
 
 // suggestionCandidates splits a multi-line suggestion into its options,

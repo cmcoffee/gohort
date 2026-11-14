@@ -1,8 +1,12 @@
 package orchestrate
 
 import (
+	"encoding/json"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	. "github.com/cmcoffee/gohort/core"
 )
 
 // TestSuggestionCandidatesSurviveTheShapesModelsActuallyReturn. "Five names,
@@ -351,5 +355,33 @@ func TestTheFallbackPromptIsSectionedToo(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("the fallback prompt is missing %q:\n%s", want, got)
 		}
+	}
+}
+
+// "Suggest again" asks for names the form has not shown yet. The names it
+// already showed travel with the request and the prompt rules them out; a
+// name the model repeats anyway is dropped from the set it offers.
+func TestSuggestAgainOffersNamesNotAlreadyShown(t *testing.T) {
+	fake := &FakeLLM{Turns: []FakeTurn{{Content: "Juniper\nScout\nMarlow\nAda\nKestrel"}}}
+	T, req := assistAppFixture(t, fake)
+	w := httptest.NewRecorder()
+	T.handleAgentSuggest(w, req("/api/agents/suggest", `{"field":"name","record":{"description":"looks things up"},"offered":["Ada","Scout","Sage"]}`))
+	var out struct {
+		Values []string `json:"values"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &out)
+	if w.Code != 200 || strings.Join(out.Values, ",") != "Juniper,Marlow,Kestrel" {
+		t.Fatalf("offered %v (%d %s)", out.Values, w.Code, w.Body.String())
+	}
+	sent := fake.LastSent()
+	if len(sent) == 0 || !strings.Contains(sent[len(sent)-1].Content, "Already offered, and passed over: Ada, Scout, Sage.") {
+		t.Errorf("the prompt does not rule out what was shown: %v", sent)
+	}
+	// Mostly repeats: the set stands rather than offering one name or none.
+	if got := freshCandidates([]string{"Ada", "Scout", "Kestrel"}, []string{"ada", "scout"}); len(got) != 3 {
+		t.Errorf("a set of mostly repeats was cut to %v", got)
+	}
+	if offeredNamesNote(nil) != "" {
+		t.Error("a first round says something was already offered")
 	}
 }
