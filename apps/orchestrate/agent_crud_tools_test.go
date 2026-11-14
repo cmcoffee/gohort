@@ -577,3 +577,37 @@ func TestAnAppAgentIsNotGivenEveryTool(t *testing.T) {
 		t.Error("prompt text carries an em dash")
 	}
 }
+
+// A save that wrote a description is told when its shape does not fit the
+// agent's place in its family: a parent's that runs long when it has
+// specialists to carry the detail, a specialist's too thin to be matched.
+func TestADescriptionIsFittedToItsPlaceInTheFamily(t *testing.T) {
+	udb := &DBase{Store: kvlite.MemStore()}
+	const p = "You do your job."
+	long := strings.Repeat("word ", parentDescriptionWords+10)
+	parent, err := saveAgent(udb, AgentRecord{ID: "p1", Owner: "u", Name: "OSINT", Description: long, OrchestratorPrompt: p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loner, _ := saveAgent(udb, AgentRecord{ID: "p2", Owner: "u", Name: "Solo", Description: long, OrchestratorPrompt: p})
+	thin, _ := saveAgent(udb, AgentRecord{ID: "s1", Owner: "u", Name: "Addr", Description: "Addresses.", OwnedBy: "p1", OrchestratorPrompt: p})
+	full, _ := saveAgent(udb, AgentRecord{ID: "s2", Owner: "u", Name: "Filings", Description: "Finds company filings and who signed them, by company name or registration number.", OwnedBy: "p1", OrchestratorPrompt: p})
+
+	if n := descriptionShapeNote(udb, parent); !strings.Contains(n, "2 sub-agent(s)") || !strings.Contains(n, "summary of what the family covers") {
+		t.Errorf("a long parent description with specialists under it: %q", n)
+	}
+	if n := descriptionShapeNote(udb, loner); n != "" {
+		t.Errorf("a long description with no sub-agents to carry the detail is left alone: %q", n)
+	}
+	short := parent
+	short.Description = "Investigates people and companies from public sources."
+	if n := descriptionShapeNote(udb, short); n != "" {
+		t.Errorf("a parent's summary is left alone: %q", n)
+	}
+	if n := descriptionShapeNote(udb, thin); !strings.Contains(n, "say in specifics what this one does") {
+		t.Errorf("a one-word specialist description: %q", n)
+	}
+	if n := descriptionShapeNote(udb, full); n != "" {
+		t.Errorf("a specialist that says what it does is left alone: %q", n)
+	}
+}

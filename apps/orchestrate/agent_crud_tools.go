@@ -244,7 +244,7 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		" Authoring focus is now %q: a subsequent add_tool with no `agent` argument attaches THERE. To tool up a different agent (e.g. the parent this was built for), pass agent=\"<name or id>\" explicitly.",
 		saved.Name,
 	)
-	unresolved := unresolvedToolNote(sess.DB, saved) + promptToolGapNote(sess.DB, saved)
+	unresolved := unresolvedToolNote(sess.DB, saved) + promptToolGapNote(sess.DB, saved) + descriptionShapeNote(sess.DB, saved)
 	// A new sub-agent is checked against the family's build notes, which the
 	// person wrote for exactly this: the next member added.
 	done := "DONE: reply with a short summary of what was saved and END THE TURN. Do NOT call ask_user, create_agent, or any other tool after this."
@@ -346,6 +346,44 @@ func promptToolGapNote(db Database, a AgentRecord) string {
 }
 
 var promptToolNameRe = regexp.MustCompile(`\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b`)
+
+// Word counts past which a description is pointed out on save: a parent's is
+// a summary of its range, and a sub-agent's is what the work is matched
+// against, so too short says too little to be found by.
+const (
+	parentDescriptionWords   = 90
+	subAgentDescriptionWords = 8
+)
+
+// descriptionShapeNote is said on a save that wrote a description, when its
+// shape does not fit the agent's place in its family. Other agents find a
+// family's work through the parent's description AND its sub-agents'
+// (agent_capability_index.go), so the parent's can summarise what the family
+// covers while each specialist's carries the specifics of its own work. A
+// note, never a refusal: the editor saves the whole record, and a hard cap
+// would hold every other setting hostage to the description.
+func descriptionShapeNote(db Database, a AgentRecord) string {
+	words := len(strings.Fields(a.Description))
+	if a.OwnedBy != "" {
+		if words < subAgentDescriptionWords {
+			return fmt.Sprintf(" Its description is %d word(s). Other agents find this family's work by matching it against its sub-agents' descriptions, so say in specifics what this one does and what it needs to do it.", words)
+		}
+		return ""
+	}
+	if words <= parentDescriptionWords {
+		return ""
+	}
+	subs := 0
+	for _, o := range listAgents(db, a.Owner) {
+		if o.OwnedBy == a.ID {
+			subs++
+		}
+	}
+	if subs == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" Its description is %d words, and it has %d sub-agent(s). Other agents find this family's work through the sub-agents' descriptions too, so the parent's can be a summary of what the family covers in a few sentences, with the specifics in the sub-agent whose work they describe. If much of it restates its sub-agents, trim it and say so in your reply.", words, subs)
+}
 
 func pluralThem(n int) string {
 	if n == 1 {
@@ -896,6 +934,12 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	// Changed names the fields that actually moved, so the summary the model
 	// writes next is of this call and not of what it meant to send.
 	done := "DONE: reply with a short summary of what changed and END THE TURN. Do NOT call ask_user, update_agent, or any other tool after this."
+	// Only when this call wrote the description, or moved the agent into or
+	// out of a family: an edit of anything else is not a time to be told.
+	shape := ""
+	if slices.Contains(changed, "description") || move != nil {
+		shape = descriptionShapeNote(sess.DB, saved)
+	}
 	family := ""
 	// Only where the update made the agent a sub-agent: a later edit of one
 	// already got the notes from agents(get) before it was written.
@@ -906,7 +950,7 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	}
 	return fmt.Sprintf(
 		"AGENT_UPDATED ok. id=%s name=%q. Changed: %s.%s%s %s\n\nSaved record: %s%s",
-		saved.ID, saved.Name, chFirst(strings.Join(changed, ", "), "its tools only"), verifyHint, unresolvedToolNote(sess.DB, saved)+promptToolGapNote(sess.DB, saved), done, b, family,
+		saved.ID, saved.Name, chFirst(strings.Join(changed, ", "), "its tools only"), verifyHint, unresolvedToolNote(sess.DB, saved)+promptToolGapNote(sess.DB, saved)+shape, done, b, family,
 	), nil
 }
 
@@ -1116,7 +1160,7 @@ func ownedByParam(update bool) string {
 func agentMutationParams(includeID bool) map[string]ToolParam {
 	params := map[string]ToolParam{
 		"name":                {Type: "string", Description: "Human-readable agent name."},
-		"description":         {Type: "string", Description: "One-sentence summary."},
+		"description":         {Type: "string", Description: "What the agent is for, opening with a sentence or two for people: they see its first two lines, and agents routing to it read all of it."},
 		"orchestrator_prompt": {Type: "string", Description: orchestratorPromptParam(includeID)},
 		"plan_guidance":       {Type: "string", Description: "Optional decomposition-style nudge appended to orchestrator prompt."},
 		"rules":               {Type: "string", Description: "Optional standing rules, one per line, applied to every turn. They render above memory and above the persona and win every conflict, so put here the constraints the agent must keep when a turn pulls the other way (\"never state a value you did not see\", \"never message anyone the brief does not name\"); how it works and how it sounds stay in the persona."},

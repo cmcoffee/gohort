@@ -2038,7 +2038,7 @@
               msgEls = {}; blockEls = {}; noticeIds = {};
               convoLog.innerHTML = '';
               emptyMsg = el('div', {class: 'ui-agent-empty'},
-                [cfg.empty_text || 'Start typing below.']);
+                [uiClampMore(cfg.empty_text || 'Start typing below.')]);
               convoLog.appendChild(emptyMsg);
             },
             clearActivity: function() {
@@ -2327,7 +2327,7 @@
     convoPane.appendChild(convoLog);
     uiWidescreenToggle(wrap, convoPane, convoLog);
     var emptyMsg = el('div', {class: 'ui-agent-empty'},
-      [cfg.empty_text || 'Start typing below.']);
+      [uiClampMore(cfg.empty_text || 'Start typing below.')]);
     convoLog.appendChild(emptyMsg);
     var divider  = el('div', {class: 'ui-agent-divider', title: 'Drag to resize'});
 
@@ -8017,7 +8017,7 @@
         convoLog.innerHTML = '';
         if (!sid) {
           emptyMsg = el('div', {class: 'ui-agent-empty'},
-            [cfg.empty_text || 'Start typing below.']);
+            [uiClampMore(cfg.empty_text || 'Start typing below.')]);
           convoLog.appendChild(emptyMsg);
           setHeaderTitle('');
           if (hasList) loadSessions();
@@ -8097,7 +8097,7 @@
       if (!sid) {
         clearConvoPanes();
         emptyMsg = el('div', {class: 'ui-agent-empty'},
-          [cfg.empty_text || 'Start typing below.']);
+          [uiClampMore(cfg.empty_text || 'Start typing below.')]);
         convoLog.appendChild(emptyMsg);
         setHeaderTitle('');
         if (cfg.deep_link_param) updateURLParam(cfg.deep_link_param, '');

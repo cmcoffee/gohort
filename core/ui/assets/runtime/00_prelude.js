@@ -395,6 +395,54 @@
   }
   window.uiAttachInfo = uiAttachInfo;
 
+  // uiClampMore(text, lines): a text that may run long, shown as its first
+  // few lines (two by default) with More to open the rest in place. Nothing
+  // is asked of whoever wrote the text: the cut is made on screen, where the
+  // lines actually fall, so a short text shows whole with no button and a
+  // long one is never more than a glance until someone asks for it. Line
+  // breaks in the text are kept. Returns one element, so a caller drops it
+  // wherever the plain text went.
+  //
+  // Whether it overflows can only be known once it is laid out, so the
+  // button stays hidden until the element is on the page and measured.
+  function uiClampMore(text, lines) {
+    text = String(text == null ? '' : text).trim();
+    lines = lines || 2;
+    var body = el('div', {class: 'ui-clamp-more-text', style: 'white-space:pre-line'}, [text]);
+    var btn = el('button', {type: 'button', class: 'ui-clamp-more-btn', 'aria-expanded': 'false',
+      // Quiet on purpose: small and muted, it is a way into the rest, not
+      // something to act on.
+      style: 'display:none;background:none;border:none;padding:0;margin-top:0.25rem;cursor:pointer;font:inherit;font-size:var(--fs-2xs, 0.72rem);font-style:normal;color:var(--text-mute, #999);opacity:0.85'}, ['More']);
+    var wrap = el('div', {class: 'ui-clamp-more'}, [body, btn]);
+    function clamp(on) {
+      body.style.display = on ? '-webkit-box' : '';
+      body.style.overflow = on ? 'hidden' : '';
+      body.style.setProperty('-webkit-box-orient', on ? 'vertical' : '');
+      body.style.setProperty('-webkit-line-clamp', on ? String(lines) : '');
+    }
+    clamp(true);
+    var tries = 0;
+    function measure() {
+      if (!wrap.isConnected) {
+        if (tries++ < 120) requestAnimationFrame(measure);
+        return;
+      }
+      if (body.scrollHeight > body.clientHeight + 1) btn.style.display = '';
+    }
+    requestAnimationFrame(measure);
+    btn.addEventListener('click', function(ev) {
+      ev.stopPropagation();
+      var open = btn.getAttribute('aria-expanded') !== 'true';
+      clamp(!open);
+      // The label's own text node is edited, not replaced: WebKit drops a
+      // click whose target text was swapped out under it.
+      btn.firstChild.nodeValue = open ? 'Less' : 'More';
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    return wrap;
+  }
+  window.uiClampMore = uiClampMore;
+
 
   function fetchJSON(url, opts) {
     // Live dashboard data — never serve a stale HTTP-cached copy. Embedded

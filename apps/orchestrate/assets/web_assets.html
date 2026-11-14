@@ -1641,7 +1641,10 @@
               // both the empty placeholder AND the intake form.
               var block = document.createElement('div');
               block.className = 'ui-agency-agent-desc';
-              block.textContent = desc;
+              // Two lines of it, the rest behind More: a description also
+              // carries the full rundown other agents route on, and a person
+              // about to fill in the form needs the opening only.
+              block.appendChild(window.uiClampMore(desc));
               log.insertBefore(block, log.firstChild);
               // Hide the generic "Pick an agent from the rail..."
               // placeholder when we've put the actual description
@@ -1653,7 +1656,7 @@
               // to a non-intake agent (we hid it above).
               if (empty) {
                 empty.style.display = '';
-                if (desc) empty.textContent = desc;
+                if (desc) { empty.textContent = ''; empty.appendChild(window.uiClampMore(desc)); }
               }
             } else {
               // Intake agent without a description — just un-hide

@@ -211,7 +211,8 @@ func renderMaintainerEditor(w http.ResponseWriter, r *http.Request, a AgentRecor
 				Method:  "PATCH",
 				Fields: []ui.FormField{
 					{Field: "name", Type: "text", Label: "Name"},
-					{Field: "description", Type: "text", Label: "Description"},
+					{Field: "description", Type: "textarea", Rows: 3, Label: "Description",
+						Help: "People see its first two lines; agents that route to it read all of it."},
 					{Field: "orchestrator_prompt", Type: "sections", Label: "Orchestrator prompt", Required: true, Rows: 12,
 						Help: "Voice, decomposition style, and synthesis approach."},
 					{Field: "rules", Type: "textarea", Label: "Rules", Rows: 6,
