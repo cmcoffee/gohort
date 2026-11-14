@@ -2563,7 +2563,7 @@ func init() {
 	RegisterTunable(TunableSpec{
 		Key: tuneActivityRetention, Category: "Sign-in & security",
 		Label:  "Activity log retention",
-		Help:   "How many days the activity log (Admin › People › Activity Log) keeps an event: sign-ins and failed sign-ins, account and credential changes, peers, approvals.",
+		Help:   "How many days the activity log (Admin › Overview › Activity Log) keeps an event: sign-ins and failed sign-ins, account and credential changes, peers, approvals.",
 		Detail: "Older events are removed as new ones are written, at most once an hour, so lowering this takes effect within the hour. Raising it keeps what is still there; it cannot bring back what was already removed.",
 		Kind:   KindDays, Default: 90, Min: 1, Max: 3650,
 	})

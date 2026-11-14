@@ -40,10 +40,12 @@ var adminLayout = []struct {
 }{
 	// What this deployment is, how it is doing, and what it costs. Prices sit
 	// with the chart they feed.
-	{"Overview", []string{"System Status", "Site", "Cost History (Last 30 Days)", "Cost by source", "Prices"}},
+	// The activity log sits under System Status: what happened on the
+	// deployment, beside how it is doing now.
+	{"Overview", []string{"System Status", "Activity Log", "Site", "Cost History (Last 30 Days)", "Cost by source", "Prices"}},
 	{"People", []string{
 		"Sign-in", "Add account", "Users", "People outside gohort", "Teams", "Default Apps",
-		"Feature Access", "Model access limits", "Personal integrations", "Activity Log",
+		"Feature Access", "Model access limits", "Personal integrations",
 	}},
 	{"Models", []string{"Worker LLM", "Lead LLM", "Decision Offloading", "Model Privacy", "Learned from model refusals", "LLM Routing", "Local Model Scheduler"}},
 	// System Hooks first: the settings below it are what some of its rows
