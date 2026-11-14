@@ -187,6 +187,13 @@ func embedDocument(ctx context.Context, text string) ([]float32, error) {
 	return embedDocumentWith(ctx, GetEmbeddingConfig(), text)
 }
 
+// EmbedDocument is embedDocument for a package outside core that keeps its own
+// index of stored text (an app's catalog of what its records do), so its
+// entries are embedded as documents and matched against Embed's queries.
+func EmbedDocument(ctx context.Context, text string) ([]float32, error) {
+	return embedDocument(ctx, text)
+}
+
 // embedDocumentWith is embedDocument against an explicit config.
 func embedDocumentWith(ctx context.Context, cfg EmbeddingConfig, text string) ([]float32, error) {
 	return embedRaw(ctx, cfg, cfg.DocPrefix+text)

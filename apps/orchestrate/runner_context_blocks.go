@@ -519,7 +519,10 @@ func (t *chatTurn) renderAgentTriggerHints(userMsg string) string {
 			names = append(names, a.Name)
 		}
 	}
-	return agentTriggerHintBlock(names)
+	// Then by meaning: agents whose work, or their specialists' work, the
+	// message matches, beyond those a trigger already named
+	// (agent_capability_index.go).
+	return agentTriggerHintBlock(names) + t.renderAgentCapabilityHints(userMsg, names)
 }
 
 // agentTriggerHintBlock formats the per-turn dispatch nudge for the given

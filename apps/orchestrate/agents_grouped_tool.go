@@ -83,7 +83,7 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 	if allowRun {
 		params["action"] = ToolParam{
 			Type:        "string",
-			Description: "One of: list | get | run | help.",
+			Description: "One of: list | get | find | run | help.",
 		}
 		params["agent"] = ToolParam{
 			Type:        "string",
@@ -111,6 +111,10 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 			machDesc += " Machines you can run: " + strings.Join(names, "; ") + "."
 		}
 		params["machine"] = ToolParam{Type: "string", Description: machDesc}
+		params["query"] = ToolParam{
+			Type:        "string",
+			Description: "(find) The work you want done, in a few words (\"address lookup\", \"summarize a court filing\"). Matched against what every agent you can reach does, including the specialists under it.",
+		}
 		params["message"] = ToolParam{
 			Type:        "string",
 			Description: "(run) The question or task to send to the target agent. Phrase it as the user would phrase it directly; the sub-agent has its own persona and will frame the response. The sub-agent keeps its persona, saved facts, and knowledge base, and it re-threads your prior dispatches to it this session (ephemeral continuity), so a follow-up can be brief without repeating earlier context.",
@@ -200,7 +204,7 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 	{
 		acts := []string{"list", "get"}
 		if allowRun {
-			acts = append(acts, "run")
+			acts = append(acts, "find", "run")
 		}
 		if allowRunTool {
 			acts = append(acts, "run_tool")
@@ -266,6 +270,11 @@ func (t *chatTurn) agentsHandler(allowRun, allowRunTool bool) ToolHandlerFunc {
 			return t.agentsListAction()
 		case "get":
 			return t.agentsGetAction(args)
+		case "find":
+			if !allowRun {
+				return "", fmt.Errorf("agents(find) is not available to this agent: it finds an agent to hand work to, and this agent does not hand work off")
+			}
+			return t.agentsFindAction(ctx, args)
 		case "run":
 			if !allowRun {
 				return "", fmt.Errorf("agents(run) is not available to this agent: your job is authoring/composition, not delegation. To execute work, call plan_set with worker steps; to consult a specialist during authoring, dispatch a plan_set worker with web_search / fetch_url instead of dispatching to another agent")
@@ -298,7 +307,7 @@ func (t *chatTurn) agentsHandler(allowRun, allowRunTool bool) ToolHandlerFunc {
 		default:
 			acts := []string{"list", "get"}
 			if allowRun {
-				acts = append(acts, "run")
+				acts = append(acts, "find", "run")
 			}
 			if allowRunTool {
 				acts = append(acts, "run_tool")
@@ -518,6 +527,16 @@ func agentsToolHelp(allowRun, allowRunTool bool) string {
                     id (from list).
 `
 	if allowRun {
+		base += `
+  action="find": which agent does a kind of work, ranked by
+                    meaning: each agent you can reach is matched by
+                    what it does AND by what the specialists under it
+                    do. Required: query (a few words, e.g.
+                    "address lookup"). Use it when you need something
+                    done and the Available agents list does not
+                    plainly name who; send the work to the agent it
+                    names, never to a specialist directly.
+`
 		base += `
   action="run": dispatch work and get the result back as the
                     tool result. Name exactly ONE target:
