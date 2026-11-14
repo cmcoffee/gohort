@@ -18,6 +18,7 @@ package orchestrate
 // And the agent has to be set to serve them (AgentRecord.OutsideAudience).
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -75,13 +76,29 @@ func outsideRunAs(runtimeUser string, run AgentSyncRun, target AgentRecord) stri
 }
 
 // outsideRunRefusal refuses a run for an outside person on an agent its owner
-// has not set to serve people outside, or returns nil.
-func outsideRunRefusal(runtimeUser string, target AgentRecord) error {
-	if agenthost.IsOutsideScope(runtimeUser) && !target.OutsideAudience {
+// has not set to serve people outside, or on an agent that is not the run's
+// owner's own, or returns nil.
+//
+// The second is sharing's limit. An agent shared with someone is theirs to
+// use, from gohort or from their own outside client, but not theirs to put in
+// front of the public: serving people outside is another form of sharing,
+// and only the agent's owner makes it.
+func outsideRunRefusal(runtimeUser, agentOwner string, target AgentRecord) error {
+	if !agenthost.IsOutsideScope(runtimeUser) {
+		return nil
+	}
+	if !target.OutsideAudience {
 		return agenthost.ErrNotForOutsideAudience
+	}
+	if !ownAgentFor(target, agentOwner) {
+		return errOutsideNotOwner
 	}
 	return nil
 }
+
+// errOutsideNotOwner refuses an outside person's turn on an agent shared with
+// the key's owner rather than owned by them.
+var errOutsideNotOwner = errors.New("this agent is shared with you, not yours: only its owner can set it to serve people outside gohort")
 
 // --- Reach (design D) -----------------------------------------------------
 //

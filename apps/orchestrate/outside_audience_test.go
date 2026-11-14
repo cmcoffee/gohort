@@ -19,16 +19,34 @@ import (
 // anyone else's run is unaffected by the setting.
 func TestAnOutsidePersonReachesOnlyAnAgentSetToServeThem(t *testing.T) {
 	person := agenthost.OutsideScope("key1", "cust-7")
-	if err := outsideRunRefusal(person, AgentRecord{ID: "a1"}); !errors.Is(err, agenthost.ErrNotForOutsideAudience) {
+	if err := outsideRunRefusal(person, "alice", AgentRecord{ID: "a1", Owner: "alice"}); !errors.Is(err, agenthost.ErrNotForOutsideAudience) {
 		t.Errorf("an agent not set to serve people outside ran for one: %v", err)
 	}
-	if err := outsideRunRefusal(person, AgentRecord{ID: "a1", OutsideAudience: true}); err != nil {
+	if err := outsideRunRefusal(person, "alice", AgentRecord{ID: "a1", Owner: "alice", OutsideAudience: true}); err != nil {
 		t.Errorf("an agent set to serve people outside refused one: %v", err)
 	}
 	for _, user := range []string{"alice", "phantom:991", "app:servitor:x"} {
-		if err := outsideRunRefusal(user, AgentRecord{ID: "a1"}); err != nil {
+		if err := outsideRunRefusal(user, "alice", AgentRecord{ID: "a1", Owner: "alice"}); err != nil {
 			t.Errorf("%s's run was refused by the outside setting: %v", user, err)
 		}
+	}
+}
+
+// Serving people outside is the agent owner's to decide. An agent shared with
+// someone is theirs to use, but their outside-audience key cannot put it in
+// front of the public, even when its owner set it to serve people outside for
+// their own platform. Their own runs of it are unaffected.
+func TestASharedAgentIsNotServedToPeopleOutsideByTheOneItIsSharedWith(t *testing.T) {
+	person := agenthost.OutsideScope("key1", "cust-7")
+	shared := AgentRecord{ID: "a1", Owner: "bob", AllowedUsers: []string{"alice"}, OutsideAudience: true}
+	if err := outsideRunRefusal(person, "alice", shared); !errors.Is(err, errOutsideNotOwner) {
+		t.Errorf("a shared agent ran for a person outside through the recipient's key: %v", err)
+	}
+	if err := outsideRunRefusal(person, "bob", shared); err != nil {
+		t.Errorf("its owner's own outside key was refused: %v", err)
+	}
+	if err := outsideRunRefusal("alice", "alice", shared); err != nil {
+		t.Errorf("the recipient's own run of a shared agent was refused: %v", err)
 	}
 }
 

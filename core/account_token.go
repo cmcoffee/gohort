@@ -90,7 +90,7 @@ type TokenScope struct {
 	// AgentsBindMCP marks a key whose agent targets are its MCP allow-list
 	// too: over MCP it reaches the agents it lists and no others, as over
 	// the Model API. Keys scoped before this reached every agent with
-	// "Reachable over MCP" on, plus the ones they listed; such a key is
+	// the (now retired) "Reachable over MCP" switch on, plus the ones they listed; such a key is
 	// migrated the first time it is seen (bindAgentsToMCP), listing the
 	// agents it reached then, so it keeps them.
 	AgentsBindMCP bool `json:"agents_bind_mcp,omitempty"`
@@ -397,7 +397,11 @@ func bindAgentsToMCP(t *AccountToken) bool {
 		if ListExternalReachableAgentsFn == nil {
 			return false
 		}
-		for _, a := range ListExternalReachableAgentsFn(nil, t.Owner, t.ExplicitTarget) {
+		// What it reached then: the agents it listed, and the ones with the
+		// retired "Reachable over MCP" switch on.
+		legacy := legacySwitchGrant(t.Owner)
+		reached := func(c string) bool { return t.ExplicitTarget(c) || legacy(c) }
+		for _, a := range ListExternalReachableAgentsFn(nil, t.Owner, reached) {
 			if target := "agent:" + a.ID; !containsFold(t.Scope.Targets, target) {
 				t.Scope.Targets = append(t.Scope.Targets, target)
 			}
@@ -539,6 +543,33 @@ func (t *AccountToken) ExplicitTarget(canonical string) bool {
 		return false
 	}
 	return containsFold(t.Scope.Targets, canonical)
+}
+
+// AgentGrant is the callback the external resolvers take for this key
+// (ResolveExternalAgentFn, ListExternalReachableAgentsFn): which agents it
+// grants. A key reaches the agents it lists. A key from before scoping
+// lists none, and reaches what the retired "Reachable over MCP" switch
+// says instead (legacySwitchGrant), until the key lifetime has retired
+// every such key (by about 2027-01-14 at the default). Nil for no key,
+// which grants nothing.
+func (t *AccountToken) AgentGrant() func(canonical string) bool {
+	if t == nil {
+		return nil
+	}
+	if t.Scope == nil {
+		return legacySwitchGrant(t.Owner)
+	}
+	return t.ExplicitTarget
+}
+
+// legacySwitchGrant reads the retired "Reachable over MCP" switch, stored on
+// the agent record and set by nothing any more (MCPAgentExposed). Read for a
+// key from before scoping, and by bindAgentsToMCP, and by nothing else.
+func legacySwitchGrant(owner string) func(canonical string) bool {
+	return func(canonical string) bool {
+		id, ok := strings.CutPrefix(canonical, "agent:")
+		return ok && id != "" && MCPAgentExposed(owner, id)
+	}
 }
 
 // ListAccountTokens returns owner's tokens (secret masked, never the real value),

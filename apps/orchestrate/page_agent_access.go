@@ -921,30 +921,11 @@ func (ap *accessPage) shareSections() []ui.Section {
 		},
 		{
 			Group:    "Share",
-			Title:    "Reachable from outside",
-			Subtitle: "Whether an external MCP client can dispatch to this agent over gohort's /mcp/ endpoint.",
-			Detail: "For example a desktop client with a bridge key calling ask_agent. Off by default, and REQUESTED rather than applied for the same reason publishing is: it takes this agent, with your tools and your documents, outside the deployment. Turning it back off is yours.\n\n" +
-				"Independent of who may run it above. An agent nobody else may run can still be reachable this way, and one shared with everyone need not be.",
-			Body: ui.FormPanel{
-				Source: ap.patchURL,
-				// The same door as the audience, and for the same reason:
-				// this is reach an administrator grants, so it cannot be
-				// applied by writing the record.
-				PostURL: T.WebPrefix() + "/api/console/permissions/audience?agent=" + url.QueryEscape(ap.agent.ID),
-				Method:  "POST",
-				Fields: []ui.FormField{
-					{Field: "mcp_exposed", Type: "toggle", Label: "Reachable over MCP",
-						Help: "An administrator approves this. Turning it off is yours and takes effect at once."},
-				},
-			},
-		},
-		{
-			Group:    "Share",
 			Title:    "People outside gohort",
 			Subtitle: "Whether people who are not gohort users can talk to this agent, through a platform's API key marked for an outside audience.",
 			Detail: "For example a chat widget on a customer portal, whose server calls /v1 with a key marked \"For people outside gohort\" (Account, API keys, Access) and names the person each call is for.\n\n" +
 				"Each person runs in a store of their own: what they tell the agent, and their conversations, stay with them and never reach you or anyone else. The agent's saved notes reach them only if you share them (\"Its saved notes\", below), read-only; your cortex and its saved findings never do. Nothing they say changes the agent's own memory. Your own chats with it are unchanged.\n\n" +
-				"The agent still needs to be reachable from outside (above), and the key has to list it. They reach only the tools and credentials you lend them below, never your other agents.",
+				"The key has to list it, and it has to be your own: an agent shared with you is yours to use, not to serve to the public. They reach only the tools and credentials you lend them below, never your other agents.",
 			Body: ui.FormPanel{
 				Source:  ap.patchURL,
 				PostURL: ap.patchURL,

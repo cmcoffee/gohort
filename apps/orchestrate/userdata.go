@@ -51,7 +51,7 @@ func (h *orchUserData) Describe(uid string) UserDataSummary {
 	}
 	for _, a := range ownedAgents(udb, uid) {
 		sum.Counts["agents"]++
-		if len(a.AllowedUsers) > 0 || a.Everyone || a.MCPExposed {
+		if len(a.AllowedUsers) > 0 || a.Everyone {
 			sum.Counts["shared"]++
 		}
 	}

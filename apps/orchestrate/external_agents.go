@@ -7,8 +7,10 @@
 // copied — two exposure checks that can disagree is exactly how an agent ends
 // up reachable from a surface its owner never opened.
 //
-// Both surfaces read the SAME per-agent switch: "Reachable over MCP"
-// (AgentRecord.MCPExposed), which is off by default.
+// Both surfaces follow the same rule: a key reaches the agents it lists. The
+// per-agent "Reachable over MCP" switch that once stood beside it is retired
+// (docs/design/retire-mcp-switch.md); only a key from before scoping still
+// reads its stored value.
 
 package orchestrate
 
@@ -22,23 +24,22 @@ import (
 	"github.com/cmcoffee/gohort/core/appagents"
 )
 
-// externallyReachable answers "may external key-authenticated surfaces (/v1,
-// MCP) see and resolve this agent at all". For USER agents that consent is the
-// per-agent MCPExposed toggle (agent editor → Access & visibility). APP agents
-// (Servitor Investigator, Guide Author, ...) have NO editor page — they're
-// Hidden, registry-owned — so their consent is the app FEATURE grant: the
-// admin enabled the app for this user under Feature Access. The per-KEY tier
-// is enforced downstream (KeyAllowsAppAgent at both surfaces); this is only
-// the visibility/resolution gate. Without this, enabling Servitor at admin AND
-// key level still dead-ended on an MCPExposed flag nobody could flip.
-func externallyReachable(a AgentRecord, owner string) bool {
-	if a.MCPExposed {
-		return true
-	}
+// reachableThrough answers "may this key (/v1, MCP) see and resolve this agent
+// at all". For a USER agent the consent is the key's own list (granted, from
+// AccountToken.AgentGrant): the owner ticking the agent on the key. It covers
+// the owner's own agents and the ones shared with them while the share
+// stands, so unsharing cuts a key off at its next call. APP agents (Servitor
+// Investigator, Guide Author, ...) have no editor page, so their consent is
+// the app FEATURE grant: the admin enabled the app for this user under
+// Feature Access; the per-KEY tier for them is KeyAllowsAppAgent, downstream.
+func reachableThrough(a AgentRecord, owner string, granted func(canonical string) bool) bool {
 	if k := AppFeatureKeyForAgent(a.ID); k != "" {
 		return FeatureAllowedForUser(RootDB, k, owner)
 	}
-	return false
+	if granted == nil || !granted("agent:"+a.ID) {
+		return false
+	}
+	return ownAgentFor(a, owner) || userCanRunSharedAgent(a, owner)
 }
 
 // resolveAppByLabel maps an APP label ("Servitor", "Guides") to that app's
@@ -59,8 +60,9 @@ func resolveAppByLabel(key string) (AgentRecord, bool) {
 }
 
 // ResolveExternalAgent maps a caller-supplied key (agent id OR name) to a
-// concrete agent id, but only when that agent is exposed. Returns false for an
-// unknown agent AND for a known-but-unexposed one — deliberately the same
+// concrete agent id, but only when no key is needed to reach it: an app's
+// agent under its feature grant. Returns false for an unknown agent AND for a
+// known-but-unreachable one — deliberately the same
 // answer, so probing this endpoint can't enumerate an account's private agents.
 func ResolveExternalAgent(db Database, owner, key string) (string, bool) {
 	if db == nil || strings.TrimSpace(owner) == "" || strings.TrimSpace(key) == "" {
@@ -70,11 +72,9 @@ func ResolveExternalAgent(db Database, owner, key string) (string, bool) {
 }
 
 // ResolveExternalAgentGranted is ResolveExternalAgent with the calling key's
-// explicit-grant test: an agent the key EXPLICITLY names is reachable through
-// that key even without the MCPExposed toggle — the deliberate grant on the
-// access menu IS the consent, the same shape as the app feature grant. nil
-// granted (or a nil-scope legacy key upstream) adds nothing beyond the
-// owner-level consents.
+// grant (AccountToken.AgentGrant): an agent the key lists is reachable
+// through it, and no other user agent is (reachableThrough). Nil granted
+// reaches app agents only.
 func ResolveExternalAgentGranted(db Database, owner, key string, granted func(canonical string) bool) (string, bool) {
 	if db == nil || strings.TrimSpace(owner) == "" || strings.TrimSpace(key) == "" {
 		return "", false
@@ -88,15 +88,14 @@ func ResolveExternalAgentGranted(db Database, owner, key string, granted func(ca
 	if !ok {
 		return "", false
 	}
-	if externallyReachable(a, owner) || (granted != nil && granted("agent:"+a.ID) && ownAgentFor(a, owner)) {
+	if reachableThrough(a, owner, granted) {
 		return a.ID, true
 	}
 	return "", false
 }
 
-// ownAgentFor reports whether a is owner's own agent. A key's explicit grant
-// is its owner's consent, which covers their own agents and no one else's: an
-// agent somebody shared with them reaches a key only when ITS owner exposed it.
+// ownAgentFor reports whether a is owner's own agent (or a framework agent,
+// which every user has).
 func ownAgentFor(a AgentRecord, owner string) bool {
 	o := strings.TrimSpace(a.Owner)
 	return o == "" || o == owner || o == seedOwner
@@ -115,9 +114,10 @@ type ExternalChannelTarget = agenthost.ChannelTarget
 // memories. Deriving a "similar" key here instead would produce a parallel
 // conversation that looks right and shares nothing.
 //
-// Exposure follows the bound agent's "Reachable over MCP" switch — one gate for
-// every external surface. Unknown and not-exposed both return false so probing
-// can't enumerate an account's rooms.
+// Which rooms a caller may join is the calling key's list ("channel:<chat id>",
+// checked by the surface after this resolves). Unknown returns false so
+// probing can't enumerate an account's rooms. Exposed carries the retired
+// "Reachable over MCP" switch's stored value, for a key from before scoping.
 func (T *OrchestrateApp) ResolveExternalChannel(owner, key string) (ExternalChannelTarget, bool) {
 	key = strings.TrimSpace(key)
 	if T == nil || owner == "" || key == "" {
@@ -158,21 +158,19 @@ func (T *OrchestrateApp) ResolveExternalChannel(owner, key string) (ExternalChan
 		Log("[external] %s: channel %q is bound to agent %q, which does not load, the agent was probably deleted; rebind the channel", owner, ch.Name, ch.AgentID)
 		return ExternalChannelTarget{}, false
 	}
-	if !ag.MCPExposed {
-		Log("[external] %s: chat %q resolves to agent %q, but it is NOT exposed, turn on \"Reachable over MCP\" on that agent to allow external surfaces to reach it", owner, chatID, ag.Name)
-		return ExternalChannelTarget{}, false
-	}
 	return ExternalChannelTarget{
 		AgentID:   ag.ID,
 		AgentName: ag.Name,
 		SessionID: T.effectiveChannelSession(owner, ag.ID, ChannelSessionKey(ch, chatID)),
 		ChatID:    chatID,
 		Name:      name,
+		Exposed:   ag.MCPExposed,
 	}, true
 }
 
 // ExternalChannels lists the conversations an external caller may join — the
-// owner's live channel threads whose bound agent is exposed.
+// owner's live channel threads whose bound agent loads. Which of them a key
+// may join is that key's list.
 func (T *OrchestrateApp) ExternalChannels(owner string) []ExternalChannelTarget {
 	if T == nil || strings.TrimSpace(owner) == "" {
 		return nil
@@ -200,8 +198,9 @@ func (T *OrchestrateApp) ExternalChannels(owner string) []ExternalChannelTarget 
 
 func init() {
 	// What an external client may DISCOVER, kept identical to what it may
-	// dispatch. Mirrors ResolveExternalAgentGranted's rules exactly: the
-	// MCPExposed toggle, an app's feature grant, or this key's explicit grant.
+	// dispatch. Mirrors ResolveExternalAgentGranted's rule exactly
+	// (reachableThrough): what the key lists, of the owner's own agents and
+	// the ones shared with them, and an app's agent under its feature grant.
 	// A list wider than the resolver would disclose agents the owner kept off
 	// the surface; a narrower one would show a set the caller cannot act on.
 	ListExternalReachableAgentsFn = func(db Database, owner string, granted func(string) bool) []ExternalAgentInfo {
@@ -212,6 +211,18 @@ func init() {
 		var out []ExternalAgentInfo
 		var skipped []string
 		all := listAgents(udb, owner)
+		// Agents shared with the owner reach a key that lists them, as the
+		// resolver accepts them (resolveAgentRef), so they are listed too.
+		have := map[string]bool{}
+		for _, a := range all {
+			have[a.ID] = true
+		}
+		for _, a := range SharedAgentsFor(db, owner) {
+			if !have[a.ID] {
+				have[a.ID] = true
+				all = append(all, a)
+			}
+		}
 		for _, a := range all {
 			// A hidden app agent is reached by its APP's label — which agent
 			// implements the app is deliberately invisible (resolveAppByLabel).
@@ -221,22 +232,22 @@ func init() {
 				skipped = append(skipped, fmt.Sprintf("%s(%s: app-internal, reached by app name)", a.Name, a.ID))
 				continue
 			}
-			if !externallyReachable(a, owner) && (granted == nil || !granted("agent:"+a.ID)) {
+			if !reachableThrough(a, owner, granted) {
 				// Name what was passed over and why. "My agent is not in the
 				// list" is otherwise unanswerable without a code read: the
-				// agent may be absent from the pool entirely, or present with
-				// the toggle off, and those need different fixes.
-				skipped = append(skipped, fmt.Sprintf("%s(%s: not MCP-exposed)", a.Name, a.ID))
+				// agent may be absent from the pool entirely, or present and
+				// not ticked on the key, and those need different fixes.
+				skipped = append(skipped, fmt.Sprintf("%s(%s: not on this key)", a.Name, a.ID))
 				continue
 			}
 			// Sub-agents are MARKED, not hidden. The first version filtered
 			// them out on the reasoning that a child is reached through its
-			// parent — but the resolver accepts any exposed agent, so filtering
-			// here made the list narrower than what ask_agent would dispatch
-			// to, and an agent whose owner had deliberately ticked "Reachable
-			// over MCP" simply never appeared. The toggle IS the consent; a
-			// rule that overrides it silently is the wrong rule. Naming the
-			// parent tells a caller what it is without deciding for them.
+			// parent — but the resolver accepts any agent the key lists, so
+			// filtering here made the list narrower than what ask_agent would
+			// dispatch to, and an agent its owner had deliberately ticked
+			// simply never appeared. The tick IS the consent; a rule that
+			// overrides it silently is the wrong rule. Naming the parent
+			// tells a caller what it is without deciding for them.
 			info := ExternalAgentInfo{ID: a.ID, Name: a.Name, Description: a.Description}
 			if parent := strings.TrimSpace(a.OwnedBy); parent != "" {
 				info.ParentID = parent
@@ -249,8 +260,8 @@ func init() {
 	}
 
 	// Populate the account page's grantable-targets picker without account
-	// importing orchestrate. Sources a user's OWN exposed agents plus agents
-	// SHARED to them (AllowedUsers) that are exposed, plus their channels. Tiers
+	// importing orchestrate. Sources a user's OWN agents plus agents SHARED to
+	// them (AllowedUsers), plus their channels. Tiers
 	// (worker/lead) are added by core.ListExternalTargets around this.
 	ListExternalTargetsFn = externalTargetsFor
 }
@@ -278,14 +289,13 @@ func externalTargetsFor(db Database, user string) []ExternalTarget {
 		}
 		out = append(out, ExternalTarget{Value: "agent:" + id, Label: label, Group: "Agents"})
 	}
-	// Own agents — ALL of them, not just MCPExposed ones: ticking an agent
-	// here is itself the consent that makes it reachable through THIS key
-	// (ResolveExternalAgentGranted), mirroring the app feature grant. App
-	// agents are deliberately NOT listed — the app's own feature checkbox
-	// covers them, the implementing agent stays invisible. Framework seeds
-	// are skipped like the tool-access pills unless already exposed, except
-	// the main agent: it is where an ask with no agent named goes, so a key
-	// can always be given it. It is listed first.
+	// Own agents: ticking an agent here is the consent that makes it
+	// reachable through THIS key (reachableThrough), mirroring the app
+	// feature grant. App agents are deliberately NOT listed — the app's own
+	// feature checkbox covers them, the implementing agent stays invisible.
+	// Hidden framework agents (Builder, Research) are skipped like the
+	// tool-access pills. The main agent is where an ask with no agent named
+	// goes, so a key can always be given it; it is listed first.
 	var main []ExternalTarget
 	for _, a := range listAgents(UserDB(db, user), user) {
 		if isAppAgent(a.ID) {
@@ -296,26 +306,17 @@ func externalTargetsFor(db Database, user string) []ExternalTarget {
 			main = append(main, ExternalTarget{Value: "agent:" + a.ID, Label: chFirst(a.Name, a.ID) + " - your main agent", Group: "Agents"})
 			continue
 		}
-		if a.Owner == seedOwner && !a.MCPExposed {
+		if a.Owner == seedOwner && a.Hidden {
 			continue
 		}
 		addAgent(a.ID, a.Name, "")
 	}
 	out = append(main, out...)
-	// Agents shared TO this user (by another owner) that are exposed. Walk
-	// every user's store — the same cross-user walk the admin governance view
-	// uses — and keep only agents whose AllowedUsers include this user and
-	// which are MCPExposed. An unexposed shared agent isn't externally
-	// reachable, so offering it would grant a key nothing.
-	for _, au := range AuthListUsers(db) {
-		if au.Username == user {
-			continue // own agents already added above
-		}
-		udb := UserDB(db, au.Username)
-		for _, a := range listAgents(udb, au.Username) {
-			if a.MCPExposed && userCanRunSharedAgent(a, user) {
-				addAgent(a.ID, a.Name, "shared by "+au.Username)
-			}
+	// Agents shared TO this user by another owner: sharing is the owner's
+	// consent, and a key that lists one reaches it while the share stands.
+	for _, a := range SharedAgentsFor(db, user) {
+		if a.Owner != user {
+			addAgent(a.ID, a.Name, "shared by "+a.Owner)
 		}
 	}
 	// Channels the user's agents serve. orchRef is the running app singleton

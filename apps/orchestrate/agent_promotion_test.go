@@ -111,10 +111,10 @@ func TestAnAdminPublishesDirectly(t *testing.T) {
 	}
 }
 
-// Both doors are the same decision: whether this person's agent may be reached
-// by everybody. The kind carries which one so an administrator does not have to
-// read two near-identical rows and work out the difference.
-func TestMCPExposureGoesThroughTheSameGate(t *testing.T) {
+// The retired "Reachable over MCP" switch is a door no more: a key reaches the
+// agents ticked on it. Asking for it files nothing and sets nothing, and a
+// request filed before it retired cannot be approved into setting it.
+func TestTheRetiredMCPSwitchIsNoLongerADoor(t *testing.T) {
 	T, udb, user := newTestOrchestrate(t)
 	auth := &DBase{Store: kvlite.MemStore()}
 	savedAuth, savedAdmin := AuthDB, requestIsAdminAgent
@@ -123,24 +123,20 @@ func TestMCPExposureGoesThroughTheSameGate(t *testing.T) {
 	t.Cleanup(func() { AuthDB, requestIsAdminAgent = savedAuth, savedAdmin })
 
 	rec, _ := saveAgent(udb, AgentRecord{ID: "a1", Owner: user, Name: "Helper", OrchestratorPrompt: "help"})
-	publishFlags(t, T, user, rec.ID, map[string]bool{"mcp_exposed": true})
+	if w := publishFlags(t, T, user, rec.ID, map[string]bool{"mcp_exposed": true}); w.Code != http.StatusBadRequest {
+		t.Errorf("asking for the retired switch: %d %s, want a refusal", w.Code, w.Body.String())
+	}
 	if got, _ := loadAgent(udb, rec.ID); got.MCPExposed {
-		t.Error("MCP exposure skipped the gate; it takes the agent OUTSIDE the deployment")
+		t.Error("the retired switch was set")
 	}
-	reqs := promotion.ListPromotionRequests(auth, true)
-	if len(reqs) != 1 || !strings.Contains(reqs[0].Name, "mcp_exposed") {
-		t.Fatalf("the request does not say which door it is for: %+v", reqs)
+	if reqs := promotion.ListPromotionRequests(auth, true); len(reqs) != 0 {
+		t.Fatalf("a request was filed for a switch that no longer exists: %+v", reqs)
 	}
-	registerAgentPromotion(T)
-	if err := promotion.Approve(auth, reqs[0].ID, "root"); err != nil {
-		t.Fatalf("approve: %v", err)
+	if err := T.approveAgentPublish(user, agentPromotionName(rec.ID, "mcp_exposed")); err == nil {
+		t.Error("an old request for the retired switch was approved")
 	}
-	got, _ := loadAgent(udb, rec.ID)
-	if !got.MCPExposed {
-		t.Error("approving the MCP request did not open that door")
-	}
-	if got.Everyone {
-		t.Error("approving MCP also published to the dashboard; they are separate doors")
+	if got, _ := loadAgent(udb, rec.ID); got.MCPExposed {
+		t.Error("approving an old request set the retired switch")
 	}
 }
 

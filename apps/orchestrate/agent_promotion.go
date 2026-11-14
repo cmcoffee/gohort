@@ -3,7 +3,7 @@ package orchestrate
 // Publishing an agent is the administrator's decision.
 //
 // An exposed agent reaches EVERY signed-in user of the deployment, through
-// /agents/<slug> and, with mcp_exposed, through an external MCP client. That is
+// /agents/<slug>. That is
 // the same reach a shared custom app has, and a shared app has needed an admin
 // to approve it since v0.6.710. An agent is arguably the larger grant: it
 // carries its owner's tools, its owner's credentials and its owner's memory,
@@ -74,7 +74,9 @@ func (T *OrchestrateApp) approveAgentPublish(owner, name string) error {
 	}
 	switch flag {
 	case "mcp_exposed":
-		rec.MCPExposed = true
+		// A request filed before the "Reachable over MCP" switch retired.
+		// There is nothing left to turn on: a key reaches what it lists.
+		return Error("this request was for \"Reachable over MCP\", which no longer exists: a key reaches the agents ticked on it, so reject the request")
 	default:
 		if err := T.publishedSlugClash(rec); err != nil {
 			return err

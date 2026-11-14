@@ -504,6 +504,10 @@ type ChannelTarget struct {
 	SessionID string
 	ChatID    string
 	Name      string // conversation/room display name, when the transport knows one
+	// Exposed is the retired "Reachable over MCP" switch's stored value on the
+	// room's agent. A key reaches the rooms it lists; only a key from before
+	// scoping is read by this instead, until the key lifetime retires it.
+	Exposed bool
 }
 
 // ToolCall is one tool invocation persisted alongside the

@@ -36,9 +36,9 @@
 // no thinking on the turn and everything below it, "low", "medium" or "high"
 // for that level.
 //
-// Which agents are reachable is governed by the SAME "Reachable over MCP"
-// toggle that gates the MCP server, so external exposure stays one switch per
-// agent instead of two that can disagree.
+// Which agents are reachable follows the same rule as the MCP server: a key
+// reaches the agents and channels it lists (AccountToken.AgentGrant), so the
+// two surfaces cannot disagree.
 //
 // Mounted by the blank import in agents.go, hidden from the dashboard (no
 // human-facing page, only the machine endpoint). The Ollama-protocol proxy
@@ -242,14 +242,18 @@ func gateTarget(w http.ResponseWriter, user string, token *AccountToken, canonic
 	return true
 }
 
-// tokenGrant adapts a (possibly nil) key to the resolver's explicit-grant
-// callback: a deliberate per-key target grant is consent to reach an agent
-// that isn't otherwise exposed.
+// tokenGrant is the key's grant for the resolvers (AccountToken.AgentGrant):
+// the agents it lists, or for a key from before scoping, the retired switch.
 func tokenGrant(token *AccountToken) func(string) bool {
-	if token == nil {
-		return nil
-	}
-	return token.ExplicitTarget
+	return token.AgentGrant()
+}
+
+// legacyKeyMissesChannel reports a key from before scoping reaching for a room
+// whose agent has the retired "Reachable over MCP" switch off. Such a key
+// lists nothing, so its reach is what the switch said, here as for agents.
+// Delete with the switch's other readers (types.go, MCPExposed).
+func legacyKeyMissesChannel(token *AccountToken, tgt agenthost.ChannelTarget) bool {
+	return token != nil && token.IsLegacyUnscoped() && !tgt.Exposed
 }
 
 // gateAppTarget applies the per-APP feature gate (gate 4) when the canonical
@@ -320,7 +324,7 @@ func (T *OpenAIAPI) handleModels(w http.ResponseWriter, r *http.Request) {
 	// Live conversations, so a config UI can offer "join THIS room" directly.
 	if host := agenthost.Get(); host != nil {
 		for _, c := range host.ExternalChannels(user) {
-			if allow("channel:" + c.ChatID) {
+			if allow("channel:"+c.ChatID) && !legacyKeyMissesChannel(token, c) {
 				data = append(data, map[string]any{
 					"id": "channel:" + c.ChatID, "object": "model", "owned_by": "gohort",
 					"description": c.Name + " - " + c.AgentName,
@@ -430,7 +434,7 @@ func (T *OpenAIAPI) handleChatCompletions(w http.ResponseWriter, r *http.Request
 	// back, and log the fallback so the next one is visible.
 	if target != "" && !isTierName(target) {
 		if host := agenthost.Get(); host != nil {
-			if tgt, ok := host.ResolveExternalChannel(user, target); ok {
+			if tgt, ok := host.ResolveExternalChannel(user, target); ok && !legacyKeyMissesChannel(token, tgt) {
 				if !gateTarget(w, user, token, "channel:"+tgt.ChatID) {
 					return
 				}
@@ -450,7 +454,7 @@ func (T *OpenAIAPI) handleChatCompletions(w http.ResponseWriter, r *http.Request
 			T.serveAgent(w, r, user, target, req)
 			return
 		}
-		Log("[openai_api] %s: model %q matched no channel or agent, answering from the WORKER tier (no persona, tools, memory or thread). If you meant a conversation, check the id and that its agent has \"Reachable over MCP\" on.", user, target)
+		Log("[openai_api] %s: model %q matched no channel or agent, answering from the WORKER tier (no persona, tools, memory or thread). If you meant a conversation, check the id and that the key lists it.", user, target)
 	}
 	// Tier passthrough (worker/lead, or an unresolved bare name that falls back
 	// to worker). Raw compute: Model access, which an administrator grants, and
@@ -564,7 +568,7 @@ func (T *OpenAIAPI) serveAgent(w http.ResponseWriter, r *http.Request, user, age
 	token := AccountTokenFromRequest(r)
 	resolved, ok := resolveAgent(user, agentKey, tokenGrant(token))
 	if !ok {
-		writeErr(w, http.StatusNotFound, fmt.Sprintf("no agent %q reachable for this account: check the id, and turn on \"Reachable over MCP\" on that agent (the same switch governs this endpoint)", agentKey))
+		writeErr(w, http.StatusNotFound, fmt.Sprintf("no agent %q reachable through this key: check the id, and tick the agent under Can reach in the key's Access (Account page, API keys)", agentKey))
 		return
 	}
 	input, system := turnInput(req)
@@ -632,8 +636,11 @@ func (T *OpenAIAPI) serveChannel(w http.ResponseWriter, r *http.Request, user, c
 		return
 	}
 	tgt, ok := orch.ResolveExternalChannel(user, chatKey)
+	if ok && legacyKeyMissesChannel(AccountTokenFromRequest(r), tgt) {
+		ok = false
+	}
 	if !ok {
-		writeErr(w, http.StatusNotFound, fmt.Sprintf("no reachable conversation %q: check GET /v1/models, and make sure the agent bound to that chat has \"Reachable over MCP\" on", chatKey))
+		writeErr(w, http.StatusNotFound, fmt.Sprintf("no reachable conversation %q: check GET /v1/models, and that the key lists it under Can reach (Account page, API keys)", chatKey))
 		return
 	}
 	input, system := turnInput(req)

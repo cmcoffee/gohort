@@ -242,10 +242,13 @@ func TestReachGrantsAreNotInTheEditor(t *testing.T) {
 		}
 	}
 	sec := mustRead(t, "page_agent_access.go")
-	for _, f := range []string{"mcp_exposed", "public_name"} {
-		if !strings.Contains(sec, `Field: "`+f+`"`) {
-			t.Errorf("%s is offered nowhere", f)
-		}
+	if !strings.Contains(sec, `Field: "public_name"`) {
+		t.Error("public_name is offered nowhere")
+	}
+	// The retired "Reachable over MCP" switch is offered nowhere: a key
+	// reaches the agents ticked on it.
+	if strings.Contains(sec, `Field: "mcp_exposed"`) {
+		t.Error("the Security page still offers the retired switch")
 	}
 	if !strings.Contains(sec, "/api/console/permissions/share") {
 		t.Error("Everyone is offered nowhere")
@@ -258,38 +261,32 @@ func TestReachGrantsAreNotInTheEditor(t *testing.T) {
 	}
 }
 
-// Both reach flags go through the one gate. An owner who cannot flip the
-// toggle on the privileges card must not reach either by another door.
+// Publishing goes through the one gate; the retired "Reachable over MCP"
+// switch goes through none: the audience door refuses it, on or off, and its
+// stored value stays as it was for the old keys that still read it.
 func TestBothReachFlagsAreRequestedNotApplied(t *testing.T) {
 	app, udb, _ := newTestOrchestrate(t)
 	pinRootDB(t)
 	if _, err := saveAgent(udb, AgentRecord{
-		ID: "a50", Name: "Wren", Owner: "alice", OrchestratorPrompt: "p"}); err != nil {
+		ID: "a50", Name: "Wren", Owner: "alice", OrchestratorPrompt: "p", MCPExposed: true}); err != nil {
 		t.Fatal(err)
 	}
-	for _, body := range []string{`{"everyone":true}`, `{"mcp_exposed":true}`} {
+	post := func(body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodPost,
 			"/api/console/permissions/audience?agent=a50", strings.NewReader(body))
 		w := httptest.NewRecorder()
 		routed(app)(w, asUser(r, "alice"))
-		if w.Code != http.StatusOK && w.Code != http.StatusNoContent {
-			t.Fatalf("%s: %d %s", body, w.Code, w.Body.String())
+		return w
+	}
+	if w := post(`{"everyone":true}`); w.Code != http.StatusOK && w.Code != http.StatusNoContent {
+		t.Fatalf("publishing: %d %s", w.Code, w.Body.String())
+	}
+	for _, body := range []string{`{"mcp_exposed":true}`, `{"mcp_exposed":false}`} {
+		if w := post(body); w.Code != http.StatusBadRequest {
+			t.Errorf("%s: %d %s, want a refusal", body, w.Code, w.Body.String())
 		}
 	}
-	// Turning one back OFF is direct: nobody needs permission to stop sharing.
-	rec, _ := loadAgent(udb, "a50")
-	rec.MCPExposed = true
-	if _, err := saveAgent(udb, rec); err != nil {
-		t.Fatal(err)
-	}
-	r := httptest.NewRequest(http.MethodPost,
-		"/api/console/permissions/audience?agent=a50", strings.NewReader(`{"mcp_exposed":false}`))
-	w := httptest.NewRecorder()
-	routed(app)(w, asUser(r, "alice"))
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("turning MCP reach off: %d %s", w.Code, w.Body.String())
-	}
-	if got, _ := loadAgent(udb, "a50"); got.MCPExposed {
-		t.Error("turning it off did not take")
+	if got, _ := loadAgent(udb, "a50"); !got.MCPExposed {
+		t.Error("the retired switch's stored value changed")
 	}
 }

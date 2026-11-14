@@ -92,7 +92,7 @@ CONSOLIDATING agents that already exist under one parent, so two related jobs sh
 - What a move takes away: a sub-agent has no way in of its own. Its chat, channels and schedules go to the parent, so whoever talked to it directly now talks to the parent, in the parent's voice. Ask the person which voice that is, and name each channel that changes hands.
 - The parent routes with a machine that judges every message (route_each_message): a first step that chooses where each message goes, a step per sub-agent that delegates to it, and that sub-agent's answer passed back unchanged (reply_with) rather than rewritten.
 - Sub-agents never call each other. When one's result feeds the other, the parent's machine chains them: one step delegates to the first, the next hands {prev} to the second.
-- An agent that is shared, published or reachable over MCP, or has sub-agents of its own, cannot move until that is undone: put it under Ask the person.
+- An agent that is shared or published, or has sub-agents of its own, cannot move until that is undone: put it under Ask the person.
 - The parent gets build notes: what the family is for and the decisions that bind every member.
 
 On a CHANGE you see the agent as it stands, with its sub-agents, and the family's build notes when it has them; a recipe keeps to those notes or says which one it changes. Most changes leave the shape alone (a prompt, a rule, a setting, a tool that fits what it already does): answer exactly "No shape change." and one sentence saying why. Write a new recipe only when the change adds reach or a job that meets one of the three reasons, and say what moves where.

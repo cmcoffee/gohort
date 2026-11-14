@@ -253,15 +253,26 @@ func (T *OrchestrateApp) agentSave(c *jsonapi.Call, raw json.RawMessage) (any, e
 		}
 		curateToolsFromModal(T.DB, user, &req)
 	}
-	// Reach that needs an administrator (everyone, inbound MCP) changes
-	// only through the publish door, which files a promotion request for a
-	// non-admin (agentPublishNeedsApproval). A whole-record save keeps the
-	// stored values, and a new record starts unpublished.
+	// Reach that needs an administrator (everyone) changes only through the
+	// publish door, which files a promotion request for a non-admin
+	// (agentPublishNeedsApproval). A whole-record save keeps the stored value,
+	// and a new record starts unpublished.
+	//
+	// The retired "Reachable over MCP" switch is set by nobody, an
+	// administrator included: its stored value is kept as it is, for the keys
+	// from before scoping that still read it (types.go, MCPExposed).
+	var keptMCPExposed bool
+	if req.ID != "" {
+		if existing, ok := loadAgent(udb, req.ID); ok {
+			keptMCPExposed = existing.MCPExposed
+		}
+	}
+	req.MCPExposed = keptMCPExposed
 	if !requestIsAdminAgent(r) {
-		req.Exposed, req.Everyone, req.MCPExposed = false, false, false
+		req.Exposed, req.Everyone = false, false
 		if req.ID != "" {
 			if existing, ok := loadAgent(udb, req.ID); ok {
-				req.Everyone, req.MCPExposed = existing.Everyone, existing.MCPExposed
+				req.Everyone = existing.Everyone
 			}
 		}
 	}
@@ -353,7 +364,7 @@ var patchAgentFields = map[string]bool{
 	"capture_prompt": true,
 	"allow_explorer": true, "explorer_hard_cap": true,
 	"channel": true, "fleet": true, "tag_name": true, "voice": true,
-	"exposed": true, "mcp_exposed": true, "show_on_dashboard": true, "public_name": true, "outside_audience": true,
+	"exposed": true, "show_on_dashboard": true, "public_name": true, "outside_audience": true,
 	"outside_tools": true, "outside_credentials": true, "outside_per_minute": true, "outside_per_day": true, "outside_daily_spend_usd": true,
 	"allow_private_mode": true, "force_private": true, "hidden": true,
 	"workspace_no_network": true, "workspace_network": true,
@@ -464,19 +475,19 @@ func (T *OrchestrateApp) patchAgent(c *jsonapi.Call, patch map[string]any, pathI
 			refused = append(refused, k)
 			continue
 		}
-		// The two REACH flags are an administrator's to grant, wherever they
-		// are written. This door applied them directly, so an owner who could
+		// The REACH flag is an administrator's to grant, wherever it is
+		// written. This door applied them directly, so an owner who could
 		// not flip the toggle on the privileges card could publish to the
 		// whole deployment by PATCHing the same field — one rule with one
 		// enforcement point and one way round it.
 		//
-		// Turning either OFF stays direct here as it does there: nobody needs
+		// Turning it OFF stays direct here as it does there: nobody needs
 		// permission to stop sharing.
-		if (k == "exposed" || k == "mcp_exposed") && maintainer != "" {
+		if k == "exposed" && maintainer != "" {
 			// Reach is the owner's: a maintainer neither sets it nor asks.
 			continue
 		}
-		if k == "exposed" || k == "mcp_exposed" {
+		if k == "exposed" {
 			// Read tolerantly and then STORE what was read. A select sends
 			// "true" where a toggle sends true, and a strict v == true made
 			// that string read as OFF - so a control meaning "publish this"
@@ -489,9 +500,6 @@ func (T *OrchestrateApp) patchAgent(c *jsonapi.Call, patch map[string]any, pathI
 			on := truthyPatchValue(v)
 			v = on
 			already := existing.Everyone
-			if k == "mcp_exposed" {
-				already = existing.MCPExposed
-			}
 			if T.agentPublishNeedsApproval(r, user, existing.ID, k, on, already) {
 				requested = append(requested, k)
 				continue

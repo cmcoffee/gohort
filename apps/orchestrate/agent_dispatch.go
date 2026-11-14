@@ -784,7 +784,7 @@ func (sd *syncDispatch) admit() bool {
 	// Standing fire / monitor wake / external dispatch to a retiring archetype
 	// seed → materialize the owner's own copy and run that.
 	sd.target = materializeIfRetiringSeed(sd.ownerDB, sd.agentOwner, agentKey, sd.target)
-	if err := outsideRunRefusal(sd.runtimeUser, sd.target); err != nil {
+	if err := outsideRunRefusal(sd.runtimeUser, sd.agentOwner, sd.target); err != nil {
 		return sd.exit(syncRunResult{}, err)
 	}
 	sd.runtimeDB = sd.ownerDB
@@ -1767,7 +1767,7 @@ func (cr *continuingRun) admit() bool {
 		return cr.exit(AgentSyncResult{Text: outsiderNotServedReply}, nil)
 	}
 	cr.runtimeUser = outsideRunAs(cr.runtimeUser, run, cr.target)
-	if err := outsideRunRefusal(cr.runtimeUser, cr.target); err != nil {
+	if err := outsideRunRefusal(cr.runtimeUser, cr.agentOwner, cr.target); err != nil {
 		return cr.exit(AgentSyncResult{}, err)
 	}
 	// A person outside past a limit gets a fixed reply, and no turn runs to

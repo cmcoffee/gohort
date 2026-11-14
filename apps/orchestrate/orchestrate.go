@@ -505,17 +505,17 @@ func (T *OrchestrateApp) wireExternalHooks() {
 	// output path, the transport routes the agent's undeliverable reply here — into
 	// the agent's cortex feed — instead of stranding it in an outbox nothing drains.
 	RegisterChannelOverflow(T.overflowChannelReply)
-	// MCP agent gate: the inbound MCP server (ask_agent) calls this so only agents
-	// the owner marked "Reachable over MCP" can be dispatched from an external
-	// client. Reads the owner's own store; seeds resolve to their per-user shadow.
+	// The retired "Reachable over MCP" switch, read for a key from before
+	// scoping only (AccountToken.AgentGrant): the value stored on the agent,
+	// which nothing sets any more. Reads the owner's own store; seeds resolve
+	// to their per-user shadow, and an agent shared with the owner resolves
+	// as dispatch resolves it.
 	RegisterMCPAgentGate(func(owner, agentID string) bool {
 		// Agents live in the orchestrate app's per-user store (UserDB(T.DB, owner)),
 		// NOT RootDB — read the SAME store the editor saves to, or every lookup
-		// falls back to the in-code seed (MCPExposed=false) and nothing is reachable.
-		// Name-or-id, matching the dispatch path's own resolution; reachability
-		// covers app agents via their feature grant (see externallyReachable).
+		// falls back to the in-code seed (MCPExposed=false).
 		a, ok := findAgentByNameOrID(UserDB(T.DB, owner), owner, agentID)
-		return ok && externallyReachable(a, owner)
+		return ok && a.MCPExposed
 	})
 	// Canonical external resolution for the MCP server: name-or-id → agent ID,
 	// only when reachable. mcpserver needs the ID (not the caller's raw string)
@@ -942,7 +942,7 @@ func (T *OrchestrateApp) registerExternalAgentHooks() {
 	// Agents live in orchestrate's per-user store, so every one of them was
 	// reading an empty bucket: pass 1 of listAgents found nothing, only in-code
 	// seeds and app agents survived, and a user's own agent was invisible and
-	// unreachable no matter what its "Reachable over MCP" toggle said. The
+	// unreachable no matter what its key listed. The
 	// comment on the agent gate above says exactly this; these three predate it
 	// and never got the treatment.
 	//

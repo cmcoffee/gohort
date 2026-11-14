@@ -22,11 +22,12 @@ func TestCrossAppHooksIgnoreTheCallersStore(t *testing.T) {
 	orchStore := &DBase{Store: kvlite.MemStore()}
 	callerStore := &DBase{Store: kvlite.MemStore()} // e.g. the MCP server's own
 
-	// An agent the user owns and has exposed, saved where orchestrate keeps it.
+	// An agent the user owns, saved where orchestrate keeps it, and a key that
+	// lists it.
 	const user = "alice@example.com"
 	udb := UserDB(orchStore, user)
 	if _, err := saveAgent(udb, AgentRecord{
-		ID: "wren-1", Name: "Wren", Owner: user, MCPExposed: true,
+		ID: "wren-1", Name: "Wren", Owner: user,
 		Description:        "General assistant",
 		OrchestratorPrompt: "You are Wren.",
 	}); err != nil {
@@ -40,7 +41,8 @@ func TestCrossAppHooksIgnoreTheCallersStore(t *testing.T) {
 	app.registerExternalAgentHooks()
 
 	// Called the way an external app calls it: with ITS store, not orchestrate's.
-	got := ListExternalReachableAgentsFn(callerStore, user, nil)
+	lists := func(c string) bool { return c == "agent:wren-1" }
+	got := ListExternalReachableAgentsFn(callerStore, user, lists)
 	var found bool
 	for _, a := range got {
 		if a.ID == "wren-1" {
@@ -48,11 +50,11 @@ func TestCrossAppHooksIgnoreTheCallersStore(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("the user's exposed agent is missing when the caller passes its own store; got %+v", got)
+		t.Fatalf("the user's listed agent is missing when the caller passes its own store; got %+v", got)
 	}
 
 	// And the resolver has to agree, or the list shows what a call refuses.
-	if id, ok := ResolveExternalAgentFn(callerStore, user, "Wren", nil); !ok || id != "wren-1" {
+	if id, ok := ResolveExternalAgentFn(callerStore, user, "Wren", lists); !ok || id != "wren-1" {
 		t.Errorf("resolver returned (%q, %v) for a listed agent", id, ok)
 	}
 

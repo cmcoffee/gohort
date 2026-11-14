@@ -630,3 +630,27 @@ func TestAccessLogKeepsNoPeerQuery(t *testing.T) {
 		t.Errorf("this instance's own request lost its query: %q", got)
 	}
 }
+
+// What a key grants the external resolvers: the agents it lists. A key from
+// before scoping lists none and is read by the retired "Reachable over MCP"
+// switch instead, and no key grants nothing.
+func TestAKeyGrantsWhatItListsAndAnOldKeyWhatTheOldSwitchSays(t *testing.T) {
+	mcpAgentGateMu.Lock()
+	saved := mcpAgentGate
+	mcpAgentGateMu.Unlock()
+	t.Cleanup(func() { RegisterMCPAgentGate(saved) })
+	RegisterMCPAgentGate(func(owner, id string) bool { return owner == "owner-a" && id == "switched-on" })
+
+	var none *AccountToken
+	if none.AgentGrant() != nil {
+		t.Error("no key granted something")
+	}
+	scoped := (&AccountToken{Owner: "owner-a", Scope: &TokenScope{Targets: []string{"agent:listed"}}}).AgentGrant()
+	if !scoped("agent:listed") || scoped("agent:switched-on") {
+		t.Error("a scoped key's grant is not exactly its list: the old switch must neither add nor take away")
+	}
+	old := (&AccountToken{Owner: "owner-a"}).AgentGrant()
+	if !old("agent:switched-on") || old("agent:listed") || old("channel:switched-on") {
+		t.Error("a key from before scoping must reach what the old switch says, and only agents")
+	}
+}

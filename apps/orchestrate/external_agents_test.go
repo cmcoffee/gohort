@@ -10,47 +10,50 @@ import (
 // The invariant list_agents exists to hold: what it SHOWS equals what
 // ask_agent would ACCEPT. The first version broke it by filtering sub-agents
 // out of the list while the resolver still dispatched to them — so an agent
-// whose owner had ticked "Reachable over MCP" was callable and invisible.
+// its owner had ticked on a key was callable and invisible.
 
 func TestSubAgentIsMarkedNotHidden(t *testing.T) {
-	// A sub-agent whose owner exposed it deliberately.
-	sub := AgentRecord{ID: "child-1", Name: "Summarizer", OwnedBy: "parent-9", MCPExposed: true}
-	if !externallyReachable(sub, "alice") {
-		t.Fatal("an MCPExposed agent must be externally reachable regardless of ownership")
+	lists := func(canonical string) bool { return canonical == "agent:child-1" || canonical == "agent:top-1" }
+	sub := AgentRecord{ID: "child-1", Name: "Summarizer", OwnedBy: "parent-9", Owner: "alice"}
+	if !reachableThrough(sub, "alice", lists) {
+		t.Fatal("a sub-agent the key lists must be reachable through it")
 	}
-	// The resolver takes it, so the lister must too — that symmetry IS the
-	// feature. Asserted on the reachability rule both sides share.
-	top := AgentRecord{ID: "top-1", Name: "Wren", MCPExposed: true}
-	if !externallyReachable(top, "alice") {
-		t.Fatal("a top-level exposed agent must be reachable")
+	top := AgentRecord{ID: "top-1", Name: "Wren", Owner: "alice"}
+	if !reachableThrough(top, "alice", lists) {
+		t.Fatal("a top-level agent the key lists must be reachable")
 	}
-	off := AgentRecord{ID: "off-1", Name: "Private", MCPExposed: false}
-	if externallyReachable(off, "alice") {
-		t.Error("an agent with the toggle off must not be reachable")
+	off := AgentRecord{ID: "off-1", Name: "Private", Owner: "alice"}
+	if reachableThrough(off, "alice", lists) {
+		t.Error("an agent the key does not list must not be reachable")
 	}
 }
 
-func TestListerAndResolverAgreeOnTheSameRule(t *testing.T) {
-	// Both sides gate on externallyReachable OR an explicit key grant. If one
-	// side ever grows an extra condition, this is the test that should fail.
-	granted := func(canonical string) bool { return canonical == "agent:granted-1" }
+// A key reaches what it lists, and the retired "Reachable over MCP" switch's
+// stored value changes nothing for a key that lists its agents: on, it does
+// not widen the key; off, it does not narrow it.
+func TestAKeyReachesWhatItListsWhateverTheOldSwitchSays(t *testing.T) {
+	lists := func(canonical string) bool { return canonical == "agent:listed" }
 	cases := []struct {
-		rec   AgentRecord
-		grant bool
-		want  bool
+		rec  AgentRecord
+		want bool
 	}{
-		{AgentRecord{ID: "a", MCPExposed: true}, false, true},
-		{AgentRecord{ID: "b"}, false, false},
-		{AgentRecord{ID: "granted-1"}, true, true},
-		{AgentRecord{ID: "sub", OwnedBy: "p", MCPExposed: true}, false, true},
+		{AgentRecord{ID: "listed", Owner: "alice"}, true},
+		{AgentRecord{ID: "listed", Owner: "alice", MCPExposed: true}, true},
+		{AgentRecord{ID: "unlisted", Owner: "alice", MCPExposed: true}, false},
+		{AgentRecord{ID: "unlisted", Owner: "alice"}, false},
+		// Somebody else's agent, not shared with alice: listing it grants nothing.
+		{AgentRecord{ID: "listed", Owner: "bob"}, false},
+		// Shared with alice: hers to reach while the share stands.
+		{AgentRecord{ID: "listed", Owner: "bob", AllowedUsers: []string{"alice"}}, true},
 	}
 	for _, c := range cases {
-		g := func(s string) bool { return c.grant && granted(s) }
-		got := externallyReachable(c.rec, "alice") || g("agent:"+c.rec.ID)
-		if got != c.want {
-			t.Errorf("agent %q (ownedBy=%q exposed=%v grant=%v): reachable=%v, want %v",
-				c.rec.ID, c.rec.OwnedBy, c.rec.MCPExposed, c.grant, got, c.want)
+		if got := reachableThrough(c.rec, "alice", lists); got != c.want {
+			t.Errorf("agent %q (owner=%q shared=%v exposed=%v): reachable=%v, want %v",
+				c.rec.ID, c.rec.Owner, c.rec.AllowedUsers, c.rec.MCPExposed, got, c.want)
 		}
+	}
+	if reachableThrough(AgentRecord{ID: "listed", Owner: "alice", MCPExposed: true}, "alice", nil) {
+		t.Error("no grant at all must reach no user agent, the old switch included")
 	}
 }
 
@@ -90,5 +93,55 @@ func TestTheMainAgentIsAlwaysOfferedToAKey(t *testing.T) {
 	}
 	if _, ok := ResolveExternalAgentGranted(app.DB, "alice", defaultConsoleAgent, nil); ok {
 		t.Error("with no tick and the switch off, the main agent should stay unreachable")
+	}
+}
+
+// An agent shared with someone is theirs to reach from their own outside
+// client: their key editor offers it and a key that lists it reaches it, with
+// no switch for the sharer to flip. Unsharing cuts the key off at its next
+// call, because the resolver re-reads the share.
+func TestAnAgentSharedWithYouIsOnYourKeyWhileTheShareStands(t *testing.T) {
+	_, udb, owner := newTestOrchestrate(t)
+	pinRootDB(t)
+	base := orchestrateBaseDB
+	saved := orchRef
+	t.Cleanup(func() { orchRefMu.Lock(); orchRef = saved; orchRefMu.Unlock() })
+	orchRefMu.Lock()
+	orchRef = nil
+	orchRefMu.Unlock()
+
+	rec := AgentRecord{ID: "a1", Owner: owner, Name: "Researcher", OrchestratorPrompt: "research",
+		AllowedUsers: []string{"bob"}}
+	if _, err := saveAgent(udb, rec); err != nil {
+		t.Fatal(err)
+	}
+	offered := false
+	for _, tg := range externalTargetsFor(base, "bob") {
+		if tg.Value == "agent:a1" {
+			offered = strings.Contains(tg.Label, "shared by "+owner)
+		}
+	}
+	if !offered {
+		t.Fatalf("the recipient's key editor does not offer the shared agent: %+v", externalTargetsFor(base, "bob"))
+	}
+	lists := func(c string) bool { return c == "agent:a1" }
+	if id, ok := ResolveExternalAgentGranted(base, "bob", "a1", lists); !ok || id != "a1" {
+		t.Fatalf("a key that lists the shared agent does not reach it: %q %v", id, ok)
+	}
+	if _, ok := ResolveExternalAgentGranted(base, "bob", "a1", func(string) bool { return false }); ok {
+		t.Error("a key that does not list it reaches it")
+	}
+	for _, tg := range externalTargetsFor(base, "dana") {
+		if tg.Value == "agent:a1" {
+			t.Error("someone it is not shared with is offered it")
+		}
+	}
+
+	rec.AllowedUsers = nil
+	if _, err := saveAgent(udb, rec); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ResolveExternalAgentGranted(base, "bob", "a1", lists); ok {
+		t.Error("after unsharing, the recipient's key still reaches it")
 	}
 }

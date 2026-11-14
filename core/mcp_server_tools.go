@@ -122,12 +122,14 @@ func MCPAppToolStatuses() []MCPToolStatus {
 	return out
 }
 
-// --- agent exposure gate (which agents ask_agent may reach) ------------------
+// --- the retired "Reachable over MCP" switch -----------------------------------
 
-// MCPAgentGateFunc reports whether (owner, agentID) is reachable over MCP — i.e.
-// the agent's MCPExposed flag. core can't import AgentRecord/loadAgent, so the
-// agent-aware package (orchestrate) registers the closure, mirroring the
-// channel-runner / standing-runner seams.
+// MCPAgentGateFunc reports whether (owner, agentID) has the retired "Reachable
+// over MCP" switch on: the value still stored on the agent record, which
+// nothing sets any more. A key reaches the agents it lists; only a key from
+// before scoping is read by this instead (AccountToken.AgentGrant), until the
+// key lifetime has retired every such key. core can't import AgentRecord, so
+// orchestrate registers the closure.
 type MCPAgentGateFunc func(owner, agentID string) bool
 
 var (
@@ -143,9 +145,9 @@ func RegisterMCPAgentGate(fn MCPAgentGateFunc) {
 	mcpAgentGateMu.Unlock()
 }
 
-// MCPAgentExposed reports whether ask_agent may dispatch to (owner, agentID).
-// Fails CLOSED: when no gate is registered (orchestrate not loaded) nothing is
-// reachable, so the external surface can't be wider than the policy.
+// MCPAgentExposed reports the retired switch's stored value for (owner,
+// agentID), for a key from before scoping. Fails CLOSED: with no gate
+// registered (orchestrate not loaded) it is off.
 func MCPAgentExposed(owner, agentID string) bool {
 	mcpAgentGateMu.RLock()
 	fn := mcpAgentGate

@@ -104,9 +104,6 @@ func newAgentMove(db Database, owner, id, parentID string) (*agentMove, error) {
 	if a.Everyone {
 		reach = append(reach, "published to everyone")
 	}
-	if a.MCPExposed {
-		reach = append(reach, "reachable over MCP")
-	}
 	if len(reach) > 0 {
 		return nil, fmt.Errorf("%s is %s. A sub-agent is private to its parent, so turn that off on its Security page (Share tab) first", a.Name, strings.Join(reach, " and "))
 	}

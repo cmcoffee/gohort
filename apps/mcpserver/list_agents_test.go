@@ -44,7 +44,8 @@ func TestListAgentsIsAdvertised(t *testing.T) {
 	}
 }
 
-// Nothing registered ⇒ the answer says which switch turns it on. An empty list
+// Nothing registered ⇒ the answer says what turns it on: the key's Can reach,
+// not the retired per-agent switch. An empty list
 // otherwise reads as "you have no agents", which is almost never true.
 func TestEmptyListExplainsWhy(t *testing.T) {
 	saved := ListExternalReachableAgentsFn
@@ -57,7 +58,7 @@ func TestEmptyListExplainsWhy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "Reachable over MCP") {
+	if !strings.Contains(out, "Can reach") || strings.Contains(out, "Reachable over MCP") {
 		t.Errorf("an empty list must name the setting that changes it; got %q", out)
 	}
 }

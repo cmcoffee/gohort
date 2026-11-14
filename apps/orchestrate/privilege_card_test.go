@@ -147,10 +147,16 @@ func TestPrivilegeFlagRows(t *testing.T) {
 			t.Errorf("top-level agent flag should be editable: %+v", f)
 		}
 	}
-	// Narrow grants appear only when on.
+	// A narrow grant appears only when on. The retired "Reachable over MCP"
+	// switch never does, whatever its stored value.
 	flags = privilegeFlagRows(AgentRecord{ID: "a5", MCPExposed: true, AllowBuilderDispatch: true})
-	if len(flags) != 5 {
-		t.Fatalf("flags = %d, want 5 with the two narrow grants on", len(flags))
+	if len(flags) != 4 {
+		t.Fatalf("flags = %d, want 4 with the narrow grant on: %+v", len(flags), flags)
+	}
+	for _, f := range flags {
+		if f.Field == "mcp_exposed" {
+			t.Error("the card shows the retired switch")
+		}
 	}
 	for _, f := range privilegeFlagRows(AgentRecord{ID: "a6", OwnedBy: "p"}) {
 		if !f.Locked {

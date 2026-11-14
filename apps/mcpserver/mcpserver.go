@@ -661,11 +661,7 @@ func (T *MCPServer) listAgents(owner string, token *AccountToken) (string, error
 	if ListExternalReachableAgentsFn == nil {
 		return "", fmt.Errorf("agent listing not available (orchestrate not loaded)")
 	}
-	var granted func(string) bool
-	if token != nil {
-		granted = token.ExplicitTarget
-	}
-	agents := ListExternalReachableAgentsFn(T.DB, owner, granted)
+	agents := ListExternalReachableAgentsFn(T.DB, owner, token.AgentGrant())
 	if keyListsAgents(token) {
 		kept := agents[:0]
 		for _, a := range agents {
@@ -679,9 +675,9 @@ func (T *MCPServer) listAgents(owner string, token *AccountToken) (string, error
 		}
 	}
 	if len(agents) == 0 {
-		// Say which switch turns this on. An empty list otherwise reads as "you
-		// have no agents", which is almost never what happened.
-		return "No agents are reachable over MCP. Open the agent's editor in gohort → Access & visibility → turn on \"Reachable over MCP\", then reconnect this connector so it re-reads the list. Only your own agents appear here; an app's built-in agents (Servitor, Guides, ...) are reached by app name, not listed.", nil
+		// Say what turns this on. An empty list otherwise reads as "you have
+		// no agents", which is almost never what happened.
+		return "No agents are reachable through this key. On the gohort Account page, open the key's Access and tick the agents it may reach under Can reach, then reconnect this connector so it re-reads the list. An app's built-in agents (Servitor, Guides, ...) are reached by app name, not listed.", nil
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%d agent(s) you can ask:\n", len(agents))
@@ -713,7 +709,7 @@ func (T *MCPServer) listAgents(owner string, token *AccountToken) (string, error
 
 // keyListsAgents reports a key whose own agent list is its whole reach over
 // MCP. A key from before scoping (nil scope) still reaches every agent with
-// "Reachable over MCP" on.
+// the retired "Reachable over MCP" switch on (AccountToken.AgentGrant).
 func keyListsAgents(token *AccountToken) bool {
 	return token != nil && token.Scope != nil
 }
@@ -787,28 +783,20 @@ func (T *MCPServer) askAgent(ctx context.Context, owner string, token *AccountTo
 	if !MCPAgentHostReady() {
 		return "", nil, fmt.Errorf("agent runner not ready (orchestrate not loaded)")
 	}
-	// Only reachable agents can be dispatched, so a bridge key can't reach every
-	// agent. Fails closed. Resolution goes name-or-id → canonical ID so the
-	// per-app gate below sees the real id: for USER agents reachable means the
-	// MCPExposed toggle; for APP agents (Servitor, Guides, ...) it means the admin
-	// enabled the app under Feature Access — they have no editor page, so the
-	// feature grant IS their exposure consent.
-	if ResolveExternalAgentFn != nil {
-		// An agent this key EXPLICITLY grants is reachable through it even
-		// without the MCPExposed toggle — the grant on the access menu is the
-		// consent (nil-scope legacy keys grant nothing extra here).
-		var granted func(string) bool
-		if token != nil {
-			granted = token.ExplicitTarget
-		}
-		id, ok := ResolveExternalAgentFn(T.DB, owner, agent, granted)
-		if !ok {
-			return "", nil, fmt.Errorf("agent %q is not reachable over MCP, for your own agents, turn on \"Reachable over MCP\" (agent editor → Access & visibility); for an app's agents (Servitor, Guides, ...), an admin enables the app under Feature Access", agent)
-		}
-		agent = id
-	} else if !MCPAgentExposed(owner, agent) {
-		return "", nil, fmt.Errorf("agent %q is not reachable over MCP: turn on \"Reachable over MCP\" in its settings (agent editor → Access & visibility)", agent)
+	// Only reachable agents can be dispatched. Fails closed. Resolution goes
+	// name-or-id → canonical ID so the per-app gate below sees the real id: a
+	// USER agent is reachable when this key lists it (its own, or one shared
+	// with its owner); an APP agent (Servitor, Guides, ...) when the admin
+	// enabled the app under Feature Access — it has no editor page, so the
+	// feature grant IS its consent.
+	if ResolveExternalAgentFn == nil {
+		return "", nil, fmt.Errorf("agent runner not ready (orchestrate not loaded)")
 	}
+	id, ok := ResolveExternalAgentFn(T.DB, owner, agent, token.AgentGrant())
+	if !ok {
+		return "", nil, fmt.Errorf("agent %q is not reachable through this key: tick it under Can reach in the key's Access (Account page, API keys), or ask one it lists (list_agents); for an app's agents (Servitor, Guides, ...), an admin enables the app under Feature Access", agent)
+	}
+	agent = id
 	// Per-APP feature gate: dispatching an app-owned agent (Servitor, Guides, ...)
 	// needs the app enabled for this user (admin) AND on this key (user scope).
 	// No-op for ordinary agents; nil token (session/bridge-key auth) skips the
@@ -816,9 +804,8 @@ func (T *MCPServer) askAgent(ctx context.Context, owner string, token *AccountTo
 	if ok, msg := KeyAllowsAppAgent(RootDB, owner, token, agent); !ok {
 		return "", nil, fmt.Errorf("%s", msg)
 	}
-	// A scoped key reaches the agents it lists, here as over the Model API:
-	// an agent's own "Reachable over MCP" switch does not widen it. App
-	// agents are granted by their app's tick, checked just above.
+	// A scoped key reaches the agents it lists, here as over the Model API.
+	// App agents are granted by their app's tick, checked just above.
 	if err := keyMayAsk(token, agent); err != nil {
 		return "", nil, err
 	}

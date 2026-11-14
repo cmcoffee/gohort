@@ -510,3 +510,20 @@ func TestTheRawTiersAreModelAccess(t *testing.T) {
 		t.Errorf("past the per-minute limit: %d, want 429", code)
 	}
 }
+
+// A key from before scoping lists nothing, so the rooms it joins are the ones
+// whose agent had the retired "Reachable over MCP" switch on, as before. A key
+// that lists its rooms is not read by the switch at all.
+func TestAnOldKeyJoinsOnlyTheRoomsTheOldSwitchOpened(t *testing.T) {
+	old := &AccountToken{Owner: "owner-a"}
+	scoped := &AccountToken{Owner: "owner-a", Scope: &TokenScope{Targets: []string{"channel:c1"}}}
+	if !legacyKeyMissesChannel(old, agenthost.ChannelTarget{ChatID: "c1"}) {
+		t.Error("an old key joined a room whose agent had the switch off")
+	}
+	if legacyKeyMissesChannel(old, agenthost.ChannelTarget{ChatID: "c1", Exposed: true}) {
+		t.Error("an old key lost a room whose agent had the switch on")
+	}
+	if legacyKeyMissesChannel(scoped, agenthost.ChannelTarget{ChatID: "c1"}) {
+		t.Error("a key that lists the room was held to the retired switch")
+	}
+}

@@ -628,12 +628,6 @@ func (T *OrchestrateApp) handleConsolePrivileges(c *jsonapi.Call, body struct {
 				continue
 			}
 			rec.Everyone = on
-		case "mcp_exposed":
-			if T.agentPublishNeedsApproval(r, user, rec.ID, "mcp_exposed", on, rec.MCPExposed) {
-				requested = append(requested, "mcp_exposed")
-				continue
-			}
-			rec.MCPExposed = on
 		// PRESENTATION. A card on the dashboard and a page at /agents/<slug>,
 		// for the people who can already use the agent. It grants nothing, so
 		// it asks nobody: a shortcut to something you already have is not a
@@ -1007,13 +1001,8 @@ func (T *OrchestrateApp) handleConsolePermissionAudience(call *jsonapi.Call, bod
 	if !found {
 		return nil, errNotFound
 	}
-	// Two reach flags, one door. Both are an administrator's to grant and both
-	// go through the same gate; which one arrived decides nothing else.
 	field, current := "exposed", rec.Everyone
 	raw, present := body["everyone"]
-	if v, ok := body["mcp_exposed"]; ok && !present {
-		field, current, raw, present = "mcp_exposed", rec.MCPExposed, v, true
-	}
 	if !present {
 		return nil, jsonapi.BadRequest("no reach flag given")
 	}
@@ -1027,11 +1016,7 @@ func (T *OrchestrateApp) handleConsolePermissionAudience(call *jsonapi.Call, bod
 		// as published while an administrator has not looked at it yet.
 		return map[string]any{"ok": true, "requested": []string{field}}, nil
 	}
-	if field == "mcp_exposed" {
-		rec.MCPExposed = on
-	} else {
-		rec.Everyone = on
-	}
+	rec.Everyone = on
 	if _, err := saveAgent(udb, rec); err != nil {
 		return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
 	}

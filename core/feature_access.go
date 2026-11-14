@@ -251,14 +251,12 @@ type ExternalTarget struct {
 var ListExternalTargetsFn func(db Database, user string) []ExternalTarget
 
 // ResolveExternalAgentFn resolves a caller-supplied agent NAME or ID to the
-// canonical agent id, only when that agent is reachable from external
-// key-authenticated surfaces (MCPExposed user agents, or app agents whose app
-// feature the admin enabled). The MCP server uses it so its per-app key gate
-// sees the real id, not whatever string the client typed. Nil ⇒ orchestrate
-// not loaded; callers fall back to their legacy gate.
-// The granted callback (nil ok) reports whether the CALLING KEY explicitly
-// names a canonical target — an explicit grant is consent enough to reach an
-// agent that isn't otherwise exposed.
+// canonical agent id, only when the calling key reaches it: an agent the key
+// grants (granted, from AccountToken.AgentGrant) that is the owner's own or
+// shared with them, or an app's agent whose app feature the admin enabled.
+// The MCP server uses it so its per-app key gate sees the real id, not
+// whatever string the client typed. Nil ⇒ orchestrate not loaded. A nil
+// granted grants nothing.
 var ResolveExternalAgentFn func(db Database, owner, key string, granted func(canonical string) bool) (string, bool)
 
 // ExternalAgentInfo is one agent an external client may drive, in the form that

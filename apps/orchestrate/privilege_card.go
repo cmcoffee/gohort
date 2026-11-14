@@ -190,9 +190,6 @@ func privilegeFlagRows(rec AgentRecord) []privilegeFlag {
 		// appears for the people who already can, and takes nobody.
 		{Field: "show_on_dashboard", Label: "Shortcut on the dashboard", On: rec.ShowOnDashboard, Locked: sub},
 	}
-	if rec.MCPExposed {
-		flags = append(flags, privilegeFlag{Field: "mcp_exposed", Label: "Reachable over MCP", On: true, Locked: sub})
-	}
 	if rec.AllowBuilderDispatch {
 		flags = append(flags, privilegeFlag{Field: "allow_builder_dispatch", Label: "May hand work to Builder", On: true, Locked: sub})
 	}

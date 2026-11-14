@@ -393,11 +393,13 @@ type AgentRecord struct {
 	// not a decision anybody else has a stake in.
 	ShowOnDashboard bool `json:"show_on_dashboard,omitempty"`
 
-	// MCPExposed makes this agent reachable through gohort's INBOUND MCP server
-	// (apps/mcpserver, /mcp/) — an external MCP client (e.g. Claude Desktop) can
-	// dispatch to it via the ask_agent tool. Default off so a bridge key can't
-	// reach every agent; the owner opts each one in. Independent of Exposed (the
-	// public /agents/ web surface) — an agent can be on one, both, or neither.
+	// MCPExposed is the retired "Reachable over MCP" switch
+	// (docs/design/retire-mcp-switch.md). A key reaches the agents ticked on
+	// it, so nothing sets this any more, and its stored value is kept only
+	// for the readers that still need it: a key from before scoping
+	// (AccountToken.AgentGrant) and the binding of old scoped keys
+	// (bindAgentsToMCP). Both retire with the last such key, by about
+	// 2027-01-14 at the default key lifetime; delete the field then.
 	MCPExposed bool `json:"mcp_exposed,omitempty"`
 
 	// OutsideAudience lets people who are not gohort users talk to this agent
