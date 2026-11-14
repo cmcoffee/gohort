@@ -21,6 +21,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -474,11 +475,30 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 			Title: "Rules",
 			Intro: "Optional. Anything it must always do, or never do. Rules sit above everything else it is told, on every turn, and you can add or change them any time in its editor.",
 			Fields: []ui.FormField{
-				{Field: "rules", Type: "textarea", Label: "Its rules", Rows: 4,
-					Placeholder: "one rule per line: something it must always do, or never do"},
+				// The list editor the rest of gohort's rules use: a row per
+				// rule, added and removed one at a time, saved one per line,
+				// which is what the agent's Rules field holds.
+				{Field: "rules", Type: "rules", Label: "Its rules", RowEditor: true},
 			},
 		}
 		steps = []ui.FormStep{welcome, personaStep, rulesStep, aboutStep, nameStep, createStep}
+		// How it sounds, when there is something to hear it with: only while
+		// speech is set up, since a voice the deployment cannot speak is a
+		// choice with nothing behind it. Same field as the editor's, chips
+		// from the speech server and a preview of the one picked.
+		if media.GetSpeechConfig().Enabled {
+			voiceStep := ui.FormStep{
+				Title: "Voice",
+				Intro: "Optional. How it sounds when it speaks: when it answers a voice note, and when one of its replies is read aloud. Pick a voice and preview it, or leave it blank for the deployment's voice.",
+				Fields: []ui.FormField{
+					{Field: "voice", Type: "text", Label: "Its voice",
+						Placeholder: "the deployment's voice",
+						ChipsSource: media.ReadAloudPath + "/voices",
+						TestURL:     media.ReadAloudPath + "/preview", TestLabel: "Preview voice"},
+				},
+			}
+			steps = append([]ui.FormStep{welcome, personaStep, voiceStep}, steps[2:]...)
+		}
 	}
 
 	head := wizardAdvancedLinkHTML()
@@ -800,6 +820,7 @@ func (T *OrchestrateApp) handleAgentWizard(c *jsonapi.Call, req wizardRequest) (
 	rec.Description = strings.TrimSpace(req.Description)
 	rec.Triggers = req.Triggers
 	rec.Rules = strings.TrimSpace(req.Rules)
+	rec.Voice = strings.TrimSpace(req.Voice)
 	rec.Cortex = kind.cortex
 	rec.MemoryMode = kind.memory_mode
 	rec.RecallHints = true
@@ -908,6 +929,8 @@ type wizardRequest struct {
 	AboutYou string `json:"about_you"`
 	// Rules are the agent's own Rules, as written (the first-run Rules step).
 	Rules string `json:"rules"`
+	// Voice is the agent's own speech voice (the first-run Voice step).
+	Voice string `json:"voice"`
 }
 
 // applyWizardMemory maps the Memory-step choices onto the record, over

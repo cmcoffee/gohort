@@ -4233,6 +4233,10 @@
         });
         fieldWrap.appendChild(presetsHost);
       }
+      // A Test for this field alone (f.test_url): the form's Test, beside the
+      // one value it is about, for a form with steps whose own Test waits
+      // on the last one.
+      if (f.test_url) fieldWrap.appendChild(buildTestRow(f.test_url, f.test_label));
       // Skip generic input append when the toggle branch already
       // placed the switch into a [label, input] header row above.
       if (!toggleHandled) fieldWrap.appendChild(xlineRow || input);
@@ -4498,6 +4502,157 @@
     // other form that asks for it (FormPanel.Assist). It shows once the
     // deployment says there is a worker to help, and it swaps a helper in
     // where the form is (uiFormAssist).
+    // buildTestRow is a Test button and its result: it POSTs the form's
+    // current values (unsaved ones included) to url and shows what came back,
+    // a line, several, or something to hear ({"audio": src}). The form's own
+    // Test (FormPanel.TestURL) and a field's (FormField.TestURL) are both this.
+    function buildTestRow(url, label, link) {
+      var testRow = el('div', {class: 'ui-form-test-row',
+        style: 'display:flex;align-items:center;gap:0.6rem;margin-top:0.5rem;flex-wrap:wrap'});
+      var testBtn = el('button', {class: 'ui-row-btn', type: 'button'},
+        [label || 'Test connectivity']);
+      var testResult = el('span', {class: 'ui-form-test-result',
+        style: 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);white-space:pre-line'});
+      // A test that checks several things answers with a line each. One
+      // line sits beside the button; more take the row below it.
+      function showResult(color, text) {
+        testResult.style.color = color;
+        testResult.textContent = text;
+        testResult.style.flexBasis = text.indexOf('\n') >= 0 ? '100%' : '';
+      }
+      // A test may answer with something to hear ({"audio": url}): a player
+      // takes the row below the result and starts at once, since the click
+      // was the person asking to hear it. Hidden again by the next test.
+      var testAudio = null;
+      function showAudio(src) {
+        if (!src) {
+          if (testAudio) testAudio.style.display = 'none';
+          return;
+        }
+        if (!testAudio) {
+          testAudio = el('audio', {class: 'ui-form-test-audio', controls: true,
+            style: 'flex-basis:100%;max-width:100%'});
+          testRow.appendChild(testAudio);
+        }
+        testAudio.style.display = '';
+        testAudio.src = src;
+        if (testAudio.play) {
+          var playing = testAudio.play();
+          if (playing && playing.catch) playing.catch(function() {});
+        }
+      }
+      // While a test is in flight the button IS the cancel: a wrong host or
+      // a dead port used to mean staring at "Testing..." until the server's
+      // timeout gave up, with nothing to click. Aborting the request also
+      // cancels the server side wherever the handler derives its context
+      // from the request, so an upstream call is dropped, not orphaned.
+      var inflight = null;   // AbortController for the running test
+      var ticker = null;     // elapsed-seconds readout
+      var originalLabel = label || 'Test connectivity';
+      function settle() {
+        if (ticker) { clearInterval(ticker); ticker = null; }
+        inflight = null;
+        testBtn.textContent = originalLabel;
+        testBtn.classList.remove('danger');
+      }
+      testBtn.addEventListener('click', function() {
+        if (inflight) {
+          inflight.abort();
+          return;
+        }
+        var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        inflight = ctl || {abort: function() {}};
+        testBtn.textContent = 'Cancel';
+        testBtn.classList.add('danger');
+        showResult('var(--text-mute)', 'Testing...');
+        showAudio('');
+        var startedAt = Date.now();
+        var step = '';   // the step a streaming test last said it started
+        function tick() {
+          var secs = Math.round((Date.now() - startedAt) / 1000);
+          var text = 'Testing...' + (secs >= 2 ? ' ' + secs + 's' : '');
+          testResult.textContent = step ? text + ' - ' + step : text;
+        }
+        ticker = setInterval(tick, 1000);
+        fetch(url, {
+          method: 'POST',
+          cache: 'no-store',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(current),
+          signal: ctl ? ctl.signal : undefined,
+        }).then(function(r) {
+          if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+          var ct = r.headers.get('Content-Type') || '';
+          if (ct.indexOf('application/x-ndjson') < 0 || !r.body || !r.body.getReader) {
+            return ct.indexOf('application/json') >= 0 ? r.json() : r.text();
+          }
+          // A test that runs several checks in turn streams a line as each
+          // starts ({"progress": "..."}), then its result as the last line.
+          var reader = r.body.getReader();
+          var dec = new TextDecoder();
+          var buf = '';
+          var result = null;
+          function line(text) {
+            text = text.trim();
+            if (!text) return;
+            var m;
+            try { m = JSON.parse(text); } catch (e) { return; }
+            if (m && m.progress != null && m.ok === undefined) {
+              step = String(m.progress);
+              tick();
+            } else {
+              result = m;
+            }
+          }
+          function pump() {
+            return reader.read().then(function(chunk) {
+              if (chunk.done) { line(buf); return result; }
+              buf += dec.decode(chunk.value, {stream: true});
+              var i;
+              while ((i = buf.indexOf('\n')) >= 0) {
+                line(buf.slice(0, i));
+                buf = buf.slice(i + 1);
+              }
+              return pump();
+            });
+          }
+          return pump();
+        }).then(function(resp) {
+          if (resp && resp.ok) {
+            showResult('var(--accent)', '✓ ' + (resp.message || 'OK'));
+            showAudio(resp.audio);
+          } else {
+            showResult('var(--danger,#ff7b72)', '✗ ' + ((resp && resp.error) || 'Failed'));
+          }
+        }).catch(function(err) {
+          if (err && err.name === 'AbortError') {
+            testResult.style.color = 'var(--text-mute)';
+            testResult.textContent = 'Cancelled after ' + Math.round((Date.now() - startedAt) / 1000) + 's: nothing was saved.';
+            return;
+          }
+          testResult.style.color = 'var(--danger,#ff7b72)';
+          testResult.textContent = '✗ ' + (err && err.message || 'Test failed');
+        }).then(settle);
+      });
+      testRow.appendChild(testBtn);
+      // A link to a fuller test elsewhere (link): "#id" scrolls to
+      // that part of the page, anything else is followed.
+      if (link && link.href) {
+        var tl = el('a', {class: 'ui-row-btn', href: link.href}, [link.label || 'More tests']);
+        if (link.href.charAt(0) === '#') {
+          tl.addEventListener('click', function(ev) {
+            var target = document.getElementById(link.href.slice(1));
+            if (!target) return;
+            ev.preventDefault();
+            target.scrollIntoView({behavior: 'smooth', block: 'start'});
+          });
+        }
+        testRow.appendChild(tl);
+      }
+      testRow.appendChild(testResult);
+      return testRow;
+    }
+
     function appendAssistButton() {
       if (!(cfg.assist || stepsMode) || cfg.no_assist || !window.uiFormAssistAvailable) return;
       var b = el('button', {type: 'button', class: 'ui-form-assist',
@@ -4651,151 +4806,9 @@
       // submit so the natural flow is [Test] then [Save].
       function appendTestRow(host) {
         if (!cfg.test_url) return;
-        var testRow = el('div', {class: 'ui-form-test-row',
-          style: 'display:flex;align-items:center;gap:0.6rem;margin-top:0.5rem;flex-wrap:wrap'});
+        var testRow = buildTestRow(cfg.test_url, cfg.test_label, cfg.test_link);
         testRowEl = testRow;
         if (cfg.test_show_when && !matchesShowWhen(cfg.test_show_when)) testRow.style.display = 'none';
-        var testBtn = el('button', {class: 'ui-row-btn', type: 'button'},
-          [cfg.test_label || 'Test connectivity']);
-        var testResult = el('span', {class: 'ui-form-test-result',
-          style: 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);white-space:pre-line'});
-        // A test that checks several things answers with a line each. One
-        // line sits beside the button; more take the row below it.
-        function showResult(color, text) {
-          testResult.style.color = color;
-          testResult.textContent = text;
-          testResult.style.flexBasis = text.indexOf('\n') >= 0 ? '100%' : '';
-        }
-        // A test may answer with something to hear ({"audio": url}): a player
-        // takes the row below the result and starts at once, since the click
-        // was the person asking to hear it. Hidden again by the next test.
-        var testAudio = null;
-        function showAudio(src) {
-          if (!src) {
-            if (testAudio) testAudio.style.display = 'none';
-            return;
-          }
-          if (!testAudio) {
-            testAudio = el('audio', {class: 'ui-form-test-audio', controls: true,
-              style: 'flex-basis:100%;max-width:100%'});
-            testRow.appendChild(testAudio);
-          }
-          testAudio.style.display = '';
-          testAudio.src = src;
-          if (testAudio.play) {
-            var playing = testAudio.play();
-            if (playing && playing.catch) playing.catch(function() {});
-          }
-        }
-        // While a test is in flight the button IS the cancel: a wrong host or
-        // a dead port used to mean staring at "Testing..." until the server's
-        // timeout gave up, with nothing to click. Aborting the request also
-        // cancels the server side wherever the handler derives its context
-        // from the request, so an upstream call is dropped, not orphaned.
-        var inflight = null;   // AbortController for the running test
-        var ticker = null;     // elapsed-seconds readout
-        var originalLabel = cfg.test_label || 'Test connectivity';
-        function settle() {
-          if (ticker) { clearInterval(ticker); ticker = null; }
-          inflight = null;
-          testBtn.textContent = originalLabel;
-          testBtn.classList.remove('danger');
-        }
-        testBtn.addEventListener('click', function() {
-          if (inflight) {
-            inflight.abort();
-            return;
-          }
-          var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-          inflight = ctl || {abort: function() {}};
-          testBtn.textContent = 'Cancel';
-          testBtn.classList.add('danger');
-          showResult('var(--text-mute)', 'Testing...');
-          showAudio('');
-          var startedAt = Date.now();
-          var step = '';   // the step a streaming test last said it started
-          function tick() {
-            var secs = Math.round((Date.now() - startedAt) / 1000);
-            var text = 'Testing...' + (secs >= 2 ? ' ' + secs + 's' : '');
-            testResult.textContent = step ? text + ' - ' + step : text;
-          }
-          ticker = setInterval(tick, 1000);
-          fetch(cfg.test_url, {
-            method: 'POST',
-            cache: 'no-store',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(current),
-            signal: ctl ? ctl.signal : undefined,
-          }).then(function(r) {
-            if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
-            var ct = r.headers.get('Content-Type') || '';
-            if (ct.indexOf('application/x-ndjson') < 0 || !r.body || !r.body.getReader) {
-              return ct.indexOf('application/json') >= 0 ? r.json() : r.text();
-            }
-            // A test that runs several checks in turn streams a line as each
-            // starts ({"progress": "..."}), then its result as the last line.
-            var reader = r.body.getReader();
-            var dec = new TextDecoder();
-            var buf = '';
-            var result = null;
-            function line(text) {
-              text = text.trim();
-              if (!text) return;
-              var m;
-              try { m = JSON.parse(text); } catch (e) { return; }
-              if (m && m.progress != null && m.ok === undefined) {
-                step = String(m.progress);
-                tick();
-              } else {
-                result = m;
-              }
-            }
-            function pump() {
-              return reader.read().then(function(chunk) {
-                if (chunk.done) { line(buf); return result; }
-                buf += dec.decode(chunk.value, {stream: true});
-                var i;
-                while ((i = buf.indexOf('\n')) >= 0) {
-                  line(buf.slice(0, i));
-                  buf = buf.slice(i + 1);
-                }
-                return pump();
-              });
-            }
-            return pump();
-          }).then(function(resp) {
-            if (resp && resp.ok) {
-              showResult('var(--accent)', '✓ ' + (resp.message || 'OK'));
-              showAudio(resp.audio);
-            } else {
-              showResult('var(--danger,#ff7b72)', '✗ ' + ((resp && resp.error) || 'Failed'));
-            }
-          }).catch(function(err) {
-            if (err && err.name === 'AbortError') {
-              testResult.style.color = 'var(--text-mute)';
-              testResult.textContent = 'Cancelled after ' + Math.round((Date.now() - startedAt) / 1000) + 's: nothing was saved.';
-              return;
-            }
-            testResult.style.color = 'var(--danger,#ff7b72)';
-            testResult.textContent = '✗ ' + (err && err.message || 'Test failed');
-          }).then(settle);
-        });
-        testRow.appendChild(testBtn);
-        // A link to a fuller test elsewhere (cfg.test_link): "#id" scrolls to
-        // that part of the page, anything else is followed.
-        if (cfg.test_link && cfg.test_link.href) {
-          var tl = el('a', {class: 'ui-row-btn', href: cfg.test_link.href}, [cfg.test_link.label || 'More tests']);
-          if (cfg.test_link.href.charAt(0) === '#') {
-            tl.addEventListener('click', function(ev) {
-              var target = document.getElementById(cfg.test_link.href.slice(1));
-              if (!target) return;
-              ev.preventDefault();
-              target.scrollIntoView({behavior: 'smooth', block: 'start'});
-            });
-          }
-          testRow.appendChild(tl);
-        }
-        testRow.appendChild(testResult);
         host.appendChild(testRow);
       }
       // HistoryURL — the kept versions of this record. Click GETs the list and

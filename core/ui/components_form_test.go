@@ -136,7 +136,7 @@ func TestATestLinkSitsBesideTheTestButton(t *testing.T) {
 		t.Errorf("the subsection's id: %s", b)
 	}
 	basics := mustRuntimePart(t, "10_basics.js")
-	for _, want := range []string{"cfg.test_link.href", "scrollIntoView", "if (cfg.id) wrap.id = cfg.id;"} {
+	for _, want := range []string{"buildTestRow(cfg.test_url, cfg.test_label, cfg.test_link)", "link.href", "scrollIntoView", "if (cfg.id) wrap.id = cfg.id;"} {
 		if !strings.Contains(basics, want) {
 			t.Errorf("the runtime lost %q", want)
 		}

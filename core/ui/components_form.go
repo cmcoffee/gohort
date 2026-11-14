@@ -720,6 +720,13 @@ type FormField struct {
 	// field. On the field rather than on each option, so an option stays a
 	// plain comparable value.
 	Fills map[string]map[string]any `json:"fills,omitempty"`
+	// TestURL puts a Test button under this field, with the same contract
+	// as FormPanel.TestURL: it POSTs the form's current values (unsaved ones
+	// included) and shows {ok, message, error}, playing {audio} when there is
+	// some. For a check about one value in a form with steps, whose own Test
+	// sits on the last step. TestLabel is the button's text.
+	TestURL   string `json:"test_url,omitempty"`
+	TestLabel string `json:"test_label,omitempty"`
 	// Invert shows and writes the OPPOSITE of the stored value, for a toggle
 	// whose field is negative: no_network, hold_this, disabled_that.
 	//

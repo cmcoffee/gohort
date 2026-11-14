@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/core/media"
 )
 
 func TestWizardFallbackDescription(t *testing.T) {
@@ -466,7 +467,7 @@ func TestTheFirstAssistantKeepsItsRules(t *testing.T) {
 	T, udb, user := newTestOrchestrate(t)
 	c := &jsonapi.Call{W: httptest.NewRecorder(), R: httptest.NewRequest(http.MethodPost, "/api/agents/wizard", nil), User: user, UDB: udb}
 	out, err := T.handleAgentWizard(c, wizardRequest{Kind: "assistant", FirstRun: "true", Name: "Ada",
-		Rules: "  Never send anything without asking first.\nKeep answers short.  "})
+		Rules: "  Never send anything without asking first.\nKeep answers short.  ", Voice: " af_sky "})
 	if err != nil {
 		t.Fatalf("a first assistant with no purpose was refused: %v", err)
 	}
@@ -483,6 +484,42 @@ func TestTheFirstAssistantKeepsItsRules(t *testing.T) {
 	}
 	if !saved.Fleet {
 		t.Error("the first assistant is not the front door (Fleet)")
+	}
+	if saved.Voice != "af_sky" {
+		t.Errorf("voice saved as %q", saved.Voice)
+	}
+}
+
+// The first-run wizard asks for a voice only while speech is set up, with the
+// editor's voice chips and a preview beside the field; without speech there is
+// nothing to hear a voice with, so no step. Its rules are the list editor the
+// rest of gohort's rules use, a row each, not one box.
+func TestTheFirstRunAsksForAVoiceOnlyWithSpeech(t *testing.T) {
+	T, _, user := newTestOrchestrate(t)
+	prev := media.GetSpeechConfig()
+	t.Cleanup(func() { media.SetSpeechConfig(prev) })
+	page := func() string {
+		w := httptest.NewRecorder()
+		T.renderAgentWizard(w, httptest.NewRequest(http.MethodGet, "/agent/wizard?kind=assistant&first_run=1", nil), user)
+		return w.Body.String()
+	}
+	media.SetSpeechConfig(media.SpeechConfig{})
+	off := page()
+	if strings.Contains(off, `"title":"Voice"`) {
+		t.Error("a voice is asked for with speech off")
+	}
+	if !strings.Contains(off, `"field":"rules","label":"Its rules","type":"rules"`) {
+		t.Error("the rules step is not the list editor")
+	}
+	media.SetSpeechConfig(media.SpeechConfig{Enabled: true})
+	on := page()
+	for _, want := range []string{`"title":"Voice"`, `"chips_source":"` + media.ReadAloudPath + `/voices"`, `"test_url":"` + media.ReadAloudPath + `/preview"`} {
+		if !strings.Contains(on, want) {
+			t.Errorf("with speech on, the wizard lacks %s", want)
+		}
+	}
+	if strings.Index(on, `"title":"Personality"`) > strings.Index(on, `"title":"Voice"`) {
+		t.Error("the voice is asked before the personality")
 	}
 }
 

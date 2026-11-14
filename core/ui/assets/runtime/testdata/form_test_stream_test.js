@@ -44,6 +44,7 @@ function streamed(lines) {
     }}};
 }
 
+eval(lift(basics, 'function buildTestRow(url, label, link)', 'buildTestRow'));
 eval(lift(basics, 'function appendTestRow(host)', 'appendTestRow'));
 var host = el('div');
 appendTestRow(host);
