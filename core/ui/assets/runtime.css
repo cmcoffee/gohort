@@ -5931,7 +5931,9 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
  * and the old wrapping came back there, buttons in a pile, between this
  * layout and the desktop one. */
 @media (max-width: 900px) {
-  .ui-agent .ui-agent-top-bundle { gap: 0.15rem; padding: 0.35rem 0.5rem; }
+  /* The gap is the room between the picker's line and the buttons' line: at
+   * 0.15rem the buttons read as touching the picker. */
+  .ui-agent .ui-agent-top-bundle { gap: 0.45rem; padding: 0.35rem 0.5rem; }
   .ui-agent .ui-agent-top-bundle-table { display: block; width: 100%; }
   .ui-agent .ui-agent-top-bundle-table tbody {
     display: grid; grid-template-columns: minmax(0, 1fr) auto;
@@ -5955,17 +5957,19 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   .ui-agent .ui-agent-top-bundle .ui-agent-actions::-webkit-scrollbar { display: none; }
   .ui-agent .ui-agent-top-bundle .ui-agent-actions > * { flex: 0 0 auto; white-space: nowrap; }
   .ui-agent .ui-agent-top-bundle .ui-topbar-tile {
-    flex-direction: row; height: auto; min-width: 0; gap: 0.3rem;
-    padding: 0.25rem 0.55rem; border-radius: var(--btn-radius);
+    flex-direction: row; height: var(--btn-h-sm); min-width: 0; gap: 0.3rem;
+    padding: 0 0.55rem; border-radius: var(--btn-radius);
   }
 }
 /* On a phone the page tiles (Build, Security) are their icons alone, square
  * at the buttons' height, so the record actions beside them keep most of the
  * line rather than scrolling in what the tiles leave. The name stays for a
- * screen reader, and on the tile's tooltip. */
+ * screen reader, and on the tile's tooltip. The buttons beside them are the
+ * small size (--btn-h-sm); at the full one the tiles stood taller than their
+ * line and reached up into the picker's. */
 @media (max-width: 700px) {
   .ui-agent .ui-agent-top-bundle .ui-topbar-tile {
-    width: var(--btn-h); height: var(--btn-h); padding: 0; gap: 0;
+    width: var(--btn-h-sm); height: var(--btn-h-sm); padding: 0; gap: 0;
   }
   .ui-agent .ui-agent-top-bundle .ui-topbar-tile-label {
     position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
