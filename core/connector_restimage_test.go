@@ -910,3 +910,38 @@ func TestALongHostWithALateTypoIsStillCaught(t *testing.T) {
 		t.Errorf("hint should name the cause: %s", hint)
 	}
 }
+
+// A backend's result URL is fetched with the public-internet client, except
+// on the backend's own host: a self-hosted backend on the LAN names its own
+// address, which the operator configured, and anything else inward it names
+// is refused. The test server stands in for a backend on this machine.
+func TestAnImageResultIsFetchedOnlyFromItsBackendsOwnHost(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("png"))
+	}))
+	defer srv.Close()
+	get := func(res *ImageGenResult) error {
+		resp, err := res.HTTPClient().Get(res.URL)
+		if err == nil {
+			resp.Body.Close()
+		}
+		return err
+	}
+
+	own, err := restImageResult(restImageOutcome{url: srv.URL + "/view?f=1"}, "p", RestImageSpec{SubmitURL: srv.URL + "/prompt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := get(own); err != nil {
+		t.Errorf("a self-hosted backend's own result was refused: %v", err)
+	}
+	// The same inward address, named by a backend that lives elsewhere.
+	elsewhere, _ := restImageResult(restImageOutcome{url: srv.URL + "/view?f=1"}, "p", RestImageSpec{SubmitURL: "https://images.example.com/v1"})
+	if err := get(elsewhere); err == nil {
+		t.Error("a backend named an inward address that is not its own, and it was fetched")
+	}
+	// A result that carries no backend at all.
+	if err := get(&ImageGenResult{URL: srv.URL + "/view?f=1"}); err == nil {
+		t.Error("a result with no backend reached an inward address")
+	}
+}

@@ -1420,7 +1420,7 @@ func generateRestImageNative(connector, prompt string, landscape bool) (*ImageGe
 	if err != nil {
 		return nil, err
 	}
-	return restImageResult(out, prompt)
+	return restImageResult(out, prompt, s)
 }
 
 // Render runs s once, as a call through the connection keeping it does
@@ -1448,7 +1448,7 @@ func (s RestImageSpec) Render(sess *ToolSession, inputs map[string]any, images [
 	if err != nil {
 		return nil, err
 	}
-	return restImageResult(out, prompt)
+	return restImageResult(out, prompt, s)
 }
 
 // EditImageRequest is one "change this photo" / "combine these" call. Images
@@ -1592,7 +1592,7 @@ func EditImageWithBackend(sess *ToolSession, req EditImageRequest) (*ImageGenRes
 	if err != nil {
 		return nil, err
 	}
-	return restImageResult(s.refineFaces(sess, req, images, out, seed), req.Prompt)
+	return restImageResult(s.refineFaces(sess, req, images, out, seed), req.Prompt, s)
 }
 
 // editCascaded runs an edit whose source images outnumber the backend's input
@@ -1665,7 +1665,7 @@ func (s RestImageSpec) editCascaded(sess *ToolSession, req EditImageRequest, ste
 	// The face pass runs once, on the finished composite. Refining an
 	// intermediate would be wasted work at best: a later stage renders straight
 	// over it.
-	return restImageResult(s.refineFaces(sess, req, images, out, seed), req.Prompt)
+	return restImageResult(s.refineFaces(sess, req, images, out, seed), req.Prompt, s)
 }
 
 // allSourceRefs reports whether a render consumes only original images.
@@ -1828,6 +1828,18 @@ func imageSpecOf(c Connector) (s RestImageSpec, graph bool, err error) {
 	return host.ImageSpec(c)
 }
 
+// hosts are the hosts (host:port) the backend's own URLs name: where it takes
+// a render and where it is polled for one.
+func (s RestImageSpec) hosts() []string {
+	var out []string
+	for _, raw := range []string{s.SubmitURL, s.PollURL, s.PollURLTemplate} {
+		if u, err := url.Parse(strings.TrimSpace(raw)); err == nil && u.Host != "" {
+			out = append(out, u.Host)
+		}
+	}
+	return out
+}
+
 // AsService is the kind and spec of a connection keeping backend s, its key
 // sent as send ("" for the backend's usual way): a ComfyUI workflow runs the
 // comfyui builtin, anything else the a1111 one.
@@ -1846,9 +1858,11 @@ func (s RestImageSpec) AsService(send string) (string, json.RawMessage, error) {
 
 // restImageResult converts a backend outcome into the ImageGenResult shape the
 // native providers return — a URL passthrough, or a local file for inline bytes.
-func restImageResult(out restImageOutcome, prompt string) (*ImageGenResult, error) {
+// A URL carries the backend's own hosts, the one inward address it may name
+// (ImageGenResult.HTTPClient).
+func restImageResult(out restImageOutcome, prompt string, s RestImageSpec) (*ImageGenResult, error) {
 	if out.url != "" {
-		return &ImageGenResult{URL: out.url, Prompt: prompt}, nil
+		return &ImageGenResult{URL: out.url, Prompt: prompt, backendHosts: s.hosts()}, nil
 	}
 	data, err := base64.StdEncoding.DecodeString(out.b64)
 	if err != nil {

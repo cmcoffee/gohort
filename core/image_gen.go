@@ -3,6 +3,8 @@ package core
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -291,6 +293,37 @@ func ImageGenHardCap() int {
 type ImageGenResult struct {
 	URL    string // URL or local path to the generated image
 	Prompt string // the prompt that was used
+	// backendHosts are the hosts (host:port) of the backend that made the
+	// image, the one inward address a self-hosted backend may name for its
+	// result. Empty for a backend that hands back bytes or a public link.
+	backendHosts []string
+}
+
+// HTTPClient is the client to fetch r.URL with. The public-internet client
+// (NewPublicHTTPClient), which checks the address it actually dials, except
+// on a host of the backend that made the image: a self-hosted backend names
+// its own address, which the operator configured, and may be on the LAN. A
+// URL anywhere else is held to the public internet, so a backend that names
+// some other inward address (169.254.169.254, an admin page) is refused.
+func (r *ImageGenResult) HTTPClient() *http.Client {
+	if r != nil && r.fromBackend(r.URL) {
+		return NewBoundedHTTPClient()
+	}
+	return NewPublicHTTPClient()
+}
+
+// fromBackend reports whether rawURL is on a host of the backend that made r.
+func (r *ImageGenResult) fromBackend(rawURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Host == "" {
+		return false
+	}
+	for _, h := range r.backendHosts {
+		if strings.EqualFold(h, u.Host) {
+			return true
+		}
+	}
+	return false
 }
 
 // generateWithBackend renders through a registered backend: a connector's,

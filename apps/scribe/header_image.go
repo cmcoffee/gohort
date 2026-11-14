@@ -133,7 +133,7 @@ func (T *Scribe) generateHeader(ctx context.Context, g Guide, udb Database) (str
 	if isRemote(res.URL) && !pasteLogo {
 		return res.URL, nil
 	}
-	data, mime, err := headerBytes(ctx, res.URL, isRemote(res.URL))
+	data, mime, err := headerBytes(ctx, res)
 	if err != nil {
 		return "", err
 	}
@@ -149,7 +149,7 @@ func (T *Scribe) generateHeader(ctx context.Context, g Guide, udb Database) (str
 // add is one pass: the header so far as the first picture and pic as the
 // second, the order prompt points at.
 func (j headerJob) add(ctx context.Context, so *ImageGenResult, step, backend, prompt string, pic []byte) (*ImageGenResult, error) {
-	base, _, err := headerBytes(ctx, so.URL, isRemote(so.URL))
+	base, _, err := headerBytes(ctx, so)
 	if err != nil {
 		return nil, err
 	}
@@ -276,11 +276,12 @@ func guidePicture(udb Database, g Guide, url string) []byte {
 
 // headerBytes reads a generator's result: a local file it wrote (removed once
 // read), or the remote one it named.
-func headerBytes(ctx context.Context, ref string, isURL bool) ([]byte, string, error) {
+func headerBytes(ctx context.Context, res *ImageGenResult) ([]byte, string, error) {
 	var data []byte
 	var err error
-	if isURL {
-		data, err = fetchHeader(ctx, ref)
+	ref := res.URL
+	if isRemote(ref) {
+		data, err = fetchHeader(ctx, res)
 	} else {
 		data, err = os.ReadFile(ref)
 		os.Remove(ref)
@@ -295,15 +296,17 @@ func headerBytes(ctx context.Context, ref string, isURL bool) ([]byte, string, e
 	return data, mime, nil
 }
 
-// fetchHeader downloads the picture an image backend handed back by URL.
-func fetchHeader(ctx context.Context, url string) ([]byte, error) {
+// fetchHeader downloads the picture an image backend handed back by URL, with
+// the client the result names: the public-internet one, or for the backend's
+// own host (a self-hosted backend on the LAN) the ordinary one.
+func fetchHeader(ctx context.Context, res *ImageGenResult) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, res.URL, nil)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := res.HTTPClient().Do(req)
 	if err != nil {
 		return nil, err
 	}
