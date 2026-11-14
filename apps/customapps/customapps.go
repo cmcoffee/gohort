@@ -151,6 +151,7 @@ func (T *CustomApps) routes() {
 	T.HandleFunc("/_app/share", jsonapi.Post(T.DB, T.handleShareApp))
 	T.HandleFunc("/_app/share_group", jsonapi.Post(T.DB, T.handleShareGroup))
 	T.HandleFunc("/_app/share_person", jsonapi.Post(T.DB, T.handleSharePerson))
+	T.HandleFunc("/_app/share_maintainer", jsonapi.Post(T.DB, T.handleShareMaintainer))
 	T.HandleFunc("/_app/order", jsonapi.Post(T.DB, T.handleAppOrder, jsonapi.MaxBody(1<<16)))
 	T.HandleFunc("/_app/schedule", jsonapi.Post(T.DB, T.handleScheduleToggle))
 	T.HandleFunc("/_app/job-cancel", jsonapi.Post(T.DB, handleJobCancel))
@@ -236,6 +237,11 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		T.touchAppView(spec)
 		page := isolateAppHTML(spec.Page, T.WebPath()+"/"+slug+"/")
 		page = T.withViewState(page, appdb, spec)
+		// A maintainer changes the app through Builder too
+		// (docs/design/app-maintainers.md), so the way there is theirs.
+		if user != ownerUser && spec.MaintainedBy(user) {
+			page = withBuilderLink(page, slug)
+		}
 		if user == ownerUser {
 			page = withBuilderLink(page, slug)
 			// The agent it asks was deleted: say so where the owner looks,
@@ -480,19 +486,21 @@ func (T *CustomApps) handleChat(w http.ResponseWriter, r *http.Request, owner, u
 var liveAppWorkOnce sync.Once
 
 // builderChangeURL opens a fresh Builder session with its starting form
-// pointed at one of the person's apps (kind App, that app picked), leaving
-// what to do to them; slug "{slug}" leaves the placeholder for a row action
-// to fill. "" when no Builder is running here.
+// already answered for changing one of the person's apps: Change, App, that
+// app. The button says Change, so the form does not ask again; only what
+// should change is left. Slug "{slug}" leaves the placeholder for a row
+// action to fill. "" when no Builder is running here.
 func builderChangeURL(slug string) string {
 	orch := agenthost.Get()
 	if orch == nil {
 		return ""
 	}
-	return orch.WebPath() + "/?agent=seed-builder&intake.kind=App&intake.target=" + slug
+	return orch.WebPath() + "/?agent=seed-builder&intake.action=Change&intake.kind=App&intake.target=" + slug
 }
 
 // withBuilderLink adds a "Change with Builder" link to an app page's header
-// nav, for the app's owner: changing an app meant finding Builder first.
+// nav, for the app's owner and its maintainers: changing an app meant finding
+// Builder first.
 func withBuilderLink(page json.RawMessage, slug string) json.RawMessage {
 	link := builderChangeURL(url.QueryEscape(slug))
 	if link == "" {
@@ -710,6 +718,12 @@ const shareModalScript = `<script>
             post('_app/share_person?slug=' + encodeURIComponent(slug) + '&user=' + encodeURIComponent(u) + '&on=false', null, function() {
               people.with = people.with.filter(function(x) { return x !== u; });
               people.others.push(u); people.others.sort();
+              // Unsharing a person drops them as a maintainer too.
+              if (maint.with.indexOf(u) >= 0) {
+                maint.with = maint.with.filter(function(x) { return x !== u; });
+                maint.others.push(u); maint.others.sort();
+                drawMaint();
+              }
               draw();
             });
           });
@@ -757,7 +771,79 @@ const shareModalScript = `<script>
       body.appendChild(note);
       body.appendChild(chips);
       body.appendChild(addRow);
+      // Maintainers: people who keep the app working for its owner. They
+      // change its sections and wording through Builder; its scripts, page
+      // code, sharing and settings stay the owner's. Naming one also shares
+      // the app with them.
+      var maint = {with: [], others: []};
+      try { maint = JSON.parse(rec.share_maintainers || '{}') || maint; } catch (e) {}
+      maint.with = maint.with || []; maint.others = maint.others || [];
+      var mHead = document.createElement('div');
+      mHead.style.cssText = 'font-weight:600;margin:1rem 0 0.25rem';
+      mHead.textContent = 'Maintainers';
+      var mNote = document.createElement('div');
+      mNote.style.cssText = note.style.cssText;
+      mNote.textContent = 'They can change its sections and wording through Builder. Its scripts, page code, sharing and settings stay yours, and every change they make is kept in its history under their name.';
+      var mChips = document.createElement('div');
+      mChips.style.cssText = chips.style.cssText;
+      var mRow = document.createElement('div');
+      mRow.style.cssText = addRow.style.cssText;
+      var mPick = document.createElement('select');
+      mPick.className = 'ui-input';
+      mPick.style.cssText = 'max-width:18rem';
+      var mAdd = document.createElement('button');
+      mAdd.type = 'button'; mAdd.className = 'ui-row-btn'; mAdd.textContent = 'Add';
+      mRow.appendChild(mPick); mRow.appendChild(mAdd);
+      function drawMaint() {
+        mChips.innerHTML = '';
+        maint.with.forEach(function(u) {
+          var c = document.createElement('span');
+          c.className = 'ui-chip';
+          c.style.cssText = 'display:inline-flex;align-items:center;gap:0.25rem';
+          c.appendChild(document.createTextNode(u));
+          var x = document.createElement('button');
+          x.type = 'button'; x.className = 'ui-row-btn'; x.textContent = '\u00d7'; x.title = u + ' stops maintaining it, and can still use it';
+          x.addEventListener('click', function() {
+            post('_app/share_maintainer?slug=' + encodeURIComponent(slug) + '&user=' + encodeURIComponent(u) + '&on=false', null, function() {
+              maint.with = maint.with.filter(function(y) { return y !== u; });
+              maint.others.push(u); maint.others.sort();
+              drawMaint();
+            });
+          });
+          c.appendChild(x);
+          mChips.appendChild(c);
+        });
+        if (!maint.with.length) {
+          var none = document.createElement('span');
+          none.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute)';
+          none.textContent = 'Only you.';
+          mChips.appendChild(none);
+        }
+        mPick.innerHTML = '';
+        maint.others.forEach(function(u) { var o = document.createElement('option'); o.value = u; o.textContent = u; mPick.appendChild(o); });
+        mRow.style.display = mPick.options.length ? 'flex' : 'none';
+      }
+      mAdd.addEventListener('click', function() {
+        var u = mPick.value;
+        if (!u) return;
+        post('_app/share_maintainer?slug=' + encodeURIComponent(slug) + '&user=' + encodeURIComponent(u) + '&on=true', null, function() {
+          maint.others = maint.others.filter(function(y) { return y !== u; });
+          maint.with.push(u); maint.with.sort();
+          // Naming a maintainer shares the app with them.
+          if (people.with.indexOf(u) < 0) {
+            people.others = people.others.filter(function(y) { return y !== u; });
+            people.with.push(u); people.with.sort();
+            draw();
+          }
+          drawMaint();
+        });
+      });
+      body.appendChild(mHead);
+      body.appendChild(mNote);
+      body.appendChild(mChips);
+      body.appendChild(mRow);
       draw();
+      drawMaint();
     },
     actions: [{label: 'Done', primary: true, onClick: function(api){ api.close(); if (ctx.reload) ctx.reload(); }}]
   });
@@ -931,6 +1017,7 @@ func (T *CustomApps) handleAppsList(c *jsonapi.Call) (any, error) {
 		}
 		// And the people it is shared with by name.
 		row["share_people"] = sharePeopleJSON(s)
+		row["share_maintainers"] = shareMaintainersJSON(s)
 		if n := len(s.SharedWith); n > 0 {
 			if row["state"] == "private" {
 				row["state"] = "shared"

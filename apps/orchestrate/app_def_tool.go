@@ -152,6 +152,17 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 			if msg := appOmittedRefusal(action, args); msg != "" {
 				return msg, nil
 			}
+			// An app this person maintains for its owner, not their own: a
+			// maintainer changes its sections and wording, and nothing else
+			// (app_maintainers.go). The rest of every action below reads
+			// their own apps, so an action not on the list never reaches it.
+			if slug := appDefSlug(args); slug != "" && action != "create" {
+				if spec, maintained, ok := t.appForTurn(slug); ok && maintained {
+					if msg := appMaintainerRefusal(action, args, spec); msg != "" {
+						return msg, nil
+					}
+				}
+			}
 			switch action {
 			case "update", "update_section", "add_section", "remove_section", "patch_html", "patch", "replace_function", "patch_function":
 				if err := t.appFolderOwnsEdit(args); err != nil {
@@ -165,7 +176,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 			case "update", "update_section", "add_section", "remove_section", "patch_html", "patch",
 				"replace_function", "patch_function", "revert", "undo", "restore", "delete", "add_asset", "remove_asset":
 				if slug := appDefSlug(args); slug != "" {
-					if prev, ok := LoadAppSpec(t.user, slug); ok {
+					if prev, _, ok := t.appForTurn(slug); ok {
 						if msg := t.approveChange("app", slug, appChangeDetail(action, args), appChangeOp(action)); msg != "" {
 							return msg, nil
 						}
@@ -273,7 +284,8 @@ const appDefHelpText = `app_def actions:
 - patch_html {id(slug), find, replace, section?|section_id?|script?, note?}, change PART of an html section, or of a data source / action when script=<name> is passed, by exact find/replace. For edits smaller than a function (a constant, a one-line bug): find must match EXACTLY ONCE (zero or several are refused, never guessed), and everything outside the match is left untouched. Both in-place edits are parsed, checked for calls to code they would delete, and loaded in a real browser BEFORE they are kept: an edit that breaks any of those is rolled back and the previous revision keeps serving.
 - revisions {id(slug)}: the last few versions of the app, newest first, each shown as its SIZE and FUNCTION COUNT next to the one serving now. A version much larger than the current one is an edit that removed code.
 - revert {id(slug), to?}: restore a kept revision (stamp, or its position in the listing; omit for the most recent). The version it replaces is kept too, so a revert is undoable. Reach for this the moment an edit turns out to have deleted something, instead of reconstructing the app from memory: reconstructing from memory is what deletes things.
-- list, your apps: [{slug, name, desc, verified: pass|fail|stale|never}].
+- list, your apps: [{slug, name, desc, verified: pass|fail|stale|never}], and the apps you maintain for someone else, marked maintained_for: <owner>.
+- An app you MAINTAIN for its owner: get it, and change its sections and wording with update_section, add_section, remove_section, or update with name, description, notes or sections. Its scripts, page code (html and card sections), sharing and settings are its owner's: anything else is refused, naming them. Your change lands in the owner's app, and its history names you.
 - request_store {id(slug), store, write?, commands?, pull?, why}: ask for what the app needs on a store (read always; write to add/change/delete files, commands to run its registered commands, pull to copy files in from the store it pulls from). An admin decides: on a card in this chat when the person is one, otherwise in the admin's approvals. Ask once per store, for exactly what the scripts use, and say why.
 - stores {id?}: the file stores on this deployment you can build on: what each holds, the commands registered on it (with the admin's guide to each), where it pulls from, and with id what that app is granted. Call it before writing anything that downloads, extracts or moves files, and use store_action (a command's mapped actions) / store_command / store_pull rather than your own code.
 - get  {id(slug), script?}: one app's full section definition, its standing notes, its revision + change note, its verify status, its record fields (derived from the sections) next to the live record count and any stored fields the sections no longer name, its retained sample, each script's size and function names (script=<name> returns that one script's body), and how its scripts went when they last ran for real (recent_runs: when, how started, ok or the error; script=<name> adds what each run sent to log()). Read it before revising an app you did not just build, and read recent_runs first when someone says an app is broken.

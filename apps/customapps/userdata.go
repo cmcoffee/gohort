@@ -76,16 +76,11 @@ func forgetAppReader(uid string) {
 	if AuthDB != nil {
 		for _, u := range AuthListUsers(AuthDB()) {
 			for _, spec := range listSpecs(u.Username) {
-				if !personShareReaches(spec, uid) {
+				if !personShareReaches(spec, uid) && !spec.MaintainedBy(uid) {
 					continue
 				}
-				kept := spec.SharedWith[:0:0]
-				for _, p := range spec.SharedWith {
-					if !strings.EqualFold(p, uid) {
-						kept = append(kept, p)
-					}
-				}
-				spec.SharedWith = kept
+				spec.SharedWith = withoutPerson(spec.SharedWith, uid)
+				spec.Maintainers = withoutPerson(spec.Maintainers, uid)
 				SaveAppSpec(spec)
 			}
 		}

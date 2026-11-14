@@ -536,44 +536,11 @@ func (T *CustomApps) handleAdminScripts(w http.ResponseWriter, r *http.Request) 
 	_, _ = w.Write([]byte(b.String()))
 }
 
-// pageBrowserCode collects every string in an app's page and sections that
-// carries HTML or script: what a Card or Frame renders into the viewer's own
-// session. The share review listed only the sandboxed scripts, so an app
-// whose page carried code read as having "nothing to review".
-func pageBrowserCode(spec AppSpec) []string {
-	var out []string
-	var walk func(any)
-	walk = func(v any) {
-		switch t := v.(type) {
-		case string:
-			low := strings.ToLower(t)
-			if strings.Contains(low, "<script") || strings.Contains(low, "javascript:") ||
-				(strings.Contains(t, "<") && strings.Contains(t, ">") && strings.Contains(low, " on")) ||
-				strings.Contains(low, "<iframe") || strings.Contains(low, "<html") || strings.Contains(low, "<style") {
-				out = append(out, t)
-			}
-		case []any:
-			for _, e := range t {
-				walk(e)
-			}
-		case map[string]any:
-			for k, e := range t {
-				if s, ok := e.(string); ok && (k == "html" || k == "srcdoc" || k == "script" || k == "js") && strings.TrimSpace(s) != "" {
-					out = append(out, s)
-					continue
-				}
-				walk(e)
-			}
-		}
-	}
-	for _, raw := range [][]byte{spec.Page, spec.Sections} {
-		var v any
-		if len(raw) > 0 && json.Unmarshal(raw, &v) == nil {
-			walk(v)
-		}
-	}
-	return out
-}
+// pageBrowserCode is the app's page code (AppSpec.PageCode): what a Card or
+// Frame renders into the viewer's own session. The share review listed only
+// the sandboxed scripts, so an app whose page carried code read as having
+// "nothing to review".
+func pageBrowserCode(spec AppSpec) []string { return spec.PageCode() }
 
 func capsOrNone(caps []string) string {
 	if len(caps) == 0 {

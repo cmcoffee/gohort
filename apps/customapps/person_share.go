@@ -61,15 +61,14 @@ func (T *CustomApps) setPersonShare(owner, slug, person string, on bool) error {
 			return Error("another user already shares an app at this slug: rename yours to share it")
 		}
 	}
-	kept := spec.SharedWith[:0:0]
-	for _, u := range spec.SharedWith {
-		if !strings.EqualFold(u, person) {
-			kept = append(kept, u)
-		}
-	}
+	kept := withoutPerson(spec.SharedWith, person)
 	if on {
 		kept = append(kept, person)
 		sort.Strings(kept)
+	} else {
+		// Maintaining an app you cannot open makes no sense: unsharing a
+		// person drops them as a maintainer too.
+		spec.Maintainers = withoutPerson(spec.Maintainers, person)
 	}
 	spec.SharedWith = kept
 	SaveAppSpec(spec)
@@ -79,6 +78,76 @@ func (T *CustomApps) setPersonShare(owner, slug, person string, on bool) error {
 		T.unshareOwned(owner, slug)
 	}
 	return nil
+}
+
+// withoutPerson is list with person taken off it, matched without case.
+func withoutPerson(list []string, person string) []string {
+	kept := list[:0:0]
+	for _, u := range list {
+		if !strings.EqualFold(strings.TrimSpace(u), strings.TrimSpace(person)) {
+			kept = append(kept, u)
+		}
+	}
+	return kept
+}
+
+// setMaintainer names one person a maintainer of the owner's app, or stops.
+// Naming one also shares the app with them, since maintaining an app you
+// cannot open makes no sense; taking one off leaves them able to use it. What
+// a maintainer may change is Builder's to hold them to
+// (docs/design/app-maintainers.md).
+func (T *CustomApps) setMaintainer(owner, slug, person string, on bool) error {
+	spec, ok := loadSpec(owner, slug)
+	if !ok {
+		return Error("no app " + slug + " for " + owner)
+	}
+	person = strings.TrimSpace(person)
+	if person == "" {
+		return Error("say who maintains it")
+	}
+	if !on {
+		spec.Maintainers = withoutPerson(spec.Maintainers, person)
+		SaveAppSpec(spec)
+		return nil
+	}
+	if strings.EqualFold(person, owner) {
+		return Error("it is already yours")
+	}
+	if AuthDB == nil {
+		return Error("no user store")
+	}
+	u, found := AuthGetUser(AuthDB(), person)
+	if !found {
+		return Error("no user named " + person)
+	}
+	if !personShareReaches(spec, u.Username) {
+		if err := T.setPersonShare(owner, slug, u.Username, true); err != nil {
+			return err
+		}
+		if spec, ok = loadSpec(owner, slug); !ok {
+			return Error("no app " + slug + " for " + owner)
+		}
+	}
+	spec.Maintainers = append(withoutPerson(spec.Maintainers, u.Username), u.Username)
+	sort.Strings(spec.Maintainers)
+	SaveAppSpec(spec)
+	return nil
+}
+
+// handleShareMaintainer is POST _app/share_maintainer?slug=&user=&on=true|false,
+// for an app the requester owns.
+func (T *CustomApps) handleShareMaintainer(c *jsonapi.Call, _ struct{}) (any, error) {
+	user, q := c.User, c.R.URL.Query()
+	slug, person := strings.TrimSpace(q.Get("slug")), strings.TrimSpace(q.Get("user"))
+	if slug == "" || person == "" {
+		return nil, jsonapi.BadRequest("send slug and user")
+	}
+	on := q.Get("on") != "false"
+	if err := T.setMaintainer(user, slug, person, on); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	Log("[customapps] %s %s %q as a maintainer of app %q", user, map[bool]string{true: "named", false: "removed"}[on], person, slug)
+	return map[string]any{"ok": true, "on": on}, nil
 }
 
 // handleSharePerson is POST _app/share_person?slug=&user=&on=true|false, for
@@ -95,6 +164,27 @@ func (T *CustomApps) handleSharePerson(c *jsonapi.Call, _ struct{}) (any, error)
 	}
 	Log("[customapps] %s %s app %q with %q", user, map[bool]string{true: "shared", false: "unshared"}[on], slug, person)
 	return map[string]any{"ok": true, "on": on}, nil
+}
+
+// shareMaintainersJSON is the Share dialog's maintainers section for one app:
+// who maintains it, and everyone else who could.
+func shareMaintainersJSON(spec AppSpec) string {
+	out := struct {
+		With   []string `json:"with"`
+		Others []string `json:"others"`
+	}{With: append([]string{}, spec.Maintainers...), Others: []string{}}
+	if AuthDB != nil {
+		for _, u := range AuthListUsers(AuthDB()) {
+			if strings.EqualFold(u.Username, spec.Owner) || spec.MaintainedBy(u.Username) {
+				continue
+			}
+			out.Others = append(out.Others, u.Username)
+		}
+	}
+	sort.Strings(out.With)
+	sort.Strings(out.Others)
+	b, _ := json.Marshal(out)
+	return string(b)
 }
 
 // sharePeopleJSON is the Share dialog's people section for one app: who it

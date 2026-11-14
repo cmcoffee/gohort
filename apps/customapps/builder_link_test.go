@@ -10,7 +10,9 @@ import (
 )
 
 // The owner's app page carries a way to change it: Builder, its starting form
-// already pointed at this app.
+// already answered: Change, App, this app. The button says Change, so the
+// form must not open asking what to do, with the app hidden behind that
+// question.
 func TestAnAppPageLinksToBuilderForItsOwner(t *testing.T) {
 	prev := agenthost.Get()
 	t.Cleanup(func() { agenthost.Register(prev) })
@@ -28,7 +30,8 @@ func TestAnAppPageLinksToBuilderForItsOwner(t *testing.T) {
 		t.Fatalf("nav = %+v, want Settings kept and one link added", m.Nav)
 	}
 	if l := m.Nav[1]; l.Label != "Change with Builder" || !strings.Contains(l.URL, "agent=seed-builder") ||
-		!strings.Contains(l.URL, "intake.kind=App") || !strings.HasSuffix(l.URL, "intake.target=swing") {
+		!strings.Contains(l.URL, "intake.action=Change") || !strings.Contains(l.URL, "intake.kind=App") ||
+		!strings.HasSuffix(l.URL, "intake.target=swing") {
 		t.Errorf("link = %+v", l)
 	}
 	if u := builderChangeURL("{slug}"); !strings.HasSuffix(u, "intake.target={slug}") {

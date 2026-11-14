@@ -99,6 +99,11 @@ func authoringTargets(udb Database, user, kind string) []intakeOption {
 		for _, a := range ListAppSpecs(user) {
 			add(a.Slug, chFirst(a.Name, a.Slug))
 		}
+		// And the ones they maintain for someone else, which Builder changes
+		// in the owner's copy (app_maintainers.go).
+		for _, a := range maintainedApps(user) {
+			add(a.Slug, chFirst(a.Name, a.Slug)+" (maintained for "+a.Owner+")")
+		}
 	case "machine":
 		for _, m := range ListMachineDefs(udb, user) {
 			add(m.Name, m.Name)

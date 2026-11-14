@@ -21,8 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-
-	. "github.com/cmcoffee/gohort/core"
 )
 
 // ensureSectionIDs returns the sections array with every section carrying an
@@ -142,7 +140,7 @@ func sectionArg(args map[string]any) (map[string]any, error) {
 // here, and the update that follows stores them).
 func (t *chatTurn) applySectionEdit(args map[string]any, reason string, mutate func(secs []map[string]any) ([]map[string]any, error)) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
-	spec, ok := LoadAppSpec(t.user, key)
+	spec, _, ok := t.appForTurn(key)
 	if !ok {
 		return "", appNotFound(args, "")
 	}

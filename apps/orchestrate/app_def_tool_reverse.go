@@ -12,7 +12,8 @@ import (
 
 func (t *chatTurn) appDefList() (string, error) {
 	specs := ListAppSpecs(t.user)
-	if len(specs) == 0 {
+	maintained := maintainedApps(t.user)
+	if len(specs) == 0 && len(maintained) == 0 {
 		return "No apps yet. Author one with app_def(action=\"create\", name=..., sections=[...]).", nil
 	}
 	type row struct {
@@ -21,10 +22,16 @@ func (t *chatTurn) appDefList() (string, error) {
 		Desc     string `json:"desc,omitempty"`
 		URL      string `json:"url"`
 		Verified string `json:"verified"`
+		// MaintainedFor names the owner of an app this person maintains:
+		// its sections and wording are theirs to change, nothing else.
+		MaintainedFor string `json:"maintained_for,omitempty"`
 	}
-	out := make([]row, len(specs))
-	for i, s := range specs {
-		out[i] = row{Slug: s.Slug, Name: s.Name, Desc: s.Desc, URL: "/apps/" + s.Slug + "/", Verified: appVerifyWord(s)}
+	out := make([]row, 0, len(specs)+len(maintained))
+	for _, s := range specs {
+		out = append(out, row{Slug: s.Slug, Name: s.Name, Desc: s.Desc, URL: "/apps/" + s.Slug + "/", Verified: appVerifyWord(s)})
+	}
+	for _, s := range maintained {
+		out = append(out, row{Slug: s.Slug, Name: s.Name, Desc: s.Desc, URL: "/apps/" + s.Slug + "/", Verified: appVerifyWord(s), MaintainedFor: s.Owner})
 	}
 	b, _ := json.Marshal(out)
 	return string(b), nil
@@ -32,7 +39,7 @@ func (t *chatTurn) appDefList() (string, error) {
 
 func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
-	spec, ok := LoadAppSpec(t.user, key)
+	spec, _, ok := t.appForTurn(key)
 	if !ok {
 		return "", appNotFound(args, "")
 	}

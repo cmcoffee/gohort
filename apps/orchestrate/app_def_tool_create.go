@@ -57,6 +57,10 @@ type appWrite struct {
 	// prior is the whole app as it stood before an update, for saying what
 	// the save changed (app_change.go).
 	prior AppSpec
+	// maintained marks an update by someone who maintains the app for its
+	// owner: the save keeps only what a maintainer may change
+	// (applyAppMaintainerEdit), and the history names them.
+	maintained bool
 	// promoted is what the bound pipeline puts on a run's sidebar row. Captured
 	// here because this is the only place the DEFINITION is in hand; a meta
 	// field naming something it does not promote renders an empty pill, which
@@ -89,10 +93,11 @@ func (aw *appWrite) load() bool {
 
 	if isUpdate {
 		key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), name))
-		existing, ok := LoadAppSpec(t.user, key)
+		existing, maintained, ok := t.appForTurn(key)
 		if !ok {
 			return aw.exit("", appNotFound(args, "to update"))
 		}
+		aw.maintained = maintained
 		aw.spec = existing
 		aw.prior = existing
 		aw.priorHTML = appSpecHTMLText(existing)
@@ -318,7 +323,7 @@ func (aw *appWrite) readParts() bool {
 			if len(prevFields) == 0 {
 				prevFields = appRecordFields(appSpecSectionsRaw(aw.spec), aw.spec.RecordKey)
 			}
-			if stranded := appStrandedFields(prevFields, nextFields, appStoredRecords(t.user, aw.spec)); len(stranded) > 0 {
+			if stranded := appStrandedFields(prevFields, nextFields, appStoredRecords(aw.spec.Owner, aw.spec)); len(stranded) > 0 {
 				return aw.exit("", errors.New(appStrandedFieldsMessage(stranded, aw.spec.Slug)))
 			}
 		}
@@ -394,6 +399,14 @@ func (aw *appWrite) save() bool {
 	}
 	if msg := t.appDelegationRefusal(aw.spec); msg != "" {
 		return aw.exit("", errors.New(msg))
+	}
+	if aw.maintained {
+		kept, err := applyAppMaintainerEdit(aw.prior, aw.spec)
+		if err != nil {
+			return aw.exit("", err)
+		}
+		aw.spec = kept
+		reason += " by " + t.user
 	}
 	aw.saved = SaveAppSpecAs(aw.spec, reason)
 	return true
@@ -484,7 +497,7 @@ func (aw *appWrite) check() bool {
 		// report about code it already rewrote, and "fixes" a line that no
 		// longer exists. Checking the write's own output cannot go stale.
 		if len(appHTMLSectionScripts(raw)) > 0 {
-			errs, checked := appPageRuntimeErrors(t.user, aw.saved.Slug)
+			errs, checked := appPageRuntimeErrors(aw.saved.Owner, aw.saved.Slug)
 			pageChecked = checked
 			if len(errs) > 0 {
 				t.noteAppStanding(aw.saved.Slug, false, "its page fails in a real browser: "+errs[0])
@@ -518,7 +531,7 @@ func (aw *appWrite) check() bool {
 			contractBroken = true
 			aw.msg += "\n\n" + strings.TrimSpace(lines)
 		}
-		aw.msg += appBuildGaps(t.user, aw.saved, appGapInput{})
+		aw.msg += appBuildGaps(aw.saved.Owner, aw.saved, appGapInput{})
 	}
 	// What to say about verification depends on what this save already did. An
 	// html-section app was just loaded in a real browser above, so telling the

@@ -149,6 +149,13 @@ type AppSpec struct {
 	// name: the owner's call, like a group, with no administrator in it.
 	// Deployment-local, cleared on export.
 	SharedWith []string `json:"shared_with,omitempty"`
+	// Maintainers are the people (usernames) who keep the app working for
+	// its owner: they change its sections and wording through Builder, in
+	// the owner's copy, and every save keeps the version it replaced under
+	// their name. Its scripts, page code, sharing and settings stay the
+	// owner's (docs/design/app-maintainers.md). Naming one also shares the
+	// app with them. Deployment-local, cleared on export.
+	Maintainers []string `json:"maintainers,omitempty"`
 	// DataOwner is whose name a PrivateDB app's database file was made under,
 	// set when the app moves to someone else, so its data stays where it is
 	// rather than the new owner's name pointing at an empty file. Read through
@@ -610,6 +617,7 @@ func appServesDifferently(prior, next AppSpec) bool {
 		s.Name, s.Desc, s.Notes, s.ChangeNote = "", "", "", ""
 		s.Created, s.Updated, s.Verify, s.Schema = "", "", nil, 0
 		s.Shared, s.SharedGroups, s.SharedWith, s.PublicToken, s.Disabled = false, nil, nil, "", false
+		s.Maintainers = nil
 		s.FullWidth, s.Narrow, s.AskDailyUSD, s.AskUserDailyUSD = false, false, 0, 0
 		s.RecordFields, s.Sample = nil, nil
 		b, _ := json.Marshal(s)
@@ -701,4 +709,58 @@ func (s AppSpec) RecordSample(sample []map[string]any) bool {
 	stored.Sample = sample
 	db.Set(AppSpecTable, s.Slug, stored)
 	return true
+}
+
+// MaintainedBy reports whether user is one of the app's maintainers. The
+// owner is not: they own it.
+func (s AppSpec) MaintainedBy(user string) bool {
+	user = strings.TrimSpace(user)
+	if user == "" || strings.EqualFold(user, s.Owner) {
+		return false
+	}
+	for _, m := range s.Maintainers {
+		if strings.EqualFold(strings.TrimSpace(m), user) {
+			return true
+		}
+	}
+	return false
+}
+
+// PageCode collects every string in an app's page and sections that carries
+// HTML or script: what a Card or Frame renders into the viewer's own session.
+// The share review lists it beside the sandboxed scripts, and a maintainer's
+// edit may not change it, since it runs for everyone who opens the app.
+func (s AppSpec) PageCode() []string {
+	var out []string
+	var walk func(any)
+	walk = func(v any) {
+		switch t := v.(type) {
+		case string:
+			low := strings.ToLower(t)
+			if strings.Contains(low, "<script") || strings.Contains(low, "javascript:") ||
+				(strings.Contains(t, "<") && strings.Contains(t, ">") && strings.Contains(low, " on")) ||
+				strings.Contains(low, "<iframe") || strings.Contains(low, "<html") || strings.Contains(low, "<style") {
+				out = append(out, t)
+			}
+		case []any:
+			for _, e := range t {
+				walk(e)
+			}
+		case map[string]any:
+			for k, e := range t {
+				if str, ok := e.(string); ok && (k == "html" || k == "srcdoc" || k == "script" || k == "js") && strings.TrimSpace(str) != "" {
+					out = append(out, str)
+					continue
+				}
+				walk(e)
+			}
+		}
+	}
+	for _, raw := range [][]byte{s.Page, s.Sections} {
+		var v any
+		if len(raw) > 0 && json.Unmarshal(raw, &v) == nil {
+			walk(v)
+		}
+	}
+	return out
 }
