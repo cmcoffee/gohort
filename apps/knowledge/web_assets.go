@@ -383,16 +383,19 @@ const documentsDetailAssets = `<style>
         // down the page, under everything you can do by hand.
         var keeper = $('#docs-keeper');
         if (keeper) {
-          keeper.textContent = c.curator_agent
-            ? 'An agent keeps this collection current. '
-            : 'Filled by hand. An agent can keep it current for you. ';
+          // app-knowledge-curator is curator.go's curatorAgentID.
+          keeper.textContent = c.curator_agent === 'app-knowledge-curator'
+            ? 'Auto-curated. '
+            : c.curator_agent
+              ? 'One of your agents keeps this collection current. '
+              : 'Filled by hand. It can be auto-curated. ';
           var jump = document.createElement('a');
           jump.href = '#';
-          jump.textContent = 'In charge of this collection ↓';
+          jump.textContent = 'Curation ↓';
           jump.addEventListener('click', function(ev) {
             ev.preventDefault();
-            var t = Array.from(document.querySelectorAll('h1,h2,h3,h4,.ui-section-title,[class*=section-title]'))
-              .find(function(e) { return /in charge of this collection/i.test(e.textContent); });
+            var t = Array.from(document.querySelectorAll('.ui-section-h,h1,h2,h3,h4,[class*=section-title]'))
+              .find(function(e) { return /^\s*curation\b/i.test(e.textContent); });
             if (t) t.scrollIntoView({behavior: 'smooth', block: 'start'});
           });
           keeper.appendChild(jump);

@@ -34,7 +34,7 @@ func TestTheDescriptionGetsTheSharedAssistant(t *testing.T) {
 // which sits far down the page under everything done by hand.
 func TestTheHeaderSaysWhoKeepsTheCollection(t *testing.T) {
 	page := documentsDetailBody + documentsDetailAssets
-	for _, want := range []string{`<div id="docs-keeper"`, `c.curator_agent`, `'In charge of this collection ↓'`, `scrollIntoView`} {
+	for _, want := range []string{`<div id="docs-keeper"`, `c.curator_agent`, `'Curation ↓'`, "'" + curatorAgentID + "'", `scrollIntoView`} {
 		if !strings.Contains(page, want) {
 			t.Errorf("the collection page is missing %s", want)
 		}

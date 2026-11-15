@@ -198,34 +198,61 @@ func (T *KnowledgeApp) stewardSection(user, collectionID string) (ui.Section, bo
 	if !ok || c.Owner != user || IsDeploymentScope(c) {
 		return ui.Section{}, false
 	}
-	base := "/orchestrate/api/collections/" + url.PathEscape(collectionID) + "/steward"
+	esc := url.PathEscape(collectionID)
+	base := "/orchestrate/api/collections/" + esc + "/steward"
+	curate := "/orchestrate/api/collections/" + esc + "/curate"
+	// Auto-curated is Knowledge's own curating agent (curator.go), stored as
+	// any curator is. The person's agents follow under their own heading.
+	options := []ui.SelectOption{
+		{Value: "", Label: "By hand", Help: "Only what you add: uploads, pasted text, Auto-fill and research."},
+		{Value: curatorAgentID, Label: "Auto-curated", Help: "Knowledge looks after it: finds material that fits what it is for and adds it."},
+	}
+	for _, o := range AgentNameOptions(user) {
+		if o.Group == "" {
+			o.Group = "By one of my agents"
+		}
+		options = append(options, o)
+	}
 	return ui.Section{
-		Title:    "In charge of this collection",
-		Subtitle: "An agent can look after this collection.",
-		Detail:   "It goes and finds material, adds it, and prunes what no longer belongs. Every other agent reads the collection as usual, unchanged.",
-		Body: ui.FormPanel{
-			Source:  base,
-			PostURL: base,
-			Fields: []ui.FormField{
-				{
-					// A select, although the save accepts any string. The
-					// stored value is an agent ID and the label is its name,
-					// and those are not the same — a free-text box would make
-					// a person type the id they can see the name of. An id
-					// also survives a rename; what it does not survive is the
-					// agent being deleted, and the toolkit's select already
-					// handles a stored value whose option has gone rather than
-					// silently showing the first one.
-					Field: "curator_agent", Type: "select", Label: "Maintained by",
-					Options: append([]ui.SelectOption{{Value: "", Label: "(nobody; this collection is filled by hand)"}},
-						AgentNameOptions(user)...),
-					Help: "That agent may add documents to THIS collection and remove them from it. Then tell it what to fetch in a chat, or give it a schedule.",
-					Detail: "It gets a collection tool for this collection: add a page by its address, a file a tool saved to its workspace (a downloaded PDF), or text; list what is in it; remove a document. It does nothing on its own: ask it in a chat (\"add this month's vendor reports\"), or give it a schedule to keep the collection current.\n\n" +
-						"It cannot touch any other collection you own, and it gets no other new powers: it cannot create or change agents, tools or apps.\n\n" +
-						"Reading is unaffected. Any agent with this collection attached still searches it exactly as before.",
+		Title:    "Curation",
+		Subtitle: "Who keeps this collection current.",
+		Detail:   "A curator goes and finds material that fits what the collection is for, adds it, and proposes removals for you to confirm. Every agent reading the collection reads it as usual, unchanged.",
+		Body: ui.Stack{Children: []ui.Component{
+			ui.FormPanel{
+				Source:     base,
+				PostURL:    base,
+				Invalidate: []string{curate},
+				Fields: []ui.FormField{
+					{
+						// A select, although the save accepts any string. The
+						// stored value is an agent ID and the label is its name,
+						// and those are not the same — a free-text box would make
+						// a person type the id they can see the name of. An id
+						// also survives a rename; what it does not survive is the
+						// agent being deleted, and the toolkit's select already
+						// handles a stored value whose option has gone rather than
+						// silently showing the first one.
+						Field: "curator_agent", Type: "select", Label: "Curated",
+						Options: options,
+						Help:    "Auto-curated, or one of your agents, may add documents to THIS collection. Curate now below runs it.",
+						Detail: "The curator gets a collection tool for this collection: add a page by its address, a file a tool saved to its workspace (a downloaded PDF), or text; list what is in it; remove a document. Curate now asks it to look after the collection; one of your agents can also be asked in a chat (\"add this month's vendor reports\"), or given a schedule.\n\n" +
+							"It cannot touch any other collection you own, and it gets no other new powers: it cannot create or change agents, tools or apps.\n\n" +
+							"Reading is unaffected. Any agent with this collection attached still searches it exactly as before.",
+					},
 				},
 			},
-		},
+			ui.ActionList{
+				Source:         curate,
+				LabelField:     "item",
+				DescField:      "desc",
+				HistoryField:   "history",
+				PostTo:         curate,
+				ButtonText:     "Curate now",
+				ProgressSource: curate + "/progress",
+				CancelTo:       curate + "/stop",
+				EmptyText:      "Curated by hand: nothing runs on its own. Choose Auto-curated, or one of your agents, to have it looked after.",
+			},
+		}},
 	}, true
 }
 

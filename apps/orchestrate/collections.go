@@ -245,6 +245,13 @@ func (T *OrchestrateApp) registerCollectionRoutes() {
 		"GET":  jsonapi.Get(T.DB, T.collectionSteward),
 		"POST": jsonapi.Post(T.DB, T.collectionStewardSave),
 	}.Serve)
+	// Curate now: the curator run on the collection's behalf (collection_curate.go).
+	T.HandleFunc("/api/collections/{id}/curate", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.collectionCurateItems),
+		"POST": jsonapi.Post(T.DB, T.collectionCurateStart),
+	}.Serve)
+	T.HandleFunc("/api/collections/{id}/curate/progress", jsonapi.Get(T.DB, T.collectionCurateProgress))
+	T.HandleFunc("/api/collections/{id}/curate/stop", jsonapi.Post(T.DB, T.collectionCurateStop))
 	T.HandleFunc("/api/collections/{id}/suggestions", jsonapi.Get(T.DB, T.collectionSuggestions))
 	T.HandleFunc("/api/collections/{id}/suggestions/settings", jsonapi.Post(T.DB, T.collectionSuggestionsSettings))
 	T.HandleFunc("/api/collections/{id}/suggestions/dismiss", jsonapi.Post(T.DB, T.collectionSuggestionDismiss))
@@ -320,7 +327,15 @@ func (T *OrchestrateApp) collectionGet(call *jsonapi.Call) (any, error) {
 		return nil, cerr
 	}
 	docs, chunks := collectionStats(VectorDB, c.ID)
+	// Who curates it, for the page header's "Auto-curated" or "Filled by
+	// hand". The owner's alone: the curator is one of their agents, and the
+	// header speaks to them.
+	curator := ""
+	if c.Owner == call.User {
+		curator = c.CuratorAgent
+	}
 	return map[string]any{
+		"curator_agent":        curator,
 		"id":                   c.ID,
 		"owner":                c.Owner,
 		"name":                 c.Name,

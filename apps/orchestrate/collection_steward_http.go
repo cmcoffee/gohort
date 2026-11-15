@@ -72,6 +72,11 @@ func (T *OrchestrateApp) stewardStatusLine(user string, c Collection) string {
 	if !ok {
 		return "In charge: " + name + ", but that is not an agent of yours any more, so nothing is maintaining this. Pick another, or clear it."
 	}
+	// Knowledge's own curating agent has no name on screen: the choice says
+	// what it does, so the line does too.
+	if hiddenAppAgent(a.ID) {
+		return "Auto-curated: it looks for material that fits what this collection is for and adds it, and proposes removals for you to confirm. Curate now runs it."
+	}
 	// The NAME, not the stored id. The id is what survives a rename and is
 	// therefore what gets saved; it is not what the person chose from the menu,
 	// and reading their own choice back in a form they did not use makes a
