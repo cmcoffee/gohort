@@ -12,11 +12,25 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/displayname"
 )
 
 // dashboardGroupMyApps puts "My apps" right after the dashboard's own apps,
 // ahead of agents.
 const dashboardGroupMyApps = 10
+
+// sharerLabel is the person who shared an app, as everyone reads them: their
+// name beside their username, or the username alone (core/displayname).
+func sharerLabel(owner string) string {
+	name := ""
+	if AuthDB != nil {
+		if db := AuthDB(); db != nil {
+			u, _ := AuthGetUser(db, owner)
+			name = u.DisplayName
+		}
+	}
+	return displayname.Shown(name, owner)
+}
 
 // DashboardPinnable offers the viewer's own apps and the apps shared with
 // them, each as a card to their app, under one "My apps" heading: the same
@@ -29,7 +43,7 @@ func (T *CustomApps) DashboardPinnable(r *http.Request) []DashboardCard {
 	}
 	var out []DashboardCard
 	seen := map[string]bool{}
-	add := func(s AppSpec, group string) {
+	add := func(s AppSpec, group, sharedBy string) {
 		seen[s.Slug] = true
 		if s.Disabled {
 			return
@@ -38,6 +52,11 @@ func (T *CustomApps) DashboardPinnable(r *http.Request) []DashboardCard {
 		if r := []rune(desc); len(r) > 140 {
 			desc = string(r[:140]) + "..."
 		}
+		// An app someone else made says so first, as everyone reads them:
+		// beside their own, it would otherwise pass for one of the viewer's.
+		if sharedBy != "" {
+			desc = strings.TrimSpace("Shared by " + sharedBy + ". " + desc)
+		}
 		out = append(out, DashboardCard{Name: s.Name, Desc: desc, Path: "/apps/" + s.Slug, Group: group, GroupOrder: dashboardGroupMyApps})
 	}
 	// By name, where the person has not placed them: the spec store's keys
@@ -45,7 +64,7 @@ func (T *CustomApps) DashboardPinnable(r *http.Request) []DashboardCard {
 	own := listSpecs(user)
 	sort.SliceStable(own, func(i, j int) bool { return own[i].Name < own[j].Name })
 	for _, s := range own {
-		add(s, "My apps")
+		add(s, "My apps", "")
 	}
 	// In slug order: the index is a map, and a card the person never placed
 	// keeps the place it is given here.
@@ -66,7 +85,7 @@ func (T *CustomApps) DashboardPinnable(r *http.Request) []DashboardCard {
 			continue
 		}
 		if s, ok := loadSpec(owner, slug); ok && appReaches(s, user) {
-			add(s, "My apps")
+			add(s, "My apps", sharerLabel(owner))
 		}
 	}
 	return out

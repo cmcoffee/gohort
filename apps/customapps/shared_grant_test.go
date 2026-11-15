@@ -73,3 +73,43 @@ func TestAPerAppGrantOpensThatAppAlone(t *testing.T) {
 		}
 	}
 }
+
+// A shared app's card says who shared it, as everyone reads them: their name
+// beside their username, or the username alone. The viewer's own apps say
+// nothing of the kind.
+func TestASharedAppsCardSaysWhoSharedIt(t *testing.T) {
+	T := sharingTestApp(t)
+	auth := &DBase{Store: kvlite.MemStore()}
+	saved := AuthDB
+	AuthDB = func() Database { return auth }
+	t.Cleanup(func() { AuthDB = saved })
+	for _, u := range []string{"bob", "carol"} {
+		AuthSetUser(auth, u, "pw", false)
+	}
+	AuthSetUserApps(auth, "carol", []string{"/apps"})
+	SaveAppSpec(AppSpec{Slug: "alpha", Name: "Alpha", Desc: "Tracks things.", Owner: "bob", Shared: true})
+	SetSharedOwner(T.DB, sharedAppsIndex, "alpha", "bob", true)
+	SaveAppSpec(AppSpec{Slug: "mine", Name: "Mine", Desc: "Carol's own.", Owner: "carol"})
+	descs := func() map[string]string {
+		r := httptest.NewRequest(http.MethodGet, "/apps/", nil)
+		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(auth, "carol")})
+		out := map[string]string{}
+		for _, c := range T.DashboardPinnable(r) {
+			out[c.Path] = c.Desc
+		}
+		return out
+	}
+	if got := descs()["/apps/alpha"]; got != "Shared by bob. Tracks things." {
+		t.Errorf("without a name: %q", got)
+	}
+	u, _ := AuthGetUser(auth, "bob")
+	u.DisplayName = "Robert"
+	auth.Set(AuthTable, "user:bob", u)
+	got := descs()
+	if got["/apps/alpha"] != "Shared by Robert (bob). Tracks things." {
+		t.Errorf("with a name: %q", got["/apps/alpha"])
+	}
+	if got["/apps/mine"] != "Carol's own." {
+		t.Errorf("the viewer's own app: %q", got["/apps/mine"])
+	}
+}
