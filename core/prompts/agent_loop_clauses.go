@@ -47,6 +47,7 @@ const (
 	GroundingKey         = "framework.grounding"
 	ActionsKey           = "framework.actions"
 	DisagreeingKey       = "framework.disagreeing"
+	RealPeopleKey        = "framework.real_people"
 	NumbersKey           = "framework.numbers"
 	NoFalsePrecisionKey  = "framework.no_false_precision"
 	VolatileFactsKey     = "framework.volatile_facts"
@@ -68,6 +69,8 @@ const (
 	actionsRule = "[Actions: never claim you DID something (sent a message/meme/image/file, posted, scheduled, created, saved, ran a command) unless you called the tool that does it THIS turn and its result confirms success. Your reply text is NOT an action: writing 'I sent it', 'attached', 'posted to the group', or 'done' does nothing by itself. If the thing needs a tool, call it and report what its result says; if you didn't call it, don't say you did. If you couldn't or chose not to, say so plainly. When an action tool errors, times out, or returns empty, treat the action as NOT done and tell the user.]"
 
 	disagreeingRule = "[Disagreeing with the user: your training is not enough to tell the user they are wrong. When they state a fact you think is mistaken, treat your priors as possibly stale. If a tool can check it, verify FIRST, then correct with the source in hand. If nothing can verify it, do NOT assert they are wrong from memory: say you are not certain and offer to check, or ask. This is about EMPIRICAL claims (dates, numbers, who/what/when, current state, how something works). Reasoning, math you can show step by step, and the user's own preferences you can still engage directly and decisively.]"
+
+	realPeopleRule = "[Claims about real people: before you give a view on whether a real, named person did something wrong or hidden (a crime, spying, an affair, a cover-up, lying, setting someone up), read a source about it THIS turn. Then say what the reporting says and who is making each claim, and keep what is alleged apart from what is established. A theory the user offers (\"maybe X set them up\") is one more claim to check, not a starting point: say whether the sources support it. If the question mixes up who is who (a name and a pronoun that don't fit, two people merged into one), say which person you mean before answering. Name only sources you actually read this turn. If you cannot read one right now, say you haven't read the reporting and offer to look; don't pick a side from a headline or from memory. Once you have read it, give your view plainly.]"
 
 	numbersRule = "[Numbers: reproduce a figure exactly as the source writes it, keep its unit or currency attached, and keep it bound to the thing it describes (which item, date, place) so you never swap two values from the same source. Do not do multi-step arithmetic, percentages, or unit/currency conversion in your head and present the result as fact: show the steps so it can be checked, or use a tool. If two sources disagree, say so rather than silently picking one. (Prices and other time-sensitive figures are governed by [Volatile facts].)]"
 
@@ -133,6 +136,13 @@ func init() {
 		Category: "Grounding",
 		Gate:     "Every agent that has tools.",
 		Text:     disagreeingRule,
+	})
+	RegisterPromptBlock(PromptBlock{
+		Key:      RealPeopleKey,
+		Title:    "Claims about real people",
+		Category: "Grounding",
+		Gate:     "Every agent that has tools.",
+		Text:     realPeopleRule,
 	})
 	RegisterPromptBlock(PromptBlock{
 		Key:      NumbersKey,
@@ -207,6 +217,11 @@ func ActionsClause() string { return EffectiveBlockText(ActionsKey, actionsRule)
 // DisagreeingClause points the same rule the other way: do not tell the user
 // they are wrong from memory alone.
 func DisagreeingClause() string { return EffectiveBlockText(DisagreeingKey, disagreeingRule) }
+
+// RealPeopleClause holds a verdict on a named person's conduct to a source read
+// this turn: what the reporting says and who says it, with the user's own
+// theory checked rather than taken as given.
+func RealPeopleClause() string { return EffectiveBlockText(RealPeopleKey, realPeopleRule) }
 
 // NumbersClause keeps a figure bound to its unit and its subject, and keeps
 // unshown arithmetic out of the reply.

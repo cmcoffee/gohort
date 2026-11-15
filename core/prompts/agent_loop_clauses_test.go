@@ -15,6 +15,7 @@ var coreLoopClauses = map[string]func() string{
 	GroundingKey:         GroundingClause,
 	ActionsKey:           ActionsClause,
 	DisagreeingKey:       DisagreeingClause,
+	RealPeopleKey:        RealPeopleClause,
 	NumbersKey:           NumbersClause,
 	NoFalsePrecisionKey:  NoFalsePrecisionClause,
 	SecretsKey:           SecretsClause,

@@ -245,12 +245,17 @@ const sessionNoteLabel = "Agent note from session"
 // / fired on its monitors, without copying the whole cortex thread. Returns ""
 // when the cortex is off, empty, or has no observations. Live-read (kept short);
 // cross-session continuity of FACTS rides the memory layer, not this.
+//
+// A line is a headline (the first line, cut short), so the block says what an
+// agent may say from it alone and that anything more is read from the source.
+// It used to forbid lookups outright, and an agent asked about a news item gave
+// its view of the story from the headline.
 func cortexContextBlock(db Database, agentID string) string {
 	lines := cortexContextLines(db, agentID)
 	if len(lines) == 0 {
 		return ""
 	}
-	return "\n\n## Recent standing activity (your cortex)\n\nBackground awareness: recent events on your channels / monitors. This is PASSIVE context, NOT a to-do list: do NOT launch tool calls, lookups, checks, or actions because of anything here. Use it only to inform your reply IF the user's current message is about it; otherwise ignore it entirely and don't mention it. (A bare greeting is not a request to act on this.) These are notes, NOT run records: they have no run id, so don't call inspect_run on them (use list_runs first for a real id).\n\n" + strings.Join(lines, "\n") + "\n"
+	return "\n\n## Recent standing activity (your cortex)\n\nBackground awareness: recent events on your channels / monitors. This is PASSIVE context, NOT a to-do list: nothing here is a reason to call a tool or take an action on your own. Use it only when the user's current message is about it; otherwise ignore it and don't mention it. (A bare greeting is not a request to act on this.) Each line is only the first line of what came in, not the whole report. You may repeat what a line says, but when the user asks about an item beyond that (details, who, why, or what you make of it), read the source first and answer from it: the report itself (list_runs finds the run that sent it), or a search or fetch for a news item. These are notes, NOT run records: they have no run id, so don't call inspect_run on them (use list_runs first for a real id).\n\n" + strings.Join(lines, "\n") + "\n"
 }
 
 // cortexContextLines is the block's content: one "- producer: first line"

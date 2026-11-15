@@ -1126,6 +1126,13 @@ func (lr *loopRun) setupPrompt() {
 		// not add hedging to the decisive-language posture elsewhere. Written
 		// without em-dashes (house style).
 		lr.addClause(prompts.DisagreeingKey, prompts.DisagreeingClause())
+		// Claims about real people: a verdict on whether a named person did
+		// something wrong or hidden waits for a source read this turn. Seen live:
+		// asked whether someone in the news was really a spy or had been set up,
+		// an agent picked a side from a one-line headline and took the user's
+		// theory as given. Grounding covers specifics, not verdicts, and
+		// Disagreeing covers correcting the user, not going along with them.
+		lr.addClause(prompts.RealPeopleKey, prompts.RealPeopleClause())
 		lr.addClause(prompts.NumbersKey, prompts.NumbersClause())
 		// False-precision prevention — the behavioral half of the same concern
 		// the [Numbers] / [Grounding] blocks address: stop the model inventing a
