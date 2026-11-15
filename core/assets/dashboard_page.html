@@ -194,20 +194,16 @@
   :root[data-style="retro"] .cluster-head > span:first-child::after { content: "├"; color: var(--tone, var(--border, #30363d)); letter-spacing: 0; }
   .cluster-head .band-gear { pointer-events: auto; background: var(--bg-0, #0d1117); }
   .cluster-grid {
-    /* auto-FIT, not auto-fill. The cluster holds a bounded set: the apps that
-       are also hub tabs, four of them, so a reserved empty track reads as a
-       missing app rather than as spare room, and invites filling a hole by
-       moving something in that does not belong. auto-fit collapses the empty
-       track and the members share the width instead.
-       The main grid above keeps auto-fill on purpose: it is an open-ended list
+    /* auto-FIT, not auto-fill, in every section: an empty track reads as a
+       missing card rather than as spare room, so the cards share the width
+       instead. The main grid above keeps auto-fill: it is an open-ended list
        where a short last row is just the end of the list. */
     display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 1rem;
   }
-  /* A kind's band (Apps, My apps, Agents) is an open-ended list, like the
-     main grid used to be, so it keeps auto-FILL: one app in a band stays a
-     card's width instead of stretching across the row. */
-  .cluster.band .cluster-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+  /* A kind's band (Apps, My apps, Agents) lays out as the Orchestrator does:
+     auto-FIT, so its cards share the row and every section reads the same,
+     rather than a short band leaving empty columns beside its cards. */
   #live-panel {
     width: 100%; max-width: var(--dash-w); margin-top: 2rem;
   }
