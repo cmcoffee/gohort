@@ -206,9 +206,9 @@ func TestCurateNowIsTheOwners(t *testing.T) {
 	}
 }
 
-// Auto-curated is an app's hidden agent set as the curator. Run on the
+// Auto-Curation is an app's hidden agent set as the curator. Run on the
 // collection's behalf it is offered the collection tool, as any curator is,
-// and the page reads it as Auto-curated rather than by an agent's name. With
+// and the page reads it as Auto-Curation rather than by an agent's name. With
 // no web search to find material, a start says so instead of running.
 func TestAHiddenAppCuratorKeepsItsCollection(t *testing.T) {
 	df := newDispatchFixture(t, FakeTurn{Content: "done", Repeat: true})
@@ -223,7 +223,7 @@ func TestAHiddenAppCuratorKeepsItsCollection(t *testing.T) {
 		t.Errorf("the hidden curator was not offered its collection tool: %v", df.toolsOffered())
 	}
 	c, _ := loadCollection(df.udb, "u", "col-h")
-	if line := df.app.stewardStatusLine("u", c); !strings.HasPrefix(line, "Auto-curated") {
+	if line := df.app.stewardStatusLine("u", c); !strings.HasPrefix(line, "Auto-Curation") {
 		t.Errorf("status line: %q", line)
 	}
 	if !WebSearchAvailable() {

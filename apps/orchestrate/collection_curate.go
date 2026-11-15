@@ -45,15 +45,19 @@ var curateRunAgent = func(T *OrchestrateApp, ctx context.Context, user, agentID,
 	return T.RunAgentSync(ctx, user, user, agentID, message)
 }
 
-// curateRun is one collection's curation, running or recently ended.
+// curateRun is one run on a collection's behalf, going or recently ended: a
+// curation, a search for sources to suggest, or adding the ones ticked.
 type curateRun struct {
 	cancel  context.CancelFunc
 	done    chan struct{}
 	started time.Time
+	label   string // what it is doing: "Curating"
 	before  int
+	counted bool // docs is kept, and "N documents added" is part of its lines
 
 	mu            sync.Mutex
 	docs          int
+	note          string // the run's own word on how far it has got
 	reply         string
 	err           error
 	ended         time.Time
@@ -84,9 +88,13 @@ func (r *curateRegistry) get(id string) (*curateRun, bool) {
 	return run, true
 }
 
-// start runs work for collection id unless a run for it is already going, in
-// which case that one is returned and started is false.
-func (r *curateRegistry) start(id string, before int, count func() int, work func(ctx context.Context) (string, error)) (run *curateRun, started bool) {
+// start runs work under key unless a run under it is already going, in which
+// case that one is returned and started is false. label says what it is doing.
+// count, when given, is the collection's document count, read every
+// curateCountEvery for "N documents added". work may report how far it has got
+// through note.
+func (r *curateRegistry) start(key, label string, before int, count func() int, work func(ctx context.Context, note func(string)) (string, error)) (run *curateRun, started bool) {
+	id := key
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if cur, ok := r.runs[id]; ok {
@@ -100,7 +108,16 @@ func (r *curateRegistry) start(id string, before int, count func() int, work fun
 	// Not the request's context: the run outlives the click that started it.
 	ctx, cancel := context.WithTimeout(context.Background(), autofillTimeout())
 	every := curateCountEvery
-	run = &curateRun{cancel: cancel, done: make(chan struct{}), started: time.Now(), before: before, docs: before}
+	run = &curateRun{cancel: cancel, done: make(chan struct{}), started: time.Now(), label: label,
+		before: before, docs: before, counted: count != nil}
+	if count == nil {
+		count = func() int { return before }
+	}
+	note := func(line string) {
+		run.mu.Lock()
+		run.note = line
+		run.mu.Unlock()
+	}
 	r.runs[id] = run
 	go func() {
 		defer close(run.done)
@@ -124,7 +141,7 @@ func (r *curateRegistry) start(id string, before int, count func() int, work fun
 				}
 			}
 		}()
-		reply, err := work(ctx)
+		reply, err := work(ctx, note)
 		close(stop)
 		<-counted
 		n := count()
@@ -160,18 +177,28 @@ func (run *curateRun) added() int {
 func (run *curateRun) status() map[string]any {
 	run.mu.Lock()
 	defer run.mu.Unlock()
-	added := fmt.Sprintf("%d document%s added", run.added(), plural(run.added()))
+	added := ""
+	if run.counted {
+		added = fmt.Sprintf(", %d document%s added", run.added(), plural(run.added()))
+	}
 	if run.ended.IsZero() {
-		return map[string]any{"progress": "Curating - " + added + " - " + curateElapsed(time.Since(run.started))}
+		line := run.label
+		if n := strings.TrimSpace(run.note); n != "" {
+			line += " - " + n
+		}
+		if run.counted {
+			line += " - " + strings.TrimPrefix(added, ", ")
+		}
+		return map[string]any{"progress": line + " - " + curateElapsed(time.Since(run.started))}
 	}
 	took := curateElapsed(run.ended.Sub(run.started))
 	switch {
 	case run.stopRequested:
-		return map[string]any{"outcome": "Stopped after " + took + ", " + added + "."}
+		return map[string]any{"outcome": "Stopped after " + took + added + "."}
 	case run.err != nil:
-		return map[string]any{"outcome": "Failed after " + took + ", " + added + ": " + run.err.Error()}
+		return map[string]any{"outcome": "Failed after " + took + added + ": " + run.err.Error()}
 	}
-	out := "Done in " + took + ", " + added + "."
+	out := "Done in " + took + added + "."
 	if reply := curateCut(run.reply, 600); reply != "" {
 		out += " " + reply
 	}
@@ -270,7 +297,7 @@ func (T *OrchestrateApp) collectionCurateStart(call *jsonapi.Call, _ struct{}) (
 	before, _ := collectionStats(VectorDB, c.ID)
 	brief := curateBrief(c, before, autofillMaxDocs())
 	count := func() int { n, _ := collectionStats(VectorDB, c.ID); return n }
-	_, started := curations.start(c.ID, before, count, func(ctx context.Context) (string, error) {
+	_, started := curations.start(c.ID, "Curating", before, count, func(ctx context.Context, _ func(string)) (string, error) {
 		Log("[orchestrate.curate] collection=%s curator=%s user=%s: started", c.ID, a.ID, user)
 		reply, err := curateRunAgent(T, ctx, user, a.ID, brief)
 		if err != nil {

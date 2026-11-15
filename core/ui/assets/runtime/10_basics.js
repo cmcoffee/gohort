@@ -4286,8 +4286,10 @@
           // path asks for, because the user is answering the suggestions in
           // front of them rather than starting from nothing.
           var autoSuggest = !!f.suggest_on_open;
+          // A long field's ✨ opens the workbench rather than re-rolling, so
+          // it is not "again".
           var sBtn = el('button', {type: 'button', class: 'ui-form-suggest-btn'},
-            [autoSuggest ? '✨ Suggest again' : '✨ Suggest']);
+            [autoSuggest && !assistFieldTypes[t] ? '✨ Suggest again' : '✨ Suggest']);
           sBtn.addEventListener('click', function() {
             runFieldSuggest(f, sBtn, autoSuggest);
           });
@@ -4388,7 +4390,12 @@
     }
 
     async function runFieldSuggest(f, btn, auto) {
-      if (assistFieldTypes[f.type || 'text']) {
+      // Not on arrival (auto, and no button pressed): a long field that
+      // drafts itself as its step opens takes the one-shot draft into the
+      // box, as a short field does. Opening the workbench there covered the
+      // step the person had just reached; its ✨ opens the workbench when
+      // they press it.
+      if (assistFieldTypes[f.type || 'text'] && (btn || !auto)) {
         var setter = fieldSetters[f.field];
         if (!setter) { showToast('No setter registered for ' + f.field); return; }
         var cur = current[f.field];
@@ -6380,9 +6387,13 @@
             fetchJSON(purl).then(function(p) {
               if (!p || running) return;
               if (p.progress) {
+                // A run this page joined ends like one it started: what it
+                // changed is refreshed (Invalidate), or a list beside it
+                // would show the state from before the run.
                 showRunning(Date.now(), function(outcome) {
                   if (running) running.stop();
                   status.textContent = outcome;
+                  if (cfg.invalidate) window.uiInvalidate(cfg.invalidate);
                 }, p.progress);
               } else if (p.outcome) {
                 status.textContent = p.outcome;

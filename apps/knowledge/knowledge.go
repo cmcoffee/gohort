@@ -136,6 +136,9 @@ func (T *KnowledgeApp) handleDetailPage(w http.ResponseWriter, r *http.Request) 
 			Body:     ui.Card{HTML: documentsDetailBody + documentsDetailAssets},
 		},
 	}
+	if s, ok := T.suggestedSourcesSection(user, collectionIDFromPath(r.URL.Path)); ok {
+		sections = append(sections, s)
+	}
 	if s, ok := T.stewardSection(user, collectionIDFromPath(r.URL.Path)); ok {
 		sections = append(sections, s)
 	}
@@ -202,18 +205,13 @@ func (T *KnowledgeApp) stewardSection(user, collectionID string) (ui.Section, bo
 	esc := url.PathEscape(collectionID)
 	base := "/orchestrate/api/collections/" + esc + "/steward"
 	curate := "/orchestrate/api/collections/" + esc + "/curate"
-	// Auto-curated is Knowledge's own curating agent (curator.go), stored as
-	// any curator is. The person's agents follow under their own heading.
-	options := []ui.SelectOption{
-		{Value: "", Label: "By hand", Help: "Only what you add: uploads, pasted text, Auto-fill and research."},
-		{Value: curatorAgentID, Label: "Auto-curated", Help: "Knowledge looks after it: finds material that fits what it is for and adds it."},
-	}
-	for _, o := range AgentNameOptions(user) {
-		if o.Group == "" {
-			o.Group = "By one of my agents"
-		}
-		options = append(options, o)
-	}
+	// Hand Curated, Auto-Curation (Knowledge's own curating agent,
+	// curator.go) or Curation by Agent, in the guided setup's words.
+	fields := curationFields(user, "select")
+	fields[0].Help = "Auto-Curation, or one of your agents, may add documents to THIS collection. Curate now below runs it."
+	fields[0].Detail = "The curator gets a collection tool for this collection: add a page by its address, a file a tool saved to its workspace (a downloaded PDF), or text; list what is in it; remove a document. Curate now asks it to look after the collection; one of your agents can also be asked in a chat (\"add this month's vendor reports\"), or given a schedule.\n\n" +
+		"It cannot touch any other collection you own, and it gets no other new powers: it cannot create or change agents, tools or apps.\n\n" +
+		"Reading is unaffected. Any agent with this collection attached still searches it exactly as before."
 	return ui.Section{
 		Title:    "Curation",
 		Subtitle: "Who keeps this collection current.",
@@ -223,24 +221,7 @@ func (T *KnowledgeApp) stewardSection(user, collectionID string) (ui.Section, bo
 				Source:     base,
 				PostURL:    base,
 				Invalidate: []string{curate},
-				Fields: []ui.FormField{
-					{
-						// A select, although the save accepts any string. The
-						// stored value is an agent ID and the label is its name,
-						// and those are not the same — a free-text box would make
-						// a person type the id they can see the name of. An id
-						// also survives a rename; what it does not survive is the
-						// agent being deleted, and the toolkit's select already
-						// handles a stored value whose option has gone rather than
-						// silently showing the first one.
-						Field: "curator_agent", Type: "select", Label: "Curated",
-						Options: options,
-						Help:    "Auto-curated, or one of your agents, may add documents to THIS collection. Curate now below runs it.",
-						Detail: "The curator gets a collection tool for this collection: add a page by its address, a file a tool saved to its workspace (a downloaded PDF), or text; list what is in it; remove a document. Curate now asks it to look after the collection; one of your agents can also be asked in a chat (\"add this month's vendor reports\"), or given a schedule.\n\n" +
-							"It cannot touch any other collection you own, and it gets no other new powers: it cannot create or change agents, tools or apps.\n\n" +
-							"Reading is unaffected. Any agent with this collection attached still searches it exactly as before.",
-					},
-				},
+				Fields:     fields,
 			},
 			ui.ActionList{
 				Source:         curate,
@@ -251,7 +232,7 @@ func (T *KnowledgeApp) stewardSection(user, collectionID string) (ui.Section, bo
 				ButtonText:     "Curate now",
 				ProgressSource: curate + "/progress",
 				CancelTo:       curate + "/stop",
-				EmptyText:      "Curated by hand: nothing runs on its own. Choose Auto-curated, or one of your agents, to have it looked after.",
+				EmptyText:      "Hand Curated: nothing runs on its own. Choose Auto-Curation, or Curation by Agent, to have it looked after.",
 			},
 		}},
 	}, true

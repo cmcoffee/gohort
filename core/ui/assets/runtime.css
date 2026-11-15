@@ -3095,8 +3095,10 @@ input[type="checkbox"].ui-input { width: auto; }
  * read whole, title and a line under it. The chosen card carries the accent;
  * the shuffle button (a preset chip) sits under the grid. */
 .ui-form-cards { display: flex; flex-direction: column; gap: 0.5rem; }
+/* auto-fit, not auto-fill: two cards share the row rather than sitting in
+   three columns with an empty one, which reads as a missing choice. */
 .ui-form-cards-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: 0.5rem;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 0.5rem;
 }
 .ui-form-card {
   display: flex; flex-direction: column; align-items: flex-start; gap: 0.2rem;

@@ -76,7 +76,7 @@ func TestOnlyArticlesNotInYetArePending(t *testing.T) {
 func TestSearchResultsKeepTheirTitles(t *testing.T) {
 	raw := "1. The Standard\n   https://std.example/spec.pdf\n   A snippet.\n\n2. No address here\n   just text\n\n3. Second\n   http://two.example\n"
 	got := parseWebSearchResults(raw)
-	if len(got) != 2 || got[0].Title != "The Standard" || got[0].URL != "https://std.example/spec.pdf" || got[1].URL != "http://two.example" {
+	if len(got) != 2 || got[0].Title != "The Standard" || got[0].URL != "https://std.example/spec.pdf" || got[0].Snippet != "A snippet." || got[1].URL != "http://two.example" || got[1].Snippet != "" {
 		t.Errorf("parsed %+v", got)
 	}
 }

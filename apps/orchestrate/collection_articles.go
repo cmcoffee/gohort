@@ -125,15 +125,18 @@ func articleRows(c Collection) []map[string]string {
 	return rows
 }
 
-// searchCandidate is one web search result: its address and its title.
+// searchCandidate is one web search result: its address, its title, and the
+// line the search showed from it.
 type searchCandidate struct {
-	URL   string
-	Title string
+	URL     string
+	Title   string
+	Snippet string
 }
 
 // parseWebSearchResults reads WebSearch's text: blank-line-separated blocks of
 // "N. Title", the URL, and a snippet. The title is kept with its URL so a
-// fetched document gets a readable name rather than the last part of its path.
+// fetched document gets a readable name rather than the last part of its path;
+// the snippet, so a suggested source can say what it is.
 func parseWebSearchResults(raw string) []searchCandidate {
 	var out []searchCandidate
 	for _, block := range strings.Split(raw, "\n\n") {
@@ -145,10 +148,11 @@ func parseWebSearchResults(raw string) []searchCandidate {
 		if dot := strings.Index(title, ". "); dot >= 0 && dot < 4 {
 			title = strings.TrimSpace(title[dot+2:])
 		}
-		for _, ln := range lines[1:] {
+		for i, ln := range lines[1:] {
 			ln = strings.TrimSpace(ln)
 			if strings.HasPrefix(ln, "http://") || strings.HasPrefix(ln, "https://") {
-				out = append(out, searchCandidate{URL: ln, Title: title})
+				snippet := strings.Join(strings.Fields(strings.Join(lines[i+2:], " ")), " ")
+				out = append(out, searchCandidate{URL: ln, Title: title, Snippet: snippet})
 				break
 			}
 		}

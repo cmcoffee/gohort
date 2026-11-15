@@ -31,9 +31,10 @@ func TestTheCuratingAgentIsHidden(t *testing.T) {
 	}
 }
 
-// The collection page's Curation offers By hand, Auto-curated (the curating
-// agent's id, stored as any curator is) and the person's agents, with Curate
-// now below it, refreshed when the choice is saved.
+// The collection page's Curation offers Auto-Curation and Hand Curated at
+// either end, with Curation by Agent between them only when there are agents
+// to pick, carries the agent Auto-Curation means, and has Curate now below
+// it, refreshed when the choice is saved.
 func TestCurationOffersAutoCuratedAndCurateNow(t *testing.T) {
 	withStores(t)
 	app := &KnowledgeApp{}
@@ -49,11 +50,15 @@ func TestCurationOffersAutoCuratedAndCurateNow(t *testing.T) {
 	if s.Title != "Curation" {
 		t.Errorf("section title %q", s.Title)
 	}
+	if blob, _ := json.Marshal(s.Body); strings.Contains(string(blob), `"label":"Curation by Agent"`) {
+		t.Error("Curation by Agent is offered to someone with no agents to pick")
+	}
 	blob, _ := json.Marshal(s.Body)
 	out := string(blob)
 	for _, want := range []string{
-		`"value":"","label":"By hand"`,
-		`"value":"` + curatorAgentID + `","label":"Auto-curated"`,
+		`"options":[{"value":"auto","label":"Auto-Curation"`,
+		`{"value":"hand","label":"Hand Curated"`,
+		`{"field":"auto_curator","type":"hidden","default":"` + curatorAgentID + `"}`,
 		`"source":"/orchestrate/api/collections/col-1/curate"`,
 		`"progress_source":"/orchestrate/api/collections/col-1/curate/progress"`,
 		`"cancel_to":"/orchestrate/api/collections/col-1/curate/stop"`,

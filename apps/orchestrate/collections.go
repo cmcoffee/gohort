@@ -33,6 +33,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/assist"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/netgate"
@@ -231,6 +232,11 @@ func (T *OrchestrateApp) collectionCreate(c *jsonapi.Call, body struct {
 	}
 	saveCollection(udb, col)
 	attached := g.attach(udb, user, col.ID)
+	// Suggest sources to start with: the search starts now, so the page it
+	// opens on is already finding them.
+	if g.suggest() && WebSearchAvailable() {
+		T.startFindSources(col)
+	}
 	Log("[orchestrate.collections] user=%q created collection %q (id=%s, curator=%q, attached to %d agent(s))", user, name, col.ID, col.CuratorAgent, attached)
 	return col, nil
 }
@@ -261,6 +267,18 @@ func (T *OrchestrateApp) registerCollectionRoutes() {
 	}.Serve)
 	T.HandleFunc("/api/collections/{id}/curate/progress", jsonapi.Get(T.DB, T.collectionCurateProgress))
 	T.HandleFunc("/api/collections/{id}/curate/stop", jsonapi.Post(T.DB, T.collectionCurateStop))
+	// A name and description drafted from what the owner said it is for
+	// (collection_naming.go).
+	T.HandleFunc("/api/collection-suggest", assist.Handler(T.collectionSuggestSpec()))
+	// Suggested sources: found, ticked, fetched (collection_suggest.go).
+	T.HandleFunc("/api/collections/{id}/suggest", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.collectionSuggestItems),
+		"POST": jsonapi.Post(T.DB, T.collectionSuggestStart),
+	}.Serve)
+	T.HandleFunc("/api/collections/{id}/suggest/progress", jsonapi.Get(T.DB, T.collectionSuggestProgress))
+	T.HandleFunc("/api/collections/{id}/suggest/stop", jsonapi.Post(T.DB, T.collectionSuggestStop))
+	T.HandleFunc("/api/collections/{id}/suggest/fields", jsonapi.Get(T.DB, T.collectionSuggestFields))
+	T.HandleFunc("/api/collections/{id}/suggest/add", jsonapi.Post(T.DB, T.collectionSuggestAdd))
 	T.HandleFunc("/api/collections/{id}/suggestions", jsonapi.Get(T.DB, T.collectionSuggestions))
 	T.HandleFunc("/api/collections/{id}/suggestions/settings", jsonapi.Post(T.DB, T.collectionSuggestionsSettings))
 	T.HandleFunc("/api/collections/{id}/suggestions/dismiss", jsonapi.Post(T.DB, T.collectionSuggestionDismiss))

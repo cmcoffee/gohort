@@ -37,10 +37,11 @@ func TestNewCollectionModalMountsTheForm(t *testing.T) {
 }
 
 // The form: a guided setup that creates through the collections API and opens
-// what it made, with only the name required, and its ✨ Draft with AI,
-// starting on the setting up. Filling carries Knowledge's curator for the
-// create endpoint to put in charge when "Look after it for me" is picked. The
-// Agents step is there only when there are agents to pick.
+// what it made, asking what it is for in their own words before naming it,
+// and its ✨ Draft with AI,
+// starting on the setting up. Curation carries Knowledge's curator for the
+// create endpoint to put in charge when Auto-Curation is picked. The Agents
+// step, and Curation by Agent, are there only when there are agents to pick.
 func TestTheNewCollectionFormIsAGuidedSetup(t *testing.T) {
 	b, err := json.Marshal(newCollectionForm(""))
 	if err != nil {
@@ -50,6 +51,8 @@ func TestTheNewCollectionFormIsAGuidedSetup(t *testing.T) {
 		Field    string `json:"field"`
 		Type     string `json:"type"`
 		Required bool   `json:"required"`
+		Suggest  string `json:"suggest_url"`
+		OnOpen   bool   `json:"suggest_on_open"`
 		Default  any    `json:"default"`
 		ShowWhen string `json:"show_when"`
 		Options  []struct {
@@ -82,28 +85,38 @@ func TestTheNewCollectionFormIsAGuidedSetup(t *testing.T) {
 		titles = append(titles, st.Title)
 		for _, fl := range st.Fields {
 			byName[fl.Field] = fl
-			if fl.Required && fl.Field != "name" {
-				t.Errorf("%s is required; only the name should be", fl.Field)
+			if fl.Required && fl.Field != "name" && fl.Field != "about" {
+				t.Errorf("%s is required; only what it is for and the name should be", fl.Field)
 			}
 		}
 	}
-	if strings.Join(titles, ",") != "Purpose,Details,Filling" {
+	if strings.Join(titles, ",") != "Purpose,Name,Details,Curation" {
 		t.Errorf("steps %v; with no agents to pick there is no Agents step", titles)
 	}
-	if !byName["name"].Required {
-		t.Error("the name is not required")
+	if !byName["name"].Required || !byName["about"].Required {
+		t.Error("what it is for and the name should be required")
 	}
-	if c := byName["curator_agent"]; c.Type != "hidden" || c.Default != curatorAgentID {
-		t.Errorf("the curator the Filling step means is not carried: %+v", c)
+	// The name and description arrive drafted from what they said, each with
+	// ✨ to ask again.
+	for _, k := range []string{"name", "description"} {
+		if f := byName[k]; f.Suggest != collectionSuggestURL || !f.OnOpen {
+			t.Errorf("%s is not drafted on arrival: %+v", k, f)
+		}
 	}
-	var fills []string
-	for _, o := range byName["fill"].Options {
-		fills = append(fills, o.Value)
+	if c := byName["auto_curator"]; c.Type != "hidden" || c.Default != curatorAgentID {
+		t.Errorf("the curator Auto-Curation means is not carried: %+v", c)
 	}
-	if strings.Join(fills, ",") != "curated,by_hand" {
-		t.Errorf("Filling offers %v", fills)
+	if g := byName["guided"]; g.Type != "hidden" || g.Default != "true" {
+		t.Errorf("the setup does not mark its answers as guided: %+v", g)
 	}
-	for _, k := range []string{"purpose", "about", "currency", "depth", "mostly", "prefer", "avoid"} {
+	var choices []string
+	for _, o := range byName["curation"].Options {
+		choices = append(choices, o.Value)
+	}
+	if byName["curation"].Type != "cards" || strings.Join(choices, ",") != "auto,hand" {
+		t.Errorf("Curation offers %v as %s; with no agents, Auto-Curation and Hand Curated", choices, byName["curation"].Type)
+	}
+	for _, k := range []string{"about", "currency", "depth", "mostly", "prefer", "avoid"} {
 		if _, ok := byName[k]; !ok {
 			t.Errorf("no %s question", k)
 		}

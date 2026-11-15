@@ -7,10 +7,15 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
+// collectionSuggestURL drafts a name or a description from what the person
+// said the collection is for (orchestrate collection_naming.go).
+const collectionSuggestURL = "/orchestrate/api/collection-suggest"
+
 // newCollectionForm is + New collection: a short guided setup in the page's
 // dialog (docs/design/knowledge-curation.md). It asks what the collection is
-// for, a few optional questions, how it should be filled, and which agents
-// read it. Only the name is required; every other answer can be skipped.
+// for in the person's own words, offers a name and a description drafted from
+// them, then a few optional questions, how it is curated, and which agents
+// read it. What it is for and the name are required; the rest can be skipped.
 //
 // The answers are not stored as answers. The create endpoint
 // (orchestrate collection_guided.go) turns them into what a collection
@@ -27,26 +32,28 @@ func newCollectionForm(user string) ui.FormPanel {
 	steps := []ui.FormStep{
 		{
 			Title: "Purpose",
-			Intro: "What is this collection for? Pick the closest, or say it in your own words.",
+			Intro: "What is this collection for? Say it in your own words: the next step drafts a name and a description from it.",
 			Fields: []ui.FormField{
-				{Field: "purpose", Type: "cards", Label: "It is for",
-					Options: []ui.SelectOption{
-						{Value: "product", Label: "Our product or docs", Help: "Answer questions about a product, a service, or its documentation."},
-						{Value: "topic", Label: "Keeping up with a topic", Help: "News and developments in a field, kept current."},
-						{Value: "reference", Label: "A technology reference", Help: "How something works and how to use it: specs, guides, APIs."},
-						{Value: "own_files", Label: "My own files", Help: "Notes, contracts, reports and exports you upload."},
-					}},
+				{Field: "about", Label: "What it is for", Type: "textarea", Rows: 4, Required: true,
+					Placeholder: "what it should hold, and what you will use it for",
+					Help:        "The products, standards, sites or kinds of document it is about, and how you will use it. Plain words are fine.",
+					Detail:      "Concrete names find better documents than a topic does: naming the official reference, the command guide and the standards body gets more than naming the subject alone."},
+				// Says the answers come from this setup, so the create
+				// endpoint applies its switches (no_suggest) as set.
+				{Field: "guided", Type: "hidden", Default: "true"},
+			},
+		},
+		{
+			Title: "Name",
+			Intro: "A name and a description, drafted from what you said. Pick a name or write your own. Edit the description, or press Suggest to work on it with the assistant.",
+			Fields: []ui.FormField{
 				{Field: "name", Label: "Name", Required: true, Placeholder: "a short name for it",
+					SuggestURL: collectionSuggestURL, SuggestOnOpen: true,
 					Help: "What it is called where you attach it to an agent or skill."},
-				{Field: "about", Label: "In your own words", Type: "textarea", Rows: 3,
-					Placeholder: "what it should hold, and what it is for",
-					Help:        "Optional. Searches for material are written from this, so name the products, standards or sites it is about.",
-					Detail: "Concrete names find better documents than a topic does: naming the official reference, the command guide and the standards body " +
-						"gets more than naming the subject alone. It also tells you, later, what the collection is for. It becomes the collection's description, which you can edit on its page."},
-				// The curator Auto-curated means, carried for the Filling
-				// step: the create endpoint puts it in charge only when that
-				// step's answer is "curated".
-				{Field: "curator_agent", Type: "hidden", Default: curatorAgentID},
+				{Field: "description", Label: "Description", Type: "textarea", Rows: 4,
+					SuggestURL: collectionSuggestURL, SuggestOnOpen: true,
+					Help:   "What it should hold and what it is for. The searches that find its material are written from this.",
+					Detail: "It is kept as the collection's description, which you can edit on its page. A good one names the concrete things the collection is about, so searches for it find the right documents."},
 			},
 		},
 		{
@@ -79,19 +86,17 @@ func newCollectionForm(user string) ui.FormPanel {
 			},
 		},
 		{
-			Title: "Filling",
-			Intro: "How should it be filled? You can change this on the collection's page.",
-			Fields: []ui.FormField{
-				{Field: "fill", Type: "cards", Label: "Filled",
-					Options: []ui.SelectOption{
-						{Value: "curated", Label: "Look after it for me",
-							Help: "Auto-curated: Knowledge finds material that fits what you said and adds it, and proposes removals for you to confirm. Start it with Curate now on the collection's page."},
-						{Value: "by_hand", Label: "I'll fill it myself",
-							Help: "Nothing goes in unless you put it there. On the collection's page: upload your own files (contracts, notes, exports, PDFs), " +
-								"list particular web pages to fetch, auto-fill a quick start from the web, or paste text."},
-					}},
-			},
+			Title:  "Curation",
+			Intro:  "Who keeps it current? You can change this on the collection's page.",
+			Fields: curationFields(user, "cards"),
 		},
+	}
+	if WebSearchAvailable() {
+		last := &steps[len(steps)-1]
+		// Stored negative (no_suggest) and shown inverted, so the switch
+		// starts on: a form's defaults seed only its hidden fields.
+		last.Fields = append(last.Fields, ui.FormField{Field: "no_suggest", Type: "toggle", Invert: true, Label: "Suggest sources to start with",
+			Help: "Knowledge searches from what you said and lists what it finds on the collection's page, each with its site and a line from it. You tick what goes in."})
 	}
 	// Which agents read it, when there are agents to choose from.
 	if agents := AgentNameOptions(user); len(agents) > 0 {

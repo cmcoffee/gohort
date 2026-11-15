@@ -19,9 +19,9 @@ import (
 
 // guidedCollection is the guided setup's answers, every one optional.
 type guidedCollection struct {
-	// Purpose is what it is for: product, topic, reference or own_files.
-	Purpose string `json:"purpose"`
-	// About is the person's own words for it.
+	// About is the person's own words for what it is for. The description,
+	// drafted from it and edited, is what is kept; About stands in when
+	// there is none.
 	About string `json:"about"`
 	// Currency is how current it has to be: current, recent or any.
 	Currency string `json:"currency"`
@@ -32,19 +32,19 @@ type guidedCollection struct {
 	// Prefer and Avoid are sources to favour and to leave out.
 	Prefer json.RawMessage `json:"prefer"`
 	Avoid  json.RawMessage `json:"avoid"`
-	// Fill is how it is filled: "curated" sets CuratorAgent as its curator,
-	// anything else leaves it filled by hand.
-	Fill         string `json:"fill"`
+	// Curation is how it is kept: hand, auto or agent (chooseCurator).
+	// AutoCurator is the agent Auto-Curation means, CuratorAgent the
+	// person's pick for Curation by Agent.
+	Curation     string `json:"curation"`
 	CuratorAgent string `json:"curator_agent"`
+	AutoCurator  string `json:"auto_curator"`
+	// Guided marks a request from the guided setup, whose switches apply.
+	Guided json.RawMessage `json:"guided"`
+	// NoSuggest turns off the search for sources to tick that the guided
+	// setup starts as it creates. Negative so the switch starts on.
+	NoSuggest json.RawMessage `json:"no_suggest"`
 	// AttachTo is the person's agents that should read it.
 	AttachTo json.RawMessage `json:"attach_to"`
-}
-
-var guidedPurposes = map[string]string{
-	"product":   "Answers questions about a product and its documentation.",
-	"topic":     "Keeps up with a topic as it develops.",
-	"reference": "A reference for a technology: how it works and how to use it.",
-	"own_files": "The owner's own files: notes, contracts, reports.",
 }
 
 var guidedCurrency = map[string]string{
@@ -66,23 +66,17 @@ var guidedMostly = map[string]string{
 // guidedAnswered reports whether any answer beyond a name and a description
 // was given, so the plain form's create is left exactly as it was.
 func (g guidedCollection) guidedAnswered() bool {
-	return g.Purpose != "" || g.About != "" || g.Currency != "" || g.Depth != "" || g.Mostly != "" ||
-		len(decodeWizardPicks(g.Prefer)) > 0 || len(decodeWizardPicks(g.Avoid)) > 0 || g.Fill != ""
+	return jsonTrue(g.Guided) || g.About != "" || g.Currency != "" || g.Depth != "" || g.Mostly != "" ||
+		len(decodeWizardPicks(g.Prefer)) > 0 || len(decodeWizardPicks(g.Avoid)) > 0 || g.Curation != ""
 }
 
-// description is the collection's description from the answers: their own
-// words first when they gave any, then what each answer says.
+// description is the collection's description from the answers: the
+// description they settled on (drafted from their words), or their words
+// when they settled on none, then a line for each answer.
 func (g guidedCollection) description(given string) string {
 	var parts []string
-	for _, s := range []string{strings.TrimSpace(given), strings.TrimSpace(g.About)} {
-		if s != "" {
-			parts = append(parts, s)
-		}
-	}
-	// What it is for, after their own words when they gave any: theirs are
-	// the more specific.
-	if p := guidedPurposes[g.Purpose]; p != "" {
-		parts = append(parts, p)
+	if base := chFirst(strings.TrimSpace(given), strings.TrimSpace(g.About)); base != "" {
+		parts = append(parts, base)
 	}
 	if s := guidedCurrency[g.Currency]; s != "" {
 		parts = append(parts, s)
@@ -113,17 +107,30 @@ func (g guidedCollection) filterRules() string {
 	return strings.Join(rules, "\n")
 }
 
-// curator is the agent to put in charge, or "" for by hand. Only an agent
-// that resolves for this person: at creation nothing is stored that the
-// collection page would then report as missing.
+// curator is the agent to put in charge, or "" for hand curated. A choice
+// that does not resolve leaves it hand curated: at creation nothing is stored
+// that the collection page would then report as missing.
 func (g guidedCollection) curator(udb Database, user string) string {
-	if g.Fill != "curated" || strings.TrimSpace(g.CuratorAgent) == "" {
+	if g.Curation == "" {
 		return ""
 	}
-	if a, ok := findAgentByNameOrID(udb, user, strings.TrimSpace(g.CuratorAgent)); ok && a.ID != "" {
-		return a.ID
+	curator, _, err := chooseCurator(udb, user, g.Curation, g.CuratorAgent, g.AutoCurator)
+	if err != nil {
+		return ""
 	}
-	return ""
+	return curator
+}
+
+// suggest reports whether to start a search for sources: for the guided
+// setup, unless its switch was turned off. The plain form never starts one.
+func (g guidedCollection) suggest() bool {
+	return jsonTrue(g.Guided) && !jsonTrue(g.NoSuggest)
+}
+
+// jsonTrue reads a switch sent as true, or as "true" by a client that
+// stringified it.
+func jsonTrue(raw json.RawMessage) bool {
+	return strings.Trim(strings.TrimSpace(string(raw)), `"`) == "true"
 }
 
 // attach adds the collection to each of the person's own agents named in
