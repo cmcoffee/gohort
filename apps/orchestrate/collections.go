@@ -275,6 +275,19 @@ func (T *OrchestrateApp) registerCollectionRoutes() {
 	// A name and description drafted from what the owner said it is for
 	// (collection_naming.go).
 	T.HandleFunc("/api/collection-suggest", assist.Handler(T.collectionSuggestSpec()))
+	// A curated collection refreshed on a schedule (collection_refresh.go).
+	RegisterScheduleHandler(collectionRefreshKind, T.handleCollectionRefresh)
+	RegisterTaskDescriber(collectionRefreshKind, func(raw json.RawMessage) string {
+		var p refreshTask
+		if json.Unmarshal(raw, &p) != nil {
+			return ""
+		}
+		name := p.Collection
+		if c, ok := loadCollection(UserDB(T.DB, p.Owner), p.Owner, p.Collection); ok && c.Name != "" {
+			name = c.Name
+		}
+		return fmt.Sprintf("collection %q refresh every %s (%s)", name, p.Every, p.Owner)
+	})
 	// Suggested sources: found, ticked, fetched (collection_suggest.go).
 	T.HandleFunc("/api/collections/{id}/suggest", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.collectionSuggestItems),

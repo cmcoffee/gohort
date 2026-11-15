@@ -24,9 +24,14 @@ func (T *OrchestrateApp) collectionSteward(call *jsonapi.Call) (any, error) {
 	if mode == curationAgent {
 		agent = c.CuratorAgent
 	}
+	refresh := "never"
+	if p, _, _, ok := refreshScheduled(c.Owner, c.ID); ok {
+		refresh = p.Every
+	}
 	return map[string]any{
 		"curation":      mode,
 		"curator_agent": agent,
+		"refresh":       refresh,
 		"status":        T.stewardStatusLine(call.User, c),
 	}, nil
 }
@@ -86,6 +91,9 @@ func (T *OrchestrateApp) collectionStewardSave(call *jsonapi.Call, body struct {
 	Curation     string `json:"curation"`
 	CuratorAgent string `json:"curator_agent"`
 	AutoCurator  string `json:"auto_curator"`
+	// Refresh is how often the curator refreshes it: week, month or never
+	// (collection_refresh.go). Absent leaves the schedule as it is.
+	Refresh string `json:"refresh"`
 }) (any, error) {
 	c, err := T.collectionAt(call, "steward")
 	if err != nil {
@@ -100,6 +108,9 @@ func (T *OrchestrateApp) collectionStewardSave(call *jsonapi.Call, body struct {
 		if change {
 			c.CuratorAgent = curator
 			saveCollection(UserDB(T.DB, user), c)
+		}
+		if err := T.keepRefresh(c, body.Refresh); err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
 		}
 		return map[string]any{"ok": true}, nil
 	}
@@ -119,7 +130,22 @@ func (T *OrchestrateApp) collectionStewardSave(call *jsonapi.Call, body struct {
 		}
 	}
 	saveCollection(UserDB(T.DB, user), c)
+	if err := T.keepRefresh(c, body.Refresh); err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
 	return map[string]any{"ok": true}, nil
+}
+
+// keepRefresh brings the collection's refresh schedule in line with a save:
+// none once nobody curates it, else the interval sent, when one was.
+func (T *OrchestrateApp) keepRefresh(c Collection, every string) error {
+	if strings.TrimSpace(c.CuratorAgent) == "" {
+		return setRefresh(c.Owner, c.ID, "never")
+	}
+	if strings.TrimSpace(every) == "" {
+		return nil
+	}
+	return setRefresh(c.Owner, c.ID, every)
 }
 
 // stewardStatusLine names who is in charge, and says so loudest when the answer

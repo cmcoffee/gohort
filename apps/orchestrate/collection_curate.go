@@ -272,7 +272,7 @@ func (T *OrchestrateApp) collectionCurateItems(call *jsonapi.Call) (any, error) 
 	return []map[string]any{{
 		"item":    "Curate now",
 		"desc":    desc,
-		"history": fmt.Sprintf("Adds up to %d documents a run, within %s.", autofillMaxDocs(), curateLimit(autofillTimeout())),
+		"history": strings.TrimSpace(fmt.Sprintf("Adds up to %d documents a run, within %s. ", autofillMaxDocs(), curateLimit(autofillTimeout())) + refreshLine(c.Owner, c.ID)),
 	}}, nil
 }
 
@@ -282,23 +282,37 @@ func (T *OrchestrateApp) collectionCurateStart(call *jsonapi.Call, _ struct{}) (
 	if err != nil {
 		return nil, err
 	}
+	_, started, err := T.startCuration(c, call.User, "Curating", "")
+	if err != nil {
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	if !started {
+		return map[string]any{"running": true, "message": "Already curating this collection"}, nil
+	}
+	return map[string]any{"running": true, "message": "Curating " + c.Name}, nil
+}
+
+// startCuration runs the collection's curator for user, under label, with
+// lead before the brief: Curate now's run and a scheduled refresh's. started
+// is false when a curation is already running (the run returned is that one);
+// an error says why it cannot run at all.
+func (T *OrchestrateApp) startCuration(c Collection, user, label, lead string) (run *curateRun, started bool, err error) {
 	curator := strings.TrimSpace(c.CuratorAgent)
 	if curator == "" {
-		return nil, jsonapi.BadRequest("nobody curates this collection: choose Auto-curated or one of your agents under Curation first")
+		return nil, false, fmt.Errorf("nobody curates this collection: choose Auto-Curation or Curation by Agent under Curation first")
 	}
-	user := call.User
 	a, ok := findAgentByNameOrID(UserDB(T.DB, user), user, curator)
 	if !ok {
-		return nil, jsonapi.BadRequest("the curator chosen for this collection is not an agent of yours any more: choose another under Curation")
+		return nil, false, fmt.Errorf("the curator chosen for this collection is not an agent of yours any more: choose another under Curation")
 	}
 	if hiddenAppAgent(a.ID) && !WebSearchAvailable() {
-		return nil, jsonapi.BadRequest("web search is not configured for this deployment, and auto-curation finds material with it")
+		return nil, false, fmt.Errorf("web search is not configured for this deployment, and Auto-Curation finds material with it")
 	}
 	before, _ := collectionStats(VectorDB, c.ID)
-	brief := curateBrief(c, before, autofillMaxDocs())
+	brief := lead + curateBrief(c, before, autofillMaxDocs())
 	count := func() int { n, _ := collectionStats(VectorDB, c.ID); return n }
-	_, started := curations.start(c.ID, "Curating", before, count, func(ctx context.Context, _ func(string)) (string, error) {
-		Log("[orchestrate.curate] collection=%s curator=%s user=%s: started", c.ID, a.ID, user)
+	run, started = curations.start(c.ID, label, before, count, func(ctx context.Context, _ func(string)) (string, error) {
+		Log("[orchestrate.curate] collection=%s curator=%s user=%s: %s", c.ID, a.ID, user, strings.ToLower(label))
 		reply, err := curateRunAgent(T, ctx, user, a.ID, brief)
 		if err != nil {
 			Log("[orchestrate.curate] collection=%s: ended: %v", c.ID, err)
@@ -307,10 +321,7 @@ func (T *OrchestrateApp) collectionCurateStart(call *jsonapi.Call, _ struct{}) (
 		}
 		return reply, err
 	})
-	if !started {
-		return map[string]any{"running": true, "message": "Already curating this collection"}, nil
-	}
-	return map[string]any{"running": true, "message": "Curating " + c.Name}, nil
+	return run, started, nil
 }
 
 // collectionCurateProgress is the run's progress or outcome; {} with neither

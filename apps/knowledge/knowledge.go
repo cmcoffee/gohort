@@ -215,6 +215,15 @@ func (T *KnowledgeApp) stewardSection(user, collectionID string) (ui.Section, bo
 	fields[0].Detail = "The curator gets a collection tool for this collection: add a page by its address, a file a tool saved to its workspace (a downloaded PDF), or text; list what is in it; remove a document. Curate now asks it to look after the collection; one of your agents can also be asked in a chat (\"add this month's vendor reports\"), or given a schedule.\n\n" +
 		"It cannot touch any other collection you own, and it gets no other new powers: it cannot create or change agents, tools or apps.\n\n" +
 		"Reading is unaffected. Any agent with this collection attached still searches it exactly as before."
+	// How often the curator refreshes it, on the scheduler: when there is a
+	// curator to run.
+	fields = append(fields, ui.FormField{Field: "refresh", Type: "select", Label: "Refresh", ShowWhen: "curation:auto|agent",
+		Options: []ui.SelectOption{
+			{Value: "never", Label: "Never", Help: "It is curated when you press Curate now."},
+			{Value: "week", Label: "Every week", Help: "The curator looks for what is new each week, within the same limits as Curate now."},
+			{Value: "month", Label: "Every month", Help: "The curator looks for what is new each month, within the same limits as Curate now."},
+		},
+		Help: "The curator looks for what is new since the last refresh and adds what fits. The row below says when the next is due and what the last one did."})
 	return ui.Section{
 		Title:    "Curation",
 		Subtitle: "Who keeps this collection current.",

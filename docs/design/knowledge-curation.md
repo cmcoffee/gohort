@@ -1,6 +1,6 @@
 # Knowledge: a guided start, and auto-curation
 
-Status: steps 1 to 4 built (2026-11-14); step 5 proposed.
+Status: built (2026-11-14), steps 1 to 5.
 
 ## Why
 
@@ -129,13 +129,25 @@ people (`collection_fill.go`):
   may make are refused; the count is held to the cap.
 - A plan is kept in memory for a day, not on the collection.
 
-## Still to build
+## Refresh on a schedule (built)
 
-5. **Refresh on a schedule** for an auto-curated collection: weekly, monthly
-   or never, set on the collection page, on gohort's scheduler. The curating
-   agent looks for what is new against the description, adds what fits, and
-   leaves a note of what it did. The page says when the next refresh is due.
-   Within Auto-fill's caps.
+On the collection page's Curation, with Auto-Curation or Curation by Agent:
+**Refresh** Never (the default), Every week, or Every month
+(`collection_refresh.go`).
+
+- The schedule is a task on gohort's scheduler, not a field of the
+  collection: one per refreshed collection, holding the collection, how
+  often, and what the last refresh did. Never is no task.
+- Each firing schedules the next before it runs, so a restart mid-run does
+  not end the chain; runs the curator as Curate now does, told it is a
+  refresh and to look first for what is new since the last one; and writes
+  what it did onto the next task.
+- The Curate now row says when the next is due and what the last one did:
+  "Refreshes every week: next on Sat 21 Nov. Last on Sat 14 Nov: ...".
+- Choosing Hand Curated ends it; a collection gone or hand curated also ends
+  the chain at its next firing. Saving the form at the same interval keeps
+  the date rather than pushing it back.
+- Within Curate now's limits: Auto-fill's document and time caps.
 
 Progress, cost and caps hold throughout: anything that runs shows it is
 alive and how far along, with a Stop; a plan shows its size before it runs;
@@ -146,7 +158,8 @@ the caps are the "Ingest & autofill" tunables an administrator sets.
 A collection's curator is the field it already has; Auto-Curation is a new
 value in it, and a collection set to one of the person's agents, or to
 nobody, reads and works as before. The guided setup writes a collection the
-same shape the plain form does, and suggested sources are not stored.
+same shape the plain form does, suggested sources and plans are not stored,
+and a refresh schedule is a scheduler task.
 
 ## Decided
 
