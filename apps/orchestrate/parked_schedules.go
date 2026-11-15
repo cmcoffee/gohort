@@ -407,16 +407,28 @@ const agentDeleteAskJS = `<script>
             },
             actions: [
               {label: 'Cancel', onClick: function(m) { m.close(); }},
-              {label: 'Delete agent', primary: true, variant: 'danger', onClick: function(m) {
+              {label: 'Delete agent', primary: true, variant: 'danger', onClick: function(m, btn) {
+                // A delete can take seconds (it clears the agent's
+                // knowledge from the search index). Busy from the first
+                // press, so a second press does not send a second delete,
+                // which found the agent already gone and said "not found".
+                if (m.deleting) return;
+                m.deleting = true;
+                var busy = (btn && window.uiBusyButton) ? window.uiBusyButton(btn) : null;
                 var body = m.body || document.querySelector('.ui-modal-body');
                 var del = body && body.dataset.schedules === 'delete';
                 fetch(api + (del ? '?schedules=delete' : ''), {method: 'DELETE', credentials: 'same-origin'})
                   .then(function(r) {
                     if (!r.ok && r.status !== 204) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+                    if (busy) busy.stop();
                     m.close();
                     if (done) done();
                   })
-                  .catch(function(e) { window.uiAlert('Not deleted: ' + e.message); });
+                  .catch(function(e) {
+                    m.deleting = false;
+                    if (busy) busy.stop();
+                    window.uiAlert('Not deleted: ' + e.message);
+                  });
               }}
             ]
           });

@@ -2321,6 +2321,10 @@
       btn.disabled = false;
     }};
   }
+  // For an app's own script, whose buttons wait on requests too: the same
+  // spinner, and the same disabling that stops a second click sending the
+  // request twice while the first is still working.
+  window.uiBusyButton = busyButton;
 
   // parseRules splits a free-form rules string into an array of
   // individual rule strings. Splits on newlines, strips common bullet

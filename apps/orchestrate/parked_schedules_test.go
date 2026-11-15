@@ -132,7 +132,8 @@ func TestDeleteAgentSchedules(t *testing.T) {
 }
 
 // The delete confirmation, driven: it names the schedules, keeps them by
-// default, and sends schedules=delete only when that is chosen.
+// default, sends schedules=delete only when that is chosen, and sends one
+// delete however many times it is pressed while working.
 func TestAgentDeleteAskOffersToKeepSchedules(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node not installed")
@@ -170,10 +171,15 @@ setTimeout(function() {
   if (body.dataset.schedules !== 'keep') fail('keeping them is not the default');
   var m = {body: body, close: function() {}};
   body.dataset.schedules = 'delete';
+  // Pressed twice before the first delete answers: one delete goes, not a
+  // second that would find the agent already gone.
+  opened.actions[1].onClick(m);
   opened.actions[1].onClick(m);
   setTimeout(function() {
     var last = fetched[fetched.length - 1];
     if (last !== 'DELETE ../api/agents/a1?schedules=delete') fail('delete sent: ' + last);
+    var deletes = fetched.filter(function(f) { return f.indexOf('DELETE ') === 0; }).length;
+    if (deletes !== 1) fail(deletes + ' deletes sent for two presses');
     if (!done) fail('the page did not move on after the delete');
     console.log('OK');
   }, 5);
