@@ -145,3 +145,35 @@ func TestAnAgentSharedWithYouIsOnYourKeyWhileTheShareStands(t *testing.T) {
 		t.Error("after unsharing, the recipient's key still reaches it")
 	}
 }
+
+// A key offers the person's own agents to tick, and not what is reached
+// through something else: a sub-agent through its parent, an app's agent
+// through its app.
+func TestAKeyOffersOnlyAgentsReachedOnTheirOwn(t *testing.T) {
+	app := pipelineArtifactApp(t)
+	saved := orchRef
+	t.Cleanup(func() { orchRefMu.Lock(); orchRef = saved; orchRefMu.Unlock() })
+	orchRefMu.Lock()
+	orchRef = nil
+	orchRefMu.Unlock()
+	udb := UserDB(app.DB, "alice")
+	parent, err := saveAgent(udb, AgentRecord{Owner: "alice", Name: "Scout", OrchestratorPrompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub, _ := saveAgent(udb, AgentRecord{Owner: "alice", Name: "Helper", OrchestratorPrompt: "p", OwnedBy: parent.ID})
+	appOwned, _ := saveAgent(udb, AgentRecord{Owner: "alice", Name: "Tracker brain", OrchestratorPrompt: "p", OwningApp: "/apps/tracker"})
+	offered := map[string]bool{}
+	for _, tg := range externalTargetsFor(app.DB, "alice") {
+		offered[tg.Value] = true
+	}
+	if !offered["agent:"+parent.ID] {
+		t.Error("the person's own agent is not offered")
+	}
+	if offered["agent:"+sub.ID] {
+		t.Error("a sub-agent is offered on its own")
+	}
+	if offered["agent:"+appOwned.ID] {
+		t.Error("an app's agent is offered on its own")
+	}
+}

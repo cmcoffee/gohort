@@ -22,6 +22,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appagents"
+	"github.com/cmcoffee/gohort/core/displayname"
 )
 
 // reachableThrough answers "may this key (/v1, MCP) see and resolve this agent
@@ -298,7 +299,11 @@ func externalTargetsFor(db Database, user string) []ExternalTarget {
 	// goes, so a key can always be given it; it is listed first.
 	var main []ExternalTarget
 	for _, a := range listAgents(UserDB(db, user), user) {
-		if isAppAgent(a.ID) {
+		// Nor what is reached through something else: a sub-agent through
+		// its parent, an app's agent through its app. A key that already
+		// lists one still reaches it (reachableThrough), and list_agents
+		// still shows it there; it is only no longer offered to tick.
+		if isAppAgent(a.ID) || strings.TrimSpace(a.OwnedBy) != "" || strings.TrimSpace(a.OwningApp) != "" {
 			continue
 		}
 		if a.ID == defaultConsoleAgent {
@@ -316,7 +321,7 @@ func externalTargetsFor(db Database, user string) []ExternalTarget {
 	// consent, and a key that lists one reaches it while the share stands.
 	for _, a := range SharedAgentsFor(db, user) {
 		if a.Owner != user {
-			addAgent(a.ID, a.Name, "shared by "+a.Owner)
+			addAgent(a.ID, a.Name, "shared by "+displayname.Shown(OwnDisplayName(a.Owner), a.Owner))
 		}
 	}
 	// Channels the user's agents serve. orchRef is the running app singleton
