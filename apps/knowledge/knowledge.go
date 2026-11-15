@@ -145,6 +145,9 @@ func (T *KnowledgeApp) handleDetailPage(w http.ResponseWriter, r *http.Request) 
 	if s, ok := T.stewardSection(user, collectionIDFromPath(r.URL.Path)); ok {
 		sections = append(sections, s)
 	}
+	if s, ok := T.heldSection(user, collectionIDFromPath(r.URL.Path)); ok {
+		sections = append(sections, s)
+	}
 	if s, ok := T.suggestionsSection(user, collectionIDFromPath(r.URL.Path)); ok {
 		sections = append(sections, s)
 	}

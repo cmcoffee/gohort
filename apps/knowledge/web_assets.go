@@ -1062,6 +1062,7 @@ const documentsDetailAssets = `<style>
     }).then(function(out) {
       st.style.color = 'var(--accent,#56d364)';
       var parts = ['Added ' + (out.added || 0)];
+      if (out.held) parts.push(out.held + ' held for you below');
       if (out.failed) parts.push((out.failed || 0) + ' failed');
       st.textContent = parts.join(' - ');
       loadSources(); loadDetail();

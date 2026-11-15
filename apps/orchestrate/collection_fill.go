@@ -112,10 +112,18 @@ func (T *OrchestrateApp) runPlan(ctx context.Context, udb Database, c Collection
 		return "", err
 	}
 	Log("[orchestrate.fill] collection=%s searches=%d added=%d failed=%d (max=%d)", c.ID, len(p.Searches), pass.added, pass.failed, p.Documents)
-	if pass.failed > 0 {
-		return fmt.Sprintf("%d page%s could not be used.", pass.failed, plural(pass.failed)), nil
+	var said []string
+	if pass.held > 0 {
+		verb := "are"
+		if pass.held == 1 {
+			verb = "is"
+		}
+		said = append(said, fmt.Sprintf("%d page%s contradicted what the collection holds and %s held for you below.", pass.held, plural(pass.held), verb))
 	}
-	return "", nil
+	if pass.failed > 0 {
+		said = append(said, fmt.Sprintf("%d page%s could not be used.", pass.failed, plural(pass.failed)))
+	}
+	return strings.Join(said, " "), nil
 }
 
 // fillRunning reports whether a draft or a run is going for the collection.

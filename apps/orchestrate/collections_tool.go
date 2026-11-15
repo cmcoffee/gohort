@@ -355,42 +355,7 @@ func collectionsListTool() ChatTool {
 		Required: []string{"id", "url"},
 		Caps:     []Capability{CapWrite, CapNetwork},
 		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
-			if sess == nil || sess.DB == nil || sess.Username == "" {
-				return "", errors.New("collections: requires authenticated session")
-			}
-			id := strings.TrimSpace(stringArg(args, "id"))
-			url := strings.TrimSpace(stringArg(args, "url"))
-			if id == "" || url == "" {
-				return "", errors.New("id and url are required for action=add_url")
-			}
-			c, ok := loadCollection(sess.DB, sess.Username, id)
-			if !ok {
-				return "", fmt.Errorf("collection %q not found", id)
-			}
-			if why := collectionWriteRefusal(c, sess.Username, "autofill", http.MethodPost, UserIsAdmin(sess.Username)); why != "" {
-				return "", errors.New(why)
-			}
-			norm := normalizeIngestURL(url)
-			for _, u := range c.IngestedURLs {
-				if normalizeIngestURL(u) == norm {
-					return fmt.Sprintf("Already ingested: %s (nothing to do).", url), nil
-				}
-			}
-			// Browser fetch can run 5–20s; give the headless fallback
-			// room beyond the static-fetch budget.
-			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-			defer cancel()
-			name, text, _, _, gerr := fetchAndExtractForIngest(ctx, url)
-			if gerr != nil {
-				return "", gerr
-			}
-			reportID := fmt.Sprintf("manual-%s-%d", c.ID, time.Now().UnixNano())
-			IngestDocument(ctx, VectorDB, collectionSource(c.ID), reportID, name, "## "+name+"\n\n"+text)
-			chunks := countReportChunks(VectorDB, reportID)
-			c.IngestedURLs = append(c.IngestedURLs, url)
-			saveCollection(sess.DB, c)
-			Log("[orchestrate.collections] user=%q ingested %q into collection %q (%d chunks)", sess.Username, url, c.ID, chunks)
-			return fmt.Sprintf("Ingested %q (%d chunks) into the collection.", name, chunks), nil
+			return addURLToCollection(args, sess, nil)
 		},
 	})
 
@@ -448,6 +413,62 @@ func collectionsListTool() ChatTool {
 }
 
 // fileResult is what add_file reports back.
+// pageCheck is the collection check as add_url runs it (collection_vet.go):
+// given the page it fetched, a line to add to the result, and whether the
+// page goes in. nil is no check: Builder's adds, made at the user's word.
+type pageCheck func(ctx context.Context, c Collection, cand vetCandidate) (note string, add bool)
+
+// addURLToCollection is add_url: fetch one page and ingest it, after check
+// when there is one.
+func addURLToCollection(args map[string]any, sess *ToolSession, check pageCheck) (string, error) {
+	if sess == nil || sess.DB == nil || sess.Username == "" {
+		return "", errors.New("collections: requires authenticated session")
+	}
+	id := strings.TrimSpace(stringArg(args, "id"))
+	url := strings.TrimSpace(stringArg(args, "url"))
+	if id == "" || url == "" {
+		return "", errors.New("id and url are required for action=add_url")
+	}
+	c, ok := loadCollection(sess.DB, sess.Username, id)
+	if !ok {
+		return "", fmt.Errorf("collection %q not found", id)
+	}
+	if why := collectionWriteRefusal(c, sess.Username, "autofill", http.MethodPost, UserIsAdmin(sess.Username)); why != "" {
+		return "", errors.New(why)
+	}
+	norm := normalizeIngestURL(url)
+	for _, u := range c.IngestedURLs {
+		if normalizeIngestURL(u) == norm {
+			return fmt.Sprintf("Already ingested: %s (nothing to do).", url), nil
+		}
+	}
+	// Browser fetch can run 5–20s; give the headless fallback
+	// room beyond the static-fetch budget.
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	name, text, _, _, gerr := ingestFetch(ctx, url)
+	if gerr != nil {
+		return "", gerr
+	}
+	checked := ""
+	if check != nil {
+		vctx, vcancel := context.WithTimeout(context.Background(), vetTimeout)
+		note, add := check(vctx, c, vetCandidate{URL: url, Title: name, Text: text})
+		vcancel()
+		if !add {
+			return note, nil
+		}
+		checked = " " + note
+	}
+	reportID := fmt.Sprintf("manual-%s-%d", c.ID, time.Now().UnixNano())
+	IngestDocument(ctx, VectorDB, collectionSource(c.ID), reportID, name, "## "+name+"\n\n"+text)
+	chunks := countReportChunks(VectorDB, reportID)
+	c.IngestedURLs = append(c.IngestedURLs, url)
+	saveCollection(sess.DB, c)
+	Log("[orchestrate.collections] user=%q ingested %q into collection %q (%d chunks)", sess.Username, url, c.ID, chunks)
+	return fmt.Sprintf("Ingested %q (%d chunks) into the collection.", name, chunks) + checked, nil
+}
+
 type fileResult struct {
 	ID       string
 	Name     string

@@ -62,7 +62,22 @@ type collectionSuggestion struct {
 	User       string    `json:"user,omitempty"` // whose run it was
 	Session    string    `json:"session,omitempty"`
 	Created    time.Time `json:"created"`
+
+	// A page the collection check held for the owner (collection_vet.go,
+	// collection_held.go) is a row here too, with Kind "held": the queue is
+	// durable and already where the owner looks. Rows stored before these
+	// fields have none of them and stay ordinary suggestions.
+	Kind         string    `json:"kind,omitempty"`
+	Title        string    `json:"title,omitempty"`         // the held page's title
+	AgainstDoc   string    `json:"against_doc,omitempty"`   // the document it conflicts with
+	AgainstTitle string    `json:"against_title,omitempty"` // and that document's title
+	Ruling       string    `json:"ruling,omitempty"`        // Settle it's answer
+	RulingWhy    string    `json:"ruling_why,omitempty"`
+	RulingAt     time.Time `json:"ruling_at,omitempty"`
 }
+
+// heldKind marks a suggestion row as a page the check held.
+const heldKind = "held"
 
 // suggestionsDB is where a collection's suggestions live: its owner's store, or
 // the deployment's for a collection with no owner or a deployment-wide one.
@@ -73,8 +88,32 @@ func (T *OrchestrateApp) suggestionsDB(c Collection) Database {
 	return UserDB(T.DB, c.Owner)
 }
 
-// listSuggestions returns a collection's pending suggestions, oldest first.
+// listSuggestions returns a collection's pending suggestions, oldest first,
+// without the pages the check held: those wait for the owner, and the curator
+// working the queue must not act on them.
 func (T *OrchestrateApp) listSuggestions(c Collection) []collectionSuggestion {
+	var out []collectionSuggestion
+	for _, s := range T.suggestionRows(c) {
+		if s.Kind != heldKind {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// listHeld returns the pages the check held for the owner, oldest first.
+func (T *OrchestrateApp) listHeld(c Collection) []collectionSuggestion {
+	var out []collectionSuggestion
+	for _, s := range T.suggestionRows(c) {
+		if s.Kind == heldKind {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// suggestionRows is every row of a collection's queue, held pages included.
+func (T *OrchestrateApp) suggestionRows(c Collection) []collectionSuggestion {
 	db := T.suggestionsDB(c)
 	if db == nil {
 		return nil
@@ -101,7 +140,7 @@ func (T *OrchestrateApp) addSuggestion(c Collection, s collectionSuggestion) (co
 	if db == nil {
 		return s, errors.New("suggestions are unavailable: the database is not open")
 	}
-	pending := T.listSuggestions(c)
+	pending := T.suggestionRows(c)
 	for _, p := range pending {
 		if strings.EqualFold(strings.TrimSpace(p.Text), strings.TrimSpace(s.Text)) {
 			return p, errAlreadySuggested
@@ -142,7 +181,7 @@ func (T *OrchestrateApp) dropSuggestion(c Collection, id string) bool {
 
 // dropAllSuggestions removes a collection's whole queue, with the collection.
 func (T *OrchestrateApp) dropAllSuggestions(c Collection) {
-	for _, s := range T.listSuggestions(c) {
+	for _, s := range T.suggestionRows(c) {
 		T.suggestionsDB(c).Unset(collectionSuggestionsTable, c.ID+"/"+s.ID)
 	}
 }
@@ -345,7 +384,8 @@ func (T *OrchestrateApp) addStewardSuggestionActions(gt *GroupedTool, cols []Col
 			}
 			sid := strings.TrimSpace(stringArg(args, "suggestion_id"))
 			s, ok := T.findSuggestion(c, sid)
-			if !ok {
+			if !ok || s.Kind == heldKind {
+				// A held page is the owner's, and never listed to the curator.
 				return "", fmt.Errorf("no suggestion %q is waiting on %q: list them with action=suggestions", sid, c.Name)
 			}
 			T.dropSuggestion(c, sid)
@@ -454,7 +494,7 @@ func (T *OrchestrateApp) collectionSuggestionFetch(call *jsonapi.Call, _ struct{
 	// Browser fetch can run 5-20s; give the headless fallback room.
 	ctx, cancel := context.WithTimeout(call.R.Context(), 90*time.Second)
 	defer cancel()
-	name, text, raw, mime, ferr := fetchAndExtractForIngest(ctx, s.Source)
+	name, text, raw, mime, ferr := ingestFetch(ctx, s.Source)
 	if ferr != nil {
 		return nil, jsonapi.BadRequest("could not fetch it: " + ferr.Error())
 	}

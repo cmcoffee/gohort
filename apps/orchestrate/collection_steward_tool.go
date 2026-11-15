@@ -165,6 +165,18 @@ func buildStewardTool(cols []Collection, queue *OrchestrateApp) ChatTool {
 			continue
 		}
 		inner := a.Handler
+		if queue != nil {
+			// What the agent in charge adds is checked first: nobody is
+			// watching (collection_vet.go).
+			switch act {
+			case "add_url":
+				inner = func(args map[string]any, sess *ToolSession) (string, error) {
+					return addURLToCollection(args, sess, queue.agentPageCheck)
+				}
+			case "add_text":
+				inner = queue.checkedAddText(inner)
+			}
+		}
 		if len(cols) == 1 {
 			// One collection means there is nothing to choose, so there is no
 			// parameter. A model cannot target the wrong corpus if it is never
