@@ -205,6 +205,8 @@ func (T *OrchestrateApp) collectionsList(c *jsonapi.Call) (any, error) {
 func (T *OrchestrateApp) collectionCreate(c *jsonapi.Call, body struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	// The guided setup's answers (collection_guided.go), all optional.
+	guidedCollection
 }) (any, error) {
 	user, udb := c.User, c.UDB
 	name := strings.TrimSpace(body.Name)
@@ -221,8 +223,15 @@ func (T *OrchestrateApp) collectionCreate(c *jsonapi.Call, body struct {
 		Description: strings.TrimSpace(body.Description),
 		Created:     time.Now(),
 	}
+	g := body.guidedCollection
+	if g.guidedAnswered() {
+		col.Description = g.description(body.Description)
+		col.FilterRules = g.filterRules()
+		col.CuratorAgent = g.curator(udb, user)
+	}
 	saveCollection(udb, col)
-	Log("[orchestrate.collections] user=%q created collection %q (id=%s)", user, name, col.ID)
+	attached := g.attach(udb, user, col.ID)
+	Log("[orchestrate.collections] user=%q created collection %q (id=%s, curator=%q, attached to %d agent(s))", user, name, col.ID, col.CuratorAgent, attached)
 	return col, nil
 }
 

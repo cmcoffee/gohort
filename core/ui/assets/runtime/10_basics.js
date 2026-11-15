@@ -5103,8 +5103,10 @@
           });
           var isFirst = nextVisible(i, -1) < 0;
           var isLast = nextVisible(i, +1) < 0;
-          backBtn.style.visibility = isFirst ? 'hidden' : 'visible';
+          if (foot) backBtn.style.display = isFirst ? 'none' : '';
+          else backBtn.style.visibility = isFirst ? 'hidden' : 'visible';
           nextBtn.style.display = isLast ? 'none' : '';
+          if (footSubmit) footSubmit.style.display = isLast ? '' : 'none';
           finishWrap.style.display = isLast ? '' : 'none';
           note.style.display = 'none';
         }
@@ -5132,6 +5134,28 @@
         appendHistoryRow(finishWrap);
         appendResetRow(finishWrap);
         appendSubmit(finishWrap);
+
+        // In a dialog that lends its footer: Back first, then Close, then
+        // Next or the submit, the main button. Each draw takes back what the
+        // one before it put there, or a redraw (the assistant filling the
+        // form) would leave two of each.
+        var foot = ctx && ctx.__modalFooter;
+        var footSubmit = null;
+        if (foot) {
+          Array.prototype.slice.call(foot.children || []).forEach(function(n) {
+            if (n.dataset && n.dataset.wizardFoot) n.remove();
+          });
+          footSubmit = finishWrap.querySelector('.ui-form-submit');
+          backBtn.className = 'ui-row-btn ui-wizard-back';
+          nextBtn.className = 'ui-row-btn primary ui-wizard-next';
+          [backBtn, nextBtn, footSubmit].forEach(function(b) { if (b) b.dataset.wizardFoot = '1'; });
+          foot.insertBefore(backBtn, foot.firstChild);
+          foot.appendChild(nextBtn);
+          if (footSubmit) {
+            footSubmit.className = 'ui-row-btn primary';
+            foot.appendChild(footSubmit);
+          }
+        }
 
         // Final-submit guard: every visible step must pass its
         // required gate; jump to the first failing step so the
@@ -6546,13 +6570,15 @@
   // footer beside Close, from either door: at the end of a long form it
   // scrolled out of sight, a level apart from Close, and the dialog read as
   // having nothing to press but Close. Close then stops being the primary
-  // button; the submit is. A wizard keeps its Back/Next row by its steps.
+  // button; the submit is. A wizard puts Back and Next there too, so its
+  // buttons are in one row with Close rather than one row by the steps and
+  // Close alone under it.
   //
   // No click-outside-to-close: a text-selection drag ending past the dialog
   // edge would otherwise dismiss it mid-copy.
   function openComponentDialog(o) {
     var c = o.component || {};
-    var footerSubmit = c.type === 'form_panel' && !!c.submit_label && !(c.steps && c.steps.length);
+    var footerSubmit = c.type === 'form_panel' && !!c.submit_label;
     return window.uiOpenModal({
       title: o.title || '',
       subtitle: o.subtitle || undefined,

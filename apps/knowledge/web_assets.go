@@ -198,7 +198,7 @@ const documentsListAssets = `<style>
   newBtn.addEventListener('click', function() {
     window.uiOpenComponentDialog({
       title: 'New collection',
-      subtitle: 'A named bundle of documents your agents and skills can search. Name it and say what it should hold; you add the documents next.',
+      subtitle: 'A named bundle of documents your agents and skills can search. A few questions set it up; only the name is required.',
       width: 'min(760px, 96vw)',
       component: window.knowledgeNewCollectionForm,
     });

@@ -88,7 +88,8 @@ func (T *KnowledgeApp) handleUserCandidates(c *jsonapi.Call) (any, error) {
 }
 
 func (T *KnowledgeApp) handleListPage(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
 		return
 	}
 	// Sub-mux StripPrefix means r.URL.Path is relative to /knowledge.
@@ -116,7 +117,7 @@ func (T *KnowledgeApp) handleListPage(w http.ResponseWriter, r *http.Request) {
 		Sections: []ui.Section{
 			{
 				NoChrome: true,
-				Body:     ui.Card{HTML: documentsListBody + newCollectionFormScript() + documentsListAssets},
+				Body:     ui.Card{HTML: documentsListBody + newCollectionFormScript(user) + documentsListAssets},
 			},
 			bulletinsSection(),
 		},

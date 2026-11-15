@@ -216,6 +216,9 @@ func curateBrief(c Collection, docs, maxDocs int) string {
 	} else {
 		b.WriteString("It has no description, so go by its name.\n\n")
 	}
+	if r := strings.TrimSpace(c.FilterRules); r != "" {
+		b.WriteString("Its owner's rules for what goes in it:\n" + r + "\n\n")
+	}
 	fmt.Fprintf(&b, "It holds %d document%s now.\n\n", docs, plural(docs))
 	b.WriteString("1. List what is in it first, so you do not add what is already there.\n")
 	b.WriteString("2. Work through any suggestions waiting from agents that read it: check each against its source, then add what holds up and dismiss what does not.\n")

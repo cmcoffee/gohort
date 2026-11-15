@@ -25,7 +25,7 @@ func TestNewCollectionModalMountsTheForm(t *testing.T) {
 	if i < 0 || j < i {
 		t.Fatal("the collections page has no script")
 	}
-	form := strings.TrimSuffix(strings.TrimPrefix(newCollectionFormScript(), "<script>"), "</script>")
+	form := strings.TrimSuffix(strings.TrimPrefix(newCollectionFormScript(""), "<script>"), "</script>")
 	script := newCollectionHarnessBefore + form + documentsListAssets[i+len("<script>"):j] + newCollectionHarnessAfter
 	tmp := filepath.Join(t.TempDir(), "new_collection.js")
 	if err := os.WriteFile(tmp, []byte(script), 0644); err != nil {
@@ -36,12 +36,25 @@ func TestNewCollectionModalMountsTheForm(t *testing.T) {
 	}
 }
 
-// The form: it creates through the collections API and opens what it made,
-// and its ✨ is Draft with AI, starting on the setting up.
-func TestTheNewCollectionFormDraftsWithAI(t *testing.T) {
-	b, err := json.Marshal(newCollectionForm())
+// The form: a guided setup that creates through the collections API and opens
+// what it made, with only the name required, and its ✨ Draft with AI,
+// starting on the setting up. Filling carries Knowledge's curator for the
+// create endpoint to put in charge when "Look after it for me" is picked. The
+// Agents step is there only when there are agents to pick.
+func TestTheNewCollectionFormIsAGuidedSetup(t *testing.T) {
+	b, err := json.Marshal(newCollectionForm(""))
 	if err != nil {
 		t.Fatal(err)
+	}
+	type field struct {
+		Field    string `json:"field"`
+		Type     string `json:"type"`
+		Required bool   `json:"required"`
+		Default  any    `json:"default"`
+		ShowWhen string `json:"show_when"`
+		Options  []struct {
+			Value string `json:"value"`
+		} `json:"options"`
 	}
 	var f struct {
 		Type        string `json:"type"`
@@ -51,11 +64,10 @@ func TestTheNewCollectionFormDraftsWithAI(t *testing.T) {
 		Assist      bool   `json:"assist"`
 		AssistLabel string `json:"assist_label"`
 		AssistAsk   string `json:"assist_ask"`
-		Fields      []struct {
-			Field    string `json:"field"`
-			Required bool   `json:"required"`
-			Help     string `json:"help"`
-		} `json:"fields"`
+		Steps       []struct {
+			Title  string  `json:"title"`
+			Fields []field `json:"fields"`
+		} `json:"steps"`
 	}
 	json.Unmarshal(b, &f)
 	if f.Type != "form_panel" || f.PostURL != "/orchestrate/api/collections" || f.SubmitLabel != "Create" || f.RedirectURL != "/knowledge/c/{id}" {
@@ -64,11 +76,40 @@ func TestTheNewCollectionFormDraftsWithAI(t *testing.T) {
 	if !f.Assist || f.AssistLabel != "Draft with AI" || f.AssistAsk != "Assist me with setting up a knowledge store." {
 		t.Errorf("its ✨ should be Draft with AI, opening on the setting up: %s", b)
 	}
-	if len(f.Fields) != 2 || f.Fields[0].Field != "name" || !f.Fields[0].Required || f.Fields[1].Field != "description" || !strings.Contains(f.Fields[1].Help, "Auto-fill") {
-		t.Errorf("name (required) and a description whose help says what it steers: %s", b)
+	var titles []string
+	byName := map[string]field{}
+	for _, st := range f.Steps {
+		titles = append(titles, st.Title)
+		for _, fl := range st.Fields {
+			byName[fl.Field] = fl
+			if fl.Required && fl.Field != "name" {
+				t.Errorf("%s is required; only the name should be", fl.Field)
+			}
+		}
 	}
-	if strings.Contains(string(b), "—") {
-		t.Error("an em-dash in the form's copy, which the helper reads as its prompt")
+	if strings.Join(titles, ",") != "Purpose,Details,Filling" {
+		t.Errorf("steps %v; with no agents to pick there is no Agents step", titles)
+	}
+	if !byName["name"].Required {
+		t.Error("the name is not required")
+	}
+	if c := byName["curator_agent"]; c.Type != "hidden" || c.Default != curatorAgentID {
+		t.Errorf("the curator the Filling step means is not carried: %+v", c)
+	}
+	var fills []string
+	for _, o := range byName["fill"].Options {
+		fills = append(fills, o.Value)
+	}
+	if strings.Join(fills, ",") != "curated,by_hand" {
+		t.Errorf("Filling offers %v", fills)
+	}
+	for _, k := range []string{"purpose", "about", "currency", "depth", "mostly", "prefer", "avoid"} {
+		if _, ok := byName[k]; !ok {
+			t.Errorf("no %s question", k)
+		}
+	}
+	if strings.Contains(string(b), "\u2014") || strings.Contains(string(b), "\u2026") {
+		t.Error("an em-dash or ellipsis character in the form's copy")
 	}
 }
 

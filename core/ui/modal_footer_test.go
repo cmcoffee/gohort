@@ -158,9 +158,9 @@ if (mounted.ctx.name !== 'h1' || typeof mounted.ctx.__closeModal !== 'function')
 // A form that saves as it goes has nothing to put there: Close stays the way out.
 m = openComponentDialog({title: 'Edit', component: {type: 'form_panel'}});
 if (labels(footerOf(m.dialog)) !== 'Close*') throw new Error('an autosaving form reads ' + labels(footerOf(m.dialog)));
-// A wizard keeps its Back/Next row by its steps.
+// A wizard is lent the footer too, for its Back, Next and submit.
 m = openComponentDialog({title: 'New', component: {type: 'form_panel', submit_label: 'Create', steps: [{}]}});
-if (labels(footerOf(m.dialog)) !== 'Close*' || mounted.parent.children.length !== 1) throw new Error('a wizard\'s submit left its steps');
+if (!mounted.ctx.__modalFooter || labels(footerOf(m.dialog)) !== 'Close,Create*') throw new Error('a wizard was not lent the footer: ' + labels(footerOf(m.dialog)));
 console.log('OK');
 `
 	tmp := filepath.Join(t.TempDir(), "row_form.js")
