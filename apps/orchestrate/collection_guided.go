@@ -40,9 +40,10 @@ type guidedCollection struct {
 	AutoCurator  string `json:"auto_curator"`
 	// Guided marks a request from the guided setup, whose switches apply.
 	Guided json.RawMessage `json:"guided"`
-	// NoSuggest turns off the search for sources to tick that the guided
-	// setup starts as it creates. Negative so the switch starts on.
-	NoSuggest json.RawMessage `json:"no_suggest"`
+	// Start is what the guided setup starts as it creates: "suggest" (or
+	// nothing chosen) searches for sources to tick, "plan" drafts a plan to
+	// fill it, "none" starts nothing.
+	Start string `json:"start"`
 	// AttachTo is the person's agents that should read it.
 	AttachTo json.RawMessage `json:"attach_to"`
 }
@@ -121,10 +122,18 @@ func (g guidedCollection) curator(udb Database, user string) string {
 	return curator
 }
 
-// suggest reports whether to start a search for sources: for the guided
-// setup, unless its switch was turned off. The plain form never starts one.
-func (g guidedCollection) suggest() bool {
-	return jsonTrue(g.Guided) && !jsonTrue(g.NoSuggest)
+// starts is what to start as the collection is created: for the guided
+// setup, its "To start with" choice, Suggest sources when none was made; for
+// the plain form, nothing.
+func (g guidedCollection) starts() string {
+	if !jsonTrue(g.Guided) {
+		return ""
+	}
+	switch g.Start {
+	case "plan", "none":
+		return g.Start
+	}
+	return "suggest"
 }
 
 // jsonTrue reads a switch sent as true, or as "true" by a client that

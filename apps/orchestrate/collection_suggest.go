@@ -50,10 +50,10 @@ const maxSuggestedSources = 30
 // suggestedKept is how long a search's candidates wait to be ticked.
 const suggestedKept = 24 * time.Hour
 
-// suggestSearch and suggestQueriesFor are the web search and the searches
+// collectionWebSearch and collectionQueriesFor are the web search and the searches
 // written from a collection. Variables so a test can stand in for both.
-var suggestSearch = WebSearch
-var suggestQueriesFor = func(ctx context.Context, T *OrchestrateApp, c Collection, n int) []string {
+var collectionWebSearch = WebSearch
+var collectionQueriesFor = func(ctx context.Context, T *OrchestrateApp, c Collection, n int) []string {
 	return generateAutofillQueries(ctx, T, c, n)
 }
 
@@ -157,7 +157,7 @@ func siteOf(addr string) string {
 // how far it has got through note. It returns the outcome line.
 func (T *OrchestrateApp) findSources(ctx context.Context, c Collection, note func(string)) (string, error) {
 	note("writing searches")
-	queries := suggestQueriesFor(ctx, T, c, suggestQueries)
+	queries := collectionQueriesFor(ctx, T, c, suggestQueries)
 	if len(queries) > suggestQueries {
 		queries = queries[:suggestQueries]
 	}
@@ -176,7 +176,7 @@ func (T *OrchestrateApp) findSources(ctx context.Context, c Collection, note fun
 			break
 		}
 		note(fmt.Sprintf("%d of %d searches, %d found", i, len(queries), len(found)))
-		for _, cand := range parseWebSearchResults(suggestSearch(q)) {
+		for _, cand := range parseWebSearchResults(collectionWebSearch(q)) {
 			nu := normalizeIngestURL(cand.URL)
 			if have[nu] || seen[nu] || !looksLikeUsefulSourceURL(cand.URL) || IsWeakSource(cand.URL) || siteMatches(cand.URL, skip) {
 				continue

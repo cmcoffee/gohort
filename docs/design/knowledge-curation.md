@@ -1,6 +1,6 @@
 # Knowledge: a guided start, and auto-curation
 
-Status: steps 1 to 3 built (2026-11-14); steps 4 and 5 proposed.
+Status: steps 1 to 4 built (2026-11-14); step 5 proposed.
 
 ## Why
 
@@ -47,10 +47,11 @@ can be skipped.
 3. **Details**, each optional: how current it has to be; a solid overview
    or comprehensive; mostly the web, mostly their own files, or both;
    sources to prefer; sources to leave out.
-4. **Curation.** How it is kept current, as cards (below), and **Suggest
-   sources to start with**, a switch, on unless turned off, shown when web
-   search is set up: the search for sources starts as the collection is
-   created, so the page it opens on is already finding them.
+4. **Curation.** How it is kept current, as cards (below), and **To start
+   with**, shown when web search is set up: Suggest sources (also what
+   happens when nothing is chosen), Draft a plan to fill it, or Nothing yet.
+   What is chosen starts as the collection is created, so the page it opens
+   on is already at it, and neither adds anything until the person says.
 5. **Agents**, when they have any: which of their agents read it, attached
    as an agent's Knowledge tab would.
 
@@ -110,13 +111,26 @@ contributors), `collection_suggest.go`:
 - Candidates are kept in memory for a day, not on the collection: a search's
   results waiting for a decision, which a restart costs only a new search.
 
+## Fill it for me (built)
+
+A section on the collection page beside Suggested sources, for the same
+people (`collection_fill.go`):
+
+- **Draft a plan** writes the web searches Auto-fill would run, from the
+  description and rules, and proposes how many documents to add (20, within
+  the cap), in the background.
+- The plan is shown with its size before anything runs: "8 searches, up to
+  20 documents. A run stops at 10 minutes." The searches are an editable
+  list and the count a number.
+- **Run this plan** runs it as edited: Auto-fill's own search and fetch
+  (`autofillPass`, shared with the Auto-fill button), in the background,
+  reporting each search and each page as it goes and the documents added,
+  with Stop, ending with what could not be used. More searches than a run
+  may make are refused; the count is held to the cap.
+- A plan is kept in memory for a day, not on the collection.
+
 ## Still to build
 
-4. **"Fill it for me": a plan before it runs.** A plan drafted from the
-   answers (the topics it will cover, the kinds of sources, about how many
-   documents) shown with its size before anything runs: "about 12 searches,
-   up to 30 documents". Approved, it runs with progress. Today Auto-Curation
-   with Curate now does the work without the plan.
 5. **Refresh on a schedule** for an auto-curated collection: weekly, monthly
    or never, set on the collection page, on gohort's scheduler. The curating
    agent looks for what is new against the description, adds what fits, and
@@ -138,8 +152,8 @@ same shape the plain form does, and suggested sources are not stored.
 
 - **Removals:** proposed in the curator's report, for the person to
   confirm, never made on its own.
-- **The default start:** Suggest sources to start with is on, beside
-  whichever curation is chosen.
+- **The default start:** Suggest sources, beside whichever curation is
+  chosen; a plan is the other start offered.
 
 ## Open questions for the owner
 

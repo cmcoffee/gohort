@@ -39,7 +39,7 @@ func newCollectionForm(user string) ui.FormPanel {
 					Help:        "The products, standards, sites or kinds of document it is about, and how you will use it. Plain words are fine.",
 					Detail:      "Concrete names find better documents than a topic does: naming the official reference, the command guide and the standards body gets more than naming the subject alone."},
 				// Says the answers come from this setup, so the create
-				// endpoint applies its switches (no_suggest) as set.
+				// endpoint applies its choices (start) as made.
 				{Field: "guided", Type: "hidden", Default: "true"},
 			},
 		},
@@ -92,11 +92,16 @@ func newCollectionForm(user string) ui.FormPanel {
 		},
 	}
 	if WebSearchAvailable() {
+		// Unanswered, the create endpoint starts Suggest sources, the first
+		// option, so what the select shows is what happens.
 		last := &steps[len(steps)-1]
-		// Stored negative (no_suggest) and shown inverted, so the switch
-		// starts on: a form's defaults seed only its hidden fields.
-		last.Fields = append(last.Fields, ui.FormField{Field: "no_suggest", Type: "toggle", Invert: true, Label: "Suggest sources to start with",
-			Help: "Knowledge searches from what you said and lists what it finds on the collection's page, each with its site and a line from it. You tick what goes in."})
+		last.Fields = append(last.Fields, ui.FormField{Field: "start", Type: "select", Label: "To start with",
+			Help: "What runs as the collection is created. Both wait for you before anything is added.",
+			Options: []ui.SelectOption{
+				{Value: "suggest", Label: "Suggest sources", Help: "Searches from what you said and lists what it finds, each with its site and a line from it. You tick what goes in."},
+				{Value: "plan", Label: "Draft a plan to fill it", Help: "Writes the searches it would run and how many documents to add, with its size. You check it, then run it."},
+				{Value: "none", Label: "Nothing yet"},
+			}})
 	}
 	// Which agents read it, when there are agents to choose from.
 	if agents := AgentNameOptions(user); len(agents) > 0 {

@@ -232,10 +232,15 @@ func (T *OrchestrateApp) collectionCreate(c *jsonapi.Call, body struct {
 	}
 	saveCollection(udb, col)
 	attached := g.attach(udb, user, col.ID)
-	// Suggest sources to start with: the search starts now, so the page it
-	// opens on is already finding them.
-	if g.suggest() && WebSearchAvailable() {
-		T.startFindSources(col)
+	// To start with: the search, or the plan, starts now, so the page it
+	// opens on is already at it.
+	if WebSearchAvailable() {
+		switch g.starts() {
+		case "suggest":
+			T.startFindSources(col)
+		case "plan":
+			T.startDraftPlan(col)
+		}
 	}
 	Log("[orchestrate.collections] user=%q created collection %q (id=%s, curator=%q, attached to %d agent(s))", user, name, col.ID, col.CuratorAgent, attached)
 	return col, nil
@@ -279,6 +284,16 @@ func (T *OrchestrateApp) registerCollectionRoutes() {
 	T.HandleFunc("/api/collections/{id}/suggest/stop", jsonapi.Post(T.DB, T.collectionSuggestStop))
 	T.HandleFunc("/api/collections/{id}/suggest/fields", jsonapi.Get(T.DB, T.collectionSuggestFields))
 	T.HandleFunc("/api/collections/{id}/suggest/add", jsonapi.Post(T.DB, T.collectionSuggestAdd))
+	// Fill it for me: a plan, its size, then the run (collection_fill.go).
+	T.HandleFunc("/api/collections/{id}/fill", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.collectionFillItems),
+		"POST": jsonapi.Post(T.DB, T.collectionFillStart),
+	}.Serve)
+	T.HandleFunc("/api/collections/{id}/fill/progress", jsonapi.Get(T.DB, T.collectionFillProgress))
+	T.HandleFunc("/api/collections/{id}/fill/stop", jsonapi.Post(T.DB, T.collectionFillStop))
+	T.HandleFunc("/api/collections/{id}/fill/fields", jsonapi.Get(T.DB, T.collectionFillFields))
+	T.HandleFunc("/api/collections/{id}/fill/plan", jsonapi.Get(T.DB, T.collectionFillPlan))
+	T.HandleFunc("/api/collections/{id}/fill/run", jsonapi.Post(T.DB, T.collectionFillRun))
 	T.HandleFunc("/api/collections/{id}/suggestions", jsonapi.Get(T.DB, T.collectionSuggestions))
 	T.HandleFunc("/api/collections/{id}/suggestions/settings", jsonapi.Post(T.DB, T.collectionSuggestionsSettings))
 	T.HandleFunc("/api/collections/{id}/suggestions/dismiss", jsonapi.Post(T.DB, T.collectionSuggestionDismiss))
@@ -1212,6 +1227,47 @@ func (T *OrchestrateApp) collectionAutofill(call *jsonapi.Call, body *collection
 		queries = queries[:wanted]
 	}
 
+	pass := &autofillPass{ctx: ctx, udb: udb, c: &c, maxDocs: body.MaxDocs, added: added, failed: failed, results: results}
+	pass.search(T, queries)
+	added, failed, results = pass.added, pass.failed, pass.results
+	skipped := pass.skipped
+
+	Log("[orchestrate.autofill] collection=%s queries=%d added=%d failed=%d (max=%d)",
+		c.ID, len(queries), added, failed, body.MaxDocs)
+	return map[string]any{
+		"added":        added,
+		"skipped":      skipped,
+		"failed":       failed,
+		"queries_used": queries,
+		"results":      results,
+	}, nil
+}
+
+// autofillPass is one pass of Auto-fill's search and fetch over a set of
+// searches: the button's run, and Fill it for me's (collection_fill.go),
+// which runs it in the background with say reporting how far it has got.
+type autofillPass struct {
+	ctx      context.Context
+	udb      Database
+	c        *Collection
+	maxDocs  int
+	added    int
+	failed   int
+	skipped  int
+	results  []autofillItem
+	progress func(string)
+}
+
+func (p *autofillPass) say(line string) {
+	if p.progress != nil {
+		p.progress(line)
+	}
+}
+
+// search runs the searches, keeps the candidates worth fetching, and fetches
+// them into the collection until maxDocs are in. It stops early when its
+// context ends.
+func (p *autofillPass) search(T *OrchestrateApp, queries []string) {
 	// Step 2: search + collect candidate URLs.
 	// Dedup key is the *normalized* URL (see normalizeIngestURL) so
 	// minor variants — trailing slash, http vs https, utm_*/fbclid
@@ -1219,13 +1275,17 @@ func (T *OrchestrateApp) collectionAutofill(call *jsonapi.Call, body *collection
 	// Verbatim string compare alone was producing duplicate ingests
 	// when the same page came back through different referrers.
 	alreadyIngested := map[string]bool{}
-	for _, u := range c.IngestedURLs {
+	for _, u := range p.c.IngestedURLs {
 		alreadyIngested[normalizeIngestURL(u)] = true
 	}
 	var candidates []searchCandidate
 	seen := map[string]bool{}
-	for _, q := range queries {
-		raw := WebSearch(q)
+	for qi, q := range queries {
+		if p.ctx.Err() != nil {
+			break
+		}
+		p.say(fmt.Sprintf("%d of %d searches", qi+1, len(queries)))
+		raw := collectionWebSearch(q)
 		if raw == "" {
 			continue
 		}
@@ -1254,27 +1314,28 @@ func (T *OrchestrateApp) collectionAutofill(call *jsonapi.Call, body *collection
 	sort.SliceStable(candidates, func(i, j int) bool {
 		return urlExtractScore(candidates[i].URL) > urlExtractScore(candidates[j].URL)
 	})
-	if len(candidates) > body.MaxDocs*2 {
-		candidates = candidates[:body.MaxDocs*2] // overscan for failures
+	if len(candidates) > p.maxDocs*2 {
+		candidates = candidates[:p.maxDocs*2] // overscan for failures
 	}
 
 	// Step 3: fetch + extract + ingest.
-	skipped := len(alreadyIngested)
-	for _, cand := range candidates {
-		if added >= body.MaxDocs {
+	p.skipped = len(alreadyIngested)
+	for ci, cand := range candidates {
+		if p.added >= p.maxDocs || p.ctx.Err() != nil {
 			break
 		}
+		p.say(fmt.Sprintf("reading %d of %d pages found", ci+1, len(candidates)))
 		// Static fetch + extract, with a headless-browser fallback for
 		// JS-only / soft-blocked pages.
-		name, text, raw, mime, gerr := fetchAndExtractForIngest(ctx, cand.URL)
+		name, text, raw, mime, gerr := fetchAndExtractForIngest(p.ctx, cand.URL)
 		// Prefer the search-result title — it's human-curated and
 		// way more readable than nameFromURL's basename fallback.
 		if t := strings.TrimSpace(cand.Title); t != "" {
 			name = t
 		}
 		if gerr != nil {
-			failed++
-			results = append(results, autofillItem{URL: cand.URL, Status: "unusable", Name: name, Err: gerr.Error()})
+			p.failed++
+			p.results = append(p.results, autofillItem{URL: cand.URL, Status: "unusable", Name: name, Err: gerr.Error()})
 			continue
 		}
 		// Reject extracted blobs above a reasonable doc-text cap.
@@ -1282,8 +1343,8 @@ func (T *OrchestrateApp) collectionAutofill(call *jsonapi.Call, body *collection
 		// stripped of markup first, so what we measure here is the
 		// actual readable content, not raw bytes.
 		if len(text) > maxAutofillDocChars {
-			failed++
-			results = append(results, autofillItem{URL: cand.URL, Status: "too_large", Name: name, Err: fmt.Sprintf("%d chars > %d cap (likely junk page or aggregator)", len(text), maxAutofillDocChars)})
+			p.failed++
+			p.results = append(p.results, autofillItem{URL: cand.URL, Status: "too_large", Name: name, Err: fmt.Sprintf("%d chars > %d cap (likely junk page or aggregator)", len(text), maxAutofillDocChars)})
 			Log("[orchestrate.autofill] dropping %q: %d chars > %d cap", cand.URL, len(text), maxAutofillDocChars)
 			continue
 		}
@@ -1294,19 +1355,19 @@ func (T *OrchestrateApp) collectionAutofill(call *jsonapi.Call, body *collection
 		// (non-thinking worker, one call per doc) and catches
 		// off-topic or low-signal pages that pass the heuristic
 		// HTML filter but don't fit the collection's purpose.
-		if c.ClassifyOnAutofill && T.LLM != nil {
-			verdict, jerr := judgeAutofillCandidate(ctx, T, c, cand.URL, name, text)
+		if p.c.ClassifyOnAutofill && T.LLM != nil {
+			verdict, jerr := judgeAutofillCandidate(p.ctx, T, *p.c, cand.URL, name, text)
 			if jerr != nil {
 				// Judge failure shouldn't block the pipeline —
 				// fall through and ingest. Log for visibility.
 				Log("[orchestrate.autofill] judge failed for %q: %v, ingesting without classification", cand.URL, jerr)
 			} else if !verdict.Keep {
-				failed++
+				p.failed++
 				reason := strings.TrimSpace(verdict.Reason)
 				if reason == "" {
 					reason = "(judge declined to keep this doc)"
 				}
-				results = append(results, autofillItem{URL: cand.URL, Status: "judge_dropped", Name: name, Err: reason})
+				p.results = append(p.results, autofillItem{URL: cand.URL, Status: "judge_dropped", Name: name, Err: reason})
 				Log("[orchestrate.autofill] judge DROP %q: %s", cand.URL, reason)
 				continue
 			} else if cleaned := strings.TrimSpace(verdict.CleanedText); cleaned != "" && len(cleaned) >= 200 {
@@ -1318,21 +1379,12 @@ func (T *OrchestrateApp) collectionAutofill(call *jsonapi.Call, body *collection
 				text = cleaned
 			}
 		}
-		chunks := T.ingestAutofillDoc(ctx, c, name, text, raw, mime)
-		results = append(results, autofillItem{URL: cand.URL, Status: "added", Name: name, Chunks: chunks})
-		added++
-		T.recordIngest(udb, &c, cand.URL, "")
+		chunks := T.ingestAutofillDoc(p.ctx, *p.c, name, text, raw, mime)
+		p.results = append(p.results, autofillItem{URL: cand.URL, Status: "added", Name: name, Chunks: chunks})
+		p.added++
+		T.recordIngest(p.udb, p.c, cand.URL, "")
 	}
 
-	Log("[orchestrate.autofill] collection=%s queries=%d added=%d failed=%d (max=%d)",
-		c.ID, len(queries), added, failed, body.MaxDocs)
-	return map[string]any{
-		"added":        added,
-		"skipped":      skipped,
-		"failed":       failed,
-		"queries_used": queries,
-		"results":      results,
-	}, nil
 }
 
 // generateAutofillQueries asks the worker LLM for 3-5 diverse search

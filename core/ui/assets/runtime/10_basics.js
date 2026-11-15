@@ -4879,6 +4879,12 @@
       // RedirectURL is set) navigates on success.
       function appendSubmit(host) {
         if (!submitMode) return;
+        // A form that is only text (its fields all headings, as one read
+        // from FieldsSource is while there is nothing to choose) has nothing
+        // to send, so it offers no submit to press for an error. A hidden
+        // field is a value sent, so a form with one keeps its button.
+        var shownFields = cfg.fields || [];
+        if (!stepsMode && shownFields.length && shownFields.every(function(f) { return f && (f.type || 'text') === 'header'; })) return;
         var submitBtn = el('button', {class: 'ui-form-submit', type: 'button'}, [cfg.submit_label]);
         // Post-submit note: when the endpoint returns a `message` string, show
         // it inline (persisting until the next submit). Generic — any create /

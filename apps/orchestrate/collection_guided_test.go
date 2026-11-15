@@ -53,7 +53,7 @@ func TestAGuidedCollectionIsMadeFromItsAnswers(t *testing.T) {
 		"name": "Kubernetes", "about": "Running clusters with kubectl.",
 		"currency": "current", "depth": "comprehensive", "mostly": "web",
 		"prefer": []string{"kubernetes.io"}, "avoid": []string{"example-blog.test"},
-		"guided": "true", "curation": "auto", "auto_curator": curator, "no_suggest": true,
+		"guided": "true", "curation": "auto", "auto_curator": curator, "start": "none",
 		"attach_to": []string{mine.ID, theirs.ID},
 	})
 	for _, want := range []string{"Running clusters with kubectl.", guidedCurrency["current"], guidedDepth["comprehensive"], guidedMostly["web"]} {
@@ -94,7 +94,7 @@ func TestAGuidedCollectionIsMadeFromItsAnswers(t *testing.T) {
 	}
 	// The description they settled on is kept, rather than their first words.
 	if c := createCollection(t, T, udb, user, map[string]any{"name": "Drafted", "guided": "true", "about": "k8s stuff",
-		"description": "The official Kubernetes documentation and kubectl reference.", "no_suggest": true}); c.Description != "The official Kubernetes documentation and kubectl reference." {
+		"description": "The official Kubernetes documentation and kubectl reference.", "start": "none"}); c.Description != "The official Kubernetes documentation and kubectl reference." {
 		t.Errorf("the settled description: %q", c.Description)
 	}
 
@@ -116,21 +116,25 @@ func TestTheCurateBriefCarriesTheRules(t *testing.T) {
 	}
 }
 
-// The guided setup starts a search for sources as it creates, unless its
-// switch was turned off; the plain form never does.
-func TestTheGuidedSetupSuggestsUnlessTurnedOff(t *testing.T) {
+// The guided setup starts what its "To start with" says as it creates:
+// Suggest sources when nothing was chosen, a plan, or nothing. The plain form
+// starts nothing.
+func TestTheGuidedSetupStartsWhatItWasAsked(t *testing.T) {
+	guided := json.RawMessage(`"true"`)
 	for _, tc := range []struct {
 		g    guidedCollection
-		want bool
+		want string
 	}{
-		{guidedCollection{Guided: json.RawMessage(`"true"`)}, true},
-		{guidedCollection{Guided: json.RawMessage(`"true"`), NoSuggest: json.RawMessage(`true`)}, false},
-		{guidedCollection{Guided: json.RawMessage(`"true"`), NoSuggest: json.RawMessage(`false`)}, true},
-		{guidedCollection{}, false},
-		{guidedCollection{About: "topic"}, false},
+		{guidedCollection{Guided: guided}, "suggest"},
+		{guidedCollection{Guided: guided, Start: "suggest"}, "suggest"},
+		{guidedCollection{Guided: guided, Start: "plan"}, "plan"},
+		{guidedCollection{Guided: guided, Start: "none"}, "none"},
+		{guidedCollection{Guided: guided, Start: "anything else"}, "suggest"},
+		{guidedCollection{}, ""},
+		{guidedCollection{About: "topic", Start: "plan"}, ""},
 	} {
-		if got := tc.g.suggest(); got != tc.want {
-			t.Errorf("%+v: suggest=%v", tc.g, got)
+		if got := tc.g.starts(); got != tc.want {
+			t.Errorf("%+v: starts %q, want %q", tc.g, got, tc.want)
 		}
 	}
 }

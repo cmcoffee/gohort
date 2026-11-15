@@ -70,6 +70,19 @@ func woken(t *testing.T, woke chan string) string {
 	}
 }
 
+// settled waits until owner's watch name has counted fires fires, which a
+// wake saves last, so nothing of that wake writes to the watch after it.
+func settled(t *testing.T, owner, name string, fires int) {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		if m, ok := GetEventMonitor(RootDB, owner, name); ok && m.FireCount >= fires {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("the watch %s/%s never counted %d fires", owner, name, fires)
+}
+
 func quiet(t *testing.T, woke chan string) {
 	t.Helper()
 	select {
@@ -374,6 +387,11 @@ func TestWhatIsNeverPassedOn(t *testing.T) {
 	if NewSecret("alice", h.Name, "z") == nil {
 		t.Error("an open webhook was given a secret")
 	}
+	// The first post's wake finishes by saving the watch with its fire
+	// counted, after the waker has already been heard. Changing the watch
+	// before that save lands is overwritten by it (it was, on a slow CI
+	// runner), so wait for the count first.
+	settled(t, "alice", "w", 1)
 	m, _ := GetEventMonitor(RootDB, "alice", "w")
 	m.Kind = EventKindPoll
 	SaveEventMonitor(RootDB, m)

@@ -17,15 +17,15 @@ import (
 func suggestFixture(t *testing.T, results map[string]string, queries ...string) *dispatchFixture {
 	t.Helper()
 	df := curateFixture(t, func(context.Context, string, string) (string, error) { return "", nil })
-	prevSearch, prevQueries := suggestSearch, suggestQueriesFor
-	suggestSearch = func(q string) string { return results[q] }
-	suggestQueriesFor = func(context.Context, *OrchestrateApp, Collection, int) []string { return queries }
+	prevSearch, prevQueries := collectionWebSearch, collectionQueriesFor
+	collectionWebSearch = func(q string) string { return results[q] }
+	collectionQueriesFor = func(context.Context, *OrchestrateApp, Collection, int) []string { return queries }
 	suggested.Lock()
 	prevFound := suggested.m
 	suggested.m = map[string]suggestionSet{}
 	suggested.Unlock()
 	t.Cleanup(func() {
-		suggestSearch, suggestQueriesFor = prevSearch, prevQueries
+		collectionWebSearch, collectionQueriesFor = prevSearch, prevQueries
 		suggested.Lock()
 		suggested.m = prevFound
 		suggested.Unlock()
@@ -79,7 +79,7 @@ func TestFindSourcesOffersWhatIsNewByTheCollectionsRules(t *testing.T) {
 	}
 
 	// A collection nothing can be written for says what to do.
-	suggestQueriesFor = func(context.Context, *OrchestrateApp, Collection, int) []string { return nil }
+	collectionQueriesFor = func(context.Context, *OrchestrateApp, Collection, int) []string { return nil }
 	if _, err := df.app.findSources(context.Background(), c, func(string) {}); err == nil || !strings.Contains(err.Error(), "searches") {
 		t.Errorf("no searches: %v", err)
 	}
