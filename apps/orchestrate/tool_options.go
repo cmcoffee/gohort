@@ -173,6 +173,35 @@ func availableWorkerToolOptions(user string) []ui.SelectOption {
 				},
 			})
 		}
+		// Tools they added from the catalog (Extensions) for all their agents.
+		// The runtime loads them like their own (runner_toolsession.go), but
+		// they live apart from the pool above, so the Tools menu never listed
+		// one: an agent with a list of its own could never be given it, and
+		// one on the default set used it without it being shown. Their own
+		// tool of the same name wins, as it does at runtime; a tool narrowed
+		// to some agents stays out of a list every agent shares, as their own
+		// agent-scoped tools do.
+		ownNames := map[string]bool{}
+		for _, d := range defs {
+			ownNames[d.Tool.Name] = true
+		}
+		for _, p := range AdoptedToolsFor(authDB, user) {
+			if len(p.ScopeAgents) > 0 || ownNames[p.Tool.Name] {
+				continue
+			}
+			cat, _ := toolcat.Of(user, p.Tool)
+			if cat == "" {
+				cat = "Added tools"
+			}
+			ownNames[p.Tool.Name] = true
+			defs = append(defs, AgentToolDef{
+				Tool: Tool{
+					Name:        p.Tool.Name,
+					Description: p.Tool.Description,
+					Category:    cat,
+				},
+			})
+		}
 		// Client-bridge tools (from_client_*) are NOT surfaced here.
 		// The runtime includes them in the catalog of every chat-page
 		// send once the user has registered a desktop (see

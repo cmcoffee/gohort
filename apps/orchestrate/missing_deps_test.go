@@ -441,3 +441,52 @@ func TestAnOwnToolScopedElsewhereIsNotMissing(t *testing.T) {
 		t.Errorf("the owner's own tool was reported missing: %+v", refs)
 	}
 }
+
+// A tool added from the catalog (Extensions) for all of a person's agents is
+// in every agent's Tools menu, as their own tools are, so an agent with a
+// list of its own can be given it. Narrowed to some agents, it is not in the
+// list every agent shares; taken back, it is gone.
+func TestAnAddedToolIsOfferedInTheToolsMenu(t *testing.T) {
+	app, _, _ := authedApp(t)
+	prevRoot := RootDB
+	RootDB = app.DB
+	t.Cleanup(func() { RootDB = prevRoot })
+	if err := AdminPersistTempTool(app.DB, "lender", TempTool{Name: "wiki_read", Description: "Reads the wiki.", CommandTemplate: "echo"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetPersistentTempToolSharedWith(app.DB, "lender", "wiki_read", []string{"alice"}); err != nil {
+		t.Fatal(err)
+	}
+	offered := func() bool {
+		for _, o := range availableWorkerToolOptions("alice") {
+			if o.Value == "wiki_read" {
+				return true
+			}
+		}
+		return false
+	}
+	if offered() {
+		t.Fatal("offered before it was added")
+	}
+	if err := SetGlobalToolAdopted(app.DB, "alice", "wiki_read", "lender", true); err != nil {
+		t.Fatal(err)
+	}
+	if !offered() {
+		t.Fatal("an added tool, for all agents, is not in the Tools menu")
+	}
+	if err := SetAdoptedToolAgents(app.DB, "alice", "wiki_read", []string{"agent-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if offered() {
+		t.Error("a tool narrowed to some agents is in the list every agent shares")
+	}
+	if err := SetAdoptedToolAgents(app.DB, "alice", "wiki_read", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetGlobalToolAdopted(app.DB, "alice", "wiki_read", "lender", false); err != nil {
+		t.Fatal(err)
+	}
+	if offered() {
+		t.Error("a tool taken back is still offered")
+	}
+}
