@@ -7528,9 +7528,19 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 /* Why "+ Add" is greyed, under it. */
 .ui-rows-add-note { color: var(--text-mute); font-size: var(--fs-xs, 0.78rem); margin-top: 0.25rem; }
 
-/* "required" after a field's label: says so before a failed save does. */
-.ui-form-required { margin-left: 0.45rem; font-size: var(--fs-xs, 0.78rem); font-weight: 500; letter-spacing: 0.02em;
-  text-transform: none; color: var(--text-mute); }
+/* "required" after a field's label: says so before a failed save does. A
+   pill, like .ui-badge.accent, so it reads as a mark on the field rather than
+   the last word of its label; red once a save or Next finds it empty. */
+.ui-form-required {
+  display: inline-block; vertical-align: 0.1em; margin-left: 0.5rem; padding: 0.05rem 0.45rem;
+  border-radius: 999px; border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent-hi);
+  font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.04em; line-height: 1.4;
+}
+.ui-form-field-invalid .ui-form-required {
+  color: var(--danger, #ff7b72); border-color: color-mix(in srgb, var(--danger, #ff7b72) 45%, transparent);
+  background: color-mix(in srgb, var(--danger, #ff7b72) 12%, transparent);
+}
 
 /* A row of a "rows" field still missing a required cell, and so not saved. */
 .ui-rows-waiting { color: var(--warn, #d29922); font-size: var(--fs-xs, 0.78rem); margin: -0.1rem 0 0.4rem; }
