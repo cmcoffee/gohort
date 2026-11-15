@@ -26,6 +26,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/displayname"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/notices"
 )
@@ -249,7 +250,8 @@ func OwnerLabel(agent AgentRecord, user string) string {
 	}
 	user = strings.TrimSpace(user)
 	if user == "" || user == owner || SharedWithUser(agent.AllowedUsers, owner, user) {
-		return owner
+		// As others read a person: their name beside the username.
+		return displayname.Shown(OwnDisplayName(owner), owner)
 	}
 	return "its owner"
 }

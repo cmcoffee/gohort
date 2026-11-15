@@ -3,7 +3,7 @@
 alice GET /api/users ""
   403 forbidden
 root GET /api/users ""
-  200 [{"username":"alice","admin":false,"pending":false,"apps":[]},{"username":"pat","admin":false,"pending":true,"apps":[]},{"username":"quinn","admin":false,"pending":true,"apps":[]},{"username":"root","admin":true,"pending":false,"apps":[]}]
+  200 [{"username":"alice","display_name":"","admin":false,"pending":false,"apps":[]},{"username":"pat","display_name":"","admin":false,"pending":true,"apps":[]},{"username":"quinn","display_name":"","admin":false,"pending":true,"apps":[]},{"username":"root","display_name":"","admin":true,"pending":false,"apps":[]}]
 root PATCH /api/users "{}"
   405 method not allowed
 (signed out) GET /api/feature-access ""
@@ -35,9 +35,9 @@ root PATCH /api/feature-candidates "{}"
 alice GET /api/users/alice ""
   403 forbidden
 root GET /api/users/alice ""
-  200 {"admin":false,"apps":[],"groups":[],"pending":false,"username":"alice"}
+  200 {"admin":false,"apps":[],"display_name":"","groups":[],"pending":false,"username":"alice"}
 root PATCH /api/users/alice "{}"
-  405 method not allowed
+  400 nothing to change: send display_name
 (signed out) GET /api/users/alice/data ""
   403 forbidden
 alice GET /api/users/alice/data ""
@@ -171,7 +171,7 @@ root PUT /api/users/carol/groups "{\"groups\":[\"g1\"]}"
 root PUT /api/users/carol/groups ""
   400 invalid JSON: EOF
 root GET /api/users/carol ""
-  200 {"admin":false,"apps":["/chat"],"groups":["g1"],"pending":false,"username":"carol"}
+  200 {"admin":false,"apps":["/chat"],"display_name":"","groups":["g1"],"pending":false,"username":"carol"}
 root POST /api/users/pat/approve ""
   200 {"status":"approved"}
 root POST /api/users/pat/approve ""
@@ -217,7 +217,7 @@ root DELETE /api/users/carol ""
 root DELETE /api/users/carol ""
   404 user not found
 root GET /api/users ""
-  200 [{"username":"alice","admin":false,"pending":false,"apps":[]},{"username":"erin","admin":false,"pending":false,"apps":[]},{"username":"pat","admin":false,"pending":false,"apps":[]},{"username":"root","admin":true,"pending":false,"apps":[]}]
+  200 [{"username":"alice","display_name":"","admin":false,"pending":false,"apps":[]},{"username":"erin","display_name":"","admin":false,"pending":false,"apps":[]},{"username":"pat","display_name":"","admin":false,"pending":false,"apps":[]},{"username":"root","display_name":"","admin":true,"pending":false,"apps":[]}]
 activity log, 15 entries:
   account root: added the account carol
   account root: approved the account pat

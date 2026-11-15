@@ -67,3 +67,65 @@ func TestFeatureAccessSaysWhoItAdmits(t *testing.T) {
 		}
 	}
 }
+
+// An administrator names people where they add and list them: an optional
+// name on Add user, kept as given (cleaned), and the Name on a person's row,
+// which changes that field alone, so it cannot undo an Admin switch made
+// while it was open. A blank clears it, since a name is optional.
+func TestAnAdministratorNamesPeople(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	AuthSetUser(db, "root", "pw", true)
+	token := AuthCreateSession(db, "root")
+	a := &AdminApp{db: db}
+	mux := http.NewServeMux()
+	a.registerUsersRoutes(mux)
+	call := func(method, path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: token})
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		return w
+	}
+	if w := call("POST", "/api/users", `{"username":"pat@example.test","password":"pw-p-123456","display_name":"  Pat   Smith "}`); w.Code >= 400 {
+		t.Fatalf("add: %d %s", w.Code, w.Body.String())
+	}
+	if u, _ := AuthGetUser(db, "pat@example.test"); u.DisplayName != "Pat Smith" {
+		t.Errorf("added as %q", u.DisplayName)
+	}
+	if w := call("POST", "/api/users", `{"username":"lee@example.test","password":"pw-l-123456","display_name":"Lee\u0007"}`); w.Code != http.StatusBadRequest {
+		t.Errorf("a name the rule refuses: %d", w.Code)
+	}
+	if _, ok := AuthGetUser(db, "lee@example.test"); ok {
+		t.Error("an account was added under a name the rule refuses")
+	}
+	if w := call("GET", "/api/users/pat@example.test", ""); !strings.Contains(w.Body.String(), `"display_name":"Pat Smith"`) {
+		t.Errorf("the row's record: %s", w.Body.String())
+	}
+	// The Admin switch, then the name from a row opened before it.
+	if w := call("PUT", "/api/users/pat@example.test", `{"admin":true}`); w.Code >= 400 {
+		t.Fatalf("admin on: %d %s", w.Code, w.Body.String())
+	}
+	if w := call("PATCH", "/api/users/pat@example.test", `{"display_name":"Patricia"}`); w.Code >= 400 {
+		t.Fatalf("rename: %d %s", w.Code, w.Body.String())
+	}
+	if u, _ := AuthGetUser(db, "pat@example.test"); u.DisplayName != "Patricia" || !u.Admin {
+		t.Errorf("after the rename: name %q, admin %v", u.DisplayName, u.Admin)
+	}
+	// A name is optional: a blank clears it.
+	if w := call("PATCH", "/api/users/pat@example.test", `{"display_name":" "}`); w.Code >= 400 {
+		t.Errorf("a blank name: %d %s", w.Code, w.Body.String())
+	}
+	if u, _ := AuthGetUser(db, "pat@example.test"); u.DisplayName != "" {
+		t.Errorf("a blank left the name %q", u.DisplayName)
+	}
+	if w := call("PATCH", "/api/users/pat@example.test", `{"display_name":"Pat\u0007"}`); w.Code != http.StatusBadRequest {
+		t.Errorf("a name the rule refuses: %d", w.Code)
+	}
+	if w := call("PATCH", "/api/users/pat@example.test", `{"display_name":"Patricia"}`); w.Code >= 400 {
+		t.Fatalf("rename again: %d", w.Code)
+	}
+	if !strings.Contains(string(UserListJSON(db)), `"display_name":"Patricia"`) {
+		t.Error("the Users list does not carry the name")
+	}
+}

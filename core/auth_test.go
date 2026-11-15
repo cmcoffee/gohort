@@ -788,7 +788,7 @@ func TestOnePersonHasOneName(t *testing.T) {
 	AuthSignupAllowed = func() bool { return true }
 	t.Cleanup(func() { AuthSignupAllowed = prevSignup })
 	signup := func(email string) {
-		form := url.Values{"email": {email}, "password": {"pw-s-123"}, "confirm": {"pw-s-123"}}
+		form := url.Values{"display_name": {"Fresh"}, "email": {email}, "password": {"pw-s-123"}, "confirm": {"pw-s-123"}}
 		r := httptest.NewRequest(http.MethodPost, "http://gohort.test/signup", strings.NewReader(form.Encode()))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		r.RemoteAddr = "198.51.100.60:4000"

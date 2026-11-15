@@ -218,6 +218,10 @@ func ServeDashboard(addr string) error {
 		mux.HandleFunc("/api/sso/connect", ssoConnectHandler(db))
 		mux.HandleFunc("/api/sso/me", ssoMeHandler(db))
 		mux.HandleFunc("/api/sso/unlink", ssoUnlinkHandler(db))
+		// The person's own account from a page (me.go).
+		mux.HandleFunc(meNamePath, meNameHandler(db))
+		mux.HandleFunc(meZonePath, meZoneHandler(db))
+		mux.HandleFunc(meHideStartPath, meHideStartHandler(db))
 	}
 
 	// Desktop bridge — gohort-desktop / gohort-bridge opens a

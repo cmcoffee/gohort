@@ -281,6 +281,7 @@ func (T *OrchestrateApp) webRestrictedLegacy(r *http.Request) bool {
 //	/api/inject                — POST/PATCH/DELETE: mid-flight note queue
 func (T *OrchestrateApp) Routes() {
 	orchMount = T.WebPrefix() // links.go
+	registerAssistantStep()   // getting_started.go
 	T.wireRunners()
 	T.wireArtifactTypes()
 	T.wireSeams()
@@ -716,7 +717,10 @@ func (T *OrchestrateApp) registerHandlers() {
 	T.HandleFunc("/api/agents/suggest", T.handleAgentSuggest)
 	// Guided create: drafts the prompt from the wizard brief, saves,
 	// and echoes the new record for the redirect into the editor.
-	T.HandleFunc("/api/agents/wizard", jsonapi.Post(T.DB, T.handleAgentWizard))
+	T.HandleFunc("/api/agents/wizard", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.handleAgentWizardStart),
+		"POST": jsonapi.Post(T.DB, T.handleAgentWizard),
+	}.Serve)
 	T.HandleFunc("/api/agents/propose", jsonapi.Post(T.DB, T.handleAgentPropose))
 	// Per-user Default agent preference (surfaced on /account via the
 	// account-section registry — account_prefs.go).

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/media"
 )
@@ -557,5 +558,28 @@ func TestEveryCharacterFillsAnswersTheStepOffers(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// What the assistant calls its person starts as the name their account goes
+// by, which they can change; with no name the field starts empty.
+func TestTheWizardStartsWithTheAccountsName(t *testing.T) {
+	T, _, user := newTestOrchestrate(t)
+	c := &jsonapi.Call{W: httptest.NewRecorder(), R: httptest.NewRequest(http.MethodGet, "/api/agents/wizard", nil), User: user}
+	start := func() map[string]any {
+		out, err := T.handleAgentWizardStart(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out.(map[string]any)
+	}
+	if got := start(); len(got) != 0 {
+		t.Errorf("with no name the wizard starts with %v", got)
+	}
+	u, _ := AuthGetUser(AuthDB(), user)
+	u.DisplayName = "Alice Example"
+	AuthDB().Set(AuthTable, "user:"+user, u)
+	if got := start(); got["call_you"] != "Alice Example" {
+		t.Errorf("the wizard starts with %v", got)
 	}
 }

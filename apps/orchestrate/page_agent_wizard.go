@@ -357,6 +357,9 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 		ShowWhen: "!template;agent_kind:assistant",
 		Intro:    "Optional, and worth it: what your assistant knows about you from the start. It keeps these as its working notes: view or edit them any time.",
 		Fields: []ui.FormField{
+			// Starts as the name the account goes by (handleAgentWizardStart),
+			// which they chose; they change it here when the agent should call
+			// them something else.
 			{Field: "call_you", Type: "text", Label: "What should it call you?",
 				Placeholder: "First name / Title (e.g. Boss) / Formal name"},
 			{Field: "about_you", Type: "textarea", Label: "Anything it should know about you?", Rows: 3,
@@ -528,6 +531,9 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 			Title:    sectionTitle,
 			Subtitle: sectionSub,
 			Body: ui.FormPanel{
+				// The starting answers (handleAgentWizardStart), then the
+				// brief is POSTed back to the same address.
+				Source:         orchPath("api/agents/wizard"),
 				PostURL:        orchPath("api/agents/wizard"),
 				Method:         "POST",
 				SubmitLabel:    "Create agent",
@@ -736,6 +742,32 @@ var wizardCharacters = []wizardCharacter{
 			"on_vague":  "asks one clarifying question before starting",
 			"on_done":   "reports completion and mentions anything it noticed on the way",
 		}},
+}
+
+// handleAgentWizardStart is the wizard's starting answers: GET
+// /api/agents/wizard. What the assistant calls its person starts as the name
+// their account goes by (core/displayname); with none, the field starts
+// empty, as before.
+func (T *OrchestrateApp) handleAgentWizardStart(c *jsonapi.Call) (any, error) {
+	start := map[string]any{}
+	if name := OwnDisplayName(c.User); name != "" {
+		start["call_you"] = name
+	}
+	return start, nil
+}
+
+// OwnDisplayName is the name user's account goes by, "" while it has none
+// (core/displayname): what a page shows the person themselves.
+func OwnDisplayName(user string) string {
+	if AuthDB == nil {
+		return ""
+	}
+	db := AuthDB()
+	if db == nil {
+		return ""
+	}
+	u, _ := AuthGetUser(db, user)
+	return strings.TrimSpace(u.DisplayName)
 }
 
 // wizardCharacter is one starting character: its card, and the answers it

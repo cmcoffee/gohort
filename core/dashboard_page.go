@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/cmcoffee/gohort/core/displayname"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -229,7 +230,14 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
 	// Notices sit above the cards, because the point is to be read before the
 	// grid is used — an admin who scrolls past them has already clicked into
 	// the app that cannot work yet.
-	html = strings.Replace(html, "%NOTICES%", dashboardNotices(notices), 1)
+	// The getting-started card reads as one of them, for whoever it still
+	// has steps for, and the page reports the browser's timezone for an
+	// account that follows it (me.go).
+	startHTML := ""
+	if AuthCurrentUser(r) != "" {
+		startHTML = gettingStartedCard(r) + browserZoneScript
+	}
+	html = strings.Replace(html, "%NOTICES%", dashboardNotices(notices)+startHTML, 1)
 	html = strings.Replace(html, "%AUTH%", auth_html, 1)
 	html = strings.Replace(html, "%CARDS%", cards, 1)
 
@@ -419,12 +427,20 @@ func dashboardAuthBar(username string) string {
 		// admin has to fix, these are what somebody's own agents had to say.
 		// It renders muted and changes only when there is something unread, so
 		// a quiet bell is as informative as a loud one.
+		// The name the account goes by beside the username, as everyone else
+		// reads them (me.go).
+		shown := username
+		if AuthDB != nil {
+			if db := AuthDB(); db != nil {
+				shown = displayname.Shown(authDisplayName(db, username), username)
+			}
+		}
 		auth_html = fmt.Sprintf(
 			`<div class="auth-bar"><span class="auth-user">%s</span>`+
 				`<button type="button" class="auth-link bell" id="bell" title="Notifications" aria-label="Notifications">`+bellGlyphSVG+`<span class="bell-count" id="bell-count"></span></button>`+
 				`<a class="auth-link" href="/account">Account</a><form class="auth-logout" method="POST" action="/logout"><button type="submit" class="auth-link">Logout</button></form></div>`+
 				notifyPanelHTML,
-			html.EscapeString(username))
+			html.EscapeString(shown))
 	}
 	return auth_html
 }

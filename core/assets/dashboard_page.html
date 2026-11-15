@@ -101,6 +101,17 @@
     background: transparent; color: var(--text, #c9d1d9); border: 1px solid rgba(99,102,241,0.35);
   }
   .notice-dismiss:hover { border-color: var(--accent, #6366f1); }
+  /* The getting-started card is a notice with a short list of steps: done
+     ones ticked and muted, the rest a link to where each is done. */
+  .gs-title { font-weight: 600; }
+  .gs-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.45rem; }
+  .gs-steps li { display: flex; gap: 0.6rem; align-items: baseline; }
+  .gs-mark { flex: none; width: 1.1rem; text-align: center; color: var(--accent, #6366f1); }
+  .gs-step { display: flex; flex-direction: column; min-width: 0; }
+  .gs-step a { color: var(--text, #c9d1d9); font-weight: 600; text-decoration: none; }
+  .gs-step a:hover { text-decoration: underline; }
+  .gs-help { font-size: var(--fs-sm, 0.85rem); color: var(--text-mute, #8b949e); }
+  .gs-done .gs-step { color: var(--text-mute, #8b949e); text-decoration: line-through; }
   /* Column width for the PHONE layout, where one centred column is the right
      answer. Desktop stops being that shape entirely: see the wide layout
      below, so this is not a cap that grows, it is the narrow case's width. */

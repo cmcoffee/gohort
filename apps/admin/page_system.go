@@ -151,7 +151,10 @@ func (a *AdminApp) systemSections() []ui.Section {
 				Source: "api/users",
 				RowKey: "username",
 				Columns: []ui.Col{
-					{Field: "username", Flex: 1},
+					// The name they go by, beside the username: two people may
+					// pick one name, and the username is who they are.
+					{Field: "display_name", Label: "Name", Flex: 1},
+					{Field: "username", Label: "Username", Flex: 1, Mute: true},
 				},
 				RowActions: []ui.RowAction{
 					// Admin toggle — partial PUT with {admin: bool}.
@@ -185,6 +188,21 @@ func (a *AdminApp) systemSections() []ui.Section {
 					// open) and the operator controls ON an app, which live
 					// on their own tab. Inside a user's row the qualifier
 					// costs nothing and the noun was the ambiguous half.
+					// Their name: a PATCH of that one field, so an older copy of
+					// the record in this form cannot undo an Admin switch.
+					func() ui.RowAction {
+						a := ui.Expand("Name", ui.FormPanel{
+							Source:  "api/users/{username}",
+							PostURL: "api/users/{username}",
+							Method:  "PATCH",
+							Fields: []ui.FormField{
+								{Field: "display_name", Label: "Name", Type: "text",
+									Help: "What gohort calls them; others see it beside their username. Optional. Saved as you leave the field."},
+							},
+						})
+						a.Compact = true
+						return a
+					}(),
 					func() ui.RowAction {
 						a := ui.Expand("App access", ui.ChipPicker{
 							OptionsSource: "api/apps",
@@ -390,6 +408,7 @@ func themePickerOptions() []ui.SelectOption {
 // api/users. Reset lives on each user's row (see admin_reset_password).
 const userAdminHTML = `<div class="uadm">
   <input id="uadm-add-email" class="uadm-in" type="email" placeholder="email@example.com" autocomplete="off">
+  <input id="uadm-add-name" class="uadm-in" type="text" maxlength="64" placeholder="Their name (optional)" autocomplete="off">
   <label class="uadm-chk"><input type="checkbox" id="uadm-add-admin"> Administrator</label>
   <div class="uadm-methods">
     <label><input type="radio" name="uadm-add-method" value="invite" checked> Send registration link</label>
@@ -440,12 +459,13 @@ const userAdminHTML = `<div class="uadm">
     if(!email){ setMsg(msg,'Enter an email.',false); return; }
     var method=(document.querySelector('input[name="uadm-add-method"]:checked')||{}).value;
     var body={username:email, admin:$('uadm-add-admin').checked, invite: method==='invite'};
+    var shownName=$('uadm-add-name').value.trim(); if(shownName) body.display_name=shownName;
     if(method==='password'){ var pw=$('uadm-add-pw').value; if(pw.length<6){ setMsg(msg,'Password must be at least 6 characters.',false); return; } body.password=pw; }
     var btn=$('uadm-add-btn'); btn.disabled=true; var orig=btn.textContent; btn.textContent='Working...';
     fetch('api/users',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
       .then(function(r){ return r.ok ? r.json() : r.text().then(function(t){ throw new Error(t||('HTTP '+r.status)); }); })
       .then(function(d){
-        btn.disabled=false; btn.textContent=orig; $('uadm-add-email').value=''; $('uadm-add-pw').value='';
+        btn.disabled=false; btn.textContent=orig; $('uadm-add-email').value=''; $('uadm-add-name').value=''; $('uadm-add-pw').value='';
         if(window.uiInvalidate) window.uiInvalidate('api/users');
         if(d.status==='invited'){ setMsg(msg,'Invite created for '+email+'.',true); showLink(linkbox,d.link,d.emailed); }
         else { setMsg(msg,'Account created for '+email+'.',true); }

@@ -18,6 +18,7 @@ import (
 
 	"github.com/cmcoffee/gohort/core/accountname"
 	"github.com/cmcoffee/gohort/core/activity"
+	"github.com/cmcoffee/gohort/core/displayname"
 	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/oidc"
@@ -367,7 +368,10 @@ func consumeResetToken(db Database, token string) (string, bool) {
 
 // AuthUser represents a stored user account.
 type AuthUser struct {
-	Username         string   `json:"username"`
+	Username string `json:"username"`
+	// DisplayName is the name the account goes by (core/displayname, and
+	// me.go): a label, never a key, and optional.
+	DisplayName      string   `json:"display_name,omitempty"`
 	PassHash         string   `json:"pass_hash"` // bcrypt hash ($2...); legacy SHA-256 hex auto-upgrades on next login
 	Admin            bool     `json:"admin"`
 	Pending          bool     `json:"pending,omitempty"`           // true if awaiting admin approval
@@ -404,6 +408,11 @@ type AuthUser struct {
 	// used for the user's turn stamp and the day boundaries of schedules they
 	// own. Set/read through AuthSetUserTimezone / AuthGetUserTimezone.
 	Timezone string `json:"timezone,omitempty"`
+	// TimezoneFromBrowser marks a Timezone the person's browser set (me.go),
+	// which the next browser report may move. A Timezone without it was
+	// chosen on the account page and stays put; an empty one is waiting for
+	// the first report.
+	TimezoneFromBrowser bool `json:"timezone_from_browser,omitempty"`
 
 	// DefaultAgent is the user's preferred landing agent on the Agents chat
 	// surface. "" = unset (the surface's default behavior — last-accessed);
@@ -419,6 +428,11 @@ type AuthUser struct {
 	// device. Stored here rather than a cookie so the dismissal follows
 	// the user. Set/read through AuthSet/GetFirstRunDismissed.
 	FirstRunDismissed bool `json:"first_run_dismissed,omitempty"`
+
+	// GettingStartedHidden records that the person put the dashboard's
+	// getting-started card away (gettingstarted.go). It goes away by itself
+	// once every step that applies to them is done; this is for before.
+	GettingStartedHidden bool `json:"getting_started_hidden,omitempty"`
 }
 
 // AuthSetNotifyDefault updates the user's persistent notify preference.
@@ -450,14 +464,16 @@ func AuthGetUserTimezone(db Database, username string) string {
 	return strings.TrimSpace(user.Timezone)
 }
 
-// AuthSetUserTimezone stores the user's personal zone (canonical IANA name;
-// pass "" to clear back to the deployment default). No-op on an unknown user.
+// AuthSetUserTimezone stores the user's personal zone (canonical IANA name),
+// chosen by them, so no browser moves it (me.go). "" returns them to
+// following their browser. No-op on an unknown user.
 func AuthSetUserTimezone(db Database, username, iana string) {
 	var user AuthUser
 	if !db.Get(AuthTable, "user:"+username, &user) {
 		return
 	}
 	user.Timezone = strings.TrimSpace(iana)
+	user.TimezoneFromBrowser = false
 	db.Set(AuthTable, "user:"+username, user)
 }
 
@@ -2037,8 +2053,17 @@ func SignupHandler(db Database) http.HandlerFunc {
 				serveSignupPage(w, "Email and password are required.")
 				return
 			}
-			canonical, nameErr := accountname.Canonical(email)
-			if len(email) > 254 || !isValidEmail(email) || nameErr != nil {
+			// Optional: a name is theirs to give, here or later.
+			displayName := ""
+			if strings.TrimSpace(r.FormValue("display_name")) != "" {
+				var nameErr error
+				if displayName, nameErr = displayname.Clean(r.FormValue("display_name")); nameErr != nil {
+					serveSignupPage(w, "Your name: "+nameErr.Error()+".")
+					return
+				}
+			}
+			canonical, emailErr := accountname.Canonical(email)
+			if len(email) > 254 || !isValidEmail(email) || emailErr != nil {
 				serveSignupPage(w, "Please enter a valid email address.")
 				return
 			}
@@ -2066,6 +2091,7 @@ func SignupHandler(db Database) http.HandlerFunc {
 			var user AuthUser
 			db.Get(AuthTable, "user:"+email, &user)
 			user.Pending = true
+			user.DisplayName = displayName
 			db.Set(AuthTable, "user:"+email, user)
 
 			Log("[auth] new signup (pending): %q from %s", email, ClientIP(r))
@@ -2185,8 +2211,12 @@ func serveSignupPage(w http.ResponseWriter, errMsg string) {
     ` + error_html + `
     <form method="POST" action="/signup">
       <div class="form-group">
+        <label for="display_name">Your name (optional)</label>
+        <input type="text" id="display_name" name="display_name" autocomplete="name" maxlength="64" autofocus>
+      </div>
+      <div class="form-group">
         <label for="email">Email</label>
-        <input type="email" id="email" name="email" autocomplete="email" autofocus>
+        <input type="email" id="email" name="email" autocomplete="email">
       </div>
       <div class="form-group">
         <label for="password">Password</label>
@@ -2508,10 +2538,11 @@ type authSetupState struct {
 func UserListJSON(db Database) []byte {
 	users := AuthListUsers(db)
 	type userSummary struct {
-		Username string   `json:"username"`
-		Admin    bool     `json:"admin"`
-		Pending  bool     `json:"pending"`
-		Apps     []string `json:"apps"`
+		Username    string   `json:"username"`
+		DisplayName string   `json:"display_name"`
+		Admin       bool     `json:"admin"`
+		Pending     bool     `json:"pending"`
+		Apps        []string `json:"apps"`
 	}
 	summaries := make([]userSummary, len(users))
 	for i, u := range users {
@@ -2519,14 +2550,16 @@ func UserListJSON(db Database) []byte {
 		if apps == nil {
 			apps = []string{}
 		}
-		summaries[i] = userSummary{Username: u.Username, Admin: u.Admin, Pending: u.Pending, Apps: apps}
+		summaries[i] = userSummary{Username: u.Username, DisplayName: u.DisplayName, Admin: u.Admin, Pending: u.Pending, Apps: apps}
 	}
 	data, _ := json.Marshal(summaries)
 	return data
 }
 
 // UserCandidatesJSON returns the deployment's users as ACL-picker candidates:
-// [{value, label}] with username as both (there is no separate display name).
+// [{value, label}], the username as the value and the person as everyone
+// else reads them as the label: their name beside the username
+// (displayname.Shown), or the username alone while they have no name.
 // Pending (unapproved) users are excluded — they can't log in, so granting them
 // access is meaningless. This is the shared source for every ui.ACLPicker
 // (credential / tool / shared-agent access editors). Sorted by username for a
@@ -2552,7 +2585,7 @@ func UserCandidatesJSON(db Database, except string) []byte {
 		if u.Pending || (except != "" && u.Username == except) {
 			continue
 		}
-		out = append(out, candidate{Value: u.Username, Label: u.Username})
+		out = append(out, candidate{Value: u.Username, Label: displayname.Shown(u.DisplayName, u.Username)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Value < out[j].Value })
 	data, _ := json.Marshal(out)

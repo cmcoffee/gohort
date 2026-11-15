@@ -179,7 +179,7 @@
         var t = (sel.options[sel.selectedIndex].text || '').trim();
         if (t) return t;
       }
-      return 'Assistant';
+      return cfg.agent_label || 'Assistant';
     }
     // activeRunId — server-issued run identifier for the current
     // in-flight turn. Captured from the kind=run event the server
@@ -3601,13 +3601,21 @@
       // timestamp on the action bar still carries the "when". Only when a
       // channel session or a thread is open (transcriptFor); plain web
       // sessions stay anonymous.
-      if (channelTranscript && (role === 'user' || role === 'assistant')) {
-        bubble.classList.add('ui-agent-msg-named');
+      // A web conversation on a page that asks for it (cfg.name_replies)
+      // names only the other side, as a messaging app does: the agent above
+      // its replies, and nothing above the person's own, which sit on their
+      // side and need no name. Kept apart from channelTranscript, which also
+      // decides polling.
+      var named = channelTranscript || (cfg.name_replies ? {contact: '', agent: currentAgentLabel()} : null);
+      if (named && (role === 'user' || role === 'assistant')) {
         // Prefer the stored per-message author (set on every channel message,
         // so a GROUP thread names each distinct sender); fall back to the
         // session's contact/agent labels for 1:1 or older messages.
-        var who = senderOverride || ((role === 'user') ? channelTranscript.contact : channelTranscript.agent);
-        bubble.appendChild(el('div', {class: 'ui-agent-msg-sender'}, [who || '']));
+        var who = senderOverride || ((role === 'user') ? named.contact : named.agent);
+        if (who) {
+          bubble.classList.add('ui-agent-msg-named');
+          bubble.appendChild(el('div', {class: 'ui-agent-msg-sender'}, [who]));
+        }
       }
       var body = el('div', {class: 'ui-agent-msg-body'});
       if (cfg.markdown && role === 'assistant' && text) {

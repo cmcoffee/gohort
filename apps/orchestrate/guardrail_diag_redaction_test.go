@@ -115,3 +115,20 @@ func TestTheOwnerIsNamedOnlyToSomebodyWhoAlreadyKnows(t *testing.T) {
 		t.Errorf("a seed has no person behind it: %q", got)
 	}
 }
+
+// Somebody who already knows the owner reads them as everyone reads a person:
+// their name beside the username. The name is no more of a disclosure than
+// the username was, so whoever may not see one sees neither.
+func TestTheOwnerIsNamedByTheirName(t *testing.T) {
+	newTestOrchestrate(t)
+	u, _ := AuthGetUser(AuthDB(), "alice")
+	u.DisplayName = "Alice Example"
+	AuthDB().Set(AuthTable, "user:alice", u)
+	shared := AgentRecord{ID: "a1", Owner: "alice", AllowedUsers: []string{"bob"}}
+	if got := OwnerLabel(shared, "bob"); got != "Alice Example (alice)" {
+		t.Errorf("shared with bob: %q", got)
+	}
+	if got := OwnerLabel(AgentRecord{ID: "a2", Owner: "alice", Everyone: true}, "dana"); got != "its owner" {
+		t.Errorf("published: %q", got)
+	}
+}

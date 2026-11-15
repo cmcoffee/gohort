@@ -287,6 +287,8 @@ func (c *chatPage) page(nav []ui.NavLink) ui.Page {
 			{
 				NoChrome: true,
 				Body: ui.AgentLoopPanel{
+					// The agent (the picker's choice) named above its replies.
+					NameReplies: true,
 					// All session URLs carry {agent_id}; the runtime
 					// substitutes it from the ExtraFields select value
 					// every fetch. Sessions live in their agent's bucket

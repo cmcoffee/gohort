@@ -366,6 +366,10 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 				Title: "Need something this agent cannot reach — a document collection, a tool, a credential? Ask " + who + ". It goes to their notifications; there is no reply here, so try again once they grant it."})
 	}
 	panel := ui.AgentLoopPanel{
+		// The agent named above its replies, as on the agents page; no
+		// picker here to read the name from.
+		NameReplies: true,
+		AgentLabel:  display,
 		ListURL:     "api/sessions",
 		LoadURL:     "api/sessions/{id}",
 		DeleteURL:   "api/sessions/{id}",

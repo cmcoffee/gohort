@@ -10,6 +10,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/accountname"
 	"github.com/cmcoffee/gohort/core/activity"
+	"github.com/cmcoffee/gohort/core/displayname"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/modelaccess"
 	"github.com/cmcoffee/gohort/core/notices"
@@ -653,8 +654,12 @@ func (a *AdminApp) handleGlobalToolRollback(c *jsonapi.Call, _ struct{}) (any, e
 // change it makes that succeeds is written to the activity log.
 func (a *AdminApp) userRoutes() http.HandlerFunc {
 	one := jsonapi.Methods{
-		"GET":    jsonapi.Get(a.db, a.handleUserOne, a.gate()),
-		"PUT":    jsonapi.Put(a.db, audit("changed the account", a.handleUpdateUser), a.gate()),
+		"GET": jsonapi.Get(a.db, a.handleUserOne, a.gate()),
+		"PUT": jsonapi.Put(a.db, audit("changed the account", a.handleUpdateUser), a.gate()),
+		// One field at a time (the name, from its row): only what is sent
+		// changes, so a form holding an older copy of the record cannot put
+		// the admin flag back.
+		"PATCH":  jsonapi.Patch(a.db, audit("renamed", a.handleRenameUser), a.gate()),
 		"DELETE": jsonapi.Delete(a.db, audit("deleted the account", a.handleDeleteUser), a.gate()),
 	}
 	actions := map[string]jsonapi.Methods{
@@ -737,11 +742,12 @@ func (a *AdminApp) handleUserOne(c *jsonapi.Call) (any, error) {
 		groups = []string{}
 	}
 	return map[string]any{
-		"username": user.Username,
-		"admin":    user.Admin,
-		"pending":  user.Pending,
-		"apps":     apps,
-		"groups":   groups,
+		"username":     user.Username,
+		"display_name": user.DisplayName,
+		"admin":        user.Admin,
+		"pending":      user.Pending,
+		"apps":         apps,
+		"groups":       groups,
 	}, nil
 }
 
@@ -751,7 +757,16 @@ func (a *AdminApp) handleAddUser(c *jsonapi.Call, req struct {
 	Password string `json:"password"`
 	Admin    bool   `json:"admin"`
 	Invite   bool   `json:"invite"` // send a registration link instead of setting a password
+	// DisplayName, optional: without it they are asked on their first page.
+	DisplayName string `json:"display_name"`
 }) (any, error) {
+	if strings.TrimSpace(req.DisplayName) != "" {
+		clean, err := displayname.Clean(req.DisplayName)
+		if err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+		req.DisplayName = clean
+	}
 	// One rule for every new name (core/accountname): lowercased, plain
 	// characters, and not an existing account's name in another case.
 	if strings.TrimSpace(req.Username) == "" {
@@ -779,6 +794,9 @@ func (a *AdminApp) handleAddUser(c *jsonapi.Call, req struct {
 		if err != nil {
 			return nil, jsonapi.BadRequest(err.Error())
 		}
+		if req.DisplayName != "" {
+			a.setDisplayName(req.Username, req.DisplayName)
+		}
 		emailed := false
 		if EmailConfigured() {
 			body := fmt.Sprintf("You've been invited to %s. Click the link below to set your password and activate your account:\n\n%s\n", ServiceName(), link)
@@ -796,9 +814,54 @@ func (a *AdminApp) handleAddUser(c *jsonapi.Call, req struct {
 		return nil, jsonapi.BadRequest("password required (or choose to send an invite link)")
 	}
 	AuthSetUser(a.db, req.Username, req.Password, req.Admin)
+	if req.DisplayName != "" {
+		a.setDisplayName(req.Username, req.DisplayName)
+	}
 	Log("[admin] user %q created user %q (admin=%v)", current, req.Username, req.Admin)
 	RecordActivity(c.R, activity.Account, current, "added the account "+req.Username+asAdmin(req.Admin))
 	return map[string]any{"status": "created"}, nil
+}
+
+// handleRenameUser changes the name an account goes by, and nothing else:
+// PATCH {display_name}. A request that names nothing to change is refused,
+// rather than written to the activity log as a change.
+func (a *AdminApp) handleRenameUser(c *jsonapi.Call, req struct {
+	DisplayName *string `json:"display_name"`
+}) (any, error) {
+	username, err := oneUser(c)
+	if err != nil {
+		return nil, err
+	}
+	if req.DisplayName == nil {
+		return nil, jsonapi.BadRequest("nothing to change: send display_name")
+	}
+	if err := a.setDisplayName(username, *req.DisplayName); err != nil {
+		if _, ok := AuthGetUser(a.db, username); !ok {
+			return nil, jsonapi.NotFound("user not found")
+		}
+		return nil, jsonapi.BadRequest(err.Error())
+	}
+	Log("[admin] user %q renamed %q", c.User, username)
+	return map[string]string{"status": "updated"}, nil
+}
+
+// setDisplayName stores name, cleaned, as the name username goes by; a blank
+// clears it.
+func (a *AdminApp) setDisplayName(username, name string) error {
+	clean := ""
+	if strings.TrimSpace(name) != "" {
+		var err error
+		if clean, err = displayname.Clean(name); err != nil {
+			return err
+		}
+	}
+	user, ok := AuthGetUser(a.db, username)
+	if !ok {
+		return fmt.Errorf("user not found")
+	}
+	user.DisplayName = clean
+	a.db.Set(AuthTable, "user:"+username, user)
+	return nil
 }
 
 // resetPasswordBody is a password reset: no body is a reset link.
@@ -847,8 +910,9 @@ func (a *AdminApp) handleResetPassword(c *jsonapi.Call, req *resetPasswordBody) 
 
 // handleUpdateUser sets an account's password, its admin flag, or both.
 func (a *AdminApp) handleUpdateUser(c *jsonapi.Call, req struct {
-	Password string `json:"password,omitempty"`
-	Admin    *bool  `json:"admin,omitempty"`
+	Password    string  `json:"password,omitempty"`
+	Admin       *bool   `json:"admin,omitempty"`
+	DisplayName *string `json:"display_name,omitempty"`
 }) (any, error) {
 	username, err := oneUser(c)
 	if err != nil {
@@ -857,6 +921,13 @@ func (a *AdminApp) handleUpdateUser(c *jsonapi.Call, req struct {
 	user, ok := AuthGetUser(a.db, username)
 	if !ok {
 		return nil, jsonapi.NotFound("user not found")
+	}
+	// The name they go by, under the one rule (core/displayname); a blank is
+	// refused, since every account has one.
+	if req.DisplayName != nil {
+		if err := a.setDisplayName(username, *req.DisplayName); err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
 	}
 
 	admin := user.Admin

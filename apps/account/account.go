@@ -400,7 +400,9 @@ func (T *Account) handlePrefs(c *jsonapi.Call) (any, error) {
 		"notify":            AuthGetNotifyDefault(db, user),
 		"private_mode":      AuthGetPrivateMode(db, user),
 		"inferred_disabled": AuthGetInferredDisabled(db, user),
-		"timezone":          AuthGetUserTimezone(db, user),
+		// "" while it follows the browser (core's me.go), so the select shows
+		// that choice rather than whichever zone the browser last reported.
+		"timezone": accountZoneChoice(db, user),
 		// RESOLVED, so the form shows what will actually happen rather than
 		// a blank that means "nobody has asked you yet". Saving from here
 		// then stores it explicitly, which is how never-chosen becomes a
@@ -436,7 +438,7 @@ func (T *Account) handlePrefsSave(c *jsonapi.Call, req struct {
 		// store the canonical IANA name so a typo can't corrupt the user's
 		// schedules/stamp; a bad value is rejected so the form shows it.
 		if tz := strings.TrimSpace(*req.Timezone); tz == "" {
-			AuthSetUserTimezone(db, user, "")
+			followBrowserZone(db, user)
 		} else if _, iana, err := ResolveZone(tz); err != nil {
 			return nil, jsonapi.BadRequest(err.Error())
 		} else {
@@ -445,6 +447,47 @@ func (T *Account) handlePrefsSave(c *jsonapi.Call, req struct {
 	}
 	return jsonapi.Empty(http.StatusNoContent), nil
 }
+
+// accountZoneChoice is the Timezone select's value: "" while the account
+// follows its browser, else the zone it chose.
+func accountZoneChoice(db Database, user string) string {
+	u, _ := AuthGetUser(db, user)
+	if strings.TrimSpace(u.Timezone) == "" || u.TimezoneFromBrowser {
+		return ""
+	}
+	return strings.TrimSpace(u.Timezone)
+}
+
+// browserZoneLabel is the select's "follow my browser" choice, saying the
+// zone it has now when there is one.
+func browserZoneLabel(user string) string {
+	label := "Based on my browser"
+	if db := AuthDB(); db != nil {
+		if u, _ := AuthGetUser(db, user); u.TimezoneFromBrowser && strings.TrimSpace(u.Timezone) != "" {
+			label += " (now " + strings.TrimSpace(u.Timezone) + ")"
+		}
+	}
+	return label
+}
+
+// followBrowserZone returns the account to following its browser, keeping
+// the zone it has until the browser next reports one, so nothing it owns
+// moves in between.
+func followBrowserZone(db Database, user string) {
+	u, ok := AuthGetUser(db, user)
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(u.Timezone) == "" {
+		return
+	}
+	u.TimezoneFromBrowser = true
+	db.Set(AuthTable, "user:"+user, u)
+}
+
+// browserZoneReport sends the browser's zone to core (/api/me/browser-zone),
+// which takes it only for an account that follows its browser.
+const browserZoneReport = `<script>(function(){try{var z=Intl.DateTimeFormat().resolvedOptions().timeZone;if(!z)return;fetch('/api/me/browser-zone',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({zone:z})});}catch(e){}})();</script>`
 
 // handlePassword lets a logged-in user change their OWN password: POST
 // {current, new}. The CURRENT password is verified (so a borrowed/hijacked
@@ -491,6 +534,19 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 
 	sections := []ui.Section{
 		{
+			// The name the account goes by (core's /api/me/name). Optional.
+			Title:    "Your name",
+			Subtitle: "What gohort calls you. Anyone else sees it beside your username, " + user + ".",
+			Body: ui.FormPanel{
+				Source:  "/api/me/name",
+				PostURL: "/api/me/name",
+				Fields: []ui.FormField{
+					{Field: "display_name", Label: "Your name", Type: "text",
+						Help: "Optional. Saved as you leave the field. Plain text, up to 64 characters."},
+				},
+			},
+		},
+		{
 			Title:    "Preferences",
 			Subtitle: "Personal defaults, applied across your agents. Saved as you toggle.",
 			Body: ui.FormPanel{
@@ -509,9 +565,9 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 						Help:    "Notifications are always kept. This is whether they also reach you somewhere else.",
 						Detail:  "Everything an agent tells you out of band is a notification, including anything it sends with notify_me, and this is the one setting that decides where those go. Forwarded copies are prefixed [agent@service] so a text on your phone says what it came from. Only the FIRST time something happens is forwarded; a repeat raises the count on the notice instead, because a surface that texts you twenty-four times a day is one you switch off before it is ever useful. Email needs mail configured and an account that is an email address; phone needs the messaging bridge."},
 					{Field: "timezone", Label: "Timezone", Type: "select",
-						Options: TimezoneSelectOptions("System default"),
-						Help:    "Your personal timezone. Blank uses the system default.",
-						Detail:  "It sets the times agents see, and the day boundaries of schedules you own."},
+						Options: TimezoneSelectOptions(browserZoneLabel(user)),
+						Help:    "Based on your browser follows the zone you are in, wherever that is. Choose a zone to keep it fixed.",
+						Detail:  "It sets the times agents see, and the day boundaries of schedules you own. Following your browser, it changes when your browser's does, and you are told when it does; a zone you choose stays until you change it."},
 				},
 			},
 		},
@@ -562,6 +618,8 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 		artifactsSection(),
 	)
 	extraHead += artifactsHead()
+	// Reports the browser's zone, for an account that follows it.
+	extraHead += browserZoneReport
 	ui.Page{
 		Title:         "Account",
 		ShowTitle:     true,

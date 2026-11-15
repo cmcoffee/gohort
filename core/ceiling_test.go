@@ -145,7 +145,13 @@ const (
 	// does (auth_cookie_name, sessionMaxAge, requestIsHTTPS, authNewName,
 	// serveLoginPage), all unexported here; the protocol, the settings and the
 	// links are core/oidc's.
-	coreFileCeiling = 201
+	//
+	// 201 -> 202 (the person's own account): core/me.go, what someone sets
+	// for themselves from a page (their name, the zone their browser reports,
+	// the getting-started card). It writes the account record and draws on
+	// the dashboard, both unexported here; the rule for a name is
+	// core/displayname's and the steps are core/gettingstarted's.
+	coreFileCeiling = 202
 
 	// coreExportCeiling is the number of exported top-level symbols — funcs,
 	// types, vars, consts. Methods are excluded because they are not what

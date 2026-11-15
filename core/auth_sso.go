@@ -26,6 +26,7 @@ import (
 
 	"github.com/cmcoffee/gohort/core/accountname"
 	"github.com/cmcoffee/gohort/core/activity"
+	"github.com/cmcoffee/gohort/core/displayname"
 	"github.com/cmcoffee/gohort/core/oidc"
 )
 
@@ -286,7 +287,9 @@ func ssoNewAccount(r *http.Request, db Database, s oidc.Settings, id oidc.Identi
 	}
 	// No password: it signs in with Microsoft, and AuthCheckPassword refuses
 	// an account with none.
-	db.Set(AuthTable, "user:"+name, AuthUser{Username: name, Pending: s.NewPeople == oidc.NewPeopleApproval})
+	// The name Microsoft holds for them, when it reads as one (me.go).
+	shown, _ := displayname.Clean(id.Name)
+	db.Set(AuthTable, "user:"+name, AuthUser{Username: name, DisplayName: shown, Pending: s.NewPeople == oidc.NewPeopleApproval})
 	oidc.SetLink(db, id, name, time.Now())
 	if s.NewPeople == oidc.NewPeopleApproval {
 		Log("[auth] new account from Microsoft sign-in (pending): %q from %s", name, ClientIP(r))

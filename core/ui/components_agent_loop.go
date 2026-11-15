@@ -354,6 +354,15 @@ type AgentLoopPanel struct {
 	// "top" + the rail is visible; the field still substitutes into
 	// list/load/delete URL templates the same way.
 	ExtraFieldsInSidebar bool `json:"extra_fields_in_sidebar,omitempty"`
+	// NameReplies names the agent above its replies in a web conversation
+	// (AgentLabel, or the agent picker's choice), as a messaging app names
+	// the other side; the person's own messages carry no name. Channel rooms
+	// and threads name every sender either way.
+	NameReplies bool `json:"name_replies,omitempty"`
+	// AgentLabel names the agent above its messages on a page with no agent
+	// picker to read the name from. Empty: the picker's choice, else
+	// "Assistant".
+	AgentLabel string `json:"agent_label,omitempty"`
 	// HideActivity collapses the right-hand activity pane on
 	// load. The user can drag the divider to reveal it. Useful
 	// for apps whose default flow doesn't surface much activity

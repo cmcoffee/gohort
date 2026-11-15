@@ -200,6 +200,9 @@ func TestANewIdentityIsHandledAsTheSettingSays(t *testing.T) {
 		if AuthCheckPassword(f.db, "pat@example.test", "") {
 			t.Error("the new account opens with an empty password")
 		}
+		if u, _ := AuthGetUser(f.db, "pat@example.test"); u.DisplayName != pat.Name {
+			t.Errorf("the new account goes by %q, not the name Microsoft holds (%q)", u.DisplayName, pat.Name)
+		}
 	})
 	t.Run("a name that is taken is never matched", func(t *testing.T) {
 		f := newSSOFixture(t, oidc.NewPeopleLetIn)
