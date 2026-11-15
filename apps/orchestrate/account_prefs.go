@@ -1,10 +1,10 @@
 // Orchestrate's personal-preferences hook into /account
-// (RegisterAccountSection): the Default agent setting. Core stores the
-// raw preference string on AuthUser (AuthGet/SetDefaultAgent); this file
-// owns its semantics — "" = standard default (Chat), the "last" sentinel
-// = last-accessed (tracked client-side in a cookie by pinAgentInURL),
-// anything else = a specific agent ID validated against the agents the
-// user can actually see.
+// (RegisterAccountSection): the Main agent and the Default agent. Core stores
+// both strings on AuthUser; this file owns what they mean. Main agent:
+// main_agent.go. Default agent: "" = the main agent, the "last" sentinel =
+// last-accessed (tracked client-side in a cookie by pinAgentInURL),
+// anything else = a specific agent ID validated against the agents the user
+// can actually see.
 
 package orchestrate
 
@@ -19,11 +19,9 @@ import (
 )
 
 const (
-	// lastAccessedSentinel is an explicit DefaultAgent value meaning "open
-	// on whichever agent I last had selected". The UNSET preference ("")
-	// means the same thing — last-accessed is the default behavior, so
-	// there is no blessed framework agent baked in — but the sentinel
-	// stays accepted for values stored while it was the select's option.
+	// lastAccessedSentinel is a DefaultAgent value meaning "open on
+	// whichever agent I last had selected". The unset preference ("")
+	// opens on the main agent.
 	lastAccessedSentinel = "last"
 	// lastAgentCookie is written by the chat surface (pinAgentInURL in
 	// web_assets) with the currently selected agent ID, so the server can
@@ -44,24 +42,43 @@ func (T *OrchestrateApp) accountSection(r *http.Request, user string) (ui.Sectio
 	if udb == nil {
 		return ui.Section{}, false
 	}
-	// No blessed "Chat" option: the framework seeds are on their way out
-	// of the user-facing picker, so the only choices are last-accessed
-	// (the unset default) or one of the user's own visible agents.
-	opts := []ui.SelectOption{
-		{Value: "", Label: "Last accessed: wherever you left off"},
+	// The main agent first, as the unset default; then last-accessed, then
+	// any agent the picker offers.
+	mainLabel := "Your main agent"
+	if m, ok := mainAgentFor(user); ok {
+		mainLabel += " (" + chFirst(m.Name, m.ID) + ")"
 	}
-	grouped, _, _ := agentPickerOptions(pickerAgents(listAgents(udb, user)))
+	opts := []ui.SelectOption{
+		{Value: "", Label: mainLabel},
+		{Value: lastAccessedSentinel, Label: "Last accessed: wherever you left off"},
+	}
+	agents := listAgents(udb, user)
+	grouped, _, _ := agentPickerOptions(pickerAgents(agents))
 	opts = append(opts, grouped...)
+	// The main agent is one of their own standing agents.
+	var mainOpts []ui.SelectOption
+	for _, a := range agents {
+		if mainAgentCandidate(a, user) {
+			mainOpts = append(mainOpts, ui.SelectOption{Value: a.ID, Label: chFirst(a.Name, a.ID)})
+		}
+	}
+	if len(mainOpts) == 0 {
+		mainOpts = []ui.SelectOption{{Value: "", Label: "(create your assistant first)"}}
+	}
 	return ui.Section{
 		Title:    "Agents",
 		Subtitle: "Preferences for the Agents chat surface.",
 		Body: ui.FormPanel{
 			Source: T.WebPath() + "/api/default-agent",
 			Fields: []ui.FormField{
+				{Field: "main_agent", Type: "select", Label: "Main agent",
+					Options: mainOpts,
+					Help:    "Your go-to agent: where an ask that names no agent goes, over MCP, and where Agents opens unless you choose otherwise below.",
+					Detail:  "Your first assistant, unless you choose another of your own agents here."},
 				{Field: "default_agent", Type: "select", Label: "Default agent",
 					Options: opts,
-					Help:    "Which agent the chat surface opens on when you arrive without a deep link.",
-					Detail:  "Last accessed remembers your selection per browser, so per device. Picking a specific agent applies everywhere. An agent's own link still wins."},
+					Help:    "Which agent Agents opens on when you arrive without a link to one.",
+					Detail:  "Your main agent unless you choose otherwise. Last accessed remembers your selection per browser, so per device. Picking a specific agent applies everywhere. An agent's own link still wins."},
 			},
 		},
 	}, true
@@ -71,6 +88,7 @@ func (T *OrchestrateApp) accountSection(r *http.Request, user string) (ui.Sectio
 // section's FormPanel: {default_agent}.
 func (T *OrchestrateApp) defaultAgentGet(c *jsonapi.Call) (any, error) {
 	return map[string]any{
+		"main_agent":    mainAgentID(c.User),
 		"default_agent": AuthGetDefaultAgent(AuthDB(), c.User),
 	}, nil
 }
@@ -79,8 +97,16 @@ func (T *OrchestrateApp) defaultAgentGet(c *jsonapi.Call) (any, error) {
 // this user can see (so a stale or forged value can't point the surface at
 // nothing).
 func (T *OrchestrateApp) defaultAgentSave(c *jsonapi.Call, req struct {
+	MainAgent    string `json:"main_agent"`
 	DefaultAgent string `json:"default_agent"`
 }) (any, error) {
+	// The form saves both fields together: the main agent changes only when
+	// it is set to a different agent of theirs.
+	if m := strings.TrimSpace(req.MainAgent); m != "" && m != mainAgentID(c.User) {
+		if err := setMainAgent(c.User, m); err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+	}
 	v := strings.TrimSpace(req.DefaultAgent)
 	if v != "" && v != lastAccessedSentinel && !userCanSeeAgent(c.UDB, c.User, v) {
 		return nil, jsonapi.BadRequest("unknown agent")
@@ -104,12 +130,23 @@ func userCanSeeAgent(udb Database, user, id string) bool {
 // resolveDefaultAgent turns the stored preference into the agent the
 // chat page should open on, given the picker options being rendered
 // (which already encode visibility). A specific, still-visible agent
-// wins; unset (and the legacy "last" sentinel) means last-accessed via
-// the cookie; anything unresolvable lands on fallback. The ?agent= deep
-// link is handled by the caller and wins over all of this.
+// wins; unset means the main agent (main_agent.go), or last-accessed while
+// there is none; the "last" sentinel means last-accessed via the cookie;
+// anything unresolvable lands on fallback. The ?agent= deep link is handled
+// by the caller and wins over all of this.
 func resolveDefaultAgent(r *http.Request, user, fallback string, agentOpts []ui.SelectOption) string {
 	want := AuthGetDefaultAgent(AuthDB(), user)
-	if want == "" || want == lastAccessedSentinel {
+	if want == "" {
+		if m := mainAgentID(user); m != "" {
+			for _, opt := range agentOpts {
+				if opt.Value == m {
+					return m
+				}
+			}
+		}
+		want = lastAccessedSentinel
+	}
+	if want == lastAccessedSentinel {
 		want = ""
 		if c, err := r.Cookie(lastAgentCookie); err == nil {
 			if v, uerr := url.QueryUnescape(c.Value); uerr == nil {

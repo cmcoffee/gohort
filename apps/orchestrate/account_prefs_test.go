@@ -72,3 +72,23 @@ func TestAuthDefaultAgentRoundtrip(t *testing.T) {
 		t.Errorf("unknown user: got %q, want empty", got)
 	}
 }
+
+// With no Default agent chosen, Agents opens on the main agent; Last accessed
+// and a specific agent still decide when chosen.
+func TestAgentsOpensOnTheMainAgentUnlessChosenOtherwise(t *testing.T) {
+	_, udb, user := newTestOrchestrate(t)
+	ada, err := saveAgent(udb, AgentRecord{Owner: user, Name: "Ada", OrchestratorPrompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := []ui.SelectOption{{Value: ""}, {Value: ada.ID}, {Value: "ag-1"}}
+	r := httptest.NewRequest("GET", "/orchestrate/", nil)
+	r.AddCookie(&http.Cookie{Name: lastAgentCookie, Value: "ag-1"})
+	if got := resolveDefaultAgent(r, user, "fallback", opts); got != ada.ID {
+		t.Errorf("unset: %q, want the main agent %q", got, ada.ID)
+	}
+	AuthSetDefaultAgent(AuthDB(), user, lastAccessedSentinel)
+	if got := resolveDefaultAgent(r, user, "fallback", opts); got != "ag-1" {
+		t.Errorf("last accessed: %q", got)
+	}
+}

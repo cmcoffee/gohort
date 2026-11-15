@@ -41,8 +41,17 @@ func TestAScopedKeyReachesOnlyTheAgentsItLists(t *testing.T) {
 
 // An ask with no agent named goes to the main agent when the key reaches
 // it, else to the one agent the key lists; a key listing several must name
-// one.
+// one, and so must one whose account has no main agent.
 func TestAnUnnamedAskGoesWhereTheKeyReaches(t *testing.T) {
+	prev := ResolveExternalAgentFn
+	t.Cleanup(func() { ResolveExternalAgentFn = prev })
+	hasMain := true
+	ResolveExternalAgentFn = func(_ Database, owner, key string, granted func(string) bool) (string, bool) {
+		if key == "" && hasMain && granted != nil && granted("agent:main1") {
+			return "main1", true
+		}
+		return "", false
+	}
 	key := func(targets ...string) *AccountToken {
 		return &AccountToken{Owner: "u", Scope: &TokenScope{Targets: targets, AgentsBindMCP: true}}
 	}
@@ -50,19 +59,27 @@ func TestAnUnnamedAskGoesWhereTheKeyReaches(t *testing.T) {
 		tok  *AccountToken
 		want string
 	}{
-		{nil, defaultAgent},
-		{&AccountToken{Owner: "u"}, defaultAgent},
-		{key("agent:"+defaultAgent, "agent:a1"), defaultAgent},
+		{key("agent:main1", "agent:a1"), "main1"},
 		{key("worker", "agent:a1"), "a1"},
 	} {
-		if got, err := defaultAgentFor(tc.tok); err != nil || got != tc.want {
+		if got, err := defaultAgentFor("u", tc.tok); err != nil || got != tc.want {
 			t.Errorf("default for %+v = %q %v, want %q", tc.tok, got, err, tc.want)
 		}
 	}
-	if _, err := defaultAgentFor(key("agent:a1", "agent:a2")); err == nil {
+	if _, err := defaultAgentFor("u", key("agent:a1", "agent:a2")); err == nil {
 		t.Error("a key listing several agents and not the main one should have to name one")
 	}
-	if _, err := defaultAgentFor(key("worker")); err == nil {
+	if _, err := defaultAgentFor("u", key("worker")); err == nil {
 		t.Error("a key listing no agents should be refused")
+	}
+	if _, err := defaultAgentFor("u", nil); err == nil {
+		t.Error("with no key to reach it, an unnamed ask was given an agent")
+	}
+	hasMain = false
+	if got, err := defaultAgentFor("u", key("agent:a1")); err != nil || got != "a1" {
+		t.Errorf("no main agent, one listed: %q %v", got, err)
+	}
+	if _, err := defaultAgentFor("u", &AccountToken{Owner: "u"}); err == nil {
+		t.Error("no main agent and a key listing none: an agent was chosen")
 	}
 }

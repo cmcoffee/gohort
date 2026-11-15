@@ -697,12 +697,8 @@ func (T *MCPServer) listAgents(owner string, token *AccountToken) (string, error
 		}
 	}
 	b.WriteString("\nPass one of these ids as ask_agent's `agent` argument.")
-	if def, err := defaultAgentFor(token); err == nil {
-		if def == defaultAgent {
-			b.WriteString(" Omitting it uses the account's main agent.")
-		} else {
-			b.WriteString(" Omitting it uses " + def + ".")
-		}
+	if def, err := defaultAgentFor(owner, token); err == nil {
+		b.WriteString(" Omitting it uses " + def + ", the account's main agent or the one agent this key reaches.")
 	}
 	return b.String(), nil
 }
@@ -738,11 +734,18 @@ func keySeesRun(owner string, token *AccountToken, subject string) bool {
 }
 
 // defaultAgentFor is the agent an ask with none named goes to: the account's
-// main agent, or for a scoped key that does not list it, the one agent the
-// key lists. A key listing several has to name one.
-func defaultAgentFor(token *AccountToken) (string, error) {
-	if !keyListsAgents(token) || token.AllowsTarget("agent:"+defaultAgent) {
-		return defaultAgent, nil
+// main agent (orchestrate answers an empty name with it) when this key
+// reaches it, or for a scoped key that does not, the one agent the key lists.
+// A key listing several has to name one, and so does an account with no main
+// agent yet.
+func defaultAgentFor(owner string, token *AccountToken) (string, error) {
+	if ResolveExternalAgentFn != nil {
+		if id, ok := ResolveExternalAgentFn(nil, owner, "", token.AgentGrant()); ok {
+			return id, nil
+		}
+	}
+	if !keyListsAgents(token) {
+		return "", fmt.Errorf("no agent named, and this account has no main agent this key reaches: name one in `agent` (list_agents shows them), or choose your main agent on your Account page")
 	}
 	var listed []string
 	for _, t := range token.Scope.Targets {
@@ -776,7 +779,7 @@ func (T *MCPServer) askAgent(ctx context.Context, owner string, token *AccountTo
 	agent, _ := args["agent"].(string)
 	if strings.TrimSpace(agent) == "" {
 		var err error
-		if agent, err = defaultAgentFor(token); err != nil {
+		if agent, err = defaultAgentFor(owner, token); err != nil {
 			return "", nil, err
 		}
 	}

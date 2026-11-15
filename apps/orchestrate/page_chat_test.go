@@ -58,8 +58,9 @@ func TestTheChatPageIsAssembledInSteps(t *testing.T) {
 		return fields[0].Default
 	}
 
-	// The picker opens on the user's own agent, unless a link or the last
-	// one used names another the picker has.
+	// The picker opens on the user's main agent (their own, here their only
+	// one), unless a link names another the picker has; the last one used
+	// decides only once they chose Last accessed.
 	page := get("alice", "/", "")
 	if got := opensOn(page); got != "a-writer" {
 		t.Errorf("opens on %q, want the user's own agent", got)
@@ -67,12 +68,17 @@ func TestTheChatPageIsAssembledInSteps(t *testing.T) {
 	for _, c := range []struct{ url, cookie, want string }{
 		{"/?agent=seed-builder", "", "seed-builder"},
 		{"/?agent=bogus", "", "a-writer"},
-		{"/", "seed-builder", "seed-builder"},
+		{"/", "seed-builder", "a-writer"},
 	} {
 		if got := opensOn(get("alice", c.url, c.cookie)); got != c.want {
 			t.Errorf("%s (cookie %q) opens on %q, want %q", c.url, c.cookie, got, c.want)
 		}
 	}
+	AuthSetDefaultAgent(AuthDB(), "alice", lastAccessedSentinel)
+	if got := opensOn(get("alice", "/", "seed-builder")); got != "seed-builder" {
+		t.Errorf("with Last accessed chosen, the last one used: %q", got)
+	}
+	AuthSetDefaultAgent(AuthDB(), "alice", "")
 	var opts []ui.SelectOption
 	decodeAfter(t, page.Body.String(), `"option_pairs":`, &opts)
 	if len(opts) < 2 || opts[0].Value != "" || opts[0].Label != "(select agent)" {

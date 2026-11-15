@@ -75,10 +75,18 @@ func ResolveExternalAgent(db Database, owner, key string) (string, bool) {
 // ResolveExternalAgentGranted is ResolveExternalAgent with the calling key's
 // grant (AccountToken.AgentGrant): an agent the key lists is reachable
 // through it, and no other user agent is (reachableThrough). Nil granted
-// reaches app agents only.
+// reaches app agents only. No key is an ask that names no agent: the owner's
+// main agent (main_agent.go), under the same grant.
 func ResolveExternalAgentGranted(db Database, owner, key string, granted func(canonical string) bool) (string, bool) {
-	if db == nil || strings.TrimSpace(owner) == "" || strings.TrimSpace(key) == "" {
+	if db == nil || strings.TrimSpace(owner) == "" {
 		return "", false
+	}
+	if strings.TrimSpace(key) == "" {
+		main, ok := mainAgentFor(owner)
+		if !ok || !reachableThrough(main, owner, granted) {
+			return "", false
+		}
+		return main.ID, true
 	}
 	udb := UserDB(db, owner)
 	a, ok := findAgentByNameOrID(udb, owner, key)
@@ -294,10 +302,11 @@ func externalTargetsFor(db Database, user string) []ExternalTarget {
 	// reachable through THIS key (reachableThrough), mirroring the app
 	// feature grant. App agents are deliberately NOT listed — the app's own
 	// feature checkbox covers them, the implementing agent stays invisible.
-	// Hidden framework agents (Builder, Research) are skipped like the
-	// tool-access pills. The main agent is where an ask with no agent named
-	// goes, so a key can always be given it; it is listed first.
+	// Hidden framework agents (Builder, Research) and the retired ones are
+	// skipped like the tool-access pills. The main agent (main_agent.go) is
+	// where an ask with no agent named goes, so it is listed first and says so.
 	var main []ExternalTarget
+	mainID := mainAgentID(user)
 	for _, a := range listAgents(UserDB(db, user), user) {
 		// Nor what is reached through something else: a sub-agent through
 		// its parent, an app's agent through its app. A key that already
@@ -306,12 +315,12 @@ func externalTargetsFor(db Database, user string) []ExternalTarget {
 		if isAppAgent(a.ID) || strings.TrimSpace(a.OwnedBy) != "" || strings.TrimSpace(a.OwningApp) != "" {
 			continue
 		}
-		if a.ID == defaultConsoleAgent {
+		if a.ID == mainID {
 			seen["agent:"+a.ID] = true
 			main = append(main, ExternalTarget{Value: "agent:" + a.ID, Label: chFirst(a.Name, a.ID) + " - your main agent", Group: "Agents"})
 			continue
 		}
-		if a.Owner == seedOwner && a.Hidden {
+		if (a.Owner == seedOwner && a.Hidden) || fleetHidden(a.ID) {
 			continue
 		}
 		addAgent(a.ID, a.Name, "")

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // The invariant list_agents exists to hold: what it SHOWS equals what
@@ -67,32 +68,62 @@ func TestExternalAgentInfoCarriesParent(t *testing.T) {
 	}
 }
 
-// The main agent is where an ask with no agent named goes, so a key can
-// always be given it: it is offered first in a key's Can reach list with
-// its "Reachable over MCP" switch off, where other built-in agents are not.
-// Ticked on a key, it resolves through that key.
-func TestTheMainAgentIsAlwaysOfferedToAKey(t *testing.T) {
+// The main agent (main_agent.go) is where an ask with no agent named goes,
+// so a key's Can reach list offers it first, marked. An ask naming no agent
+// reaches it through a key that lists it, and through no other. The retired
+// Chat is nobody's main agent and is not offered.
+func TestTheMainAgentIsOfferedFirstAndAnsweredForNoName(t *testing.T) {
 	app := pipelineArtifactApp(t)
 	saved := orchRef
 	t.Cleanup(func() { orchRefMu.Lock(); orchRef = saved; orchRefMu.Unlock() })
 	orchRefMu.Lock()
 	orchRef = nil
 	orchRefMu.Unlock()
+	prevBase := orchestrateBaseDB
+	orchestrateBaseDB = app.DB
+	t.Cleanup(func() { orchestrateBaseDB = prevBase })
+	adb := &DBase{Store: kvlite.MemStore()}
+	adb.Set(AuthTable, "user:alice", AuthUser{Username: "alice"})
+	prevAuth := AuthDB
+	AuthDB = func() Database { return adb }
+	t.Cleanup(func() { AuthDB = prevAuth })
 
+	if targets := externalTargetsFor(app.DB, "alice"); len(targets) > 0 && targets[0].Value == "agent:"+defaultConsoleAgent {
+		t.Fatalf("the retired Chat is offered as the main agent: %+v", targets)
+	}
+	ada, err := saveAgent(UserDB(app.DB, "alice"), AgentRecord{Owner: "alice", Name: "Ada", OrchestratorPrompt: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	targets := externalTargetsFor(app.DB, "alice")
-	if len(targets) == 0 || targets[0].Value != "agent:"+defaultConsoleAgent || !strings.Contains(targets[0].Label, "main agent") {
+	if len(targets) == 0 || targets[0].Value != "agent:"+ada.ID || !strings.Contains(targets[0].Label, "your main agent") {
 		t.Fatalf("the main agent should come first, marked: %+v", targets)
 	}
-	main, ok := findAgentByNameOrID(UserDB(app.DB, "alice"), "alice", defaultConsoleAgent)
-	if !ok || main.MCPExposed {
-		t.Fatalf("the test needs the main agent with its switch off: ok=%v exposed=%v", ok, main.MCPExposed)
+	for _, tg := range targets {
+		if tg.Value == "agent:"+defaultConsoleAgent {
+			t.Errorf("the retired Chat is offered: %+v", tg)
+		}
 	}
-	granted := func(c string) bool { return c == "agent:"+defaultConsoleAgent }
-	if id, ok := ResolveExternalAgentGranted(app.DB, "alice", defaultConsoleAgent, granted); !ok || id != defaultConsoleAgent {
-		t.Errorf("a key that ticks the main agent should reach it: %q %v", id, ok)
+	granted := func(c string) bool { return c == "agent:"+ada.ID }
+	if id, ok := ResolveExternalAgentGranted(app.DB, "alice", "", granted); !ok || id != ada.ID {
+		t.Errorf("an ask naming no agent, through a key that lists the main one: %q %v", id, ok)
 	}
-	if _, ok := ResolveExternalAgentGranted(app.DB, "alice", defaultConsoleAgent, nil); ok {
-		t.Error("with no tick and the switch off, the main agent should stay unreachable")
+	if _, ok := ResolveExternalAgentGranted(app.DB, "alice", "", nil); ok {
+		t.Error("an ask naming no agent reached the main one through a key that does not list it")
+	}
+	// A second agent of theirs, chosen as the main one, takes its place.
+	bo, _ := saveAgent(UserDB(app.DB, "alice"), AgentRecord{Owner: "alice", Name: "Bo", OrchestratorPrompt: "p"})
+	if _, ok := mainAgentFor("alice"); ok {
+		t.Error("with two agents and none chosen, one was taken as the main agent")
+	}
+	if err := setMainAgent("alice", bo.ID); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := mainAgentFor("alice"); m.ID != bo.ID {
+		t.Errorf("the chosen main agent: %q", m.ID)
+	}
+	if err := setMainAgent("alice", defaultConsoleAgent); err == nil {
+		t.Error("a framework seed was taken as a main agent")
 	}
 }
 

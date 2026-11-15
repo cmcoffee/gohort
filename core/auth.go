@@ -422,6 +422,13 @@ type AuthUser struct {
 	// AuthSetDefaultAgent / AuthGetDefaultAgent.
 	DefaultAgent string `json:"default_agent,omitempty"`
 
+	// MainAgent is the person's go-to agent: where an ask that names no
+	// agent goes (MCP), and where Agents opens unless they chose otherwise.
+	// Set when the first-run wizard makes their assistant, and changeable on
+	// the account page. Core only stores it; orchestrate resolves it
+	// (main_agent.go), including for an account with none recorded.
+	MainAgent string `json:"main_agent,omitempty"`
+
 	// FirstRunDismissed records that the user skipped the Agents surface's
 	// first-run setup (the guided personal-assistant wizard offered while
 	// they own no agents of their own), so it isn't offered again on any

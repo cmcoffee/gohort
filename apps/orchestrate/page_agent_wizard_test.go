@@ -489,6 +489,9 @@ func TestTheFirstAssistantKeepsItsRules(t *testing.T) {
 	if saved.Voice != "af_sky" {
 		t.Errorf("voice saved as %q", saved.Voice)
 	}
+	if got := recordedMainAgent(user); got != saved.ID {
+		t.Errorf("the first assistant is not recorded as the main agent: %q", got)
+	}
 }
 
 // The first-run wizard asks for a voice only while speech is set up, with the

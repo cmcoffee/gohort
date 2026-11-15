@@ -902,6 +902,13 @@ func (T *OrchestrateApp) handleAgentWizard(c *jsonapi.Call, req wizardRequest) (
 	if err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
+	// The first assistant is their main agent (main_agent.go), unless they
+	// already chose one.
+	if req.Kind == "assistant" && strings.TrimSpace(req.FirstRun) != "" && recordedMainAgent(user) == "" {
+		if err := setMainAgent(user, saved.ID); err != nil {
+			Log("[orchestrate.wizard] could not record %s as %s's main agent: %v", saved.ID, user, err)
+		}
+	}
 	for _, f := range aboutYou {
 		StoreMemoryFact(udb, factsNamespace(saved.ID), f)
 	}
