@@ -21,7 +21,13 @@ import (
 
 // vetReply is the check's reply, as the model writes it.
 func vetReply(answer string, excerpt int, against string) string {
-	return `{"fit":"it fits","excerpt":` + strconv.Itoa(excerpt) + `,"against":"` + against + `","why":"because","answer":"` + answer + `"}`
+	return vetReplyFrom("primary: the vendor's own documentation", answer, excerpt, against)
+}
+
+// vetReplyFrom is vetReply from a source the reply calls primary or
+// secondary.
+func vetReplyFrom(source, answer string, excerpt int, against string) string {
+	return `{"fit":"it fits","source":"` + source + `","claim":"the audit log rotates daily","excerpt":` + strconv.Itoa(excerpt) + `,"against":"` + against + `","why":"because","answer":"` + answer + `"}`
 }
 
 // vetFixture is alice's collection "col-v" with one document, the model
@@ -337,10 +343,10 @@ func TestSettleItRulesAndChangesNothing(t *testing.T) {
 
 // Without web search the voices argue from the two texts alone.
 func TestSettleLooksThingsUpOnlyWhenItCan(t *testing.T) {
-	if d := settleDef(false); d.Stages[0].Research != 0 || len(d.Stages[0].Tools) != 0 {
+	if d := settleDef(false, settleVoices); d.Stages[0].Research != 0 || len(d.Stages[0].Tools) != 0 {
 		t.Errorf("no search: %+v", d.Stages[0])
 	}
-	if d := settleDef(true); d.Stages[0].Research == 0 || len(d.Stages[0].Tools) != 2 {
+	if d := settleDef(true, settleVoices); d.Stages[0].Research == 0 || len(d.Stages[0].Tools) != 2 {
 		t.Errorf("search: %+v", d.Stages[0])
 	}
 }

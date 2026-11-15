@@ -40,9 +40,9 @@ func (T *KnowledgeApp) heldSection(user, collectionID string) (ui.Section, bool)
 	}
 	return ui.Section{
 		Title:    "Held for you",
-		Subtitle: "Pages that contradict what this collection already holds. They wait here instead of going in.",
-		Detail: "Before a page that a machine picked goes in (the curator's, or Auto-fill's), it is checked against what the collection is for and what it already says. A page that contradicts a document already there is held here, with what each side says.\n\n" +
-			"Settle it by hand: add the page beside the document, add it in place of that document, or keep the document and drop the page. Or press Settle it first: two sides argue it, one for the page and one for the document, each citing what it reads; their citations are checked against those pages; then a ruling is shown here. Nothing changes until you choose.\n\n" +
+		Subtitle: "Pages that did not pass the check before going in. They wait here for you.",
+		Detail: "Before a page that a machine picked goes in (the curator's, or Auto-fill's), it is checked against what the collection is for and what it already says. A page from a secondary source (an article, a post, a story about the thing rather than its own word) also needs an independent source saying the same. A page is held here when it contradicts a document already in the collection, when another source contradicts it, or when no other source could be found saying the same.\n\n" +
+			"Settle it by hand: add the page, add it in place of the document it contradicts, or leave it out. Or press Settle it first: two sides argue it, one for the page and one for what contradicts it, each citing what it reads; their citations are checked against those pages; then a ruling is shown here. Nothing changes until you choose.\n\n" +
 			"Pages you pick yourself (your articles, sources you tick, uploads) are never checked.",
 		Body: ui.Table{
 			Source:       base,
@@ -54,18 +54,20 @@ func (T *KnowledgeApp) heldSection(user, collectionID string) (ui.Section, bool)
 				{Field: "created", Label: "When", Format: "reltime", Mute: true},
 				// Beneath, in full: what it contradicts is the point of the
 				// row, and cutting it to fit the buttons left "Conflicts with".
-				{Field: "conflict", Label: "What it contradicts", Line: 2},
+				{Field: "conflict", Label: "Why it is held", Line: 2},
 				{Field: "ruling", Label: "Ruling", Mute: true, Line: 2},
 			},
 			RowActions: []ui.RowAction{
-				// Both need the document it contradicts, which a check that
-				// named none did not give.
-				ui.ExpandIf("Settle it", "has_doc", "", settle),
+				// Settle it needs something to argue the page against: the
+				// document it contradicts, or the page that contradicted it.
+				// Replace and keep need a document in the collection.
+				ui.ExpandIf("Settle it", "can_settle", "", settle),
 				{Type: "button", Label: "Add it", PostTo: base + "/add?sid={id}",
-					Confirm: "Add this page to the collection, beside the document it contradicts?"},
+					Confirm: "Add this page to the collection?"},
 				{Type: "button", Label: "Replace the old one", OnlyIf: "has_doc", PostTo: base + "/replace?sid={id}",
 					Confirm: "Add this page and remove the document it contradicts from the collection?"},
-				{Type: "button", Label: "Keep the old one", PostTo: base + "/keep?sid={id}"},
+				{Type: "button", Label: "Keep the old one", OnlyIf: "has_doc", PostTo: base + "/keep?sid={id}"},
+				{Type: "button", Label: "Leave it out", HideIf: "has_doc", PostTo: base + "/keep?sid={id}"},
 			},
 		},
 	}, true

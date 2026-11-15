@@ -1383,12 +1383,14 @@ func (p *autofillPass) search(T *OrchestrateApp, queries []string) {
 		if checkedHere(*p.c) {
 			p.say(fmt.Sprintf("checking %d of %d pages found", ci+1, len(candidates)))
 			vctx, vcancel := context.WithTimeout(p.ctx, vetTimeout)
-			checked = vetPage(vctx, T.LLM, *p.c, chFirst(p.c.Owner, p.c.ID), vetCandidate{URL: cand.URL, Title: name, Text: text})
+			checked = T.checkPage(vctx, *p.c, vetCandidate{URL: cand.URL, Title: name, Text: text}, func(line string) {
+				p.say(fmt.Sprintf("confirming %d of %d pages found - %s", ci+1, len(candidates), line))
+			})
 			vcancel()
-			Log("[orchestrate.autofill] check %q: answer=%q against=%q err=%v", cand.URL, checked.Answer, checked.AgainstTitle, checked.Err)
+			Log("[orchestrate.autofill] check %q: answer=%q against=%q other=%q err=%v", cand.URL, checked.Answer, checked.AgainstTitle, checked.OtherURL, checked.Err)
 			if !checked.addsIt() {
 				item := autofillItem{URL: cand.URL, Status: "dropped", Name: name, Err: checked.note()}
-				if checked.Answer == vetConflicts {
+				if heldFor(checked) != "" {
 					if err := T.holdPage(*p.c, vetCandidate{URL: cand.URL, Title: name, Text: text}, checked); err == nil {
 						item.Status = "held"
 						p.held++
@@ -1405,7 +1407,7 @@ func (p *autofillPass) search(T *OrchestrateApp, queries []string) {
 		}
 		chunks := T.ingestAutofillDoc(p.ctx, *p.c, name, text, raw, mime)
 		item := autofillItem{URL: cand.URL, Status: "added", Name: name, Chunks: chunks}
-		if checked.Answer == vetSupersedes {
+		if checked.Answer == vetSupersedes || checked.OtherURL != "" {
 			item.Err = checked.note()
 		}
 		p.results = append(p.results, item)

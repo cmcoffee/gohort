@@ -230,3 +230,92 @@ that needs its System One form and scores first.
 - Deep research, which would need a hook the private research app plugs into.
 - Research reports saved into a collection (`collections.go:649`). They come
   with their own citations and are not checked here.
+
+## Second source (2026-11-15)
+
+Status: built (2026-11-15), `apps/orchestrate/collection_second_source.go`.
+Real-model behaviour not yet seen live.
+
+### Why
+
+The check above catches a page that contradicts the collection. It does not
+catch a page that says something new and wrong: a blog post, forum answer or
+news write-up with a claim nothing in the collection covers goes in as fact.
+The curator is told to prefer primary sources, but nothing holds it to that.
+
+### The rule
+
+A page a machine picked, from a **secondary** source, goes in only when an
+**independent** source says the same thing. A primary source goes in on its
+own word, as now.
+
+- **Primary:** the thing's own word: the project's or vendor's documentation,
+  the standard, the law, the paper, the official announcement.
+- **Secondary:** an article, blog post, forum answer, news story or summary
+  about it. The curator's own text (`add_text`) counts as secondary: it is an
+  agent's conclusion, which is exactly what should not become fact unchecked.
+- **Independent:** another site, saying it on its own rather than quoting or
+  linking the page.
+
+### How
+
+1. **The check says which.** Two more steps in the existing check's verdict,
+   so no extra call: `source` (primary or secondary, one clause why) and
+   `claim` (what the page adds that the collection does not say, in one
+   sentence). Only a page answered `adds` or `supersedes` and marked
+   secondary goes on to step 2.
+2. **Look for a second source.** A pipeline on core's stages, as Settle it
+   is: a **gather** stage searches for the claim and reads the best three
+   pages (it already skips weak sources and takes at most two pages a site),
+   then a judge stage (a `decide.Verdict`) is given the claim, the page's
+   address, and the numbered pages read. Answers:
+
+| Answer | Means | What happens |
+|---|---|---|
+| `confirmed` | an independent page says the same | added; the result names that page |
+| `contradicted` | an independent page says otherwise | held, with what it says and its address |
+| `unconfirmed` | none of the pages read says it | held, as unconfirmed |
+
+   A page on the same site as the candidate, or one that only quotes it,
+   does not confirm it.
+3. **When it cannot run** (no search set up, search or reading fails): not
+   added, the same as the check failing.
+
+### Held pages
+
+The held row says why it was held, in one new optional field on the row,
+`held_for`: `conflict` (as now), `contradicted` or `unconfirmed`. The page's
+buttons follow from it:
+
+| Held for | Buttons |
+|---|---|
+| conflict | Settle it, Add it, Replace the old one, Keep the old one (as now) |
+| contradicted | Settle it (against the outside page), Add it, Leave it out |
+| unconfirmed | Add it, Leave it out |
+
+Settle it against an outside page: the second side is the outside page,
+fetched again, instead of a document in the collection. Everything else in
+the settle pipeline is unchanged; a `page` ruling means add it, `document`
+means leave it out.
+
+Rows held before this have no `held_for` and read as `conflict`. No
+migration.
+
+### Cost
+
+Only for secondary pages that pass the check: one or two searches, up to
+three pages read, one model call. The run's progress line says
+"confirming N of M".
+
+### Settled (owner, 2026-11-15)
+
+1. **Unconfirmed:** held for you.
+2. **Contradicted by an outside page:** held, with Settle it against that page.
+3. **The curator's own text:** needs a second source; without one it is
+   turned away (there is no page to hold), and the curator is told why.
+
+The check's verdict reads only an answer starting "primary" as primary: a
+reply that leaves the step out gets the stricter reading. The same site is
+never a second source, whatever the ruling says, and a ruling that names no
+page it read counts as unconfirmed. Check cases are registered
+(`app.orchestrate.collection.second_source`, five cases).

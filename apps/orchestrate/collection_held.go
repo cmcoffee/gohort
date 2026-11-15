@@ -42,12 +42,14 @@ const heldFrom = "Collection check"
 func (T *OrchestrateApp) holdPage(c Collection, cand vetCandidate, res vetResult) error {
 	_, err := T.addSuggestion(c, collectionSuggestion{
 		Kind:         heldKind,
+		HeldFor:      heldFor(res),
 		Title:        chFirst(strings.TrimSpace(cand.Title), cand.URL),
 		Text:         heldText(res),
 		Source:       cand.URL,
 		AgentName:    heldFrom,
 		AgainstDoc:   res.AgainstDoc,
 		AgainstTitle: res.AgainstTitle,
+		AgainstURL:   res.OtherURL,
 	})
 	if errors.Is(err, errAlreadySuggested) {
 		return nil
@@ -57,6 +59,12 @@ func (T *OrchestrateApp) holdPage(c Collection, cand vetCandidate, res vetResult
 
 // heldText is what a held row says it contradicts.
 func heldText(res vetResult) string {
+	switch res.Answer {
+	case vetContradicted:
+		return fmt.Sprintf("Contradicted by %q (%s): %s", chFirst(res.OtherTitle, res.OtherURL), res.OtherURL, res.Against)
+	case vetUnconfirmed:
+		return "No independent source found saying the same: " + chFirst(res.Claim, res.Reason)
+	}
 	if res.AgainstTitle == "" {
 		return "Conflicts with what the collection holds: " + res.Against
 	}
@@ -82,19 +90,23 @@ func (T *OrchestrateApp) agentPageCheck(ctx context.Context, c Collection, cand 
 	if cand.URL != "" && T.heldURL(c, cand.URL) {
 		return "Not added: this page is already held for the owner, who decides on it from the collection's page. Do not add it another way.", false
 	}
-	res := vetPage(ctx, T.LLM, c, chFirst(c.Owner, c.ID), cand)
-	Log("[orchestrate.vet] collection=%s page=%q answer=%q against=%q err=%v", c.ID, chFirst(cand.URL, cand.Title), res.Answer, res.AgainstTitle, res.Err)
+	res := T.checkPage(ctx, c, cand, nil)
+	Log("[orchestrate.vet] collection=%s page=%q answer=%q against=%q other=%q err=%v", c.ID, chFirst(cand.URL, cand.Title), res.Answer, res.AgainstTitle, res.OtherURL, res.Err)
+	confirmed := ""
+	if res.OtherURL != "" && res.addsIt() {
+		confirmed = fmt.Sprintf(" %q (%s) confirms it.", res.OtherTitle, res.OtherURL)
+	}
 	switch {
 	case res.Answer == vetSupersedes:
-		return fmt.Sprintf("It is a newer version of %q: name that one in your reply as a proposed removal.", res.AgainstTitle), true
+		return fmt.Sprintf("It is a newer version of %q: name that one in your reply as a proposed removal.", res.AgainstTitle) + confirmed, true
 	case res.addsIt():
-		return "", true
-	case res.Answer == vetConflicts && cand.URL != "":
+		return strings.TrimSpace(confirmed), true
+	case heldFor(res) != "" && cand.URL != "":
 		if err := T.holdPage(c, cand, res); err != nil {
 			return "Not added: " + res.note() + ". It could not be held for the owner either (" + err.Error() + "); say so in your reply.", false
 		}
 		return "Not added: " + res.note() + ". It is held for the owner to decide on the collection's page; say so in your reply, and do not add it another way.", false
-	case res.Answer == vetConflicts:
+	case heldFor(res) != "":
 		return "Not added: " + res.note() + ". Say so in your reply to the owner.", false
 	}
 	return capitalize(res.note()) + ".", false
@@ -139,9 +151,14 @@ func (T *OrchestrateApp) collectionHeld(call *jsonapi.Call) (any, error) {
 			"source_link":   link,
 			"conflict":      s.Text,
 			"against_title": s.AgainstTitle,
-			"has_doc":       s.AgainstDoc != "" && link != "",
-			"ruling":        rulingLine(s),
-			"created":       s.Created,
+			"held_for":      chFirst(s.HeldFor, "conflict"),
+			// A document in the collection to replace or keep, and something
+			// to argue it against: that document, or the outside page that
+			// contradicted it.
+			"has_doc":    s.AgainstDoc != "" && link != "",
+			"can_settle": (s.AgainstDoc != "" || s.AgainstURL != "") && link != "",
+			"ruling":     rulingLine(s),
+			"created":    s.Created,
 		})
 	}
 	return map[string]any{"held": rows}, nil
@@ -209,12 +226,19 @@ func rulingLine(s collectionSuggestion) string {
 		return ""
 	}
 	var head string
-	switch s.Ruling {
-	case settlePage:
+	outside := s.AgainstDoc == "" && s.AgainstURL != ""
+	switch {
+	case s.Ruling == settlePage && outside:
+		head = "The page is right: add it"
+	case s.Ruling == settlePage:
 		head = "The page is right: replace " + chFirst(fmt.Sprintf("%q", s.AgainstTitle), "the document")
-	case settleDocument:
+	case s.Ruling == settleDocument && outside:
+		head = "The other source is right: leave the page out"
+	case s.Ruling == settleDocument:
 		head = "The collection's document is right: keep it"
-	case settleBoth:
+	case s.Ruling == settleBoth && outside:
+		head = "Both hold, for different cases or versions: add the page"
+	case s.Ruling == settleBoth:
 		head = "Both hold, for different cases or versions: add the page beside it"
 	default:
 		head = "Not settled by the evidence found"
@@ -229,18 +253,18 @@ func rulingLine(s collectionSuggestion) string {
 // settleVerdict rules on the argued dispute.
 var settleVerdict = decide.Verdict{
 	Key: "app.orchestrate.collection.settle",
-	Role: `A page about to be added to a knowledge collection contradicts a document already in it. Two sides argued it, each citing what it read, and their citations were checked against the pages read. Decide which is right.
+	Role: `A page about to be added to a knowledge collection is contradicted by another source: a document already in the collection, or another page. Two sides argued it, each citing what it read, and their citations were checked against the pages read. Decide which is right.
 
 Rule on the evidence, not on which side argued better. A claim whose citation did not hold up, or that cites nothing, counts for nothing. Between sources about the same version of the same thing, prefer the primary or more authoritative one, and then the more current. When both are right about different versions, scopes or cases, say both. When the evidence read does not decide it, say so: an honest unsettled beats a guess.`,
 	Answers: []decide.Choice{
-		{Key: settlePage, Means: "the new page is right on the point in dispute, and the collection's document is wrong or out of date"},
-		{Key: settleDocument, Means: "the collection's document is right, and the new page is wrong"},
+		{Key: settlePage, Means: "the new page is right on the point in dispute, and the other source is wrong or out of date"},
+		{Key: settleDocument, Means: "the other source (the collection's document, or the other page) is right, and the new page is wrong"},
 		{Key: settleBoth, Means: "both are right, about different versions, scopes or cases"},
 		{Key: settleUnsettled, Means: "the evidence read does not decide it"},
 	},
 	Weigh: []decide.Step{
 		{Key: "page_case", Ask: "the new page's strongest point that its evidence supports, or none"},
-		{Key: "document_case", Ask: "the document's strongest point that its evidence supports, or none"},
+		{Key: "document_case", Ask: "the other source's strongest point that its evidence supports, or none"},
 		{Key: "why", Ask: "one or two sentences for the owner: the reason for the ruling, naming the source that decides it"},
 	},
 }
@@ -250,15 +274,19 @@ Rule on the evidence, not on which side argued better. A claim whose citation di
 // the sources, and the run hands that to settleVerdict.
 const settleJudge = "settle-judge"
 
-// settleVoices are the two sides.
+// settleVoices are the two sides: the page, and what contradicts it.
 var settleVoices = []string{"The new page", "The collection's document"}
+
+// settleVoicesOutside are the sides when what contradicts the page is
+// another page rather than a document in the collection.
+var settleVoicesOutside = []string{"The new page", "The other source"}
 
 // settleDef is the settle pipeline: the two sides argue over two rounds,
 // looking things up when the deployment can search; their citations are
 // checked; the judge rules.
-func settleDef(research bool) PipelineDef {
+func settleDef(research bool, voices []string) PipelineDef {
 	argue := PipelineStage{
-		Name: "argue", Kind: StagePanel, Count: 2, Panel: settleVoices,
+		Name: "argue", Kind: StagePanel, Count: 2, Panel: voices,
 		Prompt: "You are {voice}, in a dispute over what a knowledge collection should hold. Round {iteration} of {iterations}.\n\n{input}\n\n" +
 			"Argue that your side is right on the point in dispute, from your own text and from what you have read. Cite what you read by its number, as [1]. " +
 			"Say plainly where the other side is right, or where the evidence does not settle it: a concession that holds beats a claim that does not. " +
@@ -294,6 +322,9 @@ func (T *OrchestrateApp) settleSides(ctx context.Context, c Collection, s collec
 	if err != nil {
 		return "", fmt.Errorf("the page could not be read again: %v", err)
 	}
+	if s.AgainstDoc == "" {
+		return settleOutsideSides(ctx, s, pageText, note)
+	}
 	note("reading the collection's document")
 	var docText []string
 	for _, e := range collectionExcerpts(ctx, c, chFirst(c.Owner, c.ID), s.Text) {
@@ -319,6 +350,25 @@ func (T *OrchestrateApp) settleSides(ctx context.Context, c Collection, s collec
 	b.WriteString(UntrustedFence("the new page", bearingOn(pageText, s.Text, 3000)) + "\n\n")
 	b.WriteString("## The collection's document: " + chFirst(s.AgainstTitle, s.AgainstDoc) + "\n")
 	b.WriteString(UntrustedFence("the collection's document", textutil.Clip(strings.Join(docText, "\n\n"), 3000)))
+	return b.String(), nil
+}
+
+// settleOutsideSides is the dispute when what contradicts the page is another
+// page: that page, fetched again, is the second side.
+func settleOutsideSides(ctx context.Context, s collectionSuggestion, pageText string, note func(string)) (string, error) {
+	note("reading the other source")
+	fctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	_, otherText, _, _, err := ingestFetch(fctx, s.AgainstURL)
+	cancel()
+	if err != nil {
+		return "", fmt.Errorf("the other source could not be read again: %v", err)
+	}
+	var b strings.Builder
+	b.WriteString("## The point in dispute\n" + s.Text + "\n\n")
+	b.WriteString("## The new page: " + chFirst(s.Title, s.Source) + " (" + s.Source + ")\n")
+	b.WriteString(UntrustedFence("the new page", bearingOn(pageText, s.Text, 3000)) + "\n\n")
+	b.WriteString("## The other source: " + s.AgainstURL + "\n")
+	b.WriteString(UntrustedFence("the other source", bearingOn(otherText, s.Text, 3000)))
 	return b.String(), nil
 }
 
@@ -372,8 +422,8 @@ func (T *OrchestrateApp) settle(ctx context.Context, c Collection, sid string, n
 	if !ok || s.Kind != heldKind {
 		return "", fmt.Errorf("that page is no longer held")
 	}
-	if s.AgainstDoc == "" {
-		return "", fmt.Errorf("the check did not name the document it contradicts, so there is nothing to argue it against: add it or keep what is there")
+	if s.AgainstDoc == "" && s.AgainstURL == "" {
+		return "", fmt.Errorf("nothing was named as contradicting it, so there is nothing to argue it against: add it or leave it out")
 	}
 	input, err := T.settleSides(ctx, c, s, note)
 	if err != nil {
@@ -382,7 +432,11 @@ func (T *OrchestrateApp) settle(ctx context.Context, c Collection, sid string, n
 	var ruling decide.Ruling
 	var ruled bool
 	owner := chFirst(c.Owner, c.ID)
-	_, err = settleRunPipeline(T, ctx, owner, settleDef(WebSearchAvailable()), input, PipelineHooks{
+	voices := settleVoices
+	if s.AgainstDoc == "" {
+		voices = settleVoicesOutside
+	}
+	_, err = settleRunPipeline(T, ctx, owner, settleDef(WebSearchAvailable(), voices), input, PipelineHooks{
 		Status: func(line string) { note(textutil.Clip(line, 140)) },
 		Dispatch: func(ctx context.Context, agentKey, prompt string) (string, error) {
 			if agentKey != settleJudge {

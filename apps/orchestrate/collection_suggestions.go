@@ -68,6 +68,8 @@ type collectionSuggestion struct {
 	// durable and already where the owner looks. Rows stored before these
 	// fields have none of them and stay ordinary suggestions.
 	Kind         string    `json:"kind,omitempty"`
+	HeldFor      string    `json:"held_for,omitempty"`      // conflict, contradicted or unconfirmed; "" reads as conflict
+	AgainstURL   string    `json:"against_url,omitempty"`   // the outside page that contradicted it
 	Title        string    `json:"title,omitempty"`         // the held page's title
 	AgainstDoc   string    `json:"against_doc,omitempty"`   // the document it conflicts with
 	AgainstTitle string    `json:"against_title,omitempty"` // and that document's title
