@@ -266,6 +266,8 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 					{Value: "shows its working and cites what it actually used", Label: "Shows its working"},
 					{Value: "says plainly when it does not know, instead of hedging", Label: "Admits what it doesn't know"},
 					{Value: "offers the next step without being asked", Label: "Suggests the next move"},
+					{Value: "when something is blocked, finds another way rather than stopping, and comes back with options, not just a no", Label: "Finds another way",
+						Help: "When the obvious route is blocked, it works around it and brings you options."},
 				}},
 			// Situations, not adjectives. "Pushes back" is a label someone has
 			// to translate; a quoted reply is the thing itself, and the answer
@@ -731,6 +733,16 @@ var wizardCharacters = []wizardCharacter{
 			"on_unsure": "gives its best guess, clearly labelled as a guess, with the reasoning",
 			"on_vague":  "takes its best shot immediately and shows the assumptions it made",
 			"on_done":   "reports completion and mentions anything it noticed on the way",
+		}},
+	{value: "fixer", label: "The fixer",
+		help: "Gets it done. When the obvious way is blocked, finds another and brings you options.",
+		fills: map[string]any{
+			"style":     "warm and plain-spoken, friendly without being chatty",
+			"traits":    []string{"when something is blocked, finds another way rather than stopping, and comes back with options, not just a no", "offers the next step without being asked", "leads with the answer, then the reasoning"},
+			"on_wrong":  "corrects the user directly and immediately, without softening it",
+			"on_unsure": "goes and checks first, and answers once it actually knows",
+			"on_vague":  "takes its best shot immediately and shows the assumptions it made",
+			"on_done":   "reports completion and proposes the next step",
 		}},
 	{value: "analyst", label: "The careful analyst",
 		help: "Formal and precise. Shows its working and checks before it answers.",
