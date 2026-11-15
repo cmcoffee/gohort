@@ -313,3 +313,21 @@ func TestCallerIsTheRequesterAndCannotBeSent(t *testing.T) {
 		t.Fatalf("action: %d %s, caller = %v", w.Code, w.Body.String(), got["caller"])
 	}
 }
+
+// A data source's reply is its JSON, whatever else shares its output: the
+// sandbox hands back the error stream with it, and a warning a newer Python
+// writes (a deprecation) made a working source fail its page with a 500.
+func TestADataSourceWarningDoesNotBreakItsReply(t *testing.T) {
+	T := sharingTestApp(t)
+	saved := runAppScript
+	runAppScript = func(appscript.Job) (string, error) {
+		return "news.py:193: DeprecationWarning: datetime.datetime.utcnow() is deprecated\n  now = datetime.utcnow()\n" + `{"items":[1,2]}`, nil
+	}
+	t.Cleanup(func() { runAppScript = saved })
+	spec := AppSpec{Slug: "warned", Owner: "bob", DataSources: []AppDataSource{{Name: "news", Script: "x"}}}
+	w := httptest.NewRecorder()
+	T.handleData(w, httptest.NewRequest(http.MethodGet, "/apps/warned/data/news", nil), "bob", "bob", T.recordBase(spec, "bob"), spec, "news")
+	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != `{"items":[1,2]}` {
+		t.Fatalf("data: %d %q", w.Code, w.Body.String())
+	}
+}

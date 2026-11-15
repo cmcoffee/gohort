@@ -44,6 +44,7 @@ import (
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appadmin"
 	"github.com/cmcoffee/gohort/core/appassets"
+	"github.com/cmcoffee/gohort/core/appcheck"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/promotion"
 	"github.com/cmcoffee/gohort/core/shareledger"
@@ -1258,11 +1259,17 @@ func (T *CustomApps) handleData(w http.ResponseWriter, r *http.Request, owner, u
 		http.Error(w, "data source failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	trimmed := strings.TrimSpace(out)
-	if !json.Valid([]byte(trimmed)) {
+	// The reply, set apart from what else the script printed: the sandbox
+	// hands back its error stream with its output, and a warning a newer
+	// Python writes (a deprecation) made a working source read as broken.
+	trimmed, besides, ok := appcheck.ScriptReply(out)
+	if !ok {
 		Log("[customapps] data source %q/%q returned non-JSON (first 200B): %.200s", spec.Slug, name, trimmed)
 		http.Error(w, "the data source script must print a JSON value (array for a table, object for a display) to stdout", http.StatusInternalServerError)
 		return
+	}
+	if besides != "" {
+		Log("[customapps] data source %q/%q printed this besides its JSON, set aside: %.300s", spec.Slug, name, besides)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(trimmed))

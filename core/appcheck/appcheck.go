@@ -163,8 +163,9 @@ func (s Step) valid() error {
 // Judge tests a script's printed output against the check's expectations.
 // It returns "" when every one holds, or what the first that did not saw.
 func (c Check) Judge(output string) string {
+	reply, _, ok := ScriptReply(output)
 	var v any
-	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &v); err != nil {
+	if !ok || json.Unmarshal([]byte(reply), &v) != nil {
 		return "it did not print valid JSON: " + clip(output)
 	}
 	for _, e := range c.Expect {

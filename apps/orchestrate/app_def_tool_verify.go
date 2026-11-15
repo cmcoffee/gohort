@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appcheck"
 	"github.com/cmcoffee/gohort/core/buildledger"
 	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/tools/appscript"
@@ -737,6 +738,13 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 			}
 			return
 		}
+		// The reply as the app reads it (appcheck.ScriptReply): the JSON the
+		// script printed, set apart from warnings and progress lines that
+		// share its output. Said, so a warning is seen before it matters.
+		besides := ""
+		if reply, extra, ok := appcheck.ScriptReply(trimmed); ok {
+			trimmed, besides = reply, extra
+		}
 		if !json.Valid([]byte(trimmed)) {
 			fail++
 			fmt.Fprintf(&b, "FAIL %s: did not print valid JSON.%s Output:\n%s\n", label, jsonBreakNote(trimmed), SpillOutput(trimmed, 800, "read_output"))
@@ -749,6 +757,9 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 				b.WriteString("     Hint: a data source runs on page load with NO query params set, read every env var with a default, e.g. os.environ.get('city', ''), never os.environ['city'].\n")
 			}
 			return
+		}
+		if besides != "" {
+			fmt.Fprintf(&b, "NOTE %s: printed this besides its JSON reply, which the app sets aside and the page never gets (a warning is a thing to fix before the next interpreter makes it an error): %s\n", label, SpillOutput(besides, 300, "read_output"))
 		}
 		var v any
 		_ = json.Unmarshal([]byte(trimmed), &v)
@@ -998,7 +1009,7 @@ func jsonBreakNote(out string) string {
 		return ""
 	}
 	at := int(se.Offset) - 1
-	return fmt.Sprintf(" It parses as JSON up to char %d of %d, then: %q (%s). Anything printed besides the JSON, stderr included, counts as output: send a value you want to see to log() (from gohort import log), which a check shows and the page never gets.",
+	return fmt.Sprintf(" It parses as JSON up to char %d of %d, then: %q (%s). Whole lines printed before or after the JSON are set aside, but anything printed in the middle of it breaks it: send a value you want to see to log() (from gohort import log), which a check shows and the page never gets.",
 		at, len(out), textutil.Clip(out[at:], 80), se.Error())
 }
 
