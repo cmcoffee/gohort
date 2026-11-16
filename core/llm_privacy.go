@@ -94,7 +94,7 @@ func ProviderLooksPrivate(provider, endpoint string) (bool, string) {
 		switch strings.ToLower(strings.TrimSpace(provider)) {
 		case "":
 			return true, "not configured: nothing is sent anywhere"
-		case "ollama", "llama.cpp", "vllm":
+		case "ollama", "llama.cpp", "vllm", "mlx":
 			return true, "local by default (no endpoint configured)"
 		}
 		return false, "no address, and not a local server's default, so it cannot be judged private"
@@ -193,10 +193,10 @@ func tierProviderEndpoint(table string) (provider, endpoint string) {
 }
 
 // LocalDialect reports whether a model dialect is one of the servers gohort
-// runs beside (Ollama, llama.cpp, vLLM): their queue, proxy and lending.
+// runs beside (Ollama, llama.cpp, vLLM, MLX): their queue, proxy and lending.
 func LocalDialect(dialect string) bool {
 	switch strings.ToLower(strings.TrimSpace(dialect)) {
-	case "ollama", "llama.cpp", "vllm":
+	case "ollama", "llama.cpp", "vllm", "mlx":
 		return true
 	}
 	return false
@@ -214,7 +214,7 @@ func modelDialect(provider string) string {
 
 // providerTitles are the built-in LLM providers as people see them named.
 var providerTitles = map[string]string{"anthropic": "Anthropic", "openai": "OpenAI", "gemini": "Gemini",
-	"bedrock": "AWS Bedrock", "ollama": "Ollama", "llama.cpp": "llama.cpp", "vllm": "vLLM"}
+	"bedrock": "AWS Bedrock", "ollama": "Ollama", "llama.cpp": "llama.cpp", "vllm": "vLLM", "mlx": "MLX"}
 
 // ProviderTitle is how a tier's provider is shown to people: a built-in one
 // by its name (Anthropic, not anthropic), a connection by the name it is

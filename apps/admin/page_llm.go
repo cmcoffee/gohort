@@ -24,7 +24,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 				TestLabel: "Test connection",
 				Fields: tierReach([]ui.FormField{
 					{Field: "provider", Label: "Provider", Type: "select", Options: LLMProviderOptions(false),
-						Help:   "Local providers, ollama, llama.cpp or vLLM, are the usual worker.",
+						Help:   "Local providers, ollama, llama.cpp, vLLM or MLX, are the usual worker.",
 						Detail: tierProviderDetail},
 					{Field: "model", Label: "Model", Type: "text", Placeholder: "e.g. qwen3.6-27b", SaveOnBlur: true,
 						SuggestionsSource: "api/worker-llm/models", SuggestionsLabel: "List models",
@@ -32,7 +32,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 						Detail: "On AWS Bedrock, many accounts require a region-prefixed inference profile (us.anthropic.claude-opus-4-8) and deny the bare id."},
 					{Field: "context_size", Label: "Context size (tokens)", Type: "number", Min: 0, Max: 1000000,
 						ShowWhen: providerWhen(false, "openai", "gemini"),
-						Help:     "0 uses the default: 65K for ollama, llama.cpp and vLLM, 200K for Anthropic and Bedrock.",
+						Help:     "0 uses the default: 65K for ollama, llama.cpp, vLLM and MLX, 200K for Anthropic and Bedrock.",
 						Detail:   "Local providers send this as num_ctx. For Anthropic and Bedrock it is the working cap history compaction keys on. The API accepts up to 1M, but every input token bills per turn, so keep it modest. A model borrowed from a peer uses the size the peer set for it: 0 takes it, and a larger number here is lowered to it, so a conversation is trimmed before the peer's server would refuse it."},
 					{Field: "request_timeout_seconds", Label: "Request timeout (sec)", Type: "number", Min: 0, Max: 3600,
 						Help: "0 = default 300s."},
@@ -471,7 +471,7 @@ func appRoutingSources() []string {
 }
 
 // tierProviderDetail is where a tier's model can come from.
-const tierProviderDetail = "Ollama, llama.cpp and vLLM are servers on this machine or its network. OpenAI and Anthropic are their own APIs, or, given an address, any provider that speaks theirs: Groq, OpenRouter, Together, Mistral, DeepSeek, a gateway. A peer offering inference appears here too, and its GPU runs the turns. Token prices for cost estimates are the tier's rates under Costs."
+const tierProviderDetail = "Ollama, llama.cpp, vLLM and MLX are servers on this machine or its network. OpenAI and Anthropic are their own APIs, or, given an address, any provider that speaks theirs: Groq, OpenRouter, Together, Mistral, DeepSeek, a gateway. A peer offering inference appears here too, and its GPU runs the turns. Token prices for cost estimates are the tier's rates under Costs."
 
 // bedrockAPIDetail says which Bedrock API needs which permission.
 const bedrockAPIDetail = "Converse is AWS's one format for every model Bedrock hosts (Claude, Llama, Mistral, Nova and the rest) and needs bedrock:InvokeModel. The other two speak Claude's own format and serve Claude only: the Messages API needs bedrock-mantle:CreateInference, and InvokeModel needs bedrock:InvokeModel. A 403 on CreateInference means switch to Converse or InvokeModel."
@@ -507,25 +507,27 @@ func tierReach(fields []ui.FormField) []ui.FormField {
 	reach := []ui.FormField{
 		{Field: "_stale", Type: "readonly", Label: "Needs setting again", ShowWhen: "_stale"},
 		{Field: "endpoint", Label: "Address", Type: "text", Placeholder: "blank: the provider's own", SaveOnBlur: true,
-			ShowWhen: "provider:anthropic|openai|ollama|llama.cpp|vllm|bedrock",
+			ShowWhen: "provider:anthropic|openai|ollama|llama.cpp|vllm|mlx|bedrock",
 			Help:     "OpenAI or Anthropic: blank uses their own API; an address uses any provider that speaks it. Local servers: where the server listens.",
 			Detail:   "A key goes only to the address it was given for: change the address and give the key again.",
 			Presets: []ui.FieldPreset{
 				{Label: "Ollama", Value: "http://localhost:11434"},
 				{Label: "llama.cpp", Value: "http://localhost:8080/v1"},
 				{Label: "vLLM", Value: "http://localhost:8000/v1"},
+				{Label: "MLX", Value: "http://localhost:8080/v1", Hint: "mlx_lm.server"},
+				{Label: "LM Studio", Value: "http://localhost:1234/v1", Hint: "with MLX"},
 				{Label: "Groq", Value: "https://api.groq.com/openai/v1", Hint: "with OpenAI"},
 				{Label: "OpenRouter", Value: "https://openrouter.ai/api/v1", Hint: "with OpenAI"},
 				{Label: "Together", Value: "https://api.together.xyz/v1", Hint: "with OpenAI"},
 				{Label: "Mistral", Value: "https://api.mistral.ai/v1", Hint: "with OpenAI"},
 				{Label: "DeepSeek", Value: "https://api.deepseek.com/v1", Hint: "with OpenAI"}}},
 		{Field: "api_key_from", Label: "API key from", Type: "select", Default: keyOwn,
-			ShowWhen:      "provider:anthropic|openai|gemini|bedrock|llama.cpp|vllm",
+			ShowWhen:      "provider:anthropic|openai|gemini|bedrock|llama.cpp|vllm|mlx",
 			OptionsSource: keystoreSource + "/choices?tier=1",
 			Help:          "A key kept once under Services > Keystore, shared with every connector that talks to this provider, or one this tier keeps for itself.",
 			Detail:        "A Keystore key is used only when it is given for this tier's address; saving with one that is not says so. Rotating it in the Keystore reloads this tier with the new key."},
 		{Field: "api_key", Label: "API key", Type: "password", Placeholder: "(leave blank to keep current)", SaveOnBlur: true,
-			ShowWhen: "provider:anthropic|openai|gemini|bedrock|llama.cpp|vllm;api_key_from:" + keyOwn,
+			ShowWhen: "provider:anthropic|openai|gemini|bedrock|llama.cpp|vllm|mlx;api_key_from:" + keyOwn,
 			Help:     "Stored encrypted, for the address above. Ollama ignores it; llama.cpp, vLLM and a compatible provider at its own address send it only when given."},
 		{Field: "_kept_key", Type: "readonly", Label: "Saved API key", ShowWhen: "provider;_kept_key"},
 		{Field: "aws_region", Label: "AWS region", Type: "text", Placeholder: blankRegion, SaveOnBlur: true,
@@ -564,7 +566,7 @@ func judgeProviderOptions() []ui.SelectOption {
 	out := []ui.SelectOption{{Value: "", Label: "(use the worker)", Help: "The checks run on the worker model."}}
 	for _, o := range LLMProviderOptions(false) {
 		switch {
-		case o.Value == "ollama", o.Value == "llama.cpp", o.Value == "vllm":
+		case o.Value == "ollama", o.Value == "llama.cpp", o.Value == "vllm", o.Value == "mlx":
 		case o.Value == "openai":
 			o.Label = "OpenAI-compatible, at a local address"
 			o.Help = "A server on this network that speaks the OpenAI API: give its address below."

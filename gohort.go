@@ -169,9 +169,9 @@ func main() {
 	}
 	LlamaCppBackendFunc = func() (string, string) {
 		cfg := dbcfg.llm()
-		// vLLM serves the same OpenAI-compatible API, so the proxy fronts it
-		// the same way.
-		if cfg.Provider != "llama.cpp" && cfg.Provider != "vllm" {
+		// vLLM and MLX serve the same OpenAI-compatible API, so the proxy
+		// fronts them the same way.
+		if cfg.Provider != "llama.cpp" && cfg.Provider != "vllm" && cfg.Provider != "mlx" {
 			return "", ""
 		}
 		ep := cfg.Endpoint

@@ -2280,7 +2280,7 @@ func ProviderHasNativeTools(provider string) bool {
 		return true
 	}
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "anthropic", "bedrock", "openai", "gemini", "llama.cpp", "vllm":
+	case "anthropic", "bedrock", "openai", "gemini", "llama.cpp", "vllm", "mlx":
 		return true
 	}
 	// ollama (and anything unrecognized): depends on the model, so honor the
@@ -2420,10 +2420,12 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		if !cfg.SeparateServer {
 			StartOllamaScheduler(maxParallel)
 		}
-	case "llama.cpp", "vllm":
+	case "llama.cpp", "vllm", "mlx":
 		// vLLM speaks the same OpenAI-compatible dialect and reads
 		// chat_template_kwargs the same way, so it is this client with the
-		// one llama.cpp-only field left off (see openAIClient.vllm).
+		// one llama.cpp-only field left off (see openAIClient.vllm). MLX's
+		// server on a Mac (mlx_lm.server, or LM Studio's MLX engine) speaks it
+		// too, and like stock llama.cpp runs one request at a time.
 		vllm := cfg.Provider == "vllm"
 		ep := "http://localhost:8080/v1"
 		if vllm {
@@ -2440,6 +2442,7 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		oc := client.(*openAIClient)
 		oc.llamacpp = true
 		oc.vllm = vllm
+		oc.mlx = cfg.Provider == "mlx"
 		oc.llamacppBudget = cfg.ThinkingBudget
 		oc.disableThinking = cfg.DisableThinking
 		oc.noThinkUseKwarg = cfg.NoThinkUseKwarg
@@ -2520,7 +2523,7 @@ func ListModels(ctx context.Context, cfg LLMProviderConfig) ([]string, error) {
 		ids, err = openAIModelList(ctx, "openai", chooseStr(cfg.Endpoint, openAIEndpoint), cfg.APIKey, cfg.Endpoint == "")
 	case "ollama":
 		ids, err = ollamaModelList(ctx, chooseStr(cfg.Endpoint, ollamaEndpoint))
-	case "llama.cpp", "vllm":
+	case "llama.cpp", "vllm", "mlx":
 		ep := cfg.Endpoint
 		if ep == "" {
 			ep = "http://localhost:8080/v1"

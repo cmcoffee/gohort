@@ -54,6 +54,7 @@ var peerLendableProviders = map[string]bool{
 	"llama.cpp": true,
 	"vllm":      true,
 	"ollama":    true,
+	"mlx":       true,
 }
 
 // peerModelStreamIdle bounds the gap between bytes on a proxied stream.
@@ -618,7 +619,7 @@ func HandlePeerChatCompletions(w http.ResponseWriter, r *http.Request) {
 // no configured cap has always done.
 func acquirePeerModelSlot(ctx context.Context, provider, caller string) (func(), error) {
 	switch provider {
-	case "llama.cpp", "vllm":
+	case "llama.cpp", "vllm", "mlx":
 		if err := AcquireLlamacppSlot(ctx, caller); err != nil {
 			return nil, err
 		}

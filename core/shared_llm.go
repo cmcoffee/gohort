@@ -886,7 +886,7 @@ func SetBackgroundYield(mode, workerProvider, leadProvider string) {
 func ProviderIsLocal(provider string) bool {
 	p := strings.ToLower(strings.TrimSpace(provider))
 	switch {
-	case p == "llama.cpp" || p == "vllm" || p == "ollama":
+	case p == "llama.cpp" || p == "vllm" || p == "ollama" || p == "mlx":
 		return true
 	case strings.HasPrefix(p, peerProviderPrefix):
 		return true

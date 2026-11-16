@@ -1102,6 +1102,8 @@ func LLMProviderOptions(usePrimary bool) []ui.SelectOption {
 		ui.SelectOption{Value: "ollama", Label: "Ollama"},
 		ui.SelectOption{Value: "llama.cpp", Label: "llama.cpp"},
 		ui.SelectOption{Value: "vllm", Label: "vLLM"},
+		ui.SelectOption{Value: "mlx", Label: "MLX",
+			Help: "A Mac's MLX server (mlx_lm.server, or LM Studio's MLX engine): give its address below."},
 		ui.SelectOption{Value: "anthropic", Label: "Anthropic (or compatible)",
 			Help: "Anthropic's API, or any gateway that speaks it: give its address below."},
 		ui.SelectOption{Value: "openai", Label: "OpenAI (or compatible)",

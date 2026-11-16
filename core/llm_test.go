@@ -1003,6 +1003,34 @@ func TestVLLMIsALocalServer(t *testing.T) {
 	}
 }
 
+// MLX's server on a Mac is a local server like llama.cpp: tools called
+// natively, lendable, private by its address, one queue, and named for itself.
+func TestMLXIsALocalServer(t *testing.T) {
+	if !ProviderHasNativeTools("mlx") || !peerLendableProviders["mlx"] || !ProviderIsLocal("mlx") || !LocalDialect("mlx") {
+		t.Error("mlx is not treated as a local server everywhere llama.cpp is")
+	}
+	if ok, why := ProviderLooksPrivate("mlx", ""); !ok {
+		t.Errorf("an MLX server at its default address read as not private: %s", why)
+	}
+	if ok, _ := ProviderLooksPrivate("mlx", "https://api.example.com/v1"); ok {
+		t.Error("a public MLX endpoint read as private: the endpoint, not the name, decides")
+	}
+	llm, err := NewLLMFromConfig(LLMProviderConfig{Provider: "mlx", Model: "qwen"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oc, ok := unwrapOpenAIClient(llm)
+	if !ok {
+		t.Fatal("mlx did not build the OpenAI-compatible client")
+	}
+	if oc.endpoint != "http://localhost:8080/v1" || oc.provider() != "mlx" || !oc.isLocal() || oc.vllm {
+		t.Errorf("endpoint %q tag %q local %v vllm %v", oc.endpoint, oc.provider(), oc.isLocal(), oc.vllm)
+	}
+	if ProviderTitle("mlx") != "MLX" {
+		t.Errorf("shown as %q", ProviderTitle("mlx"))
+	}
+}
+
 // unwrapOpenAIClient digs the OpenAI-compatible client out of the wrappers
 // NewLLMFromConfig puts around it.
 func unwrapOpenAIClient(l LLM) (*openAIClient, bool) {

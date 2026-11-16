@@ -129,7 +129,7 @@ var reserved = map[string]bool{
 	"none": true, "default": true, "local": true, "builtin": true, "commands": true,
 	"duckduckgo": true, "searxng": true, "smtp": true,
 	"anthropic": true, "openai": true, "gemini": true, "bedrock": true,
-	"ollama": true, "llama.cpp": true, "vllm": true,
+	"ollama": true, "llama.cpp": true, "vllm": true, "mlx": true,
 }
 
 // Reserved reports whether name is one a page offers as its own, which no

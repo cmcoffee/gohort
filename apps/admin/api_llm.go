@@ -873,7 +873,7 @@ func (a *AdminApp) formTierKey(table, typed string, cfg *LLMProviderConfig) erro
 // tierProviders are the providers a tier runs on, by the name its
 // provider setting stores; a peer offering models is peer:<name>.
 var tierProviders = map[string]bool{"anthropic": true, "openai": true, "gemini": true, "bedrock": true,
-	"ollama": true, "llama.cpp": true, "vllm": true}
+	"ollama": true, "llama.cpp": true, "vllm": true, "mlx": true}
 
 // tierProviderOK refuses a provider a tier cannot run on: anything but a
 // built-in provider, a peer, or none (the lead's "use primary").

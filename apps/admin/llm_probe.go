@@ -41,6 +41,7 @@ func probeModelServer(ctx context.Context, provider, endpoint, apiKey string) se
 		base = map[string]string{
 			"llama.cpp": "http://localhost:8080/v1",
 			"vllm":      "http://localhost:8000/v1",
+			"mlx":       "http://localhost:8080/v1",
 			"ollama":    "http://localhost:11434",
 		}[provider]
 	}
@@ -131,6 +132,8 @@ func serverKindLabel(kind string) string {
 	switch kind {
 	case "vllm":
 		return "vLLM"
+	case "mlx":
+		return "MLX"
 	case "ollama":
 		return "Ollama"
 	}

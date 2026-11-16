@@ -173,6 +173,7 @@ type openAIClient struct {
 	ollama               bool          // true for a local Ollama endpoint
 	llamacpp             bool          // true when provider is llama.cpp server, or vLLM (see vllm)
 	vllm                 bool          // vLLM: the llama.cpp path (chat_template_kwargs, the local scheduler) without thinking_budget_tokens, which vLLM ignores.
+	mlx                  bool          // MLX's server on a Mac: the llama.cpp path, named for its own logs.
 	ownServer            bool          // a server of its own (LLMProviderConfig.SeparateServer): skips the process-wide local queue
 	llamacppBudget       int           // llama.cpp: default thinking_budget_tokens (0 = server default, >0 = limit)
 	contextSize          int           // Ollama num_ctx; 0 uses ollamaDefaultCtx
@@ -214,6 +215,9 @@ func (c *openAIClient) isLocal() bool {
 func (c *openAIClient) provider() string {
 	if c.vllm {
 		return "vllm"
+	}
+	if c.mlx {
+		return "mlx"
 	}
 	if c.llamacpp {
 		return "llama.cpp"
