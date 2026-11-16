@@ -159,3 +159,15 @@ func TestAnEntryInUseIsNotDeleted(t *testing.T) {
 		t.Errorf("a delete was not announced: %v", heard)
 	}
 }
+
+func TestANilStoreHoldsNoKeys(t *testing.T) {
+	if _, ok := Get(nil, "abc"); ok {
+		t.Fatal("Get found an entry in a nil store")
+	}
+	if _, ok := Secret(nil, "abc"); ok {
+		t.Fatal("Secret found a key in a nil store")
+	}
+	if got := List(nil); len(got) != 0 {
+		t.Fatalf("List = %v in a nil store", got)
+	}
+}

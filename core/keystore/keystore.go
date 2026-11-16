@@ -114,9 +114,15 @@ func (e Entry) Covers(addr string) bool {
 	return false
 }
 
-// List is every entry, by name.
+// List is every entry, by name. The reads below find nothing in a nil
+// store: a background job (the vector upkeep a settings change starts) can
+// outlive the database it was started against, and finding nothing makes it
+// say the key is gone instead of crashing the process.
 func List(db Store) []Entry {
 	var out []Entry
+	if db == nil {
+		return nil
+	}
 	for _, k := range db.Keys(Table) {
 		if strings.HasSuffix(k, secretSuffix) {
 			continue
@@ -134,7 +140,7 @@ func List(db Store) []Entry {
 func Get(db Store, id string) (Entry, bool) {
 	var e Entry
 	id = strings.TrimSpace(id)
-	if id == "" || strings.HasSuffix(id, secretSuffix) {
+	if db == nil || id == "" || strings.HasSuffix(id, secretSuffix) {
 		return e, false
 	}
 	return e, db.Get(Table, id, &e) && e.ID == id
@@ -144,7 +150,7 @@ func Get(db Store, id string) (Entry, bool) {
 // an AWS entry that signs with a profile.
 func Secret(db Store, id string) (string, bool) {
 	var s secret
-	if !db.Get(Table, strings.TrimSpace(id)+secretSuffix, &s) {
+	if db == nil || !db.Get(Table, strings.TrimSpace(id)+secretSuffix, &s) {
 		return "", false
 	}
 	return s.Value, s.Value != ""
