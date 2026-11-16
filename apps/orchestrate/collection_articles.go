@@ -75,7 +75,7 @@ func normalizeArticles(in []string) ([]string, error) {
 		out = append(out, a)
 	}
 	if len(out) > maxCollectionArticles {
-		return nil, fmt.Errorf("at most %d articles can be listed (%d given): for a whole topic, leave it to auto-fill's own searches", maxCollectionArticles, len(out))
+		return nil, fmt.Errorf("at most %d articles can be listed (%d given): for a whole topic, leave it to the plan's search terms", maxCollectionArticles, len(out))
 	}
 	return out, nil
 }

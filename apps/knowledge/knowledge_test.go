@@ -22,16 +22,16 @@ func TestTheOldDocumentsPathIsALegacyMount(t *testing.T) {
 	}
 }
 
-// Choosing a curator says what comes next: what it can do with the
-// collection, that Curate now runs it, and that one of the person's agents
-// can also be asked in a chat or scheduled.
+// Choosing how it is curated says what comes next: who runs the plan and
+// when, that Run now runs it once either way, and what an agent curating it
+// can do with the collection.
 func TestTheCuratorSettingSaysWhatComesNext(t *testing.T) {
 	src, err := os.ReadFile("knowledge.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(src)
-	for _, want := range []string{"Curate now below runs it.", "a file a tool saved to its workspace", "can also be asked in a chat", "or given a schedule"} {
+	for _, want := range []string{"Run now runs it once whichever you choose.", "Hand Curated runs it only when you press Run now", "a file its tools saved", "each page checked before it goes in"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("the curator setting no longer says %q", want)
 		}

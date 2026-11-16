@@ -37,45 +37,47 @@ func (T *OrchestrateApp) collectionSteward(call *jsonapi.Call) (any, error) {
 }
 
 // How a collection is curated, as the page offers it. Stored as one field,
-// Collection.CuratorAgent: empty, the Knowledge app's own curating agent, or
-// one of the person's agents.
+// Collection.CuratorAgent: empty for Hand Curated, collectionAutoCurator for
+// Auto-Curation, or one of the person's agents.
 const (
 	curationHand  = "hand"  // Hand Curated
 	curationAuto  = "auto"  // Auto-Curation
 	curationAgent = "agent" // Curation by Agent
 )
 
+// collectionAutoCurator is what Auto-Curation stores. It named the Knowledge
+// app's own curating agent, which is gone: Auto-Curation is the collection's
+// plan, run on its schedule (collection_plan.go). The value is kept so
+// collections that chose it before read the same.
+const collectionAutoCurator = "app-knowledge-curator"
+
 // curationOf is the choice a stored curator stands for.
 func curationOf(curator string) string {
-	switch curator = strings.TrimSpace(curator); {
-	case curator == "":
+	switch curator = strings.TrimSpace(curator); curator {
+	case "":
 		return curationHand
-	case hiddenAppAgent(curator):
+	case collectionAutoCurator:
 		return curationAuto
 	}
 	return curationAgent
 }
 
-// chooseCurator is the curator a choice stores. auto is the curating agent
-// Auto-Curation means, which the page names (it is the Knowledge app's); agent
-// is the person's pick. change is false when the choice leaves the curator as
-// it is: Curation by Agent before an agent is picked.
-func chooseCurator(udb Database, user, mode, agent, auto string) (curator string, change bool, err error) {
+// chooseCurator is the curator a choice stores; agent is the person's pick.
+// change is false when the choice leaves the curator as it is: Curation by
+// Agent before an agent is picked.
+func chooseCurator(udb Database, user, mode, agent string) (curator string, change bool, err error) {
 	switch mode {
 	case curationHand:
 		return "", true, nil
 	case curationAuto:
-		if a, ok := findAgentByNameOrID(udb, user, strings.TrimSpace(auto)); ok && hiddenAppAgent(a.ID) {
-			return a.ID, true, nil
-		}
-		return "", false, fmt.Errorf("Auto-Curation is not available on this server")
+		return collectionAutoCurator, true, nil
 	case curationAgent:
 		agent = strings.TrimSpace(agent)
 		if agent == "" {
 			return "", false, nil
 		}
 		a, ok := findAgentByNameOrID(udb, user, agent)
-		if !ok || a.ID == "" || hiddenAppAgent(a.ID) {
+		if !ok || a.ID == "" || hiddenAppAgent(a.ID) || a.ID == collectionAutoCurator {
 			return "", false, fmt.Errorf("%q is not one of your agents", agent)
 		}
 		return a.ID, true, nil
@@ -90,7 +92,6 @@ func chooseCurator(udb Database, user, mode, agent, auto string) (curator string
 func (T *OrchestrateApp) collectionStewardSave(call *jsonapi.Call, body struct {
 	Curation     string `json:"curation"`
 	CuratorAgent string `json:"curator_agent"`
-	AutoCurator  string `json:"auto_curator"`
 	// Refresh is how often the curator refreshes it: week, month or never
 	// (collection_refresh.go). Absent leaves the schedule as it is.
 	Refresh string `json:"refresh"`
@@ -101,7 +102,7 @@ func (T *OrchestrateApp) collectionStewardSave(call *jsonapi.Call, body struct {
 	}
 	user := call.User
 	if mode := strings.TrimSpace(body.Curation); mode != "" {
-		curator, change, cerr := chooseCurator(UserDB(T.DB, user), user, mode, body.CuratorAgent, body.AutoCurator)
+		curator, change, cerr := chooseCurator(UserDB(T.DB, user), user, mode, body.CuratorAgent)
 		if cerr != nil {
 			return nil, jsonapi.BadRequest(cerr.Error())
 		}
@@ -157,8 +158,11 @@ func (T *OrchestrateApp) keepRefresh(c Collection, every string) error {
 // name is the only place the difference can surface.
 func (T *OrchestrateApp) stewardStatusLine(user string, c Collection) string {
 	name := strings.TrimSpace(c.CuratorAgent)
-	if name == "" {
-		return "Hand Curated: it holds what is put in it, by upload, pasting, Articles to fetch or Auto-fill."
+	switch curationOf(name) {
+	case curationHand:
+		return "Hand Curated: the plan below runs only when you press Run now; otherwise it holds what you put in it."
+	case curationAuto:
+		return "Auto-Curation: the plan below runs on its schedule, and when you press Run now. Each page it finds is checked before it goes in."
 	}
 	// findAgentByNameOrID, not loadAgent, because that is what the RUN uses.
 	// Checking more strictly here than the thing being reported on would make
@@ -168,14 +172,9 @@ func (T *OrchestrateApp) stewardStatusLine(user string, c Collection) string {
 	if !ok {
 		return "Curation by Agent: " + name + ", but that is not an agent of yours any more, so nothing is curating this. Pick another, or choose Hand Curated."
 	}
-	// Knowledge's own curating agent has no name on screen: the choice says
-	// what it does, so the line does too.
-	if hiddenAppAgent(a.ID) {
-		return "Auto-Curation: it looks for material that fits what this collection is for and adds it, and proposes removals for you to confirm. Curate now runs it."
-	}
 	// The NAME, not the stored id. The id is what survives a rename and is
 	// therefore what gets saved; it is not what the person chose from the menu,
 	// and reading their own choice back in a form they did not use makes a
 	// correct setting look like a wrong one.
-	return "Curation by Agent: " + chFirst(a.Name, name) + ", which can add documents to this collection and remove them from it."
+	return "Curation by Agent: " + chFirst(a.Name, name) + " carries out the plan below with its own tools, and can add documents to this collection and remove them from it."
 }

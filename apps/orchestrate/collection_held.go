@@ -120,6 +120,16 @@ func capitalize(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
+// heldDetail is what a held row shows beneath its page: what the ruling
+// decided first, once there is one, then why the page is held. The cell
+// shows two lines, so the decision leads; its reasons are under Settle it.
+func heldDetail(s collectionSuggestion) string {
+	if h := rulingHead(s); h != "" {
+		return "Ruling: " + h + ". " + s.Text
+	}
+	return s.Text
+}
+
 // heldAt resolves a held row from the page's request.
 func (T *OrchestrateApp) heldAt(call *jsonapi.Call) (Collection, collectionSuggestion, error) {
 	c, err := T.collectionAt(call, "suggestions")
@@ -158,7 +168,10 @@ func (T *OrchestrateApp) collectionHeld(call *jsonapi.Call) (any, error) {
 			"has_doc":    s.AgainstDoc != "" && link != "",
 			"can_settle": (s.AgainstDoc != "" || s.AgainstURL != "") && link != "",
 			"ruling":     rulingLine(s),
-			"created":    s.Created,
+			// What the row shows beneath its page (heldDetail). One column:
+			// two side by side cut each other off.
+			"detail":  heldDetail(s),
+			"created": s.Created,
 		})
 	}
 	return map[string]any{"held": rows}, nil
@@ -220,8 +233,22 @@ const (
 	settleUnsettled = "unsettled"
 )
 
-// rulingLine is what the page says about a held page's ruling.
+// rulingLine is what the page says about a held page's ruling: what it
+// decided, then why.
 func rulingLine(s collectionSuggestion) string {
+	head := rulingHead(s)
+	if head == "" {
+		return ""
+	}
+	line := head + "."
+	if w := strings.TrimSpace(s.RulingWhy); w != "" {
+		line += " " + w
+	}
+	return line
+}
+
+// rulingHead is what a ruling decided, in a few words, or "" for none.
+func rulingHead(s collectionSuggestion) string {
 	if s.Ruling == "" {
 		return ""
 	}
@@ -243,11 +270,7 @@ func rulingLine(s collectionSuggestion) string {
 	default:
 		head = "Not settled by the evidence found"
 	}
-	line := head + "."
-	if w := strings.TrimSpace(s.RulingWhy); w != "" {
-		line += " " + w
-	}
-	return line
+	return head
 }
 
 // settleVerdict rules on the argued dispute.

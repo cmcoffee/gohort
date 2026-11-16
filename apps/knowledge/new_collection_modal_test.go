@@ -103,8 +103,8 @@ func TestTheNewCollectionFormIsAGuidedSetup(t *testing.T) {
 			t.Errorf("%s is not drafted on arrival: %+v", k, f)
 		}
 	}
-	if c := byName["auto_curator"]; c.Type != "hidden" || c.Default != curatorAgentID {
-		t.Errorf("the curator Auto-Curation means is not carried: %+v", c)
+	if c, ok := byName["auto_curator"]; ok {
+		t.Errorf("the setup still carries the retired curating agent: %+v", c)
 	}
 	if g := byName["guided"]; g.Type != "hidden" || g.Default != "true" {
 		t.Errorf("the setup does not mark its answers as guided: %+v", g)

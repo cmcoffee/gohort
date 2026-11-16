@@ -12,7 +12,7 @@ package orchestrate
 // owner (collection_held.go) instead of added.
 //
 // What a machine picked: an agent's add_url, the curator's add_text, and
-// Auto-fill's and Fill it for me's pages. What the owner picked (their
+// a plan run's pages and suggested links. What the owner picked (their
 // Articles, Find sources ticks, uploads, pastes, Add it on a held page) is
 // never checked: the owner choosing is the decision the check would hold for.
 
@@ -243,13 +243,6 @@ func vetState(c Collection, cand vetCandidate, excerpts []vetExcerpt) string {
 	b.WriteString("Title: " + chFirst(cand.Title, "(untitled)") + "\n\n")
 	b.WriteString(UntrustedFence("page text", textutil.Clip(strings.TrimSpace(cand.Text), vetSampleChars)))
 	return b.String()
-}
-
-// checkedHere reports whether Auto-fill and Fill it for me check the pages
-// they add to c: always for a curated collection, where nobody watches the
-// adds, and when the owner ticked the box on a hand-curated one.
-func checkedHere(c Collection) bool {
-	return strings.TrimSpace(c.CuratorAgent) != "" || c.ClassifyOnAutofill
 }
 
 // ingestFetch fetches a page to add, on the paths the check covers. A

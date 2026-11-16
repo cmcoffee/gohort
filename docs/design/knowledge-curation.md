@@ -2,6 +2,10 @@
 
 Status: built (2026-11-14), steps 1 to 5.
 
+Since 2026-11-15, Fill it for me and the hidden curating agent are replaced
+by one plan per collection, run once or on a schedule:
+see knowledge-one-curation.md.
+
 ## Why
 
 A new collection was two fields: a name, and a description (with Draft with

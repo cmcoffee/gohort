@@ -33,16 +33,13 @@ type guidedCollection struct {
 	Prefer json.RawMessage `json:"prefer"`
 	Avoid  json.RawMessage `json:"avoid"`
 	// Curation is how it is kept: hand, auto or agent (chooseCurator).
-	// AutoCurator is the agent Auto-Curation means, CuratorAgent the
-	// person's pick for Curation by Agent.
+	// CuratorAgent is the person's pick for Curation by Agent.
 	Curation     string `json:"curation"`
 	CuratorAgent string `json:"curator_agent"`
-	AutoCurator  string `json:"auto_curator"`
 	// Guided marks a request from the guided setup, whose switches apply.
 	Guided json.RawMessage `json:"guided"`
 	// Start is what the guided setup starts as it creates: "suggest" (or
-	// nothing chosen) searches for sources to tick, "plan" drafts a plan to
-	// fill it, "none" starts nothing.
+	// nothing chosen) searches for sources to tick, "plan" drafts its plan, "none" starts nothing.
 	Start string `json:"start"`
 	// AttachTo is the person's agents that should read it.
 	AttachTo json.RawMessage `json:"attach_to"`
@@ -115,7 +112,7 @@ func (g guidedCollection) curator(udb Database, user string) string {
 	if g.Curation == "" {
 		return ""
 	}
-	curator, _, err := chooseCurator(udb, user, g.Curation, g.CuratorAgent, g.AutoCurator)
+	curator, _, err := chooseCurator(udb, user, g.Curation, g.CuratorAgent)
 	if err != nil {
 		return ""
 	}

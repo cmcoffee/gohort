@@ -3582,7 +3582,8 @@
             row.appendChild(del);
             input.appendChild(row);
           });
-          var addBtn = el('button', {class: 'ui-rules-add', type: 'button'}, ['+ Add rule']);
+          // AddLabel names what the list holds, when it is not rules.
+          var addBtn = el('button', {class: 'ui-rules-add', type: 'button'}, [f.add_label || '+ Add rule']);
           addBtn.addEventListener('click', function() {
             rules.push('');
             renderRules();

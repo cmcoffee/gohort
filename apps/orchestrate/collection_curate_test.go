@@ -10,7 +10,6 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
@@ -94,13 +93,14 @@ func TestCurateNowRunsTheCuratorWithProgressAndOutcome(t *testing.T) {
 	})
 	saveCollection(df.udb, Collection{ID: "col-a", Name: "Runbooks", Owner: "u", Description: "How we deploy and roll back."})
 
-	// By hand: nothing to press, and a start is refused saying what to do.
+	// By hand, with no plan yet: Run now is offered, and a start is refused
+	// saying what to do. Nothing reaches the agent.
 	items, err := df.app.collectionCurateItems(curateCall(df, http.MethodGet, "u", "col-a"))
-	if err != nil || len(items.([]map[string]any)) != 0 {
-		t.Fatalf("a collection curated by hand offered a run: %v %v", items, err)
+	if err != nil || len(items.([]map[string]any)) != 1 || items.([]map[string]any)[0]["item"] != "Run now" {
+		t.Fatalf("a collection curated by hand should offer Run now: %v %v", items, err)
 	}
-	if _, err := df.app.collectionCurateStart(curateCall(df, http.MethodPost, "u", "col-a"), struct{}{}); err == nil || !strings.Contains(err.Error(), "Curation") {
-		t.Fatalf("starting with nobody curating: %v", err)
+	if _, err := df.app.collectionCurateStart(curateCall(df, http.MethodPost, "u", "col-a"), struct{}{}); err == nil || !strings.Contains(err.Error(), "Draft a plan") {
+		t.Fatalf("starting with no plan: %v", err)
 	}
 
 	saveCollection(df.udb, Collection{ID: "col-a", Name: "Runbooks", Owner: "u", Description: "How we deploy and roll back.", CuratorAgent: df.agent.ID})
@@ -115,7 +115,7 @@ func TestCurateNowRunsTheCuratorWithProgressAndOutcome(t *testing.T) {
 	}
 	waitCurate(t, df, "col-a", func(s map[string]any) bool {
 		p, _ := s["progress"].(string)
-		return strings.Contains(p, "Curating") && strings.Contains(p, "1 document added")
+		return strings.Contains(p, "Running the plan") && strings.Contains(p, "1 document added")
 	})
 	again, _ := df.app.collectionCurateStart(curateCall(df, http.MethodPost, "u", "col-a"), struct{}{})
 	if !strings.Contains(again.(map[string]any)["message"].(string), "Already") {
@@ -203,33 +203,6 @@ func TestCurateNowIsTheOwners(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if ran {
 		t.Error("the curator ran for a non-owner")
-	}
-}
-
-// Auto-Curation is an app's hidden agent set as the curator. Run on the
-// collection's behalf it is offered the collection tool, as any curator is,
-// and the page reads it as Auto-Curation rather than by an agent's name. With
-// no web search to find material, a start says so instead of running.
-func TestAHiddenAppCuratorKeepsItsCollection(t *testing.T) {
-	df := newDispatchFixture(t, FakeTurn{Content: "done", Repeat: true})
-	const id = "app-test-collection-curator"
-	appagents.RegisterAppAgent(appagents.AppAgentSpec{
-		ID: id, OwningApp: "Test", Name: "Collection curator", Prompt: "You keep a collection current.",
-		AllowedTools: []string{"web_search", "fetch_url"}, Hidden: true,
-	})
-	saveCollection(df.udb, Collection{ID: "col-h", Name: "Kubernetes", Owner: "u", CuratorAgent: id})
-	df.run(AgentSyncRun{AgentKey: id, Kind: "scheduled", Message: "Look after the collection."})
-	if !df.toolsOffered()["collection"] {
-		t.Errorf("the hidden curator was not offered its collection tool: %v", df.toolsOffered())
-	}
-	c, _ := loadCollection(df.udb, "u", "col-h")
-	if line := df.app.stewardStatusLine("u", c); !strings.HasPrefix(line, "Auto-Curation") {
-		t.Errorf("status line: %q", line)
-	}
-	if !WebSearchAvailable() {
-		if _, err := df.app.collectionCurateStart(curateCall(df, http.MethodPost, "u", "col-h"), struct{}{}); err == nil || !strings.Contains(err.Error(), "web search") {
-			t.Errorf("auto-curation without web search: %v", err)
-		}
 	}
 }
 

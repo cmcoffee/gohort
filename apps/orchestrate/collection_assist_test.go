@@ -12,7 +12,7 @@ import (
 func TestTheDescriptionAssistKnowsTheCollection(t *testing.T) {
 	c := Collection{ID: "col-1", Owner: "alice", Name: "Runbooks"}
 	about := collectionAssistAbout(c, []string{"Draining a node", "Restoring etcd"})
-	for _, want := range []string{"Collection name: Runbooks", "- Draining a node\n- Restoring etcd", "Auto-fill", "one to three sentences"} {
+	for _, want := range []string{"Collection name: Runbooks", "- Draining a node\n- Restoring etcd", "search terms", "one to three sentences"} {
 		if !strings.Contains(about, want) {
 			t.Errorf("the assist is not told %q:\n%s", want, about)
 		}

@@ -465,7 +465,9 @@ type FormField struct {
 	HideWhen string `json:"hide_when,omitempty"`
 	LockWhen string `json:"lock_when,omitempty"`
 
-	// AddLabel overrides the "+ Add" button's text on a "rows" field.
+	// AddLabel overrides the "+ Add" button's text on a "rows" field, and
+	// the "+ Add rule" button's on a "rules" field (a list that holds
+	// something other than rules: search terms, say).
 	// Name the THING being added ("+ Add output"), not the act.
 	AddLabel string `json:"add_label,omitempty"`
 	// AddBlockedWhen greys out a "rows" field's "+ Add" while ANY row

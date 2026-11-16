@@ -129,3 +129,14 @@ if (!process.exitCode) console.log('OK');
 		t.Fatalf("the row's buttons:\n%s", out)
 	}
 }
+
+// At phone width a row's cells wrap and show their text in full, and so does
+// its second line: its two-line cap, kept there, held the cell's height while
+// the text ran on over the row's buttons.
+func TestTheSecondLineIsNotCappedAtPhoneWidth(t *testing.T) {
+	phone := runtimeCSS[strings.Index(runtimeCSS, "@media (max-width: 800px) {\n  .ui-table-row {"):]
+	phone = phone[:strings.Index(phone, "\n}\n")]
+	if !strings.Contains(phone, ".ui-row-cells-2 > .ui-table-cell { max-height: none; animation: none; }") {
+		t.Error("at phone width the second line keeps its cap while its text overflows")
+	}
+}

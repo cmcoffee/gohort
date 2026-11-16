@@ -188,9 +188,9 @@ func TestTheCuratorsTextIsChecked(t *testing.T) {
 	}
 }
 
-// Auto-fill on a curated collection checks each page: one that contradicts
-// is held and counted, one that could not be checked is not added. On a
-// hand-curated collection without the box ticked nothing is asked.
+// A plan run checks each page it finds, however the collection is curated:
+// one that contradicts is held and counted, one that could not be checked is
+// not added.
 func TestAutofillChecksWhatItAdds(t *testing.T) {
 	const bad, unread = "https://example.com/bad", "https://example.com/unread"
 	f := vetFixture(t, map[string]string{bad: "The audit log is on by default.", unread: "Something."},
@@ -215,8 +215,8 @@ func TestAutofillChecksWhatItAdds(t *testing.T) {
 	calls := f.llm.Calls()
 	pass = &autofillPass{ctx: context.Background(), udb: f.store("alice"), c: &hand, maxDocs: 5}
 	pass.search(f.T, []string{"q"})
-	if f.llm.Calls() != calls || pass.added != 2 {
-		t.Errorf("an unticked hand-curated collection was checked: calls %d, added %d", f.llm.Calls()-calls, pass.added)
+	if f.llm.Calls() == calls || pass.added != 0 {
+		t.Errorf("a hand-curated collection's run should be checked too: calls %d, added %d", f.llm.Calls()-calls, pass.added)
 	}
 }
 
@@ -331,6 +331,9 @@ func TestSettleItRulesAndChangesNothing(t *testing.T) {
 	got, _ := f.T.findSuggestion(f.c, s.ID)
 	if got.Ruling != settlePage || !strings.Contains(rulingLine(got), "replace \"Configuration reference\"") {
 		t.Errorf("the ruling should be on the row: %+v", got)
+	}
+	if d := heldDetail(got); !strings.HasPrefix(d, "Ruling: The page is right: replace") || !strings.HasSuffix(d, got.Text) {
+		t.Errorf("the row should lead with what the ruling decided, then why it is held: %q", d)
 	}
 	if after := f.docs(); len(after) != len(before) || after["doc-old"] != before["doc-old"] {
 		t.Errorf("settling changed the collection: %v -> %v", before, after)

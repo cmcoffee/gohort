@@ -213,7 +213,7 @@ const documentsDetailBody = `
   <div class="docs-detail-hdr">
     <div class="docs-detail-name"><span id="docs-name">Loading...</span><button id="docs-rename" class="ui-row-btn">Rename</button><button id="docs-export" class="ui-row-btn" title="Download this collection as a portable bundle, document text travels, embeddings are rebuilt on import">Export</button><button id="docs-delete" class="ui-row-btn danger">Delete</button></div>
     <div class="docs-desc-wrap">
-      <textarea id="docs-desc" class="docs-detail-desc-edit" placeholder="Describe what this collection should contain. The description steers Auto-fill's search queries: be specific (e.g. &quot;Official Kubernetes API reference, operator best practices, and our cluster runbook&quot;)."></textarea>
+      <textarea id="docs-desc" class="docs-detail-desc-edit" placeholder="Describe what this collection should contain. The plan's search terms are written from it: be specific (e.g. &quot;Official Kubernetes API reference, operator best practices, and our cluster runbook&quot;)."></textarea>
       <div class="docs-desc-actions">
         <button id="docs-desc-save" class="ui-row-btn" disabled>Save</button>
         <button id="docs-desc-suggest" class="ui-row-btn" title="Work out the description with the assistant: it knows what the collection holds">✨ Get assistance</button>
@@ -239,41 +239,17 @@ const documentsDetailBody = `
   </div>
 
   <div class="docs-section">
-    <div class="docs-section-title">Auto-fill from web</div>
-    <div class="docs-section-help">Seeds this collection from the web using the name + description above. Skips URLs already pulled. The settings below shape which candidates get in.</div>
+    <div class="docs-section-title">From the web</div>
+    <div class="docs-section-help">Pages you pick yourself, and topics to research. These are not checked: you chose them. To have pages found for you, use the plan under Curation.</div>
     <label style="display:block;font-size:var(--fs-sm, 0.82rem);font-weight:600;color:var(--text);margin-top:0.6rem">Articles to fetch (optional)</label>
-    <div class="docs-section-help" style="margin-top:0.15rem;font-size:var(--fs-xs, 0.74rem)">Particular articles this collection should hold: paste a link, or describe one for auto-fill to search for (e.g. &quot;IRS Publication 17, 2026 edition&quot;). Auto-fill fetches these first, then searches on its own. Each is fetched once; taking one off the list keeps its document.</div>
+    <div class="docs-section-help" style="margin-top:0.15rem;font-size:var(--fs-xs, 0.74rem)">Particular articles this collection should hold: paste a link, or describe one to search for (e.g. &quot;IRS Publication 17, 2026 edition&quot;). A run of the plan fetches these first; Fetch these only fetches them now. Each is fetched once; taking one off the list keeps its document.</div>
     <div id="docs-articles-list" style="display:flex;flex-direction:column;gap:0.3rem;margin:0.4rem 0"></div>
     <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap">
       <input id="docs-articles-input" type="text" placeholder="A link, or the article to look for"
         style="flex:1;min-width:12rem;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.35rem 0.55rem;font:inherit;font-size:var(--fs-sm, 0.85rem)">
       <button id="docs-articles-add" class="ui-row-btn" disabled>+ Add</button>
-      <button id="docs-articles-fetch" class="ui-row-btn" disabled title="Fetch the listed articles not fetched yet, with none of auto-fill's own searches">Fetch these only</button>
+      <button id="docs-articles-fetch" class="ui-row-btn" disabled title="Fetch the listed articles not fetched yet, without running the plan">Fetch these only</button>
       <span id="docs-articles-status" style="font-size:var(--fs-2xs, 0.72rem);color:var(--text-mute)"></span>
-    </div>
-    <label style="display:block;font-size:var(--fs-sm, 0.82rem);font-weight:600;color:var(--text);margin-top:0.8rem">Filter rules / hints (optional)</label>
-    <div class="docs-section-help" style="margin-top:0.15rem;font-size:var(--fs-xs, 0.74rem)">Rules bias the generated search queries (e.g. "2026 edition", "official sources only") and, when the LLM judge is on, also drop candidates that don't match.</div>
-    <div id="docs-filter-rules-list" style="display:flex;flex-direction:column;gap:0.3rem;margin:0.4rem 0"></div>
-    <div style="display:flex;align-items:center;gap:0.4rem">
-      <input id="docs-filter-rules-input" type="text" placeholder="Add a rule (e.g. &quot;Prefer 2026 edition&quot; or &quot;Skip blog posts&quot;)"
-        style="flex:1;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.35rem 0.55rem;font:inherit;font-size:var(--fs-sm, 0.85rem)">
-      <button id="docs-filter-rules-add" class="ui-row-btn" disabled>+ Add</button>
-      <span id="docs-filter-rules-status" style="font-size:var(--fs-2xs, 0.72rem);color:var(--text-mute)"></span>
-    </div>
-    <label style="display:flex;align-items:center;gap:0.5rem;font-size:var(--fs-sm, 0.85rem);color:var(--text);margin:0.6rem 0 0">
-      <input id="docs-classify-toggle" type="checkbox">
-      <span>Also run an LLM judge on each candidate (extra ~1 LLM call per doc)</span>
-      <span id="docs-classify-status" style="font-size:var(--fs-2xs, 0.72rem);color:var(--text-mute);margin-left:0.3rem"></span>
-    </label>
-    <div class="docs-upload-row" style="margin-top:0.8rem;align-items:center;gap:0.5rem;padding-top:0.6rem;border-top:1px solid var(--border)">
-      <button id="docs-autofill" class="ui-row-btn primary">Auto-fill from web</button>
-      <label style="display:flex;align-items:center;gap:0.35rem;font-size:var(--fs-sm, 0.82rem);color:var(--text-mute)">
-        <span>up to</span>
-        <input id="docs-autofill-max" type="number" min="1" max="50" value="10"
-          style="width:4rem;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.25rem 0.4rem;font:inherit;font-size:var(--fs-sm, 0.85rem)">
-        <span>documents</span>
-      </label>
-      <span id="docs-autofill-status"></span>
     </div>
     <div class="docs-upload-row" style="margin-top:0.8rem;align-items:center;gap:0.5rem;padding-top:0.6rem;border-top:1px solid var(--border);flex-wrap:wrap">
       <input id="docs-research-topic" type="text" placeholder="Research a topic (cited synthesis): e.g. RKE2 agent join + ports"
@@ -360,7 +336,6 @@ const documentsDetailAssets = `<style>
   }
 
   var loadedDescription = '';
-  var loadedFilterRules = '';
   function loadDetail() {
     fetch(api('/api/collections/' + encodeURIComponent(cid)), {credentials: 'same-origin'})
       .then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error(t); }); return r.json(); })
@@ -383,7 +358,8 @@ const documentsDetailAssets = `<style>
         // down the page, under everything you can do by hand.
         var keeper = $('#docs-keeper');
         if (keeper) {
-          // app-knowledge-curator is curator.go's curatorAgentID.
+          // app-knowledge-curator is what Auto-Curation stores (orchestrate
+          // collectionAutoCurator).
           keeper.textContent = c.curator_agent === 'app-knowledge-curator'
             ? 'Auto-Curation. '
             : c.curator_agent
@@ -400,106 +376,15 @@ const documentsDetailAssets = `<style>
           });
           keeper.appendChild(jump);
         }
-        // Filter rules render as a discrete add/remove list.
-        // Stored newline-joined server-side; split on load.
-        loadedFilterRules = c.filter_rules || '';
-        renderFilterRules(loadedFilterRules);
         loadedArticles = c.articles || [];
         renderArticles(loadedArticles);
-        var cb = $('#docs-classify-toggle');
-        if (cb) cb.checked = !!c.classify_on_autofill;
       }).catch(function(err) {
         $('#docs-name').textContent = '(failed to load)';
         var ta = $('#docs-desc'); if (ta) ta.value = err && err.message || err;
       });
   }
 
-  // Filter rules as add/remove list. Stored as a newline-joined
-  // string server-side; the list is just the UI shape on top.
-  // Each add or remove fires an immediate PATCH so there's no
-  // "save" step to forget.
-  function parseRules(s) {
-    return (s || '').split('\n').map(function(x){ return x.replace(/^[-•*]\s*/, '').trim(); }).filter(function(x){ return x.length > 0; });
-  }
-  function joinRules(arr) { return (arr || []).join('\n'); }
-  function renderFilterRules(raw) {
-    var host = $('#docs-filter-rules-list');
-    if (!host) return;
-    host.innerHTML = '';
-    var items = parseRules(raw);
-    if (items.length === 0) {
-      var emp = document.createElement('div');
-      emp.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);font-style:italic';
-      emp.textContent = '(no rules yet: judge will decide purely from the collection description)';
-      host.appendChild(emp);
-      return;
-    }
-    items.forEach(function(text, idx) {
-      var row = document.createElement('div');
-      row.style.cssText = 'display:flex;align-items:center;gap:0.4rem;padding:0.3rem 0.55rem;background:var(--bg-0);border:1px solid var(--border);border-radius:4px;font-size:var(--fs-sm, 0.82rem)';
-      var bullet = document.createElement('span');
-      bullet.textContent = '•';
-      bullet.style.cssText = 'color:var(--text-mute);min-width:0.7rem';
-      var label = document.createElement('span');
-      label.style.cssText = 'flex:1;min-width:0;word-break:break-word';
-      label.textContent = text;
-      var del = document.createElement('button');
-      del.type = 'button';
-      del.className = 'ui-icon-btn danger';
-      del.textContent = '✕';
-      del.title = 'Remove this rule';
-      del.addEventListener('click', function() {
-        var next = items.slice();
-        next.splice(idx, 1);
-        saveFilterRules(joinRules(next));
-      });
-      row.appendChild(bullet); row.appendChild(label); row.appendChild(del);
-      host.appendChild(row);
-    });
-  }
-  function saveFilterRules(newRaw) {
-    var st = $('#docs-filter-rules-status');
-    st.style.color = 'var(--text-mute)';
-    st.textContent = 'Saving...';
-    fetch(api('/api/collections/' + encodeURIComponent(cid)), {
-      method: 'PATCH', credentials: 'same-origin',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({filter_rules: newRaw}),
-    }).then(function(r){
-      if (!r.ok) return r.text().then(function(t){ throw new Error(t); });
-      loadedFilterRules = newRaw;
-      renderFilterRules(newRaw);
-      st.style.color = 'var(--accent,#56d364)';
-      st.textContent = 'Saved';
-      setTimeout(function(){ if (st.textContent === 'Saved') st.textContent = ''; }, 1800);
-    }).catch(function(err){
-      st.style.color = 'var(--danger,#ff7b72)';
-      st.textContent = 'Save failed: ' + (err && err.message || err);
-    });
-  }
-  // Add-rule wiring: enable button only when input has content.
-  (function(){
-    var inp = $('#docs-filter-rules-input');
-    var btn = $('#docs-filter-rules-add');
-    if (!inp || !btn) return;
-    function refreshBtn(){ btn.disabled = inp.value.trim().length === 0; }
-    inp.addEventListener('input', refreshBtn);
-    inp.addEventListener('keydown', function(ev) {
-      if (ev.key === 'Enter' && !btn.disabled) { ev.preventDefault(); btn.click(); }
-    });
-    btn.addEventListener('click', function() {
-      var v = inp.value.trim();
-      if (!v) return;
-      var current = parseRules(loadedFilterRules);
-      current.push(v);
-      saveFilterRules(joinRules(current));
-      inp.value = '';
-      refreshBtn();
-      inp.focus();
-    });
-  })();
-
-  // Articles to fetch: an add/remove list like the rules above, each row
+  // Articles to fetch: an add/remove list, each row
   // saying whether it is in yet and, when it is, where from. The whole list
   // is PATCHed on every change; the server keeps what was fetched for the
   // entries that stay.
@@ -512,7 +397,7 @@ const documentsDetailAssets = `<style>
     if (rows.length === 0) {
       var emp = document.createElement('div');
       emp.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);font-style:italic';
-      emp.textContent = '(none listed: auto-fill picks everything from its own searches)';
+      emp.textContent = '(none listed: the plan's search terms find the rest)';
       host.appendChild(emp);
     }
     rows.forEach(function(row, idx) {
@@ -634,32 +519,6 @@ const documentsDetailAssets = `<style>
     });
   });
 
-  // Classify-on-autofill toggle: saves immediately on change.
-  $('#docs-classify-toggle') && $('#docs-classify-toggle').addEventListener('change', function() {
-    var cb = $('#docs-classify-toggle');
-    var st = $('#docs-classify-status');
-    var v = !!cb.checked;
-    cb.disabled = true;
-    st.style.color = 'var(--text-mute)';
-    st.textContent = 'Saving...';
-    fetch(api('/api/collections/' + encodeURIComponent(cid)), {
-      method: 'PATCH', credentials: 'same-origin',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({classify_on_autofill: v}),
-    }).then(function(r){
-      if (!r.ok) return r.text().then(function(t){ throw new Error(t); });
-      st.style.color = 'var(--accent,#56d364)';
-      st.textContent = v ? 'Judge ON' : 'Judge OFF';
-      cb.disabled = false;
-      setTimeout(function(){ st.textContent = ''; }, 2500);
-    }).catch(function(err){
-      st.style.color = 'var(--danger,#ff7b72)';
-      st.textContent = 'Save failed: ' + (err && err.message || err);
-      cb.checked = !v;
-      cb.disabled = false;
-    });
-  });
-
   // Dirty-tracking on the description textarea so Save only activates
   // when there's a real change.
   (function(){
@@ -707,7 +566,7 @@ const documentsDetailAssets = `<style>
     var cur = ta.value || '';
     window.uiOpenAssist({
       title: 'Description: ' + ($('#docs-name').textContent || 'collection'),
-      subtitle: 'What this collection is for. Auto-fill searches from these words, so name the kinds of source it should hold.',
+      subtitle: 'What this collection is for. The plan's search terms are written from these words, so name the kinds of source it should hold.',
       initial: cur,
       placeholder: 'The description appears here. Edit it directly, or ask for changes in the conversation.',
       url: api('/api/collections/' + encodeURIComponent(cid) + '/assist'),
@@ -1023,62 +882,9 @@ const documentsDetailAssets = `<style>
     setTimeout(function(){ inpT.focus(); }, 0);
   });
 
-  $('#docs-autofill').addEventListener('click', async function() {
-    var maxInput = $('#docs-autofill-max');
-    var maxDocs = parseInt(maxInput && maxInput.value, 10);
-    if (isNaN(maxDocs) || maxDocs < 1) maxDocs = 10;
-    if (maxDocs > 50) maxDocs = 50;
-    var listed = loadedArticles.filter(function(r){ return !r.fetched_from; }).length;
-    if (!(await window.uiConfirm('Auto-fill this collection from the web?\n\n' + (listed ? 'The ' + listed + ' listed article' + (listed === 1 ? '' : 's') + ' not fetched yet come first. Then the' : 'The') + ' framework will generate search queries from the name + description, fetch up to ' + maxDocs + ' document' + (maxDocs === 1 ? '' : 's') + ' in all, extract text, and ingest into this collection.\n\nLarger batches take longer (~30 sec per 10 docs). URLs already pulled previously will be skipped.'))) {
-      return;
-    }
-    var btn = $('#docs-autofill');
-    var st = $('#docs-autofill-status');
-    var origLabel = btn.textContent;
-    btn.disabled = true;
-    // Braille-dot spinner: same pattern as the agent backfill button.
-    // Visible cue that the multi-minute autofill is in flight, in
-    // addition to the status-text update next to the button.
-    var spinFrames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
-    var spinIdx = 0;
-    var spinTimer = setInterval(function(){
-      btn.textContent = spinFrames[spinIdx] + ' Auto-filling...';
-      spinIdx = (spinIdx + 1) % spinFrames.length;
-    }, 100);
-    function stopSpinner(label) {
-      clearInterval(spinTimer);
-      btn.textContent = label;
-    }
-    st.style.color = 'var(--text-mute)';
-    st.textContent = 'Searching + fetching...';
-    fetch(api('/api/collections/' + encodeURIComponent(cid) + '/autofill'), {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({max_docs: maxDocs}),
-    }).then(function(r){
-      if (!r.ok) return r.text().then(function(t){ throw new Error(t); });
-      return r.json();
-    }).then(function(out) {
-      st.style.color = 'var(--accent,#56d364)';
-      var parts = ['Added ' + (out.added || 0)];
-      if (out.held) parts.push(out.held + ' held for you below');
-      if (out.failed) parts.push((out.failed || 0) + ' failed');
-      st.textContent = parts.join(' - ');
-      loadSources(); loadDetail();
-      stopSpinner(origLabel);
-      btn.disabled = false;
-    }).catch(function(err) {
-      st.style.color = 'var(--danger,#ff7b72)';
-      st.textContent = 'Failed: ' + (err && err.message || err);
-      stopSpinner(origLabel);
-      btn.disabled = false;
-    });
-  });
-
   // Research a topic with the seed-research agent (web search + cited synthesis)
   // and ingest the distilled report into this collection. Higher-quality than
-  // auto-fill (which ingests raw pages); slower (an agent loop per topic).
+  // a run of the plan (which ingests raw pages); slower (an agent loop per topic).
   $('#docs-research').addEventListener('click', async function() {
     var topicInput = $('#docs-research-topic');
     var topic = (topicInput && topicInput.value || '').trim();

@@ -35,7 +35,7 @@ func collectionAssistAbout(c Collection, titles []string) string {
 	var b strings.Builder
 	b.WriteString("The draft is the description of a knowledge collection: a named bundle of documents that agents search when they answer.\n\n")
 	b.WriteString("A description has three jobs. It says what the collection is FOR, to whoever attaches it to an agent later. " +
-		"It steers Auto-fill, which searches the web for documents to add from the description's words, so the more specific it is, the better the searches. " +
+		"The collection's plan writes its web search terms from the description's words, so the more specific it is, the better the searches. " +
 		"And it stays short: one to three sentences, about 200 characters.\n\n")
 	b.WriteString("Concrete nouns and named sources make a good one: \"Official Kubernetes API reference, kubectl command guide, and CNCF operator best practices\" " +
 		"works far better than \"Things about kubernetes\". When unsure, name the kinds of source material it should hold. " +

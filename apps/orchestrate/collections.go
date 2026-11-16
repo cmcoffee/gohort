@@ -239,7 +239,7 @@ func (T *OrchestrateApp) collectionCreate(c *jsonapi.Call, body struct {
 		case "suggest":
 			T.startFindSources(col)
 		case "plan":
-			T.startDraftPlan(col)
+			T.startDraftPlan(udb, col)
 		}
 	}
 	Log("[orchestrate.collections] user=%q created collection %q (id=%s, curator=%q, attached to %d agent(s))", user, name, col.ID, col.CuratorAgent, attached)
@@ -265,7 +265,7 @@ func (T *OrchestrateApp) registerCollectionRoutes() {
 		"GET":  jsonapi.Get(T.DB, T.collectionSteward),
 		"POST": jsonapi.Post(T.DB, T.collectionStewardSave),
 	}.Serve)
-	// Curate now: the curator run on the collection's behalf (collection_curate.go).
+	// Run now: the collection's plan, run on its behalf (collection_curate.go).
 	T.HandleFunc("/api/collections/{id}/curate", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.collectionCurateItems),
 		"POST": jsonapi.Post(T.DB, T.collectionCurateStart),
@@ -297,16 +297,17 @@ func (T *OrchestrateApp) registerCollectionRoutes() {
 	T.HandleFunc("/api/collections/{id}/suggest/stop", jsonapi.Post(T.DB, T.collectionSuggestStop))
 	T.HandleFunc("/api/collections/{id}/suggest/fields", jsonapi.Get(T.DB, T.collectionSuggestFields))
 	T.HandleFunc("/api/collections/{id}/suggest/add", jsonapi.Post(T.DB, T.collectionSuggestAdd))
-	// Fill it for me: a plan, its size, then the run (collection_fill.go).
-	T.HandleFunc("/api/collections/{id}/fill", jsonapi.Methods{
-		"GET":  jsonapi.Get(T.DB, T.collectionFillItems),
-		"POST": jsonapi.Post(T.DB, T.collectionFillStart),
+	// The plan, and drafting it (collection_plan.go). Running it is /curate.
+	T.HandleFunc("/api/collections/{id}/plan", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.collectionPlan),
+		"POST": jsonapi.Post(T.DB, T.collectionPlanSave),
 	}.Serve)
-	T.HandleFunc("/api/collections/{id}/fill/progress", jsonapi.Get(T.DB, T.collectionFillProgress))
-	T.HandleFunc("/api/collections/{id}/fill/stop", jsonapi.Post(T.DB, T.collectionFillStop))
-	T.HandleFunc("/api/collections/{id}/fill/fields", jsonapi.Get(T.DB, T.collectionFillFields))
-	T.HandleFunc("/api/collections/{id}/fill/plan", jsonapi.Get(T.DB, T.collectionFillPlan))
-	T.HandleFunc("/api/collections/{id}/fill/run", jsonapi.Post(T.DB, T.collectionFillRun))
+	T.HandleFunc("/api/collections/{id}/plan/draft", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.collectionPlanDraftItems),
+		"POST": jsonapi.Post(T.DB, T.collectionPlanDraftStart),
+	}.Serve)
+	T.HandleFunc("/api/collections/{id}/plan/draft/progress", jsonapi.Get(T.DB, T.collectionPlanDraftProgress))
+	T.HandleFunc("/api/collections/{id}/plan/draft/stop", jsonapi.Post(T.DB, T.collectionPlanDraftStop))
 	T.HandleFunc("/api/collections/{id}/suggestions", jsonapi.Get(T.DB, T.collectionSuggestions))
 	T.HandleFunc("/api/collections/{id}/suggestions/settings", jsonapi.Post(T.DB, T.collectionSuggestionsSettings))
 	T.HandleFunc("/api/collections/{id}/suggestions/dismiss", jsonapi.Post(T.DB, T.collectionSuggestionDismiss))
@@ -401,17 +402,16 @@ func (T *OrchestrateApp) collectionGet(call *jsonapi.Call) (any, error) {
 		curator = c.CuratorAgent
 	}
 	return map[string]any{
-		"curator_agent":        curator,
-		"id":                   c.ID,
-		"owner":                c.Owner,
-		"name":                 c.Name,
-		"description":          c.Description,
-		"created":              c.Created,
-		"updated":              c.Updated,
-		"documents":            docs,
-		"chunks":               chunks,
-		"filter_rules":         c.FilterRules,
-		"classify_on_autofill": c.ClassifyOnAutofill,
+		"curator_agent": curator,
+		"id":            c.ID,
+		"owner":         c.Owner,
+		"name":          c.Name,
+		"description":   c.Description,
+		"created":       c.Created,
+		"updated":       c.Updated,
+		"documents":     docs,
+		"chunks":        chunks,
+		"filter_rules":  c.FilterRules,
 		// Each listed article with the address it was fetched from, or none
 		// yet, so the page can say which ones are in.
 		"articles":        articleRows(c),
@@ -428,11 +428,10 @@ func (T *OrchestrateApp) collectionGet(call *jsonapi.Call) (any, error) {
 // collectionPatch is what the collection editor and the share picker save:
 // every field optional, absent meaning unchanged.
 type collectionPatch struct {
-	Name               *string `json:"name"`
-	Description        *string `json:"description"`
-	FilterRules        *string `json:"filter_rules"`
-	ClassifyOnAutofill *bool   `json:"classify_on_autofill"`
-	// The articles auto-fill fetches first, the whole list. An entry taken
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
+	FilterRules *string `json:"filter_rules"`
+	// The articles a plan run fetches first, the whole list. An entry taken
 	// off it forgets where it was fetched from; its document stays.
 	Articles       *[]string `json:"articles"`
 	SuggestionsOff *bool     `json:"suggestions_off"`
@@ -484,9 +483,6 @@ func (T *OrchestrateApp) collectionPatch(call *jsonapi.Call, body collectionPatc
 	}
 	if body.FilterRules != nil {
 		c.FilterRules = strings.TrimSpace(*body.FilterRules)
-	}
-	if body.ClassifyOnAutofill != nil {
-		c.ClassifyOnAutofill = *body.ClassifyOnAutofill
 	}
 	if body.Articles != nil {
 		list, err := normalizeArticles(*body.Articles)
@@ -1154,123 +1150,56 @@ func queriesForMaxDocs(maxDocs int) int {
 	return n
 }
 
-// collectionAutofillBody is an autofill: no body generates the queries.
+// collectionAutofillBody: Fetch these only, the listed articles.
 type collectionAutofillBody struct {
-	Queries []string `json:"queries"`
-	MaxDocs int      `json:"max_docs"`
-	// ArticlesOnly fetches the listed articles not fetched yet and stops,
-	// with no searches of its own.
+	MaxDocs      int  `json:"max_docs"`
 	ArticlesOnly bool `json:"articles_only"`
 }
 
-// collectionAutofill seeds the collection from the web. The listed articles
-// not fetched yet go first (collection_articles.go); then it generates
-// a handful of search queries via worker LLM from the collection's
-// name + description (override with explicit queries in the body),
-// runs each against the registered web_search tool, fetches the top
-// candidates, extracts text, ingests into the collection. Skips URLs
-// already in c.IngestedURLs so repeated clicks don't duplicate.
-//
-// Note: this is the broad-capture pipeline — quality is shallow
-// (filters weak URL patterns but doesn't evaluate content). A
-// vetting/cleanup pass will be a separate feature later. For now,
-// trust the URL filter and rely on per-doc Remove for cruft.
+// collectionAutofill is Fetch these only: the listed articles not in yet,
+// with none of the plan's searches. Auto-fill's own searching is now the
+// collection's plan (collection_plan.go), run from Curation.
 //
 //	POST /api/collections/{id}/autofill
-//	body (all optional):
-//	  {queries: []string, max_docs: int, articles_only: bool}
-//	→ {added, skipped, failed, queries_used, results}
+//	body: {articles_only: true, max_docs: int}
+//	→ {added, failed, results}
 func (T *OrchestrateApp) collectionAutofill(call *jsonapi.Call, body *collectionAutofillBody) (any, error) {
-	if body == nil {
-		body = &collectionAutofillBody{}
-	}
+	// Who may, first: a stranger is told nothing about the collection.
 	c, cerr := T.collectionAt(call, "autofill")
 	if cerr != nil {
 		return nil, cerr
 	}
-	r := call.R
-	udb := call.UDB
+	if body == nil || !body.ArticlesOnly {
+		return nil, jsonapi.BadRequest("Auto-fill is now the collection's plan: Run now under Curation")
+	}
 	if maxDocs := autofillMaxDocs(); body.MaxDocs <= 0 || body.MaxDocs > maxDocs {
 		body.MaxDocs = maxDocs
 	}
-
-	// A link needs no search; a description, or auto-fill's own queries, do.
 	pending := pendingArticles(c)
-	if body.ArticlesOnly && len(pending) == 0 {
+	if len(pending) == 0 {
 		return nil, jsonapi.BadRequest("every listed article is already in this collection: add one to the list first")
 	}
-	needsSearch := !body.ArticlesOnly
 	for _, a := range pending {
-		if !isArticleLink(a) {
-			needsSearch = true
+		if !isArticleLink(a) && !WebSearchAvailable() {
+			return nil, jsonapi.BadRequest("web search is not configured for this deployment, and a described article is searched for")
 		}
 	}
-	if needsSearch && !WebSearchAvailable() {
-		return nil, jsonapi.BadRequest("web search is not configured for this deployment")
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), autofillTimeout())
+	ctx, cancel := context.WithTimeout(call.R.Context(), autofillTimeout())
 	defer cancel()
-
-	// Step 0: the articles the owner listed, before anything auto-fill picks.
-	added, results := T.fetchArticles(ctx, udb, &c, body.MaxDocs)
+	added, results := T.fetchArticles(ctx, call.UDB, &c, body.MaxDocs)
 	failed := 0
 	for _, it := range results {
 		if it.Status != "added" && it.Status != "already" {
 			failed++
 		}
 	}
-	if body.ArticlesOnly || added >= body.MaxDocs {
-		Log("[orchestrate.autofill] collection=%s articles only: added=%d failed=%d", c.ID, added, failed)
-		return map[string]any{
-			"added":        added,
-			"skipped":      0,
-			"failed":       failed,
-			"queries_used": []string{},
-			"results":      results,
-		}, nil
-	}
-
-	// Step 1: queries. Use what the caller provided; otherwise ask the
-	// worker LLM to invent a batch from the collection name + description.
-	// Query count scales with MaxDocs — small ingest = a handful of queries,
-	// large ingest = up to autofillMaxQueries — so a 50-doc request actually
-	// has enough candidate URLs to fill from.
-	wanted := queriesForMaxDocs(body.MaxDocs)
-	queries := normalizeQueries(body.Queries)
-	if len(queries) == 0 {
-		queries = generateAutofillQueries(ctx, T, c, wanted)
-	}
-	if len(queries) == 0 {
-		if added > 0 {
-			return map[string]any{"added": added, "skipped": 0, "failed": failed, "queries_used": []string{}, "results": results}, nil
-		}
-		return nil, jsonapi.BadRequest("could not derive search queries: try filling in the collection description, or pass queries explicitly")
-	}
-	if len(queries) > wanted {
-		queries = queries[:wanted]
-	}
-
-	pass := &autofillPass{ctx: ctx, udb: udb, c: &c, maxDocs: body.MaxDocs, added: added, failed: failed, results: results}
-	pass.search(T, queries)
-	added, failed, results = pass.added, pass.failed, pass.results
-	skipped := pass.skipped
-
-	Log("[orchestrate.autofill] collection=%s queries=%d added=%d failed=%d (max=%d)",
-		c.ID, len(queries), added, failed, body.MaxDocs)
-	return map[string]any{
-		"added":        added,
-		"skipped":      skipped,
-		"failed":       failed,
-		"held":         pass.held,
-		"queries_used": queries,
-		"results":      results,
-	}, nil
+	Log("[orchestrate.autofill] collection=%s articles only: added=%d failed=%d", c.ID, added, failed)
+	return map[string]any{"added": added, "failed": failed, "results": results}, nil
 }
 
-// autofillPass is one pass of Auto-fill's search and fetch over a set of
-// searches: the button's run, and Fill it for me's (collection_fill.go),
-// which runs it in the background with say reporting how far it has got.
+// autofillPass is the search part of a plan run (collection_plan.go): the
+// plan's search terms, fetched and checked into the collection, with say
+// reporting how far it has got.
 type autofillPass struct {
 	ctx      context.Context
 	udb      Database
@@ -1278,7 +1207,8 @@ type autofillPass struct {
 	maxDocs  int
 	added    int
 	failed   int
-	held     int // contradicted the collection: held for the owner
+	held     int      // did not pass the check: held for the owner
+	proposed []string // documents a page added is a newer version of
 	skipped  int
 	results  []autofillItem
 	progress func(string)
@@ -1380,7 +1310,7 @@ func (p *autofillPass) search(T *OrchestrateApp, queries []string) {
 		// holds is held for the owner, and one that could not be checked is
 		// not added.
 		var checked vetResult
-		if checkedHere(*p.c) {
+		{
 			p.say(fmt.Sprintf("checking %d of %d pages found", ci+1, len(candidates)))
 			vctx, vcancel := context.WithTimeout(p.ctx, vetTimeout)
 			checked = T.checkPage(vctx, *p.c, vetCandidate{URL: cand.URL, Title: name, Text: text}, func(line string) {
@@ -1409,6 +1339,9 @@ func (p *autofillPass) search(T *OrchestrateApp, queries []string) {
 		item := autofillItem{URL: cand.URL, Status: "added", Name: name, Chunks: chunks}
 		if checked.Answer == vetSupersedes || checked.OtherURL != "" {
 			item.Err = checked.note()
+		}
+		if checked.Answer == vetSupersedes {
+			p.proposed = append(p.proposed, checked.AgainstTitle)
 		}
 		p.results = append(p.results, item)
 		p.added++

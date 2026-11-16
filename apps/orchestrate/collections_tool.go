@@ -7,7 +7,7 @@
 // add_url/remove_doc reuse the autofill/source-delete primitives against
 // the global VectorDB, so Builder can pull in an authoritative source or
 // prune noise without bouncing the user to the Knowledge surface (which
-// remains the better path for bulk topic-based Auto-fill).
+// remains the better path for filling from the web: the collection's plan).
 //
 // NOT globally registered; reaches catalogs only via
 // builderAuthoringTools when the active agent IS Builder.
@@ -28,7 +28,7 @@ import (
 
 func collectionsListTool() ChatTool {
 	gt := NewGroupedTool("collections",
-		"Manage the user's Document Collections so you can wire them into agents (attached_collections=[...]). Actions: list, get, create (mint an empty collection), update (patch name, description or curator), docs (list ingested documents), add_url (ingest one URL into the corpus), add_file (ingest a file from your workspace, such as a PDF a tool saved), add_text (ingest text you have (markdown or JSON) as one titled document; same title replaces), remove_doc (drop one document). Use add_url to pull a known authoritative source (a statute's full-text page) into a collection, add_text to save material the user gave you or you drafted WITH the user's say-so, and remove_doc to prune noise; for bulk topic-based filling, the Knowledge surface's Auto-fill is still the better path.")
+		"Manage the user's Document Collections so you can wire them into agents (attached_collections=[...]). Actions: list, get, create (mint an empty collection), update (patch name, description or curator), docs (list ingested documents), add_url (ingest one URL into the corpus), add_file (ingest a file from your workspace, such as a PDF a tool saved), add_text (ingest text you have (markdown or JSON) as one titled document; same title replaces), remove_doc (drop one document). Use add_url to pull a known authoritative source (a statute's full-text page) into a collection, add_text to save material the user gave you or you drafted WITH the user's say-so, and remove_doc to prune noise; for filling a collection from the web on a topic, its plan on the Knowledge page (Run now) is the better path.")
 
 	gt.AddAction("list", &GroupedToolAction{
 		Description: "List every collection the user can attach: their own, ones colleagues shared with them, and the deployment's. Returns [{id, name, access, description, documents, chunks}] sorted by most-recently-updated; access is \"yours\", \"shared by <owner>\" or \"deployment\". Names are not unique across owners: an entry with name_also_used set shares its name with the listed others, so pick by access and id, and when the user named a collection without saying whose, ask which one. Use this when the user names a collection by display name and you need its ID to pass to attached_collections, or when surveying what corpus material exists for a new agent.",

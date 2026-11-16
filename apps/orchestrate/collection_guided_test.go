@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
@@ -41,8 +40,7 @@ func createCollection(t *testing.T, T *OrchestrateApp, udb Database, user string
 func TestAGuidedCollectionIsMadeFromItsAnswers(t *testing.T) {
 	T, udb, user := newTestOrchestrate(t)
 	pinRootDB(t)
-	const curator = "app-test-guided-curator"
-	appagents.RegisterAppAgent(appagents.AppAgentSpec{ID: curator, OwningApp: "Test", Name: "Curator", Prompt: "p", Hidden: true})
+	const curator = collectionAutoCurator
 	mine, err := saveAgent(udb, AgentRecord{Owner: user, Name: "Ada", OrchestratorPrompt: "p"})
 	if err != nil {
 		t.Fatal(err)
@@ -53,7 +51,7 @@ func TestAGuidedCollectionIsMadeFromItsAnswers(t *testing.T) {
 		"name": "Kubernetes", "about": "Running clusters with kubectl.",
 		"currency": "current", "depth": "comprehensive", "mostly": "web",
 		"prefer": []string{"kubernetes.io"}, "avoid": []string{"example-blog.test"},
-		"guided": "true", "curation": "auto", "auto_curator": curator, "start": "none",
+		"guided": "true", "curation": "auto", "start": "none",
 		"attach_to": []string{mine.ID, theirs.ID},
 	})
 	for _, want := range []string{"Running clusters with kubectl.", guidedCurrency["current"], guidedDepth["comprehensive"], guidedMostly["web"]} {
@@ -68,7 +66,7 @@ func TestAGuidedCollectionIsMadeFromItsAnswers(t *testing.T) {
 		t.Errorf("filter rules: %q", c.FilterRules)
 	}
 	if c.CuratorAgent != curator {
-		t.Errorf("Auto-Curation did not put the curator in charge: %q", c.CuratorAgent)
+		t.Errorf("Auto-Curation was not stored: %q", c.CuratorAgent)
 	}
 	if a, _ := loadAgent(udb, mine.ID); len(a.AttachedCollections) != 1 || a.AttachedCollections[0] != c.ID {
 		t.Errorf("their agent does not read it: %v", a.AttachedCollections)
@@ -77,14 +75,10 @@ func TestAGuidedCollectionIsMadeFromItsAnswers(t *testing.T) {
 		t.Errorf("someone else's agent was given it: %v", b.AttachedCollections)
 	}
 
-	// Hand Curated, the curator the form carries is not put in charge; nor
-	// is an Auto-Curation agent that is no agent at all. Curation by Agent
-	// puts their agent in charge, and not someone else's.
-	if c := createCollection(t, T, udb, user, map[string]any{"name": "Notes", "curation": "hand", "auto_curator": curator}); c.CuratorAgent != "" {
+	// Hand Curated stores nobody. Curation by Agent puts their agent in
+	// charge, and not someone else's.
+	if c := createCollection(t, T, udb, user, map[string]any{"name": "Notes", "curation": "hand"}); c.CuratorAgent != "" {
 		t.Errorf("hand curated, yet curated by %q", c.CuratorAgent)
-	}
-	if c := createCollection(t, T, udb, user, map[string]any{"name": "Odd", "curation": "auto", "auto_curator": "nobody-at-all"}); c.CuratorAgent != "" {
-		t.Errorf("a curator that is no agent was stored: %q", c.CuratorAgent)
 	}
 	if c := createCollection(t, T, udb, user, map[string]any{"name": "Mine", "curation": "agent", "curator_agent": mine.ID}); c.CuratorAgent != mine.ID {
 		t.Errorf("Curation by Agent: %q", c.CuratorAgent)
@@ -140,16 +134,15 @@ func TestTheGuidedSetupStartsWhatItWasAsked(t *testing.T) {
 }
 
 // The collection page sends how it is curated: Hand Curated clears the
-// curator, Auto-Curation sets the agent it names only when that is the app's
-// hidden curator, Curation by Agent sets one of the person's own agents and
-// changes nothing until one is picked. A caller sending only curator_agent
+// curator, Auto-Curation stores its marker (the plan on a schedule),
+// Curation by Agent sets one of the person's own agents and changes nothing
+// until one is picked; the marker is never taken as an agent of theirs. A caller sending only curator_agent
 // sets it as before. Reading it back gives the choice and, for Curation by
 // Agent, which one.
 func TestTheCurationChoiceIsStoredAsTheCurator(t *testing.T) {
 	T, udb, user := newTestOrchestrate(t)
 	pinRootDB(t)
-	const curator = "app-test-steward-curator"
-	appagents.RegisterAppAgent(appagents.AppAgentSpec{ID: curator, OwningApp: "Test", Name: "Curator", Prompt: "p", Hidden: true})
+	const curator = collectionAutoCurator
 	mine, _ := saveAgent(udb, AgentRecord{Owner: user, Name: "Ada", OrchestratorPrompt: "p"})
 	saveCollection(udb, Collection{ID: "col-c", Name: "C", Owner: user})
 	save := func(body map[string]any) (Collection, int) {
@@ -171,14 +164,14 @@ func TestTheCurationChoiceIsStoredAsTheCurator(t *testing.T) {
 		}
 		return out.(map[string]any)
 	}
-	if c, code := save(map[string]any{"curation": "auto", "auto_curator": curator}); code != 200 || c.CuratorAgent != curator {
+	if c, code := save(map[string]any{"curation": "auto"}); code != 200 || c.CuratorAgent != curator {
 		t.Fatalf("Auto-Curation: %d %q", code, c.CuratorAgent)
 	}
 	if got := read(); got["curation"] != "auto" || got["curator_agent"] != "" {
 		t.Errorf("read back: %v", got)
 	}
-	if _, code := save(map[string]any{"curation": "auto", "auto_curator": mine.ID}); code == 200 {
-		t.Error("Auto-Curation took one of the person's agents")
+	if _, code := save(map[string]any{"curation": "agent", "curator_agent": collectionAutoCurator}); code == 200 {
+		t.Error("Curation by Agent took the Auto-Curation marker as an agent")
 	}
 	if c, _ := save(map[string]any{"curation": "agent", "curator_agent": ""}); c.CuratorAgent != curator {
 		t.Errorf("Curation by Agent with none picked yet changed the curator: %q", c.CuratorAgent)

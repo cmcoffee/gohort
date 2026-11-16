@@ -661,6 +661,8 @@ type PortableCollection struct {
 	Name               string          `json:"name"`
 	Description        string          `json:"description,omitempty"`
 	FilterRules        string          `json:"filter_rules,omitempty"`
+	SearchTerms        []string        `json:"search_terms,omitempty"`
+	DocsPerRun         int             `json:"docs_per_run,omitempty"`
 	ClassifyOnAutofill bool            `json:"classify_on_autofill,omitempty"`
 	IngestedURLs       []string        `json:"ingested_urls,omitempty"`
 	Chunks             []PortableChunk `json:"chunks,omitempty"`
@@ -825,6 +827,8 @@ func (collectionArtifact) ExportArtifact(_ Database, name, owner string) (json.R
 		Name:               c.Name,
 		Description:        c.Description,
 		FilterRules:        c.FilterRules,
+		SearchTerms:        c.SearchTerms,
+		DocsPerRun:         c.DocsPerRun,
 		ClassifyOnAutofill: c.ClassifyOnAutofill,
 		IngestedURLs:       c.IngestedURLs,
 	}
@@ -894,6 +898,8 @@ func (collectionArtifact) ImportArtifact(db Database, recipe json.RawMessage, ow
 		Name:               name,
 		Description:        pc.Description,
 		FilterRules:        pc.FilterRules,
+		SearchTerms:        pc.SearchTerms,
+		DocsPerRun:         pc.DocsPerRun,
 		ClassifyOnAutofill: pc.ClassifyOnAutofill,
 		IngestedURLs:       pc.IngestedURLs,
 		ImportedFrom:       origin,

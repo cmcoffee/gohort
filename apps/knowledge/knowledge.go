@@ -139,9 +139,6 @@ func (T *KnowledgeApp) handleDetailPage(w http.ResponseWriter, r *http.Request) 
 	if s, ok := T.suggestedSourcesSection(user, collectionIDFromPath(r.URL.Path)); ok {
 		sections = append(sections, s)
 	}
-	if s, ok := T.fillSection(user, collectionIDFromPath(r.URL.Path)); ok {
-		sections = append(sections, s)
-	}
 	if s, ok := T.stewardSection(user, collectionIDFromPath(r.URL.Path)); ok {
 		sections = append(sections, s)
 	}
@@ -211,26 +208,27 @@ func (T *KnowledgeApp) stewardSection(user, collectionID string) (ui.Section, bo
 	esc := url.PathEscape(collectionID)
 	base := "/orchestrate/api/collections/" + esc + "/steward"
 	curate := "/orchestrate/api/collections/" + esc + "/curate"
-	// Hand Curated, Auto-Curation (Knowledge's own curating agent,
-	// curator.go) or Curation by Agent, in the guided setup's words.
+	plan := "/orchestrate/api/collections/" + esc + "/plan"
+	// Hand Curated, Auto-Curation or Curation by Agent, in the guided
+	// setup's words: who runs the plan, and when.
 	fields := curationFields(user, "select")
-	fields[0].Help = "Auto-Curation, or one of your agents, may add documents to THIS collection. Curate now below runs it."
-	fields[0].Detail = "The curator gets a collection tool for this collection: add a page by its address, a file a tool saved to its workspace (a downloaded PDF), or text; list what is in it; remove a document. Curate now asks it to look after the collection; one of your agents can also be asked in a chat (\"add this month's vendor reports\"), or given a schedule.\n\n" +
-		"It cannot touch any other collection you own, and it gets no other new powers: it cannot create or change agents, tools or apps.\n\n" +
+	fields[0].Help = "Who carries out the plan below, and when. Run now runs it once whichever you choose."
+	fields[0].Detail = "Hand Curated and Auto-Curation run the plan itself: the articles you listed, links agents suggested, then the search terms, each page checked before it goes in. Hand Curated runs it only when you press Run now; Auto-Curation also runs it on its schedule.\n\n" +
+		"Curation by Agent has one of your agents carry it out instead, with its own tools: it gets a collection tool for this collection (add a page by its address, a file its tools saved, or text; list what is in it; remove a document), and nothing else new. It cannot touch any other collection you own.\n\n" +
 		"Reading is unaffected. Any agent with this collection attached still searches it exactly as before."
-	// How often the curator refreshes it, on the scheduler: when there is a
-	// curator to run.
-	fields = append(fields, ui.FormField{Field: "refresh", Type: "select", Label: "Refresh", ShowWhen: "curation:auto|agent",
+	// How often the plan runs on its own, on the scheduler: not for Hand
+	// Curated, which runs only when asked.
+	fields = append(fields, ui.FormField{Field: "refresh", Type: "select", Label: "Schedule", ShowWhen: "curation:auto|agent",
 		Options: []ui.SelectOption{
-			{Value: "never", Label: "Never", Help: "It is curated when you press Curate now."},
-			{Value: "week", Label: "Every week", Help: "The curator looks for what is new each week, within the same limits as Curate now."},
-			{Value: "month", Label: "Every month", Help: "The curator looks for what is new each month, within the same limits as Curate now."},
+			{Value: "never", Label: "Never", Help: "The plan runs when you press Run now."},
+			{Value: "week", Label: "Every week", Help: "The plan runs each week, looking for what is new."},
+			{Value: "month", Label: "Every month", Help: "The plan runs each month, looking for what is new."},
 		},
-		Help: "The curator looks for what is new since the last refresh and adds what fits. The row below says when the next is due and what the last one did."})
+		Help: "The same plan as Run now, run on its own. The row below says when the next run is due and what the last one did."})
 	return ui.Section{
 		Title:    "Curation",
-		Subtitle: "Who keeps this collection current.",
-		Detail:   "A curator goes and finds material that fits what the collection is for, adds it, and proposes removals for you to confirm. Every agent reading the collection reads it as usual, unchanged.",
+		Subtitle: "The plan for filling this collection, and when it runs: once, or on a schedule.",
+		Detail:   "One plan fills the collection and keeps it current: run it once to fill it, or on a schedule to keep it up to date. Pages it finds go in only after the check; what does not pass waits under Held for you. Pages you add yourself are never checked.",
 		Body: ui.Stack{Children: []ui.Component{
 			ui.FormPanel{
 				Source:     base,
@@ -239,15 +237,43 @@ func (T *KnowledgeApp) stewardSection(user, collectionID string) (ui.Section, bo
 				Fields:     fields,
 			},
 			ui.ActionList{
+				Source:         plan + "/draft",
+				LabelField:     "item",
+				DescField:      "desc",
+				HistoryField:   "history",
+				PostTo:         plan + "/draft",
+				ButtonText:     "Draft",
+				ProgressSource: plan + "/draft/progress",
+				CancelTo:       plan + "/draft/stop",
+				EmptyText:      "Drafting a plan needs web search, which is not set up on this server. You can still write the search terms below.",
+				// The drafted terms land in the plan below.
+				Invalidate: []string{plan, plan + "/draft", curate},
+			},
+			ui.FormPanel{
+				Source:     plan,
+				PostURL:    plan,
+				RefreshOn:  []string{plan},
+				Invalidate: []string{curate, plan + "/draft"},
+				Fields: []ui.FormField{
+					{Field: "search_terms", Type: "rules", Label: "Search terms", AddLabel: "+ Add search terms",
+						Placeholder: "No search terms yet: Draft writes them from the description, or add your own below.",
+						Help:        "One web search each. A run searches these and keeps what fits."},
+					{Field: "filter_rules", Type: "rules", Label: "Rules", AddLabel: "+ Add rule",
+						Help: "What to prefer and what to skip, such as \"Prefer docs.vendor.example\" or \"Skip forums\". Read when the search terms are written and when pages are checked."},
+					{Field: "docs_per_run", Type: "number", Label: "Documents per run",
+						Help: "At most this many are added in one run."},
+				},
+			},
+			ui.ActionList{
 				Source:         curate,
 				LabelField:     "item",
 				DescField:      "desc",
 				HistoryField:   "history",
 				PostTo:         curate,
-				ButtonText:     "Curate now",
+				ButtonText:     "Run now",
 				ProgressSource: curate + "/progress",
 				CancelTo:       curate + "/stop",
-				EmptyText:      "Hand Curated: nothing runs on its own. Choose Auto-Curation, or Curation by Agent, to have it looked after.",
+				Invalidate:     []string{curate},
 			},
 		}},
 	}, true
@@ -330,7 +356,7 @@ func (T *KnowledgeApp) sharingSection(user, collectionID string) (ui.Section, bo
 		Subtitle: "Other people, or a team you are on, who may use this collection, each at the access you choose on their chip. Empty means private to you.",
 		Detail: "Everybody added starts at READ: it appears in their collections, they can attach it to their agents and search it. " +
 			"They cannot rename it, delete it or change who it reaches, and there is only ever one copy, so a document you add later is shared too, and one you remove is gone for everyone.\n\n" +
-			"ADD DOCUMENTS lets them upload, paste, auto-fill and research into it. It is worth stopping on: an agent takes this corpus as fact, so whoever adds to it decides what every agent reading it believes.\n\n" +
+			"ADD DOCUMENTS lets them upload, paste, fetch articles and research into it. It is worth stopping on: an agent takes this corpus as fact, so whoever adds to it decides what every agent reading it believes.\n\n" +
 			"MAINTAIN is that and curating besides: reviewing the suggestions agents file, running the audit, and editing its description, filter rules and articles. Its name, who it reaches, the agent in charge of it and deleting it stay yours.\n\n" +
 			"Sharing with the whole deployment is a separate decision and is not offered here.",
 		Body: ui.ACLPicker(ui.ACLPickerConfig{

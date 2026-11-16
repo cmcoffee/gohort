@@ -9,33 +9,20 @@ import (
 	"github.com/cmcoffee/gohort/core/appagents"
 )
 
-// Knowledge's curating agent is registered hidden, so it is in no picker and
-// nothing hands it work, and it can hand nothing on; it reads and finds pages,
-// and adds them only through the collection tool being a curator brings.
-func TestTheCuratingAgentIsHidden(t *testing.T) {
-	spec, ok := appagents.AppAgentByID(curatorAgentID)
-	if !ok {
-		t.Fatal("the curating agent is not registered")
-	}
-	if !spec.Hidden || spec.EffectiveDispatchMode() != appagents.DispatchNone {
-		t.Errorf("the curating agent must be hidden and dispatch nowhere: %+v", spec)
-	}
-	if !spec.DisableExplicit {
-		t.Error("the curating agent stores facts, which would carry one collection into its runs for another")
-	}
-	if !strings.Contains(spec.Prompt, "Never remove a document") {
-		t.Error("the curating agent's prompt no longer holds removals for the owner")
-	}
-	if strings.Contains(spec.Prompt, "\u2014") {
-		t.Error("an em-dash in the curating agent's prompt")
+// Auto-Curation is the collection's plan run on a schedule now, not a hidden
+// agent of Knowledge's own: nothing registers one.
+func TestThereIsNoHiddenCuratingAgent(t *testing.T) {
+	if _, ok := appagents.AppAgentByID("app-knowledge-curator"); ok {
+		t.Error("the retired curating agent is still registered")
 	}
 }
 
-// The collection page's Curation offers Auto-Curation and Hand Curated at
-// either end, with Curation by Agent between them only when there are agents
-// to pick, carries the agent Auto-Curation means, and has Curate now below
-// it, refreshed when the choice is saved.
-func TestCurationOffersAutoCuratedAndCurateNow(t *testing.T) {
+// The collection page's Curation is the choice of who runs the plan (Auto-
+// Curation and Hand Curated at either end, Curation by Agent between them
+// only when there are agents to pick), its schedule, the plan itself to draft
+// and edit (search terms and rules, each list naming what it adds), and Run
+// now, each refreshing what it changes.
+func TestCurationIsThePlanAndWhenItRuns(t *testing.T) {
 	withStores(t)
 	app := &KnowledgeApp{}
 	owner := UserDB(CollectionsDB(), "alice")
@@ -50,25 +37,36 @@ func TestCurationOffersAutoCuratedAndCurateNow(t *testing.T) {
 	if s.Title != "Curation" {
 		t.Errorf("section title %q", s.Title)
 	}
-	if blob, _ := json.Marshal(s.Body); strings.Contains(string(blob), `"label":"Curation by Agent"`) {
-		t.Error("Curation by Agent is offered to someone with no agents to pick")
-	}
 	blob, _ := json.Marshal(s.Body)
 	out := string(blob)
+	if strings.Contains(out, `"label":"Curation by Agent"`) {
+		t.Error("Curation by Agent is offered to someone with no agents to pick")
+	}
 	for _, want := range []string{
 		`"options":[{"value":"auto","label":"Auto-Curation"`,
 		`{"value":"hand","label":"Hand Curated"`,
-		`{"field":"auto_curator","type":"hidden","default":"` + curatorAgentID + `"}`,
-		`{"field":"refresh","label":"Refresh","type":"select"`,
+		`{"field":"refresh","label":"Schedule","type":"select"`,
 		`"show_when":"curation:auto|agent"`,
 		`{"value":"week","label":"Every week"`,
+		`"source":"/orchestrate/api/collections/col-1/plan/draft"`,
+		`"progress_source":"/orchestrate/api/collections/col-1/plan/draft/progress"`,
+		`"source":"/orchestrate/api/collections/col-1/plan"`,
+		`"field":"search_terms","label":"Search terms","type":"rules"`,
+		`"add_label":"+ Add search terms"`,
+		`"placeholder":"No search terms yet`,
+		`"field":"filter_rules","label":"Rules","type":"rules"`,
+		`"add_label":"+ Add rule"`,
+		`"field":"docs_per_run"`,
 		`"source":"/orchestrate/api/collections/col-1/curate"`,
+		`"button_text":"Run now"`,
 		`"progress_source":"/orchestrate/api/collections/col-1/curate/progress"`,
 		`"cancel_to":"/orchestrate/api/collections/col-1/curate/stop"`,
-		`"invalidate":["/orchestrate/api/collections/col-1/curate"]`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("Curation is missing %s:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "auto_curator") || strings.Contains(out, "Curate now") {
+		t.Error("Curation still names the retired curating agent or Curate now")
 	}
 }

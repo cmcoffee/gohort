@@ -6,8 +6,8 @@ package orchestrate
 // The schedule is a task on gohort's scheduler, not a field of the
 // collection: one task per refreshed collection, holding the collection, how
 // often, and what the last refresh did. Each firing schedules the next before
-// it runs (so a restart mid-run does not end the chain), runs the curator the
-// way Curate now does, and then writes what it did onto that next task, which
+// it runs (so a restart mid-run does not end the chain), runs the plan the
+// way Run now does, and then writes what it did onto that next task, which
 // is what the page reads back. Never is no task. A collection that is gone, or
 // hand curated, ends the chain at its next firing.
 

@@ -1504,6 +1504,10 @@ select:-webkit-autofill {
     overflow: visible; /* keep ellipsis off when wrapping is on */
     text-overflow: clip;
   }
+  /* Wrapping here shows a cell's text in full, so the second line's
+   * two-line cap goes too: kept, it held the cell's height while the text,
+   * no longer hidden, ran on over the row's buttons. */
+  .ui-row-cells-2 > .ui-table-cell { max-height: none; animation: none; }
   .ui-row-cells > .ui-table-cell:last-child { margin-bottom: 0; }
   /* A short status badge (Private, Shared, Disabled) took a line of its own
    * under the name; it sits on the name's line, after it. */

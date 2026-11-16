@@ -41,7 +41,7 @@ func (T *KnowledgeApp) heldSection(user, collectionID string) (ui.Section, bool)
 	return ui.Section{
 		Title:    "Held for you",
 		Subtitle: "Pages that did not pass the check before going in. They wait here for you.",
-		Detail: "Before a page that a machine picked goes in (the curator's, or Auto-fill's), it is checked against what the collection is for and what it already says. A page from a secondary source (an article, a post, a story about the thing rather than its own word) also needs an independent source saying the same. A page is held here when it contradicts a document already in the collection, when another source contradicts it, or when no other source could be found saying the same.\n\n" +
+		Detail: "Before a page that a machine picked goes in (a run of the plan, or an agent curating it), it is checked against what the collection is for and what it already says. A page from a secondary source (an article, a post, a story about the thing rather than its own word) also needs an independent source saying the same. A page is held here when it contradicts a document already in the collection, when another source contradicts it, or when no other source could be found saying the same.\n\n" +
 			"Settle it by hand: add the page, add it in place of the document it contradicts, or leave it out. Or press Settle it first: two sides argue it, one for the page and one for what contradicts it, each citing what it reads; their citations are checked against those pages; then a ruling is shown here. Nothing changes until you choose.\n\n" +
 			"Pages you pick yourself (your articles, sources you tick, uploads) are never checked.",
 		Body: ui.Table{
@@ -54,8 +54,7 @@ func (T *KnowledgeApp) heldSection(user, collectionID string) (ui.Section, bool)
 				{Field: "created", Label: "When", Format: "reltime", Mute: true},
 				// Beneath, in full: what it contradicts is the point of the
 				// row, and cutting it to fit the buttons left "Conflicts with".
-				{Field: "conflict", Label: "Why it is held", Line: 2},
-				{Field: "ruling", Label: "Ruling", Mute: true, Line: 2},
+				{Field: "detail", Label: "Why it is held", Line: 2},
 			},
 			RowActions: []ui.RowAction{
 				// Settle it needs something to argue the page against: the

@@ -77,7 +77,6 @@ func TestTheCurationFormSetsAndEndsTheRefresh(t *testing.T) {
 		var b struct {
 			Curation     string `json:"curation"`
 			CuratorAgent string `json:"curator_agent"`
-			AutoCurator  string `json:"auto_curator"`
 			Refresh      string `json:"refresh"`
 		}
 		json.Unmarshal(raw, &b)
@@ -138,5 +137,35 @@ func TestARefreshRunsTheCuratorAndRemembersIt(t *testing.T) {
 	df.app.handleCollectionRefresh(context.Background(), raw)
 	if _, _, _, ok := refreshScheduled("u", "col-r"); ok || brief != "" {
 		t.Error("a hand curated collection was refreshed or rescheduled")
+	}
+}
+
+// An Auto-Curation collection's refresh is its plan, run on the schedule the
+// same way Run now runs it: no agent, and what it did is kept for the page.
+func TestAnAutoCuratedRefreshRunsThePlan(t *testing.T) {
+	// Loopback: refused before any connection, so nothing leaves the test.
+	df := planFixture(t, map[string]string{"pg releases": "1. Notes\n   http://127.0.0.1:9/notes\n   x\n"})
+	PreInitScheduler()
+	clear := func() {
+		for _, task := range ListScheduledTasks(collectionRefreshKind) {
+			UnscheduleTask(task.ID)
+		}
+	}
+	clear()
+	t.Cleanup(clear)
+	var agentRan bool
+	curateRunAgent = func(*OrchestrateApp, context.Context, string, string, string) (string, error) {
+		agentRan = true
+		return "", nil
+	}
+	saveCollection(df.udb, Collection{ID: "col-p", Name: "PG", Owner: "u", CuratorAgent: collectionAutoCurator, SearchTerms: []string{"pg releases"}})
+	raw, _ := json.Marshal(refreshTask{Collection: "col-p", Owner: "u", Every: "week"})
+	df.app.handleCollectionRefresh(context.Background(), raw)
+	p, _, _, ok := refreshScheduled("u", "col-p")
+	if !ok || !strings.Contains(p.LastNote, "1 page could not be used") {
+		t.Errorf("the plan's run is not what the refresh kept: %+v", p)
+	}
+	if agentRan {
+		t.Error("an agent ran for an Auto-Curation refresh")
 	}
 }

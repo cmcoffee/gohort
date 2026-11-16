@@ -177,10 +177,17 @@ type Collection struct {
 	// it.
 	IngestedURLs []string `json:"ingested_urls,omitempty"`
 	// FilterRules — optional user-authored markdown describing
-	// what this collection should and shouldn't accept. Used by
-	// the autofill flow's query generator + LLM judge. Format is
-	// freeform but bullet lists read best.
+	// what this collection should and shouldn't accept: the plan's
+	// rules, read when its searches are written and its pages
+	// checked. Format is freeform but bullet lists read best.
 	FilterRules string `json:"filter_rules,omitempty"`
+	// SearchTerms and DocsPerRun are the rest of the collection's plan:
+	// the web searches a curation run makes, and the most documents one
+	// run adds. Drafted from the description, edited by the owner, and
+	// the same whether the plan is run once or on a schedule. Empty is no
+	// plan yet.
+	SearchTerms []string `json:"search_terms,omitempty"`
+	DocsPerRun  int      `json:"docs_per_run,omitempty"`
 	// CuratorAgent names an agent that is IN CHARGE of this collection: it
 	// keeps the corpus current, and is granted the four corpus actions bound
 	// to this collection and nothing else.
@@ -203,16 +210,14 @@ type Collection struct {
 	// the skill keeps an id the importer cannot read, which searches nothing
 	// today and searches the other person's corpus the day they share it.
 	ImportedFrom string `json:"imported_from,omitempty"`
-	// ClassifyOnAutofill enables the LLM judge pass during
-	// autofill. When true, every fetched + extracted candidate
-	// goes through a non-thinking worker call that decides
-	// keep/drop. Default false. Autofill-specific; ignored by
-	// other consumers of Collection.
+	// ClassifyOnAutofill turned on the page check for Auto-fill. No longer
+	// read: every curation run checks its pages. Kept so records and
+	// bundles that carry it still decode.
 	ClassifyOnAutofill bool `json:"classify_on_autofill,omitempty"`
 	// Articles are the specific ones the owner wants in this collection, each
 	// a link or a description to search for ("IRS Publication 17, 2026").
-	// Auto-fill fetches them before it searches on its own, and only the ones
-	// not fetched yet, so the list can stay as a statement of what belongs.
+	// A curation run fetches them before it searches, and only the ones not
+	// fetched yet, so the list can stay as a statement of what belongs.
 	Articles []string `json:"articles,omitempty"`
 	// ArticlesFetched maps an entry of Articles to the address it was fetched
 	// from. An entry with none is still to fetch.
