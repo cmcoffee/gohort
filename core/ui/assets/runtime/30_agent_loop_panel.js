@@ -3156,6 +3156,14 @@
     var composerMiddle = el('div', {class: 'ui-agent-composer-middle'});
     modeBtns.forEach(function(b) { composerMiddle.appendChild(b); });
     inputRow.appendChild(composerMiddle);
+    // The status line, where steps are shown: which tier answered last and
+    // how much of its context the prompt took, beside Send. Filled by the
+    // turn's 'meter' events; empty until a turn has run in this thread.
+    var meterEl = null;
+    if (cfg.show_steps) {
+      meterEl = el('span', {class: 'ui-agent-meter', style: 'align-self:center;margin:0 0.5rem;color:var(--text-mute);font-size:var(--fs-xs, 0.76rem);white-space:nowrap;font-variant-numeric:tabular-nums'});
+      inputRow.appendChild(meterEl);
+    }
     if (attachBtn) inputRow.appendChild(attachBtn);
     inputRow.appendChild(sendBtn);
     inputRow.appendChild(cancelBtn);
@@ -5660,6 +5668,25 @@
       }
     }
 
+    // setMeter shows a turn's meter event on the status line: "Worker · 12k
+    // of 32k context", the model and the share used on hover, in the warning
+    // colour from four fifths full. A null clears it.
+    function setMeter(ev) {
+      if (!meterEl) return;
+      if (!ev || !(ev.context_tokens > 0)) {
+        meterEl.textContent = ''; meterEl.title = ''; meterEl.style.color = 'var(--text-mute)';
+        return;
+      }
+      function k(n) { return n >= 10000 ? Math.round(n / 1000) + 'k' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n); }
+      var tier = ev.tier === 'lead' ? 'Lead' : ev.tier === 'worker' ? 'Worker' : '';
+      var used = k(ev.context_tokens) + (ev.context_size > 0 ? ' of ' + k(ev.context_size) : '') + ' context';
+      meterEl.textContent = tier ? tier + ' \u00b7 ' + used : used;
+      var share = ev.context_size > 0 ? ev.context_tokens / ev.context_size : 0;
+      meterEl.title = (ev.model ? ev.model + ': ' : '') + ev.context_tokens.toLocaleString() + ' tokens' +
+        (share ? ', ' + Math.round(share * 100) + '% of the window' : '');
+      meterEl.style.color = share >= 0.8 ? 'var(--warning, #d29922)' : 'var(--text-mute)';
+    }
+
     function setStatus(text) {
       if (!text) { statusBar.style.display = 'none'; statusBar.textContent = ''; return; }
       statusBar.style.display = '';
@@ -5814,6 +5841,9 @@
           break;
         case 'stats':
           renderMessageStats(ev);
+          break;
+        case 'meter':
+          setMeter(ev);
           break;
         case 'tool_call': {
           // A call made beneath a running one (a dispatched agent's) is drawn
@@ -7965,6 +7995,7 @@
       loadedMsgOffset = 0;
       convoLog.innerHTML = '';
       activityLog.innerHTML = '';
+      setMeter(null); // the meter was the cleared thread's
     }
 
     // earlierAnchor remembers WHERE THE READER WAS across a "Show earlier"

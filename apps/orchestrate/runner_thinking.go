@@ -109,10 +109,36 @@ func (t *chatTurn) thinkResponse(resp *Response) {
 	}
 	p := &t.think
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.calls++
 	p.outputTokens += resp.OutputTokens
 	p.reasoningTokens += resp.ReasoningTokens
+	p.mu.Unlock()
+	t.sendMeter(resp)
+}
+
+// sendMeter tells the page, after every model call, which tier answered and
+// how much of its context the call's prompt took: the agent panel's status
+// line (AgentLoopPanel.ShowSteps). The prompt is the whole of it, the cached
+// part included, as on the reply's footer.
+func (t *chatTurn) sendMeter(resp *Response) {
+	if t.sse == nil || t.app == nil {
+		return
+	}
+	used := resp.InputTokens + resp.CacheReadTokens + resp.CacheWriteTokens
+	if used <= 0 {
+		return
+	}
+	size := t.app.WorkerContextSize()
+	if resp.Tier == LEAD {
+		size = t.app.LeadContextSize()
+	}
+	t.sse.Send(map[string]any{
+		"kind":           "meter",
+		"tier":           resp.Tier.String(),
+		"model":          resp.Model,
+		"context_tokens": used,
+		"context_size":   size,
+	})
 }
 
 // thinkTokens is the turn's output and thinking tokens across every call, and

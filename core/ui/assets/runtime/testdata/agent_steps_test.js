@@ -86,4 +86,17 @@ check('an unchanged step is not redrawn', panel.kids[0] === first);
 step.output = 'x';
 renderTurnSteps(host);
 check('a step that ends is redrawn in place, still open', panel.kids.length === 1 && panel.kids[0] !== first && panel.kids[0].open === true);
+// The status line: which tier answered and how much of its window the
+// prompt took, in the warning colour from four fifths full; null clears it.
+var meterEl = {textContent: '', title: '', style: {color: ''}};
+eval(lift(src, '    function setMeter(ev) {', '    function setStatus(text) {', 'setMeter'));
+setMeter({tier: 'worker', model: 'small', context_tokens: 12400, context_size: 32000});
+check('the meter names the tier and the share of the window', meterEl.textContent === 'Worker \u00b7 12k of 32k context' && /small: /.test(meterEl.title) && /39%/.test(meterEl.title));
+check('under four fifths it is muted', meterEl.style.color === 'var(--text-mute)');
+setMeter({tier: 'lead', context_tokens: 1500, context_size: 1800});
+check('near full it warns', meterEl.textContent === 'Lead \u00b7 1.5k of 1.8k context' && /warning/.test(meterEl.style.color));
+setMeter({tier: 'unset', context_tokens: 900, context_size: 0});
+check('no tier or window: just what was used', meterEl.textContent === '900 context');
+setMeter(null);
+check('null clears it', meterEl.textContent === '' && meterEl.title === '');
 process.exit(fail ? 1 : 0);

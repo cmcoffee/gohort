@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -120,5 +121,41 @@ func TestThinkingTickSaysWhenTheSpanBegan(t *testing.T) {
 	}
 	if ev.StartedMS < before || ev.StartedMS > time.Now().UnixMilli() {
 		t.Errorf("started_ms = %d, want the span's start", ev.StartedMS)
+	}
+}
+
+// meterLLM reports a context window and nothing else.
+type meterLLM struct{ window int }
+
+func (m meterLLM) Chat(context.Context, []Message, ...ChatOption) (*Response, error) {
+	return &Response{}, nil
+}
+func (m meterLLM) ChatStream(context.Context, []Message, StreamHandler, ...ChatOption) (*Response, error) {
+	return &Response{}, nil
+}
+func (m meterLLM) ContextSize() int { return m.window }
+
+// Every model call tells the page which tier answered and how much of that
+// tier's window its prompt took, cached part included; a call that reports
+// no prompt sends nothing.
+func TestEachCallSendsTheMeter(t *testing.T) {
+	buf := &bytes.Buffer{}
+	app := &OrchestrateApp{}
+	app.LLM, app.LeadLLM = meterLLM{window: 32000}, meterLLM{window: 200000}
+	turn := &chatTurn{sse: &sseWriter{live: buf}, app: app}
+
+	turn.thinkResponse(&Response{InputTokens: 300, CacheReadTokens: 9000, CacheWriteTokens: 700, Tier: WORKER, Model: "small"})
+	if !strings.Contains(buf.String(), `"context_size":32000,"context_tokens":10000,"kind":"meter","model":"small","tier":"worker"`) {
+		t.Fatalf("worker meter: %s", buf.String())
+	}
+	buf.Reset()
+	turn.thinkResponse(&Response{InputTokens: 5000, Tier: LEAD})
+	if !strings.Contains(buf.String(), `"context_size":200000,"context_tokens":5000`) || !strings.Contains(buf.String(), `"tier":"lead"`) {
+		t.Fatalf("lead meter: %s", buf.String())
+	}
+	buf.Reset()
+	turn.thinkResponse(&Response{OutputTokens: 10})
+	if strings.Contains(buf.String(), `"meter"`) {
+		t.Errorf("a call with no prompt sent a meter: %s", buf.String())
 	}
 }
