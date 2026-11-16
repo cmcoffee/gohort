@@ -211,20 +211,21 @@ const documentsListAssets = `<style>
 const documentsDetailBody = `
 <div class="docs-detail">
   <div class="docs-detail-hdr">
-    <div class="docs-detail-name"><span id="docs-name">Loading...</span><button id="docs-rename" class="ui-row-btn">Rename</button><button id="docs-export" class="ui-row-btn" title="Download this collection as a portable bundle, document text travels, embeddings are rebuilt on import">Export</button><button id="docs-delete" class="ui-row-btn danger">Delete</button></div>
+    <div class="docs-detail-name"><span id="docs-name">Loading...</span><button id="docs-rename" class="ui-row-btn" data-need="owner">Rename</button><button id="docs-export" class="ui-row-btn" title="Download this collection as a portable bundle, document text travels, embeddings are rebuilt on import">Export</button><button id="docs-delete" class="ui-row-btn danger" data-need="owner">Delete</button></div>
     <div class="docs-desc-wrap">
       <textarea id="docs-desc" class="docs-detail-desc-edit" placeholder="Describe what this collection should contain. The plan's search terms are written from it: be specific (e.g. &quot;Official Kubernetes API reference, operator best practices, and our cluster runbook&quot;)."></textarea>
-      <div class="docs-desc-actions">
+      <div class="docs-desc-actions" data-need="maintain">
         <button id="docs-desc-save" class="ui-row-btn" disabled>Save</button>
         <button id="docs-desc-suggest" class="ui-row-btn" title="Work out the description with the assistant: it knows what the collection holds">✨ Get assistance</button>
         <span id="docs-desc-status"></span>
       </div>
     </div>
     <div id="docs-meta" class="docs-detail-meta"></div>
-    <div id="docs-keeper" class="docs-detail-meta"></div>
+    <div id="docs-keeper" class="docs-detail-meta" data-need="owner"></div>
+    <div id="docs-access" class="docs-detail-meta"></div>
   </div>
 
-  <div class="docs-section">
+  <div class="docs-section" data-need="add">
     <div class="docs-section-title">Upload</div>
     <div class="docs-upload-row">
       <input id="docs-file" type="file" accept=".pdf,.docx,.doc,.txt,.md,.log,.csv,.json,.yaml,.yml,.html,.htm,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/json,text/plain,text/markdown,text/csv,text/html" />
@@ -238,16 +239,16 @@ const documentsDetailBody = `
     </div>
   </div>
 
-  <div class="docs-section">
+  <div class="docs-section" data-need="add">
     <div class="docs-section-title">From the web</div>
     <div class="docs-section-help">Pages you pick yourself, and topics to research. These are not checked: you chose them. To have pages found for you, use the plan under Curation.</div>
     <label style="display:block;font-size:var(--fs-sm, 0.82rem);font-weight:600;color:var(--text);margin-top:0.6rem">Articles to fetch (optional)</label>
     <div class="docs-section-help" style="margin-top:0.15rem;font-size:var(--fs-xs, 0.74rem)">Particular articles this collection should hold: paste a link, or describe one to search for (e.g. &quot;IRS Publication 17, 2026 edition&quot;). A run of the plan fetches these first; Fetch these only fetches them now. Each is fetched once; taking one off the list keeps its document.</div>
     <div id="docs-articles-list" style="display:flex;flex-direction:column;gap:0.3rem;margin:0.4rem 0"></div>
     <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap">
-      <input id="docs-articles-input" type="text" placeholder="A link, or the article to look for"
+      <input id="docs-articles-input" data-need="maintain" type="text" placeholder="A link, or the article to look for"
         style="flex:1;min-width:12rem;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.35rem 0.55rem;font:inherit;font-size:var(--fs-sm, 0.85rem)">
-      <button id="docs-articles-add" class="ui-row-btn" disabled>+ Add</button>
+      <button id="docs-articles-add" class="ui-row-btn" data-need="maintain" disabled>+ Add</button>
       <button id="docs-articles-fetch" class="ui-row-btn" disabled title="Fetch the listed articles not fetched yet, without running the plan">Fetch these only</button>
       <span id="docs-articles-status" style="font-size:var(--fs-2xs, 0.72rem);color:var(--text-mute)"></span>
     </div>
@@ -262,10 +263,10 @@ const documentsDetailBody = `
   <div class="docs-section">
     <div class="docs-section-title" style="display:flex;align-items:center;gap:0.6rem">
       <span>Documents</span>
-      <button id="docs-audit" class="ui-row-btn" style="margin-left:auto;font-weight:600" title="Check the oldest documents for staleness with cited web research">Audit</button>
+      <button id="docs-audit" class="ui-row-btn" data-need="maintain" style="margin-left:auto;font-weight:600" title="Check the oldest documents for staleness with cited web research">Audit</button>
       <span id="docs-audit-status" style="font-size:var(--fs-xs, 0.74rem);color:var(--text-mute)"></span>
     </div>
-    <div id="docs-bulk-bar" style="display:none;align-items:center;gap:0.6rem;padding:0.4rem 0.6rem;background:var(--bg-2);border:1px solid var(--border);border-radius:4px;margin-bottom:0.4rem">
+    <div id="docs-bulk-bar" data-need="owner" style="display:none;align-items:center;gap:0.6rem;padding:0.4rem 0.6rem;background:var(--bg-2);border:1px solid var(--border);border-radius:4px;margin-bottom:0.4rem">
       <span id="docs-bulk-count" style="font-size:var(--fs-sm, 0.82rem);color:var(--text);font-weight:600"></span>
       <button id="docs-bulk-delete" class="ui-row-btn danger">Remove selected</button>
       <span id="docs-bulk-status" style="font-size:var(--fs-xs, 0.74rem);color:var(--text-mute);margin-left:auto"></span>
@@ -285,6 +286,14 @@ const documentsDetailBody = `
 `
 
 const documentsDetailAssets = `<style>
+/* What the viewer may do with this collection (its record's "access"): a
+   control marked data-need shows only to a level that may use it. Hidden
+   until the record arrives, so a control never flashes in for a reader. */
+.docs-detail:not([data-access]) [data-need],
+.docs-detail[data-access="read"] [data-need],
+.docs-detail[data-access="add"] [data-need="maintain"],
+.docs-detail[data-access="add"] [data-need="owner"],
+.docs-detail[data-access="maintain"] [data-need="owner"] { display: none !important; }
 .docs-detail { padding: 0.5rem; display: flex; flex-direction: column; gap: 1rem; }
 .docs-detail-hdr { padding-bottom: 0.8rem; border-bottom: 1px solid var(--border); }
 .docs-detail-name { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.3rem; }
@@ -342,6 +351,22 @@ const documentsDetailAssets = `<style>
       .then(function(c) {
         document.title = (c.name || 'Collection') + ': Documents';
         $('#docs-name').textContent = c.name || '(unnamed)';
+        // What this viewer may do. Controls marked data-need show only to a
+        // level that may use them (the rules at the top of the styles); the
+        // server still refuses anything else.
+        var access = c.access || 'read';
+        document.querySelector('.docs-detail').setAttribute('data-access', access);
+        var descBox = $('#docs-desc');
+        if (descBox) descBox.readOnly = (access === 'read' || access === 'add');
+        var accessLine = $('#docs-access');
+        if (accessLine) {
+          var line = '';
+          if (!c.owner && access === 'read') line = "The deployment's shared knowledge: everybody can read it, and an administrator changes it.";
+          else if (access === 'read') line = 'Shared with you to read by ' + c.owner + '.';
+          else if (access === 'add') line = 'Shared with you by ' + c.owner + ': you can add documents to it.';
+          else if (access === 'maintain') line = 'Shared with you by ' + c.owner + ': you look after what is in it.';
+          accessLine.textContent = line;
+        }
         loadedDescription = c.description || '';
         // Don't blow away an in-progress edit: only refill the textarea
         // when its current value matches the previously-loaded value.
@@ -426,6 +451,7 @@ const documentsDetailAssets = `<style>
       del.className = 'ui-icon-btn danger';
       del.textContent = '✕';
       del.title = 'Take this off the list (its document stays)';
+      del.setAttribute('data-need', 'maintain');
       del.addEventListener('click', function() {
         var next = rows.map(function(r){ return r.article; });
         next.splice(idx, 1);
@@ -617,6 +643,7 @@ const documentsDetailAssets = `<style>
         // unchecked when any row is unchecked, fully checked
         // only when all rows are in selectedSources.
         var header = document.createElement('div');
+        header.setAttribute('data-need', 'owner');
         header.style.cssText = 'display:flex;align-items:center;gap:0.5rem;padding:0.2rem 0.55rem;font-size:var(--fs-xs, 0.78rem);color:var(--text-mute)';
         var allCb = document.createElement('input');
         allCb.type = 'checkbox';
@@ -647,6 +674,7 @@ const documentsDetailAssets = `<style>
           var row = document.createElement('div'); row.className = 'docs-row';
           var sel = document.createElement('input');
           sel.type = 'checkbox'; sel.className = 'docs-row-select';
+          sel.setAttribute('data-need', 'owner');
           sel.style.marginRight = '0.4rem';
           sel.addEventListener('change', function() {
             if (sel.checked) selectedSources[s.id] = s.name || s.id;
@@ -665,6 +693,7 @@ const documentsDetailAssets = `<style>
           meta.textContent = (s.chunks || 0) + ' chunk' + (s.chunks === 1 ? '' : 's');
           var del = document.createElement('button'); del.className = 'ui-row-btn danger ui-btn-sm';
           del.textContent = 'Remove';
+          del.setAttribute('data-need', 'owner');
           del.onclick = async function() {
             if (!(await window.uiConfirm('Remove ' + nm.textContent + ' from this collection?'))) return;
             // Optimistic UI: hide the row immediately so the

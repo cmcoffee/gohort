@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -466,5 +467,47 @@ func TestTheCollectionRoutesAreNotAdminGated(t *testing.T) {
 	}
 	if !strings.Contains(string(console), "T.adminOpt()") {
 		t.Error("the console gave up its admin gate; that is the half the gate is for")
+	}
+}
+
+// The record says what its viewer may do, the same way the gate decides it:
+// the owner everything, a maintainer what is in it, a contributor adding, a
+// reader reading; the deployment's own collection is an administrator's.
+func TestACollectionsLevelFollowsTheGate(t *testing.T) {
+	c := Collection{ID: "col-l", Owner: "u", AllowedUsers: []string{"bob", "carol", "dave"},
+		Contributors: []string{"carol"}, Maintainers: []string{"dave"}}
+	for user, want := range map[string]string{"u": accessOwner, "dave": accessMaintain, "carol": accessAdd, "bob": accessRead} {
+		if got := collectionLevel(c, user, false); got != want {
+			t.Errorf("%s holds %q, want %q", user, got, want)
+		}
+	}
+	dep := Collection{ID: "dep", Scope: CollectionScopeDeployment}
+	if collectionLevel(dep, "bob", false) != accessRead || collectionLevel(dep, "bob", true) != accessOwner {
+		t.Error("the deployment's collection is read by everybody and an administrator's to change")
+	}
+}
+
+// A reader's copy of the record carries its level, and none of the plan's
+// rules or the articles list, which are for those who may act on them.
+func TestAReadersRecordLeavesOutWhatIsNotTheirs(t *testing.T) {
+	df := curateFixture(t, func(context.Context, string, string) (string, error) { return "", nil })
+	df.app.DB.Set(AuthTable, "user:bob", AuthUser{Username: "bob"})
+	shared := Collection{ID: "col-s", Name: "S", Owner: "u", AllowedUsers: []string{"bob"},
+		FilterRules: "Skip forums", Articles: []string{"https://docs.vendor.example/a"}}
+	saveCollection(df.udb, shared)
+	saveCollection(UserDB(CollectionsDB(), "u"), shared)
+	mine, err := df.app.collectionGet(curateCall(df, http.MethodGet, "u", "col-s"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := mine.(map[string]any); m["access"] != accessOwner || m["filter_rules"] != "Skip forums" || len(m["articles"].([]map[string]string)) != 1 {
+		t.Errorf("the owner's record: %v", m)
+	}
+	theirs, err := df.app.collectionGet(curateCall(df, http.MethodGet, "bob", "col-s"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := theirs.(map[string]any); m["access"] != accessRead || m["filter_rules"] != "" || len(m["articles"].([]map[string]string)) != 0 {
+		t.Errorf("a reader's record: %v", m)
 	}
 }

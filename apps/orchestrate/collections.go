@@ -401,7 +401,20 @@ func (T *OrchestrateApp) collectionGet(call *jsonapi.Call) (any, error) {
 	if c.Owner == call.User {
 		curator = c.CuratorAgent
 	}
+	// What this viewer may do, so the page offers only that; the gate
+	// (collectionWriteRefusal) still decides every change. The plan's rules
+	// are the owner's, like the rest of the plan; the articles list is for
+	// whoever may add to it.
+	access := collectionLevel(c, call.User, RequestIsAdmin(call.R))
+	rules, articles := "", []map[string]string{}
+	if access == accessOwner {
+		rules = c.FilterRules
+	}
+	if access != accessRead {
+		articles = articleRows(c)
+	}
 	return map[string]any{
+		"access":        access,
 		"curator_agent": curator,
 		"id":            c.ID,
 		"owner":         c.Owner,
@@ -411,10 +424,10 @@ func (T *OrchestrateApp) collectionGet(call *jsonapi.Call) (any, error) {
 		"updated":       c.Updated,
 		"documents":     docs,
 		"chunks":        chunks,
-		"filter_rules":  c.FilterRules,
+		"filter_rules":  rules,
 		// Each listed article with the address it was fetched from, or none
 		// yet, so the page can say which ones are in.
-		"articles":        articleRows(c),
+		"articles":        articles,
 		"suggestions_off": c.SuggestionsOff,
 		// The share picker reads what it will patch back, so the field
 		// has to be on the wire or it opens empty and the first save
@@ -1803,6 +1816,36 @@ var collectionMaintainerActions = map[string]bool{
 	"audit":       true,
 	// Help writing the description, which a maintainer may change.
 	"assist": true,
+}
+
+// What a viewer may do with a collection, as the page needs it: the owner
+// everything; a maintainer what is in it (the description, the articles
+// list, the audit, the suggestions); a contributor add documents; a reader
+// read it. The deployment's own collection is an administrator's to change.
+const (
+	accessOwner    = "owner"
+	accessMaintain = "maintain"
+	accessAdd      = "add"
+	accessRead     = "read"
+)
+
+// collectionLevel is the level user holds on c. It follows
+// collectionWriteRefusal, which stays what decides each change.
+func collectionLevel(c Collection, user string, admin bool) string {
+	switch {
+	case c.Owner == "" && IsDeploymentScope(c):
+		if admin {
+			return accessOwner
+		}
+		return accessRead
+	case c.Owner == "" || c.Owner == user:
+		return accessOwner
+	case CollectionMaintainer(c, user):
+		return accessMaintain
+	case CollectionContributor(c, user):
+		return accessAdd
+	}
+	return accessRead
 }
 
 // collectionWriteRefusal says why this user may not perform this action on

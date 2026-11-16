@@ -45,7 +45,6 @@ func TestTheHeaderSaysWhoKeepsTheCollection(t *testing.T) {
 	}
 }
 
-
 // The collection pages' scripts parse. One stray quote in a string stops the
 // whole script, and with it everything the page draws by hand: the documents
 // list went blank when a "plan's" closed a single-quoted string early.
@@ -69,6 +68,48 @@ func TestTheCollectionPagesScriptsParse(t *testing.T) {
 			if out, err := exec.Command(node, "--check", f).CombinedOutput(); err != nil {
 				t.Errorf("the %s page's script %d does not parse: %v\n%s", name, i, err, out)
 			}
+		}
+	}
+}
+
+// The page offers each viewer only what their level may do (the record's
+// "access"): every control is marked with the level it needs, and the styles
+// hide it from anyone below, and from everyone until the record says.
+func TestTheCollectionPageOffersOnlyWhatTheViewerMayDo(t *testing.T) {
+	page := documentsDetailBody + documentsDetailAssets
+	for _, want := range []string{
+		`.docs-detail:not([data-access]) [data-need],`,
+		`.docs-detail[data-access="read"] [data-need],`,
+		`.docs-detail[data-access="add"] [data-need="maintain"],`,
+		`.docs-detail[data-access="add"] [data-need="owner"],`,
+		`.docs-detail[data-access="maintain"] [data-need="owner"] { display: none !important; }`,
+		`id="docs-rename" class="ui-row-btn" data-need="owner"`,
+		`id="docs-delete" class="ui-row-btn danger" data-need="owner"`,
+		`<div class="docs-desc-actions" data-need="maintain">`,
+		`id="docs-keeper" class="docs-detail-meta" data-need="owner"`,
+		`<div class="docs-section" data-need="add">
+    <div class="docs-section-title">Upload</div>`,
+		`<div class="docs-section" data-need="add">
+    <div class="docs-section-title">From the web</div>`,
+		`id="docs-articles-input" data-need="maintain"`,
+		`id="docs-articles-add" class="ui-row-btn" data-need="maintain"`,
+		`id="docs-audit" class="ui-row-btn" data-need="maintain"`,
+		`id="docs-bulk-bar" data-need="owner"`,
+		"header.setAttribute('data-need', 'owner');",
+		"sel.setAttribute('data-need', 'owner');",
+		"del.setAttribute('data-need', 'owner');",
+		"del.setAttribute('data-need', 'maintain');",
+		"document.querySelector('.docs-detail').setAttribute('data-access', access);",
+		"descBox.readOnly = (access === 'read' || access === 'add');",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the collection page is missing %s", want)
+		}
+	}
+	// Export and search are reads: nothing hides them.
+	for _, id := range []string{`id="docs-export" class="ui-row-btn" title=`, `<input id="docs-q" type="text"`} {
+		if !strings.Contains(page, id) {
+			t.Errorf("a reader's control is marked or gone: %s", id)
 		}
 	}
 }
