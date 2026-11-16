@@ -1,0 +1,190 @@
+# Apps as repositories: Builder and Anvil on one history
+
+Status: proposed (2026-11-15). Not built.
+
+## Why
+
+An app today is one stored record (`core.AppSpec`, table `app_specs` in its
+owner's store): its sections and compiled page, its data sources, actions
+and libraries, its settings, its checks. Builder changes it through the
+`app_def` tool, and every save that changes what the app serves files the
+replaced version in a short revision list (`PushAppRevision`).
+
+That works for building an app by talking to Builder. It does not give an
+app a real history, a way to work on it as code, or a way to keep it in
+GitHub or GitLab. Anvil, gohort's coding surface (an agent working in a
+git repository), could be that, but only if Builder and Anvil never edit
+two different copies of the same app.
+
+The owner's shape: Builder and Anvil complement each other. Every app has a
+repository; Builder's changes are commits to it, and Anvil works on the same
+repository directly. What runs is a checked install of one commit.
+
+## The model
+
+1. **Every app has a repository**, from the moment it is created. An app
+   made before this gets one the first time it is changed or opened in
+   Anvil, written from its current record, with one first commit ("as
+   installed"). No migration pass.
+2. **What runs is an install of one commit.** The stored record stays what
+   the server serves: fast, transactional, and encrypted with the rest of
+   the database. It records the commit it was installed from. The working
+   files are never live: a half-made edit in Anvil changes nothing until it
+   is committed and installed.
+3. **Install is the one gate.** Installing a commit reads its files, builds
+   the record, and runs everything a Builder save runs today: the app
+   checks, the approval a shared app needs when what it serves changes (a
+   non-admin owner's change unshares it until an administrator approves),
+   and, for a maintainer, the allowed list of what a maintainer may change
+   (`applyAppMaintainerEdit`), checked against what the commit changed.
+   However a change arrives, it meets the same gate.
+4. **Builder works through the repository.** `app_def` keeps its requests
+   and its checks, but its write is a commit: Builder applies the change in
+   a scratch working copy of the current commit, commits it (authored as
+   Builder, on behalf of the person who asked, with what was asked as the
+   message), and installs it. Builder never writes the record directly.
+5. **Anvil opens the same repository.** An app's project in Anvil is a
+   working copy of its repository. Editing, committing and Install are
+   Anvil's; Install is built in (not an operator-written command) and is the
+   same install as above.
+6. **History is the repository's.** Revert is installing an earlier commit.
+   Once this has run live, the revision list retires: it is a shorter,
+   weaker copy of the same thing.
+
+## What is in the repository
+
+What the app IS, as files a person can read and diff:
+
+- `app.json`: name, description, the agent and pipeline it uses, its record
+  shape, layout flags, the settings it declares (names, kinds and help, not
+  their values), its checks.
+- `sections.json`: the authoring form of the page. The rendered page is
+  compiled from it on install, so the two never disagree.
+- `scripts/`: each data source, action and library as its own file.
+
+What it HOLDS, and what this instance decides about it, stays out: the
+records people entered and files they added, setting values (keys among
+them), who it is shared with and who maintains it, whether it is disabled,
+its verification verdicts. Those belong to the instance, not to the app, and
+a repository pushed to GitHub must not carry them.
+
+The format is the `custom_app` export bundle unpacked into files, so export
+and import keep working and a bundle and a repository say the same thing.
+
+## Builder and Anvil at the same time
+
+Builder commits on top of the repository's current commit, in its own
+scratch copy, so it never touches Anvil's working copy. If the current
+commit moved while Builder worked, its commit goes on a branch
+(`builder/<change>`) and is not installed; Builder says so, and the person
+merges it in Anvil. If someone has uncommitted edits open in Anvil, those
+stay theirs: Builder's commit lands on the repository, and Anvil shows the
+repository moved, as any shared repository does.
+
+## GitHub and GitLab
+
+A repository can have a remote. Pushing uses the person's own connected
+account (the credentials gohort already keeps per user), never a key typed
+into a chat. Pulling from a remote is a change like any other: it is
+committed and installed through the gate, never served straight from the
+remote.
+
+## Working from outside gohort
+
+An app as plain files with a git history is something any coding agent can
+work on, Claude Code among them. Three ways in, from least new surface to
+most:
+
+1. **Through GitHub or GitLab.** The owner pushes the app's repository to
+   their remote; the agent works on a clone like any project; the owner
+   pulls it back, and the pull is installed through the gate. Nothing beyond
+   the remotes above.
+2. **As local files.** Command-line actions to export an app to a folder,
+   check a folder, and install a folder. The agent works on the folder; the
+   install goes through the gate. The smallest piece, and useful before
+   repositories exist.
+3. **Straight from gohort over git.** gohort serves each app's repository
+   over HTTPS, signed in with the person's own account key, so an agent
+   clones from gohort and pushes back; a push installs through the gate, or
+   waits for the owner to press Install. New surface: a git endpoint, and a
+   key kind allowed to use it, checked against the external access rules.
+   It serves a person their own apps, so it is not a peer key lending the
+   instance to anybody.
+
+1 and 2 first; 3 when it is wanted.
+
+Whatever an outside agent writes is untrusted until installed: its scripts
+run only in the app's sandbox, a shared app still needs an administrator's
+approval when what it serves changes, and a maintainer's push is held to
+the maintainer's list.
+
+### What the agent reads
+
+Each repository, and each exported folder, carries:
+
+- **`AGENTS.md`**: the app format (what each file is), what install
+  checks, what never goes in (records, setting values), and how to run the
+  local check. The name is the convention several coding agents look for at
+  a repository's root, so one file serves them all.
+- **`CLAUDE.md`**: the single line `@AGENTS.md`, so Claude Code, which
+  reads CLAUDE.md, imports the same guide with nothing duplicated.
+- **`README.md`** (optional): for people.
+
+gohort writes these from the format whenever it exports an app or creates
+its repository, so they never drift from what install actually checks.
+
+**A local check** runs the same checks install runs, against a folder, so
+an agent tests its work before pushing instead of finding out at install.
+**Install errors name the file and the field**, since an agent reads them
+and fixes what they say.
+
+## Public and private
+
+Anvil is a private app today. The repository itself (the file format,
+install from a commit, Builder committing instead of writing, revert)
+belongs in the public code, so every build gets versioned apps and Builder
+works the same everywhere. Anvil is then an editor on top of it.
+
+## Trust
+
+Anvil runs operator-written commands on the host, unsandboxed; that is for
+an administrator. For an app owner who is not one, Anvil on their app has
+only sandboxed commands and the built-in Install. A repository's scripts
+never run outside the app's own sandbox, whatever the repository says.
+
+## To settle before building
+
+1. **Where repositories live.** Plain git repositories under the data
+   directory (simple, and what Anvil and git tools expect, but not
+   encrypted at rest like the database), or git's objects kept inside the
+   database (encrypted, one thing to back up, but a git library is needed
+   and Anvil works through it).
+2. **The git program or a library.** The program is what Anvil already
+   uses and adds no dependency; a library would be a third-party dependency
+   to vet and vendor first.
+3. **Anvil public or private.** Whether Anvil itself becomes part of the
+   public build, or stays a private editor on top of public repositories.
+4. **Who may open an app in Anvil.** Every app owner (sandboxed commands
+   only), or administrators only at first.
+
+## Build order
+
+1. **The format and install.** Write an app as files, and install a record
+   from files through every gate. Test that installing what was written
+   gives back the same app, and that each gate holds on install.
+2. **A repository per app.** Created lazily; Builder's saves become commit
+   and install; revert installs an earlier commit; the app's page lists its
+   history.
+3. **Anvil on an app.** Open its repository, edit, commit, Install;
+   sandboxed for non-admins.
+4. **Remotes.** Push and pull with the person's own credentials; a pull is
+   installed through the gate.
+5. **Outside agents.** `AGENTS.md` and `CLAUDE.md` in every repository and
+   export; export, check and install from the command line (these can come
+   as early as step 1); direct git from gohort later, if wanted.
+
+## Stored change
+
+Two optional fields on the app record: that it is repository-backed (and
+where), and the commit it was installed from. Apps without them are as
+today until changed. No migration.
