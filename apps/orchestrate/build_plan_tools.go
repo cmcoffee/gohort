@@ -602,6 +602,27 @@ func (g buildGaps) finishNotice() string {
 	return b.String()
 }
 
+// finishCheck is the turn's condition on ending: the build check for an
+// authoring agent, then the app's own (an app's tools passed it on their
+// publisher). Nil when there is neither.
+func (t *chatTurn) finishCheck() func(string) (string, string) {
+	build, app := t.buildGapsFinishCheck(), t.appFinishCheck
+	if build == nil && app == nil {
+		return nil
+	}
+	return func(reply string) (string, string) {
+		if build != nil {
+			if notice, strike := build(reply); strings.TrimSpace(notice) != "" {
+				return notice, strike
+			}
+		}
+		if app != nil {
+			return app(reply), ""
+		}
+		return "", ""
+	}
+}
+
 // buildGapsFinishCheck wires the check for an interactive turn. Nil for an
 // agent that does not author.
 func (t *chatTurn) buildGapsFinishCheck() func(string) (string, string) {

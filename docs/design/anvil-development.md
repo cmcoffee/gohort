@@ -133,8 +133,11 @@ plugged in from Anvil's package through the registries.
   not is its own failure).
 - **Compared across settings**: Worker against the lead, and a change
   against the version before it. The report says which tasks moved.
-- **Launched by the owner**, from the command line as a task. It spends
-  real model time, so it never runs on a schedule or on its own.
+- **Launched by an administrator** from Anvil's Measure page, in the
+  server: the database has one writer, so a command-line run could not
+  share it with the running server. It spends real model time, so it never
+  runs on a schedule or on its own; one run at a time, with progress and
+  Stop.
 
 ## Stored changes
 

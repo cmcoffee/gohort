@@ -781,6 +781,10 @@ type chatTurn struct {
 	// so a loop on a transient-error tool can't burn the round budget
 	// by re-dispatching 16 times. Empty until first cap-eligible call.
 	dispatchCounts map[string]int
+
+	// appFinishCheck is the app's own condition on the turn ending
+	// (agenthost.Publisher.FinishCheck), or nil.
+	appFinishCheck func(reply string) string
 }
 
 // dispatchCallCap is the number of times one (tool name, args) pair

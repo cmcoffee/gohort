@@ -172,6 +172,13 @@ func (c Chat) Panel(p ui.AgentLoopPanel) ui.AgentLoopPanel {
 type Publisher struct {
 	mu      sync.Mutex
 	publish func(Block)
+
+	// FinishCheck, when set, is the app's condition on the turn ending.
+	// Called with the reply when the model ends its turn, it returns a note
+	// that sends the reply back (the model is re-prompted with it, within the
+	// loop's correction budget), or "" to let the turn end. Set by the app
+	// before it sends the turn; a headless run ignores it.
+	FinishCheck func(reply string) string
 }
 
 // Publish emits blk into the bound turn: live to the browser, and onto the

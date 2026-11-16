@@ -2529,7 +2529,7 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		},
 		// An authoring turn may not finish on a reply over tools it never
 		// verified: the build check runs first. See buildGapsFinishCheck.
-		FinishCheck: t.buildGapsFinishCheck(),
+		FinishCheck: t.finishCheck(),
 		FinishUnmet: t.buildGapsUnmet(),
 		// Drain mid-flight user injections EACH ROUND so the orchestrator
 		// incorporates them during inline work — not just at plan-step

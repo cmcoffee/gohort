@@ -17,6 +17,9 @@ type AppBlockPublisher = agenthost.Publisher
 // turn exists; the app never names the turn, it only publishes. What the app
 // publishes is a card; what the session keeps is a UIBlock.
 func bindPublisher(p *AppBlockPublisher, t *chatTurn) {
+	if p != nil && t != nil {
+		t.appFinishCheck = p.FinishCheck
+	}
 	p.Bind(func(b agenthost.Block) {
 		t.publishAppBlock(UIBlock{Type: b.Type, ID: b.ID, Title: b.Title, Text: b.Text, HTML: b.HTML, URL: b.URL, Data: b.Data})
 	})

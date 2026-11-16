@@ -1,10 +1,16 @@
 package orchestrate
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/gohort/core/appagents"
 )
 
 // The publisher's contract is "safe to call, always" — an app builds its tools
@@ -92,5 +98,65 @@ func TestPublishPersistsAndUpsertsByID(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("the re-published block is not on the session")
+	}
+}
+
+// An app's tools can set a condition on the turn ending: the reply it holds
+// back is sent back to the model with the app's note, and the turn ends on
+// the reply after it.
+func TestAnAppsFinishCheckSendsTheReplyBack(t *testing.T) {
+	T, udb, user := newTestOrchestrate(t)
+	pinRootDB(t)
+	fake := &FakeLLM{Turns: []FakeTurn{{Content: "All done."}, {Content: "The tests still fail in parse.go."}}}
+	T.LLM = fake
+	appagents.RegisterAppAgent(appagents.AppAgentSpec{
+		ID: "app-test-finish-check", OwningApp: "Test", Name: "Coder", Prompt: "You change code.",
+		AllowedTools: []string{"ask_user"}, Hidden: true, ExactTools: true,
+	})
+	agent, ok := loadAgent(udb, "app-test-finish-check")
+	if !ok {
+		t.Fatal("the app agent did not resolve")
+	}
+	const note = "The project's check fails: parse.go:12: undefined: x"
+	held := 0
+	pub := &AppBlockPublisher{FinishCheck: func(reply string) string {
+		if strings.Contains(reply, "All done") {
+			held++
+			return note
+		}
+		return ""
+	}}
+	body, _ := json.Marshal(map[string]any{"message": "Fix the parser."})
+	r := asUser(httptest.NewRequest(http.MethodPost, "/api/send", strings.NewReader(string(body))), user)
+	T.handleSendWithAppToolsPublishing(httptest.NewRecorder(), r, udb, user, agent, []AgentToolDef{{
+		Tool:    Tool{Name: "noop", Description: "Does nothing."},
+		Handler: func(context.Context, map[string]any) (string, error) { return "", nil },
+	}}, pub)
+	if held != 1 {
+		t.Fatalf("the first reply was held %d time(s), want once", held)
+	}
+	told := false
+	for i := 1; i < fake.Calls(); i++ {
+		for _, m := range fake.Sent(i) {
+			if m.Role == "user" && strings.Contains(m.Content, note) {
+				told = true
+			}
+		}
+	}
+	if !told {
+		t.Error("the model was not asked again with what the check found")
+	}
+}
+
+// The turn's condition on ending puts an authoring agent's build check first
+// and the app's after it; with neither there is none.
+func TestTheTurnsFinishCheckCombinesBuildAndApp(t *testing.T) {
+	if (&chatTurn{}).finishCheck() != nil {
+		t.Error("a turn with no checks has a finish check")
+	}
+	turn := &chatTurn{}
+	bindPublisher(&AppBlockPublisher{FinishCheck: func(string) string { return "app says no" }}, turn)
+	if notice, strike := turn.finishCheck()("done"); notice != "app says no" || strike != "" {
+		t.Errorf("got %q %q", notice, strike)
 	}
 }
