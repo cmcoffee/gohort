@@ -42,7 +42,8 @@ func (a *AdminApp) updateSections() []ui.Section {
 					{Label: "Release keys", Field: "keys"},
 					{Label: "Last check", Field: "last_check"},
 					{Label: "Kept for rollback", Field: "previous"},
-					{Label: "Updates here", Field: "updates_here"},
+					// Only when this install cannot update, saying why.
+					{Label: "Updates here", Field: "updates_here", HideEmpty: true},
 				},
 			},
 			ui.ActionList{
@@ -52,7 +53,11 @@ func (a *AdminApp) updateSections() []ui.Section {
 				ProgressSource: "api/update/progress?key={Key}",
 				EmptyText:      "This install is not offered updates: see Updates here.",
 				ReloadSelf:     true,
-				Invalidate:     []string{"api/update/status"},
+				// An update or rollback answers {running} at once; the row then
+				// keeps its spinner through the download and the restart, and
+				// the restarted program's outcome ends it. Both lists are
+				// redrawn then, since the version and the buttons changed.
+				Invalidate: []string{"api/update/status", "api/update/actions"},
 			},
 		}},
 	}}
@@ -70,25 +75,24 @@ func (a *AdminApp) registerUpdateRoutes(sub *http.ServeMux) {
 func (a *AdminApp) handleUpdateStatus(c *jsonapi.Call) (any, error) {
 	u := updater()
 	if u == nil {
-		return map[string]string{"running": AppVersion, "updates_here": "No updater in this program."}, nil
+		return map[string]string{"running": AppVersion, "updates_here": "Not offered: this program has no updater."}, nil
 	}
 	st := u.Status()
 	out := map[string]string{
-		"running":      st.Version + " (" + st.Platform + ")",
-		"source":       st.Source,
-		"keys":         keysLine(st.Keys),
-		"last_check":   checkLine(st),
-		"previous":     "Nothing yet: the version an update replaces is kept here.",
-		"updates_here": "Offered.",
+		"running":    st.Version + " (" + st.Platform + ")",
+		"source":     st.Source,
+		"keys":       keysLine(st.Keys),
+		"last_check": checkLine(st),
+		"previous":   "Nothing yet: the version an update replaces is kept here.",
 	}
 	if st.HasPrevious {
 		out["previous"] = orUnknown(st.Previous)
 	}
-	switch {
-	case st.Blocked != "":
+	if st.Blocked != "" {
 		out["updates_here"] = "Not offered: " + st.Blocked
-	case st.Installed != "":
-		out["updates_here"] = st.Installed + " is installed and waiting for gohort to restart."
+	}
+	if st.Installed != "" {
+		out["running"] += "; " + st.Installed + " is installed and runs when gohort restarts"
 	}
 	return out, nil
 }
@@ -181,8 +185,12 @@ func (a *AdminApp) handleUpdateProgress(c *jsonapi.Call) (any, error) {
 	return map[string]string{"progress": p, "outcome": out}, nil
 }
 
-// handleUpdateRun runs one action to its end. It does not run on the
-// request's context: closing the page must not stop a download halfway.
+// handleUpdateRun runs a check to its end, and starts an update or a
+// rollback, answering {running} at once: their work (a download, then a
+// restart that ends this program) outlives the request, and a reply that
+// waited for it was cut off by the restart, which the page showed as a
+// failure. Neither runs on the request's context: closing the page must not
+// stop a download halfway.
 func (a *AdminApp) handleUpdateRun(c *jsonapi.Call, _ struct{}) (any, error) {
 	u := updater()
 	if u == nil {
@@ -190,28 +198,29 @@ func (a *AdminApp) handleUpdateRun(c *jsonapi.Call, _ struct{}) (any, error) {
 	}
 	ctx := context.WithoutCancel(c.R.Context())
 	from := u.Version
-	var (
-		msg string
-		err error
-	)
+	r := c.R
 	switch do := c.R.URL.Query().Get("do"); do {
 	case selfupdate.ActionCheck:
-		msg, err = u.Check(ctx)
-	case selfupdate.ActionUpdate:
-		msg, err = u.Update(ctx)
-		if err == nil {
-			adminChange(c.R, activity.Update, "updated gohort from %s to %s", from, u.Status().Installed)
+		msg, err := u.Check(ctx)
+		if err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
 		}
-	case selfupdate.ActionRollback:
-		msg, err = u.Rollback(ctx)
-		if err == nil {
-			adminChange(c.R, activity.Update, "rolled gohort back from %s to %s", from, u.Status().Installed)
+		return map[string]string{"message": msg}, nil
+	case selfupdate.ActionUpdate, selfupdate.ActionRollback:
+		verb, started := "updated gohort from %s to %s", "Updating."
+		if do == selfupdate.ActionRollback {
+			verb, started = "rolled gohort back from %s to %s", "Rolling back."
 		}
+		err := u.Start(ctx, do, func(_ string, err error) {
+			if err == nil {
+				adminChange(r, activity.Update, verb, from, u.Status().Installed)
+			}
+		})
+		if err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+		return map[string]any{"running": true, "message": started}, nil
 	default:
 		return nil, jsonapi.BadRequest("unknown update action")
 	}
-	if err != nil {
-		return nil, jsonapi.BadRequest(err.Error())
-	}
-	return map[string]string{"message": msg}, nil
 }

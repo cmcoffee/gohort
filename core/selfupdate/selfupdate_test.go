@@ -317,7 +317,7 @@ func updater(t *testing.T, version string, bin []byte) (*Updater, *dist, chan st
 		Install: Install{Exe: exe}, RestartDelay: time.Millisecond,
 		Restart: func() { restarted <- struct{}{} },
 	}
-	t.Cleanup(func() { setPendingRelaunch("") })
+	t.Cleanup(func() { setPendingRelaunch("", nil) })
 	return u, d, restarted
 }
 
@@ -494,5 +494,76 @@ func TestNoRestartLeavesItToWhoeverRunsIt(t *testing.T) {
 	defer pendingMu.Unlock()
 	if pendingRelaunch != "" {
 		t.Error("a relaunch was set with no restart")
+	}
+}
+
+// Until the restart the update stays running, saying it is restarting; the
+// restarted program then says how it went, from the note the update left, and
+// says so when it is not the version the update put in place.
+func TestTheRestartedProgramSaysHowTheUpdateWent(t *testing.T) {
+	u, _, restarted := updater(t, "0.9.380", script(t, "0.9.380"))
+	if _, err := u.Update(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if p, out := u.Progress(ActionUpdate); !strings.Contains(p, "restarting") || out != "" {
+		t.Errorf("before the restart: %q %q", p, out)
+	}
+	<-restarted
+	after := &Updater{Product: "gohort", Version: "0.9.380", Install: u.Install}
+	if p, out := after.Progress(ActionUpdate); p != "" || out != "Updated from 0.9.377 to 0.9.380, and it is running." {
+		t.Errorf("the restarted program says %q %q", p, out)
+	}
+	if _, err := os.Stat(u.Install.restartNotePath()); err == nil {
+		t.Error("the note was left for the next start to read again")
+	}
+
+	u.writeRestartNote(ActionUpdate, "0.9.380")
+	stale := &Updater{Product: "gohort", Version: "0.9.377", Install: u.Install}
+	if st := stale.Status(); st.Version != "0.9.377" {
+		t.Fatal(st)
+	}
+	if _, out := stale.Progress(ActionUpdate); !strings.Contains(out, "did not bring up 0.9.380") {
+		t.Errorf("a restart onto the old version says %q", out)
+	}
+}
+
+// The relaunch runs the command line the program gave it, when it gave one.
+func TestTheRelaunchCarriesTheCommandLineItWasGiven(t *testing.T) {
+	u, _, restarted := updater(t, "0.9.380", script(t, "0.9.380"))
+	u.RelaunchArgs = []string{"gohort", "serve", "127.0.0.1:8181"}
+	if _, err := u.Update(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	<-restarted
+	pendingMu.Lock()
+	args := strings.Join(pendingArgs, " ")
+	pendingMu.Unlock()
+	if CanRelaunch && args != "gohort serve 127.0.0.1:8181" {
+		t.Errorf("the relaunch runs %q", args)
+	}
+}
+
+// Start answers at once and runs the update behind it; done hears how its
+// work ended, and a second start before the restart is refused.
+func TestStartRunsTheUpdateInTheBackground(t *testing.T) {
+	u, _, restarted := updater(t, "0.9.380", script(t, "0.9.380"))
+	done := make(chan string, 1)
+	if err := u.Start(context.Background(), ActionUpdate, func(msg string, err error) {
+		if err != nil {
+			msg = "error: " + err.Error()
+		}
+		done <- msg
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if msg := <-done; !strings.Contains(msg, "Installed 0.9.380") {
+		t.Errorf("done heard %q", msg)
+	}
+	<-restarted
+	if err := u.Start(context.Background(), ActionUpdate, nil); err == nil || !strings.Contains(err.Error(), "installed already") {
+		t.Errorf("a second start: %v", err)
+	}
+	if err := u.Start(context.Background(), "reinstall", nil); err == nil {
+		t.Error("an unknown action started")
 	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -57,10 +58,17 @@ func TestServeListensWhereSetupSaid(t *testing.T) {
 		global.db = savedDB
 		_ = global.cfg.Set(cfgWebSection, "addr", prev)
 	})
+	prevFlag := global.cfg.Get(cfgWebSection, listenAddrForServe)
+	t.Cleanup(func() { _ = global.cfg.Set(cfgWebSection, listenAddrForServe, prevFlag) })
 	global.db = nil
 	_ = global.cfg.Set(cfgWebSection, "addr", "127.0.0.1:8181")
+	_ = global.cfg.Set(cfgWebSection, listenAddrForServe, "")
+	if got := serveAddr(""); got != ":8080" {
+		t.Errorf("an address saved before setup promised to use it moved the server: %q", got)
+	}
+	_ = global.cfg.Set(cfgWebSection, listenAddrForServe, "yes")
 	if got := serveAddr(""); got != "127.0.0.1:8181" {
-		t.Errorf("with an address saved: %q", got)
+		t.Errorf("with an address saved for serve: %q", got)
 	}
 	if got := serveAddr(" :9000 "); got != ":9000" {
 		t.Errorf("with an address given: %q", got)
@@ -94,5 +102,18 @@ func TestANewInstallsUsersGetAgentsAndKnowledge(t *testing.T) {
 	seedNewInstallApps(existing)
 	if got := AuthGetDefaultApps(existing); len(got) != 0 {
 		t.Errorf("an existing install's defaults changed: %v", got)
+	}
+}
+
+// serve warns while nobody has an account, since until somebody does anyone
+// who reaches it is its administrator; once an account exists it says nothing.
+func TestServeWarnsWhileThereAreNoAccounts(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	if w := noAccountsWarning(db); !strings.Contains(w, "No accounts yet") || !strings.Contains(w, "gohort --setup") {
+		t.Errorf("with no accounts: %q", w)
+	}
+	AuthSetUser(db, "root", "pw", true)
+	if w := noAccountsWarning(db); w != "" {
+		t.Errorf("with an account: %q", w)
 	}
 }

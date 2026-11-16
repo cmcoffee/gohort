@@ -130,7 +130,7 @@ func TestTheUpdateSectionChecksThenInstalls(t *testing.T) {
 	if got := strings.Join(f.actions(t), " | "); got != "check: Check for update" {
 		t.Fatalf("before a check the section offers %q", got)
 	}
-	if st := f.status(t); !strings.HasPrefix(st["last_check"], "Not checked") || st["updates_here"] != "Offered." {
+	if st := f.status(t); !strings.HasPrefix(st["last_check"], "Not checked") || st["updates_here"] != "" {
 		t.Fatalf("before a check: %+v", st)
 	}
 	w := f.do(f.admin, "POST", "/api/update?do=check")
@@ -140,8 +140,10 @@ func TestTheUpdateSectionChecksThenInstalls(t *testing.T) {
 	if got := strings.Join(f.actions(t), " | "); got != "check: Check for update | update: Update to 0.9.380" {
 		t.Fatalf("after a check the section offers %q", got)
 	}
+	// An update answers at once, the work going on behind it: a reply that
+	// waited for it was cut off by the restart.
 	w = f.do(f.admin, "POST", "/api/update?do=update")
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "Installed 0.9.380") {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"running":true`) {
 		t.Fatalf("update: %d %s", w.Code, w.Body.String())
 	}
 	select {
@@ -155,7 +157,7 @@ func TestTheUpdateSectionChecksThenInstalls(t *testing.T) {
 	if got := strings.Join(f.actions(t), " | "); got != "check: Check for update" {
 		t.Errorf("while waiting for the restart the section offers %q", got)
 	}
-	if st := f.status(t); !strings.Contains(st["updates_here"], "waiting for gohort to restart") || st["previous"] != "0.9.377" {
+	if st := f.status(t); !strings.Contains(st["running"], "0.9.380 is installed and runs when gohort restarts") || st["updates_here"] != "" || st["previous"] != "0.9.377" {
 		t.Errorf("after installing: %+v", st)
 	}
 	events := activity.List(f.db, activity.Filter{Kind: activity.Update})
@@ -195,10 +197,19 @@ func TestTheUpdateSectionIsAdminOnlyAndRefusesWhatItCannotDo(t *testing.T) {
 		t.Errorf("an unknown action: %d", w.Code)
 	}
 	// Nothing checked yet, nothing newer known: an update press still
-	// checks first, and a failure is an error the row shows, not a success.
+	// checks first, and a failure is the outcome the row shows, not a
+	// success.
 	f.u.Source.Keys = nil
-	if w := f.do(f.admin, "POST", "/api/update?do=update"); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "no release key") {
-		t.Errorf("an update with no key to check it: %d %s", w.Code, w.Body.String())
+	if w := f.do(f.admin, "POST", "/api/update?do=update"); w.Code != 200 {
+		t.Errorf("an update press: %d %s", w.Code, w.Body.String())
+	}
+	var outcome string
+	for i := 0; i < 200 && !strings.Contains(outcome, "Not updated"); i++ {
+		time.Sleep(10 * time.Millisecond)
+		outcome = f.do(f.admin, "GET", "/api/update/progress?key=update").Body.String()
+	}
+	if !strings.Contains(outcome, "Not updated") || !strings.Contains(outcome, "no release key") {
+		t.Errorf("an update with no key to check it ended %s", outcome)
 	}
 	if events := activity.List(f.db, activity.Filter{Kind: activity.Update}); len(events) != 0 {
 		t.Errorf("a refused update was logged: %+v", events)

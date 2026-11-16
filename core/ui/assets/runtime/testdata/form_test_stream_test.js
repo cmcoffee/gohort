@@ -21,11 +21,17 @@ function lift(src, start, label) {
 }
 var basics = fs.readFileSync(dir + '/10_basics.js', 'utf8');
 
+// textContent reads a node's own text, or its children's a line each (they
+// are block spans), and setting it drops the children, as the DOM does.
 function el(tag, attrs, kids) {
-  return {tag: tag, attrs: attrs || {}, kids: [], style: {}, textContent: (kids || []).join(''),
+  var node = {tag: tag, attrs: attrs || {}, kids: [], style: {}, _text: (kids || []).join(''),
     classList: {add: function() {}, remove: function() {}},
     appendChild: function(c) { this.kids.push(c); },
     addEventListener: function(t, f) { this['on' + t] = f; }};
+  Object.defineProperty(node, 'textContent', {
+    get: function() { return this.kids.length ? this.kids.map(function(k) { return k.textContent; }).join('\n') : this._text; },
+    set: function(v) { this._text = v; this.kids = []; }});
+  return node;
 }
 var cfg = {test_url: 'api/x/test', test_label: 'Test'}, current = {}, testRowEl = null;
 function matchesShowWhen() { return true; }
@@ -64,6 +70,10 @@ function settled() { return new Promise(function(r) { setTimeout(r, 20); }); }
   check('the result replaces the progress', out.textContent.indexOf('✗ Connected. The handoff check FAILED:') === 0);
   check('the result keeps its lines', out.textContent.split('\n').length === 3);
   check('a multi-line result takes its own row', out.style.flexBasis === '100%');
+  var lineColor = function(i) { return (out.kids[i] && out.kids[i].attrs.style) || ''; };
+  check('a check that passed reads as passed', lineColor(1).indexOf('--accent') >= 0);
+  check('a check that failed reads as failed', lineColor(2).indexOf('--danger') >= 0);
+  check('the overall line keeps the result colour', lineColor(0).indexOf('--danger') >= 0);
 
   // While it runs, the step shows beside "Testing...".
   var hold;

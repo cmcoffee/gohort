@@ -1096,3 +1096,28 @@ func TestAnOlderVersionRanksBelowTheCurrentOne(t *testing.T) {
 		t.Errorf("a question only the older version answers should still find it: %+v", hits)
 	}
 }
+
+// The one-time move of legacy chunks into VectorDB says nothing on a store
+// with nothing to move (every new install), and still moves what there is.
+func TestTheLegacyChunkMoveIsQuietWithNothingToMove(t *testing.T) {
+	savedVec, savedSources := VectorDB, legacyChunkSources
+	t.Cleanup(func() { VectorDB, legacyChunkSources = savedVec, savedSources })
+
+	VectorDB = &DBase{Store: kvlite.MemStore()}
+	legacyChunkSources = []Database{&DBase{Store: kvlite.MemStore()}}
+	MigrateLegacyChunksToVectorDB()
+	var marker string
+	if !VectorDB.Get(vectorMetaTable, "legacy_migrated", &marker) || marker == "" {
+		t.Error("an empty store was not marked as moved")
+	}
+
+	VectorDB = &DBase{Store: kvlite.MemStore()}
+	legacy := &DBase{Store: kvlite.MemStore()}
+	legacy.Set(EmbeddedChunks, "c1", EmbeddedChunk{ID: "c1", Text: "old"})
+	legacyChunkSources = []Database{legacy}
+	MigrateLegacyChunksToVectorDB()
+	var got EmbeddedChunk
+	if !VectorDB.Get(EmbeddedChunks, "c1", &got) || got.Text != "old" {
+		t.Errorf("a legacy chunk was not moved: %+v", got)
+	}
+}

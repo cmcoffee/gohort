@@ -397,15 +397,47 @@ func inputWithDefault(prompt, def string) string {
 }
 
 // serveAddr is where `gohort serve` listens: the address given on the command
-// line, else the one --setup saved (127.0.0.1:8181 unless it was changed),
-// else :8080. Before, the saved address was never read: a bare `gohort serve`,
+// line, else the one setup saved for it (listenAddrForServe), else :8080.
+// Before 0.9.427 the saved address was never read: a bare `gohort serve`,
 // which is what setup tells you to run, listened on :8080 on every interface,
 // and not where setup said to open it.
+//
+// Only an address saved with that promise is used. An install set up before
+// it has an address saved too, which bare `serve` never used, and moving such
+// an install off :8080 (an update relaunching it, from a version that does not
+// carry the address over) cut off whoever reached it there.
 func serveAddr(given string) string {
 	if given = strings.TrimSpace(given); given != "" {
 		return given
 	}
-	return loadWebString("addr", ":8080")
+	if global.cfg.Get(cfgWebSection, listenAddrForServe) == "yes" {
+		if saved := loadWebString("addr", ""); saved != "" {
+			return saved
+		}
+	}
+	return ":8080"
+}
+
+// listenAddrForServe marks [web] addr as the address a bare `gohort serve`
+// listens on: set when setup saves an address, from 0.9.428 on.
+const listenAddrForServe = "addr_for_serve"
+
+// saveListenAddr saves the address a bare `gohort serve` listens on.
+func saveListenAddr(addr string) {
+	saveWebString("addr", addr)
+	_ = global.cfg.Set(cfgWebSection, listenAddrForServe, "yes")
+	_ = global.cfg.TrimSave(cfgWebSection)
+}
+
+// noAccountsWarning is what serve says at start when nobody has an account:
+// until somebody does, anyone who can reach the server uses it as its
+// administrator. "" once an account exists.
+func noAccountsWarning(db Database) string {
+	if db == nil || AuthHasUsers(db) {
+		return ""
+	}
+	return "No accounts yet: anyone who can reach this server can use it and make themselves its administrator. " +
+		"Create the administrator now, with `gohort --setup` or in the browser at /admin/setup."
 }
 
 // newInstallApps are the apps a brand-new install's users get: someone an
@@ -488,7 +520,7 @@ func setup_quickstart() {
 	if loadWebString("addr", "") == "" {
 		Stdout("\n--- Network ---\n")
 		addr := inputWithDefault("  Web bind address", "127.0.0.1:8181")
-		saveWebString("addr", addr)
+		saveListenAddr(addr)
 	}
 
 	Stdout("\nDone. Start the server with:\n\n  gohort serve\n\n")
@@ -573,6 +605,7 @@ func setup_fuzz() {
 	// migration from the kvlite store baked into the helpers). The
 	// remaining DB-only settings stay on the global.db.Get path.
 	webAddr = loadWebString("addr", "")
+	savedAddr := webAddr
 	webTLSCert = loadWebString("tls_cert", "")
 	webTLSKey = loadWebString("tls_key", "")
 	webTLSSelfSigned = loadWebBool("tls_self_signed", false)
@@ -599,7 +632,7 @@ func setup_fuzz() {
 	}
 
 	webmenu := NewOptions(" [Web Server Settings] ", "(selection or 'q' to return to previous)", 'q')
-	webmenu.StringVar(&webAddr, "Listen Address", webAddr, "Address for web dashboard (e.g. ':8080', '0.0.0.0:443').")
+	webmenu.StringVar(&webAddr, "Listen Address", webAddr, "Address for web dashboard (e.g. ':8080', '0.0.0.0:443'). `gohort serve` with no address listens here once you change it in this menu.")
 	webmenu.IntVar(&webMaxConcurrent, "Max Concurrent Tasks", webMaxConcurrent, "Max simultaneous apps. Others are queued.", 1, 32)
 	webmenu.ToggleVar(&webTLSSelfSigned, "TLS (self-signed auto-certificate)", webTLSSelfSigned)
 	webmenu.StringVar(&webTLSCert, "TLS Certificate", webTLSCert, "Path to PEM certificate file (overrides self-signed).")
@@ -672,7 +705,13 @@ func setup_fuzz() {
 	// install. saveWebX helpers also mirror to the DB during the
 	// migration window so any code path still reading from kvlite
 	// keeps seeing the latest value.
-	saveWebString("addr", webAddr)
+	// Changing the address here makes it the one a bare `gohort serve` uses;
+	// saving the menu with it unchanged leaves that as it was.
+	if webAddr != savedAddr {
+		saveListenAddr(webAddr)
+	} else {
+		saveWebString("addr", webAddr)
+	}
 	saveWebString("tls_cert", webTLSCert)
 	saveWebString("tls_key", webTLSKey)
 	saveWebBool("tls_self_signed", webTLSSelfSigned)

@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/cmcoffee/gohort/core/selfupdate"
+)
 
 // A build is marked by what it registers: private.go is not in the public
 // repository, so it cannot say so itself.
@@ -21,4 +26,21 @@ func TestABuildWithThePrivateAppsIsNotOfferedThePublicUpdate(t *testing.T) {
 			break
 		}
 	}
+}
+
+// A program started with no address relaunches where it is listening, so an
+// update never moves it; one started with an address keeps its own command
+// line.
+func TestAnUpdateKeepsTheAddressTheProgramListensOn(t *testing.T) {
+	u := &selfupdate.Updater{}
+	keepAddrAcrossUpdates(u, "", "127.0.0.1:8181", []string{"gohort", "serve"})
+	if got := strings.Join(u.RelaunchArgs, " "); got != "gohort serve 127.0.0.1:8181" {
+		t.Errorf("a bare serve relaunches as %q", got)
+	}
+	given := &selfupdate.Updater{}
+	keepAddrAcrossUpdates(given, ":8080", ":8080", []string{"gohort", "serve", ":8080"})
+	if given.RelaunchArgs != nil {
+		t.Errorf("a serve with an address relaunches as %q", given.RelaunchArgs)
+	}
+	keepAddrAcrossUpdates(nil, "", ":8080", nil)
 }

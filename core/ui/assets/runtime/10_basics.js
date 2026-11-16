@@ -4522,11 +4522,22 @@
       var testResult = el('span', {class: 'ui-form-test-result',
         style: 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);white-space:pre-line'});
       // A test that checks several things answers with a line each. One
-      // line sits beside the button; more take the row below it.
+      // line sits beside the button; more take the row below it, each in the
+      // colour of its own mark, so a check that passed reads as passed inside
+      // a result that failed: \u2713 passed, \u2717 failed, \u2013 skipped.
       function showResult(color, text) {
         testResult.style.color = color;
-        testResult.textContent = text;
         testResult.style.flexBasis = text.indexOf('\n') >= 0 ? '100%' : '';
+        var lines = text.split('\n');
+        if (lines.length < 2) { testResult.textContent = text; return; }
+        testResult.textContent = '';
+        lines.forEach(function(line, i) {
+          var mark = line.charAt(0), c = color;
+          if (mark === '\u2713') c = 'var(--accent)';
+          else if (mark === '\u2717') c = 'var(--danger,#ff7b72)';
+          else if (mark === '\u2013' && i > 0) c = 'var(--text-mute)';
+          testResult.appendChild(el('span', {style: 'display:block;color:' + c}, [line]));
+        });
       }
       // A test may answer with something to hear ({"audio": url}): a player
       // takes the row below the result and starts at once, since the click
@@ -5292,8 +5303,13 @@
 
   components.display_panel = function(cfg) {
     var wrap = el('div', {class: 'ui-display'}, [uiLoading()]);
+    // shown: a load has painted the panel. A refresh that fails after that
+    // (the server restarting, a dropped connection) keeps what is shown and
+    // the next refresh repaints it; only a first load that fails says so.
+    var shown = false;
     function reload() {
       fetchJSON(cfg.source).then(function(d) {
+        shown = true;
         var restoreScroll = uiKeepBlockScroll(wrap);
         wrap.innerHTML = '';
         var data = d || {};
@@ -5350,7 +5366,7 @@
           });
           wrap.appendChild(actionsRow);
         }
-      }).catch(function(err){ wrap.textContent = 'Failed: ' + err.message; });
+      }).catch(function(err){ if (!shown) wrap.textContent = 'Failed: ' + err.message; });
     }
     // Refetch when an external action invalidates our source — same as Table.
     // Without this, a display backed by source_script (e.g. a computed weather

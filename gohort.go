@@ -534,7 +534,12 @@ func main() {
 
 		ollama_proxy.StartOllamaServer(OllamaProxyPortFunc())
 		wireSelfUpdate()
-		if err := ServeDashboard(serveAddr(bindAddr)); err != nil {
+		if w := noAccountsWarning(global.db); w != "" {
+			Warn(w)
+		}
+		listen := serveAddr(bindAddr)
+		keepAddrAcrossUpdates(updaterOf(), bindAddr, listen, os.Args)
+		if err := ServeDashboard(listen); err != nil {
 			Fatal(err)
 		}
 		Exit(0)

@@ -44,7 +44,7 @@ func TestTheRendererOnlyHonorsKnownSeverities(t *testing.T) {
 	if i < 0 {
 		t.Fatal("uiDisplayPair has moved — severity is no longer rendered where this test looks")
 	}
-	block := body[i:min(i+3000, len(body))]
+	block := body[i:min(i+4000, len(body))]
 	if !strings.Contains(block, `if (sev === 'ok' || sev === 'warn' || sev === 'bad') cls += ' ' + sev;`) {
 		t.Error("the renderer no longer restricts severity to the three known values — " +
 			"a payload field would become an arbitrary CSS class")

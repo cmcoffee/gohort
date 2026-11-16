@@ -2247,7 +2247,9 @@
       return;
     }
 
-    var value = fmt(lookup(data, p.field), p.format);
+    var rawValue = lookup(data, p.field);
+    if (p.hide_empty && (rawValue == null || rawValue === '')) return;
+    var value = fmt(rawValue, p.format);
 
     // A BLOCK pair: multi-line content on its own row, under the label.
     if (p.block) {

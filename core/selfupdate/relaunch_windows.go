@@ -10,6 +10,6 @@ import "errors"
 // installed and the program is restarted by whoever runs it.
 const CanRelaunch = false
 
-func relaunch(exe string) error {
+func relaunch(exe string, args []string) error {
 	return errors.New("restart gohort to run the new version")
 }

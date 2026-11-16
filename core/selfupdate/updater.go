@@ -2,6 +2,7 @@ package selfupdate
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -27,6 +28,13 @@ type Updater struct {
 	// RestartDelay is how long after installing the restart begins, so the
 	// press that asked for it is answered first.
 	RestartDelay time.Duration
+	// RelaunchArgs is the command line the installed version is started
+	// with; empty is this program's own. The program sets it when it was
+	// started without something the new version would decide differently
+	// (the address it listens on), so an update never moves the program.
+	RelaunchArgs []string
+
+	noteOnce sync.Once // the restart note is read once (readRestartNote)
 
 	mu        sync.Mutex
 	checked   time.Time
@@ -50,10 +58,12 @@ const (
 // Default is the running program's updater; nil when it has none.
 var Default *Updater
 
-// pendingRelaunch is the binary to start when shutdown ends.
+// pendingRelaunch is the binary to start when shutdown ends, and
+// pendingArgs its command line (empty: this program's own).
 var (
 	pendingMu       sync.Mutex
 	pendingRelaunch string
+	pendingArgs     []string
 )
 
 // RelaunchIfPending starts the installed binary in place of this process,
@@ -62,17 +72,17 @@ var (
 // there is nothing to start, or starting failed.
 func RelaunchIfPending() error {
 	pendingMu.Lock()
-	exe := pendingRelaunch
+	exe, args := pendingRelaunch, pendingArgs
 	pendingMu.Unlock()
 	if exe == "" {
 		return nil
 	}
-	return relaunch(exe)
+	return relaunch(exe, args)
 }
 
-func setPendingRelaunch(exe string) {
+func setPendingRelaunch(exe string, args []string) {
 	pendingMu.Lock()
-	pendingRelaunch = exe
+	pendingRelaunch, pendingArgs = exe, append([]string(nil), args...)
 	pendingMu.Unlock()
 }
 
@@ -99,6 +109,7 @@ type Status struct {
 // Status is where things stand. A check's answer is kept in memory, so it is
 // there until the program restarts.
 func (u *Updater) Status() Status {
+	u.noteOnce.Do(u.readRestartNote)
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	st := Status{
@@ -136,6 +147,7 @@ func (u *Updater) blockedLocked() string {
 // Progress is how far the action key has got while it runs, and how the
 // last one ended.
 func (u *Updater) Progress(key string) (progress, outcome string) {
+	u.noteOnce.Do(u.readRestartNote)
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if u.running == key {
@@ -150,10 +162,14 @@ func (u *Updater) Progress(key string) (progress, outcome string) {
 	return progress, u.outcome[key]
 }
 
-// begin marks key running, or refuses when something is.
+// begin marks key running, or refuses when something is, or when a version
+// is installed and waiting for the restart.
 func (u *Updater) begin(key string) error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	if u.installed != "" && key != ActionCheck {
+		return fmt.Errorf("%s is installed already: restart gohort to run it", u.installed)
+	}
 	if u.running != "" {
 		return ErrBusy
 	}
@@ -222,53 +238,90 @@ func (u *Updater) Update(ctx context.Context) (string, error) {
 	if err := u.begin(ActionUpdate); err != nil {
 		return "", err
 	}
-	msg, err := u.update(ctx)
+	return u.runUpdate(ctx)
+}
+
+// Start begins an update or a rollback and returns at once, the work going on
+// in the background: the press is answered before a download of minutes and
+// before the restart that ends it. Progress says how it goes, and after a
+// restart the restarted program says how it went (readRestartNote). done, when
+// set, hears the action's message or error when its work ends, before the
+// restart. ErrBusy while another action runs.
+func (u *Updater) Start(ctx context.Context, key string, done func(msg string, err error)) error {
+	if key != ActionUpdate && key != ActionRollback {
+		return fmt.Errorf("unknown update action %q", key)
+	}
+	if err := u.begin(key); err != nil {
+		return err
+	}
+	go func() {
+		var msg string
+		var err error
+		if key == ActionUpdate {
+			msg, err = u.runUpdate(ctx)
+		} else {
+			msg, err = u.runRollback(ctx)
+		}
+		if done != nil {
+			done(msg, err)
+		}
+	}()
+	return nil
+}
+
+// runUpdate is an update after begin: it ends the action when it fails or
+// when nothing restarts the program, and otherwise leaves it running, saying
+// it is restarting, for the restarted program to report.
+func (u *Updater) runUpdate(ctx context.Context) (string, error) {
+	msg, restarting, err := u.update(ctx)
 	if err != nil {
 		u.end(ActionUpdate, "Not updated: "+err.Error())
 		return "", err
 	}
-	u.end(ActionUpdate, msg)
+	if restarting {
+		u.say(msg)
+	} else {
+		u.end(ActionUpdate, msg)
+	}
 	return msg, nil
 }
 
-func (u *Updater) update(ctx context.Context) (string, error) {
+func (u *Updater) update(ctx context.Context) (string, bool, error) {
 	u.mu.Lock()
-	blocked, installed := u.blockedLocked(), u.installed
+	blocked := u.blockedLocked()
 	u.mu.Unlock()
-	switch {
-	case blocked != "":
-		return "", errors.New(blocked)
-	case installed != "":
-		return "", fmt.Errorf("%s is installed already: restart gohort to run it", installed)
+	if blocked != "" {
+		return "", false, errors.New(blocked)
 	}
 	u.say("checking the release list")
 	m, err := u.fetch(ctx)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if !Newer(m.Version, u.Version) {
-		return "", fmt.Errorf("%s is the newest release, and %s is running", m.Version, u.Version)
+		return "", false, fmt.Errorf("%s is the newest release, and %s is running", m.Version, u.Version)
 	}
 	path, err := u.Source.Download(ctx, m, Platform(), u.Install.Dir(), func(done, total int64) {
 		u.say(fmt.Sprintf("downloading %s: %.1f of %.1f MB", m.Version, mb(done), mb(total)))
 	})
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	u.say("running " + m.Version + " once to check it starts")
 	if err := u.Install.Prove(ctx, path, m.Version); err != nil {
 		os.Remove(path)
-		return "", err
+		return "", false, err
 	}
 	u.say("putting " + m.Version + " in place")
 	if err := u.Install.Swap(path, u.Version); err != nil {
 		os.Remove(path)
-		return "", err
+		return "", false, err
 	}
 	u.mu.Lock()
 	u.installed = m.Version
 	u.mu.Unlock()
-	return u.restartOnto("Installed " + m.Version), nil
+	msg, restarting := u.restartOnto(ActionUpdate, "Installed "+m.Version, m.Version)
+	return msg, restarting, nil
 }
 
 // Rollback puts the previous binary back and restarts onto it.
@@ -276,6 +329,11 @@ func (u *Updater) Rollback(ctx context.Context) (string, error) {
 	if err := u.begin(ActionRollback); err != nil {
 		return "", err
 	}
+	return u.runRollback(ctx)
+}
+
+// runRollback is a rollback after begin, ending the action as runUpdate does.
+func (u *Updater) runRollback(ctx context.Context) (string, error) {
 	u.mu.Lock()
 	blocked := u.blockedLocked()
 	u.mu.Unlock()
@@ -294,25 +352,89 @@ func (u *Updater) Rollback(ctx context.Context) (string, error) {
 	u.mu.Lock()
 	u.installed = was
 	u.mu.Unlock()
-	msg := u.restartOnto("Rolled back to " + was)
-	u.end(ActionRollback, msg)
+	msg, restarting := u.restartOnto(ActionRollback, "Rolled back to "+was, was)
+	if restarting {
+		u.say(msg)
+	} else {
+		u.end(ActionRollback, msg)
+	}
 	return msg, nil
 }
 
 // restartOnto starts the restart, when this platform and program can, and
-// says what happens next.
-func (u *Updater) restartOnto(done string) string {
+// says what happens next. restarting reports a restart is coming: it leaves a
+// note beside the binary first, so the restarted program can say how it went.
+func (u *Updater) restartOnto(key, done, to string) (msg string, restarting bool) {
 	if u.Restart == nil || !CanRelaunch {
-		return done + ". Restart gohort to run it."
+		return done + ". Restart gohort to run it.", false
 	}
-	setPendingRelaunch(u.Install.Exe)
+	u.writeRestartNote(key, to)
+	setPendingRelaunch(u.Install.Exe, u.RelaunchArgs)
 	delay := u.RestartDelay
 	if delay <= 0 {
 		delay = time.Second
 	}
 	restart := u.Restart
 	time.AfterFunc(delay, restart)
-	return done + ". gohort is restarting onto it, down for a few seconds."
+	return done + ". gohort is restarting onto it, down for a few seconds.", true
+}
+
+// restartNote is what an update or rollback leaves for the program it
+// restarts onto: which action, from which version, to which.
+type restartNote struct {
+	Key  string `json:"key"`
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+func (in Install) restartNotePath() string { return in.Exe + ".restart" }
+
+func (u *Updater) writeRestartNote(key, to string) {
+	if u.Install.Exe == "" {
+		return
+	}
+	// A note from this program's own start is read first, so it never
+	// reads back the one it is about to leave for the next.
+	u.noteOnce.Do(u.readRestartNote)
+	b, _ := json.Marshal(restartNote{Key: key, From: u.Version, To: to})
+	_ = os.WriteFile(u.Install.restartNotePath(), b, 0o600)
+}
+
+// readRestartNote is the restarted program's half: the note an update or a
+// rollback left becomes that action's outcome here, saying whether this
+// program is the version it was meant to start, and the note is removed. A
+// page that was waiting through the restart reads the outcome from here.
+func (u *Updater) readRestartNote() {
+	if u.Install.Exe == "" {
+		return
+	}
+	path := u.Install.restartNotePath()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	os.Remove(path)
+	var n restartNote
+	if json.Unmarshal(b, &n) != nil || (n.Key != ActionUpdate && n.Key != ActionRollback) {
+		return
+	}
+	var out string
+	switch {
+	case n.Key == ActionUpdate && u.Version == n.To:
+		out = fmt.Sprintf("Updated from %s to %s, and it is running.", n.From, n.To)
+	case n.Key == ActionUpdate:
+		out = fmt.Sprintf("The restart did not bring up %s: %s is running. The log from the restart says why.", n.To, u.Version)
+	case u.Version != n.From:
+		out = fmt.Sprintf("Rolled back from %s: %s is running.", n.From, u.Version)
+	default:
+		out = fmt.Sprintf("The restart did not roll back: %s is still running. The log from the restart says why.", u.Version)
+	}
+	u.mu.Lock()
+	if u.outcome == nil {
+		u.outcome = map[string]string{}
+	}
+	u.outcome[n.Key] = out
+	u.mu.Unlock()
 }
 
 func mb(n int64) float64 { return float64(n) / (1 << 20) }

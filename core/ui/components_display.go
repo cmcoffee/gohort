@@ -46,6 +46,10 @@ type DisplayPair struct {
 	// refreshing panel snapped back to the top every few seconds, so the
 	// line that just happened was always the one out of view.
 	Follow bool `json:"follow,omitempty"`
+	// HideEmpty leaves the row out when its value is empty, for a line that
+	// only says something some of the time (a reason a thing cannot be
+	// done): without it the row shows a dash.
+	HideEmpty bool `json:"hide_empty,omitempty"`
 	// Items, when set, renders the pair's Field as a LIST — the field
 	// must resolve to an array. For an array of OBJECTS each element is
 	// rendered from these sub-pairs (each sub-pair's Field is looked up

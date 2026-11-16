@@ -59,6 +59,22 @@ func wireSelfUpdate() {
 	selfupdate.Default = u
 }
 
+// updaterOf is the program's updater, nil when it has none.
+func updaterOf() *selfupdate.Updater { return selfupdate.Default }
+
+// keepAddrAcrossUpdates has an update restart the program where it is
+// listening now. A program started with no address listens where --setup said
+// (serveAddr), and the version an update brings could decide that
+// differently; so the relaunch carries the address this one chose, and an
+// update never moves the program. One started with an address keeps its own
+// command line, which already says it.
+func keepAddrAcrossUpdates(u *selfupdate.Updater, given, listening string, args []string) {
+	if u == nil || strings.TrimSpace(given) != "" || listening == "" {
+		return
+	}
+	u.RelaunchArgs = append(append([]string(nil), args...), listening)
+}
+
 // relaunchIfUpdated runs at the very end of shutdown: when an update or a
 // rollback was installed, it starts that binary in place of this process.
 func relaunchIfUpdated() {

@@ -1075,20 +1075,32 @@ func MigrateLegacyChunksToVectorDB() {
 	if VectorDB.Get(vectorMetaTable, "legacy_migrated", &marker) && marker != "" {
 		return
 	}
-	// Announce up-front, BEFORE any Keys()/Get() call, so an operator
-	// watching boot logs can tell the long pause on the first post-split
-	// boot is the migration and not a hang. The per-row Get over NFS is
-	// the dominant cost on big stores; counting source sizes (Keys walk)
-	// is itself slow there, so we don't pre-scan — progress lines show
-	// the rate as work proceeds.
+	// The sources' keys first: a store with nothing in them (every new
+	// install) is marked and left without a word, since a migration notice
+	// on a brand-new install reads as something having gone wrong. A store
+	// with chunks to move announces how many before the copying starts.
 	start := time.Now()
-	Log("[vector] one-shot migration starting: %d legacy source(s) → VectorDB (non-destructive; legacy rows preserved). This may take minutes on large NFS-backed stores.", len(legacyChunkSources))
+	sourceKeys := make([][]string, len(legacyChunkSources))
+	total := 0
+	for i, src := range legacyChunkSources {
+		if src == nil || src == VectorDB {
+			continue
+		}
+		sourceKeys[i] = src.Keys(EmbeddedChunks)
+		total += len(sourceKeys[i])
+	}
+	if total == 0 {
+		VectorDB.Set(vectorMetaTable, "legacy_migrated", time.Now().Format(time.RFC3339))
+		Debug("[vector] no legacy chunks to move into VectorDB")
+		return
+	}
+	Log("[vector] one-shot migration starting: %d chunk(s) in %d legacy source(s) to VectorDB (non-destructive; legacy rows preserved).", total, len(legacyChunkSources))
 	copied, scanned := 0, 0
 	for srcIdx, src := range legacyChunkSources {
 		if src == nil || src == VectorDB {
 			continue
 		}
-		keys := src.Keys(EmbeddedChunks)
+		keys := sourceKeys[srcIdx]
 		Log("[vector] migrating source %d/%d: %d chunk(s)", srcIdx+1, len(legacyChunkSources), len(keys))
 		for i, key := range keys {
 			var c EmbeddedChunk
