@@ -47,3 +47,52 @@ func TestTheJudgeModelNeverThinks(t *testing.T) {
 		t.Errorf("the Judge model's config: thinking disabled %v, its own server %v", got.DisableThinking, got.SeparateServer)
 	}
 }
+
+// A bare `gohort serve` listens where --setup said it would: the saved
+// address, else :8080. An address given on the command line wins.
+func TestServeListensWhereSetupSaid(t *testing.T) {
+	savedDB := global.db
+	prev := global.cfg.Get(cfgWebSection, "addr")
+	t.Cleanup(func() {
+		global.db = savedDB
+		_ = global.cfg.Set(cfgWebSection, "addr", prev)
+	})
+	global.db = nil
+	_ = global.cfg.Set(cfgWebSection, "addr", "127.0.0.1:8181")
+	if got := serveAddr(""); got != "127.0.0.1:8181" {
+		t.Errorf("with an address saved: %q", got)
+	}
+	if got := serveAddr(" :9000 "); got != ":9000" {
+		t.Errorf("with an address given: %q", got)
+	}
+	_ = global.cfg.Set(cfgWebSection, "addr", "")
+	if got := serveAddr(""); got != ":8080" {
+		t.Errorf("with none saved: %q", got)
+	}
+}
+
+// A brand-new install's users get Agents and Knowledge; an install with
+// accounts, or whose default apps were ever saved (even as none), keeps its
+// own.
+func TestANewInstallsUsersGetAgentsAndKnowledge(t *testing.T) {
+	fresh := &DBase{Store: kvlite.MemStore()}
+	seedNewInstallApps(fresh)
+	got := AuthResolveUserApps(fresh, AuthUser{Username: "pat"})
+	if len(got) != 2 || got[0] != "/orchestrate" || got[1] != "/knowledge" {
+		t.Errorf("a new install's user gets %v", got)
+	}
+
+	chosen := &DBase{Store: kvlite.MemStore()}
+	AuthSetDefaultApps(chosen, []string{})
+	seedNewInstallApps(chosen)
+	if got := AuthGetDefaultApps(chosen); len(got) != 0 {
+		t.Errorf("an administrator's empty list was replaced: %v", got)
+	}
+
+	existing := &DBase{Store: kvlite.MemStore()}
+	AuthSetUser(existing, "root", "pw", true)
+	seedNewInstallApps(existing)
+	if got := AuthGetDefaultApps(existing); len(got) != 0 {
+		t.Errorf("an existing install's defaults changed: %v", got)
+	}
+}

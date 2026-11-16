@@ -396,6 +396,39 @@ func inputWithDefault(prompt, def string) string {
 	return def
 }
 
+// serveAddr is where `gohort serve` listens: the address given on the command
+// line, else the one --setup saved (127.0.0.1:8181 unless it was changed),
+// else :8080. Before, the saved address was never read: a bare `gohort serve`,
+// which is what setup tells you to run, listened on :8080 on every interface,
+// and not where setup said to open it.
+func serveAddr(given string) string {
+	if given = strings.TrimSpace(given); given != "" {
+		return given
+	}
+	return loadWebString("addr", ":8080")
+}
+
+// newInstallApps are the apps a brand-new install's users get: someone an
+// administrator adds can then talk to agents and keep documents, rather than
+// arriving at a page with nothing on it. The administrator changes the list
+// under Admin > Site > Default Apps.
+var newInstallApps = []string{"/orchestrate", "/knowledge"}
+
+// seedNewInstallApps sets the default apps on a brand-new install: one with
+// no accounts yet whose default apps were never saved. An existing install
+// keeps whatever it has, an empty list included, since who reaches what there
+// is its administrator's decision already made.
+func seedNewInstallApps(db Database) {
+	if db == nil || AuthHasUsers(db) {
+		return
+	}
+	var saved []string
+	if db.Get(WebTable, "default_apps", &saved) {
+		return
+	}
+	AuthSetDefaultApps(db, newInstallApps)
+}
+
 // maybeQuickstart runs the guided express setup when the install is missing
 // anything a working deployment MUST have — an admin login or a bind address.
 // A missing LLM no longer counts: that is configured at /admin. On an already-configured box it's a no-op, so the
@@ -991,6 +1024,7 @@ func init_database() {
 	// An invariant maintained by hand in four places and honoured in one is
 	// not an invariant.
 	RootDB = global.db
+	seedNewInstallApps(global.db)
 	SetErrTable(global.db.Table("fuzz_errors"))
 	// Published tools run from approved releases; a deployment from before
 	// releases gets one per published tool (its definition now, as version 1)

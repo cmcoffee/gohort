@@ -317,7 +317,8 @@ func main() {
 	// "serve" subcommand — start the long-running dashboard daemon.
 	// Owns its own flagset so TLS / max-concurrent options don't
 	// pollute the top-level help. Bind address is the lone
-	// positional arg: `gohort serve [flags] [addr]` (default :8080).
+	// positional arg: `gohort serve [flags] [addr]` (default: the address
+	// --setup saved, else :8080; see serveAddr).
 	serveArgs := flags.Args()
 	if len(serveArgs) > 0 && serveArgs[0] == "serve" {
 		serveFlags := eflag.NewFlagSet("serve", eflag.ReturnErrorOnly)
@@ -336,7 +337,7 @@ func main() {
 		// `gohort serve --debug :8080` works the same as
 		// `gohort --debug serve :8080`.
 		registerModifiers(serveFlags)
-		serveFlags.Header = fmt.Sprintf("Usage: %s serve [flags] [addr]\n\n  addr defaults to :8080. TLS flags apply only when --tls is set\n  or both tls_cert and tls_key are provided.\n", os.Args[0])
+		serveFlags.Header = fmt.Sprintf("Usage: %s serve [flags] [addr]\n\n  addr defaults to the address --setup saved, or :8080 when none was saved.\n  TLS flags apply only when --tls is set\n  or both tls_cert and tls_key are provided.\n", os.Args[0])
 		if err := serveFlags.Parse(serveArgs[1:]); err != nil {
 			if err != eflag.ErrHelp {
 				Stderr(err)
@@ -348,7 +349,7 @@ func main() {
 			}
 			Exit(1)
 		}
-		bindAddr := ":8080"
+		bindAddr := ""
 		if rest := serveFlags.Args(); len(rest) > 0 && rest[0] != "" {
 			bindAddr = rest[0]
 		}
@@ -533,7 +534,7 @@ func main() {
 
 		ollama_proxy.StartOllamaServer(OllamaProxyPortFunc())
 		wireSelfUpdate()
-		if err := ServeDashboard(bindAddr); err != nil {
+		if err := ServeDashboard(serveAddr(bindAddr)); err != nil {
 			Fatal(err)
 		}
 		Exit(0)
