@@ -133,11 +133,8 @@ func (T *KnowledgeApp) handleDetailPage(w http.ResponseWriter, r *http.Request) 
 	sections := []ui.Section{
 		{
 			NoChrome: true,
-			Body:     ui.Card{HTML: documentsDetailBody + documentsDetailAssets},
+			Body:     ui.Card{HTML: documentsDetailBody + T.findSourcesScript(user, collectionIDFromPath(r.URL.Path)) + documentsDetailAssets},
 		},
-	}
-	if s, ok := T.suggestedSourcesSection(user, collectionIDFromPath(r.URL.Path)); ok {
-		sections = append(sections, s)
 	}
 	if s, ok := T.stewardSection(user, collectionIDFromPath(r.URL.Path)); ok {
 		sections = append(sections, s)

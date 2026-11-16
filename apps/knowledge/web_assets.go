@@ -241,7 +241,7 @@ const documentsDetailBody = `
 
   <div class="docs-section" data-need="add">
     <div class="docs-section-title">From the web</div>
-    <div class="docs-section-help">Pages you pick yourself, and topics to research. These are not checked: you chose them. To have pages found for you, use the plan under Curation.</div>
+    <div class="docs-section-help">Pages you pick yourself, pages Find sources turns up for you to pick, and topics to research. What you pick is not checked: you chose it. To have pages found and checked for you, use the plan under Curation.</div>
     <label style="display:block;font-size:var(--fs-sm, 0.82rem);font-weight:600;color:var(--text);margin-top:0.6rem">Articles to fetch (optional)</label>
     <div class="docs-section-help" style="margin-top:0.15rem;font-size:var(--fs-xs, 0.74rem)">Particular articles this collection should hold: paste a link, or describe one to search for (e.g. &quot;IRS Publication 17, 2026 edition&quot;). A run of the plan fetches these first; Fetch these only fetches them now. Each is fetched once; taking one off the list keeps its document.</div>
     <div id="docs-articles-list" style="display:flex;flex-direction:column;gap:0.3rem;margin:0.4rem 0"></div>
@@ -252,6 +252,7 @@ const documentsDetailBody = `
       <button id="docs-articles-fetch" class="ui-row-btn" disabled title="Fetch the listed articles not fetched yet, without running the plan">Fetch these only</button>
       <span id="docs-articles-status" style="font-size:var(--fs-2xs, 0.72rem);color:var(--text-mute)"></span>
     </div>
+    <div id="docs-find-sources" style="margin-top:0.8rem;padding-top:0.6rem;border-top:1px solid var(--border)"></div>
     <div class="docs-upload-row" style="margin-top:0.8rem;align-items:center;gap:0.5rem;padding-top:0.6rem;border-top:1px solid var(--border);flex-wrap:wrap">
       <input id="docs-research-topic" type="text" placeholder="Research a topic (cited synthesis): e.g. RKE2 agent join + ports"
         style="flex:1;min-width:16rem;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.3rem 0.5rem;font:inherit;font-size:var(--fs-sm, 0.85rem)">
@@ -343,6 +344,18 @@ const documentsDetailAssets = `<style>
     document.querySelector('.docs-detail').innerHTML = '<div class="docs-empty">Collection ID missing from URL.</div>';
     return;
   }
+
+  // Find sources, mounted where what it finds goes: under Articles to fetch.
+  // The server sends it only to someone who may add documents.
+  (function() {
+    var host = document.getElementById('docs-find-sources');
+    if (!host) return;
+    if (window.knowledgeFindSources && window.uiMountComponent) {
+      window.uiMountComponent(window.knowledgeFindSources, host);
+    } else {
+      host.style.display = 'none';
+    }
+  })();
 
   var loadedDescription = '';
   function loadDetail() {
