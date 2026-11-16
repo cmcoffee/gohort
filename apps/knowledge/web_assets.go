@@ -266,7 +266,7 @@ const documentsDetailBody = `
       <button id="docs-audit" class="ui-row-btn" data-need="maintain" style="margin-left:auto;font-weight:600" title="Check the oldest documents for staleness with cited web research">Audit</button>
       <span id="docs-audit-status" style="font-size:var(--fs-xs, 0.74rem);color:var(--text-mute)"></span>
     </div>
-    <div id="docs-bulk-bar" data-need="owner" style="display:none;align-items:center;gap:0.6rem;padding:0.4rem 0.6rem;background:var(--bg-2);border:1px solid var(--border);border-radius:4px;margin-bottom:0.4rem">
+    <div id="docs-bulk-bar" data-need="maintain" style="display:none;align-items:center;gap:0.6rem;padding:0.4rem 0.6rem;background:var(--bg-2);border:1px solid var(--border);border-radius:4px;margin-bottom:0.4rem">
       <span id="docs-bulk-count" style="font-size:var(--fs-sm, 0.82rem);color:var(--text);font-weight:600"></span>
       <button id="docs-bulk-delete" class="ui-row-btn danger">Remove selected</button>
       <span id="docs-bulk-status" style="font-size:var(--fs-xs, 0.74rem);color:var(--text-mute);margin-left:auto"></span>
@@ -643,7 +643,7 @@ const documentsDetailAssets = `<style>
         // unchecked when any row is unchecked, fully checked
         // only when all rows are in selectedSources.
         var header = document.createElement('div');
-        header.setAttribute('data-need', 'owner');
+        header.setAttribute('data-need', 'maintain');
         header.style.cssText = 'display:flex;align-items:center;gap:0.5rem;padding:0.2rem 0.55rem;font-size:var(--fs-xs, 0.78rem);color:var(--text-mute)';
         var allCb = document.createElement('input');
         allCb.type = 'checkbox';
@@ -674,7 +674,7 @@ const documentsDetailAssets = `<style>
           var row = document.createElement('div'); row.className = 'docs-row';
           var sel = document.createElement('input');
           sel.type = 'checkbox'; sel.className = 'docs-row-select';
-          sel.setAttribute('data-need', 'owner');
+          sel.setAttribute('data-need', 'maintain');
           sel.style.marginRight = '0.4rem';
           sel.addEventListener('change', function() {
             if (sel.checked) selectedSources[s.id] = s.name || s.id;
@@ -693,7 +693,7 @@ const documentsDetailAssets = `<style>
           meta.textContent = (s.chunks || 0) + ' chunk' + (s.chunks === 1 ? '' : 's');
           var del = document.createElement('button'); del.className = 'ui-row-btn danger ui-btn-sm';
           del.textContent = 'Remove';
-          del.setAttribute('data-need', 'owner');
+          del.setAttribute('data-need', 'maintain');
           del.onclick = async function() {
             if (!(await window.uiConfirm('Remove ' + nm.textContent + ' from this collection?'))) return;
             // Optimistic UI: hide the row immediately so the

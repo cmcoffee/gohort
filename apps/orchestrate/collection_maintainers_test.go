@@ -10,14 +10,15 @@ import (
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
-// A maintainer does what a contributor does and curates besides; the
-// collection itself (its name, who it reaches, its curator agent, deleting it)
-// stays the owner's.
+// A maintainer does what a contributor does and curates besides, taking
+// documents out included; the collection itself (its name, who it reaches,
+// its curator agent, deleting it) stays the owner's. A contributor may add
+// but not take out.
 func TestACollectionMaintainerCuratesButDoesNotOwn(t *testing.T) {
 	c := Collection{ID: "col-1", Owner: "alice", Name: "Runbooks",
 		AllowedUsers: []string{"bob", "carol"}, Maintainers: []string{"bob"}}
 	for _, a := range []struct{ action, method string }{
-		{"upload", "POST"}, {"sources", "DELETE"}, {"autofill", "POST"},
+		{"upload", "POST"}, {"remove_doc", "DELETE"}, {"autofill", "POST"},
 		{"suggestions", "POST"}, {"audit", "POST"}, {"", "PATCH"}, {"assist", "POST"},
 	} {
 		if why := collectionWriteRefusal(c, "bob", a.action, a.method, false); why != "" {
@@ -28,6 +29,11 @@ func TestACollectionMaintainerCuratesButDoesNotOwn(t *testing.T) {
 		if collectionWriteRefusal(c, "bob", a.action, a.method, false) == "" {
 			t.Errorf("a maintainer may %s %q", a.method, a.action)
 		}
+	}
+	carolAdds := c
+	carolAdds.Contributors = []string{"carol"}
+	if collectionWriteRefusal(carolAdds, "carol", "remove_doc", "DELETE", false) == "" {
+		t.Error("a contributor may take a document out")
 	}
 	if collectionWriteRefusal(c, "carol", "suggestions", "POST", false) == "" {
 		t.Error("a reader may review suggestions")
@@ -102,6 +108,15 @@ func TestACollectionMaintainerThroughTheRoutes(t *testing.T) {
 	}
 	if w := as("carol", "GET", "/api/collections/col-1/suggestions", ""); w.Code != http.StatusForbidden {
 		t.Errorf("a reader sees the suggestions: %d", w.Code)
+	}
+	// Taking a document out: the maintainer may, through the page's own
+	// route; a reader may not.
+	PutChunks(VectorDB, []EmbeddedChunk{{ID: "c1", Source: collectionSource("col-1"), ReportID: "doc-1", Text: "stale runbook"}})
+	if w := as("carol", "DELETE", "/api/collections/col-1/sources/doc-1", ""); w.Code != http.StatusForbidden {
+		t.Errorf("a reader's remove answered %d", w.Code)
+	}
+	if w := as("bob", "DELETE", "/api/collections/col-1/sources/doc-1", ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"removed":1`) {
+		t.Errorf("the maintainer could not remove a document: %d %s", w.Code, w.Body.String())
 	}
 	// Taken off the share, off the maintainers too.
 	if w := as("alice", "PATCH", "/api/collections/col-1", `{"allowed_users":["carol"]}`); w.Code != 200 {

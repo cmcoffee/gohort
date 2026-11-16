@@ -991,9 +991,10 @@ func (T *OrchestrateApp) collectionSources(call *jsonapi.Call) (any, error) {
 	return map[string]any{"sources": out}, nil
 }
 
-// collectionSourceDelete removes a single document's chunks.
+// collectionSourceDelete removes a single document's chunks: the owner's or a
+// maintainer's to do, under the same name as an agent's remove_doc.
 func (T *OrchestrateApp) collectionSourceDelete(call *jsonapi.Call, _ struct{}) (any, error) {
-	c, cerr := T.collectionAt(call, "sources/"+call.R.PathValue("doc"))
+	c, cerr := T.collectionAt(call, "remove_doc")
 	if cerr != nil {
 		return nil, cerr
 	}
@@ -1816,6 +1817,9 @@ var collectionMaintainerActions = map[string]bool{
 	"audit":       true,
 	// Help writing the description, which a maintainer may change.
 	"assist": true,
+	// Taking a document out: what is in it is the maintainer's to look
+	// after. The page's Remove and an agent's remove_doc are the same act.
+	"remove_doc": true,
 }
 
 // What a viewer may do with a collection, as the page needs it: the owner
