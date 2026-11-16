@@ -101,3 +101,46 @@ Suggested sources, Held for you and Suggestions stay their own sections.
 - `ClassifyOnAutofill` is no longer read; it stays on the record so stored
   collections and bundles still decode. The plan's two fields travel in
   bundles with the rest.
+
+## Submitters and versions (2026-11-15)
+
+Status: built (2026-11-15). Supersedes "Curation by Agent" above.
+
+### What changed
+
+- **Curation is one setting: Auto-Curation** off, every week or every month.
+  The plan and Run now are as above. No agent is ever in charge: "Curation by
+  Agent" and "Hand Curated" are gone as modes (off is hand curated). The
+  guided setup asks Auto-Curation (weekly) or Hand Curated.
+- **Agents submit; they do not curate.** The owner names which of their
+  agents may add documents to a collection (`Collection.Submitters`, agent id
+  to trust), each **Checked** (every submission through the collection check,
+  and the second source for a secondary page; held or turned away when it
+  does not pass) or **Always allow** (added as sent, for a process the owner
+  trusts, such as one fetching the latest admin guide). A submitter's scoped
+  `collection` tool can add a page, a file or text, and list what is in it;
+  it cannot remove. Builder sets one with `collections update
+  submitter=<agent> trust=checked|always|remove`.
+- **An agent stored as curator by an earlier version** reads as a Checked
+  submitter, and moves into the submitters on the owner's first save. No
+  migration.
+- **Suggestions** from reading agents go to the owner; links in them are
+  checked by the next plan run, as before.
+
+### Older versions
+
+A document replaced by a newer one is kept and marked, not removed: its
+passages carry the chunk provenance core already reserved for this
+(`Reason: superseded`, `Successor: <newer doc id>`). Core's hybrid search
+lowers such passages (x0.7) before its final cut and labels each hit with
+the newer document's title (`SearchHit.SupersededBy`), so a general question
+gets the current version first and a question only the older version answers
+still finds it. It applies to every search path, the agents' own included,
+because the mark lives on the passages.
+
+Marked by: the check's `supersedes` answer (plan runs and checked
+submissions), a submitter naming the document it replaces (`supersedes=`),
+or the owner or a maintainer on the documents list (Version). Removing the
+newer document makes the older one current again. Adding under an existing
+title still replaces that document outright, for one current version.
+

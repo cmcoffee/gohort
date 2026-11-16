@@ -17,11 +17,10 @@ func TestThereIsNoHiddenCuratingAgent(t *testing.T) {
 	}
 }
 
-// The collection page's Curation is the choice of who runs the plan (Auto-
-// Curation and Hand Curated at either end, Curation by Agent between them
-// only when there are agents to pick), its schedule, the plan itself to draft
-// and edit (search terms and rules, each list naming what it adds), and Run
-// now, each refreshing what it changes.
+// The collection page's Curation is Auto-Curation (the plan's schedule: off,
+// weekly or monthly), the plan itself to draft and edit (search terms and
+// rules, each list naming what it adds), and Run now, each refreshing what
+// it changes. No agent is put in charge.
 func TestCurationIsThePlanAndWhenItRuns(t *testing.T) {
 	withStores(t)
 	app := &KnowledgeApp{}
@@ -39,14 +38,12 @@ func TestCurationIsThePlanAndWhenItRuns(t *testing.T) {
 	}
 	blob, _ := json.Marshal(s.Body)
 	out := string(blob)
-	if strings.Contains(out, `"label":"Curation by Agent"`) {
-		t.Error("Curation by Agent is offered to someone with no agents to pick")
+	if strings.Contains(out, `"label":"Curation by Agent"`) || strings.Contains(out, `"field":"curation"`) {
+		t.Error("Curation still asks who is in charge")
 	}
 	for _, want := range []string{
-		`"options":[{"value":"auto","label":"Auto-Curation"`,
-		`{"value":"hand","label":"Hand Curated"`,
-		`{"field":"refresh","label":"Schedule","type":"select"`,
-		`"show_when":"curation:auto|agent"`,
+		`{"field":"refresh","label":"Auto-Curation","type":"select"`,
+		`{"value":"never","label":"Off"`,
 		`{"value":"week","label":"Every week"`,
 		`"source":"/orchestrate/api/collections/col-1/plan/draft"`,
 		`"progress_source":"/orchestrate/api/collections/col-1/plan/draft/progress"`,

@@ -82,13 +82,15 @@ func (T *OrchestrateApp) heldURL(c Collection, url string) bool {
 	return false
 }
 
-// agentPageCheck is the check as the agent in charge of a collection meets
-// it, through its scoped tool: a line for the tool result, and whether the
-// page goes in. Text without an address (add_text) that contradicts the
-// collection is turned away rather than held: there is no page to add later.
-func (T *OrchestrateApp) agentPageCheck(ctx context.Context, c Collection, cand vetCandidate) (string, bool) {
+// agentPageCheck is the check as a checked submitter meets it, through its
+// scoped tool: a line for the tool result, whether the page goes in, and the
+// document it replaces when the check found it a newer version (marked as
+// the older one once this is in: afterSubmit). Text without an address that
+// does not pass is turned away rather than held: there is no page to add
+// later.
+func (T *OrchestrateApp) agentPageCheck(ctx context.Context, c Collection, cand vetCandidate) (string, bool, string) {
 	if cand.URL != "" && T.heldURL(c, cand.URL) {
-		return "Not added: this page is already held for the owner, who decides on it from the collection's page. Do not add it another way.", false
+		return "Not added: this page is already held for the owner, who decides on it from the collection's page. Do not add it another way.", false, ""
 	}
 	res := T.checkPage(ctx, c, cand, nil)
 	Log("[orchestrate.vet] collection=%s page=%q answer=%q against=%q other=%q err=%v", c.ID, chFirst(cand.URL, cand.Title), res.Answer, res.AgainstTitle, res.OtherURL, res.Err)
@@ -98,18 +100,18 @@ func (T *OrchestrateApp) agentPageCheck(ctx context.Context, c Collection, cand 
 	}
 	switch {
 	case res.Answer == vetSupersedes:
-		return fmt.Sprintf("It is a newer version of %q: name that one in your reply as a proposed removal.", res.AgainstTitle) + confirmed, true
+		return strings.TrimSpace(confirmed), true, res.AgainstDoc
 	case res.addsIt():
-		return strings.TrimSpace(confirmed), true
+		return strings.TrimSpace(confirmed), true, ""
 	case heldFor(res) != "" && cand.URL != "":
 		if err := T.holdPage(c, cand, res); err != nil {
-			return "Not added: " + res.note() + ". It could not be held for the owner either (" + err.Error() + "); say so in your reply.", false
+			return "Not added: " + res.note() + ". It could not be held for the owner either (" + err.Error() + "); say so in your reply.", false, ""
 		}
-		return "Not added: " + res.note() + ". It is held for the owner to decide on the collection's page; say so in your reply, and do not add it another way.", false
+		return "Not added: " + res.note() + ". It is held for the owner to decide on the collection's page; say so in your reply, and do not add it another way.", false, ""
 	case heldFor(res) != "":
-		return "Not added: " + res.note() + ". Say so in your reply to the owner.", false
+		return "Not added: " + res.note() + ". Say so in your reply to the owner.", false, ""
 	}
-	return capitalize(res.note()) + ".", false
+	return capitalize(res.note()) + ".", false, ""
 }
 
 // capitalize upper-cases a line's first letter.
@@ -545,29 +547,4 @@ func (T *OrchestrateApp) collectionHeldSettleStop(call *jsonapi.Call, _ struct{}
 		run.stop()
 	}
 	return map[string]any{"ok": true}, nil
-}
-
-// checkedAddText is add_text for the agent in charge: the text is checked
-// before inner adds it, and turned away when it contradicts the collection.
-func (T *OrchestrateApp) checkedAddText(inner func(map[string]any, *ToolSession) (string, error)) func(map[string]any, *ToolSession) (string, error) {
-	return func(args map[string]any, sess *ToolSession) (string, error) {
-		if sess == nil || sess.DB == nil || sess.Username == "" {
-			return inner(args, sess)
-		}
-		c, ok := loadCollection(sess.DB, sess.Username, strings.TrimSpace(stringArg(args, "id")))
-		if !ok {
-			return inner(args, sess)
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), vetTimeout)
-		note, add := T.agentPageCheck(ctx, c, vetCandidate{Title: stringArg(args, "title"), Text: stringArg(args, "text")})
-		cancel()
-		if !add {
-			return note, nil
-		}
-		out, err := inner(args, sess)
-		if err != nil || note == "" {
-			return out, err
-		}
-		return out + " " + note, nil
-	}
 }

@@ -134,7 +134,7 @@ func TestAnAgentsAddIsCheckedAndAConflictHeld(t *testing.T) {
 	f := vetFixture(t, map[string]string{bad: "The audit log is on by default.", good: "Backups go to a dated archive."},
 		FakeTurn{Content: vetReply("conflicts", 1, "page: on; reference: off")},
 		FakeTurn{Content: vetReply("adds", 0, "")})
-	tool := f.T.stewardToolWithQueue([]Collection{f.c}).(*GroupedTool)
+	tool := f.T.submitTool([]Collection{f.c}, "sub").(*GroupedTool)
 	add, _ := tool.Action("add_url")
 	sess := &ToolSession{DB: f.store("alice"), Username: "alice"}
 
@@ -152,9 +152,11 @@ func TestAnAgentsAddIsCheckedAndAConflictHeld(t *testing.T) {
 	if n := len(f.T.listSuggestions(f.c)); n != 0 {
 		t.Errorf("a held page is in the curator's queue: %d", n)
 	}
-	resolve, _ := tool.Action("resolve_suggestion")
-	if _, err := resolve.Handler(map[string]any{"suggestion_id": held[0].ID, "outcome": "applied"}, sess); err == nil {
-		t.Error("the curator closed a held page")
+	if _, has := tool.Action("resolve_suggestion"); has {
+		t.Error("a submitter can work the suggestions queue")
+	}
+	if _, has := tool.Action("remove_doc"); has {
+		t.Error("a submitter can remove documents")
 	}
 	calls := f.llm.Calls()
 	if out, _ := add.Handler(map[string]any{"url": bad}, sess); !strings.Contains(out, "already held") || f.llm.Calls() != calls {
@@ -177,7 +179,7 @@ func TestAnAgentsAddIsCheckedAndAConflictHeld(t *testing.T) {
 // contradicts, since there is no page to hold.
 func TestTheCuratorsTextIsChecked(t *testing.T) {
 	f := vetFixture(t, nil, FakeTurn{Content: vetReply("conflicts", 1, "on vs off")})
-	tool := f.T.stewardToolWithQueue([]Collection{f.c}).(*GroupedTool)
+	tool := f.T.submitTool([]Collection{f.c}, "sub").(*GroupedTool)
 	add, _ := tool.Action("add_text")
 	out, err := add.Handler(map[string]any{"title": "Note", "text": "The audit log is on by default."}, &ToolSession{DB: f.store("alice"), Username: "alice"})
 	if err != nil || !strings.Contains(out, "Not added") {

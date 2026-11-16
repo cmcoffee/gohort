@@ -34,13 +34,20 @@ func createCollection(t *testing.T, T *OrchestrateApp, udb Database, user string
 
 // The guided setup's answers become what a collection already has: their own
 // words and what each answer says as its description, the sources to prefer
-// and leave out as its filter rules, the curator when "Look after it for me"
-// was picked, and the agents that read it. The plain form's name and
+// and leave out as its filter rules, a weekly Auto-Curation schedule when
+// that was picked, and the agents that read it. The plain form's name and
 // description make the same collection they always did.
 func TestAGuidedCollectionIsMadeFromItsAnswers(t *testing.T) {
 	T, udb, user := newTestOrchestrate(t)
 	pinRootDB(t)
-	const curator = collectionAutoCurator
+	PreInitScheduler()
+	clearRefresh := func() {
+		for _, task := range ListScheduledTasks(collectionRefreshKind) {
+			UnscheduleTask(task.ID)
+		}
+	}
+	clearRefresh()
+	t.Cleanup(clearRefresh)
 	mine, err := saveAgent(udb, AgentRecord{Owner: user, Name: "Ada", OrchestratorPrompt: "p"})
 	if err != nil {
 		t.Fatal(err)
@@ -65,8 +72,8 @@ func TestAGuidedCollectionIsMadeFromItsAnswers(t *testing.T) {
 	if c.FilterRules != "Prefer kubernetes.io\nSkip example-blog.test" {
 		t.Errorf("filter rules: %q", c.FilterRules)
 	}
-	if c.CuratorAgent != curator {
-		t.Errorf("Auto-Curation was not stored: %q", c.CuratorAgent)
+	if p, _, _, ok := refreshScheduled(user, c.ID); !ok || p.Every != "week" || c.CuratorAgent != "" {
+		t.Errorf("Auto-Curation should schedule its plan weekly, and store no curator: %+v %v %q", p, ok, c.CuratorAgent)
 	}
 	if a, _ := loadAgent(udb, mine.ID); len(a.AttachedCollections) != 1 || a.AttachedCollections[0] != c.ID {
 		t.Errorf("their agent does not read it: %v", a.AttachedCollections)
@@ -75,16 +82,10 @@ func TestAGuidedCollectionIsMadeFromItsAnswers(t *testing.T) {
 		t.Errorf("someone else's agent was given it: %v", b.AttachedCollections)
 	}
 
-	// Hand Curated stores nobody. Curation by Agent puts their agent in
-	// charge, and not someone else's.
-	if c := createCollection(t, T, udb, user, map[string]any{"name": "Notes", "curation": "hand"}); c.CuratorAgent != "" {
-		t.Errorf("hand curated, yet curated by %q", c.CuratorAgent)
-	}
-	if c := createCollection(t, T, udb, user, map[string]any{"name": "Mine", "curation": "agent", "curator_agent": mine.ID}); c.CuratorAgent != mine.ID {
-		t.Errorf("Curation by Agent: %q", c.CuratorAgent)
-	}
-	if c := createCollection(t, T, udb, user, map[string]any{"name": "Theirs", "curation": "agent", "curator_agent": theirs.ID}); c.CuratorAgent != "" {
-		t.Errorf("someone else's agent was made curator: %q", c.CuratorAgent)
+	// Hand Curated schedules nothing, and stores no curator.
+	hand := createCollection(t, T, udb, user, map[string]any{"name": "Notes", "curation": "hand"})
+	if _, _, _, ok := refreshScheduled(user, hand.ID); ok || hand.CuratorAgent != "" {
+		t.Errorf("hand curated, yet scheduled or curated by %q", hand.CuratorAgent)
 	}
 	// The description they settled on is kept, rather than their first words.
 	if c := createCollection(t, T, udb, user, map[string]any{"name": "Drafted", "guided": "true", "about": "k8s stuff",
@@ -95,18 +96,6 @@ func TestAGuidedCollectionIsMadeFromItsAnswers(t *testing.T) {
 	plain := createCollection(t, T, udb, user, map[string]any{"name": "Plain", "description": "  Just this.  "})
 	if plain.Description != "Just this." || plain.FilterRules != "" || plain.CuratorAgent != "" {
 		t.Errorf("the plain form's collection changed shape: %+v", plain)
-	}
-}
-
-// The curator's run is told the owner's rules, so preferred and excluded
-// sources steer Curate now as they steer Auto-fill.
-func TestTheCurateBriefCarriesTheRules(t *testing.T) {
-	b := curateBrief(Collection{Name: "K", FilterRules: "Prefer kubernetes.io\nSkip example-blog.test"}, 0, 10)
-	if !strings.Contains(b, "Prefer kubernetes.io\nSkip example-blog.test") {
-		t.Errorf("the brief has no rules:\n%s", b)
-	}
-	if strings.Contains(curateBrief(Collection{Name: "K"}, 0, 10), "rules") {
-		t.Error("a collection with no rules is told about rules")
 	}
 }
 
@@ -133,65 +122,3 @@ func TestTheGuidedSetupStartsWhatItWasAsked(t *testing.T) {
 	}
 }
 
-// The collection page sends how it is curated: Hand Curated clears the
-// curator, Auto-Curation stores its marker (the plan on a schedule),
-// Curation by Agent sets one of the person's own agents and changes nothing
-// until one is picked; the marker is never taken as an agent of theirs. A caller sending only curator_agent
-// sets it as before. Reading it back gives the choice and, for Curation by
-// Agent, which one.
-func TestTheCurationChoiceIsStoredAsTheCurator(t *testing.T) {
-	T, udb, user := newTestOrchestrate(t)
-	pinRootDB(t)
-	const curator = collectionAutoCurator
-	mine, _ := saveAgent(udb, AgentRecord{Owner: user, Name: "Ada", OrchestratorPrompt: "p"})
-	saveCollection(udb, Collection{ID: "col-c", Name: "C", Owner: user})
-	save := func(body map[string]any) (Collection, int) {
-		raw, _ := json.Marshal(body)
-		w := httptest.NewRecorder()
-		r := asUser(httptest.NewRequest(http.MethodPost, "/api/collections/col-c/steward", strings.NewReader(string(raw))), user)
-		r.SetPathValue("id", "col-c")
-		r.Header.Set("Content-Type", "application/json")
-		jsonapi.Post(T.DB, T.collectionStewardSave)(w, r)
-		c, _ := loadCollection(udb, user, "col-c")
-		return c, w.Code
-	}
-	read := func() map[string]any {
-		r := asUser(httptest.NewRequest(http.MethodGet, "/api/collections/col-c/steward", nil), user)
-		r.SetPathValue("id", "col-c")
-		out, err := T.collectionSteward(&jsonapi.Call{W: httptest.NewRecorder(), R: r, User: user, UDB: udb})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return out.(map[string]any)
-	}
-	if c, code := save(map[string]any{"curation": "auto"}); code != 200 || c.CuratorAgent != curator {
-		t.Fatalf("Auto-Curation: %d %q", code, c.CuratorAgent)
-	}
-	if got := read(); got["curation"] != "auto" || got["curator_agent"] != "" {
-		t.Errorf("read back: %v", got)
-	}
-	if _, code := save(map[string]any{"curation": "agent", "curator_agent": collectionAutoCurator}); code == 200 {
-		t.Error("Curation by Agent took the Auto-Curation marker as an agent")
-	}
-	if c, _ := save(map[string]any{"curation": "agent", "curator_agent": ""}); c.CuratorAgent != curator {
-		t.Errorf("Curation by Agent with none picked yet changed the curator: %q", c.CuratorAgent)
-	}
-	if c, code := save(map[string]any{"curation": "agent", "curator_agent": mine.ID}); code != 200 || c.CuratorAgent != mine.ID {
-		t.Fatalf("Curation by Agent: %d %q", code, c.CuratorAgent)
-	}
-	if got := read(); got["curation"] != "agent" || got["curator_agent"] != mine.ID {
-		t.Errorf("read back: %v", got)
-	}
-	if _, code := save(map[string]any{"curation": "agent", "curator_agent": "nobody"}); code == 200 {
-		t.Error("an agent that is not theirs was taken")
-	}
-	if c, _ := save(map[string]any{"curation": "hand"}); c.CuratorAgent != "" {
-		t.Errorf("Hand Curated left %q in charge", c.CuratorAgent)
-	}
-	if got := read(); got["curation"] != "hand" {
-		t.Errorf("read back: %v", got)
-	}
-	if c, _ := save(map[string]any{"curator_agent": "Ada"}); c.CuratorAgent != mine.ID {
-		t.Errorf("a caller naming the curator alone: %q", c.CuratorAgent)
-	}
-}

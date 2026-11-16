@@ -38,7 +38,7 @@ func TestTheDescriptionGetsTheSharedAssistant(t *testing.T) {
 // which sits far down the page under everything done by hand.
 func TestTheHeaderSaysWhoKeepsTheCollection(t *testing.T) {
 	page := documentsDetailBody + documentsDetailAssets
-	for _, want := range []string{`<div id="docs-keeper"`, `c.curator_agent`, `'Curation ↓'`, "'app-knowledge-curator'", `scrollIntoView`} {
+	for _, want := range []string{`<div id="docs-keeper"`, `c.auto_curation`, `'Auto-Curation every '`, `'Curation ↓'`, `scrollIntoView`} {
 		if !strings.Contains(page, want) {
 			t.Errorf("the collection page is missing %s", want)
 		}
@@ -110,6 +110,22 @@ func TestTheCollectionPageOffersOnlyWhatTheViewerMayDo(t *testing.T) {
 	for _, id := range []string{`id="docs-export" class="ui-row-btn" title=`, `<input id="docs-q" type="text"`} {
 		if !strings.Contains(page, id) {
 			t.Errorf("a reader's control is marked or gone: %s", id)
+		}
+	}
+}
+
+// A document that a newer one replaced says so on its row, and the owner or a
+// maintainer can set or clear which document replaced it.
+func TestADocumentShowsAndSetsItsVersion(t *testing.T) {
+	page := documentsDetailBody + documentsDetailAssets
+	for _, want := range []string{
+		"'older version, replaced by ' + (s.superseded_by_name || s.superseded_by)",
+		"verBtn.setAttribute('data-need', 'maintain');",
+		"'/sources/' + encodeURIComponent(s.id) + '/superseded'",
+		"body: JSON.stringify({by: pick.value}),",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the documents list is missing %s", want)
 		}
 	}
 }

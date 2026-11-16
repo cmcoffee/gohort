@@ -1,8 +1,6 @@
 package orchestrate
 
 import (
-	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,15 +18,12 @@ func curateCall(df *dispatchFixture, method, user, id string) *jsonapi.Call {
 	return &jsonapi.Call{W: httptest.NewRecorder(), R: r, User: user, UDB: UserDB(df.app.DB, user)}
 }
 
-// curateFixture stands in for the agent run and resets the running
-// curations, so each test starts with none.
-func curateFixture(t *testing.T, run func(ctx context.Context, agentID, brief string) (string, error)) *dispatchFixture {
+// curateFixture resets the running curations, so each test starts with none,
+// and has a running one recount its documents often.
+func curateFixture(t *testing.T) *dispatchFixture {
 	t.Helper()
 	df := newDispatchFixture(t, FakeTurn{Content: "done", Repeat: true})
-	prevRun, prevEvery := curateRunAgent, curateCountEvery
-	curateRunAgent = func(_ *OrchestrateApp, ctx context.Context, _, agentID, brief string) (string, error) {
-		return run(ctx, agentID, brief)
-	}
+	prevEvery := curateCountEvery
 	curateCountEvery = 5 * time.Millisecond
 	curations.mu.Lock()
 	prevRuns := curations.runs
@@ -44,7 +39,7 @@ func curateFixture(t *testing.T, run func(ctx context.Context, agentID, brief st
 			run.cancel()
 			<-run.done
 		}
-		curateRunAgent, curateCountEvery = prevRun, prevEvery
+		curateCountEvery = prevEvery
 	})
 	return df
 }
@@ -74,135 +69,103 @@ func waitCurate(t *testing.T, df *dispatchFixture, id string, ok func(map[string
 	return nil
 }
 
-// Curate now runs whoever curates the collection, on a run of its own: the
-// page sees it alive and how many documents it has added while it goes, a
-// second press joins it rather than starting another, and once it ends the
-// page reads how it went, with the curator's own report.
-func TestCurateNowRunsTheCuratorWithProgressAndOutcome(t *testing.T) {
+// blockingSearch has the plan's searches wait for release, so a test can see
+// a run while it goes.
+func blockingSearch(t *testing.T) chan struct{} {
+	t.Helper()
 	release := make(chan struct{})
-	var gotAgent, gotBrief string
-	df := curateFixture(t, func(ctx context.Context, agentID, brief string) (string, error) {
-		gotAgent, gotBrief = agentID, brief
-		PutChunks(VectorDB, []EmbeddedChunk{{ID: "c1", Source: collectionSource("col-a") + "page", ReportID: "r1", Text: "runbook"}})
-		select {
-		case <-release:
-		case <-ctx.Done():
-			return "", ctx.Err()
-		}
-		return "Added the deploy runbook from the project's own docs.", nil
-	})
-	saveCollection(df.udb, Collection{ID: "col-a", Name: "Runbooks", Owner: "u", Description: "How we deploy and roll back."})
+	prevSearch, prevReady := collectionWebSearch, planSearchReady
+	collectionWebSearch = func(string) string { <-release; return "" }
+	planSearchReady = func() bool { return true }
+	t.Cleanup(func() { collectionWebSearch, planSearchReady = prevSearch, prevReady })
+	return release
+}
 
-	// By hand, with no plan yet: Run now is offered, and a start is refused
-	// saying what to do. Nothing reaches the agent.
+// Run now carries out the plan on a run of its own: the page sees it alive
+// while it goes, a second press joins it rather than starting another, and
+// once it ends the page reads how it went. With no plan it is refused saying
+// what to do.
+func TestRunNowRunsThePlanWithProgressAndOutcome(t *testing.T) {
+	df := curateFixture(t)
+	release := blockingSearch(t)
+	saveCollection(df.udb, Collection{ID: "col-n", Name: "N", Owner: "u"})
+	if _, err := df.app.collectionCurateStart(curateCall(df, http.MethodPost, "u", "col-n"), struct{}{}); err == nil || !strings.Contains(err.Error(), "Draft a plan") {
+		t.Fatalf("a collection with no plan: %v", err)
+	}
+
+	saveCollection(df.udb, Collection{ID: "col-a", Name: "Runbooks", Owner: "u", SearchTerms: []string{"deploy runbook"}})
 	items, err := df.app.collectionCurateItems(curateCall(df, http.MethodGet, "u", "col-a"))
-	if err != nil || len(items.([]map[string]any)) != 1 || items.([]map[string]any)[0]["item"] != "Run now" {
-		t.Fatalf("a collection curated by hand should offer Run now: %v %v", items, err)
+	if err != nil || items.([]map[string]any)[0]["item"] != "Run now" || !strings.Contains(items.([]map[string]any)[0]["history"].(string), "1 search term") {
+		t.Fatalf("the Run now row: %v %v", items, err)
 	}
-	if _, err := df.app.collectionCurateStart(curateCall(df, http.MethodPost, "u", "col-a"), struct{}{}); err == nil || !strings.Contains(err.Error(), "Draft a plan") {
-		t.Fatalf("starting with no plan: %v", err)
-	}
-
-	saveCollection(df.udb, Collection{ID: "col-a", Name: "Runbooks", Owner: "u", Description: "How we deploy and roll back.", CuratorAgent: df.agent.ID})
-	items, _ = df.app.collectionCurateItems(curateCall(df, http.MethodGet, "u", "col-a"))
-	if rows := items.([]map[string]any); len(rows) != 1 || !strings.Contains(rows[0]["desc"].(string), df.agent.Name) {
-		t.Fatalf("the row should name the curator: %v", items)
-	}
-
 	out, err := df.app.collectionCurateStart(curateCall(df, http.MethodPost, "u", "col-a"), struct{}{})
 	if err != nil || out.(map[string]any)["running"] != true {
 		t.Fatalf("start: %v %v", out, err)
 	}
 	waitCurate(t, df, "col-a", func(s map[string]any) bool {
 		p, _ := s["progress"].(string)
-		return strings.Contains(p, "Running the plan") && strings.Contains(p, "1 document added")
+		return strings.Contains(p, "Running the plan")
 	})
 	again, _ := df.app.collectionCurateStart(curateCall(df, http.MethodPost, "u", "col-a"), struct{}{})
-	if !strings.Contains(again.(map[string]any)["message"].(string), "Already") {
-		t.Errorf("a second press started another run: %v", again)
+	if !strings.Contains(again.(map[string]any)["message"].(string), "Already running") {
+		t.Errorf("a second press should join the run: %v", again)
 	}
 	close(release)
 	end := waitCurate(t, df, "col-a", func(s map[string]any) bool { return s["outcome"] != nil })
-	if o := end["outcome"].(string); !strings.Contains(o, "1 document added") || !strings.Contains(o, "deploy runbook") || end["progress"] != nil {
-		t.Errorf("the outcome should say what was added and carry the report: %v", end)
-	}
-	if gotAgent != df.agent.ID {
-		t.Errorf("ran %q, not the curator", gotAgent)
-	}
-	for _, want := range []string{"Runbooks", "How we deploy and roll back.", "Do not remove anything", "It holds 0 documents"} {
-		if !strings.Contains(gotBrief, want) {
-			t.Errorf("the brief is missing %q:\n%s", want, gotBrief)
-		}
+	if o := end["outcome"].(string); !strings.HasPrefix(o, "Done in") || !strings.Contains(o, "0 documents added") {
+		t.Errorf("outcome %q", o)
 	}
 }
 
-// Stop ends the run at the curator's next step and says so; a run that
-// fails says why.
-func TestCurateNowStopsAndReportsFailure(t *testing.T) {
-	fail := false
-	df := curateFixture(t, func(ctx context.Context, _, _ string) (string, error) {
-		if fail {
-			return "", errors.New("the model is unreachable")
-		}
-		<-ctx.Done()
-		return "", ctx.Err()
-	})
-	saveCollection(df.udb, Collection{ID: "col-b", Name: "B", Owner: "u", CuratorAgent: df.agent.ID})
-	if _, err := df.app.collectionCurateStart(curateCall(df, http.MethodPost, "u", "col-b"), struct{}{}); err != nil {
+// Stop ends the run and says so.
+func TestRunNowStops(t *testing.T) {
+	df := curateFixture(t)
+	release := blockingSearch(t)
+	saveCollection(df.udb, Collection{ID: "col-s", Name: "S", Owner: "u", SearchTerms: []string{"one", "two"}})
+	if _, err := df.app.collectionCurateStart(curateCall(df, http.MethodPost, "u", "col-s"), struct{}{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := df.app.collectionCurateStop(curateCall(df, http.MethodPost, "u", "col-b"), struct{}{}); err != nil {
+	waitCurate(t, df, "col-s", func(s map[string]any) bool { return s["progress"] != nil })
+	if _, err := df.app.collectionCurateStop(curateCall(df, http.MethodPost, "u", "col-s"), struct{}{}); err != nil {
 		t.Fatal(err)
 	}
-	end := waitCurate(t, df, "col-b", func(s map[string]any) bool { return s["outcome"] != nil })
-	if !strings.HasPrefix(end["outcome"].(string), "Stopped") {
-		t.Errorf("a stopped run: %v", end)
-	}
-
-	fail = true
-	if _, err := df.app.collectionCurateStart(curateCall(df, http.MethodPost, "u", "col-b"), struct{}{}); err != nil {
-		t.Fatal(err)
-	}
-	end = waitCurate(t, df, "col-b", func(s map[string]any) bool {
-		o, _ := s["outcome"].(string)
-		return strings.HasPrefix(o, "Failed")
-	})
-	if !strings.Contains(end["outcome"].(string), "unreachable") {
-		t.Errorf("a failed run should say why: %v", end)
+	close(release)
+	end := waitCurate(t, df, "col-s", func(s map[string]any) bool { return s["outcome"] != nil })
+	if o := end["outcome"].(string); !strings.HasPrefix(o, "Stopped") {
+		t.Errorf("outcome %q", o)
 	}
 }
 
-// Only the collection's owner runs its curator: somebody else is refused
-// before anything starts.
-func TestCurateNowIsTheOwners(t *testing.T) {
-	ran := false
-	df := curateFixture(t, func(context.Context, string, string) (string, error) { ran = true; return "", nil })
+// Only the collection's owner runs its plan: somebody it is shared with is
+// refused before anything starts, and their copy of the record leaves out its
+// schedule.
+func TestRunNowIsTheOwners(t *testing.T) {
+	df := curateFixture(t)
+	release := blockingSearch(t)
+	close(release)
 	df.app.DB.Set(AuthTable, "user:bob", AuthUser{Username: "bob"})
 	// Saved where a share resolves from too: the collections bucket, which in
 	// a running server is the app's own store and in this fixture is not.
-	shared := Collection{ID: "col-c", Name: "C", Owner: "u", CuratorAgent: df.agent.ID, AllowedUsers: []string{"bob"}}
+	shared := Collection{ID: "col-c", Name: "C", Owner: "u", AllowedUsers: []string{"bob"}, SearchTerms: []string{"x"}}
 	saveCollection(df.udb, shared)
 	saveCollection(UserDB(CollectionsDB(), "u"), shared)
 	if _, ok := loadCollection(UserDB(df.app.DB, "bob"), "bob", "col-c"); !ok {
 		t.Fatal("setup: the collection is not shared with bob")
 	}
 	if _, err := df.app.collectionCurateStart(curateCall(df, http.MethodPost, "bob", "col-c"), struct{}{}); err == nil {
-		t.Error("someone the collection is shared with started its curator")
+		t.Error("someone the collection is shared with started its plan")
 	}
 	if _, err := df.app.collectionCurateItems(curateCall(df, http.MethodGet, "bob", "col-c")); err == nil {
-		t.Error("someone the collection is shared with was offered Curate now")
+		t.Error("someone the collection is shared with was offered Run now")
 	}
-	// The record says who curates it to its owner, for the page header, and
-	// to nobody else.
-	if rec, err := df.app.collectionGet(curateCall(df, http.MethodGet, "u", "col-c")); err != nil || rec.(map[string]any)["curator_agent"] != df.agent.ID {
-		t.Errorf("the owner's record does not say who curates it: %v %v", rec, err)
+	if rec, err := df.app.collectionGet(curateCall(df, http.MethodGet, "u", "col-c")); err != nil || rec.(map[string]any)["auto_curation"] != "never" {
+		t.Errorf("the owner's record does not say its schedule: %v %v", rec, err)
 	}
-	if rec, err := df.app.collectionGet(curateCall(df, http.MethodGet, "bob", "col-c")); err != nil || rec.(map[string]any)["curator_agent"] != "" {
-		t.Errorf("a reader's record names the owner's curator: %v %v", rec, err)
+	if rec, err := df.app.collectionGet(curateCall(df, http.MethodGet, "bob", "col-c")); err != nil || rec.(map[string]any)["auto_curation"] != "" {
+		t.Errorf("a reader's record carries the owner's schedule: %v %v", rec, err)
 	}
-	time.Sleep(20 * time.Millisecond)
-	if ran {
-		t.Error("the curator ran for a non-owner")
+	if _, ok := curations.get("col-c"); ok {
+		t.Error("a run started for a non-owner")
 	}
 }
 
@@ -222,3 +185,4 @@ func TestCurateTimesReadAsWords(t *testing.T) {
 		t.Errorf("curateElapsed(41s) = %q", got)
 	}
 }
+

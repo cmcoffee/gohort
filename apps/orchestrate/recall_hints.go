@@ -437,7 +437,10 @@ func formatRecallHints(promoted []SearchHit, scored, graph []recallHint) string 
 			if age := knowledgeAgeNote(h.Date); age != "" {
 				name = truncate(name, 80) + " " + age
 			}
-			fmt.Fprintf(&b, "── %s (%.2f) ──\n%s\n", truncate(name, 100), h.Score, truncate(strings.TrimSpace(h.Text), recallPromoteMaxChars))
+			if h.SupersededBy != "" {
+				name = truncate(name, 60) + " [older version, replaced by " + truncate(h.SupersededBy, 40) + "]"
+			}
+			fmt.Fprintf(&b, "── %s (%.2f) ──\n%s\n", truncate(name, 140), h.Score, truncate(strings.TrimSpace(h.Text), recallPromoteMaxChars))
 		}
 	}
 	if len(known) > 0 {

@@ -103,16 +103,6 @@ func refreshLine(owner, collection string) string {
 	return line
 }
 
-// refreshLead is put before the curator's brief on a refresh.
-func refreshLead(p refreshTask) string {
-	since := "it was set up"
-	if at, err := time.Parse(time.RFC3339, p.LastRan); err == nil {
-		since = "the last refresh, on " + at.Format("2 January 2006")
-	}
-	return "This is the collection's scheduled refresh, every " + p.Every + ". Look first for what is new since " + since +
-		": new versions, changes, and material that has appeared, rather than going over what it already covers.\n\n"
-}
-
 // handleCollectionRefresh is a refresh firing.
 func (T *OrchestrateApp) handleCollectionRefresh(ctx context.Context, raw json.RawMessage) {
 	var p refreshTask
@@ -124,8 +114,8 @@ func (T *OrchestrateApp) handleCollectionRefresh(ctx context.Context, raw json.R
 		return
 	}
 	c, found := loadCollection(UserDB(T.DB, p.Owner), p.Owner, p.Collection)
-	if !found || c.Owner != p.Owner || strings.TrimSpace(c.CuratorAgent) == "" {
-		Log("[orchestrate.refresh] collection=%s owner=%s: gone or hand curated, schedule ended", p.Collection, p.Owner)
+	if !found || c.Owner != p.Owner {
+		Log("[orchestrate.refresh] collection=%s owner=%s: gone, schedule ended", p.Collection, p.Owner)
 		return
 	}
 	// The next one first, so a restart during this run does not end the chain.
@@ -143,7 +133,7 @@ func (T *OrchestrateApp) handleCollectionRefresh(ctx context.Context, raw json.R
 // runRefresh runs the curator for a refresh and waits for it, returning what
 // to note: its outcome, or why it did not run.
 func (T *OrchestrateApp) runRefresh(ctx context.Context, c Collection, p refreshTask) string {
-	run, started, err := T.startCuration(c, p.Owner, "Refreshing", refreshLead(p))
+	run, started, err := T.startCuration(c, p.Owner, "Refreshing")
 	if err != nil {
 		return "did not run: " + err.Error()
 	}

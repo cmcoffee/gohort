@@ -1,7 +1,8 @@
 package orchestrate
 
-// The narrow grant. Two agents, one corpus: A keeps it, B reads it. What these
-// hold is that A's reach stops at the collection it was put in charge of.
+// The narrow grant. Two agents, one corpus: A submits to it, B reads it. What
+// these hold is that A's reach stops at the collections it may submit to, and
+// at adding.
 
 import (
 	"strings"
@@ -20,7 +21,7 @@ func stewardCols() []Collection {
 // collection current must not arrive holding create_agent or tool_def, and must
 // not be able to mint or rename collections either.
 func TestTheStewardToolCarriesOnlyCorpusActions(t *testing.T) {
-	st := collectionStewardTool(stewardCols())
+	st := (&OrchestrateApp{}).submitTool(stewardCols(), "agent-7")
 	if st == nil {
 		t.Fatal("an agent in charge of a collection got no tool")
 	}
@@ -29,8 +30,8 @@ func TestTheStewardToolCarriesOnlyCorpusActions(t *testing.T) {
 		t.Fatalf("expected a grouped tool, got %T", st)
 	}
 	got := strings.Join(gt.ActionNames(), ",")
-	if got != "add_file,add_text,add_url,docs,remove_doc" {
-		t.Errorf("the grant is not the corpus actions: %s", got)
+	if got != "add_file,add_text,add_url,docs" {
+		t.Errorf("the grant is not seeing and adding: %s", got)
 	}
 	for _, banned := range []string{"create", "update", "list", "get"} {
 		for _, have := range gt.ActionNames() {
@@ -45,7 +46,7 @@ func TestTheStewardToolCarriesOnlyCorpusActions(t *testing.T) {
 // no parameter: a model cannot target the wrong corpus if it is never asked
 // which, so the id never has to survive a round trip through a prompt.
 func TestASingleCollectionNeedsNoID(t *testing.T) {
-	gt := collectionStewardTool(stewardCols()).(*GroupedTool)
+	gt := (&OrchestrateApp{}).submitTool(stewardCols(), "agent-7").(*GroupedTool)
 	for _, name := range gt.ActionNames() {
 		a, _ := gt.Action(name)
 		if _, has := a.Params["id"]; has {
@@ -64,20 +65,20 @@ func TestASingleCollectionNeedsNoID(t *testing.T) {
 // rewriting the call to the granted collection would teach the agent that any
 // id works, and one wrong guess writes to a corpus nobody asked it to touch.
 func TestAnUngrantedCollectionIsRefused(t *testing.T) {
-	gt := collectionStewardTool([]Collection{
-		{ID: "col-a", Name: "Runbooks", Owner: "alice", CuratorAgent: "agent-7"},
-		{ID: "col-b", Name: "Policies", Owner: "alice", CuratorAgent: "agent-7"},
-	}).(*GroupedTool)
+	gt := (&OrchestrateApp{}).submitTool([]Collection{
+		{ID: "col-a", Name: "Runbooks", Owner: "alice", Submitters: map[string]string{"agent-7": trustChecked}},
+		{ID: "col-b", Name: "Policies", Owner: "alice", Submitters: map[string]string{"agent-7": trustAlways}},
+	}, "agent-7").(*GroupedTool)
 
-	a, ok := gt.Action("remove_doc")
+	a, ok := gt.Action("add_text")
 	if !ok {
-		t.Fatal("remove_doc is missing")
+		t.Fatal("add_text is missing")
 	}
-	_, err := a.Handler(map[string]any{"id": "col-someone-else", "doc_id": "d1"}, &ToolSession{})
+	_, err := a.Handler(map[string]any{"id": "col-someone-else", "title": "t", "text": "x"}, &ToolSession{})
 	if err == nil {
-		t.Fatal("an agent reached a collection it is not in charge of")
+		t.Fatal("an agent reached a collection it may not submit to")
 	}
-	if !strings.Contains(err.Error(), "not in charge") {
+	if !strings.Contains(err.Error(), "may not add") {
 		t.Errorf("the refusal should say why: %v", err)
 	}
 	// And it must name what IS granted, or the agent has no way to correct itself.
@@ -91,7 +92,7 @@ func TestAnUngrantedCollectionIsRefused(t *testing.T) {
 // derivation edited it in place, Builder would silently inherit the
 // restrictions and lose the id parameter it depends on.
 func TestDerivingTheToolDoesNotNarrowTheOriginal(t *testing.T) {
-	_ = collectionStewardTool(stewardCols())
+	_ = (&OrchestrateApp{}).submitTool(stewardCols(), "agent-7")
 	base := collectionsListTool().(*GroupedTool)
 	a, ok := base.Action("remove_doc")
 	if !ok {
@@ -105,7 +106,7 @@ func TestDerivingTheToolDoesNotNarrowTheOriginal(t *testing.T) {
 // TestNoCollectionMeansNoTool pins that this is opt-in: an ordinary agent is
 // unchanged and pays nothing.
 func TestNoCollectionMeansNoTool(t *testing.T) {
-	if st := collectionStewardTool(nil); st != nil {
+	if st := (&OrchestrateApp{}).submitTool(nil, "agent-7"); st != nil {
 		t.Errorf("an agent in charge of nothing was handed a corpus tool: %v", st.Name())
 	}
 }
@@ -145,7 +146,7 @@ func TestInChargeMatchesTheOwnersAgentByIDOrResolvedName(t *testing.T) {
 			ID: "col-" + string(rune('a'+i)), Name: "C", Owner: "alice", CuratorAgent: stored,
 		})
 	}
-	got := curatedCollectionsFor(udb, "alice", lib.ID)
+	got := submittableCollectionsFor(udb, "alice", lib.ID)
 	if len(got) != 3 {
 		var ids []string
 		for _, c := range got {
@@ -188,7 +189,7 @@ func TestInChargeOnlyOfTheOwnersCollections(t *testing.T) {
 	if n := len(ListCollections(alice, "alice")); n != 4 {
 		t.Fatalf("setup: alice should see 4 collections, sees %d", n)
 	}
-	got := curatedCollectionsFor(alice, "alice", mine.ID)
+	got := submittableCollectionsFor(alice, "alice", mine.ID)
 	if len(got) != 1 || got[0].ID != "col-alice" {
 		var ids []string
 		for _, c := range got {
@@ -197,7 +198,7 @@ func TestInChargeOnlyOfTheOwnersCollections(t *testing.T) {
 		t.Fatalf("alice's Librarian must steward only alice's own collection, got %v", ids)
 	}
 	// And carol's agent is still in charge of carol's.
-	if got := curatedCollectionsFor(carol, "carol", theirs.ID); len(got) != 2 {
+	if got := submittableCollectionsFor(carol, "carol", theirs.ID); len(got) != 2 {
 		t.Fatalf("carol's Librarian lost its own collections: %+v", got)
 	}
 }
@@ -221,7 +222,7 @@ func (df *dispatchFixture) toolsOffered() map[string]bool {
 func TestACuratorRunByDelegationCanKeepItsCollection(t *testing.T) {
 	df := newDispatchFixture(t, FakeTurn{Content: "done", Repeat: true})
 	saveCollection(df.udb, Collection{ID: "col-a", Name: "Runbooks", Owner: "u", CuratorAgent: df.agent.ID})
-	if got := curatedCollectionsFor(UserDB(df.app.DB, "u"), "u", df.agent.ID); len(got) != 1 {
+	if got := submittableCollectionsFor(UserDB(df.app.DB, "u"), "u", df.agent.ID); len(got) != 1 {
 		t.Fatalf("the fixture's curator is not in charge of the collection: %+v", got)
 	}
 	df.run(AgentSyncRun{Kind: "scheduled", Message: "tidy the runbooks"})

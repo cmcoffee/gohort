@@ -32,10 +32,9 @@ type guidedCollection struct {
 	// Prefer and Avoid are sources to favour and to leave out.
 	Prefer json.RawMessage `json:"prefer"`
 	Avoid  json.RawMessage `json:"avoid"`
-	// Curation is how it is kept: hand, auto or agent (chooseCurator).
-	// CuratorAgent is the person's pick for Curation by Agent.
-	Curation     string `json:"curation"`
-	CuratorAgent string `json:"curator_agent"`
+	// Curation is how it is kept: "auto" runs its plan every week, anything
+	// else only when the owner presses Run now.
+	Curation string `json:"curation"`
 	// Guided marks a request from the guided setup, whose switches apply.
 	Guided json.RawMessage `json:"guided"`
 	// Start is what the guided setup starts as it creates: "suggest" (or
@@ -105,18 +104,13 @@ func (g guidedCollection) filterRules() string {
 	return strings.Join(rules, "\n")
 }
 
-// curator is the agent to put in charge, or "" for hand curated. A choice
-// that does not resolve leaves it hand curated: at creation nothing is stored
-// that the collection page would then report as missing.
-func (g guidedCollection) curator(udb Database, user string) string {
-	if g.Curation == "" {
-		return ""
+// autoCuration is the schedule Auto-Curation starts on: every week when it
+// was chosen, "" when not.
+func (g guidedCollection) autoCuration() string {
+	if strings.EqualFold(strings.TrimSpace(g.Curation), "auto") {
+		return "week"
 	}
-	curator, _, err := chooseCurator(udb, user, g.Curation, g.CuratorAgent)
-	if err != nil {
-		return ""
-	}
-	return curator
+	return ""
 }
 
 // starts is what to start as the collection is created: for the guided

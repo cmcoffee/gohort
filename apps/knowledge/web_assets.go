@@ -383,13 +383,10 @@ const documentsDetailAssets = `<style>
         // down the page, under everything you can do by hand.
         var keeper = $('#docs-keeper');
         if (keeper) {
-          // app-knowledge-curator is what Auto-Curation stores (orchestrate
-          // collectionAutoCurator).
-          keeper.textContent = c.curator_agent === 'app-knowledge-curator'
-            ? 'Auto-Curation. '
-            : c.curator_agent
-              ? 'Curation by Agent. '
-              : 'Hand Curated. ';
+          // How often its plan runs on its own (orchestrate autoCurationOf).
+          keeper.textContent = (c.auto_curation && c.auto_curation !== 'never')
+            ? 'Auto-Curation every ' + c.auto_curation + '. '
+            : 'Auto-Curation off. ';
           var jump = document.createElement('a');
           jump.href = '#';
           jump.textContent = 'Curation ↓';
@@ -623,6 +620,46 @@ const documentsDetailAssets = `<style>
     var label = $('#docs-bulk-count');
     if (label) label.textContent = count + ' selected';
   }
+  // Which document replaced this one, if any: the owner's or a maintainer's
+  // call, beside the check's (orchestrate collection_submit.go).
+  function openVersion(s, sources) {
+    var pick = document.createElement('select');
+    pick.style.cssText = 'width:100%';
+    var none = document.createElement('option');
+    none.value = ''; none.textContent = 'Current (not replaced)';
+    pick.appendChild(none);
+    sources.forEach(function(o) {
+      if (o.id === s.id) return;
+      var opt = document.createElement('option');
+      opt.value = o.id; opt.textContent = 'Replaced by ' + (o.name || o.id);
+      pick.appendChild(opt);
+    });
+    pick.value = s.superseded_by || '';
+    var modal = window.uiOpenModal({
+      title: 'Version of ' + (s.name || s.id),
+      subtitle: 'An older version stays in the collection, ranked below the document that replaced it and labelled as older.',
+      actions: [
+        {label: 'Cancel'},
+        {label: 'Save', primary: true, onClick: function(m, btn) {
+          btn.disabled = true;
+          fetch(api('/api/collections/' + encodeURIComponent(cid) + '/sources/' + encodeURIComponent(s.id) + '/superseded'), {
+            method: 'POST', credentials: 'same-origin',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({by: pick.value}),
+          }).then(function(r) {
+            if (!r.ok) return r.text().then(function(t){ throw new Error(t); });
+            modal.close();
+            loadSources();
+          }).catch(function(err) {
+            btn.disabled = false;
+            window.uiAlert('Could not save: ' + (err && err.message || err));
+          });
+        }},
+      ],
+    });
+    modal.body.appendChild(pick);
+  }
+
   function loadSources() {
     fetch(api('/api/collections/' + encodeURIComponent(cid) + '/sources'), {credentials: 'same-origin'})
       .then(function(r){ return r.ok ? r.json() : null; })
@@ -716,7 +753,19 @@ const documentsDetailAssets = `<style>
                 window.uiAlert('Remove failed: ' + (err && err.message || err));
               });
           };
-          row.appendChild(sel); row.appendChild(nm); row.appendChild(meta); row.appendChild(del);
+          // An older version says what replaced it; search ranks it below
+          // the current one. A maintainer can set or clear that here.
+          var ver = null;
+          if (s.superseded_by) {
+            ver = document.createElement('span'); ver.className = 'docs-row-meta';
+            ver.textContent = 'older version, replaced by ' + (s.superseded_by_name || s.superseded_by);
+          }
+          var verBtn = document.createElement('button'); verBtn.className = 'ui-row-btn ui-btn-sm';
+          verBtn.textContent = 'Version';
+          verBtn.title = 'Mark this as an older version of another document, or clear that';
+          verBtn.setAttribute('data-need', 'maintain');
+          verBtn.onclick = function() { openVersion(s, sources); };
+          row.appendChild(sel); row.appendChild(nm); if (ver) row.appendChild(ver); row.appendChild(meta); row.appendChild(verBtn); row.appendChild(del);
           box.appendChild(row);
         });
       });

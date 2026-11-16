@@ -28,7 +28,7 @@ import (
 
 func collectionsListTool() ChatTool {
 	gt := NewGroupedTool("collections",
-		"Manage the user's Document Collections so you can wire them into agents (attached_collections=[...]). Actions: list, get, create (mint an empty collection), update (patch name, description or curator), docs (list ingested documents), add_url (ingest one URL into the corpus), add_file (ingest a file from your workspace, such as a PDF a tool saved), add_text (ingest text you have (markdown or JSON) as one titled document; same title replaces), remove_doc (drop one document). Use add_url to pull a known authoritative source (a statute's full-text page) into a collection, add_text to save material the user gave you or you drafted WITH the user's say-so, and remove_doc to prune noise; for filling a collection from the web on a topic, its plan on the Knowledge page (Run now) is the better path.")
+		"Manage the user's Document Collections so you can wire them into agents (attached_collections=[...]). Actions: list, get, create (mint an empty collection), update (patch name or description, or say which of the user's agents may submit documents to it), docs (list ingested documents), add_url (ingest one URL into the corpus), add_file (ingest a file from your workspace, such as a PDF a tool saved), add_text (ingest text you have (markdown or JSON) as one titled document; same title replaces), remove_doc (drop one document). Use add_url to pull a known authoritative source (a statute's full-text page) into a collection, add_text to save material the user gave you or you drafted WITH the user's say-so, and remove_doc to prune noise; for filling a collection from the web on a topic, its plan on the Knowledge page (Run now) is the better path.")
 
 	gt.AddAction("list", &GroupedToolAction{
 		Description: "List every collection the user can attach: their own, ones colleagues shared with them, and the deployment's. Returns [{id, name, access, description, documents, chunks}] sorted by most-recently-updated; access is \"yours\", \"shared by <owner>\" or \"deployment\". Names are not unique across owners: an entry with name_also_used set shares its name with the listed others, so pick by access and id, and when the user named a collection without saying whose, ask which one. Use this when the user names a collection by display name and you need its ID to pass to attached_collections, or when surveying what corpus material exists for a new agent.",
@@ -161,12 +161,13 @@ func collectionsListTool() ChatTool {
 	})
 
 	gt.AddAction("update", &GroupedToolAction{
-		Description: "Patch an existing collection's name, description or curator by ID: only the fields you pass change. Use to refine a collection's description so it reads as a model-facing selection cue (\"contains X, for Y\" naming the docs/subjects). Does NOT touch the collection's documents, that stays on the Knowledge surface.",
+		Description: "Patch an existing collection's name or description by ID, or say which of the user's agents may submit documents to it: only the fields you pass change. Use to refine a collection's description so it reads as a model-facing selection cue (\"contains X, for Y\" naming the docs/subjects). Does NOT touch the collection's documents, that stays on the Knowledge surface.",
 		Params: map[string]ToolParam{
 			"id":          {Type: "string", Description: "Collection ID (from collections(action=\"list\"))."},
 			"name":        {Type: "string", Description: "(optional) New display name."},
 			"description": {Type: "string", Description: "(optional) New description: \"contains X, for Y\" naming the docs/subjects it holds."},
-			"curator":     {Type: "string", Description: "(optional) The one agent, the user's own, in charge of keeping it current, by name or id: it alone may add and remove documents here, and readers suggest instead. \"\" clears it."},
+			"submitter":   {Type: "string", Description: "(optional) One of the user's own agents, by name or id, that may add documents to this collection (it cannot remove any). Set how with trust."},
+			"trust":       {Type: "string", Description: "(with submitter) \"checked\": every document it adds goes through the collection check first; \"always\": added as sent, for a process the user trusts, such as one fetching the latest guide; \"remove\": it may no longer submit. Default checked."},
 		},
 		Required: []string{"id"},
 		Caps:     []Capability{CapWrite},
@@ -199,16 +200,28 @@ func collectionsListTool() ChatTool {
 				c.Description = strings.TrimSpace(stringArg(args, "description"))
 				changed = append(changed, "description")
 			}
-			if _, has := args["curator"]; has {
-				who, err := collectionCuratorFor(sess, stringArg(args, "curator"))
+			if _, has := args["submitter"]; has {
+				who, err := collectionSubmitterFor(sess, stringArg(args, "submitter"))
 				if err != nil {
 					return "", err
 				}
-				c.CuratorAgent = who
-				changed = append(changed, "curator")
+				if who != "" {
+					if c.Submitters == nil {
+						c.Submitters = map[string]string{}
+					}
+					if strings.EqualFold(strings.TrimSpace(stringArg(args, "trust")), "remove") {
+						delete(c.Submitters, who)
+					} else {
+						c.Submitters[who] = normalTrust(stringArg(args, "trust"))
+					}
+					if c.CuratorAgent == who {
+						c.CuratorAgent = ""
+					}
+					changed = append(changed, "submitters")
+				}
 			}
 			if len(changed) == 0 {
-				return "", errors.New("nothing to update: pass name, description or curator")
+				return "", errors.New("nothing to update: pass name, description, or a submitter")
 			}
 			saveCollection(sess.DB, c)
 			Log("[orchestrate.collections] user=%q updated collection %q (id=%s): %s", sess.Username, c.Name, c.ID, strings.Join(changed, ", "))
@@ -301,6 +314,8 @@ func collectionsListTool() ChatTool {
 			if removed == 0 {
 				return fmt.Sprintf("No document %q found in that collection (already removed?).", docID), nil
 			}
+			// What it had replaced is the current version again.
+			forgetSuccessorIn(VectorDB, c, docID)
 			Log("[orchestrate.collections] user=%q removed doc %q from collection %q (%d chunks)", sess.Username, docID, id, removed)
 			return fmt.Sprintf("Removed document %q (%d chunks).", docID, removed), nil
 		},
@@ -395,7 +410,7 @@ func collectionsListTool() ChatTool {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 			defer cancel()
-			res, err := addFileToCollection(ctx, VectorDB, c, title, src)
+			res, err := addFileToCollection(ctx, VectorDB, c, title, src, nil)
 			if err != nil {
 				return "", err
 			}
@@ -414,32 +429,40 @@ func collectionsListTool() ChatTool {
 
 // fileResult is what add_file reports back.
 // pageCheck is the collection check as add_url runs it (collection_vet.go):
-// given the page it fetched, a line to add to the result, and whether the
-// page goes in. nil is no check: Builder's adds, made at the user's word.
-type pageCheck func(ctx context.Context, c Collection, cand vetCandidate) (note string, add bool)
+// given the page it fetched, a line to add to the result, whether the page
+// goes in, and the document it replaces when it is a newer version. nil is no
+// check: Builder's adds at the user's word, and an always-allowed submitter's.
+type pageCheck func(ctx context.Context, c Collection, cand vetCandidate) (note string, add bool, replaces string)
 
 // addURLToCollection is add_url: fetch one page and ingest it, after check
 // when there is one.
 func addURLToCollection(args map[string]any, sess *ToolSession, check pageCheck) (string, error) {
+	msg, _, _, err := addURLToCollectionDoc(args, sess, check)
+	return msg, err
+}
+
+// addURLToCollectionDoc is addURLToCollection, also saying the document it
+// added ("" when none) and the one the check found it replaces.
+func addURLToCollectionDoc(args map[string]any, sess *ToolSession, check pageCheck) (msg, doc, replaces string, err error) {
 	if sess == nil || sess.DB == nil || sess.Username == "" {
-		return "", errors.New("collections: requires authenticated session")
+		return "", "", "", errors.New("collections: requires authenticated session")
 	}
 	id := strings.TrimSpace(stringArg(args, "id"))
 	url := strings.TrimSpace(stringArg(args, "url"))
 	if id == "" || url == "" {
-		return "", errors.New("id and url are required for action=add_url")
+		return "", "", "", errors.New("id and url are required for action=add_url")
 	}
 	c, ok := loadCollection(sess.DB, sess.Username, id)
 	if !ok {
-		return "", fmt.Errorf("collection %q not found", id)
+		return "", "", "", fmt.Errorf("collection %q not found", id)
 	}
 	if why := collectionWriteRefusal(c, sess.Username, "autofill", http.MethodPost, UserIsAdmin(sess.Username)); why != "" {
-		return "", errors.New(why)
+		return "", "", "", errors.New(why)
 	}
 	norm := normalizeIngestURL(url)
 	for _, u := range c.IngestedURLs {
 		if normalizeIngestURL(u) == norm {
-			return fmt.Sprintf("Already ingested: %s (nothing to do).", url), nil
+			return fmt.Sprintf("Already ingested: %s (nothing to do).", url), "", "", nil
 		}
 	}
 	// Browser fetch can run 5–20s; give the headless fallback
@@ -448,17 +471,18 @@ func addURLToCollection(args map[string]any, sess *ToolSession, check pageCheck)
 	defer cancel()
 	name, text, _, _, gerr := ingestFetch(ctx, url)
 	if gerr != nil {
-		return "", gerr
+		return "", "", "", gerr
 	}
 	checked := ""
 	if check != nil {
 		vctx, vcancel := context.WithTimeout(context.Background(), vetTimeout)
-		note, add := check(vctx, c, vetCandidate{URL: url, Title: name, Text: text})
+		note, add, rep := check(vctx, c, vetCandidate{URL: url, Title: name, Text: text})
 		vcancel()
 		if !add {
-			return note, nil
+			return note, "", "", nil
 		}
-		checked = " " + note
+		checked = strings.TrimRight(" "+note, " ")
+		replaces = rep
 	}
 	reportID := fmt.Sprintf("manual-%s-%d", c.ID, time.Now().UnixNano())
 	IngestDocument(ctx, VectorDB, collectionSource(c.ID), reportID, name, "## "+name+"\n\n"+text)
@@ -466,7 +490,7 @@ func addURLToCollection(args map[string]any, sess *ToolSession, check pageCheck)
 	c.IngestedURLs = append(c.IngestedURLs, url)
 	saveCollection(sess.DB, c)
 	Log("[orchestrate.collections] user=%q ingested %q into collection %q (%d chunks)", sess.Username, url, c.ID, chunks)
-	return fmt.Sprintf("Ingested %q (%d chunks) into the collection.", name, chunks) + checked, nil
+	return fmt.Sprintf("Ingested %q (%d chunks) into the collection; doc_id %s.", name, chunks, reportID) + checked, reportID, replaces, nil
 }
 
 type fileResult struct {
@@ -475,6 +499,8 @@ type fileResult struct {
 	Chars    int
 	Chunks   int
 	Replaced bool
+	// Refused is why the check kept it out, when it did: nothing was added.
+	Refused string
 }
 
 // addFileMinChars is the least extracted text worth a document, the same floor
@@ -488,7 +514,9 @@ const addFileMinChars = 200
 // pages with form feeds, and each chunk keeps the "page N" a citation names.
 // A file with no extension is still read as a PDF when its bytes say it is
 // one, since a tool saves what a server sent under whatever name it was given.
-func addFileToCollection(ctx context.Context, db Database, c Collection, title string, src UploadSource) (fileResult, error) {
+// check, when given, is put the file's text before anything is stored: a
+// checked submitter's file goes through the collection check like a page.
+func addFileToCollection(ctx context.Context, db Database, c Collection, title string, src UploadSource, check func(text string) (note string, add bool)) (fileResult, error) {
 	mime := ""
 	if http.DetectContentType(src.Data) == "application/pdf" {
 		mime = "application/pdf"
@@ -501,6 +529,11 @@ func addFileToCollection(ctx context.Context, db Database, c Collection, title s
 	if len(text) < addFileMinChars {
 		return fileResult{}, fmt.Errorf("%q has only %d characters of text (the least is %d): a scanned PDF or an image has no text to index", src.Name, len(text), addFileMinChars)
 	}
+	if check != nil {
+		if note, add := check(text); !add {
+			return fileResult{Name: title, Refused: note}, nil
+		}
+	}
 	reportID := "file-" + c.ID + "-" + slugForReportID(title)
 	replaced := countReportChunks(db, reportID) > 0
 	doc := "## " + title + "\n\n" + text
@@ -512,12 +545,12 @@ func addFileToCollection(ctx context.Context, db Database, c Collection, title s
 	return fileResult{ID: reportID, Name: title, Chars: len(text), Chunks: countReportChunks(db, reportID), Replaced: replaced}, nil
 }
 
-// collectionCuratorFor resolves the agent named to be a collection's curator,
-// to the id the grant matches on (curatedCollectionsFor). It must be one of the
-// user's own agents: a curator writes to their corpus on their runs, and an
-// agent shared with them is somebody else's. A name more than one agent
-// answers to is refused rather than guessed at, and "" clears the curator.
-func collectionCuratorFor(sess *ToolSession, name string) (string, error) {
+// collectionSubmitterFor resolves the agent named to submit to a collection,
+// to the id the grant matches on (submittableCollectionsFor). It must be one
+// of the user's own agents: a submitter writes to their corpus on their runs,
+// and an agent shared with them is somebody else's. A name more than one
+// agent answers to is refused rather than guessed at; "" names nobody.
+func collectionSubmitterFor(sess *ToolSession, name string) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return "", nil
@@ -527,10 +560,10 @@ func collectionCuratorFor(sess *ToolSession, name string) (string, error) {
 		return "", err
 	}
 	if !ok {
-		return "", fmt.Errorf("no agent of yours is called %q: name the curator by its id or exact name (agents action=list)", name)
+		return "", fmt.Errorf("no agent of yours is called %q: name the submitter by its id or exact name (agents action=list)", name)
 	}
 	if a.Owner != "" && a.Owner != seedOwner && a.Owner != sess.Username {
-		return "", fmt.Errorf("%q is %s's agent, shared with you: a collection's curator must be one of your own agents", chFirst(a.Name, a.ID), a.Owner)
+		return "", fmt.Errorf("%q is %s's agent, shared with you: a collection's submitter must be one of your own agents", chFirst(a.Name, a.ID), a.Owner)
 	}
 	return a.ID, nil
 }

@@ -7,9 +7,10 @@ package orchestrate
 // corpus it reads would retrieve them later as fact and build on them, with
 // nobody between what it believed and what it reads next. So a reader files a
 // suggestion, naming its source, and the change is made, or not, by the
-// collection's curator agent (Collection.CuratorAgent), which checks it, or by
-// the owner on the collection's page when nobody is in charge. The owner can
-// turn suggestions off (Collection.SuggestionsOff).
+// owner on the collection's page; a suggestion with a link is also put
+// through the collection check by the next run of its plan
+// (collection_plan.go). The owner can turn suggestions off
+// (Collection.SuggestionsOff).
 //
 // Who may suggest is who may already add: the owner and the contributors,
 // through their own agents on their own runs. A suggestion carries text out of
@@ -193,11 +194,6 @@ func (T *OrchestrateApp) dropAllSuggestions(c Collection) {
 // The curator is looked up among the OWNER's agents, which is where the
 // collection page chose it from, whoever is asking.
 func (T *OrchestrateApp) suggestionsGoTo(user string, c Collection) string {
-	if who := strings.TrimSpace(c.CuratorAgent); who != "" && c.Owner != "" {
-		if a, ok := findAgentByNameOrID(UserDB(T.DB, c.Owner), c.Owner, who); ok {
-			return "the agent in charge of it, " + chFirst(a.Name, who)
-		}
-	}
 	if c.Owner == "" || c.Owner == user {
 		return "you, on the collection's page"
 	}
@@ -208,11 +204,11 @@ func (T *OrchestrateApp) suggestionsGoTo(user string, c Collection) string {
 
 // suggestableCollectionsFor returns the collections this agent may suggest
 // updates to: attached to it, taking suggestions, ones its user may already add
-// to, and not ones it is in charge of, which it changes directly.
+// to, and not ones it submits to, which it adds to directly.
 func (T *OrchestrateApp) suggestableCollectionsFor(user string, a AgentRecord) []Collection {
 	udb := UserDB(T.DB, user)
 	curated := map[string]bool{}
-	for _, c := range curatedCollectionsFor(udb, user, a.ID) {
+	for _, c := range submittableCollectionsFor(udb, user, a.ID) {
 		curated[c.ID] = true
 	}
 	admin := UserIsAdmin(user)
@@ -315,106 +311,6 @@ func (t *chatTurn) suggestCollectionUpdateTool() (AgentToolDef, bool) {
 	}, true
 }
 
-// --- the curator's half --------------------------------------------------------
-
-// addStewardSuggestionActions gives the agent in charge its queue: the waiting
-// suggestions, and a way to close one once it has acted on it or declined it.
-func (T *OrchestrateApp) addStewardSuggestionActions(gt *GroupedTool, cols []Collection) {
-	allowed := map[string]Collection{}
-	for _, c := range cols {
-		allowed[c.ID] = c
-	}
-	pick := func(args map[string]any) (Collection, error) {
-		id := strings.TrimSpace(stringArg(args, "id"))
-		if id == "" && len(cols) == 1 {
-			id = cols[0].ID
-		}
-		c, ok := allowed[id]
-		if !ok {
-			return Collection{}, fmt.Errorf("you are not in charge of collection %q", id)
-		}
-		return c, nil
-	}
-	idParam := func(p map[string]ToolParam) ([]string, map[string]ToolParam) {
-		if len(cols) == 1 {
-			return nil, p
-		}
-		p["id"] = ToolParam{Type: "string", Description: "Which collection, by id."}
-		return []string{"id"}, p
-	}
-	sugReq, sugParams := idParam(map[string]ToolParam{})
-	gt.AddAction("suggestions", &GroupedToolAction{
-		Description: "List the suggestions agents reading this collection have filed: what they say should change, their source, and who filed them. Check each against its source before changing anything, then close it with resolve_suggestion.",
-		Params:      sugParams,
-		Required:    sugReq,
-		Handler: func(args map[string]any, _ *ToolSession) (string, error) {
-			c, err := pick(args)
-			if err != nil {
-				return "", err
-			}
-			list := T.listSuggestions(c)
-			if len(list) == 0 {
-				return "No suggestions are waiting.", nil
-			}
-			var b strings.Builder
-			fmt.Fprintf(&b, "%d suggestion(s) waiting on %q. Each is a claim from an agent that READ this collection: verify it at its source before acting.\n", len(list), c.Name)
-			for _, s := range list {
-				fmt.Fprintf(&b, "\n- suggestion_id %s, from %s on %s\n  Suggests: %s\n  Source: %s\n",
-					s.ID, chFirst(s.AgentName, "an agent"), s.Created.Format("Jan 2"), s.Text, chFirst(s.Source, "(none given)"))
-			}
-			return b.String(), nil
-		},
-	})
-	resReq, resParams := idParam(map[string]ToolParam{
-		"suggestion_id": {Type: "string", Description: "The suggestion to close, from action=suggestions."},
-		"outcome":       {Type: "string", Description: "applied (you changed the collection for it) or declined (its source did not hold up, or it does not belong here)."},
-		"note":          {Type: "string", Description: "One line on what you did or why not."},
-	})
-	gt.AddAction("resolve_suggestion", &GroupedToolAction{
-		Description: "Close a suggestion once you have acted on it or decided not to. It leaves the queue either way.",
-		Params:      resParams,
-		Required:    append(resReq, "suggestion_id", "outcome"),
-		Caps:        []Capability{CapWrite},
-		Handler: func(args map[string]any, _ *ToolSession) (string, error) {
-			c, err := pick(args)
-			if err != nil {
-				return "", err
-			}
-			outcome := strings.ToLower(strings.TrimSpace(stringArg(args, "outcome")))
-			if outcome != "applied" && outcome != "declined" {
-				return "", errors.New("outcome must be applied or declined")
-			}
-			sid := strings.TrimSpace(stringArg(args, "suggestion_id"))
-			s, ok := T.findSuggestion(c, sid)
-			if !ok || s.Kind == heldKind {
-				// A held page is the owner's, and never listed to the curator.
-				return "", fmt.Errorf("no suggestion %q is waiting on %q: list them with action=suggestions", sid, c.Name)
-			}
-			T.dropSuggestion(c, sid)
-			Log("[orchestrate.collections] suggestion %s on collection %q %s by its curator (from %q): %s",
-				sid, c.ID, outcome, s.AgentName, strings.TrimSpace(stringArg(args, "note")))
-			return fmt.Sprintf("Suggestion %s closed as %s.", sid, outcome), nil
-		},
-	})
-}
-
-// stewardWaitingNote is the line the curator's tool carries about its queue,
-// so a waiting suggestion is seen without the curator having to look.
-func (T *OrchestrateApp) stewardWaitingNote(cols []Collection) string {
-	n := 0
-	for _, c := range cols {
-		n += len(T.listSuggestions(c))
-	}
-	switch n {
-	case 0:
-		return ""
-	case 1:
-		return " 1 suggestion from an agent that reads it is waiting: see action=suggestions."
-	default:
-		return fmt.Sprintf(" %d suggestions from agents that read it are waiting: see action=suggestions.", n)
-	}
-}
-
 // --- the owner's half: the collection page -------------------------------------
 
 // collectionSuggestions lists the queue for the page, with the switch.
@@ -503,7 +399,7 @@ func (T *OrchestrateApp) collectionSuggestionFetch(call *jsonapi.Call, _ struct{
 	if len(text) > maxAutofillDocChars {
 		return nil, jsonapi.BadRequest(fmt.Sprintf("that page is %d characters of text, past the %d a document may have", len(text), maxAutofillDocChars))
 	}
-	chunks := T.ingestAutofillDoc(ctx, c, name, text, raw, mime)
+	chunks, _ := T.ingestAutofillDoc(ctx, c, name, text, raw, mime)
 	T.recordIngest(call.UDB, &c, s.Source, "")
 	T.dropSuggestion(c, sid)
 	Log("[orchestrate.collections] user=%q fetched suggestion %s's link %q into collection %q (%d chunks)", call.User, sid, s.Source, c.ID, chunks)

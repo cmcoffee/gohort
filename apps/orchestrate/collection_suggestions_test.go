@@ -117,36 +117,19 @@ func TestTheCuratorWorksTheQueue(t *testing.T) {
 	if !ok {
 		t.Fatal("carol's agent lost its tool when a curator was named")
 	}
-	if !strings.Contains(td.Tool.Description, "the agent in charge of it, Reader") {
-		t.Errorf("the tool should say suggestions go to the curator: %s", td.Tool.Description)
+	if !strings.Contains(td.Tool.Description, "its owner, alice") {
+		t.Errorf("the tool should say suggestions go to the owner: %s", td.Tool.Description)
 	}
 	if _, err := td.Handler(context.Background(), map[string]any{"suggestion": "Add the v2 runbook.", "source": "the user said so"}); err != nil {
 		t.Fatal(err)
 	}
-
-	gt := T.stewardToolWithQueue([]Collection{c}).(*GroupedTool)
-	if !strings.Contains(gt.Desc(), "1 suggestion") {
-		t.Errorf("the curator's tool does not say one is waiting: %s", gt.Desc())
+	if n := len(T.listSuggestions(c)); n != 1 {
+		t.Errorf("the suggestion should wait for the owner: %d waiting", n)
 	}
-	list, _ := gt.Action("suggestions")
-	out, err := list.Handler(map[string]any{}, &ToolSession{})
-	if err != nil || !strings.Contains(out, "Add the v2 runbook.") {
-		t.Fatalf("the curator cannot see the queue: %v %s", err, out)
-	}
-	sid := T.listSuggestions(c)[0].ID
-	resolve, _ := gt.Action("resolve_suggestion")
-	if _, err := resolve.Handler(map[string]any{"suggestion_id": sid, "outcome": "maybe"}, &ToolSession{}); err == nil {
-		t.Error("an outcome other than applied or declined was taken")
-	}
-	if _, err := resolve.Handler(map[string]any{"suggestion_id": sid, "outcome": "declined", "note": "no source"}, &ToolSession{}); err != nil {
-		t.Fatal(err)
-	}
-	if n := len(T.listSuggestions(c)); n != 0 {
-		t.Errorf("a resolved suggestion is still waiting (%d)", n)
-	}
-	// The plain steward tool, which Builder-side tests derive, is unchanged.
-	if got := strings.Join(collectionStewardTool([]Collection{c}).(*GroupedTool).ActionNames(), ","); got != "add_file,add_text,add_url,docs,remove_doc" {
-		t.Errorf("the queue leaked into the plain grant: %s", got)
+	// The submitter's tool has no queue: suggestions are the owner's.
+	gt := T.submitTool([]Collection{c}, agents["alice"].ID).(*GroupedTool)
+	if got := strings.Join(gt.ActionNames(), ","); got != "add_file,add_text,add_url,docs" {
+		t.Errorf("the submitter's tool: %s", got)
 	}
 }
 

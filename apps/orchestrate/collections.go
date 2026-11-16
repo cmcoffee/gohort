@@ -228,9 +228,13 @@ func (T *OrchestrateApp) collectionCreate(c *jsonapi.Call, body struct {
 	if g.guidedAnswered() {
 		col.Description = g.description(body.Description)
 		col.FilterRules = g.filterRules()
-		col.CuratorAgent = g.curator(udb, user)
 	}
 	saveCollection(udb, col)
+	if every := g.autoCuration(); every != "" {
+		if err := setRefresh(user, col.ID, every); err != nil {
+			Log("[orchestrate.collections] collection %s: Auto-Curation could not be scheduled: %v", col.ID, err)
+		}
+	}
 	attached := g.attach(udb, user, col.ID)
 	// To start with: the search, or the plan, starts now, so the page it
 	// opens on is already at it.
@@ -242,7 +246,7 @@ func (T *OrchestrateApp) collectionCreate(c *jsonapi.Call, body struct {
 			T.startDraftPlan(udb, col)
 		}
 	}
-	Log("[orchestrate.collections] user=%q created collection %q (id=%s, curator=%q, attached to %d agent(s))", user, name, col.ID, col.CuratorAgent, attached)
+	Log("[orchestrate.collections] user=%q created collection %q (id=%s, auto-curation=%q, attached to %d agent(s))", user, name, col.ID, g.autoCuration(), attached)
 	return col, nil
 }
 
@@ -326,6 +330,12 @@ func (T *OrchestrateApp) registerCollectionRoutes() {
 	T.HandleFunc("/api/collections/{id}/paste", jsonapi.Post(T.DB, T.collectionPaste))
 	T.HandleFunc("/api/collections/{id}/sources", jsonapi.Get(T.DB, T.collectionSources))
 	T.HandleFunc("/api/collections/{id}/sources/{doc}", jsonapi.Delete(T.DB, T.collectionSourceDelete))
+	// Older versions, and the agents that may submit (collection_submit.go).
+	T.HandleFunc("/api/collections/{id}/sources/{doc}/superseded", jsonapi.Post(T.DB, T.collectionSuperseded))
+	T.HandleFunc("/api/collections/{id}/submitters", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.collectionSubmitters),
+		"POST": jsonapi.Post(T.DB, T.collectionSubmittersSave),
+	}.Serve)
 	T.HandleFunc("/api/collections/{id}/search", jsonapi.Get(T.DB, T.collectionSearch))
 	T.HandleFunc("/api/collections/{id}/autofill", jsonapi.Post(T.DB, T.collectionAutofill))
 	T.HandleFunc("/api/collections/{id}/research", jsonapi.Post(T.DB, T.collectionResearch))
@@ -394,12 +404,12 @@ func (T *OrchestrateApp) collectionGet(call *jsonapi.Call) (any, error) {
 		return nil, cerr
 	}
 	docs, chunks := collectionStats(VectorDB, c.ID)
-	// Who curates it, for the page header's "Auto-curated" or "Filled by
-	// hand". The owner's alone: the curator is one of their agents, and the
-	// header speaks to them.
-	curator := ""
+	// How often its plan runs on its own, for the page header's Auto-Curation
+	// line. The owner's alone: the schedule is theirs, and the header speaks
+	// to them.
+	autoCuration := ""
 	if c.Owner == call.User {
-		curator = c.CuratorAgent
+		autoCuration = autoCurationOf(c)
 	}
 	// What this viewer may do, so the page offers only that; the gate
 	// (collectionWriteRefusal) still decides every change. The plan's rules
@@ -415,7 +425,7 @@ func (T *OrchestrateApp) collectionGet(call *jsonapi.Call) (any, error) {
 	}
 	return map[string]any{
 		"access":        access,
-		"curator_agent": curator,
+		"auto_curation": autoCuration,
 		"id":            c.ID,
 		"owner":         c.Owner,
 		"name":          c.Name,
@@ -955,6 +965,7 @@ func (T *OrchestrateApp) collectionSources(call *jsonapi.Call) (any, error) {
 		name   string
 		chunks int
 		latest string
+		by     string // the document that replaced it, for an older version
 	}
 	groups := map[string]*group{}
 	for _, ch := range ChunksWhere(T.collectionDB(c), func(x EmbeddedChunk) bool { return strings.HasPrefix(x.Source, prefix) }) {
@@ -966,6 +977,9 @@ func (T *OrchestrateApp) collectionSources(call *jsonapi.Call) (any, error) {
 		g.chunks++
 		if ch.Date > g.latest {
 			g.latest = ch.Date
+		}
+		if ch.Reason == RetireSuperseded && ch.Successor != "" {
+			g.by = ch.Successor
 		}
 		// Prefer the document Title (the topic/question stamped at ingest)
 		// — it says what the doc is ABOUT. Title is uniform across a
@@ -982,10 +996,17 @@ func (T *OrchestrateApp) collectionSources(call *jsonapi.Call) (any, error) {
 		Name   string `json:"name"`
 		Chunks int    `json:"chunks"`
 		Latest string `json:"latest,omitempty"`
+		// An older version: the document that replaced it, and its name.
+		SupersededBy     string `json:"superseded_by,omitempty"`
+		SupersededByName string `json:"superseded_by_name,omitempty"`
 	}
 	out := make([]sourceOut, 0, len(groups))
 	for _, g := range groups {
-		out = append(out, sourceOut{ID: g.id, Name: g.name, Chunks: g.chunks, Latest: g.latest})
+		row := sourceOut{ID: g.id, Name: g.name, Chunks: g.chunks, Latest: g.latest}
+		if by, ok := groups[g.by]; ok {
+			row.SupersededBy, row.SupersededByName = by.id, by.name
+		}
+		out = append(out, row)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Latest > out[j].Latest })
 	return map[string]any{"sources": out}, nil
@@ -1006,6 +1027,8 @@ func (T *OrchestrateApp) collectionSourceDelete(call *jsonapi.Call, _ struct{}) 
 	removed := DeleteChunksWhere(T.collectionDB(c), func(x EmbeddedChunk) bool {
 		return x.ReportID == reportID && strings.HasPrefix(x.Source, prefix)
 	})
+	// What it had replaced is the current version again.
+	T.forgetSuccessor(c, reportID)
 	return map[string]int{"removed": removed}, nil
 }
 
@@ -1042,12 +1065,14 @@ func (T *OrchestrateApp) collectionSearch(call *jsonapi.Call) (any, error) {
 		Kind    string  `json:"kind,omitempty"`
 		Text    string  `json:"text"`
 		Score   float64 `json:"score,omitempty"`
+		// An older version: what replaced it (its rank is lowered).
+		SupersededBy string `json:"superseded_by,omitempty"`
 	}
 	out := make([]hitOut, 0, len(hits))
 	for _, h := range hits {
 		text := h.Text
 		text = textutil.Clip(text, 600)
-		out = append(out, hitOut{Title: h.Title, Section: h.Section, DocID: h.ReportID, Locator: h.Locator, Kind: h.Kind, Text: text, Score: float64(h.Score)})
+		out = append(out, hitOut{Title: h.Title, Section: h.Section, DocID: h.ReportID, Locator: h.Locator, Kind: h.Kind, Text: text, Score: float64(h.Score), SupersededBy: h.SupersededBy})
 	}
 	return map[string]any{"hits": out}, nil
 }
@@ -1222,7 +1247,7 @@ type autofillPass struct {
 	added    int
 	failed   int
 	held     int      // did not pass the check: held for the owner
-	proposed []string // documents a page added is a newer version of
+	proposed []string // documents a page added replaced: marked as older versions
 	skipped  int
 	results  []autofillItem
 	progress func(string)
@@ -1349,12 +1374,12 @@ func (p *autofillPass) search(T *OrchestrateApp, queries []string) {
 				continue
 			}
 		}
-		chunks := T.ingestAutofillDoc(p.ctx, *p.c, name, text, raw, mime)
+		chunks, doc := T.ingestAutofillDoc(p.ctx, *p.c, name, text, raw, mime)
 		item := autofillItem{URL: cand.URL, Status: "added", Name: name, Chunks: chunks}
 		if checked.Answer == vetSupersedes || checked.OtherURL != "" {
 			item.Err = checked.note()
 		}
-		if checked.Answer == vetSupersedes {
+		if checked.Answer == vetSupersedes && T.markSuperseded(*p.c, checked.AgainstDoc, doc) {
 			p.proposed = append(p.proposed, checked.AgainstTitle)
 		}
 		p.results = append(p.results, item)
@@ -1820,6 +1845,8 @@ var collectionMaintainerActions = map[string]bool{
 	// Taking a document out: what is in it is the maintainer's to look
 	// after. The page's Remove and an agent's remove_doc are the same act.
 	"remove_doc": true,
+	// Marking a document as an older version of another, or clearing it.
+	"supersede": true,
 }
 
 // What a viewer may do with a collection, as the page needs it: the owner

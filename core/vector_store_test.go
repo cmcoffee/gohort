@@ -1064,3 +1064,35 @@ func TestAWritePatchesTheChunkCache(t *testing.T) {
 		t.Error("the store and the cache disagree")
 	}
 }
+
+// An older version of a document is lowered, not hidden: asked in general,
+// the current version's passage comes first and the older one is labelled
+// with what replaced it; asked about something only the older version says,
+// it is still found.
+func TestAnOlderVersionRanksBelowTheCurrentOne(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	InvalidateChunkCache()
+	t.Cleanup(InvalidateChunkCache)
+	old := EmbeddedChunk{ID: "v3", Source: "collection:guides", ReportID: "guide-3", Title: "Admin guide 3",
+		Text: "Configure the audit log in the admin console under Logging. Legacy sync mode is configured in sync.conf."}
+	old.Reason, old.Successor = RetireSuperseded, "guide-4"
+	PutChunks(db, []EmbeddedChunk{old,
+		{ID: "v4", Source: "collection:guides", ReportID: "guide-4", Title: "Admin guide 4",
+			Text: "Configure the audit log in the admin console under Security."}})
+	all := func(EmbeddedChunk) bool { return true }
+
+	hits := HybridSearchByPredicate(db, all, "configure the audit log admin console", nil, 2)
+	if len(hits) != 2 || hits[0].ReportID != "guide-4" {
+		t.Fatalf("the current version should come first: %+v", hits)
+	}
+	if hits[1].SupersededBy != "Admin guide 4" || hits[0].SupersededBy != "" {
+		t.Errorf("the older version should say what replaced it, the current nothing: %+v", hits)
+	}
+	if out := (HitFormat{}).Render(hits); !strings.Contains(out, "Admin guide 3 [older version, replaced by Admin guide 4]") {
+		t.Errorf("what an agent reads should say the older version was replaced:\n%s", out)
+	}
+	hits = HybridSearchByPredicate(db, all, "legacy sync mode sync.conf", nil, 1)
+	if len(hits) != 1 || hits[0].ReportID != "guide-3" {
+		t.Errorf("a question only the older version answers should still find it: %+v", hits)
+	}
+}

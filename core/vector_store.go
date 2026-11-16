@@ -368,6 +368,13 @@ type SearchHit struct {
 	Locator  string  `json:"locator,omitempty"` // mirrored from EmbeddedChunk.Locator — citation pointer (page number, section ref)
 	Date     string  `json:"date,omitempty"`    // mirrored from EmbeddedChunk.Date — ingestion timestamp (RFC3339). Surfaced so the LLM can weight freshness and cite as-of date.
 	Kind     string  `json:"kind,omitempty"`    // mirrored from EmbeddedChunk.Kind — provenance tag ("user_comment", "related_link", "author_bio") so consumers can frame the hit appropriately. Empty = authoritative.
+	// SupersededBy names the document that replaced this one, when the
+	// passage is from an older version (lowerSuperseded): its rank is
+	// lowered and the reader is told what is current.
+	SupersededBy string `json:"superseded_by,omitempty"`
+
+	// successor is the replacing document's id, while the hit is ranked.
+	successor string
 }
 
 // The embed chunk-size limit caps how large a single chunk can be before it
@@ -1611,16 +1618,17 @@ func SearchChunks(db Database, query []float32, k int) []SearchHit {
 			continue
 		}
 		all = append(all, SearchHit{
-			ID:       c.ID,
-			Source:   c.Source,
-			ReportID: c.ReportID,
-			Title:    c.Title,
-			Section:  c.Section,
-			Text:     c.Text,
-			Score:    s,
-			Locator:  c.Locator,
-			Date:     c.Date,
-			Kind:     c.Kind,
+			ID:        c.ID,
+			Source:    c.Source,
+			ReportID:  c.ReportID,
+			Title:     c.Title,
+			Section:   c.Section,
+			Text:      c.Text,
+			Score:     s,
+			Locator:   c.Locator,
+			Date:      c.Date,
+			Kind:      c.Kind,
+			successor: supersededBy(c),
 		})
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].Score > all[j].Score })
@@ -1661,16 +1669,17 @@ func SearchChunksByPredicate(db Database, allow func(c EmbeddedChunk) bool, quer
 			continue
 		}
 		all = append(all, SearchHit{
-			ID:       c.ID,
-			Source:   c.Source,
-			ReportID: c.ReportID,
-			Title:    c.Title,
-			Section:  c.Section,
-			Text:     c.Text,
-			Score:    s,
-			Locator:  c.Locator,
-			Date:     c.Date,
-			Kind:     c.Kind,
+			ID:        c.ID,
+			Source:    c.Source,
+			ReportID:  c.ReportID,
+			Title:     c.Title,
+			Section:   c.Section,
+			Text:      c.Text,
+			Score:     s,
+			Locator:   c.Locator,
+			Date:      c.Date,
+			Kind:      c.Kind,
+			successor: supersededBy(c),
 		})
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].Score > all[j].Score })
@@ -1702,16 +1711,17 @@ func SearchChunksSubstringByPredicate(db Database, allow func(c EmbeddedChunk) b
 			continue
 		}
 		out = append(out, SearchHit{
-			ID:       c.ID,
-			Source:   c.Source,
-			ReportID: c.ReportID,
-			Title:    c.Title,
-			Section:  c.Section,
-			Text:     c.Text,
-			Score:    0,
-			Locator:  c.Locator,
-			Date:     c.Date,
-			Kind:     c.Kind,
+			ID:        c.ID,
+			Source:    c.Source,
+			ReportID:  c.ReportID,
+			Title:     c.Title,
+			Section:   c.Section,
+			Text:      c.Text,
+			Score:     0,
+			Locator:   c.Locator,
+			Date:      c.Date,
+			Kind:      c.Kind,
+			successor: supersededBy(c),
 		})
 		if len(out) >= k {
 			break
@@ -1926,6 +1936,7 @@ func SearchChunksKeywordByPredicate(db Database, allow func(c EmbeddedChunk) boo
 			ID: c.ID, Source: c.Source, ReportID: c.ReportID, Title: c.Title,
 			Section: c.Section, Text: c.Text, Score: s,
 			Locator: c.Locator, Date: c.Date, Kind: c.Kind,
+			successor: supersededBy(&chunks[cd.idx]),
 		})
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].Score > all[j].Score })
@@ -1952,10 +1963,10 @@ func HybridSearchByPredicate(db Database, allow func(c EmbeddedChunk) bool, quer
 		return nil
 	}
 	perDoc := recallPerDocMax()
-	pool := k
-	if perDoc > 0 {
-		pool = k * diversifyPoolFactor
-	}
+	// Always the wider pool: an older version's passages are lowered below
+	// (lowerSuperseded), and the passages they made way for have to be in
+	// the pool to take the slots.
+	pool := k * diversifyPoolFactor
 	var hits []SearchHit
 	if len(vec) == 0 {
 		hits = SearchChunksKeywordByPredicate(db, allow, queryText, pool)
@@ -1965,7 +1976,54 @@ func HybridSearchByPredicate(db Database, allow func(c EmbeddedChunk) bool, quer
 			SearchChunksKeywordByPredicate(db, allow, queryText, pool),
 			pool)
 	}
-	return diversifyHits(hits, perDoc, k)
+	return diversifyHits(lowerSuperseded(db, hits), perDoc, k)
+}
+
+// supersededRank is how an older version's passages rank against the rest:
+// lowered, not hidden, so a question about the older version still finds
+// them, while the current one comes first otherwise.
+const supersededRank = 0.7
+
+// supersededBy is the id of the document that replaced c's, or "" when c is
+// current. A collection marks an older version this way (the chunk's
+// MemoryProvenance: superseded, with its successor).
+func supersededBy(c *EmbeddedChunk) string {
+	if c.Reason == RetireSuperseded {
+		return c.Successor
+	}
+	return ""
+}
+
+// lowerSuperseded lowers older versions' passages and names what replaced
+// each, re-sorting by the new scores. Hits from current documents are as
+// they were.
+func lowerSuperseded(db Database, hits []SearchHit) []SearchHit {
+	titles := map[string]string{}
+	lowered := false
+	for i := range hits {
+		succ := hits[i].successor
+		if succ == "" {
+			continue
+		}
+		title, ok := titles[succ]
+		if !ok {
+			title = succ
+			for _, c := range ChunksWhere(db, func(c EmbeddedChunk) bool { return c.ReportID == succ }) {
+				if strings.TrimSpace(c.Title) != "" {
+					title = c.Title
+					break
+				}
+			}
+			titles[succ] = title
+		}
+		hits[i].Score *= supersededRank
+		hits[i].SupersededBy = title
+		lowered = true
+	}
+	if lowered {
+		sort.SliceStable(hits, func(a, b int) bool { return hits[a].Score > hits[b].Score })
+	}
+	return hits
 }
 
 // diversifyPoolFactor is how many times k the candidate pool is when
@@ -2102,16 +2160,17 @@ func SearchChunksSubstring(db Database, query string, k int) []SearchHit {
 			continue
 		}
 		out = append(out, SearchHit{
-			ID:       c.ID,
-			Source:   c.Source,
-			ReportID: c.ReportID,
-			Title:    c.Title,
-			Section:  c.Section,
-			Text:     c.Text,
-			Kind:     c.Kind,
-			Score:    0,
-			Locator:  c.Locator,
-			Date:     c.Date,
+			ID:        c.ID,
+			Source:    c.Source,
+			ReportID:  c.ReportID,
+			Title:     c.Title,
+			Section:   c.Section,
+			Text:      c.Text,
+			Kind:      c.Kind,
+			Score:     0,
+			Locator:   c.Locator,
+			Date:      c.Date,
+			successor: supersededBy(c),
 		})
 		if len(out) >= k {
 			break

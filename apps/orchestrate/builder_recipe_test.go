@@ -162,16 +162,17 @@ func TestLatestIntakeReadsThePackedText(t *testing.T) {
 	}
 }
 
-// A collection kept current has one curator, set through the action the
-// collections tool offers, and readers suggest rather than write.
-func TestTheRecipeKnowsTheCuratorPattern(t *testing.T) {
-	for _, want := range []string{"ONE curator", "collections update curator=<agent>", "suggest updates instead of writing"} {
+// A collection is kept current by its plan; an agent fetching documents for
+// it is a submitter, set through the action the collections tool offers, and
+// readers suggest rather than write.
+func TestTheRecipeKnowsTheSubmitterPattern(t *testing.T) {
+	for _, want := range []string{"is kept by its own plan", "is a SUBMITTER", "collections update submitter=<agent>", "suggest updates instead of writing"} {
 		if !strings.Contains(builderRecipeShipped, want) {
 			t.Errorf("the recipe lost %q", want)
 		}
 	}
 	gt := collectionsListTool().(*GroupedTool)
-	if a, ok := gt.Action("update"); !ok || a.Params["curator"].Type == "" {
-		t.Error("the recipe names a curator parameter the collections tool does not have")
+	if a, ok := gt.Action("update"); !ok || a.Params["submitter"].Type == "" || a.Params["trust"].Type == "" {
+		t.Error("the recipe names a submitter parameter the collections tool does not have")
 	}
 }

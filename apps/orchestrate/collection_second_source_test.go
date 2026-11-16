@@ -101,7 +101,7 @@ func TestNoSearchMeansNoSecondaryPage(t *testing.T) {
 	f := vetFixture(t, map[string]string{page: "The audit log rotates daily."},
 		FakeTurn{Content: vetReplyFrom("secondary: a forum answer", "adds", 0, "")})
 	run := secondFixture(t, false)
-	tool := f.T.stewardToolWithQueue([]Collection{f.c}).(*GroupedTool)
+	tool := f.T.submitTool([]Collection{f.c}, "sub").(*GroupedTool)
 	add, _ := tool.Action("add_url")
 	out, err := add.Handler(map[string]any{"url": page}, &ToolSession{DB: f.store("alice"), Username: "alice"})
 	if err != nil || !strings.Contains(out, "Not added") || !strings.Contains(out, "second source") {
@@ -118,7 +118,7 @@ func TestTheCuratorsOwnTextNeedsASecondSource(t *testing.T) {
 	f := vetFixture(t, nil,
 		FakeTurn{Content: vetReply("adds", 0, "")}, FakeTurn{Content: secondReply("unconfirmed", 0, "")})
 	run := secondFixture(t, true)
-	tool := f.T.stewardToolWithQueue([]Collection{f.c}).(*GroupedTool)
+	tool := f.T.submitTool([]Collection{f.c}, "sub").(*GroupedTool)
 	add, _ := tool.Action("add_text")
 	out, err := add.Handler(map[string]any{"title": "Note", "text": "The audit log rotates daily."}, &ToolSession{DB: f.store("alice"), Username: "alice"})
 	if err != nil || run.ran != 1 || !strings.Contains(out, "Not added") || !strings.Contains(out, "no independent source") {
@@ -225,7 +225,7 @@ func TestAnAgentsUnconfirmedPageIsHeld(t *testing.T) {
 	f := vetFixture(t, map[string]string{page: "The audit log rotates daily."},
 		FakeTurn{Content: vetReplyFrom("secondary: a blog post", "adds", 0, "")}, FakeTurn{Content: secondReply("unconfirmed", 0, "")})
 	secondFixture(t, true)
-	tool := f.T.stewardToolWithQueue([]Collection{f.c}).(*GroupedTool)
+	tool := f.T.submitTool([]Collection{f.c}, "sub").(*GroupedTool)
 	add, _ := tool.Action("add_url")
 	out, err := add.Handler(map[string]any{"url": page}, &ToolSession{DB: f.store("alice"), Username: "alice"})
 	if err != nil || !strings.Contains(out, "held for the owner") {

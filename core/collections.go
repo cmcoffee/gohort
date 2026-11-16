@@ -188,19 +188,18 @@ type Collection struct {
 	// plan yet.
 	SearchTerms []string `json:"search_terms,omitempty"`
 	DocsPerRun  int      `json:"docs_per_run,omitempty"`
-	// CuratorAgent names an agent that is IN CHARGE of this collection: it
-	// keeps the corpus current, and is granted the four corpus actions bound
-	// to this collection and nothing else.
-	//
-	// A field beside the rest rather than a record of its own, because this
-	// does not describe a new thing, it describes this collection. One agent
-	// may look after several collections and carries nothing per-collection
-	// that a name cannot express.
-	//
-	// Empty is the normal case: a collection filled by hand, by upload or by
-	// auto-fill has nobody in charge of it, and reading it is unaffected
-	// either way.
+	// CuratorAgent is what earlier versions stored for who curated it: an
+	// agent in charge of it, or Auto-Curation's marker. Curation is now the
+	// collection's plan on its schedule, and agents submit documents
+	// (Submitters); an agent stored here reads as a checked submitter until
+	// the owner saves the submitters, which moves it there.
 	CuratorAgent string `json:"curator_agent,omitempty"`
+	// Submitters are the owner's agents that may add documents to it, by
+	// agent id, each "checked" (every submission goes through the collection
+	// check first) or "always" (added as submitted, for a process the owner
+	// trusts, such as one that fetches the latest guide). Adding is all they
+	// may do: taking documents out stays with the owner and maintainers.
+	Submitters map[string]string `json:"submitters,omitempty"`
 	// ImportedFrom is the id this collection travelled under in the bundle it
 	// was imported from, set only when the import had to mint a new one
 	// because that id was already somebody else's here.
@@ -646,6 +645,9 @@ func (f HitFormat) Render(hits []SearchHit) string {
 		}
 		if h.Kind != "" {
 			fmt.Fprintf(&b, " [%s]", h.Kind)
+		}
+		if h.SupersededBy != "" {
+			fmt.Fprintf(&b, " [older version, replaced by %s]", h.SupersededBy)
 		}
 		if f.Tag != nil {
 			if tag := strings.TrimSpace(f.Tag(h)); tag != "" {

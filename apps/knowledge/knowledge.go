@@ -209,22 +209,19 @@ func (T *KnowledgeApp) stewardSection(user, collectionID string) (ui.Section, bo
 	base := "/orchestrate/api/collections/" + esc + "/steward"
 	curate := "/orchestrate/api/collections/" + esc + "/curate"
 	plan := "/orchestrate/api/collections/" + esc + "/plan"
-	// Hand Curated, Auto-Curation or Curation by Agent, in the guided
-	// setup's words: who runs the plan, and when.
-	fields := curationFields(user, "select")
-	fields[0].Help = "Who carries out the plan below, and when. Run now runs it once whichever you choose."
-	fields[0].Detail = "Hand Curated and Auto-Curation run the plan itself: the articles you listed, links agents suggested, then the search terms, each page checked before it goes in. Hand Curated runs it only when you press Run now; Auto-Curation also runs it on its schedule.\n\n" +
-		"Curation by Agent has one of your agents carry it out instead, with its own tools: it gets a collection tool for this collection (add a page by its address, a file its tools saved, or text; list what is in it; remove a document), and nothing else new. It cannot touch any other collection you own.\n\n" +
-		"Reading is unaffected. Any agent with this collection attached still searches it exactly as before."
-	// How often the plan runs on its own, on the scheduler: not for Hand
-	// Curated, which runs only when asked.
-	fields = append(fields, ui.FormField{Field: "refresh", Type: "select", Label: "Schedule", ShowWhen: "curation:auto|agent",
+	submitters := "/orchestrate/api/collections/" + esc + "/submitters"
+	// Auto-Curation is the plan run on a schedule; off, it runs when Run now
+	// is pressed. Nothing else is chosen here: no agent is in charge.
+	fields := []ui.FormField{{Field: "refresh", Type: "select", Label: "Auto-Curation",
 		Options: []ui.SelectOption{
-			{Value: "never", Label: "Never", Help: "The plan runs when you press Run now."},
+			{Value: "never", Label: "Off", Help: "The plan runs when you press Run now."},
 			{Value: "week", Label: "Every week", Help: "The plan runs each week, looking for what is new."},
 			{Value: "month", Label: "Every month", Help: "The plan runs each month, looking for what is new."},
 		},
-		Help: "The same plan as Run now, run on its own. The row below says when the next run is due and what the last one did."})
+		Help: "The plan below, run on its own. Run now runs it once either way.",
+		Detail: "A run fetches the articles you listed, then links agents suggested, then the search terms; every page it finds is checked before it goes in, and what does not pass waits under Held for you.\n\n" +
+			"Reading is unaffected. Any agent with this collection attached still searches it exactly as before."}}
+	agents := AgentNameOptions(user)
 	return ui.Section{
 		Title:    "Curation",
 		Subtitle: "The plan for filling this collection, and when it runs: once, or on a schedule.",
@@ -275,6 +272,7 @@ func (T *KnowledgeApp) stewardSection(user, collectionID string) (ui.Section, bo
 				CancelTo:       curate + "/stop",
 				Invalidate:     []string{curate},
 			},
+			submittersPanel(submitters, agents),
 		}},
 	}, true
 }
@@ -330,6 +328,34 @@ func (T *KnowledgeApp) suggestionsSection(user, collectionID string) (ui.Section
 			},
 		}},
 	}, true
+}
+
+// submittersPanel is the agents that may add documents to the collection:
+// which of the owner's agents, and whether each one's documents are checked
+// at the door or always allowed. An agent adds; it never takes out.
+func submittersPanel(source string, agents []ui.SelectOption) ui.Component {
+	if len(agents) == 0 {
+		return ui.Card{HTML: `<div style="font-size:var(--fs-sm);color:var(--text-mute)">Agents that submit documents: none of your agents yet. One that fetches documents on a schedule can add them here once you have it.</div>`}
+	}
+	return ui.FormPanel{
+		Source:  source,
+		PostURL: source,
+		Fields: []ui.FormField{{
+			Field: "submitters", Type: "rows", Label: "Agents that submit documents", AddLabel: "+ Add agent",
+			Placeholder: "(none: only you and the plan add to it)",
+			Help:        "Your agents that may add documents to this collection, such as one that fetches the latest guide on a schedule. They add; they cannot remove anything.",
+			Detail: "Checked: every document the agent adds goes through the same check a run of the plan uses, and what does not pass is held for you or turned away. " +
+				"Always allow: added as the agent sends it, for a process you trust.\n\n" +
+				"An agent that adds under a title already in the collection replaces that document, so it can keep one current version. It can also name the document its own replaces: that one is kept, marked as the older version, and ranked below.",
+			Columns: []ui.FormField{
+				{Field: "agent", Type: "select", Label: "Agent", Width: 4, Options: append([]ui.SelectOption{{Value: "", Label: "(choose one of your agents)"}}, agents...)},
+				{Field: "trust", Type: "select", Label: "Its documents", Width: 3, Options: []ui.SelectOption{
+					{Value: "checked", Label: "Checked"},
+					{Value: "always", Label: "Always allow"},
+				}},
+			},
+		}},
+	}
 }
 
 // sharingSection lets the OWNER hand this collection to named people.

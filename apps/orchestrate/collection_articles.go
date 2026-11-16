@@ -212,7 +212,7 @@ func (T *OrchestrateApp) fetchArticles(ctx context.Context, udb Database, c *Col
 					Err: fmt.Sprintf("%d chars > %d cap (likely junk page or aggregator)", len(text), maxAutofillDocChars)}
 				continue
 			}
-			chunks := T.ingestAutofillDoc(ctx, *c, name, text, raw, mime)
+			chunks, _ := T.ingestAutofillDoc(ctx, *c, name, text, raw, mime)
 			T.recordIngest(udb, c, cand.URL, article)
 			item = autofillItem{Article: article, URL: cand.URL, Status: "added", Name: name, Chunks: chunks}
 			added++
@@ -238,15 +238,15 @@ func collectionHasURL(c Collection, u string) bool {
 // ingestAutofillDoc adds one fetched document to the collection, with the
 // kind-tagged regions of an HTML page (comments, related links, author bios)
 // under sibling ids so the chunker's boundaries stay clean and a reader can
-// tell them from the body. Returns the chunks written.
-func (T *OrchestrateApp) ingestAutofillDoc(ctx context.Context, c Collection, name, text string, raw []byte, mime string) int {
+// tell them from the body. Returns the chunks written and the document's id.
+func (T *OrchestrateApp) ingestAutofillDoc(ctx context.Context, c Collection, name, text string, raw []byte, mime string) (int, string) {
 	baseReportID := fmt.Sprintf("autofill-%s-%d", c.ID, time.Now().UnixNano())
 	chunkDB := T.collectionDB(c)
 	IngestReport(ctx, chunkDB, collectionSource(c.ID), baseReportID, "## "+name+"\n\n"+text)
 	chunks := countReportChunks(chunkDB, baseReportID)
 	lowMime, lowName := strings.ToLower(mime), strings.ToLower(name)
 	if len(raw) == 0 || !(strings.HasPrefix(lowMime, "text/html") || strings.HasSuffix(lowName, ".html") || strings.HasSuffix(lowName, ".htm")) {
-		return chunks
+		return chunks, baseReportID
 	}
 	buckets, _ := ExtractHTMLByKind(raw)
 	for kind, kindText := range buckets {
@@ -257,7 +257,7 @@ func (T *OrchestrateApp) ingestAutofillDoc(ctx context.Context, c Collection, na
 		IngestReportTagged(ctx, chunkDB, collectionSource(c.ID), kindReportID, "## "+name+" ("+kind+")\n\n"+kindText, kind)
 		chunks += countReportChunks(chunkDB, kindReportID)
 	}
-	return chunks
+	return chunks, baseReportID
 }
 
 // recordIngest notes on the collection that this address is in, and which

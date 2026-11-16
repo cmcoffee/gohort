@@ -16,7 +16,7 @@ import (
 // found.
 func suggestFixture(t *testing.T, results map[string]string, queries ...string) *dispatchFixture {
 	t.Helper()
-	df := curateFixture(t, func(context.Context, string, string) (string, error) { return "", nil })
+	df := curateFixture(t)
 	prevSearch, prevQueries := collectionWebSearch, collectionQueriesFor
 	collectionWebSearch = func(q string) string { return results[q] }
 	collectionQueriesFor = func(context.Context, *OrchestrateApp, Collection, int) []string { return queries }

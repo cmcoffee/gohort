@@ -1,7 +1,6 @@
 package orchestrate
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -490,7 +489,7 @@ func TestACollectionsLevelFollowsTheGate(t *testing.T) {
 // A reader's copy of the record carries its level, and none of the plan's
 // rules or the articles list, which are for those who may act on them.
 func TestAReadersRecordLeavesOutWhatIsNotTheirs(t *testing.T) {
-	df := curateFixture(t, func(context.Context, string, string) (string, error) { return "", nil })
+	df := curateFixture(t)
 	df.app.DB.Set(AuthTable, "user:bob", AuthUser{Username: "bob"})
 	shared := Collection{ID: "col-s", Name: "S", Owner: "u", AllowedUsers: []string{"bob"},
 		FilterRules: "Skip forums", Articles: []string{"https://docs.vendor.example/a"}}

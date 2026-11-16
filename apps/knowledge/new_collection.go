@@ -87,7 +87,7 @@ func newCollectionForm(user string) ui.FormPanel {
 		},
 		{
 			Title:  "Curation",
-			Intro:  "Who keeps it current? You can change this on the collection's page.",
+			Intro:  "Does its plan run on its own? You can change this on the collection's page.",
 			Fields: curationFields(user, "cards"),
 		},
 	}

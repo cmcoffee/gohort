@@ -36,12 +36,6 @@ const curateOutcomeKept = 30 * time.Minute
 // collection, so it is not done per poll.
 var curateCountEvery = 10 * time.Second
 
-// curateRunAgent runs the curator. A variable so a test can stand in for the
-// agent run.
-var curateRunAgent = func(T *OrchestrateApp, ctx context.Context, user, agentID, message string) (string, error) {
-	return T.RunAgentSync(ctx, user, user, agentID, message)
-}
-
 // curateRun is one run on a collection's behalf, going or recently ended: a
 // curation, a search for sources to suggest, or adding the ones ticked.
 type curateRun struct {
@@ -229,32 +223,6 @@ func curateCut(s string, n int) string {
 	return s
 }
 
-// curateBrief is what an agent curating the collection is asked to do: the
-// collection's plan, from its own description, rules and search terms, so
-// the agent carries out the same plan a run of it would.
-func curateBrief(c Collection, docs, maxDocs int) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "Look after the knowledge collection %q now. You are in charge of it, and the collection tool works on it.\n\n", c.Name)
-	if d := strings.TrimSpace(c.Description); d != "" {
-		b.WriteString("What it is for, in its owner's words:\n" + d + "\n\n")
-	} else {
-		b.WriteString("It has no description, so go by its name.\n\n")
-	}
-	if r := strings.TrimSpace(c.FilterRules); r != "" {
-		b.WriteString("Its owner's rules for what goes in it:\n" + r + "\n\n")
-	}
-	if len(c.SearchTerms) > 0 {
-		b.WriteString("Its plan's search terms, to start from:\n- " + strings.Join(c.SearchTerms, "\n- ") + "\n\n")
-	}
-	fmt.Fprintf(&b, "It holds %d document%s now.\n\n", docs, plural(docs))
-	b.WriteString("1. List what is in it first, so you do not add what is already there.\n")
-	b.WriteString("2. Work through any suggestions waiting from agents that read it: check each against its source, then add what holds up and dismiss what does not.\n")
-	fmt.Fprintf(&b, "3. Find material that fits what it is for and is missing, and add the best of it by its address. Add no more than %d documents in this run. Prefer primary and authoritative sources over summaries of them, and current material over old.\n", maxDocs)
-	b.WriteString("4. Do not remove anything. If a document is out of date, wrong, or does not belong, name it in your reply as a proposed removal and say why.\n\n")
-	b.WriteString("Reply in a few sentences for the owner: what you added and why, and any removals you propose.")
-	return b.String()
-}
-
 // collectionCurateItems is the row the collection page offers: one, naming
 // what runs, or none when nobody curates the collection.
 func (T *OrchestrateApp) collectionCurateItems(call *jsonapi.Call) (any, error) {
@@ -263,13 +231,6 @@ func (T *OrchestrateApp) collectionCurateItems(call *jsonapi.Call) (any, error) 
 		return nil, err
 	}
 	desc := "Carries out the plan above once: the articles you listed that are not in yet, links agents suggested, then the search terms. Every page it finds is checked before it goes in."
-	if curationOf(c.CuratorAgent) == curationAgent {
-		name := c.CuratorAgent
-		if a, ok := findAgentByNameOrID(UserDB(T.DB, call.User), call.User, c.CuratorAgent); ok {
-			name = chFirst(a.Name, name)
-		}
-		desc = name + " carries out the plan above with its own tools: it adds what fits and is missing, and proposes removals for you to confirm."
-	}
 	return []map[string]any{{
 		"item":    "Run now",
 		"desc":    desc,
@@ -283,7 +244,7 @@ func (T *OrchestrateApp) collectionCurateStart(call *jsonapi.Call, _ struct{}) (
 	if err != nil {
 		return nil, err
 	}
-	_, started, err := T.startCuration(c, call.User, "Running the plan", "")
+	_, started, err := T.startCuration(c, call.User, "Running the plan")
 	if err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
@@ -294,40 +255,21 @@ func (T *OrchestrateApp) collectionCurateStart(call *jsonapi.Call, _ struct{}) (
 }
 
 // startCuration runs the collection's plan for user, under label: Run now's
-// run and a scheduled refresh's. With Curation by Agent the agent carries it
-// out, with lead before its brief. started is false when a run is already
+// run and a scheduled refresh's. started is false when a run is already
 // going (the run returned is that one); an error says why it cannot run.
-func (T *OrchestrateApp) startCuration(c Collection, user, label, lead string) (run *curateRun, started bool, err error) {
+func (T *OrchestrateApp) startCuration(c Collection, user, label string) (run *curateRun, started bool, err error) {
+	if !hasPlan(c) {
+		return nil, false, fmt.Errorf("this collection has no plan yet: Draft a plan under Curation, or list articles for it")
+	}
+	if len(c.SearchTerms) > 0 && !planSearchReady() {
+		return nil, false, fmt.Errorf("web search is not configured for this deployment, and the plan's search terms need it")
+	}
 	before, _ := collectionStats(VectorDB, c.ID)
 	count := func() int { n, _ := collectionStats(VectorDB, c.ID); return n }
-	if curationOf(c.CuratorAgent) != curationAgent {
-		if !hasPlan(c) {
-			return nil, false, fmt.Errorf("this collection has no plan yet: Draft a plan under Curation, or list articles for it")
-		}
-		if len(c.SearchTerms) > 0 && !planSearchReady() {
-			return nil, false, fmt.Errorf("web search is not configured for this deployment, and the plan's search terms need it")
-		}
-		udb := UserDB(T.DB, user)
-		run, started = curations.start(c.ID, label, before, count, func(ctx context.Context, note func(string)) (string, error) {
-			Log("[orchestrate.curate] collection=%s user=%s: plan run, %s", c.ID, user, strings.ToLower(label))
-			return T.runPlan(ctx, udb, c, note)
-		})
-		return run, started, nil
-	}
-	a, ok := findAgentByNameOrID(UserDB(T.DB, user), user, strings.TrimSpace(c.CuratorAgent))
-	if !ok {
-		return nil, false, fmt.Errorf("the agent chosen to curate this collection is not an agent of yours any more: choose another under Curation")
-	}
-	brief := lead + curateBrief(c, before, planDocs(c))
-	run, started = curations.start(c.ID, label, before, count, func(ctx context.Context, _ func(string)) (string, error) {
-		Log("[orchestrate.curate] collection=%s curator=%s user=%s: %s", c.ID, a.ID, user, strings.ToLower(label))
-		reply, err := curateRunAgent(T, ctx, user, a.ID, brief)
-		if err != nil {
-			Log("[orchestrate.curate] collection=%s: ended: %v", c.ID, err)
-		} else {
-			Log("[orchestrate.curate] collection=%s: done", c.ID)
-		}
-		return reply, err
+	udb := UserDB(T.DB, user)
+	run, started = curations.start(c.ID, label, before, count, func(ctx context.Context, note func(string)) (string, error) {
+		Log("[orchestrate.curate] collection=%s user=%s: plan run, %s", c.ID, user, strings.ToLower(label))
+		return T.runPlan(ctx, udb, c, note)
 	})
 	return run, started, nil
 }

@@ -123,28 +123,17 @@ func TestThePlanIsSavedAsEdited(t *testing.T) {
 	}
 }
 
-// Run now carries out the plan the same way for Hand Curated and Auto-
-// Curation, with no agent: the search terms run, what they find is fetched,
-// and the run reports how it ended. A collection with no plan is refused.
-// Curation by Agent hands the agent the plan instead.
+// Run now carries out the plan the same way whatever the collection stored
+// for curation before (nothing, Auto-Curation's marker, or an agent once in
+// charge): the search terms run, what they find is fetched, and the run
+// reports how it ended. No agent runs.
 func TestRunNowCarriesOutThePlan(t *testing.T) {
 	// Loopback: refused before any connection, so nothing leaves the test.
 	df := planFixture(t, map[string]string{
 		"edited search": "1. A page\n   http://127.0.0.1:9/a\n   line\n\n2. Another\n   http://127.0.0.1:9/b\n   line\n",
 	})
-	var agentRan bool
-	var brief string
-	curateRunAgent = func(_ *OrchestrateApp, _ context.Context, _, _, b string) (string, error) {
-		agentRan, brief = true, b
-		return "I added what fit.", nil
-	}
-	saveCollection(df.udb, Collection{ID: "col-n", Name: "N", Owner: "u"})
-	if _, err := df.app.collectionCurateStart(curateCall(df, http.MethodPost, "u", "col-n"), struct{}{}); err == nil || !strings.Contains(err.Error(), "Draft a plan") {
-		t.Errorf("a collection with no plan: %v", err)
-	}
-
-	for _, curator := range []string{"", collectionAutoCurator} {
-		id := "col-r" + curator
+	for i, curator := range []string{"", collectionAutoCurator, df.agent.ID} {
+		id := "col-r" + string(rune('0'+i))
 		saveCollection(df.udb, Collection{ID: id, Name: "R", Owner: "u", CuratorAgent: curator, SearchTerms: []string{"edited search"}, DocsPerRun: 5})
 		if _, err := df.app.collectionCurateStart(curateCall(df, http.MethodPost, "u", id), struct{}{}); err != nil {
 			t.Fatal(err)
@@ -154,17 +143,8 @@ func TestRunNowCarriesOutThePlan(t *testing.T) {
 			t.Errorf("curator %q: outcome %q", curator, o)
 		}
 	}
-	if agentRan {
-		t.Error("an agent ran for a plan Knowledge runs itself")
-	}
-
-	saveCollection(df.udb, Collection{ID: "col-g", Name: "G", Owner: "u", CuratorAgent: df.agent.ID, SearchTerms: []string{"edited search"}, FilterRules: "Skip forums"})
-	if _, err := df.app.collectionCurateStart(curateCall(df, http.MethodPost, "u", "col-g"), struct{}{}); err != nil {
-		t.Fatal(err)
-	}
-	waitRun(t, df, "col-g")
-	if !agentRan || !strings.Contains(brief, "- edited search") || !strings.Contains(brief, "Skip forums") {
-		t.Errorf("the agent should be handed the plan: ran %v\n%s", agentRan, brief)
+	if n := df.llm.Calls(); n != 0 {
+		t.Errorf("a model was asked %d times: no agent runs the plan, and these pages never reached the check", n)
 	}
 }
 

@@ -150,10 +150,10 @@ func (T *OrchestrateApp) runPlan(ctx context.Context, udb Database, c Collection
 		cancel()
 		switch {
 		case res.addsIt():
-			T.ingestAutofillDoc(ctx, c, name, text, raw, mime)
+			_, doc := T.ingestAutofillDoc(ctx, c, name, text, raw, mime)
 			T.recordIngest(home, &c, s.Source, "")
 			added++
-			if res.Answer == vetSupersedes {
+			if res.Answer == vetSupersedes && T.markSuperseded(c, res.AgainstDoc, doc) {
 				proposed = append(proposed, res.AgainstTitle)
 			}
 		case heldFor(res) != "" && T.holdPage(c, cand, res) == nil:
@@ -185,7 +185,7 @@ func (T *OrchestrateApp) runPlan(ctx context.Context, udb Database, c Collection
 		said = append(said, fmt.Sprintf("%d page%s did not pass the check and %s held for you below.", held, plural(held), verb))
 	}
 	if len(proposed) > 0 {
-		said = append(said, "Newer versions were found of "+quoteList(proposed)+": consider removing the old.")
+		said = append(said, "Newer versions were found of "+quoteList(proposed)+": each is kept, marked as the older version and ranked below the new one.")
 	}
 	if len(turnedAway) > 0 {
 		said = append(said, "Suggested links turned away: "+strings.Join(turnedAway, "; ")+".")
