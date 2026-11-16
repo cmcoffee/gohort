@@ -397,7 +397,7 @@ const documentsDetailAssets = `<style>
     if (rows.length === 0) {
       var emp = document.createElement('div');
       emp.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);font-style:italic';
-      emp.textContent = '(none listed: the plan's search terms find the rest)';
+      emp.textContent = '(none listed: the search terms in the plan find the rest)';
       host.appendChild(emp);
     }
     rows.forEach(function(row, idx) {
@@ -566,7 +566,7 @@ const documentsDetailAssets = `<style>
     var cur = ta.value || '';
     window.uiOpenAssist({
       title: 'Description: ' + ($('#docs-name').textContent || 'collection'),
-      subtitle: 'What this collection is for. The plan's search terms are written from these words, so name the kinds of source it should hold.',
+      subtitle: 'What this collection is for. The search terms in its plan are written from these words, so name the kinds of source it should hold.',
       initial: cur,
       placeholder: 'The description appears here. Edit it directly, or ask for changes in the conversation.',
       url: api('/api/collections/' + encodeURIComponent(cid) + '/assist'),
