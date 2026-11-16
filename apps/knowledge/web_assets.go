@@ -296,6 +296,12 @@ const documentsDetailAssets = `<style>
 .docs-detail[data-access="add"] [data-need="owner"],
 .docs-detail[data-access="maintain"] [data-need="owner"] { display: none !important; }
 .docs-detail { padding: 0.5rem; display: flex; flex-direction: column; gap: 1rem; }
+/* The paste dialog's form: label over field, the full width of a wide
+   dialog, and room to see what was pasted. */
+.docs-modal-form { display: flex; flex-direction: column; gap: 0.3rem; width: 820px; max-width: 100%; box-sizing: border-box; }
+.docs-modal-form label { font-size: var(--fs-sm, 0.82rem); font-weight: 600; color: var(--text); margin-top: 0.4rem; }
+.docs-modal-form input, .docs-modal-form textarea { width: 100%; box-sizing: border-box; background: var(--bg-0); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 0.45rem 0.6rem; font: inherit; font-size: var(--fs-sm, 0.85rem); }
+.docs-modal-form textarea { min-height: min(55vh, 34rem); resize: vertical; font-family: var(--font-mono, ui-monospace, monospace); line-height: 1.45; }
 .docs-detail-hdr { padding-bottom: 0.8rem; border-bottom: 1px solid var(--border); }
 .docs-detail-name { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.3rem; }
 .docs-detail-name span { font-size: 1.3rem; font-weight: 600; color: var(--text); flex: 1; min-width: 200px; }
@@ -922,7 +928,6 @@ const documentsDetailAssets = `<style>
     var lblX = document.createElement('label'); lblX.textContent = 'Text'; form.appendChild(lblX);
     var inpX = document.createElement('textarea');
     inpX.placeholder = 'Paste markdown, plain text, or a JSON object / array. Headings (## ...) become sections; JSON keys become sections with path: value lines.';
-    inpX.style.minHeight = '16rem';
     form.appendChild(inpX);
     var hint = document.createElement('div');
     hint.style.cssText = 'font-size:var(--fs-xs, 0.74rem);color:var(--text-mute);margin-top:0.3rem';
@@ -937,6 +942,7 @@ const documentsDetailAssets = `<style>
     inpX.addEventListener('input', describe);
     var modal = window.uiOpenModal({
       title: 'Paste into this collection',
+      width: 'min(880px, 96vw)',
       subtitle: 'One document, named by its title. Paste again under the same title to replace it.',
       actions: [
         {label: 'Cancel'},
