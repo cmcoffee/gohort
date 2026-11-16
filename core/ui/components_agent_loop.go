@@ -369,6 +369,13 @@ type AgentLoopPanel struct {
 	// (only enable when needed).
 	HideActivity bool `json:"hide_activity,omitempty"`
 
+	// ShowSteps shows each tool call as a line in the conversation as the
+	// turn runs: a spinner and its seconds while it runs, a mark when it
+	// ends, and what it covered when opened. A reply's list of calls opens
+	// with it, too, instead of behind its "N tools" button. An app words its
+	// tools' lines with window.uiRegisterStepSummary.
+	ShowSteps bool `json:"show_steps,omitempty"`
+
 	// LockActivity hides the activity pane AND the floating
 	// expand affordance — the pane is not user-toggleable. Use
 	// for chat-only surfaces that intentionally route every

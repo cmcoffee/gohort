@@ -27,7 +27,7 @@ check('the reload fallback passes over them too', cached.indexOf('notToolHost(pr
 check('a bubble with text hosts its own calls', fn.indexOf("if (!m.bubble.classList.contains('ui-agent-msg-empty')) return m.bubble;") > 0);
 
 var call = src.slice(src.indexOf("case 'tool_call': {"), src.indexOf("case 'tool_progress':"));
-check('a live call is placed by liveToolHost', call.indexOf('var host = liveToolHost(bm);') > 0);
+check('a live call is placed by liveToolHost', call.indexOf(': liveToolHost(bm);') > 0);
 check('and its host is remembered by call id', call.indexOf('bm.callHosts[ev.call_id] = host;') > 0);
 check('a call beneath a running one finds its parent where the parent was drawn',
   call.indexOf('callHostFor(pm, ev.parent_call_id)') > 0);

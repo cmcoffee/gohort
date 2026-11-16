@@ -843,6 +843,16 @@
   window.uiRegisterBlockRenderer = function(name, fn) {
     if (typeof fn === 'function') window.UIBlockRenderers[name] = fn;
   };
+  // Step-summary registry: an app says in words what one of its tools did,
+  // for the step lines an agent panel shows (AgentLoopPanel.ShowSteps).
+  // fn(args, output) returns the line ("Read main.go (120 lines)"); args is
+  // the call's arguments as an object, output its result text, or null while
+  // it runs. A tool with none, or a summary that returns nothing, shows its
+  // name and arguments.
+  if (!window.UIStepSummaries) window.UIStepSummaries = {};
+  window.uiRegisterStepSummary = function(name, fn) {
+    if (typeof fn === 'function') window.UIStepSummaries[name] = fn;
+  };
   // Client-action registry — toolbar buttons with Method="client"
   // call into one of these handlers by name. Lets apps wire
   // browser-side actions (window.print, copy-to-clipboard with

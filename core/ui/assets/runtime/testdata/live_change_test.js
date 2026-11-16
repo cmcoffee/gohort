@@ -44,7 +44,7 @@ check('a live change refreshes the counts and the list',
 check('the refresh reads the counts for the agent on screen, and the list',
   /if \(isAltNavAgent\(window\.GOHORT_AGENT_ID\)\) refreshChannelBadges\(\);\s*else if \(hasAllAgentNav\) refreshChannelBadges\(true\);\s*if \(hasList\) loadSessions\(\);/.test(panel));
 check('a tool result refreshes them, so a schedule added mid-turn shows then',
-  /attachAgentToolToggle\(host2\); \/\/ refresh count \+ open panel\s*scrollConvo\(false\);\s*if \(afterChange\) afterChange\(\);/.test(panel));
+  /refreshToolHost\(host2\); \/\/ refresh count \+ open panel\s*scrollConvo\(false\);\s*if \(afterChange\) afterChange\(\);/.test(panel));
 check('the end of a turn refreshes them',
   /\/\/ And the nav's counts, which a tool in the turn may have moved\.\s*if \(afterChange\) afterChange\(\);/.test(panel));
 check('the hook is set where the nav is built', /afterChange = refreshAfterChange;/.test(panel));

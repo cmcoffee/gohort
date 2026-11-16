@@ -1746,19 +1746,25 @@
     // route everything into the conversation pane and don't want
     // the activity-pane affordance at all.
     var activityCollapsed = !!cfg.hide_activity || !!cfg.lock_activity;
-    if (!cfg.lock_activity) {
+    // On a phone the pane would take half the screen beside the
+    // conversation, so it starts closed there, and opening it there does not
+    // change what a wider screen remembers.
+    var activityNarrow = false;
+    try { activityNarrow = !!(window.matchMedia && window.matchMedia('(max-width: 720px)').matches); } catch (_) {}
+    if (!cfg.lock_activity && !activityNarrow) {
       try {
         var aStored = localStorage.getItem('agent.activityCollapsed');
         if (aStored === '1') activityCollapsed = true;
         else if (aStored === '0') activityCollapsed = false;
       } catch (_) {}
     }
+    if (activityNarrow) activityCollapsed = true;
     function applyActivityCollapse() {
       wrap.classList.toggle('activity-collapsed', activityCollapsed);
       if (cfg.lock_activity) {
         wrap.classList.add('activity-locked-hidden');
       }
-      if (!cfg.lock_activity) {
+      if (!cfg.lock_activity && !activityNarrow) {
         try { localStorage.setItem('agent.activityCollapsed', activityCollapsed ? '1' : '0'); } catch (_) {}
       }
     }
@@ -4787,6 +4793,7 @@
       var displayName = (t.kind === 'pipeline' ? '🪈 ' : '') + '→ ' + t.name;
       var summaryChildren = [el('span', {class: 'ui-agent-tool-name'}, [displayName])];
       if (t.args) summaryChildren.push(el('span', {class: 'ui-agent-tool-args', title: toolArgsHover(t.argsFull)}, [t.args]));
+      if (cfg.show_steps) summaryChildren = stepLineChildren(t, summaryChildren);
       var summary = el('summary', {class: 'ui-agent-tool-summary'}, summaryChildren);
       var det = el('details', {class: 'ui-agent-tool'});
       det.appendChild(summary);
@@ -4816,6 +4823,101 @@
       det.appendChild(body);
       return det;
     }
+    // stepLineChildren is a step's line where steps are shown: a mark for how
+    // it stands (a spinner and its seconds while it runs, a tick, or a cross
+    // for an error), then the app's words for it when it registered some
+    // (uiRegisterStepSummary), else the name and arguments as given.
+    function stepLineChildren(t, plain) {
+      var running = t.output === null;
+      var failed = !running && /^\s*error:/i.test(String(t.output || ''));
+      var mark = el('span', {class: 'ui-agent-step-mark', style: 'display:inline-block;min-width:1.1em;margin-right:0.35em;font-family:var(--font-mono, monospace);color:' +
+        (running ? 'var(--accent)' : failed ? 'var(--danger,#ff7b72)' : 'var(--text-mute)')},
+        [running ? stepFrames[0] : failed ? '\u2717' : '\u2713']);
+      var words = null;
+      var fn = window.UIStepSummaries && window.UIStepSummaries[t.name];
+      if (fn) {
+        try { words = fn(t.argsFull && typeof t.argsFull === 'object' ? t.argsFull : {}, running ? null : String(t.output || '')); } catch (_) { words = null; }
+      }
+      // An approval the turn asked for is its question, not a call.
+      if (!words && /^Approval: /.test(String(t.name || ''))) words = String(t.name).replace(/^Approval: /, 'Asked: ');
+      var out = [mark];
+      if (words) out.push(el('span', {class: 'ui-agent-step-line', title: toolArgsHover(t.argsFull)}, [String(words)]));
+      else out = out.concat(plain);
+      if (running) {
+        if (!t.since) t.since = Date.now();
+        var secs = el('span', {class: 'ui-agent-step-secs', style: 'margin-left:0.5em;color:var(--text-mute);font-size:var(--fs-xs, 0.76rem)'}, ['']);
+        secs.setAttribute('data-since', String(t.since));
+        mark.setAttribute('data-step-run', '1');
+        out.push(secs);
+        startStepTimer();
+      }
+      return out;
+    }
+    // One timer animates every running step's mark and counts its seconds,
+    // changing the text in place; it stops when nothing is running.
+    var stepFrames = ['\u280b', '\u2819', '\u2839', '\u2838', '\u283c', '\u2834', '\u2826', '\u2827', '\u2807', '\u280f'];
+    var stepTimer = null, stepFrame = 0;
+    function startStepTimer() {
+      if (stepTimer) return;
+      stepTimer = setInterval(function() {
+        var marks = convoLog.querySelectorAll('[data-step-run]');
+        if (!marks.length) { clearInterval(stepTimer); stepTimer = null; return; }
+        stepFrame = (stepFrame + 1) % stepFrames.length;
+        marks.forEach(function(m) { setLiveText(m, stepFrames[stepFrame]); });
+        convoLog.querySelectorAll('.ui-agent-step-secs[data-since]').forEach(function(s) {
+          var n = Math.floor((Date.now() - Number(s.getAttribute('data-since'))) / 1000);
+          setLiveText(s, n >= 3 ? (n >= 60 ? Math.floor(n / 60) + 'm ' + (n % 60) + 's' : n + 's') : '');
+        });
+      }, 150);
+    }
+    // The turn's live steps, where steps are shown: one list in the
+    // conversation, made at the turn's first call and kept as its record when
+    // the turn ends. Calls are drawn into it as they start, and redrawn one
+    // at a time as they end, so an opened step stays open.
+    // It sits just above the working dots: each new step moves it there, so
+    // cards the turn put in the conversation meanwhile stay above it and the
+    // step running now is in view.
+    var turnSteps = null;
+    function turnStepsHost() {
+      if (!turnSteps || !turnSteps.isConnected) {
+        turnSteps = el('div', {class: 'ui-agent-msg ui-agent-msg-assistant ui-agent-steps'});
+        turnSteps.tools = [];
+      }
+      if (thinkingEl && thinkingEl.parentNode === convoLog) {
+        if (turnSteps.nextSibling !== thinkingEl) convoLog.insertBefore(turnSteps, thinkingEl);
+      } else if (convoLog.lastChild !== turnSteps) {
+        convoLog.appendChild(turnSteps);
+      }
+      return turnSteps;
+    }
+    function renderTurnSteps(host) {
+      var panel = host.querySelector(':scope > .ui-agent-tools-panel');
+      if (!panel) {
+        panel = el('div', {class: 'ui-agent-tools-panel'});
+        host.appendChild(panel);
+      }
+      (host.tools || []).forEach(function(t) {
+        var state = (t.output === null ? 'run' : 'done') + ':' + (t.children ? t.children.length : 0);
+        if (!t._el) {
+          t._el = renderAgentToolEntry(t);
+          t._state = state;
+          panel.appendChild(t._el);
+        } else if (t._state !== state) {
+          var fresh = renderAgentToolEntry(t);
+          fresh.open = t._el.open;
+          panel.replaceChild(fresh, t._el);
+          t._el = fresh;
+          t._state = state;
+        }
+      });
+    }
+    // refreshToolHost redraws a host's calls: the turn's live steps, or a
+    // bubble's list behind its button.
+    function refreshToolHost(host) {
+      if (host && host.classList && host.classList.contains('ui-agent-steps')) renderTurnSteps(host);
+      else attachAgentToolToggle(host);
+    }
+
     // findToolEntry finds a call by id at any depth.
     function findToolEntry(list, id) {
       for (var i = 0; list && i < list.length; i++) {
@@ -4866,6 +4968,12 @@
       }, [label]);
       if (bar) bar.appendChild(toggle);
       else msgEl.appendChild(toggle); // fallback: no action bar (e.g. truncate_url off)
+      // Where steps are shown, a reply's list is open from the start.
+      if (cfg.show_steps) {
+        panel.style.display = '';
+        toggle.classList.add('open');
+        renderAgentToolPanel(panel);
+      }
     }
 
     // ensureMsgBubbleFor materializes (or returns) a bubble keyed by
@@ -5726,7 +5834,7 @@
                 kind: ev.tool_kind || '',
               });
               noteDispatchTool(ev.parent_call_id, ev.name || '');
-              attachAgentToolToggle(phost);
+              refreshToolHost(phost);
               break;
             }
           }
@@ -5743,7 +5851,7 @@
           // specific call (see tool_result case below).
           var bm = ensureMsgBubbleFor(ev.msg_id, 'assistant');
           if (!bm || !bm.bubble) break;
-          var host = liveToolHost(bm);
+          var host = cfg.show_steps ? turnStepsHost() : liveToolHost(bm);
           if (!host) break;
           if (ev.call_id) {
             if (!bm.callHosts) bm.callHosts = {};
@@ -5758,7 +5866,7 @@
             output: null,
             kind: ev.tool_kind || '',
           });
-          attachAgentToolToggle(host);
+          refreshToolHost(host);
           scrollConvo(false);
           break;
         }
@@ -5801,7 +5909,7 @@
               }
             }
           }
-          attachAgentToolToggle(host2); // refresh count + open panel
+          refreshToolHost(host2); // refresh count + open panel
           scrollConvo(false);
           if (afterChange) afterChange();
           break;
@@ -5919,6 +6027,9 @@
           }
           break;
         case 'done':
+          // The turn's steps stay where they are, as its record; the next
+          // turn starts a list of its own.
+          turnSteps = null;
           // A note that arrived after the last drain point is still sitting
           // here, and the turn is over. Not hooked into enableInput, which also
           // fires on session OPEN — marking there would condemn a note belonging
