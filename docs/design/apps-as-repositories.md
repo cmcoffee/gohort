@@ -138,6 +138,36 @@ an agent tests its work before pushing instead of finding out at install.
 **Install errors name the file and the field**, since an agent reads them
 and fixes what they say.
 
+## Porting a project
+
+The same pieces bring an existing project into gohort and keep it there.
+Importing, porting and maintaining are different jobs on the same surface:
+
+1. **Import.** The existing project is added to Anvil as a repository, and
+   the new app's repository links it as a read-only dependency. The agent
+   reads its whole tree, runs its build and tests in the sandbox, and sees its
+   history.
+2. **Port.** The agent writes a gohort app in the format above (`app.json`,
+   `sections.json`, `scripts/`) in the new app's repository, guided by the
+   same `AGENTS.md`, runs the local check, and installs through the gate.
+   The old project is never changed.
+3. **Maintain.** Once installed it is an ordinary app with its own
+   repository: Builder, Anvil and outside agents all work on it through
+   that one history.
+
+A gohort app is built from gohort's own parts: pages, records, scripts in
+the app's sandbox, agents and pipelines. A project that is a long-running
+service of its own, or needs host access gohort does not give apps, cannot
+be ported whole. The useful answer there is the parts that fit as the app,
+and the rest reached through a connector or a system hook. So before
+writing anything the agent reports that split: what becomes the app, what
+stays outside and how the app reaches it, and what has no place, so the
+owner decides before the port starts rather than finding out after.
+
+Nothing here is new machinery: the format, install, Anvil on an app and
+linked projects (Anvil already has them). It needs steps 1 and 3 of the
+build order, and the porting brief in `AGENTS.md`.
+
 ## Public and private
 
 Anvil is a private app today. The repository itself (the file format,
@@ -179,7 +209,10 @@ never run outside the app's own sandbox, whatever the repository says.
    sandboxed for non-admins.
 4. **Remotes.** Push and pull with the person's own credentials; a pull is
    installed through the gate.
-5. **Outside agents.** `AGENTS.md` and `CLAUDE.md` in every repository and
+5. **Porting.** A port brief in `AGENTS.md` (the split report first, then
+   the app), and Anvil opening the new app's repository with the old
+   project linked into it. Needs steps 1 and 3.
+6. **Outside agents.** `AGENTS.md` and `CLAUDE.md` in every repository and
    export; export, check and install from the command line (these can come
    as early as step 1); direct git from gohort later, if wanted.
 
