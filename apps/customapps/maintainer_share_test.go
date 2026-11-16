@@ -1,8 +1,13 @@
 package customapps
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // The owner names a maintainer on the Share dialog. Naming one shares the app
@@ -63,5 +68,46 @@ func TestAnOwnerNamesAMaintainerWhoIsSharedTheApp(t *testing.T) {
 	forgetAppReader("bob")
 	if spec, _ = loadSpec("alice", "tally"); spec.MaintainedBy("bob") || personShareReaches(spec, "bob") {
 		t.Errorf("bob is still on the app after his account went: maintainers=%v shared=%v", spec.Maintainers, spec.SharedWith)
+	}
+}
+
+// The apps list offers Change to whoever may change the app through Builder:
+// its owner, and a maintainer on the app shared with them, whose row says so.
+// Somebody it is only shared with does not get it.
+func TestTheAppsListOffersChangeToMaintainers(t *testing.T) {
+	T, _, _ := groupShareFixture(t)
+	if err := T.setPersonShare("alice", "tally", "bob", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := T.setMaintainer("alice", "tally", "carol", true); err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range []string{"bob", "carol"} {
+		AuthSetUserApps(AuthDB(), u, []string{"/apps"})
+	}
+	rowFor := func(user string) map[string]string {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodGet, "/apps/_apps", nil)
+		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(AuthDB(), user)})
+		out, err := T.handleAppsList(&jsonapi.Call{R: r, User: user})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, row := range out.([]map[string]string) {
+			if row["slug"] == "tally" {
+				return row
+			}
+		}
+		t.Fatalf("%s's list has no tally", user)
+		return nil
+	}
+	if row := rowFor("alice"); row["can_change"] != "1" {
+		t.Errorf("the owner's row: %v", row)
+	}
+	if row := rowFor("carol"); row["can_change"] != "1" || !strings.Contains(row["note"], "you maintain it") || row["mine"] != "" {
+		t.Errorf("the maintainer's row: %v", row)
+	}
+	if row := rowFor("bob"); row["can_change"] != "" {
+		t.Errorf("a user it is only shared with was offered Change: %v", row)
 	}
 }

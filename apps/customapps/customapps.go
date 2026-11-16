@@ -599,7 +599,7 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 					{Type: "button", Label: "Runs", Method: "GET", PostTo: "{slug}/_runs", OnlyIf: "has_runs", HideIf: "disabled"},
 					// Builder, pointed at this app. Yours only: Builder changes
 					// what you own.
-					{Type: "button", Label: "Change", Method: "GET", PostTo: changeURL, OnlyIf: "mine", HideIf: "disabled"},
+					{Type: "button", Label: "Change", Method: "GET", PostTo: changeURL, OnlyIf: "can_change", HideIf: "disabled"},
 					{Type: "button", Label: "Enable", Method: "POST", PostTo: "_app/enable?slug={slug}", OnlyIf: "disabled",
 						Confirm: "Enable this imported app? Review its data-source and action scripts first: they run in your sandbox once the app is live."},
 					// One Share button opens the sharing modal (customapps_share).
@@ -995,13 +995,14 @@ func (T *CustomApps) handleAppsList(c *jsonapi.Call) (any, error) {
 	direct := requestIsAdmin(r) // shares and links directly, no request
 	for _, s := range listSpecs(owner) {
 		seen[s.Slug] = true
-		// "mine" gates the owner-only Share/Delete actions, and "shared" carries
+		// "mine" gates the owner-only Share/Delete actions ("can_change", the
+		// owner's and a maintainer's, gates Change), and "shared" carries
 		// the current state into the Share modal (a client action) so it opens
 		// pre-filled.
 		// group bands the list; state is the badge; note is what the badge
 		// cannot say (when it next updates, what a disabled app is waiting
 		// on); status is the same in one string, for the API's readers.
-		row := map[string]string{"slug": s.Slug, "name": s.Name, "desc": s.Desc, "mine": "1", "group": "Your apps", "state": "private"}
+		row := map[string]string{"slug": s.Slug, "name": s.Name, "desc": s.Desc, "mine": "1", "can_change": "1", "group": "Your apps", "state": "private"}
 		if len(visibleSettings(s, true)) > 0 {
 			row["has_settings"] = "1"
 		}
@@ -1101,6 +1102,12 @@ func (T *CustomApps) handleAppsList(c *jsonapi.Call) (any, error) {
 			"slug": s.Slug, "name": s.Name, "desc": s.Desc,
 			"status": by,
 			"group":  "Shared with you", "note": by,
+		}
+		// A maintainer changes it through Builder, as on the app's own page
+		// (docs/design/app-maintainers.md), so the list offers Change too.
+		if s.MaintainedBy(owner) {
+			row["can_change"] = "1"
+			row["status"], row["note"] = by+", you maintain it", by+", you maintain it"
 		}
 		if len(visibleSettings(s, false)) > 0 {
 			row["has_settings"] = "1"
