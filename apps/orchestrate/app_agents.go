@@ -128,9 +128,19 @@ func appAgentForcesPrivate(id string) bool {
 // editor or the hosting app made it on its per-turn copy, and a spec default
 // must not overrule either.
 // appAgentExactTools reports whether an app agent's spec limits its turns to
-// exactly its own tools (appagents.AppAgentSpec.ExactTools).
+// exactly its own tools (appagents.AppAgentSpec.ExactTools). An app that runs
+// its agent under a scoped id ("app-anvil-coder:<project>", so each project
+// keeps its own conversations and memory) is that agent: the part before the
+// colon names the spec. Looked up by the whole id alone, Anvil's turns never
+// matched, and its coding assistant was offered 44 tools, image and video
+// among them, about 15K tokens on every call.
 func appAgentExactTools(id string) bool {
 	s, ok := appagents.AppAgentByID(id)
+	if !ok {
+		if base, _, scoped := strings.Cut(id, ":"); scoped {
+			s, ok = appagents.AppAgentByID(base)
+		}
+	}
 	return ok && s.ExactTools
 }
 

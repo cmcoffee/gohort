@@ -13,6 +13,7 @@ import (
 	"github.com/cmcoffee/gohort/apps/orchestrate"
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -293,5 +294,25 @@ func TestAnAppProjectRunsItsChecksOnTheWorkingCopy(t *testing.T) {
 	}
 	if live, _ := LoadAppSpec("alice", "wx"); live.DataSources[0].Script != "print('{}')" || len(live.Checks) != 0 {
 		t.Errorf("running the checks installed the working copy: %+v", live)
+	}
+}
+
+// Anvil's turns are held to its own tools and a short list of the
+// framework's: the whole catalog (44 tools, image and video among them, about
+// 15K tokens a call) went to a local worker that spent minutes on each round.
+// Nothing in the list is a tool for anything but working on code.
+func TestAnvilIsHeldToItsOwnToolsAndAFewOfTheFrameworks(t *testing.T) {
+	spec, ok := appagents.AppAgentByID(anvilAgentID)
+	if !ok || !spec.ExactTools || strings.Join(spec.AllowedTools, ",") != strings.Join(anvilCoreTools, ",") {
+		t.Fatalf("the Anvil agent is not held to its tools: %+v", spec)
+	}
+	for _, n := range anvilCoreTools {
+		switch n {
+		case "image", "video", "request_build", "workspace", "browse_page", "screenshot_page", "find_tools", "load_tool":
+			t.Errorf("%s is on Anvil's list", n)
+		}
+	}
+	if anvilRounds < 30 {
+		t.Errorf("a turn has %d rounds: an ordinary change to an app ran out at 15", anvilRounds)
 	}
 }

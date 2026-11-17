@@ -40,6 +40,9 @@ type Agent struct {
 	SeedNotes              string
 	LeadModel              bool
 	ThinkBudget            int
+	// MaxWorkerRounds is how many rounds a turn may take; 0 is the host's
+	// default.
+	MaxWorkerRounds int
 	// KnowledgeAttachedOnly searches only the collections attached to the
 	// agent, never the deployment's by default. AttachedCollections are the
 	// ones attached for this turn.

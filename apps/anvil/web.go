@@ -863,6 +863,13 @@ func (T *Anvil) handleChatSend(w http.ResponseWriter, r *http.Request, udb Datab
 	// no field for it, and because the seed is a per-project answer anyway.
 	agent.EnableNotes = true
 	agent.SeedNotes = anvilSeedNotes
+	// Its tools are the project's and anvilCoreTools, whatever an older
+	// saved copy of the agent lists; its rounds are anvilRounds unless the
+	// person set their own.
+	agent.AllowedTools = anvilCoreTools
+	if agent.MaxWorkerRounds <= 0 {
+		agent.MaxWorkerRounds = anvilRounds
+	}
 	// Only knowledge attached to it. With none, an agent searches every
 	// deployment-wide collection, whatever other apps gathered about
 	// anything: noise beside the code it is working on.

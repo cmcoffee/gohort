@@ -104,3 +104,19 @@ func TestASpokenReplySendIsToldToSpeak(t *testing.T) {
 		}
 	}
 }
+
+// An app that runs its agent under a scoped id ("<agent>:<project>", as
+// Anvil does so each project keeps its own conversations) is held to the
+// agent's exact tools like the agent itself; an id whose prefix is no app
+// agent, or one that is not held to them, is not.
+func TestAScopedAppAgentIsHeldToItsExactTools(t *testing.T) {
+	appagents.RegisterAppAgent(appagents.AppAgentSpec{ID: "app-test-scoped-exact", OwningApp: "Test", Name: "Scoped",
+		AllowedTools: []string{"ask_user"}, Hidden: true, ExactTools: true})
+	appagents.RegisterAppAgent(appagents.AppAgentSpec{ID: "app-test-scoped-open", OwningApp: "Test", Name: "Open", Hidden: true})
+	if !appAgentExactTools("app-test-scoped-exact") || !appAgentExactTools("app-test-scoped-exact:project-1") {
+		t.Error("the agent, or its scoped id, is not held to its exact tools")
+	}
+	if appAgentExactTools("app-test-scoped-open:project-1") || appAgentExactTools("no-such-agent:project-1") {
+		t.Error("an agent not held to exact tools, or no agent at all, was held to them")
+	}
+}

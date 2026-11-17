@@ -47,6 +47,7 @@ func AppAgentOf(rec AgentRecord) agenthost.Agent {
 		SeedNotes:              rec.SeedNotes,
 		LeadModel:              rec.LeadModel,
 		ThinkBudget:            rec.ThinkBudget,
+		MaxWorkerRounds:        rec.MaxWorkerRounds,
 		KnowledgeAttachedOnly:  rec.KnowledgeAttachedOnly,
 		AttachedCollections:    rec.AttachedCollections,
 		Record:                 rec,
@@ -68,6 +69,7 @@ func appRecord(a agenthost.Agent) AgentRecord {
 	rec.SeedNotes = a.SeedNotes
 	rec.LeadModel = a.LeadModel
 	rec.ThinkBudget = a.ThinkBudget
+	rec.MaxWorkerRounds = a.MaxWorkerRounds
 	rec.KnowledgeAttachedOnly = a.KnowledgeAttachedOnly
 	rec.AttachedCollections = a.AttachedCollections
 	return rec

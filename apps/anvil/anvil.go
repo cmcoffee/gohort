@@ -46,8 +46,31 @@ func init() {
 		Hidden:      true, // reached through the Anvil app, not the agent picker
 		MemoryMode:  "agent",
 		Prompt:      coderPrompt,
+		// Its own tools for the project (codeTools) and these, nothing
+		// else: every tool an agent may use was on its catalog, 44 of them
+		// at about 15K tokens a call, image, video and Builder's request
+		// among them, on a local worker that spent minutes on each round.
+		ExactTools:   true,
+		AllowedTools: anvilCoreTools,
 	})
 }
+
+// anvilCoreTools are the framework's tools a coding turn keeps beside its
+// own: asking the person, its notes and what it learned, reading output too
+// long to show at once, freeing context, carrying on past a promise to act,
+// and the web for a library's docs or an error message.
+var anvilCoreTools = []string{
+	"ask_user", "ask_user_form",
+	"update_notes", "remember", "recall", "forget",
+	"read_output", "release_output", "compact_context", "keep_going",
+	"web_search", "fetch_url",
+}
+
+// anvilRounds is how many rounds a turn may take unless the person set their
+// own. The default of 15 ran out on an ordinary change to an app: reading its
+// seven files and planning took eight, and the edits, the checks and fixing
+// what they found did not fit.
+const anvilRounds = 40
 
 // coderPrompt is the coding agent's standing instruction.
 //
