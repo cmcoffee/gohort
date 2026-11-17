@@ -3580,6 +3580,20 @@ func (lr *loopRun) finalRoundOutputGuardrail() loopAction {
 		// Recorded so the exit funnel does not ask twice about the same draft.
 		lr.outputChecked = true
 		if dec := lr.cfg.GuardrailCheck(GuardHookPreOutput, lr.rs.resp.Content); dec.Blocked {
+			// Stopped while the check ran: the guard reached no verdict, so
+			// it failed closed. The draft is still withheld, since nothing
+			// checked it, but the turn ends as stopped, not as a reply that
+			// broke a rule: a person's Cancel came back as "That one isn't
+			// something I can take on" and a guardrail substitution in the
+			// session's diagnostics, with no rule broken.
+			if err := lr.ctx.Err(); err != nil {
+				Debug("[agent_loop] stopped during the pre-output guardrail check: the draft is withheld, unchecked")
+				lr.retractRound()
+				lr.replaceBlockedDraft(stoppedUncheckedDraft)
+				stopped := *lr.rs.resp
+				stopped.Content, stopped.Reasoning, stopped.ToolCalls = "", "", nil
+				return lr.exit(&stopped, lr.history, err)
+			}
 			gmsg := dec.Message
 			// Halt overrides the correction budget: once the app has
 			// decided this turn is over, asking the same model for one

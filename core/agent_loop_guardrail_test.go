@@ -1398,3 +1398,42 @@ func TestGuardrailRejectReceivesTheTurnsCalls(t *testing.T) {
 		t.Errorf("halt = %+v", got)
 	}
 }
+
+// A turn stopped while the output check runs ends as stopped: the guard got
+// no verdict and failed closed, and the draft is withheld, unchecked, but no
+// decline is substituted and nothing says a rule was broken. A person's
+// Cancel came back as "That one isn't something I can take on" and a
+// guardrail substitution in the session's diagnostics.
+func TestAStopDuringTheOutputCheckIsNotARefusal(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	app := &AppCore{LLM: &FakeLLM{Turns: []FakeTurn{{Content: "Here is the draft the person stopped.", Repeat: true}}}}
+	var diags []string
+	resp, history, err := app.RunAgentLoop(ctx, []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		MaxRounds: 4,
+		OnDiag:    func(kind, _ string) { diags = append(diags, kind) },
+		GuardrailCheck: func(hook, _ string) GuardrailDecision {
+			if hook == GuardHookPreOutput {
+				cancel() // the person pressed Stop while the warden ran
+				return GuardrailDecision{Blocked: true, Message: "no verdict: context canceled"}
+			}
+			return GuardrailDecision{}
+		},
+	})
+	if err == nil {
+		t.Fatal("the stopped turn returned no error")
+	}
+	if resp != nil && (strings.Contains(resp.Content, "draft") || isGuardrailSafeFallback(resp.Content) || strings.TrimSpace(resp.Content) != "") {
+		t.Errorf("the stopped turn returned a reply: %q", resp.Content)
+	}
+	for _, d := range diags {
+		if d == "guardrail-output-substituted" {
+			t.Error("a stop was recorded as a guardrail substitution")
+		}
+	}
+	for _, m := range history {
+		if strings.Contains(m.Content, "the person stopped") {
+			t.Errorf("the unchecked draft is still in history: %q", m.Content)
+		}
+	}
+}

@@ -108,6 +108,11 @@ type GuardrailDecision struct {
 // — it stands in for the scrubbed turn in the transcript.
 const guardrailRedactedDraft = "[a draft reply was withheld here: it violated an enforced guardrail and was never shown to the user]"
 
+// stoppedUncheckedDraft stands in for a draft the turn was stopped before the
+// guardrail check could read: withheld, since nothing checked it, and not
+// said to have broken anything.
+const stoppedUncheckedDraft = "[a draft reply was withheld here: the turn was stopped before it was checked]"
+
 // guardrailSafeFallbacks are the neutral declines substituted for the reply
 // when the model cannot produce a guardrail-compliant one within the
 // correction budget — a determined push. This is the hard floor that makes
