@@ -1,16 +1,18 @@
-# One history per app, for Builder and Anvil
+# One history per app, for Builder and Anvil, and apps that hold everything they run on
 
 Status: agreed (2026-11-17), stage 1 next. The seven questions are settled
 (Decisions, at the end). Step 1 (Anvil saying when an install leaves the app
 broken) shipped first, on its own, in 0.9.510.
 
-Two stages. **Stage 1** gives every app a repository that records each save,
-and has Anvil work in it; the app as stored stays what is served. **Stage 2**
-makes the repository what the app is: it is served from the repository's
-live branch, and the store keeps only what is not code. Stage 1 is built and
-lived with first; nothing in it is thrown away by stage 2, which needs the
-same repository and history, and what stage 1 measures (repository sizes,
-the time a commit takes) decides stage 2's details.
+Three stages. **Stage 1** gives every app a repository that records its
+work, and has Anvil work in it; the app as stored stays what is served.
+**Stage 2** makes an app self-contained: it owns the agents, pipelines,
+machines and tools it runs on, changed only through Builder and Anvil, so
+its history holds all of it. **Stage 3** makes the repository what the app
+is: it is served from the repository's live branch, and the store keeps
+only what is not code. Each stage is built and lived with before the next;
+none throws away the one before, and what stage 1 measures (repository
+sizes, the time a commit takes) decides the later stages' details.
 
 ## Why
 
@@ -96,9 +98,94 @@ its own.
 
 **Later, separately:** Builder's folder workflow (`checkout`) uses the same
 repository, and the revisions list is read from git. Neither is needed for
-the above; stage 2 does both.
+the above; stage 3 does both.
 
-## Stage 2: the app is its repository
+## Stage 2: an app holds everything it runs on
+
+Today an app points at things that are not its own. It names an agent
+(`agent_id`), and that agent is a record of its own, edited on the Agents
+page, used by other agents and apps; its tools sit in the person's tool pool
+or on the agent's record; a pipeline (`pipeline_id`) and its machines are
+the same. Changing any of them changes the app, and none of it is in the
+app's history, its export (which carries the bound agent and the
+credentials its scripts name, and nothing else) or its checks. An app that
+copies them is whole: its history is all of it, its export carries all of
+it, and deleting it leaves nothing behind.
+
+**What an app owns.** Its agents, pipelines and machines, and its own tool
+space. Each is in the app's folder and history (`agents/<name>.json`,
+`pipelines/<name>.json`, `machines/<name>.json`, `tools/<name>.json`),
+exported and deleted with it. Builder, finding an agent that would do, makes
+the app a copy of it rather than pointing at it; each copy notes what it was
+copied from. One of them belongs to one app: another app that wants it makes
+its own copy.
+
+**What it does not own**, because it is the deployment's, not anything
+built on it: gohort's own tools (web_search, fetch_url, browse_page,
+calculate, image and the rest), the deployment's MCP servers (an app names
+a server's tools; the server is not copied), and credentials and the
+keystore (an app names the owner's credential, as its scripts do now; a
+copy would be a second copy of a secret).
+
+**Its own tool space.** Tools today live in three places: gohort's own; a
+person's pool, which all their agents may use; and a single agent's record
+(admin's "Agent-Scoped Tools"). All but gohort's are named per person, so
+an app's copy of `get_weather` could not be its own: an import matched it to
+the pool's tool of that name, or set it aside under Orphaned tools. An
+app's tools are kept in a space of the app's own, named by the app as well
+as the tool, so its `get_weather` and the pool's are two tools that never
+collide. The app's agents see that space and gohort's own tools, and not the
+person's pool: a pool tool an app needs is copied in. Nothing stored moves:
+the pool and agent-scoped tools stay as they are, and an app's space is new
+storage that starts empty.
+
+**Only Builder and Anvil change it.** An app's agents, pipelines, machines
+and tools change through Builder or Anvil, and nothing else, so every change
+goes through the app's checks, a shared app's approval and its history,
+with no second path to keep in step. Elsewhere they are shown and marked:
+the Agents page, the pipeline and machine editors and admin's tools list
+show them as "Part of <app>: change it with Builder or Anvil". An
+administrator can still switch one off or remove it (a tool misbehaving),
+which stops it and is recorded in the app's history; that is a stop, not an
+edit.
+
+**A shared app's approval covers all of it.** A shared app is taken out of
+sharing until an administrator approves its new version when its page or
+scripts change (`appServesDifferently`); a change to an agent, pipeline,
+machine or tool it owns changes what it does just as much, and counts the
+same. (A change to an agent a shared app is bound to today does not, which
+self-contained apps close.)
+
+**Approval by reach, one review per space.** Every tool an imported agent
+brings waits under Drafted tools for an administrator, one by one, so an
+agent with five tools is five approvals before it works. In an app's space:
+
+- A tool that only runs sandboxed and reaches the public web through gohort,
+  no more than gohort's own tools reach, needs no administrator: the person
+  importing or building the app chose it.
+- A tool that reaches a credential, a store's commands, raw network or the
+  host needs an administrator, and the review is one card for the whole
+  space, listing each such tool and what it reaches, approved at once. It is
+  asked again only when one of those tools changes.
+- A copy made within the deployment (a pool tool copied into an app) keeps
+  its approval while it is unchanged, and is reviewed again once edited.
+
+**Knowledge is different: it is the app's data.** A collection is RAG
+content that grows as people and agents add to it. Its definition (its name,
+its settings, what it gathers from) is the app's, in its folder
+(`knowledge/<name>.json`) and history, changed through Builder or Anvil. Its
+documents are added from anywhere, as now (the Knowledge page, an agent's
+ingest tools, the app), stay in the knowledge store and out of git, like the
+records people keep in the app; an export may carry them.
+
+**Existing apps copy on their first change.** An app that points at an
+agent, pipeline or tools of the person's copies them into itself the first
+time Builder or Anvil changes it, and from then on owns them. An app nobody
+changes keeps working as it is. This is a migration, and is said as one: an
+app's agent becomes a copy the app owns, and the agent it was copied from
+no longer changes it.
+
+## Stage 3: the app is its repository
 
 The app runs from its repository. Stage 1's repository becomes the source,
 and the store keeps the app's record.
@@ -143,7 +230,7 @@ else; it cannot make anything live by writing files.
   its history.
 
 **Moving apps over.** No bulk migration: an app moves the first time it is
-saved or opened after stage 2 is on. Its current version is written into the
+saved or opened after stage 3 is on. Its current version is written into the
 repository (already there since stage 1 for any app saved since), `live`
 points at it, and its code fields in the store are cleared once the
 repository serves it. An app not yet moved is served from the store exactly
@@ -151,7 +238,7 @@ as now, so the two kinds run side by side until every app has been touched.
 This is a migration, and is said as one: the code of every app ends up
 somewhere new.
 
-**What stage 2 costs on top of stage 1.**
+**What stage 3 costs on top of stage 1.**
 
 - **git becomes required for history, not for apps.** Serving reads the
   live folder, so without git (never installed, or gone since) an app still
@@ -194,10 +281,16 @@ somewhere new.
    agent credited as co-author; not a commit per save. A person's own
    change commits at once.
 5. **git:** the git program, with a fallback: without git, apps run and
-   save as now and only the history in git is missing (stage 2 serves from
+   save as now and only the history in git is missing (stage 3 serves from
    a plain live folder, so it never needs git to serve).
-6. **Builder's branch (stage 2):** one per app.
-7. **Maintainers (stage 2):** save directly, as now.
+6. **Builder's branch (stage 3):** one per app.
+7. **Maintainers (stage 3):** save directly, as now.
+8. **Self-contained apps (stage 2):** an app owns copies of its agents,
+   pipelines, machines and tools, in a tool space of its own; only Builder
+   and Anvil change them, shown read-only elsewhere with an
+   administrator's stop; tools approved by reach, one review per space;
+   knowledge's definition is the app's and its documents are data; existing
+   apps copy what they use on their first change.
 
 ## Steps
 
@@ -214,15 +307,28 @@ Stage 1:
    another save since is fetched and merged, or shown as a conflict.
 5. Measure: repository sizes and commit times across real apps.
 
-Stage 2:
+Stage 2 (an app holds everything it runs on):
 
-6. Serve from the live folder, cached, for an app that has moved; the store
-   serves the rest.
-7. Installs merge into `live` through the save gates; Builder works on its
-   branch, one per app; without git, saves write the live folder directly.
-8. Revisions, revert and Preview from git; bundles as git bundles.
-9. Move apps on first save or open; clear their code fields once served
-   from the repository.
+6. An app's own tool space: tools named by the app, its agents seeing that
+   space and gohort's own tools; approval by reach, one review per space; a
+   copy keeping its approval while unchanged.
+7. An app owns its agents, pipelines and machines: Builder copies rather
+   than points, each in the app's folder and history, exported and deleted
+   with it; shown read-only elsewhere, with an administrator's stop.
+8. A shared app's approval covers what it owns.
+9. Knowledge: the definition in the app, the documents in the store; and
+   existing apps copying what they use on their first change.
+
+Stage 3 (the app is its repository):
+
+10. Serve from the live folder, cached, for an app that has moved; the store
+    serves the rest.
+11. Installs merge into `live` through the save gates; Builder works on its
+    branch, one per app; without git, saves write the live folder directly.
+12. Revisions, revert and Preview from git; bundles as git bundles.
+13. Move apps on first save or open; clear their code fields once served
+    from the repository.
 
 Each stage on its own branch: stage 1 changes how Anvil opens an app and
-adds a repository per app; stage 2 moves where every app's code lives.
+adds a repository per app; stage 2 changes what an app owns and how tools
+are kept and approved; stage 3 moves where every app's code lives.
