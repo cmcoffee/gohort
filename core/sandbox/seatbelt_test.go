@@ -476,3 +476,43 @@ func TestSeatbeltOpensTheRelayPortAlone(t *testing.T) {
 		t.Errorf("no hook, no relay:\n%s", p)
 	}
 }
+
+// Anvil unpacks an uploaded bundle with git in the sandbox, and the bundle
+// waits in the data directory, beside the checkouts. Reads are open on macOS
+// except there, so git was refused the file it was handed: "error opening
+// 'the bundle': Operation not permitted". A path the run must open is given
+// back after the deny, a file as itself and a folder as a subtree.
+func TestAPathTheRunMustOpenIsReadableDespiteTheDataDeny(t *testing.T) {
+	prevWS := WorkspacesDir
+	t.Cleanup(func() { WorkspacesDir = prevWS })
+	data := t.TempDir()
+	WorkspacesDir = func() string { return filepath.Join(data, "workspaces") }
+	uploads := filepath.Join(data, "workspaces", "u1", ".anvil", ".uploads")
+	if err := os.MkdirAll(uploads, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bundle := filepath.Join(uploads, "incoming.bundle")
+	if err := os.WriteFile(bundle, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := seatbeltSandbox{path: "/usr/bin/sandbox-exec"}.build(context.Background(), sandboxRun{
+		Kind: sandboxShellRun, Command: "true", WorkspaceDir: filepath.Join(data, "workspaces", "u1", ".anvil", "p1"),
+		Reach: []string{bundle, uploads},
+	})
+	p := cmd.Args[2]
+	deny := strings.Index(p, `(deny file-read* (subpath "`+data+`"))`)
+	file := strings.Index(p, `(literal "`+bundle+`")`)
+	dir := strings.Index(p, `(subpath "`+uploads+`")`)
+	if deny < 0 {
+		t.Fatalf("the data directory is no longer denied:\n%s", p)
+	}
+	if file < deny || dir < deny {
+		t.Errorf("the file (%d) and the folder (%d) must be allowed after the deny (%d):\n%s", file, dir, deny, p)
+	}
+	if strings.Contains(p, `(subpath "`+bundle+`")`) {
+		t.Errorf("a file was named as a subtree:\n%s", p)
+	}
+	if w := strings.Index(p, "(allow file-read* file-write*"); w >= 0 && strings.Contains(p[w:], ".uploads") {
+		t.Errorf("a path to open became writable:\n%s", p)
+	}
+}

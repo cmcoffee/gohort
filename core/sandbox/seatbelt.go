@@ -174,6 +174,21 @@ func (s seatbeltSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 			spec.Readable = append(spec.Readable, p)
 		}
 	}
+	// And the paths it must open (sandboxRun.Reach). Reads being open does not
+	// cover them when they sit in the data directory: a bundle Anvil unpacks
+	// waits there, beside the checkouts, and git was refused it ("error
+	// opening the bundle: Operation not permitted"). A folder is given back
+	// as a subtree, a file as itself (subpath names a directory).
+	for _, p := range run.Reach {
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+			spec.Readable = append(spec.Readable, p)
+		} else {
+			spec.ReadableFiles = append(spec.ReadableFiles, p)
+		}
+	}
 
 	profile := seatbeltProfile(spec)
 	var argv []string
@@ -208,8 +223,11 @@ type seatbeltSpec struct {
 	// the run was given to read (sandboxRun.ReadOnly, a store granted to an
 	// app). Without it every "from gohort import ..." on macOS failed with
 	// ModuleNotFoundError: Python skips a path entry it cannot read.
-	Readable   []string
-	HookSocket string // unix socket the hook listens on, or ""
+	Readable []string
+	// ReadableFiles are single files given back the same way, rendered as
+	// literals: a path the run must open (sandboxRun.Reach) that is a file.
+	ReadableFiles []string
+	HookSocket    string // unix socket the hook listens on, or ""
 	// RelayPort is the run's loopback relay port (relay.go), or "". The
 	// one localhost port a closed run may bind and connect to: macOS has no
 	// private loopback, so opening localhost wholesale would hand the
@@ -266,12 +284,16 @@ func seatbeltProfile(spec seatbeltSpec) string {
 		b.WriteString(denies)
 	}
 	// And give back what a run needs from inside the denied directory: the
-	// helper package, the Python deps, the folders it was handed to read.
+	// helper package, the Python deps, the folders it was handed to read, the
+	// paths it must open.
 	// After the denies, for the same last-match reason.
-	if len(spec.Readable) > 0 {
+	if len(spec.Readable)+len(spec.ReadableFiles) > 0 {
 		b.WriteString("(allow file-read*\n")
 		for _, p := range spec.Readable {
 			b.WriteString("  " + sbSubpath(p) + "\n")
+		}
+		for _, f := range spec.ReadableFiles {
+			b.WriteString("  " + sbLiteral(f) + "\n")
 		}
 		b.WriteString(")\n")
 	}
