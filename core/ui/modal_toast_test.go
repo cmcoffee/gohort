@@ -177,8 +177,9 @@ func TestModalButtonUsesTheFrameworksOneModal(t *testing.T) {
 		t.Error("the inner component lost its close hook")
 	}
 	// And the two things the old one carried deliberately: the caller's
-	// width, and the subtitle.
-	for _, want := range []string{"o.width", "o.subtitle", "width: cfg.width", "subtitle: cfg.subtitle"} {
+	// width, and the subtitle. Passed for the button or a menu item alike
+	// (c); TestAModalButtonMenuOpensTheDialogChosen drives both.
+	for _, want := range []string{"o.width", "o.subtitle", "width: c.width", "subtitle: c.subtitle"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("modal_button dropped %s in the swap", want)
 		}

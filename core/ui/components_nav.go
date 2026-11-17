@@ -48,6 +48,13 @@ type ModalButton struct {
 	Variant  string    `json:"variant,omitempty"`  // button variant (primary, danger, ...)
 	Width    string    `json:"width,omitempty"`    // dialog max-width CSS (default "520px")
 	Align    string    `json:"align,omitempty"`    // "left" | "center" | "right" (default), where the button sits in its row
+	// Items makes the button a "<Label> ▾" menu of other dialogs, each item
+	// its own ModalButton (Label in the menu; Title, Subtitle, Width and Body
+	// for its dialog). For alternatives that share one starting point, such
+	// as the several ways to make a new record, where a row of buttons reads
+	// as that many unrelated actions. Body is then unused. A menu of one item
+	// is that item: the button opens its dialog, under this button's Label.
+	Items []ModalButton `json:"-"`
 }
 
 func (ModalButton) componentType() string { return "modal_button" }
@@ -57,14 +64,23 @@ func (m ModalButton) MarshalJSON() ([]byte, error) {
 	if m.Body != nil {
 		body = marshalComponent(m.Body)
 	}
+	var items []json.RawMessage
+	for _, it := range m.Items {
+		raw, err := json.Marshal(it)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, raw)
+	}
 	return json.Marshal(struct {
-		Type     string          `json:"type"`
-		Label    string          `json:"label"`
-		Title    string          `json:"title,omitempty"`
-		Subtitle string          `json:"subtitle,omitempty"`
-		Body     json.RawMessage `json:"body,omitempty"`
-		Variant  string          `json:"variant,omitempty"`
-		Width    string          `json:"width,omitempty"`
-		Align    string          `json:"align,omitempty"`
-	}{"modal_button", m.Label, m.Title, m.Subtitle, body, m.Variant, m.Width, m.Align})
+		Type     string            `json:"type"`
+		Label    string            `json:"label"`
+		Title    string            `json:"title,omitempty"`
+		Subtitle string            `json:"subtitle,omitempty"`
+		Body     json.RawMessage   `json:"body,omitempty"`
+		Variant  string            `json:"variant,omitempty"`
+		Width    string            `json:"width,omitempty"`
+		Align    string            `json:"align,omitempty"`
+		Items    []json.RawMessage `json:"items,omitempty"`
+	}{"modal_button", m.Label, m.Title, m.Subtitle, body, m.Variant, m.Width, m.Align, items})
 }

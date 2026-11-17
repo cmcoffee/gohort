@@ -231,6 +231,13 @@ type FormPanel struct {
 	// because what to do with the response is the app's business and
 	// core/ui has no way to be right about it.
 	OnSuccess string `json:"on_success,omitempty"`
+	// BusyLabel is the submit button's text while a submit runs, in place
+	// of "Saving...", for a submit that does something other than save
+	// ("Pushing..."). SlowText is the line shown once a submit has run for
+	// a few seconds, with the seconds counting beside it; by default it
+	// says the endpoint runs a model.
+	BusyLabel string `json:"busy_label,omitempty"`
+	SlowText  string `json:"slow_text,omitempty"`
 }
 
 // FormTemplate is one named preset for a FormPanel's "Start from

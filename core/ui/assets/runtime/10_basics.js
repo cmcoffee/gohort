@@ -4930,7 +4930,7 @@
           // POST fires. Flat forms have no guard installed.
           if (submitGuard && !submitGuard()) return;
           submitBtn.disabled = true;
-          submitBtn.textContent = 'Saving...';
+          submitBtn.textContent = cfg.busy_label || 'Saving...';
           msgEl.style.display = 'none';
           msgEl.textContent = '';
           // Some submits are a save and some are a JOB — an endpoint that
@@ -4938,13 +4938,19 @@
           // button that has said "Saving..." for that long is
           // indistinguishable from one that hung, so say so IN the form
           // rather than leaving somebody to guess.
+          var started = Date.now(), slowTick = null;
+          var slowLine = function() {
+            msgEl.textContent = (cfg.slow_text || 'Still working. This one runs a model, so it can take a minute.') +
+              ' ' + Math.round((Date.now() - started) / 1000) + 's';
+          };
           var slow = setTimeout(function() {
-            msgEl.textContent = 'Still working. This one runs a model, so it can take a minute.';
+            slowLine();
             msgEl.style.borderLeftColor = 'var(--border)';
             msgEl.style.color = 'var(--text-mute, var(--text))';
             msgEl.style.display = '';
+            slowTick = setInterval(slowLine, 1000);
           }, 4000);
-          var done = function() { clearTimeout(slow); };
+          var done = function() { clearTimeout(slow); clearInterval(slowTick); };
           var postURL = cfg.post_url || cfg.source;
           fetchJSON(postURL, {
             method: cfg.method || 'POST',
@@ -6651,13 +6657,54 @@
 
     var btnClass = 'ui-row-btn';
     if (cfg.variant) btnClass += ' ' + cfg.variant;
-    var btn = el('button', {type: 'button', class: btnClass}, [cfg.label || 'Open']);
-    btn.addEventListener('click', function() {
-      return openComponentDialog({title: cfg.title || cfg.label || '', subtitle: cfg.subtitle,
-        width: cfg.width, component: cfg.body, ctx: ctx});
+    function openOne(c) {
+      return openComponentDialog({title: c.title || c.label || '', subtitle: c.subtitle,
+        width: c.width, component: c.body, ctx: ctx});
+    }
+    // Items: a menu of dialogs. A menu of one is that one, under this label.
+    var items = (cfg.items || []).filter(Boolean);
+    if (items.length === 1) {
+      cfg = Object.assign({}, items[0], {label: cfg.label || items[0].label});
+      items = [];
+    }
+    if (!items.length) {
+      var btn = el('button', {type: 'button', class: btnClass}, [cfg.label || 'Open']);
+      btn.addEventListener('click', function() { return openOne(cfg); });
+      row.appendChild(btn);
+      return row;
+    }
+    // Built when it opens and removed when it closes, as a row's menu is
+    // (appendActionMenu): uiAnchorMenu moves it to <body>, so one made up
+    // front would be left behind there each time the page draws this again.
+    var toggle = el('button', {type: 'button', class: btnClass + ' ui-row-menu-btn',
+      'aria-haspopup': 'menu', 'aria-expanded': 'false'}, [(cfg.label || 'Open') + ' \u25be']);
+    var open = null;
+    function closeMenu() {
+      if (!open) return;
+      open.api.close();
+      if (open.menu.parentNode) open.menu.parentNode.removeChild(open.menu);
+      document.removeEventListener('click', open.outside, true);
+      open = null;
+      toggle.setAttribute('aria-expanded', 'false');
+    }
+    toggle.addEventListener('click', function(ev) {
+      if (ev && ev.stopPropagation) ev.stopPropagation();
+      if (open) { closeMenu(); return; }
+      var menu = el('div', {class: 'ui-row-menu', role: 'menu'});
+      items.forEach(function(it) {
+        var b = el('button', {type: 'button', class: 'ui-row-btn', role: 'menuitem'}, [it.label || 'Open']);
+        b.addEventListener('click', function() { closeMenu(); openOne(it); });
+        menu.appendChild(b);
+      });
+      var api = window.uiAnchorMenu(toggle, menu, {display: 'flex'});
+      open = {menu: menu, api: api, outside: function(e) {
+        if (!menu.contains(e.target) && e.target !== toggle) closeMenu();
+      }};
+      document.addEventListener('click', open.outside, true);
+      api.open();
+      toggle.setAttribute('aria-expanded', 'true');
     });
-
-    row.appendChild(btn);
+    row.appendChild(toggle);
     return row;
   };
 

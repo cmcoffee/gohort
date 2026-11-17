@@ -28,10 +28,19 @@ Two levels, by what a person may bring into gohort:
 | An app they own or maintain (its repository) | yes | yes |
 | A folder on this host | no | yes |
 | An outside repository (GitHub, GitLab, any https) | no | yes |
+| A new, empty repository of their own | yes | yes |
+| Commit their work in a checkout Anvil made | yes | yes |
+| Publish (push) a repository they started or brought as a bundle, to a public https address | yes, unless an administrator turns it off | yes, any address |
 | Porting an outside project into an app | no | yes |
 | The project's check command (sandboxed) | yes, on their app | yes |
 | Project commands (unsandboxed, on the host) | no | yes |
 | A project an administrator added, shared with them | read-only, as today | yes |
+
+A new repository brings nothing in, so anyone may start one. Publishing
+sends one out: only the person presses Push (the assistant never commits or
+pushes), and the push runs from a bare repository the server makes from a
+bundle of the history, never in the checkout, whose git config the run tool
+can write. A user's address is held to a public host as a clone's is.
 
 A user maintains apps that live in gohort. Bringing anything from outside
 gohort in (a folder on this machine, a repository from elsewhere, a port) is
@@ -52,9 +61,10 @@ then.
 - **Home is the projects.** Opening Anvil lists what you can work on: your
   apps, and for an administrator the folders and repositories added. Each
   shows its branch, how many files differ from the last commit, and its
-  last session. **New project** is the page's main button, not a menu
-  entry, and offers what your level allows: for a user, one of your apps;
-  for an administrator also a folder, a repository, or a port.
+  last session. **New project** is the page's main button, not an entry
+  in a site menu, and its own menu offers what your level allows: a new
+  repository, a git bundle, one of your apps; for an administrator also a
+  repository by its address or a folder on this host.
 - **Opening a project is the workspace.** The conversation in the middle;
   the project's sessions beside it (sessions already belong to a project);
   the changes (what differs from the last commit, and every edit the agent
