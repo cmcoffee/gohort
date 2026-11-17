@@ -217,7 +217,7 @@ func installAppCheckout(ctx context.Context, udb Database, user string, p Projec
 	if err := commitCheckout(base, user, commit); err != nil {
 		Log("[anvil] %s installed, but the commit failed: %v", p.AppSlug, err)
 	}
-	return "Installed: " + p.Name + " now runs your changes, at /apps/" + p.AppSlug + "/.", nil
+	return "Installed: " + p.Name + " now runs your changes, at /apps/" + p.AppSlug + "/." + leftOutLine(base), nil
 }
 
 // --- a project that holds an app ----------------------------------------------
@@ -324,7 +324,7 @@ func (T *Anvil) handleAppInstallNew(c *jsonapi.Call, _ struct{}) (any, error) {
 		Log("[anvil] %s installed as a new app, but the commit failed: %v", slug, err)
 	}
 	return map[string]any{"ok": true, "slug": slug,
-		"message": "Installed: " + name + " is one of your apps now, at /apps/" + slug + "/. This project is its files from here on: Preview shows your changes to you alone, and Install puts them live."}, nil
+		"message": "Installed: " + name + " is one of your apps now, at /apps/" + slug + "/. This project is its files from here on: Preview shows your changes to you alone, and Install puts them live." + leftOutLine(base)}, nil
 }
 
 // startAppTool starts a new app's folder at the top of a project that holds
@@ -423,6 +423,33 @@ func folderError(base string, err error) error {
 	msg := strings.ReplaceAll(err.Error(), id+"/", "")
 	msg = strings.ReplaceAll(msg, id, "the project")
 	return errors.New(msg)
+}
+
+// leftOutLine names what is at the checkout's top that an install does not
+// take, so a ported app that still reads one of them (flows.json) is not
+// left to be found empty. "" when there is none.
+func leftOutLine(base string) string {
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return ""
+	}
+	part := map[string]bool{appLiveMarker: true, ".git": true, ".gitignore": true}
+	for _, n := range orchestrate.AppFolderParts {
+		part[n] = true
+	}
+	var out []string
+	for _, e := range entries {
+		if !part[e.Name()] {
+			out = append(out, e.Name())
+		}
+	}
+	if len(out) == 0 {
+		return ""
+	}
+	if len(out) > 8 {
+		out = append(out[:8], fmt.Sprintf("and %d more", len(out)-8))
+	}
+	return " Not part of the app, and not installed: " + strings.Join(out, ", ") + ". The app cannot read these: a data file it needs goes in assets/."
 }
 
 // appLiveMarker is the file an install leaves in an app's folder, saying

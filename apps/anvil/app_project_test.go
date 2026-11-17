@@ -490,7 +490,7 @@ func TestABundleProjectIsPortedIntoANewApp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start_app: %v", err)
 	}
-	for _, want := range []string{"/apps/har-analyzer/", "Install as a new app", "fetch_url", "window.app", "checks.json", `"file": "data/<name>.py"`} {
+	for _, want := range []string{"/apps/har-analyzer/", "Install as a new app", "fetch_url", "window.app", "checks.json", `"file": "data/<name>.py"`, "Only these are installed"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("start_app's answer does not say %q", want)
 		}
@@ -513,11 +513,16 @@ func TestABundleProjectIsPortedIntoANewApp(t *testing.T) {
 		t.Error("the assistant is not pointed at app_guide")
 	}
 
-	if w := serve("alice", "POST", "/api/project/"+p.ID+"/install_new", "{}"); w.Code != 200 {
+	w := serve("alice", "POST", "/api/project/"+p.ID+"/install_new", "{}")
+	if w.Code != 200 {
 		t.Fatalf("install: %d %s", w.Code, w.Body.String())
 	}
 	if live, ok := LoadAppSpec("alice", "har-analyzer"); !ok || live.Name != "HAR Analyzer" {
 		t.Errorf("the ported app is not one of alice's: %v %+v", ok, live)
+	}
+	// The code it was ported from is not installed, and the install says so.
+	if !strings.Contains(w.Body.String(), "not installed: analyze.py") {
+		t.Errorf("the install does not name what it left out: %s", w.Body.String())
 	}
 }
 

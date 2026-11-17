@@ -317,6 +317,10 @@ func AppFolderGuide() string {
 		"\n\nCHECKS (checks.json):\n" + appcheck.Reference
 }
 
+// AppFolderParts are the names at a folder's top that an install reads;
+// anything else there stays behind.
+var AppFolderParts = []string{"app.json", "page.html", "data", "actions", "lib", "assets", "NOTES.md", "checks.json"}
+
 // appFolderGuideLayout is the folder's files, as an author writes them.
 const appFolderGuideLayout = `A gohort app is a folder: install reads it, and nothing else in the folder matters.
 
@@ -331,6 +335,8 @@ const appFolderGuideLayout = `A gohort app is a folder: install reads it, and no
   assets/<file>     images, fonts, sounds, served to the page at assets/<file>
   NOTES.md          what the app is, the choices made and why, what was left out
   checks.json       a JSON list of checks, [{"name": ..., ...}, ...]: what the app is supposed to do, as tests that run on every install
+
+Only these are installed. Anything else in the folder (the code an app was ported from, a data file at the top such as flows.json) stays behind, and the installed app cannot read it: a data file the app ships goes in assets/ (the page fetches assets/<file>), and a file the person brings is picked in the page (<input type="file">, read there or sent to an action).
 
 Every script runs in a sandbox with no network of its own: it reaches the web through the gohort module (fetch_url), never requests or urllib.request. In the folder a script entry names its file; the help below says "script" for the same thing.`
 
