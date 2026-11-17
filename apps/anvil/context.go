@@ -75,6 +75,12 @@ func (T *Anvil) projectContext(p Project, base string) string {
 	default:
 		b.WriteString("A directory on this host, registered by an operator. Edits here change the files somebody is actually using; there is no copy.\n")
 	}
+	// A project brought another way that holds an app's folder. Unsaid, the
+	// assistant has no way to know the folder is a gohort app, what its page
+	// may call, or how it gets installed.
+	if p.Kind == KindClone && p.Source != sourceApp && holdsAppFolder(base) {
+		b.WriteString("It holds a gohort app's folder (app.json at its top). It becomes one of the owner's apps only when they press Install as a new app on this project's bar, through the checks every install runs; there is no install command to find. Its page reaches its backend only through window.app, which offers exactly these calls:\n\n" + customapps.PageAPI + "\n")
+	}
 	// Searches leave the deployment, and nothing else tells the agent that
 	// this work is not public (searchPrivateTerms is what they are checked
 	// against).

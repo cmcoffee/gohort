@@ -325,3 +325,109 @@ func TestAnvilIsHeldToItsOwnToolsAndAFewOfTheFrameworks(t *testing.T) {
 		t.Errorf("a turn has %d rounds: an ordinary change to an app ran out at 15", anvilRounds)
 	}
 }
+
+// A project brought another way (here, one started in Anvil) that holds an
+// app's folder installs as a new app of its owner's and becomes that app's
+// project: the app is live, the project is an app project, the live marker
+// stays out of git, and a later install is a commit. A folder naming an app its
+// owner already has is refused and the app is left as it was; the button is
+// only on a project of the caller's that holds app.json and is not an app.
+func TestAProjectHoldingAnAppInstallsAsANewApp(t *testing.T) {
+	T, serve := appProjectWorld(t)
+	udb := UserDB(T.DB, "alice")
+	started := func(name, slug string) (Project, string) {
+		t.Helper()
+		p := Project{ID: UUIDv4(), Name: name, Kind: KindClone, Owner: "alice", Source: sourceNew}
+		base, err := p.baseDir()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := orchestrate.WriteAppFolder("alice", "wx", base); err != nil {
+			t.Fatal(err)
+		}
+		os.Remove(filepath.Join(base, ".live"))
+		raw, _ := os.ReadFile(filepath.Join(base, "app.json"))
+		var m map[string]any
+		json.Unmarshal(raw, &m)
+		m["name"], m["slug"] = name, slug
+		raw, _ = json.Marshal(m)
+		os.WriteFile(filepath.Join(base, "app.json"), raw, 0o644)
+		runGit(base, "init", "-q")
+		if err := commitCheckout(base, "alice", "Started"); err != nil {
+			t.Fatal(err)
+		}
+		T.saveProject(udb, p)
+		return p, base
+	}
+	offered := func(p Project, user string) bool {
+		for _, a := range T.toolbarActions(p, user, false) {
+			if a.URL == "anvil_app_install_new" {
+				return true
+			}
+		}
+		return false
+	}
+
+	p, base := started("Notes Pad", "pad")
+	if !offered(p, "alice") || offered(p, "bob") {
+		t.Errorf("the button: owner %v, someone else %v", offered(p, "alice"), offered(p, "bob"))
+	}
+	if ctx := T.projectContext(p, base); !strings.Contains(ctx, "Install as a new app") || !strings.Contains(ctx, "window.app") {
+		t.Errorf("the assistant is not told the project holds an app:\n%s", ctx)
+	}
+	if w := serve("bob", "POST", "/api/project/"+p.ID+"/install_new", "{}"); w.Code == 200 {
+		t.Error("somebody else installed alice's project as an app")
+	}
+	if w := serve("alice", "POST", "/api/project/"+p.ID+"/install_new", "{}"); w.Code != 200 {
+		t.Fatalf("install: %d %s", w.Code, w.Body.String())
+	}
+	if live, ok := LoadAppSpec("alice", "pad"); !ok || live.Name != "Notes Pad" {
+		t.Fatalf("no new app: %v %+v", ok, live)
+	}
+	var now Project
+	if !udb.Get(projectTable, p.ID, &now) || now.Source != sourceApp || now.AppSlug != "pad" {
+		t.Fatalf("the project is not the app's: %+v", now)
+	}
+	if offered(now, "alice") {
+		t.Error("an app project still offers to become one")
+	}
+	if strings.Contains(T.projectContext(now, base), "Install as a new app") {
+		t.Error("an app project's assistant is still told to install it as a new one")
+	}
+	if st, _ := runGit(base, "status", "--porcelain"); strings.TrimSpace(st) != "" {
+		t.Errorf("changes left after the install: %q", st)
+	}
+	// The install changed no file of the folder's, so there is nothing to
+	// commit; the live marker it left is not one.
+	if log, _ := runGit(base, "log", "--format=%s"); strings.TrimSpace(log) != "Started" {
+		t.Errorf("history: %q", log)
+	}
+	// Now it installs as any app project does.
+	os.WriteFile(filepath.Join(base, "data", "now.py"), []byte("print('{\"t\": 2}')"), 0o644)
+	if w := serve("alice", "POST", "/api/project/"+p.ID+"/install", "{}"); w.Code != 200 {
+		t.Fatalf("a later install: %d %s", w.Code, w.Body.String())
+	}
+	if log, _ := runGit(base, "log", "--format=%s"); strings.TrimSpace(log) != "Installed\nStarted" {
+		t.Errorf("history after a later install: %q", log)
+	}
+
+	clash, _ := started("Weather Copy", "wx")
+	before, _ := LoadAppSpec("alice", "wx")
+	if w := serve("alice", "POST", "/api/project/"+clash.ID+"/install_new", "{}"); w.Code != 409 || !strings.Contains(w.Body.String(), "already have an app") {
+		t.Errorf("a folder naming an app alice has: %d %s", w.Code, w.Body.String())
+	}
+	if after, _ := LoadAppSpec("alice", "wx"); after.Name != before.Name || after.ChangeNote != before.ChangeNote {
+		t.Errorf("the app it named was changed: %+v", after)
+	}
+	var still Project
+	if udb.Get(projectTable, clash.ID, &still); still.Source != sourceNew {
+		t.Errorf("a refused project changed kind: %q", still.Source)
+	}
+
+	empty := Project{ID: UUIDv4(), Name: "plain", Kind: KindClone, Owner: "alice", Source: sourceNew}
+	eb, _ := empty.baseDir()
+	os.MkdirAll(eb, 0o700)
+	if offered(empty, "alice") {
+		t.Error("offered on a project with no app.json")
+	}
+}

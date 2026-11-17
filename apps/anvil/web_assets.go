@@ -1222,6 +1222,26 @@ const anvilAppPreviewJS = `function(ctx) {
 }`
 
 // anvilAppInstallJS puts the open app project's changes live.
+// anvilAppInstallNewJS installs a project holding an app's folder as a new
+// app, then reloads, so the bar is the app project's (Preview, Install).
+const anvilAppInstallNewJS = `function(ctx) {
+  var pid = window.anvilProject();
+  if (!pid) { anvilAlert('No project is selected.'); return; }
+  var btn = ctx.button, label = btn ? btn.textContent : '';
+  window.anvilConfirm("Install this project as a new app of yours? It goes through the checks every install does. From then on the project is the app's files: Preview and Install take the place of Commit and Publish.").then(function(ok) {
+    if (!ok) return;
+    if (btn) { btn.disabled = true; btn.textContent = 'Installing...'; }
+    window.anvilFetchJSON('api/project/' + encodeURIComponent(pid) + '/install_new', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'})
+      .then(function(d) {
+        Promise.resolve(anvilAlert(d.message || 'Installed.')).then(function() { location.reload(); });
+      })
+      .catch(function(err) {
+        if (btn) { btn.disabled = false; btn.textContent = label; }
+        anvilAlert('Not installed: ' + (err.message || err));
+      });
+  });
+}`
+
 const anvilAppInstallJS = `function(ctx) {
   var pid = window.anvilProject();
   if (!pid) { anvilAlert('No project is selected.'); return; }

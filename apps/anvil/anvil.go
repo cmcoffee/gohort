@@ -192,6 +192,7 @@ func (T *Anvil) Routes() {
 	// One of your apps (app_project.go).
 	T.HandleFunc("/api/apps/open", jsonapi.Post(T.DB, T.handleOpenApp))
 	T.HandleFunc("/api/project/{id}/install", jsonapi.Post(T.DB, T.handleAppInstall))
+	T.HandleFunc("/api/project/{id}/install_new", jsonapi.Post(T.DB, T.handleAppInstallNew))
 	T.HandleFunc("/api/project/{id}/preview", jsonapi.Post(T.DB, T.handleAppPreview))
 	// A repository brought as a git bundle (bundle.go).
 	T.HandleFunc("/api/bundle/upload", T.handleBundleUpload)

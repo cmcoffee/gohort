@@ -330,6 +330,11 @@ func (T *Anvil) toolbarActions(p Project, user string, isAdmin bool) []ui.Toolba
 			ui.ToolbarAction{Label: "Install", Method: "client", URL: "anvil_app_install",
 				Title: "Put your changes live, through the app's checks"})
 	}
+	// A project holding an app's folder that is not an app yet.
+	if newAppRefusal(p, user) == "" {
+		out = append(out, ui.ToolbarAction{Label: "Install as a new app", Method: "client", URL: "anvil_app_install_new",
+			Title: "Make this project's app.json and files one of your apps, through the checks an install runs; the project is the app's from then on"})
+	}
 	// Gated on PERMISSION, not on whether commands exist. An allowed user with
 	// none configured gets the button and a modal saying so, which is where
 	// they find out commands can be added.
@@ -699,6 +704,7 @@ func anvilHead(projects []Project, user string, isAdmin bool) *ui.Head {
 		ClientAction("anvil_git_done", anvilGitDoneJS).
 		ClientAction("anvil_app_preview", anvilAppPreviewJS).
 		ClientAction("anvil_app_install", anvilAppInstallJS).
+		ClientAction("anvil_app_install_new", anvilAppInstallNewJS).
 		ClientAction("anvil_permissions", anvilPermissionsJS).
 		ClientAction("anvil_notes", anvilNotesJS).
 		ClientAction("anvil_settings", anvilSettingsJS).

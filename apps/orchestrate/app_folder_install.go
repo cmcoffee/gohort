@@ -43,6 +43,16 @@ func (T *OrchestrateApp) InstallAppFolder(ctx context.Context, user, dir, note s
 	return T.personTurn(ctx, user).publishAppFolder(dir, filepath.Base(dir), folderPublish{note: note})
 }
 
+// AppFolderSlug is the app the folder dir holds, read from its app.json: the
+// slug an install of it creates or updates, and the app's name.
+func (T *OrchestrateApp) AppFolderSlug(ctx context.Context, user, dir string) (slug, name string, err error) {
+	_, m, err := T.personTurn(ctx, strings.TrimSpace(user)).appFolderRead(dir, filepath.Base(dir))
+	if err != nil {
+		return "", "", err
+	}
+	return m.Slug, m.Name, nil
+}
+
 // BuildAppFolder builds the app in the folder dir as it would be installed
 // for user, and saves nothing: what a preview serves. An update starts from
 // the live app, as an install would, so what the folder leaves out the live
