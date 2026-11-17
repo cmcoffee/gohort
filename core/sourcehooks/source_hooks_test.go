@@ -1,6 +1,7 @@
 package sourcehooks
 
 import (
+	"context"
 	"errors"
 	"testing"
 )
@@ -32,7 +33,7 @@ func TestCachedSearchAnswersRepeatsFromItsCache(t *testing.T) {
 	saved := ConnectorSearch
 	t.Cleanup(func() { ConnectorSearch = saved })
 	asked := 0
-	ConnectorSearch = func(name, query string) (string, error) {
+	ConnectorSearch = func(_ context.Context, name, query string) (string, error) {
 		asked++
 		return "1. " + name + "\n   https://b.example/1\n\n", nil
 	}

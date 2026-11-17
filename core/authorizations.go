@@ -19,6 +19,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/outbound"
 )
 
 const (
@@ -555,6 +557,18 @@ type OutboundWrite struct {
 	// gohort sees the host, never the method, so it may carry a read or an
 	// upload alike, and is decided by host. Package registries pass.
 	Tunnel bool
+	// Actor is who it was for, as the Outbound record names them.
+	Actor outbound.Actor
+}
+
+// Record puts a decision about w in the Outbound record (Admin, Oversight):
+// a refusal, or a person's answer. A send to a trusted host is not recorded.
+func (w OutboundWrite) Record(action, reason string) {
+	kind := outbound.KindWrite
+	if w.Tunnel {
+		kind = outbound.KindTunnel
+	}
+	outbound.Record(outbound.Event{Kind: kind, Dest: w.Host, Detail: w.Method + " " + w.URL, Reason: reason, Action: action, Actor: w.Actor})
 }
 
 // tunnelRegistryHosts are the hosts a proxy tunnel reaches without the
@@ -759,6 +773,9 @@ func (sess *ToolSession) OutboundWriteRefusal(method, rawURL string, canAsk bool
 	if w.Host == "" {
 		return ""
 	}
+	if sess != nil {
+		w.Actor = outbound.ActorOf(sess.Context())
+	}
 	if sess != nil && sess.ApproveWrite != nil {
 		return sess.ApproveWrite(w)
 	}
@@ -788,6 +805,9 @@ func (sess *ToolSession) OutboundTunnelRefusal(host string) string {
 		return "NOT CONNECTED: the proxy needs a host to connect to."
 	}
 	w.URL = net.JoinHostPort(w.Host, "443")
+	if sess != nil {
+		w.Actor = outbound.ActorOf(sess.Context())
+	}
 	if sess != nil && sess.ApproveWrite != nil {
 		return sess.ApproveWrite(w)
 	}
@@ -811,6 +831,7 @@ func (sess *ToolSession) OutboundTunnelRefusal(host string) string {
 func (w OutboundWrite) Decided() (refusal string, decided bool) {
 	if AdminSites.Policy(RootDB, w.Host) == PolicyBlock {
 		Log("[outbound] %s %s: blocked by the administrator, refused", w.Method, w.Host)
+		w.Record(outbound.ActionRefused, "the administrator has blocked this site")
 		if w.Tunnel {
 			return fmt.Sprintf("NOT CONNECTED: the administrator has blocked sending to %s, for every user. Do not reach it another way.", w.Host), true
 		}
@@ -822,6 +843,7 @@ func (w OutboundWrite) Decided() (refusal string, decided bool) {
 		return "", true
 	case PolicyBlock:
 		Log("[outbound] %s %s: blocked by %s, refused", w.Method, w.Host, w.Owner)
+		w.Record(outbound.ActionRefused, "the owner has blocked this site")
 		if w.Tunnel {
 			return fmt.Sprintf("NOT CONNECTED: the owner has blocked sending to %s. Do not reach it another way.", w.Host), true
 		}
@@ -845,14 +867,17 @@ func (w OutboundWrite) Decided() (refusal string, decided bool) {
 func (w OutboundWrite) Ask(ask func(prompt, detail string, yes []string) string, offerAlways bool) string {
 	if w.Tunnel {
 		Log("[outbound] %s %s: tunnel to a host not trusted, refused", w.Method, w.Host)
+		w.Record(outbound.ActionRefused, "a connection to a site that is neither a package registry nor trusted")
 		return fmt.Sprintf("NOT CONNECTED: the proxy opens HTTPS connections only to package registries and to sites the owner has trusted, and %s is neither: a connection through it could carry an upload as easily as a download, and gohort cannot see which. To read from %s, use curl or wget here, or the fetch_url tool; to send to it, use fetch_url, which asks the owner first. The owner can also add %s under Network on the agent's Security page.", w.Host, w.Host, w.Host)
 	}
 	if !w.CanAsk {
 		Log("[outbound] %s %s: a script cannot ask, refused", w.Method, w.Host)
+		w.Record(outbound.ActionRefused, "a script sending to a site nobody has trusted")
 		return fmt.Sprintf("NOT SENT: a %s to %s sends data to a host the owner has not trusted, and a script cannot stop to ask them. Make this one request with the fetch_url tool instead, which asks the owner first, or ask them to set %s to Always allow on the Permissions page.", w.Method, w.Host, w.Host)
 	}
 	if ask == nil {
 		Log("[outbound] %s %s: not trusted and nobody to ask, refused", w.Method, w.Host)
+		w.Record(outbound.ActionRefused, "sending to a site nobody has trusted, with nobody there to ask")
 		return fmt.Sprintf("NOT SENT: a %s to %s needs the owner's approval: no credential covers that host and they have not trusted it, and nobody is watching this run to ask. Do not send it another way; tell them what you meant to send.", w.Method, w.Host)
 	}
 	detail := fmt.Sprintf("%s %s\n\nThis sends data to a host none of the owner's API credentials cover, and it has not been trusted.", w.Method, w.URL)
@@ -867,12 +892,15 @@ func (w OutboundWrite) Ask(ask func(prompt, detail string, yes []string) string,
 	switch ask(fmt.Sprintf("Send a %s request to this site: %s", w.Method, w.Host), detail, yes) {
 	case "":
 		Log("[outbound] %s %s: declined", w.Method, w.Host)
+		w.Record(outbound.ActionDeclined, "asked to send to a site nobody had trusted, and declined")
 		return fmt.Sprintf("NOT SENT: the owner declined this %s to %s. Do not send it another way.", w.Method, w.Host)
 	case always:
 		SetWriteHostPolicy(RootDB, w.Owner, w.Host, PolicyAllow)
 		Log("[outbound] %s %s: %s trusted the host", w.Method, w.Host, w.Owner)
+		w.Record(outbound.ActionAllowed, "asked to send to a site nobody had trusted, and trusted it from now on")
 	default:
 		Log("[outbound] %s %s: allowed once", w.Method, w.Host)
+		w.Record(outbound.ActionAllowed, "asked to send to a site nobody had trusted, and allowed it once")
 	}
 	return ""
 }

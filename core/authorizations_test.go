@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cmcoffee/gohort/core/outbound"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -416,5 +417,37 @@ func TestAnAppCheckRunWritesNothingOutward(t *testing.T) {
 	}
 	if r := (&ToolSession{Username: "owner-a"}).CheckRunRefusal("POST"); r != "" {
 		t.Errorf("an ordinary run was held to the check rule: %s", r)
+	}
+}
+
+// Every refusal and every answer to an ask lands in the Outbound record,
+// naming who the call was for; a send to a trusted site does not.
+func TestOutboundDecisionsAreRecorded(t *testing.T) {
+	outboundTestDB(t)
+	outbound.SetStore(RootDB)
+	t.Cleanup(func() { outbound.SetStore(nil) })
+	ctx := outbound.WithActor(context.Background(), outbound.Actor{AgentName: "Helper", Owner: "alice"})
+	yes := func(string, string, []string) string { return "Allow once" }
+	alice := &ToolSession{Username: "alice", AskInChat: yes, Ctx: ctx}
+
+	AdminSites.Set(RootDB, "blocked.example", PolicyBlock)
+	alice.OutboundWriteRefusal("POST", "https://blocked.example/x", true)
+	alice.OutboundTunnelRefusal("elsewhere.example")
+	alice.OutboundWriteRefusal("PUT", "https://asked.example/y", true)
+	SetWriteHostPolicy(RootDB, "alice", "trusted.example", PolicyAllow)
+	alice.OutboundWriteRefusal("POST", "https://trusted.example/z", true)
+
+	ev := outbound.Events(0, nil)
+	got := []string{}
+	for i := len(ev) - 1; i >= 0; i-- {
+		got = append(got, ev[i].Action+" "+ev[i].Kind+" "+ev[i].Dest+" for "+ev[i].Who())
+	}
+	want := []string{
+		"refused write blocked.example for Helper (agent of alice)",
+		"refused tunnel elsewhere.example for Helper (agent of alice)",
+		"allowed write asked.example for Helper (agent of alice)",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("recorded:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }

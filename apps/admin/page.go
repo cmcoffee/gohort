@@ -70,7 +70,7 @@ var adminLayout = []struct {
 	// shared, and what users have built.
 	{"Oversight", []string{
 		"Rules", "Channel Wake Rules", "Agent security across the deployment",
-		"Agent Capabilities: Outward & Spending", "Sites agents may send to",
+		"Agent Capabilities: Outward & Spending", "Sites agents may send to", "Outbound record",
 		"Requests to share", "Shared with everyone",
 		"User-owned agents", "User-owned pipelines", "User-owned machines",
 	}},

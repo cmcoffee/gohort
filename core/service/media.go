@@ -9,7 +9,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,6 +24,8 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/flows"
 	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/gohort/core/outbound"
+	"github.com/cmcoffee/gohort/core/sourcehooks"
 )
 
 func init() {
@@ -127,10 +132,48 @@ func Address(name string) string {
 	return strings.TrimSpace(s.Provider.BaseURL)
 }
 
+// addressIsInternal reports whether a connector's base URL is inside the
+// deployment's own network: a name every address of which is private,
+// loopback or link-local. A name that does not resolve is not counted as
+// internal, so the check still applies to it.
+func addressIsInternal(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Hostname() == "" {
+		return false
+	}
+	host := u.Hostname()
+	if ip := net.ParseIP(host); ip != nil {
+		return sourcehooks.NonPublicIP(ip)
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil || len(ips) == 0 {
+		return false
+	}
+	for _, ip := range ips {
+		if !sourcehooks.NonPublicIP(ip) {
+			return false
+		}
+	}
+	return true
+}
+
 // Search searches with the service connector named name and gives the
 // results in the numbered shape every search provider gives the web_search
 // tool ("1. Title\n   URL\n   Snippet"), or "No results found."
 func Search(ctx context.Context, name, query string) (string, error) {
+	return search(ctx, name, query, outbound.KindSearch)
+}
+
+// search is Search, the query checked first (core/outbound) as kind: one
+// that names ctx's private work is watched or refused unless the connector's
+// address is inside the deployment, where it is not leaving at all.
+func search(ctx context.Context, name, query, kind string) (string, error) {
+	if refusal := outbound.CheckQuery(ctx, outbound.Query{
+		Kind: kind, Dest: name, Text: query,
+		Internal: func() bool { return addressIsInternal(Address(name)) },
+	}); refusal != "" {
+		return "", errors.New(refusal)
+	}
 	res, err := Call(ctx, nil, name, "web.search", map[string]any{"query": query})
 	if err != nil {
 		return "", err

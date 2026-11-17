@@ -4,7 +4,7 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
-// governanceSections is the governance part of the admin page: Rules, Personal integrations, Sites agents may send to, User-owned credentials, Global tools, User-owned agents, User-owned pipelines, User-owned machines, Pending promotions.
+// governanceSections is the governance part of the admin page: Rules, Personal integrations, Sites agents may send to, Outbound record, User-owned credentials, Global tools, User-owned agents, User-owned pipelines, User-owned machines, Pending promotions.
 func (a *AdminApp) governanceSections() []ui.Section {
 	return []ui.Section{
 		// First: the deployment's obligations frame everything else here.
@@ -13,6 +13,8 @@ func (a *AdminApp) governanceSections() []ui.Section {
 		// Where agents may send, for everyone: a rule of the deployment's,
 		// read around each owner's own list.
 		outboundSitesSection(),
+		// The trail those decisions leave, and what queries leaving say.
+		outboundRecordSection(),
 		{
 			Title:    "User-owned credentials",
 			Subtitle: "Credentials users create for themselves, on their Extensions page.",

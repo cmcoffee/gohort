@@ -14,6 +14,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/core/outbound"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
@@ -527,6 +528,9 @@ func (sr *sendRun) detachContext() {
 	// which is what silently took the per-turn "Worker/Lead tokens,
 	// Searches, Est. cost" block out of the log in v0.6.159.
 	sr.ctx, sr.cancel = context.WithCancel(CarryRequestUsage(context.Background(), sr.r.Context()))
+	// So too what the app named as private to this work (WithPrivateTerms),
+	// which every web search the turn makes is checked against.
+	sr.ctx = outbound.CarryPrivateTerms(sr.ctx, sr.r.Context())
 	// A person is waiting on this turn, so its calls, and every dispatch it
 	// makes, go first on the model (core/run_lane.go).
 	sr.ctx = WithRunLane(sr.ctx, LaneInteractive)

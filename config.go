@@ -18,6 +18,7 @@ import (
 	"github.com/cmcoffee/gohort/core/buildledger"
 	"github.com/cmcoffee/gohort/core/deps"
 	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/gohort/core/outbound"
 	"github.com/cmcoffee/gohort/core/replyguard"
 	"github.com/cmcoffee/snugforge/kvlite"
 	"github.com/cmcoffee/snugforge/machineid"
@@ -1149,6 +1150,10 @@ func init_database() {
 	// Wire the reply guards' per-model modes and firing tallies (Admin, Reply
 	// guards). Until this runs, every guard is on and nothing is counted.
 	replyguard.SetStore(global.db)
+
+	// Wire the Outbound record: what agents sent out that someone should see
+	// (Admin, Oversight). Until this runs, events are logged and not kept.
+	outbound.SetStore(global.db)
 
 	// Wire the build ledger: every tool test and app verify, kept per target
 	// (Admin, Build outcomes). Until this runs, nothing is recorded.

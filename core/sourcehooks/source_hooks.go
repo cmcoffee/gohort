@@ -235,7 +235,7 @@ type SourceHook struct {
 // like hooks; ConnectorSearch asks one of them.
 var (
 	ConnectorSources func() []SourceHook
-	ConnectorSearch  func(connector, query string) (string, error)
+	ConnectorSearch  func(ctx context.Context, connector, query string) (string, error)
 )
 
 // Sources are the search connectors offered beyond Web Search, each as the
@@ -543,6 +543,13 @@ func authDomainCacheKey(question string) string {
 // or a near query across sessions does not ask the service again. This
 // matters for rate-limited and metered services.
 func QuerySourceHook(hook SourceHook, query string) (string, error) {
+	return QuerySourceHookIn(context.Background(), hook, query)
+}
+
+// QuerySourceHookIn is QuerySourceHook for a call made in ctx's work, which
+// the query is checked against before it leaves (core/outbound): an agent's
+// call, whose turn names what is private and who it is for.
+func QuerySourceHookIn(ctx context.Context, hook SourceHook, query string) (string, error) {
 	if hook.Connector == "" {
 		return "", fmt.Errorf("%s is not a search connector: Source Hooks became connectors", hook.Name)
 	}
@@ -550,7 +557,7 @@ func QuerySourceHook(hook SourceHook, query string) (string, error) {
 		return "", fmt.Errorf("%s is a search connector, and this build has no connectors linked", hook.Connector)
 	}
 	name := hook.Connector
-	return CachedSearch(name, query, func() (string, error) { return ConnectorSearch(name, query) })
+	return CachedSearch(name, query, func() (string, error) { return ConnectorSearch(ctx, name, query) })
 }
 
 // CachedSearch answers query for the source called name from its caches,

@@ -1,12 +1,14 @@
 package websearch
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/outbound"
 	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
@@ -43,6 +45,15 @@ func TestAConnectorIsTheSearchEngine(t *testing.T) {
 	}
 	if _, err := SearchWithProvider(SearchRequest{Query: "x", Provider: "elsewhere"}); err == nil || !strings.Contains(err.Error(), "not an engine here") {
 		t.Errorf("an unknown provider: %v", err)
+	}
+	// A connector whose address is inside this network is not where a query
+	// leaves: a private one to it is neither refused nor recorded.
+	outbound.SetStore(&DBase{Store: kvlite.MemStore()})
+	t.Cleanup(func() { outbound.SetStore(nil) })
+	outbound.SetQueryMode(outbound.ModeRefuse)
+	ctx := outbound.WithPrivateTerms(context.Background(), "solar panels")
+	if _, err := SearchWithProvider(SearchRequest{Query: "solar panels", Provider: "finder", Ctx: ctx}); err != nil || len(outbound.Events(0, nil)) != 0 {
+		t.Errorf("a private query to a connector inside the network: %v, %+v", err, outbound.Events(0, nil))
 	}
 }
 
@@ -134,5 +145,27 @@ func TestADisabledWebSearchIsWithdrawn(t *testing.T) {
 	provider = "duckduckgo"
 	if desc, _ := tool.SchemaWithSession(&ToolSession{}); desc == "" {
 		t.Error("not offered once on")
+	}
+}
+
+// A search the work names as private is in the Outbound record (watched, not
+// refused, by default), made for the turn's agent; the tool's search sees
+// the turn's context, which is where the names are. Refused, it says why and
+// sends nothing.
+func TestAPrivateSearchIsWatched(t *testing.T) {
+	saved := LoadWebSearchConfigFunc
+	t.Cleanup(func() { LoadWebSearchConfigFunc = saved })
+	LoadWebSearchConfigFunc = func() WebSearchConfig { return WebSearchConfig{Provider: "duckduckgo"} }
+	outbound.SetStore(&DBase{Store: kvlite.MemStore()})
+	t.Cleanup(func() { outbound.SetStore(nil) })
+	ctx := outbound.WithActor(outbound.WithPrivateTerms(context.Background(), "Kestrel Control"), outbound.Actor{AgentName: "Coder", Owner: "alice"})
+	outbound.SetQueryMode(outbound.ModeRefuse)
+	tool := &WebSearchTool{}
+	if _, err := tool.RunWithSession(map[string]any{"query": "kestrel control reconcile backoff"}, &ToolSession{Ctx: ctx}); err == nil || !strings.Contains(err.Error(), "NOT SENT") {
+		t.Fatalf("a refused private search: %v", err)
+	}
+	ev := outbound.Events(0, nil)
+	if len(ev) != 1 || ev[0].Kind != outbound.KindSearch || ev[0].Dest != ProviderTitle("duckduckgo") || ev[0].Who() != "Coder (agent of alice)" {
+		t.Fatalf("the record: %+v", ev)
 	}
 }

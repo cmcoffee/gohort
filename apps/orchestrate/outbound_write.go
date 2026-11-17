@@ -21,6 +21,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/notices"
+	"github.com/cmcoffee/gohort/core/outbound"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
@@ -31,6 +32,9 @@ const outboundWriteAction = "outbound_write"
 // approveWrite is ToolSession.ApproveWrite for this turn.
 func (t *chatTurn) approveWrite(w OutboundWrite) string {
 	w.Owner = firstNonBlank(t.agent.Owner, t.user)
+	if w.Actor == (outbound.Actor{}) {
+		w.Actor = outbound.Actor{Agent: t.agent.ID, AgentName: t.agent.Name, Owner: t.agent.Owner, User: t.user}
+	}
 	if refusal, decided := w.Decided(); decided {
 		if refusal != "" {
 			t.turnDiag("outbound-refused", fmt.Sprintf("A %s to %s was not sent: you blocked that host.", w.Method, w.Host))
@@ -52,6 +56,7 @@ func (t *chatTurn) approveWrite(w OutboundWrite) string {
 		return refusal
 	}
 	t.queueOutboundWrite(w)
+	w.Record(outbound.ActionRefused, "sending to a site nobody has trusted, held for the owner's approval: nobody was watching the run")
 	if w.Tunnel {
 		return fmt.Sprintf("NOT CONNECTED: %s needs the owner's approval: it is not a package registry and they have not trusted it, and gohort cannot see whether a connection there reads or uploads. Nobody is watching this run, so it is waiting in their approval queue, and approving it lets later runs connect. Do not reach it another way; say what you meant to do there.", w.Summary())
 	}

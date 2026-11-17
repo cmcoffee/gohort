@@ -15,13 +15,14 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/outbound"
 	"github.com/cmcoffee/gohort/core/sourcehooks"
 )
 
 func init() {
 	sourcehooks.ConnectorSources = searchSources
-	sourcehooks.ConnectorSearch = func(name, query string) (string, error) {
-		return Search(context.Background(), name, query)
+	sourcehooks.ConnectorSearch = func(ctx context.Context, name, query string) (string, error) {
+		return search(ctx, name, query, outbound.KindSource)
 	}
 }
 

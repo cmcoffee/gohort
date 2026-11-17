@@ -22,6 +22,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/media"
+	"github.com/cmcoffee/gohort/core/outbound"
 	"github.com/cmcoffee/gohort/core/safefile"
 	"github.com/cmcoffee/gohort/core/service"
 	"github.com/cmcoffee/gohort/core/textutil"
@@ -166,7 +167,7 @@ type WebSearchTool struct{}
 func (t *WebSearchTool) Name() string       { return "web_search" }
 func (t *WebSearchTool) Caps() []Capability { return []Capability{CapNetwork, CapRead} } // search engine API call
 func (t *WebSearchTool) Desc() string {
-	return "Search the live web for information. Returns results with titles, URLs, and snippets. Use for current state, recent events, and topics where freshness matters."
+	return "Search the live web for information. Returns results with titles, URLs, and snippets. Use for current state, recent events, and topics where freshness matters. The query goes to an outside search engine: search for the general, public concept (the technology, library, error or technique), never the private names in your work (a project, repository, ticket ID or internal host) or the details of a flaw not yet made public."
 }
 
 func (t *WebSearchTool) Params() map[string]ToolParam {
@@ -211,8 +212,15 @@ func (t *WebSearchTool) runWithSession(args map[string]any, sess *ToolSession) (
 		provider = "duckduckgo"
 	}
 
+	// The turn's context, so the search sees what the work names as private
+	// (WithPrivateTerms).
+	var ctx context.Context
+	if sess != nil {
+		ctx = sess.Context()
+	}
 	result, err := SearchWithProvider(SearchRequest{
 		Query: query, Provider: provider, APIKey: cfg.APIKey, Endpoint: cfg.Endpoint, Source: cfg.Source,
+		Ctx: ctx,
 	})
 	// The operator's own searches are priced too. Recording only a peer's would
 	// make a shared key look like the peer was spending all of it.
@@ -996,6 +1004,18 @@ func SearchWithProvider(req SearchRequest) (string, error) {
 		// A name that is no connector here (an engine gohort once had in
 		// Go: brave, serper) is no engine either, said as one.
 		_, named = GetConnector(RootDB, name)
+	}
+	// Checked before it leaves (core/outbound): a connector checks its own,
+	// knowing whether its address is inside the deployment (service.Search).
+	// A peer's query is the peer's to check, against its own work.
+	if provider != "none" && !named && PeerRequestOf(ctx) == "" {
+		dest := ProviderTitle(provider)
+		if strings.HasPrefix(req.Source, "peer:") {
+			dest = "the search lent by " + strings.TrimPrefix(req.Source, "peer:")
+		}
+		if refusal := outbound.CheckQuery(ctx, outbound.Query{Kind: outbound.KindSearch, Dest: dest, Text: query}); refusal != "" {
+			return "", errors.New(refusal)
+		}
 	}
 	switch {
 	case provider == "none":

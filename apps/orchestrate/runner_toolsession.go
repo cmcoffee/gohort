@@ -13,6 +13,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/outbound"
 	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
@@ -513,7 +514,8 @@ func (t *chatTurn) newToolSession() *ToolSession {
 		// root them here via sess.Context() so a Stop / cancel of this
 		// turn also cancels the outgoing agent call instead of leaving it
 		// detached on context.Background().
-		Ctx: t.ctx,
+		// Who its outgoing calls are for, so the Outbound record can say.
+		Ctx: outbound.WithActor(t.ctx, outbound.Actor{Agent: t.agent.ID, AgentName: t.agent.Name, Owner: t.agent.Owner, User: t.user}),
 		// Pipeline-mode temp tools dispatch through this runner. Caps
 		// recursion depth via t.pipelineDepth (incremented on entry,
 		// decremented on exit) so pipeline-calls-pipeline can't

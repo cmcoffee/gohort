@@ -126,7 +126,12 @@ func sourceHookToAgentToolDef(h SourceHook) (AgentToolDef, bool) {
 			if err := sourceBarred(ctx, captured); err != nil {
 				return "", err
 			}
-			result, err := QuerySourceHook(captured, query)
+			// In the turn's work, which the query is checked against.
+			qctx := ctx
+			if sess := ToolSessionFromContext(ctx); sess != nil && sess.Ctx != nil {
+				qctx = sess.Ctx
+			}
+			result, err := sourcehooks.QuerySourceHookIn(qctx, captured, query)
 			if err != nil {
 				return "", fmt.Errorf("source %q failed: %w", captured.Name, err)
 			}

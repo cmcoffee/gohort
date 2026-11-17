@@ -34,6 +34,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/netgate"
+	"github.com/cmcoffee/gohort/core/outbound"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
@@ -904,7 +905,7 @@ func (sd *syncDispatch) buildToolkit() {
 	// made, so a fifteen-minute render held the turn open instead of running in
 	// the background), and cancellation only reaches a tool that is watching
 	// the turn's context rather than a background one.
-	sd.subSess.Ctx = sd.ctx
+	sd.subSess.Ctx = outbound.WithActor(sd.ctx, outbound.Actor{Agent: sd.target.ID, AgentName: sd.target.Name, Owner: sd.target.Owner, User: sd.runtimeUser})
 	toolNames := dispatchToolNames(sd.target.AllowedTools)
 	sd.tools, sd.err = GetAgentToolsWithSession(sd.subSess, toolNames...)
 	if sd.err != nil {
@@ -1908,7 +1909,7 @@ func (cr *continuingRun) buildToolkit() {
 	// made, so a fifteen-minute render held the turn open instead of running in
 	// the background), and cancellation only reaches a tool that is watching
 	// the turn's context rather than a background one.
-	cr.subSess.Ctx = cr.ctx
+	cr.subSess.Ctx = outbound.WithActor(cr.ctx, outbound.Actor{Agent: cr.target.ID, AgentName: cr.target.Name, Owner: cr.target.Owner, User: cr.runtimeUser})
 	toolNames := dispatchToolNames(cr.target.AllowedTools)
 	cr.tools, cr.err = GetAgentToolsWithSession(cr.subSess, toolNames...)
 	if cr.err != nil {
