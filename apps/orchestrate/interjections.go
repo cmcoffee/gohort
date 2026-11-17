@@ -23,7 +23,9 @@
 package orchestrate
 
 import (
+	"context"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -52,9 +54,38 @@ func lookupInjectionQueue(sessionID string) *injectionQueue {
 }
 
 // injectRoute is orchestrate's inject endpoint (agenthost.InjectRoute), with
-// a cortex run's queue closed to new notes.
+// a cortex run's queue closed to new notes, and a note that only says stop
+// stopping the run.
 func (T *OrchestrateApp) injectRoute() http.HandlerFunc {
-	return agenthost.InjectRoute{Refuse: refuseCortexNote}.Handler(T.DB)
+	return agenthost.InjectRoute{Refuse: refuseCortexNote, Noted: stopOnRequest}.Handler(T.DB)
+}
+
+// stopWords is a note that asks for nothing but a stop: the whole of it, so
+// "stop using the cache and rebuild" is an instruction to the turn, not one.
+var stopWords = regexp.MustCompile(`^(please\s+)?(stop|halt|abort|cancel|give up|quit)(\s+(it|that|this|now|right now|here|please|immediately|everything|all|working))*(\s*,?\s*(and\s+)?(do not|don't|dont)\s+(continue|go on|do anything else|keep going))?$`)
+
+// isStopRequest reports a note that only asks the run to stop.
+func isStopRequest(text string) bool {
+	t := strings.ToLower(strings.TrimSpace(text))
+	t = strings.Trim(t, " .!?\u2019'\"")
+	t = strings.Join(strings.Fields(strings.ReplaceAll(t, "\u2019", "'")), " ")
+	return t != "" && len(t) <= 60 && stopWords.MatchString(t)
+}
+
+// stopOnRequest stops a run the person told to stop, as the Stop button
+// does. Typed as a note, "Stop" joined the turn as one more message: the
+// model answered "Stopped" and made another tool call in the same reply, five
+// times over, with the person typing Stop each time.
+func stopOnRequest(user, sessionID string, text string) {
+	if !isStopRequest(text) {
+		return
+	}
+	if v, ok := inflightCancels.Load(runSessKey(user, sessionID)); ok {
+		if cancel, ok := v.(context.CancelFunc); ok {
+			Log("[orchestrate] session=%s stopped: the person asked it to stop (%q)", sessionID, text)
+			cancel()
+		}
+	}
 }
 
 // refuseCortexNote refuses a note into a cortex run: that is a write into the

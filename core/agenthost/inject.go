@@ -31,6 +31,9 @@ type InjectRoute struct {
 	// Queued, when set, is told of each new note, and whether the queue had
 	// room for it without dropping its oldest.
 	Queued func(sessionID string, clean bool)
+	// Noted, when set, is told of each new note's text and who sent it,
+	// after it joined the queue.
+	Noted func(user, sessionID, text string)
 }
 
 // injectNote is an inject request: the running session, and for a lock, an
@@ -111,6 +114,9 @@ func (ir InjectRoute) post(c *jsonapi.Call, in injectNote) (any, error) {
 	noteID, clean := q.Push(text)
 	if ir.Queued != nil {
 		ir.Queued(in.ID, clean)
+	}
+	if ir.Noted != nil {
+		ir.Noted(c.User, in.ID, text)
 	}
 	return map[string]string{"note_id": noteID}, nil
 }
