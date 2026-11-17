@@ -53,7 +53,7 @@ func workingPatch(ctx context.Context, base string) ([]byte, error) {
 	defer cancel()
 	res := sandbox.RunSandboxedShellIn(ctx, sandbox.ShellRun{Command: script, WorkspaceDir: base, Env: env, Writable: []string{out}})
 	if res.Err != nil {
-		return nil, fmt.Errorf("the patch could not be made: %s", firstLine(strings.TrimSpace(res.Output+" "+res.Err.Error())))
+		return nil, fmt.Errorf("the patch could not be made: %s", gitFailure(res.Output, res.Err))
 	}
 	return os.ReadFile(filepath.Join(out, "patch"))
 }

@@ -479,7 +479,7 @@ func (r publishRun) push(ctx context.Context) error {
 	ref := "refs/heads/" + r.branch
 	if b, err := serverGit(ctx, repo, []string{"-c", "protocol.allow=never", "-c", "protocol.file.allow=always",
 		"-c", "fetch.fsckObjects=true", "fetch", "-q", "--", bundle, "HEAD:" + ref}); err != nil {
-		return fmt.Errorf("the history could not be read for the push: %s", firstLine(strings.TrimSpace(string(b)+" "+err.Error())))
+		return fmt.Errorf("the history could not be read for the push: %s", gitFailure(string(b), err))
 	}
 	authURL, err := urlWithToken(r.url, r.token)
 	if err != nil {
@@ -540,7 +540,7 @@ func bundleOf(ctx context.Context, base, out string, revs ...string) (string, er
 	defer cancel()
 	res := sandbox.RunSandboxedShellIn(ctx, sandbox.ShellRun{Command: script, WorkspaceDir: base, Env: env, Writable: []string{out}})
 	if res.Err != nil {
-		return "", fmt.Errorf("the history could not be bundled: %s", firstLine(strings.TrimSpace(res.Output+" "+res.Err.Error())))
+		return "", fmt.Errorf("the history could not be bundled: %s", gitFailure(res.Output, res.Err))
 	}
 	path := filepath.Join(out, "repo.bundle")
 	if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() {

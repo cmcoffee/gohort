@@ -484,7 +484,7 @@ func (T *Anvil) unpackBundle(udb Database, p Project, base, staged string) {
 		fail(fmt.Sprintf("it unpacked past your Anvil disk limit of %d MB", set.DiskMB))
 		return
 	case err != nil:
-		fail(firstLine(strings.TrimSpace(out + " " + err.Error())))
+		fail(gitFailure(out, err))
 		return
 	}
 	// The remote names the upload, which is gone.

@@ -86,7 +86,7 @@ func gitResult(ctx context.Context, timeout time.Duration, args []string, out []
 	}
 	if err != nil {
 		if text != "" {
-			return text, fmt.Errorf("git %s failed: %s", args[0], firstLine(text))
+			return text, fmt.Errorf("git %s failed: %s", args[0], gitFailure(text, nil))
 		}
 		return text, fmt.Errorf("git %s failed: %w", args[0], err)
 	}
@@ -392,11 +392,37 @@ func scrubToken(s, token string) string {
 	return strings.ReplaceAll(s, token, "***")
 }
 
-func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return s[:i]
+// gitFailure is what a failed git command said went wrong: its fatal: and
+// error: lines, else the last line it printed, else err. Git starts with
+// what it is doing ("Cloning into '.'...") and ends with why it stopped, so
+// the first line of a failure is the one that says nothing: an unpack that
+// failed on a Mac was reported, and logged, as "Cloning into '.'...".
+func gitFailure(out string, err error) string {
+	var why, last []string
+	for _, l := range strings.Split(out, "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" {
+			continue
+		}
+		last = append(last[:0], l)
+		if strings.HasPrefix(l, "fatal:") || strings.HasPrefix(l, "error:") {
+			why = append(why, l)
+		}
 	}
-	return s
+	switch {
+	case len(why) > 0:
+		if len(why) > 3 {
+			why = why[len(why)-3:]
+		}
+		return strings.Join(why, " ")
+	case len(last) > 0 && err != nil:
+		return last[0] + " (" + err.Error() + ")"
+	case len(last) > 0:
+		return last[0]
+	case err != nil:
+		return err.Error()
+	}
+	return "git gave no reason"
 }
 
 // --- what git knows about a directory ----------------------------------------
