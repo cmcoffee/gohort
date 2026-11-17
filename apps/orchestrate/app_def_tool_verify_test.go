@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appcheck"
 	"github.com/cmcoffee/gohort/tools/appscript"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
@@ -286,5 +287,48 @@ func TestABrokenSampleIsRefused(t *testing.T) {
 	}
 	if recs, err := appSampleRecords(nil); err != nil || recs != nil {
 		t.Fatalf("no sample: %v %v", recs, err)
+	}
+}
+
+// verify loads the page again with records when the page shows them itself:
+// a page that only broke once it had data passed while the store was empty.
+// The records are the call's sample, else the one the app kept, else what its
+// checks seed; with none of those and nothing saved, the page was only ever
+// seen empty, and verify says so instead of passing it.
+func TestVerifyLoadsThePageWithRecords(t *testing.T) {
+	html := func(script string) json.RawMessage {
+		b, _ := json.Marshal([]map[string]any{{"id": "page", "kind": "html", "html": "<!DOCTYPE html><html><body><script>" + script + "</script></body></html>"}})
+		return b
+	}
+	if !appPageReadsRecords(AppSpec{Sections: html("app.records.list().then(draw)")}) {
+		t.Error("a page listing app.records does not read records")
+	}
+	if !appPageReadsRecords(AppSpec{Sections: json.RawMessage(`[{"kind":"table","columns":[]}]`)}) {
+		t.Error("a typed table over the store does not read records")
+	}
+	if appPageReadsRecords(AppSpec{Sections: html("app.data('weather').then(draw)")}) ||
+		appPageReadsRecords(AppSpec{Sections: json.RawMessage(`[{"kind":"table","source_script":"rows"}]`)}) {
+		t.Error("a page drawing only a data source was taken to read records")
+	}
+
+	given := []map[string]any{{"id": "g"}}
+	kept := AppSpec{Sample: []map[string]any{{"id": "k"}}}
+	checked := AppSpec{Checks: []appcheck.Check{{Name: "c", Steps: []appcheck.Step{{See: "x"}}, Records: []map[string]any{{"id": "c"}}}}}
+	if s := verifySeedRecords(kept, given); s[0]["id"] != "g" {
+		t.Errorf("the call's sample is not first: %v", s)
+	}
+	if s := verifySeedRecords(kept, nil); s[0]["id"] != "k" {
+		t.Errorf("the kept sample is not next: %v", s)
+	}
+	if s := verifySeedRecords(checked, nil); len(s) != 1 || s[0]["id"] != "c" {
+		t.Errorf("the checks' records are not last: %v", s)
+	}
+
+	pinRootDB(t)
+	turn := &chatTurn{user: "u"}
+	var b strings.Builder
+	n, cls := turn.verifyPageWithRecords(&b, AppSpec{Owner: "u", Slug: "fresh", Sections: html("app.records.list()")}, nil, "")
+	if n != 1 || len(cls) != 1 || !strings.Contains(b.String(), "only seen empty") || !strings.Contains(b.String(), "sample=") {
+		t.Errorf("a page seen only empty was not failed with a request for a sample: %d %v %q", n, cls, b.String())
 	}
 }

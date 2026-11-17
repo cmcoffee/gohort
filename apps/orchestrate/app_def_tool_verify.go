@@ -222,11 +222,11 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 		}
 	}
 
+	sample, err := appSampleRecords(args["sample"])
+	if err != nil {
+		return "", err
+	}
 	if len(spec.DataSources) > 0 || len(spec.Actions) > 0 {
-		sample, err := appSampleRecords(args["sample"])
-		if err != nil {
-			return "", err
-		}
 		if sample != nil {
 			spec.RecordSample(sample)
 			spec.Sample = sample
@@ -394,6 +394,17 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 			classes = append(classes, "runtime-not-booted")
 			b.WriteString("FAIL render: the DOM probe returned nothing; the page runtime likely never booted.\n")
 		}
+	}
+
+	// The page with records in it. The load above shows the person's own
+	// records, and a fresh app has none, so a page that only breaks once
+	// there is data passed: Builder's Workout Log listed its exercises with
+	// a misplaced parenthesis, the list threw on the first exercise, and
+	// verify, seeing only "No exercises yet", passed it.
+	if !pageCheckBroke && appPageReadsRecords(spec) {
+		n, cls := t.verifyPageWithRecords(&b, spec, sample, probe)
+		failures += n
+		classes = append(classes, cls...)
 	}
 
 	b.WriteString("\n" + t.appInventoryLine(spec) + "\n")
@@ -1078,6 +1089,85 @@ func emptyStoreNote(recs []map[string]any) string {
 
 // appReadsRecords reports an app with a data source that works from the
 // person's saved entries.
+// appPageReadsRecords reports a page that shows the app's records itself: an
+// html page calling app.records or fetching records, or a typed table, display
+// or chart over the record store.
+func appPageReadsRecords(spec AppSpec) bool {
+	html := appSpecHTMLText(spec)
+	for _, sign := range []string{"app.records", "fetch('records", "fetch(\"records", "fetch(`records"} {
+		if strings.Contains(html, sign) {
+			return true
+		}
+	}
+	var secs []map[string]any
+	if json.Unmarshal(spec.Sections, &secs) == nil {
+		for _, sec := range secs {
+			kind, _ := sec["kind"].(string)
+			src, _ := sec["source_script"].(string)
+			if (kind == "table" || kind == "display" || kind == "chart") && strings.TrimSpace(src) == "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// verifySeedRecords are the records verify loads the page with: the sample
+// this call passed, else the one the app kept from an earlier test, else the
+// records its checks are written against.
+func verifySeedRecords(spec AppSpec, sample []map[string]any) []map[string]any {
+	if len(sample) > 0 {
+		return sample
+	}
+	if len(spec.Sample) > 0 {
+		return spec.Sample
+	}
+	var out []map[string]any
+	for _, c := range spec.Checks {
+		out = append(out, c.Records...)
+	}
+	return out
+}
+
+// verifyPageWithRecords loads spec's page again on a scratch store seeded
+// with records (verifySeedRecords), as a page check does, and reports what
+// broke there. With no records to seed and none saved, the page has only
+// been seen empty, which is a failure: verify then asks for a sample.
+func (t *chatTurn) verifyPageWithRecords(b *strings.Builder, spec AppSpec, sample []map[string]any, probe string) (failures int, classes []string) {
+	seed := verifySeedRecords(spec, sample)
+	if len(seed) == 0 {
+		if len(appStoredRecords(t.user, spec)) > 0 {
+			return 0, nil
+		}
+		b.WriteString("FAIL the page was only seen empty: nothing is saved and there is no sample, so what it shows once there are records (its list, its totals) never ran. Verify again with sample=[{...}, ...]: records shaped as the page saves them, of every kind it keeps.\n")
+		return 1, []string{"page-unseen-with-records"}
+	}
+	token, end := appscript.BeginCheckScratch(spec.Owner, spec.Slug, spec.RecordKey, seed, nil)
+	defer end()
+	rep, err := CheckPageAsUser(RootDB, t.user, "/apps/"+spec.Slug+"/", probe,
+		PageCheckCookie{Name: appscript.CheckScratchCookie, Value: token, HTTPOnly: true})
+	if err != nil || rep == nil {
+		fmt.Fprintf(b, "NOTE the page could not be loaded again with %d sample record(s): %v\n", len(seed), err)
+		return 0, nil
+	}
+	for _, e := range rep.PageErrors {
+		failures++
+		classes = append(classes, "js-exception-with-records")
+		fmt.Fprintf(b, "FAIL with %d sample record(s) in the store: uncaught JS exception: %s\n", len(seed), e)
+	}
+	for _, e := range rep.ConsoleErrors {
+		failures++
+		classes = append(classes, "console-error-with-records")
+		fmt.Fprintf(b, "FAIL with %d sample record(s) in the store: console error: %s\n", len(seed), e)
+	}
+	if failures == 0 {
+		fmt.Fprintf(b, "OK   the page loads with %d sample record(s) in the store, with no errors.\n", len(seed))
+	} else {
+		b.WriteString("The page breaks once it has records to show, which an empty store never reached: fix the code that draws them.\n")
+	}
+	return failures, classes
+}
+
 func appReadsRecords(spec AppSpec) bool {
 	for _, ds := range spec.DataSources {
 		if strings.Contains(ds.Script, "records") {
