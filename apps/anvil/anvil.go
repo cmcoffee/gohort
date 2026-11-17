@@ -58,12 +58,15 @@ func init() {
 // anvilCoreTools are the framework's tools a coding turn keeps beside its
 // own: asking the person, its notes and what it learned, reading output too
 // long to show at once, freeing context, carrying on past a promise to act,
-// and the web for a library's docs or an error message.
+// and the web for a library's docs, an error message, or the live page an
+// app reads. browse_page is the browser: an app that scrapes a site is built
+// by looking at what the site serves, and fetch_url falls back to the browser
+// only on a refusal, not on a site that never answers a plain request.
 var anvilCoreTools = []string{
 	"ask_user", "ask_user_form",
 	"update_notes", "remember", "recall", "forget",
 	"read_output", "release_output", "compact_context", "keep_going",
-	"web_search", "fetch_url",
+	"web_search", "fetch_url", "browse_page",
 }
 
 // anvilRounds is how many rounds a turn may take unless the person set their

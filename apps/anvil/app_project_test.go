@@ -308,9 +308,18 @@ func TestAnvilIsHeldToItsOwnToolsAndAFewOfTheFrameworks(t *testing.T) {
 	}
 	for _, n := range anvilCoreTools {
 		switch n {
-		case "image", "video", "request_build", "workspace", "browse_page", "screenshot_page", "find_tools", "load_tool":
+		case "image", "video", "request_build", "workspace", "find_tools", "load_tool":
 			t.Errorf("%s is on Anvil's list", n)
 		}
+	}
+	// The browser stays: an app that reads a live site is built by looking
+	// at the site, and a turn without it could only report a timeout.
+	has := map[string]bool{}
+	for _, n := range anvilCoreTools {
+		has[n] = true
+	}
+	if !has["browse_page"] || !has["fetch_url"] || !has["web_search"] {
+		t.Errorf("Anvil cannot reach the web it builds against: %v", anvilCoreTools)
 	}
 	if anvilRounds < 30 {
 		t.Errorf("a turn has %d rounds: an ordinary change to an app ran out at 15", anvilRounds)
