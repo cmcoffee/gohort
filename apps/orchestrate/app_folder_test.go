@@ -565,3 +565,14 @@ func TestChecksJSONIsReadAsAListOrAWrappedList(t *testing.T) {
 		t.Errorf("broken JSON: %v", err)
 	}
 }
+
+// A revision note is written as a commit message; the revisions list shows
+// its first line and says the rest is in get.
+func TestTheRevisionsListShowsANotesSubject(t *testing.T) {
+	if got := revisionSubject("Add a city filter\n\nThe list was too long to scan."); got != "Add a city filter (more in get)" {
+		t.Errorf("%q", got)
+	}
+	if got := revisionSubject("  Fix the empty-array bug  "); got != "Fix the empty-array bug" {
+		t.Errorf("%q", got)
+	}
+}

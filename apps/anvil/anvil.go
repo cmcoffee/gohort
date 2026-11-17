@@ -180,6 +180,7 @@ func (T *Anvil) Routes() {
 		"GET":  jsonapi.Get(T.DB, T.handleCommitState),
 		"POST": jsonapi.Post(T.DB, T.handleCommit),
 	}.Serve)
+	T.HandleFunc("/api/project/{id}/commit/undo", jsonapi.Post(T.DB, T.handleCommitUndo))
 	T.HandleFunc("/api/project/{id}/publish", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.handlePublishState),
 		"POST": jsonapi.Post(T.DB, T.handlePublish),

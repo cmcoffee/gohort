@@ -3,7 +3,7 @@
 // Start a new repository makes an empty one, for anyone: it brings nothing
 // into gohort, so none of the reasons adding a project is an administrator's
 // applies. Commit records the work in it, as the person pressing the button
-// (the assistant never commits). Publish pushes it to a repository elsewhere,
+// or by the assistant as them (commit.go). Publish pushes it to a repository elsewhere,
 // and Download as a bundle hands over the whole history with no network.
 //
 // The push runs on the server, because the sandbox has no network, and so it
@@ -93,7 +93,7 @@ func publishAdminSection() ui.Section {
 		Title:    "Publishing repositories",
 		Subtitle: "Whether users may push a repository they started in Anvil, or brought as a bundle, to a repository elsewhere.",
 		Detail: "Anyone may start a new repository in Anvil: it brings nothing in, and counts against their Anvil disk. Publishing sends it out: the person gives an https address and a token, and the server pushes their committed history there.\n\n" +
-			"For anyone but an administrator the address must be https and on the public internet: the host is looked up once, refused when it is on a private or internal network, and git is held to the address checked, as for a clone. Only the person presses Push; the assistant cannot push or commit.\n\n" +
+			"For anyone but an administrator the address must be https and on the public internet: the host is looked up once, refused when it is on a private or internal network, and git is held to the address checked, as for a clone. Only the person presses Push; the assistant commits but cannot push.\n\n" +
 			"Off: only administrators can publish. Download as a bundle stays, the way out with no network.",
 		Body: ui.FormPanel{Source: api, PostURL: api, Fields: []ui.FormField{
 			{Field: "users_may_publish", Label: "Users may publish their repositories", Type: "toggle"},

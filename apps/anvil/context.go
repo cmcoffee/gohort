@@ -41,6 +41,9 @@ var instructionFiles = []string{"CLAUDE.md", "AGENTS.md", "CONVENTIONS.md"}
 // file that SAYS it was truncated is recoverable where a blown window is not.
 const maxInstructionBytes = 16 << 10
 
+// commitNote is how a checkout's work is committed, for the assistant.
+const commitNote = "Commit a piece of work with commit once it is done and its check passes, as the person you work for. " + commitStyle + " A commit stays in this checkout and the person can undo it.\n"
+
 // projectContext renders the block appended to the agent's standing prompt.
 func (T *Anvil) projectContext(p Project, base string) string {
 	var b strings.Builder
@@ -49,9 +52,9 @@ func (T *Anvil) projectContext(p Project, base string) string {
 	fmt.Fprintf(&b, "Path: %s\n", base)
 	switch {
 	case p.Kind == KindClone && p.Source == sourceNew:
-		b.WriteString("A repository its owner started in Anvil. Your changes reach nobody else until the owner commits and publishes them, which only they do: you do not commit or push.\n")
+		b.WriteString("A repository its owner started in Anvil. Your changes reach nobody else until the owner publishes them, which only they do: you do not push.\n" + commitNote)
 	case p.Kind == KindClone && p.Source == sourceBundle:
-		b.WriteString("A checkout made from a git bundle its owner brought. Your changes reach nobody else until the owner commits and publishes them, which only they do: you do not commit or push.\n")
+		b.WriteString("A checkout made from a git bundle its owner brought. Your changes reach nobody else until the owner publishes them, which only they do: you do not push.\n" + commitNote)
 	case p.Kind == KindClone && p.Source == sourceApp:
 		fmt.Fprintf(&b, "The files of the owner's app %s. Your changes reach nobody until the owner installs them.\n", p.AppSlug)
 		// The page's whole backend is window.app. Unsaid, the agent searched
@@ -71,8 +74,10 @@ func (T *Anvil) projectContext(p Project, base string) string {
 		} else {
 			b.WriteString("Installing is the owner's: the Install button on this project's bar puts your changes live, through the same checks. There is no install command or CLI to find, so do not look for one; say what you changed and that it is ready to install.\n")
 		}
+		b.WriteString("When a piece of work is done, write its commit message with install_message: the install is committed with it and it becomes the app's revision note. " + commitStyle + "\n")
 	case p.Kind == KindClone:
-		fmt.Fprintf(&b, "A checkout Anvil made of %s. Changes here affect nobody else until you push them, which Anvil does not do.\n", p.RepoURL)
+		fmt.Fprintf(&b, "A checkout Anvil made of %s. Changes here affect nobody else until they are pushed, which Anvil does not do.\n", p.RepoURL)
+		b.WriteString(commitNote)
 	default:
 		b.WriteString("A directory on this host, registered by an operator. Edits here change the files somebody is actually using; there is no copy.\n")
 	}

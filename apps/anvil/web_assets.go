@@ -57,6 +57,7 @@ const anvilCSS = `
 .anvil-edit-each summary { cursor: pointer; font-size: 0.78rem; color: var(--text-mute); }
 .anvil-edit-each > .anvil-edit-stat { display: block; margin: 6px 0 2px; }
 .anvil-plan-list { padding: 0.2rem 0.9rem 0.6rem; display: flex; flex-direction: column; gap: 0.25rem; }
+.anvil-commit-body { padding: 0.2rem 0.9rem 0.6rem; white-space: pre-wrap; font-size: 0.85rem; color: var(--text-mute); }
 .anvil-plan-step { display: flex; gap: 0.5rem; align-items: baseline; font-size: var(--fs-sm, 0.85rem); }
 .anvil-plan-step.done { color: var(--text-mute); }
 .anvil-plan-box { min-width: 1em; color: var(--accent); }
@@ -472,6 +473,60 @@ const anvilStepSummariesJS = `
 
 // anvilPlanBlockJS renders the agent's plan: its steps as a checklist, each
 // ticked as the agent finishes it.
+// anvilCommitBlockJS draws a commit the assistant made: its subject, what it
+// took in, its message, and Undo, which takes the commit back (while it is
+// still the last one) and leaves its changes uncommitted.
+const anvilCommitBlockJS = `function(d) {
+  var data = d.data || {};
+  var wrap = document.createElement('div');
+  wrap.className = 'anvil-edit anvil-commit' + (d.resolved ? ' reverted' : '');
+  var head = document.createElement('div');
+  head.className = 'anvil-edit-head';
+  var title = document.createElement('span');
+  title.className = 'anvil-edit-path';
+  title.textContent = 'Committed ' + String(data.hash || '').slice(0, 8) + ': ' + (data.subject || d.title || '');
+  head.appendChild(title);
+  var stat = document.createElement('span');
+  stat.className = 'anvil-edit-stat';
+  stat.textContent = d.resolved || data.files || '';
+  head.appendChild(stat);
+  var undo = document.createElement('button');
+  undo.className = 'anvil-edit-revert';
+  undo.textContent = 'Undo';
+  if (d.resolved) undo.style.display = 'none';
+  undo.addEventListener('click', async function(ev) {
+    ev.stopPropagation();
+    if (!(await window.anvilConfirm('Undo this commit? Its changes stay in the checkout, uncommitted.'))) return;
+    undo.disabled = true;
+    undo.textContent = 'Undoing...';
+    window.anvilFetchJSON('api/project/' + encodeURIComponent(data.project_id || '') + '/commit/undo', {method: 'POST',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({hash: data.hash || ''})})
+      .then(function(r) {
+        wrap.classList.add('reverted');
+        undo.style.display = 'none';
+        stat.textContent = 'undone';
+        if (window.uiResolveBlock) {
+          try { window.uiResolveBlock(d.id, 'Undone: its changes are uncommitted'); } catch (e) {}
+        }
+        if (window.anvilGitRefresh) window.anvilGitRefresh();
+      })
+      .catch(function(err) {
+        undo.disabled = false;
+        undo.textContent = 'Undo';
+        anvilAlert(String(err.message || err));
+      });
+  });
+  head.appendChild(undo);
+  wrap.appendChild(head);
+  if (data.body) {
+    var body = document.createElement('div');
+    body.className = 'anvil-commit-body';
+    body.textContent = data.body;
+    wrap.appendChild(body);
+  }
+  return {wrap: wrap, body: null};
+}`
+
 const anvilPlanBlockJS = `function(d) {
   var wrap = document.createElement('div');
   // fill draws the plan into the card: on arrival, and again as steps are

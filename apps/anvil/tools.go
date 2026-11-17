@@ -212,7 +212,12 @@ func (c *toolCtx) codeTools() []AgentToolDef {
 		tools = append(tools, c.planTool())
 	}
 	if c.project.Source == sourceApp && writes {
-		tools = append(tools, c.haltable(c.previewTool()))
+		tools = append(tools, c.haltable(c.previewTool()), c.installMessageTool())
+	}
+	// A checkout's work is committed by the assistant, as the person
+	// (commit.go); an app's commits are its installs.
+	if writes && commitRefusal(c.project, c.user, c.isAdmin) == "" {
+		tools = append(tools, c.haltable(c.commitTool()))
 	}
 	if c.project.Source == sourceApp {
 		tools = append(tools, c.appChecksTool())

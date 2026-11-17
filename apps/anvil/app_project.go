@@ -187,7 +187,7 @@ func (T *Anvil) handleAppInstall(c *jsonapi.Call, _ struct{}) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	msg, err := installAppCheckout(c.R.Context(), c.User, p, base)
+	msg, err := installAppCheckout(c.R.Context(), c.UDB, c.User, p, base)
 	if err != nil {
 		return nil, jsonapi.Status(409, err.Error())
 	}
@@ -196,15 +196,25 @@ func (T *Anvil) handleAppInstall(c *jsonapi.Call, _ struct{}) (any, error) {
 
 // installAppCheckout installs the checkout as user and, when it went in,
 // commits it, so the history is what was installed.
-func installAppCheckout(ctx context.Context, user string, p Project, base string) (string, error) {
+// The message the assistant wrote for the changes (install_message) is the
+// commit's and the app revision's note; without one, they say Installed.
+func installAppCheckout(ctx context.Context, udb Database, user string, p Project, base string) (string, error) {
 	o, err := appHost()
 	if err != nil {
 		return "", err
 	}
-	if _, err := o.InstallAppFolder(ctx, user, base, "Installed from Anvil"); err != nil {
+	msg := installMessage(udb, p.ID)
+	note, commit := "Installed from Anvil", "Installed"
+	if msg != "" {
+		note, commit = msg, msg
+	}
+	if _, err := o.InstallAppFolder(ctx, user, base, note); err != nil {
 		return "", folderError(base, err)
 	}
-	if err := commitCheckout(base, user, "Installed"); err != nil {
+	if udb != nil && msg != "" {
+		udb.Unset(installMessageTable, p.ID)
+	}
+	if err := commitCheckout(base, user, commit); err != nil {
 		Log("[anvil] %s installed, but the commit failed: %v", p.AppSlug, err)
 	}
 	return "Installed: " + p.Name + " now runs your changes, at /apps/" + p.AppSlug + "/.", nil
@@ -477,7 +487,7 @@ func (c *toolCtx) appFinish(edited bool) string {
 	ctx := c.lastCtx()
 	if p.InstallOnSave {
 		if live, ok := LoadAppSpec(c.user, p.AppSlug); ok && !appUsedByOthers(live) {
-			if _, err := installAppCheckout(ctx, c.user, p, c.base); err != nil {
+			if _, err := installAppCheckout(ctx, c.udb, c.user, p, c.base); err != nil {
 				return "Your changes were not installed: " + err.Error() + "\nFix what it names, then finish."
 			}
 			return ""

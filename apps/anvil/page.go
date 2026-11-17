@@ -699,6 +699,7 @@ func anvilHead(projects []Project, user string, isAdmin bool) *ui.Head {
 		BlockRenderer("anvil_edit", anvilEditBlockJS).
 		BlockRenderer(checkBlock, anvilCheckBlockJS).
 		BlockRenderer(planBlock, anvilPlanBlockJS).
+		BlockRenderer(commitBlock, anvilCommitBlockJS).
 		JS(anvilStepSummariesJS).
 		JS(anvilHabitsJS).
 		ClientAction("anvil_run", anvilRunJS).

@@ -31,7 +31,7 @@ func (t *chatTurn) appDefRevisions(args map[string]any) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Revisions of %q, newest first. Restore one with app_def(action=\"revert\", id=%q, to=<the # id>).\n\n", spec.Name, spec.Slug)
 	now := fmt.Sprintf("  NOW  %s  %s  (serving)", spec.Updated, appRevisionShape(spec))
-	if n := strings.TrimSpace(spec.ChangeNote); n != "" {
+	if n := revisionSubject(spec.ChangeNote); n != "" {
 		now += "  " + strconv.Quote(n)
 	}
 	b.WriteString(now + "\n")
@@ -41,7 +41,7 @@ func (t *chatTurn) appDefRevisions(args map[string]any) (string, error) {
 		note := ""
 		if ok {
 			shape = appRevisionShape(prior)
-			note = strings.TrimSpace(prior.ChangeNote)
+			note = revisionSubject(prior.ChangeNote)
 		}
 		line := fmt.Sprintf("  #%-3d %s  %s", r.Seq, r.Stamp, shape)
 		if age := AppRevisionAge(r.Stamp); age != "" {
@@ -59,6 +59,18 @@ func (t *chatTurn) appDefRevisions(args map[string]any) (string, error) {
 	b.WriteString("\nStatus now: " + spec.VerifyStatus() + ".\n")
 	b.WriteString("\nA version that is much larger than the one serving now is the signal to look at: it means an edit removed a lot of code. Compare with app_def(action=\"get\") before reverting if you're unsure.")
 	return b.String(), nil
+}
+
+// revisionSubject is a revision note's first line, for the list: a note is
+// written as a commit message, a subject and then why, and the why is in get.
+func revisionSubject(note string) string {
+	note = strings.TrimSpace(note)
+	subject, rest, _ := strings.Cut(note, "\n")
+	subject = strings.TrimSpace(subject)
+	if strings.TrimSpace(rest) != "" {
+		subject += " (more in get)"
+	}
+	return subject
 }
 
 // appDefRevert restores a kept revision.
