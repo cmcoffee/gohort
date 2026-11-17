@@ -172,7 +172,7 @@ func agentMissingRefs(a AgentRecord, poolDB Database, owner string, own, resolve
 	if len(a.AttachedCollections) > 0 {
 		// The retrieval gate itself, so a collection is missing here exactly
 		// when the search path leaves it out.
-		_, withheld := agentCorpusSourceSet(owner, owner, a.AttachedCollections, nil)
+		_, withheld := agentCorpusSourceSet(owner, owner, a.AttachedCollections, nil, true)
 		for _, id := range withheld {
 			out = append(out, missingRef{Kind: "collection", ID: id, Name: missingRefName("collection", id)})
 		}

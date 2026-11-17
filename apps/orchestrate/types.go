@@ -580,6 +580,14 @@ type AgentRecord struct {
 	// files transactionally and don't benefit from persisting them.
 	IngestAttachments bool `json:"ingest_attachments,omitempty"`
 
+	// KnowledgeAttachedOnly searches only the collections attached to the
+	// agent. An agent with none attached otherwise searches every
+	// deployment-wide collection, the default for a general assistant; for
+	// one working in a narrow field (a coding agent on one project) those are
+	// research and debate findings about anything, which crowd out what it
+	// needs.
+	KnowledgeAttachedOnly bool `json:"knowledge_attached_only,omitempty"`
+
 	// AllowPrivateMode publishes a "Private" toggle on the public
 	// /agents/<slug>/ surface. When the user flips it on, network-
 	// capability tools (web_search, fetch_url, ...) are filtered out

@@ -78,7 +78,7 @@ func (T *OrchestrateApp) readAgentCatalog(ctx context.Context, owner string, age
 		scope = ChunkScopeCuratedOnly
 	}
 	hits := searchAgentKnowledgeVec(ctx, T.DB, owner, "", false, agent.ID, normalizeTopic(topic), query, qVec,
-		catalogPerLayer*2, nil, agent.AttachedCollections, scope)
+		catalogPerLayer*2, nil, agent.AttachedCollections, !agent.KnowledgeAttachedOnly, scope)
 	var findings, docs []SearchHit
 	for _, h := range hits {
 		if h.Score < RelevanceFloor {

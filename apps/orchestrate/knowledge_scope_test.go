@@ -206,7 +206,7 @@ func TestAnAgentsCorpusTravelsButDoesNotEscape(t *testing.T) {
 
 	// Through alice's agent, run by bob: it is in scope, which is the whole
 	// point of sharing an agent whose value is its author's documents.
-	got, withheld := agentCorpusSourceSet("bob", "alice", []string{"runbooks"}, nil)
+	got, withheld := agentCorpusSourceSet("bob", "alice", []string{"runbooks"}, nil, true)
 	if !got[collectionSource("runbooks")] {
 		t.Error("the agent's own corpus did not travel with it")
 	}
@@ -221,7 +221,7 @@ func TestAnAgentsCorpusTravelsButDoesNotEscape(t *testing.T) {
 	}
 	// And an agent of bob's naming the same id gets nothing, because there is
 	// no owner to resolve it as.
-	if own, _ := agentCorpusSourceSet("bob", "", []string{"runbooks"}, nil); own[collectionSource("runbooks")] {
+	if own, _ := agentCorpusSourceSet("bob", "", []string{"runbooks"}, nil, true); own[collectionSource("runbooks")] {
 		t.Error("the id resolved for an agent that was not alice's")
 	}
 }
@@ -233,8 +233,28 @@ func TestABrokenReferenceIsStillReported(t *testing.T) {
 	if UserDB(CollectionsDB(), "alice") == nil {
 		t.Skip("no per-user store")
 	}
-	_, withheld := agentCorpusSourceSet("bob", "alice", []string{"deleted-one"}, nil)
+	_, withheld := agentCorpusSourceSet("bob", "alice", []string{"deleted-one"}, nil, true)
 	if len(withheld) != 1 || withheld[0] != "deleted-one" {
 		t.Errorf("a dangling reference was not reported: %v", withheld)
+	}
+}
+
+// An agent with no collections of its own searches the deployment's, unless
+// it searches only what is attached to it: a coding agent on one project was
+// handed research and debate findings about anything.
+func TestAnAgentCanSearchOnlyWhatIsAttachedToIt(t *testing.T) {
+	scopeStores(t)
+	RootDB.Set(GlobalCollectionsTable, "d-findings", Collection{ID: "d-findings", Name: "Findings", Scope: CollectionScopeDeployment})
+	if got, _ := agentCorpusSourceSet("u", "", nil, nil, true); !got[collectionSource("d-findings")] {
+		t.Error("an agent with nothing attached lost the deployment's collections")
+	}
+	if got, _ := agentCorpusSourceSet("u", "", nil, nil, false); got[collectionSource("d-findings")] {
+		t.Error("an agent searching only its own was given the deployment's collections")
+	}
+	if !agentRecordHasRetrievableContent(AgentRecord{}) {
+		t.Error("the default agent was told it has nothing to search")
+	}
+	if agentRecordHasRetrievableContent(AgentRecord{KnowledgeAttachedOnly: true}) {
+		t.Error("an agent searching only its own, with nothing attached, was promised knowledge to search")
 	}
 }

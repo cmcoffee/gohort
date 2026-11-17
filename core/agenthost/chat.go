@@ -40,6 +40,11 @@ type Agent struct {
 	SeedNotes              string
 	LeadModel              bool
 	ThinkBudget            int
+	// KnowledgeAttachedOnly searches only the collections attached to the
+	// agent, never the deployment's by default. AttachedCollections are the
+	// ones attached for this turn.
+	KnowledgeAttachedOnly bool
+	AttachedCollections   []string
 	// Record is the host's own record of the agent, which the fields above
 	// are written back onto. An app leaves it alone.
 	Record any

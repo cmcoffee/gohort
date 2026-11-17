@@ -327,7 +327,7 @@ func (t *chatTurn) agentHasRetrievableContent() bool {
 	// Open-pool default: when the agent has NO explicit collections,
 	// deployment-scope collections auto-attach. If any exist, the agent
 	// effectively has retrievable content.
-	if len(t.agent.AttachedCollections) == 0 {
+	if len(t.agent.AttachedCollections) == 0 && !t.agent.KnowledgeAttachedOnly {
 		for _, c := range ListCollections(nil, "") {
 			if IsDeploymentScope(c) {
 				return true
@@ -362,7 +362,7 @@ func agentRecordHasRetrievableContent(agent AgentRecord) bool {
 	if len(agent.AttachedCollections) > 0 || agent.IngestAttachments {
 		return true
 	}
-	if len(agent.AttachedCollections) == 0 {
+	if len(agent.AttachedCollections) == 0 && !agent.KnowledgeAttachedOnly {
 		for _, c := range ListCollections(nil, "") {
 			if IsDeploymentScope(c) {
 				return true

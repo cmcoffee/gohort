@@ -840,7 +840,7 @@ const (
 // run also searches the owner's own accumulated corpus for this agent — what
 // the agent worked out for itself while talking to them. The two rode one
 // argument until a switch over the second silently withheld the first.
-func searchAgentKnowledgeVec(ctx context.Context, db Database, user, baseUser string, baseCorpus bool, agentID, topic, query string, qVec []float32, k int, activeSkills []SkillRecord, agentAttachedCollections []string, scope ChunkScope) []SearchHit {
+func searchAgentKnowledgeVec(ctx context.Context, db Database, user, baseUser string, baseCorpus bool, agentID, topic, query string, qVec []float32, k int, activeSkills []SkillRecord, agentAttachedCollections []string, defaults bool, scope ChunkScope) []SearchHit {
 	// db is kept in the signature for caller compatibility and acts as
 	// the system-readiness gate. The chunk search itself runs against
 	// VectorDB now (the dedicated shared store, partitioned by Source
@@ -923,7 +923,7 @@ func searchAgentKnowledgeVec(ctx context.Context, db Database, user, baseUser st
 	// search it directly, or see it in their collection list. It is readable
 	// through this agent's retrieval and nowhere else. Their own corpus under
 	// this agent stays theirs — capability travels, history does not.
-	exact, withheld := agentCorpusSourceSet(user, baseUser, agentAttachedCollections, activeSkills)
+	exact, withheld := agentCorpusSourceSet(user, baseUser, agentAttachedCollections, activeSkills, defaults)
 	if len(withheld) > 0 {
 		// Logged here, and SAID once per turn where the run starts
 		// (trackMissingDependencies): the model is told the corpus is gone,
@@ -1815,7 +1815,7 @@ func chunksInSection(chunks []EmbeddedChunk, want string) []EmbeddedChunk {
 // A predicate that can disagree with the search it was written to mirror is
 // worse than no predicate: it is the one somebody reads and believes.
 func (t *chatTurn) agentCorpusSources(scopeSkills []SkillRecord) map[string]bool {
-	exact, _ := agentCorpusSourceSet(t.user, t.ownerUser, t.agent.AttachedCollections, scopeSkills)
+	exact, _ := agentCorpusSourceSet(t.user, t.ownerUser, t.agent.AttachedCollections, scopeSkills, !t.agent.KnowledgeAttachedOnly)
 	return exact
 }
 
@@ -1825,7 +1825,10 @@ func (t *chatTurn) agentCorpusSources(scopeSkills []SkillRecord) map[string]bool
 // two gates that agree today are two gates that disagree the next time either
 // is touched — which is precisely how the three copies this replaced came to
 // hold three different policies.
-func agentCorpusSourceSet(user, baseUser string, attached []string, scopeSkills []SkillRecord) (map[string]bool, []string) {
+//
+// defaults is whether an agent with no collections of its own searches the
+// deployment's (false for one that searches only what is attached to it).
+func agentCorpusSourceSet(user, baseUser string, attached []string, scopeSkills []SkillRecord, defaults bool) (map[string]bool, []string) {
 	// The agent's OWNER, when it has one distinct from whoever is running it.
 	// A dependency travels with the agent and is scoped to it; see the long
 	// note at the search path for why that reverses an earlier rule.
@@ -1860,7 +1863,7 @@ func agentCorpusSourceSet(user, baseUser string, attached []string, scopeSkills 
 	// Deployment-scoped collections auto-attach when the agent curated none —
 	// "empty means give me the defaults"; an explicit list means the author
 	// picked on purpose and the defaults stay out.
-	if len(attached) == 0 {
+	if defaults && len(attached) == 0 {
 		for _, c := range ListCollections(nil, "") {
 			if IsDeploymentScope(c) {
 				exact[collectionSource(c.ID)] = true

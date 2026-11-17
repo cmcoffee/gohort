@@ -201,7 +201,7 @@ func TestKnowledgeBaseLayer(t *testing.T) {
 
 	search := func(baseUser string, baseCorpus bool) []SearchHit {
 		return searchAgentKnowledgeVec(context.Background(), nil, inst, baseUser, baseCorpus,
-			agentID, "general", "nginx", nil, 10, nil, nil, ChunkScopeAll)
+			agentID, "general", "nginx", nil, 10, nil, nil, true, ChunkScopeAll)
 	}
 	// Layered: base + instance both retrieved.
 	if got := search(base, true); len(got) != 2 {
