@@ -332,9 +332,14 @@ const appFolderGuideLayout = `A gohort app is a folder: install reads it, and no
   data/<name>.py    a data source: reads the records and query params from env vars, PRINTS JSON
   actions/<name>.py an action: reads the records and its inputs, PRINTS {message?, records?, result?}
   lib/<name>.py     code several scripts share, imported as "from <name> import ..." (no listing needed)
-  assets/<file>     images, fonts, sounds, served to the page at assets/<file>
+  assets/<file>     images, fonts, sounds, 3D models, and the page's own scripts (.js, .mjs), stylesheets (.css),
+                    data (.json) and WebAssembly (.wasm), served to the page at assets/<file>; 8 MB each, 64 at most
   NOTES.md          what the app is, the choices made and why, what was left out
   checks.json       a JSON list of checks, [{"name": ..., ...}, ...]: what the app is supposed to do, as tests that run on every install
+
+PORTING an app built with a framework (React, Vue, a bundler): no build step runs here (the sandbox has no network, so no npm install), so bring its built output or write the page in plain JavaScript (React from a CDN without JSX works too). Put each built script and stylesheet in assets/ and reference it as <script src="assets/app.js"> (type="module" kept) or <link rel="stylesheet" href="assets/app.css">: the page is served with them in it. Build to ONE file per script: a module that imports another of the app's files (a code-split chunk) cannot load it. Calls the app made to its own server (fetch("/api/...")) become its data sources and actions through window.app.
+
+THERE IS NO DATABASE: an app's data is its records (app.records in the page; a script gets them all with records() and returns the ones it changes). A SQLite schema becomes kinds of record, each a JSON object with a field naming its kind; a query becomes a data source that filters the records it is handed. Python's sqlite3 can query an in-memory copy within one run, but nothing it writes is kept.
 
 Only these are installed. Anything else in the folder (the code an app was ported from, a data file at the top such as flows.json) stays behind, and the installed app cannot read it: a data file the app ships goes in assets/ (the page fetches assets/<file>), and a file the person brings is picked in the page (<input type="file">, read there or sent to an action).
 

@@ -6,7 +6,8 @@ import (
 )
 
 // A WebGL app ships its models as assets: a .glb alone, or a .gltf with the
-// .bin it names. Code still never qualifies.
+// .bin it names. A page still never qualifies (code does since 0.9.501:
+// TestCodeAndDataFilesAreAssets).
 func TestModelFilesAreAssets(t *testing.T) {
 	for name, want := range map[string]string{
 		"ship.glb":   "model/gltf-binary",
@@ -18,7 +19,7 @@ func TestModelFilesAreAssets(t *testing.T) {
 			t.Errorf("%s: %q %v, want %q", name, got, ok, want)
 		}
 	}
-	for _, name := range []string{"game.js", "page.html", "x.mjs"} {
+	for _, name := range []string{"page.html", "x.htm", "run.sh"} {
 		if ValidAppAssetName(name) {
 			t.Errorf("%s must not be an asset", name)
 		}
@@ -55,6 +56,40 @@ func TestAssetBytesMustMatchTheExtension(t *testing.T) {
 	for _, name := range []string{"a.wav", "a.jpg", "a.glb", "a.svg"} {
 		if assetMatchesType(name, []byte("hello")) == nil {
 			t.Errorf("%s accepted plain text", name)
+		}
+	}
+}
+
+// A built front end ships as files: its scripts, stylesheet, WebAssembly and
+// JSON data are assets, each checked for being what its name says. HTML
+// stays out: an asset is never a page.
+func TestCodeAndDataFilesAreAssets(t *testing.T) {
+	for name, want := range map[string]string{
+		"app.js":     "text/javascript; charset=utf-8",
+		"chunk.mjs":  "text/javascript; charset=utf-8",
+		"app.css":    "text/css; charset=utf-8",
+		"level.json": "application/json",
+		"sql.wasm":   "application/wasm",
+	} {
+		if got, ok := AppAssetContentType(name); !ok || got != want {
+			t.Errorf("%s: %q %v, want %q", name, got, ok, want)
+		}
+	}
+	if _, ok := AppAssetContentType("index.html"); ok {
+		t.Error("an HTML file is an asset")
+	}
+	for name, data := range map[string]string{
+		"app.js": "console.log('hi');", "app.css": "body{color:red}", "level.json": `{"a":[1,2]}`, "sql.wasm": "\x00asm\x01\x00\x00\x00",
+	} {
+		if err := assetMatchesType(name, []byte(data)); err != nil {
+			t.Errorf("%s refused: %v", name, err)
+		}
+	}
+	for name, data := range map[string]string{
+		"level.json": `{"a":`, "sql.wasm": "not wasm", "app.js": "\x00\x01binary", "app.css": "\xff\xfe",
+	} {
+		if err := assetMatchesType(name, []byte(data)); err == nil {
+			t.Errorf("%s taken though it is not one", name)
 		}
 	}
 }

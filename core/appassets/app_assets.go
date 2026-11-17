@@ -15,12 +15,14 @@
 package appassets
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 var (
@@ -74,6 +76,18 @@ var appAssetExts = map[string]string{
 	".glb":  "model/gltf-binary",
 	".gltf": "model/gltf+json",
 	".bin":  "application/octet-stream",
+	// Code and data the page loads: a built front end (a React or Vue
+	// bundle and its stylesheet), a library, WebAssembly (sql.js), a JSON
+	// data file. The page's own inline script can already do anything one
+	// of these can, so a file of it adds no power; it lets a bundle of
+	// megabytes ship as files instead of pasted into page.html. Opened
+	// directly, each is served sandboxed and nosniff like the rest, so it is
+	// text, never a page.
+	".js":   "text/javascript; charset=utf-8",
+	".mjs":  "text/javascript; charset=utf-8",
+	".css":  "text/css; charset=utf-8",
+	".json": "application/json",
+	".wasm": "application/wasm",
 }
 
 // MaxAppAssetBytes caps one asset. Generated art lands well under this; the
@@ -109,6 +123,7 @@ var assetMagic = map[string][]string{
 	".flac": {"fLaC"},
 	".webm": {"\x1a\x45\xdf\xa3"},
 	".pdf":  {"%PDF-"},
+	".wasm": {"\x00asm"},
 }
 
 // assetMatchesType reports why data is not the type name's extension says,
@@ -131,6 +146,10 @@ func assetMatchesType(name string, data []byte) error {
 		ok = strings.Contains(strings.ToLower(s[:min(len(s), 4096)]), "<svg")
 	case ".gltf":
 		ok = strings.HasPrefix(strings.TrimSpace(s), "{")
+	case ".js", ".mjs", ".css":
+		ok = utf8.Valid(data) && !strings.ContainsRune(s, 0)
+	case ".json":
+		ok = json.Valid(data)
 	default:
 		if prefixes, has := assetMagic[ext]; has {
 			ok = false
@@ -144,6 +163,12 @@ func assetMatchesType(name string, data []byte) error {
 	}
 	if ok {
 		return nil
+	}
+	switch ext {
+	case ".js", ".mjs", ".css":
+		return fmt.Errorf("asset %q is not text: a %s file is UTF-8 source with no NUL bytes", name, strings.TrimPrefix(ext, "."))
+	case ".json":
+		return fmt.Errorf("asset %q is not valid JSON", name)
 	}
 	start := s[:min(len(s), 12)]
 	return fmt.Errorf("asset %q is not a %s file: its bytes start %q. Write the file's real bytes (a script that encodes the format, e.g. zlib+struct for a PNG, the wave module for a WAV), not text or base64 of it", name, strings.TrimPrefix(ext, "."), start)

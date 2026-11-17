@@ -284,6 +284,9 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		// keeps its owner-side tracker running.
 		T.touchAppView(spec)
 		page := isolateAppHTML(appPageFor(spec, user), T.WebPath()+"/"+slug+"/")
+		// Its own scripts and stylesheets are in the page, since the frame
+		// it runs in cannot load them (asset_inline.go).
+		page = inlineAppAssets(page, ownerUser, slug)
 		page = T.withViewState(page, appdb, spec)
 		// A maintainer changes the app through Builder too
 		// (docs/design/app-maintainers.md), so the way there is theirs.
@@ -2140,9 +2143,10 @@ func (T *CustomApps) handleAsset(w http.ResponseWriter, r *http.Request, owner, 
 	// Assets are replaced by name, so a long cache would pin a stale sprite.
 	// Short and revalidating keeps an updated asset visible on reload.
 	w.Header().Set("Cache-Control", "no-cache, max-age=0, must-revalidate")
-	// The directory only ever holds allowlisted image/font types, but a
-	// browser sniffing its way to something else is exactly the hole the
-	// allowlist exists to close.
+	// The directory only ever holds allowlisted types (images, fonts,
+	// sounds, models, and the scripts, stylesheets, WebAssembly and JSON a
+	// page loads), but a browser sniffing its way to something else is
+	// exactly the hole the allowlist exists to close.
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	// Served from this origin, so an asset opened directly is a page of its
 	// own: an SVG can carry script, and run as whoever opens it. The sandbox
