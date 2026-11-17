@@ -365,6 +365,8 @@ func (T *MCPServer) handleRPC(w http.ResponseWriter, r *http.Request) {
 				kept = append(kept, d)
 			}
 			defs = kept
+			// The key owner's own apps, what each offers beyond its page.
+			defs = append(defs, appToolDefs(tok.Owner)...)
 			before := len(defs)
 			defs = allowedToolDefs(defs, tok)
 			switch {
@@ -605,6 +607,10 @@ func (T *MCPServer) callTool(ctx context.Context, owner string, token *AccountTo
 				return "", nil, fmt.Errorf("tool %q belongs to an app your account cannot use (or that is switched off)", p.Name)
 			}
 			text, err := spec.Handler(ctx, owner, p.Arguments)
+			return text, nil, err
+		}
+		// The owner's own apps, what each offers beyond its page (app_tools.go).
+		if text, handled, err := callAppTool(ctx, owner, p.Name, p.Arguments); handled {
 			return text, nil, err
 		}
 		// Name what IS here. An agent's own tools (image, web_search, ...) are not

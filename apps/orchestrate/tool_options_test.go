@@ -253,3 +253,54 @@ func TestBuiltInNetworkIsWhatPrivateModeTakesAway(t *testing.T) {
 		}
 	}
 }
+
+// What a person's apps expose is in their agents' tool picker under the
+// app's name, never in the default set (an action writes), and an agent
+// has one only when it is ticked.
+func TestAnAppsToolsAreTickedOnAnAgent(t *testing.T) {
+	prev := AppToolsFor
+	t.Cleanup(func() { AppToolsFor = prev })
+	AppToolsFor = func(sess *ToolSession, user string) []AgentToolDef {
+		if user != "alice" {
+			return nil
+		}
+		return []AgentToolDef{{Tool: Tool{Name: "books_add", Description: "Add a book.", Category: "App: Reading List"},
+			Handler: func(context.Context, map[string]any) (string, error) { return "added", nil }}}
+	}
+	var found *ui.SelectOption
+	for _, o := range availableWorkerToolOptions("alice") {
+		if o.Value == "books_add" {
+			o := o
+			found = &o
+		}
+	}
+	if found == nil || found.Group != "App: Reading List" {
+		t.Fatalf("in alice's tool picker: %+v", found)
+	}
+	if slices.Contains(availableWorkerToolNames(), "books_add") {
+		t.Error("an app tool is in the default set")
+	}
+	open := &chatTurn{agent: AgentRecord{}}
+	ticked := &chatTurn{agent: AgentRecord{AllowedTools: []string{"web_search", "books_add"}}}
+	for name, turn := range map[string]*chatTurn{"default": open, "ticked": ticked} {
+		wc := &workerCatalog{t: turn, sess: &ToolSession{Username: "alice"}}
+		wc.chooseNames()
+		wc.loadTools()
+		has := false
+		for _, td := range wc.tools {
+			has = has || td.Tool.Name == "books_add"
+		}
+		if has != (name == "ticked") {
+			t.Errorf("%s agent has the app tool: %v", name, has)
+		}
+	}
+	// Run for someone else, the ticked agent does not reach alice's app.
+	wc := &workerCatalog{t: ticked, sess: &ToolSession{Username: "bob"}}
+	wc.chooseNames()
+	wc.loadTools()
+	for _, td := range wc.tools {
+		if td.Tool.Name == "books_add" {
+			t.Error("an agent run for bob has alice's app tool")
+		}
+	}
+}

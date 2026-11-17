@@ -64,8 +64,13 @@ type AppSpec struct {
 	// Resolved against the OWNER's pipelines (like scripts, which run in the
 	// owner's sandbox); the run TRANSCRIPTS are per calling user, so a shared
 	// app gives everyone the same recipe and their own history.
-	PipelineID string          `json:"pipeline_id,omitempty"`
-	Page       json.RawMessage `json:"page"`
+	PipelineID string `json:"pipeline_id,omitempty"`
+	// ExposePipeline offers the app's pipeline (PipelineID) as a tool beyond
+	// its page: <slug>_run_pipeline, taking an input and returning the run's
+	// final output, for the owner's agents (ticked in an agent's tools) and
+	// their MCP clients. See AppAction.Expose.
+	ExposePipeline bool            `json:"expose_pipeline,omitempty"`
+	Page           json.RawMessage `json:"page"`
 	// Sections is the AUTHORING form of the page — the declarative sections
 	// array the author passed to app_def, stored verbatim alongside the Page it
 	// compiled into. Page is the RENDERED shape (bodies keyed by component
@@ -374,6 +379,9 @@ type AppDataSource struct {
 	// give it, as AppAction.Inputs: the app's agent reads every data source
 	// as a tool in the app's chat, and is asked for exactly these.
 	Inputs map[string]string `json:"inputs,omitempty"`
+	// Expose offers the data source as a read tool (read_<slug>_<name>)
+	// beyond the app's page and chat, as AppAction.Expose does an action.
+	Expose bool `json:"expose,omitempty"`
 }
 
 // AppAction is a script-backed custom-app action: a sandboxed script a button
@@ -397,6 +405,14 @@ type AppAction struct {
 	// action as a tool in the app's chat, is asked for them as the tool's
 	// parameters. An action with none takes nothing from the agent.
 	Inputs map[string]string `json:"inputs,omitempty"`
+	// Expose offers the action as a tool beyond the app's page and chat: to
+	// the owner's other agents, which get it when it is ticked in their tools,
+	// and to the owner's MCP clients. A call runs the action as a click by the
+	// owner would (the same script, records and settings). One with a Confirm
+	// prompt asks before an agent's call runs, and is refused over MCP, where
+	// nobody here is asked. The page and the app's own chat have every action
+	// either way.
+	Expose bool `json:"expose,omitempty"`
 	// Schedule, when set, makes this action ALSO fire unattended on a timer, with
 	// no human clicking it — the seam that lets a custom app keep itself fresh
 	// (dashboard / tracker) while nobody has it open. Each fire runs the script in

@@ -51,6 +51,7 @@ type appFolderScript struct {
 	Confirm      string            `json:"confirm,omitempty"`
 	Inputs       map[string]string `json:"inputs,omitempty"`
 	Schedule     *AppSchedule      `json:"schedule,omitempty"`
+	Expose       bool              `json:"expose,omitempty"`
 }
 
 // appFolderManifest is app.json.
@@ -61,6 +62,7 @@ type appFolderManifest struct {
 	RecordKey         string            `json:"record_key,omitempty"`
 	AgentID           string            `json:"agent_id,omitempty"`
 	PipelineID        string            `json:"pipeline_id,omitempty"`
+	ExposePipeline    bool              `json:"expose_pipeline,omitempty"`
 	FullWidth         bool              `json:"full_width,omitempty"`
 	Narrow            bool              `json:"narrow,omitempty"`
 	AskDailyUSD       float64           `json:"ask_daily_usd,omitempty"`
@@ -179,7 +181,7 @@ func writeAppFolder(abs string, spec AppSpec, assets map[string][]byte, base str
 		sec["html_file"] = name
 	}
 	m := appFolderManifest{Name: spec.Name, Slug: spec.Slug, Description: spec.Desc, RecordKey: spec.RecordKey,
-		AgentID: spec.AgentID, PipelineID: spec.PipelineID, FullWidth: spec.FullWidth, Narrow: spec.Narrow,
+		AgentID: spec.AgentID, PipelineID: spec.PipelineID, ExposePipeline: spec.ExposePipeline, FullWidth: spec.FullWidth, Narrow: spec.Narrow,
 		AskDailyUSD: spec.AskDailyUSD, AskUserDailyUSD: spec.AskUserDailyUSD,
 		SharedCollections: spec.SharedCollections, Settings: spec.Settings, Sections: sections}
 	for _, ds := range spec.DataSources {
@@ -187,7 +189,7 @@ func writeAppFolder(abs string, spec AppSpec, assets map[string][]byte, base str
 		if err := write(f, []byte(ds.Script)); err != nil {
 			return out, err
 		}
-		m.DataSources = append(m.DataSources, appFolderScript{Name: ds.Name, File: f, Language: ds.Language, Capabilities: ds.Capabilities, Inputs: ds.Inputs})
+		m.DataSources = append(m.DataSources, appFolderScript{Name: ds.Name, File: f, Language: ds.Language, Capabilities: ds.Capabilities, Inputs: ds.Inputs, Expose: ds.Expose})
 	}
 	for _, a := range spec.Actions {
 		f := "actions/" + a.Name + scriptExt(a.Language)
@@ -195,7 +197,7 @@ func writeAppFolder(abs string, spec AppSpec, assets map[string][]byte, base str
 			return out, err
 		}
 		m.Actions = append(m.Actions, appFolderScript{Name: a.Name, File: f, Language: a.Language, Capabilities: a.Capabilities,
-			Label: a.Label, Desc: a.Desc, Confirm: a.Confirm, Inputs: a.Inputs, Schedule: a.Schedule})
+			Label: a.Label, Desc: a.Desc, Confirm: a.Confirm, Inputs: a.Inputs, Schedule: a.Schedule, Expose: a.Expose})
 	}
 	for name, src := range spec.Libraries {
 		if err := write("lib/"+name+".py", []byte(src)); err != nil {
@@ -404,6 +406,9 @@ func (t *chatTurn) appFolderRead(abs, rel string) (map[string]any, appFolderMani
 				}
 				e["inputs"] = in
 			}
+			if s.Expose {
+				e["expose"] = true
+			}
 			if isAction {
 				for k, v := range map[string]string{"label": s.Label, "desc": s.Desc, "confirm": s.Confirm} {
 					if v != "" {
@@ -449,6 +454,9 @@ func (t *chatTurn) appFolderRead(abs, rel string) (map[string]any, appFolderMani
 			args[k] = v
 		}
 	}
+	// Always passed, as the folder is the whole app: an update without the key
+	// would keep a pipeline exposed after the folder stopped saying so.
+	args["expose_pipeline"] = m.ExposePipeline
 	if m.FullWidth {
 		args["full_width"] = true
 	}
@@ -627,7 +635,7 @@ func (t *chatTurn) appDefRun(args map[string]any) (string, error) {
 	ds, _ := appDataSources(in["data_sources"])
 	acts, _ := appActionDefs(in["actions"])
 	spec := AppSpec{Owner: t.user, Slug: m.Slug, Name: m.Name, SharedCollections: m.SharedCollections, Settings: m.Settings,
-		AgentID: m.AgentID, PipelineID: m.PipelineID, AskDailyUSD: m.AskDailyUSD, AskUserDailyUSD: m.AskUserDailyUSD}
+		AgentID: m.AgentID, PipelineID: m.PipelineID, ExposePipeline: m.ExposePipeline, AskDailyUSD: m.AskDailyUSD, AskUserDailyUSD: m.AskUserDailyUSD}
 	if libs, err := appLibraries(in["libraries"]); err != nil {
 		return "", fmt.Errorf("%s/lib: %w", rel, err)
 	} else if len(libs) > 0 {

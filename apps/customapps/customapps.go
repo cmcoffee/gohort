@@ -102,6 +102,9 @@ func (T *CustomApps) WebDesc() string { return "Apps composed from primitives." 
 
 func (T *CustomApps) Routes() {
 	hostApp = T
+	// What each app offers beyond its page, as tools for its owner's agents
+	// and MCP clients (exposed_tools.go).
+	AppToolsFor = T.exposedTools
 	// An app's own rows travel with it on request (records_artifact.go).
 	T.registerRecordsArtifact()
 	T.registerPipelineRestore()

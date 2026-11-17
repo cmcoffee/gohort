@@ -885,6 +885,20 @@ func (T *Account) handleTokenTargets(c *jsonapi.Call) (any, error) {
 			tools = append(tools, mcpTool{Name: st.Name, Label: st.Name})
 		}
 	}
+	// And what their own apps offer beyond their pages, as the server lists
+	// them for this person: not an action that asks to confirm first, which
+	// the server refuses.
+	if AppToolsFor != nil {
+		for _, d := range AppToolsFor(nil, user) {
+			if d.Confirmation == nil {
+				label := d.Tool.Name
+				if d.Tool.Category != "" {
+					label = d.Tool.Category + ": " + d.Tool.Name
+				}
+				tools = append(tools, mcpTool{Name: d.Tool.Name, Label: label})
+			}
+		}
+	}
 	return map[string]any{
 		"kinds":    keyKinds(user),
 		"features": feats,

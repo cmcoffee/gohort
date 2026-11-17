@@ -202,6 +202,19 @@ func availableWorkerToolOptions(user string) []ui.SelectOption {
 				},
 			})
 		}
+		// What their apps offer beyond their pages (an action, a data source
+		// or a pipeline marked expose), under each app's name. Here and not
+		// in the default pool (the user-less list): an action writes, so an
+		// agent gets one only when it is ticked.
+		if AppToolsFor != nil {
+			for _, d := range AppToolsFor(nil, user) {
+				if ownNames[d.Tool.Name] {
+					continue
+				}
+				ownNames[d.Tool.Name] = true
+				defs = append(defs, AgentToolDef{Tool: Tool{Name: d.Tool.Name, Description: d.Tool.Description, Category: d.Tool.Category}})
+			}
+		}
 		// Client-bridge tools (from_client_*) are NOT surfaced here.
 		// The runtime includes them in the catalog of every chat-page
 		// send once the user has registered a desktop (see

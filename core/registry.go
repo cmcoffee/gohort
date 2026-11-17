@@ -658,6 +658,24 @@ func dataURIImage(s string) (string, bool) {
 	return b64, true
 }
 
+// AppToolsFor, when set (by the custom apps host), is the tools user's apps
+// offer beyond their pages: each action, data source or pipeline its app
+// marks expose (AppAction.Expose), runnable, and with the app's name as their
+// Category. sess binds a call to a run, and is nil for a listing (an agent's
+// tool picker) or a call from outside one (an MCP client), where a call runs
+// in the caller's context.
+var AppToolsFor func(sess *ToolSession, user string) []AgentToolDef
+
+// findAgentToolDef is the def in defs named name.
+func findAgentToolDef(defs []AgentToolDef, name string) (AgentToolDef, bool) {
+	for _, d := range defs {
+		if d.Tool.Name == name {
+			return d, true
+		}
+	}
+	return AgentToolDef{}, false
+}
+
 // GetAgentToolsWithSession looks up registered chat tools by name and returns
 // them as AgentToolDefs bound to sess. Session-aware tools (SessionChatTool)
 // receive sess on each call; stateless tools fall back to Run as usual.
@@ -672,6 +690,8 @@ func GetAgentToolsWithSession(sess *ToolSession, names ...string) ([]AgentToolDe
 	var tools []AgentToolDef
 	var secureCache []AgentToolDef // built lazily, only when a name isn't in the static registry
 	secureBuilt := false
+	var appToolsCache []AgentToolDef
+	appToolsBuilt := false
 	for _, name := range names {
 		if ct, ok := FindChatTool(name); ok {
 			// A dynamic tool with nothing to offer this caller is omitted
@@ -692,6 +712,19 @@ func GetAgentToolsWithSession(sess *ToolSession, names ...string) ([]AgentToolDe
 				tools = append(tools, def)
 			}
 			continue
+		}
+		// A tool one of the person's apps offers beyond its page (an action,
+		// a data source or its pipeline marked expose), named by its tool
+		// name. Built once per lookup, and only when a name gets this far.
+		if AppToolsFor != nil && sess != nil {
+			if !appToolsBuilt {
+				appToolsCache = AppToolsFor(sess, sess.Username)
+				appToolsBuilt = true
+			}
+			if def, ok := findAgentToolDef(appToolsCache, name); ok {
+				tools = append(tools, def)
+				continue
+			}
 		}
 		// Fallback: the dynamic secure-API tools (call_<credential>)
 		// are generated per-session by Secure().BuildTools(sess) and

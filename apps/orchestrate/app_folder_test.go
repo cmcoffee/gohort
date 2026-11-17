@@ -376,3 +376,75 @@ func TestRunWithoutADirUsesTheSessionsFolder(t *testing.T) {
 		t.Error("a session that named no folder should still be asked for one")
 	}
 }
+
+// What an app exposes beyond its page is said in app_def and survives the
+// folder: an action, a data source and the pipeline, each kept through a
+// checkout and a publish, and un-exposed when the folder stops saying so.
+func TestWhatAnAppExposesSurvivesItsFolder(t *testing.T) {
+	turn, ws := folderTestTurn(t)
+	_, err := turn.appDefCreateOrUpdate(map[string]any{
+		"name":            "Books",
+		"sections":        []any{map[string]any{"id": "list", "kind": "table", "empty_text": "None yet.", "columns": []any{map[string]any{"field": "title", "label": "Title"}}}},
+		"data_sources":    []any{map[string]any{"name": "unread", "script": "print('[]')", "expose": true}, map[string]any{"name": "stats", "script": "print('{}')"}},
+		"actions":         []any{map[string]any{"name": "add", "script": "print('{}')", "expose": true}, map[string]any{"name": "wipe", "script": "print('{}')"}},
+		"pipeline_id":     "p1",
+		"expose_pipeline": true,
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(when string, want bool) {
+		t.Helper()
+		spec, _ := LoadAppSpec("u", "books")
+		if spec.DataSources[0].Expose != want || spec.DataSources[1].Expose || spec.Actions[0].Expose != want || spec.Actions[1].Expose || spec.ExposePipeline != want {
+			t.Fatalf("%s: data %+v actions %+v pipeline %v", when, spec.DataSources, spec.Actions, spec.ExposePipeline)
+		}
+	}
+	check("created", true)
+	if _, err := turn.appDefCheckout(map[string]any{"id": "books"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := turn.appDefPublish(map[string]any{"dir": "books.app"}); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	check("through the folder", true)
+	manifest := filepath.Join(ws, "books.app", "app.json")
+	b, _ := os.ReadFile(manifest)
+	off := strings.NewReplacer(`"expose": true`, `"expose": false`, `"expose_pipeline": true`, `"expose_pipeline": false`).Replace(string(b))
+	if off == string(b) {
+		t.Fatalf("app.json does not say what is exposed:\n%s", b)
+	}
+	os.WriteFile(manifest, []byte(off), 0o644)
+	if _, err := turn.appDefPublish(map[string]any{"dir": "books.app"}); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	check("taken off in the folder", false)
+}
+
+// An app used only through its tools needs no page: made with no sections and
+// an exposed action, it gets one section naming what it offers. With nothing
+// exposed, a page is still required.
+func TestAnAppUsedThroughItsToolsNeedsNoPage(t *testing.T) {
+	turn, _ := folderTestTurn(t)
+	_, err := turn.appDefCreateOrUpdate(map[string]any{
+		"name":    "Log",
+		"actions": []any{map[string]any{"name": "add", "label": "Add entry", "script": "print('{}')", "expose": true}},
+	}, false)
+	if err != nil {
+		t.Fatalf("a tools-only app was refused: %v", err)
+	}
+	spec, _ := LoadAppSpec("u", "log")
+	var secs []map[string]any
+	if json.Unmarshal(spec.Sections, &secs) != nil || len(secs) != 1 || secs[0]["kind"] != "empty" || !strings.Contains(mapStr(secs[0], "hint"), "Add entry") {
+		t.Fatalf("its page: %s", spec.Sections)
+	}
+	if len(spec.Page) == 0 {
+		t.Fatal("no page was built")
+	}
+	if _, err := turn.appDefCreateOrUpdate(map[string]any{
+		"name":    "Bare",
+		"actions": []any{map[string]any{"name": "add", "script": "print('{}')"}},
+	}, false); err == nil || !strings.Contains(err.Error(), "sections") {
+		t.Errorf("an app with nothing exposed and no page: %v", err)
+	}
+}

@@ -180,6 +180,11 @@ func (aw *appWrite) readMeta() bool {
 			aw.spec.PipelineID = pipeRef
 		}
 	}
+	// expose_pipeline: the pipeline as a tool beyond the page. Only when the
+	// key is present, so an update without it keeps the choice.
+	if _, ok := args["expose_pipeline"]; ok {
+		aw.spec.ExposePipeline = boolArg(args, "expose_pipeline")
+	}
 	// full_width: opt the app's page into edge-to-edge layout. Only honored when
 	// the key is present so an update without it keeps the existing choice.
 	if _, ok := args["full_width"]; ok {
@@ -303,6 +308,13 @@ func (aw *appWrite) readParts() bool {
 		aw.spec.Checks = checks
 	}
 
+	// An app used only through its tools (an action, a data source or its
+	// pipeline marked expose) needs no page: given none, it gets one section
+	// saying so and naming them, so everything that reads a page (the build,
+	// verify, the folder) reads an ordinary app.
+	if appSectionsMissing(args, isUpdate) && appExposesTools(aw.spec) {
+		args["sections"] = []any{toolsOnlySection(aw.spec)}
+	}
 	// Build the Page from the declarative sections. On update with no sections
 	// passed, keep the existing page.
 	if raw, ok := args["sections"]; ok && raw != nil {
@@ -646,7 +658,7 @@ func floatArg(args map[string]any, key string) float64 {
 // which a check has to see again. A notes or name edit leaves a verified app
 // verified.
 func appUpdateChangesBehavior(args map[string]any) bool {
-	for _, k := range []string{"sections", "data_sources", "actions", "libraries", "settings", "shared_collections", "record_key", "agent_id", "pipeline_id"} {
+	for _, k := range []string{"sections", "data_sources", "actions", "libraries", "settings", "shared_collections", "record_key", "agent_id", "pipeline_id", "expose_pipeline"} {
 		if _, ok := args[k]; ok {
 			return true
 		}

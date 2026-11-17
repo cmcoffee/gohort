@@ -422,7 +422,11 @@ const (
 	// PeerModelTiers and SetPeerKeyTiers: which models a key's Inference
 	// grant lends (the Offload model alone, say), as Appliances scopes Run
 	// commands. LendsTier is a method and adds no name.
-	coreExportCeiling = 2421
+	// 2447: the slack had been spent (HEAD stood at 2446), plus AppToolsFor:
+	// the tools a person's apps expose beyond their pages, which the tool
+	// lookup here resolves by name, so it carries core's tool types and
+	// cannot live in a leaf. The custom apps host sets it.
+	coreExportCeiling = 2447
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

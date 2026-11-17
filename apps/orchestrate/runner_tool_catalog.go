@@ -115,6 +115,18 @@ func (wc *workerCatalog) chooseNames() {
 				}
 			}
 		}
+		// So with what the person's apps offer beyond their pages
+		// (AppToolsFor): per person, never in the registered pool, and only
+		// ever there because the agent's list names them. Resolved for the
+		// person the turn is for, so an agent shared with someone else does
+		// not act on its owner's app records for them.
+		if matched < len(allow) && AppToolsFor != nil && sess != nil {
+			for _, td := range AppToolsFor(sess, sess.Username) {
+				if n := td.Tool.Name; allow[n] && !slices.Contains(wc.toolNames, n) {
+					wc.toolNames = append(wc.toolNames, n)
+				}
+			}
+		}
 	default:
 		// No explicit allow-list — the agent runs the full default pool.
 		// defaultNames is the REGISTERED worker pool and never contains the

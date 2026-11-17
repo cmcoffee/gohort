@@ -317,3 +317,26 @@ func TestAFileAToolWritesIsNotedWithWhatMadeIt(t *testing.T) {
 		t.Errorf("note: %+v", n)
 	}
 }
+
+// A name no registered tool has resolves through the person's app tools
+// (AppToolsFor): theirs, bound to their session, and not anyone else's.
+func TestAnAppToolResolvesForItsOwner(t *testing.T) {
+	prev := AppToolsFor
+	t.Cleanup(func() { AppToolsFor = prev })
+	AppToolsFor = func(sess *ToolSession, user string) []AgentToolDef {
+		if user != "alice" {
+			return nil
+		}
+		return []AgentToolDef{{Tool: Tool{Name: "books_add"}, Handler: func(context.Context, map[string]any) (string, error) { return "added", nil }}}
+	}
+	got, err := GetAgentToolsWithSession(&ToolSession{Username: "alice"}, "books_add")
+	if err != nil || len(got) != 1 || got[0].Tool.Name != "books_add" {
+		t.Fatalf("alice's app tool: %v %v", got, err)
+	}
+	if out, _ := got[0].Handler(context.Background(), nil); out != "added" {
+		t.Errorf("it did not run the app's handler: %q", out)
+	}
+	if got, _ := GetAgentToolsWithSession(&ToolSession{Username: "bob"}, "books_add"); len(got) != 0 {
+		t.Errorf("bob resolved alice's app tool: %v", got)
+	}
+}
