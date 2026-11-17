@@ -157,6 +157,9 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 		Touches: appDefTouches,
 		Handler: func(ctx context.Context, args map[string]any) (out string, err error) {
 			action := strings.ToLower(strings.TrimSpace(stringArg(args, "action")))
+			// The folders this call names are in the workspace the session is
+			// working in now, a switch made earlier this step included.
+			t.adoptSessionWorkspace(ctx)
 			if named := t.appDefWorkingApp(action, args); named != "" {
 				defer func() {
 					if err == nil {

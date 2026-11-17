@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -503,5 +504,45 @@ func TestAnAppsUsersGetAPageWithoutTheManagersParts(t *testing.T) {
 	desk, _ := LoadAppSpec("u", "desk")
 	if !strings.Contains(string(desk.UserPage), "For its managers") {
 		t.Errorf("an all-managers app's users' page: %s", desk.UserPage)
+	}
+}
+
+// A workspace the session switched to this step (workspace create, then
+// files written there) is where app_def checks out and publishes from, at
+// once: the turn learned of the switch only when the step ended, so Builder
+// checked out an app into the agent's own folder, wrote its files in the new
+// workspace, and published the untouched starter four times.
+func TestAppDefWorksInTheWorkspaceTheSessionSwitchedTo(t *testing.T) {
+	turn, own := folderTestTurn(t)
+	prevAuth := AuthDB
+	adb := Database(&DBase{Store: kvlite.MemStore()})
+	AuthDB = func() Database { return adb }
+	t.Cleanup(func() { AuthDB = prevAuth })
+	w, dir, err := CreateManagedWorkspace("", "u", "s1", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := &ToolSession{Username: "u", WorkspaceDir: dir, WorkspaceID: w.ID}
+	ctx := sess.ContextWithSession(context.Background())
+	def := turn.appDefToolDef()
+	if _, err := def.Handler(ctx, map[string]any{"action": "checkout", "name": "Deals"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "deals.app", "app.json")); err != nil {
+		t.Fatalf("the checkout did not land in the workspace the session switched to: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(own, "deals.app")); err == nil {
+		t.Error("the checkout landed in the agent's own folder")
+	}
+	page := "<!DOCTYPE html><html><body><h1>Hottest deals</h1></body></html>"
+	if err := os.WriteFile(filepath.Join(dir, "deals.app", "page.html"), []byte(page), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := def.Handler(ctx, map[string]any{"action": "publish", "dir": "deals.app"}); err != nil {
+		t.Fatal(err)
+	}
+	spec, ok := LoadAppSpec("u", "deals")
+	if !ok || !strings.Contains(string(spec.Sections), "Hottest deals") {
+		t.Errorf("the publish did not carry the page written in the workspace: %s", spec.Sections)
 	}
 }

@@ -97,6 +97,20 @@ func delegatedWorkspace(ctx context.Context, udb Database, user string, target A
 // through when that workspace is gone (deleted, or not ours).
 //
 // Otherwise the turn runs in its agent family's folder (agentWorkspace).
+// adoptSessionWorkspace takes a managed workspace the calling tool session
+// switched to (workspace create or use) as the turn's own, at once. The turn
+// otherwise learns of the switch only when its step ends
+// (captureActiveWorkspace), so for the rest of that step the workspace tool
+// wrote in the new workspace while app_def read and wrote its folders in the
+// agent's own: Builder created a pinned workspace, checked out an app, wrote
+// the app's files where the workspace tool put them, and published the
+// untouched starter four times, never finding why.
+func (t *chatTurn) adoptSessionWorkspace(ctx context.Context) {
+	if ts := ToolSessionFromContext(ctx); ts != nil && ts.WorkspaceID != "" {
+		t.activeWorkspaceID = ts.WorkspaceID
+	}
+}
+
 func (t *chatTurn) turnWorkspace() (dir, wsID string) {
 	if t.activeWorkspaceID != "" {
 		if w, ok := LoadManagedWorkspace(t.activeWorkspaceID); ok && w.Owner == t.user &&
