@@ -3,6 +3,14 @@
 Status: proposed (2026-11-17). Nothing built. Step 1 below (Anvil saying
 when an install leaves the app broken) shipped first, on its own, in 0.9.510.
 
+Two stages. **Stage 1** gives every app a repository that records each save,
+and has Anvil work in it; the app as stored stays what is served. **Stage 2**
+makes the repository what the app is: it is served from the repository's
+live branch, and the store keeps only what is not code. Stage 1 is built and
+lived with first; nothing in it is thrown away by stage 2, which needs the
+same repository and history, and what stage 1 measures (repository sizes,
+the time a commit takes) decides stage 2's details.
+
 ## Why
 
 An app is changed from two places, and they do not see each other.
@@ -71,7 +79,77 @@ its own.
 
 **Later, separately:** Builder's folder workflow (`checkout`) uses the same
 repository, and the revisions list is read from git. Neither is needed for
-the above.
+the above; stage 2 does both.
+
+## Stage 2: the app is its repository
+
+The app runs from its repository. Stage 1's repository becomes the source,
+and the store keeps the app's record.
+
+**What is where.**
+
+| In the repository (the app's code) | In the store (the app's record) |
+|---|---|
+| app.json, page.html, data/, actions/, lib/, assets/, NOTES.md, checks.json | owner, slug, sharing (people, groups, public), maintainers, managers |
+| | an administrator's approvals (publishing, store access, outbound) |
+| | verify verdicts, settings' values, private_db, schedules' state |
+| | the records people save, and their files |
+
+**Serving.** The app is built from the `live` branch (the folder reader
+`BuildAppFolder` already does this), cached by commit, so a request reads a
+built app from memory and a new commit on `live` replaces it.
+
+**Changing.** Builder and Anvil work in the repository, each on its own
+branch or working copy, so their changes meet in git. Builder's in-place
+edits (patch_html, replace_function) become an edit to the file and a
+commit, on Builder's branch.
+
+**Going live is the one gated step.** A change reaches `live` only through
+the install path, which runs everything a save runs now: the validators,
+the app's checks, the page loaded in a browser, an administrator's approval
+for a shared app. A merge that fails any of them does not move `live`. An
+agent editing files in the repository changes its own branch and nothing
+else; it cannot make anything live by writing files.
+
+**What follows from it.**
+
+- A revision is a commit on `live`, revert is `git revert` there, and the
+  revisions list is the log.
+- Preview is serving a branch to its author (what Anvil's Preview builds
+  today, from a branch instead of a working folder).
+- A maintainer's change can be a branch the owner merges, instead of a save
+  into the owner's app.
+- Bundles (`.gohortapp`) can become git bundles of the repository, carrying
+  its history.
+
+**Moving apps over.** No bulk migration: an app moves the first time it is
+saved or opened after stage 2 is on. Its current version is written into the
+repository (already there since stage 1 for any app saved since), `live`
+points at it, and its code fields in the store are cleared once the
+repository serves it. An app not yet moved is served from the store exactly
+as now, so the two kinds run side by side until every app has been touched.
+This is a migration, and is said as one: the code of every app ends up
+somewhere new.
+
+**What stage 2 costs on top of stage 1.**
+
+- **git is required for every app**, not only Anvil, on every deployment
+  (Windows included). Without it the store keeps serving (an app is moved
+  only where git is present), and that has to be said on the admin page. A
+  Go git library instead is a new dependency, vetted before it is chosen.
+- **Every path that changes code moves to git**: app_def's edits, revisions,
+  revert, maintainers' saves, bundles. The save gates do not change; what
+  they guard does.
+- **A request must not wait on git.** The cache by commit is required, not
+  an optimisation.
+
+### Stage 2 questions
+
+5. **git library or the git binary?** The binary is what Anvil uses now;
+   a library removes the dependency at the cost of vetting one.
+6. **Builder's branch.** One per app (proposed), or one per Builder turn?
+7. **Maintainers.** Keep saving into the owner's live app (as now), or
+   propose a branch for the owner to merge?
 
 ## What it costs
 
@@ -104,13 +182,25 @@ the above.
 
 ## Steps
 
+Stage 1:
+
 1. Anvil says when an install leaves the app broken. **Done (0.9.510).**
 2. The app repository and a commit on every save, behind the save
    (`core`, with the folder writer from orchestrate).
 3. Anvil's app projects open the app's repository; Install fast-forwards;
    another save since is fetched and merged, or shown as a conflict.
 4. "Use the app's history" for existing app projects.
-5. Builder's folder workflow on the same repository; revisions from git.
+5. Measure: repository sizes and commit times across real apps.
 
-Built on a branch: it changes how Anvil opens an app and adds a store per
-app.
+Stage 2:
+
+6. Serve from `live`, cached by commit, for an app that has moved; the store
+   serves the rest.
+7. Installs merge into `live` through the save gates; Builder's edits commit
+   on its branch.
+8. Revisions, revert and Preview from git; bundles as git bundles.
+9. Move apps on first save or open; clear their code fields once served
+   from the repository.
+
+Each stage on its own branch: stage 1 changes how Anvil opens an app and
+adds a repository per app; stage 2 moves where every app's code lives.
