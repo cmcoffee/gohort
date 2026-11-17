@@ -535,3 +535,51 @@ func TestAFolderErrorDropsTheProjectsID(t *testing.T) {
 		t.Errorf("%q", err)
 	}
 }
+
+// A project holding an app is checked for whether it would install as each
+// turn that changed it ends, and app_checks says the same on demand: a
+// refusal comes back to the assistant that can fix it, not to the person
+// pressing Install. A check naming its script by the other form of its name
+// (my_cases for my-cases) is not a refusal.
+func TestAnAppThatWouldNotInstallGoesBackToTheAssistant(t *testing.T) {
+	T, _ := appProjectWorld(t)
+	udb := UserDB(T.DB, "alice")
+	p := Project{ID: UUIDv4(), Name: "cases", Kind: KindClone, Owner: "alice", Source: sourceBundle}
+	base, _ := p.baseDir()
+	os.MkdirAll(filepath.Join(base, "data"), 0o700)
+	os.WriteFile(filepath.Join(base, "app.json"), []byte(`{"name":"Cases","slug":"cases",
+		"sections":[{"id":"page","kind":"html","html_file":"page.html"}],
+		"data_sources":[{"name":"my-cases","file":"data/my_cases.py"}]}`), 0o644)
+	os.WriteFile(filepath.Join(base, "page.html"), []byte("<!DOCTYPE html><html><body>cases</body></html>"), 0o644)
+	os.WriteFile(filepath.Join(base, "data", "my_cases.py"), []byte("print('[]')"), 0o644)
+	writeChecks := func(script string) {
+		os.WriteFile(filepath.Join(base, "checks.json"), []byte(`[{"name":"my cases asks for an email first","script":"`+script+`","expect":[{"contains":"["}]}]`), 0o644)
+	}
+	T.saveProject(udb, p)
+	c := &toolCtx{user: "alice", udb: udb, project: p, base: base, sessionID: "s1"}
+
+	writeChecks("their_cases")
+	if msg := c.appFinish(true); !strings.Contains(msg, "would not install") || !strings.Contains(msg, "their_cases") {
+		t.Errorf("the turn's end: %q", msg)
+	}
+	var checks *AgentToolDef
+	for _, d := range c.codeTools() {
+		if d.Tool.Name == "app_checks" {
+			checks = &d
+		}
+	}
+	if checks == nil {
+		t.Fatal("a project holding an app offers no app_checks")
+	}
+	if out, _ := checks.Handler(context.Background(), nil); !strings.Contains(out, "It would not install") {
+		t.Errorf("app_checks: %q", out)
+	}
+	if strings.Contains(c.appFinish(false), "install") {
+		t.Error("a turn that changed nothing was checked")
+	}
+
+	writeChecks("my_cases")
+	if msg := c.appFinish(true); msg != "" {
+		t.Errorf("an app that would install was sent back: %q", msg)
+	}
+}

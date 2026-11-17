@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appcheck"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -574,5 +575,21 @@ func TestTheRevisionsListShowsANotesSubject(t *testing.T) {
 	}
 	if got := revisionSubject("  Fix the empty-array bug  "); got != "Fix the empty-array bug" {
 		t.Errorf("%q", got)
+	}
+}
+
+// A check finds its script by name or by its slug when it runs, so it is
+// validated the same way: my_cases names the data source my-cases. Checked
+// on the exact names alone, a ported app's check that would have run was
+// refused at install.
+func TestACheckNamesItsScriptTheWayARunFindsIt(t *testing.T) {
+	spec := AppSpec{DataSources: []AppDataSource{{Name: "my-cases", Script: "print('[]')"}},
+		Checks: []appcheck.Check{{Name: "lists my cases", Script: "my_cases", Expect: []appcheck.Expect{{Contains: "["}}}}}
+	if err := validateAppChecks(spec); err != nil {
+		t.Errorf("a check naming the script by its other form was refused: %v", err)
+	}
+	spec.Checks[0].Script = "their_cases"
+	if err := validateAppChecks(spec); err == nil || !strings.Contains(err.Error(), "their_cases") {
+		t.Errorf("a check naming no script of the app: %v", err)
 	}
 }

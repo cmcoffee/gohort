@@ -219,7 +219,7 @@ func (c *toolCtx) codeTools() []AgentToolDef {
 	if writes && commitRefusal(c.project, c.user, c.isAdmin) == "" {
 		tools = append(tools, c.haltable(c.commitTool()))
 	}
-	if c.project.Source == sourceApp {
+	if c.project.Source == sourceApp || holdsAppFolder(c.base) {
 		tools = append(tools, c.appChecksTool())
 	}
 	// A gohort app in the project, or one to start: how its folder is built.

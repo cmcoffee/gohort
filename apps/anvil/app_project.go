@@ -506,12 +506,25 @@ func previewAppCheckout(ctx context.Context, user string, p Project, base string
 // with Install on every save and an app nobody else uses, the changes are
 // installed, and a refusal sends the assistant back with it; otherwise a
 // running preview is brought up to date. Nothing happens without changes.
+//
+// Before either, any project holding an app (an app project, or code being
+// ported into one) is checked for whether it would install, so a refusal
+// reaches the assistant that can fix it rather than the person pressing
+// Install ("check runs my_cases, which is not one of the app's data sources").
 func (c *toolCtx) appFinish(edited bool) string {
 	p := c.project
-	if p.Source != sourceApp || c.readOnly || !edited {
+	if c.readOnly || !edited || (p.Source != sourceApp && !holdsAppFolder(c.base)) {
 		return ""
 	}
 	ctx := c.lastCtx()
+	if o, err := appHost(); err == nil {
+		if err := o.AppFolderInstallable(ctx, c.user, c.base); err != nil {
+			return "This app would not install: " + folderError(c.base, err).Error() + "\nFix what it names (app_checks checks again), then finish."
+		}
+	}
+	if p.Source != sourceApp {
+		return ""
+	}
 	if p.InstallOnSave {
 		if live, ok := LoadAppSpec(c.user, p.AppSlug); ok && !appUsedByOthers(live) {
 			if _, err := installAppCheckout(ctx, c.udb, c.user, p, c.base); err != nil {
@@ -555,14 +568,17 @@ func (c *toolCtx) appChecksTool() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name: "app_checks",
-			Description: "Run this app's checks (checks.json) on your working copy, as installing it would, and see each pass or fail. " +
-				"Nothing is installed or saved. Run it after a change and before you say the work is done.",
+			Description: "Check that this app would install, and run its checks (checks.json) on your working copy as installing it would, each pass or fail. " +
+				"Nothing is installed or saved. Run it after a change and before you say the work is done; it also runs by itself as your turn ends, and a refusal comes back to you.",
 			Parameters: map[string]ToolParam{},
 		},
 		Handler: func(ctx context.Context, _ map[string]any) (string, error) {
 			o, err := appHost()
 			if err != nil {
 				return "", err
+			}
+			if err := o.AppFolderInstallable(ctx, c.user, c.base); err != nil {
+				return "It would not install: " + folderError(c.base, err).Error() + "\nFix what it names, and run app_checks again.", nil
 			}
 			report, err := o.CheckAppFolder(ctx, c.user, c.base)
 			if err != nil {

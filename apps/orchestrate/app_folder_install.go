@@ -86,6 +86,24 @@ func (T *OrchestrateApp) BuildAppFolder(ctx context.Context, user, dir string) (
 	return spec, nil
 }
 
+// AppFolderInstallable is why the app in the folder dir would not install
+// for user, as far as can be told without saving: the folder read and the app
+// built from it (what app.json names, the scripts, the page), and its checks
+// able to run (each names a script the app has). nil when nothing stands in
+// the way that is knowable here; a check that fails, or the page's own check,
+// is found by installing. Anvil runs it as a turn ends, so a refusal reaches
+// the assistant that can fix it, not the person pressing Install.
+func (T *OrchestrateApp) AppFolderInstallable(ctx context.Context, user, dir string) error {
+	spec, err := T.BuildAppFolder(ctx, user, dir)
+	if err != nil {
+		return err
+	}
+	if err := validateAppChecks(spec); err != nil {
+		return fmt.Errorf("%s", strings.TrimPrefix(err.Error(), "NOT SAVED: "))
+	}
+	return nil
+}
+
 // CheckAppFolder runs the checks of the app in the folder dir, as built for
 // user, and saves nothing: what Anvil's assistant runs on its working copy.
 // Without it the assistant had no way to run them: one wrote its own runner
@@ -98,7 +116,7 @@ func (T *OrchestrateApp) CheckAppFolder(ctx context.Context, user, dir string) (
 		return "", err
 	}
 	if len(spec.Checks) == 0 {
-		return "", fmt.Errorf("the app has no checks: add them to checks.json, one for each thing the app is supposed to do")
+		return "It builds, and nothing found would stop it installing. It has no checks yet: add them to checks.json, one for each thing the app is supposed to do.", nil
 	}
 	if err := validateAppChecks(spec); err != nil {
 		return "", fmt.Errorf("%s", strings.TrimPrefix(err.Error(), "NOT SAVED: "))

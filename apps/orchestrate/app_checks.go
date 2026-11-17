@@ -79,7 +79,18 @@ func validateAppChecks(spec AppSpec) error {
 	if len(spec.Checks) == 0 {
 		return nil
 	}
-	if err := appcheck.Validate(spec.Checks, appCheckScripts(spec)); err != nil {
+	// A check finds its script the way a run does (appCheckScript: by name
+	// or by its slug), so my_cases names the data source my-cases. Checked
+	// on the exact names alone, a check that ran was refused at install.
+	scripts := appCheckScripts(spec)
+	for _, c := range spec.Checks {
+		if s := strings.TrimSpace(c.Script); s != "" {
+			if kind, _, _ := appCheckScript(spec, s); kind != "" {
+				scripts[s] = true
+			}
+		}
+	}
+	if err := appcheck.Validate(spec.Checks, scripts); err != nil {
 		return fmt.Errorf("NOT SAVED: %v", err)
 	}
 	declared := map[string]bool{}
