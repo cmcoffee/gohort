@@ -142,10 +142,14 @@ type Page struct {
 
 // NavLink is one entry in a Page.Nav top menu: a label and the URL it
 // points to. Active marks the current page so the runtime underlines it.
+// Action, instead of a URL, names a browser-side handler registered with
+// window.uiRegisterClientAction: the entry runs it (to open a dialog, say)
+// rather than going anywhere.
 type NavLink struct {
 	Label  string
 	URL    string
 	Active bool
+	Action string
 }
 
 // ServeHTTP renders the Page to w. Apps wire it directly into HandleFunc.
@@ -201,7 +205,7 @@ func (p Page) ConfigJSON() (json.RawMessage, error) {
 		cfg.LiveURL = DefaultLiveURL
 	}
 	for _, n := range p.Nav {
-		cfg.Nav = append(cfg.Nav, navLinkConfig{Label: n.Label, URL: n.URL, Active: n.Active})
+		cfg.Nav = append(cfg.Nav, navLinkConfig{Label: n.Label, URL: n.URL, Active: n.Active, Action: n.Action})
 	}
 	for _, s := range p.Sections {
 		// A section with nothing in it is not rendered at all.
@@ -422,6 +426,7 @@ type navLinkConfig struct {
 	Label  string `json:"label"`
 	URL    string `json:"url"`
 	Active bool   `json:"active,omitempty"`
+	Action string `json:"action,omitempty"`
 }
 
 type sectionConfig struct {

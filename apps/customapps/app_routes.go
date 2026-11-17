@@ -139,4 +139,11 @@ func (T *CustomApps) appRoutes() {
 	T.HandleFunc("/{slug}/changes", jsonapi.Methods{"GET": T.appGet(T.changes)}.Serve)
 	T.HandleFunc("/{slug}/chat/active", appPost(T, T.setActiveRecord))
 	T.HandleFunc("/{slug}/_runs/list", jsonapi.Methods{"GET": T.appGet(T.runsList)}.Serve)
+	// Reported problems (report.go): someone it is shared with sends one,
+	// the owner reads, closes and deletes them.
+	T.HandleFunc("/{slug}/_report", appPost(T, T.reportProblem, jsonapi.MaxBody(reportMessageMax*8)))
+	T.HandleFunc("/{slug}/_reports/list", jsonapi.Methods{"GET": T.appGet(T.reportsList)}.Serve)
+	T.HandleFunc("/{slug}/_reports/{id}/close", appPost(T, T.closeReport))
+	T.HandleFunc("/{slug}/_reports/{id}", jsonapi.Methods{"DELETE": appDelete(T, T.deleteReport)}.Serve)
+	T.HandleFunc("/{slug}/_reports/{id}/screenshot", T.handleReportShot)
 }

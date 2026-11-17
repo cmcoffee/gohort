@@ -256,6 +256,13 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		if user != ownerUser && spec.MaintainedBy(user) {
 			page = withBuilderLink(page, slug)
 		}
+		// Everyone else it is shared with reports a problem instead
+		// (report.go).
+		head := recordsInvalidationBridge(spec)
+		if canReport(spec, ownerUser, user) {
+			page = withReportLink(page)
+			head += reportDialogJS
+		}
 		if user == ownerUser {
 			page = withBuilderLink(page, slug)
 			// The agent it asks was deleted: say so where the owner looks,
@@ -264,8 +271,9 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 				page = withNavLink(page, "⚠ Its agent was deleted: pick another", T.WebPath()+"/"+slug+"/_settings")
 			}
 			page = withFailedRunLink(page, T.WebPath()+"/"+slug, appscript.RecentRuns(ownerUser, slug))
+			page = withOpenReportsLink(page, T.WebPath()+"/"+slug, T.loadReports(ownerUser, slug))
 		}
-		_ = ui.RenderPageJSON(w, page, "", recordsInvalidationBridge(spec), spec.Name) // "" → resolved theme (see RegisterThemeResolver)
+		_ = ui.RenderPageJSON(w, page, "", head, spec.Name) // "" → resolved theme (see RegisterThemeResolver)
 	case rest == "_view/reset":
 		T.handleViewReset(w, r, appdb, spec)
 	case rest == "_settings":
@@ -274,6 +282,10 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 	case rest == "_runs":
 		// What its scripts did when they ran (runs.go). The owner's only.
 		T.handleRunsPage(w, r, spec, user == ownerUser)
+	case rest == "_reports":
+		// Problems people it is shared with reported (report.go). The
+		// owner's only.
+		T.handleReportsPage(w, r, spec, user == ownerUser)
 	case strings.HasPrefix(rest, "data/"):
 		T.handleData(w, r, ownerUser, user, appdb, spec, strings.TrimPrefix(rest, "data/"))
 	case strings.HasPrefix(rest, "action/"):

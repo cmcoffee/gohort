@@ -44,6 +44,7 @@ func (T *CustomApps) registerScheduling() {
 	StartTriggerScheduler()
 	RegisterAppSpecSavedHook(func(s AppSpec) { T.reconcileAppSchedules(s) })
 	RegisterAppSpecDeletedHook(func(owner, slug string) { removeAppTriggers(owner, slug) })
+	RegisterAppSpecDeletedHook(T.forgetReports)
 }
 
 // schedTriggerName is the stable per-action trigger name (unique per owner).

@@ -267,6 +267,16 @@
         class: 'ui-page-tab' + (it.active ? ' active' : ''),
         href: it.url || '#',
       }, [it.label || '']);
+      // An entry that runs a browser-side action (uiRegisterClientAction)
+      // instead of going somewhere: the app's handler opens its dialog.
+      if (it.action) {
+        a.setAttribute('role', 'button');
+        a.addEventListener('click', function(ev) {
+          ev.preventDefault();
+          var fn = window.UIClientActions && window.UIClientActions[it.action];
+          if (typeof fn === 'function') fn({button: a, nav: it});
+        });
+      }
       if (it.active) current = a;
       links.push(a);
       tabs.appendChild(a);

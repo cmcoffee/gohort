@@ -69,7 +69,7 @@ var from = src.indexOf('  function navStrip(cfg) {');
 var to = src.indexOf('  function renderPageBody(cfg, root) {');
 if (from < 0 || to < from) { console.log('FAIL navStrip moved in 99_epilogue.js'); process.exit(1); }
 
-function strip(nav) {
+function strip(nav, extraWin) {
   var doc = mkNode('document');
   var observed = null;
   var menuOpen = false, menuEl = null;
@@ -86,6 +86,7 @@ function strip(nav) {
       };
     },
   };
+  for (var wk in (extraWin || {})) win[wk] = extraWin[wk];
   var navStrip = new Function('el', 'document', 'window', src.slice(from, to) + '\nreturn navStrip;')(el, doc, win);
   var row = navStrip({nav: nav});
   if (!row) return null;
@@ -146,5 +147,18 @@ check('Escape closes it', !h.menuOpen());
 fire(h.more, 'click');
 h.resize(300);
 check('a resize closes it', !h.menuOpen());
+
+// An entry with an action runs the handler registered for it, and goes
+// nowhere: the click's default (following "#") is stopped.
+var ran = null, stopped = false;
+var act = strip([{label: 'Home', url: '/'}, {label: 'Report a problem', action: 'demo_report'}], {
+  UIClientActions: {demo_report: function (ctx) { ran = ctx; }},
+});
+var tab = act.row._kids[1];
+check('an action entry reads as a button', tab.getAttribute('role') === 'button');
+fire(tab, 'click', {preventDefault: function () { stopped = true; }, stopPropagation: function () {}});
+check('clicking it runs its action with the entry', ran && ran.nav.action === 'demo_report' && ran.button === tab);
+check('and does not follow the link', stopped);
+check('a plain entry has no action wired', !(act.row._kids[0]._on.click || []).length);
 
 if (fail) process.exit(1);
