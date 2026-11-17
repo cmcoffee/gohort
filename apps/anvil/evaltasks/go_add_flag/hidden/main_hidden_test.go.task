@@ -1,0 +1,25 @@
+package main
+
+import (
+	"bytes"
+	"testing"
+)
+
+func TestShoutHidden(t *testing.T) {
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"-name", "ana"}, "Hello, ana\n"},
+		{[]string{"-shout", "-name", "ana"}, "HELLO, ANA\n"},
+		{nil, "Hello, world\n"},
+	} {
+		var out bytes.Buffer
+		if err := run(c.args, &out); err != nil {
+			t.Fatalf("run(%v): %v", c.args, err)
+		}
+		if out.String() != c.want {
+			t.Errorf("run(%v) printed %q, want %q", c.args, out.String(), c.want)
+		}
+	}
+}

@@ -1,0 +1,7 @@
+{
+  "title": "Add a command-line flag",
+  "lang": "Go",
+  "request": "Add a -shout flag to the greet command. With it, the greeting is printed in capital letters (\"HELLO, ANA\"); without it, nothing changes.",
+  "check": "go vet ./... && go test ./...",
+  "hidden_check": "go test ./..."
+}

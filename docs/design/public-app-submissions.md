@@ -130,7 +130,7 @@ AcceptsSubmissions bool `json:"accepts_submissions,omitempty"`
 
 **`app_def` must not be able to set this.** The agent authors the form; the
 human decides whether strangers may fill it. This is the same split
-`private/anvil/actions.go` makes for `ProjectAction`s, where the operator
+`apps/anvil/actions.go` makes for `ProjectAction`s, where the operator
 writes the command and the model may at most invoke one that opted in, and it
 is the same reason: the act has a blast radius outside the app.
 

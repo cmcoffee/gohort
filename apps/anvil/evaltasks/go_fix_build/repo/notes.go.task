@@ -1,0 +1,53 @@
+package notes
+
+import (
+	"strings"
+)
+
+// Note is one line of text with tags.
+type Note struct {
+	Text string
+	Tags []string
+}
+
+// Tagged returns the notes carrying tag, in any case.
+func Tagged(notes []Note, tag string) []Note {
+	var out []Note
+	for _, n := range notes {
+		for _, t := range n.Tags {
+			if strings.EqualFold(t, tag) {
+				out = append(out, n)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// Count returns how many notes carry each tag, by its lower case.
+func Count(notes []Note) map[string]int {
+	counts := map[string]int{}
+	for _, n := range notes {
+		for _, t := range n.Tags {
+			counts[strings.ToLower(t)]++
+		}
+	}
+	return count
+}
+
+// Tags returns every tag used, in lower case, sorted, each once.
+func Tags(notes []Note) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, n := range notes {
+		for _, t := range n.Tag {
+			t = strings.ToLower(t)
+			if !seen[t] {
+				seen[t] = true
+				out = append(out, t)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}

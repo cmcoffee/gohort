@@ -1,0 +1,7 @@
+{
+  "title": "Pull repeated code into a helper",
+  "lang": "JavaScript",
+  "request": "formatMoney and formatTime repeat the same zero-padding loop. Move it into one helper function, pad2, that both use, without changing any output.",
+  "check": "node test.js",
+  "hidden_check": "node test.js && node hidden_test.js && [ \"$(grep -c 'while (' format.js)\" -le 1 ] && grep -q 'function pad2' format.js"
+}

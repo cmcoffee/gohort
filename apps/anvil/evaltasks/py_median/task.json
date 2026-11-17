@@ -1,0 +1,7 @@
+{
+  "title": "Fix a Python function",
+  "lang": "Python",
+  "request": "median gives the wrong answer for an even number of values: median([1, 2, 3, 4]) should be 2.5. Fix it, and make it raise ValueError for an empty list.",
+  "check": "python3 -m unittest -q",
+  "hidden_check": "python3 -m unittest -q"
+}

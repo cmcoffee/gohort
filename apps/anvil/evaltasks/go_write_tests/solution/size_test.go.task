@@ -1,0 +1,20 @@
+package size
+
+import "testing"
+
+func TestParseSize(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		want int64
+	}{{"512B", 512}, {"4KB", 4096}, {"2MB", 2097152}, {" 1kb ", 1024}} {
+		got, err := ParseSize(c.in)
+		if err != nil || got != c.want {
+			t.Errorf("ParseSize(%q) = %d, %v; want %d", c.in, got, err, c.want)
+		}
+	}
+	for _, bad := range []string{"12", "-1KB", "xMB", ""} {
+		if _, err := ParseSize(bad); err == nil {
+			t.Errorf("ParseSize(%q) took it", bad)
+		}
+	}
+}

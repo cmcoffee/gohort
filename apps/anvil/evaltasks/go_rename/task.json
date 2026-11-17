@@ -1,0 +1,7 @@
+{
+  "title": "Rename across files",
+  "lang": "Go",
+  "request": "Rename the function calc to Total everywhere in this package, its test included. Do not change what it does.",
+  "check": "go vet ./... && go test ./...",
+  "hidden_check": "test -z \"$(grep -rn 'calc(' --include=*.go .)\" && go test ./..."
+}

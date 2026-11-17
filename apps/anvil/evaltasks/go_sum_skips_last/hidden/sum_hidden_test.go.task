@@ -1,0 +1,14 @@
+package evaltask
+
+import "testing"
+
+func TestSumHidden(t *testing.T) {
+	for _, c := range []struct {
+		in   []int
+		want int
+	}{{nil, 0}, {[]int{5}, 5}, {[]int{1, 2, 3}, 6}, {[]int{-1, 1}, 0}} {
+		if got := Sum(c.in); got != c.want {
+			t.Errorf("Sum(%v) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}

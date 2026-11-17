@@ -1,0 +1,7 @@
+{
+  "title": "Fix an off-by-one",
+  "lang": "Go",
+  "request": "Sum leaves out the last number: Sum([]int{1, 2, 3}) gives 3 instead of 6. Fix it.",
+  "check": "go vet ./... && go test ./...",
+  "hidden_check": "go test ./..."
+}

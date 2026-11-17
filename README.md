@@ -223,6 +223,7 @@ Add `WebPath()` / `WebName()` / `WebDesc()` / `Routes()` and it gets a web dashb
 | `servitor` | SSH system investigator + git-repo Q&A, plan-driven, with an xterm pane; systems are shareable |
 | `scribe` | Living multi-section guides with an AI co-author: grounded in their sources, a Changes card on every turn with Undo, a header picture that can carry your logo |
 | `publish` | Sends finished documents out to Confluence and other destinations, and keeps them updated |
+| `anvil` | A coding assistant on a project: a repository, a folder on this server or one of your apps. It reads before it edits, runs the project's check, and every edit can be reverted; commit and push, or download the changes as a patch or bundle |
 | `codewriter` | Shell scripts, SQL queries and code snippets with an LLM co-editor |
 | `monitor` | Live view of what every agent and app is doing right now, with Cancel beside each run |
 | `mcpserver` | Expose gohort agents to an external MCP client (e.g. Claude Desktop) |

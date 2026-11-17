@@ -1,0 +1,3 @@
+module size
+
+go 1.21

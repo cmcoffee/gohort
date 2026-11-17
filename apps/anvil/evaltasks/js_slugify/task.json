@@ -1,0 +1,7 @@
+{
+  "title": "Fix a JavaScript function",
+  "lang": "JavaScript",
+  "request": "slugify turns 'Hello,  World!' into 'hello---world-'. It should give 'hello-world': each run of other characters becomes one dash, and there is no dash at either end.",
+  "check": "node test.js",
+  "hidden_check": "node test.js && node hidden_test.js"
+}

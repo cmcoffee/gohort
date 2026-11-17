@@ -1,0 +1,17 @@
+package store
+
+import "testing"
+
+func TestDeleteHidden(t *testing.T) {
+	s := New()
+	s.Set("a", "1")
+	if !s.Delete("a") {
+		t.Error("Delete of a stored key said it was not there")
+	}
+	if s.Delete("a") {
+		t.Error("Delete of a missing key said it was there")
+	}
+	if _, ok := s.Get("a"); ok {
+		t.Error("the key is still there")
+	}
+}

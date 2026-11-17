@@ -1,0 +1,228 @@
+package anvil
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/cmcoffee/gohort/apps/orchestrate"
+	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/snugforge/kvlite"
+)
+
+// appProjectWorld is alice's app wx, an orchestrate host to install it, a
+// workspaces folder, and Anvil behind its routes.
+func appProjectWorld(t *testing.T) (T *Anvil, serve func(user, method, path, body string) *httptest.ResponseRecorder) {
+	t.Helper()
+	if !gitAvailable() {
+		t.Skip("git is not installed")
+	}
+	prevRoot, prevAssets := RootDB, AppAssetsDir()
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	SetAppAssetsDir(t.TempDir())
+	prevHost := agenthost.Get()
+	o := &orchestrate.OrchestrateApp{}
+	o.DB = &DBase{Store: kvlite.MemStore()}
+	agenthost.Register(o)
+	t.Cleanup(func() { RootDB = prevRoot; SetAppAssetsDir(prevAssets); agenthost.Register(prevHost) })
+	SaveAppSpec(AppSpec{Owner: "alice", Slug: "wx", Name: "Weather", RecordKey: "id",
+		Sections:    json.RawMessage(`[{"id":"page","kind":"html","html":"<!DOCTYPE html><html><body><h1>Wx</h1></body></html>"}]`),
+		Page:        json.RawMessage(`{"title":"Weather","sections":[]}`),
+		DataSources: []AppDataSource{{Name: "now", Script: "print('{}')"}}})
+	T, raw := bundleRoutes(t)
+	return T, func(user, method, path, body string) *httptest.ResponseRecorder {
+		ct := ""
+		if body != "" {
+			ct = "application/json"
+		}
+		return raw(user, method, path, []byte(body), ct)
+	}
+}
+
+func openWx(t *testing.T, serve func(user, method, path, body string) *httptest.ResponseRecorder) string {
+	t.Helper()
+	w := serve("alice", "POST", "/api/apps/open", `{"slug":"wx"}`)
+	var out struct{ ID string }
+	if json.Unmarshal(w.Body.Bytes(), &out); w.Code != 200 || out.ID == "" {
+		t.Fatalf("open: %d %s", w.Code, w.Body.String())
+	}
+	return out.ID
+}
+
+// One of your apps opens as its folder, in git, with the app as installed as
+// its first commit and the folder's live marker kept out of it; opening it
+// again is the same project, and somebody else's app does not open.
+func TestOneOfYourAppsOpensAsItsFiles(t *testing.T) {
+	T, serve := appProjectWorld(t)
+	id := openWx(t, serve)
+	var p Project
+	if !UserDB(T.DB, "alice").Get(projectTable, id, &p) || p.Source != sourceApp || p.AppSlug != "wx" || p.Name != "Weather" {
+		t.Fatalf("project %+v", p)
+	}
+	base, _ := p.baseDir()
+	for _, f := range []string{"app.json", "page.html", "data/now.py", ".live"} {
+		if _, err := os.Stat(filepath.Join(base, f)); err != nil {
+			t.Errorf("the checkout has no %s", f)
+		}
+	}
+	if log, _ := runGit(base, "log", "--format=%s"); strings.TrimSpace(log) != "As installed" {
+		t.Errorf("history: %q", log)
+	}
+	if st, _ := runGit(base, "status", "--porcelain"); strings.TrimSpace(st) != "" {
+		t.Errorf("a fresh checkout has changes: %q", st)
+	}
+	if tracked, _ := runGit(base, "ls-files", "--", ".live"); strings.TrimSpace(tracked) != "" {
+		t.Error("the live marker is in the app's history")
+	}
+	if again := openWx(t, serve); again != id {
+		t.Errorf("opened twice as two projects: %s, %s", id, again)
+	}
+	if w := serve("root", "POST", "/api/apps/open", `{"slug":"wx"}`); w.Code != http.StatusNotFound {
+		t.Errorf("someone else's app opened: %d", w.Code)
+	}
+}
+
+// Install puts the working copy live and commits it, so the history is what
+// was installed.
+func TestInstallPutsTheWorkingCopyLive(t *testing.T) {
+	T, serve := appProjectWorld(t)
+	id := openWx(t, serve)
+	var p Project
+	UserDB(T.DB, "alice").Get(projectTable, id, &p)
+	base, _ := p.baseDir()
+	os.WriteFile(filepath.Join(base, "data", "now.py"), []byte("print('{\"t\": 1}')"), 0o644)
+	if w := serve("alice", "POST", "/api/project/"+id+"/install", "{}"); w.Code != 200 {
+		t.Fatalf("install: %d %s", w.Code, w.Body.String())
+	}
+	if live, _ := LoadAppSpec("alice", "wx"); live.DataSources[0].Script != "print('{\"t\": 1}')" {
+		t.Errorf("not live: %+v", live.DataSources)
+	}
+	if log, _ := runGit(base, "log", "--format=%s"); strings.TrimSpace(log) != "Installed\nAs installed" {
+		t.Errorf("history: %q", log)
+	}
+	if w := serve("root", "POST", "/api/project/"+id+"/install", "{}"); w.Code == 200 {
+		t.Error("somebody else installed alice's working copy")
+	}
+}
+
+// With Install on every save, a turn ending with changes installs them, for
+// an app nobody else uses; a refused install sends the assistant back with
+// it; a shared app is left as it is.
+func TestInstallOnSaveInstallsAsTheTurnEnds(t *testing.T) {
+	T, serve := appProjectWorld(t)
+	id := openWx(t, serve)
+	var p Project
+	UserDB(T.DB, "alice").Get(projectTable, id, &p)
+	p.InstallOnSave = true
+	base, _ := p.baseDir()
+	c := &toolCtx{user: "alice", project: p, base: base}
+	c.noteCtx(context.Background())
+
+	os.WriteFile(filepath.Join(base, "data", "now.py"), []byte("print('{\"t\": 2}')"), 0o644)
+	if note := c.appFinish(false); note != "" {
+		t.Errorf("a turn with no changes: %q", note)
+	}
+	if live, _ := LoadAppSpec("alice", "wx"); live.DataSources[0].Script != "print('{}')" {
+		t.Errorf("a turn with no changes installed: %+v", live.DataSources)
+	}
+	if note := c.appFinish(true); note != "" {
+		t.Fatalf("the turn's install: %q", note)
+	}
+	if live, _ := LoadAppSpec("alice", "wx"); live.DataSources[0].Script != "print('{\"t\": 2}')" {
+		t.Errorf("not installed as the turn ended: %+v", live.DataSources)
+	}
+
+	// The live app changed elsewhere: the working copy would undo it.
+	live, _ := LoadAppSpec("alice", "wx")
+	live.DataSources[0].Script = "print('{\"elsewhere\": 1}')"
+	SaveAppSpec(live)
+	os.WriteFile(filepath.Join(base, "data", "now.py"), []byte("print('{\"t\": 3}')"), 0o644)
+	if note := c.appFinish(true); !strings.Contains(note, "not installed") {
+		t.Errorf("a refused install did not send the assistant back: %q", note)
+	}
+
+	// Shared: never installed as the turn ends.
+	live, _ = LoadAppSpec("alice", "wx")
+	live.SharedWith = []string{"bob"}
+	SaveAppSpec(live)
+	if note := c.appFinish(true); note != "" {
+		t.Errorf("a shared app: %q", note)
+	}
+	if after, _ := LoadAppSpec("alice", "wx"); after.DataSources[0].Script != "print('{\"elsewhere\": 1}')" {
+		t.Errorf("a shared app was installed as the turn ended: %+v", after.DataSources)
+	}
+}
+
+// An app project's assistant can show the person a preview, in the pane the
+// main chat opens pages in; no other project has the tool, nor one the caller
+// may only read.
+func TestOnlyAnAppProjectOffersAPreview(t *testing.T) {
+	has := func(c *toolCtx) bool {
+		for _, d := range c.codeTools() {
+			if d.Tool.Name == "preview" {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(&toolCtx{project: Project{Kind: KindClone, Source: sourceApp, AppSlug: "wx"}}) {
+		t.Error("an app project has no preview tool")
+	}
+	if has(&toolCtx{project: Project{Kind: KindClone}}) || has(&toolCtx{project: Project{Kind: KindClone, Source: sourceApp}, readOnly: true}) {
+		t.Error("a preview tool where there is no app to preview, or for a reader")
+	}
+	var T Anvil
+	if p := T.chatPanel(nil, "", "", nil); p.ListPosition != "top" {
+		t.Errorf("the sessions are not beside the conversation: %q", p.ListPosition)
+	}
+}
+
+// An app's NOTES.md is held to the notes cap at the edit, not only at the
+// install: an edit or a new file taking it over is refused with the reason,
+// and nothing is written; an edit shortening notes already over goes
+// through, and other files and other projects are not held to it.
+func TestAnAppsNotesAreHeldToTheCapAtTheEdit(t *testing.T) {
+	c, _ := checkCtx(t, Project{Kind: KindClone, Source: sourceApp, AppSlug: "wx"})
+	limit := AppSpec{}.NotesCap()
+	create, _ := toolNamed(t, c, "create_file")
+	edit, _ := toolNamed(t, c, "edit_file")
+	call := func(td AgentToolDef, args map[string]any) error {
+		_, err := td.Handler(context.Background(), args)
+		return err
+	}
+	if err := call(create, map[string]any{"path": "NOTES.md", "content": strings.Repeat("n", limit+1)}); err == nil || !strings.Contains(err.Error(), "not a log") {
+		t.Fatalf("over-long new notes: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(c.base, "NOTES.md")); !os.IsNotExist(err) {
+		t.Fatal("refused notes were written")
+	}
+	full := strings.Repeat("n", limit-10) + "\nEND"
+	if err := call(create, map[string]any{"path": "NOTES.md", "content": full}); err != nil {
+		t.Fatal(err)
+	}
+	if err := call(edit, map[string]any{"path": "NOTES.md", "old_text": "END", "new_text": "END and a long new entry"}); err == nil {
+		t.Error("an edit took the notes over the cap")
+	}
+	if got := readFile(t, filepath.Join(c.base, "NOTES.md")); got != full {
+		t.Error("the refused edit changed the file")
+	}
+	// Notes already over (saved before the cap) may be trimmed in steps.
+	os.WriteFile(filepath.Join(c.base, "NOTES.md"), []byte(strings.Repeat("o", limit+50)+"\nTAIL"), 0o644)
+	if err := call(edit, map[string]any{"path": "NOTES.md", "old_text": "\nTAIL", "new_text": ""}); err != nil {
+		t.Errorf("trimming over-long notes was refused: %v", err)
+	}
+	if err := call(create, map[string]any{"path": "docs/NOTES.md", "content": strings.Repeat("n", limit+1)}); err != nil {
+		t.Errorf("another NOTES.md was held to the cap: %v", err)
+	}
+	plain, _ := checkCtx(t, Project{Kind: KindClone})
+	pc, _ := toolNamed(t, plain, "create_file")
+	if err := call(pc, map[string]any{"path": "NOTES.md", "content": strings.Repeat("n", limit+1)}); err != nil {
+		t.Errorf("a project that is not an app was held to the cap: %v", err)
+	}
+}

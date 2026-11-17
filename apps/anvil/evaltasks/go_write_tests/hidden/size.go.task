@@ -1,0 +1,33 @@
+package size
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
+
+const (
+	kb = 1024
+	mb = 1024 * kb
+)
+
+// ParseSize reads a size such as "512B", "4KB" or "2MB" as a number of bytes.
+func ParseSize(s string) (int64, error) {
+	s = strings.TrimSpace(strings.ToUpper(s))
+	unit := int64(1)
+	switch {
+	case strings.HasSuffix(s, "MB"):
+		unit, s = mb, strings.TrimSuffix(s, "MB")
+	case strings.HasSuffix(s, "KB"):
+		unit, s = kb, strings.TrimSuffix(s, "KB")
+	case strings.HasSuffix(s, "B"):
+		s = strings.TrimSuffix(s, "B")
+	default:
+		return 0, fmt.Errorf("size %q has no unit", s)
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("size %q is not a whole number of bytes", s)
+	}
+	return n * unit, nil
+}

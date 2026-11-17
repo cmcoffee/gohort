@@ -1,0 +1,19 @@
+package notes
+
+import (
+	"reflect"
+	"testing"
+)
+
+func TestNotesHidden(t *testing.T) {
+	ns := []Note{{"a", []string{"Work", "home"}}, {"b", []string{"work"}}}
+	if got := len(Tagged(ns, "WORK")); got != 2 {
+		t.Errorf("Tagged: %d", got)
+	}
+	if got := Count(ns); got["work"] != 2 || got["home"] != 1 {
+		t.Errorf("Count: %v", got)
+	}
+	if got := Tags(ns); !reflect.DeepEqual(got, []string{"home", "work"}) {
+		t.Errorf("Tags: %v", got)
+	}
+}

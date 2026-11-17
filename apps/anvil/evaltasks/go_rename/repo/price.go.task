@@ -1,0 +1,17 @@
+package shop
+
+// Item is one line of an order.
+type Item struct {
+	Name     string
+	Cents    int
+	Quantity int
+}
+
+// calc is what the order costs, in cents.
+func calc(items []Item) int {
+	total := 0
+	for _, it := range items {
+		total += it.Cents * it.Quantity
+	}
+	return total
+}

@@ -10,6 +10,7 @@ import (
 	_ "github.com/cmcoffee/gohort/apps/account"
 	_ "github.com/cmcoffee/gohort/apps/admin"
 	_ "github.com/cmcoffee/gohort/apps/agents"
+	_ "github.com/cmcoffee/gohort/apps/anvil"
 	_ "github.com/cmcoffee/gohort/apps/bridges"
 	_ "github.com/cmcoffee/gohort/apps/codewriter"
 	_ "github.com/cmcoffee/gohort/apps/customapps"

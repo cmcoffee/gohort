@@ -1,0 +1,7 @@
+{
+  "title": "Write tests that catch bugs",
+  "lang": "Go",
+  "request": "ParseSize has no tests. Write table-driven tests for it in size_test.go, covering every unit and invalid input. Do not change size.go.",
+  "check": "go vet ./... && go test ./...",
+  "hidden_check": "sh check_tests_catch_bugs.sh"
+}

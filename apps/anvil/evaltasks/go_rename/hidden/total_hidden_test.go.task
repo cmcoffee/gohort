@@ -1,0 +1,10 @@
+package shop
+
+import "testing"
+
+func TestTotalHidden(t *testing.T) {
+	items := []Item{{"pen", 150, 2}, {"pad", 300, 1}}
+	if Total(items) != 600 || Receipt(items) != "Total: 6.00" {
+		t.Errorf("Total %d, receipt %q", Total(items), Receipt(items))
+	}
+}

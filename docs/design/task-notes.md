@@ -24,7 +24,7 @@ prompt, and `update_notes` (`apps/orchestrate/notes.go:164`) rewrites it.
 
 Two places in the tree set `EnableNotes = true`: the first run assistant in the
 wizard (`page_agent_wizard.go:753`), seeded with the "About you" answers, and
-Anvil (`private/anvil/web.go:654`), seeded with build commands, what is half
+Anvil (`apps/anvil/web.go:654`), seeded with build commands, what is half
 done, and decisions already made.
 
 ## The evidence that the scope is wrong

@@ -1,0 +1,7 @@
+{
+  "title": "Extend a Python function",
+  "lang": "Python",
+  "request": "Extend summarize to also return min and max, and to skip rows where the field is missing or None. With no values left, count is 0 and total, mean, min and max are None.",
+  "check": "python3 -m py_compile summary.py",
+  "hidden_check": "python3 -m unittest -q"
+}

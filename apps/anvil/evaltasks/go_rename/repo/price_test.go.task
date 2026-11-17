@@ -1,0 +1,9 @@
+package shop
+
+import "testing"
+
+func TestTotal(t *testing.T) {
+	if got := calc([]Item{{"pen", 150, 2}, {"pad", 300, 1}}); got != 600 {
+		t.Errorf("got %d", got)
+	}
+}

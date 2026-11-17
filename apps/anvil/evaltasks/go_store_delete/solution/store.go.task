@@ -1,0 +1,36 @@
+package store
+
+import "sync"
+
+// Store is a map safe to use from several goroutines.
+type Store struct {
+	mu   sync.Mutex
+	data map[string]string
+}
+
+// New is an empty Store.
+func New() *Store { return &Store{data: map[string]string{}} }
+
+// Set stores v under k.
+func (s *Store) Set(k, v string) {
+	s.mu.Lock()
+	s.data[k] = v
+	s.mu.Unlock()
+}
+
+// Get is the value under k, and whether there is one.
+func (s *Store) Get(k string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.data[k]
+	return v, ok
+}
+
+// Delete removes k, and reports whether it was there.
+func (s *Store) Delete(k string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.data[k]
+	delete(s.data, k)
+	return ok
+}

@@ -1,0 +1,7 @@
+{
+  "title": "Add a method, keeping it safe",
+  "lang": "Go",
+  "request": "Add Delete(key string) bool to Store: it removes the key and reports whether it was there. Store is used from several goroutines, so keep it safe for that.",
+  "check": "go vet ./... && go test ./...",
+  "hidden_check": "go test ./... && grep -A4 'func (s \\*Store) Delete' store.go | grep -q 'mu.Lock'"
+}

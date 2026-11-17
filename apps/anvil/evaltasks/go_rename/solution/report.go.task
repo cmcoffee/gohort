@@ -1,0 +1,9 @@
+package shop
+
+import "fmt"
+
+// Receipt is the order's last line.
+func Receipt(items []Item) string {
+	cents := Total(items)
+	return fmt.Sprintf("Total: %d.%02d", cents/100, cents%100)
+}
