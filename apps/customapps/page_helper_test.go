@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -279,6 +280,17 @@ setTimeout(function() {
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %s in\n%s", want, got)
+		}
+	}
+}
+
+// PageAPI is what an agent writing a page is told window.app offers, so a
+// call the helper defines and PageAPI leaves out is one the agent guesses at
+// (an Anvil run reached for app.records.get, which there is not).
+func TestPageAPINamesEveryCallTheHelperDefines(t *testing.T) {
+	for _, m := range regexp.MustCompile(`[{,]([A-Za-z]+):function`).FindAllStringSubmatch(appPageHelper, -1) {
+		if !strings.Contains(PageAPI, "."+m[1]+"(") {
+			t.Errorf("window.app defines %s, and PageAPI does not name it", m[1])
 		}
 	}
 }
