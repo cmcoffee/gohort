@@ -87,6 +87,34 @@ func (aw *appWrite) exit(out string, err error) bool {
 	return false
 }
 
+// brokenExit ends a save that went through and left the app broken (its
+// page dead, a data source failing): the report goes back as a result, as
+// any save's does, for the author to fix, and the turn keeps what is wrong
+// (chatTurn.savedBroken), so a save nobody reads the report of (a person's
+// Install from Anvil) can still say it.
+func (aw *appWrite) brokenExit(problem, out string, err error) bool {
+	if aw.t != nil {
+		// The first finding: a script's FAIL line, else the first listed
+		// problem. Not just the first "- " line: in a script report that is
+		// a suggestion (a data source the page never calls), not the failure.
+		detail := ""
+		for _, marker := range []string{"\nFAIL ", "\n- "} {
+			if i := strings.Index(out, marker); i >= 0 {
+				detail = out[i+len(marker):]
+				if j := strings.IndexByte(detail, '\n'); j >= 0 {
+					detail = detail[:j]
+				}
+				break
+			}
+		}
+		aw.t.savedBroken = problem
+		if d := strings.TrimSpace(detail); d != "" {
+			aw.t.savedBroken += ": " + d
+		}
+	}
+	return aw.exit(out, err)
+}
+
 func (aw *appWrite) load() bool {
 	t := aw.t
 	args := aw.args
@@ -552,7 +580,7 @@ func (aw *appWrite) check() bool {
 			}
 		}
 		if len(scriptProblems) > 0 {
-			return aw.exit(appWithParseNotes(fmt.Sprintf("%s app %q, BUT its inline JavaScript DOES NOT PARSE, the page will be blank/dead until this is fixed:\n- %s\n\nFix the markup with app_def(action=\"update\", id=%q, ...) (it re-checks on save). Send the WHOLE corrected document, and do NOT tell the user the app is ready.",
+			return aw.brokenExit("its page's JavaScript does not parse", appWithParseNotes(fmt.Sprintf("%s app %q, BUT its inline JavaScript DOES NOT PARSE, the page will be blank/dead until this is fixed:\n- %s\n\nFix the markup with app_def(action=\"update\", id=%q, ...) (it re-checks on save). Send the WHOLE corrected document, and do NOT tell the user the app is ready.",
 				aw.verb, aw.saved.Name, strings.Join(scriptProblems, "\n- "), aw.saved.Slug), aw.parseNotes), nil)
 		}
 		// Parsing says the document is well-formed, not that it is whole. A
@@ -563,7 +591,7 @@ func (aw *appWrite) check() bool {
 		// REFUSED this shape; reaching here means either a create, or a
 		// rewrite the author explicitly confirmed. Say it plainly either way.
 		if dangling := jsDanglingCalls(appProposedHTMLText(raw)); len(dangling) > 0 {
-			return aw.exit(appWithParseNotes(fmt.Sprintf("%s app %q, BUT the page CALLS CODE IT NEVER DEFINES: it parses and loads, and then dies the moment anyone uses it. Nothing defines: %s\n\nEither add those functions or remove the calls to them. Fix it with app_def(action=\"replace_function\", ...) if you are adding one back, or action=\"update\" for the whole document. Do NOT tell the user the app is ready.",
+			return aw.brokenExit("its page calls code it never defines", appWithParseNotes(fmt.Sprintf("%s app %q, BUT the page CALLS CODE IT NEVER DEFINES: it parses and loads, and then dies the moment anyone uses it. Nothing defines: %s\n\nEither add those functions or remove the calls to them. Fix it with app_def(action=\"replace_function\", ...) if you are adding one back, or action=\"update\" for the whole document. Do NOT tell the user the app is ready.",
 				aw.verb, aw.saved.Name, appNameList(dangling, 12)), aw.parseNotes), nil)
 		}
 
@@ -579,7 +607,7 @@ func (aw *appWrite) check() bool {
 			pageChecked = checked
 			if len(errs) > 0 {
 				t.noteAppStanding(aw.saved.Slug, false, "its page fails in a real browser: "+errs[0])
-				return aw.exit(appWithParseNotes(fmt.Sprintf("%s app %q, BUT the page FAILS IN A REAL BROWSER, this is the revision you just saved, not an older one:\n- %s\n\nFix it with app_def(action=\"update\", id=%q, ...) (it re-checks on save). Send the WHOLE corrected document, and do NOT tell the user the app is ready.%s",
+				return aw.brokenExit("its page fails in a real browser", appWithParseNotes(fmt.Sprintf("%s app %q, BUT the page FAILS IN A REAL BROWSER, this is the revision you just saved, not an older one:\n- %s\n\nFix it with app_def(action=\"update\", id=%q, ...) (it re-checks on save). Send the WHOLE corrected document, and do NOT tell the user the app is ready.%s",
 					aw.verb, aw.saved.Name, strings.Join(errs, "\n- "), aw.saved.Slug, aw.plan), aw.parseNotes), nil)
 			}
 		}
@@ -596,7 +624,15 @@ func (aw *appWrite) check() bool {
 		report, _, _, fail := t.checkScripts(aw.saved, false, nil, nil)
 		if fail > 0 {
 			t.noteAppStanding(aw.saved.Slug, false, "a data source fails its check (see the last app_def result)")
-			return aw.exit(appWithParseNotes(fmt.Sprintf("%s app %q, BUT a data source FAILED to run, the app will error on load until this is fixed:\n\n%s\nFix the script with app_def(action=\"update\", id=%q, ...) (it re-checks on save). Do NOT tell the user the app is ready yet.%s",
+			// The count carries the page contract's findings too (a data
+			// source the page never calls): worth the author's fix, and not
+			// an app that does not work. Only a script that failed to run
+			// marks the save broken.
+			exit := aw.exit
+			if _, contract := appContractReport(aw.saved); fail > contract {
+				exit = func(out string, err error) bool { return aw.brokenExit("a data source fails to run", out, err) }
+			}
+			return exit(appWithParseNotes(fmt.Sprintf("%s app %q, BUT a data source FAILED to run, the app will error on load until this is fixed:\n\n%s\nFix the script with app_def(action=\"update\", id=%q, ...) (it re-checks on save). Do NOT tell the user the app is ready yet.%s",
 				aw.verb, aw.saved.Name, strings.TrimSpace(report), aw.saved.Slug, aw.plan), aw.parseNotes), nil)
 		}
 		aw.msg += "\n\nData source check, all passed:\n" + strings.TrimSpace(report)

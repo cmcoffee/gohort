@@ -111,6 +111,10 @@ var workerAbortTools = func() []string {
 type chatTurn struct {
 	app *OrchestrateApp
 	ctx context.Context
+	// savedBroken is what is wrong with the app the last save on this turn
+	// went through with (its page dead, a data source failing), "" when it
+	// works as far as the save could tell (appWrite.brokenExit).
+	savedBroken string
 	// assetRenders counts the pictures app_def has had the image generator
 	// draw this turn, against ImageGenHardCap.
 	assetRenders int

@@ -18,10 +18,22 @@ func folderTestTurn(t *testing.T) (*chatTurn, string) {
 	prevRoot, prevAssets, prevWS := RootDB, AppAssetsDir(), WorkspacesDir()
 	RootDB = &DBase{Store: kvlite.MemStore()}
 	SetAppAssetsDir(t.TempDir())
-	SetWorkspacesDir(t.TempDir())
+	// Outside /tmp: the sandbox gives a script a fresh /tmp of its own, so a
+	// workspace under it is not there for the script, and every data source
+	// failed to run. An install that leaves a script failing says so now, so
+	// the scripts have to be able to run here.
+	ws := t.TempDir()
+	if cache, err := os.UserCacheDir(); err == nil {
+		if d, err := os.MkdirTemp(cache, "gohort-folder-test-"); err == nil {
+			ws = d
+			t.Cleanup(func() { os.RemoveAll(d) })
+		}
+	}
+	SetWorkspacesDir(ws)
+	os.MkdirAll(filepath.Join(ws, "u"), 0o755)
 	t.Cleanup(func() { RootDB = prevRoot; SetAppAssetsDir(prevAssets); SetWorkspacesDir(prevWS) })
 	turn := &chatTurn{user: "u", agent: AgentRecord{ID: "builder"}, changeAsk: approveEveryChange}
-	ws, _ := turn.turnWorkspace()
+	ws, _ = turn.turnWorkspace()
 	if err := os.MkdirAll(ws, 0o755); err != nil {
 		t.Fatal(err)
 	}

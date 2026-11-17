@@ -583,3 +583,43 @@ func TestAnAppThatWouldNotInstallGoesBackToTheAssistant(t *testing.T) {
 		t.Errorf("an app that would install was sent back: %q", msg)
 	}
 }
+
+// An install that goes through and leaves the app broken (here a data source
+// that fails to run) says so: Install answers that it is installed but does
+// not work and why, the new version is committed since it is what is live,
+// and with Install on every save the assistant is sent back to fix it. It
+// used to answer "Installed: it now runs your changes" and nothing else.
+func TestAnInstallThatLeavesTheAppBrokenSaysSo(t *testing.T) {
+	T, serve := appProjectWorld(t)
+	id := openWx(t, serve)
+	udb := UserDB(T.DB, "alice")
+	var p Project
+	udb.Get(projectTable, id, &p)
+	base, _ := p.baseDir()
+	os.WriteFile(filepath.Join(base, "data", "now.py"), []byte("raise SystemExit('the weather service is down')\n"), 0o644)
+
+	w := serve("alice", "POST", "/api/project/"+id+"/install", "{}")
+	var out map[string]any
+	json.Unmarshal(w.Body.Bytes(), &out)
+	if w.Code != 200 || out["broken"] == nil || !strings.Contains(fmt.Sprint(out["message"]), "does not work yet") {
+		t.Fatalf("a broken install: %d %s", w.Code, w.Body.String())
+	}
+	if b := fmt.Sprint(out["broken"]); !strings.Contains(b, "data source fails to run") || !strings.Contains(b, `"now"`) || strings.Contains(b, "never called") {
+		t.Errorf("it does not say what is wrong: %v", b)
+	}
+	if live, _ := LoadAppSpec("alice", "wx"); !strings.Contains(live.DataSources[0].Script, "SystemExit") {
+		t.Errorf("the broken version is not the live one, as the answer says: %q", live.DataSources[0].Script)
+	}
+	if log, _ := runGit(base, "log", "-1", "--format=%s"); strings.TrimSpace(log) != "Installed" {
+		t.Errorf("what is live was not committed: %q", log)
+	}
+
+	// With Install on every save, the assistant goes back to fix it.
+	p.InstallOnSave = true
+	T.saveProject(udb, p)
+	os.WriteFile(filepath.Join(base, "data", "now.py"), []byte("raise SystemExit('still down')\n"), 0o644)
+	c := &toolCtx{user: "alice", udb: udb, project: p, base: base, sessionID: "s1"}
+	if msg := c.appFinish(true); !strings.Contains(msg, "installed, but the app does not work") {
+		t.Errorf("the turn's end: %q", msg)
+	}
+}

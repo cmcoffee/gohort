@@ -40,7 +40,26 @@ func (T *OrchestrateApp) InstallAppFolder(ctx context.Context, user, dir, note s
 	if user == "" {
 		return "", fmt.Errorf("no one to install it as")
 	}
-	return T.personTurn(ctx, user).publishAppFolder(dir, filepath.Base(dir), folderPublish{note: note})
+	t := T.personTurn(ctx, user)
+	out, err := t.publishAppFolder(dir, filepath.Base(dir), folderPublish{note: note})
+	if err == nil && t.savedBroken != "" {
+		return out, AppSavedBroken{Problem: t.savedBroken, Report: out}
+	}
+	return out, err
+}
+
+// AppSavedBroken is an install that went through and left the app broken:
+// it is live as installed, and Problem says what is wrong (its page fails in
+// a real browser, a data source fails to run). Builder reads such a save's
+// report and fixes it; a person pressing Install got "Installed" and nothing
+// else, and the assistant was never sent back.
+type AppSavedBroken struct {
+	Problem string
+	Report  string
+}
+
+func (e AppSavedBroken) Error() string {
+	return "it was installed, but it does not work: " + e.Problem
 }
 
 // AppFolderSlug is the app the folder dir holds, read from its app.json: the

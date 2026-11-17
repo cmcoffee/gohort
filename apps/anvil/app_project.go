@@ -188,6 +188,9 @@ func (T *Anvil) handleAppInstall(c *jsonapi.Call, _ struct{}) (any, error) {
 		return nil, err
 	}
 	msg, err := installAppCheckout(c.R.Context(), c.UDB, c.User, p, base)
+	if broken, ok := savedBroken(err); ok {
+		return map[string]any{"ok": true, "message": msg, "broken": broken.Problem}, nil
+	}
 	if err != nil {
 		return nil, jsonapi.Status(409, err.Error())
 	}
@@ -208,16 +211,30 @@ func installAppCheckout(ctx context.Context, udb Database, user string, p Projec
 	if msg != "" {
 		note, commit = msg, msg
 	}
-	if _, err := o.InstallAppFolder(ctx, user, base, note); err != nil {
+	_, err = o.InstallAppFolder(ctx, user, base, note)
+	broken, isBroken := savedBroken(err)
+	if err != nil && !isBroken {
 		return "", folderError(base, err)
 	}
+	// Installed, working or not: what is live is what is committed.
 	if udb != nil && msg != "" {
 		udb.Unset(installMessageTable, p.ID)
 	}
 	if err := commitCheckout(base, user, commit); err != nil {
 		Log("[anvil] %s installed, but the commit failed: %v", p.AppSlug, err)
 	}
+	if isBroken {
+		return "Installed, but " + p.Name + " does not work yet: " + broken.Problem + ". It is live as it is, at /apps/" + p.AppSlug + "/: ask the assistant to fix it, then install again." + leftOutLine(base), broken
+	}
 	return "Installed: " + p.Name + " now runs your changes, at /apps/" + p.AppSlug + "/." + leftOutLine(base), nil
+}
+
+// savedBroken reports an install that went through and left the app broken
+// (orchestrate.AppSavedBroken): live, but its page fails or a data source
+// does. It is said, not taken for a refusal: the app changed.
+func savedBroken(err error) (orchestrate.AppSavedBroken, bool) {
+	var b orchestrate.AppSavedBroken
+	return b, errors.As(err, &b)
 }
 
 // --- a project that holds an app ----------------------------------------------
@@ -315,13 +332,20 @@ func (T *Anvil) handleAppInstallNew(c *jsonapi.Call, _ struct{}) (any, error) {
 	if err := excludeFromGit(base, appLiveMarker); err != nil {
 		Log("[anvil] %s: the live marker could not be kept out of git: %v", p.ID, err)
 	}
-	if _, err := o.InstallAppFolder(ctx, c.User, base, "Installed from Anvil as a new app"); err != nil {
+	_, err = o.InstallAppFolder(ctx, c.User, base, "Installed from Anvil as a new app")
+	broken, isBroken := savedBroken(err)
+	if err != nil && !isBroken {
 		return nil, jsonapi.Status(409, folderError(base, err).Error())
 	}
+	// The app exists now, working or not, so the project is its.
 	p.Source, p.AppSlug = sourceApp, slug
 	T.saveProject(c.UDB, p)
 	if err := commitCheckout(base, c.User, "Installed as a new app"); err != nil {
 		Log("[anvil] %s installed as a new app, but the commit failed: %v", slug, err)
+	}
+	if isBroken {
+		return map[string]any{"ok": true, "slug": slug, "broken": broken.Problem,
+			"message": "Installed: " + name + " is one of your apps now, at /apps/" + slug + "/, but it does not work yet: " + broken.Problem + ". Ask the assistant to fix it, then press Install. This project is its files from here on." + leftOutLine(base)}, nil
 	}
 	return map[string]any{"ok": true, "slug": slug,
 		"message": "Installed: " + name + " is one of your apps now, at /apps/" + slug + "/. This project is its files from here on: Preview shows your changes to you alone, and Install puts them live." + leftOutLine(base)}, nil
@@ -528,6 +552,9 @@ func (c *toolCtx) appFinish(edited bool) string {
 	if p.InstallOnSave {
 		if live, ok := LoadAppSpec(c.user, p.AppSlug); ok && !appUsedByOthers(live) {
 			if _, err := installAppCheckout(ctx, c.udb, c.user, p, c.base); err != nil {
+				if broken, ok := savedBroken(err); ok {
+					return "Your changes were installed, but the app does not work: " + broken.Problem + ". It is live as it is. Fix it (app_checks and preview show it), then finish."
+				}
 				return "Your changes were not installed: " + err.Error() + "\nFix what it names, then finish."
 			}
 			return ""
