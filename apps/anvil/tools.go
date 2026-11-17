@@ -217,6 +217,12 @@ func (c *toolCtx) codeTools() []AgentToolDef {
 	if c.project.Source == sourceApp {
 		tools = append(tools, c.appChecksTool())
 	}
+	// A gohort app in the project, or one to start: how its folder is built.
+	if c.project.Source == sourceApp || holdsAppFolder(c.base) {
+		tools = append(tools, c.appGuideTool())
+	} else if writes && c.project.Kind == KindClone {
+		tools = append(tools, c.haltable(c.startAppTool()))
+	}
 	if c.hasCheck() {
 		tools = append(tools, c.checkTool())
 	}

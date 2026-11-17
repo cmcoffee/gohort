@@ -37,6 +37,8 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appcheck"
+	"github.com/cmcoffee/gohort/core/apppage"
 )
 
 // appFolderScript is one data source or action in app.json; its body is in
@@ -282,21 +284,63 @@ app.onChange(load);
 </html>
 `
 
+// appFolderStarterFiles are the files a new app's folder starts with:
+// app.json naming one html section, a page wired to window.app, and NOTES.md.
+func appFolderStarterFiles(name, slug, description string) (map[string][]byte, string) {
+	slug = slugify(firstNonEmptyStr(slug, name))
+	m := appFolderManifest{Name: name, Slug: slug, Description: description,
+		Sections: []map[string]any{{"id": "page", "kind": "html", "html_file": "page.html", "height": "100vh"}}}
+	manifest, _ := json.MarshalIndent(m, "", "  ")
+	return map[string][]byte{
+		"app.json":  manifest,
+		"page.html": []byte(strings.ReplaceAll(appFolderStarterPage, "APP_NAME", name)),
+		"NOTES.md":  []byte("# " + name + "\n\n" + appNotesStarter + "\n"),
+	}, slug
+}
+
+// AppFolderStarter is a new app's starter folder, by file, and its slug: what
+// Builder's checkout writes for a name with no app, for an assistant that
+// starts one somewhere else (an Anvil project).
+func AppFolderStarter(name, slug, description string) (map[string][]byte, string) {
+	return appFolderStarterFiles(strings.TrimSpace(name), strings.TrimSpace(slug), strings.TrimSpace(description))
+}
+
+// AppFolderGuide is how an app's folder is built, for an assistant that is
+// not Builder (Anvil) and has none of app_def's help: what each file holds,
+// how a script reads and answers, what the page may call, and the checks.
+// Unsaid, an assistant porting code into an app guessed at all four.
+func AppFolderGuide() string {
+	return appFolderGuideLayout +
+		"\n\nDATA SOURCES (data/<name>.py):\n" + appDefDataSourcesHelp +
+		"\n\nACTIONS (actions/<name>.py):\n" + appDefActionsHelp +
+		"\n\nTHE PAGE: its backend is window.app, which offers exactly these calls (nothing else exists):\n\n" + apppage.API +
+		"\n\nCHECKS (checks.json):\n" + appcheck.Reference
+}
+
+// appFolderGuideLayout is the folder's files, as an author writes them.
+const appFolderGuideLayout = `A gohort app is a folder: install reads it, and nothing else in the folder matters.
+
+  app.json          {"name", "slug", "description", "sections": [{"id": "page", "kind": "html", "html_file": "page.html", "height": "100vh"}],
+                     "data_sources": [{"name", "file": "data/<name>.py", "capabilities"?, "inputs"?}],
+                     "actions": [{"name", "label", "file": "actions/<name>.py", "confirm"?, "inputs"?, "schedule"?}],
+                     "settings"?, "shared_collections"?}
+  page.html         the whole page: HTML, CSS and JavaScript, calling its backend through window.app
+  data/<name>.py    a data source: reads the records and query params from env vars, PRINTS JSON
+  actions/<name>.py an action: reads the records and its inputs, PRINTS {message?, records?, result?}
+  lib/<name>.py     code several scripts share, imported as "from <name> import ..." (no listing needed)
+  assets/<file>     images, fonts, sounds, served to the page at assets/<file>
+  NOTES.md          what the app is, the choices made and why, what was left out
+  checks.json       what the app is supposed to do, as tests that run on every install
+
+Every script runs in a sandbox with no network of its own: it reaches the web through the gohort module (fetch_url), never requests or urllib.request. In the folder a script entry names its file; the help below says "script" for the same thing.`
+
 // appFolderScaffold starts a folder for an app that does not exist yet.
 func (t *chatTurn) appFolderScaffold(abs, rel string, args map[string]any) (string, error) {
 	name := strings.TrimSpace(firstNonEmptyStr(stringArg(args, "name"), stringArg(args, "id")))
 	if name == "" {
 		return "", errors.New("no app by that id; to start a new one, pass name")
 	}
-	slug := slugify(firstNonEmptyStr(stringArg(args, "slug"), name))
-	m := appFolderManifest{Name: name, Slug: slug, Description: stringArg(args, "description"),
-		Sections: []map[string]any{{"id": "page", "kind": "html", "html_file": "page.html", "height": "100vh"}}}
-	manifest, _ := json.MarshalIndent(m, "", "  ")
-	files := map[string][]byte{
-		"app.json":  manifest,
-		"page.html": []byte(strings.ReplaceAll(appFolderStarterPage, "APP_NAME", name)),
-		"NOTES.md":  []byte("# " + name + "\n\n" + appNotesStarter + "\n"),
-	}
+	files, _ := appFolderStarterFiles(name, stringArg(args, "slug"), stringArg(args, "description"))
 	for f, data := range files {
 		p := filepath.Join(abs, f)
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {

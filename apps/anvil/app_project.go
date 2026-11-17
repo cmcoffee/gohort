@@ -17,6 +17,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -300,6 +301,86 @@ func (T *Anvil) handleAppInstallNew(c *jsonapi.Call, _ struct{}) (any, error) {
 	}
 	return map[string]any{"ok": true, "slug": slug,
 		"message": "Installed: " + name + " is one of your apps now, at /apps/" + slug + "/. This project is its files from here on: Preview shows your changes to you alone, and Install puts them live."}, nil
+}
+
+// startAppTool starts a new app's folder at the top of a project that holds
+// none: the starter Builder writes, app.json, a page wired to window.app and
+// NOTES.md, each written as create_file would write it (a card, an undo). It
+// answers with how the folder is built, so code brought here some other way
+// can be ported into an app the owner then installs with Install as a new
+// app.
+func (c *toolCtx) startAppTool() AgentToolDef {
+	return AgentToolDef{
+		Tool: Tool{
+			Name: "start_app",
+			Description: "Start a gohort app in this project: writes app.json, page.html and NOTES.md at the project's top, the starter of a new app, and returns how an app's folder is built (its files, its scripts, what its page may call, its checks). " +
+				"Use it to port this project's code into a gohort app, then build the app in those files. The owner makes it one of their apps with Install as a new app on the project's bar. Refused when the project already has an app.json at its top.",
+			Parameters: map[string]ToolParam{
+				"name":        {Type: "string", Description: "The app's name, as people will see it."},
+				"slug":        {Type: "string", Description: "Optional: its address, /apps/<slug>/; made from the name when left out."},
+				"description": {Type: "string", Description: "Optional: one line saying what the app does."},
+			},
+			Required: []string{"name"},
+			Caps:     []Capability{CapWrite},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			name := strings.TrimSpace(strArg(args, "name"))
+			if name == "" {
+				return "", fmt.Errorf("name the app")
+			}
+			if holdsAppFolder(c.base) {
+				return "", fmt.Errorf("this project already has an app.json at its top: build in it (app_guide says how)")
+			}
+			files, slug := orchestrate.AppFolderStarter(name, strArg(args, "slug"), strArg(args, "description"))
+			names := make([]string, 0, len(files))
+			for f := range files {
+				names = append(names, f)
+			}
+			sort.Strings(names)
+			for _, f := range names {
+				t, err := c.resolve(f)
+				if err != nil {
+					return "", err
+				}
+				if err := t.requireWritable(); err != nil {
+					return "", err
+				}
+				if _, existed, err := readIfPresent(t.abs); err != nil {
+					return "", err
+				} else if existed {
+					return "", fmt.Errorf("%s already exists in the project; move it aside, or write the app's files yourself (app_guide says how)", f)
+				}
+			}
+			for _, f := range names {
+				t, _ := c.resolve(f)
+				if err := os.MkdirAll(filepath.Dir(t.abs), 0o755); err != nil {
+					return "", fmt.Errorf("make the folder for %s: %w", f, err)
+				}
+				if err := os.WriteFile(t.abs, files[f], 0o644); err != nil {
+					return "", fmt.Errorf("write %s: %w", f, err)
+				}
+				c.publish(journalWrite(c.udb, c.project.ID, c.session(), f, "", false, string(files[f]), false))
+			}
+			return fmt.Sprintf("Started app %q (/apps/%s/ once installed): %s. Build it in those files, and add data/, actions/, lib/ and checks.json as it needs. "+
+				"When it is ready, the owner presses Install as a new app on the project's bar, which runs its checks; there is no install command.\n\n%s",
+				name, slug, strings.Join(names, ", "), orchestrate.AppFolderGuide()), nil
+		},
+	}
+}
+
+// appGuideTool is how an app's folder is built, for a project that holds
+// one: the starter's guide again, for a turn after the one that started it.
+func (c *toolCtx) appGuideTool() AgentToolDef {
+	return AgentToolDef{
+		Tool: Tool{
+			Name:        "app_guide",
+			Description: "How this project's gohort app is built: what app.json, page.html, data/, actions/, lib/ and checks.json hold, how a script reads its records and what it prints, what the page may call through window.app. Read it before writing or changing the app's files.",
+			Parameters:  map[string]ToolParam{},
+		},
+		Handler: func(ctx context.Context, _ map[string]any) (string, error) {
+			return orchestrate.AppFolderGuide(), nil
+		},
+	}
 }
 
 // appLiveMarker is the file an install leaves in an app's folder, saying

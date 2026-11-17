@@ -431,3 +431,73 @@ func TestAProjectHoldingAnAppInstallsAsANewApp(t *testing.T) {
 		t.Error("offered on a project with no app.json")
 	}
 }
+
+// Porting code brought in a bundle into a gohort app: a project with no
+// app.json offers start_app, which writes the starter as create_file would
+// (an edit each, to undo) and answers with how the folder is built; then the
+// project offers app_guide in its place, start_app refuses a second start,
+// and Install as a new app makes it one of the owner's apps.
+func TestABundleProjectIsPortedIntoANewApp(t *testing.T) {
+	T, serve := appProjectWorld(t)
+	udb := UserDB(T.DB, "alice")
+	p := Project{ID: UUIDv4(), Name: "har-tool", Kind: KindClone, Owner: "alice", Source: sourceBundle, BundleName: "har-tool.bundle"}
+	base, err := p.baseDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(base, 0o700)
+	os.WriteFile(filepath.Join(base, "analyze.py"), []byte("print('the old tool')\n"), 0o644)
+	runGit(base, "init", "-q")
+	commitCheckout(base, "alice", "From the bundle")
+	T.saveProject(udb, p)
+
+	named := func(c *toolCtx, name string) *AgentToolDef {
+		for _, d := range c.codeTools() {
+			if d.Tool.Name == name {
+				return &d
+			}
+		}
+		return nil
+	}
+	c := &toolCtx{user: "alice", udb: udb, project: p, base: base, sessionID: "s1"}
+	start := named(c, "start_app")
+	if start == nil || named(c, "app_guide") != nil {
+		t.Fatalf("a project with no app offers start_app %v, app_guide %v", start != nil, named(c, "app_guide") != nil)
+	}
+	if named(&toolCtx{user: "alice", udb: udb, project: p, base: base, readOnly: true}, "start_app") != nil {
+		t.Error("a reader may start an app")
+	}
+	out, err := start.Handler(context.Background(), map[string]any{"name": "HAR Analyzer"})
+	if err != nil {
+		t.Fatalf("start_app: %v", err)
+	}
+	for _, want := range []string{"/apps/har-analyzer/", "Install as a new app", "fetch_url", "window.app", "checks.json", `"file": "data/<name>.py"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("start_app's answer does not say %q", want)
+		}
+	}
+	for _, f := range []string{"app.json", "page.html", "NOTES.md", "analyze.py"} {
+		if _, err := os.Stat(filepath.Join(base, f)); err != nil {
+			t.Errorf("no %s after the start", f)
+		}
+	}
+	if n := len(listEdits(udb, p.ID, "s1")); n != 3 {
+		t.Errorf("the start left %d edits, want one per file", n)
+	}
+	if named(c, "start_app") != nil || named(c, "app_guide") == nil {
+		t.Error("a project holding an app still offers start_app, or not app_guide")
+	}
+	if _, err := start.Handler(context.Background(), map[string]any{"name": "Again"}); err == nil {
+		t.Error("a second start was not refused")
+	}
+	if !strings.Contains(T.projectContext(p, base), "app_guide") {
+		t.Error("the assistant is not pointed at app_guide")
+	}
+
+	if w := serve("alice", "POST", "/api/project/"+p.ID+"/install_new", "{}"); w.Code != 200 {
+		t.Fatalf("install: %d %s", w.Code, w.Body.String())
+	}
+	if live, ok := LoadAppSpec("alice", "har-analyzer"); !ok || live.Name != "HAR Analyzer" {
+		t.Errorf("the ported app is not one of alice's: %v %+v", ok, live)
+	}
+}
