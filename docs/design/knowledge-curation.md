@@ -48,31 +48,62 @@ can be skipped.
    names offered as a list to pick from, with Suggest for another set; a
    description written to name the concrete things searches should find,
    with Suggest opening the assistant to work on it. Both editable.
-3. **Details**, each optional: how current it has to be; a solid overview
-   or comprehensive; mostly the web, mostly their own files, or both;
-   sources to prefer; sources to leave out.
-4. **Curation.** How it is kept current, as cards (below), and **To start
-   with**, shown when web search is set up: Suggest sources (also what
-   happens when nothing is chosen), Draft a plan to fill it, or Nothing yet.
-   What is chosen starts as the collection is created, so the page it opens
-   on is already at it, and neither adds anything until the person says.
+3. **Kind** (below, 2026-11-16): Reference, Keep up with a topic, My own
+   files, or Set it up yourself, as cards, each saying when to use it and
+   what it sets. Set it up yourself opens the settings themselves: how often
+   it looks for material, documents per run, and **To start with** (shown
+   when web search is set up: Suggest sources, Draft a plan to fill it, or
+   Nothing yet). What starts, starts as the collection is created, and adds
+   nothing until the person says.
+4. **Sources**, optional: sources to prefer, sources to leave out.
 5. **Agents**, when they have any: which of their agents read it, attached
    as an agent's Knowledge tab would.
+
+Until 2026-11-16 step 3 was **Details** (how current, overview or
+comprehensive, web or own files) and step 4 **Curation** (Auto-Curation or
+Hand Curated). The Details answers only added a sentence each to the
+description, while sitting beside real settings, so the setup read as if
+they did more. The kinds replaced both.
+
+### Kinds
+
+A kind is only the first values of settings every collection has; nothing
+records which kind it was, and each value is changed on the collection's
+page. `collectionKinds` in `apps/orchestrate/collection_guided.go`:
+
+| Kind | Use it when | Schedule | Documents a run | Rule | Starts |
+|---|---|---|---|---|---|
+| **Reference** (the usual) | docs on a product, API or standard, which change slowly | monthly | 20 | prefer official documentation | a plan to check |
+| **Keep up with a topic** | news, releases, advisories | weekly | 10 | skip pages more than a year old | a plan to check |
+| **My own files** | material the person uploads | none | (plan default) | none | nothing |
+| **Set it up yourself** | anything else | as answered | as answered (1 to 100) | none | as answered |
+
+With no kind picked, the setup makes the usual kind: Reference where the
+server can search the web, My own files where it cannot (nothing could look
+for material). A visible field's Default does not choose a card in the form
+toolkit, so the field says this in its help, and the server applies it.
+
+The collection page's Curation section opens with one line saying what its
+settings come to ("Looks for new material every week and when you press Run
+now, adding up to 10 documents a run..."), refreshed as they change, and
+each schedule option says when to use it.
 
 The answers are not stored as answers. The create endpoint
 (`collection_guided.go`) turns them into what a collection already has:
 
-- **Description:** the one they settled on (or their own words if none),
-  then a line per Details answer. Auto-fill, research, Find sources and the
-  curator all read it, so what was asked keeps steering what is found.
-- **Filter rules:** "Prefer <site>" and "Skip <site>", one per source,
-  editable on the page. Find sources and the curator's brief read them.
-- **Curator**, from the Curation choice, only an agent that resolves.
+- **Description:** the one they settled on (or their own words if none).
+  Auto-fill, research, Find sources and the plan all read it.
+- **Filter rules:** the kind's rule, then "Prefer <site>" and "Skip <site>",
+  one per source, editable on the page.
+- **Schedule and documents per run**, from the kind.
 - **Attached agents**, their own only.
 
 The plain create (a name and a description) is unchanged.
 
-## Curation (built)
+## Curation (built, then replaced)
+
+Superseded by `knowledge-one-curation.md`: one plan, run now or on a
+schedule, with no agent in charge. Kept for the history.
 
 The collection page's "Maintained by" is now **Curation**, the same three
 choices as the setup's cards, Auto-Curation and Hand Curated at either end:

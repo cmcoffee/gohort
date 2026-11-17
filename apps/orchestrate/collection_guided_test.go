@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -108,11 +109,16 @@ func TestTheGuidedSetupStartsWhatItWasAsked(t *testing.T) {
 		g    guidedCollection
 		want string
 	}{
-		{guidedCollection{Guided: guided}, "suggest"},
-		{guidedCollection{Guided: guided, Start: "suggest"}, "suggest"},
-		{guidedCollection{Guided: guided, Start: "plan"}, "plan"},
-		{guidedCollection{Guided: guided, Start: "none"}, "none"},
-		{guidedCollection{Guided: guided, Start: "anything else"}, "suggest"},
+		{guidedCollection{Guided: guided, Kind: "custom"}, "suggest"},
+		{guidedCollection{Guided: guided, Kind: "custom", Start: "suggest"}, "suggest"},
+		{guidedCollection{Guided: guided, Kind: "custom", Start: "plan"}, "plan"},
+		{guidedCollection{Guided: guided, Kind: "custom", Start: "none"}, "none"},
+		{guidedCollection{Guided: guided, Kind: "custom", Start: "anything else"}, "suggest"},
+		// No kind picked is the usual kind; with no web search in a test,
+		// My own files, which starts nothing.
+		{guidedCollection{Guided: guided, Start: "plan"}, "none"},
+		// The older curation answer picks no kind, and its Start holds.
+		{guidedCollection{Guided: guided, Curation: "hand", Start: "plan"}, "plan"},
 		{guidedCollection{}, ""},
 		{guidedCollection{About: "topic", Start: "plan"}, ""},
 	} {
@@ -122,3 +128,69 @@ func TestTheGuidedSetupStartsWhatItWasAsked(t *testing.T) {
 	}
 }
 
+// A kind sets the real settings a collection has: its schedule, how much a
+// run adds, a rule and what starts. Reference is the standard practice; a
+// topic is checked weekly for what is new; files are never searched for;
+// Set it up yourself takes its own answers, a count sent as a string too.
+func TestAKindSetsWhatACollectionStartsWith(t *testing.T) {
+	T, udb, user := newTestOrchestrate(t)
+	pinRootDB(t)
+	PreInitScheduler()
+	clearRefresh := func() {
+		for _, task := range ListScheduledTasks(collectionRefreshKind) {
+			UnscheduleTask(task.ID)
+		}
+	}
+	clearRefresh()
+	t.Cleanup(clearRefresh)
+	every := func(c Collection) string {
+		if p, _, _, ok := refreshScheduled(user, c.ID); ok {
+			return p.Every
+		}
+		return ""
+	}
+	for i, tc := range []struct {
+		body        map[string]any
+		every       string
+		docs        int
+		rule, start string
+	}{
+		{map[string]any{"kind": "reference", "prefer": []string{"docs.example.com"}}, "month", 20, "Prefer the official documentation", "plan"},
+		{map[string]any{"kind": "topic"}, "week", 10, "Skip pages more than a year old", "plan"},
+		{map[string]any{"kind": "files"}, "", 0, "", "none"},
+		{map[string]any{"kind": "custom", "refresh": "month", "docs_per_run": "15", "start": "suggest"}, "month", 15, "", "suggest"},
+		{map[string]any{"kind": "custom", "refresh": "never", "docs_per_run": 500}, "", 100, "", "suggest"},
+		// None picked: the usual kind, My own files without web search.
+		{map[string]any{"kind": ""}, "", 0, "", "none"},
+	} {
+		body := map[string]any{"name": "Kind " + strconv.Itoa(i), "guided": "true", "start": "none"}
+		for k, v := range tc.body {
+			body[k] = v
+		}
+		c := createCollection(t, T, udb, user, body)
+		if got := every(c); got != tc.every {
+			t.Errorf("%v: scheduled %q, want %q", tc.body, got, tc.every)
+		}
+		if c.DocsPerRun != tc.docs {
+			t.Errorf("%v: %d documents a run, want %d", tc.body, c.DocsPerRun, tc.docs)
+		}
+		if tc.rule != "" && !strings.HasPrefix(c.FilterRules, tc.rule) {
+			t.Errorf("%v: rules %q, want to start %q", tc.body, c.FilterRules, tc.rule)
+		}
+		if tc.rule == "" && strings.Contains(c.FilterRules, "Skip pages") {
+			t.Errorf("%v: rules %q", tc.body, c.FilterRules)
+		}
+		g := guidedCollection{Guided: json.RawMessage(`"true"`), Kind: tc.body["kind"].(string)}
+		if s, ok := tc.body["start"].(string); ok {
+			g.Start = s
+		}
+		if got := g.starts(); got != tc.start {
+			t.Errorf("%v: starts %q, want %q", tc.body, got, tc.start)
+		}
+	}
+	// The rule the kind adds comes before the sources the person named.
+	ref := createCollection(t, T, udb, user, map[string]any{"name": "Ref two", "guided": "true", "start": "none", "kind": "reference", "prefer": []string{"docs.example.com"}})
+	if !strings.HasSuffix(ref.FilterRules, "\nPrefer docs.example.com") {
+		t.Errorf("rules: %q", ref.FilterRules)
+	}
+}

@@ -228,6 +228,7 @@ func (T *OrchestrateApp) collectionCreate(c *jsonapi.Call, body struct {
 	if g.guidedAnswered() {
 		col.Description = g.description(body.Description)
 		col.FilterRules = g.filterRules()
+		col.DocsPerRun = g.docsPerRun()
 	}
 	saveCollection(udb, col)
 	if every := g.autoCuration(); every != "" {
@@ -246,7 +247,7 @@ func (T *OrchestrateApp) collectionCreate(c *jsonapi.Call, body struct {
 			T.startDraftPlan(udb, col)
 		}
 	}
-	Log("[orchestrate.collections] user=%q created collection %q (id=%s, auto-curation=%q, attached to %d agent(s))", user, name, col.ID, g.autoCuration(), attached)
+	Log("[orchestrate.collections] user=%q created collection %q (id=%s, kind=%q, auto-curation=%q, attached to %d agent(s))", user, name, col.ID, g.Kind, g.autoCuration(), attached)
 	return col, nil
 }
 

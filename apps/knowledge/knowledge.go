@@ -133,7 +133,7 @@ func (T *KnowledgeApp) handleDetailPage(w http.ResponseWriter, r *http.Request) 
 	sections := []ui.Section{
 		{
 			NoChrome: true,
-			Body:     ui.Card{HTML: documentsDetailBody + T.findSourcesScript(user, collectionIDFromPath(r.URL.Path)) + documentsDetailAssets},
+			Body:     ui.Card{HTML: documentsDetailBody + collectionWatchJS + T.findSourcesScript(user, collectionIDFromPath(r.URL.Path)) + documentsDetailAssets},
 		},
 	}
 	if s, ok := T.stewardSection(user, collectionIDFromPath(r.URL.Path)); ok {
@@ -209,15 +209,20 @@ func (T *KnowledgeApp) stewardSection(user, collectionID string) (ui.Section, bo
 	submitters := "/orchestrate/api/collections/" + esc + "/submitters"
 	// Auto-Curation is the plan run on a schedule; off, it runs when Run now
 	// is pressed. Nothing else is chosen here: no agent is in charge.
-	fields := []ui.FormField{{Field: "refresh", Type: "select", Label: "Auto-Curation",
-		Options: []ui.SelectOption{
-			{Value: "never", Label: "Off", Help: "The plan runs when you press Run now."},
-			{Value: "week", Label: "Every week", Help: "The plan runs each week, looking for what is new."},
-			{Value: "month", Label: "Every month", Help: "The plan runs each month, looking for what is new."},
-		},
-		Help: "The plan below, run on its own. Run now runs it once either way.",
-		Detail: "A run fetches the articles you listed, then links agents suggested, then the search terms; every page it finds is checked before it goes in, and what does not pass waits under Held for you.\n\n" +
-			"Reading is unaffected. Any agent with this collection attached still searches it exactly as before."}}
+	fields := []ui.FormField{
+		// What the settings below come to, in one line, kept current as
+		// they change.
+		{Field: "status", Type: "readonly", Label: "This collection"},
+		{Field: "refresh", Type: "select", Label: "Auto-Curation",
+			Options: []ui.SelectOption{
+				{Value: "never", Label: "Off", Help: "The plan runs only when you press Run now. For a collection you fill once, or by hand."},
+				{Value: "month", Label: "Every month", Help: "The plan runs each month, looking for what changed. For reference material that changes slowly."},
+				{Value: "week", Label: "Every week", Help: "The plan runs each week, looking for what is new. For a fast-moving subject: news, releases, advisories."},
+			},
+			Help: "The plan below, run on its own. Run now runs it once either way.",
+			Detail: "A run fetches the articles you listed, then links agents suggested, then the search terms; every page it finds is checked before it goes in, and what does not pass waits under Held for you.\n\n" +
+				"Reading is unaffected. Any agent with this collection attached still searches it exactly as before."},
+	}
 	agents := AgentNameOptions(user)
 	return ui.Section{
 		Title:    "Curation",
@@ -227,6 +232,7 @@ func (T *KnowledgeApp) stewardSection(user, collectionID string) (ui.Section, bo
 			ui.FormPanel{
 				Source:     base,
 				PostURL:    base,
+				RefreshOn:  []string{base},
 				Invalidate: []string{curate},
 				Fields:     fields,
 			},
@@ -240,14 +246,15 @@ func (T *KnowledgeApp) stewardSection(user, collectionID string) (ui.Section, bo
 				ProgressSource: plan + "/draft/progress",
 				CancelTo:       plan + "/draft/stop",
 				EmptyText:      "Drafting a plan needs web search, which is not set up on this server. You can still write the search terms below.",
-				// The drafted terms land in the plan below.
-				Invalidate: []string{plan, plan + "/draft", curate},
+				// The drafted terms land in the plan below, and change the
+				// line at the top.
+				Invalidate: []string{plan, plan + "/draft", curate, base},
 			},
 			ui.FormPanel{
 				Source:     plan,
 				PostURL:    plan,
 				RefreshOn:  []string{plan},
-				Invalidate: []string{curate, plan + "/draft"},
+				Invalidate: []string{curate, plan + "/draft", base},
 				Fields: []ui.FormField{
 					{Field: "search_terms", Type: "rules", Label: "Search terms", AddLabel: "+ Add search terms",
 						Placeholder: "No search terms yet: Draft writes them from the description, or add your own below.",
@@ -296,7 +303,7 @@ func (T *KnowledgeApp) suggestionsSection(user, collectionID string) (ui.Section
 		Title:    "Suggestions from agents",
 		Subtitle: "Agents that read this collection can suggest an update when they learn something it should know. Nothing changes until somebody acts on it.",
 		Detail: "A reading agent never writes to the collection itself: one that did would later read its own conclusions back as fact. It files a suggestion naming its source instead.\n\n" +
-			"With an agent in charge of the collection (above), suggestions go to that agent, which checks each against its source and updates the collection or declines. With nobody in charge, they wait here for you.\n\n" +
+			"They wait here for you: no agent is in charge of a collection, so nothing acts on a suggestion until somebody does.\n\n" +
 			"Only your own agents, and those of people you made contributors, can suggest, and only on their own runs.",
 		Body: ui.Stack{Children: []ui.Component{
 			ui.FormPanel{

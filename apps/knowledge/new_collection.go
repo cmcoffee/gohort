@@ -57,51 +57,20 @@ func newCollectionForm(user string) ui.FormPanel {
 			},
 		},
 		{
-			Title: "Details",
-			Intro: "A few questions that steer what goes in. Each one is optional.",
+			Title:  "Kind",
+			Intro:  "What kind of collection is it? Each kind sets how it is kept to start with; everything it sets can be changed on the collection's page.",
+			Fields: kindFields(),
+		},
+		{
+			Title: "Sources",
+			Intro: "Sites to favour or to leave out. Both are optional.",
 			Fields: []ui.FormField{
-				{Field: "currency", Type: "select", Label: "How current does it have to be?",
-					Options: []ui.SelectOption{
-						{Value: "", Label: "No preference"},
-						{Value: "current", Label: "Current matters most", Help: "Prefer the latest; older pages are likely out of date."},
-						{Value: "recent", Label: "Recent is enough"},
-					}},
-				{Field: "depth", Type: "select", Label: "How much of it?",
-					Options: []ui.SelectOption{
-						{Value: "", Label: "No preference"},
-						{Value: "overview", Label: "A solid overview", Help: "The essentials, not everything."},
-						{Value: "comprehensive", Label: "Comprehensive"},
-					}},
-				{Field: "mostly", Type: "select", Label: "Where will its material come from?",
-					Options: []ui.SelectOption{
-						{Value: "", Label: "No preference"},
-						{Value: "web", Label: "Mostly the web"},
-						{Value: "files", Label: "Mostly my own files"},
-						{Value: "both", Label: "Both"},
-					}},
 				{Field: "prefer", Type: "tags", Label: "Sources to prefer",
 					Help: "Sites or publishers you trust for this. Searches favour them."},
 				{Field: "avoid", Type: "tags", Label: "Sources to leave out",
 					Help: "Pages from these are turned away."},
 			},
 		},
-		{
-			Title:  "Curation",
-			Intro:  "Does its plan run on its own? You can change this on the collection's page.",
-			Fields: curationFields(user, "cards"),
-		},
-	}
-	if WebSearchAvailable() {
-		// Unanswered, the create endpoint starts Suggest sources, the first
-		// option, so what the select shows is what happens.
-		last := &steps[len(steps)-1]
-		last.Fields = append(last.Fields, ui.FormField{Field: "start", Type: "select", Label: "To start with",
-			Help: "What runs as the collection is created. Both wait for you before anything is added.",
-			Options: []ui.SelectOption{
-				{Value: "suggest", Label: "Suggest sources", Help: "Searches from what you said and lists what it finds, each with its site and a line from it. You tick what goes in."},
-				{Value: "plan", Label: "Draft a plan to fill it", Help: "Writes the searches it would run and how many documents to add, with its size. You check it, then run it."},
-				{Value: "none", Label: "Nothing yet"},
-			}})
 	}
 	// Which agents read it, when there are agents to choose from.
 	if agents := AgentNameOptions(user); len(agents) > 0 {

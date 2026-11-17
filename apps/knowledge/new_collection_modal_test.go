@@ -90,7 +90,7 @@ func TestTheNewCollectionFormIsAGuidedSetup(t *testing.T) {
 			}
 		}
 	}
-	if strings.Join(titles, ",") != "Purpose,Name,Details,Curation" {
+	if strings.Join(titles, ",") != "Purpose,Name,Kind,Sources" {
 		t.Errorf("steps %v; with no agents to pick there is no Agents step", titles)
 	}
 	if !byName["name"].Required || !byName["about"].Required {
@@ -109,16 +109,29 @@ func TestTheNewCollectionFormIsAGuidedSetup(t *testing.T) {
 	if g := byName["guided"]; g.Type != "hidden" || g.Default != "true" {
 		t.Errorf("the setup does not mark its answers as guided: %+v", g)
 	}
+	// One choice of kind, each setting the real settings, instead of
+	// questions that only added a sentence to the description. Without web
+	// search nothing can look for material, so the default is My own files.
 	var choices []string
-	for _, o := range byName["curation"].Options {
+	for _, o := range byName["kind"].Options {
 		choices = append(choices, o.Value)
 	}
-	if byName["curation"].Type != "cards" || strings.Join(choices, ",") != "auto,hand" {
-		t.Errorf("Curation offers %v as %s; with no agents, Auto-Curation and Hand Curated", choices, byName["curation"].Type)
+	if k := byName["kind"]; k.Type != "cards" || strings.Join(choices, ",") != "reference,topic,files,custom" {
+		t.Errorf("Kind offers %v as %s", choices, k.Type)
 	}
-	for _, k := range []string{"about", "currency", "depth", "mostly", "prefer", "avoid"} {
+	for _, k := range []string{"refresh", "docs_per_run"} {
+		if byName[k].ShowWhen != "kind:custom" {
+			t.Errorf("%s should show only for Set it up yourself: %+v", k, byName[k])
+		}
+	}
+	for _, k := range []string{"about", "prefer", "avoid"} {
 		if _, ok := byName[k]; !ok {
 			t.Errorf("no %s question", k)
+		}
+	}
+	for _, k := range []string{"currency", "depth", "mostly", "curation"} {
+		if _, ok := byName[k]; ok {
+			t.Errorf("the setup still asks %s, which set nothing", k)
 		}
 	}
 	if strings.Contains(string(b), "\u2014") || strings.Contains(string(b), "\u2026") {

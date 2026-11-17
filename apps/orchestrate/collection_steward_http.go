@@ -9,6 +9,7 @@ package orchestrate
 // plan's and the check's to decide. The schedule is the whole setting here.
 
 import (
+	"fmt"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -57,10 +58,20 @@ func (T *OrchestrateApp) collectionStewardSave(call *jsonapi.Call, body struct {
 	return map[string]any{"ok": true}, nil
 }
 
-// stewardStatusLine says how the collection is kept.
+// stewardStatusLine says, in one line at the top of the collection's
+// Curation section, what its settings come to: when it looks for material,
+// how much a run adds, and where a page that fails the check goes.
 func (T *OrchestrateApp) stewardStatusLine(c Collection) string {
-	if every := autoCurationOf(c); every != "never" {
-		return "Auto-Curation: the plan below runs every " + every + ", and when you press Run now. Each page it finds is checked before it goes in."
+	if len(c.SearchTerms) == 0 {
+		if autoCurationOf(c) != "never" {
+			return "Set to look for new material every " + autoCurationOf(c) + ", but there is no plan yet: Draft writes one from the description."
+		}
+		return "Filled by hand: there is no plan, so nothing is searched for. Draft writes a plan from the description if you want one."
 	}
-	return "Auto-Curation is off: the plan below runs when you press Run now."
+	adds := fmt.Sprintf("adding up to %d document%s a run", planDocs(c), plural(planDocs(c)))
+	held := " Each page it finds is checked first; one that does not pass waits under Held for you."
+	if every := autoCurationOf(c); every != "never" {
+		return "Looks for new material every " + every + " and when you press Run now, " + adds + "." + held
+	}
+	return "Looks for material only when you press Run now, " + adds + "." + held
 }

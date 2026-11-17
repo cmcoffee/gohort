@@ -12,6 +12,7 @@ package orchestrate
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -32,8 +33,16 @@ type guidedCollection struct {
 	// Prefer and Avoid are sources to favour and to leave out.
 	Prefer json.RawMessage `json:"prefer"`
 	Avoid  json.RawMessage `json:"avoid"`
-	// Curation is how it is kept: "auto" runs its plan every week, anything
-	// else only when the owner presses Run now.
+	// Kind is what sort of collection it is (collectionKinds): reference,
+	// topic or files set its schedule, documents per run, a rule and what
+	// starts; custom takes Refresh, DocsPerRun and Start as answered.
+	Kind    string `json:"kind"`
+	Refresh string `json:"refresh"`
+	// DocsPerRun is raw: a form sends a number it was given as a string
+	// when the field was left at its default.
+	DocsPerRun json.RawMessage `json:"docs_per_run"`
+	// Curation is the older answer for how it is kept: "auto" runs its plan
+	// every week. Read only when no Kind was given.
 	Curation string `json:"curation"`
 	// Guided marks a request from the guided setup, whose switches apply.
 	Guided json.RawMessage `json:"guided"`
@@ -42,6 +51,62 @@ type guidedCollection struct {
 	Start string `json:"start"`
 	// AttachTo is the person's agents that should read it.
 	AttachTo json.RawMessage `json:"attach_to"`
+}
+
+// collectionKind is what a kind of collection starts with. Each is only the
+// first values of settings every collection has, all of them changed on the
+// collection's page afterwards; nothing records which kind it was.
+type collectionKind struct {
+	Refresh    string // "week", "month", or "" for no schedule
+	DocsPerRun int
+	Rule       string // one filter rule, or ""
+	Start      string // "plan" or "none"
+}
+
+// collectionKinds are the guided setup's kinds (docs/design/knowledge-curation.md).
+// Reference is the standard practice: fill it from a plan you check, then
+// look each month for what changed. A topic moves faster and is about what is
+// new. Files are uploaded, never searched for.
+var collectionKinds = map[string]collectionKind{
+	"reference": {Refresh: "month", DocsPerRun: 20, Start: "plan",
+		Rule: "Prefer the official documentation and the maker's or standards body's own pages"},
+	"topic": {Refresh: "week", DocsPerRun: 10, Start: "plan",
+		Rule: "Skip pages more than a year old"},
+	"files": {Start: "none"},
+}
+
+// kind is the chosen kind's starting values, and whether a preset kind
+// applies (custom does not). The guided setup with no kind picked is the
+// usual kind: Reference where the server can search the web, My own files
+// where it cannot, since then nothing could look for material. A request
+// that is not the guided setup, or names the older curation answer, picks
+// no kind.
+func (g guidedCollection) kind() (collectionKind, bool) {
+	name := strings.TrimSpace(g.Kind)
+	if name == "" && jsonTrue(g.Guided) && strings.TrimSpace(g.Curation) == "" {
+		name = "files"
+		if WebSearchAvailable() {
+			name = "reference"
+		}
+	}
+	k, ok := collectionKinds[name]
+	return k, ok
+}
+
+// docsPerRun is how many documents a run adds to start with: the kind's, a
+// custom answer held to 1 to 100, or 0 to leave the plan's default.
+func (g guidedCollection) docsPerRun() int {
+	if k, ok := g.kind(); ok {
+		return k.DocsPerRun
+	}
+	if strings.TrimSpace(g.Kind) != "custom" {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.Trim(strings.TrimSpace(string(g.DocsPerRun)), `"`))
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return min(n, 100)
 }
 
 var guidedCurrency = map[string]string{
@@ -64,7 +129,7 @@ var guidedMostly = map[string]string{
 // was given, so the plain form's create is left exactly as it was.
 func (g guidedCollection) guidedAnswered() bool {
 	return jsonTrue(g.Guided) || g.About != "" || g.Currency != "" || g.Depth != "" || g.Mostly != "" ||
-		len(decodeWizardPicks(g.Prefer)) > 0 || len(decodeWizardPicks(g.Avoid)) > 0 || g.Curation != ""
+		len(decodeWizardPicks(g.Prefer)) > 0 || len(decodeWizardPicks(g.Avoid)) > 0 || g.Curation != "" || g.Kind != ""
 }
 
 // description is the collection's description from the answers: the
@@ -91,6 +156,9 @@ func (g guidedCollection) description(given string) string {
 // collection page's rule list keeps.
 func (g guidedCollection) filterRules() string {
 	var rules []string
+	if k, ok := g.kind(); ok && k.Rule != "" {
+		rules = append(rules, k.Rule)
+	}
 	for _, s := range decodeWizardPicks(g.Prefer) {
 		if s = strings.TrimSpace(s); s != "" {
 			rules = append(rules, "Prefer "+s)
@@ -104,9 +172,19 @@ func (g guidedCollection) filterRules() string {
 	return strings.Join(rules, "\n")
 }
 
-// autoCuration is the schedule Auto-Curation starts on: every week when it
-// was chosen, "" when not.
+// autoCuration is the schedule Auto-Curation starts on: the kind's, a custom
+// answer of week or month, or every week for the older "auto"; "" for none.
 func (g guidedCollection) autoCuration() string {
+	if k, ok := g.kind(); ok {
+		return k.Refresh
+	}
+	if strings.TrimSpace(g.Kind) == "custom" {
+		switch r := strings.TrimSpace(g.Refresh); r {
+		case "week", "month":
+			return r
+		}
+		return ""
+	}
 	if strings.EqualFold(strings.TrimSpace(g.Curation), "auto") {
 		return "week"
 	}
@@ -119,6 +197,9 @@ func (g guidedCollection) autoCuration() string {
 func (g guidedCollection) starts() string {
 	if !jsonTrue(g.Guided) {
 		return ""
+	}
+	if k, ok := g.kind(); ok {
+		return k.Start
 	}
 	switch g.Start {
 	case "plan", "none":

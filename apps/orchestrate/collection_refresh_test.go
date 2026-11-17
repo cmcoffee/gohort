@@ -68,7 +68,7 @@ func TestARefreshIsOneScheduledTask(t *testing.T) {
 // the steward endpoint, read back, and turned off.
 func TestTheAutoCurationSettingIsTheSchedule(t *testing.T) {
 	df := refreshFixture(t)
-	saveCollection(df.udb, Collection{ID: "col-s", Name: "S", Owner: "u"})
+	saveCollection(df.udb, Collection{ID: "col-s", Name: "S", Owner: "u", SearchTerms: []string{"pg releases"}})
 	save := func(every string) {
 		r := httptest.NewRequest(http.MethodPost, "/api/collections/col-s/steward", nil)
 		r.SetPathValue("id", "col-s")
@@ -85,7 +85,7 @@ func TestTheAutoCurationSettingIsTheSchedule(t *testing.T) {
 		}
 		return out.(map[string]any)
 	}
-	if got := read(); got["refresh"] != "never" || !strings.Contains(got["status"].(string), "Auto-Curation is off") {
+	if got := read(); got["refresh"] != "never" || !strings.Contains(got["status"].(string), "only when you press Run now, adding up to 20 documents a run") {
 		t.Errorf("a new collection: %v", got)
 	}
 	save("week")
@@ -95,6 +95,12 @@ func TestTheAutoCurationSettingIsTheSchedule(t *testing.T) {
 	save("never")
 	if _, _, _, ok := refreshScheduled("u", "col-s"); ok || read()["refresh"] != "never" {
 		t.Error("Off left the collection refreshing")
+	}
+	// With no plan, the line says nothing is searched for, not a schedule
+	// that has nothing to run.
+	saveCollection(df.udb, Collection{ID: "col-s", Name: "S", Owner: "u"})
+	if got := read()["status"].(string); !strings.Contains(got, "no plan") {
+		t.Errorf("no plan: %q", got)
 	}
 }
 

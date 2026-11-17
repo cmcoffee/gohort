@@ -1124,6 +1124,9 @@ const documentsDetailAssets = `<style>
     window.location.href = '/knowledge/';
   });
 
+  // A curation run, a held page added, anything else on the page that
+  // changes this collection: redraw the documents when it lands.
+  if (window.knowledgeWatchCollection) window.knowledgeWatchCollection('/orchestrate/api/collections/' + encodeURIComponent(cid) + '/', function() { loadDetail(); loadSources(); });
   loadDetail();
   loadSources();
 })();
