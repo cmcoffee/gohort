@@ -256,14 +256,19 @@ func (c *toolCtx) codeTools() []AgentToolDef {
 func (c *toolCtx) listFilesTool() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
-			Name:        "list_files",
-			Description: "List the entries in a directory of the project, marking which are directories. Use \".\" for the project root. Build directories, .git, node_modules and vendor are skipped. Start here when you don't know the layout yet: it is much cheaper than reading files to find out where things are.",
+			Name: "list_files",
+			Description: "List the entries in a directory of the project, marking which are directories. Use \".\" for the project root. Build directories, .git, node_modules and vendor are skipped. Start here when you don't know the layout yet: it is much cheaper than reading files to find out where things are. " +
+				"To FIND a file by name anywhere in the project and its linked dependencies, pass name instead (\"esb.tgz\", \"*.tgz\", \"**/config/*.yaml\"): it searches every file, binary and git-ignored ones too. Never search outside the project (find /, ~): everything you work on is here.",
 			Parameters: map[string]ToolParam{
 				"path": {Type: "string", Description: "Project-relative directory path. Default \".\" (the project root)."},
+				"name": {Type: "string", Description: "Optional: a file name or glob to find anywhere in the project and its linked dependencies, in place of listing one directory. A pattern without / matches a file's name at any depth."},
 			},
 			Caps: []Capability{CapRead},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			if name := strings.TrimSpace(strArg(args, "name")); name != "" {
+				return c.findByName(name), nil
+			}
 			rel := strArg(args, "path")
 			if rel == "" {
 				rel = "."
@@ -319,6 +324,87 @@ func (c *toolCtx) listFilesTool() AgentToolDef {
 			return fmt.Sprintf("%s:\n%s%s", rel, strings.Join(all, "\n"), truncated), nil
 		},
 	}
+}
+
+// maxFoundFiles caps what a name search returns, and maxNameWalk how many
+// entries it looks at in one tree.
+const (
+	maxFoundFiles = 200
+	maxNameWalk   = 200000
+)
+
+// nameTree is one tree a name search walks: the project, or a linked
+// dependency under its prefix.
+type nameTree struct {
+	prefix, base string
+	c            *toolCtx
+}
+
+// findByName finds files whose name (a pattern without "/") or project path
+// matches pattern, in the project and each linked dependency. It searches
+// what search_code cannot: binary files, and ones git ignores, which is where
+// an archive or a build's output usually is. Without it the assistant had
+// only the shell, and searched the whole machine (find / -name esb.tgz).
+// .git and node_modules are skipped.
+func (c *toolCtx) findByName(pattern string) string {
+	var found []string
+	ignored := 0
+	trees := []nameTree{{"", c.base, c}}
+	for i := range c.deps {
+		d := &c.deps[i]
+		trees = append(trees, nameTree{d.Prefix + "/", d.Base, &toolCtx{project: c.depProject(d), base: d.Base}})
+	}
+	for _, tr := range trees {
+		seen := 0
+		filepath.Walk(tr.base, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return nil
+			}
+			if seen++; seen > maxNameWalk || len(found) >= maxFoundFiles {
+				return filepath.SkipAll
+			}
+			rel, relErr := filepath.Rel(tr.base, path)
+			if relErr != nil || rel == "." {
+				return nil
+			}
+			rel = filepath.ToSlash(rel)
+			if info.IsDir() {
+				if info.Name() == ".git" || info.Name() == "node_modules" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			match := matchGlob(pattern, rel)
+			if !strings.Contains(pattern, "/") {
+				if ok, _ := filepath.Match(pattern, info.Name()); ok {
+					match = true
+				}
+			}
+			if !match {
+				return nil
+			}
+			line := fmt.Sprintf("%s%s (%s)", tr.prefix, rel, HumanSize(info.Size()))
+			if tr.c.ignores(rel) {
+				line += ", ignored by git"
+				ignored++
+			}
+			found = append(found, line)
+			return nil
+		})
+	}
+	if len(found) == 0 {
+		where := "the project"
+		if len(c.deps) > 0 {
+			where += " or its linked dependencies"
+		}
+		return fmt.Sprintf("No file matching %q in %s. It is not here: ask the person for it rather than searching outside the project.", pattern, where)
+	}
+	sort.Strings(found)
+	out := strings.Join(found, "\n")
+	if len(found) >= maxFoundFiles {
+		out += fmt.Sprintf("\n...stopped at %d. Narrow the pattern.", maxFoundFiles)
+	}
+	return out
 }
 
 func (c *toolCtx) readFileTool() AgentToolDef {

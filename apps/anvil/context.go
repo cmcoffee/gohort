@@ -50,6 +50,9 @@ func (T *Anvil) projectContext(p Project, base string) string {
 	b.WriteString("\n\n## The project you are working in\n\n")
 	fmt.Fprintf(&b, "Name: %s\n", p.Name)
 	fmt.Fprintf(&b, "Path: %s\n", base)
+	// Unsaid, an assistant looking for an archive the project did not have
+	// ran find / -name esb.tgz over the whole machine.
+	b.WriteString("Everything you work on is in this project, or in a linked dependency. Find a file by name with list_files name=...; never search outside the project (find /, ~, other folders). When a file you need is not here, ask the person for it.\n")
 	switch {
 	case p.Kind == KindClone && p.Source == sourceNew:
 		b.WriteString("A repository its owner started in Anvil. Your changes reach nobody else until the owner publishes them, which only they do: you do not push.\n" + commitNote)

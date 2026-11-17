@@ -1953,3 +1953,58 @@ func TestTheProjectBarIsGroupedByWhatItActsOn(t *testing.T) {
 		t.Errorf("an app's Preview and Install are not out front: %v", app)
 	}
 }
+
+// A file is found by name in the project and its linked dependencies, binary
+// and git-ignored ones included, which search_code cannot see. Without it an
+// assistant looking for an archive ran find / -name esb.tgz over the whole
+// machine; a name that is not here says to ask the person, and the
+// assistant is told never to search outside the project.
+func TestAFileIsFoundByNameInsideTheProject(t *testing.T) {
+	if !gitAvailable() {
+		t.Skip("git is not installed")
+	}
+	main, dep := t.TempDir(), t.TempDir()
+	runGit(main, "init", "-q")
+	mustWrite(t, filepath.Join(main, ".gitignore"), "*.tgz\n")
+	mustWrite(t, filepath.Join(main, "vendor-drop", "pkgs", "esb.tgz"), "\x1f\x8b\x08binary")
+	mustWrite(t, filepath.Join(main, "config", "app.yaml"), "a: 1\n")
+	mustWrite(t, filepath.Join(main, "node_modules", "x", "esb.tgz"), "skip me")
+	mustWrite(t, filepath.Join(dep, "dist", "esb.tgz"), "dep copy")
+	c := depCtx(t, main, dep, false)
+	var list *AgentToolDef
+	for _, d := range c.codeTools() {
+		if d.Tool.Name == "list_files" {
+			list = &d
+		}
+	}
+	if list == nil {
+		t.Fatal("no list_files")
+	}
+	run := func(name string) string {
+		out, err := list.Handler(context.Background(), map[string]any{"name": name})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		return out
+	}
+	out := run("esb.tgz")
+	if !strings.Contains(out, "vendor-drop/pkgs/esb.tgz") || !strings.Contains(out, "ignored by git") || !strings.Contains(out, "lib/dist/esb.tgz") {
+		t.Errorf("by name:\n%s", out)
+	}
+	if strings.Contains(out, "node_modules") {
+		t.Errorf("node_modules was searched:\n%s", out)
+	}
+	if out := run("*.tgz"); !strings.Contains(out, "vendor-drop/pkgs/esb.tgz") {
+		t.Errorf("a glob without a slash matches at any depth:\n%s", out)
+	}
+	if out := run("config/*.yaml"); !strings.Contains(out, "config/app.yaml") || strings.Contains(out, "esb.tgz") {
+		t.Errorf("a path glob:\n%s", out)
+	}
+	if out := run("nothing.zip"); !strings.Contains(out, "ask the person") {
+		t.Errorf("not found:\n%s", out)
+	}
+	var T Anvil
+	if ctx := T.projectContext(Project{Kind: KindRoot, Root: main}, main); !strings.Contains(ctx, "never search outside the project (find /") {
+		t.Errorf("the assistant is not told to stay in the project:\n%s", ctx)
+	}
+}
