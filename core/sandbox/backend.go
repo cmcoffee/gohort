@@ -103,7 +103,7 @@ type sandboxRun struct {
 	// So: ReadOnly is the promise, and is refused where it cannot be kept.
 	// Reach is the need, and is honored everywhere — bound read-only under
 	// bubblewrap and the container, and given back under Seatbelt, whose open
-	// reads stop at the data directory.
+	// reads stop at the data directory and people's own storage.
 	Reach []string
 	// WorkDir is the directory the command STARTS IN, when that is not the
 	// workspace. Empty means the workspace, which is what every caller wanted

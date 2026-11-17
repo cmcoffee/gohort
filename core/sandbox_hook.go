@@ -2969,7 +2969,22 @@ func init() {
 		Kind:  KindBool, Default: 1, Min: 0, Max: 1,
 	})
 	sandbox.ShellNetworkClosedByDefault = func() bool { return TuneBool(tuneShellNetworkClosed) }
+	RegisterTunable(TunableSpec{
+		Key: tuneMacPersonalReadsClosed, Category: "Sign-in & security",
+		Label: "On macOS, sandboxed commands stay out of home folders and volumes",
+		Help:  "ON (the default): a command run in the macOS sandbox cannot read /Users, /Volumes or this account's home, except its project, the folders it was handed, and toolchains installed there that are on PATH (a Go SDK, nvm, pyenv, ~/.cargo). OFF: it can read anything on the disk but gohort's data and the named secrets (~/.ssh, keychains), as before. Linux sandboxes see only the system folders and the project either way.",
+		Kind:  KindBool, Default: 1, Min: 0, Max: 1,
+	})
+	sandbox.SeatbeltPersonalReadsClosed = func() bool { return TuneBool(tuneMacPersonalReadsClosed) }
 }
+
+// tuneMacPersonalReadsClosed keeps a macOS sandboxed command out of people's
+// own storage. The macOS sandbox cannot confine reads to a list (a profile
+// that does aborts on load), so it read the whole disk but the named
+// secrets: an assistant's find / -name esb.tgz walked a whole home. Denying
+// the home folders and volumes as a whole, then giving back what a run
+// needs, is the same shape that already keeps gohort's data out.
+const tuneMacPersonalReadsClosed = "tune_mac_sandbox_personal_reads_closed"
 
 // credentialAsksEachCall reports whether the credential a name resolves to
 // for user is set to ask before every call.

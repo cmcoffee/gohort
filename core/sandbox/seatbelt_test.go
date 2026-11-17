@@ -208,8 +208,9 @@ func TestTheShellShapeCarriesItsWorkspace(t *testing.T) {
 	if !strings.Contains(profile, `"/ws/agent-9"`) {
 		t.Error("the workspace is missing from the profile")
 	}
-	// The command must be the last argv element, after the profile.
-	if c.Args[len(c.Args)-1] != "ls" {
+	// The command must be the last argv element, after the profile (behind
+	// the git setting a closed home adds).
+	if !strings.HasSuffix(c.Args[len(c.Args)-1], "ls") || c.Args[len(c.Args)-3] != "/bin/sh" {
 		t.Errorf("argv does not end with the command: %v", c.Args)
 	}
 }
@@ -514,5 +515,60 @@ func TestAPathTheRunMustOpenIsReadableDespiteTheDataDeny(t *testing.T) {
 	}
 	if w := strings.Index(p, "(allow file-read* file-write*"); w >= 0 && strings.Contains(p[w:], ".uploads") {
 		t.Errorf("a path to open became writable:\n%s", p)
+	}
+}
+
+// On macOS a command read the whole disk but the named secrets, so an
+// assistant's find / -name esb.tgz walked a whole home. People's own storage
+// is denied as a whole now, and given back after it are the toolchains on
+// PATH that live there (by install folder), the project and the folders the
+// run is handed. A toolchain is never a whole home and never holds a secret,
+// and the secrets are denied again after the toolchains, so ~/bin on PATH
+// does not give back ~/.ssh. Off, the profile is as it was.
+func TestAMacCommandStaysOutOfHomeFoldersButKeepsItsToolchains(t *testing.T) {
+	t.Setenv("HOME", "/Users/alice")
+	roots := seatbeltToolchainRoots(strings.Join([]string{
+		"/Users/alice/sdk/go/bin", "/Users/alice/.pyenv/shims", "/Users/alice/bin", "/usr/bin",
+		"/Users/alice/.cargo/bin", "/Users/alice/.ssh/bin", "/Users/alice", "/Volumes/ext/bin",
+	}, ":"), "/Users/alice/.pyenv/versions/3.12.1/bin/python3")
+	got := strings.Join(roots, " ")
+	want := "/Users/alice/sdk/go /Users/alice/.pyenv /Users/alice/bin /Users/alice/.cargo /Volumes/ext/bin /Users/alice/.pyenv/versions/3.12.1"
+	if got != want {
+		t.Errorf("toolchain roots:\n got %s\nwant %s", got, want)
+	}
+
+	prevWS, prevSwitch := WorkspacesDir, SeatbeltPersonalReadsClosed
+	t.Cleanup(func() { WorkspacesDir, SeatbeltPersonalReadsClosed = prevWS, prevSwitch })
+	WorkspacesDir = func() string { return "/Users/alice/gohort/data/workspaces" }
+	t.Setenv("PATH", "/Users/alice/bin:/usr/bin")
+	cmd := seatbeltSandbox{path: "/usr/bin/sandbox-exec"}.build(context.Background(), sandboxRun{
+		Kind: sandboxShellRun, Command: "true", WorkspaceDir: "/Users/alice/gohort/data/workspaces/u1",
+	})
+	p := cmd.Args[2]
+	at := func(s string) int { return strings.Index(p, s) }
+	users, vols := at(`(deny file-read* (subpath "/Users"))`), at(`(deny file-read* (subpath "/Volumes"))`)
+	bin := at(`(subpath "/Users/alice/bin")`)
+	ssh := strings.LastIndex(p, `(deny file-read* (subpath "/Users/alice/.ssh"))`)
+	ws := strings.LastIndex(p, `(subpath "/Users/alice/gohort/data/workspaces/u1")`)
+	if users < 0 || vols < 0 {
+		t.Fatalf("people's storage is not denied:\n%s", p)
+	}
+	if bin < users || ssh < bin || ws < users {
+		t.Errorf("order: /Users denied %d, ~/bin given back %d, ~/.ssh denied again %d, the workspace given back %d:\n%s", users, bin, ssh, ws, p)
+	}
+	if strings.Contains(p, `(subpath "/Users/alice")`) {
+		t.Errorf("a whole home was given back:\n%s", p)
+	}
+	// git reads no global config it cannot open, unless the run names one.
+	if sh := cmd.Args[len(cmd.Args)-1]; !strings.HasPrefix(sh, `GIT_CONFIG_GLOBAL="${GIT_CONFIG_GLOBAL:-/dev/null}"; export GIT_CONFIG_GLOBAL; true`) {
+		t.Errorf("the command: %q", sh)
+	}
+
+	SeatbeltPersonalReadsClosed = func() bool { return false }
+	cmd = seatbeltSandbox{path: "/usr/bin/sandbox-exec"}.build(context.Background(), sandboxRun{
+		Kind: sandboxShellRun, Command: "true", WorkspaceDir: "/Users/alice/gohort/data/workspaces/u1",
+	})
+	if strings.Contains(cmd.Args[2], `(subpath "/Users"))`) {
+		t.Error("switched off, people's storage is still denied")
 	}
 }

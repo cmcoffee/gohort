@@ -75,6 +75,12 @@ const seatbeltBinary = "/usr/bin/sandbox-exec"
 // and network stay properly constrained, and those are the axes Seatbelt can
 // enforce reliably.
 //
+// Since 0.9.506 people's own storage is denied as a whole too (/Users,
+// /Volumes, this user's home: seatbeltPersonalRoots), with the project, the
+// folders a run is handed and the toolchains on PATH given back after it.
+// Denying a subtree after the blanket allow loads where allowing one alone
+// does not; it is how gohort's data directory has always been kept out.
+//
 // Anything added here must be a path a legitimate tool never needs.
 var seatbeltDeniedReads = []string{
 	".ssh",              // private keys
@@ -190,13 +196,25 @@ func (s seatbeltSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 		}
 	}
 
+	if SeatbeltPersonalReadsClosed == nil || SeatbeltPersonalReadsClosed() {
+		spec.PersonalClosed = true
+		spec.Toolchains = seatbeltToolchainRoots(os.Getenv("PATH"), deps.Python())
+	}
+
 	profile := seatbeltProfile(spec)
 	var argv []string
 	switch run.Kind {
 	case sandboxScriptRun:
 		argv = []string{"-p", profile, run.Interpreter, "-c", run.Command}
 	default:
-		argv = []string{"-p", profile, "/bin/sh", "-c", run.Command}
+		command := run.Command
+		// With homes out of reach, git's global config (~/.gitconfig) is
+		// one it cannot open, and every git command warned so. It reads
+		// none instead, unless the run names one.
+		if spec.PersonalClosed {
+			command = `GIT_CONFIG_GLOBAL="${GIT_CONFIG_GLOBAL:-/dev/null}"; export GIT_CONFIG_GLOBAL; ` + command
+		}
+		argv = []string{"-p", profile, "/bin/sh", "-c", command}
 	}
 	c := exec.CommandContext(ctx, s.path, argv...)
 	if run.Kind == sandboxShellRun {
@@ -233,6 +251,12 @@ type seatbeltSpec struct {
 	// private loopback, so opening localhost wholesale would hand the
 	// command every service on the machine, gohort's own included.
 	RelayPort string
+	// PersonalClosed denies reading people's own storage: every home folder
+	// (/Users), mounted volumes (/Volumes) and this user's home wherever it
+	// is (SeatbeltPersonalReadsClosed). Toolchains are the folders given
+	// back inside it, so a compiler installed in a home folder still runs.
+	PersonalClosed bool
+	Toolchains     []string
 	// No read-only path list. Reads are allowed filesystem-wide by
 	// construction (a subpath-scoped file-read* aborts the profile), so a
 	// field naming readable directories could only ever describe paths that
@@ -282,6 +306,24 @@ func seatbeltProfile(spec seatbeltSpec) string {
 	// protecting nothing.
 	if denies := seatbeltDenyRules(); denies != "" {
 		b.WriteString(denies)
+	}
+	// And people's own storage, as a whole: what a command has no business
+	// walking (find / ran over a whole home). Given back below are the
+	// project, the folders the run was handed, and the toolchains installed
+	// in it.
+	if spec.PersonalClosed {
+		for _, p := range seatbeltPersonalRoots() {
+			b.WriteString("(deny file-read* " + sbSubpath(p) + ")\n")
+		}
+		if len(spec.Toolchains) > 0 {
+			b.WriteString("(allow file-read*\n")
+			for _, p := range spec.Toolchains {
+				b.WriteString("  " + sbSubpath(p) + "\n")
+			}
+			b.WriteString(")\n")
+			// A toolchain given back must never give back a secret.
+			b.WriteString(seatbeltSecretDenyRules())
+		}
 	}
 	// And give back what a run needs from inside the denied directory: the
 	// helper package, the Python deps, the folders it was handed to read, the
@@ -349,26 +391,7 @@ func seatbeltProfile(spec seatbeltSpec) string {
 // though it does.
 func seatbeltDenyRules() string {
 	var b strings.Builder
-	home, err := os.UserHomeDir()
-	resolve := func(p string) (string, bool) {
-		if strings.HasPrefix(p, "/") {
-			return p, true
-		}
-		if err != nil || strings.TrimSpace(home) == "" {
-			return "", false
-		}
-		return filepath.Join(home, p), true
-	}
-	for _, p := range seatbeltDeniedReads {
-		if full, ok := resolve(p); ok {
-			b.WriteString("(deny file-read* " + sbSubpath(full) + ")\n")
-		}
-	}
-	for _, p := range seatbeltDeniedReadFiles {
-		if full, ok := resolve(p); ok {
-			b.WriteString("(deny file-read* " + sbLiteral(full) + ")\n")
-		}
-	}
+	b.WriteString(seatbeltSecretDenyRules())
 	// The deployment's own store: credentials, peer keys, every user's data. A
 	// shell tool has no business reading the database that holds the secrets it
 	// is being denied elsewhere.
@@ -381,6 +404,121 @@ func seatbeltDenyRules() string {
 		}
 	}
 	return b.String()
+}
+
+// seatbeltSecretDenyRules are the denials of the named secrets alone.
+func seatbeltSecretDenyRules() string {
+	var b strings.Builder
+	for _, full := range seatbeltSecretPaths() {
+		b.WriteString("(deny file-read* " + sbSubpath(full) + ")\n")
+	}
+	home, err := os.UserHomeDir()
+	for _, p := range seatbeltDeniedReadFiles {
+		full := p
+		if !strings.HasPrefix(p, "/") {
+			if err != nil || strings.TrimSpace(home) == "" {
+				continue
+			}
+			full = filepath.Join(home, p)
+		}
+		b.WriteString("(deny file-read* " + sbLiteral(full) + ")\n")
+	}
+	return b.String()
+}
+
+// seatbeltSecretPaths are seatbeltDeniedReads as absolute paths.
+func seatbeltSecretPaths() []string {
+	home, err := os.UserHomeDir()
+	var out []string
+	for _, p := range seatbeltDeniedReads {
+		if strings.HasPrefix(p, "/") {
+			out = append(out, p)
+		} else if err == nil && strings.TrimSpace(home) != "" {
+			out = append(out, filepath.Join(home, p))
+		}
+	}
+	return out
+}
+
+// SeatbeltPersonalReadsClosed reports whether a macOS sandboxed command is
+// kept out of people's own storage (seatbeltSpec.PersonalClosed). Core sets
+// it from an administrator's setting; on until then.
+var SeatbeltPersonalReadsClosed = func() bool { return true }
+
+// seatbeltPersonalRoots are people's own storage: every home folder, mounted
+// volumes, and this user's home when it is somewhere else.
+func seatbeltPersonalRoots() []string {
+	out := []string{"/Users", "/Volumes"}
+	if home, err := os.UserHomeDir(); err == nil && filepath.IsAbs(home) && home != "/" &&
+		!strings.HasPrefix(home+"/", "/Users/") && !strings.HasPrefix(home+"/", "/Volumes/") {
+		out = append(out, filepath.Clean(home))
+	}
+	return out
+}
+
+// seatbeltToolchainRoots are the toolchains installed in people's own storage
+// that a command may still run: each PATH folder inside it, as its install
+// folder (the parent of a bin or shims folder: a Go SDK's GOROOT, an nvm
+// node, ~/.pyenv), and the Python gohort chose for scripts. Never a home
+// itself, nor a folder holding a secret: ~/bin gives back ~/bin, not ~.
+func seatbeltToolchainRoots(path, python string) []string {
+	personal := seatbeltPersonalRoots()
+	inPersonal := func(p string) bool {
+		for _, r := range personal {
+			if p == r || strings.HasPrefix(p, r+"/") {
+				return true
+			}
+		}
+		return false
+	}
+	home, _ := os.UserHomeDir()
+	secrets := seatbeltSecretPaths()
+	safe := func(p string) bool {
+		p = filepath.Clean(p)
+		if p == "/" || p == filepath.Clean(home) || strings.HasPrefix(filepath.Clean(home)+"/", p+"/") {
+			return false
+		}
+		for _, r := range personal {
+			if p == r || filepath.Dir(p) == r {
+				return false // a volume or a whole home
+			}
+		}
+		for _, s := range secrets {
+			if s == p || strings.HasPrefix(s, p+"/") || strings.HasPrefix(p, s+"/") {
+				return false
+			}
+		}
+		return true
+	}
+	var dirs []string
+	for _, d := range filepath.SplitList(path) {
+		if filepath.IsAbs(d) {
+			dirs = append(dirs, filepath.Clean(d))
+		}
+	}
+	if filepath.IsAbs(python) {
+		dirs = append(dirs, filepath.Dir(python))
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, d := range dirs {
+		if !inPersonal(d) {
+			continue
+		}
+		root := d
+		if b := filepath.Base(d); b == "bin" || b == "shims" {
+			root = filepath.Dir(d)
+		}
+		if !safe(root) {
+			root = d
+		}
+		if !safe(root) || seen[root] {
+			continue
+		}
+		seen[root] = true
+		out = append(out, root)
+	}
+	return out
 }
 
 // sbSubpath renders a subpath rule.
