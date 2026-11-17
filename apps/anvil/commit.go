@@ -21,6 +21,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/gohort/core/assist"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
@@ -159,4 +160,62 @@ func installMessage(udb Database, projectID string) string {
 		udb.Get(installMessageTable, projectID, &msg)
 	}
 	return strings.TrimSpace(msg)
+}
+
+// --- drafting the person's own commit message ------------------------------
+
+// commitDiffBudget caps the diff the draft is written from.
+const commitDiffBudget = 40 << 10
+
+// commitAssist is the Commit dialog's ✨ Draft message: the form's helper
+// (core/assist), told what is being committed, so it drafts the message into
+// the form for the person to check and commit. The assistant commits its
+// own work with commit; this is for the person committing theirs.
+func (T *Anvil) commitAssist() http.HandlerFunc {
+	return assist.Handler(assist.Spec{
+		Route: "app.anvil.commit_message", Label: "Anvil: commit message", App: "/anvil",
+		Think: assist.Off,
+		Allow: func(w http.ResponseWriter, r *http.Request) bool {
+			user, udb, ok := RequireUser(w, r, T.DB)
+			if !ok {
+				return false
+			}
+			p, found := T.findProject(udb, user, callerIsAdmin(r), r.PathValue("id"))
+			if !found {
+				http.Error(w, "no such project", http.StatusNotFound)
+				return false
+			}
+			if why := commitRefusal(p, user, callerIsAdmin(r)); why != "" {
+				http.Error(w, why, http.StatusForbidden)
+				return false
+			}
+			return true
+		},
+		About: func(r *http.Request) (string, error) {
+			user := AuthCurrentUser(r)
+			p, found := T.findProject(UserDB(T.DB, user), user, callerIsAdmin(r), r.PathValue("id"))
+			if !found {
+				return "", fmt.Errorf("no such project")
+			}
+			base, err := p.baseDir()
+			if err != nil {
+				return "", err
+			}
+			line, n := pendingLine(base)
+			if n == 0 {
+				return "", assist.Refuse(http.StatusConflict, "nothing differs from the last commit, so there is no message to write")
+			}
+			diff, err := diffSinceCommit(r.Context(), base, "--stat", "-p")
+			if err != nil {
+				return "", err
+			}
+			text := string(diff)
+			if len(text) > commitDiffBudget {
+				text = text[:commitDiffBudget] + "\n[the rest of the diff is left out; the summary at the top lists every file]"
+			}
+			return "The person is committing their changes to the project " + p.Name + " and wants the commit message written: the message field. " +
+				commitStyle + " Say what the changes do and why, from the diff; do not describe the diff line by line.\n\n" +
+				"What is committed: " + line + "\n\n" + UntrustedData("the changes being committed", text), nil
+		},
+	})
 }

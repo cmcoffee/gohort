@@ -25,6 +25,13 @@ import (
 // run tool can write must, and writes the patch to a folder of the server's
 // that nothing in the project can reach.
 func workingPatch(ctx context.Context, base string) ([]byte, error) {
+	return diffSinceCommit(ctx, base, "--binary")
+}
+
+// diffSinceCommit is what differs from the last commit, new files included, as
+// git diff prints it with the options given: a patch to apply (--binary), or
+// a summary and the text changes to read (--stat -p).
+func diffSinceCommit(ctx context.Context, base string, opts ...string) ([]byte, error) {
 	if info := inspectRepo(base); !info.IsRepo {
 		return nil, fmt.Errorf("this project is not under git, so there is no last commit to differ from")
 	} else if info.Head == "" && info.Branch == "" {
@@ -43,7 +50,7 @@ func workingPatch(ctx context.Context, base string) ([]byte, error) {
 		"export GIT_INDEX_FILE=\"$ANVIL_OUT/index\"\n" +
 		git + " read-tree HEAD\n" +
 		git + " add -A -- .\n" +
-		git + " diff --cached --binary --no-ext-diff --no-textconv HEAD > \"$ANVIL_OUT/patch\"\n"
+		git + " diff --cached " + strings.Join(opts, " ") + " --no-ext-diff --no-textconv HEAD > \"$ANVIL_OUT/patch\"\n"
 	env := map[string]string{"ANVIL_OUT": out}
 	for _, kv := range gitQuietEnv {
 		k, v, _ := strings.Cut(kv, "=")

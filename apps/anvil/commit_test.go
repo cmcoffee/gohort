@@ -2,6 +2,8 @@ package anvil
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -127,5 +129,49 @@ func TestAnAppsInstallCommitsWithTheAssistantsMessage(t *testing.T) {
 	}
 	if !strings.Contains(T.projectContext(p, base), "install_message") {
 		t.Error("the assistant is not told to write the install's message")
+	}
+}
+
+// The Commit dialog's ✨ Draft message drafts the person's message from what
+// is being committed: the helper is told the changes and how a message is
+// written, and its draft goes into the message field. Nothing to commit, or
+// a project the person may not commit in, is refused.
+func TestTheCommitDialogDraftsAMessageFromTheChanges(t *testing.T) {
+	T, serve := appProjectWorld(t)
+	udb := UserDB(T.DB, "alice")
+	p := Project{ID: UUIDv4(), Name: "tool", Kind: KindClone, Owner: "alice", Source: sourceNew}
+	base, _ := p.baseDir()
+	os.MkdirAll(base, 0o700)
+	runGit(base, "init", "-q")
+	os.WriteFile(filepath.Join(base, "list.go"), []byte("package tool\n"), 0o644)
+	commitCheckout(base, "alice", "Start")
+	T.saveProject(udb, p)
+
+	fake := &FakeLLM{Turns: []FakeTurn{{Content: "```fields\n{\"message\": \"Add a status filter to the list\\n\\nThe list was too long to scan.\"}\n```"}}}
+	prevW, prevL := SharedWorkerLLM(), SharedLeadLLM()
+	SetSharedLLMs(fake, fake)
+	t.Cleanup(func() { SetSharedLLMs(prevW, prevL) })
+	body := `{"message":"Draft the commit message for these changes.","form":[{"field":"message","label":"Message","type":"textarea"}],"values":{}}`
+	url := "/api/project/" + p.ID + "/commit/assist"
+
+	if w := serve("alice", "POST", url, body); w.Code != http.StatusConflict {
+		t.Errorf("with nothing to commit: %d %s", w.Code, w.Body.String())
+	}
+	os.WriteFile(filepath.Join(base, "list.go"), []byte("package tool\n\n// statusFilter keeps the rows with a status.\nfunc statusFilter() {}\n"), 0o644)
+	w := serve("alice", "POST", url, body)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Add a status filter to the list") {
+		t.Fatalf("the draft: %d %s", w.Code, w.Body.String())
+	}
+	prompt := fake.Prompt(0) + fake.Config(0).SystemPrompt
+	for _, want := range []string{"statusFilter keeps the rows", "list.go", "under 72 characters"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("the helper was not told %q", want)
+		}
+	}
+	if w := serve("bob", "POST", url, body); w.Code == http.StatusOK {
+		t.Error("someone else drafted for alice's project")
+	}
+	if !strings.Contains(fmt.Sprint(commitForm(p).AssistURL), "/commit/assist") || commitForm(p).AssistLabel != "Draft message" {
+		t.Error("the Commit dialog has no Draft message")
 	}
 }

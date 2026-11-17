@@ -236,6 +236,10 @@ func commitForm(p Project) ui.FormPanel {
 	return ui.FormPanel{
 		Source: api, PostURL: api,
 		SubmitLabel: "Commit", BusyLabel: "Committing...", OnSuccess: "anvil_git_done",
+		// ✨ Draft message: written from the changes, into the message
+		// field, for the person to check (commit.go).
+		Assist: true, AssistURL: api + "/assist", AssistLabel: "Draft message",
+		AssistAsk: "Draft the commit message for these changes.",
 		Fields: []ui.FormField{
 			{Field: "pending", Label: "To commit", Type: "readonly"},
 			{Field: "message", Label: "Message", Type: "textarea", Rows: 4, Required: true,
