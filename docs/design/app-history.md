@@ -1,7 +1,8 @@
 # One history per app, for Builder and Anvil
 
-Status: proposed (2026-11-17). Nothing built. Step 1 below (Anvil saying
-when an install leaves the app broken) shipped first, on its own, in 0.9.510.
+Status: agreed (2026-11-17), stage 1 next. The seven questions are settled
+(Decisions, at the end). Step 1 (Anvil saying when an install leaves the app
+broken) shipped first, on its own, in 0.9.510.
 
 Two stages. **Stage 1** gives every app a repository that records each save,
 and has Anvil work in it; the app as stored stays what is served. **Stage 2**
@@ -38,29 +39,45 @@ the history:
 
 ## What it would be
 
-**Every save of an app is a commit in that app's own repository**, whoever
-made it and however.
+**Every app has its own repository, and a finished, tested piece of work on
+it is a commit there**, whoever made it.
 
 - The repository is the app's folder (the format `WriteAppFolder` writes:
   app.json, page.html, data/, actions/, lib/, assets/, NOTES.md,
-  checks.json), at `<owner's workspaces>/<owner>/.apps/<slug>/`, outside any
-  chat workspace.
-- `SaveAppSpecAs` is the one place every save passes through (Builder's
-  edits, an install, a revert, a maintainer, settings, sharing), so the
-  commit is made there: the saved app is written into the repository and
-  committed when its files changed. A change that does not touch the files
-  (sharing, who maintains it) makes no commit.
-- The message is the save's change note, written as a commit message since
-  0.9.498. Saves with none get one from what changed ("Update data source
-  now").
-- The author is the person (`user <user@users.gohort.invalid>`, as Anvil's
-  commits are now), with a `Changed-by: Builder` or `Changed-by: Anvil`
-  trailer when an agent made the change, and the maintainer as author for a
-  maintainer's save.
-- The live app stays what is served. The repository is the record of saves,
-  written after each one; nothing reads the app from it. That keeps every
-  existing path, check and revision as it is, and nothing is migrated: an
-  app's history begins at its next save.
+  checks.json), at `<workspaces>/<owner>/.apps/<slug>/`, outside any chat
+  workspace.
+- **Every save updates its files.** `SaveAppSpecAs` is the one place every
+  save passes through (Builder's edits, an install, a revert, a maintainer,
+  settings), so the saved app is written into the repository's working
+  files there. A change that does not touch the files (sharing, who
+  maintains it) changes nothing in it.
+- **A commit is a finished piece of work, as Claude Code commits.** Saves
+  are not committed one by one: between commits the live app is ahead of
+  its history, and the repository shows those saves as uncommitted
+  changes. Builder commits when a piece of work is done and tested (verify
+  passed on the revision serving now, and the app's checks pass), with a
+  message it writes; a commit before that is refused, saying why, and a
+  turn that ends verified with changes uncommitted is sent back to commit
+  them. Anvil already works this way (`commit` once its check passes;
+  Install commits with the message the assistant wrote). A change a person
+  makes themselves (a revert, a setting, a maintainer's edit on the app's
+  page) is committed at once: their action is the finished piece.
+- **A message** has a subject under 72 characters saying what changed, a
+  blank line, and why.
+- **The author is the person** (`user <user@users.gohort.invalid>`, as
+  Anvil's commits are now), the maintainer for a maintainer's change, and
+  the agent is credited as Claude Code credits itself:
+  `Co-Authored-By: Builder` or `Co-Authored-By: Anvil`.
+- The live app stays what is served. The repository is the record of the
+  work; nothing reads the app from it. That keeps every existing path,
+  check and revision as it is, and nothing is migrated: an app's history
+  begins at its next save, with a commit of the version it starts from.
+
+**Without git** (a machine where it is not installed), apps do not change:
+they save, run and keep revisions exactly as now, and only the history in
+git is missing. The admin page says so ("git is not installed: app history
+is kept as revisions only"). Once git is there, an app's history begins at
+its next save.
 
 **Anvil opens the app's own repository** instead of making a checkout of
 its own.
@@ -73,9 +90,9 @@ its own.
   work in the checkout does not touch what changed, it is merged and Install
   goes ahead; if it does, the project shows what conflicts, as git does, and
   the assistant or the person resolves it. That replaces today's refusal.
-- An existing Anvil app project keeps its own history and is offered "Use
-  the app's history": its uncommitted work is kept, and the checkout is
-  re-made from the app's repository.
+- An Anvil app project made before this keeps its own history and keeps
+  working; the feature is days old, so nothing moves it over. Removing it
+  and opening the app again gives it the app's history.
 
 **Later, separately:** Builder's folder workflow (`checkout`) uses the same
 repository, and the revisions list is read from git. Neither is needed for
@@ -95,14 +112,16 @@ and the store keeps the app's record.
 | | verify verdicts, settings' values, private_db, schedules' state |
 | | the records people save, and their files |
 
-**Serving.** The app is built from the `live` branch (the folder reader
-`BuildAppFolder` already does this), cached by commit, so a request reads a
-built app from memory and a new commit on `live` replaces it.
+**Serving.** The `live` branch is kept checked out as a plain folder, and
+the app is built from those files (the folder reader `BuildAppFolder`
+already does this), cached by the folder's state, so a request reads a built
+app from memory. Serving never runs git.
 
-**Changing.** Builder and Anvil work in the repository, each on its own
-branch or working copy, so their changes meet in git. Builder's in-place
-edits (patch_html, replace_function) become an edit to the file and a
-commit, on Builder's branch.
+**Changing.** Builder and Anvil work in the repository, so their changes
+meet in git. Builder has one branch per app (`builder`), kept across its
+conversations, so work one conversation left unfinished is there in the
+next. Builder's in-place edits (patch_html, replace_function) change files
+on that branch, committed when the work is done and tested, as in stage 1.
 
 **Going live is the one gated step.** A change reaches `live` only through
 the install path, which runs everything a save runs now: the validators,
@@ -117,8 +136,9 @@ else; it cannot make anything live by writing files.
   revisions list is the log.
 - Preview is serving a branch to its author (what Anvil's Preview builds
   today, from a branch instead of a working folder).
-- A maintainer's change can be a branch the owner merges, instead of a save
-  into the owner's app.
+- A maintainer's change goes live as now, through the same gates, committed
+  under the maintainer's name. (A branch for the owner to merge is possible
+  later; it is not built.)
 - Bundles (`.gohortapp`) can become git bundles of the repository, carrying
   its history.
 
@@ -133,23 +153,17 @@ somewhere new.
 
 **What stage 2 costs on top of stage 1.**
 
-- **git is required for every app**, not only Anvil, on every deployment
-  (Windows included). Without it the store keeps serving (an app is moved
-  only where git is present), and that has to be said on the admin page. A
-  Go git library instead is a new dependency, vetted before it is chosen.
+- **git becomes required for history, not for apps.** Serving reads the
+  live folder, so without git (never installed, or gone since) an app still
+  runs and saves: a save writes the live folder directly through the same
+  gates, revisions are kept as now, and history resumes when git is back. An
+  app not yet moved is served from the store. The git program is used (what
+  Anvil uses now); no Go library, so nothing new to vet.
 - **Every path that changes code moves to git**: app_def's edits, revisions,
   revert, maintainers' saves, bundles. The save gates do not change; what
   they guard does.
 - **A request must not wait on git.** The cache by commit is required, not
   an optimisation.
-
-### Stage 2 questions
-
-5. **git library or the git binary?** The binary is what Anvil uses now;
-   a library removes the dependency at the cost of vetting one.
-6. **Builder's branch.** One per app (proposed), or one per Builder turn?
-7. **Maintainers.** Keep saving into the owner's live app (as now), or
-   propose a branch for the owner to merge?
 
 ## What it costs
 
@@ -157,9 +171,9 @@ somewhere new.
   WebAssembly) are stored at each version that changes them. An app whose
   repository passes a size worth noticing (say 200 MB) is said on its row;
   pruning old history is a separate decision.
-- **Time per save.** Writing the folder and a commit: tens of milliseconds
-  for a typical app, run after the save and never blocking it (a failed
-  commit is logged and the save stands).
+- **Time per save.** Writing the folder's files: milliseconds for a typical
+  app, after the save and never blocking it; the commit comes at the end of
+  a piece of work. A failed write or commit is logged and the save stands.
 - **Shared apps.** The repository is the owner's. A maintainer's save is
   committed in it under the maintainer's name; a maintainer opening the app
   in Anvil clones the owner's repository and installs through the same
@@ -167,37 +181,45 @@ somewhere new.
 - **Privacy.** The repository holds what the app already holds, under the
   owner's workspace, which only the owner's sessions reach.
 
-## Questions to settle before building
+## Decisions (owner, 2026-11-17)
 
-1. **Where the repository lives.** Under the owner's workspaces root
-   (proposed), or beside the app's assets?
-2. **Anvil's conflict.** Merge automatically when the changes do not
-   overlap (proposed), or always ask?
-3. **Existing Anvil app projects.** Offer "Use the app's history"
-   (proposed), or switch them over automatically on next open?
-4. **Builder's in-place edits** (patch_html, replace_function) commit like
-   any save (proposed). Is a commit per small edit too many? Grouping one
-   Builder turn's edits into one commit is possible, at the cost of a
-   commit that lands when the turn ends rather than with the edit.
+1. **Where the repository lives:** `<workspaces>/<owner>/.apps/<slug>/`.
+2. **Another save since Anvil started:** merged when it does not overlap,
+   and Install goes ahead; only a real overlap stops it, shown as a
+   conflict.
+3. **Existing Anvil app projects:** nothing special; the feature is days
+   old.
+4. **Commits:** as Claude Code commits. A finished piece of work, tested
+   (verify and checks passing), with a message the agent writes and the
+   agent credited as co-author; not a commit per save. A person's own
+   change commits at once.
+5. **git:** the git program, with a fallback: without git, apps run and
+   save as now and only the history in git is missing (stage 2 serves from
+   a plain live folder, so it never needs git to serve).
+6. **Builder's branch (stage 2):** one per app.
+7. **Maintainers (stage 2):** save directly, as now.
 
 ## Steps
 
 Stage 1:
 
 1. Anvil says when an install leaves the app broken. **Done (0.9.510).**
-2. The app repository and a commit on every save, behind the save
-   (`core`, with the folder writer from orchestrate).
-3. Anvil's app projects open the app's repository; Install fast-forwards;
+2. The app repository, its files written on every save (`core`, with the
+   folder writer from orchestrate), and the no-git fallback with its admin
+   notice.
+3. Commits: Builder's commit (refused until verify and checks pass, a turn
+   ending verified and uncommitted sent back), a person's change committed
+   at once, the Co-Authored-By trailer.
+4. Anvil's app projects open the app's repository; Install fast-forwards;
    another save since is fetched and merged, or shown as a conflict.
-4. "Use the app's history" for existing app projects.
 5. Measure: repository sizes and commit times across real apps.
 
 Stage 2:
 
-6. Serve from `live`, cached by commit, for an app that has moved; the store
+6. Serve from the live folder, cached, for an app that has moved; the store
    serves the rest.
-7. Installs merge into `live` through the save gates; Builder's edits commit
-   on its branch.
+7. Installs merge into `live` through the save gates; Builder works on its
+   branch, one per app; without git, saves write the live folder directly.
 8. Revisions, revert and Preview from git; bundles as git bundles.
 9. Move apps on first save or open; clear their code fields once served
    from the repository.
