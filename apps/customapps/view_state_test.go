@@ -43,9 +43,23 @@ func TestViewStateMergesAndReturns(t *testing.T) {
 	if got := loadViewState(alice, "prep"); got["tab"] != "summary" || got["blob"] != "" {
 		t.Errorf("a refused save changed the view: %d keys", len(got))
 	}
+	// Reset view asks first, saying the records are kept: opening the link
+	// clears nothing. Confirming clears the view, from this site only.
 	w := httptest.NewRecorder()
 	T.handleViewReset(w, httptest.NewRequest(http.MethodGet, "/apps/prep/_view/reset", nil), alice, spec)
-	if w.Code != http.StatusFound || len(loadViewState(alice, "prep")) != 0 {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "records are kept") || len(loadViewState(alice, "prep")) == 0 {
+		t.Errorf("opening Reset view: %d, view %v", w.Code, loadViewState(alice, "prep"))
+	}
+	cross := httptest.NewRequest(http.MethodPost, "/apps/prep/_view/reset", nil)
+	cross.Header.Set("Sec-Fetch-Site", "cross-site")
+	w = httptest.NewRecorder()
+	T.handleViewReset(w, cross, alice, spec)
+	if w.Code != http.StatusForbidden || len(loadViewState(alice, "prep")) == 0 {
+		t.Errorf("a reset from another site: %d, view %v", w.Code, loadViewState(alice, "prep"))
+	}
+	w = httptest.NewRecorder()
+	T.handleViewReset(w, httptest.NewRequest(http.MethodPost, "/apps/prep/_view/reset", nil), alice, spec)
+	if w.Code != http.StatusOK || len(loadViewState(alice, "prep")) != 0 {
 		t.Errorf("reset: %d %v", w.Code, loadViewState(alice, "prep"))
 	}
 }

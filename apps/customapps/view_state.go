@@ -25,6 +25,8 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/core/netgate"
+	"github.com/cmcoffee/gohort/core/ui"
 )
 
 const (
@@ -92,10 +94,51 @@ func (T *CustomApps) saveViewState(a *appCall, ch viewStateChange) (any, error) 
 	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
-// handleViewReset forgets the person's view of the app and opens it fresh.
+// handleViewReset is the page's Reset view link. GET asks first, saying
+// what goes and what stays; POST forgets the person's view of the app, and
+// the page returns them to it fresh. It used to clear at the click: an app
+// that kept its recent searches in localStorage lost them to one press of a
+// link that read as tidying the page, and its owner took the app's data to
+// be gone.
 func (T *CustomApps) handleViewReset(w http.ResponseWriter, r *http.Request, appdb Database, spec AppSpec) {
-	appdb.Unset(viewStateTable, spec.Slug)
-	http.Redirect(w, r, T.WebPath()+"/"+spec.Slug+"/", http.StatusFound)
+	base := T.WebPath() + "/" + spec.Slug
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+	case http.MethodPost:
+		// From this site's own page only: a page elsewhere cannot clear it.
+		if netgate.CrossSite(r) {
+			jsonapi.Fail(w, r, jsonapi.Forbidden("reset your view from this site's own page"))
+			return
+		}
+		appdb.Unset(viewStateTable, spec.Slug)
+		jsonapi.Write(w, map[string]string{"message": "Your view of " + spec.Name + " was reset."})
+		return
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	what := "Nothing is saved for you in this app's page right now, so there is nothing to reset."
+	if len(loadViewState(appdb, spec.Slug)) > 0 {
+		what = "This clears where you were in " + spec.Name + " and anything its page kept for you to come back to, such as recent searches, an open tab or a half-typed entry, on every device. " +
+			"The app's records are kept. Use it when the page will not open properly."
+	}
+	ui.Page{
+		Title:     "Reset your view of " + spec.Name,
+		ShowTitle: true,
+		BackURL:   base + "/",
+		MaxWidth:  "560px",
+		Sections: []ui.Section{{
+			Title:    "Reset your view of " + spec.Name + "?",
+			Subtitle: what,
+			Body: ui.FormPanel{
+				PostURL:        base + "/_view/reset",
+				Method:         "POST",
+				SubmitLabel:    "Reset view",
+				RedirectURL:    base + "/",
+				RedirectTarget: "_self",
+			},
+		}},
+	}.ServeHTTP(w, r)
 }
 
 // viewStateScript is the frame's localStorage, holding state, saving its
