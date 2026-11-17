@@ -27,6 +27,7 @@ import (
 	"strings"
 
 	"github.com/cmcoffee/gohort/apps/customapps"
+	"github.com/cmcoffee/gohort/core/appcheck"
 )
 
 // instructionFiles are read into the prompt when present, in this order. The
@@ -57,6 +58,18 @@ func (T *Anvil) projectContext(p Project, base string) string {
 		// the web for it and guessed a call that does not exist.
 		b.WriteString("Its page reaches its backend only through window.app, which offers exactly these calls (nothing else exists, so never search for more):\n\n" + customapps.PageAPI + "\n\n" +
 			"localStorage in the page is already the person's own, kept on the server for each person and app, so it follows them to every device: use it for where they were (a tab, a filter, recent picks), and records for the app's data.\n")
+		// Unsaid, asked about the header's Reset view, the assistant took it
+		// for the app's own and wrote code that emptied the person's stored
+		// records whenever their view looked reset.
+		b.WriteString("The bar above the page (the app's name, Reset view, the link to change it) is the framework's, not the app's: nothing in these files draws it or can remove it. Reset view clears where the person was in the app (its localStorage) and nothing else. When asked to change something there, say it is the framework's rather than working around it in the page.\n")
+		// Unsaid, one assistant wrote its own runner for checks.json and
+		// another spent its turn looking for an install command.
+		b.WriteString("Its checks are in checks.json; run them with app_checks after a change and before you say the work is done, and add one for each thing you build. The format:\n\n" + appcheck.Reference + "\n\n")
+		if p.InstallOnSave {
+			b.WriteString("The owner turned on Install on every save: when your turn ends with changes, they are installed through the same checks, and a refused install comes back to you to fix. There is no install command to run.\n")
+		} else {
+			b.WriteString("Installing is the owner's: the Install button on this project's bar puts your changes live, through the same checks. There is no install command or CLI to find, so do not look for one; say what you changed and that it is ready to install.\n")
+		}
 	case p.Kind == KindClone:
 		fmt.Fprintf(&b, "A checkout Anvil made of %s. Changes here affect nobody else until you push them, which Anvil does not do.\n", p.RepoURL)
 	default:

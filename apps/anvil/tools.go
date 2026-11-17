@@ -214,6 +214,9 @@ func (c *toolCtx) codeTools() []AgentToolDef {
 	if c.project.Source == sourceApp && writes {
 		tools = append(tools, c.haltable(c.previewTool()))
 	}
+	if c.project.Source == sourceApp {
+		tools = append(tools, c.appChecksTool())
+	}
 	if c.hasCheck() {
 		tools = append(tools, c.checkTool())
 	}

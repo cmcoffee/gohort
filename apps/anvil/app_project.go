@@ -286,6 +286,32 @@ func (c *toolCtx) notesFit(rel, before, after string) error {
 	return fmt.Errorf("NOTES.md would be %d characters, over the %d the app's notes are held to, so the change was not made. It is a standing summary (purpose, decisions and why, open items), not a log: fold the new point into what is there and shorten older entries, then write it again", n, limit)
 }
 
+// appChecksTool runs the app's checks (checks.json) on the working copy, as
+// a save would run them, and installs nothing. Without it the assistant had
+// no way to run them: one wrote its own runner for checks.json and guessed at
+// how a check is judged, another spent its turn looking for a command.
+func (c *toolCtx) appChecksTool() AgentToolDef {
+	return AgentToolDef{
+		Tool: Tool{
+			Name: "app_checks",
+			Description: "Run this app's checks (checks.json) on your working copy, as installing it would, and see each pass or fail. " +
+				"Nothing is installed or saved. Run it after a change and before you say the work is done.",
+			Parameters: map[string]ToolParam{},
+		},
+		Handler: func(ctx context.Context, _ map[string]any) (string, error) {
+			o, err := appHost()
+			if err != nil {
+				return "", err
+			}
+			report, err := o.CheckAppFolder(ctx, c.user, c.base)
+			if err != nil {
+				return "", fmt.Errorf("the checks could not run: %w", err)
+			}
+			return report + "\nPage checks drive the page as served, so they run when the owner installs it.", nil
+		},
+	}
+}
+
 // previewBlock is the card a preview is shown in: the framework's viewer
 // pane, the one the main chat opens a page in, with a card to reopen it.
 const previewBlock = "html_artifact"

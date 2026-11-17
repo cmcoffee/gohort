@@ -226,3 +226,72 @@ func TestAnAppsNotesAreHeldToTheCapAtTheEdit(t *testing.T) {
 		t.Errorf("a project that is not an app was held to the cap: %v", err)
 	}
 }
+
+// An app project's assistant runs the app's checks on its working copy with
+// app_checks, installing nothing, and is told what a check is and that
+// installing is the owner's: without them one wrote its own runner for
+// checks.json and another spent its turn looking for an install command.
+func TestAnAppProjectRunsItsChecksOnTheWorkingCopy(t *testing.T) {
+	T, serve := appProjectWorld(t)
+	id := openWx(t, serve)
+	var p Project
+	UserDB(T.DB, "alice").Get(projectTable, id, &p)
+	base, _ := p.baseDir()
+
+	ctx := T.projectContext(p, base)
+	for _, want := range []string{"app_checks", "Install button", "page check:", "shared", "Reset view"} {
+		if !strings.Contains(ctx, want) {
+			t.Errorf("the app project's notes do not say %q:\n%s", want, ctx)
+		}
+	}
+	tool := func(c *toolCtx) *AgentToolDef {
+		for _, d := range c.codeTools() {
+			if d.Tool.Name == "app_checks" {
+				return &d
+			}
+		}
+		return nil
+	}
+	if tool(&toolCtx{project: Project{Kind: KindClone}}) != nil {
+		t.Error("a project that is not an app offers app_checks")
+	}
+	c := &toolCtx{user: "alice", project: p, base: base}
+	run := tool(c)
+	if run == nil {
+		t.Fatal("an app project has no app_checks tool")
+	}
+
+	// The scripts run in the owner's workspace folder, outside the
+	// sandbox's fresh /tmp, as the orchestrate checks tests' do.
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		t.Skip("no cache folder")
+	}
+	ws, err := os.MkdirTemp(cache, "gohort-anvil-checks-")
+	if err != nil {
+		t.Skip("no cache folder to run scripts from")
+	}
+	prevWS := WorkspacesDir()
+	SetWorkspacesDir(ws)
+	t.Cleanup(func() { SetWorkspacesDir(prevWS); os.RemoveAll(ws) })
+	os.MkdirAll(filepath.Join(ws, "alice"), 0o755)
+
+	os.WriteFile(filepath.Join(base, "data", "now.py"), []byte("print('{\"t\": 5}')"), 0o644)
+	os.WriteFile(filepath.Join(base, "checks.json"), []byte(`[
+  {"name": "now says five", "script": "now", "expect": [{"path": "t", "equals": 5}]},
+  {"name": "now says six", "script": "now", "expect": [{"path": "t", "equals": 6}]}
+]`), 0o644)
+	out, err := run.Handler(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("app_checks: %v", err)
+	}
+	if strings.Contains(out, "could not run") {
+		t.Skipf("no script can run here: %s", out)
+	}
+	if !strings.Contains(out, `PASS "now says five"`) || !strings.Contains(out, `FAIL "now says six"`) {
+		t.Errorf("the checks did not run on the working copy:\n%s", out)
+	}
+	if live, _ := LoadAppSpec("alice", "wx"); live.DataSources[0].Script != "print('{}')" || len(live.Checks) != 0 {
+		t.Errorf("running the checks installed the working copy: %+v", live)
+	}
+}

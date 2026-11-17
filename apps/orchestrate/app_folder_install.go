@@ -76,6 +76,26 @@ func (T *OrchestrateApp) BuildAppFolder(ctx context.Context, user, dir string) (
 	return spec, nil
 }
 
+// CheckAppFolder runs the checks of the app in the folder dir, as built for
+// user, and saves nothing: what Anvil's assistant runs on its working copy.
+// Without it the assistant had no way to run them: one wrote its own runner
+// for checks.json, another spent its whole turn looking for one. Script
+// checks run as on a save; page checks drive the page as served, so they run
+// when the folder is installed.
+func (T *OrchestrateApp) CheckAppFolder(ctx context.Context, user, dir string) (string, error) {
+	spec, err := T.BuildAppFolder(ctx, user, dir)
+	if err != nil {
+		return "", err
+	}
+	if len(spec.Checks) == 0 {
+		return "", fmt.Errorf("the app has no checks: add them to checks.json, one for each thing the app is supposed to do")
+	}
+	if err := validateAppChecks(spec); err != nil {
+		return "", fmt.Errorf("%s", strings.TrimPrefix(err.Error(), "NOT SAVED: "))
+	}
+	return appChecksReport(T.personTurn(ctx, user).runAppChecks(spec)), nil
+}
+
 // WriteAppFolder writes user's app slug into dir as its folder (app.json,
 // page, scripts, shared modules, assets, notes, checks), marked as holding
 // the live app as it is, so an Install of it is not taken for undoing a
