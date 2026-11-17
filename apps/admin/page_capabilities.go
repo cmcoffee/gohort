@@ -8,10 +8,12 @@ import (
 
 // capabilitiesSections is the capabilities part of the admin page: System Hooks, Embeddings, Audio Transcription (STT), Speech (TTS), Media Generation, Web Search, Page Rendering (Browser), Mail (SMTP), Network Timeouts.
 func (a *AdminApp) capabilitiesSections() []ui.Section {
+	slow := &slowParts{}
+	defer slow.log("capabilities")
 	return []ui.Section{
 		// First: what this machine can and cannot do, which the settings
 		// below it are referred to from (transcription, for one).
-		systemDepsSection(),
+		timed(slow, "system hooks", systemDepsSection),
 		{
 			Title:    "Embeddings",
 			Subtitle: "Vector store ingestion and semantic search.",
@@ -22,14 +24,14 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 					Source:    "api/embeddings",
 					TestURL:   "api/embeddings/test",
 					TestLabel: "Test embed call",
-					Fields:    embeddingFormFields(),
+					Fields:    timed(slow, "embeddings", embeddingFormFields),
 				},
 				// The built-in embedder's one-time download: how far along,
 				// Stop, and Run again when it failed.
 				maintenanceList("Embeddings", "Nothing to download."),
 			}},
 		},
-		systemOneSection(),
+		timed(slow, "system one", systemOneSection),
 		{
 			Title:    "Audio Transcription (STT)",
 			Subtitle: "Transcription for video and audio attachments.",
@@ -39,7 +41,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 				Source:    "api/transcribe",
 				TestURL:   "api/transcribe/test",
 				TestLabel: "Test transcription",
-				Fields:    transcribeFormFields(),
+				Fields:    timed(slow, "transcription", transcribeFormFields),
 			},
 		},
 		{
@@ -55,7 +57,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 				Source:    "api/speech",
 				TestURL:   "api/speech/test",
 				TestLabel: "Preview voice",
-				Fields:    speechFormFields(),
+				Fields:    timed(slow, "speech", speechFormFields),
 			},
 		},
 		{
@@ -69,13 +71,13 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 				"Add AI generator lists the templates by what they make (images: Gemini, OpenAI, a local ComfyUI or A1111; and music or another kind once a template for it is added under Services > Templates). A kind with no template yet is added as a connector from its spec under Connectors.",
 			Body: ui.Stack{
 				Children: []ui.Component{
-					mediaBackendsTable(),
+					timed(slow, "media generation", mediaBackendsTable),
 					ui.Toolbar{
 						Actions: []ui.ToolbarAction{
 							{Label: "Add AI generator...", Method: "client", URL: "connector_add_another", Data: "media", Variant: "primary"},
 						},
 					},
-					ui.FormPanel{Source: imageCheckingSource, Fields: imageCheckingFields()},
+					ui.FormPanel{Source: imageCheckingSource, Fields: timed(slow, "image checking", imageCheckingFields)},
 				},
 			},
 		},
@@ -88,7 +90,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 				Source:    "api/web-search",
 				TestURL:   "api/web-search/test",
 				TestLabel: "Test search call",
-				Fields:    webSearchFormFields(),
+				Fields:    timed(slow, "web search", webSearchFormFields),
 			},
 		},
 		{
@@ -97,7 +99,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 			Detail:   "A headless Chromium is a heavyweight dependency to install on every machine; borrowing a peer's lets a laptop skip it entirely. Public web only either way.",
 			Body: ui.FormPanel{
 				Source: "api/browse",
-				Fields: browseFormFields(),
+				Fields: timed(slow, "page rendering", browseFormFields),
 			},
 		},
 		{
@@ -109,7 +111,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 				Source:    "api/mail",
 				TestURL:   "api/mail/test",
 				TestLabel: "Send test email",
-				Fields:    mailFormFields(),
+				Fields:    timed(slow, "mail", mailFormFields),
 			},
 		},
 	}

@@ -55,7 +55,11 @@ func TestSystemOneIsChosenUnderServices(t *testing.T) {
 		}
 		return out
 	}
+	// A page shows what was found and never waits for a check, so each
+	// reading here starts the checks due, waits for them, and reads again.
 	values := func() []string {
+		systemOneChoices()
+		waitSystemOneChecks(t)
 		var out []string
 		for _, o := range systemOneChoices() {
 			out = append(out, o.Value+"="+o.Label)
@@ -119,6 +123,8 @@ func TestSystemOneIsChosenUnderServices(t *testing.T) {
 	SetAllLLMsPrivate(false)
 
 	call("POST", "/"+systemOneSource, `{"provider":"judge"}`)
+	call("GET", "/"+systemOneSource, "")
+	waitSystemOneChecks(t)
 	got2 := call("GET", "/"+systemOneSource, "")
 	if got2["provider"] != systemOneJudge || !strings.Contains(asText(got2["_status"]), "Working: native") {
 		t.Errorf("the Judge model chosen: %v", got2)
@@ -137,14 +143,24 @@ func TestSystemOneIsChosenUnderServices(t *testing.T) {
 	}
 	st.At = time.Now().Add(-2 * systemOneRecheck)
 	RootDB.Set(systemOneTable, "status:judge", st)
+	// Shown as it stands while it is asked again in the background, and the
+	// new finding is what the next load shows.
+	if got := call("GET", "/"+systemOneSource, ""); !strings.Contains(asText(got["_status"]), "an older finding") {
+		t.Errorf("a page waited for the check instead of showing the finding it had: %v", got["_status"])
+	}
+	waitSystemOneChecks(t)
 	if got := call("GET", "/"+systemOneSource, ""); strings.Contains(asText(got["_status"]), "an older finding") {
 		t.Error("a failure that has stood a while was not asked again")
 	}
 	RootDB.Get(systemOneTable, "status:judge", &st)
 	st.Of, st.Err, st.OK = "a judge that is no longer set", "an older finding", false
 	RootDB.Set(systemOneTable, "status:judge", st)
-	if got := call("GET", "/"+systemOneSource, ""); strings.Contains(asText(got["_status"]), "an older finding") {
-		t.Error("a finding about something else was shown as current")
+	if got := call("GET", "/"+systemOneSource, ""); strings.Contains(asText(got["_status"]), "an older finding") || !strings.Contains(asText(got["_status"]), "Being checked now") {
+		t.Errorf("a finding about something else was shown as current, or the new check not said: %v", got["_status"])
+	}
+	waitSystemOneChecks(t)
+	if got := call("GET", "/"+systemOneSource, ""); !strings.Contains(asText(got["_status"]), "Working: native") {
+		t.Errorf("after the check: %v", got["_status"])
 	}
 	// A connection is chosen and tested the same way.
 	call("POST", "/"+systemOneSource, `{"provider":"home-system-one"}`)
@@ -176,4 +192,19 @@ func TestSystemOneIsChosenUnderServices(t *testing.T) {
 	if !found {
 		t.Error("System One is not a section of the Services tab")
 	}
+}
+
+// waitSystemOneChecks waits for the checks running in the background.
+func waitSystemOneChecks(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		n := 0
+		systemOneChecking.Range(func(_, _ any) bool { n++; return true })
+		if n == 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("a System One check did not finish")
 }

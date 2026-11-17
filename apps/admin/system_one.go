@@ -63,10 +63,16 @@ type systemOneStatus struct {
 	Conf   float64   `json:"confidence,omitempty"`
 	TookMS int64     `json:"took_ms,omitempty"`
 	Err    string    `json:"error,omitempty"`
+	// Checking: never checked, and its first check is running now. Not
+	// stored; only answered while it runs.
+	Checking bool `json:"-"`
 }
 
 // line is the status as the section says it.
 func (s systemOneStatus) line() string {
+	if s.Checking {
+		return "Being checked now: its test question is on its way. Reload in a moment for the result."
+	}
 	if !s.OK {
 		return "Unavailable: " + s.Err + ". Checks use their full answers."
 	}
@@ -151,13 +157,42 @@ func checkSystemOne(ctx context.Context, choice string) systemOneStatus {
 
 // currentSystemOne is the last check of choice, asked again when what it
 // names has changed since, or when it failed long enough ago.
-func currentSystemOne(ctx context.Context, choice string) systemOneStatus {
+//
+// It never asks a model while a page waits: the Admin page built every tab's
+// sections on every load, Overview included, and a choice not yet checked or
+// last found not working (rechecked after systemOneRecheck) was asked its
+// question there, holding the page for as long as the model took (1.35 s on
+// Bedrock, up to systemOneAskTimeout). The finding kept is answered, and a
+// check that is due runs in the background (one per choice at a time); a
+// choice never checked answers as being checked.
+func currentSystemOne(choice string) systemOneStatus {
 	var st systemOneStatus
-	if RootDB != nil && RootDB.Get(systemOneTable, "status:"+choice, &st) && !st.At.IsZero() &&
-		st.Of == systemOneIdentity(choice) && (st.OK || time.Since(st.At) < systemOneRecheck) {
+	have := RootDB != nil && RootDB.Get(systemOneTable, "status:"+choice, &st) && !st.At.IsZero() &&
+		st.Of == systemOneIdentity(choice)
+	if have && (st.OK || time.Since(st.At) < systemOneRecheck) {
 		return st
 	}
-	return checkSystemOne(ctx, choice)
+	checkSystemOneLater(choice)
+	if have {
+		return st
+	}
+	return systemOneStatus{Of: systemOneIdentity(choice), Checking: true}
+}
+
+// systemOneChecking are the choices whose check is running in the
+// background, so a page loaded again meanwhile does not start another.
+var systemOneChecking sync.Map
+
+// checkSystemOneLater runs choice's check in the background, unless one is
+// running. The check keeps what it found, for the next load to show.
+func checkSystemOneLater(choice string) {
+	if _, running := systemOneChecking.LoadOrStore(choice, true); running {
+		return
+	}
+	go func() {
+		defer systemOneChecking.Delete(choice)
+		checkSystemOne(context.Background(), choice)
+	}()
 }
 
 // systemOneChoices are the section's choices: Off; the models that answer
@@ -176,7 +211,7 @@ func systemOneChoices() []ui.SelectOption {
 		wg.Add(1)
 		go func(i int, choice string) {
 			defer wg.Done()
-			found[i] = currentSystemOne(context.Background(), choice)
+			found[i] = currentSystemOne(choice)
 		}(i, m.value)
 	}
 	wg.Wait()
@@ -198,6 +233,12 @@ func systemOneChoices() []ui.SelectOption {
 	}
 	for i, m := range systemOneModels {
 		works := found[i].OK
+		// Being checked for the first time: offered, and said so, rather
+		// than left out until the page is loaded again.
+		if found[i].Checking {
+			place(ui.SelectOption{Value: m.value, Label: m.label + " (checking)", Help: found[i].line()})
+			continue
+		}
 		if !works && m.value != saved {
 			continue
 		}
@@ -255,7 +296,7 @@ func (a *AdminApp) handleSystemOne(c *jsonapi.Call) (any, error) {
 	p := systemOneProvider()
 	out := withValues(systemOneForm{Provider: p}, systemOneConnection(p), service.DecideChoice)
 	if p != "" {
-		out["_status"] = currentSystemOne(c.R.Context(), p).line()
+		out["_status"] = currentSystemOne(p).line()
 	}
 	var shadows []string
 	for _, t := range decide.Shadows() {
