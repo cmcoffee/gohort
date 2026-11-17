@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -820,5 +821,48 @@ func TestRecoveryShrinksTheNewestWhenTheyAreTheBulk(t *testing.T) {
 	small := []Message{{Role: "user", Content: "hi"}}
 	if n := shrinkLargestBodies(small, 0); n != 0 {
 		t.Errorf("nothing to cut, cut %d", n)
+	}
+}
+
+// A tool call carrying a placeholder compaction left in history is refused
+// before it runs: Builder sent "[sent in this earlier call, elided to fit
+// context: 2472 characters]" back as an app's notes, which replaced the notes
+// with the line. The model is told what it sent and to send the real text.
+func TestACallCarryingACompactionPlaceholderIsRefused(t *testing.T) {
+	placeholder := elideLongArgs(strings.Repeat("x", elideLongArgMin+1)).(string)
+	ran := 0
+	tool := AgentToolDef{
+		Tool:    Tool{Name: "save_notes", Description: "Save notes.", Parameters: map[string]ToolParam{"notes": {Type: "string"}}},
+		Handler: func(context.Context, map[string]any) (string, error) { ran++; return "saved", nil },
+	}
+	fake := &FakeLLM{Turns: []FakeTurn{
+		{ToolCalls: []ToolCall{{ID: "1", Name: "save_notes", Args: map[string]any{"notes": "Plan:\n" + placeholder}}}},
+		{ToolCalls: []ToolCall{{ID: "2", Name: "save_notes", Args: map[string]any{"notes": "the real notes"}}}},
+		{Content: "Saved."},
+	}}
+	app := &AppCore{LLM: fake}
+	_, history, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "save the notes"}}, AgentLoopConfig{MaxRounds: 5, Tools: []AgentToolDef{tool}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ran != 1 {
+		t.Fatalf("the tool ran %d times, want once (the call with the real text)", ran)
+	}
+	var refused string
+	for _, m := range history {
+		for _, r := range m.ToolResults {
+			if r.ID == "1" {
+				refused = r.Content
+			}
+		}
+	}
+	if !strings.Contains(refused, "Not run") || !strings.Contains(refused, placeholder) {
+		t.Errorf("the refusal does not name the placeholder: %q", refused)
+	}
+	if elisionMarkerIn(map[string]any{"a": []any{"ok", map[string]any{"b": "[earlier tool result elided to fit context: was 9 bytes; re-run]"}}}) == "" {
+		t.Error("a placeholder deep in the arguments was not found")
+	}
+	if elisionMarkerIn(map[string]any{"a": "an ordinary [bracketed] note"}) != "" {
+		t.Error("ordinary text was taken for a placeholder")
 	}
 }

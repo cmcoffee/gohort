@@ -116,6 +116,46 @@ func elideOldToolArgs(msgs []Message, total, budget, keepRecent int) (reclaimed 
 	return reclaimed
 }
 
+// elisionMarkers begin every placeholder compaction leaves in history in
+// place of text: an earlier call's long argument, an earlier tool result, an
+// earlier message. A tool call carrying one sends the placeholder, not the
+// text it stands for (elisionMarkerIn).
+var elisionMarkers = []string{
+	"[sent in this earlier call, elided to fit context:",
+	"[earlier tool result elided to fit context:",
+	"[earlier message elided to fit context:",
+}
+
+// elisionMarkerIn is the compaction placeholder a tool call's arguments carry,
+// at any depth, or "". Builder sent one back as an app's notes, which
+// replaced the notes with the line, and the app kept it from then on.
+func elisionMarkerIn(v any) string {
+	switch t := v.(type) {
+	case string:
+		for _, m := range elisionMarkers {
+			if i := strings.Index(t, m); i >= 0 {
+				if j := strings.Index(t[i:], "]"); j > 0 {
+					return t[i : i+j+1]
+				}
+				return m
+			}
+		}
+	case map[string]any:
+		for _, x := range t {
+			if m := elisionMarkerIn(x); m != "" {
+				return m
+			}
+		}
+	case []any:
+		for _, x := range t {
+			if m := elisionMarkerIn(x); m != "" {
+				return m
+			}
+		}
+	}
+	return ""
+}
+
 // elideLongArgMin is the shortest argument value worth replacing.
 const elideLongArgMin = 400
 

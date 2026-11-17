@@ -3816,6 +3816,16 @@ func (lr *loopRun) toolRoundPlanCalls() loopAction {
 			lr.rs.toolErrors++
 			continue
 		}
+		// A placeholder compaction left in history, sent back as if it were
+		// the text: run, it writes the placeholder over the real content (an
+		// app's notes became the line, and stayed it).
+		if marker := elisionMarkerIn(map[string]any(tc.Args)); marker != "" {
+			Log("[agent_loop] round %d: refused %s: an argument is a compaction placeholder, %s", lr.round, toolCallLabel(tc), marker)
+			lr.emitDiag("placeholder-arg-refused", fmt.Sprintf("Refused %s: an argument was the placeholder for text compaction had taken out of the conversation, not the text.", toolCallLabel(tc)))
+			lr.rs.results[i] = ToolResult{ID: tc.ID, Content: "Not run: an argument of this call is " + marker + ", the placeholder the conversation keeps in place of text taken out to save room, not the text itself. Run, it would write that line where the real content belongs. Read what you need again (the tool that showed it to you) and send the real text, or leave that argument out if the call does not need it.", IsError: true}
+			lr.rs.toolErrors++
+			continue
+		}
 		// A rewrite-only turn runs nothing: see loopRun.rewriteOnly. Refused
 		// here, before the call becomes work, so it is never recorded as
 		// something the turn did and a second conviction still reads the turn
