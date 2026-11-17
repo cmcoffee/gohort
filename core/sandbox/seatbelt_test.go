@@ -526,37 +526,37 @@ func TestAPathTheRunMustOpenIsReadableDespiteTheDataDeny(t *testing.T) {
 // and the secrets are denied again after the toolchains, so ~/bin on PATH
 // does not give back ~/.ssh. Off, the profile is as it was.
 func TestAMacCommandStaysOutOfHomeFoldersButKeepsItsToolchains(t *testing.T) {
-	t.Setenv("HOME", "/Users/alice")
+	t.Setenv("HOME", "/Users/u1")
 	roots := seatbeltToolchainRoots(strings.Join([]string{
-		"/Users/alice/sdk/go/bin", "/Users/alice/.pyenv/shims", "/Users/alice/bin", "/usr/bin",
-		"/Users/alice/.cargo/bin", "/Users/alice/.ssh/bin", "/Users/alice", "/Volumes/ext/bin",
-	}, ":"), "/Users/alice/.pyenv/versions/3.12.1/bin/python3")
+		"/Users/u1/sdk/go/bin", "/Users/u1/.pyenv/shims", "/Users/u1/bin", "/usr/bin",
+		"/Users/u1/.cargo/bin", "/Users/u1/.ssh/bin", "/Users/u1", "/Volumes/ext/bin",
+	}, ":"), "/Users/u1/.pyenv/versions/3.12.1/bin/python3")
 	got := strings.Join(roots, " ")
-	want := "/Users/alice/sdk/go /Users/alice/.pyenv /Users/alice/bin /Users/alice/.cargo /Volumes/ext/bin /Users/alice/.pyenv/versions/3.12.1"
+	want := "/Users/u1/sdk/go /Users/u1/.pyenv /Users/u1/bin /Users/u1/.cargo /Volumes/ext/bin /Users/u1/.pyenv/versions/3.12.1"
 	if got != want {
 		t.Errorf("toolchain roots:\n got %s\nwant %s", got, want)
 	}
 
 	prevWS, prevSwitch := WorkspacesDir, SeatbeltPersonalReadsClosed
 	t.Cleanup(func() { WorkspacesDir, SeatbeltPersonalReadsClosed = prevWS, prevSwitch })
-	WorkspacesDir = func() string { return "/Users/alice/gohort/data/workspaces" }
-	t.Setenv("PATH", "/Users/alice/bin:/usr/bin")
+	WorkspacesDir = func() string { return "/Users/u1/gohort/data/workspaces" }
+	t.Setenv("PATH", "/Users/u1/bin:/usr/bin")
 	cmd := seatbeltSandbox{path: "/usr/bin/sandbox-exec"}.build(context.Background(), sandboxRun{
-		Kind: sandboxShellRun, Command: "true", WorkspaceDir: "/Users/alice/gohort/data/workspaces/u1",
+		Kind: sandboxShellRun, Command: "true", WorkspaceDir: "/Users/u1/gohort/data/workspaces/u1",
 	})
 	p := cmd.Args[2]
 	at := func(s string) int { return strings.Index(p, s) }
 	users, vols := at(`(deny file-read* (subpath "/Users"))`), at(`(deny file-read* (subpath "/Volumes"))`)
-	bin := at(`(subpath "/Users/alice/bin")`)
-	ssh := strings.LastIndex(p, `(deny file-read* (subpath "/Users/alice/.ssh"))`)
-	ws := strings.LastIndex(p, `(subpath "/Users/alice/gohort/data/workspaces/u1")`)
+	bin := at(`(subpath "/Users/u1/bin")`)
+	ssh := strings.LastIndex(p, `(deny file-read* (subpath "/Users/u1/.ssh"))`)
+	ws := strings.LastIndex(p, `(subpath "/Users/u1/gohort/data/workspaces/u1")`)
 	if users < 0 || vols < 0 {
 		t.Fatalf("people's storage is not denied:\n%s", p)
 	}
 	if bin < users || ssh < bin || ws < users {
 		t.Errorf("order: /Users denied %d, ~/bin given back %d, ~/.ssh denied again %d, the workspace given back %d:\n%s", users, bin, ssh, ws, p)
 	}
-	if strings.Contains(p, `(subpath "/Users/alice")`) {
+	if strings.Contains(p, `(subpath "/Users/u1")`) {
 		t.Errorf("a whole home was given back:\n%s", p)
 	}
 	// git reads no global config it cannot open, unless the run names one.
@@ -566,7 +566,7 @@ func TestAMacCommandStaysOutOfHomeFoldersButKeepsItsToolchains(t *testing.T) {
 
 	SeatbeltPersonalReadsClosed = func() bool { return false }
 	cmd = seatbeltSandbox{path: "/usr/bin/sandbox-exec"}.build(context.Background(), sandboxRun{
-		Kind: sandboxShellRun, Command: "true", WorkspaceDir: "/Users/alice/gohort/data/workspaces/u1",
+		Kind: sandboxShellRun, Command: "true", WorkspaceDir: "/Users/u1/gohort/data/workspaces/u1",
 	})
 	if strings.Contains(cmd.Args[2], `(subpath "/Users"))`) {
 		t.Error("switched off, people's storage is still denied")
