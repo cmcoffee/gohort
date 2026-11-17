@@ -123,7 +123,7 @@ func (T *CustomApps) handleViewReset(w http.ResponseWriter, r *http.Request, app
 			"The app's records are kept. Use it when the page will not open properly."
 	}
 	ui.Page{
-		Title:     "Reset your view of " + spec.Name,
+		Title:     "Reset view",
 		ShowTitle: true,
 		BackURL:   base + "/",
 		MaxWidth:  "560px",
