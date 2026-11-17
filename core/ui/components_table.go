@@ -19,6 +19,11 @@ type Table struct {
 	PullToRefresh bool        `json:"pull_to_refresh,omitempty"`
 	SortBy        string      `json:"sort_by,omitempty"` // field to sort by (descending if SortDesc)
 	SortDesc      bool        `json:"sort_desc,omitempty"`
+	// ScrollRows makes the table as tall as that many rows, with a part of
+	// the next showing, and scrolls the rest inside it: for a long list
+	// (every post, every run) above other sections that should stay in
+	// reach. 0 shows every row.
+	ScrollRows int `json:"scroll_rows,omitempty"`
 	// Cards lays each row out as a card rather than a line: its name and
 	// badges on top, its columns with a Card role below (Col.Card), its
 	// buttons apart from them. A card is washed with the colour of its first

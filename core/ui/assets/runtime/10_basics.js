@@ -996,6 +996,41 @@
         host.appendChild(row);
       });
       alignRowActions(listEl);
+      capRows();
+    }
+
+    // Table.ScrollRows: the list is as tall as that many rows, with a part
+    // of the next showing so it reads as more, and the rest scroll inside
+    // it, so a long history does not push the sections below it out of
+    // reach. Measured after layout, since rows differ in height; a table on
+    // a section not shown yet is measured when it first gets a size.
+    function capRows() {
+      var n = cfg.scroll_rows | 0;
+      if (n <= 0) return;
+      listEl.style.maxHeight = '';
+      listEl.style.overflowY = '';
+      requestAnimationFrame(function() {
+        var rows = listEl.querySelectorAll('.ui-table-row');
+        if (rows.length <= n) return;
+        var top = listEl.getBoundingClientRect().top;
+        var next = rows[n].getBoundingClientRect();
+        if (next.bottom <= top) {
+          if (window.ResizeObserver && !listEl.__uiCapWatch) {
+            listEl.__uiCapWatch = new ResizeObserver(function() {
+              if (listEl.getBoundingClientRect().height > 0) {
+                listEl.__uiCapWatch.disconnect();
+                listEl.__uiCapWatch = null;
+                capRows();
+              }
+            });
+            listEl.__uiCapWatch.observe(listEl);
+          }
+          return;
+        }
+        listEl.style.maxHeight = Math.ceil(next.top - top + Math.min(next.height * 0.4, 28)) + 'px';
+        listEl.style.overflowY = 'auto';
+        listEl.style.overscrollBehavior = 'contain';
+      });
     }
 
     // alignRowActions gives every row of a table the same room for its
