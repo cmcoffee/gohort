@@ -27,7 +27,7 @@ func evalWorkspace(t *testing.T) {
 	})
 }
 
-//
+// needToolchains skips the test unless each named language's toolchain runs.
 // Asked in the sandbox the tasks run in, not of the host: a CI runner had
 // /usr/bin/go, the sandbox could not run it, and the task's check failed
 // with "go: not found" instead of the test skipping.

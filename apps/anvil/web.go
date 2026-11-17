@@ -894,6 +894,7 @@ func (T *Anvil) handleChatSend(w http.ResponseWriter, r *http.Request, udb Datab
 	}
 
 	pub := &agenthost.Publisher{}
+	cards := &fileCards{}
 	ctx := &toolCtx{
 		udb:       udb,
 		user:      user,
@@ -904,8 +905,9 @@ func (T *Anvil) handleChatSend(w http.ResponseWriter, r *http.Request, udb Datab
 		readOnly:  !writeAllowed(p, user, isAdmin),
 		planning:  planning,
 		deps:      deps,
+		// A turn's writes to one file share a card (edit_cards.go).
 		emit: func(kind string, e EditEntry) {
-			pub.Publish(editBlock(kind, p, e))
+			pub.Publish(cards.add(kind, p, e))
 		},
 		emitBlock: pub.Publish,
 	}

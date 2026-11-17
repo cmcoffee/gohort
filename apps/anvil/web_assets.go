@@ -53,6 +53,9 @@ const anvilCSS = `
 .anvil-edit-body .l-del { color: #dc2626; }
 .anvil-edit-body .l-hunk { color: var(--text-mute); opacity: 0.8; }
 .anvil-edit.reverted .anvil-edit-path { text-decoration: line-through; opacity: 0.6; }
+.anvil-edit-each { margin-top: 6px; }
+.anvil-edit-each summary { cursor: pointer; font-size: 0.78rem; color: var(--text-mute); }
+.anvil-edit-each > .anvil-edit-stat { display: block; margin: 6px 0 2px; }
 .anvil-plan-list { padding: 0.2rem 0.9rem 0.6rem; display: flex; flex-direction: column; gap: 0.25rem; }
 .anvil-plan-step { display: flex; gap: 0.5rem; align-items: baseline; font-size: var(--fs-sm, 0.85rem); }
 .anvil-plan-step.done { color: var(--text-mute); }
@@ -114,101 +117,128 @@ const anvilCSS = `
 @media (pointer: coarse) { .anvil-btn, .anvil-edit-revert { min-height: var(--btn-h-sm, 2.25rem); } }
 `
 
-// anvilEditBlockJS renders one edit as a collapsible diff card with a Revert
-// button.
-//
-// The card is collapsed by default. A run that touches eight files should read
-// as eight lines you can scan, not eight diffs you have to scroll past to
-// reach the next sentence — the diff is one click away for the file you care
-// about.
+// anvilEditBlockJS renders a turn's writes to one file (edit_cards.go) as a
+// collapsible diff card with a Revert button. A later write to the file in
+// the same turn sends the card again, and it fills in place (onUpdate). With
+// more than one write, the diff is the turn's whole change to the file and
+// each write's own diff is listed below it. Revert puts back every write the
+// card holds, newest first, through the same undo a message's Undo uses.
 const anvilEditBlockJS = `function(d) {
-  var data = d.data || {};
   var wrap = document.createElement('div');
   wrap.className = 'anvil-edit';
-  // Undo from a message finds the changes below it by these (planmode.go).
-  wrap.dataset.editId = data.edit_id || '';
+  var ids = [];
+  function fill(d) {
+    var data = d.data || {};
+    var open = wrap.classList.contains('open');
+    wrap.textContent = '';
+    wrap.className = 'anvil-edit' + (open ? ' open' : '');
+    // Undo from a message finds the changes below it by these (planmode.go).
+    ids = String(data.edit_id || '').split(',').filter(Boolean);
+    wrap.dataset.editId = ids.join(',');
 
-  var head = document.createElement('div');
-  head.className = 'anvil-edit-head';
+    var head = document.createElement('div');
+    head.className = 'anvil-edit-head';
+    var icon = document.createElement('span');
+    icon.className = 'anvil-edit-icon';
+    icon.textContent = data.kind === 'create' ? '+' : (data.kind === 'delete' ? '\u2212' : '\u270e');
+    head.appendChild(icon);
+    var path = document.createElement('span');
+    path.className = 'anvil-edit-path';
+    path.textContent = d.title || '';
+    path.title = d.title || '';
+    head.appendChild(path);
+    var stat = document.createElement('span');
+    stat.className = 'anvil-edit-stat';
+    stat.textContent = d.text || '';
+    head.appendChild(stat);
 
-  var icon = document.createElement('span');
-  icon.className = 'anvil-edit-icon';
-  icon.textContent = data.kind === 'create' ? '+' : (data.kind === 'delete' ? '−' : '✎');
-  head.appendChild(icon);
-
-  var path = document.createElement('span');
-  path.className = 'anvil-edit-path';
-  path.textContent = d.title || '';
-  path.title = d.title || '';
-  head.appendChild(path);
-
-  var stat = document.createElement('span');
-  stat.className = 'anvil-edit-stat';
-  stat.textContent = d.text || '';
-  head.appendChild(stat);
-
-  // A card that was already answered comes back settled, with no controls.
-  // Its stored life does not end when the button is clicked, so without this
-  // every reload offers to revert an edit that is already back.
-  if (d.resolved) {
-    var settled = document.createElement('span');
-    settled.className = 'anvil-edit-stat';
-    settled.textContent = d.resolved;
-    head.appendChild(settled);
-    wrap.classList.add('reverted');
-  }
-
-  var revert = document.createElement('button');
-  revert.className = 'anvil-edit-revert';
-  revert.textContent = 'Revert';
-  if (d.resolved) revert.style.display = 'none';
-  revert.addEventListener('click', async function(ev) {
-    ev.stopPropagation();
-    if (!(await window.anvilConfirm('Restore ' + (d.title || 'this file') + ' to what it was before this edit?'))) return;
-    revert.disabled = true;
-    revert.textContent = 'Reverting...';
-    window.anvilFetchJSON(data.revert_url, {method: 'POST'})
-      .then(function() {
-        wrap.anvilReverted();
-        if (window.anvilGitRefresh) window.anvilGitRefresh();
-      })
-      .catch(function(err) {
-        revert.disabled = false;
-        revert.textContent = 'Revert';
-        anvilAlert(String(err.message || err));
-      });
-  });
-  head.appendChild(revert);
-  // anvilReverted settles the card once its change is back, here or by an
-  // undo from a message.
-  wrap.anvilReverted = function() {
-    wrap.classList.add('reverted');
-    revert.style.display = 'none';
-    stat.textContent = 'reverted';
-    // Settle it on the SERVER too, not just in this DOM. Skipping this is
-    // how an answered card comes back armed on the next load.
-    if (window.uiResolveBlock) {
-      try { window.uiResolveBlock(d.id, 'Reverted: the file is back to what it was'); } catch (e) {}
+    // A card that was already answered comes back settled, with no controls.
+    // Its stored life does not end when the button is clicked, so without this
+    // every reload offers to revert an edit that is already back.
+    if (d.resolved) {
+      var settled = document.createElement('span');
+      settled.className = 'anvil-edit-stat';
+      settled.textContent = d.resolved;
+      head.appendChild(settled);
+      wrap.classList.add('reverted');
     }
-  };
 
-  var body = document.createElement('div');
-  body.className = 'anvil-edit-body';
-  var pre = document.createElement('pre');
-  if (data.diff) {
-    window.anvilPaintDiff(pre, data.diff);
-  } else {
-    pre.textContent = '(no diff recorded)';
+    var revert = document.createElement('button');
+    revert.className = 'anvil-edit-revert';
+    revert.textContent = 'Revert';
+    if (d.resolved) revert.style.display = 'none';
+    revert.addEventListener('click', async function(ev) {
+      ev.stopPropagation();
+      var what = ids.length > 1 ? 'before these ' + ids.length + ' edits' : 'before this edit';
+      if (!(await window.anvilConfirm('Restore ' + (d.title || 'this file') + ' to what it was ' + what + '?'))) return;
+      revert.disabled = true;
+      revert.textContent = 'Reverting...';
+      window.anvilFetchJSON('api/undo', {method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ids: ids})})
+        .then(function(r) {
+          if (((r && r.reverted) || []).length < ids.length) {
+            revert.disabled = false;
+            revert.textContent = 'Revert';
+            anvilAlert((r && r.message) || 'Not every edit could be put back.');
+          } else {
+            wrap.anvilReverted();
+          }
+          if (window.anvilGitRefresh) window.anvilGitRefresh();
+        })
+        .catch(function(err) {
+          revert.disabled = false;
+          revert.textContent = 'Revert';
+          anvilAlert(String(err.message || err));
+        });
+    });
+    head.appendChild(revert);
+    // anvilReverted settles the card once its change is back, here or by an
+    // undo from a message.
+    wrap.anvilReverted = function() {
+      wrap.classList.add('reverted');
+      revert.style.display = 'none';
+      stat.textContent = 'reverted';
+      // Settle it on the SERVER too, not just in this DOM. Skipping this is
+      // how an answered card comes back armed on the next load.
+      if (window.uiResolveBlock) {
+        try { window.uiResolveBlock(d.id, 'Reverted: the file is back to what it was'); } catch (e) {}
+      }
+    };
+
+    var body = document.createElement('div');
+    body.className = 'anvil-edit-body';
+    var pre = document.createElement('pre');
+    if (data.diff) window.anvilPaintDiff(pre, data.diff);
+    else pre.textContent = '(no diff recorded)';
+    body.appendChild(pre);
+    var each = [];
+    try { each = data.edits ? JSON.parse(data.edits) : []; } catch (e) { each = []; }
+    if (each.length > 1) {
+      var list = document.createElement('details');
+      list.className = 'anvil-edit-each';
+      var sum = document.createElement('summary');
+      sum.textContent = 'Each edit (' + each.length + ')';
+      list.appendChild(sum);
+      each.forEach(function(w, i) {
+        var lab = document.createElement('div');
+        lab.className = 'anvil-edit-stat';
+        lab.textContent = 'Edit ' + (i + 1) + ' \u00b7 +' + (w.added || 0) + ' \u2212' + (w.removed || 0);
+        list.appendChild(lab);
+        var p = document.createElement('pre');
+        if (w.diff) window.anvilPaintDiff(p, w.diff);
+        list.appendChild(p);
+      });
+      body.appendChild(list);
+    }
+    head.addEventListener('click', function() { wrap.classList.toggle('open'); });
+    wrap.appendChild(head);
+    wrap.appendChild(body);
+    // The tree just changed, so anything showing its state is now stale. This
+    // is the whole reason the chip is event-driven rather than polled.
+    if (window.anvilGitRefresh) window.anvilGitRefresh();
   }
-  body.appendChild(pre);
-
-  head.addEventListener('click', function() { wrap.classList.toggle('open'); });
-  wrap.appendChild(head);
-  wrap.appendChild(body);
-  // The tree just changed, so anything showing its state is now stale. This
-  // is the whole reason the chip is event-driven rather than polled.
-  if (window.anvilGitRefresh) window.anvilGitRefresh();
-  return {wrap: wrap, body: null};
+  fill(d);
+  return {wrap: wrap, body: null, onUpdate: fill};
 }`
 
 // anvilCheckBlockJS renders one run of the project's check: a spinner and
@@ -289,17 +319,21 @@ const anvilHabitsJS = `
   async function undo(ctx) {
     var cards = changesAfter(ctx.bubble);
     if (!cards.length) { showToast('Nothing to undo: no change from this message on is still in place.'); return; }
-    var n = cards.length === 1 ? 'the change' : 'the ' + cards.length + ' changes';
+    var count = cards.reduce(function(n, c) { return n + c.dataset.editId.split(',').length; }, 0);
+    var n = count === 1 ? 'the change' : 'the ' + count + ' changes';
     if (!(await window.anvilConfirm('Put back ' + n + ' the assistant made from this message on? Each file goes back to what it was before.'))) return;
     var btn = ctx.button, label = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = 'Undoing...'; }
     window.anvilFetchJSON('api/undo', {method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ids: cards.map(function(c) { return c.dataset.editId; })})})
+      body: JSON.stringify({ids: [].concat.apply([], cards.map(function(c) { return c.dataset.editId.split(','); }))})})
       .then(function(d) {
         var back = {};
         (d.reverted || []).forEach(function(id) { back[id] = true; });
-        cards.forEach(function(c) { if (back[c.dataset.editId] && c.anvilReverted) c.anvilReverted(); });
-        if ((d.reverted || []).length < cards.length) window.anvilAlert(d.message);
+        // A card holds a turn's writes to one file: settled once all are back.
+        cards.forEach(function(c) {
+          if (c.anvilReverted && c.dataset.editId.split(',').every(function(id) { return back[id]; })) c.anvilReverted();
+        });
+        if ((d.reverted || []).length < count) window.anvilAlert(d.message);
         else showToast(d.message);
         if (window.anvilGitRefresh) window.anvilGitRefresh();
       })
