@@ -1493,6 +1493,11 @@ type ChatSession struct {
 	// build checked out its folder, then called run with no dir and was told
 	// to name one.
 	AppFolder string `json:"AppFolder,omitempty"`
+	// App is the app this session last worked on through app_def, by slug,
+	// so an action on one app that names none means that one
+	// (appDefWorkingApp). Builder left the id off nine times in three
+	// sessions that were each editing one app, and each time was refused.
+	App string `json:"app,omitempty"`
 
 	// ActiveSkillIDs is VESTIGIAL — skills are per-turn now (the LLM
 	// re-activates each turn it stays in-domain; nothing carries across

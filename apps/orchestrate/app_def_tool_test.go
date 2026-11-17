@@ -1,12 +1,16 @@
 package orchestrate
 
 import (
+	"context"
 	"encoding/json"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appcheck"
+	"github.com/cmcoffee/gohort/core/apppage"
 )
 
 // Three ways the authoring surface used to mislead an author into rebuilding an
@@ -628,6 +632,86 @@ func TestAppDefSaysWhatItTouches(t *testing.T) {
 	} {
 		if key, w := appDefTouches(c.args); key != c.key || w != c.write {
 			t.Errorf("%v: got (%q, %v), want (%q, %v)", c.args, key, w, c.key, c.write)
+		}
+	}
+}
+
+// A session working on one app may leave the id off an action on that app:
+// it means the app the session last worked on, and the reply says which.
+// Builder left it off nine times in three sessions that were each editing one
+// app. A session that has worked on none is still asked for one, a delete
+// always names its app, and a checkout given only an existing app's folder
+// checks out that app.
+func TestAnActionWithNoIdMeansTheAppTheSessionIsOn(t *testing.T) {
+	turn, _ := folderTestTurn(t)
+	turn.session = &ChatSession{}
+	def := turn.appDefToolDef()
+	call := func(args map[string]any) (string, error) { return def.Handler(context.Background(), args) }
+	if _, err := call(map[string]any{"action": "get"}); err == nil || !strings.Contains(err.Error(), "id is required") {
+		t.Fatalf("a session on no app was not asked for one: %v", err)
+	}
+	if _, err := call(map[string]any{"action": "create", "name": "Tally",
+		"sections": []any{map[string]any{"id": "page", "kind": "html", "html": "<!DOCTYPE html><html><body><h1>Tally</h1></body></html>"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if turn.session.App != "tally" {
+		t.Fatalf("the session's app after a create: %q", turn.session.App)
+	}
+	out, err := call(map[string]any{"action": "get"})
+	if err != nil || !strings.Contains(out, `"tally"`) || !strings.Contains(out, "Tally") {
+		t.Fatalf("a get with no id did not read the session's app: %v\n%s", err, out)
+	}
+	if _, err := call(map[string]any{"action": "delete"}); err == nil {
+		t.Error("a delete with no id deleted the session's app")
+	}
+	if _, ok := LoadAppSpec("u", "tally"); !ok {
+		t.Fatal("the app is gone")
+	}
+	turn.session.App = ""
+	out, err = call(map[string]any{"action": "checkout", "dir": "tally.app"})
+	if err != nil || strings.Contains(out, "never published") {
+		t.Errorf("a checkout of an existing app's folder did not check out the app: %v\n%s", err, out)
+	}
+}
+
+// The script, check and page references are help topics, read in full when
+// needed, and the parameters say the essentials and where the rest is: the
+// scripts reference alone was 13 KB a worker carried on every round of a
+// build. A topic names every field the code takes, so the two cannot drift.
+func TestTheReferencesAreHelpTopicsThatFollowTheCode(t *testing.T) {
+	def := (&chatTurn{}).appDefToolDef()
+	help := func(topic string) string {
+		out, err := def.Handler(context.Background(), map[string]any{"action": "help", "topic": topic})
+		if err != nil {
+			t.Fatalf("help topic=%s: %v", topic, err)
+		}
+		return out
+	}
+	scripts := help("scripts")
+	for _, typ := range []reflect.Type{reflect.TypeOf(AppDataSource{}), reflect.TypeOf(AppAction{}), reflect.TypeOf(AppSchedule{})} {
+		for i := 0; i < typ.NumField(); i++ {
+			tag := strings.Split(typ.Field(i).Tag.Get("json"), ",")[0]
+			if tag != "" && tag != "-" && !strings.Contains(scripts, tag) {
+				t.Errorf("help topic=scripts does not name %s.%s (%q)", typ.Name(), typ.Field(i).Name, tag)
+			}
+		}
+	}
+	if !strings.Contains(help("checks"), appcheck.Reference) {
+		t.Error("help topic=checks is not the checks reference")
+	}
+	if !strings.Contains(help("page"), apppage.API) {
+		t.Error("help topic=page is not what window.app offers")
+	}
+	if _, err := def.Handler(context.Background(), map[string]any{"action": "help", "topic": "nonsense"}); err == nil {
+		t.Error("an unknown topic was answered")
+	}
+	for name, topic := range map[string]string{"data_sources": "scripts", "actions": "scripts", "checks": "checks"} {
+		d := def.Tool.Parameters[name].Description
+		if !strings.Contains(d, `topic=\"`+topic+`\"`) && !strings.Contains(d, `topic="`+topic+`"`) {
+			t.Errorf("the %s parameter does not point at help topic=%s: %s", name, topic, d)
+		}
+		if len(d) > 1200 {
+			t.Errorf("the %s parameter is %d characters again: the rest belongs in help topic=%s", name, len(d), topic)
 		}
 	}
 }
