@@ -127,6 +127,12 @@ const checkStepJS = `(step) => {
     if (!root) return {done: false, saw: 'no section titled "' + step.in + '"'};
   }
   if (!root) return {done: false, saw: 'the page has no body'};
+  // While a dialog is open it is all a person can reach (a row's Delete asks
+  // to confirm in one), so a fill, a choice or a click goes to the topmost
+  // open dialog. Matching the whole page clicked the row's Delete again
+  // under the dialog's own button, and the confirmation never came.
+  const dialogs = Array.from(document.querySelectorAll('[role="dialog"],dialog[open]')).filter(visible);
+  const dialog = dialogs.length ? dialogs[dialogs.length - 1] : null;
   const text = norm(root.innerText);
   if (step.see) return {done: text.includes(norm(step.see)), saw: 'the page shows: ' + clip(root.innerText)};
   if (step.not_see) return {done: !text.includes(norm(step.not_see)), saw: 'the page still shows "' + step.not_see + '"'};
@@ -135,15 +141,16 @@ const checkStepJS = `(step) => {
     if (!n) n = root.querySelectorAll('[role="row"]').length;
     return {done: n === step.rows, saw: n + ' row(s)'};
   }
+  const fieldRoot = dialog || document;
   const field = label => {
     const want = norm(label);
-    for (const l of document.querySelectorAll('label')) {
+    for (const l of fieldRoot.querySelectorAll('label')) {
       if (norm(l.textContent) !== want) continue;
       const c = l.control || l.querySelector('input,textarea,select') ||
         (l.parentElement && l.parentElement.querySelector('input,textarea,select'));
       if (c) return c;
     }
-    for (const c of document.querySelectorAll('input,textarea,select')) {
+    for (const c of fieldRoot.querySelectorAll('input,textarea,select')) {
       if ([c.placeholder, c.getAttribute('aria-label'), c.name].some(v => norm(v) === want)) return c;
     }
     return null;
@@ -170,8 +177,13 @@ const checkStepJS = `(step) => {
   if (step.click) {
     const want = norm(step.click);
     const label = e => norm(e.innerText || e.value || e.getAttribute('aria-label') || e.title);
-    const cands = Array.from(root.querySelectorAll('button,a,[role="button"],input[type="submit"],input[type="button"]')).filter(visible);
+    const cands = Array.from((dialog || root).querySelectorAll('button,a,[role="button"],input[type="submit"],input[type="button"]')).filter(visible);
     const el = cands.find(e => label(e) === want) || cands.find(e => label(e).includes(want));
+    if (!el && dialog) {
+      // Say what the dialog offers, so the next try clicks one of them.
+      return {done: false, saw: 'a dialog is open ("' + clip(dialog.innerText).slice(0, 120) + '"), and its buttons are: ' +
+        cands.map(e => '"' + (e.innerText || e.value || '').trim() + '"').filter(b => b !== '""').join(', ')};
+    }
     if (!el) return {done: false, saw: 'no button or link "' + step.click + '"'};
     el.click();
     return {done: true};
