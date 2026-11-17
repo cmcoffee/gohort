@@ -529,6 +529,16 @@ func (a *AdminApp) handleResetTunables(c *jsonapi.Call, _ struct{}) (any, error)
 	return map[string]string{"status": "reset"}, nil
 }
 
+// appInfo is one app the access pickers offer.
+type appInfo struct {
+	Path string `json:"path"`
+	Name string `json:"name"`
+}
+
+// appSwitchedOffMark follows the name of an app switched off on the Apps tab
+// wherever an app is granted.
+const appSwitchedOffMark = " (switched off on the Apps tab)"
+
 // handleListApps returns all registered web apps (excluding admin and
 // any app that implements WebHidden() returning true) for the app
 // assignment UI. Hidden apps are routing-only surfaces (e.g. the
@@ -536,10 +546,6 @@ func (a *AdminApp) handleResetTunables(c *jsonapi.Call, _ struct{}) (any, error)
 // shouldn't appear as togglable items in the per-user / default-apps
 // pickers.
 func (a *AdminApp) handleListApps(c *jsonapi.Call) (any, error) {
-	type appInfo struct {
-		Path string `json:"path"`
-		Name string `json:"name"`
-	}
 	type hidden interface{ WebHidden() bool }
 	isHidden := func(wa WebApp) bool {
 		if h, ok := wa.(hidden); ok && h.WebHidden() {
@@ -572,12 +578,19 @@ func (a *AdminApp) handleListApps(c *jsonapi.Call) (any, error) {
 			}
 		}
 	}
-	// Deduplicate.
+	// Deduplicate, and mark an app switched off on the Apps tab. Granting
+	// and switching on are separate: an app granted to everyone, and a
+	// default, stayed off the dashboard for everyone, gear list included,
+	// while every one of these pickers showed it as granted. Marked rather
+	// than left out, so a grant already saved stays in view.
 	seen := make(map[string]bool)
 	var unique []appInfo
 	for _, ap := range apps {
 		if !seen[ap.Path] {
 			seen[ap.Path] = true
+			if !AppEnabled(a.db, ap.Path) {
+				ap.Name += appSwitchedOffMark
+			}
 			unique = append(unique, ap)
 		}
 	}

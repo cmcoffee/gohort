@@ -376,7 +376,7 @@ func (a *AdminApp) systemSections() []ui.Section {
 		desktopProfilesSection(),
 		{
 			Title:    "Default Apps",
-			Subtitle: "Apps every newly-approved user gets access to by default. Per-user overrides above take precedence.",
+			Subtitle: "Apps every newly-approved user gets access to by default. Per-user overrides above take precedence. An app switched off on the Apps tab is marked: nobody reaches it, granted or not, until it is switched back on there.",
 			Body: ui.ChipPicker{
 				OptionsSource: "api/apps",
 				RecordSource:  "api/settings",
