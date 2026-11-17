@@ -91,6 +91,54 @@ type Check struct {
 
 	// A page check: the steps, in order.
 	Steps []Step `json:"steps,omitempty"`
+
+	// Stored is the check as JSON, which is how the app store keeps it
+	// (Pack): the store writes with gob, which leaves out zero values, so
+	// {"count": 0}, {"exists": false}, {"rows": 0} and an empty equals came
+	// back with no test at all, and the next save refused the app's own
+	// check. Unpack restores the check from it. Never part of the check as
+	// anyone reads it.
+	Stored string `json:"-"`
+}
+
+// Pack is checks as the app store keeps them: each as its name and itself as
+// JSON in Stored, which gob keeps whole. The other fields are left to
+// Stored: gob cannot write a list inside equals at all ([] came back null).
+func Pack(checks []Check) []Check {
+	if len(checks) == 0 {
+		return checks
+	}
+	out := make([]Check, len(checks))
+	for i, c := range checks {
+		c.Stored = ""
+		b, err := json.Marshal(c)
+		if err != nil {
+			out[i] = c
+			continue
+		}
+		out[i] = Check{Name: c.Name, Stored: string(b)}
+	}
+	return out
+}
+
+// Unpack is checks as the app store returned them, each restored from
+// Stored where it has one; a check saved before Stored existed is as it was.
+func Unpack(checks []Check) []Check {
+	if len(checks) == 0 {
+		return checks
+	}
+	out := make([]Check, len(checks))
+	for i, c := range checks {
+		if c.Stored != "" {
+			var whole Check
+			if json.Unmarshal([]byte(c.Stored), &whole) == nil {
+				c = whole
+			}
+		}
+		c.Stored = ""
+		out[i] = c
+	}
+	return out
 }
 
 // Expect is one test of a script's printed JSON.

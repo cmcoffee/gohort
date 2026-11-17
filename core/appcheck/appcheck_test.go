@@ -1,6 +1,8 @@
 package appcheck
 
 import (
+	"bytes"
+	"encoding/gob"
 	"reflect"
 	"regexp"
 	"strings"
@@ -91,5 +93,34 @@ func TestTheReferenceNamesEveryField(t *testing.T) {
 				t.Errorf("%s.%s (%q) is not in Reference", typ.Name(), typ.Field(i).Name, tag)
 			}
 		}
+	}
+}
+
+// A check keeps its zero values through the app store, which writes with gob:
+// gob leaves zero values out, so {"count": 0} came back with no test and the
+// next save refused the app's own check. Pack and Unpack carry the check
+// whole; a check stored before Stored existed reads as it was.
+func TestAChecksZeroValuesSurviveTheStore(t *testing.T) {
+	checks := []Check{{Name: "nothing yet", Script: "s", Expect: []Expect{
+		{Path: "total", Equals: 0.0}, {Path: "rows", Count: n(0)}, {Path: "error", Exists: b(false)},
+		{Path: "list", Equals: []any{}}, {Path: "on", Equals: false},
+	}}, {Name: "empty table", Steps: []Step{{Rows: n(0), In: "Books"}}}}
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(Pack(checks)); err != nil {
+		t.Fatal(err)
+	}
+	var back []Check
+	if err := gob.NewDecoder(&buf).Decode(&back); err != nil {
+		t.Fatal(err)
+	}
+	back = Unpack(back)
+	if !reflect.DeepEqual(back, checks) {
+		t.Errorf("after the store:\n%+v\nwant\n%+v", back, checks)
+	}
+	if err := Validate(back, map[string]bool{"s": true}); err != nil {
+		t.Errorf("the stored checks no longer validate: %v", err)
+	}
+	if got := Unpack([]Check{{Name: "old", Script: "s"}}); got[0].Name != "old" || got[0].Stored != "" {
+		t.Errorf("a check stored without Stored: %+v", got)
 	}
 }

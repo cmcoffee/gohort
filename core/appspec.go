@@ -551,6 +551,7 @@ func LoadAppSpec(owner, slug string) (AppSpec, bool) {
 	}
 	var s AppSpec
 	ok := db.Get(AppSpecTable, slug, &s)
+	s.Checks = appcheck.Unpack(s.Checks)
 	return s, ok
 }
 
@@ -629,7 +630,10 @@ func SaveAppSpecAs(s AppSpec, reason string) AppSpec {
 		v.Against = now
 		s.Verify = &v
 	}
-	db.Set(AppSpecTable, s.Slug, s)
+	// Its checks keep their zero values through the store (appcheck.Pack).
+	stored := s
+	stored.Checks = appcheck.Pack(s.Checks)
+	db.Set(AppSpecTable, s.Slug, stored)
 	for _, fn := range appSpecSavedHooks {
 		fn(s)
 	}
@@ -680,6 +684,7 @@ func ListAppSpecs(owner string) []AppSpec {
 	for _, k := range db.Keys(AppSpecTable) {
 		var s AppSpec
 		if db.Get(AppSpecTable, k, &s) {
+			s.Checks = appcheck.Unpack(s.Checks)
 			out = append(out, s)
 		}
 	}
