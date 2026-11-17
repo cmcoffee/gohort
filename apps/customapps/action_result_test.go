@@ -1,6 +1,7 @@
 package customapps
 
 import (
+	"encoding/json"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -32,6 +33,30 @@ func TestAnActionHandsBackItsResultAndTheRecordsAsSaved(t *testing.T) {
 	var saved map[string]any
 	if !db.Get(recTable("game"), id, &saved) || saved["hull"] != float64(70) {
 		t.Errorf("the record was saved under the key handed back: %+v", saved)
+	}
+
+	// A record keyed by a number (a timestamp) keeps it: stored under its
+	// text, the number left as the script wrote it, and the same number again
+	// updates that record rather than adding one. It used to read as no key,
+	// and was replaced with a random id.
+	tsSpec := AppSpec{Slug: "prices", Owner: "alice", RecordKey: "ts", Actions: []AppAction{{Name: "log", Script: "print('x')"}}}
+	runAppScript = func(j appscript.Job) (string, error) {
+		return `{"records":[{"ts":1731828315,"price":64554}]}`, nil
+	}
+	runActionAndPersist("alice", db, db, tsSpec, tsSpec.Actions[0], map[string]any{}, "alice", scriptRun{Interactive: true})
+	res, _ = runActionAndPersist("alice", db, db, tsSpec, tsSpec.Actions[0], map[string]any{}, "alice", scriptRun{Interactive: true})
+	if len(res.Records) != 1 || res.Records[0]["ts"] != float64(1731828315) {
+		t.Errorf("a numeric key was not kept: %+v", res.Records)
+	}
+	if keys := db.Keys(recTable("prices")); len(keys) != 1 || keys[0] != "1731828315" {
+		t.Errorf("stored under %v, want one record under 1731828315", keys)
+	}
+	for in, want := range map[string]string{`"ab"`: "ab", `"  "`: "", `2.5`: "2.5", `true`: "", `null`: ""} {
+		var v any
+		json.Unmarshal([]byte(in), &v)
+		if got := recordKeyOf(map[string]any{"k": v}, "k"); got != want {
+			t.Errorf("key %s reads %q, want %q", in, got, want)
+		}
 	}
 
 	runAppScript = func(j appscript.Job) (string, error) { return `{"message":"ok"}`, nil }

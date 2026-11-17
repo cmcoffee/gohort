@@ -31,11 +31,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1749,8 +1751,8 @@ func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act 
 		if rec == nil {
 			continue
 		}
-		id, _ := rec[spec.RecordKey].(string)
-		if strings.TrimSpace(id) == "" {
+		id := recordKeyOf(rec, spec.RecordKey)
+		if id == "" {
 			id = newID()
 			rec[spec.RecordKey] = id
 		}
@@ -1835,8 +1837,8 @@ func (T *CustomApps) saveRecord(a *appCall, rec map[string]any) (any, error) {
 	if rec == nil {
 		rec = map[string]any{}
 	}
-	id, _ := rec[a.spec.RecordKey].(string)
-	if strings.TrimSpace(id) == "" {
+	id := recordKeyOf(rec, a.spec.RecordKey)
+	if id == "" {
 		id = newID()
 		rec[a.spec.RecordKey] = id
 	}
@@ -1851,6 +1853,32 @@ func (T *CustomApps) saveRecord(a *appCall, rec map[string]any) (any, error) {
 	a.appdb.Set(recTable(a.spec.Slug), id, rec)
 	noteChange(recordsChangeKey(a.owner, a.spec.Slug, a.User))
 	return rec, nil
+}
+
+// recordKeyOf is the key a record is stored under: its key field's text,
+// or a number written out (a script keying its rows by a timestamp), and ""
+// when it has neither, for the caller to make one. The record keeps the
+// number as the script wrote it; only the store's key is text. A number used
+// to read as no key at all and was replaced by a random id, so a script that
+// keyed by ts and looked for a numeric ts found none of its rows.
+func recordKeyOf(rec map[string]any, field string) string {
+	switch v := rec[field].(type) {
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return ""
+		}
+		return v
+	case float64:
+		if v == math.Trunc(v) && math.Abs(v) < 1e15 {
+			return strconv.FormatInt(int64(v), 10)
+		}
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case json.Number:
+		return v.String()
+	case int, int64:
+		return fmt.Sprint(v)
+	}
+	return ""
 }
 
 // recordID is the record ?id= names.

@@ -142,8 +142,8 @@ func (a *appRecordsArtifact) ImportArtifact(_ Database, recipe json.RawMessage, 
 		if rec == nil {
 			continue
 		}
-		id, _ := rec[key].(string)
-		if strings.TrimSpace(id) == "" {
+		id := recordKeyOf(rec, key)
+		if id == "" {
 			continue
 		}
 		udb.Set(tbl, id, rec)
