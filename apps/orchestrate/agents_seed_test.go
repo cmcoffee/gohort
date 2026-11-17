@@ -147,3 +147,15 @@ func TestBuilderPromptDeniesCreditForRefusedCalls(t *testing.T) {
 		t.Error("a validator refusal is a step, not a decision point for the user")
 	}
 }
+
+// Builder thinks at medium effort: at the worker template's default (its
+// costliest) a change to an app spent 80% of 30 minutes reasoning, and medium
+// halved the time on a new app and on a change. verify's load of the page
+// with records in it covers the slip that came with it, a list that threw on
+// its first record.
+func TestBuilderThinksAtMediumEffort(t *testing.T) {
+	rec, ok := seedAgentByID("seed-builder")
+	if !ok || rec.Effort != "medium" {
+		t.Errorf("Builder's effort: %q", rec.Effort)
+	}
+}
