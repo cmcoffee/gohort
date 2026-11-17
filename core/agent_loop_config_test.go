@@ -91,6 +91,7 @@ func TestEveryAgentLoopShowsWhatItsToolsQueue(t *testing.T) {
 		"core/sdk.go":                        "the bare loop for an outside caller: its tools take no tool session",
 		"core/pipeline_interp.go":            "pipeline stages here are given tools without a tool session",
 		"apps/hello/agent.go":                "the minimal example: its tools take no tool session",
+		"apps/anvil/eval.go":                 "Anvil's Measure runs: its code tools work on the project, not a tool session",
 		"apps/servitor/probe_session.go":     "Servitor's own tools, which take no tool session",
 		"apps/servitor/sysprobe.go":          "Servitor's own tools, which take no tool session",
 		"apps/servitor/repo_audit.go":        "Servitor's own tools, which take no tool session",
