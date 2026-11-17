@@ -385,7 +385,9 @@ type AgentLoopPanel struct {
 	// turn runs: a spinner and its seconds while it runs, a mark when it
 	// ends, and what it covered when opened. A reply's list of calls opens
 	// with it, too, instead of behind its "N tools" button. An app words its
-	// tools' lines with window.uiRegisterStepSummary.
+	// tools' lines with window.uiRegisterStepSummary. It implies
+	// LockActivity: the steps are in the conversation, so there is no
+	// activity pane to open.
 	ShowSteps bool `json:"show_steps,omitempty"`
 
 	// LockActivity hides the activity pane AND the floating

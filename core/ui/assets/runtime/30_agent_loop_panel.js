@@ -1745,6 +1745,11 @@
     // pins it hidden AND disables the toggle — used by apps that
     // route everything into the conversation pane and don't want
     // the activity-pane affordance at all.
+    // A panel that shows its steps in the conversation (show_steps) has no
+    // use for the activity pane: the work it would list is already there. It
+    // was left collapsed, not gone, so its expand tab stayed, sat over the
+    // New button on a phone, and opened a pane that split the screen.
+    if (cfg.show_steps) cfg.lock_activity = true;
     var activityCollapsed = !!cfg.hide_activity || !!cfg.lock_activity;
     // On a phone the pane would take half the screen beside the
     // conversation, so it starts closed there, and opening it there does not
