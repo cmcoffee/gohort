@@ -45,7 +45,12 @@ script check: {name, script, records?, shared?, inputs?, expect}
            one test. path is a dot path into the printed JSON
            ("rows.0.total"); empty is the whole value. contains ignores case
   A check's run writes nothing: what an action saves, shares or sends is
-  judged from what it printed, and nothing lands anywhere.
+  judged from what it printed, and nothing lands anywhere. So it sees a
+  shared record before the host stamps it: saved for real, every shared
+  record an action prints gets by set to whoever ran the action (and a new
+  updated), whatever the script put there. A manager editing Sam's record
+  becomes its by; when the author must survive someone else's edit, keep
+  them in a field of the app's own (author) and check that field.
 
 page check: {name, records?, shared?, steps}
   drives the page as served, in a browser, on the check's own records.
