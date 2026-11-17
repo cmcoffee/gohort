@@ -788,7 +788,23 @@ func (s Spec) resolveSecret(c Connector, typed map[string]string) *connectionAut
 	addrs := s.secretAddresses(f)
 	profile, fromKeystore := f.Profile, false
 	value, have := typed[f.Name]
-	if !have || strings.TrimSpace(value) == "" {
+	// A form under test that chose a Keystore key posts the choice, not the
+	// key: it is resolved here as a kept one is, or the reference itself
+	// went to the service as the key (Serper answered 400).
+	if id, ref := isKeystoreValue(value); have && ref {
+		if id == "" {
+			value = ""
+		} else {
+			v, p, err := keystoreSecret(id, f, addrs)
+			if err != nil {
+				return &connectionAuth{err: fmt.Errorf("%s: %w", c.Name, err)}
+			}
+			value, fromKeystore = v, true
+			if p != "" {
+				profile = p
+			}
+		}
+	} else if !have || strings.TrimSpace(value) == "" {
 		kept, ok := GetConnectionSecret(RootDB, c, f.Name)
 		if ok && kept.Keystore != "" {
 			v, p, err := keystoreSecret(kept.Keystore, f, addrs)

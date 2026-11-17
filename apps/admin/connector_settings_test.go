@@ -215,6 +215,25 @@ func TestAPagesTestRunsOnItsForm(t *testing.T) {
 	}
 }
 
+// A Test on a form that chose a Keystore key sends that key, not the choice:
+// the reference itself went to the service as the key, and Serper answered
+// 400 to a web search Test while saved searches worked.
+func TestAPagesTestSendsTheKeystoreKeyItsFormChose(t *testing.T) {
+	srv, got := settingsWorld(t)
+	vecConnector(t, srv.URL)
+	a := &AdminApp{db: RootDB}
+	e, err := keystore.Save(RootDB, keystore.Entry{Name: "Vec account", Addresses: []string{srv.URL}}, "sk-from-keystore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := &jsonapi.Call{R: httptest.NewRequest("POST", "/api/embeddings/test", nil)}
+	form := postedForm[EmbeddingConfig](t, `{"enabled":true,"provider":"vec","config/vec/endpoint":"`+srv.URL+`","config/vec/api_key@keystore":"`+e.ID+`"}`)
+	out, _ := a.handleEmbeddingsTest(call, form)
+	if body, _ := out.(map[string]any); body["ok"] != true || len(*got) != 1 || !strings.Contains((*got)[0], "Bearer sk-from-keystore") {
+		t.Errorf("the Test: %v, sent %v", out, *got)
+	}
+}
+
 // A connector a page references cannot be deleted: its row offers no
 // Delete, and a delete is refused naming the page, until it is taken off
 // there.
