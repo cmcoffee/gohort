@@ -62,6 +62,9 @@ func (T *CustomApps) scriptBase(r *http.Request, spec AppSpec, owner string) Dat
 	return T.recordBase(spec, owner)
 }
 
+// errNotInPreview answers a route a preview on copied records may not use.
+var errNotInPreview = jsonapi.Forbidden("not in a preview on a copy of your records: this part of the app can act on its own (an agent's chat, a pipeline, a file written to disk) or change your real settings, which a preview cannot hold to the copy. Install the app to use it, or preview it on your real records")
+
 // checkRouteAllowed reports whether a page check may use the route rest:
 // the page, its records and views, its data sources and actions, shared
 // collections and reading assets. Not chat or a pipeline (they act on their

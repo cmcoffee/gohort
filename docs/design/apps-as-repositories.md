@@ -1,6 +1,9 @@
 # Apps as repositories: Builder and Anvil on one history
 
-Status: proposed (2026-11-15). Not built.
+Status: proposed (2026-11-15). Settled 2026-11-16: plain git folders in the
+data directory, the git program, Anvil public, every app owner (sandboxed).
+Step 1 found mostly built as Builder's app folder; the rest of it, and a
+preview, built 2026-11-16 (below).
 
 ## Why
 
@@ -53,14 +56,20 @@ repository directly. What runs is a checked install of one commit.
 
 ## What is in the repository
 
-What the app IS, as files a person can read and diff:
+What the app IS, as files a person can read and diff. This is Builder's app
+folder (`apps/orchestrate/app_folder.go`), which already existed when this
+was written and is what the repository holds:
 
 - `app.json`: name, description, the agent and pipeline it uses, its record
-  shape, layout flags, the settings it declares (names, kinds and help, not
-  their values), its checks.
-- `sections.json`: the authoring form of the page. The rendered page is
-  compiled from it on install, so the two never disagree.
-- `scripts/`: each data source, action and library as its own file.
+  key, layout flags, the settings it declares (names, kinds and help, not
+  their values), its shared collections, and the sections, the authoring
+  form of the page. The rendered page is compiled from them on install, so
+  the two never disagree.
+- `page.html` (an html section names its file), `data/<name>.py`,
+  `actions/<name>.py`, `lib/<name>.py`: each part as its own file.
+- `assets/`, `NOTES.md`, `checks.json`.
+- `.live`: a fingerprint of the live app the folder was written from or last
+  installed to; an install over a live app changed since is refused.
 
 What it HOLDS, and what this instance decides about it, stays out: the
 records people entered and files they added, setting values (keys among
@@ -70,6 +79,28 @@ a repository pushed to GitHub must not carry them.
 
 The format is the `custom_app` export bundle unpacked into files, so export
 and import keep working and a bundle and a repository say the same thing.
+
+## Install and preview without a chat (built 2026-11-16)
+
+Install was Builder's publish, which only runs in a chat. It is now a core
+(`publishAppFolder`) with the chat's change approval passed in, and two
+calls a person's own action makes with no chat (`app_folder_install.go`):
+
+- `InstallAppFolder`: the same create or update Builder runs, so every check
+  and gate holds; the person pressing Install is the approval.
+- `BuildAppFolder`: the app as the folder says, compiled, saved nowhere.
+- `WriteAppFolder`: an app into a folder, marked as holding the live app.
+
+**Preview** (`apps/customapps/preview.go`). The person changing an app sees
+the working copy at the app's own address; nobody else does. A preview is
+started with a build, and its link sets a cookie on that app's path; a
+banner leads back to the installed app. By default it reads and writes a
+copy of the person's records and of the app's shared collections, held to a
+page check's rules (no outbound writes, notifications, agents or
+pipelines); real records is a choice made when it starts. Owner only for
+now. For an app nobody else uses, Install on every save makes the running
+app what is being edited; a shared app is previewed, then installed through
+the approval its sharing needs.
 
 ## Builder and Anvil at the same time
 

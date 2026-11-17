@@ -496,6 +496,31 @@ func (t *chatTurn) appDefPublish(args map[string]any) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return t.publishAppFolder(abs, rel, folderPublish{
+		note: stringArg(args, "note"), notes: stringArg(args, "notes"),
+		overwriteLive: boolArg(args, "overwrite_live"),
+		// Publishing over the live app changes it: the owner says so first
+		// (change_approval.go). A new one is this session's own.
+		approve: func(slug, rel string, exists bool) string {
+			return t.approveChange("app", slug, "Publish the folder "+rel+" over the live app.", editOrNew(exists))
+		},
+	})
+}
+
+// folderPublish is how one publish of an app folder goes: the note for the
+// app's history, notes for NOTES.md, whether it may replace a live app
+// changed since the folder was written, and who approves the change. A nil
+// approve is a person's own Install: pressing it is the approval.
+type folderPublish struct {
+	note, notes   string
+	overwriteLive bool
+	approve       func(slug, rel string, exists bool) string
+}
+
+// publishAppFolder installs the app in the folder at abs as t's user: the
+// same create or update Builder's app_def runs, with every check and gate it
+// has, then the folder's assets. rel is how the folder is named in messages.
+func (t *chatTurn) publishAppFolder(abs, rel string, o folderPublish) (string, error) {
 	in, m, err := t.appFolderRead(abs, rel)
 	if err != nil {
 		return "", err
@@ -503,29 +528,36 @@ func (t *chatTurn) appDefPublish(args map[string]any) (string, error) {
 	live, exists := LoadAppSpec(t.user, m.Slug)
 	if exists {
 		in["id"] = m.Slug
-		if err := appFolderStale(abs, rel, live); err != nil && !boolArg(args, "overwrite_live") {
+		if err := appFolderStale(abs, rel, live); err != nil && !o.overwriteLive {
 			return "", err
 		}
 	}
-	// Publishing over the live app changes it: the owner says so first
-	// (change_approval.go). A new one is this session's own.
-	if msg := t.approveChange("app", m.Slug, "Publish the folder "+rel+" over the live app.", editOrNew(exists)); msg != "" {
-		return msg, nil
+	if o.approve != nil {
+		if msg := o.approve(m.Slug, rel, exists); msg != "" {
+			return msg, nil
+		}
 	}
 	prevAgent := ""
 	if exists {
 		prevAgent = strings.TrimSpace(live.AgentID)
 	}
-	if n := strings.TrimSpace(stringArg(args, "note")); n != "" {
+	if n := strings.TrimSpace(o.note); n != "" {
 		in["note"] = n
 	}
 	// Notes passed to publish over a starter NOTES.md are the notes meant:
 	// the folder copy won, and a build that wrote good notes in the call was
 	// told its notes were still the starter. They go into NOTES.md too, so
 	// the folder and the live app keep one copy.
-	if n := strings.TrimSpace(stringArg(args, "notes")); n != "" && appNotesIsStarter(stringArg(in, "notes"), m.Name) {
+	if n := strings.TrimSpace(o.notes); n != "" && appNotesIsStarter(stringArg(in, "notes"), m.Name) {
 		in["notes"] = n
 		os.WriteFile(filepath.Join(abs, "NOTES.md"), []byte(n+"\n"), 0o644)
+	}
+	// Notes the folder holds as the live app has them are not a change, and
+	// are not sent: the length cap is for notes being written. An app whose
+	// notes were saved before the cap, checked out and installed again with
+	// them untouched, was refused for them.
+	if exists && strings.TrimSpace(stringArg(in, "notes")) == strings.TrimSpace(live.Notes) {
+		delete(in, "notes")
 	}
 	out, err := t.appDefCreateOrUpdate(in, exists)
 	if err != nil {

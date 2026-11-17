@@ -10,6 +10,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/tools/appscript"
 )
 
 // appCall is one request to an app the caller may open.
@@ -51,6 +52,23 @@ func (T *CustomApps) openApp(r *http.Request, user, slug string) (AppSpec, strin
 
 // inApp opens the app the {slug} in the route names.
 func (T *CustomApps) inApp(c *jsonapi.Call) (*appCall, error) {
+	// The working copy, for the person previewing it (preview.go).
+	if pv, ok := previewOf(c.R, c.User, c.R.PathValue("slug")); ok {
+		appdb := T.recordBase(pv.Spec, c.User)
+		if pv.Scratch != "" {
+			sc, live := appscript.CheckScratchFor(pv.Scratch)
+			if !live {
+				return nil, errCheckOver
+			}
+			path := c.R.URL.Path
+			if (strings.Contains(path, "/_settings/") && c.R.Method != http.MethodGet) || strings.HasSuffix(path, "/chat/active") {
+				return nil, errNotInPreview
+			}
+			appdb = sc.DB
+			c.R = withCheckScratch(c.R, sc)
+		}
+		return &appCall{Call: c, spec: pv.Spec, owner: pv.Spec.Owner, appdb: appdb}, nil
+	}
 	spec, owner, err := T.openApp(c.R, c.User, c.R.PathValue("slug"))
 	if err != nil {
 		return nil, err

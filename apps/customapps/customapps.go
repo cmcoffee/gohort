@@ -101,6 +101,7 @@ func (T *CustomApps) WebName() string { return "My Apps" }
 func (T *CustomApps) WebDesc() string { return "Apps composed from primitives." }
 
 func (T *CustomApps) Routes() {
+	hostApp = T
 	// An app's own rows travel with it on request (records_artifact.go).
 	T.registerRecordsArtifact()
 	T.registerPipelineRestore()
@@ -192,8 +193,23 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 	// same slug; otherwise an app another user shared with them (openApp).
 	// ownerUser is the app's owner (== user for owned apps) — the identity its
 	// sandboxed scripts run as.
-	spec, ownerUser, err := T.openApp(r, user, slug)
-	if err != nil {
+	// A preview (preview.go): starting it, leaving it, and the working copy
+	// in place of the installed app for the person it is theirs.
+	switch rest {
+	case "_preview":
+		T.handlePreviewStart(w, r, user, slug)
+		return
+	case "_preview/stop":
+		T.handlePreviewStop(w, r, slug)
+		return
+	}
+	pv, inPreview := previewOf(r, user, slug)
+	var spec AppSpec
+	var ownerUser string
+	var err error
+	if inPreview {
+		spec, ownerUser = pv.Spec, pv.Spec.Owner
+	} else if spec, ownerUser, err = T.openApp(r, user, slug); err != nil {
 		jsonapi.Fail(w, r, err)
 		return
 	}
@@ -203,9 +219,21 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 	// marker, or co-authored content goes through appdb so a private app's data
 	// stays entirely in its own file.
 	appdb := T.recordBase(spec, user)
-	// A page check's request: its scratch store, and only the routes a check
-	// may use (check_scratch.go).
-	if sc, isCheck, err := appCheckScratch(r, spec, ownerUser); err != nil {
+	// A preview on copied records is held as a page check is: its scratch
+	// store, and only the routes a check may use.
+	if inPreview && pv.Scratch != "" {
+		sc, ok := appscript.CheckScratchFor(pv.Scratch)
+		if !ok {
+			jsonapi.Fail(w, r, errCheckOver)
+			return
+		}
+		if !checkRouteAllowed(rest, r.Method) {
+			jsonapi.Fail(w, r, errNotInPreview)
+			return
+		}
+		appdb = sc.DB
+		r = withCheckScratch(r, sc)
+	} else if sc, isCheck, err := appCheckScratch(r, spec, ownerUser); err != nil {
 		jsonapi.Fail(w, r, err)
 		return
 	} else if isCheck {
@@ -262,6 +290,10 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		if canReport(spec, ownerUser, user) {
 			page = withReportLink(page)
 			head += reportDialogJS
+		}
+		if inPreview {
+			label, back := T.previewBanner(pv)
+			page = withNavLink(page, label, back)
 		}
 		if user == ownerUser {
 			page = withBuilderLink(page, slug)
