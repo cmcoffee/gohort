@@ -30,8 +30,13 @@ function node(tag, attrs, kids) {
     a.parentNode = n;
   };
   n.setAttribute = function(k, v) { n._attr[k] = v; };
+  Object.defineProperty(n, 'firstChild', {get: function() { return n.kids[0] || null; }});
+  Object.defineProperty(n, 'nextElementSibling', {get: function() {
+    var sib = n.parentNode && n.parentNode.kids; return sib ? sib[sib.indexOf(n) + 1] || null : null; }});
+  n.removeChild = function(c) { var i = n.kids.indexOf(c); if (i >= 0) n.kids.splice(i, 1); c.parentNode = null; };
   n.querySelector = function(sel) {
     if (sel === ':scope > .ui-agent-tools-panel') return n.kids.find(function(k) { return k.attrs && k.attrs.class === 'ui-agent-tools-panel'; }) || null;
+    if (sel === ':scope > .ui-agent-msg-body') return n.kids.find(function(k) { return k.attrs && k.attrs.class === 'ui-agent-msg-body'; }) || null;
     return null;
   };
   return n;
@@ -86,6 +91,69 @@ check('an unchanged step is not redrawn', panel.kids[0] === first);
 step.output = 'x';
 renderTurnSteps(host);
 check('a step that ends is redrawn in place, still open', panel.kids.length === 1 && panel.kids[0] !== first && panel.kids[0].open === true);
+// Routine steps an app grouped share one line, consecutive ones together,
+// that opens to them; the rest keep a line each, and a failure breaks the
+// group. An opened group stays open as it grows. A finished turn folds
+// behind one line saying what it did; a turn of one step does not fold.
+window.UIStepGroupOf = {read_file: 'look', search_code: 'look'};
+window.UIStepGroupWords = {look: function(steps) { return 'Looked ' + steps.length + ' times'; }};
+window.UITurnSummary = function(steps) { return steps.filter(function(s) { return s.name === 'edit_file'; }).length + ' edits'; };
+var t2 = turnStepsHost();
+t2.tools = [];
+function call(name, id, out) { return {name: name, call_id: id, args: '', argsFull: {path: id}, output: out}; }
+t2.tools.push(call('read_file', 'r1', 'a'), call('search_code', 'r2', 'b'), call('edit_file', 'e1', 'ok'), call('read_file', 'r3', 'c'));
+renderTurnSteps(t2);
+var p2 = t2.querySelector(':scope > .ui-agent-tools-panel');
+check('two routine steps share one line, in the app\u2019s words', p2.kids.length === 3 && /ui-agent-step-group/.test(p2.kids[0].attrs.class) && text(p2.kids[0]).indexOf('Looked 2 times') >= 0);
+check('an edit keeps its own line', !/ui-agent-step-group/.test(p2.kids[1].attrs.class) && text(p2.kids[1]).indexOf('edit_file') >= 0);
+check('one routine step on its own is a plain line', !/ui-agent-step-group/.test(p2.kids[2].attrs.class));
+p2.kids[0].open = true;
+t2.tools.push(call('search_code', 'r4', null));
+renderTurnSteps(t2);
+check('the last routine steps group as one more arrives, spinning while it runs', p2.kids.length === 3 && text(p2.kids[2]).indexOf('Looked 2 times') >= 0 && text(p2.kids[2]).indexOf('\u280b') >= 0);
+check('an opened group stays open across a redraw', p2.kids[0].open === true);
+t2.tools[3] = call('read_file', 'r3', 'error: no such file'); // it failed as it finished
+t2.tools[4].output = 'found';
+renderTurnSteps(t2);
+check('a failed step breaks the group and keeps its own line', p2.kids.length === 4 && text(p2.kids[2]).indexOf('\u2717') >= 0);
+t2.stepsFolded = true;
+renderTurnSteps(t2);
+check('a finished turn folds behind one line saying what it did', p2.kids.length === 1 && /ui-agent-steps-fold/.test(p2.kids[0].attrs.class) && text(p2.kids[0]).indexOf('1 edits, 1 failed') >= 0 && text(p2.kids[0]).indexOf('steps') < 0);
+var keepSummary = window.UITurnSummary;
+window.UITurnSummary = null;
+renderTurnSteps(t2);
+check('with no words of the app\u2019s, the folded line counts the steps', text(p2.kids[0]).indexOf('5 steps, 1 failed') >= 0);
+window.UITurnSummary = keepSummary;
+var t3 = {tools: [call('edit_file', 'e9', 'ok')], stepsFolded: true, querySelector: function() { return null; }, appendChild: function(c) { this.panel = c; c.parentNode = this; }};
+renderTurnSteps(t3);
+check('a turn of one step is not folded', t3.panel.kids.length === 1 && !/ui-agent-steps-fold/.test(t3.panel.kids[0].attrs.class || ''));
+
+// A list runs until the agent writes to the person: the next step after a
+// reply with text starts a new list below it, and the one before folds. An
+// empty reply (a round that only called tools) or a card does not split it.
+var replyWith = function(words) {
+  var b = node('div', {class: 'ui-agent-msg ui-agent-msg-assistant' + (words ? '' : ' ui-agent-msg-empty')});
+  var body = node('div', {class: 'ui-agent-msg-body'}, words ? [words] : []);
+  body.textContent = words;
+  b.appendChild(body);
+  return b;
+};
+convoLog.kids = [];
+turnSteps = null;
+thinkingEl = node('div');
+convoLog.appendChild(thinkingEl);
+var first = turnStepsHost();
+first.tools.push(call('read_file', 'x1', 'ok'), call('read_file', 'x2', 'ok'));
+convoLog.insertBefore(replyWith(''), thinkingEl);
+convoLog.insertBefore(node('div', {class: 'a card'}), thinkingEl);
+check('a round with no words, or a card, keeps the list going', turnStepsHost() === first);
+convoLog.insertBefore(replyWith('Found it: the handler is in web.go.'), thinkingEl);
+var second = turnStepsHost();
+check('after the agent writes, the next step starts a new list below its words', second !== first &&
+  convoLog.kids.indexOf(second) === convoLog.kids.indexOf(thinkingEl) - 1 && convoLog.kids.indexOf(first) < convoLog.kids.length - 3);
+check('the list before it folds behind its line', first.stepsFolded === true);
+check('the new list keeps going until the agent writes again', turnStepsHost() === second);
+
 // The status line: which tier answered and how much of its window the
 // prompt took, in the warning colour from four fifths full; null clears it.
 var meterEl = {textContent: '', title: '', style: {color: ''}};

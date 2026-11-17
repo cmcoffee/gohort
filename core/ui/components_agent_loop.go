@@ -255,6 +255,18 @@ type AgentLoopPanel struct {
 	// the user can type a follow-up note while the agent is
 	// running, and the agent picks it up between rounds.
 	InjectURL string `json:"inject_url,omitempty"`
+	// CommandsURL lists saved prompts offered as slash commands, as in
+	// Claude Code: GET returns [{name, description, prompt}] ({extras} such
+	// as {project_id} are substituted). Typing "/" at the start of an empty
+	// message lists them; a message "/name more words" is sent as the
+	// command's prompt followed by the words. A "/word" that names no
+	// command is sent as typed.
+	CommandsURL string `json:"commands_url,omitempty"`
+	// MentionsURL offers what "@" may name in a message, such as a
+	// project's files: GET with q= (what follows the "@" so far, {extras}
+	// substituted) returns [{value, description?}], best first. Picking one
+	// puts "@value " in the message in place of what was typed.
+	MentionsURL string `json:"mentions_url,omitempty"`
 	// ConfirmURL receives POSTs from operator-confirmation card
 	// clicks. Body shape: {id, value} where value is the chosen
 	// action's value field. Required when the server emits

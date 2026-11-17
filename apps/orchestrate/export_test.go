@@ -456,6 +456,26 @@ func TestASharedAgentsSessionCanBeExported(t *testing.T) {
 	}
 }
 
+// An app's sessions live under its agent's id scoped to a project
+// ("<agent>:<project>"); Copy session there resolves the agent, keeping the
+// scoped id, and only for someone the agent reaches.
+func TestAnAppsScopedSessionCanBeExported(t *testing.T) {
+	app, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	if _, err := saveAgent(udb, AgentRecord{ID: "app-coder", Owner: "alice", Name: "Coder", OrchestratorPrompt: "help"}); err != nil {
+		t.Fatal(err)
+	}
+	if a, ok := app.agentForSessionExport(udb, "alice", "app-coder:p1"); !ok || a.ID != "app-coder:p1" || a.Name != "Coder" {
+		t.Fatalf("a scoped session's agent: %+v %v", a, ok)
+	}
+	if _, ok := app.agentForSessionExport(UserDB(orchestrateBaseDB, "dana"), "dana", "app-coder:p1"); ok {
+		t.Error("someone the agent does not reach resolved it through a scoped id")
+	}
+	if _, ok := app.agentForSessionExport(udb, "alice", ":p1"); ok {
+		t.Error("an empty agent id resolved")
+	}
+}
+
 // A check that a Stop ended is not a check that failed. Stopped mid-turn, the
 // pre-input check beside the model's first call ends with the turn, and it
 // was recorded as "a check could not run; the turn proceeded unchecked": a

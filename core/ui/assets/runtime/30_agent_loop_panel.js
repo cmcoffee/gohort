@@ -2431,6 +2431,7 @@
       rows: 1,
     });
     inputArea.addEventListener('keydown', function(ev) {
+      if (cmdKey(ev) || recallKey(ev)) { ev.preventDefault(); return; }
       if (uiComposerEnterSends(ev)) { ev.preventDefault(); sendMessage(); }
       if (ev.key === 'Escape' && userEdit) { ev.preventDefault(); endComposerEdit(true); }
     });
@@ -3322,6 +3323,7 @@
     //   clearChip()          clears it without calling onClear
     var composerChip = el('div', {class: 'ui-agent-composer-chip', style: 'display:none'});
     convoPane.insertBefore(composerChip, inputRow);
+
     wrap.setAttribute('data-ui-composer', '');
     wrap.uiComposer = {
       insertText: composerInsert,
@@ -3335,6 +3337,183 @@
         composerChip.style.display = 'none';
       },
     };
+
+    // --- Suggestions over the box: "/" commands and "@" mentions ---------
+    // One list above the box, filled by whichever is being typed: "/" at
+    // the start of the message lists the app's saved prompts
+    // (cfg.commands_url), "@" at the start of a word its mentions, such as
+    // files (cfg.mentions_url). Arrows move, Tab or Enter picks, Escape
+    // closes. A message "/name more words" is sent as the command's prompt
+    // and the words; a picked mention puts "@value " in the message.
+    var cmdList = el('div', {class: 'ui-agent-cmd-list', role: 'listbox', style: 'display:none'});
+    convoPane.insertBefore(cmdList, inputRow);
+    var cmdCache = {url: '', list: null, at: 0, loading: null};
+    // sug is what the list shows: its rows, the one marked, what picking
+    // one does, and whether Enter on a row is its being typed in full.
+    var sug = {items: [], sel: 0, pick: null, typed: null};
+    // loadCommands is the commands for the current extras, fetched once
+    // and again after 30s when fresh is asked for (the list was edited).
+    function loadCommands(fresh) {
+      var url = substituteExtras(cfg.commands_url);
+      if (cmdCache.url === url) {
+        if (cmdCache.loading) return cmdCache.loading;
+        if (cmdCache.list && !(fresh && Date.now() - cmdCache.at > 30000)) return Promise.resolve(cmdCache.list);
+      }
+      cmdCache.url = url;
+      cmdCache.list = null;
+      var p = fetchJSON(url)
+        .then(function(d) { return Array.isArray(d) ? d : []; }, function() { return []; })
+        .then(function(list) {
+          if (cmdCache.url === url) { cmdCache.list = list; cmdCache.at = Date.now(); cmdCache.loading = null; }
+          return list;
+        });
+      cmdCache.loading = p;
+      return p;
+    }
+    function cmdQuery() {
+      var m = /^\/([^\s\/]*)$/.exec(inputArea.value);
+      return m ? m[1].toLowerCase() : null;
+    }
+    // mentionQuery is the "@word" the caret is at the end of, or null.
+    function mentionQuery() {
+      var pos = inputArea.selectionStart;
+      if (typeof pos !== 'number') pos = inputArea.value.length;
+      var m = /(^|\s)@([^\s@]*)$/.exec(inputArea.value.slice(0, pos));
+      return m ? {q: m[2], start: pos - m[2].length - 1, end: pos} : null;
+    }
+    function hideSuggest() {
+      sug.items = [];
+      sug.pick = null;
+      cmdList.innerHTML = '';
+      cmdList.style.display = 'none';
+    }
+    function markSuggest() {
+      Array.prototype.forEach.call(cmdList.children, function(r, i) { r.classList.toggle('active', i === sug.sel); });
+    }
+    // drawSuggest shows rows ([name, description] each) and what picking
+    // the i-th does.
+    function drawSuggest(items, rows, pick, typed) {
+      cmdList.innerHTML = '';
+      if (!items.length) { hideSuggest(); return; }
+      sug.items = items;
+      sug.pick = pick;
+      sug.typed = typed || null;
+      sug.sel = Math.min(sug.sel, items.length - 1);
+      rows.forEach(function(r, i) {
+        var row = el('button', {type: 'button', class: 'ui-agent-cmd', role: 'option'}, [
+          el('span', {class: 'ui-agent-cmd-name'}, [r[0]]),
+          el('span', {class: 'ui-agent-cmd-desc'}, [r[1] || '']),
+        ]);
+        // Keep the box focused, so a click picks and typing carries on.
+        row.addEventListener('mousedown', function(e) { e.preventDefault(); });
+        row.addEventListener('click', function() { pickSuggest(i); });
+        cmdList.appendChild(row);
+      });
+      markSuggest();
+      cmdList.style.display = '';
+    }
+    function pickSuggest(i) {
+      var item = sug.items[i], pick = sug.pick;
+      if (!item || !pick) return;
+      hideSuggest();
+      pick(item);
+      autosizeInput();
+      if (inputArea.focus) inputArea.focus();
+    }
+    function showCommands() {
+      var q = cmdQuery();
+      if (!cfg.commands_url || q === null) { hideSuggest(); return; }
+      loadCommands(true).then(function(list) {
+        if (cmdQuery() !== q) return;
+        var shown = list.filter(function(c) { return c && c.name && String(c.name).toLowerCase().indexOf(q) === 0; });
+        drawSuggest(shown,
+          shown.map(function(c) { return ['/' + c.name, String(c.description || c.prompt || '').split('\n')[0]]; }),
+          function(c) { inputArea.value = '/' + c.name + ' '; },
+          function(c) { return String(c.name).toLowerCase() === cmdQuery(); });
+      });
+    }
+    var mentionTimer = null, mentionSeq = 0;
+    // showMentions asks for what "@word" may name, a moment after typing
+    // stops; false when the caret is not at one.
+    function showMentions() {
+      var mq = cfg.mentions_url ? mentionQuery() : null;
+      if (!mq) return false;
+      clearTimeout(mentionTimer);
+      var seq = ++mentionSeq;
+      mentionTimer = setTimeout(function() {
+        var url = substituteExtras(cfg.mentions_url);
+        url += (url.indexOf('?') >= 0 ? '&' : '?') + 'q=' + encodeURIComponent(mq.q);
+        fetchJSON(url).then(function(d) {
+          var cur = mentionQuery();
+          if (seq !== mentionSeq || !cur || cur.q !== mq.q) return;
+          var items = (Array.isArray(d) ? d : []).filter(function(o) { return o && o.value; });
+          drawSuggest(items,
+            items.map(function(o) { return ['@' + o.value, o.description || '']; }),
+            function(o) {
+              var at = mentionQuery() || mq, v = inputArea.value;
+              var put = '@' + o.value + ' ';
+              inputArea.value = v.slice(0, at.start) + put + v.slice(at.end).replace(/^\s+/, '');
+              var caret = at.start + put.length;
+              try { inputArea.setSelectionRange(caret, caret); } catch (e) {}
+            });
+        }).catch(function() {});
+      }, 120);
+      return true;
+    }
+    // cmdKey is the list's keys; true when it used the key. Enter on a
+    // command typed in full sends it rather than picking it again.
+    function cmdKey(ev) {
+      var n = sug.items.length;
+      if (!n || cmdList.style.display === 'none' || ev.isComposing) return false;
+      if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+        sug.sel = (sug.sel + (ev.key === 'ArrowDown' ? 1 : n - 1)) % n;
+        markSuggest();
+        return true;
+      }
+      if (ev.key === 'Escape') { hideSuggest(); return true; }
+      if (ev.key === 'Tab' || (ev.key === 'Enter' && !ev.shiftKey)) {
+        if (ev.key === 'Enter' && sug.typed && sug.typed(sug.items[sug.sel])) { hideSuggest(); return false; }
+        pickSuggest(sug.sel);
+        return true;
+      }
+      return false;
+    }
+    inputArea.addEventListener('input', function() {
+      sug.sel = 0;
+      if (!showMentions()) showCommands();
+    });
+    // expandCommand is text with a known "/name" put as its prompt.
+    function expandCommand(text, list) {
+      var m = /^\/([^\s\/]+)(?:\s+([\s\S]*))?$/.exec(text);
+      if (!m) return text;
+      var name = m[1].toLowerCase();
+      for (var i = 0; i < list.length; i++) {
+        var c = list[i];
+        if (c && c.prompt && String(c.name).toLowerCase() === name) {
+          var more = (m[2] || '').trim();
+          return String(c.prompt) + (more ? '\n\n' + more : '');
+        }
+      }
+      return text;
+    }
+
+    // recallKey: up arrow in an empty box brings back the last message you
+    // sent here, to change and send again, as in a terminal.
+    function recallKey(ev) {
+      if (ev.key !== 'ArrowUp' || ev.shiftKey || ev.altKey || ev.metaKey || ev.ctrlKey || ev.isComposing) return false;
+      if (inputArea.value || userEdit) return false;
+      var last = null;
+      Object.keys(msgEls).forEach(function(k) {
+        var e = msgEls[k];
+        if (!e || e.role !== 'user' || !e.rawText || !e.bubble || !e.bubble.isConnected) return;
+        if (!last || (last.bubble.compareDocumentPosition(e.bubble) & 4)) last = e;
+      });
+      if (!last) return false;
+      inputArea.value = last.rawText;
+      autosizeInput();
+      try { inputArea.setSelectionRange(last.rawText.length, last.rawText.length); } catch (e) {}
+      return true;
+    }
 
     function renderAttachments() {
       attachStrip.innerHTML = '';
@@ -4789,6 +4968,9 @@
     // panels with fresh result data.
     function renderAgentToolPanel(panel) {
       var tools = panel.parentNode && panel.parentNode.tools || [];
+      // Where steps are shown, a reply's steps are a finished turn's: grouped,
+      // and folded behind one line.
+      if (cfg.show_steps) { buildStepList(panel, tools, true); return; }
       panel.innerHTML = '';
       tools.forEach(function(t) { panel.appendChild(renderAgentToolEntry(t)); });
     }
@@ -4885,8 +5067,16 @@
     // It sits just above the working dots: each new step moves it there, so
     // cards the turn put in the conversation meanwhile stay above it and the
     // step running now is in view.
+    // A list runs until the agent writes to the person: what it does after
+    // that starts a new list below what it wrote, and the one before folds
+    // behind its line, so each stretch of work sits with the words it led to.
     var turnSteps = null;
     function turnStepsHost() {
+      if (turnSteps && turnSteps.isConnected && proseAfter(turnSteps)) {
+        turnSteps.stepsFolded = true;
+        renderTurnSteps(turnSteps);
+        turnSteps = null;
+      }
       if (!turnSteps || !turnSteps.isConnected) {
         turnSteps = el('div', {class: 'ui-agent-msg ui-agent-msg-assistant ui-agent-steps'});
         turnSteps.tools = [];
@@ -4898,26 +5088,120 @@
       }
       return turnSteps;
     }
+    // proseAfter reports whether the agent wrote to the person after list: a
+    // reply with text between it and the working dots.
+    function proseAfter(list) {
+      for (var n = list.nextElementSibling; n && n !== thinkingEl; n = n.nextElementSibling) {
+        var c = n.classList;
+        if (!c || !c.contains('ui-agent-msg-assistant') || c.contains('ui-agent-msg-empty') ||
+            c.contains('ui-agent-steps') || c.contains('ui-agent-thinking')) continue;
+        var body = n.querySelector(':scope > .ui-agent-msg-body');
+        if (body && String(body.textContent || '').trim()) return true;
+      }
+      return false;
+    }
     function renderTurnSteps(host) {
       var panel = host.querySelector(':scope > .ui-agent-tools-panel');
       if (!panel) {
         panel = el('div', {class: 'ui-agent-tools-panel'});
         host.appendChild(panel);
       }
-      (host.tools || []).forEach(function(t) {
-        var state = (t.output === null ? 'run' : 'done') + ':' + (t.children ? t.children.length : 0);
-        if (!t._el) {
-          t._el = renderAgentToolEntry(t);
-          t._state = state;
-          panel.appendChild(t._el);
-        } else if (t._state !== state) {
-          var fresh = renderAgentToolEntry(t);
-          fresh.open = t._el.open;
-          panel.replaceChild(fresh, t._el);
-          t._el = fresh;
-          t._state = state;
+      buildStepList(panel, host.tools || [], !!host.stepsFolded);
+    }
+    function stepFailed(t) { return t.output !== null && /^\s*error:/i.test(String(t.output || '')); }
+    function stepView(t) {
+      return {name: t.name, args: t.argsFull && typeof t.argsFull === 'object' ? t.argsFull : {},
+        output: t.output === null ? null : String(t.output || '')};
+    }
+    // stepGroupKey is the group an app put a step's tool in
+    // (uiRegisterStepGroup). A failed step is in none: it keeps its own line.
+    function stepGroupKey(t) {
+      if (stepFailed(t)) return '';
+      return (window.UIStepGroupOf || {})[t.name] || '';
+    }
+    function stepMarkEl(running, failed) {
+      var mark = el('span', {class: 'ui-agent-step-mark', style: 'display:inline-block;min-width:1.1em;margin-right:0.35em;font-family:var(--font-mono, monospace);color:' +
+        (running ? 'var(--accent)' : failed ? 'var(--danger,#ff7b72)' : 'var(--text-mute)')},
+        [running ? stepFrames[0] : failed ? '\u2717' : '\u2713']);
+      if (running) {
+        mark.setAttribute('data-step-run', '1');
+        startStepTimer();
+      }
+      return mark;
+    }
+    // stepEntry is a step's line, drawn again only when the step changed, so
+    // a line that did not change is the same element, and one that did keeps
+    // whether it was open.
+    function stepEntry(t) {
+      var state = (t.output === null ? 'run' : 'done') + ':' + (t.children ? t.children.length : 0);
+      if (t._el && t._state === state) return t._el;
+      var fresh = renderAgentToolEntry(t);
+      if (t._el) fresh.open = t._el.open;
+      t._el = fresh;
+      t._state = state;
+      return fresh;
+    }
+    // turnStepsWords is a finished list's folded line: the app's words for
+    // its steps (uiRegisterTurnSummary), else how many there were, and how
+    // many failed.
+    function turnStepsWords(tools) {
+      var words = '';
+      if (typeof window.UITurnSummary === 'function') {
+        try { words = String(window.UITurnSummary(tools.map(stepView)) || ''); } catch (_) { words = ''; }
+      }
+      var failed = tools.filter(stepFailed).length;
+      return (words || tools.length + ' steps') + (failed ? ', ' + failed + ' failed' : '');
+    }
+    // buildStepList draws a turn's steps, as Claude Code does: routine steps
+    // an app grouped share one line, consecutive ones together, that opens to
+    // them; the rest (an edit, a command, the check, anything that failed)
+    // keep a line each. folded puts a finished turn's whole list behind one
+    // line. A line opened stays open when the list is drawn again.
+    function buildStepList(panel, tools, folded) {
+      var was = panel._stepBoxes || {};
+      var now = {};
+      function box(key, cls) {
+        var d = el('details', {class: 'ui-agent-tool ' + cls});
+        if (was[key]) d.open = was[key].open;
+        now[key] = d;
+        return d;
+      }
+      while (panel.firstChild) panel.removeChild(panel.firstChild);
+      var host = panel;
+      if (folded && tools.length > 1) {
+        var fold = box('fold', 'ui-agent-steps-fold');
+        fold.appendChild(el('summary', {class: 'ui-agent-tool-summary'},
+          [stepMarkEl(false, tools.some(stepFailed)), el('span', {class: 'ui-agent-step-line'}, [turnStepsWords(tools)])]));
+        host = el('div', {class: 'ui-agent-steps-fold-body'});
+        fold.appendChild(host);
+        panel.appendChild(fold);
+      }
+      for (var i = 0; i < tools.length;) {
+        var key = stepGroupKey(tools[i]);
+        var j = i + 1;
+        if (key) while (j < tools.length && stepGroupKey(tools[j]) === key) j++;
+        if (j - i < 2) {
+          host.appendChild(stepEntry(tools[i]));
+          i = j;
+          continue;
         }
-      });
+        var run = tools.slice(i, j);
+        var words = '';
+        var fn = (window.UIStepGroupWords || {})[key];
+        if (fn) {
+          try { words = String(fn(run.map(stepView)) || ''); } catch (_) { words = ''; }
+        }
+        var g = box('g:' + (run[0].call_id || run[0].id || i), 'ui-agent-step-group');
+        g.appendChild(el('summary', {class: 'ui-agent-tool-summary'},
+          [stepMarkEl(run.some(function(t) { return t.output === null; }), false),
+           el('span', {class: 'ui-agent-step-line'}, [words || (run.length + ' steps')])]));
+        var body = el('div', {class: 'ui-agent-tool-body ui-agent-step-group-body'});
+        run.forEach(function(t) { body.appendChild(stepEntry(t)); });
+        g.appendChild(body);
+        host.appendChild(g);
+        i = j;
+      }
+      panel._stepBoxes = now;
     }
     // refreshToolHost redraws a host's calls: the turn's live steps, or a
     // bubble's list behind its button.
@@ -6057,8 +6341,12 @@
           }
           break;
         case 'done':
-          // The turn's steps stay where they are, as its record; the next
-          // turn starts a list of its own.
+          // The turn's steps stay where they are, as its record, folded behind
+          // one line; the next turn starts a list of its own.
+          if (turnSteps && turnSteps.isConnected) {
+            turnSteps.stepsFolded = true;
+            renderTurnSteps(turnSteps);
+          }
           turnSteps = null;
           // A note that arrived after the last drain point is still sitting
           // here, and the turn is over. Not hooked into enableInput, which also
@@ -6489,6 +6777,24 @@
       try { sendMessage(); } finally { answerPass = false; askPending = null; }
     });
 
+    // sendTaken offers text to the apps' send interceptors; the first to
+    // take it has it, and the box is cleared.
+    function sendTaken(text) {
+      var takers = window.UISendInterceptors || [];
+      for (var i = 0; i < takers.length; i++) {
+        var took = false;
+        try {
+          took = takers[i]({text: text, attachments: pendingAttachments.length,
+            sessionId: activeSessionId, input: inputArea, toast: showToast}) === true;
+        } catch (e) { /* isolate */ }
+        if (took) {
+          inputArea.value = '';
+          autosizeInput();
+          return true;
+        }
+      }
+      return false;
+    }
     function sendMessage() {
       var ask = askPending;
       askPending = null;
@@ -6501,6 +6807,18 @@
       }
       var text = inputArea.value.trim();
       if (!text && !pendingAttachments.length) return;
+      // A saved prompt named by "/name" (cfg.commands_url): sent as its
+      // prompt. The list is fetched first when this page has not yet.
+      if (cfg.commands_url && !answerPass && /^\/[^\s\/]/.test(text)) {
+        var cmds = (cmdCache.url === substituteExtras(cfg.commands_url) && !cmdCache.loading) ? cmdCache.list : null;
+        if (!cmds) {
+          askPending = ask;
+          loadCommands().then(function() { sendMessage(); });
+          return;
+        }
+        text = expandCommand(text, cmds);
+        hideSuggest();
+      }
       // Paste-marker substitution: expand any "[Pasted text #N - X
       // lines / Y chars]" markers back to their full content before
       // the send. The marker UX keeps the textarea readable while
@@ -6519,6 +6837,11 @@
           });
         pasteMap = {};
         pasteCounter = 0;
+      }
+      // An app may take the message instead (uiRegisterSendInterceptor).
+      if (!answerPass && sendTaken(text)) {
+        askPending = ask;
+        return;
       }
       // Interjection path — when a session is already running and
       // the app configured an InjectURL, route this send into the
@@ -6805,6 +7128,8 @@
       // elsewhere and have no bubble here yet (showWaitingNotes).
       showWaitingNotes(sid);
       es.onmessage = function(ev) {
+        // Let go of: closed, and draws nothing (subscribeRunStream).
+        if (activeEventSource !== es) { es.close(); return; }
         n++;
         if (n <= skip) return; // replayed again: this view has it
         eventsSeen = n;
@@ -6812,7 +7137,7 @@
         try { handleEvent(JSON.parse(ev.data)); } catch (_) {}
       };
       es.onerror = function() {
-        if (activeEventSource !== es) return;
+        if (activeEventSource !== es) { es.close(); return; }
         var refused = es.readyState === EventSource.CLOSED && n === 0;
         es.close();
         activeEventSource = null;
@@ -8602,10 +8927,16 @@
       replayWindow.arm(); // what it replays shows at once
       activeEventSource = es;
       es.onmessage = function(ev) {
+        // A stream this view has let go of draws nothing, and is closed. One
+        // kept alive in a page the browser cached for Back is reconnected by
+        // the browser itself, from the since it opened with, every few
+        // seconds: it replayed a finished turn over the conversation each
+        // time, so every new reply read as the one before it.
+        if (activeEventSource !== es) { es.close(); return; }
         try { handleEvent(JSON.parse(ev.data)); } catch (_) {}
       };
       es.onerror = function() {
-        if (activeEventSource !== es) return;
+        if (activeEventSource !== es) { es.close(); return; }
         // Never the browser's own reconnect: it asks again with the since
         // this stream opened with and replays everything after it a second
         // time. Close, and rejoin from what this view has.
@@ -8676,6 +9007,11 @@
       if (turnLive && (long || !(activeStream || activeEventSource))) { streamLost(); return; }
       if (!turnLive && !(activeStream || activeEventSource)) recheckRun(activeSessionId, 0);
     }
+    // Leaving for a page the browser may keep to show again on Back: no
+    // stream stays open in the kept page. The browser would reconnect it on
+    // its own when the page came back, replaying the turn from where the
+    // stream began; pageshow rejoins from where this view left off instead.
+    window.addEventListener('pagehide', function(e) { if (e.persisted) detachActiveStream(); });
     window.addEventListener('pageshow', function(e) { if (e.persisted) backOnPage(true); });
     window.addEventListener('online', function() { backOnPage(true); });
     document.addEventListener('visibilitychange', function() {

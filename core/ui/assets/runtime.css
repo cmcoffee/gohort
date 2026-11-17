@@ -5209,7 +5209,8 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
  * block anyone adds. The column scrolls, so an item never needs to give way.
  * A new scrolling column joins this list (ui TestNoItemInAScrollingColumnShrinks). */
 .ui-agent-convo-log > *, .ui-agent-activity-log > *, .ui-pl-transcript > *,
-.ui-chat-thread > *, .ui-assist-log > *, .ui-history > *, .ui-wb-list-body > * {
+.ui-chat-thread > *, .ui-assist-log > *, .ui-history > *, .ui-wb-list-body > *,
+.ui-agent-cmd-list > * {
   flex-shrink: 0;
 }
 /* The conversation reads in one centred column on a wide screen: the thread,
@@ -7492,6 +7493,23 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-agent-composer-chip-x { flex: 0 0 auto; padding: 0 0.2rem; }
 .ui-agent-composer-chip-acts { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 .ui-agent-composer-chip-act { flex: 0 0 auto; }
+/* Saved prompts listed as "/" is typed (AgentLoopPanel.CommandsURL): rows
+ * over the box, the composer's width, each a name then what it is for. */
+.ui-agent-cmd-list {
+  padding: 0 max(0.7rem, calc((100% - var(--ui-agent-composer, 100%)) / 2)) 0.4rem;
+  display: flex; flex-direction: column; gap: 0.2rem; max-height: 14rem; overflow-y: auto;
+}
+.ui-agent-cmd {
+  display: flex; align-items: baseline; gap: 0.6rem; min-width: 0; text-align: left;
+  background: var(--bg-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
+  padding: 0.3rem 0.6rem; font-size: var(--fs-sm); cursor: pointer;
+}
+.ui-agent-cmd:hover, .ui-agent-cmd.active { border-color: var(--accent); }
+.ui-agent-cmd-name { flex: 0 0 auto; font-family: var(--font-mono, ui-monospace, monospace); color: var(--text-hi, var(--text)); }
+.ui-agent-cmd-desc {
+  flex: 1 1 auto; min-width: 0; color: var(--text-mute, var(--text)); white-space: nowrap;
+  overflow: hidden; text-overflow: clip; animation: ui-cut-fade-x linear both; animation-timeline: scroll(self inline);
+}
 /* In a narrow chat the composer sits almost at the frame's edges; the chip
  * above it keeps the same edges. */
 .ui-agent.ui-agent-narrow .ui-agent-composer-chip { padding: 0.35rem 0.25rem 0.2rem; }

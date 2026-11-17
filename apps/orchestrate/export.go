@@ -125,6 +125,16 @@ func (T *OrchestrateApp) agentForSessionExport(udb Database, user, agentID strin
 			return a, true
 		}
 	}
+	// An app's conversations live under its agent's id scoped to what they
+	// are about ("<agent>:<project>"), which has no record of its own: the
+	// record is the agent's, found the same way. The session is still read
+	// from the caller's store under the scoped id, so it is theirs.
+	if base, _, scoped := strings.Cut(agentID, ":"); scoped && base != "" {
+		if a, ok := T.agentForSessionExport(udb, user, base); ok {
+			a.ID = agentID
+			return a, true
+		}
+	}
 	return AgentRecord{}, false
 }
 

@@ -853,6 +853,30 @@
   window.uiRegisterStepSummary = function(name, fn) {
     if (typeof fn === 'function') window.UIStepSummaries[name] = fn;
   };
+  // Step groups: an app's routine tools (reading, listing, searching) share
+  // one line where steps are shown, consecutive steps of them together, that
+  // opens to the steps; the rest keep a line each. words(steps) says what the
+  // group did ("Read 5 files, searched twice"); steps are [{name, args,
+  // output}], output null while it runs. uiRegisterTurnSummary(fn) says the
+  // same for a finished turn's steps, folded behind one line.
+  if (!window.UIStepGroupOf) window.UIStepGroupOf = {};
+  if (!window.UIStepGroupWords) window.UIStepGroupWords = {};
+  window.uiRegisterStepGroup = function(key, names, words) {
+    (names || []).forEach(function(n) { window.UIStepGroupOf[n] = key; });
+    if (typeof words === 'function') window.UIStepGroupWords[key] = words;
+  };
+  window.uiRegisterTurnSummary = function(fn) {
+    if (typeof fn === 'function') window.UITurnSummary = fn;
+  };
+  // uiRegisterSendInterceptor lets an app take a message before an agent
+  // panel sends it (a "# remember this" line, say). fn(ctx) returns true to
+  // take it; the panel then clears the box and sends nothing. ctx = {text,
+  // attachments (how many are waiting), sessionId, input (the message box,
+  // to put the text back if the app's own request fails), toast(msg)}.
+  if (!window.UISendInterceptors) window.UISendInterceptors = [];
+  window.uiRegisterSendInterceptor = function(fn) {
+    if (typeof fn === 'function') window.UISendInterceptors.push(fn);
+  };
   // Client-action registry — toolbar buttons with Method="client"
   // call into one of these handlers by name. Lets apps wire
   // browser-side actions (window.print, copy-to-clipboard with
