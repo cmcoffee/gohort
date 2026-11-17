@@ -37,7 +37,10 @@ script check: {name, script, records?, shared?, inputs?, expect}
            shared record are one person; the owner when unset) and
            caller_role (owner, manager or user; unset when not given). A
            real run sets both itself, so name them to test what differs by
-           person
+           person. The script sees caller, and each shared record's by, as
+           the app's alias for that name (p_ and 16 hex digits), as it sees
+           real people: expect what the script decides (a branch, a count,
+           a message), not the name echoed back
   expect   [{path, equals | contains | count | exists}], each with exactly
            one test. path is a dot path into the printed JSON
            ("rows.0.total"); empty is the whole value. contains ignores case
