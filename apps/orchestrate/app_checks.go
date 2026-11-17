@@ -82,6 +82,17 @@ func validateAppChecks(spec AppSpec) error {
 	if err := appcheck.Validate(spec.Checks, appCheckScripts(spec)); err != nil {
 		return fmt.Errorf("NOT SAVED: %v", err)
 	}
+	declared := map[string]bool{}
+	for _, name := range spec.SharedCollections {
+		declared[name] = true
+	}
+	for _, c := range spec.Checks {
+		for name := range c.Shared {
+			if !declared[name] {
+				return fmt.Errorf("NOT SAVED: check %q gives shared collection %q, which the app does not declare (shared_collections: %s)", c.Name, name, strings.Join(spec.SharedCollections, ", "))
+			}
+		}
+	}
 	return nil
 }
 
@@ -95,7 +106,7 @@ func appChecksArg(raw any) ([]appcheck.Check, error) {
 	if err := json.Unmarshal(b, &out); err != nil {
 		var one appcheck.Check
 		if json.Unmarshal(b, &one) != nil {
-			return nil, fmt.Errorf("checks must be a list of {name, script, records?, inputs?, expect} or {name, steps}: %v", err)
+			return nil, fmt.Errorf("checks must be a list of {name, script, records?, shared?, inputs?, expect} or {name, records?, shared?, steps}: %v", err)
 		}
 		out = []appcheck.Check{one}
 	}
@@ -157,7 +168,7 @@ func (t *chatTurn) runPageCheck(spec AppSpec, c appcheck.Check) appCheckResult {
 		res.Why = "not run: no browser in this build"
 		return res
 	}
-	token, end := appscript.BeginCheckScratch(spec.Owner, spec.Slug, spec.RecordKey, c.Records)
+	token, end := appscript.BeginCheckScratch(spec.Owner, spec.Slug, spec.RecordKey, c.Records, c.Shared)
 	defer end()
 	rep, err := CheckPageAsUser(RootDB, spec.Owner, "/apps/"+spec.Slug+"/", appcheck.StepsProbe(c.Steps),
 		PageCheckCookie{Name: appscript.CheckScratchCookie, Value: token, HTTPOnly: true})
@@ -278,9 +289,20 @@ func (t *chatTurn) runScriptCheck(spec AppSpec, c appcheck.Check) appCheckResult
 		params[k] = v
 	}
 	// Scratch: the run's store is made here and dropped with it, so a shared
-	// collection reads empty and nothing the script writes lands anywhere.
+	// collection holds only what the check gives it and nothing the script
+	// writes lands anywhere.
 	scratch := &DBase{Store: kvlite.MemStore()}
-	fixed := map[string]string{"caller": appscript.CallerAlias(spec, t.user)}
+	appscript.SeedShared(scratch, spec.Slug, c.Shared)
+	// caller is the check's to name (appcheck.Check.Inputs): a check writes
+	// nothing, so naming someone else here acts for nobody, and without it
+	// "a user cannot delete someone else's" had to guess the owner's alias.
+	// It is aliased as a shared record's by is when read (ReadShared), so
+	// "sam" in both names one person.
+	who := strings.TrimSpace(c.Inputs["caller"])
+	if who == "" {
+		who = t.user
+	}
+	fixed := map[string]string{"caller": appscript.CallerAlias(spec, who)}
 	if len(spec.SharedCollections) > 0 {
 		fixed["shared"] = appscript.SharedInput(scratch, spec)
 	}

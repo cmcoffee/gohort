@@ -70,6 +70,17 @@ it prints.
 
 Fast (a sandboxed script run), and where most logic lives.
 
+An app with shared collections gives them for the run with `shared`
+(`{"updates": [{"id": "u1", "by": "sam", ...}]}`); unset, each reads empty.
+Without it an app whose actions work on shared records could not test them,
+and Builder wrote a second path through the app's records just for its
+checks. A check also names who the run is for: `caller` and `caller_role` in
+its inputs (a real run sets both itself, and no param can). `caller` is any
+short name, aliased as a shared record's `by` is when read, so `"sam"` in
+both is one person; unset, it is the owner. `core/appcheck.Reference` is the
+format as an author reads it, Builder in `app_def help topic=checks` and
+Anvil in an app project's notes.
+
 ### Page checks: the app as a person uses it
 
 A few steps in the browser, then what the page should show.

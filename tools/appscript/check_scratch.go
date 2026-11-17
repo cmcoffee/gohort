@@ -33,9 +33,10 @@ var (
 )
 
 // BeginCheckScratch makes a page check's store for owner's app slug, seeded
-// with records (keyed by recordKey when a record carries it), and returns the
-// token its browser carries and the call that drops it.
-func BeginCheckScratch(owner, slug, recordKey string, records []map[string]any) (token string, end func()) {
+// with records (keyed by recordKey when a record carries it) and with shared
+// ({collection: records}, SeedShared), and returns the token its browser
+// carries and the call that drops it.
+func BeginCheckScratch(owner, slug, recordKey string, records []map[string]any, shared map[string][]map[string]any) (token string, end func()) {
 	b := make([]byte, 24)
 	_, _ = rand.Read(b)
 	token = hex.EncodeToString(b)
@@ -50,6 +51,7 @@ func BeginCheckScratch(owner, slug, recordKey string, records []map[string]any) 
 		}
 		db.Set(tbl, key, rec)
 	}
+	SeedShared(db, slug, shared)
 	scratchMu.Lock()
 	scratches[token] = CheckScratch{DB: db, Owner: owner, Slug: slug}
 	scratchMu.Unlock()
@@ -66,4 +68,29 @@ func CheckScratchFor(token string) (CheckScratch, bool) {
 	defer scratchMu.Unlock()
 	sc, ok := scratches[token]
 	return sc, ok
+}
+
+// SeedShared puts a check's shared records into its scratch store db, each
+// collection where the app's shared records live. A record without an id is
+// given one, "<collection>-<n>", as a real shared write would give it one, so
+// a script looking a record up by id finds it.
+func SeedShared(db Database, slug string, shared map[string][]map[string]any) {
+	for name, recs := range shared {
+		tbl := SharedTable(slug, name)
+		for i, rec := range recs {
+			if rec == nil {
+				continue
+			}
+			id, _ := rec["id"].(string)
+			if id == "" {
+				if v, ok := rec["id"]; ok && v != nil {
+					id = fmt.Sprint(v)
+				} else {
+					id = fmt.Sprintf("%s-%d", name, i+1)
+				}
+				rec["id"] = id
+			}
+			db.Set(tbl, id, rec)
+		}
+	}
 }

@@ -125,7 +125,7 @@ func (T *CustomApps) previewScratch(spec AppSpec, editor string) (string, func()
 	if !ok {
 		live = spec
 	}
-	tok, end := appscript.BeginCheckScratch(spec.Owner, spec.Slug, spec.RecordKey, appscript.ReadRecords(T.recordBase(live, editor), spec.Slug))
+	tok, end := appscript.BeginCheckScratch(spec.Owner, spec.Slug, spec.RecordKey, appscript.ReadRecords(T.recordBase(live, editor), spec.Slug), nil)
 	if sc, ok := appscript.CheckScratchFor(tok); ok {
 		owners := T.recordBase(live, spec.Owner)
 		for _, name := range spec.SharedCollections {

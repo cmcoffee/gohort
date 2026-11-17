@@ -279,3 +279,39 @@ func TestAFailingPageCheckThatWasFailingDoesNotBlock(t *testing.T) {
 		t.Fatalf("with no browser a page check blocked the save or said nothing: %v\n%s", err, out)
 	}
 }
+
+// A check gives the app's shared collections what they hold for its run, and
+// names who the run is for, so an app whose actions work on shared records is
+// tested on them (not on a second path through its records written for the
+// checks), and a rule that differs by person is tested for each. A check
+// naming a collection the app does not declare is refused.
+func TestACheckSeedsSharedCollectionsAndNamesItsCaller(t *testing.T) {
+	turn := checksTestApp(t)
+	mine := "import os, json\nshared = json.loads(os.environ.get('shared', '{}'))\n" +
+		"ups = shared.get('updates', [])\n" +
+		"print(json.dumps({'mine': len([u for u in ups if u.get('by') == os.environ.get('caller')]), 'all': len(ups), " +
+		"'role': os.environ.get('caller_role', ''), 'first': ups[0]['id'] if ups else ''}))\n"
+	ups := []any{map[string]any{"by": "sam", "text": "a"}, map[string]any{"by": "ana", "text": "b"}, map[string]any{"by": "sam", "text": "c"}}
+	check := map[string]any{"name": "counts the caller's updates", "script": "mine",
+		"shared": map[string]any{"updates": ups},
+		"inputs": map[string]any{"caller": "sam", "caller_role": "manager"},
+		"expect": []any{
+			map[string]any{"path": "all", "equals": 3},
+			map[string]any{"path": "mine", "equals": 2},
+			map[string]any{"path": "role", "equals": "manager"},
+			map[string]any{"path": "first", "equals": "updates-1"},
+		}}
+	out, err := turn.appDefCreateOrUpdate(map[string]any{"id": "hours",
+		"shared_collections": []any{"updates"},
+		"data_sources":       []any{map[string]any{"name": "total", "script": totalScript}, map[string]any{"name": "mine", "script": mine}},
+		"checks":             []any{totalCheck(7), check}}, true)
+	if err != nil || !strings.Contains(out, `PASS "counts the caller's updates"`) {
+		t.Fatalf("a check on seeded shared records, as a named caller, did not pass: %v\n%s", err, out)
+	}
+	stray := map[string]any{"name": "reads a collection the app lacks", "script": "mine",
+		"shared": map[string]any{"votes": []any{}}, "expect": []any{map[string]any{"path": "all", "equals": 0}}}
+	_, err = turn.appDefCreateOrUpdate(map[string]any{"id": "hours", "checks": []any{totalCheck(7), check, stray}}, true)
+	if err == nil || !strings.Contains(err.Error(), `"votes"`) {
+		t.Fatalf("a check giving an undeclared collection was not refused naming it: %v", err)
+	}
+}

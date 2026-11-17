@@ -273,7 +273,7 @@ func TestAReportGoesToBuilderAsAFix(t *testing.T) {
 // check does may file a report of its own.
 func TestAPageCheckCannotReportAProblem(t *testing.T) {
 	T := sharingTestApp(t)
-	token, end := appscript.BeginCheckScratch("alice", "wx", "id", nil)
+	token, end := appscript.BeginCheckScratch("alice", "wx", "id", nil, nil)
 	defer end()
 	r := httptest.NewRequest(http.MethodPost, "/apps/wx/_report", strings.NewReader(`{"message":"from a check"}`))
 	r.AddCookie(&http.Cookie{Name: appscript.CheckScratchCookie, Value: token})

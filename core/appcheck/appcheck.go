@@ -18,6 +18,45 @@ import (
 	"strings"
 )
 
+// Reference is what a check is, for whoever writes one: Builder's app_def
+// help and an Anvil app project's standing notes. A test holds it to every
+// field the types here take.
+const Reference = `checks: a list of what the app is supposed to do, each a test that runs on
+every save (at most 20). Two kinds:
+
+script check: {name, script, records?, shared?, inputs?, expect}
+  name     what it checks, as a person would ("adding a plant lists it")
+  script   a data source or action of the app, by name
+  records  the app's records the run sees, in place of anyone's (a list)
+  shared   the shared collections the run sees, {"<collection>": [records]};
+           unset, each reads empty. Give each record its "id" and "by" (who
+           wrote it) when the script looks them up
+  inputs   {name: value}: the query params (data source) or body fields
+           (action), each an env var. Two are the check's own: caller (who
+           the run is for, any short name: "sam" here and "by": "sam" on a
+           shared record are one person; the owner when unset) and
+           caller_role (owner, manager or user; unset when not given). A
+           real run sets both itself, so name them to test what differs by
+           person
+  expect   [{path, equals | contains | count | exists}], each with exactly
+           one test. path is a dot path into the printed JSON
+           ("rows.0.total"); empty is the whole value. contains ignores case
+  A check's run writes nothing: what an action saves, shares or sends is
+  judged from what it printed, and nothing lands anywhere.
+
+page check: {name, records?, shared?, steps}
+  drives the page as served, in a browser, on the check's own records.
+  Each step is exactly one of:
+  {fill: "<field label or placeholder>", with: "<text>"}
+  {click: "<button or link text>"}
+  {choose: "<select label>", option: "<option text>"}
+  {see: "<text>", in?: "<section title>"}
+  {not_see: "<text>", in?: "<section title>"}
+  {rows: <n>, in: "<table or list title>"}
+
+A save that breaks a check that passed before is refused, and the version
+serving stays. Change a check only when its feature changed on purpose.`
+
 // MaxChecks is how many checks one app keeps: enough to pin each feature,
 // few enough that every save can run them.
 const MaxChecks = 20
@@ -32,8 +71,17 @@ type Check struct {
 	Script string `json:"script,omitempty"`
 	// Records are the app's records the run sees, in place of anyone's.
 	Records []map[string]any `json:"records,omitempty"`
+	// Shared are the app's shared collections the run sees, by name, in
+	// place of what they hold. Unset, every collection reads empty: an app
+	// whose actions work on shared records had no way to test them, and
+	// Builder wrote a second path through its records just for its checks.
+	Shared map[string][]map[string]any `json:"shared,omitempty"`
 	// Inputs are the run's query params (a data source) or body fields (an
-	// action), each as an env var.
+	// action), each as an env var. Two are the check's own: caller, who the
+	// run is for (the owner when unset), and caller_role,
+	// what they are to the app (owner, manager or user; unset when not
+	// given). A real run sets both itself and no param can change them; a
+	// check names them to test what differs by person.
 	Inputs map[string]string `json:"inputs,omitempty"`
 	// Expect is what the printed JSON must hold.
 	Expect []Expect `json:"expect,omitempty"`

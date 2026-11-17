@@ -27,7 +27,7 @@ func TestAPageChecksRequestsTouchOnlyItsScratchRecords(t *testing.T) {
 	if w := appAs(t, T, spec, "u", httptest.NewRequest("POST", "/apps/tally/records", strings.NewReader(`{"id":"real","item":"the owner's"}`))); w.Code != http.StatusOK {
 		t.Fatalf("seed: %d %s", w.Code, w.Body.String())
 	}
-	token, end := appscript.BeginCheckScratch("u", "tally", "id", []map[string]any{{"id": "seeded", "item": "from the check"}})
+	token, end := appscript.BeginCheckScratch("u", "tally", "id", []map[string]any{{"id": "seeded", "item": "from the check"}}, nil)
 
 	w := appAs(t, T, spec, "u", withCheck(httptest.NewRequest("GET", "/apps/tally/records", nil), token))
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "from the check") || strings.Contains(w.Body.String(), "the owner's") {
@@ -53,7 +53,7 @@ func TestAPageChecksRequestsTouchOnlyItsScratchRecords(t *testing.T) {
 	if w := appAs(t, T, spec, "u", withCheck(httptest.NewRequest("GET", "/apps/tally/records", nil), token)); w.Code != http.StatusForbidden || strings.Contains(w.Body.String(), "the owner's") {
 		t.Errorf("a check that is over was read as no check: %d %s", w.Code, w.Body.String())
 	}
-	other, endOther := appscript.BeginCheckScratch("u", "another", "id", nil)
+	other, endOther := appscript.BeginCheckScratch("u", "another", "id", nil, nil)
 	defer endOther()
 	if w := appAs(t, T, spec, "u", withCheck(httptest.NewRequest("GET", "/apps/tally/records", nil), other)); w.Code != http.StatusForbidden {
 		t.Errorf("another app's check reached this one: %d", w.Code)

@@ -1,6 +1,8 @@
 package appcheck
 
 import (
+	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -73,5 +75,21 @@ func TestJudgeReadsTheOutputByPath(t *testing.T) {
 	}
 	if why := (Check{Expect: []Expect{{Equals: 1}}}).Judge("not json"); !strings.Contains(why, "valid JSON") {
 		t.Errorf("unparseable output: %q", why)
+	}
+}
+
+// The reference an author reads names every field a check takes: one added
+// to the types and left out of it is one nobody is told about.
+func TestTheReferenceNamesEveryField(t *testing.T) {
+	for _, typ := range []reflect.Type{reflect.TypeOf(Check{}), reflect.TypeOf(Expect{}), reflect.TypeOf(Step{})} {
+		for i := 0; i < typ.NumField(); i++ {
+			tag := strings.Split(typ.Field(i).Tag.Get("json"), ",")[0]
+			if tag == "" || tag == "-" {
+				continue
+			}
+			if !regexp.MustCompile(`\b` + tag + `\b`).MatchString(Reference) {
+				t.Errorf("%s.%s (%q) is not in Reference", typ.Name(), typ.Field(i).Name, tag)
+			}
+		}
 	}
 }

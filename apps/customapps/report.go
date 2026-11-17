@@ -276,7 +276,7 @@ func (T *CustomApps) diagnoseReport(spec AppSpec, owner, reporter, id string) {
 	if BrowserCheckPage == nil {
 		d.State, d.Why = "failed", "this server has no headless browser to load the app with"
 	} else {
-		token, end := appscript.BeginCheckScratch(owner, spec.Slug, spec.RecordKey, appscript.ReadRecords(reporterDB, spec.Slug))
+		token, end := appscript.BeginCheckScratch(owner, spec.Slug, spec.RecordKey, appscript.ReadRecords(reporterDB, spec.Slug), nil)
 		if sc, ok := appscript.CheckScratchFor(token); ok {
 			if view := loadViewState(reporterDB, spec.Slug); len(view) > 0 {
 				sc.DB.Set(viewStateTable, spec.Slug, view)
