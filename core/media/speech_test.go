@@ -291,3 +291,45 @@ func TestSpeechLinesPutEachSentenceOnItsOwnLine(t *testing.T) {
 		t.Errorf("a weighted plus mix: %q", got)
 	}
 }
+
+// A mix of voices is said in whichever form the server reads. The server on
+// the kokoro library takes af_bella,af_sky and refuses af_bella+af_sky;
+// Kokoro-FastAPI the other way round. A refused mix is tried once in the
+// other form, weights carried over, in a preview too; a single voice is not
+// retried.
+func TestAVoiceMixIsSaidTheWayTheServerReadsIt(t *testing.T) {
+	prevSvc := SpeechService
+	t.Cleanup(func() { SpeechService = prevSvc })
+	var asked []string
+	takes := ","
+	SpeechService = func(ctx context.Context, connector, text, voice string) ([]byte, string, error) {
+		asked = append(asked, voice)
+		if strings.Contains(voice, "+") && takes == "," || strings.Contains(voice, ",") && takes == "+" || voice == "af_nope" {
+			return nil, "", fmt.Errorf("HTTP 400: unknown voice %q", voice)
+		}
+		return fakeMP3, ".mp3", nil
+	}
+	cfg := func(v string) SpeechConfig { return SpeechConfig{Enabled: true, Provider: "local-speech", Voice: v} }
+	for _, tc := range []struct{ takes, voice, want string }{
+		{",", "af_bella+af_sky", "af_bella+af_sky|af_bella,af_sky"},
+		{",", "af_bella(2)+af_sky(1)", "af_bella(2)+af_sky(1)|af_bella,af_bella,af_sky"},
+		{",", "af_bella,af_sky", "af_bella,af_sky"},
+		{"+", "af_bella,af_sky", "af_bella,af_sky|af_bella+af_sky"},
+		{"+", "af_bella,af_bella,af_sky", "af_bella,af_bella,af_sky|af_bella(2)+af_sky(1)"},
+		{",", "af_nope", "af_nope"},
+	} {
+		takes, asked = tc.takes, nil
+		_, _, err := SpeakWith(context.Background(), cfg(tc.voice), "Hi.")
+		if got := strings.Join(asked, "|"); got != tc.want {
+			t.Errorf("%q on a server taking %q: asked %q, want %q", tc.voice, tc.takes, got, tc.want)
+		}
+		if (err != nil) != (tc.voice == "af_nope") {
+			t.Errorf("%q: %v", tc.voice, err)
+		}
+	}
+	for _, v := range []string{"af_heart", "af_bella+", "af_bella(0)+af_sky", "af_bella,af_bella"} {
+		if alt, ok := otherVoiceMix(v); ok {
+			t.Errorf("%q has no other form, got %q", v, alt)
+		}
+	}
+}

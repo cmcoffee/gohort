@@ -242,6 +242,30 @@ func voiceLabel(v string) string {
 // SpeakWith is Speak against an explicit config, for the admin Test button,
 // which tries the form as typed before it is saved.
 func SpeakWith(ctx context.Context, cfg SpeechConfig, text string) ([]byte, string, error) {
+	audio, ext, err := speakOnce(ctx, cfg, text)
+	if err == nil || ctx.Err() != nil {
+		return audio, ext, err
+	}
+	// A mix of voices written the way the other kind of Kokoro server reads
+	// one: the server on the kokoro library takes af_bella,af_sky and refuses
+	// af_bella+af_sky, Kokoro-FastAPI the other way round. Nobody should have
+	// to know which server they have, so a refused mix is tried once in the
+	// other form, weights carried over.
+	alt, ok := otherVoiceMix(cfg.Voice)
+	if !ok {
+		return nil, "", err
+	}
+	c := cfg
+	c.Voice = alt
+	if a, e, err2 := speakOnce(ctx, c, text); err2 == nil {
+		nfo.Log("[speech] the server took the voice mix %q written as %q", cfg.Voice, alt)
+		return a, e, nil
+	}
+	return nil, "", err
+}
+
+// speakOnce is one request for text spoken, in cfg's voice exactly.
+func speakOnce(ctx context.Context, cfg SpeechConfig, text string) ([]byte, string, error) {
 	if !cfg.Enabled {
 		return nil, "", fmt.Errorf("speech disabled")
 	}
@@ -472,6 +496,74 @@ func SpeechVoiceParts(voice string) []string {
 		}
 	}
 	return out
+}
+
+// otherVoiceMix is a mix of voices written the other way: a comma list
+// (af_bella,af_bella,af_sky, a voice named twice counting twice) as
+// Kokoro-FastAPI's af_bella(2)+af_sky(1), or a plus-sign mix as a comma list,
+// each voice named as many times as its weight (rounded, at least once).
+// False for a single voice, or a mix that cannot be written the other way.
+func otherVoiceMix(voice string) (string, bool) {
+	voice = strings.TrimSpace(voice)
+	switch {
+	case strings.Contains(voice, "+") && !strings.Contains(voice, ","):
+		var out []string
+		for _, part := range strings.Split(voice, "+") {
+			part = strings.TrimSpace(part)
+			n := 1
+			if m := speechVoiceWeight.FindString(part); m != "" {
+				var w float64
+				if _, err := fmt.Sscanf(strings.Trim(m, "() "), "%g", &w); err != nil || w <= 0 {
+					return "", false
+				}
+				if n = int(w + 0.5); n < 1 {
+					n = 1
+				}
+				if n > 10 {
+					n = 10
+				}
+				part = strings.TrimSpace(strings.TrimSuffix(part, m))
+			}
+			if part == "" {
+				return "", false
+			}
+			for i := 0; i < n; i++ {
+				out = append(out, part)
+			}
+		}
+		if len(out) < 2 {
+			return "", false
+		}
+		return strings.Join(out, ","), true
+	case strings.Contains(voice, ",") && !strings.Contains(voice, "+"):
+		var order []string
+		count := map[string]int{}
+		for _, part := range strings.Split(voice, ",") {
+			if part = strings.TrimSpace(part); part == "" || strings.ContainsAny(part, "()") {
+				return "", false
+			}
+			if count[part] == 0 {
+				order = append(order, part)
+			}
+			count[part]++
+		}
+		if len(order) < 2 {
+			return "", false
+		}
+		weighted := false
+		for _, v := range order {
+			weighted = weighted || count[v] > 1
+		}
+		parts := make([]string, len(order))
+		for i, v := range order {
+			parts[i] = v
+			if weighted {
+				parts[i] = fmt.Sprintf("%s(%d)", v, count[v])
+			}
+		}
+		return strings.Join(parts, "+"), true
+	}
+	return "", false
 }
 
 // speechLines puts each sentence on a line of its own. Kokoro pauses at a
