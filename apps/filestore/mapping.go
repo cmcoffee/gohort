@@ -145,6 +145,19 @@ func (T *FileStoreApp) handleMapCancel(w http.ResponseWriter, r *http.Request) {
 	orch.PublicHandleCancel(w, r, agent)
 }
 
+// handleMapConfirm answers an approval card raised in a mapping
+// conversation: without it the card could be read and not answered.
+func (T *FileStoreApp) handleMapConfirm(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	_, orch, _, ok := T.mapAgentFor(w, r, r.URL.Query().Get("id"))
+	if !ok {
+		return
+	}
+	orch.PublicHandleConfirm(w, r)
+}
+
 // stampMapContext writes the command's context into the send body as
 // app_context, so the session the turn creates is filed under the command.
 // Server-side, because the first send creates the session and no page could

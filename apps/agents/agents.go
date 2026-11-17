@@ -178,8 +178,16 @@ func (T *AgentsApp) dispatch(w http.ResponseWriter, r *http.Request) {
 		orch.PublicHandleRunsDispatch(w, r)
 	case rest == "api/channel/clear":
 		orch.PublicHandleChannelClear(w, r, agent.ID)
+	case rest == "api/confirm":
+		// An approval card's answer, settled for the person who was asked.
+		orch.PublicHandleConfirm(w, r)
 	case rest == "api/sessions":
 		orch.PublicHandleSessionList(w, r, agent.ID)
+	case strings.HasPrefix(rest, "api/sessions/") && strings.HasSuffix(rest, "/resolve") && strings.Contains(rest, "/blocks/"):
+		// api/sessions/{sid}/blocks/{block}/resolve: a card's own button,
+		// inside a conversation of this agent's the caller owns.
+		sid, block, _ := strings.Cut(strings.TrimSuffix(strings.TrimPrefix(rest, "api/sessions/"), "/resolve"), "/blocks/")
+		orch.PublicHandleBlockResolve(w, r, agent.ID, sid, block)
 	case strings.HasPrefix(rest, "api/sessions/"):
 		orch.PublicHandleSessionOne(w, r, agent.ID, strings.TrimPrefix(rest, "api/sessions/"))
 	case rest == "api/ask-owner":
@@ -384,6 +392,12 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 		SendURL:      "api/send",
 		CancelURL:    "api/cancel",
 		InjectURL:    "api/inject",
+		// Where an approval card's buttons and a card's own buttons answer.
+		// Without them a card here could be read and never answered: Builder
+		// opened from its dashboard card asked to change an app, and Approve
+		// did nothing, on a phone or anywhere else.
+		ConfirmURL:      "api/confirm",
+		BlockResolveURL: "api/sessions/{id}/blocks/{block_id}/resolve",
 		// Run-stream reconnect: if the live /api/send socket drops mid-turn (a long
 		// RAG turn over a flaky link), the panel resumes from the run buffer instead
 		// of silently losing the reply until reload. Matches the admin console.

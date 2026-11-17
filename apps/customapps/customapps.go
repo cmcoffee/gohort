@@ -537,6 +537,10 @@ func (T *CustomApps) handleChat(w http.ResponseWriter, r *http.Request, owner, u
 		orch.PublicHandleInject(w, r)
 	case sub == "cancel":
 		orch.PublicHandleCancel(w, r, agent)
+	case sub == "confirm":
+		// An approval card's answer: the app's agent running an action with
+		// confirm asks the person first, and the card had nowhere to send it.
+		orch.PublicHandleConfirm(w, r)
 	case sub == "sessions":
 		orch.PublicHandleSessionList(w, r, agent.ID)
 	case strings.HasPrefix(sub, "sessions/"):

@@ -266,6 +266,8 @@ func (T *FileStoreApp) adminSection() ui.Section {
 									LoadURL:   "/filestore/api/map/chat/sessions/{id}?cmd={cmd}",
 									DeleteURL: "/filestore/api/map/chat/sessions/{id}?cmd={cmd}",
 									CancelURL: "/filestore/api/map/chat/cancel?id={cmd}",
+									// An approval card's answer.
+									ConfirmURL: "/filestore/api/map/chat/confirm?id={cmd}",
 									// A mapping lands on this command's row:
 									// the Agents switch appears once there is
 									// something to approve. The table refetches
@@ -561,6 +563,7 @@ func (T *FileStoreApp) registerRoutes() {
 	T.HandleFunc("/api/map/chat/sessions", T.handleMapSessions)
 	T.HandleFunc("/api/map/chat/sessions/", T.handleMapSessions)
 	T.HandleFunc("/api/map/chat/cancel", T.handleMapCancel)
+	T.HandleFunc("/api/map/chat/confirm", T.handleMapConfirm)
 	T.HandleFunc("/api/commands/approve", jsonapi.Post(T.DB, T.handleCommandApprove))
 	T.HandleFunc("/api/commands/background", jsonapi.Post(T.DB, T.handleCommandBackground))
 	T.HandleFunc("/api/commands/uses", jsonapi.Methods{
