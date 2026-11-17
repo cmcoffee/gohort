@@ -350,15 +350,11 @@ func (aw *appWrite) readParts() bool {
 				return aw.exit("", errors.New(appStrandedFieldsMessage(stranded, aw.spec.Slug)))
 			}
 		}
-		page, err := buildAppPage(aw.spec, raw)
+		blob, userBlob, err := compileAppPages(aw.spec, raw)
 		if err != nil {
 			return aw.exit("", err)
 		}
-		blob, err := page.ConfigJSON()
-		if err != nil {
-			return aw.exit("", fmt.Errorf("render app page: %w", err))
-		}
-		aw.spec.Page = blob
+		aw.spec.Page, aw.spec.UserPage = blob, userBlob
 		aw.spec.RecordFields = nextFields
 		// Keep the AUTHORING sections next to the page they compiled into, so
 		// action=get can hand back something action=update actually accepts.

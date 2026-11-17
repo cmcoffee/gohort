@@ -190,6 +190,7 @@ func appDataSources(raw any) (out []AppDataSource, notes []string) {
 			Capabilities: caps,
 			Inputs:       appInputs(m["inputs"]),
 			Expose:       mapBool(m, "expose"),
+			ManagersOnly: mapBool(m, "managers_only"),
 		})
 	}
 	return out, notes
@@ -328,6 +329,7 @@ func appActionDefs(raw any) (out []AppAction, notes []string) {
 			Confirm:      appConfirm(m["confirm"]),
 			Inputs:       appInputs(m["inputs"]),
 			Expose:       mapBool(m, "expose"),
+			ManagersOnly: mapBool(m, "managers_only"),
 		}
 		sch, snotes := appSchedule(m["schedule"], name)
 		act.Schedule = sch

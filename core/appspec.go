@@ -71,6 +71,11 @@ type AppSpec struct {
 	// their MCP clients. See AppAction.Expose.
 	ExposePipeline bool            `json:"expose_pipeline,omitempty"`
 	Page           json.RawMessage `json:"page"`
+	// UserPage is the page the app's ordinary users see when some of its
+	// sections are for managers only: Page without them, and without the
+	// buttons of managers-only actions. Empty when the app keeps nothing for
+	// managers, and then everyone sees Page.
+	UserPage json.RawMessage `json:"user_page,omitempty"`
 	// Sections is the AUTHORING form of the page — the declarative sections
 	// array the author passed to app_def, stored verbatim alongside the Page it
 	// compiled into. Page is the RENDERED shape (bodies keyed by component
@@ -163,6 +168,12 @@ type AppSpec struct {
 	// owner's (docs/design/app-maintainers.md). Naming one also shares the
 	// app with them. Deployment-local, cleared on export.
 	Maintainers []string `json:"maintainers,omitempty"`
+	// Managers are the people (usernames) the owner trusts to run the app for
+	// its users: they get what the app keeps for managers (an action, a data
+	// source or a section marked managers_only), and its scripts see them as
+	// caller_role "manager" (Role). Like Maintainers, naming one shares the
+	// app with them, and they are deployment-local, cleared on export.
+	Managers []string `json:"managers,omitempty"`
 	// Checks are what the app is supposed to do, as tests that live with it:
 	// written as each feature is built, run on every save, and a save that
 	// breaks one that passed is refused (docs/design/app-checks.md). They
@@ -382,6 +393,9 @@ type AppDataSource struct {
 	// Expose offers the data source as a read tool (read_<slug>_<name>)
 	// beyond the app's page and chat, as AppAction.Expose does an action.
 	Expose bool `json:"expose,omitempty"`
+	// ManagersOnly keeps the data source for the app's owner and managers
+	// (AppAction.ManagersOnly): anyone else asking for it is refused.
+	ManagersOnly bool `json:"managers_only,omitempty"`
 }
 
 // AppAction is a script-backed custom-app action: a sandboxed script a button
@@ -413,6 +427,12 @@ type AppAction struct {
 	// nobody here is asked. The page and the app's own chat have every action
 	// either way.
 	Expose bool `json:"expose,omitempty"`
+	// ManagersOnly keeps the action for the app's owner and managers: its
+	// button is not on the page an ordinary user sees, a call from one is
+	// refused by the host, and the app's chat agent does not get it while
+	// answering one. A script that should behave differently by person
+	// reads caller_role instead.
+	ManagersOnly bool `json:"managers_only,omitempty"`
 	// Schedule, when set, makes this action ALSO fire unattended on a timer, with
 	// no human clicking it — the seam that lets a custom app keep itself fresh
 	// (dashboard / tracker) while nobody has it open. Each fire runs the script in
@@ -640,7 +660,7 @@ func appServesDifferently(prior, next AppSpec) bool {
 		s.Name, s.Desc, s.Notes, s.ChangeNote = "", "", "", ""
 		s.Created, s.Updated, s.Verify, s.Schema = "", "", nil, 0
 		s.Shared, s.SharedGroups, s.SharedWith, s.PublicToken, s.Disabled = false, nil, nil, "", false
-		s.Maintainers = nil
+		s.Maintainers, s.Managers = nil, nil
 		s.Checks = nil // what the app is tested for, not what it serves
 		s.FullWidth, s.Narrow, s.AskDailyUSD, s.AskUserDailyUSD = false, false, 0, 0
 		s.RecordFields, s.Sample = nil, nil
@@ -733,6 +753,34 @@ func (s AppSpec) RecordSample(sample []map[string]any) bool {
 	stored.Sample = sample
 	db.Set(AppSpecTable, s.Slug, stored)
 	return true
+}
+
+// ManagedBy reports whether user is one of the app's managers. The owner is
+// not: they own it.
+func (s AppSpec) ManagedBy(user string) bool {
+	user = strings.TrimSpace(user)
+	if user == "" || strings.EqualFold(user, s.Owner) {
+		return false
+	}
+	for _, m := range s.Managers {
+		if strings.EqualFold(strings.TrimSpace(m), user) {
+			return true
+		}
+	}
+	return false
+}
+
+// Role is what user is to the app: "owner", "manager" (ManagedBy) or
+// "user". Scripts see it as caller_role, and the host gives a "user" none of
+// what is kept for managers.
+func (s AppSpec) Role(user string) string {
+	switch {
+	case strings.TrimSpace(user) != "" && strings.EqualFold(strings.TrimSpace(user), s.Owner):
+		return "owner"
+	case s.ManagedBy(user):
+		return "manager"
+	}
+	return "user"
 }
 
 // MaintainedBy reports whether user is one of the app's maintainers. The

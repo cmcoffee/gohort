@@ -448,3 +448,60 @@ func TestAnAppUsedThroughItsToolsNeedsNoPage(t *testing.T) {
 		t.Errorf("an app with nothing exposed and no page: %v", err)
 	}
 }
+
+// What an app keeps for managers is left out of the page its users get,
+// built at save: a managers-only section. A managers-only action's flag
+// survives the folder. An app whose every section is for
+// managers gives its users one saying so.
+func TestAnAppsUsersGetAPageWithoutTheManagersParts(t *testing.T) {
+	turn, _ := folderTestTurn(t)
+	_, err := turn.appDefCreateOrUpdate(map[string]any{
+		"name": "Poll",
+		"sections": []any{
+			map[string]any{"id": "votes", "kind": "table", "title": "Votes", "empty_text": "None.", "columns": []any{map[string]any{"field": "place", "label": "Place"}}},
+			map[string]any{"id": "admin", "kind": "display", "title": "Managing the poll", "managers_only": true, "pairs": []any{map[string]any{"label": "Day", "value": "today"}}},
+			map[string]any{"id": "buttons", "kind": "actions", "title": "Do"},
+		},
+		"actions": []any{
+			map[string]any{"name": "vote", "label": "Vote now", "script": "print('{}')"},
+			map[string]any{"name": "reset", "label": "Reset the day", "script": "print('{}')", "managers_only": true},
+		},
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, _ := LoadAppSpec("u", "poll")
+	page, users := string(spec.Page), string(spec.UserPage)
+	// The buttons come from the app's actions list at run time, which the
+	// host narrows per person (customapps); the page holds the sections.
+	if !strings.Contains(page, "Managing the poll") {
+		t.Fatalf("the full page lost the managers' parts: %s", page)
+	}
+	if users == "" || strings.Contains(users, "Managing the poll") || !strings.Contains(users, "Votes") {
+		t.Fatalf("the users' page: %s", users)
+	}
+	if !spec.Actions[1].ManagersOnly || spec.Actions[0].ManagersOnly {
+		t.Errorf("actions: %+v", spec.Actions)
+	}
+	if _, err := turn.appDefCheckout(map[string]any{"id": "poll"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := turn.appDefPublish(map[string]any{"dir": "poll.app"}); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	if spec, _ = LoadAppSpec("u", "poll"); !spec.Actions[1].ManagersOnly || strings.Contains(string(spec.UserPage), "Managing the poll") {
+		t.Errorf("through the folder: actions %+v", spec.Actions)
+	}
+
+	_, err = turn.appDefCreateOrUpdate(map[string]any{
+		"name":     "Desk",
+		"sections": []any{map[string]any{"id": "admin", "kind": "display", "title": "Desk", "managers_only": true, "pairs": []any{map[string]any{"label": "a", "value": "b"}}}},
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	desk, _ := LoadAppSpec("u", "desk")
+	if !strings.Contains(string(desk.UserPage), "For its managers") {
+		t.Errorf("an all-managers app's users' page: %s", desk.UserPage)
+	}
+}

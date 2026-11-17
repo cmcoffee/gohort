@@ -110,16 +110,12 @@ func (t *chatTurn) saveHTMLSectionEdit(spec AppSpec, sections []map[string]any, 
 	for i := range sections {
 		raw[i] = sections[i]
 	}
-	page, err := buildAppPage(spec, raw)
+	blob, userBlob, err := compileAppPages(spec, raw)
 	if err != nil {
 		return "", fmt.Errorf("edited sections no longer build a page: %w", err)
 	}
-	blob, err := page.ConfigJSON()
-	if err != nil {
-		return "", fmt.Errorf("render app page: %w", err)
-	}
 	before := spec
-	spec.Page = blob
+	spec.Page, spec.UserPage = blob, userBlob
 	if src, err := json.Marshal(raw); err == nil {
 		spec.Sections = src
 	}

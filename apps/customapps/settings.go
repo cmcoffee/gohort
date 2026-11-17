@@ -350,7 +350,8 @@ func (T *CustomApps) settingsFor(spec AppSpec, uid string) map[string]string {
 // and the body, so a param — which anyone holding a public link can set —
 // never overrides a value someone chose on the Settings page.
 //
-// It also sets caller, the id of the person the script runs for, after
+// It also sets caller, the id of the person the script runs for, and
+// caller_role, what they are to the app (owner, manager or user), after
 // everything else so neither a param nor a setting can name someone else.
 // Without it a shared app's script could not tell who clicked: "one vote per
 // person" had nothing to check against but whatever the page chose to send.
@@ -362,6 +363,10 @@ func (T *CustomApps) applySettings(args map[string]any, spec AppSpec, uid string
 		args[k] = v
 	}
 	args["caller"] = appscript.CallerAlias(spec, uid)
+	// And what they are to the app (AppSpec.Role), set here for the same
+	// reason: a script that lets a manager do more must not take that from
+	// a param.
+	args["caller_role"] = spec.Role(uid)
 }
 
 // appAgentExists reports whether the agent an app names still resolves for

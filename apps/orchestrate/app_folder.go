@@ -52,6 +52,7 @@ type appFolderScript struct {
 	Inputs       map[string]string `json:"inputs,omitempty"`
 	Schedule     *AppSchedule      `json:"schedule,omitempty"`
 	Expose       bool              `json:"expose,omitempty"`
+	ManagersOnly bool              `json:"managers_only,omitempty"`
 }
 
 // appFolderManifest is app.json.
@@ -189,7 +190,7 @@ func writeAppFolder(abs string, spec AppSpec, assets map[string][]byte, base str
 		if err := write(f, []byte(ds.Script)); err != nil {
 			return out, err
 		}
-		m.DataSources = append(m.DataSources, appFolderScript{Name: ds.Name, File: f, Language: ds.Language, Capabilities: ds.Capabilities, Inputs: ds.Inputs, Expose: ds.Expose})
+		m.DataSources = append(m.DataSources, appFolderScript{Name: ds.Name, File: f, Language: ds.Language, Capabilities: ds.Capabilities, Inputs: ds.Inputs, Expose: ds.Expose, ManagersOnly: ds.ManagersOnly})
 	}
 	for _, a := range spec.Actions {
 		f := "actions/" + a.Name + scriptExt(a.Language)
@@ -197,7 +198,7 @@ func writeAppFolder(abs string, spec AppSpec, assets map[string][]byte, base str
 			return out, err
 		}
 		m.Actions = append(m.Actions, appFolderScript{Name: a.Name, File: f, Language: a.Language, Capabilities: a.Capabilities,
-			Label: a.Label, Desc: a.Desc, Confirm: a.Confirm, Inputs: a.Inputs, Schedule: a.Schedule, Expose: a.Expose})
+			Label: a.Label, Desc: a.Desc, Confirm: a.Confirm, Inputs: a.Inputs, Schedule: a.Schedule, Expose: a.Expose, ManagersOnly: a.ManagersOnly})
 	}
 	for name, src := range spec.Libraries {
 		if err := write("lib/"+name+".py", []byte(src)); err != nil {
@@ -408,6 +409,9 @@ func (t *chatTurn) appFolderRead(abs, rel string) (map[string]any, appFolderMani
 			}
 			if s.Expose {
 				e["expose"] = true
+			}
+			if s.ManagersOnly {
+				e["managers_only"] = true
 			}
 			if isAction {
 				for k, v := range map[string]string{"label": s.Label, "desc": s.Desc, "confirm": s.Confirm} {

@@ -1327,7 +1327,7 @@ func (customAppArtifact) ExportArtifact(_ Database, name, owner string) (json.Ra
 	spec.Shared = false
 	spec.SharedGroups = nil
 	spec.SharedWith = nil
-	spec.Maintainers = nil
+	spec.Maintainers, spec.Managers = nil, nil
 	spec.DataOwner = ""
 	spec.PublicToken = ""
 	return marshalAppWithAssets(spec, owner)
@@ -1506,7 +1506,7 @@ func (customAppArtifact) ImportArtifact(_ Database, recipe json.RawMessage, owne
 	spec.Shared = false
 	spec.SharedGroups = nil
 	spec.SharedWith = nil
-	spec.Maintainers = nil
+	spec.Maintainers, spec.Managers = nil, nil
 	spec.DataOwner = ""
 	spec.PublicToken = ""
 	SaveAppSpec(spec)

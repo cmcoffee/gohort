@@ -223,3 +223,31 @@ func TestAMaintainerCannotRemoveACheck(t *testing.T) {
 		t.Errorf("a maintainer could not add a check: %v", err)
 	}
 }
+
+// Which sections only managers see is the owner's, as sharing is: a
+// maintainer may change what a managers' section says, not whether it is
+// one, and the managers list stays the owner's.
+func TestAMaintainerCannotChangeWhoSeesWhat(t *testing.T) {
+	prior := AppSpec{Slug: "poll", Owner: "owner-a", Maintainers: []string{"maint-b"}, Managers: []string{"mgr-c"},
+		Sections: json.RawMessage(`[{"id":"votes","kind":"table","title":"Votes"},{"id":"admin","kind":"display","title":"Admin","managers_only":true}]`)}
+	reworded := prior
+	reworded.Sections = json.RawMessage(`[{"id":"votes","kind":"table","title":"Today's votes"},{"id":"admin","kind":"display","title":"Running it","managers_only":true}]`)
+	reworded.Managers = []string{"mgr-c", "maint-b"}
+	got, err := applyAppMaintainerEdit(prior, reworded)
+	if err != nil {
+		t.Fatalf("rewording a managers' section was refused: %v", err)
+	}
+	if len(got.Managers) != 1 {
+		t.Errorf("the maintainer changed the managers: %v", got.Managers)
+	}
+	opened := prior
+	opened.Sections = json.RawMessage(`[{"id":"votes","kind":"table","title":"Votes"},{"id":"admin","kind":"display","title":"Admin"}]`)
+	if _, err := applyAppMaintainerEdit(prior, opened); err == nil || !strings.Contains(err.Error(), "only its managers see") {
+		t.Errorf("a maintainer opened a managers' section to everyone: %v", err)
+	}
+	hidden := prior
+	hidden.Sections = json.RawMessage(`[{"id":"votes","kind":"table","title":"Votes","managers_only":true},{"id":"admin","kind":"display","title":"Admin","managers_only":true}]`)
+	if _, err := applyAppMaintainerEdit(prior, hidden); err == nil {
+		t.Error("a maintainer hid a section from the app's users")
+	}
+}

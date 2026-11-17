@@ -157,6 +157,7 @@ func (T *CustomApps) routes() {
 	T.HandleFunc("/_app/share_group", jsonapi.Post(T.DB, T.handleShareGroup))
 	T.HandleFunc("/_app/share_person", jsonapi.Post(T.DB, T.handleSharePerson))
 	T.HandleFunc("/_app/share_maintainer", jsonapi.Post(T.DB, T.handleShareMaintainer))
+	T.HandleFunc("/_app/share_manager", jsonapi.Post(T.DB, T.handleShareManager))
 	T.HandleFunc("/_app/order", jsonapi.Post(T.DB, T.handleAppOrder, jsonapi.MaxBody(1<<16)))
 	T.HandleFunc("/_app/schedule", jsonapi.Post(T.DB, T.handleScheduleToggle))
 	T.HandleFunc("/_app/job-cancel", jsonapi.Post(T.DB, handleJobCancel))
@@ -280,7 +281,7 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		// one). Keyed by the app's owner, so a shared app the owner still watches
 		// keeps its owner-side tracker running.
 		T.touchAppView(spec)
-		page := isolateAppHTML(spec.Page, T.WebPath()+"/"+slug+"/")
+		page := isolateAppHTML(appPageFor(spec, user), T.WebPath()+"/"+slug+"/")
 		page = T.withViewState(page, appdb, spec)
 		// A maintainer changes the app through Builder too
 		// (docs/design/app-maintainers.md), so the way there is theirs.
@@ -505,7 +506,8 @@ func (T *CustomApps) handleChat(w http.ResponseWriter, r *http.Request, owner, u
 		}
 		if len(spec.Actions)+len(spec.DataSources) > 0 {
 			out, run := T.latestRunForApp(spec, r)
-			tools = append(tools, T.agentToolsFor(owner, uid, udb, spec, out, run)...)
+			// Not what the app keeps for managers, while answering a user.
+			tools = append(tools, T.agentToolsFor(owner, uid, udb, forUser(spec, uid), out, run)...)
 		}
 		// Records that keep files: the agent keeps what it made on the open
 		// one (record_files.go). The open one is what the send says it is,
@@ -779,12 +781,8 @@ const shareModalScript = `<script>
             post('_app/share_person?slug=' + encodeURIComponent(slug) + '&user=' + encodeURIComponent(u) + '&on=false', null, function() {
               people.with = people.with.filter(function(x) { return x !== u; });
               people.others.push(u); people.others.sort();
-              // Unsharing a person drops them as a maintainer too.
-              if (maint.with.indexOf(u) >= 0) {
-                maint.with = maint.with.filter(function(x) { return x !== u; });
-                maint.others.push(u); maint.others.sort();
-                drawMaint();
-              }
+              // Unsharing a person drops their roles too.
+              roles.forEach(function(r) { r.drop(u); });
               draw();
             });
           });
@@ -832,79 +830,88 @@ const shareModalScript = `<script>
       body.appendChild(note);
       body.appendChild(chips);
       body.appendChild(addRow);
-      // Maintainers: people who keep the app working for its owner. They
-      // change its sections and wording through Builder; its scripts, page
-      // code, sharing and settings stay the owner's. Naming one also shares
-      // the app with them.
-      var maint = {with: [], others: []};
-      try { maint = JSON.parse(rec.share_maintainers || '{}') || maint; } catch (e) {}
-      maint.with = maint.with || []; maint.others = maint.others || [];
-      var mHead = document.createElement('div');
-      mHead.style.cssText = 'font-weight:600;margin:1rem 0 0.25rem';
-      mHead.textContent = 'Maintainers';
-      var mNote = document.createElement('div');
-      mNote.style.cssText = note.style.cssText;
-      mNote.textContent = 'They can change its sections and wording through Builder. Its scripts, page code, sharing and settings stay yours, and every change they make is kept in its history under their name.';
-      var mChips = document.createElement('div');
-      mChips.style.cssText = chips.style.cssText;
-      var mRow = document.createElement('div');
-      mRow.style.cssText = addRow.style.cssText;
-      var mPick = document.createElement('select');
-      mPick.className = 'ui-input';
-      mPick.style.cssText = 'max-width:18rem';
-      var mAdd = document.createElement('button');
-      mAdd.type = 'button'; mAdd.className = 'ui-row-btn'; mAdd.textContent = 'Add';
-      mRow.appendChild(mPick); mRow.appendChild(mAdd);
-      function drawMaint() {
-        mChips.innerHTML = '';
-        maint.with.forEach(function(u) {
-          var c = document.createElement('span');
-          c.className = 'ui-chip';
-          c.style.cssText = 'display:inline-flex;align-items:center;gap:0.25rem';
-          c.appendChild(document.createTextNode(u));
-          var x = document.createElement('button');
-          x.type = 'button'; x.className = 'ui-row-btn'; x.textContent = '\u00d7'; x.title = u + ' stops maintaining it, and can still use it';
-          x.addEventListener('click', function() {
-            post('_app/share_maintainer?slug=' + encodeURIComponent(slug) + '&user=' + encodeURIComponent(u) + '&on=false', null, function() {
-              maint.with = maint.with.filter(function(y) { return y !== u; });
-              maint.others.push(u); maint.others.sort();
-              drawMaint();
-            });
-          });
-          c.appendChild(x);
-          mChips.appendChild(c);
-        });
-        if (!maint.with.length) {
-          var none = document.createElement('span');
-          none.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute)';
-          none.textContent = 'Only you.';
-          mChips.appendChild(none);
+      // People with a role on the app, each a list the owner adds to.
+      // Naming one shares the app with them; unsharing a person drops their
+      // roles (above).
+      function roleSection(o) {
+        var data = {with: [], others: []};
+        try { data = JSON.parse(rec[o.field] || '{}') || data; } catch (e) {}
+        data.with = data.with || []; data.others = data.others || [];
+        var h = document.createElement('div');
+        h.style.cssText = 'font-weight:600;margin:1rem 0 0.25rem';
+        h.textContent = o.title;
+        var n = document.createElement('div');
+        n.style.cssText = note.style.cssText;
+        n.textContent = o.note;
+        var cs = document.createElement('div');
+        cs.style.cssText = chips.style.cssText;
+        var row = document.createElement('div');
+        row.style.cssText = addRow.style.cssText;
+        var sel = document.createElement('select');
+        sel.className = 'ui-input';
+        sel.style.cssText = 'max-width:18rem';
+        var add = document.createElement('button');
+        add.type = 'button'; add.className = 'ui-row-btn'; add.textContent = 'Add';
+        row.appendChild(sel); row.appendChild(add);
+        function set(u, on, then) {
+          post(o.endpoint + '?slug=' + encodeURIComponent(slug) + '&user=' + encodeURIComponent(u) + '&on=' + on, null, then);
         }
-        mPick.innerHTML = '';
-        maint.others.forEach(function(u) { var o = document.createElement('option'); o.value = u; o.textContent = u; mPick.appendChild(o); });
-        mRow.style.display = mPick.options.length ? 'flex' : 'none';
-      }
-      mAdd.addEventListener('click', function() {
-        var u = mPick.value;
-        if (!u) return;
-        post('_app/share_maintainer?slug=' + encodeURIComponent(slug) + '&user=' + encodeURIComponent(u) + '&on=true', null, function() {
-          maint.others = maint.others.filter(function(y) { return y !== u; });
-          maint.with.push(u); maint.with.sort();
-          // Naming a maintainer shares the app with them.
-          if (people.with.indexOf(u) < 0) {
-            people.others = people.others.filter(function(y) { return y !== u; });
-            people.with.push(u); people.with.sort();
-            draw();
+        function drop(u) {
+          if (data.with.indexOf(u) < 0) return;
+          data.with = data.with.filter(function(y) { return y !== u; });
+          data.others.push(u); data.others.sort();
+          redraw();
+        }
+        function redraw() {
+          cs.innerHTML = '';
+          data.with.forEach(function(u) {
+            var c = document.createElement('span');
+            c.className = 'ui-chip';
+            c.style.cssText = 'display:inline-flex;align-items:center;gap:0.25rem';
+            c.appendChild(document.createTextNode(u));
+            var x = document.createElement('button');
+            x.type = 'button'; x.className = 'ui-row-btn'; x.textContent = '\u00d7'; x.title = u + o.removeTitle;
+            x.addEventListener('click', function() { set(u, 'false', function() { drop(u); }); });
+            c.appendChild(x);
+            cs.appendChild(c);
+          });
+          if (!data.with.length) {
+            var none = document.createElement('span');
+            none.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute)';
+            none.textContent = 'Only you.';
+            cs.appendChild(none);
           }
-          drawMaint();
+          sel.innerHTML = '';
+          data.others.forEach(function(u) { var op = document.createElement('option'); op.value = u; op.textContent = u; sel.appendChild(op); });
+          row.style.display = sel.options.length ? 'flex' : 'none';
+        }
+        add.addEventListener('click', function() {
+          var u = sel.value;
+          if (!u) return;
+          set(u, 'true', function() {
+            data.others = data.others.filter(function(y) { return y !== u; });
+            data.with.push(u); data.with.sort();
+            if (people.with.indexOf(u) < 0) {
+              people.others = people.others.filter(function(y) { return y !== u; });
+              people.with.push(u); people.with.sort();
+              draw();
+            }
+            redraw();
+          });
         });
-      });
-      body.appendChild(mHead);
-      body.appendChild(mNote);
-      body.appendChild(mChips);
-      body.appendChild(mRow);
+        [h, n, cs, row].forEach(function(e) { body.appendChild(e); });
+        return {draw: redraw, drop: drop};
+      }
+      var roles = [
+        roleSection({title: 'Maintainers', field: 'share_maintainers', endpoint: '_app/share_maintainer',
+          note: 'They can change its sections and wording through Builder. Its scripts, page code, sharing and settings stay yours, and every change they make is kept in its history under their name.',
+          removeTitle: ' stops maintaining it, and can still use it'}),
+        roleSection({title: 'Managers', field: 'share_managers', endpoint: '_app/share_manager',
+          note: 'They run the app for its users: they get what it keeps for managers (actions and sections marked for managers), and its scripts know them as managers.',
+          removeTitle: ' stops managing it, and can still use it'}),
+      ];
       draw();
-      drawMaint();
+      roles.forEach(function(r) { r.draw(); });
     },
     actions: [{label: 'Done', primary: true, onClick: function(api){ api.close(); if (ctx.reload) ctx.reload(); }}]
   });
@@ -1080,6 +1087,7 @@ func (T *CustomApps) handleAppsList(c *jsonapi.Call) (any, error) {
 		// And the people it is shared with by name.
 		row["share_people"] = sharePeopleJSON(s)
 		row["share_maintainers"] = shareMaintainersJSON(s)
+		row["share_managers"] = shareManagersJSON(s)
 		if n := len(s.SharedWith); n > 0 {
 			if row["state"] == "private" {
 				row["state"] = "shared"
@@ -1277,6 +1285,10 @@ func (T *CustomApps) handleData(w http.ResponseWriter, r *http.Request, owner, u
 	}
 	if ds == nil || strings.TrimSpace(ds.Script) == "" {
 		http.NotFound(w, r)
+		return
+	}
+	if ds.ManagersOnly && spec.Role(uid) == "user" {
+		http.Error(w, managersOnlyRefusal, http.StatusForbidden)
 		return
 	}
 
@@ -1533,7 +1545,8 @@ func cachedRunDataSource(user string, db Database, spec AppSpec, ds AppDataSourc
 var runAppScript = func(j appscript.Job) (string, error) { return j.Run() }
 
 // actionsList feeds the actions section's button list: one {name, button,
-// desc, confirm} per declared action.
+// desc, confirm} per declared action, without the managers' for an ordinary
+// user (managers.go).
 func (T *CustomApps) actionsList(a *appCall) (any, error) {
 	type item struct {
 		Name    string `json:"name"`
@@ -1542,7 +1555,7 @@ func (T *CustomApps) actionsList(a *appCall) (any, error) {
 		Confirm string `json:"confirm,omitempty"`
 	}
 	out := []item{}
-	for _, act := range a.spec.Actions {
+	for _, act := range forUser(a.spec, a.User).Actions {
 		label := strings.TrimSpace(act.Label)
 		if label == "" {
 			label = act.Name
@@ -1574,6 +1587,10 @@ func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, owner,
 	}
 	if act == nil || strings.TrimSpace(act.Script) == "" {
 		http.NotFound(w, r)
+		return
+	}
+	if act.ManagersOnly && spec.Role(uid) == "user" {
+		http.Error(w, managersOnlyRefusal, http.StatusForbidden)
 		return
 	}
 

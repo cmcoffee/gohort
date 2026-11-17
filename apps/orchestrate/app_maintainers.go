@@ -151,7 +151,7 @@ func applyAppMaintainerEdit(prior, next AppSpec) (AppSpec, error) {
 	// them.
 	out.Name, out.Desc, out.Notes, out.ChangeNote = next.Name, next.Desc, next.Notes, next.ChangeNote
 	out.FullWidth, out.Narrow = next.FullWidth, next.Narrow
-	out.Sections, out.Page = next.Sections, next.Page
+	out.Sections, out.Page, out.UserPage = next.Sections, next.Page, next.UserPage
 	out.RecordFields, out.Sample, out.Verify = next.RecordFields, next.Sample, next.Verify
 	out.Updated = next.Updated
 	// Checks: a maintainer adds and changes them, and removes none, so a
@@ -165,10 +165,32 @@ func applyAppMaintainerEdit(prior, next AppSpec) (AppSpec, error) {
 	if !sameStringSet(prior.PageCode(), out.PageCode()) {
 		return prior, fmt.Errorf("NOT SAVED: this changes the page code of %q (an html or card section's HTML, or script in the page). That runs for everyone who opens the app, so it is %s's to change: ask them", prior.Slug, prior.Owner)
 	}
+	// Which sections only managers see is who sees what, the owner's as
+	// sharing is: a maintainer changes what a managers' section says, not
+	// whether it is one.
+	if !sameStringSet(appManagersOnlySections(prior), appManagersOnlySections(out)) {
+		return prior, fmt.Errorf("NOT SAVED: this changes which sections of %q only its managers see. Who sees what is %s's to change: ask them", prior.Slug, prior.Owner)
+	}
 	if p := appSectionPipelines(out); !subsetOf(p, append(appSectionPipelines(prior), prior.PipelineID)) {
 		return prior, fmt.Errorf("NOT SAVED: a section of %q now runs a pipeline the app did not run before. Which pipelines the app runs is %s's to change: ask them", prior.Slug, prior.Owner)
 	}
 	return out, nil
+}
+
+// appManagersOnlySections is the id of every section of spec marked
+// managers_only.
+func appManagersOnlySections(spec AppSpec) []string {
+	secs, err := appAuthoringSections(spec)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, m := range secs {
+		if mapBool(m, "managers_only") {
+			out = append(out, firstNonEmptyStr(mapStr(m, "id"), mapStr(m, "title")))
+		}
+	}
+	return out
 }
 
 // appSectionPipelines is every pipeline_id a section of spec names.

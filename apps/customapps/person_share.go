@@ -66,9 +66,10 @@ func (T *CustomApps) setPersonShare(owner, slug, person string, on bool) error {
 		kept = append(kept, person)
 		sort.Strings(kept)
 	} else {
-		// Maintaining an app you cannot open makes no sense: unsharing a
-		// person drops them as a maintainer too.
+		// Maintaining or managing an app you cannot open makes no sense:
+		// unsharing a person drops those roles too.
 		spec.Maintainers = withoutPerson(spec.Maintainers, person)
+		spec.Managers = withoutPerson(spec.Managers, person)
 	}
 	spec.SharedWith = kept
 	SaveAppSpec(spec)

@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -10,6 +11,73 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
 )
+
+// compileAppPages builds the app's page from its sections and, when it keeps
+// anything for managers, the page its ordinary users see: the sections not
+// marked managers_only, with the buttons of managers-only actions gone.
+// userPage is nil when there is nothing to keep back, and everyone sees page.
+func compileAppPages(spec AppSpec, raw any) (page, userPage json.RawMessage, err error) {
+	full, err := buildAppPage(spec, raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	if page, err = full.ConfigJSON(); err != nil {
+		return nil, nil, fmt.Errorf("render app page: %w", err)
+	}
+	userSpec, userRaw, keptBack := appForUsers(spec, raw)
+	if !keptBack {
+		return page, nil, nil
+	}
+	up, err := buildAppPage(userSpec, userRaw)
+	if err != nil {
+		return nil, nil, fmt.Errorf("the page for the app's users (without its managers-only parts): %w", err)
+	}
+	if userPage, err = up.ConfigJSON(); err != nil {
+		return nil, nil, fmt.Errorf("render app page: %w", err)
+	}
+	return page, userPage, nil
+}
+
+// appForUsers is spec and its sections as an ordinary user gets them: no
+// managers-only action or data source, and no managers-only section. When
+// every section is for managers, the user gets one saying so. keptBack is
+// false when nothing is kept for managers.
+func appForUsers(spec AppSpec, raw any) (AppSpec, any, bool) {
+	kept := false
+	out := spec
+	out.Actions, out.DataSources = nil, nil
+	for _, a := range spec.Actions {
+		if a.ManagersOnly {
+			kept = true
+			continue
+		}
+		out.Actions = append(out.Actions, a)
+	}
+	for _, d := range spec.DataSources {
+		if d.ManagersOnly {
+			kept = true
+			continue
+		}
+		out.DataSources = append(out.DataSources, d)
+	}
+	arr, _ := raw.([]any)
+	var secs []any
+	for _, item := range arr {
+		if m, ok := item.(map[string]any); ok && mapBool(m, "managers_only") {
+			kept = true
+			continue
+		}
+		secs = append(secs, item)
+	}
+	if !kept {
+		return spec, raw, false
+	}
+	if len(secs) == 0 {
+		secs = []any{map[string]any{"id": "managers", "kind": "empty", "icon": "🔒",
+			"title": "For its managers", "hint": "This app's page is for the people who manage it."}}
+	}
+	return out, secs, true
+}
 
 // buildAppPage translates the declarative sections array into a ui.Page scoped
 // to the app's mount. Endpoints are fixed and relative ("records" / "record")
@@ -135,7 +203,7 @@ func allHTMLSections(secs []map[string]any) bool {
 // mirrors: if a kind learns a field, it belongs in both places, and the cost of
 // forgetting is one spurious note, never a refused save.
 var sectionKeys = map[string][]string{
-	"":          {"id", "kind", "title", "subtitle", "group", "collapsed"}, // every kind; id = the stable handle update_section uses
+	"":          {"id", "kind", "title", "subtitle", "group", "collapsed", "managers_only"}, // every kind; id = the stable handle update_section uses
 	"form":      {"fields", "submit_label", "modal"},
 	"table":     {"columns", "empty_text", "editable", "edit_fields", "deletable", "auto_refresh_ms", "source_script"},
 	"display":   {"pairs", "source_script"},
