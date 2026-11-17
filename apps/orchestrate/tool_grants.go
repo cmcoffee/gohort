@@ -88,6 +88,180 @@ func findToolGrant(udb Database, scope, tool, argValue string) (ToolGrant, bool)
 	return ToolGrant{}, false
 }
 
+// commandParts splits a command line chained with &&, ||, ; or | into the
+// simple commands it runs, so each can be checked against a grant the way
+// Claude Code checks a compound command: the line runs unasked only when every
+// part is allowed. False when the line cannot be split with certainty, and
+// then it is asked about whole, as before:
+//
+//   - command or process substitution, variables, subshells or grouping
+//     ($, backticks, parentheses), a backslash, a newline, or a lone &
+//     sending a command to the background;
+//   - a redirect, except 2>&1 (and its kin) and one to /dev/null, which only
+//     move or drop output;
+//   - an unclosed quote.
+//
+// Quoted text is passed through with its quotes, so a part with a separator
+// inside quotes ("a|b") is a part no grant matches (CommandIsGrantable) and is
+// asked about. A single command comes back as one part.
+func commandParts(cmd string) ([]string, bool) {
+	var parts []string
+	var cur strings.Builder
+	end := func() bool {
+		p := strings.Join(strings.Fields(cur.String()), " ")
+		cur.Reset()
+		if p == "" {
+			return false
+		}
+		parts = append(parts, p)
+		return true
+	}
+	rs := []rune(strings.TrimSpace(cmd))
+	quote := rune(0)
+	for i := 0; i < len(rs); i++ {
+		r := rs[i]
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+			} else if quote == '"' && (r == '$' || r == '`' || r == '\\') {
+				return nil, false
+			}
+			cur.WriteRune(r)
+			continue
+		}
+		next := rune(0)
+		if i+1 < len(rs) {
+			next = rs[i+1]
+		}
+		switch {
+		case r == '\'' || r == '"':
+			quote = r
+			cur.WriteRune(r)
+		case r == '$' || r == '`' || r == '(' || r == ')' || r == '\\' || r == '\n' || r == '\r' || r == '{' || r == '}':
+			return nil, false
+		case r == ';':
+			if !end() {
+				return nil, false
+			}
+		case (r == '&' && next == '&') || (r == '|' && next == '|'):
+			if !end() {
+				return nil, false
+			}
+			i++
+		case r == '|':
+			if !end() {
+				return nil, false
+			}
+		case r == '&' && next == '>', r == '>', r == '<', r >= '0' && r <= '9' && (next == '>' || next == '<') && (i == 0 || rs[i-1] == ' '):
+			n := harmlessRedirect(rs[i:])
+			if n == 0 {
+				return nil, false
+			}
+			i += n - 1
+			cur.WriteRune(' ')
+		case r == '&':
+			return nil, false
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	if quote != 0 || !end() {
+		return nil, false
+	}
+	return parts, true
+}
+
+// harmlessRedirect is how many runes at the start of rs make a redirect that
+// only moves or drops output (2>&1, >&2, >/dev/null, 2>/dev/null,
+// &>/dev/null, </dev/null), or 0 for any other.
+func harmlessRedirect(rs []rune) int {
+	s := string(rs)
+	for _, p := range []string{"&>", "2>>", "1>>", "2>", "1>", ">>", ">", "<"} {
+		if !strings.HasPrefix(s, p) {
+			continue
+		}
+		rest := s[len(p):]
+		if strings.HasPrefix(p, "2") || strings.HasPrefix(p, "1") || p == ">" {
+			if strings.HasPrefix(rest, "&1") || strings.HasPrefix(rest, "&2") {
+				return len([]rune(p)) + 2
+			}
+		}
+		trimmed := strings.TrimLeft(rest, " ")
+		if strings.HasPrefix(trimmed, "/dev/null") {
+			after := trimmed[len("/dev/null"):]
+			if after == "" || strings.HasPrefix(after, " ") || strings.HasPrefix(after, ";") || strings.HasPrefix(after, "|") || strings.HasPrefix(after, "&") {
+				return len([]rune(p)) + (len(rest) - len(trimmed)) + len("/dev/null")
+			}
+		}
+		return 0
+	}
+	return 0
+}
+
+// isDirChange reports whether a command part only changes directory (cd, or
+// cd to one place). It needs no grant: it decides where the next part runs,
+// and that part is checked.
+func isDirChange(part string) bool {
+	f := strings.Fields(part)
+	return len(f) >= 1 && len(f) <= 2 && f[0] == "cd"
+}
+
+// grantPrefixesFor is what a card for cmd offers to remember: the prefix of
+// each part a grant would have to cover, once each, in order. Nil when the
+// line cannot be split with certainty, or a part cannot be granted.
+func grantPrefixesFor(cmd string) []string {
+	parts, ok := commandParts(cmd)
+	if !ok {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, p := range parts {
+		if isDirChange(p) {
+			continue
+		}
+		prefix := GrantPrefixFor(p)
+		if prefix == "" {
+			return nil
+		}
+		if !seen[prefix] {
+			seen[prefix] = true
+			out = append(out, prefix)
+		}
+	}
+	return out
+}
+
+// compoundGrant answers a chained command line when every command in it is
+// covered by a grant the user gave: the grants used, as one for the note in
+// the conversation. A line of only cd, or one that cannot be split with
+// certainty, is not answered.
+func compoundGrant(udb Database, scope, tool, argValue string) (ToolGrant, bool) {
+	parts, ok := commandParts(argValue)
+	if !ok || len(parts) < 2 {
+		return ToolGrant{}, false
+	}
+	var used []string
+	seen := map[string]bool{}
+	for _, p := range parts {
+		if isDirChange(p) {
+			continue
+		}
+		g, ok := findToolGrant(udb, scope, tool, p)
+		if !ok {
+			return ToolGrant{}, false
+		}
+		if label := firstNonBlank(g.Prefix, tool); !seen[label] {
+			seen[label] = true
+			used = append(used, label)
+		}
+	}
+	if len(used) == 0 {
+		return ToolGrant{}, false
+	}
+	return ToolGrant{Scope: scope, Tool: tool, Prefix: strings.Join(used, ", ")}, true
+}
+
 // saveToolGrant records a standing approval, replacing any existing grant that
 // would already have covered the same ground.
 //

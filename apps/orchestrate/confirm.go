@@ -389,6 +389,16 @@ func (t *chatTurn) confirmAppToolCall(name string, spec *ToolConfirmation, args 
 		t.noteGrantUsed(name, g)
 		return true
 	}
+	// A chained line (cd sub && go test ./... 2>&1 | tail) runs unasked when
+	// every command in it is covered, as Claude Code checks one; a cd only
+	// says where the next part runs, and that part is checked. A line that
+	// cannot be split with certainty is asked about whole (commandParts).
+	if spec.GrantArg != "" {
+		if g, ok := compoundGrant(t.udb, spec.Scope, name, argValue); ok {
+			t.noteGrantUsed(name, g)
+			return true
+		}
+	}
 
 	req := toolConfirmRequest{
 		tool:    name,
@@ -404,9 +414,19 @@ func (t *chatTurn) confirmAppToolCall(name string, spec *ToolConfirmation, args 
 		if spec.GrantArg == "" {
 			req.grant = &ToolGrant{Scope: spec.Scope, Tool: name}
 			req.grantLabel = "Always allow " + name
-		} else if prefix := GrantPrefixFor(argValue); prefix != "" {
-			req.grant = &ToolGrant{Scope: spec.Scope, Tool: name, Prefix: prefix}
-			req.grantLabel = "Always allow " + prefix + "..."
+		} else if prefixes := grantPrefixesFor(argValue); len(prefixes) > 0 {
+			// One grant per command the line runs, so "always" on
+			// `go build ./... 2>&1 | head` remembers both, and the next
+			// line built of them runs unasked.
+			req.grant = &ToolGrant{Scope: spec.Scope, Tool: name, Prefix: prefixes[0]}
+			labels := make([]string, len(prefixes))
+			for i, p := range prefixes {
+				labels[i] = p + "..."
+				if i > 0 {
+					req.moreGrants = append(req.moreGrants, ToolGrant{Scope: spec.Scope, Tool: name, Prefix: p, Label: "Always allow " + p + "..."})
+				}
+			}
+			req.grantLabel = "Always allow " + strings.Join(labels, ", ")
 		}
 	}
 	if req.grant != nil {
@@ -475,6 +495,9 @@ type toolConfirmRequest struct {
 	// describe narrowly.
 	grant      *ToolGrant
 	grantLabel string
+	// moreGrants are saved with grant when the person picks it: the other
+	// commands of a chained line.
+	moreGrants []ToolGrant
 	// sessionKey, when set, offers "Allow for this session": a yes that
 	// covers this tool for the rest of the conversation (ask_first.go).
 	sessionKey string
@@ -509,6 +532,9 @@ func (t *chatTurn) escalateToolConfirm(req toolConfirmRequest) bool {
 	}
 	// Persist the standing grant only when the user picked THAT button.
 	if picked == "always" && req.grant != nil {
+		for _, g := range req.moreGrants {
+			saveToolGrant(t.udb, g)
+		}
 		saved := saveToolGrant(t.udb, *req.grant)
 		t.turnDiag("tool-grant", fmt.Sprintf("You allowed %s from now on in this scope. Revoke it under Permissions.", firstNonBlank(saved.Label, req.tool)))
 	}

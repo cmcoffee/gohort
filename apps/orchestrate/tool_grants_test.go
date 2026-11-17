@@ -1,6 +1,8 @@
 package orchestrate
 
 import (
+	"sort"
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -133,5 +135,110 @@ func TestArgFromPreview(t *testing.T) {
 	}
 	if got := argFromPreview(preview, ""); got != "" {
 		t.Errorf("an unnamed argument yielded %q, want empty", got)
+	}
+}
+
+// A chained line runs unasked when every command in it is covered, as Claude
+// Code checks one; a cd needs no grant of its own. One part not covered, a
+// part only the first clause's grant reaches, or a line that cannot be split
+// with certainty, and it is asked about.
+func TestAChainedLineIsAnsweredWhenEveryPartIs(t *testing.T) {
+	udb := grantDB(t)
+	saveToolGrant(udb, ToolGrant{Scope: "p", Tool: "run", Prefix: "go test"})
+	saveToolGrant(udb, ToolGrant{Scope: "p", Tool: "run", Prefix: "tail"})
+
+	g, ok := compoundGrant(udb, "p", "run", "cd sub && go test ./... 2>&1 | tail -20")
+	if !ok || g.Prefix != "go test, tail" {
+		t.Fatalf("a line of granted commands asked: %+v %v", g, ok)
+	}
+	for _, cmd := range []string{
+		"go test ./... ; rm -rf /",
+		"go test ./... | grep FAIL",
+		"go test $(ls) | tail",
+		"cd sub",
+		"cd sub && cd other",
+		"go test ./... | tail > out.txt",
+	} {
+		if g, ok := compoundGrant(udb, "p", "run", cmd); ok {
+			t.Errorf("%q ran on %q", cmd, g.Prefix)
+		}
+	}
+	if _, ok := compoundGrant(udb, "elsewhere", "run", "go test ./... | tail"); ok {
+		t.Error("a chained line crossed scopes")
+	}
+}
+
+// "Always" on a chained line's card remembers each command in it, so the next
+// line built of them runs unasked, as Claude Code's does.
+func TestAlwaysOnAChainedLineRemembersEachPart(t *testing.T) {
+	udb := grantDB(t)
+	turn := &chatTurn{user: "chainer", udb: udb, sse: &sseWriter{live: &syncBuf{}}}
+	spec := &ToolConfirmation{Prompt: "Run a command?", Scope: "p", GrantArg: "command"}
+	done := answerNextCard("chainer", "always")
+	if !turn.confirmAppToolCall("run", spec, "command: cd sub && go build ./... 2>&1 | head -40") {
+		t.Fatal("the card was not allowed")
+	}
+	<-done
+	var prefixes []string
+	for _, g := range listToolGrants(udb, "p") {
+		prefixes = append(prefixes, g.Prefix)
+	}
+	sort.Strings(prefixes)
+	if strings.Join(prefixes, ",") != "go build,head" {
+		t.Fatalf("remembered %q", prefixes)
+	}
+	// The next line of the same commands asks nothing: no card is answered,
+	// and it is allowed.
+	if !turn.confirmAppToolCall("run", spec, "command: go build ./cmd/... | head -5") {
+		t.Error("a line of remembered commands asked again")
+	}
+}
+
+// A chained line splits into the commands it runs, so each can be checked
+// against a grant; anything that cannot be split with certainty is not split
+// at all, and is asked about whole.
+func TestACompoundCommandSplitsIntoWhatItRuns(t *testing.T) {
+	for cmd, want := range map[string][]string{
+		"go build ./...":                               {"go build ./..."},
+		"cd sub && go test ./...":                      {"cd sub", "go test ./..."},
+		"go build ./... 2>&1 | head -50":               {"go build ./...", "head -50"},
+		"go vet ./... ; go test ./... >/dev/null 2>&1": {"go vet ./...", "go test ./..."},
+		"ls 2> /dev/null || echo none":                 {"ls", "echo none"},
+		"grep -rn 'a|b' .":                             {"grep -rn 'a|b' ."},
+		"ls > /dev/null; rm -rf /":                     {"ls", "rm -rf /"},
+	} {
+		got, ok := commandParts(cmd)
+		if !ok || strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+			t.Errorf("%q: %q %v, want %q", cmd, got, ok, want)
+		}
+	}
+	for _, cmd := range []string{
+		"go build $(cat x)", "echo `id`", "echo \"$HOME\"", "go build > out.txt", "cat < secrets",
+		"sleep 5 &", "(cd x; make)", "{ ls; }", "go build;", "&& ls", "a 'unclosed", "ls\nrm -rf x",
+		"ls >/dev/nullx", "echo a\\;b", "ls >> log.txt", "", "rm -rf $HOME", "go test ./... | tail -n $N",
+	} {
+		if got, ok := commandParts(cmd); ok {
+			t.Errorf("%q split as %q; it should be asked about whole", cmd, got)
+		}
+	}
+}
+
+// A card for a chained line offers to remember each part's verb, once each,
+// with a cd needing none; a part no grant can describe offers nothing.
+func TestACompoundCommandOffersEachPartsPrefix(t *testing.T) {
+	if got := grantPrefixesFor("cd sub && go test ./... 2>&1 | tail -20"); strings.Join(got, ",") != "go test,tail" {
+		t.Errorf("prefixes: %q", got)
+	}
+	if got := grantPrefixesFor("go build ./... && go build ./cmd/..."); strings.Join(got, ",") != "go build" {
+		t.Errorf("a verb named twice: %q", got)
+	}
+	if got := grantPrefixesFor("grep -rn 'a|b' . | head"); got != nil {
+		t.Errorf("a part with a quoted separator was offered: %q", got)
+	}
+	if got := grantPrefixesFor("go build $(x)"); got != nil {
+		t.Errorf("a substitution was offered: %q", got)
+	}
+	if !isDirChange("cd sub") || !isDirChange("cd") || isDirChange("cd a b") || isDirChange("cdx") {
+		t.Error("isDirChange")
 	}
 }
