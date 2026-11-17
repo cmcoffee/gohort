@@ -1,9 +1,14 @@
 package core
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/cmcoffee/gohort/core/desktopprofile"
+	"github.com/cmcoffee/gohort/core/desktopsignin"
 )
 
 // TestAPIKeyUserAcceptsBothEnvelopes: gohort's own clients send X-API-Key, but
@@ -132,5 +137,160 @@ func TestLocalToolsForUserDedupsAcrossTheRename(t *testing.T) {
 	}
 	if got := tools[0].Name(); got != "from_client_contacts_lookup" {
 		t.Errorf("exposed name = %q, want from_client_contacts_lookup", got)
+	}
+}
+
+// The desktop app, for someone a desktop profile shapes it for: the
+// dashboard opens the profile's start page or shows only its apps, under its
+// name; the bridge lends only its tools; and /api/desktop/profile says which
+// it is. The same person in a browser keeps the ordinary dashboard.
+func TestADesktopProfileShapesTheDesktopApp(t *testing.T) {
+	acctFixture(t)
+	prevAuth := AuthDB
+	AuthDB = func() Database { return RootDB }
+	t.Cleanup(func() { AuthDB = prevAuth })
+	AuthSetUser(RootDB, "craig", "pw", true)
+	AuthSetUser(RootDB, "dana", "pw", true)
+	desktopprofile.SetStore(RootDB)
+	t.Cleanup(func() { desktopprofile.SetStore(nil) })
+	key, _ := MintDesktopKey("craig")
+	host := dashboardHost{apps: []dashApp{
+		{name: "Notes", desc: "notes", path: "/notes", app: pinApp{}},
+		{name: "My Apps", desc: "apps", path: "/apps", app: pinApp{}},
+	}}
+	page := func(desktop bool) *httptest.ResponseRecorder {
+		r := asUser(t, "/", "craig")
+		if desktop {
+			r.Header.Set("X-Gohort-Desktop-Client-Key", key)
+		}
+		w := httptest.NewRecorder()
+		host.handleRoot(w, r)
+		return w
+	}
+	if err := desktopprofile.Save(desktopprofile.Profile{ID: "desk", Name: "Front Desk", Users: []string{"craig"}, Apps: []string{"/notes"}, Tools: []string{"contacts_search"}}); err != nil {
+		t.Fatal(err)
+	}
+	if b := page(false).Body.String(); !strings.Contains(b, "My Apps") || strings.Contains(b, "Front Desk") {
+		t.Error("a browser got the profile's dashboard")
+	}
+	b := page(true).Body.String()
+	if strings.Contains(b, ">My Apps<") || !strings.Contains(b, "Notes") || !strings.Contains(b, "<title>Front Desk</title>") {
+		t.Errorf("the desktop app's dashboard is not the profile's")
+	}
+
+	persistDesktopKnownTools("craig", []DesktopToolDescriptor{{Name: "filesystem_read"}, {Name: "contacts_search"}})
+	var lent []string
+	for _, tool := range LocalToolsForUser("craig") {
+		lent = append(lent, tool.Name())
+	}
+	if len(lent) != 1 || !strings.Contains(lent[0], "contacts_search") {
+		t.Errorf("the bridge lends %v, want only contacts_search", lent)
+	}
+
+	profileOf := func(user string) string {
+		w := httptest.NewRecorder()
+		handleDesktopProfile(w, asUser(t, "/api/desktop/profile", user))
+		return strings.TrimSpace(w.Body.String())
+	}
+	if got := profileOf("craig"); !strings.Contains(got, `"name":"Front Desk"`) {
+		t.Errorf("craig's profile: %s", got)
+	}
+	if got := profileOf("dana"); got != "{}" {
+		t.Errorf("someone no profile names: %s", got)
+	}
+
+	desktopprofile.Save(desktopprofile.Profile{ID: "desk", Name: "Front Desk", Users: []string{"craig"}, StartPath: "/notes/"})
+	if w := page(true); w.Code != http.StatusFound || w.Header().Get("Location") != "/notes/" {
+		t.Errorf("the desktop app did not open the start page: %d %s", w.Code, w.Header().Get("Location"))
+	}
+	if w := page(false); w.Code != http.StatusOK {
+		t.Errorf("a browser was sent to the start page: %d", w.Code)
+	}
+}
+
+// Signing the desktop app in from the person's browser: the app starts with
+// the hash of its secret; the page, signed out, keeps the code and sends them
+// to sign in, and the dashboard brings them back; signed in, it shows the
+// code to compare and confirms only from this site; the app's claim waits
+// until then and returns a session for them, once.
+func TestTheDesktopAppSignsInFromTheBrowser(t *testing.T) {
+	acctFixture(t)
+	prevAuth := AuthDB
+	AuthDB = func() Database { return RootDB }
+	t.Cleanup(func() { AuthDB = prevAuth })
+	AuthSetUser(RootDB, "dana", "pw", false)
+
+	post := func(h http.HandlerFunc, target, body string, r *http.Request) *httptest.ResponseRecorder {
+		if r == nil {
+			r = httptest.NewRequest(http.MethodPost, target, strings.NewReader(body))
+		}
+		w := httptest.NewRecorder()
+		h(w, r)
+		return w
+	}
+	w := post(handleDesktopSigninStart, "/api/desktop/signin/start", `{"challenge":"`+desktopsignin.Challenge("app-secret")+`"}`, nil)
+	var started struct{ Code, Phrase, URL string }
+	json.Unmarshal(w.Body.Bytes(), &started)
+	if w.Code != http.StatusOK || started.Code == "" || !strings.HasPrefix(started.URL, "/desktop/signin?code=") {
+		t.Fatalf("start: %d %s", w.Code, w.Body.String())
+	}
+	claim := func(verifier string) *httptest.ResponseRecorder {
+		return post(handleDesktopSigninClaim, "/api/desktop/signin/claim", `{"code":"`+started.Code+`","verifier":"`+verifier+`"}`, nil)
+	}
+	if w := claim("app-secret"); w.Code != http.StatusAccepted {
+		t.Errorf("before confirming the claim got %d, want 202", w.Code)
+	}
+
+	// Signed out: off to sign in, the code kept for the way back.
+	w = httptest.NewRecorder()
+	handleDesktopSigninPage(w, httptest.NewRequest(http.MethodGet, started.URL, nil))
+	if w.Code != http.StatusFound || w.Header().Get("Location") != "/login" || !strings.Contains(w.Header().Get("Set-Cookie"), desktopSigninCookie+"="+started.Code) {
+		t.Fatalf("signed out: %d %v", w.Code, w.Header())
+	}
+	r := asUser(t, "/", "dana")
+	r.AddCookie(&http.Cookie{Name: desktopSigninCookie, Value: started.Code})
+	w = httptest.NewRecorder()
+	(&dashboardHost{}).handleRoot(w, r)
+	if w.Code != http.StatusFound || w.Header().Get("Location") != started.URL {
+		t.Errorf("after signing in the dashboard did not send them back: %d %s", w.Code, w.Header().Get("Location"))
+	}
+
+	w = httptest.NewRecorder()
+	handleDesktopSigninPage(w, asUser(t, started.URL, "dana"))
+	if b := w.Body.String(); !strings.Contains(b, started.Phrase) || !strings.Contains(b, "as dana") {
+		t.Errorf("the page does not show the code to compare, for dana")
+	}
+
+	confirm := func(r *http.Request) int {
+		r.Method = http.MethodPost
+		w := httptest.NewRecorder()
+		handleDesktopSigninConfirm(w, r)
+		return w.Code
+	}
+	cross := asUser(t, "/desktop/signin/confirm?code="+started.Code, "dana")
+	cross.Header.Set("Sec-Fetch-Site", "cross-site")
+	if got := confirm(cross); got != http.StatusForbidden {
+		t.Errorf("a page elsewhere confirmed: %d", got)
+	}
+	if got := confirm(httptest.NewRequest(http.MethodPost, "/desktop/signin/confirm?code="+started.Code, nil)); got != http.StatusUnauthorized {
+		t.Errorf("confirmed signed out: %d", got)
+	}
+	if got := confirm(asUser(t, "/desktop/signin/confirm?code="+started.Code, "dana")); got != http.StatusOK {
+		t.Fatalf("dana's confirm: %d", got)
+	}
+
+	w = claim("app-secret")
+	var got struct {
+		Cookie struct{ Name, Value string }
+	}
+	json.Unmarshal(w.Body.Bytes(), &got)
+	if w.Code != http.StatusOK || got.Cookie.Name != auth_cookie_name {
+		t.Fatalf("claim: %d %s", w.Code, w.Body.String())
+	}
+	if user, ok := AuthValidateSession(RootDB, got.Cookie.Value); !ok || user != "dana" {
+		t.Errorf("the session is %q %v, want dana's", user, ok)
+	}
+	if w := claim("app-secret"); w.Code != http.StatusGone {
+		t.Errorf("a second claim got %d, want 410", w.Code)
 	}
 }

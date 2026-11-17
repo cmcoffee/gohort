@@ -200,6 +200,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	a.registerOutboundSiteRoutes(sub)
 	a.registerOutboundRecordRoutes(sub)
 	a.registerWebServerRoutes(sub)
+	a.registerDesktopProfileRoutes(sub)
 	a.registerOfferedChoiceRoutes(sub)
 	a.registerCredentialsRoutes(sub)
 	a.registerMCPRoutes(sub)

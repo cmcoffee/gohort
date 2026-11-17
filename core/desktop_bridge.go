@@ -37,6 +37,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -47,7 +48,12 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/cmcoffee/gohort/core/activity"
+	"github.com/cmcoffee/gohort/core/desktopprofile"
+	"github.com/cmcoffee/gohort/core/desktopsignin"
+	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/notices"
+	"github.com/cmcoffee/gohort/core/ui"
 )
 
 // desktopInvokeDeadline caps how long an LLM tool call can wait
@@ -303,6 +309,183 @@ func userFromAPIKey(r *http.Request) string {
 		}
 	}
 	return ""
+}
+
+// desktopProfileOf is the desktop profile a request from the desktop app
+// takes (core/desktopprofile): ok is false for a browser, or for someone no
+// profile shapes the app for.
+func desktopProfileOf(r *http.Request) (desktopprofile.Profile, bool) {
+	who := DesktopClientUser(r)
+	if who == "" {
+		return desktopprofile.Profile{}, false
+	}
+	return desktopprofile.For(who)
+}
+
+// handleDesktopProfile is GET /api/desktop/profile: the profile the asking
+// person's desktop app takes, {} for the ordinary app. Their own, by their
+// sign-in, so it says nothing about anyone else.
+func handleDesktopProfile(w http.ResponseWriter, r *http.Request) {
+	user := AuthCurrentUser(r)
+	if user == "" {
+		user = DesktopClientUser(r)
+	}
+	if user == "" {
+		http.Error(w, "sign in first", http.StatusUnauthorized)
+		return
+	}
+	out := map[string]any{}
+	if p, ok := desktopprofile.For(user); ok {
+		out = map[string]any{"name": p.Name, "start_path": p.StartPath}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(out)
+}
+
+// --- signing the desktop app in from the browser (core/desktopsignin) ------
+
+// desktopSigninCookie remembers, across a sign-in, the code of the desktop
+// sign-in its person was confirming: sign-in ends on the dashboard, which
+// sends them back to finish (handleRoot).
+const desktopSigninCookie = "gohort_desktop_signin"
+
+// handleDesktopSigninStart is POST /api/desktop/signin/start {challenge}:
+// the app begins a sign-in and gets {code, phrase, url}, url the page to
+// open in the person's browser. No account is needed to start one.
+func handleDesktopSigninStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var in struct {
+		Challenge string `json:"challenge"`
+	}
+	json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&in)
+	code, phrase, err := desktopsignin.Start(in.Challenge)
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]string{"code": code, "phrase": phrase, "url": "/desktop/signin?code=" + code})
+}
+
+// handleDesktopSigninPage is GET /desktop/signin?code=: the page in the
+// person's browser that signs their desktop app in. Signed out, it keeps
+// the code and sends them to sign in however they normally do; the
+// dashboard brings them back.
+func handleDesktopSigninPage(w http.ResponseWriter, r *http.Request) {
+	code := strings.TrimSpace(r.URL.Query().Get("code"))
+	phrase, ok := desktopsignin.Phrase(code)
+	if !ok {
+		desktopSigninMessage(w, r, "This sign-in has ended", "It was finished, cancelled, or waited too long. Start again from the desktop app.")
+		return
+	}
+	user := AuthCurrentUser(r)
+	if user == "" {
+		http.SetCookie(w, &http.Cookie{Name: desktopSigninCookie, Value: code, Path: "/", HttpOnly: true,
+			SameSite: http.SameSiteLaxMode, Secure: requestIsHTTPS(r), MaxAge: int(desktopsignin.TTL.Seconds())})
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	ui.Page{
+		Title:     "Sign in the desktop app",
+		ShowTitle: true,
+		MaxWidth:  "560px",
+		Sections: []ui.Section{{
+			Title:    "Sign in the Gohort desktop app as " + user + "?",
+			Subtitle: "Code: " + phrase + ". Confirm only if you just pressed Sign in on the desktop app on your computer and it shows this same code. If it does not, close this page: someone may be trying to sign their app in as you.",
+			Body: ui.FormPanel{
+				PostURL:     "/desktop/signin/confirm?code=" + url.QueryEscape(code),
+				Method:      "POST",
+				SubmitLabel: "Sign in the app",
+			},
+		}},
+	}.ServeHTTP(w, r)
+}
+
+// handleDesktopSigninConfirm is POST /desktop/signin/confirm?code=: the
+// person confirms, in their own signed-in browser, and the app waiting on
+// the code is signed in as them when it next asks.
+func handleDesktopSigninConfirm(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	refuse := func(status int, msg string) {
+		w.WriteHeader(status)
+		json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	}
+	if r.Method != http.MethodPost {
+		refuse(http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	// From this site's own page only: a page elsewhere cannot confirm for
+	// the person (their session cookie is not sent cross-site either).
+	if netgate.CrossSite(r) {
+		refuse(http.StatusForbidden, "confirm from this site's own page")
+		return
+	}
+	user := AuthCurrentUser(r)
+	if user == "" {
+		refuse(http.StatusUnauthorized, "sign in first")
+		return
+	}
+	if !desktopGranted(user) {
+		refuse(http.StatusForbidden, "your account may not use the desktop app: ask an administrator (Feature Access)")
+		return
+	}
+	code := strings.TrimSpace(r.URL.Query().Get("code"))
+	if !desktopsignin.Confirm(code, user) {
+		refuse(http.StatusGone, "this sign-in has ended: start again from the desktop app")
+		return
+	}
+	Log("[auth] %q confirmed signing in the desktop app from %s", user, ClientIP(r))
+	RecordActivity(r, activity.SignIn, user, "confirmed a desktop app sign-in in the browser")
+	json.NewEncoder(w).Encode(map[string]string{"message": "Done. Go back to the desktop app: it signs in by itself. You can close this page."})
+}
+
+// handleDesktopSigninClaim is POST /api/desktop/signin/claim {code,
+// verifier}: the app asking for its sign-in. 202 while it waits to be
+// confirmed; 200 with the session cookie, once; 410 when it is over (or the
+// secret is wrong, which ends it).
+func handleDesktopSigninClaim(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var in struct {
+		Code     string `json:"code"`
+		Verifier string `json:"verifier"`
+	}
+	json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&in)
+	user, status := desktopsignin.Claim(strings.TrimSpace(in.Code), in.Verifier)
+	switch status {
+	case desktopsignin.Waiting:
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(map[string]bool{"waiting": true})
+		return
+	case desktopsignin.Gone:
+		w.WriteHeader(http.StatusGone)
+		json.NewEncoder(w).Encode(map[string]string{"error": "this sign-in has ended: start again"})
+		return
+	}
+	if AuthDB == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	token := AuthCreateSession(AuthDB(), user)
+	Log("[auth] user %q signed in the desktop app through the browser from %s", user, ClientIP(r))
+	RecordActivity(r, activity.SignIn, user, "signed in the desktop app through the browser")
+	json.NewEncoder(w).Encode(map[string]any{"cookie": map[string]any{
+		"name": auth_cookie_name, "value": token, "path": "/", "max_age": sessionMaxAge()}})
+}
+
+// desktopSigninMessage is a one-line page for a sign-in that cannot go on.
+func desktopSigninMessage(w http.ResponseWriter, r *http.Request, title, msg string) {
+	ui.Page{Title: title, ShowTitle: true, MaxWidth: "560px",
+		Sections: []ui.Section{{Title: title, Subtitle: msg}}}.ServeHTTP(w, r)
 }
 
 // DesktopClientUser resolves the X-Gohort-Desktop-Client-Key header to a
@@ -811,7 +994,13 @@ func LocalToolsForUser(user string) []ChatTool {
 	// Walk live tools newest-client-first so the latest connection's
 	// schema wins for any name collision.
 	seen := map[string]DesktopToolDescriptor{}
+	// A desktop profile may lend only some of the computer's tools
+	// (core/desktopprofile); named as the bridge announces them.
+	profile, profiled := desktopprofile.For(user)
 	keep := func(t DesktopToolDescriptor) {
+		if profiled && !profile.LendsTool(t.Name) {
+			return
+		}
 		exposed := ClientToolName(t.Name)
 		if exposed == "" {
 			return // nothing survived sanitizing; unaddressable, so don't offer it

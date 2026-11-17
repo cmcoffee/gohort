@@ -54,6 +54,9 @@ type gohort_proxy struct {
 	// dashboard, click "Home", etc. Resets on URL change (so a
 	// fresh server gets a fresh landing) and on launch.
 	landing_done bool
+	// signin is the sign-in through the person's browser this window is
+	// waiting on (signin.go).
+	signin browser_signin
 }
 
 // new_gohort_proxy constructs the handler. configure_html is the raw
@@ -239,6 +242,17 @@ func (gp *gohort_proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		gp.handle_copyimg_post(w, r)
 		return
 	}
+	// Signing in through the person's browser (signin.go): the server's
+	// "sign in with Microsoft" cannot finish inside this window, so it
+	// starts that here instead.
+	if r.URL.Path == SIGNIN_PATH || (r.URL.Path == sso_start_path && r.Method == http.MethodGet) {
+		gp.handle_signin(w, r)
+		return
+	}
+	if r.URL.Path == SIGNIN_POLL_PATH {
+		gp.handle_signin_poll(w, r)
+		return
+	}
 	// A page's alert() or confirm(), shown natively (see DIALOG_PATH).
 	if r.URL.Path == DIALOG_PATH {
 		gp.handle_dialog_post(w, r)
@@ -390,6 +404,11 @@ func (gp *gohort_proxy) proxy_for(server_url string) *httputil.ReverseProxy {
 		}
 		if err := rewrite_redirect_as_js(resp); err != nil {
 			return err
+		}
+		// A page served: the window's title follows the desktop profile
+		// the server shapes this app by (asked at most once a minute).
+		if gp.app != nil && strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
+			go gp.app.refreshProfileTitle()
 		}
 		return inject_popup_shim(resp)
 	}

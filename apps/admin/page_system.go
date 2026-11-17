@@ -372,6 +372,8 @@ func (a *AdminApp) systemSections() []ui.Section {
 				},
 			},
 		},
+		// The desktop app shaped for a set of people.
+		desktopProfilesSection(),
 		{
 			Title:    "Default Apps",
 			Subtitle: "Apps every newly-approved user gets access to by default. Per-user overrides above take precedence.",

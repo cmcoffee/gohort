@@ -46,6 +46,7 @@ import (
 	"path/filepath"
 	goruntime "runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cmcoffee/gohort/gohort-desktop/core"
@@ -60,6 +61,10 @@ type App struct {
 	config    *core.Config
 	cookies   *core.PersistentCookieJar
 	approvals *approvalStore
+
+	titleMu    sync.Mutex
+	titleAsked time.Time
+	titleShown string
 }
 
 // NewApp constructs the App with the loaded config + cookie jar.
@@ -89,6 +94,79 @@ func (a *App) startup(ctx context.Context) {
 	}
 	// Auto-negotiate the daemon's bridge key from the viewer's session.
 	a.startBridgeKeyProvisioning()
+}
+
+// defaultTitle is the window's title when no desktop profile names the app.
+const defaultTitle = "Gohort"
+
+// refreshProfileTitle sets the window's title to the name of the desktop
+// profile the server shapes this app by for the signed-in person (gohort
+// Admin, People, Desktop app profiles), or back to Gohort when there is
+// none. Asked as pages are served, at most once a minute, so a profile
+// change reaches the title within a minute of the next page.
+func (a *App) refreshProfileTitle() {
+	if a.ctx == nil {
+		return
+	}
+	a.titleMu.Lock()
+	if time.Since(a.titleAsked) < time.Minute {
+		a.titleMu.Unlock()
+		return
+	}
+	a.titleAsked = time.Now()
+	a.titleMu.Unlock()
+	name, ok := a.profileName()
+	if !ok {
+		return // not signed in, or the server is unreachable: leave it be
+	}
+	if name == "" {
+		name = defaultTitle
+	}
+	a.titleMu.Lock()
+	changed := name != a.titleShown
+	a.titleShown = name
+	a.titleMu.Unlock()
+	if changed {
+		wails_runtime.WindowSetTitle(a.ctx, name)
+	}
+}
+
+// profileName is the desktop profile's name for the signed-in person, ""
+// when none applies; ok is false when the server could not say.
+func (a *App) profileName() (string, bool) {
+	base := strings.TrimRight(a.config.ServerURL(), "/")
+	if base == "" {
+		return "", false
+	}
+	req, err := http.NewRequest(http.MethodGet, base+"/api/desktop/profile", nil)
+	if err != nil {
+		return "", false
+	}
+	if a.cookies != nil {
+		if u, e := url.Parse(base); e == nil {
+			for _, c := range a.cookies.Cookies(u) {
+				req.AddCookie(c)
+			}
+		}
+	}
+	if k := core.BridgeAPIKey(); k != "" {
+		req.Header.Set("X-Gohort-Desktop-Client-Key", k)
+	}
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return "", false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", false
+	}
+	var out struct {
+		Name string `json:"name"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&out) != nil {
+		return "", false
+	}
+	return strings.TrimSpace(out.Name), true
 }
 
 // provisionBridgeKey mints (or fetches) this user's bridge key from the

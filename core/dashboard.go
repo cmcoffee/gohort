@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	httppprof "net/http/pprof"
+	"net/url"
 	"slices"
 	"sort"
 	"strings"
@@ -241,6 +242,21 @@ func ServeDashboard(addr string) error {
 	// a credential. (Core-owned; phantom no longer owns the bridge key.)
 	mux.HandleFunc("/api/desktop/key", HandleDesktopKey)
 
+	// The desktop profile the client's person gets (core/desktopprofile),
+	// for what only the client can do with it: its window's title.
+	mux.HandleFunc("/api/desktop/profile", handleDesktopProfile)
+
+	// Signing the desktop app in from the person's browser
+	// (core/desktopsignin): the app starts and claims with no session (it
+	// has none yet), and the page and its confirm check the browser's own.
+	for _, p := range []string{"/api/desktop/signin/start", "/api/desktop/signin/claim", "/desktop/signin", "/desktop/signin/confirm"} {
+		RegisterPublicPath(p)
+	}
+	mux.HandleFunc("/api/desktop/signin/start", handleDesktopSigninStart)
+	mux.HandleFunc("/api/desktop/signin/claim", handleDesktopSigninClaim)
+	mux.HandleFunc("/desktop/signin", handleDesktopSigninPage)
+	mux.HandleFunc("/desktop/signin/confirm", handleDesktopSigninConfirm)
+
 	// Resource sharing: the surface a PEER gohort instance calls to use this
 	// one's infrastructure. Public paths because they carry their own
 	// credential (X-Gohort-Peer-Key / Bearer) and must NOT fall through to
@@ -459,8 +475,15 @@ func (d dashboardHost) handleRoot(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	defaults, pinnable := d.cards(r)
 	user := AuthCurrentUser(r)
+	// Signed in partway through signing the desktop app in from this
+	// browser: back to finish it (handleDesktopSigninPage).
+	if c, err := r.Cookie(desktopSigninCookie); err == nil && user != "" && c.Value != "" {
+		http.SetCookie(w, &http.Cookie{Name: desktopSigninCookie, Path: "/", MaxAge: -1})
+		http.Redirect(w, r, "/desktop/signin?code="+url.QueryEscape(c.Value), http.StatusFound)
+		return
+	}
+	defaults, pinnable := d.cards(r)
 	prefs := loadDashPrefs(user)
 	bands := d.bandsFor(r, user, &prefs)
 	visible := applyDashPrefs(defaults, pinnable, prefs)
@@ -476,6 +499,23 @@ func (d dashboardHost) handleRoot(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	visible = shown
+	// The desktop app, for someone a desktop profile shapes it for: its start
+	// page in place of this one, else only the profile's apps
+	// (core/desktopprofile). Only for the desktop app's own requests, so the
+	// same person in a browser keeps the whole dashboard.
+	if p, ok := desktopProfileOf(r); ok {
+		if p.StartPath != "" && p.StartPath != "/" {
+			http.Redirect(w, r, p.StartPath, http.StatusFound)
+			return
+		}
+		kept := visible[:0]
+		for _, a := range visible {
+			if p.ShowsApp(a.path) {
+				kept = append(kept, a)
+			}
+		}
+		visible = kept
+	}
 	// Notices from any app with something the viewer must act on. Walked over
 	// the ORIGINAL list, like card sources, so a hidden app can still speak —
 	// but never a switched-off one, whose links would land on the 503 the
