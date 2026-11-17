@@ -330,7 +330,7 @@ const appFolderGuideLayout = `A gohort app is a folder: install reads it, and no
   lib/<name>.py     code several scripts share, imported as "from <name> import ..." (no listing needed)
   assets/<file>     images, fonts, sounds, served to the page at assets/<file>
   NOTES.md          what the app is, the choices made and why, what was left out
-  checks.json       what the app is supposed to do, as tests that run on every install
+  checks.json       a JSON list of checks, [{"name": ..., ...}, ...]: what the app is supposed to do, as tests that run on every install
 
 Every script runs in a sandbox with no network of its own: it reaches the web through the gohort module (fetch_url), never requests or urllib.request. In the folder a script entry names its file; the help below says "script" for the same thing.`
 
@@ -533,9 +533,9 @@ func (t *chatTurn) appFolderRead(abs, rel string) (map[string]any, appFolderMani
 	// checks.json is the app's checks; absent keeps the app's own, and a
 	// file that does not parse is refused rather than read as none.
 	if b, err := os.ReadFile(filepath.Join(abs, "checks.json")); err == nil {
-		var list []any
-		if err := json.Unmarshal(b, &list); err != nil {
-			return nil, appFolderManifest{}, fmt.Errorf("%s/checks.json does not parse: %v", rel, err)
+		list, err := appFolderChecks(b)
+		if err != nil {
+			return nil, appFolderManifest{}, fmt.Errorf("%s/checks.json %v", rel, err)
 		}
 		args["checks"] = list
 	}
@@ -543,6 +543,26 @@ func (t *chatTurn) appFolderRead(abs, rel string) (map[string]any, appFolderMani
 		args["notes"] = strings.TrimSpace(string(notes))
 	}
 	return args, m, nil
+}
+
+// appFolderChecks reads checks.json: a list of checks, or an object holding
+// one under "checks" ({"checks": [...]}), which an assistant porting an app
+// wrote and the install refused although it meant only the one thing.
+func appFolderChecks(b []byte) ([]any, error) {
+	var list []any
+	if err := json.Unmarshal(b, &list); err == nil {
+		return list, nil
+	}
+	var wrapped struct {
+		Checks []any `json:"checks"`
+	}
+	if err := json.Unmarshal(b, &wrapped); err == nil && wrapped.Checks != nil {
+		return wrapped.Checks, nil
+	}
+	if err := json.Unmarshal(b, new(any)); err != nil {
+		return nil, fmt.Errorf("is not valid JSON: %v", err)
+	}
+	return nil, fmt.Errorf(`must be a list of checks, [{"name": ..., ...}, ...]`)
 }
 
 // appDefPublish loads a folder into the live app: created if new, updated if

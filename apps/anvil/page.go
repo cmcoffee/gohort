@@ -330,10 +330,16 @@ func (T *Anvil) toolbarActions(p Project, user string, isAdmin bool) []ui.Toolba
 			ui.ToolbarAction{Label: "Install", Method: "client", URL: "anvil_app_install",
 				Title: "Put your changes live, through the app's checks"})
 	}
-	// A project holding an app's folder that is not an app yet.
-	if newAppRefusal(p, user) == "" {
-		out = append(out, ui.ToolbarAction{Label: "Install as a new app", Method: "client", URL: "anvil_app_install_new",
-			Title: "Make this project's app.json and files one of your apps, through the checks an install runs; the project is the app's from then on"})
+	// A checkout of the caller's that is not an app yet: out front when it
+	// holds an app's folder, in the Project menu while it does not. Always
+	// there, because the bar is drawn once and a turn can make the folder.
+	if newAppOffRefusal(p, user) == "" {
+		a := ui.ToolbarAction{Label: "Install as a new app", Method: "client", URL: "anvil_app_install_new",
+			Title: "Make this project's app.json and files one of your apps, through the checks an install runs; the project is the app's from then on"}
+		if newAppRefusal(p, user) != "" {
+			a.Group = "Project"
+		}
+		out = append(out, a)
 	}
 	// Gated on PERMISSION, not on whether commands exist. An allowed user with
 	// none configured gets the button and a modal saying so, which is where

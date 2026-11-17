@@ -202,12 +202,7 @@ func installAppCheckout(ctx context.Context, user string, p Project, base string
 		return "", err
 	}
 	if _, err := o.InstallAppFolder(ctx, user, base, "Installed from Anvil"); err != nil {
-		// The reason, without the folder's name: here it is the project's
-		// id, which says nothing to the person reading it.
-		if inner := errors.Unwrap(err); inner != nil {
-			err = inner
-		}
-		return "", err
+		return "", folderError(base, err)
 	}
 	if err := commitCheckout(base, user, "Installed"); err != nil {
 		Log("[anvil] %s installed, but the commit failed: %v", p.AppSlug, err)
@@ -235,6 +230,24 @@ func holdsAppFolder(base string) bool {
 // newAppRefusal is why user may not install p as a new app, or "" when they
 // may.
 func newAppRefusal(p Project, user string) string {
+	if why := newAppOffRefusal(p, user); why != "" {
+		return why
+	}
+	base, err := p.baseDir()
+	if err != nil {
+		return err.Error()
+	}
+	if !holdsAppFolder(base) {
+		return "the project has no app.json at its top" + appJSONElsewhere(base) + ": an app's folder holds app.json, with its page and scripts beside it. Ask the assistant to start the app here (start_app), or move the app's files to the top"
+	}
+	return ""
+}
+
+// newAppOffRefusal is why the project can never be installed as a new app
+// by user, whatever its files: what decides whether the button is offered.
+// The bar is drawn once, so a project the assistant turns into an app
+// during a turn must already carry it.
+func newAppOffRefusal(p Project, user string) string {
 	switch {
 	case p.Kind != KindClone:
 		return "only a checkout Anvil made can become an app"
@@ -245,14 +258,18 @@ func newAppRefusal(p Project, user string) string {
 	case !strings.EqualFold(p.Owner, user):
 		return "only the project's owner can make it an app"
 	}
-	base, err := p.baseDir()
-	if err != nil {
-		return err.Error()
-	}
-	if !holdsAppFolder(base) {
-		return "the project has no app.json at its top: an app's folder holds app.json, with its page and scripts beside it"
-	}
 	return ""
+}
+
+// appJSONElsewhere names an app.json one folder down, for a refusal: the
+// assistant may have built the app in a folder of its own.
+func appJSONElsewhere(base string) string {
+	found, _ := filepath.Glob(filepath.Join(base, "*", "app.json"))
+	if len(found) == 0 {
+		return ""
+	}
+	rel, _ := filepath.Rel(base, found[0])
+	return " (there is one at " + filepath.ToSlash(rel) + ", inside a folder)"
 }
 
 // handleAppInstallNew installs the project's folder as a new app of the
@@ -278,7 +295,7 @@ func (T *Anvil) handleAppInstallNew(c *jsonapi.Call, _ struct{}) (any, error) {
 	ctx := c.R.Context()
 	slug, name, err := o.AppFolderSlug(ctx, c.User, base)
 	if err != nil {
-		return nil, jsonapi.Status(409, err.Error())
+		return nil, jsonapi.Status(409, folderError(base, err).Error())
 	}
 	if have, ok := LoadAppSpec(c.User, slug); ok {
 		return nil, jsonapi.Status(409, fmt.Sprintf("you already have an app %q at /apps/%s/: to change it, open it with New project, One of your apps; for a new app, give this one another name (or slug) in app.json", have.Name, slug))
@@ -289,10 +306,7 @@ func (T *Anvil) handleAppInstallNew(c *jsonapi.Call, _ struct{}) (any, error) {
 		Log("[anvil] %s: the live marker could not be kept out of git: %v", p.ID, err)
 	}
 	if _, err := o.InstallAppFolder(ctx, c.User, base, "Installed from Anvil as a new app"); err != nil {
-		if inner := errors.Unwrap(err); inner != nil {
-			err = inner
-		}
-		return nil, jsonapi.Status(409, err.Error())
+		return nil, jsonapi.Status(409, folderError(base, err).Error())
 	}
 	p.Source, p.AppSlug = sourceApp, slug
 	T.saveProject(c.UDB, p)
@@ -314,7 +328,7 @@ func (c *toolCtx) startAppTool() AgentToolDef {
 		Tool: Tool{
 			Name: "start_app",
 			Description: "Start a gohort app in this project: writes app.json, page.html and NOTES.md at the project's top, the starter of a new app, and returns how an app's folder is built (its files, its scripts, what its page may call, its checks). " +
-				"Use it to port this project's code into a gohort app, then build the app in those files. The owner makes it one of their apps with Install as a new app on the project's bar. Refused when the project already has an app.json at its top.",
+				"Use it to port this project's code into a gohort app, then build the app in those files. The owner makes it one of their apps with Install as a new app (on the project's bar, or in its Project menu). Refused when the project already has an app.json at its top.",
 			Parameters: map[string]ToolParam{
 				"name":        {Type: "string", Description: "The app's name, as people will see it."},
 				"slug":        {Type: "string", Description: "Optional: its address, /apps/<slug>/; made from the name when left out."},
@@ -362,7 +376,7 @@ func (c *toolCtx) startAppTool() AgentToolDef {
 				c.publish(journalWrite(c.udb, c.project.ID, c.session(), f, "", false, string(files[f]), false))
 			}
 			return fmt.Sprintf("Started app %q (/apps/%s/ once installed): %s. Build it in those files, and add data/, actions/, lib/ and checks.json as it needs. "+
-				"When it is ready, the owner presses Install as a new app on the project's bar, which runs its checks; there is no install command.\n\n%s",
+				"When it is ready, the owner presses Install as a new app (on the project's bar, or in its Project menu), which runs its checks; there is no install command. Tell them so when you finish.\n\n%s",
 				name, slug, strings.Join(names, ", "), orchestrate.AppFolderGuide()), nil
 		},
 	}
@@ -381,6 +395,24 @@ func (c *toolCtx) appGuideTool() AgentToolDef {
 			return orchestrate.AppFolderGuide(), nil
 		},
 	}
+}
+
+// folderError is an install's or a build's reason, as the person reads it:
+// without the wrapping that names the folder, and with the folder's own name
+// (the project's id, which says nothing to them) taken off each file it
+// names, so "<id>/checks.json does not parse" reads "checks.json does not
+// parse".
+func folderError(base string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if inner := errors.Unwrap(err); inner != nil {
+		err = inner
+	}
+	id := filepath.Base(base)
+	msg := strings.ReplaceAll(err.Error(), id+"/", "")
+	msg = strings.ReplaceAll(msg, id, "the project")
+	return errors.New(msg)
 }
 
 // appLiveMarker is the file an install leaves in an app's folder, saying
@@ -428,7 +460,7 @@ func previewAppCheckout(ctx context.Context, user string, p Project, base string
 	}
 	spec, err := o.BuildAppFolder(ctx, user, base)
 	if err != nil {
-		return "", err
+		return "", folderError(base, err)
 	}
 	return customapps.StartAppPreview(user, spec, p.PreviewReal)
 }
@@ -497,7 +529,7 @@ func (c *toolCtx) appChecksTool() AgentToolDef {
 			}
 			report, err := o.CheckAppFolder(ctx, c.user, c.base)
 			if err != nil {
-				return "", fmt.Errorf("the checks could not run: %w", err)
+				return "", fmt.Errorf("the checks could not run: %w", folderError(c.base, err))
 			}
 			return report + "\nPage checks drive the page as served, so they run when the owner installs it.", nil
 		},

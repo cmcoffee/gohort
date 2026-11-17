@@ -546,3 +546,22 @@ func TestAppDefWorksInTheWorkspaceTheSessionSwitchedTo(t *testing.T) {
 		t.Errorf("the publish did not carry the page written in the workspace: %s", spec.Sections)
 	}
 }
+
+// checks.json is a list of checks; an object holding the list under
+// "checks" is read as that list (an assistant porting an app wrote one, and
+// the install refused it with "cannot unmarshal object"), and anything else
+// says what the file must be.
+func TestChecksJSONIsReadAsAListOrAWrappedList(t *testing.T) {
+	for _, in := range []string{`[{"name":"a"}]`, `{"checks":[{"name":"a"}]}`} {
+		list, err := appFolderChecks([]byte(in))
+		if err != nil || len(list) != 1 {
+			t.Errorf("%s: %v %v", in, list, err)
+		}
+	}
+	if _, err := appFolderChecks([]byte(`{"name":"a"}`)); err == nil || !strings.Contains(err.Error(), "must be a list of checks") {
+		t.Errorf("one check as an object: %v", err)
+	}
+	if _, err := appFolderChecks([]byte(`[{`)); err == nil || !strings.Contains(err.Error(), "not valid JSON") {
+		t.Errorf("broken JSON: %v", err)
+	}
+}

@@ -3,6 +3,7 @@ package anvil
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -359,13 +360,17 @@ func TestAProjectHoldingAnAppInstallsAsANewApp(t *testing.T) {
 		T.saveProject(udb, p)
 		return p, base
 	}
-	offered := func(p Project, user string) bool {
+	group := func(p Project, user string) (string, bool) {
 		for _, a := range T.toolbarActions(p, user, false) {
 			if a.URL == "anvil_app_install_new" {
-				return true
+				return a.Group, true
 			}
 		}
-		return false
+		return "", false
+	}
+	offered := func(p Project, user string) bool {
+		g, ok := group(p, user)
+		return ok && g == ""
 	}
 
 	p, base := started("Notes Pad", "pad")
@@ -424,11 +429,25 @@ func TestAProjectHoldingAnAppInstallsAsANewApp(t *testing.T) {
 		t.Errorf("a refused project changed kind: %q", still.Source)
 	}
 
+	// With no app.json yet it is in the Project menu, since the bar is drawn
+	// once and a turn may make one; pressed, it says what is missing, and
+	// names an app.json the assistant left in a folder.
 	empty := Project{ID: UUIDv4(), Name: "plain", Kind: KindClone, Owner: "alice", Source: sourceNew}
 	eb, _ := empty.baseDir()
-	os.MkdirAll(eb, 0o700)
-	if offered(empty, "alice") {
-		t.Error("offered on a project with no app.json")
+	os.MkdirAll(filepath.Join(eb, "plain.app"), 0o700)
+	T.saveProject(udb, empty)
+	if g, ok := group(empty, "alice"); !ok || g != "Project" {
+		t.Errorf("a project with no app.json: offered %v, in %q", ok, g)
+	}
+	if w := serve("alice", "POST", "/api/project/"+empty.ID+"/install_new", "{}"); w.Code != 400 || !strings.Contains(w.Body.String(), "start_app") {
+		t.Errorf("no app.json: %d %s", w.Code, w.Body.String())
+	}
+	os.WriteFile(filepath.Join(eb, "plain.app", "app.json"), []byte(`{"name":"Plain"}`), 0o644)
+	if w := serve("alice", "POST", "/api/project/"+empty.ID+"/install_new", "{}"); !strings.Contains(w.Body.String(), "plain.app/app.json") {
+		t.Errorf("an app.json in a folder is not named: %d %s", w.Code, w.Body.String())
+	}
+	if _, ok := group(empty, "bob"); ok {
+		t.Error("offered to someone who does not own the project")
 	}
 }
 
@@ -499,5 +518,15 @@ func TestABundleProjectIsPortedIntoANewApp(t *testing.T) {
 	}
 	if live, ok := LoadAppSpec("alice", "har-analyzer"); !ok || live.Name != "HAR Analyzer" {
 		t.Errorf("the ported app is not one of alice's: %v %+v", ok, live)
+	}
+}
+
+// An install's reason names the project's files, not the folder they are
+// in: that is the project's id, which says nothing to the person.
+func TestAFolderErrorDropsTheProjectsID(t *testing.T) {
+	base := "/data/ws/alice/.anvil/64ff8c43-a32a-4eaa-b306-70d96e64393a"
+	err := folderError(base, fmt.Errorf("64ff8c43-a32a-4eaa-b306-70d96e64393a/checks.json must be a list of checks"))
+	if err.Error() != "checks.json must be a list of checks" {
+		t.Errorf("%q", err)
 	}
 }
