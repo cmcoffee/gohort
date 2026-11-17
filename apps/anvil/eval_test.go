@@ -27,12 +27,17 @@ func evalWorkspace(t *testing.T) {
 	})
 }
 
+//
+// Asked in the sandbox the tasks run in, not of the host: a CI runner had
+// /usr/bin/go, the sandbox could not run it, and the task's check failed
+// with "go: not found" instead of the test skipping.
 func needToolchains(t *testing.T, langs ...string) {
 	t.Helper()
-	bins := map[string]string{"Go": "go", "Python": "python3", "JavaScript": "node"}
+	probes := map[string]string{"Go": "go version", "Python": "python3 --version", "JavaScript": "node --version"}
 	for _, l := range langs {
-		if _, err := os.Stat("/usr/bin/" + bins[l]); err != nil {
-			t.Skipf("%s is not installed", bins[l])
+		c := &toolCtx{project: Project{ID: "eval-toolchain"}, base: t.TempDir()}
+		if res := c.sandboxed(context.Background(), probes[l], 30*time.Second); res.Err != nil || res.TimedOut {
+			t.Skipf("%s does not run in the sandbox here: %s", l, strings.TrimSpace(res.Output))
 		}
 	}
 }
