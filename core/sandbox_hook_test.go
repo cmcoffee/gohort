@@ -607,3 +607,52 @@ func TestTheSandboxBinDirHasTheChosenPython(t *testing.T) {
 		}
 	}
 }
+
+// A value too large for an environment variable goes to a run as a file,
+// named by <name>_file, with <name> empty (Linux refuses one over 128 KiB).
+// Every app script read its records with os.environ.get('records', '[]'),
+// and an app holding more than about 100 KB of them read none. Inside
+// Python, sitecustomize makes such a name read as the file; a child process
+// still gets the environment as it was, and the gohort module's records()
+// and param() read either form.
+func TestALargeValueSentAsAFileReadsAsTheVariableInPython(t *testing.T) {
+	py, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("no python3")
+	}
+	lib := t.TempDir()
+	os.MkdirAll(filepath.Join(lib, "gohort"), 0o755)
+	os.WriteFile(filepath.Join(lib, "sitecustomize.py"), []byte(SandboxSiteCustomize), 0o644)
+	os.WriteFile(filepath.Join(lib, "gohort", "__init__.py"), []byte(SandboxHookPythonShim), 0o644)
+	ws := t.TempDir()
+	spill := filepath.Join(ws, ".tool_args", "records-1.txt")
+	os.MkdirAll(filepath.Dir(spill), 0o755)
+	big := "[" + strings.TrimSuffix(strings.Repeat(`{"n": "`+strings.Repeat("x", 100)+`"},`, 2000), ",") + "]"
+	os.WriteFile(spill, []byte(big), 0o644)
+
+	script := `import json, os, subprocess
+from gohort import records, param
+print(len(json.loads(os.environ.get('records', '[]'))))
+print(len(records()))
+print('records' in os.environ)
+print(subprocess.run(['sh', '-c', 'printf %s "$records" | wc -c'], stdout=subprocess.PIPE, universal_newlines=True).stdout.strip())
+print(param('missing', 'dflt'))
+`
+	cmd := exec.Command(py, "-c", script)
+	cmd.Env = append(os.Environ(), "PYTHONPATH="+lib, "records=", "records_file="+spill)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("python: %v\n%s", err, out)
+	}
+	if got := strings.Fields(string(out)); strings.Join(got, " ") != "2000 2000 True 0 dflt" {
+		t.Errorf("got %q, want the 2000 records read both ways, none in the child's environment", out)
+	}
+
+	// A small value is read from the variable as before, and a _file that is
+	// not a spilled value is left alone.
+	cmd = exec.Command(py, "-c", `import os; from gohort import records; print(len(records()), os.environ.get('report', 'none'))`)
+	cmd.Env = append(os.Environ(), "PYTHONPATH="+lib, `records=[{"a": 1}]`, "report_file=/etc/hostname")
+	if out, err := cmd.CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "1 none" {
+		t.Errorf("a small value: %q %v", out, err)
+	}
+}

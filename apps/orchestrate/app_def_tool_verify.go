@@ -763,7 +763,7 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 				fmt.Fprintf(&b, "     %s\n", hint)
 			}
 			if strings.Contains(trimmed, `json.loads("records")`) || strings.Contains(trimmed, "json.loads('records')") {
-				b.WriteString("     Hint: read records with json.loads(os.environ.get('records', '[]')), json.loads(\"records\") parses the literal word, not the data.\n")
+				b.WriteString("     Hint: read records with from gohort import records, then recs = records(); json.loads(\"records\") parses the literal word, not the data.\n")
 			} else if strings.Contains(trimmed, "KeyError") || strings.Contains(trimmed, "os.environ[") {
 				b.WriteString("     Hint: a data source runs on page load with NO query params set, read every env var with a default, e.g. os.environ.get('city', ''), never os.environ['city'].\n")
 			}

@@ -2319,10 +2319,103 @@ func EnsureGohortLibDir() string {
 		}
 		Debug("[hook/helpers] deployed gohort package (%dB) at %s (host): mounted RO at %s (sandbox)", len(SandboxHookPythonShim), path, SandboxGohortLibMountPath)
 	}
+	ensureGohortSiteCustomize(libBase)
 	ensureGohortShims(libBase)
 	gohortLibDirPath = libBase
 	return libBase
 }
+
+// ensureGohortSiteCustomize writes sitecustomize.py beside the gohort
+// package, where every sandboxed Python run imports it at start (the lib dir
+// is on PYTHONPATH). Best-effort, like the shims.
+func ensureGohortSiteCustomize(libBase string) {
+	p := filepath.Join(libBase, "sitecustomize.py")
+	if existing, err := os.ReadFile(p); err == nil && string(existing) == SandboxSiteCustomize {
+		return
+	}
+	if err := os.WriteFile(p, []byte(SandboxSiteCustomize), 0644); err != nil {
+		Debug("[hook/helpers] failed to write %s: %v", p, err)
+	}
+}
+
+// SandboxSiteCustomize makes a value that was too large for an environment
+// variable read as one inside Python. Linux refuses one over 128 KiB, so a
+// larger param (an app's records, a saved response) goes to the run as a file
+// under .tool_args/ named by <name>_file, with <name> left empty
+// (tools/temptool/large_args.go). Every app script was told to read its
+// records with os.environ.get('records', '[]'), and so read none once an app
+// held more than about 100 KB of them, with nothing saying why.
+//
+// Inside the process os.environ answers with the file's text for such a
+// name. Nothing is put into the real environment: a child process the script
+// starts inherits it as it was, and does not fail with "Argument list too
+// long". The system's own sitecustomize, which this one shadows, runs after.
+const SandboxSiteCustomize = `# sitecustomize.py: deployed by gohort beside the gohort package.
+import os as _os
+
+
+def _gohort_spilled():
+    out = {}
+    for k, v in list(_os.environ.items()):
+        if k.endswith("_file") and "/.tool_args/" in v.replace("\\", "/"):
+            name = k[:-5]
+            if name and _os.environ.get(name, "") == "":
+                out[name] = v
+    return out
+
+
+_gohort_files = _gohort_spilled()
+if _gohort_files:
+    _gohort_base = type(_os.environ)
+    _gohort_read = {}
+
+    class _GohortEnviron(_gohort_base):
+        def __getitem__(self, key):
+            path = _gohort_files.get(key)
+            if path is not None:
+                try:
+                    have = _gohort_base.__getitem__(self, key)
+                except KeyError:
+                    have = ""
+                if have == "":
+                    if key not in _gohort_read:
+                        try:
+                            with open(path, encoding="utf-8") as f:
+                                _gohort_read[key] = f.read()
+                        except OSError:
+                            _gohort_read[key] = ""
+                    return _gohort_read[key]
+            return _gohort_base.__getitem__(self, key)
+
+        def __contains__(self, key):
+            return key in _gohort_files or _gohort_base.__contains__(self, key)
+
+    try:
+        _os.environ.__class__ = _GohortEnviron
+    except TypeError:
+        pass
+
+
+def _gohort_next_sitecustomize():
+    import importlib.machinery
+    import importlib.util
+    import sys
+    here = _os.path.dirname(_os.path.abspath(__file__))
+    for p in sys.path:
+        if _os.path.abspath(p or ".") == here:
+            continue
+        spec = importlib.machinery.PathFinder.find_spec("sitecustomize", [p])
+        if spec is not None and spec.loader is not None:
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return
+
+
+try:
+    _gohort_next_sitecustomize()
+except Exception:
+    pass
+`
 
 // ensureGohortShims writes the executable fetch-family shims into
 // <libBase>/bin (mounted RO at SandboxGohortBinMountPath, on PATH). Content-
@@ -2827,6 +2920,28 @@ def store_pull(store, item, replace=False):
 
 def fetch_via(credential, url, method="GET", body=None, headers=None, request_headers=None, timeout=None, save_to=None):
     return gohort.fetch_via(credential, url, method=method, body=body, headers=headers, request_headers=request_headers, timeout=timeout, save_to=save_to)
+
+
+def param(name, default=""):
+    """A value the run was handed (a param, an input, an app's records), as
+    text. One too large for an environment variable (over 100 KB) arrives
+    as a file named by <name>_file, with <name> left empty; this reads it
+    either way, so a script that works on a small value keeps working on a
+    large one."""
+    v = os.environ.get(name, "")
+    if v == "":
+        path = os.environ.get(name + "_file", "")
+        if path:
+            with open(path, encoding="utf-8") as f:
+                return f.read()
+    return v if v != "" else default
+
+
+def records():
+    """The app's records, as a list. Use it rather than reading the records
+    environment variable: a large set arrives as a file, and the variable is
+    then empty."""
+    return json.loads(param("records") or "[]")
 `
 
 // --- the shell network default -------------------------------------------
