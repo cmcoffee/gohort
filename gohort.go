@@ -538,6 +538,7 @@ func main() {
 			Warn(w)
 		}
 		listen := serveAddr(bindAddr)
+		wireServerSettings(listen, bindAddr)
 		keepAddrAcrossUpdates(updaterOf(), bindAddr, listen, os.Args)
 		if err := ServeDashboard(listen); err != nil {
 			Fatal(err)

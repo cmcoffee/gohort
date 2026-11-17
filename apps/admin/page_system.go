@@ -94,6 +94,8 @@ func (a *AdminApp) systemSections() []ui.Section {
 				},
 			},
 		},
+		// Where it listens and who may reach it, under what it is called.
+		webServerSection(),
 		{
 			Title:    "Sign-in",
 			Subtitle: "Who may sign up, how long a sign-in lasts, and what locks an account out. Saved automatically as you edit.",

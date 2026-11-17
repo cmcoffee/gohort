@@ -20,6 +20,8 @@ import (
 	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/outbound"
 	"github.com/cmcoffee/gohort/core/replyguard"
+	"github.com/cmcoffee/gohort/core/serverconf"
+	"github.com/cmcoffee/gohort/core/tlsconf"
 	"github.com/cmcoffee/snugforge/kvlite"
 	"github.com/cmcoffee/snugforge/machineid"
 
@@ -1478,4 +1480,43 @@ func parseDollarRate(s string) float64 {
 		return 0
 	}
 	return v
+}
+
+// wireServerSettings lets the admin page read and save the [web] settings
+// (core/serverconf), and tells it what this process is running with, so it
+// can say which saved changes wait for a restart. listen is the address
+// being served; given is the one the command line named, if any.
+func wireServerSettings(listen, given string) {
+	serverconf.Load = func() serverconf.Settings {
+		return serverconf.Settings{
+			Addr:            loadWebString("addr", ""),
+			TLSCert:         loadWebString("tls_cert", ""),
+			TLSKey:          loadWebString("tls_key", ""),
+			TLSSelfSigned:   loadWebBool("tls_self_signed", false),
+			MaxConcurrent:   loadWebInt("max_concurrent", 1),
+			AdminAllowedIPs: loadWebString("admin_allowed_ips", ""),
+			TrustedProxies:  global.cfg.Get(cfgWebSection, "trusted_proxies"),
+		}.Normalize()
+	}
+	serverconf.Save = func(s serverconf.Settings) error {
+		s = s.Normalize()
+		if s.Addr != "" {
+			saveListenAddr(s.Addr)
+		}
+		saveWebString("tls_cert", s.TLSCert)
+		saveWebString("tls_key", s.TLSKey)
+		saveWebBool("tls_self_signed", s.TLSSelfSigned)
+		saveWebInt("max_concurrent", s.MaxConcurrent)
+		saveWebString("admin_allowed_ips", s.AdminAllowedIPs)
+		saveWebString("trusted_proxies", s.TrustedProxies)
+		return nil
+	}
+	serverconf.Running = serverconf.Settings{
+		Addr:          listen,
+		TLSCert:       tlsconf.TLSCert,
+		TLSKey:        tlsconf.TLSKey,
+		TLSSelfSigned: tlsconf.TLSSelfSigned,
+		MaxConcurrent: MaxConcurrentTasks,
+	}
+	serverconf.AddrGiven = strings.TrimSpace(given) != ""
 }

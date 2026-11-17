@@ -177,6 +177,50 @@ func trustedProxy(ip net.IP) bool {
 // the address it saw to the RIGHT of whatever the client sent, so the client
 // is the rightmost hop that is not itself a trusted proxy.
 func ClientIP(r *http.Request) net.IP {
+	return clientIP(r, trustedProxy)
+}
+
+// ClientIPTrusting is ClientIP as it would read with proxies (a
+// comma-separated list of addresses or ranges, loopback always believed) as
+// the trusted proxies: for a settings page checking that a change to the
+// proxy list or the admin addresses would not lock out the person making it.
+func ClientIPTrusting(r *http.Request, proxies string) net.IP {
+	nets := parseCIDRList(proxies)
+	return clientIP(r, func(ip net.IP) bool {
+		if ip == nil {
+			return false
+		}
+		if ip.IsLoopback() {
+			return true
+		}
+		for _, n := range nets {
+			if n.Contains(ip) {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// AddressListAllows reports whether ip is in list (comma-separated addresses
+// or ranges), as the admin allowlist reads it: an empty list allows anyone.
+func AddressListAllows(list string, ip net.IP) bool {
+	nets := parseCIDRList(list)
+	if len(nets) == 0 {
+		return true
+	}
+	if ip == nil {
+		return false
+	}
+	for _, n := range nets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func clientIP(r *http.Request, trustedProxy func(net.IP) bool) net.IP {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr

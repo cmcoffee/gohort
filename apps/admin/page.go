@@ -42,7 +42,7 @@ var adminLayout = []struct {
 	// with the chart they feed.
 	// The activity log sits under System Status: what happened on the
 	// deployment, beside how it is doing now.
-	{"Overview", []string{"System Status", "Activity Log", "Software Update", "Site", "Cost History (Last 30 Days)", "Cost by source", "Prices"}},
+	{"Overview", []string{"System Status", "Activity Log", "Software Update", "Site", "Web server", "Cost History (Last 30 Days)", "Cost by source", "Prices"}},
 	{"People", []string{
 		"Sign-in", "Microsoft sign-in", "Users", "External contacts", "Teams", "Default Apps",
 		"Feature Access", "Model access limits", "Personal integrations",

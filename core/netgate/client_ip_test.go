@@ -39,3 +39,28 @@ func TestClientIPBelievesOnlyTrustedProxies(t *testing.T) {
 		}
 	}
 }
+
+// A settings page asks what the client address would be under a proxy list
+// it has not saved yet: the same reading, with that list in place of the
+// saved one. An empty admin list allows anyone; a list allows only its own.
+func TestTheClientAddressUnderAProxyListNotYetSaved(t *testing.T) {
+	prev := TrustedProxiesFunc
+	t.Cleanup(func() { TrustedProxiesFunc = prev })
+	TrustedProxiesFunc = func() string { return "" }
+	r := httptest.NewRequest("GET", "/", nil)
+	r.RemoteAddr = "10.0.0.5:5000"
+	r.Header.Set("X-Forwarded-For", "198.51.100.7")
+	if got := ClientIP(r).String(); got != "10.0.0.5" {
+		t.Fatalf("with no proxies saved the client is the peer: %s", got)
+	}
+	if got := ClientIPTrusting(r, "10.0.0.0/24").String(); got != "198.51.100.7" {
+		t.Errorf("with the proxy listed the client is behind it: %s", got)
+	}
+	if got := ClientIPTrusting(r, "").String(); got != "10.0.0.5" {
+		t.Errorf("with the list emptied the client is the peer again: %s", got)
+	}
+	ip := ClientIPTrusting(r, "10.0.0.5")
+	if !AddressListAllows("", ip) || !AddressListAllows("198.51.100.0/24", ip) || AddressListAllows("192.168.1.0/24", ip) {
+		t.Error("an admin list read wrong")
+	}
+}
