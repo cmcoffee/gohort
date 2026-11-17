@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -182,8 +183,10 @@ func workbenchLabelField(spec AppSpec) string {
 }
 
 // handleRecordFile is file?id=&name=: GET plays or opens one file the record
-// keeps, DELETE removes it from the record and the disk. Only a file the
-// record lists is served, from the folder of the person asking.
+// keeps, DELETE removes it from the record and the disk, POST keeps the
+// request's body on the record as a file called name (app.files.add, with
+// title= what it is). Only a file the record lists is served, from the
+// folder of the person asking.
 func (T *CustomApps) handleRecordFile(w http.ResponseWriter, r *http.Request, appdb Database, spec AppSpec, owner, user string) {
 	field := recordFilesField(spec)
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
@@ -196,6 +199,9 @@ func (T *CustomApps) handleRecordFile(w http.ResponseWriter, r *http.Request, ap
 	case http.MethodGet, http.MethodHead:
 	case http.MethodDelete:
 		T.removeRecordFile(w, r, appdb, spec, owner, user, field, id, name)
+		return
+	case http.MethodPost:
+		T.addRecordFile(w, r, appdb, spec, owner, user, field, id, name)
 		return
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -230,6 +236,64 @@ func (T *CustomApps) handleRecordFile(w http.ResponseWriter, r *http.Request, ap
 	// ServeContent answers range requests, which is how an audio player
 	// seeks.
 	http.ServeContent(w, r, name, info.ModTime(), f)
+}
+
+// addRecordFile keeps the request's body on the record as a file called
+// name: a photo the person picked on the page. Before it, a page could list,
+// play and remove a record's files but not add one, so an app that took a
+// photo of each plant kept it as a data URL inside the record. The file is
+// held to what a record keeps (appassets.KeepRecordFile: its kind, that it
+// begins the way that kind does, its size, how many a record keeps).
+func (T *CustomApps) addRecordFile(w http.ResponseWriter, r *http.Request, appdb Database, spec AppSpec, owner, user, field, id, name string) {
+	base := filepath.Base(filepath.Clean("/" + strings.ReplaceAll(name, "\\", "/")))
+	if base == "/" || base == "." || strings.HasPrefix(base, ".") {
+		jsonapi.Fail(w, r, jsonapi.BadRequest("name the file, with the extension that says its kind (a photo is .jpg or .png)"))
+		return
+	}
+	tbl := recTable(spec.Slug)
+	var rec map[string]any
+	if !appdb.Get(tbl, id, &rec) || rec == nil {
+		jsonapi.Fail(w, r, jsonapi.NotFound("no record "+id+": save it first, then add its files"))
+		return
+	}
+	tmp, err := os.MkdirTemp("", "gohort-record-file-")
+	if err != nil {
+		jsonapi.Fail(w, r, err)
+		return
+	}
+	defer os.RemoveAll(tmp)
+	src := filepath.Join(tmp, base)
+	out, err := os.Create(src)
+	if err != nil {
+		jsonapi.Fail(w, r, err)
+		return
+	}
+	n, err := io.Copy(out, io.LimitReader(r.Body, appassets.MaxRecordFileBytes+1))
+	out.Close()
+	if err != nil {
+		jsonapi.Fail(w, r, jsonapi.BadRequest("the file did not arrive whole: "+err.Error()))
+		return
+	}
+	if n > appassets.MaxRecordFileBytes {
+		jsonapi.Fail(w, r, jsonapi.Status(http.StatusRequestEntityTooLarge, fmt.Sprintf("%s is over the %d MiB a record keeps per file", base, appassets.MaxRecordFileBytes>>20)))
+		return
+	}
+	recordWriteMu.Lock()
+	defer recordWriteMu.Unlock()
+	if !appdb.Get(tbl, id, &rec) || rec == nil {
+		jsonapi.Fail(w, r, jsonapi.NotFound("no record "+id+": it was removed while the file arrived"))
+		return
+	}
+	kept, err := appassets.KeepRecordFile(owner, spec.Slug, user, id, src, strings.TrimSpace(r.URL.Query().Get("title")))
+	if err != nil {
+		jsonapi.Fail(w, r, jsonapi.BadRequest(err.Error()))
+		return
+	}
+	rec[field] = filesValue(append(recordFiles(rec, field), kept))
+	appdb.Set(tbl, id, rec)
+	noteChange(recordsChangeKey(owner, spec.Slug, user))
+	jsonapi.Write(w, map[string]any{"name": kept.Name, "title": kept.Title, "type": kept.Type, "size": kept.Size, "added": kept.Added,
+		"url": "file?id=" + url.QueryEscape(id) + "&name=" + url.QueryEscape(kept.Name)})
 }
 
 // removeRecordFile takes one kept file off the record and the disk.

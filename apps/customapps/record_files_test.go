@@ -278,3 +278,44 @@ func TestKeepingWhatTheAgentMadeMovesIt(t *testing.T) {
 		t.Error("the script's own file was removed")
 	}
 }
+
+// A page keeps a file the person picked on a record (app.files.add): it is
+// listed on the record and served back. A file that is not a kind a record
+// keeps, or does not begin the way its kind does, is refused, as is one for
+// a record that does not exist, and a name that reaches out of the folder
+// keeps only its last part.
+func TestAPageAddsAFileToARecord(t *testing.T) {
+	T, spec := songsWithTakes(t)
+	png := "\x89PNG\r\n\x1a\n" + strings.Repeat("\x00", 64)
+	add := func(query, body string) *httptest.ResponseRecorder {
+		return appAs(t, T, spec, "u", httptest.NewRequest("POST", "/apps/songs/file?"+query, strings.NewReader(body)))
+	}
+	w := add("id=s1&name=..%2F..%2Fcover.png&title=Cover", png)
+	if w.Code != http.StatusOK {
+		t.Fatalf("add: %d %s", w.Code, w.Body.String())
+	}
+	var got map[string]any
+	json.Unmarshal(w.Body.Bytes(), &got)
+	if got["name"] != "cover.png" || got["title"] != "Cover" || got["url"] != "file?id=s1&name=cover.png" {
+		t.Errorf("the reply: %v", got)
+	}
+	if takes := takesOf(t, T, spec); len(takes) != 1 || takes[0].Name != "cover.png" {
+		t.Fatalf("the record lists: %+v", takes)
+	}
+	if w := appAs(t, T, spec, "u", httptest.NewRequest("GET", "/apps/songs/file?id=s1&name=cover.png", nil)); w.Code != http.StatusOK || w.Body.String() != png {
+		t.Errorf("the added file is not served back: %d", w.Code)
+	}
+	for _, c := range []struct{ query, body, why string }{
+		{"id=s1&name=notes.html", "<html></html>", "a kind a record does not keep"},
+		{"id=s1&name=fake.png", "not a picture at all", "a file that does not begin as its kind does"},
+		{"id=nope&name=cover.png", png, "a record that does not exist"},
+		{"id=s1&name=.png", png, "no name"},
+	} {
+		if w := add(c.query, c.body); w.Code == http.StatusOK {
+			t.Errorf("%s was kept: %s", c.why, w.Body.String())
+		}
+	}
+	if takes := takesOf(t, T, spec); len(takes) != 1 {
+		t.Errorf("a refused file was listed: %+v", takes)
+	}
+}

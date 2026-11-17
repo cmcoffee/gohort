@@ -22,6 +22,10 @@ app.asset(name)               the URL of one of the app's assets
 app.files.list(id)            the files a record keeps (a song's takes),
                               each {name, title, type, size, added, url}
 app.files.url(id, name)       the URL that plays or opens one
+app.files.add(id, file, title) keep a file the person picked (an
+                              <input type=file>'s file) on the record:
+                              a photo, a recording, a PDF; 64 MiB each.
+                              Resolves to {name, title, type, size, url}
 app.files.remove(id, name)    take one off the record and the disk
                               (an action script keeps one by naming it
                               in its reply: files:[{record, file, title}])
@@ -76,7 +80,7 @@ shared:function(n){return fetch("shared/"+encodeURIComponent(n)).then(json);},
 ask:function(p,o){return post("ask",{prompt:String(p),json:!!(o&&o.json)}).then(function(d){return d&&d.text;});},
 propose:function(d,p,o){o=o||{};return post("propose",{document:String(d==null?"":d),prompt:String(p),selection:o.selection||null,history:o.history||[]});},
 asset:function(n){return "assets/"+n;},
-files:{list:function(id){return fetch("files"+q({id:id})).then(json).then(function(d){return (d&&d.files)||[];});},url:function(id,n){return "file"+q({id:id,name:n});},remove:function(id,n){return fetch("file"+q({id:id,name:n}),{method:"DELETE"}).then(json);}},
+files:{list:function(id){return fetch("files"+q({id:id})).then(json).then(function(d){return (d&&d.files)||[];});},url:function(id,n){return "file"+q({id:id,name:n});},remove:function(id,n){return fetch("file"+q({id:id,name:n}),{method:"DELETE"}).then(json);},add:function(id,f,t){return fetch("file"+q({id:id,name:f&&f.name,title:t}),{method:"POST",body:f}).then(json);}},
 confirm:function(m){return window.uiConfirm(m);},alert:function(m){return window.uiAlert(m);},prompt:function(m,d){return window.uiPrompt(m,d);},
 onChange:function(fn){var v=null,stop=false;
 (function loop(){if(stop)return;var s=v||{shared:"",records:""};
