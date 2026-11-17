@@ -25,36 +25,12 @@ func TestAppDefAndWorkspaceCallsKeepTheirOrder(t *testing.T) {
 	}
 }
 
-// An update carrying actions:[one action] used to delete every other action
-// the app had and report success. Leaving a stored script out of the list is
-// now refused by name, unless confirm_rewrite says the deletion is meant.
-func TestAppDroppedScriptsNamesWhatWouldBeDeleted(t *testing.T) {
-	risk := appDroppedScripts("actions", "action", []string{"step", "reset"}, []string{"step"})
-	for _, want := range []string{"reset", "REPLACES the whole actions list", "confirm_rewrite"} {
-		if !strings.Contains(risk, want) {
-			t.Errorf("the refusal must contain %q, got:\n%s", want, risk)
-		}
-	}
-	if strings.Contains(risk, "step,") || strings.Contains(risk, ": step") {
-		t.Errorf("a kept script is not a dropped one:\n%s", risk)
-	}
-	// Names compare slugified: re-sending balance_step keeps balance-step.
-	if r := appDroppedScripts("data_sources", "data source", []string{"balance-step"}, []string{"balance_step"}); r != "" {
-		t.Errorf("the same name in its unslugified spelling is not a drop: %s", r)
-	}
-	// Adding and keeping are ordinary edits.
-	if r := appDroppedScripts("actions", "action", []string{"step"}, []string{"step", "reset"}); r != "" {
-		t.Errorf("adding a script is not a drop: %s", r)
-	}
-	// An empty list sent on purpose deletes everything, so it is refused too.
-	if r := appDroppedScripts("actions", "action", []string{"step"}, nil); !strings.Contains(r, "step") {
-		t.Errorf("an empty list drops every stored script: %q", r)
-	}
-}
-
-// The guard in place on the real update path: refused without confirm, saved
-// with it, saved when the list keeps every stored name.
-func TestUpdateRefusesToSilentlyDropAnAction(t *testing.T) {
+// An update changes what its lists name and keeps what they leave out: it
+// used to replace a whole list, so a list leaving a script out was refused by
+// name, and every change to one action re-sent all of them, scripts in full.
+// The reply says what was kept; confirm_rewrite replaces a list, which is
+// how a script is deleted.
+func TestAnUpdateMergesItsListsByName(t *testing.T) {
 	pinRootDB(t)
 	script := "import json\nprint(json.dumps({\"message\": \"ok\"}))\n"
 	SaveAppSpecAs(AppSpec{Slug: "balance", Name: "Balance", Owner: "u", RecordKey: "id",
@@ -70,38 +46,40 @@ func TestUpdateRefusesToSilentlyDropAnAction(t *testing.T) {
 	actions := func(names ...string) []any {
 		var out []any
 		for _, n := range names {
-			out = append(out, map[string]any{"name": n, "script": script})
+			out = append(out, map[string]any{"name": n, "script": script, "label": "L " + n})
 		}
 		return out
 	}
-
-	_, err := update(map[string]any{"actions": actions("step")})
-	if err == nil || !strings.Contains(err.Error(), "reset") {
-		t.Fatalf("dropping reset must be refused by name, got %v", err)
-	}
-	if spec, _ := LoadAppSpec("u", "balance"); len(spec.Actions) != 2 {
-		t.Fatalf("a refused update must not save, have %d actions", len(spec.Actions))
-	}
-
-	// A rename note travels with the refusal too: the author fixing the list
-	// needs to know new_one was stored as new-one.
-	_, err = update(map[string]any{"actions": actions("step", "new_one")})
-	if err == nil || !strings.Contains(err.Error(), "Heads up") || !strings.Contains(err.Error(), "new-one") {
-		t.Fatalf("the refusal should carry the adjusted-input notes, got %v", err)
+	names := func() string {
+		spec, _ := LoadAppSpec("u", "balance")
+		var out []string
+		for _, a := range spec.Actions {
+			out = append(out, a.Name+"="+a.Label)
+		}
+		return strings.Join(out, ",")
 	}
 
-	if _, err := update(map[string]any{"actions": actions("step", "reset", "undo")}); err != nil {
-		t.Fatalf("keeping every stored action is an ordinary edit: %v", err)
+	out, err := update(map[string]any{"actions": actions("step")})
+	if err != nil || !strings.Contains(out, "kept the 1 action(s)") || !strings.Contains(out, "reset") {
+		t.Fatalf("an update naming one action did not keep the other and say so: %v\n%s", err, out)
 	}
-	if spec, _ := LoadAppSpec("u", "balance"); len(spec.Actions) != 3 {
-		t.Fatalf("want 3 actions after the additive update, have %d", len(spec.Actions))
+	if got := names(); got != "step=L step,reset=" {
+		t.Fatalf("after changing step: %s", got)
 	}
-
+	// A new name is added after the rest, its rename noted.
+	out, err = update(map[string]any{"actions": actions("new_one")})
+	if err != nil || !strings.Contains(out, "new-one") {
+		t.Fatalf("adding one action: %v\n%s", err, out)
+	}
+	if got := names(); got != "step=L step,reset=,new-one=L new_one" {
+		t.Fatalf("after adding new_one: %s", got)
+	}
+	// confirm_rewrite replaces the list: the way to delete.
 	if _, err := update(map[string]any{"actions": actions("step"), "confirm_rewrite": true}); err != nil {
-		t.Fatalf("confirm_rewrite must allow a deliberate deletion: %v", err)
+		t.Fatalf("confirm_rewrite: %v", err)
 	}
-	if spec, _ := LoadAppSpec("u", "balance"); len(spec.Actions) != 1 || spec.Actions[0].Name != "step" {
-		t.Fatalf("confirmed deletion should leave only step, have %+v", spec.Actions)
+	if got := names(); got != "step=L step" {
+		t.Fatalf("confirm_rewrite should leave only step, have %s", got)
 	}
 }
 

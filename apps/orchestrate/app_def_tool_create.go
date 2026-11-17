@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appcheck"
 )
 
 func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (string, error) {
@@ -226,30 +227,71 @@ func (aw *appWrite) readMeta() bool {
 	return true
 }
 
+// mergeListed is the list an update stores when it passes listed for one of
+// an app's lists (data sources, actions, checks): each item listed replaces
+// the one of its name, or is added after the rest; each one stored and not
+// listed stays, and the reply says which. confirm_rewrite:true, and a
+// create, store listed as it is, which is how an item is deleted (and how a
+// folder publish, which sends every file, deletes the one removed).
+//
+// Before, an update replaced the whole list, so a list leaving one out was
+// refused by name to keep it from deleting scripts silently, and every
+// change to one action or check re-sent all of them, scripts in full. On a
+// local worker that was minutes of output per save, and a save refused for
+// one check sent the whole list again, two and three times over.
+func mergeListed[T any](stored, listed []T, name func(T) string, replace bool) (merged []T, kept []string) {
+	if replace {
+		return listed, nil
+	}
+	at := map[string]int{}
+	merged = append([]T(nil), stored...)
+	for i, item := range merged {
+		at[name(item)] = i
+	}
+	seen := map[string]bool{}
+	for _, item := range listed {
+		n := name(item)
+		seen[n] = true
+		if i, ok := at[n]; ok && n != "" {
+			merged[i] = item
+			continue
+		}
+		at[n] = len(merged)
+		merged = append(merged, item)
+	}
+	for _, item := range stored {
+		if n := name(item); !seen[n] {
+			kept = append(kept, n)
+		}
+	}
+	return merged, kept
+}
+
+// mergeInto applies mergeListed to one of aw's lists, and notes in the reply
+// what an update kept that its list left out.
+func mergeInto[T any](aw *appWrite, noun string, stored, listed []T, name func(T) string) []T {
+	replace := !aw.isUpdate || boolArg(aw.args, "confirm_rewrite")
+	merged, kept := mergeListed(stored, listed, name, replace)
+	if len(kept) > 0 {
+		aw.parseNotes = append(aw.parseNotes, fmt.Sprintf("kept the %d %s(s) this update did not list, unchanged: %s. An update changes what it lists; to delete one, pass the full list with confirm_rewrite:true.",
+			len(kept), noun, appNameList(kept, 12)))
+	}
+	return merged
+}
+
 func (aw *appWrite) readParts() bool {
 	// Script-backed data sources (the "logic" seam): a table/display section can
-	// be backed by a python script instead of the record store. Passed wholesale
-	// replaces the stored set on update (omit to keep existing).
-	//
-	// "Replaces" is also how scripts got lost: an update carrying actions:[one
-	// new action] deleted every other action the app had, and the save said
-	// success. So a list that leaves out a stored name is refused below, the
-	// same way a dropped functional section is.
-	var droppedScripts []string
+	// be backed by a python script instead of the record store. On update a
+	// list is merged by name (mergeListed): what it names is added or
+	// replaced, what it leaves out stays.
 	t := aw.t
 	args := aw.args
 	isUpdate := aw.isUpdate
 	if raw, ok := args["data_sources"]; ok && raw != nil {
 		if arr, note, ok := appArrayArg(raw, "data_sources"); ok {
-			var notes []string
-			prior := appDataSourceNames(aw.spec)
-			aw.spec.DataSources, notes = appDataSources(arr)
+			listed, notes := appDataSources(arr)
 			aw.parseNotes = append(aw.parseNotes, notes...)
-			if isUpdate {
-				if risk := appDroppedScripts("data_sources", "data source", prior, appDataSourceNames(aw.spec)); risk != "" {
-					droppedScripts = append(droppedScripts, risk)
-				}
-			}
+			aw.spec.DataSources = mergeInto(aw, "data source", aw.spec.DataSources, listed, func(d AppDataSource) string { return slugify(d.Name) })
 		} else {
 			aw.parseNotes = append(aw.parseNotes, note)
 		}
@@ -258,15 +300,9 @@ func (aw *appWrite) readParts() bool {
 	// script which returns records the framework persists.
 	if raw, ok := args["actions"]; ok && raw != nil {
 		if arr, note, ok := appArrayArg(raw, "actions"); ok {
-			var notes []string
-			prior := appActionNames(aw.spec)
-			aw.spec.Actions, notes = appActionDefs(arr)
+			listed, notes := appActionDefs(arr)
 			aw.parseNotes = append(aw.parseNotes, notes...)
-			if isUpdate {
-				if risk := appDroppedScripts("actions", "action", prior, appActionNames(aw.spec)); risk != "" {
-					droppedScripts = append(droppedScripts, risk)
-				}
-			}
+			aw.spec.Actions = mergeInto(aw, "action", aw.spec.Actions, listed, func(a AppAction) string { return slugify(a.Name) })
 		} else {
 			aw.parseNotes = append(aw.parseNotes, note)
 		}
@@ -282,9 +318,6 @@ func (aw *appWrite) readParts() bool {
 			aw.spec.Libraries = nil
 		}
 	}
-	if len(droppedScripts) > 0 && !boolArg(args, "confirm_rewrite") {
-		return aw.exit("", errors.New(appWithParseNotes(strings.Join(droppedScripts, "\n\n"), aw.parseNotes)))
-	}
 	aw.parseNotes = append(aw.parseNotes, appToolCapNotes(t.user, aw.spec)...)
 	// Declared tunables: the framework renders their Settings page and hands
 	// them to every script as env vars. Passed wholesale replaces the list.
@@ -299,13 +332,13 @@ func (aw *appWrite) readParts() bool {
 	}
 	aw.parseNotes = append(aw.parseNotes, appScheduleSettingNotes(aw.spec)...)
 	// checks: what the app is supposed to do, as tests that live with it
-	// (app_checks.go). Passed wholesale replaces the list (omit to keep).
+	// (app_checks.go). Merged by name like the scripts (mergeListed).
 	if raw, ok := args["checks"]; ok && raw != nil {
 		checks, err := appChecksArg(raw)
 		if err != nil {
 			return aw.exit("", fmt.Errorf("NOT SAVED: %v", err))
 		}
-		aw.spec.Checks = checks
+		aw.spec.Checks = mergeInto(aw, "check", aw.spec.Checks, checks, func(c appcheck.Check) string { return strings.ToLower(strings.TrimSpace(c.Name)) })
 	}
 
 	// An app used only through its tools (an action, a data source or its

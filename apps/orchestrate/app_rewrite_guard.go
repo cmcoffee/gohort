@@ -195,36 +195,6 @@ func appDroppedFunctionSection(prior, next []map[string]any) string {
 	return b.String()
 }
 
-// appDroppedScripts reports an update whose `list` (data_sources or actions)
-// leaves out a script the stored revision has, or "" when every stored name
-// is still there. noun is the singular the message uses ("action").
-//
-// data_sources and actions are replaced WHOLESALE when present, so an update
-// that sends only the script it is adding deletes every other one. Observed:
-// an update carrying actions:[{name:"step"}] and a sibling update carrying
-// only sections both landed, the second saved over the first, and the next
-// patch_html answered `no action named "step"`, with nothing in between that
-// said the action had ever gone. Names compare slugified, since that is how
-// they are stored: re-sending "balance_step" keeps "balance-step".
-func appDroppedScripts(list, noun string, prior, next []string) string {
-	keep := map[string]bool{}
-	for _, n := range next {
-		keep[slugify(n)] = true
-	}
-	var lost []string
-	for _, n := range prior {
-		if s := slugify(n); s != "" && !keep[s] {
-			lost = append(lost, s)
-		}
-	}
-	if len(lost) == 0 {
-		return ""
-	}
-	sort.Strings(lost)
-	return fmt.Sprintf("this update DROPS %d %s(s) the app already has: %s.\n\nupdate REPLACES the whole %s list, so a %s you leave out is a %s you delete. Re-send the full list: the ones already there (app_def(action=\"get\") returns them) plus your change. To edit ONE script, use patch_html or replace_function with script=<name> instead of re-sending the list. Pass confirm_rewrite:true only if you mean to delete %s; the version it replaces is kept either way, so app_def(action=\"revert\") can put it back.",
-		len(lost), noun, appNameList(lost, 12), list, noun, noun, pluralIt(len(lost)))
-}
-
 // appWithParseNotes appends the "the framework adjusted your input" block to
 // a tool result, success or failure alike. See the save path in
 // appDefCreateOrUpdate for why the failures need it as much as the success.
