@@ -81,6 +81,10 @@ type Table struct {
 	Search bool `json:"search,omitempty"`
 	// SearchPlaceholder overrides the filter box's placeholder text.
 	SearchPlaceholder string `json:"search_placeholder,omitempty"`
+	// SearchFocus puts the cursor in the filter box as the page loads (not
+	// on a touch screen), for a list that is a picker: type, and Enter opens
+	// the first row that matches when rows are links (RowLink).
+	SearchFocus bool `json:"search_focus,omitempty"`
 	// RecordsField extracts the rows from a specific key of the GET
 	// response. Use when one endpoint returns multiple lists in a
 	// shaped object (e.g. `{pending: [...], active: [...]}`) and you

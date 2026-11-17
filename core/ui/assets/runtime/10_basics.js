@@ -1478,6 +1478,21 @@
       searchText = box.value.trim().toLowerCase();
       renderRows();
     });
+    // Rows that are links: Enter opens the first one the text matches, so
+    // a few letters and Enter is the way to one, as a resume picker is.
+    box.addEventListener('keydown', function(ev) {
+      if (ev.key !== 'Enter' || !cfg.row_link) return;
+      var hits = records.filter(matchesSearch).map(function(rec) { return lookup(rec, cfg.row_link); })
+        .filter(function(h) { return h != null && /^(https?:\/\/|\/)/.test(String(h)); });
+      if (!hits.length) return;
+      ev.preventDefault();
+      window.location.href = window.uiSafeURL(hits[0]);
+    });
+    // A list that is a picker takes typing as it loads. Not on a touch
+    // screen, where focusing raises the keyboard over the list.
+    if (cfg.search_focus && window.matchMedia && window.matchMedia('(pointer: fine)').matches) {
+      setTimeout(function() { if (box.isConnected) box.focus(); }, 0);
+    }
     return el('div', {class: 'ui-table-wrap'}, [box, listEl]);
   };
 
