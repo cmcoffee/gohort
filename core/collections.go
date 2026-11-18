@@ -234,6 +234,12 @@ type Collection struct {
 	// CopiedFrom is the collection an app's own copy was made from; nil
 	// for one that is not a copy.
 	CopiedFrom *CopiedFrom `json:"copied_from,omitempty"`
+	// Refresh is how often an app's collection's plan runs on its own
+	// ("week", "month", "" for never), as its blueprint says. Whether it
+	// does on this copy of the app is the app's setting (AppCurationOff),
+	// which never changes this. A collection of no app keeps its schedule
+	// on the scheduler alone.
+	Refresh string `json:"refresh,omitempty"`
 }
 
 // collectionBlueprintChanged reports whether what a collection is, as an
@@ -242,14 +248,14 @@ type Collection struct {
 // app it is. Its documents, shares and bookkeeping are not the blueprint.
 func collectionBlueprintChanged(prior, next Collection) bool {
 	type blueprint struct {
-		Name, Description, FilterRules, OwningApp string
-		SearchTerms, Articles                     []string
-		DocsPerRun                                int
-		Submitters                                map[string]string
-		SuggestionsOff                            bool
+		Name, Description, FilterRules, OwningApp, Refresh string
+		SearchTerms, Articles                              []string
+		DocsPerRun                                         int
+		Submitters                                         map[string]string
+		SuggestionsOff                                     bool
 	}
 	of := func(c Collection) string {
-		b, _ := json.Marshal(blueprint{c.Name, c.Description, c.FilterRules, c.OwningApp, c.SearchTerms, c.Articles, c.DocsPerRun, c.Submitters, c.SuggestionsOff})
+		b, _ := json.Marshal(blueprint{c.Name, c.Description, c.FilterRules, c.OwningApp, c.Refresh, c.SearchTerms, c.Articles, c.DocsPerRun, c.Submitters, c.SuggestionsOff})
 		return string(b)
 	}
 	return of(prior) != of(next)

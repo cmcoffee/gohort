@@ -35,6 +35,11 @@ func (T *OrchestrateApp) collectionSteward(call *jsonapi.Call) (any, error) {
 // autoCurationOf is how often c's plan runs on its own: "week", "month", or
 // "never".
 func autoCurationOf(c Collection) string {
+	// An app's collection says what its blueprint says, whether or not the
+	// app's setting has it refreshing here.
+	if c.OwningApp != "" && c.Refresh != "" {
+		return c.Refresh
+	}
 	if p, _, _, ok := refreshScheduled(c.Owner, c.ID); ok {
 		return p.Every
 	}
@@ -52,7 +57,7 @@ func (T *OrchestrateApp) collectionStewardSave(call *jsonapi.Call, body struct {
 	if strings.TrimSpace(body.Refresh) == "" {
 		return map[string]any{"ok": true}, nil
 	}
-	if err := setRefresh(c.Owner, c.ID, body.Refresh); err != nil {
+	if err := setCollectionRefresh(UserDB(T.DB, c.Owner), c, body.Refresh, ""); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
 	return map[string]any{"ok": true}, nil

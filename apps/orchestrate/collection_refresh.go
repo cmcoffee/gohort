@@ -64,7 +64,6 @@ func setRefresh(owner, collection, every string) error {
 	if every == "" || every == "never" {
 		if ok {
 			UnscheduleTask(id)
-			collectionRefreshChanged(owner, collection)
 		}
 		return nil
 	}
@@ -80,22 +79,59 @@ func setRefresh(owner, collection, every string) error {
 	}
 	old.Collection, old.Owner, old.Every = collection, owner, every
 	_, err := ScheduleTask(collectionRefreshKind, old, time.Now().Add(interval))
-	collectionRefreshChanged(owner, collection)
 	return err
 }
 
-// collectionRefreshChanged records a change of an app's collection's
-// refresh, part of its blueprint (app_owned.go), as the person's own change
-// to the app: the schedule is not on the collection, so its save does not
-// see it.
-func collectionRefreshChanged(owner, collection string) {
+// setCollectionRefresh sets how often c's plan runs on its own, as via's
+// change. For an app's collection that is its blueprint (Collection.Refresh,
+// recorded in the app's history by its save), and the schedule follows it
+// unless the app's setting keeps its collections from refreshing here
+// (AppCurationOff); for any other, the schedule is all there is.
+func setCollectionRefresh(udb Database, c Collection, every, via string) error {
+	every = strings.TrimSpace(every)
+	if every == "never" {
+		every = ""
+	}
+	if c.OwningApp == "" {
+		return setRefresh(c.Owner, c.ID, every)
+	}
+	if every != "" {
+		if _, known := refreshEvery[every]; !known {
+			return fmt.Errorf("refresh every week, every month, or never")
+		}
+	}
+	if c.Refresh != every {
+		c.Refresh = every
+		SaveCollectionBy(udb, c, via)
+	}
+	if AppCurationOff(c.Owner, c.OwningApp) {
+		return setRefresh(c.Owner, c.ID, "")
+	}
+	return setRefresh(c.Owner, c.ID, every)
+}
+
+// scheduleAppCuration follows owner's app slug's setting: each of its
+// collections refreshing as its blueprint says, or none of them.
+func scheduleAppCuration(owner, slug string) {
 	if orchestrateBaseDB == nil {
 		return
 	}
-	if c, ok := loadCollection(UserDB(orchestrateBaseDB, owner), owner, collection); ok && c.OwningApp != "" {
-		AppOwnedChanged(owner, c.OwningApp, "collection", c.Name, "")
+	off := AppCurationOff(owner, slug)
+	for _, c := range listCollections(UserDB(orchestrateBaseDB, owner), owner) {
+		if c.OwningApp != slug || c.Owner != owner {
+			continue
+		}
+		every := c.Refresh
+		if off {
+			every = ""
+		}
+		if err := setRefresh(owner, c.ID, every); err != nil {
+			Log("[orchestrate.collections] %s/%s: collection %s could not be scheduled: %v", owner, slug, c.ID, err)
+		}
 	}
 }
+
+func init() { AppCurationChanged = scheduleAppCuration }
 
 // refreshLine is what the page says about the schedule: when the next one is
 // due and what the last one did, or "" when there is none.

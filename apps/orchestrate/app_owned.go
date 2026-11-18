@@ -776,7 +776,9 @@ type collectionFile struct {
 func collectionFileOf(udb Database, owner string, c Collection) collectionFile {
 	f := collectionFile{Name: c.Name, Description: c.Description, FilterRules: c.FilterRules, SearchTerms: c.SearchTerms,
 		DocsPerRun: c.DocsPerRun, Articles: c.Articles, SuggestionsOff: c.SuggestionsOff}
-	if task, _, _, ok := refreshScheduled(owner, c.ID); ok {
+	f.Refresh = c.Refresh
+	if task, _, _, ok := refreshScheduled(owner, c.ID); ok && f.Refresh == "" {
+		// One made before its refresh was kept on it.
 		f.Refresh = task.Every
 	}
 	for id, mode := range c.Submitters {
@@ -829,7 +831,7 @@ func applyCollectionFile(udb Database, owner, slug, via, id string, cf collectio
 		c.Submitters[ref] = normalTrust(mode)
 	}
 	SaveCollectionBy(udb, c, via)
-	return c.ID, setRefresh(owner, c.ID, cf.Refresh)
+	return c.ID, setCollectionRefresh(udb, c, cf.Refresh, via)
 }
 
 // Seed files (docs/design/app-history.md, piece E2 step 2): the documents

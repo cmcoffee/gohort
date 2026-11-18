@@ -24,6 +24,10 @@ func (T *CustomApps) memoryRoutes() {
 		"GET":  T.appGet(T.appMemoryMe),
 		"POST": appPost(T, T.saveAppMemoryMe),
 	}.Serve)
+	T.HandleFunc("/{slug}/_settings/curation", jsonapi.Methods{
+		"GET":  T.appGet(T.appCuration),
+		"POST": appPost(T, T.saveAppCuration),
+	}.Serve)
 }
 
 // personStore is the store of the person making a call, where what an app
@@ -149,4 +153,58 @@ func changeSection(spec AppSpec, user, owner string) *ui.Section {
 func hasSettingsPage(spec AppSpec, user, owner string) bool {
 	return len(visibleSettings(spec, user == owner)) > 0 || appKeepsMemory(spec) ||
 		user == owner || spec.MaintainedBy(user)
+}
+
+// refreshedCollections are owner's app slug's collections whose blueprint
+// has them refresh on their own, as "Name (every week)".
+func refreshedCollections(owner, slug string) []string {
+	var out []string
+	for _, c := range ListCollections(personStore(owner), owner) {
+		if c.OwningApp == slug && c.Owner == owner && c.Refresh != "" {
+			out = append(out, c.Name+" (every "+c.Refresh+")")
+		}
+	}
+	return out
+}
+
+// appCuration is the owner's switch: whether the app's collections refresh
+// on their own on this copy of the app.
+func (T *CustomApps) appCuration(a *appCall) (any, error) {
+	if !a.mine() {
+		return nil, jsonapi.Forbidden("the app's owner sets this")
+	}
+	return map[string]any{"keep_current": !AppCurationOff(a.owner, a.spec.Slug)}, nil
+}
+
+func (T *CustomApps) saveAppCuration(a *appCall, in struct {
+	KeepCurrent bool `json:"keep_current"`
+}) (any, error) {
+	if !a.mine() {
+		return nil, jsonapi.Forbidden("the app's owner sets this")
+	}
+	SetAppCurationOff(a.owner, a.spec.Slug, !in.KeepCurrent)
+	return map[string]any{"ok": true}, nil
+}
+
+// curationSection is the owner's "Keep its collections current" switch, for
+// an app whose collections refresh on their own; nil otherwise. It is how
+// this copy of the app runs, never part of the app: its blueprint keeps how
+// often each one refreshes either way.
+func curationSection(spec AppSpec, user, owner, base string) *ui.Section {
+	if user != owner {
+		return nil
+	}
+	cols := refreshedCollections(owner, spec.Slug)
+	if len(cols) == 0 {
+		return nil
+	}
+	return &ui.Section{
+		Title:    "Collections",
+		Subtitle: "Its collections look for new material on their own: " + strings.Join(cols, ", ") + ".",
+		Body: ui.FormPanel{
+			Source: base + "/_settings/curation",
+			Fields: []ui.FormField{{Field: "keep_current", Label: "Keep its collections current", Type: "toggle",
+				Help: "Off: they keep what they have and look for nothing new on their own. How often each one would is part of the app, and stays as it is."}},
+		},
+	}
 }

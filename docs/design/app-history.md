@@ -604,6 +604,14 @@ Stage 2 (an app holds everything it runs on):
      taken for a seed file. What it is (its name, description and
      submitters) changes with Builder, as the app does; its plan from the
      Knowledge page as well.
+   - **Step 5, keeping them current is the app's setting (0.9.535).** How
+     often an app's collection refreshes is its blueprint, kept on it
+     (`Collection.Refresh`), changed with the app or from the Knowledge
+     page (recorded in the app's history). Whether it refreshes on this
+     copy of the app is the owner's switch on the app's Settings page,
+     "Keep its collections current" (`AppCurationOff`, on unless turned
+     off): off stops their schedules and never changes the blueprint;
+     back on, each refreshes as its blueprint says.
 
 Stage 3 (the app is its repository):
 

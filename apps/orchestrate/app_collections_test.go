@@ -65,3 +65,45 @@ func TestOnlyAnAppsOwnPartsReachItsCollection(t *testing.T) {
 		t.Errorf("what the agent and the script added were taken for seed files: %v", seeds)
 	}
 }
+
+// How often an app's collection refreshes is its blueprint, kept on it;
+// whether it refreshes here is the app's setting, which turns its schedule
+// off and on again and never changes the blueprint.
+func TestAnAppsCurationSettingLeavesItsBlueprint(t *testing.T) {
+	turn, udb := copyTestTurn(t)
+	copyTestApp(t, turn, nil)
+	PreInitScheduler()
+	t.Cleanup(func() {
+		for _, task := range ListScheduledTasks(collectionRefreshKind) {
+			UnscheduleTask(task.ID)
+		}
+	})
+	id, err := applyCollectionFile(udb, "u", "desk", "Builder", "", collectionFile{Name: "News", Refresh: "week"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduled := func() string {
+		if p, _, _, ok := refreshScheduled("u", id); ok {
+			return p.Every
+		}
+		return ""
+	}
+	if scheduled() != "week" {
+		t.Fatalf("the blueprint's refresh is not scheduled: %q", scheduled())
+	}
+	SetAppCurationOff("u", "desk", true)
+	c, _ := LoadCollection(udb, "u", id)
+	if scheduled() != "" || c.Refresh != "week" || collectionFileOf(udb, "u", c).Refresh != "week" {
+		t.Errorf("switched off: scheduled %q, blueprint %q", scheduled(), c.Refresh)
+	}
+	if err := setCollectionRefresh(udb, c, "month", ""); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ = LoadCollection(udb, "u", id); c.Refresh != "month" || scheduled() != "" {
+		t.Errorf("a change of interval while switched off: blueprint %q, scheduled %q", c.Refresh, scheduled())
+	}
+	SetAppCurationOff("u", "desk", false)
+	if scheduled() != "month" {
+		t.Errorf("switched back on: scheduled %q", scheduled())
+	}
+}

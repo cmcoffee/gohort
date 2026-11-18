@@ -70,6 +70,8 @@ func TestEveryJSONRouteRefusesWhoItShould(t *testing.T) {
 		{"POST", "_memory/forget", "", "GET"},
 		{"GET", "_memory/me", "", "PUT"},
 		{"POST", "_memory/me", `{"remember":true}`, ""},
+		{"GET", "_settings/curation", "", "PUT"},
+		{"POST", "_settings/curation", `{"keep_current":true}`, ""},
 		{"GET", "actions", "", "POST"},
 		{"GET", "action-progress/go", "", "POST"},
 		{"POST", "action-cancel/go", "", "GET"},

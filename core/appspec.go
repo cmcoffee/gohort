@@ -1053,3 +1053,35 @@ func SetAppMemoryOptOut(db Database, owner, slug string, off bool) {
 	}
 	db.Unset(appMemoryOptOutTable, owner+"/"+slug)
 }
+
+// appCurationOffTable holds, in RootDB, the apps whose owner turned off
+// keeping their collections current on this deployment, keyed owner/slug.
+const appCurationOffTable = "app_curation_off"
+
+// AppCurationOff reports whether owner's app slug's collections are kept
+// from refreshing on their own here: the app's setting (its Settings page),
+// how this copy runs, never part of its blueprint.
+func AppCurationOff(owner, slug string) bool {
+	var off bool
+	return RootDB != nil && RootDB.Get(appCurationOffTable, owner+"/"+slug, &off) && off
+}
+
+// AppCurationChanged, when set, is told that owner's app slug's setting
+// changed, to schedule its collections' refreshes or stop them.
+var AppCurationChanged func(owner, slug string)
+
+// SetAppCurationOff records owner's choice for app slug: its collections
+// not refreshed on their own (off), or as their blueprint says.
+func SetAppCurationOff(owner, slug string, off bool) {
+	if RootDB == nil {
+		return
+	}
+	if off {
+		RootDB.Set(appCurationOffTable, owner+"/"+slug, true)
+	} else {
+		RootDB.Unset(appCurationOffTable, owner+"/"+slug)
+	}
+	if AppCurationChanged != nil {
+		AppCurationChanged(owner, slug)
+	}
+}

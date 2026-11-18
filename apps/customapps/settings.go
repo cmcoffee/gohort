@@ -236,13 +236,17 @@ func (T *CustomApps) handleSettingsPage(w http.ResponseWriter, r *http.Request, 
 		}})
 	}
 	mem := memorySection(spec, base)
+	curation := curationSection(spec, user, ownerUser, base)
 	change := changeSection(spec, user, ownerUser)
 	// "Nothing to set" says something only where nothing else is shown.
-	if len(fields) > 0 || (mem == nil && change == nil && len(sections) == 0) {
+	if len(fields) > 0 || (mem == nil && curation == nil && change == nil && len(sections) == 0) {
 		sections = append(sections, ui.Section{Title: "Settings", Subtitle: subtitle, Body: body})
 	}
 	if mem != nil {
 		sections = append(sections, *mem)
+	}
+	if curation != nil {
+		sections = append(sections, *curation)
 	}
 	if change != nil {
 		sections = append(sections, *change)
