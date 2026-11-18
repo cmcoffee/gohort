@@ -10,6 +10,7 @@ package orchestrate
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -41,7 +42,14 @@ func exportAppOwned(owner, slug string) (map[string][]byte, string, string) {
 	if d, ok := LoadPipelineDef(udb, owner, spec.PipelineID); ok && d.OwningApp == slug {
 		pipelineName = d.Name
 	}
-	return appOwnedFiles(owner, slug), agentName, pipelineName
+	files := appOwnedFiles(owner, slug)
+	// The file stores it was granted, so the importer is asked for theirs
+	// (app_needs.go). Export only: never in the app's folder or history.
+	if stores := appStoreNeeds(owner, slug); len(stores) > 0 {
+		b, _ := json.Marshal(stores)
+		files[appStoresFile] = b
+	}
+	return files, agentName, pipelineName
 }
 
 // importAppOwned is core's AppOwnedImport: files written to a folder of
@@ -80,6 +88,9 @@ func importAppOwned(owner, slug string, files map[string][]byte) error {
 	if _, err := t.applyAppOwned(slug, folder); err != nil {
 		return err
 	}
+	// What it names that only a deployment has: found here mapped to
+	// itself, the rest for its owner to answer (app_needs.go).
+	defer recordAppNeeds(owner, slug, readAppStoresFile(files))
 	spec, ok := LoadAppSpec(owner, slug)
 	if !ok {
 		return nil

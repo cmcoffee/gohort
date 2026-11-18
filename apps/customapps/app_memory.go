@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/applocal"
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
@@ -52,7 +53,7 @@ func (T *CustomApps) appMemoryList(a *appCall) (any, error) {
 	}
 	learned := []map[string]any{}
 	if appKeepsMemory(a.spec) {
-		for _, f := range ListMemoryFacts(personStore(a.User), AppMemoryNamespace(a.owner, a.spec.Slug)) {
+		for _, f := range ListMemoryFacts(personStore(a.User), applocal.AppMemoryNamespace(a.owner, a.spec.Slug)) {
 			learned = append(learned, map[string]any{"id": f.ID, "note": f.Note, "created": f.Created})
 		}
 	}
@@ -63,7 +64,7 @@ func (T *CustomApps) appMemoryList(a *appCall) (any, error) {
 // (?id=), or all of it.
 func (T *CustomApps) appMemoryForget(a *appCall, _ struct{}) (any, error) {
 	db := personStore(a.User)
-	ns := AppMemoryNamespace(a.owner, a.spec.Slug)
+	ns := applocal.AppMemoryNamespace(a.owner, a.spec.Slug)
 	id := strings.TrimSpace(a.R.URL.Query().Get("id"))
 	n := 0
 	for _, f := range ListMemoryFacts(db, ns) {
@@ -79,13 +80,13 @@ func (T *CustomApps) appMemoryForget(a *appCall, _ struct{}) (any, error) {
 
 // appMemoryMe is the caller's own switch: whether the app remembers them.
 func (T *CustomApps) appMemoryMe(a *appCall) (any, error) {
-	return map[string]any{"remember": !AppMemoryOptedOut(personStore(a.User), a.owner, a.spec.Slug)}, nil
+	return map[string]any{"remember": !applocal.AppMemoryOptedOut(personStore(a.User), a.owner, a.spec.Slug)}, nil
 }
 
 func (T *CustomApps) saveAppMemoryMe(a *appCall, in struct {
 	Remember bool `json:"remember"`
 }) (any, error) {
-	SetAppMemoryOptOut(personStore(a.User), a.owner, a.spec.Slug, !in.Remember)
+	applocal.SetAppMemoryOptOut(personStore(a.User), a.owner, a.spec.Slug, !in.Remember)
 	return map[string]any{"ok": true}, nil
 }
 
@@ -173,7 +174,7 @@ func (T *CustomApps) appCuration(a *appCall) (any, error) {
 	if !a.mine() {
 		return nil, jsonapi.Forbidden("the app's owner sets this")
 	}
-	return map[string]any{"keep_current": !AppCurationOff(a.owner, a.spec.Slug)}, nil
+	return map[string]any{"keep_current": !applocal.AppCurationOff(a.owner, a.spec.Slug)}, nil
 }
 
 func (T *CustomApps) saveAppCuration(a *appCall, in struct {
@@ -182,7 +183,7 @@ func (T *CustomApps) saveAppCuration(a *appCall, in struct {
 	if !a.mine() {
 		return nil, jsonapi.Forbidden("the app's owner sets this")
 	}
-	SetAppCurationOff(a.owner, a.spec.Slug, !in.KeepCurrent)
+	applocal.SetAppCurationOff(a.owner, a.spec.Slug, !in.KeepCurrent)
 	return map[string]any{"ok": true}, nil
 }
 

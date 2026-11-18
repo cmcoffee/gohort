@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/applocal"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -91,7 +92,7 @@ func TestAnAppsCurationSettingLeavesItsBlueprint(t *testing.T) {
 	if scheduled() != "week" {
 		t.Fatalf("the blueprint's refresh is not scheduled: %q", scheduled())
 	}
-	SetAppCurationOff("u", "desk", true)
+	applocal.SetAppCurationOff("u", "desk", true)
 	c, _ := LoadCollection(udb, "u", id)
 	if scheduled() != "" || c.Refresh != "week" || collectionFileOf(udb, "u", c).Refresh != "week" {
 		t.Errorf("switched off: scheduled %q, blueprint %q", scheduled(), c.Refresh)
@@ -102,7 +103,7 @@ func TestAnAppsCurationSettingLeavesItsBlueprint(t *testing.T) {
 	if c, _ = LoadCollection(udb, "u", id); c.Refresh != "month" || scheduled() != "" {
 		t.Errorf("a change of interval while switched off: blueprint %q, scheduled %q", c.Refresh, scheduled())
 	}
-	SetAppCurationOff("u", "desk", false)
+	applocal.SetAppCurationOff("u", "desk", false)
 	if scheduled() != "month" {
 		t.Errorf("switched back on: scheduled %q", scheduled())
 	}

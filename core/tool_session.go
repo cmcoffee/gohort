@@ -66,6 +66,12 @@ type ToolSession struct {
 	// by an app script's run, for one that declared "knowledge_add". Nil:
 	// refused.
 	KnowledgeAdd func(collection, title, text string) (string, error)
+	// CredentialAlias, when set, is what a credential an app's script or
+	// tool names means on this deployment (core.AppNeedAlias): the name of
+	// the owner's credential it is mapped to, or an error when the app goes
+	// without it here. Set for an app's scripts and agents; nil: the name
+	// is the credential.
+	CredentialAlias func(name string) (string, error)
 	// StoreCommand and StorePull, when set, are what gohort.store_command and
 	// gohort.store_pull reach: a file store's registered command run on one
 	// of its folders (input "" is the first phase of a two-phase command,
@@ -1009,4 +1015,13 @@ func (s *ToolSession) WithheldActionsFor(tool string) map[string]bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.withheldActions[strings.TrimSpace(tool)]
+}
+
+// aliasedCredential is the credential name means for this session (its
+// CredentialAlias), or name itself.
+func (s *ToolSession) aliasedCredential(name string) (string, error) {
+	if s == nil || s.CredentialAlias == nil {
+		return name, nil
+	}
+	return s.CredentialAlias(name)
 }

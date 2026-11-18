@@ -483,6 +483,9 @@ type chatTurn struct {
 	// appOwnsTools marks a turn of an app's agent whose app holds its own
 	// tools (AppSpec.OwnTools): the person's pool is not loaded for it.
 	appOwnsTools bool
+	// appToolsMapped marks the agent's tool list as mapped for its app
+	// (app_needs.go), once per turn.
+	appToolsMapped bool
 	// seedsIndexed marks an install that indexed a collection's seed
 	// files, whose text the folder then holds as indexed (app_owned.go).
 	seedsIndexed bool

@@ -34,6 +34,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/applocal"
 	"github.com/cmcoffee/gohort/core/apptools"
 )
 
@@ -388,7 +389,7 @@ func (aw *appWrite) copyBindings() error {
 		aw.spec.Memory = map[bool]string{true: "on", false: "off"}[aw.isUpdate]
 	}
 	if firstChange && aw.spec.Memory == "on" {
-		c.factsTo = AppMemoryNamespace(aw.spec.Owner, slug)
+		c.factsTo = applocal.AppMemoryNamespace(aw.spec.Owner, slug)
 		for _, a := range listAgents(udb, aw.spec.Owner) {
 			if a.OwningApp == slug && a.Owner == aw.spec.Owner {
 				owned = append(owned, a)

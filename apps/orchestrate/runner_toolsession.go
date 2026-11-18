@@ -133,6 +133,9 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 	if sess == nil || poolDB == nil || poolUser == "" {
 		return
 	}
+	// An app's agent's tools as the app's names for them are mapped here
+	// (app_needs.go), before anything reads its list.
+	t.mapAppAgentTools()
 	// Which pool tools this agent loads (builder_delegation.go). A Builder
 	// run another agent sent loads only what that agent would load itself:
 	// what it may not use, Builder may not run or fix on its behalf.

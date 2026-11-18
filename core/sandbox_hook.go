@@ -1795,6 +1795,13 @@ func (h *SandboxHook) handleSecret(conn net.Conn, params map[string]interface{})
 		writeHookError(conn, fmt.Sprintf("secret %q not granted to this tool, add \"secret:%s\" to hook_capabilities", name, name))
 		return
 	}
+	// What the app's name for it means here (an imported app's mapping).
+	if mapped, err := h.Sess.aliasedCredential(name); err != nil {
+		writeHookError(conn, err.Error())
+		return
+	} else {
+		name = mapped
+	}
 	sec := Secure()
 	// Owner-aware: a user's own My-API-credentials entry resolves for that
 	// user's tools, not just global (admin) credentials. Falls back to
@@ -1901,6 +1908,12 @@ func (h *SandboxHook) handleFetchVia(conn net.Conn, params map[string]interface{
 		Log("[hook/fetch_via] DENIED credential=%q (not in capabilities=%v)", credName, h.Capabilities)
 		writeHookError(conn, fmt.Sprintf("fetch_via credential %q not granted to this tool, add \"fetch_via:%s\" to hook_capabilities", credName, credName))
 		return
+	}
+	if mapped, err := h.Sess.aliasedCredential(credName); err != nil {
+		writeHookError(conn, err.Error())
+		return
+	} else {
+		credName = mapped
 	}
 	// Secured-credential enforcement: a secured cred is reachable only by the users
 	// it's shared with (WHO) AND through APPROVED declaring tools (WHAT). Grandfathers

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/applocal"
 	"github.com/cmcoffee/gohort/core/appstores"
 	"github.com/cmcoffee/gohort/core/bgrun"
 	"github.com/cmcoffee/gohort/tools/temptool"
@@ -159,6 +160,15 @@ func (j Job) Run() (string, error) {
 		for _, g := range grants {
 			byStore[g.Store] = g
 		}
+		// A store the app names that is mapped to one of the owner's here
+		// (an imported app's) is found under the app's name for it.
+		for _, n := range applocal.LoadAppNeeds(user, slug) {
+			if n.Kind == "store" && n.Map != "" {
+				if g, ok := byStore[n.Map]; ok {
+					byStore[n.Name] = g
+				}
+			}
+		}
 		b, _ := json.Marshal(byStore)
 		args = withArg(args, "GOHORT_STORES", string(b))
 	}
@@ -218,8 +228,15 @@ func (j Job) Run() (string, error) {
 	if caller == "" {
 		caller = user
 	}
+	// What the app's names mean here (an imported app's mappings): its
+	// credentials and the tools it calls.
+	sess.CredentialAlias = applocal.AppCredentialAlias(user, slug)
 	sess.CallTool = func(name string, args map[string]any) (string, error) {
-		return temptool.CallToolForScript(sess, name, args)
+		to, off := applocal.AppNeedAlias(user, slug, "tool", name)
+		if off {
+			return "", applocal.AppNeedRefusal(user, slug, "tool", name)
+		}
+		return temptool.CallToolForScript(sess, to, args)
 	}
 	app := func() (AppSpec, error) {
 		if j.Spec != nil {
@@ -308,13 +325,33 @@ func storeFuncs(sess *ToolSession, owner, slug string) {
 	if appstores.Provider == nil {
 		return
 	}
+	// A store the app names means the owner's store it is mapped to here.
+	mapped := func(store string) (string, error) {
+		to, off := applocal.AppNeedAlias(owner, slug, "store", store)
+		if off {
+			return "", applocal.AppNeedRefusal(owner, slug, "file store", store)
+		}
+		return to, nil
+	}
 	sess.StoreCommand = func(store, folder, command, input string) (string, error) {
+		store, err := mapped(store)
+		if err != nil {
+			return "", err
+		}
 		return appstores.Provider.RunCommand(sess.Context(), owner, slug, store, folder, command, input)
 	}
 	sess.StoreAction = func(store, command, action string, values map[string]any) (string, error) {
+		store, err := mapped(store)
+		if err != nil {
+			return "", err
+		}
 		return appstores.Provider.RunAction(sess.Context(), owner, slug, store, command, action, values)
 	}
 	sess.StorePull = func(store, item string, replace bool) (string, error) {
+		store, err := mapped(store)
+		if err != nil {
+			return "", err
+		}
 		return appstores.Provider.Pull(sess.Context(), owner, slug, store, item, replace)
 	}
 }

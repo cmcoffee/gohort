@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/applocal"
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/apptools"
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -165,7 +166,7 @@ func TestAnAppsFirstChangeMakesWhatItPointsAtItsOwn(t *testing.T) {
 	if spec.Memory != "on" {
 		t.Errorf("an existing app's first change left its memory %q, want on", spec.Memory)
 	}
-	appNS := AppMemoryNamespace("u", "desk")
+	appNS := applocal.AppMemoryNamespace("u", "desk")
 	facts := ListMemoryFacts(udb, appNS)
 	var dana bool
 	for _, f := range facts {

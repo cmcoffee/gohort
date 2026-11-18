@@ -22,6 +22,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/applocal"
 	"github.com/cmcoffee/gohort/core/apptools"
 	"github.com/cmcoffee/gohort/core/ui"
 )
@@ -678,6 +679,8 @@ func (t *chatTurn) loadAppSpaceTools(sess *ToolSession, owner string) map[string
 	if sess == nil || slug == "" || owner == "" {
 		return nil
 	}
+	// What the app's names mean here (an imported app's mappings).
+	sess.CredentialAlias = applocal.AppCredentialAlias(owner, slug)
 	tools := apptools.Load(owner, slug)
 	names := make(map[string]bool, len(tools))
 	// An app that holds its own tools (AppSpec.OwnTools, piece D) cuts the
@@ -698,6 +701,16 @@ func (t *chatTurn) loadAppSpaceTools(sess *ToolSession, owner string) map[string
 		if why := apptools.Held(owner, slug, tool, review); why != "" {
 			Log("[orchestrate.tools] app %s/%s: tool %q not loaded: %s", owner, slug, tool.Name, why)
 			continue
+		}
+		// The credential it dispatches through, as the app's name for it
+		// is mapped here; one the app goes without holds the tool back.
+		if c := strings.TrimSpace(tool.Credential); c != "" && c != "no_auth" {
+			to, off := applocal.AppNeedAlias(owner, slug, "credential", c)
+			if off {
+				Log("[orchestrate.tools] app %s/%s: tool %q not loaded: the app goes without the credential %q here", owner, slug, tool.Name, c)
+				continue
+			}
+			tool.Credential = to
 		}
 		if err := sess.AppendTempTool(&tool); err != nil {
 			Log("[orchestrate.tools] app %s/%s: tool %q failed to load: %v", owner, slug, tool.Name, err)

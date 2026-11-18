@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/applocal"
 	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/prompts"
 	"github.com/cmcoffee/gohort/core/textutil"
@@ -687,7 +688,13 @@ func agentVoice(owner, agentID string) string {
 		return ""
 	}
 	if a, ok := loadAgent(udb, agentID); ok {
-		return strings.TrimSpace(a.Voice)
+		voice := strings.TrimSpace(a.Voice)
+		// An app's agent speaks in the voice the app's is mapped to here,
+		// or the deployment's when the app goes without it.
+		if a.OwningApp != "" && voice != "" {
+			voice, _ = applocal.AppNeedAlias(firstNonEmptyStr(a.Owner, owner), a.OwningApp, "voice", voice)
+		}
+		return voice
 	}
 	return ""
 }

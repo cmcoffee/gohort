@@ -19,6 +19,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/applocal"
 )
 
 // collectionRefreshKind is the scheduler task a refresh is.
@@ -86,7 +87,7 @@ func setRefresh(owner, collection, every string) error {
 // change. For an app's collection that is its blueprint (Collection.Refresh,
 // recorded in the app's history by its save), and the schedule follows it
 // unless the app's setting keeps its collections from refreshing here
-// (AppCurationOff); for any other, the schedule is all there is.
+// (applocal.AppCurationOff); for any other, the schedule is all there is.
 func setCollectionRefresh(udb Database, c Collection, every, via string) error {
 	every = strings.TrimSpace(every)
 	if every == "never" {
@@ -104,7 +105,7 @@ func setCollectionRefresh(udb Database, c Collection, every, via string) error {
 		c.Refresh = every
 		SaveCollectionBy(udb, c, via)
 	}
-	if AppCurationOff(c.Owner, c.OwningApp) {
+	if applocal.AppCurationOff(c.Owner, c.OwningApp) {
 		return setRefresh(c.Owner, c.ID, "")
 	}
 	return setRefresh(c.Owner, c.ID, every)
@@ -116,7 +117,7 @@ func scheduleAppCuration(owner, slug string) {
 	if orchestrateBaseDB == nil {
 		return
 	}
-	off := AppCurationOff(owner, slug)
+	off := applocal.AppCurationOff(owner, slug)
 	for _, c := range listCollections(UserDB(orchestrateBaseDB, owner), owner) {
 		if c.OwningApp != slug || c.Owner != owner {
 			continue
@@ -131,7 +132,7 @@ func scheduleAppCuration(owner, slug string) {
 	}
 }
 
-func init() { AppCurationChanged = scheduleAppCuration }
+func init() { applocal.AppCurationChanged = scheduleAppCuration }
 
 // refreshLine is what the page says about the schedule: when the next one is
 // due and what the last one did, or "" when there is none.

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/applocal"
 )
 
 // An app's memory is the app's, and each person's own: every agent of the
@@ -49,11 +50,11 @@ func TestAnAppsMemoryIsTheAppsAndEachPersonsOwn(t *testing.T) {
 		t.Errorf("%d facts landed in the agent's own memory, not the app's", n)
 	}
 
-	guestDB, ns := UserDB(orchestrateBaseDB, "guest"), AppMemoryNamespace("u", "desk")
-	if facts := ListMemoryFacts(guestDB, ns); len(facts) != 1 || AppMemoryOptedOut(guestDB, "u", "desk") {
+	guestDB, ns := UserDB(orchestrateBaseDB, "guest"), applocal.AppMemoryNamespace("u", "desk")
+	if facts := ListMemoryFacts(guestDB, ns); len(facts) != 1 || applocal.AppMemoryOptedOut(guestDB, "u", "desk") {
 		t.Fatalf("what the app remembers about the guest: %+v", facts)
 	}
-	SetAppMemoryOptOut(guestDB, "u", "desk", true)
+	applocal.SetAppMemoryOptOut(guestDB, "u", "desk", true)
 	if _, err := as("guest", clerk).storeFactNote("Guest has a cat.", ClaimDomainUnknown, MemSourceObserved, time.Time{}); err == nil || !strings.Contains(err.Error(), "not to remember them") {
 		t.Errorf("a save about a person who turned it off: %v", err)
 	}
