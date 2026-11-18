@@ -537,6 +537,30 @@ Stage 2 (an app holds everything it runs on):
    schedules defined in the blueprint; the first-change copy keeping what
    the agent learned about this app's people; deleting an app listing what
    it owns.
+
+   **Piece F (owner, 2026-11-18).**
+   - **Model tiers: already so.** An agent names a tier (`lead_model`:
+     worker or lead), a pipeline stage and a machine step `"worker"` or
+     `"lead"`; nothing in an app names a model. Which model a tier is
+     stays the deployment's (routing). An agent's TTS voice is the one
+     name that is the deployment's; it is asked for on import.
+   - **Schedules: already so.** An app's scheduled work is its actions'
+     schedules (in app.json) and its collections' refresh (their
+     blueprints, piece E2); when each next runs and how the last run went
+     are the scheduler's, data. An agent's recurring updates belong to a
+     conversation, not to an app.
+   - **Export carries what the app owns (F1, 0.9.537).** An app's recipe
+     carries its folder's owned files (agents, pipelines, machines, tools
+     with their scripts, collections' blueprints and seed files) under
+     "owned", its own agent and pipeline named by name; nothing it owns
+     rides beside it as a dependency. An import saves the app switched off
+     and applies them as an install applies a folder, credited to the
+     import, binding the app to its copies. Older bundles import as they
+     did; their bound agent becomes the app's own on its first change.
+   - **What does not travel is asked for on import (F2).** Credentials,
+     MCP servers, voices and file stores the app names are listed on
+     import; each is matched to one of the importer's or marked "go
+     without", and the app stays off until every one is.
 10. Blueprints: a collection's blueprint and seed files, and each agent's
    starting memory, in the app; documents and learned memory kept as data,
    out of git and exports. An app's collections: the app's mark, only its

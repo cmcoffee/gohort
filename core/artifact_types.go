@@ -1331,7 +1331,56 @@ func (customAppArtifact) ExportArtifact(_ Database, name, owner string) (json.Ra
 	spec.Maintainers, spec.Managers = nil, nil
 	spec.DataOwner = ""
 	spec.PublicToken = ""
-	return marshalAppWithAssets(spec, owner)
+	// What the app owns (its agents, pipelines, machines, tools and
+	// collections' blueprints) as the files of its folder: an older reader
+	// finds no "owned" and imports the app as it always did. Its own agent
+	// and pipeline are named by their names, which the importer binds to
+	// its copies of them.
+	var files map[string][]byte
+	if AppOwnedExport != nil {
+		var agentName, pipelineName string
+		files, agentName, pipelineName = AppOwnedExport(owner, spec.Slug)
+		if agentName != "" {
+			spec.AgentID = agentName
+		}
+		if pipelineName != "" {
+			spec.PipelineID = pipelineName
+		}
+	}
+	recipe, err := marshalAppWithAssets(spec, owner)
+	if err != nil || len(files) == 0 {
+		return recipe, err
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(recipe, &m); err != nil {
+		return nil, err
+	}
+	enc, _ := json.Marshal(files)
+	m["owned"] = enc
+	return json.Marshal(m)
+}
+
+// AppOwnedExport, set by the app that keeps agents, is what owner's app slug
+// owns as the files of its folder (docs/design/app-history.md, piece F), and
+// the names of the agent and pipeline it binds when they are among them ("" when
+// not), so an export carries them inside the app rather than as
+// dependencies beside it.
+var AppOwnedExport func(owner, slug string) (files map[string][]byte, agentName, pipelineName string)
+
+// AppOwnedImport, set by the app that keeps agents, makes what an imported
+// app's recipe says it owns (files, as AppOwnedExport wrote them) the app's
+// own under owner, and binds the app to its own agent and pipeline.
+var AppOwnedImport func(owner, slug string, files map[string][]byte) error
+
+// appRecipeOwned reads what a custom-app recipe says the app owns.
+func appRecipeOwned(recipe json.RawMessage) map[string][]byte {
+	var r struct {
+		Owned map[string][]byte `json:"owned"`
+	}
+	if json.Unmarshal(recipe, &r) != nil {
+		return nil
+	}
+	return r.Owned
 }
 
 // appBundleAssetsMax bounds the assets one app's recipe carries, encoded.
@@ -1411,7 +1460,12 @@ func (customAppArtifact) Dependencies(_ Database, name, owner string) []Artifact
 			spec.AgentID = n
 		}
 	}
-	return customAppRecipeDeps(spec, owner)
+	ownsAgent := false
+	if AppOwnedExport != nil {
+		_, agentName, _ := AppOwnedExport(owner, spec.Slug)
+		ownsAgent = agentName != ""
+	}
+	return customAppRecipeDeps(spec, owner, ownsAgent)
 }
 
 // RecipeDependencies extracts the same references straight from a recipe (the
@@ -1422,14 +1476,21 @@ func (customAppArtifact) RecipeDependencies(_ Database, recipe json.RawMessage, 
 	if json.Unmarshal(recipe, &spec) != nil {
 		return nil
 	}
-	return customAppRecipeDeps(spec, strings.TrimSpace(owner))
+	// An agent the recipe carries as the app's own is no dependency.
+	ownsAgent := false
+	for f := range appRecipeOwned(recipe) {
+		if strings.HasPrefix(f, "agents/") {
+			ownsAgent = true
+		}
+	}
+	return customAppRecipeDeps(spec, strings.TrimSpace(owner), ownsAgent)
 }
 
 // customAppRecipeDeps is the one walk behind both dependency interfaces: the
 // bound chat agent plus every fetch_via credential named by a data source or
 // action's sandbox capabilities. Bootstrap credential sentinels are filtered,
 // same as everywhere.
-func customAppRecipeDeps(spec AppSpec, owner string) []ArtifactSel {
+func customAppRecipeDeps(spec AppSpec, owner string, ownsAgent bool) []ArtifactSel {
 	seen := map[string]bool{}
 	var out []ArtifactSel
 	add := func(typ, name, o string) {
@@ -1440,7 +1501,7 @@ func customAppRecipeDeps(spec AppSpec, owner string) []ArtifactSel {
 		seen[key] = true
 		out = append(out, ArtifactSel{Type: typ, Name: name, Owner: o})
 	}
-	if ref := strings.TrimSpace(spec.AgentID); ref != "" {
+	if ref := strings.TrimSpace(spec.AgentID); ref != "" && !ownsAgent {
 		add("agent", ref, owner)
 	}
 	capCreds := func(caps []string) {
@@ -1516,6 +1577,15 @@ func (customAppArtifact) ImportArtifact(_ Database, recipe json.RawMessage, owne
 	for n, data := range appRecipeAssets(recipe) {
 		if _, err := SaveAppAsset(owner, slug, n, data); err != nil {
 			Log("[artifacts] app %q: asset %q not imported: %v", slug, n, err)
+		}
+	}
+	// What it owns, made its own here (piece F); the app stays switched off.
+	if owned := appRecipeOwned(recipe); len(owned) > 0 {
+		if AppOwnedImport == nil {
+			return slug, "", Error("this app carries what it owns (its agents, tools, collections), and nothing here can take them in")
+		}
+		if err := AppOwnedImport(owner, slug, owned); err != nil {
+			return slug, "", fmt.Errorf("the app was imported, switched off, but what it owns was not all taken in: %w", err)
 		}
 	}
 	return slug, "", nil

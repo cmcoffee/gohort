@@ -1,0 +1,98 @@
+package orchestrate
+
+// An app's export carries what it owns (docs/design/app-history.md, piece F):
+// its agents, pipelines, machines, tools and collections' blueprints, as the
+// files of its folder (appOwnedFiles), inside the app's recipe; an import
+// makes them the imported app's own through the same path an install of the
+// folder takes, credited to the import, and binds the app to its own agent
+// and pipeline. What it holds as data (records, memory, what its collections
+// gathered) never travels.
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	. "github.com/cmcoffee/gohort/core"
+)
+
+func init() {
+	AppOwnedExport = exportAppOwned
+	AppOwnedImport = importAppOwned
+}
+
+// exportAppOwned is core's AppOwnedExport.
+func exportAppOwned(owner, slug string) (map[string][]byte, string, string) {
+	o, ok := agenthostApp()
+	if !ok || o.DB == nil {
+		return nil, "", ""
+	}
+	spec, ok := LoadAppSpec(owner, slug)
+	if !ok {
+		return nil, "", ""
+	}
+	udb := UserDB(o.DB, owner)
+	agentName, pipelineName := "", ""
+	if a, ok := loadAgent(udb, spec.AgentID); ok && a.OwningApp == slug {
+		agentName = a.Name
+	}
+	if d, ok := LoadPipelineDef(udb, owner, spec.PipelineID); ok && d.OwningApp == slug {
+		pipelineName = d.Name
+	}
+	return appOwnedFiles(owner, slug), agentName, pipelineName
+}
+
+// importAppOwned is core's AppOwnedImport: files written to a folder of
+// their own, read and applied as an install applies a folder, the import
+// credited with each change, and the app bound to its own agent and pipeline
+// by the names its recipe carries.
+func importAppOwned(owner, slug string, files map[string][]byte) error {
+	o, ok := agenthostApp()
+	if !ok || o.DB == nil {
+		return fmt.Errorf("agents are not available here")
+	}
+	dir, err := os.MkdirTemp("", "app-import-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	for name, data := range files {
+		clean := filepath.Clean(filepath.FromSlash(name))
+		if clean == "." || strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
+			return fmt.Errorf("the recipe names a file outside the app's folder: %q", name)
+		}
+		p := filepath.Join(dir, clean)
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(p, data, 0o600); err != nil {
+			return err
+		}
+	}
+	folder, err := readAppOwnedFolder(dir, "the app's recipe")
+	if err != nil {
+		return err
+	}
+	t := o.personTurn(context.Background(), owner)
+	t.via = "import"
+	if _, err := t.applyAppOwned(slug, folder); err != nil {
+		return err
+	}
+	spec, ok := LoadAppSpec(owner, slug)
+	if !ok {
+		return nil
+	}
+	changed := false
+	if id, ok := appScopedRef(t.udb, owner, slug, "agent", spec.AgentID); ok && id != spec.AgentID {
+		spec.AgentID, changed = id, true
+	}
+	if id, ok := appScopedRef(t.udb, owner, slug, "pipeline", spec.PipelineID); ok && id != spec.PipelineID {
+		spec.PipelineID, changed = id, true
+	}
+	if changed {
+		SaveAppSpecBy(spec, AppSaveNoHistory, owner, "import")
+	}
+	return nil
+}
