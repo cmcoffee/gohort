@@ -2,6 +2,8 @@ package orchestrate
 
 import (
 	"context"
+	"encoding/json"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"os"
 	"path/filepath"
 	"strings"
@@ -170,5 +172,70 @@ func TestUnchangedLongNotesDoNotStopAnInstall(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "NOTES.md"), []byte(spec.Notes+" One more decision, and why it was made."), 0o644)
 	if _, err := T.InstallAppFolder(context.Background(), "u", dir, ""); err == nil || !strings.Contains(err.Error(), "cap") {
 		t.Errorf("notes written over the cap: %v", err)
+	}
+}
+
+// An install applies what the app owns as the folder says: an agent's file
+// changed in the folder is the agent changed (its people's choices kept), a
+// new file is a new agent of the app, a file that does not parse stops the
+// install before anything is saved, and an agent whose file is gone is kept
+// and said: an item is removed with Builder, never by leaving out its file.
+func TestAnInstallAppliesWhatTheAppOwns(t *testing.T) {
+	turn, _ := folderTestTurn(t)
+	T, dir := installTestApp(t, turn)
+	prevHost := agenthost.Get()
+	agenthost.Register(T)
+	t.Cleanup(func() { agenthost.Register(prevHost) })
+	udb := UserDB(T.DB, "u")
+	helper, err := saveAgent(udb, AgentRecord{Owner: "u", Name: "Helper", OrchestratorPrompt: "Help.", OwningApp: "wx",
+		AutoApproveTools: []string{"web_search"}, appEdit: "Builder"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteAppFolder("u", "wx", dir); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "agents", "helper.json")
+	raw, err := os.ReadFile(file)
+	if err != nil || !strings.Contains(string(raw), "Help.") {
+		t.Fatalf("the folder does not hold the app's agent: %v %s", err, raw)
+	}
+	var rec map[string]any
+	json.Unmarshal(raw, &rec)
+	rec["orchestrator_prompt"] = "Help kindly."
+	edited, _ := json.MarshalIndent(rec, "", "  ")
+	os.WriteFile(file, edited, 0o644)
+
+	broken := filepath.Join(dir, "agents", "broken.json")
+	os.WriteFile(broken, []byte("{"), 0o644)
+	if _, err := T.InstallAppFolder(context.Background(), "u", dir, "Kinder"); err == nil || !strings.Contains(err.Error(), "does not read") {
+		t.Fatalf("a file that does not parse: %v", err)
+	}
+	if got, _ := loadAgent(udb, helper.ID); got.OrchestratorPrompt != "Help." {
+		t.Error("an install stopped by a bad file still changed the agent")
+	}
+	os.Remove(broken)
+
+	os.WriteFile(filepath.Join(dir, "agents", "scout.json"), []byte(`{"name": "Scout", "orchestrator_prompt": "Scout ahead."}`), 0o644)
+	out, err := T.InstallAppFolder(context.Background(), "u", dir, "Kinder, and a scout")
+	if err != nil || !strings.Contains(out, "Also saved: agent Helper, agent Scout") {
+		t.Fatalf("install: %v %s", err, out)
+	}
+	got, _ := loadAgent(udb, helper.ID)
+	if got.OrchestratorPrompt != "Help kindly." || len(got.AutoApproveTools) != 1 {
+		t.Errorf("the agent after: prompt %q, its people's choices %v", got.OrchestratorPrompt, got.AutoApproveTools)
+	}
+	scout, ok := findAgentByNameOrID(udb, "u", "Scout")
+	if !ok || scout.OwningApp != "wx" {
+		t.Errorf("the new file made no agent of the app: %+v", scout)
+	}
+
+	os.Remove(file)
+	out, err = T.InstallAppFolder(context.Background(), "u", dir, "Drop the helper file")
+	if err != nil || !strings.Contains(out, `Not in the folder, and kept: agent "Helper"`) {
+		t.Fatalf("an install with the agent's file gone: %v %s", err, out)
+	}
+	if _, ok := loadAgent(udb, helper.ID); !ok {
+		t.Error("an agent was deleted because its file was left out")
 	}
 }

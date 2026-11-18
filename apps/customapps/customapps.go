@@ -668,7 +668,7 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 					{Type: "button", Label: "Resume", Method: "POST", PostTo: "_app/schedule?slug={slug}&on=true", OnlyIf: "auto_paused"},
 					{Type: "button", Label: "Export", Method: "client", PostTo: "export_custom_app", OnlyIf: "mine"},
 					{Type: "button", Label: "Delete", Method: "DELETE", PostTo: "_app?slug={slug}", OnlyIf: "mine", Variant: "danger",
-						Confirm: "Delete this app and all its data? This can't be undone."},
+						Confirm: "Delete this app and all its data? This can't be undone.", ConfirmField: "delete_confirm"},
 				},
 			}}},
 		}},
@@ -942,8 +942,12 @@ func (T *CustomApps) handleDeleteApp(c *jsonapi.Call, _ struct{}) (any, error) {
 	if slug == "" {
 		return nil, jsonapi.BadRequest("slug required")
 	}
+	// A person deleting an app deletes what it owns (its agents, pipelines,
+	// machines). Here and not in deleteApp, which a move to another account
+	// also runs, and what the app owns must not go with that.
+	gone, kept := DeleteAppOwned(c.User, slug)
 	T.deleteApp(c.User, slug)
-	return map[string]bool{"ok": true}, nil
+	return map[string]any{"ok": true, "deleted": gone, "kept": kept}, nil
 }
 
 // deleteApp removes one of owner's apps and what it leaves behind: its spec,
@@ -1068,6 +1072,11 @@ func (T *CustomApps) handleAppsList(c *jsonapi.Call) (any, error) {
 		row := map[string]string{"slug": s.Slug, "name": s.Name, "desc": s.Desc, "mine": "1", "can_change": "1", "group": "Your apps", "state": "private"}
 		if len(visibleSettings(s, true)) > 0 {
 			row["has_settings"] = "1"
+		}
+		// The delete confirmation says what goes with the app (its own
+		// agents, pipelines, machines), with counts.
+		if owned := AppOwnedCount(c.User, s.Slug); owned != "" {
+			row["delete_confirm"] = "Delete this app, all its data, and what it owns (" + owned + ")? This can't be undone."
 		}
 		if hasScripts(s) {
 			row["has_runs"] = "1"

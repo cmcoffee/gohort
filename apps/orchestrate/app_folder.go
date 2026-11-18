@@ -618,6 +618,12 @@ func (t *chatTurn) publishAppFolder(abs, rel string, o folderPublish) (string, e
 	if err != nil {
 		return "", err
 	}
+	// What the app owns (agents/, pipelines/, machines/), read before
+	// anything is saved, so a file that does not parse stops the install.
+	owned, err := readAppOwnedFolder(abs, rel)
+	if err != nil {
+		return "", err
+	}
 	live, exists := LoadAppSpec(t.user, m.Slug)
 	if exists {
 		in["id"] = m.Slug
@@ -656,6 +662,12 @@ func (t *chatTurn) publishAppFolder(abs, rel string, o folderPublish) (string, e
 	if err != nil {
 		return "", fmt.Errorf("%s not published: %w", rel, err)
 	}
+	// Then what it owns, changed as the folder says (app_owned.go). The app
+	// is saved by now, so a refusal here leaves it installed and says so.
+	ownedLine, ownedErr := t.applyAppOwned(m.Slug, owned)
+	if ownedErr != nil && t.savedBroken == "" {
+		t.savedBroken = "what it owns was not all saved: " + ownedErr.Error()
+	}
 	notesNote := ""
 	if saved, ok := LoadAppSpec(t.user, m.Slug); ok {
 		os.WriteFile(filepath.Join(abs, appFolderBaseFile), []byte(appLiveFingerprint(saved)), 0o644)
@@ -683,7 +695,10 @@ func (t *chatTurn) publishAppFolder(abs, rel string, o folderPublish) (string, e
 		}
 		saved = append(saved, name)
 	}
-	head := fmt.Sprintf("Published %s/ to app %q.", rel, m.Name)
+	head := fmt.Sprintf("Published %s/ to app %q.", rel, m.Name) + ownedLine
+	if ownedErr != nil {
+		head += " What it owns was NOT all saved: " + ownedErr.Error() + "."
+	}
 	if notesNote != "" {
 		head += "\n\n" + notesNote
 	}

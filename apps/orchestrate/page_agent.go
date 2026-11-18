@@ -899,7 +899,7 @@ func (ed *agentEditor) serve() {
 		// credentials, sharing, delete); stacking them made the page a long scroll.
 		MaxWidth:      "1100px",
 		SectionNav:    true,
-		Sections:      ed.sections,
+		Sections:      withAppOwnedNotice(ed.sections, ed.editRec.Owner, ed.editRec.OwningApp, "agent"),
 		ExtraHeadHTML: headHTML,
 	}
 	page.ServeHTTP(w, r)

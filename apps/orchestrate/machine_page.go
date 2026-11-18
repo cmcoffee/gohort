@@ -477,7 +477,7 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			Title:    "Shared with you to edit",
 			Subtitle: defOwner + " shared this machine with you and lets you change it. Your changes are to " + defOwner + "'s copy, which everyone it is shared with runs; who it is shared with, the agents that carry it, and deleting it stay " + defOwner + "'s.",
 		})
-		page.Sections = withoutEmptySections(page.Sections)
+		page.Sections = withAppOwnedNotice(withoutEmptySections(page.Sections), def.Owner, def.OwningApp, "machine")
 		page.ServeHTTP(w, r)
 		return
 	}
@@ -504,7 +504,7 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			FlagWhenField: "named",
 		}),
 	})
-	page.Sections = withoutEmptySections(page.Sections)
+	page.Sections = withAppOwnedNotice(withoutEmptySections(page.Sections), def.Owner, def.OwningApp, "machine")
 	page.ServeHTTP(w, r)
 }
 

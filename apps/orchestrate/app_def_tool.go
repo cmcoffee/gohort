@@ -567,7 +567,7 @@ func (t *chatTurn) appAgentLeftoverNote(slug, prevAgent string) string {
 		return ""
 	}
 	if !appLives && strings.EqualFold(strings.TrimSpace(a.OwningApp), slug) {
-		return "" // the delete's own leftovers list names it (appOwnedLeftovers)
+		return "" // the app's own agent went with it (deleteAppOwned)
 	}
 	if len(agentUsedBy(t.udb, t.user, a)) > 0 {
 		return ""

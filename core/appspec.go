@@ -596,6 +596,38 @@ func RegisterAppOwnedChangeHook(fn func(owner, slug, kind, name, appEdit string)
 	}
 }
 
+// appOwnedKeeper counts and deletes what an app owns, for the delete paths
+// (the Delete button, Builder's delete), which do not know where it lives.
+// Not a delete hook: moving an app to another account deletes the old copy,
+// and what it owns must not go with that.
+var appOwnedKeeper struct {
+	count  func(owner, slug string) string
+	delete func(owner, slug string) (gone, kept []string)
+}
+
+// RegisterAppOwnedKeeper installs what counts an app's owned items (as a
+// phrase, "2 agents and a pipeline", "" for none) and deletes them.
+func RegisterAppOwnedKeeper(count func(owner, slug string) string, del func(owner, slug string) (gone, kept []string)) {
+	appOwnedKeeper.count, appOwnedKeeper.delete = count, del
+}
+
+// AppOwnedCount says what owner's app slug owns, "" for nothing.
+func AppOwnedCount(owner, slug string) string {
+	if appOwnedKeeper.count == nil {
+		return ""
+	}
+	return appOwnedKeeper.count(owner, slug)
+}
+
+// DeleteAppOwned deletes what owner's app slug owns, for a person deleting
+// the app: what went, and what was kept and why.
+func DeleteAppOwned(owner, slug string) (gone, kept []string) {
+	if appOwnedKeeper.delete == nil {
+		return nil, nil
+	}
+	return appOwnedKeeper.delete(owner, slug)
+}
+
 // AppOwnedChanged tells the hooks that owner's app slug's kind name changed.
 func AppOwnedChanged(owner, slug, kind, name, appEdit string) {
 	if owner == "" || slug == "" {
