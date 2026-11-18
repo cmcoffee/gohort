@@ -90,6 +90,10 @@ type Job struct {
 var (
 	AppRunAgent    func(ctx context.Context, spec AppSpec, caller, agent, prompt string) (string, []string, error)
 	AppRunPipeline func(ctx context.Context, spec AppSpec, caller, pipeline, input string) (string, error)
+	// AppKnowledgeAdd answers gohort.knowledge_add: a document added to one
+	// of the app's own collections. Set by the app that keeps collections;
+	// nil, and refused.
+	AppKnowledgeAdd func(ctx context.Context, spec AppSpec, caller, collection, title, text string) (string, error)
 )
 
 // longRunSecs is the run cap of a script that runs an agent or a pipeline: a
@@ -261,6 +265,16 @@ func (j Job) Run() (string, error) {
 				return "", err
 			}
 			return AppRunPipeline(s.Context(), spec, caller, pipeline, input)
+		}
+		s.KnowledgeAdd = func(collection, title, text string) (string, error) {
+			if AppKnowledgeAdd == nil {
+				return "", fmt.Errorf("knowledge_add is not available here")
+			}
+			spec, err := app()
+			if err != nil {
+				return "", err
+			}
+			return AppKnowledgeAdd(s.Context(), spec, caller, collection, title, text)
 		}
 	}
 	bindModel(sess)
@@ -469,7 +483,7 @@ func onlyAddedCaps(caps []string) bool {
 		return false
 	}
 	for _, c := range caps {
-		if !strings.HasPrefix(c, "tool:") && c != "ask" && c != "run_agent" && c != "run_pipeline" {
+		if !strings.HasPrefix(c, "tool:") && c != "ask" && c != "run_agent" && c != "run_pipeline" && c != "knowledge_add" {
 			return false
 		}
 	}
@@ -542,6 +556,9 @@ func holdToCheck(sess *ToolSession) {
 	}
 	sess.RunPipeline = func(_, _ string) (string, error) {
 		return "", checkRefusal("running a pipeline")
+	}
+	sess.KnowledgeAdd = func(collection, _, _ string) (string, error) {
+		return "", checkRefusal("adding to the collection " + collection)
 	}
 	sess.StoreCommand = func(store, _, command, _ string) (string, error) {
 		return "", checkRefusal("the store command " + command)

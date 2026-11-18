@@ -593,6 +593,17 @@ Stage 2 (an app holds everything it runs on):
      folder again as indexed; a document whose file is left out is kept and
      said. What a curation run gathered is not a seed: the run gathers it
      again.
+   - **Step 3, who reaches it (0.9.534).** Only the app's own parts: its
+     agents read it and add to it (Builder too, building the app), its
+     scripts add to it with `gohort.knowledge_add(collection, title, text)`
+     (capability "knowledge_add", which reaches the app's own collections
+     only), and people through the app's page and the Knowledge page. An
+     agent outside the app does not see it in its searches or its
+     collections list, and is refused adding to it. What an agent or a
+     script adds is the app's data, indexed under names of its own, never
+     taken for a seed file. What it is (its name, description and
+     submitters) changes with Builder, as the app does; its plan from the
+     Knowledge page as well.
 
 Stage 3 (the app is its repository):
 

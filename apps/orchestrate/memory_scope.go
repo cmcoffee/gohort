@@ -231,7 +231,7 @@ func (t *chatTurn) searchOwnKnowledge(ctx context.Context, topic, query string, 
 			scope = ChunkScopeCuratedOnly
 		}
 	}
-	hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.readsOwnerCorpus(scope), t.agent.ID, topic, query, qVec, k, skills, t.agent.AttachedCollections, !t.agent.KnowledgeAttachedOnly, scope)
+	hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.readsOwnerCorpus(scope), t.agent.ID, topic, query, qVec, k, skills, agentReadsCollections(t.agent, t.agent.AttachedCollections), !t.agent.KnowledgeAttachedOnly, scope)
 	if !t.agent.MemoryPerDocument {
 		return hits
 	}

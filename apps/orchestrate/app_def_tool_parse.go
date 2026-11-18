@@ -270,7 +270,7 @@ func appScriptCaps(raw any, label string) ([]string, []string) {
 		// run_agent and run_pipeline are documented to the author and served
 		// by the hook, and were missing here, so a script declaring either
 		// had it dropped at save and was refused at run.
-		case c == "fetch", c == "log", c == "browse_page", c == "ask", c == "run_agent", c == "run_pipeline",
+		case c == "fetch", c == "log", c == "browse_page", c == "ask", c == "run_agent", c == "run_pipeline", c == "knowledge_add",
 			strings.HasPrefix(c, "secret:") && len(c) > len("secret:"),
 			strings.HasPrefix(c, "fetch_via:") && len(c) > len("fetch_via:"),
 			strings.HasPrefix(c, "tool:") && len(c) > len("tool:"):
@@ -281,7 +281,7 @@ func appScriptCaps(raw any, label string) ([]string, []string) {
 	}
 	var notes []string
 	if len(dropped) > 0 {
-		notes = append(notes, fmt.Sprintf("%s: capabilities %s IGNORED (known: fetch, log, browse_page, ask, run_agent, run_pipeline, secret:<credential>, fetch_via:<credential>, tool:<tool name>; reading env vars and printing JSON need none)", label, strings.Join(dropped, ", ")))
+		notes = append(notes, fmt.Sprintf("%s: capabilities %s IGNORED (known: fetch, log, browse_page, ask, run_agent, run_pipeline, knowledge_add, secret:<credential>, fetch_via:<credential>, tool:<tool name>; reading env vars and printing JSON need none)", label, strings.Join(dropped, ", ")))
 	}
 	if len(keep) == 0 {
 		return nil, notes

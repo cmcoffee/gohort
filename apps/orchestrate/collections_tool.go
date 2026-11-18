@@ -37,7 +37,12 @@ func collectionsListTool() ChatTool {
 			if sess == nil || sess.DB == nil || sess.Username == "" {
 				return "", errors.New("collections: requires authenticated session")
 			}
-			cols := listCollections(sess.DB, sess.Username)
+			var cols []Collection
+			for _, c := range listCollections(sess.DB, sess.Username) {
+				if agentCollectionRefusal(sess, c) == "" {
+					cols = append(cols, c)
+				}
+			}
 			type entry struct {
 				ID     string `json:"id"`
 				Name   string `json:"name"`
@@ -122,6 +127,9 @@ func collectionsListTool() ChatTool {
 			if !ok {
 				return "", fmt.Errorf("collection %q not found", id)
 			}
+			if why := agentCollectionRefusal(sess, c); why != "" {
+				return "", errors.New(why)
+			}
 			b, _ := json.Marshal(c)
 			return string(b), nil
 		},
@@ -193,8 +201,16 @@ func collectionsListTool() ChatTool {
 			if !ok {
 				return "", fmt.Errorf("collection %q not found", id)
 			}
+			if why := agentCollectionRefusal(sess, c); why != "" {
+				return "", errors.New(why)
+			}
 			if why := collectionWriteRefusal(c, sess.Username, "", http.MethodPost, UserIsAdmin(sess.Username)); why != "" {
 				return "", errors.New(why)
+			}
+			// What an app's collection is (its name, what it holds, who adds to
+			// it) is the app's blueprint: Builder changes it with the app.
+			if c.OwningApp != "" && appEditOf(sess) == "" {
+				return "", fmt.Errorf("collection %q is part of the app %q: its name, description and submitters change with Builder, as the app does", c.Name, c.OwningApp)
 			}
 			var changed []string
 			if _, has := args["name"]; has {
@@ -255,8 +271,10 @@ func collectionsListTool() ChatTool {
 			if id == "" {
 				return "", errors.New("id is required for action=docs")
 			}
-			if _, ok := loadCollection(sess.DB, sess.Username, id); !ok {
+			if c, ok := loadCollection(sess.DB, sess.Username, id); !ok {
 				return "", fmt.Errorf("collection %q not found", id)
+			} else if why := agentCollectionRefusal(sess, c); why != "" {
+				return "", errors.New(why)
 			}
 			prefix := collectionSource(id)
 			type group struct {
@@ -312,6 +330,9 @@ func collectionsListTool() ChatTool {
 			if !ok {
 				return "", fmt.Errorf("collection %q not found", id)
 			}
+			if why := agentCollectionRefusal(sess, c); why != "" {
+				return "", errors.New(why)
+			}
 			// Removing a document is curation: the owner's (or, for the
 			// deployment's own collection, an administrator's).
 			if why := collectionWriteRefusal(c, sess.Username, "remove_doc", http.MethodPost, UserIsAdmin(sess.Username)); why != "" {
@@ -352,12 +373,15 @@ func collectionsListTool() ChatTool {
 			if !ok {
 				return "", fmt.Errorf("collection %q not found", id)
 			}
+			if why := agentCollectionRefusal(sess, c); why != "" {
+				return "", errors.New(why)
+			}
 			if why := collectionWriteRefusal(c, sess.Username, "paste", http.MethodPost, UserIsAdmin(sess.Username)); why != "" {
 				return "", errors.New(why)
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
-			res, err := pasteIntoCollection(ctx, VectorDB, c, stringArg(args, "title"), stringArg(args, "text"))
+			res, err := pasteIntoCollection(ctx, VectorDB, c, stringArg(args, "title"), stringArg(args, "text"), agentDocBy(c))
 			if err != nil {
 				return "", err
 			}
@@ -405,6 +429,9 @@ func collectionsListTool() ChatTool {
 			if !ok {
 				return "", fmt.Errorf("collection %q not found", id)
 			}
+			if why := agentCollectionRefusal(sess, c); why != "" {
+				return "", errors.New(why)
+			}
 			if why := collectionWriteRefusal(c, sess.Username, "upload", http.MethodPost, UserIsAdmin(sess.Username)); why != "" {
 				return "", errors.New(why)
 			}
@@ -420,7 +447,7 @@ func collectionsListTool() ChatTool {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 			defer cancel()
-			res, err := addFileToCollection(ctx, VectorDB, c, title, src, nil)
+			res, err := addFileToCollection(ctx, VectorDB, c, title, src, nil, agentDocBy(c))
 			if err != nil {
 				return "", err
 			}
@@ -465,6 +492,9 @@ func addURLToCollectionDoc(args map[string]any, sess *ToolSession, check pageChe
 	c, ok := loadCollection(sess.DB, sess.Username, id)
 	if !ok {
 		return "", "", "", fmt.Errorf("collection %q not found", id)
+	}
+	if why := agentCollectionRefusal(sess, c); why != "" {
+		return "", "", "", errors.New(why)
 	}
 	if why := collectionWriteRefusal(c, sess.Username, "autofill", http.MethodPost, UserIsAdmin(sess.Username)); why != "" {
 		return "", "", "", errors.New(why)
@@ -526,7 +556,7 @@ const addFileMinChars = 200
 // one, since a tool saves what a server sent under whatever name it was given.
 // check, when given, is put the file's text before anything is stored: a
 // checked submitter's file goes through the collection check like a page.
-func addFileToCollection(ctx context.Context, db Database, c Collection, title string, src UploadSource, check func(text string) (note string, add bool)) (fileResult, error) {
+func addFileToCollection(ctx context.Context, db Database, c Collection, title string, src UploadSource, check func(text string) (note string, add bool), by ...string) (fileResult, error) {
 	mime := ""
 	if http.DetectContentType(src.Data) == "application/pdf" {
 		mime = "application/pdf"
@@ -544,7 +574,7 @@ func addFileToCollection(ctx context.Context, db Database, c Collection, title s
 			return fileResult{Name: title, Refused: note}, nil
 		}
 	}
-	reportID := "file-" + c.ID + "-" + slugForReportID(title)
+	reportID := docReportPrefix("file", by) + c.ID + "-" + slugForReportID(title)
 	replaced := countReportChunks(db, reportID) > 0
 	doc := "## " + title + "\n\n" + text
 	if isPDFUpload(mime, src.Name) {

@@ -1815,7 +1815,7 @@ func chunksInSection(chunks []EmbeddedChunk, want string) []EmbeddedChunk {
 // A predicate that can disagree with the search it was written to mirror is
 // worse than no predicate: it is the one somebody reads and believes.
 func (t *chatTurn) agentCorpusSources(scopeSkills []SkillRecord) map[string]bool {
-	exact, _ := agentCorpusSourceSet(t.user, t.ownerUser, t.agent.AttachedCollections, scopeSkills, !t.agent.KnowledgeAttachedOnly)
+	exact, _ := agentCorpusSourceSet(t.user, t.ownerUser, agentReadsCollections(t.agent, t.agent.AttachedCollections), scopeSkills, !t.agent.KnowledgeAttachedOnly)
 	return exact
 }
 

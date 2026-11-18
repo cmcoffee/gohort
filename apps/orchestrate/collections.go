@@ -904,7 +904,11 @@ const pasteMinChars = 20
 // derived from it — so pasting again under the same title replaces the
 // document instead of adding a second copy. That is what makes a collection
 // a place to keep a note that changes, rather than a pile of its versions.
-func pasteIntoCollection(ctx context.Context, chunkDB Database, c Collection, title, text string) (pasteResult, error) {
+//
+// by names who added it when that is not a person by hand: "agent" for an
+// agent adding to an app's collection, whose document is the app's data and
+// not one of its seed files (app_owned.go). Omitted, a person's paste.
+func pasteIntoCollection(ctx context.Context, chunkDB Database, c Collection, title, text string, by ...string) (pasteResult, error) {
 	title = strings.TrimSpace(title)
 	text = strings.TrimSpace(text)
 	if title == "" {
@@ -922,7 +926,7 @@ func pasteIntoCollection(ctx context.Context, chunkDB Database, c Collection, ti
 		text = md
 		format = "json"
 	}
-	reportID := "paste-" + c.ID + "-" + slugForReportID(title)
+	reportID := docReportPrefix("paste", by) + c.ID + "-" + slugForReportID(title)
 	replaced := countReportChunks(chunkDB, reportID) > 0
 	chunks := IngestDocument(ctx, chunkDB, collectionSource(c.ID), reportID, title, "## "+title+"\n\n"+text)
 	return pasteResult{ID: reportID, Name: title, Chunks: chunks, Format: format, Replaced: replaced}, nil

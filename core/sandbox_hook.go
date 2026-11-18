@@ -472,6 +472,8 @@ func (h *SandboxHook) handleConn(conn net.Conn) {
 		h.handleRunAgent(conn, req.Params)
 	case "run_pipeline":
 		h.handleRunPipeline(conn, req.Params)
+	case "knowledge_add":
+		h.handleKnowledgeAdd(conn, req.Params)
 	case "store_command":
 		h.handleStoreCommand(conn, req.Params)
 	case "store_action":
@@ -537,7 +539,7 @@ func hookMethodDeadline(method string, params map[string]interface{}) time.Durat
 		return 90 * time.Second
 	case "secret", "log":
 		return 10 * time.Second
-	case "tool", "ask":
+	case "tool", "ask", "knowledge_add":
 		// A tool can fetch, browse or run its own sandbox, and a model call
 		// can be slow; a script's whole run is capped well under this, which
 		// is the real bound.
@@ -737,6 +739,29 @@ func (h *SandboxHook) handleRunAgent(conn net.Conn, params map[string]interface{
 		files = []string{}
 	}
 	writeHookResult(conn, map[string]any{"text": text, "files": files})
+}
+
+// handleKnowledgeAdd serves gohort.knowledge_add: a document added to one of
+// the app's own collections. Granted by "knowledge_add"; which collections is
+// the app's to say (only its own).
+func (h *SandboxHook) handleKnowledgeAdd(conn net.Conn, params map[string]interface{}) {
+	if h.Sess == nil || h.Sess.KnowledgeAdd == nil {
+		writeHookError(conn, "knowledge_add is only for a custom app's data sources and actions")
+		return
+	}
+	collection := strings.TrimSpace(stringFromParams(params, "collection"))
+	title := strings.TrimSpace(stringFromParams(params, "title"))
+	text := stringFromParams(params, "text")
+	if collection == "" || title == "" || strings.TrimSpace(text) == "" {
+		writeHookError(conn, "knowledge_add needs a collection, a title and the text")
+		return
+	}
+	note, err := h.Sess.KnowledgeAdd(collection, title, text)
+	if err != nil {
+		writeHookError(conn, "knowledge_add: "+err.Error())
+		return
+	}
+	writeHookResult(conn, map[string]any{"text": note})
 }
 
 // handleRunPipeline serves gohort.run_pipeline: the app's pipeline run to the
@@ -2720,6 +2745,15 @@ class _Gohort:
         result = self._call("run_pipeline", {"input": str(input), "pipeline": str(pipeline or "")})
         return Output(result.get("text", "") if isinstance(result, dict) else result)
 
+    def knowledge_add(self, collection, title, text):
+        """Add a document to one of the app's own collections (by its
+        name): title names it, and a later add of the same title replaces
+        it. What it adds is the app's data, searched by the app's agents,
+        never part of the app itself. The script must declare
+        "knowledge_add"."""
+        result = self._call("knowledge_add", {"collection": str(collection), "title": str(title), "text": str(text)})
+        return Output(result.get("text", "") if isinstance(result, dict) else result)
+
     def store_path(self, store):
         """The folder of a file store this app was granted, as a path the
         script can read (and write, when granted writing). Raises when the
@@ -2888,6 +2922,10 @@ def run_agent(prompt, agent=None):
 
 def run_pipeline(input, pipeline=None):
     return gohort.run_pipeline(input, pipeline=pipeline)
+
+
+def knowledge_add(collection, title, text):
+    return gohort.knowledge_add(collection, title, text)
 
 
 def secret(name):

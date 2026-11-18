@@ -66,8 +66,17 @@ func submittableCollectionsFor(udb Database, user, agentID string) []Collection 
 		return nil
 	}
 	admin := UserIsAdmin(user)
+	// An app's collection is submitted to by that app's own agents only
+	// (app_collections.go).
+	agentApp := ""
+	if a, ok := loadAgent(udb, agentID); ok {
+		agentApp = a.OwningApp
+	}
 	var out []Collection
 	for _, c := range ListCollections(udb, user) {
+		if c.OwningApp != "" && c.OwningApp != agentApp {
+			continue
+		}
 		ownerless := IsDeploymentScope(c) && c.Owner == ""
 		if c.Owner != user && !(ownerless && admin) {
 			continue

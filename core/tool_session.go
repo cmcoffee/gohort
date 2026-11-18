@@ -61,6 +61,11 @@ type ToolSession struct {
 	// tools made or attached, as paths in the script's working folder.
 	RunAgent    func(agent, prompt string) (string, []string, error)
 	RunPipeline func(pipeline, input string) (string, error)
+	// KnowledgeAdd, when set, is what gohort.knowledge_add reaches: a
+	// document added to one of the app's own collections, by name. Set only
+	// by an app script's run, for one that declared "knowledge_add". Nil:
+	// refused.
+	KnowledgeAdd func(collection, title, text string) (string, error)
 	// StoreCommand and StorePull, when set, are what gohort.store_command and
 	// gohort.store_pull reach: a file store's registered command run on one
 	// of its folders (input "" is the first phase of a two-phase command,

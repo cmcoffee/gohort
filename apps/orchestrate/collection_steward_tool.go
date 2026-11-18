@@ -169,7 +169,7 @@ func (T *OrchestrateApp) submitHandler(act string, inner func(map[string]any, *T
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
-			res, err := pasteIntoCollection(ctx, VectorDB, c, title, text)
+			res, err := pasteIntoCollection(ctx, VectorDB, c, title, text, agentDocBy(c))
 			if err != nil {
 				return "", err
 			}
@@ -206,7 +206,7 @@ func (T *OrchestrateApp) submitHandler(act string, inner func(map[string]any, *T
 					return note, add
 				}
 			}
-			res, err := addFileToCollection(ctx, VectorDB, c, title, src, check)
+			res, err := addFileToCollection(ctx, VectorDB, c, title, src, check, agentDocBy(c))
 			if err != nil {
 				return "", err
 			}
