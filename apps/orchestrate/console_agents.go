@@ -93,7 +93,7 @@ func (T *OrchestrateApp) handleConsoleAgentOptions(c *jsonapi.Call) (any, error)
 	for _, a := range listAgents(UserDB(T.DB, user), user) {
 		// Relink targets are things a person may point work at: hidden
 		// app-internal agents, clone-only templates, and retired seeds are not.
-		if fleetHidden(a.ID) {
+		if fleetHidden(a.ID) || appOwnedAgent(a) {
 			continue
 		}
 		label := strings.TrimSpace(a.Name)

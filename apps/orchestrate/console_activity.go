@@ -64,12 +64,18 @@ func (T *OrchestrateApp) handleConsoleRuns(c *jsonapi.Call) (any, error) {
 		runs = ListRuns(RootDB, user, RunFilter{Limit: 100})
 	}
 	rows := []consoleRunRow{}
+	labels := appAgentLabels(udb, user)
 	for _, rec := range runs {
 		if status != "" && rec.Status != status {
 			continue
 		}
+		agent := consoleRunAgent(rec)
+		// An app's agent's run reads as the app's.
+		if l, ok := labels[strings.TrimPrefix(rec.Subject, "agent:")]; ok && strings.HasPrefix(rec.Subject, "agent:") {
+			agent = l
+		}
 		rows = append(rows, consoleRunRow{
-			Agent:   consoleRunAgent(rec),
+			Agent:   agent,
 			Task:    consoleRunTask(rec),
 			Status:  string(rec.Status),
 			When:    consoleRunWhen(rec, loc),

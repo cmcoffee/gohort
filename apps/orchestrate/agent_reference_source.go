@@ -45,7 +45,7 @@ func (s agentReferenceSource) List(user string) []ReferenceItem {
 	}
 	var out []ReferenceItem
 	for _, a := range s.app.AgentsForUser(user) {
-		if a.Hidden {
+		if a.Hidden || appOwnedAgent(a) {
 			continue
 		}
 		desc := a.Description

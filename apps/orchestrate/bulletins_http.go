@@ -142,7 +142,7 @@ func groupThousands(n int) string {
 func bulletinTargets(udb Database, user string) []AgentRecord {
 	var out []AgentRecord
 	for _, a := range listAgents(udb, user) {
-		if isAppAgent(a.ID) || a.Hidden {
+		if isAppAgent(a.ID) || a.Hidden || appOwnedAgent(a) {
 			continue
 		}
 		out = append(out, a)

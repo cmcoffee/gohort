@@ -34,6 +34,10 @@ import (
 // the app FEATURE grant: the admin enabled the app for this user under
 // Feature Access; the per-KEY tier for them is KeyAllowsAppAgent, downstream.
 func reachableThrough(a AgentRecord, owner string, granted func(canonical string) bool) bool {
+	// An app's own agent is reached through its app, not by a key.
+	if appOwnedAgent(a) {
+		return false
+	}
 	if k := AppFeatureKeyForAgent(a.ID); k != "" {
 		return FeatureAllowedForUser(RootDB, k, owner)
 	}

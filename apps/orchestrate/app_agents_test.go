@@ -9,9 +9,10 @@ import (
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
-// An agent written for one of the owner's apps is filed under that app in
-// every picker, by the app's name, and is otherwise an ordinary agent.
-func TestAnAppsOwnAgentIsListedUnderTheApp(t *testing.T) {
+// An agent written for one of the owner's apps lives inside the app: no
+// picker offers it, no agent outside the app reaches it or is told of it,
+// it is no surface of its own, and what it ran reads as the app's.
+func TestAnAppsOwnAgentLivesInsideTheApp(t *testing.T) {
 	pinRootDB(t)
 	SaveAppSpec(AppSpec{Owner: "u", Slug: "weather", Name: "Weather", RecordKey: "id"})
 	rec := agentRecordFromArgs(map[string]any{"name": "Forecaster", "owning_app": "Weather"})
@@ -19,23 +20,45 @@ func TestAnAppsOwnAgentIsListedUnderTheApp(t *testing.T) {
 		t.Fatalf("owning_app = %q, want the slug", rec.OwningApp)
 	}
 	rec.ID, rec.Owner = "a1", "u"
-	if g, ok := agentAppGroup(rec); !ok || g != "App agents: Weather" {
-		t.Fatalf("group = %q %v", g, ok)
-	}
 	if isAppAgent(rec.ID) {
 		t.Fatal("an app's own agent crossed the framework app-agent boundary")
 	}
 	plain := AgentRecord{ID: "a2", Name: "Helper", Owner: "u"}
-	if agentGroupFor(plain, "Your agents") != "Your agents" {
-		t.Fatal("an ordinary agent left its group")
+	sibling := AgentRecord{ID: "a3", Name: "Sky", Owner: "u", OwningApp: "weather"}
+	other := AgentRecord{ID: "a4", Name: "Tides", Owner: "u", OwningApp: "almanac"}
+	picked := pickerAgents([]AgentRecord{rec, plain, sibling})
+	if len(picked) != 1 || picked[0].ID != "a2" {
+		t.Fatalf("the picker offers %v, want only the person's own agent", picked)
 	}
-	opts, _, _ := agentPickerOptions([]AgentRecord{rec, plain})
-	groups := map[string]string{}
-	for _, o := range opts {
-		groups[o.Value] = o.Group
+	if dispatchReachable(plain, rec) || dispatchReachable(other, rec) {
+		t.Error("an agent outside the app reaches the app's agent")
 	}
-	if groups["a1"] != "App agents: Weather" || groups["a2"] != "Specialized Agents" {
-		t.Fatalf("picker groups = %v", groups)
+	if !dispatchReachable(sibling, rec) {
+		t.Error("an agent of the same app cannot reach its sibling")
+	}
+	if agentSurfaceEligible(rec) || reachableThrough(rec, "u", func(string) bool { return true }) {
+		t.Error("an app's agent is a surface of its own, or reached by a key")
+	}
+	if !agentSurfaceEligible(plain) {
+		t.Error("an ordinary agent lost its surface")
+	}
+}
+
+// What an app's agent ran and cost reads in Fleet as the app's, by its name.
+func TestAnAppsAgentRunsReadAsTheApps(t *testing.T) {
+	pinRootDB(t)
+	SaveAppSpec(AppSpec{Owner: "u", Slug: "weather", Name: "Weather", RecordKey: "id"})
+	db := &DBase{Store: kvlite.MemStore()}
+	udb := UserDB(db, "u")
+	if _, err := saveAgent(udb, AgentRecord{ID: "a1", Name: "Forecaster", Owner: "u", OwningApp: "weather", OrchestratorPrompt: "p", appEdit: "Builder"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := saveAgent(udb, AgentRecord{ID: "a2", Name: "Helper", Owner: "u", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	names := agentNames(udb, "u")
+	if names["a1"] != "Weather (app)" || names["a2"] != "Helper" {
+		t.Fatalf("names = %v", names)
 	}
 }
 

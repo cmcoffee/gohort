@@ -709,7 +709,7 @@ func (T *OrchestrateApp) pipelineAgentsSave(c *jsonapi.Call, raw json.RawMessage
 func attachPipelineAgentOptions(udb Database, user string) []ui.SelectOption {
 	var out []ui.SelectOption
 	for _, ag := range listAgents(udb, user) {
-		if isAppAgent(ag.ID) || ag.Hidden {
+		if isAppAgent(ag.ID) || ag.Hidden || appOwnedAgent(ag) {
 			continue
 		}
 		label := chFirst(ag.Name, ag.ID)

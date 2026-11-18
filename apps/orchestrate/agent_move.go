@@ -50,7 +50,7 @@ func agentMovable(a AgentRecord) string {
 func agentMoveDestinations(db Database, owner string, a AgentRecord) []AgentRecord {
 	var out []AgentRecord
 	for _, p := range listAgents(db, owner) {
-		if p.ID == a.ID || p.Owner != owner || p.OwnedBy != "" || agentMovable(p) != "" {
+		if p.ID == a.ID || p.Owner != owner || p.OwnedBy != "" || appOwnedAgent(p) || agentMovable(p) != "" {
 			continue
 		}
 		out = append(out, p)

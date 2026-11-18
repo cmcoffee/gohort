@@ -238,6 +238,10 @@ func publiclyExposable(a AgentRecord) bool {
 // Exposed flag a past save (or the old ships-Exposed Research default) may
 // have set.
 func agentSurfaceEligible(a AgentRecord) bool {
+	// An app's own agent is reached through its app, never on its own.
+	if appOwnedAgent(a) {
+		return false
+	}
 	// App Agents are an app's own surface — publishable unless registered
 	// Hidden (Servitor Investigator, Guide Author), which are reached only
 	// through their owning app, never as a standalone surface.

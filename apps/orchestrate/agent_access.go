@@ -87,6 +87,10 @@ func dispatchReachable(caller, target AgentRecord) bool {
 	if target.ID == caller.ID {
 		return false
 	}
+	// An app's own agent is reached only by the other agents of its app.
+	if appOwnedAgent(target) && !sameAppAgent(caller, target) {
+		return false
+	}
 	// A parent always reaches its own sub-agents (ownSubAgent), whatever the
 	// policy says about the rest of the fleet. Checked first, as the gate does.
 	if ownSubAgent(caller, target) {

@@ -143,12 +143,14 @@ storage that starts empty.
 **Only Builder and Anvil change it.** An app's agents, pipelines, machines
 and tools change through Builder or Anvil, and nothing else, so every change
 goes through the app's checks, a shared app's approval and its history,
-with no second path to keep in step. Elsewhere they are shown and marked:
-the Agents page, the pipeline and machine editors and admin's tools list
-show them as "Part of <app>: change it with Builder or Anvil". An
-administrator can still switch one off or remove it (a tool misbehaving),
-which stops it and is recorded in the app's history; that is a stop, not an
-edit.
+with no second path to keep in step. An app's agents live inside it, as a
+built-in app's hidden agents do (the guide writer, the publisher): no
+picker, Fleet list, dashboard, key or other agent outside the app reaches
+them, and only the app's own agents may hand them work. What they ran and
+cost shows in Fleet under the app's name. An administrator still sees them,
+marked "part of <app>", and can switch one off or remove it (a tool
+misbehaving), which stops it and is recorded in the app's history; that is
+a stop, not an edit.
 
 **A shared app's approval covers all of it.** A shared app is taken out of
 sharing until an administrator approves its new version when its page or

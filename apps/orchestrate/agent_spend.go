@@ -201,10 +201,18 @@ func agentSpendRows(owner string, now time.Time, loc *time.Location) []agentSpen
 		return s
 	}
 	rows := make([]agentSpendRow, 0, len(byAgent))
+	var labels map[string]string
+	if orchestrateBaseDB != nil {
+		labels = appAgentLabels(UserDB(orchestrateBaseDB, owner), owner)
+	}
 	for id, a := range byAgent {
 		name := a.name
 		if name == "" {
 			name = id
+		}
+		// An app's agent's spend reads as the app's.
+		if l, ok := labels[id]; ok {
+			name = l
 		}
 		r := agentSpendRow{
 			Agent: name, Today: render(a.today), Week: render(a.week), Month: render(a.month),

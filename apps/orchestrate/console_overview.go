@@ -396,7 +396,11 @@ type fleetGuardrailEntry struct {
 // fleetGuardrailBlocks returns the most recent blocks across every agent.
 func fleetGuardrailBlocks(udb Database, user string, limit int) []fleetGuardrailEntry {
 	var all []fleetGuardrailEntry
+	labels := appAgentLabels(udb, user)
 	for _, a := range listAgents(udb, user) {
+		if l, ok := labels[a.ID]; ok {
+			a.Name = l
+		}
 		for _, b := range listGuardrailBlocks(udb, a.ID, limit) {
 			all = append(all, fleetGuardrailEntry{block: b, agent: a})
 		}
@@ -426,6 +430,10 @@ func agentNames(udb Database, user string) map[string]string {
 	out := map[string]string{}
 	for _, a := range listAgents(udb, user) {
 		out[a.ID] = chFirst(a.Name, a.ID)
+	}
+	// An app's agent's doings read as the app's.
+	for id, label := range appAgentLabels(udb, user) {
+		out[id] = label
 	}
 	return out
 }

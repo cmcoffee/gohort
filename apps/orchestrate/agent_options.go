@@ -39,6 +39,10 @@ var agentPickerBuiltInOrder = map[string]int{
 func pickerAgents(agents []AgentRecord) []AgentRecord {
 	out := make([]AgentRecord, 0, len(agents))
 	for _, a := range agents {
+		// An app's own agents live inside the app (appOwnedAgent).
+		if appOwnedAgent(a) {
+			continue
+		}
 		if isSeedID(a.ID) && a.ID != "seed-builder" {
 			if _, isApp := appagents.AppAgentByID(a.ID); !isApp {
 				continue
@@ -87,9 +91,6 @@ func agentPickerOptions(agents []AgentRecord) (opts []ui.SelectOption, cortex ma
 				continue
 			}
 			appAgents = append(appAgents, agentPickerRow{ID: a.ID, Name: a.Name, App: spec.OwningApp})
-		} else if g, ok := agentAppGroup(a); ok {
-			// An agent written for one of the owner's apps sits with that app.
-			appAgents = append(appAgents, agentPickerRow{ID: a.ID, Name: a.Name, App: strings.TrimPrefix(g, "App agents: ")})
 		} else if ord, ok := agentPickerBuiltInOrder[a.ID]; ok {
 			builtIns = append(builtIns, agentPickerRow{ID: a.ID, Name: a.Name, Order: ord})
 		} else if cat := cats[categoryKey(a.Category)]; cat != "" {

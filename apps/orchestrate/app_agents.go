@@ -45,23 +45,10 @@ func appAgentGroup(id string) (group string, ok bool) {
 	return "App agents: " + chFirst(s.OwningApp, "other apps"), true
 }
 
-// agentAppGroup is appAgentGroup for a record: a framework app agent's group,
-// else the group of a custom app the owner wrote it for (OwningApp). Display
-// only: an OwningApp agent is an ordinary agent, so nothing that guards the
-// app-agent boundary (isAppAgent) may read this.
+// agentAppGroup is appAgentGroup for a record. A custom app's own agent has
+// none: it is in no list a person picks from (appOwnedAgent).
 func agentAppGroup(a AgentRecord) (string, bool) {
-	if g, ok := appAgentGroup(a.ID); ok {
-		return g, true
-	}
-	slug := strings.TrimSpace(a.OwningApp)
-	if slug == "" {
-		return "", false
-	}
-	name := slug
-	if spec, ok := LoadAppSpec(a.Owner, slug); ok && strings.TrimSpace(spec.Name) != "" {
-		name = spec.Name
-	}
-	return "App agents: " + name, true
+	return appAgentGroup(a.ID)
 }
 
 // agentGroupFor is agentAppGroup with the group a picker gives everything
@@ -271,4 +258,46 @@ func registeredAppAgents() []AgentRecord {
 // aliases the in-code literal.
 func seedAgents() []AgentRecord {
 	return append(coreSeedAgents(), registeredAppAgents()...)
+}
+
+// appOwnedAgent reports whether a is one of an app's own agents (a custom
+// app's, docs/design/app-history.md). Those live inside their app, as a
+// built-in app's hidden agents do (the guide writer, the publisher): its
+// chat, scripts and pipelines reach them, Builder and Anvil change them, and
+// no list a person picks from or reads shows them. What they ran and cost
+// shows under the app's name (appAgentLabels); an administrator still sees
+// them, marked as the app's.
+func appOwnedAgent(a AgentRecord) bool { return strings.TrimSpace(a.OwningApp) != "" }
+
+// sameAppAgent reports whether caller and target are agents of the same app:
+// the only agents an app's agent is reachable from, listed to, or handed work
+// by.
+func sameAppAgent(caller, target AgentRecord) bool {
+	app := strings.TrimSpace(target.OwningApp)
+	return app != "" && app == strings.TrimSpace(caller.OwningApp) && caller.Owner == target.Owner
+}
+
+// appAgentName is the name of a's app, as a person knows it.
+func appAgentName(a AgentRecord) string {
+	slug := strings.TrimSpace(a.OwningApp)
+	if spec, ok := LoadAppSpec(a.Owner, slug); ok && strings.TrimSpace(spec.Name) != "" {
+		return spec.Name
+	}
+	return slug
+}
+
+// appAgentLabels are user's app agents, each named by its app ("Recipes
+// (app)"): how Fleet's records of runs, spend and blocks show what an app's
+// agent did, since the agent itself is the app's own business.
+func appAgentLabels(udb Database, user string) map[string]string {
+	out := map[string]string{}
+	if udb == nil {
+		return out
+	}
+	for _, a := range listAgents(udb, user) {
+		if appOwnedAgent(a) {
+			out[a.ID] = appAgentName(a) + " (app)"
+		}
+	}
+	return out
 }

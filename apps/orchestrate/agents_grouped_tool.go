@@ -631,6 +631,11 @@ func (t *chatTurn) agentsListAction() (string, error) {
 		if hiddenAppAgent(a.ID) {
 			continue
 		}
+		// Nor another app's agent: an app's agents are listed only to the
+		// other agents of their app.
+		if appOwnedAgent(a) && !sameAppAgent(t.agent, a) {
+			continue
+		}
 		// Sub-agents held for approval aren't live — keep them out of the
 		// dispatch listing until the owner activates them.
 		if a.PendingApproval {
@@ -1086,6 +1091,11 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 	// allowlist entry from the era these leaked into pickers cannot reopen it.
 	if hiddenAppAgent(target.ID) {
 		return AgentRecord{}, "", fmt.Errorf("agents(run): %q is an app-internal agent and cannot be dispatched directly, use the app's own tools instead", target.Name)
+	}
+	// An app's own agent is reached from inside its app alone: by the app,
+	// and by the other agents of the app.
+	if appOwnedAgent(target) && !sameAppAgent(t.agent, target) {
+		return AgentRecord{}, "", fmt.Errorf("agents(run): %q is part of the app %q and is reached only from inside it, use the app instead", target.Name, appAgentName(target))
 	}
 	if target.OwnedBy == t.agent.ID {
 		// Allowed by ownership; skip the standard checks.

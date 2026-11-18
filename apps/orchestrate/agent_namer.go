@@ -43,7 +43,7 @@ func registerAgentNamer(app *OrchestrateApp) {
 func agentNameOptions(agents []AgentRecord) []ui.SelectOption {
 	isTop := map[string]bool{}
 	for _, a := range agents {
-		if !isAppAgent(a.ID) && a.OwnedBy == "" && !a.Hidden {
+		if !isAppAgent(a.ID) && a.OwnedBy == "" && !a.Hidden && !appOwnedAgent(a) {
 			isTop[a.ID] = true
 		}
 	}

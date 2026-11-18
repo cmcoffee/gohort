@@ -61,10 +61,16 @@ func listUserOwnedAgentsForAdmin(db Database) []UserOwnedAgentRow {
 			if !isShareableAgent(a, u.Username) {
 				continue
 			}
+			name := a.Name
+			if appOwnedAgent(a) {
+				// An administrator still sees an app's agents, marked as the
+				// app's: what changes one is the app (Builder or Anvil).
+				name += " (part of " + appAgentName(a) + ")"
+			}
 			out = append(out, UserOwnedAgentRow{
 				ID:         a.ID,
 				Owner:      a.Owner,
-				Name:       a.Name,
+				Name:       name,
 				SharedWith: ShareRecipientsText(a.AllowedUsers),
 				Shared:     len(a.AllowedUsers) > 0,
 				Exposed:    a.Everyone,

@@ -26,7 +26,7 @@ func (T *OrchestrateApp) agentList(c *jsonapi.Call) (any, error) {
 	{
 		kept := agents[:0]
 		for _, a := range agents {
-			if hiddenAppAgent(a.ID) {
+			if hiddenAppAgent(a.ID) || appOwnedAgent(a) {
 				continue
 			}
 			kept = append(kept, a)

@@ -645,7 +645,7 @@ func attachAgentOptions(udb Database, user string, def MachineDef) []ui.SelectOp
 	}
 	var out []ui.SelectOption
 	for _, a := range listAgents(udb, user) {
-		if isAppAgent(a.ID) || a.Hidden {
+		if isAppAgent(a.ID) || a.Hidden || appOwnedAgent(a) {
 			continue
 		}
 		opt := ui.SelectOption{Value: a.ID, Label: chFirst(a.Name, a.ID)}
@@ -666,7 +666,7 @@ func attachAgentOptions(udb Database, user string, def MachineDef) []ui.SelectOp
 func agentOptions(udb Database, user string) []ui.SelectOption {
 	out := []ui.SelectOption{{Value: "", Label: "(this agent runs the step)"}}
 	for _, a := range listAgents(udb, user) {
-		if isAppAgent(a.ID) || a.Hidden {
+		if isAppAgent(a.ID) || a.Hidden || appOwnedAgent(a) {
 			continue
 		}
 		out = append(out, ui.SelectOption{Value: a.ID, Label: chFirst(a.Name, a.ID)})
