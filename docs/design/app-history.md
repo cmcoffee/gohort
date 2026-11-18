@@ -206,6 +206,47 @@ keep in the app.
 An exported app is therefore small and carries nobody's data: its blueprints
 and seed files, from which the deployment receiving it builds the rest.
 
+**An app's collections.** An app's collection is an ordinary knowledge
+collection (the same ingest, search, refresh and curation), marked as the
+app's (`owning_app`, as an app's agents and pipelines are). The mark decides
+who touches it:
+
+- **Only the app's own parts write to it**: its agents' ingest tools, its
+  scripts (an action, or a scheduled one that keeps it current: a nightly
+  fetch of the latest release notes), and the people using the app through
+  its page. An agent outside the app cannot push into it; to do that it
+  would have to be part of the app. The app's agents read it; others do not
+  see it. Scripts need a call to add to it: `knowledge_add` in the gohort
+  module, held to the app's own collections (new).
+- **Curation is wired by the app.** The blueprint says how the collection
+  curates itself: which of the app's agents does it, and on what schedule.
+  The app's Settings page offers **Auto-curation: on / off** (a setting's
+  value), with no picker of agents: the app chose, and only its own agents
+  could.
+- **Sources and curation rules are recorded into the blueprint when they are
+  changed**, from anywhere. Where it gathers from and what it keeps, drops
+  and prunes are the two parts of an app's blueprint that can be changed
+  outside Builder and Anvil, on the Knowledge page or the app's Settings
+  page. Such a change is a change to the app: saved through the app's own
+  save (the one Builder's changes take), so it is checked, committed at once
+  as the person's change, carried by an export, and takes a shared app out
+  of sharing until an administrator approves it (what a shared app gathers
+  is what its users are shown). Everything else in a collection's blueprint
+  (which agent curates, how the app wires it, its seed files) changes
+  through Builder or Anvil only.
+- **A setting's value is how this copy runs, and does not travel.** An app's
+  settings carry their names and defaults; the values chosen (auto-curation
+  on or off, a refresh time) stay on the deployment, as every app setting's
+  value does now. What should go wherever the app goes belongs in the
+  blueprint.
+
+**Export is not a backup.** An exported app carries its blueprints, never
+what it holds: not its settings' values, its collections' documents, what
+its agents learned, or the records people keep. Re-imported, it builds its
+collections again from their sources and seed files and starts from its
+defaults. Moving one's own app with its data (another machine, a
+reinstall) is a backup, a separate feature, not this.
+
 **Existing apps copy on their first change.** An app that points at an
 agent, pipeline or tools of the person's copies them into itself the first
 time Builder or Anvil changes it, and from then on owns them. An app nobody
@@ -319,8 +360,11 @@ somewhere new.
    administrator's stop; tools approved by reach, one review per space; an
    app records blueprints, never what it gathers or learns (a collection's
    sources, settings, refresh and seed files; an agent's starting memory),
-   its documents and learned memory being data; existing apps copy what
-   they use on their first change.
+   its documents and learned memory being data; an app's collection is an
+   ordinary one with the app's mark, written only by the app's own parts,
+   curation wired by the app with an on/off setting, and its sources and
+   curation rules recorded into the blueprint when changed from anywhere;
+   existing apps copy what they use on their first change.
 
 ## Steps
 
@@ -348,8 +392,11 @@ Stage 2 (an app holds everything it runs on):
 8. A shared app's approval covers what it owns.
 9. Blueprints: a collection's blueprint and seed files, and each agent's
    starting memory, in the app; documents and learned memory kept as data,
-   out of git and exports; and existing apps copying what they use on their
-   first change.
+   out of git and exports. An app's collections: the app's mark, only its
+   own parts writing (knowledge_add for its scripts), curation wired by the
+   app with an on/off setting, sources and rules recorded into the
+   blueprint when changed from anywhere. Existing apps copying what they
+   use on their first change.
 
 Stage 3 (the app is its repository):
 
