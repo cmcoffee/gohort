@@ -268,8 +268,9 @@ and the store keeps the app's record.
 | | verify verdicts, settings' values, private_db, schedules' state |
 | | the records people save, and their files |
 
-**Serving.** The `live` branch is kept checked out as a plain folder, and
-the app is built from those files (the folder reader `BuildAppFolder`
+**Serving.** The `live` branch is kept checked out as a plain folder, where
+no agent's workspace reaches and only the install path writes (further
+decision 2), and the app is built from those files (the folder reader `BuildAppFolder`
 already does this), cached by the folder's state, so a request reads a built
 app from memory. Serving never runs git.
 
@@ -337,6 +338,62 @@ somewhere new.
 - **Privacy.** The repository holds what the app already holds, under the
   owner's workspace, which only the owner's sessions reach.
 
+## Further decisions
+
+Raised after the questions, and agreed (owner, 2026-11-17). Each names the
+stage it belongs to.
+
+1. **A commit is its author's work (stage 1).** Saves wait to be committed
+   until a piece of work is finished, so two people changing one app (an
+   owner and a maintainer) would have one author's commit sweep in the
+   other's saves. A commit takes what its author's turn changed; another
+   person's saves waiting in the repository are committed first, under that
+   person's name, with the change notes their saves carried. The saves a
+   turn made are known from the revisions it pushed.
+2. **The live folder cannot be changed around its gates (stage 3).** In
+   stage 1 the repository is a record: writing into it lies about the
+   history and changes nothing that runs. In stage 3 it is what is served,
+   so a file written into it would change a live app without its checks or
+   approval. The live folder sits where no agent's workspace reaches (not
+   under the owner's workspaces root, which sessions' folders sit inside),
+   is written only by the install path, and is served only while it matches
+   its last commit on `live`; a folder that does not match is refused,
+   logged, and the last commit served instead.
+3. **Agent checks.** "Tested" means the app's checks and verify pass, and
+   neither looks at what an app's agent says: a prompt change could pass
+   both and make the agent worse. An app's checks gain a third kind: a
+   prompt given to one of the app's agents, and what its reply must and
+   must not contain (`{"agent": "<name>", "ask": "...", "expect": [...]}`),
+   run like a script check, against scratch records, with writes refused.
+   Builder commits an agent's change once its agent checks pass.
+4. **Model tiers, not model names (stage 2).** An agent copied or imported
+   into an app carries its model choice, and model names differ between
+   deployments. An app's agents name a tier (Worker, Lead, the Offload
+   model); a particular model is a setting's value on this copy, and does
+   not travel.
+5. **What does not travel is asked for on import (stage 2).** The blueprint
+   names what it needs that only a deployment has: a credential, the channel
+   an agent answers on (iMessage, Teams), an MCP server. An imported app
+   lists each and asks the person to pick theirs, and stays switched off
+   until every one is chosen (imports already land switched off; this gives
+   the reason a list).
+6. **Schedules (stage 2).** An app's agents' schedules and its collections'
+   refreshes are defined in the blueprint; when one next runs, and how its
+   last run went, are data.
+7. **Copying keeps what the agent learned about this app's people
+   (stage 2).** When an existing app copies the agent it used on its first
+   change, the copy starts without what that agent learned, and the app
+   would seem to forget. The first-change copy also copies what the agent
+   learned about the people using this app, once, and says so in the
+   change's note. An export still never carries learned memory.
+8. **Updates for imported apps (after stage 3).** With history, someone who
+   imported an app could take the author's later improvements, merged with
+   the changes they made since. Not built; named as what the history makes
+   possible.
+9. **Deleting an app deletes what it owns (stage 2).** A self-contained
+   app's deletion takes its agents, its tool space and its collections'
+   documents. The delete confirmation lists what goes, with counts.
+
 ## Decisions (owner, 2026-11-17)
 
 1. **Where the repository lives:** `<workspaces>/<owner>/.apps/<slug>/`.
@@ -376,7 +433,9 @@ Stage 1:
    notice.
 3. Commits: Builder's commit (refused until verify and checks pass, a turn
    ending verified and uncommitted sent back), a person's change committed
-   at once, the Co-Authored-By trailer.
+   at once, the Co-Authored-By trailer, and each commit holding only its
+   author's work (another person's waiting saves committed first, as
+   theirs). Agent checks, so an agent's change can be tested.
 4. Anvil's app projects open the app's repository; Install fast-forwards;
    another save since is fetched and merged, or shown as a conflict.
 5. Measure: repository sizes and commit times across real apps.
@@ -390,7 +449,11 @@ Stage 2 (an app holds everything it runs on):
    than points, each in the app's folder and history, exported and deleted
    with it; shown read-only elsewhere, with an administrator's stop.
 8. A shared app's approval covers what it owns.
-9. Blueprints: a collection's blueprint and seed files, and each agent's
+9. Model tiers in an app's agents; what does not travel asked for on import;
+   schedules defined in the blueprint; the first-change copy keeping what
+   the agent learned about this app's people; deleting an app listing what
+   it owns.
+10. Blueprints: a collection's blueprint and seed files, and each agent's
    starting memory, in the app; documents and learned memory kept as data,
    out of git and exports. An app's collections: the app's mark, only its
    own parts writing (knowledge_add for its scripts), curation wired by the
@@ -400,13 +463,17 @@ Stage 2 (an app holds everything it runs on):
 
 Stage 3 (the app is its repository):
 
-10. Serve from the live folder, cached, for an app that has moved; the store
-    serves the rest.
-11. Installs merge into `live` through the save gates; Builder works on its
+11. Serve from the live folder, cached, for an app that has moved; the store
+    serves the rest. The live folder outside every workspace, written only
+    by the install path, served only while it matches its last commit.
+12. Installs merge into `live` through the save gates; Builder works on its
     branch, one per app; without git, saves write the live folder directly.
-12. Revisions, revert and Preview from git; bundles as git bundles.
-13. Move apps on first save or open; clear their code fields once served
+13. Revisions, revert and Preview from git; bundles as git bundles.
+14. Move apps on first save or open; clear their code fields once served
     from the repository.
+
+After stage 3: updates for imported apps, merged with the changes made
+since.
 
 Each stage on its own branch: stage 1 changes how Anvil opens an app and
 adds a repository per app; stage 2 changes what an app owns and how tools
