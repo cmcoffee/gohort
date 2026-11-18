@@ -8635,6 +8635,18 @@
         url += (url.indexOf('?') >= 0 ? '&' : '?') + 'limit=' + sessionLoadLimit;
       }
       fetchJSON(url).then(function(rec) {
+        // A session whose run is going on right now, on a page that follows
+        // runs by its events stream (EventsURL, not the run registry): open on
+        // the run, as the live sessions pill does, rather than on the saved
+        // thread with the run's replay drawn over it. Before, opening it from
+        // the list showed it as finished, and only the pill got back to it.
+        if (cfg.events_url && !cfg.runs_url_base && rec && rec.running && !keepLimit && sid === activeSessionId) {
+          clearConvoPanes();
+          setHeaderTitle(rec[ttlF]);
+          disableInput();
+          subscribeEvents(sid);
+          return;
+        }
         // The deferred wipe for a same-thread re-render. Everything from here
         // to the end of this handler runs synchronously, so the browser paints
         // the empty pane and the rebuilt one as a single frame — the reader

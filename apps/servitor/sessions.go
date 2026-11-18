@@ -221,10 +221,13 @@ func (T *Servitor) handleServitorSessionOne() http.HandlerFunc {
 			// investigation wrote are a relationship, and keeping a copy on the
 			// session would go stale the moment one was renamed. The link table is
 			// the source; this is a join.
+			// Running says the session's investigation is going on right now,
+			// so the page opening it joins it as the live pill does.
 			return struct {
 				chatSession
-				Guides []SessionGuide `json:"guides,omitempty"`
-			}{chatSession: s, Guides: SessionGuides(c.UDB, id)}, nil
+				Guides  []SessionGuide `json:"guides,omitempty"`
+				Running bool           `json:"running,omitempty"`
+			}{chatSession: s, Guides: SessionGuides(c.UDB, id), Running: probeSessions.Running(id)}, nil
 		}),
 		"DELETE": jsonapi.Delete(T.DB, func(c *jsonapi.Call, _ struct{}) (any, error) {
 			id, appID, err := sessionPath(c.R)

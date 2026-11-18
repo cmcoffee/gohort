@@ -319,6 +319,15 @@ func (m *LiveSessionMap[T]) CancelSession(id string) bool {
 }
 
 // ActiveSessions returns a list of currently active (not done, not queued) sessions.
+// Running reports whether the session id has a run going on right now, for
+// a page opening that session to join it rather than show it as finished.
+func (m *LiveSessionMap[T]) Running(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sessions[id]
+	return ok && !s.Done
+}
+
 func (m *LiveSessionMap[T]) ActiveSessions() []LiveEntry {
 	// Get queued IDs to exclude them.
 	queuedIDs := make(map[string]bool)
