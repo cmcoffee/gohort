@@ -131,7 +131,8 @@ func TestSettingsPageShowsWhatThePersonMaySet(t *testing.T) {
 	spec := settingsSpec()
 	render := func(owner bool) string {
 		w := httptest.NewRecorder()
-		T.handleSettingsPage(w, httptest.NewRequest(http.MethodGet, "/apps/wx/_settings", nil), spec, owner)
+		user := map[bool]string{true: "alice", false: "bob"}[owner]
+		T.handleSettingsPage(w, httptest.NewRequest(http.MethodGet, "/apps/wx/_settings", nil), spec, user, "alice")
 		if w.Code != http.StatusOK {
 			t.Fatalf("page: %d", w.Code)
 		}
@@ -150,7 +151,7 @@ func TestSettingsPageShowsWhatThePersonMaySet(t *testing.T) {
 
 	// An app with no settings says so rather than rendering an empty form.
 	w := httptest.NewRecorder()
-	T.handleSettingsPage(w, httptest.NewRequest(http.MethodGet, "/apps/x/_settings", nil), AppSpec{Slug: "x", Name: "X", Owner: "alice"}, true)
+	T.handleSettingsPage(w, httptest.NewRequest(http.MethodGet, "/apps/x/_settings", nil), AppSpec{Slug: "x", Name: "X", Owner: "alice"}, "bob", "alice")
 	if !strings.Contains(w.Body.String(), "Nothing to set") {
 		t.Fatal("an app without settings must render the empty state")
 	}

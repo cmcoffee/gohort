@@ -1635,13 +1635,13 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 	var offered []string
 	fmt.Fprintf(&b, "Nothing has been deleted. Closest matches to %q:\n", query)
 
-	facts := SearchMemoryFactsVec(t.udb, factsNamespace(t.agent.ID), query, qVec)
+	facts := SearchMemoryFactsVec(t.udb, t.factsNS(), query, qVec)
 	if len(facts) == 0 {
 		// The fact search falls back to matching the whole query as one
 		// phrase, which "pending photo edits Shazz" never is. A preview deletes
 		// nothing, so a looser word match is safe here and is what finds the
 		// note a person is actually describing.
-		facts = factsSharingWords(ListMemoryFacts(t.udb, factsNamespace(t.agent.ID)), query)
+		facts = factsSharingWords(ListMemoryFacts(t.udb, t.factsNS()), query)
 	}
 	if len(facts) > k {
 		facts = facts[:k]

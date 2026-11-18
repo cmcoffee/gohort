@@ -190,7 +190,12 @@ func (T *CustomApps) settingsBase(spec AppSpec, uid string) Database {
 // handleSettingsPage renders the app's Settings page: the framework's form
 // over the settings this person may set, loading from and saving to the
 // values endpoint, with a revert that clears their overrides.
-func (T *CustomApps) handleSettingsPage(w http.ResponseWriter, r *http.Request, spec AppSpec, owner bool) {
+//
+// It is the app's ⚙: everything about the app that is the person's own,
+// also what it remembers about them (app_memory.go) and, for whoever may
+// change the app, the way to Builder.
+func (T *CustomApps) handleSettingsPage(w http.ResponseWriter, r *http.Request, spec AppSpec, user, ownerUser string) {
+	owner := user == ownerUser
 	base := T.WebPath() + "/" + spec.Slug
 	fields := []ui.FormField{}
 	for _, s := range visibleSettings(spec, owner) {
@@ -230,7 +235,18 @@ func (T *CustomApps) handleSettingsPage(w http.ResponseWriter, r *http.Request, 
 				OptionsSource: "/orchestrate/api/console/agent-options"}},
 		}})
 	}
-	sections = append(sections, ui.Section{Title: "Settings", Subtitle: subtitle, Body: body})
+	mem := memorySection(spec, base)
+	change := changeSection(spec, user, ownerUser)
+	// "Nothing to set" says something only where nothing else is shown.
+	if len(fields) > 0 || (mem == nil && change == nil && len(sections) == 0) {
+		sections = append(sections, ui.Section{Title: "Settings", Subtitle: subtitle, Body: body})
+	}
+	if mem != nil {
+		sections = append(sections, *mem)
+	}
+	if change != nil {
+		sections = append(sections, *change)
+	}
 	ui.Page{
 		Title:     spec.Name + " settings",
 		ShowTitle: true,

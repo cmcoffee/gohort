@@ -66,6 +66,8 @@ type appFolderManifest struct {
 	AgentID           string            `json:"agent_id,omitempty"`
 	PipelineID        string            `json:"pipeline_id,omitempty"`
 	ExposePipeline    bool              `json:"expose_pipeline,omitempty"`
+	Memory            string            `json:"memory,omitempty"`
+	StartingFacts     []string          `json:"starting_facts,omitempty"`
 	FullWidth         bool              `json:"full_width,omitempty"`
 	Narrow            bool              `json:"narrow,omitempty"`
 	AskDailyUSD       float64           `json:"ask_daily_usd,omitempty"`
@@ -185,6 +187,7 @@ func writeAppFolder(abs string, spec AppSpec, assets map[string][]byte, base str
 	}
 	m := appFolderManifest{Name: spec.Name, Slug: spec.Slug, Description: spec.Desc, RecordKey: spec.RecordKey,
 		AgentID: spec.AgentID, PipelineID: spec.PipelineID, ExposePipeline: spec.ExposePipeline, FullWidth: spec.FullWidth, Narrow: spec.Narrow,
+		Memory: folderMemory(spec), StartingFacts: spec.StartingFacts,
 		AskDailyUSD: spec.AskDailyUSD, AskUserDailyUSD: spec.AskUserDailyUSD,
 		SharedCollections: spec.SharedCollections, Settings: spec.Settings, Sections: sections}
 	for _, ds := range spec.DataSources {
@@ -522,6 +525,14 @@ func (t *chatTurn) appFolderRead(abs, rel string) (map[string]any, appFolderMani
 	// Always passed, as the folder is the whole app: an update without the key
 	// would keep a pipeline exposed after the folder stopped saying so.
 	args["expose_pipeline"] = m.ExposePipeline
+	// The folder is the whole app: memory and starting facts as it says
+	// ("memory": "on", or nothing for off; folderMemory).
+	args["memory"] = m.Memory == "on"
+	facts := make([]any, len(m.StartingFacts))
+	for i, f := range m.StartingFacts {
+		facts[i] = f
+	}
+	args["starting_facts"] = facts
 	if m.FullWidth {
 		args["full_width"] = true
 	}
@@ -670,6 +681,16 @@ func (t *chatTurn) publishAppFolder(abs, rel string, o folderPublish) (string, e
 	}
 	notesNote := ""
 	if saved, ok := LoadAppSpec(t.user, m.Slug); ok {
+		// The save settles what the folder may not have said: whether the
+		// app keeps a memory (app_memory.go), and the app's own copies it
+		// binds in place of what the folder named (app_copy.go). The folder
+		// is written again as the app now is, so it holds what was installed
+		// and not a version the app's history no longer has.
+		if folderMemory(saved) != m.Memory || saved.AgentID != m.AgentID || saved.PipelineID != m.PipelineID {
+			if err := WriteAppFolder(t.user, m.Slug, abs); err != nil {
+				Log("[app-folder] %s/%s: the folder could not be brought up to what was installed: %v", t.user, m.Slug, err)
+			}
+		}
 		os.WriteFile(filepath.Join(abs, appFolderBaseFile), []byte(appLiveFingerprint(saved)), 0o644)
 		var prev *AppSpec
 		if exists {
@@ -899,4 +920,15 @@ func appCodeFingerprint(spec AppSpec) string {
 	b, _ := json.Marshal([]any{spec.Sections, spec.DataSources, spec.Actions, spec.Libraries, spec.Settings, spec.SharedCollections})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
+}
+
+// folderMemory is what app.json says of an app's memory (app_memory.go):
+// "on", or nothing for an app that keeps none. An app not saved since memory
+// was the app's (Memory "") is written "on", which is what its first change
+// makes it, so its folder installs as what it will be.
+func folderMemory(spec AppSpec) string {
+	if spec.Memory == "off" {
+		return ""
+	}
+	return "on"
 }

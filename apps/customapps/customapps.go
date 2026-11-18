@@ -33,7 +33,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"net/url"
 	"regexp"
 	"slices"
 	"sort"
@@ -288,10 +287,12 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		// it runs in cannot load them (asset_inline.go).
 		page = inlineAppAssets(page, ownerUser, slug)
 		page = T.withViewState(page, appdb, spec)
-		// A maintainer changes the app through Builder too
-		// (docs/design/app-maintainers.md), so the way there is theirs.
-		if user != ownerUser && spec.MaintainedBy(user) {
-			page = withBuilderLink(page, slug)
+		// The app's ⚙: what is the person's own about it (their settings,
+		// what it remembers about them) and, for its owner and maintainers
+		// (docs/design/app-maintainers.md), the way to change it with
+		// Builder (settings.go, app_memory.go).
+		if hasSettingsPage(spec, user, ownerUser) {
+			page = withNavLink(page, "\u2699", T.WebPath()+"/"+slug+"/_settings")
 		}
 		// Everyone else it is shared with reports a problem instead
 		// (report.go).
@@ -305,7 +306,6 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 			page = withNavLink(page, label, back)
 		}
 		if user == ownerUser {
-			page = withBuilderLink(page, slug)
 			// The agent it asks was deleted: say so where the owner looks,
 			// with the way to fix it, rather than let its chat and asks fail.
 			if !T.appAgentExists(spec) {
@@ -319,7 +319,7 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		T.handleViewReset(w, r, appdb, spec)
 	case rest == "_settings":
 		// The app's Settings page — a form over the tunables it declares.
-		T.handleSettingsPage(w, r, spec, user == ownerUser)
+		T.handleSettingsPage(w, r, spec, user, ownerUser)
 	case rest == "_runs":
 		// What its scripts did when they ran (runs.go). The owner's only.
 		T.handleRunsPage(w, r, spec, user == ownerUser)
@@ -568,17 +568,6 @@ func builderChangeURL(slug string) string {
 		return ""
 	}
 	return orch.WebPath() + "/?agent=seed-builder&intake.action=Change&intake.kind=App&intake.target=" + slug
-}
-
-// withBuilderLink adds a "Change with Builder" link to an app page's header
-// nav, for the app's owner and its maintainers: changing an app meant finding
-// Builder first.
-func withBuilderLink(page json.RawMessage, slug string) json.RawMessage {
-	link := builderChangeURL(url.QueryEscape(slug))
-	if link == "" {
-		return page
-	}
-	return withNavLink(page, "Change with Builder", link)
 }
 
 // withNavLink adds one link to an app page's header nav.

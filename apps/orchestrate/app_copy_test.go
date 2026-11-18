@@ -136,9 +136,21 @@ func TestAnAppsFirstChangeMakesWhatItPointsAtItsOwn(t *testing.T) {
 	StoreMemoryFactP(udb, ns, "Prices are in euros.", FactWritePolicy{})
 	StoreMemoryFactP(udb, ns, "Dana prefers short answers.", FactWritePolicy{Speaker: "Dana", SpeakerHandle: "dana"})
 	SaveOperatingNotes(udb, ns, "Answer in two lines.")
+	// Another person who used the agent: what it learned with them is in
+	// their own store, under the agent's id.
+	adb := &DBase{Store: kvlite.MemStore()}
+	AuthSetUser(adb, "u", "pw", false)
+	AuthSetUser(adb, "guest", "pw", false)
+	prevAuth := AuthDB
+	AuthDB = func() Database { return adb }
+	t.Cleanup(func() { AuthDB = prevAuth })
+	guestDB := UserDB(orchestrateBaseDB, "guest")
+	StoreMemoryFactP(guestDB, ns, "Guest works nights.", FactWritePolicy{})
 	copyTestApp(t, turn, nil)
+	// As an app saved before any of this: pointing at the person's agent,
+	// owning no tools, its memory undecided.
 	spec, _ := LoadAppSpec("u", "desk")
-	spec.AgentID = orig.ID
+	spec.AgentID, spec.OwnTools, spec.Memory = orig.ID, false, ""
 	SaveAppSpec(spec)
 
 	out, err := turn.appDefCreateOrUpdate(map[string]any{"id": "desk", "description": "A desk."}, true)
@@ -150,7 +162,11 @@ func TestAnAppsFirstChangeMakesWhatItPointsAtItsOwn(t *testing.T) {
 	if !ok || cp.ID == orig.ID || cp.OwningApp != "desk" {
 		t.Fatalf("the app's agent after its first change: %+v", cp)
 	}
-	facts := ListMemoryFacts(udb, factsNamespace(cp.ID))
+	if spec.Memory != "on" {
+		t.Errorf("an existing app's first change left its memory %q, want on", spec.Memory)
+	}
+	appNS := AppMemoryNamespace("u", "desk")
+	facts := ListMemoryFacts(udb, appNS)
 	var dana bool
 	for _, f := range facts {
 		if strings.Contains(f.Note, "Dana") && f.Speaker == "Dana" {
@@ -166,6 +182,17 @@ func TestAnAppsFirstChangeMakesWhatItPointsAtItsOwn(t *testing.T) {
 	if len(ListMemoryFacts(udb, ns)) != 2 {
 		t.Error("the original lost what it learned")
 	}
+	if g := ListMemoryFacts(guestDB, appNS); len(g) != 1 || !strings.Contains(g[0].Note, "nights") {
+		t.Errorf("what the copy knows with the guest, in the guest's store: %+v", g)
+	}
+	for _, f := range facts {
+		if strings.Contains(f.Note, "nights") {
+			t.Error("the guest's fact landed in the owner's store")
+		}
+	}
+	if !strings.Contains(out, "1 other person") {
+		t.Errorf("the reply does not say the guest's memory came along: %s", out)
+	}
 	if _, ok := apptools.ByName("u", "desk", "lookup"); !ok {
 		t.Error("the tool the agent names was not copied into the app")
 	}
@@ -178,7 +205,7 @@ func TestAnAppsFirstChangeMakesWhatItPointsAtItsOwn(t *testing.T) {
 
 	// Saving again copies nothing more, and teaches nothing twice.
 	out, err = turn.appDefCreateOrUpdate(map[string]any{"id": "desk", "description": "A desk, again."}, true)
-	if err != nil || strings.Contains(out, "Copied into the app") || len(ListMemoryFacts(udb, factsNamespace(cp.ID))) != 2 {
+	if err != nil || strings.Contains(out, "Copied into the app") || len(ListMemoryFacts(udb, appNS)) != 2 {
 		t.Errorf("a second save: %v %s", err, out)
 	}
 }

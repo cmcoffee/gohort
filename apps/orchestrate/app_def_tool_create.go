@@ -72,10 +72,10 @@ type appWrite struct {
 	parseNotes []string
 	// copyNote says what the save copied into the app (app_copy.go).
 	copyNote string
-	verb       string
-	saved      AppSpec
-	msg        string
-	plan       string
+	verb     string
+	saved    AppSpec
+	msg      string
+	plan     string
 
 	// ret and retErr are what the write hands back, parked by exit.
 	ret    string
@@ -215,6 +215,19 @@ func (aw *appWrite) readMeta() bool {
 	// key is present, so an update without it keeps the choice.
 	if _, ok := args["expose_pipeline"]; ok {
 		aw.spec.ExposePipeline = boolArg(args, "expose_pipeline")
+	}
+	// memory / starting_facts: piece E. Only when the key is present.
+	if _, ok := args["memory"]; ok {
+		aw.spec.Memory = map[bool]string{true: "on", false: "off"}[boolArg(args, "memory")]
+	}
+	if _, ok := args["starting_facts"]; ok {
+		var facts []string
+		for _, f := range stringSliceFromArgs(args, "starting_facts") {
+			if f = strings.TrimSpace(f); f != "" {
+				facts = append(facts, f)
+			}
+		}
+		aw.spec.StartingFacts = facts
 	}
 	// full_width: opt the app's page into edge-to-edge layout. Only honored when
 	// the key is present so an update without it keeps the existing choice.
@@ -730,7 +743,7 @@ func floatArg(args map[string]any, key string) float64 {
 // which a check has to see again. A notes or name edit leaves a verified app
 // verified.
 func appUpdateChangesBehavior(args map[string]any) bool {
-	for _, k := range []string{"sections", "data_sources", "actions", "libraries", "settings", "shared_collections", "record_key", "agent_id", "pipeline_id", "expose_pipeline"} {
+	for _, k := range []string{"sections", "data_sources", "actions", "libraries", "settings", "shared_collections", "record_key", "agent_id", "pipeline_id", "expose_pipeline", "memory", "starting_facts"} {
 		if _, ok := args[k]; ok {
 			return true
 		}

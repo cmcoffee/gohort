@@ -137,6 +137,7 @@ func (T *CustomApps) appRoutes() {
 		"POST": appPost(T, T.saveSettingsValues),
 	}.Serve)
 	T.HandleFunc("/{slug}/_settings/reset", appPost(T, T.resetSettings))
+	T.memoryRoutes()
 	T.HandleFunc("/{slug}/_settings/agent", jsonapi.Methods{
 		"GET":  T.appGet(T.settingsAgent),
 		"POST": appPost(T, T.saveSettingsAgent),

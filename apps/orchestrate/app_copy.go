@@ -55,6 +55,9 @@ type appCopier struct {
 	// what an app was already bound to (its first change, piece D).
 	memory  bool
 	learned []string
+	// factsTo is the app's memory, when the app keeps one and this is its
+	// first change: copied facts go there rather than to the copy's own.
+	factsTo string
 }
 
 func newAppCopier(udb Database, owner, slug, via string) *appCopier {
@@ -169,23 +172,31 @@ func (c *appCopier) copyTools(src AgentRecord) {
 }
 
 // copyMemory has cp take what src learned, when c copies an app's first
-// change: its facts (whoever said them), working notes and learned findings,
-// once. It stays in the owner's store; an export never carries it.
+// change: its working notes and learned findings, and its facts (whoever
+// said them), once. Facts go to the app's memory when the app keeps one
+// (c.factsTo, app_memory.go), else to the copy's own. What an agent learns
+// is kept in the store of the person it learned it with: the owner's, and
+// each other person's who used it (a shared app's users), so each person's
+// is copied within their own store, where it stays theirs. An export never
+// carries any of it.
 func (c *appCopier) copyMemory(src, cp AgentRecord) {
 	if !c.memory {
 		return
 	}
 	from, to := factsNamespace(src.ID), factsNamespace(cp.ID)
-	facts := CopyMemoryFacts(c.udb, from, to)
 	part := memoryPart(c.udb, c.owner, src)
 	if n := strings.TrimSpace(part.Notes); n != "" {
 		SaveOperatingNotes(c.udb, to, n)
 	}
-	if facts == 0 && strings.TrimSpace(part.Notes) == "" && len(part.Findings) == 0 {
+	factsTo := to
+	if c.factsTo != "" {
+		factsTo = c.factsTo
+	}
+	facts, people := c.copyFacts(from, factsTo)
+	if facts == 0 && strings.TrimSpace(part.Notes) == "" && len(part.Findings) == 0 && people == 0 {
 		return
 	}
-	c.learned = append(c.learned, fmt.Sprintf("%s (%d facts, %d findings%s)", src.Name, facts, len(part.Findings),
-		map[bool]string{true: ", its working notes", false: ""}[strings.TrimSpace(part.Notes) != ""]))
+	c.noteLearned(src.Name, facts, len(part.Findings), strings.TrimSpace(part.Notes) != "", people)
 	if VectorDB == nil || len(part.Findings) == 0 {
 		return
 	}
@@ -361,6 +372,24 @@ func (aw *appWrite) copyBindings() error {
 	if c.via == "" {
 		c.via = "Builder"
 	}
+	// Whether the app keeps a memory of the people using it (app_memory.go).
+	// Undecided is an app not saved since that existed: a new app starts
+	// without one unless it says so; an existing app's first change switches
+	// it on, and what its agents learned comes into it, so it keeps
+	// remembering as it did.
+	var owned []AgentRecord
+	firstChange := aw.isUpdate && aw.prior.Memory == ""
+	if aw.spec.Memory == "" {
+		aw.spec.Memory = map[bool]string{true: "on", false: "off"}[aw.isUpdate]
+	}
+	if firstChange && aw.spec.Memory == "on" {
+		c.factsTo = AppMemoryNamespace(aw.spec.Owner, slug)
+		for _, a := range listAgents(udb, aw.spec.Owner) {
+			if a.OwningApp == slug && a.Owner == aw.spec.Owner {
+				owned = append(owned, a)
+			}
+		}
+	}
 	if id := strings.TrimSpace(aw.spec.AgentID); id != "" {
 		if a, ok := loadAgent(udb, id); ok && a.OwningApp != slug {
 			c.memory = aw.isUpdate && id == aw.prior.AgentID
@@ -382,6 +411,9 @@ func (aw *appWrite) copyBindings() error {
 		}
 	}
 	c.memory = false
+	for _, a := range owned {
+		c.adoptAgentFacts(a)
+	}
 	var everyTool []string
 	for _, a := range listAgents(udb, aw.spec.Owner) {
 		if a.OwningApp != slug || a.Owner != aw.spec.Owner {
@@ -484,4 +516,53 @@ func soleNoAppAgent(tied []AgentRecord) (AgentRecord, bool) {
 		return found[0], true
 	}
 	return AgentRecord{}, false
+}
+
+// copyFacts copies the facts of namespace from into to, in the owner's
+// store and in each other person's (where what an agent learned with them
+// is kept), and says how many the owner's held and how many other people's
+// had any.
+func (c *appCopier) copyFacts(from, to string) (owner, people int) {
+	owner = CopyMemoryFacts(c.udb, from, to)
+	if orchestrateBaseDB == nil || AuthDB == nil || AuthDB() == nil {
+		return owner, 0
+	}
+	for _, u := range AuthListUsers(AuthDB()) {
+		if u.Username == c.owner {
+			continue
+		}
+		if CopyMemoryFacts(UserDB(orchestrateBaseDB, u.Username), from, to) > 0 {
+			people++
+		}
+	}
+	return owner, people
+}
+
+// noteLearned records, for the save's reply, what of name's memory came
+// along.
+func (c *appCopier) noteLearned(name string, facts, findings int, notes bool, people int) {
+	learned := fmt.Sprintf("%s (%d facts", name, facts)
+	if findings > 0 {
+		learned += fmt.Sprintf(", %d findings", findings)
+	}
+	if notes {
+		learned += ", its working notes"
+	}
+	if people > 0 {
+		learned += fmt.Sprintf("; and what it learned with %d other %s, each kept in their own store", people, map[bool]string{true: "person", false: "people"}[people == 1])
+	}
+	c.learned = append(c.learned, learned+")")
+}
+
+// adoptAgentFacts moves into the app's memory what an agent already the
+// app's learned under its own id, on the app's first change once the app
+// keeps a memory of its own: from then on its facts are the app's.
+func (c *appCopier) adoptAgentFacts(a AgentRecord) {
+	if c.factsTo == "" {
+		return
+	}
+	facts, people := c.copyFacts(factsNamespace(a.ID), c.factsTo)
+	if facts > 0 || people > 0 {
+		c.noteLearned(a.Name, facts, 0, false, people)
+	}
 }

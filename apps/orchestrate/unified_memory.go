@@ -386,12 +386,12 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 	// <date>") instead of a silent miss the model would paper over with a
 	// stale prior.
 	if layers["pinned"] {
-		facts := SearchMemoryFactsVec(t.udb, factsNamespace(t.agent.ID), query, qVec)
+		facts := SearchMemoryFactsVec(t.udb, t.factsNS(), query, qVec)
 		if len(facts) > perLayer {
 			facts = facts[:perLayer]
 		}
 		if len(facts) > 0 {
-			ents := ListGraphEntities(t.udb, factsNamespace(t.agent.ID))
+			ents := ListGraphEntities(t.udb, t.factsNS())
 			var b strings.Builder
 			pinScores := recallScoreLog{query: query, layer: "pinned (shown only; the fact search drops the rest)"}
 			for _, f := range facts {
@@ -406,7 +406,7 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 			}
 			pinScores.emit()
 			sections = append(sections, strings.TrimRight(b.String(), "\n"))
-		} else if hole := explainRetiredHole(t.udb, factsNamespace(t.agent.ID), query); hole != "" {
+		} else if hole := explainRetiredHole(t.udb, t.factsNS(), query); hole != "" {
 			sections = append(sections, "[pinned] "+hole)
 		}
 	}
@@ -816,7 +816,7 @@ func (t *chatTurn) recallFetch(id string) (string, error) {
 		}
 		return doc, nil
 	case "fact":
-		for _, f := range ListMemoryFacts(t.udb, factsNamespace(t.agent.ID)) {
+		for _, f := range ListMemoryFacts(t.udb, t.factsNS()) {
 			if f.ID == ref {
 				return f.Note, nil
 			}
@@ -886,7 +886,7 @@ func (t *chatTurn) forgetToolDef() AgentToolDef {
 			// would hard-delete the wrong note.
 			if n, err := strconv.Atoi(id); err == nil {
 				quote := strings.TrimSpace(stringArg(args, "quote"))
-				removed, reason, ok := ForgetMemoryFactByIndexQuoted(t.udb, factsNamespace(t.agent.ID), n, quote)
+				removed, reason, ok := ForgetMemoryFactByIndexQuoted(t.udb, t.factsNS(), n, quote)
 				if !ok {
 					return "", fmt.Errorf("nothing deleted: %s", reason)
 				}
@@ -910,11 +910,11 @@ func (t *chatTurn) forgetToolDef() AgentToolDef {
 			case "fact":
 				// An open item is closed rather than deleted: declining it is
 				// an answer, and the owner can still put it back.
-				if f, ok := GetMemoryFactByID(t.udb, factsNamespace(t.agent.ID), ref); ok && !f.Retired() && f.MemKind == provenance.MemKindOpenItem {
+				if f, ok := GetMemoryFactByID(t.udb, t.factsNS(), ref); ok && !f.Retired() && f.MemKind == provenance.MemKindOpenItem {
 					closeOpenItem(t.udb, t.agent.ID, f, time.Now())
 					return "Closed the open item: it is off your saved notes. The owner can restore it from the Memory panel.", nil
 				}
-				if ForgetMemoryFactByID(t.udb, factsNamespace(t.agent.ID), ref) {
+				if ForgetMemoryFactByID(t.udb, t.factsNS(), ref) {
 					return "Forgot pinned note.", nil
 				}
 				return fmt.Sprintf("No pinned note with id fact:%s, it may already be gone.", ref), nil

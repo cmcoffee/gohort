@@ -494,7 +494,7 @@ func (t *chatTurn) openItemTurnNote(userMsg string) string {
 		return a.note
 	}
 	now := time.Now()
-	ns := factsNamespace(t.agent.ID)
+	ns := t.factsNS()
 	var pick *MemoryFact
 	for _, f := range ListMemoryFacts(t.udb, ns) {
 		if f.MemKind != provenance.MemKindOpenItem || !f.AskedAt.IsZero() || now.Sub(lastActive(f)) <= idle || provenance.ReadsAsClosed(f.Note) {

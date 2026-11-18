@@ -71,6 +71,18 @@ type AppSpec struct {
 	// when Builder or Anvil saves the app and none of its agents is allowed
 	// every tool; an app without it still loads the pool beside its space.
 	OwnTools bool `json:"own_tools,omitempty"`
+	// Memory says whether the app's agents remember the people using it:
+	// "on" (a memory of the app's own, one per person, in that person's
+	// store, shared by all its agents), "off" (they remember nobody), or ""
+	// for an app not yet saved since this existed, whose agents keep the
+	// memory of their own they always had (docs/design/app-history.md,
+	// piece E). Part of the blueprint: Builder or Anvil set it.
+	Memory string `json:"memory,omitempty"`
+	// StartingFacts are what the app's agents know from the start, written
+	// in on purpose ("prices are in euros"): given to each of them every
+	// turn as what they know from the app, apart from what they learn, and
+	// changed only with the app.
+	StartingFacts []string `json:"starting_facts,omitempty"`
 	// ExposePipeline offers the app's pipeline (PipelineID) as a tool beyond
 	// its page: <slug>_run_pipeline, taking an input and returning the run's
 	// final output, for the owner's agents (ticked in an agent's tools) and
@@ -1009,4 +1021,35 @@ func appPhaseRefs(owner, slug string, phases []MachinePhase) []MachinePhase {
 		out[i].Machine = appRef(owner, slug, "machine", out[i].Machine)
 	}
 	return out
+}
+
+// AppMemoryNamespace is the memory of owner's app slug, kept in the store of
+// the person it is about (docs/design/app-history.md, piece E): what the
+// app's agents learn about each person who uses it, shared by all of them.
+func AppMemoryNamespace(owner, slug string) string {
+	return "app:" + owner + "/" + slug
+}
+
+// appMemoryOptOutTable is, in a person's store, the apps they asked not to
+// remember them, keyed owner/slug.
+const appMemoryOptOutTable = "app_memory_optout"
+
+// AppMemoryOptedOut reports whether the person whose store db is asked
+// owner's app slug not to remember them.
+func AppMemoryOptedOut(db Database, owner, slug string) bool {
+	var off bool
+	return db != nil && db.Get(appMemoryOptOutTable, owner+"/"+slug, &off) && off
+}
+
+// SetAppMemoryOptOut records, in the person's store db, that owner's app
+// slug is not to remember them (off), or that it may again.
+func SetAppMemoryOptOut(db Database, owner, slug string, off bool) {
+	if db == nil {
+		return
+	}
+	if off {
+		db.Set(appMemoryOptOutTable, owner+"/"+slug, true)
+		return
+	}
+	db.Unset(appMemoryOptOutTable, owner+"/"+slug)
 }

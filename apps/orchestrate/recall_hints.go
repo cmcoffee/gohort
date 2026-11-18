@@ -297,7 +297,7 @@ func (t *chatTurn) graphBridgeHints(userMsg string, max int) []recallHint {
 	if t == nil || t.udb == nil || max <= 0 {
 		return nil
 	}
-	ns := factsNamespace(t.agent.ID)
+	ns := t.factsNS()
 	mentioned := GraphEntitiesMentionedIn(t.udb, ns, userMsg, max*2)
 	if len(mentioned) == 0 {
 		return nil

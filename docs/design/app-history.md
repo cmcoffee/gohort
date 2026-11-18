@@ -546,6 +546,32 @@ Stage 2 (an app holds everything it runs on):
    use on their first change (agents, pipelines, machines and tools: built,
    piece D; collections with the blueprints).
 
+   **Piece E1, an app's memory and what its agents know from the start
+   (0.9.531).** Decided (owner, 2026-11-18), replacing "each agent's
+   starting memory" and "what an agent learns in use" above for an app's
+   agents:
+   - **Memory is the app's, and an option.** `app.json` `memory: "on"`
+     (Builder's app_def memory; off unless set) gives the app a memory of
+     its own, one per person, kept in that person's store and shared by
+     every agent of the app: remember and recall as usual, deleted with
+     the app, never exported. Copying or replacing an agent loses nothing.
+     Off, the app's agents remember nobody. An app not saved since keeps
+     its agents' own memories until its first change, which switches the
+     app's on and copies what they learned into it (the owner's and each
+     other person's, each in their own store).
+   - **What the agents know from the start is the app's**: `starting_facts`
+     in `app.json`, given to every agent of the app before anything
+     learned, and changed only with the app. An agent's `seed_notes` stay
+     its starting working notes.
+   - **The ⚙ in the app's bar** opens its Settings page, which holds what is
+     the person's own about the app: its settings; what it remembers about
+     them (the starting facts read-only, their own facts each to forget,
+     Forget everything, and "Remember me in this app" to stop being
+     remembered, which keeps what is kept until they forget it); and, for
+     its owner and maintainers, Change with Builder (moved off the bar).
+     Each person sees only their own: what it remembers about anyone else
+     is in that person's store.
+
 Stage 3 (the app is its repository):
 
 11. Serve from the live folder, cached, for an app that has moved; the store

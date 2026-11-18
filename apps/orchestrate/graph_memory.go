@@ -68,7 +68,7 @@ func (t *chatTurn) entityRelatedPassages(e GraphEntity) string {
 // entityRelatedPassages; facts share the entity's namespace. Returns "" when
 // nothing matches. Short aliases (<3 chars) are skipped to avoid over-matching.
 func (t *chatTurn) entityRelatedFacts(e GraphEntity) string {
-	facts := ListMemoryFacts(t.udb, factsNamespace(t.agent.ID))
+	facts := ListMemoryFacts(t.udb, t.factsNS())
 	var matched []string
 	for _, f := range facts {
 		if GraphEntityMentionedIn(e, f.Note) {
@@ -98,7 +98,7 @@ func (t *chatTurn) entityRelatedFacts(e GraphEntity) string {
 // cross-link. Capped at a few entities to bound the appended tokens. Returns ""
 // when the passages name no known entity.
 func (t *chatTurn) passageRelatedGraph(text string) string {
-	ns := factsNamespace(t.agent.ID)
+	ns := t.factsNS()
 	ents := GraphEntitiesMentionedIn(t.udb, ns, text, 3)
 	if len(ents) == 0 {
 		return ""
@@ -166,7 +166,10 @@ func (t *chatTurn) linkEntitiesToolDef() AgentToolDef {
 			if subject == "" || relation == "" || object == "" {
 				return "", errors.New("subject, relation, and object are required")
 			}
-			ns := factsNamespace(t.agent.ID)
+			if why := t.appMemoryWriteRefusal(); why != "" {
+				return "", errors.New("not saved: " + why)
+			}
+			ns := t.factsNS()
 			subj, _ := UpsertGraphEntity(t.udb, ns, stringArg(args, "subject_kind"), subject, nil, attrsArg(args, "subject_attrs"))
 			obj, _ := UpsertGraphEntity(t.udb, ns, stringArg(args, "object_kind"), object, nil, attrsArg(args, "object_attrs"))
 			if subj.ID == "" || obj.ID == "" {
@@ -209,7 +212,7 @@ func (t *chatTurn) forgetGraphToolDef() AgentToolDef {
 			if err := t.strangerMayNotForget(); err != nil {
 				return "", err
 			}
-			ns := factsNamespace(t.agent.ID)
+			ns := t.factsNS()
 			subject := strings.TrimSpace(stringArg(args, "subject"))
 			relation := strings.TrimSpace(stringArg(args, "relation"))
 			object := strings.TrimSpace(stringArg(args, "object"))
@@ -269,7 +272,7 @@ func (t *chatTurn) recallAboutToolDef() AgentToolDef {
 			if name == "" {
 				return "", errors.New("name is required")
 			}
-			ns := factsNamespace(t.agent.ID)
+			ns := t.factsNS()
 			e, ok := FindGraphEntity(t.udb, ns, name)
 			if !ok {
 				// Offer a few known names so the model can recognize a near-miss

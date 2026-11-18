@@ -79,6 +79,11 @@ func (t *chatTurn) storeFactNote(note string, domain ClaimDomain, origin MemSour
 	if t.incognitoSession() {
 		return "", t.refuseDurableMemoryInCleanRoom("not saved", "a pinned note would outlive the conversation that made it")
 	}
+	// An app that keeps no memory, or a person who asked it not to remember
+	// them (app_memory.go).
+	if why := t.appMemoryWriteRefusal(); why != "" {
+		return "", errors.New("not saved: " + why)
+	}
 	// A pinned note naming a handle that does not survive is wrong from the
 	// moment it is written, and goes on being read as authoritative.
 	//
@@ -101,7 +106,7 @@ func (t *chatTurn) storeFactNote(note string, domain ClaimDomain, origin MemSour
 	// ("moved to Austin") supersedes the stale one instead of coexisting as
 	// a contradiction, and (b) in chatbot mode the relevance gate rejects
 	// ephemeral chatter before it bloats the always-in-prompt block.
-	res := StoreMemoryFactP(t.udb, factsNamespace(t.agent.ID), note, FactWritePolicy{
+	res := StoreMemoryFactP(t.udb, t.factsNS(), note, FactWritePolicy{
 		Mode: t.agent.MemoryMode,
 		Chat: t.app.WorkerChat,
 		// The model authored this note from the session, not a human directly and

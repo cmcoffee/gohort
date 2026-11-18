@@ -2133,8 +2133,8 @@ func (pr *planRun) runLoop() {
 		if pr.resp != nil {
 			recordTurnCommitment(t.udb, t.chatSessionID(), pr.resp.Content, t.calledAnyTool())
 		}
-		if graphExtractAllowed(t.agent, t.inferredDisabled) {
-			maybeExtractGraph(t.udb, factsNamespace(t.agent.ID),
+		if graphExtractAllowed(t.agent, t.inferredDisabled) && t.factsNS() != "" && t.appMemoryWriteRefusal() == "" {
+			maybeExtractGraph(t.udb, t.factsNS(),
 				turnExtractText(pr.userSaid, pr.resp), t.app.WorkerChat)
 		}
 	}

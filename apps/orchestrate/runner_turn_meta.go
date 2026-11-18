@@ -433,11 +433,13 @@ func (t *chatTurn) facts() []MemoryFact {
 	if t.incognitoSession() {
 		return nil
 	}
-	var own []MemoryFact
+	// What an app's agents know from the start (app_memory.go) comes first,
+	// apart from anything learned.
+	own := t.startingFacts()
 	// The owner's own saved facts reach a stranger on a channel only when the
 	// owner shares them (memory_scope.go): the run is the owner's account.
 	if t.ownLayerShared(defaultShareNotes) {
-		own = ListMemoryFacts(t.udb, factsNamespace(t.agent.ID))
+		own = append(own, ListMemoryFacts(t.udb, t.factsNS())...)
 	}
 	// The owner's saved notes, underneath, when they turned that on. This is
 	// the one layer that has never travelled, so it is the one switch that
@@ -452,7 +454,8 @@ func (t *chatTurn) facts() []MemoryFact {
 	// (storeFactNote, the forget tool, the sweep) addresses t.udb by name, so
 	// no owner fact can be edited or retired through a recipient's turn. One
 	// they try to forget is simply not in their namespace.
-	if t.readsOwnerFacts() {
+	// An app's memory is each person's own: the owner's never underlies it.
+	if t.readsOwnerFacts() && t.factsNS() == factsNamespace(t.agent.ID) {
 		if odb := UserDB(t.app.DB, t.memoryUnderlay()); odb != nil {
 			own = append(own, ListMemoryFacts(odb, factsNamespace(t.agent.ID))...)
 		}
