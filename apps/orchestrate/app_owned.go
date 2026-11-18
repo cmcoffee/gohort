@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/apptools"
@@ -25,7 +26,7 @@ import (
 )
 
 // appOwnedDirs are the folders of an app's folder that hold what it owns.
-var appOwnedDirs = []string{"agents", "pipelines", "machines", "tools"}
+var appOwnedDirs = []string{"agents", "pipelines", "machines", "tools", "knowledge"}
 
 func init() {
 	RegisterAppOwnedChangeHook(appOwnedChanged)
@@ -89,6 +90,11 @@ func appOwnedIndex(owner, slug string) map[string]appOwnedItem {
 	for _, d := range ListMachineDefs(udb, owner) {
 		if d.OwningApp == slug {
 			put("machines", "machine", d.ID, d.Name, ExportMachine(ma.normalizeDelegates(d, owner)))
+		}
+	}
+	for _, c := range ListCollections(udb, owner) {
+		if c.OwningApp == slug && c.Owner == owner {
+			put("knowledge", "collection", c.ID, c.Name, collectionFileOf(udb, owner, c))
 		}
 	}
 	for _, at := range apptools.Load(owner, slug) {
@@ -155,13 +161,15 @@ type appOwnedFolder struct {
 	machines  map[string]MachineDef
 	// tools are each tool's definition with its script read back in.
 	tools map[string]TempTool
-	raw   map[string][]byte
+	// collections are each collection's blueprint.
+	collections map[string]collectionFile
+	raw         map[string][]byte
 }
 
 // readAppOwnedFolder reads the folder's owned files. One that does not parse
 // is an error naming it: the install stops before anything is saved.
 func readAppOwnedFolder(abs, rel string) (appOwnedFolder, error) {
-	f := appOwnedFolder{agents: map[string]agentExport{}, pipelines: map[string]PipelineDef{}, machines: map[string]MachineDef{}, tools: map[string]TempTool{}, raw: map[string][]byte{}}
+	f := appOwnedFolder{agents: map[string]agentExport{}, pipelines: map[string]PipelineDef{}, machines: map[string]MachineDef{}, tools: map[string]TempTool{}, collections: map[string]collectionFile{}, raw: map[string][]byte{}}
 	for _, dir := range appOwnedDirs {
 		entries, err := os.ReadDir(filepath.Join(abs, dir))
 		if err != nil {
@@ -196,6 +204,12 @@ func readAppOwnedFolder(abs, rel string) (appOwnedFolder, error) {
 					bad = fmt.Errorf("it names no machine")
 				}
 				f.machines[file] = v
+			case "knowledge":
+				var v collectionFile
+				if bad = json.Unmarshal(b, &v); bad == nil && strings.TrimSpace(v.Name) == "" {
+					bad = fmt.Errorf("it names no collection")
+				}
+				f.collections[file] = v
 			case "tools":
 				var v TempTool
 				if bad = json.Unmarshal(b, &v); bad == nil {
@@ -344,6 +358,15 @@ func (t *chatTurn) applyAppOwned(slug string, f appOwnedFolder) (string, error) 
 		}
 		changed = append(changed, "tool "+tool.Name)
 	}
+	for file, cf := range f.collections {
+		if cur, ok := have[file]; ok && string(cur.data) == string(f.raw[file]) {
+			continue
+		}
+		if err := applyCollectionFile(udb, owner, slug, via, have[file].id, cf); err != nil {
+			return "", fmt.Errorf("the collection in %s: %w", file, err)
+		}
+		changed = append(changed, "collection "+cf.Name)
+	}
 	var gone []string
 	for file, it := range have {
 		if _, ok := f.raw[file]; !ok {
@@ -441,7 +464,7 @@ func appOwnedCount(owner, slug string) string {
 		n[it.kind]++
 	}
 	var parts []string
-	for _, kind := range []string{"agent", "pipeline", "machine", "tool"} {
+	for _, kind := range []string{"agent", "pipeline", "machine", "tool", "collection"} {
 		switch c := n[kind]; {
 		case c == 1:
 			parts = append(parts, "1 "+kind)
@@ -503,6 +526,8 @@ func deleteAppOwned(owner, slug string) (gone, kept []string) {
 		case "tool":
 			// The app's space goes whole, below.
 			continue
+		case "collection":
+			deleteCollection(udb, o.DB, owner, it.id)
 		case "agent":
 			err = deleteAgent(udb, it.id, owner)
 		case "pipeline":
@@ -542,6 +567,18 @@ func ownedItemUser(udb Database, owner string, it appOwnedItem, self map[string]
 	case "pipeline":
 		if app := pipelineApp[it.id]; app != "" {
 			return fmt.Sprintf("app %q", app)
+		}
+	case "collection":
+		// An agent of the person's that reads it, outside the app.
+		for _, a := range listAgents(udb, owner) {
+			if self["agent:"+a.Name] {
+				continue
+			}
+			for _, id := range a.AttachedCollections {
+				if id == it.id {
+					return fmt.Sprintf("agent %q", a.Name)
+				}
+			}
 		}
 	}
 	return ""
@@ -679,4 +716,81 @@ func wireAppToolSpace(sess *ToolSession, owner string) {
 		}
 		return apptools.DeleteBy(owner, slug, name, "Builder")
 	}
+}
+
+// collectionFile is an app's collection as its folder holds it
+// (knowledge/<name>.json): its blueprint, never its documents. Submitters
+// are named by agent name, as a recipe names agents, so the file reads the
+// same wherever the app goes.
+type collectionFile struct {
+	Name           string            `json:"name"`
+	Description    string            `json:"description,omitempty"`
+	FilterRules    string            `json:"filter_rules,omitempty"`
+	SearchTerms    []string          `json:"search_terms,omitempty"`
+	DocsPerRun     int               `json:"docs_per_run,omitempty"`
+	Articles       []string          `json:"articles,omitempty"`
+	Refresh        string            `json:"refresh,omitempty"`
+	Submitters     map[string]string `json:"submitters,omitempty"`
+	SuggestionsOff bool              `json:"suggestions_off,omitempty"`
+}
+
+// collectionFileOf is c's blueprint, its submitters by name and its refresh
+// from the schedule that keeps it.
+func collectionFileOf(udb Database, owner string, c Collection) collectionFile {
+	f := collectionFile{Name: c.Name, Description: c.Description, FilterRules: c.FilterRules, SearchTerms: c.SearchTerms,
+		DocsPerRun: c.DocsPerRun, Articles: c.Articles, SuggestionsOff: c.SuggestionsOff}
+	if task, _, _, ok := refreshScheduled(owner, c.ID); ok {
+		f.Refresh = task.Every
+	}
+	for id, mode := range c.Submitters {
+		name := id
+		if a, ok := loadAgent(udb, id); ok && strings.TrimSpace(a.Name) != "" {
+			name = a.Name
+		}
+		if f.Submitters == nil {
+			f.Submitters = map[string]string{}
+		}
+		f.Submitters[name] = mode
+	}
+	return f
+}
+
+// applyCollectionFile makes owner's app slug's collection id (a new one when
+// id is "") what cf says, as via's change: its blueprint, its submitters
+// resolved among the app's agents first, and its refresh. Its documents are
+// not touched.
+func applyCollectionFile(udb Database, owner, slug, via, id string, cf collectionFile) error {
+	var c Collection
+	if id != "" {
+		cur, ok := loadCollection(udb, owner, id)
+		if !ok {
+			return fmt.Errorf("its collection is gone")
+		}
+		c = cur
+	} else {
+		if why := duplicateCollectionName(udb, owner, cf.Name, ""); why != "" {
+			return errors.New(why)
+		}
+		c = Collection{ID: UUIDv4(), Owner: owner, Created: time.Now()}
+	}
+	c.Name, c.Description, c.FilterRules = strings.TrimSpace(cf.Name), cf.Description, cf.FilterRules
+	c.SearchTerms, c.DocsPerRun, c.Articles, c.SuggestionsOff = cf.SearchTerms, cf.DocsPerRun, cf.Articles, cf.SuggestionsOff
+	c.OwningApp = slug
+	c.Submitters = nil
+	for name, mode := range cf.Submitters {
+		ref := name
+		if aid, ok := appScopedRef(udb, owner, slug, "agent", name); ok {
+			ref = aid
+		} else if a, ok := findAgentByNameOrID(udb, owner, name); ok {
+			ref = a.ID
+		} else {
+			return fmt.Errorf("its submitter %q is no agent of yours", name)
+		}
+		if c.Submitters == nil {
+			c.Submitters = map[string]string{}
+		}
+		c.Submitters[ref] = normalTrust(mode)
+	}
+	SaveCollectionBy(udb, c, via)
+	return setRefresh(owner, c.ID, cf.Refresh)
 }

@@ -201,3 +201,57 @@ func TestAnInstallAppliesTheAppsTools(t *testing.T) {
 		t.Errorf("deleting the app took %v", gone)
 	}
 }
+
+// An app's collection is in its folder as its blueprint (knowledge/<name>.json:
+// what it is and its plan, never its documents), and an install applies the
+// folder's: a changed file is the collection changed, a new one a new
+// collection of the app's. Deleting the app takes them, counted in its
+// confirmation.
+func TestAnAppsCollectionIsItsBlueprint(t *testing.T) {
+	turn, _ := folderTestTurn(t)
+	T, dir := installTestApp(t, turn)
+	prevHost := agenthost.Get()
+	agenthost.Register(T)
+	t.Cleanup(func() { agenthost.Register(prevHost) })
+	udb := UserDB(T.DB, "u")
+	SaveCollectionBy(udb, Collection{ID: "c-1", Owner: "u", Name: "Manual", Description: "The product manual.",
+		SearchTerms: []string{"widget manual"}, OwningApp: "wx", IngestedURLs: []string{"https://example.invalid/m"}}, "Builder")
+	if err := WriteAppFolder("u", "wx", dir); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "knowledge", "manual.json")
+	raw, err := os.ReadFile(file)
+	if err != nil || !strings.Contains(string(raw), "widget manual") || strings.Contains(string(raw), "example.invalid") || strings.Contains(string(raw), "c-1") {
+		t.Fatalf("the collection's file: %v %s", err, raw)
+	}
+	os.WriteFile(file, []byte(strings.Replace(string(raw), `"name": "Manual",`, `"name": "Manual",
+  "filter_rules": "Skip forums.",`, 1)), 0o644)
+	os.WriteFile(filepath.Join(dir, "knowledge", "faq.json"), []byte(`{"name": "FAQ", "description": "Questions people ask."}`), 0o644)
+	out, err := T.InstallAppFolder(context.Background(), "u", dir, "Rules for the manual; a FAQ")
+	if err != nil || !strings.Contains(out, "collection Manual") || !strings.Contains(out, "collection FAQ") {
+		t.Fatalf("install: %v %s", err, out)
+	}
+	c, _ := LoadCollection(udb, "u", "c-1")
+	if c.FilterRules != "Skip forums." || len(c.IngestedURLs) != 1 {
+		t.Errorf("the collection after: %+v", c)
+	}
+	var faq Collection
+	for _, x := range ListCollections(udb, "u") {
+		if x.Name == "FAQ" {
+			faq = x
+		}
+	}
+	if faq.OwningApp != "wx" {
+		t.Errorf("the new file made no collection of the app's: %+v", faq)
+	}
+	if n := AppOwnedCount("u", "wx"); n != "2 collections" {
+		t.Errorf("the delete confirmation counts %q", n)
+	}
+	gone, kept := DeleteAppOwned("u", "wx")
+	if len(gone) != 2 || len(kept) != 0 {
+		t.Errorf("deleting the app: gone %v, kept %v", gone, kept)
+	}
+	if _, ok := LoadCollection(udb, "u", "c-1"); ok {
+		t.Error("the app's collection outlived it")
+	}
+}

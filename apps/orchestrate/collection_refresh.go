@@ -64,6 +64,7 @@ func setRefresh(owner, collection, every string) error {
 	if every == "" || every == "never" {
 		if ok {
 			UnscheduleTask(id)
+			collectionRefreshChanged(owner, collection)
 		}
 		return nil
 	}
@@ -79,7 +80,21 @@ func setRefresh(owner, collection, every string) error {
 	}
 	old.Collection, old.Owner, old.Every = collection, owner, every
 	_, err := ScheduleTask(collectionRefreshKind, old, time.Now().Add(interval))
+	collectionRefreshChanged(owner, collection)
 	return err
+}
+
+// collectionRefreshChanged records a change of an app's collection's
+// refresh, part of its blueprint (app_owned.go), as the person's own change
+// to the app: the schedule is not on the collection, so its save does not
+// see it.
+func collectionRefreshChanged(owner, collection string) {
+	if orchestrateBaseDB == nil {
+		return
+	}
+	if c, ok := loadCollection(UserDB(orchestrateBaseDB, owner), owner, collection); ok && c.OwningApp != "" {
+		AppOwnedChanged(owner, c.OwningApp, "collection", c.Name, "")
+	}
 }
 
 // refreshLine is what the page says about the schedule: when the next one is

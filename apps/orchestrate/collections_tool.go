@@ -132,6 +132,7 @@ func collectionsListTool() ChatTool {
 		Params: map[string]ToolParam{
 			"name":        {Type: "string", Description: "Display name."},
 			"description": {Type: "string", Description: "What the collection holds: write it as \"contains X, for Y\" naming the docs/subjects; it seeds Auto-fill's queries and is how an LLM later picks the collection to attach or search."},
+			"owning_app":  {Type: "string", Description: "(Builder, optional) The app (its id) this collection is part of: its blueprint goes in the app's folder and history, and it is deleted with the app. Its documents are data and never travel."},
 		},
 		Required: []string{"name"},
 		Caps:     []Capability{CapWrite},
@@ -153,7 +154,16 @@ func collectionsListTool() ChatTool {
 				Description: strings.TrimSpace(stringArg(args, "description")),
 				Created:     time.Now(),
 			}
-			saveCollection(sess.DB, c)
+			if app := slugify(stringArg(args, "owning_app")); app != "" {
+				if appEditOf(sess) == "" {
+					return "", errors.New("only Builder makes a collection part of an app")
+				}
+				if _, ok := LoadAppSpec(sess.Username, app); !ok {
+					return "", fmt.Errorf("there is no app %q of yours", app)
+				}
+				c.OwningApp = app
+			}
+			SaveCollectionBy(sess.DB, c, appEditOf(sess))
 			Log("[orchestrate.collections] user=%q created collection %q (id=%s) via collections tool", sess.Username, name, c.ID)
 			b, _ := json.Marshal(c)
 			return string(b), nil
@@ -223,7 +233,7 @@ func collectionsListTool() ChatTool {
 			if len(changed) == 0 {
 				return "", errors.New("nothing to update: pass name, description, or a submitter")
 			}
-			saveCollection(sess.DB, c)
+			SaveCollectionBy(sess.DB, c, appEditOf(sess))
 			Log("[orchestrate.collections] user=%q updated collection %q (id=%s): %s", sess.Username, c.Name, c.ID, strings.Join(changed, ", "))
 			b, _ := json.Marshal(c)
 			return string(b), nil

@@ -572,6 +572,20 @@ Stage 2 (an app holds everything it runs on):
      Each person sees only their own: what it remembers about anyone else
      is in that person's store.
 
+   **Piece E2, an app's collections, step by step.** Seed files travel as
+   their text, rebuilt from what was indexed (owner, 2026-11-18).
+   - **Step 1, the mark and the blueprint (0.9.532).** A collection marked
+     `owning_app` is in the app's folder as `knowledge/<name>.json`: name,
+     description, filter rules, search terms, documents per run, articles,
+     refresh, submitters (by agent name) and the suggestion switch; never
+     its documents or what it has fetched. An install applies the folder's,
+     a new file making a new collection of the app's; deleting the app
+     deletes them, keeping one an agent outside the app reads. A change to
+     the blueprint from anywhere (the Knowledge page, its refresh) is the
+     app's change, recorded in its history as its maker's: Builder's or
+     Anvil's when they made it, else the person's own. Builder makes one
+     with collections create owning_app.
+
 Stage 3 (the app is its repository):
 
 11. Serve from the live folder, cached, for an app that has moved; the store

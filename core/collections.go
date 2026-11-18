@@ -22,6 +22,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/cmcoffee/gohort/core/peershare"
 	"github.com/cmcoffee/gohort/core/promotion"
@@ -225,6 +226,33 @@ type Collection struct {
 	// updates to it. Off by default, so suggestions are taken: they change
 	// nothing until whoever looks after the collection acts on them.
 	SuggestionsOff bool `json:"suggestions_off,omitempty"`
+	// OwningApp is the slug of the owner's app this collection is part of
+	// (docs/design/app-history.md, piece E): its blueprint (what it is, its
+	// plan, who submits to it) is in the app's folder and history, it is
+	// deleted with the app, and its documents are data, never in either.
+	OwningApp string `json:"owning_app,omitempty"`
+	// CopiedFrom is the collection an app's own copy was made from; nil
+	// for one that is not a copy.
+	CopiedFrom *CopiedFrom `json:"copied_from,omitempty"`
+}
+
+// collectionBlueprintChanged reports whether what a collection is, as an
+// app's blueprint holds it, differs between prior and next: its name,
+// description, plan, articles, submitters and suggestion switch, and whose
+// app it is. Its documents, shares and bookkeeping are not the blueprint.
+func collectionBlueprintChanged(prior, next Collection) bool {
+	type blueprint struct {
+		Name, Description, FilterRules, OwningApp string
+		SearchTerms, Articles                     []string
+		DocsPerRun                                int
+		Submitters                                map[string]string
+		SuggestionsOff                            bool
+	}
+	of := func(c Collection) string {
+		b, _ := json.Marshal(blueprint{c.Name, c.Description, c.FilterRules, c.OwningApp, c.SearchTerms, c.Articles, c.DocsPerRun, c.Submitters, c.SuggestionsOff})
+		return string(b)
+	}
+	return of(prior) != of(next)
 }
 
 // CollectionSource returns the chunk-source tag for a collection's
@@ -893,6 +921,26 @@ func collectionSharedWith(c Collection, user string) bool {
 // Scope. User-scoped goes to udb; deployment-scoped goes to RootDB
 // under GlobalCollectionsTable. Updated timestamp stamped on write.
 func SaveCollection(udb Database, c Collection) {
+	SaveCollectionBy(udb, c, "")
+}
+
+// SaveCollectionBy is SaveCollection said by what made the change: "Builder"
+// or "Anvil" for a change to an app's collection made with the app, "" for
+// anyone else's (the Knowledge page, a person's own). A change to an app's
+// collection's blueprint is the app's change, recorded in its history
+// (AppOwnedChanged); one made with neither is the person's own.
+func SaveCollectionBy(udb Database, c Collection, appEdit string) {
+	var before Collection
+	if udb != nil && !IsDeploymentScope(c) {
+		udb.Get(CollectionsTable, c.ID, &before)
+	}
+	saveCollectionRecord(udb, c)
+	if app := firstNonEmpty(before.OwningApp, c.OwningApp); app != "" && c.Owner != "" && collectionBlueprintChanged(before, c) {
+		AppOwnedChanged(c.Owner, app, "collection", c.Name, appEdit)
+	}
+}
+
+func saveCollectionRecord(udb Database, c Collection) {
 	c.Updated = time.Now()
 	c.Contributors = contributorsStillShared(c)
 	c.Maintainers = stillSharedWith(c, c.Maintainers)
