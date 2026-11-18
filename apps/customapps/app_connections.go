@@ -10,6 +10,7 @@ package customapps
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -124,9 +125,9 @@ func needOptions(ctx context.Context, owner, slug string, n applocal.AppNeed) []
 func needHelp(n applocal.AppNeed) string {
 	switch n.Kind {
 	case "credential":
-		return "Pick one of your credentials, or add a new one under Account, API credentials, and pick it here. Without it, what reaches it says so."
+		return "Pick one of your credentials, or make a new one (below) and pick it here. Without it, what reaches it says so."
 	case "tool":
-		return "Pick one of your tools, or have Builder make one and pick it here. Without it, what calls it says so."
+		return "Pick one of your tools, or have Builder make one (below) and pick it here. Without it, what calls it says so."
 	case "voice":
 		return "Pick a voice offered here. Without it, the agent speaks in the deployment's voice."
 	case "store":
@@ -159,6 +160,54 @@ func connectionsForm(ctx context.Context, base, owner, slug string) (ui.FormPane
 			Options: needOptions(ctx, owner, slug, n), Help: needHelp(n)})
 	}
 	return ui.FormPanel{Source: base + "/_settings/connections", Fields: fields}, unanswered
+}
+
+// createNewActions are the ways to make what a need could be mapped to, for
+// the kinds that can be made: a credential, set up under Integrations; a
+// tool, made by Builder as the app's own. Picked in the form once made.
+func createNewActions(spec AppSpec, needs []applocal.AppNeed) []ui.ToolbarAction {
+	var out []ui.ToolbarAction
+	for _, n := range needs {
+		switch n.Kind {
+		case "credential":
+			out = append(out, ui.ToolbarAction{
+				Label: "New credential for " + n.Name, Method: "GET", URL: "/extensions",
+				Title: "Add an API under Integrations (the app calls it " + n.Name + "), then pick it here",
+			})
+		case "tool":
+			if builderChangeURL(spec.Slug) == "" {
+				continue
+			}
+			change := fmt.Sprintf("Give this app its own tool %s: the app calls a tool by that name and this deployment has none. Make it do what the app's scripts and agents use it for.", n.Name)
+			out = append(out, ui.ToolbarAction{
+				Label: "Have Builder make " + n.Name, Method: "GET", URL: builderNewToolURL(spec.Slug, change),
+				Title: "Builder makes it as the app's own tool; then pick it here",
+			})
+		}
+	}
+	return out
+}
+
+// builderNewToolURL opens Builder on changing the app slug, the change
+// already said.
+func builderNewToolURL(slug, change string) string {
+	base := builderChangeURL(url.QueryEscape(slug))
+	if base == "" {
+		return ""
+	}
+	return base + "&intake.change=" + url.QueryEscape(change)
+}
+
+// connectionsBody is the form, with the ways to make something new under
+// it, and how many needs are unanswered: what the import dialog and the
+// Settings page show.
+func connectionsBody(ctx context.Context, base string, spec AppSpec, owner string) (ui.Component, int) {
+	form, unanswered := connectionsForm(ctx, base, owner, spec.Slug)
+	actions := createNewActions(spec, applocal.LoadAppNeeds(owner, spec.Slug))
+	if len(actions) == 0 {
+		return form, unanswered
+	}
+	return ui.Stack{Children: []ui.Component{form, ui.Toolbar{Actions: actions}}}, unanswered
 }
 
 // appConnections is the form's record: each need's answer.
@@ -218,8 +267,8 @@ func (T *CustomApps) appConnectionsForm(a *appCall) (any, error) {
 	if !a.mine() {
 		return nil, jsonapi.Forbidden("the app's owner answers what it needs")
 	}
-	form, unanswered := connectionsForm(a.R.Context(), T.WebPath()+"/"+a.spec.Slug, a.owner, a.spec.Slug)
-	return map[string]any{"name": a.spec.Name, "unanswered": unanswered, "form": form}, nil
+	body, unanswered := connectionsBody(a.R.Context(), T.WebPath()+"/"+a.spec.Slug, a.spec, a.owner)
+	return map[string]any{"name": a.spec.Name, "unanswered": unanswered, "form": body}, nil
 }
 
 // connectionsSection is the Settings page's Connections, for the owner of
@@ -228,13 +277,13 @@ func connectionsSection(ctx context.Context, spec AppSpec, user, owner, base str
 	if user != owner || len(applocal.LoadAppNeeds(owner, spec.Slug)) == 0 {
 		return nil
 	}
-	form, unanswered := connectionsForm(ctx, base, owner, spec.Slug)
+	body, unanswered := connectionsBody(ctx, base, spec, owner)
 	sub := "What this app names that only a deployment has, and what it means here. Change any of them; one it goes without, map later."
 	if unanswered > 0 {
 		sub = fmt.Sprintf("%d of what this app names that only a deployment has %s no answer yet: map each to one of yours, or let it go without. The app stays switched off until every one is answered.",
 			unanswered, map[bool]string{true: "has", false: "have"}[unanswered == 1])
 	}
-	return &ui.Section{Title: "Connections", Subtitle: sub, Body: form}
+	return &ui.Section{Title: "Connections", Subtitle: sub, Body: body}
 }
 
 // needsRefusal is why owner's app slug may not be switched on yet: needs

@@ -8,8 +8,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cmcoffee/gohort/apps/orchestrate"
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/applocal"
+	"github.com/cmcoffee/gohort/core/ui"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -65,5 +68,32 @@ func TestAnImportedAppIsSwitchedOnOnceItsNeedsAreAnswered(t *testing.T) {
 	}
 	if code, body := do("alice", "POST", "/_app/enable?slug=desk", ""); code != 200 {
 		t.Errorf("switching on once answered: %d %s", code, body)
+	}
+}
+
+// Under the form, a way to make each kind that can be made: a credential
+// under Integrations, a tool by Builder as the app's own, its request said.
+func TestConnectionsOfferToMakeWhatIsMissing(t *testing.T) {
+	sharingTestApp(t)
+	prev := agenthost.Get()
+	t.Cleanup(func() { agenthost.Register(prev) })
+	agenthost.Register(&orchestrate.OrchestrateApp{})
+	spec := AppSpec{Slug: "desk", Name: "Desk", Owner: "alice"}
+	SaveAppSpec(spec)
+	applocal.SaveAppNeeds("alice", "desk", []applocal.AppNeed{{Kind: "credential", Name: "crm"}, {Kind: "tool", Name: "jira_search"}, {Kind: "voice", Name: "zz"}})
+	body, unanswered := connectionsBody(context.Background(), "/apps/desk", spec, "alice")
+	st, ok := body.(ui.Stack)
+	if !ok || unanswered != 3 || len(st.Children) != 2 {
+		t.Fatalf("the body: %T %d", body, unanswered)
+	}
+	bar := st.Children[1].(ui.Toolbar)
+	if len(bar.Actions) != 2 {
+		t.Fatalf("the ways to make something new: %+v", bar.Actions)
+	}
+	if a := bar.Actions[0]; a.Label != "New credential for crm" || a.URL != "/extensions" || a.Method != "GET" {
+		t.Errorf("the credential's: %+v", a)
+	}
+	if a := bar.Actions[1]; !strings.Contains(a.URL, "intake.target=desk") || !strings.Contains(a.URL, "intake.change=") || !strings.Contains(a.URL, "jira_search") {
+		t.Errorf("the tool's: %+v", a)
 	}
 }
