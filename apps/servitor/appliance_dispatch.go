@@ -128,7 +128,7 @@ func DispatchApplianceTool(ctx context.Context, udb Database, d ApplianceDispatc
 	// that actually ran, and it is the only record that answers "what did the
 	// agent do on that box".
 	Log("[servitor] agent=%q running %q on %s: %s", d.AgentID, tool.Name, d.Appliance.ID, cmd)
-	return execOverSSH(ctx, conn, cmd)
+	return execOverSSHAs(ctx, conn, cmd, elevationOf(d.Appliance))
 }
 
 // riskRank orders categories so "the higher of two" has a meaning. Unknown

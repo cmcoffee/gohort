@@ -714,9 +714,18 @@ func newPTYSession(conn *ssh.Client) (*ssh.Session, error) {
 // forever, with the agent loop never getting its result — and a near-miss of
 // that logic would reintroduce it silently. One implementation, two callers.
 func execOverSSH(ctx context.Context, conn *ssh.Client, cmd string) (string, error) {
+	return execOverSSHAs(ctx, conn, cmd, elevation{})
+}
+
+// execOverSSHAs is execOverSSH with the system's elevation passwords
+// (elevate.go): a command that runs as root is given them by servitor, and
+// neither ever reaches what the agent reads, nor the capture of a long
+// output that the agent pages.
+func execOverSSHAs(ctx context.Context, conn *ssh.Client, cmd string, el elevation) (string, error) {
 	if conn == nil {
 		return "", fmt.Errorf("no SSH connection")
 	}
+	cmd, stdin, su := el.prepare(cmd)
 	session, err := conn.NewSession()
 	if err != nil {
 		return "", fmt.Errorf("new SSH session: %w", err)
@@ -729,7 +738,17 @@ func execOverSSH(ctx context.Context, conn *ssh.Client, cmd string) (string, err
 	}
 	done := make(chan runResult, 1)
 	go func() {
-		out, err := session.CombinedOutput(cmd)
+		var out []byte
+		var err error
+		switch {
+		case su != "":
+			out, err = runAsRootViaSu(session, cmd, su)
+		default:
+			if stdin != "" {
+				session.Stdin = strings.NewReader(stdin)
+			}
+			out, err = session.CombinedOutput(cmd)
+		}
 		done <- runResult{out: out, err: err}
 	}()
 
@@ -773,6 +792,9 @@ func execOverSSH(ctx context.Context, conn *ssh.Client, cmd string) (string, err
 		out, runErr = reap()
 	}
 
+	// The system's passwords never reach the agent, even when a command
+	// prints what it was given: masked before anything is kept.
+	out = el.mask(out)
 	// Over the cap, the full capture is kept and the note carries an
 	// output_id: run_command pages it by offset, no second exec needed.
 	result := spillCapture(ctx, strings.TrimSpace(string(out)))

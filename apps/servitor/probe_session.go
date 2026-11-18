@@ -414,7 +414,7 @@ func (pr *probeRun) sshExec(cmd string) (string, error) {
 		return out, err
 	}
 	client := pr.client()
-	result, err := execOverSSH(pr.ctx, client, cmd)
+	result, err := execOverSSHAs(pr.ctx, client, cmd, elevationOf(pr.appliance))
 	if err == nil {
 		return result, nil
 	}
@@ -433,7 +433,7 @@ func (pr *probeRun) sshExec(cmd string) (string, error) {
 		return reconnMsg, nil
 	}
 	emit(pr.id, probeEvent{Kind: "status", Text: "SSH reconnected: retrying command..."})
-	return execOverSSH(pr.ctx, newClient, cmd)
+	return execOverSSHAs(pr.ctx, newClient, cmd, elevationOf(pr.appliance))
 }
 
 // client is the run's SSH connection as it stands.
@@ -634,7 +634,7 @@ func (pr *probeRun) execSeam() {
 			if pr.appliance.Type == "command" {
 				return pr.a.exec_local_ctx(c, cmd, pr.appliance.WorkDir, pr.appliance.EnvVars)
 			}
-			return execOverSSH(c, pr.client(), cmd)
+			return execOverSSHAs(c, pr.client(), cmd, elevationOf(pr.appliance))
 		}
 		dir := scratch_dir(pr.id)
 		if err := scratch_setup(pr.ctx, rawExec, dir); err != nil {

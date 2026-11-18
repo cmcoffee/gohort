@@ -34,6 +34,7 @@ func (T *Servitor) handleApplianceList(c *jsonapi.Call) (any, error) {
 				a.Password = ""
 				a.RepoToken = ""
 				a.HasKey, a.PrivateKey = a.PrivateKey != "", ""
+				a.blankElevation()
 				a.LeadTierAvailable = AllLLMsPrivate()
 				items = append(items, a)
 				seen[a.ID] = true
@@ -54,6 +55,7 @@ func (T *Servitor) handleApplianceList(c *jsonapi.Call) (any, error) {
 				a.Password = ""
 				a.RepoToken = ""
 				a.HasKey, a.PrivateKey = a.PrivateKey != "", ""
+				a.blankElevation()
 				// Someone else's record: its EnvVars can hold the
 				// secrets the command runs with. Names only, unless an
 				// admin (who may manage it) is looking.
@@ -259,6 +261,12 @@ func (T *Servitor) handleApplianceSave(c *jsonapi.Call, req Appliance) (any, err
 		if req.PrivateKey == "" && !req.ClearKey {
 			req.PrivateKey = existing.PrivateKey
 		}
+		if req.SudoPassword == "" && !req.ClearSudoPassword {
+			req.SudoPassword = existing.SudoPassword
+		}
+		if req.RootPassword == "" && !req.ClearRootPassword {
+			req.RootPassword = existing.RootPassword
+		}
 		if req.RepoToken == "" {
 			req.RepoToken = existing.RepoToken
 		}
@@ -271,6 +279,7 @@ func (T *Servitor) handleApplianceSave(c *jsonapi.Call, req Appliance) (any, err
 			if req.Type != "ssh" {
 				req.Password = ""
 				req.PrivateKey = ""
+				req.SudoPassword, req.RootPassword = "", ""
 			}
 			if req.Type != "repo" {
 				req.RepoToken = ""
@@ -402,6 +411,7 @@ func (T *Servitor) handleApplianceSave(c *jsonapi.Call, req Appliance) (any, err
 	resp.Password = ""
 	resp.RepoToken = ""
 	resp.HasKey, resp.PrivateKey = resp.PrivateKey != "", ""
+	resp.blankElevation()
 	return resp, nil
 }
 

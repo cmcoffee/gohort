@@ -1024,6 +1024,15 @@
           ? '(a key is saved; paste a new one to replace it)'
           : 'paste the private key file (not the .pub)'});
       var clearKeyIn = el('input', {type: 'checkbox'});
+      // What sudo asks for, and root's own (for su where there is no sudo):
+      // write-only like the password, given by servitor to a command that
+      // runs as root, never to the agent.
+      var sudoPassIn = el('input', {type: 'password', class: 'ui-form-input', autocomplete: 'new-password',
+        placeholder: rec.has_sudo_password ? '(saved; type to replace)' : 'optional', value: ''});
+      var clearSudoIn = el('input', {type: 'checkbox'});
+      var rootPassIn = el('input', {type: 'password', class: 'ui-form-input', autocomplete: 'new-password',
+        placeholder: rec.has_root_password ? '(saved; type to replace)' : 'optional', value: ''});
+      var clearRootIn = el('input', {type: 'checkbox'});
       var sshSection = el('div', {class: 'ui-servitor-app-section'}, [
         el('label', {}, ['Host *']), hostIn,
         el('label', {}, ['Port']),   portIn,
@@ -1036,6 +1045,15 @@
            '(the file without .pub). If it has a passphrase, put the passphrase in Password. Both are stored ' +
            'in the server database and never shown again. With neither, an administrator\'s system uses the ' +
            'server\'s own SSH key.']),
+        el('label', {}, ['Sudo password']), sudoPassIn,
+        rec.has_sudo_password ? el('label', {class: 'ui-servitor-inline'}, [clearSudoIn, ' Remove the saved sudo password']) : null,
+        el('label', {}, ['Root password']), rootPassIn,
+        rec.has_root_password ? el('label', {class: 'ui-servitor-inline'}, [clearRootIn, ' Remove the saved root password']) : null,
+        el('div', {class: 'ui-form-hint'},
+          ['For commands that run as root. With a sudo password, a command run with sudo gets it from servitor; ' +
+           'with only a root password, the command runs through su and servitor types it. The agent never sees ' +
+           'either: it is not in what it is told, in the command it writes, or in what comes back (masked if a ' +
+           'command prints it). Stored like the password and never shown again.']),
       ]);
 
       // Command section
@@ -1860,6 +1878,10 @@
             password:       passIn.value,
             private_key:    keyIn.value.trim(),
             clear_key:      clearKeyIn.checked && !keyIn.value.trim(),
+            sudo_password:  sudoPassIn.value,
+            clear_sudo_password: clearSudoIn.checked && !sudoPassIn.value,
+            root_password:  rootPassIn.value,
+            clear_root_password: clearRootIn.checked && !rootPassIn.value,
             command:        cmdIn.value.trim(),
             work_dir:       workIn.value.trim(),
             tools_only:     toolsOnlyIn.checked,

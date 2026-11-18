@@ -27,7 +27,7 @@ func TestAWriteOnlySecretIsNotBlankedByASaveThatOmitsIt(t *testing.T) {
 	app.DB = &DBase{Store: kvlite.MemStore()}
 	udb := UserDB(app.DB, "alice")
 	// RepoFiles is set so that no save here starts a clone.
-	udb.Set(applianceTable, "box", Appliance{ID: "box", Name: "box", Type: "ssh", Host: "box.example.com", Owner: "alice", Password: "pw-secret", RepoFiles: 1})
+	udb.Set(applianceTable, "box", Appliance{ID: "box", Name: "box", Type: "ssh", Host: "box.example.com", Owner: "alice", Password: "pw-secret", SudoPassword: "sudo-secret", RootPassword: "root-secret", RepoFiles: 1})
 	udb.Set(applianceTable, "code", Appliance{ID: "code", Name: "code", Type: "repo", RepoURL: "https://example.com/code.git", Owner: "alice", RepoToken: "tok-secret", RepoFiles: 1})
 	stored := func(id string) Appliance {
 		var a Appliance
@@ -46,6 +46,19 @@ func TestAWriteOnlySecretIsNotBlankedByASaveThatOmitsIt(t *testing.T) {
 	save(`{"id":"box","type":"ssh","name":"box","host":"box.example.com","password":""}`)
 	if stored("box").Password != "pw-secret" {
 		t.Error("a save that did not carry the password blanked it")
+	}
+	if a := stored("box"); a.SudoPassword != "sudo-secret" || a.RootPassword != "root-secret" {
+		t.Error("a save that did not carry the sudo or root password blanked it")
+	}
+	// Its editor's Remove takes the saved one away; a new one replaces it.
+	save(`{"id":"box","type":"ssh","name":"box","host":"box.example.com","clear_sudo_password":true,"root_password":"root-new"}`)
+	if a := stored("box"); a.SudoPassword != "" || a.RootPassword != "root-new" {
+		t.Errorf("remove and replace: sudo %q, root %q", a.SudoPassword, a.RootPassword)
+	}
+	w := httptest.NewRecorder()
+	routed(app)(w, reqAs(t, http.MethodGet, "/api/appliances", "alice", ""))
+	if strings.Contains(w.Body.String(), "root-new") || !strings.Contains(w.Body.String(), `"has_root_password":true`) {
+		t.Errorf("the system read back with its root password: %s", w.Body.String())
 	}
 	save(`{"id":"code","type":"repo","name":"code renamed","repo_url":"https://example.com/code.git"}`)
 	if stored("code").RepoToken != "tok-secret" {

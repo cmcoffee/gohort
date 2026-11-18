@@ -33,6 +33,17 @@ type Appliance struct {
 	PrivateKey string `json:"private_key,omitempty"`
 	HasKey     bool   `json:"has_key,omitempty"`   // set on the way out, never stored
 	ClearKey   bool   `json:"clear_key,omitempty"` // the editor's "remove the saved key", never stored
+	// SudoPassword is what sudo asks for on this system, and RootPassword
+	// root's own, for su where there is no sudo (elevate.go). Write-only
+	// like Password: servitor gives them to a command that runs as root,
+	// and neither ever reaches the agent. Has* say one is saved, on the way
+	// out; Clear* are the editor's "remove", never stored.
+	SudoPassword      string `json:"sudo_password,omitempty"`
+	RootPassword      string `json:"root_password,omitempty"`
+	HasSudoPassword   bool   `json:"has_sudo_password,omitempty"`
+	HasRootPassword   bool   `json:"has_root_password,omitempty"`
+	ClearSudoPassword bool   `json:"clear_sudo_password,omitempty"`
+	ClearRootPassword bool   `json:"clear_root_password,omitempty"`
 	// ToolsOnly withholds the ASKING tools for this target: a connected
 	// agent gets its approved minted tools and nothing else. Open
 	// questions (ask_system) route to the per-appliance investigator,
