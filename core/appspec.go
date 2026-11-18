@@ -946,3 +946,61 @@ func (s AppSpec) PageCode() []string {
 	}
 	return out
 }
+
+// CopiedFrom names what an app's own copy was made from (an agent, pipeline,
+// machine or tool of its owner's), by id and name, and when
+// (docs/design/app-history.md, piece C). The original is not changed by the
+// copy, and changes to it no longer reach the app.
+type CopiedFrom struct {
+	ID   string    `json:"id,omitempty"`
+	Name string    `json:"name"`
+	At   time.Time `json:"at"`
+}
+
+// appRefResolver turns a reference in an app's pipeline or machine to an
+// agent, pipeline or machine (kind) into the id of the one it means, the
+// app's own first; registered by the app that keeps agents.
+var appRefResolver func(owner, slug, kind, ref string) string
+
+// RegisterAppRefResolver installs appRefResolver. An app's copy keeps its
+// original's name, so a name inside the app has to mean the app's own: a
+// save by Builder or Anvil of an app's pipeline or machine stores each such
+// reference as the id of what it resolves to.
+func RegisterAppRefResolver(fn func(owner, slug, kind, ref string) string) {
+	appRefResolver = fn
+}
+
+// appRef is ref resolved for owner's app slug, or ref as it was.
+func appRef(owner, slug, kind, ref string) string {
+	if appRefResolver == nil || strings.TrimSpace(ref) == "" {
+		return ref
+	}
+	return appRefResolver(owner, slug, kind, ref)
+}
+
+// appStageRefs is stages with each agent and machine reference resolved for
+// owner's app slug, nested stages included. A copy: the caller's are kept.
+func appStageRefs(owner, slug string, stages []PipelineStage) []PipelineStage {
+	if len(stages) == 0 {
+		return stages
+	}
+	out := append([]PipelineStage(nil), stages...)
+	for i := range out {
+		out[i].Agent = appRef(owner, slug, "agent", out[i].Agent)
+		out[i].Machine = appRef(owner, slug, "machine", out[i].Machine)
+		out[i].Body = appStageRefs(owner, slug, out[i].Body)
+	}
+	return out
+}
+
+// appPhaseRefs is phases with each agent, pipeline and machine reference
+// resolved for owner's app slug. A copy: the caller's are kept.
+func appPhaseRefs(owner, slug string, phases []MachinePhase) []MachinePhase {
+	out := append([]MachinePhase(nil), phases...)
+	for i := range out {
+		out[i].Agent = appRef(owner, slug, "agent", out[i].Agent)
+		out[i].Pipeline = appRef(owner, slug, "pipeline", out[i].Pipeline)
+		out[i].Machine = appRef(owner, slug, "machine", out[i].Machine)
+	}
+	return out
+}

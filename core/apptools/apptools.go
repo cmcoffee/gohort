@@ -47,6 +47,9 @@ type Tool struct {
 	SavedAt time.Time     `json:"saved_at"`
 	// SavedBy is what last changed it: "Builder", "Anvil" or "import".
 	SavedBy string `json:"saved_by,omitempty"`
+	// CopiedFrom is the person's tool this one was copied from (CopyIn);
+	// nil for one made for the app.
+	CopiedFrom *core.CopiedFrom `json:"copied_from,omitempty"`
 }
 
 // Review is what administrators decided about an app's space.
@@ -138,10 +141,12 @@ func ByName(owner, slug, name string) (Tool, bool) {
 }
 
 // refusal is why a save by appEdit may not change owner's app slug's
-// tools: only Builder and Anvil change them, and an import brings them.
+// tools: only Builder and Anvil change them, and an import brings them. As
+// for an app's agents and pipelines, appEdit is said only by their paths
+// (what made the change: "Builder", "Anvil", "import"), so a save that says
+// nothing is anything else's, and refused.
 func refusal(owner, slug, appEdit string) error {
-	switch appEdit {
-	case "Builder", "Anvil", "import":
+	if strings.TrimSpace(appEdit) != "" {
 		return nil
 	}
 	name := slug
@@ -396,4 +401,43 @@ func Stop(owner, slug, name, admin string, stop bool) {
 		delete(r.Stopped, name)
 	}
 	db.Set(reviewsTable, key(owner, slug), r)
+}
+
+// CopyIn copies the person's tool t into owner's app slug's space, as
+// appEdit's change, recording what it came from. A copy made within the
+// deployment keeps its approval while it is unchanged: one that reaches
+// further than gohort's own tools is approved as it is, and asks an
+// administrator again once it is edited.
+func CopyIn(owner, slug string, t core.TempTool, from core.CopiedFrom, appEdit string) error {
+	if err := SaveBy(owner, slug, t, appEdit); err != nil {
+		return err
+	}
+	db := core.RootDB
+	if db == nil {
+		return errors.New("no tool store")
+	}
+	mu.Lock()
+	var all []Tool
+	db.Get(toolsTable, key(owner, slug), &all)
+	var saved core.TempTool
+	for i := range all {
+		if all[i].Tool.Name == t.Name {
+			f := from
+			all[i].CopiedFrom = &f
+			saved = all[i].Tool
+		}
+	}
+	db.Set(toolsTable, key(owner, slug), all)
+	if len(Reach(saved)) > 0 {
+		var r Review
+		db.Get(reviewsTable, key(owner, slug), &r)
+		if r.Approved == nil {
+			r.Approved = map[string]string{}
+		}
+		r.Approved[saved.Name] = Fingerprint(saved)
+		db.Set(reviewsTable, key(owner, slug), r)
+	}
+	mu.Unlock()
+	askReview(owner, slug)
+	return nil
 }

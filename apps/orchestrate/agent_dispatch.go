@@ -3154,6 +3154,11 @@ func resolveAgentName(own, shared, framework []AgentRecord, key, viewer string) 
 		case len(mine) == 1:
 			return mine[0], true, nil
 		case len(mine) > 1:
+			// An app's copy keeps its original's name (app_copy.go): outside
+			// the app the name means the original.
+			if a, ok := soleNoAppAgent(mine); ok {
+				return a, true, nil
+			}
 			return AgentRecord{}, false, &agentAmbiguityError{key: key, candidates: mine, viewer: viewer}
 		}
 		fw := matchAgentTier(tier, framework)

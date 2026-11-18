@@ -707,4 +707,7 @@ type PipelineDef struct {
 	// written for, as for an agent (AgentRecord.OwningApp): a label that
 	// groups it under the app and offers it for deletion with the app.
 	OwningApp string `json:"owning_app,omitempty"`
+	// CopiedFrom is what this pipeline was copied from, for an app's own
+	// copy of one (docs/design/app-history.md, piece C); nil otherwise.
+	CopiedFrom *CopiedFrom `json:"copied_from,omitempty"`
 }

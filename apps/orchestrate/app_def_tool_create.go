@@ -70,6 +70,8 @@ type appWrite struct {
 	// reads as a broken panel rather than as a name that does not resolve.
 	promoted   []string
 	parseNotes []string
+	// copyNote says what the save copied into the app (app_copy.go).
+	copyNote string
 	verb       string
 	saved      AppSpec
 	msg        string
@@ -504,6 +506,10 @@ func (aw *appWrite) save() bool {
 	if err != nil {
 		return aw.exit("", err)
 	}
+	// What the save binds anew becomes the app's own (app_copy.go).
+	if err := aw.copyBindings(); err != nil {
+		return aw.exit("", err)
+	}
 	aw.saved = SaveAppSpecBy(aw.spec, reason, t.user, t.changedVia())
 	// Page checks drive the page as served, so they run on the saved
 	// version; one this save broke puts the previous version back.
@@ -554,6 +560,7 @@ func (aw *appWrite) report() {
 		aw.msg += "\n\n" + aw.checksReport
 	}
 	aw.msg = appWithParseNotes(aw.msg, aw.parseNotes)
+	aw.msg += aw.copyNote
 }
 
 func (aw *appWrite) check() bool {

@@ -483,8 +483,29 @@ Stage 2 (an app holds everything it runs on):
 7. An app owns its agents, pipelines and machines: Builder copies rather
    than points, each in the app's folder and history, exported and deleted
    with it; shown read-only elsewhere, with an administrator's stop.
-   **Built (piece A, 0.9.523 to 0.9.526), except Builder copying (piece C)
-   and the export.**
+   **Built (piece A, 0.9.523 to 0.9.526; piece C, 0.9.528), except the
+   export.** Piece C, decided (owner, 2026-11-18):
+   - **The copy is made at binding**, in app_def's save: an agent_id or
+     pipeline_id naming something that is not the app's own (the person's,
+     or another app's) binds a copy made for the app; the original is left
+     as it is. Only a new binding copies (a new app, or one now naming
+     something else): an app that keeps pointing keeps pointing until its
+     first change (piece D). Anvil's install passes through the same save.
+   - **What the copy runs comes with it**, each the app's own: an agent's
+     sub-agents and the person's tools it names (its agent-scoped tools and
+     the pool tools in its allowed_tools; one allowed every tool copies
+     none), into the app's tool space, an unchanged copy keeping its
+     approval; a pipeline's stage agents and machines; a machine's step
+     agents, pipelines and machines. Only the person's own (or the
+     framework's agents) are copied; one shared with them is refused.
+   - **A copy keeps its original's name**, and records what it was copied
+     from (`copied_from`: id, name, when). Inside the app a name means the
+     app's own: a save of an app's pipeline or machine by Builder or Anvil
+     stores each agent, pipeline and machine it names as the id of the
+     app's own of that name, and an app's run_agent and run_pipeline look
+     there first. Anywhere else, where an original and an app's copy tie,
+     the name means the one that is no app's.
+   - A copy does not take who its original is shared with.
 8. A shared app's approval covers what it owns.
 9. Model tiers in an app's agents; what does not travel asked for on import;
    schedules defined in the blueprint; the first-change copy keeping what

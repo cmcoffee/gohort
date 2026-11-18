@@ -47,7 +47,7 @@ func TestAnAppsToolSpaceIsItsOwn(t *testing.T) {
 	if len(told) != 1 || told[0] != "u/wx tool get_weather by Builder" {
 		t.Errorf("a save that changes nothing was told as a change, or the change was not: %q", told)
 	}
-	if err := DeleteBy("u", "wx", "get_weather", "someone"); err == nil {
+	if err := DeleteBy("u", "wx", "get_weather", ""); err == nil {
 		t.Error("a delete by anything but Builder or Anvil went through")
 	}
 	SaveBy("u", "wx", core.TempTool{Name: "second", CommandTemplate: "echo 2"}, "Anvil")

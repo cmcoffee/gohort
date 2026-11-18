@@ -50,6 +50,9 @@ func SavePipelineDefBy(udb Database, d PipelineDef, reason, appEdit string) (Pip
 	if d.ID != "" {
 		udb.Get(PipelineDefsTable, d.ID, &prior)
 	}
+	if appEdit != "" && d.OwningApp != "" {
+		d.Stages = appStageRefs(d.Owner, d.OwningApp, d.Stages)
+	}
 	if why := PipelineAppEditRefusal(prior, d, appEdit); why != "" {
 		return prior, errors.New(why)
 	}

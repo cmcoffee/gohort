@@ -192,6 +192,9 @@ type MachineDef struct {
 	// deleted with it, and changed only by Builder or Anvil
 	// (MachineAppEditRefusal).
 	OwningApp string `json:"owning_app,omitempty"`
+	// CopiedFrom is what this machine was copied from, for an app's own
+	// copy of one (docs/design/app-history.md, piece C); nil otherwise.
+	CopiedFrom *CopiedFrom `json:"copied_from,omitempty"`
 }
 
 // MachinePhase is one position a session can hold. Every field except
@@ -1663,6 +1666,9 @@ func SaveMachineDefBy(udb Database, d MachineDef, reason, appEdit string) (Machi
 	var prior MachineDef
 	if d.ID != "" {
 		udb.Get(MachineDefsTable, d.ID, &prior)
+	}
+	if appEdit != "" && d.OwningApp != "" {
+		d.Phases = appPhaseRefs(d.Owner, d.OwningApp, d.Phases)
 	}
 	if why := MachineAppEditRefusal(prior, d, appEdit); why != "" {
 		return prior, errors.New(why)

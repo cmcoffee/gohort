@@ -604,9 +604,14 @@ func findPipelineByNameOrID(udb Database, user, ref string) (PipelineDef, bool) 
 	if ref == "" {
 		return PipelineDef{}, false
 	}
-	for _, d := range ListPipelineDefs(udb, user) {
-		if strings.EqualFold(strings.TrimSpace(d.Name), ref) {
-			return d, true
+	// The one of no app first: an app's copy keeps its original's name
+	// (app_copy.go), and outside the app the name means the original.
+	defs := ListPipelineDefs(udb, user)
+	for _, noApp := range []bool{true, false} {
+		for _, d := range defs {
+			if (d.OwningApp == "") == noApp && strings.EqualFold(strings.TrimSpace(d.Name), ref) {
+				return d, true
+			}
 		}
 	}
 	if def, _, _, found := resolvePipelineFor(user, udb, ref); found {
@@ -622,9 +627,12 @@ func findMachineByNameOrID(udb Database, user, ref string) (MachineDef, bool) {
 	if ref == "" {
 		return MachineDef{}, false
 	}
-	for _, d := range ListMachineDefs(udb, user) {
-		if strings.EqualFold(strings.TrimSpace(d.Name), ref) {
-			return d, true
+	defs := ListMachineDefs(udb, user)
+	for _, noApp := range []bool{true, false} {
+		for _, d := range defs {
+			if (d.OwningApp == "") == noApp && strings.EqualFold(strings.TrimSpace(d.Name), ref) {
+				return d, true
+			}
 		}
 	}
 	return LoadMachineDef(udb, user, ref)

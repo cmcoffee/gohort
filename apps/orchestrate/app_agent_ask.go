@@ -154,6 +154,10 @@ func (T *OrchestrateApp) appOwnAgent(owner, slug, agentID, agentKey string) (Age
 		own, haveOwn = findAgentByNameOrID(udb, owner, agentID)
 	}
 	key := strings.TrimSpace(agentKey)
+	// Inside the app a name means the app's own (app_copy.go).
+	if id, ok := appScopedRef(udb, owner, slug, "agent", key); ok {
+		key = id
+	}
 	if key == "" {
 		if !haveOwn {
 			return AgentRecord{}, fmt.Errorf("this app has no agent to run: set its agent_id, or name one of its agents (created with owning_app=%q)", slug)
@@ -228,6 +232,9 @@ func (T *OrchestrateApp) appOwnPipeline(owner, slug, pipelineID, pipelineKey str
 			return PipelineDef{}, fmt.Errorf("this app has no pipeline to run: set its pipeline_id, or name one of its pipelines (created with owning_app=%q)", slug)
 		}
 		return def, nil
+	}
+	if id, ok := appScopedRef(UserDB(T.DB, owner), owner, slug, "pipeline", key); ok {
+		key = id
 	}
 	def, ok := T.LookupAppPipeline(owner, key)
 	if !ok {

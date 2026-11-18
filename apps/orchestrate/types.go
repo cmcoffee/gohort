@@ -909,6 +909,9 @@ type AgentRecord struct {
 	// change to it goes through the app's checks, history and approval.
 	// (The framework's own app agents are the appagents registry.)
 	OwningApp string `json:"owning_app,omitempty"`
+	// CopiedFrom is what this agent was copied from, for an app's own copy
+	// of one (app_copy.go); nil otherwise.
+	CopiedFrom *CopiedFrom `json:"copied_from,omitempty"`
 
 	// appEdit names what is saving this record when that is Builder or Anvil
 	// changing an app's agent, the only two that may (writeAgent). Never
