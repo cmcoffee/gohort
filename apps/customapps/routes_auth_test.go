@@ -72,6 +72,9 @@ func TestEveryJSONRouteRefusesWhoItShould(t *testing.T) {
 		{"POST", "_memory/me", `{"remember":true}`, ""},
 		{"GET", "_settings/curation", "", "PUT"},
 		{"POST", "_settings/curation", `{"keep_current":true}`, ""},
+		{"GET", "_settings/connections", "", "PUT"},
+		{"POST", "_settings/connections", `{}`, ""},
+		{"GET", "_settings/connections/form", "", "POST"},
 		{"GET", "actions", "", "POST"},
 		{"GET", "action-progress/go", "", "POST"},
 		{"POST", "action-cancel/go", "", "GET"},
@@ -91,8 +94,14 @@ func TestEveryJSONRouteRefusesWhoItShould(t *testing.T) {
 		if code := do("bob", rt.method, path, rt.body); code != http.StatusNotFound {
 			t.Errorf("bob, not shared with, %s %s answered %d, want 404", rt.method, path, code)
 		}
-		if code := do("alice", rt.method, "/off/"+rt.route, rt.body); code != http.StatusForbidden {
+		// An imported app's connections are answered while it is switched
+		// off, before it may run: its owner reaches them then, by design
+		// (app_connections.go). Every other route refuses a switched-off app.
+		disabledServes := strings.HasPrefix(rt.route, "_settings/connections")
+		if code := do("alice", rt.method, "/off/"+rt.route, rt.body); !disabledServes && code != http.StatusForbidden {
 			t.Errorf("a disabled app, %s /off/%s answered %d, want 403", rt.method, rt.route, code)
+		} else if disabledServes && code != http.StatusOK {
+			t.Errorf("its owner, answering a switched-off app's connections, %s /off/%s answered %d", rt.method, rt.route, code)
 		}
 		if rt.wrong != "" {
 			if code := do("alice", rt.wrong, path, ""); code != http.StatusMethodNotAllowed {

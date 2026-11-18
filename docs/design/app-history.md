@@ -557,10 +557,27 @@ Stage 2 (an app holds everything it runs on):
      and applies them as an install applies a folder, credited to the
      import, binding the app to its copies. Older bundles import as they
      did; their bound agent becomes the app's own on its first change.
-   - **What does not travel is asked for on import (F2).** Credentials,
-     MCP servers, voices and file stores the app names are listed on
-     import; each is matched to one of the importer's or marked "go
-     without", and the app stays off until every one is.
+   - **What does not travel is asked for on import (F2, 0.9.538 and
+     0.9.539).** On import the app lists what it names that only a
+     deployment has: credentials its scripts and tools reach, tools it
+     calls that are neither gohort's nor its own (an MCP server's
+     included), its agents' voices, and the file stores it was granted
+     where it was exported (the recipe carries those). One found here is
+     mapped to itself. Each other is answered by the owner: select one of
+     theirs, create a new one (then select it), or don't map (it goes
+     without). A dialog opens after the import for the ones that did not
+     match; the same form is the app's Settings page's Connections, where
+     any answer can be changed later, and the owner reaches it while the
+     app is switched off. The app cannot be switched on until every need
+     is answered.
+   - The answers are aliases the app keeps on this deployment
+     (`core/applocal`, never exported): wherever the app reaches one (its
+     scripts' and tools' credentials, the sandbox hook still checking the
+     name the app declared; the tools its scripts call and its agents may
+     use; its agents' voices; its scripts' stores) the name means what it
+     is mapped to here, and one it goes without is refused saying where to
+     map it. A store mapped to one of the owner's asks an administrator
+     for it, as an app asks for a store.
 10. Blueprints: a collection's blueprint and seed files, and each agent's
    starting memory, in the app; documents and learned memory kept as data,
    out of git and exports. An app's collections: the app's mark, only its

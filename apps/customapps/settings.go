@@ -235,12 +235,18 @@ func (T *CustomApps) handleSettingsPage(w http.ResponseWriter, r *http.Request, 
 				OptionsSource: "/orchestrate/api/console/agent-options"}},
 		}})
 	}
+	conns := connectionsSection(r.Context(), spec, user, ownerUser, base)
 	mem := memorySection(spec, base)
 	curation := curationSection(spec, user, ownerUser, base)
 	change := changeSection(spec, user, ownerUser)
 	// "Nothing to set" says something only where nothing else is shown.
-	if len(fields) > 0 || (mem == nil && curation == nil && change == nil && len(sections) == 0) {
+	if len(fields) > 0 || (conns == nil && mem == nil && curation == nil && change == nil && len(sections) == 0) {
 		sections = append(sections, ui.Section{Title: "Settings", Subtitle: subtitle, Body: body})
+	}
+	// What an imported app needs answered comes first: until it is, the
+	// app stays off (app_connections.go).
+	if conns != nil {
+		sections = append([]ui.Section{*conns}, sections...)
 	}
 	if mem != nil {
 		sections = append(sections, *mem)

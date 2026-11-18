@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/applocal"
 	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/gohort/core/applocal"
 	"github.com/cmcoffee/gohort/core/apptools"
 	"github.com/cmcoffee/snugforge/kvlite"
 )

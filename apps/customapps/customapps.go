@@ -208,6 +208,15 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		T.handlePreviewStop(w, r, slug)
 		return
 	}
+	// The owner reaches its Settings page while the app is switched off: an
+	// imported app's connections are answered there before it may run
+	// (app_connections.go).
+	if rest == "_settings" {
+		if own, ok := loadSpec(user, slug); ok && own.Disabled {
+			T.handleSettingsPage(w, r, own, user, user)
+			return
+		}
+	}
 	pv, inPreview := previewOf(r, user, slug)
 	var spec AppSpec
 	var ownerUser string
@@ -606,7 +615,25 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
     previewURL: '/account/api/artifacts/preview',
     importURL: '/account/api/artifacts/import',
     invalidate: ['_apps'],
-    subtitle: 'An app lands switched off and shared with nobody: read its data-source and action scripts, then Enable it. Its records never travel. A slug you already have is skipped.'
+    subtitle: 'An app lands switched off and shared with nobody: read its data-source and action scripts, then Enable it. Its records never travel. A slug you already have is skipped.',
+    onDone: function(d) {
+      (d.outcomes || []).forEach(function(o) {
+        if (o.type !== 'custom_app' || o.status !== 'imported') return;
+        fetch('`+T.WebPath()+`/' + encodeURIComponent(o.name) + '/_settings/connections/form', {credentials: 'same-origin'})
+          .then(function(r) { return r.ok ? r.json() : null; })
+          .then(function(x) {
+            if (!x || !x.unanswered || !window.uiOpenModal || !window.uiMountComponent) return;
+            var api = window.uiOpenModal({
+              title: 'Connect ' + x.name,
+              subtitle: 'It names things only a deployment has, and some are not here. Map each to one of yours, or let it go without; it stays switched off until each is answered. You can change these later under its ⚙, Connections.',
+              width: '680px'
+            });
+            var host = document.createElement('div');
+            api.body.appendChild(host);
+            window.uiMountComponent(x.form, host);
+          });
+      });
+    }
   });
 }`).Render(),
 		Sections: []ui.Section{{
@@ -642,6 +669,7 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 					// Only an app that declares tunables gets the button; for a
 					// shared app, only when some of them are the reader's own.
 					{Type: "button", Label: "Settings", Method: "GET", PostTo: "{slug}/_settings", OnlyIf: "has_settings", HideIf: "disabled"},
+					{Type: "button", Label: "Connect", Method: "GET", PostTo: "{slug}/_settings", OnlyIf: "needs_answers"},
 					// What its scripts did when they ran (runs.go). Yours only.
 					{Type: "button", Label: "Runs", Method: "GET", PostTo: "{slug}/_runs", OnlyIf: "has_runs", HideIf: "disabled"},
 					// Builder, pointed at this app. Yours only: Builder changes
@@ -1062,6 +1090,10 @@ func (T *CustomApps) handleAppsList(c *jsonapi.Call) (any, error) {
 		if len(visibleSettings(s, true)) > 0 {
 			row["has_settings"] = "1"
 		}
+		// An imported app waiting for its connections to be answered.
+		if needsRefusal(owner, s.Slug) != "" {
+			row["needs_answers"] = "1"
+		}
 		// The delete confirmation says what goes with the app (its own
 		// agents, pipelines, machines), with counts.
 		if owned := AppOwnedCount(c.User, s.Slug); owned != "" {
@@ -1268,6 +1300,11 @@ func (T *CustomApps) handleEnableApp(c *jsonapi.Call, _ struct{}) (any, error) {
 	// An administrator's switch-off is theirs to undo, not the owner's.
 	if st := appadmin.Load(RootDB, spec.Owner, spec.Slug); spec.Disabled && st.DisabledBy != "" {
 		return nil, jsonapi.Forbidden("an administrator (" + st.DisabledBy + ") switched this app off; only an administrator can switch it back on")
+	}
+	// An imported app runs once what it names that only a deployment has
+	// is answered (app_connections.go).
+	if why := needsRefusal(spec.Owner, spec.Slug); why != "" && spec.Disabled {
+		return nil, jsonapi.Forbidden(why)
 	}
 	if spec.Disabled {
 		spec.Disabled = false
