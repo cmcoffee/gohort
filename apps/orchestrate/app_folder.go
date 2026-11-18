@@ -686,7 +686,7 @@ func (t *chatTurn) publishAppFolder(abs, rel string, o folderPublish) (string, e
 		// binds in place of what the folder named (app_copy.go). The folder
 		// is written again as the app now is, so it holds what was installed
 		// and not a version the app's history no longer has.
-		if folderMemory(saved) != m.Memory || saved.AgentID != m.AgentID || saved.PipelineID != m.PipelineID {
+		if folderMemory(saved) != m.Memory || saved.AgentID != m.AgentID || saved.PipelineID != m.PipelineID || t.seedsIndexed {
 			if err := WriteAppFolder(t.user, m.Slug, abs); err != nil {
 				Log("[app-folder] %s/%s: the folder could not be brought up to what was installed: %v", t.user, m.Slug, err)
 			}

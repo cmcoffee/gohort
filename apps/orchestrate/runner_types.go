@@ -483,6 +483,9 @@ type chatTurn struct {
 	// appOwnsTools marks a turn of an app's agent whose app holds its own
 	// tools (AppSpec.OwnTools): the person's pool is not loaded for it.
 	appOwnsTools bool
+	// seedsIndexed marks an install that indexed a collection's seed
+	// files, whose text the folder then holds as indexed (app_owned.go).
+	seedsIndexed bool
 	// memNS caches factsNS for the turn (app_memory.go); memNSSet says it
 	// was worked out.
 	memNS    string

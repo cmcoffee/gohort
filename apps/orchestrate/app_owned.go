@@ -11,6 +11,7 @@ package orchestrate
 // approves it, as a change to its page or scripts is.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -42,6 +43,8 @@ type appOwnedItem struct {
 	// (scriptFile), so it is edited and diffed as code.
 	scriptFile string
 	script     []byte
+	// files are a collection's seed files, by their path in the folder.
+	files map[string][]byte
 }
 
 // appOwnedIndex is owner's app slug's own agents, pipelines and machines, by
@@ -95,6 +98,17 @@ func appOwnedIndex(owner, slug string) map[string]appOwnedItem {
 	for _, c := range ListCollections(udb, owner) {
 		if c.OwningApp == slug && c.Owner == owner {
 			put("knowledge", "collection", c.ID, c.Name, collectionFileOf(udb, owner, c))
+			// Its seed files go in a folder beside its file, by that file's name.
+			for file, it := range out {
+				if it.kind == "collection" && it.id == c.ID {
+					dir := strings.TrimSuffix(file, ".json") + "/"
+					it.files = map[string][]byte{}
+					for name, text := range collectionSeeds(c) {
+						it.files[dir+name] = []byte(text)
+					}
+					out[file] = it
+				}
+			}
 		}
 	}
 	for _, at := range apptools.Load(owner, slug) {
@@ -148,6 +162,9 @@ func appOwnedFiles(owner, slug string) map[string][]byte {
 		out[f] = it.data
 		if it.scriptFile != "" {
 			out[it.scriptFile] = it.script
+		}
+		for name, data := range it.files {
+			out[name] = data
 		}
 	}
 	return out
@@ -208,6 +225,9 @@ func readAppOwnedFolder(abs, rel string) (appOwnedFolder, error) {
 				var v collectionFile
 				if bad = json.Unmarshal(b, &v); bad == nil && strings.TrimSpace(v.Name) == "" {
 					bad = fmt.Errorf("it names no collection")
+				}
+				if bad == nil {
+					v.seeds, bad = readCollectionSeeds(filepath.Join(abs, dir, strings.TrimSuffix(e.Name(), ".json")))
 				}
 				f.collections[file] = v
 			case "tools":
@@ -292,7 +312,7 @@ func (t *chatTurn) applyAppOwned(slug string, f appOwnedFolder) (string, error) 
 	}
 	owner, via, udb := t.user, t.changedVia(), t.udb
 	have := appOwnedIndex(owner, slug)
-	var changed []string
+	var changed, gone []string
 	for file, exp := range f.agents {
 		if cur, ok := have[file]; ok && string(cur.data) == string(f.raw[file]) {
 			continue
@@ -359,15 +379,29 @@ func (t *chatTurn) applyAppOwned(slug string, f appOwnedFolder) (string, error) 
 		changed = append(changed, "tool "+tool.Name)
 	}
 	for file, cf := range f.collections {
-		if cur, ok := have[file]; ok && string(cur.data) == string(f.raw[file]) {
-			continue
+		id := have[file].id
+		if cur, ok := have[file]; !ok || string(cur.data) != string(f.raw[file]) {
+			saved, err := applyCollectionFile(udb, owner, slug, via, id, cf)
+			if err != nil {
+				return "", fmt.Errorf("the collection in %s: %w", file, err)
+			}
+			id = saved
+			changed = append(changed, "collection "+cf.Name)
 		}
-		if err := applyCollectionFile(udb, owner, slug, via, have[file].id, cf); err != nil {
-			return "", fmt.Errorf("the collection in %s: %w", file, err)
+		// Its seed files, whether or not its blueprint changed.
+		if c, ok := loadCollection(udb, owner, id); ok {
+			indexed, kept := applyCollectionSeeds(c, cf.seeds)
+			for _, title := range indexed {
+				changed = append(changed, fmt.Sprintf("%s's document %q", cf.Name, title))
+			}
+			for _, title := range kept {
+				gone = append(gone, fmt.Sprintf("%s's document %q", cf.Name, title))
+			}
+			if len(indexed) > 0 {
+				t.seedsIndexed = true
+			}
 		}
-		changed = append(changed, "collection "+cf.Name)
 	}
-	var gone []string
 	for file, it := range have {
 		if _, ok := f.raw[file]; !ok {
 			gone = append(gone, fmt.Sprintf("%s %q (%s)", it.kind, it.name, file))
@@ -732,6 +766,9 @@ type collectionFile struct {
 	Refresh        string            `json:"refresh,omitempty"`
 	Submitters     map[string]string `json:"submitters,omitempty"`
 	SuggestionsOff bool              `json:"suggestions_off,omitempty"`
+	// seeds are its seed files, read from the folder beside it: file name
+	// to text. Not part of the JSON.
+	seeds map[string]string
 }
 
 // collectionFileOf is c's blueprint, its submitters by name and its refresh
@@ -758,18 +795,18 @@ func collectionFileOf(udb Database, owner string, c Collection) collectionFile {
 // applyCollectionFile makes owner's app slug's collection id (a new one when
 // id is "") what cf says, as via's change: its blueprint, its submitters
 // resolved among the app's agents first, and its refresh. Its documents are
-// not touched.
-func applyCollectionFile(udb Database, owner, slug, via, id string, cf collectionFile) error {
+// not touched. It returns the collection's id.
+func applyCollectionFile(udb Database, owner, slug, via, id string, cf collectionFile) (string, error) {
 	var c Collection
 	if id != "" {
 		cur, ok := loadCollection(udb, owner, id)
 		if !ok {
-			return fmt.Errorf("its collection is gone")
+			return "", fmt.Errorf("its collection is gone")
 		}
 		c = cur
 	} else {
 		if why := duplicateCollectionName(udb, owner, cf.Name, ""); why != "" {
-			return errors.New(why)
+			return "", errors.New(why)
 		}
 		c = Collection{ID: UUIDv4(), Owner: owner, Created: time.Now()}
 	}
@@ -784,7 +821,7 @@ func applyCollectionFile(udb Database, owner, slug, via, id string, cf collectio
 		} else if a, ok := findAgentByNameOrID(udb, owner, name); ok {
 			ref = a.ID
 		} else {
-			return fmt.Errorf("its submitter %q is no agent of yours", name)
+			return "", fmt.Errorf("its submitter %q is no agent of yours", name)
 		}
 		if c.Submitters == nil {
 			c.Submitters = map[string]string{}
@@ -792,5 +829,114 @@ func applyCollectionFile(udb Database, owner, slug, via, id string, cf collectio
 		c.Submitters[ref] = normalTrust(mode)
 	}
 	SaveCollectionBy(udb, c, via)
-	return setRefresh(owner, c.ID, cf.Refresh)
+	return c.ID, setRefresh(owner, c.ID, cf.Refresh)
+}
+
+// Seed files (docs/design/app-history.md, piece E2 step 2): the documents
+// someone added to an app's collection by hand, an upload or a paste. Nothing
+// could gather them again, so they travel with the app, as their text: the
+// original file is not kept, and the text is rebuilt from what was indexed.
+// Each is knowledge/<collection>/<title>.txt, its title on its first line.
+
+// seedReportPrefixes are the report ids a collection's hand-added documents
+// are indexed under: an upload, and a paste.
+func seedReportPrefixes(c Collection) []string {
+	return []string{"file-" + c.ID + "-", "paste-" + c.ID + "-"}
+}
+
+// collectionSeeds is c's hand-added documents as seed files: file name to
+// text, rebuilt from their indexed passages.
+func collectionSeeds(c Collection) map[string]string {
+	if VectorDB == nil {
+		return nil
+	}
+	src := collectionSource(c.ID)
+	prefixes := seedReportPrefixes(c)
+	byDoc := map[string][]EmbeddedChunk{}
+	for _, ch := range ChunksWhere(VectorDB, func(ch EmbeddedChunk) bool {
+		if ch.Source != src {
+			return false
+		}
+		for _, p := range prefixes {
+			if strings.HasPrefix(ch.ReportID, p) {
+				return true
+			}
+		}
+		return false
+	}) {
+		byDoc[ch.ReportID] = append(byDoc[ch.ReportID], ch)
+	}
+	out := map[string]string{}
+	for _, chunks := range byDoc {
+		text := AssembleChunkDoc(chunks, 1<<30)
+		title := seedTitle(text, "")
+		out[slugForReportID(title)+".txt"] = text + "\n"
+	}
+	return out
+}
+
+// seedTitle is a seed file's title: its first line, when that is a "# "
+// heading, else the file's name.
+func seedTitle(text, file string) string {
+	first, _, _ := strings.Cut(strings.TrimSpace(text), "\n")
+	if t := strings.TrimSpace(strings.TrimPrefix(first, "# ")); strings.HasPrefix(first, "# ") && t != "" {
+		return t
+	}
+	return strings.TrimSuffix(file, filepath.Ext(file))
+}
+
+// readCollectionSeeds reads the seed files in dir (a missing dir has none).
+func readCollectionSeeds(dir string) (map[string]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, nil
+	}
+	out := map[string]string{}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".txt") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			return nil, err
+		}
+		out[e.Name()] = string(b)
+	}
+	return out, nil
+}
+
+// applyCollectionSeeds indexes into c each seed file that is new or differs
+// from what c holds under its title, replacing the document of that title,
+// and says which it indexed and which of c's hand-added documents have no
+// file (kept: a document is removed in the collection, never by leaving out
+// its file).
+func applyCollectionSeeds(c Collection, seeds map[string]string) (indexed, kept []string) {
+	if VectorDB == nil {
+		return nil, nil
+	}
+	have := collectionSeeds(c)
+	for file, text := range seeds {
+		if strings.TrimSpace(have[file]) == strings.TrimSpace(text) {
+			continue
+		}
+		title := seedTitle(text, file)
+		body := strings.TrimSpace(text)
+		if first, rest, ok := strings.Cut(body, "\n"); ok && strings.HasPrefix(first, "# ") {
+			body = strings.TrimSpace(rest)
+		}
+		reportID := "file-" + c.ID + "-" + slugForReportID(title)
+		if countReportChunks(VectorDB, "paste-"+c.ID+"-"+slugForReportID(title)) > 0 {
+			reportID = "paste-" + c.ID + "-" + slugForReportID(title)
+		}
+		IngestDocument(context.WithoutCancel(AppContext()), VectorDB, collectionSource(c.ID), reportID, title, body)
+		indexed = append(indexed, title)
+	}
+	for file, text := range have {
+		if _, ok := seeds[file]; !ok {
+			kept = append(kept, seedTitle(text, file))
+		}
+	}
+	sort.Strings(indexed)
+	sort.Strings(kept)
+	return indexed, kept
 }

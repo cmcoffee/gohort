@@ -255,3 +255,50 @@ func TestAnAppsCollectionIsItsBlueprint(t *testing.T) {
 		t.Error("the app's collection outlived it")
 	}
 }
+
+// An app's collection's seed files (the documents added to it by hand) are
+// in its folder as their text, rebuilt from what was indexed, its title on
+// its first line; a new or changed one is indexed on install, and a document
+// whose file is left out is kept and said.
+func TestAnAppsCollectionCarriesItsSeedFiles(t *testing.T) {
+	turn, _ := folderTestTurn(t)
+	T, dir := installTestApp(t, turn)
+	prevHost, savedVec := agenthost.Get(), VectorDB
+	agenthost.Register(T)
+	VectorDB = &DBase{Store: kvlite.MemStore()}
+	InvalidateChunkCache()
+	t.Cleanup(func() { agenthost.Register(prevHost); VectorDB = savedVec; InvalidateChunkCache() })
+	udb := UserDB(T.DB, "u")
+	c := Collection{ID: "c-1", Owner: "u", Name: "Manual", OwningApp: "wx"}
+	SaveCollectionBy(udb, c, "Builder")
+	manual := "The widget turns on with the red switch. Hold it for two seconds until the light shows green, then let go."
+	if _, err := pasteIntoCollection(context.Background(), VectorDB, c, "Getting started", manual); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteAppFolder("u", "wx", dir); err != nil {
+		t.Fatal(err)
+	}
+	seed := filepath.Join(dir, "knowledge", "manual", "getting-started.txt")
+	raw, err := os.ReadFile(seed)
+	if err != nil || !strings.HasPrefix(string(raw), "# Getting started") || !strings.Contains(string(raw), "red switch") {
+		t.Fatalf("the seed file: %v %q", err, raw)
+	}
+
+	os.WriteFile(filepath.Join(dir, "knowledge", "manual", "care.txt"), []byte("# Care\n\nWipe the widget with a dry cloth; never put it in water, which ruins the switch."), 0o644)
+	out, err := T.InstallAppFolder(context.Background(), "u", dir, "A care page")
+	if err != nil || !strings.Contains(out, `Manual's document "Care"`) || strings.Contains(out, `"Getting started"`) {
+		t.Fatalf("install: %v %s", err, out)
+	}
+	if got := collectionSeeds(c); len(got) != 2 || !strings.Contains(got["care.txt"], "dry cloth") {
+		t.Errorf("the collection's documents after: %v", got)
+	}
+
+	os.Remove(seed)
+	out, err = T.InstallAppFolder(context.Background(), "u", dir, "Drop the getting started file")
+	if err != nil || !strings.Contains(out, `Not in the folder, and kept: Manual's document "Getting started"`) {
+		t.Fatalf("an install with a seed file gone: %v %s", err, out)
+	}
+	if got := collectionSeeds(c); len(got) != 2 {
+		t.Errorf("a document went because its file was left out: %v", got)
+	}
+}

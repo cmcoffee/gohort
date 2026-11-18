@@ -585,6 +585,14 @@ Stage 2 (an app holds everything it runs on):
      app's change, recorded in its history as its maker's: Builder's or
      Anvil's when they made it, else the person's own. Builder makes one
      with collections create owning_app.
+   - **Step 2, seed files (0.9.533).** The documents added to an app's
+     collection by hand (an upload, a paste) are in its folder as
+     `knowledge/<collection>/<title>.txt`, their text rebuilt from what was
+     indexed, the title on the first line. An install indexes a new or
+     changed one, replacing the document of its title, and writes the
+     folder again as indexed; a document whose file is left out is kept and
+     said. What a curation run gathered is not a seed: the run gathers it
+     again.
 
 Stage 3 (the app is its repository):
 
