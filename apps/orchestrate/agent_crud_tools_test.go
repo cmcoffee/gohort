@@ -549,6 +549,8 @@ func TestCollectionToolsAreExplainedNotDropped(t *testing.T) {
 // had every tool still takes other edits.
 func TestAnAppAgentIsNotGivenEveryTool(t *testing.T) {
 	sess, parent, _ := addToolTestSess(t)
+	// The authoring tools are Builder's: only it makes or changes an app's agent.
+	sess.AgentID = "seed-builder"
 	if _, err := (createAgentTool{}).RunWithSession(map[string]any{
 		"name": "Producer", "orchestrator_prompt": "Write songs.", "owning_app": "songs", "allowed_tools": []any{"*"},
 	}, sess); err == nil || !strings.Contains(err.Error(), "cannot have every tool") {
@@ -563,7 +565,7 @@ func TestAnAppAgentIsNotGivenEveryTool(t *testing.T) {
 	if _, err := (updateAgentTool{}).RunWithSession(map[string]any{"id": parent.ID, "owning_app": "songs", "allowed_tools": []any{"generate_music"}}, sess); err != nil {
 		t.Fatalf("with its tools named: %v", err)
 	}
-	old, err := saveAgent(sess.DB, AgentRecord{Name: "Older App Agent", OrchestratorPrompt: "p", Owner: sess.Username, OwningApp: "songs"})
+	old, err := saveAgent(sess.DB, AgentRecord{Name: "Older App Agent", OrchestratorPrompt: "p", Owner: sess.Username, OwningApp: "songs", appEdit: "Builder"})
 	if err != nil {
 		t.Fatal(err)
 	}

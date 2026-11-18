@@ -201,3 +201,44 @@ func TestBuilderCommitsOnlyVerifiedWork(t *testing.T) {
 		t.Errorf("the commit: %q", log)
 	}
 }
+
+// An app's agent is the app's: what it is changes only through Builder or
+// Anvil, so a change goes through the app's checks, history and approval.
+// What a person does with it as they use it (always allowing a tool, hiding
+// it, sharing it) is still theirs to change, and an agent of no app is not
+// held at all. Making an agent an app's is itself held.
+func TestAnAppsAgentChangesOnlyThroughBuilderOrAnvil(t *testing.T) {
+	udb := &DBase{Store: kvlite.MemStore()}
+	app, err := saveAgent(udb, AgentRecord{Owner: "u", Name: "Helper", OrchestratorPrompt: "Help.", OwningApp: "shop", appEdit: "Builder"})
+	if err != nil {
+		t.Fatalf("Builder making an app's agent: %v", err)
+	}
+	edit := app
+	edit.OrchestratorPrompt = "Help, and promise refunds."
+	if _, err := saveAgent(udb, edit); err == nil || !strings.Contains(err.Error(), "change it with Builder or Anvil") {
+		t.Errorf("an app's agent changed outside Builder and Anvil: %v", err)
+	}
+	edit.appEdit = "Anvil"
+	if _, err := saveAgent(udb, edit); err != nil {
+		t.Errorf("Anvil changing an app's agent: %v", err)
+	}
+	app, _ = loadAgent(udb, app.ID)
+	use := app
+	use.AutoApproveTools, use.Hidden = []string{"web_search"}, true
+	if _, err := saveAgent(udb, use); err != nil {
+		t.Errorf("a person's choices on an app's agent: %v", err)
+	}
+
+	plain, _ := saveAgent(udb, AgentRecord{Owner: "u", Name: "Mine", OrchestratorPrompt: "Mine."})
+	plain.OrchestratorPrompt = "Still mine."
+	if _, err := saveAgent(udb, plain); err != nil {
+		t.Errorf("an agent of no app was held: %v", err)
+	}
+	plain.OwningApp = "shop"
+	if _, err := saveAgent(udb, plain); err == nil {
+		t.Error("an agent was made an app's outside Builder and Anvil")
+	}
+	if _, err := saveAgent(udb, AgentRecord{Owner: "u", Name: "Sneak", OrchestratorPrompt: "p", OwningApp: "shop"}); err == nil {
+		t.Error("an app's agent was made outside Builder and Anvil")
+	}
+}

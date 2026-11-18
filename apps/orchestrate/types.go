@@ -902,12 +902,18 @@ type AgentRecord struct {
 	BuildNotes string `json:"build_notes,omitempty"`
 
 	// OwningApp is the slug of the owner's custom app this agent was written
-	// for: its brain, built with the app. A label, not a boundary: the agent
-	// is an ordinary agent of the owner's, with ordinary tools, shown in
-	// every picker under "App agents: <app>" instead of among the owner's
-	// own, and offered for deletion with the app. (The framework's own app
-	// agents, which ARE a boundary, are the appagents registry.)
+	// for: its brain, built with the app, shown in every picker under "App
+	// agents: <app>" and deleted with the app. A boundary since stage 2 of
+	// docs/design/app-history.md: what the agent is (its definition,
+	// agentDefinitionChanged) is changed only by Builder or Anvil, so every
+	// change to it goes through the app's checks, history and approval.
+	// (The framework's own app agents are the appagents registry.)
 	OwningApp string `json:"owning_app,omitempty"`
+
+	// appEdit names what is saving this record when that is Builder or Anvil
+	// changing an app's agent, the only two that may (writeAgent). Never
+	// stored: it is said by each save.
+	appEdit string
 
 	// InheritParentTools makes an owned sub-agent (OwnedBy set) resolve the
 	// PARENT's inheritable tool catalog at runtime in ADDITION to its own

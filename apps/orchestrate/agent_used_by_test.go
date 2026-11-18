@@ -63,7 +63,7 @@ func TestDeleteConfirmationNamesWhatBreaks(t *testing.T) {
 // all while something else still runs through it.
 func TestAnAgentTheAppDroppedIsOfferedForDeletion(t *testing.T) {
 	udb, general := usedByFixture(t)
-	made, _ := saveAgent(udb, AgentRecord{ID: "a-made", Name: "Screener Brain", Owner: "u", OrchestratorPrompt: "p", OwningApp: "screener"})
+	made, _ := saveAgent(udb, AgentRecord{ID: "a-made", Name: "Screener Brain", Owner: "u", OrchestratorPrompt: "p", OwningApp: "screener", appEdit: "Builder"})
 	SaveAppSpec(AppSpec{Slug: "screener", Name: "Screener", Owner: "u", AgentID: general.ID})
 	turn := &chatTurn{user: "u", udb: udb}
 

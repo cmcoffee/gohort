@@ -45,7 +45,7 @@ func TestDeletingAnAppOffersItsOwnAgents(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
 	turn := &chatTurn{user: "u", udb: db, session: &ChatSession{ID: "s1"}}
 	SaveAppSpec(AppSpec{Owner: "u", Slug: "weather", Name: "Weather", RecordKey: "id"})
-	if _, err := saveAgent(db, AgentRecord{ID: "a1", Name: "Forecaster", Owner: "u", OwningApp: "weather", OrchestratorPrompt: "Forecast."}); err != nil {
+	if _, err := saveAgent(db, AgentRecord{ID: "a1", Name: "Forecaster", Owner: "u", OwningApp: "weather", OrchestratorPrompt: "Forecast.", appEdit: "Builder"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := saveAgent(db, AgentRecord{ID: "a2", Name: "Helper", Owner: "u", OrchestratorPrompt: "Help."}); err != nil {

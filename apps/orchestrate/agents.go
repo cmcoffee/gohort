@@ -1,7 +1,9 @@
 package orchestrate
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -274,6 +276,14 @@ func rollbackAgent(db Database, id, ref string) (AgentRecord, error) {
 
 // writeAgent is the single store write.
 func writeAgent(db Database, a AgentRecord, reason string) (AgentRecord, error) {
+	saved, err := writeAgentOnce(db, a, reason)
+	// appEdit is said by each save, never carried: a record handed back and
+	// saved again later is not Builder's or Anvil's save any more.
+	saved.appEdit = ""
+	return saved, err
+}
+
+func writeAgentOnce(db Database, a AgentRecord, reason string) (AgentRecord, error) {
 	if db == nil {
 		return a, fmt.Errorf("db not initialized")
 	}
@@ -286,6 +296,14 @@ func writeAgent(db Database, a AgentRecord, reason string) (AgentRecord, error) 
 			db.Get(agentsTable, a.ID, &prior)
 		}
 		a.AllowedTools = settleAllowedTools(prior.AllowedTools, a.AllowedTools)
+		// An app's agent is the app's: what it is changes only through
+		// Builder or Anvil, so a change goes through the app's checks,
+		// history and approval. What a person does with it as they use it
+		// (always allowing a tool, sharing it, hiding it) is not that, and
+		// is left alone.
+		if why := appAgentEditRefusal(prior, a); why != "" {
+			return a, errors.New(why)
+		}
 	}
 	// What the CALLER decided, recorded before the invariants below get a
 	// vote. A rule that fires on save is the framework's decision, not the
@@ -753,4 +771,41 @@ func dropAgentSideData(db Database, owner, agentID string) {
 	if removed > 0 {
 		Log("[orchestrate.agents] dropped %d knowledge chunk(s) for deleted agent %s/%s", removed, owner, agentID)
 	}
+}
+
+// appAgentEditRefusal is why a save of a may not change it, or "": the
+// definition of an app's agent (or making an agent an app's, or taking it
+// out of one) changes only by Builder or Anvil (AgentRecord.appEdit).
+func appAgentEditRefusal(prior, a AgentRecord) string {
+	app := firstNonEmptyStr(strings.TrimSpace(prior.OwningApp), strings.TrimSpace(a.OwningApp))
+	if app == "" || a.appEdit != "" || !agentDefinitionChanged(prior, a) {
+		return ""
+	}
+	name := firstNonEmptyStr(strings.TrimSpace(prior.Name), strings.TrimSpace(a.Name), "This agent")
+	return fmt.Sprintf("%s is part of the app %q: change it with Builder or Anvil, which run the app's checks and keep its history", name, app)
+}
+
+// agentDefinitionChanged reports whether what an agent is changed between
+// prior and next. Everything counts but what is bookkeeping or the choices
+// of whoever uses it, named here; a field added later counts until it is
+// named, so the boundary fails closed.
+func agentDefinitionChanged(prior, next AgentRecord) bool {
+	strip := func(a AgentRecord) []byte {
+		a.ID, a.Owner, a.Created, a.Updated = "", "", time.Time{}, time.Time{}
+		a.appEdit = ""
+		// Builder's own notes on the agent, and what records the framework
+		// keeps on it.
+		a.BuildNotes, a.PendingApproval, a.OverriddenFields, a.OverlayRev, a.ShapeID = "", false, nil, 0, ""
+		// Who sees and shares it.
+		a.Hidden, a.ShowOnDashboard, a.Everyone = false, false, false
+		a.AllowedUsers, a.Maintainers = nil, nil
+		a.ShareHoldCortex, a.ShareHoldReference, a.ShareMemoryExplicit, a.ShareNoUploads = false, false, false, false
+		a.ShareCortex, a.ShareReference, a.ShareNotes, a.ShareUploads = "", "", "", ""
+		// The permissions a person grants it as they use it.
+		a.AutoApproveTools, a.NoUnattendedTools, a.AuthorizedIdentities = nil, nil, nil
+		a.GuardrailExceptions, a.GuardrailDeclines = nil, nil
+		b, _ := json.Marshal(a)
+		return b
+	}
+	return !bytes.Equal(strip(prior), strip(next))
 }

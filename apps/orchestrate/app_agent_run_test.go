@@ -22,7 +22,7 @@ func TestAnAppRunsOnlyItsOwnAgentsAndPipelines(t *testing.T) {
 	T.DB = &DBase{Store: kvlite.MemStore()}
 	udb := UserDB(T.DB, "alice")
 	mustSaveAgent(t, udb, AgentRecord{ID: "dm", Name: "Voidrunner DM", Owner: "alice"})
-	mustSaveAgent(t, udb, AgentRecord{ID: "qm", Name: "Quartermaster", Owner: "alice", OwningApp: "voidrunner"})
+	mustSaveAgent(t, udb, AgentRecord{ID: "qm", Name: "Quartermaster", Owner: "alice", OwningApp: "voidrunner", appEdit: "Builder"})
 	mustSaveAgent(t, udb, AgentRecord{ID: "mail", Name: "Mailer", Owner: "alice"})
 
 	if a, err := T.appOwnAgent("alice", "voidrunner", "Voidrunner DM", ""); err != nil || a.ID != "dm" {

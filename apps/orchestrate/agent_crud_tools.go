@@ -139,6 +139,7 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if _, explicit := args["cortex"].(bool); !explicit {
 		rec.Cortex = newAgentReadsCortex(rec)
 	}
+	rec.appEdit = appEditOf(sess)
 	saved, err := saveAgent(sess.DB, rec)
 	if err != nil {
 		return "", err
@@ -883,6 +884,7 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	}
 	var saved AgentRecord
 	moveNote := ""
+	existing.appEdit = appEditOf(sess)
 	if move != nil {
 		move.agent = existing
 		saved, moveNote, err = move.apply()
@@ -1965,4 +1967,13 @@ func agentEditReason(sess *ToolSession, changed []string) string {
 		reason += ": " + strings.Join(changed, ", ")
 	}
 	return reason
+}
+
+// appEditOf is what sess's agent is when it may change an app's agent:
+// "Builder", or "" for any other (AgentRecord.appEdit).
+func appEditOf(sess *ToolSession) string {
+	if sess != nil && isBuilderAgent(sess.AgentID) {
+		return "Builder"
+	}
+	return ""
 }

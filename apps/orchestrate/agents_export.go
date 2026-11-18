@@ -151,6 +151,9 @@ func importAgentRecipe(udb Database, imp agentExport, owner string) (AgentRecord
 	// reborn agent its id — the record itself stays tool-free.
 	inlineTools := rec.Tools
 	rec.Tools = nil
+	// An import is a whole agent arriving, an app's among them, not a change
+	// made around the app (appAgentEditRefusal).
+	rec.appEdit = "import"
 	saved, err := saveAgent(udb, rec)
 	if err != nil {
 		return AgentRecord{}, 0, err
