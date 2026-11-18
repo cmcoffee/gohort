@@ -11,6 +11,7 @@ package orchestrate
 // reads or changes anyone's data.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appcheck"
 	"github.com/cmcoffee/gohort/tools/appscript"
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -93,6 +95,17 @@ func validateAppChecks(spec AppSpec) error {
 	if err := appcheck.Validate(spec.Checks, scripts); err != nil {
 		return fmt.Errorf("NOT SAVED: %v", err)
 	}
+	for _, c := range spec.Checks {
+		if !c.IsAgent() {
+			continue
+		}
+		if strings.TrimSpace(spec.AgentID) == "" {
+			return fmt.Errorf("NOT SAVED: check %q asks the app's agent, and the app has none: set agent_id, or make it a script or page check", c.Name)
+		}
+		if !appCheckNamesAgent(spec, c.Agent) {
+			return fmt.Errorf("NOT SAVED: check %q asks the agent %q, which is not the app's (%s): name the app's agent", c.Name, c.Agent, spec.AgentID)
+		}
+	}
 	declared := map[string]bool{}
 	for _, name := range spec.SharedCollections {
 		declared[name] = true
@@ -138,6 +151,10 @@ func (t *chatTurn) runAppChecks(spec AppSpec, served ...bool) []appCheckResult {
 		results[i] = appCheckResult{Name: c.Name, Page: c.IsPage()}
 		if c.IsPage() {
 			results[i].Why = "page checks run once the version is saved"
+			continue
+		}
+		if c.IsAgent() {
+			results[i].Why = "agent checks run at verify and test, not on every save"
 			continue
 		}
 		wg.Add(1)
@@ -437,4 +454,75 @@ func sameAppCheck(a, b appcheck.Check) bool {
 	x, _ := json.Marshal(a)
 	y, _ := json.Marshal(b)
 	return string(x) == string(y)
+}
+
+// appCheckNamesAgent reports whether name is the app's agent: its id, or the
+// name it goes by.
+func appCheckNamesAgent(spec AppSpec, name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" || spec.AgentID == "" {
+		return false
+	}
+	if strings.EqualFold(name, spec.AgentID) {
+		return true
+	}
+	if o, ok := agenthostApp(); ok {
+		if ag, found := o.LookupAppAgent(spec.Owner, name); found {
+			return ag.ID == spec.AgentID
+		}
+	}
+	return false
+}
+
+// appAgentCheckTimeout bounds one agent check's answer.
+var appAgentCheckTimeout = 90 * time.Second
+
+// runAllAppChecks is every check of spec, its agent checks included: what
+// verify and test run. A save runs the rest (runAppChecks), since an agent
+// check costs a model call.
+func (t *chatTurn) runAllAppChecks(spec AppSpec) []appCheckResult {
+	results := t.runAppChecks(spec, true)
+	for i, c := range spec.Checks {
+		if c.IsAgent() {
+			results[i] = t.runAgentCheck(spec, c)
+		}
+	}
+	return results
+}
+
+// runAgentCheck puts the check's question to the app's agent and judges the
+// reply. The agent answers without its tools (appscript.AppAsk, what a
+// script's gohort.ask reaches), so the check writes nothing; what it tests
+// is what the agent says.
+func (t *chatTurn) runAgentCheck(spec AppSpec, c appcheck.Check) appCheckResult {
+	res := appCheckResult{Name: c.Name}
+	if appscript.AppAsk == nil {
+		res.Why = "not run: the app's agent cannot be asked here"
+		return res
+	}
+	ctx := t.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, appAgentCheckTimeout)
+	defer cancel()
+	reply, err := appscript.AppAsk(ctx, spec, spec.Owner, c.Ask, false)
+	if err != nil {
+		res.Why = "not run: the agent did not answer: " + err.Error()
+		return res
+	}
+	res.Ran = true
+	if why := c.JudgeReply(reply); why != "" {
+		res.Why = why
+		return res
+	}
+	res.Pass = true
+	return res
+}
+
+// agenthostApp is the running orchestrate app, for a check that names an
+// agent by name.
+func agenthostApp() (*OrchestrateApp, bool) {
+	o, ok := agenthost.Get().(*OrchestrateApp)
+	return o, ok && o != nil
 }

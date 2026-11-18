@@ -22,7 +22,7 @@ import (
 // help and an Anvil app project's standing notes. A test holds it to every
 // field the types here take.
 const Reference = `checks: a list of what the app is supposed to do, each a test that runs on
-every save (at most 20). Two kinds:
+every save (at most 20). Three kinds:
 
 script check: {name, script, records?, shared?, inputs?, expect}
   name     what it checks, as a person would ("adding a plant lists it")
@@ -62,6 +62,15 @@ page check: {name, records?, shared?, steps}
   {not_see: "<text>", in?: "<section title>"}
   {rows: <n>, in: "<table or list title>"}
 
+agent check: {name, agent, ask, expect}
+  puts ask to the app's agent (agent: its name or id) and tests the reply,
+  as JSON when the reply is JSON, else as its text. expect is
+  [{path?, contains | lacks | equals | exists}]: lacks is text the reply must
+  not contain ("refund" for an agent that must never promise one). The agent
+  answers without its tools, so it writes nothing. Runs at verify and test,
+  not on every save (it costs a model call). This is what tests a change to
+  the agent's prompt, which no script or page check sees.
+
 A save that breaks a check that passed before is refused, and the version
 serving stays. Change a check only when its feature changed on purpose.`
 
@@ -96,6 +105,16 @@ type Check struct {
 
 	// A page check: the steps, in order.
 	Steps []Step `json:"steps,omitempty"`
+
+	// An agent check: Ask is put to the app's agent named by Agent, and
+	// Expect is what its reply must hold (and, with lacks, must not). The
+	// reply is read as JSON when it is JSON, else as its text. A prompt
+	// change could pass every script and page check and make the agent
+	// worse; this is what tests it. Run at verify, not on every save: it
+	// costs a model call. The agent answers without its tools, so a check
+	// can never write.
+	Agent string `json:"agent,omitempty"`
+	Ask   string `json:"ask,omitempty"`
 
 	// Stored is the check as JSON, which is how the app store keeps it
 	// (Pack): the store writes with gob, which leaves out zero values, so
@@ -155,6 +174,9 @@ type Expect struct {
 	Contains string `json:"contains,omitempty"`
 	Count    *int   `json:"count,omitempty"`
 	Exists   *bool  `json:"exists,omitempty"`
+	// Lacks is text the value must not contain (an agent's reply that must
+	// not promise a refund, say).
+	Lacks string `json:"lacks,omitempty"`
 }
 
 // Step is one thing a page check does or sees, named by what a person sees:
@@ -174,6 +196,9 @@ type Step struct {
 
 // IsPage reports a page check.
 func (c Check) IsPage() bool { return len(c.Steps) > 0 }
+
+// IsAgent reports an agent check.
+func (c Check) IsAgent() bool { return strings.TrimSpace(c.Agent) != "" }
 
 // Validate refuses a list of checks that cannot run: too many, unnamed or
 // named twice, neither kind or both, a script the app does not have, an
@@ -196,11 +221,29 @@ func Validate(checks []Check, scripts map[string]bool) error {
 		}
 		seen[strings.ToLower(name)] = true
 		script := strings.TrimSpace(c.Script)
+		kinds := 0
+		for _, is := range []bool{script != "", c.IsPage(), c.IsAgent()} {
+			if is {
+				kinds++
+			}
+		}
 		switch {
-		case script != "" && c.IsPage():
-			return fmt.Errorf("%s has both script and steps: a check is one or the other", label)
-		case script == "" && !c.IsPage():
+		case kinds > 1:
+			return fmt.Errorf("%s is more than one kind: a check runs a script, takes steps on the page, or asks the app's agent, one of them", label)
+		case kinds == 0:
 			return fmt.Errorf("%s has neither script nor steps: name a data source or action to run, or the steps a person takes", label)
+		case c.IsAgent():
+			if strings.TrimSpace(c.Ask) == "" {
+				return fmt.Errorf("%s asks the agent nothing: give ask, what a person would say to it", label)
+			}
+			if len(c.Expect) == 0 {
+				return fmt.Errorf("%s expects nothing: say what the reply must hold (expect: [{contains | lacks | equals | exists, path?}])", label)
+			}
+			for j, e := range c.Expect {
+				if n := e.tests(); n != 1 {
+					return fmt.Errorf("%s, expectation %d: give exactly one of equals, contains, lacks, count or exists (it has %d)", label, j+1, n)
+				}
+			}
 		case script != "":
 			if !scripts[script] {
 				return fmt.Errorf("%s runs %q, which is not one of the app's data sources or actions", label, script)
@@ -209,6 +252,9 @@ func Validate(checks []Check, scripts map[string]bool) error {
 				return fmt.Errorf("%s expects nothing: say what its output must hold (expect: [{path, equals | contains | count | exists}])", label)
 			}
 			for j, e := range c.Expect {
+				if e.Lacks != "" {
+					return fmt.Errorf("%s, expectation %d: lacks is for an agent check's reply; a script's output is tested with equals, contains, count or exists", label, j+1)
+				}
 				if n := e.tests(); n != 1 {
 					return fmt.Errorf("%s, expectation %d: give exactly one of equals, contains, count or exists (it has %d)", label, j+1, n)
 				}
@@ -236,6 +282,9 @@ func (e Expect) tests() int {
 		n++
 	}
 	if e.Exists != nil {
+		n++
+	}
+	if e.Lacks != "" {
 		n++
 	}
 	return n
@@ -280,6 +329,21 @@ func (c Check) Judge(output string) string {
 	return ""
 }
 
+// JudgeReply tests an agent's reply against the check's expectations: as
+// JSON when the reply is JSON, else as its text. "" when every one holds.
+func (c Check) JudgeReply(reply string) string {
+	var v any
+	if json.Unmarshal([]byte(strings.TrimSpace(reply)), &v) != nil {
+		v = reply
+	}
+	for _, e := range c.Expect {
+		if why := e.judge(v); why != "" {
+			return strings.Replace(why, "the output", "the reply", 1)
+		}
+	}
+	return ""
+}
+
 func (e Expect) judge(root any) string {
 	where := "the output"
 	if e.Path != "" {
@@ -287,6 +351,13 @@ func (e Expect) judge(root any) string {
 	}
 	got, found := walk(root, e.Path)
 	switch {
+	case e.Lacks != "":
+		if !found {
+			return ""
+		}
+		if s := marshal(got); strings.Contains(strings.ToLower(text(got, s)), strings.ToLower(e.Lacks)) {
+			return fmt.Sprintf("%s contains %q, and must not: it is %s", where, e.Lacks, clip(s))
+		}
 	case e.Exists != nil:
 		if found != *e.Exists {
 			if found {

@@ -124,3 +124,35 @@ func TestAChecksZeroValuesSurviveTheStore(t *testing.T) {
 		t.Errorf("a check stored without Stored: %+v", got)
 	}
 }
+
+// An agent check asks the app's agent and tests its reply: as JSON when it
+// is JSON, else as its text, with lacks for what it must not say. It is
+// exactly one kind, needs a question and an expectation, and lacks is for a
+// reply, not a script's output.
+func TestAnAgentCheckTestsTheReply(t *testing.T) {
+	c := Check{Name: "never promises a refund", Agent: "Helper", Ask: "Can I get my money back?",
+		Expect: []Expect{{Contains: "policy"}, {Lacks: "refund"}}}
+	if err := Validate([]Check{c}, nil); err != nil {
+		t.Fatalf("a good agent check: %v", err)
+	}
+	if why := c.JudgeReply("Our policy covers exchanges within 30 days."); why != "" {
+		t.Errorf("a good reply: %s", why)
+	}
+	if why := c.JudgeReply("Our policy: yes, a full Refund."); !strings.Contains(why, "must not") {
+		t.Errorf("a reply saying what it must not: %q", why)
+	}
+	j := Check{Name: "j", Agent: "Helper", Ask: "status?", Expect: []Expect{{Path: "ok", Equals: true}}}
+	if why := j.JudgeReply(`{"ok": true}`); why != "" {
+		t.Errorf("a JSON reply: %s", why)
+	}
+	for name, bad := range map[string]Check{
+		"no question":       {Name: "x", Agent: "Helper", Expect: []Expect{{Contains: "a"}}},
+		"no expectation":    {Name: "x", Agent: "Helper", Ask: "hi"},
+		"two kinds":         {Name: "x", Agent: "Helper", Ask: "hi", Script: "s", Expect: []Expect{{Contains: "a"}}},
+		"lacks on a script": {Name: "x", Script: "s", Expect: []Expect{{Lacks: "a"}}},
+	} {
+		if err := Validate([]Check{bad}, map[string]bool{"s": true}); err == nil {
+			t.Errorf("%s was not refused", name)
+		}
+	}
+}

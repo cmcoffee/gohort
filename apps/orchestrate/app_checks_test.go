@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -313,5 +314,51 @@ func TestACheckSeedsSharedCollectionsAndNamesItsCaller(t *testing.T) {
 	_, err = turn.appDefCreateOrUpdate(map[string]any{"id": "hours", "checks": []any{totalCheck(7), check, stray}}, true)
 	if err == nil || !strings.Contains(err.Error(), `"votes"`) {
 		t.Fatalf("a check giving an undeclared collection was not refused naming it: %v", err)
+	}
+}
+
+// An agent check puts its question to the app's agent and tests the reply.
+// It runs at verify and test, not on a save (a model call each time), and an
+// app with no agent, or a check naming another agent, is refused.
+func TestAnAgentCheckRunsAtVerifyAndNotOnASave(t *testing.T) {
+	prev := appscript.AppAsk
+	t.Cleanup(func() { appscript.AppAsk = prev })
+	reply := "Exchanges within 30 days, per our policy."
+	asked := 0
+	appscript.AppAsk = func(_ context.Context, spec AppSpec, caller, prompt string, _ bool) (string, error) {
+		asked++
+		if prompt != "Can I get my money back?" || spec.AgentID != "helper-1" {
+			t.Errorf("asked %q of %q", prompt, spec.AgentID)
+		}
+		return reply, nil
+	}
+	check := appcheck.Check{Name: "never promises a refund", Agent: "helper-1", Ask: "Can I get my money back?",
+		Expect: []appcheck.Expect{{Contains: "policy"}, {Lacks: "refund"}}}
+	spec := AppSpec{Owner: "u", Slug: "shop", AgentID: "helper-1", Checks: []appcheck.Check{check}}
+	if err := validateAppChecks(spec); err != nil {
+		t.Fatalf("a check naming the app's agent: %v", err)
+	}
+	turn := &chatTurn{user: "u"}
+
+	if r := turn.runAppChecks(spec); r[0].Ran || asked != 0 {
+		t.Errorf("an agent check ran on a save: %+v, asked %d", r[0], asked)
+	}
+	if r := turn.runAllAppChecks(spec); !r[0].Ran || !r[0].Pass {
+		t.Errorf("a good reply at verify: %+v", r[0])
+	}
+	reply = "Per our policy, sure, a full refund."
+	if r := turn.runAllAppChecks(spec); r[0].Pass || !strings.Contains(r[0].Why, "must not") {
+		t.Errorf("a reply promising a refund: %+v", r[0])
+	}
+
+	noAgent := spec
+	noAgent.AgentID = ""
+	if err := validateAppChecks(noAgent); err == nil || !strings.Contains(err.Error(), "has none") {
+		t.Errorf("an agent check on an app with no agent: %v", err)
+	}
+	other := spec
+	other.Checks = []appcheck.Check{{Name: "x", Agent: "someone-else", Ask: "hi", Expect: []appcheck.Expect{{Contains: "a"}}}}
+	if err := validateAppChecks(other); err == nil || !strings.Contains(err.Error(), "not the app's") {
+		t.Errorf("a check naming another agent: %v", err)
 	}
 }
