@@ -170,13 +170,41 @@ agent with five tools is five approvals before it works. In an app's space:
 - A copy made within the deployment (a pool tool copied into an app) keeps
   its approval while it is unchanged, and is reviewed again once edited.
 
-**Knowledge is different: it is the app's data.** A collection is RAG
-content that grows as people and agents add to it. Its definition (its name,
-its settings, what it gathers from) is the app's, in its folder
-(`knowledge/<name>.json`) and history, changed through Builder or Anvil. Its
-documents are added from anywhere, as now (the Knowledge page, an agent's
-ingest tools, the app), stay in the knowledge store and out of git, like the
-records people keep in the app; an export may carry them.
+**An app records blueprints, never what it gathers or learns.** Knowledge
+and memory are built up while an app is used; what the app holds is how to
+build them, and what they come to hold is data, like the records people
+keep in the app.
+
+- **Knowledge.** The app records a collection's blueprint, in its folder
+  (`knowledge/<name>.json`) and history: its name and settings, what it
+  gathers from (pages, searches, the app's own files, a store), how often it
+  refreshes (collections refresh on a schedule already), and its **seed
+  files**, the documents someone uploaded by hand (a manual, a rulebook),
+  kept in the app's folder as its assets are, since nothing could gather
+  them again. Changing the blueprint is changing the app: Builder or Anvil,
+  the app's history, a shared app's approval. The collection's documents
+  are built from the blueprint and are data: added to and pruned from
+  anywhere (the Knowledge page, an agent's ingest tools, the app), kept in
+  the knowledge store, never in git. A refresh adds to what is there and
+  keeps those edits; a rebuild from nothing (an import on another
+  deployment) does not, so a document that must always be there belongs in
+  the blueprint as a seed file. A rebuild is not identical either: what it
+  gathers from changes over time.
+- **Memory.** The app records what its agents start out knowing: facts
+  written in on purpose ("prices are in euros") and their standing operating
+  notes, part of each agent's blueprint and changed the same way. What an
+  agent learns in use (remember and recall, what it picks up about the
+  people using it) is data: in the memory store, managed from anywhere as
+  now, never in git and never in an export. That is privacy as much as
+  tidiness: a shared app's agent learns about each person who uses it, and
+  an app that carried that would hand whoever received it what it had
+  learned about everyone else. What it learned about a person stays that
+  person's, as now, and changing or copying the app does not move it. An
+  imported agent already works this way: it carries the recipe, and its
+  memory and identity stay behind.
+
+An exported app is therefore small and carries nobody's data: its blueprints
+and seed files, from which the deployment receiving it builds the rest.
 
 **Existing apps copy on their first change.** An app that points at an
 agent, pipeline or tools of the person's copies them into itself the first
@@ -288,9 +316,11 @@ somewhere new.
 8. **Self-contained apps (stage 2):** an app owns copies of its agents,
    pipelines, machines and tools, in a tool space of its own; only Builder
    and Anvil change them, shown read-only elsewhere with an
-   administrator's stop; tools approved by reach, one review per space;
-   knowledge's definition is the app's and its documents are data; existing
-   apps copy what they use on their first change.
+   administrator's stop; tools approved by reach, one review per space; an
+   app records blueprints, never what it gathers or learns (a collection's
+   sources, settings, refresh and seed files; an agent's starting memory),
+   its documents and learned memory being data; existing apps copy what
+   they use on their first change.
 
 ## Steps
 
@@ -316,8 +346,10 @@ Stage 2 (an app holds everything it runs on):
    than points, each in the app's folder and history, exported and deleted
    with it; shown read-only elsewhere, with an administrator's stop.
 8. A shared app's approval covers what it owns.
-9. Knowledge: the definition in the app, the documents in the store; and
-   existing apps copying what they use on their first change.
+9. Blueprints: a collection's blueprint and seed files, and each agent's
+   starting memory, in the app; documents and learned memory kept as data,
+   out of git and exports; and existing apps copying what they use on their
+   first change.
 
 Stage 3 (the app is its repository):
 
