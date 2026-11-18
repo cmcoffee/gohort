@@ -14,6 +14,8 @@ package orchestrate
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -84,8 +86,71 @@ func appRepoLock(dir string) *sync.Mutex {
 	return m.(*sync.Mutex)
 }
 
+// appPending is whose saves wait to be committed in an app's history, and the
+// change notes they carried. Kept in the repository's .git, not among the
+// app's files. Waiting saves are always one author's: a save by someone else
+// commits them first, under their own name (appWorkInterrupted).
+type appPending struct {
+	By    string   `json:"by"`
+	Via   string   `json:"via,omitempty"`
+	Notes []string `json:"notes,omitempty"`
+}
+
+func appPendingPath(dir string) string { return filepath.Join(dir, ".git", "gohort-pending.json") }
+
+func loadAppPending(dir string) appPending {
+	var p appPending
+	if b, err := os.ReadFile(appPendingPath(dir)); err == nil {
+		json.Unmarshal(b, &p)
+	}
+	return p
+}
+
+func saveAppPending(dir string, p appPending) error {
+	b, _ := json.Marshal(p)
+	return os.WriteFile(appPendingPath(dir), b, 0o600)
+}
+
+// appPendingMessage is the commit message for saves committed because
+// someone else changed the app before they were marked finished.
+func appPendingMessage(p appPending) string {
+	subject := "Work in progress by " + p.By
+	var rest []string
+	for i, n := range p.Notes {
+		first, _, _ := strings.Cut(strings.TrimSpace(n), "\n")
+		if i == 0 && first != "" {
+			subject = first
+			continue
+		}
+		if first != "" {
+			rest = append(rest, "- "+first)
+		}
+	}
+	msg := subject + "\n\nCommitted when someone else changed the app, before this work was marked finished."
+	if len(rest) > 0 {
+		msg += "\n\nAlso in it:\n" + strings.Join(rest, "\n")
+	}
+	return msg
+}
+
+// commitWaiting commits the saves waiting in dir as their author's, and
+// forgets them.
+func commitWaiting(dir string) error {
+	p := loadAppPending(dir)
+	if p.By == "" {
+		return nil
+	}
+	if err := appRepoCommit(dir, p.By, p.Via, appPendingMessage(p)); err != nil {
+		return err
+	}
+	return os.Remove(appPendingPath(dir))
+}
+
 // syncAppRepo writes spec as saved into its app's repository, making the
-// repository (and its first commit) when there is none.
+// repository (and its first commit) when there is none. A person's own
+// change is committed at once, as theirs; an agent's waits for the work to
+// be finished (CommitAppHistory). Saves waiting from someone else are
+// committed first, so a commit is only ever its author's work.
 func syncAppRepo(spec AppSpec) error {
 	if appGit() == "" || len(spec.Sections) == 0 {
 		return nil
@@ -107,7 +172,19 @@ func syncAppRepo(spec AppSpec) error {
 		}
 		fresh = true
 	}
-	if err := writeAppRepoFiles(dir, spec); err != nil {
+	by, via := strings.TrimSpace(spec.ChangedBy), strings.TrimSpace(spec.ChangedVia)
+	if by == "" {
+		by = spec.Owner
+	}
+	if !fresh {
+		if p := loadAppPending(dir); p.By != "" && (p.By != by || p.Via != via) {
+			if err := commitWaiting(dir); err != nil {
+				return err
+			}
+		}
+	}
+	changed, err := writeAppRepoFiles(dir, spec)
+	if err != nil {
 		return err
 	}
 	if fresh {
@@ -117,16 +194,76 @@ func syncAppRepo(spec AppSpec) error {
 		}
 		return appRepoCommit(dir, spec.Owner, "", "Start of "+name+"'s history\n\nThe app as it was when its history began.")
 	}
-	return nil
+	if !changed {
+		return nil
+	}
+	note := strings.TrimSpace(spec.ChangeNote)
+	if via == "" {
+		if note == "" {
+			note = "Change by " + by
+		}
+		return appRepoCommit(dir, by, "", note)
+	}
+	p := loadAppPending(dir)
+	p.By, p.Via = by, via
+	if note != "" && (len(p.Notes) == 0 || p.Notes[len(p.Notes)-1] != note) {
+		p.Notes = append(p.Notes, note)
+	}
+	return saveAppPending(dir, p)
+}
+
+// ErrNoAppHistory is a commit where apps keep no history in git.
+var ErrNoAppHistory = errors.New("git is not installed here, so apps keep their history as revisions only")
+
+// CommitAppHistory commits the finished work waiting in owner's app slug as
+// by's, crediting via (the agent that did it, or ""), with message. Another
+// person's waiting saves are committed first, as theirs. The app's files are
+// written again first, so what changed since its last save (an asset added)
+// is in it. It reports whether a commit of by's was made: false when nothing
+// of theirs was waiting.
+func CommitAppHistory(owner, slug, by, via, message string) (bool, error) {
+	if appGit() == "" {
+		return false, ErrNoAppHistory
+	}
+	dir, ok := appRepoDir(owner, slug)
+	if !ok {
+		return false, fmt.Errorf("no place for the history of %q", slug)
+	}
+	spec, found := LoadAppSpec(owner, slug)
+	if !found {
+		return false, fmt.Errorf("no app %q", slug)
+	}
+	mu := appRepoLock(dir)
+	mu.Lock()
+	defer mu.Unlock()
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+		return false, fmt.Errorf("%s has no history yet: it starts at the app's next save", spec.Name)
+	}
+	if p := loadAppPending(dir); p.By != "" && (p.By != by || p.Via != via) {
+		if err := commitWaiting(dir); err != nil {
+			return false, err
+		}
+	}
+	if _, err := writeAppRepoFiles(dir, spec); err != nil {
+		return false, err
+	}
+	head, _ := appRepoGit(dir, "rev-parse", "HEAD")
+	if err := appRepoCommit(dir, by, via, message); err != nil {
+		return false, err
+	}
+	os.Remove(appPendingPath(dir))
+	after, _ := appRepoGit(dir, "rev-parse", "HEAD")
+	return strings.TrimSpace(after) != strings.TrimSpace(head), nil
 }
 
 // writeAppRepoFiles makes the repository's files the app's: written where
-// they differ, removed where the app no longer has them. .git is the
-// repository's own.
-func writeAppRepoFiles(dir string, spec AppSpec) error {
+// they differ, removed where the app no longer has them, and reports whether
+// any changed. .git is the repository's own.
+func writeAppRepoFiles(dir string, spec AppSpec) (bool, error) {
+	changed := false
 	stage, err := os.MkdirTemp("", "app-history-")
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer os.RemoveAll(stage)
 	assets := map[string][]byte{}
@@ -140,7 +277,7 @@ func writeAppRepoFiles(dir string, spec AppSpec) error {
 	// No live marker: the repository records the app, it is not a folder
 	// to install from.
 	if _, err := writeAppFolder(stage, spec, assets, ""); err != nil {
-		return err
+		return false, err
 	}
 	want := map[string]bool{}
 	err = filepath.WalkDir(stage, func(p string, d fs.DirEntry, err error) error {
@@ -160,10 +297,11 @@ func writeAppRepoFiles(dir string, spec AppSpec) error {
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 			return err
 		}
+		changed = true
 		return os.WriteFile(dst, data, 0o644)
 	})
 	if err != nil {
-		return err
+		return false, err
 	}
 	// What the app no longer has goes: a data source removed, an asset
 	// deleted. Folders left empty go with it.
@@ -184,13 +322,14 @@ func writeAppRepoFiles(dir string, spec AppSpec) error {
 		}
 		if !want[rel] {
 			os.Remove(p)
+			changed = true
 		}
 		return nil
 	})
 	for i := len(dirs) - 1; i >= 0; i-- {
 		os.Remove(dirs[i]) // only an empty one goes
 	}
-	return nil
+	return changed, nil
 }
 
 // appRepoGit runs git in an app's repository on this machine, with no
@@ -224,4 +363,75 @@ func appRepoCommit(dir, author, coAuthor, msg string) error {
 	}
 	_, err := appRepoGit(dir, "-c", "user.name="+author, "-c", "user.email="+author+"@users.gohort.invalid", "commit", "-q", "-m", msg)
 	return err
+}
+
+// changedVia is what made this turn's changes for its person: an override
+// (an install from Anvil), else the turn's agent (Builder), else "" for the
+// person's own hand.
+func (t *chatTurn) changedVia() string {
+	if t.via != "" {
+		return t.via
+	}
+	if t.agent.ID != "" {
+		return firstNonEmptyStr(t.agent.Name, t.agent.ID)
+	}
+	return ""
+}
+
+// appDefCommit is app_def commit: the work this turn's person did on an app
+// with this agent, recorded in the app's history once it is finished and
+// tested (verify passed on the revision serving now), with the agent as
+// co-author. Saves wait uncommitted until then, as Claude Code commits.
+func (t *chatTurn) appDefCommit(args map[string]any) (string, error) {
+	slug := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
+	spec, _, ok := t.appForTurn(slug)
+	if slug == "" || !ok {
+		return "", appNotFound(args, "")
+	}
+	msg := strings.TrimSpace(firstNonEmptyStr(stringArg(args, "message"), stringArg(args, "note")))
+	if msg == "" {
+		return "", errors.New("NOT COMMITTED: give message, the commit's message: a first line saying what the work changed (under 72 characters), a blank line, and why")
+	}
+	if spec.Verify == nil || !spec.Verify.Current(spec) || !spec.Verify.Pass {
+		return "", fmt.Errorf("NOT COMMITTED: a commit is finished, tested work, and %q has not passed verify on the version serving now (%s). Run app_def(action=\"verify\", id=%q), fix what it finds, then commit", spec.Name, spec.VerifyStatus(), spec.Slug)
+	}
+	done, err := CommitAppHistory(spec.Owner, spec.Slug, t.user, t.changedVia(), msg)
+	if errors.Is(err, ErrNoAppHistory) {
+		return "Nothing committed: " + err.Error() + ". The work is saved and verified; its revisions keep it.", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	subject, _, _ := strings.Cut(msg, "\n")
+	if !done {
+		return fmt.Sprintf("Nothing of yours is waiting to be committed in %q: the history already has it.", spec.Name), nil
+	}
+	return fmt.Sprintf("Committed to %q's history: %s", spec.Name, strings.TrimSpace(subject)), nil
+}
+
+// uncommittedWorkNotice holds back a reply that would end the turn while
+// work of this turn's person on the app it is working on waits in the app's
+// history verified and uncommitted: finished, tested work is committed
+// before the turn ends. Said once a turn; "" otherwise.
+func (t *chatTurn) uncommittedWorkNotice() string {
+	if t.commitAsked || t.session == nil || appGit() == "" {
+		return ""
+	}
+	slug := strings.TrimSpace(t.session.App)
+	if slug == "" {
+		return ""
+	}
+	spec, _, ok := t.appForTurn(slug)
+	if !ok || spec.Verify == nil || !spec.Verify.Current(spec) || !spec.Verify.Pass {
+		return ""
+	}
+	dir, ok := appRepoDir(spec.Owner, spec.Slug)
+	if !ok {
+		return ""
+	}
+	if p := loadAppPending(dir); p.By != t.user || p.Via != t.changedVia() {
+		return ""
+	}
+	t.commitAsked = true
+	return fmt.Sprintf("Your reply was held back: your work on %q is verified and not yet in its history. Commit it before you finish: app_def(action=\"commit\", id=%q, message=...), a first line saying what the work changed (under 72 characters), a blank line, and why. Then give your reply.", spec.Name, spec.Slug)
 }

@@ -202,6 +202,14 @@ type AppSpec struct {
 	// undoing it. Cleared by any edit that gives no note: a note that outlives
 	// the revision it described would describe the wrong one.
 	ChangeNote string `json:"change_note,omitempty"`
+	// ChangedBy is who made this revision (the owner, or a maintainer), and
+	// ChangedVia the agent that made it for them ("Builder", "Anvil"), empty
+	// for a change the person made themselves. The app's history
+	// (orchestrate/app_history.go) commits each person's work under their
+	// own name and credits the agent. Unset is the owner, by their own hand.
+	// Bookkeeping: neither changes what the app serves or how it is tested.
+	ChangedBy  string `json:"changed_by,omitempty"`
+	ChangedVia string `json:"changed_via,omitempty"`
 	// Notes is the author's standing account of the app, for whoever revises it
 	// next: what it is for, the decisions made and why, and what the owner asked
 	// for that is not done. Rewritten as a whole, never appended, bounded by
@@ -595,6 +603,15 @@ func SaveAppSpec(s AppSpec) AppSpec { return SaveAppSpecAs(s, "") }
 // for a metadata flip. Pass AppSaveNoHistory to suppress (the rollback paths
 // do, so a broken revision never gets filed as history).
 func SaveAppSpecAs(s AppSpec, reason string) AppSpec {
+	return SaveAppSpecBy(s, reason, s.Owner, "")
+}
+
+// SaveAppSpecBy is SaveAppSpecAs naming who made the change and the agent
+// that made it for them (ChangedBy, ChangedVia). Said by every save rather
+// than carried on the app: one loaded and saved again would otherwise keep
+// the last saver's name. The plain saves are the owner's own hand.
+func SaveAppSpecBy(s AppSpec, reason, by, via string) AppSpec {
+	s.ChangedBy, s.ChangedVia = strings.TrimSpace(by), strings.TrimSpace(via)
 	db := appSpecStore(s.Owner)
 	if db == nil {
 		return s
@@ -614,6 +631,9 @@ func SaveAppSpecAs(s AppSpec, reason string) AppSpec {
 	if hadPrior && prior.Shared && s.Shared && appServesDifferently(prior, s) && !UserIsAdmin(s.Owner) {
 		s.Shared = false
 		Log("[appspec] %s changed shared app %q: unshared until an administrator approves the new version", s.Owner, s.Slug)
+	}
+	if s.ChangedBy == "" {
+		s.ChangedBy = s.Owner
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	if s.Created == "" {
@@ -647,6 +667,7 @@ func appVerdictCarries(prior, next AppSpec) bool {
 	strip := func(s AppSpec) []byte {
 		s.Name, s.Desc, s.Notes, s.ChangeNote = "", "", "", ""
 		s.Created, s.Updated, s.Verify, s.Schema = "", "", nil, 0
+		s.ChangedBy, s.ChangedVia = "", ""
 		b, _ := json.Marshal(s)
 		return b
 	}
@@ -663,6 +684,7 @@ func appServesDifferently(prior, next AppSpec) bool {
 	strip := func(s AppSpec) []byte {
 		s.Name, s.Desc, s.Notes, s.ChangeNote = "", "", "", ""
 		s.Created, s.Updated, s.Verify, s.Schema = "", "", nil, 0
+		s.ChangedBy, s.ChangedVia = "", ""
 		s.Shared, s.SharedGroups, s.SharedWith, s.PublicToken, s.Disabled = false, nil, nil, "", false
 		s.Maintainers, s.Managers = nil, nil
 		s.Checks = nil // what the app is tested for, not what it serves

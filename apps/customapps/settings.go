@@ -411,7 +411,10 @@ func (T *CustomApps) saveSettingsAgent(a *appCall, body struct {
 	}
 	if ag.ID != spec.AgentID {
 		spec.AgentID = ag.ID
-		SaveAppSpecAs(spec, "agent changed in Settings")
+		// The person's own change, committed to the app's history at once:
+		// its note is its message, not the last save's.
+		spec.ChangeNote = "Answer with the agent " + firstNonEmpty(strings.TrimSpace(ag.Name), ag.ID) + "\n\nChosen on the app's Settings page."
+		SaveAppSpecBy(spec, "agent changed in Settings", a.User, "")
 	}
 	name := strings.TrimSpace(ag.Name)
 	if name == "" {

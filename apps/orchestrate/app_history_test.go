@@ -38,9 +38,9 @@ func historyApp(scripts map[string]string) AppSpec {
 }
 
 // Every app has a repository of its folder, made by its first save with the
-// app as saved as its first commit. A later save writes the app's files into
-// it and commits nothing: a finished piece of work is the commit, not a
-// save. What the app no longer has leaves the folder, and deleting the app
+// app as saved as its first commit. An agent's later save writes the app's
+// files into it and commits nothing: a finished piece of work is the commit,
+// not a save. What the app no longer has leaves the folder, and deleting the app
 // takes its history with it.
 func TestEverySaveWritesTheAppIntoItsHistory(t *testing.T) {
 	ws := historyWorld(t)
@@ -59,7 +59,9 @@ func TestEverySaveWritesTheAppIntoItsHistory(t *testing.T) {
 		t.Error("the history holds an install's live marker")
 	}
 
-	SaveAppSpec(historyApp(map[string]string{"now": "print('{\"t\": 2}')", "week": "print('[]')"}))
+	// An agent's save waits; a person's own would be committed at once
+	// (TestACommitIsOnlyItsAuthorsWork).
+	SaveAppSpecBy(historyApp(map[string]string{"now": "print('{\"t\": 2}')", "week": "print('[]')"}), "update", "alice", "Builder")
 	if b, _ := os.ReadFile(filepath.Join(dir, "data", "now.py")); string(b) != `print('{"t": 2}')` {
 		t.Errorf("the save was not written: %q", b)
 	}
@@ -71,7 +73,7 @@ func TestEverySaveWritesTheAppIntoItsHistory(t *testing.T) {
 		t.Errorf("a save made a commit: %s commits", strings.TrimSpace(n))
 	}
 
-	SaveAppSpec(historyApp(map[string]string{"now": "print('{\"t\": 2}')"}))
+	SaveAppSpecBy(historyApp(map[string]string{"now": "print('{\"t\": 2}')"}), "update", "alice", "Builder")
 	if _, err := os.Stat(filepath.Join(dir, "data", "week.py")); err == nil {
 		t.Error("a data source the app no longer has is still in its history's files")
 	}
@@ -98,5 +100,104 @@ func TestWithoutGitAnAppSavesAsAlways(t *testing.T) {
 	}
 	if !strings.Contains(AppHistoryUnavailable(), "git is not installed") {
 		t.Errorf("the reason: %q", AppHistoryUnavailable())
+	}
+}
+
+// A commit is its author's finished work. A person's own change is committed
+// at once; an agent's saves wait for the work to be finished, and a save by
+// someone else first commits what was waiting, under its own author, so no
+// commit holds two people's work. CommitAppHistory commits only what its
+// author has waiting, crediting the agent as co-author.
+func TestACommitIsOnlyItsAuthorsWork(t *testing.T) {
+	ws := historyWorld(t)
+	dir := filepath.Join(ws, "alice", ".apps", "wx")
+	commits := func() string {
+		out, _ := appRepoGit(dir, "log", "--reverse", "--format=%an|%s")
+		return strings.TrimSpace(out)
+	}
+	save := func(by, via, note, script string) {
+		s := historyApp(map[string]string{"now": script})
+		s.ChangeNote = note
+		SaveAppSpecBy(s, "update", by, via)
+	}
+
+	save("alice", "", "", "print(1)") // starts the history
+	save("alice", "Builder", "Add a forecast", "print(2)")
+	save("alice", "Builder", "Show the week", "print(3)")
+	if got := commits(); got != "alice|Start of Weather's history" {
+		t.Errorf("an agent's saves were committed before the work was finished:\n%s", got)
+	}
+
+	// A maintainer's save: alice's waiting work is committed first, as hers.
+	save("bob", "Builder", "Fix the units", "print(4)")
+	if got := commits(); !strings.HasSuffix(got, "alice|Add a forecast") {
+		t.Errorf("alice's waiting work was not committed as hers first:\n%s", got)
+	}
+	body, _ := appRepoGit(dir, "log", "-1", "--format=%B")
+	if !strings.Contains(body, "before this work was marked finished") || !strings.Contains(body, "- Show the week") || !strings.Contains(body, "Co-Authored-By: Builder") {
+		t.Errorf("the interrupted commit's message:\n%s", body)
+	}
+
+	// Bob finishes: his commit holds his work, with Builder credited.
+	done, err := CommitAppHistory("alice", "wx", "bob", "Builder", "Use Celsius everywhere\n\nThe forecast mixed units.")
+	if err != nil || !done {
+		t.Fatalf("commit: %v %v", done, err)
+	}
+	if got := commits(); !strings.HasSuffix(got, "bob|Use Celsius everywhere") {
+		t.Errorf("bob's commit:\n%s", got)
+	}
+	if body, _ := appRepoGit(dir, "log", "-1", "--format=%B"); !strings.Contains(body, "Co-Authored-By: Builder <builder@agents.gohort.invalid>") {
+		t.Errorf("the agent is not credited:\n%s", body)
+	}
+	if done, _ := CommitAppHistory("alice", "wx", "bob", "Builder", "Again"); done {
+		t.Error("a commit with nothing waiting was made")
+	}
+
+	// A person's own change is committed at once, with its note.
+	save("alice", "", "Rename the page", "print(5)")
+	if got := commits(); !strings.HasSuffix(got, "alice|Rename the page") {
+		t.Errorf("a person's own change was not committed at once:\n%s", got)
+	}
+}
+
+// Builder's commit is refused until the work is tested: verify has passed on
+// the version serving now. Then it commits the person's work with Builder as
+// co-author.
+func TestBuilderCommitsOnlyVerifiedWork(t *testing.T) {
+	turn, _ := folderTestTurn(t)
+	if appGit() == "" {
+		t.Skip("git is not installed")
+	}
+	turn.agent.Name = "Builder"
+	if _, err := turn.appDefCreateOrUpdate(map[string]any{
+		"name": "Tally", "notes": "Counts things.",
+		"sections": []any{map[string]any{"id": "page", "kind": "html", "html": "<!DOCTYPE html><html><body><h1>Tally</h1></body></html>"}},
+	}, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := turn.appDefCreateOrUpdate(map[string]any{"id": "tally", "notes": "Counts things, by day.", "note": "Count by day"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := turn.appDefCommit(map[string]any{"id": "tally", "message": "Count by day"}); err == nil || !strings.Contains(err.Error(), "verify") {
+		t.Fatalf("a commit before verify: %v", err)
+	}
+	spec, _ := LoadAppSpec("u", "tally")
+	spec.RecordVerify(true, "ok")
+	// A reply ending the turn with that work verified and uncommitted is held
+	// back once, to commit it.
+	turn.session = &ChatSession{App: "tally"}
+	if n := turn.uncommittedWorkNotice(); !strings.Contains(n, `app_def(action="commit", id="tally"`) {
+		t.Errorf("the turn's end was not held for the commit: %q", n)
+	}
+	if n := turn.uncommittedWorkNotice(); n != "" {
+		t.Error("held twice in one turn")
+	}
+	out, err := turn.appDefCommit(map[string]any{"id": "tally", "message": "Count by day\n\nOne row per day."})
+	if err != nil || !strings.Contains(out, "Committed") {
+		t.Fatalf("a verified commit: %q %v", out, err)
+	}
+	dir, _ := appRepoDir("u", "tally")
+	if log, _ := appRepoGit(dir, "log", "-1", "--format=%an|%s|%b"); !strings.HasPrefix(log, "u|Count by day|") || !strings.Contains(log, "Co-Authored-By: Builder") {
+		t.Errorf("the commit: %q", log)
 	}
 }

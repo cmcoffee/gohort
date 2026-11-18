@@ -1317,6 +1317,7 @@ func (customAppArtifact) ExportArtifact(_ Database, name, owner string) (json.Ra
 	spec.Owner = ""
 	spec.Created = ""
 	spec.Updated = ""
+	spec.ChangedBy, spec.ChangedVia = "", ""
 	spec.Disabled = false
 	// A verdict from a browser load on THIS host says nothing about the one
 	// the recipe lands on; the importer verifies afresh.

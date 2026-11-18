@@ -111,6 +111,13 @@ var workerAbortTools = func() []string {
 type chatTurn struct {
 	app *OrchestrateApp
 	ctx context.Context
+	// commitAsked is set once the turn has been told to commit verified
+	// work in an app's history, so it is told once (uncommittedWorkNotice).
+	commitAsked bool
+	// via names what made this turn's app changes for its person, for the
+	// app's history ("Anvil" for an install from Anvil); empty is the turn's
+	// agent, or nobody for a person's own change (changedVia).
+	via string
 	// savedBroken is what is wrong with the app the last save on this turn
 	// went through with (its page dead, a data source failing), "" when it
 	// works as far as the save could tell (appWrite.brokenExit).

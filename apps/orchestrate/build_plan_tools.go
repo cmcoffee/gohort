@@ -607,7 +607,7 @@ func (g buildGaps) finishNotice() string {
 // publisher). Nil when there is neither.
 func (t *chatTurn) finishCheck() func(string) (string, string) {
 	build, app := t.buildGapsFinishCheck(), t.appFinishCheck
-	if build == nil && app == nil {
+	if build == nil && app == nil && !agentCanAuthor(t.agent) {
 		return nil
 	}
 	return func(reply string) (string, string) {
@@ -615,6 +615,11 @@ func (t *chatTurn) finishCheck() func(string) (string, string) {
 			if notice, strike := build(reply); strings.TrimSpace(notice) != "" {
 				return notice, strike
 			}
+		}
+		// Finished, tested work goes in the app's history before the turn
+		// ends (app_history.go).
+		if notice := t.uncommittedWorkNotice(); notice != "" {
+			return notice, ""
 		}
 		if app != nil {
 			return app(reply), ""

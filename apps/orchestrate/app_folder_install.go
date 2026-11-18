@@ -11,6 +11,7 @@ package orchestrate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -41,9 +42,25 @@ func (T *OrchestrateApp) InstallAppFolder(ctx context.Context, user, dir, note s
 		return "", fmt.Errorf("no one to install it as")
 	}
 	t := T.personTurn(ctx, user)
+	// Installs are Anvil's: its assistant made the change, the person
+	// pressing Install finished it.
+	t.via = "Anvil"
 	out, err := t.publishAppFolder(dir, filepath.Base(dir), folderPublish{note: note})
 	if err == nil && t.savedBroken != "" {
 		return out, AppSavedBroken{Problem: t.savedBroken, Report: out}
+	}
+	// An install that went in working is finished, tested work: it is
+	// committed to the app's history now, with the install's message.
+	if err == nil {
+		if slug, _, serr := T.AppFolderSlug(ctx, user, dir); serr == nil {
+			msg := strings.TrimSpace(note)
+			if msg == "" {
+				msg = "Install from Anvil"
+			}
+			if _, cerr := CommitAppHistory(user, slug, user, t.via, msg); cerr != nil && !errors.Is(cerr, ErrNoAppHistory) {
+				Log("[app-history] %s/%s installed, but its history commit failed: %v", user, slug, cerr)
+			}
+		}
 	}
 	return out, err
 }

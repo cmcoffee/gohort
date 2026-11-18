@@ -129,7 +129,7 @@ func (t *chatTurn) saveHTMLSectionEdit(spec AppSpec, sections []map[string]any, 
 	if checks != "" {
 		checks = "\n\n" + checks
 	}
-	saved := SaveAppSpecAs(spec, reason)
+	saved := SaveAppSpecBy(spec, reason, t.user, t.changedVia())
 
 	// Now the accurate check, against the revision that was just written. On
 	// failure put the previous revision back rather than leaving a dead app.
@@ -137,7 +137,7 @@ func (t *chatTurn) saveHTMLSectionEdit(spec AppSpec, sections []map[string]any, 
 	// milliseconds and is not a version anyone would want back.
 	errs, checked := appPageRuntimeErrors(saved.Owner, saved.Slug)
 	if len(errs) > 0 {
-		SaveAppSpecAs(before, AppSaveNoHistory)
+		SaveAppSpecBy(before, AppSaveNoHistory, t.user, t.changedVia())
 		return "", fmt.Errorf("that %s broke the page in a real browser, so it was ROLLED BACK, the app is serving the previous revision again:\n- %s\n\nFix the replacement text and try again",
 			verb, strings.Join(errs, "\n- "))
 	}

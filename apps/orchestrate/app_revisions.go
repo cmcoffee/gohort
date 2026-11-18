@@ -123,7 +123,7 @@ func (t *chatTurn) appDefRevert(args map[string]any) (string, error) {
 	if msg := t.appDelegationRefusal(restored); msg != "" {
 		return "", fmt.Errorf("%s", msg)
 	}
-	saved := SaveAppSpecAs(restored, fmt.Sprintf("revert to #%d", target.Seq))
+	saved := SaveAppSpecBy(restored, fmt.Sprintf("revert to #%d", target.Seq), t.user, t.changedVia())
 	undo := ""
 	if kept := ListAppRevisions(t.user, saved.Slug); len(kept) > 0 {
 		undo = fmt.Sprintf("\n\nThe version you just replaced is itself kept as #%d, so this is undoable: app_def(action=\"revert\", id=%q, to=%d).", kept[0].Seq, saved.Slug, kept[0].Seq)

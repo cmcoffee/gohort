@@ -254,7 +254,7 @@ func (t *chatTurn) appPageChecksAfterSave(prior *AppSpec, saved AppSpec) (report
 		}
 	}
 	if len(retry) > 0 {
-		SaveAppSpecAs(*prior, AppSaveNoHistory)
+		SaveAppSpecBy(*prior, AppSaveNoHistory, t.user, t.changedVia())
 		var broke []string
 		for _, i := range retry {
 			old, _ := appCheckNamed(prior.Checks, results[i].Name)
@@ -269,7 +269,7 @@ func (t *chatTurn) appPageChecksAfterSave(prior *AppSpec, saved AppSpec) (report
 			}
 			return "", fmt.Errorf("NOT SAVED: this change breaks %s that passed on the version serving before, so it was ROLLED BACK and that version is serving again:\n- %s\n\nFix the change, not the check: change a check only when its feature changed on purpose, and say so.", what, strings.Join(broke, "\n- "))
 		}
-		SaveAppSpecAs(saved, AppSaveNoHistory)
+		SaveAppSpecBy(saved, AppSaveNoHistory, t.user, t.changedVia())
 	}
 	return appChecksReport(page), nil
 }

@@ -504,7 +504,7 @@ func (aw *appWrite) save() bool {
 	if err != nil {
 		return aw.exit("", err)
 	}
-	aw.saved = SaveAppSpecAs(aw.spec, reason)
+	aw.saved = SaveAppSpecBy(aw.spec, reason, t.user, t.changedVia())
 	// Page checks drive the page as served, so they run on the saved
 	// version; one this save broke puts the previous version back.
 	pageReport, err := t.appPageChecksAfterSave(prior, aw.saved)

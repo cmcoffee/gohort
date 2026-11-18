@@ -336,7 +336,7 @@ func (t *chatTurn) saveScriptEdit(spec AppSpec, ref appScriptRef, next, summary,
 	if err != nil {
 		return "", err
 	}
-	saved := SaveAppSpecAs(spec, reason)
+	saved := SaveAppSpecBy(spec, reason, t.user, t.changedVia())
 	pageReport, err := t.appPageChecksAfterSave(&before, saved)
 	if err != nil {
 		return "", err
@@ -347,7 +347,7 @@ func (t *chatTurn) saveScriptEdit(spec AppSpec, ref appScriptRef, next, summary,
 	if ref.kind == "data" {
 		report, _, _, fail := t.checkScripts(saved, false, nil, nil)
 		if fail > 0 {
-			SaveAppSpecAs(before, AppSaveNoHistory)
+			SaveAppSpecBy(before, AppSaveNoHistory, t.user, t.changedVia())
 			return "", fmt.Errorf("that %s made a data source fail when run, so it was ROLLED BACK, the app is serving the previous revision again:\n%s\nFix the replacement text and try again", verb, strings.TrimSpace(report))
 		}
 		msg += " Every data source was run after the change and printed valid JSON."
