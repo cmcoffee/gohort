@@ -178,6 +178,12 @@ func (T *AppCore) RunUnattended(ctx context.Context, def MachineDef, cur *Machin
 	if !def.Unattended {
 		return MachinePhase{}, "", Error("machine " + def.Name + " is not marked unattended; it expects a conversation")
 	}
+	// Every unattended machine run passes here: one whose app is switched
+	// off stops. A conversational one stops with its agent, which the app
+	// owns too.
+	if why := AppOwnedStopped(def.Owner, def.OwningApp, "machine", def.Name); why != "" {
+		return MachinePhase{}, "", Error(why)
+	}
 	if cur == nil {
 		return MachinePhase{}, "", Error("machine " + def.Name + ": nil cursor")
 	}

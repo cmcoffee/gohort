@@ -628,6 +628,30 @@ func DeleteAppOwned(owner, slug string) (gone, kept []string) {
 	return appOwnedKeeper.delete(owner, slug)
 }
 
+// AppOwnedStopped is why kind name, which owner's app slug owns, may not
+// run: the app is switched off (by an administrator, or an import waiting
+// for its owner's review), and what it owns stops with it. "" when it may
+// run, including when the app is gone: an item kept after its app was
+// deleted is nobody's to stop.
+func AppOwnedStopped(owner, slug, kind, name string) string {
+	slug = strings.TrimSpace(slug)
+	if slug == "" {
+		return ""
+	}
+	spec, ok := LoadAppSpec(owner, slug)
+	if !ok || !spec.Disabled {
+		return ""
+	}
+	app := spec.Name
+	if strings.TrimSpace(app) == "" {
+		app = slug
+	}
+	if strings.TrimSpace(name) == "" {
+		name = "this " + kind
+	}
+	return fmt.Sprintf("%s belongs to the app %q, which is switched off, so it does not run until the app is switched back on", name, app)
+}
+
 // AppOwnedChanged tells the hooks that owner's app slug's kind name changed.
 func AppOwnedChanged(owner, slug, kind, name, appEdit string) {
 	if owner == "" || slug == "" {

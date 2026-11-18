@@ -670,6 +670,17 @@ func (fr *fireRun) admit() bool {
 		}
 		return fr.exit(nil)
 	}
+	// An agent whose app is switched off waits, as a paused task does, and
+	// the owner sees why; it runs again on its own once the app is back on.
+	if err := agentRunStopped(fr.agent); err != nil {
+		recordScheduledDrop(p, RunFailed, "Did not run: "+err.Error()+".")
+		if fr.reArm {
+			if _, aerr := ScheduleTask(OrchestrateScheduledUpdateKind, p, time.Now().Add(brokenDormantReArm)); aerr != nil {
+				Log("[orchestrate/scheduled] task %s, its app switched off: dormant re-arm failed: %v", recurringName(p), aerr)
+			}
+		}
+		return fr.exit(nil)
+	}
 	return true
 }
 

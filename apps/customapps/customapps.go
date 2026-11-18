@@ -166,7 +166,7 @@ func (T *CustomApps) routes() {
 	// Operator controls on somebody else's app (admin.go). Named one by one:
 	// "/_admin/{sub}" would overlap "/{slug}/records" at /_admin/records.
 	T.HandleFunc("/_admin/scripts", T.handleAdminScripts)
-	for _, sub := range []string{"reach", "tiers", "review", "revoke-link"} {
+	for _, sub := range []string{"reach", "tiers", "review", "revoke-link", "switch"} {
 		T.HandleFunc("/_admin/"+sub, T.adminRoute(sub))
 	}
 	// One app's JSON routes (app_routes.go), then everything else of it.
@@ -1121,7 +1121,12 @@ func (T *CustomApps) handleAppsList(c *jsonapi.Call) (any, error) {
 		if lines := shareStatusLines(s); len(lines) > 0 {
 			row["status_lines"] = strings.Join(lines, "\n")
 		}
-		if s.Disabled {
+		if st := appadmin.Load(RootDB, s.Owner, s.Slug); s.Disabled && st.DisabledBy != "" {
+			// Off by an administrator: no Enable for the owner to press.
+			row["state"] = "disabled"
+			row["note"] = "switched off by an administrator"
+			status = "switched off by an administrator"
+		} else if s.Disabled {
 			row["disabled"], row["state"] = "1", "disabled"
 			row["note"] = "review its scripts, then Enable"
 			status = "disabled: review, then Enable"
@@ -1270,6 +1275,10 @@ func (T *CustomApps) handleEnableApp(c *jsonapi.Call, _ struct{}) (any, error) {
 	spec, ok := loadSpec(c.User, slug)
 	if !ok {
 		return nil, errNoApp
+	}
+	// An administrator's switch-off is theirs to undo, not the owner's.
+	if st := appadmin.Load(RootDB, spec.Owner, spec.Slug); spec.Disabled && st.DisabledBy != "" {
+		return nil, jsonapi.Forbidden("an administrator (" + st.DisabledBy + ") switched this app off; only an administrator can switch it back on")
 	}
 	if spec.Disabled {
 		spec.Disabled = false

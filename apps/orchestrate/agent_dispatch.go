@@ -788,6 +788,9 @@ func (sd *syncDispatch) admit() bool {
 	if err := outsideRunRefusal(sd.runtimeUser, sd.agentOwner, sd.target); err != nil {
 		return sd.exit(syncRunResult{}, err)
 	}
+	if err := agentRunStopped(sd.target); err != nil {
+		return sd.exit(syncRunResult{}, err)
+	}
 	sd.runtimeDB = sd.ownerDB
 	if sd.runtimeUser != sd.agentOwner {
 		sd.runtimeDB = UserDB(T.DB, sd.runtimeUser)
@@ -1760,6 +1763,9 @@ func (cr *continuingRun) admit() bool {
 		return cr.exit(AgentSyncResult{}, fmt.Errorf("agent %q not found in agentOwner %q store", cr.agentKey, cr.agentOwner))
 	}
 	cr.target = materializeIfRetiringSeed(cr.ownerDB, cr.agentOwner, cr.agentKey, cr.target)
+	if err := agentRunStopped(cr.target); err != nil {
+		return cr.exit(AgentSyncResult{}, err)
+	}
 	// A transport's person outside (a Teams DM, a group) runs in their own
 	// store when the agent serves people outside and they are not the owner.
 	// Otherwise the run is the owner's, as it always was.

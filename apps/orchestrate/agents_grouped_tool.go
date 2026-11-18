@@ -636,6 +636,10 @@ func (t *chatTurn) agentsListAction() (string, error) {
 		if a.PendingApproval {
 			continue
 		}
+		// Nor one whose app is switched off: the run would be refused.
+		if agentRunStopped(a) != nil {
+			continue
+		}
 		out = append(out, row{
 			ID:          a.ID,
 			Name:        a.Name,
@@ -961,6 +965,9 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 	target = materializeIfRetiringSeed(fleetDB, fleetUser, key, target)
 	// A sub-agent held for approval is not live yet — refuse to dispatch it until
 	// the owner activates it from the Authorizations pane.
+	if err := agentRunStopped(target); err != nil {
+		return AgentRecord{}, "", err
+	}
 	if target.PendingApproval {
 		return AgentRecord{}, "", fmt.Errorf("agents(run, agent=%q) refused, that agent is awaiting approval and isn't live yet; it becomes dispatchable once the user approves it in the Authorizations pane", key)
 	}

@@ -452,3 +452,22 @@ func withAppOwnedNotice(sections []ui.Section, owner, slug, kind string) []ui.Se
 	}
 	return sections
 }
+
+// errAppSwitchedOff is a run refused because the agent's app is switched
+// off (AppOwnedStopped). Typed so a channel can answer its contact plainly
+// rather than with the generic failure note.
+type errAppSwitchedOff struct{ why string }
+
+func (e errAppSwitchedOff) Error() string { return e.why }
+
+// agentRunStopped is the refusal for running agent a while the app that owns
+// it is switched off; nil when it may run. Every way an agent run starts
+// asks (chat, sync and continuing dispatch, scheduled fires, agents(run),
+// an app's Ask); pipelines and machines are stopped in core, where every
+// run of theirs passes.
+func agentRunStopped(a AgentRecord) error {
+	if why := AppOwnedStopped(a.Owner, a.OwningApp, "agent", chFirst(a.Name, a.ID)); why != "" {
+		return errAppSwitchedOff{why: why}
+	}
+	return nil
+}

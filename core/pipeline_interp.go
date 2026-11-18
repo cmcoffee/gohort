@@ -203,6 +203,10 @@ func (T *AppCore) executePipelineHooks(ctx context.Context, def PipelineDef, inp
 	if err := def.Validate(); err != nil {
 		return "", nil, err
 	}
+	// Every pipeline run passes here: one whose app is switched off stops.
+	if why := AppOwnedStopped(def.Owner, def.OwningApp, "pipeline", def.Name); why != "" {
+		return "", nil, Error(why)
+	}
 	r := &pipelineRun{
 		app:         T,
 		input:       input,

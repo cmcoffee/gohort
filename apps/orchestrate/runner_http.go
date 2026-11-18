@@ -413,6 +413,11 @@ func (sr *sendRun) openSession() bool {
 		tmp.Send(map[string]any{"kind": "error", "text": cortexWriteRefusal})
 		return false
 	}
+	if err := agentRunStopped(sr.agent); err != nil {
+		tmp := newSSEWriter(sr.w)
+		tmp.Send(map[string]any{"kind": "error", "text": err.Error()})
+		return false
+	}
 	// A thread (threads.go) is the agent's own conversation with someone
 	// else: written into from here, it would speak for them.
 	if isThread(sr.req.SessionID) {

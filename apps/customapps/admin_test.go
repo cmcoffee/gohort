@@ -233,3 +233,47 @@ func TestEveryAuthoredAppIsARowInTheAdminList(t *testing.T) {
 		t.Errorf("a page and its count should agree: %+v", notes)
 	}
 }
+
+// An administrator's switch-off stops the app and what it owns, and is the
+// administrator's to undo: the owner's Enable is refused, the owner's list
+// offers no Enable, and switching back on lets it all run again.
+func TestAnAdministratorsSwitchOffIsTheirsToUndo(t *testing.T) {
+	T := sharingTestApp(t)
+	auth := &DBase{Store: kvlite.MemStore()}
+	saved := AuthDB
+	AuthDB = func() Database { return auth }
+	t.Cleanup(func() { AuthDB = saved })
+	AuthSetUser(auth, "alice", "pw", false)
+	AuthSetUser(auth, "root", "pw", true)
+	SaveAppSpec(AppSpec{Slug: "desk", Name: "Desk", Owner: "alice", RecordKey: "id"})
+	h := routed(T)
+	do := func(user, method, path string) (int, string) {
+		t.Helper()
+		r := httptest.NewRequest(method, path, nil)
+		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(auth, user)})
+		w := httptest.NewRecorder()
+		h(w, r)
+		return w.Code, w.Body.String()
+	}
+	if code, body := do("root", "POST", "/_admin/switch?owner=alice&slug=desk&on=false"); code != 200 {
+		t.Fatalf("switch off: %d %s", code, body)
+	}
+	if why := AppOwnedStopped("alice", "desk", "agent", "Clerk"); !strings.Contains(why, "switched off") {
+		t.Errorf("what the app owns still runs: %q", why)
+	}
+	if code, _ := do("alice", "POST", "/_app/enable?slug=desk"); code != http.StatusForbidden {
+		t.Errorf("the owner switched an administrator's switch-off back on: %d", code)
+	}
+	if spec, _ := LoadAppSpec("alice", "desk"); !spec.Disabled {
+		t.Fatal("the app is on after the owner's refused Enable")
+	}
+	if _, body := do("alice", "GET", "/_apps"); strings.Contains(body, `"disabled":"1"`) || !strings.Contains(body, "switched off by an administrator") {
+		t.Errorf("the owner's list offers Enable or does not say who: %s", body)
+	}
+	if code, _ := do("root", "POST", "/_admin/switch?owner=alice&slug=desk&on=true"); code != 200 {
+		t.Fatalf("switch back on: %d", code)
+	}
+	if why := AppOwnedStopped("alice", "desk", "agent", "Clerk"); why != "" {
+		t.Errorf("switched back on, what it owns is still stopped: %q", why)
+	}
+}

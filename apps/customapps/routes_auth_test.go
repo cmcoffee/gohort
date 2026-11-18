@@ -101,6 +101,7 @@ func TestEveryJSONRouteRefusesWhoItShould(t *testing.T) {
 		{"GET", "/_admin/review?owner=alice&slug=tally", ""},
 		{"POST", "/_admin/revoke-link?owner=alice&slug=tally", ""},
 		{"GET", "/_admin/scripts?owner=alice&slug=tally", ""},
+		{"POST", "/_admin/switch?owner=alice&slug=tally&on=true", ""},
 	} {
 		for _, who := range []string{"", "alice", "bob"} {
 			if code := do(who, rt.method, rt.path, rt.body); code != http.StatusNotFound && code != http.StatusUnauthorized {

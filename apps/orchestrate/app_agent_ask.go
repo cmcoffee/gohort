@@ -37,6 +37,9 @@ func (T *OrchestrateApp) AppAgentAsk(ctx context.Context, owner, user, agentID, 
 	if !ok {
 		return "", 0, fmt.Errorf("the app's agent %q is gone", agentID)
 	}
+	if err := agentRunStopped(agent); err != nil {
+		return "", 0, err
+	}
 	// In the runs ledger like run_agent's dispatch, so the live pill shows the
 	// app's agent working. It answered every click while the pill stayed dark,
 	// which read as the button never reaching the agent. Under the person who

@@ -162,6 +162,30 @@ func (T *CustomApps) registerAdminControls() {
 		},
 	})
 
+	// Access: an administrator's stop. Switching an app off stops it serving
+	// and stops what it owns (its agents, pipelines, machines) from running
+	// anywhere; its owner cannot switch it back on, only an administrator.
+	// The app's own Disabled flag, with who set it (appadmin's DisabledBy),
+	// so every surface that already says "disabled" says it here too.
+	appadmin.Register(appadmin.Control{
+		Key: "customapps.switch", Label: "Switched on", Group: "Access", Order: 5,
+		Render: func(spec appadmin.App) ui.Component {
+			q := fmt.Sprintf("?owner=%s&slug=%s", url.QueryEscape(spec.Owner), url.QueryEscape(spec.Slug))
+			if st := appadmin.Load(RootDB, spec.Owner, spec.Slug); spec.Disabled && st.DisabledBy != "" {
+				return ui.Toolbar{Actions: []ui.ToolbarAction{{
+					Label: "Switch back on", Method: "post", URL: base + "/switch" + q + "&on=true",
+					Title:   "Switched off by " + st.DisabledBy,
+					Confirm: "Switch this app back on? It serves again, and what it owns can run again.",
+				}}}
+			}
+			return ui.Toolbar{Actions: []ui.ToolbarAction{{
+				Label: "Switch off", Method: "post", Variant: "danger", URL: base + "/switch" + q + "&on=false",
+				Title:   "Stops the app and what it owns; its owner cannot switch it back on",
+				Confirm: "Switch this app off? Nobody can open it, and its agents, pipelines and machines stop running until an administrator switches it back on.",
+			}}}
+		},
+	})
+
 	// Access: who may open a SHARED app. Empty is every authenticated user,
 	// which is what sharing has always meant, so an unset list changes nothing.
 	appadmin.Register(appadmin.Control{
@@ -406,6 +430,29 @@ func (T *CustomApps) handleAdminWrite(c *jsonapi.Call, sub string, raw json.RawM
 			Log("[customapps] admin %q cleared a leftover public token on %q/%q", user, owner, slug)
 		}
 		return map[string]any{"ok": true, "message": "Link revoked."}, nil
+	case "switch":
+		on := c.R.URL.Query().Get("on") == "true"
+		st := appadmin.Load(RootDB, owner, slug)
+		if on {
+			if st.DisabledBy == "" {
+				return map[string]any{"ok": true, "message": "It was not switched off by an administrator."}, nil
+			}
+			st.DisabledBy = ""
+			spec.Disabled = false
+		} else {
+			st.DisabledBy = user
+			spec.Disabled = true
+		}
+		st.UpdatedBy = user
+		st.Updated = time.Now().UTC().Format(time.RFC3339)
+		appadmin.Save(RootDB, owner, slug, st)
+		SaveAppSpecBy(spec, AppSaveNoHistory, owner, "")
+		if on {
+			Log("[customapps] admin %q switched app %q/%q back on", user, owner, slug)
+			return map[string]any{"ok": true, "message": "Switched back on."}, nil
+		}
+		Log("[customapps] admin %q switched app %q/%q off: it and what it owns stop", user, owner, slug)
+		return map[string]any{"ok": true, "message": "Switched off. The app and what it owns stop until an administrator switches it back on."}, nil
 	case "reach":
 		var in struct {
 			Users []string `json:"users"`

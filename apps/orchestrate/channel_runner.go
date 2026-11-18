@@ -453,6 +453,10 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			Log("[channel] run for owner=%s agent=%s gave way to a newer message in the same conversation", in.Owner, in.AgentID)
 			return ChannelReply{AgentName: agentNameTag(in.Owner, in.AgentID), Silenced: true}, nil
 		}
+		if stopped := (errAppSwitchedOff{}); errors.As(err, &stopped) {
+			Log("[channel] owner=%s agent=%s not run: %v", in.Owner, in.AgentID, err)
+			return ChannelReply{Text: "Sorry: I am switched off for now and cannot answer."}, nil
+		}
 		if err != nil {
 			// A messaging surface must not go silent — the contact texted and
 			// expects a reply. Deliver a brief, friendly note instead of nothing;
