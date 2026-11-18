@@ -1,7 +1,6 @@
 package servitor
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"slices"
@@ -725,11 +724,12 @@ func (pr *probeRun) newRunPtyTool() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "run_pty",
-			Description: "Run a command via a PTY (pseudo-terminal) on the remote system. Use this for commands that require a TTY: password prompts (su, sudo, mysql -p), interactive programs (python3, irb, psql), or anything that checks isatty(). Output is captured with ANSI codes stripped. Provide the 'input' parameter to send responses to prompts (newline-separated).",
+			Description: "Run a command via a PTY (pseudo-terminal) on the remote system. Use this for commands that require a TTY: interactive programs (python3, irb, psql), prompts, or anything that checks isatty(). Output is captured with ANSI codes stripped. Provide the 'input' parameter to send responses to prompts (newline-separated). To run it as root, set as_root: servitor enters the system's saved password itself. Never put a password in input.",
 			Parameters: map[string]ToolParam{
 				"command":     {Type: "string", Description: "The command to run on the remote host."},
 				"input":       {Type: "string", Description: "Optional lines to send to stdin after the command starts (newline-separated). Use for passwords, menu selections, shell commands inside an interactive session, etc."},
 				"timeout_sec": {Type: "integer", Description: "Seconds to wait for the command to finish (default 15, max 60)."},
+				"as_root":     {Type: "boolean", Description: "Run the command as root (a root shell, or anything else that needs root and a terminal). Servitor enters the system's saved root or sudo password at the prompt; you never see or send it. Refused when the system has neither saved."},
 			},
 			Required: []string{"command"},
 		},
@@ -756,8 +756,18 @@ func (pr *probeRun) newRunPtyTool() AgentToolDef {
 				}
 			}
 
-			emit(pr.id, probeEvent{Kind: "cmd", Text: "pty: " + cmd})
-			if err := pr.gateCommand(cmd); err != nil {
+			asRoot, _ := args["as_root"].(bool)
+			el := elevationOf(pr.appliance)
+			if asRoot && el.sudo == "" && el.root == "" {
+				return "", fmt.Errorf("this system has no saved root or sudo password, so as_root cannot run: whoever edits the system adds one in its editor (Sudo password or Root password)")
+			}
+			emit(pr.id, probeEvent{Kind: "cmd", Text: "pty: " + map[bool]string{true: "(as root) ", false: ""}[asRoot] + cmd})
+			// Run as root, it is judged as root: the rules for sudo apply.
+			gated := cmd
+			if asRoot {
+				gated = "sudo " + cmd
+			}
+			if err := pr.gateCommand(gated); err != nil {
 				return "", err
 			}
 			// The input lines are typed into the interactive session the
@@ -815,12 +825,23 @@ func (pr *probeRun) newRunPtyTool() AgentToolDef {
 				return "", fmt.Errorf("stdin pipe: %w", err)
 			}
 
-			var outBuf bytes.Buffer
+			var outBuf lockedBuffer
 			sess.Stdout = &outBuf
 			sess.Stderr = &outBuf
 
-			if err := sess.Start(cmd); err != nil {
+			start, prompt, typed := cmd, "", ""
+			if asRoot {
+				start, prompt, typed = el.rootPTYCommand(cmd)
+			}
+			if err := sess.Start(start); err != nil {
 				return "", fmt.Errorf("start: %w", err)
+			}
+			// The password goes to su's or sudo's prompt alone, read from the
+			// terminal: never typed into a shell, so no history can keep it,
+			// and never typed at all when the prompt does not come.
+			if typed != "" && waitForPrompt(&outBuf, prompt, 10*time.Second) {
+				fmt.Fprintln(stdinPipe, typed)
+				time.Sleep(200 * time.Millisecond)
 			}
 
 			// Send input lines with a short delay between each to let prompts appear.
@@ -851,8 +872,14 @@ func (pr *probeRun) newRunPtyTool() AgentToolDef {
 			}
 			stdinPipe.Close()
 
+			// The system's passwords never reach the agent, nor the prompt
+			// that asked for one: masked before it is kept or shown.
+			raw := string(el.mask([]byte(outBuf.String())))
+			if prompt != "" {
+				raw = strings.ReplaceAll(raw, sudoPromptMarker, "")
+			}
 			// Kept in full on spill; run_command pages it by output_id.
-			result := SpillOutput(stripANSI(outBuf.String()), max_output, "run_command")
+			result := SpillOutput(stripANSI(raw), max_output, "run_command")
 			if result != "" {
 				emit(pr.id, probeEvent{Kind: "output", Text: result})
 			}

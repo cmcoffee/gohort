@@ -3,6 +3,7 @@ package servitor
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // A command that runs as root is given the system's password by servitor:
@@ -44,5 +45,32 @@ func TestTheSystemsPasswordsAreNeverReadBack(t *testing.T) {
 	a.blankElevation()
 	if a.SudoPassword != "" || a.RootPassword != "" || !a.HasSudoPassword || !a.HasRootPassword || a.ClearSudoPassword {
 		t.Errorf("read back: %+v", a)
+	}
+}
+
+// A run_pty run as root starts the command through sudo (or su, with only
+// root's password) as the session's own command, never typed into a shell,
+// with history off; the password is typed only at the prompt asked for,
+// never when it does not come.
+func TestARootTerminalTypesThePasswordOnlyAtItsPrompt(t *testing.T) {
+	start, prompt, typed := (elevation{sudo: "s3cret-sudo", root: "r00t-pw"}).rootPTYCommand("bash")
+	if !strings.HasPrefix(start, "sudo -S -p ") || !strings.Contains(start, "HISTFILE=/dev/null") || prompt != sudoPromptMarker || typed != "s3cret-sudo" {
+		t.Errorf("with a sudo password: %q %q %q", start, prompt, typed)
+	}
+	if strings.Contains(start, "s3cret") {
+		t.Error("the password is on the command line")
+	}
+	start, prompt, typed = (elevation{root: "r00t-pw"}).rootPTYCommand("bash")
+	if !strings.HasPrefix(start, "su - -c ") || !strings.Contains(start, "HISTFILE=/dev/null") || prompt != "password" || typed != "r00t-pw" {
+		t.Errorf("with only a root password: %q %q %q", start, prompt, typed)
+	}
+	var out lockedBuffer
+	out.Write([]byte("Last login: today\n"))
+	if waitForPrompt(&out, "password", 120*time.Millisecond) {
+		t.Error("a prompt that never came was taken for one")
+	}
+	out.Write([]byte("Password: "))
+	if !waitForPrompt(&out, "password", 120*time.Millisecond) {
+		t.Error("su's prompt was missed")
 	}
 }

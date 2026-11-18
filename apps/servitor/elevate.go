@@ -158,3 +158,30 @@ func (a *Appliance) blankElevation() {
 	a.SudoPassword, a.RootPassword = "", ""
 	a.ClearSudoPassword, a.ClearRootPassword = false, false
 }
+
+// sudoPromptMarker is the prompt a root run_pty asks sudo for, so the
+// password is typed at sudo's prompt and nowhere else.
+const sudoPromptMarker = "[servitor-sudo-password]"
+
+// rootPTYCommand is cmd as a run_pty run as root starts it: through sudo
+// when the system keeps a sudo password, else through su with root's; the
+// prompt to wait for, and what to type at it. A shell it opens keeps no
+// history (HISTFILE=/dev/null), so nothing run as root is written to one.
+func (el elevation) rootPTYCommand(cmd string) (start, prompt, typed string) {
+	inner := "HISTFILE=/dev/null; export HISTFILE; " + cmd
+	if el.sudo != "" {
+		return "sudo -S -p " + shellQuote(sudoPromptMarker) + " -- sh -c " + shellQuote(inner), sudoPromptMarker, el.sudo
+	}
+	return "su - -c " + shellQuote(inner), "password", el.root
+}
+
+// waitForPrompt reports whether out shows prompt (case aside) within wait.
+func waitForPrompt(out *lockedBuffer, prompt string, wait time.Duration) bool {
+	prompt = strings.ToLower(prompt)
+	for deadline := time.Now().Add(wait); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if strings.Contains(strings.ToLower(out.String()), prompt) {
+			return true
+		}
+	}
+	return false
+}
