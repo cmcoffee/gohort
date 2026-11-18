@@ -148,6 +148,9 @@ func (T *OrchestrateApp) machinesList(c *jsonapi.Call) (any, error) {
 	}
 	rows := make([]machineRow, 0, len(defs))
 	for _, d := range defs {
+		if d.OwningApp != "" {
+			continue // the app's own: it lives inside the app
+		}
 		rows = append(rows, machineRow{
 			ID: d.ID, Name: d.Name, Description: d.Description,
 			Phases: len(d.Phases), PhaseNames: d.PhaseNames(),

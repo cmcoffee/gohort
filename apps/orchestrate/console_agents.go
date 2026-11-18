@@ -36,7 +36,7 @@ func (T *OrchestrateApp) handleConsoleAgentOptions(c *jsonapi.Call) (any, error)
 			// can be run this way: offering a conversational machine would
 			// be offering a choice the relink handler then refuses.
 			for _, d := range ListMachineDefs(UserDB(T.DB, user), user) {
-				if !d.Unattended {
+				if !d.Unattended || d.OwningApp != "" {
 					continue
 				}
 				label := strings.TrimSpace(d.Name)
@@ -63,6 +63,9 @@ func (T *OrchestrateApp) handleConsoleAgentOptions(c *jsonapi.Call) (any, error)
 		}
 		if sa, found := GetStandingAgent(RootDB, user, row); found && sa.TargetsPipeline() {
 			for _, d := range ListPipelineDefs(UserDB(T.DB, user), user) {
+				if d.OwningApp != "" {
+					continue // the app's own, run from inside it
+				}
 				label := strings.TrimSpace(d.Name)
 				if label == "" {
 					label = d.ID

@@ -301,3 +301,29 @@ func appAgentLabels(udb Database, user string) map[string]string {
 	}
 	return out
 }
+
+// inAppOf reports whether an item of owner's app slug is reachable from
+// caller: an item no app owns always is; an app's own pipeline or machine
+// only from an agent of the same app, as an app's agent is (sameAppAgent).
+func inAppOf(caller AgentRecord, slug, owner string) bool {
+	slug = strings.TrimSpace(slug)
+	return slug == "" || (slug == strings.TrimSpace(caller.OwningApp) && owner == caller.Owner)
+}
+
+// appItemName is the name of owner's app slug, as a person knows it.
+func appItemName(owner, slug string) string {
+	if spec, ok := LoadAppSpec(owner, slug); ok && strings.TrimSpace(spec.Name) != "" {
+		return spec.Name
+	}
+	return slug
+}
+
+// adminMarked is name marked as part of owner's app slug, for the
+// administrator's lists, which still show an app's own items; name as it is
+// for an item no app owns.
+func adminMarked(name, owner, slug string) string {
+	if strings.TrimSpace(slug) == "" {
+		return name
+	}
+	return name + " (part of " + appItemName(owner, slug) + ")"
+}

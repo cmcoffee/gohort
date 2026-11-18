@@ -165,12 +165,12 @@ func agentReach(udb Database, user string, caller AgentRecord) []agentReachRow {
 			FirstHandoff: firstHandoffLabel(how), Asks: how == edgeAsks, Granted: how == edgeGranted})
 	}
 	for _, def := range ListPipelineDefs(udb, user) {
-		if r := pipelineReach(def); r.escalates() && auth.allowsPipeline(def) {
+		if r := pipelineReach(def); r.escalates() && auth.allowsPipeline(def) && inAppOf(caller, def.OwningApp, def.Owner) {
 			out = append(out, agentReachRow{Name: def.Name, Kind: "pipeline", Adds: r.note()})
 		}
 	}
 	for _, def := range ListMachineDefs(udb, user) {
-		if r := machineReach(def); r.escalates() && auth.allowsMachine(def) {
+		if r := machineReach(def); r.escalates() && auth.allowsMachine(def) && inAppOf(caller, def.OwningApp, def.Owner) {
 			out = append(out, agentReachRow{Name: def.Name, Kind: "machine", Adds: r.note()})
 		}
 	}

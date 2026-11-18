@@ -208,6 +208,10 @@ func (t *chatTurn) foreignPipeline(d PipelineDef) bool {
 // gate cannot disagree — a name the tool description offers and the gate then
 // refuses is worse than never offering it.
 func (t *chatTurn) pipelineDispatchAllowed(mode string, d PipelineDef) bool {
+	// An app's own pipeline is run from inside its app alone.
+	if !inAppOf(t.agent, d.OwningApp, d.Owner) {
+		return false
+	}
 	if containsString(t.agent.DisabledPipelines, d.ID) {
 		return false
 	}

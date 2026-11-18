@@ -119,7 +119,7 @@ func registerShareProviders() {
 		Candidates: func(owner string) []shareledger.Grant {
 			var out []shareledger.Grant
 			for _, d := range ListPipelineDefs(UserDB(orchestrateBaseDB, owner), owner) {
-				if d.Owner == owner && !d.Published {
+				if d.Owner == owner && !d.Published && d.OwningApp == "" {
 					out = append(out, shareledger.Grant{ID: d.ID, Name: d.Name})
 				}
 			}
@@ -186,7 +186,7 @@ func registerShareProviders() {
 		Candidates: func(owner string) []shareledger.Grant {
 			var out []shareledger.Grant
 			for _, d := range ListMachineDefs(UserDB(orchestrateBaseDB, owner), owner) {
-				if d.Owner == owner && !d.Published {
+				if d.Owner == owner && !d.Published && d.OwningApp == "" {
 					out = append(out, shareledger.Grant{ID: d.ID, Name: d.Name})
 				}
 			}

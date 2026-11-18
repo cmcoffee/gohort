@@ -65,6 +65,9 @@ func (T *OrchestrateApp) agentList(c *jsonapi.Call) (any, error) {
 			}
 		}
 		for _, d := range ListPipelineDefs(udb, user) {
+			if d.OwningApp != "" {
+				continue // the app's own, run from inside it
+			}
 			desc := "Pipeline"
 			if s := strings.TrimSpace(d.Description); s != "" {
 				desc += " - " + s
@@ -77,7 +80,7 @@ func (T *OrchestrateApp) agentList(c *jsonapi.Call) (any, error) {
 		// dispatch refuses it whatever the list says, and offering it would
 		// be a tick that changes nothing.
 		for _, d := range ListMachineDefs(udb, user) {
-			if !d.Unattended {
+			if !d.Unattended || d.OwningApp != "" {
 				continue
 			}
 			desc := "Machine"

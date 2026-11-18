@@ -88,7 +88,9 @@ func authoringTargets(udb Database, user, kind string) []intakeOption {
 		}
 	case "pipeline":
 		for _, p := range ListPipelineDefs(udb, user) {
-			add(p.Name, p.Name)
+			if p.OwningApp == "" { // an app's own is changed by changing the app
+				add(p.Name, p.Name)
+			}
 		}
 		for _, p := range LoadPersistentTempTools(RootDB, user) {
 			if p.Tool.Mode == TempToolModePipeline {
@@ -106,7 +108,9 @@ func authoringTargets(udb Database, user, kind string) []intakeOption {
 		}
 	case "machine":
 		for _, m := range ListMachineDefs(udb, user) {
-			add(m.Name, m.Name)
+			if m.OwningApp == "" { // an app's own is changed by changing the app
+				add(m.Name, m.Name)
+			}
 		}
 	case "skill":
 		// Their own, and the ones they published, which are still theirs.

@@ -681,6 +681,9 @@ func agentOptions(udb Database, user string) []ui.SelectOption {
 func pipelineOptions(udb Database, user string) []ui.SelectOption {
 	out := []ui.SelectOption{{Value: "", Label: "(this agent runs the step)"}}
 	for _, d := range ListPipelineDefs(udb, user) {
+		if d.OwningApp != "" {
+			continue // the app's own, run from inside it
+		}
 		out = append(out, ui.SelectOption{Value: d.Name, Label: chFirst(d.Name, d.ID), Help: firstLine(d.Description)})
 	}
 	return out
@@ -696,7 +699,8 @@ func pipelineOptions(udb Database, user string) []ui.SelectOption {
 func childMachineOptions(udb Database, user string, self MachineDef) []ui.SelectOption {
 	out := []ui.SelectOption{{Value: "", Label: "(this agent runs the step)"}}
 	for _, d := range ListMachineDefs(udb, user) {
-		if !d.Unattended || d.ID == self.ID {
+		// An app's own machine runs only as a step of the same app's.
+		if !d.Unattended || d.ID == self.ID || (d.OwningApp != "" && (d.OwningApp != self.OwningApp || d.Owner != self.Owner)) {
 			continue
 		}
 		out = append(out, ui.SelectOption{Value: d.Name, Label: chFirst(d.Name, d.ID), Help: firstLine(d.Description)})

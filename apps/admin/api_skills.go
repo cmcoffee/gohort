@@ -79,8 +79,16 @@ func (a *AdminApp) handlePipelines(c *jsonapi.Call) (any, error) {
 			continue
 		}
 		for _, d := range ListPipelineDefs(udb, u.Username) {
+			name := d.Name
+			if app := strings.TrimSpace(d.OwningApp); app != "" {
+				// An app's own pipeline, still shown here, marked as the app's.
+				if spec, ok := LoadAppSpec(u.Username, app); ok && strings.TrimSpace(spec.Name) != "" {
+					app = spec.Name
+				}
+				name += " (part of " + app + ")"
+			}
 			out = append(out, wire{
-				ID: d.ID, Owner: u.Username, Name: d.Name,
+				ID: d.ID, Owner: u.Username, Name: name,
 				Description: d.Description, Stages: len(d.Stages), Detail: d,
 			})
 		}

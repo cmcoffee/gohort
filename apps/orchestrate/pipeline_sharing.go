@@ -277,7 +277,7 @@ func listUserOwnedPipelinesForAdmin(db Database) []UserOwnedPipelineRow {
 			out = append(out, UserOwnedPipelineRow{
 				ID:         d.ID,
 				Owner:      d.Owner,
-				Name:       d.Name,
+				Name:       adminMarked(d.Name, d.Owner, d.OwningApp),
 				SharedWith: ShareRecipientsText(d.AllowedUsers),
 				Shared:     len(d.AllowedUsers) > 0,
 				Stages:     len(d.Stages),

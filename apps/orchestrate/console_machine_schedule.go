@@ -38,6 +38,9 @@ func (T *OrchestrateApp) handleConsoleMachineOptions(c *jsonapi.Call) (any, erro
 	}
 	opts := []opt{}
 	for _, d := range ListMachineDefs(udb, user) {
+		if d.OwningApp != "" {
+			continue // the app's own, scheduled from inside it
+		}
 		if !d.Unattended {
 			// A conversational machine has a step that waits for a person,
 			// and a schedule fires with nobody there. Offering it would be

@@ -106,6 +106,16 @@ func pipelineStageNames(d PipelineDef) []string {
 func (T *OrchestrateApp) pipelinesList(c *jsonapi.Call) (any, error) {
 	user, udb := c.User, c.UDB
 	defs := ListPipelineDefs(udb, user)
+	// An app's own pipelines live inside the app.
+	{
+		kept := defs[:0]
+		for _, d := range defs {
+			if d.OwningApp == "" {
+				kept = append(kept, d)
+			}
+		}
+		defs = kept
+	}
 	// Which agents can call what. A pipeline attaches to an agent as
 	// a tool (run_<name>), so an unattached one is inert in exactly
 	// the way an unattached machine is.

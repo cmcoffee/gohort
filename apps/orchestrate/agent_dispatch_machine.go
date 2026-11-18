@@ -126,6 +126,10 @@ func (t *chatTurn) foreignMachine(d MachineDef) bool {
 // second denial list with nothing to deny would be a control that reads as
 // meaningful and does nothing.
 func (t *chatTurn) machineDispatchAllowed(mode string, d MachineDef) bool {
+	// An app's own machine is run from inside its app alone.
+	if !inAppOf(t.agent, d.OwningApp, d.Owner) {
+		return false
+	}
 	switch mode {
 	case dispatchNone:
 		return false

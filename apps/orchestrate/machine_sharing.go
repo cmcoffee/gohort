@@ -266,7 +266,7 @@ func listUserOwnedMachinesForAdmin(db Database) []UserOwnedMachineRow {
 			out = append(out, UserOwnedMachineRow{
 				ID:         d.ID,
 				Owner:      d.Owner,
-				Name:       d.Name,
+				Name:       adminMarked(d.Name, d.Owner, d.OwningApp),
 				SharedWith: ShareRecipientsText(d.AllowedUsers),
 				Shared:     len(d.AllowedUsers) > 0,
 				Steps:      len(d.Phases),

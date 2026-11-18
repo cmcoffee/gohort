@@ -108,3 +108,54 @@ func TestDeletingAnAppDeletesWhatItOwns(t *testing.T) {
 		t.Error("the app's pipeline stayed after the app was deleted")
 	}
 }
+
+// An app's own pipeline and machine are run from inside the app alone: an
+// agent of the app may, an agent outside it may not, and neither is in the
+// person's lists or offered as a machine's child step outside the app.
+func TestAnAppsPipelinesAndMachinesLiveInsideTheApp(t *testing.T) {
+	inApp := AgentRecord{ID: "a1", Owner: "u", OwningApp: "weather"}
+	outside := AgentRecord{ID: "a2", Owner: "u"}
+	pipe := PipelineDef{ID: "p1", Name: "Brief", Owner: "u", OwningApp: "weather"}
+	mach := MachineDef{ID: "m1", Name: "Rounds", Owner: "u", OwningApp: "weather", Unattended: true}
+	mine := PipelineDef{ID: "p2", Name: "Mine", Owner: "u"}
+	for _, c := range []struct {
+		who  AgentRecord
+		want bool
+	}{{inApp, true}, {outside, false}} {
+		turn := &chatTurn{agent: c.who}
+		if got := turn.pipelineDispatchAllowed(dispatchAll, pipe); got != c.want {
+			t.Errorf("%s runs the app's pipeline: %v, want %v", c.who.ID, got, c.want)
+		}
+		if got := turn.machineDispatchAllowed(dispatchAll, mach); got != c.want {
+			t.Errorf("%s runs the app's machine: %v, want %v", c.who.ID, got, c.want)
+		}
+		if !turn.pipelineDispatchAllowed(dispatchAll, mine) {
+			t.Errorf("%s cannot run a pipeline no app owns", c.who.ID)
+		}
+	}
+	if !inAppOf(outside, "", "u") || inAppOf(AgentRecord{Owner: "v", OwningApp: "weather"}, "weather", "u") {
+		t.Error("inAppOf: an unowned item, or another person's copy of the app")
+	}
+	db := &DBase{Store: kvlite.MemStore()}
+	udb := UserDB(db, "u")
+	if _, err := SaveMachineDefBy(udb, mach, "create", "Builder"); err != nil {
+		t.Fatal(err)
+	}
+	offered := func(self MachineDef) bool {
+		for _, o := range childMachineOptions(udb, "u", self) {
+			if o.Value == "Rounds" {
+				return true
+			}
+		}
+		return false
+	}
+	if offered(MachineDef{ID: "m9", Owner: "u"}) {
+		t.Error("the app's machine is offered as a child step of the person's own")
+	}
+	if !offered(MachineDef{ID: "m8", Owner: "u", OwningApp: "weather"}) {
+		t.Error("the app's machine is not offered to another machine of the app")
+	}
+	if adminMarked("Brief", "u", "") != "Brief" || !strings.Contains(adminMarked("Brief", "u", "weather"), "part of weather") {
+		t.Error("the administrator's mark")
+	}
+}
