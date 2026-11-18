@@ -175,7 +175,10 @@ func (T *OrchestrateApp) savePipelineBodyStage(udb Database, user string, def Pi
 	if err := def.Validate(); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
-	saved := SavePipelineDef(udb, def)
+	saved, err := SavePipelineDefBy(udb, def, "update", "")
+	if err != nil {
+		return nil, jsonapi.Forbidden(err.Error())
+	}
 	path := strings.TrimSpace(parent.Name) + "." + strings.TrimSpace(stage.Name)
 	Log("[orchestrate.pipelines] user=%q edited body stage %q of %q", user, path, saved.Name)
 	return map[string]any{"ok": true, "id": saved.ID, "name": path,

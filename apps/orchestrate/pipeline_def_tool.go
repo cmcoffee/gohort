@@ -375,7 +375,10 @@ func (t *chatTurn) pipelineCreateOrUpdate(args map[string]any, isUpdate bool) (s
 		return "", fmt.Errorf("pipeline is not runnable: %w", err)
 	}
 	def.Owner = t.user
-	saved := SavePipelineDef(t.udb, def)
+	saved, err := SavePipelineDefBy(t.udb, def, "update", appEditOfTurn(t))
+	if err != nil {
+		return "", err
+	}
 	verb := "Created"
 	if isUpdate {
 		verb = "Updated"

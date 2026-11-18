@@ -76,7 +76,10 @@ func (T *OrchestrateApp) handleMachineDraft(c *jsonapi.Call, body struct {
 	if strings.TrimSpace(def.Name) == "" {
 		def.Name = "Drafted machine"
 	}
-	saved := SaveMachineDef(udb, def)
+	saved, err := SaveMachineDefBy(udb, def, "update", "")
+	if err != nil {
+		return nil, jsonapi.Forbidden(err.Error())
+	}
 	Log("[orchestrate.machines] user=%q drafted machine %q (id=%s, %d steps, %d problems left)",
 		user, saved.Name, saved.ID, len(saved.Phases), len(saved.Problems()))
 	return map[string]any{"id": saved.ID, "name": saved.Name, "checklist": saved.Problems()}, nil

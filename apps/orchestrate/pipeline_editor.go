@@ -499,7 +499,10 @@ func (T *OrchestrateApp) pipelineStageSave(c *jsonapi.Call, body map[string]any)
 	if err := def.Validate(); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
-	saved := SavePipelineDef(udb, def)
+	saved, err := SavePipelineDefBy(udb, def, "update", "")
+	if err != nil {
+		return nil, jsonapi.Forbidden(err.Error())
+	}
 	Log("[orchestrate.pipelines] user=%q edited stage %q of %q", user, stage.Name, saved.Name)
 	return map[string]any{"ok": true, "id": saved.ID, "name": stage.Name,
 		"slug": ui.SectionSlug(stageSectionTitle(indexOfStage(saved, stage.Name), stage.Name))}, nil
@@ -534,7 +537,10 @@ func (T *OrchestrateApp) pipelineStageDelete(c *jsonapi.Call, _ struct{}) (any, 
 		if err := def.Validate(); err != nil {
 			return nil, jsonapi.BadRequest(err.Error())
 		}
-		saved := SavePipelineDef(udb, def)
+		saved, err := SavePipelineDefBy(udb, def, "update", "")
+		if err != nil {
+			return nil, jsonapi.Forbidden(err.Error())
+		}
 		Log("[orchestrate.pipelines] user=%q removed body stage %q from %q", user, name, saved.Name)
 		return map[string]any{"deleted": name, "id": saved.ID}, nil
 	}
@@ -544,7 +550,10 @@ func (T *OrchestrateApp) pipelineStageDelete(c *jsonapi.Call, _ struct{}) (any, 
 	if err := def.Validate(); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
-	saved := SavePipelineDef(udb, def)
+	saved, err := SavePipelineDefBy(udb, def, "update", "")
+	if err != nil {
+		return nil, jsonapi.Forbidden(err.Error())
+	}
 	Log("[orchestrate.pipelines] user=%q removed stage %q from %q", user, name, saved.Name)
 	return map[string]any{"deleted": name, "id": saved.ID}, nil
 }

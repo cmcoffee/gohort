@@ -51,7 +51,7 @@ func TestDeletingAnAppOffersItsOwnAgents(t *testing.T) {
 	if _, err := saveAgent(db, AgentRecord{ID: "a2", Name: "Helper", Owner: "u", OrchestratorPrompt: "Help."}); err != nil {
 		t.Fatal(err)
 	}
-	SavePipelineDef(db, PipelineDef{Name: "Daily brief", Owner: "u", OwningApp: "weather"})
+	SavePipelineDefBy(db, PipelineDef{Name: "Daily brief", Owner: "u", OwningApp: "weather"}, "create", "Builder")
 	out, err := turn.appDefDelete(map[string]any{"id": "weather"})
 	if err != nil {
 		t.Fatal(err)

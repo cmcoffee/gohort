@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -240,5 +241,48 @@ func TestAnAppsAgentChangesOnlyThroughBuilderOrAnvil(t *testing.T) {
 	}
 	if _, err := saveAgent(udb, AgentRecord{Owner: "u", Name: "Sneak", OrchestratorPrompt: "p", OwningApp: "shop"}); err == nil {
 		t.Error("an app's agent was made outside Builder and Anvil")
+	}
+}
+
+// What an app owns is in its history: its agent is a file of its folder
+// (agents/<name>.json), a change Builder makes to it is the app's change,
+// waiting as Builder's work, and a shared app whose owner is not an
+// administrator is taken out of sharing until one approves it, as a change
+// to its page would.
+func TestAnAppsOwnAgentIsInItsHistoryAndItsApproval(t *testing.T) {
+	ws := historyWorld(t)
+	prevHost := agenthost.Get()
+	o := &OrchestrateApp{}
+	o.DB = &DBase{Store: kvlite.MemStore()}
+	agenthost.Register(o)
+	t.Cleanup(func() { agenthost.Register(prevHost) })
+	udb := UserDB(o.DB, "alice")
+
+	app := historyApp(map[string]string{"now": "print(1)"})
+	app.Shared = true
+	SaveAppSpec(app)
+	helper, err := saveAgent(udb, AgentRecord{Owner: "alice", Name: "Helper", OrchestratorPrompt: "Help.", OwningApp: "wx", appEdit: "Builder"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(ws, "alice", ".apps", "wx")
+	if b, err := os.ReadFile(filepath.Join(dir, "agents", "helper.json")); err != nil || !strings.Contains(string(b), "Help.") {
+		t.Fatalf("the app's agent is not in its history: %v %s", err, b)
+	}
+	if spec, _ := LoadAppSpec("alice", "wx"); spec.Shared {
+		t.Error("a shared app stayed shared after its agent changed")
+	}
+
+	edit, _ := loadAgent(udb, helper.ID)
+	edit.OrchestratorPrompt = "Help kindly."
+	edit.appEdit = "Builder"
+	if _, err := saveAgent(udb, edit); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "agents", "helper.json")); !strings.Contains(string(b), "Help kindly.") {
+		t.Errorf("the change is not in the history's files: %s", b)
+	}
+	if p := loadAppPending(dir); p.Via != "Builder" || len(p.Notes) == 0 || !strings.Contains(p.Notes[len(p.Notes)-1], "agent Helper") {
+		t.Errorf("the change is not waiting as Builder's work: %+v", p)
 	}
 }

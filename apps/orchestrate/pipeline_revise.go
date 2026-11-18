@@ -164,7 +164,10 @@ func (T *OrchestrateApp) pipelineRevise(c *jsonapi.Call, body struct {
 	after.Owner = user
 	after.Previous = &before
 
-	saved := SavePipelineDef(udb, after)
+	saved, err := SavePipelineDefBy(udb, after, "update", "")
+	if err != nil {
+		return nil, jsonapi.Forbidden(err.Error())
+	}
 	changed := describePipelineChange(before, saved)
 	Log("[orchestrate.pipelines] user=%q revised pipeline %q (id=%s): %s", user, saved.Name, saved.ID,
 		strings.Join(changed, "; "))
@@ -269,7 +272,10 @@ func (T *OrchestrateApp) pipelineUndo(c *jsonapi.Call, _ struct{}) (any, error) 
 	// One step, deliberately: keeping the revision as the new snapshot
 	// would make undo a toggle, which promises something else.
 	back.Previous = nil
-	saved := SavePipelineDef(udb, back)
+	saved, err := SavePipelineDefBy(udb, back, "update", "")
+	if err != nil {
+		return nil, jsonapi.Forbidden(err.Error())
+	}
 	Log("[orchestrate.pipelines] user=%q undid the last revision of pipeline %q", user, saved.Name)
 	return map[string]any{"id": saved.ID, "name": saved.Name}, nil
 }
@@ -449,7 +455,10 @@ func (T *OrchestrateApp) handlePipelineDraft(c *jsonapi.Call, body struct {
 	if strings.TrimSpace(def.Name) == "" {
 		def.Name = "Drafted pipeline"
 	}
-	saved := SavePipelineDef(udb, def)
+	saved, err := SavePipelineDefBy(udb, def, "update", "")
+	if err != nil {
+		return nil, jsonapi.Forbidden(err.Error())
+	}
 	Log("[orchestrate.pipelines] user=%q drafted pipeline %q (id=%s, %d stages)",
 		user, saved.Name, saved.ID, len(saved.Stages))
 	return map[string]any{"id": saved.ID, "name": saved.Name, "stages": len(saved.Stages)}, nil

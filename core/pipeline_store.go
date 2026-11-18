@@ -1,6 +1,9 @@
 package core
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -25,6 +28,72 @@ func SavePipelineDef(udb Database, d PipelineDef) PipelineDef {
 // path funnels through it and none of them would otherwise have an opinion.
 // Same split as SaveAppSpec / SaveAppSpecAs.
 func SavePipelineDefAs(udb Database, d PipelineDef, reason string) PipelineDef {
+	saved, err := SavePipelineDefBy(udb, d, reason, "")
+	if err != nil {
+		// Held at the one place every save passes, so no path gets around
+		// it; the paths a person or an agent edits through ask first
+		// (PipelineAppEditRefusal) and say why.
+		Log("[pipelines] %s not saved: %v", d.Name, err)
+	}
+	return saved
+}
+
+// SavePipelineDefBy is SavePipelineDefAs saying what is saving when that is
+// Builder or Anvil changing an app's pipeline (appEdit), the only two that
+// may. A save that would change an app's pipeline otherwise is refused, and
+// the stored version is returned with the reason.
+func SavePipelineDefBy(udb Database, d PipelineDef, reason, appEdit string) (PipelineDef, error) {
+	if udb == nil {
+		return d, nil
+	}
+	var prior PipelineDef
+	if d.ID != "" {
+		udb.Get(PipelineDefsTable, d.ID, &prior)
+	}
+	if why := PipelineAppEditRefusal(prior, d, appEdit); why != "" {
+		return prior, errors.New(why)
+	}
+	saved := savePipelineDefAs(udb, d, reason)
+	if app := firstNonEmpty(prior.OwningApp, saved.OwningApp); app != "" && pipelineDefinitionChanged(prior, saved) {
+		AppOwnedChanged(saved.Owner, app, "pipeline", saved.Name, appEdit)
+	}
+	return saved, nil
+}
+
+// PipelineAppEditRefusal is why next may not replace prior, or "": what an
+// app's pipeline is (or making a pipeline an app's, or taking it out of one)
+// changes only by Builder or Anvil, so a change goes through the app's
+// checks, history and approval (docs/design/app-history.md, stage 2).
+func PipelineAppEditRefusal(prior, next PipelineDef, appEdit string) string {
+	app := prior.OwningApp
+	if app == "" {
+		app = next.OwningApp
+	}
+	if app == "" || appEdit != "" || !pipelineDefinitionChanged(prior, next) {
+		return ""
+	}
+	name := prior.Name
+	if name == "" {
+		name = next.Name
+	}
+	return fmt.Sprintf("%s is part of the app %q: change it with Builder or Anvil, which run the app's checks and keep its history", name, app)
+}
+
+// pipelineDefinitionChanged reports whether what a pipeline is changed:
+// everything but its bookkeeping and who it is shared with, named here, so a
+// field added later counts until it is named.
+func pipelineDefinitionChanged(prior, next PipelineDef) bool {
+	strip := func(d PipelineDef) []byte {
+		d.ID, d.Owner, d.Created, d.Updated, d.Previous = "", "", time.Time{}, time.Time{}, nil
+		d.AllowedUsers, d.Editors, d.Published, d.Global = nil, nil, false, false
+		normalizeStageThink(d.Stages)
+		b, _ := json.Marshal(d)
+		return b
+	}
+	return !bytes.Equal(strip(prior), strip(next))
+}
+
+func savePipelineDefAs(udb Database, d PipelineDef, reason string) PipelineDef {
 	if udb == nil {
 		return d
 	}
@@ -239,7 +308,9 @@ func ImportPipeline(udb Database, owner string, recipe PipelineDef) (PipelineDef
 	if err := recipe.Validate(); err != nil {
 		return PipelineDef{}, err
 	}
-	return SavePipelineDef(udb, recipe), nil
+	// An import is a whole pipeline arriving, an app's among them, not a
+	// change made around the app (PipelineAppEditRefusal).
+	return SavePipelineDefBy(udb, recipe, "update", "import")
 }
 
 // StarterPipeline is a small pipeline that RUNS, for somebody who

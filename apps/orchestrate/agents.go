@@ -276,10 +276,21 @@ func rollbackAgent(db Database, id, ref string) (AgentRecord, error) {
 
 // writeAgent is the single store write.
 func writeAgent(db Database, a AgentRecord, reason string) (AgentRecord, error) {
+	var prior AgentRecord
+	if db != nil && a.ID != "" {
+		db.Get(agentsTable, a.ID, &prior)
+	}
+	appEdit := a.appEdit
 	saved, err := writeAgentOnce(db, a, reason)
 	// appEdit is said by each save, never carried: a record handed back and
 	// saved again later is not Builder's or Anvil's save any more.
 	saved.appEdit = ""
+	// A change to an app's agent is a change to the app (app_owned.go).
+	if err == nil {
+		if app := firstNonEmptyStr(prior.OwningApp, saved.OwningApp); app != "" && agentDefinitionChanged(prior, saved) {
+			AppOwnedChanged(saved.Owner, app, "agent", saved.Name, appEdit)
+		}
+	}
 	return saved, err
 }
 

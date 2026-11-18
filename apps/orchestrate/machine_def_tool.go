@@ -47,6 +47,7 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 				"id":          {Type: "string", Description: "(update/get/run/delete) Machine id, if you have it instead of the name."},
 				"input":       {Type: "string", Description: "(run) What the run is started with, read as {input}. Pass the example the person gave, as they would."},
 				"description": {Type: "string", Description: "(create/update) One-line summary of what the machine is for."},
+				"owning_app":  {Type: "string", Description: "(create/update) The slug of the custom app this machine is written for: grouped under the app, deleted with it, and changed only through Builder or Anvil. Leave empty for a machine meant for general use."},
 				"start":       {Type: "string", Description: "(create/update) Name of the phase a fresh session enters. Defaults to the first phase in the list."},
 				"full":        {Type: "boolean", Description: "(get) When true, return every phase's full prompt. Default false previews them to save context."},
 				"phase":       {Type: "string", Description: "(update_phase) Which step to change. Only the fields you pass are written; every other field of that step, and every other step, is left exactly as it was."},
@@ -445,6 +446,9 @@ func (t *chatTurn) machineDraftFromArgs(args map[string]any, isUpdate bool) (mac
 	if d := strings.TrimSpace(stringArg(args, "description")); d != "" {
 		def.Description = d
 	}
+	if v, ok := args["owning_app"]; ok && v != nil {
+		def.OwningApp = slugify(fmt.Sprint(v))
+	}
 	if s := strings.TrimSpace(stringArg(args, "start")); s != "" {
 		def.Start = s
 	}
@@ -603,7 +607,10 @@ func (t *chatTurn) machineCreateOrUpdate(args map[string]any, isUpdate bool) (st
 	if err := def.Validate(); err != nil {
 		return "", fmt.Errorf("machine is not runnable: %w. machine(action=\"validate\") checks a phase list without writing it, which is the cheaper way to find this: an update REPLACES the whole list, so one bad field costs the entire save", err)
 	}
-	saved := SaveMachineDef(t.udb, def)
+	saved, err := SaveMachineDefBy(t.udb, def, "update", appEditOfTurn(t))
+	if err != nil {
+		return "", err
+	}
 
 	verb := "Created"
 	if isUpdate {
@@ -1070,7 +1077,10 @@ func (t *chatTurn) machineUpdatePhase(args map[string]any) (string, error) {
 	if err := def.Validate(); err != nil {
 		return "", fmt.Errorf("that change leaves the machine unrunnable, so nothing was saved: %w", err)
 	}
-	saved := SaveMachineDef(t.udb, def)
+	saved, err := SaveMachineDefBy(t.udb, def, "update", appEditOfTurn(t))
+	if err != nil {
+		return "", err
+	}
 	Log("[orchestrate.machines] user=%q updated phase %q of machine %q: %s",
 		t.user, saved.Phases[idx].Name, saved.Name, strings.Join(changed, "; "))
 	out := fmt.Sprintf("Updated step %q of %q: changed %s. Every other step is untouched.",
@@ -1096,7 +1106,10 @@ func (t *chatTurn) machineRepair(args map[string]any) (string, error) {
 		return "Nothing to repair in " + strconv.Quote(def.Name) + ", every finding it has needs a judgement, so none of them can be settled mechanically. " +
 			"machine(action=\"get\") lists them.", nil
 	}
-	saved := SaveMachineDef(t.udb, def)
+	saved, err := SaveMachineDefBy(t.udb, def, "update", appEditOfTurn(t))
+	if err != nil {
+		return "", err
+	}
 	Log("[orchestrate.machines] user=%q repaired machine %q via tool: %s", t.user, saved.Name,
 		strings.Join(RepairLines(fixed), "; "))
 	out := fmt.Sprintf("Repaired %d thing%s in %q:\n- %s",

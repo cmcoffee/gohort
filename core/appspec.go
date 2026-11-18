@@ -579,6 +579,33 @@ func RegisterAppSpecSavedHook(fn func(AppSpec)) {
 	}
 }
 
+// A change to what an app owns (an agent, pipeline or machine made for it,
+// owning_app), told to whoever keeps the app's history and its approval
+// (orchestrate's app_owned.go). Core saves pipelines and machines and does
+// not know what an app's history is, so it says what changed and nothing
+// more, as RegisterAppSpecSavedHook does for an app's own saves.
+
+var appOwnedChangeHooks []func(owner, slug, kind, name, appEdit string)
+
+// RegisterAppOwnedChangeHook installs fn, called after each save that
+// changed what an app owns: kind is "agent", "pipeline" or "machine", and
+// appEdit what made the change ("Builder", "Anvil", "import").
+func RegisterAppOwnedChangeHook(fn func(owner, slug, kind, name, appEdit string)) {
+	if fn != nil {
+		appOwnedChangeHooks = append(appOwnedChangeHooks, fn)
+	}
+}
+
+// AppOwnedChanged tells the hooks that owner's app slug's kind name changed.
+func AppOwnedChanged(owner, slug, kind, name, appEdit string) {
+	if owner == "" || slug == "" {
+		return
+	}
+	for _, fn := range appOwnedChangeHooks {
+		fn(owner, slug, kind, name, appEdit)
+	}
+}
+
 // RegisterAppSpecDeletedHook installs a callback fired after every DeleteAppSpec.
 func RegisterAppSpecDeletedHook(fn func(owner, slug string)) {
 	if fn != nil {

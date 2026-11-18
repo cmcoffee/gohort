@@ -1895,3 +1895,30 @@ func TestARouterIsShadowedAndStillDecides(t *testing.T) {
 		t.Errorf("a router that runs tools was shadowed (%v, %v)", asked, err)
 	}
 }
+
+// An app's machine is the app's, as its agent and pipeline are: what it is
+// changes only by Builder or Anvil, the plain save keeps the stored version
+// otherwise, sharing it is not changing it, and an import goes through.
+func TestAnAppsMachineChangesOnlyThroughBuilderOrAnvil(t *testing.T) {
+	udb := &DBase{Store: kvlite.MemStore()}
+	app, err := SaveMachineDefBy(udb, MachineDef{Owner: "u", Name: "Desk", OwningApp: "support", Description: "Answers."}, "create", "Builder")
+	if err != nil {
+		t.Fatalf("Builder making an app's machine: %v", err)
+	}
+	edit := app
+	edit.Description = "Answers, and escalates nothing."
+	if _, err := SaveMachineDefBy(udb, edit, "update", ""); err == nil || !strings.Contains(err.Error(), "change it with Builder or Anvil") {
+		t.Errorf("an app's machine changed outside Builder and Anvil: %v", err)
+	}
+	if got := SaveMachineDef(udb, edit); got.Description != "Answers." {
+		t.Errorf("the plain save changed an app's machine: %q", got.Description)
+	}
+	share := app
+	share.AllowedUsers = []string{"sam"}
+	if _, err := SaveMachineDefBy(udb, share, "update", ""); err != nil {
+		t.Errorf("sharing an app's machine: %v", err)
+	}
+	if _, err := SaveMachineDefBy(udb, edit, "update", "Anvil"); err != nil {
+		t.Errorf("Anvil changing an app's machine: %v", err)
+	}
+}

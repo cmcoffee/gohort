@@ -160,7 +160,10 @@ func (T *OrchestrateApp) pipelineCreate(c *jsonapi.Call, def PipelineDef) (any, 
 	if err := def.Validate(); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
-	saved := SavePipelineDef(udb, def)
+	saved, err := SavePipelineDefBy(udb, def, "update", "")
+	if err != nil {
+		return nil, jsonapi.Forbidden(err.Error())
+	}
 	Log("[orchestrate.pipelines] user=%q created pipeline %q (id=%s, %d stages)", user, saved.Name, saved.ID, len(saved.Stages))
 	return saved, nil
 }
@@ -364,7 +367,10 @@ func (T *OrchestrateApp) pipelineSave(c *jsonapi.Call, body PipelineDef) (any, e
 	if err := body.Validate(); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
-	saved := SavePipelineDef(ed.db, body)
+	saved, err := SavePipelineDefBy(ed.db, body, "update", "")
+	if err != nil {
+		return nil, jsonapi.Forbidden(err.Error())
+	}
 	Log("[orchestrate.pipelines] user=%q updated pipeline %q (id=%s, owner %q)", user, saved.Name, saved.ID, ed.owner)
 	return saved, nil
 }
@@ -406,6 +412,9 @@ func (T *OrchestrateApp) pipelineDuplicate(c *jsonapi.Call, _ struct{}) (any, er
 	// should reach everybody, not every copy anyone makes of it.
 	dup.Published = false
 	dup.Name = copyName(def.Name, pipelineNames(ListPipelineDefs(udb, user)))
+	// A copy is the person's own, not the app's (an app's pipeline changes
+	// only through Builder or Anvil).
+	dup.OwningApp = ""
 	saved := SavePipelineDef(udb, dup)
 	Log("[orchestrate.pipelines] user=%q duplicated pipeline %q as %q", user, def.Name, saved.Name)
 	return map[string]any{"id": saved.ID, "name": saved.Name}, nil

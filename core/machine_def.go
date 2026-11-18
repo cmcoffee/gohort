@@ -42,6 +42,9 @@
 package core
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -184,6 +187,11 @@ type MachineDef struct {
 	//
 	// Stripped on export: a recipe carries a machine, not its history.
 	Previous *MachineDef `json:"previous,omitempty"`
+	// OwningApp is the slug of the owner's custom app this machine was
+	// written for, as for an agent or a pipeline: grouped under the app,
+	// deleted with it, and changed only by Builder or Anvil
+	// (MachineAppEditRefusal).
+	OwningApp string `json:"owning_app,omitempty"`
 }
 
 // MachinePhase is one position a session can hold. Every field except
@@ -1635,6 +1643,68 @@ func SaveMachineDef(udb Database, d MachineDef) MachineDef {
 // import, duplicate, repair, move — and none of them would otherwise have an
 // opinion. Same split as SaveAppSpec / SaveAppSpecAs.
 func SaveMachineDefAs(udb Database, d MachineDef, reason string) MachineDef {
+	saved, err := SaveMachineDefBy(udb, d, reason, "")
+	if err != nil {
+		// Held where every save passes; the paths a person or an agent
+		// edits through ask first and say why.
+		Log("[machines] %s not saved: %v", d.Name, err)
+	}
+	return saved
+}
+
+// SaveMachineDefBy is SaveMachineDefAs saying what is saving when that is
+// Builder or Anvil changing an app's machine (appEdit), the only two that
+// may. A save that would change an app's machine otherwise is refused, and
+// the stored version is returned with the reason.
+func SaveMachineDefBy(udb Database, d MachineDef, reason, appEdit string) (MachineDef, error) {
+	if udb == nil {
+		return d, nil
+	}
+	var prior MachineDef
+	if d.ID != "" {
+		udb.Get(MachineDefsTable, d.ID, &prior)
+	}
+	if why := MachineAppEditRefusal(prior, d, appEdit); why != "" {
+		return prior, errors.New(why)
+	}
+	saved := saveMachineDefAs(udb, d, reason)
+	if app := firstNonEmpty(prior.OwningApp, saved.OwningApp); app != "" && machineDefinitionChanged(prior, saved) {
+		AppOwnedChanged(saved.Owner, app, "machine", saved.Name, appEdit)
+	}
+	return saved, nil
+}
+
+// MachineAppEditRefusal is why next may not replace prior, or "": what an
+// app's machine is changes only by Builder or Anvil, as an app's agent and
+// pipeline (docs/design/app-history.md, stage 2).
+func MachineAppEditRefusal(prior, next MachineDef, appEdit string) string {
+	app := prior.OwningApp
+	if app == "" {
+		app = next.OwningApp
+	}
+	if app == "" || appEdit != "" || !machineDefinitionChanged(prior, next) {
+		return ""
+	}
+	name := prior.Name
+	if name == "" {
+		name = next.Name
+	}
+	return fmt.Sprintf("%s is part of the app %q: change it with Builder or Anvil, which run the app's checks and keep its history", name, app)
+}
+
+// machineDefinitionChanged reports whether what a machine is changed:
+// everything but its bookkeeping and who it is shared with, named here.
+func machineDefinitionChanged(prior, next MachineDef) bool {
+	strip := func(d MachineDef) []byte {
+		d.ID, d.Owner, d.Created, d.Updated, d.Previous = "", "", time.Time{}, time.Time{}, nil
+		d.AllowedUsers, d.Editors, d.Published = nil, nil, false
+		b, _ := json.Marshal(d)
+		return b
+	}
+	return !bytes.Equal(strip(prior), strip(next))
+}
+
+func saveMachineDefAs(udb Database, d MachineDef, reason string) MachineDef {
 	if udb == nil {
 		return d
 	}
@@ -1828,7 +1898,9 @@ func ImportMachine(udb Database, owner string, recipe MachineDef) (MachineDef, e
 	// hand-written file.
 	recipe = ExportMachine(recipe)
 	recipe.Owner = owner
-	return SaveMachineDef(udb, recipe), nil
+	// An import is a whole machine arriving, an app's among them, not a
+	// change made around the app (MachineAppEditRefusal).
+	return SaveMachineDefBy(udb, recipe, "update", "import")
 }
 
 // StarterMachine is a blank machine that VALIDATES: the shape someone

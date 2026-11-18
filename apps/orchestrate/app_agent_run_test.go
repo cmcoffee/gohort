@@ -39,7 +39,7 @@ func TestAnAppRunsOnlyItsOwnAgentsAndPipelines(t *testing.T) {
 	}
 
 	SavePipelineDef(udb, PipelineDef{ID: "p1", Owner: "alice", Name: "turn", Stages: []PipelineStage{{Name: "a", Kind: StageWorker}}})
-	SavePipelineDef(udb, PipelineDef{ID: "p2", Owner: "alice", Name: "loot", OwningApp: "voidrunner", Stages: []PipelineStage{{Name: "a", Kind: StageWorker}}})
+	SavePipelineDefBy(udb, PipelineDef{ID: "p2", Owner: "alice", Name: "loot", OwningApp: "voidrunner", Stages: []PipelineStage{{Name: "a", Kind: StageWorker}}}, "create", "Builder")
 	SavePipelineDef(udb, PipelineDef{ID: "p3", Owner: "alice", Name: "research", Stages: []PipelineStage{{Name: "a", Kind: StageWorker}}})
 	if d, err := T.appOwnPipeline("alice", "voidrunner", "p1", ""); err != nil || d.ID != "p1" {
 		t.Errorf("the app's own pipeline: %+v %v", d, err)

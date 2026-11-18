@@ -194,7 +194,10 @@ func (T *OrchestrateApp) machineCreate(c *jsonapi.Call, def MachineDef) (any, er
 	if err := def.Validate(); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
-	saved := SaveMachineDef(udb, def)
+	saved, err := SaveMachineDefBy(udb, def, "update", "")
+	if err != nil {
+		return nil, jsonapi.Forbidden(err.Error())
+	}
 	Log("[orchestrate.machines] user=%q created machine %q (id=%s, %d phases)", user, saved.Name, saved.ID, len(saved.Phases))
 	return saved, nil
 }
@@ -389,7 +392,10 @@ func (T *OrchestrateApp) machineSave(c *jsonapi.Call, body MachineDef) (any, err
 	if err := body.Validate(); err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
-	saved := SaveMachineDef(ed.db, body)
+	saved, err := SaveMachineDefBy(ed.db, body, "update", "")
+	if err != nil {
+		return nil, jsonapi.Forbidden(err.Error())
+	}
 	Log("[orchestrate.machines] user=%q updated machine %q (id=%s, owner %q)", user, saved.Name, saved.ID, ed.owner)
 	return saved, nil
 }
@@ -443,6 +449,8 @@ func (T *OrchestrateApp) machineDuplicate(c *jsonapi.Call, _ struct{}) (any, err
 	dup.Published = false
 	dup.Previous = nil
 	dup.Name = copyName(def.Name, machineNames(ListMachineDefs(udb, user)))
+	// A copy is the person's own, not the app's.
+	dup.OwningApp = ""
 	saved := SaveMachineDef(udb, dup)
 	Log("[orchestrate.machines] user=%q duplicated machine %q as %q (id=%s)", user, def.Name, saved.Name, saved.ID)
 	return map[string]any{"id": saved.ID, "name": saved.Name}, nil
@@ -476,7 +484,10 @@ func (T *OrchestrateApp) machineRepair(c *jsonapi.Call, _ struct{}) (any, error)
 	if len(fixed) == 0 {
 		return map[string]any{"fixed": []string{}}, nil
 	}
-	saved := SaveMachineDef(ed.db, def)
+	saved, err := SaveMachineDefBy(ed.db, def, "update", "")
+	if err != nil {
+		return nil, jsonapi.Forbidden(err.Error())
+	}
 	Log("[orchestrate.machines] user=%q repaired machine %q: %s", user, saved.Name,
 		strings.Join(RepairLines(fixed), "; "))
 	return map[string]any{"fixed": RepairLines(fixed), "id": saved.ID}, nil

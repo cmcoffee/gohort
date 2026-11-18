@@ -160,7 +160,10 @@ func (T *OrchestrateApp) machineRevise(c *jsonapi.Call, body struct {
 	after.Owner = user
 	after.Previous = &before
 
-	saved := SaveMachineDef(udb, after)
+	saved, err := SaveMachineDefBy(udb, after, "update", "")
+	if err != nil {
+		return nil, jsonapi.Forbidden(err.Error())
+	}
 	changed := describeMachineChange(before, saved)
 	Log("[orchestrate.machines] user=%q revised machine %q (id=%s): %s", user, saved.Name, saved.ID,
 		strings.Join(changed, "; "))
@@ -261,7 +264,10 @@ func (T *OrchestrateApp) machineUndo(c *jsonapi.Call, _ struct{}) (any, error) {
 	// pressing it twice expects to be where they started, not back where
 	// they undid from.
 	back.Previous = nil
-	saved := SaveMachineDef(udb, back)
+	saved, err := SaveMachineDefBy(udb, back, "update", "")
+	if err != nil {
+		return nil, jsonapi.Forbidden(err.Error())
+	}
 	Log("[orchestrate.machines] user=%q undid the last revision of machine %q (id=%s)", user, saved.Name, saved.ID)
 	return map[string]any{"id": saved.ID, "name": saved.Name, "checklist": saved.Problems()}, nil
 }

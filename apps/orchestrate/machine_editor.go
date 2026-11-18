@@ -1308,7 +1308,10 @@ func (T *OrchestrateApp) machineMetaSave(c *jsonapi.Call, body map[string]any) (
 	// tenth exists is how an editor becomes a puzzle. The checklist
 	// says what is still wrong, and enterMachine already degrades to
 	// an ordinary turn rather than breaking a conversation.
-	saved := SaveMachineDef(udb, def)
+	saved, err := SaveMachineDefBy(udb, def, "update", "")
+	if err != nil {
+		return nil, jsonapi.Forbidden(err.Error())
+	}
 	return map[string]any{"ok": true, "checklist": machineChecklist(udb, user, saved)}, nil
 }
 
@@ -1428,7 +1431,10 @@ func (T *OrchestrateApp) machinePhaseSave(c *jsonapi.Call, body map[string]any) 
 			def.Start = ph.Name
 		}
 	}
-	saved := SaveMachineDef(udb, def)
+	saved, err := SaveMachineDefBy(udb, def, "update", "")
+	if err != nil {
+		return nil, jsonapi.Forbidden(err.Error())
+	}
 	Log("[orchestrate.machines] user=%q edited phase %q of %q", user, ph.Name, def.Name)
 	// id/name/slug are what the ADD form's redirect substitutes to
 	// reopen the editor on the step just created. The per-step
@@ -1455,7 +1461,10 @@ func (T *OrchestrateApp) machinePhaseDelete(c *jsonapi.Call, _ struct{}) (any, e
 	// deletion, and reporting it as something to fix blames somebody
 	// for doing what they meant.
 	rewritten := def.RemoveStep(name)
-	saved := SaveMachineDef(udb, def)
+	saved, err := SaveMachineDefBy(udb, def, "update", "")
+	if err != nil {
+		return nil, jsonapi.Forbidden(err.Error())
+	}
 	Log("[orchestrate.machines] user=%q removed phase %q from %q (rewrote %v)", user, name, def.Name, rewritten)
 	return map[string]any{"deleted": name, "rewritten": rewritten, "checklist": machineChecklist(udb, user, saved)}, nil
 }

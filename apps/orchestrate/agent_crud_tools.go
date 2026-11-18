@@ -1977,3 +1977,11 @@ func appEditOf(sess *ToolSession) string {
 	}
 	return ""
 }
+
+// appEditOfTurn is appEditOf for a chat turn: "Builder" for Builder's.
+func appEditOfTurn(t *chatTurn) string {
+	if t != nil && isBuilderAgent(t.agent.ID) {
+		return "Builder"
+	}
+	return ""
+}
