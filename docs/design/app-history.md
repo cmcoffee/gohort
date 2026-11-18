@@ -450,10 +450,41 @@ Stage 2 (an app holds everything it runs on):
 
 6. An app's own tool space: tools named by the app, its agents seeing that
    space and gohort's own tools; approval by reach, one review per space; a
-   copy keeping its approval while unchanged.
+   copy keeping its approval while unchanged. **Built (piece B, 0.9.527),
+   except the copy keeping its approval (with piece C).** Decided (owner,
+   2026-11-18):
+   - **A store of its own** (`core/apptools`, table `app_tools`, keyed by
+     owner and app). The pool and everything that reads it never see an
+     app's tool; nothing moved, and a space started empty.
+   - **The pool is cut at piece D.** Until an app copies what it uses on its
+     first change, its agents load its space beside the pool, the app's tool
+     winning a name they share; a held tool of the space is not stood in
+     for by the pool's.
+   - **Every app tool that reaches further waits**, Builder's and Anvil's as
+     well as an import's, stricter than the pool. Reach is a credential
+     (`credential`, `secret:`, `fetch_via:`) or raw network; a store's
+     commands and the host are reached by no stored tool (an admin's
+     mapping is never stored, and no tool mode runs on the host). The
+     review is one request per app in the approvals queue ("App's tools"),
+     naming each such tool and what it reaches; approving it approves what
+     it named, each by a fingerprint of its definition, so one changed
+     since asks again. The flags that narrow a tool (confirm in chat, never
+     unattended) do not count as a change.
+   - **In the folder** as `tools/<name>.json`, the script beside it as
+     `tools/<name>.py` (the extension of its script_name), so Anvil edits a
+     real script and the history diffs read as code.
+   - Builder reaches it with tool_def's `app` argument (create, get,
+     update, test, delete, list), wired for Builder's session only. Admin's
+     Tools page lists every app's tools ("Apps' own tools") with what each
+     reaches and whether it loads, and switches one off: a stop kept on the
+     space's review record, never a change to the tool.
+   - Not yet: an export carrying what an app owns (agents, pipelines,
+     machines and tools together).
 7. An app owns its agents, pipelines and machines: Builder copies rather
    than points, each in the app's folder and history, exported and deleted
    with it; shown read-only elsewhere, with an administrator's stop.
+   **Built (piece A, 0.9.523 to 0.9.526), except Builder copying (piece C)
+   and the export.**
 8. A shared app's approval covers what it owns.
 9. Model tiers in an app's agents; what does not travel asked for on import;
    schedules defined in the blueprint; the first-change copy keeping what

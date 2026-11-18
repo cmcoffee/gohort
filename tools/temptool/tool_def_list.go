@@ -12,6 +12,9 @@ import (
 // shim. We can't call its RunWithSession directly without an instance,
 // so reproduce the formatting inline.
 func listGrouped(args map[string]any, sess *ToolSession) (string, error) {
+	if sess.AuthoringApp != "" {
+		return listAppTools(sess)
+	}
 	persistentByName := map[string]bool{}
 	persistentDescByName := map[string]string{}
 	persistentModeByName := map[string]string{}

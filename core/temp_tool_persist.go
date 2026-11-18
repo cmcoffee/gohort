@@ -1176,6 +1176,11 @@ func QueuePendingTempToolScoped(db Database, username string, t TempTool, sessio
 // ask it without a new top-level export.
 func (t TempTool) SameDefinition(o TempTool) bool { return !toolDefinitionChanged(t, o) }
 
+// Definition is t without the flags an owner sets on it (lock, disable,
+// builder-only, bound-only, trial, confirm in chat, never unattended): what
+// the tool does.
+func (t TempTool) Definition() TempTool { return withoutGovernance(t) }
+
 // toolDefinitionChanged reports whether what a tool DOES changed between two
 // versions, ignoring the governance flags an owner sets on it (lock, disable,
 // builder-only, bound-only, trial, confirm-in-chat).

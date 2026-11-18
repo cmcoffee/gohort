@@ -61,23 +61,24 @@ func BuildToolDef() *GroupedTool {
 
 	gt.AddAction("list", &GroupedToolAction{
 		Description: "List all session-scoped + persistent tools currently available to you. Returns name, mode (shell|api), and a one-line description for each.",
-		Params:      map[string]ToolParam{},
+		Params:      map[string]ToolParam{"app": appParam},
 		Required:    nil,
 		// Listing is read-only metadata. No caps required — gating is
 		// done at runtime when a created tool is actually dispatched.
 		Caps:         nil,
 		NeedsConfirm: false,
-		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
+		Handler: withApp(func(args map[string]any, sess *ToolSession) (string, error) {
 			if sess == nil {
 				return "", fmt.Errorf("requires a session")
 			}
 			return listGrouped(args, sess)
-		},
+		}),
 	})
 
 	gt.AddAction("create", &GroupedToolAction{
 		Description: "Define a new runtime tool for THIS session. **THIS IS THE CREATION CALL (JUST CALL IT**), it IS the act of creation and persists automatically with NO approval step; never ask the user's permission first or say an admin must register it. After iterate-and-test (local(write) + local(run) to validate a script), the next step is ALWAYS tool_def(action=\"create\"...), without it you've written a script, not authored a tool. **COMPOSE BEFORE YOU BUILD**: if an existing tool already does part of the work (web_search for search, fetch_url for an HTTPS fetch, find_image / fetch_image / download_video for media), prefer chaining it via mode=\"pipeline\" (pipeline_steps) with a shell-mode tool for local processing, DON'T reimplement what the framework already gives you. CHOOSE MODE: (a) \"api\", a single HTTPS endpoint the framework can't already reach (credential=\"no_auth\" for public APIs, or a registered credential name); (b) \"toolbox\", MULTIPLE related endpoints under one tool name (a whole API surface: GitHub, Stripe, the moltbook social API), one catalog entry with action=\"<sub>\" dispatch sharing one credential. Toolboxes live ONLY here (`add_tool` can't build one); change a SINGLE action with action=\"update\" (actions=[{name...changed fields}]) rather than recreating; (c) \"shell\", local computation/parsing/scripting on data the caller passes in, NOT network fetches; build a script tool in a folder instead of here: action=\"checkout\", then run and publish; (d) \"pipeline\", a deterministic chain of existing tools (e.g. fetch_url → your shell processor), or a saved pipeline turned into a tool with from_pipeline (the tool keeps the copy; do not leave a pipeline beside a tool made from it). For an adaptive multi-step LLM workflow author no tool at all: use the standalone pipeline tool. Do NOT wrap an HTTPS endpoint in a Python+urllib or curl script, that path is plagued by invented method names, homoglyph URL bugs, and JSON errors that don't exist in api/toolbox/pipeline mode. Required: name, description, mode, plus mode-specific fields, api: credential, url_template, method, params (optional body_template, response_pipe); toolbox: credential + actions[{name, description, url_template, params...}]; shell: command_template + params (script_body for non-trivial scripts); pipeline: pipeline_tools + pipeline_steps. Tools are immediately callable and persist across sessions: Builder's land in your user-wide pool (all your agents); every other agent's land on that agent's OWN record. Call action=\"help\" for the full spec + examples.",
 		Params: map[string]ToolParam{
+			"app":               appParam,
 			"name":              {Type: "string", Description: "Tool name (snake_case, must not match an existing tool)."},
 			"description":       {Type: "string", Description: "(required) What the tool does and when to reach for it, in ONE or TWO sentences. This line is re-sent on every turn for the life of the tool: no worked examples, no restating the params, no failure modes. Hard cap 500 characters."},
 			"mode":              {Type: "string", Description: "\"api\" (one HTTPS endpoint) - \"toolbox\" (several endpoints under one name, action=\"<sub>\" dispatch) - \"shell\" (local script) - \"pipeline\" (chain existing tools). See action=\"help\"."},
@@ -164,7 +165,7 @@ func BuildToolDef() *GroupedTool {
 		// agents that hold this. Gating every creation would put a prompt
 		// in front of the most common authoring move in the system.
 		NeedsConfirm: false,
-		Handler: toolDefCreate,
+		Handler:      withApp(toolDefCreate),
 	})
 
 	// The tool folder (tool_folder.go): a script tool as files to edit, run
@@ -225,22 +226,24 @@ func BuildToolDef() *GroupedTool {
 	gt.AddAction("get", &GroupedToolAction{
 		Description: "Return the FULL definition of a tool by name: script_body, command_template, url_template, params, mode-specific fields, hook_capabilities. Read-only inspection: use this to COPY content from an existing tool (e.g. lift a known-good script_body, adapt a params shape) when authoring a new one, OR to inspect what's there before re-authoring with the same name (which overwrites the active entry). Returns a JSON-shaped block with every field set on the record. Pulls from the active pool first, then pending, then session drafts.",
 		Params: map[string]ToolParam{
+			"app":  appParam,
 			"name": {Type: "string", Description: "Name of the tool to fetch."},
 		},
 		Required:     []string{"name"},
 		Caps:         nil,
 		NeedsConfirm: false,
-		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
+		Handler: withApp(func(args map[string]any, sess *ToolSession) (string, error) {
 			if sess == nil {
 				return "", fmt.Errorf("requires a session")
 			}
 			return getGrouped(args, sess)
-		},
+		}),
 	})
 
 	gt.AddAction("update", &GroupedToolAction{
 		Description: "THE way to fix a broken tool: ALWAYS reach for update before delete+recreate. Deleting loses the tool's working actions AND its credential wiring, and a from-scratch rebuild routinely fails on a detail you already had right. PARTIALLY edit an existing tool WITHOUT recreating it whole: pass name plus only the fields you're changing. For a TOOLBOX: pass actions=[{name...}] to upsert (an action name that already exists is replaced, a new one is added), the OTHER actions are preserved untouched; pass remove_actions=[\"x\"] to drop actions. For an api/shell tool: pass any of description / params / required / url_template / command_template / method / body_template / response_pipe / script_body to change just those. (A POST action missing a body_template is auto-scaffolded: you don't have to hand-write it.)",
 		Params: map[string]ToolParam{
+			"app":               appParam,
 			"name":              {Type: "string", Description: "The tool to update."},
 			"description":       {Type: "string", Description: "(optional) New top-level description: one or two sentences, cap 500 chars. Omit to leave the current one alone."},
 			"credential":        {Type: "string", Description: "(api/toolbox, optional) Name of a registered secure credential; auth is injected server-side and never reaches you. Use \"no_auth\" for public APIs. See action=\"help\"."},
@@ -278,19 +281,20 @@ func BuildToolDef() *GroupedTool {
 			"pipeline_prompt", "pipeline_steps", "pipeline_tools", "pipeline_max_rounds"},
 		Caps:         nil,
 		NeedsConfirm: false,
-		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
+		Handler: withApp(func(args map[string]any, sess *ToolSession) (string, error) {
 			// A tool whose folder holds it as it is is edited there: an edit
 			// made here would be undone by the folder's next publish.
 			if err := toolFolderOwnsEdit(sess, strings.TrimSpace(StringArg(args, "name"))); err != nil {
 				return "", err
 			}
 			return toolDefUpdate(args, sess)
-		},
+		}),
 	})
 
 	gt.AddAction("delete", &GroupedToolAction{
 		Description: "Remove a tool by name: use ONLY when you truly want it gone. To FIX a tool that isn't working, use action=\"update\", NOT delete+recreate: deleting throws away the working actions and the credential wiring you'd have to rebuild from scratch (a common self-inflicted loop). Removes it from this session AND from your persistent pool if applicable. For an [agent-bundled] tool (one attached to the running agent's record: these reload every turn, so deleting just the session copy leaves it firing), this also unbundles it from the agent record so it does NOT come back next turn.",
 		Params: map[string]ToolParam{
+			"app":  appParam,
 			"name": {Type: "string", Description: "Name of the tool to remove."},
 		},
 		Required: []string{"name"},
@@ -304,18 +308,19 @@ func BuildToolDef() *GroupedTool {
 		// (create was marked confirm and delete was not — exactly
 		// backwards.)
 		NeedsConfirm: true,
-		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
+		Handler: withApp(func(args map[string]any, sess *ToolSession) (string, error) {
 			if sess == nil {
 				return "", fmt.Errorf("requires a session")
 			}
 			forgetToolTest(sess, strings.TrimSpace(StringArg(args, "name")))
 			return deleteGrouped(args, sess)
-		},
+		}),
 	})
 
 	gt.AddAction("test", &GroupedToolAction{
 		Description: "VERIFY a tool actually works BEFORE you call it done or hand it to a user. SHELL tools: syntax-checks the script (an unterminated string or bad indent means every call dies before doing any work, this catches it without touching the live service), reports how each required param reaches the script, and, when you pass `cases`, RUNS the tool for real with those args and reports the exit status. A shell tool with no case stays UNVERIFIED: executing it is the only proof. API/TOOLBOX tools: for every endpoint it: (1) renders the URL + body template with your sample args and checks the body is valid JSON, catches a body field that never lands (the #1 cause of a live 400 like \"content must be a string\"); (2) compile-checks the response_pipe, catches a broken jq/awk filter before it fails live; (3) for READ endpoints (GET/HEAD and the read-only WebDAV queries REPORT/PROPFIND/SEARCH) it makes a real call and asserts a 2xx, then runs the response_pipe against the REAL response body, catches shape mismatches a syntax check can't. WRITE endpoints (POST/PUT/PATCH/DELETE) are NOT auto-fired (that would spam the live service): their body is render-validated only, and the report tells you to make one manual call and confirm a 2xx yourself. Pass `cases` with representative inputs per action so read probes and body renders have real values to work with (e.g. a real post_id for get_post). Returns a per-endpoint PASS/FAIL table. Run this, fix every FAIL by action=\"update\", and re-run until green: an unexercised toolbox action is a live grenade.",
 		Params: map[string]ToolParam{
+			"app":   appParam,
 			"name":  {Type: "string", Description: "Name of the shell, api or toolbox tool to verify."},
 			"rerun": {Type: "boolean", Description: "Run again even though the tool and cases are unchanged since the last test: only when something outside the tool changed (a credential's key, the service)."},
 			"cases": {Type: "array", Description: "Sample inputs to exercise. Array of objects: {action?: \"<sub-action>\" (toolbox only, omit for a single api tool), args: {param: value...}}. Provide one per endpoint you want live-probed or body-validated; give real values (a genuine id, a valid query) so read probes hit 2xx. Endpoints with no case still get offline checks (pipe compile-check, and body render when they need no required args).", Items: &ToolParam{Type: "object"}},
@@ -327,7 +332,7 @@ func BuildToolDef() *GroupedTool {
 		// run in the exec sandbox. Same caps an api/toolbox dispatch needs.
 		Caps:         []Capability{CapNetwork, CapExecute},
 		NeedsConfirm: false,
-		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
+		Handler: withApp(func(args map[string]any, sess *ToolSession) (string, error) {
 			if sess == nil {
 				return "", fmt.Errorf("requires a session")
 			}
@@ -343,7 +348,7 @@ func BuildToolDef() *GroupedTool {
 			// against a hostile URL, hit test, and without this the response
 			// lands in the authoring model's context as trusted text.
 			return UntrustedToolResultFence + out, nil
-		},
+		}),
 	})
 
 	return gt

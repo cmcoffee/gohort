@@ -289,6 +289,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 						{Value: "pipeline", Label: "Pipeline", Color: "info"},
 						{Value: "machine", Label: "Machine", Color: "info"},
 						{Value: "store_grant", Label: "File store", Color: "warning"},
+						{Value: "app_tools", Label: "App's tools", Color: "warning"},
 						{Value: "guide", Label: "Guide", Color: "info"},
 					}},
 					{Field: "update", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{

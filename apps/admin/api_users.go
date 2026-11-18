@@ -513,6 +513,7 @@ var requestNoun = map[string]string{
 	"tool": "tool", "app": "app", "agent": "agent", "collection": "collection",
 	"credential": "credential", "skill": "skill", "pipeline": "pipeline",
 	"machine": "machine", "guide": "guide", "store_grant": "file store access",
+	"app_tools": "app's own tools",
 }
 
 // tellOwnerDenied tells the owner their request to share was declined. Only

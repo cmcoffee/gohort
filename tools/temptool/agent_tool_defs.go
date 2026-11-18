@@ -183,7 +183,10 @@ func CheckCatalogNameCollision(sess *ToolSession, name string, actions []TempToo
 	// BundleAuthoredToolTo is set: that's an in-place edit of an existing tool,
 	// which is SUPPOSED to write over the same name. This is the invariant that
 	// keeps the namespace unique per user, so a name resolves to exactly one tool.
-	if sess.BundleAuthoredToolTo == "" && sess.DB != nil && sess.Username != "" && !inSession[name] {
+	// An app's own tools are a namespace of their own (AuthoringApp): its
+	// get_weather and the person's are two tools, and a name taken in the app's
+	// space is the app's tool written over, as in the pool.
+	if sess.BundleAuthoredToolTo == "" && sess.AuthoringApp == "" && sess.DB != nil && sess.Username != "" && !inSession[name] {
 		holds := func(tt TempTool) bool {
 			for _, existing := range catalogNamesOf(&tt) {
 				if proposed[existing] {

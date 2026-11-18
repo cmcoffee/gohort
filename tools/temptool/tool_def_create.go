@@ -44,6 +44,11 @@ func finalizeAuthoredTool(sess *ToolSession, toolName string) string {
 	if draft == nil {
 		return ""
 	}
+	// A tool of an app's own space (app_tools.go) lands there and nowhere
+	// else: not the pool, not an agent's record.
+	if sess.AuthoringApp != "" {
+		return saveAppTool(sess, *draft)
+	}
 	// In-place edit redirect: an update of a tool that lives on ANOTHER of the
 	// user's agents writes back to THAT agent's record, taking precedence over
 	// both Builder-global pooling and self-bundle. This keeps a repair from
@@ -97,6 +102,10 @@ func finalizeAuthoredTool(sess *ToolSession, toolName string) string {
 func persistentToolExists(sess *ToolSession, name string) bool {
 	if sess == nil || sess.DB == nil || sess.Username == "" || name == "" {
 		return false
+	}
+	if sess.AuthoringApp != "" {
+		_, ok := appToolRecord(sess, name)
+		return ok
 	}
 	for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
 		if p.Tool.Name == name {

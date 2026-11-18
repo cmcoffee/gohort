@@ -3,10 +3,15 @@ package orchestrate
 import (
 	"context"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/gohort/core/apptools"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // An editor opens on what an app owns by saying so, before anyone types a
@@ -85,5 +90,114 @@ func TestAnAppSwitchedOffStopsWhatItOwns(t *testing.T) {
 	SaveAppSpec(spec)
 	if _, err := app.RunAgentSync(context.Background(), user, user, clerk.ID, "hello"); err != nil {
 		t.Errorf("switched back on, its agent does not run: %v", err)
+	}
+}
+
+// An app's agent loads its app's own tool space beside the pool (the pool is
+// cut for an app when it copies what it uses, piece D): the app's tool wins
+// over the pool's of its name, a tool reaching a credential loads once an
+// administrator approved it, and an agent of no app sees none of it.
+func TestAnAppsAgentLoadsItsAppsTools(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	udb := UserDB(root, "u")
+	prevRoot := RootDB
+	RootDB = root
+	t.Cleanup(func() { RootDB = prevRoot })
+	for _, tool := range []TempTool{
+		{Name: "get_weather", Description: "the pool's", CommandTemplate: "echo pool"},
+		{Name: "pool_only", Description: "d", CommandTemplate: "echo p"},
+	} {
+		if err := AdminPersistTempTool(udb, "u", tool); err != nil {
+			t.Fatal(err)
+		}
+	}
+	apptools.SaveBy("u", "wx", TempTool{Name: "get_weather", Description: "the app's", CommandTemplate: "echo app"}, "Builder")
+	crm := TempTool{Name: "crm", Description: "d", Mode: TempToolModeAPI, Credential: "crm", CommandTemplate: "https://crm.invalid/{q}"}
+	apptools.SaveBy("u", "wx", crm, "Builder")
+
+	load := func(owningApp string) map[string]string {
+		turn := &chatTurn{user: "u", udb: udb, agent: AgentRecord{ID: "a-1", Owner: "u", OwningApp: owningApp}}
+		sess := &ToolSession{}
+		turn.loadAgentTempTools(sess, "u", root)
+		got := map[string]string{}
+		for _, tt := range sess.TempTools {
+			got[tt.Name] = tt.Description
+		}
+		return got
+	}
+	got := load("wx")
+	if got["get_weather"] != "the app's" || got["pool_only"] == "" {
+		t.Errorf("an app's agent loaded %v", got)
+	}
+	if _, ok := got["crm"]; ok {
+		t.Error("a tool reaching a credential loaded before an administrator approved it")
+	}
+	apptools.Approve("u", "wx", "admin", map[string]string{"crm": apptools.Fingerprint(crm)})
+	if _, ok := load("wx")["crm"]; !ok {
+		t.Error("an approved tool did not load")
+	}
+	got = load("")
+	if got["get_weather"] != "the pool's" {
+		t.Errorf("an agent of no app loaded %v", got)
+	}
+	if _, ok := got["crm"]; ok {
+		t.Error("an agent of no app loaded an app's tool")
+	}
+}
+
+// The app's folder holds its tools, each as tools/<name>.json with its script
+// beside it, and an install applies them as the folder says; deleting the app
+// takes its space, and its confirmation counts the tools.
+func TestAnInstallAppliesTheAppsTools(t *testing.T) {
+	turn, _ := folderTestTurn(t)
+	T, dir := installTestApp(t, turn)
+	prevHost := agenthost.Get()
+	agenthost.Register(T)
+	t.Cleanup(func() { agenthost.Register(prevHost) })
+	script := "import os\nprint(os.environ.get('city', ''))\n"
+	if err := apptools.SaveBy("u", "wx", TempTool{Name: "get_weather", Description: "Weather.", CommandTemplate: "python3 run.py",
+		ScriptName: "run.py", ScriptBody: script, CanonicalScriptName: "get_weather_abc.py"}, "Builder"); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteAppFolder("u", "wx", dir); err != nil {
+		t.Fatal(err)
+	}
+	def, err := os.ReadFile(filepath.Join(dir, "tools", "get_weather.json"))
+	if err != nil || strings.Contains(string(def), "script_body") || strings.Contains(string(def), "canonical") {
+		t.Fatalf("the tool's file: %v %s", err, def)
+	}
+	side := filepath.Join(dir, "tools", "get_weather.py")
+	if b, _ := os.ReadFile(side); string(b) != script {
+		t.Fatalf("the script beside it: %q", b)
+	}
+	os.WriteFile(side, []byte(script+"print('done')\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "tools", "uptime.json"), []byte(`{"name": "uptime", "description": "Uptime.", "command_template": "uptime"}`), 0o644)
+	out, err := T.InstallAppFolder(context.Background(), "u", dir, "Weather says done; uptime")
+	if err != nil || !strings.Contains(out, "tool get_weather") || !strings.Contains(out, "tool uptime") {
+		t.Fatalf("install: %v %s", err, out)
+	}
+	got, _ := apptools.ByName("u", "wx", "get_weather")
+	if !strings.HasSuffix(got.Tool.ScriptBody, "print('done')\n") || got.Tool.CanonicalScriptName != "" || got.SavedBy != "Anvil" {
+		t.Errorf("the tool after: %+v", got)
+	}
+	if _, ok := apptools.ByName("u", "wx", "uptime"); !ok {
+		t.Error("a new tool file made no tool")
+	}
+	if pool := LoadPersistentTempTools(nil, "u"); len(pool) != 0 {
+		t.Errorf("an install put the app's tools in the pool: %+v", pool)
+	}
+
+	os.WriteFile(filepath.Join(dir, "tools", "twice.json"), []byte(`{"name": "uptime", "command_template": "uptime -p"}`), 0o644)
+	if _, err := T.InstallAppFolder(context.Background(), "u", dir, "Two files, one name"); err == nil || !strings.Contains(err.Error(), "both name the tool") {
+		t.Fatalf("two files naming one tool: %v", err)
+	}
+	os.Remove(filepath.Join(dir, "tools", "twice.json"))
+
+	if n := AppOwnedCount("u", "wx"); n != "2 tools" {
+		t.Errorf("the delete confirmation counts %q", n)
+	}
+	gone, _ := DeleteAppOwned("u", "wx")
+	if strings.Join(gone, ",") != `tool "get_weather",tool "uptime"` || len(apptools.Load("u", "wx")) != 0 {
+		t.Errorf("deleting the app took %v", gone)
 	}
 }

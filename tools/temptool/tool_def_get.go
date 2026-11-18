@@ -22,6 +22,17 @@ func getGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	if sess == nil || sess.DB == nil || sess.Username == "" {
 		return "", fmt.Errorf("requires a session bound to a user")
 	}
+	if sess.AuthoringApp != "" {
+		t, ok := appToolRecord(sess, name)
+		if !ok {
+			return "", fmt.Errorf("the app %s has no tool %q of its own", sess.AuthoringApp, name)
+		}
+		body, err := json.MarshalIndent(t, "", "  ")
+		if err != nil {
+			return "", fmt.Errorf("marshal tool %q: %w", name, err)
+		}
+		return fmt.Sprintf("source: the app %s's own tools (changed only by Builder or Anvil, as part of the app)\n%s", sess.AuthoringApp, body), nil
+	}
 	// Active pool — most common case for "tool already exists."
 	for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
 		if p.Tool.Name == name {
@@ -141,6 +152,11 @@ func getGrouped(args map[string]any, sess *ToolSession) (string, error) {
 func loadExistingToolRecord(sess *ToolSession, name string) (TempTool, bool) {
 	if sess == nil {
 		return TempTool{}, false
+	}
+	// A call naming an app looks in that app's space and nowhere else: a
+	// tool of the person's by the same name is another tool.
+	if sess.AuthoringApp != "" {
+		return appToolRecord(sess, name)
 	}
 	if sess.DB != nil && sess.Username != "" {
 		for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {

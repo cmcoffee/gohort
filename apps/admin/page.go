@@ -62,7 +62,7 @@ var adminLayout = []struct {
 		"Resource Sharing", "Peers", "Shared With", "Import and export",
 	}},
 	{"Tools & Skills", []string{
-		"Drafted tools waiting for review", "Users' tools", "Agent-Scoped Tools", "Orphaned Tools",
+		"Drafted tools waiting for review", "Users' tools", "Agent-Scoped Tools", "Apps' own tools", "Orphaned Tools",
 		"Categories", "Shared tools", "Skills",
 	}},
 	// What every agent is held to, and what reaches the whole deployment:
@@ -460,7 +460,7 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 		"API Credentials": true, "MCP Servers": true, "Connectors": true, "Names no longer offered": true, "Other integrations": true, "Research Sources": true,
 		"Keystore": true, "Drafted tools waiting for review": true, "Users' tools": true, "System Hooks": true,
 		"Requests to share": true, "Shared tools": true,
-		"Agent-Scoped Tools": true, "Orphaned Tools": true,
+		"Agent-Scoped Tools": true, "Apps' own tools": true, "Orphaned Tools": true,
 		"Skills": true, "Teams": true, "External contacts": true,
 		"Templates":  true,
 		"Migrations": true, "Database Browser": true,

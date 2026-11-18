@@ -237,6 +237,50 @@ func (a *AdminApp) toolsSections() []ui.Section {
 			},
 		},
 		{
+			Title:    "Apps' own tools",
+			Subtitle: "Tools that are part of an app, kept in the app's own tool space.",
+			Detail: "Each app's tools are its own: they never collide with a person's tools of the same name, and only that app's agents load them. They change only through Builder or Anvil, as part of the app, so they cannot be edited here.\n\n" +
+				"A tool that reaches no further than gohort's own tools loads at once. One that reaches a credential or raw network waits until an administrator approves it, under Requests to share, one request per app; a change to it asks again.\n\n" +
+				"Switch off stops one tool for every agent of its app, until an administrator switches it back on. It is a stop, not an edit: the tool stays as the app has it.",
+			Body: ui.Table{
+				Source:       "api/app-tools",
+				RecordsField: "tools",
+				RowKey:       "key",
+				Columns: []ui.Col{
+					{Field: "tool.name", Flex: 1},
+					{Field: "app", Flex: 1, Label: "App", Mute: true},
+					{Field: "owner", Flex: 0, Mute: true},
+					{Field: "reaches", Flex: 1, Label: "Reaches", Mute: true},
+					{Field: "state", Flex: 1, Label: "State", Mute: true},
+				},
+				RowActions: []ui.RowAction{
+					ui.Expand("View", ui.RecordView{
+						Pairs: []ui.DisplayPair{
+							{Label: "Name", Field: "tool.name", Mono: true},
+							{Label: "App", Field: "app"},
+							{Label: "Owner", Field: "owner"},
+							{Label: "Last changed by", Field: "saved_by"},
+							{Label: "Description", Field: "tool.description"},
+							{Label: "Mode", Field: "tool.mode"},
+							{Label: "Method", Field: "tool.method", Mono: true},
+							{Label: "Command / URL template", Field: "tool.command_template", Mono: true, Block: true},
+							{Label: "Body template", Field: "tool.body_template", Mono: true, Block: true},
+							{Label: "Script name", Field: "tool.script_name", Mono: true},
+							{Label: "Script body", Field: "tool.script_body", Block: true},
+							{Label: "Credential", Field: "tool.credential", Mono: true},
+							{Label: "Hook capabilities", Field: "tool.hook_capabilities", Mono: true},
+						},
+					}),
+					{Type: "button", Label: "Switch off", Variant: "danger", HideIf: "stopped",
+						PostTo:  "api/app-tools?owner={owner}&slug={slug}&name={tool.name}&on=false",
+						Confirm: "Switch this tool off? Its app's agents stop loading it until an administrator switches it back on."},
+					{Type: "button", Label: "Switch back on", OnlyIf: "stopped",
+						PostTo: "api/app-tools?owner={owner}&slug={slug}&name={tool.name}&on=true"},
+				},
+				EmptyText: "No app has tools of its own.",
+			},
+		},
+		{
 			Title:    "Orphaned Tools",
 			Subtitle: "Formerly agent-scoped tools whose owning agent was deleted.",
 			Detail:   "They were captured so they are not silently lost. Give one back to its owner's pool to keep it (they choose which of their agents use it), or Delete to discard. A ⚠ badge marks a missing credential dependency.",

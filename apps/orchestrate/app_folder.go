@@ -229,7 +229,7 @@ func writeAppFolder(abs string, spec AppSpec, assets map[string][]byte, base str
 	} else {
 		os.Remove(filepath.Join(abs, appFolderBaseFile))
 	}
-	// What the app owns: its agents, pipelines and machines (app_owned.go).
+	// What the app owns: its agents, pipelines, machines and tools (app_owned.go).
 	for n, data := range appOwnedFiles(spec.Owner, spec.Slug) {
 		if err := write(n, data); err != nil {
 			return out, err
@@ -325,7 +325,7 @@ func AppFolderGuide() string {
 
 // AppFolderParts are the names at a folder's top that an install reads;
 // anything else there stays behind.
-var AppFolderParts = []string{"app.json", "page.html", "data", "actions", "lib", "assets", "NOTES.md", "checks.json", "agents", "pipelines", "machines"}
+var AppFolderParts = []string{"app.json", "page.html", "data", "actions", "lib", "assets", "NOTES.md", "checks.json", "agents", "pipelines", "machines", "tools"}
 
 // appFolderGuideLayout is the folder's files, as an author writes them.
 const appFolderGuideLayout = `A gohort app is a folder: install reads it, and nothing else in the folder matters.

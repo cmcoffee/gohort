@@ -1,15 +1,18 @@
 package orchestrate
 
 // What an app owns besides its own parts (docs/design/app-history.md, stage
-// 2, piece A): the agents, pipelines and machines made for it (owning_app).
-// They are in the app's folder, as the recipes an export writes
-// (agents/<name>.json, pipelines/<name>.json, machines/<name>.json), so
-// they are in its history; a change to one is a change to the app, recorded
+// 2, pieces A and B): the agents, pipelines and machines made for it
+// (owning_app), and its own tool space. They are in the app's folder, as the
+// recipes an export writes (agents/<name>.json, pipelines/<name>.json,
+// machines/<name>.json) and each tool's definition (tools/<name>.json, its
+// script beside it as tools/<name>.py or the like), so they are in its
+// history; a change to one is a change to the app, recorded
 // there and, for a shared app, taken out of sharing until an administrator
 // approves it, as a change to its page or scripts is.
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,11 +20,12 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/apptools"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
 // appOwnedDirs are the folders of an app's folder that hold what it owns.
-var appOwnedDirs = []string{"agents", "pipelines", "machines"}
+var appOwnedDirs = []string{"agents", "pipelines", "machines", "tools"}
 
 func init() {
 	RegisterAppOwnedChangeHook(appOwnedChanged)
@@ -33,6 +37,10 @@ func init() {
 type appOwnedItem struct {
 	kind, id, name string
 	data           []byte
+	// script is a tool's script, a file of its own beside data
+	// (scriptFile), so it is edited and diffed as code.
+	scriptFile string
+	script     []byte
 }
 
 // appOwnedIndex is owner's app slug's own agents, pipelines and machines, by
@@ -83,7 +91,48 @@ func appOwnedIndex(owner, slug string) map[string]appOwnedItem {
 			put("machines", "machine", d.ID, d.Name, ExportMachine(ma.normalizeDelegates(d, owner)))
 		}
 	}
+	for _, at := range apptools.Load(owner, slug) {
+		def, script := appToolFolderForm(at.Tool)
+		b, err := json.MarshalIndent(def, "", "  ")
+		if err != nil {
+			continue
+		}
+		base := appToolFileBase(at.Tool.Name)
+		it := appOwnedItem{kind: "tool", id: at.Tool.Name, name: at.Tool.Name, data: append(b, '\n')}
+		if script != "" {
+			it.scriptFile, it.script = "tools/"+base+appToolScriptExt(def.ScriptName), []byte(script)
+		}
+		out["tools/"+base+".json"] = it
+	}
 	return out
+}
+
+// appToolFileBase is the name of a tool's files in the app's folder: its
+// own name, which is already a plain identifier, or a slug of it.
+func appToolFileBase(name string) string {
+	for _, r := range name {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+			return slugify(name)
+		}
+	}
+	return name
+}
+
+// appToolScriptExt is the extension of a tool's script file, from the name
+// its command runs it by (script_name), ".py" when that has none.
+func appToolScriptExt(scriptName string) string {
+	if ext := filepath.Ext(scriptName); ext != "" && len(ext) <= 6 {
+		return ext
+	}
+	return ".py"
+}
+
+// appToolFolderForm is t as its folder file holds it: the script apart, and
+// the on-disk name the framework derives (canonical_script_name) left out.
+func appToolFolderForm(t TempTool) (TempTool, string) {
+	script := t.ScriptBody
+	t.ScriptBody, t.CanonicalScriptName = "", ""
+	return t, script
 }
 
 // appOwnedFiles are the app's owned items as the files of its folder.
@@ -91,6 +140,9 @@ func appOwnedFiles(owner, slug string) map[string][]byte {
 	out := map[string][]byte{}
 	for f, it := range appOwnedIndex(owner, slug) {
 		out[f] = it.data
+		if it.scriptFile != "" {
+			out[it.scriptFile] = it.script
+		}
 	}
 	return out
 }
@@ -101,13 +153,15 @@ type appOwnedFolder struct {
 	agents    map[string]agentExport
 	pipelines map[string]PipelineDef
 	machines  map[string]MachineDef
-	raw       map[string][]byte
+	// tools are each tool's definition with its script read back in.
+	tools map[string]TempTool
+	raw   map[string][]byte
 }
 
 // readAppOwnedFolder reads the folder's owned files. One that does not parse
 // is an error naming it: the install stops before anything is saved.
 func readAppOwnedFolder(abs, rel string) (appOwnedFolder, error) {
-	f := appOwnedFolder{agents: map[string]agentExport{}, pipelines: map[string]PipelineDef{}, machines: map[string]MachineDef{}, raw: map[string][]byte{}}
+	f := appOwnedFolder{agents: map[string]agentExport{}, pipelines: map[string]PipelineDef{}, machines: map[string]MachineDef{}, tools: map[string]TempTool{}, raw: map[string][]byte{}}
 	for _, dir := range appOwnedDirs {
 		entries, err := os.ReadDir(filepath.Join(abs, dir))
 		if err != nil {
@@ -142,6 +196,12 @@ func readAppOwnedFolder(abs, rel string) (appOwnedFolder, error) {
 					bad = fmt.Errorf("it names no machine")
 				}
 				f.machines[file] = v
+			case "tools":
+				var v TempTool
+				if bad = json.Unmarshal(b, &v); bad == nil {
+					bad = readAppToolScript(abs, file, &v)
+				}
+				f.tools[file] = v
 			}
 			if bad != nil {
 				return f, fmt.Errorf("%s/%s does not read: %v", rel, file, bad)
@@ -149,7 +209,47 @@ func readAppOwnedFolder(abs, rel string) (appOwnedFolder, error) {
 			f.raw[file] = b
 		}
 	}
+	// One name, one tool: two files naming it would leave which one the
+	// app has to the order they were read in.
+	byName := map[string]string{}
+	files := make([]string, 0, len(f.tools))
+	for file := range f.tools {
+		files = append(files, file)
+	}
+	sort.Strings(files)
+	for _, file := range files {
+		name := f.tools[file].Name
+		if other, ok := byName[name]; ok {
+			return f, fmt.Errorf("%s/%s and %s/%s both name the tool %q: one name, one file", rel, other, rel, file, name)
+		}
+		byName[name] = file
+	}
 	return f, nil
+}
+
+// readAppToolScript reads into t the script beside its file (tools/<name>
+// and the extension of its script_name), when there is one. A tool named in
+// no file, or with its script both inside and beside, does not read.
+func readAppToolScript(abs, file string, t *TempTool) error {
+	t.Name = strings.TrimSpace(t.Name)
+	if t.Name == "" {
+		return fmt.Errorf("it names no tool")
+	}
+	if t.ScriptName == "" {
+		return nil
+	}
+	side := strings.TrimSuffix(file, ".json") + appToolScriptExt(t.ScriptName)
+	b, err := os.ReadFile(filepath.Join(abs, filepath.FromSlash(side)))
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return nil
+	case err != nil:
+		return err
+	case t.ScriptBody != "":
+		return fmt.Errorf("its script is both in it (script_body) and beside it (%s): keep one", side)
+	}
+	t.ScriptBody = string(b)
+	return nil
 }
 
 // keepAgentUse carries onto next what is not the agent's definition: its
@@ -224,6 +324,25 @@ func (t *chatTurn) applyAppOwned(slug string, f appOwnedFolder) (string, error) 
 			return "", fmt.Errorf("the machine in %s: %w", file, err)
 		}
 		changed = append(changed, "machine "+def.Name)
+	}
+	for file, tool := range f.tools {
+		cur, had := apptools.ByName(owner, slug, tool.Name)
+		if prev, ok := have[file]; ok && prev.name != tool.Name {
+			// The file now holds another name: a rename, the old one goes.
+			if err := apptools.DeleteBy(owner, slug, prev.name, via); err != nil {
+				return "", fmt.Errorf("the tool in %s: %w", file, err)
+			}
+		}
+		if had && cur.Tool.ScriptBody == tool.ScriptBody {
+			tool.CanonicalScriptName = cur.Tool.CanonicalScriptName
+		}
+		if had && appToolJSONEqual(cur.Tool, tool) {
+			continue
+		}
+		if err := apptools.SaveBy(owner, slug, tool, via); err != nil {
+			return "", fmt.Errorf("the tool in %s: %w", file, err)
+		}
+		changed = append(changed, "tool "+tool.Name)
 	}
 	var gone []string
 	for file, it := range have {
@@ -322,7 +441,7 @@ func appOwnedCount(owner, slug string) string {
 		n[it.kind]++
 	}
 	var parts []string
-	for _, kind := range []string{"agent", "pipeline", "machine"} {
+	for _, kind := range []string{"agent", "pipeline", "machine", "tool"} {
 		switch c := n[kind]; {
 		case c == 1:
 			parts = append(parts, "1 "+kind)
@@ -381,6 +500,9 @@ func deleteAppOwned(owner, slug string) (gone, kept []string) {
 		}
 		var err error
 		switch it.kind {
+		case "tool":
+			// The app's space goes whole, below.
+			continue
 		case "agent":
 			err = deleteAgent(udb, it.id, owner)
 		case "pipeline":
@@ -393,6 +515,9 @@ func deleteAppOwned(owner, slug string) (gone, kept []string) {
 			continue
 		}
 		gone = append(gone, label)
+	}
+	for _, name := range apptools.DeleteAll(owner, slug) {
+		gone = append(gone, fmt.Sprintf("tool %q", name))
 	}
 	if len(gone) > 0 {
 		Log("[appspec] %s deleted app %q and what it owned: %s", owner, slug, strings.Join(gone, ", "))
@@ -470,4 +595,83 @@ func agentRunStopped(a AgentRecord) error {
 		return errAppSwitchedOff{why: why}
 	}
 	return nil
+}
+
+// loadAppSpaceTools loads into sess the tools of the app t's agent is part
+// of (its own tool space, owner's), as the agent's own kit, and returns
+// every name the space holds, loaded or not: a tool of the space that is held
+// (an administrator's stop, a reach not yet approved) is not stood in for by
+// the pool's tool of its name.
+func (t *chatTurn) loadAppSpaceTools(sess *ToolSession, owner string) map[string]bool {
+	slug := strings.TrimSpace(t.agent.OwningApp)
+	if sess == nil || slug == "" || owner == "" {
+		return nil
+	}
+	tools := apptools.Load(owner, slug)
+	if len(tools) == 0 {
+		return nil
+	}
+	review := apptools.LoadReview(owner, slug)
+	names := make(map[string]bool, len(tools))
+	for _, at := range tools {
+		tool := at.Tool
+		names[tool.Name] = true
+		if tool.Disabled || (t.privateMode && tool.Mode == TempToolModeAPI) {
+			continue
+		}
+		if why := apptools.Held(owner, slug, tool, review); why != "" {
+			Log("[orchestrate.tools] app %s/%s: tool %q not loaded: %s", owner, slug, tool.Name, why)
+			continue
+		}
+		if err := sess.AppendTempTool(&tool); err != nil {
+			Log("[orchestrate.tools] app %s/%s: tool %q failed to load: %v", owner, slug, tool.Name, err)
+			continue
+		}
+		t.agentOwnTools[tool.Name] = true
+	}
+	return names
+}
+
+// appToolJSONEqual reports whether two tools are one as stored.
+func appToolJSONEqual(a, b TempTool) bool {
+	x, _ := json.Marshal(a)
+	y, _ := json.Marshal(b)
+	return string(x) == string(y)
+}
+
+// wireAppToolSpace gives sess (Builder's) the owner's apps' own tool spaces,
+// which tool_def reaches by naming an app; each change is Builder's change to
+// the app, through its boundary and history.
+func wireAppToolSpace(sess *ToolSession, owner string) {
+	if sess == nil || owner == "" {
+		return
+	}
+	own := func(slug string) error {
+		if _, ok := LoadAppSpec(owner, slug); !ok {
+			return fmt.Errorf("there is no app %q of yours: name an app by its id, as app_def(action=\"list\") shows it", slug)
+		}
+		return nil
+	}
+	sess.AppTools = func(slug string) ([]TempTool, error) {
+		if err := own(slug); err != nil {
+			return nil, err
+		}
+		var out []TempTool
+		for _, at := range apptools.Load(owner, slug) {
+			out = append(out, at.Tool)
+		}
+		return out, nil
+	}
+	sess.SaveAppTool = func(slug string, t TempTool) error {
+		if err := own(slug); err != nil {
+			return err
+		}
+		return apptools.SaveBy(owner, slug, t, "Builder")
+	}
+	sess.DeleteAppTool = func(slug, name string) error {
+		if err := own(slug); err != nil {
+			return err
+		}
+		return apptools.DeleteBy(owner, slug, name, "Builder")
+	}
 }

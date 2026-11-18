@@ -353,6 +353,20 @@ type ToolSession struct {
 	// vs BundleTool) applies.
 	BundleAuthoredToolTo string
 
+	// AuthoringApp is the app a tool_def call makes or changes a tool of
+	// (its "app" argument), set for that one call: the tool is the app's
+	// own (core/apptools, docs/design/app-history.md piece B), not the
+	// person's. "" for the person's own tools.
+	AuthoringApp string
+	// AppTools lists an app's own tools, SaveAppTool saves one into its
+	// space and DeleteAppTool removes one, each as Builder's change to the
+	// app, and each refusing an app that is not the session's person's.
+	// Nil for every agent but Builder: only Builder and Anvil change an
+	// app's tools.
+	AppTools      func(slug string) ([]TempTool, error)
+	SaveAppTool   func(slug string, t TempTool) error
+	DeleteAppTool func(slug, name string) error
+
 	// Network is the framework-managed network-access gate for this
 	// session and every descendant spawned from it. Top-level turns
 	// build it from privacy mode; sub-agent dispatches

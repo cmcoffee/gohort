@@ -14,6 +14,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/apptools"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -261,5 +262,51 @@ func TestTheScopePillsReachTheirKindsProvider(t *testing.T) {
 	}
 	if w := f.do(t, "DELETE", "/api/tool-scope?kind=zz_test_kind&name=x", ""); w.Code != 405 {
 		t.Errorf("DELETE answered %d", w.Code)
+	}
+}
+
+// Admin's Tools page lists every app's own tools, with what each reaches and
+// whether it loads, and an administrator switches one off and back on: a
+// stop, which leaves the tool as the app has it.
+func TestAdminListsAndStopsAnAppsOwnTools(t *testing.T) {
+	f := newToolsFixture(t)
+	apptools.SaveBy("bob", "wx", TempTool{Name: "crm", Mode: TempToolModeAPI, Credential: "crm"}, "Builder")
+	apptools.SaveBy("bob", "wx", TempTool{Name: "plain", CommandTemplate: "echo"}, "Anvil")
+	list := func() map[string]map[string]any {
+		w := f.do(t, "GET", "/api/app-tools", "")
+		var out struct {
+			Tools []map[string]any `json:"tools"`
+		}
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &out) != nil {
+			t.Fatalf("list: %d %s", w.Code, w.Body.String())
+		}
+		got := map[string]map[string]any{}
+		for _, r := range out.Tools {
+			got[r["key"].(string)] = r
+		}
+		return got
+	}
+	got := list()
+	if r := got["bob/wx/crm"]; r == nil || !strings.Contains(r["reaches"].(string), `credential "crm"`) || !strings.Contains(r["state"].(string), "waiting") {
+		t.Fatalf("the credential tool: %v", r)
+	}
+	if r := got["bob/wx/plain"]; r == nil || r["state"] != "loads" {
+		t.Fatalf("the plain tool: %v", r)
+	}
+	if w := f.do(t, "POST", "/api/app-tools?owner=bob&slug=wx&name=plain&on=false", "{}"); w.Code != 200 {
+		t.Fatalf("switch off: %d %s", w.Code, w.Body.String())
+	}
+	if r := list()["bob/wx/plain"]; r["stopped"] != true || !strings.Contains(r["state"].(string), "switched off") {
+		t.Errorf("after the stop: %v", r)
+	}
+	if at, _ := apptools.ByName("bob", "wx", "plain"); at.SavedBy != "Anvil" || at.Tool.CommandTemplate != "echo" {
+		t.Errorf("a stop changed the tool: %+v", at)
+	}
+	f.do(t, "POST", "/api/app-tools?owner=bob&slug=wx&name=plain&on=true", "{}")
+	if r := list()["bob/wx/plain"]; r["state"] != "loads" {
+		t.Errorf("switched back on: %v", r)
+	}
+	if w := f.do(t, "POST", "/api/app-tools?owner=bob&slug=wx&name=none&on=false", "{}"); w.Code != 400 {
+		t.Errorf("a tool the app does not have: %d", w.Code)
 	}
 }

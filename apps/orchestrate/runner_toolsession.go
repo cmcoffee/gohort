@@ -193,7 +193,13 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 	if t.agentOwnTools == nil {
 		t.agentOwnTools = map[string]bool{}
 	}
+	// An app's agent loads its app's own tool space first: one of its
+	// names wins over the pool's tool of that name (app_owned.go).
+	appSpace := t.loadAppSpaceTools(sess, poolUser)
 	for _, p := range loaded {
+		if appSpace[p.Tool.Name] {
+			continue
+		}
 		// The rule itself, including why Builder sees disabled, Builder-only,
 		// bound-only and other agents' scoped tools, is poolToolGate.admits.
 		if !gate.admits(p) || (sender != nil && !sender.admits(p)) {
@@ -251,6 +257,11 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 	base := t.agent
 	agentID, owner, poolDBRef := t.agent.ID, poolUser, poolDB
 	sess.CanScopeGlobal = isBuilderAgent(agentID)
+	// Builder makes and changes the owner's apps' own tools (tool_def's
+	// app argument); no other agent has them (app_owned.go).
+	if isBuilderAgent(agentID) {
+		wireAppToolSpace(sess, owner)
+	}
 	// find_tools reads the load-before-use index through this; read at call
 	// time, since the deferred set is filled after the session is set up.
 	sess.LoadableTools = func() []ToolMatch {

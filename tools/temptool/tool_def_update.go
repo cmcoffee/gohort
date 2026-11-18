@@ -43,7 +43,7 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	// Somebody else's tool (lent, adopted, or published) is refused before
 	// anything resolves it: the session carries a copy, and updating that copy
 	// persisted it into this user's pool, forking the owner's tool silently.
-	if owner, how := foreignToolOwner(sess, name); owner != "" {
+	if owner, how := foreignToolOwner(sess, name); owner != "" && sess.AuthoringApp == "" {
 		return fmt.Sprintf(foreignToolMsg, name, owner, how, owner), nil
 	}
 	if msg := toolEditRefused(sess, name, args); msg != "" {
@@ -53,7 +53,7 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		return msg, nil
 	}
 	existing, ok := loadExistingToolRecord(sess, name)
-	if !ok {
+	if !ok && sess.AuthoringApp == "" {
 		// Not in the user-wide pool, pending queue, this session's drafts, or
 		// this agent's own live tools — but it may be bundled to ANOTHER of the
 		// user's agents (e.g. Builder repairing a tool that lives on a channel
@@ -82,7 +82,7 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	// tool's scope to the EDITING agent — an edit must never be a grant.
 	// (Builder's AdminPersistTempTool path also preserves scope; the redirect
 	// just makes every session take the same explicit route.)
-	if sess.BundleAuthoredToolTo == "" {
+	if sess.BundleAuthoredToolTo == "" && sess.AuthoringApp == "" {
 		if row, found := UserToolByName(sess.DB, sess.Username, name); found && len(row.ScopeAgents) > 0 {
 			sess.BundleAuthoredToolTo = row.ScopeAgents[0]
 			defer func() { sess.BundleAuthoredToolTo = "" }()
@@ -342,6 +342,12 @@ func deleteGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	name := strings.TrimSpace(StringArg(args, "name"))
 	if msg := toolEditRefused(sess, name, nil); msg != "" {
 		return msg, nil
+	}
+	if sess.AuthoringApp != "" {
+		if msg := toolChangeRefused(sess, name, "Delete it from the app's own tools.", true); msg != "" {
+			return msg, nil
+		}
+		return removeAppTool(sess, name)
 	}
 	// The one question a delete asks, with what it costs and who loses it.
 	holders := toolHolders(sess, name)

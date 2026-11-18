@@ -1,11 +1,13 @@
 package admin
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appagents"
+	"github.com/cmcoffee/gohort/core/apptools"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
@@ -30,6 +32,13 @@ func (a *AdminApp) registerToolsRoutes(sub *http.ServeMux) {
 	sub.HandleFunc("/api/tool-scope", jsonapi.Methods{
 		"GET":  jsonapi.Get(a.db, a.handleToolScope, a.gate()),
 		"POST": jsonapi.Post(a.db, a.handleToolScopeSet, a.gate()),
+	}.Serve)
+
+	// Apps' own tools (core/apptools): GET every app's space; POST
+	// ?owner=&slug=&name=&on= switches one tool off or back on.
+	sub.HandleFunc("/api/app-tools", jsonapi.Methods{
+		"GET":  jsonapi.Get(a.db, a.handleAppTools, a.gate()),
+		"POST": jsonapi.Post(a.db, a.switchAppTool, a.gate()),
 	}.Serve)
 
 }
@@ -463,4 +472,63 @@ func (a *AdminApp) handleToolScopeSet(c *jsonapi.Call, body struct {
 		return nil, jsonapi.BadRequest(err.Error())
 	}
 	return jsonapi.Empty(http.StatusNoContent), nil
+}
+
+// appToolRow is one tool of an app's own space, as admin's Tools page lists
+// it: whose, which app's, what it reaches beyond gohort's own tools, and
+// whether it loads.
+type appToolRow struct {
+	Key     string   `json:"key"`
+	Owner   string   `json:"owner"`
+	Slug    string   `json:"slug"`
+	App     string   `json:"app"`
+	Reaches string   `json:"reaches"`
+	State   string   `json:"state"`
+	Stopped bool     `json:"stopped,omitempty"`
+	Tool    TempTool `json:"tool"`
+	SavedBy string   `json:"saved_by,omitempty"`
+}
+
+// handleAppTools answers GET /api/app-tools: every app's own tools.
+func (a *AdminApp) handleAppTools(c *jsonapi.Call) (any, error) {
+	rows := []appToolRow{}
+	for _, sp := range apptools.Spaces() {
+		owner, slug := sp[0], sp[1]
+		app := slug
+		if spec, ok := LoadAppSpec(owner, slug); ok && spec.Name != "" {
+			app = spec.Name
+		}
+		review := apptools.LoadReview(owner, slug)
+		for _, at := range apptools.Load(owner, slug) {
+			reach := strings.Join(apptools.Reach(at.Tool), ", ")
+			if reach == "" {
+				reach = "no further than gohort's own tools"
+			}
+			state := "loads"
+			if why := apptools.Held(owner, slug, at.Tool, review); why != "" {
+				state = why
+			}
+			rows = append(rows, appToolRow{Key: owner + "/" + slug + "/" + at.Tool.Name, Owner: owner, Slug: slug, App: app,
+				Reaches: reach, State: state, Stopped: review.Stopped[at.Tool.Name] != "", Tool: at.Tool, SavedBy: at.SavedBy})
+		}
+	}
+	return map[string]any{"tools": rows}, nil
+}
+
+// switchAppTool answers POST /api/app-tools: an administrator's stop of one
+// tool of an app's space (on=false), or switching it back on.
+func (a *AdminApp) switchAppTool(c *jsonapi.Call, _ json.RawMessage) (any, error) {
+	q := c.R.URL.Query()
+	owner, slug, name := strings.TrimSpace(q.Get("owner")), strings.TrimSpace(q.Get("slug")), strings.TrimSpace(q.Get("name"))
+	if _, ok := apptools.ByName(owner, slug, name); !ok {
+		return nil, jsonapi.BadRequest("no such tool of that app")
+	}
+	on := q.Get("on") == "true"
+	apptools.Stop(owner, slug, name, c.User, !on)
+	if on {
+		Log("[admin] %s switched the tool %q of app %s/%s back on", c.User, name, owner, slug)
+		return map[string]any{"ok": true, "message": "Switched back on."}, nil
+	}
+	Log("[admin] %s switched off the tool %q of app %s/%s", c.User, name, owner, slug)
+	return map[string]any{"ok": true, "message": "Switched off. The app's agents no longer load it, until an administrator switches it back on."}, nil
 }
