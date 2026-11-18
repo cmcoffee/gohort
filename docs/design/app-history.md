@@ -1,6 +1,7 @@
 # One history per app, for Builder and Anvil, and apps that hold everything they run on
 
-Status: agreed (2026-11-17), stage 1 next. The seven questions are settled
+Status: agreed (2026-11-17). Stage 1 is built on the `app-history` branch,
+not yet merged: steps 2 to 4 done, step 5 (measuring) waits on running it. The seven questions are settled
 (Decisions, at the end). Step 1 (Anvil saying when an install leaves the app
 broken) shipped first, on its own, in 0.9.510.
 
@@ -365,7 +366,10 @@ stage it belongs to.
    prompt given to one of the app's agents, and what its reply must and
    must not contain (`{"agent": "<name>", "ask": "...", "expect": [...]}`),
    run like a script check, against scratch records, with writes refused.
-   Builder commits an agent's change once its agent checks pass.
+   Builder commits an agent's change once its agent checks pass. Built so
+   the agent answers without its tools (what a script's gohort.ask
+   reaches), which tests what it says and can never write; testing its use
+   of tools, with them held to scratch records, is a follow-up.
 4. **Model tiers, not model names (stage 2).** An agent copied or imported
    into an app carries its model choice, and model names differ between
    deployments. An app's agents name a tier (Worker, Lead, the Offload
@@ -438,7 +442,9 @@ Stage 1:
    theirs). Agent checks, so an agent's change can be tested.
 4. Anvil's app projects open the app's repository; Install fast-forwards;
    another save since is fetched and merged, or shown as a conflict.
-5. Measure: repository sizes and commit times across real apps.
+5. Measure: repository sizes and commit times across real apps. Each
+   finished commit logs both (`[app-history] ... committed in ...; its
+   history is ...`), so running the branch is the measurement.
 
 Stage 2 (an app holds everything it runs on):
 
