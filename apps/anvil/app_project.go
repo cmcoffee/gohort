@@ -139,6 +139,18 @@ func writeAppCheckout(user, slug, base string) error {
 	if err := os.MkdirAll(base, 0o700); err != nil {
 		return err
 	}
+	// The app's own history, where there is one (app_history.go); a history
+	// of the project's own where git is missing or the clone failed.
+	switch err := cloneAppHistory(context.Background(), user, slug, base); {
+	case err == nil:
+		return nil
+	case !errors.Is(err, orchestrate.ErrNoAppHistory):
+		Log("[anvil] %s: the app's history could not be taken, so the project keeps one of its own: %v", slug, err)
+		os.RemoveAll(base)
+		if err := os.MkdirAll(base, 0o700); err != nil {
+			return err
+		}
+	}
 	if err := orchestrate.WriteAppFolder(user, slug, base); err != nil {
 		return err
 	}
@@ -211,6 +223,12 @@ func installAppCheckout(ctx context.Context, udb Database, user string, p Projec
 	if msg != "" {
 		note, commit = msg, msg
 	}
+	// What was saved to the app since this checkout took it comes in first,
+	// merged with the work; an overlap stops the install as a conflict.
+	inHistory, err := takeAppChanges(ctx, user, p.AppSlug, base)
+	if err != nil {
+		return "", err
+	}
 	_, err = o.InstallAppFolder(ctx, user, base, note)
 	broken, isBroken := savedBroken(err)
 	if err != nil && !isBroken {
@@ -220,7 +238,17 @@ func installAppCheckout(ctx context.Context, udb Database, user string, p Projec
 	if udb != nil && msg != "" {
 		udb.Unset(installMessageTable, p.ID)
 	}
-	if err := commitCheckout(base, user, commit); err != nil {
+	// In the app's history the install made the commit; the checkout moves
+	// onto it. A project with a history of its own commits there.
+	// A broken install is not finished work: it is not committed, and the
+	// change stays in the checkout for the next install.
+	if inHistory {
+		if !isBroken {
+			if err := settleOnAppHistory(ctx, user, p.AppSlug, base); err != nil {
+				Log("[anvil] %s installed, but the checkout could not take the app's commit: %v", p.AppSlug, err)
+			}
+		}
+	} else if err := commitCheckout(base, user, commit); err != nil {
 		Log("[anvil] %s installed, but the commit failed: %v", p.AppSlug, err)
 	}
 	if isBroken {

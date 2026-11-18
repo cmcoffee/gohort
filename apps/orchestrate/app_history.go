@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -111,9 +112,15 @@ func saveAppPending(dir string, p appPending) error {
 	return os.WriteFile(appPendingPath(dir), b, 0o600)
 }
 
-// appPendingMessage is the commit message for saves committed because
-// someone else changed the app before they were marked finished.
-func appPendingMessage(p appPending) string {
+// Why waiting saves are committed before their work is marked finished.
+const (
+	waitingInterrupted = "Committed when someone else changed the app, before this work was marked finished."
+	waitingForCheckout = "Committed so a checkout could take the app as it is live, before this work was marked finished."
+)
+
+// appPendingMessage is the commit message for waiting saves committed before
+// they were marked finished, saying why.
+func appPendingMessage(p appPending, why string) string {
 	subject := "Work in progress by " + p.By
 	var rest []string
 	for i, n := range p.Notes {
@@ -126,21 +133,21 @@ func appPendingMessage(p appPending) string {
 			rest = append(rest, "- "+first)
 		}
 	}
-	msg := subject + "\n\nCommitted when someone else changed the app, before this work was marked finished."
+	msg := subject + "\n\n" + why
 	if len(rest) > 0 {
 		msg += "\n\nAlso in it:\n" + strings.Join(rest, "\n")
 	}
 	return msg
 }
 
-// commitWaiting commits the saves waiting in dir as their author's, and
-// forgets them.
-func commitWaiting(dir string) error {
+// commitWaiting commits the saves waiting in dir as their author's, saying
+// why they were committed unfinished, and forgets them.
+func commitWaiting(dir, why string) error {
 	p := loadAppPending(dir)
 	if p.By == "" {
 		return nil
 	}
-	if err := appRepoCommit(dir, p.By, p.Via, appPendingMessage(p)); err != nil {
+	if err := appRepoCommit(dir, p.By, p.Via, appPendingMessage(p, why)); err != nil {
 		return err
 	}
 	return os.Remove(appPendingPath(dir))
@@ -162,12 +169,24 @@ func syncAppRepo(spec AppSpec) error {
 	mu := appRepoLock(dir)
 	mu.Lock()
 	defer mu.Unlock()
+	return syncAppRepoLocked(dir, spec)
+}
+
+// AppHistoryBranch is the branch an app's history is kept on.
+const AppHistoryBranch = "main"
+
+// syncAppRepoLocked is syncAppRepo with the app's history already held.
+func syncAppRepoLocked(dir string, spec AppSpec) error {
 	fresh := false
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err
 		}
 		if _, err := appRepoGit(dir, "init", "-q"); err != nil {
+			return err
+		}
+		// Named here, not by the git version's or host's default.
+		if _, err := appRepoGit(dir, "symbolic-ref", "HEAD", "refs/heads/"+AppHistoryBranch); err != nil {
 			return err
 		}
 		fresh = true
@@ -178,7 +197,7 @@ func syncAppRepo(spec AppSpec) error {
 	}
 	if !fresh {
 		if p := loadAppPending(dir); p.By != "" && (p.By != by || p.Via != via) {
-			if err := commitWaiting(dir); err != nil {
+			if err := commitWaiting(dir, waitingInterrupted); err != nil {
 				return err
 			}
 		}
@@ -240,20 +259,42 @@ func CommitAppHistory(owner, slug, by, via, message string) (bool, error) {
 		return false, fmt.Errorf("%s has no history yet: it starts at the app's next save", spec.Name)
 	}
 	if p := loadAppPending(dir); p.By != "" && (p.By != by || p.Via != via) {
-		if err := commitWaiting(dir); err != nil {
+		if err := commitWaiting(dir, waitingInterrupted); err != nil {
 			return false, err
 		}
 	}
 	if _, err := writeAppRepoFiles(dir, spec); err != nil {
 		return false, err
 	}
+	started := time.Now()
 	head, _ := appRepoGit(dir, "rev-parse", "HEAD")
 	if err := appRepoCommit(dir, by, via, message); err != nil {
 		return false, err
 	}
 	os.Remove(appPendingPath(dir))
 	after, _ := appRepoGit(dir, "rev-parse", "HEAD")
-	return strings.TrimSpace(after) != strings.TrimSpace(head), nil
+	done := strings.TrimSpace(after) != strings.TrimSpace(head)
+	if done {
+		// What stage 1 is to measure before the later stages are settled
+		// (docs/design/app-history.md, step 5): what a commit costs, and how
+		// large an app's history grows.
+		Log("[app-history] %s/%s: committed in %s; its history is %s", owner, slug, time.Since(started).Round(time.Millisecond), HumanSize(dirBytes(filepath.Join(dir, ".git"))))
+	}
+	return done, nil
+}
+
+// dirBytes is the size of the files under dir.
+func dirBytes(dir string) int64 {
+	var n int64
+	filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			if info, err := d.Info(); err == nil {
+				n += info.Size()
+			}
+		}
+		return nil
+	})
+	return n
 }
 
 // writeAppRepoFiles makes the repository's files the app's: written where
@@ -435,3 +476,65 @@ func (t *chatTurn) uncommittedWorkNotice() string {
 	t.commitAsked = true
 	return fmt.Sprintf("Your reply was held back: your work on %q is verified and not yet in its history. Commit it before you finish: app_def(action=\"commit\", id=%q, message=...), a first line saying what the work changed (under 72 characters), a blank line, and why. Then give your reply.", spec.Name, spec.Slug)
 }
+
+// BundleAppHistory writes owner's app slug's history to dest as a git bundle,
+// for a checkout of it (Anvil) to clone or fetch from: the history is
+// gohort's, and a checkout's git runs in the sandbox, which reaches a file it
+// is handed and nothing else. It is brought up to date with the app first:
+// made, for an app saved before it had one; waiting saves committed as their
+// author's; anything changed outside a save (an asset) committed as the
+// owner's. So what a checkout takes is the app as it is live, but for the
+// saves waiting from keepBy through keepVia, which are the checkout's own
+// work (an install from it not yet finished) and stay waiting; "" commits
+// every waiting save, for a checkout made new.
+func BundleAppHistory(owner, slug, dest, keepBy, keepVia string) error {
+	if appGit() == "" {
+		return ErrNoAppHistory
+	}
+	dir, ok := appRepoDir(owner, slug)
+	if !ok {
+		return fmt.Errorf("no place for the history of %q", slug)
+	}
+	spec, found := LoadAppSpec(owner, slug)
+	if !found {
+		return fmt.Errorf("no app %q", slug)
+	}
+	mu := appRepoLock(dir)
+	mu.Lock()
+	defer mu.Unlock()
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+		spec.ChangedBy, spec.ChangedVia = owner, ""
+		if err := syncAppRepoLocked(dir, spec); err != nil {
+			return err
+		}
+	}
+	own := false
+	if p := loadAppPending(dir); keepBy != "" && p.By == keepBy && p.Via == keepVia {
+		own = true
+	} else if err := commitWaiting(dir, waitingForCheckout); err != nil {
+		return err
+	}
+	if changed, err := writeAppRepoFiles(dir, spec); err != nil {
+		return err
+	} else if changed && !own {
+		if err := appRepoCommit(dir, owner, "", "Bring the history up to date with the app\n\nChanges made outside a save, such as an asset added."); err != nil {
+			return err
+		}
+	}
+	_, err := appRepoGit(dir, "bundle", "create", dest, AppHistoryBranch)
+	return err
+}
+
+// AppLiveMarker is what a folder of owner's app slug records as the live
+// version it holds (appFolderBaseFile), so an install from it is not taken
+// for undoing a change made elsewhere.
+func AppLiveMarker(owner, slug string) (string, error) {
+	spec, ok := LoadAppSpec(owner, slug)
+	if !ok {
+		return "", fmt.Errorf("no app %q", slug)
+	}
+	return appLiveFingerprint(spec), nil
+}
+
+// AppLiveMarkerFile is the name of that record in a folder.
+const AppLiveMarkerFile = appFolderBaseFile

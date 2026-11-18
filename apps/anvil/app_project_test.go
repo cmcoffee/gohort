@@ -73,7 +73,8 @@ func TestOneOfYourAppsOpensAsItsFiles(t *testing.T) {
 			t.Errorf("the checkout has no %s", f)
 		}
 	}
-	if log, _ := runGit(base, "log", "--format=%s"); strings.TrimSpace(log) != "As installed" {
+	// The checkout is the app's own history (app_history.go).
+	if log, _ := runGit(base, "log", "--format=%s"); strings.TrimSpace(log) != "Start of Weather's history" {
 		t.Errorf("history: %q", log)
 	}
 	if st, _ := runGit(base, "status", "--porcelain"); strings.TrimSpace(st) != "" {
@@ -105,8 +106,13 @@ func TestInstallPutsTheWorkingCopyLive(t *testing.T) {
 	if live, _ := LoadAppSpec("alice", "wx"); live.DataSources[0].Script != "print('{\"t\": 1}')" {
 		t.Errorf("not live: %+v", live.DataSources)
 	}
-	if log, _ := runGit(base, "log", "--format=%s"); strings.TrimSpace(log) != "Installed\nAs installed" {
+	// The install is a commit in the app's history, with the install's note,
+	// and the checkout stands on it.
+	if log, _ := runGit(base, "log", "--format=%s"); strings.TrimSpace(log) != "Installed from Anvil\nStart of Weather's history" {
 		t.Errorf("history: %q", log)
+	}
+	if st, _ := runGit(base, "status", "--porcelain"); strings.TrimSpace(st) != "" {
+		t.Errorf("the checkout is not on the install's commit: %q", st)
 	}
 	if w := serve("root", "POST", "/api/project/"+id+"/install", "{}"); w.Code == 200 {
 		t.Error("somebody else installed alice's working copy")
@@ -610,8 +616,13 @@ func TestAnInstallThatLeavesTheAppBrokenSaysSo(t *testing.T) {
 	if live, _ := LoadAppSpec("alice", "wx"); !strings.Contains(live.DataSources[0].Script, "SystemExit") {
 		t.Errorf("the broken version is not the live one, as the answer says: %q", live.DataSources[0].Script)
 	}
-	if log, _ := runGit(base, "log", "-1", "--format=%s"); strings.TrimSpace(log) != "Installed" {
-		t.Errorf("what is live was not committed: %q", log)
+	// Live but not finished: it is not committed in the app's history, and
+	// the change stays in the checkout for the next install.
+	if log, _ := runGit(base, "log", "-1", "--format=%s"); strings.TrimSpace(log) != "Start of Weather's history" {
+		t.Errorf("a broken install was committed: %q", log)
+	}
+	if st, _ := runGit(base, "status", "--porcelain"); !strings.Contains(st, "now.py") {
+		t.Errorf("the broken change left the checkout: %q", st)
 	}
 
 	// With Install on every save, the assistant goes back to fix it.

@@ -118,7 +118,7 @@ func TestAnAppsInstallCommitsWithTheAssistantsMessage(t *testing.T) {
 	if w := serve("alice", "POST", "/api/project/"+id+"/install", "{}"); w.Code != 200 {
 		t.Fatalf("install: %d %s", w.Code, w.Body.String())
 	}
-	if log, _ := runGit(base, "log", "-1", "--format=%B"); strings.TrimSpace(log) != msg {
+	if log, _ := runGit(base, "log", "-1", "--format=%B"); !strings.HasPrefix(strings.TrimSpace(log), msg) || !strings.Contains(log, "Co-Authored-By: Anvil") {
 		t.Errorf("the install's commit: %q", log)
 	}
 	if live, _ := LoadAppSpec("alice", "wx"); live.ChangeNote != msg {
