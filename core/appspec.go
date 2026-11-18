@@ -65,6 +65,12 @@ type AppSpec struct {
 	// owner's sandbox); the run TRANSCRIPTS are per calling user, so a shared
 	// app gives everyone the same recipe and their own history.
 	PipelineID string `json:"pipeline_id,omitempty"`
+	// OwnTools marks an app that holds its own tools: its agents load the
+	// app's own tool space, gohort's tools and the deployment's MCP servers,
+	// and not their owner's pool (docs/design/app-history.md, piece D). Set
+	// when Builder or Anvil saves the app and none of its agents is allowed
+	// every tool; an app without it still loads the pool beside its space.
+	OwnTools bool `json:"own_tools,omitempty"`
 	// ExposePipeline offers the app's pipeline (PipelineID) as a tool beyond
 	// its page: <slug>_run_pipeline, taking an input and returning the run's
 	// final output, for the owner's agents (ticked in an agent's tools) and

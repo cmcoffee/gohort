@@ -111,22 +111,130 @@ func TestBindingAnAgentGivesTheAppItsOwnCopy(t *testing.T) {
 	}
 }
 
-// An app that already points at an agent of the person's keeps pointing
-// until its first change copies it (piece D): a save that does not bind
-// anew copies nothing.
-func TestAnAppThatPointsKeepsPointingUntilItBindsAnew(t *testing.T) {
+// An app that points at an agent of the person's makes it its own the first
+// time Builder or Anvil saves it (piece D): the copy takes what the original
+// learned (facts whoever said them, and its working notes), once, the
+// tools it names come into the app's space, and the app then holds its own
+// tools.
+func TestAnAppsFirstChangeMakesWhatItPointsAtItsOwn(t *testing.T) {
 	turn, udb := copyTestTurn(t)
-	orig, _ := saveAgent(udb, AgentRecord{Owner: "u", Name: "Helper", OrchestratorPrompt: "Help."})
+	if err := AdminPersistTempTool(udb, "u", TempTool{Name: "lookup", Description: "d", CommandTemplate: "echo x"}); err != nil {
+		t.Fatal(err)
+	}
+	// A colleague's tool the person took: copied in too, so the app travels.
+	if err := AdminPersistTempTool(udb, "lender", TempTool{Name: "wiki_read", Description: "d", CommandTemplate: "echo lent"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetPersistentTempToolSharedWith(udb, "lender", "wiki_read", []string{"u"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetGlobalToolAdopted(udb, "u", "wiki_read", "lender", true); err != nil {
+		t.Fatal(err)
+	}
+	orig, _ := saveAgent(udb, AgentRecord{Owner: "u", Name: "Helper", OrchestratorPrompt: "Help.", AllowedTools: []string{"lookup", "wiki_read"}})
+	ns := factsNamespace(orig.ID)
+	StoreMemoryFactP(udb, ns, "Prices are in euros.", FactWritePolicy{})
+	StoreMemoryFactP(udb, ns, "Dana prefers short answers.", FactWritePolicy{Speaker: "Dana", SpeakerHandle: "dana"})
+	SaveOperatingNotes(udb, ns, "Answer in two lines.")
 	copyTestApp(t, turn, nil)
 	spec, _ := LoadAppSpec("u", "desk")
 	spec.AgentID = orig.ID
 	SaveAppSpec(spec)
+
 	out, err := turn.appDefCreateOrUpdate(map[string]any{"id": "desk", "description": "A desk."}, true)
-	if err != nil || strings.Contains(out, "Copied into the app") {
-		t.Fatalf("a save binding nothing anew: %v %s", err, out)
+	if err != nil || !strings.Contains(out, `agent "Helper"`) || !strings.Contains(out, "What the originals learned came with them") {
+		t.Fatalf("the first change: %v %s", err, out)
 	}
-	if spec, _ := LoadAppSpec("u", "desk"); spec.AgentID != orig.ID {
-		t.Errorf("the binding moved: %q", spec.AgentID)
+	spec, _ = LoadAppSpec("u", "desk")
+	cp, ok := loadAgent(udb, spec.AgentID)
+	if !ok || cp.ID == orig.ID || cp.OwningApp != "desk" {
+		t.Fatalf("the app's agent after its first change: %+v", cp)
+	}
+	facts := ListMemoryFacts(udb, factsNamespace(cp.ID))
+	var dana bool
+	for _, f := range facts {
+		if strings.Contains(f.Note, "Dana") && f.Speaker == "Dana" {
+			dana = true
+		}
+	}
+	if len(facts) != 2 || !dana {
+		t.Errorf("the copy's facts: %+v", facts)
+	}
+	if n := LoadOperatingNotes(udb, factsNamespace(cp.ID)).Text; !strings.Contains(n, "two lines") {
+		t.Errorf("the copy's working notes: %q", n)
+	}
+	if len(ListMemoryFacts(udb, ns)) != 2 {
+		t.Error("the original lost what it learned")
+	}
+	if _, ok := apptools.ByName("u", "desk", "lookup"); !ok {
+		t.Error("the tool the agent names was not copied into the app")
+	}
+	if at, ok := apptools.ByName("u", "desk", "wiki_read"); !ok || at.CopiedFrom == nil || !strings.Contains(at.CopiedFrom.Name, "lender") || at.Tool.CommandTemplate != "echo lent" {
+		t.Errorf("the colleague's tool it names, in the app: %+v %v", at, ok)
+	}
+	if !spec.OwnTools {
+		t.Error("the app does not hold its own tools after its first change")
+	}
+
+	// Saving again copies nothing more, and teaches nothing twice.
+	out, err = turn.appDefCreateOrUpdate(map[string]any{"id": "desk", "description": "A desk, again."}, true)
+	if err != nil || strings.Contains(out, "Copied into the app") || len(ListMemoryFacts(udb, factsNamespace(cp.ID))) != 2 {
+		t.Errorf("a second save: %v %s", err, out)
+	}
+}
+
+// An app that holds its own tools cuts the person's pool for its agents,
+// keeping its own space; while one of its agents is allowed every tool the
+// app keeps loading the pool, and its save says why.
+func TestAnAppHoldingItsOwnToolsCutsThePool(t *testing.T) {
+	turn, udb := copyTestTurn(t)
+	for _, n := range []string{"lookup", "pool_only"} {
+		if err := AdminPersistTempTool(udb, "u", TempTool{Name: n, Description: "d", CommandTemplate: "echo x"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	helper, _ := saveAgent(udb, AgentRecord{Owner: "u", Name: "Helper", OrchestratorPrompt: "Help.", AllowedTools: []string{"lookup"}})
+	copyTestApp(t, turn, map[string]any{"agent_id": helper.ID})
+	spec, _ := LoadAppSpec("u", "desk")
+	if !spec.OwnTools {
+		t.Fatal("a new app whose agent names its tools does not hold its own")
+	}
+	load := func(a AgentRecord) map[string]bool {
+		tt := &chatTurn{user: "u", udb: udb, agent: a}
+		sess := &ToolSession{}
+		tt.loadAgentTempTools(sess, "u", udb)
+		got := map[string]bool{}
+		for _, x := range sess.TempTools {
+			got[x.Name] = true
+		}
+		return got
+	}
+	cp, _ := loadAgent(udb, spec.AgentID)
+	if got := load(cp); !got["lookup"] || got["pool_only"] {
+		t.Errorf("the app's agent loaded %v: want its own lookup and none of the pool", got)
+	}
+	if got := load(helper); !got["lookup"] {
+		t.Errorf("the person's own agent lost its pool: %v", got)
+	}
+
+	// An agent of the app allowed every tool holds the cut back.
+	roamer, err := saveAgent(udb, AgentRecord{Owner: "u", Name: "Roamer", OrchestratorPrompt: "Roam.", OwningApp: "desk", appEdit: "Builder"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := load(roamer); got["pool_only"] {
+		t.Errorf("while the app holds its own tools, its agent allowed every tool loaded the pool: %v", got)
+	}
+	out, err := turn.appDefCreateOrUpdate(map[string]any{"id": "desk", "description": "A desk."}, true)
+	if err != nil || !strings.Contains(out, "Roamer is allowed every tool") {
+		t.Fatalf("a save with an agent allowed every tool: %v %s", err, out)
+	}
+	spec, _ = LoadAppSpec("u", "desk")
+	if spec.OwnTools {
+		t.Error("the app holds its own tools while one of its agents is allowed every tool")
+	}
+	if got := load(roamer); !got["pool_only"] || !got["lookup"] {
+		t.Errorf("with the cut held, the app's agent should load the pool beside its own tools: %v", got)
 	}
 }
 

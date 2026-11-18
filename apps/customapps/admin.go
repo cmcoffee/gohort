@@ -109,6 +109,13 @@ func adminAccess(spec AppSpec, owner string) string {
 			state = append(state, "switched off by "+st.DisabledBy)
 		}
 	}
+	// An app that runs an agent or pipeline and does not hold its own tools
+	// yet still points at what is its owner's: it becomes self-contained
+	// with its next save by Builder or Anvil (docs/design/app-history.md,
+	// piece D), which shows what is left to do.
+	if !spec.OwnTools && (spec.AgentID != "" || spec.PipelineID != "") {
+		state = append(state, "not self-contained yet")
+	}
 	return strings.Join(state, " - ")
 }
 

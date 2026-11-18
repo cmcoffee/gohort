@@ -2084,3 +2084,21 @@ func migrateSupersededTombstones(db Database) {
 		Log("[factstore] converted %d legacy superseded fact(s) to retirement tombstones", converted)
 	}
 }
+
+// CopyMemoryFacts copies the live facts of namespace from into namespace to,
+// each as it is (who said it, how it entered memory, its cached embedding),
+// and says how many. For an app's own copy of an agent taking what the
+// original learned (docs/design/app-history.md, piece D).
+func CopyMemoryFacts(db Database, from, to string) int {
+	from, to = strings.TrimSpace(from), strings.TrimSpace(to)
+	if db == nil || from == "" || to == "" || from == to {
+		return 0
+	}
+	n := 0
+	for _, f := range ListMemoryFacts(db, from) {
+		f.Namespace = to
+		db.Set(MemoryFactsTable, factDBKey(to, f.ID), f)
+		n++
+	}
+	return n
+}

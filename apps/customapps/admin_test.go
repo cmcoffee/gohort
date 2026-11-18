@@ -277,3 +277,19 @@ func TestAnAdministratorsSwitchOffIsTheirsToUndo(t *testing.T) {
 		t.Errorf("switched back on, what it owns is still stopped: %q", why)
 	}
 }
+
+// Admin's list of apps marks one that runs an agent or pipeline and does not
+// hold its own tools yet: what is left of making apps self-contained.
+func TestAdminsListMarksAnAppNotSelfContainedYet(t *testing.T) {
+	spec := AppSpec{Slug: "desk", Name: "Desk", AgentID: "a-1"}
+	if got := adminAccess(spec, "u"); !strings.Contains(got, "not self-contained yet") {
+		t.Errorf("an app pointing at its owner's agent: %q", got)
+	}
+	spec.OwnTools = true
+	if got := adminAccess(spec, "u"); strings.Contains(got, "self-contained") {
+		t.Errorf("an app holding its own tools: %q", got)
+	}
+	if got := adminAccess(AppSpec{Slug: "plain", Name: "Plain"}, "u"); strings.Contains(got, "self-contained") {
+		t.Errorf("an app with no agent or pipeline: %q", got)
+	}
+}

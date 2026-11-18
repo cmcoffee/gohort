@@ -506,6 +506,32 @@ Stage 2 (an app holds everything it runs on):
      there first. Anywhere else, where an original and an app's copy tie,
      the name means the one that is no app's.
    - A copy does not take who its original is shared with.
+
+   **Piece D, existing apps copying on their first change (0.9.530), a
+   migration made one app at a time, with no pass at startup.** Decided
+   (owner, 2026-11-18):
+   - **Only a change copies**: the first save of an app by Builder or Anvil
+     makes what it is bound to its own, as piece C does a new binding. An
+     app nobody changes keeps working as it is. Admin's list of apps marks
+     each one that runs an agent or pipeline and is "not self-contained
+     yet".
+   - **The copy of what an app was already bound to takes what its
+     original learned**, once: its facts (whoever said them, the app's
+     users included), its working notes and its learned findings (indexed
+     again after the save). Nothing records which app a conversation came
+     through, so it is all of it; it stays in the owner's store, and an
+     export never carries it. A new binding (piece C) starts fresh.
+   - **Tools taken from the deployment's catalog are copied in** as the
+     person's own pool tools are (the release they took), so the app
+     travels whole; the author's later fixes no longer reach it.
+   - **The app then holds its own tools** (`AppSpec.OwnTools`): its agents
+     stop loading their owner's pool and load its own space, gohort's tools
+     and the deployment's MCP servers. **Held while one of its agents is
+     allowed every tool** (no list of its own, or "*"): nothing says which
+     of the owner's tools it needs, so the app keeps loading the pool, and
+     each save says so and asks for that agent's tools to be named; the
+     next save copies them and makes the cut. New apps hold their own tools
+     from their first save on the same terms.
 8. A shared app's approval covers what it owns.
 9. Model tiers in an app's agents; what does not travel asked for on import;
    schedules defined in the blueprint; the first-change copy keeping what
@@ -517,7 +543,8 @@ Stage 2 (an app holds everything it runs on):
    own parts writing (knowledge_add for its scripts), curation wired by the
    app with an on/off setting, sources and rules recorded into the
    blueprint when changed from anywhere. Existing apps copying what they
-   use on their first change.
+   use on their first change (agents, pipelines, machines and tools: built,
+   piece D; collections with the blueprints).
 
 Stage 3 (the app is its repository):
 

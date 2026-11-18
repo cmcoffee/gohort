@@ -197,7 +197,7 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 	// names wins over the pool's tool of that name (app_owned.go).
 	appSpace := t.loadAppSpaceTools(sess, poolUser)
 	for _, p := range loaded {
-		if appSpace[p.Tool.Name] {
+		if appSpace[p.Tool.Name] || t.appOwnsTools {
 			continue
 		}
 		// The rule itself, including why Builder sees disabled, Builder-only,

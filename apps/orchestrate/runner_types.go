@@ -480,6 +480,9 @@ type chatTurn struct {
 	// they're already in the user's persistent pool. The agent's deliberate
 	// kit — first-classed in the lazy split; pool-shared tools stay lazy.
 	agentOwnTools map[string]bool
+	// appOwnsTools marks a turn of an app's agent whose app holds its own
+	// tools (AppSpec.OwnTools): the person's pool is not loaded for it.
+	appOwnsTools bool
 
 	// dispatchableFleet result, memoized for the turn. Computing it lists
 	// all agents from the DB; the three consumers (agents prompt block,

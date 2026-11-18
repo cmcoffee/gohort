@@ -1,6 +1,7 @@
 package orchestrate
 
-// An app's own copies (docs/design/app-history.md, stage 2, piece C). An app
+// An app's own copies (docs/design/app-history.md, stage 2, pieces C and
+// D). An app
 // binding an agent or a pipeline that is not its own (app_def agent_id,
 // pipeline_id) gets a copy of it, made for the app and bound in its place:
 // the original is not changed, and changes to it no longer reach the app.
@@ -16,8 +17,17 @@ package orchestrate
 // else, where the person's original and an app's copy tie, means the one that
 // is no app's (resolveAgentName, findPipelineByNameOrID,
 // findMachineByNameOrID).
+//
+// Piece D: an app that points at what it does not own is copied the first
+// time Builder or Anvil saves it, what it was bound to taking what its
+// agents learned (copyAgentMemory); the tools of the person's its agents
+// name, from their pool or taken from the deployment's catalog, are copied
+// into the app's space; and once none of its agents is allowed every tool,
+// the app holds its own tools (AppSpec.OwnTools) and its agents stop
+// loading the person's pool.
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -41,6 +51,10 @@ type appCopier struct {
 	machines         map[string]MachineDef
 	busy             map[string]bool
 	made, tools      []string
+	// memory has a copy take what its original learned: set while copying
+	// what an app was already bound to (its first change, piece D).
+	memory  bool
+	learned []string
 }
 
 func newAppCopier(udb Database, owner, slug, via string) *appCopier {
@@ -72,6 +86,7 @@ func (c *appCopier) agent(src AgentRecord) (AgentRecord, error) {
 	c.agents[src.ID] = saved
 	c.made = append(c.made, fmt.Sprintf("agent %q", src.Name))
 	c.copyTools(src)
+	c.copyMemory(src, saved)
 	for _, k := range c.udb.Keys(agentsTable) {
 		var sub AgentRecord
 		if !c.udb.Get(agentsTable, k, &sub) || sub.OwnedBy != src.ID || (sub.Owner != c.owner && sub.Owner != seedOwner) {
@@ -83,6 +98,7 @@ func (c *appCopier) agent(src AgentRecord) (AgentRecord, error) {
 		}
 		c.agents[sub.ID] = cp
 		c.copyTools(sub)
+		c.copyMemory(sub, cp)
 	}
 	return saved, nil
 }
@@ -108,27 +124,85 @@ func (c *appCopier) agentCopy(src AgentRecord, parent string) AgentRecord {
 	return rec
 }
 
-// copyTools copies into the app's tool space the person's tools src runs on
-// that are theirs alone: its agent-scoped tools and the pool tools it names.
-// A tool the space has by that name already is left as the space has it.
+// copyTools copies into the app's tool space the tools src runs on that are
+// the person's rather than gohort's: its agent-scoped tools, and the tools
+// it names from their pool or taken from the deployment's catalog (a copy
+// of the release they took, so the app travels whole). A tool the space has
+// by that name already is left as the space has it.
 func (c *appCopier) copyTools(src AgentRecord) {
-	var tools []PersistentTempTool
-	tools = append(tools, AgentScopedTools(c.udb, c.owner, src.ID)...)
+	type found struct {
+		tool PersistentTempTool
+		from string
+	}
+	var tools []found
+	for _, p := range AgentScopedTools(c.udb, c.owner, src.ID) {
+		tools = append(tools, found{p, p.Tool.Name})
+	}
+	var adopted map[string]LentTool
 	for _, n := range src.AllowedTools {
-		if p, ok := UserToolByName(c.udb, c.owner, strings.TrimSpace(n)); ok && len(p.ScopeAgents) == 0 {
-			tools = append(tools, p)
+		n = canonicalToolName(strings.TrimSpace(n))
+		if p, ok := UserToolByName(c.udb, c.owner, n); ok && len(p.ScopeAgents) == 0 {
+			tools = append(tools, found{p, p.Tool.Name})
+			continue
+		}
+		if adopted == nil {
+			adopted = map[string]LentTool{}
+			for _, l := range AdoptedToolsFor(c.udb, c.owner) {
+				adopted[l.Tool.Name] = l
+			}
+		}
+		if l, ok := adopted[n]; ok {
+			tools = append(tools, found{l.PersistentTempTool, fmt.Sprintf("%s (%s's, from the catalog)", l.Tool.Name, l.Owner)})
 		}
 	}
-	for _, p := range tools {
+	for _, f := range tools {
+		p := f.tool
 		if _, ok := apptools.ByName(c.owner, c.slug, p.Tool.Name); ok {
 			continue
 		}
-		if err := apptools.CopyIn(c.owner, c.slug, p.Tool, CopiedFrom{ID: p.ID, Name: p.Tool.Name, At: time.Now()}, c.via); err != nil {
+		if err := apptools.CopyIn(c.owner, c.slug, p.Tool, CopiedFrom{ID: p.ID, Name: f.from, At: time.Now()}, c.via); err != nil {
 			Log("[app-copy] %s/%s: the tool %q was not copied: %v", c.owner, c.slug, p.Tool.Name, err)
 			continue
 		}
 		c.tools = append(c.tools, p.Tool.Name)
 	}
+}
+
+// copyMemory has cp take what src learned, when c copies an app's first
+// change: its facts (whoever said them), working notes and learned findings,
+// once. It stays in the owner's store; an export never carries it.
+func (c *appCopier) copyMemory(src, cp AgentRecord) {
+	if !c.memory {
+		return
+	}
+	from, to := factsNamespace(src.ID), factsNamespace(cp.ID)
+	facts := CopyMemoryFacts(c.udb, from, to)
+	part := memoryPart(c.udb, c.owner, src)
+	if n := strings.TrimSpace(part.Notes); n != "" {
+		SaveOperatingNotes(c.udb, to, n)
+	}
+	if facts == 0 && strings.TrimSpace(part.Notes) == "" && len(part.Findings) == 0 {
+		return
+	}
+	c.learned = append(c.learned, fmt.Sprintf("%s (%d facts, %d findings%s)", src.Name, facts, len(part.Findings),
+		map[bool]string{true: ", its working notes", false: ""}[strings.TrimSpace(part.Notes) != ""]))
+	if VectorDB == nil || len(part.Findings) == 0 {
+		return
+	}
+	// Findings are embedded again, which takes a while: after the save, on
+	// work that outlives its request.
+	owner, findings := c.owner, part.Findings
+	ctx := context.WithoutCancel(AppContext())
+	go func() {
+		for i, d := range findings {
+			if strings.TrimSpace(d.Text) == "" {
+				continue
+			}
+			IngestReportTitled(ctx, VectorDB, knowledgeSource(owner, cp.ID, d.Topic),
+				fmt.Sprintf("orch-know-%s-%s-copy%d", cp.ID, owner, i), d.Title, d.Text, d.Kind)
+		}
+		Log("[app-copy] %s: %d finding(s) of %q indexed for the app's copy", owner, len(findings), src.Name)
+	}()
 }
 
 // pipeline is the app's own pipeline for src: src when it is the app's, else
@@ -264,24 +338,32 @@ func (c *appCopier) note() string {
 		b.WriteString(" its tools " + strings.Join(c.tools, ", ") + " (into the app's own tools)")
 	}
 	b.WriteString(". The originals are unchanged, and changes to them no longer reach the app: change the app's copies (they keep their names, and inside the app a name means the app's own).")
+	if len(c.learned) > 0 {
+		b.WriteString(" What the originals learned came with them, once: " + strings.Join(c.learned, ", ") + ".")
+	}
 	return b.String()
 }
 
-// copyBindings makes the agent and pipeline this save binds the app's own,
-// when the save binds them anew: a new app, or one now naming an agent or
-// pipeline other than the one it had. An app that keeps what it pointed at
-// keeps pointing until its first change copies it (piece D). A maintainer's
-// save binds nothing new.
+// copyBindings makes what the app runs its own when Builder or Anvil saves
+// it: the agent and pipeline it is bound to, when they are not its own (on
+// its first change, what it was already bound to takes what its agents
+// learned), and the tools of the person's that its own agents name. Then the
+// app holds its own tools, unless one of its agents is allowed every tool:
+// nothing says which of the person's tools that one needs, so the app keeps
+// loading the pool and the save asks for the agent's tools to be named. A
+// maintainer's save copies nothing.
 func (aw *appWrite) copyBindings() error {
 	if aw.maintained || aw.t == nil || aw.t.udb == nil {
 		return nil
 	}
-	c := newAppCopier(aw.t.udb, aw.spec.Owner, aw.spec.Slug, aw.t.changedVia())
+	udb, slug := aw.t.udb, aw.spec.Slug
+	c := newAppCopier(udb, aw.spec.Owner, slug, aw.t.changedVia())
 	if c.via == "" {
 		c.via = "Builder"
 	}
-	if id := strings.TrimSpace(aw.spec.AgentID); id != "" && (!aw.isUpdate || id != aw.prior.AgentID) {
-		if a, ok := loadAgent(aw.t.udb, id); ok && a.OwningApp != aw.spec.Slug {
+	if id := strings.TrimSpace(aw.spec.AgentID); id != "" {
+		if a, ok := loadAgent(udb, id); ok && a.OwningApp != slug {
+			c.memory = aw.isUpdate && id == aw.prior.AgentID
 			cp, err := c.agent(a)
 			if err != nil {
 				return err
@@ -289,8 +371,9 @@ func (aw *appWrite) copyBindings() error {
 			aw.spec.AgentID = cp.ID
 		}
 	}
-	if id := strings.TrimSpace(aw.spec.PipelineID); id != "" && (!aw.isUpdate || id != aw.prior.PipelineID) {
-		if d, ok := LoadPipelineDef(aw.t.udb, aw.spec.Owner, id); ok && d.OwningApp != aw.spec.Slug {
+	if id := strings.TrimSpace(aw.spec.PipelineID); id != "" {
+		if d, ok := LoadPipelineDef(udb, aw.spec.Owner, id); ok && d.OwningApp != slug {
+			c.memory = aw.isUpdate && id == aw.prior.PipelineID
 			cp, err := c.pipeline(d)
 			if err != nil {
 				return err
@@ -298,8 +381,42 @@ func (aw *appWrite) copyBindings() error {
 			aw.spec.PipelineID = cp.ID
 		}
 	}
+	c.memory = false
+	var everyTool []string
+	for _, a := range listAgents(udb, aw.spec.Owner) {
+		if a.OwningApp != slug || a.Owner != aw.spec.Owner {
+			continue
+		}
+		c.copyTools(a)
+		if allowedEveryTool(a) {
+			everyTool = append(everyTool, a.Name)
+		}
+	}
 	aw.copyNote = c.note()
+	aw.spec.OwnTools = len(everyTool) == 0
+	if len(everyTool) > 0 {
+		sort.Strings(everyTool)
+		aw.copyNote += fmt.Sprintf("\n\nThe app still loads your own tools beside its own: %s allowed every tool, so nothing says which of yours the app needs. Name its tools (update_agent allowed_tools, 4 to 10 of them): the next save copies those into the app's own tools, and the app then holds everything it runs on and travels whole.",
+			strings.Join(everyTool, ", ")+map[bool]string{true: " is", false: " are"}[len(everyTool) == 1])
+	}
 	return nil
+}
+
+// allowedEveryTool reports whether a is allowed every tool: no list of its
+// own (the default pool), or "*". One that may use no tools is not.
+func allowedEveryTool(a AgentRecord) bool {
+	if isNoToolsSentinel(a.AllowedTools) {
+		return false
+	}
+	if len(a.AllowedTools) == 0 {
+		return true
+	}
+	for _, n := range a.AllowedTools {
+		if strings.TrimSpace(n) == "*" {
+			return true
+		}
+	}
+	return false
 }
 
 // appScopedRef is the id of owner's app slug's own agent, pipeline or

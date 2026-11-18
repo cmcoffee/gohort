@@ -608,11 +608,16 @@ func (t *chatTurn) loadAppSpaceTools(sess *ToolSession, owner string) map[string
 		return nil
 	}
 	tools := apptools.Load(owner, slug)
+	names := make(map[string]bool, len(tools))
+	// An app that holds its own tools (AppSpec.OwnTools, piece D) cuts the
+	// person's pool for its agents (t.appOwnsTools, read by the pool loop).
+	if spec, ok := LoadAppSpec(owner, slug); ok && spec.OwnTools {
+		t.appOwnsTools = true
+	}
 	if len(tools) == 0 {
-		return nil
+		return names
 	}
 	review := apptools.LoadReview(owner, slug)
-	names := make(map[string]bool, len(tools))
 	for _, at := range tools {
 		tool := at.Tool
 		names[tool.Name] = true
