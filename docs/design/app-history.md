@@ -612,6 +612,17 @@ Stage 2 (an app holds everything it runs on):
      "Keep its collections current" (`AppCurationOff`, on unless turned
      off): off stops their schedules and never changes the blueprint;
      back on, each refreshes as its blueprint says.
+   - **Step 6, what its agents read becomes the app's (0.9.536).** A
+     collection of the person's that one of the app's agents reads is
+     copied into the app on a save by Builder or Anvil (the first change of
+     an existing app, a new binding, or an agent of the app pointed at one
+     later): its blueprint, and its documents as they are indexed (their
+     passages and embeddings, nothing indexed again), its submitters the
+     app's copies of them where the app has those. The agent then reads the
+     copy; the original and the person's agents reading it are left as
+     they are. One that is not the person's own (the deployment's, or a
+     colleague's shared with them) is the deployment's, as an MCP server
+     is, and is not copied.
 
 Stage 3 (the app is its repository):
 

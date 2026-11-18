@@ -49,6 +49,7 @@ type appCopier struct {
 	agents           map[string]AgentRecord
 	pipelines        map[string]PipelineDef
 	machines         map[string]MachineDef
+	collections      map[string]string
 	busy             map[string]bool
 	made, tools      []string
 	// memory has a copy take what its original learned: set while copying
@@ -62,7 +63,7 @@ type appCopier struct {
 
 func newAppCopier(udb Database, owner, slug, via string) *appCopier {
 	return &appCopier{udb: udb, owner: owner, slug: slug, via: via,
-		agents: map[string]AgentRecord{}, pipelines: map[string]PipelineDef{}, machines: map[string]MachineDef{}, busy: map[string]bool{}}
+		agents: map[string]AgentRecord{}, pipelines: map[string]PipelineDef{}, machines: map[string]MachineDef{}, collections: map[string]string{}, busy: map[string]bool{}}
 }
 
 // copiedFrom is the record of a copy of id, name, made now.
@@ -82,7 +83,9 @@ func (c *appCopier) agent(src AgentRecord) (AgentRecord, error) {
 	if src.Owner != c.owner && src.Owner != seedOwner {
 		return AgentRecord{}, fmt.Errorf("the agent %q is not yours: an app carries copies of your own agents only", src.Name)
 	}
-	saved, err := saveAgent(c.udb, c.agentCopy(src, ""))
+	rec := c.agentCopy(src, "")
+	rec.AttachedCollections = c.copyCollections(src.AttachedCollections)
+	saved, err := saveAgent(c.udb, rec)
 	if err != nil {
 		return AgentRecord{}, fmt.Errorf("copying the agent %q into the app: %w", src.Name, err)
 	}
@@ -95,7 +98,9 @@ func (c *appCopier) agent(src AgentRecord) (AgentRecord, error) {
 		if !c.udb.Get(agentsTable, k, &sub) || sub.OwnedBy != src.ID || (sub.Owner != c.owner && sub.Owner != seedOwner) {
 			continue
 		}
-		cp, err := saveAgent(c.udb, c.agentCopy(sub, saved.ID))
+		subRec := c.agentCopy(sub, saved.ID)
+		subRec.AttachedCollections = c.copyCollections(sub.AttachedCollections)
+		cp, err := saveAgent(c.udb, subRec)
 		if err != nil {
 			return AgentRecord{}, fmt.Errorf("copying %q's sub-agent %q into the app: %w", src.Name, sub.Name, err)
 		}
@@ -420,6 +425,13 @@ func (aw *appWrite) copyBindings() error {
 			continue
 		}
 		c.copyTools(a)
+		// What it reads becomes the app's own too (piece E2, step 6).
+		if ids := c.copyCollections(a.AttachedCollections); !sameStrings(ids, a.AttachedCollections) {
+			a.AttachedCollections, a.appEdit = ids, c.via
+			if _, err := saveAgent(udb, a); err != nil {
+				return fmt.Errorf("pointing the agent %q at the app's copies of what it reads: %w", a.Name, err)
+			}
+		}
 		if allowedEveryTool(a) {
 			everyTool = append(everyTool, a.Name)
 		}
@@ -565,4 +577,89 @@ func (c *appCopier) adoptAgentFacts(a AgentRecord) {
 	if facts > 0 || people > 0 {
 		c.noteLearned(a.Name, facts, 0, false, people)
 	}
+}
+
+// copyCollections is ids with each collection of the person's that is not
+// the app's replaced by the app's own copy of it (piece E2, step 6): its
+// blueprint, and its documents, which are copied as they are indexed (their
+// passages and embeddings), so the copy knows what the original knew without
+// indexing anything again. A collection that is not the person's own (the
+// deployment's, or one shared with them) is the deployment's, as an MCP
+// server is, and is left as it is.
+func (c *appCopier) copyCollections(ids []string) []string {
+	if len(ids) == 0 {
+		return ids
+	}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, c.copyCollection(id))
+	}
+	return out
+}
+
+// copyCollection is the app's own collection for id: id when it is the app's
+// already or not the person's to copy, else its copy.
+func (c *appCopier) copyCollection(id string) string {
+	if cp, ok := c.collections[id]; ok {
+		return cp
+	}
+	src, ok := loadCollection(c.udb, c.owner, id)
+	if !ok || src.OwningApp == c.slug || src.Owner != c.owner || IsDeploymentScope(src) {
+		return id
+	}
+	cp := Collection{
+		ID: UUIDv4(), Owner: c.owner, Created: time.Now(), OwningApp: c.slug, CopiedFrom: copiedFrom(src.ID, src.Name),
+		Name: src.Name, Description: src.Description, FilterRules: src.FilterRules, SearchTerms: src.SearchTerms,
+		DocsPerRun: src.DocsPerRun, Articles: src.Articles, SuggestionsOff: src.SuggestionsOff,
+		IngestedURLs: src.IngestedURLs, ArticlesFetched: src.ArticlesFetched, Refresh: src.Refresh,
+	}
+	if cp.Refresh == "" {
+		if task, _, _, ok := refreshScheduled(c.owner, src.ID); ok {
+			cp.Refresh = task.Every
+		}
+	}
+	// Who submits to it are agents of the person's: the app's copies of
+	// them when the app has copied them, else as they were.
+	for agent, mode := range src.Submitters {
+		if cp.Submitters == nil {
+			cp.Submitters = map[string]string{}
+		}
+		if a, ok := c.agents[agent]; ok {
+			agent = a.ID
+		}
+		cp.Submitters[agent] = mode
+	}
+	SaveCollectionBy(c.udb, cp, c.via)
+	docs := 0
+	if VectorDB != nil {
+		chunks := ChunksForSource(VectorDB, collectionSource(src.ID))
+		seen := map[string]bool{}
+		for i := range chunks {
+			chunks[i].ID = UUIDv4()
+			chunks[i].Source = collectionSource(cp.ID)
+			chunks[i].ReportID = strings.Replace(chunks[i].ReportID, src.ID, cp.ID, 1)
+			seen[chunks[i].ReportID] = true
+		}
+		PutChunks(VectorDB, chunks)
+		docs = len(seen)
+	}
+	if err := setCollectionRefresh(c.udb, cp, cp.Refresh, c.via); err != nil {
+		Log("[app-copy] %s/%s: the copy of collection %q could not be scheduled: %v", c.owner, c.slug, src.Name, err)
+	}
+	c.collections[id] = cp.ID
+	c.made = append(c.made, fmt.Sprintf("collection %q (%d documents)", src.Name, docs))
+	return cp.ID
+}
+
+// sameStrings reports whether a and b hold the same strings in order.
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
