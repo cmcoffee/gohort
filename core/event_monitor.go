@@ -1323,6 +1323,13 @@ func executeEventPoll(ctx context.Context, db Database, m EventMonitor) {
 	}
 	answer, err := poller(ctx, m.Owner, m.CheckAgent, pollQuestion(m.Check, m.MatchContains))
 	if err != nil {
+		// The model not answering is not the check failing: it waits for the
+		// model, checking again at its next interval, and never counts toward
+		// the pause a broken check earns.
+		if ModelUnavailable(err) {
+			noteModelWait(db, m, truncateEvent(strings.TrimSpace(err.Error()), 200))
+			return
+		}
 		notePollFailure(db, m, truncateEvent(strings.TrimSpace(err.Error()), 200))
 		return
 	}
@@ -1484,6 +1491,19 @@ func notePollFailure(db Database, m EventMonitor, reason string) bool {
 		Started: time.Now(), Ended: time.Now(),
 	}.AboutMonitor(m.Name))
 	return true
+}
+
+// noteModelWait records a check that could not run because the model did not
+// answer: on the monitor's recent checks, so the owner sees why nothing
+// happened, and in the log; the failure streak is left as it is.
+func noteModelWait(db Database, m EventMonitor, reason string) {
+	cur, ok := GetEventMonitor(db, m.Owner, m.Name)
+	if !ok {
+		return
+	}
+	Log("[event] %s %s/%s waiting for the model, checking again at its next interval: %s", cur.Kind, m.Owner, m.Name, reason)
+	noteCheck(&cur, "waiting", "the model did not answer, so this check waits for it: "+reason)
+	SaveEventMonitor(db, cur)
 }
 
 // clearPollFailures resets an accumulated streak on the caller's copy and

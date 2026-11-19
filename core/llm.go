@@ -1825,6 +1825,43 @@ func IsContextExceededError(err error) bool {
 	return false
 }
 
+// ModelUnavailable reports whether err is the model not answering at all:
+// its server unreachable (refused, no route, no such host) or saying it
+// cannot take a request now (429, 502, 503, 504, 529). Nothing about what
+// asked it is wrong, so a schedule meeting one waits for the model and runs
+// again at its time, never counting it toward stopping or backing off.
+func ModelUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.StatusCode {
+		case 429, 502, 503, 504, 529:
+			return true
+		}
+		return false
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) && opErr.Op == "dial" {
+		return true
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+	// Carried as text by the time it reaches a schedule (a run's error,
+	// wrapped with %v on the way).
+	msg := strings.ToLower(err.Error())
+	for _, n := range []string{"connection refused", "no such host", "network is unreachable", "no route to host",
+		"api error (429)", "api error (502)", "api error (503)", "api error (504)", "api error (529)"} {
+		if strings.Contains(msg, n) {
+			return true
+		}
+	}
+	return false
+}
+
 // isTransientError returns true if the error is worth retrying.
 func isTransientError(err error) bool {
 	// Context-exceeded is deterministic — the same prompt will fail the

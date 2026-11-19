@@ -174,11 +174,7 @@ func (T *OrchestrateApp) runStanding(ctx context.Context, sa StandingAgent) Stan
 		// A schedule that cannot work should not keep trying at full speed.
 		// Re-read first: this run may have taken minutes, and a pause or an
 		// edit during it is the owner's word (failure_backoff.go).
-		backoff := ""
-		if cur, ok := GetStandingAgent(RootDB, sa.Owner, sa.Name); ok {
-			backoff = noteStandingFailure(&cur)
-			SaveStandingAgent(RootDB, cur)
-		}
+		backoff := standingFailureNote(err, sa)
 		return StandingRunResult{
 			Status:  RunFailed,
 			Summary: "Run failed: " + err.Error() + backoff,

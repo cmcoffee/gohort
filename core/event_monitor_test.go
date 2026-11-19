@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1484,5 +1485,66 @@ func TestPollVerdict(t *testing.T) {
 		if v != c.verdict || n != c.note {
 			t.Errorf("%q (match %q): %q %q, want %q %q", c.m.LastResult, c.m.MatchContains, v, n, c.verdict, c.note)
 		}
+	}
+}
+
+// The model not answering is not a check failing: what tells the two apart
+// is the error itself, a model server unreachable or saying it cannot take
+// the request now.
+func TestModelUnavailableTellsTheModelDownFromABrokenCheck(t *testing.T) {
+	down := []error{
+		fmt.Errorf(`Post "http://llm.invalid:8080/v1/chat/completions": dial tcp 192.0.2.1:8080: connect: connection refused`),
+		&APIError{Provider: "vllm", StatusCode: 503, Message: "busy"},
+		fmt.Errorf("run: %w", &APIError{Provider: "anthropic", StatusCode: 529, Message: "overloaded"}),
+		fmt.Errorf("dial tcp: lookup llm.invalid: no such host"),
+		fmt.Errorf("chat: %w", &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("refused")}),
+		fmt.Errorf("chat: %w", &net.DNSError{Err: "server misbehaving", Name: "llm.invalid"}),
+	}
+	for _, err := range down {
+		if !ModelUnavailable(err) {
+			t.Errorf("not read as the model down: %v", err)
+		}
+	}
+	broken := []error{nil, context.Canceled, &APIError{Provider: "vllm", StatusCode: 400, Message: "bad request"},
+		fmt.Errorf("the checker agent %q is gone", "Security"), fmt.Errorf("permission denied")}
+	for _, err := range broken {
+		if ModelUnavailable(err) {
+			t.Errorf("read as the model down: %v", err)
+		}
+	}
+}
+
+// A poll whose model does not answer waits for it: checked again at its next
+// interval, never counted toward the pause a broken check earns, and saying
+// why on its recent checks. A check that fails for another reason still
+// counts, and pauses the monitor at the threshold.
+func TestAPollWaitsForTheModelInsteadOfStopping(t *testing.T) {
+	db := memDB(t)
+	m := EventMonitor{Name: "cve-watch", Owner: "craig", Kind: EventKindPoll,
+		CheckAgent: "Security", Check: "any new CVEs?", IntervalSeconds: 60}
+	SaveEventMonitor(db, m)
+	pollErr := fmt.Errorf(`Post "http://llm.invalid:8080/v1/chat/completions": dial tcp 192.0.2.1:8080: connect: connection refused`)
+	RegisterEventPoller(func(ctx context.Context, owner, agentID, check string) (string, error) { return "", pollErr })
+	defer RegisterEventPoller(nil)
+
+	for i := 0; i < monitorFailureThreshold+2; i++ {
+		cur, _ := GetEventMonitor(db, "craig", "cve-watch")
+		executeEventPoll(context.Background(), db, cur)
+	}
+	cur, _ := GetEventMonitor(db, "craig", "cve-watch")
+	if cur.Paused || cur.Broken || cur.ConsecutiveFailures != 0 {
+		t.Fatalf("the model being down stopped the monitor: paused %v broken %v streak %d", cur.Paused, cur.Broken, cur.ConsecutiveFailures)
+	}
+	if n := len(cur.RecentChecks); n == 0 || cur.RecentChecks[n-1].Outcome != "waiting" {
+		t.Errorf("the recent checks do not say it waits for the model: %+v", cur.RecentChecks)
+	}
+
+	pollErr = fmt.Errorf("the checker agent %q is gone", "Security")
+	for i := 0; i < monitorFailureThreshold; i++ {
+		cur, _ := GetEventMonitor(db, "craig", "cve-watch")
+		executeEventPoll(context.Background(), db, cur)
+	}
+	if cur, _ := GetEventMonitor(db, "craig", "cve-watch"); !cur.Paused || !cur.Broken {
+		t.Errorf("a check broken for another reason was not paused at the threshold: %+v", cur)
 	}
 }

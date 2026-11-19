@@ -155,6 +155,10 @@ func pollCheckVerdict(m EventMonitor, outcome, detail string) (verdict, note str
 	case "held":
 		// Still so since it fired: true, whatever words it was said in.
 		return PollTrue, answer
+	case "waiting":
+		// The model did not answer: no verdict, and not an issue with the
+		// check (core noteModelWait).
+		return "", "waiting for the model to answer; it checks again at its next interval"
 	}
 	if answer == "" {
 		answer = detail

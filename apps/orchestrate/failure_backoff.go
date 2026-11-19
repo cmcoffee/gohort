@@ -89,6 +89,37 @@ func standingBackoffBase(sa StandingAgent, now time.Time) time.Duration {
 	return orchUpdateMinInterval()
 }
 
+// waitingForModel is what a run's row says when the model did not answer:
+// not the schedule failing, so it runs again at its time.
+const waitingForModel = " The model did not answer, so it runs again at its next time."
+
+// recurringFailureNote is what a recurring fire that errored with err does
+// to its schedule, and says of it: the model not answering (ModelUnavailable)
+// leaves the streak and the next time as they are, as the model coming back
+// is all it waits for; anything else counts and backs off.
+func recurringFailureNote(err error, p orchUpdatePayload, armed *orchUpdatePayload, armedID string, reArm bool) string {
+	if ModelUnavailable(err) {
+		return waitingForModel
+	}
+	return noteRecurringFailure(p, armed, armedID, reArm)
+}
+
+// standingFailureNote is recurringFailureNote for a standing agent's run,
+// re-reading the record first: the run may have taken minutes, and a pause or
+// an edit during it is the owner's word.
+func standingFailureNote(err error, sa StandingAgent) string {
+	if ModelUnavailable(err) {
+		return waitingForModel
+	}
+	cur, ok := GetStandingAgent(RootDB, sa.Owner, sa.Name)
+	if !ok {
+		return ""
+	}
+	note := noteStandingFailure(&cur)
+	SaveStandingAgent(RootDB, cur)
+	return note
+}
+
 // noteRecurringFailure counts this failure and pushes the already-armed
 // successor out, returning the sentence the ledger row and the diag carry.
 //

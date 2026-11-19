@@ -1,6 +1,8 @@
 package orchestrate
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -191,5 +193,56 @@ func TestStandingFailureBacksOffTheNextRun(t *testing.T) {
 	noteStandingFailure(&sa)
 	if d := time.Until(sa.NextAttemptAt); d < 239*time.Minute || d > 241*time.Minute {
 		t.Errorf("second failure is %s out, wanted about four hours", d)
+	}
+}
+
+// A recurring task or standing agent whose run failed because the model did
+// not answer is not backed off: its streak and its next time stay as they
+// were, and its row says it runs again at its time. Any other failure still
+// counts.
+func TestAScheduleWaitsForTheModelInsteadOfBackingOff(t *testing.T) {
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	PreInitScheduler()
+	t.Cleanup(func() { RootDB = saved })
+	down := fmt.Errorf(`Post "http://llm.invalid:8080/v1/chat/completions": dial tcp 192.0.2.1:8080: connect: connection refused`)
+
+	p := orchUpdatePayload{Username: "u", SessionID: "s1", Prompt: "post the digest", IntervalSeconds: 600, ConsecutiveFailures: 1}
+	armedID, err := ScheduleTask(OrchestrateScheduledUpdateKind, p, time.Now().Add(10*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { UnscheduleTask(armedID) })
+	armed := p
+	if note := recurringFailureNote(down, p, &armed, armedID, true); !strings.Contains(note, "model did not answer") {
+		t.Errorf("the row does not say it waits for the model: %q", note)
+	}
+	if armed.ConsecutiveFailures != 1 || armed.NextAttemptAt != "" {
+		t.Errorf("the model being down backed the task off: streak %d, next %q", armed.ConsecutiveFailures, armed.NextAttemptAt)
+	}
+	// And through the fire itself: its run row says it waits for the model.
+	fr := &fireRun{p: p, reArm: true, armedID: armedID, armed: p, udb: UserDB(RootDB, "u"), runErr: down, agentLabel: "Digest"}
+	fr.reportable()
+	if fr.armed.ConsecutiveFailures != 1 || fr.armed.NextAttemptAt != "" {
+		t.Errorf("a fire that met the model down backed off: streak %d, next %q", fr.armed.ConsecutiveFailures, fr.armed.NextAttemptAt)
+	}
+	if runs := ListRuns(RootDB, "u", RunFilter{}); len(runs) == 0 || !strings.Contains(runs[0].Summary, "model did not answer") {
+		t.Errorf("the fire's row does not say it waits for the model: %+v", runs)
+	}
+	if note := recurringFailureNote(errors.New("the agent is gone"), p, &armed, armedID, true); armed.ConsecutiveFailures != 2 || note == "" {
+		t.Errorf("another failure did not count: streak %d, note %q", armed.ConsecutiveFailures, note)
+	}
+
+	sa := StandingAgent{Owner: "u", Name: "digest", IntervalSeconds: 3600}
+	SaveStandingAgent(RootDB, sa)
+	if note := standingFailureNote(down, sa); !strings.Contains(note, "model did not answer") {
+		t.Errorf("the standing row does not say it waits for the model: %q", note)
+	}
+	if cur, _ := GetStandingAgent(RootDB, "u", "digest"); cur.ConsecutiveFailures != 0 || !cur.NextAttemptAt.IsZero() {
+		t.Errorf("the model being down backed the standing agent off: %+v", cur)
+	}
+	standingFailureNote(errors.New("the agent is gone"), sa)
+	if cur, _ := GetStandingAgent(RootDB, "u", "digest"); cur.ConsecutiveFailures != 1 {
+		t.Errorf("another failure did not count: streak %d", cur.ConsecutiveFailures)
 	}
 }

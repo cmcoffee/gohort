@@ -1207,7 +1207,7 @@ func (fr *fireRun) reportable() bool {
 		Log("[orchestrate/scheduled] agent=%s session=%s fire %d FAILED: %v", fr.agentLabel, p.SessionID, p.FireCount+1, fr.runErr)
 		// A schedule that cannot work should not keep trying at full speed. The
 		// successor is already armed, so this moves it (failure_backoff.go).
-		backoff := noteRecurringFailure(p, &fr.armed, fr.armedID, fr.reArm)
+		backoff := recurringFailureNote(fr.runErr, p, &fr.armed, fr.armedID, fr.reArm)
 		fr.record(RunFailed, "Recurring fire errored before it could post."+backoff, "", fr.runErr.Error())
 		appendSessionDiag(fr.udb, p.AgentID, p.SessionID, "recurring-fire-failed",
 			fmt.Sprintf("Recurring task %q fire %d errored before it could post: %v.%s", recurringName(p), p.FireCount+1, fr.runErr, backoff))
