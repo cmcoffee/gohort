@@ -648,7 +648,21 @@ func (T *OrchestrateApp) serveAppOwnedPage(w http.ResponseWriter, r *http.Reques
 	if len(actions) > 0 {
 		sec.Body = ui.Toolbar{Actions: actions}
 	}
-	ui.Page{Title: chFirst(name, kind), ShowTitle: true, BackURL: "/apps/", MaxWidth: "720px", Sections: []ui.Section{sec}}.ServeHTTP(w, r)
+	page := ui.Page{Title: chFirst(name, kind), ShowTitle: true, BackURL: "/apps/", MaxWidth: "720px", Sections: []ui.Section{sec}}
+	// The chat overlay asks for the page's declaration (?format=json), to
+	// draw it where the conversation sits.
+	if strings.TrimSpace(r.URL.Query().Get("format")) == "json" {
+		blob, err := page.ConfigJSON()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Write(blob)
+		return true
+	}
+	page.ServeHTTP(w, r)
 	return true
 }
 

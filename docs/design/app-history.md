@@ -147,7 +147,9 @@ with no second path to keep in step. An app's agents, pipelines and
 machines live inside it, as a built-in app's hidden agents do (the guide
 writer, the publisher): no picker, list, dashboard, key or agent outside the
 app reaches them, and only the app's own agents may hand them work. What they ran and
-cost shows in Fleet under the app's name. An administrator still sees them,
+cost shows in Fleet under the app's name. Opening one's editor or Security
+page shows a page saying whose it is, with the way to the app and to
+Builder, and what those pages would have written is refused. An administrator still sees them,
 marked "part of <app>", and can switch one off or remove it (a tool
 misbehaving), which stops it and is recorded in the app's history; that is
 a stop, not an edit.

@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -45,7 +46,16 @@ func TestAnAppsOwnItemsOpenNoEditor(t *testing.T) {
 		"machine": page(func(w *httptest.ResponseRecorder) {
 			app.handleMachinePage(w, asUser(httptest.NewRequest("GET", "/orchestrate/machine?id="+mach.ID, nil), user))
 		}),
+		"agent's Security": page(func(w *httptest.ResponseRecorder) {
+			app.renderAgentAccess(w, asUser(httptest.NewRequest("GET", "/orchestrate/agent/"+agent.ID+"/access", nil), user), user, udb, agent.ID)
+		}),
+		"agent's Security in the chat": page(func(w *httptest.ResponseRecorder) {
+			app.renderAgentAccess(w, asUser(httptest.NewRequest("GET", "/orchestrate/agent/"+agent.ID+"/access?format=json", nil), user), user, udb, agent.ID)
+		}),
 	} {
+		if strings.HasSuffix(what, "in the chat") && !strings.HasPrefix(strings.TrimSpace(body), "{") {
+			t.Errorf("the %s is not the page's declaration the chat draws: %.80q", what, body)
+		}
 		if !strings.Contains(body, "Part of the app Help Desk") || !strings.Contains(body, "changes only with Builder or Anvil") {
 			t.Errorf("the %s's page does not say it is the app's", what)
 		}
@@ -63,6 +73,33 @@ func TestAnAppsOwnItemsOpenNoEditor(t *testing.T) {
 	})
 	if strings.Contains(mine, "Part of the app") || !strings.Contains(mine, "api/agents/") {
 		t.Error("an agent that is no app's does not open its editor")
+	}
+	mineAccess := page(func(w *httptest.ResponseRecorder) {
+		app.renderAgentAccess(w, asUser(httptest.NewRequest("GET", "/orchestrate/agent/"+own.ID+"/access", nil), user), user, udb, own.ID)
+	})
+	if strings.Contains(mineAccess, "Part of the app") || !strings.Contains(mineAccess, "api/agent-access") {
+		t.Error("an agent that is no app's does not open its Security page")
+	}
+	if strings.Contains(mineAccess, agent.ID) {
+		t.Error("an agent's Security page offers an app's own agent to grant anything about")
+	}
+	// What the page would have written is refused for the app's agent, and
+	// still taken for one that is no app's.
+	for _, c := range []struct {
+		url  string
+		body string
+		want int
+	}{
+		{"/api/agent-access/tool?agent=" + agent.ID + "&name=web_search", `{"unattended":"allow"}`, http.StatusConflict},
+		{"/api/agent-access/handoff?agent=" + agent.ID + "&target=" + own.ID + "&allow=1", `{}`, http.StatusConflict},
+		{"/api/agent-access/handoff?agent=" + own.ID + "&target=" + agent.ID + "&allow=1", `{}`, http.StatusConflict},
+		{"/api/agent-access/tool?agent=" + own.ID + "&name=web_search", `{"unattended":"allow"}`, http.StatusNoContent},
+	} {
+		w := httptest.NewRecorder()
+		routed(app)(w, asUser(httptest.NewRequest(http.MethodPost, c.url, strings.NewReader(c.body)), user))
+		if w.Code != c.want {
+			t.Errorf("POST %s: %d %s, want %d", c.url, w.Code, w.Body.String(), c.want)
+		}
 	}
 }
 

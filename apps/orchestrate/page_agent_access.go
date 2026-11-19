@@ -82,6 +82,11 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 	if !ap.prepare() {
 		return
 	}
+	// An app's agent lives inside its app: who it reaches and what it may
+	// run are the app's, changed with Builder or Anvil.
+	if T.serveAppOwnedPage(w, r, user, ap.agent.Owner, ap.agent.OwningApp, "agent", ap.name) {
+		return
+	}
 	ap.buildPage()
 	ap.serve()
 }
@@ -232,12 +237,12 @@ func (ap *accessPage) prepare() bool {
 		}
 	}
 	// Everything this agent could be allowed to call, by name.
-	// The same agents every other picker offers (a hidden app agent, a
-	// clone-only template or a retired seed is not one to grant anything
-	// about), with an app's agents under their app rather than mixed in.
+	// The same agents every other picker offers (a hidden app agent, an
+	// app's own agent, a clone-only template or a retired seed is not one to
+	// grant anything about), with a registry app's agents under their app.
 	ap.callable = []ui.SelectOption{}
 	for _, a := range listAgents(ap.udb, ap.user) {
-		if a.ID != ap.agent.ID && !fleetHidden(a.ID) {
+		if a.ID != ap.agent.ID && !fleetHidden(a.ID) && !appOwnedAgent(a) {
 			ap.callable = append(ap.callable, ui.SelectOption{Value: a.ID, Label: a.Name, Group: agentGroupFor(a, "Your agents")})
 		}
 	}

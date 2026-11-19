@@ -16,6 +16,7 @@ package orchestrate
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -275,6 +276,9 @@ func (T *OrchestrateApp) handleAgentAccessTool(c *jsonapi.Call, body struct {
 	if !found {
 		return nil, errNotFound
 	}
+	if appOwnedAgent(rec) {
+		return nil, appAgentAccessRefusal(rec)
+	}
 	name := strings.TrimSpace(r.URL.Query().Get("name"))
 	if name == "" {
 		return nil, jsonapi.BadRequest("name required")
@@ -334,6 +338,12 @@ func (T *OrchestrateApp) handleAgentAccessHandoff(c *jsonapi.Call, _ struct{}) (
 	if !found {
 		return nil, errNotFound
 	}
+	switch {
+	case appOwnedAgent(caller):
+		return nil, appAgentAccessRefusal(caller)
+	case appOwnedAgent(target):
+		return nil, appAgentAccessRefusal(target)
+	}
 	setEdgeGrant(udb, caller, target, q.Get("allow") == "1")
 	return jsonapi.Empty(http.StatusNoContent), nil
 }
@@ -380,4 +390,11 @@ func agentSubAgents(udb Database, user string, parent AgentRecord) []accessSubAg
 		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
 	})
 	return out
+}
+
+// appAgentAccessRefusal is the refusal of a change to what an app's agent
+// may run or reach from outside its app: those are the app's, changed with
+// Builder or Anvil (its Security page is closed the same way).
+func appAgentAccessRefusal(a AgentRecord) error {
+	return jsonapi.Status(http.StatusConflict, fmt.Sprintf("%s is part of the app %q and lives inside it: change it with Builder or Anvil", chFirst(a.Name, a.ID), appAgentName(a)))
 }
