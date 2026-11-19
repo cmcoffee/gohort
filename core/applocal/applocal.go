@@ -158,3 +158,19 @@ func AppCredentialAlias(owner, slug string) func(string) (string, error) {
 		return to, nil
 	}
 }
+
+// historyNote records an event in an app's history (orchestrate's app
+// history wires it); nil where nothing is wired.
+var historyNote func(owner, slug, by, message string)
+
+// SetHistoryNote wires what records events in an app's history.
+func SetHistoryNote(fn func(owner, slug, by, message string)) { historyNote = fn }
+
+// HistoryNote records in owner's app slug's history what by did to it that
+// changes none of its files: an administrator switching it, or one of its
+// tools, off or back on. Nothing where apps keep no history.
+func HistoryNote(owner, slug, by, message string) {
+	if historyNote != nil {
+		historyNote(owner, slug, by, message)
+	}
+}

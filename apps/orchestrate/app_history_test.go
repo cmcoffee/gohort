@@ -9,6 +9,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/gohort/core/applocal"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -82,6 +83,30 @@ func TestEverySaveWritesTheAppIntoItsHistory(t *testing.T) {
 	DeleteAppSpec("alice", "wx")
 	if _, err := os.Stat(dir); err == nil {
 		t.Error("the deleted app's history is still there")
+	}
+}
+
+// An administrator's stop changes none of the app's files and is recorded
+// in its history all the same, as theirs: an agent's saves waiting are
+// committed first as the agent's person's, so the stop is its own entry.
+// An app with no history yet records nothing.
+func TestAnAdministratorsStopIsInTheAppsHistory(t *testing.T) {
+	ws := historyWorld(t)
+	dir := filepath.Join(ws, "alice", ".apps", "wx")
+	applocal.HistoryNote("alice", "wx", "root", "Switched off by an administrator")
+	if _, err := os.Stat(dir); err == nil {
+		t.Fatal("a note made a history for an app that has none")
+	}
+	SaveAppSpec(historyApp(nil))
+	SaveAppSpecBy(historyApp(map[string]string{"now": "print('{}')"}), "update", "alice", "Builder")
+	applocal.HistoryNote("alice", "wx", "root", "Switched off by an administrator\n\nroot switched the app off.")
+	log, _ := appRepoGit(dir, "log", "--format=%an|%s")
+	lines := strings.Split(strings.TrimSpace(log), "\n")
+	if len(lines) != 3 || lines[0] != "root|Switched off by an administrator" || !strings.HasPrefix(lines[1], "alice|") {
+		t.Fatalf("history = %q", log)
+	}
+	if st, _ := appRepoGit(dir, "status", "--porcelain"); strings.TrimSpace(st) != "" {
+		t.Errorf("saves still waiting after the note: %q", st)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appagents"
+	"github.com/cmcoffee/gohort/core/applocal"
 	"github.com/cmcoffee/gohort/core/apptools"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 )
@@ -525,6 +526,13 @@ func (a *AdminApp) switchAppTool(c *jsonapi.Call, _ json.RawMessage) (any, error
 	}
 	on := q.Get("on") == "true"
 	apptools.Stop(owner, slug, name, c.User, !on)
+	// A stop, not an edit: the tool is as Builder or Anvil left it, so the
+	// app's history says who stopped it.
+	if on {
+		applocal.HistoryNote(owner, slug, c.User, "Tool "+name+" switched back on by an administrator\n\n"+c.User+" switched the tool back on: the app's agents load it again.")
+	} else {
+		applocal.HistoryNote(owner, slug, c.User, "Tool "+name+" switched off by an administrator\n\n"+c.User+" switched the tool off: the app's agents do not load it until an administrator switches it back on. The tool itself is as it was.")
+	}
 	if on {
 		Log("[admin] %s switched the tool %q of app %s/%s back on", c.User, name, owner, slug)
 		return map[string]any{"ok": true, "message": "Switched back on."}, nil

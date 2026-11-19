@@ -25,6 +25,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appadmin"
+	"github.com/cmcoffee/gohort/core/applocal"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 )
@@ -454,6 +455,13 @@ func (T *CustomApps) handleAdminWrite(c *jsonapi.Call, sub string, raw json.RawM
 		st.Updated = time.Now().UTC().Format(time.RFC3339)
 		appadmin.Save(RootDB, owner, slug, st)
 		SaveAppSpecBy(spec, AppSaveNoHistory, owner, "")
+		// A stop, not an edit: the app's files are as they were, so its
+		// history says who stopped it, and when.
+		if on {
+			applocal.HistoryNote(owner, slug, user, "Switched back on by an administrator\n\n"+user+" switched the app back on: it serves again, and what it owns runs again.")
+		} else {
+			applocal.HistoryNote(owner, slug, user, "Switched off by an administrator\n\n"+user+" switched the app off: it does not serve, and its agents, pipelines and machines do not run, until an administrator switches it back on. The app itself is as it was.")
+		}
 		if on {
 			Log("[customapps] admin %q switched app %q/%q back on", user, owner, slug)
 			return map[string]any{"ok": true, "message": "Switched back on."}, nil

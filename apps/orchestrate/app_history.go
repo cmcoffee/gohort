@@ -26,6 +26,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/applocal"
 )
 
 // appHistoryDirName is the folder under an owner's workspaces root that holds
@@ -43,6 +44,35 @@ func init() {
 			os.RemoveAll(dir)
 		}
 	})
+	applocal.SetHistoryNote(appHistoryNote)
+}
+
+// appHistoryNote records in owner's app slug's history an event that changes
+// none of its files (an administrator's stop), as a commit of by's with no
+// changes. Saves waiting from someone else are committed first, as theirs.
+// Nothing when the app has no history yet: it starts at its next save.
+func appHistoryNote(owner, slug, by, message string) {
+	if appGit() == "" || strings.TrimSpace(by) == "" {
+		return
+	}
+	dir, ok := appRepoDir(owner, slug)
+	if !ok {
+		return
+	}
+	mu := appRepoLock(dir)
+	mu.Lock()
+	defer mu.Unlock()
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+		return
+	}
+	if err := commitWaiting(dir, waitingInterrupted); err != nil {
+		Log("[app-history] %s/%s: saves waiting could not be committed before %s's note: %v", owner, slug, by, err)
+		return
+	}
+	if _, err := appRepoGit(dir, "-c", "user.name="+by, "-c", "user.email="+by+"@users.gohort.invalid",
+		"commit", "-q", "--allow-empty", "-m", strings.TrimSpace(message)); err != nil {
+		Log("[app-history] %s/%s: %s's note could not be recorded: %v", owner, slug, by, err)
+	}
 }
 
 // appRepoDir is where owner's app slug keeps its history, and whether there
