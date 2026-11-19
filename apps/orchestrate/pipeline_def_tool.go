@@ -83,6 +83,12 @@ func (t *chatTurn) pipelineGroupedToolDef() AgentToolDef {
 			switch action {
 			case "update", "delete":
 				if def, ok := t.findPipeline(args); ok {
+					// Refused before the owner is asked (app_draft.go).
+					if action != "delete" {
+						if err := appPartDraftRefusal(t.user, def.OwningApp, appEditOfTurn(t), "pipeline"); err != nil {
+							return "", err
+						}
+					}
 					verb := "Change its stages or settings."
 					if action == "delete" {
 						verb = "Delete it."

@@ -118,6 +118,12 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 			switch action {
 			case "update", "update_phase", "repair", "delete":
 				if def, ok := t.findMachine(args); ok {
+					// Refused before the owner is asked (app_draft.go).
+					if action != "delete" {
+						if err := appPartDraftRefusal(t.user, def.OwningApp, appEditOfTurn(t), "machine"); err != nil {
+							return "", err
+						}
+					}
 					verb := map[string]string{"update": "Change its phases or settings.", "update_phase": "Change the phase " + stringArg(args, "phase") + ".",
 						"repair": "Repair it.", "delete": "Delete it, and take it off every agent that has it."}[action]
 					if msg := t.approveChange("machine", def.Name, verb, changeOpFor(action == "delete")); msg != "" {

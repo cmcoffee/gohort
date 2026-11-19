@@ -692,3 +692,23 @@ func TestADraftsOwnPartsMergeWithALiveChange(t *testing.T) {
 		t.Errorf("the draft's tool is not live: %+v", at.Tool.Description)
 	}
 }
+
+// Builder's direct change to a live app's own agent is refused, and before
+// the owner is asked to approve it: a card for a change that would be
+// refused anyway waits on the owner for nothing.
+func TestARefusedPartChangeAsksNobody(t *testing.T) {
+	_, udb, clerk := ownedDeskFixture(t)
+	asked := 0
+	sess := &ToolSession{Username: "u", DB: udb, AgentID: "seed-builder",
+		ApproveChange: func(kind, name, detail string, op ChangeOp) string { asked++; return "" }}
+	_, err := updateAgentTool{}.RunWithSession(map[string]any{"id": clerk.ID, "orchestrator_prompt": "New prompt."}, sess)
+	if err == nil || !strings.Contains(err.Error(), "NOT CHANGED") {
+		t.Fatalf("a direct change to a live app's agent: %v", err)
+	}
+	if asked != 0 {
+		t.Errorf("the owner was asked %d time(s) to approve a change refused anyway", asked)
+	}
+	if now, _ := loadAgent(udb, clerk.ID); now.OrchestratorPrompt != "Old prompt." {
+		t.Errorf("the refused change was saved: %q", now.OrchestratorPrompt)
+	}
+}

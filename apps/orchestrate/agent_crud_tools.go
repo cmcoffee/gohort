@@ -780,6 +780,11 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		_, m.memorySet = args["keeps_memory"].(bool)
 		move = m
 	}
+	// A live app's own agent changes in Builder's draft of the app, never
+	// here: refused before the owner is asked to approve what would be.
+	if err := appPartDraftRefusal(existing.Owner, existing.OwningApp, appEditOf(sess), "agent"); err != nil {
+		return "", err
+	}
 	// A change to an agent that already exists asks the owner first, once per
 	// agent per session (change_approval.go).
 	if sess.ApproveChange != nil {
