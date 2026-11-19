@@ -103,7 +103,12 @@ func importAppOwned(owner, slug string, files map[string][]byte) error {
 		spec.PipelineID, changed = id, true
 	}
 	if changed {
-		SaveAppSpecBy(spec, AppSaveNoHistory, owner, "import")
+		// The importer's own change, committed at once as theirs (as
+		// appOwnedChanged records the import's agents): not an agent's work
+		// waiting to be finished, and never under the note the app carried
+		// from where it was exported.
+		spec.ChangeNote = "Point the app at its own agent and pipeline, as imported"
+		SaveAppSpecBy(spec, AppSaveNoHistory, owner, "")
 	}
 	return nil
 }

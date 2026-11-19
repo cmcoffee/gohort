@@ -1562,6 +1562,9 @@ func (customAppArtifact) ImportArtifact(_ Database, recipe json.RawMessage, owne
 	spec.Updated = ""
 	spec.Disabled = true
 	spec.Verify = nil
+	// The note of its last change where it was exported is that history's,
+	// not this one's: left on, the next save here would be recorded under it.
+	spec.ChangeNote = ""
 	// An imported app is never pre-shared, even if a hand-crafted bundle set the
 	// flags — the importer shares on their own terms (and the token would be
 	// meaningless in this deployment's index anyway).
