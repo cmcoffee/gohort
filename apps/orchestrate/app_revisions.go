@@ -30,6 +30,9 @@ func (t *chatTurn) appDefRevisions(args map[string]any) (string, error) {
 	if herr == nil && len(history) > 0 {
 		var b strings.Builder
 		fmt.Fprintf(&b, "Versions of %q in its history, newest first. Go back to one with app_def(action=\"revert\", id=%q, to=<its hash>): the app as that version had it, a new change of its own.\n\n", spec.Name, spec.Slug)
+		if w, ok := AppHistoryWaiting(spec.Owner, spec.Slug); ok {
+			b.WriteString("  LIVE NOW, not in the history yet: " + waitingLine(w) + "\n")
+		}
 		for _, c := range history {
 			who := c.Author
 			if c.Agent != "" {
@@ -206,4 +209,17 @@ func appHumanBytes(n int) string {
 		return fmt.Sprintf("%dB", n)
 	}
 	return fmt.Sprintf("%.1fKB", float64(n)/1024)
+}
+
+// waitingLine says what work is live and not in the history yet, and whose.
+func waitingLine(w AppWaiting) string {
+	who := w.By
+	if w.Via != "" {
+		who += " with " + w.Via
+	}
+	what := "changes not yet committed as finished"
+	if len(w.Notes) > 0 {
+		what = fmt.Sprintf("%q", strings.Join(w.Notes, "; "))
+	}
+	return what + ", by " + who
 }

@@ -80,6 +80,52 @@ func TestAnAppProjectsHistoryGoesBackToAVersion(t *testing.T) {
 	}
 }
 
+// An install that leaves the app not working is live but not in its history
+// yet: History says so above the versions and marks none of them live, so
+// the newest, the last that worked, is one to go back to. Going back to it
+// puts the app as it last worked, and the newest version is live again.
+func TestHistoryGoesBackPastAnInstallThatDoesNotWork(t *testing.T) {
+	T, serve := appProjectWorld(t)
+	id := openWx(t, serve)
+	var p Project
+	UserDB(T.DB, "alice").Get(projectTable, id, &p)
+	base, _ := p.baseDir()
+	before, _ := LoadAppSpec("alice", "wx")
+	os.WriteFile(filepath.Join(base, "data", "now.py"), []byte("raise SystemExit('the weather service is down')\n"), 0o644)
+	if w := serve("alice", "POST", "/api/project/"+id+"/install", "{}"); w.Code != 200 || !strings.Contains(w.Body.String(), `"broken"`) {
+		t.Fatalf("the install that does not work: %d %s", w.Code, w.Body.String())
+	}
+
+	w := serve("alice", "GET", "/api/project/"+id+"/app_history", "")
+	var res struct {
+		Commits []orchestrate.AppCommit `json:"commits"`
+		Waiting *orchestrate.AppWaiting `json:"waiting"`
+	}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &res) != nil || len(res.Commits) == 0 {
+		t.Fatalf("history: %d %s", w.Code, w.Body.String())
+	}
+	if res.Waiting == nil || res.Waiting.By != "alice" || res.Waiting.Via != "Anvil" {
+		t.Errorf("the install live and not in the history is not said: %+v", res.Waiting)
+	}
+	for _, c := range res.Commits {
+		if c.Live {
+			t.Errorf("%q reads as live, with the install serving", c.Subject)
+		}
+	}
+	if w := serve("alice", "POST", "/api/project/"+id+"/app_history/restore", `{"commit":"`+res.Commits[0].Hash+`"}`); w.Code != 200 || strings.Contains(w.Body.String(), `"broken"`) {
+		t.Fatalf("go back to the version that worked: %d %s", w.Code, w.Body.String())
+	}
+	if now, _ := LoadAppSpec("alice", "wx"); now.DataSources[0].Script != before.DataSources[0].Script {
+		t.Errorf("the app is not as it last worked: %q", now.DataSources[0].Script)
+	}
+	if _, waiting := orchestrate.AppHistoryWaiting("alice", "wx"); waiting {
+		t.Error("the install is still waiting to go in after going back past it")
+	}
+	if list, _ := orchestrate.AppHistoryLog("alice", "wx", 0); len(list) != len(res.Commits) || !list[0].Live {
+		t.Errorf("the history after going back: %+v", list)
+	}
+}
+
 // History is on an app project's bar, and on no other project's.
 func TestOnlyAnAppProjectHasAHistoryButton(t *testing.T) {
 	var T Anvil

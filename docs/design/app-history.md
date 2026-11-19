@@ -551,6 +551,17 @@ replaced, so going back is undone the same way.
 - What the app owns that a version did not have is kept, never removed by
   going back: an item is removed with Builder.
 
+S4, as built (2026-11-19): Install already took in what changed live
+since the checkout (`takeAppChanges`, a merge from `live`, stopping on an
+overlap), saved through every gate, and committed a working install on
+`live` as the person's with Anvil credited (`InstallAppFolder`). What was
+left: an install that goes in but leaves the app not working is live and,
+as unfinished work, waits uncommitted. The history then marks no version
+live (`AppHistoryWaiting`), and says so above the versions, in Anvil's
+History and in Builder's `revisions`, so the newest version, the last that
+worked, is one to go back to. A change saved and put back (an install
+refused after it saved) leaves nothing waiting.
+
 **Settled (owner, 2026-11-18).**
 
 1. S3: a turn that stops short of a pass leaves the work waiting; the

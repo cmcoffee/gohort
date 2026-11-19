@@ -133,3 +133,50 @@ func TestBuilderGoesBackToAVersionInItsDraft(t *testing.T) {
 		t.Error("Builder's going back reached the live app before its commit")
 	}
 }
+
+// Work live and not in the history yet (an agent's saves not committed as
+// finished) leaves no version live: the history says so, and Builder's
+// versions list names it above them.
+func TestWorkLiveAndNotInTheHistoryLeavesNoVersionLive(t *testing.T) {
+	turn, _ := shelfVersions(t)
+	if _, ok := AppHistoryWaiting("u", "shelf"); ok {
+		t.Fatal("a history with nothing waiting says something is")
+	}
+	// A change saved and put back, as an install refused after it saved:
+	// its record stays, and nothing is waiting.
+	spec, _ := LoadAppSpec("u", "shelf")
+	kept := spec.Sections
+	spec.Sections = json.RawMessage(`[{"id":"page","kind":"html","html":"<!DOCTYPE html><html><body><h1>Broken</h1></body></html>"}]`)
+	spec.ChangeNote = "Installed from Anvil"
+	SaveAppSpecBy(spec, "update", "u", "Anvil")
+	spec.Sections = kept
+	SaveAppSpecBy(spec, "update", "u", "Anvil")
+	if _, ok := AppHistoryWaiting("u", "shelf"); ok {
+		t.Error("a change put back reads as waiting")
+	}
+	if list, _ := AppHistoryLog("u", "shelf", 0); !list[0].Live {
+		t.Errorf("a change put back leaves the newest version not live: %+v", list[0])
+	}
+	spec, _ = LoadAppSpec("u", "shelf")
+	spec.Sections = json.RawMessage(`[{"id":"page","kind":"html","html":"<!DOCTYPE html><html><body><h1>Poems</h1></body></html>"}]`)
+	spec.ChangeNote = "Say poems"
+	SaveAppSpecBy(spec, "update", "u", "Anvil")
+	w, ok := AppHistoryWaiting("u", "shelf")
+	if !ok || w.By != "u" || w.Via != "Anvil" || len(w.Notes) == 0 || w.Notes[len(w.Notes)-1] != "Say poems" {
+		t.Errorf("the work waiting: %v %+v", ok, w)
+	}
+	list, _ := AppHistoryLog("u", "shelf", 0)
+	for _, c := range list {
+		if c.Live {
+			t.Errorf("%q reads as live, with newer work serving", c.Subject)
+		}
+	}
+	out, err := turn.appDefRevisions(map[string]any{"id": "shelf"})
+	if err != nil || !strings.Contains(out, `LIVE NOW, not in the history yet: "Installed from Anvil; Say poems", by u with Anvil`) || strings.Contains(out, "(live)") {
+		t.Errorf("the versions Builder reads:\n%v %s", err, out)
+	}
+	CommitAppHistory("u", "shelf", "u", "Anvil", "Say poems")
+	if list, _ := AppHistoryLog("u", "shelf", 0); !list[0].Live {
+		t.Errorf("once in, the newest version is not live: %+v", list[0])
+	}
+}

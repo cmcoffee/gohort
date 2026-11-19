@@ -31,8 +31,51 @@ type AppCommit struct {
 	When    string `json:"when"`
 	Subject string `json:"subject"`
 	Body    string `json:"body,omitempty"`
-	// Live marks the version serving now.
+	// Live marks the version serving now: the newest, unless work newer than
+	// it is live and waiting to go in (AppWaiting).
 	Live bool `json:"live,omitempty"`
+}
+
+// AppWaiting is work live in an app that is not in its history yet: an
+// agent's saves not yet committed as finished, such as an install from Anvil
+// that left the app not working. The newest version in the history is then
+// the last one that went in, not what is serving.
+type AppWaiting struct {
+	By    string   `json:"by"`
+	Via   string   `json:"via,omitempty"`
+	Notes []string `json:"notes,omitempty"`
+}
+
+// AppHistoryWaiting is the work live in owner's app slug and not in its
+// history yet; false when there is none, or no history.
+func AppHistoryWaiting(owner, slug string) (AppWaiting, bool) {
+	dir, err := appHistoryDir(owner, slug)
+	if err != nil {
+		return AppWaiting{}, false
+	}
+	mu := appRepoLock(dir)
+	mu.Lock()
+	defer mu.Unlock()
+	p, ok := appWaitingLocked(dir)
+	if !ok {
+		return AppWaiting{}, false
+	}
+	return AppWaiting{By: p.By, Via: p.Via, Notes: p.Notes}, true
+}
+
+// appWaitingLocked is the saves waiting in dir, with the history held, when
+// they left the app other than its newest version: a change put back (an
+// install refused after it saved, and saved the app back) leaves its record
+// and nothing waiting.
+func appWaitingLocked(dir string) (appPending, bool) {
+	p := loadAppPending(dir)
+	if p.By == "" {
+		return p, false
+	}
+	if out, err := appRepoGit(dir, "status", "--porcelain"); err == nil && strings.TrimSpace(out) == "" {
+		return p, false
+	}
+	return p, true
 }
 
 // appHistoryMax is how many versions a listing reads back at most.
@@ -84,6 +127,10 @@ func AppHistoryLog(owner, slug string, limit int) ([]AppCommit, error) {
 	}
 	head, _ := appRepoGit(dir, "rev-parse", "HEAD")
 	head = strings.TrimSpace(head)
+	// Work newer than the history is live: no version in it is serving.
+	if _, waiting := appWaitingLocked(dir); waiting {
+		head = ""
+	}
 	var list []AppCommit
 	for _, rec := range strings.Split(out, "\x1e") {
 		f := strings.Split(strings.TrimLeft(rec, "\n"), "\x1f")

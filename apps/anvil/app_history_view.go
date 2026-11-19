@@ -29,7 +29,14 @@ func (T *Anvil) handleAppHistory(c *jsonapi.Call) (any, error) {
 	if err != nil {
 		return map[string]any{"commits": []orchestrate.AppCommit{}, "none": err.Error()}, nil
 	}
-	return map[string]any{"commits": list}, nil
+	out := map[string]any{"commits": list}
+	// Work live and not in the history yet (an install that left the app
+	// not working): said above the versions, the newest then offered to go
+	// back to.
+	if w, ok := orchestrate.AppHistoryWaiting(c.User, p.AppSlug); ok {
+		out["waiting"] = w
+	}
+	return out, nil
 }
 
 // handleAppHistoryDiff is what one version (?commit=) changed.
@@ -105,6 +112,11 @@ const anvilAppHistoryJS = `function(ctx) {
         return;
       }
       body.appendChild(window.anvilNote('Every version the app went live as, newest first. Open one to see what it changed. Going back makes the app as that version had it live again, as a change of your own: the version it replaces stays here, to go back to the same way.'));
+      if (res.waiting) {
+        var w = res.waiting;
+        var what = (w.notes && w.notes.length) ? w.notes.join('; ') : 'changes not yet committed';
+        body.appendChild(window.anvilNote('Live now, and not in the history yet: ' + what + ', by ' + w.by + (w.via ? ' with ' + w.via : '') + '. It goes in once it is finished (an install that works). Going back to a version below replaces it.'));
+      }
       list.forEach(function(c) {
         var wrap = el('div', 'anvil-edit');
         var head = el('div', 'anvil-edit-head');
