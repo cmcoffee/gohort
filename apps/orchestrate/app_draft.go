@@ -10,11 +10,14 @@ package orchestrate
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -170,22 +173,129 @@ func appLiveMark(s AppSpec) string {
 }
 
 // errLiveMoved is a commit refused because the live app changed since the
-// draft started, by someone else.
+// draft started, by someone else, and could not be merged into it (no
+// history to merge in: no git, or a draft started before it had one).
 var errLiveMoved = errors.New("the live app changed since your draft started")
+
+// errMergedVerifyAgain is an agent's commit stopped after the live app's
+// changes since the draft started were merged into it: the two together have
+// not been tested.
+var errMergedVerifyAgain = errors.New("the live app changed since your draft started (a person's change, Anvil, or a maintainer), and those changes are now merged into your draft, which has not been verified with them")
+
+// errDraftConflict is a merge stopped because the draft and what was saved
+// to the live app since it started change the same lines.
+type errDraftConflict struct{ files []string }
+
+func (e errDraftConflict) Error() string {
+	return "the live app changed since your draft started, and those changes and yours change the same lines in " + strings.Join(e.files, ", ")
+}
+
+// mergeLiveIntoDraft brings what was saved to the live app since d started
+// into d, the way git merges: d's files committed on the commit it started
+// from, the live app's history merged into them, and the result read back as
+// the app. Done in a clone of the history, so neither the history nor the
+// live app changes; an overlap is errDraftConflict. It returns d holding the
+// merge, its base moved to the live app as it is now.
+func mergeLiveIntoDraft(d appdraft.Draft) (appdraft.Draft, error) {
+	owner, slug := d.Spec.Owner, d.Spec.Slug
+	o, hosted := agenthostApp()
+	live, isLive := LoadAppSpec(owner, slug)
+	dir, ok := appRepoDir(owner, slug)
+	if appGit() == "" || d.BaseCommit == "" || !hosted || !isLive || !ok {
+		return d, errLiveMoved
+	}
+	mu := appRepoLock(dir)
+	mu.Lock()
+	defer mu.Unlock()
+	// The history holds the live app as it is now: waiting saves committed
+	// as their author's, anything else (an asset added) as the owner's.
+	if err := commitWaiting(dir, waitingInterrupted); err != nil {
+		return d, err
+	}
+	if changed, err := writeAppRepoFiles(dir, live); err != nil {
+		return d, err
+	} else if changed {
+		if err := appRepoCommit(dir, owner, "", "Bring the history up to date with the app\n\nChanges made outside a save, such as an asset added."); err != nil {
+			return d, err
+		}
+	}
+	head, err := appRepoGit(dir, "rev-parse", "HEAD")
+	if err != nil {
+		return d, err
+	}
+	head = strings.TrimSpace(head)
+	tmp, err := os.MkdirTemp("", "app-draft-merge-")
+	if err != nil {
+		return d, err
+	}
+	defer os.RemoveAll(tmp)
+	clone := filepath.Join(tmp, slug)
+	if _, err := appRepoGit(tmp, "clone", "-q", "--no-checkout", dir, clone); err != nil {
+		return d, err
+	}
+	if _, err := appRepoGit(clone, "checkout", "-q", "--detach", d.BaseCommit); err != nil {
+		return d, fmt.Errorf("the commit your draft started from is not in the app's history: %w", err)
+	}
+	if _, err := writeAppRepoFiles(clone, d.Spec); err != nil {
+		return d, err
+	}
+	if err := appRepoCommit(clone, d.Editor, "", "Draft"); err != nil {
+		return d, err
+	}
+	if _, err := appRepoGit(clone, "-c", "user.name="+d.Editor, "-c", "user.email="+d.Editor+"@users.gohort.invalid",
+		"merge", "-q", "--no-edit", head); err != nil {
+		out, _ := appRepoGit(clone, "diff", "--name-only", "--diff-filter=U")
+		files := strings.Fields(out)
+		if len(files) == 0 {
+			return d, fmt.Errorf("the live app's changes could not be merged into your draft: %w", err)
+		}
+		return d, errDraftConflict{files: files}
+	}
+	merged, err := o.BuildAppFolder(context.Background(), owner, clone)
+	if err != nil {
+		return d, fmt.Errorf("your draft merged with the live app's changes does not build: %w", err)
+	}
+	merged.ChangedBy, merged.ChangedVia, merged.ChangeNote = d.Spec.ChangedBy, d.Spec.ChangedVia, d.Spec.ChangeNote
+	merged.Verify, merged.Created, merged.Updated = nil, d.Spec.Created, d.Spec.Updated
+	d.Spec = merged
+	d.Base, d.BaseCommit = appLiveMark(live), head
+	return d, nil
+}
 
 // goLive makes this turn's draft of an app the live app: saved through the
 // save path's gates, its verify verdict carried, the assets it took out
 // removed, and the draft dropped. It returns the app as now live.
 func (t *chatTurn) goLive(d appdraft.Draft, reason string) (AppSpec, error) {
-	return goDraftLive(d, reason)
+	return goDraftLive(d, reason, false)
 }
 
-// goDraftLive is goLive, for a turn or for the person's own Make live.
-func goDraftLive(d appdraft.Draft, reason string) (AppSpec, error) {
+// goDraftLive is goLive, for a turn or for the person's own Make live
+// (byPerson). A live app changed since the draft started is merged into the
+// draft first (mergeLiveIntoDraft). For an agent's commit, a merge that
+// brought in what changes how the app works is kept in the draft and the
+// commit refused (errMergedVerifyAgain): the two together have not been
+// tested. The person making it live takes the merge as it is.
+func goDraftLive(d appdraft.Draft, reason string, byPerson bool) (AppSpec, error) {
 	live, isLive := LoadAppSpec(d.Spec.Owner, d.Spec.Slug)
 	switch {
 	case isLive && appLiveMark(live) != d.Base:
-		return AppSpec{}, errLiveMoved
+		merged, err := mergeLiveIntoDraft(d)
+		if err != nil {
+			return AppSpec{}, err
+		}
+		keep := draftVerdictCarries(d.Spec, merged.Spec)
+		if keep {
+			merged.Spec.Verify = d.Spec.Verify
+		}
+		merged = appdraft.Save(merged, keep)
+		if !keep && !byPerson {
+			return AppSpec{}, errMergedVerifyAgain
+		}
+		d = merged
+		live, isLive = LoadAppSpec(d.Spec.Owner, d.Spec.Slug)
+		if appLiveMark(live) != d.Base {
+			return AppSpec{}, errLiveMoved
+		}
 	case !isLive && d.Base != "":
 		return AppSpec{}, fmt.Errorf("the app %q was deleted since your draft started", d.Spec.Name)
 	}
@@ -240,7 +350,7 @@ func makeDraftLive(d appdraft.Draft, by string) (string, error) {
 	}
 	subject, _, _ := strings.Cut(msg, "\n")
 	d.Spec.ChangeNote = msg
-	live, err := goDraftLive(d, subject)
+	live, err := goDraftLive(d, subject, true)
 	if err != nil {
 		return "", err
 	}
@@ -254,6 +364,36 @@ func makeDraftLive(d appdraft.Draft, by string) (string, error) {
 		return live.Name + " is live now, its first version.", nil
 	}
 	return who + "'s changes to " + live.Name + " are live now.", nil
+}
+
+// appDefDiscard drops this turn's draft of an app, when the person asks:
+// the app is as it is live again. An app never live goes with it, and what
+// was made for it.
+func (t *chatTurn) appDefDiscard(args map[string]any) (string, error) {
+	slug := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
+	spec, _, ok := t.appForTurn(slug)
+	if slug == "" || !ok {
+		return "", appNotFound(args, "")
+	}
+	d, ok := t.appDraftOf(spec.Owner, spec.Slug)
+	if !ok {
+		return fmt.Sprintf("You have no draft of %q: it is as it is live.", spec.Name), nil
+	}
+	appdraft.Delete(spec.Owner, spec.Slug, t.user)
+	if appdraft.PreviewEnd != nil {
+		appdraft.PreviewEnd(t.user, spec.Slug)
+	}
+	t.forgetAppStanding(spec.Slug)
+	if _, live := LoadAppSpec(spec.Owner, spec.Slug); !live && spec.Owner == t.user {
+		gone, _ := DeleteAppOwned(t.user, spec.Slug)
+		DeleteAppAssets(t.user, spec.Slug)
+		msg := fmt.Sprintf("Dropped %q: it was never live.", d.Spec.Name)
+		if len(gone) > 0 {
+			msg += " What was made for it went too: " + strings.Join(gone, ", ") + "."
+		}
+		return msg, nil
+	}
+	return fmt.Sprintf("Dropped your draft of %q: the app is as it is live.", d.Spec.Name), nil
 }
 
 // draftsOfUser are the person's drafts of their own apps not yet live, for

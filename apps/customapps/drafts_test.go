@@ -20,6 +20,9 @@ func TestMyAppsShowsBuildersWorkInProgress(t *testing.T) {
 	appdraft.Save(appdraft.Draft{Spec: AppSpec{Owner: "alice", Slug: "notes", Name: "Notes"}, Editor: "alice"}, false)
 	// Someone else's draft of an app of theirs is not alice's to see.
 	appdraft.Save(appdraft.Draft{Spec: AppSpec{Owner: "bob", Slug: "bobs", Name: "Bob's"}, Editor: "bob"}, false)
+	// A maintainer's draft of an app of alice's is kept in her store, and is
+	// the maintainer's work, not hers.
+	appdraft.Save(appdraft.Draft{Spec: AppSpec{Owner: "alice", Slug: "kept", Name: "Kept"}, Editor: "carol"}, false)
 
 	var rows []map[string]string
 	if err := json.Unmarshal(as(t, T, "alice", httptest.NewRequest(http.MethodGet, "/apps/_apps", nil)).Body.Bytes(), &rows); err != nil {
@@ -37,6 +40,9 @@ func TestMyAppsShowsBuildersWorkInProgress(t *testing.T) {
 	}
 	if _, ok := bySlug["bobs"]; ok {
 		t.Error("alice's list shows bob's draft")
+	}
+	if _, ok := bySlug["kept"]; ok {
+		t.Error("alice's list shows a maintainer's draft as hers")
 	}
 
 	if w := as(t, T, "alice", httptest.NewRequest(http.MethodGet, "/apps/_app/draft/preview?slug=wx", nil)); w.Code != http.StatusFound || !strings.Contains(w.Header().Get("Location"), "/apps/wx/_preview?token=") {

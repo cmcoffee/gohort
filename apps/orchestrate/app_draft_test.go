@@ -152,33 +152,145 @@ func TestANewAppIsLiveAtItsFirstCommit(t *testing.T) {
 	}
 }
 
-// A draft made before someone else changed the live app would undo that
-// change: its commit is refused, saying so, and the live app and the draft
-// stay as they were.
-func TestACommitIsRefusedWhenTheLiveAppMoved(t *testing.T) {
-	turn, _ := folderTestTurn(t)
-	if _, err := turn.appDefCreateOrUpdate(map[string]any{"name": "Shelf", "sections": draftTestPage("Books")}, false); err != nil {
+// mergeFixture is a live app Shelf with two data sources and a page, and
+// Builder's verified draft of it changing what its first data source prints.
+func mergeFixture(t *testing.T) *chatTurn {
+	t.Helper()
+	if appGit() == "" {
+		t.Skip("git is not installed")
+	}
+	// With the host registered: a merge reads the merged folder back as the
+	// app the way an Install does.
+	turn, _ := copyTestTurn(t)
+	turn.agent.Name = "Builder"
+	page := "<!DOCTYPE html><html><body>\n<h1>Books</h1>\n<p>Shelf</p>\n</body></html>"
+	if _, err := turn.appDefCreateOrUpdate(map[string]any{"name": "Shelf",
+		"sections":     []any{map[string]any{"id": "page", "kind": "html", "html": page}},
+		"data_sources": []any{map[string]any{"name": "count", "script": "print('{\"n\": 1}')"}, map[string]any{"name": "top", "script": "print('{\"t\": 1}')"}},
+	}, false); err != nil {
 		t.Fatal(err)
 	}
 	makeLive(t, turn, "shelf")
-	if _, err := turn.appDefCreateOrUpdate(map[string]any{"id": "shelf", "sections": draftTestPage("Novels")}, true); err != nil {
+	if _, err := turn.appDefCreateOrUpdate(map[string]any{"id": "shelf",
+		"data_sources": []any{map[string]any{"name": "count", "script": "print('{\"n\": 2}')"}, map[string]any{"name": "top", "script": "print('{\"t\": 1}')"}}}, true); err != nil {
 		t.Fatal(err)
 	}
 	draft, _ := turnApp(turn, "shelf")
 	turn.recordVerdict(draft, true, "ok")
-	// The person changes the live app themselves meanwhile.
-	live, _ := LoadAppSpec("u", "shelf")
-	live.Desc = "Changed by hand."
-	SaveAppSpec(live)
+	return turn
+}
 
-	if _, err := turn.appDefCommit(map[string]any{"id": "shelf", "message": "Say novels"}); err == nil || !strings.Contains(err.Error(), "changed since your draft started") {
-		t.Fatalf("a draft older than the live app was committed: %v", err)
+// liveChange is the person changing the live app themselves while Builder's
+// draft is open: committed at once, as theirs.
+func liveChange(t *testing.T, change func(*AppSpec)) {
+	t.Helper()
+	live, _ := LoadAppSpec("u", "shelf")
+	change(&live)
+	SaveAppSpec(live)
+}
+
+func scriptOf(s AppSpec, name string) string {
+	for _, ds := range s.DataSources {
+		if ds.Name == name {
+			return ds.Script
+		}
 	}
-	if now, _ := LoadAppSpec("u", "shelf"); now.Desc != "Changed by hand." || !strings.Contains(string(now.Sections), "Books") {
-		t.Errorf("the refused commit changed the live app: %q %s", now.Desc, now.Sections)
+	return ""
+}
+
+// A live app changed since the draft started is merged into the draft at
+// its commit, as git merges. A change to its words only goes live with the
+// draft, the draft's verdict standing; a change to how it works is merged
+// into the draft, and the commit waits for the two to be verified together.
+func TestADraftTakesInWhatChangedLiveSinceItStarted(t *testing.T) {
+	turn := mergeFixture(t)
+	liveChange(t, func(s *AppSpec) { s.Desc = "Changed by hand." })
+	out, err := turn.appDefCommit(map[string]any{"id": "shelf", "message": "Count two"})
+	if err != nil || !strings.Contains(out, "live now") {
+		t.Fatalf("a draft with only words changed live since: %v %s", err, out)
 	}
-	if _, ok := appdraft.Load("u", "shelf", "u"); !ok {
-		t.Error("the refused commit dropped the draft")
+	live, _ := LoadAppSpec("u", "shelf")
+	if live.Desc != "Changed by hand." || scriptOf(live, "count") != "print('{\"n\": 2}')" {
+		t.Errorf("the merge lost one side: desc %q, count %q", live.Desc, scriptOf(live, "count"))
+	}
+
+	// Builder's next draft, and the person changes another script live.
+	if _, err := turn.appDefCreateOrUpdate(map[string]any{"id": "shelf",
+		"data_sources": []any{map[string]any{"name": "count", "script": "print('{\"n\": 3}')"}, map[string]any{"name": "top", "script": "print('{\"t\": 1}')"}}}, true); err != nil {
+		t.Fatal(err)
+	}
+	draft, _ := turnApp(turn, "shelf")
+	turn.recordVerdict(draft, true, "ok")
+	liveChange(t, func(s *AppSpec) {
+		for i := range s.DataSources {
+			if s.DataSources[i].Name == "top" {
+				s.DataSources[i].Script = "print('{\"t\": 9}')"
+			}
+		}
+	})
+	if _, err := turn.appDefCommit(map[string]any{"id": "shelf", "message": "Count three"}); err == nil || !strings.Contains(err.Error(), "Verify your draft again") {
+		t.Fatalf("a merge that changed how the app works went live untested: %v", err)
+	}
+	merged, _ := turnApp(turn, "shelf")
+	if scriptOf(merged, "count") != "print('{\"n\": 3}')" || scriptOf(merged, "top") != "print('{\"t\": 9}')" {
+		t.Fatalf("the draft does not hold both: count %q top %q", scriptOf(merged, "count"), scriptOf(merged, "top"))
+	}
+	if now, _ := LoadAppSpec("u", "shelf"); scriptOf(now, "count") != "print('{\"n\": 2}')" {
+		t.Error("the stopped commit changed the live app")
+	}
+	turn.recordVerdict(merged, true, "ok")
+	if out, err := turn.appDefCommit(map[string]any{"id": "shelf", "message": "Count three"}); err != nil || !strings.Contains(out, "live now") {
+		t.Fatalf("the verified merge: %v %s", err, out)
+	}
+	if now, _ := LoadAppSpec("u", "shelf"); scriptOf(now, "count") != "print('{\"n\": 3}')" || scriptOf(now, "top") != "print('{\"t\": 9}')" {
+		t.Errorf("the merge went live without one side: count %q top %q", scriptOf(now, "count"), scriptOf(now, "top"))
+	}
+}
+
+// The draft and the live app changing the same lines is a conflict: the
+// commit names what overlaps, both stay as they were, and the person can
+// have Builder drop its draft to start again from the live app.
+func TestADraftThatOverlapsALiveChangeIsAConflict(t *testing.T) {
+	turn := mergeFixture(t)
+	liveChange(t, func(s *AppSpec) {
+		for i := range s.DataSources {
+			if s.DataSources[i].Name == "count" {
+				s.DataSources[i].Script = "print('{\"n\": 7}')"
+			}
+		}
+	})
+	_, err := turn.appDefCommit(map[string]any{"id": "shelf", "message": "Count two"})
+	if err == nil || !strings.Contains(err.Error(), "change the same lines in data/count.py") || !strings.Contains(err.Error(), `action="discard"`) {
+		t.Fatalf("an overlap: %v", err)
+	}
+	if now, _ := LoadAppSpec("u", "shelf"); scriptOf(now, "count") != "print('{\"n\": 7}')" {
+		t.Errorf("the conflict changed the live app: %q", scriptOf(now, "count"))
+	}
+	if d, _ := turnApp(turn, "shelf"); scriptOf(d, "count") != "print('{\"n\": 2}')" {
+		t.Errorf("the conflict changed the draft: %q", scriptOf(d, "count"))
+	}
+	if out, err := turn.appDefDiscard(map[string]any{"id": "shelf"}); err != nil || !strings.Contains(out, "as it is live") {
+		t.Fatalf("discard: %v %s", err, out)
+	}
+	if d, _ := turnApp(turn, "shelf"); scriptOf(d, "count") != "print('{\"n\": 7}')" {
+		t.Error("after the discard Builder still reads its draft")
+	}
+}
+
+// With no history to merge from (no git, or a draft started before the app
+// had one), a draft older than the live app is refused at its commit, and
+// both stay as they were.
+func TestADraftWithNoHistoryToMergeIsRefused(t *testing.T) {
+	turn := mergeFixture(t)
+	d, _ := appdraft.Load("u", "shelf", "u")
+	d.BaseCommit = ""
+	appdraft.Save(d, true)
+	liveChange(t, func(s *AppSpec) { s.Desc = "Changed by hand." })
+	if _, err := turn.appDefCommit(map[string]any{"id": "shelf", "message": "Count two"}); err == nil || !strings.Contains(err.Error(), "cannot be merged") {
+		t.Fatalf("a draft older than the live app, with nothing to merge from: %v", err)
+	}
+	if now, _ := LoadAppSpec("u", "shelf"); scriptOf(now, "count") != "print('{\"n\": 1}')" {
+		t.Error("the refused commit changed the live app")
 	}
 }
 
@@ -297,5 +409,25 @@ func TestThePersonMakesADraftLive(t *testing.T) {
 		if !strings.HasPrefix(log, "u|Make Builder's changes live|") || !strings.Contains(log, "before Builder had verified") || !strings.Contains(log, "Say novels") || !strings.Contains(log, "Co-Authored-By: Builder") {
 			t.Errorf("the history's record of it: %q", log)
 		}
+	}
+}
+
+// The person making a draft live takes the merge with what changed live
+// since it started as it is: their choice, through the same save.
+func TestThePersonMakesAMergedDraftLive(t *testing.T) {
+	mergeFixture(t)
+	liveChange(t, func(s *AppSpec) {
+		for i := range s.DataSources {
+			if s.DataSources[i].Name == "top" {
+				s.DataSources[i].Script = "print('{\"t\": 9}')"
+			}
+		}
+	})
+	d, _ := appdraft.Load("u", "shelf", "u")
+	if out, err := appdraft.MakeLive(d, "u"); err != nil || !strings.Contains(out, "live now") {
+		t.Fatalf("make live over a live change: %v %s", err, out)
+	}
+	if now, _ := LoadAppSpec("u", "shelf"); scriptOf(now, "count") != "print('{\"n\": 2}')" || scriptOf(now, "top") != "print('{\"t\": 9}')" {
+		t.Errorf("the merge went live without one side: count %q top %q", scriptOf(now, "count"), scriptOf(now, "top"))
 	}
 }

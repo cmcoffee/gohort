@@ -533,8 +533,14 @@ func (t *chatTurn) appDefCommit(args map[string]any) (string, error) {
 		// work, and an existing app's waiting save carries it.
 		d.Spec.ChangeNote = msg
 		live, err := t.goLive(d, subject)
-		if errors.Is(err, errLiveMoved) {
-			return "", fmt.Errorf("NOT LIVE: %v (a person's change, Anvil, or a maintainer), so your draft would undo it. Nothing changed: the live app and your draft are as they were. Tell the person, and ask whether to make your change again on the app as it is now", err)
+		var conflict errDraftConflict
+		switch {
+		case errors.Is(err, errMergedVerifyAgain):
+			return "", fmt.Errorf("NOT LIVE YET: %v. Verify your draft again (app_def(action=\"verify\", id=%q)), fix what it finds, then commit", err, spec.Slug)
+		case errors.As(err, &conflict):
+			return "", fmt.Errorf("NOT LIVE: %v. Nothing changed: the live app and your draft are as they were. Tell the person what overlaps, and ask whether to drop your draft (app_def(action=\"discard\", id=%q)) and make your change again on the app as it is now", err, spec.Slug)
+		case errors.Is(err, errLiveMoved):
+			return "", fmt.Errorf("NOT LIVE: %v (a person's change, Anvil, or a maintainer), and it cannot be merged into your draft here, so your draft would undo it. Nothing changed: the live app and your draft are as they were. Tell the person, and ask whether to drop your draft (app_def(action=\"discard\", id=%q)) and make your change again on the app as it is now", err, spec.Slug)
 		}
 		if err != nil {
 			return "", fmt.Errorf("NOT LIVE: %w", err)

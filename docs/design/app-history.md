@@ -566,8 +566,23 @@ files in the repository, and drafts with or without git):
   their name on the revision it replaces. A new app's history starts
   with that work, under its message. Without git, the commit saves live.
 - **A live app changed since the draft started** (compared by its
-  content, not its second-wide stamp) refuses the commit, leaving both
-  as they were. Merging the two (the order's next step) is not built.
+  content, not its second-wide stamp) is merged into the draft at the
+  commit, as git merges: the draft's files committed on the commit it
+  started from, the live history merged in, in a clone, and the result
+  read back as the app. A change to the app's words only goes live with
+  the draft, its verdict standing; a change to how it works stays merged
+  in the draft, and the commit waits for the two to be verified together.
+  The same lines changed on both sides is a conflict that changes
+  nothing and names the files; Builder may drop its draft
+  (`app_def discard`) when the person asks. With no history to merge from
+  (no git, or a draft older than the app's history), the commit is
+  refused.
+- **My Apps shows the work in progress**: an app with a draft says so,
+  and a new app not live yet has a row of its own. Preview opens the
+  draft; Make live is the person's own change through the same gates,
+  verified or not and merged as it is, recorded as theirs with Builder
+  credited; Discard drops it, and a new app never live goes with what was
+  made for it.
 - **An asset** added is there at once; one taken out stays live until
   the commit, since the live page may use it.
 - **A turn that ends with verified work in a draft** is held once, to
@@ -575,8 +590,7 @@ files in the repository, and drafts with or without git):
 
 Not yet drafted: what an app owns beside its record (its agents,
 pipelines, machines, tools and collections) still changes at once when
-Builder changes it, as in stage 2. Left for after the merge: the person's
-own way to see, make live or discard a draft from My Apps.
+Builder changes it, as in stage 2.
 
 ## Steps
 
