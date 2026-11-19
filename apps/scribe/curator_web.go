@@ -116,6 +116,45 @@ func (T *Scribe) handleCuratorUndo(c *jsonapi.Call, body struct {
 	return jsonapi.Empty(http.StatusOK), nil
 }
 
+// handleCuratorDiscard POSTs {finding_id} and takes one finding out of the
+// queue, as the person's own decision: one the curator keeps holding, that
+// belongs in no guide. Recorded in the digest as a discard of theirs, so every
+// finding still ends on an outcome someone can read.
+func (T *Scribe) handleCuratorDiscard(c *jsonapi.Call, body struct {
+	FindingID string `json:"finding_id"`
+}) (any, error) {
+	udb, user := c.UDB, c.User
+	id := strings.TrimSpace(body.FindingID)
+	if id == "" {
+		return nil, jsonapi.BadRequest("finding_id is required")
+	}
+	// Not under a run of the curator's: it read its batch when it started.
+	mu := curatorLock(user)
+	if !mu.TryLock() {
+		return nil, jsonapi.Status(http.StatusConflict, "the curator is working through what is waiting right now: try again in a moment")
+	}
+	defer mu.Unlock()
+	var found DocFinding
+	ok := false
+	for _, f := range listPendingFindings(udb) {
+		if f.ID == id {
+			found, ok = f, true
+		}
+	}
+	if !ok {
+		return nil, jsonapi.NotFound("that finding is not waiting any more")
+	}
+	t := now()
+	saveCuratorRun(udb, CuratorRun{
+		ID: newID(), Started: t, Finished: t, Owner: user, Findings: 1,
+		Entries: []CuratorEntry{{Kind: OutcomeDiscarded, FindingID: found.ID, Topic: found.Topic,
+			Origin: findingOriginLabel(found.Origin), Note: "discarded by " + user + ", from the queue"}},
+		Summary: "You discarded a finding that was waiting.",
+	})
+	dropFinding(udb, found.ID)
+	return jsonapi.Empty(http.StatusOK), nil
+}
+
 // handleCuratorRunNow drains this user's queue immediately. The two automatic
 // firings are both delayed by design, so without this there is no way to watch
 // the curator handle a batch you just produced.

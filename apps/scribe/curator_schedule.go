@@ -205,6 +205,11 @@ func (T *Scribe) sweepCurator(ctx context.Context) {
 		if udb == nil || len(udb.Keys(findingsTable)) == 0 {
 			continue
 		}
+		// What is waiting was all held last time, and nothing new came: it
+		// would only be held again (heldAndNothingNew).
+		if heldAndNothingNew(udb, time.Now()) {
+			continue
+		}
 		if last, ok := lastCuratorRun.Load(user); ok {
 			if t, isTime := last.(time.Time); isTime && time.Since(t) < every {
 				continue
@@ -245,6 +250,46 @@ func runCuratorForEveryone(ctx context.Context) int {
 		ran++
 	}
 	return ran
+}
+
+// heldRecheckEvery is how long findings the curator held wait before the
+// sweep offers them again, with nothing new beside them: a guide they fit may
+// have been made since.
+const heldRecheckEvery = 24 * time.Hour
+
+// heldAndNothingNew reports whether every finding waiting in udb was held by
+// the curator's latest finished run, under heldRecheckEvery ago: a run now
+// would hold them again, as it did hourly for two findings no guide fit. A
+// finding filed since, a run that failed, or a day gone by is a reason to
+// run.
+func heldAndNothingNew(udb Database, now time.Time) bool {
+	pending := udb.Keys(findingsTable)
+	if len(pending) == 0 {
+		return false
+	}
+	for _, r := range listCuratorRuns(udb) {
+		if r.Error != "" || r.Finished == "" {
+			continue
+		}
+		finished, err := time.Parse(time.RFC3339, r.Finished)
+		if err != nil || now.Sub(finished) > heldRecheckEvery {
+			return false
+		}
+		// Every decision but a hold takes its finding out of the queue
+		// (curatorSession.record), so one still waiting with an entry in the
+		// run was held by it.
+		held := map[string]bool{}
+		for _, e := range r.Entries {
+			held[e.FindingID] = true
+		}
+		for _, id := range pending {
+			if !held[id] {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // pendingKeys is the cheap queue-depth probe used by the sweep and the

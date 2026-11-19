@@ -181,6 +181,19 @@ const guideCuratorAction = `function(ctx){
                   if (text.length > 400) text = text.slice(0, 400) + '...';
                   if (text) b.appendChild(el('div', {class:'gc-content'}, [text]));
                   row.appendChild(b);
+                  // One that belongs in no guide: the curator only holds it.
+                  var drop = el('button', {class:'ui-row-btn'}, ['Discard']);
+                  drop.addEventListener('click', function(){
+                    if (!window.confirm('Discard this finding? It leaves the queue and goes in no guide.')) return;
+                    drop.disabled = true;
+                    fetch('curator/discard', {method:'POST', headers:{'Content-Type':'application/json'},
+                      body: JSON.stringify({finding_id: f.id})})
+                      .then(function(r){
+                        if (!r.ok) return r.text().then(function(t){ window.uiAlert(t); drop.disabled = false; });
+                        load();
+                      });
+                  });
+                  row.appendChild(drop);
                   waiting.appendChild(row);
                 });
               }).catch(function(){ waiting.appendChild(el('div', {class:'gc-empty'}, ['Could not list what is waiting.'])); });

@@ -238,6 +238,12 @@ func runOwnerDestination(prefix string, s RunSnapshot) string {
 	if s.Depth != 0 || strings.TrimSpace(s.SessionID) == "" || strings.TrimSpace(s.AgentID) == "" {
 		return ""
 	}
+	// A hidden app agent's run (the Guide Curator's) has no thread the chat
+	// page can open: the page shows only agents its picker offers, so the
+	// link opened the default agent on a session it does not have.
+	if hiddenAppAgent(s.AgentID) {
+		return ""
+	}
 	return strings.TrimSuffix(prefix, "/") + "/?agent=" + url.QueryEscape(s.AgentID) + "&session=" + url.QueryEscape(s.SessionID)
 }
 

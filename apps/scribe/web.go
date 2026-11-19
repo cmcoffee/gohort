@@ -103,6 +103,7 @@ func (T *Scribe) routes() {
 	T.HandleFunc("/curator/runs", jsonapi.Methods{"GET": jsonapi.Get(T.DB, T.handleCuratorRuns)}.Serve)
 	T.HandleFunc("/curator/pending", jsonapi.Methods{"GET": jsonapi.Get(T.DB, T.handlePendingFindings)}.Serve)
 	T.HandleFunc("/curator/undo", jsonapi.Post(T.DB, T.handleCuratorUndo))
+	T.HandleFunc("/curator/discard", jsonapi.Post(T.DB, T.handleCuratorDiscard))
 	T.HandleFunc("/curator/run", jsonapi.Post(T.DB, T.handleCuratorRunNow))
 	T.HandleFunc("/", T.route)
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -106,6 +107,14 @@ func TestRunOwnerDestination(t *testing.T) {
 	nested.Depth = 1
 	if got := runOwnerDestination("/orchestrate", nested); got != "" {
 		t.Errorf("a nested dispatch has no thread of its own to open, got %q", got)
+	}
+	// A hidden app agent's run (the Guide Curator's) has no thread the chat
+	// page can open: it shows only agents its picker offers.
+	appagents.RegisterAppAgent(appagents.AppAgentSpec{ID: "app-test-curator", Name: "Curator", OwningApp: "Test", Hidden: true, Prompt: "x"})
+	hidden := root
+	hidden.AgentID = "app-test-curator"
+	if got := runOwnerDestination("/orchestrate", hidden); got != "" {
+		t.Errorf("a hidden app agent's run links to a page that cannot open it: %q", got)
 	}
 	detached := root
 	detached.SessionID = ""
