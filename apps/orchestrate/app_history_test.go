@@ -86,6 +86,45 @@ func TestEverySaveWritesTheAppIntoItsHistory(t *testing.T) {
 	}
 }
 
+// An app's history is kept on its live branch: a new one starts there, and
+// one stage 1 kept on main moves to it, whole, the next time it is written,
+// and its next bundle (what Anvil clones) carries live.
+func TestAnAppsHistoryIsOnItsLiveBranch(t *testing.T) {
+	ws := historyWorld(t)
+	dir := filepath.Join(ws, "alice", ".apps", "wx")
+	SaveAppSpec(historyApp(nil))
+	if b, _ := appRepoGit(dir, "symbolic-ref", "--short", "HEAD"); strings.TrimSpace(b) != "live" {
+		t.Fatalf("a new history is on %q", strings.TrimSpace(b))
+	}
+
+	// As stage 1 left it: the same history, on main.
+	appRepoGit(dir, "branch", "-m", "live", "main")
+	before, _ := appRepoGit(dir, "rev-parse", "HEAD")
+	SaveAppSpec(historyApp(map[string]string{"now": "print('{}')"}))
+	if b, _ := appRepoGit(dir, "symbolic-ref", "--short", "HEAD"); strings.TrimSpace(b) != "live" {
+		t.Errorf("the save left the history on %q", strings.TrimSpace(b))
+	}
+	if _, err := appRepoGit(dir, "rev-parse", "--verify", "-q", "refs/heads/main"); err == nil {
+		t.Error("main is still there beside live")
+	}
+	if _, err := appRepoGit(dir, "merge-base", "--is-ancestor", strings.TrimSpace(before), "live"); err != nil {
+		t.Error("live does not hold the history main had")
+	}
+	if n, _ := appRepoGit(dir, "rev-list", "--count", "live"); strings.TrimSpace(n) != "2" {
+		t.Errorf("live holds %s commits, want the start and the save", strings.TrimSpace(n))
+	}
+
+	// Moved for a bundle too, when nothing was saved in between.
+	appRepoGit(dir, "branch", "-m", "live", "main")
+	bundle := filepath.Join(t.TempDir(), "wx.bundle")
+	if err := BundleAppHistory("alice", "wx", bundle, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if heads, _ := appRepoGit(dir, "bundle", "list-heads", bundle); !strings.Contains(heads, "refs/heads/live") {
+		t.Errorf("the bundle does not carry live: %q", heads)
+	}
+}
+
 // An administrator's stop changes none of the app's files and is recorded
 // in its history all the same, as theirs: an agent's saves waiting are
 // committed first as the agent's person's, so the stop is its own entry.

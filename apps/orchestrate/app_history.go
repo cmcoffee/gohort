@@ -65,6 +65,10 @@ func appHistoryNote(owner, slug, by, message string) {
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 		return
 	}
+	if err := liveBranchLocked(dir); err != nil {
+		Log("[app-history] %s/%s: its history could not be moved to its %s branch: %v", owner, slug, AppHistoryBranch, err)
+		return
+	}
 	if err := commitWaiting(dir, waitingInterrupted); err != nil {
 		Log("[app-history] %s/%s: saves waiting could not be committed before %s's note: %v", owner, slug, by, err)
 		return
@@ -202,8 +206,28 @@ func syncAppRepo(spec AppSpec) error {
 	return syncAppRepoLocked(dir, spec)
 }
 
-// AppHistoryBranch is the branch an app's history is kept on.
-const AppHistoryBranch = "main"
+// AppHistoryBranch is the branch an app's history is kept on: what the app
+// served, version by version (docs/design/app-history.md, stage 3, S2).
+const AppHistoryBranch = "live"
+
+// appHistoryOldBranch is the name stage 1 kept it under, renamed the first
+// time the history is written or read after.
+const appHistoryOldBranch = "main"
+
+// liveBranchLocked renames the history in dir from appHistoryOldBranch to
+// AppHistoryBranch, once, with the history held. Read from .git/HEAD, so a
+// history already on its branch costs no git run.
+func liveBranchLocked(dir string) error {
+	head, err := os.ReadFile(filepath.Join(dir, ".git", "HEAD"))
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(head)) != "ref: refs/heads/"+appHistoryOldBranch {
+		return nil
+	}
+	_, err = appRepoGit(dir, "branch", "-m", appHistoryOldBranch, AppHistoryBranch)
+	return err
+}
 
 // syncAppRepoLocked is syncAppRepo with the app's history already held.
 func syncAppRepoLocked(dir string, spec AppSpec) error {
@@ -226,6 +250,9 @@ func syncAppRepoLocked(dir string, spec AppSpec) error {
 		by = spec.Owner
 	}
 	if !fresh {
+		if err := liveBranchLocked(dir); err != nil {
+			return err
+		}
 		if p := loadAppPending(dir); p.By != "" && (p.By != by || p.Via != via) {
 			if err := commitWaiting(dir, waitingInterrupted); err != nil {
 				return err
@@ -287,6 +314,9 @@ func CommitAppHistory(owner, slug, by, via, message string) (bool, error) {
 	defer mu.Unlock()
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 		return false, fmt.Errorf("%s has no history yet: it starts at the app's next save", spec.Name)
+	}
+	if err := liveBranchLocked(dir); err != nil {
+		return false, err
 	}
 	if p := loadAppPending(dir); p.By != "" && (p.By != by || p.Via != via) {
 		if err := commitWaiting(dir, waitingInterrupted); err != nil {
@@ -537,6 +567,9 @@ func BundleAppHistory(owner, slug, dest, keepBy, keepVia string) error {
 		if err := syncAppRepoLocked(dir, spec); err != nil {
 			return err
 		}
+	}
+	if err := liveBranchLocked(dir); err != nil {
+		return err
 	}
 	own := false
 	if p := loadAppPending(dir); keepBy != "" && p.By == keepBy && p.Via == keepVia {

@@ -526,15 +526,20 @@ S5, S4 and S6, each its own commit on the stage 3 branch. Before S2, what
 stage 1 was to measure (step 5: repository sizes, the time a commit takes)
 is read from a test instance.
 
-**Questions left.**
+**Settled (owner, 2026-11-18).**
 
-1. S3: a turn that stops short of a pass leaves the work waiting, and the
-   person can make it live anyway. (Recommended: the person decides, through
-   the same gates; Builder never does.)
-2. S5: once revisions come from git, the store's revisions from before stay
-   listed beneath, and are never moved into the history. (Recommended:
-   moving them would rewrite a history that starts where it starts.)
-3. S6: a snapshot by default, history as an option. (Recommended.)
+1. S3: a turn that stops short of a pass leaves the work waiting; the
+   person can make it live anyway, through the same gates. Builder never
+   does.
+2. S5: the store's revisions from before stay listed beneath the log, and
+   are never moved into the history.
+3. S6: exports a snapshot by default, history as an option.
+
+**Built.** S2 (0.9.550): a new history starts on `live`; one kept on `main`
+is renamed the first time it is written or read (a save, a commit, a
+note, a bundle for Anvil), read from `.git/HEAD` so a history already on
+`live` runs no git for it. A checkout Anvil made before keeps working: it
+fetches `live` into a ref of its own.
 
 ## Steps
 
@@ -776,7 +781,7 @@ Stage 2 (an app holds everything it runs on):
 
 Stage 3 (the app is its repository; Stage 3 in detail):
 
-11. S2: the history branch is `live`.
+11. S2: the history branch is `live` (built, 0.9.550).
 12. S3: Builder edits a working copy, tests it, and its commit goes live.
 13. S5: revisions and revert from git, the store's earlier revisions
     listed beneath.
