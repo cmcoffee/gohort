@@ -137,6 +137,7 @@ func (t *chatTurn) appDefRevert(args map[string]any) (string, error) {
 			return msg + fmt.Sprintf("\n\nHEADS UP, the restored revision has problems of its own in a real browser:\n- %s\n\nIt is serving; revert again to a different revision (app_def action=\"revisions\") if this one isn't the good copy.", strings.Join(errs, "\n- ")) + undo, nil
 		}
 		if checked {
+			saved.RecordVerify(true, "PASS: loaded in a real browser after the revert, no JS errors")
 			msg += " It was loaded in a real browser after restoring and came up clean."
 		} else {
 			msg += " No browser check could run on it: run app_def(action=\"verify\") before telling the user it works."

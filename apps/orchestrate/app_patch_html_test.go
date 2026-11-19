@@ -198,3 +198,43 @@ func TestPatchedSectionsStillBuild(t *testing.T) {
 		t.Error("patched full document should still render in a frame")
 	}
 }
+
+// A patch or a revert that loads the page clean in a browser stores that
+// verdict on the app, as a whole save does: its result says there is nothing
+// further to verify, and work read as unverified is never sent back to be
+// committed (uncommittedWorkNotice) and is refused a commit.
+func TestACleanPatchOrRevertLeavesTheAppVerified(t *testing.T) {
+	turn, _ := folderTestTurn(t)
+	prevB, prevAddr := BrowserCheckPage, WebListenAddr
+	t.Cleanup(func() { BrowserCheckPage, WebListenAddr = prevB, prevAddr })
+	WebListenAddr = "127.0.0.1:9"
+	BrowserCheckPage = func(string, []PageCheckCookie, string, bool) (*PageCheckReport, error) {
+		return &PageCheckReport{}, nil
+	}
+	page := func(word string) []any {
+		return []any{map[string]any{"id": "main", "kind": "html", "html": "<!DOCTYPE html><html><body><p>" + word + "</p></body></html>"}}
+	}
+	if _, err := turn.appDefCreateOrUpdate(map[string]any{"name": "Shelf", "sections": page("Books")}, false); err != nil {
+		t.Fatal(err)
+	}
+	verified := func(what string) {
+		t.Helper()
+		spec, _ := LoadAppSpec(turn.user, "shelf")
+		if spec.Verify == nil || !spec.Verify.Pass || !spec.Verify.Current(spec) {
+			t.Errorf("after the %s the app does not stand verified: %+v", what, spec.Verify)
+		}
+	}
+	verified("first save")
+	if _, err := turn.appDefPatchHTML(map[string]any{"id": "shelf", "find": "Books", "replace": "Novels"}); err != nil {
+		t.Fatal(err)
+	}
+	verified("patch")
+	revs := ListAppRevisions(turn.user, "shelf")
+	if len(revs) == 0 {
+		t.Fatal("the patch kept no revision to revert to")
+	}
+	if _, err := turn.appDefRevert(map[string]any{"id": "shelf", "to": float64(revs[0].Seq)}); err != nil {
+		t.Fatal(err)
+	}
+	verified("revert")
+}

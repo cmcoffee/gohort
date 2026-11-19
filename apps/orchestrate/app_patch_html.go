@@ -154,6 +154,10 @@ func (t *chatTurn) saveHTMLSectionEdit(spec AppSpec, sections []map[string]any, 
 			" The page parsed, but no browser check could run on this save: run app_def(action=\"verify\") before telling the user it works." + checks, nil
 	}
 	t.noteAppStanding(saved.Slug, true, "")
+	// Stored, as a whole save stores it (app_def_tool_create.go): this result
+	// says there is nothing further to verify, so the app's standing has to
+	// say so too, or its work reads as never tested and is never committed.
+	saved.RecordVerify(true, "PASS: loaded in a real browser on save, no JS errors")
 	return fmt.Sprintf(summary, htmlSectionOrdinal(sections, idx), saved.Name, saved.Updated) +
 		" The page was parsed and loaded in a real browser after the change and came up clean, so there is nothing further to verify. Tell the user what changed." + checks, nil
 }
