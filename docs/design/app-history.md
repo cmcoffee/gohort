@@ -526,6 +526,31 @@ S5, S4 and S6, each its own commit on the stage 3 branch. Before S2, what
 stage 1 was to measure (step 5: repository sizes, the time a commit takes)
 is read from a test instance.
 
+S5, how it is built (owner, 2026-11-19: "see previous edits and go back to
+an earlier version"): going back restores the app as a version had it, as
+a new change, rather than undoing one commit; the history keeps what it
+replaced, so going back is undone the same way.
+
+- **The history is the app's live branch** (`AppHistoryLog`): each version
+  with who made it, the agent that did the work (its Co-Authored-By), when,
+  its message, and which is live. A version's diff is `AppHistoryDiff`. A
+  version is named by its hash, refused unless it is one the app went live
+  as.
+- **Anvil's History** (an app project's bar) lists them, opens each to what
+  it changed, and goes back to one: the person's change made from Anvil
+  (so the app's own agents, which change only with Builder or Anvil, go
+  back too), through every gate a save passes (Install's path, from the
+  version's files with the live app's marker), committed as "Go back to
+  the version of ...".
+  The project's files then take it, the work in progress kept on top.
+- **Builder** reads the same history: `revisions` lists its versions by
+  hash (the store's revisions from before counted after them), and
+  `revert` to a hash puts the app as that version had it in its draft,
+  what it owned then included, to verify and commit. Without git, both are
+  the store's revisions, as before.
+- What the app owns that a version did not have is kept, never removed by
+  going back: an item is removed with Builder.
+
 **Settled (owner, 2026-11-18).**
 
 1. S3: a turn that stops short of a pass leaves the work waiting; the

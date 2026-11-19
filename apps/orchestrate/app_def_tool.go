@@ -93,7 +93,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 				},
 				"to": {
 					Type:        "string",
-					Description: "(revert) Which kept revision to restore: the # id from action=\"revisions\" (e.g. 3 or \"#3\"). Omit to restore the most recent one, which is what you want immediately after an edit went wrong. The id is stable; a timestamp is also accepted but two saves can share one second, so prefer the id. The version being replaced is itself kept, so a revert is undoable.",
+					Description: "(revert) Which version to go back to: for an app with a history, a version's hash as action=\"revisions\" lists it (the app as that version had it, in your draft); otherwise the # id of a kept revision (e.g. 3 or \"#3\"). Omit to restore the most recent one, which is what you want immediately after an edit went wrong. The id is stable; a timestamp is also accepted but two saves can share one second, so prefer the id. The version being replaced is itself kept, so a revert is undoable.",
 				},
 				"confirm_rewrite": {
 					Type:        "boolean",

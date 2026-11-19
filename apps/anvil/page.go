@@ -328,7 +328,9 @@ func (T *Anvil) toolbarActions(p Project, user string, isAdmin bool) []ui.Toolba
 			ui.ToolbarAction{Label: "Preview", Method: "client", URL: "anvil_app_preview",
 				Title: "Open your working copy of the app; only you see it"},
 			ui.ToolbarAction{Label: "Install", Method: "client", URL: "anvil_app_install",
-				Title: "Put your changes live, through the app's checks"})
+				Title: "Put your changes live, through the app's checks"},
+			ui.ToolbarAction{Label: "History", Method: "client", URL: "anvil_app_history",
+				Title: "Every version the app went live as, what each changed, and going back to one"})
 	}
 	// A checkout of the caller's that is not an app yet: out front when it
 	// holds an app's folder, in the Project menu while it does not. Always
@@ -711,6 +713,7 @@ func anvilHead(projects []Project, user string, isAdmin bool) *ui.Head {
 		ClientAction("anvil_git_done", anvilGitDoneJS).
 		ClientAction("anvil_app_preview", anvilAppPreviewJS).
 		ClientAction("anvil_app_install", anvilAppInstallJS).
+		ClientAction("anvil_app_history", anvilAppHistoryJS).
 		ClientAction("anvil_app_install_new", anvilAppInstallNewJS).
 		ClientAction("anvil_permissions", anvilPermissionsJS).
 		ClientAction("anvil_notes", anvilNotesJS).

@@ -24,6 +24,31 @@ func (t *chatTurn) appDefRevisions(args map[string]any) (string, error) {
 		return "", appNotFound(args, "")
 	}
 	revs := ListAppRevisions(t.user, spec.Slug)
+	// With git, the versions are its history's (app_history_view.go), and
+	// the revisions kept before it began are listed after them.
+	history, herr := AppHistoryLog(spec.Owner, spec.Slug, 50)
+	if herr == nil && len(history) > 0 {
+		var b strings.Builder
+		fmt.Fprintf(&b, "Versions of %q in its history, newest first. Go back to one with app_def(action=\"revert\", id=%q, to=<its hash>): the app as that version had it, a new change of its own.\n\n", spec.Name, spec.Slug)
+		for _, c := range history {
+			who := c.Author
+			if c.Agent != "" {
+				who += " with " + c.Agent
+			}
+			line := fmt.Sprintf("  %s  %s  %s  %q", c.Short, c.When, who, c.Subject)
+			if c.Live {
+				line += "  (live)"
+			}
+			b.WriteString(line + "\n")
+		}
+		if len(revs) > 0 {
+			fmt.Fprintf(&b, "\nOlder revisions, kept before its history began (to=<the # id>): %d, the newest saved %s.\n", len(revs), revs[0].Stamp)
+		}
+		if t.hasAppDraft(spec.Owner, spec.Slug) {
+			b.WriteString("\nYour draft holds changes not in the history yet: they go in with your commit.\n")
+		}
+		return b.String(), nil
+	}
 	if len(revs) == 0 {
 		return fmt.Sprintf("No earlier revisions of %q are kept yet: history starts at its next edit. The version serving now was saved %s (%s).",
 			spec.Name, spec.Updated, appRevisionShape(spec)), nil
@@ -81,12 +106,17 @@ func (t *chatTurn) appDefRevert(args map[string]any) (string, error) {
 		return "", appNotFound(args, "")
 	}
 	revs := ListAppRevisions(t.user, current.Slug)
+	ref := strings.TrimSpace(firstNonEmptyStr(stringArg(args, "to"), stringArg(args, "stamp"), stringArg(args, "revision"), numArgString(args, "to")))
+	target, ok := FindAppRevision(t.user, current.Slug, ref)
+	// A version in the app's history, by its hash (app_history_view.go).
+	if !ok && appCommitHash.MatchString(strings.ToLower(ref)) {
+		if _, herr := appHistoryDir(current.Owner, current.Slug); herr == nil {
+			return t.revertToVersion(current, ref)
+		}
+	}
 	if len(revs) == 0 {
 		return "", fmt.Errorf("no earlier revisions of %q are kept: nothing to revert to. History begins at the app's next edit", current.Name)
 	}
-
-	ref := strings.TrimSpace(firstNonEmptyStr(stringArg(args, "to"), stringArg(args, "stamp"), stringArg(args, "revision"), numArgString(args, "to")))
-	target, ok := FindAppRevision(t.user, current.Slug, ref)
 	if !ok {
 		var ids []string
 		for _, r := range revs {
