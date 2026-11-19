@@ -890,6 +890,9 @@ func (ed *agentEditor) serve() {
 		headHTML += agentAssistHTML(id)
 		headHTML += agentDeleteAskJS
 	}
+	if ed.T.serveAppOwnedPage(w, r, ed.user, ed.editRec.Owner, ed.editRec.OwningApp, "agent", ed.editRec.Name) {
+		return
+	}
 	page := ui.Page{
 		Title:     ed.title,
 		ShowTitle: true,
@@ -899,7 +902,7 @@ func (ed *agentEditor) serve() {
 		// credentials, sharing, delete); stacking them made the page a long scroll.
 		MaxWidth:      "1100px",
 		SectionNav:    true,
-		Sections:      withAppOwnedNotice(ed.sections, ed.editRec.Owner, ed.editRec.OwningApp, "agent"),
+		Sections:      ed.sections,
 		ExtraHeadHTML: headHTML,
 	}
 	page.ServeHTTP(w, r)

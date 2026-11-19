@@ -15,6 +15,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -619,35 +621,35 @@ func ownedItemUser(udb Database, owner string, it appOwnedItem, self map[string]
 	return ""
 }
 
-// appOwnedNotice is the section an editor opens with when what it edits is
-// an app's (owning_app), so the refusal on Save is not the first a person
-// hears of it. nil when it is no app's.
-func appOwnedNotice(owner, slug, kind string) *ui.Section {
+// serveAppOwnedPage answers a request for the editor of an app's own agent,
+// pipeline or machine (owning_app slug). Those live inside their app, and
+// change only with Builder or Anvil, so in place of an editor the page says
+// whose it is, with the way to the app and, for its owner, to Builder. It
+// reports whether it answered: false for what no app owns, whose editor
+// opens as always.
+func (T *OrchestrateApp) serveAppOwnedPage(w http.ResponseWriter, r *http.Request, user, owner, slug, kind, name string) bool {
 	slug = strings.TrimSpace(slug)
 	if slug == "" {
-		return nil
+		return false
 	}
-	name := slug
-	if spec, ok := LoadAppSpec(owner, slug); ok && strings.TrimSpace(spec.Name) != "" {
-		name = spec.Name
+	app := appItemName(owner, slug)
+	var actions []ui.ToolbarAction
+	if user == owner {
+		actions = append(actions,
+			ui.ToolbarAction{Label: "Open " + app, Method: "GET", URL: "/apps/" + url.PathEscape(slug) + "/"},
+			ui.ToolbarAction{Label: "Change with Builder", Method: "GET",
+				URL: T.WebPath() + "/?agent=seed-builder&intake.action=Change&intake.kind=App&intake.target=" + url.QueryEscape(slug)})
 	}
-	keep := "Sharing it stays yours."
-	if kind == "agent" {
-		keep = "Sharing it, and your choices while using it (always allowing a tool, hiding it), stay yours."
+	sec := ui.Section{
+		Title: "Part of the app " + app,
+		Subtitle: "This " + kind + " is " + app + "'s and lives inside it: the app runs it, and it changes only with Builder or Anvil, " +
+			"which run the app's checks and keep its history. Deleting the app deletes it too.",
 	}
-	return &ui.Section{
-		Title: "Part of the app " + name,
-		Subtitle: "This " + kind + " is " + name + "'s: what it is changes only with Builder or Anvil, which run the app's checks and keep its history, so a change saved here is refused. " + keep +
-			" Deleting the app deletes it too.",
+	if len(actions) > 0 {
+		sec.Body = ui.Toolbar{Actions: actions}
 	}
-}
-
-// withAppOwnedNotice puts the notice first in sections, when there is one.
-func withAppOwnedNotice(sections []ui.Section, owner, slug, kind string) []ui.Section {
-	if n := appOwnedNotice(owner, slug, kind); n != nil {
-		return append([]ui.Section{*n}, sections...)
-	}
-	return sections
+	ui.Page{Title: chFirst(name, kind), ShowTitle: true, BackURL: "/apps/", MaxWidth: "720px", Sections: []ui.Section{sec}}.ServeHTTP(w, r)
+	return true
 }
 
 // errAppSwitchedOff is a run refused because the agent's app is switched

@@ -385,7 +385,10 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 			Subtitle: who + can + ", and it runs against your own agents, tools and credentials rather than " + defOwner + "'s.",
 		})
 	}
-	page.Sections = withAppOwnedNotice(withoutEmptySections(page.Sections), def.Owner, def.OwningApp, "pipeline")
+	if T.serveAppOwnedPage(w, r, user, def.Owner, def.OwningApp, "pipeline", def.Name) {
+		return
+	}
+	page.Sections = withoutEmptySections(page.Sections)
 	page.ServeHTTP(w, r)
 }
 

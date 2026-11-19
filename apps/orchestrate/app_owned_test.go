@@ -14,9 +14,10 @@ import (
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
-// An editor opens on what an app owns by saying so, before anyone types a
-// change Save would refuse; one that is no app's says nothing of the kind.
-func TestAnEditorSaysWhenWhatItEditsIsAnApps(t *testing.T) {
+// What an app owns lives inside the app: its editor's address opens a page
+// saying whose it is, with the way to the app and to Builder, and no editor.
+// What no app owns opens its editor as always.
+func TestAnAppsOwnItemsOpenNoEditor(t *testing.T) {
 	pinRootDB(t)
 	app, udb, user := newTestOrchestrate(t)
 	SaveAppSpec(AppSpec{Owner: user, Slug: "desk", Name: "Help Desk", RecordKey: "id"})
@@ -46,14 +47,22 @@ func TestAnEditorSaysWhenWhatItEditsIsAnApps(t *testing.T) {
 		}),
 	} {
 		if !strings.Contains(body, "Part of the app Help Desk") || !strings.Contains(body, "changes only with Builder or Anvil") {
-			t.Errorf("the %s editor does not say it is the app's", what)
+			t.Errorf("the %s's page does not say it is the app's", what)
+		}
+		if !strings.Contains(body, "/apps/desk/") || !strings.Contains(body, "intake.target=desk") {
+			t.Errorf("the %s's page offers no way to the app or to Builder", what)
+		}
+		for _, ed := range []string{"api/agents/", "api/pipelines/", "api/machines/", "Sort it."} {
+			if strings.Contains(body, ed) {
+				t.Errorf("the %s's page still holds its editor (%q)", what, ed)
+			}
 		}
 	}
 	mine := page(func(w *httptest.ResponseRecorder) {
 		app.renderAgentEditor(w, asUser(httptest.NewRequest("GET", "/orchestrate/agents/edit?id="+own.ID, nil), user), user, udb, own.ID)
 	})
-	if strings.Contains(mine, "Part of the app") {
-		t.Error("an agent that is no app's opens as an app's")
+	if strings.Contains(mine, "Part of the app") || !strings.Contains(mine, "api/agents/") {
+		t.Error("an agent that is no app's does not open its editor")
 	}
 }
 
