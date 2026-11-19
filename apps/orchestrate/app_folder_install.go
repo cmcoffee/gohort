@@ -169,11 +169,12 @@ func WriteAppFolder(user, slug, dir string) error {
 	if !ok {
 		return fmt.Errorf("you have no app %q", slug)
 	}
-	return writeAppFolderOf(spec, dir)
+	return writeAppFolderOf(spec, dir, nil)
 }
 
-// writeAppFolderOf writes spec, with its assets, into the folder dir.
-func writeAppFolderOf(spec AppSpec, dir string) error {
+// writeAppFolderOf writes spec, with its assets, into the folder dir: what
+// the app owns as owned has it, nil for as it is live.
+func writeAppFolderOf(spec AppSpec, dir string, owned map[string][]byte) error {
 	assets := map[string][]byte{}
 	if names, err := ListAppAssets(spec.Owner, spec.Slug); err == nil {
 		for _, n := range names {
@@ -182,6 +183,6 @@ func writeAppFolderOf(spec AppSpec, dir string) error {
 			}
 		}
 	}
-	_, err := writeAppFolder(dir, spec, assets, appLiveFingerprint(spec))
+	_, err := writeAppFolderOwned(dir, spec, assets, appLiveFingerprint(spec), owned)
 	return err
 }

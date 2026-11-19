@@ -24,6 +24,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appdraft"
 )
 
 func collectionsListTool() ChatTool {
@@ -167,7 +168,12 @@ func collectionsListTool() ChatTool {
 					return "", errors.New("only Builder makes a collection part of an app")
 				}
 				if _, ok := LoadAppSpec(sess.Username, app); !ok {
-					return "", fmt.Errorf("there is no app %q of yours", app)
+					if _, isDraft := appdraft.Load(sess.Username, app, sess.Username); !isDraft {
+						return "", fmt.Errorf("there is no app %q of yours", app)
+					}
+				}
+				if err := appPartDraftRefusal(sess.Username, app, appEditOf(sess), "collection"); err != nil {
+					return "", err
 				}
 				c.OwningApp = app
 			}
@@ -248,6 +254,9 @@ func collectionsListTool() ChatTool {
 			}
 			if len(changed) == 0 {
 				return "", errors.New("nothing to update: pass name, description, or a submitter")
+			}
+			if err := appPartDraftRefusal(c.Owner, c.OwningApp, appEditOf(sess), "collection"); err != nil {
+				return "", err
 			}
 			SaveCollectionBy(sess.DB, c, appEditOf(sess))
 			Log("[orchestrate.collections] user=%q updated collection %q (id=%s): %s", sess.Username, c.Name, c.ID, strings.Join(changed, ", "))

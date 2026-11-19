@@ -18,10 +18,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appdraft"
+	"github.com/cmcoffee/gohort/core/apptools"
 )
 
 // editsDrafts reports whether this turn's app changes go to a draft: an
@@ -157,7 +159,8 @@ func (t *chatTurn) appDraftNote(spec AppSpec) string {
 }
 
 // appLiveMark is what a draft remembers of the live app it started from, to
-// know at its commit whether someone changed it since: the whole app but its
+// know at its commit whether someone changed it since: the whole app and
+// what it owns, but its
 // bookkeeping, and but what a draft does not decide and a commit keeps as the
 // live app has it (who it is shared with, whether it runs, who maintains it).
 // Its content, not its stamp: two saves in one second have one stamp.
@@ -168,8 +171,21 @@ func appLiveMark(s AppSpec) string {
 	s.Maintainers, s.Managers = nil, nil
 	s.Sample = nil
 	b, _ := json.Marshal(s)
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
+	h := sha256.New()
+	h.Write(b)
+	// And what it owns, as files: an agent of the app changed live (by
+	// Anvil) is a change the draft's copy of it would undo.
+	owned := appOwnedFiles(s.Owner, s.Slug)
+	names := make([]string, 0, len(owned))
+	for n := range owned {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		h.Write([]byte("\x00" + n + "\x00"))
+		h.Write(owned[n])
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // errLiveMoved is a commit refused because the live app changed since the
@@ -207,23 +223,10 @@ func mergeLiveIntoDraft(d appdraft.Draft) (appdraft.Draft, error) {
 	mu := appRepoLock(dir)
 	mu.Lock()
 	defer mu.Unlock()
-	// The history holds the live app as it is now: waiting saves committed
-	// as their author's, anything else (an asset added) as the owner's.
-	if err := commitWaiting(dir, waitingInterrupted); err != nil {
-		return d, err
-	}
-	if changed, err := writeAppRepoFiles(dir, live); err != nil {
-		return d, err
-	} else if changed {
-		if err := appRepoCommit(dir, owner, "", "Bring the history up to date with the app\n\nChanges made outside a save, such as an asset added."); err != nil {
-			return d, err
-		}
-	}
-	head, err := appRepoGit(dir, "rev-parse", "HEAD")
+	head, err := historyAtLiveLocked(dir, live)
 	if err != nil {
 		return d, err
 	}
-	head = strings.TrimSpace(head)
 	tmp, err := os.MkdirTemp("", "app-draft-merge-")
 	if err != nil {
 		return d, err
@@ -236,7 +239,7 @@ func mergeLiveIntoDraft(d appdraft.Draft) (appdraft.Draft, error) {
 	if _, err := appRepoGit(clone, "checkout", "-q", "--detach", d.BaseCommit); err != nil {
 		return d, fmt.Errorf("the commit your draft started from is not in the app's history: %w", err)
 	}
-	if _, err := writeAppRepoFiles(clone, d.Spec); err != nil {
+	if _, err := writeAppRepoFilesOwned(clone, d.Spec, d.Owned); err != nil {
 		return d, err
 	}
 	if err := appRepoCommit(clone, d.Editor, "", "Draft"); err != nil {
@@ -254,6 +257,11 @@ func mergeLiveIntoDraft(d appdraft.Draft) (appdraft.Draft, error) {
 	merged, err := o.BuildAppFolder(context.Background(), owner, clone)
 	if err != nil {
 		return d, fmt.Errorf("your draft merged with the live app's changes does not build: %w", err)
+	}
+	// What it owns, merged too, when the draft changes it; left as it is live
+	// when the draft does not.
+	if d.Owned != nil {
+		d.Owned = folderOwnedFiles(clone)
 	}
 	merged.ChangedBy, merged.ChangedVia, merged.ChangeNote = d.Spec.ChangedBy, d.Spec.ChangedVia, d.Spec.ChangeNote
 	merged.Verify, merged.Created, merged.Updated = nil, d.Spec.Created, d.Spec.Updated
@@ -283,7 +291,7 @@ func goDraftLive(d appdraft.Draft, reason string, byPerson bool) (AppSpec, error
 		if err != nil {
 			return AppSpec{}, err
 		}
-		keep := draftVerdictCarries(d.Spec, merged.Spec)
+		keep := draftVerdictCarries(d.Spec, merged.Spec) && sameFiles(d.Owned, merged.Owned)
 		if keep {
 			merged.Spec.Verify = d.Spec.Verify
 		}
@@ -314,7 +322,24 @@ func goDraftLive(d appdraft.Draft, reason string, byPerson bool) (AppSpec, error
 	if d.Editor != spec.Owner {
 		reason += " by " + d.Editor
 	}
+	// What it owns is checked before anything is saved: a draft's files that
+	// no longer read stop the commit with the live app as it was.
+	if d.Owned != nil {
+		if _, err := ownedFolderFrom(d.Owned); err != nil {
+			return AppSpec{}, fmt.Errorf("what the app owns in your draft does not read: %w", err)
+		}
+	}
 	saved := SaveAppSpecBy(spec, reason, d.Editor, spec.ChangedVia)
+	// Then what it owns, as the draft has it (its agents, pipelines,
+	// machines, tools, collections).
+	if _, err := applyDraftOwned(d); err != nil {
+		Log("[app-draft] %s/%s: live, but what it owns was not all saved: %v", saved.Owner, saved.Slug, err)
+		appdraft.Delete(saved.Owner, saved.Slug, d.Editor)
+		return saved, fmt.Errorf("the app is live, but what it owns in your draft was not all saved: %w", err)
+	}
+	if d.Owned != nil {
+		saved, _ = LoadAppSpec(saved.Owner, saved.Slug)
+	}
 	if verdict != nil && verdict.Against == d.Spec.Updated {
 		saved.RecordVerify(verdict.Pass, verdict.Summary)
 		saved, _ = LoadAppSpec(saved.Owner, saved.Slug)
@@ -396,6 +421,182 @@ func (t *chatTurn) appDefDiscard(args map[string]any) (string, error) {
 	return fmt.Sprintf("Dropped your draft of %q: the app is as it is live.", d.Spec.Name), nil
 }
 
+// What an app owns, in a draft (docs/design/app-history.md, stage 3, S3):
+// its agents, pipelines, machines, tools and collections are changed for a
+// live app as the files of its folder, published into the draft
+// (appdraft.Draft.Owned) and applied when the draft is committed. The draft's
+// preview and checks read them in place of the live ones where the draft is
+// tried: the app's Ask (its agent) and its tool space.
+
+// draftOwned is what spec's app owns as this turn's draft of it has it: the
+// files, or nil when the draft leaves them as they are live (or there is no
+// draft).
+func (t *chatTurn) draftOwned(spec AppSpec) map[string][]byte {
+	if d, ok := t.appDraftOf(spec.Owner, spec.Slug); ok {
+		return d.Owned
+	}
+	return nil
+}
+
+// folderOwnedFiles are the files of what an app owns in the folder abs: every
+// file under its agents/, pipelines/, machines/, tools/ and knowledge/.
+func folderOwnedFiles(abs string) map[string][]byte {
+	out := map[string][]byte{}
+	for _, dir := range appOwnedDirs {
+		root := filepath.Join(abs, dir)
+		filepath.WalkDir(root, func(p string, e os.DirEntry, err error) error {
+			if err != nil || e.IsDir() {
+				return nil
+			}
+			if b, err := os.ReadFile(p); err == nil {
+				rel, _ := filepath.Rel(abs, p)
+				out[filepath.ToSlash(rel)] = b
+			}
+			return nil
+		})
+	}
+	return out
+}
+
+// sameFiles reports whether a and b hold the same files, byte for byte.
+func sameFiles(a, b map[string][]byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if w, ok := b[k]; !ok || !bytes.Equal(v, w) {
+			return false
+		}
+	}
+	return true
+}
+
+// ownedFolderFrom reads files of what an app owns, as a folder holds them.
+func ownedFolderFrom(files map[string][]byte) (appOwnedFolder, error) {
+	tmp, err := os.MkdirTemp("", "app-draft-owned-")
+	if err != nil {
+		return appOwnedFolder{}, err
+	}
+	defer os.RemoveAll(tmp)
+	for name, data := range files {
+		clean := filepath.Clean(filepath.FromSlash(name))
+		if clean == "." || strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
+			return appOwnedFolder{}, fmt.Errorf("a file outside the app's folder: %q", name)
+		}
+		p := filepath.Join(tmp, clean)
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			return appOwnedFolder{}, err
+		}
+		if err := os.WriteFile(p, data, 0o600); err != nil {
+			return appOwnedFolder{}, err
+		}
+	}
+	return readAppOwnedFolder(tmp, "the draft")
+}
+
+// keepOwnedInDraft records the files of what the app owns, as the folder abs
+// has them, in this turn's draft of spec's app: nil again when they are as
+// they are live. It reports whether the draft now changes what it owns.
+func (t *chatTurn) keepOwnedInDraft(spec AppSpec, abs string) (bool, error) {
+	d, ok := t.appDraftOf(spec.Owner, spec.Slug)
+	if !ok {
+		return false, nil
+	}
+	files := folderOwnedFiles(abs)
+	if _, err := ownedFolderFrom(files); err != nil {
+		return false, err
+	}
+	if sameFiles(files, appOwnedFiles(spec.Owner, spec.Slug)) {
+		files = nil
+	}
+	if sameFiles(files, d.Owned) {
+		return files != nil, nil
+	}
+	d.Owned = files
+	// What it owns is part of how the app works: a verdict on it before is
+	// not one on it now.
+	appdraft.Save(d, false)
+	return files != nil, nil
+}
+
+// applyDraftOwned applies what the app owns as the draft d has it, as the
+// draft goes live: made by the agent that made the draft, for its owner.
+func applyDraftOwned(d appdraft.Draft) (string, error) {
+	if d.Owned == nil {
+		return "", nil
+	}
+	o, ok := agenthostApp()
+	if !ok {
+		return "", errors.New("nothing here can save what the app owns")
+	}
+	f, err := ownedFolderFrom(d.Owned)
+	if err != nil {
+		return "", err
+	}
+	t := o.personTurn(context.Background(), d.Spec.Owner)
+	t.via = firstNonEmptyStr(d.Spec.ChangedVia, "Builder")
+	return t.applyAppOwned(d.Spec.Slug, f)
+}
+
+// draftAgentFor is agent, an app's own, as the draft whose files ctx carries
+// has it (appdraft.WithOwned): the version a draft's preview and checks ask.
+// The agent as it is live when the draft does not change it.
+func draftAgentFor(ctx context.Context, agent AgentRecord) AgentRecord {
+	owned, ok := appdraft.OwnedFrom(ctx)
+	if !ok || strings.TrimSpace(agent.OwningApp) == "" {
+		return agent
+	}
+	f, err := ownedFolderFrom(owned)
+	if err != nil {
+		return agent
+	}
+	for _, exp := range f.agents {
+		if strings.EqualFold(strings.TrimSpace(exp.Name), strings.TrimSpace(agent.Name)) {
+			rec := exp.AgentRecord
+			keepAgentUse(&rec, agent)
+			// Still the app's, whatever the file says: what stops it with
+			// its app, and who reaches it, read this.
+			rec.OwningApp = agent.OwningApp
+			return rec
+		}
+	}
+	return agent
+}
+
+// draftAppTools are an app's own tools as the draft whose files ctx carries
+// has them, and whether it does: the tool space a draft's preview runs on.
+func draftAppTools(ctx context.Context) ([]apptools.Tool, bool) {
+	owned, ok := appdraft.OwnedFrom(ctx)
+	if !ok {
+		return nil, false
+	}
+	f, err := ownedFolderFrom(owned)
+	if err != nil {
+		return nil, false
+	}
+	out := make([]apptools.Tool, 0, len(f.tools))
+	for _, tt := range f.tools {
+		out = append(out, apptools.Tool{Tool: tt})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Tool.Name < out[j].Tool.Name })
+	return out, true
+}
+
+// appPartDraftRefusal is why maker may not change what owner's live app slug
+// owns directly, "" when they may: Builder changes what a live app owns in
+// its draft, through the app's folder, so the change is tried and goes live
+// with the app. A new app not live yet, and anyone else, are not refused here.
+func appPartDraftRefusal(owner, slug, maker, kind string) error {
+	slug = strings.TrimSpace(slug)
+	if maker != "Builder" || slug == "" {
+		return nil
+	}
+	if _, live := LoadAppSpec(owner, slug); !live {
+		return nil
+	}
+	return fmt.Errorf("NOT CHANGED: the app %q is live, and what it owns changes in your draft of it, to be tried and to go live with the app: check it out (app_def(action=\"checkout\", id=%q)), change the %s's file in %s.app/ (or add one), publish the folder, verify, then commit", slug, slug, kind, slug)
+}
+
 // draftsOfUser are the person's drafts of their own apps not yet live, for
 // the app list.
 func (t *chatTurn) draftsOfUser() []appdraft.Draft {
@@ -411,19 +612,46 @@ func (t *chatTurn) draftsOfUser() []appdraft.Draft {
 	return out
 }
 
-// appLiveCommit is the commit owner's app slug's history is at, "" where it
-// has none.
+// appLiveCommit is the commit owner's app slug's history holds the live app
+// at, brought up to date with it first, so a draft started from it merges
+// from the app as it was (historyAtLiveLocked); "" where it has none.
 func appLiveCommit(owner, slug string) string {
-	if appGit() == "" {
-		return ""
-	}
+	live, isLive := LoadAppSpec(owner, slug)
 	dir, ok := appRepoDir(owner, slug)
-	if !ok {
+	if appGit() == "" || !isLive || !ok {
 		return ""
 	}
-	out, err := appRepoGit(dir, "rev-parse", "-q", "--verify", "HEAD")
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+		return ""
+	}
+	mu := appRepoLock(dir)
+	mu.Lock()
+	defer mu.Unlock()
+	head, err := historyAtLiveLocked(dir, live)
 	if err != nil {
+		Log("[app-draft] %s/%s: its history could not be brought up to the live app: %v", owner, slug, err)
 		return ""
 	}
-	return strings.TrimSpace(out)
+	return head
+}
+
+// historyAtLiveLocked brings the history in dir up to the live app, with it
+// held: saves waiting committed as their author's, anything else changed
+// outside a save (an asset added) as the owner's. It returns the commit.
+func historyAtLiveLocked(dir string, live AppSpec) (string, error) {
+	if err := liveBranchLocked(dir); err != nil {
+		return "", err
+	}
+	if err := commitWaiting(dir, waitingInterrupted); err != nil {
+		return "", err
+	}
+	if changed, err := writeAppRepoFiles(dir, live); err != nil {
+		return "", err
+	} else if changed {
+		if err := appRepoCommit(dir, live.Owner, "", "Bring the history up to date with the app\n\nChanges made outside a save, such as an asset added."); err != nil {
+			return "", err
+		}
+	}
+	head, err := appRepoGit(dir, "rev-parse", "HEAD")
+	return strings.TrimSpace(head), err
 }

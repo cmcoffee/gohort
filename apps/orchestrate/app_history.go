@@ -361,6 +361,12 @@ func dirBytes(dir string) int64 {
 // they differ, removed where the app no longer has them, and reports whether
 // any changed. .git is the repository's own.
 func writeAppRepoFiles(dir string, spec AppSpec) (bool, error) {
+	return writeAppRepoFilesOwned(dir, spec, nil)
+}
+
+// writeAppRepoFilesOwned is writeAppRepoFiles with what the app owns as
+// owned has it (a draft's), nil for as it is live.
+func writeAppRepoFilesOwned(dir string, spec AppSpec, owned map[string][]byte) (bool, error) {
 	changed := false
 	stage, err := os.MkdirTemp("", "app-history-")
 	if err != nil {
@@ -377,7 +383,7 @@ func writeAppRepoFiles(dir string, spec AppSpec) (bool, error) {
 	}
 	// No live marker: the repository records the app, it is not a folder
 	// to install from.
-	if _, err := writeAppFolder(stage, spec, assets, ""); err != nil {
+	if _, err := writeAppFolderOwned(stage, spec, assets, "", owned); err != nil {
 		return false, err
 	}
 	want := map[string]bool{}

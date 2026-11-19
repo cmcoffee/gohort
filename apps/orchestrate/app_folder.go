@@ -138,7 +138,7 @@ func (t *chatTurn) appDefCheckout(args map[string]any) (string, error) {
 			}
 		}
 	}
-	w, err := writeAppFolder(abs, spec, assets, appLiveFingerprint(spec))
+	w, err := writeAppFolderOwned(abs, spec, assets, appLiveFingerprint(spec), t.draftOwned(spec))
 	if err != nil {
 		return "", err
 	}
@@ -158,6 +158,13 @@ type appFolderWrite struct {
 // the live state the folder holds (appLiveFingerprint), or "" when it holds
 // none. Shared by checkout (the live app) and unpack (a bundle).
 func writeAppFolder(abs string, spec AppSpec, assets map[string][]byte, base string) (appFolderWrite, error) {
+	return writeAppFolderOwned(abs, spec, assets, base, nil)
+}
+
+// writeAppFolderOwned is writeAppFolder with what the app owns as owned has
+// it (a draft's, core/appdraft): its files by their path in the folder, nil
+// for the app's as they are live.
+func writeAppFolderOwned(abs string, spec AppSpec, assets map[string][]byte, base string, owned map[string][]byte) (appFolderWrite, error) {
 	var out appFolderWrite
 	var sections []map[string]any
 	if len(spec.Sections) == 0 || json.Unmarshal(spec.Sections, &sections) != nil {
@@ -235,7 +242,10 @@ func writeAppFolder(abs string, spec AppSpec, assets map[string][]byte, base str
 		os.Remove(filepath.Join(abs, appFolderBaseFile))
 	}
 	// What the app owns: its agents, pipelines, machines and tools (app_owned.go).
-	for n, data := range appOwnedFiles(spec.Owner, spec.Slug) {
+	if owned == nil {
+		owned = appOwnedFiles(spec.Owner, spec.Slug)
+	}
+	for n, data := range owned {
 		if err := write(n, data); err != nil {
 			return out, err
 		}
@@ -677,7 +687,21 @@ func (t *chatTurn) publishAppFolder(abs, rel string, o folderPublish) (string, e
 	}
 	// Then what it owns, changed as the folder says (app_owned.go). The app
 	// is saved by now, so a refusal here leaves it installed and says so.
-	ownedLine, ownedErr := t.applyAppOwned(m.Slug, owned)
+	// For a live app Builder changes, what it owns changes in the draft,
+	// and goes live with it (app_draft.go); otherwise it is saved now.
+	var ownedLine string
+	var ownedErr error
+	if _, isLive := LoadAppSpec(t.user, m.Slug); isLive && t.editsDrafts() {
+		if cur, _, ok := t.appForTurn(m.Slug); ok {
+			changed, err := t.keepOwnedInDraft(cur, abs)
+			ownedErr = err
+			if changed {
+				ownedLine = " What it owns (its agents, pipelines, machines, tools, collections) changed in your draft as the folder has it, and goes live with your commit: verify the draft first."
+			}
+		}
+	} else {
+		ownedLine, ownedErr = t.applyAppOwned(m.Slug, owned)
+	}
 	if ownedErr != nil && t.savedBroken == "" {
 		t.savedBroken = "what it owns was not all saved: " + ownedErr.Error()
 	}
@@ -689,7 +713,7 @@ func (t *chatTurn) publishAppFolder(abs, rel string, o folderPublish) (string, e
 		// is written again as the app now is, so it holds what was installed
 		// and not a version the app's history no longer has.
 		if folderMemory(saved) != m.Memory || saved.AgentID != m.AgentID || saved.PipelineID != m.PipelineID || t.seedsIndexed {
-			if err := writeAppFolderOf(saved, abs); err != nil {
+			if err := writeAppFolderOf(saved, abs, t.draftOwned(saved)); err != nil {
 				Log("[app-folder] %s/%s: the folder could not be brought up to what was installed: %v", t.user, m.Slug, err)
 			}
 		}

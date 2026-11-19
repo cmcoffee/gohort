@@ -21,6 +21,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appcheck"
+	"github.com/cmcoffee/gohort/core/appdraft"
 	"github.com/cmcoffee/gohort/tools/appscript"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
@@ -512,6 +513,10 @@ func (t *chatTurn) runAgentCheck(spec AppSpec, c appcheck.Check) appCheckResult 
 	ctx := t.ctx
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	// A draft's check asks its agent as the draft has it (app_draft.go).
+	if d, ok := t.appDraftOf(spec.Owner, spec.Slug); ok && d.Spec.Updated == spec.Updated {
+		ctx = appdraft.WithOwned(ctx, d.Owned)
 	}
 	ctx, cancel := context.WithTimeout(ctx, appAgentCheckTimeout)
 	defer cancel()

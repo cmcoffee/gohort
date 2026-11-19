@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appdraft"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/tools/appscript"
 )
@@ -54,6 +55,11 @@ func (T *CustomApps) openApp(r *http.Request, user, slug string) (AppSpec, strin
 func (T *CustomApps) inApp(c *jsonapi.Call) (*appCall, error) {
 	// The working copy, for the person previewing it (preview.go).
 	if pv, ok := previewOf(c.R, c.User, c.R.PathValue("slug")); ok {
+		// What the app owns as the person's draft has it, for its Ask and
+		// its scripts' tools (core/appdraft).
+		if d, ok := appdraft.Load(pv.Spec.Owner, pv.Spec.Slug, c.User); ok {
+			c.R = c.R.WithContext(appdraft.WithOwned(c.R.Context(), d.Owned))
+		}
 		appdb := T.recordBase(pv.Spec, c.User)
 		// A page check run on the preview (a draft's, core/appdraft) reads
 		// and writes its own scratch records, not the preview's.

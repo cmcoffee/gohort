@@ -24,6 +24,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appdraft"
 	"github.com/cmcoffee/gohort/core/applocal"
 	"github.com/cmcoffee/gohort/core/apptools"
 	"github.com/cmcoffee/gohort/core/ui"
@@ -698,6 +699,10 @@ func (t *chatTurn) loadAppSpaceTools(sess *ToolSession, owner string) map[string
 	// What the app's names mean here (an imported app's mappings).
 	sess.CredentialAlias = applocal.AppCredentialAlias(owner, slug)
 	tools := apptools.Load(owner, slug)
+	// A draft's preview runs on its tool space as the draft has it.
+	if dt, ok := draftAppTools(t.ctx); ok {
+		tools = dt
+	}
 	names := make(map[string]bool, len(tools))
 	// An app that holds its own tools (AppSpec.OwnTools, piece D) cuts the
 	// person's pool for its agents (t.appOwnsTools, read by the pool loop).
@@ -753,7 +758,10 @@ func wireAppToolSpace(sess *ToolSession, owner string) {
 	}
 	own := func(slug string) error {
 		if _, ok := LoadAppSpec(owner, slug); !ok {
-			return fmt.Errorf("there is no app %q of yours: name an app by its id, as app_def(action=\"list\") shows it", slug)
+			// A new app not live yet is its draft (app_draft.go).
+			if _, isDraft := appdraft.Load(owner, slug, owner); !isDraft {
+				return fmt.Errorf("there is no app %q of yours: name an app by its id, as app_def(action=\"list\") shows it", slug)
+			}
 		}
 		return nil
 	}
@@ -771,10 +779,16 @@ func wireAppToolSpace(sess *ToolSession, owner string) {
 		if err := own(slug); err != nil {
 			return err
 		}
+		if err := appPartDraftRefusal(owner, slug, "Builder", "tool"); err != nil {
+			return err
+		}
 		return apptools.SaveBy(owner, slug, t, "Builder")
 	}
 	sess.DeleteAppTool = func(slug, name string) error {
 		if err := own(slug); err != nil {
+			return err
+		}
+		if err := appPartDraftRefusal(owner, slug, "Builder", "tool"); err != nil {
 			return err
 		}
 		return apptools.DeleteBy(owner, slug, name, "Builder")

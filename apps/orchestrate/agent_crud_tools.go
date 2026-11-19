@@ -140,6 +140,9 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		rec.Cortex = newAgentReadsCortex(rec)
 	}
 	rec.appEdit = appEditOf(sess)
+	if err := appPartDraftRefusal(sess.Username, rec.OwningApp, rec.appEdit, "agent"); err != nil {
+		return "", err
+	}
 	saved, err := saveAgent(sess.DB, rec)
 	if err != nil {
 		return "", err
@@ -885,6 +888,9 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	var saved AgentRecord
 	moveNote := ""
 	existing.appEdit = appEditOf(sess)
+	if err := appPartDraftRefusal(existing.Owner, existing.OwningApp, existing.appEdit, "agent"); err != nil {
+		return "", err
+	}
 	if move != nil {
 		move.agent = existing
 		saved, moveNote, err = move.apply()

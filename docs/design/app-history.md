@@ -588,9 +588,19 @@ files in the repository, and drafts with or without git):
 - **A turn that ends with verified work in a draft** is held once, to
   commit it, with git or without.
 
-Not yet drafted: what an app owns beside its record (its agents,
-pipelines, machines, tools and collections) still changes at once when
-Builder changes it, as in stage 2.
+- **What a live app owns changes in the draft too** (owner, 2026-11-18,
+  as files): its agents, pipelines, machines, tools and collections, as
+  the files of its folder's agents/, pipelines/, machines/, tools/ and
+  knowledge/ (`Draft.Owned`, nil while the draft leaves them as they are
+  live). Builder changes them through the folder (checkout, edit,
+  publish); its direct tools refuse to change a live app's, and an app not
+  live yet takes them from those tools as it is built. They are applied
+  as the draft is committed, merged with the rest (a live change to them,
+  by Anvil, is part of what the draft compares and merges, never undone),
+  and read in place of the live ones where the draft is tried: the app's
+  Ask (and so its agent checks) and its agents' tool space, carried on the
+  preview's requests. The preview's pipelines, machines and collections
+  run as they are live until the commit.
 
 ## Steps
 

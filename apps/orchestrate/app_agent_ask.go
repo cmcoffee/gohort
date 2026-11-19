@@ -37,6 +37,9 @@ func (T *OrchestrateApp) AppAgentAsk(ctx context.Context, owner, user, agentID, 
 	if !ok {
 		return "", 0, fmt.Errorf("the app's agent %q is gone", agentID)
 	}
+	// A draft's preview and checks ask the agent as the draft has it
+	// (app_draft.go).
+	agent = draftAgentFor(ctx, agent)
 	if err := agentRunStopped(agent); err != nil {
 		return "", 0, err
 	}

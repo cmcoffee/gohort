@@ -9,6 +9,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appdraft"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // My Apps shows Builder's work in progress: an app with a draft says so,
@@ -79,5 +80,36 @@ func TestMyAppsShowsBuildersWorkInProgress(t *testing.T) {
 	}
 	if w := as(t, T, "alice", httptest.NewRequest(http.MethodPost, "/apps/_app/draft/discard?slug=bobs", strings.NewReader("{}"))); w.Code != http.StatusNotFound {
 		t.Errorf("alice discarded bob's draft: %d", w.Code)
+	}
+}
+
+// A request in a draft's preview carries what the app owns as the draft has
+// it, for the app's Ask and its scripts' tools to read; one outside the
+// preview carries nothing.
+func TestAPreviewCarriesTheDraftsOwnParts(t *testing.T) {
+	_, _, working := previewTestApp(t)
+	owned := map[string][]byte{"agents/clerk.json": []byte(`{"name":"Clerk"}`)}
+	appdraft.Save(appdraft.Draft{Spec: working, Editor: "alice", Owned: owned}, false)
+	c, ok := appdraft.PreviewCookie("alice", working)
+	if !ok {
+		t.Fatal("no preview cookie")
+	}
+	call := func(withPreview bool) *appCall {
+		r := httptest.NewRequest(http.MethodGet, "/apps/wx/records", nil)
+		r.SetPathValue("slug", "wx")
+		if withPreview {
+			r.AddCookie(&http.Cookie{Name: c.Name, Value: c.Value})
+		}
+		a, err := hostApp.inApp(&jsonapi.Call{R: r, User: "alice", UDB: hostApp.DB})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	if got, ok := appdraft.OwnedFrom(call(true).R.Context()); !ok || string(got["agents/clerk.json"]) != `{"name":"Clerk"}` {
+		t.Errorf("the preview's request does not carry the draft's parts: %v", got)
+	}
+	if _, ok := appdraft.OwnedFrom(call(false).R.Context()); ok {
+		t.Error("a request outside the preview carried the draft's parts")
 	}
 }

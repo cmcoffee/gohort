@@ -10,6 +10,7 @@
 package appdraft
 
 import (
+	"context"
 	"sort"
 	"strings"
 	"time"
@@ -41,6 +42,32 @@ type Draft struct {
 	// DropAssets are the assets the draft takes out of the app, taken out of
 	// the live app when it is committed: until then its page may use them.
 	DropAssets []string `json:"drop_assets,omitempty"`
+	// Owned is what the app owns as the draft has it, when the draft changes
+	// it: every file of its folder's agents/, pipelines/, machines/, tools/
+	// and knowledge/, by its path there. Nil leaves what the app owns as it
+	// is live. Applied when the draft is committed.
+	Owned map[string][]byte `json:"owned,omitempty"`
+}
+
+type ownedKey struct{}
+
+// WithOwned is ctx carrying the files of what an app owns as a draft has
+// them, for what runs the draft (its preview, its checks) to read them
+// in place of the live ones.
+func WithOwned(ctx context.Context, owned map[string][]byte) context.Context {
+	if len(owned) == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, ownedKey{}, owned)
+}
+
+// OwnedFrom is the files WithOwned put on ctx.
+func OwnedFrom(ctx context.Context) (map[string][]byte, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	m, ok := ctx.Value(ownedKey{}).(map[string][]byte)
+	return m, ok && len(m) > 0
 }
 
 func store(owner string) core.Database {

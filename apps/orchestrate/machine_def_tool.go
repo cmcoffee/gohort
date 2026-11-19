@@ -607,6 +607,9 @@ func (t *chatTurn) machineCreateOrUpdate(args map[string]any, isUpdate bool) (st
 	if err := def.Validate(); err != nil {
 		return "", fmt.Errorf("machine is not runnable: %w. machine(action=\"validate\") checks a phase list without writing it, which is the cheaper way to find this: an update REPLACES the whole list, so one bad field costs the entire save", err)
 	}
+	if err := appPartDraftRefusal(t.user, def.OwningApp, appEditOfTurn(t), "machine"); err != nil {
+		return "", err
+	}
 	saved, err := SaveMachineDefBy(t.udb, def, "update", appEditOfTurn(t))
 	if err != nil {
 		return "", err
@@ -1077,6 +1080,9 @@ func (t *chatTurn) machineUpdatePhase(args map[string]any) (string, error) {
 	if err := def.Validate(); err != nil {
 		return "", fmt.Errorf("that change leaves the machine unrunnable, so nothing was saved: %w", err)
 	}
+	if err := appPartDraftRefusal(t.user, def.OwningApp, appEditOfTurn(t), "machine"); err != nil {
+		return "", err
+	}
 	saved, err := SaveMachineDefBy(t.udb, def, "update", appEditOfTurn(t))
 	if err != nil {
 		return "", err
@@ -1105,6 +1111,9 @@ func (t *chatTurn) machineRepair(args map[string]any) (string, error) {
 	if len(fixed) == 0 {
 		return "Nothing to repair in " + strconv.Quote(def.Name) + ", every finding it has needs a judgement, so none of them can be settled mechanically. " +
 			"machine(action=\"get\") lists them.", nil
+	}
+	if err := appPartDraftRefusal(t.user, def.OwningApp, appEditOfTurn(t), "machine"); err != nil {
+		return "", err
 	}
 	saved, err := SaveMachineDefBy(t.udb, def, "update", appEditOfTurn(t))
 	if err != nil {

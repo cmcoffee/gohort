@@ -1,12 +1,18 @@
 package orchestrate
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appcheck"
 	"github.com/cmcoffee/gohort/core/appdraft"
+	"github.com/cmcoffee/gohort/core/apptools"
+	"github.com/cmcoffee/gohort/tools/appscript"
 )
 
 // makeLive puts turn's draft of its app slug live, as its commit does
@@ -429,5 +435,260 @@ func TestThePersonMakesAMergedDraftLive(t *testing.T) {
 	}
 	if now, _ := LoadAppSpec("u", "shelf"); scriptOf(now, "count") != "print('{\"n\": 2}')" || scriptOf(now, "top") != "print('{\"t\": 9}')" {
 		t.Errorf("the merge went live without one side: count %q top %q", scriptOf(now, "count"), scriptOf(now, "top"))
+	}
+}
+
+// Builder changes what a live app owns in its draft, through the app's
+// folder: its direct tools refuse, a publish keeps the folder's files in
+// the draft and the live agent as it was, the draft's Ask reads the drafted
+// agent, and the commit makes it live with the app.
+func TestALiveAppsOwnPartsChangeInItsDraft(t *testing.T) {
+	turn, udb := copyTestTurn(t)
+	turn.agent = AgentRecord{ID: "seed-builder", Name: "Builder"}
+	copyTestApp(t, turn, nil)
+	clerk, err := saveAgent(udb, AgentRecord{Owner: "u", Name: "Clerk", OrchestratorPrompt: "Old prompt.", OwningApp: "desk", appEdit: "Builder"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, _ := LoadAppSpec("u", "desk")
+	spec.AgentID = clerk.ID
+	SaveAppSpec(spec)
+
+	sess := &ToolSession{}
+	wireAppToolSpace(sess, "u")
+	if err := sess.SaveAppTool("desk", TempTool{Name: "lookup", Description: "Look it up.", CommandTemplate: "echo hi"}); err == nil || !strings.Contains(err.Error(), "NOT CHANGED") || !strings.Contains(err.Error(), "checkout") {
+		t.Errorf("a direct change to a live app's tool was not sent to its folder: %v", err)
+	}
+	if appPartDraftRefusal("u", "desk", "", "agent") != nil {
+		t.Error("someone other than Builder was refused here")
+	}
+
+	if _, err := turn.appDefCheckout(map[string]any{"id": "desk"}); err != nil {
+		t.Fatal(err)
+	}
+	// A folder published as it was changes nothing the app owns.
+	if out, err := turn.appDefPublish(map[string]any{"dir": "desk.app"}); err != nil || strings.Contains(out, "changed in your draft") {
+		t.Fatalf("publishing the folder as it was: %v %s", err, out)
+	}
+	if d, _ := appdraft.Load("u", "desk", "u"); d.Owned != nil {
+		t.Error("a folder as it was left what the app owns changed in the draft")
+	}
+	ws, _ := turn.turnWorkspace()
+	files, _ := filepath.Glob(filepath.Join(ws, "desk.app", "agents", "*.json"))
+	if len(files) != 1 {
+		t.Fatalf("the checkout's agents: %v", files)
+	}
+	b, _ := os.ReadFile(files[0])
+	os.WriteFile(files[0], []byte(strings.Replace(string(b), "Old prompt.", "New prompt.", 1)), 0o644)
+	out, err := turn.appDefPublish(map[string]any{"dir": "desk.app"})
+	if err != nil || !strings.Contains(out, "changed in your draft") {
+		t.Fatalf("publish: %v %s", err, out)
+	}
+	if live, _ := loadAgent(udb, clerk.ID); live.OrchestratorPrompt != "Old prompt." {
+		t.Fatalf("the publish changed the live app's agent: %q", live.OrchestratorPrompt)
+	}
+	d, ok := appdraft.Load("u", "desk", "u")
+	if !ok || d.Owned == nil {
+		t.Fatal("the draft does not hold what the app owns")
+	}
+	live, _ := loadAgent(udb, clerk.ID)
+	if got := draftAgentFor(appdraft.WithOwned(context.Background(), d.Owned), live); got.OrchestratorPrompt != "New prompt." || got.ID != clerk.ID {
+		t.Errorf("the draft's Ask reads %q (id %s)", got.OrchestratorPrompt, got.ID)
+	}
+	if got := draftAgentFor(context.Background(), live); got.OrchestratorPrompt != "Old prompt." {
+		t.Error("an Ask with no draft read the drafted agent")
+	}
+	// A drafted file that leaves the app out is still the app's agent.
+	loose := map[string][]byte{}
+	for k, v := range d.Owned {
+		loose[k] = []byte(strings.Replace(string(v), `"owning_app": "desk"`, `"owning_app": ""`, 1))
+	}
+	if got := draftAgentFor(appdraft.WithOwned(context.Background(), loose), live); got.OwningApp != "desk" || got.OrchestratorPrompt != "New prompt." {
+		t.Errorf("a drafted agent file without its app: app %q, prompt %q", got.OwningApp, got.OrchestratorPrompt)
+	}
+
+	draft, _ := turnApp(turn, "desk")
+	turn.recordVerdict(draft, true, "ok")
+	if out, err := turn.appDefCommit(map[string]any{"id": "desk", "message": "Give the clerk a new prompt"}); err != nil || !strings.Contains(out, "live now") {
+		t.Fatalf("commit: %v %s", err, out)
+	}
+	if now, _ := loadAgent(udb, clerk.ID); now.OrchestratorPrompt != "New prompt." {
+		t.Errorf("the commit did not make the drafted agent live: %q", now.OrchestratorPrompt)
+	}
+	if _, ok := appdraft.Load("u", "desk", "u"); ok {
+		t.Error("the draft is still there after its commit")
+	}
+}
+
+// A new app not live yet takes its own tools straight away, as Builder
+// builds it; a draft's tool space is its files', in place of the live one.
+func TestADraftsToolsAreItsOwn(t *testing.T) {
+	turn, _ := copyTestTurn(t)
+	turn.agent = AgentRecord{ID: "seed-builder", Name: "Builder"}
+	if _, err := turn.appDefCreateOrUpdate(map[string]any{"name": "Shelf", "sections": draftTestPage("Books")}, false); err != nil {
+		t.Fatal(err)
+	}
+	sess := &ToolSession{}
+	wireAppToolSpace(sess, "u")
+	if err := sess.SaveAppTool("shelf", TempTool{Name: "lookup", Description: "Look it up.", CommandTemplate: "echo hi"}); err != nil {
+		t.Fatalf("a new app's own tool, while it is a draft: %v", err)
+	}
+	files := appOwnedFiles("u", "shelf")
+	var toolFile string
+	for f := range files {
+		if strings.HasPrefix(f, "tools/") && strings.HasSuffix(f, ".json") {
+			toolFile = f
+		}
+	}
+	if toolFile == "" {
+		t.Fatalf("no tool file among %v", files)
+	}
+	files[toolFile] = []byte(strings.Replace(string(files[toolFile]), "Look it up.", "Look it up, drafted.", 1))
+	tools, ok := draftAppTools(appdraft.WithOwned(context.Background(), files))
+	if !ok || len(tools) != 1 || tools[0].Tool.Description != "Look it up, drafted." {
+		t.Errorf("the draft's tool space: %v %+v", ok, tools)
+	}
+	if _, ok := draftAppTools(context.Background()); ok {
+		t.Error("a tool space with no draft read one")
+	}
+}
+
+// ownedDeskFixture is a live app Desk whose own agent Clerk answers with
+// "Old prompt.", and a tool of its own, lookup.
+func ownedDeskFixture(t *testing.T) (*chatTurn, Database, AgentRecord) {
+	t.Helper()
+	turn, udb := copyTestTurn(t)
+	turn.agent = AgentRecord{ID: "seed-builder", Name: "Builder"}
+	copyTestApp(t, turn, nil)
+	clerk, err := saveAgent(udb, AgentRecord{Owner: "u", Name: "Clerk", Description: "Old desc.", OrchestratorPrompt: "Old prompt.", OwningApp: "desk", appEdit: "Builder"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := apptools.SaveBy("u", "desk", TempTool{Name: "lookup", Description: "Look it up.", CommandTemplate: "echo hi"}, "Builder"); err != nil {
+		t.Fatal(err)
+	}
+	spec, _ := LoadAppSpec("u", "desk")
+	spec.AgentID = clerk.ID
+	SaveAppSpec(spec)
+	return turn, udb, clerk
+}
+
+// draftedFiles is what Desk owns as files, with old turned into new.
+func draftedFiles(old, new string) map[string][]byte {
+	files := appOwnedFiles("u", "desk")
+	for k, v := range files {
+		files[k] = []byte(strings.ReplaceAll(string(v), old, new))
+	}
+	return files
+}
+
+// Where a draft is tried, what the app owns is read as the draft has it:
+// the app's Ask asks the drafted agent, an agent check of the draft carries
+// the draft's files to the Ask, and the app's agents load the drafted tool
+// space. Without the draft, each reads the live app.
+func TestADraftsAskChecksAndToolsReadItsOwnParts(t *testing.T) {
+	turn, udb, clerk := ownedDeskFixture(t)
+	fake := &FakeLLM{Turns: []FakeTurn{{Content: "Answered.", Repeat: true}}}
+	turn.app.LLM, turn.app.LeadLLM = fake, fake
+	files := draftedFiles("Old prompt.", "New prompt.")
+
+	if _, _, err := turn.app.AppAgentAsk(appdraft.WithOwned(context.Background(), files), "u", "", clerk.ID, "hello", false); err != nil {
+		t.Fatal(err)
+	}
+	if p := fake.Prompt(0); !strings.Contains(p, "New prompt.") {
+		t.Errorf("the draft's Ask did not ask the drafted agent:\n%s", p)
+	}
+	if _, _, err := turn.app.AppAgentAsk(context.Background(), "u", "", clerk.ID, "hello", false); err != nil {
+		t.Fatal(err)
+	}
+	if p := fake.Prompt(1); !strings.Contains(p, "Old prompt.") {
+		t.Errorf("an Ask outside the draft did not ask the live agent:\n%s", p)
+	}
+
+	// An agent check of the draft.
+	if _, err := turn.appDefCreateOrUpdate(map[string]any{"id": "desk", "description": "A desk."}, true); err != nil {
+		t.Fatal(err)
+	}
+	d, _ := appdraft.Load("u", "desk", "u")
+	d.Owned = files
+	d = appdraft.Save(d, false)
+	prev := appscript.AppAsk
+	t.Cleanup(func() { appscript.AppAsk = prev })
+	carried := false
+	appscript.AppAsk = func(ctx context.Context, spec AppSpec, caller, prompt string, _ bool) (string, error) {
+		_, carried = appdraft.OwnedFrom(ctx)
+		return "ok", nil
+	}
+	turn.runAgentCheck(d.Spec, appcheck.Check{Name: "answers", Agent: clerk.ID, Ask: "hello", Expect: []appcheck.Expect{{Contains: "ok"}}})
+	if !carried {
+		t.Error("an agent check of the draft did not carry the draft's files")
+	}
+
+	// The app's agent, run on the draft, loads its drafted tools.
+	toolFiles := draftedFiles("Look it up.", "Look it up, drafted.")
+	load := func(ctx context.Context) string {
+		tt := &chatTurn{user: "u", udb: udb, agent: clerk, ctx: ctx, agentOwnTools: map[string]bool{}}
+		sess := &ToolSession{}
+		tt.loadAppSpaceTools(sess, "u")
+		for _, x := range sess.TempTools {
+			if x.Name == "lookup" {
+				return x.Description
+			}
+		}
+		return ""
+	}
+	if got := load(appdraft.WithOwned(context.Background(), toolFiles)); got != "Look it up, drafted." {
+		t.Errorf("the app's agent on the draft loaded lookup as %q", got)
+	}
+	if got := load(context.Background()); got != "Look it up." {
+		t.Errorf("the app's agent outside the draft loaded lookup as %q", got)
+	}
+}
+
+// What the app owns, changed live (by Anvil) while Builder's draft changes
+// another part of it, is merged: the commit keeps both, and never undoes the
+// live change with the draft's older copy of the agent. (The same lines, or
+// lines next to each other, changed on both sides are a conflict, as git
+// has it.)
+func TestADraftsOwnPartsMergeWithALiveChange(t *testing.T) {
+	if appGit() == "" {
+		t.Skip("git is not installed")
+	}
+	turn, udb, clerk := ownedDeskFixture(t)
+	if _, err := turn.appDefCheckout(map[string]any{"id": "desk"}); err != nil {
+		t.Fatal(err)
+	}
+	ws, _ := turn.turnWorkspace()
+	files, _ := filepath.Glob(filepath.Join(ws, "desk.app", "tools", "*.json"))
+	if len(files) != 1 {
+		t.Fatalf("the checkout's tools: %v", files)
+	}
+	b, _ := os.ReadFile(files[0])
+	os.WriteFile(files[0], []byte(strings.Replace(string(b), "Look it up.", "Look it up, drafted.", 1)), 0o644)
+	if _, err := turn.appDefPublish(map[string]any{"dir": "desk.app"}); err != nil {
+		t.Fatal(err)
+	}
+	// Anvil changes the agent's description live meanwhile.
+	live, _ := loadAgent(udb, clerk.ID)
+	live.Description, live.appEdit = "Live desc.", "Anvil"
+	if _, err := saveAgent(udb, live); err != nil {
+		t.Fatal(err)
+	}
+	draft, _ := turnApp(turn, "desk")
+	turn.recordVerdict(draft, true, "ok")
+	out, err := turn.appDefCommit(map[string]any{"id": "desk", "message": "Give the clerk a new prompt"})
+	if err != nil && strings.Contains(err.Error(), "Verify your draft again") {
+		draft, _ = turnApp(turn, "desk")
+		turn.recordVerdict(draft, true, "ok")
+		out, err = turn.appDefCommit(map[string]any{"id": "desk", "message": "Give the clerk a new prompt"})
+	}
+	if err != nil || !strings.Contains(out, "live now") {
+		t.Fatalf("commit: %v %s", err, out)
+	}
+	if now, _ := loadAgent(udb, clerk.ID); now.Description != "Live desc." {
+		t.Errorf("the commit undid the live change to the agent: %q", now.Description)
+	}
+	if at, ok := apptools.ByName("u", "desk", "lookup"); !ok || at.Tool.Description != "Look it up, drafted." {
+		t.Errorf("the draft's tool is not live: %+v", at.Tool.Description)
 	}
 }
