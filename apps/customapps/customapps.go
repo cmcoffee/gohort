@@ -659,13 +659,21 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 						{Value: "shared", Label: "Shared", Color: "success"},
 						{Value: "requested", Label: "Publish requested", Color: "warning"},
 						{Value: "disabled", Label: "Disabled", Color: "danger"},
+						{Value: "draft", Label: "Not live yet", Color: "warning"},
 					}},
 					{Field: "note", Flex: 3, Mute: true},
 					{Field: "desc", Flex: 1, Mute: true, Line: 2},
 				},
 				EmptyText: "No apps yet. Ask Builder for one, or Import an app somebody exported.",
 				RowActions: []ui.RowAction{
-					{Type: "button", Label: "Open", Method: "GET", PostTo: "{slug}/", HideIf: "disabled"},
+					{Type: "button", Label: "Open", Method: "GET", PostTo: "{slug}/", HideIf: "not_open"},
+					// Builder's work in progress (drafts.go): see it, make it
+					// live yourself, or drop it.
+					{Type: "button", Label: "Preview", Method: "GET", PostTo: "_app/draft/preview?slug={slug}", OnlyIf: "draft"},
+					{Type: "button", Label: "Make live", Method: "POST", PostTo: "_app/draft/live?slug={slug}", OnlyIf: "draft",
+						Confirm: "Make Builder's changes live now? They go through the same checks as any save, but Builder may not have finished testing them."},
+					{Type: "button", Label: "Discard", Method: "POST", PostTo: "_app/draft/discard?slug={slug}", OnlyIf: "draft", Variant: "danger",
+						Confirm: "Discard Builder's changes in progress? The live app stays as it is; an app never live goes with them."},
 					// Only an app that declares tunables gets the button; for a
 					// shared app, only when some of them are the reader's own.
 					{Type: "button", Label: "Settings", Method: "GET", PostTo: "{slug}/_settings", OnlyIf: "has_settings", HideIf: "disabled"},
@@ -1148,7 +1156,7 @@ func (T *CustomApps) handleAppsList(c *jsonapi.Call) (any, error) {
 			row["note"] = "switched off by an administrator"
 			status = "switched off by an administrator"
 		} else if s.Disabled {
-			row["disabled"], row["state"] = "1", "disabled"
+			row["disabled"], row["not_open"], row["state"] = "1", "1", "disabled"
 			row["note"] = "review its scripts, then Enable"
 			status = "disabled: review, then Enable"
 		} else if has, allPaused, next := appScheduleStatus(owner, s.Slug); has {
@@ -1216,6 +1224,7 @@ func (T *CustomApps) handleAppsList(c *jsonapi.Call) (any, error) {
 	// By name first, where the person has not placed them: neither the spec
 	// store's keys nor the shared index (a map) promise an order, and the
 	// shared apps came back in a different one on every load.
+	out = draftRows(owner, out, seen)
 	sort.SliceStable(out, func(i, j int) bool { return out[i]["name"] < out[j]["name"] })
 	sort.SliceStable(shared, func(i, j int) bool { return shared[i]["name"] < shared[j]["name"] })
 	return append(inDashboardOrder(owner, out), inDashboardOrder(owner, shared)...), nil

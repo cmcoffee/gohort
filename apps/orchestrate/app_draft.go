@@ -177,6 +177,11 @@ var errLiveMoved = errors.New("the live app changed since your draft started")
 // save path's gates, its verify verdict carried, the assets it took out
 // removed, and the draft dropped. It returns the app as now live.
 func (t *chatTurn) goLive(d appdraft.Draft, reason string) (AppSpec, error) {
+	return goDraftLive(d, reason)
+}
+
+// goDraftLive is goLive, for a turn or for the person's own Make live.
+func goDraftLive(d appdraft.Draft, reason string) (AppSpec, error) {
 	live, isLive := LoadAppSpec(d.Spec.Owner, d.Spec.Slug)
 	switch {
 	case isLive && appLiveMark(live) != d.Base:
@@ -214,6 +219,41 @@ func (t *chatTurn) goLive(d appdraft.Draft, reason string) (AppSpec, error) {
 		appdraft.PreviewEnd(d.Editor, saved.Slug)
 	}
 	return saved, nil
+}
+
+func init() { appdraft.MakeLive = makeDraftLive }
+
+// makeDraftLive makes d live as by's own change, from My Apps: the person's
+// choice, through the same gates, finished and verified or not. The history
+// records it as theirs, with the agent that did the work credited.
+func makeDraftLive(d appdraft.Draft, by string) (string, error) {
+	_, wasLive := LoadAppSpec(d.Spec.Owner, d.Spec.Slug)
+	via := strings.TrimSpace(d.Spec.ChangedVia)
+	who := firstNonEmptyStr(via, "the agent")
+	msg := "Make " + who + "'s changes live\n\nMade live by " + by
+	if v := d.Spec.Verify; v == nil || !v.Current(d.Spec) || !v.Pass {
+		msg += ", before " + who + " had verified them"
+	}
+	msg += "."
+	if note := strings.TrimSpace(d.Spec.ChangeNote); note != "" {
+		msg += " Its last change: " + note
+	}
+	subject, _, _ := strings.Cut(msg, "\n")
+	d.Spec.ChangeNote = msg
+	live, err := goDraftLive(d, subject)
+	if err != nil {
+		return "", err
+	}
+	if _, err := CommitAppHistory(live.Owner, live.Slug, by, via, msg); err != nil && !errors.Is(err, ErrNoAppHistory) && !strings.Contains(err.Error(), "has no history yet") {
+		Log("[app-history] %s/%s: live, but the commit was not recorded: %v", live.Owner, live.Slug, err)
+	}
+	if !wasLive {
+		if err := rewordFirstCommit(live.Owner, live.Slug, by, via, msg); err != nil {
+			Log("[app-history] %s/%s: its first commit keeps its starting message: %v", live.Owner, live.Slug, err)
+		}
+		return live.Name + " is live now, its first version.", nil
+	}
+	return who + "'s changes to " + live.Name + " are live now.", nil
 }
 
 // draftsOfUser are the person's drafts of their own apps not yet live, for

@@ -262,3 +262,40 @@ func TestADraftsVerdictHoldsOnlyWhileWhatItJudgedStands(t *testing.T) {
 		t.Error("an untested change was committed on an earlier pass")
 	}
 }
+
+// The person makes Builder's draft live themselves, from My Apps, before it
+// was verified if they choose: live through the same save, the draft gone,
+// and the history saying who made it live and that it was not verified, with
+// Builder credited for the work.
+func TestThePersonMakesADraftLive(t *testing.T) {
+	turn, _ := folderTestTurn(t)
+	turn.agent.Name = "Builder"
+	if _, err := turn.appDefCreateOrUpdate(map[string]any{"name": "Shelf", "sections": draftTestPage("Books")}, false); err != nil {
+		t.Fatal(err)
+	}
+	makeLive(t, turn, "shelf")
+	if _, err := turn.appDefCreateOrUpdate(map[string]any{"id": "shelf", "sections": draftTestPage("Novels"), "note": "Say novels"}, true); err != nil {
+		t.Fatal(err)
+	}
+	d, _ := appdraft.Load("u", "shelf", "u")
+	if d.Spec.Verify != nil && d.Spec.Verify.Current(d.Spec) {
+		t.Fatal("the fixture's draft is verified; the case is one that is not")
+	}
+	out, err := appdraft.MakeLive(d, "u")
+	if err != nil || !strings.Contains(out, "live now") {
+		t.Fatalf("make live: %v %s", err, out)
+	}
+	if live, _ := LoadAppSpec("u", "shelf"); !strings.Contains(string(live.Sections), "Novels") {
+		t.Fatalf("the draft is not live: %s", live.Sections)
+	}
+	if _, ok := appdraft.Load("u", "shelf", "u"); ok {
+		t.Error("the draft is still there")
+	}
+	if appGit() != "" {
+		dir, _ := appRepoDir("u", "shelf")
+		log, _ := appRepoGit(dir, "log", "-1", "--format=%an|%s|%b")
+		if !strings.HasPrefix(log, "u|Make Builder's changes live|") || !strings.Contains(log, "before Builder had verified") || !strings.Contains(log, "Say novels") || !strings.Contains(log, "Co-Authored-By: Builder") {
+			t.Errorf("the history's record of it: %q", log)
+		}
+	}
+}

@@ -173,6 +173,12 @@ var (
 	PreviewEnd  func(editor, slug string)
 )
 
+// MakeLive makes d live as by's own change, through every gate a save
+// passes, whether or not its work was finished and verified: the person's
+// choice, from My Apps. It returns what to tell them. Set by the host that
+// keeps the apps' history (orchestrate).
+var MakeLive func(d Draft, by string) (string, error)
+
 func init() {
 	core.RegisterAppSpecDeletedHook(DeleteAll)
 }
