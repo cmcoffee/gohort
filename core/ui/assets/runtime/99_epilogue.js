@@ -251,6 +251,60 @@
   // What stays in mount() is what belongs to a DOCUMENT rather than a page:
   // the header, the live menu, the footer. A host that already has those does
   // not want a second set.
+
+  // The glyphs a nav entry may name as its icon, drawn as the bell is (64
+  // units, filled, currentColor), so they sit the same on every platform.
+  var uiNavGlyphs = {
+    settings: ['M26.9 10.6 L27.7 3.3 L36.3 3.3 L37.1 10.6 L43.5 13.2 L49.2 8.7 L55.3 14.8 L50.8 20.5 L53.4 26.9 L60.7 27.7 L60.7 36.3 L53.4 37.1 L50.8 43.5 L55.3 49.2 L49.2 55.3 L43.5 50.8 L37.1 53.4 L36.3 60.7 L27.7 60.7 L26.9 53.4 L20.5 50.8 L14.8 55.3 L8.7 49.2 L13.2 43.5 L10.6 37.1 L3.3 36.3 L3.3 27.7 L10.6 26.9 L13.2 20.5 L8.7 14.8 L14.8 8.7 L20.5 13.2Z M32 22A10 10 0 1 0 32 42A10 10 0 1 0 32 22Z']
+  };
+  function uiNavGlyph(name) {
+    var paths = uiNavGlyphs[name];
+    if (!paths) return null;
+    var ns = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 64 64');
+    svg.setAttribute('class', 'ui-page-icon-glyph');
+    svg.setAttribute('fill', 'currentColor');
+    svg.setAttribute('fill-rule', 'evenodd');
+    svg.setAttribute('aria-hidden', 'true');
+    paths.forEach(function(d) {
+      var path = document.createElementNS(ns, 'path');
+      path.setAttribute('d', d);
+      svg.appendChild(path);
+    });
+    return svg;
+  }
+
+  // navIcons is the page's nav entries that carry an icon, as controls at
+  // the bar's right end, after the bell and the size of it: the glyph with
+  // its label written beside it. Null when there are none. An icon the
+  // runtime does not draw leaves the label alone.
+  function navIcons(cfg) {
+    var items = (cfg.nav || []).filter(function(it) { return it.icon; });
+    if (!items.length) return null;
+    var box = el('div', {class: 'ui-page-icons'});
+    items.forEach(function(it) {
+      var kids = [];
+      var glyph = uiNavGlyph(it.icon);
+      if (glyph) kids.push(glyph);
+      kids.push(el('span', {class: 'ui-page-icon-label'}, [it.label || '']));
+      var a = el('a', {
+        class: 'ui-page-icon' + (it.active ? ' active' : ''),
+        href: it.url || '#', title: it.label || '', 'aria-label': it.label || ''
+      }, kids);
+      if (it.action) {
+        a.setAttribute('role', 'button');
+        a.addEventListener('click', function(ev) {
+          ev.preventDefault();
+          var fn = window.UIClientActions && window.UIClientActions[it.action];
+          if (typeof fn === 'function') fn({button: a, nav: it});
+        });
+      }
+      box.appendChild(a);
+    });
+    return box;
+  }
+
   // navStrip renders Page.Nav — the shared page menu for a multi-page app,
   // active page highlighted — or null when a page declares none. The tabs that
   // fit stay on the row; the rest fold into a More menu at its end.
@@ -259,10 +313,13 @@
   // has one caller. See renderPageBody for why a body rendering does not get
   // to borrow it.
   function navStrip(cfg) {
-    if (!cfg.nav || !cfg.nav.length) return null;
+    // An entry with an icon is a control at the bar's end (navIcons), not a
+    // tab.
+    var items = (cfg.nav || []).filter(function(it) { return !it.icon; });
+    if (!items.length) return null;
     var tabs = el('nav', {class: 'ui-page-tabs'});
     var current = null, links = [];
-    cfg.nav.forEach(function(it) {
+    items.forEach(function(it) {
       var a = el('a', {
         class: 'ui-page-tab' + (it.active ? ' active' : ''),
         href: it.url || '#',
@@ -783,6 +840,8 @@
       // highlighted. Scrolls horizontally on narrow screens rather than wrapping.
       var tabs = navStrip(cfg);
       if (tabs) header.appendChild(tabs);
+      var icons = navIcons(cfg);
+      if (icons && cfg.public) header.appendChild(icons);
       // Live-sessions pill — polls /api/live every 10s and shows a
       // running/queued count badge with a click-through popover. Lets
       // operators see at a glance from any framework page that
@@ -815,6 +874,7 @@
       // nobody reads, and the whole value of this is that the quiet state is
       // informative.
       header.appendChild(uiNoticeBell());
+      if (icons) header.appendChild(icons);
       var liveItems = [];
       // The server resolves each entry's destination and applies the
       // viewer's app access, so an empty href here means "no way back" —

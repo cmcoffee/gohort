@@ -52,3 +52,16 @@ func TestAnAppWhoseAgentIsGoneSaysSo(t *testing.T) {
 		t.Errorf("someone other than the owner reached the agent setting: %d", w.Code)
 	}
 }
+
+// The app's gear is drawn as an icon at the bar's end, "Settings..." written
+// beside it, not as a tab.
+func TestAnAppsSettingsAreAGearAtTheBarsEnd(t *testing.T) {
+	page := json.RawMessage(`{"title":"Swing","nav":[{"label":"Records","url":"r"}]}`)
+	var m struct {
+		Nav []struct{ Label, URL, Icon string } `json:"nav"`
+	}
+	json.Unmarshal(withNavIcon(page, "settings", "Settings...", "/apps/swing/_settings"), &m)
+	if len(m.Nav) != 2 || m.Nav[0].Icon != "" || m.Nav[1] != (struct{ Label, URL, Icon string }{"Settings...", "/apps/swing/_settings", "settings"}) {
+		t.Errorf("nav = %+v", m.Nav)
+	}
+}

@@ -301,7 +301,7 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		// (docs/design/app-maintainers.md), the way to change it with
 		// Builder (settings.go, app_memory.go).
 		if hasSettingsPage(spec, user, ownerUser) {
-			page = withNavLink(page, "\u2699", T.WebPath()+"/"+slug+"/_settings")
+			page = withNavIcon(page, "settings", "Settings...", T.WebPath()+"/"+slug+"/_settings")
 		}
 		// Everyone else it is shared with reports a problem instead
 		// (report.go).
@@ -581,12 +581,22 @@ func builderChangeURL(slug string) string {
 
 // withNavLink adds one link to an app page's header nav.
 func withNavLink(page json.RawMessage, label, link string) json.RawMessage {
+	return withNav(page, map[string]any{"label": label, "url": link})
+}
+
+// withNavIcon is withNavLink for an entry drawn as an icon at the bar's right
+// end, its label beside it (core/ui NavLink.Icon).
+func withNavIcon(page json.RawMessage, icon, label, link string) json.RawMessage {
+	return withNav(page, map[string]any{"label": label, "url": link, "icon": icon})
+}
+
+func withNav(page json.RawMessage, entry map[string]any) json.RawMessage {
 	var m map[string]any
 	if json.Unmarshal(page, &m) != nil || m == nil {
 		return page
 	}
 	nav, _ := m["nav"].([]any)
-	m["nav"] = append(nav, map[string]any{"label": label, "url": link})
+	m["nav"] = append(nav, entry)
 	out, err := json.Marshal(m)
 	if err != nil {
 		return page
