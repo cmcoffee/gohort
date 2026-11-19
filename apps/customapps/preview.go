@@ -23,6 +23,7 @@ import (
 	"sync"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appdraft"
 	"github.com/cmcoffee/gohort/tools/appscript"
 )
 
@@ -50,13 +51,24 @@ var (
 // copied records, the new build. It returns the link that switches their
 // browser to it. Only the app's owner previews it.
 func StartAppPreview(editor string, spec AppSpec, realRecords bool) (string, error) {
+	tok, err := startAppPreview(editor, spec, realRecords)
+	if err != nil {
+		return "", err
+	}
+	return hostApp.previewLink(spec.Slug, tok), nil
+}
+
+// startAppPreview is StartAppPreview's preview, by its token. Its owner
+// previews an app, and so does a maintainer changing it (a draft of theirs,
+// core/appdraft).
+func startAppPreview(editor string, spec AppSpec, realRecords bool) (string, error) {
 	T := hostApp
 	if T == nil {
 		return "", fmt.Errorf("the custom apps host is not running")
 	}
 	editor = strings.TrimSpace(editor)
-	if editor == "" || spec.Owner != editor || strings.TrimSpace(spec.Slug) == "" {
-		return "", fmt.Errorf("only an app's owner previews it")
+	if editor == "" || strings.TrimSpace(spec.Slug) == "" || (spec.Owner != editor && !spec.MaintainedBy(editor)) {
+		return "", fmt.Errorf("only an app's owner, or a maintainer changing it, previews it")
 	}
 	previewsMu.Lock()
 	defer previewsMu.Unlock()
@@ -64,7 +76,7 @@ func StartAppPreview(editor string, spec AppSpec, realRecords bool) (string, err
 		if p.Editor == editor && p.Spec.Slug == spec.Slug {
 			if (p.Scratch == "") == realRecords {
 				p.Spec = spec
-				return T.previewLink(spec.Slug, tok), nil
+				return tok, nil
 			}
 			if p.end != nil {
 				p.end()
@@ -78,7 +90,34 @@ func StartAppPreview(editor string, spec AppSpec, realRecords bool) (string, err
 		p.Scratch, p.end = T.previewScratch(spec, editor)
 	}
 	previews[tok] = p
-	return T.previewLink(spec.Slug, tok), nil
+	return tok, nil
+}
+
+// draftPreviewCookie is the cookie a browser check carries to load editor's
+// draft of an app (core/appdraft): the draft's preview, on a copy of their
+// records, the same one their own browser is shown.
+func draftPreviewCookie(editor string, spec AppSpec) (PageCheckCookie, bool) {
+	tok, err := startAppPreview(editor, spec, false)
+	if err != nil {
+		return PageCheckCookie{}, false
+	}
+	return PageCheckCookie{Name: previewCookie, Value: tok, Path: hostApp.WebPath() + "/" + spec.Slug + "/", HTTPOnly: true}, true
+}
+
+// DraftPreviewLink is the link that shows editor their draft of an app, for
+// a reply to give them; "" where it cannot be previewed.
+func DraftPreviewLink(editor string, spec AppSpec) string {
+	tok, err := startAppPreview(editor, spec, false)
+	if err != nil {
+		return ""
+	}
+	return hostApp.previewLink(spec.Slug, tok)
+}
+
+func init() {
+	appdraft.PreviewCookie = draftPreviewCookie
+	appdraft.PreviewLink = DraftPreviewLink
+	appdraft.PreviewEnd = EndAppPreview
 }
 
 // EndAppPreview ends editor's preview of the app slug, if they have one.

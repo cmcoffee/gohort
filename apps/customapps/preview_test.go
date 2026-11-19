@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appdraft"
 	"github.com/cmcoffee/gohort/tools/appscript"
 )
 
@@ -148,5 +149,49 @@ func TestAPreviewReadsACopyOfTheSharedCollections(t *testing.T) {
 	c := previewCookieFrom(t, T, "alice", link)
 	if body := as(t, T, "alice", withCookie(httptest.NewRequest(http.MethodGet, "/apps/wx/shared/scores", nil), c)).Body.String(); !strings.Contains(body, "ada") {
 		t.Errorf("the preview's shared collection: %s", body)
+	}
+}
+
+// A draft's preview (core/appdraft, the work in progress Builder tests): a
+// maintainer changing the app previews their draft too, and nobody else
+// does; a browser check carries the cookie the draft hook hands it, which
+// shows the draft at the app's address; and a page check run on the preview
+// reads its own seeded records, not the preview's copy.
+func TestADraftsPreviewServesItsEditorAndItsChecks(t *testing.T) {
+	T, installed, working := previewTestApp(t)
+	installed.Maintainers = []string{"bob"}
+	installed = SaveAppSpec(installed)
+	working.Maintainers = installed.Maintainers
+	if _, err := StartAppPreview("bob", working, false); err != nil {
+		t.Errorf("a maintainer could not preview their draft: %v", err)
+	}
+	if _, err := StartAppPreview("carol", working, false); err == nil {
+		t.Error("someone who neither owns nor maintains the app previewed it")
+	}
+
+	c, ok := appdraft.PreviewCookie("alice", working)
+	if !ok || c.Name != previewCookie || c.Path != "/apps/wx/" || !c.HTTPOnly {
+		t.Fatalf("the draft's check cookie: %+v %v", c, ok)
+	}
+	cookie := &http.Cookie{Name: c.Name, Value: c.Value}
+	if page := as(t, T, "alice", withCookie(httptest.NewRequest(http.MethodGet, "/apps/wx/", nil), cookie)).Body.String(); !strings.Contains(page, "Weather v2") {
+		t.Errorf("the check cookie did not show the draft: %s", page)
+	}
+	if link := appdraft.PreviewLink("alice", working); !strings.Contains(link, "/apps/wx/_preview?token="+c.Value) {
+		t.Errorf("the preview link for a reply: %q", link)
+	}
+
+	token, end := appscript.BeginCheckScratch("alice", "wx", "id", []map[string]any{{"id": "seed", "city": "Lima"}}, nil)
+	defer end()
+	r := withCookie(httptest.NewRequest(http.MethodGet, "/apps/wx/records", nil), cookie)
+	r.AddCookie(&http.Cookie{Name: appscript.CheckScratchCookie, Value: token})
+	body := as(t, T, "alice", r).Body.String()
+	if !strings.Contains(body, "Lima") || strings.Contains(body, "Oslo") {
+		t.Errorf("a page check on the preview did not read its own records: %s", body)
+	}
+
+	appdraft.PreviewEnd("alice", "wx")
+	if page := as(t, T, "alice", withCookie(httptest.NewRequest(http.MethodGet, "/apps/wx/", nil), cookie)).Body.String(); strings.Contains(page, "Weather v2") {
+		t.Error("an ended preview still shows the draft")
 	}
 }

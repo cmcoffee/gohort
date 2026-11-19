@@ -55,6 +55,18 @@ func (T *CustomApps) inApp(c *jsonapi.Call) (*appCall, error) {
 	// The working copy, for the person previewing it (preview.go).
 	if pv, ok := previewOf(c.R, c.User, c.R.PathValue("slug")); ok {
 		appdb := T.recordBase(pv.Spec, c.User)
+		// A page check run on the preview (a draft's, core/appdraft) reads
+		// and writes its own scratch records, not the preview's.
+		if sc, isCheck, err := appCheckScratch(c.R, pv.Spec, pv.Spec.Owner); err != nil {
+			return nil, err
+		} else if isCheck {
+			path := c.R.URL.Path
+			if (strings.Contains(path, "/_settings/") && c.R.Method != http.MethodGet) || strings.HasSuffix(path, "/chat/active") {
+				return nil, errNotInCheck
+			}
+			c.R = withCheckScratch(c.R, sc)
+			return &appCall{Call: c, spec: pv.Spec, owner: pv.Spec.Owner, appdb: sc.DB}, nil
+		}
 		if pv.Scratch != "" {
 			sc, live := appscript.CheckScratchFor(pv.Scratch)
 			if !live {
