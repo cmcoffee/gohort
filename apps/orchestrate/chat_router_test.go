@@ -9,6 +9,10 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
+
+	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // The body peek restores what it reads, so anything it truncates is corrupt
@@ -129,6 +133,54 @@ func TestThePageSendsTheTextOfWhatItCuts(t *testing.T) {
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("the page's cut does not carry the message's text: no %q", want)
+		}
+	}
+}
+
+// An app's own agent is part of its app: gohort's own chat does not open it by
+// id on any route that names one (a send, its sessions, its threads, a
+// cancel), and answers as it does for an agent that does not exist. The
+// person's own agent beside it opens as before. The app's page talks to it on
+// the app's own routes, which bind it.
+func TestGohortsChatDoesNotOpenAnAppsOwnAgent(t *testing.T) {
+	df := newDispatchFixture(t)
+	prevRoot := RootDB
+	RootDB = df.app.DB
+	t.Cleanup(func() { RootDB = prevRoot })
+	part, err := saveAgent(df.udb, AgentRecord{Name: "Librarian", Owner: "u", OwningApp: "reading-list", OrchestratorPrompt: "You suggest books.", appEdit: "Builder"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	for _, a := range []AgentRecord{df.agent, part} {
+		df.udb.Set(sessionTable(a.ID), "s1", ChatSession{ID: "s1", AgentID: a.ID, LastAt: now})
+		df.udb.Set(sessionTable(a.ID), MCPThreadPrefix+":k1", ChatSession{ID: MCPThreadPrefix + ":k1", AgentID: a.ID, LastAt: now})
+	}
+	for _, c := range []struct {
+		a     AgentRecord
+		opens bool
+	}{{df.agent, true}, {part, false}} {
+		q := "?agent_id=" + c.a.ID
+		call := &jsonapi.Call{R: httptest.NewRequest("GET", "/api/sessions"+q, nil), User: "u", UDB: df.udb}
+		if out, _ := df.app.handleSessionList(call); (len(out.([]sessionListItem)) == 1) != c.opens {
+			t.Errorf("%s: its session list %v, opens %v", c.a.Name, out, c.opens)
+		}
+		call.R = httptest.NewRequest("GET", "/api/threads"+q, nil)
+		if out, _ := df.app.handleThreadList(call); (len(out.([]threadRow)) == 1) != c.opens {
+			t.Errorf("%s: its threads %v, opens %v", c.a.Name, out, c.opens)
+		}
+		call.R = httptest.NewRequest("GET", "/api/sessions/s1"+q, nil)
+		if _, err := df.app.sessionAgent(call); (err == nil) != c.opens {
+			t.Errorf("%s: its session: %v, opens %v", c.a.Name, err, c.opens)
+		}
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/api/send", strings.NewReader(`{"agent_id":"`+c.a.ID+`","message":"hi"}`))
+		if _, ok := df.app.resolveAgent(w, r, df.udb, "u"); ok != c.opens || (!ok && w.Code != http.StatusNotFound) {
+			t.Errorf("%s: a send reached it %v (code %d), opens %v", c.a.Name, ok, w.Code, c.opens)
+		}
+		call.R = httptest.NewRequest("POST", "/api/cancel"+q, nil)
+		if _, err := df.app.cancelOwnTurn(call, &cancelTarget{}); (err == errNotFound) == c.opens {
+			t.Errorf("%s: a cancel: %v, opens %v", c.a.Name, err, c.opens)
 		}
 	}
 }

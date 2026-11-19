@@ -49,9 +49,21 @@ func (T *OrchestrateApp) resolveAgent(w http.ResponseWriter, r *http.Request, ud
 		http.Error(w, "agent_id required", http.StatusBadRequest)
 		return AgentRecord{}, false
 	}
-	agent, ok := loadAgent(udb, id)
-	if !ok || (agent.Owner != user && agent.Owner != seedOwner) {
+	agent, ok := chatAgentFor(udb, user, id)
+	if !ok {
 		http.NotFound(w, r)
+		return AgentRecord{}, false
+	}
+	return agent, true
+}
+
+// chatAgentFor is the agent a request to this chat names by id: the caller's
+// own, or a seed. An app's own agent is not one. It is part of its app and is
+// talked to only there, on the app's chat routes, which bind it; here it
+// answers as an agent that does not exist.
+func chatAgentFor(udb Database, user, id string) (AgentRecord, bool) {
+	agent, ok := loadAgent(udb, id)
+	if !ok || (agent.Owner != user && agent.Owner != seedOwner) || appOwnedAgent(agent) {
 		return AgentRecord{}, false
 	}
 	return agent, true
@@ -104,8 +116,8 @@ func (T *OrchestrateApp) handleSessionList(c *jsonapi.Call) (any, error) {
 	if id == "" {
 		return []sessionListItem{}, nil
 	}
-	agent, ok := loadAgent(udb, id)
-	if !ok || (agent.Owner != user && agent.Owner != seedOwner) {
+	agent, ok := chatAgentFor(udb, user, id)
+	if !ok {
 		return []sessionListItem{}, nil
 	}
 	native := listChatSessions(udb, agent.ID)
@@ -239,8 +251,8 @@ func (T *OrchestrateApp) sessionAgent(c *jsonapi.Call) (AgentRecord, error) {
 	if id == "" {
 		return AgentRecord{}, jsonapi.BadRequest("agent_id required")
 	}
-	agent, ok := loadAgent(c.UDB, id)
-	if !ok || (agent.Owner != c.User && agent.Owner != seedOwner) {
+	agent, ok := chatAgentFor(c.UDB, c.User, id)
+	if !ok {
 		return AgentRecord{}, errNotFound
 	}
 	return agent, nil
@@ -551,8 +563,7 @@ func (T *OrchestrateApp) cancelOwnTurn(c *jsonapi.Call, in *cancelTarget) (any, 
 		id = strings.TrimSpace(in.AgentID)
 	}
 	if id != "" {
-		agent, ok := loadAgent(c.UDB, id)
-		if !ok || (agent.Owner != c.User && agent.Owner != seedOwner) {
+		if _, ok := chatAgentFor(c.UDB, c.User, id); !ok {
 			return nil, errNotFound
 		}
 	}

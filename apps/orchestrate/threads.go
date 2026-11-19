@@ -156,8 +156,8 @@ func (T *OrchestrateApp) handleThreadList(c *jsonapi.Call) (any, error) {
 	if id == "" {
 		return []threadRow{}, nil
 	}
-	agent, ok := loadAgent(c.UDB, id)
-	if !ok || (agent.Owner != c.User && agent.Owner != seedOwner) {
+	agent, ok := chatAgentFor(c.UDB, c.User, id)
+	if !ok {
 		return []threadRow{}, nil
 	}
 	return listThreads(c.UDB, agent.ID), nil
