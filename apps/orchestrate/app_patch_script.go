@@ -336,9 +336,13 @@ func (t *chatTurn) saveScriptEdit(spec AppSpec, ref appScriptRef, next, summary,
 	if err != nil {
 		return "", err
 	}
-	saved := SaveAppSpecBy(spec, reason, t.user, t.changedVia())
+	hadDraft := t.hasAppDraft(spec.Owner, spec.Slug)
+	saved := t.saveAppEdit(spec, reason)
 	pageReport, err := t.appPageChecksAfterSave(&before, saved)
 	if err != nil {
+		if t.editsDrafts() {
+			t.undoAppEdit(before, hadDraft)
+		}
 		return "", err
 	}
 	checks = joinChecksReports(checks, pageReport)
@@ -347,7 +351,7 @@ func (t *chatTurn) saveScriptEdit(spec AppSpec, ref appScriptRef, next, summary,
 	if ref.kind == "data" {
 		report, _, _, fail := t.checkScripts(saved, false, nil, nil)
 		if fail > 0 {
-			SaveAppSpecBy(before, AppSaveNoHistory, t.user, t.changedVia())
+			t.undoAppEdit(before, hadDraft)
 			return "", fmt.Errorf("that %s made a data source fail when run, so it was ROLLED BACK, the app is serving the previous revision again:\n%s\nFix the replacement text and try again", verb, strings.TrimSpace(report))
 		}
 		msg += " Every data source was run after the change and printed valid JSON."
@@ -365,7 +369,7 @@ func (t *chatTurn) saveScriptEdit(spec AppSpec, ref appScriptRef, next, summary,
 	if checks != "" {
 		checks = "\n\n" + checks
 	}
-	return msg + " " + saved.VerifyStatus() + "." + ch.summary(saved.Slug) + checks, nil
+	return msg + " " + saved.VerifyStatus() + "." + ch.summary(saved.Slug) + checks + t.appDraftNote(saved), nil
 }
 
 // scriptSyntaxProblem checks a script body with the language's own parser —

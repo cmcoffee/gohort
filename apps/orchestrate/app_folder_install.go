@@ -169,6 +169,11 @@ func WriteAppFolder(user, slug, dir string) error {
 	if !ok {
 		return fmt.Errorf("you have no app %q", slug)
 	}
+	return writeAppFolderOf(spec, dir)
+}
+
+// writeAppFolderOf writes spec, with its assets, into the folder dir.
+func writeAppFolderOf(spec AppSpec, dir string) error {
 	assets := map[string][]byte{}
 	if names, err := ListAppAssets(spec.Owner, spec.Slug); err == nil {
 		for _, n := range names {

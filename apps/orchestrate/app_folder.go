@@ -115,7 +115,9 @@ func (t *chatTurn) appDefCheckout(args map[string]any) (string, error) {
 		return "", err
 	}
 	id := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
-	spec, exists := LoadAppSpec(t.user, id)
+	// The app as this turn changes it: its draft, for a turn that edits
+	// drafts (app_draft.go).
+	spec, _, exists := t.appForTurn(id)
 	if _, err := os.Stat(filepath.Join(abs, "app.json")); err == nil && !boolArg(args, "overwrite") {
 		// A folder for an app that was never published is work in progress,
 		// not a conflict: refusing it sent a build to inspect and second-guess
@@ -635,7 +637,7 @@ func (t *chatTurn) publishAppFolder(abs, rel string, o folderPublish) (string, e
 	if err != nil {
 		return "", err
 	}
-	live, exists := LoadAppSpec(t.user, m.Slug)
+	live, _, exists := t.appForTurn(m.Slug)
 	if exists {
 		in["id"] = m.Slug
 		if err := appFolderStale(abs, rel, live); err != nil && !o.overwriteLive {
@@ -680,14 +682,14 @@ func (t *chatTurn) publishAppFolder(abs, rel string, o folderPublish) (string, e
 		t.savedBroken = "what it owns was not all saved: " + ownedErr.Error()
 	}
 	notesNote := ""
-	if saved, ok := LoadAppSpec(t.user, m.Slug); ok {
+	if saved, _, ok := t.appForTurn(m.Slug); ok {
 		// The save settles what the folder may not have said: whether the
 		// app keeps a memory (app_memory.go), and the app's own copies it
 		// binds in place of what the folder named (app_copy.go). The folder
 		// is written again as the app now is, so it holds what was installed
 		// and not a version the app's history no longer has.
 		if folderMemory(saved) != m.Memory || saved.AgentID != m.AgentID || saved.PipelineID != m.PipelineID || t.seedsIndexed {
-			if err := WriteAppFolder(t.user, m.Slug, abs); err != nil {
+			if err := writeAppFolderOf(saved, abs); err != nil {
 				Log("[app-folder] %s/%s: the folder could not be brought up to what was installed: %v", t.user, m.Slug, err)
 			}
 		}
@@ -869,7 +871,7 @@ func (t *chatTurn) appFolderOwnsEdit(args map[string]any) error {
 	if slug == "" {
 		return nil
 	}
-	live, ok := LoadAppSpec(t.user, slug)
+	live, _, ok := t.appForTurn(slug)
 	if !ok {
 		return nil
 	}

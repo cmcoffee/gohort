@@ -331,7 +331,7 @@ func (t *chatTurn) appDefWorkingApp(action string, args map[string]any) string {
 	if action == "checkout" {
 		dir := strings.Trim(strings.TrimSpace(stringArg(args, "dir")), "/")
 		if slug := slugify(strings.TrimSuffix(filepath.Base(dir), ".app")); dir != "" && slug != "" {
-			if _, ok := LoadAppSpec(t.user, slug); ok {
+			if _, _, ok := t.appForTurn(slug); ok {
 				args["id"] = slug
 			}
 		}

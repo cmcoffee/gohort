@@ -13,7 +13,8 @@ import (
 func (t *chatTurn) appDefList() (string, error) {
 	specs := ListAppSpecs(t.user)
 	maintained := maintainedApps(t.user)
-	if len(specs) == 0 && len(maintained) == 0 {
+	drafts := t.draftsOfUser()
+	if len(specs) == 0 && len(maintained) == 0 && len(drafts) == 0 {
 		return "No apps yet. Author one with app_def(action=\"create\", name=..., sections=[...]).", nil
 	}
 	type row struct {
@@ -25,10 +26,26 @@ func (t *chatTurn) appDefList() (string, error) {
 		// MaintainedFor names the owner of an app this person maintains:
 		// its sections and wording are theirs to change, nothing else.
 		MaintainedFor string `json:"maintained_for,omitempty"`
+		// Draft says the app has work of this turn's in progress, not live
+		// yet ("not live yet" for an app with no live version at all).
+		Draft string `json:"draft,omitempty"`
 	}
-	out := make([]row, 0, len(specs)+len(maintained))
+	live := map[string]bool{}
 	for _, s := range specs {
-		out = append(out, row{Slug: s.Slug, Name: s.Name, Desc: s.Desc, URL: "/apps/" + s.Slug + "/", Verified: appVerifyWord(s)})
+		live[s.Slug] = true
+	}
+	out := make([]row, 0, len(specs)+len(maintained)+len(drafts))
+	for _, s := range specs {
+		r := row{Slug: s.Slug, Name: s.Name, Desc: s.Desc, URL: "/apps/" + s.Slug + "/", Verified: appVerifyWord(s)}
+		if d, ok := t.appDraftOf(s.Owner, s.Slug); ok {
+			r.Draft, r.Verified = "changes in progress, not live yet", appVerifyWord(d.Spec)
+		}
+		out = append(out, r)
+	}
+	for _, d := range drafts {
+		if !live[d.Spec.Slug] {
+			out = append(out, row{Slug: d.Spec.Slug, Name: d.Spec.Name, Desc: d.Spec.Desc, Verified: appVerifyWord(d.Spec), Draft: "not live yet: a new app, live at its first commit"})
+		}
 	}
 	for _, s := range maintained {
 		out = append(out, row{Slug: s.Slug, Name: s.Name, Desc: s.Desc, URL: "/apps/" + s.Slug + "/", Verified: appVerifyWord(s), MaintainedFor: s.Owner})

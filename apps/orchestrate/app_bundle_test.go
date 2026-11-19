@@ -21,6 +21,7 @@ func TestAnAppPacksToAFileAndUnpacksToAFolder(t *testing.T) {
 		"data_sources": []any{map[string]any{"name": "now", "script": "from engine import price\nprint('{}')"}}}, false); err != nil {
 		t.Fatal(err)
 	}
+	makeLive(t, turn, "voidrunner")
 	png := "\x89PNG\r\n\x1a\n" + strings.Repeat("x", 16)
 	if _, err := SaveAppAsset("u", "voidrunner", "ship.png", []byte(png)); err != nil {
 		t.Fatal(err)

@@ -257,10 +257,24 @@ func nodeCheckDetail(out string) string {
 // Every caller used to bless an empty result, and a save with no browser
 // behind it told the author its page "rendered with no JS errors".
 func appPageRuntimeErrors(user, slug string) (errs []string, checked bool) {
+	spec, _ := LoadAppSpec(user, slug)
+	return pageRuntimeErrors(spec, user, slug, nil)
+}
+
+// appPageErrors is appPageRuntimeErrors for the version of spec this turn
+// changed: its draft, through its preview, for a turn that edits drafts.
+func (t *chatTurn) appPageErrors(spec AppSpec) (errs []string, checked bool) {
+	cookies, as := t.appCheckCookies(spec)
+	return pageRuntimeErrors(spec, as, spec.Slug, cookies)
+}
+
+// pageRuntimeErrors loads the app slug's page as user, carrying cookies, and
+// returns the JS failures it hit; spec is the version being loaded.
+func pageRuntimeErrors(spec AppSpec, user, slug string, cookies []PageCheckCookie) (errs []string, checked bool) {
 	if BrowserCheckPage == nil {
 		return nil, false
 	}
-	rep, err := CheckPageAsUser(RootDB, user, "/apps/"+slug+"/", "")
+	rep, err := CheckPageAsUser(RootDB, user, "/apps/"+slug+"/", "", cookies...)
 	if err != nil || rep == nil {
 		return nil, false
 	}
@@ -271,7 +285,6 @@ func appPageRuntimeErrors(user, slug string) (errs []string, checked bool) {
 	for _, e := range rep.ConsoleErrors {
 		out = append(out, "console error: "+appOneLine(e, 300))
 	}
-	spec, _ := LoadAppSpec(user, slug)
 	if what, snip := pageShowsRawData(append([]string{rep.BodyText}, rep.FrameTexts...)); what != "" && !appShowsJSONOnPurpose(spec) {
 		out = append(out, fmt.Sprintf("the page shows %s to the person (%q): render the data as a person reads it (cards, rows, a chart, a sentence); JSON belongs between the page and its endpoints", what, snip))
 	}

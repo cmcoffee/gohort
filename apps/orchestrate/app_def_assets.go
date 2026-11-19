@@ -12,9 +12,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appdraft"
 	"github.com/cmcoffee/gohort/tools/imagefetch"
 )
 
@@ -22,7 +24,7 @@ import (
 // (default: the file's own name).
 func (t *chatTurn) appDefAddAsset(args map[string]any) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
-	spec, ok := LoadAppSpec(t.user, key)
+	spec, _, ok := t.appForTurn(key)
 	if !ok {
 		return "", appNotFound(args, "to add an asset to")
 	}
@@ -125,7 +127,7 @@ func (t *chatTurn) appDefGenerateAsset(spec AppSpec, prompt, name string) (strin
 // appDefRemoveAsset deletes the app's asset `asset`.
 func (t *chatTurn) appDefRemoveAsset(args map[string]any) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
-	spec, ok := LoadAppSpec(t.user, key)
+	spec, _, ok := t.appForTurn(key)
 	if !ok {
 		return "", appNotFound(args, "to remove an asset from")
 	}
@@ -133,7 +135,18 @@ func (t *chatTurn) appDefRemoveAsset(args map[string]any) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("asset is required: the asset's name, as get lists them")
 	}
-	if err := DeleteAppAsset(t.user, spec.Slug, name); err != nil {
+	// The live page may still use it: a draft takes it out when it is
+	// committed (app_draft.go), and an app not live yet has no page to break.
+	if _, isLive := LoadAppSpec(spec.Owner, spec.Slug); isLive && t.editsDrafts() {
+		t.saveAppEdit(spec, "remove asset "+name)
+		d, _ := appdraft.Load(spec.Owner, spec.Slug, t.user)
+		if !slices.Contains(d.DropAssets, name) {
+			d.DropAssets = append(d.DropAssets, name)
+			appdraft.Save(d, true)
+		}
+		return fmt.Sprintf("Asset %q is taken out of %q in your draft: the live app keeps it until you commit.", name, spec.Slug) + t.appDraftNote(spec), nil
+	}
+	if err := DeleteAppAsset(spec.Owner, spec.Slug, name); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("Removed asset %q from %q.", name, spec.Slug), nil

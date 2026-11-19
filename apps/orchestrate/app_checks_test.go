@@ -3,13 +3,16 @@ package orchestrate
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appcheck"
+	"github.com/cmcoffee/gohort/core/appdraft"
 	"github.com/cmcoffee/gohort/tools/appscript"
 )
 
@@ -61,6 +64,7 @@ func checksTestApp(t *testing.T) *chatTurn {
 	if !strings.Contains(out, `PASS "totals the hours"`) {
 		t.Fatalf("the check did not pass on create:\n%s", out)
 	}
+	makeLive(t, turn, "hours")
 	return turn
 }
 
@@ -168,13 +172,24 @@ func TestACheckRunIsHeldToTheCheckRules(t *testing.T) {
 }
 
 // fakeBrowser stands in for the browser: each load must carry a live page
-// check's scratch token, and a see step holds when the app as stored now has
-// that text in its sections.
+// check's scratch token, and a see step holds when the version loaded has
+// that text in its sections: the one a preview cookie names (a draft's, or
+// the version before an edit, as the app's preview serves it), else the app
+// as stored now.
 func fakeBrowser(t *testing.T, owner, slug string) *int {
 	t.Helper()
-	prevB, prevAddr := BrowserCheckPage, WebListenAddr
-	t.Cleanup(func() { BrowserCheckPage, WebListenAddr = prevB, prevAddr })
+	prevB, prevAddr, prevPC := BrowserCheckPage, WebListenAddr, appdraft.PreviewCookie
+	t.Cleanup(func() { BrowserCheckPage, WebListenAddr, appdraft.PreviewCookie = prevB, prevAddr, prevPC })
 	WebListenAddr = "127.0.0.1:9"
+	var mu sync.Mutex
+	previewed := map[string]AppSpec{}
+	appdraft.PreviewCookie = func(editor string, spec AppSpec) (PageCheckCookie, bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		id := fmt.Sprint(len(previewed) + 1)
+		previewed[id] = spec
+		return PageCheckCookie{Name: "test_preview", Value: id}, true
+	}
 	loads := 0
 	BrowserCheckPage = func(target string, cookies []PageCheckCookie, probe string, _ bool) (*PageCheckReport, error) {
 		loads++
@@ -192,6 +207,13 @@ func fakeBrowser(t *testing.T, owner, slug string) *int {
 			t.Fatalf("the probe is not a page check's steps: %q", probe)
 		}
 		spec, _ := LoadAppSpec(owner, slug)
+		for _, c := range cookies {
+			if c.Name == "test_preview" {
+				mu.Lock()
+				spec = previewed[c.Value]
+				mu.Unlock()
+			}
+		}
 		res := appcheck.StepsResult{OK: true}
 		for i, st := range steps {
 			if st.See != "" && !strings.Contains(string(spec.Sections), st.See) {
@@ -217,6 +239,7 @@ func pageApp(t *testing.T, title string) *chatTurn {
 		"checks":   []any{seeCheck("shows the list", "Shopping")}}, false); err != nil {
 		t.Fatal(err)
 	}
+	makeLive(t, turn, "board")
 	return turn
 }
 
@@ -246,15 +269,15 @@ func TestAPageCheckThisSaveBreaksRollsItBack(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "ROLLED BACK") || !strings.Contains(err.Error(), "shows the list") {
 		t.Fatalf("a change that broke a passing page check was not rolled back: %v", err)
 	}
-	if spec, _ := LoadAppSpec("u", "board"); !strings.Contains(string(spec.Sections), "Shopping") {
-		t.Fatalf("the previous version is not serving after the roll back: %s", spec.Sections)
+	if spec, _ := turnApp(turn, "board"); !strings.Contains(string(spec.Sections), "Shopping") {
+		t.Fatalf("the previous version is not back after the roll back: %s", spec.Sections)
 	}
 	out, err := retitle(t, turn, "Groceries", seeCheck("shows the list", "Groceries"))
 	if err != nil || !strings.Contains(out, `PASS "shows the list"`) {
 		t.Fatalf("a feature changed with its page check was refused: %v\n%s", err, out)
 	}
-	if spec, _ := LoadAppSpec("u", "board"); !strings.Contains(string(spec.Sections), "Groceries") {
-		t.Errorf("the accepted change is not serving: %s", spec.Sections)
+	if spec, _ := turnApp(turn, "board"); !strings.Contains(string(spec.Sections), "Groceries") {
+		t.Errorf("the accepted change is not saved: %s", spec.Sections)
 	}
 }
 
@@ -271,7 +294,7 @@ func TestAFailingPageCheckThatWasFailingDoesNotBlock(t *testing.T) {
 	if err != nil || !strings.Contains(out, `FAIL "shows the total"`) {
 		t.Fatalf("a page check that was already failing blocked the save: %v\n%s", err, out)
 	}
-	if spec, _ := LoadAppSpec("u", "board"); !strings.Contains(string(spec.Sections), "Shopping list") {
+	if spec, _ := turnApp(turn, "board"); !strings.Contains(string(spec.Sections), "Shopping list") {
 		t.Fatalf("the save stood in name only: the previous version is serving: %s", spec.Sections)
 	}
 	BrowserCheckPage = nil

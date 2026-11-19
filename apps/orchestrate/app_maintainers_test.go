@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appdraft"
 	"github.com/cmcoffee/gohort/core/peershare"
 )
 
@@ -29,6 +30,7 @@ func maintainerFixture(t *testing.T) (owner, maint, other *chatTurn) {
 	}, false); err != nil {
 		t.Fatal(err)
 	}
+	makeLive(t, owner, "tally")
 	spec, ok := LoadAppSpec("owner-a", "tally")
 	if !ok {
 		t.Fatal("the fixture app was not saved")
@@ -64,6 +66,12 @@ func TestAMaintainerChangesASectionOfTheOwnersApp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update_section: %v", err)
 	}
+	// The maintainer's draft is kept in the owner's store, beside the app,
+	// and goes live there.
+	if _, ok := appdraft.Load("owner-a", "tally", "maint-b"); !ok {
+		t.Fatal("the maintainer's change is not their draft of the owner's app")
+	}
+	makeLive(t, maint, "tally")
 	spec, _ := LoadAppSpec("owner-a", "tally")
 	if !strings.Contains(string(spec.Sections), "Things") {
 		t.Fatalf("the change did not land in the owner's app: %s\n%s", spec.Sections, out)

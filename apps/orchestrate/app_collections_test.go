@@ -51,7 +51,7 @@ func TestOnlyAnAppsOwnPartsReachItsCollection(t *testing.T) {
 		t.Errorf("the app's agent renamed the app's collection: %v", err)
 	}
 
-	spec, _ := LoadAppSpec("u", "desk")
+	spec, _ := turnApp(turn, "desk")
 	out, err := appKnowledgeAdd(context.Background(), spec, "u", "Manual", "Care", "Wipe the widget with a dry cloth; never put it in water, which ruins the switch.")
 	if err != nil || !strings.Contains(out, "Added") {
 		t.Fatalf("a script adding to its app's collection: %v %s", err, out)
@@ -132,7 +132,7 @@ func TestAnAppCopiesTheCollectionsItsAgentsRead(t *testing.T) {
 	if !strings.Contains(out, `collection "Notes" (1 documents)`) {
 		t.Errorf("the save's reply: %s", out)
 	}
-	spec, _ := LoadAppSpec("u", "desk")
+	spec, _ := turnApp(turn, "desk")
 	cp, _ := loadAgent(udb, spec.AgentID)
 	if len(cp.AttachedCollections) != 2 || cp.AttachedCollections[0] == "notes" || cp.AttachedCollections[1] != "shared" {
 		t.Fatalf("the app's agent reads %v", cp.AttachedCollections)

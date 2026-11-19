@@ -664,7 +664,7 @@ func TestAnActionWithNoIdMeansTheAppTheSessionIsOn(t *testing.T) {
 	if _, err := call(map[string]any{"action": "delete"}); err == nil {
 		t.Error("a delete with no id deleted the session's app")
 	}
-	if _, ok := LoadAppSpec("u", "tally"); !ok {
+	if _, ok := turnApp(turn, "tally"); !ok {
 		t.Fatal("the app is gone")
 	}
 	turn.session.App = ""

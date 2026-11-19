@@ -22,15 +22,13 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-
-	. "github.com/cmcoffee/gohort/core"
 )
 
 // appDefReplaceFunction replaces a named function in an app's html section
 // with the text the author supplies.
 func (t *chatTurn) appDefReplaceFunction(args map[string]any) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
-	spec, ok := LoadAppSpec(t.user, key)
+	spec, _, ok := t.appForTurn(key)
 	if !ok {
 		return "", appNotFound(args, "")
 	}

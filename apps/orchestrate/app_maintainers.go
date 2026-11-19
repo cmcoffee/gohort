@@ -77,12 +77,25 @@ func maintainedApp(user, slug string) (AppSpec, bool) {
 
 // appForTurn is the app at slug this turn's person works on: their own, or
 // one they maintain for its owner (maintained true).
+//
+// For a turn that edits drafts (app_draft.go) it is the turn's draft of the
+// app when it has one, and its draft of an app of its own not live yet: what
+// it changes and tests is its draft, never the live app.
 func (t *chatTurn) appForTurn(slug string) (spec AppSpec, maintained, ok bool) {
 	if s, found := LoadAppSpec(t.user, slug); found {
+		if d, ok := t.appDraftOf(t.user, slug); ok {
+			return d.Spec, false, true
+		}
 		return s, false, true
 	}
 	if s, found := maintainedApp(t.user, slug); found {
+		if d, ok := t.appDraftOf(s.Owner, slug); ok {
+			return d.Spec, true, true
+		}
 		return s, true, true
+	}
+	if s, ok := t.ownDraft(slug); ok {
+		return s, false, true
 	}
 	return AppSpec{}, false, false
 }

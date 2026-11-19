@@ -198,8 +198,11 @@ func (t *chatTurn) runPageCheck(spec AppSpec, c appcheck.Check) appCheckResult {
 	}
 	token, end := appscript.BeginCheckScratch(spec.Owner, spec.Slug, spec.RecordKey, c.Records, c.Shared)
 	defer end()
-	rep, err := CheckPageAsUser(RootDB, spec.Owner, "/apps/"+spec.Slug+"/", appcheck.StepsProbe(c.Steps),
-		PageCheckCookie{Name: appscript.CheckScratchCookie, Value: token, HTTPOnly: true})
+	// The version checked is spec itself: a draft's, or the one before an
+	// edit, served through its preview (app_draft.go).
+	cookies, as := t.appCheckCookies(spec)
+	cookies = append(cookies, PageCheckCookie{Name: appscript.CheckScratchCookie, Value: token, HTTPOnly: true})
+	rep, err := CheckPageAsUser(RootDB, as, "/apps/"+spec.Slug+"/", appcheck.StepsProbe(c.Steps), cookies...)
 	if err != nil || rep == nil {
 		res.Why = "not run: the browser could not load the page"
 		if err != nil {
@@ -271,7 +274,11 @@ func (t *chatTurn) appPageChecksAfterSave(prior *AppSpec, saved AppSpec) (report
 		}
 	}
 	if len(retry) > 0 {
-		SaveAppSpecBy(*prior, AppSaveNoHistory, t.user, t.changedVia())
+		// The live app is put back to serve for the retry; a draft's version
+		// before is checked through its preview, and nothing is saved.
+		if !t.editsDrafts() {
+			SaveAppSpecBy(*prior, AppSaveNoHistory, t.user, t.changedVia())
+		}
 		var broke []string
 		for _, i := range retry {
 			old, _ := appCheckNamed(prior.Checks, results[i].Name)
@@ -286,7 +293,9 @@ func (t *chatTurn) appPageChecksAfterSave(prior *AppSpec, saved AppSpec) (report
 			}
 			return "", fmt.Errorf("NOT SAVED: this change breaks %s that passed on the version serving before, so it was ROLLED BACK and that version is serving again:\n- %s\n\nFix the change, not the check: change a check only when its feature changed on purpose, and say so.", what, strings.Join(broke, "\n- "))
 		}
-		SaveAppSpecBy(saved, AppSaveNoHistory, t.user, t.changedVia())
+		if !t.editsDrafts() {
+			SaveAppSpecBy(saved, AppSaveNoHistory, t.user, t.changedVia())
+		}
 	}
 	return appChecksReport(page), nil
 }

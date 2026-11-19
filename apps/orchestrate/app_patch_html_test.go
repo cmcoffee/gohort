@@ -219,16 +219,23 @@ func TestACleanPatchOrRevertLeavesTheAppVerified(t *testing.T) {
 	}
 	verified := func(what string) {
 		t.Helper()
-		spec, _ := LoadAppSpec(turn.user, "shelf")
+		spec, _ := turnApp(turn, "shelf")
 		if spec.Verify == nil || !spec.Verify.Pass || !spec.Verify.Current(spec) {
 			t.Errorf("after the %s the app does not stand verified: %+v", what, spec.Verify)
 		}
 	}
 	verified("first save")
+	makeLive(t, turn, "shelf")
 	if _, err := turn.appDefPatchHTML(map[string]any{"id": "shelf", "find": "Books", "replace": "Novels"}); err != nil {
 		t.Fatal(err)
 	}
 	verified("patch")
+	// Committed, the verdict goes live with it, and the version it replaced
+	// is kept to revert to.
+	makeLive(t, turn, "shelf")
+	if live, _ := LoadAppSpec(turn.user, "shelf"); live.Verify == nil || !live.Verify.Current(live) {
+		t.Errorf("the patch's verdict did not go live with it: %+v", live.Verify)
+	}
 	revs := ListAppRevisions(turn.user, "shelf")
 	if len(revs) == 0 {
 		t.Fatal("the patch kept no revision to revert to")

@@ -76,7 +76,7 @@ func revisionSubject(note string) string {
 // appDefRevert restores a kept revision.
 func (t *chatTurn) appDefRevert(args map[string]any) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
-	current, ok := LoadAppSpec(t.user, key)
+	current, _, ok := t.appForTurn(key)
 	if !ok {
 		return "", appNotFound(args, "")
 	}
@@ -123,21 +123,23 @@ func (t *chatTurn) appDefRevert(args map[string]any) (string, error) {
 	if msg := t.appDelegationRefusal(restored); msg != "" {
 		return "", fmt.Errorf("%s", msg)
 	}
-	saved := SaveAppSpecBy(restored, fmt.Sprintf("revert to #%d", target.Seq), t.user, t.changedVia())
+	saved := t.saveAppEdit(restored, fmt.Sprintf("revert to #%d", target.Seq))
 	undo := ""
-	if kept := ListAppRevisions(t.user, saved.Slug); len(kept) > 0 {
+	if t.hasAppDraft(saved.Owner, saved.Slug) {
+		undo = t.appDraftNote(saved)
+	} else if kept := ListAppRevisions(t.user, saved.Slug); len(kept) > 0 {
 		undo = fmt.Sprintf("\n\nThe version you just replaced is itself kept as #%d, so this is undoable: app_def(action=\"revert\", id=%q, to=%d).", kept[0].Seq, saved.Slug, kept[0].Seq)
 	}
 
 	msg := fmt.Sprintf("Reverted %q to revision #%d (saved %s; now serving as revision %s). The document is %s; it was %s.",
 		saved.Name, target.Seq, target.Stamp, saved.Updated, appRevisionShape(saved), appRevisionShape(current))
 	if len(appSpecHTMLText(saved)) > 0 {
-		errs, checked := appPageRuntimeErrors(t.user, saved.Slug)
+		errs, checked := t.appPageErrors(saved)
 		if len(errs) > 0 {
 			return msg + fmt.Sprintf("\n\nHEADS UP, the restored revision has problems of its own in a real browser:\n- %s\n\nIt is serving; revert again to a different revision (app_def action=\"revisions\") if this one isn't the good copy.", strings.Join(errs, "\n- ")) + undo, nil
 		}
 		if checked {
-			saved.RecordVerify(true, "PASS: loaded in a real browser after the revert, no JS errors")
+			t.recordVerdict(saved, true, "PASS: loaded in a real browser after the revert, no JS errors")
 			msg += " It was loaded in a real browser after restoring and came up clean."
 		} else {
 			msg += " No browser check could run on it: run app_def(action=\"verify\") before telling the user it works."

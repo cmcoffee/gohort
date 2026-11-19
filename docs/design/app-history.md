@@ -541,6 +541,43 @@ note, a bundle for Anvil), read from `.git/HEAD` so a history already on
 `live` runs no git for it. A checkout Anvil made before keeps working: it
 fetches `live` into a ref of its own.
 
+S3, how it is built (owner, 2026-11-18: drafts kept in the store, not
+files in the repository, and drafts with or without git):
+
+- **A draft is a copy of the app record** (`core/appdraft`), one per app
+  per person changing it, kept in the owner's store beside the app, a
+  maintainer's included. It is never served to anyone but its editor,
+  never exported, and goes with the app.
+- **An agent's turn edits drafts**; a person's own turn (an Install from
+  Anvil, an import, a setting) still saves the live app. Every app_def
+  edit (update and its section forms, patch_html, replace_function, a
+  script patch, revert) reads and writes the draft; `get` and `list`
+  show it, a new app listed as not live yet.
+- **Tests run on the draft through the app's preview**, which serves
+  whatever version it is handed: the browser check, the page checks (on
+  their own scratch records, ahead of the preview's) and verify. A
+  failed edit puts the draft back as it was; nothing live is touched, so
+  nothing is rolled back.
+- **The commit is the change going live**: the draft, verified on its
+  current revision, is saved through the save path's gates and committed
+  on `live`, its verdict carried with it, and the draft dropped. What a
+  draft does not decide stays as the live app has it (who it is shared
+  with, whether it runs, who maintains it); a maintainer's commit keeps
+  their name on the revision it replaces. A new app's history starts
+  with that work, under its message. Without git, the commit saves live.
+- **A live app changed since the draft started** (compared by its
+  content, not its second-wide stamp) refuses the commit, leaving both
+  as they were. Merging the two (the order's next step) is not built.
+- **An asset** added is there at once; one taken out stays live until
+  the commit, since the live page may use it.
+- **A turn that ends with verified work in a draft** is held once, to
+  commit it, with git or without.
+
+Not yet drafted: what an app owns beside its record (its agents,
+pipelines, machines, tools and collections) still changes at once when
+Builder changes it, as in stage 2. Left for after the merge: the person's
+own way to see, make live or discard a draft from My Apps.
+
 ## Steps
 
 Stage 1:

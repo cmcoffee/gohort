@@ -39,6 +39,7 @@ func copyTestApp(t *testing.T, turn *chatTurn, extra map[string]any) string {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
+	makeLive(t, turn, slugify(stringArg(args, "name")))
 	return out
 }
 
@@ -65,7 +66,7 @@ func TestBindingAnAgentGivesTheAppItsOwnCopy(t *testing.T) {
 	if !strings.Contains(out, `Copied into the app, as its own: agent "Research"`) || !strings.Contains(out, "crm_lookup") {
 		t.Errorf("the save's reply: %s", out)
 	}
-	spec, _ := LoadAppSpec("u", "desk")
+	spec, _ := turnApp(turn, "desk")
 	cp, ok := loadAgent(udb, spec.AgentID)
 	if !ok || cp.ID == orig.ID || cp.OwningApp != "desk" || cp.Name != "Research" || cp.CopiedFrom == nil || cp.CopiedFrom.ID != orig.ID {
 		t.Fatalf("the app's agent: %+v", cp)
@@ -150,7 +151,7 @@ func TestAnAppsFirstChangeMakesWhatItPointsAtItsOwn(t *testing.T) {
 	copyTestApp(t, turn, nil)
 	// As an app saved before any of this: pointing at the person's agent,
 	// owning no tools, its memory undecided.
-	spec, _ := LoadAppSpec("u", "desk")
+	spec, _ := turnApp(turn, "desk")
 	spec.AgentID, spec.OwnTools, spec.Memory = orig.ID, false, ""
 	SaveAppSpec(spec)
 
@@ -158,7 +159,7 @@ func TestAnAppsFirstChangeMakesWhatItPointsAtItsOwn(t *testing.T) {
 	if err != nil || !strings.Contains(out, `agent "Helper"`) || !strings.Contains(out, "What the originals learned came with them") {
 		t.Fatalf("the first change: %v %s", err, out)
 	}
-	spec, _ = LoadAppSpec("u", "desk")
+	spec, _ = turnApp(turn, "desk")
 	cp, ok := loadAgent(udb, spec.AgentID)
 	if !ok || cp.ID == orig.ID || cp.OwningApp != "desk" {
 		t.Fatalf("the app's agent after its first change: %+v", cp)
@@ -223,7 +224,7 @@ func TestAnAppHoldingItsOwnToolsCutsThePool(t *testing.T) {
 	}
 	helper, _ := saveAgent(udb, AgentRecord{Owner: "u", Name: "Helper", OrchestratorPrompt: "Help.", AllowedTools: []string{"lookup"}})
 	copyTestApp(t, turn, map[string]any{"agent_id": helper.ID})
-	spec, _ := LoadAppSpec("u", "desk")
+	spec, _ := turnApp(turn, "desk")
 	if !spec.OwnTools {
 		t.Fatal("a new app whose agent names its tools does not hold its own")
 	}
@@ -257,10 +258,12 @@ func TestAnAppHoldingItsOwnToolsCutsThePool(t *testing.T) {
 	if err != nil || !strings.Contains(out, "Roamer is allowed every tool") {
 		t.Fatalf("a save with an agent allowed every tool: %v %s", err, out)
 	}
-	spec, _ = LoadAppSpec("u", "desk")
+	spec, _ = turnApp(turn, "desk")
 	if spec.OwnTools {
 		t.Error("the app holds its own tools while one of its agents is allowed every tool")
 	}
+	// The app's agents run on the live app: the cut is held once it is.
+	makeLive(t, turn, "desk")
 	if got := load(roamer); !got["pool_only"] || !got["lookup"] {
 		t.Errorf("with the cut held, the app's agent should load the pool beside its own tools: %v", got)
 	}
@@ -285,7 +288,7 @@ func TestBindingAPipelineCopiesWhatItsStagesRun(t *testing.T) {
 	if !strings.Contains(out, `pipeline "Brief"`) || !strings.Contains(out, `agent "Writer"`) {
 		t.Errorf("the save's reply: %s", out)
 	}
-	spec, _ := LoadAppSpec("u", "desk")
+	spec, _ := turnApp(turn, "desk")
 	cp, ok := LoadPipelineDef(udb, "u", spec.PipelineID)
 	if !ok || cp.ID == pipe.ID || cp.OwningApp != "desk" || cp.CopiedFrom == nil {
 		t.Fatalf("the app's pipeline: %+v", cp)

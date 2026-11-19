@@ -74,7 +74,7 @@ func TestAnAppRoundTripsThroughItsFolder(t *testing.T) {
 	if _, err := turn.appDefPublish(map[string]any{"dir": "wx.app"}); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
-	spec, _ := LoadAppSpec("u", "wx")
+	spec, _ := turnApp(turn, "wx")
 	if len(spec.DataSources) != 1 || spec.DataSources[0].Script != "print('{\"t\": 1}')" || len(spec.DataSources[0].Capabilities) != 1 {
 		t.Fatalf("data sources after publish: %+v", spec.DataSources)
 	}
@@ -107,7 +107,7 @@ func TestANewAppStartsAsAFolder(t *testing.T) {
 	if _, err := turn.appDefPublish(map[string]any{"dir": "run-log.app"}); err != nil {
 		t.Fatalf("publish a new folder: %v", err)
 	}
-	if _, ok := LoadAppSpec("u", "run-log"); !ok {
+	if _, ok := turnApp(turn, "run-log"); !ok {
 		t.Fatal("publishing a new folder did not create the app")
 	}
 	if _, err := turn.appDefRun(map[string]any{"dir": "run-log.app", "file": "data/missing.py"}); err == nil || !strings.Contains(err.Error(), "not listed") {
@@ -143,7 +143,7 @@ func TestRunExecutesOneFolderFile(t *testing.T) {
 	if !strings.Contains(out, `"city":"Reno"`) || !strings.Contains(out, "It ran clean") || !strings.Contains(out, "not published") {
 		t.Fatalf("run said:\n%s", out)
 	}
-	if _, ok := LoadAppSpec("u", "wx"); ok {
+	if _, ok := turnApp(turn, "wx"); ok {
 		t.Fatal("run published the app")
 	}
 }
@@ -190,7 +190,7 @@ func TestLibrariesTravelWithTheFolder(t *testing.T) {
 		"data_sources": []any{map[string]any{"name": "now", "script": "from engine import price\nprint('{}')"}}}, false); err != nil {
 		t.Fatal(err)
 	}
-	if spec, _ := LoadAppSpec("u", "wx"); spec.Libraries["engine"] == "" {
+	if spec, _ := turnApp(turn, "wx"); spec.Libraries["engine"] == "" {
 		t.Fatalf("libraries = %+v", spec.Libraries)
 	}
 	if out, _ := turn.appDefGet(map[string]any{"id": "wx"}); !strings.Contains(out, `"libraries":{"engine":{`) || !strings.Contains(out, `"price"`) {
@@ -207,14 +207,14 @@ func TestLibrariesTravelWithTheFolder(t *testing.T) {
 	if _, err := turn.appDefPublish(map[string]any{"dir": "wx.app"}); err != nil {
 		t.Fatal(err)
 	}
-	if spec, _ := LoadAppSpec("u", "wx"); spec.Libraries["rules"] != "MAX = 3\n" || spec.Libraries["engine"] == "" {
+	if spec, _ := turnApp(turn, "wx"); spec.Libraries["rules"] != "MAX = 3\n" || spec.Libraries["engine"] == "" {
 		t.Fatalf("after adding lib/rules.py: %+v", spec.Libraries)
 	}
 	os.Remove(filepath.Join(lib, "rules.py"))
 	if _, err := turn.appDefPublish(map[string]any{"dir": "wx.app"}); err != nil {
 		t.Fatal(err)
 	}
-	if spec, _ := LoadAppSpec("u", "wx"); len(spec.Libraries) != 1 {
+	if spec, _ := turnApp(turn, "wx"); len(spec.Libraries) != 1 {
 		t.Fatalf("after deleting lib/rules.py: %+v", spec.Libraries)
 	}
 }
@@ -240,7 +240,7 @@ func TestTheFolderAndTheLiveAppStayOne(t *testing.T) {
 		t.Fatalf("a live edit of an app its folder holds went through: %v", err)
 	}
 	// A verify leaves the folder current.
-	spec, _ := LoadAppSpec("u", "wx")
+	spec, _ := turnApp(turn, "wx")
 	before := appLiveFingerprint(spec)
 	spec.Verify = &AppVerifyState{At: "now", Pass: true}
 	spec.Sample = []map[string]any{{"x": 1}}
@@ -259,13 +259,13 @@ func TestTheFolderAndTheLiveAppStayOne(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "NOT PUBLISHED") || !strings.Contains(err.Error(), "fixed the title live") {
 		t.Fatalf("a publish over a live change went through: %v", err)
 	}
-	if spec, _ := LoadAppSpec("u", "wx"); spec.Notes != "live notes" {
+	if spec, _ := turnApp(turn, "wx"); spec.Notes != "live notes" {
 		t.Fatalf("the refused publish changed the app: %q", spec.Notes)
 	}
 	if _, err := turn.appDefPublish(map[string]any{"dir": "wx.app", "overwrite_live": true}); err != nil {
 		t.Fatal(err)
 	}
-	if spec, _ := LoadAppSpec("u", "wx"); spec.Notes != "folder notes" {
+	if spec, _ := turnApp(turn, "wx"); spec.Notes != "folder notes" {
 		t.Fatalf("notes = %q", spec.Notes)
 	}
 	if err := turn.appFolderOwnsEdit(map[string]any{"id": "wx"}); err == nil {
@@ -361,7 +361,7 @@ func TestPublishNotesOverAStarterFile(t *testing.T) {
 	if strings.Contains(out, "still the starter") {
 		t.Errorf("the passed notes were dropped:\n%s", out)
 	}
-	if spec, _ := LoadAppSpec("u", "wx"); spec.Notes != "Shows the weather for one city." {
+	if spec, _ := turnApp(turn, "wx"); spec.Notes != "Shows the weather for one city." {
 		t.Errorf("app notes = %q", spec.Notes)
 	}
 	if b, _ := os.ReadFile(filepath.Join(ws, "wx.app", "NOTES.md")); !strings.Contains(string(b), "one city") {
@@ -409,7 +409,7 @@ func TestWhatAnAppExposesSurvivesItsFolder(t *testing.T) {
 	}
 	check := func(when string, want bool) {
 		t.Helper()
-		spec, _ := LoadAppSpec("u", "books")
+		spec, _ := turnApp(turn, "books")
 		if spec.DataSources[0].Expose != want || spec.DataSources[1].Expose || spec.Actions[0].Expose != want || spec.Actions[1].Expose || spec.ExposePipeline != want {
 			t.Fatalf("%s: data %+v actions %+v pipeline %v", when, spec.DataSources, spec.Actions, spec.ExposePipeline)
 		}
@@ -447,7 +447,7 @@ func TestAnAppUsedThroughItsToolsNeedsNoPage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a tools-only app was refused: %v", err)
 	}
-	spec, _ := LoadAppSpec("u", "log")
+	spec, _ := turnApp(turn, "log")
 	var secs []map[string]any
 	if json.Unmarshal(spec.Sections, &secs) != nil || len(secs) != 1 || secs[0]["kind"] != "empty" || !strings.Contains(mapStr(secs[0], "hint"), "Add entry") {
 		t.Fatalf("its page: %s", spec.Sections)
@@ -484,7 +484,7 @@ func TestAnAppsUsersGetAPageWithoutTheManagersParts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	spec, _ := LoadAppSpec("u", "poll")
+	spec, _ := turnApp(turn, "poll")
 	page, users := string(spec.Page), string(spec.UserPage)
 	// The buttons come from the app's actions list at run time, which the
 	// host narrows per person (customapps); the page holds the sections.
@@ -503,7 +503,7 @@ func TestAnAppsUsersGetAPageWithoutTheManagersParts(t *testing.T) {
 	if _, err := turn.appDefPublish(map[string]any{"dir": "poll.app"}); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
-	if spec, _ = LoadAppSpec("u", "poll"); !spec.Actions[1].ManagersOnly || strings.Contains(string(spec.UserPage), "Managing the poll") {
+	if spec, _ = turnApp(turn, "poll"); !spec.Actions[1].ManagersOnly || strings.Contains(string(spec.UserPage), "Managing the poll") {
 		t.Errorf("through the folder: actions %+v", spec.Actions)
 	}
 
@@ -514,7 +514,7 @@ func TestAnAppsUsersGetAPageWithoutTheManagersParts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	desk, _ := LoadAppSpec("u", "desk")
+	desk, _ := turnApp(turn, "desk")
 	if !strings.Contains(string(desk.UserPage), "For its managers") {
 		t.Errorf("an all-managers app's users' page: %s", desk.UserPage)
 	}
@@ -554,7 +554,7 @@ func TestAppDefWorksInTheWorkspaceTheSessionSwitchedTo(t *testing.T) {
 	if _, err := def.Handler(ctx, map[string]any{"action": "publish", "dir": "deals.app"}); err != nil {
 		t.Fatal(err)
 	}
-	spec, ok := LoadAppSpec("u", "deals")
+	spec, ok := turnApp(turn, "deals")
 	if !ok || !strings.Contains(string(spec.Sections), "Hottest deals") {
 		t.Errorf("the publish did not carry the page written in the workspace: %s", spec.Sections)
 	}

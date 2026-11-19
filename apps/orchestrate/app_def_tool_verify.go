@@ -13,6 +13,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appcheck"
+	"github.com/cmcoffee/gohort/core/appdraft"
 	"github.com/cmcoffee/gohort/core/buildledger"
 	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/tools/appscript"
@@ -87,6 +88,15 @@ func (t *chatTurn) appDefDelete(args map[string]any) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
 	spec, ok := LoadAppSpec(t.user, key)
 	if !ok {
+		// An app not live yet is only its draft (app_draft.go).
+		if d, isDraft := t.appDraftOf(t.user, key); isDraft {
+			appdraft.Delete(t.user, key, t.user)
+			if appdraft.PreviewEnd != nil {
+				appdraft.PreviewEnd(t.user, key)
+			}
+			t.forgetAppStanding(key)
+			return fmt.Sprintf("Deleted the draft of %q: it was never live, so nothing else changed.", d.Spec.Name), nil
+		}
 		return "", appNotFound(args, "to delete")
 	}
 	// What the app owns goes with it (app_owned.go); the delete asked first.
@@ -173,7 +183,7 @@ func (t *chatTurn) appDefTest(args map[string]any) (string, error) {
 // blank.
 func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
-	spec, ok := LoadAppSpec(t.user, key)
+	spec, _, ok := t.appForTurn(key)
 	if !ok {
 		return "", appNotFound(args, "to verify")
 	}
@@ -284,7 +294,13 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 			frames: frames.length
 		});
 	}`
-	rep, err := CheckPageAsUser(RootDB, t.user, "/apps/"+spec.Slug+"/", probe)
+	// The version verified is the one this turn changes: its draft, through
+	// its preview (app_draft.go).
+	draftCookies, checkAs := t.appCheckCookies(spec)
+	if draftCookies == nil {
+		checkAs = t.user
+	}
+	rep, err := CheckPageAsUser(RootDB, checkAs, "/apps/"+spec.Slug+"/", probe, draftCookies...)
 	shotPath := ""
 	if err == nil && rep != nil {
 		shotPath = t.saveAppScreenshot(spec.Slug, rep.Screenshot)
@@ -411,7 +427,7 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 	if failures > 0 {
 		summary = fmt.Sprintf("FAIL: %d problem(s)", failures)
 	}
-	spec.RecordVerify(failures == 0, summary)
+	t.recordVerdict(spec, failures == 0, summary)
 	t.recordAppVerify(spec.Slug, failures, classes, pageCheckBroke)
 	if failures > 0 {
 		t.noteAppStanding(spec.Slug, false, "its last verify failed ("+summary+")")
@@ -1127,8 +1143,12 @@ func (t *chatTurn) verifyPageWithRecords(b *strings.Builder, spec AppSpec, sampl
 	}
 	token, end := appscript.BeginCheckScratch(spec.Owner, spec.Slug, spec.RecordKey, seed, nil)
 	defer end()
-	rep, err := CheckPageAsUser(RootDB, t.user, "/apps/"+spec.Slug+"/", probe,
-		PageCheckCookie{Name: appscript.CheckScratchCookie, Value: token, HTTPOnly: true})
+	cookies, checkAs := t.appCheckCookies(spec)
+	if cookies == nil {
+		checkAs = t.user
+	}
+	cookies = append(cookies, PageCheckCookie{Name: appscript.CheckScratchCookie, Value: token, HTTPOnly: true})
+	rep, err := CheckPageAsUser(RootDB, checkAs, "/apps/"+spec.Slug+"/", probe, cookies...)
 	if err != nil || rep == nil {
 		fmt.Fprintf(b, "NOTE the page could not be loaded again with %d sample record(s): %v\n", len(seed), err)
 		return 0, nil

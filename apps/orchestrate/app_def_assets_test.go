@@ -53,11 +53,16 @@ func TestAWorkspaceFileBecomesAnAppAsset(t *testing.T) {
 			t.Errorf("%v was accepted", bad)
 		}
 	}
+	// The live page may still use it: it goes when the draft is committed.
 	if _, err := turn.appDefRemoveAsset(map[string]any{"id": "game", "asset": "boss.png"}); err != nil {
 		t.Fatal(err)
 	}
+	if names := appAssetNames("u", "game"); strings.Join(names, ",") != "boss.png,hero.png" {
+		t.Errorf("an asset the live app has was taken out before the commit: %v", names)
+	}
+	makeLive(t, turn, "game")
 	if names := appAssetNames("u", "game"); strings.Join(names, ",") != "hero.png" {
-		t.Errorf("after remove: %v", names)
+		t.Errorf("after the commit: %v", names)
 	}
 }
 

@@ -451,6 +451,33 @@ func appRepoGit(dir string, args ...string) (string, error) {
 // appRepoCommit commits everything in the repository as author, with
 // coAuthor (an agent's name, or "") credited in a trailer. Nothing to commit
 // is not an error.
+// rewordFirstCommit gives owner's app slug's history, when it is only its
+// start, the message and authors of the work that made the app: a new app made
+// live by an agent's commit (app_draft.go) begins with that work, not with a
+// note that its history began.
+func rewordFirstCommit(owner, slug, author, coAuthor, msg string) error {
+	if appGit() == "" {
+		return nil
+	}
+	dir, ok := appRepoDir(owner, slug)
+	if !ok {
+		return nil
+	}
+	mu := appRepoLock(dir)
+	mu.Lock()
+	defer mu.Unlock()
+	if n, err := appRepoGit(dir, "rev-list", "--count", "HEAD"); err != nil || strings.TrimSpace(n) != "1" {
+		return err
+	}
+	msg = strings.TrimSpace(msg)
+	if coAuthor != "" {
+		msg += "\n\nCo-Authored-By: " + coAuthor + " <" + strings.ToLower(coAuthor) + "@agents.gohort.invalid>"
+	}
+	_, err := appRepoGit(dir, "-c", "user.name="+author, "-c", "user.email="+author+"@users.gohort.invalid",
+		"commit", "-q", "--amend", "--reset-author", "-m", msg)
+	return err
+}
+
 func appRepoCommit(dir, author, coAuthor, msg string) error {
 	if _, err := appRepoGit(dir, "add", "-A", "--", "."); err != nil {
 		return err
@@ -496,6 +523,34 @@ func (t *chatTurn) appDefCommit(args map[string]any) (string, error) {
 	if spec.Verify == nil || !spec.Verify.Current(spec) || !spec.Verify.Pass {
 		return "", fmt.Errorf("NOT COMMITTED: a commit is finished, tested work, and %q has not passed verify on the version serving now (%s). Run app_def(action=\"verify\", id=%q), fix what it finds, then commit", spec.Name, spec.VerifyStatus(), spec.Slug)
 	}
+	subject, _, _ := strings.Cut(msg, "\n")
+	subject = strings.TrimSpace(subject)
+	// The draft goes live, and the commit is the change going live
+	// (app_draft.go).
+	if d, ok := t.appDraftOf(spec.Owner, spec.Slug); ok {
+		_, wasLive := LoadAppSpec(spec.Owner, spec.Slug)
+		// The message is the change's note: a new app's first commit is this
+		// work, and an existing app's waiting save carries it.
+		d.Spec.ChangeNote = msg
+		live, err := t.goLive(d, subject)
+		if errors.Is(err, errLiveMoved) {
+			return "", fmt.Errorf("NOT LIVE: %v (a person's change, Anvil, or a maintainer), so your draft would undo it. Nothing changed: the live app and your draft are as they were. Tell the person, and ask whether to make your change again on the app as it is now", err)
+		}
+		if err != nil {
+			return "", fmt.Errorf("NOT LIVE: %w", err)
+		}
+		if _, err := CommitAppHistory(live.Owner, live.Slug, t.user, t.changedVia(), msg); err != nil && !errors.Is(err, ErrNoAppHistory) && !strings.Contains(err.Error(), "has no history yet") {
+			Log("[app-history] %s/%s: live, but the commit was not recorded: %v", live.Owner, live.Slug, err)
+		}
+		if !wasLive {
+			// A new app's history starts with this work, under its message.
+			if err := rewordFirstCommit(live.Owner, live.Slug, t.user, t.changedVia(), msg); err != nil {
+				Log("[app-history] %s/%s: its first commit keeps its starting message: %v", live.Owner, live.Slug, err)
+			}
+			return fmt.Sprintf("%q is live now at /apps/%s/, its first version: %s. It is in the person's My Apps.", live.Name, live.Slug, subject), nil
+		}
+		return fmt.Sprintf("Committed to %q's history, and live now: %s", live.Name, subject), nil
+	}
 	done, err := CommitAppHistory(spec.Owner, spec.Slug, t.user, t.changedVia(), msg)
 	if errors.Is(err, ErrNoAppHistory) {
 		return "Nothing committed: " + err.Error() + ". The work is saved and verified; its revisions keep it.", nil
@@ -503,7 +558,6 @@ func (t *chatTurn) appDefCommit(args map[string]any) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	subject, _, _ := strings.Cut(msg, "\n")
 	if !done {
 		return fmt.Sprintf("Nothing of yours is waiting to be committed in %q: the history already has it.", spec.Name), nil
 	}
@@ -515,7 +569,7 @@ func (t *chatTurn) appDefCommit(args map[string]any) (string, error) {
 // history verified and uncommitted: finished, tested work is committed
 // before the turn ends. Said once a turn; "" otherwise.
 func (t *chatTurn) uncommittedWorkNotice() string {
-	if t.commitAsked || t.session == nil || appGit() == "" {
+	if t.commitAsked || t.session == nil {
 		return ""
 	}
 	slug := strings.TrimSpace(t.session.App)
@@ -524,6 +578,15 @@ func (t *chatTurn) uncommittedWorkNotice() string {
 	}
 	spec, _, ok := t.appForTurn(slug)
 	if !ok || spec.Verify == nil || !spec.Verify.Current(spec) || !spec.Verify.Pass {
+		return ""
+	}
+	// Verified work in a draft is not live until it is committed, with git
+	// or without (app_draft.go).
+	if t.hasAppDraft(spec.Owner, spec.Slug) {
+		t.commitAsked = true
+		return fmt.Sprintf("Your reply was held back: your work on %q is verified and NOT LIVE YET: it is in your draft. Commit it to make it live before you finish: app_def(action=\"commit\", id=%q, message=...), a first line saying what the work changed (under 72 characters), a blank line, and why. Then give your reply.", spec.Name, spec.Slug)
+	}
+	if appGit() == "" {
 		return ""
 	}
 	dir, ok := appRepoDir(spec.Owner, spec.Slug)

@@ -32,7 +32,7 @@ import (
 // appDefPatchHTML applies one exact find/replace to an app's html section.
 func (t *chatTurn) appDefPatchHTML(args map[string]any) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
-	spec, ok := LoadAppSpec(t.user, key)
+	spec, _, ok := t.appForTurn(key)
 	if !ok {
 		return "", appNotFound(args, "")
 	}
@@ -129,25 +129,30 @@ func (t *chatTurn) saveHTMLSectionEdit(spec AppSpec, sections []map[string]any, 
 	if checks != "" {
 		checks = "\n\n" + checks
 	}
-	saved := SaveAppSpecBy(spec, reason, t.user, t.changedVia())
+	hadDraft := t.hasAppDraft(spec.Owner, spec.Slug)
+	saved := t.saveAppEdit(spec, reason)
 
 	// Now the accurate check, against the revision that was just written. On
 	// failure put the previous revision back rather than leaving a dead app.
 	// The restore files no history of its own — the broken revision existed for
 	// milliseconds and is not a version anyone would want back.
-	errs, checked := appPageRuntimeErrors(saved.Owner, saved.Slug)
+	errs, checked := t.appPageErrors(saved)
 	if len(errs) > 0 {
-		SaveAppSpecBy(before, AppSaveNoHistory, t.user, t.changedVia())
+		t.undoAppEdit(before, hadDraft)
 		return "", fmt.Errorf("that %s broke the page in a real browser, so it was ROLLED BACK, the app is serving the previous revision again:\n- %s\n\nFix the replacement text and try again",
 			verb, strings.Join(errs, "\n- "))
 	}
 	pageReport, err := t.appPageChecksAfterSave(&before, saved)
 	if err != nil {
+		if t.editsDrafts() {
+			t.undoAppEdit(before, hadDraft)
+		}
 		return "", err
 	}
 	if r := joinChecksReports(strings.TrimSpace(checks), pageReport); r != "" {
 		checks = "\n\n" + r
 	}
+	checks += t.appDraftNote(saved)
 	if !checked {
 		t.noteAppStanding(saved.Slug, false, "saved, and no browser check could run: run app_def(action=\"verify\")")
 		return fmt.Sprintf(summary, htmlSectionOrdinal(sections, idx), saved.Name, saved.Updated) +
@@ -157,7 +162,7 @@ func (t *chatTurn) saveHTMLSectionEdit(spec AppSpec, sections []map[string]any, 
 	// Stored, as a whole save stores it (app_def_tool_create.go): this result
 	// says there is nothing further to verify, so the app's standing has to
 	// say so too, or its work reads as never tested and is never committed.
-	saved.RecordVerify(true, "PASS: loaded in a real browser on save, no JS errors")
+	t.recordVerdict(saved, true, "PASS: loaded in a real browser on save, no JS errors")
 	return fmt.Sprintf(summary, htmlSectionOrdinal(sections, idx), saved.Name, saved.Updated) +
 		" The page was parsed and loaded in a real browser after the change and came up clean, so there is nothing further to verify. Tell the user what changed." + checks, nil
 }

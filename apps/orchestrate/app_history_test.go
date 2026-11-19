@@ -240,14 +240,15 @@ func TestBuilderCommitsOnlyVerifiedWork(t *testing.T) {
 	}, false); err != nil {
 		t.Fatal(err)
 	}
+	makeLive(t, turn, "tally")
 	if _, err := turn.appDefCreateOrUpdate(map[string]any{"id": "tally", "notes": "Counts things, by day.", "note": "Count by day"}, true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := turn.appDefCommit(map[string]any{"id": "tally", "message": "Count by day"}); err == nil || !strings.Contains(err.Error(), "verify") {
 		t.Fatalf("a commit before verify: %v", err)
 	}
-	spec, _ := LoadAppSpec("u", "tally")
-	spec.RecordVerify(true, "ok")
+	spec, _ := turnApp(turn, "tally")
+	turn.recordVerdict(spec, true, "ok")
 	// A reply ending the turn with that work verified and uncommitted is held
 	// back once, to commit it.
 	turn.session = &ChatSession{App: "tally"}

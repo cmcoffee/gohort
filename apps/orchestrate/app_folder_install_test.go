@@ -24,6 +24,7 @@ func installTestApp(t *testing.T, turn *chatTurn) (T *OrchestrateApp, dir string
 	}, false); err != nil {
 		t.Fatal(err)
 	}
+	makeLive(t, turn, "wx")
 	if _, err := turn.appDefCheckout(map[string]any{"id": "wx"}); err != nil {
 		t.Fatal(err)
 	}
@@ -62,6 +63,7 @@ func TestAStaleFolderIsNotInstalled(t *testing.T) {
 		"data_sources": []any{map[string]any{"name": "now", "script": "print('{\"live\": 1}')"}}}, true); err != nil {
 		t.Fatal(err)
 	}
+	makeLive(t, turn, "wx")
 	if _, err := T.InstallAppFolder(context.Background(), "u", dir, ""); err == nil || !strings.Contains(err.Error(), "live app was changed") {
 		t.Fatalf("a stale folder: %v", err)
 	}

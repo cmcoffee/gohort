@@ -152,7 +152,7 @@ func (aw *appWrite) load() bool {
 		if slug == "" {
 			return aw.exit("", errors.New("could not derive a slug from the name: pass an explicit slug"))
 		}
-		if _, exists := LoadAppSpec(t.user, slug); exists {
+		if _, exists := LoadAppSpec(t.user, slug); exists || t.hasAppDraft(t.user, slug) {
 			return aw.exit("", fmt.Errorf("an app with slug %q already exists: use action=update, or pick a different name/slug", slug))
 		}
 		aw.spec = AppSpec{Slug: slug, Name: name, Owner: t.user}
@@ -523,11 +523,19 @@ func (aw *appWrite) save() bool {
 	if err := aw.copyBindings(); err != nil {
 		return aw.exit("", err)
 	}
-	aw.saved = SaveAppSpecBy(aw.spec, reason, t.user, t.changedVia())
+	hadDraft := t.hasAppDraft(aw.spec.Owner, aw.spec.Slug)
+	aw.saved = t.saveAppEdit(aw.spec, reason)
 	// Page checks drive the page as served, so they run on the saved
 	// version; one this save broke puts the previous version back.
 	pageReport, err := t.appPageChecksAfterSave(prior, aw.saved)
 	if err != nil {
+		if t.editsDrafts() {
+			if prior != nil {
+				t.undoAppEdit(*prior, hadDraft)
+			} else {
+				t.undoAppEdit(aw.saved, false)
+			}
+		}
 		return aw.exit("", err)
 	}
 	aw.checksReport = joinChecksReports(report, pageReport)
@@ -623,7 +631,7 @@ func (aw *appWrite) check() bool {
 		// report about code it already rewrote, and "fixes" a line that no
 		// longer exists. Checking the write's own output cannot go stale.
 		if len(appHTMLSectionScripts(raw)) > 0 {
-			errs, checked := appPageRuntimeErrors(aw.saved.Owner, aw.saved.Slug)
+			errs, checked := t.appPageErrors(aw.saved)
 			pageChecked = checked
 			if len(errs) > 0 {
 				t.noteAppStanding(aw.saved.Slug, false, "its page fails in a real browser: "+errs[0])
@@ -682,7 +690,7 @@ func (aw *appWrite) check() bool {
 		// Stored, not only said: the next result (a notes edit, a listing)
 		// reads the standing from the spec, and without this it said "never
 		// verified" about the page this save had just loaded.
-		aw.saved.RecordVerify(true, "PASS: loaded in a real browser on save, no JS errors")
+		t.recordVerdict(aw.saved, true, "PASS: loaded in a real browser on save, no JS errors")
 		// The Status clause up top was written before this save loaded the
 		// page, and it still said "never verified: run verify", so one result
 		// told the author both that the page had passed and that it had not
@@ -698,7 +706,7 @@ func (aw *appWrite) check() bool {
 		}
 		aw.msg += "\nBefore telling the user the app is ready, run app_def(action=\"verify\", id=\"" + aw.saved.Slug + "\"): it loads the page in a real browser and catches render/JS/fetch failures the script checks can't see. Run it in a LATER turn than the update, never batched alongside one: verify reads whatever is stored when it runs, so an update and a verify in the same turn can report on the copy you just replaced."
 	}
-	return aw.exit(aw.msg+aw.plan, nil)
+	return aw.exit(aw.msg+aw.plan+t.appDraftNote(aw.saved), nil)
 }
 
 // appCompletePlan is what a complete first build includes, in the create
