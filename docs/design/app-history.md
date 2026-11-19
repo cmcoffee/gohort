@@ -261,6 +261,10 @@ no longer changes it.
 
 ## Stage 3: the app is its repository
 
+Revised 2026-11-18: worked out against the code in "Stage 3 in detail"
+below, which keeps the store's copy as what is served and gives Builder a
+working copy whose commit goes live, instead of a long-lived branch. Where the two differ, that section is the plan.
+
 The app runs from its repository. Stage 1's repository becomes the source,
 and the store keeps the app's record.
 
@@ -280,10 +284,8 @@ already does this), cached by the folder's state, so a request reads a built
 app from memory. Serving never runs git.
 
 **Changing.** Builder and Anvil work in the repository, so their changes
-meet in git. Builder has one branch per app (`builder`), kept across its
-conversations, so work one conversation left unfinished is there in the
-next. Builder's in-place edits (patch_html, replace_function) change files
-on that branch, committed when the work is done and tested, as in stage 1.
+meet in git. (Revised 2026-11-18: Builder edits a working copy, tests it, and
+its commit goes live, with no long-lived branch; see Stage 3 in detail, S3.)
 
 **Going live is the one gated step.** A change reaches `live` only through
 the install path, which runs everything a save runs now: the validators,
@@ -417,7 +419,9 @@ stage it belongs to.
 5. **git:** the git program, with a fallback: without git, apps run and
    save as now and only the history in git is missing (stage 3 serves from
    a plain live folder, so it never needs git to serve).
-6. **Builder's branch (stage 3):** one per app.
+6. **Builder's branch (stage 3):** one per app. Revised 2026-11-18: no long-lived
+   branch; Builder edits a working copy, tests it, and its commit goes live
+   (Stage 3 in detail, S3).
 7. **Maintainers (stage 3):** save directly, as now.
 8. **Self-contained apps (stage 2):** an app owns copies of its agents,
    pipelines, machines and tools, in a tool space of its own; only Builder
@@ -430,6 +434,107 @@ stage it belongs to.
    curation wired by the app with an on/off setting, and its sources and
    curation rules recorded into the blueprint when changed from anywhere;
    existing apps copy what they use on their first change.
+
+## Stage 3 in detail (2026-11-18)
+
+Read against the code as stage 2 left it. Where this and the stage 3
+section above differ, this is the plan (owner, 2026-11-18): the store keeps
+the served copy (S1), and Builder edits a working copy, tests it, and
+its commit is what goes live, with no long-lived branch (S3; decision 6,
+revised). What stays the aim: git is where
+the record of what went live is kept, and nothing reaches `live` around its
+gates.
+
+**What the code already gives.** Every save passes `SaveAppSpecBy`, which
+writes the app's files into its repository (`syncAppRepo`, branch `main`).
+62 places read an app with `LoadAppSpec`, from the store. A preview serves
+any `AppSpec` handed to it (`StartAppPreview`), not only the saved one. An
+app's folder becomes an `AppSpec` through `BuildAppFolder`, which Anvil's
+Install already uses. Revisions are the store's (`PushAppRevision`), one per
+save that changed the page.
+
+**S1. The store keeps the served copy.** The stage 3 section above clears
+an app's code from the store and serves it from a live folder, cached by
+commit. Instead, the store's copy stays what is served, written only by
+the save path, whose gates every change passes (Builder's, Anvil's, a
+person's), and `live` records each version it served. What that keeps:
+
+- Serving and the 62 readers stay as they are; nothing is cached anew.
+- No live folder, so nothing to guard on disk (further decision 2): the
+  store is beyond every agent's reach already.
+- No app's code moves, so stage 3 is not a migration. An app's `live`
+  branch starts at its next save, from the history stage 1 kept.
+- Without git, saves write the store as now.
+
+What it costs: an app's code is kept twice, in the store and in its
+repository. Clearing the store's copy stays possible later if disk ever
+says so; nothing below depends on it.
+
+**S2. The history branch is `live`.** The branch stage 1 keeps (`main`)
+is renamed `live` on an app's next save, so its name says what it is: what
+the app served, in order. Each commit on it is a version that went live: a person's
+change (a revert, a setting, a maintainer's edit) at once; Builder's and
+Anvil's when their work is finished and tested (S3, S4).
+
+**S3. Builder edits, tests, then commits, and the commit goes live.** As
+Claude Code works: Builder's edits (app_def update, patch_html,
+replace_function) change the app's working copy, the files in its
+repository, not the live app. It tests that copy: verify runs on a preview
+of it (the copy built with `BuildAppFolder`, handed to `StartAppPreview`),
+and so do the app's checks. Its commit is the change going live: the copy
+is saved through every gate a save passes now and the commit lands on
+`live`. A gate that fails leaves the live app as it was, and says why.
+
+- **No long-lived branch.** One working copy per app, at `live`. If `live`
+  moved since Builder started (a maintainer, Anvil, a person's revert), the
+  commit merges first, as Anvil's Install does; only a real overlap stops
+  it, shown as a conflict for Builder to resolve.
+- **A turn that stops short changes nothing live.** The work waits in the
+  working copy, the reply says so with the preview link, and the next turn
+  is told of it (stage 1's notice of work not yet committed). The person
+  can make it live anyway: their own action, through the same gates.
+- **A new app** is made in its working copy and appears on its first
+  commit.
+- **What changes for people:** a change asked of Builder is live when its
+  work is finished and tested, usually within the same turn, instead of at
+  each edit; and nothing untested reaches a live app.
+- **What it costs to build:** Builder's edit actions move from the store's
+  copy to the working copy. Its folder workflow (`checkout`, `publish`)
+  already reads, builds and installs a folder, so most of it is there.
+
+**S4. Anvil's Install merges into `live`.** Stage 1 already has Install
+fetch, merge and save; the merge is now into `live`, and the save it makes
+is the commit there.
+
+**S5. Revisions and revert from git.** With git, an app's revisions list
+is the log of `live`, and revert is `git revert` of a commit there, saved
+through the same gates. The store's revisions from before stay listed
+under the log (older than its history), readable and restorable as now,
+and new ones are no longer pushed. Without git, revisions stay the store's.
+
+**S6. Bundles carry a snapshot, history only when asked.** An export
+stays the app as it is. "Include its history" is an option: a history
+names the people who changed it (their user names, as commit authors) and
+holds every earlier version, including what was taken out of it on
+purpose. An imported history is kept as the start of the app's own.
+
+**Without git** (decision 5): S2 to S5 and the history option in S6 do
+not run; Builder's edits save the live app and apps keep revisions as now.
+
+**Order.** S2 first (the branch's name, nothing a person sees), then S3,
+S5, S4 and S6, each its own commit on the stage 3 branch. Before S2, what
+stage 1 was to measure (step 5: repository sizes, the time a commit takes)
+is read from a test instance.
+
+**Questions left.**
+
+1. S3: a turn that stops short of a pass leaves the work waiting, and the
+   person can make it live anyway. (Recommended: the person decides, through
+   the same gates; Builder never does.)
+2. S5: once revisions come from git, the store's revisions from before stay
+   listed beneath, and are never moved into the history. (Recommended:
+   moving them would rewrite a history that starts where it starts.)
+3. S6: a snapshot by default, history as an option. (Recommended.)
 
 ## Steps
 
@@ -669,16 +774,14 @@ Stage 2 (an app holds everything it runs on):
      colleague's shared with them) is the deployment's, as an MCP server
      is, and is not copied.
 
-Stage 3 (the app is its repository):
+Stage 3 (the app is its repository; Stage 3 in detail):
 
-11. Serve from the live folder, cached, for an app that has moved; the store
-    serves the rest. The live folder outside every workspace, written only
-    by the install path, served only while it matches its last commit.
-12. Installs merge into `live` through the save gates; Builder works on its
-    branch, one per app; without git, saves write the live folder directly.
-13. Revisions, revert and Preview from git; bundles as git bundles.
-14. Move apps on first save or open; clear their code fields once served
-    from the repository.
+11. S2: the history branch is `live`.
+12. S3: Builder edits a working copy, tests it, and its commit goes live.
+13. S5: revisions and revert from git, the store's earlier revisions
+    listed beneath.
+14. S4: Anvil's Install merges into `live`.
+15. S6: exports a snapshot, history as an option.
 
 After stage 3: updates for imported apps, merged with the changes made
 since.
