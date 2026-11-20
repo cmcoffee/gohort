@@ -34,6 +34,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appcheck"
 	"github.com/cmcoffee/gohort/core/bgrun"
 	"github.com/cmcoffee/gohort/tools/appscript"
 )
@@ -280,7 +281,20 @@ func (T *CustomApps) dataSourceTools(owner, uid string, udb Database, spec AppSp
 				if err != nil {
 					return "", fmt.Errorf("%s failed: %w", ds.Name, err)
 				}
-				return capJSON([]byte(strings.TrimSpace(res))), nil
+				// The reply alone, as the page takes it: a source that printed
+				// no JSON failed, whatever it printed instead (a sandbox or
+				// Python error read as data otherwise), and what else it
+				// printed beside its JSON (a warning) is not the data. What it
+				// printed stays in the log, as the page keeps it there.
+				reply, besides, ok := appcheck.ScriptReply(res)
+				if !ok {
+					Log("[customapps] data source %q/%q returned non-JSON to a tool call (first 200B): %.200s", spec.Slug, ds.Name, reply)
+					return "", fmt.Errorf("%s failed: %w", ds.Name, errNoJSONReply)
+				}
+				if besides != "" {
+					Log("[customapps] data source %q/%q printed this besides its JSON, set aside: %.300s", spec.Slug, ds.Name, besides)
+				}
+				return capJSON([]byte(reply)), nil
 			},
 		})
 	}

@@ -199,3 +199,39 @@ func TestTheAppsAgentSeesItsStatus(t *testing.T) {
 		t.Errorf("the data tool: %s %v", out, err)
 	}
 }
+
+// A data tool answers its source's JSON reply alone, as the page takes it: a
+// source that printed no JSON failed (what it printed instead, a sandbox or
+// Python error, is not handed over as the data), a warning printed beside its
+// JSON is set aside, and a run that printed no JSON is not cached, so the
+// next call runs the source again.
+func TestADataToolFailsWhenItsSourcePrintsNoJSON(t *testing.T) {
+	T := sharingTestApp(t)
+	spec := SaveAppSpec(AppSpec{Slug: "nojson", Name: "Shelf", Owner: "alice",
+		DataSources: []AppDataSource{{Name: "shelf", Script: "x", Expose: true}}})
+	prev := runAppScript
+	t.Cleanup(func() { runAppScript = prev })
+	reply, runs := "", 0
+	runAppScript = func(appscript.Job) (string, error) { runs++; return reply, nil }
+	tools := T.dataSourceTools("alice", "alice", T.recordBase(spec, "alice"), spec)
+	if len(tools) != 1 {
+		t.Fatalf("data tools: %d", len(tools))
+	}
+	read := tools[0].Handler
+
+	reply = "bwrap: Can't chdir to /srv/ws/alice: No such file or directory"
+	out, err := read(context.Background(), nil)
+	if err == nil || !strings.Contains(err.Error(), "printed none") || strings.Contains(err.Error()+out, "bwrap") {
+		t.Errorf("a source that printed no JSON: %q %v", out, err)
+	}
+	read(context.Background(), nil)
+	if runs != 2 {
+		t.Errorf("a run that printed no JSON was cached: %d runs for 2 calls", runs)
+	}
+
+	reply = "warning: something is deprecated\n[{\"id\": \"1\"}]"
+	out, err = read(context.Background(), map[string]any{"fresh": "1"})
+	if err != nil || strings.TrimSpace(out) != `[{"id": "1"}]` {
+		t.Errorf("a warning beside the JSON: %q %v", out, err)
+	}
+}

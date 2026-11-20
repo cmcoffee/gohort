@@ -1606,7 +1606,8 @@ func dsCacheKey(user string, spec AppSpec, ds AppDataSource, args map[string]any
 // single-flight execution. It is used only on the LIVE serve path (handleData)
 // — the authoring test/verify path always runs scripts fresh. Errors are never
 // cached (so a transient failure retries immediately), though a burst of
-// concurrent identical failing calls still shares one execution.
+// concurrent identical failing calls still shares one execution. Nor is a run
+// that printed no JSON value, which failed as surely as one that raised.
 func cachedRunDataSource(user string, db Database, spec AppSpec, ds AppDataSource, args map[string]any, caller string) (string, error) {
 	key := dsCacheKey(user, spec, ds, args)
 	now := time.Now()
@@ -1630,7 +1631,7 @@ func cachedRunDataSource(user string, db Database, spec AppSpec, ds AppDataSourc
 
 	dsCacheMu.Lock()
 	call.out, call.err = out, err
-	if err == nil {
+	if _, _, replied := appcheck.ScriptReply(out); err == nil && replied {
 		dsCache[key] = dsCacheEntry{out: out, expires: time.Now().Add(dataSourceCacheTTL)}
 	}
 	delete(dsInFlightCalls, key)
