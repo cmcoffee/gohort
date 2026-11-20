@@ -87,7 +87,7 @@ func (t *chatTurn) detectFindingConflict(newContent string, neighbors []SearchHi
 	if len(cand) == 0 {
 		return ""
 	}
-	conflicts, err := judgeFindingConflicts(t.app.WorkerChat, newContent, cand)
+	conflicts, err := judgeFindingConflicts(t.ctx, t.app.WorkerChat, newContent, cand)
 	if err != nil {
 		// The finding is still saved: a broken check must not block saving.
 		// But not silently, as "no conflict", which is what this read as.
@@ -184,13 +184,20 @@ func conflictQuick(newContent string, candidates []SearchHit) QuickChoice {
 // An error is a check that gave no verdict (its reply could not be read, or
 // the call failed), which is not the same as finding no conflict: the
 // caller decides what to do with it, and a check test reports it.
-func judgeFindingConflicts(chat FactChatFunc, newContent string, candidates []SearchHit) ([]SearchHit, error) {
+//
+// It runs under ctx, the work it is part of, so it stops with that work, is
+// paid for by its person, and is watched by a check test (its replies said in
+// the report); the ceiling below only bounds it.
+func judgeFindingConflicts(ctx context.Context, chat FactChatFunc, newContent string, candidates []SearchHit) ([]SearchHit, error) {
 	if chat == nil || len(candidates) == 0 {
 		return nil, nil
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	// System One first, where the map gives the check to it: a sure "none"
 	// is the answer; a contradiction needs the full check to say which.
-	if ans, ok := AskQuick(context.Background(), conflictQuick(newContent, candidates)); ok && ans == "none" {
+	if ans, ok := AskQuick(ctx, conflictQuick(newContent, candidates)); ok && ans == "none" {
 		return nil, nil
 	}
 	var list strings.Builder
@@ -201,7 +208,7 @@ func judgeFindingConflicts(chat FactChatFunc, newContent string, candidates []Se
 		// judge only partially read.
 		fmt.Fprintf(&list, "%d. %s\n", i+1, strings.ReplaceAll(conflictJudgeExcerpt(h.Text), "\n", " "))
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 	rulings, err := conflictVerdict.JudgeEach(ctx, decide.VerdictChat(chat),
 		fmt.Sprintf("NEW finding: %q\n\nEXISTING findings:\n%s", newContent, list.String()), len(candidates),

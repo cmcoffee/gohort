@@ -266,3 +266,42 @@ func TestNewLLMFromConfigBuildsConverse(t *testing.T) {
 		t.Errorf("context size = %d", c.ContextSize())
 	}
 }
+
+// A reply Bedrock stopped, by its guardrail or its content filter, reads as a
+// refusal and keeps Bedrock's own word for which, on both paths; a reply
+// that ended on its own carries no detail.
+func TestABedrockStoppedReplySaysWhichFilter(t *testing.T) {
+	llm, _, _ := converseServer(t, "us.anthropic.claude-sonnet-5-5", func(n int, w http.ResponseWriter, _ map[string]any) {
+		w.Write([]byte(`{"output":{"message":{"role":"assistant","content":[{"text":""}]}},"stopReason":"guardrail_intervened","usage":{"outputTokens":44}}`))
+	})
+	resp, err := llm.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StopReason != "refusal" || resp.StopDetail != "Bedrock said guardrail_intervened" {
+		t.Errorf("a guardrail's stop: %q %q", resp.StopReason, resp.StopDetail)
+	}
+	frames := [][]byte{
+		converseFrame("messageStart", `{"role":"assistant"}`),
+		converseFrame("contentBlockDelta", `{"contentBlockIndex":0,"delta":{"text":"{\"findings\": ["}}`),
+		converseFrame("contentBlockStop", `{"contentBlockIndex":0}`),
+		converseFrame("messageStop", `{"stopReason":"content_filtered"}`),
+		converseFrame("metadata", `{"usage":{"inputTokens":8,"outputTokens":4}}`),
+	}
+	llm, _, _ = converseServer(t, "us.anthropic.claude-sonnet-5-5", func(n int, w http.ResponseWriter, _ map[string]any) {
+		w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
+		for _, f := range frames {
+			w.Write(f)
+		}
+	})
+	resp, err = llm.ChatStream(t.Context(), []Message{{Role: "user", Content: "hi"}}, func(string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StopReason != "refusal" || resp.StopDetail != "Bedrock said content_filtered" {
+		t.Errorf("a content filter's stop, streamed: %q %q", resp.StopReason, resp.StopDetail)
+	}
+	if converseStopDetail("end_turn") != "" || converseStopDetail("") != "" || converseStopDetail("model_context_window_exceeded") == "" {
+		t.Error("a detail only for a stop reason that was translated")
+	}
+}

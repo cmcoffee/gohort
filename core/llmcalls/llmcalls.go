@@ -21,6 +21,7 @@ type Call struct {
 	Model     string // the model that answered
 	Tier      string // "worker" or "lead"
 	Stop      string // the provider's stop reason ("max_tokens", "end_turn", ...)
+	Detail    string // the provider's own word, when Stop translates it
 	Input     int    // input tokens
 	Output    int    // output tokens, thinking included
 	Reasoning int    // of Output, about how many were thinking
@@ -92,6 +93,9 @@ func describeOne(c Call) string {
 		how = "ended (no stop reason given)"
 	default:
 		how = "ended (" + c.Stop + ")"
+	}
+	if c.Detail != "" {
+		how += " (" + c.Detail + ")"
 	}
 	s := fmt.Sprintf("%s after %d output tokens", how, c.Output)
 	if c.Reasoning > 0 {

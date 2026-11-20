@@ -1040,6 +1040,17 @@ type cvResponse struct {
 
 // converseStopReason maps Converse's stop reasons onto the Anthropic ones the
 // loop reads. A guardrail or content filter is a refusal.
+// converseStopDetail is Bedrock's own stop reason, said beside the one
+// converseStopReason translates it to ("Bedrock said guardrail_intervened"):
+// a guardrail and a content filter both read as a refusal, and which one it
+// was is the first thing to know. Empty when nothing was translated.
+func converseStopDetail(s string) string {
+	if s == "" || converseStopReason(s) == s {
+		return ""
+	}
+	return "Bedrock said " + s
+}
+
 func converseStopReason(s string) string {
 	switch s {
 	case "guardrail_intervened", "content_filtered":
@@ -1095,6 +1106,7 @@ func (c *bedrockConverseClient) Chat(ctx context.Context, messages []Message, op
 		CacheReadTokens:  result.Usage.CacheReadTokens,
 		CacheWriteTokens: result.Usage.CacheWriteTokens,
 		StopReason:       converseStopReason(result.StopReason),
+		StopDetail:       converseStopDetail(result.StopReason),
 	}
 	r.ReasoningTokens = estimateReasoningTokens(r.OutputTokens, thinking.String(), r.Content, calls)
 	warnStopReason(r.StopReason)
@@ -1179,6 +1191,7 @@ func (cs *converseStream) apply(kind string, payload []byte) {
 		cs.emit(anthStreamEvent{Type: "content_block_stop", Index: ev.Index})
 	case "messageStop":
 		cs.st.stopReason = converseStopReason(ev.StopReason)
+		cs.st.stopDetail = converseStopDetail(ev.StopReason)
 	case "metadata":
 		if u := ev.Usage; u != nil {
 			cs.st.inputTokens = u.InputTokens

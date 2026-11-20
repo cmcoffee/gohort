@@ -398,6 +398,6 @@ func noteLLMCall(ctx context.Context, tier LLMTier, resp *Response) {
 	if tier == LEAD {
 		name = "lead"
 	}
-	llmcalls.Note(ctx, llmcalls.Call{Model: resp.Model, Tier: name, Stop: resp.StopReason,
+	llmcalls.Note(ctx, llmcalls.Call{Model: resp.Model, Tier: name, Stop: resp.StopReason, Detail: resp.StopDetail,
 		Input: resp.InputTokens, Output: resp.OutputTokens, Reasoning: resp.ReasoningTokens})
 }

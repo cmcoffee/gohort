@@ -201,4 +201,11 @@ func TestAnUnreadableReplySaysHowItEnded(t *testing.T) {
 	if !errors.Is(err, ErrUnreadable) || !strings.HasSuffix(err.Error(), "(stopped: max_tokens; 600 output tokens)") {
 		t.Errorf("a cut-off reply: %v", err)
 	}
+	stopped := func(ctx context.Context, msgs []Message, opts ...ChatOption) (*Response, error) {
+		return &Response{Content: "", StopReason: "refusal", StopDetail: "Bedrock said guardrail_intervened", OutputTokens: 44}, nil
+	}
+	_, err = testVerdict.Judge(context.Background(), stopped, "state")
+	if !errors.Is(err, ErrUnreadable) || !strings.HasSuffix(err.Error(), "(stopped: refusal, Bedrock said guardrail_intervened; 44 output tokens)") {
+		t.Errorf("a reply its provider stopped: %v", err)
+	}
 }

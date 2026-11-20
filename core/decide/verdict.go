@@ -240,7 +240,11 @@ func replyEnding(resp *Response) string {
 	}
 	var parts []string
 	if resp.StopReason != "" {
-		parts = append(parts, "stopped: "+resp.StopReason)
+		stop := "stopped: " + resp.StopReason
+		if resp.StopDetail != "" {
+			stop += ", " + resp.StopDetail
+		}
+		parts = append(parts, stop)
 	}
 	if resp.OutputTokens > 0 {
 		out := fmt.Sprintf("%d output tokens", resp.OutputTokens)

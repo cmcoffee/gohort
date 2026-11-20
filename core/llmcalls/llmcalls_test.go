@@ -22,6 +22,9 @@ func TestCallsAreKeptForAWatcherAndSaid(t *testing.T) {
 	if got := Describe(calls()); got != "2 calls: 1) stopped at its output limit after 600 output tokens, about 580 of them thinking, 10 in (worker); 2) finished after 5 output tokens, 0 in" {
 		t.Errorf("two calls: %q", got)
 	}
+	if got := describeOne(Call{Stop: "refusal", Detail: "Bedrock said content_filtered", Output: 44}); got != "declined (Bedrock said content_filtered) after 44 output tokens, 0 in" {
+		t.Errorf("a provider's own stop: %q", got)
+	}
 	for stop, want := range map[string]string{
 		"length": "stopped at its output limit", "tool_use": "stopped to call a tool", "refusal": "declined",
 		"": "ended (no stop reason given)", "pause_turn": "ended (pause_turn)",

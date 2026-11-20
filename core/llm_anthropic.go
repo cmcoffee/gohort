@@ -1095,6 +1095,7 @@ type anthStreamState struct {
 	cacheRead  int
 	cacheWrite int
 	stopReason string
+	stopDetail string // the provider's own word, when stopReason translates it
 	toolCalls  []ToolCall
 
 	// blocks tracks in-flight content blocks by index, for tool_use assembly
@@ -1304,6 +1305,7 @@ func (a *anthStreamState) response(tag string) *Response {
 		CacheWriteTokens: a.cacheWrite,
 		OutputTokens:     a.outputTokens,
 		StopReason:       a.stopReason,
+		StopDetail:       a.stopDetail,
 
 		PredictedPerSecond: a.clock.rate(a.outputTokens),
 	}

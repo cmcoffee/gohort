@@ -137,6 +137,12 @@ type Response struct {
 	// the model's nor gohort's. The loop fills it on the reply it returns.
 	LaneWait   time.Duration `json:"-"`
 	StopReason string
+	// StopDetail is the provider's own word for how the reply ended, when
+	// StopReason is gohort's translation of it: Bedrock ends a reply its
+	// guardrail stopped with "guardrail_intervened" and one its content
+	// filter stopped with "content_filtered", and both read as "refusal".
+	// Empty when StopReason is the provider's word already.
+	StopDetail string
 	// ReasoningTokens is the portion of OutputTokens spent on the
 	// thinking channel, as reported by the model when supported (e.g.
 	// llama.cpp's usage.completion_tokens_details.reasoning_tokens

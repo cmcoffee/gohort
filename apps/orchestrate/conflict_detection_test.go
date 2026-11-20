@@ -9,6 +9,7 @@ import (
 	"github.com/cmcoffee/snugforge/kvlite"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/costledger"
 )
 
 // TestFindingConflictCandidates: only neighbors in the band
@@ -110,11 +111,11 @@ func TestTheConflictCheckTakesASettledNone(t *testing.T) {
 	}
 	full := &FakeLLM{Turns: []FakeTurn{{Content: `{"findings":[{"finding":1,"why":"closed vs reopened","answer":"contradicts"}]}`, Repeat: true}}}
 	hits := []SearchHit{{ID: "1", Text: "The bridge is closed."}}
-	if got, err := judgeFindingConflicts(full.Chat, "The bridge reopened.", hits); got != nil || err != nil || full.Calls() != 0 {
+	if got, err := judgeFindingConflicts(context.Background(), full.Chat, "The bridge reopened.", hits); got != nil || err != nil || full.Calls() != 0 {
 		t.Errorf("settled none, the full check still ran: %v after %d calls", got, full.Calls())
 	}
 	QuickDecide = func(context.Context, QuickChoice) (string, bool) { return "", false }
-	if got, err := judgeFindingConflicts(full.Chat, "The bridge reopened.", hits); len(got) != 1 || err != nil || full.Calls() != 1 {
+	if got, err := judgeFindingConflicts(context.Background(), full.Chat, "The bridge reopened.", hits); len(got) != 1 || err != nil || full.Calls() != 1 {
 		t.Errorf("unsettled, the full check decides: %v after %d calls", got, full.Calls())
 	}
 }
@@ -129,12 +130,47 @@ func TestAnUnreadableConflictCheckIsNoVerdict(t *testing.T) {
 	QuickDecide = func(context.Context, QuickChoice) (string, bool) { return "", false }
 	prose := &FakeLLM{Turns: []FakeTurn{{Content: "These two findings disagree about the bridge.", Repeat: true}}}
 	hits := []SearchHit{{ID: "1", Text: "The bridge is closed."}}
-	if got, err := judgeFindingConflicts(prose.Chat, "The bridge reopened.", hits); got != nil || err == nil {
+	if got, err := judgeFindingConflicts(context.Background(), prose.Chat, "The bridge reopened.", hits); got != nil || err == nil {
 		t.Fatalf("an unreadable check: %v, %v; want no hits and an error", got, err)
 	}
 	tc := conflictCases()[0]
 	out := runConflictCase(context.Background(), prose, tc)
 	if out.Got != ScanNoVerdict || !strings.Contains(out.Reason, "These two findings disagree") {
 		t.Errorf("the check test reads it as %q (%s), want no_verdict with the reply", out.Got, out.Reason)
+	}
+}
+
+// The check runs under the work it is part of: its calls carry that work's
+// context (who pays, a check test's watch, its deadline), and work already
+// stopped asks nothing.
+func TestTheConflictCheckRunsUnderItsCaller(t *testing.T) {
+	prev := QuickDecide
+	t.Cleanup(func() { QuickDecide = prev })
+	var quickPayer costledger.Spender
+	QuickDecide = func(ctx context.Context, _ QuickChoice) (string, bool) {
+		quickPayer = costledger.SpenderFrom(ctx)
+		return "", false
+	}
+	full := &FakeLLM{Turns: []FakeTurn{{Content: `{"findings":[{"finding":1,"why":"closed vs reopened","answer":"contradicts"}]}`, Repeat: true}}}
+	var payer costledger.Spender
+	chat := func(ctx context.Context, msgs []Message, opts ...ChatOption) (*Response, error) {
+		payer = costledger.SpenderFrom(ctx)
+		return full.Chat(ctx, msgs, opts...)
+	}
+	hits := []SearchHit{{ID: "1", Text: "The bridge is closed."}}
+	ctx := costledger.WithSpender(context.Background(), costledger.Spender{Person: "alice"})
+	if got, err := judgeFindingConflicts(ctx, chat, "The bridge reopened.", hits); len(got) != 1 || err != nil {
+		t.Fatalf("the check: %v %v", got, err)
+	}
+	if payer.Person != "alice" || quickPayer.Person != "alice" {
+		t.Errorf("the check's calls ran outside its caller's work: full %+v, System One %+v", payer, quickPayer)
+	}
+	stopped, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := judgeFindingConflicts(stopped, chat, "The bridge reopened.", hits); err == nil {
+		t.Error("work already stopped still got a verdict")
+	}
+	if _, err := judgeFindingConflicts(nil, chat, "The bridge reopened.", hits); err != nil {
+		t.Errorf("no caller context: %v", err)
 	}
 }

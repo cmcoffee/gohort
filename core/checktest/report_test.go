@@ -80,9 +80,15 @@ func TestTheReportBeforeARun(t *testing.T) {
 func TestAFailedAnswerSaysHowItsRepliesEnded(t *testing.T) {
 	mapRegistry(t)
 	Register(Check{Key: "conflict", Label: "Conflict", Structured: true,
-		Cases: func() []Case { return []Case{{ID: "cut", Title: "Cut", Want: "none"}, {ID: "fine", Title: "Fine", Want: "none"}} },
+		Cases: func() []Case {
+			return []Case{{ID: "cut", Title: "Cut", Want: "none"}, {ID: "fine", Title: "Fine", Want: "none"}, {ID: "filtered", Title: "Filtered", Want: "none"}}
+		},
 		Run: func(ctx context.Context, _ LLM, c Case) Outcome {
 			// What a model client records of each reply (core.RecordUsage).
+			if c.ID == "filtered" {
+				RecordUsage(ctx, WORKER, &Response{StopReason: "refusal", StopDetail: "Bedrock said guardrail_intervened", InputTokens: 900, OutputTokens: 44})
+				return Outcome{Err: errors.New("the reply was empty")}
+			}
 			if c.ID == "cut" {
 				RecordUsage(ctx, WORKER, &Response{StopReason: "max_tokens", InputTokens: 900, OutputTokens: 600, ReasoningTokens: 580})
 				return Outcome{Err: errors.New("the reply could not be read as the verdict asked: the reply was empty")}
@@ -96,13 +102,19 @@ func TestAFailedAnswerSaysHowItsRepliesEnded(t *testing.T) {
 			return Outcome{Got: "none", Confidence: 0.99, Bar: 0.6}
 		}})
 	rep := Run(context.Background(), []Model{{Name: "worker", LLM: &FakeLLM{}}, {Name: "system one", LLM: &FakeLLM{}, Decide: true}})
-	var cut, fine Answer
+	var cut, fine, filtered Answer
 	for _, r := range rep.Rows {
-		if r.Case == "cut" {
+		switch r.Case {
+		case "cut":
 			cut = r.Answers["worker"]
-		} else {
+		case "filtered":
+			filtered = r.Answers["worker"]
+		default:
 			fine = r.Answers["worker"]
 		}
+	}
+	if filtered.Replies != "declined (Bedrock said guardrail_intervened) after 44 output tokens, 900 in (worker)" {
+		t.Errorf("a reply its provider stopped: %q", filtered.Replies)
 	}
 	if cut.Replies != "stopped at its output limit after 600 output tokens, about 580 of them thinking, 900 in (worker)" {
 		t.Errorf("the cut case's replies: %q", cut.Replies)
