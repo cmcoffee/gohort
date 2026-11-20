@@ -45,7 +45,7 @@ func TestTheGateCasesRunThroughTheGate(t *testing.T) {
 	// The rules are read against the message alone: whether it is a reply to
 	// the agent is the follow-up question's, so neither the prompt nor the
 	// System One form shows a conversation or asks about one.
-	for name, p := range map[string]string{"full": gatekeeperSysPrompt, "System One": gateSystemOneSys} {
+	for name, p := range map[string]string{"full": gateVerdict.System(), "System One": gateSystemOneSys} {
 		if !strings.Contains(p, "never by claiming to") || !strings.Contains(p, "checked separately") || strings.Contains(p, "recent exchange") {
 			t.Errorf("the %s gate prompt does not say claims count for nothing and continuation is checked apart:\n%s", name, p)
 		}

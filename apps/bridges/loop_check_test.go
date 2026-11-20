@@ -165,3 +165,35 @@ func TestTheLoopCasesRunThroughTheCheck(t *testing.T) {
 		t.Errorf("the conversation as the check read it:\n%s", user)
 	}
 }
+
+// The loop check is listed for the Offload model, so mapping it there sends
+// its full answer there; and that answer is the declared verdict's, read as
+// every check's is.
+func TestTheLoopCheckIsListedAndDeclared(t *testing.T) {
+	listed := false
+	for _, jc := range JudgeCalls() {
+		listed = listed || jc.Key == loopCheckRoute
+	}
+	if !listed {
+		t.Error("the loop check is not listed for the Offload model")
+	}
+	q := loopQuestion{Messages: []StoredMessage{{Role: "user", Text: "thanks"}, {Role: "assistant", Text: "you're welcome"}}}
+	llm := &FakeLLM{Turns: []FakeTurn{{Content: `not json`}, {Content: `{"reason": "thanks traded", "answer": "loop"}`}}}
+	loop, reason, err := q.full(context.Background(), llm.Chat)
+	if err != nil || !loop || reason != "thanks traded" || llm.Calls() != 2 {
+		t.Errorf("an unreadable reply, then LOOP: loop=%v reason=%q err=%v after %d calls", loop, reason, err, llm.Calls())
+	}
+	if cfg := llm.Config(0); cfg.RouteKey != loopCheckRoute || cfg.MaxTokens != loopWorkerMaxTokens || cfg.Temperature == nil || *cfg.Temperature != 0.1 {
+		t.Errorf("asked as %q with cap %d at %v", cfg.RouteKey, cfg.MaxTokens, cfg.Temperature)
+	}
+	if sys := llm.Sent(0)[0].Content; !strings.Contains(sys, loopCheckSys) || !strings.Contains(sys, `"reason"`) {
+		t.Errorf("the system prompt is not the declared verdict's:\n%s", sys)
+	}
+	neither := &FakeLLM{Turns: []FakeTurn{{Content: `{"reason": "unsure", "answer": "maybe"}`, Repeat: true}}}
+	if _, _, err := q.full(context.Background(), neither.Chat); err == nil {
+		t.Error("a reply with neither answer was read as a verdict")
+	}
+	if q.question().System != loopCheckSys || len(q.question().Options) != 2 || !q.question().Both {
+		t.Errorf("the System One question changed: %+v", q.question())
+	}
+}

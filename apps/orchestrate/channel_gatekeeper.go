@@ -297,29 +297,17 @@ func gateDecide(ctx context.Context, llm LLM, q gateQuestion) (bool, string, err
 	// A cap at about ten times a real answer: a reason line per rule and a
 	// verdict run under a hundred tokens, and without one a small model that
 	// fell into a loop at temperature 0 wrote thousands. Local servers honour
-	// a check's cap (checkKeepsItsCap).
-	resp, err := llm.Chat(ctx, []Message{{Role: "user", Content: userMsg}},
-		WithSystemPrompt(gatekeeperSysPrompt), WithJSONMode(),
-		WithRouteKey(gatekeeperRoute), WithThink(false), WithTemperature(0.1), WithMaxTokens(gateMaxTokens))
+	// a check's cap (checkKeepsItsCap). A reply cut off at it is unreadable,
+	// asked once more, then no verdict: the message is kept out.
+	r, err := gateVerdict.Judge(ctx, decide.VerdictChat(llm.Chat), userMsg,
+		WithThink(false), WithTemperature(0.1), WithMaxTokens(gateMaxTokens))
 	if err != nil {
 		return false, "", err
 	}
-	// Cut off at its cap, the reply is a reason that never reached its
-	// answer: no verdict, rather than one read out of half a reason.
-	if resp.StopReason == "length" {
-		return false, "", fmt.Errorf("the model ran past %d tokens without an answer; it began: %q", gateMaxTokens, truncateObs(resp.Content, 160))
+	if r.Answer == "" {
+		return false, "", fmt.Errorf("the reply gave neither answer (%s)", r.Reason)
 	}
-	var gk struct {
-		Answer string `json:"answer"`
-		Reason string `json:"reason"`
-	}
-	if derr := DecodeJSON(resp.Content, &gk); derr != nil {
-		// Fallback: the answer as written, not any "yes" in the reply. The
-		// reason now comes first and says yes or no per rule, so a scan for
-		// YES anywhere would let through almost every reply it could not read.
-		return rawGateAnswer(resp.Content), "raw/ambiguous: " + truncateObs(resp.Content, 80), nil
-	}
-	return strings.HasPrefix(strings.ToUpper(strings.TrimSpace(gk.Answer)), "YES"), gk.Reason, nil
+	return r.Answer == "YES", r.Reason, nil
 }
 
 // mergeWakeRules folds the master and per-channel rulesets into one numbered
@@ -374,14 +362,31 @@ func allowLabel(allow bool) string {
 	return "BLOCK"
 }
 
-// gatekeeperSysPrompt asks for the reason BEFORE the answer. With the answer
-// first and thinking off, the model wrote YES or NO as its first token,
-// before reading any rule, and the reason after it only argued for a verdict
-// already given: a 9B wrote NO for a message it then agreed was addressed to
-// the agent by name. Written first, the reason is the reading the answer
-// rests on. Read by field name, so the order costs the parser nothing.
-const gatekeeperSysPrompt = `You are a message filter. Reply with ONLY a JSON object, no other text, with the reason FIRST and the answer LAST:
-{"reason": "1 no, 2 yes, 3 no (a bare yes or no for EVERY rule, in order), then the rule that fired and why in a few words, or, if none did, what was missing", "answer": "YES"}
+// gateVerdict is the gate's full answer, declared (core/decide): the reason
+// BEFORE the answer. With the answer first and thinking off, the model wrote
+// YES or NO as its first token, before reading any rule, and the reason
+// after it only argued for a verdict already given: a 9B wrote NO for a
+// message it then agreed was addressed to the agent by name. Written first,
+// the reason is the reading the answer rests on.
+//
+// Declared, its reply is read as every check's is: a reply that could not be
+// read is asked once more and is then no verdict (the message kept out),
+// where the gate used to guess from the last YES or NO in the text; a model
+// that will not write its reasoning gives the answer alone; and a run of
+// no verdicts reaches the bell.
+var gateVerdict = decide.Verdict{
+	Key:  gatekeeperRoute,
+	Role: gateRole,
+	Answers: []decide.Choice{
+		{Key: "YES", Means: "the message satisfies at least one rule"},
+		{Key: "NO", Means: "the message satisfies none of the rules"},
+	},
+	Weigh: []decide.Step{{Key: "reason", Ask: "1 no, 2 yes, 3 no (a bare yes or no for EVERY rule, in order), then the rule that fired and why in a few words, or, if none did, what was missing"}},
+}
+
+// gateRole is who the gate's full answer speaks as and how it reads the
+// rules; gateVerdict adds the reply's shape.
+const gateRole = `You are a message filter.
 
 Write the reason before deciding: check each rule against the message in turn, writing only yes or no for each, then give the answer that follows. Words go only on the rule that fired, or on what was missing when none did: a sentence for every rule is time the reply does not need.
 
@@ -583,22 +588,6 @@ var nameRuleWords = func() map[string]bool {
 	}
 	return m
 }()
-
-// rawGateAnswer reads a verdict from a reply that is not valid JSON: its
-// answer field when one can be found, else the last YES or NO in it, which is
-// where the answer stands when the reason comes first. Neither found is NO.
-func rawGateAnswer(reply string) bool {
-	if m := gateAnswerRE.FindStringSubmatch(reply); m != nil {
-		return strings.EqualFold(m[1], "YES")
-	}
-	words := gateWordRE.FindAllString(reply, -1)
-	return len(words) > 0 && strings.EqualFold(words[len(words)-1], "YES")
-}
-
-var (
-	gateAnswerRE = regexp.MustCompile(`(?i)"answer"\s*:\s*"?(YES|NO)\b`)
-	gateWordRE   = regexp.MustCompile(`(?i)\b(YES|NO)\b`)
-)
 
 // gateSystemOneSys frames the gate as a System One decision: the same rules
 // and the same cautions as gatekeeperSysPrompt, without its reply format,

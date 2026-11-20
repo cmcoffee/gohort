@@ -158,38 +158,42 @@ func TestAddressedByName(t *testing.T) {
 }
 
 // The gate asks for its reason before its answer, so the model reads the
-// rules before it commits; and a reply that will not parse is read for its
-// answer, not for any "yes" among the per-rule lines that now come first.
+// rules before it commits, and reads the answer in any case.
 func TestTheGateReasonsBeforeItAnswers(t *testing.T) {
-	r, a := strings.Index(gatekeeperSysPrompt, `"reason"`), strings.Index(gatekeeperSysPrompt, `"answer"`)
-	if r < 0 || a < 0 || r > a {
-		t.Errorf("the format asks for the answer before the reason:\n%s", gatekeeperSysPrompt)
+	sys := gateVerdict.System()
+	r, a := strings.Index(sys, `"reason"`), strings.Index(sys, `"answer"`)
+	if r < 0 || a < 0 || r > a || !strings.Contains(sys, "a bare yes or no for EVERY rule") {
+		t.Errorf("the format asks for the answer before the per-rule reason:\n%s", sys)
 	}
-	for reply, want := range map[string]bool{
-		`{"reason": "rule 1: yes, named. rule 2: no", "answer": "NO"`:        false,
-		`{"reason": "rule 1: no. rule 2: yes, a follow-up", "answer": "YES"`: true,
-		"rule 1: yes, it names you. So the answer is NO.":                    false,
-		"rule 1: no. rule 2: yes. Answer: YES":                               true,
-		"I cannot tell.":                                                     false,
-	} {
-		if got := rawGateAnswer(reply); got != want {
-			t.Errorf("%q read as allow=%v, want %v", reply, got, want)
-		}
+	llm := &FakeLLM{Turns: []FakeTurn{{Content: `{"reason": "1 no, 2 yes: named", "answer": "yes"}`}}}
+	if allow, reason, err := gateDecide(t.Context(), llm, gateQuestion{Rules: "1. Named.", AgentName: "Pip", Sender: "Sam", Message: "hi"}); err != nil || !allow || reason != "1 no, 2 yes: named" {
+		t.Errorf("a YES in any case: allow=%v reason=%q err=%v", allow, reason, err)
+	}
+	// Neither answer is no verdict, so a check test says the model did not
+	// answer rather than scoring it a block.
+	neither := &FakeLLM{Turns: []FakeTurn{{Content: `{"reason": "1 no", "answer": "maybe"}`, Repeat: true}}}
+	if _, _, err := gateDecide(t.Context(), neither, gateQuestion{Rules: "1. Named.", AgentName: "Pip", Sender: "Sam", Message: "hi"}); err == nil {
+		t.Error("a reply with neither answer was read as a verdict")
 	}
 }
 
-// A reply the gate cannot parse is decided by its answer: per-rule "yes"
-// lines in the reason do not let the message through.
-func TestAnUnreadableGateReplyGoesByItsAnswer(t *testing.T) {
-	df := newDispatchFixture(t, FakeTurn{Content: "rule 1: yes, it is about the weather. rule 2: no. Answer: NO", Repeat: true})
+// A reply the gate cannot read is asked once more and then keeps the
+// message out, as any check's error does: a YES somewhere in its text is not
+// read as the answer.
+func TestAnUnreadableGateReplyKeepsTheMessageOut(t *testing.T) {
+	df := newDispatchFixture(t, FakeTurn{Content: "rule 1: yes, it is about the weather. rule 2: no. Answer: YES", Repeat: true})
 	prevRoot := RootDB
 	RootDB = df.app.DB
 	t.Cleanup(func() { RootDB = prevRoot })
 	SaveChannel(RootDB, Channel{ID: "c1", Owner: "u", Service: "imessage", Address: "chat-1", AgentID: df.agent.ID,
 		Gatekeeper: "Answer only questions about the weather."})
 	in := ChannelInbound{Owner: "u", AgentID: df.agent.ID, ChatID: "chat-1", SenderName: "Alice", Handle: "+15550100", Text: "nice day"}
+	before := df.llm.Calls()
 	if df.app.channelGatekeeperAllow(t.Context(), in) {
-		t.Error("an unparsed reply that answers NO let the message through")
+		t.Error("a reply that could not be read let the message through on a YES somewhere in its text")
+	}
+	if df.llm.Calls()-before != 2 {
+		t.Errorf("an unreadable reply was asked %d times, want twice", df.llm.Calls()-before)
 	}
 }
 
