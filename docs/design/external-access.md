@@ -164,8 +164,16 @@ click would. Owner decisions:
    Revoke) or ticked under "Your apps" on the Account page's MCP key. Stored
    in the key's existing targets: no new field, no migration.
 3. No outside door to the app's agent: asking the app in words is left out.
-4. Actions that ask to confirm first stay off MCP (nobody is asked there);
-   MCP elicitation could carry the question later.
+4. Actions that ask to confirm first: at the app's own address only, MCP
+   elicitation carries the app's question (apps/mcpserver/app_ask.go). A
+   client that says it can ask, on a key whose owner set "Ask in the client"
+   (off by default; customapps stores it by key id, no key field), gets a
+   session, and only a session lists them. Each call asks before it runs;
+   accept runs it, anything else (decline, cancel, error, 5 minutes) does
+   not. "Don't ask again" keeps a yes for that key and action alone, not a
+   gohort grant; turning asking off or revoking forgets it. Sessions are in
+   memory: after a restart a client is one that cannot be asked. The general
+   /mcp/ address still leaves them out.
 5. Owner only at first. Then (same day) the people an app is shared with,
    behind the owner's switch: AppSpec.OfferMCPToShared, "Offer to people
    it's shared with", off by default, deployment-local (cleared on export

@@ -107,7 +107,7 @@ func (T *CustomApps) mcpSection(r *http.Request, spec AppSpec, user, owner, base
 		card.WriteString("<p><b>Offers</b> " + html.EscapeString(strings.Join(offered, ", ")) + "</p>")
 	}
 	if len(asks) > 0 {
-		card.WriteString("<p><b>Left out</b> " + html.EscapeString(strings.Join(asks, ", ")) + ": each asks to confirm before it runs, and nobody is asked over MCP. Use it from the page, or from one of your agents.</p>")
+		card.WriteString("<p><b>Asks first</b> " + html.EscapeString(strings.Join(asks, ", ")) + ": each asks before it runs. A client lists these only on a key set to ask in the client, and only if it can ask you mid-call (Claude Code and Claude Desktop can): each call then shows you the app's question and runs only on your yes. Other clients do not see them.</p>")
 	}
 	if user == owner {
 		sec.Subtitle = "An MCP client such as Claude Desktop can use this app on its own, with no page open. At this address it finds what the app offers, and a call does what your click would. The app's agent is not reached from there."
@@ -115,6 +115,26 @@ func (T *CustomApps) mcpSection(r *http.Request, spec AppSpec, user, owner, base
 		sec.Subtitle = owner + " offers this app to the people it is shared with, from an MCP client such as Claude Desktop. At this address your key finds what the app offers, and a call does what your click would, on your own records. The app's agent is not reached from there."
 	}
 	keys := base + "/_settings/mcp/keys"
+	fields := []ui.FormField{{Field: "client", Label: "Used by", Type: "text",
+		Help: "What will use the key, so you can tell keys apart later. The key reaches this app and nothing else."}}
+	cols := []ui.Col{
+		{Field: "name", Label: "Key", Flex: 2},
+		{Field: "reach", Label: "Reaches", Flex: 2, Mute: true},
+		{Field: "last_seen", Label: "Last used", Format: "reltime", Mute: true},
+		{Field: "expires", Label: "Expires", Format: "reltime", Mute: true},
+	}
+	var rowActs []ui.RowAction
+	if len(asks) > 0 {
+		fields = append(fields, ui.FormField{Field: "asks", Label: "Ask in the client", Type: "toggle", Help: askInClientHelp})
+		cols = append(cols, ui.Col{Field: "unasked", Label: "Runs unasked", Flex: 2, Mute: true})
+		rowActs = append(rowActs,
+			ui.RowAction{Type: "toggle", Field: "asks", Label: "Ask in the client", PostTo: keys + "/{id}/ask"},
+			ui.RowAction{Type: "button", Label: "Ask again", PostTo: keys + "/{id}/forget", OnlyIf: "unasked",
+				Confirm: "Ask again before every call of the actions this key runs unasked?"})
+	}
+	rowActs = append(rowActs, ui.RowAction{Type: "button", Label: "Revoke", Method: "DELETE",
+		PostTo: keys + "/{id}", Variant: "danger",
+		Confirm: "Revoke this key? A client using it stops working at once."})
 	children := []ui.Component{
 		ui.Card{HTML: card.String()},
 		ui.FormPanel{
@@ -123,22 +143,14 @@ func (T *CustomApps) mcpSection(r *http.Request, spec AppSpec, user, owner, base
 			SubmitLabel: "Make a key for this app",
 			OnSuccess:   appMCPKeyAction,
 			Invalidate:  []string{keys},
-			Fields: []ui.FormField{{Field: "client", Label: "Used by", Type: "text",
-				Help: "What will use the key, so you can tell keys apart later. The key reaches this app and nothing else."}},
+			Fields:      fields,
 		},
 		ui.Table{
-			Source:    keys,
-			RowKey:    "id",
-			EmptyText: "No key of yours names this app yet.",
-			Columns: []ui.Col{
-				{Field: "name", Label: "Key", Flex: 2},
-				{Field: "reach", Label: "Reaches", Flex: 2, Mute: true},
-				{Field: "last_seen", Label: "Last used", Format: "reltime", Mute: true},
-				{Field: "expires", Label: "Expires", Format: "reltime", Mute: true},
-			},
-			RowActions: []ui.RowAction{{Type: "button", Label: "Revoke", Method: "DELETE",
-				PostTo: base + "/_settings/mcp/keys/{id}", Variant: "danger",
-				Confirm: "Revoke this key? A client using it stops working at once."}},
+			Source:     keys,
+			RowKey:     "id",
+			EmptyText:  "No key of yours names this app yet.",
+			Columns:    cols,
+			RowActions: rowActs,
 		},
 	}
 	if user == owner && appSharedAnyWay(spec) {
@@ -165,14 +177,19 @@ func (T *CustomApps) mcpSection(r *http.Request, spec AppSpec, user, owner, base
 	return sec
 }
 
+// askInClientHelp is the help on the key's asking toggle.
+const askInClientHelp = "Lets a client that can ask you mid-call (Claude Code, Claude Desktop) use the actions that confirm first: before each call it shows you the app's question, and the action runs only on your yes. You can tick \"Don't ask again\" there, for this key and that action alone. Leave it off for a client that runs on its own, which could answer yes itself."
+
 // mcpRoutes are the section's endpoints.
 func (T *CustomApps) mcpRoutes() {
 	T.HandleFunc("/{slug}/_settings/mcp/mint", jsonapi.Methods{
-		"GET":  T.appGet(func(*appCall) (any, error) { return map[string]string{"client": ""}, nil }),
+		"GET":  T.appGet(func(*appCall) (any, error) { return map[string]any{"client": "", "asks": false}, nil }),
 		"POST": appPost(T, T.mintAppMCPKey),
 	}.Serve)
 	T.HandleFunc("/{slug}/_settings/mcp/keys", jsonapi.Methods{"GET": T.appGet(T.appMCPKeys)}.Serve)
 	T.HandleFunc("/{slug}/_settings/mcp/keys/{id}", appDelete(T, T.revokeAppMCPKey))
+	T.HandleFunc("/{slug}/_settings/mcp/keys/{id}/ask", appPost(T, T.setAppMCPKeyAsks))
+	T.HandleFunc("/{slug}/_settings/mcp/keys/{id}/forget", appPost(T, T.forgetAppMCPKeyYeses))
 	T.HandleFunc("/{slug}/_settings/mcp/offer", jsonapi.Methods{
 		"GET":  T.appGet(T.appMCPOffer),
 		"POST": appPost(T, T.saveAppMCPOffer),
@@ -201,6 +218,7 @@ func (T *CustomApps) mcpReady(a *appCall) (OfferingApp, error) {
 // server.
 func (T *CustomApps) mintAppMCPKey(a *appCall, in struct {
 	Client string `json:"client"`
+	Asks   bool   `json:"asks"`
 }) (any, error) {
 	app, err := T.mcpReady(a)
 	if err != nil {
@@ -214,7 +232,10 @@ func (T *CustomApps) mintAppMCPKey(a *appCall, in struct {
 		Features: KeyKindDoors(KeyKindMCP),
 		Targets:  []string{app.Target()},
 	})
-	Log("[customapps] %s made MCP key %q for app %s/%s", a.User, name, a.owner, a.spec.Slug)
+	if in.Asks {
+		SetMCPKeyAsks(tok.ID, true)
+	}
+	Log("[customapps] %s made MCP key %q for app %s/%s (asks in the client: %v)", a.User, name, a.owner, a.spec.Slug, in.Asks)
 	return map[string]any{
 		"ok":      true,
 		"key":     tok.Token,
@@ -255,6 +276,7 @@ func (T *CustomApps) appMCPKeys(a *appCall) (any, error) {
 		rows = append(rows, map[string]any{
 			"id": tok.ID, "name": tok.Name, "reach": reach,
 			"last_seen": tok.LastSeen, "expires": tok.Expires,
+			"asks": MCPKeyAsks(tok.ID), "unasked": strings.Join(unaskedNames(tok.ID), ", "),
 		})
 	}
 	return rows, nil
@@ -268,11 +290,49 @@ func (T *CustomApps) revokeAppMCPKey(a *appCall, _ struct{}) (any, error) {
 			if !RevokeAccountToken(a.User, id) {
 				return nil, jsonapi.NotFound("no such key")
 			}
+			SetMCPKeyAsks(id, false)
 			Log("[customapps] %s revoked MCP key %q of app %s/%s", a.User, tok.Name, a.owner, a.spec.Slug)
 			return map[string]any{"ok": true, "message": "Key revoked."}, nil
 		}
 	}
 	return nil, jsonapi.NotFound("no key of yours for this app by that id")
+}
+
+// callerKey is the caller's key by the path's id when it names this app.
+func callerKey(a *appCall) (AccountToken, error) {
+	id, target := a.R.PathValue("id"), callerTarget(a)
+	for _, tok := range ListAccountTokens(a.User) {
+		if tok.ID == id && namesTarget(tok, target) {
+			return tok, nil
+		}
+	}
+	return AccountToken{}, jsonapi.NotFound("no key of yours for this app by that id")
+}
+
+// setAppMCPKeyAsks turns asking in the client on or off for one of the
+// caller's keys that names this app. Off forgets the yeses it kept.
+func (T *CustomApps) setAppMCPKeyAsks(a *appCall, in struct {
+	Asks bool `json:"asks"`
+}) (any, error) {
+	tok, err := callerKey(a)
+	if err != nil {
+		return nil, err
+	}
+	SetMCPKeyAsks(tok.ID, in.Asks)
+	Log("[customapps] %s set MCP key %q of app %s/%s to ask in the client: %v", a.User, tok.Name, a.owner, a.spec.Slug, in.Asks)
+	return map[string]any{"ok": true, "asks": in.Asks}, nil
+}
+
+// forgetAppMCPKeyYeses makes one of the caller's keys ask again before every
+// action it ran unasked.
+func (T *CustomApps) forgetAppMCPKeyYeses(a *appCall, _ struct{}) (any, error) {
+	tok, err := callerKey(a)
+	if err != nil {
+		return nil, err
+	}
+	forgetMCPYeses(tok.ID)
+	Log("[customapps] %s made MCP key %q of app %s/%s ask again", a.User, tok.Name, a.owner, a.spec.Slug)
+	return map[string]any{"ok": true, "message": "It asks again before every call."}, nil
 }
 
 // appMCPOffer is whether the owner offers the app over MCP to the people it

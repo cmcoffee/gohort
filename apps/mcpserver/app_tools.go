@@ -5,9 +5,10 @@ package mcpserver
 // an MCP client can use the app with no page open. A call is the owner using
 // the app, as a click would be.
 //
-// An action that asks to confirm before it runs is not offered: nobody here
-// is asked over MCP, and running it without asking would skip the question
-// the app put on it. The key's own scope narrows these like any tool.
+// An action that asks to confirm before it runs is not offered, since running
+// it without asking would skip the question the app put on it: except at the
+// app's own address to a client that can be asked (app_ask.go). The key's own
+// scope narrows these like any tool.
 //
 // A key may be limited to apps (customapps.AppToolsTarget targets): it then
 // reaches those apps' tools and no other app's, and a key that names apps and
@@ -93,15 +94,25 @@ func reachedApps(tok *AccountToken, only string) []customapps.OfferingApp {
 // appToolDefs are the app tools tok reaches, as tools/list entries; only,
 // when set, is the one app asked for.
 func appToolDefs(tok *AccountToken, only string) []map[string]any {
+	return appToolDefsAsking(tok, only, false)
+}
+
+// appToolDefsAsking is appToolDefs, with the actions that confirm first
+// listed too when asking: for a client that can be asked (app_ask.go).
+func appToolDefsAsking(tok *AccountToken, only string, asking bool) []map[string]any {
 	var out []map[string]any
 	for _, a := range reachedApps(tok, only) {
 		for _, d := range a.Tools {
+			desc := appToolDescription(d)
 			if d.Confirmation != nil {
-				continue
+				if !asking || !asksFirst(d) {
+					continue
+				}
+				desc = strings.TrimSpace(desc) + " Asks you to confirm before it runs."
 			}
 			out = append(out, map[string]any{
 				"name":        d.Tool.Name,
-				"description": appToolDescription(d),
+				"description": desc,
 				"inputSchema": appToolSchema(d),
 			})
 		}
@@ -119,7 +130,7 @@ func callAppTool(ctx context.Context, tok *AccountToken, only, name string, args
 				continue
 			}
 			if d.Confirmation != nil {
-				return "", true, fmt.Errorf("%q asks to confirm before it runs (%q), and nobody is asked over MCP: use it from the app's page or from one of your agents in gohort", name, d.Confirmation.Prompt)
+				return "", true, fmt.Errorf("%q asks to confirm before it runs (%q), and nobody is asked at this address: a client that can ask you mid-call can use it at the app's own address (%s) on a key set to ask in the client; or use it from the app's page or from one of your agents in gohort", name, d.Confirmation.Prompt, appServerPath(a.Slug))
 			}
 			if args == nil {
 				args = map[string]any{}

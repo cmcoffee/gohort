@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/cmcoffee/gohort/apps/customapps"
 	. "github.com/cmcoffee/gohort/core"
@@ -57,6 +58,13 @@ func (T *MCPServer) handleApp(w http.ResponseWriter, r *http.Request) {
 		}
 	case http.MethodPost:
 		T.handleAppRPC(w, r, slug)
+	case http.MethodDelete:
+		// A client done with its session (app_ask.go) ends it.
+		if tok, _, refusal := T.keyApp(r, slug, "end session"); refusal == "" && closeAskSession(r, tok.ID, slug) {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		http.Error(w, "no such session", http.StatusNotFound)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -97,10 +105,14 @@ func appInstructions(a customapps.OfferingApp) string {
 
 // handleAppRPC answers the JSON-RPC of one app's server.
 func (T *MCPServer) handleAppRPC(w http.ResponseWriter, r *http.Request, slug string) {
-	var req rpcRequest
+	var req appMessage
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		Log("[mcpserver] app %q: bad request: %v", slug, err)
 		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if req.isAnswer() {
+		T.handleAnswer(w, r, slug, req)
 		return
 	}
 	if len(req.ID) == 0 {
@@ -125,16 +137,24 @@ func (T *MCPServer) handleAppRPC(w http.ResponseWriter, r *http.Request, slug st
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "gohort app", "version": AppVersion},
 		}
-		if _, a, refusal := T.keyApp(r, slug, "initialize"); refusal == "" {
+		asks := false
+		if tok, a, refusal := T.keyApp(r, slug, "initialize"); refusal == "" {
 			result["serverInfo"] = map[string]any{"name": a.Name, "version": AppVersion}
 			result["instructions"] = appInstructions(a)
+			// A client that can be asked, on a key set to ask in it,
+			// gets a session: only a session lists the actions that
+			// confirm first (app_ask.go).
+			if asks = clientCanAsk(req.Params) && keyAsks(tok.ID); asks {
+				w.Header().Set(sessionHeader, openAskSession(tok.ID, slug, time.Now()))
+			}
 		}
 		resp.Result = result
-		Log("[mcpserver] app %q: initialize (protocol=%s)", slug, pv)
+		Log("[mcpserver] app %q: initialize (protocol=%s, asks in the client=%v)", slug, pv, asks)
 	case "tools/list":
 		defs := []map[string]any{}
 		if tok, _, refusal := T.keyApp(r, slug, "tools/list"); refusal == "" {
-			defs = append(defs, allowedToolDefs(appToolDefs(tok, slug), tok)...)
+			asking := askSessionOf(r, tok.ID, slug) != ""
+			defs = append(defs, allowedToolDefs(appToolDefsAsking(tok, slug, asking), tok)...)
 		}
 		resp.Result = map[string]any{"tools": defs}
 		Log("[mcpserver] app %q: tools/list -> %d tools", slug, len(defs))
@@ -155,6 +175,18 @@ func (T *MCPServer) handleAppRPC(w http.ResponseWriter, r *http.Request, slug st
 		if !tok.AllowsTool(toolScope(p.Name)) {
 			resp.Result = toolText(fmt.Sprintf("error: this key may not call %q: enable it on the key under Account > API keys > Access", p.Name), true)
 			break
+		}
+		if app, d, ok := findAppToolDef(tok, slug, p.Name); ok && asksFirst(d) {
+			session := askSessionOf(r, tok.ID, slug)
+			if session == "" {
+				resp.Result = cannotAsk(p.Name, d.Confirmation.Prompt)
+				break
+			}
+			if p.Arguments == nil {
+				p.Arguments = map[string]any{}
+			}
+			(&askedCall{w: w, r: r, id: req.ID, tok: tok, app: app, def: d, args: p.Arguments, session: session}).run()
+			return
 		}
 		text, handled, err := callAppTool(r.Context(), tok, slug, p.Name, p.Arguments)
 		switch {

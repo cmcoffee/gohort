@@ -40,8 +40,9 @@ func TestAnAppsOfferingIsItsNameAndTools(t *testing.T) {
 	}
 }
 
-// Settings has the app's MCP address with what it offers and what it leaves
-// out, for its owner alone; an app that offers nothing says so.
+// Settings has the app's MCP address with what it offers and what asks
+// first, with asking in the client offered on the keys, for its owner alone;
+// an app that offers nothing says so.
 func TestSettingsSaysWhereAnMCPClientFindsTheApp(t *testing.T) {
 	T, spec := mcpApp(t)
 	r := httptest.NewRequest("GET", "https://box.example/apps/books/_settings", nil)
@@ -50,14 +51,14 @@ func TestSettingsSaysWhereAnMCPClientFindsTheApp(t *testing.T) {
 		t.Fatal("no section for the owner")
 	}
 	body, _ := json.Marshal(sec)
-	for _, want := range []string{"https://box.example/mcp/app/books/", "books_add", "Left out", "books_wipe", "Make a key for this app", appMCPKeyAction, "_settings/mcp/keys"} {
+	for _, want := range []string{"https://box.example/mcp/app/books/", "books_add", "Asks first", "books_wipe", "Make a key for this app", appMCPKeyAction, "_settings/mcp/keys", "Ask in the client", "/keys/{id}/ask", "/keys/{id}/forget", "Runs unasked"} {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("the section does not say %q: %s", want, body)
 		}
 	}
 	card := sec.Body.(ui.Stack).Children[0].(ui.Card).HTML
-	if !strings.Contains(card, "<b>Offers</b> books_add<") || !strings.Contains(card, "<b>Left out</b> books_wipe:") {
-		t.Errorf("the card says what is offered and what is left out: %s", card)
+	if !strings.Contains(card, "<b>Offers</b> books_add<") || !strings.Contains(card, "<b>Asks first</b> books_wipe:") {
+		t.Errorf("the card says what is offered and what asks first: %s", card)
 	}
 	if T.mcpSection(r, spec, "someone", "u", "/apps/books") != nil {
 		t.Error("someone other than the owner sees the section")
@@ -320,4 +321,79 @@ func MCPTargetsFor(T *CustomApps, user string) []ExternalTarget {
 	hostApp = T
 	defer func() { hostApp = prev }()
 	return MCPTargets(user)
+}
+
+// A key asks in the client only when its owner says so, at minting or on its
+// row; a yes it keeps is for that key and action alone, and the row can make
+// it ask again. Off, or revoked, forgets its yeses. Nobody turns on asking
+// for a key that is not theirs or does not name the app.
+func TestAKeyAsksInTheClientWhenItsOwnerSaysSo(t *testing.T) {
+	T, spec := mcpApp(t)
+	mint := func(body string) AccountToken {
+		t.Helper()
+		w := appAs(t, T, spec, "u", httptest.NewRequest("POST", "/apps/books/_settings/mcp/mint", strings.NewReader(body)))
+		var made struct{ Name string }
+		json.Unmarshal(w.Body.Bytes(), &made)
+		for _, k := range ListAccountTokens("u") {
+			if k.Name == made.Name {
+				return k
+			}
+		}
+		t.Fatalf("no key made: %d %s", w.Code, w.Body.String())
+		return AccountToken{}
+	}
+	plain := mint(`{"client":"script"}`)
+	asking := mint(`{"client":"Claude Code","asks":true}`)
+	if MCPKeyAsks(plain.ID) || !MCPKeyAsks(asking.ID) {
+		t.Fatalf("asking at minting: plain %v, asking %v", MCPKeyAsks(plain.ID), MCPKeyAsks(asking.ID))
+	}
+
+	scope := "app-action:u/books/wipe"
+	RememberMCPYes(plain.ID, scope)
+	if MCPRunsUnasked(plain.ID, scope) {
+		t.Error("a key that does not ask kept a yes")
+	}
+	RememberMCPYes(asking.ID, scope)
+	RememberMCPYes(asking.ID, scope)
+	if !MCPRunsUnasked(asking.ID, scope) || MCPRunsUnasked(asking.ID, "app-action:u/books/add") || MCPRunsUnasked(plain.ID, scope) {
+		t.Error("a yes is for its key and its action alone")
+	}
+	if got := loadMCPKeyAsk(asking.ID).Unasked; len(got) != 1 {
+		t.Errorf("a yes kept twice is kept once: %v", got)
+	}
+	w := appAs(t, T, spec, "u", httptest.NewRequest("GET", "/apps/books/_settings/mcp/keys", nil))
+	var rows []map[string]any
+	json.Unmarshal(w.Body.Bytes(), &rows)
+	for _, row := range rows {
+		want := row["id"] == asking.ID
+		if row["asks"] != want || (row["unasked"] == "wipe") != want {
+			t.Errorf("the key's row says how it asks: %v", row)
+		}
+	}
+
+	path := "/apps/books/_settings/mcp/keys/" + asking.ID
+	if w := appAs(t, T, spec, "u", httptest.NewRequest("POST", path+"/forget", strings.NewReader(`{}`))); w.Code != 200 || MCPRunsUnasked(asking.ID, scope) || !MCPKeyAsks(asking.ID) {
+		t.Errorf("ask again: %d, unasked %v, asks %v", w.Code, MCPRunsUnasked(asking.ID, scope), MCPKeyAsks(asking.ID))
+	}
+	RememberMCPYes(asking.ID, scope)
+	if w := appAs(t, T, spec, "u", httptest.NewRequest("POST", path+"/ask", strings.NewReader(`{"asks":false}`))); w.Code != 200 || MCPKeyAsks(asking.ID) {
+		t.Fatalf("turned off: %d %s", w.Code, w.Body.String())
+	}
+	appAs(t, T, spec, "u", httptest.NewRequest("POST", path+"/ask", strings.NewReader(`{"asks":true}`)))
+	if !MCPKeyAsks(asking.ID) || MCPRunsUnasked(asking.ID, scope) {
+		t.Error("turning asking off did not forget the key's yeses")
+	}
+
+	other := MintAccountTokenScoped("u", "pantry key", &TokenScope{Features: []string{"mcp"}, Targets: []string{AppToolsTarget + "pantry"}})
+	if w := appAs(t, T, spec, "u", httptest.NewRequest("POST", "/apps/books/_settings/mcp/keys/"+other.ID+"/ask", strings.NewReader(`{"asks":true}`))); w.Code != 404 || MCPKeyAsks(other.ID) {
+		t.Errorf("asking turned on for a key that names another app: %d", w.Code)
+	}
+	if w := appAs(t, T, spec, "someone", httptest.NewRequest("POST", "/apps/books/_settings/mcp/keys/"+plain.ID+"/ask", strings.NewReader(`{"asks":true}`))); w.Code == 200 || MCPKeyAsks(plain.ID) {
+		t.Errorf("someone else turned on asking for the owner's key: %d", w.Code)
+	}
+	RememberMCPYes(asking.ID, scope)
+	appAs(t, T, spec, "u", httptest.NewRequest("DELETE", path, nil))
+	if MCPKeyAsks(asking.ID) || MCPRunsUnasked(asking.ID, scope) {
+		t.Error("a revoked key's asking was kept")
+	}
 }
