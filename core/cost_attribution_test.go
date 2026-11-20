@@ -2,10 +2,16 @@ package core
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/cmcoffee/gohort/core/costledger"
+	"github.com/cmcoffee/gohort/core/notices"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // The ledger priced credential-dispatched calls and could not say WHO. A peer
@@ -117,5 +123,97 @@ func TestEveryPeerHandlerCountsTheCall(t *testing.T) {
 	}
 	if counted == 0 {
 		t.Fatal("found no peer handlers — the sweep is no longer looking where they live")
+	}
+}
+
+// withSpendLedger wires a fresh ledger for per-person spending.
+func withSpendLedger(t *testing.T) {
+	t.Helper()
+	costledger.SetCostLedgerDB(&DBase{Store: kvlite.MemStore()})
+	t.Cleanup(func() { costledger.SetCostLedgerDB(nil) })
+}
+
+// A priced model call and a paid external call are charged to the person the
+// work was done for, by its agent and key; an unpriced model (a local one)
+// charges nothing.
+func TestWhatWorkCostsIsChargedToItsPerson(t *testing.T) {
+	withSpendLedger(t)
+	withRates(t)
+	ctx := costledger.WithSpender(context.Background(), costledger.Spender{Person: "alice", Agent: "writer", Key: "k1"})
+	// A dollar per 1k tokens on the lead: 400 in + 100 out is $0.50.
+	RecordUsage(ctx, LEAD, &Response{InputTokens: 400, OutputTokens: 100})
+	RecordExternalCostFor(ctx, "cred:maps", "maps", 0.25)
+	s := costledger.Spent(costledger.ThisMonth(), "alice")
+	if s.Total < 0.749 || s.Total > 0.751 || s.Sources["cred:maps"] != 0.25 || s.Agents["writer"] < 0.749 || s.Keys["k1"] < 0.749 {
+		t.Errorf("alice's month: %+v", s)
+	}
+	if lead := s.Sources["model:lead"]; lead < 0.499 || lead > 0.501 {
+		t.Errorf("the lead call: %v", lead)
+	}
+	RecordUsage(ctx, WORKER, &Response{InputTokens: 1000, OutputTokens: 1000})
+	if w := costledger.Spent(costledger.ThisMonth(), "alice").Sources["model:worker"]; w < 0.0019 || w > 0.0021 {
+		t.Errorf("the worker priced at its own rate: %v", w)
+	}
+
+	prev := GetCostRates()
+	SetCostRates(CostRates{})
+	t.Cleanup(func() { SetCostRates(prev) })
+	before := costledger.Spent(costledger.ThisMonth(), "alice").Total
+	RecordUsage(ctx, LEAD, &Response{InputTokens: 9_000_000})
+	if after := costledger.Spent(costledger.ThisMonth(), "alice").Total; after != before {
+		t.Errorf("an unpriced deployment charged %v", after-before)
+	}
+}
+
+// A request is paid for by the signed-in person, or by the owner of the API
+// key that asked, with that key.
+func TestARequestIsPaidForByItsPersonOrItsKeysOwner(t *testing.T) {
+	withUsers(t)
+	AuthSetUser(AuthDB(), "dana", "pw", false)
+	r := asUser(t, "/x", "dana")
+	if got := costledger.SpenderFrom(withRequestSpender(r)); got.Person != "dana" || got.Key != "" {
+		t.Errorf("a signed-in request: %+v", got)
+	}
+	prevRoot := RootDB
+	RootDB = AuthDB()
+	t.Cleanup(func() { RootDB = prevRoot })
+	tok := MintAccountTokenScoped("dana", "laptop", &TokenScope{Features: []string{"mcp"}})
+	k := httptest.NewRequest("POST", "/mcp/", nil)
+	k.Header.Set("X-API-Key", tok.Token)
+	if got := costledger.SpenderFrom(withRequestSpender(k)); got.Person != "dana" || got.Key != tok.ID {
+		t.Errorf("a key's request: %+v", got)
+	}
+	if got := costledger.SpenderFrom(withRequestSpender(httptest.NewRequest("GET", "/", nil))); got != (costledger.Spender{}) {
+		t.Errorf("nobody's request: %+v", got)
+	}
+}
+
+// Crossing 80% of the limit puts a notice on the person's bell.
+func TestEightyPercentIsOnTheBell(t *testing.T) {
+	withRootDB(t)
+	costledger.OnWarn("alice", 8, 10)
+	got := notices.List(RootDB, "alice")
+	if len(got) != 1 || !strings.Contains(got[0].Title, "80%") || !strings.Contains(got[0].Body, "$8.00 of your $10.00") {
+		t.Errorf("alice's bell: %+v", got)
+	}
+}
+
+// Every app's requests carry who pays, from the middleware every app is
+// mounted behind.
+func TestEveryAppsRequestsCarryWhoPays(t *testing.T) {
+	withUsers(t)
+	AuthSetUser(AuthDB(), "dana", "pw", false)
+	var got costledger.Spender
+	h := UsageReportMiddleware("test")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = costledger.SpenderFrom(r.Context())
+	}))
+	h.ServeHTTP(httptest.NewRecorder(), asUser(t, "/x/api/thing", "dana"))
+	if got.Person != "dana" {
+		t.Errorf("a request's payer: %+v", got)
+	}
+	got = costledger.Spender{}
+	h.ServeHTTP(httptest.NewRecorder(), asUser(t, "/x/api/events", "dana"))
+	if got.Person != "dana" {
+		t.Errorf("a streaming request's payer: %+v", got)
 	}
 }

@@ -53,6 +53,7 @@ func (a *AdminApp) costSections() []ui.Section {
 			Detail:   "One row per source: each job a connector does, and each API credential. Its price is set in the box on its row, per call or per the unit it is priced by: blank uses its template's, shown greyed. It is kept with the source (a connector's Settings show the same Price), and what the source spends folds into the chart total above. A provider that reports its price in its reply is read first. Other rows (a peer's share, a search engine gohort runs itself) are priced where they are made.",
 			Body:     costBySourceTable(),
 		},
+		spendingSection(),
 		{
 			Title:    "Prices",
 			Subtitle: "Per-million-token rates for the LLMs, which feed the dollar estimate above.",

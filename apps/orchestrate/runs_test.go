@@ -15,6 +15,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/costledger"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -398,5 +399,38 @@ func TestARunsAgentLoopsAddNoRowOfTheirOwn(t *testing.T) {
 	}
 	if rows := loopRowsDuring(t, withParentRun(context.Background(), run.ID)); len(rows) != 0 {
 		t.Errorf("a loop under work nested in a run added a row: %v", rows)
+	}
+}
+
+// A run's work is paid for by its person, by its agent, unless a person
+// already pays for the work it is part of; a chat turn, which leaves its
+// request behind, keeps who the request was for (a key's owner, with the key).
+func TestARunsWorkIsPaidForByItsPerson(t *testing.T) {
+	rr := NewRunRegistry()
+	ctx, run := rr.CreateCancellable(context.Background(), "alice", "writer", "")
+	defer run.Complete(RunStatusCompleted)
+	if got := costledger.SpenderFrom(ctx); got.Person != "alice" || got.Agent != "writer" {
+		t.Errorf("a run's payer: %+v", got)
+	}
+	keyed := costledger.WithSpender(context.Background(), costledger.Spender{Person: "bob", Key: "k1"})
+	ctx, run2 := rr.CreateCancellable(keyed, "alice", "helper", "")
+	defer run2.Complete(RunStatusCompleted)
+	if got := costledger.SpenderFrom(ctx); got.Person != "bob" || got.Key != "k1" || got.Agent != "helper" {
+		t.Errorf("a run inside bob's keyed work: %+v", got)
+	}
+
+	r := httptest.NewRequest("POST", "/api/send", nil)
+	r = r.WithContext(costledger.WithSpender(r.Context(), costledger.Spender{Person: "bob", Key: "k1"}))
+	sr := &sendRun{r: r, user: "bob", agent: AgentRecord{ID: "writer"}}
+	sr.detachContext()
+	defer sr.cancel()
+	if got := costledger.SpenderFrom(sr.ctx); got.Person != "bob" || got.Key != "k1" || got.Agent != "writer" {
+		t.Errorf("a detached chat turn: %+v", got)
+	}
+	sr2 := &sendRun{r: httptest.NewRequest("POST", "/api/send", nil), user: "carol", agent: AgentRecord{ID: "a2"}}
+	sr2.detachContext()
+	defer sr2.cancel()
+	if got := costledger.SpenderFrom(sr2.ctx); got.Person != "carol" || got.Agent != "a2" {
+		t.Errorf("a chat turn with no payer on its request: %+v", got)
 	}
 }

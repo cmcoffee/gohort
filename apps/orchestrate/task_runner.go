@@ -24,6 +24,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/bgrun"
+	"github.com/cmcoffee/gohort/core/costledger"
 	"github.com/cmcoffee/gohort/core/filenotes"
 	"github.com/cmcoffee/gohort/core/prompts"
 )
@@ -114,6 +115,7 @@ type backgroundTask struct {
 // before it finishes, and its context with it.
 func (T *OrchestrateApp) startTask(bt backgroundTask, fn func(ctx context.Context) (TaskProduct, error)) TaskRun {
 	ctx, cancel := context.WithCancel(withParentRun(context.Background(), bt.parentID))
+	ctx = costledger.WithSpender(ctx, costledger.Spender{Person: bt.origin.User, Agent: bt.origin.AgentID})
 	ctx = WithRenderLane(ctx, bt.lane)
 	run := T.runsRegistry().Create(bt.origin.User, bt.origin.AgentID, "", cancel).
 		// The agent's NAME, not just its id: the live provider falls back to

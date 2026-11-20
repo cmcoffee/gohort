@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/costledger"
 )
 
 // tierStubLLM records which tier served each round and replies with a scripted
@@ -992,5 +994,44 @@ func TestARoundOfSideNotesEndsOnItsProse(t *testing.T) {
 			InjectionDrain: func() []Message { out := pending; pending = nil; return out }})
 	if fake.Calls() != 2 || !strings.Contains(fake.Prompt(1), "one more thing") {
 		t.Errorf("a note that arrived meanwhile: %d call(s)", fake.Calls())
+	}
+}
+
+// A person past their monthly limit gets no turn: the model is not called and
+// the reply says why. Within it, a turn that crosses it finishes on the
+// worker, as with an agent's daily allowance.
+func TestTheMonthlyLimitRefusesATurnAndFinishesOneOnTheWorker(t *testing.T) {
+	withRootDB(t)
+	withRates(t)
+	withSpendLedger(t)
+	costledger.SetDefaultCap(10)
+	ctx := costledger.WithSpender(context.Background(), costledger.Spender{Person: "alice"})
+	costledger.Charge(ctx, "model:lead", 10)
+	calls := 0
+	app, _ := withTierStubs(t, "test.monthly", func(n int) []ToolCall { calls++; return nil })
+	var diags []string
+	resp, _, err := app.RunAgentLoop(ctx, []Message{{Role: "user", Content: "hi"}}, AgentLoopConfig{
+		MaxRounds: 3, RouteKey: "test.monthly", OnDiag: func(kind, _ string) { diags = append(diags, kind) },
+	})
+	if err != nil || calls != 0 || !strings.Contains(resp.Content, "monthly spending limit") || !strings.Contains(strings.Join(diags, ","), "spend-cap") {
+		t.Fatalf("over the limit: calls %d, %q, %v, %v", calls, resp.Content, diags, err)
+	}
+
+	// Bob has $5; a lead round of the stub's 100k tokens costs far more.
+	bob := costledger.WithSpender(context.Background(), costledger.Spender{Person: "bob"})
+	costledger.SetPersonOverride("bob", 5)
+	app, log := withTierStubs(t, "test.monthly2", func(n int) []ToolCall {
+		if n >= 4 {
+			return nil
+		}
+		return []ToolCall{{ID: fmt.Sprint(n), Name: "probe", Args: map[string]any{"when": fmt.Sprintf("day-%d", n)}}}
+	})
+	if _, _, err := app.RunAgentLoop(bob, []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		Tools: []AgentToolDef{alwaysFailTool("probe", "upstream refused the connection outright")}, MaxRounds: 6, RouteKey: "test.monthly2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(*log) < 2 || (*log)[0] != "lead" || (*log)[len(*log)-1] != "worker" {
+		t.Errorf("the turn crossing the limit finishes on the worker: %v", *log)
 	}
 }

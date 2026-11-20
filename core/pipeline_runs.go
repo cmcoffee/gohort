@@ -31,6 +31,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/costledger"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
@@ -755,8 +756,9 @@ func (T *AppCore) startRun(s RunSurface, run PipelineRun, input string, vars map
 		// would otherwise hold its slot until the process ends.
 		ctx, cancel := context.WithTimeout(rctx, timeout)
 		defer cancel()
-		// Listed (liveRuns), so its agent loops add no row of their own.
-		ctx = ListedWork(ctx)
+		// Listed (liveRuns), so its agent loops add no row of their own; and
+		// what it costs is the person's who started it.
+		ctx = costledger.WithSpender(ListedWork(ctx), costledger.Spender{Person: s.User})
 		// One mutex over the run record: fanout branches emit from parallel
 		// goroutines, so the stored transcript would otherwise race.
 		var mu sync.Mutex

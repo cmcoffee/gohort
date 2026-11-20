@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/costledger"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -403,5 +404,19 @@ func TestALoopsStopRouteIsMounted(t *testing.T) {
 	}
 	if !strings.Contains(string(src), "mux.HandleFunc(loopStopPath, handleLoopStop)") {
 		t.Error("dashboard.go does not mount handleLoopStop at loopStopPath")
+	}
+}
+
+// A pipeline run's work is paid for by the person who started it.
+func TestAPipelineRunIsPaidForByItsPerson(t *testing.T) {
+	var payer costledger.Spender
+	s := runSurface(t, func(ctx context.Context, input string, _ map[string]string, _ PipelineSink) (string, error) {
+		payer = costledger.SpenderFrom(ctx)
+		return "done", nil
+	})
+	id, _ := startRun(t, s)
+	waitFinished(t, s, id)
+	if payer.Person != s.User {
+		t.Errorf("a pipeline run is paid for by %+v, want %q", payer, s.User)
 	}
 }

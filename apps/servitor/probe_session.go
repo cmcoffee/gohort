@@ -14,6 +14,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/bundle"
+	"github.com/cmcoffee/gohort/core/costledger"
 	"github.com/cmcoffee/gohort/core/textutil"
 	"golang.org/x/crypto/ssh"
 )
@@ -3156,6 +3157,7 @@ func (pr *probeRun) chatAfter() probeAction {
 // running work as its own, for the session's user.
 func (pr *probeRun) consolidationContext() (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx = costledger.WithSpender(ctx, costledger.Spender{Person: pr.userID})
 	return ListLoopAs(ctx, pr.userID, "Servitor: filing what it found on "+pr.appliance.Name), cancel
 }
 

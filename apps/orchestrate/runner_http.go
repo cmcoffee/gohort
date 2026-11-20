@@ -13,6 +13,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/gohort/core/costledger"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/outbound"
 	"github.com/cmcoffee/gohort/core/textutil"
@@ -533,6 +534,10 @@ func (sr *sendRun) detachContext() {
 	// which is what silently took the per-turn "Worker/Lead tokens,
 	// Searches, Est. cost" block out of the log in v0.6.159.
 	sr.ctx, sr.cancel = context.WithCancel(CarryRequestUsage(context.Background(), sr.r.Context()))
+	// Who pays: whoever the request was for (a key's owner, with the key),
+	// else the person whose turn it is; by this agent.
+	sr.ctx = costledger.WithSpender(sr.ctx, costledger.SpenderFrom(sr.r.Context()))
+	sr.ctx = costledger.WithSpender(sr.ctx, costledger.Spender{Person: sr.user, Agent: sr.agent.ID})
 	// So too what the app named as private to this work (WithPrivateTerms),
 	// which every web search the turn makes is checked against.
 	sr.ctx = outbound.CarryPrivateTerms(sr.ctx, sr.r.Context())

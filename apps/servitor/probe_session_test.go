@@ -10,6 +10,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/costledger"
 )
 
 // A map's investigator runs a round's probes side by side, never more than
@@ -248,6 +249,9 @@ func TestASessionsLoopsAddNoRowOfTheirOwn(t *testing.T) {
 	if owner, ok := probeSessions.OwnerOf("loop-row-test"); !ok || owner != "alice" {
 		t.Fatalf("the session is listed for its user: (%q, %v)", owner, ok)
 	}
+	if got := costledger.SpenderFrom(ctx); got.Person != "alice" {
+		t.Errorf("the session's work is paid for by %+v", got)
+	}
 	if rows := loopRowsDuring(t, ctx); len(rows) != 0 {
 		t.Errorf("a session's loop added a row: %v", rows)
 	}
@@ -259,6 +263,9 @@ func TestFilingFindingsIsListedAsItsOwn(t *testing.T) {
 	pr := &probeRun{userID: "alice", appliance: Appliance{Name: "box"}}
 	ctx, cancel := pr.consolidationContext()
 	defer cancel()
+	if got := costledger.SpenderFrom(ctx); got.Person != "alice" {
+		t.Errorf("filing is paid for by %+v", got)
+	}
 	if dl, ok := ctx.Deadline(); !ok || time.Until(dl) > 120*time.Second || time.Until(dl) < 100*time.Second {
 		t.Errorf("filing runs for up to 120s: %v %v", dl, ok)
 	}

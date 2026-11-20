@@ -266,6 +266,8 @@ func RecordUsage(ctx context.Context, tier LLMTier, resp *Response) {
 	resp.usageCounted = true
 	// What the reply said about itself, for a check test watching (core/llmcalls).
 	noteLLMCall(ctx, tier, resp)
+	// To the person it ran for, at the deployment's rates (cost_attribution.go).
+	chargeModelUse(ctx, tier, resp)
 	if tier == LEAD {
 		ProcessUsage().AddLeadTokens(resp.InputTokens, resp.OutputTokens, resp.CacheReadTokens, resp.CacheWriteTokens)
 		if t := RequestUsage(ctx); t != nil {

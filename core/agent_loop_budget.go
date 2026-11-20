@@ -300,12 +300,16 @@ func chargeDailySpend(cfg AgentLoopConfig, resp *Response) (spent, limit float64
 // billing it against the tier that actually served it. Zero when no rates are
 // configured, which is what a local-only deployment has — and a ceiling
 // measured in dollars means nothing there.
-func roundCostUSD(resp *Response) float64 {
-	if !RatesConfigured() {
+func roundCostUSD(resp *Response) float64 { return priceResponse(resp.Tier, resp) }
+
+// priceResponse prices resp as served by tier, with the deployment's rates:
+// zero when no rates are configured.
+func priceResponse(tier LLMTier, resp *Response) float64 {
+	if !RatesConfigured() || resp == nil {
 		return 0
 	}
 	d := UsageDiff{}
-	if resp.Tier == LEAD {
+	if tier == LEAD {
 		d.LeadInput = int64(resp.InputTokens)
 		d.LeadOutput = int64(resp.OutputTokens)
 		d.LeadCacheRead = int64(resp.CacheReadTokens)

@@ -16,6 +16,7 @@ import (
 	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/snugforge/nfo"
 
+	"github.com/cmcoffee/gohort/core/costledger"
 	"github.com/cmcoffee/gohort/core/prompts"
 	"github.com/cmcoffee/gohort/core/toolnote"
 )
@@ -392,6 +393,13 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 		return &Response{Content: fmt.Sprintf(
 			"I've reached my spending limit for now ($%.2f of the $%.2f allowed in a 24-hour window%s), so I didn't run this. It frees up as earlier work ages out, or the owner can raise the limit.",
 			spent, limit, spendWhose(whose))}, messages, nil
+	}
+	// The person it runs for (or the key that asked) has no money left this
+	// month: the turn is not run, as for an agent's own allowance.
+	if why := costledger.OverCap(ctx, 0); why != "" {
+		Log("[agent_loop] monthly spending limit reached (%s): turn refused", why)
+		lr.emitDiag("spend-cap", "Not run: "+why+".")
+		return &Response{Content: "I didn't run this: " + why + ". It frees up next month, or the limit can be raised (Account, Spending)."}, messages, nil
 	}
 	defer func() { saveFailureMemory(cfg.FailureMemoryKey, lr.repeatFail) }()
 
@@ -2441,6 +2449,15 @@ func (lr *loopRun) callModel() loopAction {
 		lr.deescalated = "spend-cap"
 		Log("[agent_loop] daily spend cap reached mid-turn for %q ($%.2f of $%.2f%s): remaining rounds run on the worker tier", lr.cfg.BudgetKey, spent, limit, spendWhose(whose))
 		lr.emitDiag("spend-cap", fmt.Sprintf("The $%.2f daily allowance%s was crossed mid-turn; the rest of the turn ran on the local worker model.", limit, spendWhose(whose)))
+	}
+	// A monthly limit crossed mid-turn: as for the daily allowance, the turn
+	// finishes, on the worker.
+	if lr.deescalated == "" && !lr.T.LeadDenied() {
+		if why := costledger.OverCap(lr.ctx, 0); why != "" {
+			lr.deescalated = "spend-cap"
+			Log("[agent_loop] monthly spending limit reached mid-turn (%s): remaining rounds run on the worker tier", why)
+			lr.emitDiag("spend-cap", "The monthly spending limit was reached mid-turn ("+why+"); the rest of the turn ran on the local worker model.")
+		}
 	}
 
 	Debug("[agent_loop] round %d: content=%d chars, reasoning=%d chars, tool_calls=%d", lr.round, len(lr.rs.resp.Content), len(lr.rs.resp.Reasoning), len(lr.rs.resp.ToolCalls))

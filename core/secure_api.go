@@ -44,6 +44,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/costledger"
 	"github.com/cmcoffee/gohort/core/notices"
 	"github.com/cmcoffee/gohort/core/peershare"
 	"github.com/cmcoffee/gohort/core/promotion"
@@ -3301,6 +3302,18 @@ func (ac *apiCall) send() bool {
 	// 50 entries by default, so a cap above 50 could never be reached. The
 	// call takes its place just before it is sent (two at once cannot both slip
 	// under the cap) and gives it back if it never reaches the server.
+	// A priced call that would take the person it is made for (or the key
+	// that asked) past their monthly limit is not sent. Who that is rides
+	// the call's context; a call made with none is its session's person's.
+	payCtx := ac.req.Context()
+	if costledger.SpenderFrom(payCtx).Person == "" && sess != nil {
+		payCtx = costledger.WithSpender(payCtx, costledger.Spender{Person: sess.Username})
+	}
+	if c.CostPerCall > 0 {
+		if why := costledger.OverCap(payCtx, c.CostPerCall); why != "" {
+			return ac.exit("", fmt.Errorf("not sent through credential %q: %s", c.Name, why))
+		}
+	}
 	capReserved := false
 	if c.MaxCallsPerDay > 0 {
 		count, ok := s.reserveDailyCall(c)
@@ -3318,7 +3331,7 @@ func (ac *apiCall) send() bool {
 		// Attributed through the request's own context, so a render or an
 		// api-mode call a PEER triggered is priced to that peer instead of
 		// reading exactly like the operator's own spend.
-		RecordExternalCostFor(ac.req.Context(), "cred:"+c.Name, c.Name, c.CostPerCall)
+		RecordExternalCostFor(payCtx, "cred:"+c.Name, c.Name, c.CostPerCall)
 	}
 	ac.auditEntry = SecureAPIAuditEntry{
 		CredentialName: c.Name,

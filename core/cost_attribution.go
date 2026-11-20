@@ -16,7 +16,12 @@ package core
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"strings"
+
+	"github.com/cmcoffee/gohort/core/costledger"
+	"github.com/cmcoffee/gohort/core/notices"
 )
 
 type costAttributionKey struct{}
@@ -55,10 +60,58 @@ func costAttribution(ctx context.Context) string {
 // Falls through to the unattributed path when nothing claimed responsibility,
 // which is every existing caller.
 func RecordExternalCostFor(ctx context.Context, sourceID, label string, costPerCall float64) {
+	// And to the person it was done for, when one was.
+	costledger.Charge(ctx, sourceID, costPerCall)
 	who := costAttribution(ctx)
 	if who == "" {
 		RecordExternalCost(sourceID, label, costPerCall)
 		return
 	}
 	RecordExternalCost(sourceID+" - "+who, label+" (via "+who+")", costPerCall)
+}
+
+// chargeModelUse charges one model call, priced at the deployment's rates as
+// served by tier, to the person it ran for (costledger.Charge). A tier with
+// no price, a local model, costs nothing and charges nothing.
+func chargeModelUse(ctx context.Context, tier LLMTier, resp *Response) {
+	name := "worker"
+	if tier == LEAD {
+		name = "lead"
+	}
+	costledger.Charge(ctx, "model:"+name, priceResponse(tier, resp))
+}
+
+// A person whose month's spending crossed 80% of their cap is told so on
+// their bell, once a month.
+func init() {
+	costledger.OnWarn = func(person string, spent, cap float64) {
+		if RootDB == nil {
+			return
+		}
+		notices.Record(RootDB, notices.Notice{
+			Owner: person, About: "spending:" + costledger.ThisMonth(), Kind: notices.KindReport,
+			Title: "80% of your monthly spending limit is used",
+			Body:  fmt.Sprintf("You have spent $%.2f of your $%.2f limit this month. Once it is reached, work that costs money stops until next month or until the limit is raised (Account, Spending).", spent, cap),
+		})
+	}
+}
+
+// withRequestSpender is r's context with who pays for its work: the signed-in
+// person, else the owner of the key it carries; and that key when it is a
+// personal API key, the kind a cap is set on.
+func withRequestSpender(r *http.Request) context.Context {
+	ctx := r.Context()
+	person := AuthCurrentUser(r)
+	if person == "" {
+		// The owner of the key it carries, whatever kind of key.
+		person = APIKeyUser(r)
+	}
+	key := ""
+	if tok := AccountTokenFromRequest(r); tok != nil {
+		key = tok.ID
+	}
+	if person == "" {
+		return ctx
+	}
+	return costledger.WithSpender(ctx, costledger.Spender{Person: person, Key: key})
 }

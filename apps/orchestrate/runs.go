@@ -38,6 +38,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/costledger"
 )
 
 // Run status values. Strings so they serialize cleanly for any
@@ -466,8 +467,12 @@ func NewRunRegistry() *RunRegistry {
 //
 // The run is listed, so the agent loops run under the returned context add no
 // row of their own (core.ListedWork).
+//
+// What the run costs is charged to userID, unless a person already pays for
+// the work it is part of, by agentID (costledger.WithSpender).
 func (rr *RunRegistry) CreateCancellable(ctx context.Context, userID, agentID, sessionID string) (context.Context, *Run) {
 	ctx, cancel := context.WithCancel(ctx)
+	ctx = costledger.WithSpender(ctx, costledger.Spender{Person: userID, Agent: agentID})
 	return ListedWork(ctx), rr.Create(userID, agentID, sessionID, cancel)
 }
 

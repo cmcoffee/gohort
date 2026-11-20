@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/costledger"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
@@ -132,9 +133,12 @@ var (
 // listedSession lists a session among the running work, for user, and returns
 // ctx marked as listed, so the agent loops the session runs add no row of
 // their own (core.ListedWork). ctx is the session's own, the one cancel ends.
+//
+// What the session costs is user's, unless a person already pays for the work
+// it is part of (an agent's investigation is the agent owner's turn).
 func listedSession(ctx context.Context, sid, label, user string, cancel context.CancelFunc) context.Context {
 	probeSessions.Register(sid, label, cancel).SetOwner(user)
-	return ListedWork(ctx)
+	return costledger.WithSpender(ListedWork(ctx), costledger.Spender{Person: user})
 }
 
 // Mid-flight injection-queue types + registry were lifted into

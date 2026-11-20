@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/costledger"
 	"github.com/cmcoffee/gohort/core/media"
 )
 
@@ -630,12 +631,17 @@ func TestATaskIsFinishedBeforeItsResultIsDelivered(t *testing.T) {
 	defer ReleaseInjectionQueue(sid)
 	app := &OrchestrateApp{}
 	ran := make(chan struct{})
+	var payer costledger.Spender
 	app.startTask(backgroundTask{origin: taskOrigin{SessionID: sid, User: "u", AgentID: "a1"}, title: "song: rain", label: "song: rain"},
 		func(ctx context.Context) (TaskProduct, error) {
+			payer = costledger.SpenderFrom(ctx)
 			close(ran)
 			return TaskProduct{Text: "made rain.mp3"}, nil
 		})
 	<-ran
+	if payer.Person != "u" || payer.Agent != "a1" {
+		t.Errorf("the task's work is paid for by %+v, want its person and agent", payer)
+	}
 	deadline := time.Now().Add(time.Second)
 	for {
 		jobs := ListBackgroundJobs(sid)

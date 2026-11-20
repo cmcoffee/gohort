@@ -42,7 +42,7 @@ var adminLayout = []struct {
 	// with the chart they feed.
 	// The activity log sits under System Status: what happened on the
 	// deployment, beside how it is doing now.
-	{"Overview", []string{"System Status", "Activity Log", "Software Update", "Site", "Web server", "Cost History (Last 30 Days)", "Cost by source", "Prices"}},
+	{"Overview", []string{"System Status", "Activity Log", "Software Update", "Site", "Web server", "Cost History (Last 30 Days)", "Cost by source", "Spending by person", "Prices"}},
 	{"People", []string{
 		"Sign-in", "Microsoft sign-in", "Users", "External contacts", "Teams", "Default Apps", "Desktop app profiles",
 		"Feature Access", "Model access limits", "Personal integrations",
@@ -456,7 +456,7 @@ func (a *AdminApp) serveAdminPage(w http.ResponseWriter, r *http.Request, tab st
 	// because the Apps tab names those tabs in its links.
 	wideSections := map[string]bool{
 		"System Status": true, "Users": true, "LLM Routing": true, "Activity Log": true,
-		"Cost History (Last 30 Days)": true, "Cost by source": true, "Scheduled Tasks": true,
+		"Cost History (Last 30 Days)": true, "Cost by source": true, "Spending by person": true, "Scheduled Tasks": true,
 		"API Credentials": true, "MCP Servers": true, "Connectors": true, "Names no longer offered": true, "Other integrations": true, "Research Sources": true,
 		"Keystore": true, "Drafted tools waiting for review": true, "Users' tools": true, "System Hooks": true,
 		"Requests to share": true, "Shared tools": true,

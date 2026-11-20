@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/cmcoffee/snugforge/kvlite"
+
+	"github.com/cmcoffee/gohort/core/costledger"
 )
 
 // A URL that reads as one path to the allow-list and another to the server is
@@ -269,5 +271,32 @@ func TestAnEndpointAllowsItsQueries(t *testing.T) {
 		if got := urlAllowedByCredential(c, u); got != want {
 			t.Errorf("%s: allowed %v, want %v", u, got, want)
 		}
+	}
+}
+
+// A priced call is charged to the person it is made for, and one that would
+// take them past their monthly limit is not sent.
+func TestAPricedCallStopsAtTheMonthlyLimit(t *testing.T) {
+	secureAPITestStore(t)
+	withSpendLedger(t)
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits++; w.Write([]byte(`{}`)) }))
+	defer srv.Close()
+	if err := Secure().Save(SecureCredential{Name: "priced", Type: SecureCredBearer, BaseURL: srv.URL, CostPerCall: 0.4}, "k"); err != nil {
+		t.Fatal(err)
+	}
+	costledger.SetDefaultCap(1)
+	sess := &ToolSession{Username: "alice"}
+	for i := 0; i < 2; i++ {
+		if _, err := Secure().DispatchToolCall(sess, "priced", srv.URL+"/x", "GET", ""); err != nil {
+			t.Fatalf("call %d: %v", i+1, err)
+		}
+	}
+	if s := costledger.Spent(costledger.ThisMonth(), "alice"); s.Total < 0.79 || s.Sources["cred:priced"] < 0.79 {
+		t.Errorf("the calls are alice's: %+v", s)
+	}
+	_, err := Secure().DispatchToolCall(sess, "priced", srv.URL+"/x", "GET", "")
+	if err == nil || !strings.Contains(err.Error(), "monthly spending limit") || hits != 2 {
+		t.Errorf("a call past the limit: sent %d, %v", hits, err)
 	}
 }

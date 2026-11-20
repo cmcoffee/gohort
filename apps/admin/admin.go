@@ -215,6 +215,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	a.registerMediaGenerationRoutes(sub)
 	a.registerSystemOneRoutes(sub)
 	a.registerCostSourceRoutes(sub)
+	a.registerSpendingRoutes(sub)
 	a.registerToolsRoutes(sub)
 	a.registerSkillsRoutes(sub)
 	a.registerGroupsRoutes(sub)

@@ -97,6 +97,9 @@ func MarkUsageReportHandled(ctx context.Context) {
 func UsageReportMiddleware(label string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Who pays for what the request costs: the signed-in person,
+			// or the owner of the key that asked, and the key.
+			r = r.WithContext(withRequestSpender(r))
 			if isStreamingPath(r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return

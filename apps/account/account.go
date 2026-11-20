@@ -71,6 +71,7 @@ func (T *Account) Routes() {
 		"DELETE": jsonapi.Delete(T.DB, T.handleTokenRevoke),
 	}.Serve)
 	T.HandleFunc("/api/token-targets", jsonapi.Get(T.DB, T.handleTokenTargets))
+	T.spendingRoutes()
 	T.HandleFunc("/api/artifacts/export", T.handleArtifactExport)
 	T.HandleFunc("/api/artifacts/preview", jsonapi.Methods{
 		"POST": jsonapi.Post(T.DB, T.handleArtifactPreview, jsonapi.MaxBody(maxAccountImportBytes)),
@@ -610,6 +611,7 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 	// preferences, including inbound personal access tokens below (the keys an
 	// external MCP client uses to reach THIS user's agents).
 	sections = append(sections,
+		spendingSection(),
 		ui.Section{
 			Title:    "API keys (personal access)",
 			Subtitle: "Tokens for connecting an external client to your own gohort agents.",
