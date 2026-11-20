@@ -142,3 +142,30 @@ deployment-wide switch that stops all outside audiences at once.
 2. Default per-user Model access limits.
 3. Whether a change to an approved agent's lent tools or credentials is
    requested again.
+
+## An app as its own MCP server (2026-11-19)
+
+An app that offers something beyond its page (actions, data sources or its
+pipeline marked expose) is an MCP server of its own at `/mcp/app/<slug>/`.
+The handshake names the server after the app and gives its description as
+instructions, to a key that reaches it; `tools/list` holds that app's tools
+alone (no agents, no built-ins, no other app); a call runs as the owner's own
+click would. Owner decisions:
+
+1. A per-app address, not only keys narrowed on `/mcp/`: a client lists
+   servers by name, and the app's own name and instructions are what make it
+   read as the app.
+2. Keys: an MCP key may hold `apptools:<slug>` targets (core.AppToolsTarget;
+   not `app:`, which names an app's agents). A key naming apps reaches those
+   apps and no other; one naming apps and no agent reaches nothing else, no
+   agent and no built-in tool; one naming no app reaches every app its owner
+   has, as before. Made from the app's Settings ("Use from an MCP client":
+   address, what it offers and leaves out, Make a key, the keys that name it,
+   Revoke) or ticked under "Your apps" on the Account page's MCP key. Stored
+   in the key's existing targets: no new field, no migration.
+3. No outside door to the app's agent: asking the app in words is left out.
+4. Actions that ask to confirm first stay off MCP (nobody is asked there);
+   MCP elicitation could carry the question later.
+5. Owner only. People an app is shared with come later, behind an owner's
+   switch (a new stored field, to be outlined first), running as themselves
+   on their own records.

@@ -30,18 +30,43 @@ import (
 // job does when it runs long (agent_actions.go), and one from outside a run
 // is waited for.
 func (T *CustomApps) exposedTools(sess *ToolSession, user string) []AgentToolDef {
-	if user == "" || !T.mayUseApps(user) {
+	var out []AgentToolDef
+	for _, a := range T.offeringApps(user) {
+		out = append(out, a.Tools...)
+	}
+	return out
+}
+
+// OfferingApp is one of a person's apps with what it offers beyond its page,
+// as an MCP client sees it: its name and description, and its exposed tools
+// (an action that asks to confirm first among them, for the caller to leave
+// out where nobody can be asked).
+type OfferingApp struct {
+	Slug, Name, Desc string
+	Tools            []AgentToolDef
+}
+
+// offeringApps are user's own apps that offer something, switched on, while
+// user may use apps at all.
+func (T *CustomApps) offeringApps(user string) []OfferingApp {
+	if T == nil || user == "" || !T.mayUseApps(user) {
 		return nil
 	}
-	var out []AgentToolDef
+	var out []OfferingApp
 	for _, spec := range ListAppSpecs(user) {
 		if spec.Disabled || spec.Owner != user {
 			continue
 		}
-		out = append(out, T.appExposedTools(spec, user)...)
+		if tools := T.appExposedTools(spec, user); len(tools) > 0 {
+			out = append(out, OfferingApp{Slug: spec.Slug, Name: firstNonEmpty(strings.TrimSpace(spec.Name), spec.Slug), Desc: strings.TrimSpace(spec.Desc), Tools: tools})
+		}
 	}
 	return out
 }
+
+// OfferingApps are owner's apps that offer something beyond their page, for
+// the MCP server: each app's tools, run as owner's own click would be.
+func OfferingApps(owner string) []OfferingApp { return hostApp.offeringApps(owner) }
 
 // appExposedTools are one app's exposed tools for uid, its owner, each in a
 // Category named for the app so a picker lists them under it.

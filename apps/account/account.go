@@ -757,7 +757,10 @@ func (T *Account) kindScope(user, kind string, posted *TokenScope) (*TokenScope,
 		switch kind {
 		case KeyKindAgents:
 			return strings.HasPrefix(t, "agent:") || strings.HasPrefix(t, "channel:")
-		case KeyKindMCP, KeyKindOutside:
+		case KeyKindMCP:
+			// An MCP key also reaches apps: what each offers beyond its page.
+			return strings.HasPrefix(t, "agent:") || strings.HasPrefix(t, AppToolsTarget)
+		case KeyKindOutside:
 			return strings.HasPrefix(t, "agent:")
 		case KeyKindModels:
 			return IsRawTier(t)
@@ -1164,6 +1167,11 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading...</div>
     } else if(kind === 'mcp'){
       agentsGroup('Only the ticked ones.');
       appsGroup();
+      var mine = byGroup['Apps'] || [];
+      if(mine.length){
+        var yg = group('Your apps', 'What each ticked app offers beyond its page, and no other app. None ticked: every app of yours. Apps ticked and no agent: the key reaches those apps and nothing else.');
+        mine.forEach(function(t){ addTarget(yg, t); });
+      }
       // A key with no explicit tool list is NOT narrowed (every exposed tool),
       // which is why an untouched editor sends no tools rather than an empty
       // list: an empty list means "none", and the two must not be the same

@@ -98,6 +98,8 @@ func (T *MCPServer) Routes() {
 	// must bypass AuthMiddleware. Mirrors how bridges registers /api/hook.
 	RegisterPublicPath("/mcp/")
 	T.HandleFunc("/", T.handle)
+	// One app as its own server (app_server.go).
+	T.HandleFunc("/app/", T.handleApp)
 	T.HandleFunc("/status", T.handleStatus) // JSON for the status page (auth'd in-handler)
 }
 
@@ -365,8 +367,9 @@ func (T *MCPServer) handleRPC(w http.ResponseWriter, r *http.Request) {
 				kept = append(kept, d)
 			}
 			defs = kept
-			// The key owner's own apps, what each offers beyond its page.
-			defs = append(defs, appToolDefs(tok.Owner)...)
+			// The key owner's own apps, what each offers beyond its page; for
+			// a key made for apps, those alone (app_tools.go).
+			defs = withAppTools(defs, tok)
 			before := len(defs)
 			defs = allowedToolDefs(defs, tok)
 			switch {
@@ -578,6 +581,9 @@ func (T *MCPServer) callTool(ctx context.Context, owner string, token *AccountTo
 	if !token.AllowsTool(toolScope(p.Name)) {
 		return "", nil, fmt.Errorf("this key may not call %q: enable it on the key under Account → API keys → Access", p.Name)
 	}
+	if err := appOnlyRefusal(token, p.Name); err != nil {
+		return "", nil, err
+	}
 	switch p.Name {
 	case "ask_agent":
 		return T.askAgent(ctx, owner, token, p.Arguments)
@@ -610,7 +616,7 @@ func (T *MCPServer) callTool(ctx context.Context, owner string, token *AccountTo
 			return text, nil, err
 		}
 		// The owner's own apps, what each offers beyond its page (app_tools.go).
-		if text, handled, err := callAppTool(ctx, owner, p.Name, p.Arguments); handled {
+		if text, handled, err := callAppTool(ctx, token, "", p.Name, p.Arguments); handled {
 			return text, nil, err
 		}
 		// Name what IS here. An agent's own tools (image, web_search, ...) are not

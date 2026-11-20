@@ -244,8 +244,9 @@ func (T *CustomApps) handleSettingsPage(w http.ResponseWriter, r *http.Request, 
 	mem := memorySection(spec, base)
 	curation := curationSection(spec, user, ownerUser, base)
 	change := changeSection(spec, user, ownerUser)
+	mcp := T.mcpSection(r, spec, user, ownerUser, base)
 	// "Nothing to set" says something only where nothing else is shown.
-	if len(fields) > 0 || (conns == nil && mem == nil && curation == nil && change == nil && len(sections) == 0) {
+	if len(fields) > 0 || (conns == nil && mem == nil && curation == nil && change == nil && mcp == nil && len(sections) == 0) {
 		sections = append(sections, ui.Section{Title: "Settings", Subtitle: subtitle, Body: body})
 	}
 	// What an imported app needs answered comes first: until it is, the
@@ -262,12 +263,18 @@ func (T *CustomApps) handleSettingsPage(w http.ResponseWriter, r *http.Request, 
 	if change != nil {
 		sections = append(sections, *change)
 	}
+	if mcp != nil {
+		sections = append(sections, *mcp)
+	}
 	ui.Page{
 		Title:     spec.Name + " settings",
 		ShowTitle: true,
 		BackURL:   base + "/",
 		MaxWidth:  "720px",
 		Sections:  sections,
+
+		// The one showing of a key made for the app (app_mcp.go).
+		Head: ui.NewHead().ClientAction(appMCPKeyAction, appMCPKeyJS),
 	}.ServeHTTP(w, r)
 }
 
