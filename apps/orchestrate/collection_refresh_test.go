@@ -133,6 +133,20 @@ func TestARefreshRunsThePlanAndRemembersIt(t *testing.T) {
 		t.Errorf("the page's line: %q", line)
 	}
 
+	// Run again after a restart cut it off: the next refresh is already
+	// queued, and is kept rather than a second chain started beside it.
+	_, nextID, nextDue, _ := refreshScheduled("u", "col-r")
+	df.app.handleCollectionRefresh(context.Background(), raw)
+	if n := len(ListScheduledTasks(collectionRefreshKind)); n != 1 {
+		t.Errorf("a refresh run again left %d refreshes queued, want 1", n)
+	}
+	if _, id, due, _ := refreshScheduled("u", "col-r"); id != nextID || !due.Equal(nextDue) {
+		t.Errorf("a refresh run again replaced its next one: %s at %v, was %s at %v", id, due, nextID, nextDue)
+	}
+	if p, _, _, _ := refreshScheduled("u", "col-r"); p.LastRan == "" {
+		t.Error("a refresh run again did not write what it did onto the next one")
+	}
+
 	// Gone: the firing ends the chain instead of running.
 	clear()
 	raw, _ = json.Marshal(refreshTask{Collection: "col-gone", Owner: "u", Every: "week"})

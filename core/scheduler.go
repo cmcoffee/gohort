@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,9 +11,10 @@ import (
 
 const schedulerTable = "scheduler_tasks"
 
-// schedulerRunningTable holds the tasks of a kind registered with
-// RegisterResumableScheduleHandler while their handler runs: one left there
-// at startup was cut off by the process stopping, and runs again.
+// schedulerRunningTable holds tasks while their handler runs: one left there
+// at startup was cut off by the process stopping, and runs again unless its
+// job is due again soon (resumeSkipWithin). Kinds registered with
+// RegisterSelfRecoveringScheduleHandler keep no record here.
 const schedulerRunningTable = "scheduler_running"
 
 // resumeDelay is how long after startup an interrupted task runs again:
@@ -23,6 +25,12 @@ const resumeDelay = 2 * time.Minute
 // A run that takes the process down every time is not rerun forever.
 const maxResumes = 1
 
+// resumeSkipWithin is how close the same job's next run may be before a
+// cut-off run is left to it: an hourly or faster job is not run again, a
+// daily one is. The same job is a queued task of the same kind with the same
+// payload, which is how every recurring kind arms its next run.
+const resumeSkipWithin = time.Hour
+
 // ScheduledTask is a persisted deferred job stored in the global scheduler DB.
 type ScheduledTask struct {
 	ID      string          `json:"id"`
@@ -31,8 +39,8 @@ type ScheduledTask struct {
 	RunAt   string          `json:"run_at"`  // RFC3339 UTC
 	Created string          `json:"created"`
 	// Resumes is how many times the task has been run again after its run
-	// was cut off (RegisterResumableScheduleHandler). Zero for every task
-	// that never was.
+	// was cut off by the process stopping. Zero for every task that never
+	// was.
 	Resumes int `json:"resumes,omitempty"`
 }
 
@@ -77,10 +85,10 @@ func DescribeTask(t ScheduledTask) (label string) {
 var (
 	schedHandlers   = map[string]ScheduleHandlerFunc{}
 	schedHandlersMu sync.RWMutex
-	// schedResumable are the kinds whose runs are run again when the process
-	// stops under them (RegisterResumableScheduleHandler). Under
-	// schedHandlersMu.
-	schedResumable = map[string]bool{}
+	// schedSelfRecovering are the kinds that settle their own cut-off runs
+	// (RegisterSelfRecoveringScheduleHandler): the scheduler does not run
+	// them again. Under schedHandlersMu.
+	schedSelfRecovering = map[string]bool{}
 
 	// schedNotify is signalled when tasks are added or removed so the loop
 	// can re-evaluate its sleep target without waiting for the current timer.
@@ -107,27 +115,30 @@ var (
 
 // RegisterScheduleHandler registers a handler for the given task kind.
 // Call from an app's RegisterRoutes (or init) before StartGlobalScheduler is called.
+//
+// A run the process stops under (a rebuild, a crash, a shutdown that cancels
+// ctx) runs again once, shortly after the next start, unless the same job is
+// due again within resumeSkipWithin: a daily post runs again, an hourly poll
+// is left to its next run. fn must do its work before it returns; work it
+// hands to a goroutine is not covered. A recurring kind must arm its next
+// run so that a run done again does not arm a second one (replace the task
+// it armed, as the event monitors do). A task due while the server was down
+// runs at startup either way.
 func RegisterScheduleHandler(kind string, fn ScheduleHandlerFunc) {
 	schedHandlersMu.Lock()
 	schedHandlers[kind] = fn
-	delete(schedResumable, kind)
+	delete(schedSelfRecovering, kind)
 	schedHandlersMu.Unlock()
 }
 
-// RegisterResumableScheduleHandler registers a handler, as
-// RegisterScheduleHandler does, for a kind whose run must not be lost to a
-// restart: when the process stops while fn runs (a rebuild, a crash, a
-// shutdown that cancels ctx), the task runs again once, shortly after the
-// next start. For work that runs once on its schedule and is missed until
-// the next one otherwise: a daily post, a report. fn must do its work
-// before it returns; work it hands to a goroutine is not covered.
-//
-// A task due while the server was down runs at startup for every kind
-// already; this is the run that had started.
-func RegisterResumableScheduleHandler(kind string, fn ScheduleHandlerFunc) {
+// RegisterSelfRecoveringScheduleHandler registers a handler, as
+// RegisterScheduleHandler does, for a kind that settles its own runs cut off
+// by a stop: the scheduler keeps no record of its runs and never runs one
+// again.
+func RegisterSelfRecoveringScheduleHandler(kind string, fn ScheduleHandlerFunc) {
 	schedHandlersMu.Lock()
 	schedHandlers[kind] = fn
-	schedResumable[kind] = true
+	schedSelfRecovering[kind] = true
 	schedHandlersMu.Unlock()
 }
 
@@ -438,21 +449,26 @@ func fireDueTasks(ctx context.Context, db Database) {
 	// to avoid data races with UnscheduleTask which modifies the DB.
 	schedDBMu.Lock()
 	var toFire []ScheduledTask
-	for _, k := range db.Keys(schedulerTable) {
-		var task ScheduledTask
-		if !db.Get(schedulerTable, k, &task) {
+	queued := queuedTasks(db)
+	now := time.Now()
+	for _, task := range queued {
+		if task.RunAt > now.UTC().Format(time.RFC3339) {
 			continue
 		}
-		if task.RunAt > time.Now().UTC().Format(time.RFC3339) {
+		db.Unset(schedulerTable, task.ID)
+		// A run done again checks once more that its job is not due soon:
+		// a chain whose next run was lost with the stop is armed again by
+		// its reconciler after the start, before this.
+		if task.Resumes > 0 && dueAgainSoon(queued, task, now) {
+			Log("[scheduler] task %s (%s) is not run again: the same job runs again within %s", task.ID, taskLabel(task), shortDurationWords(resumeSkipWithin))
 			continue
 		}
-		db.Unset(schedulerTable, k)
-		// A resumable kind's run is on record while it runs, so a stop
-		// under it leaves it there for the next start (resumeInterrupted).
+		// A run is on record while it runs, so a stop under it leaves it
+		// there for the next start (resumeInterrupted).
 		schedHandlersMu.RLock()
-		resumable := schedResumable[task.Kind]
+		self := schedSelfRecovering[task.Kind]
 		schedHandlersMu.RUnlock()
-		if resumable {
+		if !self {
 			db.Set(schedulerRunningTable, task.ID, task)
 		}
 		toFire = append(toFire, task)
@@ -508,11 +524,13 @@ func startupFire(ctx context.Context, db Database) {
 }
 
 // resumeInterrupted queues again, resumeDelay after now, each run a stop cut
-// off (left on schedulerRunningTable), and drops one already run again
-// maxResumes times.
+// off (left on schedulerRunningTable). It drops one already run again
+// maxResumes times, and one whose job is due again within resumeSkipWithin,
+// overdue ones included: those fire in this same first pass.
 func resumeInterrupted(db Database, now time.Time) {
 	schedDBMu.Lock()
 	defer schedDBMu.Unlock()
+	queued := queuedTasks(db)
 	for _, k := range db.Keys(schedulerRunningTable) {
 		var t ScheduledTask
 		ok := db.Get(schedulerRunningTable, k, &t)
@@ -520,9 +538,10 @@ func resumeInterrupted(db Database, now time.Time) {
 		if !ok {
 			continue
 		}
-		label := t.Kind
-		if d := DescribeTask(t); d != "" {
-			label += ", " + d
+		label := taskLabel(t)
+		if dueAgainSoon(queued, t, now) {
+			Log("[scheduler] task %s (%s) was cut off by the server stopping; not running it again, the same job runs again within %s", t.ID, label, shortDurationWords(resumeSkipWithin))
+			continue
 		}
 		if t.Resumes >= maxResumes {
 			Log("[scheduler] task %s (%s) was cut off again after being run again; not running it a third time", t.ID, label)
@@ -533,4 +552,45 @@ func resumeInterrupted(db Database, now time.Time) {
 		db.Set(schedulerTable, t.ID, t)
 		Log("[scheduler] task %s (%s) was cut off by the server stopping; running it again at %s", t.ID, label, t.RunAt)
 	}
+}
+
+// queuedTasks is every task in the queue. Under schedDBMu.
+func queuedTasks(db Database) []ScheduledTask {
+	var out []ScheduledTask
+	for _, k := range db.Keys(schedulerTable) {
+		var t ScheduledTask
+		if db.Get(schedulerTable, k, &t) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// dueAgainSoon reports whether queued holds another run of t's job (same
+// kind, same payload) due before now plus resumeSkipWithin.
+func dueAgainSoon(queued []ScheduledTask, t ScheduledTask, now time.Time) bool {
+	limit := now.Add(resumeSkipWithin).UTC().Format(time.RFC3339)
+	for _, q := range queued {
+		if q.ID != t.ID && q.Kind == t.Kind && q.RunAt <= limit && samePayload(q.Payload, t.Payload) {
+			return true
+		}
+	}
+	return false
+}
+
+// samePayload compares two payloads with their spacing ignored.
+func samePayload(a, b json.RawMessage) bool {
+	var ca, cb bytes.Buffer
+	if json.Compact(&ca, a) != nil || json.Compact(&cb, b) != nil {
+		return bytes.Equal(a, b)
+	}
+	return bytes.Equal(ca.Bytes(), cb.Bytes())
+}
+
+// taskLabel is t's kind and, when its kind has a describer, its label.
+func taskLabel(t ScheduledTask) string {
+	if d := DescribeTask(t); d != "" {
+		return t.Kind + ", " + d
+	}
+	return t.Kind
 }

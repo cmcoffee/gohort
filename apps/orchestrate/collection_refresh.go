@@ -171,9 +171,14 @@ func (T *OrchestrateApp) handleCollectionRefresh(ctx context.Context, raw json.R
 		return
 	}
 	// The next one first, so a restart during this run does not end the chain.
-	nextID, err := ScheduleTask(collectionRefreshKind, p, time.Now().Add(interval))
-	if err != nil {
-		Log("[orchestrate.refresh] collection=%s: could not schedule the next refresh: %v", c.ID, err)
+	// A run done again after a restart cut it off finds the next one already
+	// queued, and keeps it rather than starting a second chain.
+	_, nextID, _, queued := refreshScheduled(p.Owner, p.Collection)
+	if !queued {
+		var err error
+		if nextID, err = ScheduleTask(collectionRefreshKind, p, time.Now().Add(interval)); err != nil {
+			Log("[orchestrate.refresh] collection=%s: could not schedule the next refresh: %v", c.ID, err)
+		}
 	}
 	note := T.runRefresh(ctx, c, p)
 	p.LastRan, p.LastNote = time.Now().UTC().Format(time.RFC3339), curateCut(note, 300)

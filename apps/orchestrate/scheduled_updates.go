@@ -238,11 +238,14 @@ func registerOrchestrateScheduledUpdates(o *OrchestrateApp) {
 	orchRefMu.Lock()
 	orchRef = o
 	orchRefMu.Unlock()
-	RegisterScheduleHandler(OrchestrateScheduledUpdateKind, handleOrchestrateScheduledUpdate)
+	// Self-recovering: a fire cut off by a restart is settled by
+	// recoverInterrupted below (a cortex note, and a re-fire under its own
+	// rules), so the scheduler does not run it again as well.
+	RegisterSelfRecoveringScheduleHandler(OrchestrateScheduledUpdateKind, handleOrchestrateScheduledUpdate)
 	// A fire an earlier process never finished: a cortex note, and once more
 	// where that still makes sense (scheduled_interrupted.go). After a short
 	// wait, so it settles after start rather than on it.
-	RegisterScheduleHandler(OrchestrateScheduledRefireKind, handleScheduledRefire)
+	RegisterSelfRecoveringScheduleHandler(OrchestrateScheduledRefireKind, handleScheduledRefire)
 	go func() {
 		time.Sleep(20 * time.Second)
 		o.recoverInterrupted()
