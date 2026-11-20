@@ -34,6 +34,7 @@ package imagefetch
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image"
 	"regexp"
@@ -113,41 +114,17 @@ func checkSourcesInResult(sess *ToolSession, sources []sourceImage, result []byt
 		return nil // nothing to judge against
 	}
 	// 2. One judge, text only.
-	var judged []int
-	var b strings.Builder
 	instruction = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(instruction), strings.TrimSpace(editCompositingGuard())))
-	if instruction == "" {
-		instruction = "(none: the pictures were combined as they are)"
-	}
-	fmt.Fprintf(&b, "An image edit was made from %d source picture(s). The instruction for it was:\n%s\n\n", len(sources), instruction)
-	for i, d := range descs[1:] {
-		if d == "" {
-			continue
-		}
-		judged = append(judged, i+1)
-		fmt.Fprintf(&b, "SOURCE %d, as described by someone who saw only that picture:\n%s\n\n", i+1, d)
-	}
+	prompt, judged := sourceJudgePrompt(instruction, descs[1:], descs[0])
 	if len(judged) == 0 {
 		return nil
 	}
-	fmt.Fprintf(&b, "The RESULT, as described by someone who saw only the result and none of the sources:\n%s\n\n", descs[0])
-	b.WriteString("For each source above, decide what the instruction takes from it: its main subject whole, or only a part (a face, a pose, a body, a background, a style). " +
-		"Then decide whether the result description contains THAT, recognisably the same one with its distinctive parts, not a different thing of the same kind standing in for it. " +
-		"A part the instruction meant to replace is not missing. Write three lines per source:\n" +
-		"Source N takes: <what the instruction takes from it>\n" +
-		"Source N in result: <which described subject has it, or what is missing>\n" +
-		"Source N FOUND: yes or no")
-	resp, err := sess.LLM.Chat(sess.Context(),
-		[]Message{{Role: "user", Content: b.String()}},
-		WithCaller("imagefetch/source_check"),
-		WithMaxRetries(0),
-		WithThink(think),
-	)
-	if err != nil || resp == nil {
+	reply, err := askSourceJudge(sess.Context(), sess.LLM, prompt, think)
+	if err != nil {
 		Debug("[imagefetch/source_check] no verdict (%v)", err)
 		return nil
 	}
-	parsed := parseSourceVerdicts(resp.Content)
+	parsed := parseSourceVerdicts(reply)
 	var out []sourceVerdict
 	for _, n := range judged {
 		v, ok := parsed[n]
@@ -159,6 +136,52 @@ func checkSourcesInResult(sess *ToolSession, sources []sourceImage, result []byt
 		out = append(out, v)
 	}
 	return out
+}
+
+// sourceJudgePrompt is the judge's question: the instruction, each source as
+// described on its own (sources[i] is source i+1; "" is one whose description
+// did not come back, left out), and the result as described on its own. It
+// returns the sources it asks about.
+func sourceJudgePrompt(instruction string, sources []string, result string) (string, []int) {
+	var judged []int
+	var b strings.Builder
+	if instruction = strings.TrimSpace(instruction); instruction == "" {
+		instruction = "(none: the pictures were combined as they are)"
+	}
+	fmt.Fprintf(&b, "An image edit was made from %d source picture(s). The instruction for it was:\n%s\n\n", len(sources), instruction)
+	for i, d := range sources {
+		if d == "" {
+			continue
+		}
+		judged = append(judged, i+1)
+		fmt.Fprintf(&b, "SOURCE %d, as described by someone who saw only that picture:\n%s\n\n", i+1, d)
+	}
+	fmt.Fprintf(&b, "The RESULT, as described by someone who saw only the result and none of the sources:\n%s\n\n", result)
+	b.WriteString("For each source above, decide what the instruction takes from it: its main subject whole, or only a part (a face, a pose, a body, a background, a style). " +
+		"Then decide whether the result description contains THAT, recognisably the same one with its distinctive parts, not a different thing of the same kind standing in for it. " +
+		"A part the instruction meant to replace is not missing. Write three lines per source:\n" +
+		"Source N takes: <what the instruction takes from it>\n" +
+		"Source N in result: <which described subject has it, or what is missing>\n" +
+		"Source N FOUND: yes or no")
+	return b.String(), judged
+}
+
+// askSourceJudge puts the judge's question to llm, thinking it over when
+// think is set, and returns its reply.
+func askSourceJudge(ctx context.Context, llm LLM, prompt string, think bool) (string, error) {
+	resp, err := llm.Chat(ctx,
+		[]Message{{Role: "user", Content: prompt}},
+		WithCaller("imagefetch/source_check"),
+		WithMaxRetries(0),
+		WithThink(think),
+	)
+	if err != nil {
+		return "", err
+	}
+	if resp == nil {
+		return "", fmt.Errorf("no reply")
+	}
+	return resp.Content, nil
 }
 
 // describeBlind describes one picture with describeBlindPrompt, or "" when no

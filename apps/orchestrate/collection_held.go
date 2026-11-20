@@ -324,10 +324,14 @@ func settleDef(research bool, voices []string) PipelineDef {
 	return PipelineDef{Name: "Settle a held page", Stages: []PipelineStage{
 		argue,
 		{Name: "check", Kind: StageVerify, Check: "argue"},
-		{Name: "rule", Kind: StageAgent, Agent: settleJudge,
-			Prompt: "## The dispute\n{input}\n\n## What each side argued\n{stage:argue}\n\n## How their citations held up\n{stage:check}\n\n## What they read\n{sources}"},
+		{Name: "rule", Kind: StageAgent, Agent: settleJudge, Prompt: settleRulePrompt},
 	}}
 }
+
+// settleRulePrompt is what the judge reads: the dispute, what each side
+// argued, how their citations held up, and what they read. The check tests
+// (collection_settle_cases.go) fill the same layout.
+const settleRulePrompt = "## The dispute\n{input}\n\n## What each side argued\n{stage:argue}\n\n## How their citations held up\n{stage:check}\n\n## What they read\n{sources}"
 
 // settleRunPipeline runs a settle pipeline. A variable so a test can stand
 // in for the pipeline engine's tools.
@@ -369,13 +373,22 @@ func (T *OrchestrateApp) settleSides(ctx context.Context, c Collection, s collec
 	if len(docText) == 0 {
 		return "", fmt.Errorf("the document it contradicts (%s) is no longer in the collection", chFirst(s.AgainstTitle, s.AgainstDoc))
 	}
+	return settleDispute(s.Text, chFirst(s.Title, s.Source)+" ("+s.Source+")", bearingOn(pageText, s.Text, 3000),
+		"The collection's document: "+chFirst(s.AgainstTitle, s.AgainstDoc), "the collection's document",
+		textutil.Clip(strings.Join(docText, "\n\n"), 3000)), nil
+}
+
+// settleDispute is the dispute as both sides and the judge are given it:
+// the point, the new page's part that bears on it, and the other side's,
+// each fenced as text from outside.
+func settleDispute(point, page, pageText, otherHead, otherName, otherText string) string {
 	var b strings.Builder
-	b.WriteString("## The point in dispute\n" + s.Text + "\n\n")
-	b.WriteString("## The new page: " + chFirst(s.Title, s.Source) + " (" + s.Source + ")\n")
-	b.WriteString(UntrustedFence("the new page", bearingOn(pageText, s.Text, 3000)) + "\n\n")
-	b.WriteString("## The collection's document: " + chFirst(s.AgainstTitle, s.AgainstDoc) + "\n")
-	b.WriteString(UntrustedFence("the collection's document", textutil.Clip(strings.Join(docText, "\n\n"), 3000)))
-	return b.String(), nil
+	b.WriteString("## The point in dispute\n" + point + "\n\n")
+	b.WriteString("## The new page: " + page + "\n")
+	b.WriteString(UntrustedFence("the new page", pageText) + "\n\n")
+	b.WriteString("## " + otherHead + "\n")
+	b.WriteString(UntrustedFence(otherName, otherText))
+	return b.String()
 }
 
 // settleOutsideSides is the dispute when what contradicts the page is another
@@ -388,13 +401,8 @@ func settleOutsideSides(ctx context.Context, s collectionSuggestion, pageText st
 	if err != nil {
 		return "", fmt.Errorf("the other source could not be read again: %v", err)
 	}
-	var b strings.Builder
-	b.WriteString("## The point in dispute\n" + s.Text + "\n\n")
-	b.WriteString("## The new page: " + chFirst(s.Title, s.Source) + " (" + s.Source + ")\n")
-	b.WriteString(UntrustedFence("the new page", bearingOn(pageText, s.Text, 3000)) + "\n\n")
-	b.WriteString("## The other source: " + s.AgainstURL + "\n")
-	b.WriteString(UntrustedFence("the other source", bearingOn(otherText, s.Text, 3000)))
-	return b.String(), nil
+	return settleDispute(s.Text, chFirst(s.Title, s.Source)+" ("+s.Source+")", bearingOn(pageText, s.Text, 3000),
+		"The other source: "+s.AgainstURL, "the other source", bearingOn(otherText, s.Text, 3000)), nil
 }
 
 // bearingOn is the part of text that bears on about: its paragraphs sharing
