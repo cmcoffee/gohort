@@ -209,3 +209,125 @@ func TestAnUnreadableReplySaysHowItEnded(t *testing.T) {
 		t.Errorf("a reply its provider stopped: %v", err)
 	}
 }
+
+// refusingThen is a chat whose first reply is a refusal of category cat from
+// model, then answers with out in turn, from answerModel; it records what it
+// was sent.
+func refusingThen(sent *[][]Message, cat, model, answerModel string, out ...string) VerdictChat {
+	refused := false
+	return func(ctx context.Context, msgs []Message, opts ...ChatOption) (*Response, error) {
+		*sent = append(*sent, msgs)
+		if !refused {
+			refused = true
+			return &Response{Model: model, StopReason: "refusal", StopCategory: cat}, nil
+		}
+		r := out[0]
+		if len(out) > 1 {
+			out = out[1:]
+		}
+		return &Response{Model: answerModel, Content: r}, nil
+	}
+}
+
+// A model that refuses to write the reasons a verdict asks for (Sonnet's
+// reasoning_extraction) is asked again at once for the answer alone, and
+// asked that way from then on; the rulings say why they carry no reason.
+func TestAModelThatWillNotWriteItsReasoningGivesTheAnswerAlone(t *testing.T) {
+	t.Cleanup(func() { answersOnly.Delete(testVerdict.Key) })
+	var sent [][]Message
+	chat := refusingThen(&sent, declinesReasoning, "sonnet", "sonnet", `{"answer": "on"}`)
+	r, err := testVerdict.Judge(context.Background(), chat, "a message")
+	if err != nil || r.Answer != "on" || r.Reason != "(answer only: sonnet declines to write its reasoning)" {
+		t.Fatalf("after the refusal: %+v, %v", r, err)
+	}
+	if len(sent) != 2 {
+		t.Fatalf("asked %d times, want the refused ask and one for the answer alone", len(sent))
+	}
+	full, bare := sent[0][0].Content, sent[1][0].Content
+	if full != testVerdict.System() || !strings.Contains(full, `"why"`) {
+		t.Errorf("the first ask was not the verdict as declared:\n%s", full)
+	}
+	if strings.Contains(bare, `"why"`) || strings.Contains(bare, `"subject"`) || strings.Contains(bare, "answer LAST") ||
+		!strings.Contains(bare, "the answer alone") || !strings.Contains(bare, "<one of: on, off>") || !strings.HasPrefix(bare, testVerdict.Role) {
+		t.Errorf("the second ask still asks for reasons, or lost the answers:\n%s", bare)
+	}
+
+	// From then on the answer alone is asked first: no refusal paid for.
+	sent = nil
+	r, err = testVerdict.Judge(context.Background(), replies(&sent, `{"answer": "off"}`), "another")
+	if err != nil || r.Answer != "off" || len(sent) != 1 || strings.Contains(sent[0][0].Content, `"why"`) {
+		t.Errorf("the next ask: %+v, %v after %d asks", r, err, len(sent))
+	}
+
+	// The refusal is not one of the two tries: an answer-alone reply that
+	// could not be read is still asked once more.
+	answersOnly.Delete(testVerdict.Key)
+	sent = nil
+	r, err = testVerdict.Judge(context.Background(), refusingThen(&sent, declinesReasoning, "sonnet", "sonnet", `not json`, `{"answer": "on"}`), "a third")
+	if err != nil || r.Answer != "on" || len(sent) != 3 {
+		t.Errorf("refused, then unreadable, then answered: %+v, %v after %d asks, want an answer after 3", r, err, len(sent))
+	}
+
+	// Several things at once: one answer per thing, no reasons.
+	each := testVerdict
+	each.Key, each.Each = "test.verdict.each", "item"
+	t.Cleanup(func() { answersOnly.Delete(each.Key) })
+	sent = nil
+	rs, err := each.JudgeEach(context.Background(), refusingThen(&sent, declinesReasoning, "sonnet", "sonnet",
+		`{"items": [{"item": 1, "answer": "on"}, {"item": 2, "answer": "off"}]}`), "1. a\n2. b", 2)
+	if err != nil || len(rs) != 2 || rs[0].Answer != "on" || rs[1].Answer != "off" || !strings.Contains(rs[1].Reason, "answer only") {
+		t.Fatalf("each, answer alone: %+v, %v", rs, err)
+	}
+	if bare := sent[1][0].Content; strings.Contains(bare, `"why"`) || !strings.Contains(bare, `"items"`) {
+		t.Errorf("each, the second ask:\n%s", bare)
+	}
+}
+
+// Asked for the answer alone and answered by another model, the check has
+// moved off the model that declined: the next ask is the verdict as declared.
+func TestAnotherModelForgetsTheAnswerAloneAsk(t *testing.T) {
+	t.Cleanup(func() { answersOnly.Delete(testVerdict.Key) })
+	var sent [][]Message
+	if _, err := testVerdict.Judge(context.Background(), refusingThen(&sent, declinesReasoning, "sonnet", "local", `{"answer": "on"}`), "x"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := answersOnly.Load(testVerdict.Key); ok {
+		t.Error("an answer from another model kept the answer-alone ask")
+	}
+	sent = nil
+	r, err := testVerdict.Judge(context.Background(), replies(&sent, `{"subject": "s", "why": "w", "answer": "on"}`), "y")
+	if err != nil || r.Reason != "w" || !strings.Contains(sent[0][0].Content, `"why"`) {
+		t.Errorf("the next ask was not the full verdict: %+v, %v", r, err)
+	}
+	// The same model answering keeps it.
+	sent = nil
+	testVerdict.Judge(context.Background(), refusingThen(&sent, declinesReasoning, "sonnet", "sonnet", `{"answer": "on"}`), "z")
+	if m, ok := answersOnly.Load(testVerdict.Key); !ok || m != "sonnet" {
+		t.Errorf("the declining model was not remembered: %v %v", m, ok)
+	}
+}
+
+// Only a refusal of the reasoning itself switches the ask: any other refusal
+// is a reply that could not be read, asked once more as declared.
+func TestOtherRefusalsKeepTheReasons(t *testing.T) {
+	t.Cleanup(func() { answersOnly.Delete(testVerdict.Key) })
+	var sent [][]Message
+	_, err := testVerdict.Judge(context.Background(), refusingThen(&sent, "cyber", "sonnet", "sonnet", `{"subject": "s", "why": "w", "answer": "on"}`), "x")
+	if err != nil || len(sent) != 2 || !strings.Contains(sent[1][0].Content, `"why"`) {
+		t.Errorf("a cyber refusal: %v after %d asks; the retry must keep the reasons", err, len(sent))
+	}
+	if _, ok := answersOnly.Load(testVerdict.Key); ok {
+		t.Error("a cyber refusal was remembered as declining its reasoning")
+	}
+	// A refused ask for the answer alone is not switched again: it is a
+	// reply that could not be read, and the second try is the last.
+	answersOnly.Store(testVerdict.Key, "sonnet")
+	sent = nil
+	_, err = testVerdict.Judge(context.Background(), func(ctx context.Context, msgs []Message, opts ...ChatOption) (*Response, error) {
+		sent = append(sent, msgs)
+		return &Response{Model: "sonnet", StopReason: "refusal", StopCategory: declinesReasoning}, nil
+	}, "x")
+	if !errors.Is(err, ErrUnreadable) || len(sent) != 2 {
+		t.Errorf("refusing the answer alone too: %v after %d asks, want unreadable after 2", err, len(sent))
+	}
+}

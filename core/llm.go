@@ -143,6 +143,10 @@ type Response struct {
 	// filter stopped with "content_filtered", and both read as "refusal".
 	// Empty when StopReason is the provider's word already.
 	StopDetail string
+	// StopCategory is the kind of policy a refusal names, as the provider
+	// writes it ("reasoning_extraction", "cyber"), for code that acts on
+	// which one it was. Empty when there is none.
+	StopCategory string
 	// ReasoningTokens is the portion of OutputTokens spent on the
 	// thinking channel, as reported by the model when supported (e.g.
 	// llama.cpp's usage.completion_tokens_details.reasoning_tokens

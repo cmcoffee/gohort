@@ -658,13 +658,16 @@ func TestARefusalSaysWhyItStopped(t *testing.T) {
 	if resp.StopReason != "refusal" || resp.StopDetail != "category reasoning_extraction, the model said: asks for the reasoning in the reply" {
 		t.Errorf("a streamed refusal: %q %q", resp.StopReason, resp.StopDetail)
 	}
+	if resp.StopCategory != "reasoning_extraction" {
+		t.Errorf("a streamed refusal's category: %q", resp.StopCategory)
+	}
 
 	var whole anthResponse
 	if err := json.Unmarshal([]byte(`{"model":"m","content":[],"stop_reason":"refusal","stop_details":{"type":"refusal","category":"cyber","explanation":null}}`), &whole); err != nil {
 		t.Fatal(err)
 	}
-	if r := parseAnthResponse(whole); r.StopDetail != "category cyber" {
-		t.Errorf("a whole refusal: %q", r.StopDetail)
+	if r := parseAnthResponse(whole); r.StopDetail != "category cyber" || r.StopCategory != "cyber" {
+		t.Errorf("a whole refusal: %q %q", r.StopDetail, r.StopCategory)
 	}
 
 	for _, d := range []string{`null`, `{"type":"refusal","category":null,"explanation":null}`} {

@@ -148,3 +148,27 @@ func TestTheGateAsSystemOne(t *testing.T) {
 		t.Errorf("the decision lacks the rules' cautions or the fence, or shows a conversation: %s", sys)
 	}
 }
+
+// Both of the gate's questions are told what a misspelling of the agent's
+// name is: only a word gohort found one letter off it. System One was never
+// told, and let a bare "Wice" through for WiWee firmly enough to stand.
+func TestBothGateQuestionsKnowWhatAMisspellingIs(t *testing.T) {
+	var c checktest.Case
+	for _, gc := range gateCases() {
+		if gc.ID == "not-a-misspelling" {
+			c = gc
+		}
+	}
+	q := caseQuestion(c.Input)
+	const rule = "is only a word gohort says below is one letter off your name"
+	if s1 := q.systemOneQuestion(); !strings.Contains(s1.System, rule) || !strings.Contains(s1.System, `"WiWee"`) {
+		t.Errorf("System One is not told what a misspelling is:\n%s", s1.System)
+	}
+	llm := &FakeLLM{Turns: []FakeTurn{{Content: `{"reason": "1 no", "answer": "NO"}`, Repeat: true}}}
+	if _, _, err := gateDecide(context.Background(), llm, q); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(llm.Prompt(0), rule) {
+		t.Errorf("the full question is not told what a misspelling is:\n%s", llm.Prompt(0))
+	}
+}

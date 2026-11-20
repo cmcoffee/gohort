@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/checkstreak"
@@ -120,10 +121,17 @@ func (v Verdict) Stands(choice int, firm float64) bool {
 }
 
 // Format is the reply's shape as the model is told it.
-func (v Verdict) Format() string {
+func (v Verdict) Format() string { return v.format(false) }
+
+// format is the reply's shape; bare is the answer alone, with nothing
+// weighed before it, for a model that declines to write its reasoning
+// (answersOnly).
+func (v Verdict) format(bare bool) string {
 	var fields strings.Builder
-	for _, s := range v.weigh() {
-		fmt.Fprintf(&fields, "%q: %q, ", s.Key, "<"+s.Ask+">")
+	if !bare {
+		for _, s := range v.weigh() {
+			fmt.Fprintf(&fields, "%q: %q, ", s.Key, "<"+s.Ask+">")
+		}
 	}
 	fmt.Fprintf(&fields, "%q: %q", "answer", "<one of: "+strings.Join(v.Keys(), ", ")+">")
 	var b strings.Builder
@@ -131,7 +139,11 @@ func (v Verdict) Format() string {
 	for _, a := range v.Answers {
 		fmt.Fprintf(&b, "- %s: %s\n", a.Key, a.Means)
 	}
-	b.WriteString("\nReply with ONLY a JSON object, no other text. Write the fields in the order shown: what you weighed FIRST, the answer LAST, so the answer follows from what you wrote.\n")
+	if bare {
+		b.WriteString("\nReply with ONLY a JSON object, no other text: the answer alone.\n")
+	} else {
+		b.WriteString("\nReply with ONLY a JSON object, no other text. Write the fields in the order shown: what you weighed FIRST, the answer LAST, so the answer follows from what you wrote.\n")
+	}
 	if v.Each == "" {
 		fmt.Fprintf(&b, "{%s}", fields.String())
 		return b.String()
@@ -141,8 +153,10 @@ func (v Verdict) Format() string {
 }
 
 // System is the system prompt: the Role and the reply's shape.
-func (v Verdict) System() string {
-	return strings.TrimSpace(v.Role) + "\n\n" + v.Format()
+func (v Verdict) System() string { return v.system(false) }
+
+func (v Verdict) system(bare bool) string {
+	return strings.TrimSpace(v.Role) + "\n\n" + v.format(bare)
 }
 
 // Judge asks the Verdict about state, once more when the reply could not be
@@ -151,10 +165,13 @@ func (v Verdict) System() string {
 // means.
 func (v Verdict) Judge(ctx context.Context, chat VerdictChat, state string, opts ...ChatOption) (Ruling, error) {
 	var out Ruling
-	err := v.ask(ctx, chat, state, opts, func(obj map[string]json.RawMessage) bool {
+	note, err := v.ask(ctx, chat, state, opts, func(obj map[string]json.RawMessage) bool {
 		out = v.ruling(obj)
 		return true
 	})
+	if note != "" && out.Answer != "" {
+		out.Reason = note
+	}
 	return out, err
 }
 
@@ -166,11 +183,16 @@ func (v Verdict) JudgeEach(ctx context.Context, chat VerdictChat, state string, 
 		return nil, fmt.Errorf("verdict %s judges one thing, not each", v.Key)
 	}
 	var out []Ruling
-	err := v.ask(ctx, chat, state, opts, func(obj map[string]json.RawMessage) bool {
+	note, err := v.ask(ctx, chat, state, opts, func(obj map[string]json.RawMessage) bool {
 		var ok bool
 		out, ok = v.rulings(obj, n)
 		return ok
 	})
+	for i := range out {
+		if note != "" && out[i].Answer != "" {
+			out[i].Reason = note
+		}
+	}
 	return out, err
 }
 
@@ -196,17 +218,56 @@ func FromStandIn(err error) bool {
 	return errors.As(err, &u) && u.standIn
 }
 
+// declinesReasoning is the refusal category of a model that will not write
+// its reasoning out in a reply: Claude's classifier names a request for it
+// "reasoning_extraction", and declines are not retried on another model.
+const declinesReasoning = "reasoning_extraction"
+
+// answersOnly is, per check, the model that declined to write the reasons
+// a Verdict asks for before its answer: the check asks it for the answer
+// alone from then on, rather than paying for a refusal first every time.
+// Held until restart; a reply from another model forgets it, since the
+// check has moved off the model that declined.
+var answersOnly sync.Map // check key -> model
+
+// answerOnlyNote is the reason a Ruling gives when its model was asked for
+// the answer alone.
+func answerOnlyNote(model string) string {
+	return "(answer only: " + modelName(model) + " declines to write its reasoning)"
+}
+
 // ask sends the Verdict and hands the reply's object to read; a reply with
-// no object, or one read rejects, is asked again once.
-func (v Verdict) ask(ctx context.Context, chat VerdictChat, state string, opts []ChatOption, read func(map[string]json.RawMessage) bool) error {
-	msgs := []Message{{Role: "system", Content: v.System()}, {Role: "user", Content: state}}
+// no object, or one read rejects, is asked again once. note is the reason
+// to give the rulings when the model was asked for the answer alone, "" when
+// it wrote its reasons.
+//
+// A reply its model refused as a request for its reasoning is asked again
+// at once for the answer alone, and that model is asked that way from then
+// on (answersOnly). The refusal is not one of the two tries. Before this,
+// Sonnet on Bedrock refused the memory conflict check every time, and the
+// check gave no verdict for anything it was asked.
+func (v Verdict) ask(ctx context.Context, chat VerdictChat, state string, opts []ChatOption, read func(map[string]json.RawMessage) bool) (note string, err error) {
+	remembered, bare := "", false
+	if m, ok := answersOnly.Load(v.Key); ok {
+		remembered, bare = m.(string), true
+	}
 	call := append([]ChatOption{WithRouteKey(v.Key)}, opts...)
 	last, standIn := "", false
 	var lastResp *Response
 	for try := 1; try <= 2; try++ {
+		msgs := []Message{{Role: "system", Content: v.system(bare)}, {Role: "user", Content: state}}
 		resp, err := chat(ctx, msgs, call...)
 		if err != nil {
-			return err
+			return "", err
+		}
+		// Once asked for the answer alone, a refusal is not switched again:
+		// it is a reply that could not be read.
+		if resp != nil && !bare && resp.StopReason == "refusal" && resp.StopCategory == declinesReasoning {
+			bare, remembered = true, resp.Model
+			answersOnly.Store(v.Key, resp.Model)
+			Log("[decide] %s: %s declined to write its reasoning (%s); asking it for the answer alone from now on", v.Key, modelName(resp.Model), declinesReasoning)
+			try--
+			continue
 		}
 		if resp != nil {
 			last, standIn, lastResp = resp.Content, resp.Model == StandInModel, resp
@@ -214,7 +275,13 @@ func (v Verdict) ask(ctx context.Context, chat VerdictChat, state string, opts [
 				// A verdict ends its model's run of none (a stand-in's
 				// ends only the stand-in's, which is never counted).
 				checkstreak.Answered(ctx, v.Key, resp.Model)
-				return nil
+				if !bare {
+					return "", nil
+				}
+				if resp.Model != "" && remembered != "" && resp.Model != remembered {
+					answersOnly.Delete(v.Key)
+				}
+				return answerOnlyNote(resp.Model), nil
 			}
 		}
 		// The fingerprint stand-in answers nothing on purpose: no model
@@ -235,7 +302,15 @@ func (v Verdict) ask(ctx context.Context, chat VerdictChat, state string, opts [
 		}
 		checkstreak.Failed(ctx, v.Key, model, clip)
 	}
-	return unreadable{clip: clip, standIn: standIn}
+	return "", unreadable{clip: clip, standIn: standIn}
+}
+
+// modelName is model as a sentence names it: "the model" when unnamed.
+func modelName(model string) string {
+	if strings.TrimSpace(model) == "" {
+		return "the model"
+	}
+	return model
 }
 
 // replyEnding is how a reply ended, for an unreadable one: why the model

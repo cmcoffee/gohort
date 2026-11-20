@@ -640,6 +640,14 @@ func anthStopDetail(d *anthStopDetails) string {
 	return strings.Join(parts, ", ")
 }
 
+// anthStopCategory is d's category alone, or "".
+func anthStopCategory(d *anthStopDetails) string {
+	if d == nil {
+		return ""
+	}
+	return strings.TrimSpace(d.Category)
+}
+
 type anthStreamEvent struct {
 	Type         string            `json:"type"`
 	Index        int               `json:"index,omitempty"`
@@ -968,6 +976,7 @@ func parseAnthResponse(result anthResponse) *Response {
 		ReasoningTokens:  estimateReasoningTokens(result.Usage.OutputTokens, thinking.String(), text.String(), toolCalls),
 		StopReason:       result.StopReason,
 		StopDetail:       anthStopDetail(result.StopDetails),
+		StopCategory:     anthStopCategory(result.StopDetails),
 	}
 }
 
@@ -1129,6 +1138,9 @@ type anthStreamState struct {
 	stopDetail string // what the provider says beside stopReason (anthStopDetail)
 	toolCalls  []ToolCall
 
+	// stopCategory is a refusal's kind, alone (anthStopCategory).
+	stopCategory string
+
 	// blocks tracks in-flight content blocks by index, for tool_use assembly
 	// (a tool call's arguments arrive as partial JSON across many deltas).
 	blocks []anthBlockState
@@ -1279,6 +1291,9 @@ func (a *anthStreamState) feed(data []byte) {
 			if d := anthStopDetail(event.Delta.StopDetails); d != "" {
 				a.stopDetail = d
 			}
+			if c := anthStopCategory(event.Delta.StopDetails); c != "" {
+				a.stopCategory = c
+			}
 		}
 	}
 }
@@ -1342,6 +1357,7 @@ func (a *anthStreamState) response(tag string) *Response {
 		OutputTokens:     a.outputTokens,
 		StopReason:       a.stopReason,
 		StopDetail:       a.stopDetail,
+		StopCategory:     a.stopCategory,
 
 		PredictedPerSecond: a.clock.rate(a.outputTokens),
 	}
