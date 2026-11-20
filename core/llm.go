@@ -919,17 +919,17 @@ func WithoutAutoDate() ChatOption {
 	return func(c *ChatConfig) { c.SuppressAutoDate = true }
 }
 
-// CurrentContextStamp is the bracketed date+time marker prefixed onto the latest
+// currentContextStamp is the bracketed date+time marker prefixed onto the latest
 // user turn so the model always has the current wall-clock. Placed on the newest
 // user message — the volatile tail that is never a cache hit anyway — it costs no
 // cache invalidation, unlike a system-prompt date which sits before the whole
 // conversation and re-prefills it on the daily (or per-request, with time)
 // rollover. Local time, no em-dash (an AI tell we scrub from product output).
-func CurrentContextStamp() string {
+func currentContextStamp() string {
 	return CurrentContextStampIn(time.Local)
 }
 
-// CurrentContextStampIn is CurrentContextStamp in a specific location — used
+// CurrentContextStampIn is currentContextStamp in a specific location — used
 // to stamp the turn in the acting user's own timezone (Phase 2 per-user zone).
 // A nil location falls back to the deployment/host zone (time.Local).
 func CurrentContextStampIn(loc *time.Location) string {

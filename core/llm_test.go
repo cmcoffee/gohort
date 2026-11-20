@@ -53,7 +53,7 @@ func TestApplyOptsAutoDate(t *testing.T) {
 // TestCurrentContextStamp: the user-turn marker is well-formed and carries no
 // em-dash (an AI tell scrubbed from product output).
 func TestCurrentContextStamp(t *testing.T) {
-	s := CurrentContextStamp()
+	s := currentContextStamp()
 	if !strings.HasPrefix(s, "[Current date & time:") || !strings.HasSuffix(s, "]") {
 		t.Fatalf("malformed stamp: %q", s)
 	}

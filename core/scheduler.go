@@ -10,6 +10,19 @@ import (
 
 const schedulerTable = "scheduler_tasks"
 
+// schedulerRunningTable holds the tasks of a kind registered with
+// RegisterResumableScheduleHandler while their handler runs: one left there
+// at startup was cut off by the process stopping, and runs again.
+const schedulerRunningTable = "scheduler_running"
+
+// resumeDelay is how long after startup an interrupted task runs again:
+// long enough for the rest of the server to come up.
+const resumeDelay = 2 * time.Minute
+
+// maxResumes is how many times one task is run again after interruptions.
+// A run that takes the process down every time is not rerun forever.
+const maxResumes = 1
+
 // ScheduledTask is a persisted deferred job stored in the global scheduler DB.
 type ScheduledTask struct {
 	ID      string          `json:"id"`
@@ -17,6 +30,10 @@ type ScheduledTask struct {
 	Payload json.RawMessage `json:"payload"` // app-defined; passed verbatim to the handler
 	RunAt   string          `json:"run_at"`  // RFC3339 UTC
 	Created string          `json:"created"`
+	// Resumes is how many times the task has been run again after its run
+	// was cut off (RegisterResumableScheduleHandler). Zero for every task
+	// that never was.
+	Resumes int `json:"resumes,omitempty"`
 }
 
 // ScheduleHandlerFunc is called when a task becomes due.
@@ -60,6 +77,10 @@ func DescribeTask(t ScheduledTask) (label string) {
 var (
 	schedHandlers   = map[string]ScheduleHandlerFunc{}
 	schedHandlersMu sync.RWMutex
+	// schedResumable are the kinds whose runs are run again when the process
+	// stops under them (RegisterResumableScheduleHandler). Under
+	// schedHandlersMu.
+	schedResumable = map[string]bool{}
 
 	// schedNotify is signalled when tasks are added or removed so the loop
 	// can re-evaluate its sleep target without waiting for the current timer.
@@ -89,6 +110,24 @@ var (
 func RegisterScheduleHandler(kind string, fn ScheduleHandlerFunc) {
 	schedHandlersMu.Lock()
 	schedHandlers[kind] = fn
+	delete(schedResumable, kind)
+	schedHandlersMu.Unlock()
+}
+
+// RegisterResumableScheduleHandler registers a handler, as
+// RegisterScheduleHandler does, for a kind whose run must not be lost to a
+// restart: when the process stops while fn runs (a rebuild, a crash, a
+// shutdown that cancels ctx), the task runs again once, shortly after the
+// next start. For work that runs once on its schedule and is missed until
+// the next one otherwise: a daily post, a report. fn must do its work
+// before it returns; work it hands to a goroutine is not covered.
+//
+// A task due while the server was down runs at startup for every kind
+// already; this is the run that had started.
+func RegisterResumableScheduleHandler(kind string, fn ScheduleHandlerFunc) {
+	schedHandlersMu.Lock()
+	schedHandlers[kind] = fn
+	schedResumable[kind] = true
 	schedHandlersMu.Unlock()
 }
 
@@ -272,8 +311,7 @@ func StartGlobalScheduler(ctx context.Context) {
 	db := schedDB
 	schedDBMu.Unlock()
 
-	// Fire any tasks that were due while the server was offline.
-	fireDueTasks(ctx, db)
+	startupFire(ctx, db)
 
 	go runSchedulerLoop(ctx, db)
 	Log("[scheduler] started")
@@ -409,6 +447,14 @@ func fireDueTasks(ctx context.Context, db Database) {
 			continue
 		}
 		db.Unset(schedulerTable, k)
+		// A resumable kind's run is on record while it runs, so a stop
+		// under it leaves it there for the next start (resumeInterrupted).
+		schedHandlersMu.RLock()
+		resumable := schedResumable[task.Kind]
+		schedHandlersMu.RUnlock()
+		if resumable {
+			db.Set(schedulerRunningTable, task.ID, task)
+		}
 		toFire = append(toFire, task)
 	}
 	schedDBMu.Unlock()
@@ -440,8 +486,51 @@ func fireDueTasks(ctx context.Context, db Database) {
 				if r := recover(); r != nil {
 					Log("[scheduler] handler for kind %q (task %s) panicked, recovered: %v", t.Kind, t.ID, r)
 				}
+				// Ended: off the record, unless it ended because the process
+				// is stopping, which cut it off. A panic is an ending: run
+				// again, it would panic again.
+				if ctx.Err() == nil {
+					schedDBMu.Lock()
+					db.Unset(schedulerRunningTable, t.ID)
+					schedDBMu.Unlock()
+				}
 			}()
 			handler(ctx, t.Payload)
 		}()
+	}
+}
+
+// startupFire is the scheduler's first pass: queue again the runs a stop cut
+// off, then fire every task that came due while the server was offline.
+func startupFire(ctx context.Context, db Database) {
+	resumeInterrupted(db, time.Now())
+	fireDueTasks(ctx, db)
+}
+
+// resumeInterrupted queues again, resumeDelay after now, each run a stop cut
+// off (left on schedulerRunningTable), and drops one already run again
+// maxResumes times.
+func resumeInterrupted(db Database, now time.Time) {
+	schedDBMu.Lock()
+	defer schedDBMu.Unlock()
+	for _, k := range db.Keys(schedulerRunningTable) {
+		var t ScheduledTask
+		ok := db.Get(schedulerRunningTable, k, &t)
+		db.Unset(schedulerRunningTable, k)
+		if !ok {
+			continue
+		}
+		label := t.Kind
+		if d := DescribeTask(t); d != "" {
+			label += ", " + d
+		}
+		if t.Resumes >= maxResumes {
+			Log("[scheduler] task %s (%s) was cut off again after being run again; not running it a third time", t.ID, label)
+			continue
+		}
+		t.Resumes++
+		t.RunAt = now.Add(resumeDelay).UTC().Format(time.RFC3339)
+		db.Set(schedulerTable, t.ID, t)
+		Log("[scheduler] task %s (%s) was cut off by the server stopping; running it again at %s", t.ID, label, t.RunAt)
 	}
 }
