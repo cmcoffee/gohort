@@ -481,13 +481,13 @@ func refTargetWords(a Appliance) (noun string, live refLiveWords) {
 		return "the local command target", refLiveWords{
 			searchCaveat:   "run anything",
 			dispatchPhrase: "to run read-only commands against it right now",
-			safetyNote:     "Meant for finding things out: a command that needs the owner's approval waits for them, and you are given a link to hand them; where nobody can answer, it is declined.",
+			safetyNote:     "Meant for finding things out: a command that needs the owner's approval is asked of them on a card in this conversation; not answered there, it waits for them and you are given a link to hand them; where nobody can answer, it is declined.",
 		}
 	}
 	return "the system", refLiveWords{
 		searchCaveat:   "touch the live machine",
 		dispatchPhrase: "to run read-only SSH commands on it right now",
-		safetyNote:     "It touches the real machine. Meant for finding things out: a command that needs the owner's approval waits for them, and you are given a link to hand them; where nobody can answer, it is declined.",
+		safetyNote:     "It touches the real machine. Meant for finding things out: a command that needs the owner's approval is asked of them on a card in this conversation; not answered there, it waits for them and you are given a link to hand them; where nobody can answer, it is declined.",
 		checkNote:      " When the user asks you to check Servitor or their systems, that means a health pass over EVERY Servitor system you have: call each one's investigate tool asking about its health (services down, disk and memory, load, recent errors), then report each system's state.",
 	}
 }

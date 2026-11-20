@@ -61,7 +61,7 @@ func TestAnAgentWithNoLinkIsRefused(t *testing.T) {
 	register(t, "agent-t2", "alice", true)
 	for name, ctx := range map[string]context.Context{
 		"no park":      WithActingAgent(context.Background(), "agent-1"),
-		"park says no": withApprovalByLink(WithActingAgent(context.Background(), "agent-1"), func(string) bool { return false }),
+		"park says no": withApprovalByLink(WithActingAgent(context.Background(), "agent-1"), func(string, string) bool { return false }),
 	} {
 		pr := &probeRun{ctx: ctx, id: "agent-t2", appliance: Appliance{ID: "box-1"}}
 		if err := pr.gateHits(gateCmd, gateHit); err == nil || !strings.Contains(err.Error(), "standing permission") {
@@ -82,8 +82,8 @@ func TestAParkedCommandWaitsOnTheOwnersCard(t *testing.T) {
 	ch := make(chan bool, 1)
 	confirmChans.Store(sid, pendingConfirm{ch: ch, owner: "alice", interactive: true})
 	t.Cleanup(func() { confirmChans.Delete(sid) })
-	var parked string
-	ctx := withApprovalByLink(WithActingAgent(context.Background(), "agent-1"), func(cmd string) bool { parked = cmd; return true })
+	var parked, why string
+	ctx := withApprovalByLink(WithActingAgent(context.Background(), "agent-1"), func(cmd, w string) bool { parked, why = cmd, w; return true })
 	pr := &probeRun{ctx: ctx, id: sid, confirm: ch, appliance: Appliance{ID: "box-1"}}
 	got := make(chan error, 1)
 	go func() { got <- pr.gateHits(gateCmd, gateHit) }()
@@ -98,6 +98,9 @@ func TestAParkedCommandWaitsOnTheOwnersCard(t *testing.T) {
 	}
 	if card.Card == "" || parked != gateCmd {
 		t.Fatalf("the command should park on a card, told to the investigation: %+v %q", card, parked)
+	}
+	if !strings.Contains(why, string(RiskSysControl)) || !strings.Contains(why, "restarts a service") {
+		t.Errorf("the investigation is not told why it needs the owner: %q", why)
 	}
 	raised := chatEventFor(sid, card)
 	if delivered := deliverConfirm("alice", raised["id"].(string), true); delivered != sid {
@@ -167,7 +170,7 @@ func TestAnAgentInvestigationParksAndReportsBack(t *testing.T) {
 			emit(sid, probeEvent{Kind: "error", Text: "not acting for the agent"})
 			return
 		}
-		if park := approvalByLink(ctx); park == nil || !park(gateCmd) {
+		if park := approvalByLink(ctx); park == nil || !park(gateCmd, "system_control: restarts a service") {
 			emit(sid, probeEvent{Kind: "error", Text: "could not park"})
 			return
 		}
@@ -242,5 +245,129 @@ func TestTheStoredAnswerSaysWhoAsked(t *testing.T) {
 	got, _ := loadSession(udb, "lab-box", s.ID)
 	if c := got.Messages[1].Content; !strings.Contains(c, "Because.") || !strings.Contains(c, "Asked by Ops in [Disk trouble](/orchestrate/?agent=a1&session=c1)") {
 		t.Errorf("the stored answer should link back to the conversation: %q", c)
+	}
+}
+
+// With someone watching the conversation that asked, the command is put to
+// them there on a card of its own: Allow runs it and Deny declines it, and
+// either way the agent's call waits on and comes back with the answer, no
+// link. A card nobody answers in time leaves the command waiting in
+// Servitor, by the link, as before.
+func TestAParkedCommandIsAskedInTheCallingChat(t *testing.T) {
+	app, _ := sourcesApp(t)
+	prevRun, prevLink, prevInv := TaskRunnerFunc, ConversationLinkFunc, runInvestigation
+	t.Cleanup(func() { TaskRunnerFunc, ConversationLinkFunc, runInvestigation = prevRun, prevLink, prevInv })
+	backgrounded := 0
+	TaskRunnerFunc = func(*ToolSession, string, func(context.Context) (TaskProduct, error)) (TaskRun, error) {
+		backgrounded++
+		return TaskRun{ID: "task-1"}, nil
+	}
+	ConversationLinkFunc = func(*ToolSession) ConversationLink {
+		return ConversationLink{Path: "/orchestrate/?agent=a1&session=c1", Title: "Disk trouble", Agent: "Ops"}
+	}
+	runInvestigation = func(T *Servitor, ctx context.Context, sid, user, ownerUser string, a Appliance, confirm chan bool, msgs []Message, udb Database) {
+		if park := approvalByLink(ctx); park == nil || !park(gateCmd, "system_control: restarts a service") {
+			emit(sid, probeEvent{Kind: "error", Text: "could not park"})
+			return
+		}
+		select {
+		case ok := <-confirm:
+			if !ok {
+				emit(sid, probeEvent{Kind: "reply", Text: "It was not allowed."})
+				return
+			}
+			emit(sid, probeEvent{Kind: "reply", Text: "The web service is back."})
+		case <-ctx.Done():
+		}
+	}
+	for _, c := range []struct {
+		name     string
+		label    string
+		answered bool
+		want     string
+	}{
+		{"Allow", "Allow", true, "The web service is back."},
+		{"Deny", "", true, "It was not allowed."},
+	} {
+		var prompt, detail string
+		sess := &ToolSession{Username: "alice", ChatSessionID: "c1", PendingApprovalPrompt: func(Authorization) {},
+			AskInChatAnswered: func(p, d string, yes []string) (string, bool) {
+				prompt, detail = p, d
+				return c.label, c.answered
+			}}
+		out, err := app.InvestigateForAgent(context.Background(), sess, "alice", "lab-box", "why is the site down?", "agent-1")
+		if err != nil || out != c.want {
+			t.Errorf("%s: the agent's call: %q %v", c.name, out, err)
+		}
+		if !strings.Contains(prompt, "Let Servitor run this on") || !strings.Contains(detail, gateCmd) || !strings.Contains(detail, "restarts a service") || !strings.Contains(detail, "why is the site down?") {
+			t.Errorf("%s: the card does not say what and why: %q / %q", c.name, prompt, detail)
+		}
+		if strings.Contains(prompt+detail, "\u2014") {
+			t.Errorf("%s: an em-dash on the card", c.name)
+		}
+	}
+	if backgrounded != 0 {
+		t.Errorf("an answered card still sent the run to the background")
+	}
+
+	// Not answered in time: the command waits in Servitor, by the link.
+	sess := &ToolSession{Username: "alice", ChatSessionID: "c1", PendingApprovalPrompt: func(Authorization) {},
+		AskInChatAnswered: func(string, string, []string) (string, bool) { return "", false }}
+	out, err := app.InvestigateForAgent(context.Background(), sess, "alice", "lab-box", "why is the site down?", "agent-1")
+	body, marked := TakeFrameworkResultMark(out)
+	if err != nil || !marked || !strings.Contains(body, "/servitor/?reconnect=") || backgrounded != 1 {
+		t.Errorf("a card nobody answered: %q %v (backgrounded %d)", out, err, backgrounded)
+	}
+}
+
+// A command the owner denied is not asked again in the same run: the next
+// time the investigation asks for it, however spaced, it is declined at once
+// and no card goes up. Another command still asks, and a card nobody
+// answered is not taken for a no.
+func TestADeniedCommandIsNotAskedAgain(t *testing.T) {
+	const sid = "agent-deny-once"
+	events := liveRun(t, sid)
+	ch := make(chan bool, 1)
+	confirmChans.Store(sid, pendingConfirm{ch: ch, owner: "alice", interactive: true})
+	t.Cleanup(func() { confirmChans.Delete(sid) })
+	// Bounded: a card put up again by mistake ends with the run, not after
+	// the half hour an agent's card waits.
+	bounded, stop := context.WithTimeout(context.Background(), 3*time.Second)
+	t.Cleanup(stop)
+	ctx := withApprovalByLink(WithActingAgent(bounded, "agent-1"), func(string, string) bool { return true })
+	pr := &probeRun{ctx: ctx, id: sid, confirm: ch, appliance: Appliance{ID: "box-1"}}
+	cards := func() int { return len(kinds(events(), "confirm")) }
+	answer := func(allow bool) {
+		for i := 0; i < 200; i++ {
+			if c := kinds(events(), "confirm"); len(c) > 0 {
+				deliverConfirm("alice", chatEventFor(sid, c[len(c)-1])["id"].(string), allow)
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	go answer(false)
+	if err := pr.gateHits(gateCmd, gateHit); err == nil {
+		t.Fatal("a denied command ran")
+	}
+	if cards() != 1 {
+		t.Fatalf("cards after the first ask: %d", cards())
+	}
+	err := pr.gateHits("systemctl   restart  web", gateHit)
+	if err == nil || !strings.Contains(err.Error(), "denied") || !strings.Contains(err.Error(), "earlier in this investigation") {
+		t.Errorf("the denied command, asked again: %v", err)
+	}
+	if cards() != 1 {
+		t.Errorf("the denied command put up another card: %d", cards())
+	}
+	// Not answered in time: not a no.
+	if err := pr.awaitApproval("systemctl reload web", "", 10*time.Millisecond); err == nil {
+		t.Fatal("a card nobody answered let the command run")
+	}
+	if pr.deniedBefore("systemctl reload web") {
+		t.Error("a card nobody answered was taken for a no")
+	}
+	if pr.deniedBefore("systemctl stop web") {
+		t.Error("a command nobody was asked about reads as denied")
 	}
 }

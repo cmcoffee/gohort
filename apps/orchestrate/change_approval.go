@@ -215,15 +215,34 @@ type changeAsker struct {
 	session                   string
 	db                        Database
 	sentBy                    string
-	ask                       func(prompt, detail string, yes []string) string
+	ask                       endedAsk
 	sess                      *ToolSession
 	// approvedRun: the owner approved this run from the queue, so its edits
 	// are theirs (withOwnerApprovedRun).
 	approvedRun bool
 }
 
-// changeApprover builds a session's ApproveChange.
+// changeApprover builds a session's ApproveChange, with a card whose every
+// no reads as the owner's (changeApproverEnded tells them apart).
 func changeApprover(sess *ToolSession, owner, agentID, agentName string, ask func(prompt, detail string, yes []string) string) func(kind, name, detail string, op ChangeOp) string {
+	return changeApproverEnded(sess, owner, agentID, agentName, saidNo(ask))
+}
+
+// saidNo is ask as an endedAsk that reads every no as the person's. Nil for
+// nil.
+func saidNo(ask func(prompt, detail string, yes []string) string) endedAsk {
+	if ask == nil {
+		return nil
+	}
+	return func(prompt, detail string, yes []string) (string, askEnd) {
+		return ask(prompt, detail, yes), askNo
+	}
+}
+
+// changeApproverEnded builds a session's ApproveChange from a card that says
+// how it ended, so a refusal says whether the owner said no or never
+// answered.
+func changeApproverEnded(sess *ToolSession, owner, agentID, agentName string, ask endedAsk) func(kind, name, detail string, op ChangeOp) string {
 	return func(kind, name, detail string, op ChangeOp) string {
 		if sess == nil {
 			return ""
@@ -240,9 +259,9 @@ func (t *chatTurn) approveChange(kind, name, detail string, op ChangeOp) string 
 	if t == nil {
 		return ""
 	}
-	ask := t.changeAsk
+	ask := saidNo(t.changeAsk)
 	if ask == nil {
-		ask = t.chatAsker() // this chat's card, or the one of the chat that started this run
+		ask = t.endedAsker() // this chat's card, or the one of the chat that started this run
 	}
 	return changeAsker{owner: t.user, agentID: t.agent.ID, agentName: t.agent.Name, session: t.chatSessionID(),
 		db: t.udb, ask: ask, approvedRun: ownerApprovedRunFor(t.ctx, t.agent.ID)}.approve(kind, name, detail, op)
@@ -288,11 +307,12 @@ func (c changeAsker) approve(kind, name, detail string, op ChangeOp) string {
 			body = "Change it."
 		}
 		body += "\n\nApprove covers changes to this " + strings.TrimSpace(kind) + " for the rest of this session."
-		if c.ask(prompt, body, []string{"Approve"}) != "" {
+		label, end := c.ask(prompt, body, []string{"Approve"})
+		if label != "" {
 			set.add(key)
 			return ""
 		}
-		return fmt.Sprintf("NOT DONE: the owner declined this change to the %s. Leave it as it is: do not make the change another way, and do not recreate it under a different name. Tell them what you would have changed and why, and ask how they want to proceed.", what)
+		return changeRefusal(what, end)
 	}
 	then := "once they approve it, the change can be made in the next run"
 	if queueChangeApproval(c, kind, name, detail) {
@@ -444,4 +464,20 @@ func (t *chatTurn) noteIntakeTargets() {
 			set.name(key)
 		}
 	}
+}
+
+// changeRefusal is what the agent is told when the owner's card for a change
+// to what ended without a yes, saying how it ended: told as a decline only
+// when the owner said no.
+func changeRefusal(what string, end askEnd) string {
+	const hold = " Leave it as it is: do not make the change another way, and do not recreate it under a different name."
+	switch end {
+	case askUnanswered:
+		return "NOT DONE: the owner did not answer the approval for this change to the " + what + " in time, so it was not made." + hold + " Tell them what you would change and why; when they are back, it can be asked again."
+	case askNobody:
+		return "NOT DONE: nobody was there to answer the approval for this change to the " + what + ", so it was not made." + hold + " Tell them what you would change and why."
+	case askUnknown:
+		return "NOT DONE: the owner did not approve this change to the " + what + ": they said no, or did not answer in time." + hold + " Tell them what you would have changed and why, and ask how they want to proceed."
+	}
+	return "NOT DONE: the owner declined this change to the " + what + "." + hold + " Tell them what you would have changed and why, and ask how they want to proceed."
 }

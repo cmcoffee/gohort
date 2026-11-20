@@ -12,6 +12,12 @@
 // render does. The session says who started it, and links back to that
 // conversation.
 //
+// When the conversation that asked can take a question card, the command is
+// put to the person there first, on a card of its own: Allow runs it, Deny
+// declines it, and the investigation goes on with the agent still waiting
+// for its answer. Only a card nobody answers in time leaves the command
+// waiting in Servitor, by the link.
+//
 // Where nobody can follow a link (a schedule, a messaging conversation, a
 // turn the framework cannot report back into), the agent is refused at the
 // first command that needs approval, with what would allow it. The same
@@ -48,19 +54,64 @@ type investigationOrigin struct {
 type approvalByLinkKey struct{}
 
 // withApprovalByLink marks a run whose commands may park for the owner.
-// park is told each command that is about to, and answers whether it may: a
-// run that cannot hand over a link says no, and the command is refused.
-func withApprovalByLink(ctx context.Context, park func(cmd string) bool) context.Context {
+// park is told each command that is about to, and why it needs them, and
+// answers whether it may: a run that cannot hand over a link says no, and
+// the command is refused.
+func withApprovalByLink(ctx context.Context, park func(cmd, why string) bool) context.Context {
 	return context.WithValue(ctx, approvalByLinkKey{}, park)
 }
 
 // approvalByLink is the run's park, or nil when its commands may not wait.
-func approvalByLink(ctx context.Context) func(cmd string) bool {
+func approvalByLink(ctx context.Context) func(cmd, why string) bool {
 	if ctx == nil {
 		return nil
 	}
-	park, _ := ctx.Value(approvalByLinkKey{}).(func(string) bool)
+	park, _ := ctx.Value(approvalByLinkKey{}).(func(string, string) bool)
 	return park
+}
+
+// parkedCmd is a command waiting for the owner, and why it needs them.
+type parkedCmd struct{ cmd, why string }
+
+// askInCallingChat puts the command waiting in investigation sid to the
+// person in the conversation that asked for it, on a card there: Allow
+// runs it, Deny declines it. It reports false when the card was not
+// answered (in time, or in a chat that cannot say), and the command keeps
+// waiting in Servitor.
+func askInCallingChat(ctx context.Context, sess *ToolSession, sid, system, question string, p parkedCmd, confirm chan bool) bool {
+	if sess == nil || sess.AskInChatAnswered == nil {
+		return false
+	}
+	prompt := "Let Servitor run this on " + system + "?"
+	detail := "`" + truncateCmd(p.cmd, 300) + "`\n\nIt needs your approval (" + p.why + "). It is part of the investigation asked here: " + truncateCmd(question, 200) + "\n\nAllow runs it once; Deny declines it, and the investigation goes on without it. To allow commands like it from now on, use Always on its card in Servitor."
+	type answer struct {
+		label    string
+		answered bool
+	}
+	got := make(chan answer, 1)
+	go func() {
+		label, answered := sess.AskInChatAnswered(prompt, detail, []string{"Allow"})
+		got <- answer{label, answered}
+	}()
+	var a answer
+	select {
+	case a = <-got:
+	case <-ctx.Done():
+		return false
+	}
+	if !a.answered {
+		return false
+	}
+	// The answer is for this command: one answered in Servitor meanwhile,
+	// with another now waiting, does not take it.
+	if v, ok := pendingCmds.Load(sid); ok && v != p.cmd {
+		return true
+	}
+	select {
+	case confirm <- a.label != "":
+	default:
+	}
+	return true
 }
 
 // approvalByLinkPossible reports whether this turn can take a link to the
@@ -118,14 +169,14 @@ func (T *Servitor) InvestigateForAgent(ctx context.Context, sess *ToolSession, u
 	RegisterInjectionQueue(sid, user, "")
 	emit(sid, probeEvent{Kind: "origin", Origin: &origin})
 
-	waiting := make(chan string, 1)
+	waiting := make(chan parkedCmd, 1)
 	var noLink atomic.Bool
-	park := func(cmd string) bool {
+	park := func(cmd, why string) bool {
 		if noLink.Load() {
 			return false
 		}
 		select {
-		case waiting <- cmd:
+		case waiting <- parkedCmd{cmd, why}:
 		default:
 		}
 		return true
@@ -139,49 +190,63 @@ func (T *Servitor) InvestigateForAgent(ctx context.Context, sess *ToolSession, u
 		noteOrigin(udb, appliance.ID, sid, origin)
 	}()
 
-	select {
-	case <-done:
-		return investigationAnswer(sid)
-	case <-ctx.Done():
-		cancel()
-		<-done
-		return "", ctx.Err()
-	case cmd := <-waiting:
-		run, err := TaskRunnerFunc(sess, "investigating "+name, func(tctx context.Context) (TaskProduct, error) {
-			select {
-			case <-done:
-			case <-tctx.Done():
-				cancel()
-				<-done
-				return TaskProduct{}, tctx.Err()
+	var cmd string
+	for cmd == "" {
+		select {
+		case <-done:
+			return investigationAnswer(sid)
+		case <-ctx.Done():
+			cancel()
+			<-done
+			return "", ctx.Err()
+		case p := <-waiting:
+			// Asked in this conversation first; answered there, the
+			// investigation goes on and the agent keeps waiting for it.
+			if askInCallingChat(ctx, sess, sid, name, q, p, confirm) {
+				continue
 			}
-			answer, err := investigationAnswer(sid)
-			if err != nil {
-				return TaskProduct{}, err
-			}
-			return TaskProduct{Text: answer}, nil
-		})
-		if err != nil {
-			// Nowhere to report back after all: the command waiting is
-			// declined, the rest are refused, and the agent waits for what
-			// the investigation finds without them.
-			noLink.Store(true)
-			select {
-			case confirm <- false:
-			default:
-			}
-			select {
-			case <-done:
-				return investigationAnswer(sid)
-			case <-ctx.Done():
+			if ctx.Err() != nil {
 				cancel()
 				<-done
 				return "", ctx.Err()
 			}
+			cmd = p.cmd
 		}
-		Log("[servitor] agent %s investigation on %s parked for the owner: %s", agentID, appliance.ID, cmd)
-		return MarkFrameworkResult(approvalNotice(run, cmd, name, investigationPath(sid))), nil
 	}
+	run, err := TaskRunnerFunc(sess, "investigating "+name, func(tctx context.Context) (TaskProduct, error) {
+		select {
+		case <-done:
+		case <-tctx.Done():
+			cancel()
+			<-done
+			return TaskProduct{}, tctx.Err()
+		}
+		answer, err := investigationAnswer(sid)
+		if err != nil {
+			return TaskProduct{}, err
+		}
+		return TaskProduct{Text: answer}, nil
+	})
+	if err != nil {
+		// Nowhere to report back after all: the command waiting is
+		// declined, the rest are refused, and the agent waits for what
+		// the investigation finds without them.
+		noLink.Store(true)
+		select {
+		case confirm <- false:
+		default:
+		}
+		select {
+		case <-done:
+			return investigationAnswer(sid)
+		case <-ctx.Done():
+			cancel()
+			<-done
+			return "", ctx.Err()
+		}
+	}
+	Log("[servitor] agent %s investigation on %s parked for the owner: %s", agentID, appliance.ID, cmd)
+	return MarkFrameworkResult(approvalNotice(run, cmd, name, investigationPath(sid))), nil
 }
 
 // runInvestigation runs one investigation's session: runSession, unless a

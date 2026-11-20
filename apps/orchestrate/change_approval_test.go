@@ -32,13 +32,13 @@ func TestAChangeToWhatExistedAsksOncePerSession(t *testing.T) {
 	udb := changeTestStores(t)
 	asked := 0
 	c := changeAsker{owner: "u", agentID: "seed-builder", agentName: "Builder", session: "s1", db: udb,
-		ask: func(prompt, detail string, yes []string) string {
+		ask: saidNo(func(prompt, detail string, yes []string) string {
 			asked++
 			if !strings.Contains(prompt, "the tool wiki_read") {
 				t.Errorf("prompt does not name the item: %q", prompt)
 			}
 			return yes[0]
-		}}
+		})}
 	if msg := c.approve("tool", "fresh", "", ChangeNew); msg != "" || asked != 0 {
 		t.Fatalf("a new tool asked: %q", msg)
 	}
@@ -64,7 +64,7 @@ func TestAChangeToWhatExistedAsksOncePerSession(t *testing.T) {
 func TestADeniedChangeIsRefused(t *testing.T) {
 	udb := changeTestStores(t)
 	c := changeAsker{owner: "u", agentID: "seed-builder", session: "s1", db: udb,
-		ask: func(string, string, []string) string { return "" }}
+		ask: saidNo(func(string, string, []string) string { return "" })}
 	if msg := c.approve("app", "swing", "Delete the app.", ChangeDelete); !strings.Contains(msg, "declined") {
 		t.Errorf("a denied change went ahead: %q", msg)
 	}
@@ -152,10 +152,10 @@ func TestTheIntakeTargetIsApprovedForChangesOnly(t *testing.T) {
 	udb := changeTestStores(t)
 	var asked []string
 	c := changeAsker{owner: "u", agentID: "seed-builder", agentName: "Builder", session: "s-intake", db: udb,
-		ask: func(prompt, detail string, yes []string) string {
+		ask: saidNo(func(prompt, detail string, yes []string) string {
 			asked = append(asked, prompt)
 			return ""
-		}}
+		})}
 	turn := &chatTurn{user: "u", agent: AgentRecord{ID: "seed-builder"}, session: &ChatSession{ID: "s-intake", Messages: []ChatMessage{
 		{Role: "user", IntakeValues: map[string]string{"action": "Change", "kind": "App", "target": "swing"}},
 		{Role: "user", Content: "**What do you want to do?:** Fix\n**What kind of thing?:** Tool\n**Which one?:** wiki_read"},
@@ -236,10 +236,10 @@ func TestMakingOneAgentDoesNotApproveItsNamesake(t *testing.T) {
 	theirs, _ := saveAgent(udb, AgentRecord{Name: "Report Writer", Owner: "u", OrchestratorPrompt: "p"})
 	var prompts []string
 	c := changeAsker{owner: "u", agentID: "seed-builder", agentName: "Builder", session: "s1", db: udb,
-		ask: func(prompt, detail string, yes []string) string {
+		ask: saidNo(func(prompt, detail string, yes []string) string {
 			prompts = append(prompts, prompt)
 			return ""
-		}}
+		})}
 	c.approve("agent", mine.ID, "", ChangeNew)
 	if msg := c.approve("agent", mine.ID, "Update it.", ChangeEdit); msg != "" || len(prompts) != 0 {
 		t.Errorf("the agent made in this session asked to be changed: %q %v", msg, prompts)
@@ -259,7 +259,7 @@ func TestAnApprovedChangeDoesNotCoverADelete(t *testing.T) {
 	udb := changeTestStores(t)
 	asked := 0
 	c := changeAsker{owner: "u", agentID: "seed-builder", session: "s-del", db: udb,
-		ask: func(string, string, []string) string { asked++; return "Approve" }}
+		ask: saidNo(func(string, string, []string) string { asked++; return "Approve" })}
 	if msg := c.approve("tool", "cal", "Change it.", ChangeEdit); msg != "" || asked != 1 {
 		t.Fatalf("the change: %q asked %d", msg, asked)
 	}
@@ -269,5 +269,64 @@ func TestAnApprovedChangeDoesNotCoverADelete(t *testing.T) {
 	c.approve("tool", "probe", "", ChangeNew)
 	if msg := c.approve("tool", "probe", "Delete it.", ChangeDelete); msg != "" || asked != 2 {
 		t.Errorf("deleting what the session made asked: %q asked %d", msg, asked)
+	}
+}
+
+// A change the owner's card did not approve is refused saying how the card
+// ended: a decline only when they said no, a card not answered in time as
+// that, and one asked in another chat, which cannot tell, as either.
+func TestAChangeRefusalSaysHowTheCardEnded(t *testing.T) {
+	udb := changeTestStores(t)
+	prev := toolConfirmTimeout
+	toolConfirmTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { toolConfirmTimeout = prev })
+	live := &syncBuf{}
+	turn := &chatTurn{user: "u", udb: udb, agent: AgentRecord{ID: "seed-builder", Name: "Builder"}, sse: &sseWriter{live: live}}
+	ask := func(name string) string {
+		return changeAsker{owner: "u", agentID: "seed-builder", agentName: "Builder", session: "s-" + name, db: udb, ask: turn.endedAsker()}.approve("tool", name, "", ChangeEdit)
+	}
+
+	done := answerNextCard("u", "deny")
+	no := ask("wiki_read")
+	<-done
+	if !strings.Contains(no, "the owner declined this change") {
+		t.Errorf("a no: %q", no)
+	}
+	late := ask("wiki_write")
+	if !strings.Contains(late, "did not answer the approval for this change") || strings.Contains(late, "declined") {
+		t.Errorf("a card not answered in time: %q", late)
+	}
+	// The chat's own note says nobody answered, not that something was
+	// denied: a question's asker decides what no answer means.
+	if live := live.String(); !strings.Contains(live, "Nobody answered") || strings.Contains(live, "so the call was denied") {
+		t.Errorf("the chat's note on a question nobody answered:\n%s", live)
+	}
+
+	// Asked in the chat that started this run: its card says only yes or not.
+	sub := &chatTurn{user: "u", udb: udb, agent: AgentRecord{ID: "seed-builder"}, askVia: func(string, string, []string) string { return "" }}
+	relayed := changeAsker{owner: "u", agentID: "seed-builder", agentName: "Builder", session: "s-sub", db: udb, ask: sub.endedAsker()}.approve("tool", "wiki_read", "", ChangeEdit)
+	if !strings.Contains(relayed, "they said no, or did not answer in time") {
+		t.Errorf("a card asked in another chat: %q", relayed)
+	}
+	if _, end := sub.askInChatEnded("q", "", []string{"Approve"}); end != askUnknown {
+		t.Errorf("this turn's own card, relayed to the chat that started it: %v", end)
+	}
+	// A tool's card says the same: a Deny is an answer, a timeout is not.
+	sess := &ToolSession{Username: "u"}
+	turn.wireLiveCallbacks(sess)
+	done = answerNextCard("u", "deny")
+	if label, answered := sess.AskInChatAnswered("q", "", []string{"Allow"}); label != "" || !answered {
+		t.Errorf("a tool's card, denied: %q %v", label, answered)
+	}
+	<-done
+	if label, answered := sess.AskInChatAnswered("q", "", []string{"Allow"}); label != "" || answered {
+		t.Errorf("a tool's card nobody answered: %q %v", label, answered)
+	}
+	// Nobody watching anywhere: nothing is asked, the change queues.
+	if (&chatTurn{user: "u"}).endedAsker() != nil {
+		t.Error("a turn nobody watches has a card to ask")
+	}
+	if _, end := (&chatTurn{user: "u"}).askInChatEnded("q", "", []string{"Approve"}); end != askNobody {
+		t.Errorf("asked with nobody there: %v", end)
 	}
 }

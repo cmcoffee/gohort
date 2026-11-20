@@ -146,6 +146,9 @@ type probeRun struct {
 	sessionFailures  []sessionFailure
 	cmdCount         map[string]int
 	cmdMu            sync.Mutex
+	// denied is each command the person said no to in this run (by
+	// deniedKey), not asked again; guarded by cmdMu.
+	denied map[string]bool
 	failCount        map[string]int
 	failMu           sync.Mutex
 	read_log_tool    AgentToolDef
@@ -529,6 +532,13 @@ func (pr *probeRun) gateLine(cmd string, hits []risk_hit, shell bool) error {
 		}
 		cat, reason = need, why
 	}
+	// Denied once in this run: not asked again. The person's no stands for
+	// the rest of the investigation, and a model retrying the same command
+	// would only put the same card in front of them again.
+	if pr.deniedBefore(cmd) {
+		emit(pr.id, probeEvent{Kind: "status", Text: "Denied earlier in this investigation, not asked again: " + cmd})
+		return fmt.Errorf("not run: the owner denied %q earlier in this investigation, and it is not asked again. Do not ask for it again or reach the same effect another way: carry on without it, and say plainly what it would have shown", truncateCmd(cmd, 160))
+	}
 	// An acting agent has nobody watching this stream, so parking the
 	// command here would block for five minutes and time out. Refuse now,
 	// legibly — see agent_confirm.go for why this is a refusal rather than
@@ -538,7 +548,11 @@ func (pr *probeRun) gateLine(cmd string, hits []risk_hit, shell bool) error {
 	wait := 5 * time.Minute
 	if acting := ActingAgent(pr.ctx); acting != "" {
 		park := approvalByLink(pr.ctx)
-		if park == nil || !park(cmd) {
+		why := string(cat)
+		if r := strings.TrimSpace(reason); r != "" {
+			why += ": " + r
+		}
+		if park == nil || !park(cmd, why) {
 			emit(pr.id, probeEvent{Kind: "status", Text: "Needs approval (" + string(cat) + "): " + cmd})
 			Log("[servitor] agent %s refused %q on %s: no standing permission for %s", acting, cmd, pr.appliance.ID, cat)
 			covered, rest := coveredPart(pr.udb, pr.appliance.ID, cmd)
@@ -572,6 +586,7 @@ func (pr *probeRun) awaitApproval(cmd, reason string, wait time.Duration) error 
 	select {
 	case allowed := <-pr.confirm:
 		if !allowed {
+			pr.noteDenied(cmd)
 			settle("deny", "Denied")
 			emit(pr.id, probeEvent{Kind: "status", Text: "Command denied."})
 			return fmt.Errorf("command denied by user")
@@ -584,6 +599,27 @@ func (pr *probeRun) awaitApproval(cmd, reason string, wait time.Duration) error 
 	case <-pr.ctx.Done():
 		return pr.ctx.Err()
 	}
+}
+
+// deniedKey is cmd as a denial is remembered: its words, however spaced.
+func deniedKey(cmd string) string { return strings.Join(strings.Fields(cmd), " ") }
+
+// noteDenied remembers that the person said no to cmd in this run.
+func (pr *probeRun) noteDenied(cmd string) {
+	pr.cmdMu.Lock()
+	defer pr.cmdMu.Unlock()
+	if pr.denied == nil {
+		pr.denied = map[string]bool{}
+	}
+	pr.denied[deniedKey(cmd)] = true
+}
+
+// deniedBefore reports whether the person said no to cmd earlier in this
+// run.
+func (pr *probeRun) deniedBefore(cmd string) bool {
+	pr.cmdMu.Lock()
+	defer pr.cmdMu.Unlock()
+	return pr.denied[deniedKey(cmd)]
 }
 
 // Failure budget removed — sessionFailures still collected for the

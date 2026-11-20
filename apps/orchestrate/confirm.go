@@ -547,6 +547,29 @@ func (t *chatTurn) escalateToolConfirm(req toolConfirmRequest) bool {
 // always means "do not". The generic form of escalateToolConfirm, for a tool
 // whose question is not "may this call run" (ToolSession.AskInChat).
 func (t *chatTurn) askInChat(prompt, detail string, yes []string) string {
+	label, _ := t.askInChatEnded(prompt, detail, yes)
+	return label
+}
+
+// askEnd is how a question card ended, beside the yes it may have given: a
+// no, nobody answering it in time, nobody there to ask, or a card asked in
+// another chat (askVia) that does not say which.
+type askEnd int
+
+const (
+	askNo askEnd = iota
+	askUnanswered
+	askNobody
+	askUnknown
+)
+
+// endedAsk is a question card that says how it ended.
+type endedAsk func(prompt, detail string, yes []string) (string, askEnd)
+
+// askInChatEnded is askInChat, saying how a card with no yes ended.
+func (t *chatTurn) askInChatEnded(prompt, detail string, yes []string) (string, askEnd) {
+	relayed := t != nil && t.sse == nil && t.askVia != nil
+	nobody := t == nil || (t.sse == nil && t.askVia == nil)
 	actions := make([]map[string]any, 0, len(yes)+1)
 	allows := make(map[string]bool, len(yes))
 	for i, label := range yes {
@@ -557,14 +580,45 @@ func (t *chatTurn) askInChat(prompt, detail string, yes []string) string {
 	actions = append(actions, map[string]any{"label": "Deny", "value": "deny", "variant": "danger"})
 	picked, ok := t.parkConfirm(toolConfirmRequest{tool: questionCard, prompt: prompt, detail: detail, because: prompt}, actions, allows)
 	if !ok {
-		return ""
+		switch {
+		case nobody:
+			return "", askNobody
+		case relayed:
+			return "", askUnknown
+		case picked == "":
+			// Nothing pressed: the card timed out.
+			return "", askUnanswered
+		}
+		return "", askNo
 	}
 	for i, label := range yes {
 		if picked == fmt.Sprintf("yes%d", i) {
-			return label
+			return label, askNo
 		}
 	}
-	return ""
+	return "", askNo
+}
+
+// endedAsker is chatAsker, saying how a card with no yes ended: this chat's
+// card, or the card of the chat that started this run, which does not say;
+// nil when nobody can be asked.
+func (t *chatTurn) endedAsker() endedAsk {
+	if t == nil {
+		return nil
+	}
+	if t.sse == nil {
+		if t.askVia == nil {
+			return nil
+		}
+		via := t.askVia
+		return func(prompt, detail string, yes []string) (string, askEnd) {
+			if label := via(prompt, detail, yes); label != "" {
+				return label, askNo
+			}
+			return "", askUnknown
+		}
+	}
+	return t.askInChatEnded
 }
 
 // questionCard is the tool name askInChat's cards carry: the card is a
@@ -679,6 +733,18 @@ func (t *chatTurn) parkConfirm(req toolConfirmRequest, actions []map[string]any,
 		// then five minutes of dead air" incident: the approval card sat
 		// unanswered, the timeout killed the call, and nothing on screen
 		// said why. The user should never have to ask "what happened?".
+		// A question is not a call: what its asker does with no answer is
+		// its own (a change not made, a command left waiting elsewhere), so
+		// the note says only that nobody answered, never that something was
+		// denied.
+		if req.tool == questionCard {
+			t.turnDiag("tool-denied", fmt.Sprintf("Not answered in %s: \u201c%s\u201d.", toolConfirmTimeout, req.prompt))
+			t.sse.Send(map[string]any{"kind": "status_note",
+				"text": fmt.Sprintf("\u23f1 Nobody answered \u201c%s\u201d in %s.", req.prompt, toolConfirmTimeout)})
+			t.sendConfirmResolvedLabel(id, "deny", "Not answered in time")
+			t.recordApproval(req, "Not answered in time")
+			return "", false
+		}
 		t.turnDiag("tool-denied", fmt.Sprintf("Approval for %s (%s) timed out after %s: the call was denied. Re-ask to retry; the approval card must be answered within the window.", req.tool, req.because, toolConfirmTimeout))
 		t.sse.Send(map[string]any{"kind": "status_note",
 			"text": fmt.Sprintf("⏱ Approval for %s timed out after %s, so the call was denied.", req.tool, toolConfirmTimeout)})

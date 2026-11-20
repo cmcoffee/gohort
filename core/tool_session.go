@@ -207,6 +207,13 @@ type ToolSession struct {
 	// once at session creation, don't mutate after.
 	AskInChat func(prompt, detail string, yes []string) string
 
+	// AskInChatAnswered is AskInChat saying whether the person answered:
+	// true with "" for Deny, false with "" when the card timed out, nobody
+	// was watching, or it was asked in another chat that cannot say which.
+	// For a tool with somewhere else to wait when nobody answers. Nil where
+	// the host cannot tell.
+	AskInChatAnswered func(prompt, detail string, yes []string) (string, bool)
+
 	// ApproveWrite, if set, decides a request that changes something (POST,
 	// PUT, ...) sent to a host no credential covers (s.OutboundWriteRefusal).
 	// "" lets it go out; anything else is the refusal to return. The app sets

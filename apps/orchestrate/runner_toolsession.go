@@ -379,6 +379,10 @@ func (t *chatTurn) wireLiveCallbacks(sess *ToolSession) {
 	// A blocking question card, for a tool that needs the person's answer on
 	// the spot.
 	sess.AskInChat = t.askInChat
+	sess.AskInChatAnswered = func(prompt, detail string, yes []string) (string, bool) {
+		label, end := t.askInChatEnded(prompt, detail, yes)
+		return label, end == askNo
+	}
 	// A write to a host no credential covers asks the agent's owner, or is
 	// queued for them when nobody is watching (outbound_write.go).
 	if sess.ApproveWrite == nil {
@@ -389,7 +393,7 @@ func (t *chatTurn) wireLiveCallbacks(sess *ToolSession) {
 	// is asked about as itself, and its queue entries and grants are its own,
 	// not the sending agent's.
 	if sess.ApproveChange == nil {
-		sess.ApproveChange = changeApprover(sess, sess.Username, t.agent.ID, t.agent.Name, t.askInChat)
+		sess.ApproveChange = changeApproverEnded(sess, sess.Username, t.agent.ID, t.agent.Name, t.askInChatEnded)
 	}
 	// Inline privileges card — what an agent an authoring tool just saved may
 	// now do, editable in place. Persisted as a UIBlock (like the credential

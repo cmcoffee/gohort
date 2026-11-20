@@ -1414,7 +1414,7 @@ func (ar *agentsRun) buildSession() {
 	applyBuilderDelegation(ar.subSess, t.udb, job)
 	// A change it makes to what already exists asks the owner in THIS chat,
 	// when somebody is watching it (change_approval.go).
-	ar.subSess.ApproveChange = changeApprover(ar.subSess, t.user, ar.target.ID, ar.target.Name, t.chatAsker())
+	ar.subSess.ApproveChange = changeApproverEnded(ar.subSess, t.user, ar.target.ID, ar.target.Name, t.endedAsker())
 	ar.subSess.DirectCredentialRefusal = directCredentialRefusal(ar.target, ar.subSess)
 	ar.subSess.ToolFailureAdvice = toolFailureAdvice(ar.target, false, func() bool { return nonOwnerRequester(t.ctx) })
 
