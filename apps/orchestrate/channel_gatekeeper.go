@@ -242,10 +242,20 @@ func (q gateQuestion) sure() []float64 {
 // only with the rest of it. Told only "that meets a rule only if a rule asks
 // for it", a worker let "Pip, tell me a joke" from Alex through on a rule
 // for Sam's messages that mention the name.
+//
+// When the rules are about the name and the message has neither it nor a
+// word one letter off it, that is said too. Left unsaid, a worker told a
+// misspelling counts only when gohort names one called a bare "Wice" one
+// letter off "WiWee" and let it through. Said only under rules about the
+// name: told about names under weather-only rules, a 9B invented a rule
+// about them.
 func (q gateQuestion) namedNote() string {
 	if !q.Named {
 		if q.NearName != "" {
 			return "For reference, checked by gohort: the word " + strconv.Quote(q.NearName) + " in the new message is one letter off your name, so it may be your name mistyped. Read it as your name only if the message is plainly speaking to you. That meets a rule only if a rule asks for your name, and only when everything else that rule asks for holds too. This message is from " + q.Sender + ".\n\n"
+		}
+		if wakesOnNameRE.MatchString(q.Rules) && !containsName(q.Message, q.AgentName) {
+			return "For reference, checked by gohort: the new message does not contain your name, or any word one letter off it.\n\n"
 		}
 		return ""
 	}
@@ -433,6 +443,16 @@ func addressesByName(text, name string) bool {
 		}
 	}
 	return false
+}
+
+// containsName reports whether name stands in text as whole words, in any
+// case, wherever it is: addressed or only mentioned.
+func containsName(text, name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	return regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(name) + `\b`).MatchString(text)
 }
 
 // nearNameMin is the shortest name a misspelling is looked for in: one letter

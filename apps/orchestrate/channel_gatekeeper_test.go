@@ -327,3 +327,42 @@ func TestTheGateIsToldOfAMisspeltNameOnlyWhenThereIsOne(t *testing.T) {
 		t.Errorf("the gate did not find the misspelt name in the message:\n%s", p)
 	}
 }
+
+// Under rules about the name, a message with neither the name nor a word
+// one letter off it is told so, in both questions: left to infer it, a
+// worker called a bare "Wice" one letter off "WiWee" and let it through.
+// Not said when the name is in the message (mentioned, not addressed), or
+// under rules that are not about the name.
+func TestTheGateIsToldWhenThereIsNoNameAtAll(t *testing.T) {
+	const none = "the new message does not contain your name, or any word one letter off it"
+	byName := "WAKE when the incoming message from Henry mentions or addresses the agent by name, including common nicknames or obvious typos of that name."
+	q := gateQuestion{Rules: byName, AgentName: "WiWee", Sender: "Henry", Message: "Wice"}
+	if !strings.Contains(q.namedNote(), none) || !strings.Contains(q.systemOneQuestion().State, none) {
+		t.Errorf("no name, under a name rule: %q", q.namedNote())
+	}
+	fake := &FakeLLM{Turns: []FakeTurn{{Content: `{"reason": "1 no", "answer": "NO"}`, Repeat: true}}}
+	if _, _, err := gateDecide(t.Context(), fake, q); err != nil || !strings.Contains(fake.Prompt(0), none) {
+		t.Errorf("the full question was not told there is no name: %v\n%s", err, fake.Prompt(0))
+	}
+	for name, other := range map[string]gateQuestion{
+		"the name mentioned":     {Rules: byName, AgentName: "WiWee", Sender: "Henry", Message: "I told wiwee about it"},
+		"rules not about a name": {Rules: "Answer only questions about the weather.", AgentName: "WiWee", Sender: "Henry", Message: "Wice"},
+	} {
+		if strings.Contains(other.namedNote(), none) {
+			t.Errorf("%s: told there is no name", name)
+		}
+	}
+}
+
+func TestContainsName(t *testing.T) {
+	for text, want := range map[string]bool{
+		"I told WiWee yesterday": true, "wiwee?": true, "Wice": false, "wiweeee": false, "": false,
+	} {
+		if got := containsName(text, "WiWee"); got != want {
+			t.Errorf("%q: %v, want %v", text, got, want)
+		}
+	}
+	if containsName("anything", " ") {
+		t.Error("a blank name is in every message")
+	}
+}
