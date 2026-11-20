@@ -51,9 +51,10 @@ func TestAnOwnersAppToolsAreOnMCP(t *testing.T) {
 	}
 }
 
-// appsFixture signs up user-a and user-b and stands in for their apps:
-// user-a's Reading List (books_add, and books_wipe that asks first) and Pantry
-// (pantry_list); user-b has none. ran records what a tool did.
+// appsFixture signs up user-a, user-b and user-c and stands in for their
+// apps: user-a's Reading List (books_add, and books_wipe that asks first) and
+// Pantry (pantry_list); user-b has none; user-c has user-a's Reading List,
+// shared with them and offered over MCP. ran records what a tool did.
 func appsFixture(t *testing.T, ran *string) Database {
 	t.Helper()
 	prevAuth, prevRoot, prevApps := AuthDB, RootDB, offeringApps
@@ -62,12 +63,23 @@ func appsFixture(t *testing.T, ran *string) Database {
 	AuthSetUser(root, "user-b", "pw-b-123", false)
 	AuthDB = func() Database { return root }
 	RootDB = root
+	AuthSetUser(root, "user-c", "pw-c-123", false)
 	offeringApps = func(user string) []customapps.OfferingApp {
+		if user == "user-c" {
+			// Reading List, shared with user-c and offered to them by user-a.
+			return []customapps.OfferingApp{{Slug: "reading", Name: "Reading List", Owner: "user-a", Shared: true, Tools: []AgentToolDef{
+				{Tool: Tool{Name: "books_add", Description: "Add a book."},
+					Handler: func(_ context.Context, args map[string]any) (string, error) {
+						*ran = "user-c added " + args["title"].(string)
+						return `{"message":"added"}`, nil
+					}},
+			}}}
+		}
 		if user != "user-a" {
 			return nil
 		}
 		return []customapps.OfferingApp{
-			{Slug: "reading", Name: "Reading List", Desc: "Books to read.", Tools: []AgentToolDef{
+			{Slug: "reading", Name: "Reading List", Desc: "Books to read.", Owner: "user-a", Tools: []AgentToolDef{
 				{Tool: Tool{Name: "books_add", Description: "Add a book.", Category: "App: Reading List",
 					Parameters: map[string]ToolParam{"title": {Type: "string", Description: "The title"}}},
 					Handler: func(_ context.Context, args map[string]any) (string, error) {
@@ -78,7 +90,7 @@ func appsFixture(t *testing.T, ran *string) Database {
 					Confirmation: &ToolConfirmation{Prompt: "Delete every book?"},
 					Handler:      func(context.Context, map[string]any) (string, error) { *ran = "wiped"; return "", nil }},
 			}},
-			{Slug: "pantry", Name: "Pantry", Tools: []AgentToolDef{
+			{Slug: "pantry", Name: "Pantry", Owner: "user-a", Tools: []AgentToolDef{
 				{Tool: Tool{Name: "pantry_list", Description: "What is in the pantry.", Category: "App: Pantry"},
 					Handler: func(context.Context, map[string]any) (string, error) { *ran = "listed pantry"; return "[]", nil }},
 			}},

@@ -179,6 +179,13 @@ type AppSpec struct {
 	// name: the owner's call, like a group, with no administrator in it.
 	// Deployment-local, cleared on export.
 	SharedWith []string `json:"shared_with,omitempty"`
+	// OfferMCPToShared offers what the app offers beyond its page over MCP to
+	// the people it is shared with, each with a key of their own, on their own
+	// records, as the page does (apps/customapps/app_mcp.go). Off by default:
+	// a call runs the app's scripts as the owner, with the owner's
+	// connections, and an outside client can call far more often than a
+	// person clicks. The owner's call. Deployment-local, cleared on export.
+	OfferMCPToShared bool `json:"offer_mcp_to_shared,omitempty"`
 	// Maintainers are the people (usernames) who keep the app working for
 	// its owner: they change its sections and wording through Builder, in
 	// the owner's copy, and every save keeps the version it replaced under
@@ -787,6 +794,7 @@ func appServesDifferently(prior, next AppSpec) bool {
 		s.Created, s.Updated, s.Verify, s.Schema = "", "", nil, 0
 		s.ChangedBy, s.ChangedVia = "", ""
 		s.Shared, s.SharedGroups, s.SharedWith, s.PublicToken, s.Disabled = false, nil, nil, "", false
+		s.OfferMCPToShared = false
 		s.Maintainers, s.Managers = nil, nil
 		s.Checks = nil // what the app is tested for, not what it serves
 		s.FullWidth, s.Narrow, s.AskDailyUSD, s.AskUserDailyUSD = false, false, 0, 0

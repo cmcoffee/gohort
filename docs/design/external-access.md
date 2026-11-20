@@ -166,6 +166,17 @@ click would. Owner decisions:
 3. No outside door to the app's agent: asking the app in words is left out.
 4. Actions that ask to confirm first stay off MCP (nobody is asked there);
    MCP elicitation could carry the question later.
-5. Owner only. People an app is shared with come later, behind an owner's
-   switch (a new stored field, to be outlined first), running as themselves
-   on their own records.
+5. Owner only at first. Then (same day) the people an app is shared with,
+   behind the owner's switch: AppSpec.OfferMCPToShared, "Offer to people
+   it's shared with", off by default, deployment-local (cleared on export
+   and import, and not a change to what the app serves). Each person finds
+   the section on their own Settings and makes a key of their own, pinned
+   "apptools:<owner>/<slug>" so it never comes to mean an app of their own
+   at the same slug; a call runs as their click would, on their own records,
+   checked at the moment (the switch, the share, their access to the app,
+   MCP open to them). The address finds their own app first, then the shared
+   one. The owner sees whose keys name the app and when each was last used,
+   not what they did. A shared app's tools are not offered to the person's
+   agents. No call limits: those belong with per-user API cost caps.
+   AppToolsTarget lives in apps/customapps (the account page reads the apps
+   host's list), so core's export ceiling is back to 2447.

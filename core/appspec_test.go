@@ -305,3 +305,30 @@ func TestRecordSampleDoesNotBumpTheRevision(t *testing.T) {
 		t.Fatal("nil should clear the sample")
 	}
 }
+
+// Offering an app over MCP to the people it is shared with is how this copy
+// runs here: turning it on is not a change to what the app serves (so a
+// shared app stays shared), and it never travels in an export or arrives
+// with an import.
+func TestOfferingAnAppOverMCPIsLocal(t *testing.T) {
+	prior := AppSpec{Slug: "books", Owner: "u", Shared: true}
+	next := prior
+	next.OfferMCPToShared = true
+	if appServesDifferently(prior, next) {
+		t.Error("offering the app over MCP reads as a change to what it serves")
+	}
+	if importedAppSpec(next, "v").OfferMCPToShared {
+		t.Error("an imported app arrives offered over MCP")
+	}
+	saved := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = saved })
+	SaveAppSpec(AppSpec{Slug: "books", Name: "Books", Owner: "u", OfferMCPToShared: true})
+	raw, err := customAppArtifact{}.ExportArtifact(nil, "books", "u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "offer_mcp_to_shared") {
+		t.Errorf("the export carries the offer: %s", raw)
+	}
+}

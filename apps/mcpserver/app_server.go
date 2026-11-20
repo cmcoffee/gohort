@@ -7,9 +7,11 @@ package mcpserver
 // other app), and a call runs as the owner's own click would. The app's agent
 // is never reached here, except through an action of the app's that uses it.
 //
-// The key decides whose app it is: the owner's own app by that slug, and only
-// when the key reaches it (a key made for other apps does not). An MCP key
-// that names no app reaches this one as it reaches all of its owner's apps.
+// The key decides whose app it is, as the page does for a person: their own
+// app by that slug, else one shared with them whose owner offers it to the
+// people it is shared with; and only when the key reaches it (a key made for
+// other apps does not). An MCP key that names no app reaches this one as it
+// reaches all the apps its owner may use here.
 
 import (
 	"encoding/json"
@@ -71,14 +73,17 @@ func (T *MCPServer) keyApp(r *http.Request, slug, action string) (*AccountToken,
 	if tok == nil {
 		return nil, customapps.OfferingApp{}, "Unauthorized: this endpoint needs an MCP key in the X-API-Key header (Account > API keys, or the app's Settings)."
 	}
-	if !keyReachesApp(tok, slug) {
-		Log("[mcpserver] %s on app %q REJECTED: key %q does not reach it (owner=%s)", action, slug, tok.Name, owner)
-		return nil, customapps.OfferingApp{}, "Forbidden: this key does not reach this app."
-	}
-	for _, a := range reachedApps(tok, slug) {
+	for _, a := range offeringApps(owner) {
+		if a.Slug != slug {
+			continue
+		}
+		if !keyReachesApp(tok, a) {
+			Log("[mcpserver] %s on app %q REJECTED: key %q does not reach it (owner=%s)", action, slug, tok.Name, owner)
+			return nil, customapps.OfferingApp{}, "Forbidden: this key does not reach this app."
+		}
 		return tok, a, ""
 	}
-	return nil, customapps.OfferingApp{}, "Not found: you have no app here at this address that offers anything over MCP (it may be switched off, or offer nothing beyond its page)."
+	return nil, customapps.OfferingApp{}, "Not found: no app at this address offers you anything over MCP (it may be switched off, offer nothing beyond its page, or not be offered to the people it is shared with)."
 }
 
 // appInstructions is what the handshake tells a client about the app.

@@ -1,8 +1,8 @@
 package account
 
 import (
+	"encoding/json"
 	"net/http/httptest"
-	"sort"
 	"strings"
 	"testing"
 
@@ -163,52 +163,43 @@ func TestAKeyCannotBeRescopedIntoTheDesktopKind(t *testing.T) {
 	}
 }
 
-// An MCP key may be limited to its owner's own apps that offer something
-// beyond their page: such an app is offered as a target, and a key keeps it.
-// An app that offers nothing, someone else's app, and an app on any other
-// kind of key are dropped.
+// An MCP key may be limited to the apps its owner may use over MCP, as the
+// apps host lists them (customapps.MCPTargets): such an app is offered as a
+// target, and a key keeps it. Anything else, and an app on any other kind of
+// key, is dropped.
 func TestAnMCPKeyMayBeLimitedToTheOwnersApps(t *testing.T) {
-	prevRoot, prevFn := RootDB, ListExternalTargetsFn
+	prevRoot, prevFn, prevApps := RootDB, ListExternalTargetsFn, appTargets
 	RootDB = &DBase{Store: kvlite.MemStore()}
 	ListExternalTargetsFn = nil
-	t.Cleanup(func() { RootDB, ListExternalTargetsFn = prevRoot, prevFn })
+	appTargets = func(user string) []ExternalTarget {
+		if user != "alice" {
+			return nil
+		}
+		return []ExternalTarget{
+			{Value: "apptools:reading", Label: "Reading List", Group: "Apps"},
+			{Value: "apptools:bob/board", Label: "Board (shared by bob)", Group: "Apps"},
+		}
+	}
+	t.Cleanup(func() { RootDB, ListExternalTargetsFn, appTargets = prevRoot, prevFn, prevApps })
 	RegisterShareableFeature(ShareableFeature{Key: "openai", Label: "Model API"})
 	RegisterShareableFeature(ShareableFeature{Key: "mcp", Label: "MCP"})
 	for _, f := range []string{"openai", "mcp"} {
 		SetFeatureAllowedUsers(RootDB, f, []string{"alice"})
 	}
-	SaveAppSpec(AppSpec{Slug: "reading", Name: "Reading List", Owner: "alice",
-		Actions: []AppAction{{Name: "add", Script: "print('{}')", Expose: true}}})
-	SaveAppSpec(AppSpec{Slug: "notes", Name: "Notes", Owner: "alice",
-		DataSources: []AppDataSource{{Name: "all", Script: "print('[]')", Expose: true}}})
-	SaveAppSpec(AppSpec{Slug: "plain", Name: "Plain", Owner: "alice",
-		Actions:    []AppAction{{Name: "add", Script: "print('{}')"}, {Name: "empty", Expose: true}},
-		PipelineID: "p1"})
-	SaveAppSpec(AppSpec{Slug: "flow", Name: "Flow", Owner: "alice", PipelineID: "p2", ExposePipeline: true})
-	SaveAppSpec(AppSpec{Slug: "off", Name: "Off", Owner: "alice", Disabled: true,
-		Actions: []AppAction{{Name: "add", Script: "print('{}')", Expose: true}}})
-	SaveAppSpec(AppSpec{Slug: "bobs", Name: "Bob's", Owner: "bob",
-		Actions: []AppAction{{Name: "add", Script: "print('{}')", Expose: true}}})
-
-	var offered []string
-	for _, tg := range ListExternalTargets(RootDB, "alice") {
-		if tg.Group == "Apps" {
-			offered = append(offered, tg.Value+"="+tg.Label)
-		}
-	}
-	sort.Strings(offered)
-	if strings.Join(offered, ",") != "apptools:flow=Flow,apptools:notes=Notes,apptools:reading=Reading List" {
-		t.Errorf("alice's apps offered as targets: %v", offered)
-	}
-
 	T := &Account{}
 	T.DB = RootDB.(*DBase).Bucket("account")
-	posted := &TokenScope{Targets: []string{"apptools:reading", "apptools:plain", "apptools:off", "apptools:bobs"}}
+	c := &jsonapi.Call{User: "alice", R: httptest.NewRequest("GET", "/account/api/token-targets", nil)}
+	out, _ := T.handleTokenTargets(c)
+	if b, _ := json.Marshal(out); !strings.Contains(string(b), "apptools:bob/board") {
+		t.Errorf("the key editor does not offer the apps: %s", b)
+	}
+
+	posted := &TokenScope{Targets: []string{"apptools:reading", "apptools:bob/board", "apptools:plain", "apptools:carol/x"}}
 	got, err := T.kindScope("alice", KeyKindMCP, posted)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(got.Targets, ",") != "apptools:reading" || got.Kind() != KeyKindMCP {
+	if strings.Join(got.Targets, ",") != "apptools:reading,apptools:bob/board" || got.Kind() != KeyKindMCP {
 		t.Errorf("an MCP key for apps: targets %v, kind %q", got.Targets, got.Kind())
 	}
 	if got, _ := T.kindScope("alice", KeyKindAgents, posted); len(got.Targets) != 0 {

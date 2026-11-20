@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cmcoffee/gohort/apps/customapps"
 	. "github.com/cmcoffee/gohort/core"
 )
 
@@ -85,7 +86,7 @@ func TestAKeyMadeForAnAppReachesThatApp(t *testing.T) {
 	app := &MCPServer{}
 	app.DB = root.Bucket("mcpserver")
 
-	only := mcpKey("user-a", AppToolsTarget+"reading")
+	only := mcpKey("user-a", customapps.AppToolsTarget+"reading")
 	if got := toolNames(rpcTo(app, "/", only, "tools/list", nil)); strings.Join(got, ",") != "books_add" {
 		t.Errorf("a key for one app lists that app's tools alone: %v", got)
 	}
@@ -109,7 +110,7 @@ func TestAKeyMadeForAnAppReachesThatApp(t *testing.T) {
 		t.Errorf("a key for one app lists another app's tools at its address: %v", got)
 	}
 
-	withAgent := mcpKey("user-a", AppToolsTarget+"pantry", "agent:helper")
+	withAgent := mcpKey("user-a", customapps.AppToolsTarget+"pantry", "agent:helper")
 	got := toolNames(rpcTo(app, "/", withAgent, "tools/list", nil))
 	if !contains(got, "ask_agent") || !contains(got, "pantry_list") || contains(got, "books_add") {
 		t.Errorf("a key naming an app and an agent: %v", got)
@@ -183,5 +184,35 @@ func TestAnAppsAddressIsServed(t *testing.T) {
 	mux.ServeHTTP(w, r)
 	if !strings.Contains(w.Body.String(), "books_add") || strings.Contains(w.Body.String(), "ask_agent") {
 		t.Errorf("the app's address as served: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// An app shared with someone and offered to them is reached by their own
+// key: one naming no app, or one pinned to the owner's app. A key naming the
+// slug alone names an app of their own, so it does not reach the shared one.
+func TestASharedAppIsReachedByAKeyPinnedToItsOwner(t *testing.T) {
+	ran := ""
+	root := appsFixture(t, &ran)
+	app := &MCPServer{}
+	app.DB = root.Bucket("mcpserver")
+
+	for _, key := range []string{mcpKey("user-c"), mcpKey("user-c", customapps.AppToolsTarget+"user-a/reading")} {
+		ran = ""
+		if got := toolNames(rpcTo(app, "/app/reading/", key, "tools/list", nil)); strings.Join(got, ",") != "books_add" {
+			t.Errorf("the shared app's tools: %v", got)
+		}
+		rpcTo(app, "/app/reading/", key, "tools/call", map[string]any{"name": "books_add", "arguments": map[string]any{"title": "Dune"}})
+		if ran != "user-c added Dune" {
+			t.Errorf("the call ran as %q", ran)
+		}
+	}
+	slugOnly := mcpKey("user-c", customapps.AppToolsTarget+"reading")
+	ran = ""
+	resp := rpcTo(app, "/app/reading/", slugOnly, "tools/call", map[string]any{"name": "books_add", "arguments": map[string]any{"title": "x"}})
+	if ran != "" || !strings.Contains(mustJSON(resp), "does not reach this app") {
+		t.Errorf("a key naming the slug alone reached the shared app: ran %q, %s", ran, mustJSON(resp))
+	}
+	if got := toolNames(rpcTo(app, "/", slugOnly, "tools/list", nil)); len(got) != 0 {
+		t.Errorf("a key naming the slug alone lists the shared app at the general address: %v", got)
 	}
 }

@@ -1333,6 +1333,7 @@ func (customAppArtifact) ExportArtifact(_ Database, name, owner string) (json.Ra
 	spec.Shared = false
 	spec.SharedGroups = nil
 	spec.SharedWith = nil
+	spec.OfferMCPToShared = false
 	spec.Maintainers, spec.Managers = nil, nil
 	spec.DataOwner = ""
 	spec.PublicToken = ""
@@ -1625,6 +1626,7 @@ func importedAppSpec(spec AppSpec, owner string) AppSpec {
 	spec.Shared = false
 	spec.SharedGroups = nil
 	spec.SharedWith = nil
+	spec.OfferMCPToShared = false
 	spec.Maintainers, spec.Managers = nil, nil
 	spec.DataOwner = ""
 	spec.PublicToken = ""

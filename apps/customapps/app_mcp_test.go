@@ -8,6 +8,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // mcpApp is an app of u's that offers an action and one that asks first,
@@ -61,6 +62,9 @@ func TestSettingsSaysWhereAnMCPClientFindsTheApp(t *testing.T) {
 	if T.mcpSection(r, spec, "someone", "u", "/apps/books") != nil {
 		t.Error("someone other than the owner sees the section")
 	}
+	if b, _ := json.Marshal(sec); strings.Contains(string(b), "_settings/mcp/offer") {
+		t.Errorf("an app shared with nobody offers to share over MCP: %s", b)
+	}
 	plain := SaveAppSpec(AppSpec{Slug: "plain", Name: "Plain", Owner: "u"})
 	if sec := T.mcpSection(r, plain, "u", "u", "/apps/plain"); sec == nil || sec.Body != nil || !strings.Contains(sec.Subtitle, "offers nothing") {
 		t.Errorf("an app that offers nothing: %+v", sec)
@@ -101,18 +105,16 @@ func TestAKeyMadeForAnAppIsListedAndRevokedThere(t *testing.T) {
 	if w.Code != 404 {
 		t.Errorf("revoked another app's key from here: %d", w.Code)
 	}
-	for _, path := range []string{"/apps/books/_settings/mcp/keys", "/apps/books/_settings/mcp/mint"} {
-		method := "GET"
-		if strings.HasSuffix(path, "mint") {
-			method = "POST"
-		}
-		w = appAs(t, T, spec, "someone", httptest.NewRequest(method, path, strings.NewReader(`{}`)))
-		if w.Code != 403 {
-			t.Errorf("someone other than the owner: %s %s answered %d", method, path, w.Code)
-		}
+	// Someone the app is shared with, and not offered to, makes no key and
+	// sees and revokes none of the owner's.
+	if w := appAs(t, T, spec, "someone", httptest.NewRequest("POST", "/apps/books/_settings/mcp/mint", strings.NewReader(`{}`))); w.Code != 403 {
+		t.Errorf("someone the app is not offered to made a key: %d", w.Code)
 	}
-	if w := appAs(t, T, spec, "someone", httptest.NewRequest("DELETE", "/apps/books/_settings/mcp/keys/"+tok.ID, nil)); w.Code != 403 {
-		t.Errorf("someone other than the owner revoked a key: %d", w.Code)
+	if w := appAs(t, T, spec, "someone", httptest.NewRequest("GET", "/apps/books/_settings/mcp/keys", nil)); strings.Contains(w.Body.String(), made.Name) {
+		t.Errorf("someone else sees the owner's keys: %s", w.Body.String())
+	}
+	if w := appAs(t, T, spec, "someone", httptest.NewRequest("DELETE", "/apps/books/_settings/mcp/keys/"+tok.ID, nil)); w.Code != 404 {
+		t.Errorf("someone else revoked the owner's key: %d", w.Code)
 	}
 	w = appAs(t, T, spec, "u", httptest.NewRequest("DELETE", "/apps/books/_settings/mcp/keys/"+tok.ID, nil))
 	if w.Code != 200 {
@@ -142,4 +144,180 @@ func TestAnAppsMCPSectionIsOnItsSettings(t *testing.T) {
 	if w := appAs(t, T, spec, "u", httptest.NewRequest("POST", "/apps/books/_settings/mcp/mint", strings.NewReader(`{}`))); w.Code != 403 {
 		t.Errorf("a key made while MCP is closed to the owner: %d", w.Code)
 	}
+}
+
+// sharedMCPApp is mcpApp shared with pal, with accounts: u granted apps, pal
+// granted this app alone, MCP open to both.
+func sharedMCPApp(t *testing.T) (*CustomApps, AppSpec) {
+	t.Helper()
+	T, spec := mcpApp(t)
+	prev := AuthDB
+	db := &DBase{Store: kvlite.MemStore()}
+	AuthSetUser(db, "u", "pw-u-123", false)
+	AuthSetUser(db, "pal", "pw-p-123", false)
+	AuthSetUserApps(db, "u", []string{"/apps"})
+	AuthSetUserApps(db, "pal", []string{"/apps/books"})
+	AuthDB = func() Database { return db }
+	t.Cleanup(func() { AuthDB = prev })
+	SetFeatureAllowedUsers(RootDB, "mcp", []string{"u", "pal"})
+	spec.SharedWith = []string{"pal"}
+	spec = SaveAppSpec(spec)
+	SetSharedOwner(T.DB, sharedAppsIndex, spec.Slug, spec.Owner, true)
+	return T, spec
+}
+
+func offerMCP(t *testing.T, T *CustomApps, spec AppSpec, user string, on bool) int {
+	t.Helper()
+	body := `{"offer_to_shared":false}`
+	if on {
+		body = `{"offer_to_shared":true}`
+	}
+	return appAs(t, T, spec, user, httptest.NewRequest("POST", "/apps/books/_settings/mcp/offer", strings.NewReader(body))).Code
+}
+
+// An app shared with someone is theirs over MCP only once its owner offers it
+// to the people it is shared with: then it is an offering app of theirs,
+// pinned to its owner, listed for their keys, never among their agents'
+// tools. Only the owner offers it, and it stops with the offer, with the
+// share, and with their access to it; an app of their own at the slug comes
+// first.
+func TestASharedAppIsOfferedOverMCPWhenItsOwnerSaysSo(t *testing.T) {
+	T, spec := sharedMCPApp(t)
+	if got := T.offeringApps("pal"); len(got) != 0 {
+		t.Fatalf("offered before its owner says so: %+v", got)
+	}
+	if code := offerMCP(t, T, spec, "pal", true); code != 403 {
+		t.Errorf("someone else offered the app: %d", code)
+	}
+	if code := offerMCP(t, T, spec, "u", true); code != 200 {
+		t.Fatalf("the owner's offer: %d", code)
+	}
+	if w := appAs(t, T, spec, "u", httptest.NewRequest("GET", "/apps/books/_settings/mcp/offer", nil)); !strings.Contains(w.Body.String(), `"offer_to_shared":true`) {
+		t.Errorf("the offer reads back as: %s", w.Body.String())
+	}
+	if w := appAs(t, T, spec, "pal", httptest.NewRequest("GET", "/apps/books/_settings/mcp/offer", nil)); w.Code != 403 {
+		t.Errorf("someone else reads the offer: %d", w.Code)
+	}
+	got := T.offeringApps("pal")
+	if len(got) != 1 || !got[0].Shared || got[0].Owner != "u" || got[0].Target() != AppToolsTarget+"u/books" {
+		t.Fatalf("pal's offering apps: %+v", got)
+	}
+	if tg := MCPTargetsFor(T, "pal"); len(tg) != 1 || tg[0].Value != AppToolsTarget+"u/books" || !strings.Contains(tg[0].Label, "shared by u") {
+		t.Errorf("pal's key targets: %+v", tg)
+	}
+	if tools := T.exposedTools(nil, "pal"); len(tools) != 0 {
+		t.Errorf("a shared app's tools reached pal's agents: %d", len(tools))
+	}
+	if own := T.offeringApps("u"); len(own) != 1 || own[0].Shared || own[0].Target() != AppToolsTarget+"books" {
+		t.Errorf("the owner's own offering: %+v", own)
+	}
+
+	// Access to the app: pal granted another app only, unless an
+	// administrator.
+	AuthSetUserApps(AuthDB(), "pal", []string{"/apps/other"})
+	if got := T.offeringApps("pal"); len(got) != 0 {
+		t.Errorf("offered without access to the app: %+v", got)
+	}
+	AuthSetUser(AuthDB(), "pal", "pw-p-123", true)
+	if got := T.offeringApps("pal"); len(got) != 1 {
+		t.Errorf("an administrator it is shared with: %+v", got)
+	}
+	AuthSetUser(AuthDB(), "pal", "pw-p-123", false)
+	AuthSetUserApps(AuthDB(), "pal", []string{"/apps/books"})
+
+	// An app of pal's own at the same slug comes first.
+	SaveAppSpec(AppSpec{Slug: "books", Name: "Pal's Books", Owner: "pal", Actions: []AppAction{{Name: "add", Script: "x", Expose: true}}})
+	AuthSetUserApps(AuthDB(), "pal", []string{"/apps"})
+	if got := T.offeringApps("pal"); len(got) != 1 || got[0].Shared || got[0].Owner != "pal" {
+		t.Errorf("pal's own app does not come first: %+v", got)
+	}
+	DeleteAppSpec("pal", "books")
+	AuthSetUserApps(AuthDB(), "pal", []string{"/apps/books"})
+
+	if code := offerMCP(t, T, spec, "u", false); code != 200 {
+		t.Fatalf("the owner's offer off: %d", code)
+	}
+	if got := T.offeringApps("pal"); len(got) != 0 {
+		t.Errorf("still offered with the offer off: %+v", got)
+	}
+	offerMCP(t, T, spec, "u", true)
+	unshared, _ := loadSpec("u", "books")
+	unshared.SharedWith = nil
+	SaveAppSpec(unshared)
+	if got := T.offeringApps("pal"); len(got) != 0 {
+		t.Errorf("still offered once unshared: %+v", got)
+	}
+}
+
+// Someone it is offered to makes a key of their own, pinned to the owner's
+// app, and sees and revokes it on their Settings; the owner sees who has
+// connected and when, and offers it, where someone else sees neither.
+func TestSomeoneItIsOfferedToMakesTheirOwnKey(t *testing.T) {
+	T, spec := sharedMCPApp(t)
+	offerMCP(t, T, spec, "u", true)
+
+	r := httptest.NewRequest("GET", "https://box.example/apps/books/_settings", nil)
+	sec := T.mcpSection(r, spec, "pal", "u", "/apps/books")
+	if sec == nil || !strings.Contains(sec.Subtitle, "u offers this app") {
+		t.Fatalf("pal's section: %+v", sec)
+	}
+	if b, _ := json.Marshal(sec); strings.Contains(string(b), "_settings/mcp/offer") || strings.Contains(string(b), "_settings/mcp/people") {
+		t.Errorf("pal is offered the owner's controls: %s", b)
+	}
+	if b, _ := json.Marshal(T.mcpSection(r, spec, "u", "u", "/apps/books")); !strings.Contains(string(b), "_settings/mcp/offer") || !strings.Contains(string(b), "_settings/mcp/people") {
+		t.Errorf("the owner's section lacks the offer or who has connected: %s", b)
+	}
+
+	w := appAs(t, T, spec, "pal", httptest.NewRequest("POST", "/apps/books/_settings/mcp/mint", strings.NewReader(`{"client":"laptop"}`)))
+	var made struct{ Key, Name string }
+	json.Unmarshal(w.Body.Bytes(), &made)
+	if w.Code != 200 || made.Key == "" {
+		t.Fatalf("pal's key: %d %s", w.Code, w.Body.String())
+	}
+	var tok AccountToken
+	for _, k := range ListAccountTokens("pal") {
+		if k.Name == made.Name {
+			tok = k
+		}
+	}
+	if tok.Scope == nil || strings.Join(tok.Scope.Targets, ",") != AppToolsTarget+"u/books" {
+		t.Fatalf("pal's key is pinned to the owner's app: %+v", tok.Scope)
+	}
+	if w := appAs(t, T, spec, "pal", httptest.NewRequest("GET", "/apps/books/_settings/mcp/keys", nil)); !strings.Contains(w.Body.String(), made.Name) {
+		t.Errorf("pal's keys: %s", w.Body.String())
+	}
+	if w := appAs(t, T, spec, "u", httptest.NewRequest("GET", "/apps/books/_settings/mcp/keys", nil)); strings.Contains(w.Body.String(), made.Name) {
+		t.Errorf("the owner's own keys list pal's: %s", w.Body.String())
+	}
+	MintAccountTokenScoped("pal", "pal-general", &TokenScope{Features: []string{"mcp"}})
+	MintAccountTokenScoped("u", "u-own", &TokenScope{Features: []string{"mcp"}, Targets: []string{AppToolsTarget + "books"}})
+	w = appAs(t, T, spec, "u", httptest.NewRequest("GET", "/apps/books/_settings/mcp/people", nil))
+	if !strings.Contains(w.Body.String(), `"person":"pal"`) || !strings.Contains(w.Body.String(), made.Name) || strings.Contains(w.Body.String(), made.Key) {
+		t.Errorf("who has connected: %s", w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "pal-general") || strings.Contains(w.Body.String(), "u-own") {
+		t.Errorf("who has connected lists keys that do not name the shared app: %s", w.Body.String())
+	}
+	if w := appAs(t, T, spec, "pal", httptest.NewRequest("GET", "/apps/books/_settings/mcp/people", nil)); w.Code != 403 {
+		t.Errorf("pal sees who has connected: %d", w.Code)
+	}
+	if w := appAs(t, T, spec, "pal", httptest.NewRequest("DELETE", "/apps/books/_settings/mcp/keys/"+tok.ID, nil)); w.Code != 200 {
+		t.Errorf("pal revokes their key: %d", w.Code)
+	}
+
+	offerMCP(t, T, spec, "u", false)
+	if T.mcpSection(r, spec, "pal", "u", "/apps/books") != nil {
+		t.Error("pal still has the section with the offer off")
+	}
+	if w := appAs(t, T, spec, "pal", httptest.NewRequest("POST", "/apps/books/_settings/mcp/mint", strings.NewReader(`{}`))); w.Code != 403 {
+		t.Errorf("pal made a key with the offer off: %d", w.Code)
+	}
+}
+
+// MCPTargetsFor is MCPTargets on T rather than the running host.
+func MCPTargetsFor(T *CustomApps, user string) []ExternalTarget {
+	prev := hostApp
+	hostApp = T
+	defer func() { hostApp = prev }()
+	return MCPTargets(user)
 }

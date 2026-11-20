@@ -307,40 +307,7 @@ func ListExternalTargets(db Database, user string) []ExternalTarget {
 	if ListExternalTargetsFn != nil {
 		out = append(out, ListExternalTargetsFn(db, user)...)
 	}
-	// The person's own apps that offer something beyond their page, which
-	// an MCP key may be limited to.
-	for _, spec := range ListAppSpecs(user) {
-		if spec.Owner == user && !spec.Disabled && appOffersTools(spec) {
-			name := strings.TrimSpace(spec.Name)
-			if name == "" {
-				name = spec.Slug
-			}
-			out = append(out, ExternalTarget{Value: AppToolsTarget + spec.Slug, Label: name, Group: "Apps"})
-		}
-	}
 	return out
-}
-
-// AppToolsTarget prefixes an app's slug as a key target: an MCP key holding
-// "apptools:<slug>" reaches what that app offers beyond its page (its exposed
-// actions, data sources and pipeline), and a key holding any such target
-// reaches no other app's. Not "app:", which names an app's agents.
-const AppToolsTarget = "apptools:"
-
-// appOffersTools reports an app that offers something beyond its page: an
-// action or data source marked expose, or its pipeline.
-func appOffersTools(spec AppSpec) bool {
-	for _, a := range spec.Actions {
-		if a.Expose && strings.TrimSpace(a.Script) != "" {
-			return true
-		}
-	}
-	for _, d := range spec.DataSources {
-		if d.Expose {
-			return true
-		}
-	}
-	return spec.ExposePipeline && strings.TrimSpace(spec.PipelineID) != ""
 }
 
 // --- Per-app features (auto-derived from the app-agent registry) --------------

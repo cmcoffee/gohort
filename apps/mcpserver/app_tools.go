@@ -9,10 +9,12 @@ package mcpserver
 // is asked over MCP, and running it without asking would skip the question
 // the app put on it. The key's own scope narrows these like any tool.
 //
-// A key may be limited to apps (AppToolsTarget targets): it then reaches
-// those apps' tools and no other app's, and a key that names apps and no
-// agent reaches nothing else at all, no agent and no built-in tool. A key
-// that names no app reaches every app its owner has, as keys always did.
+// A key may be limited to apps (customapps.AppToolsTarget targets): it then
+// reaches those apps' tools and no other app's, and a key that names apps and
+// no agent reaches nothing else at all, no agent and no built-in tool. A key
+// that names no app reaches every app its owner may use over MCP: their own,
+// and those shared with them whose owners offer them, as keys always did for
+// their own.
 
 import (
 	"context"
@@ -27,15 +29,16 @@ import (
 // offeringApps is customapps.OfferingApps, a variable so tests can stand in.
 var offeringApps = customapps.OfferingApps
 
-// keyApps are the apps a key is limited to, by slug: nil for a key that
-// names none.
+// keyApps are the apps a key is limited to, as its targets name them ("slug"
+// for the key owner's own, "owner/slug" for one shared with them): nil for a
+// key that names none.
 func keyApps(tok *AccountToken) []string {
 	if tok == nil || tok.Scope == nil {
 		return nil
 	}
 	var out []string
 	for _, t := range tok.Scope.Targets {
-		if slug := strings.TrimPrefix(strings.TrimSpace(t), AppToolsTarget); slug != strings.TrimSpace(t) && slug != "" {
+		if slug := strings.TrimPrefix(strings.TrimSpace(t), customapps.AppToolsTarget); slug != strings.TrimSpace(t) && slug != "" {
 			out = append(out, slug)
 		}
 	}
@@ -56,15 +59,15 @@ func appOnlyKey(tok *AccountToken) bool {
 	return true
 }
 
-// keyReachesApp reports whether tok may use the app slug: it names that app,
-// or names none.
-func keyReachesApp(tok *AccountToken, slug string) bool {
+// keyReachesApp reports whether tok may use app: it names that app, or names
+// none.
+func keyReachesApp(tok *AccountToken, app customapps.OfferingApp) bool {
 	apps := keyApps(tok)
 	if apps == nil {
 		return true
 	}
 	for _, a := range apps {
-		if strings.EqualFold(a, slug) {
+		if strings.EqualFold(customapps.AppToolsTarget+a, app.Target()) {
 			return true
 		}
 	}
@@ -79,7 +82,7 @@ func reachedApps(tok *AccountToken, only string) []customapps.OfferingApp {
 	}
 	var out []customapps.OfferingApp
 	for _, a := range offeringApps(tok.Owner) {
-		if !keyReachesApp(tok, a.Slug) || (only != "" && !strings.EqualFold(a.Slug, only)) {
+		if !keyReachesApp(tok, a) || (only != "" && !strings.EqualFold(a.Slug, only)) {
 			continue
 		}
 		out = append(out, a)

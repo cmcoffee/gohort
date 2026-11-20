@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cmcoffee/gohort/apps/customapps"
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/mcppersonal"
@@ -759,7 +760,7 @@ func (T *Account) kindScope(user, kind string, posted *TokenScope) (*TokenScope,
 			return strings.HasPrefix(t, "agent:") || strings.HasPrefix(t, "channel:")
 		case KeyKindMCP:
 			// An MCP key also reaches apps: what each offers beyond its page.
-			return strings.HasPrefix(t, "agent:") || strings.HasPrefix(t, AppToolsTarget)
+			return strings.HasPrefix(t, "agent:") || strings.HasPrefix(t, customapps.AppToolsTarget)
 		case KeyKindOutside:
 			return strings.HasPrefix(t, "agent:")
 		case KeyKindModels:
@@ -832,7 +833,7 @@ func (T *Account) grantableScope(user string, scope *TokenScope) *TokenScope {
 		}
 	}
 	targets := map[string]bool{}
-	for _, t := range ListExternalTargets(T.DB, user) {
+	for _, t := range keyTargets(T.DB, user) {
 		targets[t.Value] = true
 	}
 	out.Features, out.Targets = nil, nil
@@ -848,6 +849,16 @@ func (T *Account) grantableScope(user string, scope *TokenScope) *TokenScope {
 	}
 	return &out
 }
+
+// keyTargets are what a key of user's may reach: core's targets (the raw
+// tiers, agents, channels) and the apps they may use over MCP (their own that
+// offer something, and those shared with them whose owners offer them).
+func keyTargets(db Database, user string) []ExternalTarget {
+	return append(ListExternalTargets(db, user), appTargets(user)...)
+}
+
+// appTargets is customapps.MCPTargets, a variable so tests can stand in.
+var appTargets = customapps.MCPTargets
 
 // handleTokenTargets feeds the per-key scope editor: which FEATURES this user
 // may enable on a key (the registered shareable features the admin permits
@@ -905,7 +916,7 @@ func (T *Account) handleTokenTargets(c *jsonapi.Call) (any, error) {
 	return map[string]any{
 		"kinds":    keyKinds(user),
 		"features": feats,
-		"targets":  ListExternalTargets(T.DB, user),
+		"targets":  keyTargets(T.DB, user),
 		"tools":    tools,
 	}, nil
 }
@@ -1169,7 +1180,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading...</div>
       appsGroup();
       var mine = byGroup['Apps'] || [];
       if(mine.length){
-        var yg = group('Your apps', 'What each ticked app offers beyond its page, and no other app. None ticked: every app of yours. Apps ticked and no agent: the key reaches those apps and nothing else.');
+        var yg = group('Your apps', 'What each ticked app offers beyond its page, and no other app. None ticked: every app you may use here, yours and those shared with you whose owners offer them. Apps ticked and no agent: the key reaches those apps and nothing else.');
         mine.forEach(function(t){ addTarget(yg, t); });
       }
       // A key with no explicit tool list is NOT narrowed (every exposed tool),

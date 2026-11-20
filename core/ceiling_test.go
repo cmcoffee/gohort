@@ -426,12 +426,7 @@ const (
 	// the tools a person's apps expose beyond their pages, which the tool
 	// lookup here resolves by name, so it carries core's tool types and
 	// cannot live in a leaf. The custom apps host sets it.
-	// 2473: the slack had been spent (HEAD stood at 2472), plus
-	// AppToolsTarget: the key target an MCP key is limited to an app by,
-	// which core's own target list (ListExternalTargets) writes and the
-	// account, MCP and custom apps hosts read; every leaf that could hold it
-	// imports core.
-	coreExportCeiling = 2473
+	coreExportCeiling = 2447
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

@@ -32,41 +32,135 @@ import (
 func (T *CustomApps) exposedTools(sess *ToolSession, user string) []AgentToolDef {
 	var out []AgentToolDef
 	for _, a := range T.offeringApps(user) {
-		out = append(out, a.Tools...)
+		// Their own apps only: a shared app offered over MCP is offered to
+		// an outside client, not to the person's agents.
+		if !a.Shared {
+			out = append(out, a.Tools...)
+		}
 	}
 	return out
 }
 
-// OfferingApp is one of a person's apps with what it offers beyond its page,
-// as an MCP client sees it: its name and description, and its exposed tools
-// (an action that asks to confirm first among them, for the caller to leave
-// out where nobody can be asked).
+// AppToolsTarget prefixes an app as a key target: an MCP key holding
+// "apptools:<slug>" (the key owner's own app) or "apptools:<owner>/<slug>"
+// (an app shared with them, pinned to its owner, so it never comes to mean
+// an app of their own made later under the same slug) reaches what that app
+// offers beyond its page, and a key holding any such target reaches no other
+// app's. Not "app:", which names an app's agents.
+const AppToolsTarget = "apptools:"
+
+// OfferingApp is one of the apps a person may use with what it offers beyond
+// its page, as an MCP client sees it: its name and description, and its
+// exposed tools (an action that asks to confirm first among them, for the
+// caller to leave out where nobody can be asked). Shared marks someone else's
+// app, shared with this person and offered to them over MCP by its owner.
 type OfferingApp struct {
-	Slug, Name, Desc string
-	Tools            []AgentToolDef
+	Slug, Name, Desc, Owner string
+	Shared                  bool
+	Tools                   []AgentToolDef
 }
 
-// offeringApps are user's own apps that offer something, switched on, while
-// user may use apps at all.
+// Target is the app as a key target names it.
+func (a OfferingApp) Target() string {
+	if a.Shared {
+		return AppToolsTarget + a.Owner + "/" + a.Slug
+	}
+	return AppToolsTarget + a.Slug
+}
+
+// offeringApps are the apps user may use that offer something, switched on,
+// while user may use apps at all: their own, then those shared with them
+// whose owners offer them to the people they share them with. An app of
+// their own shadows a shared one at the same slug, as the page does.
 func (T *CustomApps) offeringApps(user string) []OfferingApp {
-	if T == nil || user == "" || !T.mayUseApps(user) {
+	if T == nil || user == "" {
 		return nil
 	}
 	var out []OfferingApp
-	for _, spec := range ListAppSpecs(user) {
-		if spec.Disabled || spec.Owner != user {
+	own := map[string]bool{}
+	if T.mayUseApps(user) {
+		for _, spec := range ListAppSpecs(user) {
+			if spec.Owner != user {
+				continue
+			}
+			own[spec.Slug] = true
+			if spec.Disabled {
+				continue
+			}
+			if tools := T.appExposedTools(spec, user); len(tools) > 0 {
+				out = append(out, offering(spec, user, false, tools))
+			}
+		}
+	}
+	for slug, owner := range ListSharedOwners(T.DB, sharedAppsIndex) {
+		if owner == user || own[slug] {
+			continue
+		}
+		spec, ok := loadSpec(owner, slug)
+		if !ok || spec.Disabled || !spec.OfferMCPToShared || !appReaches(spec, user) || !T.sharedAppGrantedTo(user, slug) {
 			continue
 		}
 		if tools := T.appExposedTools(spec, user); len(tools) > 0 {
-			out = append(out, OfferingApp{Slug: spec.Slug, Name: firstNonEmpty(strings.TrimSpace(spec.Name), spec.Slug), Desc: strings.TrimSpace(spec.Desc), Tools: tools})
+			out = append(out, offering(spec, owner, true, tools))
 		}
 	}
 	return out
 }
 
-// OfferingApps are owner's apps that offer something beyond their page, for
-// the MCP server: each app's tools, run as owner's own click would be.
-func OfferingApps(owner string) []OfferingApp { return hostApp.offeringApps(owner) }
+// offering is spec as an offering app.
+func offering(spec AppSpec, owner string, shared bool, tools []AgentToolDef) OfferingApp {
+	return OfferingApp{Slug: spec.Slug, Name: firstNonEmpty(strings.TrimSpace(spec.Name), spec.Slug), Desc: strings.TrimSpace(spec.Desc),
+		Owner: owner, Shared: shared, Tools: tools}
+}
+
+// OfferingApps are the apps user may use over MCP, each with its tools, run
+// as user's own click would be.
+func OfferingApps(user string) []OfferingApp { return hostApp.offeringApps(user) }
+
+// MCPTargets are the apps an MCP key of user's may be limited to, for the key
+// editor: their own apps that offer something, and the shared ones offered
+// to them.
+func MCPTargets(user string) []ExternalTarget {
+	var out []ExternalTarget
+	for _, a := range hostApp.offeringApps(user) {
+		label := a.Name
+		if a.Shared {
+			label += " (shared by " + a.Owner + ")"
+		}
+		out = append(out, ExternalTarget{Value: a.Target(), Label: label, Group: "Apps"})
+	}
+	return out
+}
+
+// sharedAppGrantedTo reports whether user may open a shared app at slug by
+// the framework's access, as sharedAppReachableBy does for a request: the
+// whole apps host granted, or that app.
+func (T *CustomApps) sharedAppGrantedTo(user, slug string) bool {
+	path := T.WebPath()
+	if !AppEnabledHere(path) {
+		return false
+	}
+	if AuthDB == nil {
+		return true
+	}
+	db := AuthDB()
+	if db == nil || !AuthHasUsers(db) {
+		return true
+	}
+	u, ok := AuthGetUser(db, user)
+	if !ok {
+		return false
+	}
+	if u.Admin {
+		return true
+	}
+	for _, p := range AuthResolveUserApps(db, u) {
+		if p == path || p == path+"/"+slug || strings.HasPrefix(p, path+"/"+slug+"/") {
+			return true
+		}
+	}
+	return false
+}
 
 // appExposedTools are one app's exposed tools for uid, its owner, each in a
 // Category named for the app so a picker lists them under it.
