@@ -196,7 +196,14 @@ function codePaths() {
   native.open('GET', 'https://cdn.example/lib.json');
   native.send();
 
+  // A reply with no body to carry (204) still settles the page's fetch: a
+  // body handed to such a Response throws, and the call hung.
+  var empty = null;
+  w.fetch('view-state', {method: 'POST', body: '{}'}).then(function(r) { empty = r.status; });
+  answer(last(), '', 'application/octet-stream', 204);
+
   return tick().then(function() {
+    check('a 204 reply settles the page\'s fetch', empty === 204);
     check('an app\'s own absolute URL elsewhere, and another site, are refused', outside === 2);
     check('the Image gets the relayed bytes as a blob: URL', img.src.indexOf('blob:') === 0);
     check('the Audio too', snd.src.indexOf('blob:') === 0);

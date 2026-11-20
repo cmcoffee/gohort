@@ -113,6 +113,7 @@ func (T *CustomApps) handleAsk(w http.ResponseWriter, r *http.Request, ownerDB D
 	text, status, err := askAppAgent(WithRunLane(ctx, LaneInteractive), ownerDB, owner, user, spec, body.Prompt, body.JSON)
 	finish(err)
 	if err != nil {
+		recordAskFailure(r, owner, user, spec.Slug, err)
 		http.Error(w, err.Error(), status)
 		return
 	}

@@ -134,3 +134,30 @@ func TestRunsFoldAndFailuresOutlast(t *testing.T) {
 		}
 	}
 }
+
+// A failure from outside a script's run (an error in the page, an ask its
+// agent could not answer) is filed on the app, and the same failure again
+// folds into it with a count, so a page that throws on every poll does not
+// push the runs out; another failure is an entry of its own.
+func TestAProblemIsFiledAndItsRepeatsFold(t *testing.T) {
+	runsDB(t)
+	page := AppRun{Kind: "page", Name: "page", Trigger: "page", Error: "TypeError: x is undefined (line 4)"}
+	RecordProblem("alice", "weather", page)
+	RecordProblem("alice", "weather", page)
+	RecordProblem("alice", "weather", AppRun{Kind: "ask", Name: "ask", Trigger: "page", Other: true, Error: "the app's agent could not answer"})
+	runs := RecentRuns("alice", "weather")
+	if len(runs) != 2 {
+		t.Fatalf("runs: %+v", runs)
+	}
+	if r := runs[1]; r.Kind != "page" || r.OK || r.Times != 2 || r.At == "" {
+		t.Errorf("the page error, twice: %+v", r)
+	}
+	if r := runs[0]; r.Kind != "ask" || !r.Other || r.Times != 1 {
+		t.Errorf("the failed ask: %+v", r)
+	}
+	// A failure that logged something is its own entry: its lines differ.
+	a := AppRun{Kind: "data", Name: "x", OK: false, Error: "boom", Log: []string{"one"}}
+	if got := addRun([]AppRun{a}, a); len(got) != 2 {
+		t.Errorf("failures with log lines folded: %d", len(got))
+	}
+}

@@ -712,3 +712,83 @@ func TestARefusedPartChangeAsksNobody(t *testing.T) {
 		t.Errorf("the refused change was saved: %q", now.OrchestratorPrompt)
 	}
 }
+
+// In a draft's preview and checks, a script's run_pipeline runs the app's
+// own pipeline as the draft has it, a renamed one still found as the same
+// pipeline and keeping who it is, and its agent steps ask the app's agent
+// as the draft has it; a script's run_agent asks that agent too. With no
+// draft on the request, both are as they are live.
+func TestADraftsScriptsRunItsPipelineAndAgent(t *testing.T) {
+	turn, udb, clerk := ownedDeskFixture(t)
+	pinRootDB(t)
+	pipe, err := SavePipelineDefBy(udb, PipelineDef{Owner: "u", Name: "Brief", OwningApp: "desk",
+		Stages: []PipelineStage{{Name: "a", Kind: StageAgent, Agent: "Clerk", Prompt: "Brief: {input}"}}}, "create", "Builder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := SavePipelineDefBy(udb, PipelineDef{Owner: "u", Name: "Digest", OwningApp: "desk",
+		Stages: []PipelineStage{{Name: "a", Kind: StageWorker, Prompt: "Digest: {input}"}}}, "create", "Builder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := appOwnedFiles("u", "desk")
+	var pipeFile, agentFile string
+	for f := range files {
+		switch {
+		case strings.HasPrefix(f, "pipelines/") && strings.Contains(string(files[f]), "Brief: {input}"):
+			pipeFile = f
+		case strings.HasPrefix(f, "agents/"):
+			agentFile = f
+		}
+	}
+	if pipeFile == "" || agentFile == "" {
+		t.Fatalf("the app's files: %v", files)
+	}
+	files[pipeFile] = []byte(strings.NewReplacer(`"Brief"`, `"Morning brief"`, "Brief: {input}", "Drafted brief: {input}").Replace(string(files[pipeFile])))
+	files[agentFile] = []byte(strings.Replace(string(files[agentFile]), "Old prompt.", "New prompt.", 1))
+	ctx := appdraft.WithOwned(context.Background(), files)
+
+	got := draftPipelineFor(ctx, pipe)
+	if got.Name != "Morning brief" || got.ID != pipe.ID || got.OwningApp != "desk" || got.Owner != "u" {
+		t.Errorf("the pipeline as the draft has it: %+v", got)
+	}
+	if d := draftPipelineFor(ctx, digest); d.Name != "Digest" || d.ID != digest.ID {
+		t.Errorf("another of the app's pipelines took the drafted one's file: %+v", d)
+	}
+	if other := draftPipelineFor(ctx, PipelineDef{ID: "x", Owner: "u", Name: "Brief"}); other.ID != "x" || other.OwningApp != "" {
+		t.Errorf("a pipeline that is not the app's took the draft's: %+v", other)
+	}
+
+	app := turn.app
+	fake := &FakeLLM{Turns: []FakeTurn{{Content: "Done.", Repeat: true}}}
+	app.LLM, app.LeadLLM = fake, fake
+	sawCall := func(from int, prompt, stage string) bool {
+		for i := from; i < fake.Calls(); i++ {
+			if strings.Contains(fake.Config(i).SystemPrompt, prompt) && (stage == "" || strings.Contains(fake.Prompt(i), stage)) {
+				return true
+			}
+		}
+		return false
+	}
+	n := fake.Calls()
+	if _, _, err := app.AppPipelineRun(ctx, "u", "u", "desk", "", pipe.ID, "today"); err != nil {
+		t.Fatal(err)
+	}
+	if !sawCall(n, "New prompt.", "Drafted brief: today") || sawCall(n, "Old prompt.", "") {
+		t.Error("a draft's run_pipeline did not run the draft's pipeline and agent")
+	}
+	n = fake.Calls()
+	if _, _, err := app.AppPipelineRun(context.Background(), "u", "u", "desk", "", pipe.ID, "today"); err != nil {
+		t.Fatal(err)
+	}
+	if !sawCall(n, "Old prompt.", "Brief: today") || sawCall(n, "", "Drafted brief") {
+		t.Error("a live run_pipeline ran the draft's")
+	}
+	n = fake.Calls()
+	if _, _, _, err := app.AppAgentRun(ctx, "u", "u", "desk", clerk.ID, "", "Hello.", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if !sawCall(n, "New prompt.", "") || sawCall(n, "Old prompt.", "") {
+		t.Error("a draft's run_agent did not ask the draft's agent")
+	}
+}

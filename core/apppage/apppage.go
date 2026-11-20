@@ -15,7 +15,7 @@ app.action(name, body, opts)  POST an action, {message, saved, records, result}.
 app.cancelAction(name)        stop this person's running action of that name
 app.records.list()            this person's records, oldest first
 app.records.save(record)      create, or update by the record key
-app.records.remove(id)        delete one
+app.records.remove(id)        delete the record whose key (record_key) is id
 app.shared(name)              a shared collection's records
 app.ask(prompt, {json})       a question to the app's agent, its text
 app.asset(name)               the URL of one of the app's assets

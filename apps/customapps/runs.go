@@ -25,8 +25,13 @@ func hasScripts(spec AppSpec) bool {
 
 // runScriptLabel names a run's script the way the app's author does.
 func runScriptLabel(r appscript.AppRun) string {
-	if r.Kind == "data" {
+	switch r.Kind {
+	case "data":
 		return "data source " + r.Name
+	case "page":
+		return "the page, in a browser"
+	case "ask":
+		return "an ask of its agent"
 	}
 	return r.Kind + " " + r.Name
 }
@@ -128,6 +133,12 @@ func withFailedRunLink(page json.RawMessage, base string, runs []appscript.AppRu
 	latest := map[string]bool{}
 	var failed []string
 	for _, r := range runs { // newest first: the first of each script is its latest
+		// Only a script's runs: a page error or a failed ask is filed only
+		// when it fails, so nothing would ever say it works again. They are
+		// on the runs page.
+		if r.Kind != "data" && r.Kind != "action" {
+			continue
+		}
 		key := r.Kind + "/" + r.Name
 		if latest[key] {
 			continue

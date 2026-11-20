@@ -635,8 +635,14 @@ files in the repository, and drafts with or without git):
   by Anvil, is part of what the draft compares and merges, never undone),
   and read in place of the live ones where the draft is tried: the app's
   Ask (and so its agent checks) and its agents' tool space, carried on the
-  preview's requests. The preview's pipelines, machines and collections
-  run as they are live until the commit.
+  preview's requests; a script's run_pipeline runs the pipeline as the
+  draft has it (matched by its file, as a commit matches it), and
+  run_agent, and a pipeline's agent steps, ask the agents as the draft has
+  them (2026-11-19). A draft's preview is on a copy of the records, where
+  the app's chat and pipeline section are not served at all, so a script is
+  the way a preview runs them. Machines (reached only through an agent's
+  hand-off) and collections (whose content is what was ingested) stay as
+  they are live until the commit.
 
 ## Steps
 

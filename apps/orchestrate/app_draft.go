@@ -563,6 +563,35 @@ func draftAgentFor(ctx context.Context, agent AgentRecord) AgentRecord {
 	return agent
 }
 
+// draftPipelineFor is def, an app's own pipeline, as the draft whose files
+// ctx carries has it: the version a draft's preview runs. Matched by its
+// file, as a commit matches it, so a renamed one is still the same pipeline;
+// its identity and who it is shared with stay the live one's. def as it is
+// live when the draft does not change it.
+func draftPipelineFor(ctx context.Context, def PipelineDef) PipelineDef {
+	owned, ok := appdraft.OwnedFrom(ctx)
+	if !ok || strings.TrimSpace(def.OwningApp) == "" {
+		return def
+	}
+	f, err := ownedFolderFrom(owned)
+	if err != nil {
+		return def
+	}
+	for file, item := range appOwnedIndex(def.Owner, def.OwningApp) {
+		if item.id != def.ID {
+			continue
+		}
+		d, ok := f.pipelines[file]
+		if !ok {
+			return def
+		}
+		d.ID, d.Owner, d.OwningApp, d.Created = def.ID, def.Owner, def.OwningApp, def.Created
+		d.AllowedUsers, d.Editors, d.Published, d.Global = def.AllowedUsers, def.Editors, def.Published, def.Global
+		return d
+	}
+	return def
+}
+
 // draftAppTools are an app's own tools as the draft whose files ctx carries
 // has them, and whether it does: the tool space a draft's preview runs on.
 func draftAppTools(ctx context.Context) ([]apptools.Tool, bool) {

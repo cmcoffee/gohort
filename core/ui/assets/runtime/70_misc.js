@@ -1328,7 +1328,11 @@
     'addEventListener("message",function(e){var d=e.data;if(!d||!d.__uiIsoReply)return;var c=p[d.id];if(!c)return;delete p[d.id];' +
       'if(d.dialog){c.res(d.value);return;}' +
       'if(d.error){c.rej(new Error(d.error));return;}' +
-      'c.res(new Response(d.body,{status:d.status,headers:{"Content-Type":d.type||"application/octet-stream"}}));});' +
+      // A status that carries no body (204, 205, 304) takes none: given one,
+      // Response throws, the promise never settles, and the page's call
+      // hangs (an app's view-state save answers 204).
+      'var nb=d.status===204||d.status===205||d.status===304;' +
+      'c.res(new Response(nb?null:d.body,{status:d.status,headers:{"Content-Type":d.type||"application/octet-stream"}}));});' +
     // A body crosses as itself where the browser can clone it (a Blob, a
     // File, an ArrayBuffer, a typed array), so an upload arrives as bytes;
     // FormData cannot be cloned and crosses as its entries. String(body)

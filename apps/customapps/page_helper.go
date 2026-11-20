@@ -33,7 +33,15 @@ const PageAPI = apppage.API
 //
 // Every call is relative, so it reaches only this app, and a failed one
 // rejects with the server's own message.
+//
+// An error the page does not catch is told to the app's run record
+// (problems.go), a few per load and each once, so whoever fixes the app
+// reads what broke in someone's browser.
 const appPageHelper = `<script>(function(){if(window.app)return;
+(function(){var n=0,seen={};function tell(m,w){m=String(m||"").slice(0,500);if(!m||m==="Script error."||n>=5)return;var k=m+"|"+(w||"");if(seen[k])return;seen[k]=1;n++;try{fetch("problem",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({error:m,where:String(w||"").slice(0,200)})}).catch(function(){});}catch(x){}}
+if(!window.addEventListener)return;
+window.addEventListener("error",function(e){if(!e||(e.target&&e.target!==window))return;tell(e.message||(e.error&&e.error.message),e.lineno?"line "+e.lineno+(e.colno?":"+e.colno:""):"");});
+window.addEventListener("unhandledrejection",function(e){var r=e&&e.reason;tell("unhandled promise rejection: "+((r&&r.message)||r),"");});})();
 function q(p){var s=[];if(p)for(var k in p)if(p[k]!=null)s.push(encodeURIComponent(k)+"="+encodeURIComponent(p[k]));return s.length?"?"+s.join("&"):"";}
 function json(r){return r.text().then(function(t){var d=null;try{d=t?JSON.parse(t):null;}catch(e){}if(!r.ok)throw new Error((d&&(d.error||d.message))||(t&&t.trim())||("HTTP "+r.status));return d;});}
 function post(u,b){return fetch(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b||{})}).then(json);}

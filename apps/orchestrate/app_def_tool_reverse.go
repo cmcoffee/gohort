@@ -202,7 +202,7 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 	}
 	if runs := appscript.RecentRuns(t.user, spec.Slug); len(runs) > 0 {
 		out["recent_runs"] = runsAtAGlance(runs)
-		out["runs_note"] = "The newest live runs of this app's scripts, newest first; a run another user started shows its outcome only. get with script=<name> lists that script's kept runs with what each logged."
+		out["runs_note"] = "The newest live runs of this app's scripts, newest first, with what failed around them: kind page is an error its page hit in someone's browser, kind ask an ask its agent could not answer. A run another user started shows its outcome only. get with script=<name> lists that script's kept runs with what each logged."
 	}
 	if len(spec.Libraries) > 0 {
 		libs := map[string]any{}

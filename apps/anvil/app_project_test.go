@@ -15,6 +15,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appagents"
+	"github.com/cmcoffee/gohort/tools/appscript"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -632,5 +633,24 @@ func TestAnInstallThatLeavesTheAppBrokenSaysSo(t *testing.T) {
 	c := &toolCtx{user: "alice", udb: udb, project: p, base: base, sessionID: "s1"}
 	if msg := c.appFinish(true); !strings.Contains(msg, "installed, but the app does not work") {
 		t.Errorf("the turn's end: %q", msg)
+	}
+}
+
+// app_runs gives the installed app's record as the assistant reads it: each
+// entry with what ran, how it ended, by whom and how often, its error and
+// what it logged; a shared user's run as someone else's.
+func TestAppRunsReadsTheAppsRecord(t *testing.T) {
+	if got := appRunsText(nil); !strings.Contains(got, "Nothing is recorded yet") {
+		t.Errorf("no runs: %q", got)
+	}
+	got := appRunsText([]appscript.AppRun{
+		{At: "t2", Kind: "page", Name: "page", Other: true, Error: "TypeError: x (line 3)", Times: 4},
+		{At: "t1", Kind: "data", Name: "counts", OK: false, Error: "Traceback\nKeyError", Log: []string{"fetching"}, Times: 1},
+	})
+	for _, want := range []string{"the page, in a browser  FAILED, by someone using it, 4 times", "error: TypeError: x (line 3)",
+		"data source counts  FAILED, by you", "error: Traceback\n    KeyError", "log: fetching"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("app_runs does not say %q:\n%s", want, got)
+		}
 	}
 }

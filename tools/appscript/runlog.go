@@ -12,6 +12,11 @@ package appscript
 //
 // Private: a run another user of a shared app started keeps its outcome and
 // error, never its log lines, which carry what that person put in.
+//
+// Beside the scripts' runs, what failed around them in real use (RecordProblem):
+// an error the app's page hit in someone's browser, and an ask its agent
+// could not answer. Only failures of those are filed, and a failure that
+// repeats folds into one entry with a count, as a quiet success does.
 
 import (
 	"strconv"
@@ -25,7 +30,7 @@ import (
 // AppRun is one live run of an app's script.
 type AppRun struct {
 	At      string   `json:"at"`
-	Kind    string   `json:"kind"`    // data | action
+	Kind    string   `json:"kind"`    // data | action | page | ask
 	Name    string   `json:"name"`    // the script's name
 	Trigger string   `json:"trigger"` // page (someone asked) | schedule
 	Other   bool     `json:"other_user,omitempty"`
@@ -79,6 +84,17 @@ func ForgetRuns(owner, slug string) {
 	}
 }
 
+// RecordProblem files a failure from outside a script's run on owner's app slug:
+// kind page (an error in someone's browser) or ask (the agent could not
+// answer).
+func RecordProblem(owner, slug string, r AppRun) {
+	r.At = time.Now().UTC().Format(time.RFC3339)
+	if rs := []rune(r.Error); len(rs) > runErrorTail {
+		r.Error = "..." + string(rs[len(rs)-runErrorTail:])
+	}
+	recordRun(owner, slug, r)
+}
+
 // recordRun files one run on its app.
 func recordRun(owner, slug string, r AppRun) {
 	db := runsStore(owner)
@@ -97,7 +113,7 @@ func addRun(runs []AppRun, r AppRun) []AppRun {
 	if r.Times < 1 {
 		r.Times = 1
 	}
-	if len(runs) > 0 && quietTwin(runs[0], r) {
+	if len(runs) > 0 && (quietTwin(runs[0], r) || sameFailure(runs[0], r)) {
 		head := runs[0]
 		head.At, head.Ms, head.Times = r.At, r.Ms, head.Times+r.Times
 		return append([]AppRun{head}, runs[1:]...)
@@ -115,6 +131,14 @@ func addRun(runs []AppRun, r AppRun) []AppRun {
 		}
 	}
 	return out
+}
+
+// sameFailure is whether b fails as a just did: the same script or place,
+// started the same way, with the same error and nothing logged. A page
+// error a polling loop hits every few seconds is one entry, not the log.
+func sameFailure(a, b AppRun) bool {
+	return !a.OK && !b.OK && len(a.Log) == 0 && len(b.Log) == 0 && a.Error == b.Error &&
+		a.Kind == b.Kind && a.Name == b.Name && a.Trigger == b.Trigger && a.Other == b.Other
 }
 
 // quietTwin is whether b repeats a: the same script, started the same way,

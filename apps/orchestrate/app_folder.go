@@ -362,6 +362,8 @@ PORTING an app built with a framework (React, Vue, a bundler): no build step run
 
 THERE IS NO DATABASE: an app's data is its records (app.records in the page; a script gets them all with records() and returns the ones it changes). A SQLite schema becomes kinds of record, each a JSON object with a field naming its kind; a query becomes a data source that filters the records it is handed. Python's sqlite3 can query an in-memory copy within one run, but nothing it writes is kept.
 
+A RECORD'S KEY: every record is stored under the value of one field, the one app.json's record_key names ("id" when it names none). app.records.save(rec) with that field set REPLACES the record with that key, whole: send every field, not only the changed ones. Without it, a new key is made, set on the record, and the saved record is what save() answers. app.records.remove(key) deletes the record whose key field is key. A script works the same way: each record it prints under records with the key set replaces that record, and one without it is added under a new key. A script cannot delete one of the app's records; the page's app.records.remove does.
+
 Only these are installed. Anything else in the folder (the code an app was ported from, a data file at the top such as flows.json) stays behind, and the installed app cannot read it: a data file the app ships goes in assets/ (the page fetches assets/<file>), and a file the person brings is picked in the page (<input type="file">, read there or sent to an action).
 
 Every script runs in a sandbox with no network of its own: it reaches the web through the gohort module (fetch_url), never requests or urllib.request. In the folder a script entry names its file; the help below says "script" for the same thing.`

@@ -222,6 +222,10 @@ func (c *toolCtx) codeTools() []AgentToolDef {
 	if c.project.Source == sourceApp || holdsAppFolder(c.base) {
 		tools = append(tools, c.appChecksTool())
 	}
+	// What the installed app did in real use (app_runs.go).
+	if c.project.Source == sourceApp {
+		tools = append(tools, c.appRunsTool())
+	}
 	// A gohort app in the project, or one to start: how its folder is built.
 	if c.project.Source == sourceApp || holdsAppFolder(c.base) {
 		tools = append(tools, c.appGuideTool())

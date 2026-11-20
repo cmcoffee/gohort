@@ -195,6 +195,9 @@ func (T *OrchestrateApp) AppPipelineRun(ctx context.Context, owner, user, slug, 
 	if err != nil {
 		return "", 0, err
 	}
+	// In a draft's preview and checks, the pipeline as the draft has it; its
+	// agent steps ask the draft's agents through the same ctx (app_draft.go).
+	def = draftPipelineFor(ctx, def)
 	// Worker stages bill to this tracker; agent stages to their own, added in.
 	ctx, mine := WithRequestUsage(ctx)
 	var mu sync.Mutex

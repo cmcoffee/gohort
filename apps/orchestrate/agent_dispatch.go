@@ -782,6 +782,9 @@ func (sd *syncDispatch) admit() bool {
 	if !sd.ok {
 		return sd.exit(syncRunResult{}, fmt.Errorf("agent %q not found in agentOwner %q store", agentKey, sd.agentOwner))
 	}
+	// A step of a draft's preview asks an app's own agent as the draft has
+	// it (app_draft.go).
+	sd.target = draftAgentFor(sd.ctx, sd.target)
 	// Standing fire / monitor wake / external dispatch to a retiring archetype
 	// seed → materialize the owner's own copy and run that.
 	sd.target = materializeIfRetiringSeed(sd.ownerDB, sd.agentOwner, agentKey, sd.target)

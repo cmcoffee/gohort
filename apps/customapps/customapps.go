@@ -29,6 +29,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -342,6 +343,9 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		T.handleAction(w, r, ownerUser, user, appdb, spec, strings.TrimPrefix(rest, "action/"))
 	case rest == "ask":
 		T.handleAsk(w, r, T.recordBase(spec, ownerUser), ownerUser, user, spec)
+	case rest == "problem":
+		// An error the page hit in the viewer's browser (problems.go).
+		T.handlePageProblem(w, r, ownerUser, user, spec)
 	case rest == "propose":
 		T.handlePropose(w, r, T.recordBase(spec, ownerUser), ownerUser, user, spec)
 	case rest == "chat" || strings.HasPrefix(rest, "chat/"):
@@ -1117,7 +1121,8 @@ func (T *CustomApps) handleAppsList(c *jsonapi.Call) (any, error) {
 		if owned := AppOwnedCount(c.User, s.Slug); owned != "" {
 			row["delete_confirm"] = "Delete this app, all its data, and what it owns (" + owned + ")? This can't be undone."
 		}
-		if hasScripts(s) {
+		// A page with no scripts can still fail in a browser (problems.go).
+		if hasScripts(s) || len(appscript.RecentRuns(s.Owner, s.Slug)) > 0 {
 			row["has_runs"] = "1"
 		}
 		if direct {
@@ -1468,9 +1473,20 @@ func runDataSourceIn(user string, db Database, spec AppSpec, ds AppDataSource, a
 	j := appscript.Job{Owner: user, DB: db, Slug: spec.Slug, Kind: "data", Name: ds.Name, Language: ds.Language, Script: ds.Script, Caps: ds.Capabilities, Args: args, Caller: caller, Libs: spec.Libraries, Interactive: true, Check: check}
 	trace := appscript.Track(&j)
 	out, err := runAppScript(j)
-	trace.Done(err)
+	// A source that ran but printed no JSON value fails its page as surely
+	// as one that raised: its run says so.
+	ended := err
+	if ended == nil {
+		if _, _, ok := appcheck.ScriptReply(out); !ok {
+			ended = errNoJSONReply
+		}
+	}
+	trace.Done(ended)
 	return out, err
 }
+
+// errNoJSONReply is a data source that ran and printed no JSON value.
+var errNoJSONReply = errors.New("the data source script must print a JSON value (array for a table, object for a display) to stdout, and printed none")
 
 // dataSourceCacheTTL is how long a data source's output is reused before it is
 // recomputed. Short on purpose: long enough to collapse a page's initial load,
@@ -2272,7 +2288,7 @@ func (T *CustomApps) handleAssetWrite(w http.ResponseWriter, r *http.Request, us
 // appOwnPaths are the relative endpoints an app's own page HTML may still
 // reach from inside its sandbox: its data sources and actions, its records,
 // and its assets. Nothing else in gohort.
-var appOwnPaths = []string{"data/", "action/", "action-progress/", "action-cancel/", "actions", "records", "record", "file", "files", "assets", "shared/", "changes", "ask", "propose", "view-state"}
+var appOwnPaths = []string{"data/", "action/", "action-progress/", "action-cancel/", "actions", "records", "record", "file", "files", "assets", "shared/", "changes", "ask", "propose", "view-state", "problem"}
 
 // navigationKeys name URLs the runtime follows as a link, never fetches.
 var navigationKeys = map[string]bool{"href": true, "footer_url": true, "back_url": true, "home_url": true, "redirect_url": true}
