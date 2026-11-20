@@ -57,7 +57,9 @@ func TestTheDraftPromptFencesTheCases(t *testing.T) {
 }
 
 // The test counts the kept cases a guard catches and the good examples it
-// wrongly catches, and sets aside replies a check cannot be judged on.
+// wrongly catches, and sets aside replies a check cannot be judged on. Only
+// good examples the admin kept count: a thumbs-up nobody reviewed could be a
+// bad reply marked by mistake, and must not fail a guard that catches it.
 func TestADraftedGuardIsTested(t *testing.T) {
 	app := &OrchestrateApp{}
 	app.DB = &DBase{Store: kvlite.MemStore()}
@@ -67,8 +69,9 @@ func TestADraftedGuardIsTested(t *testing.T) {
 		{ID: "k1", Verdict: flagDown, Status: flagKept, Reply: "Let me check that:", TurnKept: true},
 		{ID: "k2", Verdict: flagDown, Status: flagNew, Reply: "Here is the answer."}, // not kept, not a source: left out
 		{ID: "k3", Verdict: flagDown, Status: flagKept, Reply: "All done."},
-		{ID: "g1", Verdict: flagUp, Status: flagGood, Reply: "Pick one:"},
-		{ID: "g2", Verdict: flagUp, Status: flagGood, Reply: "Done."},
+		{ID: "g1", Verdict: flagUp, Status: flagKept, Reply: "Pick one:"},
+		{ID: "g2", Verdict: flagUp, Status: flagKept, Reply: "Done."},
+		{ID: "g3", Verdict: flagUp, Status: flagGood, Reply: "Choose:"}, // not reviewed: left out
 	} {
 		app.DB.Set(replyFlagTable, f.ID, f)
 	}

@@ -1,0 +1,92 @@
+<script>
+// Thumbs up / down on an agent's reply, for every page that shows an agent's
+// chat: the console and a shared agent's own page on /agents/. The thumbs go
+// first to whoever looks after the agent (agent_feedback.go): down asks what
+// was wrong (required: a bare "bad" is nothing a fix can be built from), up
+// says a reply was good. Its owner can fix the agent with Builder, or send
+// one on to the admin's reply guards.
+(function(){
+var REPLY_FLAG_URL = "__REPLY_FLAG_URL__";
+// Thumbs up / down on a reply. Down asks what was wrong (required: a
+// bare "bad" is nothing a fix can be built from) and files it for the
+// admin's review; up keeps the reply as a known-good example, which a
+// future reply guard is tested against so it leaves such replies alone.
+// Pressing the lit one again takes it back; pressing the other swaps.
+// A reloaded thread says which replies were marked (msg.flag), and the
+// replay hook lights the button to match.
+function registerReplyFlags() {
+  if (!window.uiRegisterBubbleAction || !window.uiEl || !window.uiRegisterMessageReplayHook) { setTimeout(registerReplyFlags, 50); return; }
+  var el = window.uiEl;
+  function toast(text) { if (window.uiToast) window.uiToast(text); else if (window.uiAlert) window.uiAlert(text); }
+  function call(method, url, body) {
+    return fetch(url, {method: method, credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'}, body: body ? JSON.stringify(body) : undefined})
+      .then(function(r) { return r.text().then(function(t) { if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); return t ? JSON.parse(t) : {}; }); });
+  }
+  // badge shows the mark ON the reply, before its text, rather than as
+  // a thumb left lit under it.
+  function badge(bubble, verdict) {
+    if (!window.uiSetMessageBadge) return;
+    if (verdict === 'up') window.uiSetMessageBadge(bubble, {text: '\uD83D\uDC4D Good reply', tone: 'good', title: 'You marked this reply as good. Press the thumb again to take it back.'});
+    else if (verdict === 'down') window.uiSetMessageBadge(bubble, {text: '\uD83D\uDC4E Flagged', tone: 'bad', title: 'You flagged this reply. Press the thumb again to take it back.'});
+    else window.uiSetMessageBadge(bubble, null);
+  }
+  function mark(ctx, verdict, id) {
+    if (verdict) { ctx.bubble.dataset.orchFlag = verdict; ctx.bubble.dataset.orchFlagId = id || ''; }
+    else { delete ctx.bubble.dataset.orchFlag; delete ctx.bubble.dataset.orchFlagId; }
+    badge(ctx.bubble, verdict);
+    ctx.refresh();
+  }
+  function send(ctx, verdict, evaluation) {
+    return call('POST', REPLY_FLAG_URL, {session_id: ctx.sessionId || '', agent_id: ctx.agentId || '',
+      reply: ctx.getText(), verdict: verdict, evaluation: evaluation || ''})
+      .then(function(d) { mark(ctx, d.verdict || verdict, d.id); return d; });
+  }
+  // undo takes back this reply's mark when it is the one pressed.
+  function undo(ctx) {
+    var id = ctx.bubble.dataset.orchFlagId;
+    if (!id) { mark(ctx, ''); return; }
+    call('DELETE', REPLY_FLAG_URL + '?id=' + encodeURIComponent(id))
+      .then(function() { mark(ctx, ''); toast('Taken back.'); })
+      .catch(function(e) { toast('Could not take it back: ' + (e && e.message || e)); });
+  }
+  window.uiRegisterBubbleAction({role: 'assistant', group: 'rating', label: '\uD83D\uDC4D', title: 'A good reply (press again to take it back)',
+    active: function(ctx) { return ctx.bubble.dataset.orchFlag === 'up'; },
+    onclick: function(ctx) {
+      if (ctx.bubble.dataset.orchFlag === 'up') { undo(ctx); return; }
+      send(ctx, 'up', '').then(function(d) { toast(d.message || 'Kept.'); })
+        .catch(function(e) { toast('Could not save it: ' + (e && e.message || e)); });
+    }});
+  window.uiRegisterBubbleAction({role: 'assistant', group: 'rating', label: '\uD83D\uDC4E', title: 'Something is wrong with this reply: say what (press again to take it back)',
+    active: function(ctx) { return ctx.bubble.dataset.orchFlag === 'down'; },
+    onclick: function(ctx) {
+      if (ctx.bubble.dataset.orchFlag === 'down') { undo(ctx); return; }
+      if (!window.uiOpenSimpleModal) return;
+      window.uiOpenSimpleModal({title: 'What was wrong with this reply?', width: '560px', mount: function(body, dlg) {
+        body.appendChild(el('p', {style: 'margin:0 0 0.6rem;color:var(--text-mute);font-size:0.88rem;line-height:1.45', text: 'Say what it did wrong and what it should have done. It goes to whoever looks after this agent, with the reply and your message before it, so they can fix the agent; they can also send it on to the admin as a problem with the model.'}));
+        var ta = el('textarea', {class: 'ui-input', rows: '5', style: 'width:100%;box-sizing:border-box', placeholder: 'It answered twice: the same summary before and after the search.'});
+        body.appendChild(ta);
+        var go = el('button', {class: 'ui-row-btn primary', text: 'Send'});
+        go.addEventListener('click', function() {
+          var text = ta.value.trim();
+          if (!text) { ta.focus(); toast('Say what was wrong first.'); return; }
+          go.disabled = true;
+          send(ctx, 'down', text).then(function(d) { dlg.close(); toast(d.message || 'Sent.'); })
+            .catch(function(e) { go.disabled = false; toast('Could not send it: ' + (e && e.message || e)); });
+        });
+        // In the footer beside Close.
+        dlg.addAction(go);
+        setTimeout(function() { ta.focus(); }, 30);
+      }});
+    }});
+  window.uiRegisterMessageReplayHook(function(bubble, msg) {
+    if (!bubble || !msg || !msg.flag) return;
+    bubble.dataset.orchFlag = msg.flag;
+    bubble.dataset.orchFlagId = msg.flag_id || '';
+    badge(bubble, msg.flag);
+    if (window.uiRefreshBubbleActions) window.uiRefreshBubbleActions(bubble);
+  });
+}
+registerReplyFlags();
+})();
+</script>

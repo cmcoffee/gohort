@@ -36,3 +36,19 @@ func TestTheDashboardChatUsesTheConsolesIntakeForm(t *testing.T) {
 		}
 	}
 }
+
+// A shared agent's page offers the thumbs on its replies, the console's own,
+// posting to the one endpoint that hands them to whoever looks after it.
+func TestASharedAgentsPageHasTheThumbs(t *testing.T) {
+	b, err := os.ReadFile("agents.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "orchestrate.ReplyFlagsHead()") {
+		t.Error("the page does not load the thumbs")
+	}
+	head := orchestrate.ReplyFlagsHead()
+	if strings.Contains(head, "__REPLY_FLAG_URL__") || !strings.Contains(head, `"/orchestrate/api/reply-flag"`) || !strings.Contains(head, "uiRegisterBubbleAction") {
+		t.Errorf("the thumbs do not post to the endpoint: %.200s", head)
+	}
+}

@@ -178,6 +178,10 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/reply-guards/authored", jsonapi.Get(T.DB, T.handleAuthoredGuards, T.adminOnlyOpt()))
 	T.HandleFunc("/api/console/reply-guards/authored/act", jsonapi.Post(T.DB, T.handleAuthoredGuard, T.adminOnlyOpt(), jsonapi.MaxBody(1<<16)))
 	// Anyone's thumbs-up or thumbs-down on one of their own replies.
+	// An agent's feedback, for its owner (agent_feedback.go).
+	T.HandleFunc("/api/agent-feedback", jsonapi.Get(T.DB, T.handleAgentFeedback))
+	T.HandleFunc("/api/agent-feedback/status", jsonapi.Post(T.DB, T.handleAgentFeedbackStatus))
+	T.HandleFunc("/agent-feedback", T.signedIn(T.handleAgentFeedbackPage))
 	T.HandleFunc("/api/reply-flag", jsonapi.Methods{"POST": jsonapi.Post(T.DB, T.handleReplyFlag, jsonapi.MaxBody(1<<20)), "DELETE": jsonapi.Delete(T.DB, T.handleReplyFlag, jsonapi.MaxBody(1<<20))}.Serve)
 	// Tool health: actions that have failed repeatedly and never once worked.
 	T.HandleFunc("/api/console/broken-tools", jsonapi.Get(T.DB, T.handleConsoleBrokenTools))

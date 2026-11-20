@@ -16,7 +16,10 @@
 
 package orchestrate
 
-import _ "embed"
+import (
+	_ "embed"
+	"strings"
+)
 
 //go:embed assets/web_assets.html
 var orchestrateWebAssets string
@@ -38,3 +41,14 @@ var ReportCardHead string
 //
 //go:embed assets/intake_form.html
 var IntakeFormHead string
+
+//go:embed assets/reply_flags.html
+var replyFlagsHead string
+
+// ReplyFlagsHead is the thumbs on an agent's replies (agent_feedback.go), for
+// every page that shows an agent's chat: the console, and a shared agent's
+// own page on /agents/, where the thumbs were missing. Both post to the one
+// endpoint, here.
+func ReplyFlagsHead() string {
+	return strings.Replace(replyFlagsHead, "__REPLY_FLAG_URL__", orchPath("api/reply-flag"), 1)
+}

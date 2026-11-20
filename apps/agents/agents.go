@@ -446,7 +446,9 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 			// A monitor wake, a scheduled report or a channel message drawn as
 			// the console draws it: a titled card, not the wake's prompt in a
 			// bubble from the owner.
-			orchestrate.ReportCardHead,
+			orchestrate.ReportCardHead +
+			// Thumbs on its replies, for whoever looks after it.
+			orchestrate.ReplyFlagsHead(),
 	}
 	page.ServeHTTP(w, r)
 }

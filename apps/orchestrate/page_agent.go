@@ -156,6 +156,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	ed.shareSection()
 	ed.shapeSection()
 	ed.usedBySection()
+	ed.feedbackSection()
 	ed.deleteSection()
 	ed.serve()
 }
@@ -829,6 +830,32 @@ func (ed *agentEditor) usedBySection() {
 			}
 		}
 	}
+}
+
+// feedbackSection is the way to the thumbs people gave this agent's replies
+// (agent_feedback.go), when it has any waiting for its owner.
+func (ed *agentEditor) feedbackSection() {
+	if ed.id == "" {
+		return
+	}
+	open := 0
+	for _, f := range ed.T.agentFeedback(ed.user, ed.id) {
+		if f.Status == flagOwner {
+			open++
+		}
+	}
+	if open == 0 {
+		return
+	}
+	ed.sections = append(ed.sections, ui.Section{
+		Title:    "Feedback",
+		Subtitle: fmt.Sprintf("%d %s on this agent's replies waiting for you: thumbs from you and from people you share it with. Builder reads them when you change the agent.", open, map[bool]string{true: "mark", false: "marks"}[open == 1]),
+		Body: ui.DisplayPanel{
+			Source: orchPath("api/agents/") + ed.id,
+			Pairs:  []ui.DisplayPair{},
+			Actions: []ui.ToolbarAction{{Label: "Read the feedback", Method: "GET", URL: feedbackPagePath(ed.id)}},
+		},
+	})
 }
 
 func (ed *agentEditor) deleteSection() {

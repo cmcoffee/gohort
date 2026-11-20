@@ -141,18 +141,22 @@ const (
 
 // replyFlag is one reply somebody marked.
 type replyFlag struct {
-	ID         string    `json:"id"`
-	At         time.Time `json:"at"`
-	User       string    `json:"user"`
-	AgentID    string    `json:"agent_id"`
-	Agent      string    `json:"agent"`
-	SessionID  string    `json:"session_id"`
-	Model      string    `json:"model"`
-	Verdict    string    `json:"verdict"`
-	Evaluation string    `json:"evaluation,omitempty"`
-	Asked      string    `json:"asked,omitempty"`
-	Reply      string    `json:"reply"`
-	Status     string    `json:"status"`
+	ID        string    `json:"id"`
+	At        time.Time `json:"at"`
+	User      string    `json:"user"`
+	AgentID   string    `json:"agent_id"`
+	Agent     string    `json:"agent"`
+	SessionID string    `json:"session_id"`
+	Model     string    `json:"model"`
+	Verdict   string    `json:"verdict"`
+	// AgentOwner is who looks after the agent: the flag is theirs to read
+	// first (agent_feedback.go). "" for one of gohort's own agents, and on
+	// flags from before, which went to the admin directly.
+	AgentOwner string `json:"agent_owner,omitempty"`
+	Evaluation string `json:"evaluation,omitempty"`
+	Asked      string `json:"asked,omitempty"`
+	Reply      string `json:"reply"`
+	Status     string `json:"status"`
 	// The turn around the reply, for testing a drafted guard against it:
 	// what the assistant showed earlier in the same turn, and how many tool
 	// calls the turn made. TurnKept is false on flags from before these were
@@ -215,8 +219,14 @@ func (T *OrchestrateApp) handleReplyFlag(c *jsonapi.Call, req struct {
 	if f.Verdict == flagUp {
 		f.Status = flagGood
 	}
-	if a, ok := loadAgent(udb, req.AgentID); ok {
+	// The agent's feedback, for whoever looks after it (agent_feedback.go):
+	// the person's own agent, or one shared with them. gohort's own go to
+	// the admin's review as before.
+	if a, ok := findAgentByNameOrID(udb, user, req.AgentID); ok {
 		f.Agent = chFirst(a.Name, a.ID)
+		if f.AgentOwner = feedbackOwner(a); f.AgentOwner != "" {
+			f.Status = flagOwner
+		}
 	}
 	index := -1
 	if found {
@@ -238,9 +248,17 @@ func (T *OrchestrateApp) handleReplyFlag(c *jsonapi.Call, req struct {
 		refFlag(T.DB, f, index)
 	}
 	Log("[orchestrate.flag] user=%q agent=%q model=%s marked a reply %s", user, f.Agent, f.Model, f.Verdict)
-	msg := "Kept as a good example."
-	if f.Verdict == flagDown {
+	T.notifyFeedback(f)
+	var msg string
+	switch {
+	case f.AgentOwner == user:
+		msg = "Kept on " + f.Agent + "'s feedback: Builder reads it when you change the agent, and you can send it to the admin from there."
+	case f.AgentOwner != "":
+		msg = "Sent to " + personName(f.AgentOwner) + ", who looks after " + f.Agent + "."
+	case f.Verdict == flagDown:
 		msg = "Sent to the admin for review."
+	default:
+		msg = "Sent to the admin as a good example, for them to keep or not."
 	}
 	return map[string]any{"ok": true, "message": msg, "id": f.ID, "verdict": f.Verdict}, nil
 }
@@ -317,7 +335,8 @@ func (T *OrchestrateApp) handleReplyFlags(c *jsonapi.Call) (any, error) {
 	review, good := []row{}, []row{}
 	for _, k := range T.DB.Keys(replyFlagTable) {
 		var f replyFlag
-		if !T.DB.Get(replyFlagTable, k, &f) {
+		// An agent owner's feedback is theirs until they send it on.
+		if !T.DB.Get(replyFlagTable, k, &f) || ownersFlag(f) {
 			continue
 		}
 		rw := row{replyFlag: f, Label: clip(chFirst(f.Evaluation, f.Reply), 160)}
@@ -334,7 +353,12 @@ func (T *OrchestrateApp) handleReplyFlags(c *jsonapi.Call) (any, error) {
 		}
 		return review[i].At.After(review[j].At)
 	})
-	sort.Slice(good, func(i, j int) bool { return good[i].At.After(good[j].At) })
+	sort.Slice(good, func(i, j int) bool {
+		if (good[i].Status == flagGood) != (good[j].Status == flagGood) {
+			return good[i].Status == flagGood
+		}
+		return good[i].At.After(good[j].At)
+	})
 	return map[string]any{"review": review, "good": good}, nil
 }
 
@@ -348,7 +372,7 @@ func (T *OrchestrateApp) handleReplyFlagStatus(c *jsonapi.Call, _ struct{}) (any
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	status := strings.TrimSpace(r.URL.Query().Get("status"))
 	var f replyFlag
-	if id == "" || !T.DB.Get(replyFlagTable, id, &f) {
+	if id == "" || !T.DB.Get(replyFlagTable, id, &f) || ownersFlag(f) {
 		return nil, jsonapi.NotFound("no such flag")
 	}
 	switch status {
@@ -724,7 +748,8 @@ func replyGuardSections() []ui.Section {
 			Title:    "Flagged replies",
 			Subtitle: "Replies people marked with a thumbs-down, with what they said was wrong. The cases a new reply guard would be built from.",
 			Detail: "Keep one that shows a pattern worth a guard; dismiss one that does not. A kept case is what a future guard is tested against: it must catch it.\n\n" +
-				"Good examples are replies marked with a thumbs-up. A future guard must NOT catch them, so they are kept as they are, with no review.",
+				"Good examples are replies marked with a thumbs-up. A future guard must NOT catch the ones you keep; one you have not kept counts for nothing, so a thumbs-up pressed on a bad reply cannot teach a guard to let it through.\n\n" +
+				"A thumbs on someone's own agent, or one shared with them, goes first to whoever looks after the agent: only what they send on lands here. Thumbs on gohort's own agents come here directly.",
 			Wide: true,
 			Body: ui.Stack{Children: []ui.Component{
 				ui.Table{Source: flags, RecordsField: "review", RowKey: "id",
@@ -753,15 +778,22 @@ func replyGuardSections() []ui.Section {
 				ui.Table{Source: flags, RecordsField: "good", RowKey: "id",
 					Columns: []ui.Col{
 						{Field: "at", Label: "When", Format: "reltime", Mute: true},
+						{Field: "status", Label: "Status", Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: flagGood, Label: "to review", Color: "warning"},
+							{Value: flagKept, Label: "kept", Color: "success"},
+							{Value: flagDismissed, Label: "dismissed", Color: "mute"},
+						}},
 						{Field: "agent", Label: "Agent"},
 						{Field: "model", Label: "Model", Mute: true},
 						{Field: "label", Label: "Good example", Flex: 4, Line: 2},
 					},
 					RowActions: []ui.RowAction{
 						ui.Expand("Detail", flagDetail),
+						status(flagKept, "Keep", "success", ""),
+						status(flagDismissed, "Dismiss", "", ""),
 						{Type: "button", Label: "Delete", Variant: "danger", Compact: true, PostTo: flags + "/status?id={id}&status=delete"},
 					},
-					EmptyText: "No good examples yet. A thumbs-up on a reply keeps it here."},
+					EmptyText: "No good examples yet. A thumbs-up on one of gohort's own agents, or one an agent's owner sends on, lands here for you to keep or not."},
 			}},
 		},
 	}

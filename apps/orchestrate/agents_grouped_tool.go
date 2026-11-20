@@ -762,14 +762,16 @@ func (t *chatTurn) agentsGetAction(args map[string]any) (string, error) {
 	// Either way it ends with what runs as the agent (agent_runs_on.go).
 	// The full record (prompt, rules, tools, Sources) is Builder's, to edit
 	// what it authors. Anyone else gets the compact view.
+	// Builder's view ends with the agent's feedback when its owner is
+	// changing it (agent_feedback.go).
 	if b, ok := args["full"].(bool); ok && b && whole {
 		full, _ := json.Marshal(a)
-		return string(withRunsOn(full, fleetUser, a.ID)), nil
+		return string(t.app.withFeedback(withRunsOn(full, fleetUser, a.ID), fleetUser, a.ID)), nil
 	}
 	if !whole {
 		return string(dispatchTargetJSON(a)), nil
 	}
-	return string(withRunsOn(slimAgentJSON(fleetDB, fleetUser, a), fleetUser, a.ID)), nil
+	return string(t.app.withFeedback(withRunsOn(slimAgentJSON(fleetDB, fleetUser, a), fleetUser, a.ID), fleetUser, a.ID)), nil
 }
 
 // dispatchTargetJSON is what an agent that is not authoring reads about one

@@ -59,6 +59,13 @@ func (T *OrchestrateApp) loadFlags(ids []string) []replyFlag {
 	return out
 }
 
+// keptGoodExamples are the thumbs-ups the admin kept: what a drafted guard
+// is shown as fine and must not catch. Only kept ones: an unreviewed
+// thumbs-up could be a bad reply marked by mistake, or on purpose.
+func (T *OrchestrateApp) keptGoodExamples() []replyFlag {
+	return T.flagsWhere(func(f replyFlag) bool { return f.Verdict == flagUp && f.Status == flagKept })
+}
+
 // flagsWhere lists every flag the test keeps: the kept cases and the good
 // examples.
 func (T *OrchestrateApp) flagsWhere(keep func(replyFlag) bool) []replyFlag {
@@ -203,7 +210,7 @@ func (T *OrchestrateApp) runDraft(id string) {
 		replyguard.SaveAuthored(a)
 		return
 	}
-	good := T.flagsWhere(func(f replyFlag) bool { return f.Verdict == flagUp })
+	good := T.keptGoodExamples()
 
 	ctx, cancel := context.WithTimeout(context.Background(), draftTimeout)
 	defer cancel()
@@ -267,7 +274,7 @@ func (T *OrchestrateApp) runBacktest(id, after string) {
 	positives := T.flagsWhere(func(f replyFlag) bool {
 		return f.Verdict == flagDown && (from[f.ID] || f.Status == flagKept)
 	})
-	negatives := T.flagsWhere(func(f replyFlag) bool { return f.Verdict == flagUp })
+	negatives := T.keptGoodExamples()
 
 	ctx, cancel := context.WithTimeout(context.Background(), draftTimeout)
 	defer cancel()

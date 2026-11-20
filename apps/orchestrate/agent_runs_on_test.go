@@ -49,6 +49,17 @@ func TestReadingAnAgentShowsWhatRunsAsIt(t *testing.T) {
 	if out, _ := turn.agentsGetAction(map[string]any{"id": target.ID}); strings.Contains(out, "runs_on") {
 		t.Errorf("an agent nothing runs as got a runs_on field: %s", out)
 	}
+	// What people said of its replies is in Builder's view too, fenced
+	// (agent_feedback.go).
+	turn.app = &OrchestrateApp{AppCore: AppCore{DB: orchestrateBaseDB}}
+	turn.app.DB.Set(replyFlagTable, "f1", replyFlag{ID: "f1", User: "v", AgentID: poster.ID, AgentOwner: "u", Verdict: flagDown,
+		Status: flagOwner, Evaluation: "It posted twice."})
+	for _, full := range []bool{false, true} {
+		out, _ := turn.agentsGetAction(map[string]any{"id": poster.ID, "full": full})
+		if !strings.Contains(out, "It posted twice.") || !strings.Contains(out, "UNTRUSTED") {
+			t.Errorf("full=%v: the agent's feedback is not in Builder's view:\n%s", full, out)
+		}
+	}
 }
 
 // An approval card says what an edit changes, for every kind of edit.
