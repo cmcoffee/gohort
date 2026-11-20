@@ -1,7 +1,6 @@
-// A nav entry with an icon (NavLink.Icon): not a tab but a control at the
-// header's right end, after the notifications bell, its glyph drawn and its
-// label written beside it. An entry naming a glyph the runtime does not draw
-// keeps its label alone.
+// A nav entry with an icon (NavLink.Icon): not a tab but a control just right
+// of the page's title, its glyph drawn and its label the tooltip. An entry
+// naming a glyph the runtime does not draw keeps its label written instead.
 
 var fs = require('fs');
 var src = fs.readFileSync(__dirname + '/../99_epilogue.js', 'utf8');
@@ -63,7 +62,7 @@ check('the icon entries are drawn in a box of their own', box && box.className =
 var gear = box._kids[0];
 check('an icon entry is a link to its page', gear.tagName === 'a' && gear.getAttribute('href') === '_settings' && gear.className === 'ui-page-icon');
 check('its glyph is drawn', gear._kids[0].tagName === 'svg' && gear._kids[0]._kids.length === 1 && gear._kids[0]._kids[0].tagName === 'path');
-check('its label is written beside the glyph', gear._kids[1].className === 'ui-page-icon-label' && text(gear._kids[1]) === 'Settings...');
+check('the glyph is shown alone, its label not written', gear._kids.length === 1);
 check('its label names it for a reader that cannot see the glyph', gear.getAttribute('title') === 'Settings...' && gear.getAttribute('aria-label') === 'Settings...');
 check('a glyph the runtime does not draw leaves the label alone', box._kids[1]._kids.length === 1 && text(box._kids[1]) === 'Odd');
 check('a page with no icon entries has no box', fns.navIcons({nav: [nav[0]]}) === null && fns.navIcons({}) === null);
@@ -73,9 +72,12 @@ var tabs = row._kids.filter(function (k) { return k.className.indexOf('ui-page-t
 check('an icon entry is not a tab', tabs.length === 1 && text(tabs[0]) === 'Records');
 check('a page whose only entries are icons has no tab row', fns.navStrip({nav: [nav[1]]}) === null);
 
-// Where the header puts them: after the bell, or at the end of a public
-// page's bar, which has no bell.
-check('the icons follow the bell', /header\.appendChild\(uiNoticeBell\(\)\);\s*if \(icons\) header\.appendChild\(icons\);/.test(src));
-check('a public page still has them', /if \(icons && cfg\.public\) header\.appendChild\(icons\);/.test(src));
+// Where the header puts them: just right of the page's title, inside its
+// left group, so they are the page's, not beside the live pill and the bell.
+var titleAt = src.indexOf("headerLeft.appendChild(el('h1'");
+var iconsAt = src.indexOf('if (icons) headerLeft.appendChild(icons);');
+var leftAt = src.indexOf('header.appendChild(headerLeft);');
+check('the icons follow the title, in its group', titleAt > 0 && iconsAt > titleAt && leftAt > iconsAt);
+check('they are added once, there', src.split('appendChild(icons)').length === 2);
 
 if (fail) { console.log(fail + ' failed'); process.exit(1); }

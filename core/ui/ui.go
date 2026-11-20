@@ -145,8 +145,8 @@ type Page struct {
 // Action, instead of a URL, names a browser-side handler registered with
 // window.uiRegisterClientAction: the entry runs it (to open a dialog, say)
 // rather than going anywhere. Icon names one of the runtime's drawn glyphs
-// ("settings"): the entry is then not a tab but a control at the bar's right
-// end, after the notifications bell, its Label written beside the glyph.
+// ("settings"): the entry is then not a tab but a control just right of the
+// page's title, the glyph alone, its Label the tooltip.
 type NavLink struct {
 	Label  string
 	URL    string

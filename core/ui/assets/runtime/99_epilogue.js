@@ -275,8 +275,8 @@
     return svg;
   }
 
-  // navIcons is the page's nav entries that carry an icon, as controls at
-  // the bar's right end, after the bell and the size of it: the glyph with
+  // navIcons is the page's nav entries that carry an icon, as controls just
+  // right of the page's title, the size of the bell: the glyph with
   // its label written beside it. Null when there are none. An icon the
   // runtime does not draw leaves the label alone.
   function navIcons(cfg) {
@@ -285,9 +285,11 @@
     var box = el('div', {class: 'ui-page-icons'});
     items.forEach(function(it) {
       var kids = [];
+      // The glyph alone, its label the tooltip; a glyph the runtime does
+      // not draw leaves the label written instead.
       var glyph = uiNavGlyph(it.icon);
       if (glyph) kids.push(glyph);
-      kids.push(el('span', {class: 'ui-page-icon-label'}, [it.label || '']));
+      else kids.push(el('span', {class: 'ui-page-icon-label'}, [it.label || '']));
       var a = el('a', {
         class: 'ui-page-icon' + (it.active ? ' active' : ''),
         href: it.url || '#', title: it.label || '', 'aria-label': it.label || ''
@@ -834,14 +836,17 @@
         headerLeft.appendChild(mark);
         headerLeft.appendChild(el('h1', {class: 'ui-page-title', title: cfg.title}, [cfg.title]));
       }
+      // The page's own controls (an app's Settings) sit just right of its
+      // title, as part of it, apart from the live pill and the bell, which
+      // are gohort's on every page.
+      var icons = navIcons(cfg);
+      if (icons) headerLeft.appendChild(icons);
       header.appendChild(headerLeft);
       // Top tabs — Page.Nav rendered inline on the header row (same line as the
       // back link): a shared page menu for a multi-page app, active page
       // highlighted. Scrolls horizontally on narrow screens rather than wrapping.
       var tabs = navStrip(cfg);
       if (tabs) header.appendChild(tabs);
-      var icons = navIcons(cfg);
-      if (icons && cfg.public) header.appendChild(icons);
       // Live-sessions pill — polls /api/live every 10s and shows a
       // running/queued count badge with a click-through popover. Lets
       // operators see at a glance from any framework page that
@@ -874,7 +879,6 @@
       // nobody reads, and the whole value of this is that the quiet state is
       // informative.
       header.appendChild(uiNoticeBell());
-      if (icons) header.appendChild(icons);
       var liveItems = [];
       // The server resolves each entry's destination and applies the
       // viewer's app access, so an empty href here means "no way back" —

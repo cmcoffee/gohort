@@ -7212,13 +7212,12 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   font-size: 0.65rem; font-weight: 700; line-height: 1.05rem; text-align: center;
 }
 .ui-bell.unread .ui-bell-count { display: inline-block; }
-/* A nav entry with an icon (NavLink.Icon): a control at the bar's right
- * end, after the bell, its glyph the bell's size and as quiet until pointed
- * at, its label written beside it. On a page without the bell (a public one)
- * it takes the bell's place at the end. On a phone the label goes and the
- * glyph stays, named by its title. */
-.ui-page-icons { display: inline-flex; align-items: center; gap: 0.25rem; flex: none; }
-.ui-page-header:not(:has(> .ui-live-pill-wrap)) > .ui-page-icons { margin-left: auto; }
+/* A nav entry with an icon (NavLink.Icon): a control just right of the
+ * page's title, part of it and apart from the live pill and the bell (those
+ * are gohort's, on every page; this is the page's own). Its glyph alone, the
+ * bell's size and as quiet until pointed at; its label is its tooltip. It
+ * never shrinks: the title beside it is what gives way. */
+.ui-page-icons { display: inline-flex; align-items: center; gap: 0.15rem; flex: none; }
 .ui-page-icon {
   display: inline-flex; align-items: center; gap: 0.35rem;
   min-height: 1.75rem; box-sizing: border-box; padding: 0.2rem 0.35rem;
@@ -7230,7 +7229,6 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 .ui-page-icon:hover, .ui-page-icon.active { opacity: 1; color: var(--text-hi); }
 .ui-page-icon-glyph { width: 1.2rem; height: 1.2rem; display: block; flex: none; }
 @media (max-width: 480px) {
-  .ui-page-icon-label { display: none; }
   .ui-page-icon { min-width: var(--btn-h); min-height: var(--btn-h); justify-content: center; }
 }
 .ui-bell-panel {

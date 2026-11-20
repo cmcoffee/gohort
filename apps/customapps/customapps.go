@@ -588,8 +588,8 @@ func withNavLink(page json.RawMessage, label, link string) json.RawMessage {
 	return withNav(page, map[string]any{"label": label, "url": link})
 }
 
-// withNavIcon is withNavLink for an entry drawn as an icon at the bar's right
-// end, its label beside it (core/ui NavLink.Icon).
+// withNavIcon is withNavLink for an entry drawn as an icon just right of the
+// app's name, its label the tooltip (core/ui NavLink.Icon).
 func withNavIcon(page json.RawMessage, icon, label, link string) json.RawMessage {
 	return withNav(page, map[string]any{"label": label, "url": link, "icon": icon})
 }

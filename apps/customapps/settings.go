@@ -224,7 +224,12 @@ func (T *CustomApps) handleSettingsPage(w http.ResponseWriter, r *http.Request, 
 	// The agent the app asks: its chat, and every ask() and run_agent in its
 	// scripts. The owner's to change, and the place to put it right when the
 	// agent it named was deleted.
-	if owner && strings.TrimSpace(spec.AgentID) != "" {
+	// An agent that is part of the app is not picked here: it is the app's,
+	// changed with the app (Builder or Anvil), and the people's agents the
+	// picker offers never include it.
+	if own := T.appOwnAgent(spec); owner && own != "" {
+		sections = append(sections, ui.Section{Title: "Agent", Subtitle: own + " is this app's own agent: it answers the app's chat and every question its page and scripts put to a model. It is part of the app, so it changes with the app, through Builder or Anvil."})
+	} else if owner && strings.TrimSpace(spec.AgentID) != "" {
 		agentSub := "The agent this app asks: its chat, and every question its page and scripts put to a model. Pick another to switch it."
 		if !T.appAgentExists(spec) {
 			agentSub = "This app's agent was deleted, so its chat and the questions it asks a model stop working. Pick another agent to get it working again."
@@ -407,6 +412,24 @@ func (T *CustomApps) appAgentExists(spec AppSpec) bool {
 	return ok
 }
 
+// appOwnAgent is the name of the agent spec asks when that agent is part of
+// the app (its own, made for it), "" when it is one of the person's own
+// agents, is gone, or no agent host runs here.
+func (T *CustomApps) appOwnAgent(spec AppSpec) string {
+	orch := agenthost.Get()
+	if orch == nil || strings.TrimSpace(spec.AgentID) == "" {
+		return ""
+	}
+	if orch.AgentOwningApp(spec.Owner, spec.AgentID) == "" {
+		return ""
+	}
+	ag, ok := orch.LookupAppAgent(spec.Owner, spec.AgentID)
+	if !ok {
+		return ""
+	}
+	return firstNonEmpty(strings.TrimSpace(ag.Name), ag.ID)
+}
+
 // settingsAgent is the Agent form's record: {agent}, empty when the agent it
 // names is gone. saveSettingsAgent rebinds the app to another of the owner's
 // agents. The owner's only.
@@ -431,8 +454,13 @@ func (T *CustomApps) saveSettingsAgent(a *appCall, body struct {
 		return nil, err
 	}
 	spec := a.spec
+	// The app's own agent is part of it, and so is another app's: neither is
+	// swapped here.
+	if own := T.appOwnAgent(spec); own != "" {
+		return nil, jsonapi.Status(http.StatusConflict, own+" is this app's own agent: it changes with the app, through Builder or Anvil")
+	}
 	ag, ok := orch.LookupAppAgent(spec.Owner, strings.TrimSpace(body.Agent))
-	if !ok {
+	if !ok || orch.AgentOwningApp(spec.Owner, ag.ID) != "" {
 		return nil, jsonapi.BadRequest("pick one of your agents")
 	}
 	if ag.ID != spec.AgentID {

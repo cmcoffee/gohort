@@ -514,6 +514,19 @@ func (T *OrchestrateApp) LookupAppAgent(owner, agentID string) (agenthost.Agent,
 	return AppAgentOf(rec), true
 }
 
+// AgentOwningApp is agenthost.Host's: the app agentID in owner's store is
+// part of (its OwningApp), "" for the person's own agent or none.
+func (T *OrchestrateApp) AgentOwningApp(owner, agentID string) string {
+	if T.DB == nil || owner == "" || agentID == "" {
+		return ""
+	}
+	rec, ok := findAgentByNameOrID(UserDB(T.DB, owner), owner, agentID)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(rec.OwningApp)
+}
+
 // LookupAppPipeline resolves a pipeline by ID or name within an owner's store,
 // for a data-driven app whose `pipeline` section runs it. Name fallback for the
 // same reason LookupAppAgent has one: an imported bundle carries the reference

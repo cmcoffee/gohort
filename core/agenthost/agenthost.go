@@ -66,6 +66,11 @@ type Host interface {
 	// LookupAppAgent is the agent agentID (an id or a name) in owner's store,
 	// as an app holds it for a turn.
 	LookupAppAgent(owner, agentID string) (Agent, bool)
+	// AgentOwningApp is the slug of the app agentID (an id or a name) in
+	// owner's store is part of, "" for an agent of the person's own or one
+	// not found. Read-only: what an app is made of is not an app's to set
+	// for a turn.
+	AgentOwningApp(owner, agentID string) string
 	// AgentStateNamespace is the namespace agentID's facts and memory are
 	// kept under.
 	AgentStateNamespace(agentID string) string

@@ -159,3 +159,23 @@ func TestAnAppsPipelinesAndMachinesLiveInsideTheApp(t *testing.T) {
 		t.Error("the administrator's mark")
 	}
 }
+
+// The agent host says which app an agent is part of, by its id or its name,
+// and "" for the person's own agent or one not found.
+func TestTheHostSaysWhichAppAnAgentIsPartOf(t *testing.T) {
+	pinRootDB(t)
+	SaveAppSpec(AppSpec{Owner: "u", Slug: "weather", Name: "Weather", RecordKey: "id"})
+	T := &OrchestrateApp{AppCore: AppCore{DB: &DBase{Store: kvlite.MemStore()}}}
+	udb := UserDB(T.DB, "u")
+	if _, err := saveAgent(udb, AgentRecord{ID: "a1", Name: "Forecaster", Owner: "u", OwningApp: "weather", OrchestratorPrompt: "p", appEdit: "Builder"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := saveAgent(udb, AgentRecord{ID: "a2", Name: "Helper", Owner: "u", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{"a1": "weather", "Forecaster": "weather", "a2": "", "nobody": ""} {
+		if got := T.AgentOwningApp("u", id); got != want {
+			t.Errorf("%q is part of %q, want %q", id, got, want)
+		}
+	}
+}
