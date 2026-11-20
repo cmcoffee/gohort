@@ -174,3 +174,89 @@ func TestTheConflictCheckRunsUnderItsCaller(t *testing.T) {
 		t.Errorf("no caller context: %v", err)
 	}
 }
+
+// When the full check gives no verdict but System One was sure of a
+// contradiction, the save is still flagged on its word: with one finding it
+// names it, with several it says one of them. Not sure, or sure of none, and
+// a check with no verdict flags nothing; a full check that answers decides.
+// The check test still reads the model's failure as its own.
+func TestANoVerdictFallsBackOnASureSystemOne(t *testing.T) {
+	prev := QuickDecide
+	t.Cleanup(func() { QuickDecide = prev })
+	lean := "contradicts"
+	QuickDecide = func(ctx context.Context, q QuickChoice) (string, bool) {
+		if q.Key != "memory.conflict_check" {
+			return "", false
+		}
+		return lean, false
+	}
+	refused := &FakeLLM{Turns: []FakeTurn{{Content: "", Repeat: true}}}
+	one := []SearchHit{{ID: "1", ReportID: "r1", Title: "Bridge closed", Text: "The bridge is closed."}}
+	two := append(one, SearchHit{ID: "2", ReportID: "r2", Title: "Bridge built", Text: "The bridge was built in 1962."})
+
+	note := findingConflictNote(context.Background(), refused.Chat, "The bridge reopened.", one)
+	for _, want := range []string{findingConflictMarker, "a quick check says this may contradict a finding you already saved", `"Bridge closed"`, "mem:r1", "The full check gave no verdict"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("one finding: the note lacks %q: %s", want, note)
+		}
+	}
+	note = findingConflictNote(context.Background(), refused.Chat, "The bridge reopened.", two)
+	for _, want := range []string{"one of these findings", "without saying which", "mem:r1", "mem:r2"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("two findings: the note lacks %q: %s", want, note)
+		}
+	}
+
+	// The check test: no verdict, whatever System One leaned to.
+	tc := conflictCases()[0]
+	if out := runConflictCase(context.Background(), refused, tc); out.Got != ScanNoVerdict {
+		t.Errorf("the check test read a failed full check with a lean as %q", out.Got)
+	}
+
+	// A full check that answers decides, lean or not.
+	agrees := &FakeLLM{Turns: []FakeTurn{{Content: `{"findings":[{"finding":1,"why":"same claim","answer":"consistent"}]}`, Repeat: true}}}
+	if note := findingConflictNote(context.Background(), agrees.Chat, "The bridge reopened.", one); note != "" {
+		t.Errorf("the full check said consistent, the lean flagged it: %s", note)
+	}
+	finds := &FakeLLM{Turns: []FakeTurn{{Content: `{"findings":[{"finding":1,"why":"closed vs open","answer":"contradicts"}]}`, Repeat: true}}}
+	if note := findingConflictNote(context.Background(), finds.Chat, "The bridge reopened.", one); !strings.Contains(note, "this may contradict a finding you already saved") || strings.Contains(note, "quick check") {
+		t.Errorf("the full check's own note: %s", note)
+	}
+
+	// Not sure, and no verdict: nothing flagged.
+	lean = ""
+	if note := findingConflictNote(context.Background(), refused.Chat, "The bridge reopened.", one); note != "" {
+		t.Errorf("no lean, no verdict, still flagged: %s", note)
+	}
+	// A lean on another answer is no contradiction.
+	lean = "none"
+	if note := findingConflictNote(context.Background(), refused.Chat, "The bridge reopened.", one); note != "" {
+		t.Errorf("a lean that is not a contradiction flagged it: %s", note)
+	}
+	// A sure, standing answer is not a lean either.
+	QuickDecide = func(ctx context.Context, q QuickChoice) (string, bool) { return "contradicts", true }
+	if note := findingConflictNote(context.Background(), refused.Chat, "The bridge reopened.", one); note != "" {
+		t.Errorf("an answer given as standing was taken as a lean: %s", note)
+	}
+}
+
+// A turn's save checks its in-band neighbours as part of the turn: the
+// worker's check is paid for by its person, and what it finds is the note.
+func TestATurnsSaveIsCheckedUnderTheTurn(t *testing.T) {
+	prev := QuickDecide
+	t.Cleanup(func() { QuickDecide = prev })
+	QuickDecide = nil
+	SetTunablesDB(&DBase{Store: kvlite.MemStore()})
+	defer SetTunablesDB(nil)
+	llm := &payerLLM{FakeLLM: &FakeLLM{}, marker: "EXISTING findings", reply: `{"findings":[{"finding":1,"why":"closed vs open","answer":"contradicts"}]}`}
+	T := &OrchestrateApp{AppCore: AppCore{LLM: llm}}
+	ct := &chatTurn{app: T, ctx: costledger.WithSpender(context.Background(), costledger.Spender{Person: "alice"})}
+	band := []SearchHit{{ReportID: "x", Title: "Bridge closed", Text: "The bridge is closed.", Score: 0.75}}
+	note := ct.detectFindingConflict("The bridge reopened.", band)
+	if !strings.Contains(note, `"Bridge closed"`) {
+		t.Errorf("the turn's note: %q", note)
+	}
+	if paid := llm.paid(); len(paid) != 1 || paid[0].Person != "alice" {
+		t.Errorf("the check's payers: %+v", paid)
+	}
+}

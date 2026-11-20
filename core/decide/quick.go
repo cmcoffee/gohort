@@ -29,6 +29,17 @@ func QuickStands(q QuickChoice, choice int, firm float64) bool {
 	return choice >= 0 && choice < len(q.Answers) && !q.Answers[choice].Reason && firm >= QuickBar(q)
 }
 
+// quickLean is the answer System One chose for q when it was sure of it but
+// the answer needs a reason, so the full question is still asked: a caller
+// may fall back on it when the full question gives no verdict. "" when it
+// was not sure.
+func quickLean(q QuickChoice, choice int, firm float64) string {
+	if choice < 0 || choice >= len(q.Answers) || !q.Answers[choice].Reason || firm < QuickBar(q) {
+		return ""
+	}
+	return q.Answers[choice].Key
+}
+
 // QuickBar is how firm an answer to q must be to stand: q's own bar, or
 // QuickSure.
 func QuickBar(q QuickChoice) float64 {
@@ -57,7 +68,7 @@ func quickDecide(ctx context.Context, q QuickChoice) (string, bool) {
 	}
 	if !QuickStands(q, a.Choice, a.Firm()) {
 		Debug("[decide] %s: System One %s, asking the full question", q.Key, a.line(QuickQuestion(q).Options))
-		return "", false
+		return quickLean(q, a.Choice, a.Firm()), false
 	}
 	Debug("[decide] %s settled by System One: %s", q.Key, a.line(QuickQuestion(q).Options))
 	return q.Answers[a.Choice].Key, true

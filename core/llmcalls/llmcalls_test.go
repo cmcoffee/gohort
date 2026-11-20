@@ -34,3 +34,11 @@ func TestCallsAreKeptForAWatcherAndSaid(t *testing.T) {
 		}
 	}
 }
+
+// Watched is true only under a watch.
+func TestWatchedIsOnlyUnderAWatch(t *testing.T) {
+	w, _ := Watch(context.Background())
+	if !Watched(w) || Watched(context.Background()) || Watched(nil) {
+		t.Error("Watched")
+	}
+}

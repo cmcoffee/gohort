@@ -56,15 +56,38 @@ func TestAQuickChoiceStandsOnlyWhenItShould(t *testing.T) {
 		t.Errorf("a sure reasonless answer on a mapped check: %q %v", ans, ok)
 	}
 	first = 0.03
-	if _, ok := AskQuick(context.Background(), q); ok {
-		t.Error("an answer that needs a reason stood on System One")
+	if ans, ok := AskQuick(context.Background(), q); ok || ans != "flagged" {
+		t.Errorf("an answer that needs a reason stood on System One, or its lean was lost: %q %v", ans, ok)
 	}
 	first = 0.5
-	if _, ok := AskQuick(context.Background(), q); ok {
-		t.Error("an even split stood on System One")
+	if ans, ok := AskQuick(context.Background(), q); ok || ans != "" {
+		t.Errorf("an even split stood on System One, or was given as a lean: %q %v", ans, ok)
 	}
 	if !QuickStands(q, 0, QuickSure) || QuickStands(q, 0, QuickSure-0.01) || QuickStands(q, 1, 1) {
 		t.Error("QuickStands")
+	}
+}
+
+// System One's lean is an answer that needs a reason, chosen as firmly as
+// one that stands: an answer that needs none, a weaker choice, or no choice
+// is no lean.
+func TestALeanIsAFirmReasonedAnswer(t *testing.T) {
+	q := QuickChoice{Key: "test.quick", Answers: []QuickAnswer{
+		{Key: "clean", Means: "Clean"}, {Key: "flagged", Means: "Flagged", Reason: true}}}
+	if quickLean(q, 1, QuickSure) != "flagged" {
+		t.Error("a firm reasoned answer is no lean")
+	}
+	for _, c := range []struct {
+		choice int
+		firm   float64
+	}{{1, QuickSure - 0.01}, {0, 1}, {-1, 1}, {2, 1}} {
+		if got := quickLean(q, c.choice, c.firm); got != "" {
+			t.Errorf("choice %d firm %v: lean %q", c.choice, c.firm, got)
+		}
+	}
+	q.Sure = 0.9
+	if quickLean(q, 1, 0.8) != "" || quickLean(q, 1, 0.9) != "flagged" {
+		t.Error("a lean ignores the question's own bar")
 	}
 }
 

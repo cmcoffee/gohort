@@ -1,13 +1,62 @@
 package orchestrate
 
 import (
+	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/costledger"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
+
+// payerLLM is a FakeLLM that keeps who paid for each call whose prompt
+// holds marker, and answers those calls with reply.
+type payerLLM struct {
+	*FakeLLM
+	marker, reply string
+	mu            sync.Mutex
+	payers        []costledger.Spender
+}
+
+func (p *payerLLM) Chat(ctx context.Context, msgs []Message, opts ...ChatOption) (*Response, error) {
+	for _, m := range msgs {
+		if strings.Contains(m.Content, p.marker) {
+			p.mu.Lock()
+			p.payers = append(p.payers, costledger.SpenderFrom(ctx))
+			p.mu.Unlock()
+			return &Response{Content: p.reply}, nil
+		}
+	}
+	return p.FakeLLM.Chat(ctx, msgs, opts...)
+}
+
+func (p *payerLLM) paid() []costledger.Spender {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]costledger.Spender(nil), p.payers...)
+}
+
+// A fact the model saves in a turn is judged by the memory gate as part of
+// that turn: its person pays for the gate.
+func TestAFactSavedInATurnIsJudgedUnderTheTurn(t *testing.T) {
+	prev := QuickDecide
+	t.Cleanup(func() { QuickDecide = prev })
+	QuickDecide = nil
+	db := &DBase{Store: kvlite.MemStore()}
+	llm := &payerLLM{FakeLLM: &FakeLLM{}, marker: "A personal chatbot keeps", reply: `{"relevant": true, "supersedes": [], "kind": "fact"}`}
+	T := &OrchestrateApp{AppCore: AppCore{DB: db, LLM: llm}}
+	turn := &chatTurn{user: "u", udb: db, app: T, agent: AgentRecord{ID: "ag", Owner: "u", MemoryMode: "chatbot"},
+		ctx: costledger.WithSpender(context.Background(), costledger.Spender{Person: "alice"})}
+	if _, err := turn.storeFactNote("User's partner is named Sam.", ClaimDomainUnknown, MemSourceObserved, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if paid := llm.paid(); len(paid) != 1 || paid[0].Person != "alice" {
+		t.Errorf("the gate's payers: %+v", paid)
+	}
+}
 
 // TestApplyFactListEditDiffsInsteadOfWiping pins the memory editor's Save
 // semantics: an untouched row keeps its identity and provenance (the old

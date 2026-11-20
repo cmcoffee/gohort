@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/checkstreak"
+	"github.com/cmcoffee/gohort/core/costledger"
 	"github.com/cmcoffee/gohort/core/provenance"
 )
 
@@ -319,7 +321,7 @@ func TestJudgeSupersedes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := judgeSupersedes(tc.chat, "moved to Austin", cands)
+			got := judgeSupersedes(nil, tc.chat, "moved to Austin", cands)
 			var gotIDs []string
 			for _, f := range got {
 				gotIDs = append(gotIDs, f.ID)
@@ -889,5 +891,118 @@ func TestTheTurnSaysHowFarDatedNotesAre(t *testing.T) {
 	}
 	if got := NearDatesNote([]MemoryFact{event("Long ago", day("2020-01-01"))}, now, pst); got != "" {
 		t.Errorf("nothing near should say nothing: %q", got)
+	}
+}
+
+// The memory gate and the supersession judge run under the save's work
+// (FactWritePolicy.Ctx): its person pays for them, a check test watches
+// them, and work already stopped asks nothing. With none, they run as before.
+func TestTheGateRunsUnderItsCaller(t *testing.T) {
+	db := memDB(t)
+	prev := QuickDecide
+	t.Cleanup(func() { QuickDecide = prev })
+	var quickPayer costledger.Spender
+	QuickDecide = func(ctx context.Context, q QuickChoice) (string, bool) {
+		quickPayer = costledger.SpenderFrom(ctx)
+		return "", false
+	}
+	var payer costledger.Spender
+	var stoppedErr error
+	chat := func(ctx context.Context, msgs []Message, opts ...ChatOption) (*Response, error) {
+		payer, stoppedErr = costledger.SpenderFrom(ctx), ctx.Err()
+		return &Response{Content: `{"relevant": true, "supersedes": [], "kind": "fact"}`}, nil
+	}
+	ctx := costledger.WithSpender(context.Background(), costledger.Spender{Person: "alice"})
+	StoreMemoryFactP(db, "agent:ctx", "User's partner is named Sam.", FactWritePolicy{Mode: "chatbot", Chat: chat, Ctx: ctx})
+	if payer.Person != "alice" || quickPayer.Person != "alice" {
+		t.Errorf("the gate ran outside the save's work: full %+v, System One %+v", payer, quickPayer)
+	}
+	payer = costledger.Spender{}
+	FactGateDecision(ctx, chat, "User's sister is named Ana.", nil, time.Now())
+	if payer.Person != "alice" {
+		t.Errorf("the gate's check test ran outside its case: %+v", payer)
+	}
+	payer = costledger.Spender{}
+	supersede := func(ctx context.Context, msgs []Message, opts ...ChatOption) (*Response, error) {
+		payer = costledger.SpenderFrom(ctx)
+		return &Response{Content: "[1]"}, nil
+	}
+	if got := judgeSupersedes(ctx, supersede, "moved to Austin", []MemoryFact{{ID: "a", Note: "lives in Denver"}}); len(got) != 1 || payer.Person != "alice" {
+		t.Errorf("the supersession judge ran outside the save's work: %v %+v", got, payer)
+	}
+	stopped, cancel := context.WithCancel(ctx)
+	cancel()
+	StoreMemoryFactP(db, "agent:ctx", "User's brother is named Leo.", FactWritePolicy{Mode: "chatbot", Chat: chat, Ctx: stopped})
+	if stoppedErr == nil {
+		t.Error("work already stopped still asked the gate as if it were running")
+	}
+	StoreMemoryFactP(db, "agent:ctx", "User's cousin is named Kit.", FactWritePolicy{Mode: "chatbot", Chat: chat})
+	if stoppedErr != nil || payer.Person != "" {
+		t.Errorf("with no work, the gate ran under someone's: %v %+v", stoppedErr, payer)
+	}
+	if j := judgeFactWrite(nil, chat, "User's aunt is named Bo.", nil, time.Now()); !j.relevant {
+		t.Error("no caller context: the gate did not run")
+	}
+	if (FactWritePolicy{}).work() == nil || (FactWritePolicy{Ctx: ctx}).work() != ctx {
+		t.Error("work")
+	}
+}
+
+// A gate whose reply cannot be read, again and again on one model, is a run
+// the admins are told of (core/checkstreak); a reply it can read ends the
+// run, and a call that failed is not the model declining.
+func TestAGateThatKeepsFailingIsARun(t *testing.T) {
+	prevQ, prevS := QuickDecide, checkstreak.OnStreak
+	t.Cleanup(func() { QuickDecide, checkstreak.OnStreak = prevQ, prevS })
+	QuickDecide = nil
+	var told []string
+	checkstreak.OnStreak = func(check, model, reason string, n int) {
+		told = append(told, check+"|"+model+"|"+reason)
+	}
+	model := "gate-model-" + t.Name()
+	bad := func(ctx context.Context, msgs []Message, opts ...ChatOption) (*Response, error) {
+		return &Response{Content: "I would rather not.", Model: model, StopReason: "refusal", StopDetail: "category general_harms"}, nil
+	}
+	good := func(ctx context.Context, msgs []Message, opts ...ChatOption) (*Response, error) {
+		return &Response{Content: `{"relevant": true}`, Model: model}, nil
+	}
+	down := func(ctx context.Context, msgs []Message, opts ...ChatOption) (*Response, error) {
+		return nil, errors.New("connection refused")
+	}
+	ctx := context.Background()
+	for i := 1; i < checkstreak.After; i++ {
+		judgeFactWrite(ctx, bad, "note", nil, time.Now())
+	}
+	judgeFactWrite(ctx, down, "note", nil, time.Now())
+	judgeFactWrite(ctx, good, "note", nil, time.Now())
+	judgeFactWrite(ctx, bad, "note", nil, time.Now())
+	if len(told) != 0 {
+		t.Fatalf("a read reply did not end the run: %v", told)
+	}
+	for i := 1; i < checkstreak.After; i++ {
+		judgeFactWrite(ctx, bad, "note", nil, time.Now())
+	}
+	want := "memory.gate|" + model + `|"I would rather not." (stopped: refusal, category general_harms)`
+	if len(told) != 1 || told[0] != want {
+		t.Errorf("told %v, want [%s]", told, want)
+	}
+}
+
+// A gate reply that could not be read says how it stopped, unless it ended
+// on its own.
+func TestAGateReplyClipSaysHowItStopped(t *testing.T) {
+	for _, c := range []struct {
+		resp Response
+		want string
+	}{
+		{Response{Content: "", StopReason: "refusal"}, "empty (stopped: refusal)"},
+		{Response{Content: "nope", StopReason: "max_tokens", StopDetail: "x"}, `"nope" (stopped: max_tokens, x)`},
+		{Response{Content: "nope", StopReason: "end_turn"}, `"nope"`},
+		{Response{Content: "nope"}, `"nope"`},
+	} {
+		r := c.resp
+		if got := gateReplyClip(&r); got != c.want {
+			t.Errorf("%+v: %q, want %q", c.resp, got, c.want)
+		}
 	}
 }

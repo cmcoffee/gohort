@@ -428,6 +428,9 @@ func (T *OrchestrateApp) foldOperatorHistory(udb Database, owner string, agent A
 					Mode:   agent.MemoryMode,
 					Chat:   T.WorkerChat,
 					Source: MemSourceObserved,
+					// The compaction's work, paid for as it was; the run
+					// has ended by now, so not stopped with it.
+					Ctx: context.WithoutCancel(ctx),
 				})
 			}
 		}

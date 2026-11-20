@@ -31,6 +31,28 @@ func seedFoldSession(t *testing.T, db Database, agentID, sessID string, n int) {
 	}
 }
 
+// A fact the fold surfaces is judged by the memory gate as part of the
+// fold's work: the fold's person pays for it, though the fold's run has
+// ended by then.
+func TestAFoldsFactIsJudgedUnderTheFold(t *testing.T) {
+	prev := QuickDecide
+	t.Cleanup(func() { QuickDecide = prev })
+	QuickDecide = nil
+	db := &DBase{Store: kvlite.MemStore()}
+	llm := &payerLLM{FakeLLM: &FakeLLM{Turns: []FakeTurn{{Content: "Running summary of the thread.\nFACTS: user prefers metric units", Repeat: true}}},
+		marker: "A personal chatbot keeps", reply: `{"relevant": true, "supersedes": [], "kind": "fact"}`}
+	T := &OrchestrateApp{AppCore: AppCore{DB: db, LLM: llm}}
+	agent := AgentRecord{ID: "ag", Owner: "u", ContextDepth: 4, MemoryMode: "chatbot"}
+	seedFoldSession(t, db, "ag", "s1", 30)
+	T.foldOperatorHistory(db, "u", agent, "s1", CompactionConfig{KeepRecent: 4, Trigger: 6})
+	if paid := llm.paid(); len(paid) != 1 || paid[0].Person != "u" {
+		t.Errorf("the gate's payers: %+v", paid)
+	}
+	if facts := ListMemoryFacts(db, factsNamespace("ag")); len(facts) != 1 {
+		t.Errorf("the fold's fact: %+v", facts)
+	}
+}
+
 // TestFoldOperatorHistoryCycle drives one background-fold cycle synchronously:
 // the reloaded thread folds, the cursor + fold counter persist, the span is
 // archived under the fold-seq key, and the surfaced fact lands in Explicit

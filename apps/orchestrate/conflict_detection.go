@@ -15,6 +15,7 @@ package orchestrate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -87,17 +88,7 @@ func (t *chatTurn) detectFindingConflict(newContent string, neighbors []SearchHi
 	if len(cand) == 0 {
 		return ""
 	}
-	conflicts, err := judgeFindingConflicts(t.ctx, t.app.WorkerChat, newContent, cand)
-	if err != nil {
-		// The finding is still saved: a broken check must not block saving.
-		// But not silently, as "no conflict", which is what this read as.
-		Log("[memory.conflict_check] the check gave no verdict, so a contradiction with a saved finding would go unflagged: %v", err)
-		return ""
-	}
-	if len(conflicts) == 0 {
-		return ""
-	}
-	return renderFindingConflictNote(conflicts)
+	return findingConflictNote(t.ctx, t.app.WorkerChat, newContent, cand)
 }
 
 // renderFindingConflictNote formats the surfacing message: names each conflicting
@@ -114,7 +105,29 @@ func renderFindingConflictNote(conflicts []SearchHit) string {
 	} else {
 		fmt.Fprintf(&b, "\n\n"+findingConflictMarker+" this may contradict %d findings you already saved: ", len(conflicts))
 	}
-	for i, h := range conflicts {
+	writeConflictNames(&b, conflicts)
+	b.WriteString(". Both are kept: recall them and forget the outdated one if this supersedes it, or reconcile with the user.")
+	return b.String()
+}
+
+// renderUncheckedConflictNote is the note for a save the full check gave no
+// verdict on while System One was sure of a contradiction: with one
+// candidate it names it; with several it cannot say which.
+func renderUncheckedConflictNote(candidates []SearchHit) string {
+	var b strings.Builder
+	if len(candidates) == 1 {
+		b.WriteString("\n\n" + findingConflictMarker + " a quick check says this may contradict a finding you already saved: ")
+	} else {
+		b.WriteString("\n\n" + findingConflictMarker + " a quick check says this may contradict one of these findings you already saved, without saying which: ")
+	}
+	writeConflictNames(&b, candidates)
+	b.WriteString(". The full check gave no verdict. Both are kept: recall them and forget the outdated one if this supersedes it, or reconcile with the user.")
+	return b.String()
+}
+
+// writeConflictNames writes each finding's name, its age and its recall id.
+func writeConflictNames(b *strings.Builder, hits []SearchHit) {
+	for i, h := range hits {
 		if i > 0 {
 			b.WriteString("; ")
 		}
@@ -125,14 +138,12 @@ func renderFindingConflictNote(conflicts []SearchHit) string {
 		if name == "" {
 			name = "(untitled)"
 		}
-		fmt.Fprintf(&b, "%q", name)
+		fmt.Fprintf(b, "%q", name)
 		if d := recallAgeNote(h.Date); d != "" {
-			fmt.Fprintf(&b, " %s", d)
+			fmt.Fprintf(b, " %s", d)
 		}
-		fmt.Fprintf(&b, " [id: mem:%s]", h.ReportID)
+		fmt.Fprintf(b, " [id: mem:%s]", h.ReportID)
 	}
-	b.WriteString(". Both are kept: recall them and forget the outdated one if this supersedes it, or reconcile with the user.")
-	return b.String()
 }
 
 // conflictJudgeExcerptMaxChars sizes the excerpt each candidate finding gets
@@ -196,9 +207,15 @@ func judgeFindingConflicts(ctx context.Context, chat FactChatFunc, newContent st
 		ctx = context.Background()
 	}
 	// System One first, where the map gives the check to it: a sure "none"
-	// is the answer; a contradiction needs the full check to say which.
-	if ans, ok := AskQuick(ctx, conflictQuick(newContent, candidates)); ok && ans == "none" {
+	// is the answer; a contradiction needs the full check to say which, and
+	// a sure one is kept in case the full check gives no verdict.
+	ans, ok := AskQuick(ctx, conflictQuick(newContent, candidates))
+	if ok && ans == "none" {
 		return nil, nil
+	}
+	lean := ""
+	if !ok {
+		lean = ans
 	}
 	var list strings.Builder
 	for i, h := range candidates {
@@ -214,7 +231,7 @@ func judgeFindingConflicts(ctx context.Context, chat FactChatFunc, newContent st
 		fmt.Sprintf("NEW finding: %q\n\nEXISTING findings:\n%s", newContent, list.String()), len(candidates),
 		WithCaller("memory.conflict_check"), WithThink(false), WithMaxTokens(600))
 	if err != nil {
-		return nil, err
+		return nil, conflictNoVerdict{err: err, lean: lean}
 	}
 	var out []SearchHit
 	for i, r := range rulings {
@@ -223,6 +240,42 @@ func judgeFindingConflicts(ctx context.Context, chat FactChatFunc, newContent st
 		}
 	}
 	return out, nil
+}
+
+// conflictNoVerdict is a conflict check whose full check gave no verdict,
+// with what System One was sure of before it (core.QuickDecide's lean), or ""
+// when it was not sure or was not asked. It reads as the full check's error,
+// so a check test still reports the model's failure as its own.
+type conflictNoVerdict struct {
+	err  error
+	lean string
+}
+
+func (e conflictNoVerdict) Error() string { return e.err.Error() }
+func (e conflictNoVerdict) Unwrap() error { return e.err }
+
+// findingConflictNote is the note a save gets for newContent against
+// candidates: the contradictions the check found; when it gave no verdict
+// but System One was sure there is one, a note saying it may contradict one
+// of them, since a flag costs a look and a missed one a stale finding; else
+// none.
+func findingConflictNote(ctx context.Context, chat FactChatFunc, newContent string, candidates []SearchHit) string {
+	conflicts, err := judgeFindingConflicts(ctx, chat, newContent, candidates)
+	if err != nil {
+		var nv conflictNoVerdict
+		if errors.As(err, &nv) && nv.lean == "contradicts" {
+			Log("[memory.conflict_check] the check gave no verdict (%v); System One was sure of a contradiction, so the save is flagged on its word", err)
+			return renderUncheckedConflictNote(candidates)
+		}
+		// The finding is still saved: a broken check must not block saving.
+		// But not silently, as "no conflict", which is what this read as.
+		Log("[memory.conflict_check] the check gave no verdict, so a contradiction with a saved finding would go unflagged: %v", err)
+		return ""
+	}
+	if len(conflicts) == 0 {
+		return ""
+	}
+	return renderFindingConflictNote(conflicts)
 }
 
 // conflictVerdict is the conflict check, one verdict per existing finding,

@@ -1425,7 +1425,10 @@ func UpdatePreguard(change func(*PreguardRecord)) PreguardRecord {
 
 // QuickDecide asks System One q, set by core/decide. ok is true only when it
 // gave, sure enough, an answer that needs no reason, on a check mapped to
-// it; otherwise the check asks its full question. Nil: never.
+// it; otherwise the check asks its full question. With ok false, answer is
+// what System One chose when it was as sure of an answer that needs a
+// reason (its lean, for a caller whose full question then gives no
+// verdict), and "" when it was not sure or not asked. Nil: never.
 var QuickDecide func(ctx context.Context, q QuickChoice) (answer string, ok bool)
 
 // AskQuick is QuickDecide when it is set: the answer key, and whether it

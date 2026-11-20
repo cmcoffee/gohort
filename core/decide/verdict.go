@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/checkstreak"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
@@ -210,6 +211,9 @@ func (v Verdict) ask(ctx context.Context, chat VerdictChat, state string, opts [
 		if resp != nil {
 			last, standIn, lastResp = resp.Content, resp.Model == StandInModel, resp
 			if obj := readObject(resp.Content); obj != nil && read(obj) {
+				// A verdict ends its model's run of none (a stand-in's
+				// ends only the stand-in's, which is never counted).
+				checkstreak.Answered(ctx, v.Key, resp.Model)
 				return nil
 			}
 		}
@@ -225,6 +229,11 @@ func (v Verdict) ask(ctx context.Context, chat VerdictChat, state string, opts [
 	clip := textutil.ReplyClip(last, unreadableClip) + replyEnding(lastResp)
 	if !standIn {
 		Debug("[decide] %s: the reply could not be read twice; the last was %s", v.Key, clip)
+		model := ""
+		if lastResp != nil {
+			model = lastResp.Model
+		}
+		checkstreak.Failed(ctx, v.Key, model, clip)
 	}
 	return unreadable{clip: clip, standIn: standIn}
 }

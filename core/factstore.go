@@ -29,6 +29,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/cmcoffee/gohort/core/checkstreak"
 	"github.com/cmcoffee/gohort/core/provenance"
 )
 
@@ -177,6 +178,19 @@ type FactWritePolicy struct {
 	Speaker        string
 	SpeakerHandle  string
 	SpeakerIsOwner bool
+	// Ctx is the work this save is part of: the gate's and the supersession
+	// judge's calls run under it, so they stop with that work, are paid for
+	// by its person, and are watched by a check test. Nil runs them under
+	// none, as before.
+	Ctx context.Context
+}
+
+// work is the context the save's judge calls run under: Ctx, or none.
+func (p FactWritePolicy) work() context.Context {
+	if p.Ctx != nil {
+		return p.Ctx
+	}
+	return context.Background()
 }
 
 // FactWriteReason explains what StoreMemoryFactP did with a submitted note.
@@ -460,7 +474,7 @@ func StoreMemoryFactP(db Database, namespace, note string, p FactWritePolicy) Fa
 	// embedding pass surfaced related candidates (the common case pays nothing).
 	var superseded []MemoryFact
 	if p.Chat != nil && FactGateApplies(p.Mode) {
-		j := judgeFactWrite(p.Chat, note, supersedeCandidates, now)
+		j := judgeFactWrite(p.work(), p.Chat, note, supersedeCandidates, now)
 		if !j.relevant {
 			Debug("[factstore] gate rejected non-durable note %q (ns=%s)", note, namespace)
 			return FactWriteResult{Reason: FactRejected}
@@ -479,7 +493,7 @@ func StoreMemoryFactP(db Database, namespace, note string, p FactWritePolicy) Fa
 		}
 		superseded = applyJudgedSupersession(db, &f, now, j.supersedes)
 	} else if p.Chat != nil && len(supersedeCandidates) > 0 {
-		superseded = applyJudgedSupersession(db, &f, now, judgeSupersedes(p.Chat, note, supersedeCandidates))
+		superseded = applyJudgedSupersession(db, &f, now, judgeSupersedes(p.work(), p.Chat, note, supersedeCandidates))
 	}
 
 	db.Set(MemoryFactsTable, factDBKey(namespace, f.ID), f)
@@ -636,16 +650,20 @@ const factSupersedeBandFloor = 0.60
 // judgeSupersedes asks the worker which candidate facts the new note
 // replaces (same attribute, cannot both be current). Returns the subset to
 // supersede. Best-effort: any error, nil chat, or unparseable reply yields
-// no supersession (the new fact is simply added alongside).
-func judgeSupersedes(chat FactChatFunc, newNote string, candidates []MemoryFact) []MemoryFact {
+// no supersession (the new fact is simply added alongside). It runs under
+// ctx, the save's work (FactWritePolicy.Ctx); nil is none.
+func judgeSupersedes(ctx context.Context, chat FactChatFunc, newNote string, candidates []MemoryFact) []MemoryFact {
 	if chat == nil || len(candidates) == 0 {
 		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	var list strings.Builder
 	for i, f := range candidates {
 		fmt.Fprintf(&list, "%d. %s\n", i+1, f.Note)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	resp, err := chat(ctx, []Message{
 		{Role: "user", Content: fmt.Sprintf(`A memory store holds short facts about a user. A NEW fact is being saved. For each EXISTING fact listed, decide whether the new fact UPDATES or REPLACES it: they describe the SAME attribute or relationship and cannot both be currently true. Examples of replacement: "lives in Denver" replaced by "lives in Austin"; "works at X" replaced by "works at Y"; "phone is A" replaced by "phone is B".
@@ -720,20 +738,27 @@ func FactGateQuick(note string) QuickChoice {
 		}}
 }
 
-func judgeFactWrite(chat FactChatFunc, newNote string, candidates []MemoryFact, now time.Time) factJudgement {
+// judgeFactWrite is the memory gate. It runs under ctx, the work the save is
+// part of (FactWritePolicy.Ctx), so it stops with that work, is paid for by
+// its person, and is watched by a check test; the ceiling below only bounds
+// it. Nil is none.
+func judgeFactWrite(ctx context.Context, chat FactChatFunc, newNote string, candidates []MemoryFact, now time.Time) factJudgement {
 	if chat == nil {
 		return factJudgement{relevant: true}
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	// System One first, where the map gives the gate to it: a sure "drop"
 	// is the answer; keeping a note needs the full gate.
-	if ans, ok := AskQuick(context.Background(), FactGateQuick(newNote)); ok && ans == "drop" {
+	if ans, ok := AskQuick(ctx, FactGateQuick(newNote)); ok && ans == "drop" {
 		return factJudgement{relevant: false}
 	}
 	var list strings.Builder
 	for i, f := range candidates {
 		fmt.Fprintf(&list, "%d. %s\n", i+1, f.Note)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	resp, err := chat(ctx, []Message{
 		{Role: "user", Content: fmt.Sprintf(`A personal chatbot keeps a SMALL set of short, durable facts about a user. Every saved fact is injected into every future prompt forever, so junk is expensive. A NEW note is about to be saved. Make three judgments.
@@ -769,8 +794,10 @@ Reply with ONLY JSON: {"relevant": true or false, "supersedes": [numbers], "kind
 	}
 	if DecodeJSON(ResponseText(resp), &parsed) != nil {
 		Log("[factstore] fact-write judge reply unparseable: storing %q UNJUDGED (fail-open)", newNote)
+		checkstreak.Failed(ctx, "memory.gate", resp.Model, gateReplyClip(resp))
 		return factJudgement{relevant: true}
 	}
+	checkstreak.Answered(ctx, "memory.gate", resp.Model)
 	j := factJudgement{relevant: parsed.Relevant == nil || *parsed.Relevant} // missing field => keep
 	for _, n := range parsed.Supersedes {
 		if n >= 1 && n <= len(candidates) {
@@ -791,19 +818,34 @@ Reply with ONLY JSON: {"relevant": true or false, "supersedes": [numbers], "kind
 	return j
 }
 
+// gateReplyClip is a gate reply that could not be read, for a notice: what it
+// said, and how it stopped when it did not end on its own.
+func gateReplyClip(resp *Response) string {
+	clip := textutil.ReplyClip(ResponseText(resp), 160)
+	if resp.StopReason != "" && resp.StopReason != "end_turn" {
+		stop := "stopped: " + resp.StopReason
+		if resp.StopDetail != "" {
+			stop += ", " + resp.StopDetail
+		}
+		clip += " (" + stop + ")"
+	}
+	return clip
+}
+
 // FactGateDecision is the memory gate's judgement of note against existing
 // notes, through the gate's own prompt and reading on chat: whether it is
 // kept, which existing notes (1-based) it replaces, and its kind ("fact",
 // "event", "open", or "" when the judge did not say). For the gate's check
-// tests, which ask it on a chosen model.
-func FactGateDecision(chat FactChatFunc, note string, existing []string, now time.Time) (keep bool, replaces []int, kind string) {
+// tests, which ask it on a chosen model under ctx (a case's, which the test
+// watches).
+func FactGateDecision(ctx context.Context, chat FactChatFunc, note string, existing []string, now time.Time) (keep bool, replaces []int, kind string) {
 	candidates := make([]MemoryFact, len(existing))
 	index := map[string]int{}
 	for i, e := range existing {
 		candidates[i] = MemoryFact{Note: e}
 		index[e] = i + 1
 	}
-	j := judgeFactWrite(chat, note, candidates, now)
+	j := judgeFactWrite(ctx, chat, note, candidates, now)
 	for _, f := range j.supersedes {
 		replaces = append(replaces, index[f.Note])
 	}

@@ -45,6 +45,16 @@ func Watch(ctx context.Context) (context.Context, func() []Call) {
 	}
 }
 
+// Watched reports whether a check test watches ctx: its calls ask a chosen
+// model on purpose, case by case.
+func Watched(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	w, _ := ctx.Value(key{}).(*watch)
+	return w != nil
+}
+
 // Note keeps c for whoever watches ctx; nothing when nobody does.
 func Note(ctx context.Context, c Call) {
 	if ctx == nil {

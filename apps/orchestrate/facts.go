@@ -127,6 +127,9 @@ func (t *chatTurn) storeFactNote(note string, domain ClaimDomain, origin MemSour
 		SpeakerIsOwner: t.requesterOwnerHandle,
 		// A note that holds only a while leaves the saved notes at its end.
 		Expires: expires,
+		// The gate runs as part of this turn: it stops with it and is paid
+		// for by its person.
+		Ctx: t.ctx,
 	})
 	switch res.Reason {
 	case FactDuplicate:

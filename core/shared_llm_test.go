@@ -779,11 +779,11 @@ func TestChecksTakeASettledQuickAnswer(t *testing.T) {
 	}
 
 	keep := &FakeLLM{Turns: []FakeTurn{{Content: `{"relevant": true, "supersedes": [], "kind": "fact"}`, Repeat: true}}}
-	if j := judgeFactWrite(keep.Chat, "User's partner is named Sam.", nil, time.Now()); !j.relevant || keep.Calls() != 1 {
+	if j := judgeFactWrite(context.Background(), keep.Chat, "User's partner is named Sam.", nil, time.Now()); !j.relevant || keep.Calls() != 1 {
 		t.Fatalf("unsettled, the full gate decides: %+v after %d calls", j, keep.Calls())
 	}
 	settle["memory.gate"] = "drop"
-	if j := judgeFactWrite(keep.Chat, "User said good morning.", nil, time.Now()); j.relevant || keep.Calls() != 1 {
+	if j := judgeFactWrite(context.Background(), keep.Chat, "User said good morning.", nil, time.Now()); j.relevant || keep.Calls() != 1 {
 		t.Errorf("settled drop, the full gate still ran: %+v after %d calls", j, keep.Calls())
 	}
 	if len(asked) < 4 {

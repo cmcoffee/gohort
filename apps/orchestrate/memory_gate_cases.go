@@ -60,7 +60,7 @@ func runMemoryGateCase(ctx context.Context, llm LLM, tc checktest.Case) checktes
 			existing = append(existing, ln)
 		}
 	}
-	keep, replaces, kind := FactGateDecision(llm.Chat, tc.Input["note"], existing, memoryGateDay)
+	keep, replaces, kind := FactGateDecision(ctx, llm.Chat, tc.Input["note"], existing, memoryGateDay)
 	return checktest.Outcome{Got: memoryGateAnswer(keep, replaces, kind)}
 }
 
