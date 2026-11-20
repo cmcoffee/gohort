@@ -48,6 +48,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/cmcoffee/gohort/core/checkstreak"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
@@ -571,6 +572,7 @@ func NewToolScanner(chat ToolScanChatFunc, cache *ToolScanCache) ToolScanner {
 			return ToolScanVerdict{Status: ScanNoVerdict, Reason: "scanner call failed"}
 		}
 		v := ParseToolScanVerdict(resp.Content)
+		noteScanReply(ctx, ToolScanRouteKey, resp, v.Status == ScanNoVerdict)
 		if note == "" {
 			cache.put(key, v)
 		}
@@ -763,6 +765,7 @@ func NewTaintedActionJudge(chat ToolScanChatFunc) TaintedActionJudge {
 			return TaintedActionVerdict{Status: ScanNoVerdict, Reason: "action check failed"}
 		}
 		v := ParseTaintedActionVerdict(resp.Content)
+		noteScanReply(ctx, TaintedActionRouteKey, resp, v.Status == ScanNoVerdict)
 		// A conviction has to point at something. Unverifiable, it becomes a
 		// NO-VERDICT rather than an acquittal: the caller still fails closed,
 		// so nothing is let through that was not let through before, but the
@@ -776,6 +779,20 @@ func NewTaintedActionJudge(chat ToolScanChatFunc) TaintedActionJudge {
 		}
 		return v
 	}
+}
+
+// noteScanReply counts a scan's reply toward its model's run of no verdicts
+// (core/checkstreak, the admins' bell after a few in a row), or ends the run
+// when the reply could be read. Only a reply that came back unreadable
+// counts: a call that failed is the service's to report, and a conviction
+// whose quote does not check out was an answer. The clip that reaches the
+// bell is sanitized as a span is, since the reply is about a hostile page.
+func noteScanReply(ctx context.Context, check string, resp *Response, unreadable bool) {
+	if unreadable {
+		checkstreak.Failed(ctx, check, resp.Model, sanitizeScanSpan(gateReplyClip(resp)))
+		return
+	}
+	checkstreak.Answered(ctx, check, resp.Model)
 }
 
 // VerifyTaintedQuote reports whether a diverted verdict's quote is really in
