@@ -267,7 +267,9 @@ func (a *AdminApp) handleCheckTestsReport(c *jsonapi.Call) (any, error) {
 }
 
 // checkTestsReportHeader is what the report says about this install: its
-// version and the model on each tier now.
+// version, the model on each tier now, and what models refused and are sent
+// instead (the Models page's "Learned from model refusals"), since a model
+// that thinks when asked not to answers a short check with nothing.
 func checkTestsReportHeader() []string {
 	out := []string{"gohort " + AppVersion}
 	worker, _ := LiveLLMs()
@@ -284,6 +286,14 @@ func checkTestsReportHeader() []string {
 			m += " (not used by the Decision Offloading mode)"
 		}
 		out = append(out, t.name+": "+m)
+	}
+	learned := ListRequestAdaptations()
+	if len(learned) == 0 {
+		return append(out, "Learned from model refusals: none")
+	}
+	out = append(out, "Learned from model refusals:")
+	for _, ad := range learned {
+		out = append(out, fmt.Sprintf("- %s, %s: sends %s (since %s)", ad.Subject, ad.What, ad.Sends, ad.Since.Format("2006-01-02")))
 	}
 	return out
 }

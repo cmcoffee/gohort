@@ -185,3 +185,24 @@ func TestLearnedRefusalsAreListedAndForgotten(t *testing.T) {
 		t.Errorf("a malformed id: %d, want 400", code)
 	}
 }
+
+// The check tests report says what models refused and are sent instead, so
+// a short check's empty replies can be read against the off-switch its
+// model is on.
+func TestTheCheckReportSaysWhatModelsRefused(t *testing.T) {
+	a, _ := modelsAdmin(t)
+	prev := RootDB
+	RootDB = a.db
+	t.Cleanup(func() { RootDB = prev })
+	head := strings.Join(checkTestsReportHeader(), "\n")
+	if !strings.Contains(head, "Learned from model refusals: none") {
+		t.Errorf("nothing learned: %s", head)
+	}
+	a.db.Set("request_adaptations", "thinking.off\x00claude-report", RequestAdaptation{
+		Field: "thinking.off", Subject: "claude-report", Step: "nothing", Since: time.Date(2026, 11, 2, 0, 0, 0, 0, time.Local), Refusal: "no"})
+	RootDB = &DBase{Store: a.db.(*DBase).Store}
+	head = strings.Join(checkTestsReportHeader(), "\n")
+	if !strings.Contains(head, "Learned from model refusals:\n- claude-report, Thinking off: sends no thinking setting at all, its own default (since 2026-11-02)") {
+		t.Errorf("a model moved off thinking off: %s", head)
+	}
+}

@@ -133,11 +133,16 @@ func answerLine(model string, a Answer, why bool) string {
 	if !why {
 		return line
 	}
-	if a.Err != "" {
-		return line + "\n    error: " + indentLines(a.Err, "    ")
+	switch {
+	case a.Err != "":
+		line += "\n    error: " + indentLines(a.Err, "    ")
+	case a.Reason != "":
+		line += "\n    reason: " + indentLines(a.Reason, "    ")
 	}
-	if a.Reason != "" {
-		return line + "\n    reason: " + indentLines(a.Reason, "    ")
+	// How the model's replies ended, for an answer that failed or was wrong:
+	// a reply cut off at its limit reads differently from a wrong one.
+	if a.Replies != "" && (a.Err != "" || !a.Right) {
+		line += "\n    replies: " + indentLines(a.Replies, "    ")
 	}
 	return line
 }

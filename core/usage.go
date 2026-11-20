@@ -3,6 +3,8 @@ package core
 import (
 	"context"
 	"sync"
+
+	"github.com/cmcoffee/gohort/core/llmcalls"
 )
 
 // UsageTracker accumulates LLM token counts (split by worker / lead
@@ -262,6 +264,8 @@ func RecordUsage(ctx context.Context, tier LLMTier, resp *Response) {
 		return
 	}
 	resp.usageCounted = true
+	// What the reply said about itself, for a check test watching (core/llmcalls).
+	noteLLMCall(ctx, tier, resp)
 	if tier == LEAD {
 		ProcessUsage().AddLeadTokens(resp.InputTokens, resp.OutputTokens, resp.CacheReadTokens, resp.CacheWriteTokens)
 		if t := RequestUsage(ctx); t != nil {
@@ -383,4 +387,15 @@ func Scope(onDone func(UsageDiff)) func() {
 			onDone(processUsage.Diff(start))
 		}
 	}
+}
+
+// noteLLMCall keeps what resp said about itself (how it stopped, what it
+// wrote and spent thinking) for a check test watching ctx (core/llmcalls).
+func noteLLMCall(ctx context.Context, tier LLMTier, resp *Response) {
+	name := "worker"
+	if tier == LEAD {
+		name = "lead"
+	}
+	llmcalls.Note(ctx, llmcalls.Call{Model: resp.Model, Tier: name, Stop: resp.StopReason,
+		Input: resp.InputTokens, Output: resp.OutputTokens, Reasoning: resp.ReasoningTokens})
 }

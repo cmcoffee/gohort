@@ -73,3 +73,48 @@ func TestTheReportBeforeARun(t *testing.T) {
 		t.Errorf("before a run: %q", got)
 	}
 }
+
+// A failed or wrong answer says how its model's replies ended: one cut off at
+// its output limit reads as that, not as the model being wrong. A right one
+// does not.
+func TestAFailedAnswerSaysHowItsRepliesEnded(t *testing.T) {
+	mapRegistry(t)
+	Register(Check{Key: "conflict", Label: "Conflict", Structured: true,
+		Cases: func() []Case { return []Case{{ID: "cut", Title: "Cut", Want: "none"}, {ID: "fine", Title: "Fine", Want: "none"}} },
+		Run: func(ctx context.Context, _ LLM, c Case) Outcome {
+			// What a model client records of each reply (core.RecordUsage).
+			if c.ID == "cut" {
+				RecordUsage(ctx, WORKER, &Response{StopReason: "max_tokens", InputTokens: 900, OutputTokens: 600, ReasoningTokens: 580})
+				return Outcome{Err: errors.New("the reply could not be read as the verdict asked: the reply was empty")}
+			}
+			RecordUsage(ctx, WORKER, &Response{StopReason: "end_turn", InputTokens: 900, OutputTokens: 40})
+			return Outcome{Got: "none"}
+		},
+		// Right on the case the worker failed, so its line is in the report.
+		Decide: func(ctx context.Context, _ LLM, c Case) Outcome {
+			RecordUsage(ctx, WORKER, &Response{StopReason: "end_turn", InputTokens: 900, OutputTokens: 41})
+			return Outcome{Got: "none", Confidence: 0.99, Bar: 0.6}
+		}})
+	rep := Run(context.Background(), []Model{{Name: "worker", LLM: &FakeLLM{}}, {Name: "system one", LLM: &FakeLLM{}, Decide: true}})
+	var cut, fine Answer
+	for _, r := range rep.Rows {
+		if r.Case == "cut" {
+			cut = r.Answers["worker"]
+		} else {
+			fine = r.Answers["worker"]
+		}
+	}
+	if cut.Replies != "stopped at its output limit after 600 output tokens, about 580 of them thinking, 900 in (worker)" {
+		t.Errorf("the cut case's replies: %q", cut.Replies)
+	}
+	if !strings.Contains(fine.Replies, "finished after 40 output tokens") {
+		t.Errorf("the right case's replies: %q", fine.Replies)
+	}
+	got := TextReport(rep, nil)
+	if !strings.Contains(got, "the reply was empty\n    replies: stopped at its output limit after 600 output tokens, about 580 of them thinking") {
+		t.Errorf("the report does not say how the failed reply ended:\n%s", got)
+	}
+	if !strings.Contains(got, "system one: none, ") || strings.Contains(got, "finished after 41") || strings.Contains(got, "finished after 40") {
+		t.Errorf("a right answer's replies are in the report:\n%s", got)
+	}
+}

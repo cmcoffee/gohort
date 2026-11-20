@@ -21,6 +21,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/decide"
+	"github.com/cmcoffee/gohort/core/llmcalls"
 )
 
 // Case is one test of a check: what it is given (Input, in the check's own
@@ -154,6 +155,11 @@ type Answer struct {
 	// how firm it had to be to stand. A run kept from before has neither.
 	Confidence float64 `json:"confidence,omitempty"`
 	Bar        float64 `json:"bar,omitempty"`
+	// Replies is what the model's own replies said about themselves, in
+	// words (core/llmcalls): how each call stopped, and what it wrote and
+	// spent thinking. It is what tells a reply cut short by its output limit
+	// from one the model got wrong.
+	Replies string `json:"replies,omitempty"`
 }
 
 // Row is one case in a run, with each model's answer to it.
@@ -273,10 +279,12 @@ func Run(ctx context.Context, models []Model, only ...string) RunReport {
 			}
 			began := time.Now()
 			cctx, cancel := context.WithTimeout(ctx, CaseTimeout)
+			cctx, calls := llmcalls.Watch(cctx)
 			o := run(cctx, m.LLM, j.c)
 			timedOut := cctx.Err() == context.DeadlineExceeded && ctx.Err() == nil
 			cancel()
-			a := Answer{Got: o.Got, Reason: o.Reason, TookMS: time.Since(began).Milliseconds(), Confidence: o.Confidence, Bar: o.Bar}
+			a := Answer{Got: o.Got, Reason: o.Reason, TookMS: time.Since(began).Milliseconds(), Confidence: o.Confidence, Bar: o.Bar,
+				Replies: llmcalls.Describe(calls())}
 			switch {
 			case timedOut:
 				a.Err, a.Got = fmt.Sprintf("no answer in %s", CaseTimeout), "timed out"
