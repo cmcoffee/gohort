@@ -639,3 +639,44 @@ func TestAThinkingOffThatIsNeverAcceptedFallsBackToNothing(t *testing.T) {
 		t.Errorf("sent %d requests:\n%s", len(sent), strings.Join(sent, "\n"))
 	}
 }
+
+// A refusal says which kind of policy declined it, streamed or not, so a
+// check the model declines every time can be told a prompt to change from a
+// topic it will not take. A null category, or none at all, says nothing.
+func TestARefusalSaysWhyItStopped(t *testing.T) {
+	st := &anthStreamState{}
+	for _, e := range []string{
+		`{"type":"message_start","message":{"model":"claude-sonnet-5-5","usage":{"input_tokens":10}}}`,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"{\"findings\": ["}}`,
+		`{"type":"content_block_stop","index":0}`,
+		`{"type":"message_delta","delta":{"stop_reason":"refusal","stop_details":{"type":"refusal","category":"reasoning_extraction","explanation":"asks for the reasoning in the reply"}},"usage":{"output_tokens":44}}`,
+	} {
+		st.feed([]byte(e))
+	}
+	resp := st.response("test")
+	if resp.StopReason != "refusal" || resp.StopDetail != "category reasoning_extraction, the model said: asks for the reasoning in the reply" {
+		t.Errorf("a streamed refusal: %q %q", resp.StopReason, resp.StopDetail)
+	}
+
+	var whole anthResponse
+	if err := json.Unmarshal([]byte(`{"model":"m","content":[],"stop_reason":"refusal","stop_details":{"type":"refusal","category":"cyber","explanation":null}}`), &whole); err != nil {
+		t.Fatal(err)
+	}
+	if r := parseAnthResponse(whole); r.StopDetail != "category cyber" {
+		t.Errorf("a whole refusal: %q", r.StopDetail)
+	}
+
+	for _, d := range []string{`null`, `{"type":"refusal","category":null,"explanation":null}`} {
+		var r anthResponse
+		if err := json.Unmarshal([]byte(`{"model":"m","content":[],"stop_reason":"refusal","stop_details":`+d+`}`), &r); err != nil {
+			t.Fatal(err)
+		}
+		if got := parseAnthResponse(r).StopDetail; got != "" {
+			t.Errorf("stop_details %s said %q", d, got)
+		}
+	}
+	if got := anthStopDetail(&anthStopDetails{Explanation: "  only a sentence  "}); got != "the model said: only a sentence" {
+		t.Errorf("an explanation alone: %q", got)
+	}
+}

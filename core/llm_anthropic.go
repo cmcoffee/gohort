@@ -562,8 +562,9 @@ type anthContentBlock struct {
 	Content      string           `json:"content,omitempty"`
 	IsError      bool             `json:"is_error,omitempty"`
 	CacheControl *cacheControl    `json:"cache_control,omitempty"`
-	StopReason   string           `json:"stop_reason,omitempty"` // carried on the message_delta stream event
-	Source       *anthImageSource `json:"source,omitempty"`      // an image block's picture
+	StopReason   string           `json:"stop_reason,omitempty"`  // carried on the message_delta stream event
+	StopDetails  *anthStopDetails `json:"stop_details,omitempty"` // beside it: why a refusal stopped
+	Source       *anthImageSource `json:"source,omitempty"`       // an image block's picture
 }
 
 // anthImageSource is an image block's picture, inline as base64.
@@ -610,7 +611,33 @@ type anthResponse struct {
 		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	} `json:"usage"`
-	StopReason string `json:"stop_reason"`
+	StopReason  string           `json:"stop_reason"`
+	StopDetails *anthStopDetails `json:"stop_details,omitempty"`
+}
+
+// anthStopDetails is what the API says beside a refusal: which kind of
+// policy declined it ("cyber", "reasoning_extraction", ...), and sometimes a
+// sentence. Either may be missing or null. Without it a refusal read only
+// "stopped: refusal", and a check that the model declined every time could
+// not be told a prompt to change from a topic it will not take.
+type anthStopDetails struct {
+	Category    string `json:"category"`
+	Explanation string `json:"explanation"`
+}
+
+// anthStopDetail is d said beside the stop reason, or "" when d says nothing.
+func anthStopDetail(d *anthStopDetails) string {
+	if d == nil {
+		return ""
+	}
+	var parts []string
+	if c := strings.TrimSpace(d.Category); c != "" {
+		parts = append(parts, "category "+c)
+	}
+	if e := strings.TrimSpace(d.Explanation); e != "" {
+		parts = append(parts, "the model said: "+truncateRunes(e, 200))
+	}
+	return strings.Join(parts, ", ")
 }
 
 type anthStreamEvent struct {
@@ -940,6 +967,7 @@ func parseAnthResponse(result anthResponse) *Response {
 		OutputTokens:     result.Usage.OutputTokens,
 		ReasoningTokens:  estimateReasoningTokens(result.Usage.OutputTokens, thinking.String(), text.String(), toolCalls),
 		StopReason:       result.StopReason,
+		StopDetail:       anthStopDetail(result.StopDetails),
 	}
 }
 
@@ -947,12 +975,15 @@ func parseAnthResponse(result anthResponse) *Response {
 // invisible. A refusal or a max_tokens truncation arrives as an assistant
 // message with no tool calls, so the agent loop finalizes it as a normal
 // answer; log it so the truncation/refusal isn't silent.
-func warnStopReason(stopReason string) {
+func warnStopReason(stopReason, detail string) {
 	switch stopReason {
 	case "max_tokens":
 		Warn("[anthropic]: response truncated (stop_reason=max_tokens), raise max_tokens or the answer is cut off mid-thought")
 	case "refusal":
-		Warn("[anthropic]: model declined the request (stop_reason=refusal)")
+		if detail != "" {
+			detail = ", " + detail
+		}
+		Warn("[anthropic]: model declined the request (stop_reason=refusal%s)", detail)
 	}
 }
 
@@ -1030,7 +1061,7 @@ func (c *anthropicClient) Chat(ctx context.Context, messages []Message, opts ...
 	}
 
 	r := parseAnthResponse(result)
-	warnStopReason(r.StopReason)
+	warnStopReason(r.StopReason, r.StopDetail)
 	Debug("[anthropic]: Response: model=%s input_tokens=%d output_tokens=%d cache_read=%d cache_write=%d tool_calls=%d stop=%s", r.Model, r.InputTokens, r.OutputTokens, result.Usage.CacheReadInputTokens, result.Usage.CacheCreationInputTokens, len(r.ToolCalls), r.StopReason)
 	return r, nil
 }
@@ -1095,7 +1126,7 @@ type anthStreamState struct {
 	cacheRead  int
 	cacheWrite int
 	stopReason string
-	stopDetail string // the provider's own word, when stopReason translates it
+	stopDetail string // what the provider says beside stopReason (anthStopDetail)
 	toolCalls  []ToolCall
 
 	// blocks tracks in-flight content blocks by index, for tool_use assembly
@@ -1244,6 +1275,11 @@ func (a *anthStreamState) feed(data []byte) {
 		if event.Delta != nil && event.Delta.StopReason != "" {
 			a.stopReason = event.Delta.StopReason
 		}
+		if event.Delta != nil {
+			if d := anthStopDetail(event.Delta.StopDetails); d != "" {
+				a.stopDetail = d
+			}
+		}
 	}
 }
 
@@ -1294,7 +1330,7 @@ func (a *anthStreamState) response(tag string) *Response {
 		argsJSON, _ := json.Marshal(tc.Args)
 		Trace("<-- TOOL CALL: id=%s name=%s args=%s", tc.ID, tc.Name, string(argsJSON))
 	}
-	warnStopReason(a.stopReason)
+	warnStopReason(a.stopReason, a.stopDetail)
 	return &Response{
 		Content:          a.textContent.String(),
 		ReasoningTokens:  estimateReasoningTokens(a.outputTokens, a.thinking.String(), a.textContent.String(), a.toolCalls),

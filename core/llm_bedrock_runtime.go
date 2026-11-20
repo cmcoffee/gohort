@@ -340,7 +340,7 @@ func (c *bedrockRuntimeClient) Chat(ctx context.Context, messages []Message, opt
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 	r := parseAnthResponse(result)
-	warnStopReason(r.StopReason)
+	warnStopReason(r.StopReason, r.StopDetail)
 	Debug("[bedrock-runtime]: Response: model=%s input_tokens=%d output_tokens=%d tool_calls=%d stop=%s",
 		r.Model, r.InputTokens, r.OutputTokens, len(r.ToolCalls), r.StopReason)
 	return r, nil
@@ -1109,7 +1109,7 @@ func (c *bedrockConverseClient) Chat(ctx context.Context, messages []Message, op
 		StopDetail:       converseStopDetail(result.StopReason),
 	}
 	r.ReasoningTokens = estimateReasoningTokens(r.OutputTokens, thinking.String(), r.Content, calls)
-	warnStopReason(r.StopReason)
+	warnStopReason(r.StopReason, r.StopDetail)
 	Debug("[bedrock-converse]: Response: model=%s input_tokens=%d output_tokens=%d tool_calls=%d stop=%s",
 		r.Model, r.InputTokens, r.OutputTokens, len(r.ToolCalls), r.StopReason)
 	return r, nil
