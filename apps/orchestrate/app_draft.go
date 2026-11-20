@@ -353,6 +353,9 @@ func goDraftLive(d appdraft.Draft, reason string, byPerson bool) (AppSpec, error
 	if appdraft.PreviewEnd != nil {
 		appdraft.PreviewEnd(d.Editor, saved.Slug)
 	}
+	if d.Update != nil {
+		saved = finishAppUpdate(saved, *d.Update)
+	}
 	return saved, nil
 }
 
@@ -373,6 +376,9 @@ func makeDraftLive(d appdraft.Draft, by string) (string, error) {
 	if note := strings.TrimSpace(d.Spec.ChangeNote); note != "" {
 		msg += " Its last change: " + note
 	}
+	if d.Update != nil && via == "" {
+		msg = appUpdateCommitMessage(*d.Update, by)
+	}
 	subject, _, _ := strings.Cut(msg, "\n")
 	d.Spec.ChangeNote = msg
 	live, err := goDraftLive(d, subject, true)
@@ -387,6 +393,9 @@ func makeDraftLive(d appdraft.Draft, by string) (string, error) {
 			Log("[app-history] %s/%s: its first commit keeps its starting message: %v", live.Owner, live.Slug, err)
 		}
 		return live.Name + " is live now, its first version.", nil
+	}
+	if d.Update != nil && via == "" {
+		return "The update to " + live.Name + " is live now.", nil
 	}
 	return who + "'s changes to " + live.Name + " are live now.", nil
 }
@@ -535,6 +544,11 @@ func applyDraftOwned(d appdraft.Draft) (string, error) {
 	}
 	t := o.personTurn(context.Background(), d.Spec.Owner)
 	t.via = firstNonEmptyStr(d.Spec.ChangedVia, "Builder")
+	if d.Update != nil && d.Spec.ChangedVia == "" {
+		// An update from the copy the app was taken from, made live by its
+		// owner: an import, theirs at once as the first one's was.
+		t.via = "import"
+	}
 	return t.applyAppOwned(d.Spec.Slug, f)
 }
 

@@ -90,6 +90,25 @@ func (T *CustomApps) handleDraftDiscard(c *jsonapi.Call, _ struct{}) (any, error
 	return map[string]any{"ok": true, "message": msg}, nil
 }
 
+// updateDraftNote is what an app's row says of an update waiting as its
+// draft: what it changes that runs, and where it took the author's lines.
+func updateDraftNote(up appdraft.Update) string {
+	note := "an update from the copy you took it from waits: Preview it, then Make live"
+	var code []string
+	for _, f := range up.Changed {
+		if strings.HasPrefix(f, "data/") || strings.HasPrefix(f, "actions/") || strings.HasPrefix(f, "lib/") || strings.HasPrefix(f, "tools/") {
+			code = append(code, f)
+		}
+	}
+	if len(code) > 0 {
+		note += "; read what it changes that runs: " + strings.Join(code, ", ")
+	}
+	if len(up.Clashed) > 0 {
+		note += "; where your changes and the author's met (" + strings.Join(up.Clashed, ", ") + ") it has the author's"
+	}
+	return note
+}
+
 // draftRows marks the person's own app rows that have work in progress, and
 // adds a row for each new app of theirs not live yet. seen is the slugs
 // already listed.
@@ -107,9 +126,13 @@ func draftRows(user string, rows []map[string]string, seen map[string]bool) []ma
 		if row["mine"] != "1" {
 			continue
 		}
-		if _, ok := drafts[row["slug"]]; ok {
+		if d, ok := drafts[row["slug"]]; ok {
 			row["draft"] = "1"
 			note := "changes in progress, not live yet"
+			if d.Update != nil {
+				row["update"] = "1"
+				note = updateDraftNote(*d.Update)
+			}
 			if row["note"] != "" {
 				note = row["note"] + " - " + note
 			}

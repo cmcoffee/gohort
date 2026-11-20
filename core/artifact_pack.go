@@ -31,6 +31,7 @@ import (
 	"bytes"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -739,7 +740,7 @@ func sniffArtifactType(fields map[string]json.RawMessage) (string, bool) {
 type ArtifactImportOutcome struct {
 	Type     string   `json:"type"`
 	Name     string   `json:"name"`
-	Status   string   `json:"status"` // "imported" | "skipped"
+	Status   string   `json:"status"` // "imported" | "updated" | "skipped"
 	Detail   string   `json:"detail,omitempty"`
 	Warnings []string `json:"warnings,omitempty"`
 }
@@ -916,6 +917,7 @@ type ArtifactImportResult struct {
 	GohortVersion string                  `json:"gohort_version,omitempty"`
 	Imported      int                     `json:"imported"`
 	Skipped       int                     `json:"skipped"`
+	Updated       int                     `json:"updated,omitempty"` // updated, not added: an app's update from its copy
 	Outcomes      []ArtifactImportOutcome `json:"outcomes"`
 	Warnings      []string                `json:"warnings,omitempty"`
 	// Checklist is what is left to do: everything that landed inert with its
@@ -927,11 +929,16 @@ type ArtifactImportResult struct {
 // unmet-dependency warnings each on their own line. Suitable for a form's
 // post-submit message. Returns "" for a nil/empty result.
 func (r ArtifactImportResult) Summary() string {
-	if r.Imported == 0 && r.Skipped == 0 && len(r.Warnings) == 0 {
+	if r.Imported == 0 && r.Skipped == 0 && r.Updated == 0 && len(r.Warnings) == 0 {
 		return ""
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Imported %d, skipped %d.", r.Imported, r.Skipped)
+	for _, o := range r.Outcomes {
+		if o.Status == "updated" {
+			fmt.Fprintf(&b, "\nUpdated %s %q: %s", o.Type, o.Name, o.Detail)
+		}
+	}
 	if v := strings.TrimSpace(r.GohortVersion); v != "" && v != AppVersion {
 		fmt.Fprintf(&b, " Bundle exported by gohort %s (this install is %s).", v, AppVersion)
 	}
@@ -1027,7 +1034,12 @@ func importArtifactBundle(db Database, data []byte, owner string, userOnly bool)
 		if strings.TrimSpace(name) == "" {
 			name = a.Name
 		}
+		var updated artifactUpdated
 		switch {
+		case errors.As(ierr, &updated):
+			res.Outcomes = append(res.Outcomes, ArtifactImportOutcome{
+				Type: typ, Name: name, Status: "updated", Detail: string(updated)})
+			res.Updated++
 		case ierr != nil:
 			res.Outcomes = append(res.Outcomes, ArtifactImportOutcome{
 				Type: typ, Name: name, Status: "skipped", Detail: ierr.Error()})
@@ -1107,7 +1119,7 @@ func missingDepWarning(s, dep ArtifactSel) string {
 type ArtifactPreviewItem struct {
 	Type     string   `json:"type"`
 	Name     string   `json:"name"`
-	Action   string   `json:"action"` // "import" | "skip"
+	Action   string   `json:"action"` // "import" | "update" | "skip"
 	Detail   string   `json:"detail,omitempty"`
 	Warnings []string `json:"warnings,omitempty"`
 }
@@ -1147,6 +1159,26 @@ func PreviewArtifactBundleAsUser(db Database, data []byte, owner string) (Artifa
 // so a skip import will make is not previewed as an import.
 type artifactImportRefuser interface {
 	importRefusal(name string) string
+}
+
+// updateOffer fills item when importing it would update what is here (action
+// "update") or is refused as an update (skip, with why), and reports whether
+// it did.
+func updateOffer(at ArtifactType, db Database, recipe json.RawMessage, owner string, item *ArtifactPreviewItem) bool {
+	u, ok := at.(artifactUpdateOffer)
+	if !ok {
+		return false
+	}
+	update, detail := u.ImportUpdate(db, recipe, owner)
+	switch {
+	case update:
+		item.Action, item.Detail = "update", detail
+	case detail != "":
+		item.Action, item.Detail = "skip", detail
+	default:
+		return false
+	}
+	return true
 }
 
 // importRefused is the refusal at gives name, or "" when it has none.
@@ -1202,6 +1234,7 @@ func previewArtifactBundle(db Database, data []byte, owner string, userOnly bool
 			item.Action, item.Detail = "skip", "missing artifact name"
 		case importRefused(at, name) != "":
 			item.Action, item.Detail = "skip", importRefused(at, name)
+		case updateOffer(at, db, a.Recipe, owner, &item):
 		case artifactExists(db, ArtifactSel{Type: typ, Name: landsAs, Owner: owner}):
 			item.Action, item.Detail = "skip", "an artifact with this name already exists on this install"
 		default:
@@ -1224,7 +1257,7 @@ func previewArtifactBundle(db Database, data []byte, owner string, userOnly bool
 				}
 			}
 		}
-		if item.Action == "import" {
+		if item.Action == "import" || item.Action == "update" {
 			res.WouldImport++
 		} else {
 			res.WouldSkip++

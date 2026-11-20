@@ -47,6 +47,7 @@ import (
 	"github.com/cmcoffee/gohort/core/appadmin"
 	"github.com/cmcoffee/gohort/core/appassets"
 	"github.com/cmcoffee/gohort/core/appcheck"
+	"github.com/cmcoffee/gohort/core/appsource"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/promotion"
 	"github.com/cmcoffee/gohort/core/shareledger"
@@ -629,7 +630,7 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
     previewURL: '/account/api/artifacts/preview',
     importURL: '/account/api/artifacts/import',
     invalidate: ['_apps'],
-    subtitle: 'An app lands switched off and shared with nobody: read its data-source and action scripts, then Enable it. Its records never travel. A slug you already have is skipped.',
+    subtitle: 'An app lands switched off and shared with nobody: read its data-source and action scripts, then Enable it. Its records never travel. A slug you already have is skipped, unless the file is a newer export of the copy you took that app from: then it is an update, waiting for you to try and make live.',
     onDone: function(d) {
       (d.outcomes || []).forEach(function(o) {
         if (o.type !== 'custom_app' || o.status !== 'imported') return;
@@ -652,7 +653,7 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 }`).Render(),
 		Sections: []ui.Section{{
 			Title:    "Your apps",
-			Subtitle: "Apps Builder made for you, and apps colleagues shared with you. Open one here; the gear on your dashboard's My apps section puts it on your front page. Drag an app by its grip to reorder; your dashboard follows the same order. Import brings in an app somebody exported.",
+			Subtitle: "Apps Builder made for you, and apps colleagues shared with you. Open one here; the gear on your dashboard's My apps section puts it on your front page. Drag an app by its grip to reorder; your dashboard follows the same order. Import brings in an app somebody exported; Update takes a newer export of one you imported, from the same person's copy, as a draft to try before it goes live.",
 			// The row reads in two lines: what the app is called and where it
 			// stands, then what it does. One line held a name, a description
 			// and a state in front of six buttons, and the description was the
@@ -684,10 +685,16 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 					// Builder's work in progress (drafts.go): see it, make it
 					// live yourself, or drop it.
 					{Type: "button", Label: "Preview", Method: "GET", PostTo: "_app/draft/preview?slug={slug}", OnlyIf: "draft"},
-					{Type: "button", Label: "Make live", Method: "POST", PostTo: "_app/draft/live?slug={slug}", OnlyIf: "draft",
+					{Type: "button", Label: "Make live", Method: "POST", PostTo: "_app/draft/live?slug={slug}", OnlyIf: "draft", HideIf: "update",
 						Confirm: "Make Builder's changes live now? They go through the same checks as any save, but Builder may not have finished testing them."},
-					{Type: "button", Label: "Discard", Method: "POST", PostTo: "_app/draft/discard?slug={slug}", OnlyIf: "draft", Variant: "danger",
+					{Type: "button", Label: "Discard", Method: "POST", PostTo: "_app/draft/discard?slug={slug}", OnlyIf: "draft", HideIf: "update", Variant: "danger",
 						Confirm: "Discard Builder's changes in progress? The live app stays as it is; an app never live goes with them."},
+					// An update from the copy an imported app was taken from
+					// (core app_origin.go), waiting as its draft.
+					{Type: "button", Label: "Make live", Method: "POST", PostTo: "_app/draft/live?slug={slug}", OnlyIf: "update",
+						Confirm: "Make the author's update live now? Its scripts and tools run in your sandbox once it is: read what it changes first. It goes through the same checks as any save."},
+					{Type: "button", Label: "Discard", Method: "POST", PostTo: "_app/draft/discard?slug={slug}", OnlyIf: "update", Variant: "danger",
+						Confirm: "Discard the update? The app stays as it is. You can import the same file again later."},
 					// Only an app that declares tunables gets the button; for a
 					// shared app, only when some of them are the reader's own.
 					{Type: "button", Label: "Settings", Method: "GET", PostTo: "{slug}/_settings", OnlyIf: "has_settings", HideIf: "disabled"},
@@ -706,6 +713,9 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 					{Type: "button", Label: "Pause", Method: "POST", PostTo: "_app/schedule?slug={slug}&on=false", OnlyIf: "auto_running"},
 					{Type: "button", Label: "Resume", Method: "POST", PostTo: "_app/schedule?slug={slug}&on=true", OnlyIf: "auto_paused"},
 					{Type: "button", Label: "Export", Method: "client", PostTo: "export_custom_app", OnlyIf: "mine"},
+					// An app imported from a file that said where it came from
+					// takes that copy's later exports as updates.
+					{Type: "button", Label: "Update...", Method: "client", PostTo: "customapps_import", OnlyIf: "from_import", HideIf: "draft"},
 					{Type: "button", Label: "Delete", Method: "DELETE", PostTo: "_app?slug={slug}", OnlyIf: "mine", Variant: "danger",
 						Confirm: "Delete this app and all its data? This can't be undone.", ConfirmField: "delete_confirm"},
 				},
@@ -1111,6 +1121,10 @@ func (T *CustomApps) handleAppsList(c *jsonapi.Call) (any, error) {
 		row := map[string]string{"slug": s.Slug, "name": s.Name, "desc": s.Desc, "mine": "1", "can_change": "1", "group": "Your apps", "state": "private"}
 		if len(visibleSettings(s, true)) > 0 {
 			row["has_settings"] = "1"
+		}
+		// An app taken from a copy that can send it updates (app_origin.go).
+		if _, ok := appsource.Load(owner, s.Slug); ok {
+			row["from_import"] = "1"
 		}
 		// An imported app waiting for its connections to be answered.
 		if needsRefusal(owner, s.Slug) != "" {

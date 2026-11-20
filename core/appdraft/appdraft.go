@@ -47,6 +47,29 @@ type Draft struct {
 	// and knowledge/, by its path there. Nil leaves what the app owns as it
 	// is live. Applied when the draft is committed.
 	Owned map[string][]byte `json:"owned,omitempty"`
+	// Update is set when the draft is an update to an imported app, from the
+	// copy it was taken from (docs/design/app-history.md, updates for
+	// imported apps): what the person is shown before making it live, and
+	// what moves when they do.
+	Update *Update `json:"update,omitempty"`
+}
+
+// Update is what a draft that is an update to an imported app keeps of it.
+type Update struct {
+	// Exported is when the copy it came from exported it.
+	Exported string `json:"exported"`
+	// Commit is the author's version as a commit of the app's history, what
+	// the next update is merged against once this one is live; "" without
+	// a history.
+	Commit string `json:"commit,omitempty"`
+	// Changed are the files of the app's folder the update changes.
+	Changed []string `json:"changed,omitempty"`
+	// Clashed are the files where the update and the changes made here since
+	// changed the same lines: the draft has the author's lines there.
+	Clashed []string `json:"clashed,omitempty"`
+	// Stores is what the export said of the file stores the app was granted
+	// there, asked for here when the update goes live.
+	Stores []byte `json:"stores,omitempty"`
 }
 
 type ownedKey struct{}

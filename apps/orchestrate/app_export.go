@@ -91,24 +91,29 @@ func importAppOwned(owner, slug string, files map[string][]byte) error {
 	// What it names that only a deployment has: found here mapped to
 	// itself, the rest for its owner to answer (app_needs.go).
 	defer recordAppNeeds(owner, slug, readAppStoresFile(files))
+	bindAppOwnRefs(t.udb, owner, slug, "Point the app at its own agent and pipeline, as imported")
+	return nil
+}
+
+// bindAppOwnRefs points owner's app slug at its own agent and pipeline where
+// it names them by name (as an export does), saved with note as the owner's
+// own change, committed at once as theirs (as appOwnedChanged records the
+// import's agents): not an agent's work waiting to be finished, and never
+// under the note the app carried from where it was exported.
+func bindAppOwnRefs(udb Database, owner, slug, note string) {
 	spec, ok := LoadAppSpec(owner, slug)
 	if !ok {
-		return nil
+		return
 	}
 	changed := false
-	if id, ok := appScopedRef(t.udb, owner, slug, "agent", spec.AgentID); ok && id != spec.AgentID {
+	if id, ok := appScopedRef(udb, owner, slug, "agent", spec.AgentID); ok && id != spec.AgentID {
 		spec.AgentID, changed = id, true
 	}
-	if id, ok := appScopedRef(t.udb, owner, slug, "pipeline", spec.PipelineID); ok && id != spec.PipelineID {
+	if id, ok := appScopedRef(udb, owner, slug, "pipeline", spec.PipelineID); ok && id != spec.PipelineID {
 		spec.PipelineID, changed = id, true
 	}
 	if changed {
-		// The importer's own change, committed at once as theirs (as
-		// appOwnedChanged records the import's agents): not an agent's work
-		// waiting to be finished, and never under the note the app carried
-		// from where it was exported.
-		spec.ChangeNote = "Point the app at its own agent and pipeline, as imported"
+		spec.ChangeNote = note
 		SaveAppSpecBy(spec, AppSaveNoHistory, owner, "")
 	}
-	return nil
 }

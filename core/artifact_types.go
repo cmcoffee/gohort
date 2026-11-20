@@ -9,7 +9,9 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -1306,6 +1308,9 @@ func (customAppArtifact) ExportArtifact(_ Database, name, owner string) (json.Ra
 	if !ok {
 		return nil, fmt.Errorf("no custom app %q for user %q", name, owner)
 	}
+	// Which copy of the app this is, and when it was exported: an import of a
+	// later export of the same copy is an update to it (app_origin.go).
+	origin := AppOrigin{Copy: appCopyID(spec), Exported: time.Now().UTC().Format(time.RFC3339Nano)}
 	// Normalize the bound agent ref to the agent's NAME (see
 	// ResolveAgentNameForExport). Owner/timestamps are reassigned on import;
 	// Disabled is a local mute, not part of the app's shape.
@@ -1348,15 +1353,19 @@ func (customAppArtifact) ExportArtifact(_ Database, name, owner string) (json.Ra
 		}
 	}
 	recipe, err := marshalAppWithAssets(spec, owner)
-	if err != nil || len(files) == 0 {
+	if err != nil {
 		return recipe, err
 	}
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(recipe, &m); err != nil {
 		return nil, err
 	}
-	enc, _ := json.Marshal(files)
-	m["owned"] = enc
+	if len(files) > 0 {
+		enc, _ := json.Marshal(files)
+		m["owned"] = enc
+	}
+	enc, _ := json.Marshal(origin)
+	m["origin"] = enc
 	return json.Marshal(m)
 }
 
@@ -1552,28 +1561,26 @@ func (customAppArtifact) ImportArtifact(_ Database, recipe json.RawMessage, owne
 	if !ok {
 		return slug, "", fmt.Errorf("this app was authored for a newer gohort (app schema %d; this install reads schema %d): upgrade gohort before importing it", spec.SchemaVersion(), appSpecSchema)
 	}
-	spec = upgraded
+	spec = importedAppSpec(upgraded, owner)
+	origin := appRecipeOrigin(recipe)
 	if _, exists := LoadAppSpec(owner, slug); exists {
+		// A later export of the copy this app was taken from is an update to
+		// it (app_origin.go); anything else with its slug is skipped.
+		if appUpdatesOn() && origin.Copy != "" {
+			update, why := appUpdates.For(owner, slug, origin)
+			if update {
+				detail, err := appUpdates.Import(AppUpdate{Owner: owner, Spec: spec, Owned: appRecipeOwned(recipe), Assets: appRecipeAssets(recipe), Origin: origin})
+				if err != nil {
+					return slug, "", err
+				}
+				return slug, "", artifactUpdated(detail)
+			}
+			if why != "" {
+				return slug, why, nil
+			}
+		}
 		return slug, "an app with this slug already exists", nil
 	}
-	spec.Slug = slug
-	spec.Owner = owner
-	spec.Created = ""
-	spec.Updated = ""
-	spec.Disabled = true
-	spec.Verify = nil
-	// The note of its last change where it was exported is that history's,
-	// not this one's: left on, the next save here would be recorded under it.
-	spec.ChangeNote = ""
-	// An imported app is never pre-shared, even if a hand-crafted bundle set the
-	// flags — the importer shares on their own terms (and the token would be
-	// meaningless in this deployment's index anyway).
-	spec.Shared = false
-	spec.SharedGroups = nil
-	spec.SharedWith = nil
-	spec.Maintainers, spec.Managers = nil, nil
-	spec.DataOwner = ""
-	spec.PublicToken = ""
 	SaveAppSpec(spec)
 	// Its assets with it; each is checked as any asset save is (name, type,
 	// size), and one refused does not stop the app landing.
@@ -1591,7 +1598,147 @@ func (customAppArtifact) ImportArtifact(_ Database, recipe json.RawMessage, owne
 			return slug, "", fmt.Errorf("the app was imported, switched off, but what it owns was not all taken in: %w", err)
 		}
 	}
+	// Where it came from, so a later export of that copy can update it.
+	if appUpdatesOn() && origin.Copy != "" {
+		appUpdates.Imported(owner, slug, origin)
+	}
 	return slug, "", nil
+}
+
+// importedAppSpec is spec, from a recipe, as an import makes it owner's: off,
+// shared with nobody, and with nothing of where it was exported that is that
+// deployment's (its stamps, its verdict, its last change's note).
+func importedAppSpec(spec AppSpec, owner string) AppSpec {
+	spec.Slug = strings.TrimSpace(spec.Slug)
+	spec.Owner = owner
+	spec.Created = ""
+	spec.Updated = ""
+	spec.Disabled = true
+	spec.Verify = nil
+	// The note of its last change where it was exported is that history's,
+	// not this one's: left on, the next save here would be recorded under it.
+	spec.ChangeNote = ""
+	spec.ChangedBy, spec.ChangedVia = "", ""
+	// An imported app is never pre-shared, even if a hand-crafted bundle set the
+	// flags — the importer shares on their own terms (and the token would be
+	// meaningless in this deployment's index anyway).
+	spec.Shared = false
+	spec.SharedGroups = nil
+	spec.SharedWith = nil
+	spec.Maintainers, spec.Managers = nil, nil
+	spec.DataOwner = ""
+	spec.PublicToken = ""
+	return spec
+}
+
+// ImportUpdate: an export of the copy owner's app was taken from is an
+// update to it, for the preview to say so.
+func (customAppArtifact) ImportUpdate(_ Database, recipe json.RawMessage, owner string) (bool, string) {
+	var spec AppSpec
+	if json.Unmarshal(recipe, &spec) != nil || strings.TrimSpace(spec.Slug) == "" {
+		return false, ""
+	}
+	origin := appRecipeOrigin(recipe)
+	if !appUpdatesOn() || origin.Copy == "" {
+		return false, ""
+	}
+	if _, exists := LoadAppSpec(owner, strings.TrimSpace(spec.Slug)); !exists {
+		return false, ""
+	}
+	update, why := appUpdates.For(owner, strings.TrimSpace(spec.Slug), origin)
+	if update {
+		return true, "an update to your app from the copy you took it from, merged with your changes since: it waits in My Apps for you to try, then make live"
+	}
+	return false, why
+}
+
+// ---- updates for imported apps -------------------------------------------
+
+// Updates for imported apps (docs/design/app-history.md, "Updates for
+// imported apps"). Every export of an app says which copy of it the file was
+// made from (AppOrigin): an id of that app where it was exported, and when.
+// An import keeps where the app came from; a later export of the same copy,
+// imported over it, is an update to it, merged with the changes made here
+// since, and waiting as a draft for the person to try and make live. A file
+// from any other copy of the app is refused, and so is one older than the
+// version taken.
+
+// AppOrigin is the copy of an app an export was made from: its id there
+// (appCopyID) and when the export was made (RFC3339).
+type AppOrigin struct {
+	Copy     string `json:"copy"`
+	Exported string `json:"exported"`
+}
+
+// appCopyID is an id of the app s, the same for as long as it is this app
+// (who owns it, its slug, when it was made) and different for every copy of
+// it, an imported copy included. Derived, not stored: an app made before it
+// existed has one already.
+func appCopyID(s AppSpec) string {
+	h := sha256.Sum256([]byte("gohort-app\x00" + strings.TrimSpace(s.Owner) + "\x00" + strings.TrimSpace(s.Slug) + "\x00" + strings.TrimSpace(s.Created)))
+	return hex.EncodeToString(h[:12])
+}
+
+// appRecipeOrigin is the copy a custom-app recipe says it was exported from;
+// the zero AppOrigin for a recipe exported before exports said.
+func appRecipeOrigin(recipe json.RawMessage) AppOrigin {
+	var r struct {
+		Origin AppOrigin `json:"origin"`
+	}
+	json.Unmarshal(recipe, &r)
+	r.Origin.Copy = strings.TrimSpace(r.Origin.Copy)
+	r.Origin.Exported = strings.TrimSpace(r.Origin.Exported)
+	return r.Origin
+}
+
+// AppUpdate is an export of a copy an app here was taken from, imported over
+// it: the app as the file has it (made ready for owner as an import makes
+// it), what it owns as files, its assets, and the copy it came from.
+type AppUpdate struct {
+	Owner  string
+	Spec   AppSpec
+	Owned  map[string][]byte
+	Assets map[string][]byte
+	Origin AppOrigin
+}
+
+// AppUpdateHooks are what an app's import calls, set by the host that keeps
+// the apps' history (orchestrate) with RegisterAppUpdates; unset where there
+// is none, and an import is then what it always was.
+type AppUpdateHooks struct {
+	// Imported records where a newly imported app came from.
+	Imported func(owner, slug string, origin AppOrigin)
+	// For says whether a file exported from origin is an update to owner's
+	// app slug: true when it is, else why not ("" when slug simply names
+	// another app, which an import skips as it always did).
+	For func(owner, slug string, origin AppOrigin) (bool, string)
+	// Import takes in an update, as a draft of the app, and says what
+	// became of it.
+	Import func(u AppUpdate) (string, error)
+}
+
+var appUpdates AppUpdateHooks
+
+// RegisterAppUpdates sets the hooks an app's import calls for updates.
+func RegisterAppUpdates(h AppUpdateHooks) { appUpdates = h }
+
+// appUpdatesOn reports whether every hook an update needs is set.
+func appUpdatesOn() bool {
+	return appUpdates.Imported != nil && appUpdates.For != nil && appUpdates.Import != nil
+}
+
+// artifactUpdated is an import that updated something already here rather
+// than adding it: the bundle importer reports it as "updated", with this as
+// what became of it.
+type artifactUpdated string
+
+func (e artifactUpdated) Error() string { return string(e) }
+
+// artifactUpdateOffer is an OPTIONAL capability: a type whose import can be an
+// update to what is already here says, for the preview, what the import
+// would do ("" when it would not be one, else why not as skip).
+type artifactUpdateOffer interface {
+	ImportUpdate(db Database, recipe json.RawMessage, owner string) (update bool, detail string)
 }
 
 // ---- monitor (event monitor) --------------------------------------------

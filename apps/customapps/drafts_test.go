@@ -9,6 +9,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appdraft"
+	"github.com/cmcoffee/gohort/core/appsource"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
@@ -111,5 +112,33 @@ func TestAPreviewCarriesTheDraftsOwnParts(t *testing.T) {
 	}
 	if _, ok := appdraft.OwnedFrom(call(false).R.Context()); ok {
 		t.Error("a request outside the preview carried the draft's parts")
+	}
+}
+
+// An imported app shows where an update can come from (Update...), and an
+// update waiting as its draft says so on its row, with what it changes that
+// runs and where it took the author's lines.
+func TestMyAppsShowsAnUpdateWaiting(t *testing.T) {
+	T, installed, working := previewTestApp(t)
+	appsource.Save("alice", installed.Slug, appsource.Source{Copy: "c1", Exported: "2026-11-19T10:00:00Z"})
+	rowOf := func() map[string]string {
+		var rows []map[string]string
+		if err := json.Unmarshal(as(t, T, "alice", httptest.NewRequest(http.MethodGet, "/apps/_apps", nil)).Body.Bytes(), &rows); err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range rows {
+			if r["slug"] == installed.Slug {
+				return r
+			}
+		}
+		return nil
+	}
+	if r := rowOf(); r["from_import"] != "1" || r["update"] == "1" {
+		t.Errorf("an imported app with no update waiting: %v", r)
+	}
+	appdraft.Save(appdraft.Draft{Spec: working, Editor: "alice", Update: &appdraft.Update{Exported: "2026-11-20T10:00:00Z", Changed: []string{"page.html", "data/main.py"}, Clashed: []string{"page.html"}}}, false)
+	r := rowOf()
+	if r["update"] != "1" || r["draft"] != "1" || !strings.Contains(r["note"], "data/main.py") || strings.Contains(r["note"], "runs: page.html") || !strings.Contains(r["note"], "it has the author's") {
+		t.Errorf("an update waiting: %v", r)
 	}
 }

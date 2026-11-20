@@ -37,9 +37,10 @@
   function row(it) {
     var r = document.createElement('div');
     r.style.cssText = 'display:flex;gap:0.6rem;align-items:baseline;font-size:0.85rem;border-bottom:1px solid var(--border);padding-bottom:0.35rem';
-    var imp = it.action === 'import';
+    // An update to something already here comes in too.
+    var imp = it.action === 'import' || it.action === 'update';
     var badge = document.createElement('span');
-    badge.textContent = imp ? 'import' : 'skip';
+    badge.textContent = imp ? it.action : 'skip';
     badge.style.cssText = 'flex:0 0 3.6rem;text-align:center;font-size:0.72rem;border-radius:4px;padding:0.1rem 0.3rem;' +
       (imp ? 'background:rgba(99,102,241,0.15);color:var(--accent,#6366f1)' : 'background:rgba(139,148,158,0.15);color:var(--text-mute)');
     var typ = document.createElement('span');
@@ -112,7 +113,7 @@
   // next step for each thing that reads as the import not having worked.
   function showChecklist(d) {
     window.uiOpenModal({
-      title: 'Imported ' + (d.imported || 0) + (d.skipped ? ', skipped ' + d.skipped : ''),
+      title: 'Imported ' + (d.imported || 0) + (d.updated ? ', updated ' + d.updated : '') + (d.skipped ? ', skipped ' + d.skipped : ''),
       subtitle: 'Everything came in switched off or waiting for review. Here is what is left to do.',
       width: '640px',
       actions: [{label: 'Done', primary: true}],
@@ -148,10 +149,10 @@
           });
         });
         (d.outcomes || []).forEach(function (o) {
-          if (o.status !== 'skipped') return;
+          if (o.status !== 'skipped' && o.status !== 'updated') return;
           var s = document.createElement('div');
           s.style.cssText = 'font-size:0.8rem;color:var(--text-mute);padding-top:0.3rem';
-          s.textContent = 'Skipped ' + o.type + ' ' + o.name + ': ' + (o.detail || '');
+          s.textContent = (o.status === 'updated' ? 'Updated ' : 'Skipped ') + o.type + ' ' + o.name + ': ' + (o.detail || '');
           body.appendChild(s);
         });
       },
@@ -202,15 +203,18 @@
     ['writer', 'Writers'],
     ['agent_memory', 'Agent memory'],
     ['app_records', 'App records'],
+    ['app_history', 'App history'],
   ];
   // A collection carries its documents' full text: it can be large and it is
   // the owner's data, so it goes only when asked for.
   // Memory and app records are data about a person, not a recipe: the server
   // leaves them out unless the export names them, and so does the dialog.
-  var OFF_BY_DEFAULT = {collection: true, agent_memory: true, app_records: true};
+  // An app's history names who changed it and keeps every earlier version.
+  var OFF_BY_DEFAULT = {collection: true, agent_memory: true, app_records: true, app_history: true};
   var KIND_NOTES = {
     agent_memory: 'What the agent has learned for you: its saved facts, working notes and findings. Whoever imports the file gets them.',
     app_records: 'The data you entered into the app. Whoever imports the file gets it.',
+    app_history: 'Every earlier version of the app, what was taken out of it included, and the user names of the people who changed it. Whoever imports the file gets them.',
     collection: 'Carries the documents\' full text, and can be large.',
   };
 

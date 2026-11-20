@@ -398,8 +398,8 @@ stage it belongs to.
    change's note. An export still never carries learned memory.
 8. **Updates for imported apps (after stage 3).** With history, someone who
    imported an app could take the author's later improvements, merged with
-   the changes they made since. Not built; named as what the history makes
-   possible.
+   the changes they made since. Built 2026-11-19: see "Updates for imported
+   apps" below.
 9. **Deleting an app deletes what it owns (stage 2).** A self-contained
    app's deletion takes its agents, its tool space and its collections'
    documents. The delete confirmation lists what goes, with counts.
@@ -562,6 +562,19 @@ History and in Builder's `revisions`, so the newest version, the last that
 worked, is one to go back to. A change saved and put back (an install
 refused after it saved) leaves nothing waiting.
 
+S6, as built (2026-11-19): an export already carried the app as it is
+(its record, its assets, the files of what it owns), so a snapshot was
+there. The history travels as a kind of its own, app_history, offered
+beside the app in the export dialog, unticked, with a note that it names
+who changed the app and keeps what was taken out of it: a git bundle of
+the live branch, what is committed and nothing waiting, so exporting
+changes nothing. It imports after the app, and only onto one the import
+just made (created within the last 15 minutes): the imported history is
+the start of the app's own, the app as it was imported committed on top
+as "Imported here". An app that was already here keeps its history, and
+a bundle that does not read is said, not taken. Without git, the history
+is neither offered nor taken in.
+
 **Settled (owner, 2026-11-18).**
 
 1. S3: a turn that stops short of a pass leaves the work waiting; the
@@ -643,6 +656,67 @@ files in the repository, and drafts with or without git):
   the way a preview runs them. Machines (reached only through an agent's
   hand-off) and collections (whose content is what was ingested) stay as
   they are live until the commit.
+
+## Updates for imported apps (2026-11-19)
+
+Someone who imported an app takes the author's later versions, merged with
+what they changed since. Decided (owner, 2026-11-19):
+
+1. **Files only.** An update arrives as an export, imported as any is. No
+   catalog, no link, and nothing over a peer key (a peer key never hands
+   back what is stored on the instance). Following an app on the same
+   deployment, with no file, waits until someone asks for it; it would need
+   the author to offer the app.
+2. **Always a draft.** An update brings someone else's scripts into the app,
+   so it lands as its owner's draft: Preview tries it, Make live takes it
+   through every gate a save passes, Discard keeps the app as it is.
+3. **Where both changed the same lines**, nothing live changes. The draft
+   has the author's lines there and names the files: Make live takes them,
+   Discard keeps yours, and the author's version waits in the app's history
+   as the branch `update`, for Anvil to merge by hand.
+4. **Only apps imported from now on.** One imported before has no record of
+   where it came from, and is not linked by hand.
+
+How it is built:
+
+- **Which copy.** Every app has an id (core's `appCopyID`), derived from who
+  owns it, its slug and when it was made: the same for the app's life,
+  different for every copy (an imported one included), stored nowhere, so an
+  app made before has one. Every export says which copy it was made from and
+  when (`origin` in the recipe).
+- **Where it came from.** An import of a file that says records it
+  (`core/appsource`, table `app_sources` in the owner's store: the copy, when
+  that copy exported the version taken, when it was taken, a mark of the app
+  as taken), and marks the app as taken in its history
+  (`refs/gohort/upstream`; with the history imported too, the app as
+  imported on top of it).
+- **An update** is an export of that copy, newer than the version taken:
+  any other file of the same slug is skipped as before (another copy, the
+  same version, an older one), and so is one while the owner has a draft of
+  the app. The preview says "update".
+- **The merge** is in a clone: the author's version made ready as the import
+  made the app (bound to the app's own agent and pipeline by id, so it lines
+  up with the app's history, which holds them by id), committed on the
+  version taken, and merged into the app as it is now. The author's own
+  commits are not merged: an export names the agent by name and the history
+  by id, so they would read as changes. The merge result is the owner's
+  draft (`appdraft.Draft.Update`: when it was exported, the author's
+  version's commit, the files it changes, those that clashed, and the file
+  stores the export names).
+- **Made live** (by the owner, or committed by Builder from the same
+  draft), the version taken moves to the author's, the app is pointed at its
+  own agent and pipeline (one the update added is named by name until
+  then), and what it needs that only a deployment has is asked as on import.
+  Its changes are the owner's own, committed at once.
+- **Assets** an update adds or changes are there at once, as an agent's
+  are; one it takes out stays until it is live.
+- **Without git** (or with no version taken in the history), an update is
+  taken whole, and only into an app unchanged since it was taken; otherwise
+  it is refused, since nothing says which changes are whose.
+- **My Apps**: an app taken from a copy that said has Update... (the import
+  flow); an update waiting says so on the row, with what it changes that
+  runs and where it took the author's lines, and its own Make live and
+  Discard.
 
 ## Steps
 
@@ -892,7 +966,7 @@ Stage 3 (the app is its repository; Stage 3 in detail):
 15. S6: exports a snapshot, history as an option.
 
 After stage 3: updates for imported apps, merged with the changes made
-since.
+since (built 2026-11-19, "Updates for imported apps").
 
 Each stage on its own branch: stage 1 changes how Anvil opens an app and
 adds a repository per app; stage 2 changes what an app owns and how tools

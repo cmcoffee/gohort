@@ -280,6 +280,15 @@ func syncAppRepoLocked(dir string, spec AppSpec) error {
 		}
 		return appRepoCommit(dir, by, "", note)
 	}
+	// A save that puts the app back as its newest version has (an install
+	// refused after it saved, saving the app back) leaves nothing waiting:
+	// its record goes, or its note would ride into the next commit's message.
+	if out, err := appRepoGit(dir, "status", "--porcelain"); err == nil && strings.TrimSpace(out) == "" {
+		if err := os.Remove(appPendingPath(dir)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
 	p := loadAppPending(dir)
 	p.By, p.Via = by, via
 	if note != "" && (len(p.Notes) == 0 || p.Notes[len(p.Notes)-1] != note) {
@@ -367,20 +376,31 @@ func writeAppRepoFiles(dir string, spec AppSpec) (bool, error) {
 // writeAppRepoFilesOwned is writeAppRepoFiles with what the app owns as
 // owned has it (a draft's), nil for as it is live.
 func writeAppRepoFilesOwned(dir string, spec AppSpec, owned map[string][]byte) (bool, error) {
+	return writeAppRepoFolder(dir, spec, liveAppAssets(spec.Owner, spec.Slug), owned)
+}
+
+// liveAppAssets are owner's app slug's assets as it has them, by name.
+func liveAppAssets(owner, slug string) map[string][]byte {
+	assets := map[string][]byte{}
+	if names, err := ListAppAssets(owner, slug); err == nil {
+		for _, n := range names {
+			if data, _, err := ReadAppAsset(owner, slug, n); err == nil {
+				assets[n] = data
+			}
+		}
+	}
+	return assets
+}
+
+// writeAppRepoFolder is writeAppRepoFilesOwned with the app's assets as
+// assets has them (an update's, from its file), not as the app has them.
+func writeAppRepoFolder(dir string, spec AppSpec, assets, owned map[string][]byte) (bool, error) {
 	changed := false
 	stage, err := os.MkdirTemp("", "app-history-")
 	if err != nil {
 		return false, err
 	}
 	defer os.RemoveAll(stage)
-	assets := map[string][]byte{}
-	if names, err := ListAppAssets(spec.Owner, spec.Slug); err == nil {
-		for _, n := range names {
-			if data, _, err := ReadAppAsset(spec.Owner, spec.Slug, n); err == nil {
-				assets[n] = data
-			}
-		}
-	}
 	// No live marker: the repository records the app, it is not a folder
 	// to install from.
 	if _, err := writeAppFolderOwned(stage, spec, assets, "", owned); err != nil {

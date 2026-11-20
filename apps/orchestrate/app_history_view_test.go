@@ -154,6 +154,9 @@ func TestWorkLiveAndNotInTheHistoryLeavesNoVersionLive(t *testing.T) {
 	if _, ok := AppHistoryWaiting("u", "shelf"); ok {
 		t.Error("a change put back reads as waiting")
 	}
+	if dir, _ := appHistoryDir("u", "shelf"); loadAppPending(dir).By != "" {
+		t.Errorf("a change put back left its waiting record: %+v", loadAppPending(dir))
+	}
 	if list, _ := AppHistoryLog("u", "shelf", 0); !list[0].Live {
 		t.Errorf("a change put back leaves the newest version not live: %+v", list[0])
 	}
@@ -162,7 +165,7 @@ func TestWorkLiveAndNotInTheHistoryLeavesNoVersionLive(t *testing.T) {
 	spec.ChangeNote = "Say poems"
 	SaveAppSpecBy(spec, "update", "u", "Anvil")
 	w, ok := AppHistoryWaiting("u", "shelf")
-	if !ok || w.By != "u" || w.Via != "Anvil" || len(w.Notes) == 0 || w.Notes[len(w.Notes)-1] != "Say poems" {
+	if !ok || w.By != "u" || w.Via != "Anvil" || len(w.Notes) != 1 || w.Notes[0] != "Say poems" {
 		t.Errorf("the work waiting: %v %+v", ok, w)
 	}
 	list, _ := AppHistoryLog("u", "shelf", 0)
@@ -172,7 +175,7 @@ func TestWorkLiveAndNotInTheHistoryLeavesNoVersionLive(t *testing.T) {
 		}
 	}
 	out, err := turn.appDefRevisions(map[string]any{"id": "shelf"})
-	if err != nil || !strings.Contains(out, `LIVE NOW, not in the history yet: "Installed from Anvil; Say poems", by u with Anvil`) || strings.Contains(out, "(live)") {
+	if err != nil || !strings.Contains(out, `LIVE NOW, not in the history yet: "Say poems", by u with Anvil`) || strings.Contains(out, "(live)") {
 		t.Errorf("the versions Builder reads:\n%v %s", err, out)
 	}
 	CommitAppHistory("u", "shelf", "u", "Anvil", "Say poems")
