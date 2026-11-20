@@ -270,3 +270,60 @@ func TestANameUnderARulesConditionIsTheFullChecks(t *testing.T) {
 		}
 	}
 }
+
+// A misspelt name is found in code, not left to the model: a word one letter
+// off the name (one missing, extra, different, or two swapped) and nothing
+// further. Told to allow "obvious typos", the model read a bare "Wice" as
+// "WiWee" and woke the agent in a group chat. A name under four letters
+// gets no typo at all: one letter off "Pip" is half of English.
+func TestAMisspeltNameIsOneLetterOff(t *testing.T) {
+	for _, tc := range []struct{ text, name, want string }{
+		{"Wice", "WiWee", ""},
+		{"Nice", "WiWee", ""},
+		{"WiWee", "WiWee", ""},
+		{"wiwe, you there?", "WiWee", "wiwe"},
+		{"hey WiWeee", "WiWee", "WiWeee"},
+		{"iWWee can you look", "WiWee", "iWWee"},
+		{"WiXee", "WiWee", "WiXee"},
+		{"wiwe", "Wi Wee", "wiwe"},
+		{"Pop", "Pip", ""},
+		{"Pipp", "Pip", ""},
+	} {
+		if got := nearName(tc.text, tc.name); got != tc.want {
+			t.Errorf("%q against %q: %q, want %q", tc.text, tc.name, got, tc.want)
+		}
+	}
+}
+
+// The full check is told a misspelling counts only when gohort found one,
+// and is told of one when it did; it is never invited to judge "obvious
+// typos" for itself. The gate finds it in the message as it arrived.
+func TestTheGateIsToldOfAMisspeltNameOnlyWhenThereIsOne(t *testing.T) {
+	asked := func(q gateQuestion) string {
+		fake := &FakeLLM{Turns: []FakeTurn{{Content: `{"reason": "rule 1: no", "answer": "NO"}`, Repeat: true}}}
+		if _, _, err := gateDecide(t.Context(), fake, q); err != nil {
+			t.Fatal(err)
+		}
+		return fake.Config(0).SystemPrompt + "\n" + fake.Prompt(0)
+	}
+	rules := "WAKE when the incoming message from Henry mentions you by name."
+	plain := asked(gateQuestion{Rules: rules, AgentName: "WiWee", Sender: "Henry", Message: "Wice"})
+	if strings.Contains(plain, "obvious typo") || !strings.Contains(plain, "is only a word gohort says below is one letter off your name") || strings.Contains(plain, "in the new message is one letter off") {
+		t.Errorf("a message with no misspelt name:\n%s", plain)
+	}
+	near := asked(gateQuestion{Rules: rules, AgentName: "WiWee", Sender: "Henry", Message: "wiwe, you there?", NearName: "wiwe"})
+	if !strings.Contains(near, `the word "wiwe" in the new message is one letter off your name`) {
+		t.Errorf("a misspelt name was not told:\n%s", near)
+	}
+
+	df := newDispatchFixture(t, FakeTurn{Content: `{"reason": "rule 1: no", "answer": "NO"}`, Repeat: true})
+	prevRoot := RootDB
+	RootDB = df.app.DB
+	t.Cleanup(func() { RootDB = prevRoot })
+	SaveChannel(RootDB, Channel{ID: "c1", Owner: "u", Service: "imessage", Address: "chat-1", AgentID: df.agent.ID,
+		Gatekeeper: "WAKE when the incoming message from Henry mentions you by name."})
+	df.app.channelGatekeeperAllow(t.Context(), ChannelInbound{Owner: "u", AgentID: df.agent.ID, ChatID: "chat-1", SenderName: "Henry", Handle: "+15550100", Text: "Clrek, you there?"})
+	if p := df.llm.Prompt(df.llm.Calls() - 1); !strings.Contains(p, `the word "Clrek"`) {
+		t.Errorf("the gate did not find the misspelt name in the message:\n%s", p)
+	}
+}

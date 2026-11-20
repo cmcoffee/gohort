@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/decide"
@@ -138,6 +139,9 @@ func (app *OrchestrateApp) channelGatekeeperAllow(ctx context.Context, in Channe
 
 	q := gateQuestion{Rules: prompt, AgentName: agentName, Sender: displaySender, Message: msgDesc, Recent: contextBlock,
 		Named: agentName != "the assistant" && (addressesByName(in.Text, agentName) || addressesByName(said, agentName))}
+	if !q.Named && agentName != "the assistant" {
+		q.NearName = nearName(strings.TrimSpace(in.Text+" "+said), agentName)
+	}
 	if q.byName() {
 		Log("[gatekeeper] ALLOW: addressed by name (%s), which the rules wake on; no model asked (chat=%s)", agentName, in.ChatID)
 		return true
@@ -185,6 +189,10 @@ type gateQuestion struct {
 	Message   string
 	Recent    string
 	Named     bool
+	// NearName is a word in the message one letter off the agent's name
+	// (nearName), when it does not name the agent: a misspelling the model
+	// may read as the name. "" when there is none.
+	NearName string
 }
 
 // byName is a message addressed to the agent by name under rules that wake
@@ -225,6 +233,9 @@ func (q gateQuestion) sure() []float64 {
 // for Sam's messages that mention the name.
 func (q gateQuestion) namedNote() string {
 	if !q.Named {
+		if q.NearName != "" {
+			return "For reference, checked by gohort: the word " + strconv.Quote(q.NearName) + " in the new message is one letter off your name, so it may be your name mistyped. Read it as your name only if the message is plainly speaking to you. That meets a rule only if a rule asks for your name, and only when everything else that rule asks for holds too. This message is from " + q.Sender + ".\n\n"
+		}
 		return ""
 	}
 	return "For reference, checked by gohort: the new message addresses you by name. That meets a rule only if a rule asks for it, and only when everything else that rule asks for holds too: a rule about one sender's messages is not met by a message from anyone else. This message is from " + q.Sender + ".\n\n"
@@ -237,7 +248,10 @@ func gateDecide(ctx context.Context, llm LLM, q gateQuestion) (bool, string, err
 	if q.byName() {
 		return true, "addressed by name, which the rules wake on (matched in code)", nil
 	}
-	identity := fmt.Sprintf("Your name in this conversation is %q. When a rule refers to \"you\", \"the AI\", \"the assistant\", or asks whether the sender mentioned you by name, treat that as referring to %q, including common nicknames or obvious typos of that name.\n\n", q.AgentName, q.AgentName)
+	// Typos are counted in code (nearName): told to allow "obvious typos",
+	// the model read a bare "Wice" as a misspelling of "WiWee" and woke the
+	// agent in a group chat.
+	identity := fmt.Sprintf("Your name in this conversation is %q. When a rule refers to \"you\", \"the AI\", \"the assistant\", or asks whether the sender mentioned you by name, treat that as referring to %q, including common nicknames of it. A misspelling of your name, however a rule words it (typos, misspellings), is only a word gohort says below is one letter off your name: any other word that looks a little like your name is not your name.\n\n", q.AgentName, q.AgentName)
 	// Said as a fact for reference, not a rule: put as "checked by gohort,
 	// not left to you", a 9B under weather-only rules invented a rule about
 	// the name and argued with it until its cap.
@@ -443,6 +457,63 @@ func addressesByName(text, name string) bool {
 		if regexp.MustCompile(`(?i)` + pat).MatchString(text) {
 			return true
 		}
+	}
+	return false
+}
+
+// nearNameMin is the shortest name a misspelling is looked for in: one letter
+// off a three-letter name ("Pip") is half the words in English.
+const nearNameMin = 4
+
+// nearName is the first word in text one letter off name (one missing, one
+// extra, one different, or two side by side swapped), ignoring case, as it is
+// written there; "" when none is, the name is shorter than nearNameMin, or the
+// word is the name itself. A name of several words is compared as one ("Wi
+// Wee" as "wiwee").
+func nearName(text, name string) string {
+	want := []rune(strings.ToLower(strings.Join(strings.Fields(name), "")))
+	if len(want) < nearNameMin {
+		return ""
+	}
+	for _, w := range strings.FieldsFunc(text, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) {
+		got := []rune(strings.ToLower(w))
+		if oneEditApart(got, want) {
+			return w
+		}
+	}
+	return ""
+}
+
+// oneEditApart reports whether a becomes b by one letter added, removed,
+// changed, or two neighbours swapped.
+func oneEditApart(a, b []rune) bool {
+	switch d := len(a) - len(b); {
+	case d == 0:
+		var diff []int
+		for i := range a {
+			if a[i] != b[i] {
+				diff = append(diff, i)
+			}
+		}
+		switch len(diff) {
+		case 1:
+			return true
+		case 2:
+			i, j := diff[0], diff[1]
+			return j == i+1 && a[i] == b[j] && a[j] == b[i]
+		}
+		return false
+	case d == 1 || d == -1:
+		long, short := a, b
+		if d < 0 {
+			long, short = b, a
+		}
+		for i := range short {
+			if long[i] != short[i] {
+				return string(long[i+1:]) == string(short[i:])
+			}
+		}
+		return true
 	}
 	return false
 }

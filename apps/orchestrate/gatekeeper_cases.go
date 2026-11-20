@@ -83,12 +83,25 @@ func gateCases() []checktest.Case {
 			"Pip, tell me a joke", "", "WAKE when the incoming message from Sam mentions or addresses you by name."),
 		c("plain-ok", "A bare acknowledgement with nothing before it", "block", "Sam (owner)",
 			"ok", ""),
+		// From live traffic: under a rule allowing "obvious typos", the model
+		// read a bare "Wice" as "WiWee" and woke the agent in a group chat.
+		// A misspelling is now one found in code, one letter off the name.
+		named("not-a-misspelling", "A word two letters off the name is not the name", "block", "WiWee", "Henry", "Wice",
+			"WAKE when the incoming message from Henry mentions or addresses the agent by name, including common nicknames or obvious typos of that name."),
+		named("misspelt-name", "The name one letter off, from the sender the rule is for", "allow", "WiWee", "Henry", "wiwe can you check the score",
+			"WAKE when the incoming message from Henry mentions or addresses the agent by name, including common nicknames or obvious typos of that name."),
 	}
 }
 
-// runGateCase decides one case on llm through the gate's own decision.
-func runGateCase(ctx context.Context, llm LLM, tc checktest.Case) checktest.Outcome {
-	in := tc.Input
+// named is a case for an agent other than Pip, under rules of its own.
+func named(id, title, want, agent, sender, msg, rules string) checktest.Case {
+	return checktest.Case{ID: id, Title: title, Want: want, Input: map[string]string{
+		"rules": rules, "agent": agent, "sender": sender, "message": msg}}
+}
+
+// caseQuestion is a case as the gate asks it: the name found in code, a
+// misspelling of it too, as the live gate finds them.
+func caseQuestion(in map[string]string) gateQuestion {
 	q := gateQuestion{
 		Rules:     mergeWakeRules(in["rules"], ""),
 		AgentName: in["agent"],
@@ -97,6 +110,15 @@ func runGateCase(ctx context.Context, llm LLM, tc checktest.Case) checktest.Outc
 		Recent:    in["recent"],
 		Named:     addressesByName(in["message"], in["agent"]),
 	}
+	if !q.Named {
+		q.NearName = nearName(in["message"], in["agent"])
+	}
+	return q
+}
+
+// runGateCase decides one case on llm through the gate's own decision.
+func runGateCase(ctx context.Context, llm LLM, tc checktest.Case) checktest.Outcome {
+	q := caseQuestion(tc.Input)
 	allow, reason, err := gateDecide(ctx, llm, q)
 	if err != nil {
 		return checktest.Outcome{Err: err}
@@ -109,15 +131,7 @@ func runGateCase(ctx context.Context, llm LLM, tc checktest.Case) checktest.Outc
 
 // decideGateCase decides one case on llm as a System One decision.
 func decideGateCase(ctx context.Context, llm LLM, tc checktest.Case) checktest.Outcome {
-	in := tc.Input
-	q := gateQuestion{
-		Rules:     mergeWakeRules(in["rules"], ""),
-		AgentName: in["agent"],
-		Sender:    in["sender"],
-		Message:   in["message"],
-		Recent:    in["recent"],
-		Named:     addressesByName(in["message"], in["agent"]),
-	}
+	q := caseQuestion(tc.Input)
 	allow, confidence, reason, err := gateSystemOne(ctx, llm, q)
 	if err != nil {
 		return checktest.Outcome{Err: err}

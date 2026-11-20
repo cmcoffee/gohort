@@ -27,7 +27,7 @@ root POST /api/apps "{}"
 alice GET /api/settings ""
   403 forbidden
 root GET /api/settings ""
-  200 {"allow_signup":false,"api_key_allow_query":false,"channel_default_wake_rules":"WAKE when the incoming message mentions or addresses the agent by name, including common nicknames or obvious typos of t... (979 bytes, sha1 f2b07b03cdd5282e3579d5eab813a51de1307e9d)
+  200 {"allow_signup":false,"api_key_allow_query":false,"channel_default_wake_rules":"WAKE when the incoming message mentions or addresses the agent by name, including common nicknames or misspellings of th... (978 bytes, sha1 c074b0e65b5c7369b716e56839e840f19e96715c)
 (signed out) GET /api/settings?app=/nope ""
   403 forbidden
 alice GET /api/settings?app=/nope ""
@@ -177,7 +177,7 @@ root PATCH /api/settings "{\"tune_account_key_lifetime\":90}"
 root PATCH /api/settings?app=/nope "{\"tune_account_key_lifetime\":3650}"
   200 {"status":"updated"}
 root GET /api/settings ""
-  200 {"allow_signup":true,"api_key_allow_query":false,"channel_default_wake_rules":"WAKE when the incoming message mentions or addresses the agent by name, including common nicknames or obvious typos of th... (1074 bytes, sha1 a2fc7bd9d75f254e9a7487ec562fa6c81db2c46a)
+  200 {"allow_signup":true,"api_key_allow_query":false,"channel_default_wake_rules":"WAKE when the incoming message mentions or addresses the agent by name, including common nicknames or misspellings of tha... (1073 bytes, sha1 980e851e9c5c6684194e40da620ae5fa91ed8ae3)
 alice POST /api/settings/reset-tunables ""
   403 forbidden
 root POST /api/settings/reset-tunables?category=nope ""
