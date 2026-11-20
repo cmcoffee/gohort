@@ -242,6 +242,13 @@ func (t *chatTurn) computeDispatchableFleet() []AgentRecord {
 	// never mentions is one the model only reaches by guessing a name, which is
 	// the same as not having it. The dispatch resolver takes the same union.
 	all = append(all, SharedAgentsFor(orchestrateBaseDB, fleetUser)...)
+	return t.dispatchableFrom(fleetDB, fleetUser, all)
+}
+
+// dispatchableFrom is computeDispatchableFleet's choice among all, the
+// person's agents and those shared with them: what this turn's agent may
+// dispatch to, by its policy, once each.
+func (t *chatTurn) dispatchableFrom(fleetDB Database, fleetUser string, all []AgentRecord) []AgentRecord {
 	exists := make(map[string]bool, len(all))
 	for _, a := range all {
 		exists[a.ID] = true
@@ -272,8 +279,25 @@ func (t *chatTurn) computeDispatchableFleet() []AgentRecord {
 	// what went wrong while only this surface applied it.
 	mode = t.dispatchModeAfterSelfHeal(fleetDB, fleetUser)
 	var available []AgentRecord
+	added := map[string]bool{}
 	for _, a := range all {
 		if a.ID == t.agent.ID || isFleetRetiredSeed(a.ID) || isRetiringArchetypeSeed(a.ID) {
+			continue
+		}
+		// Once each: an agent of the person's own that is also among those
+		// shared with them (a migrated copy keeps its id) was listed twice.
+		if added[a.ID] {
+			continue
+		}
+		added[a.ID] = true
+		// What no run here could reach is not offered either, so the
+		// Available agents block, agents(list) and the dispatch gate read one
+		// set: an app's agents are its own (reached from inside the app, and
+		// by the other agents of the app), a hidden app agent is the app's
+		// internal surface, a sub-agent held for approval is not live yet,
+		// and an agent whose app is switched off is refused. The block offered
+		// all of these, the model delegated to them, and the gate said no.
+		if hiddenAppAgent(a.ID) || (appOwnedAgent(a) && !sameAppAgent(t.agent, a)) || a.PendingApproval || agentRunStopped(a) != nil {
 			continue
 		}
 		// Builder rides the same carve-out as the dispatch gate: invisible

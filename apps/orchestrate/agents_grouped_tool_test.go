@@ -9,6 +9,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -331,5 +332,74 @@ func TestAHandOffThreadIsKeptLikeASession(t *testing.T) {
 	first := thread.Messages[1]
 	if first.Role != "assistant" || len(first.ToolCalls) == 0 || first.ToolCalls[0].Name != "not_a_real_tool" {
 		t.Errorf("the first reply was kept without the tool behind it: %+v", first.ToolCalls)
+	}
+}
+
+// The Available agents block offers what agents(list) lists and the gate lets
+// through, one set: another app's agent is not in it (reached only from its
+// app), nor one held for approval, and an agent both the person's own and
+// shared with them is in it once.
+func TestTheAgentsBlockOffersWhatTheListHolds(t *testing.T) {
+	turn := reachTurn(t, AgentRecord{ID: "a1", Name: "Lead"},
+		AgentRecord{ID: "a2", Name: "Researcher", Description: "looks things up", OrchestratorPrompt: "p"},
+		AgentRecord{ID: "a3", Name: "Deal Hunter", Description: "finds deals", OrchestratorPrompt: "p", OwningApp: "hottest-deals", appEdit: "Builder"},
+		AgentRecord{ID: "a4", Name: "Drafted", Description: "not yet", OrchestratorPrompt: "p", PendingApproval: true})
+	block := turn.renderAvailableAgentsBlock()
+	list, err := turn.agentsListAction()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{block, list} {
+		if !strings.Contains(s, "Researcher") || strings.Contains(s, "Deal Hunter") || strings.Contains(s, "Drafted") {
+			t.Errorf("an app's agent or one held for approval offered:\n%s", s)
+		}
+	}
+	same := reachTurn(t, AgentRecord{ID: "b1", Name: "Desk", OrchestratorPrompt: "p", OwningApp: "hottest-deals", appEdit: "Builder"},
+		AgentRecord{ID: "b2", Name: "Deal Hunter", Description: "finds deals", OrchestratorPrompt: "p", OwningApp: "hottest-deals", appEdit: "Builder"})
+	if !strings.Contains(same.renderAvailableAgentsBlock(), "Deal Hunter") {
+		t.Error("an app's agent is offered to the other agents of its app")
+	}
+
+	twice := reachTurn(t, AgentRecord{ID: "c1", Name: "Lead"}, AgentRecord{ID: "c2", Name: "WiWee", Description: "texts", OrchestratorPrompt: "p"})
+	fleet := twice.dispatchableFrom(twice.udb, "someuser", append(listAgents(twice.udb, "someuser"), AgentRecord{ID: "c2", Name: "WiWee", Description: "texts", Owner: "someuser"}))
+	n := 0
+	for _, a := range fleet {
+		if a.ID == "c2" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("an agent listed both as one's own and as shared appears %d times", n)
+	}
+}
+
+const hiddenAppAgentID = "test-hidden-appagent-fleet"
+
+func init() {
+	appagents.RegisterAppAgent(appagents.AppAgentSpec{ID: hiddenAppAgentID, Name: "Inner Workings", Prompt: "p", Hidden: true})
+}
+
+// Nor is a hidden app agent offered, even to an agent that names it in an
+// allow-list (where a pick otherwise wins over Hidden), nor an app's agent
+// while its app is switched off, even to the other agents of its app.
+func TestTheAgentsBlockLeavesOutWhatNoRunReaches(t *testing.T) {
+	picked := reachTurn(t, AgentRecord{ID: "d1", Name: "Lead", DispatchMode: dispatchOnly, AllowedDispatchTargets: []string{hiddenAppAgentID, "d2"}},
+		AgentRecord{ID: "d2", Name: "Researcher", Description: "looks things up", OrchestratorPrompt: "p"})
+	fleet := picked.dispatchableFrom(picked.udb, "someuser", append(listAgents(picked.udb, "someuser"),
+		AgentRecord{ID: hiddenAppAgentID, Name: "Inner Workings", Owner: "someuser"}))
+	for _, a := range fleet {
+		if a.ID == hiddenAppAgentID {
+			t.Error("a hidden app agent is offered to an agent that picked it")
+		}
+	}
+
+	prevRoot := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = prevRoot })
+	SaveAppSpec(AppSpec{Slug: "hottest-deals", Name: "Hottest Deals", Owner: "someuser", Disabled: true})
+	off := reachTurn(t, AgentRecord{ID: "e1", Name: "Desk", OrchestratorPrompt: "p", OwningApp: "hottest-deals", appEdit: "Builder"},
+		AgentRecord{ID: "e2", Name: "Deal Hunter", Description: "finds deals", OrchestratorPrompt: "p", OwningApp: "hottest-deals", appEdit: "Builder"})
+	if strings.Contains(off.renderAvailableAgentsBlock(), "Deal Hunter") {
+		t.Error("an app's agent is offered while its app is switched off")
 	}
 }
