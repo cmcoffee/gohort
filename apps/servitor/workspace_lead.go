@@ -74,7 +74,7 @@ func (T *Servitor) memberInvestigation(ctx context.Context, parentID, reqUser st
 	sid := "ws-" + UUIDv4()
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	probeSessions.Register(sid, label, cancel).SetOwner(reqUser)
+	runCtx = listedSession(runCtx, sid, label, reqUser, cancel)
 	sessionAppliances.Store(sid, m.ID)
 	confirm := make(chan bool, 1)
 	confirmChans.Store(sid, pendingConfirm{ch: confirm, owner: reqUser})

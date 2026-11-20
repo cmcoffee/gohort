@@ -93,3 +93,38 @@ func TestPublishToolReads(t *testing.T) {
 		}
 	}
 }
+
+// A read-back through a person's integration is listed with the running work
+// for whoever asked, its calls under it, and reads the page it points at.
+func TestAReadBackIsListedWithTheRunningWork(t *testing.T) {
+	T, _, _ := newTestOrchestrate(t)
+	var underRun string
+	wiki := AgentToolDef{
+		Tool: Tool{Name: "fetch_url_wiki", Description: "Call the wiki API.", Parameters: map[string]ToolParam{
+			"method": {Type: "string"}, "url": {Type: "string"}}},
+		Handler: func(ctx context.Context, _ map[string]any) (string, error) {
+			underRun = parentRunFromCtx(ctx)
+			return `{"title":"Runbook","body":"The page as it reads now."}`, nil
+		},
+	}
+	prevTools := publishIntegrationToolsFor
+	publishIntegrationToolsFor = func(*ToolSession, string) ([]AgentToolDef, error) { return []AgentToolDef{wiki}, nil }
+	t.Cleanup(func() { publishIntegrationToolsFor = prevTools; docs.RegisterCredentialReader(nil) })
+	registerCredentialReader(T)
+	T.LLM = &FakeLLM{Turns: []FakeTurn{
+		{ToolCalls: []ToolCall{{ID: "1", Name: "fetch_url_wiki", Args: map[string]any{"method": "GET", "url": "/pages/9"}}}},
+		{ToolCalls: []ToolCall{{ID: "2", Name: "report_current_page", Args: map[string]any{"result": 1}}}},
+		{Content: "Read the page."},
+	}}
+	got, err := docs.ReadViaCredential(context.Background(), "alice", "wiki", "Read the page at /pages/9.")
+	if err != nil || !strings.Contains(got.Body, "as it reads now") {
+		t.Fatalf("the read-back: %v %+v", err, got)
+	}
+	listed := false
+	for _, r := range T.runsRegistry().Activity("alice") {
+		listed = listed || (r.Kind == "publish" && r.AgentName == "Reading back through wiki" && r.Status == RunStatusCompleted && r.ID == underRun)
+	}
+	if !listed {
+		t.Errorf("the read-back is not listed with the running work, its calls under it (%q): %+v", underRun, T.runsRegistry().Activity("alice"))
+	}
+}

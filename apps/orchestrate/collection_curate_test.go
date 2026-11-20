@@ -8,6 +8,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
@@ -186,3 +187,70 @@ func TestCurateTimesReadAsWords(t *testing.T) {
 	}
 }
 
+
+// activityRow is the row of user's running work whose surface is kind and
+// whose name has name in it, and whether there is one.
+func activityRow(app *OrchestrateApp, user, kind, name string) (ActivityRow, bool) {
+	for _, r := range app.Activity(user, "") {
+		if strings.HasPrefix(r.Surface, kind) && strings.Contains(r.Agent, name) {
+			return r, true
+		}
+	}
+	return ActivityRow{}, false
+}
+
+// A curation is listed with the rest of the running work while it goes
+// (the Monitor, the live pill), under the collection's name, or its app's
+// for an app's collection; Stop there ends it as Stop on its page does, and
+// the page says it was stopped.
+func TestACurationIsListedWithTheRunningWork(t *testing.T) {
+	df := curateFixture(t)
+	prevHost := agenthost.Get()
+	agenthost.Register(df.app)
+	t.Cleanup(func() { agenthost.Register(prevHost) })
+	release := blockingSearch(t)
+	saveCollection(df.udb, Collection{ID: "col-r", Name: "Runbooks", Owner: "u", SearchTerms: []string{"one", "two"}})
+	if _, err := df.app.collectionCurateStart(curateCall(df, http.MethodPost, "u", "col-r"), struct{}{}); err != nil {
+		t.Fatal(err)
+	}
+	waitCurate(t, df, "col-r", func(s map[string]any) bool { return s["progress"] != nil })
+	row, ok := activityRow(df.app, "u", "curation", "Knowledge: Runbooks")
+	if !ok || !row.Running || !row.Cancellable || row.Brief == "" {
+		t.Fatalf("the running curation is not listed with the running work: %v %+v (rows %+v)", ok, row, df.app.Activity("u", ""))
+	}
+	// With how far it has got, as its page says it.
+	said := ""
+	for i := 0; i < 200 && said == ""; i++ {
+		for _, s := range df.app.runsRegistry().Activity("u") {
+			if s.ID == row.ID {
+				said = s.Detail
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if said == "" {
+		t.Error("the listed curation does not say how far it has got")
+	}
+	if !df.app.runsRegistry().Get(row.ID).Cancel() {
+		t.Fatal("the listed curation could not be stopped")
+	}
+	close(release)
+	end := waitCurate(t, df, "col-r", func(s map[string]any) bool { return s["outcome"] != nil })
+	if o := end["outcome"].(string); !strings.HasPrefix(o, "Stopped") {
+		t.Errorf("a curation stopped from the running list: %q", o)
+	}
+	for i := 0; i < 200; i++ {
+		if row, _ = activityRow(df.app, "u", "curation", "Runbooks"); !row.Running {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if row.Running || !strings.HasPrefix(row.Activity, RunStatusCanceled) {
+		t.Errorf("the ended curation's row: %+v", row)
+	}
+
+	SaveAppSpec(AppSpec{Owner: "u", Slug: "desk", Name: "Desk", Sections: []byte(`[{"id":"page","kind":"html","html":"<p>x</p>"}]`)})
+	if got := curationRunName(Collection{Owner: "u", Name: "Manual", OwningApp: "desk"}); got != "Desk (app)" {
+		t.Errorf("an app's collection's curation is listed as %q", got)
+	}
+}

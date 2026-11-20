@@ -388,7 +388,7 @@ func (T *Servitor) InvestigateSync(ctx context.Context, user, applianceID, quest
 	sid := "guide-investigate-" + UUIDv4()
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	probeSessions.Register(sid, label, cancel).SetOwner(user)
+	runCtx = listedSession(runCtx, sid, label, user, cancel)
 	sessionAppliances.Store(sid, appliance.ID)
 	confirm := make(chan bool, 1)
 	confirmChans.Store(sid, pendingConfirm{ch: confirm, owner: user})

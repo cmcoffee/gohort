@@ -885,7 +885,7 @@ func (sd *syncDispatch) startLiveRun() {
 	sd.ownRun = sd.liveRun == nil
 	if sd.ownRun {
 		sd.ctx, sd.liveRun = T.runsRegistry().CreateCancellable(sd.ctx, sd.runtimeUser, sd.target.ID, "")
-		sd.liveRun.Describe("dispatch", sd.target.Name, truncateObs(message, 100)).
+		sd.liveRun.Describe("dispatch", runAgentLabel(sd.target), truncateObs(message, 100)).
 			Parent(parentRunFromCtx(sd.ctx))
 	}
 }
@@ -1896,7 +1896,7 @@ func (cr *continuingRun) startLiveRun() {
 	// replaces the one before it" is the correct rule and already applied to
 	// the chat turns that share it.
 	cr.ctx, cr.liveRun = T.runsRegistry().CreateCancellable(cr.ctx, cr.runtimeUser, cr.target.ID, cr.subSessionID)
-	cr.liveRun.Describe(cr.liveKind, cr.target.Name, truncateObs(cr.message, 100)).
+	cr.liveRun.Describe(cr.liveKind, runAgentLabel(cr.target), truncateObs(cr.message, 100)).
 		Parent(parentRunFromCtx(cr.ctx))
 }
 

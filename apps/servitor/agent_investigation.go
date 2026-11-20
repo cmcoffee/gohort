@@ -162,7 +162,7 @@ func (T *Servitor) InvestigateForAgent(ctx context.Context, sess *ToolSession, u
 	// and it stays in Sessions with its answer afterwards.
 	sid := ensureSession(udb, appliance.ID, "", q)
 	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), agentInvestigationCap)
-	probeSessions.Register(sid, label, cancel).SetOwner(user)
+	runCtx = listedSession(runCtx, sid, label, user, cancel)
 	sessionAppliances.Store(sid, appliance.ID)
 	confirm := make(chan bool, 1)
 	confirmChans.Store(sid, pendingConfirm{ch: confirm, owner: user, interactive: true})

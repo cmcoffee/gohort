@@ -419,6 +419,9 @@ func (T *HelloAgent) handleAgentSend(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
 	defer cancel()
+	// Listed among the running work while it runs, for this user, with a
+	// label the app writes (never the message itself).
+	ctx = ListLoopAs(ctx, user, "Hello demo reply")
 
 	resp, _, err := T.RunAgentLoop(ctx, history, AgentLoopConfig{
 		SystemPrompt: systemPrompt,

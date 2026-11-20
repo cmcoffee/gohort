@@ -18,6 +18,7 @@ package orchestrate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -79,12 +80,14 @@ func (r *curateRegistry) get(id string) (*curateRun, bool) {
 	return run, true
 }
 
-// start runs work under key unless a run under it is already going, in which
-// case that one is returned and started is false. label says what it is doing.
-// count, when given, is the collection's document count, read every
-// curateCountEvery for "N documents added". work may report how far it has got
-// through note.
-func (r *curateRegistry) start(key, label string, before int, count func() int, work func(ctx context.Context, note func(string)) (string, error)) (run *curateRun, started bool) {
+// start runs work for the collection c under key unless a run under it is
+// already going, in which case that one is returned and started is false.
+// label says what it is doing. count, when given, is the collection's
+// document count, read every curateCountEvery for "N documents added". work
+// may report how far it has got through note. The run is listed with the
+// rest of the running work (the Monitor, the live pill), under the
+// collection's owner, and stopped from there as from the collection's page.
+func (r *curateRegistry) start(key string, c Collection, label string, before int, count func() int, work func(ctx context.Context, note func(string)) (string, error)) (run *curateRun, started bool) {
 	id := key
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -104,10 +107,18 @@ func (r *curateRegistry) start(key, label string, before int, count func() int, 
 	if count == nil {
 		count = func() int { return before }
 	}
+	var live *Run
+	if o, ok := agenthostApp(); ok && strings.TrimSpace(c.Owner) != "" {
+		ctx, live = o.runsRegistry().CreateCancellable(ctx, c.Owner, "", "")
+		live.Describe("curation", curationRunName(c), label)
+	}
 	note := func(line string) {
 		run.mu.Lock()
 		run.note = line
 		run.mu.Unlock()
+		if live != nil {
+			live.SetDetail(line)
+		}
 	}
 	r.runs[id] = run
 	go func() {
@@ -141,9 +152,32 @@ func (r *curateRegistry) start(key, label string, before int, count func() int, 
 		if ctx.Err() == context.DeadlineExceeded {
 			run.err = fmt.Errorf("it ran past the %s limit for one run", curateLimit(autofillTimeout()))
 		}
+		// Stopped from the running list rather than the collection's page.
+		if errors.Is(ctx.Err(), context.Canceled) {
+			run.stopRequested = true
+		}
+		status := RunStatusCompleted
+		switch {
+		case run.stopRequested:
+			status = RunStatusCanceled
+		case run.err != nil:
+			status = RunStatusFailed
+		}
 		run.mu.Unlock()
+		if live != nil {
+			live.Complete(status)
+		}
 	}()
 	return run, true
+}
+
+// curationRunName is how a curation of c is listed with the running work:
+// the collection by name, or its app's name when an app owns it.
+func curationRunName(c Collection) string {
+	if strings.TrimSpace(c.OwningApp) != "" {
+		return appRunLabel(c.Owner, c.OwningApp)
+	}
+	return "Knowledge: " + firstNonEmptyStr(strings.TrimSpace(c.Name), c.ID)
 }
 
 // stop asks the run to end. It ends at the curator's next step.
@@ -267,7 +301,7 @@ func (T *OrchestrateApp) startCuration(c Collection, user, label string) (run *c
 	before, _ := collectionStats(VectorDB, c.ID)
 	count := func() int { n, _ := collectionStats(VectorDB, c.ID); return n }
 	udb := UserDB(T.DB, user)
-	run, started = curations.start(c.ID, label, before, count, func(ctx context.Context, note func(string)) (string, error) {
+	run, started = curations.start(c.ID, c, label, before, count, func(ctx context.Context, note func(string)) (string, error) {
 		Log("[orchestrate.curate] collection=%s user=%s: plan run, %s", c.ID, user, strings.ToLower(label))
 		return T.runPlan(ctx, udb, c, note)
 	})

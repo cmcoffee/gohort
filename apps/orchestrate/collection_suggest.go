@@ -212,7 +212,7 @@ func (T *OrchestrateApp) findSources(ctx context.Context, c Collection, note fun
 // startFindSources starts a search for the collection unless one of its runs
 // is going.
 func (T *OrchestrateApp) startFindSources(c Collection) bool {
-	_, started := curations.start(suggestKey(c.ID), "Finding sources", 0, nil, func(ctx context.Context, note func(string)) (string, error) {
+	_, started := curations.start(suggestKey(c.ID), c, "Finding sources", 0, nil, func(ctx context.Context, note func(string)) (string, error) {
 		return T.findSources(ctx, c, note)
 	})
 	return started
@@ -360,7 +360,7 @@ func (T *OrchestrateApp) collectionSuggestAdd(call *jsonapi.Call, body struct {
 	before, _ := collectionStats(VectorDB, c.ID)
 	count := func() int { n, _ := collectionStats(VectorDB, c.ID); return n }
 	label := fmt.Sprintf("Adding %d source%s", len(picked), plural(len(picked)))
-	curations.start(suggestKey(c.ID), label, before, count, func(ctx context.Context, _ func(string)) (string, error) {
+	curations.start(suggestKey(c.ID), c, label, before, count, func(ctx context.Context, _ func(string)) (string, error) {
 		// Only the ticked ones: older entries still waiting on the list are
 		// left for Auto-fill, not fetched ahead of what was just chosen.
 		only := c

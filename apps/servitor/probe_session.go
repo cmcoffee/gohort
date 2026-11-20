@@ -3062,7 +3062,7 @@ func (pr *probeRun) chatAfter() probeAction {
 		}
 		pr.consolidateFn = func() {
 			leadAnswer := pr.reply
-			bgCtx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+			bgCtx, cancel := pr.consolidationContext()
 			defer cancel()
 			var cMsg strings.Builder
 			cMsg.WriteString(fmt.Sprintf("Consolidate knowledge for %s.\n\n", pr.appliance.Name))
@@ -3149,6 +3149,14 @@ func (pr *probeRun) chatAfter() probeAction {
 		}
 	}
 	return actNone
+}
+
+// consolidationContext is what filing a turn's findings runs under: apart from
+// the session, which may end first, for up to 120s, and listed among the
+// running work as its own, for the session's user.
+func (pr *probeRun) consolidationContext() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	return ListLoopAs(ctx, pr.userID, "Servitor: filing what it found on "+pr.appliance.Name), cancel
 }
 
 // allFindings is every probe result this turn, joined and capped, for the

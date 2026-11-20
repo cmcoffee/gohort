@@ -308,6 +308,10 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	if cfg.ContextSize == 0 {
 		cfg.ContextSize = T.loopContextSize()
 	}
+	// Listed among the running work unless whatever started it lists it
+	// already (see listLoop).
+	ctx, endRow := listLoop(ctx, T.appName, &cfg)
+	defer endRow()
 	resp, history, err := T.runAgentLoopInner(ctx, messages, cfg)
 	// Think-tag leak backstop at THE loop boundary, so every surface (web
 	// chat, dispatch, scheduled fires) is covered by one seam — the channel

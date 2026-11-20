@@ -973,7 +973,7 @@ func (fr *fireRun) startLiveRun() {
 	// Both offered it before and neither could do anything, because the run was
 	// created with no cancel func.
 	fr.ctx, fr.liveRun = fr.app.runsRegistry().CreateCancellable(fr.ctx, p.Username, fr.agent.ID, "")
-	fr.liveRun.Describe("scheduled", fr.agent.Name, truncateObs(p.Prompt, 100))
+	fr.liveRun.Describe("scheduled", runAgentLabel(fr.agent), truncateObs(p.Prompt, 100))
 	// Tag the context with this run, and give the session the tagged context.
 	//
 	// Without it, nothing started from a wake or a scheduled fire could detach.

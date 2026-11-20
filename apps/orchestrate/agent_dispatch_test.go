@@ -1094,3 +1094,26 @@ func TestADispatchTurnCarriesThePersonsRequest(t *testing.T) {
 		}
 	}
 }
+
+// A continuing run of an app's own agent (a channel or monitor wake) is
+// listed with the running work under its app's name.
+func TestAContinuingRunOfAnAppsAgentIsListedUnderTheApp(t *testing.T) {
+	df := newDispatchFixture(t, FakeTurn{Content: "Hello.", Repeat: true})
+	SaveAppSpec(AppSpec{Owner: "u", Slug: "desk", Name: "Desk", Sections: []byte(`[{"id":"page","kind":"html","html":"<p>x</p>"}]`)})
+	a, err := saveAgent(df.udb, AgentRecord{Name: "Greeter", Owner: "u", OrchestratorPrompt: "Greet.", OwningApp: "desk", appEdit: "Builder"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := df.app.RunAgentSyncContinuingRich(t.Context(), AgentSyncRun{AgentOwner: "u", AgentKey: a.ID, SubSessionID: "thread-app", Message: "Hi."}); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range df.app.runsRegistry().Activity("u") {
+		if s.AgentID == a.ID {
+			if s.AgentName != "Desk (app)" {
+				t.Errorf("the app's agent's run is listed as %q", s.AgentName)
+			}
+			return
+		}
+	}
+	t.Errorf("the app's agent's run is not listed: %+v", df.app.runsRegistry().Activity("u"))
+}

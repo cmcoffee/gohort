@@ -116,7 +116,7 @@ func (T *OrchestrateApp) runStanding(ctx context.Context, sa StandingAgent) Stan
 	display := strings.TrimSpace(sa.Name)
 	if display == "" {
 		if rec, ok := loadAgent(UserDB(T.DB, sa.Owner), sa.AgentID); ok {
-			display = rec.Name
+			display = runAgentLabel(rec)
 		}
 	}
 	// Cancellable: the returned ctx is what the fire runs under, so Stop on

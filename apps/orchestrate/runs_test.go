@@ -360,3 +360,43 @@ func TestParallelDispatchesDoNotCancelEachOther(t *testing.T) {
 		t.Fatal("a new run on the same conversation did not replace the previous one")
 	}
 }
+
+// loopRowsDuring runs an agent loop under ctx and returns the rows the loop
+// listed for itself (core's, stopped at /api/live/stop) while it ran.
+func loopRowsDuring(t *testing.T, ctx context.Context) []LiveEntry {
+	t.Helper()
+	var rows []LiveEntry
+	probe := AgentToolDef{
+		Tool: Tool{Name: "probe", Description: "d"},
+		Handler: func(context.Context, map[string]any) (string, error) {
+			for _, e := range AllLiveSessions() {
+				if strings.HasPrefix(e.CancelURL, "/api/live/stop?id=") {
+					rows = append(rows, e)
+				}
+			}
+			return "ok", nil
+		},
+	}
+	core := &AppCore{LLM: &FakeLLM{Turns: []FakeTurn{{ToolCalls: []ToolCall{{ID: "1", Name: "probe"}}}, {Content: "done"}}}}
+	if _, _, err := core.RunAgentLoop(ctx, []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{Tools: []AgentToolDef{probe}, MaxRounds: 3}); err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	return rows
+}
+
+// A run is listed, so the agent loops run under it, and under work nested in
+// it, add no row of their own: one row per run on the Monitor.
+func TestARunsAgentLoopsAddNoRowOfTheirOwn(t *testing.T) {
+	if rows := loopRowsDuring(t, context.Background()); len(rows) != 1 {
+		t.Fatalf("a loop under nothing is listed once, got %v", rows)
+	}
+	rr := NewRunRegistry()
+	ctx, run := rr.CreateCancellable(context.Background(), "alice", "", "")
+	defer run.Complete(RunStatusCompleted)
+	if rows := loopRowsDuring(t, ctx); len(rows) != 0 {
+		t.Errorf("a loop under a run added a row: %v", rows)
+	}
+	if rows := loopRowsDuring(t, withParentRun(context.Background(), run.ID)); len(rows) != 0 {
+		t.Errorf("a loop under work nested in a run added a row: %v", rows)
+	}
+}

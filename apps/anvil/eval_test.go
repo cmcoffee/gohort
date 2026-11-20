@@ -247,3 +247,42 @@ func TestTheRunnerUsesAnvilsToolsAndCheck(t *testing.T) {
 		t.Fatalf("%+v", res)
 	}
 }
+
+// An eval task's agent loop is listed among the running work while it runs,
+// for the user who started the eval, by the task's title.
+func TestAnEvalTaskIsListedWithTheRunningWork(t *testing.T) {
+	needToolchains(t, "Go")
+	evalWorkspace(t)
+	T := evalApp(t)
+	hold := make(chan struct{})
+	T.LLM = &FakeLLM{Turns: []FakeTurn{{Wait: hold, Content: "Looked.", Repeat: true}}}
+	tasks, _ := loadEvalTasks()
+	var task evalTask
+	for _, tk := range tasks {
+		if tk.Name == "go_sum_skips_last" {
+			task = tk
+		}
+	}
+	if task.Title == "" {
+		t.Fatalf("the task has no title to list it by: %+v", task)
+	}
+	s, _ := evalSettingByID("worker-check")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		T.evalOne(context.Background(), T.runEvalAgent, "root", "r1", task, s, filepath.Join(WorkspacesDir(), "one"))
+	}()
+	var row LiveEntry
+	for deadline := time.Now().Add(10 * time.Second); row.ID == "" && time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		for _, e := range AllLiveSessions() {
+			if strings.HasPrefix(e.CancelURL, "/api/live/stop?id=") && e.Owner == "root" {
+				row = e
+			}
+		}
+	}
+	close(hold)
+	<-done
+	if row.Label != "Anvil eval: "+task.Title {
+		t.Errorf("the eval task is listed as %q, want %q", row.Label, "Anvil eval: "+task.Title)
+	}
+}

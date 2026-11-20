@@ -755,6 +755,8 @@ func (T *AppCore) startRun(s RunSurface, run PipelineRun, input string, vars map
 		// would otherwise hold its slot until the process ends.
 		ctx, cancel := context.WithTimeout(rctx, timeout)
 		defer cancel()
+		// Listed (liveRuns), so its agent loops add no row of their own.
+		ctx = ListedWork(ctx)
 		// One mutex over the run record: fanout branches emit from parallel
 		// goroutines, so the stored transcript would otherwise race.
 		var mu sync.Mutex

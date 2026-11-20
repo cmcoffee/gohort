@@ -186,12 +186,15 @@ Find the document at the address you are given and read it with its full content
 // copy back through a person's own integration. The run holds only the
 // integration's reads: a write is refused whatever the model tries.
 func registerCredentialReader(app *OrchestrateApp) {
-	docs.RegisterCredentialReader(func(ctx context.Context, user, credential, instruction string) (docs.PublishedCopy, error) {
+	docs.RegisterCredentialReader(func(ctx context.Context, user, credential, instruction string) (_ docs.PublishedCopy, err error) {
 		if app == nil {
 			return docs.PublishedCopy{}, errors.New("orchestrate runtime not initialized")
 		}
+		// Listed with the running work while it reads, under what asked.
+		ctx, end := app.listedRun(ctx, user, "publish", "Reading back through "+strings.TrimPrefix(credential, docs.MCPIntegrationPrefix), instruction)
+		defer func() { end(err) }()
 		sess := &ToolSession{Username: user}
-		tools, err := publishIntegrationTools(sess, credential)
+		tools, err := publishIntegrationToolsFor(sess, credential)
 		if err != nil {
 			return docs.PublishedCopy{}, err
 		}

@@ -286,6 +286,23 @@ func appAgentName(a AgentRecord) string {
 	return slug
 }
 
+// runAgentLabel is how a run of a shows where running work is listed (the
+// Monitor, the live pill): an app's agent by its app's name ("Recipes
+// (app)"), as Fleet's records show it, since the agent is the app's own
+// business.
+func runAgentLabel(a AgentRecord) string {
+	if appOwnedAgent(a) {
+		return appAgentName(a) + " (app)"
+	}
+	return a.Name
+}
+
+// appRunLabel is owner's app slug as running work done for it is listed:
+// "Recipes (app)".
+func appRunLabel(owner, slug string) string {
+	return appAgentName(AgentRecord{Owner: owner, OwningApp: slug}) + " (app)"
+}
+
 // appAgentLabels are user's app agents, each named by its app ("Recipes
 // (app)"): how Fleet's records of runs, spend and blocks show what an app's
 // agent did, since the agent itself is the app's own business.

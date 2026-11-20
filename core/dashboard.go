@@ -163,6 +163,7 @@ func ServeDashboard(addr string) error {
 	mux.HandleFunc("/api/dashboard/band", host.handleDashboardBand)
 	mux.HandleFunc("/api/dashboard/seen", host.handleDashboardSeen)
 	mux.HandleFunc("/api/live", host.handleLive)
+	mux.HandleFunc(loopStopPath, handleLoopStop)
 	mux.HandleFunc("/api/changes", handleChanges)
 	mux.HandleFunc("/debug/pprof/", handlePprof)
 	mux.HandleFunc("/api/notify-preference", handleNotifyPreference)
@@ -560,6 +561,14 @@ func ViewLive(r *http.Request, entries []LiveEntry) []LiveEntry {
 func (d dashboardHost) viewLive(r *http.Request, entries []LiveEntry) []LiveEntry {
 	entries = append([]LiveEntry(nil), entries...)
 	viewer := AuthCurrentUser(r)
+	admin := RequestIsAdmin(r)
+	kept := entries[:0]
+	for _, e := range entries {
+		if !e.AdminOnly || admin {
+			kept = append(kept, e)
+		}
+	}
+	entries = kept
 	for i := range entries {
 		// Label masking runs FIRST and unconditionally — it is about who
 		// the work belongs to, not about whether this viewer can navigate

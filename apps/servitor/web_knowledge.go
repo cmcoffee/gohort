@@ -129,7 +129,7 @@ func (T *Servitor) handleRepoRefresh(c *jsonapi.Call, req applianceReq) (any, er
 	// 202. The AgentLoopPanel subscribes to the same event stream.
 	sid := UUIDv4()
 	ctx, cancel := context.WithCancel(AppContext())
-	probeSessions.Register(sid, "Refreshing "+rec.Name, cancel).SetOwner(userID)
+	ctx = listedSession(ctx, sid, "Refreshing "+rec.Name, userID, cancel)
 	sessionAppliances.Store(sid, rec.ID)
 	go func() {
 		defer cancel()

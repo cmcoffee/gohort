@@ -393,7 +393,7 @@ func (T *OrchestrateApp) foldOperatorHistory(udb Database, owner string, agent A
 	// a channel answered "Sorry: I ran into a problem". The session slot is
 	// the turn's; the fold is beside it.
 	ctx, run := T.runsRegistry().CreateCancellable(context.Background(), owner, agent.ID, "")
-	run.Describe("compaction", agent.Name, "Compacting the thread")
+	run.Describe("compaction", runAgentLabel(agent), "Compacting the thread")
 	run.SetDetail(fmt.Sprintf("summarizing %d messages", len(cm)-st.SummarizedThrough))
 	newSt, facts, changed, err := CompactConversation(ctx, cm, st, cfg, fold)
 	run.Complete(runOutcomeStatus(err, true))

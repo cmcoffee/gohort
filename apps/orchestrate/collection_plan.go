@@ -98,7 +98,7 @@ func (T *OrchestrateApp) draftPlan(ctx context.Context, udb Database, c Collecti
 // startDraftPlan drafts c's plan in the background; false when a draft is
 // already running.
 func (T *OrchestrateApp) startDraftPlan(udb Database, c Collection) bool {
-	_, started := curations.start(planKey(c.ID), "Drafting a plan", 0, nil, func(ctx context.Context, note func(string)) (string, error) {
+	_, started := curations.start(planKey(c.ID), c, "Drafting a plan", 0, nil, func(ctx context.Context, note func(string)) (string, error) {
 		return T.draftPlan(ctx, udb, c, note)
 	})
 	return started

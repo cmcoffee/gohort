@@ -784,6 +784,23 @@ func TestADraftsScriptsRunItsPipelineAndAgent(t *testing.T) {
 	if !sawCall(n, "Old prompt.", "Brief: today") || sawCall(n, "", "Drafted brief") {
 		t.Error("a live run_pipeline ran the draft's")
 	}
+	// Listed with the running work under the app's name, its agent stage
+	// nested under it under the same name.
+	name := appRunLabel("u", "desk")
+	pipes := map[string]bool{}
+	snaps := app.runsRegistry().Activity("u")
+	for _, s := range snaps {
+		if s.Kind == "pipeline" && s.AgentName == name && strings.Contains(s.Label, "today") {
+			pipes[s.ID] = true
+		}
+	}
+	staged := false
+	for _, s := range snaps {
+		staged = staged || (s.Kind == "dispatch" && s.AgentName == name && pipes[s.ParentID])
+	}
+	if len(pipes) == 0 || !staged {
+		t.Errorf("a script's pipeline run is not listed under the app, with its stage under it: %+v", snaps)
+	}
 	n = fake.Calls()
 	if _, _, _, err := app.AppAgentRun(ctx, "u", "u", "desk", clerk.ID, "", "Hello.", t.TempDir()); err != nil {
 		t.Fatal(err)

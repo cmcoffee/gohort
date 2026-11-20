@@ -160,9 +160,10 @@ var runCtxKey runCtxKeyT
 
 // withParentRun tags ctx with the ID of the run currently executing under it.
 // Every run-creation site calls this on the ctx it hands to the loop, so any
-// dispatch that fires inside inherits the ID as its parent.
+// dispatch that fires inside inherits the ID as its parent. Work under a run is
+// listed with it, so its agent loops add no row of their own (core.ListedWork).
 func withParentRun(ctx context.Context, runID string) context.Context {
-	return context.WithValue(ctx, runCtxKey, runID)
+	return context.WithValue(ListedWork(ctx), runCtxKey, runID)
 }
 
 // parentRunFromCtx returns the enclosing run ID tagged on ctx, or "" at the top.
@@ -462,9 +463,12 @@ func NewRunRegistry() *RunRegistry {
 // The returned context MUST be the one the work uses. Shadowing the caller's
 // (ctx, run := ...CreateCancellable(ctx, ...)) is the point: a derived context
 // nobody passes on is the same no-op with more steps.
+//
+// The run is listed, so the agent loops run under the returned context add no
+// row of their own (core.ListedWork).
 func (rr *RunRegistry) CreateCancellable(ctx context.Context, userID, agentID, sessionID string) (context.Context, *Run) {
 	ctx, cancel := context.WithCancel(ctx)
-	return ctx, rr.Create(userID, agentID, sessionID, cancel)
+	return ListedWork(ctx), rr.Create(userID, agentID, sessionID, cancel)
 }
 
 // Create starts a new Run, registers it under both its ID and its
@@ -785,4 +789,27 @@ func cardFrameID(frame []byte) string {
 		}
 	}
 	return ""
+}
+
+// listedRun lists work that is no agent's turn of its own (a script's
+// pipeline, a publish, a read-back) with the running work (the Monitor, the
+// live pill), under user: kind and name for its row, label for what it was
+// asked, nested under the run that started it, and what it starts nested
+// under it. The returned ctx is what the work runs under, so Stop reaches it;
+// end records how it ended.
+func (T *OrchestrateApp) listedRun(ctx context.Context, user, kind, name, label string) (context.Context, func(err error)) {
+	parent := parentRunFromCtx(ctx)
+	ctx, run := T.runsRegistry().CreateCancellable(ctx, user, "", "")
+	run.Describe(kind, name, truncateObs(label, 100)).Parent(parent)
+	ctx = withParentRun(ctx, run.ID)
+	return ctx, func(err error) {
+		switch {
+		case err == nil:
+			run.Complete(RunStatusCompleted)
+		case errors.Is(ctx.Err(), context.Canceled):
+			run.Complete(RunStatusCanceled)
+		default:
+			run.Complete(RunStatusFailed)
+		}
+	}
 }

@@ -1,6 +1,8 @@
 package core
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"sort"
@@ -84,6 +86,11 @@ type LiveEntry struct {
 	// framework-generated; the default remains mask-everything, because the
 	// cost of being wrong here is reading someone else's prompt off a pill.
 	PublicLabel bool `json:"-"`
+	// AdminOnly keeps the entry from everyone but administrators. For work
+	// with no owner to show it to: an agent loop whose caller named nobody
+	// (see ListLoopAs) is still running on this machine, and someone who
+	// runs the machine should be able to see it and stop it.
+	AdminOnly bool `json:"-"`
 }
 
 // MaskedLabel returns the entry's label as viewer should see it: unchanged
@@ -310,4 +317,159 @@ func AllLiveSessions() []LiveEntry {
 	}
 	all = append(all, GlobalQueue().QueuedEntries()...)
 	return all
+}
+
+// --- Agent loops among the running work ---
+//
+// Every agent loop shows among the running work (the Monitor, the live pill),
+// whatever started it. Most already do: orchestrate lists its runs, a
+// pipeline run and a Servitor session list themselves, and each marks the
+// context it runs work under (ListedWork) so the loop adds nothing. A loop
+// under no such mark lists itself here while it runs: for the owner and in
+// the words its caller gave (ListLoopAs), with its round and tools as the
+// status, and a Stop. A loop nobody named is listed for administrators only,
+// as its app's agent work, and the app is logged once so its caller can be
+// named. Loops a listed loop starts run under its mark and add no row.
+
+type loopListKeyT struct{}
+
+var loopListKey loopListKeyT
+
+// loopListing is what a context says about the agent loops run under it:
+// already shown somewhere (listed), or whose they are and what to call them.
+type loopListing struct {
+	listed       bool
+	owner, label string
+}
+
+// ListedWork marks ctx as work that already has a row among the running work,
+// so an agent loop run under it does not add a second one. Whatever lists
+// work and runs agent loops under it calls this on the context it hands on.
+func ListedWork(ctx context.Context) context.Context {
+	return context.WithValue(ctx, loopListKey, loopListing{listed: true})
+}
+
+// ListLoopAs names the agent loops run under ctx for the running work: owner
+// is the user whose work it is, who sees the label and may stop it; label is
+// what it is, in words the app wrote. Never the prompt or a message: everyone
+// else sees the row masked, but the owner's own screen is not the only place
+// a label ends up. An empty label lists it as the app's agent work.
+func ListLoopAs(ctx context.Context, owner, label string) context.Context {
+	return context.WithValue(ctx, loopListKey, loopListing{owner: strings.TrimSpace(owner), label: strings.TrimSpace(label)})
+}
+
+// loopStopPath is where a POST stops a listed loop (?id=).
+const loopStopPath = "/api/live/stop"
+
+var (
+	loopRows    = NewLiveSessionMap[struct{}](0)
+	loopRowMu   sync.Mutex
+	loopRowApp  = map[string]string{} // row id -> the app running the loop
+	loopUnnamed sync.Map              // apps already logged for an unnamed loop
+)
+
+func init() { RegisterLiveProvider(loopLiveEntries) }
+
+// loopLiveEntries is the loops listed here, as live entries.
+func loopLiveEntries() []LiveEntry {
+	entries := loopRows.ActiveSessions()
+	loopRowMu.Lock()
+	defer loopRowMu.Unlock()
+	for i := range entries {
+		entries[i].App = loopRowApp[entries[i].ID]
+		entries[i].CancelURL = loopStopPath + "?id=" + url.QueryEscape(entries[i].ID)
+		if entries[i].Owner == "" {
+			// The label is the framework's own (loopAppLabel), and the
+			// row is for administrators only.
+			entries[i].PublicLabel, entries[i].AdminOnly = true, true
+		}
+	}
+	return entries
+}
+
+// loopAppLabel is how a loop nobody named is listed: as its app's agent work.
+func loopAppLabel(app string) string {
+	if app == "" {
+		return "Agent work"
+	}
+	return strings.ToUpper(app[:1]) + app[1:] + " agent work"
+}
+
+// loopStepStatus is a round of the loop as a row's status: which round, and
+// the tools it called.
+func loopStepStatus(st StepInfo) string {
+	status := fmt.Sprintf("round %d", st.Round)
+	var names []string
+	seen := map[string]bool{}
+	for _, tc := range st.ToolCalls {
+		if tc.Name != "" && !seen[tc.Name] {
+			seen[tc.Name] = true
+			names = append(names, tc.Name)
+		}
+	}
+	if len(names) > 0 {
+		status += ", " + strings.Join(names, ", ")
+	}
+	return status
+}
+
+// listLoop lists the agent loop of app about to run under ctx, unless
+// something already lists it. The returned ctx is what the loop runs under,
+// so Stop reaches it and the loops it starts add no row; end takes the row
+// off when the loop returns. cfg's OnStep is wrapped to keep the status.
+func listLoop(ctx context.Context, app string, cfg *AgentLoopConfig) (_ context.Context, end func()) {
+	l, _ := ctx.Value(loopListKey).(loopListing)
+	if l.listed {
+		return ctx, func() {}
+	}
+	label := l.label
+	if l.owner == "" || label == "" {
+		label = loopAppLabel(app)
+	}
+	if l.owner == "" {
+		if _, logged := loopUnnamed.LoadOrStore(app, true); !logged {
+			Log("[agent_loop] an agent loop of %q names no owner, so it is listed for administrators only (core.ListLoopAs)", app)
+		}
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	id := UUIDv4()
+	loopRowMu.Lock()
+	loopRowApp[id] = app
+	loopRowMu.Unlock()
+	loopRows.Register(id, label, cancel).SetOwner(l.owner)
+	prev := cfg.OnStep
+	cfg.OnStep = func(st StepInfo) {
+		loopRows.UpdateStatus(id, loopStepStatus(st))
+		if prev != nil {
+			prev(st)
+		}
+	}
+	return ListedWork(ctx), func() {
+		loopRows.AppendEvent(id, struct{}{}, true)
+		loopRowMu.Lock()
+		delete(loopRowApp, id)
+		loopRowMu.Unlock()
+		// Ended rows are no longer listed; the map lets go of them a
+		// minute on, as every live session map does after its own wait.
+		loopRows.ScheduleCleanupAfter(id, time.Minute)
+		cancel()
+	}
+}
+
+// handleLoopStop is POST /api/live/stop?id=: stops a listed loop, for its
+// owner, or for an administrator when it has none. Anyone else, and an id
+// that is not running, gets the same 404.
+func handleLoopStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	id := r.URL.Query().Get("id")
+	owner, ok := loopRows.OwnerOf(id)
+	if !ok || !(loopRows.MayView(AuthCurrentUser(r), id) || owner == "" && RequestIsAdmin(r)) || !loopRows.CancelSession(id) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	LiveChanged()
+	w.WriteHeader(http.StatusOK)
 }

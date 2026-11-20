@@ -82,10 +82,14 @@ const credentialPublisherReadBackPrompt = `After your change, read the page once
 // owner's standing instruction and the Publish press is the act that asked for
 // it; a confirmation card here would have nobody to answer it.
 func registerCredentialPublisher(app *OrchestrateApp) {
-	docs.RegisterCredentialPublisher(func(ctx context.Context, user, credential, instruction string) (string, string, error) {
+	docs.RegisterCredentialPublisher(func(ctx context.Context, user, credential, instruction string) (_, _ string, err error) {
 		if app == nil {
 			return "", "", errors.New("orchestrate runtime not initialized")
 		}
+		// Listed with the running work while it goes, nested under the chat
+		// turn or job that asked for it.
+		ctx, end := app.listedRun(ctx, user, "publish", "Publishing through "+strings.TrimPrefix(credential, docs.MCPIntegrationPrefix), instruction)
+		defer func() { end(err) }()
 		// Started from a chat's publish_document call, the run shows on that
 		// call's card as it goes: its round, its thinking, and each step
 		// (dispatch_progress.go). Without it the card sat still for the whole

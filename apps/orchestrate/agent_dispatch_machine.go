@@ -462,6 +462,9 @@ func (t *chatTurn) runDispatchedMachine(ctx context.Context, def MachineDef, msg
 // a different answer depending on whose Outage Review it is, and the pill is
 // where somebody looks first.
 func machineRunLabel(t *chatTurn, def MachineDef) string {
+	if strings.TrimSpace(def.OwningApp) != "" {
+		return appRunLabel(def.Owner, def.OwningApp)
+	}
 	if t.foreignMachine(def) {
 		return def.Name + " (shared by " + def.Owner + ")"
 	}

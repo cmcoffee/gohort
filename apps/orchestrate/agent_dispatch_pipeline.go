@@ -501,6 +501,9 @@ func (t *chatTurn) runDetachedPipeline(d *ToolSession, def PipelineDef, msg stri
 // Report" has a different answer depending on whose Payroll Report it is, and
 // the pill is where somebody looks first.
 func pipelineRunLabel(t *chatTurn, def PipelineDef) string {
+	if strings.TrimSpace(def.OwningApp) != "" {
+		return appRunLabel(def.Owner, def.OwningApp)
+	}
 	if t.foreignPipeline(def) {
 		return def.Name + " (shared by " + def.Owner + ")"
 	}

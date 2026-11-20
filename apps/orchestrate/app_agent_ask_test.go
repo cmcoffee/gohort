@@ -66,4 +66,13 @@ func TestAnAppAskIsARunUnderWhoAsked(t *testing.T) {
 	if len(app.runsRegistry().Activity("alice")) != 0 {
 		t.Error("the run was filed under the owner, whose pill would show bob's prompt")
 	}
+	// An app's own agent is listed under the app's name.
+	SaveAppSpec(AppSpec{Owner: "alice", Slug: "ticker", Name: "Ticker", Sections: []byte(`[{"id":"page","kind":"html","html":"<p>x</p>"}]`)})
+	saveAgent(UserDB(root, "alice"), AgentRecord{ID: "own", Owner: "alice", Name: "Quote", OrchestratorPrompt: "Quotes.", OwningApp: "ticker", appEdit: "Builder"})
+	if _, _, err := app.AppAgentAsk(context.Background(), "alice", "carol", "own", "Quote NVDA", false); err != nil {
+		t.Fatal(err)
+	}
+	if runs := app.runsRegistry().Activity("carol"); len(runs) != 1 || runs[0].AgentName != "Ticker (app)" {
+		t.Errorf("an app's own agent's ask is listed as: %+v", runs)
+	}
 }

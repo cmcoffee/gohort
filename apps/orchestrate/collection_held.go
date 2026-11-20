@@ -518,7 +518,7 @@ func (T *OrchestrateApp) collectionHeldSettleStart(call *jsonapi.Call, _ struct{
 	if T.LLM == nil {
 		return nil, jsonapi.BadRequest("no model is set up to settle it")
 	}
-	_, started := curations.start(settleKey(c.ID, s.ID), "Settling it", 0, nil, func(ctx context.Context, note func(string)) (string, error) {
+	_, started := curations.start(settleKey(c.ID, s.ID), c, "Settling it", 0, nil, func(ctx context.Context, note func(string)) (string, error) {
 		return T.settle(ctx, c, s.ID, note)
 	})
 	if !started {

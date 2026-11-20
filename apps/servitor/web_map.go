@@ -37,7 +37,7 @@ func (T *Servitor) handleMap(c *jsonapi.Call, req struct {
 
 	sid := UUIDv4()
 	ctx, cancel := context.WithCancel(AppContext())
-	probeSessions.Register(sid, "Refreshing "+appliance.Name, cancel).SetOwner(userID)
+	ctx = listedSession(ctx, sid, "Refreshing "+appliance.Name, userID, cancel)
 	sessionAppliances.Store(sid, appliance.ID)
 	ch := make(chan bool, 1)
 	confirmChans.Store(sid, pendingConfirm{ch: ch, owner: userID, interactive: true})
@@ -103,7 +103,7 @@ func (T *Servitor) handleMapApp(c *jsonapi.Call, req mapAppReq) (any, error) {
 
 	sid := UUIDv4()
 	ctx, cancel := context.WithCancel(AppContext())
-	probeSessions.Register(sid, "Mapping "+req.Command+" on "+appliance.Name, cancel).SetOwner(userID)
+	ctx = listedSession(ctx, sid, "Mapping "+req.Command+" on "+appliance.Name, userID, cancel)
 	sessionAppliances.Store(sid, appliance.ID)
 	ch := make(chan bool, 1)
 	confirmChans.Store(sid, pendingConfirm{ch: ch, owner: userID, interactive: true})

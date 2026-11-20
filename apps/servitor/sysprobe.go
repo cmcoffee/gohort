@@ -999,7 +999,8 @@ func (T *Servitor) Main() error {
 		)},
 	}
 
-	resp, _, err := T.RunAgentLoop(mainCtx, messages, AgentLoopConfig{
+	// Run from the terminal, which shows it: no row among the running work.
+	resp, _, err := T.RunAgentLoop(ListedWork(mainCtx), messages, AgentLoopConfig{
 		SystemPrompt: T.SystemPrompt() + "\n\n" + scratch_guidance(scratch),
 		Tools:        []AgentToolDef{run_tool},
 		MaxRounds:    T.input.max_rounds,

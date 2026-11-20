@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -231,5 +232,34 @@ func TestEchoAnswersWithTheName(t *testing.T) {
 	h(w, as(t, http.MethodGet, "/api/echo", "alice", ""))
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("a GET to echo answered %d, want 405", w.Code)
+	}
+}
+
+// A demo reply is listed among the running work while it runs, for the user
+// who asked, in the app's words and never the message.
+func TestADemoReplyIsListedWhileItRuns(t *testing.T) {
+	twoUsers(t)
+	freshStore(t)
+	T := &HelloAgent{}
+	hold := make(chan struct{})
+	T.LLM = &FakeLLM{Turns: []FakeTurn{{Wait: hold, Content: "Hi."}}}
+	h := routed(T)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h(httptest.NewRecorder(), as(t, http.MethodPost, "/api/agent/send", "alice", `{"message":"a private question"}`))
+	}()
+	var row LiveEntry
+	for deadline := time.Now().Add(5 * time.Second); row.ID == "" && time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		for _, e := range AllLiveSessions() {
+			if strings.HasPrefix(e.CancelURL, "/api/live/stop?id=") && e.Owner == "alice" {
+				row = e
+			}
+		}
+	}
+	close(hold)
+	<-done
+	if row.Label != "Hello demo reply" {
+		t.Errorf("the reply is listed as %q", row.Label)
 	}
 }

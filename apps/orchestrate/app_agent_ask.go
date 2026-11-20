@@ -48,7 +48,7 @@ func (T *OrchestrateApp) AppAgentAsk(ctx context.Context, owner, user, agentID, 
 	// which read as the button never reaching the agent. Under the person who
 	// asked: the label is their prompt, masked for everyone else.
 	ctx, liveRun := T.runsRegistry().CreateCancellable(ctx, user, agent.ID, "")
-	liveRun.Describe("ask", agent.Name, truncateObs(prompt, 100))
+	liveRun.Describe("ask", runAgentLabel(agent), truncateObs(prompt, 100))
 	defer liveRun.Complete(RunStatusFailed)
 	sys := strings.TrimSpace(agent.OrchestratorPrompt)
 	if r := strings.TrimSpace(agent.Rules); r != "" {
@@ -198,6 +198,10 @@ func (T *OrchestrateApp) AppPipelineRun(ctx context.Context, owner, user, slug, 
 	// In a draft's preview and checks, the pipeline as the draft has it; its
 	// agent steps ask the draft's agents through the same ctx (app_draft.go).
 	def = draftPipelineFor(ctx, def)
+	// Listed while it runs, under the app's name, its agent stages nested
+	// under it: a script's wait is otherwise invisible work.
+	ctx, end := T.listedRun(ctx, owner, "pipeline", appRunLabel(owner, slug), input)
+	defer func() { end(err) }()
 	// Worker stages bill to this tracker; agent stages to their own, added in.
 	ctx, mine := WithRequestUsage(ctx)
 	var mu sync.Mutex

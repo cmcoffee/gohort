@@ -214,3 +214,56 @@ func TestARunCapsTheCommandsItHasOpen(t *testing.T) {
 		t.Errorf("%d commands of 0.2s finished in %s: more than %d ran at once", execSlotsPerRun*2, took, execSlotsPerRun)
 	}
 }
+
+// loopRowsDuring runs an agent loop under ctx and returns the rows the loop
+// listed for itself (core's, stopped at /api/live/stop) while it ran.
+func loopRowsDuring(t *testing.T, ctx context.Context) []LiveEntry {
+	t.Helper()
+	var rows []LiveEntry
+	probe := AgentToolDef{
+		Tool: Tool{Name: "probe", Description: "d"},
+		Handler: func(context.Context, map[string]any) (string, error) {
+			for _, e := range AllLiveSessions() {
+				if strings.HasPrefix(e.CancelURL, "/api/live/stop?id=") {
+					rows = append(rows, e)
+				}
+			}
+			return "ok", nil
+		},
+	}
+	core := &AppCore{LLM: &FakeLLM{Turns: []FakeTurn{{ToolCalls: []ToolCall{{ID: "1", Name: "probe"}}}, {Content: "done"}}}}
+	if _, _, err := core.RunAgentLoop(ctx, []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{Tools: []AgentToolDef{probe}, MaxRounds: 3}); err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	return rows
+}
+
+// A session is listed (probeSessions) for its user, so the agent loops it
+// runs add no row of their own.
+func TestASessionsLoopsAddNoRowOfTheirOwn(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx = listedSession(ctx, "loop-row-test", "Mapping a box", "alice", cancel)
+	defer probeSessions.ScheduleCleanupAfter("loop-row-test", 0)
+	if owner, ok := probeSessions.OwnerOf("loop-row-test"); !ok || owner != "alice" {
+		t.Fatalf("the session is listed for its user: (%q, %v)", owner, ok)
+	}
+	if rows := loopRowsDuring(t, ctx); len(rows) != 0 {
+		t.Errorf("a session's loop added a row: %v", rows)
+	}
+}
+
+// Filing a turn's findings runs apart from the session, so it is listed as
+// its own: for the session's user, saying which system, for at most 120s.
+func TestFilingFindingsIsListedAsItsOwn(t *testing.T) {
+	pr := &probeRun{userID: "alice", appliance: Appliance{Name: "box"}}
+	ctx, cancel := pr.consolidationContext()
+	defer cancel()
+	if dl, ok := ctx.Deadline(); !ok || time.Until(dl) > 120*time.Second || time.Until(dl) < 100*time.Second {
+		t.Errorf("filing runs for up to 120s: %v %v", dl, ok)
+	}
+	rows := loopRowsDuring(t, ctx)
+	if len(rows) != 1 || rows[0].Owner != "alice" || rows[0].Label != "Servitor: filing what it found on box" {
+		t.Fatalf("filing is listed for the session's user: %+v", rows)
+	}
+}

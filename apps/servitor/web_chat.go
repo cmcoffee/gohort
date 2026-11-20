@@ -82,7 +82,7 @@ func (T *Servitor) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	sid := ensureSession(udb, appliance.ID, reqSID, req.Message)
 	ctx, cancel := context.WithCancel(AppContext())
-	probeSessions.Register(sid, label, cancel).SetOwner(userID)
+	ctx = listedSession(ctx, sid, label, userID, cancel)
 	sessionAppliances.Store(sid, appliance.ID)
 	ch := make(chan bool, 1)
 	confirmChans.Store(sid, pendingConfirm{ch: ch, owner: userID, interactive: true})

@@ -257,6 +257,11 @@ func (T *Anvil) runEvalAgent(ctx context.Context, c *toolCtx, task evalTask, s e
 	if h := agenthost.Get(); h != nil {
 		cfg = h.AppLoopGuard(ctx, c.user, anvilAgentID).Apply(cfg)
 	}
+	name := task.Title
+	if name == "" {
+		name = task.Name
+	}
+	ctx = ListLoopAs(ctx, c.user, "Anvil eval: "+name)
 	resp, _, err := T.RunAgentLoop(ctx, []Message{{Role: "user", Content: task.Request}}, cfg)
 	reply := ""
 	if resp != nil {

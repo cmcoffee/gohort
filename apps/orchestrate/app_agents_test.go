@@ -179,3 +179,23 @@ func TestTheHostSaysWhichAppAnAgentIsPartOf(t *testing.T) {
 		}
 	}
 }
+
+// A run of an app's agent, pipeline or machine is listed with the running
+// work under its app's name, as Fleet's records show it; anyone else's under
+// its own.
+func TestAnAppsRunsAreListedUnderTheApp(t *testing.T) {
+	turn, _ := copyTestTurn(t)
+	copyTestApp(t, turn, nil)
+	if got := runAgentLabel(AgentRecord{Owner: "u", Name: "Clerk", OwningApp: "desk"}); got != "Desk (app)" {
+		t.Errorf("an app's agent's run is listed as %q", got)
+	}
+	if got := runAgentLabel(AgentRecord{Owner: "u", Name: "Clerk"}); got != "Clerk" {
+		t.Errorf("a person's agent's run is listed as %q", got)
+	}
+	if got := pipelineRunLabel(turn, PipelineDef{Owner: "u", Name: "Brief", OwningApp: "desk"}); got != "Desk (app)" {
+		t.Errorf("an app's pipeline's run is listed as %q", got)
+	}
+	if got := machineRunLabel(turn, MachineDef{Owner: "u", Name: "Loop", OwningApp: "desk"}); got != "Desk (app)" {
+		t.Errorf("an app's machine's run is listed as %q", got)
+	}
+}

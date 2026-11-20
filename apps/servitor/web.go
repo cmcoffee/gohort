@@ -1,6 +1,7 @@
 package servitor
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -127,6 +128,14 @@ var (
 	termBuffers       sync.Map // "userID:applianceID" -> *termBuffer; persistent command+output log mirrored to any connected terminal WebSocket
 	sessionAppliances sync.Map // session_id -> applianceID (for building resume URLs in the dashboard live-sessions panel)
 )
+
+// listedSession lists a session among the running work, for user, and returns
+// ctx marked as listed, so the agent loops the session runs add no row of
+// their own (core.ListedWork). ctx is the session's own, the one cancel ends.
+func listedSession(ctx context.Context, sid, label, user string, cancel context.CancelFunc) context.Context {
+	probeSessions.Register(sid, label, cancel).SetOwner(user)
+	return ListedWork(ctx)
+}
 
 // Mid-flight injection-queue types + registry were lifted into
 // core/injection.go so phantom and orchestrate can share the same

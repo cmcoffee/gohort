@@ -21,12 +21,14 @@ func TestAPublishSendsTheDocumentByReference(t *testing.T) {
 
 	var mu sync.Mutex
 	var sent []map[string]any
+	var underRun string
 	wiki := AgentToolDef{
 		Tool: Tool{Name: "fetch_url_wiki", Description: "Call the wiki API.", Parameters: map[string]ToolParam{
 			"method": {Type: "string"}, "url": {Type: "string"}, "body": {Type: "string"}}},
-		Handler: func(_ context.Context, args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			mu.Lock()
 			sent = append(sent, args)
+			underRun = parentRunFromCtx(ctx)
 			mu.Unlock()
 			return `HTTP 200 OK` + "\n" + `{"id":"9","_links":{"webui":"https://wiki.example.com/9"}}`, nil
 		},
@@ -62,6 +64,15 @@ func TestAPublishSendsTheDocumentByReference(t *testing.T) {
 	}
 	if len(sent) != 1 || !strings.Contains(sent[0]["body"].(string), "THE-LAST-LINE") || strings.Contains(sent[0]["body"].(string), "{{document") {
 		t.Fatalf("the call did not carry the document: %.200v", sent)
+	}
+	// Listed with the running work for whoever asked, and how it ended.
+	// Its calls run under that run, so Stop on it reaches them.
+	listed := false
+	for _, r := range T.runsRegistry().Activity("alice") {
+		listed = listed || (r.Kind == "publish" && r.AgentName == "Publishing through wiki" && r.Status == RunStatusCompleted && r.ID == underRun)
+	}
+	if !listed {
+		t.Errorf("the publish is not listed with the running work, its calls under it (%q): %+v", underRun, T.runsRegistry().Activity("alice"))
 	}
 
 	// A success that names no page is not taken: the model is sent back for
