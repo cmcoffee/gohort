@@ -16,7 +16,7 @@
 
 -->
 
-# Gohort: Improvise, Adapt, Dispatch.
+# Gohort: Your models, your agents, your rules.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
@@ -52,6 +52,8 @@ Most MCP servers expose flat tools and leave the reasoning to the client. **goho
 - **The rounds of work run on your hardware**, and only the summary crosses the wire.
 
 It also adds what desktop clients lack: tool sets scoped per workflow, separate memory per domain, and stages routed by sensitivity. gohort is where those are configured; Claude Desktop stays the client.
+
+**Your apps are MCP servers too.** Each app has an address of its own, `/mcp/app/<slug>/`, whose tools are the actions, data sources and pipeline the app marks `expose`, and a key can be limited to that app alone. The owner can offer it to the people the app is shared with: each makes their own key, and their calls run on their own records. An action that confirms first asks its question in the client, mid-call.
 
 ## What makes it different
 
@@ -100,11 +102,11 @@ The same goes for MCP servers: where the administrator allows it (**Admin → In
 
 ## Built to extend
 
-**🏗️ A platform.** A web dashboard that runs a fleet: multi-agent dispatch with per-caller allowlists, declarative **pipelines**, **machines**, messaging **channels**, scheduled and event-triggered agents, multi-user auth with per-user data isolation, cross-user sharing, and cost telemetry.
+**🏗️ A platform.** A web dashboard that runs a fleet: multi-agent dispatch with per-caller allowlists, declarative **pipelines**, **machines**, messaging **channels**, scheduled and event-triggered agents, multi-user auth with per-user data isolation, cross-user sharing, and spending tracked per person, with monthly limits.
 
 **🧩 Extended from inside.** You grow gohort by asking for what it lacks. The Builder agent makes new tools, agents, apps, connectors and flows as data, each approved by you, with no Go and no rebuild. What it builds uses the same building blocks as the built-in apps: tables, forms, chat panels, pipelines.
 
-**🔧 For contributors.** The built-in apps are Go packages on a small app framework (`core/ui`). Registering one is about 20 lines, and it composes those same building blocks without hand-written HTML or DOM JavaScript. See [core/ui/AUTHORING.md](core/ui/AUTHORING.md).
+**🔧 For contributors.** The built-in apps are Go packages on a small app framework (`core/ui`). Registering one is about 20 lines, and it composes those same building blocks without hand-written HTML or DOM JavaScript. Its chat panels show each step as the turn runs, and take slash commands and `@` mentions. See [core/ui/AUTHORING.md](core/ui/AUTHORING.md).
 
 ## What it looks like in practice
 
@@ -214,6 +216,7 @@ Add `WebPath()` / `WebName()` / `WebDesc()` / `Routes()` and it gets a web dashb
 | App | What it is |
 |-----|-----------|
 | `orchestrate` | **Agency**: the agent fleet runner. Chat with seed agents (Chat, Builder, Research, ...) or your own; multi-layer governed per-(user, agent) memory, plan-driven authoring, sub-agent dispatch, attachable pipelines and machines |
+| `account` | Each person's own settings: preferences, connected accounts, and what they spend, with limits of their own |
 | `admin` | Operator panel: users, permissions, app groups, API credentials, MCP servers, connectors, tool/skill curation, and all service config |
 | `extensions` | What your agents draw on, in one place: credentials, tools, skills, connections, and your own MCP servers |
 | `agents` | One published agent, one URL: a permission-gated chat surface scoped to a single agent |
@@ -227,7 +230,7 @@ Add `WebPath()` / `WebName()` / `WebDesc()` / `Routes()` and it gets a web dashb
 | `codewriter` | Shell scripts, SQL queries and code snippets with an LLM co-editor |
 | `monitor` | Live view of what every agent and app is doing right now, with Cancel beside each run |
 | `mcpserver` | Expose gohort agents to an external MCP client (e.g. Claude Desktop) |
-| `customapps` | Host for Builder-authored apps (the My Apps tile) at `/apps/<slug>/`: declarative sections (form, table, chart, chat, workbench, pipeline, or a raw HTML canvas), a per-app record store, sandboxed data/action scripts, schedules, and per-user sharing or an anonymous link |
+| `customapps` | Host for Builder-authored apps (the My Apps tile) at `/apps/<slug>/`: declarative sections (form, table, chart, chat, workbench, pipeline, or a raw HTML canvas), a per-app record store, sandboxed data/action scripts, schedules, and per-user sharing (with managers) or an anonymous link. Every change is kept in the app's history, and an export can carry it, so a copy taken elsewhere can take the author's later updates |
 | `hello` | Minimal scaffold for a new app |
 | `openai_api` | OpenAI-compatible `/v1` endpoint: an external client drives a raw model tier or a full agent over the API shape it already speaks |
 | `ollama_proxy` | Ollama-protocol proxy on its own port, for clients that speak only Ollama; lends the worker model as `gohort` |
@@ -239,12 +242,6 @@ Full descriptions in the [reference](docs/REFERENCE.md#built-in-apps).
 ## Companion client
 
 **`gohort-desktop`**, a native Wails host (macOS): a viewer window plus an always-on menu-bar **Bridge** daemon that owns the host's OS permissions (filesystem, screenshot, contacts) and, on macOS, relays iMessage into the Bridges app. Its tool surface is expandable at runtime: the server can push an admin-approved, user-consented capability that lands as a new local tool without reshipping. See [`gohort-desktop/README.md`](gohort-desktop/README.md).
-
-## Roadmap
-
-- **Artifact marketplace**: every artifact type already exports as a portable, identity-free bundle; next is a remote catalog with signing and provenance, so a pipeline or agent recipe can move between deployments like a package.
-- **Scoping parity across primitives**: collections and tools have per-user and shared tiers; skills are catching up.
-- **Machines on dispatched turns**: a schedule firing, a delegation or a sub-agent call runs without the machine, because those paths have no session to hold a position in.
 
 ## Learn more
 
