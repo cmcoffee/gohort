@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -53,6 +54,14 @@ const (
 	// cookie — can read it without opening the viewer's store. This is
 	// what makes the key auto-negotiated instead of a manual setup step.
 	API_KEY_SIDECAR = "api_key.txt"
+
+	// VIEWER_PORT_SIDECAR is the loopback port the viewer's window was last
+	// served on. The page's origin includes the port, and the webview keeps
+	// what a page stores (its per-device settings) per origin, so a new port
+	// every launch was a page that forgot them every launch. A plain file,
+	// as the viewer opens either store depending on whether the daemon holds
+	// the shared one, and the port must be the same either way.
+	VIEWER_PORT_SIDECAR = "viewer_port.txt"
 )
 
 // StoredCookie pairs a cookie with the origin URL it came from. The
@@ -255,6 +264,36 @@ func ReadAPIKeySidecar() string {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
+}
+
+// ReadViewerPortSidecar is the port the viewer was last served on, 0 when
+// none is recorded or the file does not hold a port.
+func ReadViewerPortSidecar() int {
+	dir, err := settings_dir()
+	if err != nil {
+		return 0
+	}
+	b, err := os.ReadFile(filepath.Join(dir, VIEWER_PORT_SIDECAR))
+	if err != nil {
+		return 0
+	}
+	p, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || p <= 0 || p > 65535 {
+		return 0
+	}
+	return p
+}
+
+// WriteViewerPortSidecar records the port the viewer is served on.
+func WriteViewerPortSidecar(port int) error {
+	dir, err := settings_dir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, VIEWER_PORT_SIDECAR), []byte(strconv.Itoa(port)), 0o600)
 }
 
 // Close flushes and releases the underlying bolt file. Call from the

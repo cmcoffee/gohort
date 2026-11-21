@@ -76,7 +76,8 @@ func runViewer() {
 	width, height := cfg.WindowSize()
 	app := NewApp(cfg, cookies)
 
-	// Local HTTP listener on 127.0.0.1:<random>. WKWebView refuses to
+	// Local HTTP listener on 127.0.0.1, on the port the last launch used
+	// (listenLocal). WKWebView refuses to
 	// upgrade WebSocket connections from its custom-scheme handler
 	// (wails://wails.localhost/...), which broke xterm panels and any
 	// other WS-dependent feature when running through the desktop app.
@@ -94,7 +95,7 @@ func runViewer() {
 	// for WS to work; only the transport in front of it needs to be
 	// real HTTP rather than the custom URL scheme.
 	proxyHandler := new_gohort_proxy(cfg, configure_html, cookies, app)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := listenLocal()
 	if err != nil {
 		core.Fatal("gohort-desktop: local listener: %v", err)
 	}
