@@ -683,3 +683,126 @@ func TestARefusalSaysWhyItStopped(t *testing.T) {
 		t.Errorf("an explanation alone: %q", got)
 	}
 }
+
+// A call somebody watches (a ReasoningHandler) asks an adaptive model for a
+// summary of its thinking, since the newer models send it as an empty block
+// otherwise and the page's "Thinking" line never starts. Only the adaptive
+// shape carries it: never the off-switch (between_tools refuses it), never
+// the budgeted shape, and never an unwatched call, where nothing would show
+// it. A call that leaves thinking unasked is sent the model's own default,
+// adaptive, only to carry the display, and only once the model is known to
+// think unasked.
+func TestAWatchedCallAsksToSeeTheThinking(t *testing.T) {
+	adaptTestDB(t)
+	on, off := true, false
+	watch := func(string) {}
+	const adaptive, budgeted = "claude-test-display-adaptive", "claude-test-display-budgeted"
+	noteAdaptiveThinking(adaptive)
+
+	cases := []struct {
+		name    string
+		cfg     ChatConfig
+		want    string // the thinking type sent, "" for none
+		display string
+	}{
+		{"asked, watched", ChatConfig{Model: adaptive, Think: &on, ReasoningHandler: watch}, "adaptive", "summarized"},
+		{"asked, unwatched", ChatConfig{Model: adaptive, Think: &on}, "adaptive", ""},
+		{"unasked, watched", ChatConfig{Model: adaptive, ReasoningHandler: watch}, "adaptive", "summarized"},
+		{"unasked, unwatched", ChatConfig{Model: adaptive}, "", ""},
+		{"off, watched", ChatConfig{Model: adaptive, Think: &off, ReasoningHandler: watch}, "disabled", ""},
+		{"budgeted, watched", ChatConfig{Model: budgeted, Think: &on, ReasoningHandler: watch}, "enabled", ""},
+		{"budgeted unasked, watched", ChatConfig{Model: budgeted, ReasoningHandler: watch}, "", ""},
+	}
+	for _, c := range cases {
+		blk, out, _ := anthThinkingFor(c.cfg, 8192)
+		got, display := "", ""
+		if blk != nil {
+			got, display = blk.Type, blk.Display
+		}
+		if got != c.want || display != c.display {
+			t.Errorf("%s: sent %q display %q; want %q display %q", c.name, got, display, c.want, c.display)
+		}
+		if c.cfg.Think == nil && out != nil {
+			t.Errorf("%s: unasked call sent an effort %+v; want the model's own default", c.name, out)
+		}
+	}
+
+	blk, _, _ := anthThinkingFor(ChatConfig{Model: adaptive, ReasoningHandler: watch}, 8192)
+	b, _ := json.Marshal(blk)
+	if string(b) != `{"type":"adaptive","display":"summarized"}` {
+		t.Errorf("wire = %s", b)
+	}
+}
+
+// A model that refuses the display is believed: the refusal moves the field,
+// so the call is rebuilt without it, and the thinking shape is left alone.
+func TestARefusedThinkingDisplayIsDropped(t *testing.T) {
+	adaptTestDB(t)
+	on := true
+	const model = "claude-test-display-refused"
+	noteAdaptiveThinking(model)
+	err := noteIfAdaptiveThinking(model, &APIError{Provider: "bedrock-runtime", StatusCode: 400,
+		Message: "thinking.adaptive.display: Extra inputs are not permitted"})
+	if f, moved := adaptedField(err); !moved || f != fieldThinkingDisplay {
+		t.Fatalf("refusal moved %q (%v); want %q", f, moved, fieldThinkingDisplay)
+	}
+	blk, _, _ := anthThinkingFor(ChatConfig{Model: model, Think: &on, ReasoningHandler: func(string) {}}, 8192)
+	if blk == nil || blk.Type != anthThinkAdaptive || blk.Display != "" {
+		t.Errorf("after the refusal sent %+v; want adaptive, no display", blk)
+	}
+	if blk, _, _ := anthThinkingFor(ChatConfig{Model: model, ReasoningHandler: func(string) {}}, 8192); blk != nil {
+		t.Errorf("unasked after the refusal sent %+v; want nothing", blk)
+	}
+	if isThinkingDisplayErr(errors.New(`"thinking.type.enabled" is not supported for this model`)) {
+		t.Error("a refusal of the thinking type read as one of the display")
+	}
+}
+
+// A reply that holds a thinking block on a call that left thinking unasked
+// says the model thinks on its own: it is on the adaptive shape from there,
+// so the next watched call asks to see it. Hidden thinking counts, on both
+// streams: the Messages stream opens an empty block, Converse sends only a
+// signature. A call that asked about thinking, or a reply with none, teaches
+// nothing.
+func TestAModelThatThinksUnaskedIsOnTheAdaptiveShape(t *testing.T) {
+	adaptTestDB(t)
+	messages := func(model string, thinks bool) {
+		st := &anthStreamState{unasked: model}
+		if thinks {
+			st.feed([]byte(`{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`))
+			st.feed([]byte(`{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig"}}`))
+		}
+		st.feed([]byte(`{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}`))
+		st.feed([]byte(`{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"hi"}}`))
+		st.feed([]byte(`{"type":"message_delta","delta":{"stop_reason":"end_turn"}}`))
+		st.finish("test", nil)
+	}
+	converse := func(model string) {
+		st := &anthStreamState{unasked: model}
+		cs := &converseStream{st: st, started: map[int]bool{}}
+		cs.apply("contentBlockDelta", []byte(`{"contentBlockIndex":0,"delta":{"reasoningContent":{"signature":"sig"}}}`))
+		cs.apply("contentBlockStop", []byte(`{"contentBlockIndex":0}`))
+		cs.apply("contentBlockDelta", []byte(`{"contentBlockIndex":1,"delta":{"text":"hi"}}`))
+		cs.apply("messageStop", []byte(`{"stopReason":"end_turn"}`))
+		st.finish("test", nil)
+	}
+
+	messages("claude-test-thinks-unasked", true)
+	converse("claude-test-thinks-unasked-converse")
+	messages("claude-test-thinks-not", false)
+	messages("", true) // the call asked about thinking
+
+	for model, want := range map[string]string{
+		"claude-test-thinks-unasked":          anthThinkAdaptive,
+		"claude-test-thinks-unasked-converse": anthThinkAdaptive,
+		"claude-test-thinks-not":              anthThinkBudgeted,
+	} {
+		if got := thinkingStyleFor(model); got != want {
+			t.Errorf("%s: shape %q, want %q", model, got, want)
+		}
+	}
+	on := true
+	if unaskedThinking(ChatConfig{Model: "m", Think: &on}) != "" || unaskedThinking(ChatConfig{Model: "m"}) != "m" {
+		t.Error("unaskedThinking: want the model only when thinking was left unasked")
+	}
+}

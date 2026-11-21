@@ -232,6 +232,12 @@ type anthThinking struct {
 	// BudgetTokens is the reasoning allowance for the BUDGETED shape. Omitted
 	// for adaptive, where the model decides and effort is the dial.
 	BudgetTokens int `json:"budget_tokens,omitempty"`
+	// Display asks for the thinking as text. The newer models leave it out
+	// unless asked ("summarized" sends a summary of it), and without it
+	// nothing reaches ReasoningHandler, so the page's "Thinking" line never
+	// starts while the model thinks. Set by anthThinkingFor on the adaptive
+	// shape only, and only when a handler will see it (anthShowsThinking).
+	Display string `json:"display,omitempty"`
 }
 
 // anthOutputConfig carries the effort dial that goes with adaptive thinking.
@@ -292,6 +298,56 @@ func noteAdaptiveThinking(model string) {
 		return
 	}
 	setAdaptedStep(model, fieldThinkingShape, anthThinkAdaptive, nil)
+}
+
+// Seeing the thinking. The newer models send their thinking as an empty
+// block unless asked for display "summarized", so a call with somebody
+// watching (a ReasoningHandler) asks for it. The summary is all that is
+// shown, the thinking billed is the same, and gohort never sends it back.
+// A model that refuses the field is believed and sent none from then on.
+const (
+	anthDisplaySummarized = "summarized"
+	anthDisplayOmit       = "omit"
+)
+
+// fieldThinkingDisplay is whether a model is asked for its thinking as text,
+// a request field (request_adapt.go): summarized until the model refuses it.
+const fieldThinkingDisplay = "thinking.display"
+
+func init() {
+	registerRequestField(requestField{
+		key: fieldThinkingDisplay,
+		top: anthDisplaySummarized,
+		next: func(current string, err error) (string, bool) {
+			if current == anthDisplaySummarized && isThinkingDisplayErr(err) {
+				return anthDisplayOmit, true
+			}
+			return "", false
+		},
+		said: func(model, _, _ string, _ error) {
+			Log("[llm] %s refused a summary of its thinking: its thinking stays hidden from now on", model)
+		},
+		label: "Thinking shown",
+		sends: func(string) string { return "no thinking summary: the model's thinking stays hidden" },
+	})
+}
+
+// isThinkingDisplayErr reports a refusal of the thinking display field.
+func isThinkingDisplayErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "thinking") && strings.Contains(msg, "display")
+}
+
+// anthShowsThinking is the display to ask for on an adaptive thinking block:
+// a summary when a handler will show it and the model has not refused one.
+func anthShowsThinking(cfg ChatConfig) string {
+	if cfg.ReasoningHandler == nil || adaptedStep(cfg.Model, fieldThinkingDisplay) != anthDisplaySummarized {
+		return ""
+	}
+	return anthDisplaySummarized
 }
 
 // Turning thinking off, per model. Claude's models each have their own
@@ -490,7 +546,9 @@ func isUnsupportedThinkingTypeErr(err error) bool {
 //
 // Returns nil when thinking is off or unasked-for, which keeps every existing
 // call byte-identical — this changes nothing until a route or an agent asks for
-// thinking, so no bill moves by surprise.
+// thinking, so no bill moves by surprise. The one exception is a model that
+// thinks unasked anyway, on a call somebody watches: it is sent its own
+// default, adaptive, with the display that lets the thinking be seen.
 //
 // Thinking asked OFF is sent as the model's own off-switch (anthThinkingOff),
 // not left out: on the newer models leaving it out runs adaptive thinking,
@@ -501,6 +559,13 @@ func anthThinkingFor(cfg ChatConfig, maxTokens int) (*anthThinking, *anthOutputC
 		return anthThinkingOff(cfg.Model, maxTokens)
 	}
 	if cfg.Think == nil {
+		// A model on the adaptive shape thinks when the setting is left out
+		// (noteThinksUnasked learns it from the reply). Sending its default,
+		// {type: adaptive}, is the same call; it is sent only to carry the
+		// display, so a page watching sees the model think.
+		if display := anthShowsThinking(cfg); display != "" && thinkingStyleFor(cfg.Model) == anthThinkAdaptive {
+			return &anthThinking{Type: anthThinkAdaptive, Display: display}, nil, maxTokens
+		}
 		return nil, nil, maxTokens
 	}
 	budget := anthDefaultThinkBudget
@@ -518,7 +583,7 @@ func anthThinkingFor(cfg ChatConfig, maxTokens int) (*anthThinking, *anthOutputC
 		if effort == "" {
 			effort = budgetAsEffort(budget)
 		}
-		return &anthThinking{Type: anthThinkAdaptive},
+		return &anthThinking{Type: anthThinkAdaptive, Display: anthShowsThinking(cfg)},
 			&anthOutputConfig{Effort: effort}, maxTokens
 	}
 	if maxTokens <= budget {
@@ -1125,6 +1190,13 @@ type anthStreamState struct {
 	// ReasoningHandler), so a caller can show that the model is thinking.
 	reasoning StreamHandler
 
+	// unasked is the model id sent, on a call that left thinking unasked
+	// (Think nil); thought is set when the reply held a thinking block
+	// anyway. Together they say the model thinks on its own, the adaptive
+	// shape (noteThinksUnasked).
+	unasked string
+	thought bool
+
 	textContent  strings.Builder
 	thinking     strings.Builder
 	model        string
@@ -1184,6 +1256,9 @@ func (a *anthStreamState) feed(data []byte) {
 					event.Index, event.ContentBlock.Type)
 			}
 			bs := anthBlockState{blockType: event.ContentBlock.Type}
+			if t := event.ContentBlock.Type; t == "thinking" || t == "redacted_thinking" {
+				a.thought = true
+			}
 			if event.ContentBlock.Type == "tool_use" {
 				bs.id = event.ContentBlock.ID
 				bs.name = event.ContentBlock.Name
@@ -1309,6 +1384,7 @@ func (a *anthStreamState) feed(data []byte) {
 // content in hand is returned marked interrupted, and with nothing in hand
 // it is the error it always should have been.
 func (a *anthStreamState) finish(tag string, cause error) (*Response, error) {
+	a.noteThinksUnasked()
 	if a.stopReason != "" {
 		return a.response(tag), nil
 	}
@@ -1326,6 +1402,26 @@ func (a *anthStreamState) finish(tag string, cause error) (*Response, error) {
 		tag, why, a.textContent.Len())
 	a.stopReason = stopInterrupted
 	return a.response(tag), nil
+}
+
+// noteThinksUnasked records that a model thought on a call that left thinking
+// unasked. Only the adaptive models do (the older ones think only when given
+// a budget), so it is on that shape from here, and the next watched call asks
+// to see the thinking (anthThinkingFor). Keyed by the id sent, as
+// noteIfAdaptiveThinking is.
+func (a *anthStreamState) noteThinksUnasked() {
+	if a.thought && a.unasked != "" && thinkingStyleFor(a.unasked) != anthThinkAdaptive {
+		noteAdaptiveThinking(a.unasked)
+	}
+}
+
+// unaskedThinking is the model id to learn from (anthStreamState.unasked):
+// the id sent, when the call left thinking unasked.
+func unaskedThinking(cfg ChatConfig) string {
+	if cfg.Think != nil {
+		return ""
+	}
+	return cfg.Model
 }
 
 // response materializes the accumulated state, emitting the same trace lines
@@ -1426,7 +1522,7 @@ func (c *anthropicClient) ChatStream(ctx context.Context, messages []Message, ha
 		return nil, noteIfAdaptiveThinking(c.model, c.apiError(resp.StatusCode, msg))
 	}
 
-	st := &anthStreamState{handler: handler, reasoning: cfg.ReasoningHandler}
+	st := &anthStreamState{handler: handler, reasoning: cfg.ReasoningHandler, unasked: unaskedThinking(cfg)}
 
 	scanner := bufio.NewScanner(resp.Body)
 	// Default Scanner caps a line at 64KB; a single large SSE `data:` line
@@ -1458,7 +1554,7 @@ func noteIfAdaptiveThinking(model string, err error) error {
 	// A refused off-switch is its own lesson: it says how this model turns
 	// thinking off, not that it wants adaptive thinking when asked to think.
 	if strings.TrimSpace(model) != "" {
-		for _, field := range []string{fieldThinkingOff, fieldMaxTokens} {
+		for _, field := range []string{fieldThinkingOff, fieldThinkingDisplay, fieldMaxTokens} {
 			if adaptFrom(model, field, err) {
 				return adaptedRetry{field: field, error: err}
 			}

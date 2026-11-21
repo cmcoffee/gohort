@@ -48,7 +48,7 @@ changed or dropped. What it cannot map, it surfaces instead of guessing.
 ```go
 // An adjustable field of a model request.
 type RequestField struct {
-    Key      string   // "thinking.off", "thinking.shape", "reasoning_effort", "images", "max_tokens", "sampling", "tool_choice"
+    Key      string   // "thinking.off", "thinking.shape", "thinking.display", "reasoning_effort", "images", "max_tokens", "sampling", "tool_choice"
     Names    []string // what a refusal names it by, matched in a 400's message, any provider's wording
     Ladder   []string // the steps, top first, ending in "omit" (leave it out)
     Changes  bool     // whether a lower step changes what the caller gets

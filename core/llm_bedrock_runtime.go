@@ -402,7 +402,7 @@ func (c *bedrockRuntimeClient) ChatStream(ctx context.Context, messages []Messag
 			StatusCode: resp.StatusCode, Message: withBedrockHint(c.model, msg), Provider: "bedrock-runtime"}, c.model))
 	}
 
-	st := &anthStreamState{handler: handler, reasoning: cfg.ReasoningHandler}
+	st := &anthStreamState{handler: handler, reasoning: cfg.ReasoningHandler, unasked: unaskedThinking(cfg)}
 	reader := newEventStreamReader(resp.Body)
 	// Every way out goes through finish: it is the one place that knows a
 	// stream without its terminal stop_reason is a fragment. Partial output
@@ -1177,8 +1177,11 @@ func (cs *converseStream) apply(kind string, payload []byte) {
 			cs.emit(anthStreamEvent{Type: "content_block_delta", Index: ev.Index,
 				Delta: &anthContentBlock{Type: "input_json_delta", PartialJSON: ev.Delta.ToolUse.Input}})
 		case ev.Delta.Reasoning != nil:
+			// Thinking kept hidden still arrives, as a signature with no
+			// text: the block is opened for it, so the reply is known to
+			// have thought (noteThinksUnasked).
+			cs.open(ev.Index, "thinking")
 			if ev.Delta.Reasoning.Text != "" {
-				cs.open(ev.Index, "thinking")
 				cs.emit(anthStreamEvent{Type: "content_block_delta", Index: ev.Index,
 					Delta: &anthContentBlock{Type: "thinking_delta", Thinking: ev.Delta.Reasoning.Text}})
 			}
@@ -1212,7 +1215,7 @@ func (c *bedrockConverseClient) ChatStream(ctx context.Context, messages []Messa
 	}
 	defer resp.Body.Close()
 
-	st := &anthStreamState{handler: handler, reasoning: cfg.ReasoningHandler, model: c.rt.model}
+	st := &anthStreamState{handler: handler, reasoning: cfg.ReasoningHandler, model: c.rt.model, unasked: unaskedThinking(cfg)}
 	cs := &converseStream{st: st, started: map[int]bool{}}
 	reader := newEventStreamReader(resp.Body)
 	for {

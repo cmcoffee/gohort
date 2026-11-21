@@ -432,7 +432,7 @@ func (r *retryLLM) noteUnmappedRefusal(err error) {
 	if _, moved := adaptedField(err); moved || IsContextExceededError(err) || !settingRefusedRE.MatchString(api.Message) {
 		return
 	}
-	for _, f := range []string{fieldThinkingOff, fieldThinkingShape, fieldReasoningEffort, fieldMaxTokens, fieldSampling, fieldImages, fieldImageLimit} {
+	for _, f := range []string{fieldThinkingOff, fieldThinkingShape, fieldThinkingDisplay, fieldReasoningEffort, fieldMaxTokens, fieldSampling, fieldImages, fieldImageLimit} {
 		if fl, ok := requestFieldFor(f); ok {
 			if _, reads := fl.next(fl.top, err); reads {
 				return
