@@ -249,7 +249,9 @@ func TestACallAsksAndRunsOnAYes(t *testing.T) {
 }
 
 // Decline, cancel, an error for an answer, or no answer at all: it does not
-// run, and the call says why. A yes without "Don't ask again" keeps nothing,
+// run, and the call says why. A cancel is not called a no: it is a question
+// dismissed or one the client could not show (headless Claude Code answers
+// every question with cancel). A yes without "Don't ask again" keeps nothing,
 // and neither does one for an action that may not be remembered.
 func TestANoOrNoAnswerDoesNotRun(t *testing.T) {
 	f := newAskFixture(t)
@@ -260,7 +262,7 @@ func TestANoOrNoAnswerDoesNotRun(t *testing.T) {
 		want   string
 	}{
 		{"decline", map[string]any{"jsonrpc": "2.0", "result": map[string]any{"action": "decline"}}, `You declined \"books_wipe\"`},
-		{"cancel", map[string]any{"jsonrpc": "2.0", "result": map[string]any{"action": "cancel"}}, `You declined \"books_wipe\"`},
+		{"cancel", map[string]any{"jsonrpc": "2.0", "result": map[string]any{"action": "cancel"}}, `question about \"books_wipe\" was dismissed without an answer`},
 		{"error", map[string]any{"jsonrpc": "2.0", "error": map[string]any{"code": -1, "message": "no dialog here"}}, "could not be asked (no dialog here)"},
 	} {
 		resp, ev := f.wipe(session)

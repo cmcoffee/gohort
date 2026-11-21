@@ -326,9 +326,15 @@ func (c *askedCall) answered(a askAnswer) rpcResponse {
 	case a.Rejected != "":
 		Log("[mcpserver] app %q: %s not run: the client did not ask (%s) (owner=%s)", c.app.Slug, name, a.Rejected, c.tok.Owner)
 		return c.response(toolText(fmt.Sprintf("The question could not be asked (%s), so %q did not run.", a.Rejected, name), true))
-	case a.Action != "accept":
-		Log("[mcpserver] app %q: %s not run: %s (owner=%s)", c.app.Slug, name, a.Action, c.tok.Owner)
+	case a.Action == "decline":
+		Log("[mcpserver] app %q: %s not run: declined (owner=%s)", c.app.Slug, name, c.tok.Owner)
 		return c.response(toolText(fmt.Sprintf("You declined %q, so it did not run.", name), true))
+	case a.Action != "accept":
+		// A cancel is a question dismissed, or one the client could not show
+		// (a headless run answers every question this way): nobody said no,
+		// and the reply must not say they did.
+		Log("[mcpserver] app %q: %s not run: %s (owner=%s)", c.app.Slug, name, a.Action, c.tok.Owner)
+		return c.response(toolText(fmt.Sprintf("The question about %q was dismissed without an answer, or the client could not show it, so it did not run.", name), true))
 	}
 	if again, _ := a.Content["remember"].(bool); again && c.def.Confirmation.CanRemember() {
 		keyRemember(c.tok.ID, c.def.Confirmation.Scope)
