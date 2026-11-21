@@ -1616,6 +1616,12 @@ func importedAppSpec(spec AppSpec, owner string) AppSpec {
 	spec.Updated = ""
 	spec.Disabled = true
 	spec.Verify = nil
+	// The key every app made here has ("id" when it names none): left blank,
+	// the first change here writes it, and that reads as a change of the
+	// app's own beside an update's.
+	if strings.TrimSpace(spec.RecordKey) == "" {
+		spec.RecordKey = "id"
+	}
 	// The note of its last change where it was exported is that history's,
 	// not this one's: left on, the next save here would be recorded under it.
 	spec.ChangeNote = ""

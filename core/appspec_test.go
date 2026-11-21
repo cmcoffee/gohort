@@ -306,6 +306,17 @@ func TestRecordSampleDoesNotBumpTheRevision(t *testing.T) {
 	}
 }
 
+// An imported app has the record key every app made here has: one whose
+// recipe names none gets "id", and one that names its own keeps it.
+func TestAnImportedAppHasARecordKey(t *testing.T) {
+	if got := importedAppSpec(AppSpec{Slug: "books"}, "v").RecordKey; got != "id" {
+		t.Errorf("no key in the recipe: %q, want id", got)
+	}
+	if got := importedAppSpec(AppSpec{Slug: "books", RecordKey: "isbn"}, "v").RecordKey; got != "isbn" {
+		t.Errorf("the recipe's own key: %q, want isbn", got)
+	}
+}
+
 // Offering an app over MCP to the people it is shared with is how this copy
 // runs here: turning it on is not a change to what the app serves (so a
 // shared app stays shared), and it never travels in an export or arrives
