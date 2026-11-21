@@ -238,7 +238,15 @@ func importAppHistory(owner, slug string, b []byte) string {
 	if _, err := writeAppRepoFiles(fresh, spec); err != nil {
 		return "its history could not be taken in: " + err.Error()
 	}
-	if err := appRepoCommit(fresh, owner, "", appHistoryImportedSubject+"\n\nThe app as it was imported, on the history it came with."); err != nil {
+	// Committed even when the app is the history's last version file for
+	// file (the usual case: an export's app is its history's tip): the
+	// import is on record, and an app that took a history in says so
+	// (appHistoryTakesImport).
+	if _, err := appRepoGit(fresh, "add", "-A", "--", "."); err != nil {
+		return "its history could not be taken in: " + err.Error()
+	}
+	if _, err := appRepoGit(fresh, "-c", "user.name="+owner, "-c", "user.email="+owner+"@users.gohort.invalid",
+		"commit", "-q", "--allow-empty", "-m", appHistoryImportedSubject+"\n\nThe app as it was imported, on the history it came with."); err != nil {
 		return "its history could not be taken in: " + err.Error()
 	}
 	// Swapped in whole: the app's own start goes, the imported history and

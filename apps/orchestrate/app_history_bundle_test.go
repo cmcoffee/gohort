@@ -80,6 +80,23 @@ func TestAnAppsHistoryTravelsWhenAskedFor(t *testing.T) {
 		t.Errorf("a second import replaced the history the first made: %+v", again)
 	}
 
+	// An app that is its history's last version file for file (as an
+	// export's app is) still records the import, and takes it in only once.
+	same, _ := LoadAppSpec("u", "shelf")
+	same.Owner = "y"
+	SaveAppSpec(same)
+	recordAppImported("y", "shelf", AppOrigin{Copy: "u-shelf", Exported: time.Now().UTC().Format(time.RFC3339Nano)})
+	if _, why, err := (appHistoryArtifact{}).ImportArtifact(nil, recipe, "y"); err != nil || why != "" {
+		t.Fatalf("y's import: %q %v", why, err)
+	}
+	ylog, _ := AppHistoryLog("y", "shelf", 0)
+	if len(ylog) != len(list)+1 || ylog[0].Subject != "Imported here" {
+		t.Errorf("an import onto the history's own last version is not on record: %+v", ylog)
+	}
+	if _, why, _ := (appHistoryArtifact{}).ImportArtifact(nil, recipe, "y"); !strings.Contains(why, "already took in") {
+		t.Errorf("a second import onto y's: %q", why)
+	}
+
 	// An app imported minutes ago and changed since keeps the change.
 	SaveAppSpec(AppSpec{Owner: "x", Slug: "shelf", Name: "Shelf", RecordKey: "id", Sections: page, Page: json.RawMessage(`{"title":"Shelf","sections":[]}`)})
 	recordAppImported("x", "shelf", AppOrigin{Copy: "u-shelf", Exported: time.Now().UTC().Format(time.RFC3339Nano)})
