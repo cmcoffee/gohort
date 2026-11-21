@@ -569,10 +569,12 @@ beside the app in the export dialog, unticked, with a note that it names
 who changed the app and keeps what was taken out of it: a git bundle of
 the live branch, what is committed and nothing waiting, so exporting
 changes nothing. It imports after the app, and only onto one the import
-just made (created within the last 15 minutes): the imported history is
-the start of the app's own, the app as it was imported committed on top
-as "Imported here". An app that was already here keeps its history, and
-a bundle that does not read is said, not taken. Without git, the history
+just made (created within the last 15 minutes, still at the version its
+import took, and with no history taken in on it yet): the imported
+history is the start of the app's own, the app as it was imported
+committed on top as "Imported here". An app that was already here, one
+changed since its import, and one that already took a history in keep
+theirs, and a bundle that does not read is said, not taken. Without git, the history
 is neither offered nor taken in.
 
 **Settled (owner, 2026-11-18).**

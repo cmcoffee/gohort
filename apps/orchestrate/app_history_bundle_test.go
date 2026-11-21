@@ -43,6 +43,11 @@ func TestAnAppsHistoryTravelsWhenAskedFor(t *testing.T) {
 	// then its history.
 	page := json.RawMessage(`[{"id":"page","kind":"html","html":"<!DOCTYPE html><html><body><h1>Novels</h1><p>v's copy</p></body></html>"}]`)
 	SaveAppSpec(AppSpec{Owner: "v", Slug: "shelf", Name: "Shelf", RecordKey: "id", Sections: page, Page: json.RawMessage(`{"title":"Shelf","sections":[]}`)})
+	// Not yet marked as taken from a copy: an app made here keeps its own.
+	if _, why, _ := (appHistoryArtifact{}).ImportArtifact(nil, recipe, "v"); !strings.Contains(why, "not imported from an export") {
+		t.Errorf("a history imported onto an app not taken from a copy: %q", why)
+	}
+	recordAppImported("v", "shelf", AppOrigin{Copy: "u-shelf", Exported: time.Now().UTC().Format(time.RFC3339Nano)})
 	if _, why, err := (appHistoryArtifact{}).ImportArtifact(nil, recipe, "v"); err != nil || why != "" {
 		t.Fatalf("the import: %q %v", why, err)
 	}
@@ -63,6 +68,33 @@ func TestAnAppsHistoryTravelsWhenAskedFor(t *testing.T) {
 		if st, _ := appRepoGit(dir, "status", "--porcelain"); strings.TrimSpace(st) != "" {
 			t.Errorf("v's history is not on the app as it is: %q", st)
 		}
+	}
+
+	// Taken in once, it is not taken again, however soon: a second import of
+	// the history, minutes after the first, leaves v's as it is.
+	once, _ := AppHistoryLog("v", "shelf", 0)
+	if _, why, _ := (appHistoryArtifact{}).ImportArtifact(nil, recipe, "v"); !strings.Contains(why, "already took in") {
+		t.Errorf("a history imported again onto an app that took one: %q", why)
+	}
+	if again, _ := AppHistoryLog("v", "shelf", 0); len(again) != len(once) || again[0].Hash != once[0].Hash {
+		t.Errorf("a second import replaced the history the first made: %+v", again)
+	}
+
+	// An app imported minutes ago and changed since keeps the change.
+	SaveAppSpec(AppSpec{Owner: "x", Slug: "shelf", Name: "Shelf", RecordKey: "id", Sections: page, Page: json.RawMessage(`{"title":"Shelf","sections":[]}`)})
+	recordAppImported("x", "shelf", AppOrigin{Copy: "u-shelf", Exported: time.Now().UTC().Format(time.RFC3339Nano)})
+	changed, _ := LoadAppSpec("x", "shelf")
+	changed.Desc = "x's own change"
+	SaveAppSpec(changed)
+	mine, _ := AppHistoryLog("x", "shelf", 0)
+	if len(mine) != 2 {
+		t.Fatalf("x's history before the import: %+v", mine)
+	}
+	if _, why, _ := (appHistoryArtifact{}).ImportArtifact(nil, recipe, "x"); !strings.Contains(why, "changed here since") {
+		t.Errorf("a history imported onto a new app changed since: %q", why)
+	}
+	if now, _ := AppHistoryLog("x", "shelf", 0); len(now) != 2 || now[0].Hash != mine[0].Hash {
+		t.Errorf("x's own change was replaced: %+v", now)
 	}
 
 	// An app that was already here keeps the history it has.

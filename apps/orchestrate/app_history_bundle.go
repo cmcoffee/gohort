@@ -34,8 +34,13 @@ const appHistoryArtifactType = "app_history"
 const appHistoryBundleMax = 16 << 20
 
 // appHistoryFreshFor is how new an app must be for an imported history to
-// become its own: the import that made it is that recent.
+// become its own: the import that made it is that recent. With it, the app
+// must still be as its import made it (appHistoryTakesImport).
 const appHistoryFreshFor = 15 * time.Minute
+
+// appHistoryImportedSubject is the subject of the version an imported
+// history ends with: the app as it was imported, on top of it.
+const appHistoryImportedSubject = "Imported here"
 
 type appHistoryRecipe struct {
 	Schema int    `json:"app_history"` // sniff key
@@ -221,12 +226,19 @@ func importAppHistory(owner, slug string, b []byte) string {
 	mu := appRepoLock(dir)
 	mu.Lock()
 	defer mu.Unlock()
+	// New is not enough: an app imported a minute ago and changed since, or
+	// one that already took a history in, has versions of its own here, and
+	// those are not given up for an imported history. Only an app still at
+	// the version its import took, with no history taken in on it, takes one.
+	if why := appHistoryTakesImport(dir, slug); why != "" {
+		return why
+	}
 	// The app as it is here, on top: the same files its own history holds,
 	// in a clone with nothing checked out, so what it no longer has goes.
 	if _, err := writeAppRepoFiles(fresh, spec); err != nil {
 		return "its history could not be taken in: " + err.Error()
 	}
-	if err := appRepoCommit(fresh, owner, "", "Imported here\n\nThe app as it was imported, on the history it came with."); err != nil {
+	if err := appRepoCommit(fresh, owner, "", appHistoryImportedSubject+"\n\nThe app as it was imported, on the history it came with."); err != nil {
 		return "its history could not be taken in: " + err.Error()
 	}
 	// Swapped in whole: the app's own start goes, the imported history and
@@ -249,5 +261,29 @@ func importAppHistory(owner, slug string, b []byte) string {
 		}
 	}
 	Log("[app-history] %s/%s: imported with its history", owner, slug)
+	return ""
+}
+
+// appHistoryTakesImport says why the app whose history is at dir cannot take
+// an imported one, "" when it can: its live version is still the one its
+// import took (the import's own versions, what it owns pointed at here, are
+// all it has made), and that version is not one a history was taken in with.
+// Called with the history's lock held.
+func appHistoryTakesImport(dir, slug string) string {
+	kept := "app " + slug + " was already here with a history of its own, which an imported one does not take the place of"
+	live, err := appRepoGit(dir, "rev-parse", "--verify", "-q", "refs/heads/"+AppHistoryBranch)
+	if err != nil {
+		return kept
+	}
+	taken, err := appRepoGit(dir, "rev-parse", "--verify", "-q", appUpstreamRef)
+	if err != nil {
+		return "app " + slug + " was not imported from an export that says which copy it was made from, so it keeps a history of its own"
+	}
+	if strings.TrimSpace(live) != strings.TrimSpace(taken) {
+		return "app " + slug + " was changed here since it was imported, and keeps the history those changes are in"
+	}
+	if subj, _ := appRepoGit(dir, "log", "-1", "--format=%s", strings.TrimSpace(live)); strings.TrimSpace(subj) == appHistoryImportedSubject {
+		return "app " + slug + " already took in the history it was imported with, and keeps it"
+	}
 	return ""
 }
