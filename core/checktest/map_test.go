@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/checkstreak"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -269,5 +270,31 @@ func TestClearingTheMapSendsEverythingBack(t *testing.T) {
 	// before the clear.
 	if rep, ok := Last(); ok {
 		t.Errorf("the last run outlived the clear: %d rows", len(rep.Rows))
+	}
+}
+
+// Taking a fingerprint asks the stand-in, whose empty answer is no verdict by
+// design: none of it counts toward a check's run of no-verdicts, which rang
+// the admins' bell that a check "is giving no verdict on stand-in".
+func TestAFingerprintIsNotANoVerdict(t *testing.T) {
+	var told []string
+	prev := checkstreak.OnStreak
+	checkstreak.OnStreak = func(check, model, _ string, _ int) { told = append(told, check+" on "+model) }
+	t.Cleanup(func() { checkstreak.OnStreak = prev })
+
+	c := echoCheck("scan.stand-in", true, "yes", "no", "yes", "no")
+	ask := func(ctx context.Context, llm LLM, tc Case) Outcome {
+		resp, _ := llm.Chat(ctx, []Message{{Role: "user", Content: tc.Want}})
+		checkstreak.Failed(ctx, c.Key, resp.Model, resp.Content)
+		return Outcome{}
+	}
+	c.Run, c.Decide = ask, ask
+	for i := 0; i < 2; i++ {
+		if fingerprint(c) == "" {
+			t.Fatal("no fingerprint")
+		}
+	}
+	if len(told) != 0 {
+		t.Errorf("a fingerprint rang the bell: %v", told)
 	}
 }

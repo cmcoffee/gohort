@@ -25,6 +25,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/decide"
+	"github.com/cmcoffee/gohort/core/llmcalls"
 )
 
 // mapTable is where the map is kept, one Mapping per check key.
@@ -241,7 +242,12 @@ func fingerprint(c Check) string {
 		for _, k := range keys {
 			rec.write("in", k, tc.Input[k])
 		}
+		// Marked as a check test's call (llmcalls.Watch), as a test run's
+		// are: the stand-in's empty answer is no verdict by design, and
+		// unmarked, three of them in a row rang the admins' bell that the
+		// check "is giving no verdict on stand-in" (core/checkstreak).
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, _ = llmcalls.Watch(ctx)
 		if c.Run != nil {
 			rec.write("full")
 			c.Run(ctx, rec, tc)
