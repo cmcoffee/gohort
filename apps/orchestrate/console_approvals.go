@@ -59,10 +59,9 @@ func (T *OrchestrateApp) resolveApproval(c *jsonapi.Call, always bool) (any, err
 	// held-for-activation — this approval authorizes the BUILD, the next the
 	// switch-on. Async, like the delegate approval below.
 	// approve_change: a change to something that already existed, tried with
-	// nobody watching (change_approval.go). Approving lets that agent make it,
-	// and runs it again to, when there is a conversation to bring it back to.
+	// nobody watching (change_approval.go). Approving runs that agent again to
+	// make that one change, and nothing more.
 	if a.Action == changeApprovalAction {
-		grantChange(udb, a.Agent, a.Handle)
 		T.runApprovedChange(a)
 		return jsonapi.Empty(http.StatusNoContent), nil
 	}

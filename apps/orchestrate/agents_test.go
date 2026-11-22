@@ -61,6 +61,7 @@ func TestDispatchNoneStillReachesOwnSubAgent(t *testing.T) {
 func TestDispatchNoneLetsTheBuilderGrantThrough(t *testing.T) {
 	turn, _ := newRunGateTurn(t, dispatchNone)
 	turn.agent.AllowBuilderDispatch = true
+	turn.askVia = approveEveryChange // somebody watching: Builder is offered only then
 	target, _, err := turn.agentsRunGate(map[string]any{"agent": "seed-builder", "message": "build a tool"})
 	if err != nil || !isBuilderAgent(target.ID) {
 		t.Fatalf("Allow none + grant must reach Builder; got target=%q err=%v", target.ID, err)

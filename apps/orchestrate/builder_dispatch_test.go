@@ -25,9 +25,14 @@ func TestCanDispatchBuilder(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			turn := &chatTurn{agent: c.rec}
+			turn := &chatTurn{agent: c.rec, askVia: approveEveryChange}
 			if got := turn.canDispatchBuilder(); got != c.want {
 				t.Errorf("canDispatchBuilder() = %v, want %v", got, c.want)
+			}
+			// Nobody watching: never, whatever the agent may do.
+			turn.askVia = nil
+			if turn.canDispatchBuilder() {
+				t.Error("canDispatchBuilder() = true with nobody watching")
 			}
 		})
 	}

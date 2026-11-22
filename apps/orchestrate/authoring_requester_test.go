@@ -185,6 +185,7 @@ func TestEveryAuthoringGrantAsksWhoTheRunIsFor(t *testing.T) {
 func TestAContactCannotSetBuilderToWork(t *testing.T) {
 	turn, _ := newRunGateTurn(t, "")
 	turn.agent.AllowBuilderDispatch = true
+	turn.askVia = approveEveryChange // somebody watching: Builder is offered only then
 	if _, _, err := turn.agentsRunGate(map[string]any{"agent": "seed-builder", "message": "build a tool"}); err != nil {
 		t.Fatalf("the owner's own run should reach Builder: %v", err)
 	}

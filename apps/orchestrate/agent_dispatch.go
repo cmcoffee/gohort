@@ -503,6 +503,10 @@ func (T *OrchestrateApp) buildDispatchTurnExtrasWithOwner(ctx context.Context, t
 		topic:     generalTopic,
 		ownerUser: ownerUser,
 		ownerDB:   ownerDB,
+		// Its change approvals are asked under its session's thread, as
+		// the session's own tools ask them (change_approval.go).
+		changeThread: subSess.ChatSessionID,
+		sentBy:       subSess.DispatchParentAgentID,
 	}
 	// Intent-aware catalog assembly (Tier-1 tool elevation): the caller
 	// stamps the turn's driving text on the session it built.
@@ -859,6 +863,8 @@ func (sd *syncDispatch) buildSession() {
 	// Nobody to ask here: a change to what already exists queues
 	// (change_approval.go).
 	sd.subSess.ApproveChange = changeApprover(sd.subSess, sd.runtimeUser, sd.target.ID, sd.target.Name, nil)
+	// A new job in a thread that outlasts it (change_approval.go).
+	resetChangeApprovals(sd.runtimeUser, sd.subSessID)
 }
 
 func (sd *syncDispatch) startLiveRun() {
@@ -1864,6 +1870,8 @@ func (cr *continuingRun) buildSession() {
 	// Nobody to ask here: a change to what already exists queues
 	// (change_approval.go).
 	cr.subSess.ApproveChange = changeApprover(cr.subSess, cr.runtimeUser, cr.target.ID, cr.target.Name, nil)
+	// A new job in a thread that outlasts it (change_approval.go).
+	resetChangeApprovals(cr.runtimeUser, cr.subSessionID)
 	cr.subSess.DirectCredentialRefusal = directCredentialRefusal(cr.target, cr.subSess)
 	cr.subSess.ToolFailureAdvice = toolFailureAdvice(cr.target, false, func() bool { return nonOwnerRequester(cr.ctx) })
 	// The delegator's workspace when it is of this agent's family (a sub-agent

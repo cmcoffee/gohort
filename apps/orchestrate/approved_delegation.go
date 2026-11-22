@@ -120,29 +120,22 @@ func requestOriginNote(a Authorization) string {
 // runApprovedDelegation runs an approved delegation to target and, when the
 // request recorded where it came from, wakes that conversation with the result.
 func (T *OrchestrateApp) runApprovedDelegation(a Authorization, target string) {
-	// Builder's request was approved with its brief in front of the owner:
-	// that is their say-so for the edits it needs, which an unwatched run
-	// would otherwise queue one by one and drop (withOwnerApprovedRun).
-	ownerApproved := ""
-	if udb := UserDB(T.DB, a.Owner); udb != nil {
-		if rec, ok := findAgentByNameOrID(udb, a.Owner, target); ok && isBuilderAgent(rec.ID) {
-			ownerApproved = rec.ID
-		}
-	}
+	// Approving the request runs it; it does not approve the changes it goes
+	// on to make. Each of those waits for its own card (change_approval.go).
 	name := T.delegationTargetName(a.Owner, target)
 	T.runApproved(approvedRun{
-		a: a, target: target, brief: a.Brief, ownerApproved: ownerApproved,
+		a: a, target: target, brief: a.Brief,
 		label: fmt.Sprintf("the delegation to %s you queued for the user's approval, which they approved (%s)", name, truncateObs(a.Brief, 160)),
 	})
 }
 
 // approvedRun is one run of an agent the owner approved from the queue.
 type approvedRun struct {
-	a             Authorization // the request, and where it was asked from
-	target        string        // the agent that runs
-	brief         string        // what it is asked to do
-	label         string        // how the wake names it to the agent that asked
-	ownerApproved string        // the agent whose edits the approval covers (withOwnerApprovedRun); "" for none
+	a      Authorization   // the request, and where it was asked from
+	target string          // the agent that runs
+	brief  string          // what it is asked to do
+	label  string          // how the wake names it to the agent that asked
+	change *approvedChange // the one change the owner approved, which this run makes (withApprovedChange); nil for none
 	// asOwner runs the target as the owner, with no agent handing it over:
 	// a Builder job the owner approved to run with their own permissions
 	// (builder_owner_job.go). Otherwise the agent that asked rides along, and
@@ -162,8 +155,8 @@ func (T *OrchestrateApp) runApproved(ar approvedRun) {
 		if a.FromPrivate {
 			ctx = WithNetworkConnector(ctx, NewNetworkConnector(true))
 		}
-		if ar.ownerApproved != "" {
-			ctx = withOwnerApprovedRun(ctx, ar.ownerApproved)
+		if ar.change != nil {
+			ctx = withApprovedChange(ctx, ar.change.agentID, ar.change.key)
 		}
 		return ctx
 	}

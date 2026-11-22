@@ -1078,11 +1078,24 @@ func isBuilderAgent(agentID string) bool {
 // agent permitted to call a target it cannot see never thinks to call it,
 // so a grant that moved only the gate would read as broken. Every filter
 // asks this same question.
+//
+// And only where somebody is watching: Builder's changes are approved, one at
+// a time, by the person who asked for the work, in the conversation they
+// asked in (change_approval.go). A channel message, a schedule or a monitor's
+// wake has nobody there to approve them, so Builder is not an option on
+// those turns at all: not listed, not callable. The agent says what it would
+// have Builder change, and the owner asks for it from the chat.
 func (t *chatTurn) canDispatchBuilder() bool {
-	if t == nil {
+	if t == nil || !t.watched() {
 		return false
 	}
 	return builderDispatchAllowed(t.agent)
+}
+
+// watched reports whether somebody is there to answer this turn's cards: its
+// own chat, or the chat of the turn that sent it.
+func (t *chatTurn) watched() bool {
+	return t != nil && t.chatAsker() != nil
 }
 
 // builderDispatchAllowed is THE rule for who may hand work to Builder, asked by

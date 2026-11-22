@@ -30,7 +30,8 @@ func TestTheCatalogCarriesWhatTheAgentReachesAndTellsTheSession(t *testing.T) {
 		}
 	})
 	SaveChannel(RootDB, Channel{ID: "c1", Owner: user, Service: "sms", AgentID: a.ID})
-	turn := &chatTurn{app: app, agent: a, user: user, udb: udb, ctx: context.Background()}
+	// Somebody watching: Builder is offered only then.
+	turn := &chatTurn{app: app, agent: a, user: user, udb: udb, ctx: context.Background(), askVia: approveEveryChange}
 	sess := turn.newToolSession()
 	tools, names, err := turn.resolveWorkerTools(sess, true)
 	if err != nil {

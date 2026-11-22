@@ -40,7 +40,7 @@ func (t *chatTurn) builderRunRefusal(kind, id, name string) string {
 // builderBuilt reports whether this conversation created or changed the
 // target, directly or as part of an app.
 func (t *chatTurn) builderBuilt(kind, id, name string) bool {
-	set := changeApprovalsFor(t.user, t.chatSessionID())
+	set := changeApprovalsFor(t.user, t.changeSessionID())
 	refs := []string{name, id}
 	if kind == "agent" {
 		// An agent is recorded by id (changeKey): a name could be another

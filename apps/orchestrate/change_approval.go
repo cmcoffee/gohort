@@ -6,26 +6,34 @@ package orchestrate
 // tools, apps, skills, pipelines, machines, agents. A tool could be Locked to
 // stop that, which protected only what somebody remembered to lock, and said
 // nothing at the moment a change was about to happen. Now nothing that
-// already exists changes without the owner saying so:
+// already exists changes without the owner saying so, each time, where the
+// work was asked for:
 //
 //   - something made in this session is the session's own work, and its
 //     author changes it freely;
 //   - the first change to anything else asks the owner in the chat, with
 //     what is about to change, Approve or Deny. Approve covers that one item
-//     for the rest of the session, so iterating on it asks once;
+//     for the rest of the conversation when the owner is the one asking, and
+//     for the rest of the job when another agent sent the work
+//     (resetChangeApprovals): the next job asks again;
 //   - with nobody watching (a schedule, a job another agent sent), the change
-//     is not made: it waits in the owner's approval queue. Approving it lets
-//     that agent make it (for a day), and when the request came from a
-//     conversation, runs the agent again to make it there and then, with the
-//     result delivered back to that conversation (runApprovedChange);
+//     is not made: it waits as a card in the conversation it came from, and
+//     on the Requests tab, with a bell notice. Approving it runs the agent
+//     again to make that one change (runApprovedChange, withApprovedChange),
+//     with the result delivered back to that conversation. Nothing is
+//     remembered past that run;
 //   - the one thing the owner picked in Builder's form ("Change" or "Fix",
 //     then "Which one?") is already approved in that session: picking it is
 //     the owner saying so. Only changes: deleting it still asks. Only that
 //     item: anything else Builder reaches for asks as before. And only
-//     Builder the owner opened: Builder another agent sent asks every time;
-//   - a run of Builder the owner approved from the queue (asked for where
-//     nobody was watching, holdForOwner) makes the edits it needs: approving
-//     the request was the owner saying so. Only edits, and only Builder's.
+//     Builder the owner opened: Builder another agent sent asks every time.
+//
+// No approval stands: there is no Always allow for a change, no grant that
+// outlasts the run it was given for, and approving a request to run an agent
+// is not approving the changes it goes on to make. Who may send work to
+// Builder is a setting of the agent (Can dispatch Builder), and Builder is
+// offered only in a conversation somebody is watching (canDispatchBuilder),
+// so its changes come back to the person who asked.
 //
 // Running or testing never asks. Only writes do, and only to what existed.
 
@@ -34,26 +42,14 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/notices"
 )
 
 // changeApprovalAction is the approval-queue entry for a change made with
 // nobody watching.
 const changeApprovalAction = "approve_change"
-
-// changeGrantTable holds what the owner approved from the queue, per agent
-// and item, until it expires.
-const changeGrantTable = "change_grants"
-
-// changeGrantTTL is how long an approval from the queue lasts: long enough for
-// the agent's next run, not a standing permission.
-const changeGrantTTL = 24 * time.Hour
-
-type changeGrant struct {
-	Until time.Time `json:"until"`
-}
 
 // changeApprovalSet is what one session may change without asking again:
 // what it made, and what the owner approved in it. named is what the owner
@@ -130,12 +126,16 @@ func (s *changeApprovalSet) add(key string) {
 	s.items[key] = true
 }
 
+func newChangeApprovalSet() *changeApprovalSet {
+	return &changeApprovalSet{items: map[string]bool{}, named: map[string]bool{}, made: map[string]bool{}}
+}
+
 // sessionChangeApprovals is per owner and session. In memory: a restart asks
 // again, which is the safe direction.
 var sessionChangeApprovals sync.Map // owner\x00session -> *changeApprovalSet
 
 func changeApprovalsFor(owner, session string) *changeApprovalSet {
-	v, _ := sessionChangeApprovals.LoadOrStore(owner+"\x00"+session, &changeApprovalSet{items: map[string]bool{}, named: map[string]bool{}, made: map[string]bool{}})
+	v, _ := sessionChangeApprovals.LoadOrStore(owner+"\x00"+session, newChangeApprovalSet())
 	return v.(*changeApprovalSet)
 }
 
@@ -164,45 +164,35 @@ func changeKey(kind, name string) string {
 	return strings.ToLower(strings.TrimSpace(kind)) + ":" + strings.TrimSpace(name)
 }
 
-func changeGrantKey(agentID, key string) string { return agentID + "\x00" + key }
+type approvedChangeKey struct{}
 
-// changeGranted reports whether the owner approved this agent's change to
-// this item from the queue, and it has not expired.
-func changeGranted(db Database, agentID, key string) bool {
-	if db == nil {
-		return false
-	}
-	var g changeGrant
-	if !db.Get(changeGrantTable, changeGrantKey(agentID, key), &g) {
-		return false
-	}
-	return time.Now().Before(g.Until)
+// approvedChange is one change the owner approved from a card left waiting:
+// the agent that asked for it and the item.
+type approvedChange struct{ agentID, key string }
+
+// withApprovedChange marks the run that makes a change the owner approved
+// from a card left waiting: agentID may make that one change to key, of
+// whatever kind it was (a deletion included), in this run alone. An agent the
+// run dispatches does not inherit it, and nothing is stored.
+func withApprovedChange(ctx context.Context, agentID, key string) context.Context {
+	return context.WithValue(ctx, approvedChangeKey{}, approvedChange{agentID, key})
 }
 
-// grantChange records an approval from the queue.
-func grantChange(db Database, agentID, key string) {
-	if db != nil {
-		db.Set(changeGrantTable, changeGrantKey(agentID, key), changeGrant{Until: time.Now().Add(changeGrantTTL)})
-	}
-}
-
-type ownerApprovedRunKey struct{}
-
-// withOwnerApprovedRun marks a run the owner approved from the queue as theirs
-// to change things in: agentID's edits to things that exist go ahead without a
-// question for each. Only that agent's, so an agent the run dispatches does
-// not inherit it, and only edits: a deletion still asks.
-func withOwnerApprovedRun(ctx context.Context, agentID string) context.Context {
-	return context.WithValue(ctx, ownerApprovedRunKey{}, agentID)
-}
-
-// ownerApprovedRunFor reports whether ctx is a run the owner approved for agentID.
-func ownerApprovedRunFor(ctx context.Context, agentID string) bool {
-	if ctx == nil || strings.TrimSpace(agentID) == "" {
+// approvedChangeFor reports whether ctx is the run the owner approved for
+// agentID to change key.
+func approvedChangeFor(ctx context.Context, agentID, key string) bool {
+	if ctx == nil || strings.TrimSpace(agentID) == "" || key == "" {
 		return false
 	}
-	id, _ := ctx.Value(ownerApprovedRunKey{}).(string)
-	return id == agentID
+	a, _ := ctx.Value(approvedChangeKey{}).(approvedChange)
+	return a.agentID == agentID && a.key == key
+}
+
+// resetChangeApprovals starts a new job in session: what an earlier job there
+// was approved for, or made, is asked about again. Called where another agent
+// sends work, whose thread (dispatchThreadID) outlasts the job.
+func resetChangeApprovals(owner, session string) {
+	sessionChangeApprovals.Delete(owner + "\x00" + session)
 }
 
 // changeAsker is everything one approval needs: whose things these are, the
@@ -217,9 +207,9 @@ type changeAsker struct {
 	sentBy                    string
 	ask                       endedAsk
 	sess                      *ToolSession
-	// approvedRun: the owner approved this run from the queue, so its edits
-	// are theirs (withOwnerApprovedRun).
-	approvedRun bool
+	// ctx is the run's, for the one change the owner approved from a card
+	// left waiting (withApprovedChange).
+	ctx context.Context
 }
 
 // changeApprover builds a session's ApproveChange, with a card whose every
@@ -249,7 +239,7 @@ func changeApproverEnded(sess *ToolSession, owner, agentID, agentName string, as
 		}
 		return changeAsker{owner: owner, agentID: agentID, agentName: agentName, session: sess.ChatSessionID,
 			db: sess.DB, sentBy: sess.DispatchParentAgentID, ask: ask, sess: sess,
-			approvedRun: ownerApprovedRunFor(sess.Context(), agentID)}.approve(kind, name, detail, op)
+			ctx: sess.Context()}.approve(kind, name, detail, op)
 	}
 }
 
@@ -263,8 +253,17 @@ func (t *chatTurn) approveChange(kind, name, detail string, op ChangeOp) string 
 	if ask == nil {
 		ask = t.endedAsker() // this chat's card, or the one of the chat that started this run
 	}
-	return changeAsker{owner: t.user, agentID: t.agent.ID, agentName: t.agent.Name, session: t.chatSessionID(),
-		db: t.udb, ask: ask, approvedRun: ownerApprovedRunFor(t.ctx, t.agent.ID)}.approve(kind, name, detail, op)
+	return changeAsker{owner: t.user, agentID: t.agent.ID, agentName: t.agent.Name, session: t.changeSessionID(),
+		db: t.udb, sentBy: t.sentBy, ask: ask, ctx: t.ctx}.approve(kind, name, detail, op)
+}
+
+// changeSessionID is the session this turn's change approvals last for: its
+// own, or for a handed-over run with none, the thread it works in.
+func (t *chatTurn) changeSessionID() string {
+	if id := t.chatSessionID(); id != "" {
+		return id
+	}
+	return t.changeThread
 }
 
 // approve is "" when the change may go ahead, or the refusal to return.
@@ -277,7 +276,13 @@ func (c changeAsker) approve(kind, name, detail string, op ChangeOp) string {
 		agentName = c.agentID
 	}
 	key := changeKey(kind, name)
-	set := changeApprovalsFor(c.owner, c.session)
+	// A run with no session to last for remembers nothing: one approval
+	// covers the one change. Kept under a blank session, it covered every
+	// other such run's too.
+	set := newChangeApprovalSet()
+	if strings.TrimSpace(c.session) != "" {
+		set = changeApprovalsFor(c.owner, c.session)
+	}
 	if op == ChangeNew {
 		// Made here: the session's own work.
 		set.madeHere(key)
@@ -291,11 +296,9 @@ func (c changeAsker) approve(kind, name, detail string, op ChangeOp) string {
 	if op == ChangeEdit && strings.TrimSpace(c.sentBy) == "" && set.isNamed(key) {
 		return ""
 	}
-	if changeGranted(c.db, c.agentID, key) {
-		set.add(key)
-		return ""
-	}
-	if op == ChangeEdit && c.approvedRun {
+	// The one change the owner approved from a card left waiting, in the
+	// run that makes it.
+	if approvedChangeFor(c.ctx, c.agentID, key) {
 		set.add(key)
 		return ""
 	}
@@ -306,7 +309,11 @@ func (c changeAsker) approve(kind, name, detail string, op ChangeOp) string {
 		if body == "" {
 			body = "Change it."
 		}
-		body += "\n\nApprove covers changes to this " + strings.TrimSpace(kind) + " for the rest of this session."
+		lasts := "the rest of this conversation"
+		if strings.TrimSpace(c.sentBy) != "" {
+			lasts = "the rest of this job: the next job asks again"
+		}
+		body += "\n\nApprove covers changes to this " + strings.TrimSpace(kind) + " for " + lasts + "."
 		label, end := c.ask(prompt, body, []string{"Approve"})
 		if label != "" {
 			set.add(key)
@@ -314,7 +321,7 @@ func (c changeAsker) approve(kind, name, detail string, op ChangeOp) string {
 		}
 		return changeRefusal(what, end)
 	}
-	then := "once they approve it, the change can be made in the next run"
+	then := "once they approve it, it is made in a fresh run"
 	if queueChangeApproval(c, kind, name, detail) {
 		then = "once they approve it, it is made in a fresh run and the result comes back to this conversation"
 	}
@@ -361,19 +368,31 @@ func queueChangeApproval(c changeAsker, kind, name, detail string) bool {
 	stampRequestOrigin(&a, c.sess)
 	SaveAuthorization(RootDB, a)
 	Log("[orchestrate.change] %s: %s wants to change %s, queued for approval", c.owner, c.agentID, key)
+	// The bell: the work stopped on the owner, somewhere they may not be
+	// looking.
+	where := "on the Requests tab."
+	if a.FromSession != "" {
+		where = "in the conversation it came from, or on the Requests tab."
+	}
+	agentName := chFirst(strings.TrimSpace(c.agentName), c.agentID)
+	notices.Record(RootDB, notices.Notice{
+		Owner: c.owner, Agent: c.agentID, Kind: notices.KindBlocked,
+		Title: agentName + " is waiting for you to approve a change",
+		Body:  brief + "\n\nNothing was changed. Approve or deny it " + where,
+	})
 	return a.FromSession != ""
 }
 
 // runApprovedChange runs the agent that wanted a change the owner just
-// approved, to make it now. Without a conversation to come back to it does
-// nothing: the grant waits for the agent's next run, as it always has.
+// approved, to make that one change now (withApprovedChange), with the result
+// back in the conversation it came from when there is one. The approval is
+// spent on that run: nothing is kept for a later one.
 //
-// Approval used to only grant. A run that hit the gate had already ended,
-// with "it can be made in the next run", and for a job another agent sent
-// there was no next run: the change sat approved and unmade, and the agent
-// that sent the job never heard of it again.
+// Approval used to grant the agent the item for a day, and run nothing
+// without a conversation to come back to: a standing permission given by a
+// one-off click, and a change that sat approved and unmade.
 func (T *OrchestrateApp) runApprovedChange(a Authorization) {
-	if strings.TrimSpace(a.FromSession) == "" || strings.TrimSpace(a.Agent) == "" {
+	if strings.TrimSpace(a.Agent) == "" || strings.TrimSpace(a.Handle) == "" {
 		return
 	}
 	brief := "The owner approved a change you were held from making earlier, with nobody there to approve it: " + strings.TrimSpace(a.Brief) + " Make that change now and check that it took."
@@ -382,7 +401,7 @@ func (T *OrchestrateApp) runApprovedChange(a Authorization) {
 	}
 	name := T.delegationTargetName(a.Owner, a.Agent)
 	T.runApproved(approvedRun{
-		a: a, target: a.Agent, brief: brief,
+		a: a, target: a.Agent, brief: brief, change: &approvedChange{a.Agent, a.Handle},
 		label: fmt.Sprintf("the change %s queued for the user's approval, which they approved (%s)", name, truncateObs(a.Brief, 160)),
 	})
 }

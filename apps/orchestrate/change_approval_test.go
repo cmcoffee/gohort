@@ -1,11 +1,13 @@
 package orchestrate
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/notices"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -70,11 +72,12 @@ func TestADeniedChangeIsRefused(t *testing.T) {
 	}
 }
 
-// With nobody watching, the change waits in the approval queue (once), and
-// approving it lets the agent make it in its next run.
+// With nobody watching, the change waits in the approval queue (once), with a
+// bell notice, and approving it lets the agent make that one change in the run
+// the approval starts, and in no other run.
 func TestAnUnwatchedChangeQueuesAndApprovalLetsItThrough(t *testing.T) {
 	udb := changeTestStores(t)
-	c := changeAsker{owner: "u", agentID: "a1", session: "sched-1", db: udb}
+	c := changeAsker{owner: "u", agentID: "a1", agentName: "Triage", session: "sched-1", db: udb}
 	for i := 0; i < 2; i++ {
 		if msg := c.approve("skill", "triage", "Delete it.", ChangeDelete); !strings.Contains(msg, "approval queue") {
 			t.Fatalf("an unwatched change was not refused to the queue: %q", msg)
@@ -89,15 +92,68 @@ func TestAnUnwatchedChangeQueuesAndApprovalLetsItThrough(t *testing.T) {
 	if len(queued) != 1 || queued[0].Handle != changeKey("skill", "triage") {
 		t.Fatalf("queue holds %+v, want one entry for the skill", queued)
 	}
-	grantChange(udb, queued[0].Agent, queued[0].Handle)
+	bell := notices.List(RootDB, "u")
+	if len(bell) != 1 || bell[0].Kind != notices.KindBlocked || !strings.Contains(bell[0].Title, "Triage is waiting for you to approve a change") {
+		t.Errorf("a change left waiting should ring the bell once: %+v", bell)
+	}
+
+	// The run the approval starts makes it, a deletion included.
 	c.session = "sched-2"
+	c.ctx = withApprovedChange(context.Background(), queued[0].Agent, queued[0].Handle)
 	if msg := c.approve("skill", "triage", "Delete it.", ChangeDelete); msg != "" {
-		t.Errorf("an approved change is still refused: %q", msg)
+		t.Errorf("the approved change is still refused in the run it started: %q", msg)
+	}
+	if msg := c.approve("skill", "other", "Change it.", ChangeEdit); msg == "" {
+		t.Error("approving one change let the run change something else")
 	}
 	other := c
 	other.agentID, other.session = "a2", "sched-3"
 	if msg := other.approve("skill", "triage", "", ChangeEdit); msg == "" {
 		t.Error("one agent's approval let a different agent through")
+	}
+	// Nothing stands: the agent's next run asks again.
+	later := changeAsker{owner: "u", agentID: "a1", session: "sched-4", db: udb, ask: saidNo(func(string, string, []string) string { return "" })}
+	if msg := later.approve("skill", "triage", "Delete it.", ChangeDelete); msg == "" {
+		t.Error("an approval from the queue outlasted the run it was given for")
+	}
+}
+
+// An approval given to a job another agent sent lasts for that job: the next
+// job in the same thread asks again, and the card says so. A run with no
+// session to last for remembers nothing past the one change.
+func TestASentJobsApprovalLastsForTheJob(t *testing.T) {
+	udb := changeTestStores(t)
+	var bodies []string
+	c := changeAsker{owner: "u", agentID: "seed-builder", agentName: "Builder", session: "dispatch:conv-1:seed-builder", db: udb, sentBy: "a-scout",
+		ask: saidNo(func(prompt, detail string, yes []string) string {
+			bodies = append(bodies, detail)
+			return yes[0]
+		})}
+	c.approve("tool", "map_list", "Change its url.", ChangeEdit)
+	c.approve("tool", "map_list", "Change its url again.", ChangeEdit)
+	if len(bodies) != 1 || !strings.Contains(bodies[0], "for the rest of this job: the next job asks again") {
+		t.Fatalf("one job should ask once, and say the approval lasts for the job: %q", bodies)
+	}
+	resetChangeApprovals("u", c.session)
+	c.approve("tool", "map_list", "", ChangeEdit)
+	if len(bodies) != 2 {
+		t.Errorf("the next job in the thread reused the last job's approval: asked %d times", len(bodies))
+	}
+
+	owner := c
+	owner.sentBy, owner.session = "", "s-owner"
+	owner.approve("tool", "map_list", "", ChangeEdit)
+	if !strings.Contains(bodies[len(bodies)-1], "for the rest of this conversation") {
+		t.Errorf("the owner's own conversation should say it lasts for the conversation: %q", bodies[len(bodies)-1])
+	}
+
+	blank := c
+	blank.session = ""
+	before := len(bodies)
+	blank.approve("tool", "wiki_read", "", ChangeEdit)
+	blank.approve("tool", "wiki_read", "", ChangeEdit)
+	if len(bodies)-before != 2 {
+		t.Errorf("a run with no session remembered an approval: asked %d times for two changes", len(bodies)-before)
 	}
 }
 

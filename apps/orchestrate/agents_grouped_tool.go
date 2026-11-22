@@ -1012,6 +1012,9 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 	if isBuilderAgent(target.ID) && nonOwnerRequester(t.ctx) {
 		return AgentRecord{}, "", fmt.Errorf("agents(run, agent=%q) refused: someone other than your owner started this, and building answers to the owner only. Tell them the owner has to ask for it", key)
 	}
+	if isBuilderAgent(target.ID) && !t.watched() {
+		return AgentRecord{}, "", fmt.Errorf("agents(run, agent=%q) refused: Builder is offered only in a conversation the user is watching in gohort, because what Builder changes has to be approved by them there, and nobody is watching this one. Do not try to reach it another way. Say what you would have Builder change and why, so the user can ask for it from gohort's chat", key)
+	}
 	if isBuilderAgent(target.ID) && !t.agent.Fleet && !t.agent.AllowBuilderDispatch {
 		return AgentRecord{}, "", fmt.Errorf("agents(run, agent=%q) refused: Builder is dispatch-callable only from a channel/fleet agent, or from an agent the user has granted \"Can dispatch Builder\" (Security & Access). Point the user at Builder in their agent picker (or the chat URL for Builder) and describe what they want built", key)
 	}
@@ -1375,6 +1378,9 @@ func (ar *agentsRun) buildSession() {
 	// Not registered in the SubSession lifecycle index; that index drives
 	// async promotion, which orchestrate doesn't do (dispatch is sync).
 	ar.subSessID = t.dispatchThreadID(ar.target.ID)
+	// A new job in a thread that outlasts it: what an earlier job was
+	// approved to change is asked about again (change_approval.go).
+	resetChangeApprovals(t.user, ar.subSessID)
 	ar.subSess = &ToolSession{
 		LLM:           t.app.LLM,
 		LeadLLM:       t.app.LeadLLM,
@@ -1487,6 +1493,10 @@ func (ar *agentsRun) buildTurn() {
 		// The caller's ask marks bind the run it hands over (ask_first.go).
 		askChain:        t.delegatedAskChain(),
 		askConversation: t.conversation(),
+		// Its change approvals last for this job, in its own thread
+		// (change_approval.go).
+		changeThread: ar.subSessID,
+		sentBy:       t.agent.ID,
 		// The caller's ctx, so NetworkConnector propagates, stamped with
 		// this run's lineage so a delegate or detached run from inside it
 		// keeps counting (dispatch_lineage.go).

@@ -147,6 +147,12 @@ type chatTurn struct {
 	// a run with no session of its own: an "Allow for this session" given
 	// there covers it too (ask_first.go).
 	askConversation string
+	// changeThread and sentBy are a handed-over run's, for its change
+	// approvals (change_approval.go): the thread it works in, which a run
+	// with no session of its own asks under, and the agent that sent it.
+	// Without the thread every such run asked under one blank session, and
+	// an approval given to one covered the next.
+	changeThread, sentBy string
 	// askBlock is the ask card this turn ended on (ui_ask with options, or
 	// ui_ask_form), saved on the question's message so a reload redraws it.
 	askBlock map[string]any

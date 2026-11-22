@@ -10,7 +10,7 @@ package orchestrate
 // owner never saw what was asked. Now the first such refusal in a run queues
 // the job for the owner, shown in the asking agent's chat as Approve change
 // is. Approving runs the same job in Builder as the owner, with the owner's
-// permissions and the edits it needs allowed; the agent's own limits are left
+// permissions; each change it makes still asks. The agent's own limits are left
 // as they were. Denying keeps the owner's no (proposal_declines.go), so the
 // same job, reworded or not, is not put to them again.
 //
@@ -93,17 +93,12 @@ func (h *ownerJobHold) heldForOwner(sess *ToolSession, db Database, from AgentRe
 }
 
 // runApprovedOwnerJob runs an approved builderAsOwnerAction: Builder, as the
-// owner, with the edits it needs allowed, its result back in the conversation
-// that asked.
+// owner, its result back in the conversation that asked. Approving the job is
+// not approving its changes: each change to something that exists waits for
+// its own card (change_approval.go).
 func (T *OrchestrateApp) runApprovedOwnerJob(a Authorization) {
-	builder := ""
-	if udb := UserDB(T.DB, a.Owner); udb != nil {
-		if rec, ok := findAgentByNameOrID(udb, a.Owner, "builder"); ok && isBuilderAgent(rec.ID) {
-			builder = rec.ID
-		}
-	}
 	T.runApproved(approvedRun{
-		a: a, target: "builder", brief: a.Brief, ownerApproved: builder, asOwner: true,
+		a: a, target: "builder", brief: a.Brief, asOwner: true,
 		label: fmt.Sprintf("the Builder job you sent, which the owner approved to run with their own permissions (%s)", truncateObs(a.Brief, 160)),
 	})
 }

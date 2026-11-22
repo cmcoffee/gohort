@@ -88,9 +88,11 @@ func TestAnApprovedChangeIsMadeAndComesBack(t *testing.T) {
 	registerStandingRunner(app)
 	var ran []StandingAgent
 	var under []string
+	var approvedIn []bool
 	RegisterStandingRunner(func(ctx context.Context, sa StandingAgent) StandingRunResult {
 		ran = append(ran, sa)
 		under = append(under, parentRunFromCtx(ctx))
+		approvedIn = append(approvedIn, approvedChangeFor(ctx, "seed-builder", changeKey("tool", "calendar")))
 		return StandingRunResult{Status: RunOK, Summary: "done", Raw: "CHANGED: the calendar tool now does all three."}
 	})
 	t.Cleanup(func() { RegisterStandingRunner(nil); RegisterStandingReporter(nil) })
@@ -121,14 +123,17 @@ func TestAnApprovedChangeIsMadeAndComesBack(t *testing.T) {
 	r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(AuthDB(), "u")})
 	w := httptest.NewRecorder()
 	routed(app)(w, r)
-	if w.Code != http.StatusNoContent || !changeGranted(udb, a.Agent, a.Handle) {
-		t.Fatalf("approve answered %d %s, granted=%v", w.Code, w.Body.String(), changeGranted(udb, a.Agent, a.Handle))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("approve answered %d %s", w.Code, w.Body.String())
 	}
 	waitBackgroundJobs(t, sid)
 	releaseInjectionQueue(sid)
 	if len(ran) != 1 || ran[0].AgentID != "seed-builder" || !strings.Contains(ran[0].Mission, "calendar") ||
 		!strings.Contains(ran[0].Mission, "fold the calendar tools into one") {
 		t.Fatalf("approving should run the agent that wanted the change, told what it is and what it was for: %+v", ran)
+	}
+	if !approvedIn[0] {
+		t.Error("the run approving started should be the one allowed to make that change")
 	}
 	if len(ran[0].DispatchedBy) != 1 || ran[0].DispatchedBy[0] != "wiwee" {
 		t.Errorf("the run should be wiwee's hand-off, as the original was: %v", ran[0].DispatchedBy)
@@ -152,10 +157,12 @@ func TestAnApprovedChangeIsMadeAndComesBack(t *testing.T) {
 	if len(ran) != 1 || len(ran[0].DispatchedBy) != 0 {
 		t.Errorf("an agent's own change ran as a hand-off from itself: %+v", ran)
 	}
-	ran = nil
+	// With no conversation to come back to, it still runs, to make the
+	// change: there is no grant left waiting for a later run.
+	ran, approvedIn = nil, nil
 	self.FromSession = ""
 	app.runApprovedChange(self)
-	if len(ran) != 0 {
-		t.Errorf("a change with no conversation to come back to ran: %+v", ran)
+	if len(ran) != 1 || !approvedIn[0] {
+		t.Errorf("a change with no conversation to come back to should still be made, in its own run: %+v", ran)
 	}
 }

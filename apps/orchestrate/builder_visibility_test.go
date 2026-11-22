@@ -29,7 +29,7 @@ func TestListAgentsIncludesBuilderSeed(t *testing.T) {
 func TestComputeDispatchableFleet_BuilderFollowsTheGrant(t *testing.T) {
 	udb := &DBase{Store: kvlite.MemStore()}
 	hasBuilder := func(agent AgentRecord) bool {
-		turn := &chatTurn{agent: agent, udb: udb, user: "someuser"}
+		turn := &chatTurn{agent: agent, udb: udb, user: "someuser", askVia: approveEveryChange}
 		for _, a := range turn.computeDispatchableFleet() {
 			if isBuilderAgent(a.ID) {
 				return true
@@ -68,7 +68,7 @@ func TestAllowNoneWithGrantListsBuilderOnly(t *testing.T) {
 	if _, err := saveAgent(udb, AgentRecord{Name: "Other", Owner: "u", OrchestratorPrompt: "p"}); err != nil {
 		t.Fatal(err)
 	}
-	turn := &chatTurn{agent: AgentRecord{ID: "a1", Owner: "u", AllowBuilderDispatch: true, DispatchMode: dispatchNone}, udb: udb, user: "u"}
+	turn := &chatTurn{agent: AgentRecord{ID: "a1", Owner: "u", AllowBuilderDispatch: true, DispatchMode: dispatchNone}, udb: udb, user: "u", askVia: approveEveryChange}
 	got := turn.computeDispatchableFleet()
 	if len(got) != 1 || !isBuilderAgent(got[0].ID) {
 		names := []string{}

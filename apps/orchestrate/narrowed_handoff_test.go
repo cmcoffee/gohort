@@ -94,8 +94,8 @@ func TestANarrowedAgentsFirstHandoffFromAChannelWaitsForTheOwner(t *testing.T) {
 	}
 }
 
-// Handed off (await false) from a turn nobody watches, the same two waits:
-// a narrowed agent's first handoff, and Builder.
+// Handed off (await false) from a turn nobody watches: a narrowed agent's
+// first handoff waits for the owner, and Builder is not offered at all.
 func TestAHandoffWithNobodyWatchingWaitsBeforeItDetaches(t *testing.T) {
 	df, _ := narrowedFixture(t, FakeTurn{Content: "ok", Repeat: true})
 	turn := &chatTurn{app: df.app, user: "u", udb: df.udb, agent: df.agent, ctx: t.Context()}
@@ -110,7 +110,7 @@ func TestAHandoffWithNobodyWatchingWaitsBeforeItDetaches(t *testing.T) {
 	df.agent.AllowBuilderDispatch = true
 	turn.agent = df.agent
 	err = pre(map[string]any{"action": "run", "agent": "seed-builder", "message": "make a map tool", "await": false}, sess)
-	if err == nil || !strings.Contains(err.Error(), "Builder changes things") || len(queuedFor("Builder")) != 1 {
-		t.Errorf("Builder handed off unwatched should wait for the owner: %v, %d queued", err, len(queuedFor("Builder")))
+	if err == nil || !strings.Contains(err.Error(), "offered only in a conversation the user is watching") || len(queuedFor("Builder")) != 0 {
+		t.Errorf("Builder handed off unwatched should be refused, not queued: %v, %d queued", err, len(queuedFor("Builder")))
 	}
 }

@@ -147,13 +147,17 @@ func TestHandToBuilderHiddenWithoutDispatchRights(t *testing.T) {
 		t.Error("nil turn should yield no tool")
 	}
 
-	fleet := &chatTurn{agent: AgentRecord{ID: "fleeter", Fleet: true}}
+	fleet := &chatTurn{agent: AgentRecord{ID: "fleeter", Fleet: true}, askVia: approveEveryChange}
 	if handToBuilderTool(fleet) == nil {
 		t.Error("a Fleet agent may dispatch Builder, so it should get the tool")
 	}
-	granted := &chatTurn{agent: AgentRecord{ID: "g", AllowBuilderDispatch: true}}
+	granted := &chatTurn{agent: AgentRecord{ID: "g", AllowBuilderDispatch: true}, askVia: approveEveryChange}
 	if handToBuilderTool(granted) == nil {
 		t.Error("an agent granted Builder dispatch should get the tool")
+	}
+	granted.askVia = nil
+	if handToBuilderTool(granted) != nil {
+		t.Error("offered to a turn nobody is watching")
 	}
 }
 
