@@ -48,8 +48,9 @@ func (t *chatTurn) finalizeDispatchCatalog(sess *ToolSession, tools []AgentToolD
 		names = append(names, td.Tool.Name)
 	}
 	tools, names = dedupeToolsByName(tools, names)
-	sess.SetAvailableTools(names)
 	sess.SetWithheldActions(t.withheldToolActions())
+	tools, names = withoutWithheldToolboxActions(sess, tools, names)
+	sess.SetAvailableTools(names)
 	tools, _ = t.deferBuilderOnDemandTools(tools, nil)
 	return tools
 }

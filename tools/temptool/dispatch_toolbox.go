@@ -41,6 +41,13 @@ func dispatchToolboxModeTempTool(sess *ToolSession, tt *TempTool, args map[strin
 		}
 		return "", fmt.Errorf("toolbox %q: no action named %q. available: %v", tt.Name, actionName, names)
 	}
+	// Switched off for this agent (AgentRecord.DisabledToolActions, on its
+	// Security page): the rest of the toolbox still serves. Checked here as
+	// well as in the grouped tool, since the expanded form (<toolbox>_<action>)
+	// and every other route to a toolbox's action end in this dispatcher.
+	if sess.ActionWithheld(tt.Name, act.Name) {
+		return "", fmt.Errorf("toolbox %q action %q is switched off for this agent (its Security page, Parts of a tool it may not use): the rest of the toolbox still works. Do not try to reach it another way; say what you would have done with it", tt.Name, act.Name)
+	}
 	if act.Disabled {
 		return "", fmt.Errorf("toolbox %q action %q is disabled (quarantined). Fix it and re-enable via tool_def(action=\"update\", name=%q, actions=[{name:%q, disabled:false, ...}])", tt.Name, act.Name, tt.Name, act.Name)
 	}

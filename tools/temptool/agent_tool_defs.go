@@ -91,7 +91,8 @@ func markNotReady(sess *ToolSession, tt *TempTool, defs []AgentToolDef) []AgentT
 func expandedToolboxDefs(sess *ToolSession, tt *TempTool) []AgentToolDef {
 	out := make([]AgentToolDef, 0, len(tt.Actions))
 	for i := range tt.Actions {
-		if tt.Actions[i].Disabled {
+		// Quarantined, or switched off for this agent: not offered.
+		if tt.Actions[i].Disabled || sess.ActionWithheld(tt.Name, tt.Actions[i].Name) {
 			continue
 		}
 		out = append(out, perActionToolDef(sess, tt, tt.Actions[i]))
@@ -221,7 +222,7 @@ func CheckCatalogNameCollision(sess *ToolSession, name string, actions []TempToo
 // action, hand off to dispatchTempTool → dispatchToolboxModeTempTool) but
 // promotes the action to a first-class catalog name with its own schema.
 func perActionToolDef(sess *ToolSession, tt *TempTool, act TempToolAction) AgentToolDef {
-	writes := isMutatingMethod(act.Method)
+	writes := ActionWrites(act)
 	kind := "read"
 	if writes {
 		kind = "write"
@@ -265,6 +266,21 @@ func perActionToolDef(sess *ToolSession, tt *TempTool, act TempToolAction) Agent
 // isMutatingMethod reports whether an HTTP method has side effects — used
 // to classify a toolbox action as read vs write for the LLM description
 // and the admin audit view. Empty defaults to GET (read).
+// ActionWrites reports whether a toolbox action changes something at the
+// far end: the one rule every surface asks (the agent's Security page marks
+// writes by it, the expanded tool's description says it). A command action
+// writes, since a script can do anything; an HTTP action writes when its
+// method does, unless its owner marked it as one that only reads (Reads).
+func ActionWrites(a TempToolAction) bool {
+	if a.Reads {
+		return false
+	}
+	if strings.TrimSpace(a.CommandTemplate) != "" {
+		return true
+	}
+	return isMutatingMethod(a.Method)
+}
+
 func isMutatingMethod(method string) bool {
 	switch strings.ToUpper(strings.TrimSpace(method)) {
 	case "", "GET", "HEAD", "OPTIONS":

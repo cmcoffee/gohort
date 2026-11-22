@@ -304,3 +304,44 @@ func TestAnAppsToolsAreTickedOnAnAgent(t *testing.T) {
 		}
 	}
 }
+
+// The Security page lists every action of the toolboxes an agent has, from
+// its owner's pool and its own, each marked as one that reads or writes, so a
+// toolbox's actions can be switched off one by one.
+func TestAToolboxsActionsCanBeSwitchedOffOneByOne(t *testing.T) {
+	udb := &DBase{Store: kvlite.MemStore()}
+	jira := TempTool{Name: "jira", Mode: TempToolModeToolbox, Credential: "no_auth", Description: "Jira.",
+		Actions: []TempToolAction{
+			{Name: "search", Description: "Search issues. With JQL.", URLTemplate: "https://jira.example/s", Method: "POST", Reads: true},
+			{Name: "add_comment", Description: "Comment on an issue.", URLTemplate: "https://jira.example/c", Method: "POST"},
+		}}
+	if err := AdminPersistTempTool(udb, "u", jira); err != nil {
+		t.Fatal(err)
+	}
+	own := TempTool{Name: "notes", Mode: TempToolModeToolbox, Credential: "no_auth",
+		Actions: []TempToolAction{{Name: "list", URLTemplate: "https://notes.example/l"}}}
+	plain := TempTool{Name: "weather", Mode: TempToolModeAPI}
+	agent := AgentRecord{ID: "a1", Owner: "u", Tools: []TempTool{own, plain}}
+
+	got := map[string]ui.SelectOption{}
+	for _, o := range narrowableActionOptions(udb, "u", agent) {
+		got[o.Value] = o
+	}
+	for value, label := range map[string]string{
+		"jira/search":      "jira - search (reads)",
+		"jira/add_comment": "jira - add_comment (writes)",
+		"notes/list":       "notes - list (reads)",
+	} {
+		if o, ok := got[value]; !ok || o.Label != label || o.Group != "Toolbox "+strings.SplitN(value, "/", 2)[0] {
+			t.Errorf("%s: offered %+v, want label %q", value, o, label)
+		}
+	}
+	if got["jira/search"].Help != "Search issues." {
+		t.Errorf("an action's row should carry its first sentence: %q", got["jira/search"].Help)
+	}
+	for v := range got {
+		if strings.HasPrefix(v, "weather/") {
+			t.Errorf("a tool that is not a toolbox was offered by action: %s", v)
+		}
+	}
+}

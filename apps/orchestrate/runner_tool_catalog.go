@@ -568,7 +568,46 @@ func (wc *workerCatalog) finishCatalog() {
 	// Sub-actions this agent may not call. Set beside the tool names because
 	// both answer "what can this caller actually do", and a caller that has
 	// the tool but not one of its actions is the case a name list cannot say.
+	// The user's own tools are built after this (temptool.BuildAgentToolDefs),
+	// so a toolbox offered one tool per action already leaves these out.
 	sess.SetWithheldActions(t.withheldToolActions())
+}
+
+// withoutWithheldToolboxActions drops the tools a toolbox offers one per
+// action (<toolbox>_<action>, its Expand form) whose action is switched off
+// for this caller, from a catalog built before the caller's switched-off list
+// was known: a dispatched run's (finalizeDispatchCatalog). The collapsed
+// toolbox drops them from its own schema, and the dispatcher refuses them
+// either way; this keeps the expanded form from offering a tool that can only
+// be refused.
+func withoutWithheldToolboxActions(sess *ToolSession, tools []AgentToolDef, names []string) ([]AgentToolDef, []string) {
+	drop := map[string]bool{}
+	for _, tt := range sess.CopyTempTools() {
+		if tt == nil || tt.Mode != TempToolModeToolbox {
+			continue
+		}
+		for _, a := range tt.Actions {
+			if sess.ActionWithheld(tt.Name, a.Name) {
+				drop[tt.Name+"_"+a.Name] = true
+			}
+		}
+	}
+	if len(drop) == 0 {
+		return tools, names
+	}
+	keptTools := tools[:0]
+	for _, td := range tools {
+		if !drop[td.Tool.Name] {
+			keptTools = append(keptTools, td)
+		}
+	}
+	keptNames := names[:0]
+	for _, n := range names {
+		if !drop[n] {
+			keptNames = append(keptNames, n)
+		}
+	}
+	return keptTools, keptNames
 }
 
 // dedupeToolsByName keeps the FIRST definition of each tool name, matching

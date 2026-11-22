@@ -445,17 +445,17 @@ func (ap *accessPage) toolsSections() []ui.Section {
 		{
 			Group:    "Tools",
 			Title:    "Parts of a tool it may not use",
-			Subtitle: "A grouped tool is one grant with several jobs inside it: workspace reads files, writes them, and runs commands.",
+			Subtitle: "A grouped tool is one grant with several jobs inside it: workspace reads files, writes them, and runs commands. A toolbox is too: a Jira toolbox searches, and creates issues.",
 			Detail: "Without this the choice is all of it or none, because a tool is offered on the union of what its actions need.\n\n" +
 				"Ticked here, the action is dropped from the schema the model sees, so it never plans around one it cannot have, and refused at the call as well for a name it guessed or carried over.\n\n" +
-				"Only the actions that DO something are listed: withholding a read is the reason the tool was granted. It inherits downward, so a sub-agent cannot run what its parent was denied.",
+				"For gohort's own tools, only the actions that DO something are listed: withholding a read is the reason the tool was granted. For your toolboxes every action is listed, each marked as one that reads or writes, so a noisy read can go too. It inherits downward, so a sub-agent cannot run what its parent was denied.",
 			Body: ui.FormPanel{
 				Source:  ap.patchURL,
 				PostURL: ap.patchURL,
 				Method:  "PATCH",
 				Fields: []ui.FormField{
 					{Field: "disabled_tool_actions", Type: "checklist", Label: "Switched-off sub-actions",
-						Options:     narrowableActionOptions(ap.user),
+						Options:     narrowableActionOptions(ap.udb, ap.user, ap.agent),
 						Placeholder: "(nothing here can be narrowed on its own)",
 						Help:        "Parts of a grouped tool this agent may not use, while it keeps the rest."},
 				},
@@ -681,7 +681,7 @@ func (ap *accessPage) limitsSections() []ui.Section {
 						Detail:      "Name a grouped tool's action (moltbook/create_post) or a whole tool (send_email). The action wins where both are set.",
 						Columns: []ui.FormField{
 							{Field: "action", Label: "Action", Type: "combo", Width: 3, Required: true, Placeholder: "e.g. moltbook/create_post",
-								Options: narrowableActionOptions(ap.user)},
+								Options: narrowableActionOptions(ap.udb, ap.user, ap.agent)},
 							{Field: "limit", Label: "Times per 24 hours", Type: "number", Width: 1, Required: true, Placeholder: "e.g. 6"},
 						}},
 					{Field: "daily_spend_usd", Type: "number", Label: "Spend limit (US$ per 24 hours)", Min: 0, Max: 1000,

@@ -557,6 +557,7 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 			ResponsePipe:    strings.TrimSpace(StringArg(m, "response_pipe")),
 			ResponseExtract: ParseExtractSpec(m["response_extract"]),
 			Disabled:        BoolArg(m, "disabled"),
+			Reads:           BoolArg(m, "reads"),
 			FollowUps:       followUpNames(m["follow_ups"]),
 		})
 	}
@@ -1058,6 +1059,7 @@ func toolboxCommandAction(i int, actName, actDesc, cmdTpl string, m map[string]a
 		Required:        required,
 		CommandTemplate: cmdTpl,
 		Disabled:        BoolArg(m, "disabled"),
+		Reads:           BoolArg(m, "reads"),
 		FollowUps:       followUpNames(m["follow_ups"]),
 	}, nil
 }

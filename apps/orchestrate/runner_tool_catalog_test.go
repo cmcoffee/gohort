@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
 // fakeOneTool is an MCP server offered as one tool, and fakeOneProxy one of
@@ -231,5 +232,71 @@ func TestTheDesktopToolsStayOffTurnsWithoutAChatPage(t *testing.T) {
 func TestTheChatPageMarksItsSends(t *testing.T) {
 	if src := readFile(t, "runner_http.go"); !strings.Contains(src, "chatPageSend:      true,") {
 		t.Error("a chat-page send is no longer marked, so the desktop tools would never be offered")
+	}
+}
+
+// A toolbox offered one tool per action loses the ones switched off for the
+// agent from its catalog, and keeps the rest and every other tool.
+func TestTheCatalogLeavesOutASwitchedOffToolboxAction(t *testing.T) {
+	sess := &ToolSession{Username: "u"}
+	if err := sess.AppendTempTool(&TempTool{Name: "jira", Mode: TempToolModeToolbox, Credential: "no_auth", Expand: true,
+		Actions: []TempToolAction{{Name: "search"}, {Name: "create_issue", Method: "POST"}}}); err != nil {
+		t.Fatal(err)
+	}
+	sess.SetWithheldActions([]string{"jira/create_issue"})
+	tools := []AgentToolDef{{Tool: Tool{Name: "jira_search"}}, {Tool: Tool{Name: "jira_create_issue"}}, {Tool: Tool{Name: "web_search"}}}
+	names := []string{"jira_search", "jira_create_issue", "web_search"}
+	tools, names = withoutWithheldToolboxActions(sess, tools, names)
+	var kept []string
+	for _, td := range tools {
+		kept = append(kept, td.Tool.Name)
+	}
+	if strings.Join(kept, ",") != "jira_search,web_search" || strings.Join(names, ",") != "jira_search,web_search" {
+		t.Errorf("kept tools %v, names %v", kept, names)
+	}
+}
+
+// Through the real paths: an agent's own expanded toolbox loses the action
+// switched off for it, both in a turn's catalog (its own tools are built
+// after the turn's catalog tells the session what is switched off) and in a
+// dispatched run's.
+func TestBothCatalogsLeaveOutASwitchedOffToolboxAction(t *testing.T) {
+	app, udb, user := newTestOrchestrate(t)
+	pinRootDB(t)
+	jira := TempTool{Name: "jira", Mode: TempToolModeToolbox, Credential: "no_auth", Expand: true, Description: "Jira.",
+		Actions: []TempToolAction{
+			{Name: "search", Description: "Search.", URLTemplate: "https://jira.example/s", Method: "GET"},
+			{Name: "create_issue", Description: "Create.", URLTemplate: "https://jira.example/c", Method: "POST"},
+		}}
+	a, err := saveAgent(udb, AgentRecord{Name: "Tracker", Owner: user, OrchestratorPrompt: "p",
+		Tools: []TempTool{jira}, DisabledToolActions: []string{"jira/create_issue"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := func(tools []AgentToolDef) []string {
+		var n []string
+		for _, td := range tools {
+			n = append(n, td.Tool.Name)
+		}
+		return n
+	}
+	turn := &chatTurn{app: app, agent: a, user: user, udb: udb, ctx: context.Background()}
+	sess := turn.newToolSession()
+	if _, _, err := turn.resolveWorkerTools(sess, true); err != nil {
+		t.Fatal(err)
+	}
+	own := names(temptool.BuildAgentToolDefs(sess))
+	if !slices.Contains(own, "jira_search") || slices.Contains(own, "jira_create_issue") {
+		t.Errorf("a turn's own tools should offer jira_search and not jira_create_issue: %v", own)
+	}
+
+	dsess := &ToolSession{Username: user, DB: udb}
+	if err := dsess.AppendTempTool(&jira); err != nil {
+		t.Fatal(err)
+	}
+	dturn := &chatTurn{app: app, agent: a, user: user, udb: udb, ctx: context.Background()}
+	out := names(dturn.finalizeDispatchCatalog(dsess, []AgentToolDef{{Tool: Tool{Name: "jira_search"}}, {Tool: Tool{Name: "jira_create_issue"}}}))
+	if !slices.Contains(out, "jira_search") || slices.Contains(out, "jira_create_issue") {
+		t.Errorf("a dispatched run's catalog should offer jira_search and not jira_create_issue: %v", out)
 	}
 }

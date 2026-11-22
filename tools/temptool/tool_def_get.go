@@ -299,6 +299,9 @@ func actionToArgs(a TempToolAction) map[string]any {
 	if a.Disabled {
 		m["disabled"] = true
 	}
+	if a.Reads {
+		m["reads"] = true
+	}
 	if len(a.FollowUps) > 0 {
 		m["follow_ups"] = a.FollowUps
 	}

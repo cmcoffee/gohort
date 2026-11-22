@@ -497,3 +497,92 @@ func TestAShellToolsTimeoutLengthensItsRun(t *testing.T) {
 		t.Errorf("a shorter one does not cut the general cap, got %s", got)
 	}
 }
+
+// Which actions of a toolbox write: the method decides, a script always
+// writes, and the owner can mark a write-method action that only reads (a
+// search sent as a POST). The mark survives Builder creating the toolbox and
+// editing another action, and shows in what tool_def gives back.
+func TestAToolboxActionReadsOrWrites(t *testing.T) {
+	for _, c := range []struct {
+		a     TempToolAction
+		write bool
+	}{
+		{TempToolAction{Method: "GET"}, false},
+		{TempToolAction{Method: ""}, false},
+		{TempToolAction{Method: "POST"}, true},
+		{TempToolAction{Method: "DELETE"}, true},
+		{TempToolAction{Method: "POST", Reads: true}, false},
+		{TempToolAction{CommandTemplate: "jq ."}, true},
+		{TempToolAction{CommandTemplate: "jq .", Reads: true}, false},
+	} {
+		if got := ActionWrites(c.a); got != c.write {
+			t.Errorf("%+v: writes = %v, want %v", c.a, got, c.write)
+		}
+	}
+
+	sess := &ToolSession{Username: "alice"}
+	if _, err := createGrouped(map[string]any{"name": "jira", "description": "d", "mode": "toolbox", "actions": []any{
+		map[string]any{"name": "search", "description": "Search.", "url_template": "https://jira.example/rest/api/3/search/jql", "method": "POST",
+			"body_template": `{"jql": {jql}}`, "params": map[string]any{"jql": map[string]any{"type": "string"}}, "reads": true},
+		map[string]any{"name": "add_comment", "description": "Comment.", "url_template": "https://jira.example/rest/api/3/issue/{key}/comment", "method": "POST",
+			"body_template": `{"body": {body}}`, "params": map[string]any{"key": map[string]any{"type": "string"}, "body": map[string]any{"type": "string"}}},
+	}}, sess); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := updateGrouped(map[string]any{"name": "jira", "actions": []any{map[string]any{"name": "add_comment", "description": "Comment on an issue."}}}, sess); err != nil {
+		t.Fatal(err)
+	}
+	marks := map[string]bool{}
+	for _, a := range sess.LookupTempTool("jira").Actions {
+		marks[a.Name] = ActionWrites(a)
+		if a.Name == "search" && actionToArgs(a)["reads"] != true {
+			t.Error("tool_def does not give back the read mark")
+		}
+	}
+	if marks["search"] || !marks["add_comment"] {
+		t.Errorf("after an update of another action: search writes=%v, add_comment writes=%v", marks["search"], marks["add_comment"])
+	}
+}
+
+// An action switched off for this agent is not offered as its own tool in a
+// toolbox's expanded form; the others are.
+func TestAnExpandedToolboxLeavesOutWhatTheAgentMayNotUse(t *testing.T) {
+	sess := newTestSession()
+	tt := &TempTool{Name: "jira", Mode: TempToolModeToolbox, Credential: "no_auth", Expand: true,
+		Actions: []TempToolAction{
+			{Name: "search", Description: "Search.", URLTemplate: "https://jira.example/s", Method: "GET"},
+			{Name: "create_issue", Description: "Create.", URLTemplate: "https://jira.example/c", Method: "POST"},
+		}}
+	sess.SetWithheldActions([]string{"jira/create_issue"})
+	var names []string
+	for _, d := range expandedToolboxDefs(sess, tt) {
+		names = append(names, d.Tool.Name)
+	}
+	if len(names) != 1 || names[0] != "jira_search" {
+		t.Errorf("expanded toolbox offers %v, want only jira_search", names)
+	}
+}
+
+// The collapsed toolbox (one tool, action=<name>) refuses an action switched
+// off for the agent and leaves it out of its help, as gohort's own grouped
+// tools do.
+func TestACollapsedToolboxRefusesWhatTheAgentMayNotUse(t *testing.T) {
+	sess := newTestSession()
+	tt := &TempTool{Name: "jira", Mode: TempToolModeToolbox, Credential: "no_auth",
+		Actions: []TempToolAction{
+			{Name: "search", Description: "Search.", URLTemplate: "https://jira.example/s", Method: "GET"},
+			{Name: "create_issue", Description: "Create.", URLTemplate: "https://jira.example/c", Method: "POST"},
+		}}
+	if err := sess.AppendTempTool(tt); err != nil {
+		t.Fatal(err)
+	}
+	sess.SetWithheldActions([]string{"jira/create_issue"})
+	def := agentToolFromTemp(sess, tt)
+	ctx := sess.ContextWithSession(context.Background())
+	if _, err := def.Handler(ctx, map[string]any{"action": "create_issue"}); err == nil {
+		t.Error("a switched-off action of a collapsed toolbox ran")
+	}
+	if help, _ := def.Handler(ctx, map[string]any{"action": "help"}); strings.Contains(help, "create_issue") {
+		t.Errorf("a switched-off action is still in the toolbox's help:\n%s", help)
+	}
+}

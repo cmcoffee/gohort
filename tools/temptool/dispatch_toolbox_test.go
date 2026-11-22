@@ -94,3 +94,27 @@ func TestToolboxShellActionChecksItsOwnRequiredArgs(t *testing.T) {
 		t.Error("a whitespace-only required arg is not supplied")
 	}
 }
+
+// An action switched off for this agent is refused at the dispatcher, the one
+// place every route to a toolbox action ends, before anything is sent; the
+// rest of the toolbox still runs.
+func TestASwitchedOffToolboxActionIsRefused(t *testing.T) {
+	tb := &TempTool{
+		Name: "jira", Mode: TempToolModeToolbox, Credential: "no_auth",
+		Actions: []TempToolAction{
+			{Name: "search", URLTemplate: "https://jira.example/s"},
+			{Name: "create_issue", URLTemplate: "https://jira.example/c", Method: "POST"},
+		},
+	}
+	sess := &ToolSession{Username: "u"}
+	sess.SetWithheldActions([]string{"jira/create_issue"})
+	_, err := dispatchToolboxModeTempTool(sess, tb, map[string]any{"action": "create_issue"})
+	if err == nil || !strings.Contains(err.Error(), "switched off for this agent") {
+		t.Errorf("a switched-off action was not refused: %v", err)
+	}
+	// The other action goes on to the API path (which refuses here only for
+	// want of a DB, after the check).
+	if _, err := dispatchToolboxModeTempTool(sess, tb, map[string]any{"action": "search"}); err == nil || strings.Contains(err.Error(), "switched off") {
+		t.Errorf("an action left on was refused as switched off: %v", err)
+	}
+}

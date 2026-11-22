@@ -11,6 +11,7 @@ import (
 	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/core/toolcat"
 	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
 // availableWorkerToolOptions returns the worker tool catalog as
@@ -750,7 +751,12 @@ func frameworkPhaseToolOptions() []ui.SelectOption {
 // alongside workspace/run is a longer list answering the same question worse.
 // The predicate is the action's own capabilities, so a tool added later is
 // covered without touching this.
-func narrowableActionOptions(user string) []ui.SelectOption {
+//
+// After them, every action of the toolboxes this agent has: its owner's
+// pool and the agent's own. All of them, each marked as one that reads or
+// writes (temptool.ActionWrites), since a toolbox's reads are what the owner
+// wrote it for and a noisy one is theirs to take away.
+func narrowableActionOptions(udb Database, user string, agent AgentRecord) []ui.SelectOption {
 	var out []ui.SelectOption
 	for _, ct := range FilterChatTools(BlockedTools) {
 		g, ok := ct.(*GroupedTool)
@@ -775,7 +781,7 @@ func narrowableActionOptions(user string) []ui.SelectOption {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Value < out[j].Value })
-	return out
+	return append(out, toolboxActionOptions(udb, user, agent)...)
 }
 
 // actionHelpFor is the action's own first sentence, trimmed to a row.
@@ -789,4 +795,47 @@ func actionHelpFor(g *GroupedTool, action string) string {
 		d = d[:i+1]
 	}
 	return truncateObs(d, 140)
+}
+
+// toolboxActionOptions is one row per action of each toolbox the agent has,
+// grouped by toolbox, writes marked.
+func toolboxActionOptions(udb Database, user string, agent AgentRecord) []ui.SelectOption {
+	var boxes []TempTool
+	seen := map[string]bool{}
+	add := func(tt TempTool) {
+		if tt.Mode != TempToolModeToolbox || seen[tt.Name] {
+			return
+		}
+		seen[tt.Name] = true
+		boxes = append(boxes, tt)
+	}
+	for _, tt := range agent.Tools {
+		add(tt) // the agent's own copy wins over a pool tool of the same name
+	}
+	if udb != nil && user != "" {
+		for _, p := range LoadPersistentTempTools(udb, user) {
+			add(p.Tool)
+		}
+	}
+	sort.Slice(boxes, func(i, j int) bool { return boxes[i].Name < boxes[j].Name })
+	var out []ui.SelectOption
+	for _, tt := range boxes {
+		for _, a := range tt.Actions {
+			what := "reads"
+			if temptool.ActionWrites(a) {
+				what = "writes"
+			}
+			help := strings.TrimSpace(a.Description)
+			if i := strings.IndexByte(help, '.'); i > 0 {
+				help = help[:i+1]
+			}
+			out = append(out, ui.SelectOption{
+				Value: tt.Name + "/" + a.Name,
+				Label: tt.Name + " - " + a.Name + " (" + what + ")",
+				Group: "Toolbox " + tt.Name,
+				Help:  truncateObs(help, 140),
+			})
+		}
+	}
+	return out
 }

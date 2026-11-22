@@ -94,6 +94,12 @@ type TempToolAction struct {
 	// the record being all-or-nothing. Re-enable via tool_def update
 	// (actions=[{name, disabled:false}]).
 	Disabled bool `json:"disabled,omitempty"`
+	// Reads marks an action that only reads although it is sent as a write:
+	// a search posted as a POST, as Jira's is. Set by the toolbox's owner.
+	// Without it the method decides: GET, HEAD and OPTIONS read, anything
+	// else (and a script, which can do anything) writes. Read by
+	// temptool.ActionWrites, the one place that says which an action is.
+	Reads bool `json:"reads,omitempty"`
 	// FollowUps names the other actions of this toolbox that a reply to THIS
 	// action may ask the agent to call: the service's own protocol step, such
 	// as a post the service answers with a verification challenge to send back

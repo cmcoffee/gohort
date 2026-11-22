@@ -139,6 +139,7 @@ func BuildToolDef() *GroupedTool {
 						"response_pipe":    {Type: "string", Description: "sh -c filter over the response body (jq/awk); the call's params are in its environment ($name)."},
 						"response_extract": {Type: "object", Description: responseExtractDesc},
 						"disabled":         {Type: "boolean", Description: "Quarantine this ONE action without touching the rest of the toolbox."},
+						"reads":            {Type: "boolean", Description: "Reads only, despite its method."},
 					},
 					// Not url_template: an action declares one template or the
 					// other, and requiring the HTTP one would make every local

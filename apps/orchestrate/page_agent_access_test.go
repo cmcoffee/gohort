@@ -184,7 +184,7 @@ func TestTheActionLimitsAreAList(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(src)
-	for _, want := range []string{`Source:  ap.patchURL + "/limits"`, `{Field: "action_quotas", Type: "rows"`, `AddLabel:    "+ Add limit"`, `Options: narrowableActionOptions(ap.user)`,
+	for _, want := range []string{`Source:  ap.patchURL + "/limits"`, `{Field: "action_quotas", Type: "rows"`, `AddLabel:    "+ Add limit"`, `Options: narrowableActionOptions(ap.udb, ap.user, ap.agent)`,
 		// Both halves required, so a row waits until it is whole rather than
 		// being refused while the person is still filling it in.
 		`{Field: "action", Label: "Action", Type: "combo", Width: 3, Required: true,`,
