@@ -359,6 +359,12 @@ func SharedRefsFor(store peershare.Store, indexTable, user string) []peershare.R
 	var out []peershare.Ref
 	for _, k := range ShareRecipientKeys(user) {
 		for _, ref := range peershare.List(store, indexTable, k) {
+			// What others shared with them: an owner on a team they shared
+			// with is reached through it, and their own agent came back to
+			// them as shared with them, beside itself.
+			if ref.Owner == user {
+				continue
+			}
 			if !seen[ref] {
 				seen[ref] = true
 				out = append(out, ref)

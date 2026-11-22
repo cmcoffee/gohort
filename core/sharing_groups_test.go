@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cmcoffee/gohort/core/peershare"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -158,5 +159,18 @@ func TestAToolSharedWithAGroupReachesItsMembers(t *testing.T) {
 	}
 	if !toolStillOffered("alice", "ssh_run", "bob") || toolStillOffered("alice", "ssh_run", "carol") {
 		t.Error("a tool bob took through the group should stay his, and carol never had it")
+	}
+}
+
+// Sharing with a team you are on does not hand your own thing back to you as
+// one shared with you: it showed twice on the owner's dashboard.
+func TestSharingWithYourOwnTeamDoesNotShareItWithYou(t *testing.T) {
+	_, ops := groupShareFixture(t)
+	peershare.SetRecipients(RootDB, "shared_test_index", "alice", "a1", []string{"group:" + ops})
+	if got := SharedRefsFor(RootDB, "shared_test_index", "alice"); len(got) != 0 {
+		t.Errorf("alice's own agent is listed as shared with her: %+v", got)
+	}
+	if got := SharedRefsFor(RootDB, "shared_test_index", "bob"); len(got) != 1 || got[0].Owner != "alice" {
+		t.Errorf("bob, on the team, is not shared it: %+v", got)
 	}
 }
