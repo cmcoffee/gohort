@@ -237,9 +237,9 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
 	if AuthCurrentUser(r) != "" {
 		startHTML = gettingStartedCard(r) + browserZoneScript
 	}
-	// The desktop app as a profile shapes it: the profile's name where the
-	// product's is.
-	if p, ok := desktopProfileOf(r); ok {
+	// As a user profile shapes it (the desktop app, or a browser when the
+	// profile says so): the profile's name where the product's is.
+	if p, ok := profileOf(r); ok {
 		name := template.HTMLEscapeString(p.Name)
 		html = strings.Replace(html, "<title>Gohort Dashboard</title>", "<title>"+name+"</title>", 1)
 		startHTML = `<style>#logo, body > .subtitle { display: none; }</style><h1 class="desk-profile-name" style="margin:0 0 0.9rem;font-size:var(--fs-xl, 1.6rem)">` + name + `</h1>` + startHTML

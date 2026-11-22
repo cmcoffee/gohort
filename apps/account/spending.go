@@ -15,6 +15,7 @@ import (
 	"github.com/cmcoffee/gohort/core/costledger"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/gohort/core/userprofile"
 )
 
 func (T *Account) spendingRoutes() {
@@ -24,55 +25,59 @@ func (T *Account) spendingRoutes() {
 		"POST": jsonapi.Post(T.DB, T.handleSpendingLimitSave),
 	}.Serve)
 	T.HandleFunc("/api/spending/breakdown", jsonapi.Get(T.DB, T.handleSpendingBreakdown))
-	T.HandleFunc("/api/spending/keys", jsonapi.Methods{
+	T.HandleFunc("/api/spending/keys", unlessTaken(userprofile.RemoveAPIKeys, jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.handleSpendingKeys),
 		"POST": jsonapi.Post(T.DB, T.handleSpendingKeySave),
-	}.Serve)
+	}.Serve))
 }
 
-// spendingSection is the Account page's Spending.
-func spendingSection() ui.Section {
+// spendingSection is the Account page's Spending: with what each API key
+// spent, unless the person's user profile takes their keys away.
+func spendingSection(keys bool) ui.Section {
+	parts := []ui.Component{
+		ui.DisplayPanel{
+			Source: "api/spending/summary",
+			Pairs: []ui.DisplayPair{
+				{Label: "Month", Field: "month"},
+				{Label: "Spent", Field: "spent"},
+				{Label: "Limit", Field: "limit"},
+			},
+		},
+		ui.FormPanel{
+			Source:     "api/spending/limit",
+			Invalidate: []string{"api/spending/summary"},
+			Fields: []ui.FormField{{Field: "own_cap", Label: "My monthly limit ($)", Type: "number", Decimals: 2, Min: 0,
+				Help: "A limit of your own, to stop before your administrator's would. Above theirs, theirs holds. Blank or 0: none of your own."}},
+		},
+		ui.Table{
+			Source:    "api/spending/breakdown",
+			RowKey:    "id",
+			GroupBy:   "kind",
+			EmptyText: "Nothing priced has run for you this month.",
+			Columns: []ui.Col{
+				{Field: "name", Label: "Spent on", Flex: 3},
+				{Field: "spent", Label: "This month"},
+			},
+		},
+	}
+	if keys {
+		parts = append(parts, ui.Table{
+			Source:    "api/spending/keys",
+			RowKey:    "id",
+			EmptyText: "You have no API keys.",
+			Columns: []ui.Col{
+				{Field: "name", Label: "API key", Flex: 3},
+				{Field: "spent", Label: "This month"},
+			},
+			RowActions: []ui.RowAction{{Type: "number", Label: "Limit ($)", Field: "cap", Decimals: 2, PostTo: "api/spending/keys"}},
+		})
+	}
 	return ui.Section{
 		Title:    "Spending",
 		Subtitle: "What your work cost this month, and the most it may cost.",
 		Detail: "Spending is what is priced: model use at the rates your administrator set, and calls through priced credentials and connectors, whether you asked, a schedule did, or a client with one of your API keys did. A local model priced at 0 costs nothing.\n\n" +
 			"Once your limit is reached, work that costs money stops until the month turns over: a new turn is refused, a turn under way finishes on the worker model, and a priced call is not sent. At 80% you are told once. A key's own limit stops just that key.",
-		Body: ui.Stack{Children: []ui.Component{
-			ui.DisplayPanel{
-				Source: "api/spending/summary",
-				Pairs: []ui.DisplayPair{
-					{Label: "Month", Field: "month"},
-					{Label: "Spent", Field: "spent"},
-					{Label: "Limit", Field: "limit"},
-				},
-			},
-			ui.FormPanel{
-				Source:     "api/spending/limit",
-				Invalidate: []string{"api/spending/summary"},
-				Fields: []ui.FormField{{Field: "own_cap", Label: "My monthly limit ($)", Type: "number", Decimals: 2, Min: 0,
-					Help: "A limit of your own, to stop before your administrator's would. Above theirs, theirs holds. Blank or 0: none of your own."}},
-			},
-			ui.Table{
-				Source:    "api/spending/breakdown",
-				RowKey:    "id",
-				GroupBy:   "kind",
-				EmptyText: "Nothing priced has run for you this month.",
-				Columns: []ui.Col{
-					{Field: "name", Label: "Spent on", Flex: 3},
-					{Field: "spent", Label: "This month"},
-				},
-			},
-			ui.Table{
-				Source:    "api/spending/keys",
-				RowKey:    "id",
-				EmptyText: "You have no API keys.",
-				Columns: []ui.Col{
-					{Field: "name", Label: "API key", Flex: 3},
-					{Field: "spent", Label: "This month"},
-				},
-				RowActions: []ui.RowAction{{Type: "number", Label: "Limit ($)", Field: "cap", Decimals: 2, PostTo: "api/spending/keys"}},
-			},
-		}},
+		Body: ui.Stack{Children: parts},
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/gohort/core/userprofile"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -395,5 +396,20 @@ func TestAKeyAsksInTheClientWhenItsOwnerSaysSo(t *testing.T) {
 	appAs(t, T, spec, "u", httptest.NewRequest("DELETE", path, nil))
 	if MCPKeyAsks(asking.ID) || MCPRunsUnasked(asking.ID, scope) {
 		t.Error("a revoked key's asking was kept")
+	}
+}
+
+// A key for an app is a personal API key: a user profile that takes those
+// away refuses it here too, rather than making one that every use refuses.
+func TestAProfileThatTakesKeysAwayMakesNoKeyForAnApp(t *testing.T) {
+	T, spec := mcpApp(t)
+	userprofile.SetStore(RootDB)
+	t.Cleanup(func() { userprofile.SetStore(nil) })
+	if err := userprofile.Save(userprofile.Profile{ID: "p", Name: "Focused", Users: []string{"u"}, Removes: []string{userprofile.RemoveAPIKeys}}); err != nil {
+		t.Fatal(err)
+	}
+	w := appAs(t, T, spec, "u", httptest.NewRequest("POST", "/apps/books/_settings/mcp/mint", strings.NewReader(`{"client":"laptop"}`)))
+	if w.Code != 403 || !strings.Contains(w.Body.String(), "your profile does not include this") || len(ListAccountTokens("u")) != 0 {
+		t.Errorf("a key made for someone whose profile takes keys away: %d %s", w.Code, w.Body.String())
 	}
 }

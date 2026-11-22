@@ -19,6 +19,7 @@ import (
 	"github.com/cmcoffee/gohort/core/mcppersonal"
 	"github.com/cmcoffee/gohort/core/oidc"
 	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/gohort/core/userprofile"
 	"strconv"
 )
 
@@ -61,28 +62,32 @@ func (T *Account) Routes() {
 	// Connected-accounts (per-user OAuth/MCP) endpoints stay registered here for
 	// redirect-URI stability even though the management card now renders under
 	// the Gateways app (which calls these by absolute /account path).
-	T.HandleFunc("/api/connections", jsonapi.Methods{
+	// What a user profile can take away is refused here as well as left off
+	// the page (core/userprofile): a section gone from the page while its
+	// endpoint still answered would be decoration.
+	conns, keys, data := userprofile.RemoveConnectedAccounts, userprofile.RemoveAPIKeys, userprofile.RemoveYourData
+	T.HandleFunc("/api/connections", unlessTaken(conns, jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.handleConnections),
 		"POST": jsonapi.Post(T.DB, T.handleConnectionSave),
-	}.Serve)
-	T.HandleFunc("/api/tokens", jsonapi.Methods{
+	}.Serve))
+	T.HandleFunc("/api/tokens", unlessTaken(keys, jsonapi.Methods{
 		"GET":    jsonapi.Get(T.DB, T.handleTokens),
 		"POST":   T.tokenPost(),
 		"DELETE": jsonapi.Delete(T.DB, T.handleTokenRevoke),
-	}.Serve)
-	T.HandleFunc("/api/token-targets", jsonapi.Get(T.DB, T.handleTokenTargets))
+	}.Serve))
+	T.HandleFunc("/api/token-targets", unlessTaken(keys, jsonapi.Get(T.DB, T.handleTokenTargets)))
 	T.spendingRoutes()
-	T.HandleFunc("/api/artifacts/export", T.handleArtifactExport)
-	T.HandleFunc("/api/artifacts/preview", jsonapi.Methods{
+	T.HandleFunc("/api/artifacts/export", unlessTaken(data, T.handleArtifactExport))
+	T.HandleFunc("/api/artifacts/preview", unlessTaken(data, jsonapi.Methods{
 		"POST": jsonapi.Post(T.DB, T.handleArtifactPreview, jsonapi.MaxBody(maxAccountImportBytes)),
-	}.Serve)
-	T.HandleFunc("/api/artifacts/import", jsonapi.Methods{
+	}.Serve))
+	T.HandleFunc("/api/artifacts/import", unlessTaken(data, jsonapi.Methods{
 		"POST": jsonapi.Post(T.DB, T.handleArtifactImport, jsonapi.MaxBody(maxAccountImportBytes)),
-	}.Serve)
-	T.HandleFunc("/oauth/start", T.handleOAuthStart)
-	T.HandleFunc("/oauth/callback", T.handleOAuthCallback)
-	T.HandleFunc("/mcp/connect", T.handleMCPConnect)
-	T.HandleFunc("/mcp/callback", T.handleMCPCallback)
+	}.Serve))
+	T.HandleFunc("/oauth/start", unlessTaken(conns, T.handleOAuthStart))
+	T.HandleFunc("/oauth/callback", unlessTaken(conns, T.handleOAuthCallback))
+	T.HandleFunc("/mcp/connect", unlessTaken(conns, T.handleMCPConnect))
+	T.HandleFunc("/mcp/callback", unlessTaken(conns, T.handleMCPCallback))
 	T.HandleFunc("/", T.servePage)
 }
 
@@ -610,17 +615,26 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 	// app (the per-user "outward reach" surface). Account keeps identity +
 	// preferences, including inbound personal access tokens below (the keys an
 	// external MCP client uses to reach THIS user's agents).
-	sections = append(sections,
-		spendingSection(),
-		ui.Section{
+	// What the person's user profile takes away is left off (core/userprofile);
+	// its endpoints refuse it too (Routes).
+	profile, profiled := userprofile.Of(user)
+	takes := func(what string) bool { return profiled && profile.Takes(what) }
+	sections = append(sections, spendingSection(!takes(userprofile.RemoveAPIKeys)))
+	if !takes(userprofile.RemoveAPIKeys) {
+		sections = append(sections, ui.Section{
 			Title:    "API keys (personal access)",
 			Subtitle: "Tokens for connecting an external client to your own gohort agents.",
 			Detail:   "For example Claude Desktop over MCP, a voice platform over the OpenAI-compatible /v1 endpoint, or an Ollama-protocol app over the Ollama proxy. Send it as the client's X-API-Key header, or as \"Authorization: Bearer <token>\". It is shown once at creation and can be revoked any time. Keys expire after the period your administrator sets; when one does, create a new one.\n\nEach key is SCOPED under Configure access: what it connects with (the Model API, MCP), and what it can reach (your agents, an app's agents, models, channels). It reaches only what is ticked, whichever way it connects. A new key reaches nothing until you tick something. Keys created before scoping existed are marked Unrestricted; set a scope to lock them down.",
 			Body:     ui.Card{HTML: tokensHTML},
-		},
-		artifactsSection(),
-	)
-	extraHead += artifactsHead()
+		})
+	}
+	if !takes(userprofile.RemoveYourData) {
+		sections = append(sections, artifactsSection())
+		extraHead += artifactsHead()
+	}
+	if profiled {
+		sections = append([]ui.Section{profileSection(profile)}, sections...)
+	}
 	// Reports the browser's zone, for an account that follows it.
 	extraHead += browserZoneReport
 	ui.Page{

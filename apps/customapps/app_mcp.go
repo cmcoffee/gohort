@@ -25,6 +25,7 @@ import (
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/gohort/core/userprofile"
 )
 
 // appMCPKeyAction is the client action that shows a key made here, once.
@@ -223,6 +224,11 @@ func (T *CustomApps) mintAppMCPKey(a *appCall, in struct {
 	app, err := T.mcpReady(a)
 	if err != nil {
 		return nil, err
+	}
+	// A key made here is a personal API key like any other: one the person's
+	// user profile takes away would be made and then refused on every use.
+	if userprofile.TakesFrom(a.User, userprofile.RemoveAPIKeys) {
+		return nil, jsonapi.Forbidden(userprofile.Refusal)
 	}
 	name := app.Name
 	if c := strings.TrimSpace(in.Client); c != "" {

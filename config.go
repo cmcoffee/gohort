@@ -17,7 +17,7 @@ import (
 	"github.com/cmcoffee/gohort/core/appassets"
 	"github.com/cmcoffee/gohort/core/buildledger"
 	"github.com/cmcoffee/gohort/core/deps"
-	"github.com/cmcoffee/gohort/core/desktopprofile"
+	"github.com/cmcoffee/gohort/core/userprofile"
 	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/outbound"
 	"github.com/cmcoffee/gohort/core/replyguard"
@@ -1160,7 +1160,7 @@ func init_database() {
 
 	// Wire the desktop profiles (Admin): how the desktop app is shaped for a
 	// set of people. Until this runs there are none.
-	desktopprofile.SetStore(global.db)
+	userprofile.SetStore(global.db)
 
 	// Wire the build ledger: every tool test and app verify, kept per target
 	// (Admin, Build outcomes). Until this runs, nothing is recorded.

@@ -96,6 +96,12 @@ Under **Administrator › People**:
   closed until granted; administrators always have both. Grant them to the
   people or teams who need them, and set each person's raw model use under
   **Model access limits**.
+- **User profiles** shape gohort for a set of people or a team: what it is
+  called for them, the page it opens on, the apps their dashboard shows, and
+  what it takes away (API keys, connected accounts, exporting their data,
+  any Feature Access feature). What it shows applies in the desktop app, and
+  in a browser when the profile says so; what it takes away is refused
+  everywhere. Administrators are never shaped by one.
 
 Owners share an agent, collection or tool from its own sharing list.
 

@@ -1,4 +1,4 @@
-package desktopprofile
+package userprofile
 
 import (
 	"encoding/json"
@@ -32,7 +32,7 @@ func (m memStore) Keys(table string) []string {
 func TestEachPersonGetsOneProfile(t *testing.T) {
 	SetStore(memStore{})
 	t.Cleanup(func() { SetStore(nil) })
-	if _, ok := For("alice"); ok {
+	if _, ok := For("alice", nil); ok {
 		t.Fatal("a profile with none saved")
 	}
 	if err := Save(Profile{ID: "desk", Name: "Front Desk", Users: []string{"alice", " Bob "}, Apps: []string{"apps/desk"}, StartPath: "apps/desk/"}); err != nil {
@@ -41,10 +41,10 @@ func TestEachPersonGetsOneProfile(t *testing.T) {
 	if err := Save(Profile{ID: "all", Name: "Company"}); err != nil {
 		t.Fatal(err)
 	}
-	if p, ok := For("BOB"); !ok || p.ID != "desk" || p.StartPath != "/apps/desk/" || p.Apps[0] != "/apps/desk" {
+	if p, ok := For("BOB", nil); !ok || p.ID != "desk" || p.StartPath != "/apps/desk/" || p.Apps[0] != "/apps/desk" {
 		t.Errorf("bob's: %+v", p)
 	}
-	if p, ok := For("carol"); !ok || p.ID != "all" {
+	if p, ok := For("carol", nil); !ok || p.ID != "all" {
 		t.Errorf("carol, named by none, gets the default: %+v", p)
 	}
 	if err := Save(Profile{ID: "ops", Name: "Ops", Users: []string{"alice"}}); err == nil || !strings.Contains(err.Error(), "Front Desk") {
@@ -60,7 +60,7 @@ func TestEachPersonGetsOneProfile(t *testing.T) {
 		t.Error("a start page elsewhere was kept")
 	}
 	Delete("desk")
-	if p, _ := For("alice"); p.ID != "all" {
+	if p, _ := For("alice", nil); p.ID != "all" {
 		t.Errorf("with her profile gone alice gets the default: %+v", p)
 	}
 }
@@ -78,5 +78,41 @@ func TestWhatAProfileShowsAndLends(t *testing.T) {
 	}
 	if !p.LendsTool("Contacts_Search") || p.LendsTool("filesystem_read") {
 		t.Error("tools lent wrong")
+	}
+}
+
+// A team's profile reaches its members a profile names by name does not;
+// one team is on one profile; what a profile takes away is one it knows.
+func TestATeamsProfileAndWhatItTakesAway(t *testing.T) {
+	SetStore(memStore{})
+	t.Cleanup(func() { SetStore(nil) })
+	if err := Save(Profile{ID: "desk", Name: "Front Desk", Users: []string{"alice"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(Profile{ID: "ops", Name: "Ops", Teams: []string{"t-ops"}, Removes: []string{RemoveAPIKeys, FeaturePrefix + "mcp"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(Profile{ID: "all", Name: "Company"}); err != nil {
+		t.Fatal(err)
+	}
+	onOps := func(team string) bool { return team == "t-ops" }
+	if p, _ := For("alice", onOps); p.ID != "desk" {
+		t.Errorf("a person named by name, on a team too: %+v", p)
+	}
+	p, _ := For("bob", onOps)
+	if p.ID != "ops" || !p.Takes(RemoveAPIKeys) || !p.TakesFeature("mcp") || p.TakesFeature("openai") || p.Takes(RemoveYourData) {
+		t.Errorf("bob, on the team: %+v", p)
+	}
+	if p, _ := For("bob", nil); p.ID != "all" {
+		t.Errorf("bob, on no team: %+v", p)
+	}
+	if err := Save(Profile{ID: "ops2", Name: "Ops Two", Teams: []string{"t-ops"}}); err == nil || !strings.Contains(err.Error(), "Ops") {
+		t.Errorf("a team on two profiles: %v", err)
+	}
+	if err := Save(Profile{ID: "x", Name: "X", Users: []string{"carol"}, Removes: []string{"the_kitchen_sink"}}); err == nil {
+		t.Error("a profile took away something no one knows")
+	}
+	if (Profile{Teams: []string{"t"}}).IsDefault() || !(Profile{}).IsDefault() {
+		t.Error("a team's profile read as the default, or the default did not")
 	}
 }

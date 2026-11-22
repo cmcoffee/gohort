@@ -243,7 +243,7 @@ func ServeDashboard(addr string) error {
 	// a credential. (Core-owned; phantom no longer owns the bridge key.)
 	mux.HandleFunc("/api/desktop/key", HandleDesktopKey)
 
-	// The desktop profile the client's person gets (core/desktopprofile),
+	// The desktop profile the client's person gets (core/userprofile),
 	// for what only the client can do with it: its window's title.
 	mux.HandleFunc("/api/desktop/profile", handleDesktopProfile)
 
@@ -500,11 +500,11 @@ func (d dashboardHost) handleRoot(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	visible = shown
-	// The desktop app, for someone a desktop profile shapes it for: its start
-	// page in place of this one, else only the profile's apps
-	// (core/desktopprofile). Only for the desktop app's own requests, so the
-	// same person in a browser keeps the whole dashboard.
-	if p, ok := desktopProfileOf(r); ok {
+	// For someone a user profile shapes this for: its start page in place of
+	// this one, else only the profile's apps (core/userprofile). In the
+	// desktop app always; in a browser only when the profile says so, so
+	// otherwise the same person keeps the whole dashboard there.
+	if p, ok := profileOf(r); ok {
 		if p.StartPath != "" && p.StartPath != "/" {
 			http.Redirect(w, r, p.StartPath, http.StatusFound)
 			return

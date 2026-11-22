@@ -26,6 +26,7 @@ import (
 	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/core/toolcat"
 	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/gohort/core/userprofile"
 )
 
 func init() { RegisterApp(new(Extensions)) }
@@ -1961,7 +1962,11 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 	defer pt.logIfSlow("the page")
 	sections := []ui.Section{T.integrationsSection(r, user)}
 	pt.mark("integrations")
-	sections = append(sections, T.connectedAccountsSection())
+	// Left off when the person's user profile takes connected accounts away
+	// (core/userprofile); /account/api/connections refuses them too.
+	if !userprofile.TakesFrom(user, userprofile.RemoveConnectedAccounts) {
+		sections = append(sections, T.connectedAccountsSection())
+	}
 	pt.mark("connected accounts")
 	sections = append(sections, T.toolsSection(user))
 	pt.mark("tools")

@@ -49,11 +49,11 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/cmcoffee/gohort/core/activity"
-	"github.com/cmcoffee/gohort/core/desktopprofile"
 	"github.com/cmcoffee/gohort/core/desktopsignin"
 	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/notices"
 	"github.com/cmcoffee/gohort/core/ui"
+	"github.com/cmcoffee/gohort/core/userprofile"
 )
 
 // desktopInvokeDeadline caps how long an LLM tool call can wait
@@ -311,17 +311,6 @@ func userFromAPIKey(r *http.Request) string {
 	return ""
 }
 
-// desktopProfileOf is the desktop profile a request from the desktop app
-// takes (core/desktopprofile): ok is false for a browser, or for someone no
-// profile shapes the app for.
-func desktopProfileOf(r *http.Request) (desktopprofile.Profile, bool) {
-	who := DesktopClientUser(r)
-	if who == "" {
-		return desktopprofile.Profile{}, false
-	}
-	return desktopprofile.For(who)
-}
-
 // handleDesktopProfile is GET /api/desktop/profile: the profile the asking
 // person's desktop app takes, {} for the ordinary app. Their own, by their
 // sign-in, so it says nothing about anyone else.
@@ -335,7 +324,7 @@ func handleDesktopProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := map[string]any{}
-	if p, ok := desktopprofile.For(user); ok {
+	if p, ok := userProfileFor(user); ok {
 		out = map[string]any{"name": p.Name, "start_path": p.StartPath}
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -994,9 +983,9 @@ func LocalToolsForUser(user string) []ChatTool {
 	// Walk live tools newest-client-first so the latest connection's
 	// schema wins for any name collision.
 	seen := map[string]DesktopToolDescriptor{}
-	// A desktop profile may lend only some of the computer's tools
-	// (core/desktopprofile); named as the bridge announces them.
-	profile, profiled := desktopprofile.For(user)
+	// A user profile may lend only some of the computer's tools
+	// (core/userprofile); named as the bridge announces them.
+	profile, profiled := userProfileFor(user)
 	keep := func(t DesktopToolDescriptor) {
 		if profiled && !profile.LendsTool(t.Name) {
 			return
@@ -1086,4 +1075,35 @@ func (t *desktopChatTool) Run(args map[string]any) (string, error) {
 	// Newest-connected wins (matches LocalToolsForUser's dedup order
 	// for live announces).
 	return clients[len(clients)-1].invoke(t.desc.Name, args)
+}
+
+// --- user profiles (core/userprofile) --------------------------------------
+
+func init() { userprofile.SetResolver(userProfileFor) }
+
+// userProfileFor is the profile that shapes user, ok false for none. An
+// administrator is never shaped by one: a profile that could take API keys or
+// a feature from the people who manage profiles could lock them out. It is
+// userprofile.Of's resolver, the side that knows teams and administrators.
+func userProfileFor(user string) (userprofile.Profile, bool) {
+	if user == "" || UserIsAdmin(user) {
+		return userprofile.Profile{}, false
+	}
+	return userprofile.For(user, func(team string) bool { return userInTeam(user, team) })
+}
+
+// profileOf is the profile that shapes what a request is shown: the desktop
+// app's person's always, and a browser's when their profile says so
+// (AlsoWeb). ok is false for anyone no profile shapes, and for an
+// administrator.
+func profileOf(r *http.Request) (userprofile.Profile, bool) {
+	if who := DesktopClientUser(r); who != "" {
+		return userProfileFor(who)
+	}
+	if who := AuthCurrentUser(r); who != "" {
+		if p, ok := userProfileFor(who); ok && p.AlsoWeb {
+			return p, true
+		}
+	}
+	return userprofile.Profile{}, false
 }

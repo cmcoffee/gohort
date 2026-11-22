@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/userprofile"
 )
 
 // AccountToken is a per-user PERSONAL ACCESS TOKEN: the credential a user pastes
@@ -299,6 +301,9 @@ func loadAccountToken(secret string) (AccountToken, string, bool) {
 	}
 	key := accountTokenKey(secret)
 	if RootDB.Get(accountTokenTable, key, &t) {
+		if profileTakesKeys(t.Owner) {
+			return AccountToken{}, "", false
+		}
 		return t, key, true
 	}
 	var legacy AccountToken
@@ -308,7 +313,21 @@ func loadAccountToken(secret string) (AccountToken, string, bool) {
 	legacy.Token = maskAccountToken(secret)
 	RootDB.Set(accountTokenTable, key, legacy)
 	RootDB.Unset(accountTokenTable, secret)
+	if profileTakesKeys(legacy.Owner) {
+		return AccountToken{}, "", false
+	}
 	return legacy, key, true
+}
+
+// profileTakesKeys reports whether owner's user profile takes their API keys
+// away (core/userprofile). Their keys stop working while it does, and are
+// kept: a profile that stops taking them gives them back.
+func profileTakesKeys(owner string) bool {
+	if userprofile.TakesFrom(owner, userprofile.RemoveAPIKeys) {
+		Debug("[account] a key of %s refused: their profile takes API keys away", owner)
+		return true
+	}
+	return false
 }
 
 // rehashAccountTokens moves every row still keyed by its raw secret onto the

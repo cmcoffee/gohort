@@ -187,6 +187,11 @@ func FeatureAllowedForUser(db Database, feature, user string) bool {
 	if feature == "" || user == "" {
 		return false
 	}
+	// A user profile can take a feature away (core/userprofile); it never
+	// grants one, and never applies to an administrator.
+	if p, ok := userProfileFor(user); ok && p.TakesFeature(feature) {
+		return false
+	}
 	// A Closed feature is always the administrators'.
 	if featureClosed(feature) && UserIsAdmin(user) {
 		return true

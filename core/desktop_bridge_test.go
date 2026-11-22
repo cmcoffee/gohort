@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cmcoffee/gohort/core/desktopprofile"
+	"github.com/cmcoffee/gohort/core/userprofile"
 	"github.com/cmcoffee/gohort/core/desktopsignin"
 )
 
@@ -140,47 +140,54 @@ func TestLocalToolsForUserDedupsAcrossTheRename(t *testing.T) {
 	}
 }
 
-// The desktop app, for someone a desktop profile shapes it for: the
-// dashboard opens the profile's start page or shows only its apps, under its
-// name; the bridge lends only its tools; and /api/desktop/profile says which
-// it is. The same person in a browser keeps the ordinary dashboard.
-func TestADesktopProfileShapesTheDesktopApp(t *testing.T) {
+// A user profile shapes the desktop app: its start page or only its apps,
+// under its name; the bridge lends only its tools; and /api/desktop/profile
+// says which it is. A browser keeps the ordinary dashboard until the profile
+// says it shapes a browser too. An administrator is never shaped by one.
+func TestAUserProfileShapesTheDesktopAppAndABrowser(t *testing.T) {
 	acctFixture(t)
 	prevAuth := AuthDB
 	AuthDB = func() Database { return RootDB }
 	t.Cleanup(func() { AuthDB = prevAuth })
-	AuthSetUser(RootDB, "craig", "pw", true)
-	AuthSetUser(RootDB, "dana", "pw", true)
-	desktopprofile.SetStore(RootDB)
-	t.Cleanup(func() { desktopprofile.SetStore(nil) })
-	key, _ := MintDesktopKey("craig")
+	AuthSetUser(RootDB, "erin", "pw", false)
+	AuthSetUser(RootDB, "dana", "pw", false)
+	AuthSetUser(RootDB, "root", "pw", true)
+	for _, u := range []string{"erin", "dana"} {
+		AuthSetUserApps(RootDB, u, []string{"/notes", "/apps"})
+	}
+	userprofile.SetStore(RootDB)
+	t.Cleanup(func() { userprofile.SetStore(nil) })
 	host := dashboardHost{apps: []dashApp{
 		{name: "Notes", desc: "notes", path: "/notes", app: pinApp{}},
 		{name: "My Apps", desc: "apps", path: "/apps", app: pinApp{}},
 	}}
-	page := func(desktop bool) *httptest.ResponseRecorder {
-		r := asUser(t, "/", "craig")
+	page := func(user string, desktop bool) *httptest.ResponseRecorder {
+		r := asUser(t, "/", user)
 		if desktop {
+			key, _ := MintDesktopKey(user)
 			r.Header.Set("X-Gohort-Desktop-Client-Key", key)
 		}
 		w := httptest.NewRecorder()
 		host.handleRoot(w, r)
 		return w
 	}
-	if err := desktopprofile.Save(desktopprofile.Profile{ID: "desk", Name: "Front Desk", Users: []string{"craig"}, Apps: []string{"/notes"}, Tools: []string{"contacts_search"}}); err != nil {
+	if err := userprofile.Save(userprofile.Profile{ID: "desk", Name: "Front Desk", Users: []string{"erin", "root"}, Apps: []string{"/notes"}, Tools: []string{"contacts_search"}}); err != nil {
 		t.Fatal(err)
 	}
-	if b := page(false).Body.String(); !strings.Contains(b, "My Apps") || strings.Contains(b, "Front Desk") {
+	if b := page("erin", false).Body.String(); !strings.Contains(b, "My Apps") || strings.Contains(b, "Front Desk") {
 		t.Error("a browser got the profile's dashboard")
 	}
-	b := page(true).Body.String()
+	b := page("erin", true).Body.String()
 	if strings.Contains(b, ">My Apps<") || !strings.Contains(b, "Notes") || !strings.Contains(b, "<title>Front Desk</title>") {
 		t.Errorf("the desktop app's dashboard is not the profile's")
 	}
+	if b := page("root", true).Body.String(); strings.Contains(b, "<title>Front Desk</title>") {
+		t.Error("an administrator's desktop app was shaped by a profile")
+	}
 
-	persistDesktopKnownTools("craig", []DesktopToolDescriptor{{Name: "filesystem_read"}, {Name: "contacts_search"}})
+	persistDesktopKnownTools("erin", []DesktopToolDescriptor{{Name: "filesystem_read"}, {Name: "contacts_search"}})
 	var lent []string
-	for _, tool := range LocalToolsForUser("craig") {
+	for _, tool := range LocalToolsForUser("erin") {
 		lent = append(lent, tool.Name())
 	}
 	if len(lent) != 1 || !strings.Contains(lent[0], "contacts_search") {
@@ -192,19 +199,85 @@ func TestADesktopProfileShapesTheDesktopApp(t *testing.T) {
 		handleDesktopProfile(w, asUser(t, "/api/desktop/profile", user))
 		return strings.TrimSpace(w.Body.String())
 	}
-	if got := profileOf("craig"); !strings.Contains(got, `"name":"Front Desk"`) {
-		t.Errorf("craig's profile: %s", got)
+	if got := profileOf("erin"); !strings.Contains(got, `"name":"Front Desk"`) {
+		t.Errorf("erin's profile: %s", got)
 	}
 	if got := profileOf("dana"); got != "{}" {
 		t.Errorf("someone no profile names: %s", got)
 	}
 
-	desktopprofile.Save(desktopprofile.Profile{ID: "desk", Name: "Front Desk", Users: []string{"craig"}, StartPath: "/notes/"})
-	if w := page(true); w.Code != http.StatusFound || w.Header().Get("Location") != "/notes/" {
+	userprofile.Save(userprofile.Profile{ID: "desk", Name: "Front Desk", Users: []string{"erin"}, StartPath: "/notes/"})
+	if w := page("erin", true); w.Code != http.StatusFound || w.Header().Get("Location") != "/notes/" {
 		t.Errorf("the desktop app did not open the start page: %d %s", w.Code, w.Header().Get("Location"))
 	}
-	if w := page(false); w.Code != http.StatusOK {
+	if w := page("erin", false); w.Code != http.StatusOK {
 		t.Errorf("a browser was sent to the start page: %d", w.Code)
+	}
+
+	// In a browser too.
+	userprofile.Save(userprofile.Profile{ID: "desk", Name: "Front Desk", Users: []string{"erin"}, Apps: []string{"/notes"}, AlsoWeb: true})
+	if b := page("erin", false).Body.String(); strings.Contains(b, ">My Apps<") || !strings.Contains(b, "<title>Front Desk</title>") {
+		t.Error("a profile that shapes a browser too did not")
+	}
+	if b := page("dana", false).Body.String(); !strings.Contains(b, "My Apps") {
+		t.Error("someone the profile does not name lost the dashboard")
+	}
+}
+
+// What a user profile takes away holds wherever its people reach gohort
+// from: a feature it removes is denied as Feature Access denies one, and
+// their API keys stop working while it takes keys away, kept for when it
+// stops. A team's profile reaches its members; an administrator's keys and
+// features are never taken.
+func TestAUserProfileTakesAwayWhatItRemoves(t *testing.T) {
+	acctFixture(t)
+	prevAuth := AuthDB
+	AuthDB = func() Database { return RootDB }
+	t.Cleanup(func() { AuthDB = prevAuth })
+	AuthSetUser(RootDB, "erin", "pw", false)
+	AuthSetUser(RootDB, "root", "pw", true)
+	team, err := SaveAppGroup(RootDB, AppGroup{Name: "Front desk"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { DeleteAppGroup(RootDB, team.ID) }) // teams are cached past the test
+	AuthSetUserGroups(RootDB, "erin", []string{team.ID})
+	userprofile.SetStore(RootDB)
+	t.Cleanup(func() { userprofile.SetStore(nil) })
+	RegisterShareableFeature(ShareableFeature{Key: "unit_profile_feat", Label: "Unit"})
+
+	erinKey := MintAccountToken("erin", "laptop")
+	rootKey := MintAccountToken("root", "laptop")
+	if u, ok := lookupAccountTokenOwner(erinKey.Token); !ok || u != "erin" || !FeatureAllowedForUser(RootDB, "unit_profile_feat", "erin") {
+		t.Fatalf("before any profile: %q %v", u, ok)
+	}
+	if err := userprofile.Save(userprofile.Profile{ID: "desk", Name: "Desk", Teams: []string{team.ID},
+		Removes: []string{userprofile.RemoveAPIKeys, userprofile.FeaturePrefix + "unit_profile_feat"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := lookupAccountTokenOwner(erinKey.Token); ok {
+		t.Error("a key of someone whose profile takes keys away still works")
+	}
+	r := httptest.NewRequest("GET", "/v1/models", nil)
+	r.Header.Set("X-API-Key", erinKey.Token)
+	if AccountTokenFromRequest(r) != nil {
+		t.Error("the key still reads off a request")
+	}
+	if FeatureAllowedForUser(RootDB, "unit_profile_feat", "erin") {
+		t.Error("a feature the profile removes is still allowed")
+	}
+	if len(ListAccountTokens("erin")) != 1 {
+		t.Error("the keys a profile takes away were deleted, not kept")
+	}
+
+	AuthSetUserGroups(RootDB, "root", []string{team.ID})
+	if _, ok := lookupAccountTokenOwner(rootKey.Token); !ok || !FeatureAllowedForUser(RootDB, "unit_profile_feat", "root") {
+		t.Error("an administrator on the team lost a key or a feature")
+	}
+
+	userprofile.Delete("desk")
+	if u, ok := lookupAccountTokenOwner(erinKey.Token); !ok || u != "erin" {
+		t.Error("the key did not come back with the profile gone")
 	}
 }
 
