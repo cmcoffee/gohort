@@ -1,5 +1,10 @@
 # Sharing & Governance: namespacing phase 5
 
+**Superseded in part, 2026-11-22, by `sharing-people-and-teams.md`:** the
+deployment rung (the global plane and promotion into it) is retired in favour
+of sharing with Everyone as a team, and the admin console over users' own
+things shrinks to a stop switch. What is built here keeps working until 0.10.
+
 Continues `tool-credential-namespacing.md`. Phases 1–4 built the two ownership
 planes (global vs user-owned) and the Extensions surface (named Extensions when this
 was written; renamed in v0.6.817). This batch builds the

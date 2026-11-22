@@ -1,7 +1,12 @@
 # Owner-first: tools, APIs and connected accounts
 
 **Status:** Proposed, 2026-10-07; every decision settled. Nothing here is
-built.
+built. **Revised 2026-11-22 by `sharing-people-and-teams.md`,** which drops
+deployment APIs, the record split and the migration, makes the split "my
+account for reads, theirs for writes" the default choice per API, and
+replaces "unavailable until every bring-your-own API is connected" for that
+choice. Read that doc first; what this one settled about OAuth, repairs and
+the call-time check still holds.
 Supersedes, once built: the credential half of the global plane in
 `tool-credential-namespacing.md`, and the binding model in
 `secured-credential-tool-binding.md`. Builds on the three sharing rungs in
