@@ -1,23 +1,22 @@
 # gohort-desktop
 
-Native desktop host for gohort + the local-capability tool bridge.
+Native desktop host for gohort, plus the local-capability tool bridge.
 
-Shipped as **two separate apps** (one Go module, two `package main` build
-targets):
+Shipped as **two apps** (one Go module, two `package main` build targets):
 
 - **Gohort.app**: the viewer. A Wails window that reverse-proxies the
   gohort web UI (orchestrate / Agency / etc.). Dock icon, no special
   permissions, quittable. Knows nothing about tools or iMessage.
 - **Gohort-Bridge.app**: the bridge. An always-on **menu-bar** daemon
   (`LSUIElement`, no dock icon) that owns every OS-level permission and
-  capability. It hosts the WebSocket tool bridge to the gohort server, the
-  local tool catalog (filesystem, contacts), an MCP host, and
-  on macOS: the iMessage relay. Launches the viewer via its tray menu.
+  capability: the WebSocket tool bridge to the gohort server, the local
+  tool catalog (filesystem, contacts), an MCP host, and on macOS the
+  iMessage relay. Its tray menu launches the viewer.
 
-The split exists because Wails and the system-tray library can't share one
-process (`fyne.io/systray` claims the `NSApplication` delegate, which Wails
-needs). Two bundles with distinct bundle IDs also dodge the single-instance
-/ dock conflicts of a one-bundle, two-mode design.
+They are split because Wails and the system-tray library can't share a
+process (`fyne.io/systray` claims the `NSApplication` delegate, which Wails needs). Two bundles with
+distinct bundle IDs also avoid the single-instance / dock conflicts of one
+bundle with two modes.
 
 ```
 launchd / Run-key ── Gohort-Bridge.app (cmd/gohort-bridge; always on)
@@ -41,15 +40,15 @@ user / tray opens ──── Gohort.app (Wails viewer; quittable, no perms)
 
 ## Unified auth + config
 
-- **One API key** authenticates **both** `/bridges/api/*` and the tool
-  bridge `/api/desktop/ws` (server side: `core.RegisterAPIKeyValidator` +
-  the bridge key's `Owner`). Set it once in the viewer.
+- **One API key** authenticates both `/bridges/api/*` and the tool bridge
+  `/api/desktop/ws` (server side: `core.RegisterAPIKeyValidator` + the
+  bridge key's `Owner`). Set it once in the viewer.
 - **Config is a lock-free JSON sidecar**: `core.BridgeConfig`
   (`server_url`, `api_key`, allowed read/write roots, ...) at
   `<app-support>/gohort-desktop/bridge-config.json` (0600). The viewer
-  writes it; the bridge re-reads it live, so edits apply without a restart.
-  No shared kvlite lock between the two processes.
-- The viewer keeps its own `viewer.db` (cookies, window size); it falls
+  writes it; the bridge re-reads it live, so edits apply without a
+  restart. The two processes share no kvlite lock.
+- The viewer keeps its own `viewer.db` (cookies, window size) and falls
   back to the sidecar `server_url` when the daemon holds `settings.db`.
 
 ## Repository layout
@@ -83,49 +82,51 @@ make bridge         # Gohort-Bridge.app    (go build cmd/gohort-bridge + LSUIEle
 make install-all    # install both + register the bridge as a login item
 ```
 
-The bridge is cgo-on and platform-specific (systray Cocoa on macOS); the
-viewer builds for macOS and Windows (WebView2). The macOS-only packages
-(`macos/imsg`, `macos/contacts`) are `//go:build darwin` and excluded from
-the Windows build; Windows gets the tray + WS bridge + filesystem tools
-with an HKCU Run-key login item, macOS adds iMessage via launchd.
+The bridge needs cgo and is platform-specific (systray Cocoa on macOS).
+The viewer builds for macOS and Windows (WebView2). The macOS-only
+packages (`macos/imsg`, `macos/contacts`) are `//go:build darwin`, so the
+Windows build leaves them out. Windows gets the tray, WS bridge and
+filesystem tools, with an HKCU Run-key login item; macOS adds iMessage,
+with launchd.
 
 ## First-run
 
-1. Launch **Gohort.app**, enter the gohort server URL + the bridge API key
-   in the configure/settings page (written to the sidecar).
+1. Launch **Gohort.app** and enter the gohort server URL and the bridge
+   API key on the configure/settings page (saved to the sidecar).
 2. Install the bridge from the viewer's **Account → Install Gohort-Bridge...**
-   (or `make bridge-install`); grant **Full Disk Access** to Gohort-Bridge
-   under System Settings → Privacy & Security for iMessage.
+   (or `make bridge-install`). For iMessage, grant Gohort-Bridge **Full
+   Disk Access** under System Settings → Privacy & Security.
 3. The bridge connects, announces its tools, and starts the relay. It
-   restarts at login and on crash, but a deliberate tray **Quit** stays quit.
+   restarts at login and after a crash; a deliberate tray **Quit** stays
+   quit.
 
 ## Tools
 
-Local capabilities register against the shared `core.Tool` registry and are
-announced to the server over the WS bridge, where they're dispatched through
-the agent's allowlist like any server-side tool. Filesystem reads/writes go
-through per-folder consent (read and write are separate, stronger grants);
-a tool that returns a `data:image/...;base64,...` URI (e.g. MCP image
-tools) is delivered to the LLM as a vision attachment automatically.
+Local capabilities register in the shared `core.Tool` registry and are
+announced to the server over the WS bridge, which dispatches them through
+the agent's allowlist like any server-side tool. Filesystem reads and
+writes need per-folder consent (read and write are separate, stronger
+grants). A tool that returns a `data:image/...;base64,...` URI (e.g. MCP
+image tools) reaches the LLM as a vision attachment automatically.
 
-The registry has two tiers. **Native** tools (`filesystem_*`, `contacts_*`)
-register at `init()` and are permanent. **Dynamic** tools register at runtime
-via `core.ReplaceDynamicTools(source, tools)`, keyed by source (an MCP server,
-a declared command), and can be swapped or dropped wholesale. A native tool
-always wins a name clash. When the dynamic set changes the registry fires a
-change hook, so the WS bridge **re-announces** the fresh catalog without a
-reconnect.
+The registry has two tiers. **Native** tools (`filesystem_*`,
+`contacts_*`) register at `init()` and are permanent. **Dynamic** tools
+register at runtime via `core.ReplaceDynamicTools(source, tools)`, keyed
+by source (an MCP server, a declared command), and are swapped or dropped
+as a set. A native tool always wins a name clash. A change to the dynamic
+set fires a change hook, and the WS bridge **re-announces** the catalog
+without reconnecting.
 
 **Server-push install.** The server can send an `install` frame (a
 `desktop_mcp` or `desktop_command` connector, once admin-approved on the
-server) carrying an MCP server spec or a declared-command spec. Applying it is
-gated by the same user-consent prompt as a tool call (`install_capability:*`),
-so the machine's owner authorizes running new local code; a nil `Installer`
-turns server-push off entirely. Accepted installs persist to `mcp.json` /
-`commands.json`, so they survive a daemon restart, and the resulting tools ride
-the dynamic-registry path above. Removes apply directly.
-Declared commands run via `exec` with no shell involved: `{placeholder}` tokens
-only fill argument values, so there is no shell-injection surface.
+server) carrying an MCP server spec or a declared-command spec. Applying
+it takes the same user-consent prompt as a tool call
+(`install_capability:*`), so the machine's owner authorizes any new local
+code; a nil `Installer` turns server-push off. Accepted installs persist
+to `mcp.json` / `commands.json` and survive a daemon restart; their tools
+use the dynamic registry above. Removes apply directly. Declared commands
+run via `exec` with no shell: `{placeholder}` tokens only fill argument
+values, so there is no shell-injection surface.
 
 ## Menu (viewer, "Account")
 
@@ -140,9 +141,9 @@ only fill argument values, so there is no shell-injection surface.
 | Log Out (⌘⇧L) | Clear the local cookie jar + hit gohort `/logout` |
 
 > Menu callbacks drive the webview via `runtime.WindowExecJS`: proxy-served
-> pages don't carry the Wails JS runtime (`window.go` / `window.runtime`),
-> so anything that reaches the page from Go must execute JS, not rely on
-> bindings. Page-side config posts to Go-handled `/__desktop/*` endpoints.
+> pages lack the Wails JS runtime (`window.go` / `window.runtime`), so Go
+> reaches the page by executing JS, not through bindings. Page-side config
+> posts to Go-handled `/__desktop/*` endpoints.
 
 ## Security notes
 
@@ -151,8 +152,8 @@ only fill argument values, so there is no shell-injection surface.
 - **API-key auth**, loopback-scoped: the desktop proxy strips
   `X-Forwarded-For` so the gohort server never sees the request as
   loopback (which would bypass its auth).
-- **Folder consent** is asked per folder at first use (see Tools above).
-  Approvals are remembered in the sidecar.
-- Tools execute with the bridge binary's privileges; the allowlists are
-  scope guards against the LLM, not a sandbox. The OS-level permissions
+- **Folder consent** is asked per folder on first use (see Tools) and
+  remembered in the sidecar.
+- Tools run with the bridge binary's privileges. The allowlists guard
+  scope against the LLM; they are not a sandbox. The OS-level permissions
   are the perimeter.

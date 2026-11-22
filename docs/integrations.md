@@ -14,15 +14,14 @@ gohort ⇄ [ a gohort contract ]  CONNECTOR  [ transport + endpoints ] ⇄ the r
 AGENT:  decides which connectors to call
 ```
 
-- **A connector is a wrapper.** It takes something gohort does not own and
-  makes it speak gohort's language. Its **inside** speaks a contract gohort
+- **A connector is a wrapper.** It makes something gohort does not own
+  speak gohort's language. Its **inside** speaks a contract gohort
   defines: make an image, transcribe audio, convert a file, send a message,
-  or tell gohort that something arrived. Its **outside** reaches the
-  resource: a transport and its endpoints, with whatever reaching it takes
-  (a key, a program, network access, an admin's approval).
-- **An agent decides.** It is the one part that is not deterministic: it
-  reads the situation, calls a connector, reads the result,
-  and decides again.
+  or tell gohort something arrived. Its **outside** reaches the resource: a
+  transport and its endpoints, plus whatever that takes (a key, a program,
+  network access, an admin's approval).
+- **An agent decides.** It is the one non-deterministic part: it reads the
+  situation, calls a connector, reads the result, and decides again.
 
 A voice note on Telegram, end to end:
 
@@ -34,30 +33,29 @@ Telegram connector (a voice note arrives) → transcription connector → agent 
 
 The same four jobs, whatever it wraps:
 
-1. **Translate.** Its mapping turns what gohort asks into calls on the
+1. **Translate.** Its mapping turns gohort's asks into calls on the
    resource's endpoints, and reads the answer back into the contract.
-2. **Govern.** The key and the endpoints it may reach, the sandbox a
-   program runs in, whether it has the network, and what reaches it: a
-   services connector is reached through the pages that name it (Web
-   Search, Image Generation, a Research Source, ...), the others once an
-   admin approves them. What gohort can reach, and who allowed it, all sits on
-   connectors.
+2. **Govern.** The key and endpoints it may reach, the sandbox a program
+   runs in, whether it has the network, and what reaches it: a services
+   connector through the pages that name it (Web Search, Image Generation,
+   a Research Source, ...), the others once an admin approves them. What
+   gohort can reach, and who allowed it, all sits on connectors.
 3. **Measure.** A free health check on a timer where the resource offers
    one; a test, one small real call checked against the contract (tests can
    cost money, so they run only on a click, during a Fix, or on first
-   approval, within a daily budget); and the cost of every call, in the cost
+   approval, within a daily budget); and each call's cost, in the cost
    ledger.
 4. **Repair.** When the resource changes, ✨ Fix reads the failure, asks the
    resource, tries a corrected mapping and proposes it. It can change the
    outside and the mapping, never the contract or the price.
 
-Because gohort only ever talks to the inside, **connectors with the same
+Because gohort only talks to the inside, **connectors with the same
 contract are interchangeable**: hosted or local, one provider or another,
 is a setting.
 
 ## The inside: contracts
 
-What gohort asks of a connector: what each contract is, what it takes and
+Each contract gohort asks of a connector: what it is, what it takes and
 gives, what its check requires of an answer, and where gohort uses it. A
 connector's editor (Edit on its row under Admin > Services > Connectors)
 shows the same for each job it does.
@@ -83,10 +81,10 @@ shows the same for each job it does.
 | `web.search` | A search of the web. results is a list of objects: title, url and snippet, and published when the engine says when a page was published. | query (text, required), count (number) | results (json) | results is a list, and every url in it is an http or https address. The test, a search for a common phrase, must find at least one. | Admin > Services > Web Search: "Search with" |
 <!-- end contracts -->
 
-The inside faces both ways. gohort asks things of a connector (make, convert,
-send), and a connector tells gohort things (a message arrived, a watched API
-changed). The second is what starts work with no one asking: a message wakes
-an agent.
+The inside faces both ways: gohort asks things of a connector (make,
+convert, send), and a connector tells gohort things (a message arrived, a
+watched API changed). The second starts work with no one asking: a message
+wakes an agent.
 
 ## The outside: transports and endpoints
 
@@ -105,12 +103,12 @@ Version 4), with a stored key pair or, made by an administrator, as this
 machine's own AWS identity.
 
 A connection keeps its own **settings** and **key**, in a space of its own.
-Its spec declares what it needs, and what kind of value each is (an
-address, a model, a choice, a number, a key), and uses each as
-`{config.name}`; the page that uses it shows them under the choice, and its
-row's Settings shows them all. A key is sent only to the address it was
-given for: move the connection and it asks for the key again. These keys
-are not API Credentials, which keep what has no page of its own.
+Its spec declares what it needs and each value's kind (an address, a
+model, a choice, a number, a key), and uses each as `{config.name}`. The
+page that uses it shows them under the choice; its row's Settings shows
+them all. A key is sent only to the address it was given for: move the
+connection and it asks for the key again. These keys are not API
+Credentials, which keep what has no page of its own.
 
 ## Reading a connector
 
@@ -122,15 +120,15 @@ Image Generation ⇐ submit, then wait on status ⇐ api.example.com (its API ke
 Image editing ⇐ edit ⇐ magick on this machine (no network)
 ```
 
-What gohort asks, the endpoints that do it, and what it reaches with what.
-The same line heads its ✨ Fix form. A connector giving several things keeps
-to one line by naming them and counting its endpoints:
+That is: what gohort asks, the endpoints that do it, and what it reaches
+with what. The same line heads its ✨ Fix form. A connector giving several
+things stays on one line, naming them and counting its endpoints:
 
 ```
 Speech, Transcription, Image Generation ⇐ api.example.com (its API key), 7 endpoints
 ```
 
-**Endpoints** on the row lists each endpoint once, with what it is sent and
+**Endpoints** on the row lists each endpoint once: what it is sent and
 where each value comes from, what is read from its reply, and what uses it:
 
 ```
@@ -142,10 +140,10 @@ GET /v1/models       health check
 DELETE /v1/files/{id}  not used
 ```
 
-`{prompt}` is what gohort asked for, the contract's side; the field names
-are the endpoint's; the arrows are the mapping. It is read from the
-connector's spec, so it shows the part of each endpoint gohort uses, not the
-resource's whole schema.
+`{prompt}` is what gohort asked for (the contract's side), the field names
+are the endpoint's, and the arrows are the mapping. The list is read from
+the connector's spec, so it shows only the part of each endpoint gohort
+uses, not the resource's whole schema.
 
 ## Everything gohort has, as connectors
 
@@ -160,13 +158,14 @@ resource's whole schema.
 | A research source (Admin > Services > Research Sources) | a search connector put to use for research and agents | the connector's |
 | gohort's own providers (DuckDuckGo search, the browser, SMTP mail and the local model servers) | the same contracts | written in Go where Go is the protocol or the server is on this machine; every hosted provider moved to a connector (embeddings, transcription, speech, images, the other search engines, the hosted LLMs and Bedrock) |
 
-Admin > Services > Connectors lists what has a spec, the part that can be
-edited and fixed without a new build: services, messaging relays, polls, MCP
-connections, adapted System Hooks and peer relays, grouped by what each does.
-What gohort does in Go has no spec and is not listed there: DuckDuckGo and
-the browser are set up under Admin > Services, SMTP under Admin > Services >
-Mail, a local model server under Admin > Models, peers under Admin >
-Integrations > Peers, and the programs System Hooks run under System Hooks.
+Admin > Services > Connectors lists what has a spec (the part that can be
+edited and fixed without a new build), grouped by what each does: services,
+messaging relays, polls, MCP connections, adapted System Hooks and peer
+relays. What gohort does in Go has no spec and is not listed: DuckDuckGo
+and the browser are set up under Admin > Services, SMTP under Admin >
+Services > Mail, a local model server under Admin > Models, peers under
+Admin > Integrations > Peers, and the programs System Hooks run under
+System Hooks.
 
 ## Where to find things
 
@@ -204,9 +203,8 @@ per person and never shared between accounts unless the owner lends one.
 Templates add a connector that fetches and sends a channel's messages
 (`message.fetch` and `message.send`). A person adds it as a linked service
 under Extensions > Integrations, and the channel bound to that service
-answers there. A connector that only sends has nothing that calls it, so
-there is no send-only template; a recipe can make one when something needs
-it. Telegram, and Slack or Discord webhooks, keep their secret in the
+answers there. There is no send-only template: nothing would call it (a
+recipe can make one when something needs it). Telegram, and Slack or Discord webhooks, keep their secret in the
 address, which a connector never holds, so they have no template.
 
 ## An example from start to finish: hosted embeddings
@@ -215,21 +213,21 @@ The connector: inside `embed.text`, mapping one request, outside OpenAI with
 its key.
 
 1. **Admin > Services > Embeddings:** in "Embed with", choose
-   **+ Add another...**, then **Add...** on *OpenAI (embeddings)* and give it a
-   name. This creates the connection, shown as *OpenAI (embeddings)*, and
-   the page reloads with it in the list. (The same templates are under
-   Admin > Services > Templates, by category.)
-2. **Still on Embeddings:** set "Embed with" to it. Its model and its API
-   key show under the choice. Test embeds two sentences and checks for two
-   vectors of the same length. Save: the page now references it, and keeps
+   **+ Add another...**, then **Add...** on *OpenAI (embeddings)* and name
+   it. This creates the connection, shown as *OpenAI (embeddings)*, and the
+   page reloads with it listed. (The same templates are under Admin >
+   Services > Templates, by category.)
+2. **Still on Embeddings:** set "Embed with" to it; its model and API key
+   show under the choice. Test embeds two sentences and checks for two
+   vectors of the same length. Save: the page now references it and keeps
    the model and key with the connection; its row then says *Referenced by
    Embeddings*.
 3. **Admin > Maintenance > Vector Index:** run *Repair the vector index*.
-   Vectors made by the old embedder are in a different space, so search
-   skips them until they are made again, one embed call per stored piece.
+   Vectors from the old embedder are in a different space, so search skips
+   them until they are remade, one embed call per stored piece.
 
-From then on the connector's row shows its calls, failures and cost. If
-OpenAI changes something, ✨ Fix is on the same row.
+The connector's row then shows its calls, failures and cost, and has ✨ Fix
+for when OpenAI changes something.
 
 ## Not there yet
 
@@ -240,9 +238,9 @@ The model is where gohort is going; some pieces still bend it.
   System Hooks, not the connector's.
 - **An adapted System Hook is stored as a connector** already, and is set up
   and fixed from System Hooks.
-- **Older image backends** (`rest_image`) are not run any more: A1111,
-  ComfyUI and peers' renderers are connections. A ComfyUI one is moved by
-  setting it up again from its row; the rest wait for the migration.
+- **Older image backends** (`rest_image`) no longer run: A1111, ComfyUI
+  and peers' renderers are connections. To move a ComfyUI one, set it up
+  again from its row; the rest wait for the migration.
 
 The plan for closing these is
 [design/integration-model.md](design/integration-model.md).

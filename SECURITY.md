@@ -90,6 +90,16 @@ Two kinds, and the difference is what a script can see:
   bound to a declaring tool, and to the users the credential is shared with, is enforced at
   the same point. Code the model wrote cannot read the key it is using.
 
+Either way, a call is checked against the credential's base-URL and endpoint allowlist
+before the secret attaches, and a rule every agent carries forbids asking for a credential
+in chat. A tool granted both `raw_network` and a `secret:` can send that key anywhere its
+network reaches, and any script holding a key can print it where the model reads it:
+approving such a tool is trusting it with the key. In a chat it asks before its first call,
+with the reason on the card, and "Allow for this session" covers the rest of that
+conversation. Skills can carry tools too; they are per-user, authored in-product rather than
+installed from a public registry, and their scripts run in the same sandbox under the same
+allowlist.
+
 At rest, credentials and all other stored data are encrypted with a key derived from the
 host, so the database file on its own is not enough to read them. The corollary matters for
 backups: a copied database does not open on a different machine.
