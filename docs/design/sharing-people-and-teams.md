@@ -196,12 +196,12 @@ Settled (2026-11-22):
   versions; people and teams get changes live.
 - Administrators govern what is shared and can only Disable what is not.
 - Ownership can be handed over; it replaces company-owned kinds.
+- **Sharing with Everyone needs approval for what runs code or spends a
+  key** (apps, tools, agents and pipelines with an API on the owner's
+  account, machines) and for skills, which act on everyone's turns.
+  Collections and guides go straight through: they only hold reading
+  material, and an administrator can still take them back.
 
 Open:
 
-1. **Which kinds need approval to share with Everyone.** Recommended: those
-   that run code or spend a key (apps, tools, agents and pipelines with an
-   API on the owner's account, machines) and skills, which act on everyone's
-   turns; collections and guides go straight through, since they only hold
-   reading material, and an administrator can still take them back.
-2. **The request form's fields** (phase 6).
+1. **The request form's fields** (phase 6).
