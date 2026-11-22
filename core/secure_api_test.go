@@ -1217,6 +1217,39 @@ func TestAReadOnlyLendCannotWrite(t *testing.T) {
 	}
 }
 
+// A key lent through an agent share works inside that agent, held to reads,
+// and nowhere else. Both checks asked for the lend without the agent and read
+// it as no lend: every call was refused as "not shared with you", and had that
+// been fixed alone, the read-only check would have let writes through.
+func TestALendForReadsMadeForAnAgentCannotWrite(t *testing.T) {
+	secureAPITestStore(t)
+	adminUsers(t, "alice")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	shareTestCred(t, "alice", "wiki", imageHostPattern(srv.URL))
+	if err := Secure().LendForAgent("alice", "wiki", "a1", []string{"bob"}, false); err != nil {
+		t.Fatal(err)
+	}
+	c, ok := Secure().ResolveIn("wiki", "bob", "a1")
+	if !ok {
+		t.Fatal("the lend does not resolve inside the agent it was made for")
+	}
+	bob := &ToolSession{Username: "bob", AgentID: "a1"}
+	if _, err := Secure().dispatch(c, map[string]any{"url": srv.URL + "/page", "method": "GET"}, bob); err != nil {
+		t.Fatalf("a read through the agent's lend was refused: %v", err)
+	}
+	if _, err := Secure().dispatch(c, map[string]any{"url": srv.URL + "/page", "method": "POST", "body": "{}"}, bob); err == nil || !strings.Contains(err.Error(), "for reads") {
+		t.Errorf("a write through a lend for reads, inside its agent, was not refused: %v", err)
+	}
+	// And nowhere else: from another of their agents the key is not theirs.
+	if _, err := Secure().dispatch(c, map[string]any{"url": srv.URL + "/page", "method": "GET"},
+		&ToolSession{Username: "bob", AgentID: "a2"}); err == nil {
+		t.Error("a key lent for one agent was used from another")
+	}
+}
+
 // A read-write lend writes. The grant is a grant.
 func TestAReadWriteLendCanWrite(t *testing.T) {
 	secureAPITestStore(t)

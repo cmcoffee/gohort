@@ -1583,8 +1583,17 @@ func (s *SecureAPI) RevokeToolBinding(cred, tool string) error {
 // opt-out; composing them is what keeps "shared to a user" intact through a
 // later securing. An empty user passes only for an open credential.
 func (s *SecureAPI) UserMayUse(c SecureCredential, user string) bool {
+	return s.userMayUseIn(c, user, "")
+}
+
+// userMayUseIn is UserMayUse inside the agent the call is running, so a key
+// lent for one agent (an agent share's lend, SharedForAgents) is usable there.
+// Asked with no agent, as every dispatch did, such a lend read as no lend and
+// its calls were refused as "not shared with you": a lend the share dialog
+// made never worked when the agent ran.
+func (s *SecureAPI) userMayUseIn(c SecureCredential, user, agentID string) bool {
 	if c.Owner != "" {
-		return c.Owner == user || credShareGrant(c, user) != credShareNone
+		return c.Owner == user || credShareGrantIn(c, user, agentID) != credShareNone
 	}
 	if len(c.AllowedUsers) == 0 {
 		return true
@@ -1625,7 +1634,7 @@ func (s *SecureAPI) EnforceSecuredBinding(credName, toolName, user string, agent
 		// shared — tier-1 AllowedUsers is otherwise only enforced at tool-BUILD (the
 		// deny set removes the auto-route), which these dispatch paths bypass.
 		// Applies to unnamed callers (persistent shell / run_local) too.
-		if !s.UserMayUse(c, user) {
+		if !s.userMayUseIn(c, user, agent) {
 			return fmt.Errorf("credential %q is not shared with you: an admin grants access via Access in Admin > APIs", credName)
 		}
 		return nil
@@ -1638,7 +1647,7 @@ func (s *SecureAPI) EnforceSecuredBinding(credName, toolName, user string, agent
 	// everybody. Securing narrows HOW the key is used (server-side only,
 	// through bound tools); it never widens WHO. The admin's Access list is
 	// shown for secured credentials again for the same reason.
-	if !s.UserMayUse(c, user) {
+	if !s.userMayUseIn(c, user, agent) {
 		return fmt.Errorf("credential %q is not shared with you: an admin grants access via Access in Admin > APIs", credName)
 	}
 	toolName = strings.TrimSpace(toolName)
@@ -2553,7 +2562,7 @@ func (s *SecureAPI) callerMayDispatch(c SecureCredential, sess *ToolSession) err
 		return nil
 	}
 	user := sessUsername(sess)
-	if !s.UserMayUse(c, user) {
+	if !s.userMayUseIn(c, user, sessAgentID(sess)) {
 		if user == "" {
 			return fmt.Errorf("credential %q is limited to named people, and this call runs as no one: it cannot use it", c.Name)
 		}
@@ -4435,8 +4444,19 @@ func credLendCoversAgent(c SecureCredential, user, agentID string) bool {
 
 // readOnlyForUser reports whether this dispatch is a lent-for-reads one, and so
 // must be held to GET/HEAD however wide the owner's own use of the key is.
+//
+// The read list alone, whatever agent the lend was made for: which agent it
+// reaches decides WHETHER the person gets the key (credShareGrantIn), and
+// once they have it, it is held to reads everywhere. Asked through
+// credShareGrant, which reads an agent-scoped lend from no agent as no lend
+// at all, every lend made through an agent share came out as "not read-only",
+// and its writes went through as the owner.
 func readOnlyForUser(c SecureCredential, user string) bool {
-	return credShareGrant(c, user) == credShareRead
+	user = strings.TrimSpace(user)
+	if user == "" || c.Owner == "" || user == c.Owner {
+		return false
+	}
+	return credSliceHas(c.SharedReadOnly, user) && !credSliceHas(c.SharedReadWrite, user)
 }
 
 // SetCredentialShares replaces both share lists on a user-owned credential and
