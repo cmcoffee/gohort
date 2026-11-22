@@ -99,6 +99,37 @@ Under **Administrator › People**:
 
 Owners share an agent, collection or tool from its own sharing list.
 
+## 7. Work on code with Anvil
+
+**Anvil**, on the dashboard, is a coding assistant that works on a project.
+Under **＋ New project**:
+
+- **Start a new repository**: an empty one, for anyone.
+- **One of your apps**: the app as its files (`app.json`, its pages and
+  scripts).
+- **Upload a bundle**: a repository brought as a git bundle, where an
+  administrator allows it.
+- **A repository or a directory** (administrators): a repository checked out
+  for you, or a folder on this server, edited in place.
+
+Ask for a change in the project's chat. Anvil reads before it edits, shows
+each edit as a card you can revert, and runs the project's check (set in
+**Settings**) before it finishes, working on while the check fails. The
+commands it runs are sandboxed, with no network, in that checkout only, and
+it asks before deleting a file.
+
+When the work is done:
+
+- **Commit** records it as yours, with a message (✨ Draft message writes
+  one). Anvil never pushes: **Publish** pushes the commits to a repository
+  elsewhere, where allowed, and **Changes as a patch** or **The repository
+  as a bundle** downloads them.
+- In an app project, **Preview** opens your working copy (only you see it),
+  **Install** puts it live through the app's checks, and **History** lists
+  every version the app went live as, what each changed, and a way back to
+  it. **Install as a new app** makes a project holding `app.json` one of
+  your apps.
+
 ## Where to go next
 
 - **Scheduler**, in the Agents sidebar: run an agent on a schedule, or
