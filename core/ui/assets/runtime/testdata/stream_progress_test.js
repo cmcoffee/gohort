@@ -55,9 +55,32 @@ check('no count at all (the call just sent) is not',
   thinkTokensShown({tokens: 0, grewAt: 0}) === 0);
 Date.now = realNow;
 check('the line is drawn with the shown count, not the raw one',
-  /thinkingLabel\(Date\.now\(\) - thinkLive\.since, thinkTokensShown\(thinkLive\)\)/.test(panel));
+  /live\.working \? workingLabel\(ms\) : thinkingLabel\(ms, thinkTokensShown\(live\)\)/.test(lift(panel, 'function liveThinkLabel(', 'liveThinkLabel')) &&
+  /setLiveText\(label, thinkLive \? liveThinkLabel\(thinkLive\)/.test(lift(panel, 'function renderThinkLive(', 'renderThinkLive')));
 check('a count only moves its growth time when it grew',
   /tokens <= thinkLive\.tokens\) \? thinkLive\.grewAt : Date\.now\(\)/.test(lift(panel, 'function noteThinking(', 'noteThinking')));
+
+// A call sent with nothing back yet is "Working", timed from the call; the
+// first reasoning makes it "Thinking", on the same clock. Driven with the real
+// functions and a stand-in clock.
+(function() {
+  var now = 50000;
+  var Date = {now: function() { return now; }};
+  var thinkingEl = {}, serverClockOffset = 0, thinkLive = null, thinkLiveTimer = null;
+  function showThinking() {}
+  function renderThinkLive() {}
+  function setInterval() { return 1; }
+  eval(lift(panel, 'function thinkTokensShown(', 'thinkTokensShown'));
+  eval(lift(panel, 'function workingLabel(', 'workingLabel'));
+  eval(lift(panel, 'function liveThinkLabel(', 'liveThinkLabel'));
+  eval(lift(panel, 'function noteThinking(', 'noteThinking'));
+  noteThinking({kind: 'thinking', elapsed_ms: 0, started_ms: 50000, tokens: 0, working: true});
+  now = 62000;
+  check('sent, with nothing back: Working, with its seconds', liveThinkLabel(thinkLive) === 'Working · 12s');
+  noteThinking({kind: 'thinking', elapsed_ms: 12000, started_ms: 50000, tokens: 40});
+  now = 63000;
+  check('reasoning arrives: Thinking, timed from the call', liveThinkLabel(thinkLive) === 'Thinking · 13s · ~40 tokens');
+})();
 
 // The server reports it, the panel shows it, and anything the model produces
 // ends it.
@@ -132,8 +155,8 @@ check('the seconds advance between server ticks',
 
   noteLiveCall({call_id: 'd', name: 'agents'});
   noteDispatchProgress({call_id: 'd', agent: 'Researcher', round: 2});
-  check('a dispatch is named by its agent, not by the call that sent it',
-    dispatchLiveText() === '[Researcher] round 2');
+  check('a dispatch is named by its agent, not by the call that sent it, and is working until it reports more',
+    dispatchLiveText() === '[Researcher] round 2 · Working');
   check('and shows from its first report, with no wait',
     now - dispatchLive.d.since < liveCallQuietMs);
 })();

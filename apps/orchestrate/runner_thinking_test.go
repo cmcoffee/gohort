@@ -169,8 +169,9 @@ func TestTheThinkingLineStartsWhenTheCallIsSent(t *testing.T) {
 	buf := &bytes.Buffer{}
 	turn := &chatTurn{sse: &sseWriter{live: buf}}
 	turn.thinkNewCall()
-	if n := strings.Count(buf.String(), `"kind":"thinking"`); n != 1 || !strings.Contains(buf.String(), `"tokens":0`) {
-		t.Fatalf("a call sent: %q, want one thinking event with no count", buf.String())
+	if n := strings.Count(buf.String(), `"kind":"thinking"`); n != 1 || !strings.Contains(buf.String(), `"tokens":0`) ||
+		!strings.Contains(buf.String(), `"working":true`) {
+		t.Fatalf("a call sent: %q, want one thinking event with no count, marked working", buf.String())
 	}
 	// Twenty seconds on, the first reasoning arrives.
 	turn.think.mu.Lock()
@@ -192,6 +193,9 @@ func TestTheThinkingLineStartsWhenTheCallIsSent(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(line), &ev); err != nil {
 		t.Fatalf("the tick: %q: %v", buf.String(), err)
+	}
+	if strings.Contains(line, `"working"`) {
+		t.Errorf("the first reasoning's tick is still marked working: %s", line)
 	}
 	if ev.ElapsedMS < 19000 || ev.StartedMS != sent.UnixMilli() {
 		t.Errorf("the tick after the wait: elapsed %dms from %d, want ~20s from the call at %d", ev.ElapsedMS, ev.StartedMS, sent.UnixMilli())
