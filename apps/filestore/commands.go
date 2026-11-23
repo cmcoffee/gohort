@@ -115,6 +115,10 @@ type StoreCommand struct {
 	// clicking it is deciding.
 	Label   string `json:"label,omitempty"`
 	Command string `json:"command"` // absolute path; no shell
+	// Resolved is the file Command led to when it was saved, links followed;
+	// a run refuses once it leads elsewhere (command_path.go). Set by the
+	// save from the disk, never from what a form sends.
+	Resolved string `json:"resolved,omitempty"`
 	// TwoPhase: run bare first and show the output as a challenge, then
 	// run again with what the person supplies. Off = one call, done.
 	TwoPhase bool `json:"two_phase,omitempty"`
@@ -240,6 +244,11 @@ func SaveStoreCommand(db Database, a StoreCommand) (StoreCommand, error) {
 	if _, ok := LoadStore(db, a.Slug); !ok {
 		return a, Error("there is no file store called " + a.Slug)
 	}
+	real, err := resolveCommandPath(a.Command)
+	if err != nil {
+		return a, err
+	}
+	a.Resolved = real
 	if strings.TrimSpace(a.Label) == "" {
 		a.Label = strings.ToUpper(a.Name[:1]) + strings.ReplaceAll(a.Name[1:], "_", " ")
 	}
@@ -324,7 +333,14 @@ func DeleteStoreCommand(db Database, slug, name string) {
 // Under a background-capable run (core/bgrun) the output is also copied to the
 // run's activity as it comes, and the fixed limit gives way to the run's own:
 // stopped when it goes quiet or would fill the disk, not at thirty minutes.
-func runRegisteredCommand(ctx context.Context, dir, bin string, args ...string) (string, error) {
+//
+// It runs the file cmd's path leads to (StoreCommand.binary), with the path as
+// given for argv[0].
+func runRegisteredCommand(ctx context.Context, dir string, cmd StoreCommand, args ...string) (string, error) {
+	bin, err := cmd.binary()
+	if err != nil {
+		return "", err
+	}
 	act := bgrun.RunActivityFrom(ctx)
 	cancel := context.CancelFunc(func() {})
 	if act == nil {
@@ -332,6 +348,7 @@ func runRegisteredCommand(ctx context.Context, dir, bin string, args ...string) 
 	}
 	defer cancel()
 	c := exec.CommandContext(ctx, bin, args...)
+	c.Args[0] = cmd.Command
 	c.Dir = dir
 	// Done means the command exited, not that every process holding its
 	// output pipe did: a helper it left behind kept the pipe open, the wait
@@ -346,7 +363,7 @@ func runRegisteredCommand(ctx context.Context, dir, bin string, args ...string) 
 		w = io.MultiWriter(&buf, act)
 	}
 	c.Stdout, c.Stderr = w, w
-	err := c.Start()
+	err = c.Start()
 	if err == nil {
 		if act != nil {
 			// A command busy without printing or writing where it was
@@ -438,7 +455,7 @@ func (T *FileStoreApp) handleCommand(c *jsonapi.Call, body *runReq) (any, error)
 		return nil, jsonapi.Status(http.StatusInsufficientStorage, err.Error())
 	}
 	release := pathhold.Hold(dir)
-	out, err := runRegisteredCommand(c.R.Context(), dir, act.Command, args...)
+	out, err := runRegisteredCommand(c.R.Context(), dir, act, args...)
 	release()
 	st.wrote()
 	if err != nil {

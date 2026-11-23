@@ -61,13 +61,13 @@ root PUT /api/stores?slug=fresh "{}"
 root DELETE /api/stores?slug=fresh ""
   200 {"deleted":"fresh"}
 alice GET /api/commands ""
-  200 [{"approved":false,"background":"","background_on":false,"cmd":"archive/decrypt","command":"<bin>","help":"","input_label":"Response key","label":"Decrypt","mapped":"Not mapped: show it how, or map it with Builder","mapped_ok":false,"name":"decrypt","phases":"Response key","slug":"archive","store":"Archive","two_phase":true,"uses":"only as specified: none yet (Builder adds the lines it maps)"},{"approved":false,"background":"","background_on":false,"cmd":"bundles/decrypt","command":"<bin>","help":"","input_label":"Response key","label":"Decrypt","mapped":"Not mapped: show it how, or map it with Builder","mapped_ok":false,"name":"decrypt","phases":"Response key","slug":"bundles","store":"Bundles","two_phase":true,"uses":"only as specified: none yet (Builder adds the lines it maps)"}]
+  200 [{"approved":false,"background":"","background_on":false,"cmd":"archive/decrypt","command":"<bin>","help":"","input_label":"Response key","label":"Decrypt","mapped":"Not mapped: show it how, or map it with Builder","mapped_ok":false,"name":"decrypt","phases":"Response key","runs":"<bin>","slug":"archive","store":"Archive","two_phase":true,"uses":"only as specified: none yet (Builder adds the lines it maps)"},{"approved":false,"background":"","background_on":false,"cmd":"bundles/decrypt","command":"<bin>","help":"","input_label":"Response key","label":"Decrypt","mapped":"Not mapped: show it how, or map it with Builder","mapped_ok":false,"name":"decrypt","phases":"Response key","runs":"<bin>","slug":"bundles","store":"Bundles","two_phase":true,"uses":"only as specified: none yet (Builder adds the lines it maps)"}]
 alice GET /api/commands?slug=archive ""
-  200 [{"approved":false,"background":"","background_on":false,"cmd":"archive/decrypt","command":"<bin>","help":"","input_label":"Response key","label":"Decrypt","mapped":"Not mapped: show it how, or map it with Builder","mapped_ok":false,"name":"decrypt","phases":"Response key","slug":"archive","store":"Archive","two_phase":true,"uses":"only as specified: none yet (Builder adds the lines it maps)"}]
+  200 [{"approved":false,"background":"","background_on":false,"cmd":"archive/decrypt","command":"<bin>","help":"","input_label":"Response key","label":"Decrypt","mapped":"Not mapped: show it how, or map it with Builder","mapped_ok":false,"name":"decrypt","phases":"Response key","runs":"<bin>","slug":"archive","store":"Archive","two_phase":true,"uses":"only as specified: none yet (Builder adds the lines it maps)"}]
 alice POST /api/commands?slug=bundles "{\"name\":\"x\",\"command\":\"<bin>\"}"
   403 File stores are admin-only: these paths name and read directories on the server, so the list of them is a deployment decision.
 root POST /api/commands?slug=bundles "{\"name\":\"inspect\",\"command\":\"<bin>\",\"allowed_uses\":\"list\\nshow\"}"
-  200 {"slug":"bundles","name":"inspect","label":"Inspect","command":"<bin>","usage":"specified","allowed_uses":["list","show"]}
+  200 {"slug":"bundles","name":"inspect","label":"Inspect","command":"<bin>","resolved":"<bin>","usage":"specified","allowed_uses":["list","show"]}
 root POST /api/commands?slug=bundles "{\"name\":"
   400 invalid JSON: unexpected EOF
 root POST /api/commands?slug=bundles "{\"name\":\"bad\"}"
@@ -109,7 +109,7 @@ alice POST /api/commands/background?id=bundles/decrypt "{}"
 root GET /api/commands/background?id=bundles/decrypt ""
   405 method not allowed
 root POST /api/commands/background?id=bundles/decrypt "{\"approved\":true,\"background_on\":true}"
-  200 {"slug":"bundles","name":"decrypt","label":"Decrypt","command":"<bin>","two_phase":true,"input_label":"Response key","usage":"specified","background":"always"}
+  200 {"slug":"bundles","name":"decrypt","label":"Decrypt","command":"<bin>","resolved":"<bin>","two_phase":true,"input_label":"Response key","usage":"specified","background":"always"}
 root POST /api/commands/background?id=bundles/nope "{}"
   404 no such command
 root POST /api/commands/background?id=bundles/decrypt "{\"approved\":"

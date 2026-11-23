@@ -141,6 +141,13 @@ func (T *FileStoreApp) handleTryCommand(w http.ResponseWriter, r *http.Request) 
 		jsonapi.Write(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	// The file the command's path leads to, refused if that has moved since
+	// it was saved (command_path.go).
+	bin, err := cmd.binary()
+	if err != nil {
+		jsonapi.Write(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	flusher, _ := w.(http.Flusher)
 	send := func(v map[string]any) {
@@ -156,7 +163,8 @@ func (T *FileStoreApp) handleTryCommand(w http.ResponseWriter, r *http.Request) 
 	defer cancel()
 	defer pathhold.Hold(dir)()
 	defer st.wrote()
-	c := exec.CommandContext(ctx, cmd.Command, argv...)
+	c := exec.CommandContext(ctx, bin, argv...)
+	c.Args[0] = cmd.Command
 	c.Dir = dir
 	pr, pw := io.Pipe()
 	c.Stdout, c.Stderr = pw, pw

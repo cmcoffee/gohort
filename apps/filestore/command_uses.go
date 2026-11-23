@@ -191,7 +191,7 @@ func runSpecified(ctx context.Context, who string, st Store, cmd StoreCommand, a
 	}
 	defer pathhold.Hold(dir)()
 	defer st.wrote()
-	out, err := runRegisteredCommand(ctx, dir, cmd.Command, argv...)
+	out, err := runRegisteredCommand(ctx, dir, cmd, argv...)
 	if len(out) > specifiedOutputMax {
 		out = "[... earlier output cut ...]\n" + out[len(out)-specifiedOutputMax:]
 	}

@@ -168,7 +168,7 @@ func (h storeHost) RunCommand(ctx context.Context, owner, slug, store, folder, c
 	if input != "" {
 		args = append(args, input) // never logged: it may be the secret half of an exchange
 	}
-	out, err := runRegisteredCommand(ctx, dir, act.Command, args...)
+	out, err := runRegisteredCommand(ctx, dir, act, args...)
 	stop()
 	if err != nil {
 		Log("[filestore.command] app %s: %s on %s/%s failed: %v", appKey(owner, slug), act.Name, st.Name, folderLabel(folder), err)
