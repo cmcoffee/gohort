@@ -221,7 +221,7 @@ Add `WebPath()` / `WebName()` / `WebDesc()` / `Routes()` and it gets a web dashb
 | `codewriter` | Shell scripts, SQL queries and code snippets with an LLM co-editor |
 | `monitor` | Live view of what every agent and app is doing right now, with Cancel beside each run |
 | `mcpserver` | Expose gohort agents to an external MCP client (e.g. Claude Desktop) |
-| `customapps` | Host for Builder-made apps (the My Apps tile) at `/apps/<slug>/`: declarative sections (form, table, chart, chat, workbench, pipeline, or a raw HTML canvas), a per-app record store, sandboxed data/action scripts, schedules, sharing (with managers) or an anonymous link, and a history of every change that an export can carry, so a copy elsewhere can take the author's later updates |
+| `customapps` | Host for Builder-made apps (the My Apps tile) at `/apps/<slug>/`: declarative sections (form, table, chart, chat, workbench, pipeline, or a raw HTML canvas), a per-app record store, sandboxed data/action scripts, schedules, sharing (with managers) or an anonymous link, and a history of every change that an export can carry, so a copy elsewhere can take the author's later updates ([guide](docs/apps.md)) |
 | `hello` | Minimal scaffold for a new app |
 | `openai_api` | OpenAI-compatible `/v1` endpoint: an external client drives a raw model tier or a full agent over the API shape it already speaks |
 | `ollama_proxy` | Ollama-protocol proxy on its own port, for clients that speak only Ollama; lends the worker model as `gohort` |
@@ -244,6 +244,7 @@ Full descriptions in the [reference](docs/REFERENCE.md#built-in-apps).
 **Agents**
 - **[Memory](docs/memory.md)**: what an agent remembers between conversations, layer by layer; how to see and prune it; and what travels when an agent is shared
 - **[Pipelines and machines](docs/pipelines-and-machines.md)**: workflows you design: pipelines that run to a result, machines a conversation moves through, and how to build, try and assign them
+- **[Apps](docs/apps.md)**: pages of your own that Builder makes from a description: what they are made of, sharing them, history, export and updates
 - **[Sharing](docs/sharing.md)**: sharing agents, apps and the rest with people, teams or Everyone; whose account a shared agent's calls use; maintainers
 
 **What agents can reach**
