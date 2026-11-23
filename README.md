@@ -243,6 +243,7 @@ Full descriptions in the [reference](docs/REFERENCE.md#built-in-apps).
 
 **Agents**
 - **[Memory](docs/memory.md)**: what an agent remembers between conversations, layer by layer; how to see and prune it; and what travels when an agent is shared
+- **[Sharing](docs/sharing.md)**: sharing agents, apps and the rest with people, teams or Everyone; whose account a shared agent's calls use; maintainers
 
 **What agents can reach**
 - **[File stores](docs/file-stores.md)**: folders on the server an agent can search and read, with commands an administrator approves, pulls between stores and a private folder per person
