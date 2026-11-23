@@ -297,12 +297,15 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		// Its own scripts and stylesheets are in the page, since the frame
 		// it runs in cannot load them (asset_inline.go).
 		page = inlineAppAssets(page, ownerUser, slug)
-		page = T.withViewState(page, appdb, spec)
+		page, hasView := T.withViewState(page, appdb, spec)
 		// The app's ⚙: what is the person's own about it (their settings,
-		// what it remembers about them) and, for its owner and maintainers
+		// what it remembers about them, Reset view when they have a saved
+		// view) and, for its owner and maintainers
 		// (docs/design/app-maintainers.md), the way to change it with
-		// Builder (settings.go, app_memory.go).
-		if hasSettingsPage(spec, user, ownerUser) {
+		// Builder and, for its owner, its recent runs (settings.go,
+		// app_memory.go). Warnings stay in the header: one behind a gear is
+		// one nobody sees.
+		if hasView || hasSettingsPage(spec, user, ownerUser) {
 			page = withNavIcon(page, "settings", "Settings...", T.WebPath()+"/"+slug+"/_settings")
 		}
 		// Everyone else it is shared with reports a problem instead
