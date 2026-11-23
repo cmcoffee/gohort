@@ -189,6 +189,12 @@ func (T *OrchestrateApp) saveAsMaintainer(maintainer string, cur AgentRecord, ow
 	return saved, nil
 }
 
+// maintainedAgentRecord is the owner's record of an agent user maintains, and
+// the owner's store it lives in.
+func (T *OrchestrateApp) maintainedAgentRecord(user, id string) (AgentRecord, Database, bool) {
+	return maintainedAgent(T.DB, user, id)
+}
+
 // renderMaintainerEditor is the agent editor a maintainer gets: the fields
 // they may change, and a line saying what stays with the owner. Everything
 // else the owner's editor shows is left off, rather than shown and quietly
@@ -204,7 +210,8 @@ func renderMaintainerEditor(w http.ResponseWriter, r *http.Request, a AgentRecor
 			Title:    "Agent",
 			Subtitle: "You maintain this agent for " + a.Owner + ": its words and behaviour are yours to adjust.",
 			Detail: "Who uses it and who maintains it, publishing, its guardrails and security settings, what it remembers, and adding tools, skills or collections stay with " + a.Owner + ". " +
-				"You can take a tool, skill or collection away from it, but not give it one. Your changes are kept in its history with your name on them, and " + a.Owner + " can roll any of them back.",
+				"You can take a tool, skill or collection away from it, but not give it one. Your changes are kept in its history with your name on them, and " + a.Owner + " can roll any of them back.\n\n" +
+				"When you use it you go through the same gate as everybody it is shared with: reads may use " + a.Owner + "'s keys, and a write needs your own account (Connected accounts).",
 			Body: ui.FormPanel{
 				Source:  src,
 				PostURL: orchPath("api/agents?id=") + url.QueryEscape(a.ID),
@@ -221,6 +228,13 @@ func renderMaintainerEditor(w http.ResponseWriter, r *http.Request, a AgentRecor
 						Help: "Optional. Appended to the orchestrator prompt: nudges decomposition style."},
 				},
 			},
+		}, {
+			Title:    "What it reaches",
+			Wide:     true,
+			Subtitle: "Everything it depends on, as " + a.Owner + " sees it.",
+			Detail: "Its tools, skills, documents and recipes travel with it. A credential is " + a.Owner + "'s key: you can move it to Theirs (everybody uses their own) or Disallow, or from writes down to reads, " +
+				"but only " + a.Owner + " can lend it further. To keep it working while they are away, connect your own account for it under Connected accounts, and so can the people who use it.",
+			Body: reachTable(src, credentialRowChoices(true)),
 		}},
 	}
 	page.ServeHTTP(w, r)

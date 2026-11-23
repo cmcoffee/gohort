@@ -159,9 +159,16 @@ func (T *OrchestrateApp) agentCredentialDecision(c *jsonapi.Call, body struct {
 	Lend string `json:"lend"`
 }) (any, error) {
 	user, udb, agentID := c.User, c.UDB, c.R.PathValue("id")
+	// The owner, or one of its maintainers, who works on the owner's record
+	// and may only narrow what the owner's key does (maintainerMayChoose).
+	owner, maintainer := user, false
 	a, ok := loadAgent(udb, agentID)
 	if !ok || a.Owner != user {
-		return nil, errNotFound
+		m, odb, mok := T.maintainedAgentRecord(user, agentID)
+		if !mok {
+			return nil, errNotFound
+		}
+		a, udb, owner, maintainer = m, odb, m.Owner, true
 	}
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
@@ -171,6 +178,13 @@ func (T *OrchestrateApp) agentCredentialDecision(c *jsonapi.Call, body struct {
 	case credRead, credOwn, credWrite, credWithhold, shareSkip:
 	default:
 		return nil, jsonapi.BadRequest("choose mine for reads, theirs, mine with writes too, or disallow")
+	}
+	if maintainer {
+		cur := lendModeFor(owner, agentID, name, namedIn(a.DisabledCredentials, name),
+			namedIn(a.WithheldFromRecipients, name), namedIn(a.CredentialsDecided, name))
+		if !maintainerMayChoose(cur, body.Lend) {
+			return nil, jsonapi.Forbidden("only " + owner + " can let more go out on " + name + ": as its maintainer you can move it to Theirs or Disallow, or from writes down to reads")
+		}
 	}
 	// Leaving skip re-enables the key for the agent before anything else, so
 	// "they bring their own" after "leave it out" does what it says rather than
@@ -195,9 +209,32 @@ func (T *OrchestrateApp) agentCredentialDecision(c *jsonapi.Call, body struct {
 	// reads "they bring their own" over a key still lent would be a lie told by
 	// the UI.
 	if body.Lend == credOwn || body.Lend == shareSkip || body.Lend == credWithhold {
-		withdrawOneCredentialLend(user, agentID, name)
+		withdrawOneCredentialLend(owner, agentID, name)
 	}
-	it := credentialReach(user, name, namedIn(a.DisabledCredentials, name))
-	msg := applyCredentialAnswer(user, agentID, it, a.AllowedUsers, body.Lend)
+	// Moving from writes down to reads takes the writes back first, so the
+	// lend that remains is for reads.
+	if body.Lend == credRead {
+		withdrawOneCredentialLend(owner, agentID, name)
+	}
+	it := credentialReach(owner, name, namedIn(a.DisabledCredentials, name))
+	// Everybody who runs it: its users and its maintainers.
+	msg := applyCredentialAnswer(owner, agentID, it, append(append([]string{}, a.AllowedUsers...), a.Maintainers...), body.Lend)
 	return map[string]string{"result": msg}, nil
+}
+
+// maintainerMayChoose reports whether a maintainer may move a credential row
+// from cur to want. Only its owner can let more go out on a key: a maintainer
+// may move it to Theirs or Disallow, or from writes down to reads, and nothing
+// that lends the owner's key further or switches back on what was off.
+func maintainerMayChoose(cur, want string) bool {
+	if cur == shareSkip {
+		return false
+	}
+	switch want {
+	case credOwn, credWithhold:
+		return true
+	case credRead:
+		return cur == credRead || cur == credWrite
+	}
+	return false
 }

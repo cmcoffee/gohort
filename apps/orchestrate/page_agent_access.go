@@ -890,9 +890,9 @@ func (ap *accessPage) shareSections() []ui.Section {
 			Title: "Who may run this agent",
 			// Says where Everyone stands: granted, waiting on an
 			// administrator, or not asked for.
-			Subtitle: shareSubtitleFor(ap.agent, ap.publishPending()) + undecidedCredentialsNote(agentReachOf(ap.udb, ap.user, ap.agent).Undecided),
+			Subtitle: shareSubtitleFor(ap.agent, ap.publishPending()),
 			Detail: "People and teams are yours to add and take effect at once. Everyone reaches every signed-in user, so it is REQUESTED rather than applied: it goes to the administrator's pending queue and takes effect once approved. Taking it back out is yours and takes effect at once; the people and teams in the list keep it either way.\n\n" +
-				"What the agent uses travels with it either way: your tools, your documents, your skills, readable through this agent and nowhere else. Each person gets their own sessions and memory under it. A credential is the exception, because it is whose account a call goes out as rather than a copy anybody is missing: choose that per key, on the agent's page under What it reaches. Mine for reads is the usual choice for a team: they read with your key, and a write waits for their own account.",
+				"What the agent uses travels with it either way: your tools, your documents, your skills, readable through this agent and nowhere else. Each person gets their own sessions and memory under it. A credential is the exception, because it is whose account a call goes out as rather than a copy anybody is missing. The people you add get yours for reads (Mine for reads), so it works for them as it does for you, and a write waits for their own account; change that per key on the agent's page, under What it reaches.",
 			// Its own door, not the record PATCH: Everyone is publishing,
 			// which is requested rather than applied and has to go through
 			// the one place that rule is enforced (agentShareSave).

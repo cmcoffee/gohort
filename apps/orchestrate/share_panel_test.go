@@ -225,11 +225,8 @@ func TestACredentialOnASharedAgentAsksForAChoice(t *testing.T) {
 	}
 
 	it, m := row()
-	if it.Lend != "" || !strings.Contains(it.Fix, "Mine for reads") || m.Undecided != 1 {
+	if it.Lend != "" || !strings.Contains(it.Fix, "People you add from now on read with your key") || m.Undecided != 1 {
 		t.Fatalf("an undecided key on a shared agent: lend %q, fix %q, undecided %d", it.Lend, it.Fix, m.Undecided)
-	}
-	if note := undecidedCredentialsNote(m.Undecided); !strings.Contains(note, "One of its credentials still needs a choice") {
-		t.Errorf("the Share tab's note: %q", note)
 	}
 	if code := decide(credOwn); code != http.StatusOK {
 		t.Fatalf("theirs: %d", code)
@@ -255,5 +252,76 @@ func TestACredentialOnASharedAgentAsksForAChoice(t *testing.T) {
 	}
 	if code := decide("everything"); code != http.StatusBadRequest {
 		t.Errorf("an answer that is not one of the four was taken: %d", code)
+	}
+}
+
+// A maintainer sees what the agent reaches, as its owner does, and may only
+// narrow what the owner's key does on a credential row: to Theirs or
+// Disallow, or from writes down to reads. Lending it further, for reads or
+// writes, is the owner's alone, and the server holds them to it.
+func TestAMaintainerCanOnlyNarrowTheOwnersKey(t *testing.T) {
+	app, udb, owner := newTestOrchestrate(t)
+	pinRootDB(t)
+	adb := AuthDB()
+	adb.Set(AuthTable, "user:mia", AuthUser{Username: "mia"})
+	adb.Set(AuthTable, "user:bob", AuthUser{Username: "bob"})
+	if err := Secure().Save(SecureCredential{Name: "jira_m", Type: SecureCredNone, Owner: owner,
+		AllowedURLPattern: "https://jira.example/**"}, ""); err != nil {
+		t.Skipf("no secure store here: %v", err)
+	}
+	t.Cleanup(func() { Secure().SetCredentialShares(owner, "jira_m", nil, nil) })
+	if _, err := saveAgent(udb, AgentRecord{ID: "a10", Owner: owner, Name: "Tracker", OrchestratorPrompt: "p",
+		AllowedUsers: []string{"bob"}, Maintainers: []string{"mia"},
+		Tools: []TempTool{{Name: "search", CommandTemplate: "curl x", Credential: "jira_m"}}}); err != nil {
+		t.Fatal(err)
+	}
+	as := func(user, method, path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(adb, user)})
+		w := httptest.NewRecorder()
+		routed(app)(w, r)
+		return w
+	}
+	decide := func(user, lend string) int {
+		return as(user, "POST", "/api/agents/a10/reach/credential", `{"name":"jira_m","lend":"`+lend+`"}`).Code
+	}
+	if w := as("mia", "GET", "/api/agents/a10/reach", ""); w.Code != 200 || !strings.Contains(w.Body.String(), "jira_m") {
+		t.Fatalf("the maintainer does not see what the agent reaches: %d %s", w.Code, w.Body.String())
+	}
+	for _, lend := range []string{credRead, credWrite} {
+		if code := decide("mia", lend); code != http.StatusForbidden {
+			t.Errorf("a maintainer lent the owner's key (%s) from no lend: %d", lend, code)
+		}
+	}
+	if lentToIn(t, "jira_m", "bob", "a10") {
+		t.Fatal("a refused choice lent the key anyway")
+	}
+	if code := decide(owner, credWrite); code != 200 {
+		t.Fatalf("the owner's writes: %d", code)
+	}
+	// The owner's choice reaches everybody who runs it, its maintainers too.
+	if c, _ := Secure().LoadUser(owner, "jira_m"); !namedIn(c.SharedReadWrite, "bob") || !namedIn(c.SharedReadWrite, "mia") {
+		t.Errorf("the owner's writes did not reach its users and maintainers: write %v", c.SharedReadWrite)
+	}
+	if code := decide("mia", credRead); code != 200 {
+		t.Fatalf("a maintainer could not take writes back down to reads: %d", code)
+	}
+	if c, _ := Secure().LoadUser(owner, "jira_m"); namedIn(c.SharedReadWrite, "bob") || !namedIn(c.SharedReadOnly, "bob") {
+		t.Errorf("from writes down to reads left read %v write %v", c.SharedReadOnly, c.SharedReadWrite)
+	}
+	if code := decide("mia", credWrite); code != http.StatusForbidden {
+		t.Errorf("a maintainer put writes back on the owner's key: %d", code)
+	}
+	if code := decide("mia", credOwn); code != 200 || lentToIn(t, "jira_m", "bob", "a10") {
+		t.Errorf("a maintainer could not move it to Theirs: %d", code)
+	}
+	if code := decide("mia", credRead); code != http.StatusForbidden {
+		t.Errorf("a maintainer lent the owner's key again from Theirs: %d", code)
+	}
+	if code := decide("mia", credWithhold); code != 200 {
+		t.Errorf("a maintainer could not disallow it: %d", code)
+	}
+	if code := as("bob", "POST", "/api/agents/a10/reach/credential", `{"name":"jira_m","lend":"own"}`).Code; code != http.StatusNotFound {
+		t.Errorf("somebody who only uses the agent changed a row: %d", code)
 	}
 }

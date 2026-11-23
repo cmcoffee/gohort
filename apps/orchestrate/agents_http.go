@@ -765,6 +765,11 @@ func (T *OrchestrateApp) agentDetach(c *jsonapi.Call, _ struct{}) (any, error) {
 func (T *OrchestrateApp) agentReach(c *jsonapi.Call) (any, error) {
 	agent, ok := loadAgent(c.UDB, c.R.PathValue("id"))
 	if !ok || (agent.Owner != "" && agent.Owner != c.User && agent.Owner != seedOwner) {
+		// A maintainer sees what the owner sees: the owner's agent, walked
+		// in the owner's namespace.
+		if m, odb, mok := T.maintainedAgentRecord(c.User, c.R.PathValue("id")); mok {
+			return agentReachOf(odb, m.Owner, m).Items, nil
+		}
 		return nil, errNotFound
 	}
 	return agentReachOf(c.UDB, c.User, agent).Items, nil

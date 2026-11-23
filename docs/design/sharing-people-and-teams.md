@@ -79,6 +79,30 @@ October split into API and connected-account records is not needed.
 setup until the person connects, and says which accounts. The default choice
 never blocks: reads work from the start.
 
+## Defaults, and maintainers
+
+**Sharing gives the people added the same experience the owner has.** Adding
+people or a team to an agent (as users or maintainers) lends each credential
+of the owner's it uses to them **for reads, for that agent only**, with no
+question asked: it works for them from the start, and a write waits for
+their own account. A row's standing choice wins (Theirs or Disallow lends
+nothing, Mine with writes too lends writes), a key set to be lent to nobody
+stays unlent, and people already on the agent are left as they were. Taking
+somebody off takes their lend back.
+
+**Only a credential's owner can let more go out on it.** A maintainer sees
+the complete picture ("What it reaches", every tool, skill, document and
+credential), and on a credential row may move the owner's key to Theirs or
+Disallow, or from writes down to reads, never further: the server holds them
+to it. When they use the agent they go through the same gate as everybody it
+is shared with: reads on the owner's key, writes on their own account.
+
+**Keeping it working while the owner is away:** a key that expired or was
+revoked is worked around by people connecting their own accounts for it
+(Connected accounts), or by a maintainer moving the row to Theirs. A broken
+tool is fixed by a maintainer as a copy only that agent uses (to come). An
+API that moved, or an owner gone for good, is handing over ownership.
+
 ## Reads and writes
 
 **One rule decides whether a call reads or writes** (`temptool.ActionWrites`,
@@ -196,6 +220,12 @@ Settled (2026-11-22):
   versions; people and teams get changes live.
 - Administrators govern what is shared and can only Disable what is not.
 - Ownership can be handed over; it replaces company-owned kinds.
+- **Sharing lends the owner's keys for reads by default** to the people
+  added, for that agent only; nobody is asked. Existing recipients are left
+  as they were.
+- **Only a credential's owner can lend it further.** Maintainers see
+  everything and may only narrow the owner's key; they use the agent through
+  the same gate as its users.
 - **Sharing with Everyone needs approval for what runs code or spends a
   key** (apps, tools, agents and pipelines with an API on the owner's
   account, machines) and for skills, which act on everyone's turns.

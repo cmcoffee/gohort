@@ -245,3 +245,56 @@ func lendModeFor(owner, agentID, cred string, disabled, withheld, decided bool) 
 	}
 	return notLent
 }
+
+// lendByDefault gives the people just added to an agent (as users or
+// maintainers) the same experience its owner has: each credential of the
+// owner's the agent uses is lent to them for reads, for this agent only, so it
+// works for them from the start, and a write waits for their own account.
+//
+// The row's standing choice wins: Theirs or Disallow lends nothing, and Mine
+// with writes too lends writes. A key its owner set to be lent to nobody is
+// not lent (the setter refuses, and the row says so). People already on the
+// agent are left as they are: only those added now are lent to.
+func lendByDefault(owner string, a AgentRecord, added []string) {
+	if len(added) == 0 || orchestrateBaseDB == nil {
+		return
+	}
+	udb := UserDB(orchestrateBaseDB, owner)
+	for _, it := range agentReachOf(udb, owner, a).Items {
+		if it.kind != "credential" {
+			continue
+		}
+		if _, mine := Secure().LoadUser(owner, it.id); !mine {
+			continue
+		}
+		write := false
+		switch it.Lend {
+		case "", credRead:
+		case credWrite:
+			write = true
+		default: // Theirs, Disallow, switched off
+			continue
+		}
+		if err := Secure().LendForAgent(owner, it.id, a.ID, added, write); err != nil {
+			Log("[orchestrate.share] %s: %q not lent to the people added to %s: %v", owner, it.id, a.ID, err)
+			continue
+		}
+		recordShareLend(owner, a.ID, it.id, added)
+	}
+}
+
+// addedPeople is who is in after and was not in before, as people.
+func addedPeople(owner string, before, after []string) []string {
+	had := map[string]bool{}
+	for _, u := range ShareMembers(before, owner) {
+		had[u] = true
+	}
+	var out []string
+	for _, u := range ShareMembers(after, owner) {
+		if !had[u] && u != owner {
+			had[u] = true
+			out = append(out, u)
+		}
+	}
+	return out
+}

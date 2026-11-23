@@ -153,7 +153,7 @@ func agentReachOf(udb Database, owner string, a AgentRecord) agentReachMap {
 		if it.kind == "credential" && out.audience > reachPrivate && it.level < reachDeployment {
 			switch it.Lend {
 			case "":
-				it.Fix = "Choose whose account they use. Mine for reads is the usual one for a team: they read with your key, and a write waits for their own."
+				it.Fix = "People you add from now on read with your key (Mine for reads). Choose here to change that, or to give it to everyone it is already shared with."
 				out.Undecided++
 			case shareSkip:
 				it.Fix = "Turned off for this agent, for you too. Choose one to turn it back on, or Disallow to keep it for yourself."

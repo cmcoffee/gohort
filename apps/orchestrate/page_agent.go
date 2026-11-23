@@ -722,41 +722,53 @@ func (ed *agentEditor) shareSection() {
 			Detail: "Everything here travels with the agent and is scoped to it: whoever runs it reads your documents, runs your tools and activates your skills THROUGH this agent, and nowhere else. They cannot attach any of it to an agent of their own.\n\n" +
 				"One exception, and it is the only thing a share has to ask about. A credential is not a copy somebody is missing: it is whose account the call goes out as. Choose that on its row: Mine for reads (the usual one for a team: they read with your key, and a write waits for their own account), Theirs, Mine with writes too, or Disallow. Whoever connects their own account for it goes out as themselves on every call.\n\n" +
 				"Apart from those choices, nothing here changes anything. It is the list to check before you share, and the answer to \"why does it work for me and not for them\" afterwards.",
-			Body: ui.Table{
-				Source: ed.source + "/reach",
-				RowKey: "name",
-				Columns: []ui.Col{
-					{Field: "kind", Label: "Kind", Flex: 0},
-					{Field: "name", Flex: 1},
-					{Field: "reach", Label: "Reach", Flex: 1},
-					{Field: "missing", Label: "", Flex: 1},
-					{Field: "fix", Label: "To decide", Flex: 2},
-					{Field: "how", Label: "How a run finds it", Mute: true, Flex: 3},
-				},
-				EmptyText: "This agent depends on nothing of yours. Anybody you share it with gets all of it.",
-				// The one row kind with a decision on it. Everything else here
-				// states a fact, so it gets no control; a credential is whose
-				// identity the call goes out as, and that is set per key, on
-				// the row that raised it, rather than only inside a share flow
-				// that ran once and cannot be revisited.
-				RowActions: []ui.RowAction{
-					{
-						Type: "segmented", Field: "lend", OnlyIf: "decide",
-						PostTo: ed.source + "/reach/credential",
-						// Mine for reads first: the usual answer for a team.
-						// Disallow takes it from the people the agent is
-						// shared with and leaves it to its owner.
-						Options: []ui.SelectOption{
-							{Value: credRead, Label: "Mine for reads", Help: "They read with your key. A write waits for their own account, and once they connect it every call goes out as them."},
-							{Value: credOwn, Label: "Theirs", Help: "They use their own credential of this name."},
-							{Value: credWrite, Label: "Mine, writes too", Help: "Everything goes through your key until they connect their own: what they write arrives as you."},
-							{Value: credWithhold, Label: "Disallow", Help: "The tools on it are withheld for the people you share this with. You keep them."},
-						},
-					},
-				},
-			},
+			Body: reachTable(ed.source, credentialRowChoices(false)),
 		})
 	}
+}
+
+// reachTable is "What it reaches": everything an agent depends on, with the
+// one control a credential row carries. source is the agent's API path.
+func reachTable(source string, choices []ui.SelectOption) ui.Table {
+	return ui.Table{
+		Source: source + "/reach",
+		RowKey: "name",
+		Columns: []ui.Col{
+			{Field: "kind", Label: "Kind", Flex: 0},
+			{Field: "name", Flex: 1},
+			{Field: "reach", Label: "Reach", Flex: 1},
+			{Field: "missing", Label: "", Flex: 1},
+			{Field: "fix", Label: "To decide", Flex: 2},
+			{Field: "how", Label: "How a run finds it", Mute: true, Flex: 3},
+		},
+		EmptyText: "This agent depends on nothing of yours. Anybody you share it with gets all of it.",
+		// The one row kind with a decision on it. Everything else here
+		// states a fact, so it gets no control; a credential is whose
+		// identity the call goes out as, and that is set per key, on the
+		// row that raised it.
+		RowActions: []ui.RowAction{{
+			Type: "segmented", Field: "lend", OnlyIf: "decide",
+			PostTo:  source + "/reach/credential",
+			Options: choices,
+		}},
+	}
+}
+
+// credentialRowChoices is what a credential row offers: its owner all four,
+// a maintainer only what narrows the owner's key (maintainerMayChoose, which
+// the server holds them to whatever the page offers).
+func credentialRowChoices(maintainer bool) []ui.SelectOption {
+	read := ui.SelectOption{Value: credRead, Label: "Mine for reads", Help: "They read with your key. A write waits for their own account, and once they connect it every call goes out as them."}
+	theirs := ui.SelectOption{Value: credOwn, Label: "Theirs", Help: "They use their own credential of this name."}
+	write := ui.SelectOption{Value: credWrite, Label: "Mine, writes too", Help: "Everything goes through your key until they connect their own: what they write arrives as you."}
+	withhold := ui.SelectOption{Value: credWithhold, Label: "Disallow", Help: "The tools on it are withheld for the people you share this with. You keep them."}
+	if maintainer {
+		read.Label, read.Help = "Owner's for reads", "Reads go through the owner's key; from writes, this takes the writes back. Only the owner can lend it further."
+		theirs.Help = "Everybody uses their own credential of this name, the owner's key no longer lent."
+		withhold.Help = "The tools on it are withheld for everybody but the owner."
+		return []ui.SelectOption{read, theirs, withhold}
+	}
+	return []ui.SelectOption{read, theirs, write, withhold}
 }
 
 func (ed *agentEditor) shapeSection() {
@@ -1352,19 +1364,6 @@ func shareSubtitleFor(a AgentRecord, pending bool) string {
 		return "Everyone is waiting for an administrator to approve it. Until then, the people and teams in the list can run it."
 	}
 	return "Everyone, people, or a team you are on. Empty means private to you."
-}
-
-// undecidedCredentialsNote is what the Share tab adds when the agent is shared
-// and some of its credentials have no choice yet, so the owner hears of it
-// where they add people, not only on the agent's page.
-func undecidedCredentialsNote(n int) string {
-	switch {
-	case n <= 0:
-		return ""
-	case n == 1:
-		return " One of its credentials still needs a choice: whose account the people you share it with use. Make it on the agent's page, under What it reaches."
-	}
-	return fmt.Sprintf(" %d of its credentials still need a choice: whose account the people you share it with use. Make it on the agent's page, under What it reaches.", n)
 }
 
 // budgetReasoningFields are the agent editor's Budgets and Reasoning sections:

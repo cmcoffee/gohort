@@ -164,6 +164,8 @@ func (T *OrchestrateApp) agentShareSave(c *jsonapi.Call, body struct {
 		return nil, err
 	}
 	rec, ask := sh.rec, sh.ask
+	// Who already has it, to lend to only those added now (lendByDefault).
+	hadBefore := append(append([]string{}, rec.AllowedUsers...), rec.Maintainers...)
 	// Each list is changed only when the body names it: the maintainers
 	// picker posts its own list alone, and must not clear who uses it.
 	if body.AllowedUsers != nil {
@@ -197,6 +199,9 @@ func (T *OrchestrateApp) agentShareSave(c *jsonapi.Call, body struct {
 		return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
 	}
 	tellNewMaintainers(saved, before)
+	// The same experience the owner has: the people added get its keys for
+	// reads, a write waiting for their own account.
+	lendByDefault(c.User, saved, addedPeople(c.User, hadBefore, append(append([]string{}, saved.AllowedUsers...), saved.Maintainers...)))
 	return sh.list(saved), nil
 }
 
