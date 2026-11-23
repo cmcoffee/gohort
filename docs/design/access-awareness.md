@@ -1,9 +1,10 @@
 # Access awareness: an agent knows how the person reaches it
 
 Status: **design note, not built** (2026-11-23). Owner's idea: tell apart the
-people an agent is shared with from its maintainers (and its owner), so the
-agent can give each a different experience, and the owner can change a
-machine and see the results that come back to each kind of person differ.
+people an agent is shared with from its maintainers (and its owner), and the
+teams they are on, so the agent can give each a different experience, and the
+owner can change a machine and see the results that come back to each kind of
+person differ.
 
 ## The idea
 
@@ -41,11 +42,33 @@ One value per turn, decided by the server, never by the conversation:
   specialist behaves for the person who is actually being served.
 - **A detail beside it**, `{access_via}`, says how a shared person came in
   ("team Support", "Everyone", "by name"), for prompts only. Routing and
-  conditions use the five values, so a rename of a team never re-routes
-  anybody.
+  conditions use the five values and teams by id (below), so a rename of a
+  team never re-routes anybody.
 - Computed in one place, `chatTurn.access()`, from what the turn already holds
   (`t.user`, the agent's owner and maintainers, `outsideAudience()`,
   `strangerOnChannel()`, dispatch lineage).
+
+## Teams
+
+Beside the access value, a step or condition can ask **whether the person is
+on a team**, to tune the agent further: Support gets the runbook steps, Sales
+the customer-facing summary.
+
+- **By the team's id**, `group:<id>`, which a rename does not change. Editors
+  show the team's name and store its id.
+- **A question, never a list.** A person can be on many teams, so nothing hands
+  the agent "their teams". It asks "is this person on Support?", and only for
+  teams the owner named in this agent's routes, conditions or share list. A
+  team the owner never named stays out of the agent, and so out of the
+  owner's view: otherwise someone's other memberships would reach whoever
+  built the agent.
+- **Everyone is not a team here**: every signed-in person is on it.
+- **The owner and maintainers are matched too**, so a maintainer on Support
+  can be routed to the Support step, ahead of or after the maintainers' step,
+  as the owner orders them.
+- **The prompt line** (when the agent's switch is on) says "on team Support"
+  for a named team the person is on, never a list of everything they belong
+  to.
 
 ## Where the agent sees it
 
@@ -53,13 +76,16 @@ One value per turn, decided by the server, never by the conversation:
 `{user}` and `{agent}`, with a field named `access` filled from it like any
 built-in. Two step settings use it:
 
-- **`routes`** on a step: a map from a value to the step to go to,
-  `{"owner": "preview", "maintainer": "preview"}`, with `next` as the
-  fallback for everyone else. Decided by the value with no model call, so a
-  step that only routes costs nothing. It is a plain map from a field's value
-  to a step, not an expression, so the same setting can later route on any
-  string field (a severity, say).
-- **`for`** on a step: who may be in it, `["owner", "maintainer"]`. **Enforced
+- **`routes`** on a step: an ordered list, first match wins, each entry an
+  access value or a team and the step to go to:
+  `[{"access": "maintainer", "to": "preview"}, {"team": "group:support", "to": "support"}]`,
+  with `next` as the fallback for everyone else. A list rather than a map
+  because a person can match several entries (a maintainer on Support), and
+  the owner decides which wins by the order. Decided with no model call, so a
+  step that only routes costs nothing. Entries name a value or a team, never
+  an expression.
+- **`for`** on a step: who may be in it, access values and teams,
+  `["owner", "maintainer", "group:support"]`. **Enforced
   by the driver on every way into the step**: `next`, `routes`, a guard and
   the model's `change_phase`. A person outside the list who would land there
   goes to the step's fallback instead, with a breadcrumb. Without `for`, a
@@ -68,8 +94,9 @@ built-in. Two step settings use it:
 
 **2. Skill conditions.** A third way to decide a condition, beside "looking it
 up" and "the message mentioning": **"the person is"**, a list of access
-values, decided with no run. "If the person is a maintainer: include the raw
-evidence and the guide changes you would make. Else: the steps and the fix."
+values and teams, decided with no run. "If the person is a maintainer:
+include the raw evidence and the guide changes you would make. Else if they
+are on Support: the runbook steps. Else: the steps and the fix."
 
 **3. The agent's own prompt.** A per-agent switch in the agent's editor
 (behaviour, not Security), **"Tell the agent how the person reaches it"**:
@@ -84,7 +111,7 @@ wrote them to.
 ## Try as
 
 The owner and maintainers get **Try as** in the chat's menu: Shared user,
-Outside, Channel. For that conversation the access value reads as the one
+Outside, Channel, and a member of any team the agent names. For that conversation the access value reads as the one
 chosen, so machine routes, `for`, skill conditions and the prompt line behave
 as they would for that person, and a band across the chat says "Trying as a
 shared user". Off when the conversation ends.
@@ -114,14 +141,17 @@ decided by the real identity, in code, exactly as now.
 
 All additive, none rewrite existing records, **no migration**:
 
-- `MachinePhase.Routes map[string]string`, `MachinePhase.For []string`.
-- `SkillCase.Check = "access"` and `SkillCase.Access []string`.
+- `MachinePhase.Routes []MachineRoute` (`{Access, Team, To}`),
+  `MachinePhase.For []string` (access values and `group:<id>`).
+- `SkillCase.Check = "access"` and `SkillCase.Access []string` (the same
+  entries).
 - `AgentRecord.TellAccess string` (tri-state; empty = off).
 - The session's Try as value: per conversation, never on the agent.
 
-`Problems()` checks a `routes` value names a real step, a `for` list holds
-only the five values, and a `for` step has a fallback for everyone it keeps
-out.
+`Problems()` checks a route names a real step, a `for` list holds only the
+five values and teams that exist, and a `for` step has a fallback for everyone
+it keeps out. A team that is later deleted matches nobody, and the editor
+marks the entry.
 
 ## Build order
 
@@ -129,7 +159,7 @@ out.
    the `access` field filled from it.
 2. `routes` and `for`, enforced in the driver on every way into a step,
    including `change_phase` and guards.
-3. Skill condition "the person is".
+3. Skill condition "the person is", with teams.
 4. Try as, with its band.
 5. The agent's prompt line and its switch.
 
