@@ -12,7 +12,7 @@ import (
 func registerTestRoot(t *testing.T, kind, name, abs string) {
 	t.Helper()
 	RegisterPathScope(kind, PathScope{
-		Resolve: func(user, root, value string) (string, error) {
+		Resolve: func(user, _, root, value string) (string, error) {
 			if root != name {
 				return "", Error("no such root " + root)
 			}

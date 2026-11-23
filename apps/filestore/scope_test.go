@@ -39,7 +39,7 @@ func scopeFixture(t *testing.T) (*FileStoreApp, Store, string) {
 func TestScopeResolvesAFolderToAnAbsolutePath(t *testing.T) {
 	app, st, root := scopeFixture(t)
 
-	got, err := app.resolveScope("u", st.Slug, "scan-2026-08-13")
+	got, err := app.resolveScope("u", "", st.Slug, "scan-2026-08-13")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -65,13 +65,13 @@ func TestScopeRefusesWhatQuotingWouldHaveAllowed(t *testing.T) {
 	// root as well and stay refused — that is why rootSpelling is an
 	// allowlist rather than a loosened comparison in resolveUnder.
 	for _, bad := range []string{"../", "..", "../../etc", "/etc", "nope"} {
-		if _, err := app.resolveScope("u", st.Slug, bad); err == nil {
+		if _, err := app.resolveScope("u", "", st.Slug, bad); err == nil {
 			t.Errorf("%q was accepted", bad)
 		}
 	}
 	// And the refusal says what would change the answer, because a model
 	// reads it and has to act on it.
-	_, err := app.resolveScope("u", st.Slug, "nope")
+	_, err := app.resolveScope("u", "", st.Slug, "nope")
 	if err == nil || !strings.Contains(err.Error(), "Support bundles") {
 		t.Errorf("the refusal should name the store to look in, got: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestScopeListsWhatIsValidNow(t *testing.T) {
 	if got := app.listScope("u", st.Slug); len(got) != 4 {
 		t.Errorf("a new folder should be valid without re-authoring, got %v", got)
 	}
-	if _, err := app.resolveScope("u", st.Slug, "scan-2026-08-14"); err != nil {
+	if _, err := app.resolveScope("u", "", st.Slug, "scan-2026-08-14"); err != nil {
 		t.Errorf("the new folder should resolve: %v", err)
 	}
 }
@@ -107,7 +107,7 @@ func TestScopeIsRegisteredUnderFiles(t *testing.T) {
 	}
 	// An unknown kind fails CLOSED: a parameter declaring a constraint
 	// nobody implements must not quietly become unconstrained.
-	if _, err := ResolvePathScope("u", "", "nosuchkind:x", "value", true); err == nil {
+	if _, err := ResolvePathScope("u", "", "", "nosuchkind:x", "value", true); err == nil {
 		t.Error("an unknown scope kind should refuse rather than pass")
 	}
 }
@@ -131,10 +131,10 @@ func TestScopeRequiresTheCallingAgentToBeLinked(t *testing.T) {
 	}
 
 	ref := "files:" + st.Slug
-	if _, err := ResolvePathScope("u", "linked", ref, "scan-2026-08-13", true); err != nil {
+	if _, err := ResolvePathScope("u", "", "linked", ref, "scan-2026-08-13", true); err != nil {
 		t.Errorf("a linked agent should resolve: %v", err)
 	}
-	_, err := ResolvePathScope("u", "unlinked", ref, "scan-2026-08-13", true)
+	_, err := ResolvePathScope("u", "", "unlinked", ref, "scan-2026-08-13", true)
 	if err == nil {
 		t.Fatal("an unlinked agent reached a store nobody attached to it")
 	}
@@ -147,13 +147,13 @@ func TestScopeRequiresTheCallingAgentToBeLinked(t *testing.T) {
 
 	// No agent in play (a CLI path, a test) is NOT a refusal: there is no
 	// attachment to check, and the user gate still applies.
-	if _, err := ResolvePathScope("u", "", ref, "scan-2026-08-13", true); err != nil {
+	if _, err := ResolvePathScope("u", "", "", ref, "scan-2026-08-13", true); err != nil {
 		t.Errorf("a non-agent caller should still resolve: %v", err)
 	}
 	// Neither is a deployment with no app owning agent records — the
 	// feature would be dead rather than ungated.
 	AgentHoldsReference = nil
-	if _, err := ResolvePathScope("u", "unlinked", ref, "scan-2026-08-13", true); err != nil {
+	if _, err := ResolvePathScope("u", "", "unlinked", ref, "scan-2026-08-13", true); err != nil {
 		t.Errorf("with no agent-record app wired this should resolve: %v", err)
 	}
 }
@@ -269,7 +269,7 @@ func TestStoresAreNotOfferedToToolAuthors(t *testing.T) {
 	}
 	// And a caller that is not an admin-mapped tool is refused, saying
 	// what would let it in.
-	if _, err := ResolvePathScope("u", "", "files:"+st.Slug, "scan-2026-08-13", false); err == nil ||
+	if _, err := ResolvePathScope("u", "", "", "files:"+st.Slug, "scan-2026-08-13", false); err == nil ||
 		!strings.Contains(err.Error(), "an admin maps the store's registered commands") {
 		t.Errorf("an untrusted caller reached a store: %v", err)
 	}
@@ -320,10 +320,10 @@ func TestAssignedStoreIsNotReachableThroughAPathScope(t *testing.T) {
 		t.Fatalf("save: %v", err)
 	}
 
-	if _, err := app.resolveScope("alice", st.Slug, "scan-2026-08-13"); err != nil {
+	if _, err := app.resolveScope("alice", "", st.Slug, "scan-2026-08-13"); err != nil {
 		t.Fatalf("alice should resolve: %v", err)
 	}
-	_, err := app.resolveScope("bob", st.Slug, "scan-2026-08-13")
+	_, err := app.resolveScope("bob", "", st.Slug, "scan-2026-08-13")
 	if err == nil {
 		t.Fatal("bob resolved a folder in a store he cannot reach")
 	}

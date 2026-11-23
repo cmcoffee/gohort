@@ -76,3 +76,52 @@ func TestAnAppAskIsARunUnderWhoAsked(t *testing.T) {
 		t.Errorf("an app's own agent's ask is listed as: %+v", runs)
 	}
 }
+
+// personSource records who each run's store tools were built for.
+type personSource struct{ seen *[]string }
+
+func (p personSource) Kind() string                                          { return "personfiles" }
+func (p personSource) Label() string                                         { return "Person files" }
+func (p personSource) List(user string) []ReferenceItem                      { return nil }
+func (p personSource) Fetch(ctx context.Context, user, item, q string) string { return "" }
+func (p personSource) ItemTools(user, item string) []AgentToolDef             { return nil }
+func (p personSource) ItemToolsWithSession(sess *ToolSession, user, item string) []AgentToolDef {
+	*p.seen = append(*p.seen, user+" for "+sess.StorePerson)
+	return nil
+}
+
+// An app's agent runs as the owner, but its Sources are told who the run is
+// for: the person using the app, so a file store that gives each person their
+// own folder reaches theirs, not the owner's. An owner's own run is for them,
+// and one run for someone else is for that someone.
+func TestAnAppsAgentRunTellsItsSourcesWhoItIsFor(t *testing.T) {
+	var seen []string
+	RegisterReferenceSource(personSource{seen: &seen})
+	df := newDispatchFixture(t, FakeTurn{Content: "Done.", Repeat: true})
+	df.agent.AttachedSources = []ReferenceSelection{{Kind: "personfiles", ItemID: "caps"}}
+	if _, err := saveAgent(df.udb, df.agent); err != nil {
+		t.Fatal(err)
+	}
+	decline := func(string, string) bool { return false }
+	check := func(ctx context.Context, runtime, want string) {
+		t.Helper()
+		seen = nil
+		if _, err := df.app.runAgentSyncConfirm(ctx, "u", runtime, df.agent.ID, "Look.", decline); err != nil {
+			t.Fatal(err)
+		}
+		if len(seen) == 0 {
+			t.Fatal("the run built no Sources")
+		}
+		for _, s := range seen {
+			if !strings.HasSuffix(s, " for "+want) {
+				t.Errorf("the Sources were built %v, want each for %q", seen, want)
+				break
+			}
+		}
+	}
+	check(appRunAs(t.Context(), "u", "bob"), "u", "bob")
+	check(t.Context(), "u", "u")
+	// The owner's agent run for someone it is shared with (their conversation
+	// sent it work): for them.
+	check(t.Context(), "carol", "carol")
+}

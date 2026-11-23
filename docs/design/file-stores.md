@@ -501,6 +501,25 @@ and no name is a path. A person's folder that is a link (`people/mallory` pointi
   with it every person's folder under `people/`: the setting's help warns of that too.
 - **Not with evidence indexing yet.** The evidence index is keyed by store and folder name, so two
   people's `CASE-1` would share one index. Saving both switches on is refused.
+- **An owner's agent working for someone else.** An app's agent and pipelines run as the app's
+  owner, and an owner's specialist can be sent work by someone it is shared with. The run carries
+  who it is for (`appstores.WithPerson` on the context, `ToolSession.StorePerson` on the session,
+  set at dispatch; the first person named wins), and the store's tools, a mapped command's folder
+  values (`PathScopeResolver` takes the person beside the user) and the generic search reach that
+  person's folder, under the owner's access. App checks run as the person running them, never as
+  the caller a check names.
+- **The people folder is the setting's own.** It holds a marker file (`.gohort-per-person`).
+  Turning the setting on over a `people` folder without it, or over anything called `people` that
+  is not a folder, is refused: its folders would go to whoever's name each matches. A `people`
+  that becomes a link is never followed: no person's folder is made through it, and the cleanup
+  sweeps list nothing in it.
+- **A per-person source reached as nobody offers nothing**, rather than its top, where `people`
+  would be everyone's folders at once. A pull job is keyed by the source's person too, so two
+  people pulling the same name from their own folders into a shared store are two jobs.
+- **Where isolation stops: the app's working folder.** An app's scripts run in its owner's
+  workspace whoever is using it, so a script that caches something read from one person's folder
+  there leaves it for the next person's run. Builder is told to keep results in the store folder
+  or return them.
 
 ## Running a command through servitor
 

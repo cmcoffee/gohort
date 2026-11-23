@@ -39,6 +39,30 @@ type App struct {
 	Owner, Slug, Caller string
 }
 
+// personKey carries who a run is for, through work that runs as somebody else.
+type personKey struct{}
+
+// WithPerson marks ctx as work done for person: someone using an owner's app,
+// whose agent and pipelines run as the owner, so that a store giving each
+// person their own folder reaches theirs and not the owner's. The first person
+// named wins: work that sends more work keeps the person at the top.
+func WithPerson(ctx context.Context, person string) context.Context {
+	person = strings.TrimSpace(person)
+	if person == "" || PersonFrom(ctx) != "" {
+		return ctx
+	}
+	return context.WithValue(ctx, personKey{}, person)
+}
+
+// PersonFrom is the person WithPerson named on ctx, or "".
+func PersonFrom(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	p, _ := ctx.Value(personKey{}).(string)
+	return p
+}
+
 // Host is the file-store side.
 type Host interface {
 	// GrantsFor is every store granted to the app.

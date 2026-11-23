@@ -71,8 +71,16 @@ func (s Store) pullSource(db Database) (Store, bool) {
 		return Store{}, false
 	}
 	src, ok := LoadStore(db, slug)
-	if !ok || s.viewer == "" {
-		return src, ok
+	if !ok {
+		return Store{}, false
+	}
+	if s.viewer == "" {
+		// Reached as nobody: a per-person source has no folder to offer, and
+		// handing back its top would offer people itself, everyone's at once.
+		if src.PerPerson {
+			return Store{}, false
+		}
+		return src, true
 	}
 	src, err := src.forPerson(s.viewer)
 	if err != nil {
@@ -118,7 +126,17 @@ type pullJob struct {
 	doneFiles, doneByte    atomic.Int64
 }
 
-func (p *pullJob) key() string { return p.dest.forPersonKey(p.item) }
+// key is the job's registry key: the destination as the person reaches it,
+// and the source's person too, so two people pulling the same name from their
+// own folders of a per-person source into a shared store are two jobs, and
+// neither joins, watches or stops the other's.
+func (p *pullJob) key() string {
+	k := p.dest.forPersonKey(p.item)
+	if p.src.root != "" && p.dest.root == "" {
+		k += "/from:" + personFolder(p.src.viewer)
+	}
+	return k
+}
 
 // progress is the job's line for a person: "120 of 1,204 files, 310 MB of
 // 3.2 GB".

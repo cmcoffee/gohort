@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appstores"
 	"github.com/cmcoffee/gohort/core/appcheck"
 	"github.com/cmcoffee/gohort/core/appdraft"
 	"github.com/cmcoffee/gohort/tools/appscript"
@@ -311,6 +312,13 @@ func TestAFailingPageCheckThatWasFailingDoesNotBlock(t *testing.T) {
 // naming a collection the app does not declare is refused.
 func TestACheckSeedsSharedCollectionsAndNamesItsCaller(t *testing.T) {
 	turn := checksTestApp(t)
+	// The caller a check names is a value for its script, not who it runs
+	// as: a file store that gives each person their own folder must hand over
+	// the folder of whoever runs the check, never the named caller's.
+	var callers []string
+	prevStores := appstores.Provider
+	appstores.Provider = callerRecorder{callers: &callers}
+	t.Cleanup(func() { appstores.Provider = prevStores })
 	mine := "import os, json\nshared = json.loads(os.environ.get('shared', '{}'))\n" +
 		"ups = shared.get('updates', [])\n" +
 		"print(json.dumps({'mine': len([u for u in ups if u.get('by') == os.environ.get('caller')]), 'all': len(ups), " +
@@ -331,6 +339,32 @@ func TestACheckSeedsSharedCollectionsAndNamesItsCaller(t *testing.T) {
 		"checks":             []any{totalCheck(7), check}}, true)
 	if err != nil || !strings.Contains(out, `PASS "counts the caller's updates"`) {
 		t.Fatalf("a check on seeded shared records, as a named caller, did not pass: %v\n%s", err, out)
+	}
+	if len(callers) == 0 {
+		t.Fatal("no check asked for the app's stores")
+	}
+	for _, c := range callers {
+		if c != turn.user {
+			t.Fatalf("a check ran for %q, want %q who ran it (the check names sam): %v", c, turn.user, callers)
+		}
+	}
+	// Run by someone other than the owner (a maintainer), the checks are for
+	// them, not for the owner whose app it is.
+	spec, ok := LoadAppSpec(turn.user, "hours")
+	if !ok {
+		t.Fatal("the app was not saved")
+	}
+	other := *turn
+	other.user = "maintainer-mo"
+	callers = nil
+	other.runAppChecks(spec)
+	if len(callers) == 0 {
+		t.Fatal("the maintainer's check run asked for no stores")
+	}
+	for _, c := range callers {
+		if c != "maintainer-mo" {
+			t.Fatalf("a maintainer's check ran for %q, want them: %v", c, callers)
+		}
 	}
 	stray := map[string]any{"name": "reads a collection the app lacks", "script": "mine",
 		"shared": map[string]any{"votes": []any{}}, "expect": []any{map[string]any{"path": "all", "equals": 0}}}
@@ -384,4 +418,16 @@ func TestAnAgentCheckRunsAtVerifyAndNotOnASave(t *testing.T) {
 	if err := validateAppChecks(other); err == nil || !strings.Contains(err.Error(), "not the app's") {
 		t.Errorf("a check naming another agent: %v", err)
 	}
+}
+
+// callerRecorder is a store host that grants nothing and records who each
+// app run was for.
+type callerRecorder struct {
+	fakeStoreCatalog
+	callers *[]string
+}
+
+func (c callerRecorder) GrantsFor(app appstores.App) []appstores.Grant {
+	*c.callers = append(*c.callers, app.Caller)
+	return nil
 }

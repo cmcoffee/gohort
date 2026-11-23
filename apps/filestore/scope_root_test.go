@@ -21,7 +21,7 @@ func TestScopeResolvesTheRootItself(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, spelling := range []string{".", "", "/", "./", "  .  "} {
-		got, err := app.resolveScope("u", st.Slug, spelling)
+		got, err := app.resolveScope("u", "", st.Slug, spelling)
 		if err != nil {
 			t.Errorf("%q should name the root: %v", spelling, err)
 			continue
@@ -39,7 +39,7 @@ func TestScopeStillRefusesTraversalThatLandsOnTheRoot(t *testing.T) {
 	app, st, _ := scopeFixture(t)
 
 	for _, probe := range []string{"..", "../", "../..", "scan-2026-08-13/.."} {
-		if got, err := app.resolveScope("u", st.Slug, probe); err == nil {
+		if got, err := app.resolveScope("u", "", st.Slug, probe); err == nil {
 			t.Errorf("%q should be refused, resolved to %q", probe, got)
 		}
 	}
@@ -49,13 +49,13 @@ func TestScopeStillRefusesTraversalThatLandsOnTheRoot(t *testing.T) {
 func TestScopeStillRefusesOutsideAndMissing(t *testing.T) {
 	app, st, _ := scopeFixture(t)
 
-	if _, err := app.resolveScope("u", st.Slug, "../../etc"); err == nil {
+	if _, err := app.resolveScope("u", "", st.Slug, "../../etc"); err == nil {
 		t.Error("a path outside the store should still be refused")
 	}
-	if _, err := app.resolveScope("u", st.Slug, "no-such-folder"); err == nil {
+	if _, err := app.resolveScope("u", "", st.Slug, "no-such-folder"); err == nil {
 		t.Error("a folder that is not there should still be refused")
 	}
-	if _, err := app.resolveScope("u", "no-such-store", "."); err == nil {
+	if _, err := app.resolveScope("u", "", "no-such-store", "."); err == nil {
 		t.Error("an unreachable store should still be refused, root or not")
 	}
 }

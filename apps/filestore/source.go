@@ -30,6 +30,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appstores"
 	"github.com/cmcoffee/gohort/core/bundle"
 )
 
@@ -100,7 +101,7 @@ func (s storeSource) Fetch(ctx context.Context, user, itemID, query string) stri
 	if !ok || !st.AllowsUser(user) {
 		return ""
 	}
-	st, err := st.forPerson(user)
+	st, err := st.forPerson(personFor(ToolSessionFromContext(ctx), firstNonEmpty(appstores.PersonFrom(ctx), user)))
 	if err != nil {
 		return ""
 	}
@@ -234,7 +235,7 @@ func (s storeSource) ItemToolsWithSession(sess *ToolSession, user, itemID string
 	if !ok {
 		return tools
 	}
-	st, err := st.forPerson(user)
+	st, err := st.forPerson(personFor(sess, user))
 	if err != nil {
 		return tools
 	}
@@ -297,7 +298,9 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 	}
 	// The person's own folder, for a store that gives each person one: every
 	// tool below holds its paths to st.Path.
-	st, err := st.forPerson(user)
+	// Whose: the person the run is for, which on an owner's agent working for
+	// someone else (their app, their conversation) is that someone.
+	st, err := st.forPerson(personFor(sess, user))
 	if err != nil {
 		Log("[filestore] %s: %v", user, err)
 		return nil

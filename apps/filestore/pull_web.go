@@ -125,8 +125,10 @@ func (T *FileStoreApp) handlePull() http.HandlerFunc {
 		if err != nil {
 			return nil, err
 		}
-		if run, ok := pulls.get(dest.forPersonKey(strings.TrimSpace(c.R.URL.Query().Get("item")))); ok {
-			return run.status(), nil
+		if job, err := T.pullJobFor(dest, strings.TrimSpace(c.R.URL.Query().Get("item")), c.User, false); err == nil {
+			if run, ok := pulls.get(job.key()); ok {
+				return run.status(), nil
+			}
 		}
 		return map[string]any{}, nil
 	})
@@ -135,8 +137,10 @@ func (T *FileStoreApp) handlePull() http.HandlerFunc {
 		if err != nil {
 			return nil, err
 		}
-		if run, ok := pulls.get(dest.forPersonKey(strings.TrimSpace(c.R.URL.Query().Get("item")))); ok {
-			run.cancel()
+		if job, err := T.pullJobFor(dest, strings.TrimSpace(c.R.URL.Query().Get("item")), c.User, false); err == nil {
+			if run, ok := pulls.get(job.key()); ok {
+				run.cancel()
+			}
 		}
 		return map[string]any{"ok": true}, nil
 	})

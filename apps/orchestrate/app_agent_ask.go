@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appstores"
 )
 
 // appAskMaxTokens bounds one reply.
@@ -137,9 +138,14 @@ func (T *OrchestrateApp) AppAgentRun(ctx context.Context, owner, user, slug, age
 // and when somebody else is using the app it carries the non-owner mark, so
 // the owner's guardrails judge it as a request from someone else, authoring
 // is withheld, and the owner's standing approvals do not answer for it.
+//
+// It also names the viewer as who the run is for (appstores.WithPerson), so a
+// file store that gives each person their own folder reaches the viewer's
+// through the app's agent, the same folder the app's script was handed, and
+// not the owner's.
 func appRunAs(ctx context.Context, owner, viewer string) context.Context {
 	if v := strings.TrimSpace(viewer); v != "" && v != owner {
-		return withNonOwnerRequester(ctx)
+		return appstores.WithPerson(withNonOwnerRequester(ctx), v)
 	}
 	return ctx
 }

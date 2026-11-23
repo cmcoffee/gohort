@@ -98,7 +98,7 @@ func init() {
 		// Only the tools an admin maps from a store's own commands reach its
 		// folders; see PathScope.TrustedOnly.
 		TrustedOnly: true,
-		Resolve:     func(u, n, v string) (string, error) { return registeredFileStoreApp.resolveScope(u, n, v) },
+		Resolve:     func(u, p, n, v string) (string, error) { return registeredFileStoreApp.resolveScope(u, p, n, v) },
 		Values:      func(u, n string) []string { return registeredFileStoreApp.listScope(u, n) },
 		Roots:       func(u string) []PathScopeRoot { return registeredFileStoreApp.scopeRoots(u) },
 	})
@@ -111,7 +111,11 @@ func init() {
 // rather than reimplementing it: it resolves symlinks rather than
 // trusting the textual path, and refuses anything not strictly inside
 // the root.
-func (T *FileStoreApp) resolveScope(user, storeSlug, value string) (string, error) {
+//
+// user is whose access decides; person, when set, is who the run is for, and
+// whose folder a store that gives each person one narrows to (an owner's agent
+// working for someone using the owner's app).
+func (T *FileStoreApp) resolveScope(user, person, storeSlug, value string) (string, error) {
 	st, ok := LoadStore(T.DB, storeSlug)
 	// Same answer for "no such store" and "not yours": a path scope is
 	// reachable from a minted command tool, and telling a caller that a
@@ -125,7 +129,7 @@ func (T *FileStoreApp) resolveScope(user, storeSlug, value string) (string, erro
 	if !st.FullAccessFor(user) {
 		return "", Error("you have Read Only / No Commands access to " + st.Name + ", and running a command on its folders takes Full Access")
 	}
-	st, err := st.forPerson(user)
+	st, err := st.forPerson(firstNonEmpty(person, user))
 	if err != nil {
 		return "", err
 	}
