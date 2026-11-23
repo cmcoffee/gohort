@@ -100,11 +100,7 @@ is shared with: reads on the owner's key, writes on their own account.
 **Keeping it working while the owner is away:** a key that expired or was
 revoked is worked around by people connecting their own accounts for it
 (Connected accounts), or by a maintainer moving the row to Theirs. A broken
-tool is fixed by a maintainer as a copy only that agent uses
-("<tool>_fix", scoped to the agent, the original switched off for that agent
-alone): only an HTTP tool or toolbox, only its request's shape, the
-original's credential and response pipe kept whatever was sent. The owner
-is told, and keeps it (into the original) or discards it. An
+tool is fixed by a maintainer as a copy only that agent uses (to come). An
 API that moved, or an owner gone for good, is handing over ownership.
 
 ## Reads and writes

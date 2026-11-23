@@ -724,8 +724,6 @@ func (ed *agentEditor) shareSection() {
 				"Apart from those choices, nothing here changes anything. It is the list to check before you share, and the answer to \"why does it work for me and not for them\" afterwards.",
 			Body: reachTable(ed.source, credentialRowChoices(false)),
 		})
-		// What a maintainer fixed while the owner was away (agent_tool_fix.go).
-		ed.sections = append(ed.sections, toolFixOwnerSection(ed.source))
 	}
 }
 
