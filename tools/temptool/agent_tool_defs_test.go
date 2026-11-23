@@ -586,3 +586,19 @@ func TestACollapsedToolboxRefusesWhatTheAgentMayNotUse(t *testing.T) {
 		t.Errorf("a switched-off action is still in the toolbox's help:\n%s", help)
 	}
 }
+
+// A session's copy that is a maintainer's fix in place of the stored tool runs
+// as loaded: a call does not swap it back for the stored row.
+func TestAFixInPlaceOfTheStoredToolRunsAsLoaded(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	if err := AdminPersistTempTool(db, "alice", TempTool{Name: "jira", Mode: TempToolModeAPI, CommandTemplate: "https://jira.example/2"}); err != nil {
+		t.Fatal(err)
+	}
+	sess := &ToolSession{Username: "alice", DB: db}
+	if err := sess.AppendTempTool(&TempTool{Name: "jira", Mode: TempToolModeAPI, CommandTemplate: "https://jira.example/3", FixedBy: "mia"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := currentTempTool(sess, "jira"); got == nil || got.CommandTemplate != "https://jira.example/3" {
+		t.Errorf("the fix was swapped back for the stored tool: %+v", got)
+	}
+}

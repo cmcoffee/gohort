@@ -206,6 +206,7 @@ func (T *OrchestrateApp) agentSave(c *jsonapi.Call, raw json.RawMessage) (any, e
 			// Disallow is the share dialog's (share_plan.go), never this form's.
 			req.WithheldFromRecipients = existing.WithheldFromRecipients
 			req.CredentialsDecided = existing.CredentialsDecided
+			req.ToolFixes = existing.ToolFixes
 		}
 	} else if isSeedID(req.ID) {
 		// Seeds save as a per-user shadow. The form carries no `locked`
@@ -612,6 +613,14 @@ func (T *OrchestrateApp) registerAgentRoutes() {
 	T.HandleFunc("/api/agents/{id}/used-by", jsonapi.Get(T.DB, T.agentUses))
 	T.HandleFunc("/api/agents/{id}/reach", jsonapi.Get(T.DB, T.agentReach))
 	T.HandleFunc("/api/agents/{id}/reach/credential", jsonapi.Post(T.DB, T.agentCredentialDecision))
+	// A maintainer's fix of one of the owner's tools (agent_tool_fix.go).
+	T.HandleFunc("/api/agents/{id}/fixable-tools", jsonapi.Get(T.DB, T.agentFixableTools))
+	T.HandleFunc("/api/agents/{id}/tool-fix", jsonapi.Methods{
+		"GET":  jsonapi.Get(T.DB, T.agentToolFixGet),
+		"POST": jsonapi.Post(T.DB, T.agentToolFixSave),
+	}.Serve)
+	T.HandleFunc("/api/agents/{id}/tool-fixes", jsonapi.Get(T.DB, T.agentToolFixes))
+	T.HandleFunc("/api/agents/{id}/tool-fix/resolve", jsonapi.Post(T.DB, T.agentToolFixResolve))
 	T.HandleFunc("/api/agents/{id}/missing", jsonapi.Methods{
 		"GET":  jsonapi.Get(T.DB, T.agentMissing),
 		"POST": jsonapi.Post(T.DB, T.agentMissingFix),

@@ -1624,6 +1624,9 @@ func cleanupSessionDraftsByNameLocked(db Database, username, toolName string) in
 	return cleaned
 }
 
+// reason, when given, names the edit in the tool's kept versions ("edited"
+// otherwise).
+//
 // UpdatePersistentTempTool replaces an existing active tool's content
 // in place. Used by the LLM-iteration path: when an LLM re-authors a
 // tool whose name is already in the persistent pool (the original was
@@ -1636,7 +1639,7 @@ func cleanupSessionDraftsByNameLocked(db Database, username, toolName string) in
 // Returns true when a replacement happened, false when no tool by
 // that name was in the persistent pool (caller should fall through
 // to the queue-for-review path in that case).
-func UpdatePersistentTempTool(db Database, username string, t TempTool) bool {
+func UpdatePersistentTempTool(db Database, username string, t TempTool, reason ...string) bool {
 	db = tempToolStore(db)
 	if db == nil || username == "" {
 		return false
@@ -1655,7 +1658,11 @@ func UpdatePersistentTempTool(db Database, username string, t TempTool) bool {
 	if !updated {
 		return false
 	}
-	writeToolPool(db, username, approved, "edited")
+	why := "edited"
+	if len(reason) > 0 && strings.TrimSpace(reason[0]) != "" {
+		why = reason[0]
+	}
+	writeToolPool(db, username, approved, why)
 	Log("[temp_tool_persist] in-place update of active tool %q (LLM iteration; original approval preserved)", t.Name)
 	return true
 }

@@ -213,7 +213,9 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 		if t.privateMode && p.Tool.Mode == TempToolModeAPI {
 			continue
 		}
-		tool := p.Tool
+		// A maintainer's fix runs in its place, under its name, for anybody
+		// but the agent's owner (agent_tool_fix.go).
+		tool := toolWithFix(t.agent, t.user, p.Tool)
 		// Agent-scoped record (flattened namespace — the old AgentRecord.Tools
 		// kit): part of THIS agent's own kit, first-classed in setupCustomTools.
 		if len(p.ScopeAgents) > 0 {

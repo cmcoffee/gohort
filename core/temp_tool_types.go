@@ -317,6 +317,10 @@ type TempTool struct {
 	// a broken action fixes/quarantines as one named tool instead of an
 	// opaque bundle. Ignored for non-toolbox modes.
 	Expand bool `json:"expand,omitempty"`
+	// FixedBy marks a session's copy that is a maintainer's fix in place of
+	// the stored tool (orchestrate's agent tool fixes), never stored: a call
+	// runs this copy rather than re-reading the stored row (currentTempTool).
+	FixedBy string `json:"-"`
 	// FollowUpsFromAny (toolbox mode only) names the actions the reply to ANY
 	// of this toolbox's actions may ask for as the service's own next step:
 	// TempToolAction.FollowUps for every action at once, ones added later

@@ -734,6 +734,10 @@ type AgentRecord struct {
 	// is shown as waiting for that choice, so "they bring their own" by
 	// default is never mistaken for one the owner made.
 	CredentialsDecided []string `json:"credentials_decided,omitempty"`
+	// ToolFixes are maintainers' fixes of the owner's tools, each run under
+	// the tool's own name by everybody but the owner until the owner keeps or
+	// discards it (agent_tool_fix.go).
+	ToolFixes []ToolFix `json:"tool_fixes,omitempty"`
 
 	// AllowedUsers is the peer-share recipient set for a USER-OWNED agent: which
 	// other users may see and run this agent besides its Owner. Empty = private to

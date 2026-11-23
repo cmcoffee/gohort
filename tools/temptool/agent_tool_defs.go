@@ -479,6 +479,10 @@ func currentTempTool(sess *ToolSession, name string) *TempTool {
 	if sess == nil || sess.DB == nil || sess.Username == "" {
 		return live
 	}
+	// A maintainer's fix in place of the stored tool runs as loaded.
+	if live != nil && live.FixedBy != "" {
+		return live
+	}
 	p, ok := UserToolByName(sess.DB, sess.Username, name)
 	if !ok || p.Tool.Disabled || p.Tool.BuilderOnly || p.Tool.BoundOnly {
 		return live

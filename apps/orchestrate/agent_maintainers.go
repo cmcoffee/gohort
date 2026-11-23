@@ -235,7 +235,7 @@ func renderMaintainerEditor(w http.ResponseWriter, r *http.Request, a AgentRecor
 			Detail: "Its tools, skills, documents and recipes travel with it. A credential is " + a.Owner + "'s key: you can move it to Theirs (everybody uses their own) or Disallow, or from writes down to reads, " +
 				"but only " + a.Owner + " can lend it further. To keep it working while they are away, connect your own account for it under Connected accounts, and so can the people who use it.",
 			Body: reachTable(src, credentialRowChoices(true)),
-		}},
+		}, toolFixMaintainerSection(src, a.Owner)},
 	}
 	page.ServeHTTP(w, r)
 }
