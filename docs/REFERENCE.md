@@ -189,7 +189,7 @@ For models without native tool support, turn off **Native tool calling** on the 
 | `ollama_proxy` | Ollama-protocol proxy on its own port, for clients that speak only Ollama; the OpenAI shape is `openai_api` |
 | `extensions` | A user's outward reach: their own API credentials, connected accounts (per-user OAuth/MCP), authored tools, **skills** (incl. their if / else if / else conditions), and the global-tool catalog they opt into. The user-namespace counterpart to admin's global management; everything here is scoped to the calling user. Mounted at `/extensions` |
 | `publish` | Where finished documents go: the deployment's destinations (Confluence, webhook, agent destinations, set up in Admin > Publishing) and each person's own **publishing targets** (Extensions > Publishing targets: one of their API or MCP integrations, or an agent, with an instruction). Any document surface publishes through `core/docs`; a document's table of contents and links to its own sections are rebuilt for each destination, and a running publish reports its steps. See `docs/design/publishing.md` |
-| `filestore` | Folders on this server an agent can search, as a named store with retention |
+| `filestore` | Folders on this server an agent can search, as a named store with retention ([guide](file-stores.md)) |
 | `monitor` | Live view of what is happening across the deployment: runs, agents, schedules, in one hub tab |
 | `account` | Identity + preferences: password, timezone, and the inbound personal-access tokens an external MCP client uses to reach THIS user's agents. `extensions` is the outbound side |
 | `openai_api` | OpenAI-compatible chat endpoint: lets an external client drive a model or a gohort agent over the API shape it already speaks |
