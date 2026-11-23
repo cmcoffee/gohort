@@ -106,7 +106,8 @@ Under **Administrator › People**:
   in a browser when the profile says so; what it takes away is refused
   everywhere. Administrators are never shaped by one.
 
-Owners share an agent, collection or tool from its own sharing list.
+Owners share an agent, collection or tool from its own sharing list; see
+[sharing.md](sharing.md).
 
 ## 7. Work on code with Anvil
 
