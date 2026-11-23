@@ -137,6 +137,8 @@ func (T *Extensions) Routes() {
 		"DELETE": jsonapi.Delete(T.DB, T.handleSkillDelete),
 	}.Serve)
 	T.HandleFunc("/api/skills/", T.handleUserSkillOne)
+	// A tool's kept versions (tool_revisions.go).
+	T.HandleFunc("/api/tools/", T.handleUserToolOne)
 	T.HandleFunc("/api/skill-tools", jsonapi.Get(T.DB, T.handleSkillToolOptions))
 	T.HandleFunc("/api/skill-collections", jsonapi.Get(T.DB, T.handleSkillCollectionOptions))
 	T.HandleFunc("/", T.servePage)
@@ -1988,6 +1990,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 		// ArtifactClientJS) against the person's own account endpoints.
 		JS(ArtifactClientJS).
 		ClientAction("export_tool", `function(ctx){ window.gohortArtifacts.exportAction('tool', 'name', 'name')(ctx); }`).
+		ClientAction("tool_history", toolHistoryJS).
 		ClientAction("export_skill", `function(ctx){ window.gohortArtifacts.exportAction('skill', 'id', 'name')(ctx); }`).
 		ClientAction("extensions_import", `function(){
   window.gohortArtifacts.importFlow({
@@ -2275,6 +2278,8 @@ func (T *Extensions) toolsSection(user string) ui.Section {
 					RowActions: []ui.RowAction{
 						{Type: "button", Label: "Export", Method: "client",
 							PostTo: "export_tool", OnlyIf: "exportable"},
+						// Its kept versions: every save keeps what it replaced.
+						{Type: "button", Label: "History", Method: "client", PostTo: "tool_history"},
 						// View the full tool definition (read parity with the admin's
 						// tool RecordView, scoped to the user's own pool). Source fetches
 						// the single record so heavy fields (script body, command

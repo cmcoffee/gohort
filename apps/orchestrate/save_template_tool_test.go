@@ -171,7 +171,7 @@ func TestSaveTemplateCarriesTheToolOwnersCredential(t *testing.T) {
 	}
 	tool := TempTool{Name: "tpl_acme_orders", Description: "Orders.", Mode: TempToolModeAPI, Credential: cred, Method: "GET",
 		CommandTemplate: "https://alice.acme.example/v1/orders"}
-	if err := QueuePendingTempTool(db, "alice", tool, "test"); err != nil {
+	if err := QueuePendingTempToolScoped(db, "alice", tool, "test", nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := ApprovePendingTempTool(db, "alice", tool.Name); err != nil {

@@ -18,8 +18,8 @@ func TestARecordIsItsOwnersAlone(t *testing.T) {
 		{"", "", false, false},
 		{"alice", "", false, false},
 	} {
-		if got := OwnsRecord(c.owner, c.user, c.admin); got != c.want {
-			t.Errorf("OwnsRecord(%q, %q, admin=%v) = %v, want %v", c.owner, c.user, c.admin, got, c.want)
+		if got := ownsRecord(c.owner, c.user, c.admin); got != c.want {
+			t.Errorf("ownsRecord(%q, %q, admin=%v) = %v, want %v", c.owner, c.user, c.admin, got, c.want)
 		}
 	}
 }

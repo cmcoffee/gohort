@@ -25,6 +25,7 @@ import (
 
 	"github.com/cmcoffee/gohort/core/peershare"
 	"github.com/cmcoffee/gohort/core/promotion"
+	"github.com/cmcoffee/gohort/core/revisions"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
@@ -418,6 +419,9 @@ type PersistentTempTool struct {
 	// "Builder fixed it but the agent ran the other copy" failure). Gob/JSON
 	// compatible: records written before this field decode as nil ⇒ shared.
 	ScopeAgents []string `json:"scope_agents,omitempty"`
+	// UpdatedAt is when the definition last changed (writeToolPool), so the
+	// version a later edit keeps says when it was written.
+	UpdatedAt time.Time `json:"updated_at,omitempty"`
 }
 
 // ScopedToAgent reports whether the record is agent-scoped AND includes the
@@ -487,7 +491,7 @@ func SetUserToolScopeAgents(db Database, username, name string, agents []string)
 	for i := range list {
 		if list[i].Tool.Name == name {
 			list[i].ScopeAgents = agents
-			db.Set(persistentTempToolsTable, username, list)
+			writeToolPool(db, username, list, "edited")
 			return true
 		}
 	}
@@ -581,7 +585,7 @@ func SetPersistentTempToolShared(db Database, username, name string, shared bool
 	if !shared {
 		withdrew := withdrawToolReleaseLocked(db, username, approved[idx])
 		approved[idx].Shared = false
-		db.Set(persistentTempToolsTable, username, approved)
+		writeToolPool(db, username, approved, "edited")
 		// Everybody who took it is told, naming their agents that used it.
 		notify = withdrew
 		// An update asked for before the withdrawal is moot; left pending,
@@ -599,7 +603,7 @@ func SetPersistentTempToolShared(db Database, username, name string, shared bool
 	if !published {
 		return nil // already in the catalog; its release stands
 	}
-	db.Set(persistentTempToolsTable, username, approved)
+	writeToolPool(db, username, approved, "edited")
 	db.Unset(toolUpdateRequestsTable, PromotionRequestKey("tool", username, name))
 	// Publishing FULFILLS any pending publish request for this tool, however it
 	// got published (admin Approve, the direct Share button) — otherwise the
@@ -660,7 +664,7 @@ func SetPersistentTempToolAllowedUsers(db Database, username, name string, users
 	if !found {
 		return errString("no persistent tool named " + name)
 	}
-	db.Set(persistentTempToolsTable, username, approved)
+	writeToolPool(db, username, approved, "edited")
 	return nil
 }
 
@@ -1093,16 +1097,16 @@ func MergeAdoptedGlobalTools(db Database, username string, names []string) {
 	saveAdoptionsLocked(db, username, recs)
 }
 
-// QueuePendingTempTool adds a tool to the approval queue. Returns an
+// queuePendingTempTool adds a tool to the approval queue. Returns an
 // error if a same-named tool is already approved, or already pending with
 // a different definition (avoid silent overwrites — the user should
 // explicitly delete the old one first), or if the name is one no authoring
 // path would accept.
-func QueuePendingTempTool(db Database, username string, t TempTool, sessionID string) error {
+func queuePendingTempTool(db Database, username string, t TempTool, sessionID string) error {
 	return QueuePendingTempToolScoped(db, username, t, sessionID, nil)
 }
 
-// QueuePendingTempToolScoped is QueuePendingTempTool for a tool that should be
+// QueuePendingTempToolScoped is queuePendingTempTool for a tool that should be
 // scoped to particular agents once approved (an imported agent's own tools).
 func QueuePendingTempToolScoped(db Database, username string, t TempTool, sessionID string, scopeAgents []string) error {
 	db = tempToolStore(db)
@@ -1230,7 +1234,7 @@ func AdminReconfigureTempTool(db Database, username string, t TempTool) error {
 	if !found {
 		return errString("no persistent tool named " + t.Name)
 	}
-	db.Set(persistentTempToolsTable, username, list)
+	writeToolPool(db, username, list, "edited")
 	return nil
 }
 
@@ -1314,7 +1318,7 @@ func AdminPersistTempTool(db Database, username string, t TempTool) error {
 		next.ID = UUIDv4()
 	}
 	rest = append(rest, next)
-	db.Set(persistentTempToolsTable, username, rest)
+	writeToolPool(db, username, rest, "edited")
 	// Dedupe against the pending queue — the tool was likely also
 	// auto-queued by tool_def(create) when first authored. Without
 	// this, the same name shows in BOTH the pending and active lists
@@ -1409,7 +1413,7 @@ func ApprovePendingTempTool(db Database, username, name string) error {
 		ScopeAgents: moved.ScopeAgents,
 	})
 	db.Set(pendingTempToolsTable, username, rest)
-	db.Set(persistentTempToolsTable, username, deduped)
+	writeToolPool(db, username, deduped, "edited")
 	// Clean up the originating session draft. The mutex is already
 	// held, so call the lock-free core: the locking form would deadlock on
 	// this same non-reentrant mutex and freeze tool persistence
@@ -1525,7 +1529,9 @@ func DeletePersistentTempTool(db Database, username, name string) error {
 	if len(rest) == len(approved) {
 		return errString("no persistent tool named " + name)
 	}
-	db.Set(persistentTempToolsTable, username, rest)
+	writeToolPool(db, username, rest, "edited")
+	// Deleted is deleted: its kept versions go with it.
+	revisions.Delete(db, revisions.KindTool, toolRingKey(username, name))
 	// Recipe content lives inline on the record, so no on-disk
 	// cleanup is needed. State dir (if any) is left in place — the
 	// operator can purge it explicitly via DeleteToolState.
@@ -1649,7 +1655,7 @@ func UpdatePersistentTempTool(db Database, username string, t TempTool) bool {
 	if !updated {
 		return false
 	}
-	db.Set(persistentTempToolsTable, username, approved)
+	writeToolPool(db, username, approved, "edited")
 	Log("[temp_tool_persist] in-place update of active tool %q (LLM iteration; original approval preserved)", t.Name)
 	return true
 }
@@ -1689,7 +1695,7 @@ func TouchPersistentTempTool(db Database, username, name string) {
 		}
 	}
 	if changed {
-		db.Set(persistentTempToolsTable, username, approved)
+		writeToolPool(db, username, approved, "edited")
 	}
 }
 
@@ -2317,7 +2323,7 @@ func approveToolRelease(db Database, owner, name string) error {
 		if _, err := publishToolReleaseLocked(db, owner, p, &def, ""); err != nil {
 			return err
 		}
-		db.Set(persistentTempToolsTable, owner, list)
+		writeToolPool(db, owner, list, "edited")
 	} else if !cur.Tool.SameDefinition(def) {
 		prev := cur
 		pushReleaseHistory(&cur, prev)
@@ -2402,7 +2408,7 @@ func migrateToolReleases(db Database) int {
 			}
 		}
 		if dirty {
-			db.Set(persistentTempToolsTable, owner, list)
+			writeToolPool(db, owner, list, "edited")
 		}
 	}
 	for _, owner := range owners {
@@ -2424,7 +2430,7 @@ func migrateToolReleases(db Database) int {
 			}
 		}
 		if dirty {
-			db.Set(persistentTempToolsTable, owner, list)
+			writeToolPool(db, owner, list, "edited")
 		}
 	}
 	return changed
@@ -2486,7 +2492,7 @@ func SetPersistentTempToolSharedWith(db Database, owner, name string, users []st
 			return errString(why)
 		}
 	}
-	store.Set(persistentTempToolsTable, owner, list)
+	writeToolPool(store, owner, list, "edited")
 	tempToolPersistMu.Unlock()
 	peershare.SetRecipients(store, sharedToolsTable, owner, name, clean)
 	return nil
@@ -2760,7 +2766,7 @@ func SetUserToolAsksInChat(db Database, username, agentID, name string, ask bool
 	for i := range list {
 		if list[i].Tool.Name == name && list[i].Tool.ConfirmInChat != ask {
 			list[i].Tool.ConfirmInChat = ask
-			db.Set(persistentTempToolsTable, username, list)
+			writeToolPool(db, username, list, "edited")
 			break
 		}
 	}
@@ -2849,6 +2855,11 @@ func moveToolsTo(from, to string) error {
 	}
 	store.Set(persistentTempToolsTable, to, append(theirs, mine...))
 	store.Unset(persistentTempToolsTable, from)
+	// The kept versions are the sender's; the tools start their history
+	// afresh with whoever they moved to.
+	for _, t := range mine {
+		revisions.Delete(store, revisions.KindTool, toolRingKey(from, t.Tool.Name))
+	}
 	for _, name := range names {
 		peershare.MoveOwner(store, sharedToolsTable, from, to, name)
 		var rel ToolRelease
@@ -2924,4 +2935,83 @@ func purgeTools(owner string) int {
 	}
 	purgeToolStates(owner)
 	return n
+}
+
+// toolRingKey names one person's tool's kept versions: the owner is in the key,
+// since every person's pool lives in one table.
+func toolRingKey(username, name string) string { return username + ":" + name }
+
+// toolRevisionIgnore is what changes on a tool without anybody editing it.
+var toolRevisionIgnore = []string{"trial", "trial_since"}
+
+// writeToolPool stores a person's tool pool, keeping the version each tool's
+// definition had before this write (core/revisions): a save that changed what
+// a tool does can be undone instead of reconstructed. reason names the edit.
+// Every write of the pool goes through here, so no route edits a tool without
+// keeping what it replaced.
+func writeToolPool(db Database, username string, list []PersistentTempTool, reason string) {
+	var prior []PersistentTempTool
+	db.Get(persistentTempToolsTable, username, &prior)
+	was := make(map[string]PersistentTempTool, len(prior))
+	for _, p := range prior {
+		was[p.Tool.Name] = p
+	}
+	now := time.Now()
+	for i := range list {
+		old, ok := was[list[i].Tool.Name]
+		if !ok || !revisions.Differs(old.Tool, list[i].Tool, toolRevisionIgnore...) {
+			continue
+		}
+		stamp := old.UpdatedAt
+		if stamp.IsZero() {
+			stamp = old.ApprovedAt
+		}
+		revisions.Push(db, revisions.KindTool, toolRingKey(username, list[i].Tool.Name), old.Tool, stamp, reason)
+		list[i].UpdatedAt = now
+	}
+	db.Set(persistentTempToolsTable, username, list)
+}
+
+// ToolRevisionRing is where one person's tool's kept versions live: the store
+// and the key, for the history surface (core/revisions.Surface).
+func ToolRevisionRing(db Database, username, name string) (Database, string) {
+	return tempToolStore(db), toolRingKey(username, name)
+}
+
+// RestoreTempTool puts a kept version of one of username's tools back, as a
+// new edit: the version it replaces is kept in turn, so a restore can itself
+// be undone. The tool's governance stays as it is now (whether it is off,
+// Builder-only, bound-only, locked), and a locked tool is not restored.
+func RestoreTempTool(db Database, username, name, ref string) (TempTool, error) {
+	db = tempToolStore(db)
+	if db == nil || username == "" || name == "" {
+		return TempTool{}, errString("restoring needs a person and a tool")
+	}
+	key := toolRingKey(username, name)
+	rev, ok := revisions.Find(db, revisions.KindTool, key, ref)
+	if !ok {
+		return TempTool{}, errString("this tool has no such kept version")
+	}
+	var t TempTool
+	if !revisions.Load(db, revisions.KindTool, key, ref, &t) {
+		return TempTool{}, errString("that kept version could not be read")
+	}
+	tempToolPersistMu.Lock()
+	defer tempToolPersistMu.Unlock()
+	pool := LoadPersistentTempTools(db, username)
+	for i := range pool {
+		if pool[i].Tool.Name != name {
+			continue
+		}
+		cur := pool[i].Tool
+		if cur.Locked {
+			return TempTool{}, errString("this tool is locked: unlock it before restoring a version")
+		}
+		t.Name = name
+		t.Disabled, t.BuilderOnly, t.BoundOnly, t.Locked = cur.Disabled, cur.BuilderOnly, cur.BoundOnly, cur.Locked
+		pool[i].Tool = t
+		writeToolPool(db, username, pool, "restored version "+strconv.Itoa(rev.Seq))
+		return t, nil
+	}
+	return TempTool{}, errString("no tool of yours named " + name)
 }

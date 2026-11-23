@@ -23,7 +23,7 @@ func TestAToolExportsTheCredentialItActuallyUses(t *testing.T) {
 	for _, u := range []string{"alice", "carol"} {
 		tool := TempTool{Name: "acme_orders", Description: "Orders.", Mode: TempToolModeAPI, Credential: "acme", Method: "GET",
 			CommandTemplate: "https://x.acme.example/v1/orders"}
-		if err := QueuePendingTempTool(db, u, tool, "test"); err != nil {
+		if err := queuePendingTempTool(db, u, tool, "test"); err != nil {
 			t.Fatal(err)
 		}
 		if err := ApprovePendingTempTool(db, u, "acme_orders"); err != nil {

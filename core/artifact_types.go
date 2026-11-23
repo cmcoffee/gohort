@@ -210,7 +210,7 @@ func renamedOnImport(was, name string) string {
 // Credential is a NAME reference, so no secret leaves the install.
 //
 // Per-user scope: export needs the owning user; import lands the tool in that
-// user's PENDING pool via QueuePendingTempTool — never active. A tool recipe
+// user's PENDING pool via queuePendingTempTool — never active. A tool recipe
 // carries executable code (command_template / script_body / recipe files), so
 // human approval before it can fire is the whole point. An already-active or
 // already-pending tool of the same name is a skip, as preview predicts, and so
@@ -409,7 +409,7 @@ func (toolArtifact) ImportArtifact(db Database, recipe json.RawMessage, owner st
 	// Lands in the pending pool for review. An already-active same-named tool
 	// makes this return an error (delete-first), which we surface as a skip so
 	// the rest of the bundle still imports.
-	if err := QueuePendingTempTool(db, owner, t, "import"); err != nil {
+	if err := queuePendingTempTool(db, owner, t, "import"); err != nil {
 		return name, err.Error(), nil
 	}
 	return name, "", nil

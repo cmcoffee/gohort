@@ -64,6 +64,8 @@ const (
 	KindSkill    = "skill"
 	KindMachine  = "machine"
 	KindPipeline = "pipeline"
+	// KindTool is a person's own tool, keyed by owner and name.
+	KindTool = "tool"
 	// KindAgentGuardrails is an agent's guardrail settings, kept apart from
 	// the agent's own ring. The guardrails editor saves on every change, and
 	// each save filed a whole agent version, so a few guardrail tweaks pushed

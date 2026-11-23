@@ -37,7 +37,7 @@ func TestToolConfigRoutesContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"ct_pending", "ct_unwanted"} {
-		if err := QueuePendingTempTool(adb, "bob", TempTool{Name: name, Description: "Waiting.", CommandTemplate: "echo " + name}, "s1"); err != nil {
+		if err := QueuePendingTempToolScoped(adb, "bob", TempTool{Name: name, Description: "Waiting.", CommandTemplate: "echo " + name}, "s1", nil); err != nil {
 			t.Fatal(err)
 		}
 	}

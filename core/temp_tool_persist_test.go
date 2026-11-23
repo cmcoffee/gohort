@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"github.com/cmcoffee/gohort/core/promotion"
+	"github.com/cmcoffee/gohort/core/revisions"
 	"github.com/cmcoffee/gohort/core/shareledger"
 	"github.com/cmcoffee/snugforge/kvlite"
+	"strconv"
 )
 
 // TestGlobalToolAdoption covers the opt-in adoption store: adopt adds, adopt
@@ -395,7 +397,7 @@ func TestApprovePendingDoesNotDeadlock(t *testing.T) {
 
 	// A pending tool that came from a session draft — the combination that
 	// drives approval into the session-cleanup branch.
-	QueuePendingTempTool(db, user, TempTool{Name: name, Description: "news"}, session)
+	queuePendingTempTool(db, user, TempTool{Name: name, Description: "news"}, session)
 	SaveSessionTempTool(db, session, TempTool{Name: name, Description: "news"})
 
 	done := make(chan error, 1)
@@ -436,7 +438,7 @@ func TestToolPersistLockReleasedAfterApprove(t *testing.T) {
 	RootDB = db
 	defer func() { RootDB = prev }()
 
-	QueuePendingTempTool(db, "u", TempTool{Name: "t1"}, "s1")
+	queuePendingTempTool(db, "u", TempTool{Name: "t1"}, "s1")
 	SaveSessionTempTool(db, "s1", TempTool{Name: "t1"})
 	if err := ApprovePendingTempTool(db, "u", "t1"); err != nil {
 		t.Fatalf("approve: %v", err)
@@ -1383,7 +1385,7 @@ func pendingNamed(db Database, user, name string) (PendingTempTool, bool) {
 // skips it too now, so the preview is the truth.
 func TestToolImportSkipsAPendingToolAsThePreviewSays(t *testing.T) {
 	db := toolCollisionStore(t)
-	if err := QueuePendingTempTool(db, "alice", TempTool{Name: "wiki_read", CommandTemplate: "echo first"}, "s1"); err != nil {
+	if err := queuePendingTempTool(db, "alice", TempTool{Name: "wiki_read", CommandTemplate: "echo first"}, "s1"); err != nil {
 		t.Fatal(err)
 	}
 	bundle := toolBundle(t, TempTool{Name: "wiki_read", CommandTemplate: "echo second"})
@@ -1703,5 +1705,75 @@ func TestAnAddedToolCanBeKeptToSomeAgents(t *testing.T) {
 	}
 	if s := scope(); len(s) != 0 {
 		t.Fatalf("all agents again: %v", s)
+	}
+}
+
+// Every save of a person's tool keeps the version it replaced, by any route; a
+// change nobody made (a trial flag) keeps nothing. A kept version comes back
+// as a new edit, itself kept, with the tool's switches as they are now; a
+// locked tool is not restored; deleting a tool deletes its kept versions.
+func TestAToolKeepsTheVersionsItReplaced(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	v := func(url string) TempTool {
+		return TempTool{Name: "jira", Mode: TempToolModeAPI, CommandTemplate: url, Method: "GET", Credential: "jira"}
+	}
+	if err := AdminPersistTempTool(db, "alice", v("https://jira.example/1")); err != nil {
+		t.Fatal(err)
+	}
+	if !UpdatePersistentTempTool(db, "alice", v("https://jira.example/2")) {
+		t.Fatal("update")
+	}
+	if err := AdminPersistTempTool(db, "alice", v("https://jira.example/3")); err != nil {
+		t.Fatal(err)
+	}
+	trial := v("https://jira.example/3")
+	trial.Trial = true
+	UpdatePersistentTempTool(db, "alice", trial)
+
+	store, key := ToolRevisionRing(db, "alice", "jira")
+	kept := revisions.List(store, revisions.KindTool, key)
+	if len(kept) != 2 {
+		t.Fatalf("kept %d versions, want 2 (a trial flag is not an edit): %+v", len(kept), kept)
+	}
+	var newest TempTool
+	json.Unmarshal(kept[0].Body, &newest)
+	if newest.CommandTemplate != "https://jira.example/2" || kept[0].Reason != "edited" {
+		t.Errorf("the newest kept version: %q (%s)", newest.CommandTemplate, kept[0].Reason)
+	}
+	if other := revisions.List(store, revisions.KindTool, toolRingKey("bob", "jira")); len(other) != 0 {
+		t.Errorf("alice's versions are kept under somebody else's tool: %+v", other)
+	}
+
+	// Switched off since: restoring an old version does not switch it back on.
+	off := v("https://jira.example/3")
+	off.Disabled = true
+	UpdatePersistentTempTool(db, "alice", off)
+	oldest := revisions.List(store, revisions.KindTool, key)
+	ref := strconv.Itoa(oldest[len(oldest)-1].Seq)
+	got, err := RestoreTempTool(db, "alice", "jira", ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cur, _ := UserToolByName(db, "alice", "jira")
+	if got.CommandTemplate != "https://jira.example/1" || cur.Tool.CommandTemplate != "https://jira.example/1" || !cur.Tool.Disabled {
+		t.Errorf("after restoring version 1: %q, disabled %v", cur.Tool.CommandTemplate, cur.Tool.Disabled)
+	}
+	after := revisions.List(store, revisions.KindTool, key)
+	if !strings.HasPrefix(after[0].Reason, "restored version") {
+		t.Errorf("a restore did not keep what it replaced: %+v", after[0])
+	}
+
+	locked := cur.Tool
+	locked.Locked = true
+	UpdatePersistentTempTool(db, "alice", locked)
+	if _, err := RestoreTempTool(db, "alice", "jira", ref); err == nil {
+		t.Error("a locked tool was restored")
+	}
+
+	if err := DeletePersistentTempTool(db, "alice", "jira"); err != nil {
+		t.Fatal(err)
+	}
+	if gone := revisions.List(store, revisions.KindTool, key); len(gone) != 0 {
+		t.Errorf("a deleted tool's versions are still kept: %d", len(gone))
 	}
 }
