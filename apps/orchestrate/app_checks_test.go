@@ -354,8 +354,7 @@ func TestACheckSeedsSharedCollectionsAndNamesItsCaller(t *testing.T) {
 	if !ok {
 		t.Fatal("the app was not saved")
 	}
-	other := *turn
-	other.user = "maintainer-mo"
+	other := &chatTurn{user: "maintainer-mo", agent: turn.agent, changeAsk: turn.changeAsk}
 	callers = nil
 	other.runAppChecks(spec)
 	if len(callers) == 0 {
