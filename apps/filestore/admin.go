@@ -360,13 +360,14 @@ func (T *FileStoreApp) adminSection() ui.Section {
 						},
 
 						ui.Card{HTML: folderPanelHeading("Apps that may use it",
-							"An app granted here can read this folder from its scripts, and, as ticked, write into it (add, change and delete files), run its commands, and pull files and folders into it. The grant is the app's: it covers everyone who uses the app, whatever the list below says.")},
+							"An app granted here can read this folder from its scripts, and, as ticked, write into it (add, change and delete files), run its commands, and pull files and folders into it. The grant is the app's: it covers everyone who uses the app, whatever the store's own list says, and each row names who that is now.")},
 						ui.Table{
 							Source: "/filestore/api/app-grants?slug={slug}",
 							RowKey: "app",
 							Columns: []ui.Col{
 								{Field: "label", Label: "App", Flex: 1},
 								{Field: "rights", Label: "May", Mute: true, Flex: 2},
+								{Field: "reach", Label: "Who reaches it through the app", Mute: true, Flex: 2},
 							},
 							RowActions: []ui.RowAction{
 								{Type: "button", Label: "Remove", Method: "DELETE",

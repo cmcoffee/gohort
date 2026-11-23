@@ -314,7 +314,7 @@ func (T *FileStoreApp) handleAppGrants(c *jsonapi.Call) (any, error) {
 	}
 	rows := []map[string]any{}
 	for _, g := range st.AppGrants {
-		rows = append(rows, map[string]any{"app": g.App, "label": appLabel(g.App), "rights": g.rights()})
+		rows = append(rows, map[string]any{"app": g.App, "label": appLabel(g.App), "rights": g.rights(), "reach": appAudience(g.App)})
 	}
 	return rows, nil
 }
@@ -370,6 +370,43 @@ func appLabel(key string) string {
 		return spec.Name + " (" + owner + ")"
 	}
 	return key + " (no longer exists)"
+}
+
+// appAudience is who reaches a store through the app key: its owner, and
+// whoever it is shared with (Everyone, teams, people, maintainers), since a
+// grant covers whoever uses the app.
+func appAudience(key string) string {
+	owner, slug, _ := strings.Cut(key, "/")
+	spec, ok := LoadAppSpec(owner, slug)
+	if !ok {
+		return "nobody: the app no longer exists"
+	}
+	var who []string
+	if spec.Shared {
+		who = append(who, "Everyone")
+	}
+	for _, id := range spec.SharedGroups {
+		name := id
+		if AuthDB != nil {
+			if g, ok := LoadAppGroup(AuthDB(), id); ok {
+				name = g.Name
+			}
+		}
+		who = append(who, "team "+name)
+	}
+	seen := map[string]bool{owner: true}
+	for _, list := range [][]string{spec.SharedWith, spec.Maintainers, spec.Managers} {
+		for _, u := range list {
+			if u = strings.TrimSpace(u); u != "" && !seen[u] {
+				seen[u] = true
+				who = append(who, u)
+			}
+		}
+	}
+	if len(who) == 0 {
+		return owner + " only"
+	}
+	return owner + ", and " + strings.Join(who, ", ")
 }
 
 // handleAppOptions lists every app, for the grant picker.

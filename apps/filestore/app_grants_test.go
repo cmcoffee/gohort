@@ -164,3 +164,24 @@ func TestAnAppsAuthorSeesTheStoresAndTheirCommands(t *testing.T) {
 		}
 	}
 }
+
+// Each app grant on a store names who reaches the store through the app: its
+// owner, and whoever the app is shared with.
+func TestAStoresAppGrantNamesWhoReachesItThroughTheApp(t *testing.T) {
+	authDB := &DBase{Store: kvlite.MemStore()}
+	prevAuth, prevRoot := AuthDB, RootDB
+	AuthDB = func() Database { return authDB }
+	RootDB = authDB
+	t.Cleanup(func() { AuthDB, RootDB = prevAuth, prevRoot })
+	SaveAppSpec(AppSpec{Owner: "alice", Slug: "solo", Name: "Solo", RecordKey: "id"})
+	SaveAppSpec(AppSpec{Owner: "alice", Slug: "wide", Name: "Wide", RecordKey: "id", Shared: true, SharedWith: []string{"bob", "alice"}, Maintainers: []string{"mia"}})
+	for key, want := range map[string]string{
+		"alice/solo": "alice only",
+		"alice/wide": "alice, and Everyone, bob, mia",
+		"alice/gone": "nobody: the app no longer exists",
+	} {
+		if got := appAudience(key); got != want {
+			t.Errorf("%s: %q, want %q", key, got, want)
+		}
+	}
+}

@@ -797,6 +797,18 @@ const shareModalScript = `<script>
       note.style.cssText = 'font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);margin:0 0 0.5rem;line-height:1.4';
       note.textContent = 'Each of them gets their own copy, and your data-source and action scripts run with your credentials for them.'
         + (direct ? '' : ' Everyone needs an administrator to approve it; a team or people by name are yours to add.');
+      // The file stores they reach through it: an administrator's grant to
+      // the app covers whoever uses it. Server-worded, one line each.
+      var reach = (rec.store_reach || '').split('\n').filter(function(l){ return l; });
+      var rb = null;
+      if (reach.length) {
+        rb = document.createElement('div');
+        rb.style.cssText = 'margin:0 0 0.6rem;padding:0.5rem 0.7rem;border:1px solid var(--border);border-radius:6px;font-size:var(--fs-xs, 0.78rem);line-height:1.5;color:var(--text-mute)';
+        var rh = document.createElement('div');
+        rh.textContent = 'Through this app they also reach these file stores, as an administrator granted it:';
+        rb.appendChild(rh);
+        reach.forEach(function(l){ var d = document.createElement('div'); d.textContent = '- ' + l; rb.appendChild(d); });
+      }
       var chips = document.createElement('div');
       chips.style.cssText = 'display:flex;flex-wrap:wrap;gap:0.35rem;margin:0.3rem 0';
       var addRow = document.createElement('div');
@@ -886,6 +898,7 @@ const shareModalScript = `<script>
       head.textContent = 'Shared with';
       body.appendChild(head);
       body.appendChild(note);
+      if (rb) body.appendChild(rb);
       body.appendChild(chips);
       body.appendChild(addRow);
       // People with a role on the app, each a list the owner adds to.
@@ -1178,6 +1191,11 @@ func (T *CustomApps) handleAppsList(c *jsonapi.Call) (any, error) {
 		// administrator let in, who turned it off. One line per fact.
 		if lines := shareStatusLines(s); len(lines) > 0 {
 			row["status_lines"] = strings.Join(lines, "\n")
+		}
+		// The file stores whoever it is shared with reaches through it
+		// (store_reach.go).
+		if lines := storeReachLines(s.Owner, s.Slug); len(lines) > 0 {
+			row["store_reach"] = strings.Join(lines, "\n")
 		}
 		if st := appadmin.Load(RootDB, s.Owner, s.Slug); s.Disabled && st.DisabledBy != "" {
 			// Off by an administrator: no Enable for the owner to press.

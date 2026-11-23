@@ -195,7 +195,7 @@ root POST /api/app-grants?slug=bundles "{\"app\":\"no-owner\"}"
 root POST /api/app-grants?slug=bundles "{\"app\":"
   400 invalid JSON: unexpected EOF
 root GET /api/app-grants?slug=bundles ""
-  200 [{"app":"alice/swing","label":"alice/swing (no longer exists)","rights":"read"}]
+  200 [{"app":"alice/swing","label":"alice/swing (no longer exists)","reach":"nobody: the app no longer exists","rights":"read"}]
 root DELETE /api/app-grants?slug=bundles&app=alice/swing ""
   200 {"ok":true}
 root PUT /api/app-grants?slug=bundles "{}"
