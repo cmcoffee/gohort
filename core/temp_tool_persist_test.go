@@ -1777,3 +1777,27 @@ func TestAToolKeepsTheVersionsItReplaced(t *testing.T) {
 		t.Errorf("a deleted tool's versions are still kept: %d", len(gone))
 	}
 }
+
+// A restore keeps every switch the tool has now: never-unattended and
+// ask-in-chat turned on since are not turned off by going back.
+func TestARestoreKeepsTheToolsSafetySwitches(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	tt := TempTool{Name: "post", Mode: TempToolModeAPI, CommandTemplate: "https://x.example/1", Method: "POST"}
+	if err := AdminPersistTempTool(db, "alice", tt); err != nil {
+		t.Fatal(err)
+	}
+	tt.NoUnattended, tt.ConfirmInChat = true, true
+	UpdatePersistentTempTool(db, "alice", tt)
+	store, key := ToolRevisionRing(db, "alice", "post")
+	kept := revisions.List(store, revisions.KindTool, key)
+	if len(kept) == 0 {
+		t.Fatal("nothing kept")
+	}
+	if _, err := RestoreTempTool(db, "alice", "post", strconv.Itoa(kept[0].Seq)); err != nil {
+		t.Fatal(err)
+	}
+	cur, _ := UserToolByName(db, "alice", "post")
+	if !cur.Tool.NoUnattended || !cur.Tool.ConfirmInChat {
+		t.Errorf("a restore turned off the tool's switches: no_unattended %v, confirm_in_chat %v", cur.Tool.NoUnattended, cur.Tool.ConfirmInChat)
+	}
+}

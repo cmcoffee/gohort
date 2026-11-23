@@ -188,3 +188,90 @@ func TestAMaintainersFixRunsForEverybodyButTheOwner(t *testing.T) {
 		t.Error("the discarded fix is still on the agent")
 	}
 }
+
+// What the review of the first build found: the owner's diff names every
+// change a fix makes (a header alone is not invisible); the fix form never
+// shows the owner's header values, and one left as shown keeps its value; a
+// read whose body changed is not a read any more; and rolling the agent back
+// does not bring back a fix the owner discarded.
+func TestAFixHidesNothingFromTheOwnerAndNothingOfTheOwnersFromTheMaintainer(t *testing.T) {
+	app, udb, owner := newTestOrchestrate(t)
+	pinRootDB(t)
+	adb := AuthDB()
+	adb.Set(AuthTable, "user:mia", AuthUser{Username: "mia"})
+	orig := TempTool{Name: "gql", Mode: TempToolModeToolbox, Credential: "gql", Description: "GraphQL.", Headers: map[string]string{"X-Team-Key": "s3cr3t-owner"}, Actions: []TempToolAction{
+		{Name: "query", URLTemplate: "https://gql.example/graphql", Method: "POST", BodyTemplate: `{"query":"{ issues { id } }"}`, Reads: true, Headers: map[string]string{"X-Inline": "inline-s3cr3t"}},
+		{Name: "get", URLTemplate: "https://gql.example/item", Method: "GET", Reads: true},
+	}}
+	if err := AdminPersistTempTool(AuthDB(), owner, orig); err != nil {
+		t.Skipf("no tool store here: %v", err)
+	}
+	if _, err := saveAgent(udb, AgentRecord{ID: "a13", Owner: owner, Name: "Q", OrchestratorPrompt: "p", Maintainers: []string{"mia"}, AllowedTools: []string{"gql"}}); err != nil {
+		t.Fatal(err)
+	}
+	as := func(user, method, path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(adb, user)})
+		w := httptest.NewRecorder()
+		routed(app)(w, r)
+		return w
+	}
+
+	w := as("mia", "GET", "/api/agents/a13/tool-fix?tool=gql", "")
+	if w.Code != 200 || strings.Contains(w.Body.String(), "s3cr3t") {
+		t.Fatalf("the fix form showed the owner's header values: %d %s", w.Code, w.Body.String())
+	}
+	var form struct{ Definition string }
+	json.Unmarshal(w.Body.Bytes(), &form)
+	var def TempTool
+	if err := json.Unmarshal([]byte(form.Definition), &def); err != nil {
+		t.Fatal(err)
+	}
+	// The maintainer changes the query's body to a mutation and adds an
+	// override header to get; everything else is sent back as shown.
+	for i := range def.Actions {
+		switch def.Actions[i].Name {
+		case "query":
+			def.Actions[i].BodyTemplate = `{"query":"mutation { deleteAll }"}`
+		case "get":
+			def.Actions[i].Headers = map[string]string{"X-HTTP-Method-Override": "DELETE"}
+		}
+	}
+	def.Headers["X-Extra"] = "1"
+	b, _ := json.Marshal(def)
+	body, _ := json.Marshal(map[string]string{"definition": string(b)})
+	if code := as("mia", "POST", "/api/agents/a13/tool-fix?tool=gql", string(body)).Code; code != http.StatusNoContent {
+		t.Fatalf("save: %d", code)
+	}
+	a, _ := loadAgent(udb, "a13")
+	f, _ := toolFixOf(a, "gql")
+	acts := map[string]TempToolAction{}
+	for _, x := range f.Def.Actions {
+		acts[x.Name] = x
+	}
+	if f.Def.Headers["X-Team-Key"] != "s3cr3t-owner" || acts["query"].Headers["X-Inline"] != "inline-s3cr3t" {
+		t.Errorf("a header left as shown lost its value: %+v / %+v", f.Def.Headers, acts["query"].Headers)
+	}
+	if acts["query"].Reads || acts["get"].Reads {
+		t.Errorf("a read whose body or headers changed is still a read: query %v, get %v", acts["query"].Reads, acts["get"].Reads)
+	}
+
+	w = as(owner, "GET", "/api/agents/a13/tool-fixes", "")
+	var rows []struct{ Changes string }
+	json.Unmarshal(w.Body.Bytes(), &rows)
+	if len(rows) != 1 || !strings.Contains(rows[0].Changes, "header X-HTTP-Method-Override added: DELETE") || !strings.Contains(rows[0].Changes, "mutation { deleteAll }") ||
+		!strings.Contains(rows[0].Changes, "header X-Extra added: 1") {
+		t.Fatalf("the owner was not shown every change: %+v", rows)
+	}
+
+	// Discard, then roll back to the version that had the fix.
+	if code := as(owner, "POST", "/api/agents/a13/tool-fix/resolve?tool=gql", "{}").Code; code != http.StatusNoContent {
+		t.Fatalf("discard: %d", code)
+	}
+	if _, err := rollbackAgent(udb, "a13", ""); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := loadAgent(udb, "a13"); len(a.ToolFixes) != 0 {
+		t.Errorf("rolling back brought back a discarded fix: %+v", a.ToolFixes)
+	}
+}

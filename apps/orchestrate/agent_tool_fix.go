@@ -129,7 +129,11 @@ func fixedShape(base, sent TempTool) TempTool {
 			a.URLTemplate, a.Method, a.BodyTemplate = s.URLTemplate, s.Method, s.BodyTemplate
 			a.Headers, a.ContentType = s.Headers, s.ContentType
 			a.Params, a.Required = s.Params, s.Required
-			if !existed || a.URLTemplate != old.URLTemplate || !strings.EqualFold(a.Method, old.Method) {
+			// A read is the call the owner marked: any change to what it
+			// sends (a GraphQL mutation in the body, an override header)
+			// is not that call any more.
+			if !existed || a.URLTemplate != old.URLTemplate || !strings.EqualFold(a.Method, old.Method) ||
+				a.BodyTemplate != old.BodyTemplate || !sameShape(a.Headers, old.Headers) || a.ContentType != old.ContentType {
 				a.Reads = false
 			}
 			out.Actions = append(out.Actions, a)
@@ -193,9 +197,9 @@ func fixDiff(orig, fix TempTool) []string {
 	if !strings.EqualFold(orig.Method, fix.Method) {
 		risky = append(risky, "Method: "+orig.Method+" → "+fix.Method)
 	}
-	if orig.BodyTemplate != fix.BodyTemplate {
-		plain = append(plain, "Body changed")
-	}
+	r, p := shapeOf(orig.Headers, orig.ContentType, orig.BodyTemplate, orig.Params, orig.Required).
+		diff("", shapeOf(fix.Headers, fix.ContentType, fix.BodyTemplate, fix.Params, fix.Required))
+	risky, plain = append(risky, r...), append(plain, p...)
 	if orig.Description != fix.Description {
 		plain = append(plain, "Description changed")
 	}
@@ -222,9 +226,9 @@ func fixDiff(orig, fix TempTool) []string {
 			if old.Reads && !a.Reads {
 				risky = append(risky, "Action "+a.Name+" is no longer marked as one that only reads")
 			}
-			if old.BodyTemplate != a.BodyTemplate {
-				plain = append(plain, "Action "+a.Name+": body changed")
-			}
+			r, p := shapeOf(old.Headers, old.ContentType, old.BodyTemplate, old.Params, old.Required).
+				diff("Action "+a.Name+": ", shapeOf(a.Headers, a.ContentType, a.BodyTemplate, a.Params, a.Required))
+			risky, plain = append(risky, r...), append(plain, p...)
 		}
 	}
 	for _, a := range orig.Actions {
@@ -237,6 +241,124 @@ func fixDiff(orig, fix TempTool) []string {
 		}
 	}
 	return append(risky, plain...)
+}
+
+// requestShape is the part of a request a fix may change besides its address
+// and method, so the owner's diff names every one of them.
+type requestShape struct {
+	headers     map[string]string
+	contentType string
+	body        string
+	params      map[string]ToolParam
+	required    []string
+}
+
+func shapeOf(h map[string]string, ct, body string, p map[string]ToolParam, req []string) requestShape {
+	return requestShape{headers: h, contentType: ct, body: body, params: p, required: req}
+}
+
+// diff lists what changes from rs to next. Headers are always risky (one can
+// override the method or the account); the body is shown, so the owner reads
+// what will be sent.
+func (rs requestShape) diff(prefix string, next requestShape) (risky, plain []string) {
+	for _, k := range fixKeys(rs.headers, next.headers) {
+		was, had := rs.headers[k]
+		now, has := next.headers[k]
+		switch {
+		case !had:
+			risky = append(risky, prefix+"header "+k+" added: "+now)
+		case !has:
+			risky = append(risky, prefix+"header "+k+" removed")
+		case was != now:
+			risky = append(risky, prefix+"header "+k+": "+was+" → "+now)
+		}
+	}
+	if rs.contentType != next.contentType {
+		risky = append(risky, prefix+"content type: "+rs.contentType+" → "+next.contentType)
+	}
+	if rs.body != next.body {
+		body := next.body
+		if len(body) > 400 {
+			body = body[:400] + "..."
+		}
+		if body == "" {
+			body = "(empty)"
+		}
+		plain = append(plain, prefix+"body is now: "+body)
+	}
+	for _, k := range fixKeys(rs.params, next.params) {
+		was, had := rs.params[k]
+		now, has := next.params[k]
+		switch {
+		case !had:
+			plain = append(plain, prefix+"parameter "+k+" added")
+		case !has:
+			plain = append(plain, prefix+"parameter "+k+" removed")
+		case !jsonEqual(was, now):
+			plain = append(plain, prefix+"parameter "+k+" changed")
+		}
+	}
+	if !sameShape(rs.required, next.required) {
+		plain = append(plain, prefix+"required parameters: "+strings.Join(next.required, ", "))
+	}
+	return risky, plain
+}
+
+func fixKeys[V any](a, b map[string]V) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, m := range []map[string]V{a, b} {
+		for k := range m {
+			if !seen[k] {
+				seen[k] = true
+				out = append(out, k)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func jsonEqual(a, b any) bool {
+	x, _ := json.Marshal(a)
+	y, _ := json.Marshal(b)
+	return string(x) == string(y)
+}
+
+// sameShape compares two maps or slices of strings by their JSON form.
+func sameShape(a, b any) bool { return jsonEqual(a, b) }
+
+// keptValue stands in for a header value in the fix form: a maintainer sees
+// which headers there are, never the owner's values, and a header left at
+// keptValue keeps the value it had.
+const keptValue = "(kept: not shown)"
+
+func maskHeaders(h map[string]string) map[string]string {
+	if len(h) == 0 {
+		return h
+	}
+	out := map[string]string{}
+	for k := range h {
+		out[k] = keptValue
+	}
+	return out
+}
+
+// unmaskHeaders puts back the values the form hid: a header sent as keptValue
+// takes the value it had in shown, and is dropped if it had none.
+func unmaskHeaders(sent, shown map[string]string) map[string]string {
+	if len(sent) == 0 {
+		return sent
+	}
+	out := map[string]string{}
+	for k, v := range sent {
+		if v != keptValue {
+			out[k] = v
+		} else if was, ok := shown[k]; ok {
+			out[k] = was
+		}
+	}
+	return out
 }
 
 // toolFixTarget is the agent a tool-fix call names, and whether the caller is
@@ -313,7 +435,12 @@ func (T *OrchestrateApp) agentToolFixGet(c *jsonapi.Call) (any, error) {
 	if f, ok := toolFixOf(a, tool); ok {
 		shown = f.Def
 	}
-	b, _ := json.MarshalIndent(fixedShape(TempTool{Mode: shown.Mode}, shown), "", "  ")
+	form := fixedShape(TempTool{Mode: shown.Mode}, shown)
+	form.Headers = maskHeaders(form.Headers)
+	for i := range form.Actions {
+		form.Actions[i].Headers = maskHeaders(form.Actions[i].Headers)
+	}
+	b, _ := json.MarshalIndent(form, "", "  ")
 	return map[string]string{"tool": tool, "definition": string(b)}, nil
 }
 
@@ -335,6 +462,19 @@ func (T *OrchestrateApp) agentToolFixSave(c *jsonapi.Call, body struct {
 	var sent TempTool
 	if err := json.Unmarshal([]byte(body.Definition), &sent); err != nil {
 		return nil, jsonapi.BadRequest("the definition is not valid JSON: " + err.Error())
+	}
+	// Header values the form hid come back from the version it showed.
+	shown := orig.Tool
+	if f, ok := toolFixOf(a, tool); ok {
+		shown = f.Def
+	}
+	sent.Headers = unmaskHeaders(sent.Headers, shown.Headers)
+	shownActs := map[string]TempToolAction{}
+	for _, x := range shown.Actions {
+		shownActs[x.Name] = x
+	}
+	for i := range sent.Actions {
+		sent.Actions[i].Headers = unmaskHeaders(sent.Actions[i].Headers, shownActs[sent.Actions[i].Name].Headers)
 	}
 	fix := fixedShape(orig.Tool, sent)
 	fix.Name = tool

@@ -3016,6 +3016,8 @@ func RestoreTempTool(db Database, username, name, ref string) (TempTool, error) 
 		}
 		t.Name = name
 		t.Disabled, t.BuilderOnly, t.BoundOnly, t.Locked = cur.Disabled, cur.BuilderOnly, cur.BoundOnly, cur.Locked
+		t.NoUnattended, t.ConfirmInChat = cur.NoUnattended, cur.ConfirmInChat
+		t.Trial, t.TrialSince = cur.Trial, cur.TrialSince
 		pool[i].Tool = t
 		writeToolPool(db, username, pool, "restored version "+strconv.Itoa(rev.Seq))
 		return t, nil

@@ -270,6 +270,9 @@ func rollbackAgent(db Database, id, ref string) (AgentRecord, error) {
 		// Nor who maintains it: a maintainer taken off is not put back by
 		// going back to a version from before.
 		restored.Maintainers = current.Maintainers
+		// Nor a maintainer's tool fix: only the owner's keep or discard
+		// settles one, and going back must not put back one discarded.
+		restored.ToolFixes = current.ToolFixes
 	}
 	return saveAgentAs(db, restored, fmt.Sprintf("rolled back to #%d", rev.Seq))
 }
