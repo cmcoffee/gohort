@@ -104,6 +104,17 @@ type Store struct {
 	// The folder itself is never changed. Off by default: the index is a
 	// second, encrypted copy of what the folder holds.
 	Evidence bool `json:"evidence,omitempty"`
+
+	// PerPerson gives each person their own folder in the store,
+	// people/<name>/, and everything a person reaches it through (an agent,
+	// an app, a command, a pull, an upload) reaches only theirs. See
+	// per_person.go. Off by default: the store is one folder for everyone.
+	PerPerson bool `json:"per_person,omitempty"`
+
+	// root and viewer are set only on the copy forPerson hands out: the
+	// store's own folder, when Path has been narrowed to one person's, and
+	// who the copy is for. Never stored.
+	root, viewer string
 }
 
 // Access levels: what a person, or an agent of theirs, may do with a store.
@@ -224,8 +235,14 @@ func SaveStore(db Database, s Store) (Store, error) {
 	if db == nil {
 		return s, Error("no store available")
 	}
+	if s.root != "" {
+		return s, Error("this is one person's view of " + s.Name + ", not the store, and is never saved")
+	}
 	if err := s.Valid(); err != nil {
 		return s, err
+	}
+	if s.PerPerson && s.Evidence {
+		return s, Error("a store that gives each person their own folder cannot index its folders as evidence yet: turn one of them off")
 	}
 	s.Path = filepath.Clean(strings.TrimSpace(s.Path))
 	if s.Ephemeral && s.LifetimeHours <= 0 {

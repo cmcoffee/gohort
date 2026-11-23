@@ -143,7 +143,7 @@ func (j Job) Run() (string, error) {
 	// commands and pulls (the store checks which). See core/appstores.
 	var grants []appstores.Grant
 	if appstores.Provider != nil {
-		grants = appstores.Provider.GrantsFor(user, slug)
+		grants = appstores.Provider.GrantsFor(j.storeApp())
 	}
 	// An action may tell the person it ran for something (notify.go); a data
 	// source runs on every page load and may not.
@@ -196,6 +196,9 @@ func (j Job) Run() (string, error) {
 		Params:           params,
 	}
 	for _, g := range grants {
+		if g.Path == "" {
+			continue // a per-person store with nobody to give a folder of
+		}
 		if g.Write {
 			tt.GrantWrite = append(tt.GrantWrite, g.Path)
 		} else {
@@ -295,7 +298,7 @@ func (j Job) Run() (string, error) {
 		}
 	}
 	bindModel(sess)
-	storeFuncs(sess, user, slug)
+	storeFuncs(sess, j.storeApp())
 	if kind == "action" {
 		sess.Notify = notifier(caller, user, slug)
 	}
@@ -319,12 +322,24 @@ func (j Job) Run() (string, error) {
 	return out, err
 }
 
+// storeApp is the app this run is, for the file stores: whose app, and who it
+// runs for, so a store that gives each person their own folder hands over the
+// caller's.
+func (j Job) storeApp() appstores.App {
+	caller := strings.TrimSpace(j.Caller)
+	if caller == "" {
+		caller = j.Owner
+	}
+	return appstores.App{Owner: j.Owner, Slug: j.Slug, Caller: caller}
+}
+
 // storeFuncs gives a run's session the store calls, on its own context, so a
 // long command or pull reports to (and is stopped with) that run.
-func storeFuncs(sess *ToolSession, owner, slug string) {
+func storeFuncs(sess *ToolSession, app appstores.App) {
 	if appstores.Provider == nil {
 		return
 	}
+	owner, slug := app.Owner, app.Slug
 	// A store the app names means the owner's store it is mapped to here.
 	mapped := func(store string) (string, error) {
 		to, off := applocal.AppNeedAlias(owner, slug, "store", store)
@@ -338,21 +353,21 @@ func storeFuncs(sess *ToolSession, owner, slug string) {
 		if err != nil {
 			return "", err
 		}
-		return appstores.Provider.RunCommand(sess.Context(), owner, slug, store, folder, command, input)
+		return appstores.Provider.RunCommand(sess.Context(), app, store, folder, command, input)
 	}
 	sess.StoreAction = func(store, command, action string, values map[string]any) (string, error) {
 		store, err := mapped(store)
 		if err != nil {
 			return "", err
 		}
-		return appstores.Provider.RunAction(sess.Context(), owner, slug, store, command, action, values)
+		return appstores.Provider.RunAction(sess.Context(), app, store, command, action, values)
 	}
 	sess.StorePull = func(store, item string, replace bool) (string, error) {
 		store, err := mapped(store)
 		if err != nil {
 			return "", err
 		}
-		return appstores.Provider.Pull(sess.Context(), owner, slug, store, item, replace)
+		return appstores.Provider.Pull(sess.Context(), app, store, item, replace)
 	}
 }
 
@@ -380,7 +395,7 @@ func (j Job) runLong(sess *ToolSession, tt *TempTool, args map[string]any, bindM
 		bindModel(work)
 		work.Notify = sess.Notify
 		work.ScriptLog = sess.ScriptLog
-		storeFuncs(work, j.Owner, j.Slug)
+		storeFuncs(work, j.storeApp())
 		// The long run works on a session of its own, so a check holds it
 		// as well, after everything above has been bound.
 		if j.Check {

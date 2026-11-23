@@ -12,19 +12,19 @@ import (
 
 type fakeStoreCatalog struct{}
 
-func (fakeStoreCatalog) GrantsFor(owner, slug string) []appstores.Grant { return nil }
-func (fakeStoreCatalog) RunCommand(ctx context.Context, owner, slug, store, folder, command, input string) (string, error) {
+func (fakeStoreCatalog) GrantsFor(appstores.App) []appstores.Grant { return nil }
+func (fakeStoreCatalog) RunCommand(ctx context.Context, app appstores.App, store, folder, command, input string) (string, error) {
 	return "", nil
 }
-func (fakeStoreCatalog) RunAction(ctx context.Context, owner, slug, store, command, action string, values map[string]any) (string, error) {
+func (fakeStoreCatalog) RunAction(ctx context.Context, app appstores.App, store, command, action string, values map[string]any) (string, error) {
 	return "", nil
 }
-func (fakeStoreCatalog) Pull(ctx context.Context, owner, slug, store, item string, replace bool) (string, error) {
+func (fakeStoreCatalog) Pull(ctx context.Context, app appstores.App, store, item string, replace bool) (string, error) {
 	return "", nil
 }
 func (fakeStoreCatalog) Stores(owner, slug string) []appstores.StoreInfo {
 	return []appstores.StoreInfo{
-		{Store: "intake", Name: "Intake", About: "Raw logs per case.", Temporary: true, FolderCount: 3,
+		{Store: "intake", Name: "Intake", About: "Raw logs per case.", Temporary: true, PerPerson: true, FolderCount: 3,
 			Commands: []appstores.CommandInfo{{Name: "extract", Label: "Extract", TwoPhase: true, InputLabel: "Response", Guide: "Support answers the signature.\nA response works once."},
 				{Name: "kb", Actions: []appstores.ActionInfo{{Name: "download", Description: "Download a case's files.", Line: "download --id={id} --dst={folder}",
 					Values: []appstores.ValueInfo{{Name: "folder", Type: "string", Required: true, Folder: true}, {Name: "id", Type: "number", Description: "The case id.", Required: true}}}}},
@@ -44,7 +44,7 @@ func TestBuilderSeesTheStoresAnAppCanUse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"## Intake (store \"intake\")", "Raw logs per case.", "3 folder(s)", "Temporary",
+	for _, want := range []string{"## Intake (store \"intake\")", "Raw logs per case.", "3 folder(s)", "Temporary", "Each person has their own folder: store_path is the folder of whoever is using the app",
 		"- \"extract\" (Extract): two phases, the second takes Response", "Support answers the signature.",
 		"Pulls from \"intake\" (a folder's prepared/ part)", "store_command", "A new app has no grants yet",
 		`Mapped actions: run each with store_action("intake", "kb", "<action>", {<value>: ...}), never store_command:`,

@@ -17,36 +17,42 @@ import (
 type fakeStores struct {
 	write, read string
 	ran         []string
+	callers     []string // who each call was for
 }
 
-func (f *fakeStores) GrantsFor(owner, slug string) []appstores.Grant {
-	if owner != "alice" || slug != "kwprep" {
+func (f *fakeStores) GrantsFor(app appstores.App) []appstores.Grant {
+	if app.Owner != "alice" || app.Slug != "kwprep" {
 		return nil
 	}
+	f.callers = append(f.callers, app.Caller)
 	return []appstores.Grant{
 		{Store: "intake", Name: "Intake", Path: f.write, Read: true, Write: true, Commands: true},
 		{Store: "analysis", Name: "Analysis", Path: f.read, Read: true, Pull: true},
 	}
 }
-func (f *fakeStores) RunCommand(ctx context.Context, owner, slug, store, folder, command, input string) (string, error) {
+func (f *fakeStores) RunCommand(ctx context.Context, app appstores.App, store, folder, command, input string) (string, error) {
+	f.callers = append(f.callers, app.Caller)
 	f.ran = append(f.ran, store+"/"+folder+"/"+command+"/"+input)
 	if input == "" {
 		return "CHALLENGE 4711", nil
 	}
 	return "extracted", nil
 }
-func (f *fakeStores) RunAction(ctx context.Context, owner, slug, store, command, action string, values map[string]any) (string, error) {
+func (f *fakeStores) RunAction(ctx context.Context, app appstores.App, store, command, action string, values map[string]any) (string, error) {
+	f.callers = append(f.callers, app.Caller)
 	b, _ := json.Marshal(values)
 	f.ran = append(f.ran, store+"/"+command+"/"+action+"/"+string(b))
 	return "fetched", nil
 }
-func (f *fakeStores) Pull(ctx context.Context, owner, slug, store, caseName string, replace bool) (string, error) {
+func (f *fakeStores) Pull(ctx context.Context, app appstores.App, store, caseName string, replace bool) (string, error) {
 	return "Copied " + caseName, nil
 }
 
 // A real script in the real sandbox: it finds its stores in GOHORT_STORES,
 // writes into the one it may write, cannot write into the one it may only
-// read, and reaches the store's command through the hook.
+// read, and reaches the store's command through the hook. Every call says who
+// the run is for (bob, using alice's app), so a store that gives each person
+// their own folder hands over his.
 func TestAnAppScriptWorksInTheStoresItWasGranted(t *testing.T) {
 	cache, err := os.UserCacheDir()
 	if err != nil {
@@ -83,7 +89,7 @@ done = store_command("intake", "CASE-1", "extract", input="s3cret")
 fetched = store_action("intake", "kb", "download", {"id": 12345678, "files": ["a.zip", "b.zip"]})
 print(json.dumps({"message": "ok", "result": {"challenge": str(challenge), "done": str(done), "fetched": str(fetched), "wrote_read_only": wrote_read_only, "rights": stores["analysis"]["pull"]}}))
 `
-	out, err := Job{Owner: "alice", Slug: "kwprep", Kind: "action", Name: "prep", Script: script, Args: map[string]any{}}.Run()
+	out, err := Job{Owner: "alice", Slug: "kwprep", Kind: "action", Name: "prep", Script: script, Args: map[string]any{}, Caller: "bob"}.Run()
 	if err != nil {
 		t.Fatalf("run: %v\n%s", err, out)
 	}
@@ -103,6 +109,15 @@ print(json.dumps({"message": "ok", "result": {"challenge": str(challenge), "done
 	}
 	if len(f.ran) != 3 || f.ran[1] != "intake/CASE-1/extract/s3cret" || f.ran[2] != `intake/kb/download/{"files":["a.zip","b.zip"],"id":12345678}` {
 		t.Errorf("commands asked for: %v", f.ran)
+	}
+	if len(f.callers) != 4 {
+		t.Errorf("calls to the stores: %v, want the grants and three commands", f.callers)
+	}
+	for _, c := range f.callers {
+		if c != "bob" {
+			t.Errorf("a store call was for %q, want bob, who the run is for: %v", c, f.callers)
+			break
+		}
 	}
 
 	// An app with no grants gets no stores.

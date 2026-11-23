@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appstores"
 )
 
 // An app runs a command's mapped action through its grant: the approved line
@@ -32,11 +33,11 @@ func TestAnAppRunsAMappedAction(t *testing.T) {
 	ctx := context.Background()
 	vals := map[string]any{"id": float64(12345678), "folder": "CASE-1", "files": []any{"a.zip", "b c.zip"}}
 
-	if _, err := host.RunAction(ctx, "alice", "kwprep", intake.Slug, "kb", "download", vals); err == nil || !strings.Contains(err.Error(), "not approved") {
+	if _, err := host.RunAction(ctx, appstores.App{Owner: "alice", Slug: "kwprep"}, intake.Slug, "kb", "download", vals); err == nil || !strings.Contains(err.Error(), "not approved") {
 		t.Fatalf("an unapproved mapping ran: %v", err)
 	}
 	SetCommandApproved(app.DB, intake.Slug, "kb", true)
-	out, err := host.RunAction(ctx, "alice", "kwprep", intake.Slug, "kb", "download", vals)
+	out, err := host.RunAction(ctx, appstores.App{Owner: "alice", Slug: "kwprep"}, intake.Slug, "kb", "download", vals)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,14 +45,14 @@ func TestAnAppRunsAMappedAction(t *testing.T) {
 	if !strings.Contains(out, want) {
 		t.Errorf("ran as:\n%s\nwant:\n%s", out, want)
 	}
-	if _, err := host.RunAction(ctx, "alice", "kwprep", intake.Slug, "kb", "download",
+	if _, err := host.RunAction(ctx, appstores.App{Owner: "alice", Slug: "kwprep"}, intake.Slug, "kb", "download",
 		map[string]any{"id": 1, "folder": "../../etc"}); err == nil {
 		t.Error("a folder outside the store ran")
 	}
-	if _, err := host.RunAction(ctx, "alice", "kwprep", intake.Slug, "kb", "upload", vals); err == nil || !strings.Contains(err.Error(), "download") {
+	if _, err := host.RunAction(ctx, appstores.App{Owner: "alice", Slug: "kwprep"}, intake.Slug, "kb", "upload", vals); err == nil || !strings.Contains(err.Error(), "download") {
 		t.Errorf("an unknown action should name the real ones: %v", err)
 	}
-	if _, err := host.RunAction(ctx, "alice", "other", intake.Slug, "kb", "download", vals); err == nil {
+	if _, err := host.RunAction(ctx, appstores.App{Owner: "alice", Slug: "other"}, intake.Slug, "kb", "download", vals); err == nil {
 		t.Error("an app without a grant ran it")
 	}
 

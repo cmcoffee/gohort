@@ -14,28 +14,29 @@ import (
 
 type reachStores struct{}
 
-func (reachStores) GrantsFor(owner, slug string) []appstores.Grant {
-	if owner == "alice" && slug == "pcap" {
+func (reachStores) GrantsFor(app appstores.App) []appstores.Grant {
+	if app.Owner == "alice" && app.Slug == "pcap" {
 		return []appstores.Grant{
-			{Store: "caps", Name: "Captures", Read: true, Write: true, Commands: true},
+			{Store: "caps", Name: "Captures", Read: true, Write: true, Commands: true, PerPerson: true},
 			{Store: "ref", Name: "Reference", Read: true},
 		}
 	}
 	return nil
 }
-func (reachStores) RunCommand(context.Context, string, string, string, string, string, string) (string, error) {
+func (reachStores) RunCommand(context.Context, appstores.App, string, string, string, string) (string, error) {
 	return "", nil
 }
-func (reachStores) RunAction(context.Context, string, string, string, string, string, map[string]any) (string, error) {
+func (reachStores) RunAction(context.Context, appstores.App, string, string, string, map[string]any) (string, error) {
 	return "", nil
 }
-func (reachStores) Pull(context.Context, string, string, string, string, bool) (string, error) {
+func (reachStores) Pull(context.Context, appstores.App, string, string, bool) (string, error) {
 	return "", nil
 }
 
 // An administrator's store grant covers whoever uses the app, so the Share
 // dialog's record and the administrator's review both say which stores the
-// app reaches and what it may do there; an app with none says nothing.
+// app reaches and what it may do there, and whether each person who uses it
+// gets a folder of their own; an app with none says nothing.
 func TestSharingAnAppSaysWhichFileStoresItReaches(t *testing.T) {
 	T := sharingTestApp(t)
 	prev := appstores.Provider
@@ -54,13 +55,13 @@ func TestSharingAnAppSaysWhichFileStoresItReaches(t *testing.T) {
 	w := httptest.NewRecorder()
 	routed(T)(w, r)
 	body := w.Body.String()
-	if !strings.Contains(body, `Captures: read and change its files, run its commands\nReference: read its files`) {
+	if !strings.Contains(body, `Captures: read and change its files, run its commands (each person has their own folder)\nReference: read its files`) {
 		t.Errorf("the Share dialog is not told which stores the app reaches: %s", body)
 	}
 	if strings.Count(body, "store_reach") != 1 {
 		t.Errorf("an app with no store grants carries a store line: %s", body)
 	}
-	if got := adminReview(AppSpec{Slug: "pcap", Owner: "alice"}, "alice")["file_stores"]; got != "Captures: read and change its files, run its commands; Reference: read its files" {
+	if got := adminReview(AppSpec{Slug: "pcap", Owner: "alice"}, "alice")["file_stores"]; got != "Captures: read and change its files, run its commands (each person has their own folder); Reference: read its files" {
 		t.Errorf("the review's file stores: %v", got)
 	}
 	if got := adminReview(AppSpec{Slug: "notes", Owner: "alice"}, "alice")["file_stores"]; got != "none" {

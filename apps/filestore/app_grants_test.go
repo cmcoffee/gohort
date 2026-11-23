@@ -33,7 +33,7 @@ func TestAnAppUsesOnlyWhatItsStoresGrant(t *testing.T) {
 	SaveStore(app.DB, analysis)
 	host := storeHost{app}
 
-	grants := host.GrantsFor("alice", "kwprep")
+	grants := host.GrantsFor(appstores.App{Owner: "alice", Slug: "kwprep"})
 	if len(grants) != 2 {
 		t.Fatalf("grants: %+v", grants)
 	}
@@ -45,45 +45,45 @@ func TestAnAppUsesOnlyWhatItsStoresGrant(t *testing.T) {
 			t.Errorf("Analysis grant: %+v", g)
 		}
 	}
-	if len(host.GrantsFor("alice", "other")) != 0 || len(host.GrantsFor("bob", "kwprep")) != 0 {
+	if len(host.GrantsFor(appstores.App{Owner: "alice", Slug: "other"})) != 0 || len(host.GrantsFor(appstores.App{Owner: "bob", Slug: "kwprep"})) != 0 {
 		t.Error("another app, or another owner's app of that name, got the grants")
 	}
 
 	ctx := context.Background()
-	challenge, err := host.RunCommand(ctx, "alice", "kwprep", intake.Slug, "CASE-2", "extract", "")
+	challenge, err := host.RunCommand(ctx, appstores.App{Owner: "alice", Slug: "kwprep"}, intake.Slug, "CASE-2", "extract", "")
 	if err != nil || !strings.Contains(challenge, "CHALLENGE 4711") {
 		t.Fatalf("first phase: %q %v", challenge, err)
 	}
-	if _, err := host.RunCommand(ctx, "alice", "kwprep", intake.Slug, "CASE-2", "extract", "s3cret"); err != nil {
+	if _, err := host.RunCommand(ctx, appstores.App{Owner: "alice", Slug: "kwprep"}, intake.Slug, "CASE-2", "extract", "s3cret"); err != nil {
 		t.Fatalf("second phase: %v", err)
 	}
 	if b, _ := os.ReadFile(filepath.Join(intake.Path, "CASE-2", "prepared", "dump.txt")); !strings.Contains(string(b), "opened with s3cret") {
 		t.Errorf("the response did not reach the command: %q", b)
 	}
-	out, err := host.Pull(ctx, "alice", "kwprep", analysis.Slug, "CASE-2", false)
+	out, err := host.Pull(ctx, appstores.App{Owner: "alice", Slug: "kwprep"}, analysis.Slug, "CASE-2", false)
 	if err != nil || !strings.Contains(out, "Copied CASE-2") {
 		t.Fatalf("pull: %q %v", out, err)
 	}
 
 	for name, call := range map[string]func() error{
 		"a command on a store granted no commands": func() error {
-			_, err := host.RunCommand(ctx, "alice", "kwprep", analysis.Slug, "CASE-2", "extract", "")
+			_, err := host.RunCommand(ctx, appstores.App{Owner: "alice", Slug: "kwprep"}, analysis.Slug, "CASE-2", "extract", "")
 			return err
 		},
 		"a pull into a store granted no pulls": func() error {
-			_, err := host.Pull(ctx, "alice", "kwprep", intake.Slug, "CASE-1", false)
+			_, err := host.Pull(ctx, appstores.App{Owner: "alice", Slug: "kwprep"}, intake.Slug, "CASE-1", false)
 			return err
 		},
 		"an app with no grant": func() error {
-			_, err := host.RunCommand(ctx, "alice", "other", intake.Slug, "CASE-2", "extract", "")
+			_, err := host.RunCommand(ctx, appstores.App{Owner: "alice", Slug: "other"}, intake.Slug, "CASE-2", "extract", "")
 			return err
 		},
 		"a folder that is a path out": func() error {
-			_, err := host.RunCommand(ctx, "alice", "kwprep", intake.Slug, "../../etc", "extract", "")
+			_, err := host.RunCommand(ctx, appstores.App{Owner: "alice", Slug: "kwprep"}, intake.Slug, "../../etc", "extract", "")
 			return err
 		},
 		"a response that is an option": func() error {
-			_, err := host.RunCommand(ctx, "alice", "kwprep", intake.Slug, "CASE-2", "extract", "--output=/x")
+			_, err := host.RunCommand(ctx, appstores.App{Owner: "alice", Slug: "kwprep"}, intake.Slug, "CASE-2", "extract", "--output=/x")
 			return err
 		},
 	} {

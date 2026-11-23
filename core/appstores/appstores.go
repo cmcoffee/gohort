@@ -26,21 +26,32 @@ type Grant struct {
 	Write    bool   `json:"write"`    // add, change and delete files (implies Read)
 	Commands bool   `json:"commands"` // run its registered commands
 	Pull     bool   `json:"pull"`     // pull files and folders into it from the store it pulls from
+	// PerPerson: the store gives each person their own folder, and Path is
+	// the caller's (empty when the call named nobody).
+	PerPerson bool `json:"per_person,omitempty"`
+}
+
+// App is the app a call is for, and the person it runs for: Caller is who
+// clicked or is viewing, or the owner for a run nobody started. Empty only
+// where nothing runs (a page saying what an app reaches), and a store that
+// gives each person their own folder then has no folder to hand over.
+type App struct {
+	Owner, Slug, Caller string
 }
 
 // Host is the file-store side.
 type Host interface {
-	// GrantsFor is every store granted to the app owner/slug.
-	GrantsFor(owner, slug string) []Grant
+	// GrantsFor is every store granted to the app.
+	GrantsFor(app App) []Grant
 	// RunCommand runs store's command on folder for the app, when granted.
 	// input "" is a two-phase command's first phase.
-	RunCommand(ctx context.Context, owner, slug, store, folder, command, input string) (string, error)
+	RunCommand(ctx context.Context, app App, store, folder, command, input string) (string, error)
 	// RunAction runs one of command's mapped actions for the app, when
 	// granted: the approved line with values in its placeholders, as an
 	// agent's tool for it runs.
-	RunAction(ctx context.Context, owner, slug, store, command, action string, values map[string]any) (string, error)
+	RunAction(ctx context.Context, app App, store, command, action string, values map[string]any) (string, error)
 	// Pull copies a file or folder into store for the app, when granted.
-	Pull(ctx context.Context, owner, slug, store, item string, replace bool) (string, error)
+	Pull(ctx context.Context, app App, store, item string, replace bool) (string, error)
 }
 
 // Provider is the registered host, nil where no file-store app is compiled in.
@@ -56,6 +67,7 @@ type StoreInfo struct {
 	PullsFrom   string        `json:"pulls_from,omitempty"` // the store it copies files and folders in from
 	PullPart    string        `json:"pull_part,omitempty"`  // the part of a folder a pull copies
 	Temporary   bool          `json:"temporary,omitempty"`
+	PerPerson   bool          `json:"per_person,omitempty"` // each person who uses the app gets their own folder
 	Commands    []CommandInfo `json:"commands,omitempty"`
 	Granted     *Grant        `json:"granted,omitempty"` // nil: the app has no grant on it
 	FolderCount int           `json:"folders"`

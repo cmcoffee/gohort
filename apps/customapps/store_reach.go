@@ -15,13 +15,14 @@ import (
 )
 
 // storeReachLines is one line per store the app owner/slug is granted: its
-// name and what the app may do there.
+// name, what the app may do there, and whether each person who uses it gets a
+// folder of their own.
 func storeReachLines(owner, slug string) []string {
 	if appstores.Provider == nil {
 		return nil
 	}
 	var out []string
-	for _, g := range appstores.Provider.GrantsFor(owner, slug) {
+	for _, g := range appstores.Provider.GrantsFor(appstores.App{Owner: owner, Slug: slug}) {
 		var may []string
 		switch {
 		case g.Write:
@@ -42,7 +43,11 @@ func storeReachLines(owner, slug string) []string {
 		if strings.TrimSpace(name) == "" {
 			name = g.Store
 		}
-		out = append(out, name+": "+strings.Join(may, ", "))
+		line := name + ": " + strings.Join(may, ", ")
+		if g.PerPerson {
+			line += " (each person has their own folder)"
+		}
+		out = append(out, line)
 	}
 	return out
 }
