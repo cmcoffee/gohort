@@ -56,6 +56,9 @@ Agents can answer from your own documents.
 The agent then finds passages when a question calls for them, and sees
 when each was added, so an old document reads as old.
 
+What the agent learns by itself, as you talk to it, is its memory: see
+[memory.md](memory.md).
+
 ## 4. Talk to it
 
 For voice, choose servers under **Administrator › Services**, in **Audio

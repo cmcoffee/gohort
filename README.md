@@ -241,6 +241,9 @@ Full descriptions in the [reference](docs/REFERENCE.md#built-in-apps).
 - **[Reference](docs/REFERENCE.md)**: the full feature surface, CLI flags, configuration and project layout
 - **[Security](SECURITY.md)**: the trust model, and how to report a vulnerability privately
 
+**Agents**
+- **[Memory](docs/memory.md)**: what an agent remembers between conversations, layer by layer; how to see and prune it; and what travels when an agent is shared
+
 **What agents can reach**
 - **[File stores](docs/file-stores.md)**: folders on the server an agent can search and read, with commands an administrator approves, pulls between stores and a private folder per person
 - **[Integrations](docs/integrations.md)**: how gohort reaches things: connectors wrap what gohort does not own, flows wire them together, agents decide
