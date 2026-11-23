@@ -40,6 +40,25 @@ check('seconds and an approximate token count once there are some',
 check('past a minute it reads as minutes',
   thinkingLabel(65000, 0) === 'Thinking · 1m 05s');
 
+// The count shows only while it grows: a provider that keeps its thinking to
+// itself sent a fragment, and "~1 tokens" sat on the line for minutes. Once
+// it stops growing the line is the timer alone.
+eval('var THINK_COUNT_STALE_MS = 6000;');
+eval(lift(panel, 'function thinkTokensShown(', 'thinkTokensShown'));
+var realNow = Date.now;
+Date.now = function() { return 100000; };
+check('a count that just grew is shown',
+  thinkTokensShown({tokens: 40, grewAt: 98000}) === 40);
+check('a count that stopped growing is not',
+  thinkTokensShown({tokens: 1, grewAt: 90000}) === 0);
+check('no count at all (the call just sent) is not',
+  thinkTokensShown({tokens: 0, grewAt: 0}) === 0);
+Date.now = realNow;
+check('the line is drawn with the shown count, not the raw one',
+  /thinkingLabel\(Date\.now\(\) - thinkLive\.since, thinkTokensShown\(thinkLive\)\)/.test(panel));
+check('a count only moves its growth time when it grew',
+  /tokens <= thinkLive\.tokens\) \? thinkLive\.grewAt : Date\.now\(\)/.test(lift(panel, 'function noteThinking(', 'noteThinking')));
+
 // The server reports it, the panel shows it, and anything the model produces
 // ends it.
 check('a thinking event updates the line',
