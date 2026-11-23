@@ -85,6 +85,11 @@ func (t *chatTurn) thinkChunk(s string) {
 // can be busy for a long while before anything streams back (a big prompt,
 // thinking it does not show), and a line that waited for the first chunk
 // showed bare dots, or a count that never moved, for all of it.
+//
+// It says "working", not "thinking": nothing has come back yet, and that wait
+// is as often a queue or a long prompt being read as a model thinking. The
+// first reasoning chunk's tick carries no mark, and the line becomes
+// "Thinking" from then, timed from this same moment.
 func (t *chatTurn) thinkNewCall() {
 	p := &t.think
 	now := time.Now()
@@ -98,6 +103,7 @@ func (t *chatTurn) thinkNewCall() {
 		"elapsed_ms": 0,
 		"started_ms": now.UnixMilli(),
 		"tokens":     0,
+		"working":    true,
 	})
 }
 

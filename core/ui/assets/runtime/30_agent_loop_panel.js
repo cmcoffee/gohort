@@ -6528,6 +6528,9 @@
         since: since,
         tokens: tokens,
         grewAt: tokens > 0 ? grewAt : 0,
+        // Sent, with nothing back yet: "Working". The first reasoning to
+        // arrive makes it "Thinking", timed from the same start.
+        working: !!ev.working,
       };
       if (!thinkingEl) showThinking();
       renderThinkLive();
@@ -6540,6 +6543,17 @@
       if (!live.grewAt || Date.now() - live.grewAt > THINK_COUNT_STALE_MS) return 0;
       return live.tokens;
     }
+    // workingLabel is the line while a call has been sent and nothing has come
+    // back: "Working · 12s". The wait is as often a queue or a long prompt
+    // being read as a model thinking, so it does not say thinking until
+    // reasoning arrives. thinkingLabel's timing, under its own word.
+    function workingLabel(ms) {
+      return thinkingLabel(ms, 0).replace(/^Thinking/, 'Working');
+    }
+    function liveThinkLabel(live) {
+      var ms = Date.now() - live.since;
+      return live.working ? workingLabel(ms) : thinkingLabel(ms, thinkTokensShown(live));
+    }
     function endThinkLive() {
       thinkLive = null;
       if (thinkLiveTimer) { clearInterval(thinkLiveTimer); thinkLiveTimer = null; }
@@ -6550,7 +6564,7 @@
       if (!label) return;
       // The reply's own thinking first; while it waits on a call, what the
       // call is doing.
-      setLiveText(label, thinkLive ? thinkingLabel(Date.now() - thinkLive.since, thinkTokensShown(thinkLive)) : dispatchLiveText());
+      setLiveText(label, thinkLive ? liveThinkLabel(thinkLive) : dispatchLiveText());
     }
     // The line changes every second, so it edits its text node rather than
     // replacing it: WebKit drops a click whose press and release land on
@@ -6639,6 +6653,8 @@
         if (d.think) bits.push(thinkingLabel(Date.now() - d.think.since, d.think.tokens));
         else if (d.tool) bits.push(d.tool);
         else if (!d.agent && d.call) bits.push(d.call);
+        // An agent between its rounds' reports: sent, nothing back yet.
+        else if (d.agent) bits.push('Working');
         var secs = Math.floor(ms / 1000);
         if (secs >= 3) bits.push(secs >= 60 ? Math.floor(secs / 60) + 'm ' + (secs % 60) + 's' : secs + 's');
         parts.push((d.agent ? '[' + d.agent + '] ' : '') + bits.join(' · '));
