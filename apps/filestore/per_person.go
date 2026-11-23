@@ -79,6 +79,7 @@ func (s Store) forPerson(user string) (Store, error) {
 	if err != nil {
 		return Store{}, Error(s.Name + ": " + err.Error())
 	}
+	markPeopleFolder(people)
 	mine, err := ownFolder(people, personFolder(user))
 	if err != nil {
 		return Store{}, Error(s.Name + ": " + err.Error())
@@ -105,6 +106,25 @@ func ownFolder(parent, name string) (string, error) {
 	return p, nil
 }
 
+// personFor is who a store's tools are for in this session: the person the run
+// is for when that is not its user (ToolSession.StorePerson), else user.
+func personFor(sess *ToolSession, user string) string {
+	if sess != nil && strings.TrimSpace(sess.StorePerson) != "" {
+		return sess.StorePerson
+	}
+	return user
+}
+
+// firstNonEmpty is the first of vals that is not blank.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // rootPath is the store's own folder, for a copy made for one person too.
 func (s Store) rootPath() string {
 	if s.root != "" {
@@ -114,7 +134,8 @@ func (s Store) rootPath() string {
 }
 
 // forPersonKey is what tells one person's run on item apart from another's in
-// the same store: the pull registry keys a job by it.
+// the same store: the pull registry keys a job by it, with the source's
+// person too (pullJob.key).
 func (s Store) forPersonKey(item string) string {
 	if s.root != "" {
 		return s.Slug + "/" + personFolder(s.viewer) + "/" + item
@@ -122,15 +143,59 @@ func (s Store) forPersonKey(item string) string {
 	return s.Slug + "/" + item
 }
 
+// peopleMarker is a file the setting leaves in the people folder it made, so
+// that turning the setting on over a store can tell a people folder of its own
+// (from an earlier time it was on) from one that was already there, whose
+// folders would otherwise go to whoever's name they happen to match.
+const peopleMarker = ".gohort-per-person"
+
+// markPeopleFolder leaves the marker in people, best-effort.
+func markPeopleFolder(people string) {
+	p := filepath.Join(people, peopleMarker)
+	if _, err := os.Lstat(p); err == nil {
+		return
+	}
+	os.WriteFile(p, []byte("Each folder here is one person's: this store gives each person their own folder.\n"), 0o644)
+}
+
+// checkPeopleFolder refuses turning the setting on over a store whose people
+// folder was not made by it: its folders would be handed to whoever's name
+// each matches. Nothing there, or one the setting made, is fine.
+func checkPeopleFolder(root string) error {
+	people := filepath.Join(root, peopleDir)
+	info, err := os.Lstat(people)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return Error("cannot read " + people + ": " + err.Error())
+	}
+	if !info.Mode().IsDir() {
+		return Error("this store already has something called people at its top, which the setting needs for each person's folder: rename or move it first")
+	}
+	if _, err := os.Lstat(filepath.Join(people, peopleMarker)); err == nil {
+		return nil
+	}
+	if entries, err := os.ReadDir(people); err == nil && len(entries) == 0 {
+		return nil
+	}
+	return Error("this store already has a people folder that this setting did not make. Turned on, each folder in it would go to whoever's name it matches: rename or move it first")
+}
+
 // personRoot is one person's folder in a per-person store, for a sweep.
 type personRoot struct {
 	name, dir string
 }
 
-// personRoots lists the folders under people/, links left out.
+// personRoots lists the folders under people/, links left out, and nothing at
+// all when people itself is a link: a sweep that followed one would delete in
+// whatever folder it pointed at, inside the store or out of it.
 func (s Store) personRoots() []personRoot {
 	root, err := filepath.EvalSymlinks(s.rootPath())
 	if err != nil {
+		return nil
+	}
+	if info, err := os.Lstat(filepath.Join(root, peopleDir)); err != nil || !info.Mode().IsDir() {
 		return nil
 	}
 	entries, err := os.ReadDir(filepath.Join(root, peopleDir))

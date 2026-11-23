@@ -38,7 +38,7 @@ func scopeFixture(t *testing.T) (root string, teardown func()) {
 	// "testfiles" made an unrelated store test fail in the full run and
 	// pass alone.
 	RegisterPathScope(scopeTestKind, PathScope{
-		Resolve: func(user, name, value string) (string, error) {
+		Resolve: func(user, _, name, value string) (string, error) {
 			if name != "logs" {
 				return "", Error("no such store " + name)
 			}
@@ -68,7 +68,7 @@ func TestScopedArgsAreProvedAndReturnedAbsolute(t *testing.T) {
 		"query":  {Type: "string"}, // unscoped, must pass through untouched
 	}
 
-	out, resolved, err := ResolveScopedArgs("u", "ag", params,
+	out, resolved, err := ResolveScopedArgs("u", "", "ag", params,
 		map[string]any{"bundle": "bundle-a", "query": "ERROR"}, false)
 	if err != nil {
 		t.Fatalf("a folder that exists should resolve: %v", err)
@@ -86,24 +86,24 @@ func TestScopedArgsAreProvedAndReturnedAbsolute(t *testing.T) {
 
 	// The escape the scope exists for. Shell quoting would have made
 	// this a single well-formed argument and let it through.
-	if _, _, err := ResolveScopedArgs("u", "ag", params,
+	if _, _, err := ResolveScopedArgs("u", "", "ag", params,
 		map[string]any{"bundle": "../../etc"}, false); err == nil {
 		t.Error("a traversal out of the root must be refused")
 	}
 	// A folder inside the root that does not exist is refused too — the
 	// resolver proves the path, not just the prefix.
-	if _, _, err := ResolveScopedArgs("u", "ag", params,
+	if _, _, err := ResolveScopedArgs("u", "", "ag", params,
 		map[string]any{"bundle": "bundle-z"}, false); err == nil {
 		t.Error("a folder that is not there should be refused")
 	}
 	// An ABSENT argument is the required-check's business, not this one.
-	if _, res, err := ResolveScopedArgs("u", "ag", params, map[string]any{"query": "x"}, false); err != nil || len(res) != 0 {
+	if _, res, err := ResolveScopedArgs("u", "", "ag", params, map[string]any{"query": "x"}, false); err != nil || len(res) != 0 {
 		t.Errorf("absence should pass through: %v %v", res, err)
 	}
 	// The caller's map is not rewritten in place — it is what gets logged
 	// and echoed back, and it should say what the model actually asked.
 	args := map[string]any{"bundle": "bundle-b"}
-	if _, _, err := ResolveScopedArgs("u", "ag", params, args, false); err != nil {
+	if _, _, err := ResolveScopedArgs("u", "", "ag", params, args, false); err != nil {
 		t.Fatal(err)
 	}
 	if args["bundle"] != "bundle-b" {
@@ -111,7 +111,7 @@ func TestScopedArgsAreProvedAndReturnedAbsolute(t *testing.T) {
 	}
 	// No scoped params at all: the same map back, nothing allocated.
 	plain := map[string]ToolParam{"q": {Type: "string"}}
-	if out, res, err := ResolveScopedArgs("u", "ag", plain, args, false); err != nil ||
+	if out, res, err := ResolveScopedArgs("u", "", "ag", plain, args, false); err != nil ||
 		len(res) != 0 || out["bundle"] != "bundle-b" {
 		t.Errorf("an unscoped tool should be untouched: %v %v %v", out, res, err)
 	}
@@ -126,14 +126,14 @@ func TestATrustedOnlyScopeRefusesEveryoneElse(t *testing.T) {
 	}
 	RegisterPathScope("trustedtest", PathScope{
 		TrustedOnly: true,
-		Resolve:     func(u, n, v string) (string, error) { return filepath.Join(root, v), nil },
+		Resolve:     func(u, _, n, v string) (string, error) { return filepath.Join(root, v), nil },
 		Roots:       func(u string) []PathScopeRoot { return []PathScopeRoot{{Ref: "trustedtest:x", Label: "x"}} },
 	})
 	params := map[string]ToolParam{"case": {Type: "string", PathScope: "trustedtest:x"}}
-	if _, _, err := ResolveScopedArgs("u", "", params, map[string]any{"case": "case-1"}, false); err == nil {
+	if _, _, err := ResolveScopedArgs("u", "", "", params, map[string]any{"case": "case-1"}, false); err == nil {
 		t.Error("an untrusted tool reached a trusted-only root")
 	}
-	if out, _, err := ResolveScopedArgs("u", "", params, map[string]any{"case": "case-1"}, true); err != nil || out["case"] != filepath.Join(root, "case-1") {
+	if out, _, err := ResolveScopedArgs("u", "", "", params, map[string]any{"case": "case-1"}, true); err != nil || out["case"] != filepath.Join(root, "case-1") {
 		t.Errorf("a trusted tool was refused: %v %v", out, err)
 	}
 	for _, r := range PathScopeRoots("u") {

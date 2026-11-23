@@ -116,7 +116,9 @@ func (s storeSource) specifiedToolDefs(sess *ToolSession, user string, st Store,
 			},
 			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				return bgrun.BackgroundRun{Tool: name, Label: cmd.Label + " on " + st.Name, DetachAfter: cmd.detachAfter(), Run: func(work *ToolSession) (string, error) {
-					resolve := func(ref, v string) (string, error) { return ResolvePathScope(user, sess.AgentID, ref, v, true) }
+					resolve := func(ref, v string) (string, error) {
+						return ResolvePathScope(user, personFor(sess, user), sess.AgentID, ref, v, true)
+					}
 					return runSpecified(work.Context(), "agent", st, cmd, act, args, resolve)
 				}}.Start(sess)
 			},

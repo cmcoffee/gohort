@@ -244,6 +244,13 @@ func SaveStore(db Database, s Store) (Store, error) {
 	if s.PerPerson && s.Evidence {
 		return s, Error("a store that gives each person their own folder cannot index its folders as evidence yet: turn one of them off")
 	}
+	if s.PerPerson {
+		if prev, ok := LoadStore(db, s.Slug); !ok || !prev.PerPerson || prev.Path != s.Path {
+			if err := checkPeopleFolder(s.Path); err != nil {
+				return s, err
+			}
+		}
+	}
 	s.Path = filepath.Clean(strings.TrimSpace(s.Path))
 	if s.Ephemeral && s.LifetimeHours <= 0 {
 		s.LifetimeHours = defaultLifetimeHours

@@ -462,7 +462,7 @@ func (sd *shellDispatch) resolveCommand() bool {
 	// pointing somewhere else, which core/path_scope.go opens by warning
 	// about: "../../var/lib/something" is a perfectly well-formed single
 	// argument.
-	sd.scopedArgs, sd.scopedPaths, sd.serr = ResolveScopedArgs(sess.Username, sess.AgentID, tt.Params, sd.args, tt.AdminMapped)
+	sd.scopedArgs, sd.scopedPaths, sd.serr = ResolveScopedArgs(sess.Username, sess.StorePerson, sess.AgentID, tt.Params, sd.args, tt.AdminMapped)
 	if sd.serr != nil {
 		// Refuse. A scope that fails open is not a scope, and the model
 		// gets a message it can act on: the root it may name, and what

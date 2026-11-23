@@ -221,7 +221,7 @@ func TestScopedArgsCarryTheCallingAgent(t *testing.T) {
 
 	var sawUser, sawName, sawValue string
 	RegisterPathScope("testscope", PathScope{
-		Resolve: func(u, n, v string) (string, error) {
+		Resolve: func(u, _, n, v string) (string, error) {
 			sawUser, sawName, sawValue = u, n, v
 			return "/abs/" + v, nil
 		},
@@ -276,7 +276,7 @@ func (scopeTestSource) Fetch(context.Context, string, string, string) string { r
 // the first call is a guess that gets refused.
 func TestScopedParamDescriptionCarriesTheFolders(t *testing.T) {
 	RegisterPathScope("listscope", PathScope{
-		Resolve: func(u, n, v string) (string, error) { return "/abs/" + v, nil },
+		Resolve: func(u, _, n, v string) (string, error) { return "/abs/" + v, nil },
 		Values:  func(u, n string) []string { return []string{"scan-b", "scan-a"} },
 	})
 	params := map[string]ToolParam{

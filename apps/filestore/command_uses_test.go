@@ -249,7 +249,7 @@ func TestAStoresCommandsFollowItsAccessAndItsLife(t *testing.T) {
 	if cmd, writes := has("bob"); !cmd || !writes {
 		t.Errorf("a Full Access owner's agent: command %v, declares a write %v (so an attachment not allowing changes keeps it out)", cmd, writes)
 	}
-	if _, err := app.resolveScope("alice", st.Slug, ""); err == nil {
+	if _, err := app.resolveScope("alice", "", st.Slug, ""); err == nil {
 		t.Error("a Read-Only person resolved a folder to run a command on")
 	}
 

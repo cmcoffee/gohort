@@ -641,13 +641,13 @@ func resolveRunCwd(args map[string]any, sess *ToolSession) (string, error) {
 		// would be ceremony over a value with one sensible meaning.
 		rel = "."
 	}
-	user, agentID := "", ""
+	user, person, agentID := "", "", ""
 	if sess != nil {
-		user, agentID = sess.Username, sess.AgentID
+		user, person, agentID = sess.Username, sess.StorePerson, sess.AgentID
 	}
 	// Never trusted: a command run here is whatever the model wrote, so a
 	// root that only admin-built tools may reach (a file store) refuses it.
-	abs, err := ResolvePathScope(user, agentID, ref, rel, false)
+	abs, err := ResolvePathScope(user, person, agentID, ref, rel, false)
 	if err != nil {
 		if !rootRegistered(user, ref) {
 			return "", fmt.Errorf("cwd_root %q is not a registered root. Nothing ran.%s", ref, knownRootsSuffix(sess))

@@ -62,7 +62,7 @@ func (t *chatTurn) appDefStores(args map[string]any) (string, error) {
 			b.WriteString(" Temporary: each folder is removed after its lifetime.")
 		}
 		if st.PerPerson {
-			b.WriteString(" Each person has their own folder: store_path is the folder of whoever is using the app, so a script sees only that person's files and the folder count is theirs.")
+			b.WriteString(" Each person has their own folder: store_path is the folder of whoever is using the app, so a script sees only that person's files and the folder count is theirs. Keep nothing read from it in the script's working folder, which every person using the app shares: write results back into store_path, or return them.")
 		}
 		if st.PullsFrom != "" {
 			fmt.Fprintf(&b, " Pulls from %q (a folder's %s/ part).", st.PullsFrom, st.PullPart)

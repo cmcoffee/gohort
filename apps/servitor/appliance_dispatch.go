@@ -318,7 +318,7 @@ func resolveScopedArgs(user, agentID string, tool ApplianceTool, args map[string
 	// resolved, which an appliance does not use: an appliance runs the
 	// command on the TARGET, so there is no local sandbox to bind them
 	// into.
-	out, _, err := ResolveScopedArgs(user, agentID, tool.Params, args, trusted)
+	out, _, err := ResolveScopedArgs(user, "", agentID, tool.Params, args, trusted)
 	return out, err
 }
 

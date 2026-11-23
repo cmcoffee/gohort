@@ -191,8 +191,10 @@ func TestToolboxActionStartsInItsWorkDir(t *testing.T) {
 	}
 	ws := workDirTestWorkspace(t)
 
+	var person string
 	RegisterPathScope("wdtest", PathScope{
-		Resolve: func(user, root, value string) (string, error) {
+		Resolve: func(user, p, root, value string) (string, error) {
+			person = p
 			if value == "." || value == "" {
 				return filepath.EvalSymlinks(bundle)
 			}
@@ -200,8 +202,11 @@ func TestToolboxActionStartsInItsWorkDir(t *testing.T) {
 		},
 	})
 
+	// A run for someone other than its user (an owner's agent working for
+	// someone using the owner's app): the scope is told who, so a root that
+	// keeps a folder per person resolves theirs.
 	sess := &ToolSession{
-		Username: "alice", ChatSessionID: "s1",
+		Username: "alice", StorePerson: "bob", ChatSessionID: "s1",
 		DB:           &DBase{Store: kvlite.MemStore()},
 		WorkspaceDir: ws,
 	}
@@ -232,6 +237,9 @@ func TestToolboxActionStartsInItsWorkDir(t *testing.T) {
 	got := strings.TrimSpace(out)
 	if got != want {
 		t.Errorf("the command started in the wrong directory\n got %q\nwant %q\n(workspace was %q)", got, want, ws)
+	}
+	if person != "bob" {
+		t.Errorf("the path scope was told the run is for %q, want bob", person)
 	}
 }
 

@@ -421,6 +421,12 @@ type ToolSession struct {
 	// (chat without auth) or apps that don't support per-user features
 	// (phantom, since persistence isn't honored there).
 	Username string
+	// StorePerson is who the run is for when that is not Username: someone
+	// using an owner's app, whose agent runs as the owner, or someone the
+	// agent is shared with whose conversation sent work to an agent of the
+	// owner's. A file store that gives each person their own folder reaches
+	// theirs. Empty on an ordinary run, where Username is that person.
+	StorePerson string
 
 	// ChatSessionID identifies the chat session this tool call is running
 	// within (chat app only). Used by tools that need to schedule recurring

@@ -33,14 +33,14 @@ func perPersonFixture(t *testing.T) (*FileStoreApp, Store, string) {
 			t.Fatal(err)
 		}
 	}
-	put("people/alice/CASE-A/app.log", "ERROR alice's disk full")
-	put("people/bob/CASE-B/app.log", "ERROR bob's license expired")
 	put("OLD-CASE/app.log", "ERROR from before each person had a folder")
 	st, err := SaveStore(app.DB, Store{Name: "Captures", Path: root, PerPerson: true,
 		Members: []string{"alice", "bob"}, FullAccess: []string{"alice", "bob"}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	put("people/alice/CASE-A/app.log", "ERROR alice's disk full")
+	put("people/bob/CASE-B/app.log", "ERROR bob's license expired")
 	return app, st, root
 }
 
@@ -89,10 +89,10 @@ func TestEachPersonsAgentSeesOnlyTheirOwnFolder(t *testing.T) {
 		}
 	}
 	// A path scope (a command's folder value) resolves in her folder too.
-	if _, err := app.resolveScope("alice", st.Slug, "CASE-B"); err == nil {
+	if _, err := app.resolveScope("alice", "", st.Slug, "CASE-B"); err == nil {
 		t.Error("alice's command value resolved to bob's folder")
 	}
-	if p, err := app.resolveScope("alice", st.Slug, "CASE-A"); err != nil || !strings.Contains(p, filepath.Join("people", "alice")) {
+	if p, err := app.resolveScope("alice", "", st.Slug, "CASE-A"); err != nil || !strings.Contains(p, filepath.Join("people", "alice")) {
 		t.Errorf("alice's own folder: %q %v", p, err)
 	}
 	// Someone reaching it for the first time gets an empty folder of their
@@ -184,14 +184,14 @@ func TestATemporaryPerPersonStoreExpiresEachPersonsFolders(t *testing.T) {
 	app := &FileStoreApp{}
 	app.DB = &DBase{Store: kvlite.MemStore()}
 	root := t.TempDir()
+	if _, err := SaveStore(app.DB, Store{Name: "Drop", Path: root, PerPerson: true, Ephemeral: true, LifetimeHours: 24}); err != nil {
+		t.Fatal(err)
+	}
 	old := aged(t, filepath.Join(root, "people", "alice"), "CASE-OLD", 3)
 	fresh := aged(t, filepath.Join(root, "people", "bob"), "CASE-NEW", 0)
 	for _, p := range []string{filepath.Join(root, "people", "alice"), filepath.Join(root, "people")} {
 		when := time.Now().AddDate(0, 0, -3)
 		os.Chtimes(p, when, when)
-	}
-	if _, err := SaveStore(app.DB, Store{Name: "Drop", Path: root, PerPerson: true, Ephemeral: true, LifetimeHours: 24}); err != nil {
-		t.Fatal(err)
 	}
 	list := FindExpiredBundles(context.Background(), app.DB)
 	if len(list) != 1 || list[0].Folder != "alice/CASE-OLD" || list[0].Path != old {

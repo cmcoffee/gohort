@@ -345,9 +345,13 @@ func (t *chatTurn) runScriptCheck(spec AppSpec, c appcheck.Check) appCheckResult
 		fixed["shared"] = appscript.SharedInput(scratch, spec)
 	}
 	args, _, _ := appScriptArgs(spec, string(recJSON), params, fixed)
+	// Caller is the person running the check, not the caller the check names:
+	// that is a value a check's author types, and a file store that gives each
+	// person their own folder would hand over the named person's. The person
+	// running it reaches their own, as they would using the app.
 	out, err := appscript.Job{Owner: spec.Owner, DB: scratch, Slug: spec.Slug, Kind: kind, Name: name,
 		Language: lang, Script: script, Caps: caps, Args: args, Libs: spec.Libraries, Spec: &spec,
-		Interactive: t.inPersonsLane(), Check: true}.Run()
+		Interactive: t.inPersonsLane(), Check: true, Caller: t.user}.Run()
 	if err != nil {
 		res.Why = "it could not run: " + appOneLine(err.Error(), 400)
 		return res

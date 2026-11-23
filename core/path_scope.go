@@ -40,7 +40,12 @@ import (
 // A resolver is expected to refuse traversal AND to resolve symlinks: a
 // link inside the root pointing out of it is the same hole with better
 // manners.
-type PathScopeResolver func(user, name, value string) (string, error)
+//
+// person is who the run is for when that is not user, and empty otherwise:
+// someone using an owner's app, whose agent runs as the owner. user decides
+// what may be reached; person decides whose part of it, for a root that keeps
+// one per person (a file store that gives each person their own folder).
+type PathScopeResolver func(user, person, name, value string) (string, error)
 
 // PathScopeLister returns the values currently valid for one root, for a
 // tool description. Best-effort: a scope with no lister still works, the
@@ -180,7 +185,8 @@ var AgentHoldsReference func(user, agentID, kind, itemID string) bool
 //
 // trusted says the caller is a tool an admin built for this purpose; a kind
 // marked TrustedOnly refuses everything else (see PathScope.TrustedOnly).
-func ResolvePathScope(user, agentID, ref, value string, trusted bool) (string, error) {
+// person is who the run is for when that is not user (PathScopeResolver).
+func ResolvePathScope(user, person, agentID, ref, value string, trusted bool) (string, error) {
 	kind, name := SplitPathScopeRef(ref)
 	pathScopeMu.RLock()
 	sc, ok := pathScopes[kind]
@@ -205,7 +211,7 @@ func ResolvePathScope(user, agentID, ref, value string, trusted bool) (string, e
 				"A sub-agent needs its own link; holding it on the parent is not enough.")
 		}
 	}
-	return sc.Resolve(user, name, value)
+	return sc.Resolve(user, person, name, value)
 }
 
 // PathScopeChoices lists the currently valid values for a scope, for a
@@ -258,7 +264,7 @@ func PathScopeKnown(ref string) bool {
 // so a proved path the script cannot open is a check that passes and a
 // tool that fails — and binding exactly what resolved is stricter than
 // binding the root it came from, which would hand over every sibling.
-func ResolveScopedArgs(user, agentID string, params map[string]ToolParam, args map[string]any, trusted bool) (map[string]any, []string, error) {
+func ResolveScopedArgs(user, person, agentID string, params map[string]ToolParam, args map[string]any, trusted bool) (map[string]any, []string, error) {
 	out := args
 	copied := false
 	var resolved []string
@@ -279,7 +285,7 @@ func ResolveScopedArgs(user, agentID string, params map[string]ToolParam, args m
 		if !present || strings.TrimSpace(fmt.Sprint(raw)) == "" {
 			continue
 		}
-		abs, err := ResolvePathScope(user, agentID, ref, fmt.Sprint(raw), trusted)
+		abs, err := ResolvePathScope(user, person, agentID, ref, fmt.Sprint(raw), trusted)
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s: %w", name, err)
 		}
