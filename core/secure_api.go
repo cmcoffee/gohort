@@ -4582,6 +4582,29 @@ func readOnlyForUser(c SecureCredential, user, agentID string) bool {
 	return false
 }
 
+// WritesWithAnotherKey reports whether user's call on credential name, in
+// agentID, can write with a key that is not their own: the owner's lent with
+// writes, or a deployment credential. False when it resolves to their own
+// credential, their own connected account on a lent one, or a lend held to
+// reads; also false when it resolves to nothing, which cannot call at all.
+// Used where somebody other than the key's owner shaped the request (a
+// maintainer's tool fix), so it runs only where it cannot write as anyone
+// but the person running it.
+func (s *SecureAPI) WritesWithAnotherKey(name, user, agentID string) bool {
+	c, ok := s.ResolveIn(name, user, agentID)
+	if !ok {
+		return false
+	}
+	user = strings.TrimSpace(user)
+	if c.Owner != "" && c.Owner == user {
+		return false
+	}
+	if c.Owner == "" {
+		return true
+	}
+	return !s.recipientUsesOwn(c, user) && !readOnlyForUser(c, user, agentID)
+}
+
 // bodyOverridesMethod reports whether a write-method call's body carries a
 // method override (a form or JSON "_method"), which a listed read must not.
 func bodyOverridesMethod(method, body string) bool {

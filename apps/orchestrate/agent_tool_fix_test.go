@@ -275,3 +275,69 @@ func TestAFixHidesNothingFromTheOwnerAndNothingOfTheOwnersFromTheMaintainer(t *t
 		t.Errorf("rolling back brought back a discarded fix: %+v", a.ToolFixes)
 	}
 }
+
+// An unkept fix runs only where a call cannot write as anybody but the person
+// running it: for somebody the owner lent the key to for reads, yes; for
+// somebody lent it WITH writes, no, they keep the original until the owner
+// keeps the fix, unless they connected their own account; on a deployment
+// credential, no; on a credential-less tool with headers of its own (which
+// may carry the owner's key), no.
+func TestAFixWaitsForAnybodyWhoseCallCouldWriteAsSomebodyElse(t *testing.T) {
+	_, _, owner := newTestOrchestrate(t)
+	// The credential store is one for the whole package: leave nothing in
+	// it for the tests after (Builder's catalog lists what is there).
+	t.Cleanup(func() {
+		Secure().DeleteUser(owner, "fixcred")
+		Secure().Delete("fixdeploy")
+	})
+	if err := Secure().Save(SecureCredential{Name: "fixcred", Owner: owner, Type: SecureCredBearer, BaseURL: "https://fix.example"}, "k"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Secure().LendForAgent(owner, "fixcred", "a14", []string{"reader"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := Secure().LendForAgent(owner, "fixcred", "a14", []string{"writer"}, true); err != nil {
+		t.Fatal(err)
+	}
+	// The lend is real: both resolve to the owner's key in this agent.
+	for _, u := range []string{"reader", "writer"} {
+		if c, ok := Secure().ResolveIn("fixcred", u, "a14"); !ok || c.Owner != owner {
+			t.Fatalf("%s does not reach the owner's key: %+v %v", u, c, ok)
+		}
+	}
+	if err := Secure().Save(SecureCredential{Name: "fixdeploy", Type: SecureCredBearer, BaseURL: "https://deploy.example"}, "k"); err != nil {
+		t.Fatal(err)
+	}
+	stored := func(cred string, h map[string]string) TempTool {
+		return TempTool{Name: "t_" + cred, Mode: TempToolModeAPI, Credential: cred, CommandTemplate: "https://fix.example/v1", Method: "GET", Headers: h}
+	}
+	a := AgentRecord{ID: "a14", Owner: owner}
+	for _, st := range []TempTool{stored("fixcred", nil), stored("fixdeploy", nil), stored("", map[string]string{"X-Key": "k"}), stored("", nil)} {
+		a.ToolFixes = append(a.ToolFixes, ToolFix{Tool: st.Name, By: "mia", Base: toolPrint(st), Def: TempTool{Mode: st.Mode, CommandTemplate: "https://fix.example/v2"}})
+	}
+	runs := func(runner string, st TempTool) bool { return toolWithFix(a, runner, st).FixedBy != "" }
+	cases := []struct {
+		runner string
+		tool   TempTool
+		want   bool
+	}{
+		{"reader", stored("fixcred", nil), true},
+		{"writer", stored("fixcred", nil), false},
+		{"reader", stored("fixdeploy", nil), false},
+		{"reader", stored("", map[string]string{"X-Key": "k"}), false},
+		{"reader", stored("", nil), true},
+	}
+	for _, c := range cases {
+		if got := runs(c.runner, c.tool); got != c.want {
+			t.Errorf("%s on %q: fix runs %v, want %v", c.runner, c.tool.Credential, got, c.want)
+		}
+	}
+	// Lent writes, but connected their own account: every call goes out as
+	// them, so the fix runs.
+	if err := Secure().SaveSharedAccount(owner, "fixcred", "writer", "writers-own"); err != nil {
+		t.Fatal(err)
+	}
+	if !runs("writer", stored("fixcred", nil)) {
+		t.Error("somebody on their own account does not get the fix")
+	}
+}

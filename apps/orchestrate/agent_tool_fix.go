@@ -8,9 +8,11 @@ package orchestrate
 // UNDER THE TOOL'S OWN NAME, and runs in place of the tool for everybody who
 // runs the agent EXCEPT its owner.
 //
-// Why that is safe. Everybody but the owner already goes through the
-// credential gate: reads on the owner's key, writes on their own account. So
-// a fix cannot make anything write as the owner. The owner's own runs (their
+// Why that is safe. It runs only for people whose calls cannot write as
+// anybody but themselves: reads held to reads on the owner's key, writes on
+// their own account (fixMayRunFor). Somebody the owner lent the key to WITH
+// writes keeps the original until the owner keeps the fix. So a fix cannot
+// make anything write as the owner. The owner's own runs (their
 // chats, schedules, channels) are the only ones with the owner's full key,
 // and they keep the original until the owner keeps the fix. And because the
 // fix keeps the tool's name, every per-agent setting keyed by it still holds:
@@ -151,7 +153,7 @@ func fixedShape(base, sent TempTool) TempTool {
 // per-agent settings on a toolbox's actions are keyed by action name, so an
 // action under a new name would run past one the owner switched off.
 func toolWithFix(a AgentRecord, runner string, stored TempTool) TempTool {
-	if strings.TrimSpace(runner) == "" || runner == a.Owner {
+	if strings.TrimSpace(runner) == "" || runner == a.Owner || !fixMayRunFor(a, runner, stored) {
 		return stored
 	}
 	for _, f := range a.ToolFixes {
@@ -175,6 +177,27 @@ func toolWithFix(a AgentRecord, runner string, stored TempTool) TempTool {
 		return fixed
 	}
 	return stored
+}
+
+// fixMayRunFor reports whether an unkept fix may shape runner's calls: only
+// where they cannot write as anybody but runner. Somebody the owner lent the
+// key to WITH writes keeps the original until the owner keeps the fix, as
+// does anybody whose call would go out on a deployment credential. A tool
+// with no credential but headers of its own may carry the owner's key in
+// them, so its fix waits too.
+func fixMayRunFor(a AgentRecord, runner string, stored TempTool) bool {
+	if strings.TrimSpace(stored.Credential) == "" {
+		if len(stored.Headers) > 0 {
+			return false
+		}
+		for _, x := range stored.Actions {
+			if len(x.Headers) > 0 {
+				return false
+			}
+		}
+		return true
+	}
+	return !Secure().WritesWithAnotherKey(stored.Credential, runner, a.ID)
 }
 
 // fixDiff is what a fix changes, in lines the owner reads, the risky ones
@@ -491,7 +514,7 @@ func (T *OrchestrateApp) agentToolFixSave(c *jsonapi.Call, body struct {
 	notices.Record(RootDB, notices.Notice{
 		Owner: a.Owner, Agent: a.ID, Kind: notices.KindBlocked,
 		Title: c.User + " fixed " + tool + " on " + chFirst(a.Name, a.ID),
-		Body: "Everybody but you now runs their fix of your " + tool + " on this agent; your own runs keep your tool as it is. " +
+		Body: "People using this agent now run their fix of your " + tool + ", except anyone you lent its key to with writes; your own runs keep your tool as it is. " +
 			"Keep it to put it into your " + tool + " for every agent of yours, or discard it: both on the agent's page, under Fixes from maintainers.",
 	})
 	Log("[orchestrate.agents] %s fixed %s's tool %q on agent %q", c.User, a.Owner, tool, a.Name)
@@ -582,8 +605,8 @@ func toolFixMaintainerSection(src, owner string) ui.Section {
 		Title:    "Fix a tool",
 		Wide:     true,
 		Subtitle: "When one of its tools breaks and " + owner + " is away: a fix everybody but " + owner + " runs at once, until " + owner + " keeps or discards it.",
-		Detail: "Your fix runs under the tool's own name, so every setting " + owner + " made for it on this agent still holds. Everybody but " + owner + " reads with " + owner + "'s key and writes with their own account through it, as they do now; " + owner + "'s own runs keep the tool as it is. " +
-			"You can change what the request looks like: the URL, method, body, headers, parameters and a toolbox's actions. Its credential, response filters, quarantined actions and anything that runs a script stay " + owner + "'s; an action whose address or method you change is no longer counted as a read.",
+		Detail: "Your fix runs under the tool's own name, so every setting " + owner + " made for it on this agent still holds. It runs only where a call cannot write as anybody but the person running it: reads on " + owner + "'s key, writes on their own account. Anyone " + owner + " lent the key to with writes, and " + owner + "'s own runs, keep the tool as it is. " +
+			"You can change what the request looks like: the URL, method, body, headers, parameters and a toolbox's actions. Its credential, response filters, quarantined actions and anything that runs a script stay " + owner + "'s; an action whose request you change is no longer counted as a read.",
 		Body: ui.Table{
 			Source: src + "/fixable-tools",
 			RowKey: "name",
@@ -614,7 +637,7 @@ func toolFixOwnerSection(src string) ui.Section {
 		Title:    "Fixes from maintainers",
 		Indent:   1,
 		Wide:     true,
-		Subtitle: "Fixes of your tools a maintainer made: everybody but you runs them on this agent until you keep or discard them.",
+		Subtitle: "Fixes of your tools a maintainer made: people using this agent run them until you keep or discard them, except you and anyone you lent the key to with writes.",
 		Detail:   "Keep puts the fix into your own tool, for every agent of yours that uses it; the version it replaces stays in the tool's history. Discard drops it. Keep applies exactly the version listed here, and is refused if your tool changed since.",
 		Body: ui.Table{
 			Source: src + "/tool-fixes",
