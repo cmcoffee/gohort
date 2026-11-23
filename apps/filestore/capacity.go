@@ -40,7 +40,7 @@ func (s Store) usage() int64 {
 	if ok && time.Since(e.when) < usageTTL {
 		return e.bytes
 	}
-	n := folderBytes(s.Path)
+	n := folderBytes(s.rootPath()) // the whole store, for one person's copy too
 	usageCache.Lock()
 	usageCache.at[s.Slug] = usageEntry{bytes: n, when: time.Now()}
 	usageCache.Unlock()

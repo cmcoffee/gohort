@@ -168,50 +168,72 @@ func findExpired(ctx context.Context, db Database, temporaryOnly bool) expiredSc
 			sc.blocked = append(sc.blocked, st.Name+": "+why)
 			continue
 		}
-		entries, err := os.ReadDir(st.Path)
-		if err != nil {
-			Log("[filestore.retention] %s: cannot read %s (%v), skipped", st.Name, st.Path, err)
-			continue
+		// The folders a sweep walks: the store's own, or in a store that
+		// gives each person their own folder, each of theirs (the people
+		// folder itself is never a candidate, nor is a person's folder).
+		roots := []personRoot{{dir: st.Path}}
+		if st.PerPerson {
+			roots = st.personRoots()
 		}
-		for _, e := range entries {
-			if ctx.Err() != nil {
+		for _, r := range roots {
+			if !sc.scanFolders(ctx, st, cutoff, r) {
 				return sc
 			}
-			if !e.IsDir() {
-				continue // loose files at the root are never touched
-			}
-			// SubRoot resolves symlinks and refuses anything not strictly
-			// below the root. A symlinked folder pointing elsewhere on the
-			// disk must not become a delete target because it happened to
-			// be listed here.
-			dir, err := SubRoot(st.Path, e.Name())
-			if err != nil {
-				Log("[filestore.retention] %s/%s did not resolve inside the store (%v): skipped", st.Name, e.Name(), err)
-				continue
-			}
-			newest, err := bundleNewest(dir)
-			if err != nil {
-				continue // unreadable: not eligible
-			}
-			if !newest.Before(cutoff) {
-				continue
-			}
-			if pathhold.InUse(dir) {
-				Debug("[filestore.retention] %s/%s is past its window but in use: kept", st.Name, e.Name())
-				continue
-			}
-			if why := removeBlocker(dir); why != "" {
-				sc.blocked = append(sc.blocked, st.Name+" / "+e.Name()+": "+why)
-				continue
-			}
-			sc.bundles = append(sc.bundles, ExpiredBundle{
-				Store: st.Name, Slug: st.Slug, Folder: e.Name(),
-				Path: dir, Newest: newest, Bytes: folderBytes(dir),
-			})
 		}
 	}
 	sort.Slice(sc.bundles, func(i, j int) bool { return sc.bundles[i].Newest.Before(sc.bundles[j].Newest) })
 	return sc
+}
+
+// scanFolders adds the folders directly under r.dir that are past cutoff,
+// named "<person>/<folder>" for one person's folder. False when ctx stopped.
+func (sc *expiredScan) scanFolders(ctx context.Context, st Store, cutoff time.Time, r personRoot) bool {
+	entries, err := os.ReadDir(r.dir)
+	if err != nil {
+		Log("[filestore.retention] %s: cannot read %s (%v), skipped", st.Name, r.dir, err)
+		return true
+	}
+	prefix := ""
+	if r.name != "" {
+		prefix = r.name + "/"
+	}
+	for _, e := range entries {
+		if ctx.Err() != nil {
+			return false
+		}
+		if !e.IsDir() {
+			continue // loose files at the root are never touched
+		}
+		// SubRoot resolves symlinks and refuses anything not strictly
+		// below the root. A symlinked folder pointing elsewhere on the
+		// disk must not become a delete target because it happened to
+		// be listed here.
+		dir, err := SubRoot(r.dir, e.Name())
+		if err != nil {
+			Log("[filestore.retention] %s/%s%s did not resolve inside the store (%v): skipped", st.Name, prefix, e.Name(), err)
+			continue
+		}
+		newest, err := bundleNewest(dir)
+		if err != nil {
+			continue // unreadable: not eligible
+		}
+		if !newest.Before(cutoff) {
+			continue
+		}
+		if pathhold.InUse(dir) {
+			Debug("[filestore.retention] %s/%s%s is past its window but in use: kept", st.Name, prefix, e.Name())
+			continue
+		}
+		if why := removeBlocker(dir); why != "" {
+			sc.blocked = append(sc.blocked, st.Name+" / "+prefix+e.Name()+": "+why)
+			continue
+		}
+		sc.bundles = append(sc.bundles, ExpiredBundle{
+			Store: st.Name, Slug: st.Slug, Folder: prefix + e.Name(),
+			Path: dir, Newest: newest, Bytes: folderBytes(dir),
+		})
+	}
+	return true
 }
 
 // FormatExpiredBundles renders candidates for the maintenance log — the

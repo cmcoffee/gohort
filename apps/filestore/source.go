@@ -70,7 +70,12 @@ func (s storeSource) List(user string) []ReferenceItem {
 		// sizes and mtimes are then thrown away. The picker renders on the
 		// agent editor, so that walk was in front of somebody every time they
 		// opened one.
-		if n, err := CountFolders(st.Path); err == nil {
+		if st.PerPerson {
+			desc += " - your own folder in it"
+		}
+		if mine, err := st.forPerson(user); err != nil {
+			desc += " - " + err.Error()
+		} else if n, err := CountFolders(mine.Path); err == nil {
 			desc += " - " + strconv.Itoa(n) + " folder" + plural(n)
 		} else {
 			desc += " - unreadable"
@@ -93,6 +98,10 @@ func (s storeSource) Fetch(ctx context.Context, user, itemID, query string) stri
 	// id is a string somebody can supply — filtering the picker is a
 	// courtesy, this is the gate.
 	if !ok || !st.AllowsUser(user) {
+		return ""
+	}
+	st, err := st.forPerson(user)
+	if err != nil {
 		return ""
 	}
 	if strings.TrimSpace(query) == "" {
@@ -225,6 +234,10 @@ func (s storeSource) ItemToolsWithSession(sess *ToolSession, user, itemID string
 	if !ok {
 		return tools
 	}
+	st, err := st.forPerson(user)
+	if err != nil {
+		return tools
+	}
 	// Commands and pull change what the store holds, or act on its behalf:
 	// Full Access for the agent's owner, and an attachment that allows
 	// changes (both kinds of tool declare CapWrite).
@@ -246,6 +259,10 @@ func (s storeSource) ItemToolsWithSession(sess *ToolSession, user, itemID string
 func (s storeSource) ItemTurnWriteTools(user, itemID string) []Tool {
 	st, ok := LoadStore(s.app.DB, itemID)
 	if !ok || !st.AllowsUser(user) || !st.FullAccessFor(user) {
+		return nil
+	}
+	st, err := st.forPerson(user)
+	if err != nil {
 		return nil
 	}
 	var out []Tool
@@ -276,6 +293,13 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 	// attachment degrades to the store simply not being there rather
 	// than to a set of tools that refuse on every call.
 	if !ok || !st.AllowsUser(user) {
+		return nil
+	}
+	// The person's own folder, for a store that gives each person one: every
+	// tool below holds its paths to st.Path.
+	st, err := st.forPerson(user)
+	if err != nil {
+		Log("[filestore] %s: %v", user, err)
 		return nil
 	}
 	slug := st.Slug

@@ -464,6 +464,44 @@ because confirming a store exists is a fact the caller can do nothing with and s
 Empty is closed (v0.8.340). It used to mean every user, which failed open for every new store and
 every list somebody cleared. Stores saved before then start with nobody on either list.
 
+## Each person's own folder
+
+**Each person gets their own folder** (`per_person`, on the store's Settings; off by default) makes
+one store a private working area for everyone who reaches it. A person reaches only
+`people/<name>/` under the store's folder, made the first time they reach it, through every door:
+an attached agent's tools, the path scope a command's folder value goes through, an app's mounted
+folder and its commands and pulls, uploads, the Files command route and the folder picker. The
+case it is for is an app shared with many people, such as a capture analyzer: without it, an app
+granted write on a store shares one folder with everyone who uses the app, and one person's uploads
+are the next person's search results.
+
+How it works: `Store.forPerson(user)` hands out a copy of the store whose `Path` is the person's
+folder, so every check downstream, which already holds a path to `Path`, holds it to theirs. The
+copy is never saved (`SaveStore` refuses it). The folder name is the person's name when it is a
+plain one, and otherwise its plain part, a `+` and a short hash, so two names never share a folder
+and no name is a path. A person's folder that is a link (`people/mallory` pointing at
+`people/alice`, which stays inside the store) is refused rather than followed.
+
+- **Apps.** An app's grant is still the app's, but what it reaches is the folder of the person
+  using it: `appstores.App` carries `Caller`, the person who clicked or is viewing (the owner for a
+  run nobody started). A page that only says what an app reaches names nobody, and is handed no
+  folder. The share dialog and the admin review say "(each person has their own folder)", and
+  Builder's store listing says so too.
+- **Pulls.** A pull between two per-person stores goes from the person's folder in one to theirs
+  in the other. A shared source into a per-person store lands in the puller's folder. A job is
+  keyed by the person, so two people pulling the same name are two jobs. The admin's pull panel
+  acts as the admin, like everyone else.
+- **What stays on the store's own folder.** The admin page (its count reads "3 people"), the size
+  cap (one cap for the whole store, not one per person), and the cleanup sweeps, which walk each
+  person's folders in turn: a temporary store's timer and a retention window apply to the folders
+  inside each person's folder, never to a person's folder or to `people/` itself, and the
+  maintenance list names them `alice/CASE-1`.
+- **Files already in the store** stay where they are, and nobody reaches them while it is on; the
+  setting's help says so. Turning it off makes the top level what everyone reaches again, and
+  with it every person's folder under `people/`: the setting's help warns of that too.
+- **Not with evidence indexing yet.** The evidence index is keyed by store and folder name, so two
+  people's `CASE-1` would share one index. Saving both switches on is refused.
+
 ## Running a command through servitor
 
 The way to let agents run something over a store is to register the binary on the store and map

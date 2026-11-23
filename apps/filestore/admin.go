@@ -496,6 +496,9 @@ func storeFormFields() []ui.FormField {
 		{Field: "evidence", Type: "toggle", Label: "Index folders as evidence",
 			Help:   "Index each subfolder like an evidence bundle, and give attached agents a summary and a timeline of it. Off by default.",
 			Detail: "Each subfolder (a case, a run, a dump) is indexed as it arrives: format, line count, the period it covers, which hosts wrote it and how many errors and warnings it holds, with timestamps parsed so files can be merged in time order. Attached agents get summarize_<store> and timeline_<store>, which take the folder by name.\n\nThe folder itself is never changed. The index is a second copy, kept encrypted, of up to 8 GB per folder: a changed folder is indexed again, a deleted one's index is wiped, and turning this off wipes them all. Folders that change some other way (a command's download, a copy by hand) are picked up within 15 minutes, or at once when an agent asks about one."},
+		{Field: "per_person", Type: "toggle", Label: "Each person gets their own folder",
+			Help:   "Everyone who reaches this store, through an agent, an app, a command or an upload, reaches only a folder of their own in it.",
+			Detail: "Their folder is people/<name>/ inside this one, made the first time they reach it, so one person's files are never another's search results. For a working area an app shares with many people, such as captures each person uploads. Leave it off for a folder everyone should see, such as build logs.\n\nFiles already at the top of the store are not moved, and nobody reaches them while this is on: move them into a person's folder by hand if they should stay reachable. Turning this off later shows everyone who reaches the store every person's folder, under people/. The size cap is for the whole store, not each person, and a temporary store's timer applies to each person's folders. Cannot be combined with indexing folders as evidence yet."},
 		{Field: "ephemeral", Type: "toggle", Label: "Temporary store",
 			Help:   "Delete each folder automatically once nothing in it has changed for a set time.",
 			Detail: "For a working area whose contents are copied onward, such as raw downloads that are extracted and pulled into another store. Folders go on a timer, checked every 15 minutes, with no admin sweep. A folder that a command, a copy or an upload is using is never removed, whatever its age.\n\nLeave it off for a store that holds the only copy of something: those wait for an admin."},
@@ -788,10 +791,7 @@ func (T *FileStoreApp) storeRows() []map[string]any {
 		// Folder count is the fact that says whether the path is right. A
 		// store reading "unreadable" here is a typo caught before an agent
 		// is attached to it.
-		folders := "unreadable"
-		if n, err := CountFolders(st.Path); err == nil {
-			folders = strconv.Itoa(n)
-		}
+		folders := st.folderCountLabel()
 		rows = append(rows, map[string]any{
 			"slug": st.Slug, "name": st.Name, "path": st.Path,
 			"description": st.Description, "folders": folders,

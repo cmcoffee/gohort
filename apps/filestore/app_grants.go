@@ -69,15 +69,29 @@ func (s Store) grantFor(owner, slug string) (AppGrant, bool) {
 // storeHost answers app scripts for the stores they were granted.
 type storeHost struct{ app *FileStoreApp }
 
-func (h storeHost) GrantsFor(owner, slug string) []appstores.Grant {
+func (h storeHost) GrantsFor(app appstores.App) []appstores.Grant {
 	var out []appstores.Grant
 	for _, st := range ListStores(h.app.DB) {
-		g, ok := st.grantFor(owner, slug)
+		g, ok := st.grantFor(app.Owner, app.Slug)
 		if !ok || st.Valid() != nil {
 			continue
 		}
-		out = append(out, appstores.Grant{Store: st.Slug, Name: st.Name, Path: st.Path,
-			Read: true, Write: g.Write, Commands: g.Commands, Pull: g.Pull})
+		// The caller's own folder, for a store that gives each person one:
+		// that is what is mounted, and no one else's is.
+		path := st.Path
+		if st.PerPerson {
+			path = ""
+			if strings.TrimSpace(app.Caller) != "" {
+				mine, err := st.forPerson(app.Caller)
+				if err != nil {
+					Log("[filestore] app %s for %s: %v", appKey(app.Owner, app.Slug), app.Caller, err)
+					continue
+				}
+				path = mine.Path
+			}
+		}
+		out = append(out, appstores.Grant{Store: st.Slug, Name: st.Name, Path: path,
+			Read: true, Write: g.Write, Commands: g.Commands, Pull: g.Pull, PerPerson: st.PerPerson})
 	}
 	return out
 }
@@ -91,7 +105,7 @@ func (h storeHost) Stores(owner, slug string) []appstores.StoreInfo {
 			continue
 		}
 		info := appstores.StoreInfo{Store: st.Slug, Name: st.Name, About: strings.TrimSpace(st.Description),
-			Temporary: st.Ephemeral, FolderCount: len(h.app.listScope(owner, st.Slug))}
+			Temporary: st.Ephemeral, PerPerson: st.PerPerson, FolderCount: len(h.app.listScope(owner, st.Slug))}
 		if src, ok := st.pullSource(h.app.DB); ok {
 			info.PullsFrom, info.PullPart = src.Slug, st.PullSubpath
 			if info.PullPart == "" {
@@ -113,7 +127,7 @@ func (h storeHost) Stores(owner, slug string) []appstores.StoreInfo {
 		}
 		if slug != "" {
 			if g, ok := st.grantFor(owner, slug); ok {
-				info.Granted = &appstores.Grant{Store: st.Slug, Name: st.Name, Read: true, Write: g.Write, Commands: g.Commands, Pull: g.Pull}
+				info.Granted = &appstores.Grant{Store: st.Slug, Name: st.Name, Read: true, Write: g.Write, Commands: g.Commands, Pull: g.Pull, PerPerson: st.PerPerson}
 			}
 		}
 		out = append(out, info)
@@ -121,21 +135,27 @@ func (h storeHost) Stores(owner, slug string) []appstores.StoreInfo {
 	return out
 }
 
-// grantedStore loads store and the app's grant on it, or says why not.
-func (h storeHost) grantedStore(owner, slug, store string) (Store, AppGrant, error) {
+// grantedStore loads store, as the caller reaches it, and the app's grant on
+// it, or says why not.
+func (h storeHost) grantedStore(app appstores.App, store string) (Store, AppGrant, error) {
 	st, ok := LoadStore(h.app.DB, strings.TrimSpace(store))
 	if !ok {
 		return Store{}, AppGrant{}, fmt.Errorf("there is no file store %q", store)
 	}
-	g, ok := st.grantFor(owner, slug)
+	g, ok := st.grantFor(app.Owner, app.Slug)
 	if !ok {
 		return Store{}, AppGrant{}, fmt.Errorf("this app has no grant on %s; an admin grants one on the store's page (Admin, Files)", st.Name)
+	}
+	st, err := st.forPerson(app.Caller)
+	if err != nil {
+		return Store{}, AppGrant{}, err
 	}
 	return st, g, nil
 }
 
-func (h storeHost) RunCommand(ctx context.Context, owner, slug, store, folder, command, input string) (string, error) {
-	st, g, err := h.grantedStore(owner, slug, store)
+func (h storeHost) RunCommand(ctx context.Context, app appstores.App, store, folder, command, input string) (string, error) {
+	owner, slug := app.Owner, app.Slug
+	st, g, err := h.grantedStore(app, store)
 	if err != nil {
 		return "", err
 	}
@@ -183,8 +203,9 @@ func (h storeHost) RunCommand(ctx context.Context, owner, slug, store, folder, c
 // placeholders, exactly as an agent's tool for it runs. A folder value is
 // proved inside this store; the app's grant, not the owner's own access, is
 // what lets it reach the store.
-func (h storeHost) RunAction(ctx context.Context, owner, slug, store, command, action string, values map[string]any) (string, error) {
-	st, g, err := h.grantedStore(owner, slug, store)
+func (h storeHost) RunAction(ctx context.Context, app appstores.App, store, command, action string, values map[string]any) (string, error) {
+	owner, slug := app.Owner, app.Slug
+	st, g, err := h.grantedStore(app, store)
 	if err != nil {
 		return "", err
 	}
@@ -241,8 +262,9 @@ func actionInfo(act TempToolAction) appstores.ActionInfo {
 	return ai
 }
 
-func (h storeHost) Pull(ctx context.Context, owner, slug, store, item string, replace bool) (string, error) {
-	dest, g, err := h.grantedStore(owner, slug, store)
+func (h storeHost) Pull(ctx context.Context, app appstores.App, store, item string, replace bool) (string, error) {
+	owner, slug := app.Owner, app.Slug
+	dest, g, err := h.grantedStore(app, store)
 	if err != nil {
 		return "", err
 	}

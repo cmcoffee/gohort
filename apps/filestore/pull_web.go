@@ -100,35 +100,48 @@ func fileSize(e os.DirEntry) int64 {
 //
 // Admin-only, like the rest of the store's panel.
 func (T *FileStoreApp) handlePull() http.HandlerFunc {
-	items := jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
+	// The admin's own view of the store, like anyone's: in a store that gives
+	// each person their own folder, a pull from this panel lands in theirs.
+	adminDest := func(c *jsonapi.Call) (Store, error) {
 		dest, err := T.adminStore(c)
+		if err != nil {
+			return Store{}, err
+		}
+		dest, err = dest.forPerson(c.User)
+		if err != nil {
+			return Store{}, jsonapi.Status(http.StatusInternalServerError, err.Error())
+		}
+		return dest, nil
+	}
+	items := jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
+		dest, err := adminDest(c)
 		if err != nil {
 			return nil, err
 		}
 		return T.pullItems(dest), nil
 	})
 	progress := jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
-		dest, err := T.adminStore(c)
+		dest, err := adminDest(c)
 		if err != nil {
 			return nil, err
 		}
-		if run, ok := pulls.get(dest.Slug + "/" + strings.TrimSpace(c.R.URL.Query().Get("item"))); ok {
+		if run, ok := pulls.get(dest.forPersonKey(strings.TrimSpace(c.R.URL.Query().Get("item")))); ok {
 			return run.status(), nil
 		}
 		return map[string]any{}, nil
 	})
 	cancel := jsonapi.Post(T.DB, func(c *jsonapi.Call, _ struct{}) (any, error) {
-		dest, err := T.adminStore(c)
+		dest, err := adminDest(c)
 		if err != nil {
 			return nil, err
 		}
-		if run, ok := pulls.get(dest.Slug + "/" + strings.TrimSpace(c.R.URL.Query().Get("item"))); ok {
+		if run, ok := pulls.get(dest.forPersonKey(strings.TrimSpace(c.R.URL.Query().Get("item")))); ok {
 			run.cancel()
 		}
 		return map[string]any{"ok": true}, nil
 	})
 	start := jsonapi.Post(T.DB, func(c *jsonapi.Call, _ struct{}) (any, error) {
-		dest, err := T.adminStore(c)
+		dest, err := adminDest(c)
 		if err != nil {
 			return nil, err
 		}

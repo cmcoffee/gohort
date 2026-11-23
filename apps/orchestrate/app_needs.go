@@ -34,7 +34,7 @@ func appStoreNeeds(owner, slug string) []applocal.AppNeed {
 		return nil
 	}
 	var out []applocal.AppNeed
-	for _, g := range appstores.Provider.GrantsFor(owner, slug) {
+	for _, g := range appstores.Provider.GrantsFor(appstores.App{Owner: owner, Slug: slug}) {
 		out = append(out, applocal.AppNeed{Kind: "store", Name: g.Store, Write: g.Write, Commands: g.Commands, Pull: g.Pull})
 	}
 	return out

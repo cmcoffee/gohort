@@ -125,6 +125,10 @@ func (T *FileStoreApp) resolveScope(user, storeSlug, value string) (string, erro
 	if !st.FullAccessFor(user) {
 		return "", Error("you have Read Only / No Commands access to " + st.Name + ", and running a command on its folders takes Full Access")
 	}
+	st, err := st.forPerson(user)
+	if err != nil {
+		return "", err
+	}
 	return st.resolveValue(value)
 }
 
@@ -202,6 +206,10 @@ func (T *FileStoreApp) listScope(user, storeSlug string) []string {
 	if !ok || !st.AllowsUser(user) {
 		return nil
 	}
+	st, err := st.forPerson(user)
+	if err != nil {
+		return nil
+	}
 	folders, err := ListFolders(st.Path)
 	if err != nil {
 		return nil
@@ -236,7 +244,9 @@ func (T *FileStoreApp) grantsFor(user, agentID string) []AgentGrant {
 		// posture of a store, and the row is read by someone deciding
 		// whether an attachment is safe to leave in place.
 		detail := "read-only"
-		if n, err := CountFolders(st.Path); err == nil {
+		if mine, err := st.forPerson(user); err != nil {
+			detail = err.Error()
+		} else if n, err := CountFolders(mine.Path); err == nil {
 			detail = strconv.Itoa(n) + " folders, read-only"
 		}
 		out = append(out, AgentGrant{Label: st.Name, Detail: detail})

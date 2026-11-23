@@ -62,13 +62,24 @@ func (s Store) pullSubpath() string {
 }
 
 // pullSource is the store this one pulls from, when a link is set and the
-// store still exists.
+// store still exists. For a store reached as one person (forPerson), the
+// source as that same person: a pull between two per-person stores goes from
+// their folder in one to their folder in the other.
 func (s Store) pullSource(db Database) (Store, bool) {
 	slug := strings.TrimSpace(s.PullFrom)
 	if slug == "" || slug == s.Slug {
 		return Store{}, false
 	}
-	return LoadStore(db, slug)
+	src, ok := LoadStore(db, slug)
+	if !ok || s.viewer == "" {
+		return src, ok
+	}
+	src, err := src.forPerson(s.viewer)
+	if err != nil {
+		Log("[filestore.pull] %s: %v", s.viewer, err)
+		return Store{}, false
+	}
+	return src, true
 }
 
 // validatePull refuses a pull link that cannot work, at save time.
@@ -107,7 +118,7 @@ type pullJob struct {
 	doneFiles, doneByte    atomic.Int64
 }
 
-func (p *pullJob) key() string { return p.dest.Slug + "/" + p.item }
+func (p *pullJob) key() string { return p.dest.forPersonKey(p.item) }
 
 // progress is the job's line for a person: "120 of 1,204 files, 310 MB of
 // 3.2 GB".

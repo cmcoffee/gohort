@@ -429,6 +429,10 @@ func (T *FileStoreApp) handleCommand(c *jsonapi.Call, body *runReq) (any, error)
 		return nil, jsonapi.NotFound("no command called " + strconv.Quote(name) + " on " + st.Name + " (" + avail +
 			"). An admin registers commands under Admin → Integrations → File stores.")
 	}
+	st, err := st.forPerson(user)
+	if err != nil {
+		return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
+	}
 	dir, err := SubRoot(st.Path, q.Get("within"))
 	if err != nil {
 		return nil, jsonapi.BadRequest(err.Error())
@@ -509,6 +513,10 @@ func (T *FileStoreApp) handleFolders(c *jsonapi.Call) (any, error) {
 	st, found := LoadStore(T.DB, strings.TrimSpace(c.R.URL.Query().Get("slug")))
 	if !found || !st.AllowsUser(c.User) {
 		return nil, jsonapi.NotFound("no such file store you can reach")
+	}
+	st, err := st.forPerson(c.User)
+	if err != nil {
+		return nil, jsonapi.Status(http.StatusInternalServerError, err.Error())
 	}
 	folders, err := ListFolders(st.Path)
 	if err != nil {

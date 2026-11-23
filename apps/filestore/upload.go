@@ -97,6 +97,11 @@ func (T *FileStoreApp) handleUpload(w http.ResponseWriter, r *http.Request) {
 			http.StatusForbidden)
 		return
 	}
+	st, err := st.forPerson(user)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	dest, err := EnsureSub(st.Path, r.URL.Query().Get("within"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
