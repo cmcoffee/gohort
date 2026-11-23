@@ -817,7 +817,7 @@ func handleNotificationForward(w http.ResponseWriter, r *http.Request) {
 		phoneOK = NoticePhoneReady(user)
 	}
 	json.NewEncoder(w).Encode(map[string]any{
-		"where": AuthGetNotifyForward(AuthDB(), user),
+		"where": authGetNotifyForward(AuthDB(), user),
 		// Mail only reaches a username that IS an address, the existing
 		// contract of NotifyUser everywhere else.
 		"email_ok": EmailConfigured() && strings.Contains(user, "@"),

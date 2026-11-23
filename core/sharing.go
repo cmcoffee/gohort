@@ -185,7 +185,7 @@ func CanManageShared(reqUser, owner string, isAdmin bool) bool {
 	return owner == reqUser
 }
 
-// ownsRecord reports whether user may reach a record owned by owner, in an
+// OwnsRecord reports whether user may reach a record owned by owner, in an
 // app whose records belong to whoever made them (a debate, a research
 // report, a blog post): its owner, and nobody else. A record written before
 // records carried an owner, or by an unattended run with nobody behind it,
@@ -193,7 +193,7 @@ func CanManageShared(reqUser, owner string, isAdmin bool) bool {
 //
 // Unlike CanManageShared, an administrator does not reach somebody's own
 // record by being one, and an ownerless record is not everybody's.
-func ownsRecord(owner, user string, admin bool) bool {
+func OwnsRecord(owner, user string, admin bool) bool {
 	if owner == "" {
 		return admin
 	}

@@ -484,9 +484,9 @@ func AuthSetUserTimezone(db Database, username, iana string) {
 	db.Set(AuthTable, "user:"+username, user)
 }
 
-// AuthGetNotifyForward returns where this user's notifications are forwarded:
+// authGetNotifyForward returns where this user's notifications are forwarded:
 // "", "email", "phone" or "both".
-func AuthGetNotifyForward(db Database, username string) string {
+func authGetNotifyForward(db Database, username string) string {
 	var user AuthUser
 	if db == nil || !db.Get(AuthTable, "user:"+username, &user) {
 		return ""
@@ -530,7 +530,7 @@ func AuthSetNotifyForward(db Database, username, where string) {
 // an onboarding prompt would key on, and collapsing the two now would mean
 // inventing the distinction again later against data that has lost it.
 func ResolveNotifyForward(db Database, username string) string {
-	if where := AuthGetNotifyForward(db, username); where != "" {
+	if where := authGetNotifyForward(db, username); where != "" {
 		return where
 	}
 	return "off"
