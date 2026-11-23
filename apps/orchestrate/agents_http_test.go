@@ -78,3 +78,35 @@ func TestTheLimitsListRoundTrips(t *testing.T) {
 		t.Errorf("another user read the limits: %d %s", w.Code, w.Body.String())
 	}
 }
+
+// What the share dialog disallowed for the people an agent is shared with
+// survives the editor's whole-record save, which never carries it, and one
+// that sends it empty.
+func TestAgentSave_WholeRecordFormKeepsWhatTheShareDisallowed(t *testing.T) {
+	app, req, udb := authedApp(t)
+	w := httptest.NewRecorder()
+	routed(app)(w, req(http.MethodPost, "/api/agents", map[string]any{"name": "Wren", "orchestrator_prompt": "be helpful"}))
+	if w.Code != http.StatusOK {
+		t.Fatalf("create agent: %d %s", w.Code, w.Body.String())
+	}
+	var agent AgentRecord
+	_ = json.Unmarshal(w.Body.Bytes(), &agent)
+	a, _ := loadAgent(udb, agent.ID)
+	a.WithheldFromRecipients = []string{"jira"}
+	if _, err := saveAgent(udb, a); err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range []map[string]any{
+		{"id": agent.ID, "name": "Wren", "orchestrator_prompt": "be brief"},
+		{"id": agent.ID, "name": "Wren", "orchestrator_prompt": "be brief", "withheld_from_recipients": []string{}},
+	} {
+		w = httptest.NewRecorder()
+		routed(app)(w, req(http.MethodPost, "/api/agents", body))
+		if w.Code != http.StatusOK {
+			t.Fatalf("form save: %d %s", w.Code, w.Body.String())
+		}
+		if got, _ := loadAgent(udb, agent.ID); len(got.WithheldFromRecipients) != 1 {
+			t.Errorf("a whole-record save cleared what the share disallowed: %+v", got.WithheldFromRecipients)
+		}
+	}
+}

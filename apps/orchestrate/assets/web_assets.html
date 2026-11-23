@@ -569,11 +569,13 @@
       var wrap = el('div', {class: 'ui-orch-connect'});
       wrap.appendChild(el('div', {class: 'ui-orch-connect-icon'}, ['🔌']));
       var msg = el('div', {class: 'ui-orch-connect-body'});
-      msg.appendChild(el('div', {class: 'ui-orch-connect-title'}, ['Connect ' + server]));
+      // title, sub and button, when sent, say it for a kind of connection
+      // that is not a sign-in (a key somebody lent, which takes your own).
+      msg.appendChild(el('div', {class: 'ui-orch-connect-title'}, [String(d.title || ('Connect ' + server))]));
       msg.appendChild(el('div', {class: 'ui-orch-connect-sub'},
-        ['This needs access to your ' + server + ' account. Sign in to continue, then send your message again.']));
+        [String(d.sub || ('This needs access to your ' + server + ' account. Sign in to continue, then send your message again.'))]));
       wrap.appendChild(msg);
-      var btn = el('button', {class: 'ui-orch-connect-btn', type: 'button'}, ['Connect']);
+      var btn = el('button', {class: 'ui-orch-connect-btn', type: 'button'}, [String(d.button || 'Connect')]);
       if (!url) { btn.disabled = true; }
       btn.addEventListener('click', function() {
         var w = window.open(url, 'gohort-connect', 'width=600,height=760');

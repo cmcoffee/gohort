@@ -192,6 +192,7 @@ func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	carried, _ := workspaceFilesArg(args[carriedWorkspaceFiles])
 	applyToolExtras(sess, strings.TrimSpace(StringArg(args, "name")), args, files, carried)
+	noteToolboxReadCalls(sess, strings.TrimSpace(StringArg(args, "name")))
 	return res, nil
 }
 

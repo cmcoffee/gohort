@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -62,17 +63,21 @@ func TestThePlanAsksAboutWhatTheyCannotReach(t *testing.T) {
 	if len(plan) != 1 || keys[0] != "cred:wiki" {
 		t.Fatalf("decisions = %v", keys)
 	}
-	// Four answers, defaulting to the one that keeps each person's calls
-	// going out as themselves.
+	// Four answers, defaulting to the split: the agent works for them from
+	// the start on reads, and a write goes out as them.
 	for _, d := range plan {
 		if !strings.HasPrefix(d.Key, "cred:") {
 			continue
 		}
-		if len(d.Options) != 4 {
-			t.Errorf("the credential fork has %d options", len(d.Options))
+		var values []string
+		for _, o := range d.Options {
+			values = append(values, o.Value)
 		}
-		if d.Default != credOwn {
-			t.Errorf("the credential defaults to %q rather than their own key", d.Default)
+		if strings.Join(values, ",") != "read,own,write,withhold" {
+			t.Errorf("the credential fork offers %v", values)
+		}
+		if d.Default != credRead {
+			t.Errorf("the credential defaults to %q rather than your account for reads, theirs for writes", d.Default)
 		}
 		for _, o := range d.Options {
 			if o.Help == "" {
@@ -458,5 +463,28 @@ func TestALendThroughATeamEndsWithTheTeamShare(t *testing.T) {
 				t.Error("the team share ended but bob still holds the key")
 			}
 		})
+	}
+}
+
+// Disallow withholds the credential for the people the agent is shared with,
+// and only them: its owner keeps it.
+func TestDisallowWithholdsItForThePeopleItIsSharedWith(t *testing.T) {
+	udb, _ := guidedFixture(t)
+	lines := shareAgentGuided("alice", "a1", []string{"bob"}, map[string]string{"cred:wiki": credWithhold})
+	if !strings.Contains(strings.Join(lines, " | "), "withheld for the people you share this with") {
+		t.Errorf("the report does not say what was done: %v", lines)
+	}
+	if got := Secure().SharedWithUser("bob"); len(got) != 0 {
+		t.Errorf("a disallowed key was lent: %+v", got)
+	}
+	a, _ := loadAgent(udb, "a1")
+	if !slices.Contains(a.WithheldFromRecipients, "wiki") || slices.Contains(a.DisabledCredentials, "wiki") {
+		t.Fatalf("withheld %v, disabled %v", a.WithheldFromRecipients, a.DisabledCredentials)
+	}
+	if !credentialDenySet(a, "bob")["wiki"] {
+		t.Error("the person it is shared with can still use the disallowed key")
+	}
+	if credentialDenySet(a, "alice")["wiki"] {
+		t.Error("disallowing it for the people it is shared with took it from its owner")
 	}
 }

@@ -80,6 +80,18 @@ func credentialDenySet(a AgentRecord, user string) map[string]bool {
 		}
 		add(c)
 	}
+	// What the owner disallowed for the people they share it with: denied to
+	// anybody running it but its owner, the owner keeping it. A sub-agent
+	// follows its parents here as with opt-outs.
+	if owner := strings.TrimSpace(a.Owner); user != "" && owner != "" && user != owner {
+		withheld := append([]string(nil), a.WithheldFromRecipients...)
+		for _, p := range parents {
+			withheld = append(withheld, p.WithheldFromRecipients...)
+		}
+		for _, c := range withheld {
+			add(c)
+		}
+	}
 	// Tier 3 (on the credential, the owner's own): an API of theirs narrowed
 	// to some of their agents ("Only these agents") is denied to every other
 	// agent. Fails closed: an agent not on the list is denied, whatever else

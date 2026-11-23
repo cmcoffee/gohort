@@ -317,6 +317,14 @@ type SecureCredential struct {
 	// (legacy behavior). Set to ["GET","HEAD"] for a read-only
 	// credential. Method check happens before any URL or auth work.
 	AllowedMethods []string `json:"allowed_methods,omitempty"`
+	// ReadCalls are the calls through this credential that only read although
+	// they are sent as a write: a search posted as a POST, as Jira's is. Each
+	// is "METHOD /path", matched segment by segment, "*" for one segment and
+	// "**" at the end for the rest. The credential owner's to set
+	// (SetReadCalls, AddReadCalls), never a tool's: somebody this key is lent
+	// to for reads could otherwise write a tool that calls its write a read.
+	// GET, HEAD and OPTIONS read without being listed (credentialCallReads).
+	ReadCalls []string `json:"read_calls,omitempty"`
 	// DeniedURLPatterns is a blacklist applied AFTER AllowedURLPattern.
 	// Useful for "give it Vapi but never the billing endpoints" —
 	// allow=https://api.vapi.ai/** + deny=https://api.vapi.ai/billing/**.
@@ -762,6 +770,7 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 		//   Zeroed, a secured credential is bound to nothing.
 		c.CredScope = existing.CredScope
 		c.SharedForAgents = existing.SharedForAgents
+		c.ReadCalls = existing.ReadCalls
 		c.ApprovedToolBindings = existing.ApprovedToolBindings
 		c.RevokedToolBindings = existing.RevokedToolBindings
 		// Lending is NOT preserved: it is ordinary config the form carries,
@@ -1280,6 +1289,9 @@ type PerUserConnection struct {
 	// lift a lock the admin put on the credential.
 	Secured      bool `json:"secured"`
 	AdminSecured bool `json:"admin_secured"`
+	// Owner is whose credential a connKindLent entry is: the person who lent
+	// it, which the save names so two people's "jira" never mix.
+	Owner string `json:"owner,omitempty"`
 }
 
 // PerUserConnectionsFor returns the per_user credentials a user can connect, each
@@ -1316,6 +1328,39 @@ func (s *SecureAPI) PerUserConnectionsFor(user string) []PerUserConnection {
 // live in different namespaces), so the panel sends the kind back with a save
 // and the handler routes on it.
 const ConnKindOwn = "own"
+
+// connKindLent marks a credential somebody lent the user: they can connect
+// their own key on it, and every call to it then goes out as them. Unexported
+// to keep core's names down; the account page and the panel's script match
+// the value "lent".
+const connKindLent = "lent"
+
+// LentConnectionsFor is every key-based credential lent to user, whatever
+// agent the lend was made for, as a connection they can put their own key on
+// (SaveSharedAccount). An OAuth one is not listed: its calls already go out
+// with the person's own sign-in.
+func (s *SecureAPI) LentConnectionsFor(user string) []PerUserConnection {
+	if !s.ready() || strings.TrimSpace(user) == "" {
+		return nil
+	}
+	var out []PerUserConnection
+	for _, ref := range peershare.List(s.db, sharedCredentialsTable, user) {
+		c, ok := s.LoadUser(ref.Owner, ref.ID)
+		if !ok || c.Disabled || c.Type == SecureCredNone || c.IsAuthCode() || !lentTo(c, user) {
+			continue
+		}
+		_, has := s.recipientOwnSecret(c, user)
+		out = append(out, PerUserConnection{
+			Name: c.Name,
+			Description: "Lent to you by " + c.Owner + ". Connect your own key and every call to it goes out as you, reads included: " +
+				"you may then find less than you did, because it was reading with " + c.Owner + "'s access. A write through it needs your own.",
+			Connected: has,
+			Kind:      connKindLent,
+			Owner:     c.Owner,
+		})
+	}
+	return out
+}
 
 // OwnConnectionsFor lists a user's own credentials that take a key, each with
 // whether one is stored. A no-auth credential has nothing to connect and is
@@ -2766,9 +2811,12 @@ type apiCall struct {
 	saveRoot string // the workspace savePath is in, which the write may not leave
 	parsed   *url.URL
 
-	// The secret and whose call it is (loadSecret).
-	secret   string
-	callUser string
+	// The secret and whose call it is (loadSecret). recipientOwn: the caller
+	// is somebody this key is lent to, and the call goes out with their own
+	// account instead (recipientUsesOwn), decided in allowed.
+	secret       string
+	callUser     string
+	recipientOwn bool
 
 	// Where it may go and for how long (online, timeout). ctx is the call's
 	// own, made in dispatch so its cancel is deferred there.
@@ -2882,10 +2930,22 @@ func (ac *apiCall) allowed() bool {
 	// This is the point of the two lists: a write through somebody else's key
 	// arrives at the far end as THEM, and no allowlist downstream can tell the
 	// two apart afterwards.
-	if readOnlyForUser(c, sessUsername(sess)) && ac.method != http.MethodGet && ac.method != http.MethodHead {
-		return ac.exit("", s.refuse(c, sess, ac.method, ac.rawURL, fmt.Sprintf(
-			"%s is not allowed: %s lent you %q for reads (GET/HEAD). Ask them for a read-write share if this genuinely has to write, and say what it would write — a write through their key is recorded as theirs",
-			ac.method, c.Owner, c.Name)))
+	//
+	// Somebody who connected their own account for it goes out as themselves
+	// on every call, so the lend's limit does not apply to them: it limits
+	// what the OWNER's key does (recipientUsesOwn). A write by somebody who
+	// has not is refused with the way to connect one, not with a request for
+	// a wider lend.
+	user := sessUsername(sess)
+	ac.recipientOwn = s.recipientUsesOwn(c, user)
+	if readOnlyForUser(c, user) && !ac.recipientOwn && !credentialCallReads(c, ac.method, ac.rawURL) {
+		refused := s.refuse(c, sess, ac.method, ac.rawURL, fmt.Sprintf(
+			"%s was not sent: %s lent you %q for reads, and this call writes. A write goes out as you, with your own account: connect yours under Extensions > Connected accounts (%q, lent by %s), and it can be made. Until then, say what it would write",
+			ac.method, c.Owner, c.Name, c.Name, c.Owner))
+		if sess != nil && sess.CredentialConnectPrompt != nil {
+			sess.CredentialConnectPrompt(c.Owner, c.Name)
+		}
+		return ac.exit("", credentialConnectError{owner: c.Owner, name: c.Name, err: refused})
 	}
 
 	// Method allowlist check. Empty list = all methods allowed
@@ -3027,6 +3087,12 @@ func (ac *apiCall) loadSecret() bool {
 			var ok bool
 			var readable bool
 			ac.secret, readable, ok = s.resolveSecretRead(c, ac.callUser)
+			// Their own account, on a key lent to them: every call, reads
+			// included, and no falling back to the owner's when it fails.
+			if ac.recipientOwn {
+				ac.secret, ok = s.recipientOwnSecret(c, ac.callUser)
+				readable = true
+			}
 			if !readable {
 				// The store could not answer. The credential is not missing
 				// anything, and telling somebody to re-add it would have them
@@ -3555,6 +3621,12 @@ func (ac *apiCall) reply() bool {
 		sb.WriteString(secureAPIRefusalNote + "\n")
 	} else if s := ac.resp.StatusCode; s == 400 || s == 404 || s == 405 || s == 422 {
 		sb.WriteString(secureAPIShapeNote(s) + "\n")
+	}
+	// With their own account on a key lent to them, a provider that answers
+	// "not found" or "forbidden" is usually saying their account cannot see
+	// it, which the owner's could: say that, not that the tool is broken.
+	if s := ac.resp.StatusCode; ac.recipientOwn && (s == 403 || s == 404) {
+		fmt.Fprintf(&sb, "This call went out with your own account. The service may answer this way for what your account cannot see; %s's account can. Ask them, or ask the service's administrator for access, before treating the tool as broken.\n", ac.c.Owner)
 	}
 	if strings.Contains(ac.ct, "json") {
 		var anyVal interface{}
@@ -4457,6 +4529,202 @@ func readOnlyForUser(c SecureCredential, user string) bool {
 		return false
 	}
 	return credSliceHas(c.SharedReadOnly, user) && !credSliceHas(c.SharedReadWrite, user)
+}
+
+// lentTo reports whether c is a user-owned credential on one of whose share
+// lists user is, whatever agent the lend was made for.
+func lentTo(c SecureCredential, user string) bool {
+	user = strings.TrimSpace(user)
+	if user == "" || c.Owner == "" || user == c.Owner {
+		return false
+	}
+	return credSliceHas(c.SharedReadOnly, user) || credSliceHas(c.SharedReadWrite, user)
+}
+
+// recipientUsesOwn reports whether a call by user through c, a key lent to
+// them, goes out with their own account: an OAuth credential always does (its
+// token is per person), a key once they connected one (SaveSharedAccount).
+func (s *SecureAPI) recipientUsesOwn(c SecureCredential, user string) bool {
+	if !lentTo(c, user) {
+		return false
+	}
+	if c.IsAuthCode() {
+		return true
+	}
+	_, ok := s.recipientOwnSecret(c, user)
+	return ok
+}
+
+// recipientOwnSecret is the key user connected for themselves on c, a
+// credential lent to them: kept in the per-person slot under the owner's
+// name for it, so two people's "jira" never mix.
+func (s *SecureAPI) recipientOwnSecret(c SecureCredential, user string) (string, bool) {
+	if !lentTo(c, user) {
+		return "", false
+	}
+	v, ok := s.loadUserSecret(credStoreKey(c.Owner, c.Name), user)
+	if !ok || strings.TrimSpace(v) == "" {
+		return "", false
+	}
+	return v, true
+}
+
+// SaveSharedAccount stores user's own key for owner's credential name, which
+// is lent to them, so their calls through it go out as them. Empty clears it,
+// and their calls go back to the lend.
+func (s *SecureAPI) SaveSharedAccount(owner, name, user, value string) error {
+	c, ok := s.LoadUser(owner, name)
+	if !ok {
+		return fmt.Errorf("no credential %q of %s's", name, owner)
+	}
+	if !lentTo(c, user) {
+		return fmt.Errorf("%s has not lent you %q", owner, name)
+	}
+	if c.IsAuthCode() {
+		return fmt.Errorf("%q signs in with your own account already: connect it with its Connect button", name)
+	}
+	return s.SaveUserSecret(credStoreKey(owner, name), user, value)
+}
+
+// HasSharedAccount reports whether user connected their own key for owner's
+// credential name, which is lent to them.
+func (s *SecureAPI) HasSharedAccount(owner, name, user string) bool {
+	c, ok := s.LoadUser(owner, name)
+	if !ok {
+		return false
+	}
+	_, has := s.recipientOwnSecret(c, user)
+	return has
+}
+
+// credentialConnectError is a write refused on a key lent for reads, to
+// somebody who can make it with their own account once they connect one.
+type credentialConnectError struct {
+	owner, name string
+	err         error
+}
+
+func (e credentialConnectError) Error() string { return e.err.Error() }
+func (e credentialConnectError) Unwrap() error { return e.err }
+
+// credentialConnectNeeded reports whether err is a write that waits for the
+// caller to connect their own account for owner's credential name. The chat
+// learns of it through ToolSession.CredentialConnectPrompt instead.
+func credentialConnectNeeded(err error) (owner, name string, ok bool) {
+	var e credentialConnectError
+	if errors.As(err, &e) {
+		return e.owner, e.name, true
+	}
+	return "", "", false
+}
+
+// credentialCallReads reports whether a call through c only reads: its
+// method does (GET, HEAD, OPTIONS), or the owner listed it (ReadCalls). A path
+// that could mean something else at the server (dot segments, an encoded
+// slash or dot) is never a listed read.
+func credentialCallReads(c SecureCredential, method, rawURL string) bool {
+	if !IsWriteMethod(method) {
+		return true
+	}
+	if len(c.ReadCalls) == 0 {
+		return false
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	esc := strings.ToLower(u.EscapedPath())
+	if strings.Contains(esc, "%2f") || strings.Contains(esc, "%2e") || strings.Contains(esc, "%5c") {
+		return false
+	}
+	for _, seg := range strings.Split(u.Path, "/") {
+		if seg == "." || seg == ".." {
+			return false
+		}
+	}
+	for _, rc := range c.ReadCalls {
+		m, p, ok := strings.Cut(strings.TrimSpace(rc), " ")
+		if ok && strings.EqualFold(m, method) && readCallPathMatches(strings.TrimSpace(p), u.Path) {
+			return true
+		}
+	}
+	return false
+}
+
+// readCallPathMatches matches a ReadCalls path pattern against a request
+// path, segment by segment: "*" is one segment, "**" last is the rest.
+func readCallPathMatches(pattern, reqPath string) bool {
+	ps := strings.Split(strings.Trim(pattern, "/"), "/")
+	xs := strings.Split(strings.Trim(reqPath, "/"), "/")
+	for i, seg := range ps {
+		if seg == "**" && i == len(ps)-1 {
+			return true
+		}
+		if i >= len(xs) || (seg != "*" && seg != xs[i]) {
+			return false
+		}
+	}
+	return len(ps) == len(xs)
+}
+
+// cleanReadCalls normalizes ReadCalls entries: "METHOD /path", the method a
+// write (a read needs no entry) and the path absolute, without duplicates.
+func cleanReadCalls(calls []string) ([]string, error) {
+	var out []string
+	seen := map[string]bool{}
+	for _, rc := range calls {
+		m, p, ok := strings.Cut(strings.TrimSpace(rc), " ")
+		m, p = strings.ToUpper(strings.TrimSpace(m)), strings.TrimSpace(p)
+		if !ok || m == "" || p == "" {
+			return nil, fmt.Errorf("%q is not a call: write it as METHOD /path, such as POST /rest/api/3/search/jql", rc)
+		}
+		if !IsWriteMethod(m) {
+			continue // already a read
+		}
+		if !strings.HasPrefix(p, "/") {
+			p = "/" + p
+		}
+		e := m + " " + p
+		if !seen[e] {
+			seen[e] = true
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
+// SetReadCalls replaces the calls owner's credential name counts as reads.
+func (s *SecureAPI) SetReadCalls(owner, name string, calls []string) error {
+	return s.updateReadCalls(owner, name, calls, false)
+}
+
+// AddReadCalls adds to them: what marking a toolbox action as one that only
+// reads does, on a toolbox on its author's own credential.
+func (s *SecureAPI) AddReadCalls(owner, name string, calls []string) error {
+	return s.updateReadCalls(owner, name, calls, true)
+}
+
+func (s *SecureAPI) updateReadCalls(owner, name string, calls []string, add bool) error {
+	if !s.ready() || name == "" {
+		return fmt.Errorf("a credential name is required")
+	}
+	clean, err := cleanReadCalls(calls)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := credStoreKey(owner, name)
+	var c SecureCredential
+	if !s.db.Get(secureAPITable, key, &c) {
+		return fmt.Errorf("credential %q not found", name)
+	}
+	if add {
+		clean, _ = cleanReadCalls(append(append([]string{}, c.ReadCalls...), clean...))
+	}
+	c.ReadCalls = clean
+	s.db.Set(secureAPITable, key, c)
+	return nil
 }
 
 // SetCredentialShares replaces both share lists on a user-owned credential and

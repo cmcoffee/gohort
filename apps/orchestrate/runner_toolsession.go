@@ -332,6 +332,22 @@ func (t *chatTurn) wireLiveCallbacks(sess *ToolSession) {
 			"url":    "/account/mcp/connect?server=" + url.QueryEscape(server),
 		})
 	}
+	// A write through a key somebody lent for reads waits for the person's
+	// own account on it: the same card, pointing at Connected accounts, where
+	// a lent key takes their own.
+	sess.CredentialConnectPrompt = func(owner, name string) {
+		t.sse.Send(map[string]any{
+			"kind":   "block",
+			"type":   "connect_required",
+			"id":     fmt.Sprintf("connect-%d", time.Now().UnixNano()),
+			"server": name,
+			"title":  "Connect your own " + name + " account",
+			"sub": owner + " lent you " + name + " for reads. A write goes out as you, so it needs your own key: add it under Connected accounts, " +
+				"then send your message again. From then on every call to it goes out as you, reads included.",
+			"button": "Open Connected accounts",
+			"url":    "/extensions#connected-accounts",
+		})
+	}
 	// Inline sub-agent approval card — surfaces a drafted-but-held sub-agent as an
 	// Approve/Deny card right in the conversation, wired to the same authorization
 	// the Permissions pane shows. See ToolSession.ApprovalPrompt / create_agent.

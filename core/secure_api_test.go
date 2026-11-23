@@ -1250,6 +1250,160 @@ func TestALendForReadsMadeForAnAgentCannotWrite(t *testing.T) {
 	}
 }
 
+// lendTestServer is a local server that records the Authorization header of
+// each request, with alice's bearer key "alice-key" lent to bob for reads
+// inside agent a1. Answers 404 under /missing.
+func lendTestServer(t *testing.T) (*httptest.Server, *[]string) {
+	t.Helper()
+	secureAPITestStore(t)
+	adminUsers(t, "alice")
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Method+" "+r.URL.Path+" "+r.Header.Get("Authorization"))
+		if strings.HasPrefix(r.URL.Path, "/missing") {
+			w.WriteHeader(http.StatusNotFound)
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+	if err := Secure().Save(SecureCredential{Name: "jira", Type: SecureCredBearer, Owner: "alice",
+		AllowedURLPattern: imageHostPattern(srv.URL)}, "alice-key"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Secure().LendForAgent("alice", "jira", "a1", []string{"bob"}, false); err != nil {
+		t.Fatal(err)
+	}
+	return srv, &seen
+}
+
+func lendCall(t *testing.T, user, method, url string) (string, error) {
+	t.Helper()
+	c, ok := Secure().ResolveIn("jira", user, "a1")
+	if !ok {
+		t.Fatalf("jira does not resolve for %s", user)
+	}
+	return Secure().dispatch(c, map[string]any{"url": url, "method": method, "body": "{}"}, &ToolSession{Username: user, AgentID: "a1"})
+}
+
+// A call the owner listed as one that only reads (a search sent as a POST)
+// goes through a key lent for reads; any other write waits for the person's
+// own account, and says so in a way the chat can turn into a Connect card.
+// A path that could mean something else at the server is never a listed read.
+func TestAListedReadGoesThroughALendForReads(t *testing.T) {
+	srv, _ := lendTestServer(t)
+	if err := Secure().SetReadCalls("alice", "jira", []string{"post /rest/api/3/search/jql", "POST /rest/api/3/issue/*/view"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lendCall(t, "bob", "POST", srv.URL+"/rest/api/3/search/jql"); err != nil {
+		t.Errorf("a listed read was refused: %v", err)
+	}
+	if _, err := lendCall(t, "bob", "POST", srv.URL+"/rest/api/3/issue/OPS-1/view"); err != nil {
+		t.Errorf("a listed read with a wildcard segment was refused: %v", err)
+	}
+	for _, write := range []string{
+		"/rest/api/3/issue",
+		"/rest/api/3/search/jql/../../issue",
+		"/rest/api/3/search%2Fjql",
+		"/rest/api/3/issue/OPS-1/view/extra",
+	} {
+		_, err := lendCall(t, "bob", "POST", srv.URL+write)
+		owner, name, ok := credentialConnectNeeded(err)
+		if err == nil || !ok || owner != "alice" || name != "jira" {
+			t.Errorf("POST %s through a lend for reads: %v (connect needed %v %s/%s)", write, err, ok, owner, name)
+		}
+	}
+	// A pattern ending in ** covers what is under it, and never a path that
+	// climbs out of it, which the server would read as somewhere else.
+	if err := Secure().SetReadCalls("alice", "jira", []string{"POST /rest/api/3/search/**"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lendCall(t, "bob", "POST", srv.URL+"/rest/api/3/search/saved/run"); err != nil {
+		t.Errorf("a read under a ** pattern was refused: %v", err)
+	}
+	if _, err := lendCall(t, "bob", "POST", srv.URL+"/rest/api/3/search/../issue"); err == nil {
+		t.Error("a path climbing out of a ** pattern was read as a listed read")
+	}
+	if err := Secure().SetReadCalls("alice", "jira", []string{"post /rest/api/3/search/jql", "POST /rest/api/3/issue/*/view"}); err != nil {
+		t.Fatal(err)
+	}
+	// An edit of the credential keeps the list: the edit form does not carry it.
+	c, _ := Secure().LoadUser("alice", "jira")
+	c.ReadCalls = nil
+	if err := Secure().Save(c, ""); err != nil {
+		t.Fatal(err)
+	}
+	if c2, _ := Secure().LoadUser("alice", "jira"); len(c2.ReadCalls) != 2 {
+		t.Errorf("an edit dropped the read calls: %v", c2.ReadCalls)
+	}
+	if err := Secure().SetReadCalls("alice", "jira", []string{"search"}); err == nil {
+		t.Error("an entry that is not METHOD /path was taken")
+	}
+}
+
+// The refused write asks the chat for the card that leads to Connected
+// accounts, naming whose key it is; a read does not.
+func TestAWriteWaitingForTheirOwnAccountAsksForTheCard(t *testing.T) {
+	srv, _ := lendTestServer(t)
+	var asked []string
+	sess := &ToolSession{Username: "bob", AgentID: "a1", CredentialConnectPrompt: func(owner, name string) { asked = append(asked, owner+"/"+name) }}
+	c, _ := Secure().ResolveIn("jira", "bob", "a1")
+	Secure().dispatch(c, map[string]any{"url": srv.URL + "/rest/api/3/issue/OPS-1", "method": "GET"}, sess)
+	if len(asked) != 0 {
+		t.Errorf("a read asked for the card: %v", asked)
+	}
+	Secure().dispatch(c, map[string]any{"url": srv.URL + "/rest/api/3/issue", "method": "POST", "body": "{}"}, sess)
+	if len(asked) != 1 || asked[0] != "alice/jira" {
+		t.Errorf("the refused write asked for %v", asked)
+	}
+}
+
+// Somebody a key is lent to connects their own, and from then on every call
+// goes out with theirs, reads included; the owner's own calls keep the
+// owner's. A provider's "not found" under their own account says it may be
+// theirs that cannot see it. Clearing it goes back to the lend.
+func TestTheirOwnAccountCarriesEveryCallOnceConnected(t *testing.T) {
+	srv, seen := lendTestServer(t)
+	if err := Secure().SaveSharedAccount("alice", "jira", "carol", "carol-key"); err == nil {
+		t.Error("somebody the key is not lent to stored an account on it")
+	}
+	if err := Secure().SaveSharedAccount("alice", "jira", "bob", "bob-key"); err != nil {
+		t.Fatal(err)
+	}
+	if !Secure().HasSharedAccount("alice", "jira", "bob") {
+		t.Error("the account is not reported as connected")
+	}
+	if _, err := lendCall(t, "bob", "GET", srv.URL+"/rest/api/3/issue/OPS-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lendCall(t, "bob", "POST", srv.URL+"/rest/api/3/issue"); err != nil {
+		t.Fatalf("a write with their own account connected was refused: %v", err)
+	}
+	if _, err := lendCall(t, "alice", "POST", srv.URL+"/rest/api/3/issue"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"GET /rest/api/3/issue/OPS-1 Bearer bob-key",
+		"POST /rest/api/3/issue Bearer bob-key",
+		"POST /rest/api/3/issue Bearer alice-key",
+	}
+	if strings.Join(*seen, "|") != strings.Join(want, "|") {
+		t.Errorf("keys sent:\n%s\nwant:\n%s", strings.Join(*seen, "\n"), strings.Join(want, "\n"))
+	}
+	out, _ := lendCall(t, "bob", "GET", srv.URL+"/missing/OPS-9")
+	if !strings.Contains(out, "went out with your own account") || !strings.Contains(out, "alice's account can") {
+		t.Errorf("a not found under their own account does not say whose access it may be: %s", out)
+	}
+	if out, _ := lendCall(t, "alice", "GET", srv.URL+"/missing/OPS-9"); strings.Contains(out, "your own account") {
+		t.Errorf("the owner's own call carries the recipient's note: %s", out)
+	}
+	if err := Secure().SaveSharedAccount("alice", "jira", "bob", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lendCall(t, "bob", "POST", srv.URL+"/rest/api/3/issue"); err == nil {
+		t.Error("with their account cleared, a write still went through")
+	}
+}
+
 // A read-write lend writes. The grant is a grant.
 func TestAReadWriteLendCanWrite(t *testing.T) {
 	secureAPITestStore(t)

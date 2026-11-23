@@ -26,10 +26,11 @@ import (
 // credential has four, and a two-state control that grew a third option is how
 // the third one ends up meaning "whatever the second one meant".
 const (
-	credOwn   = "own"  // they supply their own key of this name
-	credRead  = "read" // lend mine, reads only
-	credWrite = "write"
-	shareSkip = "skip" // turn it off for the agent entirely
+	credOwn      = "own"      // they bring their own
+	credRead     = "read"     // my account for reads, theirs for writes
+	credWrite    = "write"    // share mine, writes included
+	credWithhold = "withhold" // disallow: withheld for the people it is shared with
+	shareSkip    = "skip"     // turn it off for the agent entirely (no longer offered)
 )
 
 // planAgentShare asks about everything the recipients cannot reach.
@@ -73,37 +74,37 @@ func credentialDecision(it reachItem, owner string) shareledger.Decision {
 	//
 	// The flow only declines to OFFER. The refusal that matters is on the
 	// setter, where every other door goes through too.
-	lend, write := true, true
+	lend, lendWrite := true, true
 	if c, ok := Secure().LoadUser(owner, it.id); ok {
-		lend, write = c.MayLend()
+		lend, lendWrite = c.MayLend()
 	}
-	intro := "Whose identity should these calls go out as? This is the one dependency that is not a copy somebody is missing."
-	opts := []shareledger.Choice{
-		{Value: credOwn, Label: "They bring their own",
-			Help: "The agent looks for a credential of this name in THEIR namespace. Their calls go out as them, which is usually what you want. If they have none, the tools that need it fail and say so."},
-	}
+	intro := "Whose account should the people you share this with use? They can always connect their own: once they do, every call to it goes out as them, reads included, and they see only what their own access allows, which may be less than yours."
+	read := shareledger.Choice{Value: credRead, Label: "My account for reads, theirs for writes",
+		Help: "Reads go through your key, so the agent works for them from the start, and they read with your access until they connect their own account. A write asks them to connect theirs first, so it goes out as them."}
+	own := shareledger.Choice{Value: credOwn, Label: "They bring their own",
+		Help: "The agent uses their own credential of this name. Until they have one, the tools that need it fail and say so."}
+	write := shareledger.Choice{Value: credWrite, Label: "Share mine, writes included",
+		Help: "Everything goes through your key until they connect their own, writes included: what they write arrives at the far end as YOU, and only gohort's record says who it was. For a service people have no account of their own on."}
+	withhold := shareledger.Choice{Value: credWithhold, Label: "Disallow",
+		Help: "The tools that use it are withheld for the people you share this with. You keep them."}
+	var opts []shareledger.Choice
+	def := credRead
 	switch {
 	case !lend:
-		intro += " You have set this key to be lent to nobody, so the only answers left are theirs or none. Change that on the credential itself if you meant to lend it."
-	case !write:
-		opts = append(opts, shareledger.Choice{Value: credRead, Label: "Lend them mine, reads only",
-			Help: "GET and HEAD through your key. Anything else is refused and the refusal is recorded against their name."})
-		intro += " You have set this key to be lent for reads only, so a write lend is not offered."
+		intro += " You have set this key to be lent to nobody, so your account is not offered. Change that on the credential itself if you meant to lend it."
+		opts, def = []shareledger.Choice{own, withhold}, credOwn
+	case !lendWrite:
+		intro += " You have set this key to be lent for reads only, so sharing it for writes is not offered."
+		opts = []shareledger.Choice{read, own, withhold}
 	default:
-		opts = append(opts,
-			shareledger.Choice{Value: credRead, Label: "Lend them mine, reads only",
-				Help: "GET and HEAD through your key. Anything else is refused and the refusal is recorded against their name."},
-			shareledger.Choice{Value: credWrite, Label: "Lend them mine, reads and writes",
-				Help: "What they write arrives at the far end as YOU: the page says you edited it. The ledger is the only place the two can be told apart."})
+		opts = []shareledger.Choice{read, own, write, withhold}
 	}
-	opts = append(opts, shareledger.Choice{Value: shareSkip, Label: "Leave it out",
-		Help: "Turn this credential off for the agent entirely, for everybody including you."})
 	return shareledger.Decision{
 		Key:     "cred:" + it.id,
 		Title:   "Credential — " + it.Name,
 		Intro:   intro,
 		Options: opts,
-		Default: credOwn,
+		Default: def,
 	}
 }
 
@@ -162,9 +163,18 @@ func applyCredentialAnswer(owner, agentID string, it reachItem, recipients []str
 		recordShareLend(owner, agentID, it.id, people)
 		who := ShareRecipientsText(recipients)
 		if answer == credWrite {
-			return "Credential " + it.Name + " → " + who + ", reads and writes, inside this agent only. Their writes arrive as you."
+			return "Credential " + it.Name + " → " + who + ": your key for everything, writes included, inside this agent only, until they connect their own. Their writes arrive as you."
 		}
-		return "Credential " + it.Name + " → " + who + ", reads only, inside this agent only"
+		return "Credential " + it.Name + " → " + who + ": your key for reads, inside this agent only; a write waits for them to connect their own account"
+	case credWithhold:
+		udb := UserDB(orchestrateBaseDB, owner)
+		if a, ok := loadAgent(udb, agentID); ok && a.Owner == owner {
+			if !namedIn(a.WithheldFromRecipients, it.id) {
+				a.WithheldFromRecipients = append(a.WithheldFromRecipients, it.id)
+				saveAgent(udb, a)
+			}
+		}
+		return "Credential " + it.Name + ": withheld for the people you share this with; you keep it"
 	case shareSkip:
 		udb := UserDB(orchestrateBaseDB, owner)
 		if a, ok := loadAgent(udb, agentID); ok && a.Owner == owner {

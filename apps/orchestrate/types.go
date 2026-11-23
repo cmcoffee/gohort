@@ -723,6 +723,11 @@ type AgentRecord struct {
 	// itself (SecureCredential.AllowedUsers), the scalable admin control. See
 	// docs/design/tool-credential-namespacing.md.
 	DisabledCredentials []string `json:"disabled_credentials,omitempty"`
+	// WithheldFromRecipients are credentials this agent does not use for the
+	// people it is shared with, while its owner keeps them: Disallow in the
+	// share dialog (share_plan.go). Unlike DisabledCredentials, which switches
+	// one off for everybody, the owner included.
+	WithheldFromRecipients []string `json:"withheld_from_recipients,omitempty"`
 
 	// AllowedUsers is the peer-share recipient set for a USER-OWNED agent: which
 	// other users may see and run this agent besides its Owner. Empty = private to

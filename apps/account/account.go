@@ -296,6 +296,7 @@ func (T *Account) handleConnections(c *jsonapi.Call) (any, error) {
 	// key lives here, with every other key and sign-in), then MCP servers.
 	conns := Secure().PerUserConnectionsFor(user)
 	conns = append(conns, Secure().OwnConnectionsFor(user)...)
+	conns = append(conns, Secure().LentConnectionsFor(user)...)
 	conns = append(conns, MCP().PerUserOAuthConnectionsFor(user)...)
 	conns = append(conns, mcppersonal.Connections(user)...)
 	if conns == nil {
@@ -317,6 +318,9 @@ type connectionSave struct {
 	// that says nothing about the lock must not read as a request to
 	// unlock, which is the shape that loses a setting nobody touched.
 	Secured *bool `json:"secured,omitempty"`
+	// Owner is who lent the credential, on a connection of kind "lent" (a key
+	// somebody lent this user; core names it connKindLent).
+	Owner string `json:"owner,omitempty"`
 }
 
 // handleConnectionSave sets or clears the user's secret for one integration,
@@ -338,6 +342,20 @@ func (T *Account) handleConnectionSave(c *jsonapi.Call, body connectionSave) (an
 			return nil, jsonapi.BadRequest("paste a key to save")
 		}
 		if err := Secure().SetOwnedSecret(user, body.Name, secret); err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+		return jsonapi.Empty(http.StatusNoContent), nil
+	}
+	// A key somebody lent them: their own key on it, so their calls go out as
+	// them. Disconnect goes back to the lend.
+	if body.Kind == "lent" {
+		secret := body.Secret
+		if body.Disconnect {
+			secret = ""
+		} else if strings.TrimSpace(secret) == "" {
+			return nil, jsonapi.BadRequest("paste a key to save")
+		}
+		if err := Secure().SaveSharedAccount(strings.TrimSpace(body.Owner), body.Name, user, secret); err != nil {
 			return nil, jsonapi.BadRequest(err.Error())
 		}
 		return jsonapi.Empty(http.StatusNoContent), nil

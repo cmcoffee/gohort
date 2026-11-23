@@ -46,8 +46,9 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading...</div
   }
   // kind rides along: one of your own credentials can share a name with one
   // the deployment offers, and the server needs to know which key to touch.
-  function save(c, secret, btn){ return post({name:c.name, kind:c.kind||'', secret:secret}, btn); }
-  function disconnect(c, btn){ return post({name:c.name, kind:c.kind||'', disconnect:true}, btn); }
+  // owner rides along on a key somebody lent: two people can lend one name.
+  function save(c, secret, btn){ return post({name:c.name, kind:c.kind||'', owner:c.owner||'', secret:secret}, btn); }
+  function disconnect(c, btn){ return post({name:c.name, kind:c.kind||'', owner:c.owner||'', disconnect:true}, btn); }
   function load(){
     fetch(API, {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(list){
       box.innerHTML = '';
@@ -56,6 +57,7 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading...</div
         var badge = el('span', {class:'acct-conn-badge '+(c.connected?'on':'off'), text: c.connected?'Connected':'Not connected'});
         var head = el('div', {class:'acct-conn-head'}, [el('span',{class:'acct-conn-name',text:c.name})]);
         if (c.kind === 'own') head.appendChild(el('span',{class:'acct-conn-kind',text:'Your API', title:'Configured under Integrations'}));
+        if (c.kind === 'lent') head.appendChild(el('span',{class:'acct-conn-kind',text:'Lent by '+c.owner}));
         head.appendChild(badge);
         var card = el('div', {class:'acct-conn'}, [head]);
         if (c.description) card.appendChild(el('div',{class:'acct-conn-desc',text:c.description}));
@@ -84,7 +86,10 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading...</div
           row.appendChild(inp); row.appendChild(saveBtn);
           if (c.connected){
             var dis = el('button', {class:'ui-row-btn', text:'Disconnect'});
-            dis.addEventListener('click', function(){ window.uiConfirm('Disconnect '+c.name+'? Your stored key is removed.').then(function(ok){ if (ok) disconnect(c, dis); }); });
+            var disMsg = c.kind === 'lent'
+              ? 'Disconnect your key for '+c.name+'? Reads go back to '+c.owner+'\'s key, and a write waits for yours again.'
+              : 'Disconnect '+c.name+'? Your stored key is removed.';
+            dis.addEventListener('click', function(){ window.uiConfirm(disMsg).then(function(ok){ if (ok) disconnect(c, dis); }); });
             row.appendChild(dis);
           }
         }
@@ -95,7 +100,7 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading...</div
         // for the deployment: you may keep your own lock on, never lift
         // theirs. Your own API's reach is part of its configuration, so it is
         // set under Integrations rather than here.
-        if (c.connected && c.kind !== 'own'){
+        if (c.connected && c.kind !== 'own' && c.kind !== 'lent'){
           var lockWrap = el('label', {class:'acct-conn-lock'});
           var lock = el('input', {type:'checkbox'});
           lock.checked = !!c.secured;

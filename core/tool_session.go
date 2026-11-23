@@ -163,6 +163,13 @@ type ToolSession struct {
 	// from a tool goroutine — set once at session creation, don't mutate after.
 	ConnectPrompt func(server string)
 
+	// CredentialConnectPrompt, if set, is invoked when a write through a key
+	// somebody lent the user for reads waits for their own account on it
+	// (owner's credential name). The app wires it to the same inline card, to
+	// the place they add their own key. Nil leaves the refusal's text alone.
+	// Same rules as ConnectPrompt.
+	CredentialConnectPrompt func(owner, name string)
+
 	// ApprovalPrompt, if set, surfaces an INLINE approve/deny card in the
 	// conversation for a one-shot authorization the user must decide on (today:
 	// activating a Builder-drafted sub-agent). The app wires it to emit an

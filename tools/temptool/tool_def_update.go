@@ -14,7 +14,7 @@ import (
 // record, patches the provided fields (for a toolbox: upserts the given
 // actions by name and applies remove_actions), then routes the merged result
 // through createGrouped so persistence is identical to create.
-func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
+func updateGrouped(args map[string]any, sess *ToolSession) (out string, err error) {
 	if sess == nil {
 		return "", fmt.Errorf("requires a session")
 	}
@@ -22,6 +22,13 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("name is required")
 	}
+	// An action marked as one that only reads, saved here, becomes one of its
+	// credential's read calls when the credential is this user's (read_calls.go).
+	defer func() {
+		if err == nil {
+			noteToolboxReadCalls(sess, name)
+		}
+	}()
 	// Only the fields this call actually passes — a patch to url_template
 	// must not be refused over a description it inherited.
 	if err := CheckAuthoredToolText(args); err != nil {

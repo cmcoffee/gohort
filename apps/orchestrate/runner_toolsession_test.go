@@ -71,3 +71,22 @@ func TestALazyToolCalledByNameKeepsItsConfirm(t *testing.T) {
 		t.Error("the tool was not marked loaded for the next round")
 	}
 }
+
+// A turn someone is watching shows the Connect card for a write that waits for
+// their own account on a lent key, pointing at Connected accounts.
+func TestTheTurnShowsTheCardForALentKey(t *testing.T) {
+	buf := &syncBuf{}
+	turn := &chatTurn{user: "bob", sse: &sseWriter{live: buf}}
+	sess := &ToolSession{Username: "bob"}
+	turn.wireLiveCallbacks(sess)
+	if sess.CredentialConnectPrompt == nil {
+		t.Fatal("a watched turn has no card for a lent key")
+	}
+	sess.CredentialConnectPrompt("alice", "jira")
+	out := buf.String()
+	for _, want := range []string{`"type":"connect_required"`, "Connect your own jira account", "alice lent you jira for reads", "/extensions#connected-accounts", "Open Connected accounts"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the card is missing %q:\n%s", want, out)
+		}
+	}
+}
