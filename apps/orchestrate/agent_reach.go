@@ -91,11 +91,11 @@ type agentReachMap struct {
 	Items []reachItem `json:"items"`
 	// Audience is how far the AGENT goes, which is what every dependency is
 	// measured against. An agent nobody has is not missing anything.
-	Audience   string `json:"audience"`
-	Gaps       int    `json:"gaps"`
+	Audience string `json:"audience"`
+	Gaps     int    `json:"gaps"`
 	// Undecided counts the credentials of a shared agent its owner has not
 	// chosen for yet: whose account the people it is shared with use.
-	Undecided  int    `json:"undecided,omitempty"`
+	Undecided  int `json:"undecided,omitempty"`
 	audience   int
 	recipients []string
 }

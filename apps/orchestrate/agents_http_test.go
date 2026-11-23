@@ -93,6 +93,7 @@ func TestAgentSave_WholeRecordFormKeepsWhatTheShareDisallowed(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &agent)
 	a, _ := loadAgent(udb, agent.ID)
 	a.WithheldFromRecipients = []string{"jira"}
+	a.CredentialsDecided = []string{"jira"}
 	if _, err := saveAgent(udb, a); err != nil {
 		t.Fatal(err)
 	}
@@ -105,8 +106,8 @@ func TestAgentSave_WholeRecordFormKeepsWhatTheShareDisallowed(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Fatalf("form save: %d %s", w.Code, w.Body.String())
 		}
-		if got, _ := loadAgent(udb, agent.ID); len(got.WithheldFromRecipients) != 1 {
-			t.Errorf("a whole-record save cleared what the share disallowed: %+v", got.WithheldFromRecipients)
+		if got, _ := loadAgent(udb, agent.ID); len(got.WithheldFromRecipients) != 1 || len(got.CredentialsDecided) != 1 {
+			t.Errorf("a whole-record save cleared the share's choices: withheld %v, decided %v", got.WithheldFromRecipients, got.CredentialsDecided)
 		}
 	}
 }

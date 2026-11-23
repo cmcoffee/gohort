@@ -155,6 +155,11 @@ func TestOnlyCredentialRowsOfferADecision(t *testing.T) {
 			if !it.Decide {
 				t.Errorf("credential row has no decision on it: %+v", it)
 			}
+			// Not the owner's key: there is nothing of theirs to lend, so
+			// the row does not ask them to choose.
+			if it.Fix != "" {
+				t.Errorf("a credential that is not the owner's asks for a choice: %q", it.Fix)
+			}
 			continue
 		}
 		others++
