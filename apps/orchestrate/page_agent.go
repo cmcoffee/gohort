@@ -720,8 +720,8 @@ func (ed *agentEditor) shareSection() {
 			Wide:     true,
 			Subtitle: "Everything it depends on, and how far each of those goes today.",
 			Detail: "Everything here travels with the agent and is scoped to it: whoever runs it reads your documents, runs your tools and activates your skills THROUGH this agent, and nowhere else. They cannot attach any of it to an agent of their own.\n\n" +
-				"One exception, and it is the only thing a share has to ask about. A credential is not a copy somebody is missing — it is whose identity the call goes out as — so it resolves by name in the namespace of whoever is running, and you decide per key whether to lend yours or let them bring their own. That choice is made when you share, in Sharing.\n\n" +
-				"Nothing here changes anything. It is the list to check before you share, and the answer to \"why does it work for me and not for them\" afterwards.",
+				"One exception, and it is the only thing a share has to ask about. A credential is not a copy somebody is missing: it is whose account the call goes out as. Choose that on its row: Mine for reads (the usual one for a team: they read with your key, and a write waits for their own account), Theirs, Mine with writes too, or Disallow. Whoever connects their own account for it goes out as themselves on every call.\n\n" +
+				"Apart from those choices, nothing here changes anything. It is the list to check before you share, and the answer to \"why does it work for me and not for them\" afterwards.",
 			Body: ui.Table{
 				Source: ed.source + "/reach",
 				RowKey: "name",
@@ -743,11 +743,14 @@ func (ed *agentEditor) shareSection() {
 					{
 						Type: "segmented", Field: "lend", OnlyIf: "decide",
 						PostTo: ed.source + "/reach/credential",
+						// Mine for reads first: the usual answer for a team.
+						// Disallow takes it from the people the agent is
+						// shared with and leaves it to its owner.
 						Options: []ui.SelectOption{
-							{Value: credOwn, Label: "Theirs"},
-							{Value: credRead, Label: "Mine, reads"},
-							{Value: credWrite, Label: "Mine, writes"},
-							{Value: shareSkip, Label: "Off"},
+							{Value: credRead, Label: "Mine for reads", Help: "They read with your key. A write waits for their own account, and once they connect it every call goes out as them."},
+							{Value: credOwn, Label: "Theirs", Help: "They use their own credential of this name."},
+							{Value: credWrite, Label: "Mine, writes too", Help: "Everything goes through your key until they connect their own: what they write arrives as you."},
+							{Value: credWithhold, Label: "Disallow", Help: "The tools on it are withheld for the people you share this with. You keep them."},
 						},
 					},
 				},
@@ -1349,6 +1352,19 @@ func shareSubtitleFor(a AgentRecord, pending bool) string {
 		return "Everyone is waiting for an administrator to approve it. Until then, the people and teams in the list can run it."
 	}
 	return "Everyone, people, or a team you are on. Empty means private to you."
+}
+
+// undecidedCredentialsNote is what the Share tab adds when the agent is shared
+// and some of its credentials have no choice yet, so the owner hears of it
+// where they add people, not only on the agent's page.
+func undecidedCredentialsNote(n int) string {
+	switch {
+	case n <= 0:
+		return ""
+	case n == 1:
+		return " One of its credentials still needs a choice: whose account the people you share it with use. Make it on the agent's page, under What it reaches."
+	}
+	return fmt.Sprintf(" %d of its credentials still need a choice: whose account the people you share it with use. Make it on the agent's page, under What it reaches.", n)
 }
 
 // budgetReasoningFields are the agent editor's Budgets and Reasoning sections:

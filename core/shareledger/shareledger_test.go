@@ -146,9 +146,7 @@ func TestASharedThingTellsItsRecipient(t *testing.T) {
 	t.Cleanup(func() { NotifyRecipient = saved })
 
 	Register("agent", Provider{
-		Label:      "Agent",
-		Candidates: func(string) []Grant { return []Grant{{ID: "a1", Name: "Troubleshooter"}} },
-		Share:      func(string, string, []string, map[string]string) []string { return []string{"done"} },
+		Label: "Agent",
 		Manifest: func(owner, id, recipient string) []string {
 			if recipient == "bob" {
 				return []string{"Add a credential named wiki."}
@@ -157,9 +155,7 @@ func TestASharedThingTellsItsRecipient(t *testing.T) {
 		},
 	})
 
-	if _, err := Share("agent", "alice", "a1", []string{"bob", "carol"}, nil); err != nil {
-		t.Fatalf("share: %v", err)
-	}
+	TellRecipients("agent", "alice", "a1", "Troubleshooter", []string{"bob", "carol"})
 	if len(sent) != 2 {
 		t.Fatalf("told %d people", len(sent))
 	}
@@ -183,13 +179,8 @@ func TestASharedThingIsQuietWithNowhereToTell(t *testing.T) {
 	NotifyRecipient = nil
 	t.Cleanup(func() { NotifyRecipient = saved })
 
-	Register("agent", Provider{
-		Label: "Agent",
-		Share: func(string, string, []string, map[string]string) []string { return []string{"done"} },
-	})
-	if _, err := Share("agent", "alice", "a1", []string{"bob"}, nil); err != nil {
-		t.Errorf("share: %v", err)
-	}
+	Register("agent", Provider{Label: "Agent"})
+	TellRecipients("agent", "alice", "a1", "Troubleshooter", []string{"bob"}) // nothing to tell with, and no panic
 }
 
 // A kind with no manifest asks nothing, rather than asking about nothing.

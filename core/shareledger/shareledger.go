@@ -88,18 +88,6 @@ type Provider struct {
 	// every recipient. Returning an error leaves the row alone and says why.
 	Revoke func(owner, id, recipient string) error
 
-	// Candidates lists what this owner could share, for the guided flow's
-	// first step. Nil when the kind is not something somebody sets out to
-	// share — a credential is handed over as part of sharing the thing that
-	// uses it far more often than on its own.
-	Candidates func(owner string) []Grant
-	// Plan says what handing this record over would DECIDE, so the owner is
-	// asked rather than assumed at. Nil or empty means the share is one
-	// decision and the flow goes straight to confirming it.
-	Plan func(owner, id string, recipients []string) []Decision
-	// Share hands it over, with the answers to whatever Plan asked, and
-	// returns one line per thing it did or could not do.
-	Share func(owner, id string, recipients []string, answers map[string]string) []string
 	// Carries is what comes WITH this record for whoever holds it: the tools
 	// it runs, the documents it reads, the behaviour it applies. The other
 	// half of Manifest, and the half the recipient has no other way to see.
@@ -427,83 +415,6 @@ type errString string
 
 func (e errString) Error() string { return string(e) }
 
-// ----------------------------------------------------------------------
-// The guided route
-// ----------------------------------------------------------------------
-
-// Choice is one answer to a Decision.
-type Choice struct {
-	Value string `json:"value"`
-	Label string `json:"label"`
-	// Help is the consequence, in one line. The whole reason a guided flow
-	// exists is that these outcomes are not obvious from their names, and a
-	// list of bare options would be the same assumption in a nicer wrapper.
-	Help string `json:"help,omitempty"`
-}
-
-// Decision is something the owner has to answer before a share can go out.
-//
-// Kinds return their own, because what a share implies differs entirely
-// between them: handing over an agent raises a question per credential it
-// touches, handing over a skill raises none. A registry that tried to know
-// which was which would be back to naming kinds.
-type Decision struct {
-	// Key is the form field this answers under, stable across a rerender.
-	Key     string   `json:"key"`
-	Title   string   `json:"title"`
-	Intro   string   `json:"intro,omitempty"`
-	Options []Choice `json:"options"`
-	Default string   `json:"default,omitempty"`
-}
-
-// Options is everything this owner could share, across every kind. For the
-// first step of the guided flow, which is a list nobody can assemble from one
-// page.
-func Options(owner string) []Grant {
-	return collect(owner, false, func(p Provider) func(string) []Grant { return p.Candidates })
-}
-
-// Plan asks one kind what handing this record over would decide.
-func Plan(kind, owner, id string, recipients []string) []Decision {
-	mu.RLock()
-	p, ok := providers[strings.TrimSpace(kind)]
-	mu.RUnlock()
-	if !ok || p.Plan == nil {
-		return nil
-	}
-	return p.Plan(owner, id, recipients)
-}
-
-// Share hands the record over, with the answers to whatever Plan asked.
-//
-// Returns what it did AND what it could not, because a report listing only
-// successes is how somebody concludes their team has a working thing while a
-// piece of it is still missing.
-func Share(kind, owner, id string, recipients []string, answers map[string]string) ([]string, error) {
-	mu.RLock()
-	p, ok := providers[strings.TrimSpace(kind)]
-	mu.RUnlock()
-	if !ok || p.Share == nil {
-		return nil, errString("nothing here can share a " + kind)
-	}
-	lines := p.Share(owner, id, recipients, answers)
-	tellRecipients(kind, owner, id, displayName(p, owner, id), recipients)
-	return lines, nil
-}
-
-// displayName finds what to call this record, so a notice says "Troubleshooter"
-// rather than quoting an id at somebody who has never seen it.
-func displayName(p Provider, owner, id string) string {
-	if p.Candidates != nil {
-		for _, g := range p.Candidates(owner) {
-			if g.ID == id {
-				return g.Name
-			}
-		}
-	}
-	return id
-}
-
 // NotifyRecipient, when wired at startup, tells somebody that something has
 // been shared with them and what they still need for it.
 //
@@ -527,14 +438,19 @@ func Manifest(kind, owner, id, recipient string) []string {
 	return p.Manifest(owner, id, recipient)
 }
 
-// tellRecipients is the other half of a share, and the half that was missing.
+// TellRecipients tells the people something was shared with that it arrived,
+// and what they still need for it: the other half of a share.
+//
+// Nothing calls it yet. It ran from the guided share flow, which nothing
+// reached, so a share made from an agent's or a collection's own page tells
+// nobody; wiring it into those saves is the follow-up.
 //
 // The owner gets a report of what they just did. The people on the other end
 // got nothing at all — no word that anything arrived, and no word that the
 // thing which arrived needs something from them before it works. A share that
 // tells only the person who made it is how a colleague finds out by running
 // something and watching it fail.
-func tellRecipients(kind, owner, id, name string, recipients []string) {
+func TellRecipients(kind, owner, id, name string, recipients []string) {
 	if NotifyRecipient == nil {
 		return
 	}

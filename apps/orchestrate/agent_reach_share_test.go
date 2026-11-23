@@ -4,7 +4,6 @@ package orchestrate
 // only thing left to take back is a credential lent as part of one.
 
 import (
-	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -16,7 +15,7 @@ func TestDroppingARecipientTakesBackTheKeyLentForTheAgent(t *testing.T) {
 	udb, a := guidedFixture(t)
 	a.AllowedUsers = []string{"bob", "carol"}
 	saveAgent(udb, a)
-	shareAgentGuided("alice", "a1", []string{"bob", "carol"},
+	shareThroughRows("alice", "a1", []string{"bob", "carol"},
 		map[string]string{"cred:wiki": credRead})
 
 	c, _ := Secure().LoadUser("alice", "wiki")
@@ -61,17 +60,10 @@ func TestAHandLentKeyIsNeverClawedBack(t *testing.T) {
 	}
 }
 
-// Nothing else is granted, so nothing else has to be taken back. The report
-// says the dependencies travel rather than listing grants it did not make.
+// Nothing else is granted, so nothing else has to be taken back.
 func TestASharedAgentGrantsNothingButKeys(t *testing.T) {
 	udb, _ := guidedFixture(t)
-	lines := shareAgentGuided("alice", "a1", []string{"bob"},
-		map[string]string{"cred:wiki": credOwn})
-	joined := strings.Join(lines, " | ")
-
-	if !strings.Contains(joined, "travel with it") {
-		t.Errorf("the report does not say the dependencies travel: %v", lines)
-	}
+	shareThroughRows("alice", "a1", []string{"bob"}, map[string]string{"cred:wiki": credOwn})
 	// The skill is reachable through the agent and was never handed over.
 	for _, s := range LoadSkills(RootDB, "alice") {
 		if s.ID == "s1" && len(s.AllowedUsers) != 0 {

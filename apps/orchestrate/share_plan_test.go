@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/shareledger"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -48,50 +47,11 @@ func guidedFixture(t *testing.T) (Database, AgentRecord) {
 	return udb, a
 }
 
-// Only the gaps, and a question per credential. A plan that asked about
-// everything would bury the two that matter in eight that do not.
-func TestThePlanAsksAboutWhatTheyCannotReach(t *testing.T) {
-	guidedFixture(t)
-	plan := planAgentShare("alice", "a1", []string{"bob"})
-
-	var keys []string
-	for _, d := range plan {
-		keys = append(keys, d.Key)
-	}
-	// The key, and only the key. Everything else the agent uses travels with
-	// it, so asking about it would be asking a question with one answer.
-	if len(plan) != 1 || keys[0] != "cred:wiki" {
-		t.Fatalf("decisions = %v", keys)
-	}
-	// Four answers, defaulting to the split: the agent works for them from
-	// the start on reads, and a write goes out as them.
-	for _, d := range plan {
-		if !strings.HasPrefix(d.Key, "cred:") {
-			continue
-		}
-		var values []string
-		for _, o := range d.Options {
-			values = append(values, o.Value)
-		}
-		if strings.Join(values, ",") != "read,own,write,withhold" {
-			t.Errorf("the credential fork offers %v", values)
-		}
-		if d.Default != credRead {
-			t.Errorf("the credential defaults to %q rather than your account for reads, theirs for writes", d.Default)
-		}
-		for _, o := range d.Options {
-			if o.Help == "" {
-				t.Errorf("option %q has no consequence written under it", o.Value)
-			}
-		}
-	}
-}
-
 // "They bring their own" must actually leave the key alone. It is the default,
 // so a bug here would quietly lend every credential in the deployment.
 func TestBringingTheirOwnLendsNothing(t *testing.T) {
 	udb, _ := guidedFixture(t)
-	lines := shareAgentGuided("alice", "a1", []string{"bob"},
+	lines := shareThroughRows("alice", "a1", []string{"bob"},
 		map[string]string{"cred:wiki": credOwn})
 
 	if got := Secure().SharedWithUser("bob"); len(got) != 0 {
@@ -116,7 +76,7 @@ func TestBringingTheirOwnLendsNothing(t *testing.T) {
 // the report has to say what it did in those terms.
 func TestAWriteLendSaysWhoseNameTheWritesCarry(t *testing.T) {
 	guidedFixture(t)
-	lines := shareAgentGuided("alice", "a1", []string{"bob"},
+	lines := shareThroughRows("alice", "a1", []string{"bob"},
 		map[string]string{"cred:wiki": credWrite})
 
 	c, ok := Secure().LoadUser("alice", "wiki")
@@ -137,7 +97,7 @@ func TestAWriteLendSaysWhoseNameTheWritesCarry(t *testing.T) {
 // recipient is held to GET and HEAD.
 func TestAReadLendIsRecordedAsReadOnly(t *testing.T) {
 	guidedFixture(t)
-	shareAgentGuided("alice", "a1", []string{"bob"}, map[string]string{"cred:wiki": credRead})
+	shareThroughRows("alice", "a1", []string{"bob"}, map[string]string{"cred:wiki": credRead})
 	c, _ := Secure().LoadUser("alice", "wiki")
 	if !namedIn(c.SharedReadOnly, "bob") || namedIn(c.SharedReadWrite, "bob") {
 		t.Errorf("read-only landed wrong: read=%v write=%v", c.SharedReadOnly, c.SharedReadWrite)
@@ -148,7 +108,7 @@ func TestAReadLendIsRecordedAsReadOnly(t *testing.T) {
 // including the owner, which the option says in as many words.
 func TestLeavingACredentialOutTurnsItOff(t *testing.T) {
 	udb, _ := guidedFixture(t)
-	shareAgentGuided("alice", "a1", []string{"bob"}, map[string]string{"cred:wiki": shareSkip})
+	shareThroughRows("alice", "a1", []string{"bob"}, map[string]string{"cred:wiki": shareSkip})
 	a, _ := loadAgent(udb, "a1")
 	if !namedIn(a.DisabledCredentials, "wiki") {
 		t.Errorf("the credential is still live for the agent: %+v", a.DisabledCredentials)
@@ -175,7 +135,7 @@ func TestTheRecipientIsToldWhatTheyMustSupply(t *testing.T) {
 	guidedFixture(t)
 	// They bring their own key, which is the default and the case where the
 	// recipient has something to do.
-	shareAgentGuided("alice", "a1", []string{"bob"},
+	shareThroughRows("alice", "a1", []string{"bob"},
 		map[string]string{"cred:wiki": credOwn})
 
 	need := manifestForAgent("alice", "a1", "bob")
@@ -195,7 +155,7 @@ func TestTheRecipientIsToldWhatTheyMustSupply(t *testing.T) {
 func TestACompleteShareAsksNothingOfTheRecipient(t *testing.T) {
 	udb, _ := guidedFixture(t)
 	// Lend the key and share everything else: bob is left with nothing to do.
-	shareAgentGuided("alice", "a1", []string{"bob"},
+	shareThroughRows("alice", "a1", []string{"bob"},
 		map[string]string{"cred:wiki": credRead})
 	// Taking the tool is the recipient's own step, so stand in for it.
 	SetGlobalToolAdopted(AuthDB(), "bob", "wiki_read", "", true)
@@ -217,7 +177,7 @@ func TestTheManifestIsPerRecipient(t *testing.T) {
 		AllowedURLPattern: "https://wiki.example/**"}, ""); err != nil {
 		t.Skipf("no secure store here: %v", err)
 	}
-	shareAgentGuided("alice", "a1", []string{"bob", "carol"}, map[string]string{"cred:wiki": credOwn})
+	shareThroughRows("alice", "a1", []string{"bob", "carol"}, map[string]string{"cred:wiki": credOwn})
 
 	if need := manifestForAgent("alice", "a1", "bob"); len(need) != 0 {
 		t.Errorf("bob has his own key and is still being asked: %v", need)
@@ -225,59 +185,6 @@ func TestTheManifestIsPerRecipient(t *testing.T) {
 	if need := manifestForAgent("alice", "a1", "carol"); len(need) == 0 {
 		t.Error("carol has no key of that name and is being told nothing")
 	}
-}
-
-// The flow offers only what the key's own policy allows. Asking about a
-// credential on every share is how a key somebody would never lend ends up
-// lent by one careless pass.
-func TestTheFlowOffersOnlyWhatThePolicyAllows(t *testing.T) {
-	guidedFixture(t)
-
-	// Reads only: the write lend is gone, and the screen says why rather than
-	// quietly showing three options where there were four.
-	Secure().Save(SecureCredential{Name: "wiki", Type: SecureCredNone, Owner: "alice",
-		AllowedURLPattern: "https://wiki.example/**", Lending: LendRead}, "")
-	d := credDecisionFor(t, "alice", "a1", []string{"bob"})
-	if hasOption(d, credWrite) {
-		t.Error("a reads-only key still offers a write lend")
-	}
-	if !hasOption(d, credRead) || !hasOption(d, credOwn) {
-		t.Errorf("a reads-only key lost the answers it should keep: %+v", d.Options)
-	}
-	if !strings.Contains(d.Intro, "reads only") {
-		t.Errorf("the screen does not say why an option is missing: %q", d.Intro)
-	}
-
-	// Nobody: no lend at all, and the two answers left are theirs or none.
-	Secure().Save(SecureCredential{Name: "wiki", Type: SecureCredNone, Owner: "alice",
-		AllowedURLPattern: "https://wiki.example/**", Lending: LendNone}, "")
-	d = credDecisionFor(t, "alice", "a1", []string{"bob"})
-	if hasOption(d, credRead) || hasOption(d, credWrite) {
-		t.Errorf("a key set to never lend still offers a lend: %+v", d.Options)
-	}
-	if len(d.Options) != 2 || d.Default != credOwn {
-		t.Errorf("options = %+v default = %q", d.Options, d.Default)
-	}
-}
-
-func credDecisionFor(t *testing.T, owner, agentID string, who []string) shareledger.Decision {
-	t.Helper()
-	for _, d := range planAgentShare(owner, agentID, who) {
-		if strings.HasPrefix(d.Key, "cred:") {
-			return d
-		}
-	}
-	t.Fatal("the plan asks about no credential")
-	return shareledger.Decision{}
-}
-
-func hasOption(d shareledger.Decision, value string) bool {
-	for _, o := range d.Options {
-		if o.Value == value {
-			return true
-		}
-	}
-	return false
 }
 
 // The recipient's own view of what they are about to run.
@@ -336,7 +243,7 @@ func TestAShareLendsTheKeyForThatAgentOnly(t *testing.T) {
 	if err := Secure().SetCredentialShares("alice", "wiki", nil, nil); err != nil {
 		t.Fatalf("clearing: %v", err)
 	}
-	lines := shareAgentGuided("alice", "a1", []string{"bob"}, map[string]string{"cred:wiki": credRead})
+	lines := shareThroughRows("alice", "a1", []string{"bob"}, map[string]string{"cred:wiki": credRead})
 
 	// Asked of the LEND rather than of resolution, because resolution answers
 	// a wider question: bob may own a key called "wiki" himself, and it is
@@ -470,7 +377,7 @@ func TestALendThroughATeamEndsWithTheTeamShare(t *testing.T) {
 // and only them: its owner keeps it.
 func TestDisallowWithholdsItForThePeopleItIsSharedWith(t *testing.T) {
 	udb, _ := guidedFixture(t)
-	lines := shareAgentGuided("alice", "a1", []string{"bob"}, map[string]string{"cred:wiki": credWithhold})
+	lines := shareThroughRows("alice", "a1", []string{"bob"}, map[string]string{"cred:wiki": credWithhold})
 	if !strings.Contains(strings.Join(lines, " | "), "withheld for the people you share this with") {
 		t.Errorf("the report does not say what was done: %v", lines)
 	}
@@ -487,4 +394,28 @@ func TestDisallowWithholdsItForThePeopleItIsSharedWith(t *testing.T) {
 	if credentialDenySet(a, "alice")["wiki"] {
 		t.Error("disallowing it for the people it is shared with took it from its owner")
 	}
+}
+
+// shareThroughRows shares the agent with recipients and answers each of its
+// credentials the way its row on "What it reaches" does
+// (applyCredentialAnswer), for tests about what a share's choices do.
+func shareThroughRows(owner, id string, recipients []string, answers map[string]string) []string {
+	udb := UserDB(orchestrateBaseDB, owner)
+	a, ok := loadAgent(udb, id)
+	if !ok || a.Owner != owner {
+		return []string{"That agent is not yours to share."}
+	}
+	for _, r := range recipients {
+		if !namedIn(a.AllowedUsers, r) {
+			a.AllowedUsers = append(a.AllowedUsers, r)
+		}
+	}
+	saveAgent(udb, a)
+	out := []string{"Agent " + a.Name + " → " + ShareRecipientsText(recipients)}
+	for _, it := range agentReachOf(udb, owner, a).Items {
+		if it.Gap {
+			out = append(out, applyCredentialAnswer(owner, id, it, recipients, answers["cred:"+it.id]))
+		}
+	}
+	return out
 }

@@ -26,18 +26,6 @@ func registerShareProviders() {
 		// The one kind with real decisions behind a share, because it is the
 		// one that reaches other records: its tools, its documents, its
 		// skills, and the key underneath them.
-		Candidates: func(owner string) []shareledger.Grant {
-			var out []shareledger.Grant
-			udb := UserDB(orchestrateBaseDB, owner)
-			for _, a := range listAgents(udb, owner) {
-				if isShareableAgent(a, owner) && !a.Everyone {
-					out = append(out, shareledger.Grant{ID: a.ID, Name: a.Name})
-				}
-			}
-			return out
-		},
-		Plan:     planAgentShare,
-		Share:    shareAgentGuided,
 		Carries:  carriedByAgent,
 		Manifest: manifestForAgent,
 		Mine: func(owner string) []shareledger.Grant {
@@ -116,28 +104,6 @@ func registerShareProviders() {
 
 	shareledger.Register("pipeline", shareledger.Provider{
 		Label: "Pipeline",
-		Candidates: func(owner string) []shareledger.Grant {
-			var out []shareledger.Grant
-			for _, d := range ListPipelineDefs(UserDB(orchestrateBaseDB, owner), owner) {
-				if d.Owner == owner && !d.Published && d.OwningApp == "" {
-					out = append(out, shareledger.Grant{ID: d.ID, Name: d.Name})
-				}
-			}
-			return out
-		},
-		Share: func(owner, id string, recipients []string, _ map[string]string) []string {
-			udb := UserDB(orchestrateBaseDB, owner)
-			def, ok := LoadPipelineDef(udb, owner, id)
-			if !ok || def.Owner != owner {
-				return []string{"That pipeline is not yours to share."}
-			}
-			def.AllowedUsers = mergeRecipients(def.AllowedUsers, recipients)
-			SavePipelineDefAs(udb, def, "shared")
-			return []string{
-				"Pipeline " + def.Name + " → " + ShareRecipientsText(recipients),
-				"Pipeline " + def.Name + ": they run YOUR definition against their own agents, tools and credentials.",
-			}
-		},
 		Mine: func(owner string) []shareledger.Grant {
 			var out []shareledger.Grant
 			for _, d := range ListPipelineDefs(UserDB(orchestrateBaseDB, owner), owner) {
@@ -183,28 +149,6 @@ func registerShareProviders() {
 
 	shareledger.Register("machine", shareledger.Provider{
 		Label: "Machine",
-		Candidates: func(owner string) []shareledger.Grant {
-			var out []shareledger.Grant
-			for _, d := range ListMachineDefs(UserDB(orchestrateBaseDB, owner), owner) {
-				if d.Owner == owner && !d.Published && d.OwningApp == "" {
-					out = append(out, shareledger.Grant{ID: d.ID, Name: d.Name})
-				}
-			}
-			return out
-		},
-		Share: func(owner, id string, recipients []string, _ map[string]string) []string {
-			udb := UserDB(orchestrateBaseDB, owner)
-			def, ok := LoadMachineDef(udb, owner, id)
-			if !ok || def.Owner != owner {
-				return []string{"That machine is not yours to share."}
-			}
-			def.AllowedUsers = mergeRecipients(def.AllowedUsers, recipients)
-			SaveMachineDefAs(udb, def, "shared")
-			return []string{
-				"Machine " + def.Name + " → " + ShareRecipientsText(recipients),
-				"Machine " + def.Name + ": they run YOUR definition against their own agents, tools and credentials.",
-			}
-		},
 		Mine: func(owner string) []shareledger.Grant {
 			var out []shareledger.Grant
 			for _, d := range ListMachineDefs(UserDB(orchestrateBaseDB, owner), owner) {

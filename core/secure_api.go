@@ -291,7 +291,7 @@ type SecureCredential struct {
 	// moment this field existed. It reads as "Not set" on the credential list
 	// so the undecided ones are visible rather than merely permissive.
 	//
-	// Enforced where the lists are WRITTEN, so the guided flow, the pickers,
+	// Enforced where the lists are WRITTEN, so the agent's rows, the pickers,
 	// the fan-out and the ledger cannot each hold a different opinion. And
 	// tightening it reaches what already happened: a policy saying nobody,
 	// over a key two people hold, would be a rule about the future pretending
@@ -4765,7 +4765,7 @@ func (s *SecureAPI) setCredentialShares(owner, name string, readOnly, readWrite 
 		return fmt.Errorf("the deployment has a credential named %q, so a lend of yours under that name would not reach anyone: rename yours to lend it", name)
 	}
 	// The policy is enforced where the lists are WRITTEN, which is here for
-	// every door: the guided flow, both pickers, the fan-out and the ledger.
+	// every door: the agent's rows, both pickers, the fan-out and the ledger.
 	// A flow that merely declined to OFFER a lend would be one refusal that
 	// any other caller walks straight past.
 	if !takeOnly && len(read)+len(write) > 0 {
@@ -5125,30 +5125,6 @@ func init() {
 	}
 	shareledger.Register("tool", shareledger.Provider{
 		Label: "Tool",
-		Candidates: func(owner string) []shareledger.Grant {
-			var out []shareledger.Grant
-			for _, p := range LoadPersistentTempTools(nil, owner) {
-				if !p.Shared && !p.Tool.Disabled {
-					out = append(out, shareledger.Grant{ID: p.Tool.Name, Name: p.Tool.Name})
-				}
-			}
-			return out
-		},
-		Share: func(owner, id string, recipients []string, _ map[string]string) []string {
-			for _, p := range LoadPersistentTempTools(nil, owner) {
-				if p.Tool.Name != id {
-					continue
-				}
-				if err := SetPersistentTempToolSharedWith(nil, owner, id, addRecipients(p.SharedWith, recipients)); err != nil {
-					return []string{"Tool " + id + ": " + err.Error()}
-				}
-				return []string{
-					"Tool " + id + " → " + strings.Join(recipients, ", "),
-					"Tool " + id + ": it loads for their agents once they take it from their catalog.",
-				}
-			}
-			return []string{"That tool is not yours to share."}
-		},
 		Mine: func(owner string) []shareledger.Grant {
 			var out []shareledger.Grant
 			for _, p := range LoadPersistentTempTools(nil, owner) {

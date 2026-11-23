@@ -93,6 +93,9 @@ type agentReachMap struct {
 	// measured against. An agent nobody has is not missing anything.
 	Audience   string `json:"audience"`
 	Gaps       int    `json:"gaps"`
+	// Undecided counts the credentials of a shared agent its owner has not
+	// chosen for yet: whose account the people it is shared with use.
+	Undecided  int    `json:"undecided,omitempty"`
 	audience   int
 	recipients []string
 }
@@ -130,13 +133,31 @@ func agentReachOf(udb Database, owner string, a AgentRecord) agentReachMap {
 			// control that vanished when the warning did would leave them no
 			// way to take it back.
 			it.Decide = true
-			it.Lend = lendModeFor(owner, a.ID, it.id, namedIn(a.DisabledCredentials, it.id))
+			it.Lend = lendModeFor(owner, a.ID, it.id, namedIn(a.DisabledCredentials, it.id),
+				namedIn(a.WithheldFromRecipients, it.id), namedIn(a.CredentialsDecided, it.id))
 		}
 		it.Gap = it.kind == "credential" && it.level < out.audience
 		if it.Gap {
 			it.Missing = missingFor(out.audience, out.recipients)
-			it.Fix = fixFor(it, out.audience)
+			// A choice made is the owner's answer to the gap: it is not asked
+			// again ("theirs" leaves a gap on purpose).
+			if it.Lend == "" || it.Lend == shareSkip {
+				it.Fix = fixFor(it, out.audience)
+			}
 			out.Gaps++
+		}
+		// Shared, and nobody has said whose account the people it is shared
+		// with use: asked here, on the row, with the usual answer named.
+		// Only a key of the owner's own can be lent: one that is the
+		// deployment's, or nobody's of theirs, has nothing to choose.
+		if it.kind == "credential" && out.audience > reachPrivate && it.level < reachDeployment {
+			switch it.Lend {
+			case "":
+				it.Fix = "Choose whose account they use. Mine for reads is the usual one for a team: they read with your key, and a write waits for their own."
+				out.Undecided++
+			case shareSkip:
+				it.Fix = "Turned off for this agent, for you too. Choose one to turn it back on, or Disallow to keep it for yourself."
+			}
 		}
 		out.Items = append(out.Items, it)
 	}
@@ -305,7 +326,7 @@ func credentialReach(owner, name string, disabled bool) reachItem {
 	// kind and id are stamped here like every other row's. They were not, and
 	// the omission was invisible while nothing routed on them: the fan-out
 	// skips credentials by design, so an empty kind and a kind it ignores
-	// behaved identically. The guided flow routes on it, and a credential
+	// behaved identically. The row's choice routes on it, and a credential
 	// with no kind silently became an ordinary dependency there.
 	it := reachItem{Kind: "Credential", Name: name, kind: "credential", id: name}
 	if disabled {
@@ -377,6 +398,6 @@ func namedIn(list []string, want string) bool {
 func fixFor(it reachItem, audience int) string {
 	// Only credentials reach here, since nothing else is ever a gap. Not a
 	// copy they are missing, so "share it" is one answer of four and usually
-	// the wrong one; the guided flow is the only surface that asks.
-	return "Decide it when you share: their own key, or a lend of yours"
+	// the wrong one: the row's own control asks.
+	return "Choose whose account they use, on this row"
 }

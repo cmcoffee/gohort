@@ -238,6 +238,9 @@ func (T *Extensions) handleCredentials(c *jsonapi.Call) (any, error) {
 		if q.Get("view") == "security" {
 			return apiSecurityOf(cred), nil
 		}
+		if q.Get("view") == "read_calls" {
+			return readCallsView(cred), nil
+		}
 		return toRow(cred), nil
 	}
 	rows := []row{}
@@ -254,6 +257,7 @@ func (T *Extensions) credentialPost() http.HandlerFunc {
 	share := jsonapi.Post(T.DB, T.handleCredentialShare)
 	security := jsonapi.Post(T.DB, T.saveAPISecurity)
 	toggle := jsonapi.Post(T.DB, T.handleCredentialToggle)
+	readCalls := jsonapi.Post(T.DB, T.handleReadCallsSave)
 	save := jsonapi.Post(T.DB, T.handleCredentialSave)
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch action := strings.TrimSpace(r.URL.Query().Get("action")); action {
@@ -263,6 +267,8 @@ func (T *Extensions) credentialPost() http.HandlerFunc {
 			security(w, r)
 		case "enable", "disable":
 			toggle(w, r)
+		case "read_calls":
+			readCalls(w, r)
 		default:
 			save(w, r)
 		}
@@ -2078,11 +2084,12 @@ func credentialRowActions() []ui.RowAction {
 				PostTo:        "api/credentials?action=share&name={name}",
 				Method:        "POST",
 				Noun:          "user",
-				Intro: "They can read through your key: GET and HEAD, nothing else. " +
+				Intro: "They can read through your key: GET and HEAD, and the calls you list below as ones that only read. A write waits for them to connect their own account for it, under their Connected accounts, and from then on every call of theirs goes out as them. " +
 					"Your own use of it is unchanged. Every call is logged with their name against it. Refused while lending is set to Nobody.",
 				EmptyText:  "No other users to share with yet.",
 				Invalidate: []string{"api/credentials"},
 			}),
+			readCallsPanel(),
 			ui.Card{HTML: `<div style="font-size:var(--fs-xs, 0.78rem);color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Lent for writes</div>`},
 			ui.ACLPicker(ui.ACLPickerConfig{
 				OptionsSource: "api/user-candidates",

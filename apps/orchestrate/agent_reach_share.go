@@ -204,20 +204,31 @@ func reconcileShareLends() {
 // same reason the ledger exists: a key the owner lent by hand is not this
 // agent's doing, and showing its pill as "lend mine" would invite somebody to
 // move it and quietly revoke a grant made for another reason entirely.
-func lendModeFor(owner, agentID, cred string, disabled bool) string {
+//
+// withheld is Disallow (AgentRecord.WithheldFromRecipients), and decided says
+// whether the owner chose at all: with no lend standing, "they bring their
+// own" is the answer only if they chose it, and "" (not chosen yet) otherwise.
+func lendModeFor(owner, agentID, cred string, disabled, withheld, decided bool) string {
 	if disabled {
 		return shareSkip
 	}
+	if withheld {
+		return credWithhold
+	}
+	notLent := credOwn
+	if !decided {
+		notLent = ""
+	}
 	if orchestrateBaseDB == nil {
-		return credOwn
+		return notLent
 	}
 	var lent []string
 	if !orchestrateBaseDB.Get(shareLendTable, shareLendKey(owner, agentID, cred), &lent) || len(lent) == 0 {
-		return credOwn
+		return notLent
 	}
 	c, ok := Secure().LoadUser(owner, cred)
 	if !ok {
-		return credOwn
+		return notLent
 	}
 	// Writes if anybody this share lent to holds the stronger grant: the
 	// control sets one answer for the whole recipient list, so the stronger
@@ -232,5 +243,5 @@ func lendModeFor(owner, agentID, cred string, disabled bool) string {
 			return credRead
 		}
 	}
-	return credOwn
+	return notLent
 }

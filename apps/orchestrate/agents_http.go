@@ -205,6 +205,7 @@ func (T *OrchestrateApp) agentSave(c *jsonapi.Call, raw json.RawMessage) (any, e
 			}
 			// Disallow is the share dialog's (share_plan.go), never this form's.
 			req.WithheldFromRecipients = existing.WithheldFromRecipients
+			req.CredentialsDecided = existing.CredentialsDecided
 		}
 	} else if isSeedID(req.ID) {
 		// Seeds save as a per-user shadow. The form carries no `locked`

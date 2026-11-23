@@ -133,7 +133,7 @@ func TestACredentialIsTheOnlyGap(t *testing.T) {
 	if it.Kind != "Credential" || !it.Gap {
 		t.Errorf("a personal key on a shared agent is not the gap: %+v", it)
 	}
-	if !strings.Contains(it.Fix, "their own key") {
+	if !strings.Contains(it.Fix, "Mine for reads") {
 		t.Errorf("the fix does not describe the choice: %q", it.Fix)
 	}
 }

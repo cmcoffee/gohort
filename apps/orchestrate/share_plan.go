@@ -1,25 +1,18 @@
 package orchestrate
 
-// What handing an agent over actually decides.
+// What handing an agent over decides, and what it carries.
 //
-// "Share this with my team so we are all working from the same agent" is one
-// request that resolves into several answers, and the fan-out used to make all
-// of them silently: share every dependency it could, skip every credential,
-// say so afterwards. Skipping is usually right for a credential — their calls
-// should go out as them — but usually is not always, and the owner is the one
-// who knows which this is.
-//
-// So the flow asks. One decision per thing the agent reaches that its
-// recipients cannot, with the consequence of each answer on screen rather than
-// in a document somebody reads afterwards.
+// Everything an agent uses travels with it, scoped to it. A credential is the
+// exception: it is whose account a call goes out as, so the owner chooses per
+// key, on the agent's "What it reaches" (agentCredentialDecision): Mine for
+// reads, Theirs, Mine with writes too, or Disallow. A guided share flow used
+// to ask the same once, at sharing; nothing reached it, and it is gone.
 
 import (
-	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
-	"github.com/cmcoffee/gohort/core/shareledger"
 )
 
 // The answers a decision can carry. Values rather than booleans because a
@@ -32,109 +25,6 @@ const (
 	credWithhold = "withhold" // disallow: withheld for the people it is shared with
 	shareSkip    = "skip"     // turn it off for the agent entirely (no longer offered)
 )
-
-// planAgentShare asks about everything the recipients cannot reach.
-//
-// Only the gaps. A dependency they already have raises no question, and a list
-// that asked about all of them would bury the two that matter in eight that
-// do not.
-func planAgentShare(owner, id string, recipients []string) []shareledger.Decision {
-	udb := UserDB(orchestrateBaseDB, owner)
-	a, ok := loadAgent(udb, id)
-	if !ok || a.Owner != owner {
-		return nil
-	}
-	// Planned against the recipients being proposed, not against whoever the
-	// agent already lists: the question is what THESE people would be missing.
-	a.AllowedUsers = recipients
-	a.Everyone = false
-
-	// Credentials, and only credentials. Everything else an agent uses travels
-	// with it and is scoped to it, so there is no question to ask: asking
-	// "share this tool too?" had one possible answer, and the answer it
-	// offered was the wrong shape anyway — handing the tool over, when the
-	// agent only ever needed to run it.
-	var out []shareledger.Decision
-	for _, it := range agentReachOf(udb, owner, a).Items {
-		if it.Gap {
-			out = append(out, credentialDecision(it, owner))
-		}
-	}
-	return out
-}
-
-// credentialDecision is the fork the fan-out used to make on everybody's
-// behalf. Four answers, and the difference between them is whose name a call
-// goes out under — which is not a thing to assume for somebody.
-func credentialDecision(it reachItem, owner string) shareledger.Decision {
-	// The lend options are offered only where the credential's own policy
-	// allows them. A key its owner already decided never to lend should not
-	// be one careless pass through a wizard away from being lent, and asking
-	// again on every share is how that pass eventually happens.
-	//
-	// The flow only declines to OFFER. The refusal that matters is on the
-	// setter, where every other door goes through too.
-	lend, lendWrite := true, true
-	if c, ok := Secure().LoadUser(owner, it.id); ok {
-		lend, lendWrite = c.MayLend()
-	}
-	intro := "Whose account should the people you share this with use? They can always connect their own: once they do, every call to it goes out as them, reads included, and they see only what their own access allows, which may be less than yours."
-	read := shareledger.Choice{Value: credRead, Label: "My account for reads, theirs for writes",
-		Help: "Reads go through your key, so the agent works for them from the start, and they read with your access until they connect their own account. A write asks them to connect theirs first, so it goes out as them."}
-	own := shareledger.Choice{Value: credOwn, Label: "They bring their own",
-		Help: "The agent uses their own credential of this name. Until they have one, the tools that need it fail and say so."}
-	write := shareledger.Choice{Value: credWrite, Label: "Share mine, writes included",
-		Help: "Everything goes through your key until they connect their own, writes included: what they write arrives at the far end as YOU, and only gohort's record says who it was. For a service people have no account of their own on."}
-	withhold := shareledger.Choice{Value: credWithhold, Label: "Disallow",
-		Help: "The tools that use it are withheld for the people you share this with. You keep them."}
-	var opts []shareledger.Choice
-	def := credRead
-	switch {
-	case !lend:
-		intro += " You have set this key to be lent to nobody, so your account is not offered. Change that on the credential itself if you meant to lend it."
-		opts, def = []shareledger.Choice{own, withhold}, credOwn
-	case !lendWrite:
-		intro += " You have set this key to be lent for reads only, so sharing it for writes is not offered."
-		opts = []shareledger.Choice{read, own, withhold}
-	default:
-		opts = []shareledger.Choice{read, own, write, withhold}
-	}
-	return shareledger.Decision{
-		Key:     "cred:" + it.id,
-		Title:   "Credential — " + it.Name,
-		Intro:   intro,
-		Options: opts,
-		Default: def,
-	}
-}
-
-// shareAgentGuided performs the share the answers describe.
-//
-// The recipient list goes on first: everything after it is a dependency
-// decision, and a dependency shared to somebody who does not have the agent
-// would be a grant nobody asked for if the run failed halfway.
-func shareAgentGuided(owner, id string, recipients []string, answers map[string]string) []string {
-	udb := UserDB(orchestrateBaseDB, owner)
-	a, ok := loadAgent(udb, id)
-	if !ok || a.Owner != owner {
-		return []string{"That agent is not yours to share."}
-	}
-	a.AllowedUsers = mergeRecipients(a.AllowedUsers, recipients)
-	if _, err := saveAgent(udb, a); err != nil {
-		return []string{"Could not share the agent: " + err.Error()}
-	}
-	out := []string{"Agent " + a.Name + " → " + ShareRecipientsText(recipients)}
-
-	// Everything else the agent uses travels with it, so there is nothing to
-	// grant and nothing to report beyond saying so once.
-	out = append(out, "Its tools, skills, documents and recipes travel with it, readable through this agent and nowhere else.")
-	for _, it := range agentReachOf(udb, owner, a).Items {
-		if it.Gap {
-			out = append(out, applyCredentialAnswer(owner, id, it, recipients, answers["cred:"+it.id]))
-		}
-	}
-	return out
-}
 
 // applyCredentialAnswer is the only place a key changes hands, and it reports
 // every branch — including the one that does nothing, since "they bring their
@@ -187,19 +77,6 @@ func applyCredentialAnswer(owner, agentID string, it reachItem, recipients []str
 	default:
 		return "Credential " + it.Name + ": they supply their own of this name, so their calls go out as them"
 	}
-}
-
-func mergeRecipients(have, add []string) []string {
-	seen := map[string]bool{}
-	out := []string{}
-	for _, u := range append(append([]string{}, have...), add...) {
-		if u = strings.TrimSpace(u); u != "" && !seen[u] {
-			seen[u] = true
-			out = append(out, u)
-		}
-	}
-	sort.Strings(out)
-	return out
 }
 
 // manifestForAgent is what THIS person still has to supply before the agent
@@ -273,10 +150,10 @@ func carriedByAgent(owner, id, viewer string) []string {
 // agentCredentialDecision sets one credential's mode for one agent, from
 // the row in the reach table that raised it.
 //
-// The guided flow asks the same four questions once, at the moment of sharing.
-// This is the same answer changed later, which is when it is actually needed:
-// a key gets rotated, somebody joins, or the first answer was the cautious one
-// and the agent has been failing for a week because of it.
+// The row is where the choice is made and changed: at sharing, when a key gets
+// rotated, when somebody joins, or when the first answer was the cautious one
+// and the agent has been failing for a week because of it. The choice is
+// recorded as made (CredentialsDecided), so the row stops asking.
 func (T *OrchestrateApp) agentCredentialDecision(c *jsonapi.Call, body struct {
 	Name string `json:"name"`
 	Lend string `json:"lend"`
@@ -290,21 +167,34 @@ func (T *OrchestrateApp) agentCredentialDecision(c *jsonapi.Call, body struct {
 	if name == "" {
 		return nil, jsonapi.BadRequest("which credential?")
 	}
+	switch body.Lend {
+	case credRead, credOwn, credWrite, credWithhold, shareSkip:
+	default:
+		return nil, jsonapi.BadRequest("choose mine for reads, theirs, mine with writes too, or disallow")
+	}
 	// Leaving skip re-enables the key for the agent before anything else, so
 	// "they bring their own" after "leave it out" does what it says rather than
 	// setting a lend on a credential the agent still cannot dispatch through.
-	if body.Lend != shareSkip && namedIn(a.DisabledCredentials, name) {
+	// Leaving Disallow gives it back to the people the agent is shared with.
+	// And the choice is recorded as made, so the row stops asking for one.
+	if body.Lend != shareSkip {
 		a.DisabledCredentials = withoutOne(a.DisabledCredentials, name)
-		if _, err := saveAgent(udb, a); err != nil {
-			return nil, err
-		}
 	}
-	// Moving off a lend takes the lend back. The guided flow never had to do
-	// this because it only ever ran forward, from no decision to one; a control
+	if body.Lend != credWithhold {
+		a.WithheldFromRecipients = withoutOne(a.WithheldFromRecipients, name)
+	}
+	if !namedIn(a.CredentialsDecided, name) {
+		a.CredentialsDecided = append(a.CredentialsDecided, name)
+	}
+	if _, err := saveAgent(udb, a); err != nil {
+		return nil, err
+	}
+	// Moving off a lend takes the lend back. A flow that only ran forward,
+	// from no decision to one, never had to do this; a control
 	// that can be moved back implies the move undoes something, and a pill that
 	// reads "they bring their own" over a key still lent would be a lie told by
 	// the UI.
-	if body.Lend == credOwn || body.Lend == shareSkip {
+	if body.Lend == credOwn || body.Lend == shareSkip || body.Lend == credWithhold {
 		withdrawOneCredentialLend(user, agentID, name)
 	}
 	it := credentialReach(user, name, namedIn(a.DisabledCredentials, name))

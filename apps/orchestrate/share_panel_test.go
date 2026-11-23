@@ -52,7 +52,7 @@ func TestMovingACredentialOffALendTakesItBack(t *testing.T) {
 	if !lentToIn(t, "share_panel_wiki", "bob", "a1") {
 		t.Fatal("the lend was not made")
 	}
-	if got := lendModeFor("alice", "a1", "share_panel_wiki", false); got != credWrite {
+	if got := lendModeFor("alice", "a1", "share_panel_wiki", false, false, true); got != credWrite {
 		t.Errorf("the control reads back %q, not %q", got, credWrite)
 	}
 
@@ -61,7 +61,7 @@ func TestMovingACredentialOffALendTakesItBack(t *testing.T) {
 	if lentToIn(t, "share_panel_wiki", "bob", "a1") {
 		t.Error("moving the control back left the key lent")
 	}
-	if got := lendModeFor("alice", "a1", "share_panel_wiki", false); got != credOwn {
+	if got := lendModeFor("alice", "a1", "share_panel_wiki", false, false, true); got != credOwn {
 		t.Errorf("the control still reads %q", got)
 	}
 }
@@ -86,8 +86,9 @@ func TestAHandMadeLendIsNotTheAgentsToTakeBack(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The control shows "theirs", because this agent's share lent nothing.
-	if got := lendModeFor("alice", "a2", "share_panel_hand", false); got != credOwn {
+	// The control shows no choice made, because this agent's share lent
+	// nothing and its owner chose nothing for it.
+	if got := lendModeFor("alice", "a2", "share_panel_hand", false, false, false); got != "" {
 		t.Errorf("the control claimed a hand-made lend as its own: %q", got)
 	}
 	// And moving it leaves that grant standing.
@@ -151,7 +152,7 @@ func TestOnlyCredentialRowsOfferADecision(t *testing.T) {
 	for _, it := range agentReachOf(udb, "alice", a).Items {
 		if it.kind == "credential" {
 			creds++
-			if !it.Decide || it.Lend == "" {
+			if !it.Decide {
 				t.Errorf("credential row has no decision on it: %+v", it)
 			}
 			continue
@@ -177,4 +178,77 @@ func lentToIn(t *testing.T, cred, user, agentID string) bool {
 		}
 	}
 	return false
+}
+
+// On a shared agent, a key of the owner's with no choice made yet says so on
+// its row, naming the usual answer, and the Share tab counts it. Choosing,
+// even "theirs", is recorded as a choice. Disallow withholds it for the people
+// it is shared with and takes back the agent's lend; moving off Disallow gives
+// it back. An answer that is not one of the four is refused.
+func TestACredentialOnASharedAgentAsksForAChoice(t *testing.T) {
+	app, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	if err := Secure().Save(SecureCredential{Name: "share_panel_dec", Type: SecureCredNone,
+		Owner: "alice", AllowedURLPattern: "https://wiki.example/**"}, ""); err != nil {
+		t.Skipf("no secure store here: %v", err)
+	}
+	t.Cleanup(func() { Secure().SetCredentialShares("alice", "share_panel_dec", nil, nil) })
+	if _, err := saveAgent(udb, AgentRecord{ID: "a5", Owner: "alice", Name: "Tracker", OrchestratorPrompt: "p",
+		AllowedUsers: []string{"bob"},
+		Tools:        []TempTool{{Name: "get_page", CommandTemplate: "curl x", Credential: "share_panel_dec"}}}); err != nil {
+		t.Fatal(err)
+	}
+	row := func() (reachItem, agentReachMap) {
+		t.Helper()
+		a, _ := loadAgent(udb, "a5")
+		m := agentReachOf(udb, "alice", a)
+		for _, it := range m.Items {
+			if it.kind == "credential" && it.id == "share_panel_dec" {
+				return it, m
+			}
+		}
+		t.Fatalf("no row for the credential: %+v", m.Items)
+		return reachItem{}, m
+	}
+	decide := func(lend string) int {
+		t.Helper()
+		body, _ := json.Marshal(map[string]string{"name": "share_panel_dec", "lend": lend})
+		r := httptest.NewRequest(http.MethodPost, "/api/agents/a5/reach/credential", strings.NewReader(string(body)))
+		w := httptest.NewRecorder()
+		routed(app)(w, asUser(r, "alice"))
+		return w.Code
+	}
+
+	it, m := row()
+	if it.Lend != "" || !strings.Contains(it.Fix, "Mine for reads") || m.Undecided != 1 {
+		t.Fatalf("an undecided key on a shared agent: lend %q, fix %q, undecided %d", it.Lend, it.Fix, m.Undecided)
+	}
+	if note := undecidedCredentialsNote(m.Undecided); !strings.Contains(note, "One of its credentials still needs a choice") {
+		t.Errorf("the Share tab's note: %q", note)
+	}
+	if code := decide(credOwn); code != http.StatusOK {
+		t.Fatalf("theirs: %d", code)
+	}
+	if it, m := row(); it.Lend != credOwn || m.Undecided != 0 || it.Fix != "" {
+		t.Errorf("after choosing theirs: lend %q, undecided %d, fix %q", it.Lend, m.Undecided, it.Fix)
+	}
+	if code := decide(credRead); code != http.StatusOK || !lentToIn(t, "share_panel_dec", "bob", "a5") {
+		t.Fatalf("mine for reads: %d", code)
+	}
+	if code := decide(credWithhold); code != http.StatusOK {
+		t.Fatalf("disallow: %d", code)
+	}
+	a, _ := loadAgent(udb, "a5")
+	if it, _ := row(); it.Lend != credWithhold || lentToIn(t, "share_panel_dec", "bob", "a5") || !namedIn(a.WithheldFromRecipients, "share_panel_dec") {
+		t.Errorf("after disallow: lend %q, still lent %v, withheld %v", it.Lend, lentToIn(t, "share_panel_dec", "bob", "a5"), a.WithheldFromRecipients)
+	}
+	if code := decide(credRead); code != http.StatusOK {
+		t.Fatal(code)
+	}
+	if a, _ := loadAgent(udb, "a5"); namedIn(a.WithheldFromRecipients, "share_panel_dec") {
+		t.Error("moving off Disallow left it withheld")
+	}
+	if code := decide("everything"); code != http.StatusBadRequest {
+		t.Errorf("an answer that is not one of the four was taken: %d", code)
+	}
 }

@@ -2124,30 +2124,6 @@ func init() {
 			return out
 		},
 		Unpublish: func(owner, id string) error { return NarrowSkillToOwner(nil, owner, id) },
-		Candidates: func(owner string) []shareledger.Grant {
-			var out []shareledger.Grant
-			for _, s := range LoadSkills(nil, owner) {
-				out = append(out, shareledger.Grant{ID: s.ID, Name: s.Name})
-			}
-			return out
-		},
-		Share: func(owner, id string, recipients []string, _ map[string]string) []string {
-			for _, s := range LoadSkills(nil, owner) {
-				if s.ID != id {
-					continue
-				}
-				s.AllowedUsers = addRecipients(s.AllowedUsers, recipients)
-				if _, err := SaveSkillAs(nil, owner, s, "shared"); err != nil {
-					return []string{"Skill " + s.Name + ": " + err.Error()}
-				}
-				out := []string{"Skill " + s.Name + " → " + strings.Join(recipients, ", ")}
-				if d := skillShareDetail(s); d != "" {
-					out = append(out, "Skill "+s.Name+": "+d)
-				}
-				return out
-			}
-			return []string{"That skill is not yours to share."}
-		},
 		Mine: func(owner string) []shareledger.Grant {
 			var out []shareledger.Grant
 			for _, s := range LoadSkills(nil, owner) {

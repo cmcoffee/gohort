@@ -728,6 +728,12 @@ type AgentRecord struct {
 	// share dialog (share_plan.go). Unlike DisabledCredentials, which switches
 	// one off for everybody, the owner included.
 	WithheldFromRecipients []string `json:"withheld_from_recipients,omitempty"`
+	// CredentialsDecided are the credentials the owner has chosen for, on the
+	// agent's "What it reaches" (agentCredentialDecision): whose account the
+	// people it is shared with use. One not on it, on an agent that is shared,
+	// is shown as waiting for that choice, so "they bring their own" by
+	// default is never mistaken for one the owner made.
+	CredentialsDecided []string `json:"credentials_decided,omitempty"`
 
 	// AllowedUsers is the peer-share recipient set for a USER-OWNED agent: which
 	// other users may see and run this agent besides its Owner. Empty = private to
