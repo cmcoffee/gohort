@@ -149,6 +149,20 @@ func changeSection(spec AppSpec, user, owner string) *ui.Section {
 	}
 }
 
+// runsSection is the owner's way to the app's Recent runs, on the Settings
+// page; nil for anyone else (the runs page is the owner's only, runs.go). A
+// failed run still says so in the page's header, where it is seen.
+func runsSection(user, owner, base string) *ui.Section {
+	if user != owner {
+		return nil
+	}
+	return &ui.Section{
+		Title:    "Runs",
+		Subtitle: "What the app's scripts did each time they ran, and why one failed.",
+		Body:     ui.Toolbar{Actions: []ui.ToolbarAction{{Label: "Recent runs", Method: "GET", URL: base + "/_runs"}}},
+	}
+}
+
 // hasSettingsPage reports whether the ⚙ has anything to show user: settings
 // they may set, a memory the app keeps, or a way to change it.
 func hasSettingsPage(spec AppSpec, user, owner string) bool {

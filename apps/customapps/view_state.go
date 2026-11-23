@@ -14,8 +14,9 @@ package customapps
 //
 // It is the person's view of the app, not the app's data: records hold what
 // the app is about, this holds where they were in it. Capped, and cleared by
-// the page's Reset view link, so a saved state that breaks the page cannot
-// trap anyone in it.
+// Reset view on the app's Settings page (the ⚙), so a saved state that breaks
+// the page cannot trap anyone in it: Settings is drawn by gohort, not by the
+// app, so it opens however broken the app's page is.
 
 import (
 	"encoding/json"
@@ -169,13 +170,14 @@ func viewStateScript(state map[string]string) string {
 }
 
 // withViewState puts the person's saved view into every isolated frame on the
-// page, after the page helper, and offers Reset view when there is one.
-func (T *CustomApps) withViewState(page json.RawMessage, appdb Database, spec AppSpec) json.RawMessage {
+// page, after the page helper, and reports whether there is one: Reset view is
+// then on the Settings page, and the ⚙ is shown for it.
+func (T *CustomApps) withViewState(page json.RawMessage, appdb Database, spec AppSpec) (json.RawMessage, bool) {
 	state := loadViewState(appdb, spec.Slug)
 	script := viewStateScript(state)
 	var v any
 	if json.Unmarshal(page, &v) != nil {
-		return page
+		return page, len(state) > 0
 	}
 	var walk func(any)
 	walk = func(x any) {
@@ -197,10 +199,20 @@ func (T *CustomApps) withViewState(page json.RawMessage, appdb Database, spec Ap
 	walk(v)
 	out, err := json.Marshal(v)
 	if err != nil {
-		return page
+		return page, len(state) > 0
 	}
-	if len(state) > 0 {
-		out = withNavLink(out, "Reset view", T.WebPath()+"/"+spec.Slug+"/_view/reset")
+	return out, len(state) > 0
+}
+
+// viewSection is the Settings page's Reset view, when the person has a saved
+// view of the app to reset; nil otherwise.
+func viewSection(appdb Database, spec AppSpec, base string) *ui.Section {
+	if len(loadViewState(appdb, spec.Slug)) == 0 {
+		return nil
 	}
-	return out
+	return &ui.Section{
+		Title:    "Your view",
+		Subtitle: "Where you were in the app: tabs, filters, what was open. Reset it if the page will not draw or looks wrong. The app's records are not touched.",
+		Body:     ui.Toolbar{Actions: []ui.ToolbarAction{{Label: "Reset view", Method: "GET", URL: base + "/_view/reset"}}},
+	}
 }
