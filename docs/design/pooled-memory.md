@@ -211,13 +211,16 @@ store belongs in `apps/orchestrate`.
 Slices 1 and 2 ship together: a pool without the delete rules is the unsafe
 half.
 
-## Open questions for the owner
+## Settled with the owner (2026-11-23)
 
-1. **Pinned notes from recipients**: private (recommended), or offered to the
-   owner as suggestions to accept into the pool?
-2. **Daily cap**: 50 findings per person per day as the default?
-3. **Leaving the share**: contributions stay (recommended), or go to Recently
-   removed automatically when someone is removed?
+The owner went with the recommendations:
+
+1. **Pinned notes from recipients stay private** to them. Only the owner and
+   maintainers pin notes into the pool.
+2. **The daily cap is 50 pool findings per person per day.**
+3. **When someone leaves the share, their contributions stay** in the pool,
+   attributed; the owner or a maintainer can remove everything from that
+   person in one action.
 
 ## Considered and not chosen
 
