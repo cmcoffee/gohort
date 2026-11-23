@@ -301,10 +301,13 @@ func noteAdaptiveThinking(model string) {
 }
 
 // Seeing the thinking. The newer models send their thinking as an empty
-// block unless asked for display "summarized", so a call with somebody
-// watching (a ReasoningHandler) asks for it. The summary is all that is
-// shown, the thinking billed is the same, and gohort never sends it back.
-// A model that refuses the field is believed and sent none from then on.
+// block unless asked for display "summarized", so every adaptive call asks
+// for it: a call with somebody watching shows it, and every call's stream
+// keeps moving while the model thinks. Hidden, a long think was minutes of
+// silence on the wire, which the stream's idle watchdog cannot tell from a
+// stall (claudeStreamGuard). The summary is all that is shown, the thinking
+// billed is the same, and gohort never sends it back. A model that refuses
+// the field is believed and sent none from then on.
 const (
 	anthDisplaySummarized = "summarized"
 	anthDisplayOmit       = "omit"
@@ -342,9 +345,10 @@ func isThinkingDisplayErr(err error) bool {
 }
 
 // anthShowsThinking is the display to ask for on an adaptive thinking block:
-// a summary when a handler will show it and the model has not refused one.
+// a summary, unless the model has refused one. Asked whether or not anybody
+// watches, so the stream carries the thinking as it happens (see above).
 func anthShowsThinking(cfg ChatConfig) string {
-	if cfg.ReasoningHandler == nil || adaptedStep(cfg.Model, fieldThinkingDisplay) != anthDisplaySummarized {
+	if adaptedStep(cfg.Model, fieldThinkingDisplay) != anthDisplaySummarized {
 		return ""
 	}
 	return anthDisplaySummarized
@@ -547,8 +551,8 @@ func isUnsupportedThinkingTypeErr(err error) bool {
 // Returns nil when thinking is off or unasked-for, which keeps every existing
 // call byte-identical — this changes nothing until a route or an agent asks for
 // thinking, so no bill moves by surprise. The one exception is a model that
-// thinks unasked anyway, on a call somebody watches: it is sent its own
-// default, adaptive, with the display that lets the thinking be seen.
+// thinks unasked anyway: it is sent its own default, adaptive, with the
+// display that lets the thinking be seen and keeps its stream moving.
 //
 // Thinking asked OFF is sent as the model's own off-switch (anthThinkingOff),
 // not left out: on the newer models leaving it out runs adaptive thinking,
@@ -562,7 +566,7 @@ func anthThinkingFor(cfg ChatConfig, maxTokens int) (*anthThinking, *anthOutputC
 		// A model on the adaptive shape thinks when the setting is left out
 		// (noteThinksUnasked learns it from the reply). Sending its default,
 		// {type: adaptive}, is the same call; it is sent only to carry the
-		// display, so a page watching sees the model think.
+		// display, so the thinking streams (and a page watching sees it).
 		if display := anthShowsThinking(cfg); display != "" && thinkingStyleFor(cfg.Model) == anthThinkAdaptive {
 			return &anthThinking{Type: anthThinkAdaptive, Display: display}, nil, maxTokens
 		}
@@ -1523,8 +1527,10 @@ func (c *anthropicClient) ChatStream(ctx context.Context, messages []Message, ha
 	}
 
 	st := &anthStreamState{handler: handler, reasoning: cfg.ReasoningHandler, unasked: unaskedThinking(cfg)}
+	guard := claudeStreamGuard(resp.Body, "anthropic", c.model)
+	defer guard.Stop()
 
-	scanner := bufio.NewScanner(resp.Body)
+	scanner := bufio.NewScanner(guard)
 	// Default Scanner caps a line at 64KB; a single large SSE `data:` line
 	// (a big content block) would trip bufio.ErrTooLong and abort the stream.
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -1536,7 +1542,7 @@ func (c *anthropicClient) ChatStream(ctx context.Context, messages []Message, ha
 		st.feed([]byte(strings.TrimPrefix(line, "data: ")))
 	}
 
-	return st.finish("anthropic", scanner.Err())
+	return st.finish("anthropic", guard.stalled(scanner.Err(), "anthropic", c.model))
 }
 
 // noteIfAdaptiveThinking records the model's own answer about which thinking

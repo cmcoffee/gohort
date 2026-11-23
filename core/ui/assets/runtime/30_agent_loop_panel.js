@@ -6491,13 +6491,26 @@
       if (ev.started_ms && serverClockOffset !== null) {
         since = Math.min(since, Number(ev.started_ms) + serverClockOffset);
       }
+      // The count shows only while it grows: a provider that keeps its
+      // thinking to itself sends a fragment or nothing, and a count stuck at
+      // ~1 reads as the work being one token. Stalled, the line is the timer.
+      var tokens = Number(ev.tokens) || 0;
+      var grewAt = (thinkLive && tokens <= thinkLive.tokens) ? thinkLive.grewAt : Date.now();
       thinkLive = {
         since: since,
-        tokens: Number(ev.tokens) || 0,
+        tokens: tokens,
+        grewAt: tokens > 0 ? grewAt : 0,
       };
       if (!thinkingEl) showThinking();
       renderThinkLive();
       if (!thinkLiveTimer) thinkLiveTimer = setInterval(renderThinkLive, 1000);
+    }
+    // thinkTokensShown is the count for the line: none once it has stopped
+    // growing for THINK_COUNT_STALE_MS (a few of the server's 2s ticks).
+    var THINK_COUNT_STALE_MS = 6000;
+    function thinkTokensShown(live) {
+      if (!live.grewAt || Date.now() - live.grewAt > THINK_COUNT_STALE_MS) return 0;
+      return live.tokens;
     }
     function endThinkLive() {
       thinkLive = null;
@@ -6509,7 +6522,7 @@
       if (!label) return;
       // The reply's own thinking first; while it waits on a call, what the
       // call is doing.
-      setLiveText(label, thinkLive ? thinkingLabel(Date.now() - thinkLive.since, thinkLive.tokens) : dispatchLiveText());
+      setLiveText(label, thinkLive ? thinkingLabel(Date.now() - thinkLive.since, thinkTokensShown(thinkLive)) : dispatchLiveText());
     }
     // The line changes every second, so it edits its text node rather than
     // replacing it: WebKit drops a click whose press and release land on

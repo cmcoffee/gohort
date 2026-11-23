@@ -22,6 +22,7 @@ import (
 // Usable at its zero value, so every way a chatTurn is built gets it.
 type thinkProgress struct {
 	mu        sync.Mutex
+	callStart time.Time // when the current call was sent
 	spanStart time.Time // first reasoning chunk of the current call
 	last      time.Time // latest reasoning chunk
 	chars     int       // reasoning received in the current span
@@ -57,10 +58,16 @@ func (t *chatTurn) thinkChunk(s string) {
 	var payload map[string]any
 	if due {
 		p.lastSent = now
+		// The live line runs from when the call was sent: the wait before the
+		// first chunk is the model working too. The stats keep spanStart.
+		from := p.spanStart
+		if !p.callStart.IsZero() && p.callStart.Before(from) {
+			from = p.callStart
+		}
 		payload = map[string]any{
 			"kind":       "thinking",
-			"elapsed_ms": now.Sub(p.spanStart).Milliseconds(),
-			"started_ms": p.spanStart.UnixMilli(),
+			"elapsed_ms": now.Sub(from).Milliseconds(),
+			"started_ms": from.UnixMilli(),
 			"tokens":     p.chars / thinkCharsPerToken,
 		}
 	}
@@ -73,18 +80,32 @@ func (t *chatTurn) thinkChunk(s string) {
 // thinkNewCall closes the current span, if any. Called at the start of every
 // round, so a second call's thinking is timed from its own first chunk rather
 // than across the tool run in between.
+//
+// It also starts the live line at once, timed from the call: a cloud model
+// can be busy for a long while before anything streams back (a big prompt,
+// thinking it does not show), and a line that waited for the first chunk
+// showed bare dots, or a count that never moved, for all of it.
 func (t *chatTurn) thinkNewCall() {
 	p := &t.think
+	now := time.Now()
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.closeSpan()
+	p.callStart = now
+	p.lastSent = now
+	p.mu.Unlock()
+	t.sse.Send(map[string]any{
+		"kind":       "thinking",
+		"elapsed_ms": 0,
+		"started_ms": now.UnixMilli(),
+		"tokens":     0,
+	})
 }
 
 func (p *thinkProgress) closeSpan() {
 	if !p.spanStart.IsZero() {
 		p.doneMS += p.last.Sub(p.spanStart).Milliseconds()
 	}
-	p.spanStart, p.last, p.chars, p.lastSent = time.Time{}, time.Time{}, 0, time.Time{}
+	p.spanStart, p.last, p.chars, p.lastSent, p.callStart = time.Time{}, time.Time{}, 0, time.Time{}, time.Time{}
 }
 
 // thinkTotalMS is the time the model spent thinking this turn, the current

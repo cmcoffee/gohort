@@ -688,11 +688,12 @@ func TestARefusalSaysWhyItStopped(t *testing.T) {
 // summary of its thinking, since the newer models send it as an empty block
 // otherwise and the page's "Thinking" line never starts. Only the adaptive
 // shape carries it: never the off-switch (between_tools refuses it), never
-// the budgeted shape, and never an unwatched call, where nothing would show
-// it. A call that leaves thinking unasked is sent the model's own default,
+// the budgeted shape. Asked whether or not anybody watches: hidden thinking
+// is silence on the wire, which the stream's idle watchdog would take for a
+// stall. A call that leaves thinking unasked is sent the model's own default,
 // adaptive, only to carry the display, and only once the model is known to
 // think unasked.
-func TestAWatchedCallAsksToSeeTheThinking(t *testing.T) {
+func TestEveryAdaptiveCallAsksToSeeTheThinking(t *testing.T) {
 	adaptTestDB(t)
 	on, off := true, false
 	watch := func(string) {}
@@ -706,9 +707,9 @@ func TestAWatchedCallAsksToSeeTheThinking(t *testing.T) {
 		display string
 	}{
 		{"asked, watched", ChatConfig{Model: adaptive, Think: &on, ReasoningHandler: watch}, "adaptive", "summarized"},
-		{"asked, unwatched", ChatConfig{Model: adaptive, Think: &on}, "adaptive", ""},
+		{"asked, unwatched", ChatConfig{Model: adaptive, Think: &on}, "adaptive", "summarized"},
 		{"unasked, watched", ChatConfig{Model: adaptive, ReasoningHandler: watch}, "adaptive", "summarized"},
-		{"unasked, unwatched", ChatConfig{Model: adaptive}, "", ""},
+		{"unasked, unwatched", ChatConfig{Model: adaptive}, "adaptive", "summarized"},
 		{"off, watched", ChatConfig{Model: adaptive, Think: &off, ReasoningHandler: watch}, "disabled", ""},
 		{"budgeted, watched", ChatConfig{Model: budgeted, Think: &on, ReasoningHandler: watch}, "enabled", ""},
 		{"budgeted unasked, watched", ChatConfig{Model: budgeted, ReasoningHandler: watch}, "", ""},

@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync/atomic"
@@ -160,4 +161,27 @@ func (w *streamWatchdog) Stop() {
 // exited due to the body being closed out from under it.
 func (w *streamWatchdog) Fired() bool {
 	return w.fired.Load()
+}
+
+// claudeStreamGuard puts the idle watchdog on a Claude stream (the Anthropic
+// API, and Bedrock's invoke and Converse streams), which had none: once the
+// server took the request and went quiet, the call waited until the turn's
+// own time ran out, with nothing said. tag and model name the call in the
+// watchdog's log line.
+func claudeStreamGuard(body io.ReadCloser, tag, model string) *streamWatchdog {
+	return newStreamWatchdog(body, claudeStreamIdle(), tag+" model="+model)
+}
+
+// claudeStreamIdle is the Stream idle timeout setting; a var so a test can
+// use seconds instead of a minute.
+var claudeStreamIdle = DefaultStreamIdleTimeout
+
+// stalled is cause, or the idle-timeout error when the watchdog closed the
+// stream: a stall nothing came out of is then retried (isTransientError), and
+// one mid-reply ends as an interrupted reply the loop continues.
+func (w *streamWatchdog) stalled(cause error, tag, model string) error {
+	if !w.Fired() {
+		return cause
+	}
+	return fmt.Errorf("%w from %s after %v of silence (model=%s)", errStreamIdleTimeout, tag, w.timeout, model)
 }

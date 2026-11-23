@@ -403,7 +403,9 @@ func (c *bedrockRuntimeClient) ChatStream(ctx context.Context, messages []Messag
 	}
 
 	st := &anthStreamState{handler: handler, reasoning: cfg.ReasoningHandler, unasked: unaskedThinking(cfg)}
-	reader := newEventStreamReader(resp.Body)
+	guard := claudeStreamGuard(resp.Body, "bedrock-runtime", c.model)
+	defer guard.Stop()
+	reader := newEventStreamReader(guard)
 	// Every way out goes through finish: it is the one place that knows a
 	// stream without its terminal stop_reason is a fragment. Partial output
 	// is still returned — the caller has already rendered those tokens
@@ -412,10 +414,10 @@ func (c *bedrockRuntimeClient) ChatStream(ctx context.Context, messages []Messag
 	for {
 		frame, err := reader.next()
 		if err == io.EOF {
-			return st.finish("bedrock-runtime", nil)
+			return st.finish("bedrock-runtime", guard.stalled(nil, "bedrock-runtime", c.model))
 		}
 		if err != nil {
-			return st.finish("bedrock-runtime", err)
+			return st.finish("bedrock-runtime", guard.stalled(err, "bedrock-runtime", c.model))
 		}
 		event, err := decodeBedrockEvent(frame)
 		if err != nil {
@@ -1217,14 +1219,16 @@ func (c *bedrockConverseClient) ChatStream(ctx context.Context, messages []Messa
 
 	st := &anthStreamState{handler: handler, reasoning: cfg.ReasoningHandler, model: c.rt.model, unasked: unaskedThinking(cfg)}
 	cs := &converseStream{st: st, started: map[int]bool{}}
-	reader := newEventStreamReader(resp.Body)
+	guard := claudeStreamGuard(resp.Body, "bedrock-converse", c.rt.model)
+	defer guard.Stop()
+	reader := newEventStreamReader(guard)
 	for {
 		frame, err := reader.next()
 		if err == io.EOF {
-			return st.finish("bedrock-converse", nil)
+			return st.finish("bedrock-converse", guard.stalled(nil, "bedrock-converse", c.rt.model))
 		}
 		if err != nil {
-			return st.finish("bedrock-converse", err)
+			return st.finish("bedrock-converse", guard.stalled(err, "bedrock-converse", c.rt.model))
 		}
 		if mt := frame.messageType(); mt == "exception" || mt == "error" {
 			_, err := decodeBedrockEvent(frame)

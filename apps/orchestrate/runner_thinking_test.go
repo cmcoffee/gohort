@@ -159,3 +159,44 @@ func TestEachCallSendsTheMeter(t *testing.T) {
 		t.Errorf("a call with no prompt sent a meter: %s", buf.String())
 	}
 }
+
+// A call starts the live line the moment it is sent, before anything streams
+// back: a cloud model can work a long while first, and the line showed bare
+// dots, or a count that never moved, for all of it. The ticks after keep the
+// time from the call, while the turn's thinking time still counts only the
+// model's reasoning.
+func TestTheThinkingLineStartsWhenTheCallIsSent(t *testing.T) {
+	buf := &bytes.Buffer{}
+	turn := &chatTurn{sse: &sseWriter{live: buf}}
+	turn.thinkNewCall()
+	if n := strings.Count(buf.String(), `"kind":"thinking"`); n != 1 || !strings.Contains(buf.String(), `"tokens":0`) {
+		t.Fatalf("a call sent: %q, want one thinking event with no count", buf.String())
+	}
+	// Twenty seconds on, the first reasoning arrives.
+	turn.think.mu.Lock()
+	sent := time.Now().Add(-20 * time.Second)
+	turn.think.callStart, turn.think.lastSent = sent, sent
+	turn.think.mu.Unlock()
+	buf.Reset()
+	turn.thinkChunk(strings.Repeat("x", 40))
+	var ev struct {
+		ElapsedMS int64 `json:"elapsed_ms"`
+		StartedMS int64 `json:"started_ms"`
+	}
+	line := buf.String()
+	if i := strings.Index(line, "{"); i >= 0 {
+		line = line[i:]
+	}
+	if j := strings.LastIndex(line, "}"); j >= 0 {
+		line = line[:j+1]
+	}
+	if err := json.Unmarshal([]byte(line), &ev); err != nil {
+		t.Fatalf("the tick: %q: %v", buf.String(), err)
+	}
+	if ev.ElapsedMS < 19000 || ev.StartedMS != sent.UnixMilli() {
+		t.Errorf("the tick after the wait: elapsed %dms from %d, want ~20s from the call at %d", ev.ElapsedMS, ev.StartedMS, sent.UnixMilli())
+	}
+	if got := turn.thinkTotalMS(); got > 1000 {
+		t.Errorf("the wait was counted as thinking time: %dms", got)
+	}
+}
