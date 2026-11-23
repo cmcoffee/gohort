@@ -105,7 +105,7 @@ func TestACommandIsDoneWhenItExits(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "leaves-a-helper.sh")
 	os.WriteFile(bin, []byte("#!/bin/sh\necho downloaded\nsleep 60 &\nexit 0\n"), 0o755)
 	t0 := time.Now()
-	out, err := runRegisteredCommand(context.Background(), t.TempDir(), bin)
+	out, err := runRegisteredCommand(context.Background(), t.TempDir(), StoreCommand{Command: bin})
 	if took := time.Since(t0); took > commandWaitDelay+5*time.Second {
 		t.Fatalf("waited %s for a command that exited at once", took)
 	}

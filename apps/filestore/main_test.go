@@ -2,6 +2,7 @@ package filestore
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -18,6 +19,15 @@ func TestMain(m *testing.M) {
 	packageTunables = &DBase{Store: kvlite.MemStore()}
 	packageTunables.Set(WebTable, "tune_disk_floor_gb", float64(1))
 	SetTunablesDB(packageTunables)
+	// Most tests register commands at paths this host does not have
+	// (/opt/bin/kb): those resolve to themselves. A path that IS here is
+	// resolved for real; command_path_test.go tests the real resolver.
+	resolveCommandPath = func(p string) (string, error) {
+		if _, err := os.Lstat(p); err != nil && filepath.IsAbs(p) {
+			return p, nil
+		}
+		return resolveOnDisk(p)
+	}
 	os.Exit(m.Run())
 }
 

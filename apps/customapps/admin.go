@@ -318,6 +318,7 @@ func RegisterCustomAppReviewControl(base string) {
 					{Label: "Code in the page", Field: "page_code"},
 					{Label: "Capabilities declared", Field: "capabilities"},
 					{Label: "Runs as", Field: "runs_as"},
+					{Label: "File stores it reaches", Field: "file_stores"},
 				},
 				Actions: []ui.ToolbarAction{{
 					Label:  "Show scripts",
@@ -556,7 +557,17 @@ func adminReview(spec AppSpec, owner string) map[string]any {
 		"page_code":    pageCode,
 		"capabilities": shown,
 		"runs_as":      owner,
+		"file_stores":  fileStoresShown(owner, spec.Slug),
 	}
+}
+
+// fileStoresShown is the review's line for the stores the app reaches, which
+// whoever it is shared with reaches through it.
+func fileStoresShown(owner, slug string) string {
+	if lines := storeReachLines(owner, slug); len(lines) > 0 {
+		return strings.Join(lines, "; ")
+	}
+	return "none"
 }
 
 // handleAdminScripts is the app's code, as plain text for an operator to read.

@@ -277,7 +277,7 @@ func (T *FileStoreApp) probeCommand(ctx context.Context, root string, cmd StoreC
 	// The store root, so the probe sees what the real run will see. An agent
 	// choosing flags against a binary that resolves anything relatively would
 	// otherwise be reading one directory here and writing about another.
-	out, err := runRegisteredCommand(ctx, root, cmd.Command, strings.Fields(argLine)...)
+	out, err := runRegisteredCommand(ctx, root, cmd, strings.Fields(argLine)...)
 	out = strings.TrimSpace(out)
 	if err != nil {
 		// The output comes back WITH the failure, not instead of it. Handing an

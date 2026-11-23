@@ -126,7 +126,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 							RowKey: "cmd",
 							Columns: []ui.Col{
 								{Field: "label", Label: "Command", Flex: 1},
-								{Field: "command", Mute: true, Flex: 2},
+								{Field: "runs", Label: "Path", Mute: true, Flex: 2},
 								{Field: "phases", Label: "Asks for input", Mute: true},
 								// What mapping produced, on the command it came
 								// from. There is nowhere else it could be: the
@@ -360,13 +360,14 @@ func (T *FileStoreApp) adminSection() ui.Section {
 						},
 
 						ui.Card{HTML: folderPanelHeading("Apps that may use it",
-							"An app granted here can read this folder from its scripts, and, as ticked, write into it (add, change and delete files), run its commands, and pull files and folders into it. The grant is the app's: it covers everyone who uses the app, whatever the list below says.")},
+							"An app granted here can read this folder from its scripts, and, as ticked, write into it (add, change and delete files), run its commands, and pull files and folders into it. The grant is the app's: it covers everyone who uses the app, whatever the store's own list says, and each row names who that is now.")},
 						ui.Table{
 							Source: "/filestore/api/app-grants?slug={slug}",
 							RowKey: "app",
 							Columns: []ui.Col{
 								{Field: "label", Label: "App", Flex: 1},
 								{Field: "rights", Label: "May", Mute: true, Flex: 2},
+								{Field: "reach", Label: "Who reaches it through the app", Mute: true, Flex: 2},
 							},
 							RowActions: []ui.RowAction{
 								{Type: "button", Label: "Remove", Method: "DELETE",
@@ -451,7 +452,7 @@ func actionFormFields() []ui.FormField {
 			Help:   "What the button says.",
 			Detail: "Name it for what it DOES to the folder, since that is what the person clicking it is deciding."},
 		{Field: "command", Type: "text", Label: "Command", Placeholder: "/opt/bin/unpack",
-			Help:   "Absolute path. It is called as `<command> <folder>`.",
+			Help:   "Absolute path. It is called as `<command> <folder>`. A link is followed when you save, and the command stops running if it later leads elsewhere.",
 			Detail: "For a two-phase command it is called a second time as `<command> <folder> <input>`. It runs with NO shell, so quoting and metacharacters have nowhere to happen."},
 		{Field: "two_phase", Type: "toggle", Label: "Two phases (asks for input)",
 			Help:   "Whether the command runs once, or twice with a value from the person in between.",
@@ -962,7 +963,7 @@ func (T *FileStoreApp) handleCommands(c *jsonapi.Call) (any, error) {
 		mapped := mappingState(a)
 		rows = append(rows, map[string]any{
 			"cmd": commandKey(a.Slug, a.Name), "store": store, "slug": a.Slug,
-			"name": a.Name, "label": a.Label, "command": a.Command,
+			"name": a.Name, "label": a.Label, "command": a.Command, "runs": a.runsLabel(),
 			"phases": phases, "two_phase": a.TwoPhase, "mapped": mapped,
 			// mapped_ok gates the Agents switch: a toggle offering to
 			// enable nothing is a question the reader cannot answer.
