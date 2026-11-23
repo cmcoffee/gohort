@@ -52,12 +52,15 @@ var thinkingEl = node('thinking'), card = node('card'), scrolled = 0, kept = 0;
 convoLog.appendChild(thinkingEl);
 convoLog.appendChild(card);
 var document = {getElementById: function(id) { return id === 'confirm-c1' ? card : null; }};
+var ended = [];
+var window = {uiWaitingEnd: function(key) { ended.push(key); }};
 function el(tag, attrs, kids) { return node(attrs && attrs['class']); }
 function keepPendingInterjectionsLast() { kept++; }
 function scrollConvo() { scrolled++; }
 eval(lift('function settleConfirmCard(id, value, label)'));
 settleConfirmCard('c1', 'allow', 'Allow');
 check('answered, the card is followed by the thinking dots', convoLog.kids[0] === card && convoLog.kids[1] === thinkingEl);
+check('answered, the card stops waiting on the person', ended.length === 1 && ended[0] === 'confirm-c1');
 check('with notes still last and the view following', kept === 1 && scrolled === 1);
 var over = node('card2');
 convoLog.kids = [over]; thinkingEl.parentNode = null;

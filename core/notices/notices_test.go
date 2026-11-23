@@ -212,3 +212,22 @@ func TestClearingIsNotSilencing(t *testing.T) {
 		t.Errorf("a cleared condition did not return as new: new=%v count=%d", isNew, back.Count)
 	}
 }
+
+// Something waiting on its owner is handed to OnWaiting the first time it is
+// said, whoever wrote it: not again when it repeats, and never for a notice
+// that waits on nobody.
+func TestOnWaitingHearsEachNewThingWaiting(t *testing.T) {
+	db := newStore(t)
+	var heard []string
+	prev := OnWaiting
+	OnWaiting = func(n Notice) { heard = append(heard, n.Title) }
+	t.Cleanup(func() { OnWaiting = prev })
+	Record(db, Notice{Owner: "alice", Kind: KindBlocked, Title: "A change is waiting"})
+	Record(db, Notice{Owner: "alice", Kind: KindBlocked, Title: "A change is waiting"})
+	Record(db, Notice{Owner: "alice", Kind: KindReport, Title: "The report ran"})
+	Record(db, Notice{Owner: "alice", Kind: KindStopped, Title: "A tool was not run"})
+	Record(db, Notice{Owner: "bob", Kind: KindBlocked, Title: "A change is waiting"})
+	if !reflect.DeepEqual(heard, []string{"A change is waiting", "A change is waiting"}) {
+		t.Errorf("heard %v, want alice's and bob's waiting change once each", heard)
+	}
+}

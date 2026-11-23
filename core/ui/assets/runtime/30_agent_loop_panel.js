@@ -5715,8 +5715,31 @@
       // on surfaces that hide the activity pane (e.g. mobile). Falls
       // back to the activity log only if the convo pane is somehow
       // unavailable.
+      // It waits on the person: the tab says so, and so does a notification
+      // when they are elsewhere and have allowed them (71_notice_bell.js).
+      // The browser asks its permission only on a click, so the card offers
+      // that click while the question is open.
+      if (window.uiWaitingCanAsk && window.uiWaitingCanAsk()) {
+        var ask = el('div', {class: 'ui-agent-confirm-input-help ui-agent-confirm-notify'}, [
+          el('button', {class: 'ui-row-btn', type: 'button', onclick: function() {
+            window.uiWaitingAsk();
+            if (ask.parentNode) ask.parentNode.removeChild(ask);
+          }}, ['Notify me when something waits'])]);
+        card.appendChild(ask);
+      }
       (convoLog || activityLog).appendChild(card);
+      if (window.uiWaitingStart) window.uiWaitingStart('confirm-' + id, d.prompt || 'Waiting for your answer');
       scrollConvo(true);
+    }
+
+    // endWaitingCards ends the wait of every card still armed: a turn that
+    // ends (done, an error, a stop) has nothing left waiting on the person,
+    // and a title still counting it would say otherwise.
+    function endWaitingCards() {
+      if (!window.uiWaitingEnd || !convoLog) return;
+      convoLog.querySelectorAll('.ui-agent-confirm').forEach(function(c) {
+        if (c.id) window.uiWaitingEnd(c.id);
+      });
     }
 
     // settleConfirmCard reflects the decision on the card instead of leaving
@@ -5732,8 +5755,11 @@
     // would come back armed, asking again about a call already allowed.
     function settleConfirmCard(id, value, label) {
       var card = document.getElementById('confirm-' + id);
+      if (window.uiWaitingEnd) window.uiWaitingEnd('confirm-' + id);
       if (!card || card.classList.contains('ui-agent-confirm-resolved')) return;
       card.classList.add('ui-agent-confirm-resolved', 'is-' + (value || 'done'));
+      var notify = card.querySelector('.ui-agent-confirm-notify');
+      if (notify && notify.parentNode) notify.parentNode.removeChild(notify);
       card.querySelectorAll('button').forEach(function(b) { b.disabled = true; });
       var deny = value === 'deny' || value === 'no' || value === 'reject';
       var stamp = el('div', {class: 'ui-agent-confirm-status'},
@@ -6346,6 +6372,7 @@
           }
           break;
         case 'done':
+          endWaitingCards();
           // The turn's steps stay where they are, as its record, folded behind
           // one line; the next turn starts a list of its own.
           if (turnSteps && turnSteps.isConnected) {
@@ -6381,6 +6408,7 @@
           }
           break;
         case 'error':
+          endWaitingCards();
           addActivity('error', '', ev.text || 'unknown error');
           // AND in the conversation. The activity pane is a collapsible side
           // rail; a turn that failed there and nowhere else leaves the thread
