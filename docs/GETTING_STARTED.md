@@ -148,6 +148,9 @@ When the work is done:
   makes it.
 - **Servitor**: give agents your SSH systems and git repositories to
   investigate.
+- **File stores**, under **Administrator › Integrations**: give an agent a
+  folder of logs, captures or exports to search. See
+  [file-stores.md](file-stores.md).
 - **Administrator › Overview › System Status**: health of the sandbox,
   background work and the rest.
 

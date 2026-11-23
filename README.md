@@ -212,7 +212,7 @@ Add `WebPath()` / `WebName()` / `WebDesc()` / `Routes()` and it gets a web dashb
 | `extensions` | What your agents draw on, in one place: credentials, tools, skills, connections, and your own MCP servers |
 | `agents` | One published agent, one URL: a permission-gated chat surface scoped to a single agent |
 | `knowledge` | Named document collections that travel with your skills, recalled by every agent that has those skills on |
-| `filestore` | File stores: make a folder on this server searchable by an agent |
+| `filestore` | File stores: make a folder on this server searchable by an agent ([guide](docs/file-stores.md)) |
 | `bridges` | Messaging transport: wire iMessage / Telegram / ... to a channel agent, with a wake-rule gatekeeper |
 | `servitor` | SSH system investigator + git-repo Q&A, plan-driven, with an xterm pane; systems are shareable |
 | `scribe` | Living multi-section guides with an AI co-author: grounded in their sources, a Changes card on every turn with Undo, a header picture that can carry your logo |
@@ -234,16 +234,25 @@ Full descriptions in the [reference](docs/REFERENCE.md#built-in-apps).
 
 **`gohort-desktop`**, a native Wails host (macOS): a viewer window plus an always-on menu-bar **Bridge** daemon that holds the host's OS permissions (filesystem, screenshot, contacts) and relays iMessage into the Bridges app. The server can push an admin-approved, user-consented capability that becomes a new local tool without reshipping. See [`gohort-desktop/README.md`](gohort-desktop/README.md).
 
-## Learn more
+## Find your way around
 
-- **[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)**: from a fresh install to an agent you use, step by step
-- **[docs/REFERENCE.md](docs/REFERENCE.md)**: the full feature surface, SDK interfaces, CLI flags, and project layout
-- **[docs/integrations.md](docs/integrations.md)**: how gohort reaches things: connectors wrap what gohort does not own, flows wire connectors together, agents decide
-- **[core/ui/AUTHORING.md](core/ui/AUTHORING.md)**: how to write a new app from scratch
-- **[core/README.md](core/README.md)**: framework core types and internals
-- **[docs/bridges-connector-contract.md](docs/bridges-connector-contract.md)**: writing a connector that relays a messaging service into Bridges
-- **[SECURITY.md](SECURITY.md)**: the trust model, and how to report a vulnerability privately
-- **[docs/design/](docs/design/)**: design records, one per feature: what it was built to do, the choices made, and what was left out
+**Start here**
+- **[Getting started](docs/GETTING_STARTED.md)**: from a fresh install to an agent you use, step by step
+- **[Reference](docs/REFERENCE.md)**: the full feature surface, CLI flags, configuration and project layout
+- **[Security](SECURITY.md)**: the trust model, and how to report a vulnerability privately
+
+**What agents can reach**
+- **[File stores](docs/file-stores.md)**: folders on the server an agent can search and read, with commands an administrator approves, pulls between stores and a private folder per person
+- **[Integrations](docs/integrations.md)**: how gohort reaches things: connectors wrap what gohort does not own, flows wire them together, agents decide
+- **[Companion client](gohort-desktop/README.md)**: the macOS host and Bridge daemon (iMessage, local files, screenshots)
+
+**Extending gohort**
+- **[Writing an app](core/ui/AUTHORING.md)**: a new app from scratch on the `core/ui` framework
+- **[Framework core](core/README.md)**: core types and internals
+- **[Bridges connector contract](docs/bridges-connector-contract.md)**: writing a connector that relays a messaging service into Bridges, with [Telegram](docs/bridges-telegram.md) as a worked spec
+
+**Why it works the way it does**
+- **[Design records](docs/design/)**: one per feature: what it was built to do, the choices made, and what was left out
 
 ## License
 
