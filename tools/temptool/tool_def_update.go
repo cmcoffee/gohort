@@ -26,7 +26,7 @@ func updateGrouped(args map[string]any, sess *ToolSession) (out string, err erro
 	// credential's read calls when the credential is this user's (read_calls.go).
 	defer func() {
 		if err == nil {
-			noteToolboxReadCalls(sess, name)
+			noteToolboxReadCalls(sess, name, args)
 		}
 	}()
 	// Only the fields this call actually passes — a patch to url_template

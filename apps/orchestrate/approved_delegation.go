@@ -156,7 +156,7 @@ func (T *OrchestrateApp) runApproved(ar approvedRun) {
 			ctx = WithNetworkConnector(ctx, NewNetworkConnector(true))
 		}
 		if ar.change != nil {
-			ctx = withApprovedChange(ctx, ar.change.agentID, ar.change.key)
+			ctx = withApprovedChange(ctx, *ar.change)
 		}
 		return ctx
 	}

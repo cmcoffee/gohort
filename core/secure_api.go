@@ -278,6 +278,11 @@ type SecureCredential struct {
 	// which agent it is running is outside the scope by definition, and the
 	// whole point of the field is that outside is where it does not work.
 	SharedForAgents map[string][]string `json:"shared_for_agents,omitempty"`
+	// SharedWriteForAgents narrows a WRITE lend to the agents it was made for:
+	// recipient -> agent ids. A person on SharedReadWrite with an entry here
+	// writes only in those agents and reads in the rest of SharedForAgents
+	// (readOnlyForUser). Absent means the write lend is as wide as the lend.
+	SharedWriteForAgents map[string][]string `json:"shared_write_for_agents,omitempty"`
 	// Lending is the owner's STANDING answer to "may this key be lent at
 	// all": LendNone, LendRead, LendAny, or empty.
 	//
@@ -770,6 +775,7 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 		//   Zeroed, a secured credential is bound to nothing.
 		c.CredScope = existing.CredScope
 		c.SharedForAgents = existing.SharedForAgents
+		c.SharedWriteForAgents = existing.SharedWriteForAgents
 		c.ReadCalls = existing.ReadCalls
 		c.ApprovedToolBindings = existing.ApprovedToolBindings
 		c.RevokedToolBindings = existing.RevokedToolBindings
@@ -787,13 +793,7 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 		// cached machine token, would otherwise be sent to whatever host an
 		// edit named next. The people reconnect; the machine token re-mints.
 		if credDestinationMoved(existing, c) {
-			tokPrefix, secPrefix := secureCredUserTokenKey(key, ""), secureCredUserSecretKey(key, "")
-			for _, k := range s.db.Keys(secureAPITable) {
-				if strings.HasPrefix(k, tokPrefix) || strings.HasPrefix(k, secPrefix) {
-					s.db.Unset(secureAPITable, k)
-				}
-			}
-			s.db.Unset(secureAPITable, oauthTokenKey(key))
+			s.forgetPerPersonSecrets(key)
 		}
 	} else {
 		c.CreatedAt = time.Now()
@@ -1083,6 +1083,9 @@ func (s *SecureAPI) DeleteUser(owner, name string) error {
 	key := credStoreKey(owner, name)
 	s.db.Unset(secureAPITable, key)
 	s.db.Unset(secureAPITable, secureCredSecretKey(key))
+	// The keys people put on it go with it: a credential made again under the
+	// name, pointing somewhere else, must not inherit them.
+	s.forgetPerPersonSecrets(key)
 	// An index entry outliving its record points at nothing, which reads to a
 	// recipient as access they lost rather than a credential that is gone.
 	peershare.DropAll(s.db, sharedCredentialsTable, owner, name)
@@ -1352,7 +1355,7 @@ func (s *SecureAPI) LentConnectionsFor(user string) []PerUserConnection {
 		_, has := s.recipientOwnSecret(c, user)
 		out = append(out, PerUserConnection{
 			Name: c.Name,
-			Description: "Lent to you by " + c.Owner + ". Connect your own key and every call to it goes out as you, reads included: " +
+			Description: "Lent to you by " + c.Owner + "; its calls go to " + lentDestination(c) + ". Connect your own key and every call to it goes out as you, reads included: " +
 				"you may then find less than you did, because it was reading with " + c.Owner + "'s access. A write through it needs your own.",
 			Connected: has,
 			Kind:      connKindLent,
@@ -1882,6 +1885,36 @@ func (c SecureCredential) IsPerUser() bool { return c.CredScope == "per_user" }
 // secureCredUserSecretKey is the DB key for one user's secret on a per_user
 // credential. Kept distinct from the shared __secret key so the two never mix.
 func secureCredUserSecretKey(name, user string) string { return name + "__usecret__" + user }
+
+// secureCredUserDestKey records where a person's own key on a lent credential
+// was given for (credDestinationPrint), so it is never sent anywhere else.
+func secureCredUserDestKey(name, user string) string { return name + "__usdest__" + user }
+
+// forgetPerPersonSecrets drops every person's token and key, and the cached
+// machine token, kept under a credential's store key. Called with s.mu held.
+func (s *SecureAPI) forgetPerPersonSecrets(key string) {
+	prefixes := []string{secureCredUserTokenKey(key, ""), secureCredUserSecretKey(key, ""), secureCredUserDestKey(key, "")}
+	for _, k := range s.db.Keys(secureAPITable) {
+		for _, p := range prefixes {
+			if strings.HasPrefix(k, p) {
+				s.db.Unset(secureAPITable, k)
+				break
+			}
+		}
+	}
+	s.db.Unset(secureAPITable, oauthTokenKey(key))
+}
+
+// credDestinationPrint is every place c sends its secret, in one string: the
+// same fields credDestinationMoved compares.
+func credDestinationPrint(c SecureCredential) string {
+	also := make([]string, 0, len(c.AlsoCovers))
+	for _, o := range c.AlsoCovers {
+		also = append(also, credOrigin(o))
+	}
+	sort.Strings(also)
+	return strings.Join([]string{credOrigin(c.BaseURL), credOrigin(c.AllowedURLPattern), credOrigin(c.TokenURL), strings.Join(also, ",")}, "|")
+}
 
 // SaveUserSecret stores (encrypted) a user's own secret for a per_user
 // credential. Empty value clears it (the user disconnecting).
@@ -2938,7 +2971,7 @@ func (ac *apiCall) allowed() bool {
 	// a wider lend.
 	user := sessUsername(sess)
 	ac.recipientOwn = s.recipientUsesOwn(c, user)
-	if readOnlyForUser(c, user) && !ac.recipientOwn && !credentialCallReads(c, ac.method, ac.rawURL) {
+	if readOnlyForUser(c, user, sessAgentID(sess)) && !ac.recipientOwn && !(credentialCallReads(c, ac.method, ac.rawURL) && !bodyOverridesMethod(ac.method, ac.body)) {
 		refused := s.refuse(c, sess, ac.method, ac.rawURL, fmt.Sprintf(
 			"%s was not sent: %s lent you %q for reads, and this call writes. A write goes out as you, with your own account: connect yours under Extensions > Connected accounts (%q, lent by %s), and it can be made. Until then, say what it would write",
 			ac.method, c.Owner, c.Name, c.Name, c.Owner))
@@ -3195,7 +3228,7 @@ func (ac *apiCall) build() bool {
 	// Where the methods are limited (the credential's own list, or a lend
 	// for reads), a method-override header is dropped: APIs that honour one
 	// turn a permitted GET or POST into the DELETE the limit refused.
-	methodsLimited := len(c.AllowedMethods) > 0 || readOnlyForUser(c, sessUsername(sess))
+	methodsLimited := len(c.AllowedMethods) > 0 || readOnlyForUser(c, sessUsername(sess), sessAgentID(sess))
 	if hdrs, ok := args["request_headers"].(map[string]any); ok {
 		for k, v := range hdrs {
 			if str, ok := v.(string); ok {
@@ -4248,6 +4281,13 @@ func credentialURLTrick(rawURL string) string {
 		if seg == "." || seg == ".." {
 			return "a . or .. path segment"
 		}
+		// A server that strips ";params" from each segment before resolving
+		// the path (Tomcat, and Jira on it) reads "..;" as "..".
+		if i := strings.IndexByte(seg, ';'); i >= 0 {
+			if base := strings.ToLower(seg[:i]); base == "." || base == ".." || base == "%2e" || base == "%2e%2e" || base == ".%2e" || base == "%2e." {
+				return "a . or .. path segment behind ;parameters"
+			}
+		}
 	}
 	return ""
 }
@@ -4523,12 +4563,29 @@ func credLendCoversAgent(c SecureCredential, user, agentID string) bool {
 // credShareGrant, which reads an agent-scoped lend from no agent as no lend
 // at all, every lend made through an agent share came out as "not read-only",
 // and its writes went through as the owner.
-func readOnlyForUser(c SecureCredential, user string) bool {
+//
+// A write lend made for some agents (SharedWriteForAgents) writes only in
+// those: in any other agent the person reaches the key in, it reads. Without
+// it a write lend for one agent widened a read lend the same person held for
+// another, both being one name on one list.
+func readOnlyForUser(c SecureCredential, user, agentID string) bool {
 	user = strings.TrimSpace(user)
 	if user == "" || c.Owner == "" || user == c.Owner {
 		return false
 	}
-	return credSliceHas(c.SharedReadOnly, user) && !credSliceHas(c.SharedReadWrite, user)
+	if !credSliceHas(c.SharedReadWrite, user) {
+		return credSliceHas(c.SharedReadOnly, user)
+	}
+	if scope := c.SharedWriteForAgents[user]; len(scope) > 0 {
+		return !credSliceHas(scope, strings.TrimSpace(agentID))
+	}
+	return false
+}
+
+// bodyOverridesMethod reports whether a write-method call's body carries a
+// method override (a form or JSON "_method"), which a listed read must not.
+func bodyOverridesMethod(method, body string) bool {
+	return IsWriteMethod(method) && strings.Contains(strings.ToLower(body), "_method")
 }
 
 // lentTo reports whether c is a user-owned credential on one of whose share
@@ -4562,8 +4619,15 @@ func (s *SecureAPI) recipientOwnSecret(c SecureCredential, user string) (string,
 	if !lentTo(c, user) {
 		return "", false
 	}
-	v, ok := s.loadUserSecret(credStoreKey(c.Owner, c.Name), user)
+	key := credStoreKey(c.Owner, c.Name)
+	v, ok := s.loadUserSecret(key, user)
 	if !ok || strings.TrimSpace(v) == "" {
+		return "", false
+	}
+	// Given for where the credential pointed then, and nowhere else: if it
+	// points somewhere new by any route, the key is not sent there.
+	var dest string
+	if !s.db.Get(secureAPITable, secureCredUserDestKey(key, user), &dest) || dest != credDestinationPrint(c) {
 		return "", false
 	}
 	return v, true
@@ -4583,7 +4647,18 @@ func (s *SecureAPI) SaveSharedAccount(owner, name, user, value string) error {
 	if c.IsAuthCode() {
 		return fmt.Errorf("%q signs in with your own account already: connect it with its Connect button", name)
 	}
-	return s.SaveUserSecret(credStoreKey(owner, name), user, value)
+	key := credStoreKey(owner, name)
+	if err := s.SaveUserSecret(key, user, value); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if strings.TrimSpace(value) == "" {
+		s.db.Unset(secureAPITable, secureCredUserDestKey(key, user))
+	} else {
+		s.db.Set(secureAPITable, secureCredUserDestKey(key, user), credDestinationPrint(c))
+	}
+	return nil
 }
 
 // HasSharedAccount reports whether user connected their own key for owner's
@@ -4634,8 +4709,15 @@ func credentialCallReads(c SecureCredential, method, rawURL string) bool {
 		return false
 	}
 	esc := strings.ToLower(u.EscapedPath())
-	if strings.Contains(esc, "%2f") || strings.Contains(esc, "%2e") || strings.Contains(esc, "%5c") {
+	if strings.Contains(esc, "%2f") || strings.Contains(esc, "%2e") || strings.Contains(esc, "%5c") || strings.Contains(esc, ";") {
 		return false
+	}
+	// A method override turns a listed POST into something else at a server
+	// that honours one (Rails, Laravel): never a listed read.
+	for k := range u.Query() {
+		if strings.EqualFold(k, "_method") || strings.EqualFold(k, "x-http-method-override") || strings.EqualFold(k, "x-http-method") || strings.EqualFold(k, "x-method-override") {
+			return false
+		}
 	}
 	for _, seg := range strings.Split(u.Path, "/") {
 		if seg == "." || seg == ".." {
@@ -4702,6 +4784,31 @@ func (s *SecureAPI) SetReadCalls(owner, name string, calls []string) error {
 // reads does, on a toolbox on its author's own credential.
 func (s *SecureAPI) AddReadCalls(owner, name string, calls []string) error {
 	return s.updateReadCalls(owner, name, calls, true)
+}
+
+// RemoveReadCalls takes calls off them: an action of the owner's own toolbox
+// marked as one that does not only read.
+func (s *SecureAPI) RemoveReadCalls(owner, name string, calls []string) error {
+	drop, err := cleanReadCalls(calls)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := credStoreKey(owner, name)
+	var c SecureCredential
+	if !s.db.Get(secureAPITable, key, &c) {
+		return fmt.Errorf("credential %q not found", name)
+	}
+	var kept []string
+	for _, rc := range c.ReadCalls {
+		if !credSliceHas(drop, rc) {
+			kept = append(kept, rc)
+		}
+	}
+	c.ReadCalls = kept
+	s.db.Set(secureAPITable, key, c)
+	return nil
 }
 
 func (s *SecureAPI) updateReadCalls(owner, name string, calls []string, add bool) error {
@@ -4785,6 +4892,14 @@ func (s *SecureAPI) setCredentialShares(owner, name string, readOnly, readWrite 
 	}
 	if len(c.SharedForAgents) == 0 {
 		c.SharedForAgents = nil
+	}
+	for u := range c.SharedWriteForAgents {
+		if !credSliceHas(write, u) {
+			delete(c.SharedWriteForAgents, u)
+		}
+	}
+	if len(c.SharedWriteForAgents) == 0 {
+		c.SharedWriteForAgents = nil
 	}
 	s.db.Set(secureAPITable, key, c)
 	s.mu.Unlock()
@@ -5428,6 +5543,10 @@ func (s *SecureAPI) LendForAgent(owner, name, agentID string, users []string, wr
 	for u, ids := range c.SharedForAgents {
 		scope[u] = append([]string{}, ids...)
 	}
+	wscope := map[string][]string{}
+	for u, ids := range c.SharedWriteForAgents {
+		wscope[u] = append([]string{}, ids...)
+	}
 	read, wr := c.SharedReadOnly, c.SharedReadWrite
 	for _, u := range users {
 		if u = strings.TrimSpace(u); u == "" || u == owner {
@@ -5435,22 +5554,34 @@ func (s *SecureAPI) LendForAgent(owner, name, agentID string, users []string, wr
 		}
 		held := credSliceHas(read, u) || credSliceHas(wr, u)
 		if held && len(scope[u]) == 0 {
-			// Already holds it unscoped. Leave it.
+			// An unscoped lend made by hand already covers this agent.
 			continue
+		}
+		writes := credSliceHas(wr, u)
+		// A write lend scoped to agents but recorded before writes had a
+		// scope of their own wrote in all of them: those agents are its
+		// write scope, so what is added now does not inherit it.
+		if writes && len(wscope[u]) == 0 && len(scope[u]) > 0 {
+			wscope[u] = append([]string{}, scope[u]...)
 		}
 		if !credSliceHas(scope[u], agentID) {
 			scope[u] = append(scope[u], agentID)
 		}
 		if write {
-			wr = append(wr, u)
-		} else {
+			if !writes {
+				wr = append(wr, u)
+			}
+			if !credSliceHas(wscope[u], agentID) {
+				wscope[u] = append(wscope[u], agentID)
+			}
+		} else if !credSliceHas(read, u) && !writes {
 			read = append(read, u)
 		}
 	}
 	if err := s.SetCredentialShares(owner, name, read, wr); err != nil {
 		return err
 	}
-	return s.setLendScope(owner, name, scope)
+	return s.setLendScope(owner, name, scope, wscope)
 }
 
 // TakeBackForAgent undoes LendForAgent for these people and this agent only,
@@ -5469,33 +5600,46 @@ func (s *SecureAPI) TakeBackForAgent(owner, name, agentID string, users []string
 	for u, ids := range c.SharedForAgents {
 		scope[u] = append([]string{}, ids...)
 	}
+	wscope := map[string][]string{}
+	for u, ids := range c.SharedWriteForAgents {
+		wscope[u] = append([]string{}, ids...)
+	}
 	read, wr := c.SharedReadOnly, c.SharedReadWrite
+	changed := false
 	var gone []string
 	for _, u := range users {
 		u = strings.TrimSpace(u)
 		if !credSliceHas(scope[u], agentID) {
 			continue
 		}
-		var rest []string
-		for _, id := range scope[u] {
-			if id != agentID {
-				rest = append(rest, id)
-			}
-		}
+		rest := credWithout(scope[u], agentID)
 		if len(rest) > 0 {
 			scope[u] = rest
+			// Writes taken back from this agent: when no agent left writes,
+			// what remains of the lend reads.
+			if ws := wscope[u]; len(ws) > 0 {
+				if ws = credWithout(ws, agentID); len(ws) > 0 {
+					wscope[u] = ws
+				} else {
+					delete(wscope, u)
+					wr, read = credWithout(wr, u), append(credWithout(read, u), u)
+					changed = true
+				}
+			}
 			continue
 		}
 		delete(scope, u)
+		delete(wscope, u)
 		read, wr = credWithout(read, u), credWithout(wr, u)
 		gone = append(gone, u)
+		changed = true
 	}
-	if len(gone) > 0 {
+	if changed {
 		if err := s.setCredentialShares(owner, name, read, wr, true); err != nil {
 			return nil, err
 		}
 	}
-	return gone, s.setLendScope(owner, name, scope)
+	return gone, s.setLendScope(owner, name, scope, wscope)
 }
 
 func credWithout(list []string, drop string) []string {
@@ -5511,7 +5655,7 @@ func credWithout(list []string, drop string) []string {
 // setLendScope writes the scope map beside the lists SetCredentialShares just
 // wrote. Separate because that setter owns the lists and this owns the scope;
 // one function writing both would be the door that decides two things.
-func (s *SecureAPI) setLendScope(owner, name string, scope map[string][]string) error {
+func (s *SecureAPI) setLendScope(owner, name string, scope, wscope map[string][]string) error {
 	if !s.ready() {
 		return errString("secure-api store not initialized")
 	}
@@ -5537,6 +5681,27 @@ func (s *SecureAPI) setLendScope(owner, name string, scope map[string][]string) 
 		c.SharedForAgents = nil
 	} else {
 		c.SharedForAgents = clean
+	}
+	// A write scope only for people who write, and only within their lend.
+	wclean := map[string][]string{}
+	for u, ids := range wscope {
+		if !credSliceHas(c.SharedReadWrite, u) {
+			continue
+		}
+		var in []string
+		for _, id := range ids {
+			if credSliceHas(clean[u], id) {
+				in = append(in, id)
+			}
+		}
+		if len(in) > 0 {
+			wclean[u] = in
+		}
+	}
+	if len(wclean) == 0 {
+		c.SharedWriteForAgents = nil
+	} else {
+		c.SharedWriteForAgents = wclean
 	}
 	s.db.Set(secureAPITable, key, c)
 	return nil
@@ -5644,4 +5809,15 @@ func urlWithoutQuery(raw string) string {
 		return raw[:i]
 	}
 	return raw
+}
+
+// lentDestination is where a lent credential's calls go, for the person it is
+// lent to: what their own key would be sent to.
+func lentDestination(c SecureCredential) string {
+	for _, v := range []string{credOrigin(c.BaseURL), credOrigin(c.AllowedURLPattern)} {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return "where its owner set it"
 }

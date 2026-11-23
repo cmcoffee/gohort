@@ -192,7 +192,11 @@ func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	carried, _ := workspaceFilesArg(args[carriedWorkspaceFiles])
 	applyToolExtras(sess, strings.TrimSpace(StringArg(args, "name")), args, files, carried)
-	noteToolboxReadCalls(sess, strings.TrimSpace(StringArg(args, "name")))
+	// A create notes its marks; an update re-runs this path with the whole
+	// merged toolbox, and notes only what it set itself (updateGrouped).
+	if updating, _ := args[updatingArg].(bool); !updating {
+		noteToolboxReadCalls(sess, strings.TrimSpace(StringArg(args, "name")), args)
+	}
 	return res, nil
 }
 

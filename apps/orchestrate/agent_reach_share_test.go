@@ -128,6 +128,13 @@ func TestSharingLendsTheKeyForReadsToThePeopleAdded(t *testing.T) {
 	if lentToIn(t, "jira_def", "dana", "a9") {
 		t.Error("somebody already on the agent was lent the key by somebody else being added")
 	}
+	// A maintainer taken off loses the lend with it.
+	if code := as("POST", "/api/console/permissions/share?agent=a9", `{"maintainers":[]}`); code != 200 {
+		t.Fatalf("remove maintainers: %d", code)
+	}
+	if lentToIn(t, "jira_def", "erin", "a9") {
+		t.Error("a maintainer taken off the agent kept the owner's key")
+	}
 	// With the row at Mine with writes too, the next person added gets writes.
 	if code := as("POST", "/api/agents/a9/reach/credential", `{"name":"jira_def","lend":"write"}`); code != 200 {
 		t.Fatalf("writes: %d", code)

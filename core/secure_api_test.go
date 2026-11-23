@@ -1404,6 +1404,149 @@ func TestTheirOwnAccountCarriesEveryCallOnceConnected(t *testing.T) {
 	}
 }
 
+// A path a server reads as somewhere else is never a listed read: a ".."
+// behind ";params" (Tomcat strips them, and Jira runs on it), any ";" at all,
+// and a method override in the query or the body.
+func TestTrickedPathsAreNeverListedReads(t *testing.T) {
+	srv, _ := lendTestServer(t)
+	if err := Secure().SetReadCalls("alice", "jira", []string{"POST /rest/api/3/search/**"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lendCall(t, "bob", "POST", srv.URL+"/rest/api/3/search/saved"); err != nil {
+		t.Fatalf("a plain listed read was refused: %v", err)
+	}
+	for _, u := range []string{
+		"/rest/api/3/search/..;/issue",
+		"/rest/api/3/search/..;x/issue",
+		"/rest/api/3/search/saved;jsessionid=1",
+		"/rest/api/3/search/saved?_method=DELETE",
+		"/rest/api/3/search/saved?X-HTTP-Method-Override=DELETE",
+	} {
+		if _, err := lendCall(t, "bob", "POST", srv.URL+u); err == nil {
+			t.Errorf("POST %s went out on alice's key through a lend for reads", u)
+		}
+	}
+	c, _ := Secure().ResolveIn("jira", "bob", "a1")
+	if _, err := Secure().dispatch(c, map[string]any{"url": srv.URL + "/rest/api/3/search/saved", "method": "POST", "body": `{"_method":"DELETE"}`},
+		&ToolSession{Username: "bob", AgentID: "a1"}); err == nil {
+		t.Error("a listed read carrying a method override in its body went out")
+	}
+	if why := credentialURLTrick("https://jira.example/a/..;/b"); why == "" {
+		t.Error("the URL check misses a .. behind ;params")
+	}
+}
+
+// A person's own key on a lent credential is sent only where the credential
+// pointed when they gave it: not after it is deleted and made again under the
+// name somewhere else, and not after its address changes by any route.
+func TestTheirOwnKeyNeverFollowsTheCredentialElsewhere(t *testing.T) {
+	srv, seen := lendTestServer(t)
+	if err := Secure().SaveSharedAccount("alice", "jira", "bob", "bob-key"); err != nil {
+		t.Fatal(err)
+	}
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*seen = append(*seen, "OTHER "+r.Header.Get("Authorization"))
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer other.Close()
+
+	// Deleted and made again at the same address: what the person gave the
+	// old credential goes with it all the same.
+	if err := Secure().DeleteUser("alice", "jira"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Secure().Save(SecureCredential{Name: "jira", Type: SecureCredBearer, Owner: "alice", AllowedURLPattern: imageHostPattern(srv.URL)}, "alice-key"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Secure().LendForAgent("alice", "jira", "a1", []string{"bob"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if Secure().HasSharedAccount("alice", "jira", "bob") {
+		t.Error("bob's key survived its credential being deleted and made again")
+	}
+	if err := Secure().SaveSharedAccount("alice", "jira", "bob", "bob-key"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Deleted and made again, pointing elsewhere, lent again.
+	if err := Secure().DeleteUser("alice", "jira"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Secure().Save(SecureCredential{Name: "jira", Type: SecureCredBearer, Owner: "alice", AllowedURLPattern: imageHostPattern(other.URL)}, "alice-key"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Secure().LendForAgent("alice", "jira", "a1", []string{"bob"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if Secure().HasSharedAccount("alice", "jira", "bob") {
+		t.Error("bob's key survived the credential being deleted")
+	}
+	lendCall(t, "bob", "GET", other.URL+"/x")
+	for _, h := range *seen {
+		if strings.Contains(h, "bob-key") {
+			t.Fatalf("bob's key went to the re-made credential's server: %v", *seen)
+		}
+	}
+
+	// Its address changed underneath, by a route that wipes nothing.
+	if err := Secure().SaveSharedAccount("alice", "jira", "bob", "bob-key"); err != nil {
+		t.Fatal(err)
+	}
+	key := credStoreKey("alice", "jira")
+	var c SecureCredential
+	Secure().db.Get(secureAPITable, key, &c)
+	c.AllowedURLPattern = imageHostPattern(srv.URL)
+	Secure().db.Set(secureAPITable, key, c)
+	if Secure().HasSharedAccount("alice", "jira", "bob") {
+		t.Error("bob's key is still used after the credential was pointed somewhere else")
+	}
+}
+
+// A write lend made for one agent writes in that agent only. A read lend the
+// same person holds for another agent stays a read, whichever was made first,
+// and taking the write back leaves the read.
+func TestAWriteLendForOneAgentStaysInIt(t *testing.T) {
+	srv, _ := lendTestServer(t) // bob: reads, in a1
+	if err := Secure().LendForAgent("alice", "jira", "a2", []string{"bob"}, true); err != nil {
+		t.Fatal(err)
+	}
+	call := func(agent, method string) error {
+		c, ok := Secure().ResolveIn("jira", "bob", agent)
+		if !ok {
+			t.Fatalf("no lend in %s", agent)
+		}
+		_, err := Secure().dispatch(c, map[string]any{"url": srv.URL + "/x", "method": method, "body": "{}"}, &ToolSession{Username: "bob", AgentID: agent})
+		return err
+	}
+	if err := call("a1", "POST"); err == nil {
+		t.Error("a write lend for a2 let bob write in a1, where he was lent reads")
+	}
+	if err := call("a2", "POST"); err != nil {
+		t.Errorf("the write lend for a2 does not write there: %v", err)
+	}
+	if _, err := Secure().TakeBackForAgent("alice", "jira", "a2", []string{"bob"}); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := Secure().LoadUser("alice", "jira"); credSliceHas(c.SharedReadWrite, "bob") || !credSliceHas(c.SharedReadOnly, "bob") {
+		t.Errorf("taking the write back did not leave the read: read %v write %v", c.SharedReadOnly, c.SharedReadWrite)
+	}
+	if err := call("a1", "GET"); err != nil {
+		t.Errorf("the read lend for a1 went with the write: %v", err)
+	}
+
+	// The other way round: writes for a3 first, then reads for a4.
+	if err := Secure().LendForAgent("alice", "jira", "a3", []string{"carol"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := Secure().LendForAgent("alice", "jira", "a4", []string{"carol"}, false); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := Secure().ResolveIn("jira", "carol", "a4")
+	if _, err := Secure().dispatch(c, map[string]any{"url": srv.URL + "/x", "method": "DELETE"}, &ToolSession{Username: "carol", AgentID: "a4"}); err == nil {
+		t.Error("a read lend for a4 writes because of a write lend for a3")
+	}
+}
+
 // A read-write lend writes. The grant is a grant.
 func TestAReadWriteLendCanWrite(t *testing.T) {
 	secureAPITestStore(t)

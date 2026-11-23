@@ -408,7 +408,12 @@ func writeAgentOnce(db Database, a AgentRecord, reason string) (AgentRecord, err
 	if RootDB != nil && isShareableAgent(a, a.Owner) {
 		var prior AgentRecord
 		if db.Get(agentsTable, a.ID, &prior) {
-			dropped = leftBehind(ShareMembers(prior.AllowedUsers, a.Owner), ShareMembers(a.AllowedUsers, a.Owner))
+			// Users and maintainers both are lent the owner's keys
+			// (lendByDefault), so leaving either list, and holding neither,
+			// takes the lend back.
+			before := append(append([]string{}, prior.AllowedUsers...), prior.Maintainers...)
+			after := append(append([]string{}, a.AllowedUsers...), a.Maintainers...)
+			dropped = leftBehind(ShareMembers(before, a.Owner), ShareMembers(after, a.Owner))
 		}
 	}
 	db.Set(agentsTable, a.ID, a)

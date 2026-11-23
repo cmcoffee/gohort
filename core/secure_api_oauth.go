@@ -384,7 +384,7 @@ func (s *SecureAPI) AuthorizeRequestAs(user, credName string, req *http.Request)
 	switch {
 	case s.EffectiveSecured(c, user):
 		return fmt.Errorf("credential %q is SECURED: it is reached only through the tools bound to it, and an MCP server is not one", credName)
-	case readOnlyForUser(c, user):
+	case readOnlyForUser(c, user, ""):
 		return fmt.Errorf("credential %q was lent to you for reads, and every MCP request is a POST: ask %s for a read-write share", credName, c.Owner)
 	case len(c.AllowedMethods) > 0 && !credSliceHas(c.AllowedMethods, http.MethodPost):
 		return fmt.Errorf("credential %q does not allow POST, and every MCP request is one", credName)
@@ -558,6 +558,11 @@ func (s *SecureAPI) SaveAPIDraft(c SecureCredential) error {
 		c.CreatedAt = time.Now()
 	}
 	s.db.Set(secureAPITable, key, c)
+	// A draft that repoints the credential drops what people gave for the old
+	// address, as an edit that moves it does.
+	if moved {
+		s.forgetPerPersonSecrets(key)
+	}
 	// Placeholder secret so the UI flags "needs secret"; the owner replaces it
 	// with the real value. A repointing draft drops a real secret, as above.
 	var hasSecret string

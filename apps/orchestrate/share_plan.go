@@ -208,6 +208,24 @@ func (T *OrchestrateApp) agentCredentialDecision(c *jsonapi.Call, body struct {
 	// that can be moved back implies the move undoes something, and a pill that
 	// reads "they bring their own" over a key still lent would be a lie told by
 	// the UI.
+	// A maintainer's "reads" only takes writes back from those this agent's
+	// share lent to: it never lends the owner's key to anybody the owner did
+	// not (somebody they left out, or took it back from).
+	if maintainer && body.Lend == credRead {
+		var lent []string
+		if orchestrateBaseDB != nil {
+			orchestrateBaseDB.Get(shareLendTable, shareLendKey(owner, agentID, name), &lent)
+		}
+		withdrawOneCredentialLend(owner, agentID, name)
+		if len(lent) == 0 {
+			return map[string]string{"result": "Credential " + name + ": nobody was lent it, so there was nothing to take down to reads"}, nil
+		}
+		if err := Secure().LendForAgent(owner, name, agentID, lent, false); err != nil {
+			return nil, jsonapi.BadRequest(err.Error())
+		}
+		recordShareLend(owner, agentID, name, lent)
+		return map[string]string{"result": "Credential " + name + " → " + strings.Join(lent, ", ") + ": reads only now"}, nil
+	}
 	if body.Lend == credOwn || body.Lend == shareSkip || body.Lend == credWithhold {
 		withdrawOneCredentialLend(owner, agentID, name)
 	}

@@ -52,6 +52,25 @@ func TestAReadMarkOnYourOwnKeyBecomesOneOfItsReadCalls(t *testing.T) {
 		t.Errorf("read calls after an update: %v", c.ReadCalls)
 	}
 
+	// The owner takes a call off the list: an edit of something else does not
+	// put it back, and marking an action as not only reading takes its call off.
+	if err := Secure().SetReadCalls("alice", "jira", []string{"POST /rest/api/3/issue/*/view"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := updateGrouped(map[string]any{"name": "jira_tools", "actions": []any{map[string]any{"name": "comment", "description": "Comment on it."}}}, sess); err != nil {
+		t.Fatal(err)
+	}
+	c, _ = Secure().LoadUser("alice", "jira")
+	if !slices.Equal(c.ReadCalls, []string{"POST /rest/api/3/issue/*/view"}) {
+		t.Errorf("an unrelated edit put a removed read call back: %v", c.ReadCalls)
+	}
+	if _, err := updateGrouped(map[string]any{"name": "jira_tools", "actions": []any{map[string]any{"name": "view", "reads": false}}}, sess); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ = Secure().LoadUser("alice", "jira"); len(c.ReadCalls) != 0 {
+		t.Errorf("unmarking an action did not take its call off: %v", c.ReadCalls)
+	}
+
 	if _, err := createGrouped(box("wiki_tools", "wiki"), sess); err != nil {
 		t.Fatal(err)
 	}

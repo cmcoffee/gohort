@@ -179,7 +179,7 @@ func reconcileShareLends() {
 		}
 		a, ok := loadAgent(UserDB(orchestrateBaseDB, owner), agentID)
 		for _, u := range lent {
-			if ok && a.Owner == owner && SharedWithUser(a.AllowedUsers, owner, u) {
+			if ok && a.Owner == owner && (SharedWithUser(a.AllowedUsers, owner, u) || SharedWithUser(a.Maintainers, owner, u)) {
 				continue
 			}
 			ak := owner + "\x00" + agentID

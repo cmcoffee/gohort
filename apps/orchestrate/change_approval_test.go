@@ -99,12 +99,22 @@ func TestAnUnwatchedChangeQueuesAndApprovalLetsItThrough(t *testing.T) {
 
 	// The run the approval starts makes it, a deletion included.
 	c.session = "sched-2"
-	c.ctx = withApprovedChange(context.Background(), queued[0].Agent, queued[0].Handle)
+	if !queued[0].Deletes || !strings.HasPrefix(queued[0].Brief, "Delete the skill") {
+		t.Errorf("the queued deletion is not marked as one: %+v", queued[0])
+	}
+	c.ctx = withApprovedChange(context.Background(), approvedChange{agentID: queued[0].Agent, key: queued[0].Handle, deletes: queued[0].Deletes})
 	if msg := c.approve("skill", "triage", "Delete it.", ChangeDelete); msg != "" {
 		t.Errorf("the approved change is still refused in the run it started: %q", msg)
 	}
 	if msg := c.approve("skill", "other", "Change it.", ChangeEdit); msg == "" {
 		t.Error("approving one change let the run change something else")
+	}
+	// An approved edit is not an approved deletion, nor the other way round.
+	edit := c
+	edit.ctx = withApprovedChange(context.Background(), approvedChange{agentID: "a1", key: changeKey("skill", "triage")})
+	edit.session = "sched-5"
+	if msg := edit.approve("skill", "triage", "Delete it.", ChangeDelete); msg == "" {
+		t.Error("an approved edit let the run delete the item")
 	}
 	other := c
 	other.agentID, other.session = "a2", "sched-3"

@@ -167,25 +167,29 @@ func changeKey(kind, name string) string {
 type approvedChangeKey struct{}
 
 // approvedChange is one change the owner approved from a card left waiting:
-// the agent that asked for it and the item.
-type approvedChange struct{ agentID, key string }
+// the agent that asked for it, the item, and whether it was a deletion.
+type approvedChange struct {
+	agentID, key string
+	deletes      bool
+}
 
 // withApprovedChange marks the run that makes a change the owner approved
 // from a card left waiting: agentID may make that one change to key, of
 // whatever kind it was (a deletion included), in this run alone. An agent the
 // run dispatches does not inherit it, and nothing is stored.
-func withApprovedChange(ctx context.Context, agentID, key string) context.Context {
-	return context.WithValue(ctx, approvedChangeKey{}, approvedChange{agentID, key})
+func withApprovedChange(ctx context.Context, ch approvedChange) context.Context {
+	return context.WithValue(ctx, approvedChangeKey{}, ch)
 }
 
 // approvedChangeFor reports whether ctx is the run the owner approved for
-// agentID to change key.
-func approvedChangeFor(ctx context.Context, agentID, key string) bool {
+// agentID to make op to key: an approved edit covers edits, an approved
+// deletion the deletion.
+func approvedChangeFor(ctx context.Context, agentID, key string, op ChangeOp) bool {
 	if ctx == nil || strings.TrimSpace(agentID) == "" || key == "" {
 		return false
 	}
 	a, _ := ctx.Value(approvedChangeKey{}).(approvedChange)
-	return a.agentID == agentID && a.key == key
+	return a.agentID == agentID && a.key == key && a.deletes == (op == ChangeDelete)
 }
 
 // resetChangeApprovals starts a new job in session: what an earlier job there
@@ -298,8 +302,10 @@ func (c changeAsker) approve(kind, name, detail string, op ChangeOp) string {
 	}
 	// The one change the owner approved from a card left waiting, in the
 	// run that makes it.
-	if approvedChangeFor(c.ctx, c.agentID, key) {
-		set.add(key)
+	if approvedChangeFor(c.ctx, c.agentID, key, op) {
+		if op != ChangeDelete {
+			set.add(key)
+		}
 		return ""
 	}
 	what := strings.TrimSpace(kind) + " " + changeItemLabel(c.db, kind, name)
@@ -322,7 +328,7 @@ func (c changeAsker) approve(kind, name, detail string, op ChangeOp) string {
 		return changeRefusal(what, end)
 	}
 	then := "once they approve it, it is made in a fresh run"
-	if queueChangeApproval(c, kind, name, detail) {
+	if queueChangeApproval(c, kind, name, detail, op) {
 		then = "once they approve it, it is made in a fresh run and the result comes back to this conversation"
 	}
 	return fmt.Sprintf("NOT DONE: changing the %s needs the owner's approval, and nobody is here to give it. It is waiting in their approval queue; %s. Do not make it another way, and do not recreate it under a different name.", what, then)
@@ -343,14 +349,18 @@ func sessionApprove(sess *ToolSession, kind, name, detail string, op ChangeOp) s
 // approval queue, once: a run that tries again before they answer does not
 // add a second entry. Reports whether approving it brings the result back to
 // a conversation (it recorded one to come back to).
-func queueChangeApproval(c changeAsker, kind, name, detail string) bool {
+func queueChangeApproval(c changeAsker, kind, name, detail string, op ChangeOp) bool {
 	key := changeKey(kind, name)
 	for _, a := range ListAuthorizations(RootDB, c.owner) {
-		if a.Action == changeApprovalAction && a.Agent == c.agentID && a.Handle == key {
+		if a.Action == changeApprovalAction && a.Agent == c.agentID && a.Handle == key && a.Deletes == (op == ChangeDelete) {
 			return a.FromSession != ""
 		}
 	}
-	brief := fmt.Sprintf("Change the %s %s.", strings.TrimSpace(kind), changeItemLabel(c.db, kind, name))
+	verb := "Change"
+	if op == ChangeDelete {
+		verb = "Delete"
+	}
+	brief := fmt.Sprintf("%s the %s %s.", verb, strings.TrimSpace(kind), changeItemLabel(c.db, kind, name))
 	if d := strings.TrimSpace(detail); d != "" {
 		brief += " " + d
 	}
@@ -361,6 +371,7 @@ func queueChangeApproval(c changeAsker, kind, name, detail string) bool {
 		FromAgent: chFirst(strings.TrimSpace(c.sentBy), c.agentID), // shows where it was asked
 		Handle:    key,                                             // the item, matched when it is approved
 		Brief:     brief,
+		Deletes:   op == ChangeDelete,
 	}
 	if c.sess != nil {
 		a.Text = strings.TrimSpace(c.sess.IntentText) // what the re-run finishes
@@ -401,7 +412,7 @@ func (T *OrchestrateApp) runApprovedChange(a Authorization) {
 	}
 	name := T.delegationTargetName(a.Owner, a.Agent)
 	T.runApproved(approvedRun{
-		a: a, target: a.Agent, brief: brief, change: &approvedChange{a.Agent, a.Handle},
+		a: a, target: a.Agent, brief: brief, change: &approvedChange{agentID: a.Agent, key: a.Handle, deletes: a.Deletes},
 		label: fmt.Sprintf("the change %s queued for the user's approval, which they approved (%s)", name, truncateObs(a.Brief, 160)),
 	})
 }

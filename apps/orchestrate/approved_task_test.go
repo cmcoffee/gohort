@@ -92,7 +92,7 @@ func TestAnApprovedChangeIsMadeAndComesBack(t *testing.T) {
 	RegisterStandingRunner(func(ctx context.Context, sa StandingAgent) StandingRunResult {
 		ran = append(ran, sa)
 		under = append(under, parentRunFromCtx(ctx))
-		approvedIn = append(approvedIn, approvedChangeFor(ctx, "seed-builder", changeKey("tool", "calendar")))
+		approvedIn = append(approvedIn, approvedChangeFor(ctx, "seed-builder", changeKey("tool", "calendar"), ChangeEdit))
 		return StandingRunResult{Status: RunOK, Summary: "done", Raw: "CHANGED: the calendar tool now does all three."}
 	})
 	t.Cleanup(func() { RegisterStandingRunner(nil); RegisterStandingReporter(nil) })

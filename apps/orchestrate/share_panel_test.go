@@ -303,8 +303,17 @@ func TestAMaintainerCanOnlyNarrowTheOwnersKey(t *testing.T) {
 	if c, _ := Secure().LoadUser(owner, "jira_m"); !namedIn(c.SharedReadWrite, "bob") || !namedIn(c.SharedReadWrite, "mia") {
 		t.Errorf("the owner's writes did not reach its users and maintainers: write %v", c.SharedReadWrite)
 	}
+	// Somebody the owner never lent it to joins the agent.
+	adb.Set(AuthTable, "user:dana", AuthUser{Username: "dana"})
+	if a, _ := loadAgent(udb, "a10"); true {
+		a.AllowedUsers = append(a.AllowedUsers, "dana")
+		saveAgent(udb, a)
+	}
 	if code := decide("mia", credRead); code != 200 {
 		t.Fatalf("a maintainer could not take writes back down to reads: %d", code)
+	}
+	if lentToIn(t, "jira_m", "dana", "a10") {
+		t.Error("a maintainer's reads lent the owner's key to somebody the owner never lent it to")
 	}
 	if c, _ := Secure().LoadUser(owner, "jira_m"); namedIn(c.SharedReadWrite, "bob") || !namedIn(c.SharedReadOnly, "bob") {
 		t.Errorf("from writes down to reads left read %v write %v", c.SharedReadOnly, c.SharedReadWrite)
