@@ -65,7 +65,7 @@ func TestAClaudeStreamThatGoesQuietEndsInsteadOfHanging(t *testing.T) {
 				return out
 			},
 			func(t *testing.T, url string) LLM {
-				llm, err := newBedrockRuntimeLLM(bedrockAuth{}, "us.anthropic.claude-opus-4-8", "us-west-2", strings.TrimPrefix(url, "http://"), &apiclient.APIClient{URLScheme: "http", VerifySSL: false})
+				llm, err := newBedrockRuntimeLLM(bedrockAuth{bearer: "tok"}, "us.anthropic.claude-opus-4-8", "us-west-2", strings.TrimPrefix(url, "http://"), &apiclient.APIClient{URLScheme: "http", VerifySSL: false})
 				if err != nil {
 					t.Fatal(err)
 				}
