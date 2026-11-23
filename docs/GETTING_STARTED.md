@@ -150,6 +150,8 @@ When the work is done:
   under **Extensions › Integrations**.
 - **Build**, on any agent's page: describe a tool, app or agent and Builder
   makes it.
+- **Pipelines and machines**, on the Extensions page: workflows you design
+  for an agent. See [pipelines-and-machines.md](pipelines-and-machines.md).
 - **Servitor**: give agents your SSH systems and git repositories to
   investigate.
 - **File stores**, under **Administrator › Integrations**: give an agent a

@@ -243,6 +243,7 @@ Full descriptions in the [reference](docs/REFERENCE.md#built-in-apps).
 
 **Agents**
 - **[Memory](docs/memory.md)**: what an agent remembers between conversations, layer by layer; how to see and prune it; and what travels when an agent is shared
+- **[Pipelines and machines](docs/pipelines-and-machines.md)**: workflows you design: pipelines that run to a result, machines a conversation moves through, and how to build, try and assign them
 - **[Sharing](docs/sharing.md)**: sharing agents, apps and the rest with people, teams or Everyone; whose account a shared agent's calls use; maintainers
 
 **What agents can reach**
