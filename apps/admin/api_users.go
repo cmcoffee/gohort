@@ -19,6 +19,10 @@ import (
 
 // registerUsersRoutes wires the users API under the admin sub-mux.
 func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
+	// Administrators hear when a request to share is waiting on them, and
+	// stop hearing it once it is settled, by whatever door.
+	promotion.OnRequested = tellAdminsRequested
+	promotion.OnSettled = clearAdminsRequested
 	// API: list users.
 	sub.HandleFunc("/api/users", jsonapi.Methods{
 		"GET":  jsonapi.Get(a.db, a.handleUsersAPI, a.gate()),
@@ -514,6 +518,59 @@ var requestNoun = map[string]string{
 	"credential": "credential", "skill": "skill", "pipeline": "pipeline",
 	"machine": "machine", "guide": "guide", "store_grant": "file store access",
 	"app_tools": "app's own tools",
+}
+
+// requestWaitingAbout is the About a request's waiting notice carries, so it
+// can be found again when the request is settled.
+func requestWaitingAbout(id string) string { return "request:" + id }
+
+// tellAdminsRequested puts a request in every administrator's notices as
+// waiting on them, and so, through notices.OnWaiting, in their inbox or on
+// their phone when they chose that. Only new sign-ups used to reach an
+// administrator; a request to share sat in the queue until somebody happened
+// to open it. The requester is left out: they know.
+func tellAdminsRequested(req PromotionRequest) {
+	if RootDB == nil || AuthDB == nil {
+		return
+	}
+	noun := requestNoun[req.Kind]
+	if noun == "" {
+		noun = req.Kind
+	}
+	title := fmt.Sprintf("%s is waiting for your approval: the %s %q", req.Owner, noun, req.Name)
+	body := "Approve or decline it in Admin, under Sharing, Requests to share."
+	if note := strings.TrimSpace(req.Note); note != "" {
+		body = "Their note: " + note + "\n\n" + body
+	}
+	for _, u := range AuthListUsers(AuthDB()) {
+		if !u.Admin || u.Username == req.Owner {
+			continue
+		}
+		notices.Record(RootDB, notices.Notice{
+			Owner: u.Username, About: requestWaitingAbout(req.ID),
+			Kind: notices.KindBlocked, Title: title, Body: body,
+		})
+	}
+}
+
+// clearAdminsRequested takes a settled request's waiting notice out of every
+// administrator's notices: it is not waiting on anyone any more, and a bell
+// that still says it is teaches people to ignore the bell.
+func clearAdminsRequested(req PromotionRequest) {
+	if RootDB == nil || AuthDB == nil {
+		return
+	}
+	about := requestWaitingAbout(req.ID)
+	for _, u := range AuthListUsers(AuthDB()) {
+		if !u.Admin {
+			continue
+		}
+		for _, n := range notices.List(RootDB, u.Username) {
+			if n.About == about && n.Kind == notices.KindBlocked {
+				notices.Remove(RootDB, u.Username, n.ID)
+			}
+		}
+	}
 }
 
 // tellOwnerDenied tells the owner their request to share was declined. Only

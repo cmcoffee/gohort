@@ -68,11 +68,32 @@ func CreatePromotionRequest(db Store, owner, kind, name, note string) error {
 		}
 	}
 	id := RequestKey(kind, owner, name)
-	db.Set(promotionRequestsTable, id, PromotionRequest{
+	req := PromotionRequest{
 		ID: id, Owner: owner, Kind: kind, Name: name, Note: strings.TrimSpace(note),
 		Created: time.Now(), State: PromotionPendingState,
-	})
+	}
+	db.Set(promotionRequestsTable, id, req)
+	if OnRequested != nil {
+		OnRequested(req)
+	}
 	return nil
+}
+
+// OnRequested is told about each request as it lands in the queue (a new one,
+// or one asked again), so whoever decides it hears that it is waiting, and
+// OnSettled when it stops waiting: decided, withdrawn, or dropped with its
+// owner's account, so what told them it was waiting does not go on saying so.
+// Set by the admin app; nil leaves the queue silent.
+var (
+	OnRequested func(PromotionRequest)
+	OnSettled   func(PromotionRequest)
+)
+
+// settled tells OnSettled about req.
+func settled(req PromotionRequest) {
+	if OnSettled != nil {
+		OnSettled(req)
+	}
 }
 
 // ListPromotionRequests returns every request, newest first. Pass onlyPending to
@@ -119,6 +140,9 @@ func SetPromotionRequestState(db Store, id, state, decidedBy string) error {
 	req.State = state
 	req.DecidedBy = decidedBy
 	db.Set(promotionRequestsTable, id, req)
+	if state != PromotionPendingState {
+		settled(req)
+	}
 	return nil
 }
 
@@ -137,6 +161,7 @@ func DropOwnerRequests(db Store, owner string) int {
 	for _, req := range ListPromotionRequests(db, true) {
 		if req.Owner == owner {
 			db.Unset(promotionRequestsTable, req.ID)
+			settled(req)
 			n++
 		}
 	}
@@ -148,10 +173,12 @@ func DropOwnerRequests(db Store, owner string) int {
 // administrator got to it. A decided request stays, as the record of what was
 // decided. Reports whether there was one to drop.
 func WithdrawPromotionRequest(db Store, owner, kind, name string) bool {
-	if !PendingPromotion(db, owner, kind, name) {
+	req, ok := GetPromotionRequest(db, RequestKey(kind, owner, name))
+	if !ok || req.State != PromotionPendingState {
 		return false
 	}
-	db.Unset(promotionRequestsTable, RequestKey(kind, owner, name))
+	db.Unset(promotionRequestsTable, req.ID)
+	settled(req)
 	return true
 }
 

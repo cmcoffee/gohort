@@ -91,6 +91,14 @@ func fingerprint(owner, agent, kind, title string) string {
 
 func key(owner, id string) string { return owner + ":" + id }
 
+// OnWaiting is told about a notice the first time it says something is waiting
+// on its owner (KindBlocked), whatever wrote it, so the owner's choice of
+// email or phone applies to every one of them rather than to the callers that
+// remembered to forward. Set by the app that owns the transports; nil keeps
+// the notice and sends nothing. Called inline: a transport that takes time
+// does its own sending in the background.
+var OnWaiting func(Notice)
+
 // Record files a notice, folding it into an identical one already there.
 //
 // Returns the stored notice and whether this was the FIRST time it was said.
@@ -130,6 +138,9 @@ func Record(db Store, n Notice) (Notice, bool) {
 	}
 	n.Count, n.First, n.Last, n.Read = 1, now, now, false
 	db.Set(Table, key(n.Owner, n.ID), n)
+	if n.Kind == KindBlocked && OnWaiting != nil {
+		OnWaiting(n)
+	}
 	return n, true
 }
 

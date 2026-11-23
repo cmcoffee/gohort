@@ -318,7 +318,7 @@ func (T *OrchestrateApp) wireRunners() {
 	// Notifications are core's: the store, the bell and the preference live
 	// there so any app can tell an owner something. What lives here is how the
 	// telling gets out, which is the half that knows about bridges.
-	registerNoticeTransports()
+	registerNoticeTransports(T)
 	// Publishing an agent reaches every signed-in user, so it follows the same
 	// route apps and tools already do: the owner asks, an administrator
 	// approves. See agent_promotion.go.

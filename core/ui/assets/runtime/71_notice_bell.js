@@ -143,3 +143,45 @@
     setInterval(load, 30000);
     return wrap;
   }
+
+  // Something on the page is waiting on the person: an approval card, a
+  // question only they can answer. A turn that stops on one while they are in
+  // another tab used to wait in silence, so the tab's title says how many are
+  // waiting, and a browser notification goes out when the tab is hidden and
+  // they have allowed notifications. Generic: whatever waits calls
+  // uiWaitingStart with a key of its own and uiWaitingEnd with the same key
+  // once it is answered or gone; nothing here knows what it was.
+  //
+  // Asking the browser's permission takes a click, so nothing here asks on
+  // its own: a surface offers uiWaitingAsk on something the person presses,
+  // while uiWaitingCanAsk says the question is still open.
+  var uiWaiting = {};
+  var UI_WAITING_PREFIX = /^\(\d+\) Waiting for you - /;
+  function uiWaitingRetitle() {
+    var n = Object.keys(uiWaiting).length;
+    var own = String(document.title || '').replace(UI_WAITING_PREFIX, '');
+    document.title = n > 0 ? '(' + n + ') Waiting for you - ' + own : own;
+  }
+  window.uiWaitingStart = function(key, label) {
+    if (!key || uiWaiting[key]) return;
+    uiWaiting[key] = String(label || 'Something is waiting for you');
+    uiWaitingRetitle();
+    if (!document.hidden || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    try {
+      var note = new Notification(String(document.title || '').replace(UI_WAITING_PREFIX, '') || 'Waiting for you',
+        {body: uiWaiting[key], tag: 'ui-waiting-' + key});
+      note.onclick = function() { try { window.focus(); } catch (_) {} note.close(); };
+    } catch (_) {}
+  };
+  window.uiWaitingEnd = function(key) {
+    if (!key || !uiWaiting[key]) return;
+    delete uiWaiting[key];
+    uiWaitingRetitle();
+  };
+  window.uiWaitingCanAsk = function() {
+    return typeof Notification !== 'undefined' && Notification.permission === 'default';
+  };
+  window.uiWaitingAsk = function() {
+    if (!window.uiWaitingCanAsk()) return;
+    try { Notification.requestPermission(); } catch (_) {}
+  };

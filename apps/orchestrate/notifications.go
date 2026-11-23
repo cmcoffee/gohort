@@ -36,7 +36,9 @@ func (T *OrchestrateApp) notify(owner string, n notices.Notice) {
 		return
 	}
 	stored, first := notices.Record(RootDB, n)
-	if !first {
+	// Something waiting on them was already sent on by notices.OnWaiting, for
+	// every app's notices alike (registerNoticeTransports).
+	if !first || stored.Kind == notices.KindBlocked {
 		return
 	}
 	T.forwardNotice(stored)
@@ -147,9 +149,16 @@ func noticePhoneReady(user string) bool {
 
 // registerNoticeTransports wires this app's transports into core's hooks. Call
 // once at startup.
-func registerNoticeTransports() {
+//
+// OnWaiting sends on every notice that says something is waiting on its owner,
+// the first time, whoever wrote it: a queued change approval, someone asking
+// for a share, a tool waiting to run unattended. Before, only the ones written
+// through notify went out, so with forwarding on, a change waiting for
+// approval still reached nobody's phone.
+func registerNoticeTransports(T *OrchestrateApp) {
 	NoticeForwarder = forwardNoticeTo
 	NoticePhoneReady = noticePhoneReady
+	notices.OnWaiting = func(n notices.Notice) { go T.forwardNotice(n) }
 }
 
 // notifyToolWithheld is the refusal that is the owner's own standing decision.

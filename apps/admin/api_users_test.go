@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/notices"
+	"github.com/cmcoffee/gohort/core/promotion"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -127,5 +129,59 @@ func TestAnAdministratorNamesPeople(t *testing.T) {
 	}
 	if !strings.Contains(string(UserListJSON(db)), `"display_name":"Patricia"`) {
 		t.Error("the Users list does not carry the name")
+	}
+}
+
+// A request to share lands in every administrator's notices as waiting on
+// them, the requester's own left out, and leaves them once it is settled:
+// decided, or withdrawn.
+func TestAdministratorsHearOfARequestUntilItIsSettled(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	prevRoot, prevAuth := RootDB, AuthDB
+	RootDB = db
+	AuthDB = func() Database { return db }
+	t.Cleanup(func() { RootDB, AuthDB = prevRoot, prevAuth })
+	prevReq, prevSet := promotion.OnRequested, promotion.OnSettled
+	promotion.OnRequested, promotion.OnSettled = tellAdminsRequested, clearAdminsRequested
+	t.Cleanup(func() { promotion.OnRequested, promotion.OnSettled = prevReq, prevSet })
+	AuthSetUser(db, "ana", "pw-ana-123", true)
+	AuthSetUser(db, "carl", "pw-carl-123", true)
+	AuthSetUser(db, "bob", "pw-bob-123", false)
+	waiting := func(user string) []notices.Notice {
+		var out []notices.Notice
+		for _, n := range notices.List(db, user) {
+			if n.Kind == notices.KindBlocked {
+				out = append(out, n)
+			}
+		}
+		return out
+	}
+	if err := CreatePromotionRequest(db, "bob", "tool", "get_weather", "for the team"); err != nil {
+		t.Fatal(err)
+	}
+	if err := CreatePromotionRequest(db, "carl", "app", "roster", ""); err != nil {
+		t.Fatal(err)
+	}
+	if n := waiting("ana"); len(n) != 2 {
+		t.Fatalf("ana has %d waiting, want both requests: %+v", len(n), n)
+	}
+	if n := waiting("carl"); len(n) != 1 {
+		t.Errorf("carl has %d waiting, want only bob's: his own request is not news to him", len(n))
+	}
+	if n := waiting("bob"); len(n) != 0 {
+		t.Errorf("bob, not an administrator, has %d waiting", len(n))
+	}
+	if err := SetPromotionRequestState(db, PromotionRequestKey("tool", "bob", "get_weather"), PromotionDeniedState, "ana"); err != nil {
+		t.Fatal(err)
+	}
+	if n := waiting("ana"); len(n) != 1 || n[0].About != requestWaitingAbout(PromotionRequestKey("app", "carl", "roster")) {
+		t.Errorf("after deciding bob's, ana still has: %+v", n)
+	}
+	if n := waiting("carl"); len(n) != 0 {
+		t.Errorf("after ana decided bob's, carl still has it: %+v", n)
+	}
+	promotion.WithdrawPromotionRequest(db, "carl", "app", "roster")
+	if n := waiting("ana"); len(n) != 0 {
+		t.Errorf("after carl withdrew his, ana still has: %+v", n)
 	}
 }
