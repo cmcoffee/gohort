@@ -149,7 +149,7 @@ When the work is done:
   the `gohort-desktop` app on a Mac; add Teams bots and linked services
   under **Extensions › Integrations**.
 - **Build**, on any agent's page: describe a tool, app or agent and Builder
-  makes it.
+  makes it. For apps, see [apps.md](apps.md).
 - **Pipelines and machines**, on the Extensions page: workflows you design
   for an agent. See [pipelines-and-machines.md](pipelines-and-machines.md).
 - **Servitor**: give agents your SSH systems and git repositories to
