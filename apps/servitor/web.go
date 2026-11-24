@@ -180,6 +180,10 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// Expose servitor's appliances as a generic reference source so writer
 	// apps can ground drafts in gathered system knowledge. T.DB is final here.
 	RegisterReferenceSource(servitorSource{app: T})
+	// Systems written before their records were encrypted are written again,
+	// encrypted, once per person (appliance_sealed.go). Before serving, so no
+	// edit made meanwhile can be overwritten by the re-write.
+	T.encryptStoredSystems()
 	// Connections made before Sources were the door become Sources, once.
 	go T.moveGrantsToSources()
 

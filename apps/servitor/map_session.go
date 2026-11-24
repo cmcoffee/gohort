@@ -384,7 +384,7 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 				} else {
 					existing.Profile = reply
 					existing.Scanned = time.Now().Format(time.RFC3339)
-					ownerUDB.Set(applianceTable, appliance.ID, existing)
+					saveAppliance(ownerUDB, appliance.ID, existing)
 					emit(id, probeEvent{Kind: "status", Text: "Profile updated."})
 				}
 			}

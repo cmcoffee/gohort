@@ -88,7 +88,7 @@ func (T *Servitor) handleMemoryClear(c *jsonapi.Call, req applianceReq) (any, er
 		if ownerUDB.Get(applianceTable, req.ApplianceID, &fresh) {
 			fresh.RepoFiles = 0
 			fresh.RepoCloned = ""
-			ownerUDB.Set(applianceTable, req.ApplianceID, fresh)
+			saveAppliance(ownerUDB, req.ApplianceID, fresh)
 		}
 	}
 	// Bundles: clearing memory drops the recorded findings, NOT the evidence.

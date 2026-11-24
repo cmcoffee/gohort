@@ -152,6 +152,9 @@ func (T *Anvil) WebName() string { return "Anvil" }
 func (T *Anvil) WebDesc() string { return "Read, edit and check a project's source with an AI." }
 
 func (T *Anvil) Routes() {
+	// Projects written before their records were encrypted are written
+	// again, encrypted, once (project_sealed.go). Before any route serves.
+	T.encryptStoredProjects()
 	T.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
