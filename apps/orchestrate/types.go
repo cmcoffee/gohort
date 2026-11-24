@@ -1539,6 +1539,13 @@ type ChatSession struct {
 	UIBlocks []UIBlock `json:"ui_blocks,omitempty"`
 }
 
+// MessageFold is what a folded reply is folded behind (ChatMessage.Folded):
+// the line shown in its place, and what led to it, behind an info icon.
+type MessageFold struct {
+	Line   string `json:"line"`
+	Detail string `json:"detail,omitempty"`
+}
+
 // MessageMark is the badge described on ChatMessage.Mark.
 type MessageMark struct {
 	Glyph  string            `json:"glyph"`
@@ -1750,6 +1757,15 @@ type ChatMessage struct {
 	// one-line reason. The reply after it is the one the check asked for.
 	// Kept and shown with its reason, not struck: it said nothing untrue.
 	Corrected string `json:"corrected,omitempty"`
+
+	// Folded, when set, keeps an assistant reply on the record but folded
+	// behind one line: a reply the one after it replaced, such as a draft the
+	// lead's review sent back. Not struck (nothing in it was ruled untrue) and
+	// not shown open, because the reply after it says nearly the same and the
+	// two read as one answer given twice. The panel shows the line with a
+	// control to open the text; the model's history carries it noted as a
+	// draft (llmHistoryContent).
+	Folded *MessageFold `json:"folded,omitempty"`
 
 	// Label is a short tag shown on the bubble ("Correction"), so a follow-up
 	// the framework asked for reads as what it is rather than as a second

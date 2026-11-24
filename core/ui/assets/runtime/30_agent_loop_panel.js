@@ -4020,6 +4020,41 @@
       m.bubble.classList.remove('ui-agent-msg-empty');
     }
 
+    // foldMessage keeps a message on the record but folded behind one line,
+    // with a control to open it: a reply the one after it replaced, which
+    // left open read as the same answer given twice. Not struck, since nothing
+    // in it was ruled untrue. What the line and the detail (behind an info
+    // icon) say is the server's text. Idempotent: live, then replay; an empty
+    // line unfolds it.
+    function foldMessage(id, line, detail) {
+      var m = msgEls[id];
+      if (!m || !m.bubble) return;
+      m.folded = line || '';
+      var head = m.bubble.querySelector(':scope > .ui-agent-msg-fold-line');
+      if (!line) {
+        if (head) head.remove();
+        m.bubble.classList.remove('ui-agent-msg-folded');
+        return;
+      }
+      if (!head) {
+        head = el('div', {class: 'ui-agent-msg-fold-line'});
+        m.bubble.insertBefore(head, m.body);
+      }
+      var toggle = el('button', {class: 'ui-agent-msg-fold-toggle', type: 'button'});
+      function paint() {
+        m.bubble.classList.toggle('ui-agent-msg-folded', !m.foldOpen);
+        toggle.textContent = m.foldOpen ? 'hide' : 'show';
+        toggle.setAttribute('aria-expanded', m.foldOpen ? 'true' : 'false');
+      }
+      toggle.onclick = function() { m.foldOpen = !m.foldOpen; paint(); };
+      head.textContent = '';
+      head.appendChild(el('span', {}, [line]));
+      var info = detail ? uiInfoIcon(detail, {label: 'Why'}) : null;
+      if (info) head.appendChild(info);
+      head.appendChild(toggle);
+      paint();
+    }
+
     // uiSetMessageBadge puts a small chip at the head of a message, before its
     // text, with a matching edge on the bubble: an app's verdict ON the
     // message (a rating, a review state), shown where the message is read
@@ -4085,6 +4120,7 @@
       // live is still shown when the thread is reopened.
       if (meta.retracted) strikeMessage(id, meta.retracted);
       if (meta.corrected) correctMessage(id, meta.corrected);
+      if (meta.folded && meta.folded.line) foldMessage(id, meta.folded.line, meta.folded.detail || '');
       if (meta.label) labelMessage(id, meta.label);
     }
 
@@ -4408,11 +4444,15 @@
           // plain text, a struck reply reads as an answer that stood.
           var entryFor = msgEntryForBubble(next);
           var struck = next.classList.contains('ui-agent-msg-struck');
-          var tag = struck ? ', struck through' : ((entryFor && entryFor.label) ? ', ' + entryFor.label : '');
+          var folded = !struck && !!(entryFor && entryFor.folded);
+          var tag = struck ? ', struck through' : (folded ? ', folded' : ((entryFor && entryFor.label) ? ', ' + entryFor.label : ''));
           lines.push('## Assistant (round ' + roundNum + tag + ')');
           lines.push('');
           if (struck && entryFor && entryFor.struck) {
             lines.push('> ' + entryFor.struck);
+            lines.push('');
+          } else if (folded && entryFor && entryFor.folded) {
+            lines.push('> ' + entryFor.folded);
             lines.push('');
           }
           if (txt) {
@@ -6153,6 +6193,9 @@
           break;
         case 'message_label':
           labelMessage(ev.id, ev.label || '');
+          break;
+        case 'chunk_folded':
+          foldMessage(ev.id, ev.line || '', ev.detail || '');
           break;
         case 'stats':
           renderMessageStats(ev);

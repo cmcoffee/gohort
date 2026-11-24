@@ -1546,6 +1546,35 @@ func (pr *planRun) correctRound(reason string) {
 	t.setCurrentMsgID("")
 }
 
+// foldRound settles the round's reply like settleRound and shows it folded
+// behind line, with detail behind an info icon, live and in the transcript
+// (AgentLoopConfig.FoldRound). Nothing streamed, nothing to fold.
+func (pr *planRun) foldRound(line, detail string) {
+	t := pr.t
+	id := pr.streamMsgID
+	if id == "" {
+		id = t.getCurrentMsgID()
+	}
+	raw := pr.streamedBuf.String()
+	cleaned := cleanBubbleText(raw)
+	if id == "" || cleaned == "" {
+		pr.settleRound()
+		return
+	}
+	if cleaned != strings.TrimSpace(raw) {
+		t.sse.Send(map[string]any{"kind": "chunk_replace", "id": id, "text": cleaned})
+	}
+	pr.paintHeldBubble(id, cleaned)
+	t.sse.Send(map[string]any{"kind": "message_done", "id": id})
+	t.foldBubble(id, cleaned, MessageFold{Line: line, Detail: detail})
+	// lastFinalizedText is left alone, as for a struck reply: it is what a
+	// later reply is deduplicated against, and the revision that replaces
+	// this one resembles it by design. It must still be shown.
+	pr.streamMsgID = ""
+	pr.streamedBuf.Reset()
+	t.setCurrentMsgID("")
+}
+
 // mayShowStruck reports whether a reply about to be struck may be shown at
 // all. Only a held stream needs asking: an agent without an output guardrail
 // already streamed the text live.
@@ -2434,6 +2463,7 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		// reload shows what happened.
 		StrikeRound:    pr.strikeRound,
 		CorrectRound:   pr.correctRound,
+		FoldRound:      pr.foldRound,
 		LabelNextRound: pr.labelNextRound,
 		// Feed view_video's sampled frames to the model on the next round so it
 		// actually sees the clip instead of describing it blind.

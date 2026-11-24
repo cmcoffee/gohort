@@ -87,6 +87,24 @@ func (t *chatTurn) captureCorrectedBubble(text, reason string) {
 	}
 }
 
+// foldBubble folds the finished bubble id behind fold's line on the page and
+// saves it so. Shared by the direct turn's review (planRun.foldRound) and the
+// planned turn's (reviewPlannedReply).
+func (t *chatTurn) foldBubble(id, text string, fold MessageFold) {
+	t.sse.Send(map[string]any{"kind": "chunk_folded", "id": id, "line": fold.Line, "detail": fold.Detail})
+	t.captureFoldedBubble(text, fold)
+}
+
+// captureFoldedBubble records a bubble shown folded behind fold's line, so a
+// reload shows it folded as the live screen did.
+func (t *chatTurn) captureFoldedBubble(text string, fold MessageFold) {
+	if saved := t.captureBubble(text, "", ""); saved != "" {
+		t.bubblesMu.Lock()
+		t.midTurnBubbles[len(t.midTurnBubbles)-1].Folded = &fold
+		t.bubblesMu.Unlock()
+	}
+}
+
 // uncorrectLastBubble takes the mark off the last bubble that carries one: the
 // follow-up was dropped and that bubble is the turn's answer after all, so it
 // is saved, and folded into the final reply, like any other.
@@ -266,8 +284,12 @@ func appendMidTurnBubbles(sess *ChatSession, bubbles []ChatMessage, finalReply s
 			// not the near-duplicate test, which counts a reply with a
 			// short new ending ("... Saved.") as a repeat, and that ending
 			// is the follow-up.
+			// A folded one the same: it is folded precisely because the
+			// reply after it resembles it, and dropped, a reload would show
+			// the revision's label over nothing it revised.
 			corrected := b.Corrected != "" && strings.TrimSpace(b.Content) != final
-			if b.Retracted == "" && !corrected && b.Block == nil && repeatsWithoutAdding(b.Content, final) {
+			folded := b.Folded != nil && strings.TrimSpace(b.Content) != final
+			if b.Retracted == "" && !corrected && !folded && b.Block == nil && repeatsWithoutAdding(b.Content, final) {
 				if len(b.ToolCalls) > 0 {
 					orphanedCalls = append(orphanedCalls, b.ToolCalls...)
 				}

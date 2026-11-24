@@ -1139,7 +1139,15 @@ func (sr *sendRun) reviewPlannedReply() {
 		return
 	}
 	sr.turn.emitStatus("The lead sent the reply back; revising it.")
-	sr.turn.captureMidTurnBubble(sr.reply)
+	// The first reply is folded behind a line rather than left open: the
+	// revision says much the same, and the two read as one answer twice.
+	// runSynthesis made its bubble the turn's current one.
+	fold := MessageFold{Line: reviewedDraftLine, Detail: strings.TrimSpace(changes)}
+	if id := sr.turn.getCurrentMsgID(); id != "" {
+		sr.turn.foldBubble(id, sr.reply, fold)
+	} else {
+		sr.turn.captureFoldedBubble(sr.reply, fold)
+	}
 	revised, err := sr.turn.runSynthesis(sr.req.Message, sr.steps, nil, &synthRevision{previous: sr.reply, changes: changes})
 	if err != nil || strings.TrimSpace(revised) == "" {
 		Log("[lead-review] agent=%s: the revision could not be written (%v); the first reply stands", sr.turn.agent.ID, err)
