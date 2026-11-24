@@ -19,7 +19,7 @@
 # Gohort: Your models, your agents, your rules.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![Go](https://img.shields.io/badge/Go-1.26%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![Single binary](https://img.shields.io/badge/deploy-single%20binary-success)](#quick-start)
 [![Local-first](https://img.shields.io/badge/LLM-local--first-6366f1)](#1-the-harness)
 
@@ -156,7 +156,7 @@ On macOS the download is unsigned, so Gatekeeper quarantines it: `xattr -d com.a
 
 ### Build from source
 
-**Requires:** Go 1.25+.
+**Requires:** Go 1.26+.
 
 ```bash
 # Build: one static binary, plus the notices it travels with
@@ -221,7 +221,7 @@ Add `WebPath()` / `WebName()` / `WebDesc()` / `Routes()` and it gets a web dashb
 | `codewriter` | Shell scripts, SQL queries and code snippets with an LLM co-editor |
 | `monitor` | Live view of what every agent and app is doing right now, with Cancel beside each run |
 | `mcpserver` | Expose gohort agents to an external MCP client (e.g. Claude Desktop) |
-| `customapps` | Host for Builder-made apps (the My Apps tile) at `/apps/<slug>/`: declarative sections (form, table, chart, chat, workbench, pipeline, or a raw HTML canvas), a per-app record store, sandboxed data/action scripts, schedules, sharing (with managers) or an anonymous link, and a history of every change that an export can carry, so a copy elsewhere can take the author's later updates ([guide](docs/apps.md)) |
+| `customapps` | Host for Builder-made apps (the My Apps tile) at `/apps/<slug>/`: declarative sections (form, table, chart, chat, workbench, pipeline, or a raw HTML canvas), a per-app record store, sandboxed data/action scripts, schedules, sharing with signed-in people and teams (with managers), and a history of every change that an export can carry, so a copy elsewhere can take the author's later updates ([guide](docs/apps.md)) |
 | `hello` | Minimal scaffold for a new app |
 | `openai_api` | OpenAI-compatible `/v1` endpoint: an external client drives a raw model tier or a full agent over the API shape it already speaks |
 | `ollama_proxy` | Ollama-protocol proxy on its own port, for clients that speak only Ollama; lends the worker model as `gohort` |
@@ -275,7 +275,7 @@ Versions before v0.6.314 were released under the MIT License and stay available 
 
 ## Dependencies
 
-The ten direct dependencies, from `go.mod`:
+The eleven direct dependencies, from `go.mod`:
 
 - [snugforge](https://github.com/cmcoffee/snugforge), logging, config, flags, kvlite database, concurrency primitives
 - [go-pdf/fpdf](https://github.com/go-pdf/fpdf), PDF generation
@@ -283,4 +283,4 @@ The ten direct dependencies, from `go.mod`:
 - [go-shiori/go-readability](https://github.com/go-shiori/go-readability), article text out of a fetched page
 - [gorilla/websocket](https://github.com/gorilla/websocket), Servitor's live terminal and the desktop bridge
 - [rwcarlsen/goexif](https://github.com/rwcarlsen/goexif), a photo's EXIF (date, place, camera) handed to the vision model
-- [golang.org/x](https://pkg.go.dev/golang.org/x) `crypto`, `image`, `net` and `sys`, the Go project's own extended libraries
+- [golang.org/x](https://pkg.go.dev/golang.org/x) `crypto`, `image`, `net`, `sys` and `text`, the Go project's own extended libraries
