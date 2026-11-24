@@ -3239,7 +3239,7 @@ func (pr *probeRun) finishTurn() probeAction {
 				if fresh := extractLogMap(pr.reply); len(fresh) > 0 {
 					existing.LogMap = mergeLogMap(existing.LogMap, fresh)
 				}
-				pr.ownerUDB.Set(applianceTable, pr.appliance.ID, existing)
+				saveAppliance(pr.ownerUDB, pr.appliance.ID, existing)
 				extractDocsFromProfile(pr.ownerUDB, pr.appliance.ID, pr.reply)
 			}
 		}

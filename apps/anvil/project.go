@@ -383,13 +383,14 @@ func (p Project) resolvePath(base, rel string) (string, error) {
 
 // --- storage -----------------------------------------------------------------
 
-// saveProject writes p into the correct store for its kind.
+// saveProject writes p into the correct store for its kind, encrypted: the
+// record holds the clone and push tokens (project_sealed.go).
 func (T *Anvil) saveProject(udb Database, p Project) {
 	if p.Kind == KindRoot {
-		T.DB.Set(projectTable, p.ID, p)
+		T.DB.CryptSet(projectTable, p.ID, p)
 		return
 	}
-	udb.Set(projectTable, p.ID, p)
+	udb.CryptSet(projectTable, p.ID, p)
 }
 
 // deleteProject removes the record (not the files — see handleProjectDelete).

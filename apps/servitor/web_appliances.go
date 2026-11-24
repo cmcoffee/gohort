@@ -387,7 +387,7 @@ func (T *Servitor) handleApplianceSave(c *jsonapi.Call, req Appliance) (any, err
 		}
 	}
 	req.HasKey, req.ClearKey = false, false
-	targetUDB.Set(applianceTable, req.ID, req)
+	saveAppliance(targetUDB, req.ID, req)
 	// Keep the global shared index in sync with the record's Shared flag,
 	// and the named one with who it is shared with by name or team.
 	T.setApplianceShared(req.ID, owner, req.Shared)
@@ -510,7 +510,7 @@ func clearApplianceMemory(udb Database, applianceID string) {
 		a.Profile = ""
 		a.LogMap = nil
 		a.Scanned = ""
-		udb.Set(applianceTable, applianceID, a)
+		saveAppliance(udb, applianceID, a)
 	}
 	// Also clear the orchestrate-scoped memory so "Clear Memory" is consistent
 	// across the dual-write split (legacy ssh_* AND the scope the modal reads).

@@ -103,7 +103,7 @@ func (T *Servitor) handleBundleUpload(w http.ResponseWriter, r *http.Request) {
 
 	rec.BundleState = bundleStateStaging
 	rec.BundleError = ""
-	ownerUDB.Set(applianceTable, applianceID, rec)
+	saveAppliance(ownerUDB, applianceID, rec)
 
 	names, total, err := bundle.StreamPartsToStage(mr, stage)
 	if err != nil {
@@ -122,7 +122,7 @@ func (T *Servitor) handleBundleUpload(w http.ResponseWriter, r *http.Request) {
 
 	rec.BundleSources = append(rec.BundleSources, names...)
 	rec.BundleUploaded = time.Now().Format(time.RFC3339)
-	ownerUDB.Set(applianceTable, applianceID, rec)
+	saveAppliance(ownerUDB, applianceID, rec)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
@@ -149,7 +149,7 @@ func (T *Servitor) ingestBundle(ctx context.Context, owner string, ownerUDB Data
 	if err != nil {
 		rec.BundleState = bundleStateFailed
 		rec.BundleError = err.Error()
-		ownerUDB.Set(applianceTable, applianceID, rec)
+		saveAppliance(ownerUDB, applianceID, rec)
 		Log("[servitor.bundle] ingest failed for %s: %v", applianceID, err)
 		return
 	}
@@ -164,7 +164,7 @@ func (T *Servitor) ingestBundle(ctx context.Context, owner string, ownerUDB Data
 	// having to go looking for why a bundle seems thin.
 	rec.BundleBinaries = st.Binaries
 	rec.BundleUnopened = st.Unopened
-	ownerUDB.Set(applianceTable, applianceID, rec)
+	saveAppliance(ownerUDB, applianceID, rec)
 }
 
 // markBundleFailed stamps a failure reason on the record.
@@ -178,7 +178,7 @@ func (T *Servitor) markBundleFailed(ownerUDB Database, applianceID, reason strin
 	}
 	rec.BundleState = bundleStateFailed
 	rec.BundleError = reason
-	ownerUDB.Set(applianceTable, applianceID, rec)
+	saveAppliance(ownerUDB, applianceID, rec)
 }
 
 // handleBundleIngest expands and ingests whatever is currently staged. Called
@@ -212,7 +212,7 @@ func (T *Servitor) handleBundleIngest(c *jsonapi.Call, req applianceReq) (any, e
 	}
 	rec.BundleState = bundleStateIngesting
 	rec.BundleError = ""
-	ownerUDB.Set(applianceTable, req.ApplianceID, rec)
+	saveAppliance(ownerUDB, req.ApplianceID, rec)
 	go T.ingestBundle(AppContext(), owner, ownerUDB, req.ApplianceID)
 	return jsonapi.Empty(http.StatusAccepted), nil
 }
