@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 func init() {
@@ -463,17 +465,10 @@ func taskLabelFor(ct ChatTool, args map[string]any) string {
 	}
 	for _, key := range []string{"prompt", "query", "message", "url"} {
 		if v := strings.TrimSpace(StringArg(args, key)); v != "" {
-			return name + ": " + truncateTaskLabel(v, 60)
+			return name + ": " + textutil.ArgClip(v)
 		}
 	}
 	return name
-}
-
-func truncateTaskLabel(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return strings.TrimSpace(s[:n]) + "..."
 }
 
 // errNoTaskHost is what a host returns when it cannot start a task — no chat

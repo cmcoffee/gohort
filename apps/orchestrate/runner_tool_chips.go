@@ -436,7 +436,10 @@ func (t *chatTurn) emitToolResult(msgID, callID, name, out string, err error) {
 
 // summarizeToolArgs renders the args map into a single compact
 // "key=val, key=val" string for the inline tool chip's summary row.
-// Drops newlines, clips long values. Empty args produce empty string.
+// Drops newlines, clips long values (a string with no spaces, such as a URL
+// or an id, stays whole; see textutil.ArgClip). Empty args produce empty
+// string. runtime/10_basics.js toolArgsSummary builds the same line for a
+// call replayed from history.
 func summarizeToolArgs(args map[string]any) string {
 	if len(args) == 0 {
 		return ""
@@ -451,7 +454,8 @@ func summarizeToolArgs(args map[string]any) string {
 		var s string
 		switch vv := args[k].(type) {
 		case string:
-			s = vv
+			parts = append(parts, fmt.Sprintf("%s=%q", k, textutil.ArgClip(strings.ReplaceAll(vv, "\n", " "))))
+			continue
 		case []any:
 			elems := make([]string, 0, len(vv))
 			for _, e := range vv {

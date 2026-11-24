@@ -121,7 +121,8 @@
   }
 
   // toolArgsSummary is the clipped one-line form: key="value", values cut at
-  // 60 characters, keys sorted. The server builds the same line for a live
+  // 60 characters, keys sorted. A string with no spaces (a URL, an id) stays
+  // whole up to 200, as textutil.ArgClip keeps it. The server builds the same line for a live
   // call; this builds it for a call replayed from history.
   function toolArgsSummary(args) {
     if (!args || typeof args !== 'object') return String(args || '');
@@ -132,7 +133,8 @@
       else if (v && typeof v === 'object') s = '{...}';
       else s = String(v);
       s = s.replace(/\n/g, ' ');
-      if (s.length > 60) s = s.slice(0, 60) + '...';
+      var max = (typeof v === 'string' && !/\s/.test(s)) ? 200 : 60;
+      if (s.length > max) s = s.slice(0, max) + '...';
       return k + '=' + JSON.stringify(s);
     }).join(', ');
   }

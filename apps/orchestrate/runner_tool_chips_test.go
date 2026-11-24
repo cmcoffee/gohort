@@ -97,3 +97,16 @@ func sseData(t *testing.T, s string) []byte {
 	t.Fatalf("no data line in %q", s)
 	return nil
 }
+
+// The chip line keeps a URL whole and still cuts a sentence, so the scheduler
+// log and the live chip name the post that was read.
+func TestToolChipKeepsAURLWhole(t *testing.T) {
+	url := "https://www.example.com/post/0b9f6c2e-4d1a-4e8b-9c3f-7a2d5e8f1b4c"
+	got := summarizeToolArgs(map[string]any{"url": url, "note": strings.Repeat("a long sentence ", 8)})
+	if !strings.Contains(got, `url="`+url+`"`) {
+		t.Errorf("the URL was cut: %s", got)
+	}
+	if !strings.Contains(got, `..."`) {
+		t.Errorf("the sentence must still be cut: %s", got)
+	}
+}

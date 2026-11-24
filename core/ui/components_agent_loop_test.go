@@ -168,3 +168,41 @@ if (!fail) console.log('OK');
 		t.Error("Send no longer sends on click")
 	}
 }
+
+// The browser builds the chip line for a call replayed from history, and it
+// follows the server's rule: a URL stays whole, a sentence is cut at 60, and
+// a long array is cut at 60 even though its JSON has no spaces.
+func TestReplayedToolChipKeepsAURLWhole(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not available")
+	}
+	src := readRuntimeFile(t, "10_basics.js")
+	i := strings.Index(src, "function toolArgsSummary(")
+	if i < 0 {
+		t.Fatal("toolArgsSummary is gone from the runtime")
+	}
+	const tail = "join(', ');\n  }"
+	end := strings.Index(src[i:], tail)
+	if end < 0 {
+		t.Fatal("could not bound toolArgsSummary")
+	}
+	harness := src[i:i+end+len(tail)] + `
+var url = 'https://www.example.com/post/0b9f6c2e-4d1a-4e8b-9c3f-7a2d5e8f1b4c';
+var got = toolArgsSummary({url: url});
+if (got !== 'url=' + JSON.stringify(url)) throw new Error('the URL was cut: ' + got);
+got = toolArgsSummary({note: 'a long sentence a long sentence a long sentence a long sentence a long sentence'});
+if (!/\.\.\."$/.test(got)) throw new Error('the sentence must still be cut: ' + got);
+var arr = []; for (var n = 0; n < 40; n++) arr.push(n);
+got = toolArgsSummary({ids: arr});
+if (got.length > 'ids=""'.length + 63 + 10) throw new Error('an array must still be cut at 60: ' + got);
+console.log('OK');
+`
+	tmp := filepath.Join(t.TempDir(), "argsummary.js")
+	if err := os.WriteFile(tmp, []byte(harness), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("node", tmp).CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "OK") {
+		t.Fatalf("the replayed chip line cuts a URL:\n%s", out)
+	}
+}
