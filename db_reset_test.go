@@ -172,3 +172,24 @@ func TestNoPadlockOpensItResets(t *testing.T) {
 		t.Fatalf("copies made: %v", copies)
 	}
 }
+
+// Every database this opens has its CFB secrets re-encrypted with GCM, in the
+// background (kvlite.UpgradeCipher, tested in snugforge).
+func TestSecureDatabaseUpgradesTheCipher(t *testing.T) {
+	src, err := os.ReadFile("config.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+	i := strings.Index(s, "func secureDatabaseWith(")
+	if i < 0 {
+		t.Fatal("secureDatabaseWith not found")
+	}
+	body := s[i:]
+	if j := strings.Index(body, "\n}\n"); j > 0 {
+		body = body[:j]
+	}
+	if !strings.Contains(body, "go upgradeDatabaseCipher(file, st)") {
+		t.Error("a database opened here no longer has its secrets re-encrypted with GCM")
+	}
+}
