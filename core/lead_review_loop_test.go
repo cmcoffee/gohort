@@ -27,7 +27,7 @@ func TestALeadReviewSendsAReplyBackAndTheRevisionGoesOut(t *testing.T) {
 	}}
 	app := &AppCore{LLM: stub, LeadLLM: stub}
 	var seen []TurnClaimEvidence
-	var diags, labels []string
+	var diags, labels, folds []string
 	resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "is my 9:40 train running?"}}, AgentLoopConfig{
 		MaxRounds: 8,
 		Tools:     []AgentToolDef{searchTool()},
@@ -41,6 +41,7 @@ func TestALeadReviewSendsAReplyBackAndTheRevisionGoesOut(t *testing.T) {
 		OnDiag:         func(kind, detail string) { diags = append(diags, kind) },
 		SettleRound:    func() {},
 		LabelNextRound: func(l string) { labels = append(labels, l) },
+		FoldRound:      func(line, detail string) { folds = append(folds, line+"|"+detail) },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -64,6 +65,11 @@ func TestALeadReviewSendsAReplyBackAndTheRevisionGoesOut(t *testing.T) {
 	}
 	if !corrected {
 		t.Error("the model was not given the reviewer's changes")
+	}
+	// The draft is folded behind its line, with what the review asked for, so
+	// it does not read as a second answer beside the revision.
+	if len(folds) != 1 || !strings.HasPrefix(folds[0], reviewedDraftLine+"|") || !strings.Contains(folds[0], "9:40 is cancelled") {
+		t.Errorf("the draft was not folded with the review's changes: %v", folds)
 	}
 	if !strings.Contains(strings.Join(diags, " "), "lead-review-sent-back") || len(labels) != 1 || labels[0] != reviewedLabel {
 		t.Errorf("the trail or the label is missing: diags=%v labels=%v", diags, labels)

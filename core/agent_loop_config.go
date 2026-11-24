@@ -342,6 +342,16 @@ type AgentLoopConfig struct {
 	// so it must no longer say a correction follows.
 	CorrectRound func(reason string)
 
+	// FoldRound settles the current round's reply like SettleRound and asks
+	// the app to show it folded behind line (one line, ready to show), with
+	// detail (may be empty) behind an info icon: a reply that stays on the
+	// record but is replaced by the one the loop is about to ask for, such as
+	// a draft the lead's review sent back. Not struck, since nothing in it was
+	// ruled untrue, and not left open, since the reply after it says nearly
+	// the same and the two read as the agent answering twice. A later reply
+	// that resembles it must still be shown. Nil falls back to SettleRound.
+	FoldRound func(line, detail string)
+
 	// LabelNextRound asks the app to show the NEXT reply bubble it finalizes
 	// with a small label (e.g. "Correction"), live and in the saved
 	// transcript, so a follow-up the framework asked for reads as one instead

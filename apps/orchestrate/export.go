@@ -372,6 +372,8 @@ func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Data
 			header += " (retracted)"
 		case corrected != "":
 			header += " (corrected)"
+		case m.Folded != nil:
+			header += " (draft, replaced)"
 		case strings.TrimSpace(m.Label) != "":
 			header += " [" + strings.TrimSpace(m.Label) + "]"
 		}
@@ -380,6 +382,8 @@ func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Data
 			fmt.Fprintf(&b, "> %s\n\n", exportText(retracted))
 		} else if corrected != "" {
 			fmt.Fprintf(&b, "> %s\n\n", exportText(corrected))
+		} else if m.Folded != nil && strings.TrimSpace(m.Folded.Line) != "" {
+			fmt.Fprintf(&b, "> %s\n\n", exportText(m.Folded.Line))
 		}
 		if body := strings.TrimSpace(exportText(m.Content)); body != "" {
 			if retracted != "" {

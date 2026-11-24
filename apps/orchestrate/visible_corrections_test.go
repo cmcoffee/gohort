@@ -26,6 +26,7 @@ func runCorrectedTurn(t *testing.T, turns []FakeTurn, cfg AgentLoopConfig) (Chat
 	cfg.RetractRound = pr.retractRound
 	cfg.StrikeRound = pr.strikeRound
 	cfg.CorrectRound = pr.correctRound
+	cfg.FoldRound = pr.foldRound
 	cfg.LabelNextRound = pr.labelNextRound
 	if cfg.MaxRounds == 0 {
 		cfg.MaxRounds = 6
@@ -299,5 +300,91 @@ func TestAnUnchangedFollowUpTakesTheMarkBack(t *testing.T) {
 	}
 	if !strings.Contains(live, `"kind":"chunk_corrected"`) || !strings.Contains(live, `"reason":""`) {
 		t.Errorf("the page must be told to take the mark back:\n%s", live)
+	}
+}
+
+// A reply the lead's review sent back is kept, folded behind its line with the
+// review's changes, and the revision follows under its label. Left open, the
+// page showed two near-identical answers; folded, the draft is one click away
+// and the revision is the answer on screen. A reload shows the same, and the
+// model reads the draft as a draft.
+func TestAReplySentBackByTheReviewIsSavedFolded(t *testing.T) {
+	const draft = "Your train is on time."
+	const revised = "The 9:40 is cancelled; take the 10:10, which is on time."
+	look := AgentToolDef{
+		Tool:    Tool{Name: "search", Description: "searches", Parameters: map[string]ToolParam{"q": {Type: "string"}}},
+		Handler: func(context.Context, map[string]any) (string, error) { return "the 9:40 is cancelled", nil },
+	}
+	reviews := 0
+	sess, live := runCorrectedTurn(t, []FakeTurn{
+		{ToolCalls: []ToolCall{{ID: "1", Name: "search", Args: map[string]any{"q": "trains"}}}},
+		{Content: draft},
+		{Content: revised, Repeat: true},
+	}, AgentLoopConfig{
+		Tools: []AgentToolDef{look},
+		TurnReview: func(TurnClaimEvidence) (bool, string, bool) {
+			reviews++
+			return reviews == 1, "1. The search says the 9:40 is cancelled.", true
+		},
+	})
+	if len(sess.Messages) != 2 {
+		t.Fatalf("want the folded draft and the revision, got %+v", sess.Messages)
+	}
+	first, last := sess.Messages[0], sess.Messages[1]
+	if first.Content != draft || first.Folded == nil || first.Folded.Line != reviewedDraftLine ||
+		!strings.Contains(first.Folded.Detail, "9:40 is cancelled") || first.Retracted != "" || first.Corrected != "" {
+		t.Errorf("the draft must be saved folded (not struck, not corrected), with the review's changes: %+v", first)
+	}
+	if last.Content != revised || last.Label != reviewedReplyLabel {
+		t.Errorf("the revision must follow under its label: %+v", last)
+	}
+	if !strings.Contains(live, `"kind":"chunk_folded"`) || !strings.Contains(live, reviewedDraftLine) {
+		t.Errorf("the page must be told to fold the draft:\n%s", live)
+	}
+	hist := toLLMMessages(sess.Messages)
+	if !strings.Contains(hist[0].Content, "<gohort-meta>") || !strings.Contains(hist[0].Content, "was a draft") {
+		t.Errorf("a folded draft must reach the model noted as a draft, got %q", hist[0].Content)
+	}
+}
+
+// The chat turn's own loop hands the fold hook to the loop; the test above
+// wires it by hand.
+func TestTheChatTurnWiresFoldRound(t *testing.T) {
+	body := funcBody(t, readFile(t, "runner.go"), "func (pr *planRun) loopConfig() AgentLoopConfig {")
+	if !strings.Contains(body, "FoldRound:      pr.foldRound,") {
+		t.Error("the chat turn's loop config does not wire FoldRound, so a draft the review sent back settles open beside its revision")
+	}
+}
+
+// A folded bubble survives the final-reply dedup it is folded because of,
+// unless the final reply is the same text; and the export says what it was.
+func TestAFoldedBubbleSurvivesTheDedupAndIsExported(t *testing.T) {
+	text := "Your train is on time."
+	fold := &MessageFold{Line: reviewedDraftLine, Detail: "1. Check the search."}
+	var sess ChatSession
+	appendMidTurnBubbles(&sess, []ChatMessage{{Role: "assistant", Content: text, Folded: fold}}, text+" Mostly.")
+	if len(sess.Messages) != 1 || sess.Messages[0].Folded == nil {
+		t.Fatalf("the folded bubble must be kept, got %+v", sess.Messages)
+	}
+	var again ChatSession
+	appendMidTurnBubbles(&again, []ChatMessage{{Role: "assistant", Content: text, Folded: fold}}, text)
+	if len(again.Messages) != 0 {
+		t.Errorf("a folded bubble the final reply only repeats was kept beside it: %+v", again.Messages)
+	}
+	md := renderSessionMarkdown(AgentRecord{Name: "Helper"}, ChatSession{Messages: []ChatMessage{
+		{Role: "assistant", Content: text, Folded: fold}, {Role: "assistant", Content: "The 9:40 is cancelled."},
+	}}, true)
+	for _, want := range []string{"## Assistant (draft, replaced)", "> " + reviewedDraftLine, text} {
+		if !strings.Contains(md, want) {
+			t.Errorf("export missing %q:\n%s", want, md)
+		}
+	}
+}
+
+// The planned turn folds its first reply the same way, under the same line.
+func TestAPlannedTurnFoldsTheReplyItsReviewSentBack(t *testing.T) {
+	body := funcBody(t, readFile(t, "runner_http.go"), "func (sr *sendRun) reviewPlannedReply() {")
+	if !strings.Contains(body, "MessageFold{Line: reviewedDraftLine") || !strings.Contains(body, "foldBubble(") {
+		t.Error("the planned turn's review no longer folds the reply it sent back")
 	}
 }

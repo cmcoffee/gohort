@@ -3008,6 +3008,11 @@ func llmHistoryText(m ChatMessage) string {
 		return textutil.FenceMeta(fmt.Sprintf("this reply was followed up at a check's request: %s The reply after it is the one that stands.",
 			strings.TrimSpace(m.Corrected))) + "\n" + m.Content
 	}
+	// A folded reply was a draft the reply after it replaced: read bare, it
+	// was the same answer twice, and a later turn could quote the draft.
+	if m.Role == "assistant" && m.Folded != nil {
+		return textutil.FenceMeta("this reply was a draft, replaced by the reply after it, which is the one that stands.") + "\n" + m.Content
+	}
 	return attributeSender(m.Role, m.Sender, m.Content)
 }
 
