@@ -1283,6 +1283,17 @@ func (lr *loopRun) correctRound(reason string) {
 	lr.settleRound()
 }
 
+// foldRound settles the current round's reply folded behind line (see
+// AgentLoopConfig.FoldRound). Falls back to settleRound on hosts that did not
+// wire it.
+func (lr *loopRun) foldRound(line, detail string) {
+	if lr.cfg.FoldRound != nil {
+		lr.cfg.FoldRound(line, detail)
+		return
+	}
+	lr.settleRound()
+}
+
 // withdrawCorrection takes back the last correction mark: the follow-up was
 // dropped and the marked reply is the turn's answer after all.
 func (lr *loopRun) withdrawCorrection() {
@@ -3560,11 +3571,12 @@ func (lr *loopRun) leadReview(ev TurnClaimEvidence) loopAction {
 	Debug("[agent_loop] lead review: sent back (%q): correction %d/%d",
 		truncForLog(changes, 80), lr.corrections.spend(correctionLeadReview), maxCorrectionsPerKind)
 	lr.emitDiag("lead-review-sent-back", "The lead reviewed the reply and sent it back: "+truncForLog(changes, 400))
-	// Settled, not struck: a reply sent back is unfinished, not false, and
-	// the revision that follows is labelled as one rather than read as a
-	// second answer (see the grounding correction above for why settling
-	// comes first).
-	lr.settleRound()
+	// Folded, not struck: a reply sent back is unfinished, not false. Left
+	// open it read as the agent answering twice, since the revision says
+	// much the same; folded, it stays one click away, and the revision that
+	// follows is labelled as one (see the grounding correction above for why
+	// settling comes first).
+	lr.foldRound(reviewedDraftLine, changes)
 	lr.history[len(lr.history)-1] = Message{Role: "assistant", Content: lr.rs.resp.Content, Reasoning: lr.rs.resp.Reasoning}
 	if lr.cfg.SettleRound != nil {
 		lr.labelNextRound(reviewedLabel)
@@ -3575,6 +3587,10 @@ func (lr *loopRun) leadReview(ev TurnClaimEvidence) loopAction {
 
 // reviewedLabel is what the revision a lead review asked for is shown under.
 const reviewedLabel = "Revised after review"
+
+// reviewedDraftLine is the line a reply the lead review sent back is folded
+// behind, with the review's changes beside it.
+const reviewedDraftLine = "Draft, sent back by the review."
 
 // leadReviewCorrection is what the model is told when the review sends its
 // reply back. It asks for the whole reply again, since a review's changes

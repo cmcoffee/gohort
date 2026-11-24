@@ -5572,6 +5572,31 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   cursor: pointer;
   text-decoration: underline;
 }
+/* Folded message: a reply the one after it replaced (a draft sent back),
+ * kept on the record behind one line with a control to open it. Not struck:
+ * nothing in it was ruled untrue. */
+.ui-agent-msg-fold-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  font-size: var(--fs-xs);
+  line-height: 1.35;
+  color: var(--text-mute);
+  margin-bottom: 0.25rem;
+  padding: 0 0.2rem;
+}
+.ui-agent-msg-folded .ui-agent-msg-body { display: none; }
+.ui-agent-msg-folded > .ui-agent-msg-fold-line { margin-bottom: 0; }
+.ui-agent-msg-fold-toggle {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
 /* A message a check followed up on: it stands, so it is not struck; a quiet
  * chip at its head says so, with the reason behind its info icon. */
 .ui-agent-msg-corrected {

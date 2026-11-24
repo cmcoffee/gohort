@@ -101,6 +101,10 @@ func (T *OrchestrateApp) reviewTurn(ctx context.Context, g leadGate, ev TurnClai
 // as core's loop shows its own.
 const reviewedReplyLabel = "Revised after review"
 
+// reviewedDraftLine is the line the reply the review sent back is folded
+// behind, as core's loop folds its own.
+const reviewedDraftLine = "Draft, sent back by the review."
+
 // plannedRevisionNote is what the write-up is told when the review sends a
 // planned turn's reply back. It has no tools, so it works from the findings.
 func plannedRevisionNote(changes string) string {
