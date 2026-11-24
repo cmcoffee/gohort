@@ -347,7 +347,16 @@ func TestChangingARoleKeepsTheUsersPreferences(t *testing.T) {
 }
 
 func csrfReq(host, origin, referer string) *http.Request {
+	return csrfReqVia(host, origin, referer, false)
+}
+
+// csrfReqVia is csrfReq, sent through gohort-desktop's proxy when desktop is
+// set: it carries the header that proxy stamps on everything it forwards.
+func csrfReqVia(host, origin, referer string, desktop bool) *http.Request {
 	r := httptest.NewRequest(http.MethodPost, "http://"+host+"/x", nil)
+	if desktop {
+		r.Header.Set(desktopProxyHeader, "gohort-desktop")
+	}
 	r.Host = host
 	if origin != "" {
 		r.Header.Set("Origin", origin)
@@ -375,18 +384,43 @@ func TestSameOriginRequest(t *testing.T) {
 		{"neither present fails open", "app.example.com", "", "", true},
 		{"malformed origin rejected", "app.example.com", "://bad", "", false},
 		{"host compare is case-insensitive", "App.Example.com", "https://app.example.com", "", true},
-		// gohort-desktop webview: loopback origin → remote server host. Allowed.
-		{"desktop loopback 127.0.0.1", "gohort.example.com", "http://127.0.0.1:34567", "", true},
-		{"desktop localhost", "gohort.example.com", "http://localhost:8080", "", true},
-		{"desktop wails.localhost", "gohort.example.com", "http://wails.localhost", "", true},
-		{"desktop ipv6 loopback", "gohort.example.com", "http://[::1]:9000", "", true},
 		// A remote site can never present a loopback origin — normal cross-origin stays blocked.
 		{"remote evil not loopback", "gohort.example.com", "https://evil.com", "", false},
+		// A loopback origin without the desktop's proxy is a page in a browser,
+		// and on a server hosted on loopback, any other local port is the same
+		// site: refused.
+		{"another local port, no desktop", "127.0.0.1:8181", "http://127.0.0.1:8888", "", false},
+		{"localhost page, no desktop", "localhost:8181", "http://localhost:3000", "", false},
+		{"loopback page to a remote server, no desktop", "gohort.example.com", "http://127.0.0.1:34567", "", false},
+		{"loopback referer, no desktop", "127.0.0.1:8181", "", "http://127.0.0.1:8888/page", false},
+		// Hosted on loopback and opened in a browser: the same origin.
+		{"local instance in a browser", "127.0.0.1:8181", "http://127.0.0.1:8181", "", true},
+		{"local instance by name", "localhost:8181", "http://localhost:8181", "", true},
 	}
 	for _, c := range cases {
 		if got := SameOriginRequest(csrfReq(c.host, c.origin, c.referer)); got != c.want {
 			t.Errorf("%s: SameOriginRequest = %v, want %v", c.name, got, c.want)
 		}
+	}
+	// gohort-desktop: its webview's loopback origin, through its proxy, to a
+	// remote server or to an instance hosted on this machine. Allowed.
+	desktop := []struct {
+		name, host, origin string
+	}{
+		{"desktop loopback 127.0.0.1", "gohort.example.com", "http://127.0.0.1:34567"},
+		{"desktop localhost", "gohort.example.com", "http://localhost:8080"},
+		{"desktop wails.localhost", "gohort.example.com", "http://wails.localhost"},
+		{"desktop ipv6 loopback", "gohort.example.com", "http://[::1]:9000"},
+		{"desktop to a local instance", "127.0.0.1:8181", "http://127.0.0.1:34567"},
+	}
+	for _, c := range desktop {
+		if !SameOriginRequest(csrfReqVia(c.host, c.origin, "", true)) {
+			t.Errorf("%s: refused through the desktop's proxy", c.name)
+		}
+	}
+	// The desktop's header does not make a non-loopback origin same-origin.
+	if SameOriginRequest(csrfReqVia("gohort.example.com", "https://evil.com", "", true)) {
+		t.Error("the desktop header let a remote origin through")
 	}
 }
 

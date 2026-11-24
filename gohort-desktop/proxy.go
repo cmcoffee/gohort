@@ -345,6 +345,10 @@ func (gp *gohort_proxy) proxy_for(server_url string) *httputil.ReverseProxy {
 	proxy.Director = func(req *http.Request) {
 		original_director(req)
 		req.Host = host
+		// The server lets this window's loopback Origin through its
+		// cross-site check only with this header on the request
+		// (core.SameOriginRequest): a page in a browser cannot add it.
+		// Removing it refuses every change this window makes.
 		req.Header.Set("X-Forwarded-For-Desktop", "gohort-desktop")
 		// Suppress the X-Forwarded-For this local proxy would otherwise
 		// stamp on (= 127.0.0.1, the webview's loopback connection to us),
