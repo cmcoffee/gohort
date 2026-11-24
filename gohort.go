@@ -411,6 +411,10 @@ func main() {
 
 		// Wire auth database.
 		AuthDB = func() Database { return global.db }
+		// Old SHA-256 password hashes of accounts nobody has signed in to
+		// since bcrypt came in are kept under bcrypt, so none sits in the
+		// database as a fast hash. Only bare ones are touched.
+		AuthWrapLegacyHashes(global.db)
 		// The one connection migration, once: it needs the credential store
 		// just wired, for the keys it moves.
 		service.MigrateIntegration(global.db)

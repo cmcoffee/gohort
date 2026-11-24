@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -901,5 +902,65 @@ func TestNewChannelWakeRulesFallBackToTheBuiltIn(t *testing.T) {
 	}
 	if got := AuthGetChannelDefaultWakeRules(nil); got != DefaultDMGatekeeperRule {
 		t.Errorf("with no store, new channels start with %q", got)
+	}
+}
+
+// An account still on a legacy SHA-256 hash has it kept under bcrypt at start,
+// so the database holds no fast hash a lookup table could reverse. The
+// password still signs in, wrong ones do not, the next sign-in leaves an
+// ordinary bcrypt hash, and a second pass touches nothing.
+func TestALegacyHashIsKeptUnderBcrypt(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	const pw = "correct horse battery staple"
+	legacy := legacyPasswordHash(pw)
+	db.Set(AuthTable, "user:alice", AuthUser{Username: "alice", PassHash: legacy, Timezone: "America/Los_Angeles"})
+	modern := hashPassword("bob's password")
+	db.Set(AuthTable, "user:bob", AuthUser{Username: "bob", PassHash: modern})
+
+	if n := AuthWrapLegacyHashes(db); n != 1 {
+		t.Fatalf("wrapped %d hash(es), want alice's alone", n)
+	}
+	var a, b AuthUser
+	db.Get(AuthTable, "user:alice", &a)
+	db.Get(AuthTable, "user:bob", &b)
+	if !strings.HasPrefix(a.PassHash, wrappedLegacyPrefix) || strings.Contains(a.PassHash, legacy) {
+		t.Errorf("alice's legacy hash is still in the open: %q", a.PassHash)
+	}
+	if a.Timezone != "America/Los_Angeles" || b.PassHash != modern {
+		t.Errorf("wrapping changed more than the legacy hash: alice=%+v bob=%+v", a, b)
+	}
+	if ok, needsUpgrade := verifyPassword(a.PassHash, pw); !ok || !needsUpgrade {
+		t.Errorf("wrapped verify: got ok=%v legacy=%v, want true,true", ok, needsUpgrade)
+	}
+	if ok, _ := verifyPassword(a.PassHash, "wrong"); ok {
+		t.Error("a wrapped hash accepted a wrong password")
+	}
+	// The hash itself is not a password: typing it in does not sign in.
+	if ok, _ := verifyPassword(a.PassHash, legacy); ok {
+		t.Error("a wrapped hash accepted the legacy hash as a password")
+	}
+	if n := AuthWrapLegacyHashes(db); n != 0 {
+		t.Errorf("a second pass wrapped %d again", n)
+	}
+	if AuthCheckPassword(db, "alice", "wrong") {
+		t.Error("sign-in accepted a wrong password")
+	}
+	if !AuthCheckPassword(db, "alice", pw) {
+		t.Fatal("alice could not sign in with her password after the wrap")
+	}
+	db.Get(AuthTable, "user:alice", &a)
+	if !strings.HasPrefix(a.PassHash, "$2") {
+		t.Errorf("sign-in did not upgrade the wrapped hash to bcrypt: %q", a.PassHash)
+	}
+}
+
+// The start-up wiring wraps legacy hashes. The test above calls it by hand.
+func TestStartupWrapsLegacyHashes(t *testing.T) {
+	src, err := os.ReadFile("../gohort.go")
+	if err != nil {
+		t.Skip("gohort.go not beside core: ", err)
+	}
+	if !strings.Contains(string(src), "AuthWrapLegacyHashes(global.db)") {
+		t.Error("start-up no longer wraps legacy password hashes")
 	}
 }
