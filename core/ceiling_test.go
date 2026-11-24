@@ -426,7 +426,11 @@ const (
 	// the tools a person's apps expose beyond their pages, which the tool
 	// lookup here resolves by name, so it carries core's tool types and
 	// cannot live in a leaf. The custom apps host sets it.
-	coreExportCeiling = 2447
+	// 2448: AuthWrapLegacyHashes, the start-up pass that keeps old SHA-256
+	// password hashes under bcrypt. It needs auth's own hashing and table, so
+	// it lives beside them, and the main package calls it once AuthDB is
+	// wired (HEAD stood at the edge of the slack, 2472).
+	coreExportCeiling = 2448
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a
