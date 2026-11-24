@@ -1170,8 +1170,12 @@ func replyEndsMidSentence(reply string) bool {
 }
 
 // structuralLineRe matches a last line that legitimately ends without
-// punctuation: a list item, heading, table row, quote, or bare link.
-var structuralLineRe = regexp.MustCompile(`^(?:[-*+] |\d+[.)] |#|\||>|https?://\S+$)`)
+// punctuation: a list item, heading, table row, quote, bare link, or a
+// divider. The divider is there because a report that closes on a footer
+// block ("---" then STATUS lines, then "---") ended every Servitor
+// investigator reply for nine days, and its trailing dash read as a cut-off
+// sentence: 49 firings, all of them re-prompting a finished reply.
+var structuralLineRe = regexp.MustCompile(`^(?:[-*+] |\d+[.)] |#|\||>|https?://\S+$|(?:-{3,}|\*{3,}|_{3,})$)`)
 
 // trailingLinkRe is a last word that is a link or a path: a URL, a site, or
 // an absolute, home or relative path, in backticks or not.
