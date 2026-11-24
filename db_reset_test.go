@@ -2,10 +2,12 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cmcoffee/snugforge/cfg"
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -192,4 +194,34 @@ func TestSecureDatabaseUpgradesTheCipher(t *testing.T) {
 	if !strings.Contains(body, "go upgradeDatabaseCipher(file, st)") {
 		t.Error("a database opened here no longer has its secrets re-encrypted with GCM")
 	}
+}
+
+// The re-encryption pass says how far through the tables it is on its tick,
+// and a pass that showed progress ends with a line of its own even when it
+// found nothing, so the last thing in the log is never a stale tick.
+func TestCipherProgressSaysHowFarAndEnds(t *testing.T) {
+	clock := time.Unix(1000, 0)
+	var lines []string
+	c := &cipherProgress{file: "x.db", start: clock, last: clock,
+		now:  func() time.Time { return clock },
+		logf: func(f string, a ...interface{}) { lines = append(lines, fmt.Sprintf(f, a...)) }}
+
+	c.tick(kvlite.UpgradeProgress{Tables: 312, TablesDone: 3})
+	if len(lines) != 0 {
+		t.Fatalf("logged before the tick: %q", lines)
+	}
+	clock = clock.Add(3 * time.Second)
+	c.tick(kvlite.UpgradeProgress{Tables: 312, TablesDone: 140, Upgraded: 16})
+	if len(lines) != 1 || !strings.Contains(lines[0], "140 of 312 tables done, 16 secret(s) so far (3s)") {
+		t.Fatalf("progress line = %q", lines)
+	}
+	c.finish(0, nil)
+	if len(lines) != 2 || !strings.Contains(lines[1], "no stored secrets were left") {
+		t.Errorf("a pass that showed progress and found nothing ended with %q", lines)
+	}
+
+	quiet := &cipherProgress{file: "x.db", start: clock, last: clock, now: func() time.Time { return clock },
+		logf: func(f string, a ...interface{}) { t.Errorf("a quick pass with nothing to do logged: "+f, a...) }}
+	quiet.tick(kvlite.UpgradeProgress{Tables: 2, TablesDone: 2})
+	quiet.finish(0, nil)
 }

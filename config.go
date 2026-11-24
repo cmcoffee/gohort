@@ -1306,22 +1306,49 @@ func secureDatabaseWith(file string, plan padlockPlan) (Database, error) {
 // (the server stopped) carries on at the next start, since only CFB values
 // are touched.
 func upgradeDatabaseCipher(file string, st kvlite.Store) {
-	start := time.Now()
-	last := start
-	n, err := kvlite.UpgradeCipher(st, func(done int) {
-		if time.Since(last) >= 2*time.Second {
-			last = time.Now()
-			Log("Database %s: re-encrypting stored secrets with AES-256-GCM, %d so far (%s).", file, done, time.Since(start).Round(time.Second))
-		}
-	})
-	if err != nil {
-		Warn("Database %s: re-encrypting stored secrets stopped after %d: %v. The rest are read as they are and are tried again at the next start.", file, n, err)
+	report := newCipherProgress(file)
+	n, err := kvlite.UpgradeCipher(st, report.tick)
+	report.finish(n, err)
+}
+
+// cipherProgress turns UpgradeCipher's reports into log lines: how far on a
+// ~2s tick, then the pass's own ending. A pass spends most of its time on
+// tables with nothing left to upgrade, so the line says how many of the
+// tables are done, not only how many values were re-encrypted.
+type cipherProgress struct {
+	file        string
+	start, last time.Time
+	told        bool // a progress line went out, so an ending must follow
+	now         func() time.Time
+	logf        func(format string, args ...interface{})
+}
+
+func newCipherProgress(file string) *cipherProgress {
+	t := time.Now()
+	return &cipherProgress{file: file, start: t, last: t, now: time.Now, logf: func(f string, a ...interface{}) { Log(fmt.Sprintf(f, a...)) }}
+}
+
+func (c *cipherProgress) tick(p kvlite.UpgradeProgress) {
+	if c.now().Sub(c.last) < 2*time.Second {
 		return
 	}
-	if n > 0 {
-		Notice("Database %s: %d stored secret(s) re-encrypted with AES-256-GCM in %s. Their old copies can stay in the file's freed pages until later writes reuse them.", file, n, time.Since(start).Round(time.Second))
+	c.last, c.told = c.now(), true
+	c.logf("Database %s: re-encrypting stored secrets with AES-256-GCM: %d of %d tables done, %d secret(s) so far (%s).",
+		c.file, p.TablesDone, p.Tables, p.Upgraded, c.elapsed())
+}
+
+func (c *cipherProgress) finish(n int, err error) {
+	switch {
+	case err != nil:
+		Warn("Database %s: re-encrypting stored secrets stopped after %d: %v. The rest are read as they are and are tried again at the next start.", c.file, n, err)
+	case n > 0:
+		Notice("Database %s: %d stored secret(s) re-encrypted with AES-256-GCM in %s. Their old copies can stay in the file's freed pages until later writes reuse them.", c.file, n, c.elapsed())
+	case c.told:
+		c.logf("Database %s: checked every table in %s; no stored secrets were left to re-encrypt.", c.file, c.elapsed())
 	}
 }
+
+func (c *cipherProgress) elapsed() time.Duration { return c.now().Sub(c.start).Round(time.Second) }
 
 // hashBytes computes the SHA256 hash of the input values.
 func hashBytes(input ...interface{}) []byte {
