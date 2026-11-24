@@ -230,7 +230,7 @@ func (T *Servitor) cloneAndIngestRepo(ctx context.Context, user string, udb Data
 
 	rec.RepoCloned = time.Now().Format(time.RFC3339)
 	rec.RepoFiles = count
-	udb.Set(applianceTable, applianceID, rec)
+	saveAppliance(udb, applianceID, rec)
 	Log("[servitor.repo] ingested %s: %d files (%d new, %d changed, %d removed)",
 		rec.Name, count, added, changed, removed)
 }

@@ -164,7 +164,7 @@ func (T *Servitor) runRepoMemoryAudit(ctx context.Context, sid, user string, udb
 	var rec Appliance
 	if udb.Get(applianceTable, appliance.ID, &rec) && rec.ID != "" {
 		rec.Scanned = time.Now().Format(time.RFC3339)
-		udb.Set(applianceTable, appliance.ID, rec)
+		saveAppliance(udb, appliance.ID, rec)
 	}
 
 	if len(corrected) > 0 {
