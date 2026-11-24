@@ -9,8 +9,8 @@ package servitor
 //
 // Records written before this were plain. encryptStoredSystems writes each one
 // again, encrypted, once per person. The plain bytes they replaced stay in the
-// database file's freed pages until it is compacted, so the pass says to
-// reclaim space when it re-wrote anything.
+// database file's freed pages until new writes reuse those pages; gohort has
+// no step that wipes them sooner, so the pass says that much and no more.
 
 import (
 	. "github.com/cmcoffee/gohort/core"
@@ -45,7 +45,7 @@ func (T *Servitor) encryptStoredSystems() int {
 		total += encryptUserSystems(udb)
 	}
 	if total > 0 {
-		Notice("[servitor] %d system record(s) re-written encrypted. Their old unencrypted copies stay in the database file until it is compacted: run Administrator › Maintenance › Reclaim space.", total)
+		Notice("[servitor] %d system record(s) re-written encrypted. Their old unencrypted copies can stay in the database file's freed pages until later writes reuse them, and backups taken before this hold them as they were.", total)
 	}
 	return total
 }

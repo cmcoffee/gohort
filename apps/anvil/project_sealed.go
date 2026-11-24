@@ -7,7 +7,7 @@ package anvil
 //
 // Records written before this were plain. encryptStoredProjects writes each
 // one again, encrypted, once per store. The plain bytes they replaced stay in
-// the database file's freed pages until it is compacted.
+// the database file's freed pages until new writes reuse those pages.
 
 import (
 	. "github.com/cmcoffee/gohort/core"
@@ -34,7 +34,7 @@ func (T *Anvil) encryptStoredProjects() int {
 		}
 	}
 	if total > 0 {
-		Notice("[anvil] %d project record(s) re-written encrypted. Their old unencrypted copies stay in the database file until it is compacted: run Administrator › Maintenance › Reclaim space.", total)
+		Notice("[anvil] %d project record(s) re-written encrypted. Their old unencrypted copies can stay in the database file's freed pages until later writes reuse them, and backups taken before this hold them as they were.", total)
 	}
 	return total
 }

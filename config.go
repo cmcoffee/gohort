@@ -1294,7 +1294,33 @@ func secureDatabaseWith(file string, plan padlockPlan) (Database, error) {
 		return nil, err
 	}
 	Debug("Database opened successfully.")
+	go upgradeDatabaseCipher(file, st)
 	return &DBase{Store: st}, nil
+}
+
+// upgradeDatabaseCipher re-encrypts a database's AES-CFB values with
+// AES-256-GCM (kvlite.UpgradeCipher), in the background: both ciphers read,
+// so nothing waits on it, and a store of repository files or evidence can
+// hold many values. Each value is rewritten in the same write transaction it
+// is re-read in, so a write made meanwhile is never lost. A run cut short
+// (the server stopped) carries on at the next start, since only CFB values
+// are touched.
+func upgradeDatabaseCipher(file string, st kvlite.Store) {
+	start := time.Now()
+	last := start
+	n, err := kvlite.UpgradeCipher(st, func(done int) {
+		if time.Since(last) >= 2*time.Second {
+			last = time.Now()
+			Log("Database %s: re-encrypting stored secrets with AES-256-GCM, %d so far (%s).", file, done, time.Since(start).Round(time.Second))
+		}
+	})
+	if err != nil {
+		Warn("Database %s: re-encrypting stored secrets stopped after %d: %v. The rest are read as they are and are tried again at the next start.", file, n, err)
+		return
+	}
+	if n > 0 {
+		Notice("Database %s: %d stored secret(s) re-encrypted with AES-256-GCM in %s. Their old copies can stay in the file's freed pages until later writes reuse them.", file, n, time.Since(start).Round(time.Second))
+	}
 }
 
 // hashBytes computes the SHA256 hash of the input values.
