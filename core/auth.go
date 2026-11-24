@@ -372,7 +372,7 @@ type AuthUser struct {
 	// DisplayName is the name the account goes by (core/displayname, and
 	// me.go): a label, never a key, and optional.
 	DisplayName      string   `json:"display_name,omitempty"`
-	PassHash         string   `json:"pass_hash"` // bcrypt hash ($2...); legacy SHA-256 hex auto-upgrades on next login
+	PassHash         string   `json:"pass_hash"` // bcrypt hash ($2...); a legacy SHA-256 hex is kept under bcrypt at start (AuthWrapLegacyHashes) and upgrades on next login
 	Admin            bool     `json:"admin"`
 	Pending          bool     `json:"pending,omitempty"`           // true if awaiting admin approval
 	Apps             []string `json:"apps,omitempty"`              // allowed app paths; empty = use defaults
@@ -820,10 +820,21 @@ func legacyPasswordHash(password string) string {
 	return hex.EncodeToString(h[:])
 }
 
+// wrappedLegacyPrefix marks a legacy SHA-256 hash kept under bcrypt: the old
+// hash of an account nobody has signed in to since, bcrypt'd as it stood so it
+// no longer sits in the database as a fast, fixed-salt hash that a lookup table
+// could reverse (AuthWrapLegacyHashes). It still verifies, and upgrades to an
+// ordinary bcrypt hash at the next sign-in, like a bare legacy one.
+//
+// An older build reads it as a bare legacy hash, which it is not, so after a
+// downgrade those accounts need a password reset.
+const wrappedLegacyPrefix = "bcrypt-sha256-legacy:"
+
 // verifyPassword checks a password against a stored hash, transparently handling
-// both bcrypt (new) and legacy SHA-256 (old) formats — bcrypt hashes are
-// self-identifying by their "$2" prefix. legacy is true when the stored hash used
-// the old scheme and should be upgraded to bcrypt on this successful login.
+// bcrypt (new), legacy SHA-256 kept under bcrypt, and bare legacy SHA-256 —
+// bcrypt hashes are self-identifying by their "$2" prefix, wrapped ones by
+// wrappedLegacyPrefix. legacy is true when the stored hash used the old scheme
+// and should be upgraded to bcrypt on this successful login.
 func verifyPassword(stored, password string) (ok, legacy bool) {
 	if stored == "" {
 		return false, false
@@ -831,8 +842,53 @@ func verifyPassword(stored, password string) (ok, legacy bool) {
 	if strings.HasPrefix(stored, "$2") { // bcrypt ($2a$/$2b$/$2y$)
 		return bcrypt.CompareHashAndPassword([]byte(stored), passwordDigest(password)) == nil, false
 	}
+	if inner, wrapped := strings.CutPrefix(stored, wrappedLegacyPrefix); wrapped {
+		return bcrypt.CompareHashAndPassword([]byte(inner), []byte(legacyPasswordHash(password))) == nil, true
+	}
 	// Legacy fixed-salt SHA-256 — constant-time compare, upgrade on success.
 	return subtle.ConstantTimeCompare([]byte(stored), []byte(legacyPasswordHash(password))) == 1, true
+}
+
+// isBareLegacyHash reports whether stored is a legacy SHA-256 hash in the
+// open: not bcrypt, and not already kept under it.
+func isBareLegacyHash(stored string) bool {
+	return stored != "" && !strings.HasPrefix(stored, "$2") && !strings.HasPrefix(stored, wrappedLegacyPrefix)
+}
+
+// AuthWrapLegacyHashes keeps every bare legacy SHA-256 hash under bcrypt, so
+// an account nobody has signed in to since bcrypt came in no longer holds a
+// hash a lookup table could reverse. No password is needed: bcrypt is taken
+// of the old hash as it stands. Each still signs in with its password and is
+// upgraded to an ordinary bcrypt hash then. Safe to run every start: it only
+// touches bare ones. Returns how many it wrapped.
+func AuthWrapLegacyHashes(db Database) int {
+	if db == nil {
+		return 0
+	}
+	n := 0
+	for _, key := range db.Keys(AuthTable) {
+		if !strings.HasPrefix(key, "user:") {
+			continue
+		}
+		var user AuthUser
+		if !db.Get(AuthTable, key, &user) || !isBareLegacyHash(user.PassHash) {
+			continue
+		}
+		b, err := bcrypt.GenerateFromPassword([]byte(user.PassHash), bcrypt.DefaultCost)
+		if err != nil {
+			Log("[auth] could not wrap %q's legacy password hash: %v", user.Username, err)
+			continue
+		}
+		user.PassHash = wrappedLegacyPrefix + string(b)
+		// Saved under the key it was read from, so nothing about the
+		// account but its hash changes.
+		db.Set(AuthTable, key, user)
+		n++
+	}
+	if n > 0 {
+		Log("[auth] kept %d legacy password hash(es) under bcrypt; each becomes an ordinary bcrypt hash at its next sign-in", n)
+	}
+	return n
 }
 
 // --- User Management (called from setup and admin app) ---
@@ -1216,8 +1272,8 @@ func AuthDeleteUser(db Database, username string) {
 }
 
 // AuthCheckPassword verifies a username/password combination. On a successful
-// login against a legacy SHA-256 hash it transparently upgrades the stored hash
-// to bcrypt (rehash-on-login migration), so no separate migration pass is needed.
+// login against a legacy SHA-256 hash, bare or kept under bcrypt, it upgrades
+// the stored hash to an ordinary bcrypt one (rehash-on-login).
 func AuthCheckPassword(db Database, username, password string) bool {
 	user, ok := AuthGetUser(db, username)
 	if !ok || user.PassHash == "" {
