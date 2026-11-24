@@ -100,9 +100,22 @@ conversation. Skills can carry tools too; they are per-user, authored in-product
 installed from a public registry, and their scripts run in the same sandbox under the same
 allowlist.
 
-At rest, credentials and all other stored data are encrypted with a key derived from the
-host, so the database file on its own is not enough to read them. The corollary matters for
-backups: a copied database does not open on a different machine.
+At rest, the secrets in the database (API keys, credential secrets, OAuth tokens) are
+encrypted under a random key, which a padlock set by `[database] lock` in `gohort.ini` wraps.
+The rest of the database (conversations, memory, knowledge, app records) is not encrypted, so
+protect the data directory itself, with file permissions and disk encryption.
+
+- `lock = portable` (the default): the padlock is kept in `gohort.ini`. The data directory
+  opens anywhere alongside that ini, so a backup holding both can read the secrets. Treat the
+  ini as a secret, and keep it out of backups that should not carry credentials.
+- `lock = machine`: the padlock is derived from this machine's install identity and never
+  stored. On another machine a copied database's secrets cannot be read: they are cleared,
+  with a notice, and the rest of it opens as it is.
+
+The cipher is AES-CFB, which hides a value but does not detect a change to it: someone who can
+write the database file can alter an encrypted value undetected, though not read it. See
+"The database padlock" in [docs/REFERENCE.md](docs/REFERENCE.md#the-database-padlock) for
+moving a database between machines.
 
 ## Sending data out
 
