@@ -68,6 +68,17 @@ func Clip(s string, n int) string {
 	return s[:n] + "..."
 }
 
+// ArgClip is one string argument of a tool call as a one-line summary shows
+// it. Prose is cut at 60 bytes. A value with no whitespace in it (a URL, an
+// id, a path) is kept whole up to 200, because a cut one points at nothing:
+// a post URL ends in a 36-character UUID and lost its last six characters.
+func ArgClip(s string) string {
+	if !strings.ContainsAny(s, " \t\r\n") {
+		return Clip(s, 200)
+	}
+	return Clip(s, 60)
+}
+
 // ReplyClip is a model reply as an error or a log line quotes it: on one
 // line, meta tags taken out, the first n bytes, quoted, or "empty" for a
 // reply with no text. For a check whose reply could not be read, so the

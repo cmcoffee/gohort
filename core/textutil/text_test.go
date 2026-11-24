@@ -177,3 +177,24 @@ func TestFirstMessageTitle(t *testing.T) {
 		}
 	}
 }
+
+// A one-line summary of a tool call keeps an id-shaped value whole and still
+// cuts prose. The live case: a post URL is a 30-character prefix and a
+// 36-character UUID, and the 60-byte cut dropped the UUID's last six.
+func TestArgClipKeepsAnIDWholeAndCutsProse(t *testing.T) {
+	url := "https://www.example.com/post/0b9f6c2e-4d1a-4e8b-9c3f-7a2d5e8f1b4c"
+	if got := ArgClip(url); got != url {
+		t.Errorf("a URL was cut: %q", got)
+	}
+	prose := strings.Repeat("the quick brown fox ", 5)
+	if got := ArgClip(prose); got != prose[:60]+"..." {
+		t.Errorf("prose must still be cut at 60: %q", got)
+	}
+	long := strings.Repeat("x", 250)
+	if got := ArgClip(long); got != long[:200]+"..." {
+		t.Errorf("a token past 200 is cut at 200: %d bytes", len(got))
+	}
+	if got := ArgClip("short one"); got != "short one" {
+		t.Errorf("a short value is left as is: %q", got)
+	}
+}

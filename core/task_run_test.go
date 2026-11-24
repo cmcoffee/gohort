@@ -517,3 +517,15 @@ func TestTheMarkNeverReachesTheModel(t *testing.T) {
 func shouldDetach(ct ChatTool, args map[string]any, sess *ToolSession) bool {
 	return shouldDetachPolicy(detachPolicyForChatTool(ct, sess), args, sess)
 }
+
+// A background run's label keeps its URL whole and still cuts a prompt.
+func TestTaskLabelKeepsAURLWhole(t *testing.T) {
+	url := "https://www.example.com/post/0b9f6c2e-4d1a-4e8b-9c3f-7a2d5e8f1b4c"
+	if got := taskLabelFor(&slowTool{}, map[string]any{"url": url}); got != "slow_tool: "+url {
+		t.Errorf("the URL was cut: %q", got)
+	}
+	got := taskLabelFor(&slowTool{}, map[string]any{"prompt": strings.Repeat("draw a picture ", 10)})
+	if !strings.HasSuffix(got, "...") || len(got) > len("slow_tool: ")+63 {
+		t.Errorf("a prompt must still be cut at 60: %q", got)
+	}
+}
