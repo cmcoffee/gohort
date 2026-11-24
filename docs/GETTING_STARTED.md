@@ -54,7 +54,9 @@ Agents can answer from your own documents.
    collection.
 
 The agent then finds passages when a question calls for them, and sees
-when each was added, so an old document reads as old.
+when each was added, so an old document reads as old. To keep a
+collection current on its own, share it, or check what is added, see
+[knowledge.md](knowledge.md).
 
 What the agent learns by itself, as you talk to it, is its memory: see
 [memory.md](memory.md).

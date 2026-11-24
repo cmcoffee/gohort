@@ -211,7 +211,7 @@ Add `WebPath()` / `WebName()` / `WebDesc()` / `Routes()` and it gets a web dashb
 | `admin` | Operator panel: users, permissions, app groups, API credentials, MCP servers, connectors, tool/skill curation, and all service config |
 | `extensions` | What your agents draw on, in one place: credentials, tools, skills, connections, and your own MCP servers |
 | `agents` | One published agent, one URL: a permission-gated chat surface scoped to a single agent |
-| `knowledge` | Named document collections that travel with your skills, recalled by every agent that has those skills on |
+| `knowledge` | Named document collections that travel with your skills, recalled by every agent that has those skills on ([guide](docs/knowledge.md)) |
 | `filestore` | File stores: make a folder on this server searchable by an agent ([guide](docs/file-stores.md)) |
 | `bridges` | Messaging transport: wire iMessage / Telegram / ... to a channel agent, with a wake-rule gatekeeper |
 | `servitor` | SSH system investigator + git-repo Q&A, plan-driven, with an xterm pane; systems are shareable ([guide](docs/servitor.md)) |
@@ -248,6 +248,7 @@ Full descriptions in the [reference](docs/REFERENCE.md#built-in-apps).
 - **[Sharing](docs/sharing.md)**: sharing agents, apps and the rest with people, teams or Everyone; whose account a shared agent's calls use; maintainers
 
 **What agents can reach**
+- **[Knowledge](docs/knowledge.md)**: collections of documents agents search when they answer: making them, keeping them current with a checked plan, sharing them, and bulletins
 - **[Servitor](docs/servitor.md)**: your SSH systems and code repositories: mapping and investigating them, command approvals, and giving them to agents as Sources
 - **[File stores](docs/file-stores.md)**: folders on the server an agent can search and read, with commands an administrator approves, pulls between stores and a private folder per person
 - **[Integrations](docs/integrations.md)**: how gohort reaches things: connectors wrap what gohort does not own, flows wire them together, agents decide
