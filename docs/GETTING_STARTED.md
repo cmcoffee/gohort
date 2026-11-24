@@ -146,7 +146,7 @@ When the work is done:
 
 - **Scheduler**, in the Agents sidebar: run an agent on a schedule, or
   wake it when something it watches changes. Each schedule shows how its
-  last run went.
+  last run went. See [scheduler.md](scheduler.md).
 - **Bridges**: answer messages from other services. iMessage comes through
   the `gohort-desktop` app on a Mac; add Teams bots and linked services
   under **Extensions › Integrations**.
