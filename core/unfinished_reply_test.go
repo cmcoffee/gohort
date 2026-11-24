@@ -23,6 +23,9 @@ func TestAReplyThatStopsMidSentenceIsCaught(t *testing.T) {
 		"It runs every morning,",
 		"Pick either this or /",
 		"Saved it under reports and/",
+		// A lone dash or two is still a cut, not a divider.
+		"The checks ran and the results are -",
+		"It is fine --",
 	}
 	complete := []string{
 		"lol that's great",
@@ -43,6 +46,10 @@ func TestAReplyThatStopsMidSentenceIsCaught(t *testing.T) {
 		"It's in ./out/",
 		"| name | value |",
 		"I'll post it every morning at 8",
+		// A report that closes on a footer block ends on its divider.
+		"Nothing else needs root.\n\n---\nSTATUS: found\nLEAD: none\nFACTS_SAVED: 0\n---",
+		"Done.\n\n***",
+		"Done.\n\n___",
 		"",
 	}
 	for _, r := range stops {
