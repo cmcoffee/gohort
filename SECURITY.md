@@ -160,6 +160,10 @@ Before gohort faces anything wider than localhost:
   network, a remote nginx) is believed only when listed in `trusted_proxies`. Leave it off and
   every client looks like the proxy: one address for the login lockout, so a few bad guesses
   lock everyone out, one address for `admin_allowed_ips`, and the session cookie loses Secure.
+  The machine itself is a trusted zone for addresses: anything running on it can name any
+  client address in `X-Forwarded-For`. It still has to sign in like anyone else; an address
+  only decides the logs, the per-address lockout and `admin_allowed_ips`, and the per-account
+  lockout still applies.
 - Multi-user means real accounts with per-user isolation, not a shared password. Create
   accounts rather than sharing one.
 - With a local model, prompts and tool output never leave the host. Wiring a hosted provider is a deliberate choice, and the per-agent privacy

@@ -1594,15 +1594,25 @@ func SameOriginRequest(r *http.Request) bool {
 		return true
 	}
 	// gohort-desktop: the desktop app serves its UI from a LOOPBACK origin
-	// (http://127.0.0.1:<port>, or wails.localhost on Windows WebView2) and makes
-	// cookie-authenticated requests to the remote server, so its Origin never
-	// matches the server host. A loopback origin cannot be forged by a remote
-	// website — the browser stamps Origin from the actual page's origin, and a
-	// remote page is never served from the victim's own loopback — so treat it as
-	// same-origin. The residual case (a page served from the user's OWN localhost)
-	// is inside the trust boundary a desktop webview already assumes.
-	return isLoopbackHost(u.Hostname())
+	// (http://127.0.0.1:<port>, or wails.localhost on Windows WebView2) and its
+	// proxy forwards the page's requests, Origin and all, to the server, so its
+	// Origin never matches the server host. A loopback origin is not enough on
+	// its own: browsers count every port on 127.0.0.1 as the same site, so on a
+	// server hosted on loopback, any page on another local port (a dev server, a
+	// notebook, a downloaded page opened from disk) would pass, cookie and all.
+	// The desktop's proxy stamps desktopProxyHeader on every request it forwards,
+	// WebSocket upgrades included. A page cannot add it: a custom header makes
+	// the browser ask first (a CORS preflight), which this server never approves,
+	// and a page's WebSocket cannot set headers at all. A browser on a server
+	// hosted on loopback is unaffected: its Origin matches the Host above.
+	return isLoopbackHost(u.Hostname()) && r.Header.Get(desktopProxyHeader) != ""
 }
+
+// desktopProxyHeader is what gohort-desktop's proxy sets on every request it
+// forwards (gohort-desktop/proxy.go). It proves only that the request did not
+// come from a page in a browser, which is all SameOriginRequest asks of it; a
+// process on the machine can send it, and nothing else trusts it.
+const desktopProxyHeader = "X-Forwarded-For-Desktop"
 
 // requestIsHTTPS reports whether the browser's connection is HTTPS, which is
 // what decides the session cookie's Secure flag. Three ways to know: this
