@@ -2446,7 +2446,7 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		// date stamp goes, and free for the same reason.
 		TurnNotes: func(user string) string {
 			dates := t.datesTurnNote(UserLocation(t.user))
-			framework := turnNotes(pr.sess, t.udb, t.chatSessionID(), user, dates)
+			framework := turnNotes(pr.sess, t.udb, t.chatSessionID(), user, dates, t.speakerRoleNote())
 			notes := t.withBulletins(framework)
 			// The one-time ask about an idle open item is for the person in
 			// this conversation, so it rides the main turn only, never a
