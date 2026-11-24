@@ -245,6 +245,7 @@ Full descriptions in the [reference](docs/REFERENCE.md#built-in-apps).
 - **[Memory](docs/memory.md)**: what an agent remembers between conversations, layer by layer; how to see and prune it; and what travels when an agent is shared
 - **[Pipelines and machines](docs/pipelines-and-machines.md)**: workflows you design: pipelines that run to a result, machines a conversation moves through, and how to build, try and assign them
 - **[Apps](docs/apps.md)**: pages of your own that Builder makes from a description: what they are made of, sharing them, history, export and updates
+- **[Scheduler](docs/scheduler.md)**: what agents do on their own: schedules on a clock, event monitors, goals and limits, link groups, and what to do when one stops working
 - **[Sharing](docs/sharing.md)**: sharing agents, apps and the rest with people, teams or Everyone; whose account a shared agent's calls use; maintainers
 
 **What agents can reach**
