@@ -23,6 +23,9 @@ import (
 func TestBuildPlanContract(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
 	turn := &chatTurn{udb: db, sse: &sseWriter{live: &syncBuf{}}, session: &ChatSession{ID: "s1"}, agent: AgentRecord{ID: "seed-builder"}}
+	// The turn's checks are built as it starts, so what it builds below is
+	// this turn's build work (chatTurn.buildWork).
+	turn.buildWork()
 	ctx := context.Background()
 
 	var log strings.Builder

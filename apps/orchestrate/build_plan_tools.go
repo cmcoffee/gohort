@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -630,11 +631,61 @@ func (t *chatTurn) finishCheck() func(string) (string, string) {
 
 // buildGapsFinishCheck wires the check for an interactive turn. Nil for an
 // agent that does not author.
+//
+// It holds a reply back only on a turn that did build work (buildWorkSince).
+// A session keeps its ledger and plan across turns, so a standing task run
+// on Builder, a weekly legal digest that built nothing, was held back for
+// tools from Builder's other work in that session, and its reply rewritten
+// around them.
 func (t *chatTurn) buildGapsFinishCheck() func(string) (string, string) {
 	if !agentCanAuthor(t.agent) || t.session == nil {
 		return nil
 	}
-	return buildGapsFinishCheck(func() *WorkPlan { return t.session.BuildWorkPlan }, t.udb, t.session.ID, &t.gapsShown)
+	worked := t.buildWork()
+	check := buildGapsFinishCheck(func() *WorkPlan { return t.session.BuildWorkPlan }, t.udb, t.session.ID, &t.gapsShown)
+	return func(reply string) (string, string) {
+		if !worked() {
+			return "", ""
+		}
+		return check(reply)
+	}
+}
+
+// buildWork is whether this turn has done build work so far, measured from
+// the first time it is asked for, which is when the turn's checks are built.
+func (t *chatTurn) buildWork() func() bool {
+	if t.buildWorkSeen == nil {
+		t.buildWorkSeen = buildWorkSince(func() *WorkPlan { return t.session.BuildWorkPlan }, t.udb, t.session.ID)
+	}
+	return t.buildWorkSeen
+}
+
+// buildWorkSince reports, each time it is asked, whether a run has done build
+// work since it was made: a tool's standing recorded in the verification
+// ledger (every authoring edit and test records one), or the build plan
+// changed. A turn that built nothing is not held to gaps it did not make.
+func buildWorkSince(plan func() *WorkPlan, udb Database, sessionID string) func() bool {
+	since := time.Now()
+	planAt := func() string {
+		if plan == nil {
+			return ""
+		}
+		p := plan()
+		if p == nil {
+			return ""
+		}
+		b, _ := json.Marshal(p.Snapshot())
+		return string(b)
+	}
+	start := planAt()
+	return func() bool {
+		for _, r := range loadToolVerifications(udb, sessionID) {
+			if !r.At.Before(since) {
+				return true
+			}
+		}
+		return planAt() != start
+	}
 }
 
 // buildGapsNote is what an authoring turn adds when it ends with the check's
@@ -667,7 +718,11 @@ func (t *chatTurn) buildGapsUnmet() func() {
 	if !agentCanAuthor(t.agent) || t.session == nil {
 		return nil
 	}
+	worked := t.buildWork()
 	return func() {
+		if !worked() {
+			return
+		}
 		if note := buildGapsNote(t.session.BuildWorkPlan, t.udb, t.session.ID); note != "" {
 			t.turnDiag("build-check-unmet", note)
 		}
@@ -683,27 +738,41 @@ type dispatchBuildCheck struct {
 	ts    *ToolSession
 	shown string
 	note  string
+	// worked is whether the run has done build work since it started
+	// (buildWorkSince): a run that built nothing is not held to the
+	// session's older gaps.
+	worked func() bool
 }
 
 func newDispatchBuildCheck(target AgentRecord, ts *ToolSession) *dispatchBuildCheck {
 	if !agentCanAuthor(target) || ts == nil || ts.ChatSessionID == "" {
 		return nil
 	}
-	return &dispatchBuildCheck{ts: ts}
+	return &dispatchBuildCheck{ts: ts, worked: buildWorkSince(nil, ts.DB, ts.ChatSessionID)}
 }
 
 func (d *dispatchBuildCheck) finishCheck() func(string) (string, string) {
 	if d == nil {
 		return nil
 	}
-	return buildGapsFinishCheck(nil, d.ts.DB, d.ts.ChatSessionID, &d.shown)
+	check := buildGapsFinishCheck(nil, d.ts.DB, d.ts.ChatSessionID, &d.shown)
+	return func(reply string) (string, string) {
+		if !d.worked() {
+			return "", ""
+		}
+		return check(reply)
+	}
 }
 
 func (d *dispatchBuildCheck) finishUnmet() func() {
 	if d == nil {
 		return nil
 	}
-	return func() { d.note = buildGapsNote(nil, d.ts.DB, d.ts.ChatSessionID) }
+	return func() {
+		if d.worked() {
+			d.note = buildGapsNote(nil, d.ts.DB, d.ts.ChatSessionID)
+		}
+	}
 }
 
 // questionNote is what is still unmet when the run ends on a QUESTION rather
@@ -714,7 +783,7 @@ func (d *dispatchBuildCheck) finishUnmet() func() {
 // described the tool as running "on its first live run", and nothing said
 // otherwise. The note rides on the question, so the user reads it with it.
 func (d *dispatchBuildCheck) questionNote() string {
-	if d == nil {
+	if d == nil || !d.worked() {
 		return ""
 	}
 	return buildGapsNote(nil, d.ts.DB, d.ts.ChatSessionID)

@@ -387,6 +387,9 @@ type chatTurn struct {
 	// gapsShown is the set of build gaps the model has already been shown this
 	// turn, by report_build_gaps or by the finish check, which shows a set once.
 	gapsShown string
+	// buildWorkSeen says whether this turn has done build work, once its
+	// checks are built (chatTurn.buildWork).
+	buildWorkSeen func() bool
 
 	// appTools are extra per-run tools supplied by the HOST APP dispatching this
 	// turn (e.g. a workbench's co-author tool that writes into the open document's
