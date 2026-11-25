@@ -93,3 +93,17 @@ func clipRunes(s string, n int) string {
 	}
 	return s
 }
+
+// tellOwnerConnectNeeded tells an app's owner that a person using it could
+// not write through one of their credentials, because the app lends it to
+// them for reads: once per person and credential, a repeat folded into a
+// count. It says the two ways out.
+func tellOwnerConnectNeeded(owner, slug, person, cred string) {
+	name := slug
+	if spec, ok := LoadAppSpec(owner, slug); ok && strings.TrimSpace(spec.Name) != "" {
+		name = spec.Name
+	}
+	TellPerson(owner, owner, slug, person+" needs their own "+cred+" account in "+name,
+		"The people using "+name+" read through your credential "+cred+", but a write goes out as them, so "+person+"'s was refused. "+
+			"They can connect their own "+cred+" account under Extensions, Connected accounts, or you can lend "+cred+" for writes in this app, on its settings (the gear), under What it reaches.")
+}

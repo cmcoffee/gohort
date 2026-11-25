@@ -76,6 +76,18 @@ type Job struct {
 	// OnNotify hears that the run sent the person a notice of its own
 	// (gohort.notify), so the host does not send a second when it ends.
 	OnNotify func()
+	// CredentialLend says how the owner lends a credential of theirs to the
+	// person a run is for, when that is not the owner (ToolSession
+	// .CredentialLend; nil: for reads). OnConnectNeeded hears each
+	// credential a call waited on their own account for, so the host can say
+	// so where they will read it.
+	CredentialLend  func(name string) string
+	OnConnectNeeded func(owner, name string)
+	// CredentialsOff are the owner's credentials kept out of the app, its
+	// owner's own runs included; CredentialUsed hears each of the owner's
+	// that a call goes out through, so the app can list what it uses.
+	CredentialsOff []string
+	CredentialUsed func(name string)
 	// Check marks a run made by an app check (docs/design/app-checks.md):
 	// it reads, and changes nothing outside the run. Every outbound write is
 	// refused (ToolSession.CheckRun), and so are the calls whose effects a
@@ -234,6 +246,7 @@ func (j Job) Run() (string, error) {
 	if caller == "" {
 		caller = user
 	}
+	j.credentialsFor(sess, user, caller, slug)
 	// What the app's names mean here (an imported app's mappings): its
 	// credentials and the tools it calls.
 	sess.CredentialAlias = applocal.AppCredentialAlias(user, slug)
@@ -626,5 +639,36 @@ func holdToCheck(sess *ToolSession) {
 	}
 	sess.Notify = func(title, _ string) (string, error) {
 		return "not sent: a check notifies nobody (" + title + ")", nil
+	}
+}
+
+// credentialsFor sets how sess reaches credentials. A run for someone other
+// than the owner reaches them as that person: their own first, then the
+// owner's as the app lends them, held to reads unless lent for writes
+// (docs/design/app-credentials.md); the rest of the run stays the owner's. A
+// write that waits for their own account tells the owner once and the host
+// (OnConnectNeeded). The owner's own runs are left as they are.
+func (j Job) credentialsFor(sess *ToolSession, owner, caller, slug string) {
+	sess.CredentialUsed = j.CredentialUsed
+	if len(j.CredentialsOff) > 0 {
+		denied := map[string]bool{}
+		for k, v := range sess.DeniedCredentials {
+			denied[k] = v
+		}
+		for _, n := range j.CredentialsOff {
+			denied[n] = true
+		}
+		sess.DeniedCredentials = denied
+	}
+	if caller == "" || caller == owner {
+		return
+	}
+	sess.CredentialPerson = caller
+	sess.CredentialLend = j.CredentialLend
+	sess.CredentialConnectPrompt = func(lender, name string) {
+		tellOwnerConnectNeeded(lender, slug, caller, name)
+		if j.OnConnectNeeded != nil {
+			j.OnConnectNeeded(lender, name)
+		}
 	}
 }

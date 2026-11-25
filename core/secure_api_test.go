@@ -3263,3 +3263,171 @@ func TestTheLedgerKeepsNoPeerQuery(t *testing.T) {
 		t.Errorf("the row for a peer's call: %+v", got)
 	}
 }
+
+// appRunTestCred is alice's bearer key for a local server that records the
+// Authorization each call carries, and a session of her app's run for bob.
+func appRunTestCred(t *testing.T) (*httptest.Server, *[]string) {
+	t.Helper()
+	secureAPITestStore(t)
+	adminUsers(t, "alice")
+	var seen []string
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.Method+" "+r.Header.Get("Authorization"))
+		mu.Unlock()
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+	if err := Secure().Save(SecureCredential{Name: "wiki", Type: SecureCredBearer, Owner: "alice", BaseURL: srv.URL, AllowedURLPattern: imageHostPattern(srv.URL)}, "alice-key"); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	return srv, &seen
+}
+
+// A run of alice's app for bob reaches her credential as lent to him in that
+// app: reads on her key, a write refused with the way to connect his own
+// (and the run told), unless the app lends it for writes; withheld, it is not
+// there; held to his own account, nothing goes until he connects one, and
+// then his key goes. Her own run of the app is not narrowed, and the copy
+// lent for the run can never be saved over her record.
+func TestAnAppRunForSomeoneElseReachesTheOwnersKeyAsLent(t *testing.T) {
+	srv, seen := appRunTestCred(t)
+	run := func(lend string, prompted *[]string) *ToolSession {
+		s := &ToolSession{Username: "alice", CredentialPerson: "bob"}
+		if lend != "" {
+			s.CredentialLend = func(string) string { return lend }
+		}
+		s.CredentialConnectPrompt = func(owner, name string) {
+			if prompted != nil {
+				*prompted = append(*prompted, owner+"/"+name)
+			}
+		}
+		return s
+	}
+	call := func(sess *ToolSession, method string) error {
+		_, err := Secure().DispatchToolCallArgs(sess, "wiki", map[string]any{"url": srv.URL + "/page", "method": method, "body": "{}"})
+		return err
+	}
+
+	var prompted []string
+	if err := call(run("", &prompted), "GET"); err != nil {
+		t.Fatalf("a read on the owner's key, lent for reads by default: %v", err)
+	}
+	if err := call(run("", &prompted), "POST"); err == nil || !strings.Contains(err.Error(), "Connected accounts") {
+		t.Errorf("a write on a key lent for reads: %v", err)
+	}
+	if len(prompted) != 1 || prompted[0] != "alice/wiki" {
+		t.Errorf("the run was not told the write waits for his own account: %v", prompted)
+	}
+	if err := call(run("write", nil), "POST"); err != nil {
+		t.Errorf("a write on a key lent for writes: %v", err)
+	}
+	if err := call(run("withhold", nil), "GET"); err == nil {
+		t.Error("a withheld key was reached")
+	}
+	if err := call(&ToolSession{Username: "alice"}, "POST"); err != nil {
+		t.Errorf("the owner's own run was narrowed: %v", err)
+	}
+	prompted = nil
+	if err := call(run("own", &prompted), "GET"); err == nil || len(prompted) != 1 {
+		t.Errorf("a key held to his own account was used without one: %v %v", err, prompted)
+	}
+	// His own key, kept as SaveSharedAccount keeps one (the per-person slot
+	// under her name for it, and where it pointed). Connecting one for a key
+	// an app lends him has no page yet (docs/design/app-credentials.md).
+	stored, _ := Secure().LoadUser("alice", "wiki")
+	key := credStoreKey("alice", "wiki")
+	if err := Secure().SaveUserSecret(key, "bob", "bob-key"); err != nil {
+		t.Fatalf("connect bob's own: %v", err)
+	}
+	Secure().db.Set(secureAPITable, secureCredUserDestKey(key, "bob"), credDestinationPrint(stored))
+	if err := call(run("own", nil), "POST"); err != nil {
+		t.Errorf("his own account, connected: %v", err)
+	}
+	want := []string{"GET Bearer alice-key", "POST Bearer alice-key", "POST Bearer alice-key", "POST Bearer bob-key"}
+	if strings.Join(*seen, " | ") != strings.Join(want, " | ") {
+		t.Errorf("what reached the server:\n got %v\nwant %v", *seen, want)
+	}
+
+	c, ok := Secure().resolveFor(run("", nil), "wiki")
+	if !ok || !c.appLend {
+		t.Fatal("the run did not resolve the lent copy")
+	}
+	if err := Secure().Save(c, "x"); err == nil {
+		t.Error("the copy lent for a run was saved over the owner's record")
+	}
+	if stored, _ := Secure().LoadUser("alice", "wiki"); len(stored.SharedReadOnly) != 0 {
+		t.Errorf("lending for a run changed the stored record: %+v", stored.SharedReadOnly)
+	}
+}
+
+// A plain fetch from bob's run of alice's app goes through her credential
+// for the host as the app lends it, and not when the app withholds it. The
+// raw key is never handed to the script in his run, though it would be in
+// hers.
+func TestAnAppRunForSomeoneElseRoutesAndNeverHandsOutTheKey(t *testing.T) {
+	srv, _ := appRunTestCred(t)
+	bob := &ToolSession{Username: "alice", CredentialPerson: "bob"}
+	if name, err := Secure().autoRouteFor(bob, srv.URL+"/page"); err != nil || name != "wiki" {
+		t.Errorf("bob's plain fetch: routed %q, %v", name, err)
+	}
+	bob.CredentialLend = func(string) string { return "withhold" }
+	if name, _ := Secure().autoRouteFor(bob, srv.URL+"/page"); name == "wiki" {
+		t.Error("a withheld key was routed")
+	}
+	hook := func(sess *ToolSession) *SandboxHook {
+		return &SandboxHook{Capabilities: []string{"secret:wiki"}, Sess: sess, ToolName: "app_action:notes:go"}
+	}
+	if got := hookSecret(t, hook(&ToolSession{Username: "alice", CredentialPerson: "bob"}), "wiki"); strings.Contains(got, "alice-key") {
+		t.Errorf("the owner's raw key was handed to a script in bob's run: %s", got)
+	}
+	if got := hookSecret(t, hook(&ToolSession{Username: "alice"}), "wiki"); !strings.Contains(got, "alice-key") {
+		t.Errorf("the owner's own run lost her key: %s", got)
+	}
+}
+
+// A credential an app of alice's lends bob is one he can put his own key on,
+// in Connected accounts as for one lent to him directly; then his run of the
+// app goes out with it. Nobody else may, and nothing else is listed.
+func TestAPersonConnectsTheirOwnKeyForAnAppLend(t *testing.T) {
+	srv, seen := appRunTestCred(t)
+	prev := appLendsFn
+	t.Cleanup(func() { appLendsFn = prev })
+	Secure().SetAppLends(func(person string) [][3]string {
+		if person == "bob" {
+			return [][3]string{{"alice", "wiki", "Case prep"}}
+		}
+		return nil
+	})
+	if err := Secure().SaveSharedAccount("alice", "wiki", "dana", "dana-key"); err == nil {
+		t.Error("someone no app lends it to connected a key for it")
+	}
+	var listed []PerUserConnection
+	for _, c := range Secure().LentConnectionsFor("bob") {
+		if c.Owner == "alice" && c.Name == "wiki" {
+			listed = append(listed, c)
+		}
+	}
+	if len(listed) != 1 || listed[0].Connected || !strings.Contains(listed[0].Description, "Case prep") {
+		t.Fatalf("bob's Connected accounts: %+v", listed)
+	}
+	if err := Secure().SaveSharedAccount("alice", "wiki", "bob", "bob-key"); err != nil {
+		t.Fatalf("bob connecting his own: %v", err)
+	}
+	if !Secure().HasSharedAccount("alice", "wiki", "bob") {
+		t.Error("his key is not shown as connected")
+	}
+	var used []string
+	sess := &ToolSession{Username: "alice", CredentialPerson: "bob", CredentialLend: func(string) string { return "own" },
+		CredentialUsed: func(name string) { used = append(used, name) }}
+	if _, err := Secure().DispatchToolCallArgs(sess, "wiki", map[string]any{"url": srv.URL + "/page", "method": "GET"}); err != nil {
+		t.Fatalf("his run with his own key: %v", err)
+	}
+	if len(used) != 1 || used[0] != "wiki" {
+		t.Errorf("the app was not told which of alice's credentials it used: %v", used)
+	}
+	if got := (*seen)[len(*seen)-1]; got != "GET Bearer bob-key" {
+		t.Errorf("went out as %q", got)
+	}
+}

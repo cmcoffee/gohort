@@ -434,6 +434,22 @@ type ToolSession struct {
 	// and nothing else: no read of this person's sources. Empty on an
 	// ordinary run.
 	FindingsTo string
+	// CredentialPerson is whom a credential call in this run is made for,
+	// when that is not Username: someone using an owner's app, whose run is
+	// otherwise the owner's (its workspace, records, stores and tools). Every
+	// credential decision is then that person's: their own credential first,
+	// then Username's as the app lends it (CredentialLend), then the
+	// deployment's they may use. A lent key is held to reads unless lent for
+	// writes, and is never handed to a script. Empty on an ordinary run
+	// (docs/design/app-credentials.md).
+	CredentialPerson string
+	// CredentialLend says how Username lends their credential name to
+	// CredentialPerson in this run: "read" (the default, and what nil and ""
+	// mean), "write", "own" (their own account only) or "withhold".
+	CredentialLend func(name string) string
+	// CredentialUsed hears the name of each credential of Username's that a
+	// call in this run goes out through, so an app can list what it uses.
+	CredentialUsed func(name string)
 
 	// ChatSessionID identifies the chat session this tool call is running
 	// within (chat app only). Used by tools that need to schedule recurring

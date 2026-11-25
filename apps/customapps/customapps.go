@@ -48,6 +48,7 @@ import (
 	"github.com/cmcoffee/gohort/core/appadmin"
 	"github.com/cmcoffee/gohort/core/appassets"
 	"github.com/cmcoffee/gohort/core/appcheck"
+	"github.com/cmcoffee/gohort/core/applocal"
 	"github.com/cmcoffee/gohort/core/appsource"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/promotion"
@@ -111,6 +112,9 @@ func (T *CustomApps) Routes() {
 	AppToolsFor = T.exposedTools
 	// An app's own rows travel with it on request (records_artifact.go).
 	T.registerRecordsArtifact()
+	// Which of an owner's credentials their shared apps lend whom, so a
+	// person can connect their own key on one (app_credentials.go).
+	Secure().SetAppLends(T.appLends)
 	T.registerPipelineRestore()
 	T.routes()
 	// An app's running work (its actions, its asks) in the live pill, with
@@ -1047,6 +1051,7 @@ func (T *CustomApps) deleteApp(owner, slug string) {
 	appdb.Unset(activeTable, slug) // workbench open-document marker
 	_ = appassets.DeleteAppRecordFiles(owner, slug)
 	appadmin.Drop(RootDB, owner, slug)
+	applocal.DropAppCredentials(owner, slug)
 	DeleteAppAssets(owner, slug) // files on disk, which no store sweep reaches
 }
 
@@ -1520,6 +1525,7 @@ func runDataSource(user string, db Database, spec AppSpec, ds AppDataSource, arg
 func runDataSourceIn(user string, db Database, spec AppSpec, ds AppDataSource, args map[string]any, caller string, check bool) (string, error) {
 	// A data source runs when a page asks for it: someone is looking.
 	j := appscript.Job{Owner: user, DB: db, Slug: spec.Slug, Kind: "data", Name: ds.Name, Language: ds.Language, Script: ds.Script, Caps: ds.Capabilities, Args: args, Caller: caller, Libs: spec.Libraries, Interactive: true, Check: check}
+	withAppCredentials(&j, user, spec.Slug)
 	trace := appscript.Track(&j)
 	out, err := runAppScript(j)
 	// A source that ran but printed no JSON value fails its page as surely
@@ -1859,8 +1865,28 @@ func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act 
 	if len(spec.SharedCollections) > 0 {
 		args["shared"] = sharedInput(ownerDB, spec)
 	}
+	// A credential the person's call waited on their own account for is said
+	// in the outcome, which is where they read how the press went.
+	var needs []string
+	var needsMu sync.Mutex
 	j := appscript.Job{Owner: owner, DB: ownerDB, Slug: spec.Slug, Kind: "action", Name: act.Name, Language: act.Language, Script: act.Script, Caps: act.Capabilities, Args: args, Caller: by, Libs: spec.Libraries,
-		Interactive: how.Interactive, Long: how.Long, Ctx: how.Ctx, OnProgress: how.OnProgress, OnNotify: how.OnNotify, Check: how.Check}
+		Interactive: how.Interactive, Long: how.Long, Ctx: how.Ctx, OnProgress: how.OnProgress, OnNotify: how.OnNotify, Check: how.Check,
+		OnConnectNeeded: func(_, name string) {
+			needsMu.Lock()
+			if !slices.Contains(needs, name) {
+				needs = append(needs, name)
+			}
+			needsMu.Unlock()
+		}}
+	withAppCredentials(&j, owner, spec.Slug)
+	defer func() {
+		needsMu.Lock()
+		defer needsMu.Unlock()
+		if len(needs) > 0 {
+			note := "Part of this needs your own " + strings.Join(needs, " and ") + " account: connect it under Extensions, Connected accounts, then try again."
+			res.Message = strings.TrimSpace(res.Message + " " + note)
+		}
+	}()
 	// The record takes the run's whole ending: a reply the host refuses is
 	// as much the action failing as the script exiting badly.
 	trace := appscript.Track(&j)

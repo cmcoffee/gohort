@@ -112,6 +112,10 @@ type SecureCredential struct {
 	// call (ConnectionCredential): its secret is the connection's, kept in
 	// its own space, so there is no stored record to ask who may use it.
 	connection string
+	// appLend marks the in-memory copy of an owner's credential lent to the
+	// person an app run is for (appLent): never stored. appOwnOnly holds it
+	// to the person's own account, reads included ("own").
+	appLend, appOwnOnly bool
 
 	Name              string `json:"name"`
 	Type              string `json:"type"`
@@ -659,6 +663,11 @@ func (s *SecureAPI) ready() bool { return s != nil && s.db != nil }
 func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 	if !s.ready() {
 		return fmt.Errorf("secure-api store not initialized (AuthDB unset)")
+	}
+	if c.appLend {
+		// The copy an app run lends one person (appLent): its share lists
+		// are that run's, and saving it would rewrite the owner's lends.
+		return fmt.Errorf("credential %q as lent in an app run is not a record to save", c.Name)
 	}
 	if !validToolNameStr(c.Name) {
 		return fmt.Errorf("name must be lowercase letters/digits/underscores only")
@@ -1362,6 +1371,33 @@ func (s *SecureAPI) LentConnectionsFor(user string) []PerUserConnection {
 			Owner:     c.Owner,
 		})
 	}
+	// And the ones an app of somebody else's lends them, which are no record
+	// of a lend: the app's runs lend them as it says (appLent).
+	if appLendsFn != nil {
+		listed := map[string]bool{}
+		for _, o := range out {
+			listed[o.Owner+"\x00"+o.Name] = true
+		}
+		for _, l := range appLendsFn(user) {
+			if listed[l[0]+"\x00"+l[1]] {
+				continue
+			}
+			c, ok := s.LoadUser(l[0], l[1])
+			if !ok || c.Disabled || c.Type == SecureCredNone || c.IsAuthCode() {
+				continue
+			}
+			listed[l[0]+"\x00"+l[1]] = true
+			_, has := s.storedOwnSecret(c, user)
+			out = append(out, PerUserConnection{
+				Name: c.Name,
+				Description: c.Owner + "'s, used by their app " + l[2] + "; its calls go to " + lentDestination(c) + ". Connect your own key and every call to it from there goes out as you, reads included. " +
+					"A write through it needs your own, unless " + c.Owner + " lends it for writes.",
+				Connected: has,
+				Kind:      connKindLent,
+				Owner:     c.Owner,
+			})
+		}
+	}
 	return out
 }
 
@@ -1662,6 +1698,14 @@ func (s *SecureAPI) userMayUseIn(c SecureCredential, user, agentID string) bool 
 // is legitimately bound — no approval step. toolName == "" (an unnamed caller:
 // run_local / persistent shell) skips the WHAT axis. (Name kept for history; it
 // now also gates the WHO axis for open creds.)
+// enforceSecuredBindingFor is EnforceSecuredBinding for a session, resolving
+// the credential the way its dispatch will (resolveFor), so an app run for
+// someone else is checked against the key it would actually use.
+func (s *SecureAPI) enforceSecuredBindingFor(sess *ToolSession, credName, toolName string) error {
+	c, ok := s.resolveFor(sess, credName)
+	return s.enforceSecuredBindingOn(c, ok, credName, toolName, sessUsername(sess), sessAgentID(sess))
+}
+
 func (s *SecureAPI) EnforceSecuredBinding(credName, toolName, user string, agentID ...string) error {
 	// Resolve user-aware so the check runs against the credential the user actually
 	// dispatches through — a user's OWN same-named cred shadows a global one, and
@@ -1673,6 +1717,12 @@ func (s *SecureAPI) EnforceSecuredBinding(credName, toolName, user string, agent
 		agent = agentID[0]
 	}
 	c, ok := s.ResolveIn(credName, user, agent)
+	return s.enforceSecuredBindingOn(c, ok, credName, toolName, user, agent)
+}
+
+// enforceSecuredBindingOn is the binding check on a credential already
+// resolved (ok false: none, which this check leaves to dispatch).
+func (s *SecureAPI) enforceSecuredBindingOn(c SecureCredential, ok bool, credName, toolName, user, agent string) error {
 	if !ok {
 		return nil
 	}
@@ -2278,7 +2328,7 @@ func (s *SecureAPI) agentToolFromCredential(c SecureCredential, sess *ToolSessio
 			// catalog was built: a lend revoked or narrowed, a credential
 			// secured or given an Access list mid-conversation, applies to
 			// the next call rather than the next turn.
-			cur, ok := s.ResolveIn(c.Name, sessUsername(sess), sessAgentID(sess))
+			cur, ok := s.resolveFor(sess, c.Name)
 			if !ok || cur.Owner != c.Owner {
 				return "", fmt.Errorf("credential %q changed since this conversation's tools were built: retry, the next turn has the current one", c.Name)
 			}
@@ -2521,7 +2571,7 @@ func (s *SecureAPI) dispatchToolCallFull(sess *ToolSession, credName, urlStr, me
 		}
 		return s.dispatch(synth, args, sess)
 	}
-	c, ok := s.ResolveIn(credName, sessUsername(sess), sessAgentID(sess))
+	c, ok := s.resolveFor(sess, credName)
 	if !ok {
 		return "", fmt.Errorf("credential %q not registered", credName)
 	}
@@ -2769,7 +2819,7 @@ type StreamRequest struct {
 // it and calls done with how many bytes it read, which closes it and records
 // the call in the credential's audit.
 func (s *SecureAPI) OpenStream(sess *ToolSession, credName string, r StreamRequest) (*http.Response, func(n int64), error) {
-	c, ok := s.ResolveIn(credName, sessUsername(sess), sessAgentID(sess))
+	c, ok := s.resolveFor(sess, credName)
 	if !ok {
 		return nil, nil, fmt.Errorf("credential %q not registered", credName)
 	}
@@ -2971,6 +3021,17 @@ func (ac *apiCall) allowed() bool {
 	// a wider lend.
 	user := sessUsername(sess)
 	ac.recipientOwn = s.recipientUsesOwn(c, user)
+	// An app that lends this key to the people using it as theirs only
+	// ("own"): every call, reads included, waits for their own account.
+	if c.appOwnOnly && !ac.recipientOwn {
+		refused := s.refuse(c, sess, ac.method, ac.rawURL, fmt.Sprintf(
+			"%s was not sent: in this app, %q is used with your own account, not %s's. Connect yours under Extensions > Connected accounts (%q, from %s), and it can be made",
+			ac.method, c.Name, c.Owner, c.Name, c.Owner))
+		if sess != nil && sess.CredentialConnectPrompt != nil {
+			sess.CredentialConnectPrompt(c.Owner, c.Name)
+		}
+		return ac.exit("", credentialConnectError{owner: c.Owner, name: c.Name, err: refused})
+	}
 	if readOnlyForUser(c, user, sessAgentID(sess)) && !ac.recipientOwn && !(credentialCallReads(c, ac.method, ac.rawURL) && !bodyOverridesMethod(ac.method, ac.body)) {
 		refused := s.refuse(c, sess, ac.method, ac.rawURL, fmt.Sprintf(
 			"%s was not sent: %s lent you %q for reads, and this call writes. A write goes out as you, with your own account: connect yours under Extensions > Connected accounts (%q, lent by %s), and it can be made. Until then, say what it would write",
@@ -3081,10 +3142,7 @@ func (ac *apiCall) loadSecret() bool {
 	// Hoisted out of the branch below: the 401 handler after the response needs
 	// to know WHOSE token was rejected, and an authorization_code credential is
 	// per-user by definition.
-	ac.callUser = ""
-	if sess != nil {
-		ac.callUser = sess.Username
-	}
+	ac.callUser = sessUsername(sess)
 	if c.Type == SecureCredAWS && c.AWSMachine {
 		// Signed with this machine's AWS identity, resolved as it signs: no
 		// stored secret to read.
@@ -3884,6 +3942,30 @@ func (s *SecureAPI) SecuredCoverRefusal(rawURL, user string, inTool bool) error 
 	return fmt.Errorf("this host is covered by credential %q, which is SECURED: its key is used only by the tools bound to it (%s), never by fetch_url or a script. To check or repair one of those tools, change it in place with tool_def action=\"update\" and run it with tool_def action=\"test\": an edit keeps its binding. Do not route around this with another fetch, a script or a new credential. If the work needs this API outside those tools, stop and ask the person: %s", cover.Name, tools, who)
 }
 
+// autoRouteFor is AutoRouteCredential for a session. In an app run for
+// someone other than its owner, the host is routed through that person's own
+// credential first, then through the owner's as the app lends them (a
+// credential the app withholds is not a route), then through a deployment
+// credential the person may use.
+func (s *SecureAPI) autoRouteFor(sess *ToolSession, rawURL string) (string, error) {
+	p := sessAppPerson(sess)
+	if p == "" {
+		return s.AutoRouteCredential(rawURL, sessUsername(sess))
+	}
+	if name, err := s.autoRouteOwn(rawURL, p); name != "" || err != nil {
+		return name, err
+	}
+	if name, err := s.autoRouteOwn(rawURL, sess.Username); err != nil || name != "" {
+		if err != nil {
+			return "", err
+		}
+		if _, lent := s.appLent(sess, name); lent {
+			return name, nil
+		}
+	}
+	return s.AutoRouteCredential(rawURL, p)
+}
+
 func (s *SecureAPI) autoRouteOwn(rawURL, user string) (string, error) {
 	var covering []string
 	for _, c := range s.ListUser(user) {
@@ -3923,7 +4005,7 @@ func (s *SecureAPI) DispatchToolCallArgs(sess *ToolSession, credName string, arg
 	}
 	// Resolve in the session user's namespace: their OWN credential shadows a
 	// global one of the same name. Nil session → global only.
-	c, ok := s.ResolveIn(credName, sessUsername(sess), sessAgentID(sess))
+	c, ok := s.resolveFor(sess, credName)
 	if !ok {
 		return "", fmt.Errorf("credential %q not registered", credName)
 	}
@@ -3935,6 +4017,9 @@ func (s *SecureAPI) DispatchToolCallArgs(sess *ToolSession, credName string, arg
 	}
 	if refusal := sess.CheckRunRefusal(method); refusal != "" {
 		return "", errors.New(refusal)
+	}
+	if sess != nil && sess.CredentialUsed != nil && c.Owner != "" && c.Owner == sess.Username {
+		sess.CredentialUsed(c.Name)
 	}
 	return s.dispatch(c, args, sess)
 }
@@ -3949,11 +4034,85 @@ func sessAgentID(sess *ToolSession) string {
 	return sess.AgentID
 }
 
+// sessUsername is whom the session's credential calls are for: the person
+// an app run is for (CredentialPerson), else its user.
 func sessUsername(sess *ToolSession) string {
 	if sess == nil {
 		return ""
 	}
+	if p := sessAppPerson(sess); p != "" {
+		return p
+	}
 	return sess.Username
+}
+
+// sessAppPerson is the person an app run is for when that is not its owner,
+// or "".
+func sessAppPerson(sess *ToolSession) string {
+	if sess == nil {
+		return ""
+	}
+	p := strings.TrimSpace(sess.CredentialPerson)
+	if p == "" || p == strings.TrimSpace(sess.Username) {
+		return ""
+	}
+	return p
+}
+
+// resolveFor is ResolveIn for a session. In an app run for someone other
+// than its owner it is that person's own credential, then the owner's as the
+// app lends it to them (appLent), then whatever else they may use; in any
+// other run, ResolveIn as before.
+func (s *SecureAPI) resolveFor(sess *ToolSession, name string) (SecureCredential, bool) {
+	p := sessAppPerson(sess)
+	if p == "" {
+		return s.ResolveIn(name, sessUsername(sess), sessAgentID(sess))
+	}
+	if c, ok := s.LoadUser(p, name); ok {
+		return c, true
+	}
+	if c, ok := s.appLent(sess, name); ok {
+		return c, true
+	}
+	return s.ResolveIn(name, p, sessAgentID(sess))
+}
+
+// appLent is the owner's credential name as the app lends it to the person
+// its run is for: an in-memory copy whose share lists hold that person alone,
+// read-only unless the app lends it for writes, so the dispatch path's lend
+// rules (readOnlyForUser, recipientUsesOwn, the connect refusal) apply to it
+// as to an agent's lend. Never stored. False when the owner has no such
+// credential or the app withholds it.
+func (s *SecureAPI) appLent(sess *ToolSession, name string) (SecureCredential, bool) {
+	p := sessAppPerson(sess)
+	if p == "" {
+		return SecureCredential{}, false
+	}
+	c, ok := s.LoadUser(sess.Username, name)
+	if !ok || c.Owner == "" {
+		return SecureCredential{}, false
+	}
+	choice := "read"
+	if sess.CredentialLend != nil {
+		if v := strings.TrimSpace(sess.CredentialLend(name)); v != "" {
+			choice = v
+		}
+	}
+	c.SharedReadOnly, c.SharedReadWrite = nil, nil
+	c.SharedForAgents, c.SharedWriteForAgents = nil, nil
+	c.appLend = true
+	switch choice {
+	case "withhold":
+		return SecureCredential{}, false
+	case "write":
+		c.SharedReadWrite = []string{p}
+	case "own":
+		c.SharedReadOnly = []string{p}
+		c.appOwnOnly = true
+	default:
+		c.SharedReadOnly = []string{p}
+	}
+	return c, true
 }
 
 // sessAgent is the agent whose turn sess is, or "" with none.
@@ -4642,6 +4801,38 @@ func (s *SecureAPI) recipientOwnSecret(c SecureCredential, user string) (string,
 	if !lentTo(c, user) {
 		return "", false
 	}
+	return s.storedOwnSecret(c, user)
+}
+
+// appLendsFn, set by the apps host (SetAppLends), lists what other people's
+// apps lend person: each the owner, the credential's name and the apps it is
+// lent in, joined for reading. Nil: no app lends anything.
+var appLendsFn func(person string) [][3]string
+
+// SetAppLends gives core the apps host's answer to what apps lend a person,
+// so they can connect their own key on such a credential as on one lent to
+// them directly (LentConnectionsFor, SaveSharedAccount). A method, not a
+// package function, so core's exported surface does not grow.
+func (s *SecureAPI) SetAppLends(fn func(person string) [][3]string) { appLendsFn = fn }
+
+// appLendsTo reports whether an app of owner's lends their credential name
+// to person.
+func appLendsTo(owner, name, person string) bool {
+	if appLendsFn == nil || strings.TrimSpace(person) == "" || person == owner {
+		return false
+	}
+	for _, l := range appLendsFn(person) {
+		if l[0] == owner && l[1] == name {
+			return true
+		}
+	}
+	return false
+}
+
+// storedOwnSecret is the key user keeps for themselves on owner c.Owner's
+// credential, for where it points now: recipientOwnSecret without asking
+// whether the key is lent to them, for a caller that has asked another way.
+func (s *SecureAPI) storedOwnSecret(c SecureCredential, user string) (string, bool) {
 	key := credStoreKey(c.Owner, c.Name)
 	v, ok := s.loadUserSecret(key, user)
 	if !ok || strings.TrimSpace(v) == "" {
@@ -4664,7 +4855,7 @@ func (s *SecureAPI) SaveSharedAccount(owner, name, user, value string) error {
 	if !ok {
 		return fmt.Errorf("no credential %q of %s's", name, owner)
 	}
-	if !lentTo(c, user) {
+	if !lentTo(c, user) && !appLendsTo(owner, name, user) {
 		return fmt.Errorf("%s has not lent you %q", owner, name)
 	}
 	if c.IsAuthCode() {
@@ -4688,10 +4879,10 @@ func (s *SecureAPI) SaveSharedAccount(owner, name, user, value string) error {
 // credential name, which is lent to them.
 func (s *SecureAPI) HasSharedAccount(owner, name, user string) bool {
 	c, ok := s.LoadUser(owner, name)
-	if !ok {
+	if !ok || (!lentTo(c, user) && !appLendsTo(owner, name, user)) {
 		return false
 	}
-	_, has := s.recipientOwnSecret(c, user)
+	_, has := s.storedOwnSecret(c, user)
 	return has
 }
 

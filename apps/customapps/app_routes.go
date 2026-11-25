@@ -155,6 +155,8 @@ func (T *CustomApps) appRoutes() {
 		"POST": appPost(T, T.saveSettingsValues),
 	}.Serve)
 	T.HandleFunc("/{slug}/_settings/reset", appPost(T, T.resetSettings))
+	// How the app lends its owner's credentials (app_credentials.go).
+	T.appReachRoutes()
 	T.memoryRoutes()
 	T.mcpRoutes()
 	T.connectionsRoutes()

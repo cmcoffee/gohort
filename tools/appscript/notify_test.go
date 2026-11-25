@@ -98,3 +98,37 @@ print(json.dumps({"r": r}))
 }
 
 func sleepBriefly() { time.Sleep(20 * time.Millisecond) }
+
+// A run for someone other than the app's owner reaches credentials as them,
+// with the app's lend; a write that waits for their own account tells the
+// owner once per person and credential and tells the host. The owner's own
+// run, and a run for nobody in particular, are left as they were.
+func TestARunForSomeoneElseReachesCredentialsAsThem(t *testing.T) {
+	prevRoot := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = prevRoot })
+	var heard []string
+	j := Job{CredentialLend: func(string) string { return "write" }, OnConnectNeeded: func(owner, name string) { heard = append(heard, owner+"/"+name) }}
+
+	for _, caller := range []string{"", "alice"} {
+		sess := &ToolSession{Username: "alice"}
+		j.credentialsFor(sess, "alice", caller, "notes")
+		if sess.CredentialPerson != "" || sess.CredentialConnectPrompt != nil {
+			t.Errorf("caller %q: the owner's run reaches credentials as someone else", caller)
+		}
+	}
+	sess := &ToolSession{Username: "alice"}
+	j.credentialsFor(sess, "alice", "bob", "notes")
+	if sess.CredentialPerson != "bob" || sess.CredentialLend == nil || sess.CredentialLend("wiki") != "write" {
+		t.Fatalf("bob's run: person %q, lend set %v", sess.CredentialPerson, sess.CredentialLend != nil)
+	}
+	sess.CredentialConnectPrompt("alice", "wiki")
+	sess.CredentialConnectPrompt("alice", "wiki")
+	if len(heard) != 2 || heard[0] != "alice/wiki" {
+		t.Errorf("the host heard %v", heard)
+	}
+	ns := notices.List(RootDB, "alice")
+	if len(ns) != 1 || ns[0].Count != 2 || !strings.Contains(ns[0].Title, "bob needs their own wiki account") || !strings.Contains(ns[0].Body, "What it reaches") {
+		t.Errorf("the owner's notice: %+v", ns)
+	}
+}

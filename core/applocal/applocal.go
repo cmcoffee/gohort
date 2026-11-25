@@ -2,12 +2,15 @@
 // part of the app itself and never exported (docs/design/app-history.md,
 // stage 2): what its import needs are mapped to here (pieces F2), who asked
 // it not to remember them (piece E1), and whether its collections keep
-// themselves current (piece E2).
+// themselves current (piece E2), and how it lends its owner's credentials to
+// the people using it (docs/design/app-credentials.md).
 package applocal
 
 import (
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/cmcoffee/gohort/core"
 )
@@ -172,5 +175,92 @@ func SetHistoryNote(fn func(owner, slug, by, message string)) { historyNote = fn
 func HistoryNote(owner, slug, by, message string) {
 	if historyNote != nil {
 		historyNote(owner, slug, by, message)
+	}
+}
+
+// AppCredentials is how owner's app lends their credentials to the people
+// using it here (docs/design/app-credentials.md): a choice per credential
+// (Lend: "read", the default, "own", "write" or "withhold"), the ones kept
+// out of the app altogether, their own runs included (Off), and the ones its
+// runs have used (Used, name to first use). How this copy runs, never part
+// of the app: credentials are this deployment's, so it is not exported.
+type AppCredentials struct {
+	Lend map[string]string    `json:"lend,omitempty"`
+	Off  []string             `json:"off,omitempty"`
+	Used map[string]time.Time `json:"used,omitempty"`
+}
+
+// Choice is how the app lends credential name: "read" when nothing was
+// chosen.
+func (a AppCredentials) Choice(name string) string {
+	if v := strings.TrimSpace(a.Lend[name]); v != "" {
+		return v
+	}
+	return "read"
+}
+
+// IsOff reports whether credential name is kept out of the app.
+func (a AppCredentials) IsOff(name string) bool {
+	for _, n := range a.Off {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
+
+const appCredentialsTable = "app_credentials"
+
+var appCredentialsMu sync.Mutex
+
+// LoadAppCredentials is how owner's app slug lends their credentials here.
+func LoadAppCredentials(owner, slug string) AppCredentials {
+	var out AppCredentials
+	if core.RootDB != nil {
+		core.RootDB.Get(appCredentialsTable, owner+"/"+slug, &out)
+	}
+	return out
+}
+
+// UpdateAppCredentials changes how owner's app slug lends their credentials,
+// under one lock so a choice and a first use never overwrite each other.
+func UpdateAppCredentials(owner, slug string, fn func(*AppCredentials)) {
+	if core.RootDB == nil {
+		return
+	}
+	appCredentialsMu.Lock()
+	defer appCredentialsMu.Unlock()
+	a := LoadAppCredentials(owner, slug)
+	fn(&a)
+	core.RootDB.Set(appCredentialsTable, owner+"/"+slug, a)
+}
+
+// usedNoted keeps a first use from being written again on every call.
+var usedNoted sync.Map
+
+// NoteAppCredentialUsed records that a run of owner's app slug went out
+// through their credential name, the first time it does.
+func NoteAppCredentialUsed(owner, slug, name string) {
+	key := owner + "/" + slug + "/" + name
+	if _, seen := usedNoted.LoadOrStore(key, true); seen {
+		return
+	}
+	if _, ok := LoadAppCredentials(owner, slug).Used[name]; ok {
+		return
+	}
+	UpdateAppCredentials(owner, slug, func(a *AppCredentials) {
+		if a.Used == nil {
+			a.Used = map[string]time.Time{}
+		}
+		if _, ok := a.Used[name]; !ok {
+			a.Used[name] = time.Now()
+		}
+	})
+}
+
+// DropAppCredentials forgets how a deleted app lent credentials.
+func DropAppCredentials(owner, slug string) {
+	if core.RootDB != nil {
+		core.RootDB.Unset(appCredentialsTable, owner+"/"+slug)
 	}
 }
