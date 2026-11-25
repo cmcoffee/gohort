@@ -67,4 +67,12 @@ check('the repeat count is shown only when there is one',
 // something running", and it runs on every open tab.
 check('it polls on its own slower timer', /setInterval\(load, 30000\)/.test(src));
 
+// A notice with a link takes its reader there, and only to a path on this
+// site: the server keeps nothing else, and the bell checks again.
+check('a link is followed only when it is a path on this site',
+  /it\.link\.charAt\(0\) === '\/' && it\.link\.charAt\(1\) !== '\/'/.test(src) &&
+  /el\('a', \{class: 'ui-bell-title ui-bell-link', href: link/.test(src));
+check('following it reads the notice on the way',
+  /addEventListener\('click'[\s\S]{0,200}?\/api\/notifications\/read\?id=/.test(src));
+
 process.exit(fail ? 1 : 0);

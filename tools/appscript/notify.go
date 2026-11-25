@@ -46,7 +46,7 @@ func notifier(recipient, owner, slug string, onSent func()) func(title, body str
 		if RootDB == nil {
 			return "", fmt.Errorf("notifications are not available here")
 		}
-		count, first := TellPerson(recipient, owner, slug, title, body)
+		count, first := TellPerson(recipient, owner, slug, title, body, "")
 		sent++
 		if onSent != nil {
 			onSent()
@@ -63,7 +63,9 @@ func notifier(recipient, owner, slug string, onSent func()) func(title, body str
 // when it is the first of its title. A repeat folds into the first with a
 // count, which is returned. The notice an app's script sends and the one the
 // host sends when the person's work ends while they are away both come here.
-func TellPerson(recipient, owner, slug, title, body string) (count int, first bool) {
+// link is where in the app the notice opens (a path on this site); "" is the
+// app's page.
+func TellPerson(recipient, owner, slug, title, body, link string) (count int, first bool) {
 	if RootDB == nil || strings.TrimSpace(recipient) == "" {
 		return 0, false
 	}
@@ -73,13 +75,18 @@ func TellPerson(recipient, owner, slug, title, body string) (count int, first bo
 	if spec, ok := LoadAppSpec(owner, slug); ok && strings.TrimSpace(spec.Name) != "" {
 		name = spec.Name
 	}
-	link := "/apps/" + slug + "/"
-	if base := strings.TrimRight(DashboardURL(), "/"); base != "" {
-		link = base + link
+	if strings.TrimSpace(link) == "" {
+		link = "/apps/" + slug + "/"
 	}
-	full := strings.TrimSpace(body + "\n\nFrom the app " + name + ": " + link)
+	// The address in the text is for a forwarded copy (email, a phone),
+	// which has no bell to click; the bell opens Link.
+	where := link
+	if base := strings.TrimRight(DashboardURL(), "/"); base != "" {
+		where = base + link
+	}
+	full := strings.TrimSpace(body + "\n\nFrom the app " + name + ": " + where)
 	stored, first := notices.Record(RootDB, notices.Notice{
-		Owner: recipient, About: "app:" + slug, Kind: notices.KindReport, Title: title, Body: full,
+		Owner: recipient, About: "app:" + slug, Kind: notices.KindReport, Title: title, Body: full, Link: link,
 	})
 	if first && NoticeForwarder != nil {
 		go NoticeForwarder(recipient, name, title, full)
@@ -105,5 +112,5 @@ func tellOwnerConnectNeeded(owner, slug, person, cred string) {
 	}
 	TellPerson(owner, owner, slug, person+" needs their own "+cred+" account in "+name,
 		"The people using "+name+" read through your credential "+cred+", but a write goes out as them, so "+person+"'s was refused. "+
-			"They can connect their own "+cred+" account under Extensions, Connected accounts, or you can lend "+cred+" for writes in this app, on its settings (the gear), under What it reaches.")
+			"They can connect their own "+cred+" account under Extensions, Connected accounts, or you can lend "+cred+" for writes in this app, on its settings (the gear), under What it reaches.", "/apps/"+slug+"/_settings")
 }

@@ -595,3 +595,17 @@ func TestNoticesAreClearedByPOSTOnly(t *testing.T) {
 		t.Errorf("a POST did not clear them: %d", w.Code)
 	}
 }
+
+// The bell is handed a notice's link, so it can take its reader there.
+func TestTheBellIsHandedANoticesLink(t *testing.T) {
+	withUsers(t)
+	prevRoot := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = prevRoot })
+	notices.Record(RootDB, notices.Notice{Owner: "craig", Title: "Extract finished", Link: "/apps/prep/?work=j1"})
+	w := httptest.NewRecorder()
+	handleNotifications(w, asUser(t, "/api/notifications", "craig"))
+	if !strings.Contains(w.Body.String(), `"link":"/apps/prep/?work=j1"`) {
+		t.Errorf("the bell's list has no link: %s", w.Body.String())
+	}
+}

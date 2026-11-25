@@ -19,7 +19,9 @@ package customapps
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -38,6 +40,11 @@ var actionInlineWait = 15 * time.Second
 // actionOutcomeKept is how long a finished job's outcome stays readable, so a
 // page reopened after the end says how it went rather than nothing.
 const actionOutcomeKept = 30 * time.Minute
+
+// toldOutcomeKept is how long the outcome of work the person was told about
+// stays readable: the notice links to it, and a notice is read hours later.
+// In memory, so a restart still loses it.
+const toldOutcomeKept = 24 * time.Hour
 
 // appWork says whose a job is and what it is doing, for the live pill: the
 // person it runs for, the app, and the work in words ("extract", "asking its
@@ -66,6 +73,7 @@ type actionJob struct {
 	mu       sync.Mutex
 	watchers int       // requests waiting on it now
 	seen     time.Time // when a page last asked how it was going
+	told     bool      // a notice went out about it, linking to its outcome
 	progress string
 	res      actionOutcome
 	err      error
@@ -225,7 +233,10 @@ func (j *actionJob) tellIfUnwatched() {
 	default:
 		title, body = w.What+" failed", err.Error()
 	}
-	appscript.TellPerson(w.UID, w.Owner, w.Slug, title, body)
+	j.mu.Lock()
+	j.told = true
+	j.mu.Unlock()
+	appscript.TellPerson(w.UID, w.Owner, w.Slug, title, body, "/apps/"+w.Slug+"/?work="+url.QueryEscape(j.id))
 }
 
 // trackWork records work that runs in the request rather than as a job of its
@@ -305,7 +316,11 @@ func handleJobCancel(c *jsonapi.Call, _ struct{}) (any, error) {
 func pruneActionJobs() {
 	for id, j := range actionJobs.byID {
 		j.mu.Lock()
-		old := !j.ended.IsZero() && time.Since(j.ended) > actionOutcomeKept
+		keep := actionOutcomeKept
+		if j.told {
+			keep = toldOutcomeKept
+		}
+		old := !j.ended.IsZero() && time.Since(j.ended) > keep
 		j.mu.Unlock()
 		if old {
 			delete(actionJobs.byID, id)
@@ -358,7 +373,7 @@ func appWorkPrefix(owner, slug, uid string) string {
 // workRow is one job as window.app.work lists it: what it is and its status.
 func (j *actionJob) workRow() map[string]any {
 	row := j.status()
-	row["kind"], row["name"], row["started"] = j.work.Kind, j.name, j.started
+	row["kind"], row["name"], row["started"], row["what"] = j.work.Kind, j.name, j.started, j.work.What
 	return row
 }
 
@@ -395,4 +410,31 @@ func (T *CustomApps) appWorkStatus(a *appCall) (any, error) {
 	}
 	j.markSeen()
 	return j.workRow(), nil
+}
+
+// workResultJS is served on every app page, around its frames. Opened from a
+// notice (?work=<job>), it shows below the header how that work ended, drawn
+// by gohort rather than the app, so it works for every app whatever its page
+// remembers: an action's message, why it failed, or an ask's answer in full.
+// Work still running is followed until it ends; an outcome no longer kept
+// says so. Dismiss takes it away and the job off the address.
+func workResultJS(base string) string {
+	b, _ := json.Marshal(base)
+	return `<script>(function(){var id=null;try{id=new URLSearchParams(location.search).get("work");}catch(e){}if(!id)return;var base=` + string(b) + `;` +
+		`function place(bar){var tries=0;(function go(){var h=document.querySelector(".ui-page-header");if(h&&h.parentNode){h.parentNode.insertBefore(bar,h.nextSibling);return;}if(++tries<40){setTimeout(go,100);return;}var r=document.getElementById("ui-root")||document.body;r.insertBefore(bar,r.firstChild);})();}` +
+		`var bar=document.createElement("div");bar.setAttribute("role","status");bar.setAttribute("data-work-result",id);` +
+		`bar.style.cssText="display:flex;gap:12px;align-items:flex-start;margin:8px 0;padding:10px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-1)";` +
+		`var words=document.createElement("div");words.style.cssText="flex:1;min-width:0";var head=document.createElement("div");head.style.fontWeight="600";var body=document.createElement("div");body.style.cssText="white-space:pre-wrap;margin-top:4px;max-height:40vh;overflow:auto";` +
+		`words.appendChild(head);words.appendChild(body);var close=document.createElement("button");close.type="button";close.className="ui-row-btn";close.textContent="Dismiss";` +
+		`close.onclick=function(){bar.remove();try{var u=new URL(location.href);u.searchParams.delete("work");history.replaceState(history.state,"",u.pathname+u.search+u.hash);}catch(e){}};` +
+		`bar.appendChild(words);bar.appendChild(close);head.textContent="Looking for how it went";place(bar);` +
+		`function say(h,b){head.textContent=h;body.textContent=b||"";}` +
+		`(function poll(){fetch(base+"work/"+encodeURIComponent(id),{credentials:"same-origin"}).then(function(r){return r.json();}).then(function(s){` +
+		`var what=(s&&s.what)||"It";` +
+		`if(!s||(!s.running&&!s.done)){say("That result is no longer kept","The outcome of work you were told about is kept for a day, and not across a restart of gohort.");return;}` +
+		`if(s.running){say(what+" is still running",s.progress||"");setTimeout(poll,2000);return;}` +
+		`if(s.error){say(s.kind==="ask"?"The app's agent could not answer":what+" failed",s.error);return;}` +
+		`if(s.kind==="ask"){say("Your answer",(s.result&&s.result.text)||"");return;}` +
+		`say(what+" finished",s.message||"");` +
+		`}).catch(function(){say("Could not read how it went","");});})();})();</script>`
 }

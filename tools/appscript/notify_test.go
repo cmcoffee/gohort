@@ -131,4 +131,20 @@ func TestARunForSomeoneElseReachesCredentialsAsThem(t *testing.T) {
 	if len(ns) != 1 || ns[0].Count != 2 || !strings.Contains(ns[0].Title, "bob needs their own wiki account") || !strings.Contains(ns[0].Body, "What it reaches") {
 		t.Errorf("the owner's notice: %+v", ns)
 	}
+	if len(ns) == 1 && ns[0].Link != "/apps/notes/_settings" {
+		t.Errorf("the owner's notice does not open the app's settings: %q", ns[0].Link)
+	}
+}
+
+// A notice an app's script sends opens the app.
+func TestAnAppsOwnNoticeOpensTheApp(t *testing.T) {
+	prevRoot := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = prevRoot })
+	if _, err := notifier("bob", "alice", "notes", nil)("3 new cases", "see them"); err != nil {
+		t.Fatal(err)
+	}
+	if ns := notices.List(RootDB, "bob"); len(ns) != 1 || ns[0].Link != "/apps/notes/" {
+		t.Errorf("the notice: %+v", ns)
+	}
 }

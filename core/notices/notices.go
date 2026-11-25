@@ -78,6 +78,26 @@ type Notice struct {
 	First time.Time `json:"first"`
 	Last  time.Time `json:"last"`
 	Read  bool      `json:"read,omitempty"`
+	// Link is where the notice takes its reader: a path on this site (an
+	// app's page, the work it is about). Anything else is dropped as it is
+	// recorded (safeLink), so a notice can never send someone off-site.
+	Link string `json:"link,omitempty"`
+}
+
+// safeLink is link when it is a path on this site, else "": it starts with
+// one slash (not two, which is another host), and carries no backslash,
+// scheme or control character.
+func safeLink(link string) string {
+	link = strings.TrimSpace(link)
+	if len(link) > 500 || !strings.HasPrefix(link, "/") || strings.HasPrefix(link, "//") || strings.ContainsAny(link, "\\") {
+		return ""
+	}
+	for _, r := range link {
+		if r < 0x20 || r == 0x7f {
+			return ""
+		}
+	}
+	return link
 }
 
 // fingerprint is what makes two arrivals the same notice: same owner, same
@@ -118,6 +138,7 @@ func Record(db Store, n Notice) (Notice, bool) {
 		n.Kind = KindReport
 	}
 	n.ID = fingerprint(n.Owner, n.Agent, n.Kind, n.Title)
+	n.Link = safeLink(n.Link)
 
 	var prev Notice
 	if db.Get(Table, key(n.Owner, n.ID), &prev) && prev.ID != "" {
@@ -132,6 +153,10 @@ func Record(db Store, n Notice) (Notice, bool) {
 		}
 		if strings.TrimSpace(n.About) != "" {
 			prev.About = n.About
+		}
+		// And the newest link: it is to the latest occurrence.
+		if n.Link != "" {
+			prev.Link = n.Link
 		}
 		db.Set(Table, key(prev.Owner, prev.ID), prev)
 		return prev, false

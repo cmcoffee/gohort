@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -419,7 +422,7 @@ func TestWorkThatEndsWhileNobodyWatchesTellsThePerson(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "done at once") {
 		t.Fatalf("the quick action: %s", w.Body.String())
 	}
-	start("extract")
+	extract := start("extract")
 	start("own")
 	watched := start("watched")
 	stopped := start("stop")
@@ -441,6 +444,21 @@ func TestWorkThatEndsWhileNobodyWatchesTellsThePerson(t *testing.T) {
 	}
 	if ns := notices.List(RootDB, "alice"); len(ns) == 1 && !strings.Contains(ns[0].Body, "CASE-1 extracted") {
 		t.Errorf("the notice does not say how it went: %q", ns[0].Body)
+	}
+	if ns := notices.List(RootDB, "alice"); len(ns) == 1 && ns[0].Link != "/apps/prep/?work="+extract {
+		t.Errorf("the notice does not take her to how it went: %q", ns[0].Link)
+	}
+	actionJobs.Lock()
+	tj := actionJobs.byID[extract]
+	actionJobs.Unlock()
+	tj.mu.Lock()
+	kept := tj.told
+	tj.mu.Unlock()
+	if !kept {
+		t.Error("the work she was told about is not kept for her to read")
+	}
+	if !strings.Contains(appAs(t, T, spec, "alice", httptest.NewRequest(http.MethodGet, "/apps/prep/", nil)).Body.String(), "data-work-result") {
+		t.Error("the app page cannot show how work went when opened from a notice")
 	}
 }
 
@@ -467,5 +485,82 @@ func TestAnActionSaysWhichAccountItWaitedOn(t *testing.T) {
 	if !strings.Contains(body, "Posted the summary.") || !strings.Contains(body, "your own wiki account") || strings.Count(body, "wiki") != 1 ||
 		!strings.Contains(body, "Extensions, Connected accounts") {
 		t.Errorf("the outcome: %s", body)
+	}
+}
+
+// The outcome of work a notice was sent about stays readable for a day, since
+// the notice links to it and is read later; other work's for half an hour.
+func TestToldWorkIsKeptForADay(t *testing.T) {
+	freshJobs(t)
+	mk := func(id string, told bool, ended time.Duration) {
+		j := &actionJob{id: id, key: "o/s/u/" + id, done: make(chan struct{}), started: time.Now().Add(-ended), ended: time.Now().Add(-ended), told: told}
+		actionJobs.byID[id] = j
+		actionJobs.byKey[j.key] = j
+	}
+	actionJobs.Lock()
+	mk("told-2h", true, 2*time.Hour)
+	mk("quiet-2h", false, 2*time.Hour)
+	mk("told-2d", true, 48*time.Hour)
+	pruneActionJobs()
+	_, told := actionJobs.byID["told-2h"]
+	_, quiet := actionJobs.byID["quiet-2h"]
+	_, old := actionJobs.byID["told-2d"]
+	actionJobs.Unlock()
+	if !told || quiet || old {
+		t.Errorf("kept: told 2h ago %v, untold 2h ago %v, told 2 days ago %v", told, quiet, old)
+	}
+}
+
+// Opened from a notice (?work=<job>), the app page says below its header how
+// that work went: following it while it runs, an action's message once it
+// ends, an ask's answer in full, and that an outcome is no longer kept when
+// it is gone. Without ?work it does nothing.
+func TestThePageOpenedFromANoticeSaysHowTheWorkWent(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed")
+	}
+	js := strings.TrimSuffix(strings.TrimPrefix(workResultJS("/apps/prep/"), "<script>"), "</script>")
+	run := func(search, replies string) string {
+		t.Helper()
+		harness := `
+function node(tag) { return {tag: tag, kids: [], style: {}, attrs: {}, textContent: "", setAttribute: function(k, v) { this.attrs[k] = v; },
+  appendChild: function(c) { this.kids.push(c); }, remove: function() { this.removed = true; }}; }
+var placed = [], urls = [], replies = ` + replies + `;
+var header = node("div"); header.parentNode = {insertBefore: function(c) { placed.push(c); }};
+var document = {createElement: node, querySelector: function() { return header; }, getElementById: function() { return null; }, body: node("body")};
+var location = {search: ` + "`" + search + "`" + `, href: "http://h/apps/prep/" + ` + "`" + search + "`" + `};
+var history = {state: null, replaceState: function() {}};
+global.setTimeout = function(fn) { Promise.resolve().then(fn); };
+global.fetch = function(u) { urls.push(u); var r = replies.length > 1 ? replies.shift() : replies[0]; return Promise.resolve({json: function() { return Promise.resolve(r); }}); };
+` + js + `
+var ticks = 0;
+(function wait() { if (++ticks < 40) { setTimeout(wait); return; }
+  var bar = placed[0], words = bar && bar.kids[0];
+  console.log(JSON.stringify({placed: placed.length, urls: urls, head: words && words.kids[0].textContent, body: words && words.kids[1].textContent}));
+})();
+`
+		f := filepath.Join(t.TempDir(), "w.js")
+		if err := os.WriteFile(f, []byte(harness), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		b, err := exec.Command(node, f).CombinedOutput()
+		if err != nil {
+			t.Fatalf("node: %v\n%s", err, b)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	if got := run("", `[{}]`); !strings.Contains(got, `"placed":0`) || !strings.Contains(got, `"urls":[]`) {
+		t.Errorf("a page not opened from a notice: %s", got)
+	}
+	got := run("?work=j1", `[{"running":true,"what":"Extract","progress":"part 3"},{"done":true,"what":"Extract","message":"CASE-1 extracted"}]`)
+	if !strings.Contains(got, `"head":"Extract finished"`) || !strings.Contains(got, `"body":"CASE-1 extracted"`) || !strings.Contains(got, `"/apps/prep/work/j1"`) {
+		t.Errorf("an action, followed to its end: %s", got)
+	}
+	if got := run("?work=a1", `[{"done":true,"kind":"ask","result":{"text":"The whole answer."}}]`); !strings.Contains(got, `"head":"Your answer"`) || !strings.Contains(got, `"body":"The whole answer."`) {
+		t.Errorf("an ask: %s", got)
+	}
+	if got := run("?work=gone", `[{}]`); !strings.Contains(got, "no longer kept") {
+		t.Errorf("an outcome no longer kept: %s", got)
 	}
 }
