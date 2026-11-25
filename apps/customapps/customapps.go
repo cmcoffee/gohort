@@ -1532,7 +1532,8 @@ func runDataSource(user string, db Database, spec AppSpec, ds AppDataSource, arg
 // (a page check's request).
 func runDataSourceIn(user string, db Database, spec AppSpec, ds AppDataSource, args map[string]any, caller string, check bool) (string, error) {
 	// A data source runs when a page asks for it: someone is looking.
-	j := appscript.Job{Owner: user, DB: db, Slug: spec.Slug, Kind: "data", Name: ds.Name, Language: ds.Language, Script: ds.Script, Caps: ds.Capabilities, Args: args, Caller: caller, Libs: spec.Libraries, Interactive: true, Check: check}
+	j := appscript.Job{Owner: user, DB: db, Slug: spec.Slug, Kind: "data", Name: ds.Name, Language: ds.Language, Script: ds.Script, Caps: ds.Capabilities, Args: args, Caller: caller, Libs: spec.Libraries, Interactive: true, Check: check,
+		Reads: ds.Reads, KeyField: recordKeyField(spec)}
 	withAppCredentials(&j, user, spec.Slug)
 	// What waited on the person's own account is said on the page, which
 	// the script's own answer may not (app_credentials.go).
@@ -1882,6 +1883,7 @@ func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act 
 	var needsMu sync.Mutex
 	j := appscript.Job{Owner: owner, DB: ownerDB, Slug: spec.Slug, Kind: "action", Name: act.Name, Language: act.Language, Script: act.Script, Caps: act.Capabilities, Args: args, Caller: by, Libs: spec.Libraries,
 		Interactive: how.Interactive, Long: how.Long, Ctx: how.Ctx, OnProgress: how.OnProgress, OnNotify: how.OnNotify, Check: how.Check,
+		Reads: act.Reads, KeyField: recordKeyField(spec),
 		OnConnectNeeded: func(_, name string) {
 			needsMu.Lock()
 			if !slices.Contains(needs, name) {
@@ -2023,7 +2025,8 @@ func recTable(slug string) string { return appscript.RecordsTable(slug) }
 // listRecords is the caller's records, oldest first, as scripts get them: in
 // key order (random hex) a page listing "my entries" showed them shuffled.
 func (T *CustomApps) listRecords(a *appCall) (any, error) {
-	return appscript.ReadRecords(a.appdb, a.spec.Slug), nil
+	// ?q=<query> or ?count=<where> asks for part (record_queries.go).
+	return answerRecords(a.R, appscript.ReadRecords(a.appdb, a.spec.Slug), recordKeyField(a.spec))
 }
 
 // saveRecord stores one record, keyed on the app's RecordKey, and answers it

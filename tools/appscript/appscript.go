@@ -23,6 +23,7 @@ import (
 	"github.com/cmcoffee/gohort/core/applocal"
 	"github.com/cmcoffee/gohort/core/appstores"
 	"github.com/cmcoffee/gohort/core/bgrun"
+	"github.com/cmcoffee/gohort/core/recquery"
 	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
@@ -88,6 +89,12 @@ type Job struct {
 	// that a call goes out through, so the app can list what it uses.
 	CredentialsOff []string
 	CredentialUsed func(name string)
+	// Reads is the part of the records the script is handed (the script's
+	// declared reads): applied to Args["records"] before it runs. Nil hands
+	// it every record. KeyField is what the records are keyed by ("id" when
+	// empty).
+	Reads    *recquery.Query
+	KeyField string
 	// Check marks a run made by an app check (docs/design/app-checks.md):
 	// it reads, and changes nothing outside the run. Every outbound write is
 	// refused (ToolSession.CheckRun), and so are the calls whose effects a
@@ -123,6 +130,13 @@ var AppAsk func(ctx context.Context, spec AppSpec, caller, prompt string, jsonMo
 
 // Run executes the job.
 func (j Job) Run() (string, error) {
+	if j.Reads != nil {
+		read, err := readsApplied(j.Args, *j.Reads, j.KeyField)
+		if err != nil {
+			return "", fmt.Errorf("%s %q: its reads: %v", j.Kind, j.Name, err)
+		}
+		j.Args = read
+	}
 	user, db, slug, kind, name, language, script, caps, args := j.Owner, j.DB, j.Slug, j.Kind, j.Name, j.Language, j.Script, j.Caps, j.Args
 	ws, err := EnsureWorkspaceDir(user)
 	if err != nil {
@@ -164,6 +178,10 @@ func (j Job) Run() (string, error) {
 	// source runs on every page load and may not.
 	if kind == "action" {
 		caps = mergeCaps(caps, []string{"notify"})
+	}
+	// Both may ask for the app's records in part (gohort.query).
+	if kind == "action" || kind == "data" {
+		caps = mergeCaps(caps, []string{"query"})
 	}
 	// log reaches no network and no data, and every check hint tells the
 	// author to log what an API returned: a script that declared only
@@ -317,6 +335,19 @@ func (j Job) Run() (string, error) {
 	storeFuncs(sess, j.storeApp())
 	if kind == "action" {
 		sess.Notify = notifier(caller, user, slug, j.OnNotify)
+	}
+	if kind == "action" || kind == "data" {
+		keyField := j.KeyField
+		if strings.TrimSpace(keyField) == "" {
+			keyField = "id"
+		}
+		sess.RecordQuery = func(raw string) ([]map[string]any, string, error) {
+			q, err := recquery.Parse(raw)
+			if err != nil {
+				return nil, "", err
+			}
+			return recquery.Run(ReadRecords(db, slug), keyField, q)
+		}
 	}
 	sess.ScriptLog = j.OnLog
 	if j.Check {
@@ -671,4 +702,39 @@ func (j Job) credentialsFor(sess *ToolSession, owner, caller, slug string) {
 			j.OnConnectNeeded(lender, name)
 		}
 	}
+}
+
+// readsApplied is args with its "records" (the JSON list a script reads)
+// narrowed to what reads asks for. Args without records are left as they are;
+// the caller's map is never changed.
+func readsApplied(args map[string]any, reads recquery.Query, keyField string) (map[string]any, error) {
+	raw, ok := args["records"].(string)
+	if !ok {
+		return args, nil
+	}
+	var recs []map[string]any
+	if strings.TrimSpace(raw) != "" {
+		d := json.NewDecoder(strings.NewReader(raw))
+		d.UseNumber()
+		if err := d.Decode(&recs); err != nil {
+			return nil, fmt.Errorf("the records are not a JSON list: %v", err)
+		}
+	}
+	if strings.TrimSpace(keyField) == "" {
+		keyField = "id"
+	}
+	page, _, err := recquery.Run(recs, keyField, reads)
+	if err != nil {
+		return nil, err
+	}
+	b, err := json.Marshal(page)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]any, len(args))
+	for k, v := range args {
+		out[k] = v
+	}
+	out["records"] = string(b)
+	return out, nil
 }

@@ -1,6 +1,6 @@
 # Querying an app's records
 
-Status: proposed (2026-11-17). Nothing built.
+Status: steps 1 to 5 built (0.9.699, 2026-11-25); step 6 (indexes) waits on a measurement.
 
 ## Why
 
@@ -94,3 +94,41 @@ it does today.
 5. Builder's help and the folder guide.
 6. Measure a large app; add indexes only if step 1's full read is the
    remaining cost.
+
+## Settled (2026-11-25), as the questions above proposed
+
+1. **Both**: declared `reads` for the fixed case, and `query()` over the hook
+   for one that depends on the request.
+2. **`kind` is just a field** for `where`, with no meaning of its own.
+3. **500** results per page at most.
+4. **Checks run the declared reads** over their records.
+
+## As built (0.9.699)
+
+- **The shape and its filter** are `core/recquery`, a leaf package (core's
+  exported surface does not grow): `Parse`, `Check`, `Run` (the page, and
+  the key to continue after when a limit left more), `Count`. Numbers
+  compare by value and anything else as text, so an ISO date orders as a
+  date; a missing field fails every comparison except `!=`; `contains` is
+  any-case text, or an element of a list; records without the order field
+  go last; an `after` that is no longer among the matches is an error, so a
+  page that lost its place starts again.
+- **The page**: `records?q=<query>` answers `{records, next}`,
+  `records?count=<where>` answers `{count}`, and `shared/<name>?q=` the
+  same; a list with no query answers as before. `window.app.records.list(
+  query)` resolves to the records with `.next` on the list,
+  `app.records.count(where)` to a number, `app.shared(name, query)` as
+  list.
+- **Scripts**: `reads` on a data source or action (`AppDataSource.Reads`,
+  `AppAction.Reads`, and in `app.json`), applied by the runner to the
+  `records` input before the script starts, so `records()` holds those
+  records only. `from gohort import query` asks while it runs, through the
+  hook (`query`, granted to every app data source and action), over the
+  records of the person the run is for.
+- **Checks and verify** run a script's declared reads over their records.
+- **Builder's help, the folder guide and the page API reference** say all of
+  it. A malformed `reads` is noted on the save and the script is handed
+  every record until it is fixed.
+- **Still a full read on the server**: kvlite has no secondary indexes, so
+  the host reads the table and filters. What is saved is everything after:
+  the JSON sent, the input handed to a script, the script's parse.

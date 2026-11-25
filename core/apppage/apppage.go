@@ -23,10 +23,17 @@ app.follow(job, opts)         a job from work(), resolving as action or ask
                               would when it ends; opts.onProgress as for
                               action. The same action called again with the
                               same body while it runs joins that run
-app.records.list()            this person's records, oldest first
+app.records.list(query)       this person's records, oldest first, or the
+                              part query asks for: {where: {field: value or
+                              {op: value}}, order: "field" or "-field",
+                              limit, after}, op one of = != < <= > >= in
+                              contains; the list's .next is the key to pass
+                              as after for the page after (limit at most 500)
+app.records.count(where)      how many records meet where
 app.records.save(record)      create, or update by the record key
 app.records.remove(id)        delete the record whose key (record_key) is id
-app.shared(name)              a shared collection's records
+app.shared(name, query)       a shared collection's records, or the part
+                              query asks for, as records.list
 app.ask(prompt, {json})       a question to the app's agent, its text. A
                               long answer keeps coming when the page is
                               closed: work() finds it

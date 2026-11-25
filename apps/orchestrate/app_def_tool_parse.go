@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/recquery"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -183,11 +184,16 @@ func appDataSources(raw any) (out []AppDataSource, notes []string) {
 		}
 		caps, cnotes := appScriptCaps(m["capabilities"], "data source "+strconv.Quote(name))
 		notes = append(notes, cnotes...)
+		reads, rnote := appReads(m["reads"], "data source "+strconv.Quote(name))
+		if rnote != "" {
+			notes = append(notes, rnote)
+		}
 		out = append(out, AppDataSource{
 			Name:         name,
 			Language:     strings.ToLower(strings.TrimSpace(mapStr(m, "language"))),
 			Script:       script,
 			Capabilities: caps,
+			Reads:        reads,
 			Inputs:       appInputs(m["inputs"]),
 			Expose:       mapBool(m, "expose"),
 			ManagersOnly: mapBool(m, "managers_only"),
@@ -319,7 +325,12 @@ func appActionDefs(raw any) (out []AppAction, notes []string) {
 		}
 		caps, cnotes := appScriptCaps(m["capabilities"], "action "+strconv.Quote(name))
 		notes = append(notes, cnotes...)
+		reads, rnote := appReads(m["reads"], "action "+strconv.Quote(name))
+		if rnote != "" {
+			notes = append(notes, rnote)
+		}
 		act := AppAction{
+			Reads:        reads,
 			Name:         name,
 			Label:        strings.TrimSpace(mapStr(m, "label")),
 			Desc:         strings.TrimSpace(firstNonEmptyStr(mapStr(m, "desc"), mapStr(m, "description"))),
@@ -766,4 +777,22 @@ func appLibraries(raw any) (map[string]string, error) {
 		return nil, fmt.Errorf("the libraries come to %d bytes, over the %d an app may have", total, appMaxLibraryBytes)
 	}
 	return out, nil
+}
+
+// appReads is a script's declared reads (core/recquery), checked: nil when it
+// declares none, and a note naming what is wrong when it is malformed, so
+// the script is handed every record rather than none.
+func appReads(raw any, what string) (*recquery.Query, string) {
+	if raw == nil {
+		return nil, ""
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return nil, what + ": reads IGNORED, not a JSON object"
+	}
+	q, err := recquery.Parse(string(b))
+	if err != nil {
+		return nil, what + ": reads IGNORED (" + err.Error() + "); the script is handed every record until it is fixed"
+	}
+	return &q, ""
 }
