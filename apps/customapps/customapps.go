@@ -1859,8 +1859,27 @@ func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act 
 	if len(spec.SharedCollections) > 0 {
 		args["shared"] = sharedInput(ownerDB, spec)
 	}
+	// A credential the person's call waited on their own account for is said
+	// in the outcome, which is where they read how the press went.
+	var needs []string
+	var needsMu sync.Mutex
 	j := appscript.Job{Owner: owner, DB: ownerDB, Slug: spec.Slug, Kind: "action", Name: act.Name, Language: act.Language, Script: act.Script, Caps: act.Capabilities, Args: args, Caller: by, Libs: spec.Libraries,
-		Interactive: how.Interactive, Long: how.Long, Ctx: how.Ctx, OnProgress: how.OnProgress, OnNotify: how.OnNotify, Check: how.Check}
+		Interactive: how.Interactive, Long: how.Long, Ctx: how.Ctx, OnProgress: how.OnProgress, OnNotify: how.OnNotify, Check: how.Check,
+		OnConnectNeeded: func(_, name string) {
+			needsMu.Lock()
+			if !slices.Contains(needs, name) {
+				needs = append(needs, name)
+			}
+			needsMu.Unlock()
+		}}
+	defer func() {
+		needsMu.Lock()
+		defer needsMu.Unlock()
+		if len(needs) > 0 {
+			note := "Part of this needs your own " + strings.Join(needs, " and ") + " account: connect it under Extensions, Connected accounts, then try again."
+			res.Message = strings.TrimSpace(res.Message + " " + note)
+		}
+	}()
 	// The record takes the run's whole ending: a reply the host refuses is
 	// as much the action failing as the script exiting badly.
 	trace := appscript.Track(&j)

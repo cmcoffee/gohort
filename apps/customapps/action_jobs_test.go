@@ -443,3 +443,29 @@ func TestWorkThatEndsWhileNobodyWatchesTellsThePerson(t *testing.T) {
 		t.Errorf("the notice does not say how it went: %q", ns[0].Body)
 	}
 }
+
+// A press whose call waited on the person's own account says so in the
+// outcome they read, naming the account and where to connect it.
+func TestAnActionSaysWhichAccountItWaitedOn(t *testing.T) {
+	freshJobs(t)
+	T := sharingTestApp(t)
+	spec := AppSpec{Slug: "prep", Name: "Case prep", Owner: "alice", RecordKey: "id", Actions: []AppAction{{Name: "post", Script: "x"}}}
+	prev := runAppScript
+	t.Cleanup(func() { runAppScript = prev })
+	runAppScript = func(j appscript.Job) (string, error) {
+		if j.Caller != "bob" || j.OnConnectNeeded == nil {
+			t.Errorf("the run is not bob's, or nothing hears a refused write: %q", j.Caller)
+			return `{"message":"x"}`, nil
+		}
+		j.OnConnectNeeded("alice", "wiki")
+		j.OnConnectNeeded("alice", "wiki")
+		return `{"message":"Posted the summary."}`, nil
+	}
+	w := httptest.NewRecorder()
+	T.handleAction(w, httptest.NewRequest(http.MethodPost, "/apps/prep/action/post", nil), "alice", "bob", T.recordBase(spec, "bob"), spec, "post")
+	body := w.Body.String()
+	if !strings.Contains(body, "Posted the summary.") || !strings.Contains(body, "your own wiki account") || strings.Count(body, "wiki") != 1 ||
+		!strings.Contains(body, "Extensions, Connected accounts") {
+		t.Errorf("the outcome: %s", body)
+	}
+}

@@ -1280,7 +1280,7 @@ func (h *SandboxHook) handleDescribe(conn net.Conn, params map[string]interface{
 // a way around another.
 func (h *SandboxHook) credentialRoute(rawURL, method string) (credName, refusal string) {
 	user := sessUsername(h.Sess)
-	credName, rerr := Secure().AutoRouteCredential(rawURL, user)
+	credName, rerr := Secure().autoRouteFor(h.Sess, rawURL)
 	switch {
 	case rerr != nil:
 		return "", rerr.Error()
@@ -1806,11 +1806,11 @@ func (h *SandboxHook) handleSecret(conn net.Conn, params map[string]interface{})
 	// Owner-aware: a user's own My-API-credentials entry resolves for that
 	// user's tools, not just global (admin) credentials. Falls back to
 	// global when the session has no username.
-	owner := ""
-	if h.Sess != nil {
-		owner = h.Sess.Username
-	}
-	cred, ok := sec.Resolve(name, owner)
+	// Whom the key would be for: in an app run for someone other than its
+	// owner, that person, so the owner's key is a lent one here and never
+	// handed out (below).
+	owner := sessUsername(h.Sess)
+	cred, ok := sec.resolveFor(h.Sess, name)
 	if !ok {
 		writeHookError(conn, fmt.Sprintf("no credential named %q registered: register it via Extensions > Integrations (or Admin > APIs) first", name))
 		return
@@ -1919,11 +1919,7 @@ func (h *SandboxHook) handleFetchVia(conn net.Conn, params map[string]interface{
 	// it's shared with (WHO) AND through APPROVED declaring tools (WHAT). Grandfathers
 	// a legacy declaring tool, refuses a revoked one. Open creds pass through here
 	// (their WHO is enforced at tool-build via the deny set).
-	securedUser := ""
-	if h.Sess != nil {
-		securedUser = h.Sess.Username
-	}
-	if err := Secure().EnforceSecuredBinding(credName, h.ToolName, securedUser, sessAgentID(h.Sess)); err != nil {
+	if err := Secure().enforceSecuredBindingFor(h.Sess, credName, h.ToolName); err != nil {
 		Log("[hook/fetch_via] binding refused credential=%q tool=%q: %v", credName, h.ToolName, err)
 		writeHookError(conn, err.Error())
 		return

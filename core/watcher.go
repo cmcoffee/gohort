@@ -127,7 +127,7 @@ func invokeCredentialPoll(sess *ToolSession, toolName string, toolArgs map[strin
 	if method == "" {
 		method = "GET"
 	}
-	if c, ok := Secure().ResolveIn(credName, sessUsername(sess), sessAgentID(sess)); ok {
+	if c, ok := Secure().resolveFor(sess, credName); ok {
 		if Secure().EffectiveSecured(c, sessUsername(sess)) {
 			return "", fmt.Errorf("credential %q is SECURED: a standing poll cannot use it; poll through a tool bound to it instead", credName)
 		}

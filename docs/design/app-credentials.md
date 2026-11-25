@@ -1,6 +1,6 @@
 # An app's credentials, the way an agent's are lent
 
-Status: **design, not built**. Every stored change is additive, so **no
+Status: **step 1 built (0.9.693), not to ship alone (below)**; steps 2 and 3 not built. Every stored change is additive, so **no
 migration**. The default is **Mine for reads** for every app, the ones
 already shared included (settled with the owner 2026-11-25).
 
@@ -36,7 +36,7 @@ A shared **agent** does it differently, and carefully
   your own account", unless the person has their own key.
 - A recipient's own key is kept per person under the owner's credential name
   and used for every call once connected (`SaveSharedAccount`,
-  `recipientOwnSecret`), from Account, Connected accounts.
+  `recipientOwnSecret`), from Extensions, Connected accounts.
 - Maintainers may only narrow (`maintainerMayChoose`).
 
 The gate is in the shared dispatch path, so `fetch_via` and secure API calls
@@ -61,7 +61,7 @@ workspace, the records the script reads, the file stores, the tools.
   the owner's, unchanged.
 - A refused write reaches the script as the hook's error, and the action's
   outcome says it in the person's words: "This needs your own <name>
-  account: connect it under Account, Connected accounts."
+  account: connect it under Extensions, Connected accounts."
 
 ### 2. Each credential gets a choice per app
 
@@ -162,3 +162,49 @@ shared (see "Settled", below), not in data.
 - **Running a recipient's app script entirely as them.** Their records and
   workspace instead of the owner's would break every app's data model; only
   credentials move.
+
+## As built: step 1 (0.9.693)
+
+- **The seam.** `ToolSession.CredentialPerson` and `CredentialLend` (fields
+  on an existing type, no new core export). Credential code reads its user
+  through `sessUsername`, which is the person in an app run for someone
+  else; resolution is `resolveFor`: their own credential, then the owner's
+  as lent (`appLent`), then `ResolveIn` as them.
+- **The lend is a copy, not a record.** `appLent` hands dispatch the owner's
+  credential with share lists holding that person alone, read-only unless
+  lent for writes, so `readOnlyForUser`, `recipientUsesOwn`, the connect
+  refusal and the audit row apply as for an agent's lend. It is marked
+  (`appLend`) and `Save` refuses it, and the stored record is untouched.
+  "own" adds `appOwnOnly`: every call, reads included, waits for their own
+  account.
+- **Plain fetches** route by host through the person's own credential, then
+  the owner's as lent, then the deployment's they may use (`autoRouteFor`).
+- **The raw key** (`secret:`) is never handed out in such a run: it reads as
+  a lent key. Secured-binding checks resolve as dispatch does.
+- **appscript** sets the person for every run whose caller is not the owner
+  (`Job.credentialsFor`), and `CredentialLend` from the host (nil in step
+  1: Mine for reads for every credential). A refused write tells the owner
+  once per person and credential, folded into a count, and the action's
+  outcome names the account to connect.
+
+### Found while building, before this ships
+
+- **Their own key has no way in yet.** `SaveSharedAccount` and the
+  Connected accounts panel know only stored lends, so a person cannot
+  connect their own key for a credential an app lends them, though dispatch
+  uses one when it is there. Connecting needs core to know which apps lend
+  which credentials to whom, which is step 3's record. Until then the
+  refusal's "connect it under Extensions, Connected accounts" leads nowhere
+  for an app lend.
+- **No way to lend for writes yet.** That is step 2's table. Until it
+  exists a shared app's recipients cannot write through the owner's keys
+  at all.
+- So **step 1 ships with steps 2 and 3**, not alone: shipped alone, a
+  shared app's writes stop with no way out for the owner or the person.
+- **Deployment credentials go by the person's own access.** A run for
+  someone else reaches an admin's credential only if that person may use
+  it, as an agent's recipient does; before, the owner's access was enough.
+- **A data source's refusal** reaches the script as the hook's error, not
+  the page; saying it on the page is still to do.
+- **MCP tools a script calls** run on a session of their own, as the owner,
+  outside this.
