@@ -246,9 +246,10 @@ func (T *CustomApps) handleSettingsPage(w http.ResponseWriter, r *http.Request, 
 	change := changeSection(spec, user, ownerUser)
 	mcp := T.mcpSection(r, spec, user, ownerUser, base)
 	view := viewSection(T.recordBase(spec, user), spec, base)
+	reach := reachSection(spec, user, ownerUser, base)
 	runs := runsSection(user, ownerUser, base)
 	// "Nothing to set" says something only where nothing else is shown.
-	if len(fields) > 0 || (conns == nil && mem == nil && curation == nil && change == nil && mcp == nil && runs == nil && len(sections) == 0) {
+	if len(fields) > 0 || (conns == nil && mem == nil && curation == nil && change == nil && mcp == nil && runs == nil && reach == nil && len(sections) == 0) {
 		sections = append(sections, ui.Section{Title: "Settings", Subtitle: subtitle, Body: body})
 	}
 	// What an imported app needs answered comes first: until it is, the
@@ -261,6 +262,9 @@ func (T *CustomApps) handleSettingsPage(w http.ResponseWriter, r *http.Request, 
 	}
 	if curation != nil {
 		sections = append(sections, *curation)
+	}
+	if reach != nil {
+		sections = append(sections, *reach)
 	}
 	if change != nil {
 		sections = append(sections, *change)

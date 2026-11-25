@@ -83,6 +83,11 @@ type Job struct {
 	// so where they will read it.
 	CredentialLend  func(name string) string
 	OnConnectNeeded func(owner, name string)
+	// CredentialsOff are the owner's credentials kept out of the app, its
+	// owner's own runs included; CredentialUsed hears each of the owner's
+	// that a call goes out through, so the app can list what it uses.
+	CredentialsOff []string
+	CredentialUsed func(name string)
 	// Check marks a run made by an app check (docs/design/app-checks.md):
 	// it reads, and changes nothing outside the run. Every outbound write is
 	// refused (ToolSession.CheckRun), and so are the calls whose effects a
@@ -644,6 +649,17 @@ func holdToCheck(sess *ToolSession) {
 // write that waits for their own account tells the owner once and the host
 // (OnConnectNeeded). The owner's own runs are left as they are.
 func (j Job) credentialsFor(sess *ToolSession, owner, caller, slug string) {
+	sess.CredentialUsed = j.CredentialUsed
+	if len(j.CredentialsOff) > 0 {
+		denied := map[string]bool{}
+		for k, v := range sess.DeniedCredentials {
+			denied[k] = v
+		}
+		for _, n := range j.CredentialsOff {
+			denied[n] = true
+		}
+		sess.DeniedCredentials = denied
+	}
 	if caller == "" || caller == owner {
 		return
 	}

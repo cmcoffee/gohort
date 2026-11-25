@@ -1,6 +1,6 @@
 # An app's credentials, the way an agent's are lent
 
-Status: **step 1 built (0.9.693), not to ship alone (below)**; steps 2 and 3 not built. Every stored change is additive, so **no
+Status: **built** (step 1 0.9.693, steps 2 and 3 0.9.694). Every stored change is additive, so **no
 migration**. The default is **Mine for reads** for every app, the ones
 already shared included (settled with the owner 2026-11-25).
 
@@ -208,3 +208,34 @@ shared (see "Settled", below), not in data.
   the page; saying it on the page is still to do.
 - **MCP tools a script calls** run on a session of their own, as the owner,
   outside this.
+
+## As built: steps 2 and 3 (0.9.694)
+
+- **Where the choices live.** In core/applocal (`AppCredentials`, table
+  `app_credentials` keyed owner/slug): `Lend` (credential to read, own,
+  write or withhold), `Off`, and `Used` (credential to first use). Not on
+  `AppSpec`: credentials are this deployment's, so an exported app never
+  carries its owner's lends. Because a run's lend is computed per call
+  (step 1), nothing is written onto the credential either: the
+  `SharedForApps` field and the spec fields this note proposed are not
+  needed. Dropped with the app.
+- **What it reaches** is a section of the app's Settings page for its owner
+  and maintainers: each credential, where it goes, since when it is used,
+  the four choices (maintainers: reads, Theirs, Disallow, held to
+  narrowing as an agent's are) and a Used by the app switch (a maintainer
+  may turn it off, only the owner back on). Routes `_settings/reach` and
+  `_settings/reach/used/{name}`, refusing anyone else.
+- **Listed:** the owner's own credentials a script declares
+  (`fetch_via:<name>`), those an imported app's names are mapped to, and
+  those a run has gone out through, recorded on the first call
+  (`ToolSession.CredentialUsed`, from `DispatchToolCallArgs`).
+- **Runs** read the choice per call (`withAppCredentials`), and a
+  credential kept out is denied for every run, the owner's included, by the
+  session's existing `DeniedCredentials`.
+- **Their own key.** Core asks the apps host what apps lend a person
+  (`SecureAPI.SetAppLends`, a method so core's exports do not grow):
+  Connected accounts lists each such credential with the app it is used
+  by, `SaveSharedAccount` accepts it, `HasSharedAccount` shows it.
+  Dispatch then sends their key, as in step 1.
+- **Still open from step 1:** a data source's refusal reaching the page,
+  and MCP tools a script calls (they run as the owner).

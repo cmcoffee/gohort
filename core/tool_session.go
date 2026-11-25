@@ -447,6 +447,9 @@ type ToolSession struct {
 	// CredentialPerson in this run: "read" (the default, and what nil and ""
 	// mean), "write", "own" (their own account only) or "withhold".
 	CredentialLend func(name string) string
+	// CredentialUsed hears the name of each credential of Username's that a
+	// call in this run goes out through, so an app can list what it uses.
+	CredentialUsed func(name string)
 
 	// ChatSessionID identifies the chat session this tool call is running
 	// within (chat app only). Used by tools that need to schedule recurring

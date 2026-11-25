@@ -3386,3 +3386,48 @@ func TestAnAppRunForSomeoneElseRoutesAndNeverHandsOutTheKey(t *testing.T) {
 		t.Errorf("the owner's own run lost her key: %s", got)
 	}
 }
+
+// A credential an app of alice's lends bob is one he can put his own key on,
+// in Connected accounts as for one lent to him directly; then his run of the
+// app goes out with it. Nobody else may, and nothing else is listed.
+func TestAPersonConnectsTheirOwnKeyForAnAppLend(t *testing.T) {
+	srv, seen := appRunTestCred(t)
+	prev := appLendsFn
+	t.Cleanup(func() { appLendsFn = prev })
+	Secure().SetAppLends(func(person string) [][3]string {
+		if person == "bob" {
+			return [][3]string{{"alice", "wiki", "Case prep"}}
+		}
+		return nil
+	})
+	if err := Secure().SaveSharedAccount("alice", "wiki", "dana", "dana-key"); err == nil {
+		t.Error("someone no app lends it to connected a key for it")
+	}
+	var listed []PerUserConnection
+	for _, c := range Secure().LentConnectionsFor("bob") {
+		if c.Owner == "alice" && c.Name == "wiki" {
+			listed = append(listed, c)
+		}
+	}
+	if len(listed) != 1 || listed[0].Connected || !strings.Contains(listed[0].Description, "Case prep") {
+		t.Fatalf("bob's Connected accounts: %+v", listed)
+	}
+	if err := Secure().SaveSharedAccount("alice", "wiki", "bob", "bob-key"); err != nil {
+		t.Fatalf("bob connecting his own: %v", err)
+	}
+	if !Secure().HasSharedAccount("alice", "wiki", "bob") {
+		t.Error("his key is not shown as connected")
+	}
+	var used []string
+	sess := &ToolSession{Username: "alice", CredentialPerson: "bob", CredentialLend: func(string) string { return "own" },
+		CredentialUsed: func(name string) { used = append(used, name) }}
+	if _, err := Secure().DispatchToolCallArgs(sess, "wiki", map[string]any{"url": srv.URL + "/page", "method": "GET"}); err != nil {
+		t.Fatalf("his run with his own key: %v", err)
+	}
+	if len(used) != 1 || used[0] != "wiki" {
+		t.Errorf("the app was not told which of alice's credentials it used: %v", used)
+	}
+	if got := (*seen)[len(*seen)-1]; got != "GET Bearer bob-key" {
+		t.Errorf("went out as %q", got)
+	}
+}

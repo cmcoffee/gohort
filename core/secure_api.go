@@ -1371,6 +1371,33 @@ func (s *SecureAPI) LentConnectionsFor(user string) []PerUserConnection {
 			Owner:     c.Owner,
 		})
 	}
+	// And the ones an app of somebody else's lends them, which are no record
+	// of a lend: the app's runs lend them as it says (appLent).
+	if appLendsFn != nil {
+		listed := map[string]bool{}
+		for _, o := range out {
+			listed[o.Owner+"\x00"+o.Name] = true
+		}
+		for _, l := range appLendsFn(user) {
+			if listed[l[0]+"\x00"+l[1]] {
+				continue
+			}
+			c, ok := s.LoadUser(l[0], l[1])
+			if !ok || c.Disabled || c.Type == SecureCredNone || c.IsAuthCode() {
+				continue
+			}
+			listed[l[0]+"\x00"+l[1]] = true
+			_, has := s.storedOwnSecret(c, user)
+			out = append(out, PerUserConnection{
+				Name: c.Name,
+				Description: c.Owner + "'s, used by their app " + l[2] + "; its calls go to " + lentDestination(c) + ". Connect your own key and every call to it from there goes out as you, reads included. " +
+					"A write through it needs your own, unless " + c.Owner + " lends it for writes.",
+				Connected: has,
+				Kind:      connKindLent,
+				Owner:     c.Owner,
+			})
+		}
+	}
 	return out
 }
 
@@ -3991,6 +4018,9 @@ func (s *SecureAPI) DispatchToolCallArgs(sess *ToolSession, credName string, arg
 	if refusal := sess.CheckRunRefusal(method); refusal != "" {
 		return "", errors.New(refusal)
 	}
+	if sess != nil && sess.CredentialUsed != nil && c.Owner != "" && c.Owner == sess.Username {
+		sess.CredentialUsed(c.Name)
+	}
 	return s.dispatch(c, args, sess)
 }
 
@@ -4771,6 +4801,38 @@ func (s *SecureAPI) recipientOwnSecret(c SecureCredential, user string) (string,
 	if !lentTo(c, user) {
 		return "", false
 	}
+	return s.storedOwnSecret(c, user)
+}
+
+// appLendsFn, set by the apps host (SetAppLends), lists what other people's
+// apps lend person: each the owner, the credential's name and the apps it is
+// lent in, joined for reading. Nil: no app lends anything.
+var appLendsFn func(person string) [][3]string
+
+// SetAppLends gives core the apps host's answer to what apps lend a person,
+// so they can connect their own key on such a credential as on one lent to
+// them directly (LentConnectionsFor, SaveSharedAccount). A method, not a
+// package function, so core's exported surface does not grow.
+func (s *SecureAPI) SetAppLends(fn func(person string) [][3]string) { appLendsFn = fn }
+
+// appLendsTo reports whether an app of owner's lends their credential name
+// to person.
+func appLendsTo(owner, name, person string) bool {
+	if appLendsFn == nil || strings.TrimSpace(person) == "" || person == owner {
+		return false
+	}
+	for _, l := range appLendsFn(person) {
+		if l[0] == owner && l[1] == name {
+			return true
+		}
+	}
+	return false
+}
+
+// storedOwnSecret is the key user keeps for themselves on owner c.Owner's
+// credential, for where it points now: recipientOwnSecret without asking
+// whether the key is lent to them, for a caller that has asked another way.
+func (s *SecureAPI) storedOwnSecret(c SecureCredential, user string) (string, bool) {
 	key := credStoreKey(c.Owner, c.Name)
 	v, ok := s.loadUserSecret(key, user)
 	if !ok || strings.TrimSpace(v) == "" {
@@ -4793,7 +4855,7 @@ func (s *SecureAPI) SaveSharedAccount(owner, name, user, value string) error {
 	if !ok {
 		return fmt.Errorf("no credential %q of %s's", name, owner)
 	}
-	if !lentTo(c, user) {
+	if !lentTo(c, user) && !appLendsTo(owner, name, user) {
 		return fmt.Errorf("%s has not lent you %q", owner, name)
 	}
 	if c.IsAuthCode() {
@@ -4817,10 +4879,10 @@ func (s *SecureAPI) SaveSharedAccount(owner, name, user, value string) error {
 // credential name, which is lent to them.
 func (s *SecureAPI) HasSharedAccount(owner, name, user string) bool {
 	c, ok := s.LoadUser(owner, name)
-	if !ok {
+	if !ok || (!lentTo(c, user) && !appLendsTo(owner, name, user)) {
 		return false
 	}
-	_, has := s.recipientOwnSecret(c, user)
+	_, has := s.storedOwnSecret(c, user)
 	return has
 }
 

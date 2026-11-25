@@ -48,6 +48,7 @@ import (
 	"github.com/cmcoffee/gohort/core/appadmin"
 	"github.com/cmcoffee/gohort/core/appassets"
 	"github.com/cmcoffee/gohort/core/appcheck"
+	"github.com/cmcoffee/gohort/core/applocal"
 	"github.com/cmcoffee/gohort/core/appsource"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/promotion"
@@ -111,6 +112,9 @@ func (T *CustomApps) Routes() {
 	AppToolsFor = T.exposedTools
 	// An app's own rows travel with it on request (records_artifact.go).
 	T.registerRecordsArtifact()
+	// Which of an owner's credentials their shared apps lend whom, so a
+	// person can connect their own key on one (app_credentials.go).
+	Secure().SetAppLends(T.appLends)
 	T.registerPipelineRestore()
 	T.routes()
 	// An app's running work (its actions, its asks) in the live pill, with
@@ -1047,6 +1051,7 @@ func (T *CustomApps) deleteApp(owner, slug string) {
 	appdb.Unset(activeTable, slug) // workbench open-document marker
 	_ = appassets.DeleteAppRecordFiles(owner, slug)
 	appadmin.Drop(RootDB, owner, slug)
+	applocal.DropAppCredentials(owner, slug)
 	DeleteAppAssets(owner, slug) // files on disk, which no store sweep reaches
 }
 
@@ -1520,6 +1525,7 @@ func runDataSource(user string, db Database, spec AppSpec, ds AppDataSource, arg
 func runDataSourceIn(user string, db Database, spec AppSpec, ds AppDataSource, args map[string]any, caller string, check bool) (string, error) {
 	// A data source runs when a page asks for it: someone is looking.
 	j := appscript.Job{Owner: user, DB: db, Slug: spec.Slug, Kind: "data", Name: ds.Name, Language: ds.Language, Script: ds.Script, Caps: ds.Capabilities, Args: args, Caller: caller, Libs: spec.Libraries, Interactive: true, Check: check}
+	withAppCredentials(&j, user, spec.Slug)
 	trace := appscript.Track(&j)
 	out, err := runAppScript(j)
 	// A source that ran but printed no JSON value fails its page as surely
@@ -1872,6 +1878,7 @@ func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act 
 			}
 			needsMu.Unlock()
 		}}
+	withAppCredentials(&j, owner, spec.Slug)
 	defer func() {
 		needsMu.Lock()
 		defer needsMu.Unlock()
