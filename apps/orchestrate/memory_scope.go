@@ -232,6 +232,7 @@ func (t *chatTurn) searchOwnKnowledge(ctx context.Context, topic, query string, 
 		}
 	}
 	hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.readsOwnerCorpus(scope), t.agent.ID, topic, query, qVec, k, skills, agentReadsCollections(t.agent, t.agent.AttachedCollections), !t.agent.KnowledgeAttachedOnly, scope)
+	hits = t.labelPoolHits(hits)
 	if !t.agent.MemoryPerDocument {
 		return hits
 	}
@@ -271,8 +272,10 @@ func (t *chatTurn) readsOwnerReference() bool {
 	if t.outsideAudience() {
 		return false // worked out across the owner's conversations
 	}
+	// On a pooled agent the owner's copy IS the pool, and a pool nobody
+	// reads is not one, so the switch reads as on while pooling is.
 	return t.memoryUnderlay() != "" &&
-		settingIsOn(RootDB, t.agent, defaultShareReference)
+		(t.agent.poolsMemory() || settingIsOn(RootDB, t.agent, defaultShareReference))
 }
 
 // readsOwnerFacts reports whether the owner's saved notes join this turn's

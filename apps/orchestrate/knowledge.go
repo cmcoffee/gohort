@@ -217,11 +217,29 @@ func (T *OrchestrateApp) autoInferredRoute(at memAt) http.HandlerFunc {
 		"GET": jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
 			return map[string]int{"chunks": len(ChunksWhere(VectorDB, scope(at(c))))}, nil
 		}),
+		// ?by=<user> removes only what that person added to a pool.
+		// ?pool=1 acts on the pool beneath the caller's own copy instead of
+		// on their copy: a manager may clear it or remove one person's part;
+		// anyone else may remove only their own (by=themselves).
 		"DELETE": jsonapi.Delete(T.DB, func(c *jsonapi.Call, _ struct{}) (any, error) {
 			t := at(c)
-			removed := DeleteChunksWhere(VectorDB, scope(t))
-			Log("[orchestrate.knowledge] user=%q wiped %d auto-inferred chunk(s) for agent=%s (uploads preserved)",
-				t.user, removed, t.agentID)
+			by := strings.TrimSpace(c.R.URL.Query().Get("by"))
+			if c.R.URL.Query().Get("pool") == "1" {
+				agent, ok := T.memoryPoolOf(c, at)
+				if !ok {
+					return nil, jsonapi.BadRequest("this agent has no memory shared by everyone who uses it")
+				}
+				if by != c.User && !managesPool(agent, c.User) {
+					return nil, jsonapi.Forbidden("only the owner or a maintainer can clear what everyone shares; you can remove what you added")
+				}
+				t = memTarget{user: agent.Owner, agentID: agent.ID}
+			}
+			in := scope(t)
+			removed := DeleteChunksWhere(VectorDB, func(x EmbeddedChunk) bool {
+				return in(x) && (by == "" || x.By == by)
+			})
+			Log("[orchestrate.knowledge] user=%q wiped %d auto-inferred chunk(s) for agent=%s in %s's copy (by=%q, uploads preserved)",
+				c.User, removed, t.agentID, t.user, by)
 			return map[string]int{"removed": removed}, nil
 		}),
 	}.Serve
@@ -289,32 +307,76 @@ func (T *OrchestrateApp) handleAgentKnowledgeScaffoldCollection(c *jsonapi.Call,
 // Capped at maxInferredList entries to keep the modal load tractable;
 // users with hundreds of derived chunks get the most recent slice
 // (sorted by ReportID prefix which is timestamp-ish).
+//
+// For someone using a pooled agent they do not own, it also returns the pool
+// (what everyone who uses it shares) apart from their own copy, each entry
+// saying who added it and whether this caller may remove it.
 func (T *OrchestrateApp) inferredListRoute(at memAt) http.HandlerFunc {
 	return jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
 		t := at(c)
-		prefix := agentKnowledgePrefix(t.user, t.agentID)
-		type row struct {
-			ID        string `json:"id"`
-			Topic     string `json:"topic,omitempty"`
-			Content   string `json:"content"`
-			SourceDoc string `json:"source_doc,omitempty"`
+		out := map[string]any{"items": inferredRows(agentKnowledgePrefix(t.user, t.agentID), nil)}
+		if agent, ok := T.memoryPoolOf(c, at); ok {
+			may := func(ch EmbeddedChunk) bool { return poolRemovalRefusal(agent, c.User, ch) == "" }
+			out["pool"] = inferredRows(agentKnowledgePrefix(agent.Owner, agent.ID), may)
+			out["pool_manage"] = managesPool(agent, c.User)
 		}
-		items := make([]row, 0, 32)
-		for _, ch := range ChunksWhere(VectorDB, func(x EmbeddedChunk) bool {
-			return sourceInScope(x.Source, prefix) && chunkProvenance(x.Source, x.ReportID) == "derived"
-		}) {
-			items = append(items, row{
-				ID:        ch.ID,
-				Topic:     ch.Section,
-				Content:   ch.Text,
-				SourceDoc: chunkDocName(ch.Section),
-			})
-			if len(items) >= maxInferredList {
-				break
-			}
-		}
-		return map[string]any{"items": items}, nil
+		return out, nil
 	})
+}
+
+// inferredRow is one Reference Memory entry as the Memory window lists it.
+type inferredRow struct {
+	ID        string `json:"id"`
+	Topic     string `json:"topic,omitempty"`
+	Content   string `json:"content"`
+	SourceDoc string `json:"source_doc,omitempty"`
+	// By is who added it to a pool, when that is not the copy's own user.
+	By string `json:"by,omitempty"`
+	// CanDelete is set on a pool entry, false where only the owner or a
+	// maintainer may remove it. Absent on an entry in the caller's own copy.
+	CanDelete *bool `json:"can_delete,omitempty"`
+}
+
+// inferredRows lists the derived chunks under prefix, at most maxInferredList.
+// may, when given, decides each entry's CanDelete.
+func inferredRows(prefix string, may func(EmbeddedChunk) bool) []inferredRow {
+	items := make([]inferredRow, 0, 32)
+	for _, ch := range ChunksWhere(VectorDB, func(x EmbeddedChunk) bool {
+		return sourceInScope(x.Source, prefix) && chunkProvenance(x.Source, x.ReportID) == "derived"
+	}) {
+		row := inferredRow{
+			ID:        ch.ID,
+			Topic:     ch.Section,
+			Content:   ch.Text,
+			SourceDoc: chunkDocName(ch.Section),
+			By:        ch.By,
+		}
+		if may != nil {
+			ok := may(ch)
+			row.CanDelete = &ok
+		}
+		items = append(items, row)
+		if len(items) >= maxInferredList {
+			break
+		}
+	}
+	return items
+}
+
+// memoryPoolOf is the agent whose pool a Memory window call may see beneath
+// the caller's own copy: when the agent pools and the caller uses it without
+// owning it. ok is false otherwise, and always for a scope's memory, which is
+// never the caller's own.
+func (T *OrchestrateApp) memoryPoolOf(c *jsonapi.Call, at memAt) (AgentRecord, bool) {
+	mc, err := T.memoryOf(c, at)
+	if err != nil || mc.user != c.User || !mc.agent.poolsMemory() {
+		return AgentRecord{}, false
+	}
+	owner := strings.TrimSpace(mc.agent.Owner)
+	if owner == "" || owner == seedOwner || owner == c.User {
+		return AgentRecord{}, false
+	}
+	return mc.agent, true
 }
 
 // inferredDeleteRoute removes one Reference Memory chunk by id.
@@ -337,9 +399,16 @@ func (T *OrchestrateApp) inferredDeleteRoute(at memAt) http.HandlerFunc {
 		}
 		ch := match[0]
 		// Scope checks — defend against deleting curated content via
-		// a misrouted chunk id.
+		// a misrouted chunk id. A pool entry is in the owner's copy, and the
+		// pool's rules decide, here and not in the page (memory_pool.go).
 		if !sourceInScope(ch.Source, prefix) {
-			return nil, jsonapi.Forbidden("chunk not owned by this agent")
+			agent, ok := T.memoryPoolOf(c, at)
+			if !ok || !sourceInScope(ch.Source, agentKnowledgePrefix(agent.Owner, agent.ID)) {
+				return nil, jsonapi.Forbidden("chunk not owned by this agent")
+			}
+			if why := poolRemovalRefusal(agent, c.User, ch); why != "" {
+				return nil, jsonapi.Forbidden(why)
+			}
 		}
 		if chunkProvenance(ch.Source, ch.ReportID) != "derived" {
 			return nil, jsonapi.Forbidden("chunk is not a derived Reference Memory entry")
@@ -1113,6 +1182,9 @@ func (t *chatTurn) memorySave(args map[string]any) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 	defer cancel()
+	// Whose copy it goes into: the runner's own, or on a pooled agent the
+	// owner's, recorded as coming from the runner (memory_pool.go).
+	into, by, poolNote := t.findingTarget()
 	// Save-time dedup: skip when a near-identical finding is already in this
 	// agent's derived memory, so re-saving the same material doesn't proliferate
 	// chunks that later crowd each other in memory_search. Mirrors the fact
@@ -1126,7 +1198,7 @@ func (t *chatTurn) memorySave(args map[string]any) (string, error) {
 		if cfg := GetEmbeddingConfig(); cfg.Enabled {
 			if vec, err := Embed(ctx, content); err == nil && len(vec) > 0 {
 				semanticDedupRan = true
-				agentPrefix := knowledgeSource(t.user, t.agent.ID, "")
+				agentPrefix := knowledgeSource(into, t.agent.ID, "")
 				allow := func(c EmbeddedChunk) bool {
 					if c.Source != agentPrefix && !strings.HasPrefix(c.Source, agentPrefix+":") {
 						return false
@@ -1155,17 +1227,18 @@ func (t *chatTurn) memorySave(args map[string]any) (string, error) {
 	// ZERO dedup, silently — the exact failure it catches is the model
 	// re-saving the same finding verbatim across a session. Whitespace/case-
 	// insensitive equality only; rephrasings need the semantic tier.
-	if VectorDB != nil && !semanticDedupRan && t.findingExactDuplicate(content) {
+	if VectorDB != nil && !semanticDedupRan && t.findingExactDuplicateIn(into, content) {
 		return fmt.Sprintf("Already saved (deduped): this exact finding is already in Memory. Skipping: retrieve it via %s.", memRecallPhrase()), nil
 	}
-	reportID := ingestAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, subject, t.attributedToSpeaker(content))
+	reportID := ingestAgentKnowledge(ctx, t.app.DB, into, t.agent.ID, topic, subject, t.attributedToSpeaker(content))
+	markFindingBy(reportID, by)
 	// A finding about something that happened on a date is dated, so it can
 	// age out of recall hints instead of being offered as news for good.
 	if kind, at := provenance.ClassifyMemKind(content, time.Now()); kind == provenance.MemKindEvent && reportID != "" && VectorDB != nil {
 		tagFindingChunks(reportID, chunkKindEvent, at, MemoryProvenance{})
 	}
-	return fmt.Sprintf("Saved %d chars under topic %q in Memory. Future similar questions can retrieve this via %s.%s",
-		len(content), topic, memRecallPhrase(), conflictNote), nil
+	return fmt.Sprintf("Saved %d chars under topic %q in Memory. Future similar questions can retrieve this via %s.%s%s",
+		len(content), topic, memRecallPhrase(), conflictNote, poolNote), nil
 }
 
 // findingExactDuplicate reports whether one of the agent's own saved findings
@@ -1175,6 +1248,12 @@ func (t *chatTurn) memorySave(args map[string]any) (string, error) {
 // findings that split into multiple chunks won't match whole — acceptable for
 // a backstop tier.
 func (t *chatTurn) findingExactDuplicate(content string) bool {
+	return t.findingExactDuplicateIn(t.user, content)
+}
+
+// findingExactDuplicateIn is findingExactDuplicate over into's copy of the
+// agent's findings: the runner's own, or on a pooled agent the owner's.
+func (t *chatTurn) findingExactDuplicateIn(into, content string) bool {
 	if VectorDB == nil {
 		return false
 	}
@@ -1182,7 +1261,7 @@ func (t *chatTurn) findingExactDuplicate(content string) bool {
 	if want == "" {
 		return false
 	}
-	agentPrefix := knowledgeSource(t.user, t.agent.ID, "")
+	agentPrefix := knowledgeSource(into, t.agent.ID, "")
 	for _, c := range ChunksWhere(VectorDB, func(c EmbeddedChunk) bool {
 		if c.Source != agentPrefix && !strings.HasPrefix(c.Source, agentPrefix+":") {
 			return false
@@ -1592,6 +1671,14 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 		agentPrefix := t.agentCorpusPrefix()
 		exact := t.agentCorpusSources(t.skillsActive)
 		inScope := c.Source == agentPrefix || strings.HasPrefix(c.Source, agentPrefix+":") || exact[c.Source]
+		// A pooled agent's findings are in the owner's copy, and the pool's
+		// rules say which of them this runner may remove (memory_pool.go).
+		if !inScope && t.inPool(c) {
+			if why := poolRemovalRefusal(t.agent, t.user, c); why != "" {
+				return why, nil
+			}
+			inScope = true
+		}
 		if !inScope {
 			return fmt.Sprintf("No chunk with mem_id=%q in your accessible memory: it may have already been deleted, or the id belongs to a corpus you can't access.", explicitID), nil
 		}

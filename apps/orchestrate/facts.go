@@ -149,7 +149,7 @@ func (t *chatTurn) storeFactNote(note string, domain ClaimDomain, origin MemSour
 		}
 		msg += fmt.Sprintf(" Superseded %d now-stale fact(s): %s.", len(dropped), strings.Join(dropped, ", "))
 	}
-	return msg, nil
+	return msg + t.pinnedNoteStaysYours(), nil
 }
 
 // noteExpiry reads remember's expires: a date, which ends with that day in the

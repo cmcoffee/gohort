@@ -946,6 +946,14 @@ func (t *chatTurn) forgetFindingByReportID(reportID string) (string, error) {
 	var ids []string
 	for _, c := range ChunksWhere(VectorDB, func(c EmbeddedChunk) bool { return c.ReportID == reportID }) {
 		inScope := c.Source == agentPrefix || strings.HasPrefix(c.Source, agentPrefix+":")
+		// A pooled finding is in the owner's copy; the pool's rules say
+		// whether this runner may remove it (memory_pool.go).
+		if !inScope && t.inPool(c) {
+			if why := poolRemovalRefusal(t.agent, t.user, c); why != "" {
+				return why, nil
+			}
+			inScope = true
+		}
 		if !inScope || chunkProvenance(c.Source, c.ReportID) != "derived" {
 			return fmt.Sprintf("id mem:%s doesn't point at one of your own findings (it may be knowledge, already deleted, or from another context). Only findings you saved with remember can be forgotten.", reportID), nil
 		}
@@ -959,6 +967,12 @@ func (t *chatTurn) forgetFindingByReportID(reportID string) (string, error) {
 		var c EmbeddedChunk
 		if VectorDB.Get(EmbeddedChunks, reportID, &c) {
 			inScope := c.Source == agentPrefix || strings.HasPrefix(c.Source, agentPrefix+":")
+			if !inScope && t.inPool(c) {
+				if why := poolRemovalRefusal(t.agent, t.user, c); why != "" {
+					return why, nil
+				}
+				inScope = true
+			}
 			if inScope && chunkProvenance(c.Source, c.ReportID) == "derived" {
 				DeleteChunksByIDs(VectorDB, []string{reportID})
 				Log("[orchestrate.unified_memory.forget] user=%q agent=%q dropped chunk id=%s topic=%q",

@@ -27,7 +27,7 @@
 //	             before and after output, appeals, declines, history
 //	machine_     machines (an agent's phased procedure): editor, runs, drafts,
 //	             previews, sharing
-//	memory_      an agent's memory: modes, scope, search, lifecycle, audit
+//	memory_      an agent's memory: modes, scope, pool, search, lifecycle, audit
 //	operator_    the Operator agent's fleet tools: standing agents, monitors,
 //	             schedules, wakes
 //	page_        the agent pages: chat, the wizard, access, fleet security

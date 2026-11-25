@@ -373,6 +373,8 @@ func writeAgentOnce(db Database, a AgentRecord, reason string) (AgentRecord, err
 	// going Fleet-off, and therefore from being publishable. Saving the record
 	// IS its one-time migration to the split model.
 	a.Mode = ""
+	// Whether a new agent's memory pools, written once at creation.
+	settleNewAgentMemoryPool(db, &a)
 	now := time.Now()
 	if a.ID == "" {
 		a.ID = UUIDv4()

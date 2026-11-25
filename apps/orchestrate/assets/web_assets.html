@@ -3804,43 +3804,42 @@
             .catch(function(err){ window.uiAlert('Wipe failed: ' + (err && err.message || err)); wipeBtn.disabled = false; });
         };
 
-        function renderInferred(items) {
-          inferredList.innerHTML = '';
-          wipeBtn.disabled = !items || !items.length;
-          if (!items || !items.length) {
-            var empty = document.createElement('div');
-            empty.style.cssText = 'color:var(--text-mute);font-style:italic;padding:0.4rem 0';
-            empty.textContent = 'No memory entries yet. memory_save findings will appear here once the agent decides something is worth remembering.';
-            inferredList.appendChild(empty);
-            return;
+        // One entry's row. by names who added it to a shared pool; canDelete
+        // false leaves the row without a delete (the server refuses it too).
+        function inferredRow(item, canDelete, onGone) {
+          var row = document.createElement('div');
+          row.className = 'ui-orch-list-row';
+          row.style.alignItems = 'flex-start';
+          var body = document.createElement('div');
+          body.style.cssText = 'flex:1;font-size:0.85rem;line-height:1.4';
+          // Topic line acts as the disclosure trigger: content hidden by
+          // default to keep the list scannable even when there are many
+          // entries. Click the topic to expand the full chunk text.
+          var topic = document.createElement('div');
+          topic.style.cssText = 'color:var(--text-mute);font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em;cursor:pointer;user-select:none';
+          var topicCaret = document.createElement('span');
+          topicCaret.style.cssText = 'display:inline-block;margin-right:0.4rem;transition:transform 0.15s';
+          topicCaret.textContent = String.fromCharCode(9656); // ▸
+          topic.appendChild(topicCaret);
+          topic.appendChild(document.createTextNode((item.topic || 'general') + (item.source_doc ? ' - ' + item.source_doc : '')));
+          if (item.by) {
+            var by = document.createElement('span');
+            by.style.cssText = 'text-transform:none;letter-spacing:0;margin-left:0.5rem';
+            by.textContent = 'from ' + item.by;
+            topic.appendChild(by);
           }
-          items.forEach(function(item) {
-            var row = document.createElement('div');
-            row.className = 'ui-orch-list-row';
-            row.style.alignItems = 'flex-start';
-            var body = document.createElement('div');
-            body.style.cssText = 'flex:1;font-size:0.85rem;line-height:1.4';
-            // Topic line acts as the disclosure trigger — content
-            // hidden by default to keep the list scannable even when
-            // there are many entries. Click the topic to expand the
-            // full chunk text.
-            var topic = document.createElement('div');
-            topic.style.cssText = 'color:var(--text-mute);font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em;cursor:pointer;user-select:none';
-            var topicCaret = document.createElement('span');
-            topicCaret.style.cssText = 'display:inline-block;margin-right:0.4rem;transition:transform 0.15s';
-            topicCaret.textContent = String.fromCharCode(9656); // ▸
-            topic.appendChild(topicCaret);
-            topic.appendChild(document.createTextNode((item.topic || 'general') + (item.source_doc ? ' - ' + item.source_doc : '')));
-            body.appendChild(topic);
-            var content = document.createElement('div');
-            content.style.cssText = 'white-space:pre-wrap;margin-top:0.15rem;display:none';
-            content.textContent = item.content || '';
-            body.appendChild(content);
-            topic.addEventListener('click', function() {
-              var open = content.style.display === 'none';
-              content.style.display = open ? '' : 'none';
-              topicCaret.style.transform = open ? 'rotate(90deg)' : '';
-            });
+          body.appendChild(topic);
+          var content = document.createElement('div');
+          content.style.cssText = 'white-space:pre-wrap;margin-top:0.15rem;display:none';
+          content.textContent = item.content || '';
+          body.appendChild(content);
+          topic.addEventListener('click', function() {
+            var open = content.style.display === 'none';
+            content.style.display = open ? '' : 'none';
+            topicCaret.style.transform = open ? 'rotate(90deg)' : '';
+          });
+          row.appendChild(body);
+          if (canDelete) {
             var del = document.createElement('button');
             del.className = 'ui-orch-list-del';
             del.type = 'button';
@@ -3852,19 +3851,91 @@
                 .then(function(r) {
                   if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status);
                   row.remove();
+                  if (onGone) onGone();
                 })
                 .catch(function(err) { window.uiAlert('Delete failed: ' + (err && err.message || err)); });
             };
-            row.appendChild(body);
             row.appendChild(del);
-            inferredList.appendChild(row);
+          }
+          return row;
+        }
+
+        function renderInferred(items) {
+          inferredList.innerHTML = '';
+          wipeBtn.disabled = !items || !items.length;
+          if (!items || !items.length) {
+            var empty = document.createElement('div');
+            empty.style.cssText = 'color:var(--text-mute);font-style:italic;padding:0.4rem 0';
+            empty.textContent = 'No memory entries yet. memory_save findings will appear here once the agent decides something is worth remembering.';
+            inferredList.appendChild(empty);
+            return;
+          }
+          items.forEach(function(item) {
+            inferredList.appendChild(inferredRow(item, true));
           });
+        }
+
+        // The pool: what a shared agent has learned from everyone who uses
+        // it, shown to someone who uses it without owning it. Only a manager
+        // (the owner or a maintainer) may clear it or remove another
+        // person's entry; the server enforces the same.
+        function renderPool(items, manage) {
+          inferredTitle.textContent = 'Reference Memory: yours';
+          var section = document.createElement('div');
+          section.style.cssText = 'margin-top:1.2rem;padding-top:0.8rem;border-top:1px solid var(--border)';
+          var header = document.createElement('div');
+          header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:0.3rem';
+          var title = document.createElement('div');
+          title.style.cssText = 'font-weight:600;color:var(--text)';
+          title.textContent = 'Shared with everyone who uses it';
+          header.appendChild(title);
+          var poolWipe = null;
+          if (manage) {
+            poolWipe = document.createElement('button');
+            poolWipe.type = 'button';
+            poolWipe.style.cssText = wipeBtn.style.cssText;
+            poolWipe.textContent = 'Wipe all';
+            poolWipe.title = 'Delete everything this agent has learned from everyone who uses it.';
+            poolWipe.disabled = !items.length;
+            poolWipe.onclick = async function() {
+              if (!(await window.uiConfirm('Wipe everything this agent has learned from everyone who uses it? Each person loses it, not only you. Continue?'))) return;
+              poolWipe.disabled = true;
+              fetch(inferredWipeURL + '?pool=1', {method: 'DELETE'})
+                .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); list.innerHTML = ''; })
+                .catch(function(err){ window.uiAlert('Wipe failed: ' + (err && err.message || err)); poolWipe.disabled = false; });
+            };
+            header.appendChild(poolWipe);
+          }
+          section.appendChild(header);
+          var help = document.createElement('div');
+          help.className = 'ui-orch-modal-help';
+          help.style.marginBottom = '0.5rem';
+          help.textContent = manage
+            ? 'What this agent works out in anyone’s conversation is shared with everyone who uses it. As a maintainer you can remove any entry, or all of them.'
+            : 'What this agent works out in your conversations is shared with everyone who uses it, and theirs with you. You can delete what you added; only the owner or a maintainer can remove anything else. Notes you pin stay yours.';
+          section.appendChild(help);
+          var list = document.createElement('div');
+          list.className = 'ui-orch-list';
+          section.appendChild(list);
+          if (!items.length) {
+            var empty = document.createElement('div');
+            empty.style.cssText = 'color:var(--text-mute);font-style:italic;padding:0.4rem 0';
+            empty.textContent = 'Nothing shared yet.';
+            list.appendChild(empty);
+          }
+          items.forEach(function(item) {
+            list.appendChild(inferredRow(item, item.can_delete !== false));
+          });
+          inferredSection.appendChild(section);
         }
 
         inferredList.appendChild(window.uiLoading('Loading findings'));
         fetch(inferredURL)
           .then(function(r){ return r.ok ? r.json() : null; })
-          .then(function(d){ renderInferred(d ? d.items : []); })
+          .then(function(d){
+            renderInferred(d ? d.items : []);
+            if (d && d.pool) renderPool(d.pool, !!d.pool_manage);
+          })
           .catch(function(){ renderInferred([]); });
 
         // --- Graph Memory section ---
