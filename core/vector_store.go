@@ -344,6 +344,11 @@ type EmbeddedChunk struct {
 	// upload read part 1, 10, 11, 2. Zero on rows ingested before the field
 	// existed; SortChunksForAssembly falls back to a natural sort for those.
 	Ord int `json:"ord,omitempty"`
+	// By is who contributed this chunk to a corpus that is not theirs: a
+	// person using a shared agent whose memory is pooled, writing into the
+	// owner's copy. Empty means the corpus's own user, which is every chunk
+	// written before the field existed.
+	By string `json:"by,omitempty"`
 	// MemoryProvenance is reserved: the vector layer has no retirement pass yet, so
 	// these fields sit unset. Embedded now so a future chunk-staleness or
 	// supersession pass inherits the same vocabulary as the fact store. Zero value
@@ -372,6 +377,9 @@ type SearchHit struct {
 	// passage is from an older version (lowerSuperseded): its rank is
 	// lowered and the reader is told what is current.
 	SupersededBy string `json:"superseded_by,omitempty"`
+	// By is mirrored from EmbeddedChunk.By: who contributed the chunk, when
+	// it is not the corpus's own user.
+	By string `json:"by,omitempty"`
 
 	// successor is the replacing document's id, while the hit is ranked.
 	successor string
@@ -1640,6 +1648,7 @@ func SearchChunks(db Database, query []float32, k int) []SearchHit {
 			Locator:   c.Locator,
 			Date:      c.Date,
 			Kind:      c.Kind,
+			By:        c.By,
 			successor: supersededBy(c),
 		})
 	}
@@ -1691,6 +1700,7 @@ func SearchChunksByPredicate(db Database, allow func(c EmbeddedChunk) bool, quer
 			Locator:   c.Locator,
 			Date:      c.Date,
 			Kind:      c.Kind,
+			By:        c.By,
 			successor: supersededBy(c),
 		})
 	}
@@ -1733,6 +1743,7 @@ func SearchChunksSubstringByPredicate(db Database, allow func(c EmbeddedChunk) b
 			Locator:   c.Locator,
 			Date:      c.Date,
 			Kind:      c.Kind,
+			By:        c.By,
 			successor: supersededBy(c),
 		})
 		if len(out) >= k {
@@ -1947,7 +1958,7 @@ func SearchChunksKeywordByPredicate(db Database, allow func(c EmbeddedChunk) boo
 		all = append(all, SearchHit{
 			ID: c.ID, Source: c.Source, ReportID: c.ReportID, Title: c.Title,
 			Section: c.Section, Text: c.Text, Score: s,
-			Locator: c.Locator, Date: c.Date, Kind: c.Kind,
+			Locator: c.Locator, Date: c.Date, Kind: c.Kind, By: c.By,
 			successor: supersededBy(&chunks[cd.idx]),
 		})
 	}

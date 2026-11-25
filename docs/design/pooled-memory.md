@@ -1,6 +1,10 @@
 # Pooled memory: a shared specialist learns from everyone who uses it
 
-Status: **design, not built** (2026-11-23). Follows
+Status: **slices 1 and 2 built** (0.9.682, 2026-11-24): the write path with
+who added each finding, the daily cap, the runs that never write the pool,
+labels on recall, and the removal rules in the tools and the Memory routes,
+with the Memory window's two sections. Slices 3 to 5 are not built.
+Designed 2026-11-23. Follows
 [sharing-people-and-teams.md](sharing-people-and-teams.md), which settled
 that a share gives the people added "the same experience" the owner has, and
 that memory follows the kind of agent: **pooled for a specialist, private for a
@@ -210,6 +214,19 @@ store belongs in `apps/orchestrate`.
 
 Slices 1 and 2 ship together: a pool without the delete rules is the unsafe
 half.
+
+Left for later slices, found while building 1 and 2:
+
+- **No switch yet** (slice 4): only a new specialist pools. An existing agent
+  cannot be turned on until the Share tab has the switch.
+- **A maintainer's pinned note** still goes to their own copy, as before; the
+  table above has it going to the pool's.
+- **The owner is not told** when someone reaches the daily cap; it is logged.
+- **The pool is the owner's copy, so it shares that copy's finding cap**
+  (`tune_finding_hard_cap`, default 300), and past it the oldest finding goes,
+  whoever added it. A busy pool can push out the owner's older findings. Not
+  decided: a separate cap for contributions, or a larger one on a pooled agent.
+- **Removals are final** until Recently removed exists (slice 3).
 
 ## Settled with the owner (2026-11-23)
 

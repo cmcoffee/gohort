@@ -870,6 +870,12 @@ type AgentRecord struct {
 	ShareReference string `json:"share_reference,omitempty"`
 	ShareNotes     string `json:"share_notes,omitempty"`
 	ShareUploads   string `json:"share_uploads,omitempty"`
+	// MemoryPool is whether what this agent works out in other people's runs
+	// pools into the owner's copy, so everyone it is shared with learns from
+	// everyone (memory_pool.go): "on", "off", or empty, which reads as off so
+	// every agent made before it keeps its private copies. A new agent gets it
+	// written at creation: on for a specialist, off otherwise.
+	MemoryPool string `json:"memory_pool,omitempty"`
 
 	InboundMode string `json:"inbound_mode,omitempty"`
 	// AllowedCallers are the agent IDs that may dispatch to this one, read
