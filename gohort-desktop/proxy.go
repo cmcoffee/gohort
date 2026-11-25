@@ -57,6 +57,9 @@ type gohort_proxy struct {
 	// signin is the sign-in through the person's browser this window is
 	// waiting on (signin.go).
 	signin browser_signin
+	// timing logs the window's slow requests and when it runs out of
+	// connections (proxy_timing.go).
+	timing proxy_timing
 }
 
 // new_gohort_proxy constructs the handler. configure_html is the raw
@@ -319,6 +322,8 @@ func (gp *gohort_proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	f, r := gp.timing.begin(r)
+	defer gp.timing.end(f)
 	proxy.ServeHTTP(w, r)
 }
 
@@ -403,6 +408,9 @@ func (gp *gohort_proxy) proxy_for(server_url string) *httputil.ReverseProxy {
 	// All have to happen before WriteHeader; ModifyResponse runs at
 	// exactly the right point in the proxy lifecycle for that.
 	proxy.ModifyResponse = func(resp *http.Response) error {
+		if f := flight_from(resp.Request.Context()); f != nil {
+			f.saw_response(resp)
+		}
 		if cookies := resp.Cookies(); len(cookies) > 0 {
 			cookie_jar.SetCookies(upstream_url, cookies)
 		}
@@ -417,7 +425,10 @@ func (gp *gohort_proxy) proxy_for(server_url string) *httputil.ReverseProxy {
 		return inject_popup_shim(resp)
 	}
 	display_url := server_url
-	proxy.ErrorHandler = func(rw http.ResponseWriter, _ *http.Request, err error) {
+	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, err error) {
+		if f := flight_from(req.Context()); f != nil {
+			f.failed()
+		}
 		rw.Header().Set("Content-Type", "text/html; charset=utf-8")
 		rw.WriteHeader(http.StatusBadGateway)
 		fmt.Fprintf(rw, GOHORT_NOT_RUNNING_HTML, display_url, display_url, err)
