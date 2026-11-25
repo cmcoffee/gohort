@@ -571,3 +571,32 @@ function go() {}
 		t.Errorf("language keywords read as calls: %v", got)
 	}
 }
+
+// Verify notes a page that starts work and never looks for it again, and one
+// that chains actions itself (then, two awaits, an await in a loop); a call
+// named only in a string, and a page that follows its work, are not noted.
+func TestVerifyNotesWorkThePageWouldLoseOnLeaving(t *testing.T) {
+	page := func(js string) string { return "<script>" + js + "</script>" }
+	const follows = "app.work().then(function(w){ w.forEach(function(j){ if (j.running) app.follow(j.job); }); });"
+	cases := []struct {
+		name, html  string
+		work, chain bool
+	}{
+		{"nothing started", page("app.data('x');"), false, false},
+		{"started, never looked for", page("btn.onclick = function(){ app.action('fetch', {}); };"), true, false},
+		{"started and followed", page(follows + " btn.onclick = function(){ app.action('fetch', {}); };"), false, false},
+		{"chained with then", page(follows + " app.action('fetch', {}).then(function(r){ return app.action('save', r.result); });"), false, true},
+		{"two awaits", page(follows + " async function go(){ var a = await app.ask('sum it'); await app.action('save', {text: a}); }"), false, true},
+		{"await in a loop", page(follows + " async function all(items){ for (const it of items) { await app.action('fetch', {id: it}); } }"), false, true},
+		{"named in a string", page("var help = 'call app.action(name) to run one';"), false, false},
+	}
+	for _, c := range cases {
+		notes := strings.Join(jsWorkNotes(c.html), "\n")
+		if got := strings.Contains(notes, "never calls app.work()"); got != c.work {
+			t.Errorf("%s: work note %v, want %v (%q)", c.name, got, c.work, notes)
+		}
+		if got := strings.Contains(notes, "one after another"); got != c.chain {
+			t.Errorf("%s: chain note %v, want %v (%q)", c.name, got, c.chain, notes)
+		}
+	}
+}

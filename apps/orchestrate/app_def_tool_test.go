@@ -702,6 +702,9 @@ func TestTheReferencesAreHelpTopicsThatFollowTheCode(t *testing.T) {
 	if !strings.Contains(help("page"), apppage.API) {
 		t.Error("help topic=page is not what window.app offers")
 	}
+	if !strings.Contains(help("page"), apppage.Work) || !strings.Contains(AppFolderGuide(), apppage.Work) {
+		t.Error("the page help or the folder guide does not say how a page treats work that outlives it")
+	}
 	if _, err := def.Handler(context.Background(), map[string]any{"action": "help", "topic": "nonsense"}); err == nil {
 		t.Error("an unknown topic was answered")
 	}

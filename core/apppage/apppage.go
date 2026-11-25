@@ -51,3 +51,9 @@ app.onChange(fn)              fn() whenever records or shared data change
 app.confirm(msg)              a question, true or false
 app.alert(msg)                a notice, resolved when read
 app.prompt(msg, default)      a line of text, or null`
+
+// Work is how a page treats work that outlives it, said once for everyone
+// who writes a page: Builder, the folder guide, Anvil.
+const Work = "WORK THAT OUTLIVES THE PAGE: an action or an ask keeps running on the server when the person closes or leaves the page, and they are told how it went if nobody was watching. " +
+	"So call app.work() as the page loads, and app.follow(job) for what is still running, or show how it ended. " +
+	"Do work of several steps (fetch, then summarize, then save) in ONE action script, which can ask the agent (gohort.ask) and report progress as it goes, not as calls chained in the page: those stop the moment the page closes, and the steps after it never run."

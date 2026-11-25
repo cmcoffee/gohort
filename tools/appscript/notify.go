@@ -32,12 +32,11 @@ const (
 )
 
 // notifier is the Notify for one run: recipient is who hears it, spec names
-// the app it came from.
-func notifier(recipient, owner, slug string) func(title, body string) (string, error) {
+// the app it came from. sent, when set, hears each notice it sends.
+func notifier(recipient, owner, slug string, onSent func()) func(title, body string) (string, error) {
 	sent := 0
 	return func(title, body string) (string, error) {
 		title = clipRunes(strings.TrimSpace(title), notifyTitleMax)
-		body = clipRunes(strings.TrimSpace(body), notifyBodyMax)
 		if title == "" {
 			return "", fmt.Errorf("notify needs a title: what happened, in a line")
 		}
@@ -47,27 +46,45 @@ func notifier(recipient, owner, slug string) func(title, body string) (string, e
 		if RootDB == nil {
 			return "", fmt.Errorf("notifications are not available here")
 		}
-		name := slug
-		if spec, ok := LoadAppSpec(owner, slug); ok && strings.TrimSpace(spec.Name) != "" {
-			name = spec.Name
-		}
-		link := "/apps/" + slug + "/"
-		if base := strings.TrimRight(DashboardURL(), "/"); base != "" {
-			link = base + link
-		}
-		full := strings.TrimSpace(body + "\n\nFrom the app " + name + ": " + link)
-		stored, first := notices.Record(RootDB, notices.Notice{
-			Owner: recipient, About: "app:" + slug, Kind: notices.KindReport, Title: title, Body: full,
-		})
+		count, first := TellPerson(recipient, owner, slug, title, body)
 		sent++
-		if first && NoticeForwarder != nil {
-			go NoticeForwarder(recipient, name, title, full)
+		if onSent != nil {
+			onSent()
 		}
 		if !first {
-			return fmt.Sprintf("noted again (%d times now; only the first is forwarded)", stored.Count), nil
+			return fmt.Sprintf("noted again (%d times now; only the first is forwarded)", count), nil
 		}
 		return "sent", nil
 	}
+}
+
+// TellPerson files a notice from owner's app slug in recipient's
+// notifications, with a link back to the app, and forwards it as they asked
+// when it is the first of its title. A repeat folds into the first with a
+// count, which is returned. The notice an app's script sends and the one the
+// host sends when the person's work ends while they are away both come here.
+func TellPerson(recipient, owner, slug, title, body string) (count int, first bool) {
+	if RootDB == nil || strings.TrimSpace(recipient) == "" {
+		return 0, false
+	}
+	title = clipRunes(strings.TrimSpace(title), notifyTitleMax)
+	body = clipRunes(strings.TrimSpace(body), notifyBodyMax)
+	name := slug
+	if spec, ok := LoadAppSpec(owner, slug); ok && strings.TrimSpace(spec.Name) != "" {
+		name = spec.Name
+	}
+	link := "/apps/" + slug + "/"
+	if base := strings.TrimRight(DashboardURL(), "/"); base != "" {
+		link = base + link
+	}
+	full := strings.TrimSpace(body + "\n\nFrom the app " + name + ": " + link)
+	stored, first := notices.Record(RootDB, notices.Notice{
+		Owner: recipient, About: "app:" + slug, Kind: notices.KindReport, Title: title, Body: full,
+	})
+	if first && NoticeForwarder != nil {
+		go NoticeForwarder(recipient, name, title, full)
+	}
+	return stored.Count, first
 }
 
 func clipRunes(s string, n int) string {

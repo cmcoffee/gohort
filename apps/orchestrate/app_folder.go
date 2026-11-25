@@ -335,6 +335,7 @@ func AppFolderGuide() string {
 		"\n\nDATA SOURCES (data/<name>.py):\n" + appDefDataSourcesHelp +
 		"\n\nACTIONS (actions/<name>.py):\n" + appDefActionsHelp +
 		"\n\nTHE PAGE: its backend is window.app, which offers exactly these calls (nothing else exists):\n\n" + apppage.API +
+		"\n\n" + apppage.Work +
 		"\n\nCHECKS (checks.json):\n" + appcheck.Reference
 }
 

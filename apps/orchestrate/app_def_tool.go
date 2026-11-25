@@ -398,7 +398,7 @@ func appDefHelpTopic(topic string) (string, bool) {
 	case "checks", "check":
 		return appcheck.Reference + "\n\nHow they run:\n" + appDefChecksHelp, true
 	case "page", "window.app", "app":
-		return "A page's backend is window.app, which offers exactly these calls (nothing else exists):\n\n" + apppage.API, true
+		return "A page's backend is window.app, which offers exactly these calls (nothing else exists):\n\n" + apppage.API + "\n\n" + apppage.Work, true
 	}
 	return "", false
 }

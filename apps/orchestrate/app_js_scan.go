@@ -582,3 +582,48 @@ func jsFunctionBodyEnd(masked string, from int) (int, error) {
 	}
 	return len(masked), nil
 }
+
+// How a page's own script starts work that outlives it (apppage.Work): a
+// page that starts actions or asks and never looks for them again, and one
+// that runs actions one after another itself, whose later steps never run
+// once the person leaves. Read from the masked source, so a call named in a
+// string does not count. Notes, not failures: a page may chain two quick
+// calls on purpose.
+var (
+	jsAppStartRE   = regexp.MustCompile(`\bapp\.(?:action|ask)\s*\(`)
+	jsAppWorkRE    = regexp.MustCompile(`\bapp\.(?:work|follow)\s*\(`)
+	jsAwaitStartRE = regexp.MustCompile(`\bawait\s+(?:window\.)?app\.(?:action|ask)\s*\(`)
+	jsThenStartRE  = regexp.MustCompile(`(?s)\bapp\.(?:action|ask)\s*\([^;]*?\)\s*\.then\s*\([^;]{0,600}?\bapp\.action\s*\(`)
+	jsLoopStartRE  = regexp.MustCompile(`(?s)(?:\bfor\s*\(|\bwhile\s*\(|\.forEach\s*\(\s*async\b)[^}]{0,400}?\bawait\s+(?:window\.)?app\.action\s*\(`)
+)
+
+// jsWorkNotes is what verify notes about it, one line each.
+func jsWorkNotes(html string) []string {
+	src := jsMaskAll(html)
+	if !jsAppStartRE.MatchString(src) {
+		return nil
+	}
+	var out []string
+	if !jsAppWorkRE.MatchString(src) {
+		out = append(out, "NOTE the page starts actions or asks but never calls app.work(): reopened after the person leaves, it will not show what is still running or how it ended. Call app.work() as the page loads, and app.follow(job) for what is running.")
+	}
+	if jsChainsActions(src) {
+		out = append(out, "NOTE the page runs actions one after another itself: if the person leaves midway, the steps after that never run. When they are steps of one job, do them in ONE action script, which keeps going after the page closes and reports progress as it goes.")
+	}
+	return out
+}
+
+// jsChainsActions reports a page that starts an action from the end of
+// another call (a .then, two awaits close together, an await in a loop).
+func jsChainsActions(src string) bool {
+	if jsThenStartRE.MatchString(src) || jsLoopStartRE.MatchString(src) {
+		return true
+	}
+	locs := jsAwaitStartRE.FindAllStringIndex(src, -1)
+	for i := 1; i < len(locs); i++ {
+		if locs[i][0]-locs[i-1][1] < 800 {
+			return true
+		}
+	}
+	return false
+}

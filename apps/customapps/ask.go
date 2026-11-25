@@ -114,7 +114,7 @@ func (T *CustomApps) handleAsk(w http.ResponseWriter, r *http.Request, ownerDB D
 	live := liveUse(r, user, spec.Slug)
 	var status int
 	job, _ := startOrJoinJob(actionJobKey(owner, spec.Slug, user, "_ask"), "ask", string(inputs),
-		appWork{UID: user, Slug: spec.Slug, AppName: spec.Name, What: "asking its agent", Kind: "ask"},
+		appWork{UID: user, Slug: spec.Slug, AppName: spec.Name, What: "asking its agent", Kind: "ask", Owner: owner, Tell: true},
 		func(ctx context.Context, _ func(string)) (actionOutcome, error) {
 			text, st, err := askAppAgent(WithRunLane(ctx, LaneInteractive), ownerDB, owner, user, spec, body.Prompt, body.JSON)
 			if err != nil {
@@ -124,13 +124,23 @@ func (T *CustomApps) handleAsk(w http.ResponseWriter, r *http.Request, ownerDB D
 			}
 			return actionOutcome{Result: map[string]any{"text": text}}, nil
 		})
+	left := false
+	job.waitFor(func() {
+		select {
+		case <-job.done:
+		case <-time.After(actionInlineWait):
+		case <-r.Context().Done():
+			left = true // the person left; the ask carries on and keeps its answer
+		}
+	})
+	if left {
+		return
+	}
 	select {
 	case <-job.done:
-	case <-time.After(actionInlineWait):
+	default:
 		jsonapi.Write(w, job.status())
 		return
-	case <-r.Context().Done():
-		return // the person left; the ask carries on and keeps its answer
 	}
 	job.mu.Lock()
 	res, err := job.res, job.err

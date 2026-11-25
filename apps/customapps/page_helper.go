@@ -11,6 +11,9 @@ import (
 // package; the helper it describes is here, and a test holds the two equal.
 const PageAPI = apppage.API
 
+// PageWork is how a page treats work that outlives it (apppage.Work).
+const PageWork = apppage.Work
+
 // The page side of an app: one small object, window.app, put at the top of
 // every frame an app's page renders in.
 //
