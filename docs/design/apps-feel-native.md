@@ -1,0 +1,164 @@
+# Apps that feel like gohort's own
+
+Status: **design, not built**. Nothing here changes stored data or needs a
+migration, except the last item, which applies to new apps only.
+
+## The goal
+
+An app made with Builder, Anvil or an import should work like an app compiled
+into gohort: the same header, settings in the same place, remembering where
+you were without asking, and opening as fast. Today it feels different, and
+the difference comes from what surrounds the app's page, not from the page
+itself.
+
+What has to stay is the containment. An app's page HTML is its author's and is
+shown to whoever opens the app, administrators included. On the gohort origin
+its script could act as the viewer against every endpoint the viewer can
+reach, so it runs in a sandboxed frame with no origin (`isolateAppHTML`, the
+runtime's `isolatedFrame`). Everything below works within that, and none of it
+gives the frame more reach.
+
+## Two kinds of app page
+
+The custom app tier (`custom-app-tier.md`) has two shapes, and they differ here:
+
+- **Composed from primitives** (`Table`, `FormPanel`, `WorkbenchPanel`, ...).
+  These render in the real page with the shared runtime, the same way a
+  native app's do. They already look and load like gohort's own.
+- **Written as HTML** (a Card or Frame holding the app's own page). This is
+  what runs in the isolated frame, and it is where almost every difference
+  below comes from.
+
+So the first answer to "make apps feel native" is the existing rule: compose
+from primitives wherever a primitive fits, and write HTML only for a shape
+none of them can express.
+
+## Side by side
+
+| | Native app | Custom app (HTML page) |
+|---|---|---|
+| Where the page runs | The gohort page itself | A sandboxed frame with no origin |
+| Header | `ui.Page` title and nav | The same `ui.Page` header, plus links the host adds |
+| Settings | Each app's own page, wherever it put it | The ⚙ beside the app's name, to `_settings` |
+| Why the ⚙ shows | (no ⚙) | The app has settings, **or the person has a saved view** |
+| Remembering where you were | Browser localStorage, this device only | Server-kept stand-in for localStorage, every device (`view_state.go`) |
+| Clearing that | Never needed; it holds layout choices read defensively | **Reset view**, on the ⚙ Settings page |
+| Its scripts and styles | Shared runtime, cached by the browser | Inlined into the page on every open (`asset_inline.go`), never cached |
+| A code-split build | Works | Does not: one file per script |
+| Its data | Its own bucket in the shared store, or its own file | Its own namespace in the shared custom-apps store, or its own file (`PrivateDB`) |
+| A data source | Go code in the process | A fresh sandboxed script run on every call (`tools/appscript`), no cache |
+
+## What to change
+
+### 1. The ⚙ is for settings
+
+The ⚙ appears when the app has something to set, and not because the person
+has a saved view. Today an app with no settings at all grows a ⚙ the first
+time its page saves anything, and the page behind it is a Reset view and
+nothing else. That is the moment it reads as foreign.
+
+Later, native apps that keep per-person settings take the same ⚙ beside their
+name, so the place to look is the same in both.
+
+### 2. Reset view when it is needed
+
+Saving where the person was stays as it is, quiet, on every device. That is
+better than native today, and native pages may adopt it later.
+
+Reset view leaves the standing UI. It is offered by gohort, in its own bar
+above the frame, when the app's page fails while loading: "This page did not
+load. Reset your view of it?" The app's page helper (`window.app`) already
+catches an error the page hits and files it as a page problem
+(`handlePageProblem`), through the shim the page around the frame relays. The
+same catch, in the first seconds of a load, also tells the page around the
+frame, which shows the offer. It is drawn by gohort, not by the app, so a
+broken app cannot hide it.
+
+A page can also be stuck without an error, for example a wizard saved on a
+step that no longer exists. For that, the confirmation page at `_view/reset`
+stays, and the ⚙ Settings page keeps a quiet "Trouble with this page? Reset
+your view" line at its foot when the app has settings. See open question 1
+for an app without them.
+
+### 3. The app's scripts and styles load like files
+
+An app's own `.js`, `.mjs` and `.css` are inlined because a request the frame
+makes by itself carries no session, and the browser fetches `<script src>` and
+stylesheets while parsing, before the runtime's shim can relay them (measured:
+a classic script and a stylesheet blocked by ORB, a module script by CORS).
+
+Instead, serve them at a URL that needs no session:
+
+    /apps/<slug>/_files/<token>/<name>
+
+- `<token>` is derived on the server from the app's owner, slug and a hash of
+  its current files, so it is unguessable, names one version of one app's
+  files, and changes whenever any of them change.
+- The response is `Cache-Control: public, max-age=31536000, immutable`, with
+  `Access-Control-Allow-Origin: *` so module scripts load into the frame's
+  null origin.
+- It serves the app's **assets only**: never records, settings, view state or
+  anything a person stored. Those keep going through the shim and the session.
+- Because the token is in the path, a module's relative `import` resolves under
+  it, so a code-split build works and the one-file-per-script rule goes.
+
+What this lends: anyone holding the URL reads that version of the app's code
+and styles, which everyone who can open the app already receives today. An
+app that puts something private in an asset file would expose it to a holder
+of the link; see open question 2.
+
+### 4. Data sources answer from a cache when nothing changed
+
+**Measure first.** A data source is a fresh sandboxed process on every call,
+so a page with three runs three on every open. Before building anything,
+time one slow app from its run log, or with the desktop app's timing, to see
+whether this or the inlined assets is the cost.
+
+If it is the scripts: keep a data source's last output in memory, keyed by the
+app, its name, the person and its arguments, and drop it when the app's
+records change (the host already signals a change, `recordsInvalidationBridge`)
+or after a short time for a source that reads outside data. A source declares
+whether it may be cached, off by default, since only the author knows whether
+it reads the clock or the web.
+
+### 5. A new app gets its own database file
+
+`PrivateDB` becomes the default for apps created from now on: its own
+encrypted file, removed with the app, with writes that do not queue behind
+other apps. Existing apps stay where they are. Moving one would be a
+migration, offered per app, by its owner, if ever.
+
+### 6. Fix what the assistant is told about the bar
+
+`apps/anvil/context.go` tells Anvil's assistant that the bar above the page
+holds the app's name, Reset view and the link to change it. Reset view has
+moved to the ⚙ Settings page, and with item 2 it moves again. The text follows
+whatever ships.
+
+## Stored-shape changes
+
+None for items 1 to 4 and 6: the token is derived on each request, the cache
+is in memory, and the view-state table is unchanged. Item 5 changes the
+default of an existing field for new apps only. **No migration.**
+
+## Order
+
+1. Items 1, 2 and 6 together: the ⚙ and Reset view, which is what feels
+   different today.
+2. Measure a slow app (item 4's first step).
+3. Item 3, then item 4 if the measurement points at the scripts.
+4. Item 5, at any point.
+
+## Open questions
+
+1. **An app with no settings and a page stuck without an error.** With item 2
+   it has no ⚙ and no error prompt, so its Reset view is reachable only by its
+   address. Recommended: accept that, and have "Report a problem" (shown to
+   everyone the app is shared with) mention Reset view in its dialog.
+2. **Assets at a link that needs no session.** Recommended: acceptable, since
+   it is the code every viewer already receives. The folder guide and
+   Builder's instructions would say that an asset is readable by anyone who
+   can open the app, so data stays in records.
+3. **Should native apps take the server-kept view?** Recommended: later, per
+   app, starting with the agents page's tab and sidebar choices, if remembering
+   across devices proves wanted.
