@@ -114,3 +114,50 @@ func TestAppendCortexObsCap(t *testing.T) {
 		t.Fatalf("append trimmed a thread that has compaction state: %d messages", len(sess.Messages))
 	}
 }
+
+// TestFindingCapCountsOthersApart: on a pooled agent the owner's copy holds
+// what other people added too. Those are capped apart from the owner's own,
+// each to the limit, so a busy pool never evicts the owner's findings and the
+// owner's saving never evicts what others added.
+func TestFindingCapCountsOthersApart(t *testing.T) {
+	oldVDB := VectorDB
+	VectorDB = &DBase{Store: kvlite.MemStore()}
+	defer func() { VectorDB = oldVDB; InvalidateChunkCache() }()
+	InvalidateChunkCache()
+	tdb := &DBase{Store: kvlite.MemStore()}
+	tdb.Set(WebTable, tuneFindingHardCap, float64(2))
+	SetTunablesDB(tdb)
+	defer SetTunablesDB(nil)
+
+	base := knowledgeSource("u", "ag", "")
+	now := time.Now()
+	// The owner's two are the oldest of all, so a single count would evict
+	// them first.
+	for i := 0; i < 2; i++ {
+		seedFindingChunk(VectorDB, fmt.Sprintf("own%d", i), base+":general",
+			fmt.Sprintf("orch-know-own%d", i), "owner's", now.Add(time.Duration(i-100)*time.Hour))
+	}
+	for i := 0; i < 4; i++ { // p0 oldest ... p3 newest
+		id := fmt.Sprintf("p%d", i)
+		VectorDB.Set(EmbeddedChunks, id, EmbeddedChunk{ID: id, Source: base + ":general", ReportID: "orch-know-" + id,
+			Section: "## Note", Text: "pooled", By: "bob", Date: now.Add(time.Duration(i-4) * time.Hour).Format(time.RFC3339)})
+	}
+	InvalidateChunkCache()
+
+	enforceFindingCap("u", "ag")
+
+	remaining := map[string]bool{}
+	for _, c := range ChunksWhere(VectorDB, func(EmbeddedChunk) bool { return true }) {
+		remaining[c.ReportID] = true
+	}
+	for _, kept := range []string{"orch-know-own0", "orch-know-own1", "orch-know-p2", "orch-know-p3"} {
+		if !remaining[kept] {
+			t.Errorf("%s was evicted", kept)
+		}
+	}
+	for _, gone := range []string{"orch-know-p0", "orch-know-p1"} {
+		if remaining[gone] {
+			t.Errorf("%s survived past the limit for what others added", gone)
+		}
+	}
+}

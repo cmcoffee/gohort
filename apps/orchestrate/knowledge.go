@@ -44,7 +44,7 @@ func init() {
 	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_knowledge_ingest_timeout", Category: "Ingest & autofill", Label: "Knowledge ingest timeout", Help: "Caps any embedding round-trip during knowledge ingest/search.", Kind: KindSeconds, Default: 45, Min: 5, Max: 300})
 	RegisterTunable(TunableSpec{App: "/orchestrate", Key: tuneFindingHardCap, Category: "Memory",
 		Label:  "Findings hard cap per agent (0 = off)",
-		Help:   "Max self-saved findings, from memory_save and remember, that one agent keeps.",
+		Help:   "Max self-saved findings, from memory_save and remember, that one agent keeps. On a pooled agent what other people add is counted apart, to the same limit.",
 		Detail: "Past the cap the OLDEST findings are deleted. This is the fact store's hard-cap parity for the Reference layer, which otherwise grows without bound, since every save is a new document. Uploaded and attached documents are never touched.",
 		Kind:   KindInt, Default: 300, Min: 0, Max: 10000})
 }
@@ -773,6 +773,15 @@ func countAgentKnowledgeChunks(appDB Database, user, agentID string) int {
 // own. Empty topic falls back to the agent-wide bucket — but callers
 // should normally pass a normalized topic so retrieval can be sharp.
 func ingestAgentKnowledge(ctx context.Context, db Database, user, agentID, topic, title, body string) string {
+	return ingestAgentFinding(ctx, db, user, agentID, topic, title, body, "")
+}
+
+// ingestAgentFinding is ingestAgentKnowledge for a finding someone other than
+// user added to user's copy (a pooled agent's, memory_pool.go): by is who.
+// Marked before the cap runs, which counts what others add apart from user's
+// own; marked after, a new contribution would count as user's own for that
+// one pass and could evict the oldest of them.
+func ingestAgentFinding(ctx context.Context, db Database, user, agentID, topic, title, body, by string) string {
 	if db == nil || user == "" || agentID == "" {
 		return ""
 	}
@@ -794,6 +803,7 @@ func ingestAgentKnowledge(ctx context.Context, db Database, user, agentID, topic
 	if topic != "" {
 		recordAgentTopic(db, user, agentID, topic)
 	}
+	markFindingBy(reportID, by)
 	// Every save grows the corpus by one document (fresh reportID by design),
 	// so the bound is enforced at the single write choke point.
 	enforceFindingCap(user, agentID)
@@ -810,6 +820,11 @@ func ingestAgentKnowledge(ctx context.Context, db Database, user, agentID, topic
 // cap must never silently discard something the user handed over. Eviction is
 // a hard delete (the vector layer has no retirement by design — a dropped
 // finding reads as a clean miss, never resurfaces), logged. No-op at cap 0.
+//
+// On a pooled agent the owner's copy also holds what other people added
+// (EmbeddedChunk.By). Those are counted apart, each group to the same limit,
+// so a busy pool evicts its own oldest contributions and never the owner's
+// findings, and the owner's saving never evicts what others added.
 func enforceFindingCap(user, agentID string) {
 	limit := TuneInt(tuneFindingHardCap)
 	if limit <= 0 || VectorDB == nil {
@@ -820,6 +835,7 @@ func enforceFindingCap(user, agentID string) {
 	type finding struct {
 		reportID string
 		date     time.Time
+		others   bool // added by someone other than user (a pooled agent's)
 	}
 	seen := map[string]int{} // reportID → index into findings
 	var findings []finding
@@ -840,17 +856,30 @@ func enforceFindingCap(user, agentID string) {
 			continue
 		}
 		seen[c.ReportID] = len(findings)
-		findings = append(findings, finding{c.ReportID, ts})
+		findings = append(findings, finding{c.ReportID, ts, c.By != ""})
 	}
-	if len(findings) <= limit {
-		return
+	var own, others []finding
+	for _, f := range findings {
+		if f.others {
+			others = append(others, f)
+		} else {
+			own = append(own, f)
+		}
 	}
-	sort.Slice(findings, func(i, j int) bool { return findings[i].date.Before(findings[j].date) })
-	for i := 0; i < len(findings)-limit; i++ {
-		DeleteReportChunks(VectorDB, findings[i].reportID)
+	for _, group := range []struct {
+		what  string
+		found []finding
+	}{{"own", own}, {"added by others", others}} {
+		if len(group.found) <= limit {
+			continue
+		}
+		sort.Slice(group.found, func(i, j int) bool { return group.found[i].date.Before(group.found[j].date) })
+		for i := 0; i < len(group.found)-limit; i++ {
+			DeleteReportChunks(VectorDB, group.found[i].reportID)
+		}
+		Log("[orchestrate.knowledge] finding cap evicted %d oldest finding(s) (%s) for %s/%s (limit %d)",
+			len(group.found)-limit, group.what, user, agentID, limit)
 	}
-	Log("[orchestrate.knowledge] finding cap evicted %d oldest finding(s) for %s/%s (limit %d)",
-		len(findings)-limit, user, agentID, limit)
 }
 
 // searchAgentKnowledge returns up to k semantically relevant chunks
@@ -1230,8 +1259,7 @@ func (t *chatTurn) memorySave(args map[string]any) (string, error) {
 	if VectorDB != nil && !semanticDedupRan && t.findingExactDuplicateIn(into, content) {
 		return fmt.Sprintf("Already saved (deduped): this exact finding is already in Memory. Skipping: retrieve it via %s.", memRecallPhrase()), nil
 	}
-	reportID := ingestAgentKnowledge(ctx, t.app.DB, into, t.agent.ID, topic, subject, t.attributedToSpeaker(content))
-	markFindingBy(reportID, by)
+	reportID := ingestAgentFinding(ctx, t.app.DB, into, t.agent.ID, topic, subject, t.attributedToSpeaker(content), by)
 	// A finding about something that happened on a date is dated, so it can
 	// age out of recall hints instead of being offered as news for good.
 	if kind, at := provenance.ClassifyMemKind(content, time.Now()); kind == provenance.MemKindEvent && reportID != "" && VectorDB != nil {

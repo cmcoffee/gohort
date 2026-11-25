@@ -499,3 +499,26 @@ func TestTheOwnerHearsWhenSomeoneReachesTheDailyLimit(t *testing.T) {
 		t.Errorf("a repeat did not fold into the one notice: count=%d", mine[0].Count)
 	}
 }
+
+// A contribution saved at the limit counts as the contributor's from the
+// start: the save marks it before the cap runs, so it never pushes out the
+// owner's oldest finding.
+func TestAContributionAtTheLimitKeepsTheOwnersFindings(t *testing.T) {
+	f := newPoolFixture(t, memoryPoolOn)
+	tdb := &DBase{Store: kvlite.MemStore()}
+	tdb.Set(WebTable, tuneFindingHardCap, float64(2))
+	SetTunablesDB(tdb)
+	t.Cleanup(func() { SetTunablesDB(nil) })
+	f.save(t, "alice", "The backup job needs the share mounted before it starts.")
+	f.save(t, "alice", "The label printer only takes the narrow rolls.")
+	f.save(t, "bob", "The meeting room screen wakes only from its own remote.")
+	own := 0
+	for _, c := range f.chunksIn("alice") {
+		if c.By == "" {
+			own++
+		}
+	}
+	if own < 2 {
+		t.Errorf("a contribution evicted the owner's findings: %d of 2 left", own)
+	}
+}

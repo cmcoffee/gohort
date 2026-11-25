@@ -219,10 +219,12 @@ Left for later slices, found while building 1 and 2:
 
 - **A maintainer's pinned note** still goes to their own copy, as before; the
   table above has it going to the pool's.
-- **The pool is the owner's copy, so it shares that copy's finding cap**
-  (`tune_finding_hard_cap`, default 300), and past it the oldest finding goes,
-  whoever added it. A busy pool can push out the owner's older findings. Not
-  decided: a separate cap for contributions, or a larger one on a pooled agent.
+- **The pool is the owner's copy, so it falls under that copy's finding cap**
+  (`tune_finding_hard_cap`, default 300). Settled 2026-11-25 (0.9.684): what
+  others added is counted apart from the owner's own, each to the same limit,
+  so a busy pool evicts its own oldest contributions and never the owner's
+  findings. A save marks who added a finding before the cap runs, so a new
+  contribution is never counted as the owner's.
 - **Removals are final** until Recently removed exists (slice 3).
 
 ## Settled with the owner (2026-11-23)
