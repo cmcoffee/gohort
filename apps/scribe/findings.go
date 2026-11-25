@@ -203,15 +203,19 @@ func findingOriginLabel(o DocFindingOrigin) string {
 		label = strings.TrimSpace(o.ItemID)
 	}
 	kind := strings.TrimSpace(o.SourceKind)
+	by := ""
+	if who := strings.TrimSpace(o.ReportedBy); who != "" {
+		by = ", reported by " + who
+	}
 	switch {
 	case kind == "" && label == "":
-		return "unattributed"
+		return "unattributed" + by
 	case label == "":
-		return kind
+		return kind + by
 	case kind == "":
-		return label
+		return label + by
 	}
-	return kind + " - " + label
+	return kind + " - " + label + by
 }
 
 // --- digest ---

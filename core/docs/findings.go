@@ -42,6 +42,10 @@ type Origin struct {
 	ItemLabel  string `json:"item_label,omitempty"` // human name at time of observation
 	RunID      string `json:"run_id,omitempty"`     // the investigation/session that produced it
 	Observed   string `json:"observed"`             // RFC3339
+	// ReportedBy is the person whose run reported it, when the finding was
+	// filed into someone else's inbox: a shared agent that pools what it
+	// learns files into its owner's. Empty when it is the inbox's own.
+	ReportedBy string `json:"reported_by,omitempty"`
 }
 
 // Finding is one thing learned, reported for documentation.

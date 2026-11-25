@@ -675,3 +675,39 @@ func TestDeletingTheAgentDropsItsRemovals(t *testing.T) {
 		t.Errorf("%d removal(s) outlived their agent", n)
 	}
 }
+
+// findingsProbe is a Source that records whose inbox the run says findings go to.
+type findingsProbe struct{ to *[]string }
+
+func (findingsProbe) Kind() string                                         { return "testfindings" }
+func (findingsProbe) Label() string                                        { return "Test findings" }
+func (findingsProbe) List(string) []ReferenceItem                          { return nil }
+func (findingsProbe) Fetch(context.Context, string, string, string) string { return "" }
+func (p findingsProbe) ItemToolsWithSession(sess *ToolSession, user, itemID string) []AgentToolDef {
+	if sess != nil {
+		*p.to = append(*p.to, sess.FindingsTo)
+	}
+	return nil
+}
+
+// A run of a pooled agent by someone it is shared with tells its Sources that
+// findings go to the owner, so a guide's report files into the owner's
+// curator. The owner's own run, and any run of an agent that does not pool,
+// say nothing, and the Sources go on as before.
+func TestAPooledRunTellsItsSourcesFindingsGoToTheOwner(t *testing.T) {
+	var to []string
+	RegisterReferenceSource(findingsProbe{to: &to})
+	check := func(pool, user, want string) {
+		t.Helper()
+		f := newPoolFixture(t, pool)
+		f.agent.AttachedSources = []ReferenceSelection{{Kind: "testfindings", ItemID: "g1"}}
+		to = nil
+		f.turn(user).buildAttachedSourceToolDefs(&ToolSession{Username: user, AgentID: f.agent.ID})
+		if len(to) != 1 || to[0] != want {
+			t.Errorf("pool=%s user=%s: findings go to %q, want %q", pool, user, to, want)
+		}
+	}
+	check(memoryPoolOn, "bob", "alice")
+	check(memoryPoolOn, "alice", "")
+	check(memoryPoolOff, "bob", "")
+}
