@@ -1,6 +1,6 @@
 # Apps that feel like gohort's own
 
-Status: **design, not built**. Nothing here changes stored data or needs a
+Status: **items 1, 2 and 6 built (0.9.688)**; 3 to 5 not built. Nothing here changes stored data or needs a
 migration, except the last item, which applies to new apps only.
 
 ## The goal
@@ -162,3 +162,26 @@ default of an existing field for new apps only. **No migration.**
 3. **Should native apps take the server-kept view?** Recommended: later, per
    app, starting with the agents page's tab and sidebar choices, if remembering
    across devices proves wanted.
+
+## As built: items 1, 2 and 6 (0.9.688)
+
+- **The ⚙** shows when the person has a Settings page (`hasSettingsPage`):
+  settings to set, memory the app keeps about them, or they own or maintain
+  it. A saved view alone no longer brings it.
+- **The load-error offer.** The page helper in each isolated frame posts
+  `{gohortApp: "load-error"}` to the page around it on the first uncaught
+  error or rejected promise within 8 seconds of the frame's load, once. The
+  app's page, for a person with a saved view, carries `viewTroubleJS`, which
+  accepts the message only from one of its own frames and shows, once, below
+  the header: "This page hit an error while loading..." with Reset your view,
+  linking to the confirmation page. A page that sends the message falsely
+  can show the offer and nothing more.
+- **Reset view on the Settings page** moved to the foot, as "Trouble with this
+  page?", and no longer hides "Nothing to set". Someone with no Settings page
+  reaches it by its address.
+- **Open question 1, as built:** "Report a problem" tells someone with a saved
+  view that resetting it may fix a stuck page, with the link. Owners and
+  maintainers always have a Settings page.
+- **Anvil's assistant** is told the bar holds the app's name, its gear and
+  the link to change it, and that Reset view is the framework's, offered on a
+  load error and at the foot of the settings.

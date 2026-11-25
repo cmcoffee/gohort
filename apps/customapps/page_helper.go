@@ -36,9 +36,12 @@ const PageAPI = apppage.API
 //
 // An error the page does not catch is told to the app's run record
 // (problems.go), a few per load and each once, so whoever fixes the app
-// reads what broke in someone's browser.
+// reads what broke in someone's browser. One in the first seconds of the
+// frame's load is also told to the page around it, which offers the person
+// Reset view when they have one (viewTroubleJS).
 const appPageHelper = `<script>(function(){if(window.app)return;
-(function(){var n=0,seen={};function tell(m,w){m=String(m||"").slice(0,500);if(!m||m==="Script error."||n>=5)return;var k=m+"|"+(w||"");if(seen[k])return;seen[k]=1;n++;try{fetch("problem",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({error:m,where:String(w||"").slice(0,200)})}).catch(function(){});}catch(x){}}
+(function(){var n=0,seen={},t0=Date.now(),said=false;function loading(){if(said||Date.now()-t0>8000)return;said=true;try{parent.postMessage({gohortApp:"load-error"},"*");}catch(x){}}
+function tell(m,w){m=String(m||"").slice(0,500);if(m)loading();if(!m||m==="Script error."||n>=5)return;var k=m+"|"+(w||"");if(seen[k])return;seen[k]=1;n++;try{fetch("problem",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({error:m,where:String(w||"").slice(0,200)})}).catch(function(){});}catch(x){}}
 if(!window.addEventListener)return;
 window.addEventListener("error",function(e){if(!e||(e.target&&e.target!==window))return;tell(e.message||(e.error&&e.error.message),e.lineno?"line "+e.lineno+(e.colno?":"+e.colno:""):"");});
 window.addEventListener("unhandledrejection",function(e){var r=e&&e.reason;tell("unhandled promise rejection: "+((r&&r.message)||r),"");});})();

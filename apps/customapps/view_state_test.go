@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -107,10 +110,12 @@ func TestThePageCarriesTheSavedView(t *testing.T) {
 	}
 }
 
-// Reset view and Recent runs are behind the ⚙, not in the header: someone the
-// app is shared with gets the ⚙ once they have a view to reset, though they
-// have nothing else there, and only the owner is offered the runs.
-func TestResetViewAndRecentRunsAreBehindTheGear(t *testing.T) {
+// The ⚙ is for settings: a saved view alone does not bring it, as a native
+// app's remembered tab brings nothing. Someone the app is shared with who has
+// a saved view gets the load-error offer on the page instead, and Reset view
+// stays at the foot of the Settings page, by its address. Only the owner is
+// offered the runs.
+func TestTheGearIsForSettingsAndResetViewIsQuiet(t *testing.T) {
 	T := sharingTestApp(t)
 	spec := AppSpec{Slug: "prep", Name: "Prep", Owner: "alice", RecordKey: "id",
 		Page: json.RawMessage(`{"title":"Prep","sections":[]}`)}
@@ -129,13 +134,69 @@ func TestResetViewAndRecentRunsAreBehindTheGear(t *testing.T) {
 	if c := appAs(t, T, spec, "bob", httptest.NewRequest(http.MethodPost, "/apps/prep/view-state", strings.NewReader(`{"set":{"tab":"logs"}}`))).Code; c != 204 {
 		t.Fatalf("bob's view: %d", c)
 	}
-	if p := page("bob"); !strings.Contains(p, "Settings...") || strings.Contains(p, "Reset view") {
-		t.Errorf("bob with a saved view: gear %v, Reset view in the header %v", strings.Contains(p, "Settings..."), strings.Contains(p, "Reset view"))
+	p := page("bob")
+	if strings.Contains(p, "Settings...") {
+		t.Error("a saved view brought bob a gear with nothing to set behind it")
 	}
-	if s := settings("bob"); !strings.Contains(s, "Reset view") || !strings.Contains(s, "/prep/_view/reset") || strings.Contains(s, "Recent runs") {
-		t.Errorf("bob's settings: Reset view %v, Recent runs %v", strings.Contains(s, "Reset view"), strings.Contains(s, "Recent runs"))
+	if !strings.Contains(p, "gohortAppViewReset") || !strings.Contains(p, "/apps/prep/_view/reset") {
+		t.Error("bob's page does not offer Reset view when it fails to load")
 	}
-	if s := settings("alice"); !strings.Contains(s, "Recent runs") || !strings.Contains(s, "/prep/_runs") || strings.Contains(s, "Reset view") {
-		t.Errorf("alice's settings: Recent runs %v, Reset view (she has no saved view) %v", strings.Contains(s, "Recent runs"), strings.Contains(s, "Reset view"))
+	if strings.Contains(page("alice"), "gohortAppViewReset") {
+		t.Error("the offer is on a page with no saved view to reset")
+	}
+	s := settings("bob")
+	if !strings.Contains(s, "Reset your view") || !strings.Contains(s, "/prep/_view/reset") || strings.Contains(s, "Recent runs") {
+		t.Errorf("bob's settings: Reset view %v, Recent runs %v", strings.Contains(s, "Reset your view"), strings.Contains(s, "Recent runs"))
+	}
+	if !strings.Contains(s, "Nothing to set") || strings.Index(s, "Nothing to set") > strings.Index(s, "Trouble with this page?") {
+		t.Error("bob's settings should say there is nothing to set, with Reset view after it")
+	}
+	if s := settings("alice"); !strings.Contains(s, "Recent runs") || !strings.Contains(s, "/prep/_runs") || strings.Contains(s, "Reset your view") {
+		t.Errorf("alice's settings: Recent runs %v, Reset view (she has no saved view) %v", strings.Contains(s, "Recent runs"), strings.Contains(s, "Reset your view"))
+	}
+}
+
+// The page around the frames offers Reset view, once, below the header, when
+// one of its own frames says the page failed to load; a message from anywhere
+// else is ignored.
+func TestThePageOffersResetViewWhenAFrameFailsToLoad(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed")
+	}
+	js := strings.TrimSuffix(strings.TrimPrefix(viewTroubleJS("/apps/prep/_view/reset"), "<script>"), "</script>")
+	harness := `
+function node(tag) { return {tag: tag, kids: [], style: {}, attrs: {}, setAttribute: function(k, v) { this.attrs[k] = v; },
+  appendChild: function(c) { this.kids.push(c); }}; }
+var frameWin = {}, strangerWin = {}, inserted = [];
+var header = node("div");
+header.parentNode = {insertBefore: function(c, after) { inserted.push(c); }};
+var document = {
+  createElement: node,
+  getElementsByTagName: function() { return [{contentWindow: frameWin}]; },
+  querySelector: function() { return header; },
+};
+var on = {};
+var window = {addEventListener: function(k, fn) { on[k] = fn; }};
+` + js + `
+on.message({source: strangerWin, data: {gohortApp: "load-error"}});
+var afterStranger = inserted.length;
+on.message({source: frameWin, data: {other: 1}});
+on.message({source: frameWin, data: {gohortApp: "load-error"}});
+on.message({source: frameWin, data: {gohortApp: "load-error"}});
+var bar = inserted[0], link = bar && bar.kids[1];
+console.log(JSON.stringify({stranger: afterStranger, shown: inserted.length, href: link && link.href, label: link && link.textContent, report: window.gohortAppViewReset}));
+`
+	f := filepath.Join(t.TempDir(), "v.js")
+	if err := os.WriteFile(f, []byte(harness), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := exec.Command(node, f).CombinedOutput()
+	if err != nil {
+		t.Fatalf("node: %v\n%s", err, b)
+	}
+	want := `{"stranger":0,"shown":1,"href":"/apps/prep/_view/reset","label":"Reset your view","report":"/apps/prep/_view/reset"}`
+	if got := strings.TrimSpace(string(b)); got != want {
+		t.Errorf("got  %s\nwant %s", got, want)
 	}
 }
