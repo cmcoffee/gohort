@@ -20,6 +20,12 @@
 // The ITEM is one of the person's own guides. A guide someone else shared is
 // not offered: a finding is filed into the reporter's own inbox, and the
 // curator edits the reporter's own guides.
+//
+// One exception, the report tool alone: someone using a shared agent that
+// pools what it learns (ToolSession.FindingsTo) reports into its owner's
+// guide, filed in the owner's inbox and marked with who reported it. The
+// owner's curator still decides whether it belongs. They get no read of the
+// owner's guide.
 
 package scribe
 
@@ -135,6 +141,12 @@ func (s guideSource) ItemTools(user, itemID string) []AgentToolDef {
 // for a source with a tool that writes), so the report tool is listed, and it
 // refuses if it is ever called that way.
 func (s guideSource) ItemToolsWithSession(sess *ToolSession, user, itemID string) []AgentToolDef {
+	// reportedBy is set when this run reports into someone else's guide: the
+	// owner of a pooled agent, whose guide it is. user becomes that owner.
+	reportedBy := ""
+	if sess != nil && strings.TrimSpace(sess.FindingsTo) != "" && sess.FindingsTo != user {
+		user, reportedBy = sess.FindingsTo, user
+	}
 	g, ok := s.guide(user, itemID)
 	if !ok {
 		return nil
@@ -193,6 +205,9 @@ func (s guideSource) ItemToolsWithSession(sess *ToolSession, user, itemID string
 			},
 		},
 	}
+	if reportedBy != "" {
+		tools = nil
+	}
 	var agentID, sessionID string
 	if sess != nil {
 		if strings.TrimSpace(sess.AgentID) == "" {
@@ -236,6 +251,7 @@ func (s guideSource) ItemToolsWithSession(sess *ToolSession, user, itemID string
 					ItemLabel:  s.agentName(user, agentID),
 					RunID:      sessionID,
 					Observed:   time.Now().UTC().Format(time.RFC3339),
+					ReportedBy: reportedBy,
 				},
 			})
 			if err != nil {

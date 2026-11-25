@@ -427,6 +427,13 @@ type ToolSession struct {
 	// owner's. A file store that gives each person their own folder reaches
 	// theirs. Empty on an ordinary run, where Username is that person.
 	StorePerson string
+	// FindingsTo is whose inbox a finding reported in this run is filed into,
+	// when that is not Username: someone using a shared agent that pools what
+	// it learns into its owner's. A source that takes findings files them for
+	// this person and records Username as who reported them. It lends that
+	// and nothing else: no read of this person's sources. Empty on an
+	// ordinary run.
+	FindingsTo string
 
 	// ChatSessionID identifies the chat session this tool call is running
 	// within (chat app only). Used by tools that need to schedule recurring

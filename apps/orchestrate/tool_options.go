@@ -422,6 +422,11 @@ func (t *chatTurn) buildAttachedSourceToolDefs(sess *ToolSession) []AgentToolDef
 	if t == nil || len(t.agent.AttachedSources) == 0 {
 		return nil
 	}
+	// On a pooled agent, what this run reports to a Source that takes
+	// findings goes to the owner's, as its findings go to the owner's copy.
+	if sess != nil {
+		sess.FindingsTo = t.poolOwner()
+	}
 	return attachedSourceToolDefs(sess, t.user, t.agent, &sourceToolNotes{empty: func(kind, item string) {
 		// A BREADCRUMB, not just a server log. The attachment is a
 		// frozen {kind, item_id}; when that id stops resolving — the

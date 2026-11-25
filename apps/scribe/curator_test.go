@@ -256,6 +256,7 @@ func TestFindingOriginLabel(t *testing.T) {
 		{DocFindingOrigin{ItemLabel: "somewhere"}, "somewhere"},
 		{DocFindingOrigin{SourceKind: "system"}, "system"},
 		{DocFindingOrigin{}, "unattributed"},
+		{DocFindingOrigin{SourceKind: "agent", ItemLabel: "Triage", ReportedBy: "bob"}, "agent - Triage, reported by bob"},
 	}
 	for _, c := range cases {
 		if got := findingOriginLabel(c.in); got != c.want {

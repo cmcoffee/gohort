@@ -305,3 +305,26 @@ The owner went with the recommendations:
 - **A restore does not run the finding cap.** Restored chunks keep their
   dates, so the next save's cap may evict them if they are the oldest past
   the limit.
+
+## As built: slice 5 (0.9.686)
+
+- **The run says where findings go.** `ToolSession.FindingsTo` (a new field
+  on an existing core type, so no new export) is set to the owner on a run of
+  a pooled agent by someone it is shared with, and left empty on the owner's
+  own run, on an agent that does not pool, in a clean room and for a person
+  outside gohort (the same `poolOwner` that decides where findings go).
+- **The guide decides what it lends.** Given `FindingsTo`, the guide Source
+  builds its report tool against the owner's guide, files into the owner's
+  Guide Curator inbox, and records `ReportedBy`. It hands over the report
+  tool alone: no read or search of the owner's guide, which was never
+  offered to recipients and still is not. The attachment's "Can make
+  changes" switch still decides whether the report tool reaches the agent.
+- **`DocFindingOrigin.ReportedBy`** (additive, `omitempty`) shows as
+  ", reported by bob" wherever a finding's origin is named: the digest, the
+  queue and the curator's own prompt, so the curator weighs who reported it.
+- **The daily cap does not count guide reports.** They do not enter the
+  pool; they wait in the curator's inbox, which has its own queue cap and
+  the curator's judgement.
+- **Left open:** whether a pooled agent's recipients should also read the
+  owner's guide. Today they report into it blind, and the curator drops what
+  the guide already says.

@@ -211,3 +211,37 @@ func TestCurateOnReportIsSetInTheEditDialog(t *testing.T) {
 		t.Errorf("the dialog is not told it is on: %s", w.Body.String())
 	}
 }
+
+// Someone using a shared agent that pools what it learns reports into its
+// owner's guide: the finding is filed in the owner's inbox, saying who
+// reported it, and the curator is told. They get the report tool and nothing
+// that reads the owner's guide. Without the pool, they get nothing for it.
+func TestAPooledAgentsRecipientReportsIntoTheOwnersGuide(t *testing.T) {
+	src, udb, g := guideSourceFixture(t)
+	if tools := src.ItemToolsWithSession(&ToolSession{Username: "bob", AgentID: "a-triage"}, "bob", g.ID); len(tools) != 0 {
+		t.Fatalf("a recipient of an agent that does not pool got %d tools for the owner's guide", len(tools))
+	}
+	sess := &ToolSession{Username: "bob", AgentID: "a-triage", ChatSessionID: "chat-b", FindingsTo: "u"}
+	tools := toolsByName(src.ItemToolsWithSession(sess, "bob", g.ID))
+	report, ok := tools["report_to_dump_triage_guide"]
+	if !ok || len(tools) != 1 {
+		t.Fatalf("a pooled recipient should get the report tool alone, got %v", tools)
+	}
+	if _, err := report.Handler(context.Background(), map[string]any{"topic": "Empty dumps", "finding": "Restart the collector."}); err != nil {
+		t.Fatal(err)
+	}
+	pending := listPendingFindings(udb)
+	if len(pending) != 1 {
+		t.Fatalf("the owner's inbox has %d findings, want 1", len(pending))
+	}
+	f := pending[0]
+	if f.Submitter != "u" || f.Origin.ReportedBy != "bob" || f.Origin.RunID != "chat-b" || f.Document != g.ID {
+		t.Errorf("finding = %+v", f)
+	}
+	if n := len(listPendingFindings(UserDB(src.app.DB, "bob"))); n != 0 {
+		t.Errorf("the recipient's own inbox got %d findings", n)
+	}
+	if p := curatorBatchPrompt(udb, pending); !strings.Contains(p, "reported by bob") {
+		t.Errorf("the curator is not told who reported it:\n%s", p)
+	}
+}
