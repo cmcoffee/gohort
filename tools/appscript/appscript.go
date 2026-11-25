@@ -73,6 +73,9 @@ type Job struct {
 	// OnLog hears each gohort.log the script makes (level, message), which
 	// otherwise reaches only the server log: a check hands it to the author.
 	OnLog func(level, msg string)
+	// OnNotify hears that the run sent the person a notice of its own
+	// (gohort.notify), so the host does not send a second when it ends.
+	OnNotify func()
 	// Check marks a run made by an app check (docs/design/app-checks.md):
 	// it reads, and changes nothing outside the run. Every outbound write is
 	// refused (ToolSession.CheckRun), and so are the calls whose effects a
@@ -300,7 +303,7 @@ func (j Job) Run() (string, error) {
 	bindModel(sess)
 	storeFuncs(sess, j.storeApp())
 	if kind == "action" {
-		sess.Notify = notifier(caller, user, slug)
+		sess.Notify = notifier(caller, user, slug, j.OnNotify)
 	}
 	sess.ScriptLog = j.OnLog
 	if j.Check {

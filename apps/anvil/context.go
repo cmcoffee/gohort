@@ -62,7 +62,7 @@ func (T *Anvil) projectContext(p Project, base string) string {
 		fmt.Fprintf(&b, "The files of the owner's app %s. Your changes reach nobody until the owner installs them.\n", p.AppSlug)
 		// The page's whole backend is window.app. Unsaid, the agent searched
 		// the web for it and guessed a call that does not exist.
-		b.WriteString("Its page reaches its backend only through window.app, which offers exactly these calls (nothing else exists, so never search for more):\n\n" + customapps.PageAPI + "\n\n" +
+		b.WriteString("Its page reaches its backend only through window.app, which offers exactly these calls (nothing else exists, so never search for more):\n\n" + customapps.PageAPI + "\n\n" + customapps.PageWork + "\n\n" +
 			"localStorage in the page is already the person's own, kept on the server for each person and app, so it follows them to every device: use it for where they were (a tab, a filter, recent picks), and records for the app's data.\n")
 		// Unsaid, asked about Reset view, the assistant took it for the app's
 		// own and wrote code that emptied the person's stored records
@@ -88,7 +88,7 @@ func (T *Anvil) projectContext(p Project, base string) string {
 	// assistant has no way to know the folder is a gohort app, what its page
 	// may call, or how it gets installed.
 	if p.Kind == KindClone && p.Source != sourceApp && holdsAppFolder(base) {
-		b.WriteString("It holds a gohort app's folder (app.json at its top). It becomes one of the owner's apps only when they press Install as a new app (on this project's bar, or in its Project menu), through the checks every install runs; there is no install command to find. Its page reaches its backend only through window.app, which offers exactly these calls:\n\n" + customapps.PageAPI + "\n\napp_guide says how the rest of the folder is built (app.json, its scripts, checks.json): read it before writing them. app_checks says whether it would install and runs its checks; it also runs as your turn ends, and a refusal comes back to you to fix.\n")
+		b.WriteString("It holds a gohort app's folder (app.json at its top). It becomes one of the owner's apps only when they press Install as a new app (on this project's bar, or in its Project menu), through the checks every install runs; there is no install command to find. Its page reaches its backend only through window.app, which offers exactly these calls:\n\n" + customapps.PageAPI + "\n\n" + customapps.PageWork + "\n\napp_guide says how the rest of the folder is built (app.json, its scripts, checks.json): read it before writing them. app_checks says whether it would install and runs its checks; it also runs as your turn ends, and a refusal comes back to you to fix.\n")
 	}
 	// Searches leave the deployment, and nothing else tells the agent that
 	// this work is not public (searchPrivateTerms is what they are checked

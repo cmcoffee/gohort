@@ -228,9 +228,11 @@ ran on the page's own request. In order:
 1. **The page finds its work again** (built 0.9.690).
 2. **An ask is a job** (built 0.9.690).
 3. **A notice when work ends with nobody watching**, linking back to the
-   app; an app that sends its own (`gohort.notify`) is not sent a second.
+   app; an app that sends its own (`gohort.notify`) is not sent a second
+   (built 0.9.691).
 4. **Chained work on the server**: Builder and Anvil put steps in one
-   action, and an app check warns when a page chains actions itself.
+   action, and an app check warns when a page chains actions itself
+   (built 0.9.691).
 
 None of it changes stored data: running and ended jobs stay in memory for
 30 minutes, as actions' already did.
@@ -255,3 +257,27 @@ None of it changes stored data: running and ended jobs stay in memory for
   live pill, and an answer that fails is still filed as a page problem,
   decided while the request was open.
 - **Co-author proposals** (`propose`) still run in the request.
+
+### As built: 3 and 4 (0.9.691)
+
+- **Watching.** A job counts as watched while a request waits on it, and
+  for ten seconds after a page last asked how it was going (`work/<job>`,
+  `action-progress/<name>`); a following page asks every two seconds.
+- **The notice.** A job started from the page (`appWork.Tell`: a button's
+  action or an ask; not an app's agent running an action, which waits on
+  it, and not a check's run) that ends unwatched files a notice through
+  `appscript.TellPerson`, the same path `gohort.notify` takes: in the
+  person's notifications, forwarded as they asked when it is the first of
+  its title, a repeat folded into a count. "Extract finished" with the
+  action's message, "Extract failed" with why, "Your answer from Notes is
+  ready" without the answer in it (a notice can be forwarded by email or
+  to a phone). None when the run sent its own (`Job.OnNotify`), and none
+  when the person stopped it.
+- **Builder and Anvil** are told once, in `apppage.Work`, carried by
+  Builder's page help, the folder guide and Anvil's context: work keeps
+  going when the page closes, so call `app.work()` on load and follow what
+  runs, and do work of several steps in one action script.
+- **Verify's code check** adds two notes, not failures: a page that starts
+  actions or asks and never calls `app.work()`, and one that runs actions
+  one after another itself (a `.then`, two awaits close together, an await
+  in a loop), read from the source with its strings masked.

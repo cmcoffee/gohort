@@ -40,6 +40,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -1775,16 +1776,30 @@ func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, owner,
 	if what == "" {
 		what = act.Name
 	}
-	job, _ := startOrJoinJob(actionJobKey(owner, spec.Slug, uid, name), name, string(inputs), appWork{UID: uid, Slug: spec.Slug, AppName: spec.Name, What: what, Kind: "action"}, func(ctx context.Context, progress func(string)) (actionOutcome, error) {
-		return runActionAndPersist(owner, ownerDB, udb, spec, action, args, uid, scriptRun{Interactive: true, Long: true, Ctx: ctx, OnProgress: progress, Check: isCheck})
+	// Started from the page, so the person hears how it went if they leave
+	// before it ends; a check's run tells nobody.
+	told := new(atomic.Bool)
+	info := appWork{UID: uid, Slug: spec.Slug, AppName: spec.Name, What: what, Kind: "action", Owner: owner, Tell: !isCheck, Told: told}
+	job, _ := startOrJoinJob(actionJobKey(owner, spec.Slug, uid, name), name, string(inputs), info, func(ctx context.Context, progress func(string)) (actionOutcome, error) {
+		return runActionAndPersist(owner, ownerDB, udb, spec, action, args, uid, scriptRun{Interactive: true, Long: true, Ctx: ctx, OnProgress: progress, OnNotify: func() { told.Store(true) }, Check: isCheck})
 	})
+	left := false
+	job.waitFor(func() {
+		select {
+		case <-job.done:
+		case <-time.After(actionInlineWait):
+		case <-r.Context().Done():
+			left = true // the person left; the job carries on and keeps its outcome
+		}
+	})
+	if left {
+		return
+	}
 	select {
 	case <-job.done:
-	case <-time.After(actionInlineWait):
+	default:
 		jsonapi.Write(w, job.status())
 		return
-	case <-r.Context().Done():
-		return // the person left; the job carries on and keeps its outcome
 	}
 	job.mu.Lock()
 	res, err := job.res, job.err
@@ -1809,6 +1824,8 @@ type scriptRun struct {
 	Long        bool
 	Ctx         context.Context
 	OnProgress  func(string)
+	// OnNotify hears that the run sent the person a notice of its own.
+	OnNotify func()
 	// Check holds the run to a check's rules (a page check's request).
 	Check bool
 }
@@ -1843,7 +1860,7 @@ func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act 
 		args["shared"] = sharedInput(ownerDB, spec)
 	}
 	j := appscript.Job{Owner: owner, DB: ownerDB, Slug: spec.Slug, Kind: "action", Name: act.Name, Language: act.Language, Script: act.Script, Caps: act.Capabilities, Args: args, Caller: by, Libs: spec.Libraries,
-		Interactive: how.Interactive, Long: how.Long, Ctx: how.Ctx, OnProgress: how.OnProgress, Check: how.Check}
+		Interactive: how.Interactive, Long: how.Long, Ctx: how.Ctx, OnProgress: how.OnProgress, OnNotify: how.OnNotify, Check: how.Check}
 	// The record takes the run's whole ending: a reply the host refuses is
 	// as much the action failing as the script exiting badly.
 	trace := appscript.Track(&j)

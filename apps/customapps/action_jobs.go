@@ -23,10 +23,12 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/tools/appscript"
 )
 
 // actionInlineWait is how long a request waits for its action before answering
@@ -42,6 +44,12 @@ const actionOutcomeKept = 30 * time.Minute
 // agent").
 type appWork struct {
 	UID, Slug, AppName, What, Kind string
+	// Owner is the app's owner, and Tell asks for a notice to UID when the
+	// work ends with nobody watching it (tellIfUnwatched). Told is set when
+	// the run sent one of its own, so a second is not sent.
+	Owner string
+	Tell  bool
+	Told  *atomic.Bool
 }
 
 // actionJob is one run of one action (or one ask) for one person.
@@ -56,6 +64,8 @@ type actionJob struct {
 	started time.Time
 
 	mu       sync.Mutex
+	watchers int       // requests waiting on it now
+	seen     time.Time // when a page last asked how it was going
 	progress string
 	res      actionOutcome
 	err      error
@@ -147,14 +157,75 @@ func startOrJoinJob(key, name, inputs string, info appWork, work func(ctx contex
 		defer close(j.done)
 		defer cancel()
 		res, err := work(ctx, j.setProgress)
-		if err == nil && ctx.Err() != nil {
+		// Only Stop cancels a job's context: the person ended it themselves.
+		stopped := ctx.Err() != nil
+		if err == nil && stopped {
 			err = Error("stopped")
 		}
 		j.mu.Lock()
 		j.res, j.err, j.ended = res, err, time.Now()
+		unwatched := j.watchers == 0 && time.Since(j.seen) > unwatchedAfter
 		j.mu.Unlock()
+		if unwatched && !stopped {
+			j.tellIfUnwatched()
+		}
 	}()
 	return j, false
+}
+
+// unwatchedAfter is how long since a page last asked about a job before it
+// counts as nobody watching: a following page asks every two seconds.
+var unwatchedAfter = 10 * time.Second
+
+// waitFor counts a request waiting on the job as watching it while fn runs.
+func (j *actionJob) waitFor(fn func()) {
+	j.mu.Lock()
+	j.watchers++
+	j.mu.Unlock()
+	defer func() {
+		j.mu.Lock()
+		j.watchers--
+		j.seen = time.Now()
+		j.mu.Unlock()
+	}()
+	fn()
+}
+
+// markSeen records that a page asked how the job is going.
+func (j *actionJob) markSeen() {
+	j.mu.Lock()
+	j.seen = time.Now()
+	j.mu.Unlock()
+}
+
+// tellIfUnwatched tells the person their work has ended, when it was started
+// from the app's page and ended with nobody watching it, as a native app's
+// run does: they left, and should hear how it went without going back to
+// look. Not when the run told them itself; a job they stopped is not asked.
+func (j *actionJob) tellIfUnwatched() {
+	w := j.work
+	if !w.Tell || (w.Told != nil && w.Told.Load()) {
+		return
+	}
+	j.mu.Lock()
+	res, err := j.res, j.err
+	j.mu.Unlock()
+	app := strings.TrimSpace(w.AppName)
+	if app == "" {
+		app = w.Slug
+	}
+	var title, body string
+	switch {
+	case w.Kind == "ask" && err == nil:
+		title, body = "Your answer from "+app+" is ready", "Open the app to read it."
+	case w.Kind == "ask":
+		title, body = app+" could not answer", err.Error()
+	case err == nil:
+		title, body = w.What+" finished", res.Message
+	default:
+		title, body = w.What+" failed", err.Error()
+	}
+	appscript.TellPerson(w.UID, w.Owner, w.Slug, title, body)
 }
 
 // trackWork records work that runs in the request rather than as a job of its
@@ -267,6 +338,7 @@ func (T *CustomApps) actionProgress(a *appCall) (any, error) {
 	if j == nil {
 		return map[string]any{}, nil
 	}
+	j.markSeen()
 	return j.status(), nil
 }
 
@@ -321,5 +393,6 @@ func (T *CustomApps) appWorkStatus(a *appCall) (any, error) {
 	if j == nil || !strings.HasPrefix(j.key, appWorkPrefix(a.owner, a.spec.Slug, a.User)) {
 		return map[string]any{}, nil
 	}
+	j.markSeen()
 	return j.workRow(), nil
 }

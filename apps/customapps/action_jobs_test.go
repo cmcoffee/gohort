@@ -10,6 +10,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/notices"
 	"github.com/cmcoffee/gohort/tools/appscript"
 )
 
@@ -342,4 +343,103 @@ func freshJobs(t *testing.T) {
 		actionJobs.byID, actionJobs.byKey = byID, byKey
 		actionJobs.Unlock()
 	})
+}
+
+// Work started from the page that ends with nobody watching tells the person
+// how it went, as a native app's run does; work a page was following, work
+// the run told them about itself, and work they stopped, do not.
+func TestWorkThatEndsWhileNobodyWatchesTellsThePerson(t *testing.T) {
+	freshJobs(t)
+	T := sharingTestApp(t)
+	spec := AppSpec{Slug: "prep", Name: "Case prep", Owner: "alice", RecordKey: "id",
+		Actions: []AppAction{{Name: "extract", Label: "Extract", Script: "x"}, {Name: "own", Label: "Own notice", Script: "x"},
+			{Name: "watched", Label: "Watched", Script: "x"}, {Name: "stop", Label: "Stopped", Script: "x"},
+			{Name: "quick", Label: "Quick", Script: "x"}}}
+	SaveAppSpec(spec)
+	prevWait, prevAfter := actionInlineWait, unwatchedAfter
+	actionInlineWait, unwatchedAfter = 30*time.Millisecond, 200*time.Millisecond
+	t.Cleanup(func() { actionInlineWait, unwatchedAfter = prevWait, prevAfter })
+	prev := runAppScript
+	t.Cleanup(func() { runAppScript = prev })
+	gates := map[string]chan struct{}{"extract": make(chan struct{}), "own": make(chan struct{}), "watched": make(chan struct{}), "stop": make(chan struct{})}
+	runAppScript = func(j appscript.Job) (string, error) {
+		if j.Name == "quick" {
+			return `{"message":"done at once"}`, nil
+		}
+		select {
+		case <-gates[j.Name]:
+		case <-j.Ctx.Done():
+			return "", j.Ctx.Err()
+		}
+		if j.Name == "own" && j.OnNotify != nil {
+			j.OnNotify()
+		}
+		return `{"message":"CASE-1 extracted"}`, nil
+	}
+	start := func(name string) string {
+		w := httptest.NewRecorder()
+		T.handleAction(w, httptest.NewRequest(http.MethodPost, "/apps/prep/action/"+name, nil), "alice", "alice", T.recordBase(spec, "alice"), spec, name)
+		var out map[string]any
+		json.Unmarshal(w.Body.Bytes(), &out)
+		id, _ := out["job"].(string)
+		if id == "" {
+			t.Fatalf("%s did not run as a job: %s", name, w.Body.String())
+		}
+		return id
+	}
+	ended := func(job string) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			actionJobs.Lock()
+			j := actionJobs.byID[job]
+			actionJobs.Unlock()
+			j.mu.Lock()
+			done := !j.ended.IsZero()
+			j.mu.Unlock()
+			if done {
+				time.Sleep(20 * time.Millisecond)
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatal("the job did not end")
+	}
+	titles := func() []string {
+		var out []string
+		for _, n := range notices.List(RootDB, "alice") {
+			out = append(out, n.Title)
+		}
+		return out
+	}
+
+	// One that answers while the page waits for it: watched the whole time.
+	w := httptest.NewRecorder()
+	T.handleAction(w, httptest.NewRequest(http.MethodPost, "/apps/prep/action/quick", nil), "alice", "alice", T.recordBase(spec, "alice"), spec, "quick")
+	if !strings.Contains(w.Body.String(), "done at once") {
+		t.Fatalf("the quick action: %s", w.Body.String())
+	}
+	start("extract")
+	start("own")
+	watched := start("watched")
+	stopped := start("stop")
+	time.Sleep(250 * time.Millisecond) // past unwatchedAfter: everyone has left
+	close(gates["extract"])
+	close(gates["own"])
+	appAs(t, T, spec, "alice", httptest.NewRequest(http.MethodPost, "/apps/prep/action-cancel/stop?job="+stopped, nil))
+	ended(stopped)
+	// A page follows the last one until it ends.
+	appAs(t, T, spec, "alice", httptest.NewRequest(http.MethodGet, "/apps/prep/work/"+watched, nil))
+	close(gates["watched"])
+	for i := 0; i < 100 && !strings.Contains(appAs(t, T, spec, "alice", httptest.NewRequest(http.MethodGet, "/apps/prep/work/"+watched, nil)).Body.String(), `"done":true`); i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond)
+	got := strings.Join(titles(), " | ")
+	if got != "Extract finished" {
+		t.Errorf("notices: %q, want only the unwatched one's", got)
+	}
+	if ns := notices.List(RootDB, "alice"); len(ns) == 1 && !strings.Contains(ns[0].Body, "CASE-1 extracted") {
+		t.Errorf("the notice does not say how it went: %q", ns[0].Body)
+	}
 }

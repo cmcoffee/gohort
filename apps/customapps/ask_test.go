@@ -11,6 +11,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/notices"
 	"github.com/cmcoffee/gohort/tools/appscript"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
@@ -216,4 +217,38 @@ func TestAnAskKeepsGoingWhenThePageIsGone(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("the ask did not end")
+}
+
+// An answer that arrives with nobody watching tells the person it is ready,
+// without putting the answer in the notice.
+func TestAnAnswerThatArrivesWhileNobodyWatchesSaysSo(t *testing.T) {
+	freshJobs(t)
+	T := sharingTestApp(t)
+	spec := AppSpec{Slug: "notes", Name: "Notes", Owner: "alice", RecordKey: "id", AgentID: "npc"}
+	SaveAppSpec(spec)
+	prevWait, prevAfter := actionInlineWait, unwatchedAfter
+	actionInlineWait, unwatchedAfter = 30*time.Millisecond, 50*time.Millisecond
+	t.Cleanup(func() { actionInlineWait, unwatchedAfter = prevWait, prevAfter })
+	prev := appAgentAsk
+	t.Cleanup(func() { appAgentAsk = prev })
+	release := make(chan struct{})
+	appAgentAsk = func(ctx context.Context, owner, user, agentID, prompt string, jsonMode bool) (string, float64, error) {
+		<-release
+		return "a private answer", 0, nil
+	}
+	w := httptest.NewRecorder()
+	T.handleAsk(w, httptest.NewRequest(http.MethodPost, "/apps/notes/ask", strings.NewReader(`{"prompt":"why"}`)), &DBase{Store: kvlite.MemStore()}, "alice", "bob", spec)
+	time.Sleep(100 * time.Millisecond) // bob has gone
+	close(release)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if ns := notices.List(RootDB, "bob"); len(ns) > 0 {
+			if ns[0].Title != "Your answer from Notes is ready" || strings.Contains(ns[0].Body, "a private answer") {
+				t.Errorf("the notice: %q %q", ns[0].Title, ns[0].Body)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("bob was not told his answer was ready")
 }
