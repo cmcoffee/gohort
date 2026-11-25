@@ -63,11 +63,10 @@ func (T *Anvil) projectContext(p Project, base string) string {
 		// The page's whole backend is window.app. Unsaid, the agent searched
 		// the web for it and guessed a call that does not exist.
 		b.WriteString("Its page reaches its backend only through window.app, which offers exactly these calls (nothing else exists, so never search for more):\n\n" + customapps.PageAPI + "\n\n" + customapps.PageWork + "\n\n" +
-			"localStorage in the page is already the person's own, kept on the server for each person and app, so it follows them to every device: use it for where they were (a tab, a filter, recent picks), and records for the app's data.\n")
-		// Unsaid, asked about Reset view, the assistant took it for the app's
-		// own and wrote code that emptied the person's stored records
-		// whenever their view looked reset.
-		b.WriteString("The bar above the page (the app's name, its settings gear, the link to change it) is the framework's, not the app's: nothing in these files draws it or can remove it. So is Reset view, which the framework offers when the page hits an error while loading, and keeps at the foot of the app's settings: it clears where the person was in the app (its localStorage) and nothing else. When asked to change something there, say it is the framework's rather than working around it in the page.\n")
+			"Every open of the app is a fresh run, a reload included: localStorage lasts one visit. To let a person carry on where they left off, save it with app.state.set and read it on load with app.state.get (kept for each person, on every device), and offer it rather than restoring it unasked; the app's data goes in records.\n")
+		// Unsaid, asked about the framework's own controls, an assistant took
+		// one for the app's and wrote code around it.
+		b.WriteString("The bar above the page (the app's name, its settings gear, the link to change it) is the framework's, not the app's: nothing in these files draws it or can remove it. The settings page's Clear for what the app saved is the framework's too: it clears app.state and nothing else. When asked to change something there, say it is the framework's rather than working around it in the page.\n")
 		// Unsaid, one assistant wrote its own runner for checks.json and
 		// another spent its turn looking for an install command.
 		b.WriteString("app_guide says how the folder is built (app.json, data/, actions/, lib/, how a script reads its records and what it prints): read it before writing a script.\n")

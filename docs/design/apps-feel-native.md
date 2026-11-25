@@ -281,3 +281,31 @@ None of it changes stored data: running and ended jobs stay in memory for
   actions or asks and never calls `app.work()`, and one that runs actions
   one after another itself (a `.then`, two awaits close together, an await
   in a loop), read from the source with its strings masked.
+
+## Fresh starts (0.9.700)
+
+Settled with the owner, 2026-11-25: an app is an independent runtime when it
+comes to being opened. Every open starts fresh, reloads included, as with an
+app of its own; to get back to where someone was, the app has to offer it.
+
+- **localStorage lasts one visit.** Each isolated frame gets an empty,
+  in-memory stand-in (`freshStorageScript`), and nothing is put back into it.
+  Before this the page's localStorage was kept on the server and restored on
+  every open, on every device, so an app always landed where it was left,
+  whether it meant to or not.
+- **`app.state` is how an app keeps something between visits**, on purpose:
+  `get(key)`, `set(key, value)` (any JSON), `remove(key)`, `clear()`, per
+  person and per app, on every device, capped at 256 KB. It is the old saved
+  view's table and route (`app_view_state`, `view-state`), so a view saved
+  before this reads back through `get` (as its text). The app decides on
+  load what to do with it ("Continue where you left off?").
+- **Reset view is gone** (item 2 above, and its load-error offer): with
+  nothing restored unasked, a page has no saved view to get stuck on. Its
+  place on the Settings page is "What it saved for you", with a Clear, when
+  the app has saved something with `app.state`; that also brings the ⚙.
+  Report a problem no longer mentions it.
+- **Builder, the page API reference and Anvil** say each open is fresh and to
+  offer a resume with `app.state`, where they used to say localStorage
+  follows the person.
+- **No migration.** What was saved stays where it was; nothing restores it
+  but an app asking.
