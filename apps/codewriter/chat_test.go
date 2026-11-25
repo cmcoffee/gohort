@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appagents"
 )
@@ -133,5 +134,40 @@ func TestTheTurnCarriesTheSelectedPassage(t *testing.T) {
 	}
 	if !strings.Contains(codeWriterPrompt, "propose_edit") || !strings.Contains(codeWriterPrompt, "selected a passage") {
 		t.Error("the prompt should say how a passage is changed")
+	}
+}
+
+// sessionSource records the session a consumer hands it for its tools.
+type sessionSource struct{ got **ToolSession }
+
+func (sessionSource) Kind() string                                         { return "test-session-source" }
+func (sessionSource) Label() string                                        { return "Test" }
+func (sessionSource) List(string) []ReferenceItem                          { return nil }
+func (sessionSource) Fetch(context.Context, string, string, string) string { return "" }
+func (s sessionSource) ItemTools(user, itemID string) []AgentToolDef {
+	return s.ItemToolsWithSession(nil, user, itemID)
+}
+func (s sessionSource) ItemToolsWithSession(sess *ToolSession, user, itemID string) []AgentToolDef {
+	*s.got = sess
+	return []AgentToolDef{{Tool: Tool{Name: "search_it"}}}
+}
+
+// CodeWriter reads its sources and asks nothing live: it hands them a session
+// marked read-only, as the person, with no context of its own (the turn
+// outlives the request, and a tool is rooted on its call), and tells the
+// model that the current state of a live system is an agent's to find out.
+func TestCodeWriterReadsItsSourcesOnly(t *testing.T) {
+	var got *ToolSession
+	RegisterReferenceSource(sessionSource{got: &got})
+	T := &CodeWriterAgent{}
+	turn, tools := T.editorTurnContext(context.Background(), "alice", chatSendFields{
+		Message: "which port",
+		Editor:  chatEditor{Lang: "go", References: ReferenceSelections{{Kind: "test-session-source", ItemID: "x"}}},
+	}, WriterRecord{})
+	if got == nil || !got.ReadOnlySources || got.Username != "alice" || got.Ctx != nil {
+		t.Fatalf("the source was handed %+v", got)
+	}
+	if len(tools) != 1 || !strings.Contains(turn, "attaching an agent set up with that system") || strings.Contains(turn, "investigate tool") {
+		t.Errorf("tools %d, turn:\n%s", len(tools), turn)
 	}
 }

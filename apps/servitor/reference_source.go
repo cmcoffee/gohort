@@ -267,11 +267,24 @@ func (s servitorSource) ItemToolsWithSession(sess *ToolSession, user, itemID str
 	}
 	id := a.ID // capture for the closures; itemID and a.ID are the same value
 	noun, live := refTargetWords(a)
+	// Whether a question can be sent to it: not for "Tools only", not for
+	// someone it is shared with at Read, and not for a consumer that reads
+	// sources only (a writer app): what is live there is asked through an
+	// agent set up with it, under that agent's grants, credential limits
+	// and Stop. A repository or evidence bundle is read from its ingested
+	// copy, nothing live, so it is still asked.
+	asks := !a.ToolsOnly && a.fullAccessFor(owner, user) &&
+		!(sess != nil && sess.ReadOnlySources && reachesLive(a))
+	searchMore := fmt.Sprintf(" Use this FIRST; only reach for investigate_%s when you need something the gathered knowledge does not already contain.", slug)
+	emptyMore := fmt.Sprintf(" Try investigate_%s to gather it from the live system, or broaden the query.", slug)
+	if !asks {
+		searchMore, emptyMore = " It is what can be known about it here: nothing is sent to it.", " Broaden the query; nothing more can be found out about it from here."
+	}
 
 	searchTool := AgentToolDef{
 		Tool: Tool{
 			Name:        "search_" + slug + "_knowledge",
-			Description: fmt.Sprintf("Search the knowledge Servitor has ALREADY gathered about %s %q, one of the user's Servitor systems (its recorded facts, structured docs, and linked collections) for material relevant to a query, and return the best matches. Read-only and instant: it does NOT %s. Use this FIRST; only reach for investigate_%s when you need something the gathered knowledge does not already contain.", noun, name, live.searchCaveat, slug),
+			Description: fmt.Sprintf("Search the knowledge Servitor has ALREADY gathered about %s %q, one of the user's Servitor systems (its recorded facts, structured docs, and linked collections) for material relevant to a query, and return the best matches. Read-only and instant: it does NOT %s.%s", noun, name, live.searchCaveat, searchMore),
 			Parameters: map[string]ToolParam{
 				"query": {Type: "string", Description: "What you're writing about: a focused topic, e.g. 'network interfaces and firewall zones'."},
 			},
@@ -280,9 +293,9 @@ func (s servitorSource) ItemToolsWithSession(sess *ToolSession, user, itemID str
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			query := strings.TrimSpace(fmt.Sprint(args["query"]))
-			txt := s.Fetch(sess.Context(), user, id, query)
+			txt := s.Fetch(callCtx(sess, ctx), user, id, query)
 			if strings.TrimSpace(txt) == "" {
-				return fmt.Sprintf("No gathered knowledge matches %q for %s. Try investigate_%s to gather it from the live system, or broaden the query.", query, name, slug), nil
+				return fmt.Sprintf("No gathered knowledge matches %q for %s.%s", query, name, emptyMore), nil
 			}
 			return txt, nil
 		},
@@ -318,21 +331,39 @@ func (s servitorSource) ItemToolsWithSession(sess *ToolSession, user, itemID str
 			if sess != nil {
 				agentID = sess.AgentID
 			}
-			return s.app.InvestigateForAgent(sess.Context(), sess, user, id, question, agentID)
+			return s.app.InvestigateForAgent(callCtx(sess, ctx), sess, user, id, question, agentID)
 		},
 	}
 
 	// Tools only withholds the asking route: what is recorded can be read,
 	// but open questions are not sent to the system. Without this, adding it
 	// as a Source gave back the investigation the flag exists to withhold.
-	if a.ToolsOnly {
-		return []AgentToolDef{searchTool, factsTool}
-	}
-	// Shared at Read: what is recorded, and nothing sent to the system.
-	if !a.fullAccessFor(owner, user) {
+	// Shared at Read, or read by a consumer of sources only: the same.
+	if !asks {
 		return []AgentToolDef{searchTool, factsTool}
 	}
 	return []AgentToolDef{searchTool, factsTool, investigateTool}
+}
+
+// callCtx is what a source tool's work is rooted on: the turn's own context
+// when the session carries one, else the call's, so a consumer that hands
+// over a session with no context of its own (a writer app, whose request
+// ends before its turn does) still has its Stop reach the work.
+func callCtx(sess *ToolSession, call context.Context) context.Context {
+	if sess != nil && sess.Ctx != nil {
+		return sess.Ctx
+	}
+	if call != nil {
+		return call
+	}
+	return context.Background()
+}
+
+// reachesLive reports whether asking a system sends anything to something
+// live: everything but a repository or an evidence bundle, which are read
+// from their ingested copies.
+func reachesLive(a Appliance) bool {
+	return a.Type != "repo" && a.Type != "bundle"
 }
 
 // factsBlock renders the appliance's discrete facts as a key/value list for the
