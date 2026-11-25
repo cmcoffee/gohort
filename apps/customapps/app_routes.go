@@ -166,6 +166,9 @@ func (T *CustomApps) appRoutes() {
 	T.HandleFunc("/{slug}/actions", jsonapi.Methods{"GET": T.appGet(T.actionsList)}.Serve)
 	T.HandleFunc("/{slug}/action-progress/{name}", jsonapi.Methods{"GET": T.appGet(T.actionProgress)}.Serve)
 	T.HandleFunc("/{slug}/action-cancel/{name}", appPost(T, T.cancelAction))
+	// The person's work in the app, and one job of it (action_jobs.go).
+	T.HandleFunc("/{slug}/work", jsonapi.Methods{"GET": T.appGet(T.appWorkList)}.Serve)
+	T.HandleFunc("/{slug}/work/{job}", jsonapi.Methods{"GET": T.appGet(T.appWorkStatus)}.Serve)
 	T.HandleFunc("/{slug}/records", jsonapi.Methods{
 		"GET":  T.appGet(T.listRecords),
 		"POST": appPost(T, T.saveRecord),

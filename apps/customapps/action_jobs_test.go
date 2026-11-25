@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -122,12 +123,12 @@ func TestAnActionJobCanBeStopped(t *testing.T) {
 // and the actions section follows a running action with progress and Stop.
 func TestAppPagesReachTheJobEndpoints(t *testing.T) {
 	joined := strings.Join(appOwnPaths, " ")
-	for _, p := range []string{"action-progress/", "action-cancel/"} {
+	for _, p := range []string{"action-progress/", "action-cancel/", "work"} {
 		if !strings.Contains(joined, p) {
 			t.Errorf("%s is not among the paths an app page may fetch", p)
 		}
 	}
-	for _, want := range []string{`fetch("action-progress/"+e+q({job:d.job}))`, `cancelAction:function(n)`, `o.onProgress(p)`} {
+	for _, want := range []string{`follow("action-progress/"+e+q({job:d.job}),o,"action")`, `cancelAction:function(n)`, `o.onProgress(p)`, `fetch("work")`, `follow("work/"+encodeURIComponent(d.job),o,"ask")`} {
 		if !strings.Contains(appPageHelper, want) {
 			t.Errorf("the page helper lost %s", want)
 		}
@@ -221,4 +222,124 @@ func TestARunningActionIsInTheLivePill(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Error("a stopped job stayed in the pill")
+}
+
+// The same action called again while it runs, with the same body, joins that
+// run, as a reopened page or a second press does; another body starts its
+// own. The person's work lists both, newest first, and reads one by its job;
+// someone else's work in the app shows none of it.
+func TestTheSameActionAgainJoinsItsRunAndWorkListsIt(t *testing.T) {
+	freshJobs(t)
+	T := sharingTestApp(t)
+	spec := AppSpec{Slug: "prep", Name: "Case prep", Owner: "alice", RecordKey: "id", Actions: []AppAction{{Name: "fetch", Script: "x"}}}
+	prevWait := actionInlineWait
+	actionInlineWait = 50 * time.Millisecond
+	t.Cleanup(func() { actionInlineWait = prevWait })
+	prev := runAppScript
+	t.Cleanup(func() { runAppScript = prev })
+	release := make(chan struct{})
+	runs := 0
+	var mu sync.Mutex
+	runAppScript = func(j appscript.Job) (string, error) {
+		mu.Lock()
+		runs++
+		mu.Unlock()
+		select {
+		case <-release:
+			return `{"message":"fetched"}`, nil
+		case <-j.Ctx.Done():
+			return "", j.Ctx.Err()
+		}
+	}
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+	post := func(body string) string {
+		w := httptest.NewRecorder()
+		T.handleAction(w, httptest.NewRequest(http.MethodPost, "/apps/prep/action/fetch", strings.NewReader(body)), "alice", "alice", T.recordBase(spec, "alice"), spec, "fetch")
+		var out map[string]any
+		json.Unmarshal(w.Body.Bytes(), &out)
+		id, _ := out["job"].(string)
+		return id
+	}
+	first := post(`{"item":"1"}`)
+	again := post(`{"item":"1"}`)
+	other := post(`{"item":"2"}`)
+	if first == "" || again != first {
+		t.Errorf("the same call again did not join its run: %q then %q", first, again)
+	}
+	if other == "" || other == first {
+		t.Errorf("a call with another body joined the first: %q", other)
+	}
+	mu.Lock()
+	n := runs
+	mu.Unlock()
+	if n != 2 {
+		t.Errorf("%d runs started, want 2", n)
+	}
+	list := func(user string) []map[string]any {
+		w := appAs(t, T, spec, user, httptest.NewRequest(http.MethodGet, "/apps/prep/work", nil))
+		var out struct {
+			Items []map[string]any `json:"items"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &out)
+		return out.Items
+	}
+	items := list("alice")
+	if len(items) != 2 || items[0]["job"] != other || items[0]["kind"] != "action" || items[0]["name"] != "fetch" || items[0]["running"] != true {
+		t.Errorf("alice's work: %v", items)
+	}
+	if got := list("bob"); len(got) != 0 {
+		t.Errorf("bob sees alice's work: %v", got)
+	}
+	if w := appAs(t, T, spec, "bob", httptest.NewRequest(http.MethodGet, "/apps/prep/work/"+first, nil)); strings.TrimSpace(w.Body.String()) != "{}" {
+		t.Errorf("bob read alice's job: %s", w.Body.String())
+	}
+	close(release)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		w := appAs(t, T, spec, "alice", httptest.NewRequest(http.MethodGet, "/apps/prep/work/"+first, nil))
+		if strings.Contains(w.Body.String(), `"done":true`) {
+			if !strings.Contains(w.Body.String(), `"outcome":"fetched"`) {
+				t.Errorf("the ended job: %s", w.Body.String())
+			}
+			// Pressed again once it has ended, it runs again.
+			post(`{"item":"1"}`)
+			mu.Lock()
+			n := runs
+			mu.Unlock()
+			if n != 3 {
+				t.Errorf("a call after the run ended did not run again: %d runs, want 3", n)
+			}
+			found := false
+			for _, p := range appOwnPaths {
+				found = found || p == "work"
+			}
+			if !found {
+				t.Error("the page may not reach work")
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("the job did not end")
+}
+
+// freshJobs starts the test with no app jobs, the earlier tests' put back
+// after it.
+func freshJobs(t *testing.T) {
+	t.Helper()
+	actionJobs.Lock()
+	byID, byKey := actionJobs.byID, actionJobs.byKey
+	actionJobs.byID, actionJobs.byKey = map[string]*actionJob{}, map[string]*actionJob{}
+	actionJobs.Unlock()
+	t.Cleanup(func() {
+		actionJobs.Lock()
+		actionJobs.byID, actionJobs.byKey = byID, byKey
+		actionJobs.Unlock()
+	})
 }

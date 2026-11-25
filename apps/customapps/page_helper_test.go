@@ -327,3 +327,56 @@ console.log(JSON.stringify({said: said, filed: filed}));
 		t.Errorf("got %s", got)
 	}
 }
+
+// A long ask through window.app follows its job to the answer; work() lists
+// the person's jobs; follow() resolves a job that has ended at once, with an
+// ask's text or an action's outcome, and polls one still running.
+func TestThePageHelperFollowsWorkAfterLeaving(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed")
+	}
+	js := strings.TrimSuffix(strings.TrimPrefix(appPageHelper, "<script>"), "</script>")
+	harness := `
+var calls = [], window = {}, polls = 0;
+function resp(body) { return {ok: true, status: 200, text: function() { return Promise.resolve(JSON.stringify(body)); }}; }
+global.setTimeout = function(fn) { return Promise.resolve().then(fn); };
+global.fetch = function(u, o) {
+  calls.push((o && o.method || "GET") + " " + u);
+  if (u === "ask") return Promise.resolve(resp({running: true, job: "a1", progress: "working"}));
+  if (u === "work/a1") { polls++; return Promise.resolve(resp(polls < 2 ? {running: true, kind: "ask"} : {done: true, kind: "ask", result: {text: "the answer"}})); }
+  if (u === "work") return Promise.resolve(resp({items: [{job: "x1", kind: "action", name: "fetch", done: true, message: "fetched", saved: 2}]}));
+  if (u === "work/x1") return Promise.resolve(resp({job: "x1", kind: "action", done: true, message: "fetched", saved: 2}));
+  if (u === "work/gone") return Promise.resolve(resp({}));
+  return Promise.resolve(resp({}));
+};
+` + js + `
+var app = window.app, out = {};
+app.ask("why").then(function(text) {
+  out.ask = text;
+  return app.work();
+}).then(function(items) {
+  out.items = items.length + ":" + items[0].name;
+  return app.follow(items[0].job);
+}).then(function(r) {
+  out.follow = r.message + ":" + r.saved;
+  return app.follow("gone").catch(function(e) { out.gone = e.message; });
+}).then(function() {
+  console.log(JSON.stringify({out: out, calls: calls}));
+});
+`
+	f := filepath.Join(t.TempDir(), "h.js")
+	if err := os.WriteFile(f, []byte(harness), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := exec.Command(node, f).CombinedOutput()
+	if err != nil {
+		t.Fatalf("node: %v\n%s", err, b)
+	}
+	got := string(b)
+	for _, want := range []string{`"ask":"the answer"`, `"items":"1:fetch"`, `"follow":"fetched:2"`, `"gone":"no such work`, `"GET work/a1"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s in\n%s", want, got)
+		}
+	}
+}

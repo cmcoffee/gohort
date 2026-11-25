@@ -13,11 +13,23 @@ app.action(name, body, opts)  POST an action, {message, saved, records, result}.
                               meanwhile (show it: it is how a person knows
                               a five-minute download is alive)
 app.cancelAction(name)        stop this person's running action of that name
+app.work()                    this person's work in the app, newest first:
+                              each {job, kind: "action"|"ask", name,
+                              running, progress, done, outcome, started}.
+                              Work keeps going when the page is closed; call
+                              this as the page loads and follow what runs,
+                              or show how it ended (kept 30 minutes)
+app.follow(job, opts)         a job from work(), resolving as action or ask
+                              would when it ends; opts.onProgress as for
+                              action. The same action called again with the
+                              same body while it runs joins that run
 app.records.list()            this person's records, oldest first
 app.records.save(record)      create, or update by the record key
 app.records.remove(id)        delete the record whose key (record_key) is id
 app.shared(name)              a shared collection's records
-app.ask(prompt, {json})       a question to the app's agent, its text
+app.ask(prompt, {json})       a question to the app's agent, its text. A
+                              long answer keeps coming when the page is
+                              closed: work() finds it
 app.asset(name)               the URL of one of the app's assets
 app.files.list(id)            the files a record keeps (a song's takes),
                               each {name, title, type, size, added, url}
