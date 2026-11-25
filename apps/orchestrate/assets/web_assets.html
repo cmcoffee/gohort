@@ -3763,6 +3763,7 @@
         // affordance is "prune drift" not "rewrite."
         var inferredURL = 'api/agents/' + encodeURIComponent(id) + '/inferred';
         var inferredWipeURL = 'api/agents/' + encodeURIComponent(id) + '/knowledge/auto-inferred';
+        var removedURL = 'api/agents/' + encodeURIComponent(id) + '/inferred-removed';
         var inferredSection = document.createElement('div');
         inferredSection.style.marginTop = '1.2rem';
         inferredSection.style.paddingTop = '0.8rem';
@@ -3800,6 +3801,7 @@
             .then(function(d) {
               renderInferred([]);
               if (d) inferredHelp.textContent = 'Wiped ' + (d.removed || 0) + ' entr' + (d.removed === 1 ? 'y' : 'ies') + '. ' + inferredHelp.textContent;
+              loadRemoved();
             })
             .catch(function(err){ window.uiAlert('Wipe failed: ' + (err && err.message || err)); wipeBtn.disabled = false; });
         };
@@ -3852,6 +3854,7 @@
                   if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status);
                   row.remove();
                   if (onGone) onGone();
+                  loadRemoved();
                 })
                 .catch(function(err) { window.uiAlert('Delete failed: ' + (err && err.message || err)); });
             };
@@ -3879,9 +3882,11 @@
         // it, shown to someone who uses it without owning it. Only a manager
         // (the owner or a maintainer) may clear it or remove another
         // person's entry; the server enforces the same.
+        var poolSection = null;
         function renderPool(items, manage) {
           inferredTitle.textContent = 'Reference Memory: yours';
-          var section = document.createElement('div');
+          if (poolSection) poolSection.remove();
+          var section = poolSection = document.createElement('div');
           section.style.cssText = 'margin-top:1.2rem;padding-top:0.8rem;border-top:1px solid var(--border)';
           var header = document.createElement('div');
           header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:0.3rem';
@@ -3898,10 +3903,10 @@
             poolWipe.title = 'Delete everything this agent has learned from everyone who uses it.';
             poolWipe.disabled = !items.length;
             poolWipe.onclick = async function() {
-              if (!(await window.uiConfirm('Wipe everything this agent has learned from everyone who uses it? Each person loses it, not only you. Continue?'))) return;
+              if (!(await window.uiConfirm('Wipe everything this agent has learned from everyone who uses it? Each person loses it, not only you. It can be put back from Recently removed for 30 days. Continue?'))) return;
               poolWipe.disabled = true;
               fetch(inferredWipeURL + '?pool=1', {method: 'DELETE'})
-                .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); list.innerHTML = ''; })
+                .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); list.innerHTML = ''; loadRemoved(); })
                 .catch(function(err){ window.uiAlert('Wipe failed: ' + (err && err.message || err)); poolWipe.disabled = false; });
             };
             header.appendChild(poolWipe);
@@ -3926,17 +3931,80 @@
           items.forEach(function(item) {
             list.appendChild(inferredRow(item, item.can_delete !== false));
           });
-          inferredSection.appendChild(section);
+          if (removedSection) inferredSection.insertBefore(section, removedSection);
+          else inferredSection.appendChild(section);
         }
 
+        // Recently removed: what was taken out of a shared agent's memory in
+        // the last 30 days, each removal restorable as a whole. The owner and
+        // maintainers see every removal; anyone else sees what they removed.
+        // Hidden when there is nothing to put back.
+        var removedSection = null;
+        function renderRemoved(items) {
+          if (removedSection) { removedSection.remove(); removedSection = null; }
+          if (!items || !items.length) return;
+          var section = removedSection = document.createElement('div');
+          section.style.cssText = 'margin-top:1.2rem;padding-top:0.8rem;border-top:1px solid var(--border)';
+          var title = document.createElement('div');
+          title.style.cssText = 'font-weight:600;color:var(--text);margin-bottom:0.3rem';
+          title.textContent = 'Recently removed';
+          section.appendChild(title);
+          var help = document.createElement('div');
+          help.className = 'ui-orch-modal-help';
+          help.style.marginBottom = '0.5rem';
+          help.textContent = 'What was removed from what this agent has learned from everyone who uses it. Each can be put back for 30 days, then it is gone.';
+          section.appendChild(help);
+          var list = document.createElement('div');
+          list.className = 'ui-orch-list';
+          section.appendChild(list);
+          items.forEach(function(item) {
+            var row = document.createElement('div');
+            row.className = 'ui-orch-list-row';
+            var body = document.createElement('div');
+            body.style.cssText = 'flex:1;font-size:0.85rem;line-height:1.4';
+            var what = document.createElement('div');
+            what.textContent = item.what + (item.entries > 1 ? ' (' + item.entries + ' entries)' : '');
+            body.appendChild(what);
+            var when = document.createElement('div');
+            when.style.cssText = 'color:var(--text-mute);font-size:0.74rem';
+            when.textContent = 'Removed by ' + item.removed_by + ', ' + new Date(item.at).toLocaleString() + '. Can be put back until ' + new Date(item.until).toLocaleDateString() + '.';
+            body.appendChild(when);
+            row.appendChild(body);
+            var put = document.createElement('button');
+            put.type = 'button';
+            put.style.cssText = 'padding:0.2rem 0.55rem;background:var(--bg-1);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.74rem;cursor:pointer';
+            put.textContent = 'Restore';
+            put.title = 'Put this back where it was';
+            put.onclick = function() {
+              put.disabled = true;
+              fetch(removedURL + '/' + encodeURIComponent(item.id), {method: 'POST'})
+                .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); loadInferred(); })
+                .catch(function(err) { window.uiAlert('Restore failed: ' + (err && err.message || err)); put.disabled = false; });
+            };
+            row.appendChild(put);
+            list.appendChild(row);
+          });
+          inferredSection.appendChild(section);
+        }
+        function loadRemoved() {
+          fetch(removedURL)
+            .then(function(r){ return r.ok ? r.json() : null; })
+            .then(function(d){ renderRemoved(d ? d.items : []); })
+            .catch(function(){});
+        }
+
+        function loadInferred() {
+          fetch(inferredURL)
+            .then(function(r){ return r.ok ? r.json() : null; })
+            .then(function(d){
+              renderInferred(d ? d.items : []);
+              if (d && d.pool) renderPool(d.pool, !!d.pool_manage);
+              loadRemoved();
+            })
+            .catch(function(){ renderInferred([]); });
+        }
         inferredList.appendChild(window.uiLoading('Loading findings'));
-        fetch(inferredURL)
-          .then(function(r){ return r.ok ? r.json() : null; })
-          .then(function(d){
-            renderInferred(d ? d.items : []);
-            if (d && d.pool) renderPool(d.pool, !!d.pool_manage);
-          })
-          .catch(function(){ renderInferred([]); });
+        loadInferred();
 
         // --- Graph Memory section ---
         // Entities + relationships recorded via link_entities. Read-only with

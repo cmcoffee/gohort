@@ -19,10 +19,13 @@ package orchestrate
 
 import (
 	"fmt"
+	"net/http"
+	"sort"
 	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/notices"
 	"github.com/cmcoffee/gohort/core/shareledger"
 )
@@ -257,4 +260,201 @@ func tellPoolChanges(prior *AgentRecord, a AgentRecord) {
 				"What it learned before stays yours, and notes you pin stay yours. "+
 				"You can see and remove what you added in its Memory window.", nil)
 	}
+}
+
+// Recently removed: nothing is lost from a pool by a click
+// (docs/design/pooled-memory.md, slice 3).
+//
+// Every removal from a pooled agent's memory (one finding, everything one
+// person added, a wipe) is kept for 30 days in the owner's store as one entry,
+// holding the removed chunks as they were, vectors included, so a restore puts
+// them back without embedding them again. The owner and the agent's
+// maintainers see and restore every entry; anyone else sees and restores only
+// what they removed themselves, which is only ever what they added.
+//
+// Only removals by a person or by the agent at their word are kept. The
+// finding cap's eviction of the oldest is not a click, and keeping it would
+// make this a second copy of the pool.
+
+const (
+	// poolRemovedTable holds the removals, in the pool owner's store, keyed
+	// "<agent id>:<entry id>".
+	poolRemovedTable = "orchestrate_pool_removed"
+	// poolRemovedKeep is how long a removal can be restored.
+	poolRemovedKeep = 30 * 24 * time.Hour
+)
+
+// poolRemoval is one removal from a pool, restorable as a whole.
+type poolRemoval struct {
+	ID        string
+	AgentID   string
+	RemovedBy string
+	At        time.Time
+	// What says what was removed, in words for the Memory window.
+	What   string
+	Chunks []EmbeddedChunk
+}
+
+// keepPoolRemoval records chunks about to be removed from a's pool, so they can
+// be restored for 30 days. Only the chunks that are findings in the pool (the
+// owner's copy) are kept, and nothing is kept for an agent that does not pool.
+// db is the app's store; the entry goes in the owner's.
+func keepPoolRemoval(db Database, a AgentRecord, removedBy, what string, chunks []EmbeddedChunk) {
+	if db == nil || !a.poolsMemory() {
+		return
+	}
+	prefix := agentKnowledgePrefix(a.Owner, a.ID)
+	var kept []EmbeddedChunk
+	for _, c := range chunks {
+		if sourceInScope(c.Source, prefix) && chunkProvenance(c.Source, c.ReportID) == "derived" {
+			kept = append(kept, c)
+		}
+	}
+	udb := UserDB(db, a.Owner)
+	if len(kept) == 0 || udb == nil {
+		return
+	}
+	purgePoolRemovals(udb, time.Now())
+	e := poolRemoval{ID: UUIDv4(), AgentID: a.ID, RemovedBy: removedBy, At: time.Now(), What: what, Chunks: kept}
+	udb.Set(poolRemovedTable, a.ID+":"+e.ID, e)
+	Log("[orchestrate.memory.pool] user=%q removed %d chunk(s) from %s's pool for agent=%s (%s); restorable for 30 days",
+		removedBy, len(kept), a.Owner, a.ID, what)
+}
+
+// purgePoolRemovals drops every removal in udb older than poolRemovedKeep.
+func purgePoolRemovals(udb Database, now time.Time) {
+	for _, k := range udb.Keys(poolRemovedTable) {
+		var e poolRemoval
+		if !udb.Get(poolRemovedTable, k, &e) || now.Sub(e.At) > poolRemovedKeep {
+			udb.Unset(poolRemovedTable, k)
+		}
+	}
+}
+
+// dropPoolRemovals forgets every removal kept for an agent being deleted.
+func dropPoolRemovals(udb Database, agentID string) {
+	for _, k := range udb.Keys(poolRemovedTable) {
+		if strings.HasPrefix(k, agentID+":") {
+			udb.Unset(poolRemovedTable, k)
+		}
+	}
+}
+
+// poolRemovalsFor is the removals from a's pool that user may see and restore,
+// newest first: every one for the owner and its maintainers, otherwise only
+// those user removed.
+func poolRemovalsFor(udb Database, a AgentRecord, user string, now time.Time) []poolRemoval {
+	purgePoolRemovals(udb, now)
+	manage := managesPool(a, user)
+	var out []poolRemoval
+	for _, k := range udb.Keys(poolRemovedTable) {
+		if !strings.HasPrefix(k, a.ID+":") {
+			continue
+		}
+		var e poolRemoval
+		if udb.Get(poolRemovedTable, k, &e) && (manage || e.RemovedBy == user) {
+			out = append(out, e)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].At.After(out[j].At) })
+	return out
+}
+
+// removedRow is one removal as the Memory window lists it.
+type removedRow struct {
+	ID        string    `json:"id"`
+	What      string    `json:"what"`
+	RemovedBy string    `json:"removed_by"`
+	At        time.Time `json:"at"`
+	Entries   int       `json:"entries"`
+	Until     time.Time `json:"until"`
+}
+
+// poolRemovedOf is the agent a Recently removed call is about and its owner's
+// store, where the removals are kept.
+func (T *OrchestrateApp) poolRemovedOf(c *jsonapi.Call, at memAt) (AgentRecord, Database, error) {
+	mc, err := T.memoryOf(c, at)
+	if err != nil {
+		return AgentRecord{}, nil, err
+	}
+	owner := strings.TrimSpace(mc.agent.Owner)
+	if owner == "" || owner == seedOwner {
+		return AgentRecord{}, nil, errNotFound
+	}
+	udb := UserDB(T.DB, owner)
+	if udb == nil {
+		return AgentRecord{}, nil, errNotFound
+	}
+	return mc.agent, udb, nil
+}
+
+// poolRemovedRoute lists the removals from an agent's pool the caller may
+// restore.
+//
+//	GET /api/agents/{id}/inferred-removed → {items: [removedRow]}
+func (T *OrchestrateApp) poolRemovedRoute(at memAt) http.HandlerFunc {
+	return jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
+		a, udb, err := T.poolRemovedOf(c, at)
+		if err != nil {
+			return nil, err
+		}
+		rows := []removedRow{}
+		for _, e := range poolRemovalsFor(udb, a, c.User, time.Now()) {
+			rows = append(rows, removedRow{ID: e.ID, What: e.What, RemovedBy: e.RemovedBy, At: e.At,
+				Entries: len(e.Chunks), Until: e.At.Add(poolRemovedKeep)})
+		}
+		return map[string]any{"items": rows}, nil
+	})
+}
+
+// poolRestoreRoute puts one removal back where it was, as a whole. A removal
+// the caller may not see is a 404, as if it were not there.
+//
+//	POST /api/agents/{id}/inferred-removed/{item} → {restored: N}
+func (T *OrchestrateApp) poolRestoreRoute(at memAt) http.HandlerFunc {
+	return jsonapi.Post(T.DB, func(c *jsonapi.Call, _ struct{}) (any, error) {
+		a, udb, err := T.poolRemovedOf(c, at)
+		if err != nil {
+			return nil, err
+		}
+		id := at(c).item
+		for _, e := range poolRemovalsFor(udb, a, c.User, time.Now()) {
+			if e.ID != id {
+				continue
+			}
+			PutChunks(VectorDB, e.Chunks)
+			udb.Unset(poolRemovedTable, a.ID+":"+e.ID)
+			Log("[orchestrate.memory.pool] user=%q restored %d chunk(s) to %s's pool for agent=%s (%s, removed by %s)",
+				c.User, len(e.Chunks), a.Owner, a.ID, e.What, e.RemovedBy)
+			return map[string]int{"restored": len(e.Chunks)}, nil
+		}
+		return nil, errNotFound
+	})
+}
+
+// findingWhat names one removed finding for the Memory window.
+func findingWhat(chunks []EmbeddedChunk) string {
+	for _, c := range chunks {
+		if t := strings.TrimSpace(strings.TrimPrefix(c.Section, "## ")); t != "" {
+			return "A finding: " + t
+		}
+	}
+	return "A finding"
+}
+
+// wipeWhat names a clear of the pool, or of what one person added to it.
+func wipeWhat(by string) string {
+	if by == "" {
+		return "Everything it had learned"
+	}
+	return "Everything " + by + " added"
+}
+
+// keepPoolRemoval keeps the chunks a forget in this turn is about to remove,
+// when they are findings in its agent's pool.
+func (t *chatTurn) keepPoolRemoval(chunks []EmbeddedChunk) {
+	if t == nil || t.app == nil {
+		return
+	}
+	keepPoolRemoval(t.app.DB, t.agent, t.user, findingWhat(chunks), chunks)
 }

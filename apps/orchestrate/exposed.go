@@ -748,7 +748,8 @@ func (T *OrchestrateApp) lookupReachableAgentByID(agentID string) (AgentRecord, 
 //     the visitor sees and prunes their own scope, never the author's.
 //
 // The fallback is only for the request's own user: a scope user is never the
-// session identity, so a scope lookup that misses stays a miss.
+// session identity, so a scope lookup that misses stays a miss. It admits the
+// agent's maintainers too, who curate what a pooled agent has learned.
 func (T *OrchestrateApp) memoryAgent(r *http.Request, udb Database, user, agentID string) (AgentRecord, bool) {
 	if a, ok := loadAgent(udb, agentID); ok && (a.Owner == user || a.Owner == seedOwner) {
 		return a, true
@@ -757,10 +758,16 @@ func (T *OrchestrateApp) memoryAgent(r *http.Request, udb Database, user, agentI
 		return AgentRecord{}, false
 	}
 	a, e, ok := T.lookupReachableAgentByID(agentID)
-	if !ok || !T.AgentReachableBy(r, e.Slug, e.Owner, a.AllowedUsers, a.Everyone) {
-		return AgentRecord{}, false
+	if ok && T.AgentReachableBy(r, e.Slug, e.Owner, a.AllowedUsers, a.Everyone) {
+		return a, true
 	}
-	return a, true
+	// A maintainer curates the agent's memory whether or not it is also
+	// shared with them to use (docs/design/pooled-memory.md). As for a
+	// visitor, the data read is still their own store's, beside the pool.
+	if m, _, ok := maintainedAgent(T.DB, user, agentID); ok {
+		return m, true
+	}
+	return AgentRecord{}, false
 }
 
 // PublicHandleSend dispatches a /api/send for an exposed agent. The

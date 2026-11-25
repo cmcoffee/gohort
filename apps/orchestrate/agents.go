@@ -762,6 +762,7 @@ func dropAgentSideData(db Database, owner, agentID string) {
 		Log("[orchestrate.agents] dropped graph for deleted agent %s/%s (%d entities, %d edges)", owner, agentID, ents, edges)
 	}
 	db.Unset(knowledgeTopicsTable, key)
+	dropPoolRemovals(db, agentID)
 
 	// Knowledge chunks are ingested into VectorDB (knowledge.go), and this
 	// used to clear AuthDB, where they lived before that move: a deleted

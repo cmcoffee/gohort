@@ -522,3 +522,156 @@ func TestAContributionAtTheLimitKeepsTheOwnersFindings(t *testing.T) {
 		t.Errorf("a contribution evicted the owner's findings: %d of 2 left", own)
 	}
 }
+
+// memCall drives one of the Memory window's routes as user.
+func (f poolFixture) memCall(t *testing.T, user, method string, h http.HandlerFunc, item string) *httptest.ResponseRecorder {
+	t.Helper()
+	adb := AuthDB()
+	adb.Set(AuthTable, "user:"+user, AuthUser{Username: user})
+	r := httptest.NewRequest(method, "/api/agents/a1/x", nil)
+	r.AddCookie(&http.Cookie{Name: "gohort_session", Value: AuthCreateSession(adb, user)})
+	r.SetPathValue("id", f.agent.ID)
+	r.SetPathValue("item", item)
+	w := httptest.NewRecorder()
+	h(w, r)
+	return w
+}
+
+// removedFor is the Recently removed list as user sees it.
+func (f poolFixture) removedFor(t *testing.T, user string) []removedRow {
+	t.Helper()
+	w := f.memCall(t, user, "GET", f.app.poolRemovedRoute(ownAgent), "")
+	var got struct {
+		Items []removedRow `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != 200 {
+		t.Fatalf("%s listing Recently removed: %d %s", user, w.Code, w.Body.String())
+	}
+	return got.Items
+}
+
+func (f poolFixture) has(id string) bool {
+	var c EmbeddedChunk
+	return VectorDB.Get(EmbeddedChunks, id, &c)
+}
+
+// Whatever is removed from a pool by a click can be put back for 30 days: one
+// finding, and a wipe as a whole. The owner and maintainers see and restore
+// every removal; anyone else only what they removed.
+func TestARemovalFromThePoolCanBeRestored(t *testing.T) {
+	f := newPoolFixture(t, memoryPoolOn)
+	now := time.Now()
+	f.addToPool("b1", "bob", now)
+	f.addToPool("c1", "carol", now)
+	f.addToPool("o1", "", now)
+
+	if w := f.memCall(t, "bob", "DELETE", f.app.inferredDeleteRoute(ownAgent), "b1"); w.Code != http.StatusNoContent {
+		t.Fatalf("bob deleting his own entry: %d %s", w.Code, w.Body.String())
+	}
+	if w := f.memCall(t, "alice", "DELETE", f.app.autoInferredRoute(ownAgent), ""); w.Code != 200 {
+		t.Fatalf("the owner wiping: %d %s", w.Code, w.Body.String())
+	}
+	if f.has("b1") || f.has("c1") || f.has("o1") {
+		t.Fatal("the removals did not remove")
+	}
+
+	mine := f.removedFor(t, "bob")
+	if len(mine) != 1 || mine[0].RemovedBy != "bob" || mine[0].Entries != 1 {
+		t.Fatalf("bob sees %+v, want only his own removal", mine)
+	}
+	if got := f.removedFor(t, "carol"); len(got) != 0 {
+		t.Errorf("carol sees removals she did not make: %+v", got)
+	}
+	if got := f.removedFor(t, "dave"); len(got) != 2 {
+		t.Errorf("the maintainer sees %d removals, want 2", len(got))
+	}
+	all := f.removedFor(t, "alice")
+	if len(all) != 2 {
+		t.Fatalf("the owner sees %d removals, want 2", len(all))
+	}
+	wipe := all[0]
+	if wipe.RemovedBy != "alice" || wipe.Entries != 2 || wipe.What != wipeWhat("") {
+		t.Fatalf("the wipe is not one entry holding both: %+v", wipe)
+	}
+
+	// Carol cannot restore what bob removed, though it is in the pool.
+	if w := f.memCall(t, "carol", "POST", f.app.poolRestoreRoute(ownAgent), mine[0].ID); w.Code != http.StatusNotFound {
+		t.Errorf("carol restoring bob's removal: %d %s", w.Code, w.Body.String())
+	}
+	if w := f.memCall(t, "bob", "POST", f.app.poolRestoreRoute(ownAgent), mine[0].ID); w.Code != 200 || !f.has("b1") {
+		t.Fatalf("bob restoring his own removal: %d %s", w.Code, w.Body.String())
+	}
+	var back EmbeddedChunk
+	VectorDB.Get(EmbeddedChunks, "b1", &back)
+	if back.By != "bob" || back.Text != "finding b1" {
+		t.Errorf("the restored finding is not as it was: %+v", back)
+	}
+	if w := f.memCall(t, "alice", "POST", f.app.poolRestoreRoute(ownAgent), wipe.ID); w.Code != 200 || !f.has("c1") || !f.has("o1") {
+		t.Fatalf("the owner restoring the wipe as a whole: %d %s", w.Code, w.Body.String())
+	}
+	if got := f.removedFor(t, "alice"); len(got) != 0 {
+		t.Errorf("a restored removal is still listed: %+v", got)
+	}
+}
+
+// A forget in a run, at the person's word, is kept the same way.
+func TestAForgetInARunCanBeRestored(t *testing.T) {
+	f := newPoolFixture(t, memoryPoolOn)
+	f.addToPool("b1", "bob", time.Now())
+	f.addToPool("b2", "bob", time.Now())
+	bob := f.turn("bob")
+	if msg, _ := bob.forgetFindingByReportID("orch-know-b1"); msg != "Forgot that finding." {
+		t.Fatalf("forget: %q", msg)
+	}
+	if msg, _ := bob.memoryForget(map[string]any{"id": "b2"}); f.has("b2") {
+		t.Fatalf("memory(forget): %q", msg)
+	}
+	got := f.removedFor(t, "bob")
+	if len(got) != 2 {
+		t.Fatalf("bob's forgets kept %d removals, want 2: %+v", len(got), got)
+	}
+	for _, e := range got {
+		if e.RemovedBy != "bob" || e.What != "A finding: note" {
+			t.Errorf("removal %+v", e)
+		}
+	}
+}
+
+// Nothing is kept for an agent that does not pool, and nothing past 30 days.
+func TestRecentlyRemovedKeepsOnlyThePoolForThirtyDays(t *testing.T) {
+	f := newPoolFixture(t, memoryPoolOff)
+	f.addToPool("o1", "", time.Now())
+	if w := f.memCall(t, "alice", "DELETE", f.app.inferredDeleteRoute(ownAgent), "o1"); w.Code != http.StatusNoContent {
+		t.Fatalf("delete: %d %s", w.Code, w.Body.String())
+	}
+	if got := f.removedFor(t, "alice"); len(got) != 0 {
+		t.Errorf("a removal on an agent that does not pool was kept: %+v", got)
+	}
+
+	f.agent.MemoryPool = memoryPoolOn
+	udb := UserDB(f.app.DB, "alice")
+	old := poolRemoval{ID: "old", AgentID: "a1", RemovedBy: "alice", At: time.Now().Add(-31 * 24 * time.Hour),
+		What: "A finding", Chunks: []EmbeddedChunk{{ID: "x"}}}
+	udb.Set(poolRemovedTable, "a1:old", old)
+	if got := poolRemovalsFor(udb, f.agent, "alice", time.Now()); len(got) != 0 {
+		t.Errorf("a removal past 30 days is still offered: %+v", got)
+	}
+	if len(udb.Keys(poolRemovedTable)) != 0 {
+		t.Error("a removal past 30 days is still stored")
+	}
+}
+
+// Deleting the agent takes what was removed from its pool with it.
+func TestDeletingTheAgentDropsItsRemovals(t *testing.T) {
+	f := newPoolFixture(t, memoryPoolOn)
+	keepPoolRemoval(f.app.DB, f.agent, "alice", "A finding",
+		[]EmbeddedChunk{{ID: "x", Source: knowledgeSource("alice", "a1", "general"), ReportID: "orch-know-x"}})
+	udb := UserDB(f.app.DB, "alice")
+	if len(udb.Keys(poolRemovedTable)) != 1 {
+		t.Fatal("the removal was not kept")
+	}
+	dropAgentSideData(udb, "alice", "a1")
+	if n := len(udb.Keys(poolRemovedTable)); n != 0 {
+		t.Errorf("%d removal(s) outlived their agent", n)
+	}
+}

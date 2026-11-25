@@ -77,6 +77,8 @@ func (T *OrchestrateApp) registerMemoryRoutes() {
 	T.HandleFunc("/api/agents/{id}/memsearch", T.memorySearchRoute(at))
 	T.HandleFunc("/api/agents/{id}/inferred", T.inferredListRoute(at))
 	T.HandleFunc("/api/agents/{id}/inferred/{item}", T.inferredDeleteRoute(at))
+	T.HandleFunc("/api/agents/{id}/inferred-removed", T.poolRemovedRoute(at))
+	T.HandleFunc("/api/agents/{id}/inferred-removed/{item}", T.poolRestoreRoute(at))
 	T.HandleFunc("/api/agents/{id}/graph", T.graphRoute(at))
 	T.HandleFunc("/api/agents/{id}/graph/edge", T.graphEdgeDeleteRoute(at))
 	T.HandleFunc("/api/agents/{id}/graph/entity/{item}", T.graphEntityDeleteRoute(at))
