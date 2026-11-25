@@ -23,6 +23,8 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/notices"
+	"github.com/cmcoffee/gohort/core/shareledger"
 )
 
 const (
@@ -106,6 +108,7 @@ func (t *chatTurn) findingTarget() (user, by, note string) {
 	}
 	if n := poolContributionsToday(owner, t.agent.ID, t.user, time.Now()); n >= poolDailyCap {
 		Log("[orchestrate.memory.pool] user=%q agent=%q reached the daily cap of %d pooled findings; saving to their own copy", t.user, t.agent.ID, poolDailyCap)
+		t.tellOwnerCapReached(owner)
 		return t.user, "", fmt.Sprintf(" This one is saved to your own memory only: you have added %d findings to what everyone using this agent shares today, which is the most in a day.", poolDailyCap)
 	}
 	return owner, t.user, ""
@@ -192,4 +195,66 @@ func (t *chatTurn) pinnedNoteStaysYours() string {
 		return ""
 	}
 	return " This note is yours only: what this agent learns is shared with everyone who uses it, but notes you pin stay with you."
+}
+
+// tellOwnerCapReached tells the owner that someone has reached the day's limit
+// on what they add to the pool. One notice per person: the notice store folds
+// a repeat into a count rather than a second notice.
+func (t *chatTurn) tellOwnerCapReached(owner string) {
+	if RootDB == nil {
+		return
+	}
+	name := chFirst(t.agent.Name, t.agent.ID)
+	n := notices.Notice{
+		Agent: t.agent.ID, Kind: notices.KindReport,
+		Title: t.user + " reached the day's limit on what they add to " + name,
+		Body: fmt.Sprintf("%s has added %d findings in a day to what %s has learned from everyone who uses it. "+
+			"Anything more today is saved to their own memory only. A run stuck in a loop is the usual cause; "+
+			"you can see and remove what they added in the agent's Memory window.", t.user, poolDailyCap, name),
+	}
+	if t.app != nil {
+		t.app.notify(owner, n)
+		return
+	}
+	n.Owner = owner
+	notices.Record(RootDB, n)
+}
+
+// tellPoolChanges tells the people who have just come under an agent's pooled
+// memory what that means for them: everyone it is shared with, when pooling
+// has just been turned on, and anyone just added, when it was already on. A
+// maintainer added later hears it in their maintainer notice instead
+// (tellNewMaintainers). prior is the stored record before this save, nil for
+// a new agent.
+func tellPoolChanges(prior *AgentRecord, a AgentRecord) {
+	if !a.poolsMemory() || shareledger.NotifyRecipient == nil {
+		return
+	}
+	users := ShareMembers(a.AllowedUsers, a.Owner)
+	maintainers := ShareMembers(a.Maintainers, a.Owner)
+	had := map[string]bool{}
+	turnedOn := prior == nil || !prior.poolsMemory()
+	if !turnedOn {
+		for _, u := range ShareMembers(append(append([]string{}, prior.AllowedUsers...), prior.Maintainers...), a.Owner) {
+			had[u] = true
+		}
+		maintainers = nil
+	}
+	name := chFirst(a.Name, a.ID)
+	told := map[string]bool{}
+	for _, u := range maintainers {
+		told[u] = true
+		shareledger.NotifyRecipient(u, name+" now shares what it learns",
+			a.Owner+" has pooled what "+name+" learns: what it works out in anyone's conversation is shared with everyone who uses it. "+
+				"As a maintainer you can curate it in its Memory window, removing any entry or all of them.", nil)
+	}
+	for _, u := range users {
+		if had[u] || told[u] {
+			continue
+		}
+		shareledger.NotifyRecipient(u, name+" shares what it learns with everyone who uses it",
+			"What "+name+" works out in your conversations is shared with everyone who uses it, and theirs with you, from now on. "+
+				"What it learned before stays yours, and notes you pin stay yours. "+
+				"You can see and remove what you added in its Memory window.", nil)
+	}
 }

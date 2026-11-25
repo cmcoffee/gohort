@@ -64,6 +64,32 @@ func settingOptions(db Database, key string) []ui.SelectOption {
 // A shared helper because four of them differ only in the field and the noun,
 // and four copies of a select is where one quietly keeps the wrong option
 // list, or where the words drift apart from the line underneath.
+func withShowWhen(f ui.FormField, when string) ui.FormField {
+	f.ShowWhen = when
+	return f
+}
+
+// memoryPoolChoice is the Share tab's switch for pooled memory
+// (memory_pool.go). Off is listed first, so an agent stored before the
+// setting existed, which reads as off, shows as off.
+func memoryPoolChoice(agent AgentRecord) ui.FormField {
+	on := ui.SelectOption{Value: memoryPoolOn, Label: "Pooled: shared with everyone who uses it"}
+	help := "On, what it works out in anyone's conversation reaches everyone it is shared with, and you. Pinned notes stay with each person. Turning it on does not pull in what people already learned."
+	if agent.MemoryMode != memoryModeAgent {
+		// What a chatbot or an assistant remembers is about the person it
+		// talks to, so pooling it is the owner's choice, made knowingly. The
+		// warning is the help line under the select: an option's Confirm is
+		// honoured on a row's segmented toggle, not in a form's select.
+		help = "Careful: this agent remembers things about the people it talks to. Pooled, what it learns about each person reaches everyone it is shared with. " + help
+	}
+	return ui.FormField{
+		Field: "memory_pool", Type: "select", Label: "What it learns from people using it",
+		Options: []ui.SelectOption{{Value: memoryPoolOff, Label: "Each person's own"}, on},
+		Help:    help,
+		Detail:  "Each person can remove what they added; you and its maintainers can remove anything. While it is pooled, everyone reads what it worked out, so that choice is not shown below.",
+	}
+}
+
 func shareChoice(field, noun, key string, db Database, owner string, agent AgentRecord) ui.FormField {
 	return ui.FormField{
 		Field: field, Type: "select", Label: noun,
@@ -994,8 +1020,12 @@ func (ap *accessPage) shareSections() []ui.Section {
 					// The Invert hack these replace is gone with them: the
 					// stored values are positive now, so nothing has to be
 					// turned round on the way to the screen.
+					memoryPoolChoice(ap.agent),
 					shareChoice("share_cortex", "Its standing activity", defaultShareCortex, RootDB, ap.user, ap.agent),
-					shareChoice("share_reference", "What it worked out", defaultShareReference, RootDB, ap.user, ap.agent),
+					// Read by everyone while what it learns is pooled, so the
+					// choice is not offered then: a setting that silently does
+					// nothing is worse than one that is not shown.
+					withShowWhen(shareChoice("share_reference", "What it worked out", defaultShareReference, RootDB, ap.user, ap.agent), "memory_pool:!"+memoryPoolOn),
 					shareChoice("share_notes", "Its saved notes", defaultShareNotes, RootDB, ap.user, ap.agent),
 					shareChoice("share_uploads", "Adding documents of their own", defaultShareUploads, RootDB, ap.user, ap.agent),
 				},

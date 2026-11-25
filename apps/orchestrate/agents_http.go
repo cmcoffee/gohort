@@ -376,7 +376,10 @@ var patchAgentFields = map[string]bool{
 	"allow_private_mode": true, "force_private": true, "hidden": true,
 	"workspace_no_network": true, "workspace_network": true,
 	"share_cortex": true, "share_reference": true, "share_notes": true, "share_uploads": true, "disabled_tool_actions": true,
-	"allow_builder_dispatch": true, "dispatch_mode": true,
+	// memory_pool is validated below: only the two named values. A
+	// maintainer's edit never carries it (applyMaintainerEdit), so it is the
+	// owner's to switch.
+	"memory_pool": true, "allow_builder_dispatch": true, "dispatch_mode": true,
 	"inbound_mode": true, "allowed_callers": true, "consult_lead": true,
 	"intake_form": true, "work_plan": true,
 	"run_priority": true, // validated below: only the two named levels
@@ -510,6 +513,14 @@ func (T *OrchestrateApp) patchAgent(c *jsonapi.Call, patch map[string]any, pathI
 			if T.agentPublishNeedsApproval(r, user, existing.ID, k, on, already) {
 				requested = append(requested, k)
 				continue
+			}
+		}
+		if k == "memory_pool" {
+			switch p := strings.TrimSpace(fmt.Sprint(v)); p {
+			case memoryPoolOn, memoryPoolOff:
+				v = p
+			default:
+				return nil, jsonapi.BadRequest("memory_pool must be \"on\" or \"off\"")
 			}
 		}
 		if k == "run_priority" {
