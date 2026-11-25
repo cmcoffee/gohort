@@ -294,3 +294,36 @@ func TestPageAPINamesEveryCallTheHelperDefines(t *testing.T) {
 		}
 	}
 }
+
+// An error in the first seconds of the frame's load is told to the page around
+// it, once however many follow, so it can offer Reset view; it is still filed
+// as a page problem as before.
+func TestThePageHelperSaysWhenThePageFailsToLoad(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed")
+	}
+	js := strings.TrimSuffix(strings.TrimPrefix(appPageHelper, "<script>"), "</script>")
+	harness := `
+var on = {}, said = [], filed = 0;
+var window = {addEventListener: function(k, fn) { on[k] = fn; }};
+var parent = {postMessage: function(m, o) { said.push(JSON.stringify(m) + " " + o); }};
+global.fetch = function(u) { if (u === "problem") filed++; return Promise.resolve({ok: true, status: 200, text: function() { return Promise.resolve("{}"); }}); };
+` + js + `
+on.error({message: "boom", lineno: 3});
+on.unhandledrejection({reason: new Error("later")});
+console.log(JSON.stringify({said: said, filed: filed}));
+`
+	f := filepath.Join(t.TempDir(), "h.js")
+	if err := os.WriteFile(f, []byte(harness), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := exec.Command(node, f).CombinedOutput()
+	if err != nil {
+		t.Fatalf("node: %v\n%s", err, b)
+	}
+	got := strings.TrimSpace(string(b))
+	if got != `{"said":["{\"gohortApp\":\"load-error\"} *"],"filed":2}` {
+		t.Errorf("got %s", got)
+	}
+}

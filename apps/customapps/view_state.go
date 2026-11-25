@@ -14,9 +14,12 @@ package customapps
 //
 // It is the person's view of the app, not the app's data: records hold what
 // the app is about, this holds where they were in it. Capped, and cleared by
-// Reset view on the app's Settings page (the ⚙), so a saved state that breaks
-// the page cannot trap anyone in it: Settings is drawn by gohort, not by the
-// app, so it opens however broken the app's page is.
+// Reset view, so a saved state that breaks the page cannot trap anyone in it.
+// Like a native app's remembered tab, it is quiet: Reset view is offered by
+// gohort, above the app's page, when that page hits an error while loading
+// (viewTroubleJS), and kept at the foot of the app's Settings page and in
+// "Report a problem" for a page stuck without one. All three are drawn by
+// gohort, not by the app, so they open however broken the app's page is.
 
 import (
 	"encoding/json"
@@ -204,15 +207,35 @@ func (T *CustomApps) withViewState(page json.RawMessage, appdb Database, spec Ap
 	return out, len(state) > 0
 }
 
-// viewSection is the Settings page's Reset view, when the person has a saved
-// view of the app to reset; nil otherwise.
+// viewSection is the foot of the Settings page, when the person has a saved
+// view of the app to reset; nil otherwise. Quiet on purpose: it is for a page
+// that will not work, not a setting.
 func viewSection(appdb Database, spec AppSpec, base string) *ui.Section {
 	if len(loadViewState(appdb, spec.Slug)) == 0 {
 		return nil
 	}
 	return &ui.Section{
-		Title:    "Your view",
-		Subtitle: "Where you were in the app: tabs, filters, what was open. Reset it if the page will not draw or looks wrong. The app's records are not touched.",
-		Body:     ui.Toolbar{Actions: []ui.ToolbarAction{{Label: "Reset view", Method: "GET", URL: base + "/_view/reset"}}},
+		Title:    "Trouble with this page?",
+		Subtitle: "If it will not draw or is stuck, reset your view of it: where you were in it and what it kept for you to come back to. Its records are kept.",
+		Body:     ui.Toolbar{Actions: []ui.ToolbarAction{{Label: "Reset your view", Method: "GET", URL: base + "/_view/reset"}}},
 	}
+}
+
+// viewTroubleJS is served on the app's page, around its frames, for a person
+// with a saved view. When a frame's page helper says the page hit an error
+// while loading, it offers Reset view just below the page's header, once. The
+// offer only links to Reset view's own page, which asks first, so a page that
+// sends the message falsely can show it and nothing more. It also leaves the
+// address for "Report a problem" to mention (reportDialogJS).
+func viewTroubleJS(resetURL string) string {
+	u, _ := json.Marshal(resetURL)
+	return `<script>(function(){var U=` + string(u) + `,shown=false;window.gohortAppViewReset=U;` +
+		`window.addEventListener("message",function(e){var d=e&&e.data;if(shown||!d||d.gohortApp!=="load-error")return;` +
+		`var fs=document.getElementsByTagName("iframe"),ok=false;for(var i=0;i<fs.length;i++){if(fs[i].contentWindow===e.source){ok=true;break;}}if(!ok)return;shown=true;` +
+		`var bar=document.createElement("div");bar.setAttribute("role","status");` +
+		`bar.style.cssText="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:8px 0;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-1)";` +
+		`var t=document.createElement("span");t.style.flex="1 1 240px";t.textContent="This page hit an error while loading. If it will not work, reset your view of it: where you were in it and what it kept for you to come back to. Its records are kept.";` +
+		`var a=document.createElement("a");a.className="ui-row-btn";a.href=U;a.textContent="Reset your view";bar.appendChild(t);bar.appendChild(a);` +
+		`var h=document.querySelector(".ui-page-header");if(h&&h.parentNode){h.parentNode.insertBefore(bar,h.nextSibling);}else{var r=document.getElementById("ui-root")||document.body;r.insertBefore(bar,r.firstChild);}` +
+		`});})();</script>`
 }

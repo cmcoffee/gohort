@@ -299,18 +299,22 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		page = inlineAppAssets(page, ownerUser, slug)
 		page, hasView := T.withViewState(page, appdb, spec)
 		// The app's ⚙: what is the person's own about it (their settings,
-		// what it remembers about them, Reset view when they have a saved
-		// view) and, for its owner and maintainers
+		// what it remembers about them) and, for its owner and maintainers
 		// (docs/design/app-maintainers.md), the way to change it with
 		// Builder and, for its owner, its recent runs (settings.go,
 		// app_memory.go). Warnings stay in the header: one behind a gear is
-		// one nobody sees.
-		if hasView || hasSettingsPage(spec, user, ownerUser) {
+		// one nobody sees. A saved view alone does not bring the ⚙, as a
+		// native app's remembered tab brings nothing: Reset view is offered
+		// when the page fails to load (docs/design/apps-feel-native.md).
+		if hasSettingsPage(spec, user, ownerUser) {
 			page = withNavIcon(page, "settings", "Settings...", T.WebPath()+"/"+slug+"/_settings")
 		}
 		// Everyone else it is shared with reports a problem instead
 		// (report.go).
 		head := recordsInvalidationBridge(spec)
+		if hasView {
+			head += viewTroubleJS(T.WebPath() + "/" + slug + "/_view/reset")
+		}
 		if canReport(spec, ownerUser, user) {
 			page = withReportLink(page)
 			head += reportDialogJS
