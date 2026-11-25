@@ -4,8 +4,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/applocal"
@@ -129,5 +133,105 @@ func TestAppLendsAreWhatSharedAppsLendThePerson(t *testing.T) {
 	applocal.UpdateAppCredentials("alice", "prep", func(c *applocal.AppCredentials) { c.Lend = map[string]string{"wiki": "withhold"} })
 	if got := T.appLends("carol"); len(got) != 0 {
 		t.Errorf("a withheld key is listed as lent: %v", got)
+	}
+}
+
+// When a data source run for someone waits on their own account, their page
+// is told which and where to connect it, whatever the script printed; once
+// they connect their own, it is not said again. The owner is never told it.
+func TestAPageSaysWhichAccountItsDataWaitedOn(t *testing.T) {
+	T := sharingTestApp(t)
+	credStore(t)
+	Secure().Save(SecureCredential{Name: "wiki", Type: SecureCredBearer, Owner: "alice", BaseURL: "https://wiki.example"}, "k")
+	Secure().SetAppLends(T.appLends)
+	t.Cleanup(func() { Secure().SetAppLends(nil) })
+	spec := AppSpec{Slug: "prep", Name: "Prep", Owner: "alice", RecordKey: "id",
+		DataSources: []AppDataSource{{Name: "pages", Script: "x", Capabilities: []string{"fetch_via:wiki"}}},
+		Page:        json.RawMessage(`{"title":"Prep","sections":[]}`)}
+	prev := runAppScript
+	t.Cleanup(func() { runAppScript = prev })
+	runAppScript = func(j appscript.Job) (string, error) {
+		if j.OnConnectNeeded != nil && j.Caller == "bob" {
+			j.OnConnectNeeded("alice", "wiki")
+		}
+		return `[]`, nil // the script swallowed the refusal and showed nothing
+	}
+	needs := func(user string) []any {
+		w := appAs(t, T, spec, user, httptest.NewRequest(http.MethodGet, "/apps/prep/needs-account", nil))
+		var out struct {
+			Names []any `json:"names"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &out)
+		return out.Names
+	}
+	appAs(t, T, spec, "bob", httptest.NewRequest(http.MethodGet, "/apps/prep/data/pages", nil))
+	if got := needs("bob"); len(got) != 1 || got[0] != "wiki" {
+		t.Fatalf("bob is not told which account his data waited on: %v", got)
+	}
+	if got := needs("alice"); len(got) != 0 {
+		t.Errorf("the owner was told: %v", got)
+	}
+	if !strings.Contains(appAs(t, T, spec, "bob", httptest.NewRequest(http.MethodGet, "/apps/prep/", nil)).Body.String(), "data-needs-account") {
+		t.Error("bob's page cannot say it")
+	}
+	if strings.Contains(appAs(t, T, spec, "alice", httptest.NewRequest(http.MethodGet, "/apps/prep/", nil)).Body.String(), "data-needs-account") {
+		t.Error("the owner's page carries it")
+	}
+	if err := Secure().SaveSharedAccount("alice", "wiki", "bob", "bob-key"); err != nil {
+		t.Fatalf("bob connecting his own: %v", err)
+	}
+	if got := needs("bob"); len(got) != 0 {
+		t.Errorf("still told after connecting his own: %v", got)
+	}
+	// And a note is kept only a while.
+	noteNeedsAccount("alice", "prep", "carol", "wiki")
+	needsAccount.Lock()
+	needsAccount.m["alice/prep/carol"]["wiki"] = time.Now().Add(-needsAccountKept - time.Minute)
+	needsAccount.Unlock()
+	if got := needsAccountFor("alice", "prep", "carol"); len(got) != 0 {
+		t.Errorf("an old note is still shown: %v", got)
+	}
+}
+
+// The page asks a little after it loads, and shows which accounts once,
+// below the header, with where to connect them; with nothing to say it
+// shows nothing.
+func TestThePageBarNamesTheAccountsToConnect(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed")
+	}
+	js := strings.TrimSuffix(strings.TrimPrefix(accountNeedsJS("/apps/prep/"), "<script>"), "</script>")
+	run := func(names string) string {
+		harness := `
+function node(tag) { return {tag: tag, kids: [], style: {}, attrs: {}, textContent: "", setAttribute: function(k, v) { this.attrs[k] = v; }, appendChild: function(c) { this.kids.push(c); }}; }
+var placed = [], asks = 0;
+var header = node("div"); header.parentNode = {insertBefore: function(c) { placed.push(c); }};
+var document = {createElement: node, querySelector: function() { return header; }, getElementById: function() { return null; }, body: node("body")};
+global.setTimeout = function(fn) { Promise.resolve().then(fn); };
+global.fetch = function(u) { asks++; return Promise.resolve({json: function() { return Promise.resolve({names: ` + names + `}); }}); };
+` + js + `
+var ticks = 0;
+(function wait() { if (++ticks < 60) { setTimeout(wait); return; }
+  var bar = placed[0];
+  console.log(JSON.stringify({placed: placed.length, asks: asks, text: bar && bar.kids[0].textContent, href: bar && bar.kids[1].href}));
+})();
+`
+		f := filepath.Join(t.TempDir(), "n.js")
+		if err := os.WriteFile(f, []byte(harness), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		b, err := exec.Command(node, f).CombinedOutput()
+		if err != nil {
+			t.Fatalf("node: %v\n%s", err, b)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	got := run(`["wiki", "jira"]`)
+	if !strings.Contains(got, `"placed":1`) || !strings.Contains(got, `"asks":1`) || !strings.Contains(got, "your own wiki and jira account") || !strings.Contains(got, `"href":"/extensions/"`) {
+		t.Errorf("with accounts to connect: %s", got)
+	}
+	if got := run(`[]`); !strings.Contains(got, `"placed":0`) || !strings.Contains(got, `"asks":5`) {
+		t.Errorf("with nothing to say: %s", got)
 	}
 }

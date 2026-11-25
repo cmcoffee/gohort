@@ -237,5 +237,11 @@ shared (see "Settled", below), not in data.
   Connected accounts lists each such credential with the app it is used
   by, `SaveSharedAccount` accepts it, `HasSharedAccount` shows it.
   Dispatch then sends their key, as in step 1.
-- **Still open from step 1:** a data source's refusal reaching the page,
-  and MCP tools a script calls (they run as the owner).
+- **Still open from step 1:** MCP tools a script calls (they run as the
+  owner).
+- **A data source's refusal reaches the page** (0.9.697). A data source run
+  for someone that waits on their own account notes it (in memory, fifteen
+  minutes, dropped once they connect their own); the app's page, for anyone
+  but its owner, asks `needs-account` a few times after it loads and says
+  once, below the header, which accounts and where to connect them, whatever
+  the script printed. Drawn by gohort, so typed and hand-written pages alike.

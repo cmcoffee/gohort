@@ -17,9 +17,12 @@ package customapps
 // time. A credential nobody chose for is lent for reads.
 
 import (
+	"encoding/json"
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/applocal"
@@ -297,4 +300,83 @@ func (T *CustomApps) appReachRoutes() {
 		http.MethodPost: appPost(T, T.saveAppLend),
 	}.Serve)
 	T.HandleFunc("/{slug}/_settings/reach/used/{name}", appPost(T, T.saveAppCredentialUsed))
+	T.HandleFunc("/{slug}/needs-account", jsonapi.Methods{http.MethodGet: T.appGet(T.appNeedsAccount)}.Serve)
+}
+
+// needsAccount notes, for a person using someone else's app, the credentials
+// a data source of it waited on their own account for, so the app's page can
+// say so: a data source's refusal reaches only its script, which may print an
+// empty list and say nothing. In memory, kept needsAccountKept, and dropped
+// for a credential once they have connected their own.
+var needsAccount = struct {
+	sync.Mutex
+	m map[string]map[string]time.Time // owner/slug/person -> credential -> when
+}{m: map[string]map[string]time.Time{}}
+
+// needsAccountKept is how long a note stays to be shown.
+const needsAccountKept = 15 * time.Minute
+
+// noteNeedsAccount records that a run of owner's app slug for person waited
+// on their own account for credential name.
+func noteNeedsAccount(owner, slug, person, name string) {
+	key := owner + "/" + slug + "/" + person
+	needsAccount.Lock()
+	defer needsAccount.Unlock()
+	if needsAccount.m[key] == nil {
+		needsAccount.m[key] = map[string]time.Time{}
+	}
+	needsAccount.m[key][name] = time.Now()
+}
+
+// needsAccountFor is the credentials person still needs their own account
+// for in owner's app slug, by name: noted lately, and not connected since.
+func needsAccountFor(owner, slug, person string) []string {
+	key := owner + "/" + slug + "/" + person
+	needsAccount.Lock()
+	var names []string
+	for name, at := range needsAccount.m[key] {
+		if time.Since(at) > needsAccountKept {
+			delete(needsAccount.m[key], name)
+			continue
+		}
+		names = append(names, name)
+	}
+	needsAccount.Unlock()
+	out := names[:0]
+	for _, name := range names {
+		if !Secure().HasSharedAccount(owner, name, person) {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// appNeedsAccount answers needs-account: the credentials the caller's runs
+// of this app waited on their own account for. Nothing for its owner, whose
+// runs use their own keys.
+func (T *CustomApps) appNeedsAccount(a *appCall) (any, error) {
+	names := []string{}
+	if !a.mine() {
+		names = append(names, needsAccountFor(a.owner, a.spec.Slug, a.User)...)
+	}
+	return map[string]any{"names": names}, nil
+}
+
+// accountNeedsJS is served on an app's page for someone other than its
+// owner. A little after the page loads, and again while it is open, it asks
+// whether the app's data waited on their own account for something, and if
+// so says which and where to connect it, once, below the header. Drawn by
+// gohort, so it shows whatever the app's page does with the empty answer.
+func accountNeedsJS(base string) string {
+	b, _ := json.Marshal(base)
+	return `<script>(function(){var base=` + string(b) + `,shown=false,waits=[1500,5000,15000,40000,90000],i=0;` +
+		`function show(names){if(shown||!names||!names.length)return;shown=true;` +
+		`var bar=document.createElement("div");bar.setAttribute("role","status");bar.setAttribute("data-needs-account","");` +
+		`bar.style.cssText="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:8px 0;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-1)";` +
+		`var t=document.createElement("span");t.style.flex="1 1 240px";t.textContent="Part of this app needs your own "+names.join(" and ")+" account, so some of what it shows may be missing. Connect yours under Extensions, Connected accounts, then reload the page.";` +
+		`var a=document.createElement("a");a.className="ui-row-btn";a.href="/extensions/";a.textContent="Connected accounts";bar.appendChild(t);bar.appendChild(a);` +
+		`var h=document.querySelector(".ui-page-header");if(h&&h.parentNode){h.parentNode.insertBefore(bar,h.nextSibling);}else{var r=document.getElementById("ui-root")||document.body;r.insertBefore(bar,r.firstChild);}}` +
+		`function ask(){fetch(base+"needs-account",{credentials:"same-origin"}).then(function(r){return r.json();}).then(function(d){show(d&&d.names);}).catch(function(){}).then(function(){if(!shown&&i<waits.length)setTimeout(ask,waits[i++]);});}` +
+		`setTimeout(ask,waits[i++]);})();</script>`
 }

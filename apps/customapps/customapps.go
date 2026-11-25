@@ -329,6 +329,11 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		// Opened from a notice about work that ended, the page says how it
 		// went, whatever the app's own page remembers (action_jobs.go).
 		head += workResultJS(T.WebPath() + "/" + slug + "/")
+		// Someone using another person's app hears when its data waited on
+		// their own account (app_credentials.go).
+		if user != ownerUser {
+			head += accountNeedsJS(T.WebPath() + "/" + slug + "/")
+		}
 		if hasView {
 			head += viewTroubleJS(T.WebPath() + "/" + slug + "/_view/reset")
 		}
@@ -1529,6 +1534,9 @@ func runDataSourceIn(user string, db Database, spec AppSpec, ds AppDataSource, a
 	// A data source runs when a page asks for it: someone is looking.
 	j := appscript.Job{Owner: user, DB: db, Slug: spec.Slug, Kind: "data", Name: ds.Name, Language: ds.Language, Script: ds.Script, Caps: ds.Capabilities, Args: args, Caller: caller, Libs: spec.Libraries, Interactive: true, Check: check}
 	withAppCredentials(&j, user, spec.Slug)
+	// What waited on the person's own account is said on the page, which
+	// the script's own answer may not (app_credentials.go).
+	j.OnConnectNeeded = func(_, name string) { noteNeedsAccount(user, spec.Slug, caller, name) }
 	trace := appscript.Track(&j)
 	out, err := runAppScript(j)
 	// A source that ran but printed no JSON value fails its page as surely
