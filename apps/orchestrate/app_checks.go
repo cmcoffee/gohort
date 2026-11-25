@@ -24,6 +24,8 @@ import (
 	"github.com/cmcoffee/gohort/core/appdraft"
 	"github.com/cmcoffee/gohort/tools/appscript"
 	"github.com/cmcoffee/snugforge/kvlite"
+
+	"github.com/cmcoffee/gohort/core/recquery"
 )
 
 // appChecksBudget is how long all of an app's checks may take on one run.
@@ -349,9 +351,12 @@ func (t *chatTurn) runScriptCheck(spec AppSpec, c appcheck.Check) appCheckResult
 	// that is a value a check's author types, and a file store that gives each
 	// person their own folder would hand over the named person's. The person
 	// running it reaches their own, as they would using the app.
+	// The script's declared reads run over the check's records as they would
+	// over the store, so a check fails when the query is wrong.
 	out, err := appscript.Job{Owner: spec.Owner, DB: scratch, Slug: spec.Slug, Kind: kind, Name: name,
 		Language: lang, Script: script, Caps: caps, Args: args, Libs: spec.Libraries, Spec: &spec,
-		Interactive: t.inPersonsLane(), Check: true, Caller: t.user}.Run()
+		Interactive: t.inPersonsLane(), Check: true, Caller: t.user,
+		Reads: appScriptReads(spec, kind, name), KeyField: appRecordKey(spec)}.Run()
 	if err != nil {
 		res.Why = "it could not run: " + appOneLine(err.Error(), 400)
 		return res
@@ -543,4 +548,32 @@ func (t *chatTurn) runAgentCheck(spec AppSpec, c appcheck.Check) appCheckResult 
 func agenthostApp() (*OrchestrateApp, bool) {
 	o, ok := agenthost.Get().(*OrchestrateApp)
 	return o, ok && o != nil
+}
+
+// appScriptReads is the reads the app's script of kind and name declares, nil
+// when it declares none or there is no such script.
+func appScriptReads(spec AppSpec, kind, name string) *recquery.Query {
+	switch kind {
+	case "data":
+		for _, ds := range spec.DataSources {
+			if ds.Name == name {
+				return ds.Reads
+			}
+		}
+	case "action":
+		for _, a := range spec.Actions {
+			if a.Name == name {
+				return a.Reads
+			}
+		}
+	}
+	return nil
+}
+
+// appRecordKey is the field an app's records are keyed by.
+func appRecordKey(spec AppSpec) string {
+	if k := strings.TrimSpace(spec.RecordKey); k != "" {
+		return k
+	}
+	return "id"
 }

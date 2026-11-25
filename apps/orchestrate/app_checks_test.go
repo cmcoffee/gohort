@@ -11,9 +11,10 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/appstores"
 	"github.com/cmcoffee/gohort/core/appcheck"
 	"github.com/cmcoffee/gohort/core/appdraft"
+	"github.com/cmcoffee/gohort/core/appstores"
+	"github.com/cmcoffee/gohort/core/recquery"
 	"github.com/cmcoffee/gohort/tools/appscript"
 )
 
@@ -429,4 +430,51 @@ type callerRecorder struct {
 func (c callerRecorder) GrantsFor(app appstores.App) []appstores.Grant {
 	*c.callers = append(*c.callers, app.Caller)
 	return nil
+}
+
+// A check runs a script's declared reads over the check's records as they
+// would run over the store, so a check fails when the query is wrong: here
+// the open hours are 3 + 4, not all 10. A malformed reads is noted, and the
+// script is handed every record until it is fixed.
+func TestACheckRunsTheScriptsDeclaredReads(t *testing.T) {
+	turn := checksTestApp(t)
+	recs := []any{map[string]any{"hours": 3, "status": "open"}, map[string]any{"hours": 3, "status": "done"}, map[string]any{"hours": 4, "status": "open"}}
+	check := map[string]any{"name": "totals the open hours", "script": "open", "records": recs,
+		"expect": []any{map[string]any{"path": "total", "equals": 7}}}
+	out, err := turn.appDefCreateOrUpdate(map[string]any{"id": "hours",
+		"data_sources": []any{map[string]any{"name": "total", "script": totalScript},
+			map[string]any{"name": "open", "script": totalScript, "reads": map[string]any{"where": map[string]any{"status": "open"}}}},
+		"checks": []any{totalCheck(7), check}}, true)
+	if err != nil || !strings.Contains(out, `PASS "totals the open hours"`) {
+		t.Fatalf("a check over a script's declared reads did not pass: %v\n%s", err, out)
+	}
+	ds, notes := appDataSources([]any{map[string]any{"name": "open", "script": totalScript, "reads": map[string]any{"limit": 9999}}})
+	if said := strings.Join(notes, "\n"); len(ds) != 1 || ds[0].Reads != nil || !strings.Contains(said, "reads IGNORED") || !strings.Contains(said, "limit is 1 to 500") {
+		t.Errorf("a malformed reads was not noted: %q (%+v)", said, ds)
+	}
+}
+
+// A script's reads travel in app.json, out and back.
+func TestReadsTravelInTheAppFolder(t *testing.T) {
+	reads, _ := recquery.Parse(`{"where":{"status":"open"},"order":"-day","limit":20}`)
+	spec := AppSpec{Slug: "hours", Name: "Hours", Owner: "u", Sections: json.RawMessage(`[{"id":"s","kind":"empty"}]`),
+		DataSources: []AppDataSource{{Name: "open", Script: "print(1)", Reads: &reads}},
+		Actions:     []AppAction{{Name: "close", Script: "print(1)", Reads: &reads}}}
+	turn, ws := folderTestTurn(t)
+	dir := ws + "/hours.app"
+	if _, err := writeAppFolder(dir, spec, nil, "/apps/hours/"); err != nil {
+		t.Fatal(err)
+	}
+	args, _, err := turn.appFolderRead(dir, "hours.app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ds, _ := appDataSources(args["data_sources"])
+	acts, _ := appActionDefs(args["actions"])
+	if len(ds) != 1 || ds[0].Reads == nil || ds[0].Reads.Order != "-day" || ds[0].Reads.Limit != 20 {
+		t.Errorf("a data source's reads did not come back: %+v", ds)
+	}
+	if len(acts) != 1 || acts[0].Reads == nil || acts[0].Reads.Where["status"] != "open" {
+		t.Errorf("an action's reads did not come back: %+v", acts)
+	}
 }

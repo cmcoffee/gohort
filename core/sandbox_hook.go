@@ -480,6 +480,8 @@ func (h *SandboxHook) handleConn(conn net.Conn) {
 		h.handleStoreAction(conn, req.Params)
 	case "notify":
 		h.handleNotify(conn, req.Params)
+	case "query":
+		h.handleQuery(conn, req.Params)
 	case "store_pull":
 		h.handleStorePull(conn, req.Params)
 	case "relay":
@@ -832,6 +834,24 @@ func (h *SandboxHook) handleNotify(conn net.Conn, params map[string]interface{})
 		return
 	}
 	writeHookResult(conn, map[string]any{"text": out})
+}
+
+// handleQuery serves gohort.query: the app's records that meet a query,
+// asked while the script runs (its declared reads are the fixed case, with
+// no call). Granted by "query", which an app's scripts carry.
+func (h *SandboxHook) handleQuery(conn net.Conn, params map[string]interface{}) {
+	if h.Sess == nil || h.Sess.RecordQuery == nil {
+		writeHookError(conn, "query is for an app's data sources and actions: it reads the app's records")
+		return
+	}
+	q, _ := params["query"].(map[string]interface{})
+	b, _ := json.Marshal(q)
+	recs, next, err := h.Sess.RecordQuery(string(b))
+	if err != nil {
+		writeHookError(conn, "query: "+err.Error())
+		return
+	}
+	writeHookResult(conn, map[string]any{"records": recs, "next": next})
 }
 
 // handleStorePull serves gohort.store_pull: a file or folder copied into a store from
@@ -2790,6 +2810,16 @@ class _Gohort:
         result = self._call("store_action", {"store": str(store), "command": str(command), "action": str(action), "values": dict(values or {})})
         return result.get("text", "") if isinstance(result, dict) else result
 
+    def query(self, q=None):
+        """The app's records that meet q, the same query the page uses:
+        {"where": {field: value, or field: {op: value}}, "order": "field" or
+        "-field", "limit": n, "after": key}, with op one of = != < <= > >=
+        in contains. Returns the list of records. For a fixed query, declare
+        "reads" on the script in app.json instead: no call, and its checks
+        run it."""
+        result = self._call("query", {"query": dict(q or {})})
+        return result.get("records", []) if isinstance(result, dict) else []
+
     def notify(self, title, body=None):
         """Tell the person this action ran for something, in gohort's
         notifications (and by email or phone if they chose that): whoever
@@ -2955,6 +2985,10 @@ def store_action(store, command, action, values=None):
 
 def notify(title, body=None):
     return gohort.notify(title, body=body)
+
+
+def query(q=None):
+    return gohort.query(q)
 
 
 def describe(path, title):

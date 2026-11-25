@@ -86,6 +86,11 @@ type ToolSession struct {
 	// Notify is what gohort.notify reaches: a notice to the person an app's
 	// action ran for. Set only on an action's run; nil, and refused.
 	Notify func(title, body string) (string, error)
+	// RecordQuery answers gohort.query in an app's script: the app's records
+	// that meet query (its JSON, core/recquery), as the page's
+	// app.records.list(query) gets them, and the key to continue after when
+	// a limit left more. Nil outside an app's run.
+	RecordQuery func(query string) (records []map[string]any, next string, err error)
 
 	// ScriptLog hears what a script sends to gohort.log, besides the server
 	// log it always goes to: an app check shows it to the author, who cannot

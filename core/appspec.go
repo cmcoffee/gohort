@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/cmcoffee/gohort/core/appcheck"
+	"github.com/cmcoffee/gohort/core/recquery"
 )
 
 // AppSpecTable is the per-user kvlite table holding AppSpecs, keyed by slug.
@@ -419,6 +420,10 @@ type AppDataSource struct {
 	Language     string   `json:"language,omitempty"`     // "python" (default) | "bash"
 	Script       string   `json:"script"`                 // the script body
 	Capabilities []string `json:"capabilities,omitempty"` // sandbox hook caps: fetch, log, browse_page, fetch_via:<cred>
+	// Reads is the part of the records the script is handed, by the same
+	// query the page uses (core/recquery): nil hands it every record, as
+	// before. docs/design/app-record-queries.md.
+	Reads *recquery.Query `json:"reads,omitempty"`
 	// Inputs names the query params the data source reads, each with what to
 	// give it, as AppAction.Inputs: the app's agent reads every data source
 	// as a tool in the app's chat, and is asked for exactly these.
@@ -445,7 +450,10 @@ type AppAction struct {
 	Language     string   `json:"language,omitempty"`     // "python" (default) | "bash"
 	Script       string   `json:"script"`                 // the script body
 	Capabilities []string `json:"capabilities,omitempty"` // sandbox hook caps
-	Confirm      string   `json:"confirm,omitempty"`      // optional confirm prompt before firing
+	// Reads is the part of the records the script is handed (AppDataSource
+	// .Reads): nil, every record.
+	Reads   *recquery.Query `json:"reads,omitempty"`
+	Confirm string          `json:"confirm,omitempty"` // optional confirm prompt before firing
 	// Inputs names the values the action reads beyond the records, each with
 	// what to give it ("folder": "the case folder to fetch into"). The page
 	// sends them in app.action's body; the app's agent, which gets every

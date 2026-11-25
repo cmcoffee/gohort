@@ -728,7 +728,8 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 				fmt.Fprintf(&b, "     logged (%d): %s\n", len(logged), SpillOutput(strings.Join(logged, "\n"), appLoggedShown, "read_output"))
 			}
 		}()
-		out, err := appscript.Job{Owner: t.user, DB: db, Slug: spec.Slug, Kind: kind, Name: name, Language: lang, Script: script, Caps: caps, Args: scriptArgs, Libs: spec.Libraries, Spec: &spec, Interactive: t.inPersonsLane(), OnLog: onLog}.Run()
+		out, err := appscript.Job{Owner: t.user, DB: db, Slug: spec.Slug, Kind: kind, Name: name, Language: lang, Script: script, Caps: caps, Args: scriptArgs, Libs: spec.Libraries, Spec: &spec, Interactive: t.inPersonsLane(), OnLog: onLog,
+			Reads: appScriptReads(spec, kind, name), KeyField: appRecordKey(spec)}.Run()
 		if err != nil {
 			fail++
 			fmt.Fprintf(&b, "FAIL %s, could not run: %v\n", label, err)
@@ -920,7 +921,7 @@ func (t *chatTurn) runScriptChecks(spec AppSpec, opt appScriptRun) (report strin
 			emptyArgs[k] = v
 		}
 		emptyArgs["records"] = "[]"
-		if out, err := (appscript.Job{Owner: t.user, DB: db, Slug: spec.Slug, Kind: "data", Name: ds.Name, Language: ds.Language, Script: ds.Script, Caps: ds.Capabilities, Args: emptyArgs, Libs: spec.Libraries, Interactive: t.inPersonsLane()}).Run(); err == nil {
+		if out, err := (appscript.Job{Owner: t.user, DB: db, Slug: spec.Slug, Kind: "data", Name: ds.Name, Language: ds.Language, Script: ds.Script, Caps: ds.Capabilities, Args: emptyArgs, Libs: spec.Libraries, Interactive: t.inPersonsLane(), Reads: ds.Reads, KeyField: appRecordKey(spec)}).Run(); err == nil {
 			gapIn.empty[ds.Name] = strings.TrimSpace(out)
 		}
 	}

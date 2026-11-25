@@ -57,7 +57,7 @@ func TestAProjectsNamesAreKeptOutOfItsSearches(t *testing.T) {
 func TestAnAppProjectIsToldWhatItsPageCanCall(t *testing.T) {
 	T := &Anvil{}
 	text := T.projectContext(Project{Name: "Tool", Kind: KindClone, Source: sourceApp, AppSlug: "harrier-intake"}, t.TempDir())
-	for _, want := range []string{"app.records.list()", "app.records.remove(id)", "kept on the server for each person"} {
+	for _, want := range []string{"app.records.list(query)", "app.records.count(where)", "app.records.remove(id)", "kept on the server for each person"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the app project's context lacks %q", want)
 		}

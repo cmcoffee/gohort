@@ -158,5 +158,11 @@ func (T *CustomApps) handleShared(w http.ResponseWriter, r *http.Request, ownerD
 		http.NotFound(w, r)
 		return
 	}
-	jsonapi.Write(w, readShared(ownerDB, spec, name))
+	// ?q=<query> or ?count=<where> asks for part (record_queries.go).
+	out, err := answerRecords(r, readShared(ownerDB, spec, name), recordKeyField(spec))
+	if err != nil {
+		jsonapi.Fail(w, r, err)
+		return
+	}
+	jsonapi.Write(w, out)
 }
