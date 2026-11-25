@@ -11,6 +11,10 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/jsonapi"
+	"github.com/cmcoffee/gohort/core/notices"
+	"github.com/cmcoffee/gohort/core/shareledger"
+	"github.com/cmcoffee/gohort/core/ui"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -357,5 +361,141 @@ func TestARecipientsRecallLabelsAnotherPersonsFinding(t *testing.T) {
 		if h.ID == "c1" && !strings.HasPrefix(h.Text, "From carol: ") {
 			t.Errorf("a recipient's search returned carol's finding unlabelled: %q", h.Text)
 		}
+	}
+}
+
+// told captures the notices people get through shareledger.NotifyRecipient.
+func told(t *testing.T) *[][2]string {
+	t.Helper()
+	got := &[][2]string{}
+	prev := shareledger.NotifyRecipient
+	shareledger.NotifyRecipient = func(u, title, intro string, _ []string) {
+		*got = append(*got, [2]string{u, title + " | " + intro})
+	}
+	t.Cleanup(func() { shareledger.NotifyRecipient = prev })
+	return got
+}
+
+func (f poolFixture) patch(t *testing.T, user string, body map[string]any) (any, error) {
+	t.Helper()
+	r := httptest.NewRequest("PATCH", "/api/agents/a1", nil)
+	return f.app.patchAgent(&jsonapi.Call{R: r, User: user, UDB: UserDB(f.app.DB, user)}, body, f.agent.ID)
+}
+
+// The owner turns pooling on and off on the Share tab, which PATCHes the
+// record. Only the two named values are taken, and a maintainer cannot
+// switch it.
+func TestTheOwnerSwitchesPoolingOnAnExistingAgent(t *testing.T) {
+	f := newPoolFixture(t, "")
+	told(t)
+	if _, err := f.patch(t, "alice", map[string]any{"memory_pool": "maybe"}); err == nil {
+		t.Error("an unknown value was accepted")
+	}
+	if _, err := f.patch(t, "alice", map[string]any{"memory_pool": memoryPoolOn}); err != nil {
+		t.Fatalf("the owner cannot turn pooling on: %v", err)
+	}
+	a, _ := loadAgent(UserDB(f.app.DB, "alice"), f.agent.ID)
+	if !a.poolsMemory() {
+		t.Fatalf("pooling did not stick: %q", a.MemoryPool)
+	}
+	// A maintainer's change leaves it as the owner set it.
+	f.patch(t, "dave", map[string]any{"memory_pool": memoryPoolOff, "description": "edited"})
+	if a, _ := loadAgent(UserDB(f.app.DB, "alice"), f.agent.ID); !a.poolsMemory() {
+		t.Error("a maintainer switched pooling off")
+	}
+}
+
+// Turning pooling on tells everyone it is shared with, maintainers in their
+// own words; a later save tells nobody again; someone added later is told on
+// joining; an agent that does not pool tells nobody.
+func TestPeopleAreToldWhenTheyComeUnderAPool(t *testing.T) {
+	f := newPoolFixture(t, memoryPoolOff)
+	got := told(t)
+	udb := UserDB(f.app.DB, "alice")
+	a := f.agent
+	a.Description = "no pooling yet"
+	saveAgent(udb, a)
+	if len(*got) != 0 {
+		t.Fatalf("an agent that does not pool told people something: %v", *got)
+	}
+	a.MemoryPool = memoryPoolOn
+	saveAgent(udb, a)
+	who := map[string]string{}
+	for _, n := range *got {
+		who[n[0]] = n[1]
+	}
+	if len(who) != 3 || who["bob"] == "" || who["carol"] == "" || who["dave"] == "" {
+		t.Fatalf("turning pooling on told %v", who)
+	}
+	if !strings.Contains(who["bob"], "notes you pin stay yours") || !strings.Contains(who["dave"], "As a maintainer you can curate it") {
+		t.Errorf("the wrong words: bob=%q dave=%q", who["bob"], who["dave"])
+	}
+	*got = nil
+	a.Description = "edited again"
+	saveAgent(udb, a)
+	if len(*got) != 0 {
+		t.Errorf("a save that changed nothing about the pool told people again: %v", *got)
+	}
+	a.AllowedUsers = append(a.AllowedUsers, "erin")
+	saveAgent(udb, a)
+	if len(*got) != 1 || (*got)[0][0] != "erin" {
+		t.Errorf("adding someone to a pooled agent told %v, want erin only", *got)
+	}
+}
+
+// The Share tab's switch: off first, so an agent stored before the setting
+// reads as off; and a chatbot is warned about what pooling it means.
+func TestTheShareTabOffersPoolingAndWarnsForAChatbot(t *testing.T) {
+	spec := memoryPoolChoice(AgentRecord{MemoryMode: memoryModeAgent})
+	if spec.Field != "memory_pool" || len(spec.Options) != 2 || spec.Options[0].Value != memoryPoolOff {
+		t.Fatalf("the switch: %+v", spec)
+	}
+	if strings.Contains(spec.Help, "Careful") {
+		t.Error("a specialist is warned off pooling, which is its default")
+	}
+	// While pooled, "what it worked out" is read by everyone, so the choice
+	// is not offered: one that silently did nothing would mislead.
+	app, _, _ := newTestOrchestrate(t)
+	ap := &accessPage{T: app, agent: AgentRecord{ID: "a1", Owner: "alice"}, user: "alice", patchURL: "x"}
+	var share ui.FormPanel
+	for _, sec := range ap.shareSections() {
+		if sec.Title == "What a recipient sees" {
+			share, _ = sec.Body.(ui.FormPanel)
+		}
+	}
+	shown := map[string]string{}
+	for _, fl := range share.Fields {
+		shown[fl.Field] = fl.ShowWhen
+	}
+	if _, ok := shown["memory_pool"]; !ok || shown["share_reference"] != "memory_pool:!"+memoryPoolOn {
+		t.Errorf("the Share tab's memory fields: %v", shown)
+	}
+	bot := memoryPoolChoice(AgentRecord{MemoryMode: memoryModeChatbot})
+	if !strings.Contains(bot.Help, "Careful") || !strings.Contains(bot.Help, "reaches everyone it is shared with") {
+		t.Errorf("a chatbot is pooled without a warning: %+v", bot)
+	}
+}
+
+// The owner hears once that someone reached the day's limit, however many
+// more they try.
+func TestTheOwnerHearsWhenSomeoneReachesTheDailyLimit(t *testing.T) {
+	f := newPoolFixture(t, memoryPoolOn)
+	now := time.Now()
+	for i := 0; i < poolDailyCap; i++ {
+		f.addToPool(fmt.Sprintf("b%d", i), "bob", now)
+	}
+	f.save(t, "bob", "One finding past the limit.")
+	f.save(t, "bob", "And another past it.")
+	var mine []notices.Notice
+	for _, n := range notices.List(RootDB, "alice") {
+		if strings.Contains(n.Title, "bob reached the day's limit") {
+			mine = append(mine, n)
+		}
+	}
+	if len(mine) != 1 {
+		t.Fatalf("the owner got %d notices about bob's limit, want 1", len(mine))
+	}
+	if mine[0].Count < 2 {
+		t.Errorf("a repeat did not fold into the one notice: count=%d", mine[0].Count)
 	}
 }

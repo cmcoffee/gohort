@@ -410,9 +410,11 @@ func writeAgentOnce(db Database, a AgentRecord, reason string) (AgentRecord, err
 	// replaces it. A share taken back has to take back what it enabled, and
 	// for an agent that includes whatever a fan-out granted on its behalf.
 	var dropped []string
+	var poolPrior *AgentRecord
 	if RootDB != nil && isShareableAgent(a, a.Owner) {
 		var prior AgentRecord
 		if db.Get(agentsTable, a.ID, &prior) {
+			poolPrior = &prior
 			// Users and maintainers both are lent the owner's keys
 			// (lendByDefault), so leaving either list, and holding neither,
 			// takes the lend back.
@@ -429,6 +431,9 @@ func writeAgentOnce(db Database, a AgentRecord, reason string) (AgentRecord, err
 	if RootDB != nil && isShareableAgent(a, a.Owner) {
 		peershare.SetRecipients(RootDB, SharedAgentsTable, a.Owner, a.ID, a.AllowedUsers)
 		peershare.SetRecipients(RootDB, MaintainedAgentsTable, a.Owner, a.ID, a.Maintainers)
+		// Who has just come under pooled memory is told what it means for
+		// them (memory_pool.go).
+		tellPoolChanges(poolPrior, a)
 	}
 	// Only the credential lends this agent's share made, which is the whole
 	// reason they were recorded: a key the owner lent somebody by hand months

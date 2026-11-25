@@ -255,8 +255,12 @@ func tellNewMaintainers(a AgentRecord, before []string) {
 		if had[u] {
 			continue
 		}
+		stays := "Who uses it, its guardrails, its memory and what it is given stay with " + a.Owner + "."
+		if a.poolsMemory() {
+			stays = "Who uses it, its guardrails and what it is given stay with " + a.Owner + ". " +
+				"You can curate what it has learned from everyone who uses it, in its Memory window."
+		}
 		shareledger.NotifyRecipient(u, a.Owner+" made you a maintainer of "+chFirst(a.Name, a.ID),
-			"You can adjust its prompt, rules and behaviour at /orchestrate/agent/"+a.ID+". "+
-				"Who uses it, its guardrails, its memory and what it is given stay with "+a.Owner+".", nil)
+			"You can adjust its prompt, rules and behaviour at /orchestrate/agent/"+a.ID+". "+stays, nil)
 	}
 }

@@ -1,10 +1,10 @@
 # Pooled memory: a shared specialist learns from everyone who uses it
 
-Status: **slices 1 and 2 built** (0.9.682, 2026-11-24): the write path with
-who added each finding, the daily cap, the runs that never write the pool,
-labels on recall, and the removal rules in the tools and the Memory routes,
-with the Memory window's two sections. Slices 3 to 5 are not built.
-Designed 2026-11-23. Follows
+Status: **slices 1, 2 and 4 built** (0.9.682 and 0.9.683, 2026-11-24): the
+write path with who added each finding, the daily cap, the runs that never
+write the pool, labels on recall, the removal rules in the tools and the
+Memory routes with the Memory window's two sections, and the Share tab switch
+with its notices. Slices 3 and 5 are not built. Designed 2026-11-23. Follows
 [sharing-people-and-teams.md](sharing-people-and-teams.md), which settled
 that a share gives the people added "the same experience" the owner has, and
 that memory follows the kind of agent: **pooled for a specialist, private for a
@@ -217,11 +217,8 @@ half.
 
 Left for later slices, found while building 1 and 2:
 
-- **No switch yet** (slice 4): only a new specialist pools. An existing agent
-  cannot be turned on until the Share tab has the switch.
 - **A maintainer's pinned note** still goes to their own copy, as before; the
   table above has it going to the pool's.
-- **The owner is not told** when someone reaches the daily cap; it is logged.
 - **The pool is the owner's copy, so it shares that copy's finding cap**
   (`tune_finding_hard_cap`, default 300), and past it the oldest finding goes,
   whoever added it. A busy pool can push out the owner's older findings. Not
@@ -252,3 +249,27 @@ The owner went with the recommendations:
   privacy default, and it never affects anyone else.
 - **Pooling existing shared specialists automatically.** It would change, under
   people already using them, where what they say ends up.
+
+## As built: slice 4 (0.9.683)
+
+- **The switch** is "What it learns from people using it" on the Share tab's
+  "What a recipient sees" panel, Off ("Each person's own") listed first so an
+  agent stored before the setting shows as off. PATCH takes only "on" and
+  "off"; a maintainer's edit never carries it.
+- **"What it worked out" is hidden** while pooling is on (ShowWhen), rather
+  than shown locked: a top-level form field has no locked state, and a choice
+  that silently did nothing would mislead.
+- **A chatbot's warning is the help line**, starting "Careful:". An option's
+  Confirm is honoured on a row's segmented toggle, not in a form's select, so
+  a confirm there would have done nothing.
+- **Recipients are told on joining, not on first chat.** The chat page has no
+  per-agent first-run notice to hook, so the notice goes through the share
+  notices at the two moments that matter: when the owner turns pooling on
+  (everyone it is shared with, maintainers in curator's words) and when
+  someone is added to an agent that already pools. Both are decided in the one
+  store write, from the record before and after, so no new stored data.
+  Someone who joins through a team gaining a member is not told.
+- **The owner is told** when someone reaches the daily cap, once per person:
+  the notice store folds a repeat into a count.
+- **The maintainer notice** says they can curate what it has learned from
+  everyone, on a pooled agent.
