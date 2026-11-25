@@ -86,7 +86,20 @@
       }
       items.forEach(function(it) {
         var row = el('div', {class: 'ui-bell-item' + (it.read ? '' : ' unread')});
-        row.appendChild(el('div', {class: 'ui-bell-title'}, [it.title || '']));
+        // A notice with a link takes its reader there, and is read on the
+        // way. Only a path on this site: the server keeps nothing else.
+        var link = typeof it.link === 'string' && it.link.charAt(0) === '/' && it.link.charAt(1) !== '/' ? it.link : '';
+        if (link) {
+          var a = el('a', {class: 'ui-bell-title ui-bell-link', href: link, style: 'display:block;text-decoration:none'}, [it.title || '']);
+          a.addEventListener('click', function() {
+            if (!it.read) {
+              try { fetch('/api/notifications/read?id=' + encodeURIComponent(it.id), {method: 'POST', keepalive: true}); } catch (e) {}
+            }
+          });
+          row.appendChild(a);
+        } else {
+          row.appendChild(el('div', {class: 'ui-bell-title'}, [it.title || '']));
+        }
         if (it.body) { row.appendChild(el('div', {class: 'ui-bell-body'}, [it.body])); }
         // The count is stated only when it is more than one. "1 time" on every
         // row is noise, and the repeating ones are what a reader is scanning

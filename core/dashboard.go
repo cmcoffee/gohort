@@ -735,6 +735,7 @@ func handleNotifications(w http.ResponseWriter, r *http.Request) {
 		Count int    `json:"count"`
 		When  string `json:"when"`
 		Read  bool   `json:"read"`
+		Link  string `json:"link,omitempty"`
 	}
 	out := make([]row, 0, len(list))
 	for _, n := range list {
@@ -743,7 +744,7 @@ func handleNotifications(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, row{
 			ID: n.ID, Title: n.Title, Body: n.Body, Kind: n.Kind, Count: n.Count,
-			When: n.Last.In(UserLocation(user)).Format("Jan 2 3:04 PM"), Read: n.Read,
+			When: n.Last.In(UserLocation(user)).Format("Jan 2 3:04 PM"), Read: n.Read, Link: n.Link,
 		})
 	}
 	json.NewEncoder(w).Encode(map[string]any{"unread": unread, "notices": out})

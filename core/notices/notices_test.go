@@ -231,3 +231,34 @@ func TestOnWaitingHearsEachNewThingWaiting(t *testing.T) {
 		t.Errorf("heard %v, want alice's and bob's waiting change once each", heard)
 	}
 }
+
+// A notice carries a link only to a path on this site: anything that could
+// take its reader to another host is dropped as it is recorded. A repeat
+// takes the newer link, since it is to the latest occurrence.
+func TestANoticeLinksOnlyWithinTheSite(t *testing.T) {
+	db := newStore(t)
+	for link, want := range map[string]string{
+		"/apps/notes/?work=abc":   "/apps/notes/?work=abc",
+		"  /apps/notes/  ":        "/apps/notes/",
+		"//evil.example/x":        "",
+		"https://evil.example/":   "",
+		"javascript:alert(1)":     "",
+		"/\\evil.example":         "",
+		"/apps/notes/\nX-Header:": "",
+		"apps/notes/":             "",
+	} {
+		n, _ := Record(db, Notice{Owner: "u", Title: "t " + link, Link: link})
+		if n.Link != want {
+			t.Errorf("link %q kept as %q, want %q", link, n.Link, want)
+		}
+	}
+	Record(db, Notice{Owner: "u", Title: "Extract finished", Link: "/apps/p/?work=1"})
+	n, first := Record(db, Notice{Owner: "u", Title: "Extract finished", Link: "/apps/p/?work=2"})
+	if first || n.Count != 2 || n.Link != "/apps/p/?work=2" {
+		t.Errorf("a repeat: first %v, count %d, link %q", first, n.Count, n.Link)
+	}
+	n, _ = Record(db, Notice{Owner: "u", Title: "Extract finished"})
+	if n.Link != "/apps/p/?work=2" {
+		t.Errorf("a repeat with no link dropped the one it had: %q", n.Link)
+	}
+}

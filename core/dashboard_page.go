@@ -64,8 +64,13 @@ const notifyPanelHTML = `<div class="notify-panel" id="notify-panel">
         // The count is stated only when it is more than one: "1 time" on every
         // row is noise, and the chronic ones are what a reader is scanning for.
         var times = it.count > 1 ? ' - ' + it.count + ' times' : '';
+        // A link takes its reader there (a path on this site only).
+        var link = typeof it.link === 'string' && it.link.charAt(0) === '/' && it.link.charAt(1) !== '/' ? it.link : '';
+        var title = link
+          ? '<a class="notify-title notify-link" href="' + esc(link) + '" data-open="' + esc(it.id) + '"' + (it.read ? '' : ' data-unread="1"') + '>' + esc(it.title) + '</a>'
+          : '<div class="notify-title">' + esc(it.title) + '</div>';
         return '<div class="notify-item' + (it.read ? '' : ' unread') + '">' +
-          '<div class="notify-title">' + esc(it.title) + '</div>' +
+          title +
           (it.body ? '<div class="notify-body">' + esc(it.body) + '</div>' : '') +
           '<div class="notify-meta"><span>' + esc(it.when) + times + '</span>' +
           (it.read ? '' : '<button type="button" data-read="' + esc(it.id) + '">Mark read</button>') +
@@ -81,6 +86,14 @@ const notifyPanelHTML = `<div class="notify-panel" id="notify-panel">
     if (!panel.contains(e.target) && !bell.contains(e.target)) { panel.classList.remove('open'); }
   });
   list.addEventListener('click', function(e) {
+    // Following a notice's link reads it on the way.
+    var open = e.target && e.target.getAttribute && e.target.getAttribute('data-open');
+    if (open) {
+      if (e.target.getAttribute('data-unread')) {
+        try { fetch('/api/notifications/read?id=' + encodeURIComponent(open), {method: 'POST', keepalive: true}); } catch (x) {}
+      }
+      return;
+    }
     var id = e.target && (e.target.getAttribute('data-read') || e.target.getAttribute('data-dismiss'));
     if (!id) { return; }
     post(e.target.hasAttribute('data-read')

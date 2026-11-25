@@ -326,6 +326,9 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		// Everyone else it is shared with reports a problem instead
 		// (report.go).
 		head := recordsInvalidationBridge(spec)
+		// Opened from a notice about work that ended, the page says how it
+		// went, whatever the app's own page remembers (action_jobs.go).
+		head += workResultJS(T.WebPath() + "/" + slug + "/")
 		if hasView {
 			head += viewTroubleJS(T.WebPath() + "/" + slug + "/_view/reset")
 		}
