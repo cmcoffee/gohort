@@ -165,6 +165,10 @@ func TestAReplyIsAskedApartAndOnlyWhileRecent(t *testing.T) {
 	if !containsAll(sent, "[Henry, 5 min ago]", "[Clerk, 5 min ago] What's up?", "the back fence fell down", "message under evaluation") {
 		t.Errorf("the follow-up question did not see the chat with ages and the fenced message:\n%s", sent)
 	}
+	// And the room's own rules, which may say what counts as a reply.
+	if !containsAll(sent, "wake rules, from the assistant's owner", "directed to you by name") {
+		t.Errorf("the follow-up question was not shown the room's rules:\n%s", sent)
+	}
 	df, in = followUpFixture(t, now.Add(-5*time.Minute), no, FakeTurn{Content: `{"why": "a new subject", "answer": "other"}`})
 	if df.app.channelGatekeeperAllow(t.Context(), in) {
 		t.Error("the follow-up question said other, and the message was let through")
@@ -272,8 +276,10 @@ func TestTheFollowUpQuestionAsSystemOne(t *testing.T) {
 	if o := decideFollowUpCase(context.Background(), llm, cases["answers-question"]); o.Got != "reply" || !o.Unsure {
 		t.Errorf("a reply at 0.7: %+v, want unsure", o)
 	}
-	reply = 0.3
-	if o := decideFollowUpCase(context.Background(), llm, cases["talk-moved-on"]); o.Got != "other" || o.Unsure || o.Bar != 0.6 {
-		t.Errorf("other at 0.7: %+v, want it to stand", o)
+	// "Not a reply" never stands on System One, however firm: it goes to
+	// the full question, since a reply left out is someone unanswered.
+	reply = 0.02
+	if o := decideFollowUpCase(context.Background(), llm, cases["talk-moved-on"]); o.Got != "other" || !o.Unsure || o.Bar != 0 {
+		t.Errorf("other at 0.98: %+v, want it sent to the full question", o)
 	}
 }

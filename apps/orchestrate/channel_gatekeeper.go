@@ -182,7 +182,7 @@ func (app *OrchestrateApp) channelGatekeeperAllow(ctx context.Context, in Channe
 	if chat == "" {
 		return false
 	}
-	return app.followUpAllow(ctx, followUpQuestion{AgentName: agentName, Chat: chat, Sender: displaySender, Message: msgDesc}, in.ChatID)
+	return app.followUpAllow(ctx, followUpQuestion{AgentName: agentName, Rules: prompt, Chat: chat, Sender: displaySender, Message: msgDesc}, in.ChatID)
 }
 
 // gateMaxTokens bounds the gate's reply.
