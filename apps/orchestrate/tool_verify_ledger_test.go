@@ -126,9 +126,9 @@ func TestReportBuildGapsFlagsUnverifiedToolOnDoneSteps(t *testing.T) {
 func TestADelegatedQuestionCarriesTheUnverifiedNote(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
 	sess := &ToolSession{DB: db, ChatSessionID: "dispatch-1"}
-	recordToolVerify(db, "dispatch-1", "post_to_local_radar", false, "verification call failed: No module named 'default_api'")
-
+	// The run starts, then authors the tool and fails to verify it.
 	check := newDispatchBuildCheck(AgentRecord{ID: "seed-builder"}, sess)
+	recordToolVerify(db, "dispatch-1", "post_to_local_radar", false, "verification call failed: No module named 'default_api'")
 	note := check.questionNote()
 	for _, want := range []string{"[Build check]", "post_to_local_radar", "default_api", "unconfirmed"} {
 		if !strings.Contains(note, want) {

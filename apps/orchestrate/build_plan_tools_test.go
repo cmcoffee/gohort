@@ -3,6 +3,7 @@ package orchestrate
 import (
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -193,8 +194,9 @@ func TestTheBuildCheckLeavesAnUnfinishedPlanAndAnAnsweredReportAlone(t *testing.
 // agent over a tool whose last test had failed, after the check held it twice.
 func TestADelegatedReplyCarriesWhatIsStillUnverified(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
-	recordToolVerify(db, "d1", "extract_audio", false, "shell tool failed verification")
+	// The run starts, then authors the tool and it fails its verification.
 	bc := newDispatchBuildCheck(AgentRecord{ID: "seed-builder"}, &ToolSession{DB: db, ChatSessionID: "d1"})
+	recordToolVerify(db, "d1", "extract_audio", false, "shell tool failed verification")
 	bc.finishUnmet()()
 	resp := &Response{Content: "Verified & Working: extract_audio.\n"}
 	bc.annotate(resp)
@@ -214,5 +216,57 @@ func TestADelegatedReplyCarriesWhatIsStillUnverified(t *testing.T) {
 	}
 	if note := buildGapsNote(gateSession("d2", "done", "pending").BuildWorkPlan, db, "d2"); note != "" {
 		t.Errorf("a plan still pending is not a finish: %q", note)
+	}
+}
+
+// A turn that built nothing is not held to gaps its session carries from
+// earlier work: a standing task run on Builder, a weekly digest, had its
+// reply held back and rewritten around tools from Builder's other work.
+// Once the turn does build work (a tool's standing recorded, or the plan
+// changed), the check holds it to every gap, the older ones included.
+func TestATurnThatBuiltNothingIsNotHeldToOlderGaps(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	recordToolVerify(db, "s5", "list_events", false, "never tested")
+	old := loadToolVerifications(db, "s5")
+	old[0].At = time.Now().Add(-time.Hour)
+	db.Set(toolVerifyTable, "s5", old)
+
+	turn := &chatTurn{udb: db, session: &ChatSession{ID: "s5"}, agent: AgentRecord{ID: "seed-builder"}}
+	check := turn.buildGapsFinishCheck()
+	if notice, _ := check("Penal Code changes this week: none in the window, sources read below."); notice != "" {
+		t.Errorf("a turn that built nothing was held to an older gap: %q", notice)
+	}
+	recordToolVerify(db, "s5", "new_tool", false, "edited after passing")
+	notice, _ := check("Done, it works.")
+	if !strings.Contains(notice, "new_tool") || !strings.Contains(notice, "list_events") {
+		t.Errorf("a turn that built was not held to the gaps: %q", notice)
+	}
+
+	// A plan the turn moves counts as build work too.
+	pl := gateSession("s6", "done", "blocked")
+	pturn := &chatTurn{udb: db, session: pl, agent: AgentRecord{ID: "seed-builder"}}
+	pcheck := pturn.buildGapsFinishCheck()
+	if n, _ := pcheck("Here is the digest."); n != "" {
+		t.Errorf("an untouched plan held a turn that built nothing: %q", n)
+	}
+	pl.BuildWorkPlan.Steps[0].Status = WorkStepBlocked
+	pl.BuildWorkPlan.Steps[0].BlockedReason = "the API refused"
+	if n, _ := pcheck("All done."); !strings.Contains(n, "blocked") {
+		t.Errorf("a turn that moved the plan was not held: %q", n)
+	}
+
+	// A delegated run is held the same way.
+	d := newDispatchBuildCheck(AgentRecord{ID: "seed-builder"}, &ToolSession{DB: db, ChatSessionID: "s7"})
+	recordToolVerify(db, "s7", "x", false, "never tested")
+	old = loadToolVerifications(db, "s7")
+	old[0].At = time.Now().Add(-time.Hour)
+	db.Set(toolVerifyTable, "s7", old)
+	d.worked = buildWorkSince(nil, db, "s7")
+	if n, _ := d.finishCheck()("Here it is."); n != "" || d.questionNote() != "" {
+		t.Errorf("a delegated run that built nothing was held: %q %q", n, d.questionNote())
+	}
+	recordToolVerify(db, "s7", "y", false, "never tested")
+	if n, _ := d.finishCheck()("Done."); n == "" || d.questionNote() == "" {
+		t.Error("a delegated run that built was not held")
 	}
 }
