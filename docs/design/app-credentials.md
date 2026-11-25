@@ -1,8 +1,8 @@
 # An app's credentials, the way an agent's are lent
 
-Status: **design, not built**. Every stored change is additive and an app
-stored before it behaves as today until its owner decides, so **no
-migration**.
+Status: **design, not built**. Every stored change is additive, so **no
+migration**. The default is **Mine for reads** for every app, the ones
+already shared included (settled with the owner 2026-11-25).
 
 ## Where it stands
 
@@ -92,8 +92,8 @@ The ones the app names or uses, not every credential the owner has:
 - those the app's runs have actually used, recorded the first time a run
   resolves one (a small per-app table).
 
-A credential used for the first time on a shared app, with no choice made,
-takes **Mine for reads** and is listed for the owner to confirm.
+A credential with no choice made takes **Mine for reads**, on an app
+shared before this as on a new one, and is listed for the owner to change.
 
 ### 4. Their own key
 
@@ -115,34 +115,39 @@ All additive:
 - A per-app "credentials used" table in the owner's store, name and first
   use.
 
-**No migration.** An app whose `CredentialsDecided` is false behaves as
-today for runs already shared (see open question 1), and nothing stored is
-rewritten.
+**No migration.** Nothing stored is rewritten: a credential with no choice
+is read as Mine for reads. That is a change in behaviour for apps already
+shared (see "Settled", below), not in data.
 
 ## Order
 
 1. The run's credential identity and scope (item 1), with the refusal
-   message, behind `CredentialsDecided`: nothing changes for an app until
-   its owner decides.
+   message, and the owners' notice below. From this step a shared app's
+   recipients read on the owner's keys and need their own account to
+   write.
 2. The "What it reaches" table on the app's ⚙ (item 2), and the record of
    what an app uses (item 3).
 3. Maintainers' narrowing.
 
+## Settled
+
+- **The default is Mine for reads, for every app** (the owner, 2026-11-25),
+  the ones already shared included, as for an agent. An app shared today
+  whose recipients write somewhere stops doing that on the owner's key: the
+  write is refused until they connect their own account, or the owner
+  chooses Mine, writes too for that credential. So the owner of each shared
+  app that has used a credential is told once, in the share notices: what
+  changed, which of the app's credentials it affects, and where to choose
+  (the app's ⚙, What it reaches).
+
 ## Open questions
 
-1. **Apps already shared today.** Their recipients write on the owner's
-   keys now. Switching them to Mine for reads would stop actions that post
-   somewhere, without the owner having done anything. Recommended: leave
-   them as they are (Mine, writes too) until the owner decides, and tell
-   the owner once, in the share notices, that the app lends their keys for
-   writes and where to choose. A new share, or an app created from now on,
-   starts at Mine for reads.
-2. **Data sources on page load.** A data source runs for whoever opens the
+1. **Data sources on page load.** A data source runs for whoever opens the
    page, so with Theirs, a person without their own account sees the page
    fail to load its data. Recommended: the data source's error says what to
    connect, and the page helper's error carries it to the page, as an
    action's does.
-3. **Tools a script calls (`tool:<name>`).** A tool brings its own
+2. **Tools a script calls (`tool:<name>`).** A tool brings its own
    credential setup and runs as the owner. Recommended: the same rule
    applies inside it when the run is for someone else, since it is the same
    dispatch path; listed here because it widens what item 1 touches.
