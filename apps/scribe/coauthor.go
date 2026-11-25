@@ -69,7 +69,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 
 	// Attached-source tools: every source the user linked via the Sources button
 	// contributes its OWN named tools (e.g. search_<system>_knowledge,
-	// investigate_<system>) directly into the kit — so the agent SEES and calls
+	// get_<system>_facts) directly into the kit — so the agent SEES and calls
 	// the guide's Sources instead of having to discover them through the generic
 	// list_reference_sources → pull_reference dance (which loses to the framework's
 	// own knowledge tools, leaving attached Sources untouched). Editors only:
@@ -83,8 +83,13 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			for _, t := range base {
 				have[t.Tool.Name] = true
 			}
+			// Sources are read here, not asked of anything live: a live
+			// system is found out about by an agent set up with it, under
+			// that agent's grants and credential limits, which Scribe's
+			// co-author has none of.
+			srcSess := &ToolSession{Ctx: ctx, Username: user, ReadOnlySources: true}
 			for _, ref := range g.References {
-				for _, t := range ReferenceItemToolsWithContext(ctx, user, ref.Kind, ref.ItemID) {
+				for _, t := range ReferenceItemToolsWithSession(srcSess, user, ref.Kind, ref.ItemID) {
 					if t.Tool.Name == "" || have[t.Tool.Name] {
 						continue
 					}
@@ -757,7 +762,7 @@ func plural(n int) string {
 // deterministic "gather from both before drafting" step behind draft_section:
 // the gather can't be skipped by the LLM because it IS the drafting call. It uses
 // each Source's cached/gathered knowledge (FetchReference's focused fetch), NOT a
-// live investigation — the live investigate_<system> tool stays an explicit,
+// live investigation. Asking a source more (a repository's investigate_<name>) stays an explicit,
 // deliberate agent choice so a single draft can't spawn many SSH sessions.
 func gatherGroundingFor(ctx context.Context, ownerUser string, g Guide, query string) (string, bool) {
 	var b strings.Builder
