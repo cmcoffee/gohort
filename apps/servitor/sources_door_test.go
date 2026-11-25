@@ -5,6 +5,7 @@ package servitor
 // connections made before this move there once.
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -257,5 +258,64 @@ func TestAddingAnAgentFromServitorWritesNoGrant(t *testing.T) {
 	}
 	if got := grantAllowsText(CommandGrant{AgentID: "wren", ApplianceID: "lab-box", ownSettings: true}); got != "same as your own auto-run settings" {
 		t.Errorf("row reads %q", got)
+	}
+}
+
+// A consumer that reads sources only (a writer app) gets what is gathered
+// about a live system and no way to send it a question, worded so nothing
+// points it at a tool it does not have; a repository is still asked, being
+// read from its ingested copy. An agent's Source is unchanged.
+func TestAReadOnlyConsumerSendsNothingLive(t *testing.T) {
+	app, udb := sourcesApp(t)
+	udb.Set(applianceTable, "src", Appliance{ID: "src", Name: "Src", Type: "repo", Owner: "alice"})
+	udb.Set(applianceTable, "estate", Appliance{ID: "estate", Name: "Estate", Type: "workspace", Owner: "alice", Members: []string{"lab-box"}})
+	readOnly := &ToolSession{Username: "alice", ReadOnlySources: true}
+	tools := func(sess *ToolSession, id string) []AgentToolDef {
+		return (servitorSource{app: app}).ItemToolsWithSession(sess, "alice", id)
+	}
+	has := func(defs []AgentToolDef, prefix string) bool {
+		for _, d := range defs {
+			if strings.HasPrefix(d.Tool.Name, prefix) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, id := range []string{"lab-box", "estate"} {
+		got := tools(readOnly, id)
+		if has(got, "investigate_") || !has(got, "search_") || !has(got, "get_") {
+			t.Errorf("%s, read only: %d tools, investigate offered %v", id, len(got), has(got, "investigate_"))
+		}
+		for _, d := range got {
+			if strings.Contains(d.Tool.Description, "investigate_") {
+				t.Errorf("%s points at an investigate tool it does not have: %s", d.Tool.Name, d.Tool.Description)
+			}
+			if d.Tool.Name == "search_"+RefToolSlug(map[string]string{"lab-box": "Lab Box", "estate": "Estate"}[id])+"_knowledge" {
+				out, _ := d.Handler(context.Background(), map[string]any{"query": "nothing recorded"})
+				if strings.Contains(out, "investigate_") {
+					t.Errorf("an empty search points at an investigate tool: %s", out)
+				}
+			}
+		}
+	}
+	if !has(tools(readOnly, "src"), "investigate_") {
+		t.Error("a repository, read from its ingested copy, cannot be asked by a read-only consumer")
+	}
+	if !has(tools(nil, "lab-box"), "investigate_") || !has(tools(&ToolSession{Username: "alice"}, "lab-box"), "investigate_") {
+		t.Error("an agent's Source lost its investigate tool")
+	}
+}
+
+// A source tool's work is rooted on the turn's context when the session has
+// one, and on the call's when it does not, never on a context nothing stops.
+func TestASourceToolStopsWithItsCall(t *testing.T) {
+	call, cancel := context.WithCancel(context.Background())
+	cancel()
+	if callCtx(&ToolSession{Username: "alice"}, call).Err() == nil || callCtx(nil, call).Err() == nil {
+		t.Error("a session with no context of its own ignored the call's Stop")
+	}
+	turn := context.WithValue(context.Background(), struct{}{}, 1)
+	if callCtx(&ToolSession{Ctx: turn}, call) != turn {
+		t.Error("the turn's context was not used")
 	}
 }

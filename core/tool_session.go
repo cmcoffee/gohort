@@ -486,6 +486,12 @@ type ToolSession struct {
 	// no intent-derived behavior.
 	IntentText string
 
+	// ReadOnlySources is set by a consumer of reference sources that takes
+	// only what a source has already gathered (a writer app): a source then
+	// leaves out any tool that sends a question to something live, so live
+	// access goes through an agent set up for it, under that agent's rules.
+	ReadOnlySources bool
+
 	// AgentID is the agent whose turn this is. Set by the host app that owns
 	// agents; empty for hosts that have none.
 	//

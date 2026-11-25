@@ -219,11 +219,17 @@ func (T *CodeWriterAgent) editorTurnContext(ctx context.Context, user string, se
 		if text := FetchReferences(ctx, user, send.Message, refs); text != "" {
 			b.WriteString("\n" + text + "\n")
 		}
+		// Sources are read here, not asked of anything live: a live system
+		// is found out about by an agent set up with it, under that agent's
+		// grants and credential limits, which CodeWriter's own agent has
+		// none of. No context of its own: the turn outlives this request, so
+		// a source's tool is rooted on its call, which the turn's Stop ends.
+		srcSess := &ToolSession{Username: user, ReadOnlySources: true}
 		for _, sel := range refs {
-			refTools = append(refTools, ReferenceItemTools(user, sel.Kind, sel.ItemID)...)
+			refTools = append(refTools, ReferenceItemToolsWithSession(srcSess, user, sel.Kind, sel.ItemID)...)
 		}
 		if len(refTools) > 0 {
-			b.WriteString("\nThe attached reference source also provides tools. Use them when the reference above doesn't answer the question, or when the user asks about the CURRENT state of the system: the investigate tool runs a live session when gathered knowledge isn't enough.\n")
+			b.WriteString("\nThe attached reference sources also provide tools. Use them when the reference above does not answer the question. A live system is read here from what was already gathered about it: when the user needs its CURRENT state and that does not hold it, say so, and that attaching an agent set up with that system as a source lets you ask it.\n")
 		}
 	}
 	// The passage the user selected and asked about, with how to change it.

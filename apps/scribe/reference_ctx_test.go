@@ -63,6 +63,11 @@ func TestCoauthorToolsRootAttachedSourcesOnTheTurn(t *testing.T) {
 	if got == nil {
 		t.Fatal("attached-source tools were minted with a NIL session; a sub-run they dispatch cannot be canceled with the turn")
 	}
+	// Read, not asked of anything live: a live system's current state is an
+	// agent's to find out, under that agent's grants and limits.
+	if !got.ReadOnlySources || got.Username != "u" {
+		t.Errorf("the co-author's sources were not read-only, as the person: %+v", got)
+	}
 	// The turn's own context, not a detached one: canceling the turn must reach
 	// anything the source rooted on what it was given.
 	cancel()
