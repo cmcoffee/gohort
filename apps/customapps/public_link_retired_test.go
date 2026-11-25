@@ -19,30 +19,67 @@ import (
 )
 
 // The surface itself, checked in the source rather than by probing a route:
-// what matters is that nothing REGISTERS an anonymous path, since a public path
-// is a deployment-wide exemption from the cookie middleware and not merely one
-// app's handler.
+// what matters is that nothing REGISTERS an anonymous path that runs anything,
+// since a public path is a deployment-wide exemption from the cookie
+// middleware and not merely one app's handler.
+//
+// One public path is allowed, by name: the folder an app's sandboxed frame
+// loads its own scripts and stylesheets from (asset_files.go). It serves
+// those files and nothing else: no data source, action, record or setting,
+// and nothing runs. Any other registration, or anything else answered ahead
+// of RequireUser, fails here.
 func TestNoAnonymousSurfaceIsRegistered(t *testing.T) {
-	raw, err := os.ReadFile("customapps.go")
+	entries, err := os.ReadDir(".")
 	if err != nil {
-		t.Fatalf("reading the source: %v", err)
+		t.Fatal(err)
 	}
-	src := string(raw)
-	for _, gone := range []string{
-		`RegisterPublicPath(`,
-		`promotion.RegisterApprover("public_link"`,
-		`func (T *CustomApps) handlePublic(`,
-		`func (T *CustomApps) setPublic(`,
-		`func newPublicToken(`,
-	} {
-		if strings.Contains(src, gone) {
-			t.Errorf("the anonymous surface is back: %s", gone)
+	const allowedPublic = `RegisterPublicPath(T.WebPath() + appFilesPath)`
+	const allowedEarly = "if strings.HasPrefix(path, strings.Trim(appFilesPath, \"/\")+\"/\") {\n\t\tT.handleAppFiles(w, r)\n\t\treturn\n\t}"
+	public := 0
+	for _, e := range entries {
+		n := e.Name()
+		if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(n)
+		if err != nil {
+			t.Fatalf("reading %s: %v", n, err)
+		}
+		src := string(raw)
+		public += strings.Count(src, `RegisterPublicPath(`)
+		if strings.Count(src, `RegisterPublicPath(`) != strings.Count(src, allowedPublic) {
+			t.Errorf("%s registers a public path other than the app files folder", n)
+		}
+		for _, gone := range []string{
+			`promotion.RegisterApprover("public_link"`,
+			`func (T *CustomApps) handlePublic(`,
+			`func (T *CustomApps) setPublic(`,
+			`func newPublicToken(`,
+		} {
+			if strings.Contains(src, gone) {
+				t.Errorf("the anonymous surface is back in %s: %s", n, gone)
+			}
 		}
 	}
+	if public > 1 {
+		t.Errorf("%d public paths registered; only the app files folder may be", public)
+	}
 	// And the one that matters most on its own: an app route must not dispatch
-	// anything before RequireUser.
+	// anything before RequireUser but the app files folder.
+	raw, _ := os.ReadFile("customapps.go")
+	src := string(raw)
 	if strings.Contains(src, `strings.HasPrefix(path, "pub/")`) {
 		t.Error("a request is being routed ahead of the auth check again")
+	}
+	i := strings.Index(src, "func (T *CustomApps) route(")
+	j := strings.Index(src[i:], "RequireUser(")
+	if i < 0 || j < 0 {
+		t.Fatal("route or its RequireUser not found")
+	}
+	ahead := src[i : i+j]
+	ahead = strings.Replace(ahead, allowedEarly, "", 1)
+	if strings.Contains(ahead, "T.handle") || strings.Contains(ahead, "ServeHTTP") {
+		t.Errorf("something other than the app files folder is answered ahead of RequireUser:\n%s", ahead)
 	}
 }
 

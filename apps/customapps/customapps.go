@@ -172,6 +172,11 @@ func (T *CustomApps) routes() {
 	}
 	// One app's JSON routes (app_routes.go), then everything else of it.
 	T.appRoutes()
+	// An app's scripts and stylesheets, which its sandboxed frame loads with
+	// no session, are answered in route before the sign-in check: the path
+	// checks its own version (asset_files.go). A pattern of their own would
+	// overlap an app's /{slug}/<route> patterns, which the router refuses.
+	RegisterPublicPath(T.WebPath() + appFilesPath)
 	T.HandleFunc("/", T.route)
 }
 
@@ -179,6 +184,10 @@ func (T *CustomApps) routes() {
 // dispatches.
 func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 	path := strings.Trim(r.URL.Path, "/")
+	if strings.HasPrefix(path, strings.Trim(appFilesPath, "/")+"/") {
+		T.handleAppFiles(w, r)
+		return
+	}
 
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
@@ -294,9 +303,9 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		// keeps its owner-side tracker running.
 		T.touchAppView(spec)
 		page := isolateAppHTML(appPageFor(spec, user), T.WebPath()+"/"+slug+"/")
-		// Its own scripts and stylesheets are in the page, since the frame
-		// it runs in cannot load them (asset_inline.go).
-		page = inlineAppAssets(page, ownerUser, slug)
+		// Its own scripts and stylesheets load as files the frame can reach
+		// without a session, kept by the browser (asset_files.go).
+		page = T.linkAppFiles(page, ownerUser, slug)
 		page, hasView := T.withViewState(page, appdb, spec)
 		// The app's ⚙: what is the person's own about it (their settings,
 		// what it remembers about them) and, for its owner and maintainers
