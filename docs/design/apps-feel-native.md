@@ -1,6 +1,6 @@
 # Apps that feel like gohort's own
 
-Status: **items 1, 2 and 6 built (0.9.688)**; 3 to 5 not built. Nothing here changes stored data or needs a
+Status: **items 1, 2, 3 and 6 built (0.9.688, 0.9.689)**; 4 and 5 not built. Nothing here changes stored data or needs a
 migration, except the last item, which applies to new apps only.
 
 ## The goal
@@ -185,3 +185,35 @@ default of an existing field for new apps only. **No migration.**
 - **Anvil's assistant** is told the bar holds the app's name, its gear and
   the link to change it, and that Reset view is the framework's, offered on a
   load error and at the foot of the settings.
+
+## As built: item 3 (0.9.689)
+
+- **The path** is `/apps/_files/<app>/<version>/<name>`, not under the app's
+  slug: an unauthenticated request carries no person to resolve a slug for,
+  so `<app>` names the owner and slug (base64url). It is answered at the top
+  of the app host's catch-all route, ahead of the sign-in check, because a
+  mux pattern of its own overlaps the apps' `/{slug}/...` patterns, which
+  the router refuses.
+- **The version** is the first 32 hex digits of a SHA-256 of the owner, the
+  slug and every `.js`, `.mjs` and `.css` asset's name, length and bytes. No
+  server secret: it cannot be made without the files it serves. A request
+  for any version but the current one, any other type, an app that is gone
+  or switched off, is a 404.
+- **Headers:** the file's type, `Cache-Control: public, max-age=31536000,
+  immutable`, `Access-Control-Allow-Origin: *` (a module from the frame's
+  null origin), and `Content-Security-Policy: sandbox; default-src 'none'`,
+  so a file opened as a page of its own has no origin.
+- **Checked in Chromium**: a module, the chunk it imports, a classic script
+  and a stylesheet load inside a frame sandboxed like an app's
+  (`TestABrowserLoadsAnAppsFilesInItsSandboxedFrame`, skipped without a
+  Chromium, as on CI).
+- **The guard** `TestNoAnonymousSurfaceIsRegistered` now reads every source
+  file of the package and allows exactly this one public path and this one
+  early answer ahead of sign-in; anything else still fails it.
+- **The folder guide** says split builds work with their chunks flat in
+  `assets/`, and that scripts and stylesheets are readable by anyone who can
+  open the app (open question 2, as recommended).
+- **Not served here:** images, fonts and sounds, which still go through the
+  shim. A stylesheet's `url(...)` to one of the app's own images or fonts
+  resolves inside the files folder and is a 404; serving those types here
+  too is the follow-up if an app needs it.
