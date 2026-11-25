@@ -20,6 +20,7 @@ package customapps
 import (
 	"context"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -47,6 +48,8 @@ type appWork struct {
 type actionJob struct {
 	id      string
 	key     string // app owner / slug / person / action: whose, and which button
+	name    string // the action's name, or "ask"
+	inputs  string // what the caller sent, so a repeat of the same call joins it
 	work    appWork
 	cancel  context.CancelFunc
 	done    chan struct{}
@@ -110,10 +113,33 @@ func actionJobKey(owner, slug, uid, action string) string {
 // startActionJob runs work as a job and returns it. work receives the job's
 // own context and a progress reporter.
 func startActionJob(key string, info appWork, work func(ctx context.Context, progress func(string)) (actionOutcome, error)) *actionJob {
-	ctx, cancel := context.WithCancel(context.Background())
-	j := &actionJob{id: UUIDv4(), key: key, work: info, cancel: cancel, done: make(chan struct{}), started: time.Now()}
+	j, _ := startOrJoinJob(key, "", "", info, work)
+	return j
+}
+
+// startOrJoinJob starts work as a job, or, when the same call (key and inputs)
+// is already running, hands back that job: a page that is reopened and calls
+// again, or a button pressed twice, follows the run already going instead of
+// starting a second. A call with other inputs starts its own, so a page that
+// runs one action for each of several items still runs them all. joined says
+// which.
+func startOrJoinJob(key, name, inputs string, info appWork, work func(ctx context.Context, progress func(string)) (actionOutcome, error)) (j *actionJob, joined bool) {
 	actionJobs.Lock()
 	pruneActionJobs()
+	for _, run := range actionJobs.byID {
+		if run.key != key || run.inputs != inputs {
+			continue
+		}
+		run.mu.Lock()
+		going := run.ended.IsZero()
+		run.mu.Unlock()
+		if going {
+			actionJobs.Unlock()
+			return run, true
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	j = &actionJob{id: UUIDv4(), key: key, name: name, inputs: inputs, work: info, cancel: cancel, done: make(chan struct{}), started: time.Now()}
 	actionJobs.byID[j.id] = j
 	actionJobs.byKey[key] = j
 	actionJobs.Unlock()
@@ -128,11 +154,11 @@ func startActionJob(key string, info appWork, work func(ctx context.Context, pro
 		j.res, j.err, j.ended = res, err, time.Now()
 		j.mu.Unlock()
 	}()
-	return j
+	return j, false
 }
 
 // trackWork records work that runs in the request rather than as a job of its
-// own (a page's ask), so it shows in the live pill and Stop reaches it.
+// own (a co-author proposal), so it shows in the live pill and Stop reaches it.
 // cancel stops it; the returned finish records how it ended.
 func trackWork(key string, info appWork, cancel context.CancelFunc) (finish func(error)) {
 	j := &actionJob{id: UUIDv4(), key: key, work: info, cancel: cancel, done: make(chan struct{}), started: time.Now()}
@@ -250,4 +276,50 @@ func (T *CustomApps) cancelAction(a *appCall, _ struct{}) (any, error) {
 		j.cancel()
 	}
 	return map[string]any{"ok": true}, nil
+}
+
+// appWorkPrefix is the start of the key of every job one person runs in one app.
+func appWorkPrefix(owner, slug, uid string) string {
+	return actionJobKey(owner, slug, uid, "")
+}
+
+// workRow is one job as window.app.work lists it: what it is and its status.
+func (j *actionJob) workRow() map[string]any {
+	row := j.status()
+	row["kind"], row["name"], row["started"] = j.work.Kind, j.name, j.started
+	return row
+}
+
+// appWorkList answers work: the person's jobs in this app, running or ended
+// within actionOutcomeKept, newest first, so a page reopened after leaving
+// finds what it started and how it went.
+func (T *CustomApps) appWorkList(a *appCall) (any, error) {
+	prefix := appWorkPrefix(a.owner, a.spec.Slug, a.User)
+	actionJobs.Lock()
+	pruneActionJobs()
+	var jobs []*actionJob
+	for _, j := range actionJobs.byID {
+		if strings.HasPrefix(j.key, prefix) {
+			jobs = append(jobs, j)
+		}
+	}
+	actionJobs.Unlock()
+	sort.Slice(jobs, func(i, k int) bool { return jobs[i].started.After(jobs[k].started) })
+	rows := []map[string]any{}
+	for _, j := range jobs {
+		rows = append(rows, j.workRow())
+	}
+	return map[string]any{"items": rows}, nil
+}
+
+// appWorkStatus answers work/<job>: that job's status, the person's own in
+// this app only; {} when there is none.
+func (T *CustomApps) appWorkStatus(a *appCall) (any, error) {
+	actionJobs.Lock()
+	j := actionJobs.byID[a.R.PathValue("job")]
+	actionJobs.Unlock()
+	if j == nil || !strings.HasPrefix(j.key, appWorkPrefix(a.owner, a.spec.Slug, a.User)) {
+		return map[string]any{}, nil
+	}
+	return j.workRow(), nil
 }

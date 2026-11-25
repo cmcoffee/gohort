@@ -30,9 +30,11 @@ func liveUse(r *http.Request, user, slug string) bool {
 	return !inPreview
 }
 
-// recordAskFailure files an ask the app's agent could not answer.
-func recordAskFailure(r *http.Request, owner, user, slug string, err error) {
-	if err == nil || !liveUse(r, user, slug) {
+// recordAskFailure files an ask the app's agent could not answer. live is
+// liveUse of the request that asked, read while it was open: the ask runs as a
+// job and may end after it.
+func recordAskFailure(live bool, owner, user, slug string, err error) {
+	if err == nil || !live {
 		return
 	}
 	appscript.RecordProblem(owner, slug, appscript.AppRun{Kind: "ask", Name: "ask", Trigger: "page", Other: user != owner, Error: err.Error()})

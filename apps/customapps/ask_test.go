@@ -2,10 +2,13 @@ package customapps
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/tools/appscript"
@@ -146,4 +149,71 @@ func TestALongAskGoesThrough(t *testing.T) {
 	if _, err := appscript.AppAsk(context.Background(), spec, "bob", strings.Repeat("a", appPromptMaxBytes+1), false); err == nil {
 		t.Error("a script's ask past the guard went through")
 	}
+}
+
+// A page's ask is a job: a long answer keeps coming after the page that asked
+// is gone, waits to be read in work, and the same question asked again while
+// it runs joins it rather than asking twice.
+func TestAnAskKeepsGoingWhenThePageIsGone(t *testing.T) {
+	freshJobs(t)
+	T := sharingTestApp(t)
+	spec := AppSpec{Slug: "notes", Name: "Notes", Owner: "alice", RecordKey: "id", AgentID: "npc"}
+	ownerDB := &DBase{Store: kvlite.MemStore()}
+	prevWait := actionInlineWait
+	actionInlineWait = 50 * time.Millisecond
+	t.Cleanup(func() { actionInlineWait = prevWait })
+	prev := appAgentAsk
+	t.Cleanup(func() { appAgentAsk = prev })
+	release := make(chan struct{})
+	var mu sync.Mutex
+	asked, stopped := 0, false
+	appAgentAsk = func(ctx context.Context, owner, user, agentID, prompt string, jsonMode bool) (string, float64, error) {
+		mu.Lock()
+		asked++
+		mu.Unlock()
+		select {
+		case <-release:
+		case <-time.After(5 * time.Second):
+		}
+		mu.Lock()
+		stopped = ctx.Err() != nil
+		mu.Unlock()
+		return "the answer to " + prompt, 0, nil
+	}
+	ask := func() string {
+		ctx, cancel := context.WithCancel(context.Background())
+		r := httptest.NewRequest(http.MethodPost, "/apps/notes/ask", strings.NewReader(`{"prompt":"why"}`)).WithContext(ctx)
+		w := httptest.NewRecorder()
+		T.handleAsk(w, r, ownerDB, "alice", "bob", spec)
+		cancel() // the page is gone
+		var out map[string]any
+		json.Unmarshal(w.Body.Bytes(), &out)
+		if out["running"] != true {
+			t.Fatalf("a long ask should answer that it is running: %s", w.Body.String())
+		}
+		id, _ := out["job"].(string)
+		return id
+	}
+	job := ask()
+	if again := ask(); again != job {
+		t.Errorf("the same question again did not join: %q then %q", job, again)
+	}
+	close(release)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		w := appAs(t, T, spec, "bob", httptest.NewRequest(http.MethodGet, "/apps/notes/work/"+job, nil))
+		if strings.Contains(w.Body.String(), `"done":true`) {
+			if !strings.Contains(w.Body.String(), `"text":"the answer to why"`) || !strings.Contains(w.Body.String(), `"kind":"ask"`) {
+				t.Errorf("the ended ask: %s", w.Body.String())
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if asked != 1 || stopped {
+				t.Errorf("asked %d times, stopped by the page leaving %v", asked, stopped)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("the ask did not end")
 }

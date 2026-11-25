@@ -1746,9 +1746,13 @@ func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, owner,
 	out, runJSON := T.latestRunForApp(spec, r)
 	args["pipeline_output"] = out
 	args["pipeline_run"] = runJSON
+	// sent is what the caller sent, apart from what the app adds: the same
+	// call again while it runs joins it rather than starting a second.
+	sent := map[string]string{}
 	for k, vs := range r.URL.Query() {
 		if len(vs) > 0 {
 			args[k] = vs[0]
+			sent[k] = vs[0]
 		}
 	}
 	if r.Body != nil {
@@ -1756,9 +1760,11 @@ func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, owner,
 		if json.NewDecoder(r.Body).Decode(&body) == nil {
 			for k, v := range body {
 				args[k] = fmt.Sprint(v)
+				sent[k] = fmt.Sprint(v)
 			}
 		}
 	}
+	inputs, _ := json.Marshal(sent)
 
 	T.applySettings(args, spec, uid) // last: neither a param nor the body overrides a setting
 	// A job, not a call: it runs on its own context so a slow one outlasts this
@@ -1769,7 +1775,7 @@ func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, owner,
 	if what == "" {
 		what = act.Name
 	}
-	job := startActionJob(actionJobKey(owner, spec.Slug, uid, name), appWork{UID: uid, Slug: spec.Slug, AppName: spec.Name, What: what, Kind: "action"}, func(ctx context.Context, progress func(string)) (actionOutcome, error) {
+	job, _ := startOrJoinJob(actionJobKey(owner, spec.Slug, uid, name), name, string(inputs), appWork{UID: uid, Slug: spec.Slug, AppName: spec.Name, What: what, Kind: "action"}, func(ctx context.Context, progress func(string)) (actionOutcome, error) {
 		return runActionAndPersist(owner, ownerDB, udb, spec, action, args, uid, scriptRun{Interactive: true, Long: true, Ctx: ctx, OnProgress: progress, Check: isCheck})
 	})
 	select {
@@ -2337,7 +2343,7 @@ func (T *CustomApps) handleAssetWrite(w http.ResponseWriter, r *http.Request, us
 // appOwnPaths are the relative endpoints an app's own page HTML may still
 // reach from inside its sandbox: its data sources and actions, its records,
 // and its assets. Nothing else in gohort.
-var appOwnPaths = []string{"data/", "action/", "action-progress/", "action-cancel/", "actions", "records", "record", "file", "files", "assets", "shared/", "changes", "ask", "propose", "view-state", "problem"}
+var appOwnPaths = []string{"data/", "action/", "action-progress/", "action-cancel/", "actions", "records", "record", "file", "files", "assets", "shared/", "changes", "ask", "propose", "view-state", "problem", "work"}
 
 // navigationKeys name URLs the runtime follows as a link, never fetches.
 var navigationKeys = map[string]bool{"href": true, "footer_url": true, "back_url": true, "home_url": true, "redirect_url": true}

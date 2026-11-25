@@ -217,3 +217,41 @@ default of an existing field for new apps only. **No migration.**
   shim. A stylesheet's `url(...)` to one of the app's own images or fonts
   resolves inside the files folder and is a 404; serving those types here
   too is the follow-up if an app needs it.
+
+## Work that keeps going
+
+A native app's work runs on the server and its page only watches, so leaving
+and coming back finds the work where it was. An app's actions already ran
+as jobs, but the page could not find them again, and an ask from the page
+ran on the page's own request. In order:
+
+1. **The page finds its work again** (built 0.9.690).
+2. **An ask is a job** (built 0.9.690).
+3. **A notice when work ends with nobody watching**, linking back to the
+   app; an app that sends its own (`gohort.notify`) is not sent a second.
+4. **Chained work on the server**: Builder and Anvil put steps in one
+   action, and an app check warns when a page chains actions itself.
+
+None of it changes stored data: running and ended jobs stay in memory for
+30 minutes, as actions' already did.
+
+### As built: 1 and 2 (0.9.690)
+
+- **Joining.** `startOrJoinJob` hands back the running job when the same
+  call comes again: the same person, app and action (or ask), and the same
+  inputs, which are only what the caller sent (query and body), not the
+  records or settings the host adds. Other inputs start their own job, so a
+  page that runs one action per item still runs them all. A call after the
+  run has ended runs again.
+- **`work` and `work/<job>`**, for the person's own jobs in the app only:
+  each `{job, kind, name, running, progress, done, outcome, started}` plus
+  an action's `message, saved, records, result` or an ask's `result.text`.
+  The frame may fetch `work`.
+- **`window.app.work()`** lists them, newest first, and
+  **`window.app.follow(job, opts)`** resolves as `action` or `ask` would.
+  The page API reference says to call `work()` as the page loads.
+- **`window.app.ask`** follows its job when the answer is slow, as `action`
+  already did. On the server the ask runs on a context of its own, in the
+  live pill, and an answer that fails is still filed as a page problem,
+  decided while the request was open.
+- **Co-author proposals** (`propose`) still run in the request.

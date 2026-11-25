@@ -103,20 +103,47 @@ func (T *CustomApps) handleAsk(w http.ResponseWriter, r *http.Request, ownerDB D
 		http.Error(w, appPromptTooLong.Error(), http.StatusRequestEntityTooLarge)
 		return
 	}
+	// A job, like an action: it runs on its own context, so leaving the page
+	// does not stop it, and its answer waits (action_jobs.go). The request
+	// answers with the text when it comes soon enough, and otherwise that it
+	// is running, for the page to follow; a page reopened finds it in work.
 	// A page's ask is a person waiting: their lane, so background work gives
-	// way to it.
-	// In the live pill while it runs, so a long answer can be stopped from
-	// anywhere, not only by leaving the page.
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-	finish := trackWork(actionJobKey(owner, spec.Slug, user, "_ask"), appWork{UID: user, Slug: spec.Slug, AppName: spec.Name, What: "asking its agent", Kind: "ask"}, cancel)
-	text, status, err := askAppAgent(WithRunLane(ctx, LaneInteractive), ownerDB, owner, user, spec, body.Prompt, body.JSON)
-	finish(err)
+	// way to it. In the live pill while it runs, so it can be stopped from
+	// anywhere.
+	inputs, _ := json.Marshal(body)
+	live := liveUse(r, user, spec.Slug)
+	var status int
+	job, _ := startOrJoinJob(actionJobKey(owner, spec.Slug, user, "_ask"), "ask", string(inputs),
+		appWork{UID: user, Slug: spec.Slug, AppName: spec.Name, What: "asking its agent", Kind: "ask"},
+		func(ctx context.Context, _ func(string)) (actionOutcome, error) {
+			text, st, err := askAppAgent(WithRunLane(ctx, LaneInteractive), ownerDB, owner, user, spec, body.Prompt, body.JSON)
+			if err != nil {
+				status = st
+				recordAskFailure(live, owner, user, spec.Slug, err)
+				return actionOutcome{}, err
+			}
+			return actionOutcome{Result: map[string]any{"text": text}}, nil
+		})
+	select {
+	case <-job.done:
+	case <-time.After(actionInlineWait):
+		jsonapi.Write(w, job.status())
+		return
+	case <-r.Context().Done():
+		return // the person left; the ask carries on and keeps its answer
+	}
+	job.mu.Lock()
+	res, err := job.res, job.err
+	job.mu.Unlock()
 	if err != nil {
-		recordAskFailure(r, owner, user, spec.Slug, err)
+		if status == 0 {
+			status = http.StatusInternalServerError
+		}
 		http.Error(w, err.Error(), status)
 		return
 	}
+	m, _ := res.Result.(map[string]any)
+	text, _ := m["text"].(string)
 	jsonapi.Write(w, map[string]any{"text": text})
 }
 
