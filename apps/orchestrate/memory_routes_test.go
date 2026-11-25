@@ -44,6 +44,8 @@ func TestEveryMemoryRouteTakesItsMethodsAndRefusesTheSignedOut(t *testing.T) {
 		"memsearch":                     "GET DELETE",
 		"inferred":                      "GET",
 		"inferred/x":                    "DELETE",
+		"inferred-removed":              "GET",
+		"inferred-removed/x":            "POST",
 		"graph":                         "GET",
 		"graph/edge":                    "DELETE",
 		"graph/entity/x":                "DELETE",

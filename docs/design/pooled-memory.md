@@ -225,7 +225,8 @@ Left for later slices, found while building 1 and 2:
   so a busy pool evicts its own oldest contributions and never the owner's
   findings. A save marks who added a finding before the cap runs, so a new
   contribution is never counted as the owner's.
-- **Removals are final** until Recently removed exists (slice 3).
+- **Removals are final** until Recently removed exists. Built in slice 3
+  (0.9.685), below.
 
 ## Settled with the owner (2026-11-23)
 
@@ -275,3 +276,32 @@ The owner went with the recommendations:
   the notice store folds a repeat into a count.
 - **The maintainer notice** says they can curate what it has learned from
   everyone, on a pooled agent.
+
+## As built: slice 3 (0.9.685)
+
+- **The store** is one table, `orchestrate_pool_removed`, in the owner's
+  store, keyed by agent id and entry id. An entry holds the removed chunks as
+  they were, vectors and who added each included, so a restore puts them back
+  without embedding again, plus who removed them, when, and what it was in
+  words. Additive, no migration.
+- **What is kept**: every removal from a pooled agent's findings by a person
+  or by the agent at their word: one entry deleted in the Memory window, a
+  wipe, everything one person added, and `forget` and `memory(forget)` in a
+  run. A wipe is one entry. The finding cap's eviction of the oldest is not
+  kept: it is not a click, and keeping it would make a second copy of the
+  pool. On an agent that does not pool, a removal is final as before.
+- **Who sees and restores**: the owner and maintainers, every removal; anyone
+  else, only removals they made, which are only ever of what they added. A
+  removal someone may not see is a 404 on restore, as if it were not there.
+- **Thirty days**: an entry older than that is dropped whenever the table is
+  read or written, so there is no timer. Deleting the agent drops its entries.
+- **The Memory window** shows a Recently removed section, only when there is
+  something to put back, with a Restore on each entry. It refreshes after
+  every delete and wipe.
+- **Maintainers reach the Memory window** whether or not the agent is also
+  shared with them to use. Before this a maintainer not on the share list got
+  a 404 from every Memory route, so the curation the table above gives them
+  had no door. They see their own copy and the pool with full controls.
+- **A restore does not run the finding cap.** Restored chunks keep their
+  dates, so the next save's cap may evict them if they are the oldest past
+  the limit.

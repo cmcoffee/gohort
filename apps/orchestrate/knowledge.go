@@ -235,9 +235,11 @@ func (T *OrchestrateApp) autoInferredRoute(at memAt) http.HandlerFunc {
 				t = memTarget{user: agent.Owner, agentID: agent.ID}
 			}
 			in := scope(t)
-			removed := DeleteChunksWhere(VectorDB, func(x EmbeddedChunk) bool {
-				return in(x) && (by == "" || x.By == by)
-			})
+			hit := func(x EmbeddedChunk) bool { return in(x) && (by == "" || x.By == by) }
+			if mc, err := T.memoryOf(c, at); err == nil {
+				keepPoolRemoval(T.DB, mc.agent, c.User, wipeWhat(by), ChunksWhere(VectorDB, hit))
+			}
+			removed := DeleteChunksWhere(VectorDB, hit)
 			Log("[orchestrate.knowledge] user=%q wiped %d auto-inferred chunk(s) for agent=%s in %s's copy (by=%q, uploads preserved)",
 				c.User, removed, t.agentID, t.user, by)
 			return map[string]int{"removed": removed}, nil
@@ -412,6 +414,9 @@ func (T *OrchestrateApp) inferredDeleteRoute(at memAt) http.HandlerFunc {
 		}
 		if chunkProvenance(ch.Source, ch.ReportID) != "derived" {
 			return nil, jsonapi.Forbidden("chunk is not a derived Reference Memory entry")
+		}
+		if mc, err := T.memoryOf(c, at); err == nil {
+			keepPoolRemoval(T.DB, mc.agent, c.User, findingWhat(match[:1]), match[:1])
 		}
 		DeleteChunksByIDs(VectorDB, []string{ch.ID})
 		Log("[orchestrate.memory] user=%q deleted Reference Memory chunk %q for agent=%s", t.user, chunkID, t.agentID)
@@ -1719,6 +1724,7 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 		// Chunks live in VectorDB (a separate, possibly relocated store), NOT
 		// t.app.DB — deleting against the main DB is a silent no-op that leaves
 		// the chunk searchable. Delete where the chunk actually lives.
+		t.keepPoolRemoval([]EmbeddedChunk{c})
 		DeleteChunksByIDs(VectorDB, []string{explicitID})
 		Log("[orchestrate.memory.forget] user=%q agent=%q deleted by id=%s topic=%q",
 			t.user, t.agent.ID, explicitID, topic)
