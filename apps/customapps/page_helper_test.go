@@ -295,10 +295,10 @@ func TestPageAPINamesEveryCallTheHelperDefines(t *testing.T) {
 	}
 }
 
-// An error in the first seconds of the frame's load is told to the page around
-// it, once however many follow, so it can offer Reset view; it is still filed
-// as a page problem as before.
-func TestThePageHelperSaysWhenThePageFailsToLoad(t *testing.T) {
+// An error the page does not catch is filed as a page problem, and nothing
+// is told to the page around it: with every open a fresh start there is no
+// saved view for it to offer to reset.
+func TestThePageHelperFilesAnErrorAndTellsThePageNothing(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node not installed")
@@ -322,8 +322,7 @@ console.log(JSON.stringify({said: said, filed: filed}));
 	if err != nil {
 		t.Fatalf("node: %v\n%s", err, b)
 	}
-	got := strings.TrimSpace(string(b))
-	if got != `{"said":["{\"gohortApp\":\"load-error\"} *"],"filed":2}` {
+	if got := strings.TrimSpace(string(b)); got != `{"said":[],"filed":2}` {
 		t.Errorf("got %s", got)
 	}
 }

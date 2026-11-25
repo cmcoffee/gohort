@@ -2,7 +2,6 @@ package customapps
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -68,54 +67,35 @@ func TestViewStateMergesAndReturns(t *testing.T) {
 	}
 }
 
-// The page arrives with the person's view inside every isolated frame, after
-// the page helper, and says whether there is one to reset: Reset view is on
-// the Settings page then, not in the header.
-func TestThePageCarriesTheSavedView(t *testing.T) {
+// Every open starts fresh, reloads included: each frame gets its own empty
+// localStorage, and nothing the app saved for the person is put into it.
+func TestEveryOpenStartsFresh(t *testing.T) {
 	T := sharingTestApp(t)
-	alice := UserDB(T.DB, "alice")
-	spec := AppSpec{Slug: "prep", Owner: "alice"}
-	page := isolateAppHTML(json.RawMessage(`{"sections":[{"body":{"type":"frame","html":"<p>x</p>"}}]}`), "/apps/prep/")
-	freshOut, hasView := T.withViewState(page, alice, spec)
-	fresh := string(freshOut)
-	if !strings.Contains(fresh, `localStorage`) || hasView || viewSection(alice, spec, "/apps/prep") != nil {
-		t.Errorf("a fresh page: storage script present=%v, a view to reset=%v", strings.Contains(fresh, "localStorage"), hasView)
+	spec := AppSpec{Slug: "prep", Owner: "alice", RecordKey: "id",
+		Page: json.RawMessage(`{"title":"Prep","sections":[{"body":{"type":"frame","html":"<p>x</p>"}}]}`)}
+	postViewState(t, T, spec, `{"set":{"step":"\"three\""}}`)
+	body := appAs(t, T, spec, "alice", httptest.NewRequest(http.MethodGet, "/apps/prep/", nil)).Body.String()
+	if !strings.Contains(body, "(function(){var d={};function own(k)") || strings.Contains(body, "three") {
+		t.Errorf("the page did not start fresh: fresh storage in its frame %v, carries the saved step %v",
+			strings.Contains(body, "(function(){var d={};function own(k)"), strings.Contains(body, "three"))
 	}
-	postViewState(t, T, spec, `{"set":{"note":"</script><b>hi</b>","tab":"logs"}}`)
-	out, hasView := T.withViewState(page, alice, spec)
-	var m map[string]any
-	if err := json.Unmarshal(out, &m); err != nil {
-		t.Fatal(err)
-	}
-	body := m["sections"].([]any)[0].(map[string]any)["body"].(map[string]any)
-	pre, _ := body["isolate_prelude"].(string)
-	if !strings.HasPrefix(pre, appPagePrelude) || !strings.Contains(pre, `"tab":"logs"`) {
-		t.Errorf("prelude does not carry the view after the helper: %.200s", pre)
-	}
-	if strings.Count(pre, "</script>") != strings.Count(appPagePrelude, "</script>")+1 {
-		t.Error("a saved value closed the script it rides in")
-	}
-	if !hasView || strings.Contains(string(out), "Reset view") {
-		t.Errorf("a saved view: reported %v, still in the header %v", hasView, strings.Contains(string(out), "Reset view"))
-	}
-	if sec := viewSection(alice, spec, "/apps/prep"); sec == nil || !strings.Contains(fmt.Sprint(sec.Body), "/apps/prep/_view/reset") {
-		t.Errorf("Settings offers no Reset view for a saved view: %+v", sec)
+	if strings.Contains(body, `fetch(\"view-state\"`) && strings.Contains(body, "pagehide") {
+		t.Error("the page's storage still saves itself to the server")
 	}
 	found := false
 	for _, p := range appOwnPaths {
 		found = found || p == "view-state"
 	}
 	if !found {
-		t.Error("the page may not reach view-state")
+		t.Error("the page may not reach app.state")
 	}
 }
 
-// The ⚙ is for settings: a saved view alone does not bring it, as a native
-// app's remembered tab brings nothing. Someone the app is shared with who has
-// a saved view gets the load-error offer on the page instead, and Reset view
-// stays at the foot of the Settings page, by its address. Only the owner is
-// offered the runs.
-func TestTheGearIsForSettingsAndResetViewIsQuiet(t *testing.T) {
+// The ⚙ is for settings and for what the app saved for the person: someone
+// with neither has no ⚙; once the app saves something for them with
+// app.state, its Settings page says so with a Clear. The owner, who always
+// has a Settings page, sees no such line while nothing is saved.
+func TestTheGearShowsWhatTheAppSavedForThePerson(t *testing.T) {
 	T := sharingTestApp(t)
 	spec := AppSpec{Slug: "prep", Name: "Prep", Owner: "alice", RecordKey: "id",
 		Page: json.RawMessage(`{"title":"Prep","sections":[]}`)}
@@ -129,65 +109,59 @@ func TestTheGearIsForSettingsAndResetViewIsQuiet(t *testing.T) {
 		t.Fatal("the owner sees no gear, so the checks below would prove nothing")
 	}
 	if strings.Contains(page("bob"), "Settings...") {
-		t.Fatal("bob, with nothing of his behind the gear, was shown one")
+		t.Fatal("bob, with nothing behind the gear, was shown one")
 	}
-	if c := appAs(t, T, spec, "bob", httptest.NewRequest(http.MethodPost, "/apps/prep/view-state", strings.NewReader(`{"set":{"tab":"logs"}}`))).Code; c != 204 {
-		t.Fatalf("bob's view: %d", c)
+	if c := appAs(t, T, spec, "bob", httptest.NewRequest(http.MethodPost, "/apps/prep/view-state", strings.NewReader(`{"set":{"step":"3"}}`))).Code; c != 204 {
+		t.Fatalf("bob's app.state: %d", c)
 	}
-	p := page("bob")
-	if strings.Contains(p, "Settings...") {
-		t.Error("a saved view brought bob a gear with nothing to set behind it")
+	if !strings.Contains(page("bob"), "Settings...") {
+		t.Error("bob has something saved and no gear to clear it from")
 	}
-	if !strings.Contains(p, "gohortAppViewReset") || !strings.Contains(p, "/apps/prep/_view/reset") {
-		t.Error("bob's page does not offer Reset view when it fails to load")
+	if s := settings("bob"); !strings.Contains(s, "What it saved for you") || !strings.Contains(s, "/prep/_view/reset") {
+		t.Errorf("bob's settings do not offer to clear what it saved")
 	}
-	if strings.Contains(page("alice"), "gohortAppViewReset") {
-		t.Error("the offer is on a page with no saved view to reset")
-	}
-	s := settings("bob")
-	if !strings.Contains(s, "Reset your view") || !strings.Contains(s, "/prep/_view/reset") || strings.Contains(s, "Recent runs") {
-		t.Errorf("bob's settings: Reset view %v, Recent runs %v", strings.Contains(s, "Reset your view"), strings.Contains(s, "Recent runs"))
-	}
-	if !strings.Contains(s, "Nothing to set") || strings.Index(s, "Nothing to set") > strings.Index(s, "Trouble with this page?") {
-		t.Error("bob's settings should say there is nothing to set, with Reset view after it")
-	}
-	if s := settings("alice"); !strings.Contains(s, "Recent runs") || !strings.Contains(s, "/prep/_runs") || strings.Contains(s, "Reset your view") {
-		t.Errorf("alice's settings: Recent runs %v, Reset view (she has no saved view) %v", strings.Contains(s, "Recent runs"), strings.Contains(s, "Reset your view"))
+	if strings.Contains(settings("alice"), "What it saved for you") {
+		t.Error("the owner, with nothing saved, is offered to clear it")
 	}
 }
 
-// The page around the frames offers Reset view, once, below the header, when
-// one of its own frames says the page failed to load; a message from anywhere
-// else is ignored.
-func TestThePageOffersResetViewWhenAFrameFailsToLoad(t *testing.T) {
+// window.app.state keeps what the app chooses between visits: get reads one
+// value back as it was set (or a value saved before app.state as its text),
+// set, remove and clear change only what they name.
+func TestThePageHelperKeepsAppState(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node not installed")
 	}
-	js := strings.TrimSuffix(strings.TrimPrefix(viewTroubleJS("/apps/prep/_view/reset"), "<script>"), "</script>")
+	js := strings.TrimSuffix(strings.TrimPrefix(appPageHelper, "<script>"), "</script>")
+	store := strings.TrimSuffix(strings.TrimPrefix(freshStorageScript, "<script>"), "</script>")
 	harness := `
-function node(tag) { return {tag: tag, kids: [], style: {}, attrs: {}, setAttribute: function(k, v) { this.attrs[k] = v; },
-  appendChild: function(c) { this.kids.push(c); }}; }
-var frameWin = {}, strangerWin = {}, inserted = [];
-var header = node("div");
-header.parentNode = {insertBefore: function(c, after) { inserted.push(c); }};
-var document = {
-  createElement: node,
-  getElementsByTagName: function() { return [{contentWindow: frameWin}]; },
-  querySelector: function() { return header; },
+var calls = [], window = {}, saved = {old: "plain text", step: JSON.stringify({n: 3})};
+function resp(status, body) { return {ok: true, status: status, text: function() { return Promise.resolve(body == null ? "" : JSON.stringify(body)); }}; }
+global.fetch = function(u, o) {
+  calls.push((o && o.method || "GET") + " " + u + (o && o.body ? " " + o.body : ""));
+  if (o && o.method === "POST") return Promise.resolve(resp(204, null));
+  return Promise.resolve(resp(200, saved));
 };
-var on = {};
-var window = {addEventListener: function(k, fn) { on[k] = fn; }};
 ` + js + `
-on.message({source: strangerWin, data: {gohortApp: "load-error"}});
-var afterStranger = inserted.length;
-on.message({source: frameWin, data: {other: 1}});
-on.message({source: frameWin, data: {gohortApp: "load-error"}});
-on.message({source: frameWin, data: {gohortApp: "load-error"}});
-var bar = inserted[0], link = bar && bar.kids[1];
-console.log(JSON.stringify({stranger: afterStranger, shown: inserted.length, href: link && link.href, label: link && link.textContent, report: window.gohortAppViewReset}));
+` + store + `
+var app = window.app, out = {};
+window.localStorage.setItem("a", "1");
+out.storage = window.localStorage.getItem("a");
+app.state.get("step").then(function(v) {
+  out.step = v.n;
+  return app.state.get("old");
+}).then(function(v) {
+  out.old = v;
+  return app.state.get("none");
+}).then(function(v) {
+  out.none = v;
+  return app.state.set("step", {n: 4});
+}).then(function() { return app.state.remove("old"); })
+  .then(function() { return app.state.clear(); })
+  .then(function() { console.log(JSON.stringify({out: out, calls: calls})); });
 `
-	f := filepath.Join(t.TempDir(), "v.js")
+	f := filepath.Join(t.TempDir(), "s.js")
 	if err := os.WriteFile(f, []byte(harness), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -195,8 +169,11 @@ console.log(JSON.stringify({stranger: afterStranger, shown: inserted.length, hre
 	if err != nil {
 		t.Fatalf("node: %v\n%s", err, b)
 	}
-	want := `{"stranger":0,"shown":1,"href":"/apps/prep/_view/reset","label":"Reset your view","report":"/apps/prep/_view/reset"}`
-	if got := strings.TrimSpace(string(b)); got != want {
-		t.Errorf("got  %s\nwant %s", got, want)
+	got := string(b)
+	for _, want := range []string{`"step":3`, `"old":"plain text"`, `"none":null`, `"storage":"1"`,
+		`POST view-state {\"set\":{\"step\":\"{\\\"n\\\":4}\"}}`, `POST view-state {\"remove\":[\"old\"]}`, `POST view-state {\"clear\":true}`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s in\n%s", want, got)
+		}
 	}
 }

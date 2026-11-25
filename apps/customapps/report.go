@@ -694,20 +694,6 @@ const reportDialogJS = `<script>(function(){
         body.appendChild(box);
         body.appendChild(label);
         body.appendChild(err);
-        // A page stuck on something it saved is fixed by the person, at once,
-        // without waiting on the owner (view_state.go).
-        if (window.gohortAppViewReset) {
-          var stuck = document.createElement('div');
-          stuck.className = 'ui-muted';
-          stuck.style.cssText = 'font-size:0.9em;margin-top:12px';
-          stuck.appendChild(document.createTextNode('Page will not draw, or stuck? Resetting your view of it may fix it now: '));
-          var go = document.createElement('a');
-          go.href = window.gohortAppViewReset;
-          go.textContent = 'reset your view';
-          stuck.appendChild(go);
-          stuck.appendChild(document.createTextNode('. Its records are kept.'));
-          body.appendChild(stuck);
-        }
         // Cancel is the dialog's own Close; Send joins it in the footer as
         // the main button.
         var cancel = api.primaryButton;

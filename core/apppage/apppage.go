@@ -13,6 +13,16 @@ app.action(name, body, opts)  POST an action, {message, saved, records, result}.
                               meanwhile (show it: it is how a person knows
                               a five-minute download is alive)
 app.cancelAction(name)        stop this person's running action of that name
+app.state.get(key)            what the app saved for this person under key
+                              (null when nothing), on every device. Every
+                              open of an app starts fresh, reloads included:
+                              localStorage lasts one visit. To let someone
+                              carry on where they left off, save it here
+                              and offer it on load ("Continue where you
+                              left off?"); the app's data goes in records
+app.state.set(key, value)     keep value (any JSON) for this person
+app.state.remove(key)         forget one
+app.state.clear()             forget everything the app saved for them
 app.work()                    this person's work in the app, newest first:
                               each {job, kind: "action"|"ask", name,
                               running, progress, done, outcome, started}.

@@ -248,7 +248,7 @@ func TestAnAppProjectRunsItsChecksOnTheWorkingCopy(t *testing.T) {
 	base, _ := p.baseDir()
 
 	ctx := T.projectContext(p, base)
-	for _, want := range []string{"app_checks", "Install button", "page check:", "shared", "Reset view"} {
+	for _, want := range []string{"app_checks", "Install button", "page check:", "shared", "app.state"} {
 		if !strings.Contains(ctx, want) {
 			t.Errorf("the app project's notes do not say %q:\n%s", want, ctx)
 		}

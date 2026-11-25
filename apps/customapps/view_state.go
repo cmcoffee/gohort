@@ -1,31 +1,26 @@
 package customapps
 
-// Where each person left an app: its page's localStorage, kept on the server.
+// What an app keeps for each person between opens, and only what it chooses
+// to keep (docs/design/apps-feel-native.md, "Fresh starts").
 //
-// An app's page runs in an isolated frame with no origin, where the browser's
-// own localStorage cannot exist, so the frame used to get an in-memory stand-in
-// that forgot everything on reload: the tab, the step, the selection, a
-// half-typed form. Now the stand-in is backed here, per person and per app.
-// The page is served with the person's saved map already inside the frame
-// (viewStateScript), so localStorage reads work from its first line, and the
-// frame sends what changed back to view-state a quarter second after a change
-// and as the page closes. Changes travel as a merge, not the whole map, so two
-// frames on one page do not overwrite each other.
+// Every open of an app is a fresh run, reloads included, as with an app of
+// its own: its page's localStorage lasts for that visit and no longer. It
+// used to be kept on the server and put back on every open, on every device,
+// so an app always opened where it was left whether or not it meant to, and
+// a saved state that broke the page needed a Reset view to get out of. An
+// app that wants a person to carry on where they left off offers it: it
+// saves what it needs with app.state.set and reads it with app.state.get, and
+// decides on load what to do with it ("Continue where you left off?"), or it
+// keeps it in its records.
 //
-// It is the person's view of the app, not the app's data: records hold what
-// the app is about, this holds where they were in it. Capped, and cleared by
-// Reset view, so a saved state that breaks the page cannot trap anyone in it.
-// Like a native app's remembered tab, it is quiet: Reset view is offered by
-// gohort, above the app's page, when that page hits an error while loading
-// (viewTroubleJS), and kept at the foot of the app's Settings page and in
-// "Report a problem" for a page stuck without one. All three are drawn by
-// gohort, not by the app, so they open however broken the app's page is.
+// app.state is per person and per app, on every device, capped, and listed
+// on the app's Settings page with a Clear. It is the same table the old
+// saved view used, so a view saved before this reads back through it.
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/jsonapi"
@@ -35,12 +30,12 @@ import (
 
 const (
 	viewStateTable = "app_view_state"
-	// viewStateMax is the most one person's saved view of one app may hold,
+	// viewStateMax is the most one person's app.state of one app may hold,
 	// keys and values together.
 	viewStateMax = 256 << 10
 )
 
-// loadViewState is the person's saved view of the app, never nil.
+// loadViewState is what the app keeps for the person (app.state), never nil.
 func loadViewState(appdb Database, slug string) map[string]string {
 	out := map[string]string{}
 	if appdb != nil {
@@ -60,20 +55,20 @@ func viewStateSize(m map[string]string) int {
 	return n
 }
 
-// viewStateChange is what the frame sends: cleared first, then removed, then
-// set, the order its calls were made in when one batch holds all three.
+// viewStateChange is what app.state sends: cleared first, then removed, then
+// set.
 type viewStateChange struct {
 	Clear  bool              `json:"clear"`
 	Remove []string          `json:"remove"`
 	Set    map[string]string `json:"set"`
 }
 
-// viewState is the person's saved view of the app.
+// viewState is what the app keeps for the person.
 func (T *CustomApps) viewState(a *appCall) (any, error) {
 	return loadViewState(a.appdb, a.spec.Slug), nil
 }
 
-// saveViewState merges a change into the person's view of the app.
+// saveViewState merges a change into what the app keeps for the person.
 func (T *CustomApps) saveViewState(a *appCall, ch viewStateChange) (any, error) {
 	appdb, spec := a.appdb, a.spec
 	state := loadViewState(appdb, spec.Slug)
@@ -87,8 +82,8 @@ func (T *CustomApps) saveViewState(a *appCall, ch viewStateChange) (any, error) 
 		state[k] = v
 	}
 	if n := viewStateSize(state); n > viewStateMax {
-		Debug("[customapps] %s: view state of %d bytes refused (limit %d)", spec.Slug, n, viewStateMax)
-		return nil, jsonapi.Status(http.StatusRequestEntityTooLarge, fmt.Sprintf("the page's saved state would be %d KB, over the %d KB an app may keep for one person: keep records in app.records, and only where the person was in localStorage", n>>10, viewStateMax>>10))
+		Debug("[customapps] %s: app.state of %d bytes refused (limit %d)", spec.Slug, n, viewStateMax)
+		return nil, jsonapi.Status(http.StatusRequestEntityTooLarge, fmt.Sprintf("app.state would hold %d KB, over the %d KB an app may keep for one person: keep the app's data in app.records, and in app.state only what lets them carry on", n>>10, viewStateMax>>10))
 	}
 	if len(state) == 0 {
 		appdb.Unset(viewStateTable, spec.Slug)
@@ -98,12 +93,8 @@ func (T *CustomApps) saveViewState(a *appCall, ch viewStateChange) (any, error) 
 	return jsonapi.Empty(http.StatusNoContent), nil
 }
 
-// handleViewReset is the page's Reset view link. GET asks first, saying
-// what goes and what stays; POST forgets the person's view of the app, and
-// the page returns them to it fresh. It used to clear at the click: an app
-// that kept its recent searches in localStorage lost them to one press of a
-// link that read as tidying the page, and its owner took the app's data to
-// be gone.
+// handleViewReset is the Settings page's Clear: GET asks first, saying what
+// goes and what stays; POST forgets what the app keeps for the person.
 func (T *CustomApps) handleViewReset(w http.ResponseWriter, r *http.Request, appdb Database, spec AppSpec) {
 	base := T.WebPath() + "/" + spec.Slug
 	switch r.Method {
@@ -111,33 +102,33 @@ func (T *CustomApps) handleViewReset(w http.ResponseWriter, r *http.Request, app
 	case http.MethodPost:
 		// From this site's own page only: a page elsewhere cannot clear it.
 		if netgate.CrossSite(r) {
-			jsonapi.Fail(w, r, jsonapi.Forbidden("reset your view from this site's own page"))
+			jsonapi.Fail(w, r, jsonapi.Forbidden("clear it from this site's own page"))
 			return
 		}
 		appdb.Unset(viewStateTable, spec.Slug)
-		jsonapi.Write(w, map[string]string{"message": "Your view of " + spec.Name + " was reset."})
+		jsonapi.Write(w, map[string]string{"message": "What " + spec.Name + " saved for you was cleared."})
 		return
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	what := "Nothing is saved for you in this app's page right now, so there is nothing to reset."
+	what := spec.Name + " has saved nothing for you, so there is nothing to clear."
 	if len(loadViewState(appdb, spec.Slug)) > 0 {
-		what = "This clears where you were in " + spec.Name + " and anything its page kept for you to come back to, such as recent searches, an open tab or a half-typed entry, on every device. " +
-			"The app's records are kept. Use it when the page will not open properly."
+		what = "This clears what " + spec.Name + " saved so you could carry on where you left off, on every device. " +
+			"The app's records are kept."
 	}
 	ui.Page{
-		Title:     "Reset view",
+		Title:     "Clear what it saved",
 		ShowTitle: true,
 		BackURL:   base + "/",
 		MaxWidth:  "560px",
 		Sections: []ui.Section{{
-			Title:    "Reset your view of " + spec.Name + "?",
+			Title:    "Clear what " + spec.Name + " saved for you?",
 			Subtitle: what,
 			Body: ui.FormPanel{
 				PostURL:        base + "/_view/reset",
 				Method:         "POST",
-				SubmitLabel:    "Reset view",
+				SubmitLabel:    "Clear",
 				RedirectURL:    base + "/",
 				RedirectTarget: "_self",
 			},
@@ -145,42 +136,27 @@ func (T *CustomApps) handleViewReset(w http.ResponseWriter, r *http.Request, app
 	}.ServeHTTP(w, r)
 }
 
-// viewStateScript is the frame's localStorage, holding state, saving its
-// changes to view-state a quarter second after the first, and at once as the
-// page hides. Soon, because the save as the page hides goes through the page
-// around the frame, which is closing too and often never sends it: a quick
-// save is what survives a reload.
-func viewStateScript(state map[string]string) string {
-	b, _ := json.Marshal(state) // escapes <, > and & for a script body
-	js := strings.ReplaceAll(string(b), " ", ` `)
-	js = strings.ReplaceAll(js, " ", ` `)
-	return `<script>(function(){var d=` + js + `,pend={},rm={},clr=false,t=null;` +
-		`function own(k){return Object.prototype.hasOwnProperty.call(d,k);}` +
-		`function flush(keep){if(t){clearTimeout(t);t=null;}var ks=Object.keys(rm);if(!clr&&!ks.length&&!Object.keys(pend).length)return;` +
-		`var b={clear:clr,remove:ks,set:pend};pend={};rm={};clr=false;` +
-		`try{fetch("view-state",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b),keepalive:!!keep,quiet:true}).catch(function(){});}catch(e){}}` +
-		`function later(){if(!t)t=setTimeout(function(){t=null;flush(false);},250);}` +
-		`var s={getItem:function(k){k=String(k);return own(k)?d[k]:null;},` +
-		`setItem:function(k,v){k=String(k);v=String(v);if(own(k)&&d[k]===v)return;d[k]=v;pend[k]=v;delete rm[k];later();},` +
-		`removeItem:function(k){k=String(k);if(!own(k))return;delete d[k];delete pend[k];rm[k]=1;later();},` +
-		`clear:function(){d={};pend={};rm={};clr=true;later();},` +
-		`key:function(i){var ks=Object.keys(d);return i<ks.length?ks[i]:null;},` +
-		`get length(){return Object.keys(d).length;}};` +
-		`try{Object.defineProperty(window,"localStorage",{value:s,configurable:true});}catch(e){}` +
-		`addEventListener("pagehide",function(){flush(true);});` +
-		`addEventListener("visibilitychange",function(){if(document.visibilityState==="hidden")flush(true);});` +
-		`})();</script>`
-}
+// freshStorageScript is the frame's localStorage for one visit: the frame has
+// no origin, so the browser's own cannot exist there, and this stands in for
+// it, starting empty and forgetting everything when the page goes. What an
+// app wants kept between visits it keeps with app.state.
+const freshStorageScript = `<script>(function(){var d={};` +
+	`function own(k){return Object.prototype.hasOwnProperty.call(d,k);}` +
+	`var s={getItem:function(k){k=String(k);return own(k)?d[k]:null;},` +
+	`setItem:function(k,v){d[String(k)]=String(v);},` +
+	`removeItem:function(k){delete d[String(k)];},` +
+	`clear:function(){d={};},` +
+	`key:function(i){var ks=Object.keys(d);return i<ks.length?ks[i]:null;},` +
+	`get length(){return Object.keys(d).length;}};` +
+	`try{Object.defineProperty(window,"localStorage",{value:s,configurable:true});}catch(e){}` +
+	`})();</script>`
 
-// withViewState puts the person's saved view into every isolated frame on the
-// page, after the page helper, and reports whether there is one: Reset view is
-// then on the Settings page, and the ⚙ is shown for it.
-func (T *CustomApps) withViewState(page json.RawMessage, appdb Database, spec AppSpec) (json.RawMessage, bool) {
-	state := loadViewState(appdb, spec.Slug)
-	script := viewStateScript(state)
+// withFreshStorage gives every isolated frame on the page its own empty
+// localStorage, after the page helper.
+func withFreshStorage(page json.RawMessage) json.RawMessage {
 	var v any
 	if json.Unmarshal(page, &v) != nil {
-		return page, len(state) > 0
+		return page
 	}
 	var walk func(any)
 	walk = func(x any) {
@@ -188,7 +164,7 @@ func (T *CustomApps) withViewState(page json.RawMessage, appdb Database, spec Ap
 		case map[string]any:
 			if iso, _ := t["isolate"].(bool); iso {
 				pre, _ := t["isolate_prelude"].(string)
-				t["isolate_prelude"] = pre + script
+				t["isolate_prelude"] = pre + freshStorageScript
 			}
 			for _, c := range t {
 				walk(c)
@@ -202,40 +178,21 @@ func (T *CustomApps) withViewState(page json.RawMessage, appdb Database, spec Ap
 	walk(v)
 	out, err := json.Marshal(v)
 	if err != nil {
-		return page, len(state) > 0
+		return page
 	}
-	return out, len(state) > 0
+	return out
 }
 
-// viewSection is the foot of the Settings page, when the person has a saved
-// view of the app to reset; nil otherwise. Quiet on purpose: it is for a page
-// that will not work, not a setting.
+// viewSection is the Settings page's "What it saved for you", when the app
+// keeps something for the person with app.state; nil otherwise.
 func viewSection(appdb Database, spec AppSpec, base string) *ui.Section {
-	if len(loadViewState(appdb, spec.Slug)) == 0 {
+	state := loadViewState(appdb, spec.Slug)
+	if len(state) == 0 {
 		return nil
 	}
 	return &ui.Section{
-		Title:    "Trouble with this page?",
-		Subtitle: "If it will not draw or is stuck, reset your view of it: where you were in it and what it kept for you to come back to. Its records are kept.",
-		Body:     ui.Toolbar{Actions: []ui.ToolbarAction{{Label: "Reset your view", Method: "GET", URL: base + "/_view/reset"}}},
+		Title:    "What it saved for you",
+		Subtitle: fmt.Sprintf("%s keeps %d item(s) so you can carry on where you left off, on every device. Clear them to start it as if new; its records are kept.", spec.Name, len(state)),
+		Body:     ui.Toolbar{Actions: []ui.ToolbarAction{{Label: "Clear", Method: "GET", URL: base + "/_view/reset"}}},
 	}
-}
-
-// viewTroubleJS is served on the app's page, around its frames, for a person
-// with a saved view. When a frame's page helper says the page hit an error
-// while loading, it offers Reset view just below the page's header, once. The
-// offer only links to Reset view's own page, which asks first, so a page that
-// sends the message falsely can show it and nothing more. It also leaves the
-// address for "Report a problem" to mention (reportDialogJS).
-func viewTroubleJS(resetURL string) string {
-	u, _ := json.Marshal(resetURL)
-	return `<script>(function(){var U=` + string(u) + `,shown=false;window.gohortAppViewReset=U;` +
-		`window.addEventListener("message",function(e){var d=e&&e.data;if(shown||!d||d.gohortApp!=="load-error")return;` +
-		`var fs=document.getElementsByTagName("iframe"),ok=false;for(var i=0;i<fs.length;i++){if(fs[i].contentWindow===e.source){ok=true;break;}}if(!ok)return;shown=true;` +
-		`var bar=document.createElement("div");bar.setAttribute("role","status");` +
-		`bar.style.cssText="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:8px 0;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-1)";` +
-		`var t=document.createElement("span");t.style.flex="1 1 240px";t.textContent="This page hit an error while loading. If it will not work, reset your view of it: where you were in it and what it kept for you to come back to. Its records are kept.";` +
-		`var a=document.createElement("a");a.className="ui-row-btn";a.href=U;a.textContent="Reset your view";bar.appendChild(t);bar.appendChild(a);` +
-		`var h=document.querySelector(".ui-page-header");if(h&&h.parentNode){h.parentNode.insertBefore(bar,h.nextSibling);}else{var r=document.getElementById("ui-root")||document.body;r.insertBefore(bar,r.firstChild);}` +
-		`});})();</script>`
 }

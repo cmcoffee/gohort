@@ -39,12 +39,10 @@ const PageWork = apppage.Work
 //
 // An error the page does not catch is told to the app's run record
 // (problems.go), a few per load and each once, so whoever fixes the app
-// reads what broke in someone's browser. One in the first seconds of the
-// frame's load is also told to the page around it, which offers the person
-// Reset view when they have one (viewTroubleJS).
+// reads what broke in someone's browser.
 const appPageHelper = `<script>(function(){if(window.app)return;
-(function(){var n=0,seen={},t0=Date.now(),said=false;function loading(){if(said||Date.now()-t0>8000)return;said=true;try{parent.postMessage({gohortApp:"load-error"},"*");}catch(x){}}
-function tell(m,w){m=String(m||"").slice(0,500);if(m)loading();if(!m||m==="Script error."||n>=5)return;var k=m+"|"+(w||"");if(seen[k])return;seen[k]=1;n++;try{fetch("problem",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({error:m,where:String(w||"").slice(0,200)})}).catch(function(){});}catch(x){}}
+(function(){var n=0,seen={};
+function tell(m,w){m=String(m||"").slice(0,500);if(!m||m==="Script error."||n>=5)return;var k=m+"|"+(w||"");if(seen[k])return;seen[k]=1;n++;try{fetch("problem",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({error:m,where:String(w||"").slice(0,200)})}).catch(function(){});}catch(x){}}
 if(!window.addEventListener)return;
 window.addEventListener("error",function(e){if(!e||(e.target&&e.target!==window))return;tell(e.message||(e.error&&e.error.message),e.lineno?"line "+e.lineno+(e.colno?":"+e.colno:""):"");});
 window.addEventListener("unhandledrejection",function(e){var r=e&&e.reason;tell("unhandled promise rejection: "+((r&&r.message)||r),"");});})();
@@ -65,6 +63,10 @@ work:function(){return fetch("work").then(json).then(function(d){return (d&&d.it
 follow:function(job,o){o=o||{};return fetch("work/"+encodeURIComponent(job)).then(json).then(function(s){if(!s||(!s.running&&!s.done))throw new Error("no such work: it ended too long ago, or is not yours");
 var k=s.kind==="ask"?"ask":"action";if(s.done)return outcome(s,k);hear(o,s.progress);return follow("work/"+encodeURIComponent(job),o,k);});},
 cancelAction:function(n){return post("action-cancel/"+encodeURIComponent(n));},
+state:{get:function(k){return fetch("view-state").then(json).then(function(m){m=m||{};k=String(k);if(!Object.prototype.hasOwnProperty.call(m,k))return null;try{return JSON.parse(m[k]);}catch(e){return m[k];}});},
+set:function(k,v){var s={};s[String(k)]=JSON.stringify(v===undefined?null:v);return fetch("view-state",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({set:s})}).then(json);},
+remove:function(k){return fetch("view-state",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({remove:[String(k)]})}).then(json);},
+clear:function(){return fetch("view-state",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({clear:true})}).then(json);}},
 records:{list:function(){return fetch("records").then(json);},save:function(r){return post("records",r);},remove:function(id){return fetch("record?id="+encodeURIComponent(id),{method:"DELETE"}).then(json);}},
 shared:function(n){return fetch("shared/"+encodeURIComponent(n)).then(json);},
 ask:function(p,o){o=o||{};return post("ask",{prompt:String(p),json:!!o.json}).then(function(d){if(d&&d.running&&d.job){hear(o,d.progress);return follow("work/"+encodeURIComponent(d.job),o,"ask");}return d&&d.text;});},
