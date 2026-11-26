@@ -15,10 +15,17 @@ package customapps
 // script declares (fetch_via:<name>), those an imported app's names are
 // mapped to, and those its runs have gone out through, recorded the first
 // time. A credential nobody chose for is lent for reads.
+//
+// The owner's sign-ins to MCP servers that sign in per person are listed
+// beside them (appMCPServers), with two choices: the owner's for reads, all a
+// script can do with one (it calls only a tool that never asks first), or
+// Disallow. Never Theirs: what a script reads goes to the owner's code, so a
+// person's own sign-in is never behind it (tools/temptool).
 
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -29,6 +36,7 @@ import (
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 	"github.com/cmcoffee/gohort/tools/appscript"
+	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
 // The four ways to lend a credential, as an agent's table names them.
@@ -94,6 +102,63 @@ func appCredentialNames(owner string, spec AppSpec, creds applocal.AppCredential
 	return out
 }
 
+// appMCPServers is the MCP servers signing in per person that the app's
+// scripts name or have reached, in name order: declared as tool:<name>,
+// mapped from an imported app's tool names, or called by a run. Each is the
+// owner's sign-in, theirs to lend.
+func appMCPServers(owner string, spec AppSpec, creds applocal.AppCredentials) []string {
+	seen := map[string]bool{}
+	tool := func(name string) {
+		if server, ok := temptool.ScriptMCPSignIn(name); ok {
+			seen[server] = true
+		}
+	}
+	declare := func(caps []string) {
+		for _, c := range caps {
+			if n, ok := strings.CutPrefix(strings.TrimSpace(c), "tool:"); ok {
+				tool(n)
+			}
+		}
+	}
+	for _, ds := range spec.DataSources {
+		declare(ds.Capabilities)
+	}
+	for _, a := range spec.Actions {
+		declare(a.Capabilities)
+	}
+	for _, n := range applocal.LoadAppNeeds(owner, spec.Slug) {
+		if n.Kind == "tool" && !n.Off {
+			tool(n.Map)
+		}
+	}
+	for key := range creds.Used {
+		server, ok := strings.CutPrefix(key, temptool.MCPReachKey(""))
+		if !ok {
+			continue
+		}
+		if cfg, ok := MCP().Load(server); ok && cfg.AuthMode == MCPAuthOAuth {
+			seen[server] = true
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for server := range seen {
+		out = append(out, server)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// mcpServerListed is the server key names when it is one of the app's MCP
+// sign-ins, keyed as its rules name it (temptool.MCPReachKey).
+func mcpServerListed(owner string, spec AppSpec, key string) (string, bool) {
+	for _, server := range appMCPServers(owner, spec, applocal.LoadAppCredentials(owner, spec.Slug)) {
+		if temptool.MCPReachKey(server) == key {
+			return server, true
+		}
+	}
+	return "", false
+}
+
 // mayManageReach reports whether user sets how the app lends: its owner, or
 // one of its maintainers, who may only narrow (maintainerMayLend).
 func mayManageReach(a *appCall) bool {
@@ -132,8 +197,28 @@ func (T *CustomApps) appReachRows(a *appCall) (any, error) {
 			how = "used since " + t.Format("Jan 2, 2006")
 		}
 		rows = append(rows, map[string]any{
-			"name": name, "goes": goes, "how": how,
+			"name": name, "label": name, "goes": goes, "how": how,
 			"lend": creds.Choice(name), "used": !creds.IsOff(name), "decide": true,
+		})
+	}
+	for _, server := range appMCPServers(a.owner, a.spec, creds) {
+		key := temptool.MCPReachKey(server)
+		cfg, _ := MCP().Load(server)
+		goes := cfg.URL
+		if u, err := url.Parse(cfg.URL); err == nil && u.Host != "" {
+			goes = u.Host
+		}
+		how := "named by its scripts"
+		if t, ok := creds.Used[key]; ok {
+			how = "used since " + t.Format("Jan 2, 2006")
+		}
+		lend := creds.Choice(key)
+		if lend != lendRead {
+			lend = lendWithhold
+		}
+		rows = append(rows, map[string]any{
+			"name": key, "label": server + " sign-in", "goes": goes, "how": how,
+			"lend": lend, "used": !creds.IsOff(key), "decide_mcp": true,
 		})
 	}
 	return map[string]any{"rows": rows}, nil
@@ -155,6 +240,9 @@ func (T *CustomApps) saveAppLend(a *appCall, in struct {
 	}
 	if !T.appCredentialListed(a, name) {
 		return nil, jsonapi.BadRequest("this app does not use a credential of yours named " + name)
+	}
+	if server, ok := mcpServerListed(a.owner, a.spec, name); ok && lend != lendRead && lend != lendWithhold {
+		return nil, jsonapi.BadRequest("your sign-in to " + server + " is lent for reads or not at all: a script reads with it, and someone's own sign-in is never behind your app's scripts")
 	}
 	current := applocal.LoadAppCredentials(a.owner, a.spec.Slug).Choice(name)
 	if !a.mine() && !maintainerMayLend(current, lend) {
@@ -201,9 +289,12 @@ func (T *CustomApps) saveAppCredentialUsed(a *appCall, in struct {
 	return map[string]any{"ok": true}, nil
 }
 
-// appCredentialListed reports whether name is one of the credentials the
-// app's table lists, the only ones a choice may be made for.
+// appCredentialListed reports whether name is one of the credentials (or MCP
+// sign-ins) the app's table lists, the only ones a choice may be made for.
 func (T *CustomApps) appCredentialListed(a *appCall, name string) bool {
+	if _, ok := mcpServerListed(a.owner, a.spec, name); ok {
+		return true
+	}
 	for _, n := range appCredentialNames(a.owner, a.spec, applocal.LoadAppCredentials(a.owner, a.spec.Slug)) {
 		if n == name {
 			return true
@@ -224,29 +315,34 @@ func reachSection(spec AppSpec, user, owner, base string) *ui.Section {
 	write := ui.SelectOption{Value: lendWrite, Label: "Mine, writes too", Help: "Everything goes through your key until they connect their own: what they write arrives as you."}
 	withhold := ui.SelectOption{Value: lendWithhold, Label: "Disallow", Help: "Their runs of the app do not reach it. Yours do."}
 	choices := []ui.SelectOption{read, theirs, write, withhold}
+	signIn := ui.SelectOption{Value: lendRead, Label: "Mine for reads", Help: "Its scripts read with your sign-in when they use the app. A script calls only what never asks first, so nothing is written as you."}
 	if maintainer {
 		read.Label, read.Help = "Owner's for reads", "Reads go through the owner's key; from writes, this takes the writes back. Only the owner can lend it further."
 		choices = []ui.SelectOption{read, theirs, withhold}
+		signIn.Label, signIn.Help = "Owner's for reads", "Its scripts read with the owner's sign-in. Only the owner can lend it again once it is disallowed."
 	}
+	signIns := []ui.SelectOption{signIn, withhold}
 	return &ui.Section{
 		Title:    "What it reaches",
-		Subtitle: "Your credentials this app uses, and how it lends each to the people you share it with.",
+		Subtitle: "Your credentials and sign-ins this app uses, and how it lends each to the people you share it with.",
 		Detail: "When someone else uses the app, its scripts reach your credentials as THEM: their own account first, then yours as chosen here. " +
 			"Mine for reads is the usual one: they read with your key, and a write waits for their own account (Extensions, Connected accounts). " +
 			"Theirs makes them use their own for everything; Mine, writes too sends their writes as you; Disallow keeps it from their runs. " +
 			"Your own runs, and the app's scheduled ones, use your keys as always. Turn Used by the app off to keep a credential out of it entirely, yours included.\n\n" +
-			"Listed: the credentials its scripts name, the ones an imported app's names are mapped to, and any it has used.",
+			"A sign-in to an MCP server (one each person signs in to with their own account) is lent for reads or not at all: what a script reads goes to your code, so nobody's own sign-in is ever behind it.\n\n" +
+			"Listed: the credentials and MCP tools its scripts name, the ones an imported app's names are mapped to, and any it has used.",
 		Body: ui.Table{
 			Source: base + "/_settings/reach",
 			RowKey: "name",
 			Columns: []ui.Col{
-				{Field: "name", Label: "Credential", Flex: 1},
+				{Field: "label", Label: "Credential", Flex: 1},
 				{Field: "goes", Label: "Goes to", Flex: 2},
 				{Field: "how", Label: "", Mute: true, Flex: 1},
 			},
 			EmptyText: "The app reaches no credential of yours.",
 			RowActions: []ui.RowAction{
 				{Type: "segmented", Field: "lend", OnlyIf: "decide", PostTo: base + "/_settings/reach", Options: choices},
+				{Type: "segmented", Field: "lend", OnlyIf: "decide_mcp", PostTo: base + "/_settings/reach", Options: signIns},
 				{Type: "toggle", Field: "used", Label: "Used by the app", PostTo: base + "/_settings/reach/used/{name}"},
 			},
 		},

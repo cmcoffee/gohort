@@ -93,3 +93,74 @@ func TestAScriptCallsAnMCPToolAsTheOwner(t *testing.T) {
 		t.Error("a tool from a server that is off was callable")
 	}
 }
+
+// A server that signs in per person is the owner's sign-in, so an app keeps
+// it by its choice: every run reaches it for reads, a run for someone else
+// does not when it is disallowed (or chosen anything an MCP sign-in is not
+// offered), and no run does once it is kept out of the app. A server on the
+// deployment's own connection is not the owner's to lend, and is left alone.
+func TestAnAppKeepsItsOwnersMCPSignInByItsChoice(t *testing.T) {
+	saved, savedAuth := RootDB, AuthDB
+	db := &DBase{Store: kvlite.MemStore()}
+	RootDB = db
+	AuthDB = func() Database { return db }
+	t.Cleanup(func() { RootDB, AuthDB = saved, savedAuth })
+	MCP().Save(MCPServerConfig{Name: "reachtest-own", URL: "http://127.0.0.1:1/mcp", AuthMode: MCPAuthOAuth, Enabled: true, ExposeTools: true}, "")
+	MCP().Save(MCPServerConfig{Name: "reachtest-dep", URL: "http://127.0.0.1:1/mcp", Enabled: true, ExposeTools: true}, "")
+	t.Cleanup(func() { MCP().Delete("reachtest-own"); MCP().Delete("reachtest-dep") })
+	var ranAs string
+	RegisterChatTool(fakeMCPTool{name: "reachtest-own_get_issue", server: "reachtest-own", ranAs: &ranAs})
+	RegisterChatTool(fakeMCPTool{name: "reachtest-dep_get_page", server: "reachtest-dep", ranAs: &ranAs})
+
+	if s, ok := ScriptMCPSignIn("reachtest-own_get_issue"); !ok || s != "reachtest-own" {
+		t.Errorf("a per-person server's tool: %q %v", s, ok)
+	}
+	if _, ok := ScriptMCPSignIn("reachtest-dep_get_page"); ok {
+		t.Error("a tool on the deployment's connection read as the owner's sign-in")
+	}
+	key := MCPReachKey("reachtest-own")
+	var used []string
+	run := func(person, lend string, off bool, tool string) error {
+		ranAs = ""
+		sess := &ToolSession{Username: "owner", DB: db, CredentialPerson: person,
+			CredentialUsed: func(n string) { used = append(used, n) }}
+		if lend != "" {
+			sess.CredentialLend = func(n string) string {
+				if n == key {
+					return lend
+				}
+				return ""
+			}
+		}
+		if off {
+			sess.DeniedCredentials = map[string]bool{key: true}
+		}
+		_, err := CallToolForScript(sess, tool, map[string]any{"key": "SUP-1"})
+		return err
+	}
+	own := "reachtest-own_get_issue"
+	if err := run("", "", false, own); err != nil || ranAs != "owner" {
+		t.Errorf("the owner's run: %q %v", ranAs, err)
+	}
+	if len(used) != 1 || used[0] != key {
+		t.Errorf("the use was not recorded under the sign-in's key: %v", used)
+	}
+	if err := run("carol", "", false, own); err != nil || ranAs != "owner" {
+		t.Errorf("a run for someone else, lent for reads by default: %q %v", ranAs, err)
+	}
+	for _, lend := range []string{"withhold", "own", "write"} {
+		if err := run("carol", lend, false, own); err == nil || ranAs != "" || !strings.Contains(err.Error(), "someone else uses this app") {
+			t.Errorf("a run for someone else with %s: ran %q, %v", lend, ranAs, err)
+		}
+	}
+	if err := run("owner", "withhold", false, own); err != nil {
+		t.Errorf("the owner named as the person is the owner's run: %v", err)
+	}
+	if err := run("", "", true, own); err == nil || ranAs != "" || !strings.Contains(err.Error(), "turned it off") {
+		t.Errorf("a sign-in kept out of the app: ran %q, %v", ranAs, err)
+	}
+	used = nil
+	if err := run("carol", "withhold", true, "reachtest-dep_get_page"); err != nil || ranAs != "owner" || len(used) != 0 {
+		t.Errorf("the deployment's server: ran %q, used %v, %v", ranAs, used, err)
+	}
+}

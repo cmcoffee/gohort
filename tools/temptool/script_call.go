@@ -12,9 +12,11 @@ package temptool
 //   - the owner's own ACTIVE tools, and tools they added from the catalog.
 //     A tool still waiting for approval is not one of them.
 //   - the deployment's MCP tools (<server>_<tool>, from an enabled server
-//     whose tools are offered to agents), run as the person using the app,
-//     so a server with a sign-in per person (Atlassian) answers with what
-//     that person may see.
+//     whose tools are offered to agents), run as the app's owner: what they
+//     read goes to the owner's script, so it is the owner's sign-in that
+//     answers, never that of the person using the app. A server with a
+//     sign-in per person is the owner's to lend, so in a run for someone
+//     else it follows the app's choice for it (mcpReachRefusal).
 //   - only a tool that never stops to ask before running (NeedsConfirm, the
 //     same rule an unattended fire is held to). A page load has nobody to
 //     answer a confirmation, so a tool that would ask is refused, and the
@@ -84,6 +86,12 @@ func CallToolForScript(sess *ToolSession, name string, args map[string]any) (str
 		if !ok {
 			return "", fmt.Errorf("MCP tool %q cannot be run for a person", name)
 		}
+		if err := mcpReachRefusal(sess, server); err != nil {
+			return "", err
+		}
+		if sess.CredentialUsed != nil && mcpSignsInPerPerson(server) {
+			sess.CredentialUsed(MCPReachKey(server))
+		}
 		Log("[temptool/script] %s's app calls MCP %s (%s)", sess.Username, name, server)
 		return run.RunWithSession(args, &ToolSession{Username: sess.Username, DB: sess.DB, Ctx: sess.Context()})
 	}
@@ -115,4 +123,58 @@ func scriptMCPTool(name string) (ChatTool, string, bool) {
 		}
 	}
 	return nil, "", false
+}
+
+// MCPReachKey is how an app's credential rules (core/applocal's
+// AppCredentials, a session's CredentialLend and DeniedCredentials) name the
+// owner's sign-in to MCP server: "mcp:<server>", a name no credential has, so
+// one key never means two kinds of thing.
+func MCPReachKey(server string) string { return "mcp:" + server }
+
+// ScriptMCPSignIn is the server of MCP tool name when that server signs in
+// per person: the only kind whose sign-in is the owner's to lend from an app.
+// A server on the deployment's own connection is not.
+func ScriptMCPSignIn(name string) (string, bool) {
+	_, server, ok := scriptMCPTool(strings.TrimSpace(name))
+	if !ok || !mcpSignsInPerPerson(server) {
+		return "", false
+	}
+	return server, true
+}
+
+// mcpSignsInPerPerson reports whether server signs in per person (oauth).
+func mcpSignsInPerPerson(server string) bool {
+	cfg, ok := MCP().Load(server)
+	return ok && cfg.AuthMode == MCPAuthOAuth
+}
+
+// mcpReachRefusal says why an app's script may not reach server on sess, or
+// nil. Only a server that signs in per person is held to anything: the call
+// runs on the owner's sign-in, which the app may keep out altogether (Used by
+// the app off, for every run) or keep from other people's runs (Disallow).
+// For reads, the default, it answers as it always has: a script calls only a
+// tool that never asks first. A choice that is neither reads nor Disallow is
+// not one an MCP sign-in is offered, and is read as Disallow.
+func mcpReachRefusal(sess *ToolSession, server string) error {
+	if !mcpSignsInPerPerson(server) {
+		return nil
+	}
+	key := MCPReachKey(server)
+	if sess.DeniedCredentials[key] {
+		return fmt.Errorf("this app is kept from %s: its owner turned it off for the app", server)
+	}
+	person := strings.TrimSpace(sess.CredentialPerson)
+	if person == "" || person == strings.TrimSpace(sess.Username) {
+		return nil
+	}
+	choice := "read"
+	if sess.CredentialLend != nil {
+		if c := strings.TrimSpace(sess.CredentialLend(key)); c != "" {
+			choice = c
+		}
+	}
+	if choice == "read" {
+		return nil
+	}
+	return fmt.Errorf("%s is not reached when someone else uses this app: its owner keeps their sign-in to it for their own runs", server)
 }

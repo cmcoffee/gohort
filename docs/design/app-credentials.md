@@ -207,7 +207,7 @@ shared (see "Settled", below), not in data.
 - **A data source's refusal** reaches the script as the hook's error, not
   the page; saying it on the page is still to do.
 - **MCP tools a script calls** run on a session of their own, as the owner,
-  outside this.
+  outside this. Closed in 0.9.704, below.
 
 ## As built: steps 2 and 3 (0.9.694)
 
@@ -238,10 +238,39 @@ shared (see "Settled", below), not in data.
   by, `SaveSharedAccount` accepts it, `HasSharedAccount` shows it.
   Dispatch then sends their key, as in step 1.
 - **Still open from step 1:** MCP tools a script calls (they run as the
-  owner).
+  owner). Closed in 0.9.704, below.
 - **A data source's refusal reaches the page** (0.9.697). A data source run
   for someone that waits on their own account notes it (in memory, fifteen
   minutes, dropped once they connect their own); the app's page, for anyone
   but its owner, asks `needs-account` a few times after it loads and says
   once, below the header, which accounts and where to connect them, whatever
   the script printed. Drawn by gohort, so typed and hand-written pages alike.
+
+## As built: MCP sign-ins (0.9.704)
+
+- **Which servers.** Only one that signs in per person (oauth): the call
+  runs on the owner's own sign-in, which is theirs to lend. A server on the
+  deployment's own connection (none, bearer, a SecureAPI credential) is not
+  the owner's, and is left as it was.
+- **Still the owner's sign-in, never the person's.** What a script reads
+  goes to the owner's code, so a person's own sign-in is never behind it
+  (settled 2026-11-02, when scripts' MCP calls moved to the owner). That is
+  why there is no Theirs for a sign-in, and no Mine, writes too: a script
+  calls only a tool that never asks first, so it only reads.
+- **The choices.** On What it reaches, as a row of its own beside the
+  credentials ("<server> sign-in"): Mine for reads (the default, and what
+  every run did before) or Disallow, which keeps it from other people's
+  runs. Used by the app off keeps it out of every run, the owner's included.
+  A maintainer may disallow it, never lend it again.
+- **Keyed `mcp:<server>`** in the same `app_credentials` row (Lend, Off,
+  Used), a name no credential has, so one key never means two kinds of
+  thing. `tools/temptool` checks it per call (`mcpReachRefusal`) from the
+  session's `CredentialLend` and `DeniedCredentials`, as dispatch does for a
+  credential, and records the first use. A choice saved as anything but
+  reads or Disallow is read as Disallow.
+- **Listed:** servers whose tools a script declares (`tool:<name>`), those
+  an imported app's tool names are mapped to, and those a run has reached.
+  Never offered to a person as an account to connect (`appLends` lists
+  credentials only).
+- **No migration.** Nothing stored changes shape, and with no choice made
+  a run reaches the sign-in for reads, as before.
