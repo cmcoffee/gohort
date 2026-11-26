@@ -143,6 +143,21 @@ func WithCallProgress(ctx context.Context, fn func(line string)) context.Context
 	return context.WithValue(ctx, callProgressKey{}, fn)
 }
 
+type callerKeyKey struct{}
+
+// WithCallerKey marks ctx's tool call as made with the key id: a conversation
+// the action's script continues with the app's agent is kept per person and
+// key (agenthost.AppThread), so two clients of one person never interleave.
+func WithCallerKey(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, callerKeyKey{}, id)
+}
+
+// callKeyOf is ctx's call's key id (WithCallerKey), "" for none.
+func callKeyOf(ctx context.Context) string {
+	id, _ := ctx.Value(callerKeyKey{}).(string)
+	return id
+}
+
 // outsideCall reports a tool call made from outside gohort (WithCallProgress).
 func outsideCall(ctx context.Context) bool {
 	_, ok := ctx.Value(callProgressKey{}).(func(string))
@@ -184,7 +199,7 @@ func (T *CustomApps) runActionForAgent(ctx context.Context, owner, uid string, u
 				}
 				HearCallLine(ctx, line)
 			}
-			return runActionAndPersist(owner, ownerDB, udb, spec, act, args, uid, scriptRun{Interactive: true, Long: true, Ctx: jctx, OnProgress: tee})
+			return runActionAndPersist(owner, ownerDB, udb, spec, act, args, uid, scriptRun{Interactive: true, Long: true, Ctx: jctx, OnProgress: tee, CallerKey: callKeyOf(ctx)})
 		})
 	select {
 	case <-job.done:

@@ -114,7 +114,7 @@ func startAppJob(ctx context.Context, tok *AccountToken, app customapps.Offering
 	}
 	jctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	j := &appJob{id: newJobID(), owner: tok.Owner, key: key, slug: app.Slug, tool: tool, started: time.Now(), done: make(chan struct{}), cancel: cancel}
-	jctx = customapps.WithCallProgress(jctx, j.hear)
+	jctx = customapps.WithCallerKey(customapps.WithCallProgress(jctx, j.hear), key)
 	appJobs.m[j.id] = j
 	appJobs.Unlock()
 	go func() {

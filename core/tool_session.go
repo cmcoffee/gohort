@@ -59,7 +59,9 @@ type ToolSession struct {
 	// only by an app script's run, for one that declared "run_agent" /
 	// "run_pipeline". Nil: refused. RunAgent also returns what the agent's
 	// tools made or attached, as paths in the script's working folder.
-	RunAgent    func(agent, prompt string) (string, []string, error)
+	// thread, when not "", continues that conversation of the caller's with
+	// the agent, and fresh starts it over (agenthost.AppThread).
+	RunAgent    func(agent, prompt, thread string, fresh bool) (string, []string, error)
 	RunPipeline func(pipeline, input string) (string, error)
 	// KnowledgeAdd, when set, is what gohort.knowledge_add reaches: a
 	// document added to one of the app's own collections, by name. Set only

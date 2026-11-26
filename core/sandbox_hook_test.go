@@ -435,12 +435,12 @@ func TestPythonRunAgentAndPipelineReachTheHook(t *testing.T) {
 	}
 	run := func(caps []string, code string) string {
 		h, err := NewSandboxHook(t.TempDir(), caps, &ToolSession{Username: "owner",
-			RunAgent: func(agent, p string) (string, []string, error) {
+			RunAgent: func(agent, p, thread string, fresh bool) (string, []string, error) {
 				var made []string
 				if agent == "Composer" {
 					made = []string{"agent_files/run-1/take.mp3"}
 				}
-				return fmt.Sprintf(`{"agent": %q, "said": %q}`, agent, p), made, nil
+				return fmt.Sprintf(`{"agent": %q, "said": %q, "thread": %q, "fresh": %v}`, agent, p, thread, fresh), made, nil
 			},
 			RunPipeline: func(pipeline, in string) (string, error) {
 				return fmt.Sprintf("pipeline %q ran on %q", pipeline, in), nil
@@ -460,6 +460,11 @@ func TestPythonRunAgentAndPipelineReachTheHook(t *testing.T) {
 	agent := "    r = run_agent('roll for it')\n    print(r.get('agent') == '' and r['said'])\n    print(run_agent('x', agent='Quartermaster').get('agent'))\n"
 	if got := run([]string{"fetch", "run_agent"}, agent); !strings.Contains(got, "roll for it") || !strings.Contains(got, "Quartermaster") {
 		t.Fatalf("run_agent granted: %s", got)
+	}
+	// A thread and fresh reach the host as the script gave them; none, none.
+	thread := "    print(run_agent('go on', thread='chat-1').get('thread'), run_agent('anew', thread='chat-1', fresh=True).get('fresh'), repr(run_agent('alone').get('thread')))\n"
+	if got := run([]string{"run_agent"}, thread); !strings.Contains(got, "chat-1 True ''") {
+		t.Fatalf("run_agent's thread: %s", got)
 	}
 	// What the agent's tools made comes back beside the reply, which still
 	// reads as text.

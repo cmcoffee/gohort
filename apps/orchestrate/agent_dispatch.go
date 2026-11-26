@@ -1655,10 +1655,13 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	cr.shapeReply()
 	cr.saveExchange()
 	if cr.run.AutoTitle && titleDue(cr.priorSession) {
-		retitleSession(T.LLM, cr.runtimeDB, cr.target.ID, cr.subSessionID)
+		retitleSession(T.LLM, cr.threadStore(), cr.target.ID, cr.subSessionID)
 	}
 	cr.collectMedia()
 	res := AgentSyncResult{Text: cr.cleanReply, Parts: cr.replyParts, Images: cr.imgs, Videos: cr.vids, Made: madeFiles(cr.subSess), HitRoundCap: cr.resp.HitRoundCap, PhantomDelivery: cr.phantomDelivery, ToolCalls: cr.turnToolCalls, Silenced: cr.subSess != nil && cr.subSess.Silenced}
+	if t := RequestUsage(cr.ctx); t != nil {
+		res.Usage = t.Diff(UsageSnapshot{})
+	}
 	if cr.ask != nil && cr.ask.direct && cr.ask.asked() {
 		res.Question, res.Options = cr.ask.question, cr.ask.options
 	}
@@ -1737,6 +1740,18 @@ type continuingRun struct {
 	// ret and retErr are what an early return hands back, parked by exit.
 	ret    AgentSyncResult
 	retErr error
+}
+
+// threadStore is where the run's thread is kept: the store of the person it
+// remembers for (memory_scope.go memStore), the run's own otherwise. An app's
+// conversation for someone other than its owner is theirs, as their memory is.
+func (cr *continuingRun) threadStore() Database {
+	if cr.subTurn != nil {
+		if db := cr.subTurn.memStore(); db != nil {
+			return db
+		}
+	}
+	return cr.runtimeDB
 }
 
 // exit records what an early return hands back and tells the driver to take
@@ -2137,12 +2152,12 @@ func (cr *continuingRun) loadThread() {
 	// and the dispatch runs as if it's the first ever. The wipe is
 	// irreversible; older turns are not preserved elsewhere.
 	if cr.freshSession {
-		deleteChatSession(cr.runtimeDB, cr.target.ID, cr.subSessionID)
+		deleteChatSession(cr.threadStore(), cr.target.ID, cr.subSessionID)
 		Log("[orchestrate.RunAgentSyncContinuing] fresh_session wipe: runtime=%s target=%s sub=%s",
 			cr.runtimeUser, cr.target.ID, cr.subSessionID)
 	}
 	// Load prior session (if any) and build history.
-	cr.priorSession, _ = loadChatSession(cr.runtimeDB, cr.target.ID, cr.subSessionID)
+	cr.priorSession, _ = loadChatSession(cr.threadStore(), cr.target.ID, cr.subSessionID)
 	if cr.priorSession.ID == "" {
 		cr.priorSession.ID = cr.subSessionID
 		cr.priorSession.AgentID = cr.target.ID
@@ -2278,7 +2293,7 @@ func (cr *continuingRun) buildMessages() {
 	// No-op until the thread grows past the fold trigger, so short dispatches
 	// are unaffected; fact extraction honors the agent's memory setting (see
 	// compactOperatorHistory).
-	bounded := T.compactOperatorHistory(cr.runtimeDB, cr.runtimeUser, cr.target, cr.subSessionID, cr.priorSession.Messages)
+	bounded := T.compactOperatorHistory(cr.threadStore(), cr.subTurn.memName(), cr.target, cr.subSessionID, cr.priorSession.Messages)
 	if strings.TrimSpace(run.InputReportFrom) != "" {
 		bounded = withoutUnansweredAsk(bounded)
 	}
@@ -2432,6 +2447,15 @@ func (cr *continuingRun) configureLoop() {
 		// agent asking.
 		cr.loopCfg.Confirm, cr.loopCfg.ConfirmRefusal = outsideConfirm, outsideConfirmRefusal
 	}
+	// An app's script continuing a conversation with its agent: nobody is
+	// there to approve a tool that stops to ask, so it is refused, as on an
+	// app's one-off run (AppAgentRun), and never queued for the owner.
+	if agenthost.AppThreadFrom(cr.ctx).Name != "" {
+		cr.loopCfg.Confirm = func(string, string) bool { return false }
+		cr.loopCfg.ConfirmRefusal = func(name string) string {
+			return fmt.Sprintf("not run: %s asks before it runs, and nobody is there to answer in an app's run. Do the work without it, or say it needs doing from the app's page.", name)
+		}
+	}
 }
 
 func (cr *continuingRun) wireJudges() {
@@ -2455,6 +2479,9 @@ func (cr *continuingRun) wireJudges() {
 	// What the machine's steps did before the loop ran, as on the web turn.
 	cr.loopCfg.PriorWork = cr.subTurn.priorWorkForJudge
 	cr.loopCfg.PriorReports = func() []string {
+		if cr.subTurn.memUser != "" {
+			return priorReportsFrom(cr.priorSession.Messages) // the owner's feed was not shown
+		}
 		return append(priorReportsFrom(cr.priorSession.Messages), dispatchPriorReports(cr.target, cr.subSessionID, cr.runtimeDB)...)
 	}
 	// And whether it KNOWS what it asserts. On this path the live claim matters
@@ -2684,7 +2711,7 @@ func (cr *continuingRun) saveExchange() {
 	deliveredFiles := keepDeliveredFiles(cr.subSess.Username, cr.subSess.Videos, cr.subSess.Files)
 	withSessionAppend(cr.target.ID, cr.subSessionID, func() {
 		baseCount := len(cr.priorSession.Messages)
-		if latest, ok := loadChatSession(cr.runtimeDB, cr.target.ID, cr.subSessionID); ok && len(latest.Messages) > baseCount {
+		if latest, ok := loadChatSession(cr.threadStore(), cr.target.ID, cr.subSessionID); ok && len(latest.Messages) > baseCount {
 			cr.priorSession.Messages = append(cr.priorSession.Messages, latest.Messages[baseCount:]...)
 		}
 		reply := ChatMessage{Role: "assistant", Content: cr.cleanReply, Created: now, Sender: assistantSender, Attachments: deliveredIDs, Files: deliveredFiles, ToolCalls: cr.savedToolCalls()}
@@ -2708,8 +2735,8 @@ func (cr *continuingRun) saveExchange() {
 		// AND archived to recall, cursor kept consistent. Without this, a
 		// long-lived channel / phantom thread grew without limit and was
 		// loaded whole every turn.
-		cr.priorSession.Messages = T.trimStoredHistory(cr.runtimeDB, cr.target, cr.subSessionID, cr.priorSession.Messages)
-		if _, serr := saveChatSession(cr.runtimeDB, cr.priorSession); serr != nil {
+		cr.priorSession.Messages = T.trimStoredHistory(cr.threadStore(), cr.target, cr.subSessionID, cr.priorSession.Messages)
+		if _, serr := saveChatSession(cr.threadStore(), cr.priorSession); serr != nil {
 			Log("[orchestrate.RunAgentSyncContinuing] WARN failed to persist sub-session %s: %v", cr.subSessionID, serr)
 		}
 	})

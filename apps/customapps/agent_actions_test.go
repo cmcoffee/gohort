@@ -305,3 +305,29 @@ func TestADataToolsReplyIsWholeForAnOutsideCaller(t *testing.T) {
 		t.Errorf("an outside caller's call: %d bytes, %d rows, %v", len(out), len(back), err)
 	}
 }
+
+// The key an outside client called with reaches the action's script run, so
+// a conversation the script continues with the app's agent is kept per key;
+// a call with no key (the page, an agent) carries none.
+func TestAnActionCallCarriesItsCallersKey(t *testing.T) {
+	T := sharingTestApp(t)
+	spec := AppSpec{Slug: "prep", Name: "Case prep", Owner: "alice", RecordKey: "id",
+		Actions: []AppAction{{Name: "chat", Script: "x"}}}
+	prev := runAppScript
+	t.Cleanup(func() { runAppScript = prev })
+	var got []string
+	runAppScript = func(j appscript.Job) (string, error) {
+		got = append(got, j.CallerKey)
+		return `{"message":"ok"}`, nil
+	}
+	tool := T.actionTools("alice", "alice", T.recordBase(spec, "alice"), spec, "", "")[0]
+	if _, err := tool.Handler(WithCallerKey(context.Background(), "key-7"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tool.Handler(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != "key-7" || got[1] != "" {
+		t.Errorf("the script runs carried keys %q", got)
+	}
+}

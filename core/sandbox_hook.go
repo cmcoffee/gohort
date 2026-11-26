@@ -732,7 +732,8 @@ func (h *SandboxHook) handleRunAgent(conn net.Conn, params map[string]interface{
 		writeHookError(conn, "run_agent needs a prompt")
 		return
 	}
-	text, files, err := h.Sess.RunAgent(strings.TrimSpace(stringFromParams(params, "agent")), prompt)
+	fresh, _ := params["fresh"].(bool)
+	text, files, err := h.Sess.RunAgent(strings.TrimSpace(stringFromParams(params, "agent")), prompt, strings.TrimSpace(stringFromParams(params, "thread")), fresh)
 	if err != nil {
 		writeHookError(conn, "run_agent: "+err.Error())
 		return
@@ -2748,7 +2749,7 @@ class _Gohort:
         result = self._call("ask", {"prompt": str(prompt), "json": bool(json)})
         return Output(result.get("text", "") if isinstance(result, dict) else result)
 
-    def run_agent(self, prompt, agent=None):
+    def run_agent(self, prompt, agent=None, thread=None, fresh=False):
         """Run one of the app's agents WITH its tools on prompt and return
         its reply as text (it reads as its JSON when the reply is JSON).
         What its tools made or attached (a song, a picture) is in the
@@ -2756,8 +2757,15 @@ class _Gohort:
         action's files reply. agent=None is the app's own agent; otherwise
         name one made for the app. Under the app's daily caps; a tool that
         stops to ask before running is refused. The script must declare
-        "run_agent"."""
-        result = self._call("run_agent", {"prompt": str(prompt), "agent": str(agent or "")})
+        "run_agent".
+
+        thread names a conversation to continue: the agent sees what was
+        said in it before, and this exchange is added to it. It is the
+        caller's own (the person, and the client they called from), so
+        the same name never reaches someone else's. fresh=True starts it
+        over. Without a thread each call is on its own."""
+        result = self._call("run_agent", {"prompt": str(prompt), "agent": str(agent or ""),
+                                          "thread": str(thread or ""), "fresh": bool(fresh)})
         if not isinstance(result, dict):
             out = Output(result)
             out.files = []
@@ -2955,8 +2963,8 @@ def ask(prompt, json=False):
     return gohort.ask(prompt, json=json)
 
 
-def run_agent(prompt, agent=None):
-    return gohort.run_agent(prompt, agent=agent)
+def run_agent(prompt, agent=None, thread=None, fresh=False):
+    return gohort.run_agent(prompt, agent=agent, thread=thread, fresh=fresh)
 
 
 def run_pipeline(input, pipeline=None):

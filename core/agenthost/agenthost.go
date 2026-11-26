@@ -467,6 +467,9 @@ type Result struct {
 	// run with AskUser; Text is the question as the thread keeps it.
 	Question string
 	Options  []string
+	// Usage is what the run spent, for a caller that charges it to an
+	// allowance (an app's daily caps).
+	Usage core.UsageDiff
 }
 
 // Scope instantiates an agent TEMPLATE against a caller-supplied state

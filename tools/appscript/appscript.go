@@ -20,6 +20,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/applocal"
 	"github.com/cmcoffee/gohort/core/appstores"
 	"github.com/cmcoffee/gohort/core/bgrun"
@@ -51,6 +52,10 @@ type Job struct {
 	Caps     []string
 	Args     map[string]any
 	Caller   string
+	// CallerKey is the key of the outside client (MCP, HTTP) the run is for,
+	// "" for the app's page: a conversation the script continues with its
+	// agent is kept per person and key (agenthost.AppThread).
+	CallerKey string
 	// Libs are the app's shared Python modules (AppSpec.Libraries), which a
 	// Python script imports by name.
 	Libs map[string]string
@@ -303,7 +308,7 @@ func (j Job) Run() (string, error) {
 			}
 			return AppAsk(s.Context(), spec, caller, prompt, jsonMode)
 		}
-		s.RunAgent = func(agent, prompt string) (string, []string, error) {
+		s.RunAgent = func(agent, prompt, thread string, fresh bool) (string, []string, error) {
 			if AppRunAgent == nil {
 				return "", nil, fmt.Errorf("run_agent is not available here")
 			}
@@ -311,7 +316,8 @@ func (j Job) Run() (string, error) {
 			if err != nil {
 				return "", nil, err
 			}
-			return AppRunAgent(s.Context(), spec, caller, agent, prompt)
+			ctx := agenthost.WithAppThread(s.Context(), agenthost.AppThread{Name: thread, Key: j.CallerKey, Fresh: fresh})
+			return AppRunAgent(ctx, spec, caller, agent, prompt)
 		}
 		s.RunPipeline = func(pipeline, input string) (string, error) {
 			if AppRunPipeline == nil {
@@ -653,7 +659,7 @@ func holdToCheck(sess *ToolSession) {
 	sess.CallTool = func(name string, _ map[string]any) (string, error) {
 		return "", checkRefusal("calling the tool " + name)
 	}
-	sess.RunAgent = func(agent, _ string) (string, []string, error) {
+	sess.RunAgent = func(agent, _, _ string, _ bool) (string, []string, error) {
 		return "", nil, checkRefusal("running an agent")
 	}
 	sess.RunPipeline = func(_, _ string) (string, error) {

@@ -108,7 +108,7 @@ type memoryMove struct {
 
 // lifecycleTally is what one pass did, for its outcome line.
 type lifecycleTally struct {
-	users, events, closed, expired, dated int
+	users, events, closed, expired, dated, threads int
 }
 
 func (lt lifecycleTally) moved() int { return lt.events + lt.closed + lt.expired }
@@ -138,8 +138,8 @@ func runMemoryLifecycle(ctx context.Context) int {
 	if ctx.Err() == nil {
 		lt.dated = dateEventFindings(now)
 	}
-	line := fmt.Sprintf("Checked %d users: %d past event(s) moved to reference memory, %d open item(s) closed, %d expired note(s) let go, %d finding(s) dated",
-		lt.users, lt.events, lt.closed, lt.expired, lt.dated)
+	line := fmt.Sprintf("Checked %d users: %d past event(s) moved to reference memory, %d open item(s) closed, %d expired note(s) let go, %d finding(s) dated, %d idle app conversation(s) removed",
+		lt.users, lt.events, lt.closed, lt.expired, lt.dated, lt.threads)
 	if ctx.Err() != nil {
 		line = "Stopped early. " + line
 	}
@@ -171,6 +171,9 @@ func lifecycleForUser(ctx context.Context, user string, now time.Time, lt *lifec
 	if udb == nil {
 		return
 	}
+	// The conversations apps keep with their agents for this person, left
+	// unused past appThreadIdle (app_agent_ask.go appThreadRun).
+	lt.threads += sweepIdleAppThreads(udb, now)
 	fresh, answer := eventFreshFor(), openAnswerFor()
 	for _, ns := range factNamespaces(udb) {
 		agentID := strings.TrimPrefix(ns, "agent:")

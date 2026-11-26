@@ -21,7 +21,7 @@ func TestACheckRunRefusesWhatActsBeyondIt(t *testing.T) {
 	if _, err := sess.CallTool("send_email", nil); err == nil {
 		t.Error("a check run called a tool")
 	}
-	if _, _, err := sess.RunAgent("helper", "go"); err == nil {
+	if _, _, err := sess.RunAgent("helper", "go", "", false); err == nil {
 		t.Error("a check run ran an agent")
 	}
 	if _, err := sess.RunPipeline("p", "in"); err == nil {

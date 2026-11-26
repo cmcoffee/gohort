@@ -17,8 +17,10 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appstores"
 )
 
@@ -126,6 +128,19 @@ func (T *OrchestrateApp) AppAgentRun(ctx context.Context, owner, user, slug, age
 		return "", nil, 0, err
 	}
 	returned := &ToolSession{} // what the run makes and attaches (agent_media.go)
+	// A conversation the script continues, the caller's own (appThreadRun).
+	if th := agenthost.AppThreadFrom(ctx); th.Name != "" {
+		res, err := T.appThreadRun(ctx, owner, slug, agent, th, prompt, returned)
+		cost := GetCostRates().Estimate(res.Usage)
+		if err != nil {
+			return "", nil, cost, err
+		}
+		text := res.Text
+		if res.HitRoundCap {
+			text += "\n\n(The agent stopped at its round limit before it finished.)"
+		}
+		return text, handToScript(agent.Name, returned, filesDir), cost, nil
+	}
 	res, err := T.runAgentSyncConfirm(withMediaReturn(ctx, returned), owner, owner, agent.ID, prompt, func(string, string) bool { return false })
 	cost := GetCostRates().Estimate(res.Usage)
 	if err != nil {
@@ -267,4 +282,112 @@ func (T *OrchestrateApp) appOwnPipeline(owner, slug, pipelineID, pipelineKey str
 		return def, nil
 	}
 	return PipelineDef{}, fmt.Errorf("pipeline %q is not one of this app's pipelines: run_pipeline reaches the app's pipeline_id or a pipeline made for it (owning_app=%q)", def.Name, slug)
+}
+
+// A conversation an app's script keeps with its agent for a caller, which
+// AppAgentRun runs (appThreadRun).
+//
+// gohort.run_agent(prompt, thread="name") continues a thread: the agent sees
+// what was said in it before, and the exchange is added to it. Without a
+// thread each call stands alone, as before. The app's author decides which
+// actions hold a conversation; an MCP or HTTP caller names one as an ordinary
+// input the script passes on. The agent is still reached only through the
+// app's action (no outside door to an app's agent).
+//
+// A thread is its caller's: kept in the store of the person using the app,
+// beside their memory of its agent and their sessions in its chat, and per key
+// for a call from an outside client, so two clients of one person never
+// interleave and a script can never reach someone else's. The run is the
+// owner's account, as an app's one-off run is (AppAgentRun); only the thread
+// and the memory are the person's. Not shown anywhere in v1 (listChatSessions
+// leaves them out), and one left idle for appThreadIdle is removed by the
+// daily memory pass.
+
+// appThreadPrefix opens an app thread's session id.
+const appThreadPrefix = "app-thread:"
+
+// appThreadIdle is how long a thread may go unused before it is removed.
+const appThreadIdle = 30 * 24 * time.Hour
+
+// appThreadNameMax bounds a thread's name as the script gives it.
+const appThreadNameMax = 64
+
+// appThreadSessionID is the session a thread is kept as in the person's
+// store: the app, the key it came from ("page" for the app's own page) and
+// the name, each in plain characters.
+func appThreadSessionID(slug, key, name string) (string, error) {
+	n := strings.TrimSpace(name)
+	if n == "" {
+		return "", fmt.Errorf("a thread needs a name")
+	}
+	if len([]rune(n)) > appThreadNameMax {
+		return "", fmt.Errorf("a thread's name is at most %d characters", appThreadNameMax)
+	}
+	var b strings.Builder
+	for _, r := range strings.ToLower(n) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	from := "page"
+	if k := strings.TrimSpace(key); k != "" {
+		from = "key-" + k
+	}
+	return appThreadPrefix + slug + ":" + from + ":" + b.String(), nil
+}
+
+// appThreadRun is AppAgentRun continuing th: the agent run on the owner's
+// account, its thread and memory the person's (ctx already carries whom it is
+// for, appRunAs), anything that stops to ask refused.
+func (T *OrchestrateApp) appThreadRun(ctx context.Context, owner, slug string, agent AgentRecord, th agenthost.AppThread, prompt string, returned *ToolSession) (AgentSyncResult, error) {
+	sid, err := appThreadSessionID(slug, th.Key, th.Name)
+	if err != nil {
+		return AgentSyncResult{}, err
+	}
+	return T.RunAgentSyncContinuingRich(withMediaReturn(ctx, returned), AgentSyncRun{
+		AgentOwner:   owner,
+		RuntimeUser:  owner,
+		AgentKey:     agent.ID,
+		SubSessionID: sid,
+		Message:      prompt,
+		FreshSession: th.Fresh,
+		Kind:         "app-thread",
+		Title:        th.Name,
+	})
+}
+
+// sweepIdleAppThreads removes the app threads in udb that have gone unused
+// for appThreadIdle, and says how many.
+func sweepIdleAppThreads(udb Database, now time.Time) int {
+	if udb == nil {
+		return 0
+	}
+	gone := 0
+	for _, tbl := range udb.Tables() {
+		agentID, ok := strings.CutPrefix(tbl, "orchestrate_sessions:")
+		if !ok {
+			continue
+		}
+		for _, k := range udb.Keys(tbl) {
+			if !strings.HasPrefix(k, appThreadPrefix) {
+				continue
+			}
+			s, ok := loadChatSession(udb, agentID, k)
+			if !ok {
+				continue
+			}
+			last := s.LastAt
+			if last.IsZero() {
+				last = s.Created
+			}
+			if now.Sub(last) > appThreadIdle {
+				deleteChatSession(udb, agentID, k)
+				gone++
+			}
+		}
+	}
+	return gone
 }

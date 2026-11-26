@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/appreach"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
@@ -278,5 +280,85 @@ func TestAnAppsRunForSomeoneElseHasItsOwnSession(t *testing.T) {
 	}
 	if got := appMemorySessSuffix(context.Background(), "u"); got != "" {
 		t.Errorf("an ordinary run got a suffix %q", got)
+	}
+}
+
+// An app's script continuing a thread with its agent: the next call in the
+// same thread hears the last, while another person, the same person from
+// another key, and a fresh start do not. The thread is kept in the person's
+// own store, never the owner's, and stays out of their session list.
+func TestAnAppsThreadIsTheCallersOwn(t *testing.T) {
+	SetWorkspacesDir(t.TempDir())
+	t.Cleanup(func() { SetWorkspacesDir("") })
+	df := newDispatchFixture(t, FakeTurn{Content: "Noted.", Repeat: true})
+	run := func(who, key, thread string, fresh bool, prompt string) string {
+		t.Helper()
+		ctx := agenthost.WithAppThread(context.Background(), agenthost.AppThread{Name: thread, Key: key, Fresh: fresh})
+		from := df.llm.Calls()
+		if _, _, _, err := df.app.AppAgentRun(ctx, "u", who, "studio", df.agent.ID, "", prompt, t.TempDir()); err != nil {
+			t.Fatal(err)
+		}
+		var seen strings.Builder
+		for i := from; i < df.llm.Calls(); i++ {
+			seen.WriteString(df.llm.Config(i).SystemPrompt + df.llm.Prompt(i))
+		}
+		return seen.String()
+	}
+	run("bob", "k1", "chat", false, "My locker is number 4417.")
+	if got := run("bob", "k1", "chat", false, "Which locker?"); !strings.Contains(got, "4417") {
+		t.Error("the next call in bob's thread did not hear the last")
+	}
+	for _, c := range []struct{ who, key, thread string }{{"cara", "k9", "chat"}, {"bob", "k2", "chat"}, {"bob", "k1", "other"}} {
+		if got := run(c.who, c.key, c.thread, false, "Which locker?"); strings.Contains(got, "4417") {
+			t.Errorf("%s on key %s in thread %q heard bob's k1 thread", c.who, c.key, c.thread)
+		}
+	}
+	if got := run("bob", "k1", "chat", true, "Which locker?"); strings.Contains(got, "4417") {
+		t.Error("a fresh start still heard the thread")
+	}
+	sid, _ := appThreadSessionID("studio", "k1", "chat")
+	if _, ok := loadChatSession(UserDB(df.app.DB, "bob"), df.agent.ID, sid); !ok {
+		t.Error("bob's thread is not in his own store")
+	}
+	if _, ok := loadChatSession(UserDB(df.app.DB, "u"), df.agent.ID, sid); ok {
+		t.Error("bob's thread was kept in the owner's store")
+	}
+	for _, s := range listChatSessions(UserDB(df.app.DB, "bob"), df.agent.ID) {
+		if strings.HasPrefix(s.ID, appThreadPrefix) {
+			t.Errorf("an app thread is in bob's session list: %s", s.ID)
+		}
+	}
+	// Without a thread a call stands alone, as before.
+	run("bob", "k1", "", false, "My bike is red.")
+	if got := run("bob", "k1", "", false, "What colour is my bike?"); strings.Contains(got, "bike is red") {
+		t.Error("a call with no thread heard the one before")
+	}
+}
+
+// The daily pass removes a thread left unused for appThreadIdle, and keeps
+// one in use and every other session.
+func TestAnIdleAppThreadIsRemoved(t *testing.T) {
+	df := newDispatchFixture(t)
+	udb := UserDB(df.app.DB, "bob")
+	old, _ := appThreadSessionID("studio", "", "old")
+	live, _ := appThreadSessionID("studio", "k1", "live")
+	now := time.Now()
+	for _, s := range []ChatSession{
+		{ID: old, AgentID: df.agent.ID, Created: now.Add(-40 * 24 * time.Hour), LastAt: now.Add(-31 * 24 * time.Hour)},
+		{ID: live, AgentID: df.agent.ID, Created: now.Add(-40 * 24 * time.Hour), LastAt: now.Add(-2 * 24 * time.Hour)},
+		{ID: "ordinary", AgentID: df.agent.ID, Created: now.Add(-90 * 24 * time.Hour), LastAt: now.Add(-90 * 24 * time.Hour)},
+	} {
+		udb.Set(sessionTable(df.agent.ID), s.ID, s)
+	}
+	if n := sweepIdleAppThreads(udb, now); n != 1 {
+		t.Errorf("removed %d, want 1", n)
+	}
+	for id, want := range map[string]bool{old: false, live: true, "ordinary": true} {
+		if _, ok := loadChatSession(udb, df.agent.ID, id); ok != want {
+			t.Errorf("%s kept=%v, want %v", id, ok, want)
+		}
+	}
+	if _, err := appThreadSessionID("studio", "", strings.Repeat("x", appThreadNameMax+1)); err == nil {
+		t.Error("an over-long thread name was taken")
 	}
 }

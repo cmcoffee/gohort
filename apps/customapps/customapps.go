@@ -1860,6 +1860,9 @@ type scriptRun struct {
 	OnNotify func()
 	// Check holds the run to a check's rules (a page check's request).
 	Check bool
+	// CallerKey is the outside client's key the run is for (WithCallerKey),
+	// "" for the page.
+	CallerKey string
 }
 
 // actionOutcome is what one action run did: the message for the button, how
@@ -1897,7 +1900,7 @@ func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act 
 	var needsMu sync.Mutex
 	j := appscript.Job{Owner: owner, DB: ownerDB, Slug: spec.Slug, Kind: "action", Name: act.Name, Language: act.Language, Script: act.Script, Caps: act.Capabilities, Args: args, Caller: by, Libs: spec.Libraries,
 		Interactive: how.Interactive, Long: how.Long, Ctx: how.Ctx, OnProgress: how.OnProgress, OnNotify: how.OnNotify, Check: how.Check,
-		Reads: act.Reads, KeyField: recordKeyField(spec),
+		Reads: act.Reads, KeyField: recordKeyField(spec), CallerKey: how.CallerKey,
 		OnConnectNeeded: func(_, name string) {
 			needsMu.Lock()
 			if !slices.Contains(needs, name) {

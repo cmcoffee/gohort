@@ -224,7 +224,9 @@ func listChatSessions(db Database, agentID string) []ChatSession {
 		// "machine:<thread>:<step>". Both are internal plumbing, not threads
 		// anybody opened; the request reaches the target's cortex instead
 		// (recordMachineDelegation), and the rail keeps to real sessions.
-		if strings.HasPrefix(k, "dispatch:") || strings.HasPrefix(k, "machine:") {
+		// An app's conversation its script keeps with its agent for a caller
+		// (app_agent_ask.go appThreadRun) is the app's working state, not shown in v1.
+		if strings.HasPrefix(k, "dispatch:") || strings.HasPrefix(k, "machine:") || strings.HasPrefix(k, appThreadPrefix) {
 			continue
 		}
 		var s ChatSession
