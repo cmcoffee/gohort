@@ -172,7 +172,7 @@ func (T *MCPServer) handleAppRPC(w http.ResponseWriter, r *http.Request, slug st
 			resp.Result = toolText("error: bad params: "+err.Error(), true)
 			break
 		}
-		if !tok.AllowsTool(toolScope(p.Name)) {
+		if !keyMayCall(tok, p.Name) {
 			resp.Result = toolText(fmt.Sprintf("error: this key may not call %q: enable it on the key under Account > API keys > Access", p.Name), true)
 			break
 		}

@@ -245,3 +245,30 @@ func TestAKeyCanListItsAppJobs(t *testing.T) {
 		t.Errorf("stop with no job: %q", got)
 	}
 }
+
+// A key narrowed to some of an app's tools may still collect and stop their
+// jobs: the result tool follows the app's tools, as agent_result follows
+// ask_agent. A key allowed none of the app's tools gets no result tool.
+func TestANarrowedKeyCanCollectItsJobs(t *testing.T) {
+	app, s := jobsFixture(t)
+	narrow := MintAccountTokenScoped("user-a", "narrow", &TokenScope{Features: []string{MCPFeatureKey}, Tools: &[]string{"lab_wait"}}).Token
+	for _, path := range []string{"/app/lab/", "/"} {
+		if got := toolNames(rpcTo(app, path, narrow, "tools/list", map[string]any{})); !contains(got, "lab_result") || contains(got, "lab_quick") {
+			t.Errorf("%s lists %v for a key narrowed to lab_wait", path, got)
+		}
+	}
+	m := jobIDRE.FindStringSubmatch(callText(rpcTo(app, "/app/lab/", narrow, "tools/call", map[string]any{"name": "lab_wait", "arguments": map[string]any{"tag": "N"}})))
+	if m == nil {
+		t.Fatal("no job")
+	}
+	close(s.release)
+	for _, path := range []string{"/app/lab/", "/"} {
+		if got := callText(rpcTo(app, path, narrow, "tools/call", map[string]any{"name": "lab_result", "arguments": map[string]any{"job": m[1]}})); got != "done:N" {
+			t.Errorf("%s: collecting with a narrowed key answered %q", path, got)
+		}
+	}
+	none := MintAccountTokenScoped("user-a", "none", &TokenScope{Features: []string{MCPFeatureKey}, Tools: &[]string{"ask_agent"}}).Token
+	if got := toolNames(rpcTo(app, "/app/lab/", none, "tools/list", map[string]any{})); contains(got, "lab_result") {
+		t.Errorf("a key allowed none of the app's tools lists its result tool: %v", got)
+	}
+}

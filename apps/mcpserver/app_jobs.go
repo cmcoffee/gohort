@@ -320,6 +320,29 @@ func (j *appJob) state() string {
 	return fmt.Sprintf("%s %s ago, after %s", how, time.Since(j.ended).Round(time.Second), j.ended.Sub(j.started).Round(time.Second))
 }
 
+// keyMayCall reports whether tok may call name: as its scope says, and an
+// app's result tool whenever tok may call any of that app's tools. The result
+// tool reads only tok's own jobs, of tools it was allowed to start, so it
+// follows them as agent_result follows ask_agent (toolScope). A key narrowed
+// to an app's tools names them one by one, never the result tool, so a long
+// call's job could be started and not collected.
+func keyMayCall(tok *AccountToken, name string) bool {
+	if tok.AllowsTool(toolScope(name)) {
+		return true
+	}
+	for _, a := range reachedApps(tok, "") {
+		if name != resultToolName(a) {
+			continue
+		}
+		for _, d := range a.Tools {
+			if tok.AllowsTool(toolScope(d.Tool.Name)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // runAppJob runs one of app's tools for tok as a job and answers as the call
 // would, or with the job when it is still going after appWait.
 func runAppJob(ctx context.Context, tok *AccountToken, app customapps.OfferingApp, d AgentToolDef, args map[string]any) (string, error) {

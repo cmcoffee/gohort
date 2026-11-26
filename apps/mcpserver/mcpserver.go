@@ -561,7 +561,7 @@ func allowedToolDefs(defs []map[string]any, tok *AccountToken) []map[string]any 
 	out := make([]map[string]any, 0, len(defs))
 	for _, d := range defs {
 		name, _ := d["name"].(string)
-		if tok.AllowsTool(toolScope(name)) {
+		if keyMayCall(tok, name) {
 			out = append(out, d)
 		}
 	}
@@ -578,7 +578,7 @@ func (T *MCPServer) callTool(ctx context.Context, owner string, token *AccountTo
 	}
 	// Enforced here as well as in the listing, because a client can call a name
 	// it learned somewhere else — a filtered list is a courtesy, not a gate.
-	if !token.AllowsTool(toolScope(p.Name)) {
+	if !keyMayCall(token, p.Name) {
 		return "", nil, fmt.Errorf("this key may not call %q: enable it on the key under Account → API keys → Access", p.Name)
 	}
 	if err := appOnlyRefusal(token, p.Name); err != nil {
