@@ -128,17 +128,25 @@ func (T *CustomApps) actionTools(owner, uid string, udb Database, spec AppSpec, 
 }
 
 // callProgressKey carries, on a call's context, who hears each line an action
-// prints while it runs for a caller outside gohort: an MCP client's job says
-// it on each check-in (apps/mcpserver/app_jobs.go).
+// prints while it runs for a caller outside gohort: an MCP or HTTP client's job
+// says it on each check-in (apps/mcpserver/app_jobs.go). It also marks the
+// call as that caller's (outsideCall): its reply goes back whole, not cut to
+// what an agent's context takes (capJSON).
 type callProgressKey struct{}
 
-// WithCallProgress is ctx with fn hearing each line the action a tool call
-// runs prints as it runs.
+// WithCallProgress marks ctx's tool call as a caller's outside gohort, with fn
+// hearing each line the action it runs prints as it runs.
 func WithCallProgress(ctx context.Context, fn func(line string)) context.Context {
 	if fn == nil {
 		return ctx
 	}
 	return context.WithValue(ctx, callProgressKey{}, fn)
+}
+
+// outsideCall reports a tool call made from outside gohort (WithCallProgress).
+func outsideCall(ctx context.Context) bool {
+	_, ok := ctx.Value(callProgressKey{}).(func(string))
+	return ok
 }
 
 // HearCallLine tells whoever ctx names (WithCallProgress) a line the call's
@@ -316,6 +324,11 @@ func (T *CustomApps) dataSourceTools(owner, uid string, udb Database, spec AppSp
 				}
 				if besides != "" {
 					Log("[customapps] data source %q/%q printed this besides its JSON, set aside: %.300s", spec.Slug, ds.Name, besides)
+				}
+				// Whole to a caller outside gohort, whose program reads it;
+				// cut for an agent, whose context it would fill.
+				if outsideCall(ctx) {
+					return reply, nil
 				}
 				return capJSON([]byte(reply)), nil
 			},

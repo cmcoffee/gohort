@@ -97,6 +97,9 @@ type SandboxedShellResult struct {
 	Err      error
 	Sandbox  bool // true when the command ran inside bwrap
 	TimedOut bool // true when ctx.Err() == context.DeadlineExceeded
+	// Total is how many bytes the command printed, all of them, including
+	// any ShellRun.MaxOutput kept out of Output. Zero where not counted.
+	Total int64
 }
 
 // RunSandboxedShell runs `sh -c command` with the strongest sandbox
@@ -518,6 +521,7 @@ func runSandboxedShellWithBinds(ctx context.Context, spec ShellRun) SandboxedShe
 		Err:      runErr,
 		Sandbox:  built.Confined,
 		TimedOut: timedOut,
+		Total:    buf.Len(),
 	}
 }
 

@@ -351,6 +351,9 @@ type shellDispatch struct {
 	// ret and retErr are what the run hands back, parked by exit.
 	ret    string
 	retErr error
+	// parsed marks a run whose output its caller parses (WithParsedOutput):
+	// kept whole up to ParsedOutputMax, never trimmed for a model's view.
+	parsed bool
 }
 
 // exit records what an early return hands back and tells the driver to take
@@ -654,6 +657,9 @@ func (sd *shellDispatch) prepareRun() bool {
 		}
 		sd.keepOutput = backgroundOutputKeep
 	}
+	if sd.parsed = parsedOutput(sess.Context()); sd.parsed {
+		sd.keepOutput = ParsedOutputMax
+	}
 	// Wrap with the session's network connector so the sandbox
 	// applies --unshare-net when the calling turn is in private
 	// mode. No-op when sess has no connector.
@@ -840,7 +846,10 @@ func (sd *shellDispatch) finish() bool {
 		TouchPersistentTempTool(sess.DB, sess.Username, tt.Name)
 	}
 
-	if len(sd.output) > maxOutput {
+	if sd.parsed && sd.res.Total > ParsedOutputMax {
+		return sd.exit("", tooMuchParsedOutput(sd.res.Total))
+	}
+	if len(sd.output) > maxOutput && !sd.parsed {
 		totalLines := strings.Count(sd.output, "\n") + 1
 		truncated := sd.output[:maxOutput]
 		shown := strings.Count(truncated, "\n") + 1

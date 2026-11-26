@@ -1936,7 +1936,7 @@ func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act 
 	// together, so those lines come before the reply rather than instead of it.
 	trimmed := lastJSONObject(out)
 	if trimmed != "" && json.Unmarshal([]byte(trimmed), &result) != nil {
-		return res, fmt.Errorf("the action script must print a JSON object {message?, records?, result?, shared?, shared_delete?, files?} to stdout (got %.200s)", trimmed)
+		return res, fmt.Errorf("the action script must print a JSON object {message?, records?, result?, shared?, shared_delete?, files?} to stdout (got %s)", outputGist(trimmed))
 	}
 	// Keys outside the reply are dropped here, and the page shows nothing
 	// with no error anywhere; leave the reason in the log.
@@ -2013,6 +2013,19 @@ func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act 
 // output when it is one, else the shortest tail of whole lines that parses as
 // one (a reply printed on one line or pretty-printed over several). The output
 // trimmed as it was when nothing at the end parses, so the error shows it.
+// outputGist is a script's output as an error quotes it: whole when short,
+// else its start and its end with "..." between. The end, because a
+// traceback names what went wrong on its last line, which a quote of the
+// first 200 characters cut off.
+func outputGist(out string) string {
+	const head, tail = 120, 480
+	r := []rune(out)
+	if len(r) <= head+tail {
+		return out
+	}
+	return string(r[:head]) + "\n...\n" + string(r[len(r)-tail:])
+}
+
 func lastJSONObject(out string) string {
 	trimmed := strings.TrimSpace(out)
 	if trimmed == "" || json.Valid([]byte(trimmed)) {

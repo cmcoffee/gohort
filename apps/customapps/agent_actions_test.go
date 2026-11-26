@@ -278,3 +278,30 @@ func TestADataToolFailsWhenItsSourcePrintsNoJSON(t *testing.T) {
 		t.Errorf("a warning beside the JSON: %q %v", out, err)
 	}
 }
+
+// A data tool's JSON goes back cut for an agent, whose context it would fill,
+// and whole to a caller outside gohort (an MCP or HTTP client's job), whose
+// program reads it: cut, a table of a few hundred records reached the client
+// as a string ending mid-record.
+func TestADataToolsReplyIsWholeForAnOutsideCaller(t *testing.T) {
+	T := sharingTestApp(t)
+	spec := SaveAppSpec(AppSpec{Slug: "big", Name: "Shelf", Owner: "alice",
+		DataSources: []AppDataSource{{Name: "shelf", Script: "x", Expose: true}}})
+	prev := runAppScript
+	t.Cleanup(func() { runAppScript = prev })
+	var rows []map[string]any
+	for i := 0; i < 600; i++ {
+		rows = append(rows, map[string]any{"id": fmt.Sprint(i), "note": strings.Repeat("n", 80)})
+	}
+	big, _ := json.Marshal(rows)
+	runAppScript = func(appscript.Job) (string, error) { return string(big), nil }
+	read := T.dataSourceTools("alice", "alice", T.recordBase(spec, "alice"), spec)[0].Handler
+	if out, _ := read(context.Background(), map[string]any{"fresh": "1"}); !strings.Contains(out, "[... cut:") {
+		t.Errorf("an agent's call was not cut: %d bytes", len(out))
+	}
+	out, err := read(WithCallProgress(context.Background(), func(string) {}), map[string]any{"fresh": "2"})
+	var back []map[string]any
+	if err != nil || json.Unmarshal([]byte(out), &back) != nil || len(back) != 600 {
+		t.Errorf("an outside caller's call: %d bytes, %d rows, %v", len(out), len(back), err)
+	}
+}

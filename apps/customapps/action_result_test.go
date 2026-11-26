@@ -2,6 +2,7 @@ package customapps
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -63,5 +64,18 @@ func TestAnActionHandsBackItsResultAndTheRecordsAsSaved(t *testing.T) {
 	res, _ = runActionAndPersist("alice", db, db, spec, spec.Actions[0], map[string]any{}, "alice", scriptRun{Interactive: true})
 	if res.Records == nil || len(res.Records) != 0 || res.Result != nil {
 		t.Errorf("no records reads as an empty list and no result as none: %+v", res)
+	}
+}
+
+// An error quoting a script's output keeps its end, where a traceback says
+// what went wrong; a short output is quoted whole.
+func TestAScriptErrorQuotesTheEndOfItsOutput(t *testing.T) {
+	tb := "Traceback (most recent call last):\n" + strings.Repeat("  File \"actions/x.py\", line 3, in <module>\n    r = ask(\"a long prompt\")\n", 12) + "RuntimeError: this app has no agent to ask"
+	got := outputGist(tb)
+	if !strings.HasSuffix(got, "RuntimeError: this app has no agent to ask") || !strings.HasPrefix(got, "Traceback") || !strings.Contains(got, "\n...\n") {
+		t.Errorf("a long traceback quoted as %q", got)
+	}
+	if got := outputGist("not json"); got != "not json" {
+		t.Errorf("a short output quoted as %q", got)
 	}
 }

@@ -256,6 +256,9 @@ func (j Job) Run() (string, error) {
 	if j.Long && j.Ctx != nil {
 		base = j.Ctx
 	}
+	// Its reply is read by the app, not shown to a model: kept whole rather
+	// than trimmed to a model's view (tools/temptool parsed_output.go).
+	base = temptool.WithParsedOutput(base)
 	sess.Ctx = base
 	if j.Interactive {
 		sess.Ctx = WithRunLane(base, LaneInteractive)
