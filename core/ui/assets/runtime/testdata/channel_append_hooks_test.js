@@ -26,6 +26,7 @@ var msgEls = {}, added = [], hooked = [], toolsApplied = [];
 function addMessage(role, mid, text) { added.push(mid); msgEls[mid] = {bubble: {id: mid}}; }
 function finalizeMessage() {}
 function setMessageMeta() {}
+function savedMessageMeta() { return null; }
 function applyPersistedToolCalls(mid, m) { if (m.tool_calls) toolsApplied.push(mid); }
 var messageReplayHooks = [function(bubble, m) { hooked.push(bubble.id + ':' + (m.files || []).length); }];
 var arrived = [];

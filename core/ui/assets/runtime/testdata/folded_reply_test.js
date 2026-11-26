@@ -23,4 +23,19 @@ check('no line, nothing folded', /if \(!line\) \{[\s\S]{0,120}classList\.remove\
 check('the copy says it was folded', src.indexOf("(folded ? ', folded' :") > 0);
 check('the folded body is hidden', css.indexOf('.ui-agent-msg-folded .ui-agent-msg-body { display: none; }') >= 0);
 
+// The reload: setMessageMeta could fold, but no replay path handed it the
+// fold, so a reopened thread showed the sent-back draft open above its
+// revision. Every replay goes through savedMessageMeta, and it carries folded.
+var start = src.indexOf('function savedMessageMeta(m) {');
+check('one helper builds a saved message\'s meta', start > 0);
+var body = src.slice(start, src.indexOf('\n    }\n', start) + 6);
+var savedMessageMeta = new Function(body + '\nreturn savedMessageMeta;')();
+var fold = {line: 'Draft, sent back by the review.', detail: 'why'};
+var got = savedMessageMeta({role: 'assistant', content: 'draft', folded: fold});
+check('a folded message alone still gets its meta', !!got && got.folded === fold);
+check('a message with nothing to replay gets none', savedMessageMeta({role: 'assistant', content: 'x'}) === null);
+check('a fold with no line is not a fold', savedMessageMeta({folded: {line: ''}}) === null);
+var calls = src.match(/setMessageMeta\(mid, [^)]*\)/g) || [];
+check('every replay path uses it (' + calls.length + ' found)', calls.length >= 3 && calls.every(function(c) { return c === 'setMessageMeta(mid, meta)'; }));
+
 process.exit(fail ? 1 : 0);

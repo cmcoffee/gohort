@@ -19,8 +19,11 @@ check('not struck', fn.indexOf('struck') < 0);
 check('no reason, no chip', /if \(!reason\) return;/.test(fn));
 check('applied live', /case 'chunk_corrected':\s*correctMessage\(ev\.id, ev\.reason \|\| ''\);/.test(src));
 check('applied on reopening', src.indexOf('if (meta.corrected) correctMessage(id, meta.corrected);') > 0);
-var replays = src.split('corrected: m.corrected').length - 1;
-check('every replay path passes it on (3)', replays === 3);
+// The replay paths share savedMessageMeta, so the field is listed once.
+var metaFn = src.slice(src.indexOf('function savedMessageMeta(m) {'), src.indexOf('function setMessageMeta(id, meta) {'));
+check('the saved meta carries it', metaFn.indexOf('corrected: m.corrected') > 0 && /\|\| m\.corrected \|\|/.test(metaFn));
+var replays = (src.match(/setMessageMeta\(mid, [^)]*\)/g) || []);
+check('every replay path passes it on (3)', replays.length === 3 && replays.every(function(c) { return c === 'setMessageMeta(mid, meta)'; }));
 check('styled', css.indexOf('.ui-agent-msg-corrected {') >= 0);
 
 process.exit(fail ? 1 : 0);

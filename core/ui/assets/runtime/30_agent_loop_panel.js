@@ -4076,6 +4076,19 @@
       if (badge.tone === 'good' || badge.tone === 'bad') bubble.classList.add('ui-agent-msg-toned-' + badge.tone);
     };
 
+    // savedMessageMeta is what a stored message carries for setMessageMeta, or
+    // null when it carries none. The one list for every replay path: each path
+    // used to list the fields itself, and folded (a draft the review sent
+    // back) was in none of them, so a reopened thread showed the draft open
+    // above its revision, the same answer twice.
+    function savedMessageMeta(m) {
+      if (!m) return null;
+      var folded = m.folded && m.folded.line ? m.folded : null;
+      if (!(m.created || m.usage || m.report_from || m.mark || m.retracted || m.corrected || folded || m.label)) return null;
+      return {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail,
+        mark: m.mark, retracted: m.retracted, corrected: m.corrected, folded: folded, label: m.label};
+    }
+
     function setMessageMeta(id, meta) {
       var m = msgEls[id];
       if (!m || !meta) return;
@@ -7780,7 +7793,8 @@
       var mid = (m && m.id) || ('obs-' + Math.random().toString(36).slice(2));
       addMessage(m.role || 'assistant', mid, m.content || m.text || '', m.sender);
       if (cfg.markdown && (m.role === 'assistant')) finalizeMessage(mid);
-      if (m.created || m.usage || m.report_from || m.mark || m.retracted || m.corrected || m.label) setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail, mark: m.mark, retracted: m.retracted, corrected: m.corrected, label: m.label});
+      var meta = savedMessageMeta(m);
+      if (meta) setMessageMeta(mid, meta);
       applyPersistedToolCalls(mid, m);
       runReplayHooks(mid, m);
       return mid;
@@ -8639,9 +8653,8 @@
                 var mid = m.id || ('m-' + Math.random().toString(36).slice(2));
                 addMessage(m.role || 'assistant', mid, m.content || m.text || '');
                 if (cfg.markdown && (m.role === 'assistant')) finalizeMessage(mid);
-                if (m.created || m.usage || m.retracted || m.corrected || m.label) {
-                  setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail, mark: m.mark, retracted: m.retracted, corrected: m.corrected, label: m.label});
-                }
+                var meta = savedMessageMeta(m);
+                if (meta) setMessageMeta(mid, meta);
                 // Replay persisted tool calls (same shape as the
                 // SESSION-mode branch below — see that comment for
                 // rationale). Skipped silently when the message has
@@ -8847,9 +8860,8 @@
               else if (m.role === 'assistant') attachAssistantActions(msgEls[mid].bubble);
             }
             if (cfg.markdown && (m.role === 'assistant')) finalizeMessage(mid);
-            if (m.created || m.usage || m.retracted || m.corrected || m.label) {
-              setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail, mark: m.mark, retracted: m.retracted, corrected: m.corrected, label: m.label});
-            }
+            var meta = savedMessageMeta(m);
+            if (meta) setMessageMeta(mid, meta);
             if (msgEls[mid] && msgEls[mid].bubble) {
               noticeAnchors.push({at: Date.parse(m.created || ''), node: msgEls[mid].bubble});
             }

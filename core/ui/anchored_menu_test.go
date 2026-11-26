@@ -181,8 +181,10 @@ func TestReportCardsExportByKind(t *testing.T) {
 		t.Error("setMessageMeta must keep the card's kind on the entry")
 	}
 	// Three paths: session replay, context replay, and renderObservation,
-	// which the live channel poll also draws through.
-	if strings.Count(src, "report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail") < 3 {
+	// which the live channel poll also draws through. They share
+	// savedMessageMeta, which lists the fields once.
+	if !strings.Contains(src, "report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail") ||
+		strings.Count(src, "var meta = savedMessageMeta(m);\n") < 3 {
 		t.Error("every render path must pass the report fields through to the entry")
 	}
 	// The kinds are the app's vocabulary: shown as sent, never a table here.
