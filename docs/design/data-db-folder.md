@@ -1,8 +1,8 @@
 # Databases in their own folder, and an app's own file by default
 
-Status: **design, not built**. Part 1 **needs a migration**: database files
-are moved (renamed) once at startup. Nothing inside any file is rewritten.
-Part 2 needs none.
+Status: **built (0.9.707)**, see "As built" at the end. Part 1 **is a
+migration**: database files are moved (renamed) once at startup. Nothing
+inside any file is rewritten. Part 2 needs none.
 
 ## Where it stands
 
@@ -152,10 +152,60 @@ on use. Not built until it is measured.
    above, in a throwaway data folder.
 2. Part 2: the default, delete removing the file, and Builder's guidance.
 
-## Open questions
+## Decided
 
-1. **How long the links stay.** Proposed: until 0.10.
-2. **Windows.** Skip the move there, as above, or move anyway and accept
-   that a rollback starts empty?
-3. **Existing shared-store apps.** Leave them (proposed), or build the
-   "Move to its own file" step as part of this?
+1. **The links stay until 0.10.** A release before then removes nothing.
+2. **Windows without the link privilege keeps the old layout.** The move
+   is skipped and the log says why.
+3. **Existing shared-store apps stay where they are.** No "Move to its own
+   file" step.
+
+## As built (0.9.707)
+
+- **`db_folder.go`** (main package, so core's file count is unchanged):
+  `dbRelocation.run` plans the moves (`gohort.db`, each store whose
+  `[paths]` setting is unset, every other `gohort_*.db` into `db/apps/`),
+  tries one link in `db/` first, then renames each file and links its old
+  path relatively (`db/gohort.db`, `db/apps/<file>`). The layout it returns
+  is what `init_database` opens.
+- **If the link check fails** and something would move, nothing moves and
+  the old layout is opened. A fresh folder needs no link and always uses
+  `db/`.
+- **A rename that fails stops the start** with the file still at its old
+  path. A link that fails after a rename moves the file back and stops the
+  start.
+- **A regular file at both paths:** the one in `db/` is opened, and both
+  are named in a warning on each start until one is removed.
+- **Staging** stays at `bundle_dir/staging`, else `data/staging`.
+- **`SetPrivateDBOpener` takes a second func**, the delete. Core's
+  `removeAppDB` closes the cached handle, drops it from the cache and calls
+  it. The delete removes the file in `db/apps/` and the link at its old
+  path. This adds no new exported core symbol.
+- **`AppSpec.OwnFileByDefault` and `AppSpec.RemovePrivateDB`** (methods,
+  which the export ceiling does not count) check every account's apps for
+  one stored with its records in the same file. A new app sharing a file
+  with an app moved to another account stays in the shared store. A file
+  any stored app uses, the deleted app included until its spec is gone, is
+  never removed. With no account list, nothing is put on a file and nothing
+  is removed.
+- **The callers:**
+  - Builder's create (and folder install, which goes through it), and a
+    bundle import of a new slug, call `OwnFileByDefault`.
+  - `deleteApp` calls `RemovePrivateDB` last. That covers the delete
+    button, an account purge and the old side of a move. A move to the
+    same slug keeps the file, because the moved app uses it.
+  - An update from an app's origin keeps the live app's `PrivateDB` and
+    `DataOwner`, both when it is merged and when it is taken whole.
+- **Deleting a shared app on its own file** also deletes the copies its
+  readers kept in that file. In the shared store those copies were left
+  behind but could not be reached once the app was gone.
+- **Tests:**
+  - `db_folder_test.go`: fresh, move and link, idempotent, an older
+    binary through the link, no links, both copies, a failed rename, a
+    failed link, removing a file.
+  - `TestAnAppsOwnFileIsMadeAndRemovedOnlyWhenNoOtherAppUsesIt` (core).
+  - `TestAnAppsOwnFileMovesWithItAndGoesWhenItIsDeleted` (customapps,
+    real files).
+  - `TestANewAppGetsItsOwnFileUnlessAskedForTheSharedStore`.
+  - Import and both update paths.
+- **Mutants:** 23 of 23 caught.

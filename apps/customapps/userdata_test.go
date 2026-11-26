@@ -1,10 +1,15 @@
 package customapps
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"os"
+	"path/filepath"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appadmin"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // A deleted account's apps move to someone else with their records and their
@@ -80,4 +85,60 @@ func TestADeletedAccountLeavesAnAppsAudience(t *testing.T) {
 	if st := appadmin.Load(RootDB, "alice", "poll"); len(st.AllowedUsers) != 1 || st.AllowedUsers[0] != "carol" {
 		t.Errorf("poll's audience: %v", st.AllowedUsers)
 	}
+}
+
+// An app on its own file keeps it when it moves to another account, records
+// and all, and deleting the app then removes the file from disk.
+func TestAnAppsOwnFileMovesWithItAndGoesWhenItIsDeleted(t *testing.T) {
+	T := sharingTestApp(t)
+	savedAuth := AuthDB
+	adb := &DBase{Store: kvlite.MemStore()}
+	for _, u := range []string{"alice", "bob"} {
+		adb.Set(AuthTable, "user:"+u, AuthUser{Username: u})
+	}
+	AuthDB = func() Database { return adb }
+	dir := t.TempDir()
+	file := func(name string) string { return filepath.Join(dir, "gohort_"+name+".db") }
+	SetPrivateDBOpener(func(name string) (Database, error) {
+		st, err := kvlite.Open(file(name))
+		if err != nil {
+			return nil, err
+		}
+		return &DBase{Store: st}, nil
+	}, func(name string) error { return os.Remove(file(name)) })
+	t.Cleanup(func() { AuthDB = savedAuth; SetPrivateDBOpener(nil, nil) })
+
+	spec := SaveAppSpec(AppSpec{Slug: "ledger", Name: "Ledger", Owner: "bob", RecordKey: "id", PrivateDB: true})
+	T.recordBase(spec, "bob").Set(recTable("ledger"), "r1", map[string]any{"id": "r1"})
+	onDisk := file("customapp_ledger_" + hashOf(t, "bob"))
+	if _, err := os.Stat(onDisk); err != nil {
+		t.Fatalf("the app's own file is not on disk: %v", err)
+	}
+
+	if err := (&appsUserData{app: T}).Reassign("bob", "alice"); err != nil {
+		t.Fatal(err)
+	}
+	moved, ok := loadSpec("alice", "ledger")
+	if !ok {
+		t.Fatal("the app did not move")
+	}
+	var rec map[string]any
+	if !T.recordBase(moved, "alice").Get(recTable("ledger"), "r1", &rec) {
+		t.Fatal("the moved app lost its records")
+	}
+	if _, err := os.Stat(onDisk); err != nil {
+		t.Fatalf("the move deleted the file the moved app uses: %v", err)
+	}
+
+	T.deleteApp("alice", "ledger")
+	if _, err := os.Stat(onDisk); !os.IsNotExist(err) {
+		t.Fatalf("deleting the app left its file: %v", err)
+	}
+}
+
+// hashOf is the short owner hash core puts in a per-app file's name.
+func hashOf(t *testing.T, owner string) string {
+	t.Helper()
+	sum := sha256.Sum256([]byte(owner))
+	return hex.EncodeToString(sum[:6])
 }

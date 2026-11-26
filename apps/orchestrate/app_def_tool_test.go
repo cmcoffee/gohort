@@ -11,6 +11,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appcheck"
 	"github.com/cmcoffee/gohort/core/apppage"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // Three ways the authoring surface used to mislead an author into rebuilding an
@@ -715,6 +716,45 @@ func TestTheReferencesAreHelpTopicsThatFollowTheCode(t *testing.T) {
 		}
 		if len(d) > 1200 {
 			t.Errorf("the %s parameter is %d characters again: the rest belongs in help topic=%s", name, len(d), topic)
+		}
+	}
+}
+
+// A new app gets its own database file unless Builder asks for the shared
+// store, and an update that does not name private_db keeps the choice.
+func TestANewAppGetsItsOwnFileUnlessAskedForTheSharedStore(t *testing.T) {
+	turn, _ := folderTestTurn(t)
+	savedAuth := AuthDB
+	adb := &DBase{Store: kvlite.MemStore()}
+	adb.Set(AuthTable, "user:u", AuthUser{Username: "u"})
+	AuthDB = func() Database { return adb }
+	t.Cleanup(func() { AuthDB = savedAuth })
+	def := turn.appDefToolDef()
+	page := []any{map[string]any{"id": "page", "kind": "html", "html": "<!DOCTYPE html><html><body><h1>T</h1></body></html>"}}
+	for _, c := range []struct {
+		name string
+		args map[string]any
+		want bool
+	}{
+		{"Ledger", map[string]any{}, true},
+		{"Tally", map[string]any{"private_db": false}, false},
+	} {
+		args := map[string]any{"action": "create", "name": c.name, "sections": page}
+		for k, v := range c.args {
+			args[k] = v
+		}
+		if _, err := def.Handler(context.Background(), args); err != nil {
+			t.Fatal(err)
+		}
+		slug := strings.ToLower(c.name)
+		if s, ok := turnApp(turn, slug); !ok || s.PrivateDB != c.want {
+			t.Errorf("%s: private_db %v, want %v (%v)", c.name, s.PrivateDB, c.want, ok)
+		}
+		if _, err := def.Handler(context.Background(), map[string]any{"action": "update", "id": slug, "description": "Changed."}); err != nil {
+			t.Fatal(err)
+		}
+		if s, _ := turnApp(turn, slug); s.PrivateDB != c.want {
+			t.Errorf("%s: an update without private_db changed it to %v", c.name, s.PrivateDB)
 		}
 	}
 }

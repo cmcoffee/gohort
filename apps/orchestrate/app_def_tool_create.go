@@ -155,7 +155,9 @@ func (aw *appWrite) load() bool {
 		if _, exists := LoadAppSpec(t.user, slug); exists || t.hasAppDraft(t.user, slug) {
 			return aw.exit("", fmt.Errorf("an app with slug %q already exists: use action=update, or pick a different name/slug", slug))
 		}
-		aw.spec = AppSpec{Slug: slug, Name: name, Owner: t.user}
+		// Its own database file unless private_db=false asks for the shared
+		// store (docs/design/data-db-folder.md).
+		aw.spec = AppSpec{Slug: slug, Name: name, Owner: t.user}.OwnFileByDefault()
 	}
 	return true
 }
@@ -239,9 +241,10 @@ func (aw *appWrite) readMeta() bool {
 	if _, ok := args["narrow"]; ok {
 		aw.spec.Narrow = boolArg(args, "narrow")
 	}
-	// private_db: opt the app into its own dedicated database file. Only honored
-	// when the key is present so an update without it keeps the existing choice.
-	// No migration — records already in the shared store stay there.
+	// private_db: its own database file (the default for a new app) or the
+	// shared store. Only honored when the key is present so an update without
+	// it keeps the existing choice. No migration: records already saved stay
+	// in the store they are in.
 	if _, ok := args["private_db"]; ok {
 		aw.spec.PrivateDB = boolArg(args, "private_db")
 	}

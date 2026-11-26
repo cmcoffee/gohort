@@ -343,3 +343,74 @@ func TestOfferingAnAppOverMCPIsLocal(t *testing.T) {
 		t.Errorf("the export carries the offer: %s", raw)
 	}
 }
+
+// A new app gets its own database file unless another app already keeps its
+// records in the file that name would open; deleting one removes its file,
+// closing the cached handle first, only when no other app uses it.
+func TestAnAppsOwnFileIsMadeAndRemovedOnlyWhenNoOtherAppUsesIt(t *testing.T) {
+	savedRoot, savedAuth := RootDB, AuthDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	adb := &DBase{Store: kvlite.MemStore()}
+	adb.Set(AuthTable, "user:alice", AuthUser{Username: "alice"})
+	adb.Set(AuthTable, "user:bob", AuthUser{Username: "bob"})
+	AuthDB = func() Database { return adb }
+	opened := map[string]int{}
+	var removed []string
+	SetPrivateDBOpener(func(name string) (Database, error) {
+		opened[name]++
+		return &DBase{Store: kvlite.MemStore()}, nil
+	}, func(name string) error {
+		removed = append(removed, name)
+		return nil
+	})
+	t.Cleanup(func() { RootDB, AuthDB = savedRoot, savedAuth; SetPrivateDBOpener(nil, nil) })
+
+	if s := (AppSpec{Owner: "alice", Slug: "ledger"}).OwnFileByDefault(); !s.PrivateDB {
+		t.Fatal("a new app did not get its own file")
+	}
+	// alice's notes moved to bob keep the file named for alice.
+	SaveAppSpec(AppSpec{Owner: "bob", Slug: "notes", PrivateDB: true, DataOwner: "alice"})
+	if s := (AppSpec{Owner: "alice", Slug: "notes"}).OwnFileByDefault(); s.PrivateDB {
+		t.Fatal("a new app was put on a file another app keeps its records in")
+	}
+	for _, none := range []func() Database{nil, func() Database { return nil }} {
+		AuthDB = none
+		if s := (AppSpec{Owner: "alice", Slug: "ledger"}).OwnFileByDefault(); s.PrivateDB {
+			t.Fatal("with no account list to check, a new app was put on a file anyway")
+		}
+	}
+	AuthDB = func() Database { return adb }
+
+	// A file another app uses stays.
+	if err := (AppSpec{Owner: "alice", Slug: "notes", PrivateDB: true}).RemovePrivateDB(); err != nil || len(removed) != 0 {
+		t.Fatalf("removed %v (%v): another app still uses it", removed, err)
+	}
+	// An app in the shared store has no file to remove.
+	if (AppSpec{Owner: "alice", Slug: "tally"}).RemovePrivateDB(); len(removed) != 0 {
+		t.Fatalf("removed %v for an app in the shared store", removed)
+	}
+	// An app still stored keeps its file.
+	SaveAppSpec(AppSpec{Owner: "alice", Slug: "kept", PrivateDB: true})
+	if (AppSpec{Owner: "alice", Slug: "kept", PrivateDB: true}).RemovePrivateDB(); len(removed) != 0 {
+		t.Fatalf("removed %v while the app is still stored", removed)
+	}
+	// An app in the shared store under the same name does not use the file:
+	// bob's own "sheet" beside the one he moved to alice.
+	SaveAppSpec(AppSpec{Owner: "bob", Slug: "sheet"})
+	sheet := AppSpec{Owner: "alice", Slug: "sheet", PrivateDB: true, DataOwner: "bob"}
+	if err := sheet.RemovePrivateDB(); err != nil || len(removed) != 1 || removed[0] != customAppDBName("bob", "sheet") {
+		t.Fatalf("removed %v (%v): an app in the shared store kept the file", removed, err)
+	}
+	removed = nil
+	// One nobody else uses goes, and a later open makes a fresh one.
+	ledger := AppSpec{Owner: "alice", Slug: "ledger", PrivateDB: true}
+	name := customAppDBName("alice", "ledger")
+	OpenCustomAppDB("alice", "ledger").Set("t", "k", "v")
+	if err := ledger.RemovePrivateDB(); err != nil || len(removed) != 1 || removed[0] != name {
+		t.Fatalf("removed %v (%v), want %s", removed, err, name)
+	}
+	var v string
+	if OpenCustomAppDB("alice", "ledger").Get("t", "k", &v) || opened[name] != 2 {
+		t.Fatalf("the removed file's handle was kept: opens %d, read %q", opened[name], v)
+	}
+}

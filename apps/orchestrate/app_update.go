@@ -288,6 +288,9 @@ func importAppUpdate(u AppUpdate) (string, error) {
 	// bound to the app's own agent and pipeline by id.
 	theirs := u.Spec
 	theirs.Owner, theirs.Slug, theirs.Created = owner, slug, live.Created
+	// Where its records are is this deployment's: an update never moves the
+	// app onto another store, which would leave its records behind.
+	theirs.PrivateDB, theirs.DataOwner = live.PrivateDB, live.DataOwner
 	udb := UserDB(o.DB, owner)
 	if id, ok := appScopedRef(udb, owner, slug, "agent", theirs.AgentID); ok {
 		theirs.AgentID = id
