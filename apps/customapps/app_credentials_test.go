@@ -235,3 +235,103 @@ var ticks = 0;
 		t.Errorf("with nothing to say: %s", got)
 	}
 }
+
+// reachMCPTool stands in for a registered MCP proxy: its category is its
+// server's, which is how a script's MCP tool is told from the others.
+type reachMCPTool struct{ name, server string }
+
+func (f reachMCPTool) Name() string                       { return f.name }
+func (f reachMCPTool) Desc() string                       { return "MCP tool." }
+func (f reachMCPTool) Params() map[string]ToolParam       { return nil }
+func (f reachMCPTool) Run(map[string]any) (string, error) { return "", nil }
+func (f reachMCPTool) Category() string                   { return MCPToolCategory(f.server) }
+
+// The owner's sign-in to an MCP server that signs in per person is listed on
+// What it reaches when a script names one of its tools, with only reads or
+// Disallow to choose from; a maintainer may disallow it but never lend it
+// again. A server on the deployment's own connection is not the owner's and
+// is not listed, and a sign-in is never offered to the person as an account
+// of theirs to connect.
+func TestTheOwnerChoosesWhetherTheAppLendsTheirMCPSignIn(t *testing.T) {
+	T := sharingTestApp(t)
+	credStore(t)
+	MCP().Save(MCPServerConfig{Name: "apptest-own", URL: "https://issues.example/mcp", AuthMode: MCPAuthOAuth, Enabled: true, ExposeTools: true}, "")
+	MCP().Save(MCPServerConfig{Name: "apptest-dep", URL: "https://pages.example/mcp", Enabled: true, ExposeTools: true}, "")
+	t.Cleanup(func() { MCP().Delete("apptest-own"); MCP().Delete("apptest-dep") })
+	RegisterChatTool(reachMCPTool{name: "apptest-own_get_issue", server: "apptest-own"})
+	RegisterChatTool(reachMCPTool{name: "apptest-dep_get_page", server: "apptest-dep"})
+	spec := AppSpec{Slug: "desk", Name: "Desk", Owner: "alice", RecordKey: "id", Maintainers: []string{"bob"},
+		DataSources: []AppDataSource{{Name: "issues", Script: "x", Capabilities: []string{"tool:apptest-own_get_issue", "tool:apptest-dep_get_page"}}}}
+	rows := func(user string) []map[string]any {
+		w := appAs(t, T, spec, user, httptest.NewRequest(http.MethodGet, "/apps/desk/_settings/reach", nil))
+		var out struct {
+			Rows []map[string]any `json:"rows"`
+		}
+		json.Unmarshal(w.Body.Bytes(), &out)
+		return out.Rows
+	}
+	choose := func(user, lend string) int {
+		return appAs(t, T, spec, user, httptest.NewRequest(http.MethodPost, "/apps/desk/_settings/reach", strings.NewReader(`{"name":"mcp:apptest-own","lend":"`+lend+`"}`))).Code
+	}
+	got := rows("alice")
+	if len(got) != 1 || got[0]["name"] != "mcp:apptest-own" || got[0]["label"] != "apptest-own sign-in" || got[0]["goes"] != "issues.example" ||
+		got[0]["lend"] != "read" || got[0]["decide_mcp"] != true || got[0]["decide"] != nil {
+		t.Fatalf("the owner's table: %v", got)
+	}
+	steps := []struct {
+		user, lend string
+		want       int
+	}{
+		{"alice", "write", 400}, // a script cannot write with it
+		{"alice", "own", 400},   // nobody's own sign-in is behind the owner's script
+		{"bob", "withhold", 200},
+		{"bob", "read", 403}, // a maintainer never lends it again
+		{"alice", "read", 200},
+		{"alice", "withhold", 200},
+	}
+	for _, s := range steps {
+		if c := choose(s.user, s.lend); c != s.want {
+			t.Errorf("%s choosing %s: %d, want %d", s.user, s.lend, c, s.want)
+		}
+	}
+	if got := rows("alice"); len(got) != 1 || got[0]["lend"] != "withhold" {
+		t.Errorf("after disallowing it: %v", got)
+	}
+	// A choice a sign-in is not offered shows as what a run reads it as.
+	applocal.UpdateAppCredentials("alice", "desk", func(c *applocal.AppCredentials) { c.Lend["mcp:apptest-own"] = "own" })
+	if got := rows("alice"); len(got) != 1 || got[0]["lend"] != "withhold" {
+		t.Errorf("a stored own: %v", got)
+	}
+	applocal.UpdateAppCredentials("alice", "desk", func(c *applocal.AppCredentials) { c.Lend["mcp:apptest-own"] = "withhold" })
+	if c := appAs(t, T, spec, "alice", httptest.NewRequest(http.MethodPost, "/apps/desk/_settings/reach/used/mcp:apptest-own", strings.NewReader(`{"used":false}`))).Code; c != 200 {
+		t.Errorf("keeping it out of the app: %d", c)
+	}
+	var j appscript.Job
+	withAppCredentials(&j, "alice", "desk")
+	if j.CredentialLend("mcp:apptest-own") != "withhold" || len(j.CredentialsOff) != 1 || j.CredentialsOff[0] != "mcp:apptest-own" {
+		t.Errorf("a run's rules: lend %q, off %v", j.CredentialLend("mcp:apptest-own"), j.CredentialsOff)
+	}
+	// Reached by a run without being named, it is listed all the same.
+	stored, _ := loadSpec("alice", "desk")
+	stored.DataSources = nil
+	SaveAppSpec(stored)
+	if got := rows("alice"); len(got) != 0 {
+		t.Errorf("listed with nothing naming or using it: %v", got)
+	}
+	j.CredentialUsed("mcp:apptest-own")
+	j.CredentialUsed("mcp:apptest-dep") // the deployment's: not the owner's to lend
+	if got := rows("alice"); len(got) != 1 || got[0]["name"] != "mcp:apptest-own" || !strings.Contains(got[0]["how"].(string), "used since") {
+		t.Errorf("after a run reached it: %v", got)
+	}
+	// An imported app's tool name mapped to one of its tools lists it too.
+	applocal.UpdateAppCredentials("alice", "desk", func(c *applocal.AppCredentials) { c.Used = nil })
+	applocal.SaveAppNeeds("alice", "desk", []applocal.AppNeed{{Kind: "tool", Name: "get_issue", Map: "apptest-own_get_issue"}})
+	if got := rows("alice"); len(got) != 1 || got[0]["name"] != "mcp:apptest-own" || got[0]["how"] != "named by its scripts" {
+		t.Errorf("mapped from an imported app's tool: %v", got)
+	}
+	appAs(t, T, spec, "carol", httptest.NewRequest(http.MethodGet, "/apps/desk/", nil)) // shared with carol
+	applocal.UpdateAppCredentials("alice", "desk", func(c *applocal.AppCredentials) { c.Lend = nil; c.Off = nil })
+	if got := T.appLends("carol"); len(got) != 0 {
+		t.Errorf("a sign-in was offered as an account to connect: %v", got)
+	}
+}
