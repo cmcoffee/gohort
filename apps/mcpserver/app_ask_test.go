@@ -165,11 +165,11 @@ func TestOnlyAClientThatCanAskIsGivenTheActionsThatAskFirst(t *testing.T) {
 	list := func(key, session string) map[string]any {
 		return body(t, f.post("/app/reading/", key, session, call("tools/list", nil), false))
 	}
-	if got := toolNames(list(f.key.Token, "")); strings.Join(got, ",") != "books_add" {
+	if got := toolNames(list(f.key.Token, "")); strings.Join(got, ",") != "books_add,reading_result" {
 		t.Errorf("without its session the list has the action that asks first: %v", got)
 	}
 	withSession := list(f.key.Token, session)
-	if got := toolNames(withSession); strings.Join(got, ",") != "books_add,books_wipe" {
+	if got := toolNames(withSession); strings.Join(got, ",") != "books_add,books_wipe,reading_result" {
 		t.Fatalf("a session lists the action that asks first: %v", got)
 	}
 	if !strings.Contains(mustJSON(withSession), "Asks you to confirm before it runs.") {

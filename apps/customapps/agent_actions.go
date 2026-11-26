@@ -127,6 +127,28 @@ func (T *CustomApps) actionTools(owner, uid string, udb Database, spec AppSpec, 
 	return out
 }
 
+// callProgressKey carries, on a call's context, who hears each line an action
+// prints while it runs for a caller outside gohort: an MCP client's job says
+// it on each check-in (apps/mcpserver/app_jobs.go).
+type callProgressKey struct{}
+
+// WithCallProgress is ctx with fn hearing each line the action a tool call
+// runs prints as it runs.
+func WithCallProgress(ctx context.Context, fn func(line string)) context.Context {
+	if fn == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, callProgressKey{}, fn)
+}
+
+// HearCallLine tells whoever ctx names (WithCallProgress) a line the call's
+// action printed. No-op for nobody.
+func HearCallLine(ctx context.Context, line string) {
+	if fn, _ := ctx.Value(callProgressKey{}).(func(string)); fn != nil {
+		fn(line)
+	}
+}
+
 // runActionForAgent runs one action as a click would, as a job under the
 // button's key so the page shows it, and waits for it: until it ends, or
 // until ctx is done, which stops it.
@@ -152,6 +174,7 @@ func (T *CustomApps) runActionForAgent(ctx context.Context, owner, uid string, u
 				if act2 != nil {
 					fmt.Fprintln(act2, line)
 				}
+				HearCallLine(ctx, line)
 			}
 			return runActionAndPersist(owner, ownerDB, udb, spec, act, args, uid, scriptRun{Interactive: true, Long: true, Ctx: jctx, OnProgress: tee})
 		})

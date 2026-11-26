@@ -102,6 +102,7 @@ func appToolDefs(tok *AccountToken, only string) []map[string]any {
 func appToolDefsAsking(tok *AccountToken, only string, asking bool) []map[string]any {
 	var out []map[string]any
 	for _, a := range reachedApps(tok, only) {
+		listed := 0
 		for _, d := range a.Tools {
 			desc := appToolDescription(d)
 			if d.Confirmation != nil {
@@ -115,6 +116,12 @@ func appToolDefsAsking(tok *AccountToken, only string, asking bool) []map[string
 				"description": desc,
 				"inputSchema": appToolSchema(d),
 			})
+			listed++
+		}
+		// The app's result tool, for a call that answered with a job
+		// (app_jobs.go).
+		if listed > 0 {
+			out = append(out, resultToolDef(a))
 		}
 	}
 	return out
@@ -125,6 +132,10 @@ func appToolDefsAsking(tok *AccountToken, only string, asking bool) []map[string
 // the caller goes on to say what is here.
 func callAppTool(ctx context.Context, tok *AccountToken, only, name string, args map[string]any) (text string, handled bool, err error) {
 	for _, a := range reachedApps(tok, only) {
+		if name == resultToolName(a) {
+			text, err := appResult(ctx, tok, a, args)
+			return text, true, err
+		}
 		for _, d := range a.Tools {
 			if d.Tool.Name != name {
 				continue
@@ -132,10 +143,9 @@ func callAppTool(ctx context.Context, tok *AccountToken, only, name string, args
 			if d.Confirmation != nil {
 				return "", true, fmt.Errorf("%q asks to confirm before it runs (%q), and nobody is asked at this address: a client that can ask you mid-call can use it at the app's own address (%s) on a key set to ask in the client; or use it from the app's page or from one of your agents in gohort", name, d.Confirmation.Prompt, appServerPath(a.Slug))
 			}
-			if args == nil {
-				args = map[string]any{}
-			}
-			text, err := d.Handler(ctx, args)
+			// As a job: a client that gives up or goes away no longer stops
+			// it, and a long one answers with the job (app_jobs.go).
+			text, err := runAppJob(ctx, tok, a, d, args)
 			return text, true, err
 		}
 	}
@@ -167,6 +177,9 @@ func appOnlyRefusal(tok *AccountToken, name string) error {
 // findAppTool reports whether name is one of the app tools tok reaches.
 func findAppTool(tok *AccountToken, name string) bool {
 	for _, a := range reachedApps(tok, "") {
+		if name == resultToolName(a) {
+			return true
+		}
 		for _, d := range a.Tools {
 			if d.Tool.Name == name {
 				return true

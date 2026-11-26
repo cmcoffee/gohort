@@ -123,6 +123,38 @@ func TestAnActionJobCanBeStopped(t *testing.T) {
 	t.Fatal("Stop did not end the job")
 }
 
+// A script killed by Stop part way through reads as stopped, not as a script
+// that printed no JSON: the killed run's output is half its ticks and the
+// sandbox's exit line, which the reply check used to report as a broken script.
+func TestAStoppedActionSaysItWasStopped(t *testing.T) {
+	T := sharingTestApp(t)
+	spec := AppSpec{Slug: "prep", Name: "Case prep", Owner: "alice", RecordKey: "id", Actions: []AppAction{{Name: "download", Script: "x"}}}
+	prevWait := actionInlineWait
+	actionInlineWait = 50 * time.Millisecond
+	t.Cleanup(func() { actionInlineWait = prevWait })
+	prev := runAppScript
+	t.Cleanup(func() { runAppScript = prev })
+	runAppScript = func(j appscript.Job) (string, error) {
+		<-j.Ctx.Done()
+		return "tick 1/40\ntick 2/40\n[exit: signal: killed]", nil
+	}
+	w := httptest.NewRecorder()
+	T.handleAction(w, httptest.NewRequest(http.MethodPost, "/apps/prep/action/download", nil), "alice", "alice", T.recordBase(spec, "alice"), spec, "download")
+	appAs(t, T, spec, "alice", httptest.NewRequest(http.MethodPost, "/apps/prep/action-cancel/download", nil))
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		w = appAs(t, T, spec, "alice", httptest.NewRequest(http.MethodGet, "/apps/prep/action-progress/download", nil))
+		if body := w.Body.String(); strings.Contains(body, `"done":true`) {
+			if !strings.Contains(body, "stopped") || strings.Contains(body, "must print") {
+				t.Errorf("a stopped action's outcome: %s", body)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("Stop did not end the job")
+}
+
 // The app's own pages may reach the job endpoints from inside their sandbox,
 // and the actions section follows a running action with progress and Stop.
 func TestAppPagesReachTheJobEndpoints(t *testing.T) {

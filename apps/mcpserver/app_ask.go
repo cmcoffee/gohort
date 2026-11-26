@@ -343,9 +343,10 @@ func (c *askedCall) answered(a askAnswer) rpcResponse {
 	return c.response(c.result())
 }
 
-// result runs the action and is the call's result.
+// result runs the action, as a job like any app call over MCP (app_jobs.go),
+// and is the call's result.
 func (c *askedCall) result() map[string]any {
-	text, err := c.def.Handler(c.r.Context(), c.args)
+	text, err := runAppJob(c.r.Context(), c.tok, c.app, c.def, c.args)
 	if err != nil {
 		Log("[mcpserver] app %q: tools/call %s error (owner=%s): %v", c.app.Slug, c.def.Tool.Name, c.tok.Owner, err)
 		return toolText("error: "+err.Error(), true)

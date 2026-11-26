@@ -37,7 +37,7 @@ func TestAnAppsAddressIsThatAppAlone(t *testing.T) {
 		t.Errorf("without a key the handshake names no app: %s", mustJSON(anon))
 	}
 
-	if got := toolNames(rpcTo(app, "/app/reading/", key, "tools/list", nil)); strings.Join(got, ",") != "books_add" {
+	if got := toolNames(rpcTo(app, "/app/reading/", key, "tools/list", nil)); strings.Join(got, ",") != "books_add,reading_result" {
 		t.Errorf("the app's address lists its own tools alone: %v", got)
 	}
 	if got := toolNames(rpcTo(app, "/app/reading/", "", "tools/list", nil)); len(got) != 0 {
@@ -87,7 +87,7 @@ func TestAKeyMadeForAnAppReachesThatApp(t *testing.T) {
 	app.DB = root.Bucket("mcpserver")
 
 	only := mcpKey("user-a", customapps.AppToolsTarget+"reading")
-	if got := toolNames(rpcTo(app, "/", only, "tools/list", nil)); strings.Join(got, ",") != "books_add" {
+	if got := toolNames(rpcTo(app, "/", only, "tools/list", nil)); strings.Join(got, ",") != "books_add,reading_result" {
 		t.Errorf("a key for one app lists that app's tools alone: %v", got)
 	}
 	for _, name := range []string{"ask_agent", "list_agents", "recent_results", "pantry_list"} {
@@ -198,7 +198,7 @@ func TestASharedAppIsReachedByAKeyPinnedToItsOwner(t *testing.T) {
 
 	for _, key := range []string{mcpKey("user-c"), mcpKey("user-c", customapps.AppToolsTarget+"user-a/reading")} {
 		ran = ""
-		if got := toolNames(rpcTo(app, "/app/reading/", key, "tools/list", nil)); strings.Join(got, ",") != "books_add" {
+		if got := toolNames(rpcTo(app, "/app/reading/", key, "tools/list", nil)); strings.Join(got, ",") != "books_add,reading_result" {
 			t.Errorf("the shared app's tools: %v", got)
 		}
 		rpcTo(app, "/app/reading/", key, "tools/call", map[string]any{"name": "books_add", "arguments": map[string]any{"title": "Dune"}})

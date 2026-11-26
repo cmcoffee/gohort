@@ -172,8 +172,11 @@ func startOrJoinJob(key, name, inputs string, info appWork, work func(ctx contex
 		defer cancel()
 		res, err := work(ctx, j.setProgress)
 		// Only Stop cancels a job's context: the person ended it themselves.
+		// Said as that, whatever the run says: a script killed mid-run
+		// failed as one that printed no JSON, which read as a broken script
+		// rather than one somebody stopped.
 		stopped := ctx.Err() != nil
-		if err == nil && stopped {
+		if stopped {
 			err = Error("stopped")
 		}
 		j.mu.Lock()
