@@ -96,6 +96,11 @@ func TestCustomAppArtifact_ExportNormalizesAndStrips(t *testing.T) {
 
 func TestCustomAppArtifact_ImportLandsDisabledDraft(t *testing.T) {
 	customAppTestDB(t, nil)
+	savedAuth := AuthDB
+	adb := &DBase{Store: kvlite.MemStore()}
+	adb.Set(AuthTable, "user:bob", AuthUser{Username: "bob"})
+	AuthDB = func() Database { return adb }
+	t.Cleanup(func() { AuthDB = savedAuth })
 	recipe, _ := json.Marshal(AppSpec{
 		Slug: "notes", Name: "Notes", RecordKey: "id",
 		Page:    json.RawMessage(`{}`),
@@ -115,6 +120,10 @@ func TestCustomAppArtifact_ImportLandsDisabledDraft(t *testing.T) {
 	}
 	if got.Owner != "bob" || got.Created == "" {
 		t.Fatalf("owner/created must be the importer's: %+v", got)
+	}
+	// A new app here, so it gets its own database file, as one made here does.
+	if !got.PrivateDB {
+		t.Error("an imported app did not get its own database file")
 	}
 
 	// Same slug again → skip, never clobber.

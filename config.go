@@ -980,13 +980,14 @@ lock = portable
 #   logs_dir → <binary-dir>/logs
 # Override to put state on a separate volume (e.g. /var/lib/gohort,
 # /var/log/gohort) without symlinks. Sub-directories (images,
-# browser, geocode, workspaces, the kvlite database) live inside
-# data_dir and follow it automatically.
+# browser, geocode, workspaces) live inside data_dir and follow it
+# automatically. The databases live in data_dir/db (the per-app files
+# in data_dir/db/apps), the one folder to back up.
 data_dir =
 logs_dir =
 # vector_dir holds the embedding/vector store (gohort_vectors.db)
 # a derived, regenerable cache that is the hot path for semantic
-# search. Empty = co-located with data_dir (unchanged behavior).
+# search. Empty = data_dir/db, beside gohort.db.
 # Point it at a fast LOCAL disk (e.g. an SSD) when data_dir lives on
 # network storage: the cold-load full-table scan that gates the first
 # search is dominated by per-row latency, so local storage is the
@@ -996,8 +997,7 @@ vector_dir =
 # repo_dir holds the repo browser's cloned+encrypted source cache
 # (gohort_repos.db). Like vector_dir it is a bulk, re-clonable cache
 # point it at a fast LOCAL disk when data_dir lives on network storage,
-# and it need not be backed up (if lost, re-clone). Empty = co-located
-# with data_dir.
+# and it need not be backed up (if lost, re-clone). Empty = data_dir/db.
 repo_dir =
 
 # python is the interpreter gohort runs scripts with (app, tool and
@@ -1021,11 +1021,6 @@ key =
 `
 
 // init_database initializes the application database.
-// mainDBFile is this instance's database in data_dir.
-func mainDBFile(data_dir string) string {
-	return FormatPath(fmt.Sprintf("%s/%s.db", data_dir, APPNAME))
-}
-
 func init_database() {
 	var err error
 
@@ -1055,7 +1050,17 @@ func init_database() {
 	// Files a record keeps (a song's rendered takes), one folder per record.
 	appassets.SetRecordFilesDir(data_dir + "/app_record_files")
 
-	global.db, err = SecureDatabase(mainDBFile(data_dir))
+	// The databases live in data_dir/db (db_folder.go); an install from
+	// before has them moved there, once, before any is opened.
+	dbs, err := dbRelocation{
+		dataDir: data_dir,
+		set:     func(setting string) bool { return global.cfg.Get(cfgPathsSection, setting) != "" },
+		link:    os.Symlink,
+		note:    Notice,
+	}.run()
+	Critical(err)
+
+	global.db, err = SecureDatabase(FormatPath(dbs.mainFile()))
 	Critical(err)
 	// RootDB is set HERE, not by the caller. It used to be assigned on one
 	// line after init_database() in the serve path, and init_database has
@@ -1081,13 +1086,13 @@ func init_database() {
 	// change takes effect on restart (see ApplyDeploymentTimezone).
 	ApplyDeploymentTimezone(global.db)
 
-	// Dedicated vector store. Defaults to data_dir (co-located, same
-	// behavior as before); operators relocate it to local SSD via
+	// Dedicated vector store. Defaults to data_dir/db, beside gohort.db;
+	// operators relocate it to local SSD via
 	// [paths] vector_dir when data_dir is on network storage. Opened
 	// with the same padlocked encryption as the main DB. The
 	// startup migration (see core) copies existing shared chunks here
 	// on first boot after upgrade.
-	vector_dir := loadPath("vector_dir", data_dir)
+	vector_dir := loadPath("vector_dir", dbs.dir)
 	MkDir(vector_dir + "/")
 	vec_filename := FormatPath(fmt.Sprintf("%s/%s_vectors.db", vector_dir, APPNAME))
 	VectorDB, err = SecureDatabase(vec_filename)
@@ -1101,7 +1106,7 @@ func init_database() {
 	// off the main DB and relocatable to local SSD via [paths] repo_dir.
 	// SecureDatabase gives padlocked at-rest encryption, so file bodies
 	// are encrypted on disk automatically.
-	repo_dir := loadPath("repo_dir", data_dir)
+	repo_dir := loadPath("repo_dir", dbs.dir)
 	MkDir(repo_dir + "/")
 	repo_filename := FormatPath(fmt.Sprintf("%s/%s_repos.db", repo_dir, APPNAME))
 	RepoFilesDB, err = SecureDatabase(repo_filename)
@@ -1115,20 +1120,25 @@ func init_database() {
 	// before it is unpacked, ingested, and deleted — so the transient extract
 	// and the permanent store land on the same (fast, chosen) volume instead of
 	// wherever os.TempDir happens to point.
-	bundle_dir := loadPath("bundle_dir", data_dir)
+	// Staging is a transient extract, not a database, so with bundle_dir
+	// unset it stays at data_dir/staging rather than in db/.
+	bundle_dir := loadPath("bundle_dir", dbs.dir)
 	MkDir(bundle_dir + "/")
 	bundle_filename := FormatPath(fmt.Sprintf("%s/%s_bundles.db", bundle_dir, APPNAME))
 	BundleFilesDB, err = SecureDatabase(bundle_filename)
 	Critical(err)
-	SetBulkStagingDir(FormatPath(bundle_dir + "/staging"))
+	staging_dir := loadPath("bundle_dir", data_dir)
+	SetBulkStagingDir(FormatPath(staging_dir + "/staging"))
 
 	// Per-app private databases (core.OpenAppDB): apps that opt in get their own
-	// dedicated, padlocked kvlite file — co-located in data_dir, same
-	// at-rest encryption as the main DB — instead of a bucket of global.db. main
-	// owns the padlock + data dir, so it injects the concrete open here; core
-	// caches the handle per name.
+	// dedicated, padlocked kvlite file in data_dir/db/apps, same at-rest
+	// encryption as the main DB, instead of a bucket of global.db. main owns
+	// the padlock + data dir, so it injects the concrete open (and the delete
+	// of a file a deleted app leaves) here; core caches the handle per name.
 	SetPrivateDBOpener(func(name string) (Database, error) {
-		return SecureDatabase(FormatPath(fmt.Sprintf("%s/%s_%s.db", data_dir, APPNAME, name)))
+		return SecureDatabase(FormatPath(dbs.appFile(name)))
+	}, func(name string) error {
+		return dbs.removeAppFile(data_dir, name)
 	})
 
 	// Wire the persistent source hook cache to the global cache sub-database.

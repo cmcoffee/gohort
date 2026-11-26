@@ -1064,6 +1064,11 @@ func (T *CustomApps) deleteApp(owner, slug string) {
 	appadmin.Drop(RootDB, owner, slug)
 	applocal.DropAppCredentials(owner, slug)
 	DeleteAppAssets(owner, slug) // files on disk, which no store sweep reaches
+	// Its own database file goes too, once no app uses it: a move to another
+	// account runs this with the moved app already saved on the same file.
+	if err := spec.RemovePrivateDB(); err != nil {
+		Log("[customapps] app %q of %s: its database file was not removed: %v", slug, owner, err)
+	}
 }
 
 // recordBase returns the per-user record store for one app: a dedicated private

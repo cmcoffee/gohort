@@ -335,16 +335,35 @@ type PrivateDBApp interface {
 }
 
 var (
-	privateDBOpener func(name string) (Database, error)
-	privateDBs      = map[string]Database{}
-	privateDBMu     sync.Mutex
+	privateDBOpener  func(name string) (Database, error)
+	privateDBRemover func(name string) error
+	privateDBs       = map[string]Database{}
+	privateDBMu      sync.Mutex
 )
 
-// SetPrivateDBOpener wires the concrete secure database open. main calls this
-// once at startup with a closure that builds the file path under the data dir
-// and opens it padlocked (SecureDatabase). Until wired, OpenAppDB returns
-// nil so callers fall back to the shared bucket.
-func SetPrivateDBOpener(fn func(name string) (Database, error)) { privateDBOpener = fn }
+// SetPrivateDBOpener wires the concrete secure database open, and the delete
+// of a file no app uses any more. main calls this once at startup with
+// closures that build the file path under the data dir (data/db/apps) and
+// open it padlocked (SecureDatabase). Until wired, OpenAppDB returns nil so
+// callers fall back to the shared bucket, and nothing is removed.
+func SetPrivateDBOpener(open func(name string) (Database, error), remove func(name string) error) {
+	privateDBOpener, privateDBRemover = open, remove
+}
+
+// removeAppDB closes the cached handle for name and deletes its file. A
+// caller has made sure no app still uses it (AppSpec.RemovePrivateDB).
+func removeAppDB(name string) error {
+	privateDBMu.Lock()
+	defer privateDBMu.Unlock()
+	if db, ok := privateDBs[name]; ok {
+		db.Close()
+		delete(privateDBs, name)
+	}
+	if privateDBRemover == nil || name == "" {
+		return nil
+	}
+	return privateDBRemover(name)
+}
 
 // OpenAppDB returns the dedicated, padlocked kvlite database for the given
 // logical name, opened once and cached for the process lifetime (opening the

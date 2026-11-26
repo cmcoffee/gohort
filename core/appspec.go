@@ -118,9 +118,9 @@ type AppSpec struct {
 	Narrow bool `json:"narrow,omitempty"`
 	// PrivateDB opts this app into its OWN dedicated, padlocked kvlite
 	// database file (via OpenCustomAppDB) instead of the shared customapps store.
-	// Its records live in an isolated, independently disposable file — the right
-	// choice for a data-heavy app. Opt-in per app, no migration: existing apps
-	// (PrivateDB=false) keep using the shared store untouched.
+	// Its records live in an isolated, independently disposable file. A new
+	// app gets one by default (OwnFileByDefault); an app from before keeps
+	// the store it has, since moving it would mean copying its records.
 	PrivateDB bool `json:"private_db,omitempty"`
 	// SharedCollections are record collections every user of the app reads in
 	// common: a leaderboard, a lobby, a shared list. The app's ordinary
@@ -563,6 +563,51 @@ func (s AppSpec) PrivateDBOwner() string {
 
 func OpenCustomAppDB(owner, slug string) Database {
 	return OpenAppDB(customAppDBName(owner, slug))
+}
+
+// OwnFileByDefault is s, a NEW app, given its own database file
+// (docs/design/data-db-folder.md), unless another app already uses the file
+// its owner and slug would name (an app moved to another account keeps the
+// file it was made under), where it stays in the shared store.
+func (s AppSpec) OwnFileByDefault() AppSpec {
+	s.PrivateDB = true
+	if s.privateDBClaimed() {
+		s.PrivateDB = false
+	}
+	return s
+}
+
+// RemovePrivateDB deletes the database file of s, an app being deleted, once
+// no other app uses it: closes its handle, removes the file and the link at
+// its old path. An app in the shared store has no file of its own.
+func (s AppSpec) RemovePrivateDB() error {
+	if !s.PrivateDB || strings.TrimSpace(s.Slug) == "" || s.privateDBClaimed() {
+		return nil
+	}
+	return removeAppDB(customAppDBName(s.PrivateDBOwner(), s.Slug))
+}
+
+// privateDBClaimed reports whether a stored app has its records in the file
+// s would use: s is a new app not yet saved, or one already deleted, so an app
+// still stored, s itself included, always keeps its file. Unknown (no account
+// list) reads as claimed, so nothing is deleted on a guess.
+func (s AppSpec) privateDBClaimed() bool {
+	if AuthDB == nil {
+		return true
+	}
+	authDB := AuthDB()
+	if authDB == nil {
+		return true
+	}
+	name := customAppDBName(s.PrivateDBOwner(), s.Slug)
+	for _, u := range AuthListUsers(authDB) {
+		for _, o := range ListAppSpecs(u.Username) {
+			if o.PrivateDB && customAppDBName(o.PrivateDBOwner(), o.Slug) == name {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // customAppDBName derives the logical (and thus file) name for a custom app's

@@ -1582,6 +1582,8 @@ func (customAppArtifact) ImportArtifact(_ Database, recipe json.RawMessage, owne
 		}
 		return slug, "an app with this slug already exists", nil
 	}
+	// A new app here, so its own database file, as one made here gets.
+	spec = spec.OwnFileByDefault()
 	SaveAppSpec(spec)
 	// Its assets with it; each is checked as any asset save is (name, type,
 	// size), and one refused does not stop the app landing.

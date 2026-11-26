@@ -105,6 +105,11 @@ func TestAnImportedAppTakesItsAuthorsUpdates(t *testing.T) {
 	vSpec.Sections = updateTestPage("Desk", "Kept by v")
 	SaveAppSpec(vSpec)
 	changeUApp(t, "Front desk", "Help at the front desk.")
+	// Where the author's app keeps its records is the author's deployment's:
+	// an update never moves v's app onto another store.
+	uSpec, _ := LoadAppSpec("u", "desk")
+	uSpec.PrivateDB = !vSpec.PrivateDB
+	SaveAppSpec(uSpec)
 	second := export()
 
 	prev, err := PreviewArtifactBundleAsUser(RootDB, second, "v")
@@ -130,6 +135,9 @@ func TestAnImportedAppTakesItsAuthorsUpdates(t *testing.T) {
 	}
 	if h := appPageHTML(d.Spec); !strings.Contains(h, "Front desk") || !strings.Contains(h, "Kept by v") {
 		t.Errorf("the draft is not the update merged with v's change:\n%s", h)
+	}
+	if d.Spec.PrivateDB != vSpec.PrivateDB {
+		t.Errorf("the update moved v's app to another store: private_db %v, was %v", d.Spec.PrivateDB, vSpec.PrivateDB)
 	}
 	if !strings.Contains(string(d.Owned["agents/clerk.json"]), "front desk") {
 		t.Errorf("the draft does not hold the agent as updated: %s", d.Owned["agents/clerk.json"])
@@ -258,6 +266,11 @@ func TestAnUpdateWithoutHistoryNeedsTheAppUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	changeUApp(t, "Front desk", "")
+	// Taken whole, it still keeps the store v's app has.
+	took, _ := LoadAppSpec("v", "desk")
+	uSpec, _ := LoadAppSpec("u", "desk")
+	uSpec.PrivateDB = !took.PrivateDB
+	SaveAppSpec(uSpec)
 	second := export()
 	res, _ := ImportArtifactBundleAsUser(RootDB, second, "v")
 	if o := outcomeOf(res, "custom_app"); o.Status != "updated" {
@@ -266,6 +279,9 @@ func TestAnUpdateWithoutHistoryNeedsTheAppUnchanged(t *testing.T) {
 	d, ok := appdraft.Load("v", "desk", "v")
 	if !ok || !strings.Contains(appPageHTML(d.Spec), "Front desk") || d.BaseCommit != "" {
 		t.Fatalf("the update's draft: %v %+v", ok, d)
+	}
+	if d.Spec.PrivateDB != took.PrivateDB {
+		t.Errorf("an update taken whole moved v's app to another store: private_db %v, was %v", d.Spec.PrivateDB, took.PrivateDB)
 	}
 	appdraft.Delete("v", "desk", "v")
 
