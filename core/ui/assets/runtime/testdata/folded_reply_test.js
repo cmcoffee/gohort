@@ -38,4 +38,9 @@ check('a fold with no line is not a fold', savedMessageMeta({folded: {line: ''}}
 var calls = src.match(/setMessageMeta\(mid, [^)]*\)/g) || [];
 check('every replay path uses it (' + calls.length + ' found)', calls.length >= 3 && calls.every(function(c) { return c === 'setMessageMeta(mid, meta)'; }));
 
+// A voice reading the draft has to hear it was folded: said once, as it folds.
+check('folding says so to listeners, once', fn.indexOf('if (line && !m.folded) announceText(m, id, {folded: true});') > 0 &&
+  fn.indexOf('announceText') < fn.indexOf("m.folded = line || '';"));
+check('and the event carries it', src.indexOf('struck: !!what.struck, folded: !!what.folded,') > 0);
+
 process.exit(fail ? 1 : 0);

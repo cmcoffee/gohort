@@ -598,9 +598,42 @@ eval(readAloudJS);
   check('the first read played out while the reply was still coming', lastHeard().url === '/api/speak/slow1' &&
     lastHeard().heard.ended === true && lastHeard().heard.reply_done === false);
   emit('ui-agent-message-text', {bubble: sb, text: long + 'Then it carries on. ', done: false, struck: true});
-  check('a reply struck while read stops being read', ends[ends.length - 1] === 'slow:false' && sa.paused);
+  // Its caller goes on, to the reply that replaces it.
+  check('a reply struck while read stops being read', ends[ends.length - 1] === 'slow:true' && sa.paused);
   check('and the read playing says the reply was struck', lastHeard().url === '/api/speak/slow2' &&
     lastHeard().heard.why === 'the reply was struck' && lastHeard().heard.ended === false);
+
+  // A finished reply read once whole, then folded behind the revision the
+  // review asked for, stops too. And a caller's lead-in is said before a
+  // reply, not counted as the reply's text.
+  var told0 = beacons.length;
+  var draft = reply('A draft the review will send back.'); draft.onDone = function(ended) { ends.push('draft:' + ended); };
+  draft.leadIn = 'Revised.';
+  var dn = pending.length;
+  window.gohortReadAloud(draft);
+  check('the lead-in is said first', pending.length === dn + 1 && body(dn).text === 'Revised. A draft the review will send back.');
+  pending[dn].res(link('/api/speak/draft1'));
+  await sleep(20);
+  var da = audios[audios.length - 1];
+  check('a finished reply plays', da.src === '/api/speak/draft1' && !da.paused);
+  emit('ui-agent-message-text', {bubble: draft.bubble, text: 'A draft the review will send back.', done: true, folded: true});
+  check('folded behind its revision, it stops, and its caller goes on', ends[ends.length - 1] === 'draft:true' && da.paused);
+  check('the server hears it was cut short by the fold', beacons.length > told0 && lastHeard().url === '/api/speak/draft1' &&
+    lastHeard().heard.why === 'the reply was folded behind its revision' && lastHeard().heard.ended === false);
+  // Followed as it is written, the lead-in goes with the first piece only.
+  var lv = reply(''); lv.leadIn = 'Correction.';
+  emit('ui-agent-message-text', {bubble: lv.bubble, text: 'Only two things happened overnight, both on the database. Then', done: false});
+  var ln = pending.length;
+  window.gohortReadAloud(lv);
+  await sleep(20);
+  check('a followed reply opens with the lead-in', pending.length === ln + 1 &&
+    body(ln).text === 'Correction. Only two things happened overnight, both on the database.');
+  pending[ln].res(opened('/api/speak/lead1'));
+  await sleep(20);
+  emit('ui-agent-message-text', {bubble: lv.bubble, text: 'Only two things happened overnight, both on the database. Then it settled.', done: true});
+  await sleep(20);
+  check('and only the first', pending.length === ln + 2 && body(ln + 1).text.indexOf('Correction.') < 0 && body(ln + 1).text.indexOf('it settled.') >= 0);
+  window.gohortReadAloudStop();
 
   // A reply that finishes while its first read is still opening: the read
   // was opened to take more, so the rest goes to it and closes it. Opening a

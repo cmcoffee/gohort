@@ -4029,6 +4029,9 @@
     function foldMessage(id, line, detail) {
       var m = msgEls[id];
       if (!m || !m.bubble) return;
+      // Said once, as it folds: a voice reading the draft stops, and the
+      // reply after it is read as the revision it is.
+      if (line && !m.folded) announceText(m, id, {folded: true});
       m.folded = line || '';
       var head = m.bubble.querySelector(':scope > .ui-agent-msg-fold-line');
       if (!line) {
@@ -4921,7 +4924,7 @@
     }
 
     // announceText tells whoever listens what a reply's text is now, as it
-    // grows, is replaced, finishes, or is struck: something that follows a
+    // grows, is replaced, finishes, or is struck or folded: something that follows a
     // reply while it is written (reading it aloud, say) needs more than the
     // finished message the decorators see. Generic: it says what happened to
     // the text and leaves what to do about it to the listener. replay marks
@@ -4933,7 +4936,7 @@
       try {
         window.dispatchEvent(new CustomEvent('ui-agent-message-text', {detail: {
           id: id, bubble: m.bubble, text: m.rawText || '',
-          done: !!what.done, replaced: !!what.replaced, struck: !!what.struck,
+          done: !!what.done, replaced: !!what.replaced, struck: !!what.struck, folded: !!what.folded,
           replay: replayWindow.active(),
         }}));
       } catch (e) {}

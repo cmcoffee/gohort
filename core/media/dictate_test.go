@@ -905,6 +905,60 @@ eval(dictationJS);
 })();
 `
 
+// dictationReplacedReply: a reply heard and then struck, or folded behind the
+// revision that replaces it, has the next reply read with a word saying so; a
+// replaced reply still waiting its turn is not read at all.
+const dictationReplacedReply = `
+eval(dictationJS);
+(async function() {
+  await sleep(10);
+  mic = actions[0];
+  var skew = 0, realNow = Date.now;
+  Date.now = function() { return realNow() + skew; };
+  mic.onclick(mic); await sleep(10); skew += 1000; mic.onclick(mic); await sleep(10);
+  pending[0].res(written('What happened overnight?'));
+  await sleep(10);
+  fire('ui-agent-sent');
+  function bubble() { return {querySelector: function() { return null; }}; }
+  var draft = bubble();
+  fire('ui-agent-message-text', {bubble: draft, text: 'Two things happened.', done: true});
+  await sleep(5);
+  check('the draft is read', readCalls.length === 1 && !readCalls[0].leadIn);
+  fire('ui-agent-message-text', {bubble: draft, text: 'Two things happened.', done: true, folded: true});
+  readCalls[0].onDone(true); // read aloud stops it, as an end
+  var revision = bubble();
+  fire('ui-agent-message-text', {bubble: revision, text: 'Three things happened.', done: true});
+  await sleep(5);
+  check('the revision is read as one', readCalls.length === 2 && readCalls[1].bubble === revision && readCalls[1].leadIn === 'Revised.');
+
+  // Waiting its turn behind the revision, a reply struck is dropped unheard.
+  var waiting = bubble();
+  fire('ui-agent-message-text', {bubble: waiting, text: 'Also, one more.', done: true});
+  fire('ui-agent-message-text', {bubble: waiting, text: 'Also, one more.', done: true, struck: true});
+  decorators.forEach(function(d) { d({role: 'assistant', rawText: 'Also, one more.', wrap: waiting}); });
+  readCalls[1].onDone(true);
+  await sleep(5);
+  check('a replaced reply not yet read is not read', readCalls.length === 2);
+
+  // Heard, then struck: the next is a correction, and the word is said once.
+  fire('ui-agent-message-text', {bubble: revision, text: 'Three things happened.', done: true, struck: true});
+  var fixed = bubble();
+  fire('ui-agent-message-text', {bubble: fixed, text: 'Only two, in fact.', done: true});
+  await sleep(5);
+  check('a struck reply that was heard makes the next a correction', readCalls.length === 3 && readCalls[2].leadIn === 'Correction.');
+  readCalls[2].onDone(true);
+  var after = bubble();
+  fire('ui-agent-message-text', {bubble: after, text: 'Anything else?', done: true});
+  await sleep(5);
+  check('and only the next', readCalls.length === 4 && !readCalls[3].leadIn);
+  process.exit(fail ? 1 : 0);
+})();
+`
+
+func TestAReplacedReplyIsReadAsOne(t *testing.T) {
+	runDictationHarness(t, dictationNode(t), dictationSetup+dictationReplacedReply)
+}
+
 // A reply to a dictated message is read while it is being written, not once
 // it is finished: queued as its first text arrives.
 func TestADictatedReplyIsQueuedAsItStarts(t *testing.T) {

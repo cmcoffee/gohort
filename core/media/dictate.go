@@ -876,7 +876,13 @@ const dictationJS = `(function(){
   // the last has played to its end, and stopping one (a send, its button,
   // another reply pressed) drops the rest.
   var readQueue = [], reading = false;
+  // leadIn is said before the next reply read: set when a reply this read,
+  // or was reading, is struck or folded behind a revision, so the listener
+  // knows the one that follows replaces what they heard. Cleared once used,
+  // and when the person sends something.
+  var leadIn = '';
   function readLater(bubble, text) {
+    if (bubble && bubble.__gohortReplaced) return;
     readQueue.push({bubble: bubble, text: text});
     // After this tick, so the bubble's own Read aloud button is drawn and
     // shows the piece playing.
@@ -889,6 +895,9 @@ const dictationJS = `(function(){
     var m = readQueue.shift();
     var btn = m.bubble && m.bubble.querySelector ? m.bubble.querySelector('button[title="Read aloud"]') : null;
     reading = true;
+    if (m.bubble) m.bubble.__gohortHeard = true;
+    var lead = leadIn;
+    leadIn = '';
     // A reply queued while it was being written is read from its text as it
     // is now: followed, if it is still coming (read aloud's follow).
     window.gohortReadAloud({bubble: m.bubble, getText: function() {
@@ -897,6 +906,7 @@ const dictationJS = `(function(){
         return now ? now.text : '';
       },
       agentId: window.GOHORT_AGENT_ID || '', audio: player, button: btn,
+      leadIn: lead,
       // A retry that says the same as the reply just read is not read again.
       skipRepeat: true,
       onDone: function(ended) {
@@ -911,6 +921,7 @@ const dictationJS = `(function(){
     // So is the reply being read: the person has moved on. Typing leaves it
     // playing, since they may be listening while they write.
     readQueue = [];
+    leadIn = '';
     if (window.gohortReadAloudStop) window.gohortReadAloudStop('a message was sent');
     awaiting = dictated;
     dictated = false;
@@ -933,6 +944,16 @@ const dictationJS = `(function(){
   // comes, so a long answer starts playing at its first sentence.
   window.addEventListener('ui-agent-message-text', function(e) {
     var d = e && e.detail;
+    // A reply struck, or folded behind the revision that replaces it. Still
+    // waiting its turn, it is not read at all; heard, or being heard (read
+    // aloud stops it), the reply after it is read with a word saying it
+    // replaces what was heard.
+    if (d && d.bubble && !d.replay && (d.struck || d.folded)) {
+      d.bubble.__gohortReplaced = true;
+      readQueue = readQueue.filter(function(q) { return q.bubble !== d.bubble; });
+      if (d.bubble.__gohortHeard) leadIn = d.struck ? 'Correction.' : 'Revised.';
+      return;
+    }
     if (!awaiting || !d || d.replay || !d.bubble || d.bubble.__gohortQueued) return;
     if (!String(d.text || '').trim()) return;
     d.bubble.__gohortQueued = true;

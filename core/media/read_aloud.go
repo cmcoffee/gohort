@@ -1023,7 +1023,7 @@ const readAloudJS = `(function(){
     // Whoever asked hears how it ended: played to the end, or not (stopped,
     // replaced, failed). A caller reading several pieces in turn goes on
     // only after an end.
-    if (p.onDone) { try { p.onDone(!!p.ended); } catch (e) {} }
+    if (p.onDone) { try { p.onDone(!!(p.ended || p.goOn)); } catch (e) {} }
   }
   // heard tells the server how the read playing ended: why, how far its audio
   // got, and how much of the reply had been handed to it. The server's own
@@ -1103,6 +1103,14 @@ const readAloudJS = `(function(){
       btn.textContent = frames.charAt(frame++ % frames.length) + (secs >= 3 ? ' ' + secs + 's' : '');
     }, 100);
   }
+  // leadOf is what is said before a reply, from its caller (ctx.leadIn): a
+  // word that tells a listener this reply replaces one they heard. Spoken
+  // only, never part of the reply's text, so where a read has got to in the
+  // reply is counted without it.
+  function leadOf(ctx) {
+    var w = String((ctx && ctx.leadIn) || '').trim();
+    return w ? w + ' ' : '';
+  }
   function press(ctx) {
     var again = playing && playing.bubble === ctx.bubble;
     stop(again ? 'stopped with its button' : 'another reply was read');
@@ -1123,7 +1131,7 @@ const readAloudJS = `(function(){
     var p = playing = {bubble: ctx.bubble, button: btn, ctl: new AbortController(), onDone: ctx.onDone, text: text};
     spin(p);
     fetch(speakPath, {method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({text: text, agent_id: ctx.agentId || '', seen: seenOf(ctx.bubble)}), signal: p.ctl.signal})
+        body: JSON.stringify({text: leadOf(ctx) + text, agent_id: ctx.agentId || '', seen: seenOf(ctx.bubble)}), signal: p.ctl.signal})
       .then(function(r) {
         if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
         return r.json();
@@ -1204,7 +1212,7 @@ const readAloudJS = `(function(){
   }
   function follow(ctx) {
     var p = playing = {bubble: ctx.bubble, button: ctx.button || null, onDone: ctx.onDone, live: true, skipRepeat: !!ctx.skipRepeat,
-      agentId: ctx.agentId || '', audio: ctx.audio || null, text: '', sent: 0, done: false,
+      agentId: ctx.agentId || '', audio: ctx.audio || null, lead: leadOf(ctx), text: '', sent: 0, done: false,
       firstAt: 0, lastGrow: 0, started: false, segOpen: false, segStarting: false, url: '',
       urls: [], busy: false, ctls: [], chain: Promise.resolve()};
     spin(p);
@@ -1299,7 +1307,9 @@ const readAloudJS = `(function(){
     // read was opened for the rest, and the player waited on the first until
     // it gave up: the end of the reply was never played.
     var asOpen = !p.done;
-    post(speakPath, {text: chunk, agent_id: p.agentId, open: asOpen,
+    var lead = p.lead || '';
+    p.lead = '';
+    post(speakPath, {text: lead + chunk, agent_id: p.agentId, open: asOpen,
       live: true, after_ms: Date.now() - p.firstAt, seen: seenOf(p.bubble)}, ctl)
       .then(function(r) {
         if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
@@ -1374,9 +1384,18 @@ const readAloudJS = `(function(){
     if (!d || !d.bubble) return;
     d.bubble.__gohortSeen = (d.bubble.__gohortSeen || 0) + 1;
     d.bubble.__gohortText = {text: d.text || '', done: !!d.done};
+    // Struck, or folded behind the revision that replaces it: a reply that
+    // does not stand is not read on, whether it is followed as it is written
+    // or was read once finished. The caller goes on (goOn), since the reply
+    // that replaces it is the one to hear; the server still hears the read
+    // was cut short, which it was.
+    if ((d.struck || d.folded) && playing && playing.bubble === d.bubble) {
+      playing.goOn = true;
+      stop(d.struck ? 'the reply was struck' : 'the reply was folded behind its revision');
+      return;
+    }
     var p = d.bubble.__gohortFollow;
     if (!p || playing !== p) return;
-    if (d.struck) { stop('the reply was struck'); return; }
     feed(p, d.text, d.done, d.replaced);
   });
 
