@@ -128,10 +128,16 @@ func actionJobKey(owner, slug, uid, action string) string {
 	return owner + "/" + slug + "/" + uid + "/" + action
 }
 
-// startActionJob runs work as a job and returns it. work receives the job's
-// own context and a progress reporter.
+// startActionJob runs work as a job of its own and returns it. work receives
+// the job's own context and a progress reporter.
+//
+// It never joins a run already going, as a second press of a button does: a
+// call from an agent or an MCP client is a request of its own, with its own
+// inputs and its own caller waiting on its own answer. Joined by key alone,
+// concurrent calls with other inputs were handed the first call's result and
+// never ran (seen over MCP: 39 of 40 parallel calls answered with call 0's).
 func startActionJob(key string, info appWork, work func(ctx context.Context, progress func(string)) (actionOutcome, error)) *actionJob {
-	j, _ := startOrJoinJob(key, "", "", info, work)
+	j, _ := startOrJoinJob(key, "", "own:"+UUIDv4(), info, work)
 	return j
 }
 

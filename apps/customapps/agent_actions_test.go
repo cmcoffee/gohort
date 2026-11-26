@@ -3,9 +3,11 @@ package customapps
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -85,6 +87,47 @@ func TestTheAppsAgentRunsItsActions(t *testing.T) {
 	}
 	if recs := appscript.ReadRecords(udb, spec.Slug); len(recs) != 1 || recs[0]["state"] != "raw" {
 		t.Errorf("the records were not saved into the person's store: %v", recs)
+	}
+}
+
+// Calls of one action that overlap each run, with their own inputs, and each
+// gets its own answer: an agent's or an MCP client's call is not a second
+// press of the button, so it never joins another call's run.
+func TestOverlappingCallsOfAnActionEachRunWithTheirOwnInputs(t *testing.T) {
+	freshJobs(t)
+	T := sharingTestApp(t)
+	spec := AppSpec{Slug: "prep", Name: "Case prep", Owner: "alice", RecordKey: "id",
+		Actions: []AppAction{{Name: "echo", Script: "x", Inputs: map[string]string{"text": "what to echo"}}}}
+	prev := runAppScript
+	t.Cleanup(func() { runAppScript = prev })
+	release := make(chan struct{})
+	runAppScript = func(j appscript.Job) (string, error) {
+		<-release
+		b, _ := json.Marshal(map[string]any{"message": "echo:" + fmt.Sprint(j.Args["text"])})
+		return string(b), nil
+	}
+	tool := T.actionTools("alice", "alice", T.recordBase(spec, "alice"), spec, "", "")[0]
+	const n = 5
+	got := make([]string, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			out, err := tool.Handler(context.Background(), map[string]any{"text": fmt.Sprint("m", i)})
+			if err != nil {
+				out = "error: " + err.Error()
+			}
+			got[i] = out
+		}(i)
+	}
+	time.Sleep(100 * time.Millisecond) // every call is waiting on its run
+	close(release)
+	wg.Wait()
+	for i, out := range got {
+		if want := fmt.Sprintf(`"echo:m%d"`, i); !strings.Contains(out, want) {
+			t.Errorf("call %d answered %q, want its own %s", i, out, want)
+		}
 	}
 }
 
