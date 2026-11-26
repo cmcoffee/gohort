@@ -569,6 +569,15 @@ Then in your page:
 {Label: "Run my action", URL: "my_action", Method: "client"}
 ```
 
+### The ⚙: what a person sets for themselves
+Settings a signed-in person sets for themselves in your app (not per item, not admin-wide) go behind a ⚙ just right of the page's title, where every app keeps them:
+
+```go
+Nav: []ui.NavLink{{Label: "Settings", Icon: "settings", URL: "settings"}}
+```
+
+`URL` goes to a page; `Action` instead runs a client action, with `ctx.button` the ⚙. When there is more than one kind of setting, the action opens a menu of them with `window.uiActionMenu(ctx.button, [{label, action}, {label, url}])`, each item opening where that setting already lives. Settings that belong to one item (a project, a document, a system) stay with that item.
+
 ### App-specific CSS
 A `<style>` block in `Page.ExtraHeadHTML` alongside your `<script>`. Namespace your CSS classes (`ui-debate-*`, `ui-research-*`) to avoid collisions. Apply the class to a block via the `class` field on text blocks, or via the wrap div in your custom renderer.
 

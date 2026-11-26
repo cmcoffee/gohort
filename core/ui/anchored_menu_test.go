@@ -375,3 +375,79 @@ func TestNoItemInAScrollingColumnShrinks(t *testing.T) {
 		}
 	}
 }
+
+// uiActionMenu is the ⚙'s menu when an app has more than one kind of setting:
+// each item runs its client action or goes to its page, and the button opens
+// and closes it.
+func TestAnActionMenuRunsWhatItsItemsName(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not available")
+	}
+	src := readRuntimeFile(t, "00_prelude.js")
+	var fns []string
+	for _, name := range []string{"uiAnchorMenu", "uiActionMenu"} {
+		i := strings.Index(src, "window."+name+" = function(")
+		if i < 0 {
+			t.Fatalf("%s is gone", name)
+		}
+		end := strings.Index(src[i:], "\n  };")
+		if end < 0 {
+			t.Fatalf("could not bound %s", name)
+		}
+		fns = append(fns, src[i:i+end+len("\n  };")])
+	}
+	harness := `
+function node(tag) {
+  var n = {tag: tag, style: {}, kids: [], on: {}, offsetWidth: 150, offsetHeight: 60,
+    appendChild: function(k) { this.kids.push(k); k.parent = this; },
+    addEventListener: function(ev, fn) { this.on[ev] = fn; },
+    contains: function(x) { for (; x; x = x.parent) if (x === this) return true; return false; },
+    getBoundingClientRect: function() { return {left: 20, right: 46, top: 30, bottom: 60}; }};
+  Object.defineProperty(n, 'textContent', {set: function(v) { this.kids = []; this.text = v; }, get: function() { return this.text; }});
+  return n;
+}
+var docClick = null, ran = null;
+global.window = {innerWidth: 800, innerHeight: 600, addEventListener: function() {},
+  location: {href: '/app/'},
+  UIClientActions: {open_rules: function(ctx) { ran = ctx; }}};
+global.document = {body: node('body'), createElement: node,
+  addEventListener: function(ev, fn) { if (ev === 'click') docClick = fn; }};
+` + strings.Join(fns, "\n") + `
+var gear = node('a');
+var items = [{label: 'Rules', action: 'open_rules', title: 'House style'}, {label: 'Agent settings', url: 'chat/settings'}];
+window.uiActionMenu(gear, items);
+var menu = gear._uiActionMenu.menu;
+if (menu.style.display !== 'block') throw new Error('the menu did not open');
+if (menu.kids.length !== 2 || menu.kids[0].text !== 'Rules' || menu.kids[0].title !== 'House style') throw new Error('items wrong');
+
+// A click on the gear itself is not a click elsewhere.
+docClick({target: gear});
+if (menu.style.display !== 'block') throw new Error('the click that opened it closed it');
+
+menu.kids[0].on.click();
+if (!ran || ran.button !== gear || ran.item !== items[0]) throw new Error('the action did not run with its button');
+if (menu.style.display !== 'none') throw new Error('running an item left the menu open');
+
+window.uiActionMenu(gear, items);
+if (menu.kids.length !== 2) throw new Error('reopening doubled the items: ' + menu.kids.length);
+menu.kids[1].on.click();
+if (window.location.href !== 'chat/settings') throw new Error('the link did not go: ' + window.location.href);
+
+window.uiActionMenu(gear, items);
+window.uiActionMenu(gear, items);
+if (menu.style.display !== 'none') throw new Error('a second click on the gear did not close it');
+
+window.uiActionMenu(gear, items);
+docClick({target: document.body});
+if (menu.style.display !== 'none') throw new Error('a click elsewhere did not close it');
+console.log('OK');
+`
+	tmp := filepath.Join(t.TempDir(), "action_menu.js")
+	if err := os.WriteFile(tmp, []byte(harness), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("node", tmp).CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "OK") {
+		t.Fatalf("uiActionMenu:\n%s", out)
+	}
+}

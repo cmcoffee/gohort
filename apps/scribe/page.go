@@ -258,6 +258,9 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 		BackURL:   "/",
 		MaxWidth:  "100%",
 		Sections:  []ui.Section{{NoChrome: true, Body: wb}},
+		// The ⚙ beside the title, where every app keeps what a person sets
+		// for themselves: the house style and their copy of the Guide Author.
+		Nav: []ui.NavLink{{Label: "Settings", Icon: "settings", Action: "scribe_settings"}},
 		// Migrated off a raw ExtraHeadHTML concatenation onto the typed
 		// ui.Head builder: the doc CSS rides in as pre-wrapped <style> blobs
 		// (.HTML), the section-controls listener as raw JS (.JS), the shared
@@ -281,6 +284,7 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 			ClientAction("guides_curator", guideCuratorAction).
 			ClientAction("guides_publish", guidePublishAction).
 			ClientAction("scribe_rules", scribeRulesAction).
+			ClientAction("scribe_settings", scribeSettingsAction).
 			ClientAction("scribe_import", scribeImportAction).
 			ClientAction("scribe_import_page", scribeImportPageAction).
 			ClientAction("guides_update_sources", guideUpdateSourcesAction).
@@ -309,6 +313,15 @@ func templateOptions() []ui.SelectOption {
 const scribeRulesAction = `function(ctx){
       if (!window.uiOpenRulesPanel) return;
       window.uiOpenRulesPanel({url: 'rules', noun: 'document the Guide Author writes'});
+}`
+
+// scribeSettingsAction is the ⚙'s menu: what a person sets for themselves
+// in Scribe, each opening where it already lives.
+const scribeSettingsAction = `function(ctx){
+      window.uiActionMenu(ctx.button, [
+        {label: 'Rules', action: 'scribe_rules', title: 'The house style the Guide Author writes every document under'},
+        {label: 'Agent settings', url: 'chat/settings', title: 'Your copy of the Guide Author: its rounds, plan steps, gap detection and reasoning'}
+      ]);
 }`
 
 // scribeImportAction brings an exported HTML page back in as a new guide:

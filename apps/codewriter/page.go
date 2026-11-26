@@ -31,6 +31,10 @@ func (T *CodeWriterAgent) handleCodeWriterPage(w http.ResponseWriter, r *http.Re
 		ShowTitle: true,
 		BackURL:   "/",
 		MaxWidth:  "100%",
+		// The ⚙ beside the title, where every app keeps what a person sets
+		// for themselves: the rules every reply follows and their copy of the
+		// Code Writer.
+		Nav: []ui.NavLink{{Label: "Settings", Icon: "settings", Action: "codewriter_settings"}},
 		Sections: []ui.Section{
 			{
 				NoChrome: true,
@@ -81,9 +85,27 @@ func (T *CodeWriterAgent) handleCodeWriterPage(w http.ResponseWriter, r *http.Re
 		// The editor's clipboard, resize and import helpers. The diff a
 		// proposal opens in ships with the runtime on every page.
 		ExtraHeadHTML: "<script>" + editor.UtilsJS() + "</script>",
+		Head: ui.NewHead().
+			ClientAction("codewriter_rules", codeWriterRulesAction).
+			ClientAction("codewriter_settings", codeWriterSettingsAction),
 	}
 	page.ServeHTTP(w, r)
 }
+
+// codeWriterRulesAction opens the shared Rules editor over the person's
+// rules, as the editor's own Rules button does (RulesURL above).
+const codeWriterRulesAction = `function(ctx){
+      if (window.uiOpenRulesPanel) window.uiOpenRulesPanel({url: 'api/rules', noun: 'reply'});
+}`
+
+// codeWriterSettingsAction is the ⚙'s menu: what a person sets for
+// themselves in CodeWriter, each opening where it already lives.
+const codeWriterSettingsAction = `function(ctx){
+      window.uiActionMenu(ctx.button, [
+        {label: 'Rules', action: 'codewriter_rules', title: 'Standing instructions every reply follows'},
+        {label: 'Agent settings', url: 'chat/settings', title: 'Your copy of the Code Writer: its rounds, plan steps, gap detection and reasoning'}
+      ]);
+}`
 
 // codeWriterLanguages is the editor's language list, defined ONCE.
 //

@@ -121,6 +121,11 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 		ShowTitle: true,
 		BackURL:   "/",
 		MaxWidth:  "100%",
+		// The ⚙ beside the title, where every app keeps what a person sets
+		// for themselves. Here that is one thing, the categories of risky
+		// command that run without asking, so it opens that dialog straight
+		// away. Everything else on the toolbar is about one system.
+		Nav: []ui.NavLink{{Label: "Settings: which risky commands run without asking", Icon: "settings", Action: "servitor_permissions"}},
 		// ExtraHeadHTML loads servitor's block renderers + CSS for
 		// app-specific events (intent, plan, etc.). See web_assets.go.
 		ExtraHeadHTML: applianceTypesScript + servitorWebAssets + applianceMemoryModalScript,
