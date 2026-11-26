@@ -271,20 +271,11 @@ const appJobListMax = 20
 // it again. A call whose client went away before it answered left a job the
 // client was never told about.
 func listAppJobs(tok *AccountToken, app customapps.OfferingApp) string {
-	appJobs.Lock()
-	sweepAppJobs()
-	var mine []*appJob
-	for _, j := range appJobs.m {
-		if tok != nil && j.owner == tok.Owner && j.key == keyID(tok) && strings.EqualFold(j.slug, app.Slug) {
-			mine = append(mine, j)
-		}
-	}
-	appJobs.Unlock()
+	mine := keyAppJobs(tok, app.Slug)
 	name := firstNonEmptyText(app.Name, app.Slug)
 	if len(mine) == 0 {
 		return fmt.Sprintf("No calls of %s from this key in the last %s.", name, jobKeep)
 	}
-	sort.Slice(mine, func(a, b int) bool { return mine[a].started.After(mine[b].started) })
 	var b strings.Builder
 	fmt.Fprintf(&b, "This key's calls of %s in the last %s, newest first:\n", name, jobKeep)
 	for i, j := range mine {

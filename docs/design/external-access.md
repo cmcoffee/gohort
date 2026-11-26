@@ -188,3 +188,44 @@ click would. Owner decisions:
    agents. No call limits: those belong with per-user API cost caps.
    AppToolsTarget lives in apps/customapps (the account page reads the apps
    host's list), so core's export ceiling is back to 2447.
+
+## An app's calls as jobs, and the app over plain HTTP (2026-11-26)
+
+Found in a durability pass on a throwaway instance: a call of an app's tool
+over MCP ran inside its request, so a client that gave up waiting (Claude
+Code waits 60 seconds for a first byte) or dropped its connection stopped the
+run it had asked for. Owner decisions:
+
+1. **Every app call over MCP is a job** (apps/mcpserver/app_jobs.go), on the
+   app's own address, the general one, and a confirm-first action once
+   answered. It runs on a context of its own; the request waits 20 seconds.
+   A call that ends in time answers as before. One that does not answers
+   with its job, its time so far and its latest output line.
+2. **`<slug>_result(job, stop)`** collects a job (waiting 20 seconds each
+   call) or, with `stop: true`, stops it. With no job it lists the key's
+   calls of the app from the last hour, for a client that went away before
+   it was told the job. It is named `<slug>_app_result` if the app has a tool
+   called `<slug>_result`. A key may call it whenever it may call any of the
+   app's tools, as `agent_result` follows `ask_agent`.
+3. As `ask_agent`'s jobs: a job belongs to the key that started it, its
+   answer is kept for an hour, it is in memory and a restart drops it. No
+   stored field, no migration.
+4. **A key has at most 8 calls running at once**; the next is refused with
+   the running jobs named.
+5. **The same app over plain HTTP, below the same address and with the same
+   keys** (apps/mcpserver/app_http.go): what a key reaches decides how it is
+   opened, not which protocol it speaks.
+   - `GET tools`: the tools with their input schemas.
+   - `POST tools/<name>`: the body is the arguments, a JSON object; waits up
+     to 20 seconds (`?wait=0..20`). 200 with the result (the tool's own JSON
+     as JSON), or 202 with the job (`Location` is its URL).
+   - `GET jobs`, `GET jobs/<id>?wait=0..20`, `DELETE jobs/<id>` (stop).
+   - 422 a tool that ran and failed, 409 a stopped job or an action that asks
+     to confirm first (nobody is asked over plain HTTP), 429 over the cap,
+     401/403/404 as the key's reach. The key goes in `X-API-Key`; a sign-in
+     cookie alone is refused, and there is no CORS: it is for scripts and
+     servers, not another site's page.
+   - The app's Settings shows a curl example beside the MCP config when a key
+     is made.
+6. A stopped action says it was stopped, on its page as over MCP and HTTP: a
+   script killed part way through used to read as one that printed no JSON.

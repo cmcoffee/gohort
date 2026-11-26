@@ -49,6 +49,11 @@ func (T *MCPServer) handleApp(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// Below the address, the same app over plain HTTP (app_http.go).
+	if sub := appSubPath(r.URL.Path); sub != "" {
+		T.handleAppHTTP(w, r, slug, sub)
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {

@@ -399,6 +399,14 @@ const appMCPKeyJS = `function(ctx){
   var servers = {};
   servers[r.server || 'app'] = {type: 'http', url: r.address, headers: {'X-API-Key': r.key}};
   var cfg = JSON.stringify({mcpServers: servers}, null, 2);
+  // The same key over plain HTTP, below the same address (apps/mcpserver/app_http.go).
+  var hdr = "-H 'X-API-Key: " + r.key + "'";
+  var curl = '# What the app offers, with each tool\'s inputs\n' +
+    'curl ' + hdr + ' ' + r.address + 'tools\n\n' +
+    '# Call a tool: the body is its inputs. A run past 20s answers 202 with a job\n' +
+    "curl -X POST " + hdr + " -H 'Content-Type: application/json' -d '{}' " + r.address + 'tools/TOOL_NAME\n\n' +
+    '# Collect a job (?wait= up to 20 seconds), or stop it with -X DELETE\n' +
+    'curl ' + hdr + ' ' + r.address + 'jobs/JOB_ID?wait=20';
   function copy(text, btn) {
     if (navigator.clipboard) navigator.clipboard.writeText(text);
     var was = btn.firstChild ? btn.firstChild.nodeValue : '';
@@ -419,6 +427,7 @@ const appMCPKeyJS = `function(ctx){
     actions: [
       {label: 'Copy key', onClick: function(api, btn){ copy(r.key, btn); }},
       {label: 'Copy config', onClick: function(api, btn){ copy(cfg, btn); }},
+      {label: 'Copy curl', onClick: function(api, btn){ copy(curl, btn); }},
       {label: 'Done', primary: true}
     ],
     mount: function(box) {
@@ -429,6 +438,10 @@ const appMCPKeyJS = `function(ctx){
       note.textContent = 'For a client that takes a server list (Claude Desktop, Claude Code and others), the app as a server:';
       wrap.appendChild(note);
       wrap.appendChild(block(cfg));
+      var http = document.createElement('div');
+      http.textContent = 'Or from a script or a server, over plain HTTP with the same key:';
+      wrap.appendChild(http);
+      wrap.appendChild(block(curl));
       box.appendChild(wrap);
     }
   });
