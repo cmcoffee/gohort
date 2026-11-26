@@ -224,6 +224,21 @@ func keepsBetweenVisits(spec AppSpec) bool {
 	return apppage.KeepsInLocalStorage(b.String())
 }
 
+// noteFreshStart marks a My Apps row whose app now opens fresh
+// (keepsBetweenVisits), for Fix with Builder, and adds it to the row's note.
+// Rows for whoever can change the app: its owner and its maintainers.
+func noteFreshStart(row map[string]string, spec AppSpec) {
+	if !keepsBetweenVisits(spec) {
+		return
+	}
+	row["fresh_start"] = "1"
+	if row["note"] != "" {
+		row["note"] += " - " + freshStartNote
+	} else {
+		row["note"] = freshStartNote
+	}
+}
+
 // pageStrings writes every string in a page's JSON to b, a line each.
 func pageStrings(page json.RawMessage, b *strings.Builder) {
 	var v any

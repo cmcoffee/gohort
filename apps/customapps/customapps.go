@@ -1267,14 +1267,7 @@ func (T *CustomApps) handleAppsList(c *jsonapi.Call) (any, error) {
 		}
 		// Written before every open started fresh: it kept where you were
 		// in localStorage, and opens fresh now until it is changed.
-		if keepsBetweenVisits(s) {
-			row["fresh_start"] = "1"
-			if row["note"] != "" {
-				row["note"] += " - " + freshStartNote
-			} else {
-				row["note"] = freshStartNote
-			}
-		}
+		noteFreshStart(row, s)
 		row["status"] = status
 		out = append(out, row)
 	}
@@ -1310,6 +1303,9 @@ func (T *CustomApps) handleAppsList(c *jsonapi.Call) (any, error) {
 		if s.MaintainedBy(owner) {
 			row["can_change"] = "1"
 			row["status"], row["note"] = by+", you maintain it", by+", you maintain it"
+			// And is told, as the owner is, when it now opens fresh: they
+			// can make the change the owner would.
+			noteFreshStart(row, s)
 		}
 		if len(visibleSettings(s, false)) > 0 {
 			row["has_settings"] = "1"
