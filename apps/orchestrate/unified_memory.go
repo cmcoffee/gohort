@@ -386,12 +386,12 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 	// <date>") instead of a silent miss the model would paper over with a
 	// stale prior.
 	if layers["pinned"] {
-		facts := SearchMemoryFactsVec(t.udb, t.factsNS(), query, qVec)
+		facts := SearchMemoryFactsVec(t.memStore(), t.factsNS(), query, qVec)
 		if len(facts) > perLayer {
 			facts = facts[:perLayer]
 		}
 		if len(facts) > 0 {
-			ents := ListGraphEntities(t.udb, t.factsNS())
+			ents := ListGraphEntities(t.memStore(), t.factsNS())
 			var b strings.Builder
 			pinScores := recallScoreLog{query: query, layer: "pinned (shown only; the fact search drops the rest)"}
 			for _, f := range facts {
@@ -406,7 +406,7 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 			}
 			pinScores.emit()
 			sections = append(sections, strings.TrimRight(b.String(), "\n"))
-		} else if hole := explainRetiredHole(t.udb, t.factsNS(), query); hole != "" {
+		} else if hole := explainRetiredHole(t.memStore(), t.factsNS(), query); hole != "" {
 			sections = append(sections, "[pinned] "+hole)
 		}
 	}
@@ -480,7 +480,7 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 	// conversation on any weak match.
 	if layers["history"] {
 		source := operatorLCMSource(t.agent.ID, cortexSessionID(t.agent.ID))
-		hh := SearchRecallVec(t.udb, source, query, qVec, perLayer)
+		hh := SearchRecallVec(t.memStore(), source, query, qVec, perLayer)
 		var b strings.Builder
 		scores := recallScoreLog{query: query, layer: "history"}
 		defer scores.emit()
@@ -806,7 +806,7 @@ func (t *chatTurn) recallFetch(id string) (string, error) {
 		return t.fetchKnowledgeDocToolDef().Handler(t.ctx, map[string]any{"doc_id": ref})
 	case "span":
 		source := operatorLCMSource(t.agent.ID, cortexSessionID(t.agent.ID))
-		chunks := FetchRecallSpanChunks(t.udb, source, ref)
+		chunks := FetchRecallSpanChunks(t.memStore(), source, ref)
 		if len(chunks) == 0 {
 			return "No such history span (it may have been cleared).", nil
 		}
@@ -816,7 +816,7 @@ func (t *chatTurn) recallFetch(id string) (string, error) {
 		}
 		return doc, nil
 	case "fact":
-		for _, f := range ListMemoryFacts(t.udb, t.factsNS()) {
+		for _, f := range ListMemoryFacts(t.memStore(), t.factsNS()) {
 			if f.ID == ref {
 				return f.Note, nil
 			}
@@ -886,7 +886,7 @@ func (t *chatTurn) forgetToolDef() AgentToolDef {
 			// would hard-delete the wrong note.
 			if n, err := strconv.Atoi(id); err == nil {
 				quote := strings.TrimSpace(stringArg(args, "quote"))
-				removed, reason, ok := ForgetMemoryFactByIndexQuoted(t.udb, t.factsNS(), n, quote)
+				removed, reason, ok := ForgetMemoryFactByIndexQuoted(t.memStore(), t.factsNS(), n, quote)
 				if !ok {
 					return "", fmt.Errorf("nothing deleted: %s", reason)
 				}
@@ -910,11 +910,11 @@ func (t *chatTurn) forgetToolDef() AgentToolDef {
 			case "fact":
 				// An open item is closed rather than deleted: declining it is
 				// an answer, and the owner can still put it back.
-				if f, ok := GetMemoryFactByID(t.udb, t.factsNS(), ref); ok && !f.Retired() && f.MemKind == provenance.MemKindOpenItem {
-					closeOpenItem(t.udb, t.agent.ID, f, time.Now())
+				if f, ok := GetMemoryFactByID(t.memStore(), t.factsNS(), ref); ok && !f.Retired() && f.MemKind == provenance.MemKindOpenItem {
+					closeOpenItem(t.memStore(), t.agent.ID, f, time.Now())
 					return "Closed the open item: it is off your saved notes. The owner can restore it from the Memory panel.", nil
 				}
-				if ForgetMemoryFactByID(t.udb, t.factsNS(), ref) {
+				if ForgetMemoryFactByID(t.memStore(), t.factsNS(), ref) {
 					return "Forgot pinned note.", nil
 				}
 				return fmt.Sprintf("No pinned note with id fact:%s, it may already be gone.", ref), nil
@@ -942,7 +942,7 @@ func (t *chatTurn) forgetFindingByReportID(reportID string) (string, error) {
 	if VectorDB == nil {
 		return "", errors.New("vector store unavailable")
 	}
-	agentPrefix := knowledgeSource(t.user, t.agent.ID, "")
+	agentPrefix := knowledgeSource(t.memName(), t.agent.ID, "")
 	var ids []string
 	var gone []EmbeddedChunk
 	for _, c := range ChunksWhere(VectorDB, func(c EmbeddedChunk) bool { return c.ReportID == reportID }) {
@@ -950,7 +950,7 @@ func (t *chatTurn) forgetFindingByReportID(reportID string) (string, error) {
 		// A pooled finding is in the owner's copy; the pool's rules say
 		// whether this runner may remove it (memory_pool.go).
 		if !inScope && t.inPool(c) {
-			if why := poolRemovalRefusal(t.agent, t.user, c); why != "" {
+			if why := poolRemovalRefusal(t.agent, t.memName(), c); why != "" {
 				return why, nil
 			}
 			inScope = true
@@ -970,7 +970,7 @@ func (t *chatTurn) forgetFindingByReportID(reportID string) (string, error) {
 		if VectorDB.Get(EmbeddedChunks, reportID, &c) {
 			inScope := c.Source == agentPrefix || strings.HasPrefix(c.Source, agentPrefix+":")
 			if !inScope && t.inPool(c) {
-				if why := poolRemovalRefusal(t.agent, t.user, c); why != "" {
+				if why := poolRemovalRefusal(t.agent, t.memName(), c); why != "" {
 					return why, nil
 				}
 				inScope = true
@@ -979,7 +979,7 @@ func (t *chatTurn) forgetFindingByReportID(reportID string) (string, error) {
 				t.keepPoolRemoval([]EmbeddedChunk{c})
 				DeleteChunksByIDs(VectorDB, []string{reportID})
 				Log("[orchestrate.unified_memory.forget] user=%q agent=%q dropped chunk id=%s topic=%q",
-					t.user, t.agent.ID, reportID, c.Section)
+					t.memName(), t.agent.ID, reportID, c.Section)
 				return "Forgot that memory entry.", nil
 			}
 		}
@@ -988,7 +988,7 @@ func (t *chatTurn) forgetFindingByReportID(reportID string) (string, error) {
 	t.keepPoolRemoval(gone)
 	DeleteChunksByIDs(VectorDB, ids)
 	Log("[orchestrate.unified_memory.forget] user=%q agent=%q dropped finding report_id=%s (%d chunks)",
-		t.user, t.agent.ID, reportID, len(ids))
+		t.memName(), t.agent.ID, reportID, len(ids))
 	return "Forgot that finding.", nil
 }
 

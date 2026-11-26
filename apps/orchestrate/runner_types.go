@@ -111,6 +111,13 @@ var workerAbortTools = func() []string {
 type chatTurn struct {
 	app *OrchestrateApp
 	ctx context.Context
+	// memUser and memDB are whose memory this turn reads and writes when that
+	// is not user's: an app's agent run for someone other than its owner runs
+	// on the owner's account, and remembers in that person's own copy, the
+	// one the app's chat keeps for them (memory_scope.go memName/memStore).
+	// Empty on every other turn, where memory is user's.
+	memUser string
+	memDB   Database
 	// commitAsked is set once the turn has been told to commit verified
 	// work in an app's history, so it is told once (uncommittedWorkNotice).
 	commitAsked bool

@@ -42,7 +42,7 @@ func (t *chatTurn) operatingNotes() OperatingNotes {
 	if t.incognitoSession() {
 		return OperatingNotes{}
 	}
-	return ResolveOperatingNotes(t.udb, factsNamespace(t.agent.ID), t.agent.SeedNotes)
+	return ResolveOperatingNotes(t.memStore(), factsNamespace(t.agent.ID), t.agent.SeedNotes)
 }
 
 // AgentStateNamespace is the store namespace an agent's per-agent state lives
@@ -242,7 +242,7 @@ func (t *chatTurn) updateNotesToolDef() AgentToolDef {
 			Required:    []string{"text"},
 			Caps:        []Capability{CapWrite},
 		},
-		Handler: datedArg(t.datedText, "text", notesWriteHandler(t.udb, factsNamespace(t.agent.ID), t.agent.SeedNotes, agentNotesCopy, OperatingNotesCap)),
+		Handler: datedArg(t.datedText, "text", notesWriteHandler(t.memStore(), factsNamespace(t.agent.ID), t.agent.SeedNotes, agentNotesCopy, OperatingNotesCap)),
 	}
 }
 

@@ -52,12 +52,85 @@ type memoryScope struct {
 	Under []string
 }
 
+// memName is whose memory this turn reads and writes: the person an app's
+// agent is running for (chatTurn.memUser) when that is not the turn's user,
+// else the user. Every memory layer's namespace is named by this or by
+// memStore, never by t.user or t.udb directly, so a turn that runs on one
+// account and remembers in another's copy cannot write to the first.
+func (t *chatTurn) memName() string {
+	if t.memUser != "" {
+		return t.memUser
+	}
+	return t.user
+}
+
+// memStore is the store memName's memory lives in.
+func (t *chatTurn) memStore() Database {
+	if t.memDB != nil {
+		return t.memDB
+	}
+	return t.udb
+}
+
+// appMemoryPersonKey carries, on a run's context, the person an app's agent or
+// pipeline is running for when that is not the app's owner (appRunAs).
+type appMemoryPersonKey struct{}
+
+// withAppMemoryPerson marks ctx as an app's run for person, who is not its
+// owner: what its agents remember goes to person's own copy.
+func withAppMemoryPerson(ctx context.Context, person string) context.Context {
+	if person = strings.TrimSpace(person); person == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, appMemoryPersonKey{}, person)
+}
+
+// appMemoryPerson is the person ctx's app run remembers for, "" for none.
+func appMemoryPerson(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	p, _ := ctx.Value(appMemoryPersonKey{}).(string)
+	return p
+}
+
+// rememberFor points t's memory at the person ctx's app run is for, when the
+// turn itself runs as someone else (the app's owner): their own copy of the
+// agent's memory, the one the app's chat keeps for them, with the owner's
+// layers underneath read-only as on a shared agent (memoryUnderlay). The run
+// stays the owner's: credentials, workspace, tools and roster are untouched.
+// Without this, everyone using a shared app pooled what they told its agent
+// into the owner's memory, and each read back the others'.
+func (t *chatTurn) rememberFor(ctx context.Context) {
+	if t == nil || t.app == nil {
+		return
+	}
+	p := appMemoryPerson(ctx)
+	if p == "" || p == strings.TrimSpace(t.user) {
+		return
+	}
+	if db := UserDB(t.app.DB, p); db != nil {
+		t.memUser, t.memDB = p, db
+	}
+}
+
+// appMemorySessSuffix keeps an app's run for someone else in a dispatch
+// session of its own, ":for:<person>", so what the session holds between
+// calls (its commitments, its temp tools) is never shared with another
+// person's run of the same agent. "" on every other run.
+func appMemorySessSuffix(ctx context.Context, runtimeUser string) string {
+	if p := appMemoryPerson(ctx); p != "" && p != strings.TrimSpace(runtimeUser) {
+		return ":for:" + p
+	}
+	return ""
+}
+
 // memoryScope reports the two axes for this turn.
 func (t *chatTurn) memoryScope() memoryScope {
 	if t == nil {
 		return memoryScope{}
 	}
-	ms := memoryScope{Run: strings.TrimSpace(t.user), Write: strings.TrimSpace(t.user)}
+	ms := memoryScope{Run: strings.TrimSpace(t.user), Write: strings.TrimSpace(t.memName())}
 	if owner := t.memoryUnderlay(); owner != "" {
 		ms.Under = []string{owner}
 	}
@@ -82,7 +155,7 @@ func (t *chatTurn) memoryUnderlay() string {
 	if owner == "" {
 		owner = strings.TrimSpace(t.agent.Owner)
 	}
-	if owner == "" || owner == seedOwner || owner == strings.TrimSpace(t.user) {
+	if owner == "" || owner == seedOwner || owner == strings.TrimSpace(t.memName()) {
 		return ""
 	}
 	return owner
@@ -231,7 +304,7 @@ func (t *chatTurn) searchOwnKnowledge(ctx context.Context, topic, query string, 
 			scope = ChunkScopeCuratedOnly
 		}
 	}
-	hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.readsOwnerCorpus(scope), t.agent.ID, topic, query, qVec, k, skills, agentReadsCollections(t.agent, t.agent.AttachedCollections), !t.agent.KnowledgeAttachedOnly, scope)
+	hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.memName(), t.ownerUser, t.readsOwnerCorpus(scope), t.agent.ID, topic, query, qVec, k, skills, agentReadsCollections(t.agent, t.agent.AttachedCollections), !t.agent.KnowledgeAttachedOnly, scope)
 	hits = t.labelPoolHits(hits)
 	if !t.agent.MemoryPerDocument {
 		return hits

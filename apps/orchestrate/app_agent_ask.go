@@ -149,7 +149,10 @@ func (T *OrchestrateApp) AppAgentRun(ctx context.Context, owner, user, slug, age
 // not the owner's.
 func appRunAs(ctx context.Context, owner, viewer string) context.Context {
 	if v := strings.TrimSpace(viewer); v != "" && v != owner {
-		return appstores.WithPerson(withNonOwnerRequester(ctx), v)
+		// And what its agents remember is the viewer's own copy, the one the
+		// app's chat keeps for them (memory_scope.go rememberFor), not the
+		// owner's memory every other person using the app reads back.
+		return withAppMemoryPerson(appstores.WithPerson(withNonOwnerRequester(ctx), v), v)
 	}
 	return ctx
 }

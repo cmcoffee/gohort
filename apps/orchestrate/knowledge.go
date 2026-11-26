@@ -1281,7 +1281,7 @@ func (t *chatTurn) memorySave(args map[string]any) (string, error) {
 // findings that split into multiple chunks won't match whole — acceptable for
 // a backstop tier.
 func (t *chatTurn) findingExactDuplicate(content string) bool {
-	return t.findingExactDuplicateIn(t.user, content)
+	return t.findingExactDuplicateIn(t.memName(), content)
 }
 
 // findingExactDuplicateIn is findingExactDuplicate over into's copy of the
@@ -1707,7 +1707,7 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 		// A pooled agent's findings are in the owner's copy, and the pool's
 		// rules say which of them this runner may remove (memory_pool.go).
 		if !inScope && t.inPool(c) {
-			if why := poolRemovalRefusal(t.agent, t.user, c); why != "" {
+			if why := poolRemovalRefusal(t.agent, t.memName(), c); why != "" {
 				return why, nil
 			}
 			inScope = true
@@ -1727,7 +1727,7 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 		t.keepPoolRemoval([]EmbeddedChunk{c})
 		DeleteChunksByIDs(VectorDB, []string{explicitID})
 		Log("[orchestrate.memory.forget] user=%q agent=%q deleted by id=%s topic=%q",
-			t.user, t.agent.ID, explicitID, topic)
+			t.memName(), t.agent.ID, explicitID, topic)
 		return fmt.Sprintf("Deleted 1 memory entry: mem_id=%s, topic=%q.", explicitID, topic), nil
 	}
 
@@ -1756,13 +1756,13 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 	var offered []string
 	fmt.Fprintf(&b, "Nothing has been deleted. Closest matches to %q:\n", query)
 
-	facts := SearchMemoryFactsVec(t.udb, t.factsNS(), query, qVec)
+	facts := SearchMemoryFactsVec(t.memStore(), t.factsNS(), query, qVec)
 	if len(facts) == 0 {
 		// The fact search falls back to matching the whole query as one
 		// phrase, which "pending photo edits Shazz" never is. A preview deletes
 		// nothing, so a looser word match is safe here and is what finds the
 		// note a person is actually describing.
-		facts = factsSharingWords(ListMemoryFacts(t.udb, t.factsNS()), query)
+		facts = factsSharingWords(ListMemoryFacts(t.memStore(), t.factsNS()), query)
 	}
 	if len(facts) > k {
 		facts = facts[:k]
@@ -1812,7 +1812,7 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 	t.forgetOfferedMu.Unlock()
 	b.WriteString("\nDelete only the ones that are exactly what the user asked to remove, one forget(id=...) call each. A match score measures how similar the wording is, not whether it is the same thing. If none of these is it, delete nothing and tell the user so.")
 	Log("[orchestrate.memory.forget] user=%q agent=%q previewed %d candidate(s) for %q, nothing deleted",
-		t.user, t.agent.ID, len(offered), truncateObs(query, 80))
+		t.memName(), t.agent.ID, len(offered), truncateObs(query, 80))
 	return b.String(), nil
 }
 
@@ -1936,7 +1936,7 @@ func chunksInSection(chunks []EmbeddedChunk, want string) []EmbeddedChunk {
 // A predicate that can disagree with the search it was written to mirror is
 // worse than no predicate: it is the one somebody reads and believes.
 func (t *chatTurn) agentCorpusSources(scopeSkills []SkillRecord) map[string]bool {
-	exact, _ := agentCorpusSourceSet(t.user, t.ownerUser, agentReadsCollections(t.agent, t.agent.AttachedCollections), scopeSkills, !t.agent.KnowledgeAttachedOnly)
+	exact, _ := agentCorpusSourceSet(t.memName(), t.ownerUser, agentReadsCollections(t.agent, t.agent.AttachedCollections), scopeSkills, !t.agent.KnowledgeAttachedOnly)
 	return exact
 }
 
@@ -1997,7 +1997,7 @@ func agentCorpusSourceSet(user, baseUser string, attached []string, scopeSkills 
 // agentCorpusPrefix is the agent's own chunk namespace for this turn. The
 // RUNNER's, always: capability travels with a shared agent, history does not.
 func (t *chatTurn) agentCorpusPrefix() string {
-	return knowledgeSource(t.user, t.agent.ID, "")
+	return knowledgeSource(t.memName(), t.agent.ID, "")
 }
 
 // ownerCorpusPrefix is the OWNER's copy of this agent's corpus, when this turn

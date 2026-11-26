@@ -68,7 +68,7 @@ func (t *chatTurn) entityRelatedPassages(e GraphEntity) string {
 // entityRelatedPassages; facts share the entity's namespace. Returns "" when
 // nothing matches. Short aliases (<3 chars) are skipped to avoid over-matching.
 func (t *chatTurn) entityRelatedFacts(e GraphEntity) string {
-	facts := ListMemoryFacts(t.udb, t.factsNS())
+	facts := ListMemoryFacts(t.memStore(), t.factsNS())
 	var matched []string
 	for _, f := range facts {
 		if GraphEntityMentionedIn(e, f.Note) {
@@ -99,7 +99,7 @@ func (t *chatTurn) entityRelatedFacts(e GraphEntity) string {
 // when the passages name no known entity.
 func (t *chatTurn) passageRelatedGraph(text string) string {
 	ns := t.factsNS()
-	ents := GraphEntitiesMentionedIn(t.udb, ns, text, 3)
+	ents := GraphEntitiesMentionedIn(t.memStore(), ns, text, 3)
 	if len(ents) == 0 {
 		return ""
 	}
@@ -107,7 +107,7 @@ func (t *chatTurn) passageRelatedGraph(text string) string {
 	b.WriteString("## Related graph relationships\n")
 	b.WriteString("Structured relationships you've recorded about entities named in these passages.\n")
 	for _, e := range ents {
-		b.WriteString(renderGraphRecall(t.udb, ns, e, 1))
+		b.WriteString(renderGraphRecall(t.memStore(), ns, e, 1))
 		b.WriteString("\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
@@ -170,13 +170,13 @@ func (t *chatTurn) linkEntitiesToolDef() AgentToolDef {
 				return "", errors.New("not saved: " + why)
 			}
 			ns := t.factsNS()
-			subj, _ := UpsertGraphEntity(t.udb, ns, stringArg(args, "subject_kind"), subject, nil, attrsArg(args, "subject_attrs"))
-			obj, _ := UpsertGraphEntity(t.udb, ns, stringArg(args, "object_kind"), object, nil, attrsArg(args, "object_attrs"))
+			subj, _ := UpsertGraphEntity(t.memStore(), ns, stringArg(args, "subject_kind"), subject, nil, attrsArg(args, "subject_attrs"))
+			obj, _ := UpsertGraphEntity(t.memStore(), ns, stringArg(args, "object_kind"), object, nil, attrsArg(args, "object_attrs"))
 			if subj.ID == "" || obj.ID == "" {
 				return "", errors.New("failed to record entities")
 			}
 			replace := oArgBool(args, "replace")
-			edge := LinkGraphEdge(t.udb, ns, subj.ID, relation, obj.ID, stringArg(args, "note"), replace)
+			edge := LinkGraphEdge(t.memStore(), ns, subj.ID, relation, obj.ID, stringArg(args, "note"), replace)
 			rel := strings.ReplaceAll(edge.Rel, "_", " ")
 			msg := fmt.Sprintf("Linked: %s → %s → %s.", subj.Name, rel, obj.Name)
 			if replace {
@@ -223,15 +223,15 @@ func (t *chatTurn) forgetGraphToolDef() AgentToolDef {
 				if subject == "" || relation == "" || object == "" {
 					return "", errors.New("to remove a relationship, provide subject, relation, AND object (or pass name alone to delete a whole entity)")
 				}
-				subj, ok := FindGraphEntity(t.udb, ns, subject)
+				subj, ok := FindGraphEntity(t.memStore(), ns, subject)
 				if !ok {
 					return fmt.Sprintf("No entity named %q in your graph memory: nothing to unlink.", subject), nil
 				}
-				obj, ok := FindGraphEntity(t.udb, ns, object)
+				obj, ok := FindGraphEntity(t.memStore(), ns, object)
 				if !ok {
 					return fmt.Sprintf("No entity named %q in your graph memory: nothing to unlink.", object), nil
 				}
-				if !DeleteGraphEdge(t.udb, ns, subj.ID, relation, obj.ID) {
+				if !DeleteGraphEdge(t.memStore(), ns, subj.ID, relation, obj.ID) {
 					return fmt.Sprintf("No %q relationship from %s to %s to remove: it may already be gone.", relation, subj.Name, obj.Name), nil
 				}
 				return fmt.Sprintf("Removed relationship: %s → %s → %s. Both entities remain.", subj.Name, relation, obj.Name), nil
@@ -241,11 +241,11 @@ func (t *chatTurn) forgetGraphToolDef() AgentToolDef {
 			if name == "" {
 				return "", errors.New("provide name (to delete a whole entity) or subject/relation/object (to remove one relationship)")
 			}
-			e, ok := FindGraphEntity(t.udb, ns, name)
+			e, ok := FindGraphEntity(t.memStore(), ns, name)
 			if !ok {
 				return fmt.Sprintf("Nothing in your graph memory named %q: nothing to delete.", name), nil
 			}
-			if !DeleteGraphEntity(t.udb, ns, e.ID) {
+			if !DeleteGraphEntity(t.memStore(), ns, e.ID) {
 				return fmt.Sprintf("Could not delete %q: it may already have been removed.", e.Name), nil
 			}
 			return fmt.Sprintf("Deleted entity %q and all its relationships from graph memory.", e.Name), nil
@@ -273,11 +273,11 @@ func (t *chatTurn) recallAboutToolDef() AgentToolDef {
 				return "", errors.New("name is required")
 			}
 			ns := t.factsNS()
-			e, ok := FindGraphEntity(t.udb, ns, name)
+			e, ok := FindGraphEntity(t.memStore(), ns, name)
 			if !ok {
 				// Offer a few known names so the model can recognize a near-miss
 				// instead of concluding it knows nothing.
-				known := ListGraphEntities(t.udb, ns)
+				known := ListGraphEntities(t.memStore(), ns)
 				if len(known) == 0 {
 					return fmt.Sprintf("Nothing in your graph memory about %q (your graph is empty). Record relationships with link_entities as you learn them.", name), nil
 				}
@@ -297,7 +297,7 @@ func (t *chatTurn) recallAboutToolDef() AgentToolDef {
 			if depth > 2 {
 				depth = 2
 			}
-			out := renderGraphRecall(t.udb, ns, e, depth)
+			out := renderGraphRecall(t.memStore(), ns, e, depth)
 			// Graph → Explicit bridge: fold in the flat facts that name this
 			// entity, so a focused recall surfaces them without scanning the
 			// whole always-on fact block.

@@ -294,17 +294,17 @@ func topPromotable(hits []SearchHit, promote float64, max int, keysOut map[strin
 // companies were doing answered that one was private, from training, while the
 // graph, one link from the person, recorded its stock listing.
 func (t *chatTurn) graphBridgeHints(userMsg string, max int) []recallHint {
-	if t == nil || t.udb == nil || max <= 0 {
+	if t == nil || t.memStore() == nil || max <= 0 {
 		return nil
 	}
 	ns := t.factsNS()
-	mentioned := GraphEntitiesMentionedIn(t.udb, ns, userMsg, max*2)
+	mentioned := GraphEntitiesMentionedIn(t.memStore(), ns, userMsg, max*2)
 	if len(mentioned) == 0 {
 		return nil
 	}
 	var out []recallHint
 	for _, e := range mentioned {
-		facts := graphFactLines(t.udb, ns, e, recallGraphFacts, recallGraphNeighbors)
+		facts := graphFactLines(t.memStore(), ns, e, recallGraphFacts, recallGraphNeighbors)
 		if len(facts) == 0 {
 			continue // nothing recorded worth carrying
 		}

@@ -221,3 +221,62 @@ func (appTestWhoami) RunWithSession(_ map[string]any, sess *ToolSession) (string
 }
 
 func init() { RegisterChatTool(appTestWhoami{}) }
+
+// Everyone using a shared app has their own memory of its agent. What Bob
+// tells it lands in his copy, the one the app's chat keeps for him, never in
+// the owner's, and a run for Cara or for the owner does not hear it. The run
+// itself stays the owner's. Before, every person's facts pooled into the
+// owner's memory and each read back the others' (a PIN told to the app by
+// one person was recalled for the next).
+func TestAnAppsAgentRemembersEachPersonApart(t *testing.T) {
+	SetWorkspacesDir(t.TempDir())
+	t.Cleanup(func() { SetWorkspacesDir("") })
+	df := newDispatchFixture(t,
+		FakeTurn{ToolCalls: []ToolCall{{ID: "m1", Name: "remember", Args: map[string]any{
+			"content": "Bob's dog is called Biscuit.", "pin": true, "origin": "told", "domain": "self"}}}},
+		FakeTurn{Content: "OK.", Repeat: true})
+	ns := factsNamespace(df.agent.ID)
+	knows := func(user string) bool {
+		for _, f := range ListMemoryFacts(UserDB(df.app.DB, user), ns) {
+			if strings.Contains(f.Note, "Biscuit") {
+				return true
+			}
+		}
+		return false
+	}
+	if _, _, _, err := df.app.AppAgentRun(context.Background(), "u", "bob", "studio", df.agent.ID, "", "Remember that my dog is Biscuit.", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if !knows("bob") {
+		t.Error("what bob told the app's agent is not in his own copy of its memory")
+	}
+	if knows("u") {
+		t.Error("what bob told the app's agent went into the owner's memory")
+	}
+	for _, who := range []string{"cara", "u"} {
+		from := df.llm.Calls()
+		if _, _, _, err := df.app.AppAgentRun(context.Background(), "u", who, "studio", df.agent.ID, "", "What is my dog called?", t.TempDir()); err != nil {
+			t.Fatal(err)
+		}
+		for i := from; i < df.llm.Calls(); i++ {
+			if strings.Contains(df.llm.Config(i).SystemPrompt+df.llm.Prompt(i), "Biscuit") {
+				t.Errorf("a run for %s was shown what bob told the app's agent", who)
+			}
+		}
+	}
+}
+
+// The person an app's run remembers for keeps it in a dispatch session of its
+// own, and only when they are not the one the run is for already.
+func TestAnAppsRunForSomeoneElseHasItsOwnSession(t *testing.T) {
+	ctx := withAppMemoryPerson(context.Background(), "bob")
+	if got := appMemorySessSuffix(ctx, "u"); got != ":for:bob" {
+		t.Errorf("suffix for bob's run on u's account = %q", got)
+	}
+	if got := appMemorySessSuffix(ctx, "bob"); got != "" {
+		t.Errorf("a run already bob's got a suffix %q", got)
+	}
+	if got := appMemorySessSuffix(context.Background(), "u"); got != "" {
+		t.Errorf("an ordinary run got a suffix %q", got)
+	}
+}

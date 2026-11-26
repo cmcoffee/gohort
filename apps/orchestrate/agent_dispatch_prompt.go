@@ -29,18 +29,31 @@ func dispatchPriorReports(target AgentRecord, sessID string, runtimeDB Database)
 // Single source of truth so adding a prompt block (as custom-tools just did)
 // can't get appended to one dispatch site and forgotten on the other.
 func dispatchSystemPrompt(ctx context.Context, target AgentRecord, subFacts []MemoryFact, availableBlock, customToolPrompt, sessID string, runtimeDB Database, user string, surface promptSurface) string {
+	return dispatchSystemPromptMem(ctx, target, subFacts, availableBlock, customToolPrompt, sessID, runtimeDB, runtimeDB, user, surface)
+}
+
+// dispatchSystemPromptMem is dispatchSystemPrompt for a run whose memory is
+// memDB's, which differs from runtimeDB on an app's run for someone other
+// than its owner (memory_scope.go rememberFor): the Working notes are that
+// person's, and the owner's Cortex feed is left out. Everything else (skills,
+// capability guidance) is the run's own.
+func dispatchSystemPromptMem(ctx context.Context, target AgentRecord, subFacts []MemoryFact, availableBlock, customToolPrompt, sessID string, runtimeDB, memDB Database, user string, surface promptSurface) string {
+	if memDB == nil {
+		memDB = runtimeDB
+	}
+	forSomeoneElse := memDB != runtimeDB
 	// The agent's own Working notes, unless this run is a scheduled fire that
 	// carries the TASK's notes instead. Two always-in-prompt scratchpads with
 	// no rule for choosing between them is how running state lands in the wrong
 	// one; for the duration of a fire there is exactly one. See task_notes.go.
-	agentNotes := agentOperatingNotes(runtimeDB, target)
+	agentNotes := agentOperatingNotes(memDB, target)
 	if agentNotesSuppressed(ctx) {
 		agentNotes = OperatingNotes{}
 	}
 	sysPrompt := prependAgentContext(gatedPersonaOn(target, target.OrchestratorPrompt, surface), target, subFacts, agentNotes)
 	sysPrompt += availableBlock
 	sysPrompt += customToolPrompt
-	if target.Cortex && sessID != cortexSessionID(target.ID) {
+	if target.Cortex && sessID != cortexSessionID(target.ID) && !forSomeoneElse {
 		sysPrompt += cortexContextBlock(runtimeDB, target.ID)
 	}
 	// Same per-agent capability guidance the web turn gets, so a capability

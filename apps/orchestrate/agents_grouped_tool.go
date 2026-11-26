@@ -1485,11 +1485,15 @@ func (ar *agentsRun) buildTurn() {
 	// queue) stay nil — the bound tools that need them aren't
 	// added to the sub-agent's catalog anyway.
 	ar.subTurn = &chatTurn{
-		app:    t.app,
-		agent:  ar.target,
-		user:   t.user,
-		udb:    t.udb,
-		askVia: t.chatAsker(), // the calling turn's question card, see chatTurn.askVia
+		app:   t.app,
+		agent: ar.target,
+		user:  t.user,
+		udb:   t.udb,
+		// Remembers where the caller does (memory_scope.go memName): an app
+		// agent's hand-off on someone else's behalf keeps to their copy.
+		memUser: t.memUser,
+		memDB:   t.memDB,
+		askVia:  t.chatAsker(), // the calling turn's question card, see chatTurn.askVia
 		// The caller's ask marks bind the run it hands over (ask_first.go).
 		askChain:        t.delegatedAskChain(),
 		askConversation: t.conversation(),
@@ -1633,7 +1637,7 @@ func (ar *agentsRun) buildPrompt() {
 	// the target's, which is the wrong agent's tool list to be stripping a
 	// target's persona sections against; gatedPersonaFor reads the target.
 	ar.subFacts = ar.subTurn.facts() // honours the Explicit Memory switch, as a web turn's read does
-	ar.sysPrompt = dispatchSystemPrompt(t.ctx, ar.target, ar.subFacts, ar.subTurn.dispatchContextBlocks(), ar.customToolPrompt, ar.subSessID, t.udb, t.user, surfaceUnattended)
+	ar.sysPrompt = dispatchSystemPromptMem(t.ctx, ar.target, ar.subFacts, ar.subTurn.dispatchContextBlocks(), ar.customToolPrompt, ar.subSessID, t.udb, ar.subTurn.memStore(), t.user, surfaceUnattended)
 }
 
 func (ar *agentsRun) buildMessages() bool {

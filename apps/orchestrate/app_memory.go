@@ -64,7 +64,7 @@ func (t *chatTurn) appMemoryWriteRefusal() string {
 	switch {
 	case spec.Memory == "off":
 		return fmt.Sprintf("the app %q keeps no memory of the people using it: say what you would have remembered instead of saving it", chFirst(spec.Name, spec.Slug))
-	case spec.Memory == "on" && applocal.AppMemoryOptedOut(t.udb, spec.Owner, spec.Slug):
+	case spec.Memory == "on" && applocal.AppMemoryOptedOut(t.memStore(), spec.Owner, spec.Slug):
 		return fmt.Sprintf("this person asked the app %q not to remember them: nothing new is saved about them, so do not save it, and do not ask them to undo their choice", chFirst(spec.Name, spec.Slug))
 	}
 	return ""

@@ -107,14 +107,14 @@ func (t *chatTurn) poolPrefix() string {
 func (t *chatTurn) findingTarget() (user, by, note string) {
 	owner := t.poolOwner()
 	if owner == "" {
-		return t.user, "", ""
+		return t.memName(), "", ""
 	}
-	if n := poolContributionsToday(owner, t.agent.ID, t.user, time.Now()); n >= poolDailyCap {
-		Log("[orchestrate.memory.pool] user=%q agent=%q reached the daily cap of %d pooled findings; saving to their own copy", t.user, t.agent.ID, poolDailyCap)
+	if n := poolContributionsToday(owner, t.agent.ID, t.memName(), time.Now()); n >= poolDailyCap {
+		Log("[orchestrate.memory.pool] user=%q agent=%q reached the daily cap of %d pooled findings; saving to their own copy", t.memName(), t.agent.ID, poolDailyCap)
 		t.tellOwnerCapReached(owner)
-		return t.user, "", fmt.Sprintf(" This one is saved to your own memory only: you have added %d findings to what everyone using this agent shares today, which is the most in a day.", poolDailyCap)
+		return t.memName(), "", fmt.Sprintf(" This one is saved to your own memory only: you have added %d findings to what everyone using this agent shares today, which is the most in a day.", poolDailyCap)
 	}
-	return owner, t.user, ""
+	return owner, t.memName(), ""
 }
 
 // poolContributionsToday counts the findings by has added to owner's pool for
@@ -158,7 +158,7 @@ func markFindingBy(reportID, by string) {
 // owner's are left plain.
 func (t *chatTurn) labelPoolHits(hits []SearchHit) []SearchHit {
 	for i, h := range hits {
-		if h.By != "" && h.By != t.user {
+		if h.By != "" && h.By != t.memName() {
 			hits[i].Text = poolLabel(h.By) + h.Text
 		}
 	}
@@ -194,7 +194,7 @@ func (t *chatTurn) inPool(c EmbeddedChunk) bool {
 // pooled agent they do not manage: what it learns is shared, but their pinned
 // notes are not.
 func (t *chatTurn) pinnedNoteStaysYours() string {
-	if t.poolOwner() == "" || managesPool(t.agent, t.user) {
+	if t.poolOwner() == "" || managesPool(t.agent, t.memName()) {
 		return ""
 	}
 	return " This note is yours only: what this agent learns is shared with everyone who uses it, but notes you pin stay with you."
@@ -210,10 +210,10 @@ func (t *chatTurn) tellOwnerCapReached(owner string) {
 	name := chFirst(t.agent.Name, t.agent.ID)
 	n := notices.Notice{
 		Agent: t.agent.ID, Kind: notices.KindReport,
-		Title: t.user + " reached the day's limit on what they add to " + name,
+		Title: t.memName() + " reached the day's limit on what they add to " + name,
 		Body: fmt.Sprintf("%s has added %d findings in a day to what %s has learned from everyone who uses it. "+
 			"Anything more today is saved to their own memory only. A run stuck in a loop is the usual cause; "+
-			"you can see and remove what they added in the agent's Memory window.", t.user, poolDailyCap, name),
+			"you can see and remove what they added in the agent's Memory window.", t.memName(), poolDailyCap, name),
 	}
 	if t.app != nil {
 		t.app.notify(owner, n)
@@ -456,5 +456,5 @@ func (t *chatTurn) keepPoolRemoval(chunks []EmbeddedChunk) {
 	if t == nil || t.app == nil {
 		return
 	}
-	keepPoolRemoval(t.app.DB, t.agent, t.user, findingWhat(chunks), chunks)
+	keepPoolRemoval(t.app.DB, t.agent, t.memName(), findingWhat(chunks), chunks)
 }

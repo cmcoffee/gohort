@@ -439,7 +439,7 @@ func (t *chatTurn) facts() []MemoryFact {
 	// The owner's own saved facts reach a stranger on a channel only when the
 	// owner shares them (memory_scope.go): the run is the owner's account.
 	if t.ownLayerShared(defaultShareNotes) {
-		own = append(own, ListMemoryFacts(t.udb, t.factsNS())...)
+		own = append(own, ListMemoryFacts(t.memStore(), t.factsNS())...)
 	}
 	// The owner's saved notes, underneath, when they turned that on. This is
 	// the one layer that has never travelled, so it is the one switch that

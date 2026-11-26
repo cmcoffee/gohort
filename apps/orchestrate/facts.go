@@ -106,7 +106,7 @@ func (t *chatTurn) storeFactNote(note string, domain ClaimDomain, origin MemSour
 	// ("moved to Austin") supersedes the stale one instead of coexisting as
 	// a contradiction, and (b) in chatbot mode the relevance gate rejects
 	// ephemeral chatter before it bloats the always-in-prompt block.
-	res := StoreMemoryFactP(t.udb, t.factsNS(), note, FactWritePolicy{
+	res := StoreMemoryFactP(t.memStore(), t.factsNS(), note, FactWritePolicy{
 		Mode: t.agent.MemoryMode,
 		Chat: t.app.WorkerChat,
 		// The model authored this note from the session, not a human directly and

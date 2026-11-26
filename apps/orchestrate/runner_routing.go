@@ -287,7 +287,11 @@ func (t *chatTurn) frameworkConversationalTools(sess *ToolSession) []AgentToolDe
 	if t.agent.EnableNotes {
 		out = append(out, t.updateNotesToolDef())
 	}
-	out = append(out, cortexDeliverableTools(t.udb, t.agent.ID, t.datedText)...) // file_deliverable + note_to_cortex; nil for non-cortex
+	// Not on a run that remembers for someone else (memName): the feed is the
+	// owner's, and an app's run for another person neither writes nor reads it.
+	if t.memUser == "" {
+		out = append(out, cortexDeliverableTools(t.udb, t.agent.ID, t.datedText)...) // file_deliverable + note_to_cortex; nil for non-cortex
+	}
 	// (send_to_builder removed — agents reach Builder by DIRECT dispatch
 	// (agents action="run", agent="builder") and iterate with it in-thread, rather
 	// than handing the user a one-click link into a separate Builder session.)

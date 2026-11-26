@@ -509,6 +509,8 @@ func (T *OrchestrateApp) buildDispatchTurnExtrasWithOwner(ctx context.Context, t
 		changeThread: subSess.ChatSessionID,
 		sentBy:       subSess.DispatchParentAgentID,
 	}
+	// An app's run for someone other than its owner remembers in their copy.
+	subTurn.rememberFor(ctx)
 	// Intent-aware catalog assembly (Tier-1 tool elevation): the caller
 	// stamps the turn's driving text on the session it built.
 	subTurn.intentText = subSess.IntentText
@@ -749,6 +751,16 @@ type syncDispatch struct {
 	retErr error
 }
 
+// priorReports is the standing activity the judge reads this run was shown:
+// none on a run that remembers for someone else, whose prompt left the
+// owner's feed out (dispatchSystemPromptMem).
+func (sd *syncDispatch) priorReports() []string {
+	if sd.subTurn != nil && sd.subTurn.memUser != "" {
+		return nil
+	}
+	return dispatchPriorReports(sd.target, sd.subSessID, sd.runtimeDB)
+}
+
 // exit records what an early return hands back and tells the driver to take
 // it.
 func (sd *syncDispatch) exit(res syncRunResult, err error) bool {
@@ -827,7 +839,7 @@ func (sd *syncDispatch) buildSession() {
 	T := sd.T
 	message := sd.message
 	via := sd.via
-	sd.subSessID = "external-dispatch:" + sd.runtimeUser + ":" + sd.target.ID
+	sd.subSessID = "external-dispatch:" + sd.runtimeUser + ":" + sd.target.ID + appMemorySessSuffix(sd.ctx, sd.runtimeUser)
 	sd.subSess = &ToolSession{
 		LLM:           T.LLM,
 		LeadLLM:       T.LeadLLM,
@@ -1056,7 +1068,7 @@ func (sd *syncDispatch) buildPrompt() {
 	if !sd.isPhantomDispatch {
 		sd.subFacts = sd.subTurn.facts()
 	}
-	sd.sysPrompt = dispatchSystemPrompt(sd.ctx, sd.target, sd.subFacts, sd.availableBlock, sd.customToolPrompt, sd.subSessID, sd.runtimeDB, sd.runtimeUser, surfaceUnattended)
+	sd.sysPrompt = dispatchSystemPromptMem(sd.ctx, sd.target, sd.subFacts, sd.availableBlock, sd.customToolPrompt, sd.subSessID, sd.runtimeDB, sd.subTurn.memStore(), sd.runtimeUser, surfaceUnattended)
 	// Only Builder reads the delegated marker (to skip its intake/confirm
 	// workflow); other agents ignore it. ask_user / approvals are already
 	// framework-gated off the dispatch path, so we don't add the marker for
@@ -1165,7 +1177,7 @@ func (sd *syncDispatch) configureLoop() {
 		// (lead_review.go).
 		TurnReview:   sd.subTurn.leadReviewer(sd.ctx),
 		Consult:      sd.subTurn.leadConsult(),
-		PriorReports: func() []string { return dispatchPriorReports(sd.target, sd.subSessID, sd.runtimeDB) },
+		PriorReports: sd.priorReports,
 		FinishCheck:  sd.buildCheck.finishCheck(),
 		FinishUnmet:  sd.buildCheck.finishUnmet(),
 		// And whether the reply KNOWS what it asserts. This site had the claim
@@ -1846,7 +1858,7 @@ func (cr *continuingRun) buildSession() {
 	run := cr.run
 	T := cr.T
 	if cr.subSessionID == "" {
-		cr.subSessionID = "external-dispatch:" + cr.runtimeUser + ":" + cr.target.ID
+		cr.subSessionID = "external-dispatch:" + cr.runtimeUser + ":" + cr.target.ID + appMemorySessSuffix(cr.ctx, cr.runtimeUser)
 	}
 	cr.subSess = &ToolSession{
 		LLM:                T.LLM,
@@ -2099,7 +2111,7 @@ func (cr *continuingRun) buildPrompt() {
 	if !cr.isPhantomDispatch {
 		cr.subFacts = cr.subTurn.facts()
 	}
-	cr.sysPrompt = dispatchSystemPrompt(cr.ctx, cr.target, cr.subFacts, cr.availableBlock, cr.customToolPrompt, cr.subSessionID, cr.runtimeDB, cr.runtimeUser, surfaceForRun(run))
+	cr.sysPrompt = dispatchSystemPromptMem(cr.ctx, cr.target, cr.subFacts, cr.availableBlock, cr.customToolPrompt, cr.subSessionID, cr.runtimeDB, cr.subTurn.memStore(), cr.runtimeUser, surfaceForRun(run))
 	// The third-party doctrine goes in the SYSTEM prompt, not on every message.
 	// It names nobody, so the text is byte-identical turn after turn and caches
 	// for the life of the thread; the volatile half — which of them is writing
