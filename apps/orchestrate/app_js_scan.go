@@ -25,6 +25,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/cmcoffee/gohort/core/apppage"
 )
 
 // jsMaskLiterals returns a copy of src with the same LENGTH and the same line
@@ -596,6 +598,17 @@ var (
 	jsThenStartRE  = regexp.MustCompile(`(?s)\bapp\.(?:action|ask)\s*\([^;]*?\)\s*\.then\s*\([^;]{0,600}?\bapp\.action\s*\(`)
 	jsLoopStartRE  = regexp.MustCompile(`(?s)(?:\bfor\s*\(|\bwhile\s*\(|\.forEach\s*\(\s*async\b)[^}]{0,400}?\bawait\s+(?:window\.)?app\.action\s*\(`)
 )
+
+// jsPageNotes is verify's advice on a page's scripts, one line each: work
+// that outlives the page (apppage.Work), and what it keeps for a next visit
+// when every open starts fresh (apppage.KeepsInLocalStorage).
+func jsPageNotes(html string) []string {
+	out := jsWorkNotes(html)
+	if apppage.KeepsInLocalStorage(html) {
+		out = append(out, "NOTE the page keeps something in localStorage for a next visit, and every open of an app starts fresh, a reload included: it is gone when this visit ends. To let the person carry on where they left off, save it with app.state.set(key, value) and on load read it with app.state.get(key) and offer it.")
+	}
+	return out
+}
 
 // jsWorkNotes is what verify notes about it, one line each.
 func jsWorkNotes(html string) []string {

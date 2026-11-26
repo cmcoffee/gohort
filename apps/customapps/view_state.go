@@ -21,8 +21,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path"
+	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/apppage"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/ui"
@@ -196,3 +199,62 @@ func viewSection(appdb Database, spec AppSpec, base string) *ui.Section {
 		Body:     ui.Toolbar{Actions: []ui.ToolbarAction{{Label: "Clear", Method: "GET", URL: base + "/_view/reset"}}},
 	}
 }
+
+// keepsBetweenVisits reports whether the app's own scripts (its page, and
+// the script and page files it keeps as assets) still keep something in
+// localStorage for a next visit and never use app.state: an app written
+// before every open started fresh, which now forgets where it was left.
+// My Apps says so to its owner, until it is changed.
+func keepsBetweenVisits(spec AppSpec) bool {
+	var b strings.Builder
+	// The page's text, not its JSON: stored, "<script>" is
+	// "\u003cscript\u003e", which runs a letter into the name looked for.
+	pageStrings(spec.Page, &b)
+	pageStrings(spec.UserPage, &b)
+	names, _ := ListAppAssets(spec.Owner, spec.Slug)
+	for _, name := range names {
+		switch strings.ToLower(path.Ext(name)) {
+		case ".js", ".mjs", ".html", ".htm":
+			if data, _, err := ReadAppAsset(spec.Owner, spec.Slug, name); err == nil {
+				b.WriteString("\n")
+				b.Write(data)
+			}
+		}
+	}
+	return apppage.KeepsInLocalStorage(b.String())
+}
+
+// pageStrings writes every string in a page's JSON to b, a line each.
+func pageStrings(page json.RawMessage, b *strings.Builder) {
+	var v any
+	if len(page) == 0 || json.Unmarshal(page, &v) != nil {
+		return
+	}
+	var walk func(any)
+	walk = func(x any) {
+		switch t := x.(type) {
+		case string:
+			b.WriteString(t + "\n")
+		case map[string]any:
+			for _, c := range t {
+				walk(c)
+			}
+		case []any:
+			for _, c := range t {
+				walk(c)
+			}
+		}
+	}
+	walk(v)
+}
+
+const (
+	// freshStartNote is My Apps' note on such an app.
+	freshStartNote = "opens fresh now: Fix with Builder has it offer to carry on where you left off"
+	// freshStartChange is what Fix with Builder asks for.
+	freshStartChange = "Every open of an app now starts fresh, a reload included: localStorage lasts one visit. " +
+		"This app keeps where the person was in localStorage, so it now forgets it. " +
+		"Move what would let them carry on (the step, tab or item they were on, an unsent draft) to app.state.set, " +
+		"and on load read it with app.state.get and offer it (\"Continue where you left off?\") rather than restoring it unasked. " +
+		"Keep localStorage only for what matters within one visit, or drop it."
+)

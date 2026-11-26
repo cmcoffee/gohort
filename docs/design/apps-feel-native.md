@@ -309,3 +309,11 @@ app of its own; to get back to where someone was, the app has to offer it.
   follows the person.
 - **No migration.** What was saved stays where it was; nothing restores it
   but an app asking.
+- **Apps written before this are named (0.9.703).** My Apps notes each of the
+  owner's apps whose own scripts (its page, and its .js and .html files)
+  still write localStorage and never use `app.state`: "opens fresh now".
+  Its Fix with Builder opens Builder on the app with the change already
+  asked: move what lets the person carry on to `app.state` and offer it on
+  load. Builder's verify notes the same on any page it checks
+  (`apppage.KeepsInLocalStorage`), so new work does not repeat it. Read
+  only from the app's own files; nothing is stored about it.

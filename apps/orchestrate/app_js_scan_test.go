@@ -600,3 +600,18 @@ func TestVerifyNotesWorkThePageWouldLoseOnLeaving(t *testing.T) {
 		}
 	}
 }
+
+// Verify tells a page that keeps its place in localStorage that it now opens
+// fresh, and says nothing to one that reads it only or uses app.state.
+func TestVerifyNotesAPageThatKeepsItsPlaceInLocalStorage(t *testing.T) {
+	for html, want := range map[string]bool{
+		`<script>localStorage.setItem("step", s)</script>`:                           true,
+		`<script>var s = localStorage.getItem("step")</script>`:                      false,
+		`<script>localStorage.setItem("step", s); app.state.set("step", s)</script>`: false,
+	} {
+		got := strings.Contains(strings.Join(jsPageNotes(html), "\n"), "app.state.set(key, value)")
+		if got != want {
+			t.Errorf("%s: noted %v, want %v", html, got, want)
+		}
+	}
+}

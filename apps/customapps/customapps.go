@@ -34,6 +34,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"regexp"
 	"slices"
 	"sort"
@@ -729,6 +730,9 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 					{Type: "button", Label: "Connect", Method: "GET", PostTo: "{slug}/_settings", OnlyIf: "needs_answers"},
 					// What its scripts did when they ran (runs.go). Yours only.
 					{Type: "button", Label: "Runs", Method: "GET", PostTo: "{slug}/_runs", OnlyIf: "has_runs", HideIf: "disabled"},
+					// An app that kept its place in localStorage, which now
+					// opens fresh: Builder, with the change already asked.
+					{Type: "button", Label: "Fix with Builder", Method: "GET", PostTo: changeURL + "&intake.change=" + url.QueryEscape(freshStartChange), OnlyIf: "fresh_start", HideIf: "disabled"},
 					// Builder, pointed at this app. Yours only: Builder changes
 					// what you own.
 					{Type: "button", Label: "Change", Method: "GET", PostTo: changeURL, OnlyIf: "can_change", HideIf: "disabled"},
@@ -1254,6 +1258,16 @@ func (T *CustomApps) handleAppsList(c *jsonapi.Call) (any, error) {
 				status = seg
 			} else {
 				status += " - " + seg
+			}
+		}
+		// Written before every open started fresh: it kept where you were
+		// in localStorage, and opens fresh now until it is changed.
+		if keepsBetweenVisits(s) {
+			row["fresh_start"] = "1"
+			if row["note"] != "" {
+				row["note"] += " - " + freshStartNote
+			} else {
+				row["note"] = freshStartNote
 			}
 		}
 		row["status"] = status
