@@ -28,6 +28,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/appreach"
 	"github.com/cmcoffee/gohort/core/internal/mcpclient"
 )
 
@@ -1701,6 +1702,16 @@ func (t *mcpProxyTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	//
 	// sess.Context() is nil-safe and falls back to Background, so a caller
 	// without a session gets exactly the old behavior.
+	// In an app's agent or pipeline run, a server that signs in per person
+	// answers on the owner's sign-in, theirs to lend: the app's choice for it
+	// holds here as on a credential (core/appreach).
+	if cfg, ok := t.mgr.Load(t.server); ok && cfg.AuthMode == MCPAuthOAuth {
+		if r, ok := appreach.From(sess.Context()); ok {
+			if err := r.MCPRefusal(t.server); err != nil {
+				return "", err
+			}
+		}
+	}
 	ctx, cancel := context.WithTimeout(sess.Context(), mcpCallTimeout())
 	defer cancel()
 	out, err := t.mgr.callToolForUser(ctx, user, t.server, t.rawName, args)

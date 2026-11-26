@@ -22,6 +22,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/gohort/core/appreach"
 )
 
 type dispatchLineageKey struct{}
@@ -71,9 +72,20 @@ func carryDispatchLineage(from, to context.Context) context.Context {
 // the way out from under the agent above it.
 func carryHandOff(from, to context.Context) context.Context {
 	to = carryNonOwnerRequester(from, to)
+	to = carryAppReach(from, to)
 	to = carryDispatchLineage(from, to)
 	if isUnattended(from) {
 		to = withUnattended(to)
+	}
+	return to
+}
+
+// carryAppReach puts from's app credential rules on to (core/appreach): an
+// app's agent run for someone else that hands work to a context of its own
+// keeps meeting the app's choices there, as it keeps the non-owner mark.
+func carryAppReach(from, to context.Context) context.Context {
+	if r, ok := appreach.From(from); ok {
+		return appreach.With(to, r)
 	}
 	return to
 }

@@ -674,12 +674,13 @@ func (s *ToolSession) LookupTempTool(name string) *TempTool {
 
 // CredentialDenied reports whether the running agent is barred from
 // dispatching through the named SecureAPI credential (its scope pill turned
-// this credential OFF for the agent). nil-safe; false when unrestricted.
+// this credential OFF for the agent), or an app's run is (the app keeps it
+// out, sessAppRules). nil-safe; false when unrestricted.
 func (s *ToolSession) CredentialDenied(name string) bool {
-	if s == nil || len(s.DeniedCredentials) == 0 {
+	if s == nil {
 		return false
 	}
-	return s.DeniedCredentials[name]
+	return s.DeniedCredentials[name] || sessAppRules(s).IsOff(name)
 }
 
 // RemoveTempTool deletes a temp tool from the session by name. Returns

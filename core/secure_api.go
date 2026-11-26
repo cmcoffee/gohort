@@ -44,6 +44,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/appreach"
 	"github.com/cmcoffee/gohort/core/costledger"
 	"github.com/cmcoffee/gohort/core/notices"
 	"github.com/cmcoffee/gohort/core/peershare"
@@ -3027,18 +3028,14 @@ func (ac *apiCall) allowed() bool {
 		refused := s.refuse(c, sess, ac.method, ac.rawURL, fmt.Sprintf(
 			"%s was not sent: in this app, %q is used with your own account, not %s's. Connect yours under Extensions > Connected accounts (%q, from %s), and it can be made",
 			ac.method, c.Name, c.Owner, c.Name, c.Owner))
-		if sess != nil && sess.CredentialConnectPrompt != nil {
-			sess.CredentialConnectPrompt(c.Owner, c.Name)
-		}
+		sessConnectNeeded(sess, c.Owner, c.Name)
 		return ac.exit("", credentialConnectError{owner: c.Owner, name: c.Name, err: refused})
 	}
 	if readOnlyForUser(c, user, sessAgentID(sess)) && !ac.recipientOwn && !(credentialCallReads(c, ac.method, ac.rawURL) && !bodyOverridesMethod(ac.method, ac.body)) {
 		refused := s.refuse(c, sess, ac.method, ac.rawURL, fmt.Sprintf(
 			"%s was not sent: %s lent you %q for reads, and this call writes. A write goes out as you, with your own account: connect yours under Extensions > Connected accounts (%q, lent by %s), and it can be made. Until then, say what it would write",
 			ac.method, c.Owner, c.Name, c.Name, c.Owner))
-		if sess != nil && sess.CredentialConnectPrompt != nil {
-			sess.CredentialConnectPrompt(c.Owner, c.Name)
-		}
+		sessConnectNeeded(sess, c.Owner, c.Name)
 		return ac.exit("", credentialConnectError{owner: c.Owner, name: c.Name, err: refused})
 	}
 
@@ -4018,8 +4015,8 @@ func (s *SecureAPI) DispatchToolCallArgs(sess *ToolSession, credName string, arg
 	if refusal := sess.CheckRunRefusal(method); refusal != "" {
 		return "", errors.New(refusal)
 	}
-	if sess != nil && sess.CredentialUsed != nil && c.Owner != "" && c.Owner == sess.Username {
-		sess.CredentialUsed(c.Name)
+	if used := sessAppRules(sess).Used; used != nil && c.Owner != "" && c.Owner == sess.Username {
+		used(c.Name)
 	}
 	return s.dispatch(c, args, sess)
 }
@@ -4046,13 +4043,44 @@ func sessUsername(sess *ToolSession) string {
 	return sess.Username
 }
 
+// sessAppRules are the app's credential rules for sess: set on the session
+// itself by an app's script (CredentialPerson, CredentialLend,
+// CredentialUsed), else carried on its context by the agent or pipeline the
+// script ran (core/appreach), so every session that run makes, delegates
+// included, follows them. Empty outside an app's run.
+func sessAppRules(sess *ToolSession) appreach.Rules {
+	if sess == nil {
+		return appreach.Rules{}
+	}
+	if strings.TrimSpace(sess.CredentialPerson) != "" || sess.CredentialLend != nil || sess.CredentialUsed != nil {
+		return appreach.Rules{Person: sess.CredentialPerson, Lend: sess.CredentialLend, Used: sess.CredentialUsed}
+	}
+	r, _ := appreach.From(sess.Context())
+	return r
+}
+
+// sessConnectNeeded tells whoever listens that a call on sess waited on the
+// person's own account for owner's credential name: the session's own prompt
+// (a chat turn's card, an app script's notice), and an app run's rules.
+func sessConnectNeeded(sess *ToolSession, owner, name string) {
+	if sess == nil {
+		return
+	}
+	if sess.CredentialConnectPrompt != nil {
+		sess.CredentialConnectPrompt(owner, name)
+	}
+	if f := sessAppRules(sess).ConnectNeeded; f != nil {
+		f(owner, name)
+	}
+}
+
 // sessAppPerson is the person an app run is for when that is not its owner,
 // or "".
 func sessAppPerson(sess *ToolSession) string {
 	if sess == nil {
 		return ""
 	}
-	p := strings.TrimSpace(sess.CredentialPerson)
+	p := strings.TrimSpace(sessAppRules(sess).Person)
 	if p == "" || p == strings.TrimSpace(sess.Username) {
 		return ""
 	}
@@ -4092,12 +4120,7 @@ func (s *SecureAPI) appLent(sess *ToolSession, name string) (SecureCredential, b
 	if !ok || c.Owner == "" {
 		return SecureCredential{}, false
 	}
-	choice := "read"
-	if sess.CredentialLend != nil {
-		if v := strings.TrimSpace(sess.CredentialLend(name)); v != "" {
-			choice = v
-		}
-	}
+	choice := sessAppRules(sess).Choice(name)
 	c.SharedReadOnly, c.SharedReadWrite = nil, nil
 	c.SharedForAgents, c.SharedWriteForAgents = nil, nil
 	c.appLend = true

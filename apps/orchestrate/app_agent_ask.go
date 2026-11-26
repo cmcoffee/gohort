@@ -104,7 +104,11 @@ func appAskUsage(resp *Response) UsageDiff {
 // Whose run: the owner's, whoever is using the app (appRunAs). What the run
 // returns goes to the owner's script, so a run acting with the person's own
 // accounts handed the owner whatever those accounts could reach: their mail,
-// their files, their connected services. The app's chat section is different
+// their files, their connected services. Its credentials and sign-ins are
+// not the owner's full reach either: the apps host puts the app's rules on
+// ctx (core/appreach), so every session the run makes, delegates included,
+// reaches them as What it reaches lends them to the person using the app.
+// The app's chat section is different
 // and still runs as the person, because its answer goes to them. Nobody is
 // there to approve a tool that stops to ask, so such a call is refused, never
 // assumed.
