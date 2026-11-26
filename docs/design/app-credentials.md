@@ -274,3 +274,28 @@ shared (see "Settled", below), not in data.
   credentials only).
 - **No migration.** Nothing stored changes shape, and with no choice made
   a run reaches the sign-in for reads, as before.
+
+## As built: an app's agent and pipeline runs (0.9.705)
+
+- **The gap.** An agent or pipeline a script runs (`gohort.run_agent`,
+  `run_pipeline`) builds sessions of its own, many of them, delegates
+  included, and none carried the script's `CredentialPerson` or lends. So
+  its tools reached the owner's keys and MCP sign-ins as the owner, writes
+  included, past every choice on What it reaches.
+- **The rules ride on the context.** `core/appreach` (a leaf, so core gains
+  no export) carries `Rules`: the person, the app's choice per credential or
+  sign-in, its keep-outs, the record of use, and the wait for someone's own
+  account. The apps host puts them on the run's context
+  (`withAppReach`, for every run, the owner's included, whose person is
+  empty), the way `appRunAs` puts the non-owner mark, and hand-offs to a
+  context of their own carry them (`carryHandOff`, `carryAppReach`).
+- **Core reads them where it decides.** `sessAppRules`: a session's own
+  fields when set (an app script's), else its context's. Credential
+  resolution, the lent copy, the record of use, the connect notice and
+  `CredentialDenied` all go through it, and the MCP proxy holds a
+  per-person server's sign-in to `Rules.MCPRefusal`, the same rule a
+  script's MCP call meets in `tools/temptool`.
+- **What the person sees.** A write that waits for their own account tells
+  the owner once (as a script's does) and notes it for the app's page.
+- **No migration.** Nothing stored changes.
+

@@ -23,6 +23,7 @@ package customapps
 // person's own sign-in is never behind it (tools/temptool).
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -33,6 +34,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/applocal"
+	"github.com/cmcoffee/gohort/core/appreach"
 	"github.com/cmcoffee/gohort/core/jsonapi"
 	"github.com/cmcoffee/gohort/core/ui"
 	"github.com/cmcoffee/gohort/tools/appscript"
@@ -56,6 +58,35 @@ func withAppCredentials(j *appscript.Job, owner, slug string) {
 	}
 	j.CredentialsOff = applocal.LoadAppCredentials(owner, slug).Off
 	j.CredentialUsed = func(name string) { applocal.NoteAppCredentialUsed(owner, slug, name) }
+}
+
+// withAppReach puts the app's credential rules on the context of an agent or
+// pipeline a script of owner's app slug runs for caller (gohort.run_agent,
+// run_pipeline). That run makes sessions of its own, delegates included,
+// which never saw the script's: it reached the owner's keys and sign-ins as
+// the owner, past What it reaches. On the context, core reads them wherever
+// it decides on a credential (core/appreach), so the agent's calls meet the
+// same choices as the script's: the person's own account first, the owner's
+// as lent, a credential or sign-in the app keeps out reached by no run. Read
+// per call, as a script's are.
+func withAppReach(ctx context.Context, owner, slug, caller string) context.Context {
+	person := strings.TrimSpace(caller)
+	if person == owner {
+		person = ""
+	}
+	r := appreach.Rules{
+		Person: person,
+		Lend:   func(name string) string { return applocal.LoadAppCredentials(owner, slug).Choice(name) },
+		Off:    func(name string) bool { return applocal.LoadAppCredentials(owner, slug).IsOff(name) },
+		Used:   func(name string) { applocal.NoteAppCredentialUsed(owner, slug, name) },
+	}
+	if person != "" {
+		r.ConnectNeeded = func(_, name string) {
+			appscript.TellOwnerConnectNeeded(owner, slug, person, name)
+			noteNeedsAccount(owner, slug, person, name)
+		}
+	}
+	return appreach.With(ctx, r)
 }
 
 // appCredentialNames is the owner's credentials the app names or uses, in

@@ -77,6 +77,8 @@ func delegateToolDef(sess *ToolSession, owner, controllerAgentID string) AgentTo
 				// And who handed THIS run over, so the delegation counts as one
 				// more hop of the same chain (dispatch_lineage.go).
 				dctx = carryDispatchLineage(ctx, dctx)
+				// And the app's credential rules, when this is an app's run.
+				dctx = carryAppReach(ctx, dctx)
 				// And this call's card, so the delegated run's progress
 				// shows on it (dispatch_progress.go).
 				dctx = withToolCard(dctx, toolCardFrom(ctx))

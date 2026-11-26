@@ -9,6 +9,8 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/applocal"
+	"github.com/cmcoffee/gohort/core/appreach"
 	"github.com/cmcoffee/gohort/tools/appscript"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
@@ -104,5 +106,52 @@ func TestRunAgentHandsTheScriptWhatItsAgentMade(t *testing.T) {
 	}
 	if runs, _ := os.ReadDir(filepath.Join(ws, agentFilesFolder)); len(runs) != 1 {
 		t.Errorf("a run that made nothing left a folder: %d folders", len(runs))
+	}
+}
+
+// The agent and pipeline a script runs carry the app's rules on their
+// context, read from What it reaches per call: for someone else, their name
+// and the app's choices; for the owner, no person, the app's keep-outs still.
+// A first use is recorded on the app.
+func TestRunAgentAndPipelineCarryTheAppsRules(t *testing.T) {
+	prevRoot := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = prevRoot })
+	prevAgent, prevPipe := appAgentRun, appPipelineRun
+	t.Cleanup(func() { appAgentRun, appPipelineRun = prevAgent, prevPipe })
+	var seen []appreach.Rules
+	appAgentRun = func(ctx context.Context, spec AppSpec, caller, agent, prompt, filesDir string) (string, []string, float64, error) {
+		r, _ := appreach.From(ctx)
+		seen = append(seen, r)
+		return "ok", nil, 0, nil
+	}
+	appPipelineRun = func(ctx context.Context, spec AppSpec, caller, pipeline, input string) (string, float64, error) {
+		r, _ := appreach.From(ctx)
+		seen = append(seen, r)
+		return "ok", 0, nil
+	}
+	spec := AppSpec{Slug: "game", Owner: "alice", AgentID: "dm"}
+	applocal.UpdateAppCredentials("alice", "game", func(c *applocal.AppCredentials) {
+		c.Lend = map[string]string{"wiki": "withhold"}
+		c.Off = []string{"mcp:atl"}
+	})
+	ctx := context.Background()
+	appscript.AppRunAgent(ctx, spec, "bob", "", "go")
+	appscript.AppRunPipeline(ctx, spec, "bob", "", "go")
+	appscript.AppRunAgent(ctx, spec, "alice", "", "go")
+	if len(seen) != 3 {
+		t.Fatalf("runs seen: %d", len(seen))
+	}
+	for i, r := range seen[:2] {
+		if r.Person != "bob" || r.Choice("wiki") != "withhold" || r.Choice("other") != "read" || !r.IsOff("mcp:atl") || r.ConnectNeeded == nil {
+			t.Errorf("run %d for bob: %+v", i, r)
+		}
+	}
+	if r := seen[2]; r.Person != "" || !r.IsOff("mcp:atl") || r.ConnectNeeded != nil {
+		t.Errorf("the owner's run: %+v", r)
+	}
+	seen[0].Used("wiki")
+	if _, ok := applocal.LoadAppCredentials("alice", "game").Used["wiki"]; !ok {
+		t.Error("a use was not recorded on the app")
 	}
 }

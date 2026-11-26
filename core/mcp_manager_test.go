@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/appreach"
 	"github.com/cmcoffee/gohort/core/internal/mcpclient"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
@@ -455,5 +456,57 @@ func TestMCPReauthWaitDoesNotHoldTheRefreshLock(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("alice's call never returned after the reconnect: the retry deadlocked")
+	}
+}
+
+// In an app's agent run (its rules on the context, core/appreach), a server
+// that signs in per person answers on the owner's sign-in only as the app
+// lends it: for reads in a run for someone else, never once disallowed or
+// kept out of the app, and a reach is heard. A server on the deployment's own
+// connection is not the owner's to lend and is not held to it.
+func TestAnAppsAgentRunReachesTheOwnersMCPSignInAsTheAppLendsIt(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	m := &MCPManager{db: db, conns: map[string]*mcpConn{}, userConns: map[string]*mcpConn{},
+		proxies: map[string]*mcpProxyTool{}, whole: map[string]*mcpServerTool{}, oneTool: map[string]bool{},
+		dialFail: map[string]time.Time{}, oauthPending: map[string]mcpPendingAuth{}}
+	db.Set(mcpServersTable, "reachown", MCPServerConfig{Name: "reachown", URL: "http://127.0.0.1:1/mcp", AuthMode: MCPAuthOAuth, Enabled: true, ExposeTools: true})
+	db.Set(mcpServersTable, "reachdep", MCPServerConfig{Name: "reachdep", URL: "http://127.0.0.1:1/mcp", Enabled: true, ExposeTools: true})
+	if _, ok := m.Load("reachown"); !ok {
+		t.Fatal("the test server did not load")
+	}
+	var used []string
+	lend := map[string]string{}
+	off := map[string]bool{}
+	call := func(server, person string) error {
+		r := appreach.Rules{Person: person,
+			Lend: func(n string) string { return lend[n] },
+			Off:  func(n string) bool { return off[n] },
+			Used: func(n string) { used = append(used, n) }}
+		p := &mcpProxyTool{mgr: m, server: server, rawName: "get_issue", fullName: server + "_get_issue"}
+		_, err := p.RunWithSession(map[string]any{}, &ToolSession{Username: "alice", Ctx: appreach.With(context.Background(), r)})
+		return err
+	}
+	refused := func(err error) bool {
+		return err != nil && (strings.Contains(err.Error(), "someone else uses this app") || strings.Contains(err.Error(), "turned it off"))
+	}
+	// Reached: the call goes on to the connection, which alice has not made.
+	if err := call("reachown", "bob"); refused(err) || len(used) != 1 || used[0] != "mcp:reachown" {
+		t.Errorf("lent for reads: %v, used %v", err, used)
+	}
+	lend["mcp:reachown"] = "withhold"
+	if err := call("reachown", "bob"); !refused(err) {
+		t.Errorf("disallowed, for bob: %v", err)
+	}
+	if err := call("reachown", ""); refused(err) {
+		t.Errorf("disallowed, for her own run: %v", err)
+	}
+	off["mcp:reachown"] = true
+	if err := call("reachown", ""); !refused(err) {
+		t.Errorf("kept out of the app, her own run: %v", err)
+	}
+	lend["mcp:reachdep"], off["mcp:reachdep"] = "withhold", true
+	used = nil
+	if err := call("reachdep", "bob"); refused(err) || len(used) != 0 {
+		t.Errorf("the deployment's server: %v, used %v", err, used)
 	}
 }

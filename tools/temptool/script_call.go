@@ -27,6 +27,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appreach"
 )
 
 // ScriptCallableTool finds the tool named name that user's scripts may call,
@@ -89,9 +90,6 @@ func CallToolForScript(sess *ToolSession, name string, args map[string]any) (str
 		if err := mcpReachRefusal(sess, server); err != nil {
 			return "", err
 		}
-		if sess.CredentialUsed != nil && mcpSignsInPerPerson(server) {
-			sess.CredentialUsed(MCPReachKey(server))
-		}
 		Log("[temptool/script] %s's app calls MCP %s (%s)", sess.Username, name, server)
 		return run.RunWithSession(args, &ToolSession{Username: sess.Username, DB: sess.DB, Ctx: sess.Context()})
 	}
@@ -127,9 +125,8 @@ func scriptMCPTool(name string) (ChatTool, string, bool) {
 
 // MCPReachKey is how an app's credential rules (core/applocal's
 // AppCredentials, a session's CredentialLend and DeniedCredentials) name the
-// owner's sign-in to MCP server: "mcp:<server>", a name no credential has, so
-// one key never means two kinds of thing.
-func MCPReachKey(server string) string { return "mcp:" + server }
+// owner's sign-in to MCP server (appreach.MCPKey).
+func MCPReachKey(server string) string { return appreach.MCPKey(server) }
 
 // ScriptMCPSignIn is the server of MCP tool name when that server signs in
 // per person: the only kind whose sign-in is the owner's to lend from an app.
@@ -149,32 +146,22 @@ func mcpSignsInPerPerson(server string) bool {
 }
 
 // mcpReachRefusal says why an app's script may not reach server on sess, or
-// nil. Only a server that signs in per person is held to anything: the call
-// runs on the owner's sign-in, which the app may keep out altogether (Used by
-// the app off, for every run) or keep from other people's runs (Disallow).
-// For reads, the default, it answers as it always has: a script calls only a
-// tool that never asks first. A choice that is neither reads nor Disallow is
-// not one an MCP sign-in is offered, and is read as Disallow.
+// nil, and records a reach. Only a server that signs in per person is held to
+// anything: the call runs on the owner's sign-in, which the app may keep out
+// altogether or keep from other people's runs (appreach.Rules.MCPRefusal, the
+// rule an app's agent and pipeline runs meet in core too).
 func mcpReachRefusal(sess *ToolSession, server string) error {
 	if !mcpSignsInPerPerson(server) {
 		return nil
 	}
-	key := MCPReachKey(server)
-	if sess.DeniedCredentials[key] {
-		return fmt.Errorf("this app is kept from %s: its owner turned it off for the app", server)
-	}
 	person := strings.TrimSpace(sess.CredentialPerson)
-	if person == "" || person == strings.TrimSpace(sess.Username) {
-		return nil
+	if person == strings.TrimSpace(sess.Username) {
+		person = ""
 	}
-	choice := "read"
-	if sess.CredentialLend != nil {
-		if c := strings.TrimSpace(sess.CredentialLend(key)); c != "" {
-			choice = c
-		}
-	}
-	if choice == "read" {
-		return nil
-	}
-	return fmt.Errorf("%s is not reached when someone else uses this app: its owner keeps their sign-in to it for their own runs", server)
+	return appreach.Rules{
+		Person: person,
+		Lend:   sess.CredentialLend,
+		Off:    func(name string) bool { return sess.DeniedCredentials[name] },
+		Used:   sess.CredentialUsed,
+	}.MCPRefusal(server)
 }

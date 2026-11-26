@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/appreach"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -3429,5 +3430,68 @@ func TestAPersonConnectsTheirOwnKeyForAnAppLend(t *testing.T) {
 	}
 	if got := (*seen)[len(*seen)-1]; got != "GET Bearer bob-key" {
 		t.Errorf("went out as %q", got)
+	}
+}
+
+// An agent or pipeline an app's script runs builds sessions of its own, which
+// carry the app's rules on their context (core/appreach) rather than as
+// fields: a run for bob reaches alice's key as the app lends it, the run's
+// rules hear the use and the write that waits for his own account, a key the
+// app keeps out is reached by no run, hers included, and a session that sets
+// the rules itself (an app script's) goes by its own.
+func TestAnAppsAgentRunMeetsTheAppsRulesFromItsContext(t *testing.T) {
+	srv, seen := appRunTestCred(t)
+	var used, waits []string
+	lend := map[string]string{}
+	off := map[string]bool{}
+	rules := func(person string) appreach.Rules {
+		return appreach.Rules{Person: person,
+			Lend:          func(n string) string { return lend[n] },
+			Off:           func(n string) bool { return off[n] },
+			Used:          func(n string) { used = append(used, n) },
+			ConnectNeeded: func(owner, n string) { waits = append(waits, owner+"/"+n) }}
+	}
+	run := func(person string) *ToolSession {
+		return &ToolSession{Username: "alice", AgentID: "dm", Ctx: appreach.With(context.Background(), rules(person))}
+	}
+	call := func(sess *ToolSession, method string) error {
+		_, err := Secure().DispatchToolCallArgs(sess, "wiki", map[string]any{"url": srv.URL + "/page", "method": method, "body": "{}"})
+		return err
+	}
+	if err := call(run("bob"), "GET"); err != nil {
+		t.Fatalf("a read on her key, lent for reads: %v", err)
+	}
+	if len(used) != 1 || used[0] != "wiki" {
+		t.Errorf("the use was not heard: %v", used)
+	}
+	if err := call(run("bob"), "POST"); err == nil || !strings.Contains(err.Error(), "Connected accounts") {
+		t.Errorf("a write on a key lent for reads: %v", err)
+	}
+	if len(waits) != 1 || waits[0] != "alice/wiki" {
+		t.Errorf("the wait for his own account was not heard: %v", waits)
+	}
+	lend["wiki"] = "withhold"
+	if err := call(run("bob"), "GET"); err == nil {
+		t.Error("a withheld key was reached")
+	}
+	if err := call(run(""), "POST"); err != nil {
+		t.Errorf("her own run of the app was narrowed: %v", err)
+	}
+	// A script's session sets the rules itself, and goes by them.
+	script := run("bob")
+	script.CredentialUsed = func(string) {}
+	if err := call(script, "POST"); err != nil {
+		t.Errorf("a session's own rules were overridden by its context's: %v", err)
+	}
+	off["wiki"] = true
+	if !run("").CredentialDenied("wiki") {
+		t.Error("a key the app keeps out is not denied")
+	}
+	if err := call(run(""), "GET"); err == nil {
+		t.Error("a key the app keeps out was reached by her own run")
+	}
+	want := []string{"GET Bearer alice-key", "POST Bearer alice-key", "POST Bearer alice-key"}
+	if strings.Join(*seen, " | ") != strings.Join(want, " | ") {
+		t.Errorf("what reached the server:\n got %v\nwant %v", *seen, want)
 	}
 }

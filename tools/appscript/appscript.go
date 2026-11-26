@@ -697,7 +697,7 @@ func (j Job) credentialsFor(sess *ToolSession, owner, caller, slug string) {
 	sess.CredentialPerson = caller
 	sess.CredentialLend = j.CredentialLend
 	sess.CredentialConnectPrompt = func(lender, name string) {
-		tellOwnerConnectNeeded(lender, slug, caller, name)
+		TellOwnerConnectNeeded(lender, slug, caller, name)
 		if j.OnConnectNeeded != nil {
 			j.OnConnectNeeded(lender, name)
 		}

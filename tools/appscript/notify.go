@@ -101,11 +101,11 @@ func clipRunes(s string, n int) string {
 	return s
 }
 
-// tellOwnerConnectNeeded tells an app's owner that a person using it could
+// TellOwnerConnectNeeded tells an app's owner that a person using it could
 // not write through one of their credentials, because the app lends it to
 // them for reads: once per person and credential, a repeat folded into a
 // count. It says the two ways out.
-func tellOwnerConnectNeeded(owner, slug, person, cred string) {
+func TellOwnerConnectNeeded(owner, slug, person, cred string) {
 	name := slug
 	if spec, ok := LoadAppSpec(owner, slug); ok && strings.TrimSpace(spec.Name) != "" {
 		name = spec.Name

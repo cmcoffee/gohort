@@ -242,6 +242,7 @@ func init() {
 		if len(prompt) > appPromptMaxBytes {
 			return "", nil, appPromptTooLong
 		}
+		ctx = withAppReach(ctx, spec.Owner, spec.Slug, caller)
 		var files []string
 		text, _, err := appModelCall(appscript.RecordBase(spec, spec.Owner), spec, caller, "run_agent", func() (string, float64, error) {
 			dir, rel, err := agentFilesDir(spec)
@@ -263,6 +264,7 @@ func init() {
 		if len(input) > appPromptMaxBytes {
 			return "", appPromptTooLong
 		}
+		ctx = withAppReach(ctx, spec.Owner, spec.Slug, caller)
 		text, _, err := appModelCall(appscript.RecordBase(spec, spec.Owner), spec, caller, "run_pipeline", func() (string, float64, error) {
 			return appPipelineRun(ctx, spec, caller, pipeline, input)
 		})

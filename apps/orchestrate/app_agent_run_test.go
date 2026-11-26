@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appreach"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -176,9 +177,32 @@ func TestAnAppScriptsAgentRunsAsTheOwner(t *testing.T) {
 	}
 }
 
+// The app's credential rules, put on the run's context by the apps host,
+// reach the sessions the agent's tools run on, so its calls meet the app's
+// choices (core/appreach) and not the owner's full reach.
+func TestAnAppScriptsAgentRunCarriesTheAppsRules(t *testing.T) {
+	SetWorkspacesDir(t.TempDir())
+	t.Cleanup(func() { SetWorkspacesDir("") })
+	appTestWho = appTestWhoSeen{}
+	df := newDispatchFixture(t,
+		FakeTurn{ToolCalls: []ToolCall{{ID: "w1", Name: "apptest_whoami", Args: map[string]any{}}}},
+		FakeTurn{Content: "Done.", Repeat: true})
+	ctx := appreach.With(context.Background(), appreach.Rules{Person: "bob"})
+	if _, _, _, err := df.app.AppAgentRun(ctx, "u", "bob", "studio", df.agent.ID, "", "who are you", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if !appTestWho.ran || appTestWho.user != "u" || appTestWho.person != "bob" {
+		t.Errorf("the tool's session: %+v, want the owner's run carrying bob's rules", appTestWho)
+	}
+	to := carryHandOff(ctx, context.Background())
+	if r, ok := appreach.From(to); !ok || r.Person != "bob" {
+		t.Errorf("a hand-off to a context of its own dropped the rules: %+v %v", r, ok)
+	}
+}
+
 type appTestWhoSeen struct {
 	ran, nonOwner bool
-	user          string
+	user, person  string
 }
 
 var appTestWho appTestWhoSeen
@@ -191,7 +215,8 @@ func (appTestWhoami) Desc() string                       { return "Say who is ru
 func (appTestWhoami) Params() map[string]ToolParam       { return map[string]ToolParam{} }
 func (appTestWhoami) Run(map[string]any) (string, error) { return "", fmt.Errorf("needs a session") }
 func (appTestWhoami) RunWithSession(_ map[string]any, sess *ToolSession) (string, error) {
-	appTestWho = appTestWhoSeen{ran: true, user: sess.Username, nonOwner: nonOwnerRequester(sess.Context())}
+	r, _ := appreach.From(sess.Context())
+	appTestWho = appTestWhoSeen{ran: true, user: sess.Username, nonOwner: nonOwnerRequester(sess.Context()), person: r.Person}
 	return "ok", nil
 }
 
