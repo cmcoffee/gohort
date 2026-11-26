@@ -317,3 +317,6 @@ app of its own; to get back to where someone was, the app has to offer it.
   load. Builder's verify notes the same on any page it checks
   (`apppage.KeepsInLocalStorage`), so new work does not repeat it. Read
   only from the app's own files; nothing is stored about it.
+- **Its maintainers are told too (0.9.708).** A shared app's maintainers
+  can change it through Builder, so their "Shared with you" row carries the
+  same note and Fix with Builder. Someone who only uses the app is not told.

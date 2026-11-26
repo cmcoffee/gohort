@@ -213,6 +213,32 @@ func TestMyAppsNamesTheAppsThatNowOpenFresh(t *testing.T) {
 	if !fresh["steps"] || !fresh["game"] || fresh["moved"] || fresh["reads"] || len(fresh) != 2 {
 		t.Errorf("named as opening fresh: %v", fresh)
 	}
+	// Shared, it is named to whoever maintains it, as to its owner, and not
+	// to someone who only uses it.
+	steps, _ := loadSpec("alice", "steps")
+	steps.Shared, steps.Maintainers = true, []string{"carol"}
+	SaveAppSpec(steps)
+	SetSharedOwner(T.DB, sharedAppsIndex, "steps", "alice", true)
+	for user, want := range map[string]bool{"carol": true, "bob": false} {
+		var rows []map[string]string
+		if err := json.Unmarshal(as(t, T, user, httptest.NewRequest(http.MethodGet, "/apps/_apps", nil)).Body.Bytes(), &rows); err != nil {
+			t.Fatal(err)
+		}
+		listed := false
+		for _, r := range rows {
+			if r["slug"] != "steps" {
+				continue
+			}
+			listed = true
+			if got := r["fresh_start"] == "1" && strings.Contains(r["note"], "opens fresh now"); got != want {
+				t.Errorf("%s: named as opening fresh %v, want %v (note %q)", user, got, want, r["note"])
+			}
+		}
+		if !listed {
+			t.Fatalf("%s is not shown the shared app at all", user)
+		}
+	}
+
 	page := as(t, T, "alice", httptest.NewRequest(http.MethodGet, "/apps/", nil)).Body.String()
 	i := strings.Index(page, `"label":"Fix with Builder"`)
 	if i < 0 {
