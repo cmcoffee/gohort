@@ -57,8 +57,8 @@ has a saved view. Today an app with no settings at all grows a ⚙ the first
 time its page saves anything, and the page behind it is a Reset view and
 nothing else. That is the moment it reads as foreign.
 
-Later, native apps that keep per-person settings take the same ⚙ beside their
-name, so the place to look is the same in both.
+Native apps that keep per-person settings take the same ⚙ beside their
+name, so the place to look is the same in both (built 0.9.709, below).
 
 ### 2. Reset view when it is needed
 
@@ -217,6 +217,29 @@ default of an existing field for new apps only. **No migration.**
   shim. A stylesheet's `url(...)` to one of the app's own images or fonts
   resolves inside the files folder and is a 404; serving those types here
   too is the follow-up if an app needs it.
+
+## As built: the ⚙ on native apps (0.9.709)
+
+Item 1's second half. The ⚙ is `ui.NavLink{Icon: "settings"}`, which every
+page already draws beside its title; nothing in core changed but one menu
+helper.
+
+- **Which apps.** Only the ones with settings a person sets for themselves in
+  the app: Scribe, CodeWriter and Servitor. Anvil, Knowledge, Filestore and
+  Agents keep settings per item (project, board, store, agent); Blogger,
+  Forge and Tuning are app-wide or admin's (Forge already has its own ⚙
+  drawer); Orchestrate's are per-agent switches in the composer. None of
+  those take the ⚙.
+- **Servitor** has one: which categories of risky command run without
+  asking. The ⚙ opens that dialog (`servitor_permissions`).
+- **Scribe and CodeWriter** have two each: the Rules (house style, standing
+  instructions) and Agent settings (the person's copy of the app's agent).
+  The ⚙ opens a menu of both (`window.uiActionMenu`, in the runtime beside
+  `uiAnchorMenu`), each opening where it already lives.
+- **The old places stay**: Rules in Scribe's library controls and the
+  editor's toolbar, Agent settings in the chat toolbar, Permissions under
+  More. Whether to take them out is a later call.
+- `core/ui/AUTHORING.md` says where a new app puts what a person sets.
 
 ## Work that keeps going
 

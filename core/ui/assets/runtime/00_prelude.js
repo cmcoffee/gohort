@@ -1459,6 +1459,42 @@
     return api;
   };
 
+  // uiActionMenu opens a small menu under button, for a control that holds
+  // more than one thing (a page's ⚙ when the app has two kinds of setting).
+  // Each item runs a registered client action ({label, action}) or goes to
+  // a page ({label, url}); title is its tooltip. A second click on the
+  // button, or a click anywhere else, closes it.
+  window.uiActionMenu = function(button, items) {
+    var m = button._uiActionMenu;
+    if (!m) {
+      var menu = document.createElement('div');
+      menu.className = 'ui-side-menu';
+      m = button._uiActionMenu = {menu: menu, anchor: window.uiAnchorMenu(button, menu)};
+      document.addEventListener('click', function(ev) {
+        if (!m.anchor.isOpen()) return;
+        if (menu.contains(ev.target) || button.contains(ev.target)) return;
+        m.anchor.close();
+      });
+    }
+    if (m.anchor.isOpen()) { m.anchor.close(); return; }
+    m.menu.textContent = '';
+    (items || []).forEach(function(it) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'ui-side-menu-item';
+      b.textContent = it.label || '';
+      if (it.title) b.title = it.title;
+      b.addEventListener('click', function() {
+        m.anchor.close();
+        if (it.url) { window.location.href = it.url; return; }
+        var fn = window.UIClientActions && window.UIClientActions[it.action];
+        if (typeof fn === 'function') fn({button: button, item: it});
+      });
+      m.menu.appendChild(b);
+    });
+    m.anchor.open();
+  };
+
   window.uiOpenModal = function(opts) {
     opts = opts || {};
     // The look is the shared modal one (.ui-modal-overlay / .ui-modal-box in
