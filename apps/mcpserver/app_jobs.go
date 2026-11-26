@@ -219,15 +219,14 @@ func resultToolDef(app customapps.OfferingApp) map[string]any {
 	name := firstNonEmptyText(app.Name, app.Slug)
 	return map[string]any{
 		"name": resultToolName(app),
-		"description": fmt.Sprintf("App: %s. The result of one of this app's calls that was still running when it answered: it gave a job id. Waits up to %s each time it is called and says if the run is still going. With stop: true, stops the run instead.",
+		"description": fmt.Sprintf("App: %s. The result of one of this app's calls that was still running when it answered: it gave a job id. Waits up to %s each time it is called and says if the run is still going. With stop: true, stops the run instead. With no job, lists this key's calls of the app from the last hour, running or ended, for a client that lost the id.",
 			name, resultWait),
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"job":  map[string]any{"type": "string", "description": "The job id the call answered with."},
+				"job":  map[string]any{"type": "string", "description": "The job id the call answered with. Leave it out to list this key's jobs of the app."},
 				"stop": map[string]any{"type": "boolean", "description": "true to stop the run instead of waiting for it."},
 			},
-			"required": []string{"job"},
 		},
 	}
 }
@@ -237,7 +236,10 @@ func resultToolDef(app customapps.OfferingApp) map[string]any {
 func appResult(ctx context.Context, tok *AccountToken, app customapps.OfferingApp, args map[string]any) (string, error) {
 	id, _ := args["job"].(string)
 	if strings.TrimSpace(id) == "" {
-		return "", fmt.Errorf("job is required: the id a call of this app answered with while it was still running")
+		if truthy(args["stop"]) {
+			return "", fmt.Errorf("stop needs the job to stop: call this with no arguments to list this key's jobs of the app")
+		}
+		return listAppJobs(tok, app), nil
 	}
 	j, ok := appJobFor(tok, app.Slug, id)
 	if !ok {
@@ -259,6 +261,63 @@ func appResult(ctx context.Context, tok *AccountToken, app customapps.OfferingAp
 		return fmt.Sprintf("Stopped %s (job %s).", j.tool, j.id), nil
 	}
 	return j.await(ctx, resultWait, resultToolName(app))
+}
+
+// appJobListMax bounds a listing of a key's jobs.
+const appJobListMax = 20
+
+// listAppJobs is tok's jobs of app still kept (running, or ended within
+// jobKeep), newest first: what a client that lost a job's id needs to find
+// it again. A call whose client went away before it answered left a job the
+// client was never told about.
+func listAppJobs(tok *AccountToken, app customapps.OfferingApp) string {
+	appJobs.Lock()
+	sweepAppJobs()
+	var mine []*appJob
+	for _, j := range appJobs.m {
+		if tok != nil && j.owner == tok.Owner && j.key == keyID(tok) && strings.EqualFold(j.slug, app.Slug) {
+			mine = append(mine, j)
+		}
+	}
+	appJobs.Unlock()
+	name := firstNonEmptyText(app.Name, app.Slug)
+	if len(mine) == 0 {
+		return fmt.Sprintf("No calls of %s from this key in the last %s.", name, jobKeep)
+	}
+	sort.Slice(mine, func(a, b int) bool { return mine[a].started.After(mine[b].started) })
+	var b strings.Builder
+	fmt.Fprintf(&b, "This key's calls of %s in the last %s, newest first:\n", name, jobKeep)
+	for i, j := range mine {
+		if i == appJobListMax {
+			fmt.Fprintf(&b, "(and %d older)\n", len(mine)-appJobListMax)
+			break
+		}
+		fmt.Fprintf(&b, "- job %s: %s, %s\n", j.id, j.tool, j.state())
+	}
+	fmt.Fprintf(&b, "Call %s with a job to get its result.", resultToolName(app))
+	return b.String()
+}
+
+// state is how the job stands, in words: running and for how long with its
+// latest line, or how it ended and when.
+func (j *appJob) state() string {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.ended.IsZero() {
+		s := fmt.Sprintf("running for %s", time.Since(j.started).Round(time.Second))
+		if j.latest != "" {
+			s += " (now: " + textutil.Clip(strings.Join(strings.Fields(j.latest), " "), 120) + ")"
+		}
+		return s
+	}
+	how := "ended"
+	switch {
+	case j.stopped:
+		how = "stopped"
+	case j.err != nil:
+		how = "failed"
+	}
+	return fmt.Sprintf("%s %s ago, after %s", how, time.Since(j.ended).Round(time.Second), j.ended.Sub(j.started).Round(time.Second))
 }
 
 // runAppJob runs one of app's tools for tok as a job and answers as the call

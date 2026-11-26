@@ -216,3 +216,32 @@ func TestAKeysRunningAppCallsAreCapped(t *testing.T) {
 		t.Errorf("another key was held to this key's cap: %q", got)
 	}
 }
+
+// The result tool with no job lists the key's calls of the app, so a client
+// that went away before its call answered can find the job it was never told
+// about. Another key's calls are not in it.
+func TestAKeyCanListItsAppJobs(t *testing.T) {
+	app, s := jobsFixture(t)
+	key := MintAccountTokenScoped("user-a", "claude", &TokenScope{Features: []string{MCPFeatureKey}}).Token
+	other := MintAccountTokenScoped("user-a", "desktop", &TokenScope{Features: []string{MCPFeatureKey}}).Token
+	if got := callText(rpcTo(app, "/app/lab/", key, "tools/call", map[string]any{"name": "lab_result", "arguments": map[string]any{}})); !strings.Contains(got, "No calls of Lab") {
+		t.Errorf("an empty listing: %q", got)
+	}
+	m := jobIDRE.FindStringSubmatch(callText(rpcTo(app, "/app/lab/", key, "tools/call", map[string]any{"name": "lab_wait", "arguments": map[string]any{"tag": "L"}})))
+	if m == nil {
+		t.Fatal("no job")
+	}
+	callText(rpcTo(app, "/app/lab/", other, "tools/call", map[string]any{"name": "lab_wait", "arguments": map[string]any{"tag": "O"}}))
+	got := callText(rpcTo(app, "/app/lab/", key, "tools/call", map[string]any{"name": "lab_result", "arguments": map[string]any{}}))
+	if !strings.Contains(got, "job "+m[1]+": lab_wait, running for") || !strings.Contains(got, "warming up L") || strings.Count(got, "- job ") != 1 {
+		t.Errorf("the key's listing: %q", got)
+	}
+	close(s.release)
+	time.Sleep(50 * time.Millisecond)
+	if got := callText(rpcTo(app, "/app/lab/", key, "tools/call", map[string]any{"name": "lab_result", "arguments": map[string]any{}})); !strings.Contains(got, "job "+m[1]+": lab_wait, ended") {
+		t.Errorf("an ended job in the listing: %q", got)
+	}
+	if got := callText(rpcTo(app, "/app/lab/", key, "tools/call", map[string]any{"name": "lab_result", "arguments": map[string]any{"stop": true}})); !strings.HasPrefix(got, "ERR ") {
+		t.Errorf("stop with no job: %q", got)
+	}
+}
