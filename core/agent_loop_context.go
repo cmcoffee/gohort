@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // EstimateTokens approximates the token count of a string using the
@@ -615,7 +616,7 @@ func (T *AppCore) summarizeOldHistory(ctx context.Context, msgs []Message, conte
 	for i := 0; i < foldEnd; i++ {
 		n := EstimateTokens(msgs[i].Content)
 		for _, tr := range msgs[i].ToolResults {
-			n += EstimateTokens(tr.Content)
+			n += EstimateTokens(foldResultText(tr.Content)) // sized as foldChunk sends it
 		}
 		// A single message larger than a chunk is folded alone; capOversized
 		// has already cut anything genuinely impossible, so this is a large
@@ -669,7 +670,7 @@ func (T *AppCore) foldChunk(ctx context.Context, span []Message) string {
 			fmt.Fprintf(&b, "%s: %s\n", role, c)
 		}
 		for _, tr := range m.ToolResults {
-			if c := strings.TrimSpace(tr.Content); c != "" {
+			if c := foldResultText(strings.TrimSpace(tr.Content)); c != "" {
 				fmt.Fprintf(&b, "tool result: %s\n", c)
 			}
 		}
@@ -703,6 +704,34 @@ const (
 	foldChunkTokens = 12000
 	maxFoldCalls    = 12
 )
+
+// foldResultBytes is the most of one tool result a fold call is handed, about
+// a quarter of a chunk. A result may arrive at 15% of the window (ingestShare),
+// some 30k tokens on a 200k model, and a message that size is folded alone, so
+// without this one fold call ran at two and a half times the size the chunk
+// budget exists to hold it to. It also keeps one large output from dominating
+// the notes a chunk is boiled down to.
+const foldResultBytes = foldChunkTokens
+
+// foldResultText is a tool result as a fold call reads it: whole when it fits
+// foldResultBytes, otherwise its head and its tail around a note of what was
+// cut. Both ends, because the head says what the output is (the file, the
+// listing, the response's opening) and the tail is where a command's error or
+// final count lands. Cuts on rune boundaries.
+func foldResultText(s string) string {
+	if len(s) <= foldResultBytes {
+		return s
+	}
+	h := foldResultBytes / 2
+	for h > 0 && !utf8.RuneStart(s[h]) {
+		h--
+	}
+	t := len(s) - foldResultBytes/2
+	for t < len(s) && !utf8.RuneStart(s[t]) {
+		t++
+	}
+	return s[:h] + fmt.Sprintf("\n[... %d bytes of this result cut for the summary ...]\n", t-h) + s[t:]
+}
 
 // contextRecoveryKeepWhole is how many of the newest messages stay verbatim
 // through any recovery. The round is about those; folding them would salvage

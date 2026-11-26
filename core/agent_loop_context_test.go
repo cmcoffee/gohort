@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // clearObservedCeilings keeps cases from leaking into one another — the store
@@ -531,6 +532,58 @@ func TestFoldRequestsStaySmall(t *testing.T) {
 			t.Errorf("fold call %d asked for %d tokens; the budget is %d and a loaded server cannot place requests that size",
 				i, n, foldChunkTokens)
 		}
+	}
+}
+
+// A tool result may arrive at 15% of the window, and a message that size is
+// folded alone, so the chunk budget held nothing on a thread of large reads:
+// on a 262k window each fold call was handed ~39k tokens of one result.
+func TestFoldCapsEachToolResult(t *testing.T) {
+	app, stub := withFoldStub(t)
+
+	var msgs []Message
+	for i := 0; i < 8; i++ {
+		id := fmt.Sprintf("c%d", i)
+		msgs = append(msgs,
+			Message{Role: "assistant", ToolCalls: []ToolCall{{ID: id, Name: "read_file"}}},
+			Message{Role: "user", ToolResults: []ToolResult{{ID: id,
+				Content: "HEAD-" + id + " " + strings.Repeat("line of output ", 10000) + " TAIL-" + id}}})
+	}
+	msgs = append(msgs, Message{Role: "user", Content: "the question"})
+
+	if _, ok := app.summarizeOldHistory(t.Context(), msgs, 262144, 1); !ok {
+		t.Fatal("summarization declined")
+	}
+	sent := ""
+	for i, n := range foldInputTokens(stub) {
+		if n > foldChunkTokens+1000 {
+			t.Errorf("fold call %d asked for %d tokens; the budget is %d", i, n, foldChunkTokens)
+		}
+		for _, m := range stub.Sent(i) {
+			sent += m.Content
+		}
+	}
+	// Cut, not dropped: both ends of a result reach the summarizer.
+	if !strings.Contains(sent, "HEAD-c0") || !strings.Contains(sent, "TAIL-c0") {
+		t.Error("a capped result lost its head or its tail")
+	}
+	if !strings.Contains(sent, "cut for the summary") {
+		t.Error("a capped result does not say it was cut")
+	}
+}
+
+func TestFoldResultText(t *testing.T) {
+	if s := "short output"; foldResultText(s) != s {
+		t.Error("a result under the cap was changed")
+	}
+	// Multi-byte runes straddling both cut points must not be split.
+	long := strings.Repeat("é", foldResultBytes)
+	got := foldResultText(long)
+	if !utf8.ValidString(got) {
+		t.Error("the cut split a rune")
+	}
+	if len(got) > foldResultBytes+100 {
+		t.Errorf("capped result is %d bytes; the cap is %d", len(got), foldResultBytes)
 	}
 }
 

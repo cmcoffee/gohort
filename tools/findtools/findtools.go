@@ -1,14 +1,12 @@
-// find_tools — LLM-callable safety net for the framework's
-// classifier-driven tool surfacing. The framework pre-selects the
-// top-K most relevant tools each turn via embedding match; this
-// tool lets the LLM explicitly search when its question's intent
-// didn't surface what it needs (mid-conversation pivot, unusual
-// phrasing, ambiguous request, or a follow-up that drifts from the
-// initial topic).
+// find_tools: search the tool catalog by intent.
 //
-// Always-on tool. Skipping the classifier when the LLM searches
-// explicitly is intentional — the user-stated query is a stronger
-// signal of intent than the latest message alone.
+// There is no per-turn classifier trim any more (see runPlan in
+// apps/orchestrate/runner.go): an agent's allowed tools all ship to the model,
+// except the ones held back behind load_tool when the schemas would not fit
+// the model's window, and those are listed by name in the prompt. So this is
+// not a way to uncover hidden tools. It answers "which of my tools does this?"
+// and "does this deployment have that at all?", and marks each hit with how
+// to use it: call it, load it first, or not enabled for this agent.
 
 package findtools
 
@@ -32,7 +30,7 @@ type FindToolsTool struct{}
 func (t *FindToolsTool) Name() string { return "find_tools" }
 
 func (t *FindToolsTool) Desc() string {
-	return "Search the deployment's tool catalog by intent. Use when the question or task doesn't match any tool currently visible in your catalog: the framework only surfaces the top-K most relevant tools per turn, so specialty tools (image editing, video processing, niche APIs, etc.) may be hidden until you search for them. Pass a short query describing what you want to do (\"resize an image\", \"download a video\", \"check the weather\"). Returns matching tool names + descriptions ranked by relevance. After a match, call the specific tool by name."
+	return "Search for a tool by what you want to do. Your tools are the ones in your catalog plus any your instructions list as load-before-use; use this when you cannot tell which of them fits, or to check whether a capability exists here at all. Pass a short query describing the action (\"resize an image\", \"check the weather\"). Returns matching tool names and descriptions ranked by relevance, each with a note on how to use it: call it directly, load it first with load_tool, or not enabled for you (it exists on this deployment but you cannot call it, so say so instead of calling it)."
 }
 
 // CapRead — the search itself is just an embed + cosine pass over
@@ -97,14 +95,20 @@ func (t *FindToolsTool) RunWithSessionContext(ctx context.Context, args map[stri
 	hits := LookupToolsByQuery(context.Background(), query, k)
 	// The tools this round already has: the ones the query names, flagged
 	// so the agent calls them instead of concluding they do not exist.
-	inHand := map[string]bool{}
+	// held is every tool this round has, by name, so an index hit the agent
+	// already holds is marked as such even when its words missed the query.
+	// Nil outside an agent loop, where nothing is known about what is held.
+	var held map[string]bool
 	if turn := turnToolMatches(TurnToolsFromContext(ctx)); len(turn) > 0 {
+		held = make(map[string]bool, len(turn))
+		for _, m := range turn {
+			held[m.Name] = true
+		}
 		seen := map[string]bool{}
 		for _, h := range hits {
 			seen[h.Name] = true
 		}
 		for _, m := range loadableMatches(query, turn) {
-			inHand[m.Name] = true
 			if !seen[m.Name] {
 				hits = append(hits, m)
 			}
@@ -141,16 +145,27 @@ func (t *FindToolsTool) RunWithSessionContext(ctx context.Context, args map[stri
 	}
 	rows := make([]out, len(hits))
 	for i, h := range hits {
-		rows[i] = out{Name: h.Name, Description: h.Description, Score: h.Score}
-		switch {
-		case loadable[h.Name]:
-			rows[i].Note = "not loaded yet: call load_tool(names=[\"" + h.Name + "\"]) first, then use it"
-		case inHand[h.Name]:
-			rows[i].Note = "already in your tools this turn: call it directly"
-		}
+		rows[i] = out{Name: h.Name, Description: h.Description, Score: h.Score, Note: hitNote(h.Name, loadable, held)}
 	}
 	b, _ := json.Marshal(rows)
 	return string(b) + note, nil
+}
+
+// hitNote is how the agent can use one hit. loadable names the turn's
+// load-before-use tools; held names every tool the round has, nil when the
+// search runs outside an agent loop. An index hit in neither is a tool on the
+// deployment that this agent was not given: calling it fails as an unknown
+// tool, so the note says so rather than leaving the hit to read as callable.
+func hitNote(name string, loadable, held map[string]bool) string {
+	switch {
+	case loadable[name]:
+		return "not loaded yet: call load_tool(names=[\"" + name + "\"]) first, then use it"
+	case held[name]:
+		return "already in your tools this turn: call it directly"
+	case held != nil:
+		return "not enabled for you: this deployment has it but you cannot call it, so say it exists rather than calling it"
+	}
+	return ""
 }
 
 // turnToolMatches is the round's tools as search candidates, less the

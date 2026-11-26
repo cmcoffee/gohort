@@ -1,12 +1,13 @@
-// tool_index.go — semantic search over tool descriptions.
+// tool_index.go: semantic search over tool descriptions.
 //
-// Solves the LLM catalog-saturation problem: when an agent has 40+
-// tools, the LLM struggles to pick the right one for any given
-// question, and most tools are irrelevant to most turns. Instead of
-// admin-authored static groupings (the previous ToolGroup approach),
-// the runtime embeds each tool's description once, then for each
-// turn embeds the user's message and surfaces only the top-K
-// closest-matching tools.
+// The runtime embeds each registered tool's description once; find_tools
+// embeds the agent's query and returns the closest matches. This index does
+// NOT pick a turn's catalog. A per-turn classifier trim used to, and was
+// retired because a stateless trim dropped the tool a follow-up needed ("get
+// me another" scored a different tool higher than the one turn 1 used). Every
+// allowed tool now ships, apart from schemas held back behind load_tool to fit
+// a small window (apps/orchestrate/catalog_window_fit.go), which the prompt
+// lists by name.
 //
 // Index lifecycle:
 //
@@ -16,10 +17,10 @@
 //   - InvalidateToolIndex() forces a rebuild. Called when temp tools
 //     register / deregister so the index stays in sync.
 //   - Embedding failures don't fail the lookup — the affected tool
-//     just doesn't surface from the classifier (it can still be
+//     just doesn't surface from a search (it can still be
 //     called directly when listed in agent.AllowedTools).
 //
-// Match cost per turn: one Embed() of the user message + cosine
+// Match cost per search: one Embed() of the query + cosine
 // sweep across the index. Both cheap (microseconds for cosine; the
 // embed model serves the query in tens of ms on local hardware).
 

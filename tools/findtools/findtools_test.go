@@ -128,3 +128,28 @@ func TestFindToolsSeesTheToolsThisTurnHas(t *testing.T) {
 		t.Error("no round outside a loop")
 	}
 }
+
+// An index hit the agent was not given used to come back with no note, under
+// a description that said to call any match by name, so the next call failed
+// as an unknown tool.
+func TestHitNoteSaysWhatTheAgentCanDo(t *testing.T) {
+	loadable := map[string]bool{"schedule": true}
+	held := map[string]bool{"bulletin_board": true, "schedule": true}
+	cases := []struct {
+		name string
+		held map[string]bool
+		want string
+	}{
+		{"schedule", held, "load_tool"},
+		{"bulletin_board", held, "call it directly"},
+		{"image_edit", held, "not enabled for you"},
+		// Outside a loop nothing is known about what the agent holds.
+		{"image_edit", nil, ""},
+	}
+	for _, c := range cases {
+		got := hitNote(c.name, loadable, c.held)
+		if c.want == "" && got != "" || !strings.Contains(got, c.want) {
+			t.Errorf("hitNote(%q, held=%v) = %q, want it to contain %q", c.name, c.held != nil, got, c.want)
+		}
+	}
+}
