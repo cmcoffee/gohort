@@ -177,3 +177,49 @@ app.state.get("step").then(function(v) {
 		}
 	}
 }
+
+// My Apps says which of the owner's apps still keep their place in
+// localStorage, in the page or in a script file, and so open fresh now, with
+// Fix with Builder asking Builder for the change; an app that moved it to
+// app.state, or only reads localStorage, is not named.
+func TestMyAppsNamesTheAppsThatNowOpenFresh(t *testing.T) {
+	prev := AppAssetsDir()
+	SetAppAssetsDir(t.TempDir())
+	t.Cleanup(func() { SetAppAssetsDir(prev) })
+	T := sharingTestApp(t)
+	frame := func(js string) json.RawMessage {
+		b, _ := json.Marshal(map[string]any{"title": "x", "sections": []any{map[string]any{"body": map[string]any{"type": "frame", "html": "<script>" + js + "</script>"}}}})
+		return b
+	}
+	SaveAppSpec(AppSpec{Slug: "steps", Name: "Steps", Owner: "alice", Page: frame(`localStorage.setItem("step", s)`)})
+	SaveAppSpec(AppSpec{Slug: "game", Name: "Game", Owner: "alice", Page: frame(`import "./assets/main.js"`)})
+	SaveAppAsset("alice", "game", "main.js", []byte(`localStorage["level"] = n;`))
+	SaveAppSpec(AppSpec{Slug: "moved", Name: "Moved", Owner: "alice", Page: frame(`localStorage.setItem("a", 1); app.state.set("a", 1)`)})
+	SaveAppSpec(AppSpec{Slug: "reads", Name: "Reads", Owner: "alice", Page: frame(`var t = localStorage.getItem("tab")`)})
+
+	var rows []map[string]string
+	if err := json.Unmarshal(as(t, T, "alice", httptest.NewRequest(http.MethodGet, "/apps/_apps", nil)).Body.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
+	fresh := map[string]bool{}
+	for _, r := range rows {
+		if r["fresh_start"] == "1" {
+			fresh[r["slug"]] = true
+			if !strings.Contains(r["note"], "opens fresh now") {
+				t.Errorf("%s is marked but its note does not say so: %q", r["slug"], r["note"])
+			}
+		}
+	}
+	if !fresh["steps"] || !fresh["game"] || fresh["moved"] || fresh["reads"] || len(fresh) != 2 {
+		t.Errorf("named as opening fresh: %v", fresh)
+	}
+	page := as(t, T, "alice", httptest.NewRequest(http.MethodGet, "/apps/", nil)).Body.String()
+	i := strings.Index(page, `"label":"Fix with Builder"`)
+	if i < 0 {
+		t.Fatal("My Apps has no Fix with Builder")
+	}
+	end := strings.Index(page[i:], "}")
+	if btn := page[i : i+end]; !strings.Contains(btn, `"only_if":"fresh_start"`) || !strings.Contains(btn, "intake.change=Every+open+of+an+app+now+starts+fresh") {
+		t.Errorf("Fix with Builder is not for the apps that open fresh, asking for the change: %s", btn)
+	}
+}

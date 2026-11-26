@@ -263,8 +263,8 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 		} else {
 			b.WriteString("Code check: OK, every function the page calls is defined somewhere in it.\n\n")
 		}
-		// Work that outlives the page (apppage.Work): advice, not a failure.
-		if notes := jsWorkNotes(html); len(notes) > 0 {
+		// Advice, not failures.
+		if notes := jsPageNotes(html); len(notes) > 0 {
 			b.WriteString(strings.Join(notes, "\n") + "\n\n")
 		}
 	}
