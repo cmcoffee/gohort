@@ -1692,6 +1692,10 @@ func (cfg *LLMProviderConfig) UseKey(key string) {
 	}
 }
 
+// defaultLLMRequestTimeout caps one model call when the operator set no
+// request timeout. See newLLMAPIClient.
+const defaultLLMRequestTimeout = 15 * time.Minute
+
 // newLLMAPIClient builds an apiclient.APIClient configured for LLM provider
 // communication. It sets connection-level timeouts and leaves the client-level
 // Timeout at 0 so that context handles overall deadlines, avoiding killing
@@ -1703,15 +1707,15 @@ func newLLMAPIClient(cfg LLMProviderConfig) *apiclient.APIClient {
 	}
 	requestTimeout := cfg.RequestTimeout
 	if requestTimeout == 0 {
-		// Fallback when operator hasn't set request_timeout_seconds via
-		// --setup or admin UI. 5 minutes is plenty for typical agentic
-		// rounds on Qwen 27B dense with tightened thinking budgets and
-		// /no_think directives — fail-fast is more diagnostic than
-		// waiting 12 minutes for a hung request. Operators running
-		// deep-thinking workloads (research/debate hitting full
-		// dynamic-budget ceilings) should bump this in --setup to 10+
-		// minutes; the override path is unchanged.
-		requestTimeout = 5 * time.Minute
+		// Fallback when the operator hasn't set request_timeout_seconds
+		// via --setup or the admin page. It caps a whole generation, so
+		// it has to outlast a real round: a local thinking model building
+		// an app spent 4 to 7 minutes on single rounds, and the old 5
+		// minute fallback cut them off before they wrote anything (a turn
+		// that ends "context deadline exceeded" and changes nothing). A
+		// hung request does not wait this long: the stream idle watchdog
+		// (tune_stream_idle_timeout) stops a stream that has gone quiet.
+		requestTimeout = defaultLLMRequestTimeout
 	}
 	return &apiclient.APIClient{
 		ConnectTimeout: connectTimeout,

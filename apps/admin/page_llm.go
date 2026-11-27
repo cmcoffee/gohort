@@ -35,7 +35,8 @@ func (a *AdminApp) llmSections() []ui.Section {
 						Help:     "0 uses the default: 65K for ollama, llama.cpp, vLLM and MLX, 200K for Anthropic and Bedrock.",
 						Detail:   "Local providers send this as num_ctx. For Anthropic and Bedrock it is the working cap history compaction keys on. The API accepts up to 1M, but every input token bills per turn, so keep it modest. A model borrowed from a peer uses the size the peer set for it: 0 takes it, and a larger number here is lowered to it, so a conversation is trimmed before the peer's server would refuse it."},
 					{Field: "request_timeout_seconds", Label: "Request timeout (sec)", Type: "number", Min: 0, Max: 3600,
-						Help: "0 = default 300s."},
+						Help:   "0 = default 900s (15 minutes).",
+						Detail: "The most one model call may take in all, queue and thinking included. A stream that goes quiet is stopped sooner, by the stream idle timeout under Model calls."},
 					{Field: "native_tools", Label: "Native tool calling", Type: "toggle",
 						// Only ollama reads it: every hosted API and llama.cpp, and so
 						// every peer, calls tools natively (ProviderHasNativeTools).

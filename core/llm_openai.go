@@ -1597,14 +1597,14 @@ func (c *openAIClient) streamReadTimeout() time.Duration {
 // inter-token gaps, but neither caps TOTAL wall time: a model that keeps
 // trickling tokens within the idle window runs unbounded. This caps the
 // whole call (queue + prefill + thinking + streaming). Tracks
-// RequestTimeout so operators tune it via request_timeout_seconds (5 min
-// default); deep-thinking workloads that legitimately need longer bump
-// that knob and get a longer total budget too.
+// RequestTimeout so operators tune it via request_timeout_seconds
+// (defaultLLMRequestTimeout when unset); deep-thinking workloads that
+// legitimately need longer bump that knob and get a longer total budget too.
 func (c *openAIClient) totalResponseBudget() time.Duration {
 	if c.api.RequestTimeout > 0 {
 		return c.api.RequestTimeout
 	}
-	return 5 * time.Minute
+	return defaultLLMRequestTimeout
 }
 
 // SystemOne posts a structured decision to a vLLM server's /v1/systemone
