@@ -59,7 +59,10 @@ func TestTryPageLoadsTheWorkingCopyAndSaysWhatHappened(t *testing.T) {
 		}
 		probes = append(probes, probe)
 		rep := &PageCheckReport{BodyText: "Wx two", ConsoleErrors: []string{"TypeError: x is undefined"},
-			FailedRequests: []string{"http://127.0.0.1:9/favicon.ico -> HTTP 404"}, Screenshot: []byte("jpeg")}
+			FailedRequests: []string{"http://127.0.0.1:9/favicon.ico -> HTTP 404"}, Screenshot: []byte("jpeg"),
+			// The page's live-update feeds stay open by design; the slow
+			// data source does not.
+			PendingRequests: []string{"http://127.0.0.1:9/api/changes?wait=1&live=a.1", "http://127.0.0.1:9/apps/wx/changes?records=b.2", "http://127.0.0.1:9/apps/wx/data/slow"}}
 		if steps, ok := appcheck.DecodeStepsProbe(probe); ok {
 			res := appcheck.StepsResult{OK: true}
 			for i, st := range steps {
@@ -98,6 +101,12 @@ func TestTryPageLoadsTheWorkingCopyAndSaysWhatHappened(t *testing.T) {
 	}
 	if strings.Contains(out, "favicon") {
 		t.Errorf("a missing favicon reported as the app's:\n%s", out)
+	}
+	if strings.Contains(out, "changes?") {
+		t.Errorf("the page's live-update feeds reported as waiting requests:\n%s", out)
+	}
+	if !strings.Contains(out, "request still waiting (slow, not failed): http://127.0.0.1:9/apps/wx/data/slow") {
+		t.Errorf("a slow request of the app's own is not named as slow:\n%s", out)
 	}
 	if ended != 1 {
 		t.Errorf("the load's preview ended %d times", ended)

@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -181,7 +182,17 @@ func loadWorkingCopy(user string, spec AppSpec, steps []appcheck.Step) (tryPageR
 		}
 	}
 	add("failed request", failed)
-	add("request still waiting", rep.PendingRequests)
+	// A request still open when the page settled is a slow one, not an
+	// error, and the page's live-update feeds (the framework's /api/changes
+	// and the app's own .../changes) stay open by design: listed under
+	// Errors, they sent the assistant after a problem the page did not have.
+	var slow []string
+	for _, u := range rep.PendingRequests {
+		if !isLiveFeed(u) {
+			slow = append(slow, u)
+		}
+	}
+	add("request still waiting (slow, not failed)", slow)
 
 	var shows strings.Builder
 	shows.WriteString(strings.TrimSpace(rep.BodyText))
@@ -346,4 +357,14 @@ func (T *Anvil) handleShot(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/jpeg")
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 	w.Write(s.data)
+}
+
+// isLiveFeed reports a page's live-update long poll: a request to a path
+// ending in /changes, which the page holds open until something changes.
+func isLiveFeed(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	return strings.HasSuffix(strings.TrimRight(u.Path, "/"), "/changes")
 }
