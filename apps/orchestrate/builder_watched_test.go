@@ -119,6 +119,8 @@ func TestApprovingARunDoesNotApproveItsChanges(t *testing.T) {
 	registerStandingRunner(app)
 	t.Cleanup(func() { RegisterStandingRunner(nil); RegisterStandingReporter(nil) })
 	app.LLM = &FakeLLM{Turns: []FakeTurn{
+		// Whether the sent job is an app job (builder_app_mode.go).
+		{Content: `{"why": "an agent's description", "answer": "other"}`},
 		{ToolCalls: []ToolCall{{ID: "c1", Name: "update_agent", Args: map[string]any{"id": "a-critic", "description": "Reviews the drafts."}}}},
 		{Content: "Done.", Repeat: true},
 	}}

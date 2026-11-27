@@ -150,3 +150,52 @@ func TestPlaceholdersInsideTextAreCounted(t *testing.T) {
 		t.Fatalf("ordinary words counted: %d", n)
 	}
 }
+
+// A job sent to Builder has no intake: its kind is the intake's own answer
+// when the message carries one, else the worker's. Only Builder is asked
+// about at all, and only an app job gets app mode.
+func TestAJobSentToBuilderGetsAppModeWhenItIsAnApp(t *testing.T) {
+	builder := AgentRecord{ID: "seed-builder", Name: "Builder"}
+	fake := &FakeLLM{}
+	T := &OrchestrateApp{}
+	T.LLM = fake
+
+	if b := T.sentJobAppMode(t.Context(), builder, "**What do you want to do?:** Create\n\n**What kind of thing?:** App\n\n**What should it do?:** track my plants"); !strings.Contains(b, "Building an app") {
+		t.Error("an intake answering App did not turn app mode on")
+	}
+	if b := T.sentJobAppMode(t.Context(), builder, "**What kind of thing?:** Agent\n\n**What should it do?:** an app reviewer"); b != "" {
+		t.Error("an intake answering Agent turned app mode on")
+	}
+	if b := T.sentJobAppMode(t.Context(), AgentRecord{ID: "clerk"}, "build me an app"); b != "" {
+		t.Error("an agent that is not Builder got app mode")
+	}
+	if fake.Calls() != 0 {
+		t.Fatalf("%d model call(s) where the answer was already known", fake.Calls())
+	}
+
+	fake.Turns = []FakeTurn{{Content: `{"why": "a page to track plants", "answer": "app"}`}, {Content: `{"why": "a tool", "answer": "other"}`}}
+	if b := T.sentJobAppMode(t.Context(), builder, "Chat here: Rory wants a page where the family logs who watered which plant."); !strings.Contains(b, "Building an app") {
+		t.Error("a job the worker read as an app did not get app mode")
+	}
+	if b := T.sentJobAppMode(t.Context(), builder, "Make a tool that looks up a plant's watering needs."); b != "" {
+		t.Error("a job the worker read as something else got app mode")
+	}
+}
+
+// End to end on the path a channel, a schedule or a hand-off takes: a
+// Builder run on an app job is told how to build an app.
+func TestASentAppJobRunsBuilderInAppMode(t *testing.T) {
+	df := newDispatchFixture(t,
+		FakeTurn{Content: `{"why": "a page", "answer": "app"}`},
+		FakeTurn{Content: "Started on it.", Repeat: true})
+	df.run(AgentSyncRun{AgentKey: "seed-builder", SubSessionID: "s-app-job", Message: "Build a page where the family logs who watered which plant."})
+	found := false
+	for i := 0; i < df.llm.Calls(); i++ {
+		if strings.Contains(df.llm.Config(i).SystemPrompt, "Building an app") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the sent app job ran Builder without app mode")
+	}
+}

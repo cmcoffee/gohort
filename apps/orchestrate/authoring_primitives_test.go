@@ -26,8 +26,17 @@ func TestADispatchedBuilderCanBuildApps(t *testing.T) {
 	if fake.Calls() == 0 {
 		t.Fatal("the Builder never ran")
 	}
+	// The first call with tools is Builder's own: before it, the question of
+	// whether the sent job is an app job (builder_app_mode.go).
+	turn := 0
+	for i := 0; i < fake.Calls(); i++ {
+		if len(fake.Config(i).Tools) > 0 {
+			turn = i
+			break
+		}
+	}
 	var offered []string
-	for _, tl := range fake.Config(0).Tools {
+	for _, tl := range fake.Config(turn).Tools {
 		offered = append(offered, tl.Name)
 	}
 	for _, want := range []string{"app_def", "pipeline", "load_tool"} {
@@ -38,7 +47,7 @@ func TestADispatchedBuilderCanBuildApps(t *testing.T) {
 	if slices.Contains(offered, "machine") {
 		t.Error("machine rode inline on a sent Builder: its own chat keeps it behind load_tool")
 	}
-	if p := fake.Config(0).SystemPrompt + fake.Prompt(0); !strings.Contains(p, "load before use") || !strings.Contains(p, "- `machine` ") {
+	if p := fake.Config(turn).SystemPrompt + fake.Prompt(turn); !strings.Contains(p, "load before use") || !strings.Contains(p, "- `machine` ") {
 		t.Error("a sent Builder's prompt does not index machine to load")
 	}
 }

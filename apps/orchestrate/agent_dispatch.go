@@ -1069,6 +1069,7 @@ func (sd *syncDispatch) buildPrompt() {
 		sd.subFacts = sd.subTurn.facts()
 	}
 	sd.sysPrompt = dispatchSystemPromptMem(sd.ctx, sd.target, sd.subFacts, sd.availableBlock, sd.customToolPrompt, sd.subSessID, sd.runtimeDB, sd.subTurn.memStore(), sd.runtimeUser, surfaceUnattended)
+	sd.sysPrompt += sd.T.sentJobAppMode(sd.ctx, sd.target, message)
 	// Only Builder reads the delegated marker (to skip its intake/confirm
 	// workflow); other agents ignore it. ask_user / approvals are already
 	// framework-gated off the dispatch path, so we don't add the marker for
@@ -2136,6 +2137,8 @@ func (cr *continuingRun) buildPrompt() {
 	}
 	if s := strings.TrimSpace(run.SystemPromptOverride); s != "" {
 		cr.sysPrompt = s // app supplies its own complete per-run prompt (e.g. servitor's investigator)
+	} else {
+		cr.sysPrompt += cr.T.sentJobAppMode(cr.ctx, cr.target, cr.message)
 	}
 	if c := strings.TrimSpace(run.CallerContext); c != "" {
 		cr.sysPrompt += "\n\n## Instructions from the calling application\n\n" +
