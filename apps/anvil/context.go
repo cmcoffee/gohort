@@ -89,6 +89,13 @@ func (T *Anvil) projectContext(p Project, base string) string {
 	if p.Kind == KindClone && p.Source != sourceApp && holdsAppFolder(base) {
 		b.WriteString("It holds a gohort app's folder (app.json at its top). It becomes one of the owner's apps only when they press Install as a new app (on this project's bar, or in its Project menu), through the checks every install runs; there is no install command to find. Its page reaches its backend only through window.app, which offers exactly these calls:\n\n" + customapps.PageAPI + "\n\n" + customapps.PageWork + "\n\napp_guide says how the rest of the folder is built (app.json, its scripts, checks.json): read it before writing them. app_checks says whether it would install and runs its checks; whether it would install is also checked as your turn ends, and a refusal comes back to you to fix. try_page loads the page as your change has it and says what happened.\n")
 	}
+	// An empty project asked for "an app". Unsaid, the assistant read "build
+	// a call center app" as a plain web project (package.json, ES modules)
+	// and never started a gohort app: no records, no scripts, nothing the
+	// owner could install.
+	if p.Kind == KindClone && p.Source != sourceApp && projectIsEmpty(base) {
+		b.WriteString("The project is empty. When the person asks for an app, build a gohort app: one they install and open here in gohort. start_app starts its folder and says how one is built. There are two sizes. A light app is the page alone, like an artifact: app.json with one html section and page.html, no scripts, for a page that shows, computes or plays something (a calculator, a game, a chart of numbers it is given); it can still keep each person's entries with app.records. A full app adds data sources and actions: build one whenever what they ask for keeps data beyond simple entries (a database, a history, data shared between people), needs a backend, calls an outside service, or runs on a schedule. Build a standalone project instead (a static website to host elsewhere, a CLI, a library) only when that is what they asked for; when the request does not make it plain which, ask before building.\n")
+	}
 	// Searches leave the deployment, and nothing else tells the agent that
 	// this work is not public (searchPrivateTerms is what they are checked
 	// against).
@@ -302,4 +309,19 @@ func repoHostPath(raw string) (host, path string) {
 	}
 	path = strings.TrimSuffix(strings.Trim(path, "/"), ".git")
 	return strings.ToLower(host), path
+}
+
+// projectIsEmpty reports a project folder holding nothing yet but hidden
+// entries (.git, .gitignore).
+func projectIsEmpty(base string) bool {
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Name(), ".") {
+			return false
+		}
+	}
+	return true
 }

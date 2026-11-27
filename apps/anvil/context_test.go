@@ -1,6 +1,8 @@
 package anvil
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -64,5 +66,28 @@ func TestAnAppProjectIsToldWhatItsPageCanCall(t *testing.T) {
 	}
 	if text := T.projectContext(Project{Name: "Repo", Kind: KindClone, RepoURL: "https://example.com/r.git"}, t.TempDir()); strings.Contains(text, "window.app") {
 		t.Error("a repository that is not an app was told about window.app")
+	}
+}
+
+// An empty project asked for an app is told what an app most likely means
+// here and how to start one; a project with files, or one already holding
+// an app's folder, is not.
+func TestAnEmptyProjectIsToldAppsAreGohortApps(t *testing.T) {
+	T := &Anvil{}
+	empty := t.TempDir()
+	os.MkdirAll(filepath.Join(empty, ".git"), 0o755)
+	p := Project{Name: "Call Center", Kind: KindClone, Source: sourceNew}
+	if text := T.projectContext(p, empty); !strings.Contains(text, "build a gohort app") || !strings.Contains(text, "A light app is the page alone") || !strings.Contains(text, "A full app adds data sources") {
+		t.Errorf("an empty project is not told about gohort apps:\n%s", text)
+	}
+	withCode := t.TempDir()
+	os.WriteFile(filepath.Join(withCode, "main.go"), []byte("package main\n"), 0o644)
+	if text := T.projectContext(p, withCode); strings.Contains(text, "A light app is the page alone") {
+		t.Error("a project with code in it was told an app means a gohort app")
+	}
+	app := t.TempDir()
+	os.WriteFile(filepath.Join(app, "app.json"), []byte(`{"name":"x"}`), 0o644)
+	if text := T.projectContext(p, app); strings.Contains(text, "A light app is the page alone") {
+		t.Error("a project holding an app's folder got the empty project's note")
 	}
 }
