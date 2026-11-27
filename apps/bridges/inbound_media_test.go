@@ -197,3 +197,44 @@ func TestAContactsMessageIsWatchedWithNoChannelToWake(t *testing.T) {
 		t.Errorf("the sender's handle is not among the addresses: %v", seen[0].Addresses)
 	}
 }
+
+// A burst: "take this picture..." and the picture arrive at once and are
+// judged at the same time, the words let through first and the picture's
+// block coming last. The words wait for the picture's judgement, so the
+// agent is asked about this picture WITH it, not the last one it had.
+func TestWordsAndAPictureSentTogetherReachTheAgentTogether(t *testing.T) {
+	prevRoot := RootDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB = prevRoot })
+	T := &Bridges{AppCore{DB: &DBase{Store: kvlite.MemStore()}}}
+	T.setConfig(bridgesConfig{Enabled: true})
+	const chat = "any;+;chat-burst"
+	SaveChannel(RootDB, Channel{ID: "ch-burst", Owner: "alice", Name: "Group", Service: "imessage", Address: chat, AgentID: "agent-1", AutoReply: true})
+
+	RegisterChannelGatekeeper(func(_ context.Context, in ChannelInbound) bool {
+		if strings.TrimSpace(in.Text) == "" {
+			time.Sleep(400 * time.Millisecond) // the picture's judgement comes back last
+			return false
+		}
+		time.Sleep(50 * time.Millisecond)
+		return true
+	})
+	got := make(chan ChannelInbound, 2)
+	RegisterChannelAgentRunner(func(_ context.Context, in ChannelInbound) (ChannelReply, error) {
+		got <- in
+		return ChannelReply{}, nil
+	})
+	t.Cleanup(func() { RegisterChannelGatekeeper(nil); RegisterChannelAgentRunner(nil) })
+
+	key := BridgeKey{Owner: "alice", Service: "imessage", Enabled: true}
+	T.ingestInbound(key, hookRequest{ChatID: chat, Text: "can you take this picture and replace the lady", RowID: 201})
+	T.ingestInbound(key, hookRequest{ChatID: chat, Text: "￼", Images: []string{"cGhvdG8="}, RowID: 202})
+	select {
+	case in := <-got:
+		if len(in.Images) != 1 || in.Images[0] != "cGhvdG8=" || !strings.Contains(in.Text, "take this picture") {
+			t.Errorf("the agent got %q with %d picture(s)", in.Text, len(in.Images))
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the words never reached the agent")
+	}
+}

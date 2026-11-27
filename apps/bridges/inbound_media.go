@@ -80,6 +80,68 @@ func holdBlockedMedia(owner, chatID, handle string, images, videos []string) {
 	e.at = time.Now()
 }
 
+// burstJudgeWait is the longest a message let through waits for the same
+// sender's pictures still being judged before it goes to the agent.
+const burstJudgeWait = 8 * time.Second
+
+// judging counts, by owner, conversation and sender, the messages carrying
+// pictures or videos that the gatekeeper is still deciding on.
+//
+// A burst ("can you take this picture...", the picture, "Wiwee?") arrives
+// as separate messages at once, and each is judged on its own, at the same
+// time. The words were let through and went to the agent before the
+// picture's block put it on hold, so the agent was asked about "this
+// picture" without it and edited the last picture it had. A message let
+// through now waits for the sender's pictures still being judged, then
+// takes what was held.
+var judging = struct {
+	sync.Mutex
+	n       map[string]int
+	changed chan struct{}
+}{n: map[string]int{}, changed: make(chan struct{})}
+
+// beginJudging marks a message with pictures from this sender as being
+// judged, and returns the call that marks it decided (safe to call twice).
+func beginJudging(owner, chatID, handle string) (done func()) {
+	k := heldMediaKey(owner, chatID, handle)
+	judging.Lock()
+	judging.n[k]++
+	judging.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			judging.Lock()
+			if judging.n[k]--; judging.n[k] <= 0 {
+				delete(judging.n, k)
+			}
+			close(judging.changed)
+			judging.changed = make(chan struct{})
+			judging.Unlock()
+		})
+	}
+}
+
+// waitJudged waits, at most limit, until no message with pictures from this
+// sender is still being judged.
+func waitJudged(owner, chatID, handle string, limit time.Duration) {
+	k := heldMediaKey(owner, chatID, handle)
+	deadline := time.Now().Add(limit)
+	for {
+		judging.Lock()
+		pending, ch := judging.n[k], judging.changed
+		judging.Unlock()
+		left := time.Until(deadline)
+		if pending == 0 || left <= 0 {
+			return
+		}
+		select {
+		case <-ch:
+		case <-time.After(left):
+			return
+		}
+	}
+}
+
 // takeHeldMedia returns, and forgets, what a blocked message from this sender
 // left waiting in this conversation.
 func takeHeldMedia(owner, chatID, handle string) (images, videos []string) {

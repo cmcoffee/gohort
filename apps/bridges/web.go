@@ -639,7 +639,15 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 		RecordChannelSilent(in)
 		return
 	}
+	// A message with pictures is marked as being judged before its judgement
+	// starts, so the same sender's words let through in the same burst wait
+	// for it (inbound_media.go, judging).
+	judged := func() {}
+	if len(in.Images)+len(in.Videos) > 0 {
+		judged = beginJudging(owner, chatID, handle)
+	}
 	go func() {
+		defer judged()
 		// Wake-rule gatekeeper: master (admin) + per-channel rules decide whether
 		// this inbound wakes the agent. It was already recorded above for history;
 		// on a block we simply don't run or reply. Fails open when no rules are set
@@ -654,6 +662,7 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 			// Its pictures wait for this sender's next message that is let
 			// through: "there ya go, can you make it now?" is about them.
 			holdBlockedMedia(owner, chatID, handle, in.Images, in.Videos)
+			judged()
 			// Mirror the blocked message into the bound agent's own transcript so it
 			// shows in the agent's chat and is in-context on its next wake — the
 			// agent reads along even when it stays silent. No-op if orchestrate isn't
@@ -661,6 +670,8 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 			RecordChannelSilent(in)
 			return
 		}
+		judged()
+		waitJudged(owner, chatID, handle, burstJudgeWait)
 		if imgs, vids := takeHeldMedia(owner, chatID, handle); len(imgs)+len(vids) > 0 {
 			in.Images = append(imgs, in.Images...)
 			in.Videos = append(vids, in.Videos...)
