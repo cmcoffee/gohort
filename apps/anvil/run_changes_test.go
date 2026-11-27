@@ -142,6 +142,10 @@ func TestALongRunMovesToTheBackgroundAndStillRecordsItsChanges(t *testing.T) {
 	initRepo(t, repo)
 	mustWrite(t, filepath.Join(repo, "a.txt"), "one\n")
 	mustWrite(t, filepath.Join(repo, "b.txt"), "bee\n")
+	// The command marks that it has started in a file git ignores, so the
+	// later turn's edit below lands while the command runs, not before it
+	// began: under load the detach can come before the command starts.
+	mustWrite(t, filepath.Join(repo, ".gitignore"), "started\n")
 	commitAll(t, repo, "start")
 	c, _ := checkCtx(t, Project{Kind: KindClone})
 	c.base = repo
@@ -151,7 +155,7 @@ func TestALongRunMovesToTheBackgroundAndStillRecordsItsChanges(t *testing.T) {
 
 	turnCtx, endTurn := context.WithCancel(context.Background())
 	sess := &ToolSession{Ctx: turnCtx, Username: "u", DeliverySessionID: "chat-1"}
-	out, err := run.Handler(sess.ContextWithSession(turnCtx), map[string]any{"command": "sleep 1; printf 'two\\n' > a.txt; printf 'B\\n' > b.txt; echo built"})
+	out, err := run.Handler(sess.ContextWithSession(turnCtx), map[string]any{"command": "touch started; sleep 1; printf 'two\\n' > a.txt; printf 'B\\n' > b.txt; echo built"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,6 +163,15 @@ func TestALongRunMovesToTheBackgroundAndStillRecordsItsChanges(t *testing.T) {
 		t.Fatalf("the turn did not get the background notice: %q", out)
 	}
 	endTurn()
+	for i := 0; ; i++ {
+		if _, err := os.Stat(filepath.Join(repo, "started")); err == nil {
+			break
+		}
+		if i > 300 {
+			t.Fatal("the command never started")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 
 	// A later turn writes b.txt while the command is still running... and
 	// the command then writes it too; the later write is the one recorded.
