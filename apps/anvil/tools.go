@@ -37,6 +37,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
@@ -98,6 +99,14 @@ type toolCtx struct {
 	ignoreOnce sync.Once
 	ignoreSet  *ignoreSet
 
+	// Where the project sits in its git repository, asked once per turn,
+	// and runMu, which runs one command at a time so each one's changes
+	// are told apart from another's (run_changes.go).
+	prefixOnce sync.Once
+	prefix     string
+	inRepo     bool
+	runMu      sync.Mutex
+
 	// emitBlock publishes any other card (a check run) into the live turn.
 	// Nil for a headless run.
 	emitBlock func(agenthost.Block)
@@ -106,8 +115,11 @@ type toolCtx struct {
 	// call, and a counter naming each run's card.
 	checkMu          sync.Mutex
 	editedSinceCheck bool
-	turnCtx          context.Context
-	checkSeq         int
+	// wrote is when a file tool last wrote each path this turn, so a
+	// command running beside it does not claim the write (run_changes.go).
+	wrote    map[string]time.Time
+	turnCtx  context.Context
+	checkSeq int
 	// The turn's plan (plan.go), under checkMu; planSeq names its card, so
 	// a new plan gets a card of its own and the old one stays as it was.
 	plan    []planStep
@@ -855,6 +867,7 @@ func writeFilePreservingMode(abs, content string) error {
 // the tree as changed since the check last passed.
 func (c *toolCtx) publish(e EditEntry) {
 	c.markEdited()
+	c.noteWrite(e.Path)
 	if c.emit != nil {
 		c.emit("anvil_edit", e)
 	}
@@ -916,21 +929,30 @@ func (c *toolCtx) runTool() AgentToolDef {
 			if command == "" {
 				return "", fmt.Errorf("command is required")
 			}
+			// What the command changes is recorded like a file tool's
+			// write, so it shows and reverts the same way (run_changes.go).
+			c.runMu.Lock()
+			defer c.runMu.Unlock()
+			watch := c.watchRun(ctx)
 			res := c.sandboxed(ctx, command, 0)
+			changed := ""
+			if watch != nil {
+				changed = watch.finish(context.WithoutCancel(ctx))
+			}
 			out := strings.TrimSpace(res.Output)
 			if len(out) > maxRunOutput {
 				out = "...(earlier output trimmed)...\n" + out[len(out)-maxRunOutput:]
 			}
 			if res.Err != nil {
-				if out == "" {
+				if out == "" && changed == "" {
 					return "", fmt.Errorf("command failed: %w", res.Err)
 				}
-				return fmt.Sprintf("Command failed (%s):\n%s", res.Err, out), nil
+				return fmt.Sprintf("Command failed (%s):\n%s%s", res.Err, out, changed), nil
 			}
 			if out == "" {
-				return "Command finished with no output.", nil
+				return "Command finished with no output." + changed, nil
 			}
-			return out, nil
+			return out + changed, nil
 		},
 	}
 }
