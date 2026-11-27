@@ -3,6 +3,7 @@ package orchestrate
 import (
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -237,6 +238,34 @@ func TestAMonitorCanRunAtSetTimes(t *testing.T) {
 	hook := EventMonitor{Kind: EventKindWebhook}
 	if err := applyMonitorUpdate(&hook, monitorUpdateBody{DailyAt: &at}); err == nil {
 		t.Error("a push-triggered monitor has no schedule for set times")
+	}
+}
+
+// The editor sets whether a monitor pauses after so many failed checks: a
+// number turns it on, 0 turns it off, absent leaves it, and a push-triggered
+// monitor, which runs no checks, refuses one.
+func TestTheEditorSetsWhenFailingChecksPauseAMonitor(t *testing.T) {
+	n := func(v int) *int { return &v }
+	m := EventMonitor{Kind: EventKindWatch, IntervalSeconds: 60}
+	if err := applyMonitorUpdate(&m, monitorUpdateBody{PauseAfterFailures: n(5)}); err != nil || m.PauseAfterFailures != 5 {
+		t.Fatalf("set to 5: %v, now %d", err, m.PauseAfterFailures)
+	}
+	if err := applyMonitorUpdate(&m, monitorUpdateBody{IntervalSeconds: 120}); err != nil || m.PauseAfterFailures != 5 {
+		t.Errorf("an edit without it changed it: %v, now %d", err, m.PauseAfterFailures)
+	}
+	if err := applyMonitorUpdate(&m, monitorUpdateBody{PauseAfterFailures: n(0)}); err != nil || m.PauseAfterFailures != 0 {
+		t.Errorf("turned off: %v, now %d", err, m.PauseAfterFailures)
+	}
+	if err := applyMonitorUpdate(&m, monitorUpdateBody{PauseAfterFailures: n(-1)}); err == nil {
+		t.Error("a negative count was taken")
+	}
+	hook := EventMonitor{Kind: EventKindWebhook}
+	if err := applyMonitorUpdate(&hook, monitorUpdateBody{PauseAfterFailures: n(3)}); err == nil {
+		t.Error("a push-triggered monitor took a failure limit")
+	}
+	label := scheduleFailingLabel(2, m.PauseAfterFailures, time.Date(2026, 11, 26, 19, 0, 0, 0, time.UTC), time.UTC)
+	if !strings.Contains(label, "next try") || strings.Contains(label, "stops at") {
+		t.Errorf("a backing-off monitor's row: %q", label)
 	}
 }
 

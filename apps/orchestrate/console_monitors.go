@@ -80,6 +80,9 @@ func (T *OrchestrateApp) handleConsoleMonitorGet(c *jsonapi.Call) (any, error) {
 		"until":            monitorUntilOut(m),
 		"schedulable":      IsScheduledEventKind(m.Kind),
 		"paused":           m.Paused,
+		// 0 keeps checking through failures, backing off; N pauses it after
+		// N failed checks in a row.
+		"pause_after_failures": m.PauseAfterFailures,
 		// What it tells the woken agent — every kind has one, including the
 		// push-triggered webhook. A monitor that only texts or posts
 		// directly wakes nobody, so the editor leaves the brief out.
@@ -203,6 +206,9 @@ type monitorUpdateBody struct {
 	Periods *monitorPeriods `json:"periods"`
 	// Until, when sent, is the dialog's Until section (schedule_until.go).
 	Until *untilBody `json:"until"`
+	// PauseAfterFailures, when sent: 0 keeps the monitor checking through
+	// failed checks, N pauses it after N of them in a row.
+	PauseAfterFailures *int `json:"pause_after_failures"`
 
 	WakeBrief *string `json:"wake_brief"`
 	// For is the "Who does it" picker: "" for the agent itself, or a
@@ -267,6 +273,16 @@ func applyMonitorUpdate(m *EventMonitor, body monitorUpdateBody) error {
 		if sent[field] != nil && !owned[field] {
 			return Error("a " + m.Kind + " monitor has no " + field + " to edit")
 		}
+	}
+
+	if body.PauseAfterFailures != nil {
+		if *body.PauseAfterFailures < 0 {
+			return Error("the number of failed checks to pause after cannot be negative: 0 means never pause")
+		}
+		if !IsScheduledEventKind(m.Kind) {
+			return Error("this monitor is push-triggered: it runs no checks that could fail")
+		}
+		m.PauseAfterFailures = *body.PauseAfterFailures
 	}
 
 	if body.WakeBrief != nil {
@@ -609,10 +625,10 @@ func consoleMonitorRows(user, agentID string) []consoleMonitorRow {
 		rows = append(rows, consoleMonitorRow{Name: m.Name, Kind: m.Kind, State: state, Runs: subAgentRunsLabel(m.WakeBrief), Detail: detail, Script: script, Checked: checked, Seen: seen, Last: last, ID: m.Name, Agent: wake, Paused: m.Paused, Schedulable: IsScheduledEventKind(m.Kind), Broken: m.Broken,
 			// Where its stopping condition stands, in the checker's own words.
 			Objective: objectiveStateLabel(monitorObjective(m)),
-			// A monitor does not back off, it PARKS: the streak counts towards
-			// a bound, so the label says what it is counting towards rather
-			// than leaving a rising number to mean whatever the reader guesses.
-			Failing:    scheduleFailingLabel(m.ConsecutiveFailures, MonitorFailureThreshold(), time.Time{}, nil),
+			// A failing monitor backs off, so the label says when it tries
+			// next; one set to pause after so many failures also says what
+			// the streak is counting towards.
+			Failing:    scheduleFailingLabel(m.ConsecutiveFailures, m.PauseAfterFailures, m.NextCheck, UserLocation(m.Owner)),
 			FailStreak: m.ConsecutiveFailures,
 			NextRun:    monitorNextRun(m),
 			// The monitor vocabulary's own answer to core.RelinkFixesIt: a

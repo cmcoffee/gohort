@@ -265,8 +265,8 @@ func TestAFailingScheduleSaysSoWhileItIsStillFailing(t *testing.T) {
 	if got := scheduleFailingLabel(0, 3, time.Time{}, loc); got != "" {
 		t.Errorf("a healthy row gained a line: %q", got)
 	}
-	// A monitor parks at a bound, so the count has something to count towards.
-	got := scheduleFailingLabel(2, MonitorFailureThreshold(), time.Time{}, loc)
+	// A monitor set to pause after 3 failures says what it is counting towards.
+	got := scheduleFailingLabel(2, 3, time.Time{}, loc)
 	if !strings.Contains(got, "2 time(s)") || !strings.Contains(got, "stops at 3") {
 		t.Errorf("a monitor's streak does not say what it is counting towards: %q", got)
 	}

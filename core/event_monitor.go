@@ -274,13 +274,19 @@ type EventMonitor struct {
 	// failure-shaped result — traceback / non-zero exit / timeout). A failed poll
 	// is never delivered (so a direct-channel monitor can't spam a traceback into
 	// a human chat) and doesn't advance the baseline; the streak resets on any
-	// success. At monitorFailureThreshold the monitor is marked broken + paused.
-	ConsecutiveFailures int       `json:"consecutive_failures,omitempty"`
-	Created             time.Time `json:"created"`
-	NextCheck           time.Time `json:"next_check,omitempty"`
-	LastFired           time.Time `json:"last_fired,omitempty"`
-	LastChecked         time.Time `json:"last_checked,omitempty"` // last time the poll ran (every interval) — proves liveness even with no change
-	LastResult          string    `json:"last_result,omitempty"`  // last answer/value seen (poll debounce / http display)
+	// success or resume. While it runs, the checks back off (notePollFailure).
+	ConsecutiveFailures int `json:"consecutive_failures,omitempty"`
+	// PauseAfterFailures is the owner's choice to pause the monitor after this
+	// many failed checks in a row. 0, the default, never pauses for failing
+	// checks: it keeps checking, further apart, and is back at its own pace
+	// at the first check that works. A removed dependency still pauses it,
+	// whatever this says (MarkEventMonitorBroken).
+	PauseAfterFailures int       `json:"pause_after_failures,omitempty"`
+	Created            time.Time `json:"created"`
+	NextCheck          time.Time `json:"next_check,omitempty"`
+	LastFired          time.Time `json:"last_fired,omitempty"`
+	LastChecked        time.Time `json:"last_checked,omitempty"` // last time the poll ran (every interval) — proves liveness even with no change
+	LastResult         string    `json:"last_result,omitempty"`  // last answer/value seen (poll debounce / http display)
 	// RecentChecks is what the last few checks found and did, newest last:
 	// fired, no match (with the value seen), held because the condition is
 	// still true from a fire, re-armed, unchanged, a change a filter or the
@@ -773,8 +779,16 @@ func (m EventMonitor) FireLabel() string {
 // Called on resume: the owner turning a stopped monitor back on means "watch
 // again", not "fire once more and stop". A monitor that has NOT spent its
 // allowance is left alone, so an ordinary unpause keeps its remaining fires.
+//
+// A resume also starts the failure streak over. Kept, the first failed check
+// after resuming a monitor paused at its limit was already past the limit, and
+// paused it again at once.
 func RearmMonitorFires(m *EventMonitor) bool {
-	if m == nil || !m.firedOut() {
+	if m == nil {
+		return false
+	}
+	m.ConsecutiveFailures = 0
+	if !m.firedOut() {
 		return false
 	}
 	m.FiresBase = m.FireCount
@@ -1441,20 +1455,38 @@ func executeHTTPPoll(ctx context.Context, db Database, m EventMonitor) {
 	}
 }
 
-// monitorFailureThreshold is how many consecutive FAILED checks a polled
-// monitor tolerates before it's marked broken + paused. Low enough to stop
-// spam / a definitively-dead dependency (a revoked binding, a hostname that
-// does not resolve) quickly; high enough that a single transient blip
-// self-heals on the next successful check.
-const monitorFailureThreshold = 3
+// monitorFailingNotice is the failed check, in a row, at which the owner is
+// told the monitor is failing: past a blip, which the next check heals without
+// anyone needing to hear of it.
+const monitorFailingNotice = 3
 
-// MonitorFailureThreshold is that bound, for the surfaces that report a streak.
-// A count of failed checks with nothing to count towards says a monitor is
-// unhappy without saying whether it is about to stop.
-func MonitorFailureThreshold() int { return monitorFailureThreshold }
+// monitorBackoffCeiling is the furthest apart failing checks get. A host that
+// comes back is noticed within the hour; a monitor whose own interval is longer
+// keeps that, since a backoff only ever moves a check later.
+const monitorBackoffCeiling = time.Hour
 
-// notePollFailure records one failed check and parks the monitor when the
-// streak reaches the threshold. It reports whether it parked.
+// monitorFailureBackoff is how long after now the next check of a failing
+// monitor waits: its interval doubled for each failure in a row, up to 16
+// times, and no more than monitorBackoffCeiling.
+func monitorFailureBackoff(m EventMonitor) time.Duration {
+	iv := m.IntervalSeconds
+	if iv < minPollInterval {
+		iv = minPollInterval
+	}
+	n := m.ConsecutiveFailures
+	if n > 4 {
+		n = 4
+	}
+	if d := time.Duration(iv) * time.Second << uint(n); d < monitorBackoffCeiling {
+		return d
+	}
+	return monitorBackoffCeiling
+}
+
+// notePollFailure records one failed check. A monitor its owner set to pause
+// after so many failures is parked when the streak reaches that number, and
+// it reports whether it parked. Any other keeps checking, further apart each
+// time, and the owner is told once that its checks are failing.
 //
 // Every polled kind goes through here. Only watch used to: an http_poll whose
 // URL never resolved logged its error and returned, so it retried every
@@ -1472,13 +1504,32 @@ func notePollFailure(db Database, m EventMonitor, reason string) bool {
 		return false
 	}
 	cur.ConsecutiveFailures++
-	Log("[event] %s %s/%s failed check %d/%d: %s",
-		cur.Kind, m.Owner, m.Name, cur.ConsecutiveFailures, monitorFailureThreshold, reason)
+	n, limit := cur.ConsecutiveFailures, cur.PauseAfterFailures
+	of := ""
+	if limit > 0 {
+		of = fmt.Sprintf("/%d", limit)
+	}
+	Log("[event] %s %s/%s failed check %d%s: %s", cur.Kind, m.Owner, m.Name, n, of, reason)
 	noteCheck(&cur, "failed", reason)
-	SaveEventMonitor(db, cur)
-	if cur.ConsecutiveFailures < monitorFailureThreshold {
+	if limit <= 0 || n < limit {
+		// Read by the re-arm after this check (ScheduleEventMonitor), which
+		// takes it only when it is later than the monitor's own next check.
+		cur.NextAttemptAt = time.Now().Add(monitorFailureBackoff(cur))
+		cur.NextAttemptWhy = fmt.Sprintf("its last %d check(s) failed, so it waits longer before the next", n)
+		SaveEventMonitor(db, cur)
+		// Once, and only on a monitor still checking: one with a limit at or
+		// below this has been paused by now, which says so itself.
+		if n == monitorFailingNotice {
+			RecordRun(db, RunRecord{
+				Owner: m.Owner, Agent: m.Name, Trigger: cur.Kind, Task: m.Name,
+				Status:  RunAttention,
+				Summary: fmt.Sprintf("Its checks are failing (%d in a row): %s. It keeps checking, less often, and goes back to its usual pace when a check works.", n, reason),
+				Started: time.Now(), Ended: time.Now(),
+			}.AboutMonitor(m.Name))
+		}
 		return false
 	}
+	SaveEventMonitor(db, cur)
 	MarkEventMonitorFailing(db, m.Owner, m.Name, cur.Kind+" checks are failing: "+reason)
 	// The row is the half the owner can actually see. Written once, when the
 	// monitor stops trying — a row per failed check would bury the feed under
@@ -1486,7 +1537,7 @@ func notePollFailure(db Database, m EventMonitor, reason string) bool {
 	RecordRun(db, RunRecord{
 		Owner: m.Owner, Agent: m.Name, Trigger: cur.Kind, Task: m.Name,
 		Status: RunAttention,
-		Summary: fmt.Sprintf("Stopped checking after %d consecutive failures: %s. The monitor is paused and needs attention; fix what it points at, then resume it.",
+		Summary: fmt.Sprintf("Paused after %d failed checks in a row, the limit set on it: %s. Fix what it points at, then resume it.",
 			cur.ConsecutiveFailures, reason),
 		Started: time.Now(), Ended: time.Now(),
 	}.AboutMonitor(m.Name))
@@ -1507,10 +1558,21 @@ func noteModelWait(db Database, m EventMonitor, reason string) {
 }
 
 // clearPollFailures resets an accumulated streak on the caller's copy and
-// persists it, so a transient blip self-heals on the next good check.
+// persists it, so a transient blip self-heals on the next good check. A
+// monitor whose owner was told it was failing is said to be working again, in
+// the same place.
 func clearPollFailures(db Database, m *EventMonitor) {
 	if m == nil || m.ConsecutiveFailures == 0 {
 		return
+	}
+	if n := m.ConsecutiveFailures; n >= monitorFailingNotice {
+		Log("[event] %s %s/%s checks work again after %d failed", m.Kind, m.Owner, m.Name, n)
+		RecordRun(db, RunRecord{
+			Owner: m.Owner, Agent: m.Name, Trigger: m.Kind, Task: m.Name,
+			Status:  RunOK,
+			Summary: fmt.Sprintf("Its checks work again, after %d failed in a row. It is back at its usual pace.", n),
+			Started: time.Now(), Ended: time.Now(),
+		}.AboutMonitor(m.Name))
 	}
 	m.ConsecutiveFailures = 0
 	SaveEventMonitor(db, *m)
@@ -1551,10 +1613,9 @@ func executeWatchPoll(ctx context.Context, db Database, m EventMonitor) {
 	// err=nil) — is NOT monitored content. NEVER deliver it: a direct-channel
 	// monitor would otherwise post a raw traceback into a human chat, and a
 	// revoked secured-credential binding fails in exactly this shape. Don't advance
-	// the baseline (so a genuine recovery still registers as a change), count the
-	// streak, and after monitorFailureThreshold consecutive failures mark the monitor
-	// broken — which pauses + unschedules it and surfaces a "needs attention" state
-	// — instead of retrying into the void or spamming.
+	// the baseline (so a genuine recovery still registers as a change), and count
+	// the streak, which backs the checks off, or parks the monitor at the limit
+	// its owner set (notePollFailure).
 	if failed, reason := watchPollFailed(body, err); failed {
 		notePollFailure(db, m, reason)
 		return

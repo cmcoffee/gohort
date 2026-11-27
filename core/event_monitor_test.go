@@ -373,7 +373,7 @@ func TestWatchFailureCircuitBreaker(t *testing.T) {
 	})
 	defer RegisterWatchToolInvoker(nil)
 
-	m := EventMonitor{Owner: "u", Name: "w", Kind: EventKindWatch, ToolName: "ts3_status", Notify: EventNotifyDirect}
+	m := EventMonitor{Owner: "u", Name: "w", Kind: EventKindWatch, ToolName: "ts3_status", Notify: EventNotifyDirect, PauseAfterFailures: 3}
 	SaveEventMonitor(db, m)
 
 	// Two failures — not yet broken.
@@ -392,13 +392,13 @@ func TestWatchFailureCircuitBreaker(t *testing.T) {
 
 	// Now K straight failures → broken + paused.
 	result = traceback
-	for i := 0; i < monitorFailureThreshold; i++ {
+	for i := 0; i < m.PauseAfterFailures; i++ {
 		executeWatchPoll(context.Background(), db, m)
 	}
 	got, _ := GetEventMonitor(db, "u", "w")
 	if !got.Broken || !got.Paused {
 		t.Fatalf("after %d consecutive failures the monitor must be broken+paused; broken=%v paused=%v failures=%d",
-			monitorFailureThreshold, got.Broken, got.Paused, got.ConsecutiveFailures)
+			m.PauseAfterFailures, got.Broken, got.Paused, got.ConsecutiveFailures)
 	}
 }
 
@@ -795,27 +795,28 @@ func TestAOneShotAwaitStillRemovesItself(t *testing.T) {
 
 // --- failing checks ----------------------------------------------------------
 
-// TestAFailingHTTPPollStopsInsteadOfRetryingForever. Only the watch kind used
+// TestAFailingHTTPPollStopsAtTheLimitSetOnIt. Only the watch kind used
 // to count its failures; an http_poll logged the error and returned, so a
 // monitor pointed at a hostname that cannot resolve retried every interval
 // with nothing to show for it — no ledger row, no state change, and a console
 // row still reading "active" with a freshly stamped last-checked time. Live,
-// that ran for three hours and the only symptom was that it never fired.
-func TestAFailingHTTPPollStopsInsteadOfRetryingForever(t *testing.T) {
+// that ran for three hours and the only symptom was that it never fired. One
+// set to pause after so many failures does, at that number.
+func TestAFailingHTTPPollStopsAtTheLimitSetOnIt(t *testing.T) {
 	db := memDB(t)
 	// Port 1 on loopback refuses instantly: a real failure with no network.
 	m := EventMonitor{
 		Name: "dead-endpoint", Owner: "craig", Kind: EventKindHTTP,
 		URL: "http://127.0.0.1:1/status", CompareOp: ">", Threshold: "1",
-		IntervalSeconds: 300,
+		IntervalSeconds: 300, PauseAfterFailures: 3,
 	}
 	SaveEventMonitor(db, m)
 
-	for i := 1; i < monitorFailureThreshold; i++ {
+	for i := 1; i < m.PauseAfterFailures; i++ {
 		executeHTTPPoll(context.Background(), db, m)
 		cur, _ := GetEventMonitor(db, "craig", "dead-endpoint")
 		if cur.Broken {
-			t.Fatalf("parked after %d failure(s); the threshold is %d and a blip must self-heal", i, monitorFailureThreshold)
+			t.Fatalf("parked after %d failure(s); the limit is %d and a blip must self-heal", i, m.PauseAfterFailures)
 		}
 		if cur.ConsecutiveFailures != i {
 			t.Errorf("failure %d was not counted: streak is %d", i, cur.ConsecutiveFailures)
@@ -828,7 +829,7 @@ func TestAFailingHTTPPollStopsInsteadOfRetryingForever(t *testing.T) {
 		t.Fatal("the monitor was deleted rather than parked")
 	}
 	if !cur.Broken || !cur.Paused {
-		t.Errorf("still checking after %d consecutive failures: broken=%v paused=%v", monitorFailureThreshold, cur.Broken, cur.Paused)
+		t.Errorf("still checking after %d consecutive failures: broken=%v paused=%v", m.PauseAfterFailures, cur.Broken, cur.Paused)
 	}
 	// The reason has to name what failed, or "needs attention" is another
 	// dead end for whoever reads the row.
@@ -839,7 +840,7 @@ func TestAFailingHTTPPollStopsInsteadOfRetryingForever(t *testing.T) {
 	// And it says so once, in Activity, where the owner is actually looking.
 	rows := 0
 	for _, r := range ListRuns(db, "craig", RunFilter{}) {
-		if strings.Contains(r.Summary, "Stopped checking after") {
+		if strings.Contains(r.Summary, "Paused after 3 failed checks") {
 			rows++
 			if r.Status != RunAttention {
 				t.Errorf("a monitor that gave up is attention, got %q", r.Status)
@@ -848,6 +849,76 @@ func TestAFailingHTTPPollStopsInsteadOfRetryingForever(t *testing.T) {
 	}
 	if rows != 1 {
 		t.Errorf("want exactly one row for the stop, got %d — one per failed check would bury the feed", rows)
+	}
+}
+
+// A monitor with no limit set keeps checking through failures, as a host that
+// restarts comes back: each failed check puts the next one further out, up to
+// an hour, the owner is told once that it is failing and once that it works
+// again, and it is never paused. It used to pause at the third failure, which
+// on a one-minute watch was a host down for two minutes.
+func TestAFailingMonitorBacksOffInsteadOfPausing(t *testing.T) {
+	allowLoopbackPolls(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("5"))
+	}))
+	defer srv.Close()
+	db := memDB(t)
+	m := EventMonitor{
+		Name: "restarting-host", Owner: "craig", Kind: EventKindHTTP,
+		URL: "http://127.0.0.1:1/status", CompareOp: ">", Threshold: "10",
+		IntervalSeconds: 300,
+	}
+	SaveEventMonitor(db, m)
+
+	for i, want := range []time.Duration{10 * time.Minute, 20 * time.Minute, 40 * time.Minute, time.Hour, time.Hour, time.Hour} {
+		cur, _ := GetEventMonitor(db, "craig", "restarting-host")
+		executeHTTPPoll(context.Background(), db, cur)
+		cur, _ = GetEventMonitor(db, "craig", "restarting-host")
+		if cur.Paused || cur.Broken {
+			t.Fatalf("paused at failure %d with no limit set", i+1)
+		}
+		if got := time.Until(cur.NextAttemptAt); got < want-time.Minute || got > want {
+			t.Errorf("failure %d: next check in %s, want %s", i+1, got.Round(time.Second), want)
+		}
+	}
+	notices := func(text string, status RunStatus) int {
+		n := 0
+		for _, r := range ListRuns(db, "craig", RunFilter{}) {
+			if strings.Contains(r.Summary, text) {
+				n++
+				if r.Status != status {
+					t.Errorf("%q is %q, want %q", r.Summary, r.Status, status)
+				}
+			}
+		}
+		return n
+	}
+	if n := notices("Its checks are failing (3 in a row)", RunAttention); n != 1 {
+		t.Errorf("told %d time(s) that it is failing, want once", n)
+	}
+
+	cur, _ := GetEventMonitor(db, "craig", "restarting-host")
+	cur.URL = srv.URL
+	SaveEventMonitor(db, cur)
+	executeHTTPPoll(context.Background(), db, cur)
+	cur, _ = GetEventMonitor(db, "craig", "restarting-host")
+	if cur.ConsecutiveFailures != 0 {
+		t.Errorf("a check that worked left the streak at %d", cur.ConsecutiveFailures)
+	}
+	if n := notices("Its checks work again, after 6 failed", RunOK); n != 1 {
+		t.Errorf("told %d time(s) that it works again, want once", n)
+	}
+
+	// Resuming one paused at its limit starts the count over, or its first
+	// failure after the resume is past the limit already.
+	parked := EventMonitor{ConsecutiveFailures: 3, PauseAfterFailures: 3}
+	RearmMonitorFires(&parked)
+	if parked.ConsecutiveFailures != 0 {
+		t.Errorf("a resume kept a streak of %d", parked.ConsecutiveFailures)
+	}
+	if d := monitorFailureBackoff(EventMonitor{ConsecutiveFailures: 1}); d != time.Minute {
+		t.Errorf("a monitor with no interval backs off from the floor of 30s: got %s", d)
 	}
 }
 
@@ -863,10 +934,10 @@ func TestABadComparisonCountsAsAFailure(t *testing.T) {
 	db := memDB(t)
 	m := EventMonitor{
 		Name: "bad-compare", Owner: "craig", Kind: EventKindHTTP,
-		URL: srv.URL, CompareOp: ">", Threshold: "10",
+		URL: srv.URL, CompareOp: ">", Threshold: "10", PauseAfterFailures: 3,
 	}
 	SaveEventMonitor(db, m)
-	for i := 0; i < monitorFailureThreshold; i++ {
+	for i := 0; i < m.PauseAfterFailures; i++ {
 		executeHTTPPoll(context.Background(), db, m)
 	}
 	cur, _ := GetEventMonitor(db, "craig", "bad-compare")
@@ -892,7 +963,7 @@ func TestAGoodCheckClearsTheFailureStreak(t *testing.T) {
 	m := EventMonitor{
 		Name: "flaky", Owner: "craig", Kind: EventKindHTTP,
 		URL: srv.URL, CompareOp: ">", Threshold: "10",
-		ConsecutiveFailures: monitorFailureThreshold - 1,
+		ConsecutiveFailures: 2,
 	}
 	SaveEventMonitor(db, m)
 
@@ -1521,13 +1592,13 @@ func TestModelUnavailableTellsTheModelDownFromABrokenCheck(t *testing.T) {
 func TestAPollWaitsForTheModelInsteadOfStopping(t *testing.T) {
 	db := memDB(t)
 	m := EventMonitor{Name: "cve-watch", Owner: "craig", Kind: EventKindPoll,
-		CheckAgent: "Security", Check: "any new CVEs?", IntervalSeconds: 60}
+		CheckAgent: "Security", Check: "any new CVEs?", IntervalSeconds: 60, PauseAfterFailures: 3}
 	SaveEventMonitor(db, m)
 	pollErr := fmt.Errorf(`Post "http://llm.invalid:8080/v1/chat/completions": dial tcp 192.0.2.1:8080: connect: connection refused`)
 	RegisterEventPoller(func(ctx context.Context, owner, agentID, check string) (string, error) { return "", pollErr })
 	defer RegisterEventPoller(nil)
 
-	for i := 0; i < monitorFailureThreshold+2; i++ {
+	for i := 0; i < m.PauseAfterFailures+2; i++ {
 		cur, _ := GetEventMonitor(db, "craig", "cve-watch")
 		executeEventPoll(context.Background(), db, cur)
 	}
@@ -1540,7 +1611,7 @@ func TestAPollWaitsForTheModelInsteadOfStopping(t *testing.T) {
 	}
 
 	pollErr = fmt.Errorf("the checker agent %q is gone", "Security")
-	for i := 0; i < monitorFailureThreshold; i++ {
+	for i := 0; i < m.PauseAfterFailures; i++ {
 		cur, _ := GetEventMonitor(db, "craig", "cve-watch")
 		executeEventPoll(context.Background(), db, cur)
 	}

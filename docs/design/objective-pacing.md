@@ -247,10 +247,12 @@ and droppable, and building the rest made the case clearer:
 attempt saying what it is waiting for, backoff is the framework noticing that nothing is working.
 They meet only at the end, where both move the next occurrence through the same two fields.
 
-- **Recurring and standing only.** Event monitors already had this bound: `ConsecutiveFailures` plus
-  `monitorFailureThreshold` parks them after three failed polls. Backing off there would only make
-  the owner wait longer to learn it is broken. The other two had no bound at all: a fire that
-  errored was recorded and re-armed on the same cadence, forever.
+- **Recurring and standing only.** Event monitors had a bound of their own: `ConsecutiveFailures`
+  parked them after three failed polls. The other two had no bound at all: a fire that errored was
+  recorded and re-armed on the same cadence, forever. (2026-11-26: the three-failure park turned out
+  to pause a one-minute watch whenever its host restarted. Monitors now back off too, on their own
+  curve in `notePollFailure`, at most an hour apart, and park only at a limit the owner sets,
+  `PauseAfterFailures`, which is off unless set.)
 - **The curve is relative to the schedule's own cadence** (2x, 4x, 8x, 16x, then stop climbing):
   five minutes is a long wait for a five-minute task and no wait at all for a daily one. Capped by
   the same ceiling pacing uses, so a backed-off fire still cannot be armed past the idle reap.

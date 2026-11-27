@@ -8259,23 +8259,68 @@
         // continuously, or during set days and hours (core/timing's terms).
         var collectPeriods = schedPeriodsFields(host, mon.periods);
         var collectUntil = schedUntilFields(host, mon.until, {unit: 'alerts', noAttempts: true});
+        var collectFailures = monitorFailureFields(host, mon.pause_after_failures);
 
         return function() {
           var periods = collectPeriods();
           if (!periods) return null;
           var until = collectUntil();
           if (!until) return null;
+          var pauseAfter = collectFailures();
+          if (pauseAfter == null) return null;
           if (whenSel.value === 'daily') {
             var at = dailyAt.value.trim();
             if (!at) { window.uiAlert('Enter one or more times, like 08:00.'); return null; }
-            return {daily_at: at, periods: periods.periods, until: until.until};
+            return {daily_at: at, periods: periods.periods, until: until.until, pause_after_failures: pauseAfter};
           }
           var secsPer = unitSel.value === 'hours' ? 3600 : (unitSel.value === 'minutes' ? 60 : 1);
           var v = parseInt(everyVal.value, 10);
           var n = (isNaN(v) ? 0 : v) * secsPer;
           if (n < 5) { window.uiAlert('Interval must be at least 5 seconds.'); return null; }
           // Back to an interval clears any set times.
-          return {interval_seconds: n, daily_at: '', periods: periods.periods, until: until.until};
+          return {interval_seconds: n, daily_at: '', periods: periods.periods, until: until.until, pause_after_failures: pauseAfter};
+        };
+      }
+
+      // What a monitor does when its checks fail: by default it keeps
+      // checking, further apart, and is back at its pace once one works. The
+      // owner can choose to have it pause after so many failures in a row.
+      // The collector returns 0 for never, N for after N, or null (with an
+      // alert) for a number that is not one.
+      function monitorFailureFields(host, stored) {
+        var n = parseInt(stored, 10) || 0;
+        var row = document.createElement('label');
+        row.style.cssText = 'display:inline-flex;align-items:center;gap:0.4rem;font-size:0.85rem;flex-wrap:wrap';
+        var cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.checked = n > 0;
+        var count = schedNum(n > 0 ? n : 3, 1);
+        count.style.maxWidth = '5rem';
+        row.appendChild(cb);
+        row.appendChild(document.createTextNode('Pause after'));
+        row.appendChild(count);
+        row.appendChild(document.createTextNode('failed checks in a row'));
+        // Not schedLabeled: that wraps its field in a label, and this row is
+        // a label of its own (one inside another is not valid HTML).
+        var wrap = document.createElement('div');
+        wrap.style.cssText = 'margin:0.4rem 0';
+        var head = document.createElement('div');
+        head.className = 'ui-orch-sec-toggle-help';
+        head.textContent = 'When checks fail';
+        wrap.appendChild(head);
+        wrap.appendChild(row);
+        var help = document.createElement('div');
+        help.className = 'ui-orch-modal-help';
+        help.textContent = 'Unticked, it keeps checking when checks fail, less often each time (at most an hour apart), and goes back to its usual pace when one works.';
+        wrap.appendChild(help);
+        host.appendChild(wrap);
+        function sync() { count.disabled = !cb.checked; }
+        cb.addEventListener('change', sync);
+        sync();
+        return function() {
+          if (!cb.checked) return 0;
+          var v = parseInt(count.value, 10);
+          if (isNaN(v) || v < 1) { window.uiAlert('Enter how many failed checks in a row pause it: 1 or more.'); return null; }
+          return v;
         };
       }
 

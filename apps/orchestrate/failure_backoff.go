@@ -9,11 +9,10 @@
 // The gap: a recurring fire that errors is recorded and re-armed on the same
 // cadence, forever. A task whose agent was misconfigured at 09:00 tries again at
 // 09:05, and at 09:10, filing a failed run each time, until somebody notices or
-// the idle reap takes it ninety days later. Event monitors already had the
-// bound this adds (ConsecutiveFailures + monitorFailureThreshold parks them
-// after three), which is why they are not touched here: there the streak already
-// ends in a park, and backing off would only make the owner wait longer to find
-// out. These two surfaces had no bound at all.
+// the idle reap takes it ninety days later. These two surfaces had no bound at
+// all. Event monitors back off on their own curve (core's notePollFailure): they
+// used to park after three failures, which on a one-minute watch was a host
+// down for two minutes, and now park only at a limit their owner sets.
 //
 // An explicit ask always wins. A fire that failed but still said when to come
 // back knows something the curve does not.

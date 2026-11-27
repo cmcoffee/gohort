@@ -200,6 +200,7 @@ func (T *OrchestrateApp) setConsoleBridgePaused(c *jsonapi.Call, paused bool) (a
 		}
 		SaveEventMonitor(RootDB, m)
 	} else {
+		RearmMonitorFires(&m) // as the console's Resume does: the failure streak starts over
 		SaveEventMonitor(RootDB, m)
 		_ = ScheduleEventMonitor(RootDB, m)
 	}

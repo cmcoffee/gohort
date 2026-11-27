@@ -68,6 +68,7 @@ func TestTheScheduleEditorSendsWhatWasTypedInBothHalves(t *testing.T) {
 		"function schedTimingFields(host, spec) {",
 		"function schedPeriodsFields(host, periods) {",
 		"function schedUntilFields(host, until, opts) {",
+		"function monitorFailureFields(host, stored) {",
 	} {
 		parts = append(parts, jsSpan(t, src, "      "+fn))
 	}
@@ -127,7 +128,22 @@ func TestTheScheduleEditorSendsWhatWasTypedInBothHalves(t *testing.T) {
         if (posted.match_contains !== 'YES') fail('match: ' + posted.match_contains);
         if (posted.interval_seconds !== 300) fail('interval: ' + posted.interval_seconds);
         if (!posted.periods || posted.periods.days !== 0 || posted.periods.has_window) fail('a monitor should stay continuous by default: ' + JSON.stringify(posted.periods));
-        if ('url' in posted) fail('a poll monitor sent a url, which the server refuses by name');`,
+        if ('url' in posted) fail('a poll monitor sent a url, which the server refuses by name');
+        if (posted.pause_after_failures !== 0) fail('a monitor with no limit should keep checking through failures: ' + posted.pause_after_failures);`,
+		},
+		{
+			// Its last checkbox is "Pause after N failed checks in a row".
+			name:   "a monitor can be set to pause after failed checks, and turned back",
+			action: "orchestrate_edit_monitor",
+			record: `{name: 'build', kind: 'watch', schedulable: true, wake_brief: 'b', interval_seconds: 60, pause_after_failures: 4}`,
+			edit: `var cbs = global.made.input.filter(function(x) { return x.type === 'checkbox'; });
+        if (!cbs[cbs.length - 1].checked) fail('a stored limit of 4 shows unticked');
+        var n = global.made.input.filter(function(x) { return x.type === 'number' && x.value === '4'; });
+        if (n.length !== 1) fail('the stored count is not shown');
+        n[0].value = '6';`,
+			checks: `
+        if (!posted) fail('nothing was sent: ' + alerted);
+        if (posted.pause_after_failures !== 6) fail('pause after: ' + posted.pause_after_failures);`,
 		},
 		{
 			// The advanced option: same cadence, only on the days and hours set.
