@@ -75,7 +75,10 @@ var store struct {
 	m      map[string]Mapping
 }
 
-func init() { JudgeMapGate = mappedNow }
+func init() {
+	JudgeMapGate = mappedNow
+	decide.FormFor = formNow
+}
 
 // load reads the map once a database is there.
 func load() {
@@ -128,7 +131,9 @@ func saveMapping(e Mapping) {
 func TierModel(tier string) string {
 	switch tier {
 	case TierWorker:
-		return TierWorker
+		// The worker's model, served weights included, so what it earned
+		// (a form) is known to be stale when the weights change.
+		return decide.Identity(decide.ProviderWorker)
 	case MapJudge:
 		if JudgeLLM() == nil {
 			return ""
@@ -162,6 +167,105 @@ func mapGateFor(key, tier, model string) bool {
 		return false
 	}
 	return e.Tiers[tier].mapped(model)
+}
+
+// formTier is where a tier's results in form are kept on a check's mapping:
+// the tier itself for the check as written, tier#form for another form.
+func formTier(tier, form string) string {
+	if form == decide.FormReasons {
+		return tier
+	}
+	return tier + "#" + form
+}
+
+// formNow is decide.FormFor: the form check key is asked in live. As
+// written while that gets every case right on the model answering it, or
+// was never tried there; else the first other form that has earned the
+// check on that model, two clean runs in a row; else as written.
+func formNow(key string) string {
+	if beingTaken(key) {
+		return decide.FormReasons
+	}
+	tier := TierWorker
+	if MappedTo(key, MapJudge) {
+		tier = MapJudge
+	}
+	return formFor(key, tier, TierModel(tier))
+}
+
+// formFor is formNow with the tier and its model given.
+func formFor(key, tier, model string) string {
+	e, ok := MappingFor(key)
+	if !ok || model == "" {
+		return decide.FormReasons
+	}
+	ch, ok := checkFor(key)
+	if !ok || !ch.Structured || e.Fingerprint == "" || e.Fingerprint != Fingerprint(ch) {
+		return decide.FormReasons
+	}
+	base := e.Tiers[tier]
+	if base.Model != model || len(base.Missed) == 0 {
+		return decide.FormReasons
+	}
+	for _, f := range decide.Forms {
+		if r := e.Tiers[formTier(tier, f)]; r.mapped(model) {
+			return f
+		}
+	}
+	return decide.FormReasons
+}
+
+// FormMissing are the checks model gets wrong as written, on the check as
+// it is and the model it is, that another form has not yet earned or been
+// ruled out on: what a forms run asks. A form that missed a case on that
+// model is ruled out until the map is cleared; one short of its clean runs
+// is asked again.
+func FormMissing(m Model) []string {
+	tier, id := m.tier(), m.identity()
+	if id == "" || m.Decide {
+		return nil
+	}
+	var out []string
+	for _, ch := range Checks() {
+		fp := Fingerprint(ch)
+		if fp == "" || !ch.Structured {
+			continue
+		}
+		e, _ := MappingFor(ch.Key)
+		base := e.Tiers[tier]
+		if e.Fingerprint != fp || base.Model != id || len(base.Missed) == 0 {
+			continue
+		}
+		earned, open := false, false
+		for _, f := range decide.Forms {
+			r := e.Tiers[formTier(tier, f)]
+			switch {
+			case r.mapped(id):
+				earned = true
+			case r.Model != id || (r.Clean > 0 && r.Clean < mapRuns):
+				open = true
+			}
+		}
+		if !earned && open {
+			out = append(out, ch.Key)
+		}
+	}
+	return out
+}
+
+// FormModels are m asked in each form beyond the one as written, each named
+// for its form so its answers sit beside m's.
+func FormModels(m Model) []Model {
+	out := make([]Model, 0, len(decide.Forms))
+	for _, f := range decide.Forms {
+		fm := m
+		fm.Name, fm.Form = m.Name+" ("+f+")", f
+		if fm.Tier == "" {
+			fm.Tier = m.tier()
+		}
+		out = append(out, fm)
+	}
+	return out
 }
 
 // Mapped reports whether check key is mapped to tier now.
@@ -248,6 +352,9 @@ func fingerprint(c Check) string {
 		// check "is giving no verdict on stand-in" (core/checkstreak).
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		ctx, _ = llmcalls.Watch(ctx)
+		// The check as written, whatever form its model has earned: the
+		// fingerprint is of the check, and a form is a rendering of it.
+		ctx = decide.WithForm(ctx, decide.FormReasons)
 		if c.Run != nil {
 			rec.write("full")
 			c.Run(ctx, rec, tc)
@@ -330,7 +437,7 @@ func record(rep RunReport, models []Model) {
 		}
 		changed := false
 		for _, m := range models {
-			tier := m.tier()
+			tier := formTier(m.tier(), m.Form)
 			var took []int64
 			var missed []string
 			for _, r := range rows {
@@ -359,7 +466,16 @@ func record(rep RunReport, models []Model) {
 			res.Cases, res.Missed, res.MS, res.At = len(took), missed, median(took), rep.At
 			e.Tiers[tier] = res
 			changed = true
-			if tier != TierWorker {
+			if m.Form != "" {
+				state := fmt.Sprintf("%d clean run(s) of %d", res.Clean, mapRuns)
+				switch {
+				case res.mapped(id):
+					state = "EARNED: asked this way from now on"
+				case len(missed) > 0:
+					state = "missed " + strings.Join(missed, "; ")
+				}
+				Log("[checktest] form: %s on %s asked %q (%s): %s", ch.Label, m.tier(), m.Form, id, state)
+			} else if tier != TierWorker {
 				// Every mapping's step in the log, so where a check stands can
 				// be read without the page.
 				state := fmt.Sprintf("%d clean run(s) of %d", res.Clean, mapRuns)

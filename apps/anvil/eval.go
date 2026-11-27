@@ -78,15 +78,22 @@ type evalSetting struct {
 	// Builder runs the app tasks through Builder instead of Anvil, and only
 	// those, to measure which builds apps better on the same tasks.
 	Builder bool
+	// Effort is the thinking effort every round runs at ("low", "medium"),
+	// "" the agent's own: what a lower effort costs in passes, against what
+	// it saves in time, so a project's Reasoning can be chosen from it
+	// (docs/design/adaptive-checks.md).
+	Effort string
 }
 
 var evalSettings = []evalSetting{
-	{"worker-check", "Worker, with the check", "The local model, with each task's check run after its edits.", false, true, false, false},
-	{"worker-check-noscript", "Worker, with the check, without tool_script", "As Worker, with the check, but with no tool_script: compare the two to see whether scripts save rounds.", false, true, true, false},
-	{"worker-plain", "Worker, without the check", "The local model, with no check: how Anvil worked before.", false, false, false, false},
-	{"lead-check", "Lead, with the check", "The lead model, with each task's check run after its edits.", true, true, false, false},
-	{"lead-plain", "Lead, without the check", "The lead model, with no check.", true, false, false, false},
-	{"builder-apps", "Builder, app tasks", "Builder as a person's chat turn in app mode, on the models it is set to use, on the app tasks only: compare with Worker, with the check, on the same tasks.", false, false, false, true},
+	{"worker-check", "Worker, with the check", "The local model, with each task's check run after its edits.", false, true, false, false, ""},
+	{"worker-check-medium", "Worker, with the check, medium effort", "As Worker, with the check, thinking at medium effort: compare with it to see what thinking less costs.", false, true, false, false, "medium"},
+	{"worker-check-low", "Worker, with the check, low effort", "As Worker, with the check, thinking at low effort, as a project set to Quick does: compare with it to see what thinking less costs.", false, true, false, false, "low"},
+	{"worker-check-noscript", "Worker, with the check, without tool_script", "As Worker, with the check, but with no tool_script: compare the two to see whether scripts save rounds.", false, true, true, false, ""},
+	{"worker-plain", "Worker, without the check", "The local model, with no check: how Anvil worked before.", false, false, false, false, ""},
+	{"lead-check", "Lead, with the check", "The lead model, with each task's check run after its edits.", true, true, false, false, ""},
+	{"lead-plain", "Lead, without the check", "The lead model, with no check.", true, false, false, false, ""},
+	{"builder-apps", "Builder, app tasks", "Builder as a person's chat turn in app mode, on the models it is set to use, on the app tasks only: compare with Worker, with the check, on the same tasks.", false, false, false, true, ""},
 }
 
 func evalSettingByID(id string) (evalSetting, bool) {
@@ -266,6 +273,7 @@ func (T *Anvil) runEvalAgent(ctx context.Context, c *toolCtx, task evalTask, s e
 		Tools:        c.codeTools(),
 		MaxRounds:    evalMaxRounds,
 		Tier:         tier,
+		Effort:       s.Effort,
 		Confirm:      func(string, string) bool { return true },
 		OnStep: func(st StepInfo) {
 			mu.Lock()

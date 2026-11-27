@@ -103,6 +103,24 @@ func runCheckMap(ctx context.Context) int {
 		Log("[checktest] mapping %d check(s): %s", len(missing), strings.Join(missing, ", "))
 		checktest.Run(ctx, models, missing...)
 	}
+	// The checks the worker gets wrong as written, asked in the other forms
+	// until one earns each or all are ruled out (docs/design/adaptive-checks.md).
+	forms := 0
+	if w, ok := workerModel(models); ok {
+		for pass := 1; pass <= 2 && ctx.Err() == nil; pass++ {
+			keys := checktest.FormMissing(w)
+			if len(keys) == 0 {
+				break
+			}
+			Log("[checktest] asking %d check(s) the worker gets wrong in other forms: %s", len(keys), strings.Join(keys, ", "))
+			checktest.Run(ctx, checktest.FormModels(w), keys...)
+		}
+		for _, ch := range checktest.Checks() {
+			if f := decide.FormFor; f != nil && f(ch.Key) != decide.FormReasons {
+				forms++
+			}
+		}
+	}
 	offload, s1, worker := 0, 0, 0
 	for _, ch := range checktest.Checks() {
 		on := false
@@ -118,7 +136,11 @@ func runCheckMap(ctx context.Context) int {
 			worker++
 		}
 	}
-	ReportMaintenanceOutcome(ctx, fmt.Sprintf("Mapped: %d check(s) to the Offload model, %d to System One first; %d stay on the worker.", offload, s1, worker))
+	outcome := fmt.Sprintf("Mapped: %d check(s) to the Offload model, %d to System One first; %d stay on the worker.", offload, s1, worker)
+	if forms > 0 {
+		outcome += fmt.Sprintf(" %d asked in another form the worker gets right.", forms)
+	}
+	ReportMaintenanceOutcome(ctx, outcome)
 	return offload + s1
 }
 
@@ -130,7 +152,7 @@ func startCheckMap() {
 		go func() {
 			time.Sleep(checkMapAfter)
 			for {
-				if !checktest.Busy() && len(checkTestModels()) >= 2 && len(checktest.Missing(checkTestModels())) > 0 {
+				if !checktest.Busy() && checkMapDue() {
 					RunMaintenanceFunc(context.WithValue(context.Background(), checkMapAuto{}, true), checkMapKey)
 				}
 				time.Sleep(checkMapEvery)
@@ -140,6 +162,30 @@ func startCheckMap() {
 }
 
 var checkMapOnce sync.Once
+
+// checkMapDue reports whether the map has something to settle on its own: a
+// mapping missing for a tier the mode uses, or a check the worker gets wrong
+// as written that another form has not been tried on.
+func checkMapDue() bool {
+	models := checkTestModels()
+	if len(models) >= 2 && len(checktest.Missing(models)) > 0 {
+		return true
+	}
+	if w, ok := workerModel(models); ok && len(checktest.FormMissing(w)) > 0 {
+		return true
+	}
+	return false
+}
+
+// workerModel is the worker among models.
+func workerModel(models []checktest.Model) (checktest.Model, bool) {
+	for _, m := range models {
+		if m.Tier == checktest.TierWorker {
+			return m, true
+		}
+	}
+	return checktest.Model{}, false
+}
 
 // checkTestRow is one case as its row shows it: the answer it wants, and
 // each model's answer, time and reason.

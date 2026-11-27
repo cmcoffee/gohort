@@ -133,6 +133,9 @@ type Model struct {
 	// Identity is what the model is for the map; empty, what its tier is
 	// now (TierModel). Set by a test.
 	Identity string
+	// Form is the form its checks are asked in (core/decide Forms), "" as
+	// written. Its results are kept beside its tier's (formTier).
+	Form string
 }
 
 // Answer is one model's outcome on one case.
@@ -192,6 +195,12 @@ var CaseTimeout = 60 * time.Second
 const (
 	table   = "check_tests"
 	lastKey = "last"
+	// lastFormsKey is where the last forms run is kept (every model asked
+	// in a form, FormModels), apart from the last run the page shows: a
+	// forms run asks only some checks, in other forms, and kept as the last
+	// it would have replaced those checks' rows with answers the page does
+	// not show.
+	lastFormsKey = "last_forms"
 )
 
 // runMu holds one run at a time: two would ask the same models the same
@@ -216,6 +225,10 @@ func Busy() bool {
 func Run(ctx context.Context, models []Model, only ...string) RunReport {
 	runMu.Lock()
 	defer runMu.Unlock()
+	keep := lastKey
+	if allForms(models) {
+		keep = lastFormsKey
+	}
 	rep := RunReport{At: time.Now()}
 	for _, m := range models {
 		rep.Models = append(rep.Models, m.Name)
@@ -240,7 +253,7 @@ func Run(ctx context.Context, models []Model, only ...string) RunReport {
 	// The rows of the checks not asked this time, from the last run, so the
 	// results table still shows every check.
 	var kept []Row
-	if len(only) > 0 {
+	if len(only) > 0 && keep == lastKey {
 		if last, ok := Last(); ok {
 			for _, r := range last.Rows {
 				if !asked[r.Check] {
@@ -280,6 +293,9 @@ func Run(ctx context.Context, models []Model, only ...string) RunReport {
 			began := time.Now()
 			cctx, cancel := context.WithTimeout(ctx, CaseTimeout)
 			cctx, calls := llmcalls.Watch(cctx)
+			if !m.Decide {
+				cctx = decide.WithForm(cctx, m.Form)
+			}
 			o := run(cctx, m.LLM, j.c)
 			timedOut := cctx.Err() == context.DeadlineExceeded && ctx.Err() == nil
 			cancel()
@@ -315,7 +331,7 @@ func Run(ctx context.Context, models []Model, only ...string) RunReport {
 		// Kept as it goes, so a page showing the run's results fills in case
 		// by case rather than only once the whole run is over.
 		if RootDB != nil {
-			RootDB.Set(table, lastKey, withRows(rep, kept))
+			RootDB.Set(table, keep, withRows(rep, kept))
 		}
 		// Every case in the log, each model's answer beside the other's: the
 		// comparison is readable where the rest of the trail is.
@@ -323,7 +339,7 @@ func Run(ctx context.Context, models []Model, only ...string) RunReport {
 	}
 	record(rep, models)
 	if RootDB != nil {
-		RootDB.Set(table, lastKey, withRows(rep, kept))
+		RootDB.Set(table, keep, withRows(rep, kept))
 	}
 	Log("[checktest] %s", Summary(rep))
 	ReportMaintenanceOutcome(ctx, Summary(rep))
@@ -439,4 +455,17 @@ func quickForm(quick func(Case) QuickChoice) func(ctx context.Context, llm LLM, 
 		}
 		return out
 	}
+}
+
+// allForms reports a run whose every model is asked in a form: a forms run.
+func allForms(models []Model) bool {
+	if len(models) == 0 {
+		return false
+	}
+	for _, m := range models {
+		if m.Form == "" {
+			return false
+		}
+	}
+	return true
 }
