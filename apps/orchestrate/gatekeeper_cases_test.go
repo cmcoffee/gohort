@@ -164,7 +164,14 @@ func TestBothGateQuestionsKnowWhatAMisspellingIs(t *testing.T) {
 	if s1 := q.systemOneQuestion(); !strings.Contains(s1.System, rule) || !strings.Contains(s1.System, `"WiWee"`) {
 		t.Errorf("System One is not told what a misspelling is:\n%s", s1.System)
 	}
-	llm := &FakeLLM{Turns: []FakeTurn{{Content: `{"reason": "1 no", "answer": "NO"}`, Repeat: true}}}
+	// The case itself is kept out in code (cannotMeet: its one rule is about
+	// the name, and nothing in it is); beside a rule about something else,
+	// the full question is asked and told what a misspelling is.
+	if allow, _, _ := gateDecide(context.Background(), &FakeLLM{}, q); allow {
+		t.Error("a word that is not the name was let through")
+	}
+	q.Rules += "\n  2. WAKE when the message shares a meme."
+	llm := &FakeLLM{Turns: []FakeTurn{{Content: `{"reason": "1 no, 2 no", "answer": "NO"}`, Repeat: true}}}
 	if _, _, err := gateDecide(context.Background(), llm, q); err != nil {
 		t.Fatal(err)
 	}

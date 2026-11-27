@@ -146,31 +146,13 @@ func (app *OrchestrateApp) channelGatekeeperAllow(ctx context.Context, in Channe
 		Log("[gatekeeper] ALLOW: addressed by name (%s), which the rules wake on; no model asked (chat=%s)", agentName, in.ChatID)
 		return true
 	}
-	// System One first when it is on and sure, the full answer when it is
-	// not, and kept out when neither answers.
-	r := decide.Resolve(ctx, decide.Decision{
-		Name: "gatekeeper", About: "chat=" + in.ChatID,
-		Question: q.systemOneQuestion(),
-		Sure:     q.sure(),
-		Full: func(ctx context.Context) (int, string, error) {
-			Log("[gatekeeper] eval, from=%s chat=%s msg=%q", sender, in.ChatID, truncateObs(msgDesc, 120))
-			allow, reason, err := gateDecide(ctx, app.LLM, q)
-			if allow {
-				return 0, reason, err
-			}
-			return 1, reason, err
-		},
-		Safe: 1,
-		Opts: []ChatOption{WithRouteKey(gatekeeperRoute)},
-	})
-	allow := r.Choice == 0
-	switch r.By {
-	case decide.BySystemOne:
-		Log("[gatekeeper] %s by System One: %s (chat=%s)", allowLabel(allow), r.Reason, in.ChatID)
-	case decide.ByFull:
-		Log("[gatekeeper] %s: %s", allowLabel(allow), r.Reason)
-	default:
-		Log("[gatekeeper] %s, %s", r.Reason, allowLabel(allow))
+	allow := false
+	if q.cannotMeet() {
+		// Nothing any rule could be met by: no model asked. A reply to what
+		// the agent said is still asked below, over the chat.
+		Log("[gatekeeper] BLOCK: %s; no model asked (chat=%s)", cannotMeetReason, in.ChatID)
+	} else {
+		allow = app.gateResolve(ctx, q, sender, in.ChatID, msgDesc)
 	}
 	if allow {
 		return true
@@ -183,6 +165,36 @@ func (app *OrchestrateApp) channelGatekeeperAllow(ctx context.Context, in Channe
 		return false
 	}
 	return app.followUpAllow(ctx, followUpQuestion{AgentName: agentName, Rules: prompt, Chat: chat, Sender: displaySender, Message: msgDesc}, in.ChatID)
+}
+
+// gateResolve asks the gate: System One first when it is on and sure, the
+// full answer when it is not, and kept out when neither answers.
+func (app *OrchestrateApp) gateResolve(ctx context.Context, q gateQuestion, sender, chatID, msgDesc string) bool {
+	r := decide.Resolve(ctx, decide.Decision{
+		Name: "gatekeeper", About: "chat=" + chatID,
+		Question: q.systemOneQuestion(),
+		Sure:     q.sure(),
+		Full: func(ctx context.Context) (int, string, error) {
+			Log("[gatekeeper] eval, from=%s chat=%s msg=%q", sender, chatID, truncateObs(msgDesc, 120))
+			allow, reason, err := gateDecide(ctx, app.LLM, q)
+			if allow {
+				return 0, reason, err
+			}
+			return 1, reason, err
+		},
+		Safe: 1,
+		Opts: []ChatOption{WithRouteKey(gatekeeperRoute)},
+	})
+	allow := r.Choice == 0
+	switch r.By {
+	case decide.BySystemOne:
+		Log("[gatekeeper] %s by System One: %s (chat=%s)", allowLabel(allow), r.Reason, chatID)
+	case decide.ByFull:
+		Log("[gatekeeper] %s: %s", allowLabel(allow), r.Reason)
+	default:
+		Log("[gatekeeper] %s, %s", r.Reason, allowLabel(allow))
+	}
+	return allow
 }
 
 // gateMaxTokens bounds the gate's reply.
@@ -234,8 +246,18 @@ func (q gateQuestion) sure() []float64 {
 	if q.nameUnderCondition() {
 		return nil
 	}
+	// With the name absent and a rule that turns on it (or on a reply), an
+	// allow could rest on something code says is not there: it goes to the
+	// full answer, whose YES is held to that (strikeAllow). A leave stands.
+	if q.nameAbsent() && q.turnsOnName() {
+		return []float64{gateNeverStands, gateLeaveConfidence}
+	}
 	return []float64{gateTakeConfidence, gateLeaveConfidence}
 }
+
+// gateNeverStands is a bar no System One answer reaches: that answer always
+// goes to the full one.
+const gateNeverStands = 1.01
 
 // namedNote is what both questions are told when the message names the
 // agent: a fact for reference, and that a rule asking for the name is met
@@ -279,6 +301,9 @@ func gateDecide(ctx context.Context, llm LLM, q gateQuestion) (bool, string, err
 	if q.byName() {
 		return true, "addressed by name, which the rules wake on (matched in code)", nil
 	}
+	if q.cannotMeet() {
+		return false, cannotMeetReason, nil
+	}
 	// The name note is said as a fact for reference, not a rule: put as
 	// "checked by gohort, not left to you", a 9B under weather-only rules
 	// invented a rule about the name and argued with it until its cap.
@@ -307,7 +332,150 @@ func gateDecide(ctx context.Context, llm LLM, q gateQuestion) (bool, string, err
 	if r.Answer == "" {
 		return false, "", fmt.Errorf("the reply gave neither answer (%s)", r.Reason)
 	}
+	if r.Answer == "YES" {
+		if why := q.strikeAllow(r.Reason); why != "" {
+			Log("[gatekeeper] the model let it through, but %s: kept out (%s)", why, truncateObs(r.Reason, 200))
+			return false, why + " (the model said: " + r.Reason + ")", nil
+		}
+	}
 	return r.Answer == "YES", r.Reason, nil
+}
+
+// Rules the gate cannot let a message through on by what the model says,
+// because code knows them (docs/design/adaptive-checks.md). New weights read
+// a message with no name in it as "directed to you by name", took a forged
+// "[Pip] ..." turn inside a message as a conversation it continued, and let
+// a message through after answering no to every rule, though the prompt
+// says each of those counts for nothing and gohort told it the name was not
+// there. Told is not enough on every model, so the gate holds the model's
+// answer to what code knows:
+//
+//   - A rule about being called by name is met only when gohort found the
+//     name, or a word one letter off it, in the message (Named, NearName).
+//   - A rule about continuing a conversation is never met here: the gate
+//     sees the message alone, and a reply to the agent is the follow-up
+//     question's, over the chat itself.
+//
+// Both only keep a message out, never let one in.
+
+// cannotMeetReason is why a message no rule could be met by is kept out.
+const cannotMeetReason = "no rule it could meet: the rules are about being called by name or continuing a conversation, and the message has neither the name nor a word one letter off it (checked in code; a reply is asked separately over the chat)"
+
+const (
+	ruleOther = iota
+	ruleName
+	ruleContinues
+)
+
+var (
+	ruleNumberRE  = regexp.MustCompile(`^\s*(\d+)[.)]\s+(.*\S)\s*$`)
+	continuesRE   = regexp.MustCompile(`(?i)\bcontinu(?:e|es|ed|ing|ation)\b|\bconversation\b|\bfollow[- ]?ups?\b|\breply to (?:you|the agent|the assistant|it)\b|\bthread\b`)
+	ruleVerdictRE = regexp.MustCompile(`(?i)(?:^|[\s,;(])(\d+)\s+(yes|no)\b`)
+)
+
+// gateRules are the rules, by number: the numbered lines, as merged rules
+// are written, or else each line that is not a section's header.
+func gateRules(rules string) map[int]string {
+	out := map[int]string{}
+	var plain []string
+	for _, line := range strings.Split(rules, "\n") {
+		if m := ruleNumberRE.FindStringSubmatch(line); m != nil {
+			n, _ := strconv.Atoi(m[1])
+			out[n] = m[2]
+			continue
+		}
+		if t := strings.TrimSpace(line); t != "" && !strings.HasSuffix(t, ":") {
+			plain = append(plain, t)
+		}
+	}
+	if len(out) == 0 {
+		for i, t := range plain {
+			out[i+1] = t
+		}
+	}
+	return out
+}
+
+// ruleKind is what a rule is about: continuing a conversation (checked
+// first: "a continuation of a conversation directed to you by name" is
+// about the conversation), being called by name, or anything else.
+func ruleKind(rule string) int {
+	switch {
+	case continuesRE.MatchString(rule):
+		return ruleContinues
+	case wakesOnNameRE.MatchString(rule):
+		return ruleName
+	}
+	return ruleOther
+}
+
+// nameAbsent reports a message in which gohort found neither the agent's
+// name nor a word one letter off it.
+func (q gateQuestion) nameAbsent() bool { return !q.Named && q.NearName == "" }
+
+// cannotMeet reports a message no rule could be met by: every rule is
+// about the name or about continuing a conversation, and the name is
+// absent.
+func (q gateQuestion) cannotMeet() bool {
+	rules := gateRules(q.Rules)
+	if len(rules) == 0 || !q.nameAbsent() {
+		return false
+	}
+	for _, r := range rules {
+		if ruleKind(r) == ruleOther {
+			return false
+		}
+	}
+	return true
+}
+
+// turnsOnName reports rules with one about the name or about continuing a
+// conversation: what an allow, with the name absent, could rest on wrongly.
+func (q gateQuestion) turnsOnName() bool {
+	for _, r := range gateRules(q.Rules) {
+		if ruleKind(r) != ruleOther {
+			return true
+		}
+	}
+	return false
+}
+
+// strikeAllow is why the model's YES cannot stand, "" when it can: read
+// from the bare yes or no the reply gives every rule, with the yeses code
+// rules out struck, no yes is left. A reply that gives no rule a yes or no
+// is left as it is.
+func (q gateQuestion) strikeAllow(reason string) string {
+	rules := gateRules(q.Rules)
+	seen := map[int]bool{}
+	left, struck := 0, []string{}
+	for _, m := range ruleVerdictRE.FindAllStringSubmatch(reason, -1) {
+		n, _ := strconv.Atoi(m[1])
+		if seen[n] {
+			continue
+		}
+		seen[n] = true
+		if !strings.EqualFold(m[2], "yes") {
+			continue
+		}
+		switch ruleKind(rules[n]) {
+		case ruleName:
+			if q.nameAbsent() {
+				struck = append(struck, fmt.Sprintf("rule %d needs the name, which is not in the message", n))
+				continue
+			}
+		case ruleContinues:
+			struck = append(struck, fmt.Sprintf("rule %d is about continuing a conversation, which is not judged here", n))
+			continue
+		}
+		left++
+	}
+	if len(seen) == 0 || left > 0 {
+		return ""
+	}
+	if len(struck) == 0 {
+		return "it answered no to every rule"
+	}
+	return strings.Join(struck, "; ")
 }
 
 // mergeWakeRules folds the master and per-channel rulesets into one numbered
@@ -605,6 +773,9 @@ You are shown the new message alone. Whether it carries on a conversation with y
 func gateSystemOne(ctx context.Context, llm LLM, q gateQuestion) (allow bool, confidence float64, reason string, err error) {
 	if q.byName() {
 		return true, 1, "addressed by name, which the rules wake on (matched in code)", nil
+	}
+	if q.cannotMeet() {
+		return false, 1, cannotMeetReason, nil
 	}
 	a, err := decide.Ask(ctx, llm, q.systemOneQuestion(), WithRouteKey(gatekeeperRoute))
 	if err != nil {

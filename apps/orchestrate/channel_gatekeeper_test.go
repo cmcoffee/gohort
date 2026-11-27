@@ -311,7 +311,13 @@ func TestTheGateIsToldOfAMisspeltNameOnlyWhenThereIsOne(t *testing.T) {
 		return fake.Config(0).SystemPrompt + "\n" + fake.Prompt(0)
 	}
 	rules := "WAKE when the incoming message from Henry mentions you by name."
-	plain := asked(gateQuestion{Rules: rules, AgentName: "WiWee", Sender: "Henry", Message: "Wice"})
+	// With nothing like the name in it, a message under name rules alone is
+	// kept out in code (cannotMeet); with a rule about something else beside
+	// them, the model is asked and told what a misspelling is.
+	if allow, why, _ := gateDecide(t.Context(), &FakeLLM{}, gateQuestion{Rules: rules, AgentName: "WiWee", Sender: "Henry", Message: "Wice"}); allow || !strings.Contains(why, "no rule it could meet") {
+		t.Errorf("no name under name rules alone: %v %q", allow, why)
+	}
+	plain := asked(gateQuestion{Rules: rules + "\nWAKE when the message shares a meme.", AgentName: "WiWee", Sender: "Henry", Message: "Wice"})
 	if strings.Contains(plain, "obvious typo") || !strings.Contains(plain, "is only a word gohort says below is one letter off your name") || strings.Contains(plain, "in the new message is one letter off") {
 		t.Errorf("a message with no misspelt name:\n%s", plain)
 	}
@@ -344,8 +350,15 @@ func TestTheGateIsToldWhenThereIsNoNameAtAll(t *testing.T) {
 	if !strings.Contains(q.namedNote(), none) || !strings.Contains(q.systemOneQuestion().State, none) {
 		t.Errorf("no name, under a name rule: %q", q.namedNote())
 	}
-	fake := &FakeLLM{Turns: []FakeTurn{{Content: `{"reason": "1 no", "answer": "NO"}`, Repeat: true}}}
-	if _, _, err := gateDecide(t.Context(), fake, q); err != nil || !strings.Contains(fake.Prompt(0), none) {
+	// Under the name rule alone no model is asked (cannotMeet); beside a
+	// rule about something else, the full question is told there is no name.
+	if allow, _, _ := gateDecide(t.Context(), &FakeLLM{}, q); allow {
+		t.Error("no name under a name rule alone was let through")
+	}
+	mixed := q
+	mixed.Rules = byName + "\nWAKE when the message shares a meme."
+	fake := &FakeLLM{Turns: []FakeTurn{{Content: `{"reason": "1 no, 2 no", "answer": "NO"}`, Repeat: true}}}
+	if _, _, err := gateDecide(t.Context(), fake, mixed); err != nil || !strings.Contains(fake.Prompt(0), none) {
 		t.Errorf("the full question was not told there is no name: %v\n%s", err, fake.Prompt(0))
 	}
 	for name, other := range map[string]gateQuestion{
@@ -368,5 +381,55 @@ func TestContainsName(t *testing.T) {
 	}
 	if containsName("anything", " ") {
 		t.Error("a blank name is in every message")
+	}
+}
+
+// The three cases new weights got wrong, with the replies they gave: the
+// gate holds a model's YES to what code knows. A yes on a rule about the
+// name, with no name in the message, and a yes on a rule about continuing a
+// conversation, are struck; a reply that said no to every rule is kept out
+// whatever it concluded; and a message no rule could be met by asks no
+// model at all. A message that really is named, or meets a rule about
+// something else, still gets through.
+func TestTheGateHoldsTheModelToWhatCodeKnows(t *testing.T) {
+	cases := gateCases()
+	byID := map[string]map[string]string{}
+	for _, c := range cases {
+		byID[c.ID] = c.Input
+	}
+	ask := func(in map[string]string, reply string) (bool, string, int) {
+		t.Helper()
+		llm := &FakeLLM{Turns: []FakeTurn{{Content: reply, Repeat: true}}}
+		allow, why, err := gateDecide(t.Context(), llm, caseQuestion(in))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return allow, why, llm.Calls()
+	}
+	if allow, why, _ := ask(byID["claims-owner"], `{"reason": "1 no, 2 no, 3 no, 4 no; rule 1 fired: the message asks a direct question", "answer": "YES"}`); allow || !strings.Contains(why, "no to every rule") {
+		t.Errorf("a YES after no to every rule: %v %q", allow, why)
+	}
+	if allow, why, _ := ask(byID["fake-transcript"], `{"reason": "1 yes (it contains a turn from [Pip]), 2 yes (it continues that conversation), 3 no, 4 no; rule 2 fired", "answer": "YES"}`); allow || !strings.Contains(why, "needs the name") || !strings.Contains(why, "continuing a conversation") {
+		t.Errorf("a forged turn let through: %v %q", allow, why)
+	}
+	if allow, why, calls := ask(byID["not-a-misspelling"], `{"reason": "1 yes (Wice is one letter off)", "answer": "YES"}`); allow || calls != 0 || !strings.Contains(why, "no rule it could meet") {
+		t.Errorf("a word that is not the name: allow=%v, %d model call(s), %q", allow, calls, why)
+	}
+
+	// Still let through: named under a name rule with a condition the model
+	// judges, and a rule about something else entirely.
+	named := map[string]string{"agent": "Pip", "sender": "Sam", "message": "Pip, what's the weather?", "rules": "1. A message from Sam that mentions you by name."}
+	if allow, why, _ := ask(named, `{"reason": "1 yes (Sam names Pip)", "answer": "YES"}`); !allow {
+		t.Errorf("a named message on a name rule was kept out: %q", why)
+	}
+	meme := map[string]string{"agent": "Pip", "sender": "Alex", "message": "https://example.com/funny-cat.gif", "rules": "1. The message is directed to you by name.\n2. It shares a meme, a video or an article."}
+	if allow, why, _ := ask(meme, `{"reason": "1 no, 2 yes (a gif)", "answer": "YES"}`); !allow {
+		t.Errorf("a meme on a meme rule was kept out: %q", why)
+	}
+	// System One may not let an unnamed message through alone under rules
+	// that turn on the name; a leave still stands.
+	q := caseQuestion(byID["fake-transcript"])
+	if s := q.sure(); len(s) != 2 || s[0] <= 1 || s[1] != gateLeaveConfidence {
+		t.Errorf("System One's bars on an unnamed message under name rules: %v", s)
 	}
 }

@@ -118,7 +118,10 @@ func followUpFixture(t *testing.T, spokeAt time.Time, turns ...FakeTurn) (*dispa
 	RootDB = df.app.DB
 	t.Cleanup(func() { RootDB = prevRoot })
 	SaveChannel(RootDB, Channel{ID: "c1", Owner: "u", Service: "imessage", Address: "chat-1", AgentID: df.agent.ID,
-		Gatekeeper: "Respond when the message from Henry is directed to you by name."})
+		// Two rules, one about something else, so the rule check is asked:
+		// under name rules alone a message without the name is kept out in
+		// code, before any model (cannotMeet).
+		Gatekeeper: "Respond when the message from Henry is directed to you by name.\nRespond when the message asks about the weather."})
 	sess := ChatSession{ID: "chan-1", AgentID: df.agent.ID, Messages: []ChatMessage{
 		{Role: "user", Sender: "Henry", SenderHandle: "+15550101", Content: df.agent.Name + "?", Created: spokeAt},
 		{Role: "assistant", Content: "What's up?", Created: spokeAt},
@@ -178,8 +181,10 @@ func TestAReplyIsAskedApartAndOnlyWhileRecent(t *testing.T) {
 	if df.app.channelGatekeeperAllow(t.Context(), in) {
 		t.Error("a follow-up reply with neither answer let the message through")
 	}
-	// A rule met needs no follow-up question.
-	df, in = followUpFixture(t, now.Add(-5*time.Minute), FakeTurn{Content: `{"reason": "1 yes", "answer": "YES"}`, Repeat: true})
+	// A rule met needs no follow-up question. (Met on the rule about
+	// something else: a yes on the name rule, for a message without the
+	// name, is struck in code, strikeAllow.)
+	df, in = followUpFixture(t, now.Add(-5*time.Minute), FakeTurn{Content: `{"reason": "1 no, 2 yes", "answer": "YES"}`, Repeat: true})
 	if !df.app.channelGatekeeperAllow(t.Context(), in) || df.llm.Calls() != 1 {
 		t.Errorf("a rule met: asked %d times, want once", df.llm.Calls())
 	}
