@@ -33,7 +33,7 @@ func TestARunsChangesAreRecordedAndRevert(t *testing.T) {
 			"e.txt":          "gone soon\n",
 			"keep.txt":       "same\n",
 			".gitignore":     "build/\n",
-			".gitattributes": "*.lfs filter=lfs\n",
+			".gitattributes": "*.lfs filter=anvil-test\n", // no such filter, so git stores it as is everywhere
 			"f.lfs":          "pointer\n",
 		}
 		for name, body := range files {
