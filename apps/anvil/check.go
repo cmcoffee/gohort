@@ -22,6 +22,7 @@ package anvil
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -100,10 +101,20 @@ func toolchainEnv(dir string) map[string]string {
 // through gohort's relay. ctx is the turn's, so a private turn's privacy and
 // the agent's network ceiling apply, and stopping the turn stops the command.
 func (c *toolCtx) sandboxed(ctx context.Context, command string, timeout time.Duration) sandbox.SandboxedShellResult {
+	return c.sandboxedTee(ctx, command, timeout, nil)
+}
+
+// sandboxedTee is sandboxed with tee hearing the output as it comes. With a
+// tee the result keeps the start and end of a long output, not all of it.
+func (c *toolCtx) sandboxedTee(ctx context.Context, command string, timeout time.Duration, tee io.Writer) sandbox.SandboxedShellResult {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	spec := sandbox.ShellRun{Command: command, WorkspaceDir: c.base}
+	if tee != nil {
+		spec.Tee = tee
+		spec.MaxOutput = maxRunOutput * 4
+	}
 	if dir, err := cacheDir(c.project); err == nil && os.MkdirAll(dir, 0o700) == nil {
 		spec.Env = toolchainEnv(dir)
 		spec.Writable = []string{dir}

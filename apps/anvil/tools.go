@@ -30,6 +30,7 @@ package anvil
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -41,6 +42,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
+	"github.com/cmcoffee/gohort/core/bgrun"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
@@ -99,13 +101,11 @@ type toolCtx struct {
 	ignoreOnce sync.Once
 	ignoreSet  *ignoreSet
 
-	// Where the project sits in its git repository, asked once per turn,
-	// and runMu, which runs one command at a time so each one's changes
-	// are told apart from another's (run_changes.go).
+	// Where the project sits in its git repository, asked once per turn
+	// (run_changes.go).
 	prefixOnce sync.Once
 	prefix     string
 	inRepo     bool
-	runMu      sync.Mutex
 
 	// emitBlock publishes any other card (a check run) into the live turn.
 	// Nil for a headless run.
@@ -115,11 +115,8 @@ type toolCtx struct {
 	// call, and a counter naming each run's card.
 	checkMu          sync.Mutex
 	editedSinceCheck bool
-	// wrote is when a file tool last wrote each path this turn, so a
-	// command running beside it does not claim the write (run_changes.go).
-	wrote    map[string]time.Time
-	turnCtx  context.Context
-	checkSeq int
+	turnCtx          context.Context
+	checkSeq         int
 	// The turn's plan (plan.go), under checkMu; planSeq names its card, so
 	// a new plan gets a card of its own and the old one stays as it was.
 	plan    []planStep
@@ -899,8 +896,9 @@ func (c *toolCtx) runConfirmation() *ToolConfirmation {
 func (c *toolCtx) runTool() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
-			Name:        "run",
-			Description: "Run a shell command in the project root and return its combined output. Use it to check your work: compile, run a test, inspect state. The command runs sandboxed with the project directory as its writable root, so it can be slower and more restricted than the same command in a terminal. Package managers (go, npm, pip) download through gohort into this project's own cache. For the project's own build or test commands, prefer the project actions if any are offered: those are the operator's own commands and run with a real environment.",
+			Name: "run",
+			Description: "Run a shell command in the project root and return its combined output. Use it to check your work: compile, run a test, inspect state. The command runs sandboxed with the project directory as its writable root, so it can be slower and more restricted than the same command in a terminal. Package managers (go, npm, pip) download through gohort into this project's own cache. For the project's own build or test commands, prefer the project actions if any are offered: those are the operator's own commands and run with a real environment. " +
+				"A command still running after " + bgWords(TuneDuration("tune_tool_detach_after")) + " moves to the background: you are told so, you can carry on, and its output arrives as its own message when it ends. One that prints nothing for " + bgWords(TuneDuration("tune_tool_idle_limit")) + " is taken to be stuck and stopped, so a server or a watcher that never exits cannot be run here; nothing else could reach it anyway.",
 			Parameters: map[string]ToolParam{
 				"command": {Type: "string", Description: "Shell command, sh -c semantics. Runs with the project root as the working directory."},
 			},
@@ -929,32 +927,71 @@ func (c *toolCtx) runTool() AgentToolDef {
 			if command == "" {
 				return "", fmt.Errorf("command is required")
 			}
-			// What the command changes is recorded like a file tool's
-			// write, so it shows and reverts the same way (run_changes.go).
-			c.runMu.Lock()
-			defer c.runMu.Unlock()
-			watch := c.watchRun(ctx)
-			res := c.sandboxed(ctx, command, 0)
-			changed := ""
-			if watch != nil {
-				changed = watch.finish(context.WithoutCancel(ctx))
+			// A long command moves to the background (core/bgrun): inline
+			// until the detach time, then the turn goes on and its output
+			// arrives as its own message. A run with no session to deliver
+			// to (an eval) stays inline, as before.
+			sess := ToolSessionFromContext(ctx)
+			if sess == nil {
+				return c.runCommand(ctx, ctx, command, nil)
 			}
-			out := strings.TrimSpace(res.Output)
-			if len(out) > maxRunOutput {
-				out = "...(earlier output trimmed)...\n" + out[len(out)-maxRunOutput:]
-			}
-			if res.Err != nil {
-				if out == "" && changed == "" {
-					return "", fmt.Errorf("command failed: %w", res.Err)
-				}
-				return fmt.Sprintf("Command failed (%s):\n%s%s", res.Err, out, changed), nil
-			}
-			if out == "" {
-				return "Command finished with no output." + changed, nil
-			}
-			return out + changed, nil
+			return bgrun.BackgroundRun{Tool: "run", Label: "run: " + oneLine(command, 60),
+				Run: func(work *ToolSession) (string, error) {
+					act := bgrun.RunActivityFrom(work.Context())
+					if act != nil {
+						act.WatchDir(c.base)
+					}
+					return c.runCommand(work.ContextWithSession(work.Context()), ctx, command, act)
+				}}.Start(sess)
 		},
 	}
+}
+
+// runCommand runs command in the sandbox, ctx being the run's own, and
+// reports its output and what it changed. turn is the tool call's context:
+// once it is over (the run went to the background and the turn ended) the
+// changes are still recorded, without cards in a turn that is gone. tee, when
+// set, hears the output as it comes, which is how a background run is seen
+// to be alive.
+func (c *toolCtx) runCommand(ctx, turn context.Context, command string, tee io.Writer) (string, error) {
+	// What the command changes is recorded like a file tool's write, so it
+	// shows and reverts the same way (run_changes.go).
+	watch := c.watchRun(ctx)
+	if watch != nil {
+		watch.turn = turn
+	}
+	res := c.sandboxedTee(ctx, command, 0, tee)
+	changed := ""
+	if watch != nil {
+		changed = watch.finish(context.WithoutCancel(ctx))
+	}
+	out := strings.TrimSpace(res.Output)
+	if len(out) > maxRunOutput {
+		out = "...(earlier output trimmed)...\n" + out[len(out)-maxRunOutput:]
+	}
+	if res.Err != nil {
+		if out == "" && changed == "" {
+			return "", fmt.Errorf("command failed: %w", res.Err)
+		}
+		return fmt.Sprintf("Command failed (%s):\n%s%s", res.Err, out, changed), nil
+	}
+	if out == "" {
+		return "Command finished with no output." + changed, nil
+	}
+	return out + changed, nil
+}
+
+// bgWords is a limit as a person says it ("a minute", "5 minutes").
+func bgWords(d time.Duration) string {
+	switch {
+	case d <= 0:
+		return "a while"
+	case d == time.Minute:
+		return "a minute"
+	case d%time.Minute == 0:
+		return fmt.Sprintf("%d minutes", int(d/time.Minute))
+	}
+	return fmt.Sprintf("%d seconds", int(d/time.Second))
 }
 
 // gitTool exposes the read-only half of git.

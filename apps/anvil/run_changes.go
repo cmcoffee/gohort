@@ -29,6 +29,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -56,7 +57,11 @@ type preImage struct {
 
 // runWatch is the tree's state before one command.
 type runWatch struct {
-	c      *toolCtx
+	c *toolCtx
+	// turn is the context of the tool call that started the command. Once
+	// it is over (the command went to the background and its turn ended)
+	// what it changed is recorded without cards: that turn's page is gone.
+	turn   context.Context
 	start  time.Time
 	prefix string              // the project's folder within the repository
 	before map[string]preImage // files changed before the command, by project path
@@ -202,6 +207,10 @@ func (w *runWatch) finish(ctx context.Context) string {
 	if len(changes) == 0 {
 		return ""
 	}
+	// Two commands ending at once must not both claim one file: the check
+	// above and the recording below happen under one lock per project.
+	unlock := lockProjectRecording(c.project.ID)
+	defer unlock()
 	sort.Slice(changes, func(i, j int) bool { return changes[i].rel < changes[j].rel })
 	if len(changes) > maxRunRecord {
 		return fmt.Sprintf("\n\nThis command changed %d files in the project, too many to record one by one, so they cannot be reverted from Anvil. git status shows them.", len(changes))
@@ -222,8 +231,15 @@ func (w *runWatch) finish(ctx context.Context) string {
 		if !ch.pre.exists && !now.exists || ch.pre.exists == now.exists && ch.pre.content == now.content {
 			continue
 		}
+		if c.wroteSince(ch.rel, w.start) {
+			continue // recorded meanwhile by another command
+		}
 		e := journalWrite(c.udb, c.project.ID, c.session(), ch.rel, ch.pre.content, ch.pre.exists, now.content, !now.exists)
-		c.publish(e)
+		if w.turn != nil && w.turn.Err() != nil {
+			c.noteWrite(e.Path)
+		} else {
+			c.publish(e)
+		}
 		switch e.Kind {
 		case EditCreate:
 			recorded = append(recorded, fmt.Sprintf("%s (new, +%d)", ch.rel, e.Added))
@@ -390,21 +406,51 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// noteWrite records that a file tool wrote rel, so a command running at the
+// What was written in each project and when, by file tools and by commands
+// recording, kept across turns: a command that went to the background ends
+// after its turn, and a write a later turn made meanwhile is that turn's,
+// not the command's. Pruned as it grows.
+var (
+	writesMu sync.Mutex
+	writes   = map[string]time.Time{} // project ID + "\x00" + path
+	// recordMu holds one lock per project for a command's recording.
+	recordMu    sync.Mutex
+	recordLocks = map[string]*sync.Mutex{}
+)
+
+// noteWrite records that rel was written now, so a command running at the
 // same time does not record the write as its own.
 func (c *toolCtx) noteWrite(rel string) {
-	c.checkMu.Lock()
-	defer c.checkMu.Unlock()
-	if c.wrote == nil {
-		c.wrote = map[string]time.Time{}
+	writesMu.Lock()
+	defer writesMu.Unlock()
+	if len(writes) > 10000 {
+		for k, at := range writes {
+			if time.Since(at) > time.Hour {
+				delete(writes, k)
+			}
+		}
 	}
-	c.wrote[rel] = time.Now()
+	writes[c.project.ID+"\x00"+rel] = time.Now()
 }
 
-// wroteSince reports whether a file tool wrote rel at or after t.
+// wroteSince reports whether rel was written at or after t.
 func (c *toolCtx) wroteSince(rel string, t time.Time) bool {
-	c.checkMu.Lock()
-	defer c.checkMu.Unlock()
-	at, ok := c.wrote[rel]
+	writesMu.Lock()
+	defer writesMu.Unlock()
+	at, ok := writes[c.project.ID+"\x00"+rel]
 	return ok && !at.Before(t)
+}
+
+// lockProjectRecording takes the project's recording lock and returns its
+// release.
+func lockProjectRecording(projectID string) func() {
+	recordMu.Lock()
+	m := recordLocks[projectID]
+	if m == nil {
+		m = &sync.Mutex{}
+		recordLocks[projectID] = m
+	}
+	recordMu.Unlock()
+	m.Lock()
+	return m.Unlock
 }
