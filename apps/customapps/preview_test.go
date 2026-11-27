@@ -195,3 +195,59 @@ func TestADraftsPreviewServesItsEditorAndItsChecks(t *testing.T) {
 		t.Error("an ended preview still shows the draft")
 	}
 }
+
+// A preview made for one load (an assistant looking at its working copy) sits
+// beside the person's own: it neither replaces nor ends theirs, even one on
+// real records, is not counted as theirs, writes only its own copy of the
+// records, and once ended serves nothing.
+func TestACheckPreviewLeavesThePersonsPreviewAlone(t *testing.T) {
+	T, installed, working := previewTestApp(t)
+	link, err := StartAppPreview("alice", working, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mine := previewCookieFrom(t, T, "alice", link)
+	serves := func(c *http.Cookie) bool {
+		return strings.Contains(as(t, T, "alice", withCookie(httptest.NewRequest(http.MethodGet, "/apps/wx/", nil), c)).Body.String(), "Weather v2")
+	}
+	load := func() (*http.Cookie, func()) {
+		c, end, err := CheckPreview("alice", working, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.Path != "/apps/wx/" || !c.HTTPOnly {
+			t.Errorf("the load's cookie: %+v", c)
+		}
+		return &http.Cookie{Name: c.Name, Value: c.Value, Path: c.Path}, end
+	}
+	if _, _, err := CheckPreview("bob", working, true); err == nil {
+		t.Error("someone other than the owner got a preview")
+	}
+
+	c, end := load()
+	if again, _ := StartAppPreview("alice", working, true); again != link {
+		t.Errorf("the load's preview moved the person's: %s, was %s", again, link)
+	}
+	w := as(t, T, "alice", withCookie(httptest.NewRequest(http.MethodPost, "/apps/wx/records", strings.NewReader(`{"id":"r3","city":"Lima"}`)), c))
+	if w.Code != http.StatusOK {
+		t.Fatalf("saving in the load's preview: %d %s", w.Code, w.Body.String())
+	}
+	var real map[string]any
+	if T.recordBase(installed, "alice").Get(appscript.RecordsTable("wx"), "r3", &real) {
+		t.Error("the load's preview wrote alice's real records")
+	}
+	end()
+	if serves(c) {
+		t.Error("an ended load's preview still served the working copy")
+	}
+	if !serves(mine) {
+		t.Error("ending the load's preview ended the person's")
+	}
+
+	c, end = load()
+	defer end()
+	EndAppPreview("alice", "wx")
+	if !serves(c) || HasAppPreview("alice", "wx") {
+		t.Error("ending the person's preview reached the load's, or the load's counts as theirs")
+	}
+}

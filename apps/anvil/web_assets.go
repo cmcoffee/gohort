@@ -49,6 +49,8 @@ const anvilCSS = `
   margin: 0; padding: 0.6rem 0.75rem; font-size: 0.76rem; line-height: 1.5;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+.anvil-page-shot { display: block; max-width: 100%; height: auto; border-top: 1px solid var(--border); }
+.anvil-page-shot-gone { padding: 0.6rem 0.75rem; font-size: 0.8rem; color: var(--text-mute); }
 .anvil-edit-body .l-add { color: #16a34a; }
 .anvil-edit-body .l-del { color: #dc2626; }
 .anvil-edit-body .l-hunk { color: var(--text-mute); opacity: 0.8; }
@@ -266,7 +268,10 @@ const anvilCheckBlockJS = `function(d) {
     head.appendChild(icon);
     var label = document.createElement('span');
     label.className = 'anvil-edit-path';
-    var verb = state === 'passed' ? 'Check passed: ' : (state === 'failed' ? 'Check failed: ' : 'Checking: ');
+    var page = data.kind === 'page';
+    var verb = page
+      ? (state === 'passed' ? 'Looked at the page: ' : (state === 'failed' ? 'The page has problems: ' : 'Loading the page: '))
+      : (state === 'passed' ? 'Check passed: ' : (state === 'failed' ? 'Check failed: ' : 'Checking: '));
     label.textContent = verb + (d.title || '');
     label.title = d.title || '';
     head.appendChild(label);
@@ -289,12 +294,30 @@ const anvilCheckBlockJS = `function(d) {
     } else {
       statText.nodeValue = (data.took || '0') + 's';
     }
-    if (data.output) {
+    if (data.output || data.shot) {
       var body = document.createElement('div');
       body.className = 'anvil-edit-body';
-      var pre = document.createElement('pre');
-      pre.textContent = data.output;
-      body.appendChild(pre);
+      if (data.output) {
+        var pre = document.createElement('pre');
+        pre.textContent = data.output;
+        body.appendChild(pre);
+      }
+      // A page's screenshot, kept by the server while it runs.
+      if (data.shot) {
+        var img = document.createElement('img');
+        img.className = 'anvil-page-shot';
+        img.alt = 'The page as the assistant saw it';
+        img.loading = 'lazy';
+        img.src = data.shot;
+        img.addEventListener('error', function() {
+          var gone = document.createElement('div');
+          gone.className = 'anvil-page-shot-gone';
+          gone.textContent = 'The screenshot is no longer kept.';
+          img.replaceWith(gone);
+        });
+        body.appendChild(img);
+        if (page && state === 'passed') wrap.classList.add('open');
+      }
       wrap.appendChild(body);
       head.addEventListener('click', function() { wrap.classList.toggle('open'); });
     }
@@ -417,6 +440,12 @@ const anvilStepSummariesJS = `
   R('check', function(a, out) {
     if (out == null) return 'Running the check';
     return first(out).replace(/:$/, '');
+  });
+  R('try_page', function(a, out) {
+    var n = (a.steps || []).length;
+    if (out == null) return n ? 'Trying the page (' + n + ' steps)' : 'Loading the page';
+    if (failed(out)) return 'Could not load the page';
+    return /\nErrors:/.test(String(out)) || /did not hold/.test(String(out)) ? 'Tried the page: it has problems' : 'Tried the page';
   });
   R('git', function(a, out) {
     var what = 'git ' + (a.action || '') + (a.path ? ' ' + a.path : '');

@@ -121,6 +121,10 @@ type chatTurn struct {
 	// commitAsked is set once the turn has been told to commit verified
 	// work in an app's history, so it is told once (uncommittedWorkNotice).
 	commitAsked bool
+	// folderChecks is a check of a working copy that is not installed
+	// (CheckAppFolder): each page check loads it through a preview made for
+	// that one load, beside any preview the person has open.
+	folderChecks bool
 	// via names what made this turn's app changes for its person, for the
 	// app's history ("Anvil" for an install from Anvil); empty is the turn's
 	// agent, or nobody for a person's own change (changedVia).

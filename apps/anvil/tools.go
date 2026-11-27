@@ -232,7 +232,7 @@ func (c *toolCtx) codeTools() []AgentToolDef {
 		tools = append(tools, c.haltable(c.commitTool()))
 	}
 	if c.project.Source == sourceApp || holdsAppFolder(c.base) {
-		tools = append(tools, c.appChecksTool())
+		tools = append(tools, c.appChecksTool(), c.tryPageTool())
 	}
 	// What the installed app did in real use (app_runs.go).
 	if c.project.Source == sourceApp {

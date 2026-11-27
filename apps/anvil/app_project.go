@@ -623,8 +623,8 @@ func (c *toolCtx) appChecksTool() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name: "app_checks",
-			Description: "Check that this app would install, and run its checks (checks.json) on your working copy as installing it would, each pass or fail. " +
-				"Nothing is installed or saved. Run it after a change and before you say the work is done; it also runs by itself as your turn ends, and a refusal comes back to you.",
+			Description: "Check that this app would install, and run its checks (checks.json) on your working copy, each pass or fail: script checks, and page checks driving the working copy in a browser on each check's own records. " +
+				"Nothing is installed or saved. Run it after a change and before you say the work is done. Whether it would install is also checked by itself as your turn ends, and a refusal comes back to you; the checks run only when you call this.",
 			Parameters: map[string]ToolParam{},
 		},
 		Handler: func(ctx context.Context, _ map[string]any) (string, error) {
@@ -639,7 +639,7 @@ func (c *toolCtx) appChecksTool() AgentToolDef {
 			if err != nil {
 				return "", fmt.Errorf("the checks could not run: %w", folderError(c.base, err))
 			}
-			return report + "\nPage checks drive the page as served, so they run when the owner installs it.", nil
+			return report, nil
 		},
 	}
 }

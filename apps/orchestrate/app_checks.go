@@ -202,8 +202,22 @@ func (t *chatTurn) runPageCheck(spec AppSpec, c appcheck.Check) appCheckResult {
 	token, end := appscript.BeginCheckScratch(spec.Owner, spec.Slug, spec.RecordKey, c.Records, c.Shared)
 	defer end()
 	// The version checked is spec itself: a draft's, or the one before an
-	// edit, served through its preview (app_draft.go).
+	// edit, served through its preview (app_draft.go), or a working copy
+	// through a preview of its own for this load.
 	cookies, as := t.appCheckCookies(spec)
+	if t.folderChecks {
+		if appdraft.CheckPreview == nil {
+			res.Why = "not run: the working copy cannot be previewed here"
+			return res
+		}
+		pv, endPreview, err := appdraft.CheckPreview(t.user, spec, false)
+		if err != nil {
+			res.Why = "not run: the working copy could not be previewed: " + appOneLine(err.Error(), 300)
+			return res
+		}
+		defer endPreview()
+		cookies, as = []PageCheckCookie{pv}, t.user
+	}
 	cookies = append(cookies, PageCheckCookie{Name: appscript.CheckScratchCookie, Value: token, HTTPOnly: true})
 	rep, err := CheckPageAsUser(RootDB, as, "/apps/"+spec.Slug+"/", appcheck.StepsProbe(c.Steps), cookies...)
 	if err != nil || rep == nil {

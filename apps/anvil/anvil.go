@@ -199,6 +199,7 @@ func (T *Anvil) Routes() {
 	T.HandleFunc("/api/project/{id}/install", jsonapi.Post(T.DB, T.handleAppInstall))
 	T.HandleFunc("/api/project/{id}/install_new", jsonapi.Post(T.DB, T.handleAppInstallNew))
 	T.HandleFunc("/api/project/{id}/preview", jsonapi.Post(T.DB, T.handleAppPreview))
+	T.HandleFunc("/api/shot/{id}", T.handleShot)
 	// The app's versions, what each changed, and going back to one
 	// (app_history_view.go).
 	T.HandleFunc("/api/project/{id}/app_history", jsonapi.Methods{"GET": jsonapi.Get(T.DB, T.handleAppHistory)}.Serve)

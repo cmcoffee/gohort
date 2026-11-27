@@ -3,13 +3,17 @@ package orchestrate
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appcheck"
+	"github.com/cmcoffee/gohort/core/appdraft"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -239,5 +243,81 @@ func TestAnInstallAppliesWhatTheAppOwns(t *testing.T) {
 	}
 	if _, ok := loadAgent(udb, helper.ID); !ok {
 		t.Error("an agent was deleted because its file was left out")
+	}
+}
+
+// CheckAppFolder runs page checks too, on the working copy: each loads it
+// through a preview made for that one load (never the person's own preview),
+// on the check's scratch records, and the preview ends with the load.
+func TestCheckAppFolderRunsPageChecksOnTheWorkingCopy(t *testing.T) {
+	turn, _ := folderTestTurn(t)
+	T, dir := installTestApp(t, turn)
+	if err := WriteAppFolder("u", "wx", dir); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, "page.html"), []byte("<!DOCTYPE html><html><body><h1>Wx two</h1></body></html>"), 0o644)
+	os.WriteFile(filepath.Join(dir, "checks.json"), []byte(`[{"name":"shows the new title","steps":[{"see":"Wx two"}]},{"name":"shows a total","steps":[{"see":"Total"}]}]`), 0o644)
+
+	prevB, prevAddr, prevCP, prevPC := BrowserCheckPage, WebListenAddr, appdraft.CheckPreview, appdraft.PreviewCookie
+	t.Cleanup(func() {
+		BrowserCheckPage, WebListenAddr, appdraft.CheckPreview, appdraft.PreviewCookie = prevB, prevAddr, prevCP, prevPC
+	})
+	WebListenAddr = "127.0.0.1:9"
+	var mu sync.Mutex
+	live := map[string]AppSpec{}
+	started, ended := 0, 0
+	appdraft.CheckPreview = func(editor string, spec AppSpec, copyRecords bool) (PageCheckCookie, func(), error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if editor != "u" || copyRecords {
+			t.Errorf("a page check's preview: editor %q, copied records %v", editor, copyRecords)
+		}
+		started++
+		tok := fmt.Sprint(started)
+		live[tok] = spec
+		return PageCheckCookie{Name: "test_preview", Value: tok}, func() {
+			mu.Lock()
+			defer mu.Unlock()
+			delete(live, tok)
+			ended++
+		}, nil
+	}
+	appdraft.PreviewCookie = func(string, AppSpec) (PageCheckCookie, bool) {
+		t.Error("a check of a working copy went through the person's preview")
+		return PageCheckCookie{}, false
+	}
+	BrowserCheckPage = func(target string, cookies []PageCheckCookie, probe string, _ bool) (*PageCheckReport, error) {
+		var spec AppSpec
+		found := false
+		for _, c := range cookies {
+			if c.Name == "test_preview" {
+				mu.Lock()
+				spec, found = live[c.Value]
+				mu.Unlock()
+			}
+		}
+		if !found {
+			t.Fatalf("a page check loaded %s without its own live preview", target)
+		}
+		steps, _ := appcheck.DecodeStepsProbe(probe)
+		res := appcheck.StepsResult{OK: true}
+		for i, st := range steps {
+			if !strings.Contains(string(spec.Sections), st.See) {
+				res = appcheck.StepsResult{Step: i + 1, Saw: "not there"}
+			}
+		}
+		b, _ := json.Marshal(res)
+		return &PageCheckReport{ProbeJSON: string(b)}, nil
+	}
+
+	out, err := T.CheckAppFolder(context.Background(), "u", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `PASS "shows the new title"`) || !strings.Contains(out, `FAIL "shows a total"`) {
+		t.Errorf("the page checks on the working copy:\n%s", out)
+	}
+	if started != 2 || ended != 2 {
+		t.Errorf("previews started %d, ended %d", started, ended)
 	}
 }

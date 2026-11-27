@@ -37,6 +37,10 @@ type appPreview struct {
 	Spec    AppSpec
 	Scratch string // the page-check store's token; "" for real records
 	end     func()
+	// oneLoad marks a preview made for one browser load by an assistant
+	// (CheckPreview): not the person's preview, so starting, ending or
+	// asking after theirs never finds it, and it ends with its load.
+	oneLoad bool
 }
 
 var (
@@ -73,7 +77,7 @@ func startAppPreview(editor string, spec AppSpec, realRecords bool) (string, err
 	previewsMu.Lock()
 	defer previewsMu.Unlock()
 	for tok, p := range previews {
-		if p.Editor == editor && p.Spec.Slug == spec.Slug {
+		if p.Editor == editor && p.Spec.Slug == spec.Slug && !p.oneLoad {
 			if (p.Scratch == "") == realRecords {
 				p.Spec = spec
 				return tok, nil
@@ -114,7 +118,42 @@ func DraftPreviewLink(editor string, spec AppSpec) string {
 	return hostApp.previewLink(spec.Slug, tok)
 }
 
+// CheckPreview is a preview of spec for one browser load as editor, made for
+// an assistant to look at its working copy: its own token, beside any
+// preview the person has (which it neither replaces nor ends), on a fresh
+// copy of editor's records when copyRecords, held to a page check's rules.
+// A page check that brings its own scratch records passes false. end ends it
+// and throws the copy away; call it when the load returns.
+func CheckPreview(editor string, spec AppSpec, copyRecords bool) (PageCheckCookie, func(), error) {
+	T := hostApp
+	if T == nil {
+		return PageCheckCookie{}, nil, fmt.Errorf("the custom apps host is not running")
+	}
+	editor = strings.TrimSpace(editor)
+	if editor == "" || strings.TrimSpace(spec.Slug) == "" || (spec.Owner != editor && !spec.MaintainedBy(editor)) {
+		return PageCheckCookie{}, nil, fmt.Errorf("only an app's owner, or a maintainer changing it, previews it")
+	}
+	p := &appPreview{Editor: editor, Spec: spec, oneLoad: true}
+	if copyRecords {
+		p.Scratch, p.end = T.previewScratch(spec, editor)
+	}
+	tok := previewToken()
+	previewsMu.Lock()
+	previews[tok] = p
+	previewsMu.Unlock()
+	end := func() {
+		previewsMu.Lock()
+		delete(previews, tok)
+		previewsMu.Unlock()
+		if p.end != nil {
+			p.end()
+		}
+	}
+	return PageCheckCookie{Name: previewCookie, Value: tok, Path: T.WebPath() + "/" + spec.Slug + "/", HTTPOnly: true}, end, nil
+}
+
 func init() {
+	appdraft.CheckPreview = CheckPreview
 	appdraft.PreviewCookie = draftPreviewCookie
 	appdraft.PreviewLink = DraftPreviewLink
 	appdraft.PreviewEnd = EndAppPreview
@@ -125,7 +164,7 @@ func EndAppPreview(editor, slug string) {
 	previewsMu.Lock()
 	defer previewsMu.Unlock()
 	for tok, p := range previews {
-		if p.Editor == editor && p.Spec.Slug == slug {
+		if p.Editor == editor && p.Spec.Slug == slug && !p.oneLoad {
 			if p.end != nil {
 				p.end()
 			}
@@ -140,7 +179,7 @@ func HasAppPreview(editor, slug string) bool {
 	previewsMu.Lock()
 	defer previewsMu.Unlock()
 	for _, p := range previews {
-		if p.Editor == editor && p.Spec.Slug == slug {
+		if p.Editor == editor && p.Spec.Slug == slug && !p.oneLoad {
 			return true
 		}
 	}

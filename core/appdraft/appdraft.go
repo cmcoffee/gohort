@@ -223,6 +223,12 @@ var (
 	PreviewEnd  func(editor, slug string)
 )
 
+// CheckPreview is a preview of spec for one browser load as editor, beside
+// any preview the person has, on a fresh copy of their records when
+// copyRecords; end ends it. Set by the custom-apps host; nil where there is
+// none.
+var CheckPreview func(editor string, spec core.AppSpec, copyRecords bool) (cookie core.PageCheckCookie, end func(), err error)
+
 // MakeLive makes d live as by's own change, through every gate a save
 // passes, whether or not its work was finished and verified: the person's
 // choice, from My Apps. It returns what to tell them. Set by the host that
