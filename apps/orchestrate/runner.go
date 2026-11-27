@@ -228,6 +228,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		)
 		label := "orchestrate.orch"
 		Log("%s", pr.telem.summary(label, softCap, hardCap, exitReason)+" agent="+t.agent.ID)
+		addMeasuredRounds(t.chatSessionID(), pr.telem.rounds)
 		if line := pr.telem.toolCallSummary(label); line != "" {
 			Log("%s", line)
 		}

@@ -321,3 +321,62 @@ func TestCheckAppFolderRunsPageChecksOnTheWorkingCopy(t *testing.T) {
 		t.Errorf("previews started %d, ended %d", started, ended)
 	}
 }
+
+// A measured Builder turn works in the task's folder, in app mode: what it
+// publishes is new to its session, so nothing waits for an approval. When it
+// ends, the folder holds the app as published, and the app, its history and
+// the conversation are gone. A slug that is not a measure's, or an app that
+// already exists, is never run on, so a person's app cannot be deleted.
+func TestBuilderIsMeasuredOnAnAppFolderAndLeavesNothingBehind(t *testing.T) {
+	df := newDispatchFixture(t,
+		FakeTurn{ToolCalls: []ToolCall{{ID: "1", Name: "app_def", Args: map[string]any{"action": "publish", "dir": "anvil-eval-wx.app"}}}},
+		FakeTurn{Content: "Published it.", Repeat: true})
+	folderTestTurn(t)
+	dir := filepath.Join(WorkspacesDir(), "u", "measure-task", "anvil-eval-wx.app")
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "app.json"), []byte(`{"name": "Wx", "slug": "anvil-eval-wx", "sections": [{"id": "page", "kind": "html", "html_file": "page.html"}]}`), 0o644)
+	os.WriteFile(filepath.Join(dir, "page.html"), []byte("<!DOCTYPE html><html><body><h1>Wx</h1></body></html>"), 0o644)
+
+	run, err := df.app.RunBuilderOnAppFolder(t.Context(), BuilderAppTask{User: "u", Folder: dir, Slug: "anvil-eval-wx", Request: "Make the heading say Weather."})
+	if err != nil {
+		t.Fatalf("%v (reply %q)", err, run.Reply)
+	}
+	if !run.Published || run.Rounds < 2 || run.Steps != 1 || !strings.Contains(run.Reply, "Published") {
+		t.Fatalf("%+v", run)
+	}
+	prompt := df.llm.Config(0).SystemPrompt + "\n" + df.llm.Prompt(0)
+	for _, want := range []string{"Building an app", "anvil-eval-wx.app/", "Make the heading say Weather."} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("Builder was not told %q", want)
+		}
+	}
+	if _, ok := LoadAppSpec("u", "anvil-eval-wx"); ok {
+		t.Error("the app Builder published was left behind")
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "app.json")); err != nil || !strings.Contains(string(b), "anvil-eval-wx") {
+		t.Errorf("the folder lost the app: %v %s", err, b)
+	}
+	if left, _ := filepath.Glob(filepath.Join(familyWorkspace(UserDB(df.app.DB, "u"), "u", "seed-builder"), "anvil-eval-*")); len(left) != 0 {
+		t.Errorf("Builder's copy was left in its workspace: %v", left)
+	}
+	if n := len(listChatSessions(UserDB(df.app.DB, "u"), "seed-builder")); n != 0 {
+		t.Errorf("%d measured conversation(s) left in Builder", n)
+	}
+
+	for _, bad := range []BuilderAppTask{
+		{User: "u", Folder: filepath.Join(filepath.Dir(dir), "wx.app"), Slug: "wx", Request: "x"},
+		{User: "u", Folder: dir, Slug: "anvil-eval-Wx", Request: "x"},
+		{User: "u", Folder: dir, Slug: "anvil-eval-other", Request: "x"},
+	} {
+		if _, err := df.app.RunBuilderOnAppFolder(t.Context(), bad); err == nil {
+			t.Errorf("ran on slug %q", bad.Slug)
+		}
+	}
+	SaveAppSpec(AppSpec{Owner: "u", Slug: "anvil-eval-mine", Name: "Mine"})
+	if _, err := df.app.RunBuilderOnAppFolder(t.Context(), BuilderAppTask{User: "u", Folder: filepath.Join(filepath.Dir(dir), "anvil-eval-mine.app"), Slug: "anvil-eval-mine", Request: "x"}); err == nil {
+		t.Error("ran on an app that already existed")
+	}
+	if _, ok := LoadAppSpec("u", "anvil-eval-mine"); !ok {
+		t.Error("an app that existed before the run was deleted")
+	}
+}

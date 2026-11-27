@@ -42,6 +42,7 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		exitReason := classifyWorkerExit(stepErr, ws.telem.rounds, softCap, len(stepOut))
 		label := fmt.Sprintf("orchestrate.worker step=%d", cur.ID)
 		Log("%s", ws.telem.summary(label, softCap, hardCap, exitReason)+" agent="+t.agent.ID)
+		addMeasuredRounds(t.chatSessionID(), ws.telem.rounds)
 		if line := ws.telem.toolCallSummary(label); line != "" {
 			Log("%s", line)
 		}

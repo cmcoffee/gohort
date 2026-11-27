@@ -47,6 +47,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/apps/orchestrate"
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/jsonapi"
@@ -74,14 +75,18 @@ type evalSetting struct {
 	// NoScript leaves tool_script out, to measure what it changes
 	// (docs/design/code-mode.md).
 	NoScript bool
+	// Builder runs the app tasks through Builder instead of Anvil, and only
+	// those, to measure which builds apps better on the same tasks.
+	Builder bool
 }
 
 var evalSettings = []evalSetting{
-	{"worker-check", "Worker, with the check", "The local model, with each task's check run after its edits.", false, true, false},
-	{"worker-check-noscript", "Worker, with the check, without tool_script", "As Worker, with the check, but with no tool_script: compare the two to see whether scripts save rounds.", false, true, true},
-	{"worker-plain", "Worker, without the check", "The local model, with no check: how Anvil worked before.", false, false, false},
-	{"lead-check", "Lead, with the check", "The lead model, with each task's check run after its edits.", true, true, false},
-	{"lead-plain", "Lead, without the check", "The lead model, with no check.", true, false, false},
+	{"worker-check", "Worker, with the check", "The local model, with each task's check run after its edits.", false, true, false, false},
+	{"worker-check-noscript", "Worker, with the check, without tool_script", "As Worker, with the check, but with no tool_script: compare the two to see whether scripts save rounds.", false, true, true, false},
+	{"worker-plain", "Worker, without the check", "The local model, with no check: how Anvil worked before.", false, false, false, false},
+	{"lead-check", "Lead, with the check", "The lead model, with each task's check run after its edits.", true, true, false, false},
+	{"lead-plain", "Lead, without the check", "The lead model, with no check.", true, false, false, false},
+	{"builder-apps", "Builder, app tasks", "Builder as a person's chat turn in app mode, on the models it is set to use, on the app tasks only: compare with Worker, with the check, on the same tasks.", false, false, false, true},
 }
 
 func evalSettingByID(id string) (evalSetting, bool) {
@@ -246,6 +251,9 @@ type evalAgentResult struct {
 // the project check as the turn's condition on ending when the setting has
 // one.
 func (T *Anvil) runEvalAgent(ctx context.Context, c *toolCtx, task evalTask, s evalSetting) (evalAgentResult, error) {
+	if s.Builder {
+		return runEvalBuilder(ctx, c, task)
+	}
 	tier := WORKER
 	if s.Lead {
 		tier = LEAD
@@ -301,6 +309,46 @@ func (T *Anvil) runEvalAgent(ctx context.Context, c *toolCtx, task evalTask, s e
 	return evalAgentResult{Reply: reply, Steps: steps, Rounds: rounds, Tokens: tokens, RanOn: strings.Join(ran, "+")}, err
 }
 
+// runEvalBuilder runs an app task through Builder, as a person's chat turn
+// in app mode, on the models Builder is set to use: its folder is c.base,
+// named <slug>.app. What Builder published is written back to the folder and
+// deleted (orchestrate.RunBuilderOnAppFolder), so the score is of what it
+// delivered.
+func runEvalBuilder(ctx context.Context, c *toolCtx, task evalTask) (evalAgentResult, error) {
+	if !task.isApp() {
+		return evalAgentResult{}, fmt.Errorf("Builder is measured on app tasks only")
+	}
+	o, err := appHost()
+	if err != nil {
+		return evalAgentResult{}, err
+	}
+	slug := strings.TrimSuffix(filepath.Base(c.base), ".app")
+	ctx = ListLoopAs(ctx, c.user, "Builder eval: "+task.Title)
+	run, err := o.RunBuilderOnAppFolder(ctx, orchestrate.BuilderAppTask{
+		User: c.user, Folder: c.base, Slug: slug, Request: task.Request,
+	})
+	reply := run.Reply
+	if run.Published {
+		reply = "[published] " + reply
+	}
+	return evalAgentResult{Reply: reply, Steps: run.Steps, Rounds: run.Rounds, Tokens: run.Tokens, RanOn: run.RanOn}, err
+}
+
+// evalAppSlug is the slug an app task's app.json names.
+func evalAppSlug(task evalTask) (string, error) {
+	b, err := evalFS.ReadFile(path.Join("evaltasks", task.Name, "repo", "app.json"))
+	if err != nil {
+		return "", fmt.Errorf("task %s has no app.json: %w", task.Name, err)
+	}
+	var m struct {
+		Slug string `json:"slug"`
+	}
+	if err := json.Unmarshal(b, &m); err != nil || m.Slug == "" {
+		return "", fmt.Errorf("task %s: app.json names no slug", task.Name)
+	}
+	return m.Slug, nil
+}
+
 // evalOne runs task in a fresh copy under dir and scores it.
 func (T *Anvil) evalOne(ctx context.Context, run evalRunner, user, runID string, task evalTask, s evalSetting, dir string) evalTaskResult {
 	res := evalTaskResult{Task: task.Name, Title: task.Title, Lang: task.Lang}
@@ -309,6 +357,15 @@ func (T *Anvil) evalOne(ctx context.Context, run evalRunner, user, runID string,
 	fail := func(err error) evalTaskResult {
 		res.Error = err.Error()
 		return res
+	}
+	// Builder works on an app as <slug>.app/ in its workspace, which is
+	// the task's folder here.
+	if s.Builder {
+		slug, err := evalAppSlug(task)
+		if err != nil {
+			return fail(err)
+		}
+		dir = filepath.Join(dir, slug+".app")
 	}
 	if err := writeEvalFiles(task.Name, "repo", dir); err != nil {
 		return fail(err)
@@ -388,6 +445,15 @@ func (T *Anvil) runEval(ctx context.Context, run evalRunner, user string, s eval
 	if err != nil {
 		st.set("Could not read the task set: " + err.Error())
 		return r
+	}
+	if s.Builder {
+		var apps []evalTask
+		for _, t := range tasks {
+			if t.isApp() {
+				apps = append(apps, t)
+			}
+		}
+		tasks = apps
 	}
 	r.Total = len(tasks)
 	base := filepath.Join(WorkspacesDir(), ".anvil-eval", r.ID)

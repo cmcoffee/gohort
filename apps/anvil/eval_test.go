@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -378,5 +379,50 @@ func TestEveryAppTaskFailsAtTheStartAndPassesWithItsSolution(t *testing.T) {
 	}
 	if apps < 3 {
 		t.Fatalf("%d app tasks", apps)
+	}
+}
+
+// Builder's setting runs the app tasks only, each in a folder named for the
+// app's slug, which is how Builder finds an app in its workspace.
+func TestBuilderIsMeasuredOnTheAppTasksOnly(t *testing.T) {
+	evalWorkspace(t)
+	T := evalApp(t)
+	var mu sync.Mutex
+	var folders []string
+	run := func(ctx context.Context, c *toolCtx, task evalTask, s evalSetting) (evalAgentResult, error) {
+		mu.Lock()
+		folders = append(folders, filepath.Base(c.base))
+		mu.Unlock()
+		if !task.isApp() {
+			t.Errorf("Builder was given %s, not an app task", task.Name)
+		}
+		if _, err := os.Stat(filepath.Join(c.base, "app.json")); err != nil {
+			t.Errorf("%s: the folder has no app.json", task.Name)
+		}
+		return evalAgentResult{Reply: "Could not do it."}, nil
+	}
+	s, ok := evalSettingByID("builder-apps")
+	if !ok || !s.Builder {
+		t.Fatal("no Builder setting")
+	}
+	if _, err := T.startEval("root", s, run); err != nil {
+		t.Fatal(err)
+	}
+	waitEval(t, T, s.ID)
+	r := T.evalRuns()[0]
+	apps := 0
+	tasks, _ := loadEvalTasks()
+	for _, task := range tasks {
+		if task.isApp() {
+			apps++
+		}
+	}
+	if r.Total != apps || len(folders) != apps {
+		t.Fatalf("ran %d of %d tasks (%d app tasks): %v", len(folders), r.Total, apps, folders)
+	}
+	for _, f := range folders {
+		if !strings.HasPrefix(f, "anvil-eval-") || !strings.HasSuffix(f, ".app") {
+			t.Errorf("folder %q is not <slug>.app", f)
+		}
 	}
 }

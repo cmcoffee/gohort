@@ -10,13 +10,20 @@ package orchestrate
 // checks that put the previous version back.
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appdraft"
 )
 
 // personTurn is the turn a person's own Install or Preview runs on: their
@@ -222,4 +229,231 @@ func writeAppFolderOf(spec AppSpec, dir string, owned map[string][]byte) error {
 	}
 	_, err := writeAppFolderOwned(dir, spec, assets, appLiveFingerprint(spec), owned)
 	return err
+}
+
+// MeasureSlugPrefix starts the slug of every app a measure builds. The run
+// below refuses any other slug, and deletes only an app it made, so a
+// measure can never remove a person's own app.
+const MeasureSlugPrefix = "anvil-eval-"
+
+// BuilderAppTask is one app task for Builder to do, for a measure: the app's
+// folder (Folder, named <Slug>.app, never published) and what to change in
+// it.
+type BuilderAppTask struct {
+	User, Folder, Slug, Request string
+}
+
+// BuilderAppRun is how Builder's turn on a task went.
+type BuilderAppRun struct {
+	Reply                 string
+	Steps, Rounds, Tokens int
+	RanOn                 string // the tier that served it ("lead", "worker", or both)
+	// Published is whether the turn published the app (its draft, or live);
+	// the folder was then rewritten from that, which is what Builder
+	// delivered.
+	Published bool
+}
+
+// RunBuilderOnAppFolder runs one Builder turn on a task's app folder as a
+// person's would run: the same send the chat page posts, the intake answered
+// Change, App and the request, so the turn has Builder's chat prompt, its
+// app mode, its tools and its drafts, in Builder's own workspace. What it
+// publishes is new to the session, so nothing in it waits for an approval.
+// When it ends, the task's folder holds the app as Builder left it, and
+// everything the turn made outside it (its copy in Builder's workspace, the
+// app it published with its drafts, history and owned parts, and the
+// conversation) is deleted.
+func (T *OrchestrateApp) RunBuilderOnAppFolder(ctx context.Context, task BuilderAppTask) (BuilderAppRun, error) {
+	var out BuilderAppRun
+	user, slug := strings.TrimSpace(task.User), strings.TrimSpace(task.Slug)
+	if user == "" || !strings.HasPrefix(slug, MeasureSlugPrefix) || slugify(slug) != slug {
+		return out, fmt.Errorf("a measured app's slug starts %q (got %q)", MeasureSlugPrefix, slug)
+	}
+	if filepath.Base(task.Folder) != slug+".app" {
+		return out, fmt.Errorf("the task's folder is named %s.app (got %s)", slug, filepath.Base(task.Folder))
+	}
+	if _, ok := LoadAppSpec(user, slug); ok {
+		return out, fmt.Errorf("%s already has an app %q; a measure builds only apps that do not exist yet", user, slug)
+	}
+	udb := UserDB(T.DB, user)
+	builder, ok := loadAgent(udb, "seed-builder")
+	if !ok {
+		return out, fmt.Errorf("there is no Builder for %s", user)
+	}
+	ws := agentWorkspace(udb, user, builder)
+	if ws == "" {
+		return out, fmt.Errorf("Builder has no workspace for %s", user)
+	}
+	work := filepath.Join(ws, slug+".app")
+	if _, err := os.Stat(work); err == nil {
+		return out, fmt.Errorf("Builder's workspace already holds %s.app; a measure works only in a folder it puts there itself", slug)
+	}
+	if err := copyAppFolder(task.Folder, work); err != nil {
+		os.RemoveAll(work)
+		return out, err
+	}
+	sessionID := "measure-" + UUIDv4()
+	rounds := &atomic.Int64{}
+	measuredRounds.Store(sessionID, rounds)
+	defer func() {
+		measuredRounds.Delete(sessionID)
+		DeleteAppOwned(user, slug)
+		DeleteAppSpec(user, slug)
+		deleteChatSession(udb, builder.ID, sessionID)
+		os.RemoveAll(work)
+	}()
+
+	intake := map[string]string{"action": "Change", "kind": "App", "change": task.Request}
+	msg := "**What do you want to do?:** Change\n\n**What kind of thing?:** App\n\n**What should change?:** " + task.Request +
+		"\n\nThe app is the folder " + slug + ".app/ in your workspace (app.json, page.html, its scripts and checks.json). It has not been published yet."
+	body, _ := json.Marshal(sendRequest{Message: msg, SessionID: sessionID, IntakeValues: intake})
+	ctx, usage := WithRequestUsage(ctx)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/api/send", bytes.NewReader(body))
+	if err != nil {
+		return out, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	// The turn's life is its own, not the request's (detachContext): stop it
+	// the way the page's Stop does when the measure is stopped or times out.
+	ended := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			if c, ok := inflightCancels.Load(runSessKey(user, sessionID)); ok {
+				c.(context.CancelFunc)()
+			}
+		case <-ended:
+		}
+	}()
+	w := &measureWriter{header: http.Header{}}
+	T.handleSendWithAppToolsPublishing(w, req, udb, user, builder, nil, nil)
+	close(ended)
+
+	if sess, ok := loadChatSession(udb, builder.ID, sessionID); ok {
+		for _, m := range sess.Messages {
+			if m.Role == "assistant" {
+				out.Steps += len(m.ToolCalls)
+				if strings.TrimSpace(m.Content) != "" {
+					out.Reply = m.Content
+				}
+			}
+		}
+	}
+	if out.Reply == "" {
+		out.Reply = w.lastError()
+	}
+	out.Rounds = int(rounds.Load())
+	u := usage.Diff(UsageSnapshot{})
+	out.Tokens = int(u.WorkerInput + u.WorkerOutput + u.LeadInput + u.LeadOutput)
+	var tiers []string
+	if u.LeadInput+u.LeadOutput > 0 {
+		tiers = append(tiers, "lead")
+	}
+	if u.WorkerInput+u.WorkerOutput > 0 {
+		tiers = append(tiers, "worker")
+	}
+	out.RanOn = strings.Join(tiers, "+")
+	if ctx.Err() != nil {
+		err = ctx.Err()
+	}
+	// What Builder delivered: its draft of the app when it published one
+	// (a chat's publish is a draft until committed, app_draft.go), else the
+	// app as live when it committed, else its folder.
+	spec, ok := LoadAppSpec(user, slug)
+	if d, isDraft := appdraft.Load(user, slug, user); isDraft {
+		spec, ok = d.Spec, true
+	}
+	if ok {
+		out.Published = true
+		if werr := writeAppFolderOf(spec, work, nil); werr != nil && err == nil {
+			err = fmt.Errorf("the published app could not be written to its folder: %w", werr)
+		}
+	}
+	if cerr := replaceAppFolder(work, task.Folder); cerr != nil && err == nil {
+		err = cerr
+	}
+	return out, err
+}
+
+// measuredRounds is, for each conversation a measure is running, how many
+// rounds its turn took (addMeasuredRounds, from the turn's telemetry).
+var measuredRounds sync.Map // session id -> *atomic.Int64
+
+// addMeasuredRounds counts a finished loop's rounds for a measured
+// conversation; any other conversation is not counted.
+func addMeasuredRounds(sessionID string, n int) {
+	if v, ok := measuredRounds.Load(sessionID); ok && n > 0 {
+		v.(*atomic.Int64).Add(int64(n))
+	}
+}
+
+// measureWriter is where a measured turn's page events go: kept only to say
+// why a turn that wrote nothing ended.
+type measureWriter struct {
+	header http.Header
+	mu     sync.Mutex
+	buf    bytes.Buffer
+}
+
+func (m *measureWriter) Header() http.Header { return m.header }
+func (m *measureWriter) WriteHeader(int)     {}
+func (m *measureWriter) Flush()              {}
+func (m *measureWriter) Write(b []byte) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.buf.Len() < 1<<20 {
+		m.buf.Write(b)
+	}
+	return len(b), nil
+}
+
+// lastError is the last error event the turn sent the page, or "".
+func (m *measureWriter) lastError() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	last := ""
+	for _, line := range strings.Split(m.buf.String(), "\n") {
+		data, ok := strings.CutPrefix(line, "data: ")
+		if !ok {
+			continue
+		}
+		var ev struct{ Kind, Text string }
+		if json.Unmarshal([]byte(data), &ev) == nil && ev.Kind == "error" {
+			last = "error: " + ev.Text
+		}
+	}
+	return last
+}
+
+// copyAppFolder copies the folder from into to, which must not exist yet.
+func copyAppFolder(from, to string) error {
+	return filepath.WalkDir(from, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(from, p)
+		if err != nil {
+			return err
+		}
+		dst := filepath.Join(to, rel)
+		if d.IsDir() {
+			return os.MkdirAll(dst, 0o755)
+		}
+		if !d.Type().IsRegular() {
+			return nil // a link or a socket is not part of an app
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(dst, b, 0o644)
+	})
+}
+
+// replaceAppFolder makes to a copy of from, whatever it held before.
+func replaceAppFolder(from, to string) error {
+	if err := os.RemoveAll(to); err != nil {
+		return err
+	}
+	return copyAppFolder(from, to)
 }
