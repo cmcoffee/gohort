@@ -44,6 +44,7 @@ import (
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/bgrun"
 	"github.com/cmcoffee/gohort/core/textutil"
+	"github.com/cmcoffee/gohort/core/toolscript"
 )
 
 // Limits. These are deliberately per-call rather than configurable: they
@@ -90,6 +91,8 @@ type toolCtx struct {
 	// change rather than making it. Edits, commands and the project's actions
 	// are withheld for the turn (planmode.go).
 	planning bool
+	// noScript leaves tool_script out (a measure run comparing without it).
+	noScript bool
 
 	// deps are the linked projects this caller may read, resolved once per
 	// turn. Never stored: a link's usability depends on who is asking.
@@ -200,11 +203,20 @@ func (c *toolCtx) ignores(rel string) bool {
 
 // codeTools builds the per-turn tool set.
 func (c *toolCtx) codeTools() []AgentToolDef {
-	tools := []AgentToolDef{
+	reads := []AgentToolDef{
 		c.listFilesTool(),
 		c.readFileTool(),
 		c.searchCodeTool(),
 		c.gitTool(),
+	}
+	tools := append([]AgentToolDef(nil), reads...)
+	// A chain of reads in one round (docs/design/code-mode.md).
+	if !c.noScript {
+		if script, err := toolscript.New(reads...); err == nil {
+			tools = append(tools, script)
+		} else {
+			Log("[anvil] tool_script not offered: %v", err)
+		}
 	}
 	writes := !c.readOnly && !c.planning
 	// Everything that changes something refuses while a revert has halted

@@ -45,9 +45,10 @@ type ToolSession struct {
 
 	// CallTool, when set, is what gohort.call_tool reaches: one of the
 	// session user's tools, run for a script that declared "tool:<name>".
-	// Only an app's own script runs set it (appscript.Run), so a tool in a
-	// chat cannot use the hook to call further tools behind its own
-	// confirmation. Nil: call_tool is refused.
+	// Only an app's own script runs set it (appscript.Run), and code mode
+	// (core/toolscript) on a session of its own holding only tools that
+	// read, so a tool in a chat cannot use the hook to call further tools
+	// behind its own confirmation. Nil: call_tool is refused.
 	CallTool func(name string, args map[string]any) (string, error)
 	// Ask, when set, is what gohort.ask reaches: the app's agent with no
 	// tools, for an app script that declared "ask". Set only by an app

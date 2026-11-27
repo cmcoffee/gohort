@@ -7,7 +7,7 @@ package anvil
 // Without it every change to the prompt or the tools is a guess. A run picks
 // a setting (the worker or the lead, with the project check or without), runs
 // every task in a fresh copy, and records for each whether its hidden check
-// passed, how many steps and tokens it took, how long, and what the agent
+// passed, how many rounds, steps and tokens it took, how long, and what the agent
 // said it had done. Comparing two runs says which tasks a change moved.
 //
 // It runs in the server (one at a time, an administrator's, started by hand
@@ -65,13 +65,17 @@ const (
 type evalSetting struct {
 	ID, Label, Desc string
 	Lead, Check     bool
+	// NoScript leaves tool_script out, to measure what it changes
+	// (docs/design/code-mode.md).
+	NoScript bool
 }
 
 var evalSettings = []evalSetting{
-	{"worker-check", "Worker, with the check", "The local model, with each task's check run after its edits.", false, true},
-	{"worker-plain", "Worker, without the check", "The local model, with no check: how Anvil worked before.", false, false},
-	{"lead-check", "Lead, with the check", "The lead model, with each task's check run after its edits.", true, true},
-	{"lead-plain", "Lead, without the check", "The lead model, with no check.", true, false},
+	{"worker-check", "Worker, with the check", "The local model, with each task's check run after its edits.", false, true, false},
+	{"worker-check-noscript", "Worker, with the check, without tool_script", "As Worker, with the check, but with no tool_script: compare the two to see whether scripts save rounds.", false, true, true},
+	{"worker-plain", "Worker, without the check", "The local model, with no check: how Anvil worked before.", false, false, false},
+	{"lead-check", "Lead, with the check", "The lead model, with each task's check run after its edits.", true, true, false},
+	{"lead-plain", "Lead, without the check", "The lead model, with no check.", true, false, false},
 }
 
 func evalSettingByID(id string) (evalSetting, bool) {
@@ -152,11 +156,14 @@ func writeEvalFiles(task, part, dir string) error {
 
 // evalTaskResult is how one task went.
 type evalTaskResult struct {
-	Task    string  `json:"task"`
-	Title   string  `json:"title"`
-	Lang    string  `json:"lang"`
-	Passed  bool    `json:"passed"`
-	Steps   int     `json:"steps"`
+	Task   string `json:"task"`
+	Title  string `json:"title"`
+	Lang   string `json:"lang"`
+	Passed bool   `json:"passed"`
+	Steps  int    `json:"steps"`
+	// Rounds is how many times the model was called; Steps counts the tool
+	// calls those rounds made. Zero on runs from before it was kept.
+	Rounds  int     `json:"rounds,omitempty"`
 	Tokens  int     `json:"tokens"`
 	Seconds float64 `json:"seconds"`
 	// RanOn is the tier that served the rounds ("lead", "worker", or both),
@@ -214,19 +221,26 @@ func (T *Anvil) evalSt() *evalState {
 
 // evalRunner runs one task with Anvil's tools and reports how it went. A
 // variable so a test can run the set without a model.
-type evalRunner func(ctx context.Context, c *toolCtx, task evalTask, s evalSetting) (reply string, steps, tokens int, ranOn string, err error)
+type evalRunner func(ctx context.Context, c *toolCtx, task evalTask, s evalSetting) (evalAgentResult, error)
+
+// evalAgentResult is how one task's run went, before its hidden check.
+type evalAgentResult struct {
+	Reply                 string
+	Steps, Rounds, Tokens int
+	RanOn                 string // the tier that served it ("lead", "worker", or both)
+}
 
 // runEvalAgent is the real runner: Anvil's prompt, briefing and tools on the
 // app's own agent loop, every confirmation allowed (nobody is watching), and
 // the project check as the turn's condition on ending when the setting has
 // one.
-func (T *Anvil) runEvalAgent(ctx context.Context, c *toolCtx, task evalTask, s evalSetting) (string, int, int, string, error) {
+func (T *Anvil) runEvalAgent(ctx context.Context, c *toolCtx, task evalTask, s evalSetting) (evalAgentResult, error) {
 	tier := WORKER
 	if s.Lead {
 		tier = LEAD
 	}
 	var mu sync.Mutex
-	steps, tokens := 0, 0
+	steps, rounds, tokens := 0, 0, 0
 	tiers := map[string]bool{}
 	cfg := AgentLoopConfig{
 		SystemPrompt: coderPrompt + T.projectContext(c.project, c.base),
@@ -237,6 +251,7 @@ func (T *Anvil) runEvalAgent(ctx context.Context, c *toolCtx, task evalTask, s e
 		OnStep: func(st StepInfo) {
 			mu.Lock()
 			steps += len(st.ToolCalls)
+			rounds = max(rounds, st.Round)
 			if st.Tier != "" && st.Tier != "unset" {
 				tiers[st.Tier] = true
 			}
@@ -272,7 +287,7 @@ func (T *Anvil) runEvalAgent(ctx context.Context, c *toolCtx, task evalTask, s e
 		ran = append(ran, t)
 	}
 	sort.Strings(ran)
-	return reply, steps, tokens, strings.Join(ran, "+"), err
+	return evalAgentResult{Reply: reply, Steps: steps, Rounds: rounds, Tokens: tokens, RanOn: strings.Join(ran, "+")}, err
 }
 
 // evalOne runs task in a fresh copy under dir and scores it.
@@ -296,11 +311,11 @@ func (T *Anvil) evalOne(ctx context.Context, run evalRunner, user, runID string,
 	if s.Check {
 		p.CheckCommand = task.Check
 	}
-	c := &toolCtx{udb: UserDB(OpenCache(), user), user: user, project: p, base: dir, sessionID: runID + "-" + task.Name}
+	c := &toolCtx{udb: UserDB(OpenCache(), user), user: user, project: p, base: dir, sessionID: runID + "-" + task.Name, noScript: s.NoScript}
 	tctx, cancel := context.WithTimeout(ctx, evalTaskTimeout)
-	reply, steps, tokens, ranOn, err := run(tctx, c, task, s)
+	got, err := run(tctx, c, task, s)
 	cancel()
-	res.Reply, res.Steps, res.Tokens, res.RanOn = truncateEval(reply, 1200), steps, tokens, ranOn
+	res.Reply, res.Steps, res.Rounds, res.Tokens, res.RanOn = truncateEval(got.Reply, 1200), got.Steps, got.Rounds, got.Tokens, got.RanOn
 	if err != nil {
 		res.Error = err.Error()
 	}
@@ -516,12 +531,18 @@ func (T *Anvil) handleEvalRunList(c *jsonapi.Call) (any, error) {
 	rows := []map[string]any{}
 	for _, r := range T.evalRuns() {
 		state := fmt.Sprintf("%d of %d", r.Passed, r.Total)
+		rounds, steps := 0, 0
+		for _, res := range r.Results {
+			rounds += res.Rounds
+			steps += res.Steps
+		}
 		if r.Stopped {
 			state += " (stopped)"
 		}
 		rows = append(rows, map[string]any{
 			"id": r.ID, "when": r.Started.Local().Format("Jan 2 15:04"), "setting": r.Label,
 			"passed": state, "took": (time.Duration(r.Seconds) * time.Second).String(), "by": r.By,
+			"rounds": rounds, "steps": steps,
 		})
 	}
 	return rows, nil
@@ -546,7 +567,7 @@ func (T *Anvil) handleEvalLatest(c *jsonapi.Call) (any, error) {
 			result += ": " + res.Error
 		}
 		rows = append(rows, map[string]any{
-			"task": res.Title, "lang": res.Lang, "result": result, "steps": res.Steps,
+			"task": res.Title, "lang": res.Lang, "result": result, "rounds": res.Rounds, "steps": res.Steps,
 			"tokens": res.Tokens, "took": (time.Duration(res.Seconds) * time.Second).String(), "ran_on": res.RanOn,
 			"reply": res.Reply, "hidden": res.Hidden,
 		})
@@ -598,6 +619,8 @@ func (T *Anvil) handleEvalPage(w http.ResponseWriter, r *http.Request) {
 					{Field: "when", Label: "When"},
 					{Field: "setting", Label: "Setting", Flex: 2},
 					{Field: "passed", Label: "Passed"},
+					{Field: "rounds", Label: "Rounds", Mute: true},
+					{Field: "steps", Label: "Steps", Mute: true},
 					{Field: "took", Label: "Took", Mute: true},
 					{Field: "by", Label: "By", Mute: true},
 				},
@@ -613,6 +636,7 @@ func (T *Anvil) handleEvalPage(w http.ResponseWriter, r *http.Request) {
 					{Field: "task", Label: "Task", Flex: 2},
 					{Field: "lang", Label: "Language", Mute: true},
 					{Field: "result", Label: "Result", Flex: 2},
+					{Field: "rounds", Label: "Rounds", Mute: true},
 					{Field: "steps", Label: "Steps", Mute: true},
 					{Field: "took", Label: "Took", Mute: true},
 					{Field: "ran_on", Label: "Ran on", Mute: true},

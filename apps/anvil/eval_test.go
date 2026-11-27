@@ -122,17 +122,17 @@ func TestARunScoresEveryTaskAndStoresIt(t *testing.T) {
 	evalWorkspace(t)
 	T := evalApp(t)
 	solves := func(task evalTask) bool { return task.Lang != "Go" }
-	run := func(ctx context.Context, c *toolCtx, task evalTask, s evalSetting) (string, int, int, string, error) {
+	run := func(ctx context.Context, c *toolCtx, task evalTask, s evalSetting) (evalAgentResult, error) {
 		if c.project.CheckCommand != task.Check {
 			t.Errorf("%s: the project's check is %q", task.Name, c.project.CheckCommand)
 		}
 		if solves(task) {
 			if err := writeEvalFiles(task.Name, "solution", c.base); err != nil {
-				return "", 0, 0, "", err
+				return evalAgentResult{}, err
 			}
-			return "Done.", 2, 100, "worker", nil
+			return evalAgentResult{Reply: "Done.", Steps: 2, Rounds: 2, Tokens: 100, RanOn: "worker"}, nil
 		}
-		return "Could not do it.", 1, 50, "worker", nil
+		return evalAgentResult{Reply: "Could not do it.", Steps: 1, Rounds: 1, Tokens: 50, RanOn: "worker"}, nil
 	}
 	s, _ := evalSettingByID("worker-check")
 	if _, err := T.startEval("root", s, run); err != nil {
@@ -172,13 +172,13 @@ func TestStopEndsARun(t *testing.T) {
 	evalWorkspace(t)
 	T := evalApp(t)
 	started := make(chan struct{}, 1)
-	run := func(ctx context.Context, c *toolCtx, task evalTask, s evalSetting) (string, int, int, string, error) {
+	run := func(ctx context.Context, c *toolCtx, task evalTask, s evalSetting) (evalAgentResult, error) {
 		select {
 		case started <- struct{}{}:
 		default:
 		}
 		<-ctx.Done()
-		return "", 0, 0, "", ctx.Err()
+		return evalAgentResult{}, ctx.Err()
 	}
 	s, _ := evalSettingByID("worker-plain")
 	if _, err := T.startEval("root", s, run); err != nil {
@@ -243,7 +243,7 @@ func TestTheRunnerUsesAnvilsToolsAndCheck(t *testing.T) {
 	}
 	s, _ := evalSettingByID("worker-check")
 	res := T.evalOne(context.Background(), T.runEvalAgent, "root", "r1", task, s, filepath.Join(WorkspacesDir(), "one"))
-	if !res.Passed || res.Steps != 2 || !strings.Contains(res.Reply, "Fixed") {
+	if !res.Passed || res.Steps != 2 || res.Rounds != 3 || !strings.Contains(res.Reply, "Fixed") {
 		t.Fatalf("%+v", res)
 	}
 }

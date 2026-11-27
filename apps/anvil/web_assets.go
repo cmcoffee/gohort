@@ -447,6 +447,25 @@ const anvilStepSummariesJS = `
     if (failed(out)) return 'Could not load the page';
     return /\nErrors:/.test(String(out)) || /did not hold/.test(String(out)) ? 'Tried the page: it has problems' : 'Tried the page';
   });
+  // A script's last line counts its calls: "(4 tool calls: read_file x3,
+  // search_code x1.)".
+  R('tool_script', function(a, out) {
+    if (out == null) return 'Looking around in a script';
+    if (failed(out)) return 'Could not run the script';
+    var m = String(out).match(/\((\d+) tool calls?: ([^)]*)\.\)\s*(\nFailed:[\s\S]*)?$/);
+    if (!m) return 'Ran a script';
+    var parts = m[2].split(', ').map(function(p) {
+      var x = p.match(/^(\S+) x(\d+)$/);
+      if (!x) return p;
+      var n = +x[2];
+      if (x[1] === 'read_file') return 'read ' + n + (n === 1 ? ' file' : ' files');
+      if (x[1] === 'list_files') return 'listed ' + n + (n === 1 ? ' folder' : ' folders');
+      if (x[1] === 'search_code') return 'searched ' + times(n);
+      if (x[1] === 'git') return 'looked at git' + (n > 1 ? ' ' + times(n) : '');
+      return x[1] + ' ' + times(n);
+    });
+    return 'In a script: ' + parts.join(', ');
+  });
   R('git', function(a, out) {
     var what = 'git ' + (a.action || '') + (a.path ? ' ' + a.path : '');
     return out == null ? what : what.trim();
@@ -468,13 +487,15 @@ const anvilStepSummariesJS = `
     return line ? line.charAt(0).toUpperCase() + line.slice(1) : '';
   }
   if (window.uiRegisterStepGroup) {
-    window.uiRegisterStepGroup('look', ['read_file', 'list_files', 'search_code', 'git', 'plan'], function(steps) {
-      var r = count(steps, ['read_file']), l = count(steps, ['list_files']), q = count(steps, ['search_code']), g = count(steps, ['git']);
+    window.uiRegisterStepGroup('look', ['read_file', 'list_files', 'search_code', 'git', 'tool_script', 'plan'], function(steps) {
+      var r = count(steps, ['read_file']), l = count(steps, ['list_files']), q = count(steps, ['search_code']), g = count(steps, ['git']),
+          s = count(steps, ['tool_script']);
       return said([
         r ? 'read ' + r + (r === 1 ? ' file' : ' files') : '',
         l ? 'listed ' + l + (l === 1 ? ' folder' : ' folders') : '',
         q ? 'searched ' + times(q) : '',
         g ? 'looked at git' + (g > 1 ? ' ' + times(g) : '') : '',
+        s ? 'ran ' + s + (s === 1 ? ' script' : ' scripts') : '',
       ]) || 'Updated the plan';
     });
   }
@@ -484,12 +505,14 @@ const anvilStepSummariesJS = `
     window.uiRegisterTurnSummary(function(steps) {
       var r = count(steps, ['read_file']), l = count(steps, ['list_files']), q = count(steps, ['search_code']),
           g = count(steps, ['git']), e = count(steps, ['edit_file', 'create_file']),
-          d = count(steps, ['delete_file']), c = count(steps, ['run']), k = count(steps, ['check']);
+          d = count(steps, ['delete_file']), c = count(steps, ['run']), k = count(steps, ['check']),
+          s = count(steps, ['tool_script']);
       return said([
         r ? 'read ' + r + (r === 1 ? ' file' : ' files') : '',
         l ? 'listed ' + l + (l === 1 ? ' folder' : ' folders') : '',
         q ? 'searched ' + times(q) : '',
         g ? 'looked at git' + (g > 1 ? ' ' + times(g) : '') : '',
+        s ? 'ran ' + s + (s === 1 ? ' script' : ' scripts') : '',
         e ? 'changed ' + e + (e === 1 ? ' file' : ' files') : '',
         d ? 'deleted ' + d + (d === 1 ? ' file' : ' files') : '',
         c ? 'ran ' + c + (c === 1 ? ' command' : ' commands') : '',
