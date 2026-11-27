@@ -127,17 +127,26 @@ func Identity(choice string) string {
 	return "connection:" + choice + "@" + service.Address(choice)
 }
 
-// tierIdentity is a model tier's provider, address and model, as stored.
+// tierIdentity is a model tier's provider, address and model, as stored,
+// and for a local server the weights it actually serves under that name
+// (served.go): a swap behind the same served name is a new model.
 func tierIdentity(table string) string {
-	var p, e, m string
+	var p, e, m, key string
 	if AuthDB != nil {
 		if db := AuthDB(); db != nil {
 			db.Get(table, "provider", &p)
 			db.Get(table, "endpoint", &e)
 			db.Get(table, "model", &m)
+			db.Get(table, "api_key", &key)
 		}
 	}
-	return p + "|" + e + "|" + m
+	id := p + "|" + e + "|" + m
+	if servedLocal(p) && e != "" {
+		if w := servedWeights(e, m, key); w != "" {
+			id += "|" + w
+		}
+	}
+	return id
 }
 
 // Privacy is whether provider may answer decisions (ok), and whether it is
