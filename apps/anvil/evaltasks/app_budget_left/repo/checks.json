@@ -1,0 +1,24 @@
+[
+  {
+    "name": "the summary counts the entries",
+    "script": "summary",
+    "records": [
+      {
+        "id": "e1",
+        "kind": "expense",
+        "amount": 20
+      },
+      {
+        "id": "e2",
+        "kind": "expense",
+        "amount": 5
+      }
+    ],
+    "expect": [
+      {
+        "path": "count",
+        "equals": 2
+      }
+    ]
+  }
+]

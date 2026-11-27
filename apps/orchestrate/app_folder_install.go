@@ -162,6 +162,41 @@ func (T *OrchestrateApp) CheckAppFolder(ctx context.Context, user, dir string) (
 	return appChecksReport(t.runAppChecks(spec, true)), nil
 }
 
+// AppChecksScore is how the checks of an app folder went, counted: what a
+// measure scores a task by, where CheckAppFolder's report is for reading.
+type AppChecksScore struct {
+	Report               string
+	Passed, Failed, Skip int
+}
+
+// ScoreAppFolder runs the checks of the app in dir as CheckAppFolder does and
+// counts them. An app that does not build, or whose checks cannot run, is an
+// error.
+func (T *OrchestrateApp) ScoreAppFolder(ctx context.Context, user, dir string) (AppChecksScore, error) {
+	spec, err := T.BuildAppFolder(ctx, user, dir)
+	if err != nil {
+		return AppChecksScore{}, err
+	}
+	if err := validateAppChecks(spec); err != nil {
+		return AppChecksScore{}, fmt.Errorf("%s", strings.TrimPrefix(err.Error(), "NOT SAVED: "))
+	}
+	t := T.personTurn(ctx, user)
+	t.folderChecks = true
+	results := t.runAppChecks(spec, true)
+	s := AppChecksScore{Report: appChecksReport(results)}
+	for _, r := range results {
+		switch {
+		case !r.Ran:
+			s.Skip++
+		case r.Pass:
+			s.Passed++
+		default:
+			s.Failed++
+		}
+	}
+	return s, nil
+}
+
 // WriteAppFolder writes user's app slug into dir as its folder (app.json,
 // page, scripts, shared modules, assets, notes, checks), marked as holding
 // the live app as it is, so an Install of it is not taken for undoing a

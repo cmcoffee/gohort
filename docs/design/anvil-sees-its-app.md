@@ -146,8 +146,9 @@ None. No new records, no new fields, no migration. One new tool (with
 - **Other projects than apps.** A web project in a checkout has no
   gohort-served address to load; that needs a dev server (opencode's item 5,
   background commands) first.
-- **An eval task for apps.** Measure has only code tasks. Worth adding once
-  this exists, so a change to it can be scored.
+- **An eval task for apps.** Added (2026-11-27): three app tasks in
+  `apps/anvil/evaltasks/app_*`, scored by their hidden checks.json run
+  through the app host (`ScoreAppFolder`), page checks included.
 
 ## Settled (2026-11-27)
 

@@ -1,0 +1,32 @@
+{
+  "name": "Budget",
+  "slug": "anvil-eval-budget",
+  "description": "This month's money in and out.",
+  "record_key": "id",
+  "sections": [
+    {
+      "id": "page",
+      "kind": "html",
+      "html_file": "page.html",
+      "height": "100vh"
+    }
+  ],
+  "data_sources": [
+    {
+      "name": "summary",
+      "file": "data/summary.py"
+    }
+  ],
+  "actions": [
+    {
+      "name": "add_entry",
+      "label": "Add",
+      "file": "actions/add_entry.py",
+      "inputs": {
+        "kind": "income or expense",
+        "amount": "how much",
+        "note": "what it was"
+      }
+    }
+  ]
+}

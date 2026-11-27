@@ -1,0 +1,38 @@
+{
+  "name": "Tasks",
+  "slug": "anvil-eval-tasks",
+  "description": "A short list of things to do.",
+  "record_key": "id",
+  "sections": [
+    {
+      "id": "page",
+      "kind": "html",
+      "html_file": "page.html",
+      "height": "100vh"
+    }
+  ],
+  "data_sources": [
+    {
+      "name": "tasks",
+      "file": "data/tasks.py"
+    }
+  ],
+  "actions": [
+    {
+      "name": "add_task",
+      "label": "Add task",
+      "file": "actions/add_task.py",
+      "inputs": {
+        "title": "what to do"
+      }
+    },
+    {
+      "name": "toggle",
+      "label": "Done",
+      "file": "actions/toggle.py",
+      "inputs": {
+        "id": "the task's id"
+      }
+    }
+  ]
+}

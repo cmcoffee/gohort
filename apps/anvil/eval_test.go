@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cmcoffee/gohort/apps/orchestrate"
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/sandbox"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
@@ -76,6 +78,9 @@ func TestEveryTaskFailsAtTheStartAndPassesWithItsSolution(t *testing.T) {
 		t.Fatalf("%d tasks", len(tasks))
 	}
 	for _, task := range tasks {
+		if task.isApp() {
+			continue // TestEveryAppTaskFailsAtTheStartAndPassesWithItsSolution
+		}
 		if task.Title == "" || task.Request == "" || task.Check == "" || task.HiddenCheck == "" {
 			t.Errorf("%s is missing a field: %+v", task.Name, task)
 			continue
@@ -121,7 +126,9 @@ func TestARunScoresEveryTaskAndStoresIt(t *testing.T) {
 	needToolchains(t, "Go", "Python", "JavaScript")
 	evalWorkspace(t)
 	T := evalApp(t)
-	solves := func(task evalTask) bool { return task.Lang != "Go" }
+	// The app tasks are scored by the app host, which this run has not got:
+	// left alone, they fail as unsolved ones do.
+	solves := func(task evalTask) bool { return task.Lang != "Go" && task.Lang != "App" }
 	run := func(ctx context.Context, c *toolCtx, task evalTask, s evalSetting) (evalAgentResult, error) {
 		if c.project.CheckCommand != task.Check {
 			t.Errorf("%s: the project's check is %q", task.Name, c.project.CheckCommand)
@@ -284,5 +291,92 @@ func TestAnEvalTaskIsListedWithTheRunningWork(t *testing.T) {
 	<-done
 	if row.Label != "Anvil eval: "+task.Title {
 		t.Errorf("the eval task is listed as %q, want %q", row.Label, "Anvil eval: "+task.Title)
+	}
+}
+
+// evalAppHost is an orchestrate host to build and check app folders, and a
+// workspaces folder outside the host's temp folder, which the sandbox the
+// app's scripts run in does not see.
+func evalAppHost(t *testing.T) {
+	t.Helper()
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		t.Skip("no cache folder for scripts to run from")
+	}
+	ws, err := os.MkdirTemp(cache, "gohort-anvil-evalapps-")
+	if err != nil {
+		t.Skip("no cache folder for scripts to run from")
+	}
+	prevRoot, prevAssets, prevWS, prevHost := RootDB, AppAssetsDir(), WorkspacesDir(), agenthost.Get()
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	SetAppAssetsDir(t.TempDir())
+	SetWorkspacesDir(ws)
+	o := &orchestrate.OrchestrateApp{}
+	o.DB = &DBase{Store: kvlite.MemStore()}
+	agenthost.Register(o)
+	t.Cleanup(func() {
+		RootDB = prevRoot
+		SetAppAssetsDir(prevAssets)
+		SetWorkspacesDir(prevWS)
+		agenthost.Register(prevHost)
+		removeAllWritable(ws)
+	})
+	os.MkdirAll(filepath.Join(ws, "root"), 0o755)
+}
+
+// Every app task's hidden checks fail on the folder the agent starts from
+// and pass on the reference solution, and each folder builds as an app. A
+// page check needs a browser: where there is none it does not run, and only
+// the script checks are held to it here.
+func TestEveryAppTaskFailsAtTheStartAndPassesWithItsSolution(t *testing.T) {
+	needToolchains(t, "Python")
+	evalAppHost(t)
+	tasks, err := loadEvalTasks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	apps := 0
+	for _, task := range tasks {
+		if !task.isApp() {
+			continue
+		}
+		apps++
+		if task.Title == "" || task.Request == "" || task.Lang != "App" {
+			t.Errorf("%s is missing a field: %+v", task.Name, task)
+		}
+		for _, parts := range [][]string{{"repo", "hidden"}, {"repo", "solution", "hidden"}} {
+			dir := filepath.Join(WorkspacesDir(), "root", task.Name+"-"+parts[len(parts)-2])
+			for _, part := range parts {
+				if err := writeEvalFiles(task.Name, part, dir); err != nil {
+					t.Fatal(err)
+				}
+			}
+			solved := len(parts) == 3
+			o, _ := appHost()
+			score, err := o.ScoreAppFolder(context.Background(), "root", dir)
+			if err != nil {
+				// A start whose hidden checks name a script it has not got
+				// yet does not build: that scores as a fail, as it should.
+				if solved {
+					t.Errorf("%s: the solution does not build: %v", task.Name, err)
+				}
+				continue
+			}
+			if strings.Contains(score.Report, "could not run") {
+				t.Skipf("no script can run here: %s", score.Report)
+			}
+			switch {
+			case !solved && score.Failed == 0:
+				t.Errorf("%s: the hidden checks pass before any work:\n%s", task.Name, score.Report)
+			case solved && (score.Failed > 0 || score.Passed == 0):
+				t.Errorf("%s: the hidden checks fail on the solution:\n%s", task.Name, score.Report)
+			}
+			if solved && score.Skip > 0 {
+				t.Logf("%s: %d check(s) not run here (no browser?):\n%s", task.Name, score.Skip, score.Report)
+			}
+		}
+	}
+	if apps < 3 {
+		t.Fatalf("%d app tasks", apps)
 	}
 }

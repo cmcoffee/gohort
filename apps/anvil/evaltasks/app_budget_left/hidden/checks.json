@@ -1,0 +1,106 @@
+[
+  {
+    "name": "the summary counts the entries",
+    "script": "summary",
+    "records": [
+      {
+        "id": "e1",
+        "kind": "expense",
+        "amount": 20
+      },
+      {
+        "id": "e2",
+        "kind": "expense",
+        "amount": 5
+      }
+    ],
+    "expect": [
+      {
+        "path": "count",
+        "equals": 2
+      }
+    ]
+  },
+  {
+    "name": "spent adds up only the expenses",
+    "script": "summary",
+    "records": [
+      {
+        "id": "i1",
+        "kind": "income",
+        "amount": 1000
+      },
+      {
+        "id": "e1",
+        "kind": "expense",
+        "amount": 200
+      },
+      {
+        "id": "e2",
+        "kind": "expense",
+        "amount": 50.5
+      }
+    ],
+    "expect": [
+      {
+        "path": "spent",
+        "equals": 250.5
+      }
+    ]
+  },
+  {
+    "name": "left is income minus spent",
+    "script": "summary",
+    "records": [
+      {
+        "id": "i1",
+        "kind": "income",
+        "amount": 1000
+      },
+      {
+        "id": "e1",
+        "kind": "expense",
+        "amount": 200
+      },
+      {
+        "id": "e2",
+        "kind": "expense",
+        "amount": 50.5
+      }
+    ],
+    "expect": [
+      {
+        "path": "left",
+        "equals": 749.5
+      }
+    ]
+  },
+  {
+    "name": "the page shows spent and left",
+    "records": [
+      {
+        "id": "i1",
+        "kind": "income",
+        "amount": 1000
+      },
+      {
+        "id": "e1",
+        "kind": "expense",
+        "amount": 200
+      },
+      {
+        "id": "e2",
+        "kind": "expense",
+        "amount": 50.5
+      }
+    ],
+    "steps": [
+      {
+        "see": "Spent: $250.50"
+      },
+      {
+        "see": "Left: $749.50"
+      }
+    ]
+  }
+]

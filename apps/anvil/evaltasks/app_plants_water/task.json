@@ -1,0 +1,8 @@
+{
+  "title": "Add a field to an app",
+  "lang": "App",
+  "kind": "app",
+  "request": "Each plant should also say how often it needs watering, in days. Add a field labelled \"Water every (days)\" to the add form. add_plant saves it on the plant as water_days, a whole number, and the plants data source returns water_days for each plant. The list shows it after the name, as \"Fern - every 3 days\".",
+  "check": "",
+  "hidden_check": ""
+}

@@ -1,0 +1,96 @@
+[
+  {
+    "name": "adding a task saves it not done",
+    "script": "add_task",
+    "inputs": {
+      "title": "Buy milk"
+    },
+    "expect": [
+      {
+        "path": "records.0.title",
+        "equals": "Buy milk"
+      },
+      {
+        "path": "records.0.done",
+        "equals": false
+      }
+    ]
+  },
+  {
+    "name": "progress counts the done tasks",
+    "script": "progress",
+    "records": [
+      {
+        "id": "t1",
+        "kind": "task",
+        "title": "Buy milk",
+        "done": true
+      },
+      {
+        "id": "t2",
+        "kind": "task",
+        "title": "Call Sam",
+        "done": true
+      },
+      {
+        "id": "t3",
+        "kind": "task",
+        "title": "Write notes",
+        "done": false
+      }
+    ],
+    "expect": [
+      {
+        "path": "done",
+        "equals": 2
+      },
+      {
+        "path": "total",
+        "equals": 3
+      }
+    ]
+  },
+  {
+    "name": "progress with no tasks is none of none",
+    "script": "progress",
+    "records": [],
+    "expect": [
+      {
+        "path": "done",
+        "equals": 0
+      },
+      {
+        "path": "total",
+        "equals": 0
+      }
+    ]
+  },
+  {
+    "name": "the page says how many are done",
+    "records": [
+      {
+        "id": "t1",
+        "kind": "task",
+        "title": "Buy milk",
+        "done": true
+      },
+      {
+        "id": "t2",
+        "kind": "task",
+        "title": "Call Sam",
+        "done": true
+      },
+      {
+        "id": "t3",
+        "kind": "task",
+        "title": "Write notes",
+        "done": false
+      }
+    ],
+    "steps": [
+      {
+        "see": "2 of 3 done"
+      }
+    ]
+  }
+]

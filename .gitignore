@@ -10,6 +10,9 @@ apps/phantom/_bridge/build/
 
 # Data directory
 data/
+# An app's data sources live in a data/ folder too: Measure's app tasks carry
+# them.
+!apps/anvil/evaltasks/**/data/
 
 # Private apps (not tracked in public repo).
 # Both entries needed: "private/" matches a real directory; bare

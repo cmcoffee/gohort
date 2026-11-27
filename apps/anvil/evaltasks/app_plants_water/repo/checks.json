@@ -1,0 +1,15 @@
+[
+  {
+    "name": "adding a plant saves it",
+    "script": "add_plant",
+    "inputs": {
+      "name": "Fern"
+    },
+    "expect": [
+      {
+        "path": "records.0.name",
+        "equals": "Fern"
+      }
+    ]
+  }
+]

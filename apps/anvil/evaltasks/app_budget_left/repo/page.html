@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Budget</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: #0f1420; color: #e8edf5; }
+  main { max-width: 640px; margin: 0 auto; padding: 24px 16px; }
+  label { display: block; margin: 8px 0 4px; }
+  input { font: inherit; padding: 6px 8px; }
+  button { font: inherit; padding: 6px 12px; margin-top: 8px; }
+  .muted { color: #8ea0bd; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Budget</h1>
+  <div id="summary"><span class="muted">Loading...</span></div>
+  <h2>Add an entry</h2>
+  <label for="amount">Amount</label>
+  <input id="amount" type="number" step="0.01" placeholder="Amount">
+  <label for="note">What it was</label>
+  <input id="note" placeholder="What it was">
+  <div><button id="income">Add income</button> <button id="expense">Add expense</button></div>
+</main>
+<script>
+const summary = document.getElementById('summary');
+function money(n) { return '$' + Number(n || 0).toFixed(2); }
+async function load() {
+  const s = await app.data('summary');
+  summary.innerHTML = '';
+  const spent = document.createElement('p');
+  spent.textContent = 'Spent: ' + money(s.spent);
+  summary.appendChild(spent);
+}
+async function add(kind) {
+  await app.action('add_entry', {kind, amount: document.getElementById('amount').value, note: document.getElementById('note').value});
+  document.getElementById('amount').value = '';
+  document.getElementById('note').value = '';
+  load();
+}
+document.getElementById('income').onclick = () => add('income');
+document.getElementById('expense').onclick = () => add('expense');
+load();
+app.onChange(load);
+</script>
+</body>
+</html>

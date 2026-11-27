@@ -1,0 +1,8 @@
+{
+  "title": "Fix an app's numbers",
+  "lang": "App",
+  "kind": "app",
+  "request": "The budget's summary is wrong: Spent counts income as if it were spending. Spent should add up only the expenses. Also have the summary return left, the income minus what was spent, and show it on the page under Spent as \"Left: $749.50\" (two decimals, like Spent).",
+  "check": "",
+  "hidden_check": ""
+}

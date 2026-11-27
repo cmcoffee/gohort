@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tasks</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: #0f1420; color: #e8edf5; }
+  main { max-width: 640px; margin: 0 auto; padding: 24px 16px; }
+  label { display: block; margin: 8px 0 4px; }
+  input { font: inherit; padding: 6px 8px; }
+  button { font: inherit; padding: 6px 12px; margin-top: 8px; }
+  .muted { color: #8ea0bd; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tasks</h1>
+  <p id="progress" class="muted"></p>
+  <ul id="list"><li class="muted">Loading...</li></ul>
+  <label for="title">New task</label>
+  <input id="title" placeholder="New task">
+  <div><button id="add">Add task</button></div>
+</main>
+<script>
+const list = document.getElementById('list');
+async function load() {
+  const p = await app.data('progress');
+  document.getElementById('progress').textContent = p.done + ' of ' + p.total + ' done';
+  const rows = await app.data('tasks');
+  list.innerHTML = '';
+  for (const t of rows) {
+    const li = document.createElement('li');
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = t.done;
+    box.onchange = async () => { await app.action('toggle', {id: t.id}); load(); };
+    li.appendChild(box);
+    li.appendChild(document.createTextNode(' ' + t.title));
+    list.appendChild(li);
+  }
+  if (!rows.length) list.innerHTML = '<li class="muted">Nothing to do.</li>';
+}
+document.getElementById('add').onclick = async () => {
+  await app.action('add_task', {title: document.getElementById('title').value});
+  document.getElementById('title').value = '';
+  load();
+};
+load();
+app.onChange(load);
+</script>
+</body>
+</html>

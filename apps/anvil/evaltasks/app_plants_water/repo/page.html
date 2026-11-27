@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plants</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: #0f1420; color: #e8edf5; }
+  main { max-width: 640px; margin: 0 auto; padding: 24px 16px; }
+  label { display: block; margin: 8px 0 4px; }
+  input { font: inherit; padding: 6px 8px; }
+  button { font: inherit; padding: 6px 12px; margin-top: 8px; }
+  .muted { color: #8ea0bd; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Plants</h1>
+  <label for="name">Plant name</label>
+  <input id="name" placeholder="Plant name">
+  <div><button id="add">Add plant</button></div>
+  <h2>My plants</h2>
+  <ul id="list"><li class="muted">Loading...</li></ul>
+</main>
+<script>
+const nameInput = document.getElementById('name');
+const list = document.getElementById('list');
+async function load() {
+  const rows = await app.data('plants');
+  list.innerHTML = '';
+  for (const p of rows) {
+    const li = document.createElement('li');
+    li.textContent = p.name;
+    list.appendChild(li);
+  }
+  if (!rows.length) list.innerHTML = '<li class="muted">No plants yet.</li>';
+}
+document.getElementById('add').onclick = async () => {
+  await app.action('add_plant', {name: nameInput.value});
+  nameInput.value = '';
+  load();
+};
+load();
+app.onChange(load);
+</script>
+</body>
+</html>

@@ -22,6 +22,12 @@ package anvil
 // on the start and passes on the solution). Go files and go.mod carry a
 // ".task" suffix there, so the go tool never builds them as part of gohort.
 //
+// An app task (kind "app") starts from a gohort app's folder. It has no
+// commands: the turn's own end checks the app would install, and its hidden
+// part is a checks.json that replaces the app's, scored by running the app's
+// checks as Anvil's app_checks does (script checks, and page checks in the
+// browser). It passes when every one of them ran and passed.
+//
 // The run is an approximation of a chat turn, said plainly: it is Anvil's
 // prompt, its project briefing, its tools and its check, on the host's own
 // loop guardrails, but not the chat path's memory and notes.
@@ -95,7 +101,12 @@ type evalTask struct {
 	Request     string `json:"request"`
 	Check       string `json:"check"`
 	HiddenCheck string `json:"hidden_check"`
+	// Kind is "app" for a task on a gohort app's folder, "" for code.
+	Kind string `json:"kind,omitempty"`
 }
+
+// isApp reports a task on an app's folder, scored by the app's checks.
+func (t evalTask) isApp() bool { return t.Kind == "app" }
 
 // loadEvalTasks reads the task set, in name order.
 func loadEvalTasks() ([]evalTask, error) {
@@ -325,10 +336,28 @@ func (T *Anvil) evalOne(ctx context.Context, run evalRunner, user, runID string,
 	if err := writeEvalFiles(task.Name, "hidden", dir); err != nil {
 		return fail(err)
 	}
-	out := c.sandboxed(ctx, task.HiddenCheck, evalHiddenLimit)
-	res.Passed = out.Err == nil && !out.TimedOut
-	res.Hidden = tailOutput(out.Output, 1500)
+	res.Passed, res.Hidden = scoreEvalTask(ctx, c, task)
 	return res
+}
+
+// scoreEvalTask runs a task's hidden check on c's tree, its hidden files
+// already copied in: whether it passed, and the end of what it said.
+func scoreEvalTask(ctx context.Context, c *toolCtx, task evalTask) (bool, string) {
+	if !task.isApp() {
+		out := c.sandboxed(ctx, task.HiddenCheck, evalHiddenLimit)
+		return out.Err == nil && !out.TimedOut, tailOutput(out.Output, 1500)
+	}
+	o, err := appHost()
+	if err != nil {
+		return false, err.Error()
+	}
+	ctx, cancel := context.WithTimeout(ctx, evalHiddenLimit)
+	defer cancel()
+	score, err := o.ScoreAppFolder(ctx, c.user, c.base)
+	if err != nil {
+		return false, "The app did not build: " + err.Error()
+	}
+	return score.Passed > 0 && score.Failed == 0 && score.Skip == 0, tailOutput(score.Report, 1500)
 }
 
 // evalCommit makes dir a repository with its starting tree committed, so the

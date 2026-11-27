@@ -1,0 +1,8 @@
+{
+  "title": "Add a data source to an app",
+  "lang": "App",
+  "kind": "app",
+  "request": "Add a line at the top of the task list saying how many tasks are done, as \"2 of 3 done\". Compute it in a new data source named progress that returns {\"done\": <number done>, \"total\": <number of tasks>}, and show it on the page.",
+  "check": "",
+  "hidden_check": ""
+}
