@@ -303,6 +303,7 @@ func (c *chatPage) page(nav []ui.NavLink) ui.Page {
 					// Phase pill — empty for every session not running a
 					// machine, which is the default (docs/design/agent-machines.md).
 					StatusURL:        "api/session-status?agent={agent_id}&session={session}",
+					SuggestURL:       "api/session-suggest?agent={agent_id}&session={session}",
 					ChannelSaveURL:   "api/channels?agent_id={agent_id}",
 					ChannelDeleteURL: "api/channels?id={id}",
 					// A sub-agent's channels are its parent's.

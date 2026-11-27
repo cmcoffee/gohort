@@ -103,6 +103,9 @@ func (T *Anvil) handleAPI(w http.ResponseWriter, r *http.Request) {
 		T.dispatchChat(w, r, "sessions", "")
 	case path == "chat/sessions/rename":
 		T.dispatchChat(w, r, "rename", "")
+	case strings.HasPrefix(path, "chat/sessions/") && strings.HasSuffix(path, "/suggest"):
+		sid := strings.TrimSuffix(strings.TrimPrefix(path, "chat/sessions/"), "/suggest")
+		T.dispatchChat(w, r, "suggest", sid)
 	case strings.HasPrefix(path, "chat/sessions/") && strings.HasSuffix(path, "/diagnostics"):
 		sid := strings.TrimSuffix(strings.TrimPrefix(path, "chat/sessions/"), "/diagnostics")
 		T.dispatchChat(w, r, "diagnostics", sid)
@@ -1001,6 +1004,8 @@ func (T *Anvil) dispatchChat(w http.ResponseWriter, r *http.Request, kind, sid s
 		orch.PublicHandleSessionRename(w, r, agent.ID)
 	case kind == "diagnostics":
 		orch.PublicHandleSessionDiag(w, r, agent.ID, sid)
+	case kind == "suggest":
+		orch.PublicHandleSessionSuggest(w, r, agent.ID, sid)
 	case strings.HasPrefix(kind, "resolve-block:"):
 		orch.PublicHandleBlockResolve(w, r, agent.ID, sid, strings.TrimPrefix(kind, "resolve-block:"))
 	case kind == "runs-active":

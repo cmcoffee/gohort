@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -240,4 +241,79 @@ func TestSessionWritesWakeTheirOwnersPages(t *testing.T) {
 	udb.Set(sessionTable("a1"), s.ID, s)
 	moved("reading it", func() { markSessionSeen(udb, "a1", s.ID) })
 	moved("a delete", func() { deleteChatSession(udb, "a1", s.ID) })
+}
+
+// The suggestion reads the latest exchanges (a struck reply left out), asks
+// the worker without thinking, and offers one short line; NONE, a long
+// answer and a labelled one are cleaned or dropped. A person who turned it
+// off, a session that is not at a reply, or one that is not theirs gets
+// nothing, and no model is asked.
+func TestTheSuggestedNextMessage(t *testing.T) {
+	udb := UserDB(&DBase{Store: kvlite.MemStore()}, "alice")
+	now := time.Now()
+	s := ChatSession{ID: "s1", AgentID: "a1", Messages: []ChatMessage{
+		{Role: "user", Content: "zeroth question", Created: now},
+		{Role: "assistant", Content: "zeroth answer", Created: now},
+		{Role: "user", Content: "first question", Created: now},
+		{Role: "assistant", Content: "first answer", Created: now},
+		{Role: "user", Content: "second question", Created: now},
+		{Role: "assistant", Content: "a wrong answer", Retracted: "wrong", Created: now},
+		{Role: "assistant", Content: "the right answer", Created: now},
+		{Role: "user", Content: "third question", Created: now},
+		{Role: "assistant", Content: "Shall I add the tests too?", Created: now},
+	}}
+	if _, err := saveChatSession(udb, s); err != nil {
+		t.Fatal(err)
+	}
+	llm := &FakeLLM{Turns: []FakeTurn{{Content: "Next message: \"Yes, add the tests\"\nand more"}}}
+	T := &OrchestrateApp{}
+	T.LLM = llm
+
+	if got := T.suggestFor(context.Background(), udb, "a1", "s1"); got != "Yes, add the tests" {
+		t.Errorf("the suggestion: %q", got)
+	}
+	prompt := llm.Prompt(0)
+	for _, want := range []string{"Person: second question", "Assistant: the right answer", "Assistant: Shall I add the tests too?", "NONE"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("the prompt lacks %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "zeroth") || strings.Contains(prompt, "a wrong answer") {
+		t.Errorf("the prompt reads past the latest exchanges or a struck reply:\n%s", prompt)
+	}
+	if cfg := llm.Config(0); cfg.Think == nil || *cfg.Think || cfg.RouteKey != "app.orchestrate.suggest_next" {
+		t.Errorf("the call: think %v, route %q", cfg.Think, cfg.RouteKey)
+	}
+
+	for raw, want := range map[string]string{
+		"NONE":                      "",
+		"None.":                     "",
+		"  ":                        "",
+		"User: run the build":       "run the build",
+		strings.Repeat("word ", 25): "",
+	} {
+		if got := cleanNextMessage(raw); got != want {
+			t.Errorf("cleanNextMessage(%q) = %q, want %q", raw, got, want)
+		}
+	}
+
+	setSuggestNext(udb, false)
+	if suggestNextOn(udb) || T.suggestFor(context.Background(), udb, "a1", "s1") != "" {
+		t.Error("turned off, it still suggested")
+	}
+	setSuggestNext(udb, true)
+	if !suggestNextOn(udb) {
+		t.Error("turned back on, it stayed off")
+	}
+	if T.suggestFor(context.Background(), udb, "a1", "other") != "" || T.suggestFor(context.Background(), udb, "a2", "s1") != "" {
+		t.Error("a session that is not the caller's got a suggestion")
+	}
+	s.Messages = append(s.Messages, ChatMessage{Role: "user", Content: "fourth", Created: now})
+	saveChatSession(udb, s)
+	if T.suggestFor(context.Background(), udb, "a1", "s1") != "" {
+		t.Error("a session waiting on a reply got a suggestion")
+	}
+	if llm.Calls() != 1 {
+		t.Errorf("the model was asked %d times", llm.Calls())
+	}
 }

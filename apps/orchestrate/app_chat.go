@@ -73,6 +73,8 @@ func (T *OrchestrateApp) serveAppChatSession(w http.ResponseWriter, r *http.Requ
 		T.PublicHandleSessionRename(w, r, agent.ID)
 	case tail == "diagnostics":
 		T.PublicHandleSessionDiag(w, r, agent.ID, sid)
+	case tail == "suggest":
+		T.PublicHandleSessionSuggest(w, r, agent.ID, sid)
 	case strings.HasPrefix(tail, "blocks/") && strings.HasSuffix(tail, "/resolve"):
 		block := strings.TrimSuffix(strings.TrimPrefix(tail, "blocks/"), "/resolve")
 		if block == "" || strings.Contains(block, "/") {

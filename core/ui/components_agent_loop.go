@@ -172,6 +172,17 @@ type AgentLoopPanel struct {
 	// means. An app that wants to surface a workflow phase, a connection state,
 	// or a review stage serves this shape and names it in its own words.
 	StatusURL string `json:"status_url,omitempty"`
+	// SuggestURL — optional suggested next message. When set, after a turn
+	// ends with the message box empty the panel GETs it, {session}
+	// substituted with the active session id, and shows the answer greyed in
+	// the empty box; Tab puts it in the box to edit or send, and typing or a
+	// new turn drops it. Not fetched on a touch screen, which has no Tab.
+	//
+	//	GET → {text}
+	//
+	// An empty text shows nothing, which is how the host says there is no
+	// obvious next message, or that the person turned suggestions off.
+	SuggestURL string `json:"suggest_url,omitempty"`
 	// ChannelAgentsURL — optional GET → [{id, name}] of the agents a channel
 	// may be bound to, so the channel editor can re-point a channel at a
 	// different agent. Omit to hide the agent picker.

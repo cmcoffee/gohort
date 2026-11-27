@@ -50,9 +50,11 @@ func (T *Anvil) chatPanel(options []ui.SelectOption, defaultProject, empty strin
 		// {project_id} is substituted by the panel from the picker on every
 		// request, so the rail always lists the open project's threads and
 		// switching projects switches the conversation history with it.
-		ListURL:   "api/chat/sessions?project_id={project_id}",
-		LoadURL:   "api/chat/sessions/{id}?project_id={project_id}",
-		DeleteURL: "api/chat/sessions/{id}?project_id={project_id}",
+		// What the person might say next, greyed in the empty box for Tab.
+		SuggestURL: "api/chat/sessions/{session}/suggest?project_id={project_id}",
+		ListURL:    "api/chat/sessions?project_id={project_id}",
+		LoadURL:    "api/chat/sessions/{id}?project_id={project_id}",
+		DeleteURL:  "api/chat/sessions/{id}?project_id={project_id}",
 		// Edit / Delete on the last user message — which is also the
 		// retry. Edit replaces it, truncates the thread there, and
 		// resends; Delete just truncates. Without this a turn that

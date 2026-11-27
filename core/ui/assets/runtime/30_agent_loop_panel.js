@@ -2435,7 +2435,50 @@
       placeholder: cfg.placeholder || 'Ask something...',
       rows: 1,
     });
+    // The suggested next message (cfg.suggest_url): after a turn, what the
+    // person might say next sits greyed in the empty box, as its placeholder;
+    // Tab takes it. Dropped by typing, a send, or another session, and never
+    // fetched on a touch screen, which has no Tab to take it with.
+    var nextSuggest = '', nextSuggestSid = '', suggestSeq = 0;
+    function clearNextSuggest() {
+      suggestSeq++;
+      if (!nextSuggest) return;
+      if (inputArea.placeholder === nextSuggest) inputArea.placeholder = cfg.placeholder || 'Ask something...';
+      inputArea.removeAttribute('title');
+      nextSuggest = '';
+      nextSuggestSid = '';
+    }
+    function fetchNextSuggest() {
+      clearNextSuggest();
+      var sid = activeSessionId || '';
+      if (!cfg.suggest_url || !sid || recordLocked || inputArea.disabled || inputArea.value !== '') return;
+      if (window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches) return;
+      var seq = suggestSeq;
+      fetchJSON(substituteExtras(cfg.suggest_url).replace('{session}', encodeURIComponent(sid))).then(function(d) {
+        var text = d && d.text ? String(d.text).trim() : '';
+        if (!text || seq !== suggestSeq || (activeSessionId || '') !== sid || inputArea.value !== '' || inputArea.disabled) return;
+        nextSuggest = text;
+        nextSuggestSid = sid;
+        inputArea.placeholder = text;
+        inputArea.title = 'Tab to use this';
+      }).catch(function() {});
+    }
+    // takeNextSuggest puts the suggestion in the box; true when it did.
+    function takeNextSuggest(ev) {
+      if (ev.key !== 'Tab' || ev.shiftKey || ev.altKey || ev.ctrlKey || ev.metaKey || ev.isComposing) return false;
+      if (!nextSuggest || inputArea.value !== '' || inputArea.placeholder !== nextSuggest || (activeSessionId || '') !== nextSuggestSid) return false;
+      var text = nextSuggest;
+      clearNextSuggest();
+      inputArea.value = text;
+      try { inputArea.setSelectionRange(text.length, text.length); } catch (e) {}
+      autosizeInput();
+      return true;
+    }
+    inputArea.addEventListener('input', function() {
+      if (inputArea.value !== '') clearNextSuggest();
+    });
     inputArea.addEventListener('keydown', function(ev) {
+      if (takeNextSuggest(ev)) { ev.preventDefault(); return; }
       if (cmdKey(ev) || recallKey(ev)) { ev.preventDefault(); return; }
       if (uiComposerEnterSends(ev)) { ev.preventDefault(); sendMessage(); }
       if (ev.key === 'Escape' && userEdit) { ev.preventDefault(); endComposerEdit(true); }
@@ -6449,6 +6492,7 @@
           sawTurnEnd = true;
           enableInput();
           if (cfg.resend_unread_notes && unread.length) sendUnreadNotes(unread);
+          else fetchNextSuggest();
           setStatus('');
           // A turn can move whatever the app's status pill reports.
           refreshStatusPill();
@@ -6917,6 +6961,7 @@
       return false;
     }
     function sendMessage() {
+      clearNextSuggest();
       var ask = askPending;
       askPending = null;
       if (recordLocked && !answerPass) return;

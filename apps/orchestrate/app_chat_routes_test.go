@@ -47,6 +47,7 @@ func TestTheAppChatEndpointsTakeTheirMethods(t *testing.T) {
 		{"sessions for", "GET", func(w http.ResponseWriter, r *http.Request) { T.PublicHandleSessionListFor(w, r, agent.ID, "doc") }},
 		{"sessions only", "GET", func(w http.ResponseWriter, r *http.Request) { T.PublicHandleSessionListOnly(w, r, agent.ID, "doc") }},
 		{"diagnostics", "GET", func(w http.ResponseWriter, r *http.Request) { T.PublicHandleSessionDiag(w, r, agent.ID, "s1") }},
+		{"suggest", "GET", func(w http.ResponseWriter, r *http.Request) { T.PublicHandleSessionSuggest(w, r, agent.ID, "s1") }},
 		{"rename", "POST", func(w http.ResponseWriter, r *http.Request) { T.PublicHandleSessionRename(w, r, agent.ID) }},
 		{"grants", "GET DELETE", func(w http.ResponseWriter, r *http.Request) { T.PublicHandleGrants(w, r, "proj", "g1") }},
 	}

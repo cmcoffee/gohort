@@ -79,6 +79,9 @@ func (T *OrchestrateApp) accountSection(r *http.Request, user string) (ui.Sectio
 					Options: opts,
 					Help:    "Which agent Agents opens on when you arrive without a link to one.",
 					Detail:  "Your main agent unless you choose otherwise. Last accessed remembers your selection per browser, so per device. Picking a specific agent applies everywhere. An agent's own link still wins."},
+				{Field: "suggest_next", Type: "toggle", Label: "Suggest my next message",
+					Help:   "After the agent replies, what you might say next shows greyed in the message box; Tab takes it.",
+					Detail: "One short model call after each turn, on the local worker. Not shown on a phone or tablet, which has no Tab key. Typing anything replaces it."},
 			},
 		},
 	}, true
@@ -90,6 +93,7 @@ func (T *OrchestrateApp) defaultAgentGet(c *jsonapi.Call) (any, error) {
 	return map[string]any{
 		"main_agent":    mainAgentID(c.User),
 		"default_agent": AuthGetDefaultAgent(AuthDB(), c.User),
+		"suggest_next":  suggestNextOn(c.UDB),
 	}, nil
 }
 
@@ -99,6 +103,8 @@ func (T *OrchestrateApp) defaultAgentGet(c *jsonapi.Call) (any, error) {
 func (T *OrchestrateApp) defaultAgentSave(c *jsonapi.Call, req struct {
 	MainAgent    string `json:"main_agent"`
 	DefaultAgent string `json:"default_agent"`
+	// A pointer, so a save from a form without the field leaves it as is.
+	SuggestNext *bool `json:"suggest_next"`
 }) (any, error) {
 	// The form saves both fields together: the main agent changes only when
 	// it is set to a different agent of theirs.
@@ -112,6 +118,9 @@ func (T *OrchestrateApp) defaultAgentSave(c *jsonapi.Call, req struct {
 		return nil, jsonapi.BadRequest("unknown agent")
 	}
 	AuthSetDefaultAgent(AuthDB(), c.User, v)
+	if req.SuggestNext != nil {
+		setSuggestNext(c.UDB, *req.SuggestNext)
+	}
 	return jsonapi.Empty(http.StatusNoContent), nil
 }
 

@@ -3,6 +3,7 @@ package orchestrate
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/changes"
+	"github.com/cmcoffee/gohort/core/jsonapi"
 )
 
 // sessionTable returns the per-agent session table name. One bucket
@@ -530,4 +532,149 @@ func fallbackTitle(s ChatSession) string {
 		}
 	}
 	return "New session"
+}
+
+// --- the suggested next message ----------------------------------------------
+//
+// The suggested next message (AgentLoopPanel.SuggestURL): after a turn the
+// chat panel asks what the person might say next, and shows it greyed in the
+// empty message box for Tab to take. One short call on the worker, after the
+// turn's done, so no turn waits for it; nothing is stored. A person turns it
+// off in their account preferences (Agents), which is the only thing kept:
+// the off, so unset is on.
+
+const (
+	// suggestPrefTable and suggestOffKey keep a person's choice to go without
+	// suggestions, in their own store. Absent is on.
+	suggestPrefTable = "orchestrate_prefs"
+	suggestOffKey    = "suggest_next_off"
+	// suggestExchanges is how many of the latest exchanges the suggestion
+	// reads, and suggestWords the longest one it offers.
+	suggestExchanges = 3
+	suggestWords     = 20
+)
+
+// suggestNextOn reports whether the person in udb gets suggestions.
+func suggestNextOn(udb Database) bool {
+	var off bool
+	return udb == nil || !udb.Get(suggestPrefTable, suggestOffKey, &off) || !off
+}
+
+// setSuggestNext records the person's choice; on removes the off.
+func setSuggestNext(udb Database, on bool) {
+	if udb == nil {
+		return
+	}
+	if on {
+		udb.Unset(suggestPrefTable, suggestOffKey)
+		return
+	}
+	udb.Set(suggestPrefTable, suggestOffKey, true)
+}
+
+// PublicHandleSessionSuggest answers a panel's SuggestURL for one of the
+// caller's sessions with agentID: {text}, "" for none.
+func (T *OrchestrateApp) PublicHandleSessionSuggest(w http.ResponseWriter, r *http.Request, agentID, sessionID string) {
+	jsonapi.Get(T.DB, func(c *jsonapi.Call) (any, error) {
+		return map[string]string{"text": T.suggestFor(c.R.Context(), c.UDB, agentID, sessionID)}, nil
+	})(w, r)
+}
+
+// handleSessionSuggest is the main chat's: GET /api/session-suggest?agent=&session=.
+func (T *OrchestrateApp) handleSessionSuggest(c *jsonapi.Call) (any, error) {
+	agentID := strings.TrimSpace(c.R.URL.Query().Get("agent"))
+	sessionID := strings.TrimSpace(c.R.URL.Query().Get("session"))
+	return map[string]string{"text": T.suggestFor(c.R.Context(), c.UDB, agentID, sessionID)}, nil
+}
+
+// suggestFor is the suggestion for a session of the caller's, "" when they
+// turned suggestions off, the session is not theirs or not at a reply, or
+// nothing obvious comes next.
+func (T *OrchestrateApp) suggestFor(ctx context.Context, udb Database, agentID, sessionID string) string {
+	if agentID == "" || sessionID == "" || T.LLM == nil || !suggestNextOn(udb) {
+		return ""
+	}
+	s, ok := loadChatSession(udb, agentID, sessionID)
+	if !ok || len(s.Messages) == 0 || s.Messages[len(s.Messages)-1].Role != "assistant" {
+		return ""
+	}
+	// The page asked because a turn just ended; a person who closes it
+	// meanwhile wants nothing, so the request's context bounds the call.
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	return suggestNext(ctx, T.LLM, s)
+}
+
+// suggestNext asks the model for the person's likely next message.
+func suggestNext(ctx context.Context, llm LLM, s ChatSession) string {
+	exchanges := suggestInput(s)
+	if exchanges == "" {
+		return ""
+	}
+	prompt := "Below is the end of a conversation between a person and an assistant. Write the message the person is most likely to send next, as they would type it: in their own words, at most 15 words, no quotes. " +
+		"Prefer the concrete next step the conversation points to: a confirmation, a follow-up request, the obvious next task. " +
+		"If there is no clear next message, reply with exactly NONE." + exchanges
+	resp, err := llm.Chat(ctx, []Message{{Role: "user", Content: prompt}},
+		WithSystemPrompt("You predict what a person will type next in a chat. Reply with ONLY that message, or NONE."),
+		WithMaxTokens(48),
+		WithRouteKey("app.orchestrate.suggest_next"),
+		WithThink(false),
+		WithMaxRetries(0),
+	)
+	if err != nil || resp == nil {
+		return ""
+	}
+	return cleanNextMessage(resp.Content)
+}
+
+// suggestInput is the latest exchanges as the prompt reads them, "" when
+// there is no exchange to read.
+func suggestInput(s ChatSession) string {
+	var picked []ChatMessage
+	users := 0
+	for i := len(s.Messages) - 1; i >= 0 && users < suggestExchanges; i-- {
+		m := s.Messages[i]
+		if m.Role != "user" && (m.Role != "assistant" || m.Retracted != "") {
+			continue
+		}
+		if strings.TrimSpace(m.Content) == "" {
+			continue
+		}
+		if m.Role == "user" {
+			users++
+		}
+		picked = append(picked, m)
+	}
+	if users == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i := len(picked) - 1; i >= 0; i-- {
+		who := "Person"
+		if picked[i].Role == "assistant" {
+			who = "Assistant"
+		}
+		b.WriteString("\n\n" + who + ": " + titleInput(picked[i].Content))
+	}
+	return b.String()
+}
+
+// cleanNextMessage is the model's answer as a suggestion: one line, without
+// quotes or a label, "" for NONE or for anything that is not a short
+// message.
+func cleanNextMessage(raw string) string {
+	text := strings.TrimSpace(raw)
+	if i := strings.IndexByte(text, '\n'); i >= 0 {
+		text = strings.TrimSpace(text[:i])
+	}
+	for _, p := range []string{"Person:", "User:", "Next message:"} {
+		if len(text) >= len(p) && strings.EqualFold(text[:len(p)], p) {
+			text = strings.TrimSpace(text[len(p):])
+		}
+	}
+	text = strings.TrimSpace(strings.Trim(text, "\"'`"))
+	if text == "" || strings.EqualFold(strings.Trim(text, "."), "none") || len(strings.Fields(text)) > suggestWords || len(text) > 200 {
+		return ""
+	}
+	return text
 }

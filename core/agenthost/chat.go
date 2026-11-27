@@ -140,6 +140,8 @@ func (c Chat) Panel(p ui.AgentLoopPanel) ui.AgentLoopPanel {
 	set(&p.RenameURL, c.url("sessions/{id}/rename"))
 	// Why a turn did what it did: a denied tool, a guard that stopped it.
 	set(&p.DiagnosticsURL, c.url("sessions/{session}/diagnostics"))
+	// What the person might say next, greyed in the empty box for Tab.
+	set(&p.SuggestURL, c.url("sessions/{session}/suggest"))
 	// An answered question card settles instead of replaying on every load.
 	set(&p.BlockResolveURL, c.url("sessions/{id}/blocks/{block_id}/resolve"))
 	// A reload or a closed tab rejoins the turn still running.

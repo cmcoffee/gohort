@@ -89,6 +89,7 @@ type Host interface {
 	PublicHandleSessionOne(w http.ResponseWriter, r *http.Request, agentID, sid string)
 	PublicHandleSessionRename(w http.ResponseWriter, r *http.Request, agentID string)
 	PublicHandleSessionDiag(w http.ResponseWriter, r *http.Request, agentID, sessionID string)
+	PublicHandleSessionSuggest(w http.ResponseWriter, r *http.Request, agentID, sessionID string)
 	PublicHandleBlockResolve(w http.ResponseWriter, r *http.Request, agentID, sid, blockID string)
 	PublicHandleRunsActive(w http.ResponseWriter, r *http.Request)
 	PublicHandleRunsDispatch(w http.ResponseWriter, r *http.Request)

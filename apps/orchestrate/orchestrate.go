@@ -140,6 +140,14 @@ func init() {
 		Private: true,
 	})
 	RegisterRouteStage(RouteStage{
+		Key:     "app.orchestrate.suggest_next",
+		App:     "/orchestrate",
+		Label:   "Agents: Suggested next message (after each turn)",
+		Default: "worker",
+		Group:   "Agents",
+		Private: true,
+	})
+	RegisterRouteStage(RouteStage{
 		Key:     "app.orchestrate.title",
 		App:     "/orchestrate",
 		Label:   "Agents: Session title summarizer (background)",
@@ -731,6 +739,8 @@ func (T *OrchestrateApp) registerHandlers() {
 	}.Serve)
 	// Per-session diagnostics trail (session_diag.go) — the ⚠ affordance.
 	T.HandleFunc("/api/session-diag", jsonapi.Get(T.DB, T.handleSessionDiag))
+	// The suggested next message (session_suggest.go).
+	T.HandleFunc("/api/session-suggest", jsonapi.Get(T.DB, T.handleSessionSuggest))
 	// Collections are NOT admin-only, and were. A collection belongs to the
 	// user who made it, apps/knowledge is the surface ordinary people manage
 	// theirs from, and every one of these handlers already resolves by the
