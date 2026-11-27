@@ -657,13 +657,14 @@ func (c *toolCtx) editFileTool() AgentToolDef {
 		Tool: Tool{
 			Name: "edit_file",
 			Description: "Change part of an existing file by replacing an exact piece of its text. " +
-				"old_text must appear EXACTLY ONCE in the file. If it appears more than once the edit is refused, so include enough surrounding lines to make it unique. " +
-				"Read the file first: the anchor has to match what is actually there, whitespace included. " +
+				"old_text must appear EXACTLY ONCE in the file. If it appears more than once the edit is refused, so include enough surrounding lines to make it unique, or set replace_all to change every one (a rename). " +
+				"Read the file first: the anchor has to match what is actually there, indentation included. A miss is retried with the file's line endings, with curly quotes and dashes read as plain ones, and without spaces at line ends, and the result says when one of those was needed. " +
 				"This is the tool for every change to an existing file; do not re-emit whole files.",
 			Parameters: map[string]ToolParam{
-				"path":     {Type: "string", Description: "Project-relative file path."},
-				"old_text": {Type: "string", Description: "The exact text to replace, copied from the file. Must be unique in the file: add surrounding lines until it is."},
-				"new_text": {Type: "string", Description: "What to put in its place. Pass an empty string to delete the anchored text."},
+				"path":        {Type: "string", Description: "Project-relative file path."},
+				"old_text":    {Type: "string", Description: "The exact text to replace, copied from the file. Must be unique in the file: add surrounding lines until it is."},
+				"new_text":    {Type: "string", Description: "What to put in its place. Pass an empty string to delete the anchored text."},
+				"replace_all": {Type: "boolean", Description: "Replace every occurrence of old_text instead of requiring exactly one. Default false."},
 			},
 			Required: []string{"path", "old_text", "new_text"},
 			Caps:     []Capability{CapWrite},
@@ -701,13 +702,16 @@ func (c *toolCtx) editFileTool() AgentToolDef {
 				return "", fmt.Errorf("%s is %s, above the %s limit for a revertable edit. Anvil will not make an edit it cannot undo",
 					rel, HumanSize(int64(len(before))), HumanSize(maxWriteBytes))
 			}
-			switch n := strings.Count(before, oldText); {
+			m := findAnchor(before, oldText, newText)
+			switch n := len(m.spans); {
+			case n == 0 && alreadyApplied(before, newText):
+				return "", fmt.Errorf("old_text was not found in %s, but new_text is already there, so this edit may have been made already. Read the file to check before trying again", rel)
 			case n == 0:
 				return "", fmt.Errorf("old_text was not found in %s.%s", rel, anchorHint(before, oldText))
-			case n > 1:
-				return "", fmt.Errorf("old_text appears %d times in %s, so it is ambiguous. Include more surrounding lines until it is unique", n, rel)
+			case n > 1 && !boolArg(args, "replace_all"):
+				return "", fmt.Errorf("old_text appears %d times in %s, so it is ambiguous. Include more surrounding lines until it is unique, or set replace_all to change every one", n, rel)
 			}
-			after := strings.Replace(before, oldText, newText, 1)
+			after := m.apply(before)
 			if err := c.notesFit(rel, before, after); err != nil {
 				return "", err
 			}
@@ -716,7 +720,11 @@ func (c *toolCtx) editFileTool() AgentToolDef {
 			}
 			e := journalWrite(c.udb, c.project.ID, c.session(), rel, before, true, after, false)
 			c.publish(e)
-			return fmt.Sprintf("Edited %s (+%d −%d). The change is recorded and can be reverted.", rel, e.Added, e.Removed), nil
+			where := ""
+			if n := len(m.spans); n > 1 {
+				where = fmt.Sprintf(", %d places", n)
+			}
+			return fmt.Sprintf("Edited %s (+%d −%d%s). The change is recorded and can be reverted.%s", rel, e.Added, e.Removed, where, m.tier.note()), nil
 		},
 	}
 }
@@ -1145,6 +1153,17 @@ func strArg(args map[string]any, key string) string {
 		return s
 	}
 	return fmt.Sprint(v)
+}
+
+// boolArg reads a flag a model may send as a boolean or as its text.
+func boolArg(args map[string]any, key string) bool {
+	switch v := args[key].(type) {
+	case bool:
+		return v
+	case string:
+		return strings.EqualFold(strings.TrimSpace(v), "true")
+	}
+	return false
 }
 
 func intArg(args map[string]any, key string, def int) int {
