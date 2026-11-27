@@ -53,6 +53,11 @@ func planEdit(sess *ToolSession, args map[string]any, avail imageActions) (editP
 		return p, fmt.Errorf("edit changes one picture: name it as picture, and put pictures to take people or things from in references. "+
 			"To make a NEW picture from reference photos, use generate with them as references. The pictures you can name: %s", hint)
 	}
+	// A person's picture from well before the message is checked once: it
+	// may not be the one meant (stale_picture.go).
+	if err := stalePictureCheck(sess, args, time.Now()); err != nil {
+		return p, err
+	}
 	// Before anything is dispatched: take attached people's NAMES out of the
 	// prompt, and refuse outright if it names somebody whose picture we have
 	// and did not pass. Here rather than after the render because a render that
