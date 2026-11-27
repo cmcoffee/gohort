@@ -181,7 +181,7 @@ func TestAFailedRunIsOnTheStatusPanelUntilTheNextGoodOne(t *testing.T) {
 	if got := a.failedMaintenance(); len(got) != 0 {
 		t.Errorf("a clean run did not clear the failure: %v", got)
 	}
-	if line := backgroundWorkLine(nil); !strings.Contains(line, "ended cleanly") {
+	if line := backgroundWorkLine(nil); line != "No maintenance job failed on its last run" {
 		t.Errorf("the clean status line reads %q", line)
 	}
 }

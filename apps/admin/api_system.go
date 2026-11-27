@@ -53,11 +53,12 @@ func (a *AdminApp) registerSystemRoutes(sub *http.ServeMux) {
 
 }
 
-// backgroundWorkLine is the System Status row for maintenance passes: the
-// ones whose last run failed, or that every one ended cleanly.
+// backgroundWorkLine is the System Status row for maintenance jobs: the ones
+// whose last run failed, or that none did. Worded so it stays true of a job
+// that has not run yet.
 func backgroundWorkLine(failed []string) string {
 	if len(failed) == 0 {
-		return "Every pass's last run ended cleanly"
+		return "No maintenance job failed on its last run"
 	}
 	return strings.Join(failed, "; ")
 }
