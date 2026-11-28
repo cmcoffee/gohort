@@ -1,65 +1,70 @@
-package anvil
-
-// Where edit_file's old_text lands. An exact match is still the rule, but a
-// miss used to be final even when the anchor differed from the file only in
-// ways the model cannot see or does not reproduce: the file's CRLF line
-// endings, a curly quote or an en dash it wrote as a plain one, spaces left
-// at the end of a line. Each of those cost a round of reading the hint and
-// copying again, and a local model often wrote the same plain quote again.
+// Package editmatch finds the text an agent's edit names, in a file or a
+// stored document, and says what to do when it is not there.
 //
-// So a miss is retried, in order, more loosely: with the file's CRLF line
+// An exact match is still the rule, but a miss used to be final even when
+// the anchor differed from the text only in ways the model cannot see or does
+// not reproduce: CRLF line endings, a curly quote or an en dash it wrote as a
+// plain one, spaces left at the end of a line. Each of those cost a round of
+// reading the hint and copying again, and a local model often wrote the same
+// plain quote again.
+//
+// So a miss is retried, in order, more loosely: with the text's CRLF line
 // endings, then reading typographic quotes, dashes and spaces as plain ones,
 // then ignoring spaces at the ends of lines. The first reading that finds the
-// anchor decides, and it must still find it exactly once (or replace_all).
-// Leading indentation is never loosened: in Python or YAML it is the code.
-// The result says which reading matched, so the agent knows the file is not
-// byte for byte what it wrote, and the diff card shows what went in.
+// anchor decides; the caller decides how many places it may change. Leading
+// indentation is never loosened: in Python or YAML it is the code. The
+// match's Tier says which reading found it, so the edit's result can say the
+// text is not byte for byte what the agent wrote.
+//
+// Anvil's edit_file and Builder's app patches both use it: one matcher, so an
+// improvement to it reaches both.
+package editmatch
 
 import (
 	"strings"
 	"unicode/utf8"
 )
 
-// matchTier is how loosely old_text was read to find it.
-type matchTier int
+// Tier is how loosely old_text was read to find it.
+type Tier int
 
 const (
-	matchExact matchTier = iota
-	matchLineEndings
-	matchTypography
-	matchTrailingSpace
+	Exact Tier = iota
+	LineEndings
+	Typography
+	TrailingSpace
 )
 
 // note is what the edit's result adds about a loose match; "" for exact.
-func (t matchTier) note() string {
+func (t Tier) Note() string {
 	switch t {
-	case matchLineEndings:
+	case LineEndings:
 		return " Matched with the file's CRLF line endings, which the new text keeps."
-	case matchTypography:
+	case Typography:
 		return " Matched only after reading the file's curly quotes, dashes or special spaces as plain ones: the new text went in as you wrote it."
-	case matchTrailingSpace:
+	case TrailingSpace:
 		return " Matched only after ignoring spaces at the ends of lines: the new text went in as you wrote it."
 	}
 	return ""
 }
 
-// span is a byte range of the file.
-type span struct{ start, end int }
+// Span is a byte range of the file.
+type Span struct{ start, end int }
 
-// anchorMatch is where old_text is in a file and what to put there.
-type anchorMatch struct {
-	spans []span // non-overlapping, in file order
-	tier  matchTier
+// Match is where old_text is in a file and what to put there.
+type Match struct {
+	Spans []Span // non-overlapping, in file order
+	Tier  Tier
 	// replacement is new_text, with CRLF line endings when the file has them
 	// and new_text was written without.
-	replacement string
+	Replacement string
 }
 
-// findAnchor finds oldText in content, exactly first and then more loosely.
+// Find finds oldText in content, exactly first and then more loosely.
 // No spans means not found at any tier.
-func findAnchor(content, oldText, newText string) anchorMatch {
+func Find(content, oldText, newText string) Match {
 	if s := occurrences(content, oldText); len(s) > 0 {
-		return anchorMatch{spans: s, tier: matchExact, replacement: newText}
+		return Match{Spans: s, Tier: Exact, Replacement: newText}
 	}
 	crlf := usesCRLF(content) && !strings.Contains(oldText, "\r")
 	repl := newText
@@ -70,31 +75,31 @@ func findAnchor(content, oldText, newText string) anchorMatch {
 	if crlf {
 		want = strings.ReplaceAll(oldText, "\n", "\r\n")
 		if s := occurrences(content, want); len(s) > 0 {
-			return anchorMatch{spans: s, tier: matchLineEndings, replacement: repl}
+			return Match{Spans: s, Tier: LineEndings, Replacement: repl}
 		}
 	}
 	norm, offs := normalizeTypography(content)
 	if wantNorm, _ := normalizeTypography(want); norm != content || wantNorm != want {
 		if s := occurrences(norm, wantNorm); len(s) > 0 {
 			for i := range s {
-				s[i] = span{offs[s[i].start], offs[s[i].end]}
+				s[i] = Span{offs[s[i].start], offs[s[i].end]}
 			}
-			return anchorMatch{spans: s, tier: matchTypography, replacement: repl}
+			return Match{Spans: s, Tier: Typography, Replacement: repl}
 		}
 	}
 	if s := lineOccurrences(content, oldText); len(s) > 0 {
-		return anchorMatch{spans: s, tier: matchTrailingSpace, replacement: repl}
+		return Match{Spans: s, Tier: TrailingSpace, Replacement: repl}
 	}
-	return anchorMatch{replacement: repl}
+	return Match{Replacement: repl}
 }
 
-// apply replaces every span with the replacement.
-func (m anchorMatch) apply(content string) string {
+// apply replaces every Span with the replacement.
+func (m Match) Apply(content string) string {
 	var b strings.Builder
 	last := 0
-	for _, s := range m.spans {
+	for _, s := range m.Spans {
 		b.WriteString(content[last:s.start])
-		b.WriteString(m.replacement)
+		b.WriteString(m.Replacement)
 		last = s.end
 	}
 	b.WriteString(content[last:])
@@ -102,17 +107,17 @@ func (m anchorMatch) apply(content string) string {
 }
 
 // occurrences are the non-overlapping places want is in content.
-func occurrences(content, want string) []span {
+func occurrences(content, want string) []Span {
 	if want == "" {
 		return nil
 	}
-	var out []span
+	var out []Span
 	for off := 0; ; {
 		i := strings.Index(content[off:], want)
 		if i < 0 {
 			return out
 		}
-		out = append(out, span{off + i, off + i + len(want)})
+		out = append(out, Span{off + i, off + i + len(want)})
 		off += i + len(want)
 	}
 }
@@ -167,7 +172,7 @@ func normalizeTypography(s string) (string, []int) {
 // lineOccurrences finds oldText as whole lines of content, comparing each
 // line without the spaces at its end and with typography made plain. A
 // trailing newline on oldText takes the matched last line's break with it.
-func lineOccurrences(content, oldText string) []span {
+func lineOccurrences(content, oldText string) []Span {
 	want := strings.Split(strings.ReplaceAll(oldText, "\r\n", "\n"), "\n")
 	withBreak := strings.HasSuffix(oldText, "\n")
 	if withBreak {
@@ -205,7 +210,7 @@ func lineOccurrences(content, oldText string) []span {
 		off += nl + 1
 	}
 
-	var out []span
+	var out []Span
 	for i := 0; i+len(want) <= len(lines); i++ {
 		ok := true
 		for k := range want {
@@ -226,15 +231,15 @@ func lineOccurrences(content, oldText string) []span {
 			}
 			end = last.end
 		}
-		out = append(out, span{lines[i].start, end})
+		out = append(out, Span{lines[i].start, end})
 		i += len(want) - 1
 	}
 	return out
 }
 
-// alreadyApplied reports a miss whose new text is in the file already: an
+// AlreadyApplied reports a miss whose new text is in the file already: an
 // edit made once and sent again, which no anchor will fix.
-func alreadyApplied(content, newText string) bool {
+func AlreadyApplied(content, newText string) bool {
 	if len(strings.TrimSpace(newText)) < 20 {
 		return false
 	}

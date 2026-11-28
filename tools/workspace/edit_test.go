@@ -95,3 +95,24 @@ func TestAnAttachedFileIsReadInsideTheWorkspace(t *testing.T) {
 		t.Errorf("a file of the workspace's own: %d %v", len(b), err)
 	}
 }
+
+// edit matches as Anvil's edit_file does (core/editmatch): a find with plain
+// quotes lands on curly ones and says so, and an edit sent twice says it may
+// have been made already.
+func TestEditMatchesAsAnvilsEditsDo(t *testing.T) {
+	dir := t.TempDir()
+	sess := &ToolSession{WorkspaceDir: dir, Username: "u"}
+	p := filepath.Join(dir, "page.html")
+	os.WriteFile(p, []byte("<p>It’s “ready”</p>\n"), 0o644)
+
+	out, err := handleEdit(map[string]any{"path": "page.html", "find": `It's "ready"`, "replace": "It is ready now"}, sess)
+	if err != nil || !strings.Contains(out, "curly quotes") {
+		t.Fatalf("a plain-quoted find: %q %v", out, err)
+	}
+	if b, _ := os.ReadFile(p); string(b) != "<p>It is ready now</p>\n" {
+		t.Fatalf("the file: %q", b)
+	}
+	if _, err := handleEdit(map[string]any{"path": "page.html", "find": "It is not ready", "replace": "<p>It is ready now</p>"}, sess); err == nil || !strings.Contains(err.Error(), "already there") {
+		t.Fatalf("an edit made already: %v", err)
+	}
+}

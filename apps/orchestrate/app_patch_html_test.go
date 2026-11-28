@@ -29,7 +29,7 @@ function draw() { ctx.fillRect(bird.x, bird.y, bird.w, bird.h); }
 func TestApplyHTMLPatchReplacesOnlyTheMatch(t *testing.T) {
 	secs := gameSections()
 	before := mapStr(secs[0], "html")
-	got, err := applyHTMLPatch(secs, 0, "var GAP = 155;", "var GAP = 170;", "law-bird")
+	got, _, err := applyHTMLPatch(secs, 0, "var GAP = 155;", "var GAP = 170;", "law-bird")
 	if err != nil {
 		t.Fatalf("patch failed: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestApplyHTMLPatchReplacesOnlyTheMatch(t *testing.T) {
 // silently doing nothing.
 func TestApplyHTMLPatchRefusesZeroMatches(t *testing.T) {
 	secs := gameSections()
-	_, err := applyHTMLPatch(secs, 0, "var GAP = 999;", "var GAP = 170;", "law-bird")
+	_, _, err := applyHTMLPatch(secs, 0, "var GAP = 999;", "var GAP = 170;", "law-bird")
 	if err == nil {
 		t.Fatal("expected a refusal for a find that matches nothing")
 	}
@@ -67,7 +67,7 @@ func TestApplyHTMLPatchRefusesZeroMatches(t *testing.T) {
 // cannot report which place it changed, so it must not choose one.
 func TestApplyHTMLPatchRefusesMultipleMatches(t *testing.T) {
 	secs := gameSections()
-	_, err := applyHTMLPatch(secs, 0, "bird.", "lawyer.", "law-bird")
+	_, _, err := applyHTMLPatch(secs, 0, "bird.", "lawyer.", "law-bird")
 	if err == nil {
 		t.Fatal("expected a refusal for an ambiguous find")
 	}
@@ -83,7 +83,7 @@ func TestApplyHTMLPatchRefusesMultipleMatches(t *testing.T) {
 // TestApplyHTMLPatchDeletes — an empty replacement removes the matched text.
 func TestApplyHTMLPatchDeletes(t *testing.T) {
 	secs := gameSections()
-	got, err := applyHTMLPatch(secs, 0, "\nfunction spawn() { pipes.push({x: 400, gap: GAP}); }", "", "law-bird")
+	got, _, err := applyHTMLPatch(secs, 0, "\nfunction spawn() { pipes.push({x: 400, gap: GAP}); }", "", "law-bird")
 	if err != nil {
 		t.Fatalf("delete patch failed: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestAppAuthoringSectionsFallsBackToPage(t *testing.T) {
 func TestPatchedSectionsStillBuild(t *testing.T) {
 	spec := AppSpec{Slug: "law-bird", Name: "Law Bird", RecordKey: "id"}
 	secs := gameSections()
-	patched, err := applyHTMLPatch(secs, 0, "var GAP = 155;", "var GAP = 170;", spec.Slug)
+	patched, _, err := applyHTMLPatch(secs, 0, "var GAP = 155;", "var GAP = 170;", spec.Slug)
 	if err != nil {
 		t.Fatalf("patch: %v", err)
 	}
@@ -244,4 +244,30 @@ func TestACleanPatchOrRevertLeavesTheAppVerified(t *testing.T) {
 		t.Fatal(err)
 	}
 	verified("revert")
+}
+
+// A patch is matched as Anvil's edits are (core/editmatch): a find written
+// with plain quotes lands on the page's curly ones, and the result says it
+// was read loosely; a miss shows where the find's lines really are; a patch
+// sent twice says it is made already. Still exactly one place, or refused.
+func TestAPatchIsMatchedAsAnvilsEditsAre(t *testing.T) {
+	secs := []map[string]any{{"kind": "html", "html": "<p id=\"t\">It’s “ready”</p>\r\n<script>\r\nvar total = 0;\r\nfunction add(n) {\r\n  total += n;\r\n}\r\n</script>\r\n"}}
+
+	got, note, err := applyHTMLPatch(secs, 0, `It's "ready"`, "It is ready", "s")
+	if err != nil || !strings.Contains(got, "It is ready</p>") || !strings.Contains(note, "curly quotes") {
+		t.Fatalf("a plain-quoted find: %q %q %v", got, note, err)
+	}
+	got, note, err = applyHTMLPatch(secs, 0, "function add(n) {\n  total += n;\n}", "function add(n) {\n  total += n * 2;\n}", "s")
+	if err != nil || !strings.Contains(got, "total += n * 2;\r\n}") || !strings.Contains(note, "CRLF") {
+		t.Fatalf("a find with LF breaks on a CRLF page: %q %q %v", got, note, err)
+	}
+	if _, _, err := applyHTMLPatch(secs, 0, "function add(n) {\n  total -= n;\n}", "x", "s"); err == nil || !strings.Contains(err.Error(), "line 4") {
+		t.Fatalf("a miss should show where the find's lines are: %v", err)
+	}
+	if _, _, err := applyHTMLPatch(secs, 0, "var sum = 0;", "var total = 0;\r\nfunction add(n) {", "s"); err == nil || !strings.Contains(err.Error(), "already there") {
+		t.Fatalf("a patch made already: %v", err)
+	}
+	if _, _, err := applyHTMLPatch(secs, 0, "total", "sum", "s"); err == nil || !strings.Contains(err.Error(), "2 times") {
+		t.Fatalf("a find in two places is still refused: %v", err)
+	}
 }

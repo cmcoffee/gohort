@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/editmatch"
 )
 
 // patch_html — change part of an html section without re-sending the document.
@@ -69,11 +70,11 @@ func (t *chatTurn) appDefPatchHTML(args map[string]any) (string, error) {
 		return "", err
 	}
 	prior := mapStr(sections[idx], "html")
-	patched, err := applyHTMLPatch(sections, idx, find, replace, spec.Slug)
+	patched, note, err := applyHTMLPatch(sections, idx, find, replace, spec.Slug)
 	if err != nil {
 		return "", err
 	}
-	summary := fmt.Sprintf("Patched html section %%d of %%q (revision %%s): replaced %d chars with %d.", len(find), len(replace))
+	summary := fmt.Sprintf("Patched html section %%d of %%q (revision %%s): replaced %d chars with %d.", len(find), len(replace)) + note
 	return t.saveHTMLSectionEdit(spec, sections, idx, prior, patched, summary, "patch", "patch_html", stringArg(args, "note"))
 }
 
@@ -168,20 +169,34 @@ func (t *chatTurn) saveHTMLSectionEdit(spec AppSpec, sections []map[string]any, 
 }
 
 // applyHTMLPatch resolves the find/replace against one section's html and
-// returns the patched document. The uniqueness rule lives here because it IS
-// the safety property: a patch that matched nothing is aimed at a version the
-// author no longer has, and one that matched several places cannot report
-// which it changed. Refusing both is what makes patching safer than re-sending
-// the document, not just cheaper.
-func applyHTMLPatch(sections []map[string]any, idx int, find, replace, slug string) (string, error) {
-	html := mapStr(sections[idx], "html")
-	switch n := strings.Count(html, find); {
+// returns the patched document, and a note when the find was read loosely.
+// The uniqueness rule lives in patchOnce because it IS the safety property: a
+// patch that matched nothing is aimed at a version the author no longer has,
+// and one that matched several places cannot report which it changed.
+// Refusing both is what makes patching safer than re-sending the document,
+// not just cheaper.
+func applyHTMLPatch(sections []map[string]any, idx int, find, replace, slug string) (string, string, error) {
+	what := fmt.Sprintf("html section %d", htmlSectionOrdinal(sections, idx))
+	reread := fmt.Sprintf("Call app_def(action=\"get\", id=%q) to read the CURRENT html", slug)
+	return patchOnce(mapStr(sections[idx], "html"), find, replace, what, reread)
+}
+
+// patchOnce is the find/replace every app patch shares, on Anvil's matcher
+// (core/editmatch): the find must land in exactly one place, but CRLF line
+// endings, curly quotes and dashes, and spaces at line ends do not make it
+// miss. A miss says where the find's lines really are, or that the change is
+// there already. what names the document; reread says how to read it again.
+func patchOnce(text, find, replace, what, reread string) (string, string, error) {
+	m := editmatch.Find(text, find, replace)
+	switch n := len(m.Spans); {
+	case n == 0 && editmatch.AlreadyApplied(text, replace):
+		return "", "", fmt.Errorf("that text does not appear in %s, but the replacement is already there, so this patch may have been made already. %s to check before patching again", what, reread)
 	case n == 0:
-		return "", fmt.Errorf("that text does not appear in html section %d: you may be patching a version the app no longer has. Call app_def(action=\"get\", id=%q) to read the CURRENT html, copy the exact text from it (whitespace included), and patch again", htmlSectionOrdinal(sections, idx), slug)
+		return "", "", fmt.Errorf("that text does not appear in %s: you may be patching a version the app no longer has.%s If that is not enough, %s, copy the exact text from it, and patch again", what, editmatch.Hint(text, find), strings.ToLower(reread[:1])+reread[1:])
 	case n > 1:
-		return "", fmt.Errorf("that text appears %d times in html section %d: a patch has to identify ONE place. Extend the find text with the surrounding lines until it is unique", n, htmlSectionOrdinal(sections, idx))
+		return "", "", fmt.Errorf("that text appears %d times in %s: a patch has to identify ONE place. Extend the find text with the surrounding lines until it is unique", n, what)
 	}
-	return strings.Replace(html, find, replace, 1), nil
+	return m.Apply(text), strings.ReplaceAll(m.Tier.Note(), "%", "%%"), nil
 }
 
 // appAuthoringSections returns a spec's sections in AUTHORING form, ready to

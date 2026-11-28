@@ -1,4 +1,4 @@
-package anvil
+package editmatch
 
 import (
 	"strings"
@@ -21,19 +21,19 @@ func TestAMissedEditShowsWhereTheAnchorIs(t *testing.T) {
 
 	// Two blocks written as neighbours, in the wrong order (the run that
 	// gave up).
-	got := anchorHint(file, "document.addEventListener('click', e => {\n  const c = e.target.closest('.chip');\n});\nfunction restore() {")
+	got := Hint(file, "document.addEventListener('click', e => {\n  const c = e.target.closest('.chip');\n});\nfunction restore() {")
 	if !strings.Contains(got, "first line is at line 5") || !strings.Contains(got, "at line 1, before it") {
 		t.Errorf("out of order:\n%s", got)
 	}
-	got = anchorHint(file, "function restore() {\n  load(); restore2();\n  renderRecent();")
+	got = Hint(file, "function restore() {\n  load(); restore2();\n  renderRecent();")
 	if !strings.Contains(got, "first line is at line 1 and its last at line 3") || !strings.Contains(got, "     2\t  load();") {
 		t.Errorf("a changed middle:\n%s", got)
 	}
-	got = anchorHint(file, "function restore() {\n\tload();")
+	got = Hint(file, "function restore() {\n\tload();")
 	if !strings.Contains(got, "apart from spaces") || !strings.Contains(got, "line 1") {
 		t.Errorf("spacing alone:\n%s", got)
 	}
-	got = anchorHint(file, "const nothing = here;\nlet more = none;")
+	got = Hint(file, "const nothing = here;\nlet more = none;")
 	if !strings.Contains(got, "Neither its first nor its last line") {
 		t.Errorf("text the file lacks:\n%s", got)
 	}

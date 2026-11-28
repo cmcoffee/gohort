@@ -135,16 +135,10 @@ func pickAppScriptQualified(spec AppSpec, name string) (appScriptRef, error) {
 	return appScriptRef{}, fmt.Errorf("no %s named %q on this app", map[string]string{"data": "data source", "action": "action"}[kind], n)
 }
 
-// applyTextPatch is applyHTMLPatch's rule over any text: the find must occur
+// applyTextPatch is applyHTMLPatch's rule over a script: the find must occur
 // exactly once. what names the document in the refusal.
-func applyTextPatch(text, find, replace, what, slug string) (string, error) {
-	switch n := strings.Count(text, find); {
-	case n == 0:
-		return "", fmt.Errorf("that text does not appear in %s: you may be patching a version the app no longer has. Call app_def(action=\"get\", id=%q, script=<name>) to read the CURRENT script, copy the exact text from it (whitespace included), and patch again", what, slug)
-	case n > 1:
-		return "", fmt.Errorf("that text appears %d times in %s: a patch has to identify ONE place. Extend the find text with the surrounding lines until it is unique", n, what)
-	}
-	return strings.Replace(text, find, replace, 1), nil
+func applyTextPatch(text, find, replace, what, slug string) (string, string, error) {
+	return patchOnce(text, find, replace, what, fmt.Sprintf("Call app_def(action=\"get\", id=%q, script=<name>) to read the CURRENT script", slug))
 }
 
 // pyDefRE matches a Python def line and captures its indentation and name.
@@ -271,11 +265,11 @@ func (t *chatTurn) appDefPatchScript(args map[string]any, spec AppSpec) (string,
 		return "", errors.New("find and replace are identical: nothing to do")
 	}
 	_, prior := ref.body(spec)
-	next, err := applyTextPatch(prior, find, replace, ref.label(spec), spec.Slug)
+	next, note, err := applyTextPatch(prior, find, replace, ref.label(spec), spec.Slug)
 	if err != nil {
 		return "", err
 	}
-	summary := fmt.Sprintf("Patched %s of %%q (revision %%s): replaced %d chars with %d.", ref.label(spec), len(find), len(replace))
+	summary := fmt.Sprintf("Patched %s of %%q (revision %%s): replaced %d chars with %d.", ref.label(spec), len(find), len(replace)) + note
 	return t.saveScriptEdit(spec, ref, next, summary, "patch", "patch "+ref.label(spec), args)
 }
 

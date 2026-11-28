@@ -86,14 +86,14 @@ func TestReplaceScriptFunctionSpliceKeepsTheRest(t *testing.T) {
 }
 
 func TestApplyTextPatchUniqueOrRefuse(t *testing.T) {
-	out, err := applyTextPatch(weatherScript, `"https://example.test/?q="`, `"https://example.test/v2?q="`, `data source "weather"`, "wx")
+	out, _, err := applyTextPatch(weatherScript, `"https://example.test/?q="`, `"https://example.test/v2?q="`, `data source "weather"`, "wx")
 	if err != nil || !strings.Contains(out, "/v2?q=") {
 		t.Fatalf("patch failed: %v", err)
 	}
-	if _, err := applyTextPatch(weatherScript, "recs", "", `data source "weather"`, "wx"); err == nil || !strings.Contains(err.Error(), "times") {
+	if _, _, err := applyTextPatch(weatherScript, "recs", "", `data source "weather"`, "wx"); err == nil || !strings.Contains(err.Error(), "times") {
 		t.Fatalf("a non-unique find should refuse and say so: %v", err)
 	}
-	if _, err := applyTextPatch(weatherScript, "nowhere", "", `data source "weather"`, "wx"); err == nil || !strings.Contains(err.Error(), "script=") {
+	if _, _, err := applyTextPatch(weatherScript, "nowhere", "", `data source "weather"`, "wx"); err == nil || !strings.Contains(err.Error(), "script=") {
 		t.Fatalf("a missing find should point at get with script=: %v", err)
 	}
 }

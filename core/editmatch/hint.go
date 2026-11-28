@@ -1,4 +1,4 @@
-package anvil
+package editmatch
 
 // What a missed edit says. "old_text was not found" alone sent the agent
 // back to guess again: it had written an anchor from memory (two blocks it
@@ -15,9 +15,9 @@ import (
 // hintLines bounds the file shown back for a missed anchor.
 const hintLines = 24
 
-// anchorHint is what to say after old_text was not found in content: where
+// Hint is what to say after old_text was not found in content: where
 // its first and last lines are, with the file's real text around them.
-func anchorHint(content, oldText string) string {
+func Hint(content, oldText string) string {
 	lines := strings.Split(content, "\n")
 	if at := findCollapsed(content, oldText); at >= 0 {
 		line := strings.Count(content[:at], "\n") + 1

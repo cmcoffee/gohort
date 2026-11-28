@@ -43,6 +43,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/agenthost"
 	"github.com/cmcoffee/gohort/core/bgrun"
+	"github.com/cmcoffee/gohort/core/editmatch"
 	"github.com/cmcoffee/gohort/core/textutil"
 	"github.com/cmcoffee/gohort/core/toolscript"
 )
@@ -723,16 +724,16 @@ func (c *toolCtx) editFileTool() AgentToolDef {
 				return "", fmt.Errorf("%s is %s, above the %s limit for a revertable edit. Anvil will not make an edit it cannot undo",
 					rel, HumanSize(int64(len(before))), HumanSize(maxWriteBytes))
 			}
-			m := findAnchor(before, oldText, newText)
-			switch n := len(m.spans); {
-			case n == 0 && alreadyApplied(before, newText):
+			m := editmatch.Find(before, oldText, newText)
+			switch n := len(m.Spans); {
+			case n == 0 && editmatch.AlreadyApplied(before, newText):
 				return "", fmt.Errorf("old_text was not found in %s, but new_text is already there, so this edit may have been made already. Read the file to check before trying again", rel)
 			case n == 0:
-				return "", fmt.Errorf("old_text was not found in %s.%s", rel, anchorHint(before, oldText))
+				return "", fmt.Errorf("old_text was not found in %s.%s", rel, editmatch.Hint(before, oldText))
 			case n > 1 && !boolArg(args, "replace_all"):
 				return "", fmt.Errorf("old_text appears %d times in %s, so it is ambiguous. Include more surrounding lines until it is unique, or set replace_all to change every one", n, rel)
 			}
-			after := m.apply(before)
+			after := m.Apply(before)
 			if err := c.notesFit(rel, before, after); err != nil {
 				return "", err
 			}
@@ -742,10 +743,10 @@ func (c *toolCtx) editFileTool() AgentToolDef {
 			e := journalWrite(c.udb, c.project.ID, c.session(), rel, before, true, after, false)
 			c.publish(e)
 			where := ""
-			if n := len(m.spans); n > 1 {
+			if n := len(m.Spans); n > 1 {
 				where = fmt.Sprintf(", %d places", n)
 			}
-			return fmt.Sprintf("Edited %s (+%d −%d%s). The change is recorded and can be reverted.%s", rel, e.Added, e.Removed, where, m.tier.note()), nil
+			return fmt.Sprintf("Edited %s (+%d −%d%s). The change is recorded and can be reverted.%s", rel, e.Added, e.Removed, where, m.Tier.Note()), nil
 		},
 	}
 }

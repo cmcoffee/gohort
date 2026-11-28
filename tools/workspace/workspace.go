@@ -30,6 +30,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/editmatch"
 	"github.com/cmcoffee/gohort/core/filenotes"
 	// Imported directly rather than through a core alias: the shell run needs a
 	// working directory, and two more symbols in core put it over
@@ -1340,26 +1341,28 @@ func handleEdit(args map[string]any, sess *ToolSession) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("no file %q in the workspace", rel)
 	}
+	// Matched as Anvil's edit_file and Builder's app patches are
+	// (core/editmatch): CRLF line endings, curly quotes and dashes, and
+	// spaces at line ends do not make a find miss, and a miss says where its
+	// lines really are.
 	text := string(data)
-	n := strings.Count(text, find)
-	switch {
+	m := editmatch.Find(text, find, replace)
+	switch n := len(m.Spans); {
+	case n == 0 && editmatch.AlreadyApplied(text, replace):
+		return "", fmt.Errorf("that text does not appear in %s, but the replacement is already there, so this edit may have been made already. Read the file (workspace cat) to check before editing again", rel)
 	case n == 0:
-		return "", fmt.Errorf("that text does not appear in %s: read the file (workspace cat) and copy the exact text, whitespace included", rel)
+		return "", fmt.Errorf("that text does not appear in %s.%s", rel, editmatch.Hint(text, find))
 	case n > 1 && !all:
 		return "", fmt.Errorf("that text appears %d times in %s: extend find with the surrounding lines until it is unique, or pass all=true to replace every one", n, rel)
 	}
-	if all {
-		text = strings.ReplaceAll(text, find, replace)
-	} else {
-		text = strings.Replace(text, find, replace, 1)
-	}
+	text = m.Apply(text)
 	if err := safefile.WriteFileIn(sess.WorkspaceDir, abs, []byte(text), 0600); err != nil {
 		return "", fmt.Errorf("write %s: %w", rel, err)
 	}
 	if all {
-		return fmt.Sprintf("Replaced %d occurrence(s) in %s.", n, rel), nil
+		return fmt.Sprintf("Replaced %d occurrence(s) in %s.%s", len(m.Spans), rel, m.Tier.Note()), nil
 	}
-	return fmt.Sprintf("Replaced 1 occurrence in %s (%d bytes now).", rel, len(text)), nil
+	return fmt.Sprintf("Replaced 1 occurrence in %s (%d bytes now).%s", rel, len(text), m.Tier.Note()), nil
 }
 
 // What a workspace call reads or writes, so the agent loop can drop a result
