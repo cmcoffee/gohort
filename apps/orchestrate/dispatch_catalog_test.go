@@ -149,8 +149,11 @@ func TestADispatchedBuilderDefersAndKnowsTheOwnersTools(t *testing.T) {
 	for _, td := range tools {
 		got = append(got, td.Tool.Name)
 	}
-	if strings.Join(got, ",") != "app_def,keep_going" {
-		t.Fatalf("Builder's dispatched catalog = %v, want app_def and one keep_going inline", got)
+	if strings.Join(got, ",") != "app_def,keep_going,tool_script" {
+		t.Fatalf("Builder's dispatched catalog = %v, want app_def, one keep_going and tool_script (over app_def's reads) inline", got)
+	}
+	if !sess.HasTool("tool_script") {
+		t.Error("tool_script is in the catalog but not a tool the run has")
 	}
 	if !sess.HasTool("connector") || !sess.HasTool("schedule") {
 		t.Error("a deferred tool is still one this run has")

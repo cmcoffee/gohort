@@ -2081,7 +2081,7 @@ func (pr *planRun) prepareMessages() {
 			"phase %q allows %v, but %v are not in this agent's catalog under those names, so the phase ran without them. Tool names in a phase must match the catalog exactly: a remote MCP tool is exposed as \"<server>_<tool>\", not its raw remote name.",
 			pr.mach.Name(), pr.mach.phase.Tools, phaseUnmatched))
 	}
-	pr.allTools = clientToolsLast(narrowed)
+	pr.allTools = clientToolsLast(t.withToolScript(narrowed))
 	// Last change to the catalog: a model too small for all of it gets the
 	// largest schemas behind load_tool. Before the mounted note and the
 	// roster, so neither names a tool that was not sent.

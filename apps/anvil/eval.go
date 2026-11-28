@@ -98,6 +98,7 @@ var evalSettings = []evalSetting{
 	{"lead-plain", "Lead, without the check", "The lead model, with no check.", true, false, false, false, false, ""},
 	{"worker-apps", "Worker, with the check, app tasks", "As Worker, with the check, on the app tasks only: compare with Builder, app tasks, on the same tasks.", false, true, false, false, true, ""},
 	{"builder-apps", "Builder, app tasks", "Builder as a person's chat turn in app mode, on the models it is set to use, on the app tasks only: compare with Worker, with the check, on the same tasks.", false, false, false, true, false, ""},
+	{"builder-apps-noscript", "Builder, app tasks, without tool_script", "As Builder, app tasks, but without tool_script: what chaining its reads in one round adds.", false, false, true, true, false, ""},
 }
 
 func evalSettingByID(id string) (evalSetting, bool) {
@@ -337,7 +338,7 @@ func runEvalBuilder(ctx context.Context, c *toolCtx, task evalTask) (evalAgentRe
 	slug := strings.TrimSuffix(filepath.Base(c.base), ".app")
 	ctx = ListLoopAs(ctx, c.user, "Builder eval: "+task.Title)
 	run, err := o.RunBuilderOnAppFolder(ctx, orchestrate.BuilderAppTask{
-		User: c.user, Folder: c.base, Slug: slug, Request: task.Request,
+		User: c.user, Folder: c.base, Slug: slug, Request: task.Request, NoScript: c.noScript,
 	})
 	reply := run.Reply
 	if run.Published {

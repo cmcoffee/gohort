@@ -50,6 +50,11 @@ func (t *chatTurn) finalizeDispatchCatalog(sess *ToolSession, tools []AgentToolD
 	tools, names = dedupeToolsByName(tools, names)
 	sess.SetWithheldActions(t.withheldToolActions())
 	tools, names = withoutWithheldToolboxActions(sess, tools, names)
+	// A chain of reads in one round, over what this run kept (authoring_primitives.go).
+	n := len(tools)
+	if tools = t.withToolScript(tools); len(tools) > n {
+		names = append(names, tools[n].Tool.Name)
+	}
 	sess.SetAvailableTools(names)
 	tools, _ = t.deferBuilderOnDemandTools(tools, nil)
 	return tools

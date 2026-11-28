@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/toolscript"
 )
 
 // A Builder another agent (or MCP, or a schedule) sends has the app,
@@ -77,5 +78,55 @@ func TestASentBuilderCannotBuildAnAppAroundItsSender(t *testing.T) {
 	owner := &chatTurn{user: "alice", udb: udb}
 	if msg := owner.appDelegationRefusal(withCaps("fetch_via:weather", "tool:allowed_kit")); msg != "" {
 		t.Errorf("the owner's own run was held to a sender: %q", msg)
+	}
+}
+
+// Builder's tool_script reaches app_def for its reading actions only: each
+// runs and changes nothing, a write is refused, and the script is offered to
+// an author alone, and not on a measure run without it.
+func TestBuildersScriptReadsOnlyReadingActions(t *testing.T) {
+	turn, _ := folderTestTurn(t)
+	turn.agent.ID = "seed-builder"
+	SaveAppSpec(AppSpec{Owner: "u", Slug: "books", Name: "Books", RecordKey: "id"})
+	before, _ := LoadAppSpec("u", "books")
+
+	def := turn.appDefToolDef()
+	view := toolscript.Reads(def, builderScriptReads...)
+	for _, args := range []map[string]any{
+		{"action": "get", "id": "books"}, {"action": "list"}, {"action": "stores"}, {"action": "revisions", "id": "books"},
+	} {
+		if _, err := view.Handler(context.Background(), args); err != nil {
+			t.Errorf("%v: %v", args["action"], err)
+		}
+	}
+	if after, _ := LoadAppSpec("u", "books"); after.Updated != before.Updated {
+		t.Errorf("a reading action changed the app: %v -> %v", before.Updated, after.Updated)
+	}
+	if _, err := view.Handler(context.Background(), map[string]any{"action": "update", "id": "books", "name": "Renamed"}); err == nil || !strings.Contains(err.Error(), "reading actions only") {
+		t.Errorf("a write through the view: %v", err)
+	}
+	if after, _ := LoadAppSpec("u", "books"); after.Name != "Books" {
+		t.Errorf("the refused write landed: %q", after.Name)
+	}
+
+	has := func(tools []AgentToolDef) bool {
+		return slices.ContainsFunc(tools, func(td AgentToolDef) bool { return td.Tool.Name == toolscript.Name })
+	}
+	if !has(turn.withToolScript([]AgentToolDef{def})) {
+		t.Error("Builder was not offered tool_script")
+	}
+	turn.agent.ID = "someone-else"
+	if has(turn.withToolScript([]AgentToolDef{def})) {
+		t.Error("an agent that does not author was offered tool_script")
+	}
+	turn.agent.ID = "seed-builder"
+	if has(turn.withToolScript(nil)) {
+		t.Error("tool_script offered with nothing for it to call")
+	}
+	turn.session = &ChatSession{ID: "measure-noscript"}
+	measureWithoutScript.Store("measure-noscript", true)
+	t.Cleanup(func() { measureWithoutScript.Delete("measure-noscript") })
+	if has(turn.withToolScript([]AgentToolDef{def})) {
+		t.Error("a measure run without tool_script was offered it")
 	}
 }

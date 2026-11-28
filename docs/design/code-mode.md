@@ -1,7 +1,8 @@
 # Code mode: one round that calls several tools
 
-Status: built (2026-11-27), on for Anvil, waiting on the measure. Where the
-build differs from the plan below:
+Status: built (2026-11-27), on for Anvil and, since 0.9.746, for Builder
+(below), waiting on the measure. Where the build differs from the plan
+below:
 
 - **A script is stopped after 2 minutes** rather than moving to the
   background: it only reads, so one still running is stuck.
@@ -150,8 +151,8 @@ omitted when zero); no migration.
 - Edits, `run` or anything that asks inside a script.
 - Moving tools out of the direct list to save schema tokens (opencode's
   default). Revisit if the measure shows models use the script for reads.
-- Other agents than Anvil. The core piece is generic; turning it on
-  elsewhere is a separate decision with its own measure.
+- Other agents than Anvil and Builder. The core piece is generic; turning
+  it on elsewhere is a separate decision with its own measure.
 - `fetch` inside the script. App scripts have it; Anvil's sandbox has no
   network.
 
@@ -163,3 +164,29 @@ omitted when zero); no migration.
 3. **Built in core** as a generic piece, **turned on for Anvil only**.
 4. **Kept only if the measure shows fewer rounds** at the same pass rate on
    the worker model.
+
+## Builder (2026-11-27)
+
+Builder's tools that read also write: `workspace` is a grouped tool with
+reading and writing actions, and `app_def` is one tool over all of an
+app's actions. So a script reaches them through a **reading view**
+(`toolscript.Reads`, `toolscript.GroupedReads`): the same tool under the
+same name, its schema cut to its reading actions and their arguments, and a
+call naming any other action refused before the tool sees it. No new tool
+names.
+
+- **workspace**: the actions that declare reading alone and do not ask
+  (`cat`, `grep`, `head`, `info`, `list`, `ls`, `probe`, `read_lines`,
+  `stat`, `tail`), taken from its own declarations; `view_image` reaches the
+  network and stays out.
+- **app_def**: `get`, `list`, `stores` and `revisions`, named in
+  `builderScriptReads` and held there by a test that runs each and finds the
+  app unchanged.
+
+Built from the turn's catalog as it stands (after the machine phase on a
+chat turn, in `finalizeDispatchCatalog` on a dispatched run), so it reaches
+nothing a rule, a phase or the owner took out. An action the owner turned
+off is refused by the grouped tool at call time, through the view as
+directly. On for Builder now; Measure's "Builder, app tasks, without
+tool_script" is the comparison.
+

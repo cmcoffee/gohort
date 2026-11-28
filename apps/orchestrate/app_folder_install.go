@@ -241,6 +241,8 @@ const MeasureSlugPrefix = "anvil-eval-"
 // it.
 type BuilderAppTask struct {
 	User, Folder, Slug, Request string
+	// NoScript runs the turn without tool_script, to measure what it adds.
+	NoScript bool
 }
 
 // BuilderAppRun is how Builder's turn on a task went.
@@ -295,8 +297,12 @@ func (T *OrchestrateApp) RunBuilderOnAppFolder(ctx context.Context, task Builder
 	sessionID := "measure-" + UUIDv4()
 	rounds := &atomic.Int64{}
 	measuredRounds.Store(sessionID, rounds)
+	if task.NoScript {
+		measureWithoutScript.Store(sessionID, true)
+	}
 	defer func() {
 		measuredRounds.Delete(sessionID)
+		measureWithoutScript.Delete(sessionID)
 		DeleteAppOwned(user, slug)
 		DeleteAppSpec(user, slug)
 		deleteChatSession(udb, builder.ID, sessionID)

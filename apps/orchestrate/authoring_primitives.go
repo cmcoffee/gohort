@@ -11,8 +11,10 @@ package orchestrate
 import (
 	"context"
 	"strings"
+	"sync"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/toolscript"
 )
 
 // authoringPrimitiveToolDefs are the managers for what an author makes
@@ -80,4 +82,58 @@ func (t *chatTurn) appDelegationRefusal(spec AppSpec) string {
 		}
 	}
 	return ""
+}
+
+// builderScriptReads are app_def's actions that only read, and the arguments
+// each takes: what a tool_script may call app_def for. Checked against the
+// handler's own switch by TestBuildersScriptReadsOnlyReadingActions.
+var builderScriptReads = []toolscript.ReadAction{
+	{Name: "get", Params: []string{"id", "script", "section_id"}},
+	{Name: "list"},
+	{Name: "stores"},
+	{Name: "revisions", Params: []string{"id"}},
+}
+
+// measureWithoutScript marks a measure's sessions that run without
+// tool_script (Measure's "Builder, app tasks, without tool_script").
+var measureWithoutScript sync.Map // session id -> true
+
+// withToolScript adds tool_script to an author's catalog: a chain of reads in
+// one round (docs/design/code-mode.md), over the workspace and app_def the
+// catalog holds, their reading actions only. Built from the catalog as it
+// stands, so it reaches nothing a rule, a phase or the owner took out of it.
+// The catalog unchanged for an agent that does not author, or when neither
+// tool is in it.
+func (t *chatTurn) withToolScript(tools []AgentToolDef) []AgentToolDef {
+	if !agentCanAuthor(t.agent) {
+		return tools
+	}
+	if _, off := measureWithoutScript.Load(t.chatSessionID()); off {
+		return tools
+	}
+	var reads []AgentToolDef
+	for _, td := range tools {
+		switch td.Tool.Name {
+		case toolscript.Name:
+			return tools
+		case "workspace":
+			ct, ok := LookupChatTool("workspace")
+			if g, grouped := ct.(*GroupedTool); ok && grouped {
+				if view, ok := toolscript.GroupedReads(td, g); ok {
+					reads = append(reads, view)
+				}
+			}
+		case "app_def":
+			reads = append(reads, toolscript.Reads(td, builderScriptReads...))
+		}
+	}
+	if len(reads) == 0 {
+		return tools
+	}
+	script, err := toolscript.New(reads...)
+	if err != nil {
+		Log("[orchestrate] tool_script not offered: %v", err)
+		return tools
+	}
+	return append(tools, script)
 }
